@@ -78,28 +78,38 @@ claude --agent qa
 codex --profile local
 ```
 
-The PO profile autonomously:
-1. delegates `planner` to decompose the request and **write a PRD to `docs/prd/<slug>.md`** (canonical artifact — the user, designer, developer, and QA all read it)
-2. delegates `designer` for any tasks needing design (updates PRD status + activity log)
-3. delegates `developer` to implement (updates PRD)
-4. delegates `qa` to verify against the PRD's Acceptance criteria (updates PRD)
-5. loops dev↔qa up to 3× on QA failure
-6. announces `→ <persona> ...` progress per persona on stdout and summarizes to you in ≤5 bullets at the end
+The PO profile follows a three-stage loop (see `codex/po-instructions.md` for the full doctrine):
 
-**Feedback turns** ("디자인 더 심플하게 해줘", "QA 실패한 부분 다시 봐") don't restart the full cycle — PO identifies which persona owns the feedback, finds the PRD, resumes that persona's session, and chains forward only if downstream output is invalidated.
+**Stage 1 — Instruction**: paraphrases the ask back if vague, raises risk flags (auth / payments / PII / breaking changes), asks at most 2 clarifying questions, offers A/B alternatives when two paths are defensible.
+
+**Stage 2 — Execution**: delegates to `planner`, then runs the pipeline that planner identifies (not every task uses every persona — a "design system" task may be designer-only). Emits `→` progress markers between persona calls. Applies gates adaptively:
+- **Gate 1 (plan approval)**: before design/dev work if ≥4 tasks or touches risk areas
+- **Gate 2 (design review)**: after designer, if the artifact is user-facing
+- **Gate 3 (design-compliance cross-check)** — *mandatory when designer was involved*: after developer, PO re-invokes `designer` with changed files to check "does this match the design intent?" before handing back to the user
+- **QA** runs in parallel with design-compliance or after; dev↔qa loops up to 3×
+
+**Stage 3 — Feedback**: probes if vague ("어느 부분이?"), scopes to the owning persona, resumes that persona's session only, chains forward only when invalidated. Learns repeated preferences into `~/.codex/po-memory.md`.
+
+**PRDs are opt-in** — written only when you ask ("PRD 내놔") or PO judges scope warrants it (≥5 tasks / multi-day work). Otherwise task list stays in PO's memory and only the final ≤5-bullet summary reaches you.
 
 ## Per-project state
 
-When PO runs in a project, it creates `<project>/.codex/persona-sessions.json` to track which Claude session UUID belongs to each persona *for that project*. This isolates sessions per project — planner in project A has a different accumulated context than planner in project B.
+When PO runs in a project, it creates `<project>/.codex/po-state.json` to track:
+- `persona_sessions`: Claude session UUIDs per persona (isolates sessions per project)
+- `recent_turns`: last 10 persona outcomes (PO uses this to flag recurring failures → suggests model/tool upgrades)
 
 Add this to the target project's `.gitignore`:
 
 ```
-.codex/persona-sessions.json
+.codex/po-state.json
 .codex/logs/
 ```
 
-Project-tier memory lives at `<project>/docs/<persona>/*.md` and *should* be committed — it's part of the project's documentation.
+Project-tier memory lives at `<project>/docs/<persona>/*.md` and *should* be committed — it's part of the project's documentation. PRDs (when opt-in'd) live at `<project>/docs/prd/*.md` and also committed.
+
+## PO's own memory
+
+PO remembers **how you work with it** (not project facts) at `~/.codex/po-memory.md`. Accumulates your communication preferences, product taste, workflow preferences, and pushback history. PO reads it at session start and appends at notable moments. Seeded by `install.sh` as an empty template; edit freely or let PO grow it.
 
 ## Model choices
 
@@ -122,14 +132,18 @@ orchestration/
 │   ├── designer.md
 │   ├── developer.md
 │   └── qa.md
-├── codex/                     # Codex global config — copied to ~/.codex/
-│   ├── config.toml            # profiles po + local, model_providers.ollama
-│   └── po-instructions.md     # PO doctrine (delegation rules, memory model, output shape)
+├── codex/                          # Codex global config — copied to ~/.codex/
+│   ├── config.toml                 # profiles po + local
+│   ├── po-instructions.md          # PO doctrine (3 stages, gates, evolution triggers)
+│   └── po-memory.md.template       # seed for ~/.codex/po-memory.md (PO's cross-session memory of user)
 ├── scripts/
-│   ├── install.sh             # one-time: symlinks + copies
-│   └── setup-graphiti.sh      # one-time: FalkorDB docker + graphiti clone + uv sync
-├── docs/                      # the plan/design docs for this orchestration itself
-└── README.md                  # this file
+│   ├── install.sh                  # one-time: symlinks + copies + seeds PO memory
+│   └── setup-graphiti.sh           # one-time: FalkorDB docker + graphiti clone + uv sync
+├── docs/
+│   ├── overview.md                 # high-level system explanation
+│   ├── customization.md            # how to swap model / add MCP / add skill / new persona
+│   └── plan.md                     # design journey (historical)
+└── README.md                       # this file
 ```
 
 ## Memory promotion (how knowledge climbs the tiers)

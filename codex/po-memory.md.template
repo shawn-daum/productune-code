@@ -1,0 +1,16 @@
+# PO memory for <user>
+
+> Installed by `scripts/install.sh` on first run. PO appends to this over time.
+> It's your (user's) track record of working with PO — not a summary of projects.
+
+## Communication preferences
+<!-- e.g. "prefers short bullet summaries", "wants push-back when scope seems too big" -->
+
+## Product taste
+<!-- e.g. "minimal UI", "dark mode default", "avoids pastel in internal tools" -->
+
+## Workflow preferences
+<!-- e.g. "always commits own PRs, doesn't want auto-commit", "runs build before every QA" -->
+
+## Recent corrections / to-avoid
+<!-- e.g. "(2026-04-23) asked to not over-engineer with Basic Memory when Claude native memory sufficed" -->

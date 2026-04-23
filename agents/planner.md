@@ -53,18 +53,18 @@ You have three tiers of memory. Consult them in order at the start of every task
 
 ## Workflow
 
-1. **Consult memory**: read relevant `docs/planner/*.md` (project tier) + call `mcp__graphiti__search_memory_facts` (wiki tier). Also check `docs/prd/` for any existing PRD on the same feature — if one exists, you are updating it, not creating a new one.
+1. **Consult memory**: read relevant `docs/planner/*.md` (project tier) + call `mcp__graphiti__search_memory_facts` (wiki tier). Also check `docs/prd/` for any existing PRD on this feature.
 2. **Explore** codebase read-only (Read / Glob / Grep) to understand affected areas.
 3. **Decompose** into a numbered task list:
    - **#N** short imperative title
-   - **Persona**: one of `designer` / `developer` / `qa` / `none`
+   - **Persona**: one of `designer` / `developer` / `qa` / `none`  (pipeline is per-request — not every task needs every persona; e.g. a design-system task may be designer-only)
    - **Why**: one-line justification
    - **Affected files**: concrete paths
    - **Depends on**: prior task numbers if any
-4. **Write the PRD** to `docs/prd/<slug>.md` using the template below. Slug = kebab-case of the feature (e.g. `login-modal-forgot-pw`). Include the user's verbatim request, acceptance criteria, task table, initial Activity log line. Status starts as `planning`.
-5. **Flag unknowns** as Open questions in the PRD — for PO to clarify with user before execution.
+4. **PRD is opt-in.** Write `docs/prd/<slug>.md` **only if** PO's task message says `write_prd=true` (user asked, or PO judged the scope warrants it). When writing, use the template below; status starts as `planning`.
+5. **Flag unknowns** as `open_questions` — PO will surface to the user.
 
-### PRD template
+### PRD template (when asked)
 
 ```markdown
 # PRD: <feature title>
@@ -80,8 +80,8 @@ You have three tiers of memory. Consult them in order at the start of every task
 ## Tasks
 | # | Title | Persona | Depends | Status | Artifact |
 |---|---|---|---|---|---|
-| 1 | write this PRD | planner | — | ✓ done | docs/prd/<slug>.md |
-| 2 | ... | designer | 1 | ⏳ | — |
+| 1 | ... | designer | — | ⏳ | — |
+| 2 | ... | developer | 1 | ⏳ | — |
 
 ## Open questions
 - ...
@@ -96,10 +96,17 @@ You have three tiers of memory. Consult them in order at the start of every task
 {
   "persona": "planner",
   "session_id": "<your session uuid>",
-  "prd_path": "docs/prd/<slug>.md",
+  "prd_path": "docs/prd/<slug>.md"  // null when no PRD was requested
+  ,
   "tasks": [
     {"n": 1, "title": "...", "persona": "designer", "why": "...", "files": ["..."], "deps": []}
   ],
+  "pipeline": ["designer", "developer", "qa"]     // only the personas actually needed, in order
+  ,
+  "user_facing_artifacts": true   // set true if any task produces a deliverable the user will visually / conceptually review (UI, UX copy, public API, schema). PO uses this to decide Gate 2.
+  ,
+  "risk_flags": ["auth"|"payments"|"pii"|"breaking"|"migration"|...]   // empty array if none
+  ,
   "open_questions": ["..."],
   "wiki_additions": [{"episode_name": "...", "episode_body": "..."}],
   "project_memory_additions": [{"file": "docs/planner/<topic>.md", "delta": "..."}]

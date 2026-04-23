@@ -41,7 +41,7 @@ for AGENT in "$ROOT"/agents/*.md; do
   say "linked agent: $NAME"
 done
 
-# 2) Codex config
+# 2) Codex config (always overwritten, backup if content differs)
 mkdir -p "$HOME/.codex"
 for F in config.toml po-instructions.md; do
   SRC="$ROOT/codex/$F"
@@ -54,7 +54,16 @@ for F in config.toml po-instructions.md; do
   say "copied codex file: $F"
 done
 
-# 3) Summary + next steps
+# 3) PO memory (seed ONLY if user hasn't started one yet — do NOT clobber learnings)
+PO_MEM="$HOME/.codex/po-memory.md"
+if [ ! -e "$PO_MEM" ]; then
+  cp "$ROOT/codex/po-memory.md.template" "$PO_MEM"
+  say "seeded PO memory at $PO_MEM (PO will append over time)"
+else
+  say "PO memory already exists at $PO_MEM — leaving as-is"
+fi
+
+# 4) Summary + next steps
 cat <<EOF
 
 $(printf "\033[1;32m✓ install complete\033[0m")
