@@ -50,8 +50,8 @@ Graphiti is **bi-temporal** — every fact has `(valid_from, valid_to)` windows.
 ## Install
 
 ```sh
-git clone <this-repo>  ~/Documents/dev/orchestration   # wherever you want
-cd ~/Documents/dev/orchestration
+git clone <this-repo>  ~/   # wherever you want
+cd ~/<your-folder>
 bash scripts/install.sh           # links agents → ~/.claude/agents/, copies codex config → ~/.codex/
 bash scripts/setup-graphiti.sh    # FalkorDB container + graphiti clone + uv sync
 ```
@@ -88,9 +88,9 @@ The PO profile follows a three-stage loop (see `codex/po-instructions.md` for th
 - **Gate 3 (design-compliance cross-check)** — *mandatory when designer was involved*: after developer, PO re-invokes `designer` with changed files to check "does this match the design intent?" before handing back to the user
 - **QA** runs in parallel with design-compliance or after; dev↔qa loops up to 3×
 
-**Stage 3 — Feedback**: probes if vague ("어느 부분이?"), scopes to the owning persona, resumes that persona's session only, chains forward only when invalidated. Learns repeated preferences into `~/.codex/po-memory.md`.
+**Stage 3 — Feedback**: probes if vague, scopes to the owning persona, resumes that persona's session only, chains forward only when invalidated. Learns repeated preferences into `~/.codex/po-memory.md`.
 
-**PRDs are opt-in** — written only when you ask ("PRD 내놔") or PO judges scope warrants it (≥5 tasks / multi-day work). Otherwise task list stays in PO's memory and only the final ≤5-bullet summary reaches you.
+**PRDs are opt-in** — written only when you ask or PO judges scope warrants it (≥5 tasks / multi-day work). Otherwise task list stays in PO's memory and only the final ≤5-bullet summary reaches you.
 
 ## Per-project state
 
