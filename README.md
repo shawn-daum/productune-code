@@ -79,12 +79,14 @@ codex --profile local
 ```
 
 The PO profile autonomously:
-1. delegates `planner` to decompose the request
-2. delegates `designer` for any tasks needing design
-3. delegates `developer` to implement
-4. delegates `qa` to verify
+1. delegates `planner` to decompose the request and **write a PRD to `docs/prd/<slug>.md`** (canonical artifact — the user, designer, developer, and QA all read it)
+2. delegates `designer` for any tasks needing design (updates PRD status + activity log)
+3. delegates `developer` to implement (updates PRD)
+4. delegates `qa` to verify against the PRD's Acceptance criteria (updates PRD)
 5. loops dev↔qa up to 3× on QA failure
-6. summarizes to you in ≤5 bullets per section
+6. announces `→ <persona> ...` progress per persona on stdout and summarizes to you in ≤5 bullets at the end
+
+**Feedback turns** ("디자인 더 심플하게 해줘", "QA 실패한 부분 다시 봐") don't restart the full cycle — PO identifies which persona owns the feedback, finds the PRD, resumes that persona's session, and chains forward only if downstream output is invalidated.
 
 ## Per-project state
 
