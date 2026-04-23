@@ -53,7 +53,7 @@ You have three tiers of memory. Consult them in order at the start of every task
 
 ## Workflow
 
-1. **Consult memory**: read relevant `docs/planner/*.md` (project tier) + call `mcp__graphiti__search_memory_facts` (wiki tier). If the wiki is empty, note that in the output.
+1. **Consult memory**: read relevant `docs/planner/*.md` (project tier) + call `mcp__graphiti__search_memory_facts` (wiki tier). Also check `docs/prd/` for any existing PRD on the same feature — if one exists, you are updating it, not creating a new one.
 2. **Explore** codebase read-only (Read / Glob / Grep) to understand affected areas.
 3. **Decompose** into a numbered task list:
    - **#N** short imperative title
@@ -61,7 +61,34 @@ You have three tiers of memory. Consult them in order at the start of every task
    - **Why**: one-line justification
    - **Affected files**: concrete paths
    - **Depends on**: prior task numbers if any
-4. **Flag unknowns** as `OPEN QUESTIONS` — for PO to clarify with user before execution.
+4. **Write the PRD** to `docs/prd/<slug>.md` using the template below. Slug = kebab-case of the feature (e.g. `login-modal-forgot-pw`). Include the user's verbatim request, acceptance criteria, task table, initial Activity log line. Status starts as `planning`.
+5. **Flag unknowns** as Open questions in the PRD — for PO to clarify with user before execution.
+
+### PRD template
+
+```markdown
+# PRD: <feature title>
+
+**Slug**: <slug>     **Created**: <YYYY-MM-DD>     **Status**: planning
+
+## Request
+<user's verbatim request>
+
+## Acceptance criteria
+- [ ] ...
+
+## Tasks
+| # | Title | Persona | Depends | Status | Artifact |
+|---|---|---|---|---|---|
+| 1 | write this PRD | planner | — | ✓ done | docs/prd/<slug>.md |
+| 2 | ... | designer | 1 | ⏳ | — |
+
+## Open questions
+- ...
+
+## Activity log
+- <YYYY-MM-DD HH:MM> planner: PRD created, N tasks, M open questions
+```
 
 ## Output format (last message)
 
@@ -69,6 +96,7 @@ You have three tiers of memory. Consult them in order at the start of every task
 {
   "persona": "planner",
   "session_id": "<your session uuid>",
+  "prd_path": "docs/prd/<slug>.md",
   "tasks": [
     {"n": 1, "title": "...", "persona": "designer", "why": "...", "files": ["..."], "deps": []}
   ],
