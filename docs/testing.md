@@ -87,11 +87,30 @@ This is a temperery test for the orchestration setup.
 EOF
 git add . && git commit -q -m "reset" 2>/dev/null || true
 
-# 3.2 — Start PO
+# 3.2 — Start PO — pick one of three methods
+
+# Method A (recommended for testing): interactive TUI
 codex --profile po
+# → opens Codex TUI. Type the prompt below inside the TUI, press Enter to submit.
+# Multi-line: Shift+Enter for newline, Enter to submit. Pasting works fine.
+
+# Method B: kickstart the TUI with an initial prompt as CLI argument
+# Use SINGLE quotes when the prompt contains backticks, otherwise zsh executes them:
+codex --profile po 'README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.'
+
+# Or with heredoc when the prompt is multi-line:
+codex --profile po "$(cat <<'EOF'
+README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서
+`function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.
+EOF
+)"
+
+# Method C: completely non-interactive (scripting / CI-style)
+codex exec --profile po --output-last-message /tmp/po-out.txt \
+  'README 의 오타 하나 찾아서 고치고, `sum.js` 에 `function sum(a,b) { return a+b; }` 를 export 해줘.'
 ```
 
-Inside the Codex prompt, try:
+Whichever method you pick, the initial task to give PO is:
 
 > README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.
 
@@ -110,7 +129,9 @@ Inside the Codex prompt, try:
 
 ### 3.3 — Test feedback routing
 
-Without leaving Codex, follow up:
+If you used **Method A or B**, you're still inside the Codex TUI after the first task completes — just type the follow-up as a new turn. If you used **Method C** (`codex exec`), start a resumed session with `codex resume --last` instead.
+
+Follow-up prompt:
 
 > 어 그리고 `sum.js` 에 음수 들어가면 에러 던지게 수정해줘.
 
@@ -197,13 +218,13 @@ cat > .codex/po-state.json <<'EOF'
 EOF
 ```
 
-Now start PO and give it any small task:
+Now start PO and give it any small task (kickstart with a CLI argument so the TUI opens with the prompt already submitted):
 
 ```sh
-codex --profile po
+codex --profile po 'README.md 에 한 줄 더 추가해줘.'
 ```
 
-> `README.md` 한 줄 더 추가해줘
+(Equivalent: run `codex --profile po` alone and type the prompt in the TUI.)
 
 **Observe:** Before executing, PO should mention something like: "qa 가 최근 이 프로젝트에서 4/5 실패. sonnet 으로 올려볼까요? (one-off: `--model sonnet`, 영구: agents/qa.md 수정)".
 
