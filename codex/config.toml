@@ -1,0 +1,37 @@
+# Global Codex configuration for PO-driven multi-persona orchestration.
+# Installed to ~/.codex/config.toml by scripts/install.sh.
+#
+# Profiles:
+#   po    — hosted Codex, autonomous, orchestrates Claude Code personas (default for work)
+#   local — Ollama qwen3.5:4b fallback (for token-soak / offline / cheap triage)
+
+approval_policy        = "on-request"
+sandbox_mode           = "workspace-write"
+model_reasoning_effort = "high"
+
+# ────────────────────────────────────────────────
+# profile: po
+# Run with: `codex --profile po`
+# ────────────────────────────────────────────────
+[profiles.po]
+approval_policy        = "never"
+sandbox_mode           = "workspace-write"
+model_reasoning_effort = "high"
+model_instructions_file = "~/.codex/po-instructions.md"
+
+# ────────────────────────────────────────────────
+# profile: local  (Ollama fallback)
+# Run with: `codex --profile local`
+# Requires `ollama serve` on localhost:11434 with qwen3.5:4B pulled.
+# ────────────────────────────────────────────────
+# profile.local uses Codex's built-in `ollama` provider (no [model_providers.ollama] override;
+# that's a reserved builtin). If this errors at runtime, fallback is:
+#   codex --oss --local-provider ollama -m qwen3.5:4B
+
+[profiles.local]
+model_provider = "ollama"
+model          = "qwen3.5:4B"
+approval_policy = "never"
+sandbox_mode    = "workspace-write"
+model_reasoning_effort  = "medium"
+model_instructions_file = "~/.codex/po-instructions.md"
