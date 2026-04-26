@@ -40,7 +40,7 @@ codex --profile po        (PO, OpenAI hosted)
 | **tools** | Read, Glob, Grep, WebFetch + graphiti MCP | + Write (docs/ 만), + WebFetch | + Write, Edit, Bash | + Bash (whitelist) |
 | **쓰기 영역** | 없음 (plan 모드) | `docs/design/` 만 | 전체 | 없음 |
 | **Bash 허용** | — | — | 전체 | `npm run *`, `npm test`, `git status/diff`, `curl localhost:*` 뿐 |
-| **wiki group_id** | `persona:planner` | `persona:designer` | `persona:developer` | `persona:qa` |
+| **wiki group_id** | `persona-planner` | `persona-designer` | `persona-developer` | `persona-qa` |
 | **memory** | `user` (글로벌 MEMORY.md 자동 주입) | `user` | `user` | `user` |
 
 ### 공통 규칙 (모든 persona)

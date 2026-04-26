@@ -164,7 +164,7 @@ Teach the designer persona a principle, then query it:
 ```sh
 cd /tmp/co-test
 claude --agent designer -p "From now on, save this principle to your wiki: 'For consumer-facing apps, prefer pastel color palettes over monotone.'" --output-format json | jq '.result' -r
-# Expect: designer calls mcp__graphiti__add_memory with group_id=persona:designer
+# Expect: designer calls mcp__graphiti__add_memory with group_id=persona-designer
 
 # Verify it's retrievable:
 claude --agent designer -p "Search your wiki for color palette preferences. What do you know?" --output-format json | jq '.result' -r
@@ -191,7 +191,7 @@ Confirm developer doesn't see designer's palette knowledge (different group_id):
 
 ```sh
 claude --agent developer -p "Search your wiki for color palette preferences. What do you know?" --output-format json | jq '.result' -r
-# Expect: nothing relevant (developer's group is persona:developer, not :designer)
+# Expect: nothing relevant (developer's group is persona-developer, not -designer)
 ```
 
 **Pass criteria:** developer returns empty or "no relevant facts".

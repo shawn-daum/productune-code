@@ -164,14 +164,45 @@ echo "$RESULT"
 
 ## Persona evolution (proactive suggestions)
 
-When `po-state.json` or user feedback suggests a persona is struggling, **surface it as a suggestion** — never silently mutate the persona.
+When `po-state.json`, persona output, or user feedback suggests a persona needs adjustment, **surface it as a suggestion** — never silently mutate the persona.
 
 Signals to watch:
-- persona returns `fail`/`refused`/`blocked` ≥3× in last 5 turns on this project
+- persona returns `blocked: true` (a tool/bash pattern they need isn't in their allowlist) — **act on this immediately** (see Stage A below)
+- persona returns `fail`/`refused` ≥3× in last 5 turns on this project
 - user gives the same correction to the same persona ≥2× ("다시 해", "이게 아냐")
 - user explicitly names a persona as the problem
 
-When you see a signal, on the next user turn, before executing: raise it as a one-line suggestion and offer a concrete change. Your menu of suggestions (from cheapest to biggest):
+### Stage A — `blocked` signal (mid-turn, immediate)
+
+When a persona returns `blocked: true` with `suggest_allowlist_addition`:
+
+1. **Pause the pipeline**. Don't move to the next persona.
+2. **One-line propose** to user, in their language:
+   `developer 가 'bun install' 시도했는데 allowlist 밖. agents/developer.md 의 tools 에 'Bash(bun *)' 추가하고 이어갈까? (y/n)`
+3. **On y**: mechanical edit `~/Documents/dev/orchestration/agents/<persona>.md` — append the suggested pattern to the `tools:` line. This is a small, reviewable edit; you can do it directly with `sed`/`python` (no Claude call needed). The symlink at `~/.claude/agents/<persona>.md` makes the change live for the next call.
+4. **Resume**: re-invoke the same persona with the same `--session-id` (so it continues from the partial state in `partial_changes` / `partial_checks`). Pass it: "allowlist updated, try again from where you stopped."
+5. **On n**: skip the blocked step, surface to user as a manual follow-up in your final summary, mark the relevant work `blocked` in po-state.
+
+Implementation hint for step 3 (mechanical tools-line edit, no Claude call):
+
+```bash
+PERSONA_FILE=~/Documents/dev/orchestration/agents/<persona>.md
+NEW_PATTERN='Bash(bun *)'
+# Insert before the closing `, mcp__graphiti__add_memory` segment (or just before end of tools line)
+python3 - "$PERSONA_FILE" "$NEW_PATTERN" <<'PY'
+import re, sys, pathlib
+p, pat = sys.argv[1], sys.argv[2]
+text = pathlib.Path(p).read_text()
+text = re.sub(r'^(tools: .*?)(, mcp__graphiti)', rf'\1, {pat}\2', text, count=1, flags=re.M)
+pathlib.Path(p).write_text(text)
+PY
+```
+
+Re-running `install.sh` is **not** required after a tools-line edit — symlinks update live.
+
+### Stage B — recurring failures or user friction (between turns)
+
+For the slower-evolving signals (≥3 fails in last 5, repeated user corrections), on the *next* user turn before executing, raise it as a suggestion. Menu of changes from cheapest to biggest:
 
 1. **One-off model override** (free, reversible): "다음 qa 만 sonnet 으로 돌려볼까요? `claude --agent qa --model sonnet`"
 2. **Permanent model upgrade**: "agents/qa.md 의 `model: haiku` → `model: sonnet` 로 영구 교체 제안"
@@ -179,7 +210,7 @@ When you see a signal, on the next user turn, before executing: raise it as a on
 4. **Tighten or loosen permissions**: `tools:` / `permissionMode:` 조정
 5. **Spawn a new persona**: 완전히 새로운 역할이 필요하면 `.claude/agents/<new>.md` 신규 작성 제안
 
-Do not execute 2–5 without user confirmation — these are committed changes in `~/Documents/dev/orchestration/agents/` and should be user-approved, even if trivial.
+For Stage B options 2–5: never execute without user confirmation — these are committed changes in `~/Documents/dev/orchestration/agents/` (or `~/Documents/dev/orchestration/codex/`).
 
 See `docs/customization.md` for the exact edits per option.
 

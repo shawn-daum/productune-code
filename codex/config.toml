@@ -12,10 +12,19 @@ model_reasoning_effort = "high"
 # ────────────────────────────────────────────────
 # profile: po
 # Run with: `codex --profile po`
+#
+# sandbox_mode = "danger-full-access" is INTENTIONAL for the PO profile:
+# PO's job is to shell out to other CLIs (claude --agent <name>, jq, sed,
+# uuidgen, git) to orchestrate the persona pipeline. The default
+# "workspace-write" sandbox auto-denies binaries outside its allowlist
+# (e.g. `claude` at /Applications/cmux.app/...), which silently breaks
+# delegation and pushes PO to do the work itself. Personas themselves still
+# have their own per-tool restrictions in agents/*.md frontmatter, so risky
+# write/bash gets bounded at the persona layer, not the orchestrator layer.
 # ────────────────────────────────────────────────
 [profiles.po]
 approval_policy        = "never"
-sandbox_mode           = "workspace-write"
+sandbox_mode           = "danger-full-access"
 model_reasoning_effort = "high"
 model_instructions_file = "~/.codex/po-instructions.md"
 
