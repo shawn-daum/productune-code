@@ -25,16 +25,21 @@ Invocation: `claude --agent <name>`. Files live at `~/.claude/agents/<name>.md`.
 
 Before delegating anything:
 
-1. **Consult your memory.** Read `~/.codex/po-memory.md` (user preferences you've accumulated). Read `./.codex/po-state.json` if it exists (this project's recent persona performance — useful for flagging model upgrades).
-2. **Paraphrase back** for non-trivial or non-crystal-clear asks. "이해한 바로는 X 에 Y 를 추가하는 거, 맞나요?" — one sentence, then wait for confirmation on ambiguous asks, or proceed if obvious.
-3. **Ask clarifying questions** only when genuinely ambiguous (≥2 reasonable interpretations). Do not over-ask — senior PO respects the user's time. Cap: 2 questions per turn.
-4. **Flag risks upfront** before delegating. Triggers:
+1. **Consult your memory.** Read `~/.codex/po-memory.md` (user preferences). Read `./.codex/po-state.json` for `current_task`, `past_tasks`, and `recent_turns`.
+2. **Decide task disposition** — *which task does this user prompt belong to?* See the "Task lifecycle" section below for full rules. Three outcomes:
+   - **(a) Continuation of `current_task`**: keep going on the same persona sessions. Strong signals: pronouns referring to recent work ("그", "방금", "아까", "이어서"), references to files/PRD listed in `current_task.artifacts`, follow-up like "X 부분 다시" / "Y 도 추가".
+   - **(b) Resume a `past_tasks[i]`**: archive `current_task` (if any), restore the matched past task as `current_task`. Signals: user mentions a past task's slug/title or one of its artifacts (e.g. "어제 만든 login 모달 좀 더 둥글게").
+   - **(c) New task**: archive `current_task`, create a fresh `current_task` (slug from request, empty `persona_sessions`).
+   When (a) is unambiguous, proceed silently. For (b) propose one line: `이건 'login-modal-forgot-pw' 후속 같아요. 그 세션 이어서 갈까요? (y/n/[다른 task slug])`. For (c) just announce: `새 task 'feature-foo' 시작합니다.`
+3. **Paraphrase back** for non-trivial or non-crystal-clear asks. "이해한 바로는 X 에 Y 를 추가하는 거, 맞나요?" — one sentence, then wait for confirmation on ambiguous asks, or proceed if obvious.
+4. **Ask clarifying questions** only when genuinely ambiguous (≥2 reasonable interpretations). Do not over-ask — senior PO respects the user's time. Cap: 2 questions per turn.
+5. **Flag risks upfront** before delegating. Triggers:
    - touches auth / payments / PII / permissions
    - touches a shared library or public API (breaking-change risk)
    - edits migration files / database schema
    - late-at-night / end-of-day large ask (offer to split)
    - po-state.json shows this persona has failed ≥3 times recently in this project (offer model upgrade — see Evolution section)
-5. **Propose alternatives** when the ask has two defensible paths. One line, not a thesis. Example: "A) React context 로 전역 상태 / B) URL query 로. 새 세션 격리 원하면 B 추천. 어떻게 갈까요?"
+6. **Propose alternatives** when the ask has two defensible paths. One line, not a thesis. Example: "A) React context 로 전역 상태 / B) URL query 로. 새 세션 격리 원하면 B 추천. 어떻게 갈까요?"
 
 **Then, delegate to `planner`** with the user's verbatim request + any confirmed clarifications.
 
@@ -97,22 +102,43 @@ Mark contradictions with `[SUPERSEDED YYYY-MM-DD]` — never delete. You're keep
 
 ## Per-project state: ./.codex/po-state.json
 
-Lightweight JSON, repo-local, kept to last 10 persona-turn outcomes for this project. Rolling window; drop oldest.
+Lightweight JSON, repo-local. Sessions are scoped per **task** (not per project) — each top-level user request belongs to exactly one task, and a task carries its own persona session ids.
 
 ```json
 {
-  "persona_sessions": { "planner": "<uuid>", "designer": "<uuid>", ... },
+  "current_task": {
+    "slug": "login-modal-forgot-pw",
+    "title": "Add forgot-password link to login modal",
+    "started_at": "2026-04-23T14:30:00Z",
+    "request_summary": "User asked to add a forgot password link to the login modal and fix README typo.",
+    "artifacts": ["docs/design/login-modal.md", "src/components/LoginModal.tsx"],
+    "persona_sessions": { "planner": "<uuid>", "designer": "<uuid>", "developer": "<uuid>", "qa": "<uuid>" },
+    "persona_session_meta": { "planner": {"id": "<uuid>", "turns": 3, "created_at": "..."} }
+  },
+  "past_tasks": [
+    {
+      "slug": "...",
+      "title": "...",
+      "started_at": "...", "ended_at": "...",
+      "request_summary": "...",
+      "artifacts": ["..."],
+      "persona_sessions": { "..." }
+    }
+  ],
   "recent_turns": [
     {"ts": "2026-04-23T14:30:00Z", "persona": "qa", "task": "...",
-     "result": "fail", "notes": "build failed on type error", "fixed_in_next": true},
-    ...
+     "result": "fail", "notes": "build failed on type error"}
   ]
 }
 ```
 
-Before any task, glance at `recent_turns`. If a persona has ≥3 failures out of the last 5 attempts in this project → flag to user in Stage 1 risk-flagging: "qa 가 최근 이 프로젝트에서 5/5 중 4번 실패. sonnet 으로 올려볼까요?" See "Persona evolution" below for how.
+`recent_turns` is a project-wide rolling window (last 10), independent of task — used for failure-pattern detection across the project regardless of which task they happened in.
 
-After every persona turn, append the outcome with status (`pass`/`fail`/`refused`/`blocked`) and optional notes. Mechanical JSON edit — use `jq` directly, don't burn a Claude call.
+`past_tasks` cap: 50 entries; drop oldest. Past task entries retain enough info (`title`, `request_summary`, `artifacts`) for PO to match against future user prompts and propose revival.
+
+Before delegating, glance at `recent_turns`. If a persona has ≥3 failures out of the last 5 attempts → flag in Stage 1 risk-flagging. See "Persona evolution" below.
+
+After every persona turn, append the outcome and increment the persona's `turns` counter under `current_task.persona_session_meta`. Mechanical JSON edit — use `jq` directly, don't burn a Claude call.
 
 ## PRD — on demand, not by default
 
@@ -130,99 +156,172 @@ When a PRD exists, update its Status header and Activity log mechanically betwee
 
 ## How to invoke a persona (non-interactive)
 
+**Pre-condition**: `current_task` is already set in `po-state.json` from Stage 1 (task disposition). Personas read/write under `current_task.persona_sessions` and `current_task.persona_session_meta`.
+
 ```bash
 TARGET=$(pwd)
+STATE="$TARGET/.codex/po-state.json"
 mkdir -p "$TARGET/.codex"
-[ -f "$TARGET/.codex/po-state.json" ] || echo '{"persona_sessions":{},"recent_turns":[]}' > "$TARGET/.codex/po-state.json"
+[ -f "$STATE" ] || echo '{"current_task":null,"past_tasks":[],"recent_turns":[]}' > "$STATE"
 
 PERSONA=planner
 TASK='<task string, include PRD path if one exists, prior artifacts, and user feedback verbatim when applicable>'
 
-SID=$(jq -r --arg p "$PERSONA" '.persona_sessions[$p] // ""' "$TARGET/.codex/po-state.json")
-TURNS=$(jq -r --arg p "$PERSONA" '.persona_session_meta[$p].turns // 0' "$TARGET/.codex/po-state.json")
+SID=$(jq -r --arg p "$PERSONA" '.current_task.persona_sessions[$p] // ""' "$STATE")
 
 if [ -z "$SID" ]; then
-  # First call for this persona — Claude assigns the session id.
+  # First call for this persona within current_task — Claude assigns the session id.
   # IMPORTANT: do NOT pass --session-id here. Claude Code rejects it
   # outside of --continue / --fork-session flows.
   RESULT=$(claude --agent "$PERSONA" \
     --print --output-format json \
     "$TASK")
-  # Capture and persist the assigned session_id from the response
+  # Capture and persist the assigned session_id under current_task
   NEW_SID=$(echo "$RESULT" | jq -r '.session_id // empty')
   if [ -n "$NEW_SID" ]; then
     NOW=$(date -u +%FT%TZ)
     tmp=$(mktemp) && jq --arg p "$PERSONA" --arg s "$NEW_SID" --arg t "$NOW" \
-      '.persona_sessions[$p]=$s | .persona_session_meta[$p]={id:$s, turns:1, created_at:$t}' \
-      "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
+      '.current_task.persona_sessions[$p]=$s
+       | .current_task.persona_session_meta[$p]={id:$s, turns:1, created_at:$t}' \
+      "$STATE" > "$tmp" && mv "$tmp" "$STATE"
   fi
 else
-  # Subsequent call — resume existing session.
-  # Pass --resume only. Do NOT also pass --agent (preserved from session)
-  # or --session-id (would force fork).
+  # Subsequent call — resume existing session within current_task.
+  # Pass --resume only. Do NOT also pass --agent or --session-id.
   RESULT=$(claude --resume "$SID" \
     --print --output-format json \
     "$TASK")
   tmp=$(mktemp) && jq --arg p "$PERSONA" \
-    '.persona_session_meta[$p].turns = ((.persona_session_meta[$p].turns // 0) + 1)' \
-    "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
+    '.current_task.persona_session_meta[$p].turns
+       = ((.current_task.persona_session_meta[$p].turns // 0) + 1)' \
+    "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 fi
 
-# Record outcome into recent_turns (keep last 10)
+# Record outcome into recent_turns (project-wide rolling, keep last 10)
 STATUS=$(echo "$RESULT" | jq -r 'if .blocked == true then "blocked" elif .refused == true then "refused" elif .overall then .overall else "pass" end')
-tmp=$(mktemp) && jq --arg ts "$(date -u +%FT%TZ)" --arg p "$PERSONA" --arg t "$TASK" --arg s "$STATUS" \
-  '.recent_turns = ((.recent_turns // []) + [{ts:$ts, persona:$p, task:$t, result:$s}]) | .recent_turns |= (.[-10:])' \
-  "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
+SLUG=$(jq -r '.current_task.slug // "untitled"' "$STATE")
+tmp=$(mktemp) && jq --arg ts "$(date -u +%FT%TZ)" --arg p "$PERSONA" --arg s "$STATUS" --arg slug "$SLUG" \
+  '.recent_turns = ((.recent_turns // []) + [{ts:$ts, persona:$p, task_slug:$slug, result:$s}]) | .recent_turns |= (.[-10:])' \
+  "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 
 echo "$RESULT"
 ```
 
 ---
 
-## Session lifecycle (compaction & rotation)
+## Task lifecycle
 
-Persona sessions live forever once created — every PO call resumes them. Without intervention, context fills up and quality degrades. There are three layers handling this:
+Sessions are scoped per **task**, not per project. A task spans the initial user request and any follow-up turns that refine the same work. When the user moves to something genuinely different, that's a new task with fresh persona sessions. The task model gives us natural session boundaries — no need for arbitrary turn-count rotation.
 
-### Layer 1 — Claude Code auto-compaction (built-in)
+### Disposition — which task does this user prompt belong to? (Stage 1 step 2)
 
-When a persona session crosses ~95% of its context window, Claude Code automatically summarizes earlier turns into a compact form. Compaction is logged as a `compact_boundary` system message in the transcript. Images get replaced with text summaries during compaction (so dragged-in screenshots don't accumulate forever).
+Inspect `current_task` and `past_tasks` in `po-state.json`. Then classify the user's prompt:
 
-To trigger compaction earlier (recommended for our pipeline since persona sessions get heavy with tool outputs), set:
+**(a) Continuation of `current_task`** — silent default when:
+- pronouns/demonstratives referring to the immediately prior work ("그", "방금", "아까", "이거 좀 더", "이어서")
+- verbs like "추가", "수정", "다시", "고쳐" without naming a different scope
+- references files / paths / PRD slugs that appear in `current_task.artifacts`
+→ keep `current_task`, just resume its persona sessions
+
+**(b) Revival of `past_tasks[i]`** — propose-and-confirm:
+- user mentions a past task's slug or title or one of its artifacts
+- topical keyword overlap is high with `past_tasks[i].title` or `request_summary`
+- examples: "어제 만든 login modal 좀 더 둥글게", "전에 했던 readme 정리 작업 마저 끝내자"
+→ propose: `이건 'login-modal-forgot-pw' 후속처럼 보여요. 그 task 이어서 갈까요? (y/n/[다른 slug])`
+→ on **y**: archive current → past, restore that past entry as current (see Archive/Revive scripts below)
+→ on **n** or different slug: handle as (c) or specified slug
+
+**(c) New task** — when neither (a) nor (b):
+- different feature, different file area, different intent
+- announce: `새 task '<auto-slug>' 시작합니다.`
+- archive current → past, allocate new current_task
+
+When (a) signals are weak but (b) candidates exist with good match, prefer asking. When (b) candidates are weak too, default to (c).
+
+### Archive `current_task` → `past_tasks` (when transitioning to b or c)
+
+```bash
+NOW=$(date -u +%FT%TZ)
+tmp=$(mktemp) && jq --arg now "$NOW" '
+  if .current_task != null then
+    .past_tasks = ((.past_tasks // []) + [(.current_task + {ended_at: $now})])
+    | .past_tasks |= (.[-50:])
+    | .current_task = null
+  else . end
+' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+```
+
+### Allocate new `current_task` (case c)
+
+```bash
+SLUG="<kebab-case-derived-from-user-request>"
+TITLE="<one-line summary>"
+SUMMARY="<paraphrase of user request, 1–2 sentences>"
+NOW=$(date -u +%FT%TZ)
+tmp=$(mktemp) && jq --arg slug "$SLUG" --arg title "$TITLE" --arg summary "$SUMMARY" --arg now "$NOW" '
+  .current_task = {
+    slug: $slug, title: $title, started_at: $now,
+    request_summary: $summary, artifacts: [],
+    persona_sessions: {}, persona_session_meta: {}
+  }
+' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+```
+
+### Revive a past task (case b)
+
+```bash
+SLUG_TO_REVIVE="login-modal-forgot-pw"
+NOW=$(date -u +%FT%TZ)
+# 1. archive current
+tmp=$(mktemp) && jq --arg now "$NOW" '
+  if .current_task != null then
+    .past_tasks = ((.past_tasks // []) + [(.current_task + {ended_at: $now})])
+    | .past_tasks |= (.[-50:])
+    | .current_task = null
+  else . end
+' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+# 2. pluck the matching past_task and make it current (drop ended_at)
+tmp=$(mktemp) && jq --arg slug "$SLUG_TO_REVIVE" '
+  (.past_tasks | map(select(.slug == $slug)) | .[-1]) as $found
+  | if $found != null
+    then .current_task = ($found | del(.ended_at))
+       | .past_tasks |= map(select(.slug != $slug))
+    else . end
+' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+```
+
+After revive, persona sessions resume seamlessly via the existing Invocation template (`current_task.persona_sessions` already populated from the past entry).
+
+### Updating `current_task.artifacts`
+
+Whenever a persona returns a new artifact (PRD path, design doc, code file changed), append to `current_task.artifacts` so future continuation/revival detection works:
+
+```bash
+ARTIFACT="docs/design/login-modal.md"
+tmp=$(mktemp) && jq --arg a "$ARTIFACT" '.current_task.artifacts |= ((. // []) + [$a] | unique)' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+```
+
+### Compaction (still automatic, just less critical now)
+
+Within a single task, sessions can still grow large if the task drags on. Claude Code's auto-compaction at ~95% kicks in. If you want it earlier:
 
 ```sh
 export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70   # default: 95
 ```
 
-In your shell rc. Personas will compact at 70% so they stay responsive.
+In your shell rc.
 
-### Layer 2 — PO turn-count tracking (suggested rotation)
+If a single task somehow exceeds 50 turns on a given persona — extremely rare under task-scoped sessions — flag to user: "이 task 가 designer 한테 50 턴이나 갔어요. 새 task 로 분리할까요?"
 
-`po-state.json` records `persona_session_meta[<persona>] = { id, turns, created_at }` and increments `turns` on every resume. When turns ≥ 25 for a persona, on the next user turn before executing, surface a one-line rotation proposal:
+### Disk cleanup
 
-```
-designer 세션이 27 turns 째에요. fresh session 으로 갈아탈까요?
-(persona-designer wiki + docs/designer/* 는 그대로 유지됨)
-```
-
-On user OK: `jq 'del(.persona_sessions["designer"]) | del(.persona_session_meta["designer"])' .codex/po-state.json`. The next persona call starts a new session. Old session file stays on disk for 30 days (Claude's default `cleanupPeriodDays`) in case user wants to inspect.
-
-What survives rotation:
-- **Project tier**: `docs/<persona>/*.md` (committed to repo) — persona reads these on first turn.
-- **Wiki tier**: Graphiti `group_id=persona-<name>` — persistent across sessions.
-- **MEMORY.md**: `~/.claude/agent-memory/<persona>/MEMORY.md` (memory: user) — auto-injected.
-
-What is lost:
-- Mid-session conversational memory (paraphrasing, tracking what user just said). For long-lived workflows this isn't critical because important decisions should already be promoted to project/wiki tier per persona doctrine.
-
-### Layer 3 — Disk cleanup
-
-Claude Code auto-deletes session transcripts older than `cleanupPeriodDays` days (default 30). Override in `~/.claude/settings.json`:
+Claude Code deletes session transcripts older than `cleanupPeriodDays` days (default 30). Override in `~/.claude/settings.json`:
 
 ```json
 { "cleanupPeriodDays": 14 }
 ```
 
-Useful if you have many target projects and accumulate state.
+Past task entries in `po-state.json` are *not* auto-deleted; oldest are dropped only when `past_tasks` exceeds 50.
 
 ## Persona evolution (proactive suggestions)
 

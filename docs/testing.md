@@ -240,6 +240,20 @@ codex --profile po 'README.md 에 한 줄 더 추가해줘.'
 
 **"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — you (or PO) tried `claude --session-id <uuid>` to *create* a new session with that id. That's not supported — Claude Code only allows `--session-id` inside fork-session flows. Correct pattern: omit `--session-id` on the first call (Claude assigns one, returned in response JSON's `.session_id`), and use `--resume <id>` on subsequent calls. Don't combine `--resume` with `--session-id`. The PO doctrine in `~/.codex/po-instructions.md` already implements this — if you hit the error from PO, run `bash scripts/install.sh` to redeploy the latest doctrine.
 
+**Legacy `po-state.json` schema (flat `persona_sessions`)** — if you set up before the task-lifecycle change, your `<project>/.codex/po-state.json` may have:
+
+```json
+{ "persona_sessions": {"planner": "uuid", ...}, "recent_turns": [...] }
+```
+
+The new doctrine reads under `current_task.persona_sessions`, not the top level. The simplest migration is to clear it and let PO recreate on next run:
+
+```sh
+rm /path/to/project/.codex/po-state.json
+```
+
+Persona-tier knowledge (project markdown + Graphiti wiki + MEMORY.md) is unaffected — only the in-flight session ids are reset, which means the next persona call starts fresh sessions. That's usually fine since the task you were on is most likely complete by the time you upgrade.
+
 **"claude --agent exits with missing `uuidgen`"** — macOS always has it; on Linux use `python3 -c 'import uuid; print(uuid.uuid4())'` instead in the PO delegation template.
 
 **General**: `claude --debug --agent <name> -p "..."` shows MCP connection attempts and tool discovery.
