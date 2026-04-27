@@ -240,16 +240,28 @@ When (a) signals are weak but (b) candidates exist with good match, prefer askin
 
 ### Archive `current_task` → `past_tasks` (when transitioning to b or c)
 
+Before pushing the current task into the past array, write a brief **outcome** so the timeline view later has something to render. The outcome is your synthesized 1–2 sentence verdict, *not* a reused JSON dump from a persona — it captures what shipped, what's still open, and the final status.
+
 ```bash
 NOW=$(date -u +%FT%TZ)
-tmp=$(mktemp) && jq --arg now "$NOW" '
+FINAL_STATUS="done"   # or "blocked" / "abandoned"
+OUTCOME_SUMMARY="Shipped 2 files (LoginModal.tsx + readme typo). QA pass. Designer flagged copy of forgot-pw link as 'TBD' — open follow-up."
+tmp=$(mktemp) && jq \
+  --arg now "$NOW" --arg status "$FINAL_STATUS" --arg outcome "$OUTCOME_SUMMARY" '
   if .current_task != null then
-    .past_tasks = ((.past_tasks // []) + [(.current_task + {ended_at: $now})])
+    .past_tasks = ((.past_tasks // []) + [(.current_task + {ended_at: $now, final_status: $status, outcome_summary: $outcome})])
     | .past_tasks |= (.[-50:])
     | .current_task = null
   else . end
 ' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
+
+Default `final_status` values:
+- `done` — task delivered, QA passed (or QA wasn't applicable)
+- `blocked` — stopped due to QA failure that hit the loop cap, or external dependency
+- `abandoned` — user moved on without explicit completion (when (b)/(c) auto-archives a stale current_task)
+
+If user asks "이거 그냥 접자" / "취소" / abandons silently, write `final_status="abandoned"` and an outcome describing what was reached.
 
 ### Allocate new `current_task` (case c)
 
@@ -322,6 +334,34 @@ Claude Code deletes session transcripts older than `cleanupPeriodDays` days (def
 ```
 
 Past task entries in `po-state.json` are *not* auto-deleted; oldest are dropped only when `past_tasks` exceeds 50.
+
+## Timeline / project history (when user asks)
+
+When the user asks for the project's history, timeline, log, or "지금까지 뭐 했어" — *do not invoke any persona*. The data is already in `po-state.json`. Read `current_task` + `past_tasks`, sort by `started_at`, and render chronologically:
+
+```
+## 프로젝트 타임라인 (<repo-name>)
+
+<started_at> – <ended_at>  <slug>  [<final_status>]
+  요청  : <request_summary, 1 line>
+  플로우: <personas that ran, in order, with pass/fail>
+  산출물: <artifacts>
+  결과  : <outcome_summary, 1 line>
+
+... (repeat per task, oldest → newest) ...
+
+진행중: <current_task.slug>  [in-progress]
+  요청  : ...
+  플로우 (지금까지): planner ✓, designer ✓, developer (turn 2) ⏳
+  현재 산출물: ...
+```
+
+If user asks for a *specific* task's detail beyond the timeline summary, you can:
+- read the PRD if one exists at `docs/prd/<slug>.md`
+- read persona project notes at `docs/<persona>/*.md` filtered by date/keywords
+- as a last resort, `claude --resume <session-id>` against that task's persona session and ask for a summary (this re-loads context — use sparingly, never for routine timeline rendering)
+
+For "what changed in task X" specifically: use `git log --since=<task.started_at> --until=<task.ended_at>` over the artifact paths — much cheaper than re-resuming a session.
 
 ## Persona evolution (proactive suggestions)
 
