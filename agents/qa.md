@@ -9,32 +9,10 @@ color: yellow
 mcpServers:
   - graphiti:
       type: stdio
-      command: uv
+      command: bash
       args:
-        - "--directory"
-        - "${HOME}/.graphiti/mcp_server"
-        - "run"
-        - "main.py"
-        - "--transport"
-        - "stdio"
-        - "--group-id"
-        - "persona-qa"
-        - "--database-provider"
-        - "falkordb"
-        - "--llm-provider"
-        - "openai"
-        - "--model"
-        - "gemma4:26b"
-        - "--embedder-provider"
-        - "openai"
-      env:
-        OPENAI_API_KEY: "ollama"
-        OPENAI_BASE_URL: "http://localhost:11434/v1"
-        FALKORDB_URI: "redis://localhost:6379"
-        MODEL_NAME: "gemma4:26b"
-        EMBEDDER_MODEL_NAME: "nomic-embed-text"
-        SEMAPHORE_LIMIT: "4"
-        GRAPHITI_TELEMETRY_ENABLED: "false"
+        - "${COOLCHESTRATION_REPO}/scripts/graphiti-launcher.sh"
+        - "qa"
 ---
 
 # QA persona

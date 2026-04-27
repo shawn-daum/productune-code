@@ -168,9 +168,13 @@ esac
 
 # 0) Resolve engine. Priority: --engine flag > $MY_PO_ENGINE in shell env >
 #    saved preference at ~/.codex/coolchestration.env (written by install.sh) > 'codex'.
-if [ -z "${MY_PO_ENGINE:-}" ] && [ -r "$HOME/.codex/coolchestration.env" ]; then
+if [ -r "$HOME/.codex/coolchestration.env" ]; then
+  # Auto-export every assignment so spawned codex/claude (and the graphiti
+  # launcher invoked by personas) see COOLCHESTRATION_REPO, GRAPHITI_*, etc.
+  set -a
   # shellcheck source=/dev/null
   . "$HOME/.codex/coolchestration.env"
+  set +a
 fi
 ENGINE="${MY_PO_ENGINE:-codex}"
 ARGS=()

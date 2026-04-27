@@ -112,6 +112,60 @@ elif [ -e "$PO_ENV_FILE" ]; then
   say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}, repo path refreshed to $ROOT)"
 fi
 
+# 6) Interactive: pick Graphiti backend provider (only if not yet set)
+if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" 2>/dev/null; then
+  echo
+  printf '\033[1;36m[install]\033[0m Pick Graphiti (long-term wiki memory) backend provider:\n'
+  cat <<'PROMPT'
+  [1] OpenAI    — gpt-4o-mini + text-embedding-3-small.
+                  Highest quality entity extraction. Needs OPENAI_API_KEY env.
+                  Cost: ~$0.01 / coding session typical.
+  [2] Anthropic — Claude Haiku for LLM + OpenAI embed.
+                  Needs ANTHROPIC_API_KEY env (+ OPENAI_API_KEY for embed).
+  [3] Local     — Ollama gemma4:26b + nomic-embed-text. Free, slower, no network.
+                  Needs `ollama pull gemma4:26b` and `ollama pull nomic-embed-text`.
+  [Enter]       — [1] OpenAI default. Change later by editing the env file.
+
+PROMPT
+  printf '  Choice [1/2/3/Enter]: '
+  read -r GCHOICE || GCHOICE=""
+  case "$GCHOICE" in
+    2|anthropic|a)
+      cat >> "$PO_ENV_FILE" <<EOF
+GRAPHITI_LLM_PROVIDER=anthropic
+GRAPHITI_LLM_MODEL=claude-haiku-4-5-20251001
+GRAPHITI_EMBEDDER_PROVIDER=openai
+GRAPHITI_EMBEDDER_MODEL=text-embedding-3-small
+EOF
+      say "Graphiti backend: anthropic LLM + openai embed (saved to $PO_ENV_FILE)"
+      say "  → ensure ANTHROPIC_API_KEY and OPENAI_API_KEY are set in your shell rc"
+      ;;
+    3|local|ollama|l)
+      cat >> "$PO_ENV_FILE" <<EOF
+GRAPHITI_LLM_PROVIDER=ollama
+GRAPHITI_LLM_MODEL=gemma4:26b
+GRAPHITI_EMBEDDER_PROVIDER=ollama
+GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
+EOF
+      say "Graphiti backend: ollama (local). Pull models if missing:"
+      say "  ollama pull gemma4:26b && ollama pull nomic-embed-text"
+      ;;
+    *)
+      cat >> "$PO_ENV_FILE" <<EOF
+GRAPHITI_LLM_PROVIDER=openai
+GRAPHITI_LLM_MODEL=gpt-4o-mini
+GRAPHITI_EMBEDDER_PROVIDER=openai
+GRAPHITI_EMBEDDER_MODEL=text-embedding-3-small
+EOF
+      say "Graphiti backend: openai (saved to $PO_ENV_FILE)"
+      say "  → ensure OPENAI_API_KEY is set in your shell rc"
+      ;;
+  esac
+elif grep -qE '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" 2>/dev/null; then
+  CURRENT_GRAPHITI="$(grep -E '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
+  say "Graphiti provider config already set (current LLM provider: $CURRENT_GRAPHITI)"
+fi
+
 # 6) Summary + next steps
 cat <<EOF
 
