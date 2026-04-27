@@ -139,6 +139,7 @@ PERSONA=planner
 TASK='<task string, include PRD path if one exists, prior artifacts, and user feedback verbatim when applicable>'
 
 SID=$(jq -r --arg p "$PERSONA" '.persona_sessions[$p] // ""' "$TARGET/.codex/po-state.json")
+TURNS=$(jq -r --arg p "$PERSONA" '.persona_session_meta[$p].turns // 0' "$TARGET/.codex/po-state.json")
 
 if [ -z "$SID" ]; then
   # First call for this persona — Claude assigns the session id.
@@ -150,7 +151,10 @@ if [ -z "$SID" ]; then
   # Capture and persist the assigned session_id from the response
   NEW_SID=$(echo "$RESULT" | jq -r '.session_id // empty')
   if [ -n "$NEW_SID" ]; then
-    tmp=$(mktemp) && jq --arg p "$PERSONA" --arg s "$NEW_SID" '.persona_sessions[$p]=$s' "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
+    NOW=$(date -u +%FT%TZ)
+    tmp=$(mktemp) && jq --arg p "$PERSONA" --arg s "$NEW_SID" --arg t "$NOW" \
+      '.persona_sessions[$p]=$s | .persona_session_meta[$p]={id:$s, turns:1, created_at:$t}' \
+      "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
   fi
 else
   # Subsequent call — resume existing session.
@@ -159,6 +163,9 @@ else
   RESULT=$(claude --resume "$SID" \
     --print --output-format json \
     "$TASK")
+  tmp=$(mktemp) && jq --arg p "$PERSONA" \
+    '.persona_session_meta[$p].turns = ((.persona_session_meta[$p].turns // 0) + 1)' \
+    "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
 fi
 
 # Record outcome into recent_turns (keep last 10)
@@ -171,6 +178,51 @@ echo "$RESULT"
 ```
 
 ---
+
+## Session lifecycle (compaction & rotation)
+
+Persona sessions live forever once created — every PO call resumes them. Without intervention, context fills up and quality degrades. There are three layers handling this:
+
+### Layer 1 — Claude Code auto-compaction (built-in)
+
+When a persona session crosses ~95% of its context window, Claude Code automatically summarizes earlier turns into a compact form. Compaction is logged as a `compact_boundary` system message in the transcript. Images get replaced with text summaries during compaction (so dragged-in screenshots don't accumulate forever).
+
+To trigger compaction earlier (recommended for our pipeline since persona sessions get heavy with tool outputs), set:
+
+```sh
+export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70   # default: 95
+```
+
+In your shell rc. Personas will compact at 70% so they stay responsive.
+
+### Layer 2 — PO turn-count tracking (suggested rotation)
+
+`po-state.json` records `persona_session_meta[<persona>] = { id, turns, created_at }` and increments `turns` on every resume. When turns ≥ 25 for a persona, on the next user turn before executing, surface a one-line rotation proposal:
+
+```
+designer 세션이 27 turns 째에요. fresh session 으로 갈아탈까요?
+(persona-designer wiki + docs/designer/* 는 그대로 유지됨)
+```
+
+On user OK: `jq 'del(.persona_sessions["designer"]) | del(.persona_session_meta["designer"])' .codex/po-state.json`. The next persona call starts a new session. Old session file stays on disk for 30 days (Claude's default `cleanupPeriodDays`) in case user wants to inspect.
+
+What survives rotation:
+- **Project tier**: `docs/<persona>/*.md` (committed to repo) — persona reads these on first turn.
+- **Wiki tier**: Graphiti `group_id=persona-<name>` — persistent across sessions.
+- **MEMORY.md**: `~/.claude/agent-memory/<persona>/MEMORY.md` (memory: user) — auto-injected.
+
+What is lost:
+- Mid-session conversational memory (paraphrasing, tracking what user just said). For long-lived workflows this isn't critical because important decisions should already be promoted to project/wiki tier per persona doctrine.
+
+### Layer 3 — Disk cleanup
+
+Claude Code auto-deletes session transcripts older than `cleanupPeriodDays` days (default 30). Override in `~/.claude/settings.json`:
+
+```json
+{ "cleanupPeriodDays": 14 }
+```
+
+Useful if you have many target projects and accumulate state.
 
 ## Persona evolution (proactive suggestions)
 

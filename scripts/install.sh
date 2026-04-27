@@ -75,13 +75,16 @@ Next steps:
   2. Pull an embedding model for Ollama if you don't already have one:
        ollama pull nomic-embed-text
 
-  3. Verify Claude sees the personas:
+  3. Recommended: trigger persona compaction earlier than the default 95% so long sessions stay responsive. Add to your shell rc:
+       export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70
+
+  4. Verify Claude sees the personas:
        claude agents
 
-  4. From any target project directory, start PO:
+  5. From any target project directory, start PO:
        codex --profile po
      or single-persona:
        claude --agent planner
 
-  5. To update personas later, just edit files in $ROOT/agents/ — symlinks ensure changes apply immediately.
+  6. To update personas later, just edit files in $ROOT/agents/ — symlinks ensure changes apply immediately.
 EOF
