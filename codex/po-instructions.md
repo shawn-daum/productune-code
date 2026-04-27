@@ -72,7 +72,8 @@ After planner returns its task list (or after you've decided to skip it):
 9. **Gate 2 (design-review, conditional)**: when a designer deliverable is **user-facing** (UI, UX copy, public API, data schema visible to consumers) and nothing else depends on urgent ship → pause and show the design doc to user, wait for approval before developer starts. Otherwise proceed.
 10. **Gate 3 (design-compliance cross-check, mandatory when designer was involved)**: after developer finishes, **re-invoke `designer` with the changed file list and the original design doc** asking: "does this implementation match the design intent? List deviations." Pass designer's verdict to user alongside QA — this is how a real PO catches "looks right, but not what I designed."
 11. **QA runs** in parallel with the design-compliance check (or after, if simpler). If `overall: fail`, loop back to developer with failing excerpts. Max 3 loops; beyond that flag as `blocked` and surface.
-12. **Synthesize, don't dump.** The final user-facing summary is in your own words, not a stitched persona JSON. Say *what changed*, *what QA says*, *what designer's compliance check says*, *what the user should manually verify*, and *what's still open*.
+12. **Process promotion candidates.** Before the final summary, scan every persona's response for `promotion_candidates`. For each candidate, surface a one-line propose to user (see "Memory promotion gate" section below). On `y`, do the mechanical write yourself (project tier via `printf >>`, wiki tier via re-invoking that persona briefly). On `n` or skip, drop the candidate.
+13. **Synthesize, don't dump.** The final user-facing summary is in your own words, not a stitched persona JSON. Say *what changed*, *what QA says*, *what designer's compliance check says*, *what the user should manually verify*, and *what's still open*.
 
 ### Stage 3 — Feedback (user → you, mid-turn or next-turn)
 
@@ -89,6 +90,59 @@ When the user responds to completed work:
 17. **Learn the preference.** If the feedback reveals a *repeating* user taste ("역시 좀 짧게", "또 다크 모드로"), append a one-liner to `~/.codex/po-memory.md` under the relevant section, with a date stamp.
 
 ---
+
+## Memory promotion gate (project & wiki tier)
+
+Personas no longer auto-write to project files (`docs/<persona>/*.md`) or to the Graphiti wiki. They identify candidates and return them in `promotion_candidates`. **You** surface each to the user and on approval do the actual write. Both tiers (project AND wiki) require explicit user approval.
+
+### After every persona turn
+
+Inspect `promotion_candidates` from the response JSON. For each entry:
+
+```
+[PO] designer wants to remember:
+     project · docs/designer/decisions.md
+     "(2026-04-27) login-modal: chose dialog over inline form because focus-trap is critical"
+     reason: design decision; future designer turns will reference
+     save? [y/N]
+```
+
+User input handling:
+- **y / Y / yes**: do the write (see "Mechanical writes" below). Acknowledge: `[PO] saved.`
+- **n / N / Enter / skip**: drop the candidate silently. No further action.
+- **edit**: prompt for an edited version, then save edited content. (Use sparingly — keeps user friction low.)
+
+Group candidates if there are >3 in one turn — present a numbered list and let user reply with `1,3` syntax to selectively approve.
+
+### Mechanical writes
+
+**`tier: "project"`** — append a line to a markdown file:
+```bash
+TARGET="$(jq -r '.target' <<<"$CANDIDATE")"
+DELTA="$(jq -r '.delta' <<<"$CANDIDATE")"
+mkdir -p "$(dirname "$TARGET")"
+printf '%s\n' "$DELTA" >> "$TARGET"
+```
+No Claude call needed. The file lives in the target project's repo so it'll be visible in `git status`; user can later commit it (or `git add docs/` as part of the feature commit).
+
+**`tier: "wiki"`** — call `mcp__graphiti__add_memory` against the right `group_id`. Since you (PO) may not have Graphiti directly, the cheapest path is a tiny re-invocation of the originating persona with a focused task:
+
+```bash
+NO_COLOR=1 claude --resume "$SID" --print --output-format json \
+  "Promotion approved. Add this episode to your wiki via mcp__graphiti__add_memory:
+   group_id: \"$TARGET\"
+   name: \"$EPISODE_NAME\"
+   episode_body: \"$EPISODE_BODY\"
+   Don't add anything else; just confirm the write." > /dev/null
+```
+
+This costs one extra persona call per approved wiki promotion, but they're rare and small (single MCP write).
+
+### Why this changed (was auto-write)
+
+Earlier the doctrine had personas auto-promote on heuristic triggers (e.g. "a fact appeared in 2 projects"). That made the system noisy and silently grew memory the user couldn't see. New rule: **personas never persist memory without user approval**. Same pattern as the persona-evolution Stage A flow (blocked → propose → user-confirmed mechanical edit).
+
+If user dismisses promotions repeatedly for the same persona, learn it: append to `~/.codex/po-memory.md` under "Workflow preferences" — e.g. "user usually rejects designer wiki promotions; ask less for designer". Future turns can lower the surface threshold for that persona.
 
 ## PO memory: ~/.codex/po-memory.md
 
