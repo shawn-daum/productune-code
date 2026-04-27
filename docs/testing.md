@@ -69,9 +69,17 @@ claude --agent qa -p "Verify the README change. Run git status and git diff, con
 - Developer changes one character in README.md (`temperery` → `temporary`) and nothing else
 - QA reports pass
 
-## Phase 3 — Full PO orchestration (~5 min)
+## Phase 3 — Full PO orchestration + task lifecycle (~10–15 min)
 
-Now the real integration: Codex PO delegating across multiple personas.
+Tests Codex PO delegating across multiple personas, **plus** the task-scoped session model (current_task / past_tasks / revival / timeline rendering).
+
+> **Pre-flight migration**: if you ran an earlier version of this test suite and have a stale `<project>/.codex/po-state.json` with the legacy flat schema (top-level `persona_sessions`), nuke it first:
+>
+> ```sh
+> rm -f /tmp/co-test/.codex/po-state.json
+> ```
+>
+> PO will recreate it with the current `current_task` / `past_tasks` schema on the next run.
 
 ```sh
 cd /tmp/co-test
@@ -86,6 +94,9 @@ This is a temperery test for the orchestration setup.
 - adds 2 numbers
 EOF
 git add . && git commit -q -m "reset" 2>/dev/null || true
+
+# Clear any legacy po-state from prior test cycles (safe — sessions just restart fresh)
+rm -f .codex/po-state.json
 
 # 3.2 — Start PO — pick one of three methods
 
@@ -126,8 +137,11 @@ Whichever method you pick, the initial task to give PO is:
 - `git diff` shows the typo fix + new `sum.js` with the expected content
 - PO emitted progress markers between persona calls
 - Final summary is PO's own synthesized words, not raw JSON
+- PO announced `새 task '<slug>' 시작합니다.` at the start of the run
+- After the run, `cat .codex/po-state.json | jq '.current_task'` shows a populated `current_task` with `slug`, `started_at`, `request_summary`, `persona_sessions.developer` (a real UUID), `persona_session_meta.developer.turns ≥ 1`
+- `recent_turns` has at least one entry with `task_slug` matching `current_task.slug`
 
-### 3.3 — Test feedback routing
+### 3.3 — Continuation (same task, follow-up turn)
 
 If you used **Method A or B**, you're still inside the Codex TUI after the first task completes — just type the follow-up as a new turn. If you used **Method C** (`codex exec`), start a resumed session with `codex resume --last` instead.
 
@@ -136,11 +150,62 @@ Follow-up prompt:
 > 어 그리고 `sum.js` 에 음수 들어가면 에러 던지게 수정해줘.
 
 **Observe:**
-- PO should NOT re-run planner. It recognizes this as developer-scope feedback.
-- `→ delegating to developer...` (only), resumed session
-- `✓ developer complete` with the update to sum.js
+- PO does **not** announce a new task. It detects continuation signals ("그", "그리고", reference to `sum.js` already in `current_task.artifacts`) and proceeds silently.
+- PO should NOT re-run planner.
+- `→ delegating to developer...` (only), resumed session.
+- `✓ developer complete` with the update to sum.js.
 
-**Pass criteria:** only developer is invoked; session is resumed (not a fresh one).
+**Pass criteria:**
+- Only developer is invoked; session is resumed (not a fresh one)
+- `jq '.current_task.slug' .codex/po-state.json` returns the **same slug** as before (no archive, no new task)
+- `jq '.current_task.persona_session_meta.developer.turns' .codex/po-state.json` incremented by 1
+
+### 3.4 — New task (different intent → archive + new current_task)
+
+In the same Codex TUI, ask something genuinely unrelated:
+
+> 이제 README 에 "## License" 섹션 추가해서 MIT 라고 적어줘.
+
+**Observe:**
+- PO announces: `새 task 'add-license-section' (or similar) 시작합니다.` (or proposes a slug — exact wording flexible)
+- The previous task is archived: `jq '.past_tasks[-1]' .codex/po-state.json` should show the prior `current_task` content with `ended_at`, `final_status`, `outcome_summary` populated
+- New `current_task` allocated with empty `persona_sessions` (developer gets a fresh session id, not the prior one)
+
+**Pass criteria:**
+- `jq '.past_tasks | length' .codex/po-state.json` is ≥1
+- `jq '.past_tasks[-1].final_status' .codex/po-state.json` is one of `done` / `blocked` / `abandoned`
+- `jq '.past_tasks[-1].outcome_summary' .codex/po-state.json` is a 1-2 sentence string (not null, not raw JSON)
+- `current_task.slug` differs from the archived entry's slug
+
+### 3.5 — Timeline rendering (no persona invocations)
+
+In the same TUI:
+
+> 지금까지 한 작업 타임라인 정리해줘.
+
+**Observe:**
+- PO does **not** print `→ delegating to ...` for any persona. The whole answer is rendered from `po-state.json` alone.
+- Output groups entries chronologically with `slug`, `started_at — ended_at`, `final_status`, `outcome_summary`, `artifacts`.
+- Includes the in-progress `current_task` with status `in-progress`.
+
+**Pass criteria:** zero `→ delegating` lines in this turn; visible chronological list with at least 2 entries (one `past_tasks[]` + current).
+
+### 3.6 — Past task revival
+
+In the same TUI:
+
+> 어제 만든 sum.js 좀 다시 손대자. 함수 위에 JSDoc 주석 달아줘.
+
+**Observe:**
+- PO scans `past_tasks` for matches against "sum.js" in `artifacts` or the slug.
+- PO proposes (one line): `이건 'add-sum-helper' 후속처럼 보여요. 그 task 이어서 갈까요? (y/n)`. Reply `y`.
+- After confirmation: PO archives the (just-created) `add-license-section` task and restores the `add-sum-helper` past entry as `current_task` — including its prior `persona_sessions.developer` session id.
+- The next persona call resumes that *original* developer session (not a fresh one), so the dev "remembers" the sum.js context.
+
+**Pass criteria:**
+- After revival, `jq '.current_task.slug' .codex/po-state.json` matches the revived slug
+- The revived task's `developer` session id matches what was previously archived (verify against the prior `past_tasks` snapshot if you saved one)
+- The license-section task is now in `past_tasks`
 
 ## Phase 4 — Memory tiers (requires Phase 0)
 
@@ -159,19 +224,21 @@ find docs/ -type f 2>/dev/null
 
 ### 4.2 — Wiki tier (Graphiti)
 
-Teach the designer persona a principle, then query it:
+> Note: earlier doctrine versions used `group_id="persona:<name>"` (with a colon), which Graphiti's API rejected as invalid. Current doctrine uses `persona-<name>` (with a dash). If the second query below comes back with a "Graphiti validation error — colon in group_id" message, that means Claude Code is still loading a cached/older agent definition — re-run `bash scripts/install.sh` and start a fresh session.
+
+Teach the designer persona a principle, then query it. Note: **each `claude --agent` call creates a fresh session** unless you `--resume`, so Graphiti is the only thing carrying knowledge across these two invocations.
 
 ```sh
 cd /tmp/co-test
 claude --agent designer -p "From now on, save this principle to your wiki: 'For consumer-facing apps, prefer pastel color palettes over monotone.'" --output-format json | jq '.result' -r
 # Expect: designer calls mcp__graphiti__add_memory with group_id=persona-designer
 
-# Verify it's retrievable:
+# Verify it's retrievable in a fresh session:
 claude --agent designer -p "Search your wiki for color palette preferences. What do you know?" --output-format json | jq '.result' -r
 # Expect: designer references the fact just saved
 ```
 
-**Pass criteria:** second call retrieves the principle.
+**Pass criteria:** second call retrieves the principle even though it's a different Claude session (because Graphiti persists across sessions for the same group_id).
 
 ### 4.3 — Bi-temporal contradiction
 
