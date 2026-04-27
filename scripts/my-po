@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# my-po — wrapper for `codex --profile po` with auto-worktree split for parallel sessions.
+# my-po — wrapper for the PO orchestrator (Codex or Claude Code) with
+# auto-worktree split when another my-po is already running on the same root.
 #
 # Modes:
-#   my-po                              Default: lock + worktree-split + codex; on exit
-#                                      asks once whether to clean up safe my-po worktrees.
+#   my-po                              Default engine = codex (or $MY_PO_ENGINE)
+#   my-po --engine claude              Spawn `claude --agent po` instead (100% Anthropic)
+#   my-po --engine codex               Spawn `codex --profile po` (default)
 #   my-po gc                           (alias: --cleanup) audit my-po/* worktrees, dry-run
 #   my-po gc -y                        (alias: --auto, --yes) audit, then remove safe ones
+#
+# Engine selection priority: --engine flag > $MY_PO_ENGINE env > 'codex' default.
 #
 # Decision basis for cleanup is purely git state. PO process state (alive,
 # crashed, exited cleanly) is irrelevant — a worktree is "safe to remove"
@@ -162,9 +166,43 @@ esac
 
 # -------------------- default mode --------------------
 
-# 1) Resolve project root. Non-git → bypass everything, just run codex.
+# 0) Resolve engine. Flag overrides env; env overrides default ('codex').
+ENGINE="${MY_PO_ENGINE:-codex}"
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --engine)
+      ENGINE="$2"; shift 2 ;;
+    --engine=*)
+      ENGINE="${1#--engine=}"; shift ;;
+    *)
+      ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+case "$ENGINE" in
+  codex|claude) ;;
+  *) die "unknown --engine '$ENGINE' (expected 'codex' or 'claude')" ;;
+esac
+
+run_engine() {
+  case "$ENGINE" in
+    codex)  exec codex --profile po "$@" ;;
+    claude) exec claude --agent po "$@" ;;
+  esac
+}
+
+run_engine_fg() {
+  # Foreground (not exec) so EXIT trap can fire after engine returns.
+  case "$ENGINE" in
+    codex)  codex --profile po "$@" ;;
+    claude) claude --agent po "$@" ;;
+  esac
+}
+
+# 1) Resolve project root. Non-git → bypass lock + worktree, just run engine.
 if ! ROOT="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
-  exec codex --profile po "$@"
+  run_engine "$@"
 fi
 
 mkdir -p "$ROOT/.codex"
@@ -190,12 +228,12 @@ if [ -f "$LOCK" ]; then
 fi
 
 # 3) Acquire lock.
-printf '{"pid": %s, "started_at": "%s", "cwd": "%s"}\n' \
-  "$$" "$(date -u +%FT%TZ)" "$ROOT" > "$LOCK"
+printf '{"pid": %s, "started_at": "%s", "cwd": "%s", "engine": "%s"}\n' \
+  "$$" "$(date -u +%FT%TZ)" "$ROOT" "$ENGINE" > "$LOCK"
 trap 'rm -f "$LOCK"' EXIT INT TERM
 
-# 4) Run codex (foreground, NOT exec — so trap fires when codex exits).
-codex --profile po "$@"
+# 4) Run the chosen engine (foreground, NOT exec — so trap fires when it exits).
+run_engine_fg "$@"
 
 # 5) Post-exit auto-prompt (only when in main worktree, only if interactive).
 #    Skipped if we're inside an auto-spawned my-po/* worktree (recursive call's

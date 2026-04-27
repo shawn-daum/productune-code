@@ -92,10 +92,12 @@ cd ~/path/to/target-project
 
 # Full PO flow (recommended) — auto-creates a git worktree if another my-po
 # is already running on the same project root
-my-po
+my-po                          # default engine: Codex
+my-po --engine claude          # 100% first-party Anthropic stack (no Codex)
 
-# Equivalent direct call (no worktree split, no parallel-safety)
-codex --profile po
+# Equivalent direct calls (no worktree split, no parallel-safety):
+codex --profile po             # Codex hosts PO
+claude --agent po              # Claude Code hosts PO
 
 # Single persona (for debugging / exploration)
 claude --agent planner
@@ -106,6 +108,21 @@ claude --agent qa
 # Token-soak / offline fallback: swaps Codex to local qwen3.5:4B
 codex --profile local
 ```
+
+### Picking a PO engine
+
+Both `codex --profile po` and `claude --agent po` execute the same doctrine (`~/.codex/po-instructions.md`). They differ only in who hosts the orchestrator:
+
+| | `--engine codex` (default) | `--engine claude` |
+|---|---|---|
+| Top-level reasoning model | OpenAI hosted (Codex CLI) | Anthropic hosted (Claude Code) |
+| Subscription used for PO | ChatGPT Plus / Pro | Claude Pro / Max |
+| Subscription used for personas | Claude Pro / Max (unchanged) | Claude Pro / Max (unchanged) |
+| Cost-split between providers | ✓ | ✗ — all on Anthropic |
+| ToS clarity (no third-party concerns) | OK (each tool used with own auth) | **Cleanest** — 100% first-party |
+| Persistent env var | `MY_PO_ENGINE=codex` | `MY_PO_ENGINE=claude` |
+
+If you don't care about cost-splitting between providers and want absolute simplicity, set `export MY_PO_ENGINE=claude` in your shell rc.
 
 ### Parallel sessions on the same project
 
