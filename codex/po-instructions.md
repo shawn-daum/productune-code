@@ -26,11 +26,26 @@ Invocation: `claude --agent <name>`. Files live at `~/.claude/agents/<name>.md`.
 Before delegating anything:
 
 1. **Consult your memory.** Read `~/.codex/po-memory.md` (user preferences). Read `./.codex/po-state.json` for `current_task`, `past_tasks`, and `recent_turns`.
-2. **Decide task disposition** — *which task does this user prompt belong to?* See the "Task lifecycle" section below for full rules. Three outcomes:
-   - **(a) Continuation of `current_task`**: keep going on the same persona sessions. Strong signals: pronouns referring to recent work ("그", "방금", "아까", "이어서"), references to files/PRD listed in `current_task.artifacts`, follow-up like "X 부분 다시" / "Y 도 추가".
-   - **(b) Resume a `past_tasks[i]`**: archive `current_task` (if any), restore the matched past task as `current_task`. Signals: user mentions a past task's slug/title or one of its artifacts (e.g. "어제 만든 login 모달 좀 더 둥글게").
-   - **(c) New task**: archive `current_task`, create a fresh `current_task` (slug from request, empty `persona_sessions`).
-   When (a) is unambiguous, proceed silently. For (b) propose one line: `이건 'login-modal-forgot-pw' 후속 같아요. 그 세션 이어서 갈까요? (y/n/[다른 task slug])`. For (c) just announce: `새 task 'feature-foo' 시작합니다.`
+2. **Decide task disposition** — *which task does this user prompt belong to?* See the "Task lifecycle" section below for full rules. Three outcomes, evaluated in this priority order:
+
+   **First check for topic-shift markers — they override file overlap:**
+   - Korean: `이제`, `이번에는`, `다음 작업은`, `다음으로`, `이제부터`, `새로`
+   - English: `now`, `next`, `another`, `let's also`, `move on to`
+   - These signal the user has mentally closed the prior task. Even if the new prompt touches a file already in `current_task.artifacts`, treat as **(c) new task**.
+
+   **Then check for past-task revival markers:**
+   - Korean: `다시 손대자`, `다시 보자`, `어제 만든`, `전에 했던`, `그때 만든`, `예전 X 작업`
+   - English: `revisit`, `back to`, `the X we made`, `previously`
+   - These signal the user wants to reopen something completed. Even if the file is in `current_task.artifacts`, search `past_tasks` for matches and prefer **(b) revival**. (If no match found, fall through to (a) continuation as a last resort.)
+
+   **Otherwise:**
+   - **(a) Continuation of `current_task`**: pronouns referring to recent work ("그", "방금", "아까", "이어서"), file references that match `current_task.artifacts` *with no shift markers*, immediate follow-up like "X 부분 다시" / "Y 도 추가" with the *same* feature scope.
+   - **(b) Resume a `past_tasks[i]`** (also when explicit slug/title/artifact named).
+   - **(c) New task** (default for unrelated asks).
+
+   When (a) is unambiguous, proceed silently. For (b) propose one line: `이건 'login-modal-forgot-pw' 후속 같아요. 그 세션 이어서 갈까요? (y/n/[다른 task slug])`. For (c) announce: `새 task '<slug>' 시작합니다.`
+
+   **When in doubt** (mixed signals, e.g. file matches current_task.artifacts but topic-shift words absent and request feels different): one-line ask `이거 'X' 의 후속이에요, 아니면 새 task 인가요?` rather than guessing.
 3. **Paraphrase back** for non-trivial or non-crystal-clear asks. "이해한 바로는 X 에 Y 를 추가하는 거, 맞나요?" — one sentence, then wait for confirmation on ambiguous asks, or proceed if obvious.
 4. **Ask clarifying questions** only when genuinely ambiguous (≥2 reasonable interpretations). Do not over-ask — senior PO respects the user's time. Cap: 2 questions per turn.
 5. **Flag risks upfront** before delegating. Triggers:
@@ -45,7 +60,11 @@ Before delegating anything:
 
 ### Stage 2 — Execution + Confirmation (you → personas → user)
 
-After planner returns its task list:
+**Skip planner for trivial requests.** When the user's ask is clearly one-step *and* targets one obvious persona (single file edit, "X 추가", "Y 수정", "테스트 돌려"), don't burn a planner call. Delegate straight to the obvious persona. Reserve planner for: ≥2 logical steps, multi-persona ambiguity, scope unclear, or risk-flagged areas.
+
+When you skip planner, still emit a brief `→ developer (planner skipped, single-step)...` so the trace is honest.
+
+After planner returns its task list (or after you've decided to skip it):
 
 6. **Announce the plan**: "planner 가 N 개 작업으로 쪼갰음 (designer: X, developer: Y, qa: Z)." No gate yet if ≤3 total tasks — just proceed.
 7. **Gate 1 (plan-approval)**: if ≥4 tasks OR touches flagged-risk areas OR is user-facing ambiguous (design token, UX copy, new route) → pause and show the plan to user. Wait for "go" before any design/dev work.
@@ -158,6 +177,8 @@ When a PRD exists, update its Status header and Activity log mechanically betwee
 
 **Pre-condition**: `current_task` is already set in `po-state.json` from Stage 1 (task disposition). Personas read/write under `current_task.persona_sessions` and `current_task.persona_session_meta`.
 
+> **Why this template uses Python instead of pure jq**: `claude --print --output-format json` writes a JSON envelope where `.result` may contain raw control characters (terminal-escape codes, embedded newlines from tool output). Pure `jq` rejects these as `Invalid string: control characters from U+0000 through U+001F must be escaped`. We use `NO_COLOR=1` to suppress most of them and Python's `json.loads` (which is more lenient with embedded ctrl chars in strings) for parsing. Bash + jq still handles state-file edits where we control the input.
+
 ```bash
 TARGET=$(pwd)
 STATE="$TARGET/.codex/po-state.json"
@@ -168,44 +189,58 @@ PERSONA=planner
 TASK='<task string, include PRD path if one exists, prior artifacts, and user feedback verbatim when applicable>'
 
 SID=$(jq -r --arg p "$PERSONA" '.current_task.persona_sessions[$p] // ""' "$STATE")
+OUT=$(mktemp)
 
 if [ -z "$SID" ]; then
   # First call for this persona within current_task — Claude assigns the session id.
-  # IMPORTANT: do NOT pass --session-id here. Claude Code rejects it
-  # outside of --continue / --fork-session flows.
-  RESULT=$(claude --agent "$PERSONA" \
+  # IMPORTANT: do NOT pass --session-id. Claude Code rejects it outside of
+  # --continue / --fork-session flows. NO_COLOR=1 strips ANSI escapes that
+  # would otherwise embed raw control chars into the JSON .result field.
+  NO_COLOR=1 claude --agent "$PERSONA" \
     --print --output-format json \
-    "$TASK")
-  # Capture and persist the assigned session_id under current_task
-  NEW_SID=$(echo "$RESULT" | jq -r '.session_id // empty')
-  if [ -n "$NEW_SID" ]; then
-    NOW=$(date -u +%FT%TZ)
-    tmp=$(mktemp) && jq --arg p "$PERSONA" --arg s "$NEW_SID" --arg t "$NOW" \
-      '.current_task.persona_sessions[$p]=$s
-       | .current_task.persona_session_meta[$p]={id:$s, turns:1, created_at:$t}' \
-      "$STATE" > "$tmp" && mv "$tmp" "$STATE"
-  fi
+    "$TASK" > "$OUT"
 else
   # Subsequent call — resume existing session within current_task.
-  # Pass --resume. --agent is optional (acts as a consistency check, harmless
-  # if matching). Do NOT pass --session-id together with --resume.
-  RESULT=$(claude --resume "$SID" \
+  # --agent is optional (consistency check). Do NOT pass --session-id with --resume.
+  NO_COLOR=1 claude --resume "$SID" \
     --print --output-format json \
-    "$TASK")
-  tmp=$(mktemp) && jq --arg p "$PERSONA" \
-    '.current_task.persona_session_meta[$p].turns
-       = ((.current_task.persona_session_meta[$p].turns // 0) + 1)' \
-    "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+    "$TASK" > "$OUT"
 fi
 
-# Record outcome into recent_turns (project-wide rolling, keep last 10)
-STATUS=$(echo "$RESULT" | jq -r 'if .blocked == true then "blocked" elif .refused == true then "refused" elif .overall then .overall else "pass" end')
-SLUG=$(jq -r '.current_task.slug // "untitled"' "$STATE")
-tmp=$(mktemp) && jq --arg ts "$(date -u +%FT%TZ)" --arg p "$PERSONA" --arg s "$STATUS" --arg slug "$SLUG" \
-  '.recent_turns = ((.recent_turns // []) + [{ts:$ts, persona:$p, task_slug:$slug, result:$s}]) | .recent_turns |= (.[-10:])' \
-  "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+# Parse Claude's response with Python (lenient with control chars in strings).
+# Update current_task session_id/turns and recent_turns rolling window.
+python3 - "$OUT" "$STATE" "$PERSONA" "$TASK" <<'PY'
+import json, sys, pathlib, datetime
+out_path, state_path, persona, task = sys.argv[1:5]
+data = json.loads(pathlib.Path(out_path).read_text())
+state = json.loads(pathlib.Path(state_path).read_text())
+now = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+sid = data.get("session_id")
+ct = state.setdefault("current_task", {})
+sessions = ct.setdefault("persona_sessions", {})
+meta = ct.setdefault("persona_session_meta", {})
+if sid:
+    if persona not in sessions:
+        sessions[persona] = sid
+        meta[persona] = {"id": sid, "turns": 1, "created_at": now}
+    else:
+        m = meta.setdefault(persona, {"id": sessions[persona], "turns": 0, "created_at": now})
+        m["turns"] = m.get("turns", 0) + 1
+status = ("blocked" if data.get("blocked") is True
+          else "refused" if data.get("refused") is True
+          else data.get("overall") or ("fail" if data.get("is_error") else "pass"))
+state.setdefault("recent_turns", []).append({
+    "ts": now, "persona": persona,
+    "task_slug": ct.get("slug", "untitled"),
+    "result": status,
+})
+state["recent_turns"] = state["recent_turns"][-10:]
+pathlib.Path(state_path).write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+print("STATUS=" + status)
+print(data.get("result", ""))
+PY
 
-echo "$RESULT"
+rm -f "$OUT"
 ```
 
 ---
