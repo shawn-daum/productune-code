@@ -187,7 +187,8 @@ if [ -z "$SID" ]; then
   fi
 else
   # Subsequent call — resume existing session within current_task.
-  # Pass --resume only. Do NOT also pass --agent or --session-id.
+  # Pass --resume. --agent is optional (acts as a consistency check, harmless
+  # if matching). Do NOT pass --session-id together with --resume.
   RESULT=$(claude --resume "$SID" \
     --print --output-format json \
     "$TASK")
