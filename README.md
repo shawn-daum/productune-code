@@ -50,13 +50,38 @@ Graphiti is **bi-temporal** — every fact has `(valid_from, valid_to)` windows.
 ## Install
 
 ```sh
-git clone <this-repo>  ~/   # wherever you want
-cd ~/<your-folder>
-bash scripts/install.sh           # links agents → ~/.claude/agents/, copies codex config → ~/.codex/
-bash scripts/setup-graphiti.sh    # FalkorDB container + graphiti clone + uv sync
+# 1. Clone wherever you want
+git clone <this-repo> ~/Documents/dev/orchestration
+cd ~/Documents/dev/orchestration
+
+# 2. Wire the persona/codex configs into ~/.claude and ~/.codex
+bash scripts/install.sh
+
+# 3. Put my-po on your PATH (no sudo needed) — pick ONE:
+#    a) PATH export in shell rc (recommended)
+echo 'export PATH="$HOME/Documents/dev/orchestration/scripts:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+#    (~/.bashrc if you're on bash)
+
+#    b) Or symlink into ~/.local/bin (XDG, no sudo)
+mkdir -p ~/.local/bin
+ln -sf "$PWD/scripts/my-po" ~/.local/bin/my-po
+#    (then ensure ~/.local/bin is on PATH — most modern shells already include it)
+
+#    c) Or with sudo into /usr/local/bin (Apple Silicon Macs typically need sudo here)
+sudo ln -sf "$PWD/scripts/my-po" /usr/local/bin/my-po
+
+# 4. Set up the wiki tier (FalkorDB container + Graphiti clone). Optional but recommended.
+bash scripts/setup-graphiti.sh
+
+# 5. Verify
+which my-po          # should print a path
+claude agents        # should list planner/designer/developer/qa
 ```
 
-`install.sh` is idempotent and backs up any existing conflicting files at the target path with a `.bak.<timestamp>` suffix.
+`install.sh` is idempotent and backs up any existing conflicting files at the target path with a `.bak.<timestamp>` suffix. It does **not** touch your PATH — that step is up to you (step 3 above).
+
+> **Permission denied on /usr/local/bin?** That directory needs sudo on Apple Silicon Macs. Use option (a) or (b) above instead — neither requires elevated privileges.
 
 ## Daily use
 
@@ -93,11 +118,26 @@ Running `my-po` from a second terminal in a directory where another `my-po` is a
 
 The new shell `cd`s into the worktree before launching codex, so its `.codex/po-state.json`, branch, and persona sessions are all isolated from the original. The two PO instances cannot race on shared state.
 
-When you're done with the auto-created worktrees, audit them and let the wrapper clean up the safe ones:
+Two ways to clean up the auto-created worktrees, pick whichever you remember:
+
+**Option 1 — passive prompt at exit (default).** When `my-po` returns from a normal codex exit in the *main* worktree, it scans for safe-to-remove worktrees and asks once:
+
+```
+[my-po] 🧹 2 my-po worktree(s) safe to remove.
+[my-po]    (also ambiguous: 0, unsafe: 1 — those are left alone)
+[my-po] clean up the safe ones now? [y/N]
+```
+
+`y` removes them inline; anything else skips and you can revisit later. No command to remember.
+
+**Option 2 — explicit subcommand.** Audit anytime:
 
 ```sh
-my-po --cleanup            # dry-run: classify each my-po/* worktree as ✓ / ⚠ / ❌
-my-po --cleanup --auto     # remove only the ✓ ones (dirty / unmerged-unpushed are never touched)
+my-po gc          # dry-run: classify each my-po/* worktree as ✓ / ⚠ / ❌
+my-po gc -y       # remove only the ✓ ones (dirty / unmerged-unpushed are never touched)
+# verbose aliases below also work:
+#   my-po --cleanup
+#   my-po --cleanup --auto
 ```
 
 Decision basis is **git state** — a worktree is `✓ safe` only when its committed history is already in `main`/`master` (or an upstream remote). If you walked away from PO without committing, the worktree stays `❌ unsafe` so nothing is lost. To preserve a worktree as a real feature branch, rename it before cleanup: `git branch -m my-po/<...> feat/proper-name` removes it from the cleanup filter.

@@ -14,11 +14,21 @@ Use `my-po` (the wrapper from `scripts/my-po`) instead of `codex --profile po` d
 
 The two PO instances now have separate `.codex/po-state.json` files, separate persona session UUIDs, and separate branches — they cannot race on shared state.
 
-Worktrees auto-created this way **persist after PO exits** (the wrapper does not delete them — your work could still be sitting there uncommitted). Periodically run:
+Worktrees auto-created this way **persist after PO exits** (the wrapper does not delete them — your work could still be sitting there uncommitted). Two ways to clean up:
+
+**Passive (default).** When `my-po` returns from a normal codex exit in the *main* worktree (not inside an auto-spawned `my-po/*` branch), it audits and asks once:
+
+```
+[my-po] 🧹 2 my-po worktree(s) safe to remove.
+[my-po] clean up the safe ones now? [y/N]
+```
+
+**Explicit.** Run anytime:
 
 ```sh
-my-po --cleanup            # dry-run: see which my-po/* worktrees are safe to remove
-my-po --cleanup --auto     # delete only the ✓ ones (committed history merged into main, clean working tree)
+my-po gc          # dry-run: classify each my-po/* worktree as ✓ / ⚠ / ❌
+my-po gc -y       # remove only the ✓ ones
+# (verbose aliases: my-po --cleanup / my-po --cleanup --auto)
 ```
 
 The cleanup classifier is git-state-only: PO process state (alive, crashed) is irrelevant. A worktree is `✓ safe` exclusively when its content lives elsewhere (merged or pushed). `⚠ ambiguous` and `❌ unsafe` are never auto-removed; you decide manually.

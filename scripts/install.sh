@@ -85,21 +85,37 @@ Next steps:
   4. Verify Claude sees the personas:
        claude agents
 
-  5. Put the \`my-po\` wrapper on your PATH (one of):
-       ln -sf $ROOT/scripts/my-po /usr/local/bin/my-po
-     OR add this line to your shell rc (~/.zshrc, ~/.bashrc):
-       export PATH="$ROOT/scripts:\$PATH"
+  5. Put the \`my-po\` wrapper on your PATH. Pick one (no sudo needed):
+
+     a) Add the scripts dir to PATH (recommended — works everywhere):
+          echo 'export PATH="$ROOT/scripts:\$PATH"' >> ~/.zshrc
+          source ~/.zshrc
+        (use ~/.bashrc if you're on bash)
+
+     b) Symlink into ~/.local/bin (XDG, no sudo):
+          mkdir -p ~/.local/bin
+          ln -sf $ROOT/scripts/my-po ~/.local/bin/my-po
+        Then make sure ~/.local/bin is on your PATH (most modern shells already include it).
+
+     c) Symlink into /usr/local/bin (may need sudo on Apple Silicon):
+          sudo ln -sf $ROOT/scripts/my-po /usr/local/bin/my-po
+
+     Verify: \`which my-po\` should print a path.
 
   6. From any target project directory, start PO:
        my-po
-     (auto-creates a git worktree if another my-po is already running on the same project; stays direct \`codex --profile po\` otherwise. See docs/customization.md.)
-     Or call codex/persona directly:
+     If another my-po is already running on the same project, this will
+     auto-create a git worktree and start codex there. After codex exits
+     it asks once whether to clean up safe worktrees.
+
+     Direct alternatives (if you don't want the wrapper logic):
        codex --profile po
        claude --agent planner
 
-  7. After parallel work, audit & cleanup auto-created worktrees:
-       my-po --cleanup            # dry-run
-       my-po --cleanup --auto     # remove safe (✓) ones
+  7. After parallel work, audit & remove auto-created worktrees:
+       my-po gc        # dry-run, classify each my-po/* worktree
+       my-po gc -y     # remove only the ✓ safe ones (dirty / unmerged-unpushed left alone)
+       (verbose aliases: 'my-po --cleanup' / 'my-po --cleanup --auto' both still work)
 
   8. To update personas later, just edit files in $ROOT/agents/ — symlinks ensure changes apply immediately.
 EOF
