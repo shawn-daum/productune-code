@@ -238,6 +238,8 @@ codex --profile po 'README.md 에 한 줄 더 추가해줘.'
 
 **"persona doesn't respect gate"** — PO reads `po-instructions.md` at startup. If you edited it mid-session, restart Codex.
 
+**"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — you (or PO) tried `claude --session-id <uuid>` to *create* a new session with that id. That's not supported — Claude Code only allows `--session-id` inside fork-session flows. Correct pattern: omit `--session-id` on the first call (Claude assigns one, returned in response JSON's `.session_id`), and use `--resume <id>` on subsequent calls. Don't combine `--resume` with `--session-id`. The PO doctrine in `~/.codex/po-instructions.md` already implements this — if you hit the error from PO, run `bash scripts/install.sh` to redeploy the latest doctrine.
+
 **"claude --agent exits with missing `uuidgen`"** — macOS always has it; on Linux use `python3 -c 'import uuid; print(uuid.uuid4())'` instead in the PO delegation template.
 
 **General**: `claude --debug --agent <name> -p "..."` shows MCP connection attempts and tool discovery.

@@ -139,20 +139,30 @@ PERSONA=planner
 TASK='<task string, include PRD path if one exists, prior artifacts, and user feedback verbatim when applicable>'
 
 SID=$(jq -r --arg p "$PERSONA" '.persona_sessions[$p] // ""' "$TARGET/.codex/po-state.json")
-RESUME_FLAG=""
+
 if [ -z "$SID" ]; then
-  SID=$(uuidgen | tr 'A-Z' 'a-z')
-  tmp=$(mktemp) && jq --arg p "$PERSONA" --arg s "$SID" '.persona_sessions[$p]=$s' "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
+  # First call for this persona — Claude assigns the session id.
+  # IMPORTANT: do NOT pass --session-id here. Claude Code rejects it
+  # outside of --continue / --fork-session flows.
+  RESULT=$(claude --agent "$PERSONA" \
+    --print --output-format json \
+    "$TASK")
+  # Capture and persist the assigned session_id from the response
+  NEW_SID=$(echo "$RESULT" | jq -r '.session_id // empty')
+  if [ -n "$NEW_SID" ]; then
+    tmp=$(mktemp) && jq --arg p "$PERSONA" --arg s "$NEW_SID" '.persona_sessions[$p]=$s' "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
+  fi
 else
-  RESUME_FLAG="--resume $SID"
+  # Subsequent call — resume existing session.
+  # Pass --resume only. Do NOT also pass --agent (preserved from session)
+  # or --session-id (would force fork).
+  RESULT=$(claude --resume "$SID" \
+    --print --output-format json \
+    "$TASK")
 fi
 
-RESULT=$(claude --agent "$PERSONA" --session-id "$SID" $RESUME_FLAG \
-  --print --output-format json \
-  "$TASK")
-
 # Record outcome into recent_turns (keep last 10)
-STATUS=$(echo "$RESULT" | jq -r '.overall // .refused // "pass"' | head -1)
+STATUS=$(echo "$RESULT" | jq -r 'if .blocked == true then "blocked" elif .refused == true then "refused" elif .overall then .overall else "pass" end')
 tmp=$(mktemp) && jq --arg ts "$(date -u +%FT%TZ)" --arg p "$PERSONA" --arg t "$TASK" --arg s "$STATUS" \
   '.recent_turns = ((.recent_turns // []) + [{ts:$ts, persona:$p, task:$t, result:$s}]) | .recent_turns |= (.[-10:])' \
   "$TARGET/.codex/po-state.json" > "$tmp" && mv "$tmp" "$TARGET/.codex/po-state.json"
