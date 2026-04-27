@@ -55,6 +55,9 @@ git clone <this-repo> ~/Documents/dev/orchestration
 cd ~/Documents/dev/orchestration
 
 # 2. Wire the persona/codex configs into ~/.claude and ~/.codex
+#    During this step, install.sh interactively asks which PO engine you want
+#    as default ('codex' or 'claude') and saves the choice to
+#    ~/.codex/coolchestration.env. Pick whichever — you can change later.
 bash scripts/install.sh
 
 # 3. Put my-po on your PATH (no sudo needed) — pick ONE:
@@ -122,7 +125,13 @@ Both `codex --profile po` and `claude --agent po` execute the same doctrine (`~/
 | ToS clarity (no third-party concerns) | OK (each tool used with own auth) | **Cleanest** — 100% first-party |
 | Persistent env var | `MY_PO_ENGINE=codex` | `MY_PO_ENGINE=claude` |
 
-If you don't care about cost-splitting between providers and want absolute simplicity, set `export MY_PO_ENGINE=claude` in your shell rc.
+The default is set during `install.sh` (interactive prompt). To change later, edit `~/.codex/coolchestration.env`:
+
+```sh
+echo 'MY_PO_ENGINE=claude' > ~/.codex/coolchestration.env   # or 'codex'
+```
+
+Priority order when `my-po` resolves the engine: `--engine` flag → shell env `$MY_PO_ENGINE` → `~/.codex/coolchestration.env` → fallback `codex`.
 
 ### Parallel sessions on the same project
 

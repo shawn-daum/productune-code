@@ -166,7 +166,12 @@ esac
 
 # -------------------- default mode --------------------
 
-# 0) Resolve engine. Flag overrides env; env overrides default ('codex').
+# 0) Resolve engine. Priority: --engine flag > $MY_PO_ENGINE in shell env >
+#    saved preference at ~/.codex/coolchestration.env (written by install.sh) > 'codex'.
+if [ -z "${MY_PO_ENGINE:-}" ] && [ -r "$HOME/.codex/coolchestration.env" ]; then
+  # shellcheck source=/dev/null
+  . "$HOME/.codex/coolchestration.env"
+fi
 ENGINE="${MY_PO_ENGINE:-codex}"
 ARGS=()
 while [ $# -gt 0 ]; do

@@ -67,7 +67,44 @@ fi
 chmod +x "$ROOT/scripts/my-po" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh"
 say "wrapper scripts ready: $ROOT/scripts/{my-po,setup-graphiti.sh,install.sh}"
 
-# 5) Summary + next steps
+# 5) Interactive: pick default PO engine (only if running in a terminal and not already set)
+PO_ENV_FILE="$HOME/.codex/coolchestration.env"
+if [ -t 0 ] && [ -t 1 ] && [ ! -e "$PO_ENV_FILE" ]; then
+  echo
+  printf '\033[1;36m[install]\033[0m Pick a default PO engine for `my-po`:\n'
+  cat <<'PROMPT'
+  [1] codex   — Codex CLI (OpenAI subscription) hosts the PO orchestrator.
+                Personas still run on Claude Code. Splits cost across providers.
+  [2] claude  — Claude Code hosts both PO and personas. 100% Anthropic stack,
+                cleanest ToS posture (no third-party-harness concerns).
+  [Enter]     — skip; default to 'codex'. You can change anytime by editing
+                ~/.codex/coolchestration.env or running `my-po --engine <name>`.
+
+PROMPT
+  printf '  Choice [1/2/Enter]: '
+  read -r CHOICE || CHOICE=""
+  case "$CHOICE" in
+    1|c|codex)
+      printf 'MY_PO_ENGINE=codex\n' > "$PO_ENV_FILE"
+      say "default engine: codex (saved to $PO_ENV_FILE)"
+      ;;
+    2|a|cl|claude|anthropic)
+      printf 'MY_PO_ENGINE=claude\n' > "$PO_ENV_FILE"
+      say "default engine: claude (saved to $PO_ENV_FILE)"
+      ;;
+    "")
+      say "default engine: codex (no preference saved; override with --engine or MY_PO_ENGINE)"
+      ;;
+    *)
+      warn "unrecognized choice '$CHOICE'; defaulting to codex (no preference saved)"
+      ;;
+  esac
+elif [ -e "$PO_ENV_FILE" ]; then
+  CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
+  say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}) — leaving as-is"
+fi
+
+# 6) Summary + next steps
 cat <<EOF
 
 $(printf "\033[1;32m✓ install complete\033[0m")
@@ -105,12 +142,19 @@ Next steps:
   6. From any target project directory, start PO:
        my-po
      If another my-po is already running on the same project, this will
-     auto-create a git worktree and start codex there. After codex exits
-     it asks once whether to clean up safe worktrees.
+     auto-create a git worktree and start the PO engine there. After the
+     engine exits it asks once whether to clean up safe worktrees.
 
-     Direct alternatives (if you don't want the wrapper logic):
+     The default PO engine was set in step 5 above (saved to
+     ~/.codex/coolchestration.env). To override per-call:
+       my-po --engine claude     # one-off: Claude Code hosts PO
+       my-po --engine codex      # one-off: Codex hosts PO
+     To change the default later, edit ~/.codex/coolchestration.env.
+
+     Direct alternatives (no wrapper logic, no parallel-safety):
        codex --profile po
-       claude --agent planner
+       claude --agent po
+       claude --agent planner    # single persona
 
   7. After parallel work, audit & remove auto-created worktrees:
        my-po gc        # dry-run, classify each my-po/* worktree
