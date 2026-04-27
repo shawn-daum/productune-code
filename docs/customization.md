@@ -4,6 +4,27 @@ Structurally, everything about a persona is a small edit in `agents/<name>.md`. 
 
 This doc is the playbook for the common evolutions PO might suggest, or you might want to try on your own.
 
+## 0. Running multiple PO sessions on the same project
+
+Use `my-po` (the wrapper from `scripts/my-po`) instead of `codex --profile po` directly. When a second `my-po` is launched in a project where another is already running, the wrapper automatically:
+
+1. Detects the live PO via `<root>/.codex/po.lock` (PID + alive check).
+2. Creates a `git worktree` at `<parent>/<repo>-my-po-<timestamp>-<pid>` on a new branch `my-po/<timestamp>-<pid>`.
+3. `cd`s into the worktree and launches a fresh codex session there.
+
+The two PO instances now have separate `.codex/po-state.json` files, separate persona session UUIDs, and separate branches — they cannot race on shared state.
+
+Worktrees auto-created this way **persist after PO exits** (the wrapper does not delete them — your work could still be sitting there uncommitted). Periodically run:
+
+```sh
+my-po --cleanup            # dry-run: see which my-po/* worktrees are safe to remove
+my-po --cleanup --auto     # delete only the ✓ ones (committed history merged into main, clean working tree)
+```
+
+The cleanup classifier is git-state-only: PO process state (alive, crashed) is irrelevant. A worktree is `✓ safe` exclusively when its content lives elsewhere (merged or pushed). `⚠ ambiguous` and `❌ unsafe` are never auto-removed; you decide manually.
+
+To graduate a worktree's branch into a real feature branch (and exclude it from cleanup): `git branch -m my-po/<...> feat/<name>`. The cleanup filter only matches `my-po/*` so renamed branches stay forever until you handle them yourself.
+
 ## 1. Swap a persona's model
 
 Permanent (commits into the repo):

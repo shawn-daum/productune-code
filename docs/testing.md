@@ -307,6 +307,8 @@ codex --profile po 'README.md 에 한 줄 더 추가해줘.'
 
 **"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — you (or PO) tried `claude --session-id <uuid>` to *create* a new session with that id. That's not supported — Claude Code only allows `--session-id` inside fork-session flows. Correct pattern: omit `--session-id` on the first call (Claude assigns one, returned in response JSON's `.session_id`), and use `--resume <id>` on subsequent calls. Don't combine `--resume` with `--session-id`. The PO doctrine in `~/.codex/po-instructions.md` already implements this — if you hit the error from PO, run `bash scripts/install.sh` to redeploy the latest doctrine.
 
+**Stale `.codex/po.lock` after a kill -9** — no manual cleanup needed. The next `my-po` invocation reads the lock, finds the recorded PID is dead via `kill -0`, prints `[my-po] stale lock from pid <X>; reclaiming`, deletes the lock file, and proceeds normally.
+
 **Legacy `po-state.json` schema (flat `persona_sessions`)** — if you set up before the task-lifecycle change, your `<project>/.codex/po-state.json` may have:
 
 ```json

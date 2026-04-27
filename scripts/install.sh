@@ -63,7 +63,11 @@ else
   say "PO memory already exists at $PO_MEM — leaving as-is"
 fi
 
-# 4) Summary + next steps
+# 4) Make wrapper scripts executable (idempotent — git checkout usually preserves +x already)
+chmod +x "$ROOT/scripts/my-po" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh"
+say "wrapper scripts ready: $ROOT/scripts/{my-po,setup-graphiti.sh,install.sh}"
+
+# 5) Summary + next steps
 cat <<EOF
 
 $(printf "\033[1;32m✓ install complete\033[0m")
@@ -81,10 +85,21 @@ Next steps:
   4. Verify Claude sees the personas:
        claude agents
 
-  5. From any target project directory, start PO:
+  5. Put the \`my-po\` wrapper on your PATH (one of):
+       ln -sf $ROOT/scripts/my-po /usr/local/bin/my-po
+     OR add this line to your shell rc (~/.zshrc, ~/.bashrc):
+       export PATH="$ROOT/scripts:\$PATH"
+
+  6. From any target project directory, start PO:
+       my-po
+     (auto-creates a git worktree if another my-po is already running on the same project; stays direct \`codex --profile po\` otherwise. See docs/customization.md.)
+     Or call codex/persona directly:
        codex --profile po
-     or single-persona:
        claude --agent planner
 
-  6. To update personas later, just edit files in $ROOT/agents/ — symlinks ensure changes apply immediately.
+  7. After parallel work, audit & cleanup auto-created worktrees:
+       my-po --cleanup            # dry-run
+       my-po --cleanup --auto     # remove safe (✓) ones
+
+  8. To update personas later, just edit files in $ROOT/agents/ — symlinks ensure changes apply immediately.
 EOF

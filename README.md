@@ -65,7 +65,11 @@ From **any project directory** you want to work on:
 ```sh
 cd ~/path/to/target-project
 
-# Full PO flow (recommended)
+# Full PO flow (recommended) — auto-creates a git worktree if another my-po
+# is already running on the same project root
+my-po
+
+# Equivalent direct call (no worktree split, no parallel-safety)
 codex --profile po
 
 # Single persona (for debugging / exploration)
@@ -77,6 +81,26 @@ claude --agent qa
 # Token-soak / offline fallback: swaps Codex to local qwen3.5:4B
 codex --profile local
 ```
+
+### Parallel sessions on the same project
+
+Running `my-po` from a second terminal in a directory where another `my-po` is already alive triggers an automatic split:
+
+```
+[my-po] another PO is running on /Users/.../agentcafe (pid 12345)
+[my-po] creating worktree at /Users/.../agentcafe-my-po-20260427-153045-67890 on branch my-po/20260427-153045-67890
+```
+
+The new shell `cd`s into the worktree before launching codex, so its `.codex/po-state.json`, branch, and persona sessions are all isolated from the original. The two PO instances cannot race on shared state.
+
+When you're done with the auto-created worktrees, audit them and let the wrapper clean up the safe ones:
+
+```sh
+my-po --cleanup            # dry-run: classify each my-po/* worktree as ✓ / ⚠ / ❌
+my-po --cleanup --auto     # remove only the ✓ ones (dirty / unmerged-unpushed are never touched)
+```
+
+Decision basis is **git state** — a worktree is `✓ safe` only when its committed history is already in `main`/`master` (or an upstream remote). If you walked away from PO without committing, the worktree stays `❌ unsafe` so nothing is lost. To preserve a worktree as a real feature branch, rename it before cleanup: `git branch -m my-po/<...> feat/proper-name` removes it from the cleanup filter.
 
 The PO profile follows a three-stage loop (see `codex/po-instructions.md` for the full doctrine):
 
@@ -102,6 +126,7 @@ Add this to the target project's `.gitignore`:
 
 ```
 .codex/po-state.json
+.codex/po.lock
 .codex/logs/
 ```
 
@@ -137,7 +162,8 @@ orchestration/
 │   ├── po-instructions.md          # PO doctrine (3 stages, gates, evolution triggers)
 │   └── po-memory.md.template       # seed for ~/.codex/po-memory.md (PO's cross-session memory of user)
 ├── scripts/
-│   ├── install.sh                  # one-time: symlinks + copies + seeds PO memory
+│   ├── install.sh                  # one-time: symlinks + copies + seeds PO memory + chmod
+│   ├── my-po                       # daily entrypoint: lock + auto-worktree + codex
 │   └── setup-graphiti.sh           # one-time: FalkorDB docker + graphiti clone + uv sync
 ├── docs/
 │   ├── overview.md                 # high-level system explanation
