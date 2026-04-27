@@ -416,14 +416,15 @@ When a persona returns `blocked: true` with `suggest_allowlist_addition`:
 1. **Pause the pipeline**. Don't move to the next persona.
 2. **One-line propose** to user, in their language:
    `developer 가 'bun install' 시도했는데 allowlist 밖. agents/developer.md 의 tools 에 'Bash(bun *)' 추가하고 이어갈까? (y/n)`
-3. **On y**: mechanical edit `~/Documents/dev/orchestration/agents/<persona>.md` — append the suggested pattern to the `tools:` line. This is a small, reviewable edit; you can do it directly with `sed`/`python` (no Claude call needed). The symlink at `~/.claude/agents/<persona>.md` makes the change live for the next call.
+3. **On y**: mechanical edit `$COOLCHESTRATION_REPO/agents/<persona>.md` — append the suggested pattern to the `tools:` line. Source `~/.codex/coolchestration.env` first to populate `$COOLCHESTRATION_REPO` (set by `install.sh`). This is a small, reviewable edit; you can do it directly with `sed`/`python` (no Claude call needed). The symlink at `~/.claude/agents/<persona>.md` makes the change live for the next call.
 4. **Resume**: re-invoke the same persona with the same `--session-id` (so it continues from the partial state in `partial_changes` / `partial_checks`). Pass it: "allowlist updated, try again from where you stopped."
 5. **On n**: skip the blocked step, surface to user as a manual follow-up in your final summary, mark the relevant work `blocked` in po-state.
 
 Implementation hint for step 3 (mechanical tools-line edit, no Claude call):
 
 ```bash
-PERSONA_FILE=~/Documents/dev/orchestration/agents/<persona>.md
+. ~/.codex/coolchestration.env    # populates $COOLCHESTRATION_REPO
+PERSONA_FILE="$COOLCHESTRATION_REPO/agents/<persona>.md"
 NEW_PATTERN='Bash(bun *)'
 # Insert before the closing `, mcp__graphiti__add_memory` segment (or just before end of tools line)
 python3 - "$PERSONA_FILE" "$NEW_PATTERN" <<'PY'
@@ -447,7 +448,7 @@ For the slower-evolving signals (≥3 fails in last 5, repeated user corrections
 4. **Tighten or loosen permissions**: `tools:` / `permissionMode:` 조정
 5. **Spawn a new persona**: 완전히 새로운 역할이 필요하면 `.claude/agents/<new>.md` 신규 작성 제안
 
-For Stage B options 2–5: never execute without user confirmation — these are committed changes in `~/Documents/dev/orchestration/agents/` (or `~/Documents/dev/orchestration/codex/`).
+For Stage B options 2–5: never execute without user confirmation — these are committed changes in the coolchestration repo's `agents/` (or `codex/`) directory.
 
 See `docs/customization.md` for the exact edits per option.
 

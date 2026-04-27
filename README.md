@@ -50,9 +50,11 @@ Graphiti is **bi-temporal** — every fact has `(valid_from, valid_to)` windows.
 ## Install
 
 ```sh
-# 1. Clone wherever you want
-git clone <this-repo> ~/Documents/dev/orchestration
-cd ~/Documents/dev/orchestration
+# 1. Clone wherever you want — pick a path you'll remember
+git clone https://github.com/shawn-kim-axz/coolchestration.git ~/<your-path>/coolchestration
+cd ~/<your-path>/coolchestration
+# (the rest of this README uses $REPO to mean the path you just cd'd into;
+#  in real shell you can use $PWD directly while you're in the cloned dir)
 
 # 2. Wire the persona/codex configs into ~/.claude and ~/.codex
 #    During this step, install.sh interactively asks which PO engine you want
@@ -61,8 +63,8 @@ cd ~/Documents/dev/orchestration
 bash scripts/install.sh
 
 # 3. Put my-po on your PATH (no sudo needed) — pick ONE:
-#    a) PATH export in shell rc (recommended)
-echo 'export PATH="$HOME/Documents/dev/orchestration/scripts:$PATH"' >> ~/.zshrc
+#    a) PATH export in shell rc (recommended) — uses $PWD so it works no matter where you cloned
+echo "export PATH=\"$PWD/scripts:\$PATH\"" >> ~/.zshrc
 source ~/.zshrc
 #    (~/.bashrc if you're on bash)
 

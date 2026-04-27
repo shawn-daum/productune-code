@@ -85,23 +85,31 @@ PROMPT
   read -r CHOICE || CHOICE=""
   case "$CHOICE" in
     1|c|codex)
-      printf 'MY_PO_ENGINE=codex\n' > "$PO_ENV_FILE"
-      say "default engine: codex (saved to $PO_ENV_FILE)"
+      printf 'MY_PO_ENGINE=codex\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      say "default engine: codex (saved to $PO_ENV_FILE, repo path: $ROOT)"
       ;;
     2|a|cl|claude|anthropic)
-      printf 'MY_PO_ENGINE=claude\n' > "$PO_ENV_FILE"
-      say "default engine: claude (saved to $PO_ENV_FILE)"
+      printf 'MY_PO_ENGINE=claude\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      say "default engine: claude (saved to $PO_ENV_FILE, repo path: $ROOT)"
       ;;
     "")
-      say "default engine: codex (no preference saved; override with --engine or MY_PO_ENGINE)"
+      printf 'MY_PO_ENGINE=codex\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      say "default engine: codex (no preference picked; saved baseline to $PO_ENV_FILE)"
       ;;
     *)
-      warn "unrecognized choice '$CHOICE'; defaulting to codex (no preference saved)"
+      warn "unrecognized choice '$CHOICE'; saving codex + repo path baseline"
+      printf 'MY_PO_ENGINE=codex\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       ;;
   esac
 elif [ -e "$PO_ENV_FILE" ]; then
   CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
-  say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}) — leaving as-is"
+  # Update repo path in case user moved the clone
+  if grep -qE '^COOLCHESTRATION_REPO=' "$PO_ENV_FILE"; then
+    sed -i.bak -E "s|^COOLCHESTRATION_REPO=.*|COOLCHESTRATION_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
+  else
+    printf 'COOLCHESTRATION_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
+  fi
+  say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}, repo path refreshed to $ROOT)"
 fi
 
 # 6) Summary + next steps

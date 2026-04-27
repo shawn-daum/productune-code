@@ -9,7 +9,7 @@ A progressive 4-phase test plan. Each phase must pass before the next — failur
 ollama pull nomic-embed-text
 
 # 0.2 — Start Graphiti infra (FalkorDB container + clone graphiti + uv sync)
-bash ~/Documents/dev/orchestration/scripts/setup-graphiti.sh
+bash <coolchestration-clone>/scripts/setup-graphiti.sh   # whatever path you cloned to
 ```
 
 **Pass criteria:**

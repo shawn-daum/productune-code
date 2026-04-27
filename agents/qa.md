@@ -12,7 +12,7 @@ mcpServers:
       command: uv
       args:
         - "--directory"
-        - "/Users/x/.graphiti/mcp_server"
+        - "${HOME}/.graphiti/mcp_server"
         - "run"
         - "main.py"
         - "--transport"
