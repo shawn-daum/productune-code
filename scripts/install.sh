@@ -558,7 +558,9 @@ PROMPT
         else
           printf '\n# productune\n%s\n' "$EXPORT_LINE" >> "$SHELL_RC"
           say "PATH 추가 완료: $SHELL_RC"
-          say "  → 적용: source $SHELL_RC  (또는 새 터미널 열기)"
+          # Apply immediately in the current session so the user doesn't need to re-source manually.
+          export PATH="$ROOT/scripts:$PATH"
+          say "  → 현재 세션에 즉시 적용됨 (새 터미널에서도 자동 적용)"
           printf 'PRODUCTUNE_PATH_METHOD=rc\nPRODUCTUNE_PATH_RC=%s\n' "$SHELL_RC" >> "$PO_ENV_FILE"
           PATH_REGISTERED=1
         fi
