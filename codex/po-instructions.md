@@ -420,12 +420,12 @@ tmp=$(mktemp) && jq --arg a "$ARTIFACT" '.current_task.artifacts |= ((. // []) +
 
 ### Compaction (still automatic, just less critical now)
 
-Within a single task, sessions can still grow large if the task drags on. Claude Code's auto-compaction at ~95% kicks in. The `install.sh` defaults this to **70%** by writing `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to `~/.codex/coolchestration.env` — which `my-po` sources with `set -a`, so any persona spawned through the wrapper inherits it.
+Within a single task, sessions can still grow large if the task drags on. Claude Code's auto-compaction at ~95% kicks in. The `install.sh` defaults this to **70%** by writing `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to `~/.codex/productune.env` — which `my-po` sources with `set -a`, so any persona spawned through the wrapper inherits it.
 
-To override the threshold, edit `~/.codex/coolchestration.env`:
+To override the threshold, edit `~/.codex/productune.env`:
 
 ```sh
-sed -i.bak 's/^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=.*/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80/' ~/.codex/coolchestration.env
+sed -i.bak 's/^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=.*/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80/' ~/.codex/productune.env
 ```
 
 Direct `claude --agent my-X` calls **do not** inherit this — add `export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to your shell rc if you also use direct calls.
@@ -487,15 +487,15 @@ When a persona returns `blocked: true` with `suggest_allowlist_addition`:
 1. **Pause the pipeline**. Don't move to the next persona.
 2. **One-line propose** to user, in their language:
    `my-developer 가 'bun install' 시도했는데 allowlist 밖. agents/my-developer.md 의 tools 에 'Bash(bun *)' 추가하고 이어갈까? (y/n)`
-3. **On y**: mechanical edit `$COOLCHESTRATION_REPO/agents/<persona>.md` — append the suggested pattern to the `tools:` line. Source `~/.codex/coolchestration.env` first to populate `$COOLCHESTRATION_REPO` (set by `install.sh`). This is a small, reviewable edit; you can do it directly with `sed`/`python` (no Claude call needed). The symlink at `~/.claude/agents/<persona>.md` makes the change live for the next call.
+3. **On y**: mechanical edit `$PRODUCTUNE_REPO/agents/<persona>.md` — append the suggested pattern to the `tools:` line. Source `~/.codex/productune.env` first to populate `$PRODUCTUNE_REPO` (set by `install.sh`). This is a small, reviewable edit; you can do it directly with `sed`/`python` (no Claude call needed). The symlink at `~/.claude/agents/<persona>.md` makes the change live for the next call.
 4. **Resume**: re-invoke the same persona with the same `--session-id` (so it continues from the partial state in `partial_changes` / `partial_checks`). Pass it: "allowlist updated, try again from where you stopped."
 5. **On n**: skip the blocked step, surface to user as a manual follow-up in your final summary, mark the relevant work `blocked` in po-state.
 
 Implementation hint for step 3 (mechanical tools-line edit, no Claude call):
 
 ```bash
-. ~/.codex/coolchestration.env    # populates $COOLCHESTRATION_REPO
-PERSONA_FILE="$COOLCHESTRATION_REPO/agents/<persona>.md"
+. ~/.codex/productune.env    # populates $PRODUCTUNE_REPO
+PERSONA_FILE="$PRODUCTUNE_REPO/agents/<persona>.md"
 NEW_PATTERN='Bash(bun *)'
 # Insert before the closing `, mcp__graphiti__add_memory` segment (or just before end of tools line)
 python3 - "$PERSONA_FILE" "$NEW_PATTERN" <<'PY'
@@ -519,7 +519,7 @@ For the slower-evolving signals (≥3 fails in last 5, repeated user corrections
 4. **Tighten or loosen permissions**: `tools:` / `permissionMode:` 조정
 5. **Spawn a new persona**: 완전히 새로운 역할이 필요하면 `.claude/agents/<new>.md` 신규 작성 제안
 
-For Stage B options 2–5: never execute without user confirmation — these are committed changes in the coolchestration repo's `agents/` (or `codex/`) directory.
+For Stage B options 2–5: never execute without user confirmation — these are committed changes in the productune repo's `agents/` (or `codex/`) directory.
 
 See `docs/customization.md` for the exact edits per option.
 

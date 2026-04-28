@@ -9,11 +9,11 @@ mcpServers:
   - graphiti:
       type: stdio
       # Launcher reads provider config (OpenAI/Anthropic/Ollama) from
-      # ~/.codex/coolchestration.env at every spawn. Set by install.sh;
+      # ~/.codex/productune.env at every spawn. Set by install.sh;
       # change anytime by editing the env file.
       command: bash
       args:
-        - "${COOLCHESTRATION_REPO}/scripts/graphiti-launcher.sh"
+        - "${PRODUCTUNE_REPO}/scripts/graphiti-launcher.sh"
         - "planner"
 ---
 

@@ -1,4 +1,4 @@
-# coolchestration
+# productune
 
 > 한 명의 시니어 PO + 4명의 전문가 페르소나 + 인간형 3-tier 기억 — 모두 bash 스크립트와 markdown 으로.
 
@@ -64,7 +64,7 @@ PO 는 코드 안 짜고 디자인도 안 함. 라우팅·gate·합성·피드�
 
 ## 기존 Claude Code 와 무엇이 다른가
 
-| | 기본 Claude Code | coolchestration |
+| | 기본 Claude Code | productune |
 |---|---|---|
 | 페르소나 | 단일 세션, 한 명이 다 함 | 4 명 전문가 + PO 오케스트레이터 |
 | 위임 결정 | 사용자가 매번 직접 | PO 가 자동 라우팅 + adaptive gate |
@@ -84,7 +84,7 @@ OpenClaw 는 2026-04-04 Anthropic 가 차단한 카테고리:
 - 사용자 Claude 구독의 OAuth 토큰을 자기네 클라이언트가 써서 Anthropic API 직접 호출
 - Anthropic 입장에선 "구독 인증으로 외부 클라이언트가 우리 인프라 쓰는 것" → 가격 모델 파괴
 
-coolchestration 은:
+productune 은:
 - **bash 스크립트 + markdown 페르소나 정의** 만 추가
 - LLM API 호출 주체 = `claude` (Anthropic 자체 CLI). OAuth 토큰 외부 노출 0.
 - Anthropic 입장에서 보이는 트래픽 = 정상 Claude Code 사용. `--print` 헤드리스 모드는 Anthropic 이 공식 권장.
@@ -99,8 +99,8 @@ coolchestration 은:
 ### 첫 셋업 (한 번)
 
 ```sh
-git clone <repo> ~/<your-path>/coolchestration
-cd ~/<your-path>/coolchestration
+git clone <repo> ~/<your-path>/productune
+cd ~/<your-path>/productune
 bash scripts/install.sh
 ```
 
@@ -251,7 +251,7 @@ PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
 ## 한계 / 다음 단계
 
 **해결됨 (2026-04-28)**
-- 메모리 압축 자동화 — `install.sh` 가 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 을 `~/.codex/coolchestration.env` 에 기본값으로 박아두고 `my-po` 가 자동 export. shell rc 편집 불필요. (직접 `claude --agent` 호출 시엔 미적용 — 한계로 남음.)
+- 메모리 압축 자동화 — `install.sh` 가 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 을 `~/.codex/productune.env` 에 기본값으로 박아두고 `my-po` 가 자동 export. shell rc 편집 불필요. (직접 `claude --agent` 호출 시엔 미적용 — 한계로 남음.)
 - Graphiti 추출 품질 — install.sh 옵션 [3] Local description 보강 (대체 모델 `gemma2:27b`, `qwen2.5:32b` 추천). setup-graphiti.sh sanity-check 에 호스티드 옵션 ([2] Anthropic) fallback 안내 추가.
 - PO disposition 명시화 — silent 분류 폐지. 모든 turn 에 `→ continuing '<slug>'` / `→ new task '<slug>'` 1줄 trace + 사용자 override prefix (`/new`, `/continue`, `/resume <slug>`). 교정이 ≥2번 누적되면 `~/.codex/po-memory.md` 에 패턴 학습.
 
@@ -270,6 +270,6 @@ PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
 
 ## 한 줄 요약
 
-> Anthropic 가 권장하는 사용 패턴 안에서, 시니어 PO 의 워크플로를 bash + markdown 으로 재현한 lightweight orchestration. 외부 SaaS / 새 런타임 / 새 인프라 0개. `git clone + bash install.sh + my-po` 세 줄로 시작.
+> Anthropic 가 권장하는 사용 패턴 안에서, 시니어 PO 의 워크플로를 bash + markdown 으로 재현한 lightweight productune. 외부 SaaS / 새 런타임 / 새 인프라 0개. `git clone + bash install.sh + my-po` 세 줄로 시작.
 
-**Repo**: https://github.com/shawn-kim-axz/coolchestration
+**Repo**: https://github.com/shawn-kim-axz/productune

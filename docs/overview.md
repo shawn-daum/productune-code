@@ -69,4 +69,4 @@ codex --profile po        (PO, OpenAI hosted)
 
 **Graphiti wiki tier 켜려면 아직 필요한 것:**
 - `ollama pull nomic-embed-text` (임베딩 모델)
-- `bash <coolchestration-clone>/scripts/setup-graphiti.sh` (FalkorDB 컨테이너 + graphiti clone + uv sync)
+- `bash <productune-clone>/scripts/setup-graphiti.sh` (FalkorDB 컨테이너 + graphiti clone + uv sync)

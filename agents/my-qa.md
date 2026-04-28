@@ -10,7 +10,7 @@ mcpServers:
       type: stdio
       command: bash
       args:
-        - "${COOLCHESTRATION_REPO}/scripts/graphiti-launcher.sh"
+        - "${PRODUCTUNE_REPO}/scripts/graphiti-launcher.sh"
         - "qa"
 ---
 

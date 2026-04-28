@@ -9,7 +9,7 @@
 ollama pull nomic-embed-text
 
 # 0.2 — Graphiti infra 기동 (FalkorDB 컨테이너 + graphiti clone + uv sync)
-bash <coolchestration-clone>/scripts/setup-graphiti.sh   # clone 한 경로 그대로
+bash <productune-clone>/scripts/setup-graphiti.sh   # clone 한 경로 그대로
 ```
 
 **합격 기준:**
@@ -45,7 +45,7 @@ mkdir -p /tmp/co-test && cd /tmp/co-test
 git init -q
 cat > README.md <<'EOF'
 # Test project
-This is a temperery test for the orchestration setup.
+This is a temperery test for the productune setup.
 EOF
 git add . && git commit -q -m "init"
 ```
@@ -88,7 +88,7 @@ cd /tmp/co-test
 git reset --hard HEAD~0 >/dev/null 2>&1 || true
 cat > README.md <<'EOF'
 # Test project
-This is a temperery test for the orchestration setup.
+This is a temperery test for the productune setup.
 
 ## Features
 - adds 2 numbers
@@ -250,13 +250,13 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 
 ### 3.8 — install.sh 멱등 재실행 + autocompact append
 
-이 sub-phase 는 `coolchestration.env` 를 갈아엎으니 먼저 백업.
+이 sub-phase 는 `productune.env` 를 갈아엎으니 먼저 백업.
 
 ```sh
-cp ~/.codex/coolchestration.env ~/.codex/coolchestration.env.before-test 2>/dev/null || true
-rm ~/.codex/coolchestration.env
-bash <coolchestration-clone>/scripts/install.sh   # Enter (engine), Enter (Graphiti) 응답
-grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.codex/coolchestration.env
+cp ~/.codex/productune.env ~/.codex/productune.env.before-test 2>/dev/null || true
+rm ~/.codex/productune.env
+bash <productune-clone>/scripts/install.sh   # Enter (engine), Enter (Graphiti) 응답
+grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.codex/productune.env
 ```
 
 **합격 기준:**
@@ -267,17 +267,17 @@ grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.co
 멱등성 재확인 — 사용자 override 시뮬레이션을 위해 autocompact 값 수동 변경 후 install.sh 재실행해서 그대로 보존되는지:
 
 ```sh
-sed -i.bak 's/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85/' ~/.codex/coolchestration.env
-rm ~/.codex/coolchestration.env.bak
-bash <coolchestration-clone>/scripts/install.sh   # 기존 env 파일 인식, 재프롬프트 안 함
-grep CLAUDE_AUTOCOMPACT ~/.codex/coolchestration.env
+sed -i.bak 's/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85/' ~/.codex/productune.env
+rm ~/.codex/productune.env.bak
+bash <productune-clone>/scripts/install.sh   # 기존 env 파일 인식, 재프롬프트 안 함
+grep CLAUDE_AUTOCOMPACT ~/.codex/productune.env
 # 기대: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85 (보존, 70 으로 리셋 안 됨)
 ```
 
 원래 설정 복원:
 
 ```sh
-mv ~/.codex/coolchestration.env.before-test ~/.codex/coolchestration.env 2>/dev/null || true
+mv ~/.codex/productune.env.before-test ~/.codex/productune.env 2>/dev/null || true
 ```
 
 ## Phase 4 — 메모리 tier (Phase 0 필요)

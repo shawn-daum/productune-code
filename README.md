@@ -1,4 +1,4 @@
-# orchestration
+# productune
 
 A personal dev-workflow setup where a **PO orchestrator** (Codex CLI or Claude Code, your pick) delegates work to four specialized **Claude Code sub-agent personas** — **my-planner, my-designer, my-developer, my-qa** — each with its own 3-tier memory.
 
@@ -51,15 +51,15 @@ Graphiti is **bi-temporal** — every fact has `(valid_from, valid_to)` windows.
 
 ```sh
 # 1. Clone wherever you want — pick a path you'll remember
-git clone https://github.com/shawn-kim-axz/coolchestration.git ~/<your-path>/coolchestration
-cd ~/<your-path>/coolchestration
+git clone https://github.com/shawn-kim-axz/productune.git ~/<your-path>/productune
+cd ~/<your-path>/productune
 # (the rest of this README uses $REPO to mean the path you just cd'd into;
 #  in real shell you can use $PWD directly while you're in the cloned dir)
 
 # 2. Wire the persona/codex configs into ~/.claude and ~/.codex
 #    During this step, install.sh interactively asks which PO engine you want
 #    as default ('codex' or 'claude') and saves the choice to
-#    ~/.codex/coolchestration.env. Pick whichever — you can change later.
+#    ~/.codex/productune.env. Pick whichever — you can change later.
 bash scripts/install.sh
 
 # 3. Put my-po on your PATH (no sudo needed) — pick ONE:
@@ -86,7 +86,7 @@ claude agents        # should list my-planner/my-designer/my-developer/my-qa
 
 `install.sh` is idempotent and backs up any existing conflicting files at the target path with a `.bak.<timestamp>` suffix. It does **not** touch your PATH — that step is up to you (step 3 above).
 
-`install.sh` also writes `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` into `~/.codex/coolchestration.env`. The `my-po` wrapper sources that file with `set -a`, so any persona spawned through `my-po` inherits the lower compaction threshold automatically — no shell-rc edit needed. Direct `claude --agent my-X` calls do **not** inherit it; if you also use direct calls, add `export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to your shell rc.
+`install.sh` also writes `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` into `~/.codex/productune.env`. The `my-po` wrapper sources that file with `set -a`, so any persona spawned through `my-po` inherits the lower compaction threshold automatically — no shell-rc edit needed. Direct `claude --agent my-X` calls do **not** inherit it; if you also use direct calls, add `export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to your shell rc.
 
 > **Permission denied on /usr/local/bin?** That directory needs sudo on Apple Silicon Macs. Use option (a) or (b) above instead — neither requires elevated privileges.
 
@@ -134,13 +134,13 @@ Both `codex --profile po` and `claude --agent my-po` execute the same doctrine (
 | ToS clarity (no third-party concerns) | OK (each tool used with own auth) | **Cleanest** — 100% first-party |
 | Persistent env var | `MY_PO_ENGINE=codex` | `MY_PO_ENGINE=claude` |
 
-The default is set during `install.sh` (interactive prompt). To change later, edit `~/.codex/coolchestration.env`:
+The default is set during `install.sh` (interactive prompt). To change later, edit `~/.codex/productune.env`:
 
 ```sh
-echo 'MY_PO_ENGINE=claude' > ~/.codex/coolchestration.env   # or 'codex'
+echo 'MY_PO_ENGINE=claude' > ~/.codex/productune.env   # or 'codex'
 ```
 
-Priority order when `my-po` resolves the engine: `--engine` flag → shell env `$MY_PO_ENGINE` → `~/.codex/coolchestration.env` → fallback `codex`.
+Priority order when `my-po` resolves the engine: `--engine` flag → shell env `$MY_PO_ENGINE` → `~/.codex/productune.env` → fallback `codex`.
 
 ### Parallel sessions on the same project
 
@@ -226,7 +226,7 @@ All persona LLM calls stay on Anthropic hosted Claude. Only the *memory backend*
 ## Files
 
 ```
-orchestration/
+productune/
 ├── agents/                    # persona sub-agent definitions — symlinked to ~/.claude/agents/
 │   ├── my-planner.md
 │   ├── my-designer.md
@@ -260,7 +260,7 @@ Each persona has explicit rules in its `.md` frontmatter body:
 - **"claude doesn't list my personas"** → run `bash scripts/install.sh` (re-symlinks). Confirm `ls -la ~/.claude/agents/` shows symlinks pointing into this repo.
 - **"graphiti MCP fails to start"** → check `docker ps` (falkordb container up), `curl http://localhost:11434/api/tags` (ollama), and `ls ~/.graphiti/mcp_server/main.py` (clone succeeded).
 - **"entity extraction quality is bad"** → gemma4:26b depending on your tag may not match. Two fixes:
-  - swap to a stronger local LLM: `ollama pull gemma2:27b` (or `qwen2.5:32b`) and set `GRAPHITI_LLM_MODEL=<tag>` in `~/.codex/coolchestration.env`
+  - swap to a stronger local LLM: `ollama pull gemma2:27b` (or `qwen2.5:32b`) and set `GRAPHITI_LLM_MODEL=<tag>` in `~/.codex/productune.env`
   - or re-run `install.sh` and pick option **[2] Anthropic** — Claude Haiku for extraction + OpenAI embed. Hosted-quality with low add_memory cost (calls are rare).
 - **"embedding errors"** → ensure `ollama pull nomic-embed-text` ran successfully. Verify via `ollama list`.
 - **"PO loses session continuity"** → check `<target-project>/.codex/persona-sessions.json` — if malformed, reset with `echo '{}' > <project>/.codex/persona-sessions.json`.

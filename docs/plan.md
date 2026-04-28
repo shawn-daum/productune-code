@@ -259,7 +259,7 @@ Local-only 모드 참고 (주석으로 `.mcp.json.local` 같은 대체 파일 �
 
 경로: `/Users/x/Documents/dev/ntf-products/agentcafe/AGENTS.md`
 
-기존 Next.js 경고 유지 + "Orchestration", "Memory model(3-tier)", "Persona catalog" 섹션 추가. `codex --profile po` 로 기동, 단일 페르소나는 `claude --agent <name>` 로 직접.
+기존 Next.js 경고 유지 + "Productune", "Memory model(3-tier)", "Persona catalog" 섹션 추가. `codex --profile po` 로 기동, 단일 페르소나는 `claude --agent <name>` 로 직접.
 
 ### E. `package.json` scripts
 
@@ -413,7 +413,7 @@ claude --mcp-config .mcp.json -p "Using graphiti, invalidate the fact that says 
 - NEW: `.claude/agents/planner.md`, `designer.md`, `developer.md`, `qa.md`
 - NEW: `.mcp.json` (repo-local, basic-memory + graphiti)
 - NEW: `.codex/config.toml`, `.codex/po-instructions.md`, `.codex/persona-sessions.json`
-- MODIFY: `AGENTS.md` (orchestration + memory model 섹션)
+- MODIFY: `AGENTS.md` (productune + memory model 섹션)
 - MODIFY: `package.json` (scripts 7개)
 - MODIFY: `.gitignore` (+3 항목)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# install.sh — one-time setup to wire the orchestration repo into ~/.claude/ and ~/.codex/
+# install.sh — one-time setup to wire the productune repo into ~/.claude/ and ~/.codex/
 #
 # What it does:
 #   1. Symlinks agents/*.md  →  ~/.claude/agents/*.md        (persona sub-agents, editable in place)
@@ -73,50 +73,55 @@ else
 fi
 
 # 4) Make wrapper scripts executable (idempotent — git checkout usually preserves +x already)
-chmod +x "$ROOT/scripts/my-po" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh"
-say "wrapper scripts ready: $ROOT/scripts/{my-po,setup-graphiti.sh,install.sh}"
+chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh"
+say "wrapper scripts ready: $ROOT/scripts/{productune,setup-graphiti.sh,install.sh}"
+# Legacy `my-po` symlink (compat alias) — recreate if missing.
+if [ ! -e "$ROOT/scripts/my-po" ]; then
+  ln -s productune "$ROOT/scripts/my-po"
+  say "created compat symlink scripts/my-po → productune"
+fi
 
 # 5) Interactive: pick default PO engine (only if running in a terminal and not already set)
-PO_ENV_FILE="$HOME/.codex/coolchestration.env"
+PO_ENV_FILE="$HOME/.codex/productune.env"
 if [ -t 0 ] && [ -t 1 ] && [ ! -e "$PO_ENV_FILE" ]; then
   echo
-  printf '\033[1;36m[install]\033[0m Pick a default PO engine for `my-po`:\n'
+  printf '\033[1;36m[install]\033[0m Pick a default PO engine for `productune`:\n'
   cat <<'PROMPT'
   [1] codex   — Codex CLI (OpenAI subscription) hosts the PO orchestrator.
                 Personas still run on Claude Code. Splits cost across providers.
   [2] claude  — Claude Code hosts both PO and personas. 100% Anthropic stack,
                 cleanest ToS posture (no third-party-harness concerns).
   [Enter]     — skip; default to 'codex'. You can change anytime by editing
-                ~/.codex/coolchestration.env or running `my-po --engine <name>`.
+                ~/.codex/productune.env or running `productune --engine <name>`.
 
 PROMPT
   printf '  Choice [1/2/Enter]: '
   read -r CHOICE || CHOICE=""
   case "$CHOICE" in
     1|c|codex)
-      printf 'MY_PO_ENGINE=codex\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       say "default engine: codex (saved to $PO_ENV_FILE, repo path: $ROOT)"
       ;;
     2|a|cl|claude|anthropic)
-      printf 'MY_PO_ENGINE=claude\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       say "default engine: claude (saved to $PO_ENV_FILE, repo path: $ROOT)"
       ;;
     "")
-      printf 'MY_PO_ENGINE=codex\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       say "default engine: codex (no preference picked; saved baseline to $PO_ENV_FILE)"
       ;;
     *)
       warn "unrecognized choice '$CHOICE'; saving codex + repo path baseline"
-      printf 'MY_PO_ENGINE=codex\nCOOLCHESTRATION_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       ;;
   esac
 elif [ -e "$PO_ENV_FILE" ]; then
   CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
   # Update repo path in case user moved the clone
-  if grep -qE '^COOLCHESTRATION_REPO=' "$PO_ENV_FILE"; then
-    sed -i.bak -E "s|^COOLCHESTRATION_REPO=.*|COOLCHESTRATION_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
+  if grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
+    sed -i.bak -E "s|^PRODUCTUNE_REPO=.*|PRODUCTUNE_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
   else
-    printf 'COOLCHESTRATION_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
+    printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   fi
   say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}, repo path refreshed to $ROOT)"
 fi
@@ -200,13 +205,14 @@ Next steps:
   2. Pull an embedding model for Ollama if you don't already have one:
        ollama pull nomic-embed-text
 
-  3. Auto-compact threshold (70%) is auto-applied via $PO_ENV_FILE when you launch through \`my-po\`.
+  3. Auto-compact threshold (70%) is auto-applied via $PO_ENV_FILE when you launch through \`productune\`.
      Direct \`claude --agent my-X\` calls don't inherit this — add \`export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\` to your shell rc if you also use direct calls.
 
   4. Verify Claude sees the personas:
        claude agents
+     (expect: productune, my-designer, my-developer, my-qa)
 
-  5. Put the \`my-po\` wrapper on your PATH. Pick one (no sudo needed):
+  5. Put the \`productune\` wrapper on your PATH. Pick one (no sudo needed):
 
      a) Add the scripts dir to PATH (recommended — works everywhere):
           echo 'export PATH="$ROOT/scripts:\$PATH"' >> ~/.zshrc
@@ -215,35 +221,36 @@ Next steps:
 
      b) Symlink into ~/.local/bin (XDG, no sudo):
           mkdir -p ~/.local/bin
-          ln -sf $ROOT/scripts/my-po ~/.local/bin/my-po
+          ln -sf $ROOT/scripts/productune ~/.local/bin/productune
         Then make sure ~/.local/bin is on your PATH (most modern shells already include it).
 
      c) Symlink into /usr/local/bin (may need sudo on Apple Silicon):
-          sudo ln -sf $ROOT/scripts/my-po /usr/local/bin/my-po
+          sudo ln -sf $ROOT/scripts/productune /usr/local/bin/productune
 
-     Verify: \`which my-po\` should print a path.
+     Verify: \`which productune\` should print a path.
+     (Legacy \`my-po\` command name is kept as a compat symlink — both work.)
 
   6. From any target project directory, start PO:
-       my-po
-     If another my-po is already running on the same project, this will
+       productune
+     If another productune is already running on the same project, this will
      auto-create a git worktree and start the PO engine there. After the
      engine exits it asks once whether to clean up safe worktrees.
 
      The default PO engine was set in step 5 above (saved to
-     ~/.codex/coolchestration.env). To override per-call:
-       my-po --engine claude     # one-off: Claude Code hosts PO
-       my-po --engine codex      # one-off: Codex hosts PO
-     To change the default later, edit ~/.codex/coolchestration.env.
+     ~/.codex/productune.env). To override per-call:
+       productune --engine claude     # one-off: Claude Code hosts PO
+       productune --engine codex      # one-off: Codex hosts PO
+     To change the default later, edit ~/.codex/productune.env.
 
      Direct alternatives (no wrapper logic, no parallel-safety):
-       codex --profile po
-       claude --agent my-po
-       claude --agent my-planner    # single persona
+       codex --profile productune     # (\`--profile po\` also works as legacy alias)
+       claude --agent productune
+       claude --agent my-developer    # single persona
 
   7. After parallel work, audit & remove auto-created worktrees:
-       my-po gc        # dry-run, classify each my-po/* worktree
-       my-po gc -y     # remove only the ✓ safe ones (dirty / unmerged-unpushed left alone)
-       (verbose aliases: 'my-po --cleanup' / 'my-po --cleanup --auto' both still work)
+       productune gc        # dry-run, classify each productune/* (or legacy my-po/*) worktree
+       productune gc -y     # remove only the ✓ safe ones (dirty / unmerged-unpushed left alone)
+       (verbose aliases: 'productune --cleanup' / 'productune --cleanup --auto' both still work)
 
   8. To update personas later, just edit files in $ROOT/agents/ — symlinks ensure changes apply immediately.
 EOF

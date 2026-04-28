@@ -132,7 +132,7 @@ permissionMode: plan           # read-only, proposes before executing
 
 ```sh
 # 1. Create the file
-cat > "$REPO/agents/security-reviewer.md" <<'EOF'    # $REPO = wherever you cloned coolchestration
+cat > "$REPO/agents/security-reviewer.md" <<'EOF'    # $REPO = wherever you cloned productune
 ---
 name: security-reviewer
 description: Audits code changes for common security issues (injection, auth, secrets, PII). Read-only.
@@ -154,7 +154,7 @@ When invoked, audit the listed changed files for:
 EOF
 
 # 2. Sync to ~/.claude/agents/
-bash "$REPO/scripts/install.sh"   # $REPO = your coolchestration clone dir
+bash "$REPO/scripts/install.sh"   # $REPO = your productune clone dir
 
 # 3. Verify
 claude agents | grep security-reviewer
