@@ -45,9 +45,9 @@ Claude Code 한 세션으로 디자인·구현·QA 다 시키면:
 사용자 ─한 문장─▶ productune (PO, Codex 또는 Claude Code 선택)
                    │   ├ 자체 decompose / risk-flag / pipeline (구 my-planner 흡수)
                    │
-                   ├─ my-designer   (UX 원칙 / Brand / DS / docs/design/*.md, default opus)
-                   ├─ my-developer  (코드 구현, default sonnet)
-                   └─ my-qa         (lint/build/test, default haiku)
+                   ├─ pdt-designer   (UX 원칙 / Brand / DS / docs/design/*.md, default opus)
+                   ├─ pdt-developer  (코드 구현, default sonnet)
+                   └─ pdt-qa         (lint/build/test, default haiku)
                    │
 사용자 ◀─≤5 bullet─ PO 가 결과 합성
 ```
@@ -79,7 +79,7 @@ PO 는 코드 안 짜고 디자인도 안 함. PRD 수립 + 라우팅 + gate + �
 | 메모리 | MEMORY.md + 세션 transcript | 3-tier (session/project/wiki) + 페르소나별 격리 |
 | 피드백 처리 | 같은 세션 안에서 응답 | 어떤 페르소나 소관인지 PO 가 판정 → 그 페르소나만 resume |
 | 권한 | 한 페르소나가 다 가짐 | 페르소나별 좁은 allow-list (`tools: Bash(npm run *), ...`) |
-| 진화 메커니즘 | 수동 system prompt 수정 | PO 가 실패 패턴 감지 → "my-qa 모델 sonnet 으로 올릴까요?" 자발 제안 |
+| 진화 메커니즘 | 수동 system prompt 수정 | PO 가 실패 패턴 감지 → "pdt-qa 모델 sonnet 으로 올릴까요?" 자발 제안 |
 | 모델 선택 | 사용자 수동 / 페르소나 frontmatter 고정 | PO 가 task 난이도 → tier 매핑 (OSS 7-level), `xhigh` effort 까지 4 단계 |
 | 품질 검증 | 사용자 피드백으로만 | 페르소나 confidence + unresolved 자동 보고 → PO 가 retry / skill / 진행 3-option |
 | 워크플로 | freeform | Real Engineering: PRD → Test → Issue → 구현 → Refactor (mattpocock skill 자동) |
@@ -148,15 +148,15 @@ Codex/Claude TUI 가 뜨고, 한 문장 던지면:
 > 로그인 모달에 비밀번호 찾기 링크 추가해줘.
 
 [PO] 새 task 'login-forgot-pw' 시작합니다.
-→ planning 2 개 작업 (my-designer + my-developer)
-→ delegating to my-designer for task #1 (model=opus, effort=high — UI 디자인)...
-✓ my-designer: docs/design/login-forgot-pw.md
-→ delegating to my-developer for task #2...
-✓ my-developer: 2 files changed
-→ design-compliance cross-check (my-designer)...
+→ planning 2 개 작업 (pdt-designer + pdt-developer)
+→ delegating to pdt-designer for task #1 (model=opus, effort=high — UI 디자인)...
+✓ pdt-designer: docs/design/login-forgot-pw.md
+→ delegating to pdt-developer for task #2...
+✓ pdt-developer: 2 files changed
+→ design-compliance cross-check (pdt-designer)...
 ✓ matches intent
-→ delegating to my-qa...
-✓ my-qa: pass
+→ delegating to pdt-qa...
+✓ pdt-qa: pass
 
 ## Changes
 - src/components/LoginModal.tsx: 비번 찾기 링크 추가
@@ -174,15 +174,15 @@ Codex/Claude TUI 가 뜨고, 한 문장 던지면:
 ```
 > 그 디자인 좀 더 심플하게.
 
-[PO] my-designer 후속으로 보고 그 세션 resume.
-→ delegating to my-designer (resumed)...
-✓ my-designer: docs/design/login-forgot-pw.md (v2)
-→ my-developer (디자인 변경 반영)...
-→ my-qa (재검증)...
+[PO] pdt-designer 후속으로 보고 그 세션 resume.
+→ delegating to pdt-designer (resumed)...
+✓ pdt-designer: docs/design/login-forgot-pw.md (v2)
+→ pdt-developer (디자인 변경 반영)...
+→ pdt-qa (재검증)...
 [PO] ## Changes ...
 ```
 
-PO re-decompose 안 함 (피드백은 디자인 세부 변경만). my-designer 만 resume → 영향받는 dev/my-qa 만 chain.
+PO re-decompose 안 함 (피드백은 디자인 세부 변경만). pdt-designer 만 resume → 영향받는 dev/pdt-qa 만 chain.
 
 ### 새로운 작업 / 옛 작업 부활
 
@@ -194,7 +194,7 @@ PO re-decompose 안 함 (피드백은 디자인 세부 변경만). my-designer �
 > 어제 만든 sum.js 좀 다시 손대자.
 [PO] 이건 'add-sum-helper' 후속처럼 보여요. 이어서 갈까요? (y/n)
 > y
-[PO] past_task 복원, my-developer 의 옛 session resume.
+[PO] past_task 복원, pdt-developer 의 옛 session resume.
 ```
 
 ### 같은 프로젝트 두 번째 터미널 (자동 worktree 분리)
@@ -226,14 +226,14 @@ codex › "결제 화면 토스페이 추가"   # 터미널 1과 격리됨
 
 2026-04-23 14:30–15:10  login-forgot-pw          [done]
   요청  : 로그인 모달 비번 찾기 링크
-  플로우: PO planning ✓ → my-designer ✓ → my-developer ✓ → my-qa ✓
+  플로우: PO planning ✓ → pdt-designer ✓ → pdt-developer ✓ → pdt-qa ✓
   결과  : 2 files shipped. Designer copy 'TBD' 제외 모든 항목 만족.
 
 2026-04-24 09:00–09:12  fix-readme-typo          [done]
   ...
 
 진행중: add-license-section                       [in-progress]
-  플로우 (지금까지): my-developer (turn 2) ⏳
+  플로우 (지금까지): pdt-developer (turn 2) ⏳
 ```
 
 PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
@@ -245,7 +245,7 @@ PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
 | 컴포넌트 | 구현 |
 |---|---|
 | PO 오케스트레이터 | Codex CLI 또는 Claude Code (사용자 선택) |
-| 페르소나 4종 | `agents/{productune,my-designer,my-developer,my-qa}.md` + frontmatter (planner role 흡수) |
+| 페르소나 4종 | `agents/{productune,pdt-designer,pdt-developer,pdt-qa}.md` + frontmatter (planner role 흡수) |
 | 페르소나 호출 | `claude --agent X --print --output-format json` |
 | 상태 저장 | `<project>/.codex/po-state.json` (current_task / past_tasks / recent_turns) |
 | 사용자 성향 메모 | `~/.codex/po-memory.md` |

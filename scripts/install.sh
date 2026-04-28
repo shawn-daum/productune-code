@@ -18,10 +18,94 @@ say() { printf "\033[1;34m[install]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[install]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[install]\033[0m %s\n" "$*" >&2; exit 1; }
 
+# ── Hardware tier detection ────────────────────────────────────────────────────
+detect_tier() {
+  local ram_gb chip arch has_docker disk_free_gb apple_silicon=0
+  ram_gb=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1024/1024/1024)}' || echo 0)
+  chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+  arch=$(uname -m)
+  has_docker=0
+  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && has_docker=1
+  disk_free_gb=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
+
+  [[ "$chip" == *"Apple M"* || "$arch" == "arm64" ]] && apple_silicon=1
+
+  if [[ $has_docker == 0 || $disk_free_gb -lt 5 ]]; then echo "B"; return; fi
+  if [[ $apple_silicon == 1 && $ram_gb -ge 16 && $disk_free_gb -ge 10 ]]; then echo "S"; return; fi
+  if [[ $apple_silicon == 1 && $ram_gb -ge 8 ]]; then echo "A"; return; fi
+  if [[ $ram_gb -ge 32 && $disk_free_gb -ge 10 ]]; then echo "S"; return; fi
+  if [[ $ram_gb -ge 16 ]]; then echo "A"; return; fi
+  echo "B"
+}
+
+# ── Local LLM installer (Tier S/A only) ───────────────────────────────────────
+install_local_llm() {
+  local model="$1"
+
+  if ! command -v ollama >/dev/null 2>&1; then
+    say "Ollama 미설치. 설치 시작..."
+    if [[ "$(uname)" == "Darwin" ]]; then
+      brew install ollama 2>/dev/null || {
+        warn "brew install ollama 실패. https://ollama.com/download 에서 수동 설치 후 재실행."
+        return 1
+      }
+    else
+      curl -fsSL https://ollama.com/install.sh | sh || { warn "ollama 설치 실패"; return 1; }
+    fi
+  fi
+
+  if ! curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+    say "Ollama daemon 시작..."
+    nohup ollama serve >/dev/null 2>&1 &
+    sleep 3
+  fi
+
+  say "$model pull 중 (한 번만, 5–15분 소요)..."
+  if ! ollama pull "$model"; then
+    echo
+    printf "  [r] 재시도  [k] wiki-keeper(Claude API)로 대신 가기  [q] 중단: "
+    read -r choice || choice="q"
+    case "$choice" in
+      r|R) ollama pull "$model" || return 1 ;;
+      k|K) WIKI_BACKEND=keeper; return 0 ;;
+      *)   return 1 ;;
+    esac
+  fi
+
+  say "nomic-embed-text pull 중 (Graphiti 임베딩용, ~275MB)..."
+  ollama pull nomic-embed-text || warn "nomic-embed-text pull 실패 — 나중에 수동으로: ollama pull nomic-embed-text"
+}
+
+# ── Backend variant activator ──────────────────────────────────────────────────
+activate_backend() {
+  local backend="$1"   # graphiti | keeper | fs
+  local variants_dir="$ROOT/agents/variants/$backend"
+
+  if [ ! -d "$variants_dir" ]; then
+    warn "variants dir not found: $variants_dir — leaving current agents as-is"
+    return
+  fi
+
+  for variant in "$variants_dir"/*.md; do
+    local name; name="$(basename "$variant")"
+    local dest="$ROOT/agents/$name"
+    ln -sfn "$variant" "$dest"
+    say "backend=$backend: agents/$name → variants/$backend/$name"
+  done
+
+  # wiki-keeper only needed for keeper backend — link/unlink accordingly
+  local keeper_dest="$ROOT/agents/pdt-wiki-keeper.md"
+  if [[ "$backend" == "keeper" ]]; then
+    if [ ! -e "$keeper_dest" ]; then
+      ln -sfn "$ROOT/agents/pdt-wiki-keeper.md" "$keeper_dest" 2>/dev/null || true
+    fi
+  fi
+}
+
 # Preflight
 command -v claude >/dev/null || die "claude CLI not found. Install Claude Code first."
 command -v codex  >/dev/null || die "codex CLI not found. Run: npm i -g @openai/codex"
-command -v uv     >/dev/null || die "uv not found. Run: brew install uv"
+command -v uv     >/dev/null || warn "uv not found (optional). Install if needed: brew install uv"
 command -v jq     >/dev/null || die "jq not found. Run: brew install jq"
 
 # 1) Symlink agents (and clean up any dangling symlinks from prior renames)
@@ -73,8 +157,9 @@ else
 fi
 
 # 4) Make wrapper scripts executable (idempotent — git checkout usually preserves +x already)
-chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh"
-say "wrapper scripts ready: $ROOT/scripts/{productune,setup-graphiti.sh,install.sh}"
+chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh" \
+         "$ROOT/scripts/wiki-init.sh" "$ROOT/scripts/migrate-graphiti-to-fs.sh"
+say "wrapper scripts ready"
 # Legacy `my-po` symlink (compat alias) — recreate if missing.
 if [ ! -e "$ROOT/scripts/my-po" ]; then
   ln -s productune "$ROOT/scripts/my-po"
@@ -126,63 +211,131 @@ elif [ -e "$PO_ENV_FILE" ]; then
   say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}, repo path refreshed to $ROOT)"
 fi
 
-# 6) Interactive: pick Graphiti backend provider (only if not yet set)
-if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" 2>/dev/null; then
+# 6) Wiki memory backend — hardware-aware tier detection + model recommendation
+WIKI_BACKEND=""
+if grep -qE '^WIKI_BACKEND=' "$PO_ENV_FILE" 2>/dev/null; then
+  WIKI_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
+  say "Wiki backend already configured: $WIKI_BACKEND (skipping detection)"
+elif [ -t 0 ] && [ -t 1 ]; then
   echo
-  printf '\033[1;36m[install]\033[0m Pick Graphiti (long-term wiki memory) backend provider:\n'
-  cat <<'PROMPT'
-  [1] OpenAI    — gpt-4o-mini + text-embedding-3-small.
-                  Highest quality entity extraction. Needs OPENAI_API_KEY env.
-                  Cost: ~$0.01 / coding session typical.
-  [2] Anthropic — Claude Haiku for LLM + OpenAI embed.
-                  Hybrid path: hosted-quality extraction, OpenAI embed.
-                  Needs ANTHROPIC_API_KEY env (+ OPENAI_API_KEY for embed).
-  [3] Local     — Ollama gemma4:26b + nomic-embed-text. Free, slower, no network.
-                  Needs `ollama pull gemma4:26b` and `ollama pull nomic-embed-text`.
-                  For better extraction quality, swap LLM to gemma2:27b or qwen2.5:32b
-                  (set GRAPHITI_LLM_MODEL in the env file after install).
-  [Enter]       — [1] OpenAI default. Change later by editing the env file.
+  printf '\033[1;36m[install]\033[0m Wiki memory backend 설정 (하드웨어 감지 중)...\n'
+
+  RAM_GB=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1024/1024/1024)}' || echo 0)
+  CHIP=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+  HAS_DOCKER=0; command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && HAS_DOCKER=1
+  DISK_FREE=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
+  DETECTED_TIER=$(detect_tier)
+
+  printf "  감지 결과: %s, RAM %dGB, Docker=%s, 여유디스크=%dGB\n" \
+    "$CHIP" "$RAM_GB" "$([ $HAS_DOCKER -eq 1 ] && echo yes || echo no)" "$DISK_FREE"
+
+  case "$DETECTED_TIER" in
+    S)
+      printf '\033[1;32m  → Tier S (Smooth)\033[0m 감지. Graphiti + async write 권장.\n'
+      cat <<'PROMPT'
+
+  로컬 LLM 선택 (Graphiti entity 추출용):
+
+  [1] qwen2.5:14b    9GB disk, ~9GB RAM
+       + 최고 추출 품질, 한국어 강함, multilingual
+       − write 가장 느림 (8–15s, background라 안 보임)
+       *기본 추천*
+
+  [2] gemma2:9b      5.5GB disk, ~6GB RAM
+       + 안정적 structured output, 빠름 (write 3–6s)
+       − 한국어 약간 약함
+
+  [3] llama3.1:8b    5GB disk, ~5.5GB RAM
+       + 영어 reasoning 강, 잘 검증됨
+       − 한국어 약함, 추출 품질 #1보다 약간↓
+
+  [k] skip — wiki-keeper(Claude API)로 대신 가기
 
 PROMPT
-  printf '  Choice [1/2/3/Enter]: '
-  read -r GCHOICE || GCHOICE=""
-  case "$GCHOICE" in
-    2|anthropic|a)
-      cat >> "$PO_ENV_FILE" <<EOF
-GRAPHITI_LLM_PROVIDER=anthropic
-GRAPHITI_LLM_MODEL=claude-haiku-4-5-20251001
-GRAPHITI_EMBEDDER_PROVIDER=openai
-GRAPHITI_EMBEDDER_MODEL=text-embedding-3-small
-EOF
-      say "Graphiti backend: anthropic LLM + openai embed (saved to $PO_ENV_FILE)"
-      say "  → ensure ANTHROPIC_API_KEY and OPENAI_API_KEY are set in your shell rc"
+      printf '  선택 [1/2/3/k, 기본=1]: '
+      read -r MCHOICE || MCHOICE=""
+      case "${MCHOICE:-1}" in
+        2) LLM_MODEL=gemma2:9b ;;
+        3) LLM_MODEL=llama3.1:8b ;;
+        k|K) WIKI_BACKEND=keeper ;;
+        *) LLM_MODEL=qwen2.5:14b ;;
+      esac
       ;;
-    3|local|ollama|l)
+    A)
+      printf '\033[1;33m  → Tier A (Acceptable)\033[0m 감지. Graphiti + 소형 LLM 권장.\n'
+      cat <<'PROMPT'
+
+  로컬 LLM 선택:
+
+  [1] qwen2.5:7b     5GB disk, ~5GB RAM
+       + Tier A 최적 균형, 한국어 강함
+       − 8GB Mac에서 다른 앱 동시 사용 시 빡빡함
+       *기본 추천*
+
+  [2] llama3.1:8b    5GB disk, ~5.5GB RAM
+       + 영어 reasoning 강
+       − 8GB에서 swap 가능, 한국어 약함
+
+  [3] phi3.5:3.8b    2.5GB disk, ~3GB RAM
+       + 매우 가볍고 빠름 (write 1–3s)
+       − 추출 품질 눈에 띄게↓ (entity 누락 잦음)
+
+  [k] skip — wiki-keeper(Claude API)로 대신 가기
+
+PROMPT
+      printf '  선택 [1/2/3/k, 기본=1]: '
+      read -r MCHOICE || MCHOICE=""
+      case "${MCHOICE:-1}" in
+        2) LLM_MODEL=llama3.1:8b ;;
+        3) LLM_MODEL=phi3.5:3.8b ;;
+        k|K) WIKI_BACKEND=keeper ;;
+        *) LLM_MODEL=qwen2.5:7b ;;
+      esac
+      ;;
+    B|*)
+      printf '\033[1;31m  → Tier B (Constrained)\033[0m 감지 (RAM 부족 또는 Docker 없음).\n'
+      printf '  wiki-keeper agent (Claude API) 자동 선택.\n'
+      WIKI_BACKEND=keeper
+      ;;
+  esac
+
+  # If not overridden to keeper, proceed with Graphiti + chosen LLM
+  if [ -z "$WIKI_BACKEND" ] && [ -n "${LLM_MODEL:-}" ]; then
+    WIKI_BACKEND=graphiti
+    say "로컬 LLM 설치 시작: $LLM_MODEL"
+    if install_local_llm "$LLM_MODEL"; then
       cat >> "$PO_ENV_FILE" <<EOF
+WIKI_BACKEND=graphiti
 GRAPHITI_LLM_PROVIDER=ollama
-GRAPHITI_LLM_MODEL=gemma4:26b
+GRAPHITI_LLM_MODEL=$LLM_MODEL
 GRAPHITI_EMBEDDER_PROVIDER=ollama
 GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
 EOF
-      say "Graphiti backend: ollama (local). Pull models if missing:"
-      say "  ollama pull gemma4:26b && ollama pull nomic-embed-text"
-      say "  (alt LLMs for stronger extraction: gemma2:27b, qwen2.5:32b — set GRAPHITI_LLM_MODEL accordingly)"
-      ;;
-    *)
-      cat >> "$PO_ENV_FILE" <<EOF
-GRAPHITI_LLM_PROVIDER=openai
-GRAPHITI_LLM_MODEL=gpt-4o-mini
-GRAPHITI_EMBEDDER_PROVIDER=openai
-GRAPHITI_EMBEDDER_MODEL=text-embedding-3-small
-EOF
-      say "Graphiti backend: openai (saved to $PO_ENV_FILE)"
-      say "  → ensure OPENAI_API_KEY is set in your shell rc"
-      ;;
-  esac
-elif grep -qE '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" 2>/dev/null; then
-  CURRENT_GRAPHITI="$(grep -E '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
-  say "Graphiti provider config already set (current LLM provider: $CURRENT_GRAPHITI)"
+      say "Graphiti 로컬 backend 설정 완료 ($LLM_MODEL)"
+      say "  → FalkorDB 시작: bash $ROOT/scripts/setup-graphiti.sh"
+    else
+      warn "LLM 설치 실패 — wiki-keeper로 fallback"
+      WIKI_BACKEND=keeper
+    fi
+  fi
+
+  # keeper fallback: write env and init wiki dirs
+  if [ "$WIKI_BACKEND" = "keeper" ]; then
+    printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
+    say "Wiki backend: wiki-keeper agent (Claude API). 로컬 LLM/Docker 불필요."
+    bash "$ROOT/scripts/wiki-init.sh"
+  fi
+else
+  # Non-interactive (CI / piped) — default to keeper (safest, no local deps)
+  WIKI_BACKEND=keeper
+  printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
+  say "Non-interactive mode: wiki-keeper backend selected"
+  bash "$ROOT/scripts/wiki-init.sh"
 fi
+
+# Activate backend-specific agent variants
+FINAL_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo graphiti)"
+activate_backend "$FINAL_BACKEND"
 
 # 7) Ensure auto-compact threshold default is present in env file.
 #    `productune` sources this with `set -a` so the var is inherited by spawned
@@ -224,63 +377,56 @@ PROMPT
 fi
 
 # 9) Summary + next steps
+FINAL_BACKEND_DISPLAY="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
+
 cat <<EOF
 
 $(printf "\033[1;32m✓ install complete\033[0m")
 
+Wiki backend: $FINAL_BACKEND_DISPLAY
+
 Next steps:
-  1. Run \`bash $ROOT/scripts/setup-graphiti.sh\` to install Graphiti MCP server + FalkorDB for persona wiki memory.
-     (Skippable on first try — personas still work without wiki tier, falling back to project docs.)
+  1. Wiki backend = $FINAL_BACKEND_DISPLAY
+$(if [ "$FINAL_BACKEND_DISPLAY" = "graphiti" ]; then
+cat <<'GRAPHITI'
+     Run `bash $ROOT/scripts/setup-graphiti.sh` to start FalkorDB (Docker) + Graphiti MCP server.
+     (Skippable on first try — personas work without wiki tier, falling back to project docs.)
+GRAPHITI
+elif [ "$FINAL_BACKEND_DISPLAY" = "keeper" ]; then
+cat <<'KEEPER'
+     wiki-keeper agent (Claude API) active. No local models needed.
+     Wiki stored at ~/.productune/wiki/. Verify: ls ~/.productune/wiki/
+KEEPER
+fi)
 
-  2. Pull an embedding model for Ollama if you don't already have one:
-       ollama pull nomic-embed-text
+  2. Auto-compact threshold (70%) is auto-applied via $PO_ENV_FILE when you launch through \`productune\`.
+     Direct \`claude --agent my-X\` calls don't inherit this — add \`export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\` to your shell rc if needed.
 
-  3. Auto-compact threshold (70%) is auto-applied via $PO_ENV_FILE when you launch through \`productune\`.
-     Direct \`claude --agent my-X\` calls don't inherit this — add \`export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\` to your shell rc if you also use direct calls.
-
-  4. Verify Claude sees the personas:
+  3. Verify Claude sees the personas:
        claude agents
-     (expect: productune, my-designer, my-developer, my-qa)
+     (expect: pdt-po, pdt-designer, pdt-developer, pdt-qa$([ "$FINAL_BACKEND_DISPLAY" = "keeper" ] && echo ", pdt-wiki-keeper")
 
-  5. Put the \`productune\` wrapper on your PATH. Pick one (no sudo needed):
+  4. Put the \`productune\` wrapper on your PATH. Pick one (no sudo needed):
 
-     a) Add the scripts dir to PATH (recommended — works everywhere):
-          echo 'export PATH="$ROOT/scripts:\$PATH"' >> ~/.zshrc
-          source ~/.zshrc
-        (use ~/.bashrc if you're on bash)
-
-     b) Symlink into ~/.local/bin (XDG, no sudo):
-          mkdir -p ~/.local/bin
-          ln -sf $ROOT/scripts/productune ~/.local/bin/productune
-        Then make sure ~/.local/bin is on your PATH (most modern shells already include it).
-
-     c) Symlink into /usr/local/bin (may need sudo on Apple Silicon):
+     a) Add the scripts dir to PATH (recommended):
+          echo 'export PATH="$ROOT/scripts:\$PATH"' >> ~/.zshrc && source ~/.zshrc
+     b) Symlink into ~/.local/bin:
+          mkdir -p ~/.local/bin && ln -sf $ROOT/scripts/productune ~/.local/bin/productune
+     c) Symlink into /usr/local/bin (may need sudo):
           sudo ln -sf $ROOT/scripts/productune /usr/local/bin/productune
 
-     Verify: \`which productune\` should print a path.
-     (Legacy \`my-po\` command name is kept as a compat symlink — both work.)
-
-  6. From any target project directory, start PO:
+  5. From any target project directory, start PO:
        productune
-     If another productune is already running on the same project, this will
-     auto-create a git worktree and start the PO engine there. After the
-     engine exits it asks once whether to clean up safe worktrees.
 
-     The default PO engine was set in step 5 above (saved to
-     ~/.codex/productune.env). To override per-call:
-       productune --engine claude     # one-off: Claude Code hosts PO
-       productune --engine codex      # one-off: Codex hosts PO
-     To change the default later, edit ~/.codex/productune.env.
-
-     Direct alternatives (no wrapper logic, no parallel-safety):
-       codex --profile productune     # (\`--profile po\` also works as legacy alias)
-       claude --agent productune
-       claude --agent my-developer    # single persona
+  6. To switch wiki backend later (e.g. Tier A → B):
+       # Edit ~/.codex/productune.env: WIKI_BACKEND=keeper
+       # Then re-run: bash $ROOT/scripts/install.sh
+       # To migrate existing Graphiti episodes:
+       #   bash $ROOT/scripts/migrate-graphiti-to-fs.sh
 
   7. After parallel work, audit & remove auto-created worktrees:
-       productune gc        # dry-run, classify each productune/* (or legacy my-po/*) worktree
-       productune gc -y     # remove only the ✓ safe ones (dirty / unmerged-unpushed left alone)
-       (verbose aliases: 'productune --cleanup' / 'productune --cleanup --auto' both still work)
+       productune gc        # dry-run
+       productune gc -y     # remove safe ones
 
-  8. To update personas later, just edit files in $ROOT/agents/ — symlinks ensure changes apply immediately.
+  8. To update personas, edit files in $ROOT/agents/variants/<backend>/ — re-run install.sh or re-symlink.
 EOF

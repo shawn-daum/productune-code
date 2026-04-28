@@ -64,14 +64,14 @@ $(printf "\033[1;32m✓ skills setup complete\033[0m")
     - mattpocock/to-prd, grill-me, to-issues
     - phuryn/pm-product-discovery, pm-product-strategy, pm-execution
 
-  my-designer:
+  pdt-designer:
     - mattpocock/design-an-interface
 
-  my-developer:
+  pdt-developer:
     - mattpocock/tdd, triage-issue, request-refactor-plan,
       improve-codebase-architecture, setup-pre-commit, git-guardrails-claude-code
 
-  my-qa:
+  pdt-qa:
     - mattpocock/tdd (검증 모드)
 
 부족하면 productune 의 quality escalation Path 2 가 'skill-fetch search'

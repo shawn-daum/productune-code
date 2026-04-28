@@ -40,7 +40,7 @@ To graduate a worktree's branch into a real feature branch (and exclude it from 
 Permanent (commits into the repo):
 
 ```markdown
-# agents/my-qa.md — change this line
+# agents/pdt-qa.md — change this line
 -model: haiku
 +model: sonnet
 ```
@@ -48,7 +48,7 @@ Permanent (commits into the repo):
 One-off (no file edit, single call):
 
 ```sh
-claude --agent my-qa --model sonnet -p "your prompt"
+claude --agent pdt-qa --model sonnet -p "your prompt"
 ```
 
 CLI `--model` flag wins over frontmatter. Useful for A/B testing before you commit.
@@ -57,7 +57,7 @@ Aliases: `sonnet`, `opus`, `haiku`. Or full IDs: `claude-opus-4-7`, `claude-sonn
 
 ## 2. Add an MCP server (RAG, browser, etc.) to ONE persona
 
-Suppose you found a cool RAG MCP (e.g. `awesome-docs-rag`) and want only the my-developer to use it (not my-planner/my-designer/my-qa). Append to `agents/my-developer.md`'s frontmatter:
+Suppose you found a cool RAG MCP (e.g. `awesome-docs-rag`) and want only the pdt-developer to use it (not my-planner/pdt-designer/pdt-qa). Append to `agents/pdt-developer.md`'s frontmatter:
 
 ```yaml
 mcpServers:
@@ -78,12 +78,12 @@ tools: Read, Write, Edit, Bash, Glob, Grep,
        mcp__awesome-rag__search, mcp__awesome-rag__fetch
 ```
 
-Save. Next `claude --agent my-developer` call spawns the new MCP server alongside graphiti.
+Save. Next `claude --agent pdt-developer` call spawns the new MCP server alongside graphiti.
 
 **One-off experiment** (no file edit):
 
 ```sh
-claude --agent my-developer \
+claude --agent pdt-developer \
   --mcp-config '{"mcpServers":{"awesome-rag":{"type":"stdio","command":"uvx","args":["awesome-docs-rag-mcp"]}}}' \
   --allowedTools "mcp__awesome-rag__search" \
   -p "try the new RAG"
@@ -213,7 +213,7 @@ If you change PO's doctrine itself (e.g. new gate rule, new evolution trigger), 
 claude agents
 
 # Dry-run — ask the persona to describe its own context
-claude --agent my-qa -p "List your memory tiers, your tools, your MCP servers, and any skills loaded. Return as JSON." --output-format json
+claude --agent pdt-qa -p "List your memory tiers, your tools, your MCP servers, and any skills loaded. Return as JSON." --output-format json
 ```
 
 The agent's own output is the most reliable test of whether your frontmatter is being parsed correctly.

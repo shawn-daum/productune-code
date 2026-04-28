@@ -8,9 +8,9 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 ```
 사용자 ─한 문장─▶ productune (PO orchestrator, sonnet/opus)
                    │
-                   ├── claude --agent my-designer   → UX/Brand/Design System (default opus)
-                   ├── claude --agent my-developer  → 구현 (default sonnet)
-                   └── claude --agent my-qa         → 검증 (default haiku)
+                   ├── claude --agent pdt-designer   → UX/Brand/Design System (default opus)
+                   ├── claude --agent pdt-developer  → 구현 (default sonnet)
+                   └── claude --agent pdt-qa         → 검증 (default haiku)
                                                   │
                                                   └─ 각 페르소나 3-tier 메모리:
                                                      1. session  — Claude session (per ticket)
@@ -42,9 +42,9 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 | 페르소나 | Default 모델 | Why mode | How mode | What mode |
 |---|---|---|---|---|
 | **productune** (PO) | sonnet | **opus + ⚡xhigh** — MVP PRD 첫 round 수립 (Discovery / 실현가능성 / 위험 동시 reasoning) | sonnet/medium — 라우팅 / 티켓 관리 / 교통정리 | — |
-| **my-designer** | opus | **opus + ⚡xhigh** — net-new 시스템 디자인 (UX/Brand/DS) | sonnet/low — 단순 token 매핑, haiku — 단일 컴포넌트 compliance | — |
-| **my-developer** | sonnet | — | **opus + high** — 아키텍처 / 멀티-파일 refactor / 2턴+ 디버깅. **opus + ⚡xhigh** — 3턴 째 디버깅 / 시스템 차원 결정 | sonnet/medium — PRD 기반 명료한 구현 |
-| **my-qa** | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. test 환경 bypass 요청 (auth pass 등) PO 통해 처리 | haiku/low — npm test, lint/build, 단일 페이지 nav |
+| **pdt-designer** | opus | **opus + ⚡xhigh** — net-new 시스템 디자인 (UX/Brand/DS) | sonnet/low — 단순 token 매핑, haiku — 단일 컴포넌트 compliance | — |
+| **pdt-developer** | sonnet | — | **opus + high** — 아키텍처 / 멀티-파일 refactor / 2턴+ 디버깅. **opus + ⚡xhigh** — 3턴 째 디버깅 / 시스템 차원 결정 | sonnet/medium — PRD 기반 명료한 구현 |
+| **pdt-qa** | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. test 환경 bypass 요청 (auth pass 등) PO 통해 처리 | haiku/low — npm test, lint/build, 단일 페이지 nav |
 
 > PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용.
 > Effort `xhigh` 는 opus 에만 허용 (다른 model 은 자동 승격).
@@ -59,22 +59,22 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 | **Project** | 한 repo | `docs/<persona>/*.md` (committed) | PO, 사용자 승인 후 |
 | **Wiki** | persona-global cross-project | Graphiti KG (`group_id=persona-<name>`, FalkorDB) | PO, `[PROMOTION-APPROVED]` 마커 + 사용자 승인 |
 
-핵심 제약: **my-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — project tier 가 디렉토리 격리, generalized 원칙만 wiki promote. Graphiti bi-temporal 로 옛 사실 자동 deprecate.
+핵심 제약: **pdt-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — project tier 가 디렉토리 격리, generalized 원칙만 wiki promote. Graphiti bi-temporal 로 옛 사실 자동 deprecate.
 
 ## Real Engineering 워크플로
 
 ```
 PRD (productune Why)         — 사용자 문답 + 실현가능성 (mattpocock to-prd, grill-me)
    ↓
-Test (my-qa What)            — acceptance criteria → test 정의
+Test (pdt-qa What)            — acceptance criteria → test 정의
    ↓
 Issue (productune How)       — vertical-slice ticket 분해 (mattpocock to-issues)
    ↓
-Impl (my-developer What/How) — TDD 사이클 (mattpocock tdd, triage-issue)
+Impl (pdt-developer What/How) — TDD 사이클 (mattpocock tdd, triage-issue)
    ↓
-Refactor (my-developer How)  — request-refactor-plan, improve-codebase-architecture
+Refactor (pdt-developer How)  — request-refactor-plan, improve-codebase-architecture
    ↓
-QA (my-qa What/How)          — 자동화 + manual + e2e
+QA (pdt-qa What/How)          — 자동화 + manual + e2e
    ↓ (반복)
 ```
 
@@ -118,7 +118,7 @@ bash scripts/setup-graphiti.sh
 
 # 5. 검증
 which productune     # 경로 출력
-claude agents        # 4 페르소나 보임: productune, my-designer, my-developer, my-qa
+claude agents        # 4 페르소나 보임: productune, pdt-designer, pdt-developer, pdt-qa
 ```
 
 `install.sh` 가 자동으로 처리:
@@ -139,8 +139,8 @@ productune --engine claude          # 100% Anthropic stack
 
 # 직접 호출 (worktree split / parallel-safety 없음)
 codex --profile productune          # (legacy `--profile po` 도 동작)
-claude --agent productune
-claude --agent my-developer         # 단일 페르소나
+claude --agent pdt-po
+claude --agent pdt-developer         # 단일 페르소나
 
 # Legacy 명령 (호환 alias — 한동안 유지)
 my-po                               # productune 과 동일
@@ -164,7 +164,7 @@ my-po                               # productune 과 동일
 페르소나가 confidence=low 또는 unresolved 항목 보고 → PO 가 3-option 메뉴 surface:
 
 ```
-[PO] my-developer 결과 confidence=low (unresolved: ["Next 16 middleware..."]).
+[PO] pdt-developer 결과 confidence=low (unresolved: ["Next 16 middleware..."]).
      [1] retry — 모델 sonnet → opus, effort medium → high (같은 session resume)
      [2] skill 검색 — keyword 로 9 registry 조회 (mattpocock + phuryn + skill-fetch)
      [3] 그냥 진행 (Follow-ups 로 surface)
@@ -209,9 +209,9 @@ Cleanup: `productune gc` (dry-run) / `productune gc -y` (자동 정리). 결정 
 productune/
 ├── agents/                       # symlinked to ~/.claude/agents/
 │   ├── productune.md             # PO (구 my-po; planner role 흡수)
-│   ├── my-designer.md
-│   ├── my-developer.md
-│   └── my-qa.md
+│   ├── pdt-designer.md
+│   ├── pdt-developer.md
+│   └── pdt-qa.md
 ├── codex/
 │   ├── config.toml               # profiles.productune (+ legacy po alias) + local
 │   ├── po-instructions.md        # PO doctrine (Real Engineering + ticket + tier + quality)
@@ -261,7 +261,7 @@ productune/
 ## Uninstall
 
 ```sh
-rm -rf ~/.claude/agents/{productune,my-designer,my-developer,my-qa}.md
+rm -rf ~/.claude/agents/{productune,pdt-designer,pdt-developer,pdt-qa}.md
 rm ~/.codex/{config.toml,po-instructions.md,productune.env}
 docker rm -f falkordb && docker volume rm falkordb-data
 rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn}

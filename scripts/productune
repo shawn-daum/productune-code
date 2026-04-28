@@ -5,7 +5,7 @@
 #
 # Modes:
 #   productune                              Default engine = codex (or $MY_PO_ENGINE)
-#   productune --engine claude              Spawn `claude --agent productune` instead (100% Anthropic)
+#   productune --engine claude              Spawn `claude --agent pdt-po` instead (100% Anthropic)
 #   productune --engine codex               Spawn `codex --profile productune` (default)
 #   productune gc                           (alias: --cleanup) audit productune/* worktrees, dry-run
 #   productune gc -y                        (alias: --auto, --yes) audit, then remove safe ones
@@ -199,7 +199,7 @@ esac
 run_engine() {
   case "$ENGINE" in
     codex)  exec codex --profile productune "$@" ;;
-    claude) exec claude --agent productune "$@" ;;
+    claude) exec claude --agent pdt-po "$@" ;;
   esac
 }
 
@@ -207,7 +207,7 @@ run_engine_fg() {
   # Foreground (not exec) so EXIT trap can fire after engine returns.
   case "$ENGINE" in
     codex)  codex --profile productune "$@" ;;
-    claude) claude --agent productune "$@" ;;
+    claude) claude --agent pdt-po "$@" ;;
   esac
 }
 

@@ -17,9 +17,9 @@
 productune        (PO, Codex 또는 Claude — 사용자 선택)
   │   ├─ 자체적으로 decompose / risk-flag / pipeline 결정 (구 my-planner 역할)
   │
-  ├─ claude --agent my-designer   → docs/design/login-modal.md 작성 (default opus)
-  ├─ claude --agent my-developer  → 실제 코드 수정 (default sonnet)
-  └─ claude --agent my-qa         → lint / build / test 실행 (default haiku)
+  ├─ claude --agent pdt-designer   → docs/design/login-modal.md 작성 (default opus)
+  ├─ claude --agent pdt-developer  → 실제 코드 수정 (default sonnet)
+  └─ claude --agent pdt-qa         → lint / build / test 실행 (default haiku)
   │
   ▼
 사용자에게 ≤5 bullet 요약
@@ -36,9 +36,9 @@ productune        (PO, Codex 또는 Claude — 사용자 선택)
 | 페르소나 | Default | Why mode | How mode | What mode |
 |---|:---:|---|---|---|
 | **productune** (PO) | sonnet | **opus + ⚡xhigh** — MVP PRD 첫 round | sonnet/medium — 라우팅, 티켓 관리 | — |
-| **my-designer** | opus | **opus + ⚡xhigh** — net-new DS | sonnet/low — 단순 token 매핑 / haiku — compliance check | — |
-| **my-developer** | sonnet | — | **opus + high** — refactor / 2턴+ 디버깅. **opus + ⚡xhigh** — 3턴 째 / 시스템 차원 | sonnet/medium — PRD 구현 |
-| **my-qa** | haiku | — | sonnet/high — 복잡 e2e / stress / test 환경 bypass 요청 | haiku/low — npm test, lint/build |
+| **pdt-designer** | opus | **opus + ⚡xhigh** — net-new DS | sonnet/low — 단순 token 매핑 / haiku — compliance check | — |
+| **pdt-developer** | sonnet | — | **opus + high** — refactor / 2턴+ 디버깅. **opus + ⚡xhigh** — 3턴 째 / 시스템 차원 | sonnet/medium — PRD 구현 |
+| **pdt-qa** | haiku | — | sonnet/high — 복잡 e2e / stress / test 환경 bypass 요청 | haiku/low — npm test, lint/build |
 
 PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용. Effort `xhigh` 는 opus 에만 허용.
 
@@ -55,7 +55,7 @@ MVP 라운드: `MVP PRD 수립 → test 로 MVP 확립 → 실제 제품 → 배
   - 추출 품질을 hosted 급으로 올리려면 install.sh 옵션 [2] Anthropic 추천. 옵션 [3] 로컬에서도 더 강한 LLM (`gemma2:27b`, `qwen2.5:32b`) 로 교체 가능.
 - **작업 전**: 항상 project tier(`docs/<persona>/*.md`) + wiki tier(Graphiti) 검색.
 - **작업 후**: JSON 포맷으로 PO 에 반환 — `changed_files` / `design_doc_path` / `confidence` / `unresolved` / `promotion_candidates` 같은 명시적 구조.
-- **역할 밖 거절**: 예) my-designer 가 코드 수정 요청 받으면 `{"refused": true, "suggested_persona": "my-developer"}` 반환. PO 가 다시 라우팅.
+- **역할 밖 거절**: 예) pdt-designer 가 코드 수정 요청 받으면 `{"refused": true, "suggested_persona": "pdt-developer"}` 반환. PO 가 다시 라우팅.
 
 ### 메모리 승격 규칙 (공통, **모두 user-gate**)
 
@@ -85,7 +85,7 @@ MVP 라운드: `MVP PRD 수립 → test 로 MVP 확립 → 실제 제품 → 배
 ## 지금 당장 가능한 것 / 필요한 것
 
 **바로 됨:**
-- `claude --agent my-developer -p "..."` 등 페르소나 직접 호출 (Graphiti 없이도 project tier 와 MEMORY.md 로 동작)
+- `claude --agent pdt-developer -p "..."` 등 페르소나 직접 호출 (Graphiti 없이도 project tier 와 MEMORY.md 로 동작)
 - `productune` PO 오케스트레이션 (`my-po` 호환 alias)
 
 **Skill 라이브러리 + Graphiti 켜려면:**

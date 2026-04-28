@@ -99,7 +99,7 @@ Verification:
       --database-provider falkordb --llm-provider openai --model gemma4:26b --embedder-provider openai
 
   # Then in another terminal:
-  claude --agent my-developer -p "Search your graphiti wiki for anything known. Return JSON."
+  claude --agent pdt-developer -p "Search your graphiti wiki for anything known. Return JSON."
 
 If the wiki search returns [] that's expected for a fresh install — you haven't seeded knowledge yet.
 EOF

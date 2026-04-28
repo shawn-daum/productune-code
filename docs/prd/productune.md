@@ -45,9 +45,9 @@
 1. **`productune` 명령어** — 사용자 entry point. terminal 에서 한 줄로 시작.
 2. **4 페르소나 시스템** (Golden Circle):
    - `productune` (PO; default sonnet) — Why: PRD 수립 / Discovery / 라우팅. How: 티켓 관리 / 교통정리.
-   - `my-designer` (default opus) — Why: UX 원칙 + Brand Identity + Design System. How: 검수 / 외부 툴 추천.
-   - `my-developer` (default sonnet) — What: 명료한 구현. How: 아키텍처 / 디버깅.
-   - `my-qa` (default haiku) — What: 기능 검증. How: 복잡 UX / e2e / stress.
+   - `pdt-designer` (default opus) — Why: UX 원칙 + Brand Identity + Design System. How: 검수 / 외부 툴 추천.
+   - `pdt-developer` (default sonnet) — What: 명료한 구현. How: 아키텍처 / 디버깅.
+   - `pdt-qa` (default haiku) — What: 기능 검증. How: 복잡 UX / e2e / stress.
 3. **Real Engineering 워크플로** — `PRD → Test → Issue → Refactor → 반복`. PO 가 각 stage 에 적절한 페르소나 호출 + transition 시 사용자에게 1줄 announce.
 4. **Ticket system** — task 가 ticket 단위로 영속화 (`po-state.json` + `docs/tickets/<round>/T-<id>.md`). status / 작업자 / I/O / dependency / 링크 추적. 후일 UI dashboard 의 backend.
 5. **Dynamic model tier + effort** — task 난이도에 맞춰 PO 가 페르소나마다 모델 (haiku/sonnet/opus) + effort (low/medium/high/⚡xhigh) 동적 선택. OSS 7-level task complexity hierarchy 차용.
@@ -68,11 +68,11 @@
 
 다음 모두 충족 시 Phase 1 합격:
 
-- [ ] `claude agents` 가 정확히 4 페르소나 (productune / my-designer / my-developer / my-qa) 인식
+- [ ] `claude agents` 가 정확히 4 페르소나 (productune / pdt-designer / pdt-developer / pdt-qa) 인식
 - [ ] `productune` 명령으로 새 프로젝트에서 시작 가능 (`my-po` 호환 alias 도 동작)
 - [ ] PRD 작성 → test 정의 → issue 분해 → 구현 → QA 의 한 round 가 1 명의 기획자 사용자에 의해 끝까지 완주됨 (manual dogfood)
 - [ ] 라운드 종료 시 `<project>/docs/tickets/<round-id>/` 에 ticket markdown 들이 자동 export 됨
-- [ ] PO 가 task 별로 model + effort 를 동적 선택하고 trace 에 명시 (`→ delegating to my-developer (model=opus, effort=⚡xhigh — 3턴 째 디버깅)`)
+- [ ] PO 가 task 별로 model + effort 를 동적 선택하고 trace 에 명시 (`→ delegating to pdt-developer (model=opus, effort=⚡xhigh — 3턴 째 디버깅)`)
 - [ ] 페르소나가 confidence + unresolved 필드를 출력 → PO 가 미달 시 3-option 메뉴 surface
 - [ ] 적어도 페르소나당 1 개 skill 이 자동 invoke 됨 (mattpocock 또는 phuryn)
 - [ ] `docs/testing.md` 의 Phase 0–6 모두 pass
