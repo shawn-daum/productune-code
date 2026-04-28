@@ -15,8 +15,8 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
                                                   └─ 각 페르소나 3-tier 메모리:
                                                      1. session  — Claude session (per ticket)
                                                      2. project  — docs/<persona>/*.md
-                                                     3. wiki     — Graphiti, persona-global
-                                                                   group_id=persona-<name>
+                                                     3. wiki     — Graphiti KG (graphiti backend)
+                                                                   또는 filesystem (keeper backend)
 ```
 
 > **planner 역할은 PO 안으로 흡수** — 별도 my-planner 페르소나 없음.
@@ -57,7 +57,7 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 |---|---|---|---|
 | **Session** | 한 ticket | Claude Code session (`--session-id`) | Claude 자동 |
 | **Project** | 한 repo | `docs/<persona>/*.md` (committed) | PO, 사용자 승인 후 |
-| **Wiki** | persona-global cross-project | Graphiti KG (`group_id=persona-<name>`, FalkorDB) | PO, `[PROMOTION-APPROVED]` 마커 + 사용자 승인 |
+| **Wiki** | persona-global cross-project | Graphiti KG (`group_id=persona-<name>`, FalkorDB) or `~/.productune/wiki/` | PO, `[PROMOTION-APPROVED]` 마커 + 사용자 승인 |
 
 핵심 제약: **pdt-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — project tier 가 디렉토리 격리, generalized 원칙만 wiki promote. Graphiti bi-temporal 로 옛 사실 자동 deprecate.
 
@@ -86,39 +86,31 @@ OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 ski
 
 - **macOS** (Linux 도 가능, path 조정 필요)
 - `claude` — Claude Code CLI, 인증 완료
-- `codex` — OpenAI Codex CLI (`npm i -g @openai/codex`)
-- `uv` — Python runner (`brew install uv`)
+- `codex` — OpenAI Codex CLI (`npm i -g @openai/codex`) — `--engine codex` 사용 시
 - `jq` — JSON CLI (`brew install jq`)
-- `docker` — Docker Desktop (FalkorDB 용)
-- `ollama` — 로컬 LLM (`curl -fsSL https://ollama.com/install.sh | sh && ollama serve`)
-- Ollama 모델:
-  - `gemma4:26b` — Graphiti entity 추출 (wiki tier)
-  - `nomic-embed-text` — Graphiti embedding (`ollama pull nomic-embed-text`)
-  - `qwen3.5:4B` — Codex fallback (선택)
+- `node` >= 18
+
+Wiki backend 에 따라 추가 필요:
+- **Graphiti (권장, 자동 설치)**: Docker Desktop + `uv` (`brew install uv`) + ollama (install 이 자동 설치)
+- **keeper**: 추가 불필요 (Claude API 사용)
 
 ## Install
 
 ```sh
-# 1. Clone — 원하는 경로로
-git clone https://github.com/shawn-kim-axz/productune.git ~/<your-path>/productune
-cd ~/<your-path>/productune
-
-# 2. install.sh — 인터랙티브 (engine / wiki backend / skill / PATH 등록 prompt)
-bash scripts/install.sh
-
-# 3. Graphiti wiki tier 셋업 (선택, 권장)
-bash scripts/setup-graphiti.sh
-
-# 4. 검증
-which productune     # 경로 출력
-claude agents        # 4 페르소나 보임: productune, pdt-designer, pdt-developer, pdt-qa
+npm i -g github:shawn-kim-axz/productune
+productune onboard
 ```
 
-`install.sh` 가 자동으로 처리:
-- 페르소나 symlink 정리 (dangling 자동 sweep)
-- `~/.codex/productune.env` 에 engine 선택 + wiki backend + skill 설치 흔적 저장
-- PATH 등록 인터랙티브 — shell rc 추가 / `~/.local/bin` symlink / `/usr/local/bin` symlink / 건너뜀 중 선택
-- `productune` 가 env 파일 source 하므로 spawn 페르소나도 상속
+`productune onboard` 가 인터랙티브하게 처리:
+
+1. **PO 엔진 선택** — `codex` (OpenAI) 또는 `claude` (100% Anthropic)
+2. **Wiki backend 설정** — 하드웨어 자동 감지
+   - Tier S (RAM ≥ 16GB) / Tier A (RAM ≥ 8GB): Ollama 로컬 LLM 선택 → 자동 설치 → FalkorDB + Graphiti 자동 셋업
+   - Tier B (RAM 부족 / Docker 없음): wiki-keeper agent (Claude API) 자동 선택
+3. **OSS skill 설치** — mattpocock + phuryn skill 라이브러리
+4. **PATH 등록** — 현재 세션 즉시 적용
+
+> 모델 목록은 [Ollama registry](https://registry.ollama.ai) 에서 실시간 크기를 조회해 하드웨어 tier 에 맞는 것만 표시합니다 (`config/model-catalog.json` 에서 관리).
 
 ## Daily use
 
@@ -126,20 +118,22 @@ claude agents        # 4 페르소나 보임: productune, pdt-designer, pdt-deve
 cd ~/path/to/target-project
 
 # Full PO flow (권장)
-productune                          # default engine: Codex
+productune                          # default engine (onboard 에서 설정한 엔진)
 productune --engine claude          # 100% Anthropic stack
+productune --engine codex           # Codex CLI
+
+# 도움말
+productune --help                   # 현재 설정 포함 커맨드 레퍼런스
 
 # 유지보수
-productune onboard                  # install.sh 재실행 (페르소나 재연결 / 설정 변경)
+productune onboard                  # 재설치 (페르소나 재연결 / 설정 변경)
 productune uninstall                # 설치된 모든 artifact 제거
+productune gc                       # productune/* worktree audit (dry-run)
+productune gc -y                    # 안전한 worktree 자동 정리
 
 # 직접 호출 (worktree split / parallel-safety 없음)
-codex --profile productune          # (legacy `--profile po` 도 동작)
 claude --agent pdt-po
-claude --agent pdt-developer         # 단일 페르소나
-
-# Legacy 명령 (호환 alias — 한동안 유지)
-my-po                               # productune 과 동일
+claude --agent pdt-developer        # 단일 페르소나
 ```
 
 ### 사용자 prefix override (PO turn 안에서)
@@ -155,6 +149,30 @@ my-po                               # productune 과 동일
 | `/skill <query?>` | Path 2 강제 (skill 검색) |
 | `/retry` | Path 1 강제 (직전 호출 재시도, tier ↑) |
 
+## Picking a PO engine
+
+| | `--engine codex` | `--engine claude` |
+|---|---|---|
+| Top-level reasoning | OpenAI hosted (Codex CLI) | Anthropic hosted (Claude Code) |
+| Subscription | ChatGPT Plus / Pro | Claude Pro / Max |
+| Persona subscription | Claude (변동 없음) | Claude (변동 없음) |
+| Cost-split | ✓ | ✗ — all on Anthropic |
+| ToS | OK | **Cleanest** — 100% first-party |
+
+`MY_PO_ENGINE=claude` 또는 `productune --engine claude` 로 변경 가능.
+
+## Wiki backend
+
+| | `graphiti` | `keeper` |
+|---|---|---|
+| 저장소 | FalkorDB (로컬 Docker) | `~/.productune/wiki/` (파일) |
+| LLM | Ollama 로컬 모델 (백그라운드) | Claude API |
+| 추가 설치 | Docker + ollama (onboard 자동) | 없음 |
+| 검색 품질 | Knowledge Graph (관계 추론) | 파일 검색 |
+| 활성 페르소나 | pdt-developer, pdt-designer, pdt-qa | + pdt-wiki-keeper |
+
+backend 는 `~/.codex/productune.env` 의 `WIKI_BACKEND=` 로 확인/변경. 변경 후 `productune onboard` 재실행.
+
 ## Quality-based escalation
 
 페르소나가 confidence=low 또는 unresolved 항목 보고 → PO 가 3-option 메뉴 surface:
@@ -167,28 +185,6 @@ my-po                               # productune 과 동일
      선택? [1/2/3/Enter=1]
 ```
 
-OSS 근거: RouteLLM cascade, Anthropic engineering "Demystifying evals" 의 reflect-and-retry 패턴.
-
-## Ticket system
-
-PO 가 작업을 ticket 단위로 영속화:
-- `<project>/.codex/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
-- Ticket close 시 자동 export — `<project>/docs/tickets/<round-id>/T-<id>.md` git-versioned
-
-후일 Phase 3 의 UI dashboard backend.
-
-## Picking a PO engine
-
-| | `--engine codex` (default) | `--engine claude` |
-|---|---|---|
-| Top-level reasoning | OpenAI hosted (Codex CLI) | Anthropic hosted (Claude Code) |
-| Subscription | ChatGPT Plus / Pro | Claude Pro / Max |
-| Persona subscription | Claude (변동 없음) | Claude (변동 없음) |
-| Cost-split | ✓ | ✗ — all on Anthropic |
-| ToS | OK | **Cleanest** — 100% first-party |
-
-`MY_PO_ENGINE=claude` 또는 `productune --engine claude` 로 변경 가능. 환경 변수 이름 `MY_PO_ENGINE` 은 호환을 위해 유지.
-
 ## 병렬 작업 (자동 worktree split)
 
 같은 프로젝트에서 두 번째 `productune` 호출:
@@ -199,36 +195,11 @@ PO 가 작업을 ticket 단위로 영속화:
 
 Cleanup: `productune gc` (dry-run) / `productune gc -y` (자동 정리). 결정 기준은 **순수 git state** — 커밋 + push 또는 main merge 됐으면 ✓ safe, 아니면 ❌ unsafe (보존).
 
-## Files
+## Ticket system
 
-```
-productune/
-├── agents/                       # symlinked to ~/.claude/agents/
-│   ├── productune.md             # PO (구 my-po; planner role 흡수)
-│   ├── pdt-designer.md
-│   ├── pdt-developer.md
-│   └── pdt-qa.md
-├── codex/
-│   ├── config.toml               # profiles.productune (+ legacy po alias) + local
-│   ├── po-instructions.md        # PO doctrine (Real Engineering + ticket + tier + quality)
-│   └── po-memory.md.template
-├── scripts/
-│   ├── install.sh                # one-time setup (onboard)
-│   ├── uninstall.sh              # 모든 artifact 제거
-│   ├── productune                # daily entrypoint — onboard / uninstall / gc / engine 선택
-│   ├── my-po                     # → productune (compat symlink)
-│   ├── setup-graphiti.sh         # FalkorDB + Graphiti
-│   ├── setup-skills.sh           # mattpocock + phuryn skill 설치
-│   └── graphiti-launcher.sh      # provider-aware Graphiti spawn
-├── docs/
-│   ├── prd/productune.md         # 자체 PRD (round 누적)
-│   ├── overview.md
-│   ├── pitch.md
-│   ├── customization.md
-│   ├── plan.md
-│   └── testing.md                # end-to-end 테스트 플랜 (한글)
-└── README.md                     # this file
-```
+PO 가 작업을 ticket 단위로 영속화:
+- `<project>/.codex/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
+- Ticket close 시 자동 export — `<project>/docs/tickets/<round-id>/T-<id>.md` git-versioned
 
 ## Memory promotion
 
@@ -237,16 +208,62 @@ productune/
 - PO 가 사용자에 한 줄 propose
 - 사용자 `y` → PO 가 mechanical write (project tier: `printf >>`, wiki tier: `[PROMOTION-APPROVED]` 마커 prefix 후 페르소나 재호출)
 
+## Files
+
+```
+productune/
+├── agents/                       # symlinked to ~/.claude/agents/
+│   ├── pdt-po.md                 # PO orchestrator
+│   ├── pdt-designer.md
+│   ├── pdt-developer.md
+│   ├── pdt-qa.md
+│   ├── pdt-wiki-keeper.md        # keeper backend 시에만 ~/.claude/agents/에 링크됨
+│   └── variants/                 # backend별 페르소나 variant
+│       ├── graphiti/             # mcp__graphiti__* tools 포함
+│       ├── keeper/               # wiki-keeper 위임 방식
+│       └── fs/
+├── config/
+│   └── model-catalog.json        # tier별 추천 모델 (Ollama registry에서 실시간 크기 조회)
+├── codex/
+│   ├── config.toml               # profiles.productune + local
+│   ├── po-instructions.md        # PO doctrine
+│   └── po-memory.md.template
+├── scripts/
+│   ├── install.sh                # onboard — engine / wiki backend / LLM / Graphiti / PATH
+│   ├── uninstall.sh
+│   ├── productune                # daily entrypoint
+│   ├── setup-graphiti.sh         # FalkorDB + Graphiti (onboard에서 자동 호출)
+│   ├── setup-skills.sh           # mattpocock + phuryn skill 설치
+│   └── graphiti-launcher.sh      # provider-aware Graphiti MCP spawn
+├── docs/
+│   ├── prd/productune.md
+│   ├── overview.md
+│   ├── pitch.md
+│   └── testing.md
+├── package.json                  # bin: productune → scripts/productune
+└── README.md
+```
+
 ## Troubleshooting
 
-- **"claude doesn't list my personas"** → `bash scripts/install.sh` 재실행 (symlink 재생성 + dangling sweep)
-- **"graphiti MCP fails to start"** → `docker ps` (falkordb), `curl http://localhost:11434/api/tags` (ollama), `ls ~/.graphiti/mcp_server/main.py`
-- **"entity extraction quality is bad"** → `gemma4:26b` 대체 (`gemma2:27b`, `qwen2.5:32b`, `GRAPHITI_LLM_MODEL` 으로 set) 또는 install.sh option [2] Anthropic 으로 hosted-quality
+- **"claude doesn't list my personas"** → `productune onboard` 재실행 (symlink 재생성 + dangling sweep)
+- **"graphiti MCP fails to start"** → `docker ps` (falkordb 확인), `curl http://localhost:11434/api/tags` (ollama 확인), `productune onboard` 로 graphiti 재셋업
+- **"entity extraction quality is bad"** → `config/model-catalog.json` 에서 더 큰 모델로 교체 후 `productune onboard`
 - **legacy state.json schema** — 옛 `top-level persona_sessions` 면 `rm <project>/.codex/po-state.json` 후 PO 다시 시작
 
-## Updating personas
+## Updating
 
-`agents/*.md` 가 symlink 라 직접 수정하면 즉시 반영. Codex config (`codex/config.toml`, `codex/po-instructions.md`) 은 copy 라 수정 후 `bash scripts/install.sh` 재실행 필요.
+```sh
+# npm global로 설치한 경우
+npm i -g github:shawn-kim-axz/productune
+productune onboard   # agents 재연결 (agents/*.md 는 symlink라 자동 반영되지만 codex config는 재복사 필요)
+
+# repo 직접 clone으로 설치한 경우
+git pull
+productune onboard
+```
+
+`agents/*.md` 가 symlink 라 수정 즉시 반영. Codex config (`codex/config.toml`, `codex/po-instructions.md`) 은 copy 라 `productune onboard` 재실행 필요.
 
 ## Non-goals / future
 
@@ -264,8 +281,9 @@ productune uninstall
 또는 수동으로:
 
 ```sh
-rm -rf ~/.claude/agents/{productune,pdt-designer,pdt-developer,pdt-qa}.md
+rm -rf ~/.claude/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa,pdt-wiki-keeper}.md
 rm ~/.codex/{config.toml,po-instructions.md,productune.env}
 docker rm -f falkordb && docker volume rm falkordb-data
-rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn}
+rm -rf ~/.graphiti ~/.productune ~/.claude/skills/{mattpocock,phuryn}
+npm rm -g productune
 ```
