@@ -185,7 +185,7 @@ elif grep -qE '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" 2>/dev/null; then
 fi
 
 # 7) Ensure auto-compact threshold default is present in env file.
-#    `my-po` sources this with `set -a` so the var is inherited by spawned
+#    `productune` sources this with `set -a` so the var is inherited by spawned
 #    codex/claude personas — no manual shell-rc export needed.
 mkdir -p "$(dirname "$PO_ENV_FILE")"
 if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$PO_ENV_FILE"; then
@@ -193,7 +193,37 @@ if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$P
   say "auto-compact threshold defaulted to 70% in $PO_ENV_FILE"
 fi
 
-# 8) Summary + next steps
+# 8) Interactive: install OSS skill libraries (mattpocock + phuryn) — only if not yet installed
+if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^PRODUCTUNE_SKILLS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
+  echo
+  printf '\033[1;36m[install]\033[0m OSS skill 라이브러리 설치 (productune 페르소나 자동 invoke 활용):\n'
+  cat <<'PROMPT'
+  설치 대상:
+    [Y] mattpocock/skills (Real engineering: to-prd, tdd, triage-issue 등 23개)
+        + phuryn/pm-skills (PM workflow: discovery / strategy / execution 65개)
+  [n]   skip — 나중에 `bash $ROOT/scripts/setup-skills.sh` 로 설치 가능
+
+PROMPT
+  printf '  설치하시겠어요? [Y/n]: '
+  read -r SCHOICE || SCHOICE=""
+  case "$SCHOICE" in
+    n|N|no|NO|skip)
+      printf 'PRODUCTUNE_SKILLS_INSTALLED=skipped\n' >> "$PO_ENV_FILE"
+      say "skill 설치 건너뜀 — 나중에 bash $ROOT/scripts/setup-skills.sh"
+      ;;
+    *)
+      if bash "$ROOT/scripts/setup-skills.sh"; then
+        printf 'PRODUCTUNE_SKILLS_INSTALLED=true\n' >> "$PO_ENV_FILE"
+        say "OSS skill 설치 완료"
+      else
+        warn "skill 설치 중 일부 실패 — 수동 확인: bash $ROOT/scripts/setup-skills.sh"
+        printf 'PRODUCTUNE_SKILLS_INSTALLED=partial\n' >> "$PO_ENV_FILE"
+      fi
+      ;;
+  esac
+fi
+
+# 9) Summary + next steps
 cat <<EOF
 
 $(printf "\033[1;32m✓ install complete\033[0m")
