@@ -20,7 +20,7 @@ die()  { printf "\033[1;31m[graphiti]\033[0m %s\n" "$*" >&2; exit 1; }
 command -v docker >/dev/null || die "docker not found. Install Docker Desktop first."
 command -v git    >/dev/null || die "git not found."
 command -v uv     >/dev/null || die "uv not found. Run: brew install uv"
-command -v ollama >/dev/null || die "ollama not found. Run: brew install ollama (and 'ollama serve')"
+command -v ollama >/dev/null || die "ollama not found. Run: curl -fsSL https://ollama.com/install.sh | sh (then 'ollama serve')"
 
 # 1) FalkorDB
 if docker ps --format '{{.Names}}' | grep -qx falkordb; then
@@ -65,7 +65,7 @@ say "installing graphiti MCP server python deps via uv (this may take a minute).
 # 3) Ollama sanity check
 if ! curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
   warn "ollama does not appear to be serving on :11434."
-  warn "run 'ollama serve' (or 'brew services start ollama') in another terminal."
+  warn "run 'ollama serve' in another terminal."
 fi
 
 HAS_LLM=""

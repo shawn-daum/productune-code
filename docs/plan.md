@@ -129,7 +129,7 @@ Persona 격리 원칙:
 
 ### 선택 (Local-only 모드 or qwen fallback)
 
-6. `brew install ollama`
+6. `curl -fsSL https://ollama.com/install.sh | sh`
 7. `ollama pull qwen3.5:4b` (Codex fallback 용 — 사용자 이미 설치 중)
 8. (선택) `ollama pull deepseek-r1:7b` + `ollama pull nomic-embed-text` (Graphiti/Basic Memory 를 로컬로 돌릴 경우)
 9. `ollama serve` 가 localhost:11434 에서 실행중인지 확인
@@ -292,7 +292,7 @@ Local-only 모드 참고 (주석으로 `.mcp.json.local` 같은 대체 파일 �
 # 1) 바이너리 설치
 npm i -g @openai/codex
 brew install uv
-# (선택) brew install ollama && ollama pull qwen3.5:4b
+# (선택) curl -fsSL https://ollama.com/install.sh | sh && ollama pull qwen3.5:4b
 
 # 2) 키 세팅
 export OPENAI_API_KEY=sk-...              # Graphiti/Basic Memory 백엔드용

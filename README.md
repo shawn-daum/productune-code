@@ -90,7 +90,7 @@ OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 ski
 - `uv` — Python runner (`brew install uv`)
 - `jq` — JSON CLI (`brew install jq`)
 - `docker` — Docker Desktop (FalkorDB 용)
-- `ollama` — 로컬 LLM (`brew install ollama && brew services start ollama`)
+- `ollama` — 로컬 LLM (`curl -fsSL https://ollama.com/install.sh | sh && ollama serve`)
 - Ollama 모델:
   - `gemma4:26b` — Graphiti entity 추출 (wiki tier)
   - `nomic-embed-text` — Graphiti embedding (`ollama pull nomic-embed-text`)

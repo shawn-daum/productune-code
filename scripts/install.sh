@@ -44,21 +44,13 @@ install_local_llm() {
 
   if ! command -v ollama >/dev/null 2>&1; then
     say "Ollama 미설치. 설치 시작..."
-    if [[ "$(uname)" == "Darwin" ]]; then
-      brew install ollama 2>/dev/null || {
-        warn "brew install ollama 실패. https://ollama.com/download 에서 수동 설치 후 재실행."
-        return 1
-      }
-    else
-      curl -fsSL https://ollama.com/install.sh | sh || { warn "ollama 설치 실패"; return 1; }
-    fi
+    curl -fsSL https://ollama.com/install.sh | sh || {
+      warn "ollama 공식 설치 스크립트 실패. https://ollama.com/download 에서 수동 설치 후 재실행."
+      return 1
+    }
   fi
 
-  if ! curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
-    say "Ollama daemon 시작..."
-    nohup ollama serve >/dev/null 2>&1 &
-    sleep 3
-  fi
+  ensure_ollama_ready || return 1
 
   say "$model pull 중 (한 번만, 5–15분 소요)..."
   if ! ollama pull "$model"; then
@@ -74,6 +66,43 @@ install_local_llm() {
 
   say "nomic-embed-text pull 중 (Graphiti 임베딩용, ~275MB)..."
   ollama pull nomic-embed-text || warn "nomic-embed-text pull 실패 — 나중에 수동으로: ollama pull nomic-embed-text"
+}
+
+wait_for_ollama_ready() {
+  local key_file="$HOME/.ollama/id_ed25519"
+  local i
+
+  for i in $(seq 1 30); do
+    if [ -f "$key_file" ] && curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  return 1
+}
+
+ensure_ollama_ready() {
+  local ollama_dir="$HOME/.ollama"
+  local key_file="$ollama_dir/id_ed25519"
+  local log_file="$ollama_dir/productune-ollama.log"
+
+  if [ -f "$key_file" ] && curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+    return 0
+  fi
+
+  mkdir -p "$ollama_dir"
+  if [ ! -f "$key_file" ]; then
+    say "Ollama key 초기화 및 daemon 준비 중..."
+  else
+    say "Ollama daemon 시작..."
+  fi
+
+  nohup ollama serve >"$log_file" 2>&1 &
+  if ! wait_for_ollama_ready; then
+    warn "Ollama 준비 실패. 로그 확인: $log_file"
+    return 1
+  fi
 }
 
 # ── Backend variant activator ──────────────────────────────────────────────────
@@ -215,8 +244,27 @@ fi
 WIKI_BACKEND=""
 if grep -qE '^WIKI_BACKEND=' "$PO_ENV_FILE" 2>/dev/null; then
   WIKI_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
-  say "Wiki backend already configured: $WIKI_BACKEND (skipping detection)"
-elif [ -t 0 ] && [ -t 1 ]; then
+  if [ "$WIKI_BACKEND" = "keeper" ] && [ -t 0 ] && [ -t 1 ]; then
+    printf '\033[1;36m[install]\033[0m 현재 Wiki backend=keeper 입니다. 로컬 Graphiti/Ollama 설정을 다시 시도할까요? [y/N]: '
+    read -r RETRY_LOCAL || RETRY_LOCAL=""
+    case "$RETRY_LOCAL" in
+      y|Y|yes|YES)
+        TMP_ENV="$PO_ENV_FILE.tmp.$$"
+        grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' "$PO_ENV_FILE" > "$TMP_ENV" || true
+        mv "$TMP_ENV" "$PO_ENV_FILE"
+        WIKI_BACKEND=""
+        say "Wiki backend 설정 초기화 완료. 하드웨어 감지를 다시 실행합니다."
+        ;;
+      *)
+        say "Wiki backend already configured: $WIKI_BACKEND (skipping detection)"
+        ;;
+    esac
+  else
+    say "Wiki backend already configured: $WIKI_BACKEND (skipping detection)"
+  fi
+fi
+
+if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
   echo
   printf '\033[1;36m[install]\033[0m Wiki memory backend 설정 (하드웨어 감지 중)...\n'
 
@@ -325,7 +373,7 @@ EOF
     say "Wiki backend: wiki-keeper agent (Claude API). 로컬 LLM/Docker 불필요."
     bash "$ROOT/scripts/wiki-init.sh"
   fi
-else
+elif [ -z "$WIKI_BACKEND" ]; then
   # Non-interactive (CI / piped) — default to keeper (safest, no local deps)
   WIKI_BACKEND=keeper
   printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
