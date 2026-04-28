@@ -178,35 +178,47 @@ install_local_llm() {
 }
 
 wait_for_ollama_ready() {
-  local key_file="$HOME/.ollama/id_ed25519"
   local i
-
-  for i in $(seq 1 30); do
-    if [ -f "$key_file" ] && curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+  for i in $(seq 1 45); do
+    if curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
-
   return 1
 }
 
 ensure_ollama_ready() {
-  local ollama_dir="$HOME/.ollama"
-  local key_file="$ollama_dir/id_ed25519"
-  local log_file="$ollama_dir/productune-ollama.log"
-
-  if [ -f "$key_file" ] && curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
+  # Already responding — nothing to do.
+  if curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
     return 0
   fi
 
-  mkdir -p "$ollama_dir"
-  if [ ! -f "$key_file" ]; then
-    say "Ollama key 초기화 및 daemon 준비 중..."
-  else
-    say "Ollama daemon 시작..."
+  mkdir -p "$HOME/.ollama"
+  local log_file="$HOME/.ollama/productune-ollama.log"
+
+  # macOS: prefer the managed app to avoid server conflicts with launchd.
+  if [ -d "/Applications/Ollama.app" ]; then
+    say "Ollama app 시작 중..."
+    open -a Ollama
+    if ! wait_for_ollama_ready; then
+      warn "Ollama 준비 실패. /Applications/Ollama.app 수동 실행 후 재시도하세요."
+      return 1
+    fi
+    return 0
   fi
 
+  # Non-app install (Linux / CLI-only): only spawn serve if not already running.
+  if pgrep -x ollama >/dev/null 2>&1; then
+    say "Ollama 프로세스 감지 — 준비 대기 중..."
+    if ! wait_for_ollama_ready; then
+      warn "Ollama 준비 실패. 로그 확인: $log_file"
+      return 1
+    fi
+    return 0
+  fi
+
+  say "Ollama daemon 시작..."
   nohup ollama serve >"$log_file" 2>&1 &
   if ! wait_for_ollama_ready; then
     warn "Ollama 준비 실패. 로그 확인: $log_file"
