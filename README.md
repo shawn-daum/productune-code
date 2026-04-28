@@ -97,11 +97,15 @@ Wiki backend 에 따라 추가 필요:
 ## Install
 
 ```sh
-npm i -g github:shawn-kim-axz/productune
-productune onboard
+git clone https://github.com/shawn-kim-axz/productune
+bash productune/scripts/install.sh
 ```
 
-`productune onboard` 가 인터랙티브하게 처리:
+> Clone 위치는 어디든 OK — symlink target 이라 그대로 유지하면 됩니다 (`~/code/productune`, `~/productune` 등 자유). 단, wiki data 가 저장되는 `~/.productune/` 와 겹치지 않게만 주의.
+
+이후엔 어디서든 `productune onboard` 로 재실행 가능 (PATH 등록은 첫 install 마지막에 처리됨).
+
+`install.sh` 가 인터랙티브하게 처리:
 
 1. **PO 엔진 선택** — `codex` (OpenAI) 또는 `claude` (100% Anthropic)
 2. **Wiki backend 설정** — 하드웨어 자동 감지
@@ -240,7 +244,6 @@ productune/
 │   ├── overview.md
 │   ├── pitch.md
 │   └── testing.md
-├── package.json                  # bin: productune → scripts/productune
 └── README.md
 ```
 
@@ -254,11 +257,7 @@ productune/
 ## Updating
 
 ```sh
-# npm global로 설치한 경우
-npm i -g github:shawn-kim-axz/productune
-productune onboard   # agents 재연결 (agents/*.md 는 symlink라 자동 반영되지만 codex config는 재복사 필요)
-
-# repo 직접 clone으로 설치한 경우
+cd <clone-dir>           # install 시 clone 한 위치 (예: ~/code/productune)
 git pull
 productune onboard
 ```
@@ -285,5 +284,5 @@ rm -rf ~/.claude/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa,pdt-wiki-keepe
 rm ~/.codex/{config.toml,po-instructions.md,productune.env}
 docker rm -f falkordb && docker volume rm falkordb-data
 rm -rf ~/.graphiti ~/.productune ~/.claude/skills/{mattpocock,phuryn}
-npm rm -g productune
+rm -rf <clone-dir>       # install 시 clone 한 위치
 ```
