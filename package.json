@@ -1,0 +1,19 @@
+{
+  "name": "productune",
+  "version": "0.1.0",
+  "description": "AI product team orchestrator — PO + Designer + Developer + QA personas on Claude Code",
+  "private": true,
+  "bin": {
+    "productune": "./scripts/productune"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "postinstall": "chmod +x ./scripts/productune ./scripts/install.sh ./scripts/uninstall.sh"
+  }
+}
