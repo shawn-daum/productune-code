@@ -9,6 +9,8 @@
 #   productune --engine codex               Spawn `codex --profile productune` (default)
 #   productune gc                           (alias: --cleanup) audit productune/* worktrees, dry-run
 #   productune gc -y                        (alias: --auto, --yes) audit, then remove safe ones
+#   productune onboard                      Run install.sh — wire agents, codex config, wiki backend
+#   productune uninstall                    Remove all installed artifacts (agents, codex files, wiki data)
 #
 # Engine selection priority: --engine flag > $MY_PO_ENGINE env > 'codex' default.
 # (Env var name MY_PO_ENGINE retained for compat; semantically PRODUCTUNE_ENGINE.)
@@ -138,8 +140,14 @@ remove_safe() {
   done
 }
 
-# -------------------- cleanup mode (gc / --cleanup) --------------------
+# -------------------- cleanup mode (gc / --cleanup / uninstall) --------------------
 case "${1:-}" in
+  onboard)
+    exec bash "$(dirname "$0")/install.sh"
+    ;;
+  uninstall)
+    exec bash "$(dirname "$0")/uninstall.sh"
+    ;;
   --cleanup|gc)
     shift
     AUTO=0

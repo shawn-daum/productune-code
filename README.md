@@ -103,30 +103,22 @@ OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 ski
 git clone https://github.com/shawn-kim-axz/productune.git ~/<your-path>/productune
 cd ~/<your-path>/productune
 
-# 2. install.sh — 인터랙티브 (engine / Graphiti backend / skill 설치 prompt)
+# 2. install.sh — 인터랙티브 (engine / wiki backend / skill / PATH 등록 prompt)
 bash scripts/install.sh
 
-# 3. PATH 등록 (옵션 중 하나)
-#    a) shell rc 에 PATH 추가 (권장)
-echo "export PATH=\"$PWD/scripts:\$PATH\"" >> ~/.zshrc && source ~/.zshrc
-
-#    b) ~/.local/bin 에 symlink (sudo 불요)
-mkdir -p ~/.local/bin && ln -sf "$PWD/scripts/productune" ~/.local/bin/productune
-
-# 4. Graphiti wiki tier 셋업 (선택, 권장)
+# 3. Graphiti wiki tier 셋업 (선택, 권장)
 bash scripts/setup-graphiti.sh
 
-# 5. 검증
+# 4. 검증
 which productune     # 경로 출력
 claude agents        # 4 페르소나 보임: productune, pdt-designer, pdt-developer, pdt-qa
 ```
 
 `install.sh` 가 자동으로 처리:
 - 페르소나 symlink 정리 (dangling 자동 sweep)
-- `~/.codex/productune.env` 에 engine 선택 + Graphiti provider + autocompact 70% + skill 설치 흔적 저장
+- `~/.codex/productune.env` 에 engine 선택 + wiki backend + skill 설치 흔적 저장
+- PATH 등록 인터랙티브 — shell rc 추가 / `~/.local/bin` symlink / `/usr/local/bin` symlink / 건너뜀 중 선택
 - `productune` 가 env 파일 source 하므로 spawn 페르소나도 상속
-
-> 직접 `claude --agent my-X` 호출은 wrapper 안 거치니 env 미상속. shell rc 에 직접 추가 필요.
 
 ## Daily use
 
@@ -136,6 +128,10 @@ cd ~/path/to/target-project
 # Full PO flow (권장)
 productune                          # default engine: Codex
 productune --engine claude          # 100% Anthropic stack
+
+# 유지보수
+productune onboard                  # install.sh 재실행 (페르소나 재연결 / 설정 변경)
+productune uninstall                # 설치된 모든 artifact 제거
 
 # 직접 호출 (worktree split / parallel-safety 없음)
 codex --profile productune          # (legacy `--profile po` 도 동작)
@@ -217,8 +213,9 @@ productune/
 │   ├── po-instructions.md        # PO doctrine (Real Engineering + ticket + tier + quality)
 │   └── po-memory.md.template
 ├── scripts/
-│   ├── install.sh                # one-time setup
-│   ├── productune                # daily entrypoint (구 my-po; symlink 호환)
+│   ├── install.sh                # one-time setup (onboard)
+│   ├── uninstall.sh              # 모든 artifact 제거
+│   ├── productune                # daily entrypoint — onboard / uninstall / gc / engine 선택
 │   ├── my-po                     # → productune (compat symlink)
 │   ├── setup-graphiti.sh         # FalkorDB + Graphiti
 │   ├── setup-skills.sh           # mattpocock + phuryn skill 설치
@@ -259,6 +256,12 @@ productune/
 - 자동 deploy / CI 통합
 
 ## Uninstall
+
+```sh
+productune uninstall
+```
+
+또는 수동으로:
 
 ```sh
 rm -rf ~/.claude/agents/{productune,pdt-designer,pdt-developer,pdt-qa}.md

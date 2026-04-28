@@ -376,57 +376,122 @@ PROMPT
   esac
 fi
 
-# 9) Summary + next steps
+# 9) Interactive: PATH registration
+PATH_REGISTERED=0
+if [ -t 0 ] && [ -t 1 ]; then
+  echo
+  printf '\033[1;36m[install]\033[0m productune PATH 등록 확인...\n'
+
+  if command -v productune >/dev/null 2>&1; then
+    say "이미 PATH에 있습니다: $(command -v productune)"
+    PATH_REGISTERED=1
+  else
+    # Detect shell RC
+    case "${SHELL:-}" in
+      */zsh)  SHELL_RC="$HOME/.zshrc" ;;
+      */bash) SHELL_RC="$HOME/.bashrc" ;;
+      *)      SHELL_RC="$HOME/.zshrc" ;;
+    esac
+
+    cat <<PROMPT
+
+  productune가 PATH에 없습니다. 등록 방법을 선택하세요:
+
+  [1] $SHELL_RC 에 PATH 추가  (권장, sudo 불필요)
+  [2] ~/.local/bin 심볼릭 링크  (sudo 불필요)
+  [3] /usr/local/bin 심볼릭 링크  (sudo 필요할 수 있음)
+  [n] 건너뜀  — 나중에 수동으로 설정
+
+PROMPT
+    printf '  선택 [1/2/3/n, 기본=1]: '
+    read -r PCHOICE || PCHOICE=""
+
+    case "${PCHOICE:-1}" in
+      2)
+        mkdir -p "$HOME/.local/bin"
+        ln -sf "$ROOT/scripts/productune" "$HOME/.local/bin/productune"
+        say "심볼릭 링크 생성: ~/.local/bin/productune"
+        printf 'PRODUCTUNE_PATH_METHOD=local_bin\n' >> "$PO_ENV_FILE"
+        if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+          warn "~/.local/bin 이 PATH에 없습니다. $SHELL_RC 에 추가 필요:"
+          warn "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        else
+          PATH_REGISTERED=1
+        fi
+        ;;
+      3)
+        if sudo ln -sf "$ROOT/scripts/productune" /usr/local/bin/productune 2>/dev/null; then
+          say "심볼릭 링크 생성: /usr/local/bin/productune"
+          printf 'PRODUCTUNE_PATH_METHOD=usr_local_bin\n' >> "$PO_ENV_FILE"
+          PATH_REGISTERED=1
+        else
+          warn "sudo 실패. 수동으로 실행하세요:"
+          warn "  sudo ln -sf $ROOT/scripts/productune /usr/local/bin/productune"
+        fi
+        ;;
+      n|N|no|NO|skip)
+        say "PATH 등록 건너뜀 — 나중에 수동 설정:"
+        say "  echo 'export PATH=\"$ROOT/scripts:\$PATH\"' >> $SHELL_RC && source $SHELL_RC"
+        printf 'PRODUCTUNE_PATH_METHOD=none\n' >> "$PO_ENV_FILE"
+        ;;
+      *)
+        EXPORT_LINE="export PATH=\"$ROOT/scripts:\$PATH\""
+        if grep -qF "$ROOT/scripts" "$SHELL_RC" 2>/dev/null; then
+          say "이미 $SHELL_RC 에 등록되어 있습니다"
+          printf 'PRODUCTUNE_PATH_METHOD=rc\nPRODUCTUNE_PATH_RC=%s\n' "$SHELL_RC" >> "$PO_ENV_FILE"
+          PATH_REGISTERED=1
+        else
+          printf '\n# productune\n%s\n' "$EXPORT_LINE" >> "$SHELL_RC"
+          say "PATH 추가 완료: $SHELL_RC"
+          say "  → 적용: source $SHELL_RC  (또는 새 터미널 열기)"
+          printf 'PRODUCTUNE_PATH_METHOD=rc\nPRODUCTUNE_PATH_RC=%s\n' "$SHELL_RC" >> "$PO_ENV_FILE"
+          PATH_REGISTERED=1
+        fi
+        ;;
+    esac
+  fi
+fi
+
+# 10) Summary + next steps
 FINAL_BACKEND_DISPLAY="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
 
 cat <<EOF
 
-$(printf "\033[1;32m✓ install complete\033[0m")
+$(printf "\033[1;32m✓ onboard complete\033[0m")
 
-Wiki backend: $FINAL_BACKEND_DISPLAY
+  Wiki backend : $FINAL_BACKEND_DISPLAY
+  PATH         : $([ "$PATH_REGISTERED" = 1 ] && echo "등록됨" || echo "미등록 (위 안내 참고)")
 
 Next steps:
   1. Wiki backend = $FINAL_BACKEND_DISPLAY
 $(if [ "$FINAL_BACKEND_DISPLAY" = "graphiti" ]; then
 cat <<'GRAPHITI'
-     Run `bash $ROOT/scripts/setup-graphiti.sh` to start FalkorDB (Docker) + Graphiti MCP server.
-     (Skippable on first try — personas work without wiki tier, falling back to project docs.)
+     FalkorDB + Graphiti MCP 시작:
+       bash scripts/setup-graphiti.sh
+     (첫 실행 시 건너뛰어도 됨 — 페르소나는 project docs 폴백으로 동작)
 GRAPHITI
 elif [ "$FINAL_BACKEND_DISPLAY" = "keeper" ]; then
 cat <<'KEEPER'
-     wiki-keeper agent (Claude API) active. No local models needed.
-     Wiki stored at ~/.productune/wiki/. Verify: ls ~/.productune/wiki/
+     wiki-keeper agent (Claude API) 활성화. 로컬 모델/Docker 불필요.
+     Wiki 저장 위치: ~/.productune/wiki/
 KEEPER
 fi)
 
-  2. Auto-compact threshold (70%) is auto-applied via $PO_ENV_FILE when you launch through \`productune\`.
-     Direct \`claude --agent my-X\` calls don't inherit this — add \`export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\` to your shell rc if needed.
-
-  3. Verify Claude sees the personas:
+  2. Claude가 페르소나를 인식하는지 확인:
        claude agents
-     (expect: pdt-po, pdt-designer, pdt-developer, pdt-qa$([ "$FINAL_BACKEND_DISPLAY" = "keeper" ] && echo ", pdt-wiki-keeper")
+     (기대값: pdt-po, pdt-designer, pdt-developer, pdt-qa$([ "$FINAL_BACKEND_DISPLAY" = "keeper" ] && echo ", pdt-wiki-keeper"))
 
-  4. Put the \`productune\` wrapper on your PATH. Pick one (no sudo needed):
-
-     a) Add the scripts dir to PATH (recommended):
-          echo 'export PATH="$ROOT/scripts:\$PATH"' >> ~/.zshrc && source ~/.zshrc
-     b) Symlink into ~/.local/bin:
-          mkdir -p ~/.local/bin && ln -sf $ROOT/scripts/productune ~/.local/bin/productune
-     c) Symlink into /usr/local/bin (may need sudo):
-          sudo ln -sf $ROOT/scripts/productune /usr/local/bin/productune
-
-  5. From any target project directory, start PO:
+  3. 프로젝트 디렉터리에서 PO 시작:
        productune
 
-  6. To switch wiki backend later (e.g. Tier A → B):
-       # Edit ~/.codex/productune.env: WIKI_BACKEND=keeper
-       # Then re-run: bash $ROOT/scripts/install.sh
-       # To migrate existing Graphiti episodes:
-       #   bash $ROOT/scripts/migrate-graphiti-to-fs.sh
+  4. Wiki backend 변경 (예: Tier A → B):
+       # ~/.codex/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
+       productune onboard
 
-  7. After parallel work, audit & remove auto-created worktrees:
+  5. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run
-       productune gc -y     # remove safe ones
+       productune gc -y     # safe한 것 자동 제거
 
-  8. To update personas, edit files in $ROOT/agents/variants/<backend>/ — re-run install.sh or re-symlink.
+  6. 완전히 제거할 때:
+       productune uninstall
 EOF
