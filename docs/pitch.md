@@ -250,10 +250,16 @@ PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
 
 ## 한계 / 다음 단계
 
-**지금 잘 안 되는 것**
-- 메모리 압축의 자동화 — 사용자가 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 직접 세팅 필요
-- Graphiti wiki 검색 품질 — Ollama 로컬 모델 (gemma4:26b) 의 entity 추출이 OpenAI 모델보다 거칠 수 있음
-- PO 의 task disposition 휴리스틱 — 가끔 continuation 으로 잘못 판단 (사용자가 "이거 후속이에요?" 한 줄로 교정)
+**해결됨 (2026-04-28)**
+- 메모리 압축 자동화 — `install.sh` 가 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 을 `~/.codex/coolchestration.env` 에 기본값으로 박아두고 `my-po` 가 자동 export. shell rc 편집 불필요. (직접 `claude --agent` 호출 시엔 미적용 — 한계로 남음.)
+- Graphiti 추출 품질 — install.sh 옵션 [3] Local description 보강 (대체 모델 `gemma2:27b`, `qwen2.5:32b` 추천). setup-graphiti.sh sanity-check 에 호스티드 옵션 ([2] Anthropic) fallback 안내 추가.
+- PO disposition 명시화 — silent 분류 폐지. 모든 turn 에 `→ continuing '<slug>'` / `→ new task '<slug>'` 1줄 trace + 사용자 override prefix (`/new`, `/continue`, `/resume <slug>`). 교정이 ≥2번 누적되면 `~/.codex/po-memory.md` 에 패턴 학습.
+
+**여전히 한계**
+- 직접 `claude --agent my-X` 호출 시 autocompact env 미상속 — wrapper 안 거치니 의도된 한계. shell rc 직접 추가로 보완.
+- Pure-local Graphiti 의 entity 추출 품질은 호스티드보다 거칠 수 있음 — 옵션 [2] Anthropic 으로 추출만 호스티드로 올리거나, 더 큰 로컬 모델로 보완.
+- "Hosted LLM + Ollama embed" 형태의 진정한 hybrid — Graphiti 의 default `config.yaml` 이 LLM/embed 가 같은 `OPENAI_API_URL` env 를 공유하는 구조라 별도 config 생성 작업 없이는 불가. 별도 plan 필요.
+- Disposition 휴리스틱의 "When in doubt" 케이스 — 명시 trace + override 로 교정창은 짧아졌지만, 분류 자체의 정확도는 휴리스틱 한계 안에 있음. LLM 기반 분류는 비용/지연 trade-off 로 미루기.
 
 **검토 가능한 다음 step**
 - 다중 사용자 / 팀 — `~/.codex/po-memory.md` 가 single-user. 팀 공유하려면 별도 sync 필요

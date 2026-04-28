@@ -47,6 +47,7 @@ codex --profile po        (PO, OpenAI hosted)
 
 - **Graphiti MCP 서버**: 페르소나마다 `--group-id persona:<이름>` 으로 개별 인스턴스 spawn. 서로의 wiki 는 안 보임.
 - **Backend**: FalkorDB (Docker `falkordb` 컨테이너) + Ollama `gemma4:26b` (엔티티 추출) + `nomic-embed-text` (임베딩). 전부 로컬.
+  - 추출 품질을 호스티드급으로 올리려면 install.sh 옵션 [2] Anthropic (Claude Haiku LLM + OpenAI embed) 추천. 옵션 [3] 로컬에서도 더 강한 LLM (`gemma2:27b`, `qwen2.5:32b`) 으로 교체 가능.
 - **작업 전**: 항상 project tier(`docs/<persona>/*.md`) + wiki tier(Graphiti) 검색.
 - **작업 후**: JSON 포맷으로 PO 에 반환 — `changed_files` / `design_doc_path` / `tasks` 같은 명시적 구조.
 - **역할 밖 거절**: 예) my-designer 가 코드 수정 요청 받으면 `{"refused": true, "suggested_persona": "my-developer"}` 반환하고 종료. PO 가 다시 라우팅.

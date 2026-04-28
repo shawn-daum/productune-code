@@ -130,9 +130,12 @@ if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" 2
                   Highest quality entity extraction. Needs OPENAI_API_KEY env.
                   Cost: ~$0.01 / coding session typical.
   [2] Anthropic — Claude Haiku for LLM + OpenAI embed.
+                  Hybrid path: hosted-quality extraction, OpenAI embed.
                   Needs ANTHROPIC_API_KEY env (+ OPENAI_API_KEY for embed).
   [3] Local     — Ollama gemma4:26b + nomic-embed-text. Free, slower, no network.
                   Needs `ollama pull gemma4:26b` and `ollama pull nomic-embed-text`.
+                  For better extraction quality, swap LLM to gemma2:27b or qwen2.5:32b
+                  (set GRAPHITI_LLM_MODEL in the env file after install).
   [Enter]       — [1] OpenAI default. Change later by editing the env file.
 
 PROMPT
@@ -158,6 +161,7 @@ GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
 EOF
       say "Graphiti backend: ollama (local). Pull models if missing:"
       say "  ollama pull gemma4:26b && ollama pull nomic-embed-text"
+      say "  (alt LLMs for stronger extraction: gemma2:27b, qwen2.5:32b — set GRAPHITI_LLM_MODEL accordingly)"
       ;;
     *)
       cat >> "$PO_ENV_FILE" <<EOF
@@ -175,7 +179,16 @@ elif grep -qE '^GRAPHITI_LLM_PROVIDER=' "$PO_ENV_FILE" 2>/dev/null; then
   say "Graphiti provider config already set (current LLM provider: $CURRENT_GRAPHITI)"
 fi
 
-# 6) Summary + next steps
+# 7) Ensure auto-compact threshold default is present in env file.
+#    `my-po` sources this with `set -a` so the var is inherited by spawned
+#    codex/claude personas — no manual shell-rc export needed.
+mkdir -p "$(dirname "$PO_ENV_FILE")"
+if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$PO_ENV_FILE"; then
+  printf 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\n' >> "$PO_ENV_FILE"
+  say "auto-compact threshold defaulted to 70% in $PO_ENV_FILE"
+fi
+
+# 8) Summary + next steps
 cat <<EOF
 
 $(printf "\033[1;32m✓ install complete\033[0m")
@@ -187,8 +200,8 @@ Next steps:
   2. Pull an embedding model for Ollama if you don't already have one:
        ollama pull nomic-embed-text
 
-  3. Recommended: trigger persona compaction earlier than the default 95% so long sessions stay responsive. Add to your shell rc:
-       export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70
+  3. Auto-compact threshold (70%) is auto-applied via $PO_ENV_FILE when you launch through \`my-po\`.
+     Direct \`claude --agent my-X\` calls don't inherit this — add \`export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\` to your shell rc if you also use direct calls.
 
   4. Verify Claude sees the personas:
        claude agents

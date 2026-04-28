@@ -86,6 +86,8 @@ claude agents        # should list my-planner/my-designer/my-developer/my-qa
 
 `install.sh` is idempotent and backs up any existing conflicting files at the target path with a `.bak.<timestamp>` suffix. It does **not** touch your PATH — that step is up to you (step 3 above).
 
+`install.sh` also writes `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` into `~/.codex/coolchestration.env`. The `my-po` wrapper sources that file with `set -a`, so any persona spawned through `my-po` inherits the lower compaction threshold automatically — no shell-rc edit needed. Direct `claude --agent my-X` calls do **not** inherit it; if you also use direct calls, add `export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to your shell rc.
+
 > **Permission denied on /usr/local/bin?** That directory needs sudo on Apple Silicon Macs. Use option (a) or (b) above instead — neither requires elevated privileges.
 
 ## Daily use
@@ -109,6 +111,11 @@ claude --agent my-planner
 claude --agent my-designer
 claude --agent my-developer
 claude --agent my-qa
+
+# Override PO's task-disposition heuristic (any my-po turn):
+#   /new <slug?>       — force a new task
+#   /continue          — force continuation of current_task
+#   /resume <slug>     — force revival of a past task by slug
 
 # Token-soak / offline fallback: swaps Codex to local qwen3.5:4B
 codex --profile local
@@ -211,7 +218,7 @@ PO remembers **how you work with it** (not project facts) at `~/.codex/po-memory
 | **PO default** | Codex hosted (OpenAI) | Robust multi-step routing, structured output |
 | **PO fallback** | Ollama `qwen3.5:4B` | Fast, cheap, offline; only for simple routing |
 | **Personas** | Claude (hosted) per frontmatter | `my-planner`/`my-designer`=sonnet, `my-developer`=opus, `my-qa`=haiku |
-| **Graphiti LLM** | Ollama `gemma4:26b` | Entity/relationship extraction needs quality structured output; 26B is the sweet spot vs 4B. Called infrequently (only on `add_memory`), so slowness is fine. |
+| **Graphiti LLM** | Ollama `gemma4:26b` (default Local) — or hosted `gpt-4o-mini` / `claude-haiku` via OpenAI / Anthropic options in `install.sh` | Entity/relationship extraction needs quality structured output; 26B is the sweet spot vs 4B for fully-local. Anthropic option (Claude Haiku LLM + OpenAI embed) is a partial hybrid — hosted-quality extraction with cheap embed. |
 | **Graphiti embed** | Ollama `nomic-embed-text` | Small, fast, purpose-built for embeddings |
 
 All persona LLM calls stay on Anthropic hosted Claude. Only the *memory backend* goes local via Ollama — your project content does not leave your machine for wiki storage.
@@ -252,7 +259,9 @@ Each persona has explicit rules in its `.md` frontmatter body:
 
 - **"claude doesn't list my personas"** → run `bash scripts/install.sh` (re-symlinks). Confirm `ls -la ~/.claude/agents/` shows symlinks pointing into this repo.
 - **"graphiti MCP fails to start"** → check `docker ps` (falkordb container up), `curl http://localhost:11434/api/tags` (ollama), and `ls ~/.graphiti/mcp_server/main.py` (clone succeeded).
-- **"entity extraction quality is bad"** → gemma4:26b depending on your tag may not match. Try `ollama pull gemma2:27b` or `ollama pull qwen2.5:32b` and update `MODEL_NAME` in each `agents/*.md`.
+- **"entity extraction quality is bad"** → gemma4:26b depending on your tag may not match. Two fixes:
+  - swap to a stronger local LLM: `ollama pull gemma2:27b` (or `qwen2.5:32b`) and set `GRAPHITI_LLM_MODEL=<tag>` in `~/.codex/coolchestration.env`
+  - or re-run `install.sh` and pick option **[2] Anthropic** — Claude Haiku for extraction + OpenAI embed. Hosted-quality with low add_memory cost (calls are rare).
 - **"embedding errors"** → ensure `ollama pull nomic-embed-text` ran successfully. Verify via `ollama list`.
 - **"PO loses session continuity"** → check `<target-project>/.codex/persona-sessions.json` — if malformed, reset with `echo '{}' > <project>/.codex/persona-sessions.json`.
 

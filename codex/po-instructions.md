@@ -28,7 +28,13 @@ Before delegating anything:
 1. **Consult your memory.** Read `~/.codex/po-memory.md` (user preferences). Read `./.codex/po-state.json` for `current_task`, `past_tasks`, and `recent_turns`.
 2. **Decide task disposition** — *which task does this user prompt belong to?* See the "Task lifecycle" section below for full rules. Three outcomes, evaluated in this priority order:
 
-   **First check for topic-shift markers — they override file overlap:**
+   **0. First, check for explicit override prefixes** — they bypass all heuristics:
+   - `/new <optional slug>` → unconditionally **(c) new task**. Use the optional slug if provided; otherwise auto-derive from the rest of the prompt.
+   - `/continue` → unconditionally **(a) continuation** of `current_task`. (No-op if `current_task` is null — fall back to (c).)
+   - `/resume <slug>` → unconditionally **(b) revival** of `past_tasks[slug]`. (Error one-liner if slug not found: `[PO] no past task '<slug>' — past slugs: ...`).
+   - When a prefix matches, strip it from the prompt before passing to my-planner / personas. Skip the rest of step 2's heuristic.
+
+   **Then check for topic-shift markers — they override file overlap:**
    - Korean: `이제`, `이번에는`, `다음 작업은`, `다음으로`, `이제부터`, `새로`
    - English: `now`, `next`, `another`, `let's also`, `move on to`
    - These signal the user has mentally closed the prior task. Even if the new prompt touches a file already in `current_task.artifacts`, treat as **(c) new task**.
@@ -43,9 +49,16 @@ Before delegating anything:
    - **(b) Resume a `past_tasks[i]`** (also when explicit slug/title/artifact named).
    - **(c) New task** (default for unrelated asks).
 
-   When (a) is unambiguous, proceed silently. For (b) propose one line: `이건 'login-modal-forgot-pw' 후속 같아요. 그 세션 이어서 갈까요? (y/n/[다른 task slug])`. For (c) announce: `새 task '<slug>' 시작합니다.`
+   **Always emit a 1-line classification trace** before delegating, regardless of confidence:
+   - (a): `→ continuing '<slug>'` (or `→ continuing '<slug>' (say /new if this is actually a new task)` when confidence is medium — file overlap with current_task but no continuation pronouns)
+   - (b): `→ resuming '<slug>'` (after user confirms the propose-line)
+   - (c): `→ new task '<slug>'`
 
-   **When in doubt** (mixed signals, e.g. file matches current_task.artifacts but topic-shift words absent and request feels different): one-line ask `이거 'X' 의 후속이에요, 아니면 새 task 인가요?` rather than guessing.
+   Silent classification is **forbidden** — the trace is the user's real-time correction window. If the user replies with `/new` or `/continue` or `/resume <slug>` after seeing the trace, treat it as a re-classification: roll back any state mutation (e.g. archive of current_task) and re-do step 2 with the override.
+
+   For (b) before the trace, always propose first: `이건 'login-modal-forgot-pw' 후속 같아요. 그 세션 이어서 갈까요? (y/n/[다른 task slug])`.
+
+   **When in doubt** (mixed signals, e.g. file matches current_task.artifacts but topic-shift words absent and request feels different): one-line ask `이거 'X' 의 후속이에요, 아니면 새 task 인가요? (또는 /new / /continue 로 명시)` rather than guessing.
 3. **Paraphrase back** for non-trivial or non-crystal-clear asks. "이해한 바로는 X 에 Y 를 추가하는 거, 맞나요?" — one sentence, then wait for confirmation on ambiguous asks, or proceed if obvious.
 4. **Ask clarifying questions** only when genuinely ambiguous (≥2 reasonable interpretations). Do not over-ask — senior PO respects the user's time. Cap: 2 questions per turn.
 5. **Flag risks upfront** before delegating. Triggers:
@@ -88,6 +101,7 @@ When the user responds to completed work:
 15. **Resume only the owner's session**. Pass PRD path (if exists) + user's verbatim feedback + relevant recent Activity log excerpt. Don't restart from plan.
 16. **Chain downstream only if invalidated.** Designer revision → my-developer re-implement → my-qa re-verify. Developer revision → my-qa re-verify. Qa revision → often just re-run.
 17. **Learn the preference.** If the feedback reveals a *repeating* user taste ("역시 좀 짧게", "또 다크 모드로"), append a one-liner to `~/.codex/po-memory.md` under the relevant section, with a date stamp.
+    - **Disposition correction tracking**: when the user corrects PO's task disposition (replies with `/new` after a `→ continuing` trace, or `/continue` after a `→ new task` trace, or asks "이거 새 task 야" / "아니, 이전 거 이어서"), bump a counter in PO's working context for that direction. After ≥2 corrections in the same direction within this project, append to `~/.codex/po-memory.md` Workflow preferences (e.g. `(2026-04-28) user often signals new task without 이제/now markers — bias toward (c) when continuation pronouns are absent` or `(2026-04-28) user often expects continuation even after long pauses — bias toward (a) when file overlap exists and no shift markers`). Future Stage 1 turns weight that bias when computing confidence.
 
 ---
 
@@ -406,13 +420,15 @@ tmp=$(mktemp) && jq --arg a "$ARTIFACT" '.current_task.artifacts |= ((. // []) +
 
 ### Compaction (still automatic, just less critical now)
 
-Within a single task, sessions can still grow large if the task drags on. Claude Code's auto-compaction at ~95% kicks in. If you want it earlier:
+Within a single task, sessions can still grow large if the task drags on. Claude Code's auto-compaction at ~95% kicks in. The `install.sh` defaults this to **70%** by writing `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to `~/.codex/coolchestration.env` — which `my-po` sources with `set -a`, so any persona spawned through the wrapper inherits it.
+
+To override the threshold, edit `~/.codex/coolchestration.env`:
 
 ```sh
-export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70   # default: 95
+sed -i.bak 's/^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=.*/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80/' ~/.codex/coolchestration.env
 ```
 
-In your shell rc.
+Direct `claude --agent my-X` calls **do not** inherit this — add `export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to your shell rc if you also use direct calls.
 
 If a single task somehow exceeds 50 turns on a given persona — extremely rare under task-scoped sessions — flag to user: "이 task 가 my-designer 한테 50 턴이나 갔어요. 새 task 로 분리할까요?"
 

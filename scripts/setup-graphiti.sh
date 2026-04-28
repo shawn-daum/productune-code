@@ -74,7 +74,12 @@ if curl -fsS http://localhost:11434/api/tags 2>/dev/null | jq -e '.models[]?.nam
   HAS_LLM=$(curl -fsS http://localhost:11434/api/tags | jq -r '.models[].name' | grep -ix "gemma4:26b" || true)
   HAS_EMB=$(curl -fsS http://localhost:11434/api/tags | jq -r '.models[].name' | grep -iE '^(nomic-embed-text|mxbai-embed-large)' || true)
 fi
-[ -n "$HAS_LLM" ] || warn "ollama model 'gemma4:26b' not found. Pull it: ollama pull gemma4:26b  (or adjust model name in ~/.claude/agents/*.md)"
+if [ -z "$HAS_LLM" ]; then
+  warn "ollama model 'gemma4:26b' not found. Pull it: ollama pull gemma4:26b"
+  warn "  (extraction quality depends heavily on this — alternates: gemma2:27b, qwen2.5:32b)"
+  warn "  set GRAPHITI_LLM_MODEL=<chosen-tag> in ~/.codex/coolchestration.env if you pick an alternate"
+  warn "  or run install.sh and pick option [4] Hybrid for hosted-quality extraction with local embed"
+fi
 [ -n "$HAS_EMB" ] || warn "no embedding model found on ollama. Recommend: ollama pull nomic-embed-text"
 
 cat <<EOF
