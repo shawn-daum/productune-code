@@ -38,6 +38,115 @@ detect_tier() {
   echo "B"
 }
 
+# ── Dynamic model catalog (registry.ollama.ai) ────────────────────────────────
+
+# Fetch total disk size of a model tag from Ollama registry.
+# Outputs size in GB (e.g. "4.7"), or returns 1 on failure.
+fetch_disk_gb() {
+  local model="$1" tag="$2"
+  local manifest total
+  manifest=$(curl -fsSL --max-time 8 \
+    -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+    "https://registry.ollama.ai/v2/library/${model}/manifests/${tag}" 2>/dev/null) || return 1
+  total=$(printf '%s' "$manifest" | jq '[.layers[].size] | add // empty' 2>/dev/null) || return 1
+  [[ "$total" =~ ^[0-9]+$ ]] || return 1
+  awk "BEGIN{printf \"%.1f\", $total/1024/1024/1024}"
+}
+
+# Read config/model-catalog.json, fetch sizes in parallel, print filtered menu
+# for the given tier, prompt user, and set LLM_MODEL (or WIKI_BACKEND=keeper).
+select_model_for_tier() {
+  local tier="$1"
+  local catalog="$ROOT/config/model-catalog.json"
+
+  if [ ! -f "$catalog" ]; then
+    warn "model-catalog.json not found at $catalog — keeper로 전환"
+    WIKI_BACKEND=keeper; return
+  fi
+
+  local max_disk
+  max_disk=$(jq -r ".tiers.\"${tier}\".max_disk_gb" "$catalog")
+
+  say "모델 크기 조회 중 (registry.ollama.ai, 병렬)..."
+
+  local tmpdir; tmpdir=$(mktemp -d)
+  local count; count=$(jq '.catalog | length' "$catalog")
+
+  # Parallel fetch — one background job per catalog entry
+  local i
+  for i in $(seq 0 $((count - 1))); do
+    local m t
+    m=$(jq -r ".catalog[$i].model" "$catalog")
+    t=$(jq -r ".catalog[$i].tag"   "$catalog")
+    (
+      sz=$(fetch_disk_gb "$m" "$t" 2>/dev/null) && printf '%s' "$sz" > "$tmpdir/${i}.size"
+    ) &
+  done
+  wait
+
+  # Collect entries that fit the tier
+  local -a labels=() models=() descs=()
+  for i in $(seq 0 $((count - 1))); do
+    local m t fallback strengths weaknesses size_gb
+    m=$(jq -r         ".catalog[$i].model"       "$catalog")
+    t=$(jq -r         ".catalog[$i].tag"          "$catalog")
+    fallback=$(jq -r  ".catalog[$i].fallback_gb"  "$catalog")
+    strengths=$(jq -r ".catalog[$i].strengths"    "$catalog")
+    weaknesses=$(jq -r ".catalog[$i].weaknesses"  "$catalog")
+
+    if [ -f "$tmpdir/${i}.size" ]; then
+      size_gb=$(cat "$tmpdir/${i}.size")
+    else
+      size_gb="$fallback"
+    fi
+
+    awk "BEGIN{exit !($size_gb <= $max_disk)}" || continue
+
+    labels+=("${m}:${t}")
+    models+=("${m}:${t}")
+    descs+=("${size_gb}GB | + ${strengths} | − ${weaknesses}")
+  done
+
+  rm -rf "$tmpdir"
+
+  if [ ${#labels[@]} -eq 0 ]; then
+    warn "tier ${tier}에 적합한 모델 없음 — wiki-keeper로 전환"
+    WIKI_BACKEND=keeper; return
+  fi
+
+  echo
+  printf '  로컬 LLM 선택 (Graphiti entity 추출용):\n\n'
+  local idx=1
+  for i in "${!labels[@]}"; do
+    IFS='|' read -r sz plus minus <<< "${descs[$i]}"
+    printf '  [%d] %-24s %s\n' "$idx" "${labels[$i]}" "$(echo "$sz" | tr -d ' ')"
+    printf '       +%s\n'  "$(echo "$plus"  | sed 's/^ + //')"
+    [[ "$(echo "$minus" | sed 's/^ − //')" != "null" ]] && \
+      printf '       −%s\n' "$(echo "$minus" | sed 's/^ − //')"
+    [ "$idx" -eq 1 ] && printf '       *기본 추천*\n'
+    echo
+    idx=$((idx + 1))
+  done
+  printf '  [k] skip — wiki-keeper(Claude API)로 대신 가기\n\n'
+
+  printf '  선택 [1–%d/k, 기본=1 (%s)]: ' "${#labels[@]}" "${labels[0]}"
+  read -r MCHOICE || MCHOICE=""
+
+  case "${MCHOICE:-1}" in
+    k|K) WIKI_BACKEND=keeper; return ;;
+    ''|1) LLM_MODEL="${models[0]}" ;;
+    [2-9]|[1-9][0-9])
+      if [ "$MCHOICE" -ge 1 ] 2>/dev/null && [ "$MCHOICE" -le "${#labels[@]}" ] 2>/dev/null; then
+        LLM_MODEL="${models[$((MCHOICE - 1))]}"
+      else
+        warn "잘못된 선택 '${MCHOICE}' — 기본값 ${models[0]} 사용"
+        LLM_MODEL="${models[0]}"
+      fi
+      ;;
+    *) LLM_MODEL="${models[0]}" ;;
+  esac
+}
+
 # ── Local LLM installer (Tier S/A only) ───────────────────────────────────────
 install_local_llm() {
   local model="$1"
@@ -280,65 +389,11 @@ if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
   case "$DETECTED_TIER" in
     S)
       printf '\033[1;32m  → Tier S (Smooth)\033[0m 감지. Graphiti + async write 권장.\n'
-      cat <<'PROMPT'
-
-  로컬 LLM 선택 (Graphiti entity 추출용):
-
-  [1] qwen2.5:14b    9GB disk, ~9GB RAM
-       + 최고 추출 품질, 한국어 강함, multilingual
-       − write 가장 느림 (8–15s, background라 안 보임)
-       *기본 추천*
-
-  [2] gemma2:9b      5.5GB disk, ~6GB RAM
-       + 안정적 structured output, 빠름 (write 3–6s)
-       − 한국어 약간 약함
-
-  [3] llama3.1:8b    5GB disk, ~5.5GB RAM
-       + 영어 reasoning 강, 잘 검증됨
-       − 한국어 약함, 추출 품질 #1보다 약간↓
-
-  [k] skip — wiki-keeper(Claude API)로 대신 가기
-
-PROMPT
-      printf '  선택 [1/2/3/k, 기본=1]: '
-      read -r MCHOICE || MCHOICE=""
-      case "${MCHOICE:-1}" in
-        2) LLM_MODEL=gemma2:9b ;;
-        3) LLM_MODEL=llama3.1:8b ;;
-        k|K) WIKI_BACKEND=keeper ;;
-        *) LLM_MODEL=qwen2.5:14b ;;
-      esac
+      select_model_for_tier S
       ;;
     A)
       printf '\033[1;33m  → Tier A (Acceptable)\033[0m 감지. Graphiti + 소형 LLM 권장.\n'
-      cat <<'PROMPT'
-
-  로컬 LLM 선택:
-
-  [1] qwen2.5:7b     5GB disk, ~5GB RAM
-       + Tier A 최적 균형, 한국어 강함
-       − 8GB Mac에서 다른 앱 동시 사용 시 빡빡함
-       *기본 추천*
-
-  [2] llama3.1:8b    5GB disk, ~5.5GB RAM
-       + 영어 reasoning 강
-       − 8GB에서 swap 가능, 한국어 약함
-
-  [3] phi3.5:3.8b    2.5GB disk, ~3GB RAM
-       + 매우 가볍고 빠름 (write 1–3s)
-       − 추출 품질 눈에 띄게↓ (entity 누락 잦음)
-
-  [k] skip — wiki-keeper(Claude API)로 대신 가기
-
-PROMPT
-      printf '  선택 [1/2/3/k, 기본=1]: '
-      read -r MCHOICE || MCHOICE=""
-      case "${MCHOICE:-1}" in
-        2) LLM_MODEL=llama3.1:8b ;;
-        3) LLM_MODEL=phi3.5:3.8b ;;
-        k|K) WIKI_BACKEND=keeper ;;
-        *) LLM_MODEL=qwen2.5:7b ;;
-      esac
+      select_model_for_tier A
       ;;
     B|*)
       printf '\033[1;31m  → Tier B (Constrained)\033[0m 감지 (RAM 부족 또는 Docker 없음).\n'

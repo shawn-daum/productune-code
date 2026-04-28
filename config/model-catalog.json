@@ -1,0 +1,63 @@
+{
+  "tiers": {
+    "S": {
+      "max_disk_gb": 12,
+      "note": "RAM ≥ 16GB Apple Silicon or ≥ 32GB x86"
+    },
+    "A": {
+      "max_disk_gb": 6,
+      "note": "RAM ≥ 8GB Apple Silicon or ≥ 16GB x86"
+    }
+  },
+  "catalog": [
+    {
+      "model": "qwen2.5",
+      "tag": "14b",
+      "fallback_gb": 8.4,
+      "strengths": "최고 추출 품질, 한국어 강함, multilingual",
+      "weaknesses": "write 가장 느림 (8–15s, background라 안 보임)"
+    },
+    {
+      "model": "gemma2",
+      "tag": "9b",
+      "fallback_gb": 5.1,
+      "strengths": "안정적 structured output, 빠름 (3–6s)",
+      "weaknesses": "한국어 약간 약함"
+    },
+    {
+      "model": "qwen2.5",
+      "tag": "7b",
+      "fallback_gb": 4.4,
+      "strengths": "한국어 강함, S/A 경계 균형",
+      "weaknesses": "8GB Mac 동시 사용 시 빡빡함"
+    },
+    {
+      "model": "llama3.1",
+      "tag": "8b",
+      "fallback_gb": 4.6,
+      "strengths": "영어 reasoning 강, 잘 검증됨",
+      "weaknesses": "한국어 약함, 추출 품질 qwen 대비 약간↓"
+    },
+    {
+      "model": "gemma3",
+      "tag": "4b",
+      "fallback_gb": 3.1,
+      "strengths": "가볍고 structured output 안정적",
+      "weaknesses": "한국어 약함"
+    },
+    {
+      "model": "qwen2.5",
+      "tag": "3b",
+      "fallback_gb": 1.8,
+      "strengths": "매우 가볍고 빠름 (1–2s), 한국어 무난",
+      "weaknesses": "추출 품질↓"
+    },
+    {
+      "model": "phi3.5",
+      "tag": "3.8b",
+      "fallback_gb": 2.0,
+      "strengths": "매우 가볍고 빠름 (1–3s)",
+      "weaknesses": "추출 품질 눈에 띄게↓, 한국어 약함"
+    }
+  ]
+}
