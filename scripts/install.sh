@@ -243,12 +243,16 @@ activate_backend() {
     say "backend=$backend: agents/$name → variants/$backend/$name"
   done
 
-  # wiki-keeper only needed for keeper backend — link/unlink accordingly
-  local keeper_dest="$ROOT/agents/pdt-wiki-keeper.md"
+  # wiki-keeper is only active for the keeper backend.
+  # Manage the ~/.claude/agents/ symlink directly so Claude Code sees/doesn't see it.
+  local keeper_claude="$HOME/.claude/agents/pdt-wiki-keeper.md"
+  local keeper_src="$ROOT/agents/pdt-wiki-keeper.md"
   if [[ "$backend" == "keeper" ]]; then
-    if [ ! -e "$keeper_dest" ]; then
-      ln -sfn "$ROOT/agents/pdt-wiki-keeper.md" "$keeper_dest" 2>/dev/null || true
-    fi
+    ln -sfn "$keeper_src" "$keeper_claude"
+    say "linked pdt-wiki-keeper agent (backend=keeper)"
+  else
+    rm -f "$keeper_claude"
+    say "unlinked pdt-wiki-keeper agent (backend=$backend — not needed)"
   fi
 }
 
@@ -414,20 +418,25 @@ if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
       ;;
   esac
 
-  # If not overridden to keeper, proceed with Graphiti + chosen LLM
+  # If not overridden to keeper, proceed with LLM install → Graphiti setup → env write
   if [ -z "$WIKI_BACKEND" ] && [ -n "${LLM_MODEL:-}" ]; then
-    WIKI_BACKEND=graphiti
     say "로컬 LLM 설치 시작: $LLM_MODEL"
     if install_local_llm "$LLM_MODEL"; then
-      cat >> "$PO_ENV_FILE" <<EOF
+      say "Graphiti 세팅 시작 (FalkorDB + Graphiti MCP)..."
+      if bash "$ROOT/scripts/setup-graphiti.sh"; then
+        cat >> "$PO_ENV_FILE" <<EOF
 WIKI_BACKEND=graphiti
 GRAPHITI_LLM_PROVIDER=ollama
 GRAPHITI_LLM_MODEL=$LLM_MODEL
 GRAPHITI_EMBEDDER_PROVIDER=ollama
 GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
 EOF
-      say "Graphiti 로컬 backend 설정 완료 ($LLM_MODEL)"
-      say "  → FalkorDB 시작: bash $ROOT/scripts/setup-graphiti.sh"
+        WIKI_BACKEND=graphiti
+        say "Graphiti backend 설정 완료 ($LLM_MODEL)"
+      else
+        warn "Graphiti 세팅 실패 — wiki-keeper로 fallback"
+        WIKI_BACKEND=keeper
+      fi
     else
       warn "LLM 설치 실패 — wiki-keeper로 fallback"
       WIKI_BACKEND=keeper
