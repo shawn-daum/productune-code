@@ -1,6 +1,6 @@
-# 오케스트레이션 end-to-end 테스트
+# productune end-to-end 테스트
 
-점진적 4-phase 테스트 플랜. 각 phase 가 통과해야 다음 phase 로 — 건너뛰면 실패 진단이 어려워짐.
+점진적 6-phase 테스트 플랜. 각 phase 가 통과해야 다음 phase 로 — 건너뛰면 실패 진단이 어려워짐. **Phase 6 통과 = Phase 1 (CLI MVP) 합격 = Phase 2 (사용자 dogfood) 진입 자격**.
 
 ## Phase 0 — 사전 준비 (한 번만, 약 5분)
 
@@ -26,11 +26,12 @@ Claude Code 가 페르소나를 인식하고 정상 JSON 으로 응답하는지 
 ```sh
 # 1.1 — 인식된 페르소나 목록
 claude agents
-# 기대: 4 개 user agent — my-planner / my-designer / my-developer / my-qa
+# 기대: 4 개 user agent — productune / my-designer / my-developer / my-qa
+# (my-planner 는 PO 안으로 흡수됨 — 별도 페르소나 없음)
 
-# 1.2 — my-planner 자가 introspection (Graphiti 호출 없는 순수 introspection)
-claude --agent my-planner -p "Describe your role in one sentence and list the JSON fields you return. Return as JSON." --output-format json | jq '.result' -r
-# 기대: 한 문장 역할 설명 + persona, tasks, prd_path, pipeline, risk_flags, open_questions 같은 필드 언급
+# 1.2 — productune (PO) 자가 introspection
+claude --agent productune -p "Describe your role in one sentence and list the JSON fields you produce when planning a task. Return as JSON." --output-format json | jq '.result' -r
+# 기대: PO 역할 설명 + tasks, pipeline, risk_flags, user_facing_artifacts, open_questions 같은 필드 언급
 ```
 
 **합격 기준:** JSON 파싱 성공, 페르소나가 자기 역할을 정확히 식별.
@@ -53,8 +54,8 @@ git add . && git commit -q -m "init"
 이제 페르소나를 한 번에 하나씩 테스트:
 
 ```sh
-# 2.2 — Planner: 요청 분해 (read-only, tasks 배열 들어 있는 JSON 기대)
-claude --agent my-planner -p "The README has a typo. Find it and describe the fix." --output-format json | jq '.result' -r
+# 2.2 — productune (PO): 요청 분해 (PO 가 자체적으로 planning — 구 my-planner 역할)
+claude --agent productune -p "The README has a typo. Decompose this into tasks (return JSON with tasks array)." --output-format json | jq '.result' -r
 
 # 2.3 — Developer: 실제 fix 수행
 claude --agent my-developer -p "Fix the typo in README.md. The misspelling is on line 2." --output-format json | jq '.result' -r
@@ -65,7 +66,7 @@ claude --agent my-qa -p "Verify the README change. Run git status and git diff, 
 ```
 
 **합격 기준:**
-- Planner 가 `tasks` 들어 있는 JSON 반환
+- productune 이 `tasks` 들어 있는 JSON 반환 (planner 역할 흡수)
 - Developer 가 README.md 한 글자만 변경 (`temperery` → `temporary`), 그 외 손대지 않음
 - QA 가 pass 보고
 
@@ -101,16 +102,16 @@ rm -f .codex/po-state.json
 # 3.2 — PO 시작 — 셋 중 하나 고르기
 
 # 방법 A (테스트용 권장): 인터랙티브 TUI
-codex --profile po
+codex --profile productune
 # → Codex TUI 열림. 아래 prompt 를 TUI 안에서 입력, Enter 로 제출.
 # 멀티라인: Shift+Enter 로 줄바꿈, Enter 로 제출. 붙여넣기도 OK.
 
 # 방법 B: 초기 prompt 를 CLI 인자로 함께 던져서 TUI 시작
 # prompt 에 backtick 이 있으면 SINGLE quote 사용, 안 그러면 zsh 가 실행해버림:
-codex --profile po 'README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.'
+codex --profile productune 'README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.'
 
 # 멀티라인이면 heredoc:
-codex --profile po "$(cat <<'EOF'
+codex --profile productune "$(cat <<'EOF'
 README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서
 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.
 EOF
@@ -127,8 +128,8 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 
 **관찰 포인트:**
 1. PO 가 paraphrase 하거나 그대로 진행 (Stage 1 질문 건너뛸 만큼 명확)
-2. `→ delegating to my-planner...` 진척 마커 출력
-3. Planner 가 task list 반환 (대개 2 개 — 오타 fix + sum.js 생성, 둘 다 `my-developer` 페르소나, "테스트 안 돌려도" 라서 `my-qa` 스킵)
+2. PO 가 자체 decompose 수행 (planner 역할 흡수) — `→ planning N 개 작업` 또는 trivial 이면 `→ delegating to my-developer (decompose 생략, single-step)` 진척 마커
+3. Decomposition 결과 task list (대개 2 개 — 오타 fix + sum.js 생성, 둘 다 `my-developer` 페르소나, "테스트 안 돌려도" 라서 `my-qa` 스킵)
 4. ≤3 task + 위험 플래그 없음 → Gate 1 pause 없이 my-developer 로 직진
 5. `→ delegating to my-developer...`, `✓ my-developer complete`
 6. PO 가 ≤5-bullet 요약으로 마무리
@@ -152,7 +153,7 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 **관찰 포인트:**
 - PO 가 새 task 를 시작하지 **않음**. continuation 시그널 ("그", "그리고", `current_task.artifacts` 에 이미 있는 `sum.js` 참조) 감지.
 - PO 가 `→ continuing '<slug>'` 1줄 trace 출력. (doctrine 상 silent 분류 금지 — confidence 와 무관하게 trace 필수.)
-- my-planner 재호출 안 함.
+- PO 자체 re-decompose 안 함 (continuation 이라 기존 plan 재사용).
 - `→ delegating to my-developer...` (단독), 세션 resume.
 - `✓ my-developer complete` — sum.js 업데이트.
 
@@ -221,7 +222,7 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 - PO 가 `/new` prefix 인식, disposition 휴리스틱 전체 스킵.
 - `→ new task 'license-redo'` trace 출력.
 - 이전 task (current 였던 것) 가 `past_tasks` 로 archive.
-- `/new <slug>` 뒤 텍스트 (실제 요청) 만 my-planner / 페르소나에 전달.
+- `/new <slug>` 뒤 텍스트 (실제 요청) 만 PO decomposition / 페르소나에 전달.
 
 이어서 같은 TUI 에서:
 
@@ -231,7 +232,7 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 
 **관찰 포인트:**
 - prompt 에 continuation 대명사가 없어도 `→ continuing 'license-redo'` trace 출력.
-- 단일 step / 단일 페르소나 요청이라 my-planner 스킵.
+- 단일 step / 단일 페르소나 요청이라 PO decomposition 생략 ("→ delegating to my-developer (decompose 생략, single-step)").
 
 이제 `/resume` prefix 테스트 (3.6 에서 `add-sum-helper` 가 past_tasks 에 있다고 가정):
 
@@ -361,31 +362,152 @@ EOF
 이제 PO 시작, 아무 작은 task 던지기 (CLI 인자로 prompt 함께 던지면 TUI 가 그걸로 시작):
 
 ```sh
-codex --profile po 'README.md 에 한 줄 더 추가해줘.'
+codex --profile productune 'README.md 에 한 줄 더 추가해줘.'
 ```
 
-(동등: `codex --profile po` 만 실행 후 TUI 안에서 입력.)
+(동등: `codex --profile productune` 만 실행 후 TUI 안에서 입력.)
 
 **관찰 포인트:** 실행 직전에 PO 가 다음 비슷한 안내: "my-qa 가 최근 이 프로젝트에서 4/5 실패. sonnet 으로 올려볼까요? (one-off: `--model sonnet`, 영구: agents/my-qa.md 수정)".
 
 **합격 기준:** PO 가 패턴을 자발적으로 surface 하고 evolution 을 제안 (자동 mutate 안 함).
 
+## Phase 6 — MVP 확립 (Phase 1 완료 합격 기준)
+
+> 이 phase 는 productune 자체의 PRD acceptance criteria 와 동일. 통과해야 Phase 2 (사용자 dogfood) 진입 자격.
+
+### 사전 조건
+
+```sh
+# 새 프로젝트 (productune 자기 적용 아닌, 별개 dogfood-style)
+mkdir -p /tmp/productune-mvp-test && cd /tmp/productune-mvp-test
+git init -q
+echo '# MVP test project' > README.md
+git add . && git commit -q -m "init"
+
+# productune 명령 + 페르소나 인식 + skill 라이브러리 + Graphiti 모두 준비된 상태여야 함
+which productune
+claude agents     # productune / my-designer / my-developer / my-qa 4개
+ls ~/.claude/skills/mattpocock ~/.claude/skills/phuryn  # skill 디렉토리 존재
+```
+
+### 6.1 — Real Engineering 워크플로 한 round 완주
+
+기획자 역할로, 단일 명령 + 한 문장으로 시작:
+
+```sh
+productune
+> "TODO 앱 MVP — 추가 / 완료체크 / 삭제 + 로컬 저장. 만들고 싶어."
+```
+
+**관찰 포인트 (PO 가 자발적으로 stage transition announce):**
+
+```
+→ Stage: PRD 작성 (productune Why-essential, opus, ⚡xhigh)
+   ✓ to-prd skill auto-invoke + grill-me 식 문답 시작
+   ✓ docs/prd/<your-slug>.md 또는 docs/prd/productune.md round 헤더 추가
+→ Stage: Test 정의 (my-qa What, haiku)
+   ✓ acceptance criteria → test 정의
+→ Stage: Issue 분해 (productune How, sonnet, to-issues skill)
+   ✓ vertical-slice ticket 생성 (T-001, T-002, ...)
+→ Stage: 구현 (my-developer What, sonnet, tdd skill auto-invoke)
+   ✓ 각 ticket 처리, confidence 보고
+→ Stage: QA (my-qa What, haiku)
+   ✓ test 실행, pass/fail
+→ 사용자에게 final summary + deploy checklist
+```
+
+**합격 기준:**
+- 4 페르소나 모두 적어도 1번씩 호출됨 (productune / my-designer 또는 skip / my-developer / my-qa)
+- 각 호출 trace 에 model + effort 명시 (`model=sonnet, effort=medium` 류)
+- `confidence` 가 출력 JSON 에 들어 있음 — `low` 면 PO 가 3-option 메뉴 surface 했어야 함
+- 적어도 페르소나당 1 개 skill 자동 invoke (mattpocock 또는 phuryn) — trace 에서 확인 가능
+
+### 6.2 — Ticket 영속화
+
+```sh
+jq '.current_round, .current_task.ticket_id, .current_task.stage' /tmp/productune-mvp-test/.codex/po-state.json
+# 기대: "v1.0-MVP", "T-NNN", "<stage>"
+
+ls /tmp/productune-mvp-test/docs/tickets/v1.0-MVP/ 2>/dev/null
+# 기대: 완료된 ticket 들이 markdown (T-001.md, T-002.md ...)
+
+cat /tmp/productune-mvp-test/docs/tickets/v1.0-MVP/T-001.md
+# 기대: title / Round / Stage / Status / Period / Request / Inputs / Outputs / Linked tickets / Outcome
+```
+
+**합격 기준:**
+- `current_task` 가 ticket schema (`ticket_id`, `stage`, `assignee_persona`, `input/output/deps`) 를 완전히 채움
+- 닫힌 ticket 이 `docs/tickets/<round>/T-<id>.md` 에 자동 export 됨
+
+### 6.3 — Quality escalation (의도적 어려움)
+
+```sh
+productune
+> "src/middleware.ts 를 Next.js 16 의 새 proxy 구조로 마이그레이션"
+# 의도: my-developer 가 모를 가능성 높음 → confidence=low → 3-option 메뉴
+```
+
+**관찰 포인트:**
+- `→ delegating to my-developer (model=sonnet, effort=medium)` 첫 시도
+- `✓ my-developer: confidence=low, unresolved: [...]`
+- `[PO] my-developer 결과 confidence=low. [1] retry / [2] skill 검색 / [3] 진행 — [1/2/3]?`
+
+사용자 `1` 응답 시:
+- `→ retry my-developer (model=opus, effort=high — same session resume, ⚡tier-up)`
+- 두 번째 시도 후에도 low → opus + ⚡xhigh (Loop cap 2 의 마지막 시도)
+
+**합격 기준:**
+- 3-option 메뉴가 정확히 surface
+- Path 1 retry 시 model + effort 가 한 단계 ↑
+- Loop cap 2 후에도 fail 이면 `blocked` 마크 + final summary 에 follow-up
+
+### 6.4 — 사용자 prefix override
+
+```sh
+productune
+> "/effort xhigh 디자인 시스템 신규 정의해줘"
+# 기대: → my-designer (Why-essential, model=opus auto-promoted, effort=⚡xhigh — user override)
+
+> "/dev:opus/high 그 컴포넌트 멀티-파일 refactor"
+# 기대: → my-developer (How, opus, high — user override per-persona)
+
+> "/skill 'next.js 16'"
+# 기대: skill-fetch 호출 → 후보 surface → 사용자 선택
+```
+
+**합격 기준:**
+- 모든 prefix 인식 + 적용
+- xhigh + sonnet/haiku 충돌 시 자동 opus 승격 (한 줄 confirm 또는 자동)
+
+### 6.5 — 종합 (Phase 1 acceptance)
+
+다음 모두 만족:
+
+- [ ] 6.1–6.4 위 phase 모두 pass
+- [ ] `claude agents` 4 페르소나 (no my-planner)
+- [ ] `productune` + `my-po` 둘 다 동작
+- [ ] `bash scripts/install.sh` 재실행 멱등 (env file 보존)
+- [ ] `bash scripts/setup-skills.sh` 재실행 멱등
+- [ ] `docs/prd/productune.md` 의 acceptance criteria 모두 ✓ (또는 의도적 deferred 만 □)
+
+이 phase 통과 시 Phase 1 완료. Phase 2 (사용자 실 프로젝트 dogfood) 진입 가능.
+
 ## Troubleshooting
 
 **"MCP server 'graphiti' failed to start"** — Phase 0 미완. `setup-graphiti.sh` 실행. wiki tier 가 필요 없는 phase 라면 경고 무시 가능.
 
-**"codex --profile po fails to parse config"** — 드물지만 Ollama 의 `responses` API 가 준비 안 됐으면 profile `local` 이 에러 가능. `po` 에는 영향 없음. 우회: `codex --oss --local-provider ollama -m qwen3.5:4B` 를 `--profile local` 대신 사용.
+**"codex --profile productune fails to parse config"** — 드물지만 Ollama 의 `responses` API 가 준비 안 됐으면 profile `local` 이 에러 가능. `productune` 에는 영향 없음. 우회: `codex --oss --local-provider ollama -m qwen3.5:4B` 를 `--profile local` 대신 사용.
 
 **"persona doesn't respect gate"** — PO 는 시작 시 `po-instructions.md` 를 읽음. 세션 도중에 수정했으면 Codex 재시작.
 
 **"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — (또는 PO 가) `claude --session-id <uuid>` 로 그 id 의 새 세션을 *생성* 시도. 미지원 — `--session-id` 는 fork-session flow 안에서만 허용. 정상 패턴: 첫 호출에 `--session-id` 생략 (Claude 가 할당, 응답 JSON 의 `.session_id` 로 반환), 이후 호출에 `--resume <id>` 사용. `--resume` 와 `--session-id` 동시 사용 금지. PO doctrine 인 `~/.codex/po-instructions.md` 가 이미 이 패턴 — 만약 PO 에서 이 에러를 만나면 `bash scripts/install.sh` 로 최신 doctrine 재배포.
 
-**`kill -9` 후 stale `.codex/po.lock`** — 수동 정리 불필요. 다음 `my-po` 호출이 lock 읽고, `kill -0` 으로 PID 가 죽었음을 확인하면 `[my-po] stale lock from pid <X>; reclaiming` 출력 후 lock 삭제, 정상 진행.
+**`kill -9` 후 stale `.codex/po.lock`** — 수동 정리 불필요. 다음 `productune` 호출이 lock 읽고, `kill -0` 으로 PID 가 죽었음을 확인하면 `[productune] stale lock from pid <X>; reclaiming` 출력 후 lock 삭제, 정상 진행.
 
 **Legacy `po-state.json` 스키마 (flat `persona_sessions`)** — task-lifecycle 변경 전에 셋업했다면 `<project>/.codex/po-state.json` 이 다음 모양일 수 있음:
 
 ```json
-{ "persona_sessions": {"my-planner": "uuid", ...}, "recent_turns": [...] }
+{ "persona_sessions": {"my-designer": "uuid", ...}, "recent_turns": [...] }
 ```
 
 새 doctrine 은 top-level 이 아니라 `current_task.persona_sessions` 아래를 읽음. 가장 단순한 마이그레이션은 그냥 비우고 PO 가 다음 실행에 새로 만들도록 두는 것:

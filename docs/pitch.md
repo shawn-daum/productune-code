@@ -1,6 +1,14 @@
 # productune
 
-> 한 명의 시니어 PO + 4명의 전문가 페르소나 + 인간형 3-tier 기억 — 모두 bash 스크립트와 markdown 으로.
+> 오케스트라처럼 — 들으면서 곡(제품) 을 tune 해 나가는 컨셉. 한 명의 시니어 PO + 3 명의 전문가 페르소나 (구 4명 — planner 는 PO 안으로 흡수) + 인간형 3-tier 기억 + Real Engineering 워크플로 — 모두 bash + markdown 으로.
+
+## 비전
+
+**개발에 잘 모르는 기획자가 프로덕트를 성공적으로 만들 수 있는 툴.**
+
+타깃: 스펙 / 구현난이도 추정은 가능하지만 CLI 미숙 + 복잡 개발지식 X 인 기획자. "성공적으로" = 단순 동작이 아니라 PRD acceptance criteria 만족 + 사용자에게 가치 전달.
+
+3-phase 롤아웃: **Phase 1 (지금) — CLI 핵심** / Phase 2 — dogfood / Phase 3 — UI 화. 자체 PRD 는 [`docs/prd/productune.md`](./prd/productune.md).
 
 ---
 
@@ -34,17 +42,17 @@ Claude Code 한 세션으로 디자인·구현·QA 다 시키면:
 ### 1. 다년차 PO 가 멀티 페르소나를 부린다
 
 ```
-사용자 ─한 문장─▶ PO (Codex 또는 Claude Code)
+사용자 ─한 문장─▶ productune (PO, Codex 또는 Claude Code 선택)
+                   │   ├ 자체 decompose / risk-flag / pipeline (구 my-planner 흡수)
                    │
-                   ├─ my-planner    (요구 분해, 영향 파일 매핑)
-                   ├─ my-designer   (아키텍처/UX 설계, docs/design/*.md)
-                   ├─ my-developer  (코드 구현)
-                   └─ my-qa         (lint/build/test 검증)
+                   ├─ my-designer   (UX 원칙 / Brand / DS / docs/design/*.md, default opus)
+                   ├─ my-developer  (코드 구현, default sonnet)
+                   └─ my-qa         (lint/build/test, default haiku)
                    │
 사용자 ◀─≤5 bullet─ PO 가 결과 합성
 ```
 
-PO 는 코드 안 짜고 디자인도 안 함. 라우팅·gate·합성·피드백 처리만.
+PO 는 코드 안 짜고 디자인도 안 함. PRD 수립 + 라우팅 + gate + 합성 + 피드백 처리 + 티켓 관리.
 
 ### 2. 인간 기억 구조 닮은 3-tier 메모리
 
@@ -66,14 +74,17 @@ PO 는 코드 안 짜고 디자인도 안 함. 라우팅·gate·합성·피드�
 
 | | 기본 Claude Code | productune |
 |---|---|---|
-| 페르소나 | 단일 세션, 한 명이 다 함 | 4 명 전문가 + PO 오케스트레이터 |
+| 페르소나 | 단일 세션, 한 명이 다 함 | 3 명 전문가 + PO (planner 흡수) |
 | 위임 결정 | 사용자가 매번 직접 | PO 가 자동 라우팅 + adaptive gate |
 | 메모리 | MEMORY.md + 세션 transcript | 3-tier (session/project/wiki) + 페르소나별 격리 |
 | 피드백 처리 | 같은 세션 안에서 응답 | 어떤 페르소나 소관인지 PO 가 판정 → 그 페르소나만 resume |
 | 권한 | 한 페르소나가 다 가짐 | 페르소나별 좁은 allow-list (`tools: Bash(npm run *), ...`) |
 | 진화 메커니즘 | 수동 system prompt 수정 | PO 가 실패 패턴 감지 → "my-qa 모델 sonnet 으로 올릴까요?" 자발 제안 |
-| 병렬 작업 | 같은 cwd 두 세션 = race | `my-po` 가 자동 git worktree 분리 |
-| Task lifecycle | conversation 그대로 흐름 | current_task / past_tasks / 자동 timeline 렌더링 |
+| 모델 선택 | 사용자 수동 / 페르소나 frontmatter 고정 | PO 가 task 난이도 → tier 매핑 (OSS 7-level), `xhigh` effort 까지 4 단계 |
+| 품질 검증 | 사용자 피드백으로만 | 페르소나 confidence + unresolved 자동 보고 → PO 가 retry / skill / 진행 3-option |
+| 워크플로 | freeform | Real Engineering: PRD → Test → Issue → 구현 → Refactor (mattpocock skill 자동) |
+| 병렬 작업 | 같은 cwd 두 세션 = race | `productune` 가 자동 git worktree 분리 |
+| Task lifecycle | conversation 그대로 흐름 | ticket 단위 영속화 (current_round / current_task / past_tickets) → docs/tickets/ git-versioned |
 
 ---
 
@@ -137,9 +148,8 @@ Codex/Claude TUI 가 뜨고, 한 문장 던지면:
 > 로그인 모달에 비밀번호 찾기 링크 추가해줘.
 
 [PO] 새 task 'login-forgot-pw' 시작합니다.
-→ delegating to my-planner...
-✓ my-planner: 2 tasks (my-designer + my-developer)
-→ delegating to my-designer for task #1...
+→ planning 2 개 작업 (my-designer + my-developer)
+→ delegating to my-designer for task #1 (model=opus, effort=high — UI 디자인)...
 ✓ my-designer: docs/design/login-forgot-pw.md
 → delegating to my-developer for task #2...
 ✓ my-developer: 2 files changed
@@ -172,7 +182,7 @@ Codex/Claude TUI 가 뜨고, 한 문장 던지면:
 [PO] ## Changes ...
 ```
 
-my-planner 다시 안 부름. my-designer 만 resume → 영향받는 dev/my-qa 만 chain.
+PO re-decompose 안 함 (피드백은 디자인 세부 변경만). my-designer 만 resume → 영향받는 dev/my-qa 만 chain.
 
 ### 새로운 작업 / 옛 작업 부활
 
@@ -216,7 +226,7 @@ codex › "결제 화면 토스페이 추가"   # 터미널 1과 격리됨
 
 2026-04-23 14:30–15:10  login-forgot-pw          [done]
   요청  : 로그인 모달 비번 찾기 링크
-  플로우: my-planner ✓ → my-designer ✓ → my-developer ✓ → my-qa ✓
+  플로우: PO planning ✓ → my-designer ✓ → my-developer ✓ → my-qa ✓
   결과  : 2 files shipped. Designer copy 'TBD' 제외 모든 항목 만족.
 
 2026-04-24 09:00–09:12  fix-readme-typo          [done]
@@ -235,7 +245,7 @@ PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
 | 컴포넌트 | 구현 |
 |---|---|
 | PO 오케스트레이터 | Codex CLI 또는 Claude Code (사용자 선택) |
-| 페르소나 4종 | `agents/{my-planner,my-designer,my-developer,my-qa}.md` + frontmatter |
+| 페르소나 4종 | `agents/{productune,my-designer,my-developer,my-qa}.md` + frontmatter (planner role 흡수) |
 | 페르소나 호출 | `claude --agent X --print --output-format json` |
 | 상태 저장 | `<project>/.codex/po-state.json` (current_task / past_tasks / recent_turns) |
 | 사용자 성향 메모 | `~/.codex/po-memory.md` |

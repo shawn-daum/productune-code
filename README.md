@@ -1,294 +1,268 @@
 # productune
 
-A personal dev-workflow setup where a **PO orchestrator** (Codex CLI or Claude Code, your pick) delegates work to four specialized **Claude Code sub-agent personas** — **my-planner, my-designer, my-developer, my-qa** — each with its own 3-tier memory.
+> 오케스트라처럼 — 들으면서 곡 (제품) 을 tune 해 나가는 컨셉.
+> **개발에 대해 잘 알지 못하는 기획자가 프로덕트를 성공적으로 만들 수 있는 툴**.
+
+CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 → Refactor** 를 4 명의 전문가 페르소나가 함께 돌리는 로컬 dev-workflow 도구.
 
 ```
-Codex CLI (PO, orchestrator)
-   │
-   ├── claude --agent my-planner    → reads, decomposes, routes
-   ├── claude --agent my-designer   → writes docs/design/*.md
-   ├── claude --agent my-developer  → implements code
-   └── claude --agent my-qa         → verifies build / lint / test / runtime
-                                  │
-                                  └─ each persona has 3 memory tiers:
-                                      1. session  — Claude session (per task)
-                                      2. project  — docs/<persona>/*.md in target repo
-                                      3. wiki     — Graphiti knowledge graph, persona-global,
-                                                    group_id=persona:<name>, backed by FalkorDB + Ollama
+사용자 ─한 문장─▶ productune (PO orchestrator, sonnet/opus)
+                   │
+                   ├── claude --agent my-designer   → UX/Brand/Design System (default opus)
+                   ├── claude --agent my-developer  → 구현 (default sonnet)
+                   └── claude --agent my-qa         → 검증 (default haiku)
+                                                  │
+                                                  └─ 각 페르소나 3-tier 메모리:
+                                                     1. session  — Claude session (per ticket)
+                                                     2. project  — docs/<persona>/*.md
+                                                     3. wiki     — Graphiti, persona-global
+                                                                   group_id=persona-<name>
 ```
 
-This repo is the source of truth. It installs symlinks/copies into `~/.claude/agents/` and `~/.codex/` so the personas are available from **any** project directory on your machine.
+> **planner 역할은 PO 안으로 흡수** — 별도 my-planner 페르소나 없음.
+
+## 누구를 위한 도구인가
+
+- 기획자 / 1인 PM / 제품 오너 — 코드는 직접 짜지 않지만 무엇을 만들지 정의할 수 있는 사람
+- 스펙 / 구현 난이도 추정은 가능, 단 CLI 익숙치 않고 복잡한 개발 지식은 없음
+- 실제 풀스택 개발자에게는 productune 이 IDE 보조가 아니라 **위임 + 검증** 도구라 적합도가 다름
+
+## 3-phase 롤아웃
+
+| Phase | 목표 | 인터페이스 | 상태 |
+|---|---|---|---|
+| **Phase 1 (지금)** | CLI 기반 핵심 + dogfood-ready | terminal `productune` | **현재 작업 중** |
+| Phase 2 | 사용자가 실제 프로젝트 1 개로 dogfood 완주 | 동일 (CLI) | Phase 1 완료 후 |
+| Phase 3 | UI 화 (onboarding + 일반 사용 모두 GUI) | web/desktop | Phase 2 합격 후 |
+
+자체 PRD 는 [`docs/prd/productune.md`](./docs/prd/productune.md) — round 단위 누적.
+
+## 페르소나 매트릭스 (Why / How / What — Golden Circle)
+
+| 페르소나 | Default 모델 | Why mode | How mode | What mode |
+|---|---|---|---|---|
+| **productune** (PO) | sonnet | **opus + ⚡xhigh** — MVP PRD 첫 round 수립 (Discovery / 실현가능성 / 위험 동시 reasoning) | sonnet/medium — 라우팅 / 티켓 관리 / 교통정리 | — |
+| **my-designer** | opus | **opus + ⚡xhigh** — net-new 시스템 디자인 (UX/Brand/DS) | sonnet/low — 단순 token 매핑, haiku — 단일 컴포넌트 compliance | — |
+| **my-developer** | sonnet | — | **opus + high** — 아키텍처 / 멀티-파일 refactor / 2턴+ 디버깅. **opus + ⚡xhigh** — 3턴 째 디버깅 / 시스템 차원 결정 | sonnet/medium — PRD 기반 명료한 구현 |
+| **my-qa** | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. test 환경 bypass 요청 (auth pass 등) PO 통해 처리 | haiku/low — npm test, lint/build, 단일 페이지 nav |
+
+> PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용.
+> Effort `xhigh` 는 opus 에만 허용 (다른 model 은 자동 승격).
 
 ## Why the 3-tier memory
 
-Inspired by human memory: short-term / middle-term / long-term.
+사람의 단기 / 중기 / 장기 기억 모방.
 
-| Tier | Scope | Where it lives | Who writes |
+| Tier | Scope | Where | Who writes |
 |---|---|---|---|
-| **Session** | one task | Claude Code session (keyed by `--session-id`) | Claude auto |
-| **Project** | one repo | `docs/<persona>/*.md` inside the *target* project (committed, git-versioned) | PO, after user approval |
-| **Wiki** | persona-global across projects | Graphiti temporal KG (`group_id=persona-<name>`), stored in local FalkorDB | PO, after user approval |
+| **Session** | 한 ticket | Claude Code session (`--session-id`) | Claude 자동 |
+| **Project** | 한 repo | `docs/<persona>/*.md` (committed) | PO, 사용자 승인 후 |
+| **Wiki** | persona-global cross-project | Graphiti KG (`group_id=persona-<name>`, FalkorDB) | PO, `[PROMOTION-APPROVED]` 마커 + 사용자 승인 |
 
-The key constraint this solves: **the my-designer should not instantly recall an old project's color palette in a new project.** Project-tier memory is physically isolated per repo. Only *generalizable* principles (e.g. "prefer pastel for consumer apps") get promoted to the wiki.
+핵심 제약: **my-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — project tier 가 디렉토리 격리, generalized 원칙만 wiki promote. Graphiti bi-temporal 로 옛 사실 자동 deprecate.
 
-Graphiti is **bi-temporal** — every fact has `(valid_from, valid_to)` windows. When you tell a persona "we don't do X anymore", it adds a new fact, and the old one deprecates automatically at retrieval time. Old knowledge isn't deleted, just deprioritized.
+## Real Engineering 워크플로
+
+```
+PRD (productune Why)         — 사용자 문답 + 실현가능성 (mattpocock to-prd, grill-me)
+   ↓
+Test (my-qa What)            — acceptance criteria → test 정의
+   ↓
+Issue (productune How)       — vertical-slice ticket 분해 (mattpocock to-issues)
+   ↓
+Impl (my-developer What/How) — TDD 사이클 (mattpocock tdd, triage-issue)
+   ↓
+Refactor (my-developer How)  — request-refactor-plan, improve-codebase-architecture
+   ↓
+QA (my-qa What/How)          — 자동화 + manual + e2e
+   ↓ (반복)
+```
+
+각 stage transition 에 PO 가 1줄 announce. 단순 작업은 stage 일부 skip.
+
+OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 skill) + [phuryn/pm-skills](https://github.com/phuryn/pm-skills) (65 skill, 8 plugin) — `bash scripts/setup-skills.sh` 로 한 번에 설치.
 
 ## Prerequisites
 
-- **macOS** (Linux should work, paths will need tweaking)
-- `claude` — Claude Code CLI, installed and authenticated
-- `codex` — OpenAI Codex CLI (`npm i -g @openai/codex`), logged in
+- **macOS** (Linux 도 가능, path 조정 필요)
+- `claude` — Claude Code CLI, 인증 완료
+- `codex` — OpenAI Codex CLI (`npm i -g @openai/codex`)
 - `uv` — Python runner (`brew install uv`)
 - `jq` — JSON CLI (`brew install jq`)
-- `docker` — Docker Desktop (for FalkorDB container)
-- `ollama` — local LLM runtime (`brew install ollama && brew services start ollama`)
-- Models pulled in Ollama:
-  - `gemma4:26b` — LLM for Graphiti entity/relationship extraction (wiki tier)
-  - `qwen3.5:4B` — optional Codex fallback (token-soak / offline)
-  - `nomic-embed-text` — embeddings for Graphiti (pull: `ollama pull nomic-embed-text`)
+- `docker` — Docker Desktop (FalkorDB 용)
+- `ollama` — 로컬 LLM (`brew install ollama && brew services start ollama`)
+- Ollama 모델:
+  - `gemma4:26b` — Graphiti entity 추출 (wiki tier)
+  - `nomic-embed-text` — Graphiti embedding (`ollama pull nomic-embed-text`)
+  - `qwen3.5:4B` — Codex fallback (선택)
 
 ## Install
 
 ```sh
-# 1. Clone wherever you want — pick a path you'll remember
+# 1. Clone — 원하는 경로로
 git clone https://github.com/shawn-kim-axz/productune.git ~/<your-path>/productune
 cd ~/<your-path>/productune
-# (the rest of this README uses $REPO to mean the path you just cd'd into;
-#  in real shell you can use $PWD directly while you're in the cloned dir)
 
-# 2. Wire the persona/codex configs into ~/.claude and ~/.codex
-#    During this step, install.sh interactively asks which PO engine you want
-#    as default ('codex' or 'claude') and saves the choice to
-#    ~/.codex/productune.env. Pick whichever — you can change later.
+# 2. install.sh — 인터랙티브 (engine / Graphiti backend / skill 설치 prompt)
 bash scripts/install.sh
 
-# 3. Put my-po on your PATH (no sudo needed) — pick ONE:
-#    a) PATH export in shell rc (recommended) — uses $PWD so it works no matter where you cloned
-echo "export PATH=\"$PWD/scripts:\$PATH\"" >> ~/.zshrc
-source ~/.zshrc
-#    (~/.bashrc if you're on bash)
+# 3. PATH 등록 (옵션 중 하나)
+#    a) shell rc 에 PATH 추가 (권장)
+echo "export PATH=\"$PWD/scripts:\$PATH\"" >> ~/.zshrc && source ~/.zshrc
 
-#    b) Or symlink into ~/.local/bin (XDG, no sudo)
-mkdir -p ~/.local/bin
-ln -sf "$PWD/scripts/my-po" ~/.local/bin/my-po
-#    (then ensure ~/.local/bin is on PATH — most modern shells already include it)
+#    b) ~/.local/bin 에 symlink (sudo 불요)
+mkdir -p ~/.local/bin && ln -sf "$PWD/scripts/productune" ~/.local/bin/productune
 
-#    c) Or with sudo into /usr/local/bin (Apple Silicon Macs typically need sudo here)
-sudo ln -sf "$PWD/scripts/my-po" /usr/local/bin/my-po
-
-# 4. Set up the wiki tier (FalkorDB container + Graphiti clone). Optional but recommended.
+# 4. Graphiti wiki tier 셋업 (선택, 권장)
 bash scripts/setup-graphiti.sh
 
-# 5. Verify
-which my-po          # should print a path
-claude agents        # should list my-planner/my-designer/my-developer/my-qa
+# 5. 검증
+which productune     # 경로 출력
+claude agents        # 4 페르소나 보임: productune, my-designer, my-developer, my-qa
 ```
 
-`install.sh` is idempotent and backs up any existing conflicting files at the target path with a `.bak.<timestamp>` suffix. It does **not** touch your PATH — that step is up to you (step 3 above).
+`install.sh` 가 자동으로 처리:
+- 페르소나 symlink 정리 (dangling 자동 sweep)
+- `~/.codex/productune.env` 에 engine 선택 + Graphiti provider + autocompact 70% + skill 설치 흔적 저장
+- `productune` 가 env 파일 source 하므로 spawn 페르소나도 상속
 
-`install.sh` also writes `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` into `~/.codex/productune.env`. The `my-po` wrapper sources that file with `set -a`, so any persona spawned through `my-po` inherits the lower compaction threshold automatically — no shell-rc edit needed. Direct `claude --agent my-X` calls do **not** inherit it; if you also use direct calls, add `export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` to your shell rc.
-
-> **Permission denied on /usr/local/bin?** That directory needs sudo on Apple Silicon Macs. Use option (a) or (b) above instead — neither requires elevated privileges.
+> 직접 `claude --agent my-X` 호출은 wrapper 안 거치니 env 미상속. shell rc 에 직접 추가 필요.
 
 ## Daily use
-
-From **any project directory** you want to work on:
 
 ```sh
 cd ~/path/to/target-project
 
-# Full PO flow (recommended) — auto-creates a git worktree if another my-po
-# is already running on the same project root
-my-po                          # default engine: Codex
-my-po --engine claude          # 100% first-party Anthropic stack (no Codex)
+# Full PO flow (권장)
+productune                          # default engine: Codex
+productune --engine claude          # 100% Anthropic stack
 
-# Equivalent direct calls (no worktree split, no parallel-safety):
-codex --profile po             # Codex hosts PO
-claude --agent my-po              # Claude Code hosts PO
+# 직접 호출 (worktree split / parallel-safety 없음)
+codex --profile productune          # (legacy `--profile po` 도 동작)
+claude --agent productune
+claude --agent my-developer         # 단일 페르소나
 
-# Single persona (for debugging / exploration)
-claude --agent my-planner
-claude --agent my-designer
-claude --agent my-developer
-claude --agent my-qa
-
-# Override PO's task-disposition heuristic (any my-po turn):
-#   /new <slug?>       — force a new task
-#   /continue          — force continuation of current_task
-#   /resume <slug>     — force revival of a past task by slug
-
-# Token-soak / offline fallback: swaps Codex to local qwen3.5:4B
-codex --profile local
+# Legacy 명령 (호환 alias — 한동안 유지)
+my-po                               # productune 과 동일
 ```
 
-### Picking a PO engine
+### 사용자 prefix override (PO turn 안에서)
 
-Both `codex --profile po` and `claude --agent my-po` execute the same doctrine (`~/.codex/po-instructions.md`). They differ only in who hosts the orchestrator:
+| Prefix | 동작 |
+|---|---|
+| `/new <slug?>` | 강제 새 task |
+| `/continue` | 강제 current_task 후속 |
+| `/resume <slug>` | 강제 past_task 부활 |
+| `/model <tier>` | 다음 호출 model 강제 (haiku/sonnet/opus) |
+| `/effort <level>` | 다음 호출 effort 강제 (low/medium/high/xhigh) |
+| `/dev:opus/xhigh` | persona-specific (`<persona>:<tier>[/<effort>]`) |
+| `/skill <query?>` | Path 2 강제 (skill 검색) |
+| `/retry` | Path 1 강제 (직전 호출 재시도, tier ↑) |
+
+## Quality-based escalation
+
+페르소나가 confidence=low 또는 unresolved 항목 보고 → PO 가 3-option 메뉴 surface:
+
+```
+[PO] my-developer 결과 confidence=low (unresolved: ["Next 16 middleware..."]).
+     [1] retry — 모델 sonnet → opus, effort medium → high (같은 session resume)
+     [2] skill 검색 — keyword 로 9 registry 조회 (mattpocock + phuryn + skill-fetch)
+     [3] 그냥 진행 (Follow-ups 로 surface)
+     선택? [1/2/3/Enter=1]
+```
+
+OSS 근거: RouteLLM cascade, Anthropic engineering "Demystifying evals" 의 reflect-and-retry 패턴.
+
+## Ticket system
+
+PO 가 작업을 ticket 단위로 영속화:
+- `<project>/.codex/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
+- Ticket close 시 자동 export — `<project>/docs/tickets/<round-id>/T-<id>.md` git-versioned
+
+후일 Phase 3 의 UI dashboard backend.
+
+## Picking a PO engine
 
 | | `--engine codex` (default) | `--engine claude` |
 |---|---|---|
-| Top-level reasoning model | OpenAI hosted (Codex CLI) | Anthropic hosted (Claude Code) |
-| Subscription used for PO | ChatGPT Plus / Pro | Claude Pro / Max |
-| Subscription used for personas | Claude Pro / Max (unchanged) | Claude Pro / Max (unchanged) |
-| Cost-split between providers | ✓ | ✗ — all on Anthropic |
-| ToS clarity (no third-party concerns) | OK (each tool used with own auth) | **Cleanest** — 100% first-party |
-| Persistent env var | `MY_PO_ENGINE=codex` | `MY_PO_ENGINE=claude` |
+| Top-level reasoning | OpenAI hosted (Codex CLI) | Anthropic hosted (Claude Code) |
+| Subscription | ChatGPT Plus / Pro | Claude Pro / Max |
+| Persona subscription | Claude (변동 없음) | Claude (변동 없음) |
+| Cost-split | ✓ | ✗ — all on Anthropic |
+| ToS | OK | **Cleanest** — 100% first-party |
 
-The default is set during `install.sh` (interactive prompt). To change later, edit `~/.codex/productune.env`:
+`MY_PO_ENGINE=claude` 또는 `productune --engine claude` 로 변경 가능. 환경 변수 이름 `MY_PO_ENGINE` 은 호환을 위해 유지.
 
-```sh
-echo 'MY_PO_ENGINE=claude' > ~/.codex/productune.env   # or 'codex'
+## 병렬 작업 (자동 worktree split)
+
+같은 프로젝트에서 두 번째 `productune` 호출:
+```
+[productune] another PO is running on /Users/.../my-project (pid 12345)
+[productune] creating worktree at .../my-project-productune-<ts> on branch productune/<ts>
 ```
 
-Priority order when `my-po` resolves the engine: `--engine` flag → shell env `$MY_PO_ENGINE` → `~/.codex/productune.env` → fallback `codex`.
-
-### Parallel sessions on the same project
-
-Running `my-po` from a second terminal in a directory where another `my-po` is already alive triggers an automatic split:
-
-```
-[my-po] another PO is running on /Users/.../agentcafe (pid 12345)
-[my-po] creating worktree at /Users/.../agentcafe-my-po-20260427-153045-67890 on branch my-po/20260427-153045-67890
-```
-
-The new shell `cd`s into the worktree before launching codex, so its `.codex/po-state.json`, branch, and persona sessions are all isolated from the original. The two PO instances cannot race on shared state.
-
-Two ways to clean up the auto-created worktrees, pick whichever you remember:
-
-**Option 1 — passive prompt at exit (default).** When `my-po` returns from a normal codex exit in the *main* worktree, it scans for safe-to-remove worktrees and asks once:
-
-```
-[my-po] 🧹 2 my-po worktree(s) safe to remove.
-[my-po]    (also ambiguous: 0, unsafe: 1 — those are left alone)
-[my-po] clean up the safe ones now? [y/N]
-```
-
-`y` removes them inline; anything else skips and you can revisit later. No command to remember.
-
-**Option 2 — explicit subcommand.** Audit anytime:
-
-```sh
-my-po gc          # dry-run: classify each my-po/* worktree as ✓ / ⚠ / ❌
-my-po gc -y       # remove only the ✓ ones (dirty / unmerged-unpushed are never touched)
-# verbose aliases below also work:
-#   my-po --cleanup
-#   my-po --cleanup --auto
-```
-
-Decision basis is **git state** — a worktree is `✓ safe` only when its committed history is already in `main`/`master` (or an upstream remote). If you walked away from PO without committing, the worktree stays `❌ unsafe` so nothing is lost. To preserve a worktree as a real feature branch, rename it before cleanup: `git branch -m my-po/<...> feat/proper-name` removes it from the cleanup filter.
-
-The PO profile follows a three-stage loop (see `codex/po-instructions.md` for the full doctrine):
-
-**Stage 1 — Instruction**: paraphrases the ask back if vague, raises risk flags (auth / payments / PII / breaking changes), asks at most 2 clarifying questions, offers A/B alternatives when two paths are defensible.
-
-**Stage 2 — Execution**: delegates to `my-planner`, then runs the pipeline that my-planner identifies (not every task uses every persona — a "design system" task may be my-designer-only). Emits `→` progress markers between persona calls. Applies gates adaptively:
-- **Gate 1 (plan approval)**: before design/dev work if ≥4 tasks or touches risk areas
-- **Gate 2 (design review)**: after my-designer, if the artifact is user-facing
-- **Gate 3 (design-compliance cross-check)** — *mandatory when my-designer was involved*: after my-developer, PO re-invokes `my-designer` with changed files to check "does this match the design intent?" before handing back to the user
-- **QA** runs in parallel with design-compliance or after; dev↔my-qa loops up to 3×
-
-**Stage 3 — Feedback**: probes if vague, scopes to the owning persona, resumes that persona's session only, chains forward only when invalidated. Learns repeated preferences into `~/.codex/po-memory.md`.
-
-**PRDs are opt-in** — written only when you ask or PO judges scope warrants it (≥5 tasks / multi-day work). Otherwise task list stays in PO's memory and only the final ≤5-bullet summary reaches you.
-
-## Per-project state
-
-When PO runs in a project, it creates `<project>/.codex/po-state.json` to track:
-- `persona_sessions`: Claude session UUIDs per persona (isolates sessions per project)
-- `recent_turns`: last 10 persona outcomes (PO uses this to flag recurring failures → suggests model/tool upgrades)
-
-Add this to the target project's `.gitignore`:
-
-```
-.codex/po-state.json
-.codex/po.lock
-.codex/logs/
-```
-
-Project-tier memory lives at `<project>/docs/<persona>/*.md` and *should* be committed — it's part of the project's documentation. PRDs (when opt-in'd) live at `<project>/docs/prd/*.md` and also committed.
-
-## PO's own memory
-
-PO remembers **how you work with it** (not project facts) at `~/.codex/po-memory.md`. Accumulates your communication preferences, product taste, workflow preferences, and pushback history. PO reads it at session start and appends at notable moments. Seeded by `install.sh` as an empty template; edit freely or let PO grow it.
-
-## Model choices
-
-| Role | Model | Rationale |
-|---|---|---|
-| **PO default** | Codex hosted (OpenAI) | Robust multi-step routing, structured output |
-| **PO fallback** | Ollama `qwen3.5:4B` | Fast, cheap, offline; only for simple routing |
-| **Personas** | Claude (hosted) per frontmatter | `my-planner`/`my-designer`=sonnet, `my-developer`=opus, `my-qa`=haiku |
-| **Graphiti LLM** | Ollama `gemma4:26b` (default Local) — or hosted `gpt-4o-mini` / `claude-haiku` via OpenAI / Anthropic options in `install.sh` | Entity/relationship extraction needs quality structured output; 26B is the sweet spot vs 4B for fully-local. Anthropic option (Claude Haiku LLM + OpenAI embed) is a partial hybrid — hosted-quality extraction with cheap embed. |
-| **Graphiti embed** | Ollama `nomic-embed-text` | Small, fast, purpose-built for embeddings |
-
-All persona LLM calls stay on Anthropic hosted Claude. Only the *memory backend* goes local via Ollama — your project content does not leave your machine for wiki storage.
+Cleanup: `productune gc` (dry-run) / `productune gc -y` (자동 정리). 결정 기준은 **순수 git state** — 커밋 + push 또는 main merge 됐으면 ✓ safe, 아니면 ❌ unsafe (보존).
 
 ## Files
 
 ```
 productune/
-├── agents/                    # persona sub-agent definitions — symlinked to ~/.claude/agents/
-│   ├── my-planner.md
+├── agents/                       # symlinked to ~/.claude/agents/
+│   ├── productune.md             # PO (구 my-po; planner role 흡수)
 │   ├── my-designer.md
 │   ├── my-developer.md
 │   └── my-qa.md
-├── codex/                          # Codex global config — copied to ~/.codex/
-│   ├── config.toml                 # profiles po + local
-│   ├── po-instructions.md          # PO doctrine (3 stages, gates, evolution triggers)
-│   └── po-memory.md.template       # seed for ~/.codex/po-memory.md (PO's cross-session memory of user)
+├── codex/
+│   ├── config.toml               # profiles.productune (+ legacy po alias) + local
+│   ├── po-instructions.md        # PO doctrine (Real Engineering + ticket + tier + quality)
+│   └── po-memory.md.template
 ├── scripts/
-│   ├── install.sh                  # one-time: symlinks + copies + seeds PO memory + chmod
-│   ├── my-po                       # daily entrypoint: lock + auto-worktree + codex
-│   └── setup-graphiti.sh           # one-time: FalkorDB docker + graphiti clone + uv sync
+│   ├── install.sh                # one-time setup
+│   ├── productune                # daily entrypoint (구 my-po; symlink 호환)
+│   ├── my-po                     # → productune (compat symlink)
+│   ├── setup-graphiti.sh         # FalkorDB + Graphiti
+│   ├── setup-skills.sh           # mattpocock + phuryn skill 설치
+│   └── graphiti-launcher.sh      # provider-aware Graphiti spawn
 ├── docs/
-│   ├── overview.md                 # high-level system explanation
-│   ├── customization.md            # how to swap model / add MCP / add skill / new persona
-│   └── plan.md                     # design journey (historical)
-└── README.md                       # this file
+│   ├── prd/productune.md         # 자체 PRD (round 누적)
+│   ├── overview.md
+│   ├── pitch.md
+│   ├── customization.md
+│   ├── plan.md
+│   └── testing.md                # end-to-end 테스트 플랜 (한글)
+└── README.md                     # this file
 ```
 
-## Memory promotion (how knowledge climbs the tiers)
+## Memory promotion
 
-Each persona has explicit rules in its `.md` frontmatter body:
-
-1. **Session → Project**: during a task, when a decision/constraint/non-obvious project fact is established, the persona appends a dated line to `docs/<persona>/project-notes.md` (or `decisions.md` for my-designer). Committed with the feature.
-2. **Project → Wiki**: only when a pattern repeats across ≥2 projects *or* the user explicitly says "always do this", the persona calls `mcp__graphiti__add_memory` with `group_id="persona:<name>"`. Project-specific facts stay in project tier and **do not** get promoted.
-3. **Wiki contradictions**: when a new fact contradicts an old one, the persona just adds the new fact. Graphiti's bi-temporal model invalidates the old one automatically.
+각 페르소나는 `[PROMOTION-APPROVED]` 마커 게이트. 직접 호출 시 wiki write 거절. 절차:
+- Persona 가 promotion_candidate 만 리턴 (자동 write 안 함)
+- PO 가 사용자에 한 줄 propose
+- 사용자 `y` → PO 가 mechanical write (project tier: `printf >>`, wiki tier: `[PROMOTION-APPROVED]` 마커 prefix 후 페르소나 재호출)
 
 ## Troubleshooting
 
-- **"claude doesn't list my personas"** → run `bash scripts/install.sh` (re-symlinks). Confirm `ls -la ~/.claude/agents/` shows symlinks pointing into this repo.
-- **"graphiti MCP fails to start"** → check `docker ps` (falkordb container up), `curl http://localhost:11434/api/tags` (ollama), and `ls ~/.graphiti/mcp_server/main.py` (clone succeeded).
-- **"entity extraction quality is bad"** → gemma4:26b depending on your tag may not match. Two fixes:
-  - swap to a stronger local LLM: `ollama pull gemma2:27b` (or `qwen2.5:32b`) and set `GRAPHITI_LLM_MODEL=<tag>` in `~/.codex/productune.env`
-  - or re-run `install.sh` and pick option **[2] Anthropic** — Claude Haiku for extraction + OpenAI embed. Hosted-quality with low add_memory cost (calls are rare).
-- **"embedding errors"** → ensure `ollama pull nomic-embed-text` ran successfully. Verify via `ollama list`.
-- **"PO loses session continuity"** → check `<target-project>/.codex/persona-sessions.json` — if malformed, reset with `echo '{}' > <project>/.codex/persona-sessions.json`.
+- **"claude doesn't list my personas"** → `bash scripts/install.sh` 재실행 (symlink 재생성 + dangling sweep)
+- **"graphiti MCP fails to start"** → `docker ps` (falkordb), `curl http://localhost:11434/api/tags` (ollama), `ls ~/.graphiti/mcp_server/main.py`
+- **"entity extraction quality is bad"** → `gemma4:26b` 대체 (`gemma2:27b`, `qwen2.5:32b`, `GRAPHITI_LLM_MODEL` 으로 set) 또는 install.sh option [2] Anthropic 으로 hosted-quality
+- **legacy state.json schema** — 옛 `top-level persona_sessions` 면 `rm <project>/.codex/po-state.json` 후 PO 다시 시작
 
 ## Updating personas
 
-Because `install.sh` uses symlinks, editing `agents/my-planner.md` here immediately applies to your next `claude --agent my-planner` run. No re-install needed.
+`agents/*.md` 가 symlink 라 직접 수정하면 즉시 반영. Codex config (`codex/config.toml`, `codex/po-instructions.md`) 은 copy 라 수정 후 `bash scripts/install.sh` 재실행 필요.
 
-For Codex config (`codex/config.toml`, `codex/po-instructions.md`): these are *copied*, not symlinked (Codex doesn't follow symlinks well for config paths). To update, edit the file here and re-run `install.sh`.
+## Non-goals / future
 
-## Non-goals / future work
-
-- **Not committed upstream to Graphiti**: we use a simple stdio spawn of the official graphiti MCP. If you want HTTP/SSE for multi-client sharing, edit the mcpServers `--transport` value.
-- **No auto-commit** — PO always returns to you for the commit decision.
-- **Not a team setup** — this is a personal config. For team sharing, the personas would live in a shared plugin rather than `~/.claude/agents/`.
-- **No replacement of Basic Memory / Mem0** — evaluated, ruled out for this setup (see `docs/` for the reasoning).
+- UI 는 Phase 3 — 지금은 OOS
+- Codex 페르소나 (sub-agent 런타임으로) 통합 — Codex agent 의 권한 / MCP 격리 모델이 1:1 매칭 안 됨, 별도 plan
+- Multi-user / 팀 공유 — 현 single-user 가정
+- 자동 deploy / CI 통합
 
 ## Uninstall
 
 ```sh
-# Remove symlinks
-rm -rf ~/.claude/agents/{my-planner,my-designer,my-developer,my-qa}.md
-
-# Remove Codex config (or restore the .bak.* files install.sh created)
-rm ~/.codex/config.toml ~/.codex/po-instructions.md
-
-# Remove Graphiti infra
-docker rm -f falkordb
-docker volume rm falkordb-data
-rm -rf ~/.graphiti
+rm -rf ~/.claude/agents/{productune,my-designer,my-developer,my-qa}.md
+rm ~/.codex/{config.toml,po-instructions.md,productune.env}
+docker rm -f falkordb && docker volume rm falkordb-data
+rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn}
 ```
