@@ -142,6 +142,58 @@ remove_safe() {
 
 # -------------------- cleanup mode (gc / --cleanup / uninstall) --------------------
 case "${1:-}" in
+  --help|-h)
+    # Resolve current config for display
+    _engine="codex"
+    _wiki="?"
+    _repo="?"
+    if [ -r "$HOME/.codex/productune.env" ]; then
+      _engine="$(grep -E '^MY_PO_ENGINE=' "$HOME/.codex/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo codex)"
+      _engine="${_engine:-codex}"
+      _wiki="$(grep -E '^WIKI_BACKEND=' "$HOME/.codex/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
+      _repo="$(grep -E '^PRODUCTUNE_REPO=' "$HOME/.codex/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
+    fi
+    B=$(printf '\033[1m') R=$(printf '\033[0m')
+    printf "
+  ${B}productune${R} — AI product team orchestrator
+
+  ${B}USAGE${R}
+    productune [--engine <engine>] [prompt...]
+    productune <command> [options]
+
+  ${B}COMMANDS${R}
+    (default)          Start a PO session with the configured engine
+    onboard            Run install — wire agents, wiki backend, PATH
+    uninstall          Remove all installed artifacts
+    gc                 Audit productune/* worktrees (dry-run)
+    gc -y              Remove safe worktrees automatically
+    --help, -h         Show this help
+
+  ${B}ENGINE OPTIONS${R}
+    --engine codex     PO on Codex CLI   (codex --profile productune)
+    --engine claude    PO on Claude Code (claude --agent pdt-po)
+
+  ${B}CURRENT CONFIG${R}  (~/.codex/productune.env)
+    engine       %s
+    wiki         %s
+    repo         %s
+
+  ${B}PERSONAS${R}  (always run on Claude Code)
+    pdt-po           Product Owner — orchestrator
+    pdt-developer    Implementation
+    pdt-designer     UX / Design System
+    pdt-qa           QA / Test validation
+    pdt-wiki-keeper  Wiki memory (keeper backend only)
+
+  ${B}EXAMPLES${R}
+    productune                        Start PO session
+    productune --engine claude        Force Claude engine this session
+    productune gc -y                  Clean up merged worktrees
+    productune onboard                Re-run setup
+
+" "$_engine" "$_wiki" "$_repo"
+    exit 0
+    ;;
   onboard)
     exec bash "$(dirname "$0")/install.sh"
     ;;
