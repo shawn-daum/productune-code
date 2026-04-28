@@ -6,14 +6,24 @@
   "bin": {
     "productune": "./scripts/productune"
   },
+  "files": [
+    "agents/",
+    "codex/",
+    "config/",
+    "scripts/productune",
+    "scripts/install.sh",
+    "scripts/uninstall.sh",
+    "scripts/setup-graphiti.sh",
+    "scripts/setup-skills.sh",
+    "scripts/graphiti-launcher.sh",
+    "scripts/wiki-init.sh",
+    "scripts/migrate-graphiti-to-fs.sh"
+  ],
   "engines": {
     "node": ">=18"
   },
   "os": [
     "darwin",
     "linux"
-  ],
-  "scripts": {
-    "postinstall": "chmod +x ./scripts/productune ./scripts/install.sh ./scripts/uninstall.sh"
-  }
+  ]
 }
