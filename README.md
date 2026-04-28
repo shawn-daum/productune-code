@@ -1,14 +1,14 @@
 # orchestration
 
-A personal dev-workflow setup where **OpenAI Codex CLI** acts as a Product Owner (PO) and delegates work to four specialized **Claude Code sub-agent personas** — **Planner, Designer, Developer, QA** — each with its own 3-tier memory.
+A personal dev-workflow setup where a **PO orchestrator** (Codex CLI or Claude Code, your pick) delegates work to four specialized **Claude Code sub-agent personas** — **my-planner, my-designer, my-developer, my-qa** — each with its own 3-tier memory.
 
 ```
 Codex CLI (PO, orchestrator)
    │
-   ├── claude --agent planner    → reads, decomposes, routes
-   ├── claude --agent designer   → writes docs/design/*.md
-   ├── claude --agent developer  → implements code
-   └── claude --agent qa         → verifies build / lint / test / runtime
+   ├── claude --agent my-planner    → reads, decomposes, routes
+   ├── claude --agent my-designer   → writes docs/design/*.md
+   ├── claude --agent my-developer  → implements code
+   └── claude --agent my-qa         → verifies build / lint / test / runtime
                                   │
                                   └─ each persona has 3 memory tiers:
                                       1. session  — Claude session (per task)
@@ -26,10 +26,10 @@ Inspired by human memory: short-term / middle-term / long-term.
 | Tier | Scope | Where it lives | Who writes |
 |---|---|---|---|
 | **Session** | one task | Claude Code session (keyed by `--session-id`) | Claude auto |
-| **Project** | one repo | `docs/<persona>/*.md` inside the *target* project (committed, git-versioned) | Persona, on significant decision |
-| **Wiki** | persona-global across projects | Graphiti temporal KG (`group_id=persona:<name>`), stored in local FalkorDB | Persona, on promotion |
+| **Project** | one repo | `docs/<persona>/*.md` inside the *target* project (committed, git-versioned) | PO, after user approval |
+| **Wiki** | persona-global across projects | Graphiti temporal KG (`group_id=persona-<name>`), stored in local FalkorDB | PO, after user approval |
 
-The key constraint this solves: **the designer should not instantly recall an old project's color palette in a new project.** Project-tier memory is physically isolated per repo. Only *generalizable* principles (e.g. "prefer pastel for consumer apps") get promoted to the wiki.
+The key constraint this solves: **the my-designer should not instantly recall an old project's color palette in a new project.** Project-tier memory is physically isolated per repo. Only *generalizable* principles (e.g. "prefer pastel for consumer apps") get promoted to the wiki.
 
 Graphiti is **bi-temporal** — every fact has `(valid_from, valid_to)` windows. When you tell a persona "we don't do X anymore", it adds a new fact, and the old one deprecates automatically at retrieval time. Old knowledge isn't deleted, just deprioritized.
 
@@ -81,7 +81,7 @@ bash scripts/setup-graphiti.sh
 
 # 5. Verify
 which my-po          # should print a path
-claude agents        # should list planner/designer/developer/qa
+claude agents        # should list my-planner/my-designer/my-developer/my-qa
 ```
 
 `install.sh` is idempotent and backs up any existing conflicting files at the target path with a `.bak.<timestamp>` suffix. It does **not** touch your PATH — that step is up to you (step 3 above).
@@ -102,13 +102,13 @@ my-po --engine claude          # 100% first-party Anthropic stack (no Codex)
 
 # Equivalent direct calls (no worktree split, no parallel-safety):
 codex --profile po             # Codex hosts PO
-claude --agent po              # Claude Code hosts PO
+claude --agent my-po              # Claude Code hosts PO
 
 # Single persona (for debugging / exploration)
-claude --agent planner
-claude --agent designer
-claude --agent developer
-claude --agent qa
+claude --agent my-planner
+claude --agent my-designer
+claude --agent my-developer
+claude --agent my-qa
 
 # Token-soak / offline fallback: swaps Codex to local qwen3.5:4B
 codex --profile local
@@ -116,7 +116,7 @@ codex --profile local
 
 ### Picking a PO engine
 
-Both `codex --profile po` and `claude --agent po` execute the same doctrine (`~/.codex/po-instructions.md`). They differ only in who hosts the orchestrator:
+Both `codex --profile po` and `claude --agent my-po` execute the same doctrine (`~/.codex/po-instructions.md`). They differ only in who hosts the orchestrator:
 
 | | `--engine codex` (default) | `--engine claude` |
 |---|---|---|
@@ -174,11 +174,11 @@ The PO profile follows a three-stage loop (see `codex/po-instructions.md` for th
 
 **Stage 1 — Instruction**: paraphrases the ask back if vague, raises risk flags (auth / payments / PII / breaking changes), asks at most 2 clarifying questions, offers A/B alternatives when two paths are defensible.
 
-**Stage 2 — Execution**: delegates to `planner`, then runs the pipeline that planner identifies (not every task uses every persona — a "design system" task may be designer-only). Emits `→` progress markers between persona calls. Applies gates adaptively:
+**Stage 2 — Execution**: delegates to `my-planner`, then runs the pipeline that my-planner identifies (not every task uses every persona — a "design system" task may be my-designer-only). Emits `→` progress markers between persona calls. Applies gates adaptively:
 - **Gate 1 (plan approval)**: before design/dev work if ≥4 tasks or touches risk areas
-- **Gate 2 (design review)**: after designer, if the artifact is user-facing
-- **Gate 3 (design-compliance cross-check)** — *mandatory when designer was involved*: after developer, PO re-invokes `designer` with changed files to check "does this match the design intent?" before handing back to the user
-- **QA** runs in parallel with design-compliance or after; dev↔qa loops up to 3×
+- **Gate 2 (design review)**: after my-designer, if the artifact is user-facing
+- **Gate 3 (design-compliance cross-check)** — *mandatory when my-designer was involved*: after my-developer, PO re-invokes `my-designer` with changed files to check "does this match the design intent?" before handing back to the user
+- **QA** runs in parallel with design-compliance or after; dev↔my-qa loops up to 3×
 
 **Stage 3 — Feedback**: probes if vague, scopes to the owning persona, resumes that persona's session only, chains forward only when invalidated. Learns repeated preferences into `~/.codex/po-memory.md`.
 
@@ -210,7 +210,7 @@ PO remembers **how you work with it** (not project facts) at `~/.codex/po-memory
 |---|---|---|
 | **PO default** | Codex hosted (OpenAI) | Robust multi-step routing, structured output |
 | **PO fallback** | Ollama `qwen3.5:4B` | Fast, cheap, offline; only for simple routing |
-| **Personas** | Claude (hosted) per frontmatter | `planner`/`designer`=sonnet, `developer`=opus, `qa`=haiku |
+| **Personas** | Claude (hosted) per frontmatter | `my-planner`/`my-designer`=sonnet, `my-developer`=opus, `my-qa`=haiku |
 | **Graphiti LLM** | Ollama `gemma4:26b` | Entity/relationship extraction needs quality structured output; 26B is the sweet spot vs 4B. Called infrequently (only on `add_memory`), so slowness is fine. |
 | **Graphiti embed** | Ollama `nomic-embed-text` | Small, fast, purpose-built for embeddings |
 
@@ -221,10 +221,10 @@ All persona LLM calls stay on Anthropic hosted Claude. Only the *memory backend*
 ```
 orchestration/
 ├── agents/                    # persona sub-agent definitions — symlinked to ~/.claude/agents/
-│   ├── planner.md
-│   ├── designer.md
-│   ├── developer.md
-│   └── qa.md
+│   ├── my-planner.md
+│   ├── my-designer.md
+│   ├── my-developer.md
+│   └── my-qa.md
 ├── codex/                          # Codex global config — copied to ~/.codex/
 │   ├── config.toml                 # profiles po + local
 │   ├── po-instructions.md          # PO doctrine (3 stages, gates, evolution triggers)
@@ -244,7 +244,7 @@ orchestration/
 
 Each persona has explicit rules in its `.md` frontmatter body:
 
-1. **Session → Project**: during a task, when a decision/constraint/non-obvious project fact is established, the persona appends a dated line to `docs/<persona>/project-notes.md` (or `decisions.md` for designer). Committed with the feature.
+1. **Session → Project**: during a task, when a decision/constraint/non-obvious project fact is established, the persona appends a dated line to `docs/<persona>/project-notes.md` (or `decisions.md` for my-designer). Committed with the feature.
 2. **Project → Wiki**: only when a pattern repeats across ≥2 projects *or* the user explicitly says "always do this", the persona calls `mcp__graphiti__add_memory` with `group_id="persona:<name>"`. Project-specific facts stay in project tier and **do not** get promoted.
 3. **Wiki contradictions**: when a new fact contradicts an old one, the persona just adds the new fact. Graphiti's bi-temporal model invalidates the old one automatically.
 
@@ -258,7 +258,7 @@ Each persona has explicit rules in its `.md` frontmatter body:
 
 ## Updating personas
 
-Because `install.sh` uses symlinks, editing `agents/planner.md` here immediately applies to your next `claude --agent planner` run. No re-install needed.
+Because `install.sh` uses symlinks, editing `agents/my-planner.md` here immediately applies to your next `claude --agent my-planner` run. No re-install needed.
 
 For Codex config (`codex/config.toml`, `codex/po-instructions.md`): these are *copied*, not symlinked (Codex doesn't follow symlinks well for config paths). To update, edit the file here and re-run `install.sh`.
 
@@ -273,7 +273,7 @@ For Codex config (`codex/config.toml`, `codex/po-instructions.md`): these are *c
 
 ```sh
 # Remove symlinks
-rm -rf ~/.claude/agents/{planner,designer,developer,qa}.md
+rm -rf ~/.claude/agents/{my-planner,my-designer,my-developer,my-qa}.md
 
 # Remove Codex config (or restore the .bak.* files install.sh created)
 rm ~/.codex/config.toml ~/.codex/po-instructions.md

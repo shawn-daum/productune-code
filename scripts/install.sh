@@ -24,7 +24,7 @@ command -v codex  >/dev/null || die "codex CLI not found. Run: npm i -g @openai/
 command -v uv     >/dev/null || die "uv not found. Run: brew install uv"
 command -v jq     >/dev/null || die "jq not found. Run: brew install jq"
 
-# 1) Symlink agents
+# 1) Symlink agents (and clean up any dangling symlinks from prior renames)
 mkdir -p "$HOME/.claude/agents"
 for AGENT in "$ROOT"/agents/*.md; do
   NAME="$(basename "$AGENT")"
@@ -40,6 +40,15 @@ for AGENT in "$ROOT"/agents/*.md; do
   ln -sfn "$AGENT" "$DEST"
   say "linked agent: $NAME"
 done
+
+# Sweep dangling symlinks (e.g. old persona names removed in a rename)
+DANGLING=$(find "$HOME/.claude/agents" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null)
+if [ -n "$DANGLING" ]; then
+  echo "$DANGLING" | while IFS= read -r broken; do
+    rm -f "$broken"
+    warn "removed dangling symlink: $broken"
+  done
+fi
 
 # 2) Codex config (always overwritten, backup if content differs)
 mkdir -p "$HOME/.codex"
@@ -215,8 +224,8 @@ Next steps:
 
      Direct alternatives (no wrapper logic, no parallel-safety):
        codex --profile po
-       claude --agent po
-       claude --agent planner    # single persona
+       claude --agent my-po
+       claude --agent my-planner    # single persona
 
   7. After parallel work, audit & remove auto-created worktrees:
        my-po gc        # dry-run, classify each my-po/* worktree

@@ -14,10 +14,10 @@
   ▼
 codex --profile po        (PO, OpenAI hosted)
   │
-  ├─ claude --agent planner    → 작업 쪼개기, 영향 파일 맵핑
-  ├─ claude --agent designer   → docs/design/login-modal.md 작성
-  ├─ claude --agent developer  → 실제 코드 수정
-  └─ claude --agent qa         → lint / build / test 실행
+  ├─ claude --agent my-planner    → 작업 쪼개기, 영향 파일 맵핑
+  ├─ claude --agent my-designer   → docs/design/login-modal.md 작성
+  ├─ claude --agent my-developer  → 실제 코드 수정
+  └─ claude --agent my-qa         → lint / build / test 실행
   │
   ▼
 사용자에게 ≤5 bullet 요약
@@ -31,7 +31,7 @@ codex --profile po        (PO, OpenAI hosted)
 
 ## 페르소나 기본 세팅
 
-| | **planner** | **designer** | **developer** | **qa** |
+| | **my-planner** | **my-designer** | **my-developer** | **my-qa** |
 |---|---|---|---|---|
 | **역할** | 요구 분해·라우팅 | 아키텍처·스펙 설계 | 구현 | 빌드/린트/테스트 검증 |
 | **모델** | sonnet | sonnet | **opus** | haiku |
@@ -41,7 +41,7 @@ codex --profile po        (PO, OpenAI hosted)
 | **쓰기 영역** | 없음 (plan 모드) | `docs/design/` 만 | 전체 | 없음 |
 | **Bash 허용** | — | — | 전체 | `npm run *`, `npm test`, `git status/diff`, `curl localhost:*` 뿐 |
 | **wiki group_id** | `persona-planner` | `persona-designer` | `persona-developer` | `persona-qa` |
-| **memory** | `user` (글로벌 MEMORY.md 자동 주입) | `user` | `user` | `user` |
+| **memory** | (없음 — 직접 호출 시 cross-project 누적 안 됨) | (없음) | (없음) | (없음) |
 
 ### 공통 규칙 (모든 persona)
 
@@ -49,18 +49,21 @@ codex --profile po        (PO, OpenAI hosted)
 - **Backend**: FalkorDB (Docker `falkordb` 컨테이너) + Ollama `gemma4:26b` (엔티티 추출) + `nomic-embed-text` (임베딩). 전부 로컬.
 - **작업 전**: 항상 project tier(`docs/<persona>/*.md`) + wiki tier(Graphiti) 검색.
 - **작업 후**: JSON 포맷으로 PO 에 반환 — `changed_files` / `design_doc_path` / `tasks` 같은 명시적 구조.
-- **역할 밖 거절**: 예) designer 가 코드 수정 요청 받으면 `{"refused": true, "suggested_persona": "developer"}` 반환하고 종료. PO 가 다시 라우팅.
+- **역할 밖 거절**: 예) my-designer 가 코드 수정 요청 받으면 `{"refused": true, "suggested_persona": "my-developer"}` 반환하고 종료. PO 가 다시 라우팅.
 
-### 메모리 승격 규칙 (공통)
+### 메모리 승격 규칙 (공통, **모두 user-gate**)
 
-- **Session → Project**: 의사결정/제약/비자명한 프로젝트 사실은 `docs/<persona>/*.md` 에 날짜 찍고 추가 (커밋 대상).
-- **Project → Wiki**: 둘 이상 프로젝트에서 반복되는 패턴 또는 "항상 이렇게 해" 라고 사용자가 말한 것만 `mcp__graphiti__add_memory` 로 올림. 프로젝트 고유 사실은 올리지 않음.
-- **Wiki 반박**: 이전 사실과 모순되는 새 사실이 들어오면 그냥 새 episode 추가 → Graphiti 의 bi-temporal validity window 가 자동으로 이전 사실을 후순위로.
+페르소나는 **자동 write 안 함**. `promotion_candidates` JSON 만 반환 → PO 가 한 줄 prompt → user `y` 시 PO 가 mechanical write.
+
+- **Session → Project**: 의사결정/제약/비자명한 프로젝트 사실 후보 → user 승인 → `docs/<persona>/*.md` 에 날짜 찍고 추가 (커밋 대상).
+- **Project → Wiki**: 둘 이상 프로젝트에서 반복되는 패턴 또는 "항상 이렇게 해" 라고 사용자가 말한 것만 → user 승인 → PO 가 `[PROMOTION-APPROVED]` 마커 붙여 persona 재호출 → `mcp__graphiti__add_memory` write.
+- **Wiki 반박**: 이전 사실과 모순되는 새 사실은 새 episode 로 추가 → Graphiti bi-temporal 이 자동으로 이전 후순위.
+- **직접 호출 (PO 없이) 시**: persona 가 wiki write 거절. 마커 없으면 `mcp__graphiti__add_memory` 절대 호출 안 함.
 
 ## 지금 당장 가능한 것 / 필요한 것
 
 **바로 됨:**
-- `claude --agent planner -p "..."` 등 4 페르소나 직접 호출 (Graphiti 없이도 project tier 와 MEMORY.md 로 동작)
+- `claude --agent my-planner -p "..."` 등 4 페르소나 직접 호출 (Graphiti 없이도 project tier 와 MEMORY.md 로 동작)
 - `codex --profile po` PO 오케스트레이션
 
 **Graphiti wiki tier 켜려면 아직 필요한 것:**

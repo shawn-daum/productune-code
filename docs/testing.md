@@ -26,10 +26,10 @@ Confirms Claude Code sees the personas and they respond with valid JSON.
 ```sh
 # 1.1 — List discovered personas
 claude agents
-# Expect: 4 user agents — planner / designer / developer / qa
+# Expect: 4 user agents — my-planner / my-designer / my-developer / my-qa
 
-# 1.2 — Ask planner to introspect itself (no Graphiti call; pure introspection)
-claude --agent planner -p "Describe your role in one sentence and list the JSON fields you return. Return as JSON." --output-format json | jq '.result' -r
+# 1.2 — Ask my-planner to introspect itself (no Graphiti call; pure introspection)
+claude --agent my-planner -p "Describe your role in one sentence and list the JSON fields you return. Return as JSON." --output-format json | jq '.result' -r
 # Expect: a coherent 1-sentence role description + mention of fields like persona, tasks, prd_path, pipeline, risk_flags, open_questions
 ```
 
@@ -54,14 +54,14 @@ Now test personas one at a time:
 
 ```sh
 # 2.2 — Planner: decompose a request (read-only, expect JSON with tasks array)
-claude --agent planner -p "The README has a typo. Find it and describe the fix." --output-format json | jq '.result' -r
+claude --agent my-planner -p "The README has a typo. Find it and describe the fix." --output-format json | jq '.result' -r
 
 # 2.3 — Developer: implement the fix
-claude --agent developer -p "Fix the typo in README.md. The misspelling is on line 2." --output-format json | jq '.result' -r
+claude --agent my-developer -p "Fix the typo in README.md. The misspelling is on line 2." --output-format json | jq '.result' -r
 git diff   # confirm the change
 
 # 2.4 — QA: verify
-claude --agent qa -p "Verify the README change. Run git status and git diff, confirm exactly one typo was corrected, nothing else." --output-format json | jq '.result' -r
+claude --agent my-qa -p "Verify the README change. Run git status and git diff, confirm exactly one typo was corrected, nothing else." --output-format json | jq '.result' -r
 ```
 
 **Pass criteria:**
@@ -127,10 +127,10 @@ Whichever method you pick, the initial task to give PO is:
 
 **Observe:**
 1. PO paraphrases back or proceeds (obvious enough to skip Stage 1 questions)
-2. `→ delegating to planner...` progress marker appears
-3. Planner returns task list (likely 2 tasks: typo fix + sum.js creation, both `developer` persona, `qa` skipped since "테스트 안 돌려도")
-4. Since ≤3 tasks and no risk flags, no Gate 1 pause — PO proceeds directly to developer
-5. `→ delegating to developer...`, `✓ developer complete`
+2. `→ delegating to my-planner...` progress marker appears
+3. Planner returns task list (likely 2 tasks: typo fix + sum.js creation, both `my-developer` persona, `my-qa` skipped since "테스트 안 돌려도")
+4. Since ≤3 tasks and no risk flags, no Gate 1 pause — PO proceeds directly to my-developer
+5. `→ delegating to my-developer...`, `✓ my-developer complete`
 6. PO ends with the ≤5-bullet summary
 
 **Pass criteria:**
@@ -138,7 +138,7 @@ Whichever method you pick, the initial task to give PO is:
 - PO emitted progress markers between persona calls
 - Final summary is PO's own synthesized words, not raw JSON
 - PO announced `새 task '<slug>' 시작합니다.` at the start of the run
-- After the run, `cat .codex/po-state.json | jq '.current_task'` shows a populated `current_task` with `slug`, `started_at`, `request_summary`, `persona_sessions.developer` (a real UUID), `persona_session_meta.developer.turns ≥ 1`
+- After the run, `cat .codex/po-state.json | jq '.current_task'` shows a populated `current_task` with `slug`, `started_at`, `request_summary`, `persona_sessions.my-developer` (a real UUID), `persona_session_meta.my-developer.turns ≥ 1`
 - `recent_turns` has at least one entry with `task_slug` matching `current_task.slug`
 
 ### 3.3 — Continuation (same task, follow-up turn)
@@ -151,14 +151,14 @@ Follow-up prompt:
 
 **Observe:**
 - PO does **not** announce a new task. It detects continuation signals ("그", "그리고", reference to `sum.js` already in `current_task.artifacts`) and proceeds silently.
-- PO should NOT re-run planner.
-- `→ delegating to developer...` (only), resumed session.
-- `✓ developer complete` with the update to sum.js.
+- PO should NOT re-run my-planner.
+- `→ delegating to my-developer...` (only), resumed session.
+- `✓ my-developer complete` with the update to sum.js.
 
 **Pass criteria:**
-- Only developer is invoked; session is resumed (not a fresh one)
+- Only my-developer is invoked; session is resumed (not a fresh one)
 - `jq '.current_task.slug' .codex/po-state.json` returns the **same slug** as before (no archive, no new task)
-- `jq '.current_task.persona_session_meta.developer.turns' .codex/po-state.json` incremented by 1
+- `jq '.current_task.persona_session_meta.my-developer.turns' .codex/po-state.json` incremented by 1
 
 ### 3.4 — New task (different intent → archive + new current_task)
 
@@ -169,7 +169,7 @@ In the same Codex TUI, ask something genuinely unrelated:
 **Observe:**
 - PO announces: `새 task 'add-license-section' (or similar) 시작합니다.` (or proposes a slug — exact wording flexible)
 - The previous task is archived: `jq '.past_tasks[-1]' .codex/po-state.json` should show the prior `current_task` content with `ended_at`, `final_status`, `outcome_summary` populated
-- New `current_task` allocated with empty `persona_sessions` (developer gets a fresh session id, not the prior one)
+- New `current_task` allocated with empty `persona_sessions` (my-developer gets a fresh session id, not the prior one)
 
 **Pass criteria:**
 - `jq '.past_tasks | length' .codex/po-state.json` is ≥1
@@ -199,12 +199,12 @@ In the same TUI:
 **Observe:**
 - PO scans `past_tasks` for matches against "sum.js" in `artifacts` or the slug.
 - PO proposes (one line): `이건 'add-sum-helper' 후속처럼 보여요. 그 task 이어서 갈까요? (y/n)`. Reply `y`.
-- After confirmation: PO archives the (just-created) `add-license-section` task and restores the `add-sum-helper` past entry as `current_task` — including its prior `persona_sessions.developer` session id.
-- The next persona call resumes that *original* developer session (not a fresh one), so the dev "remembers" the sum.js context.
+- After confirmation: PO archives the (just-created) `add-license-section` task and restores the `add-sum-helper` past entry as `current_task` — including its prior `persona_sessions.my-developer` session id.
+- The next persona call resumes that *original* my-developer session (not a fresh one), so the dev "remembers" the sum.js context.
 
 **Pass criteria:**
 - After revival, `jq '.current_task.slug' .codex/po-state.json` matches the revived slug
-- The revived task's `developer` session id matches what was previously archived (verify against the prior `past_tasks` snapshot if you saved one)
+- The revived task's `my-developer` session id matches what was previously archived (verify against the prior `past_tasks` snapshot if you saved one)
 - The license-section task is now in `past_tasks`
 
 ## Phase 4 — Memory tiers (requires Phase 0)
@@ -216,7 +216,7 @@ Check that personas write to `docs/<persona>/` when they learn something:
 ```sh
 cd /tmp/co-test
 ls docs/ 2>/dev/null
-# Personas may have auto-created docs/developer/project-notes.md or similar from Phase 3 runs
+# Personas may have auto-created docs/my-developer/project-notes.md or similar from Phase 3 runs
 find docs/ -type f 2>/dev/null
 ```
 
@@ -226,16 +226,16 @@ find docs/ -type f 2>/dev/null
 
 > Note: earlier doctrine versions used `group_id="persona:<name>"` (with a colon), which Graphiti's API rejected as invalid. Current doctrine uses `persona-<name>` (with a dash). If the second query below comes back with a "Graphiti validation error — colon in group_id" message, that means Claude Code is still loading a cached/older agent definition — re-run `bash scripts/install.sh` and start a fresh session.
 
-Teach the designer persona a principle, then query it. Note: **each `claude --agent` call creates a fresh session** unless you `--resume`, so Graphiti is the only thing carrying knowledge across these two invocations.
+Teach the my-designer persona a principle, then query it. Note: **each `claude --agent` call creates a fresh session** unless you `--resume`, so Graphiti is the only thing carrying knowledge across these two invocations.
 
 ```sh
 cd /tmp/co-test
-claude --agent designer -p "From now on, save this principle to your wiki: 'For consumer-facing apps, prefer pastel color palettes over monotone.'" --output-format json | jq '.result' -r
-# Expect: designer calls mcp__graphiti__add_memory with group_id=persona-designer
+claude --agent my-designer -p "From now on, save this principle to your wiki: 'For consumer-facing apps, prefer pastel color palettes over monotone.'" --output-format json | jq '.result' -r
+# Expect: my-designer calls mcp__graphiti__add_memory with group_id=persona-designer
 
 # Verify it's retrievable in a fresh session:
-claude --agent designer -p "Search your wiki for color palette preferences. What do you know?" --output-format json | jq '.result' -r
-# Expect: designer references the fact just saved
+claude --agent my-designer -p "Search your wiki for color palette preferences. What do you know?" --output-format json | jq '.result' -r
+# Expect: my-designer references the fact just saved
 ```
 
 **Pass criteria:** second call retrieves the principle even though it's a different Claude session (because Graphiti persists across sessions for the same group_id).
@@ -243,10 +243,10 @@ claude --agent designer -p "Search your wiki for color palette preferences. What
 ### 4.3 — Bi-temporal contradiction
 
 ```sh
-claude --agent designer -p "Update your wiki: actually, I've changed my mind — for consumer apps I now prefer high-contrast monotone palettes, not pastel." --output-format json | jq '.result' -r
+claude --agent my-designer -p "Update your wiki: actually, I've changed my mind — for consumer apps I now prefer high-contrast monotone palettes, not pastel." --output-format json | jq '.result' -r
 
 # Query again:
-claude --agent designer -p "What do I prefer for consumer app color palettes? Check your wiki." --output-format json | jq '.result' -r
+claude --agent my-designer -p "What do I prefer for consumer app color palettes? Check your wiki." --output-format json | jq '.result' -r
 # Expect: the new (monotone) answer; old (pastel) may be mentioned as deprecated/invalidated
 ```
 
@@ -254,14 +254,14 @@ claude --agent designer -p "What do I prefer for consumer app color palettes? Ch
 
 ### 4.4 — Persona isolation
 
-Confirm developer doesn't see designer's palette knowledge (different group_id):
+Confirm my-developer doesn't see my-designer's palette knowledge (different group_id):
 
 ```sh
-claude --agent developer -p "Search your wiki for color palette preferences. What do you know?" --output-format json | jq '.result' -r
-# Expect: nothing relevant (developer's group is persona-developer, not -designer)
+claude --agent my-developer -p "Search your wiki for color palette preferences. What do you know?" --output-format json | jq '.result' -r
+# Expect: nothing relevant (my-developer's group is persona-developer, not -my-designer)
 ```
 
-**Pass criteria:** developer returns empty or "no relevant facts".
+**Pass criteria:** my-developer returns empty or "no relevant facts".
 
 ## Phase 5 — Persona evolution (manual, ~2 min)
 
@@ -275,11 +275,11 @@ cat > .codex/po-state.json <<'EOF'
 {
   "persona_sessions": {},
   "recent_turns": [
-    {"ts": "2026-04-23T10:00:00Z", "persona": "qa", "task": "verify build", "result": "fail"},
-    {"ts": "2026-04-23T11:00:00Z", "persona": "qa", "task": "verify lint", "result": "fail"},
-    {"ts": "2026-04-23T12:00:00Z", "persona": "qa", "task": "verify tests", "result": "fail"},
-    {"ts": "2026-04-23T13:00:00Z", "persona": "qa", "task": "verify build", "result": "pass"},
-    {"ts": "2026-04-23T14:00:00Z", "persona": "qa", "task": "verify build", "result": "fail"}
+    {"ts": "2026-04-23T10:00:00Z", "persona": "my-qa", "task": "verify build", "result": "fail"},
+    {"ts": "2026-04-23T11:00:00Z", "persona": "my-qa", "task": "verify lint", "result": "fail"},
+    {"ts": "2026-04-23T12:00:00Z", "persona": "my-qa", "task": "verify tests", "result": "fail"},
+    {"ts": "2026-04-23T13:00:00Z", "persona": "my-qa", "task": "verify build", "result": "pass"},
+    {"ts": "2026-04-23T14:00:00Z", "persona": "my-qa", "task": "verify build", "result": "fail"}
   ]
 }
 EOF
@@ -293,7 +293,7 @@ codex --profile po 'README.md 에 한 줄 더 추가해줘.'
 
 (Equivalent: run `codex --profile po` alone and type the prompt in the TUI.)
 
-**Observe:** Before executing, PO should mention something like: "qa 가 최근 이 프로젝트에서 4/5 실패. sonnet 으로 올려볼까요? (one-off: `--model sonnet`, 영구: agents/qa.md 수정)".
+**Observe:** Before executing, PO should mention something like: "my-qa 가 최근 이 프로젝트에서 4/5 실패. sonnet 으로 올려볼까요? (one-off: `--model sonnet`, 영구: agents/my-qa.md 수정)".
 
 **Pass criteria:** PO proactively surfaces the pattern and suggests evolution, without auto-mutating the persona file.
 
@@ -312,7 +312,7 @@ codex --profile po 'README.md 에 한 줄 더 추가해줘.'
 **Legacy `po-state.json` schema (flat `persona_sessions`)** — if you set up before the task-lifecycle change, your `<project>/.codex/po-state.json` may have:
 
 ```json
-{ "persona_sessions": {"planner": "uuid", ...}, "recent_turns": [...] }
+{ "persona_sessions": {"my-planner": "uuid", ...}, "recent_turns": [...] }
 ```
 
 The new doctrine reads under `current_task.persona_sessions`, not the top level. The simplest migration is to clear it and let PO recreate on next run:

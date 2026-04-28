@@ -4,7 +4,7 @@
 #
 # Modes:
 #   my-po                              Default engine = codex (or $MY_PO_ENGINE)
-#   my-po --engine claude              Spawn `claude --agent po` instead (100% Anthropic)
+#   my-po --engine claude              Spawn `claude --agent my-po` instead (100% Anthropic)
 #   my-po --engine codex               Spawn `codex --profile po` (default)
 #   my-po gc                           (alias: --cleanup) audit my-po/* worktrees, dry-run
 #   my-po gc -y                        (alias: --auto, --yes) audit, then remove safe ones
@@ -197,7 +197,7 @@ esac
 run_engine() {
   case "$ENGINE" in
     codex)  exec codex --profile po "$@" ;;
-    claude) exec claude --agent po "$@" ;;
+    claude) exec claude --agent my-po "$@" ;;
   esac
 }
 
@@ -205,7 +205,7 @@ run_engine_fg() {
   # Foreground (not exec) so EXIT trap can fire after engine returns.
   case "$ENGINE" in
     codex)  codex --profile po "$@" ;;
-    claude) claude --agent po "$@" ;;
+    claude) claude --agent my-po "$@" ;;
   esac
 }
 
