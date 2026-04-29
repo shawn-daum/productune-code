@@ -263,7 +263,7 @@ productune                       # default engine = claude (hooks 발동)
 ```sh
 cp ~/.productune/productune.env ~/.productune/productune.env.before-test 2>/dev/null || true
 rm ~/.productune/productune.env
-bash <productune-clone>/scripts/install.sh   # Enter (engine), Enter (Graphiti) 응답
+bash <productune-clone>/scripts/install.sh   # claude preflight 자동 통과 → Enter (Graphiti) 응답
 grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.productune/productune.env
 ```
 
