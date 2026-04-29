@@ -148,6 +148,32 @@ if [ -d "$HOME/.productune" ] && [ -z "$(ls -A "$HOME/.productune" 2>/dev/null)"
   rmdir "$HOME/.productune" 2>/dev/null && say "  removed empty: ~/.productune/"
 fi
 
+# ── 6b. ~/.claude/settings.json — strip productune hooks + statusLine ────────
+say "6b) Removing productune hooks + statusLine from ~/.claude/settings.json..."
+SETTINGS="$HOME/.claude/settings.json"
+if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
+  HOOKS_DIR="$ROOT/scripts/hooks/"
+  STATUSLINE="$ROOT/scripts/statusline-productune.sh"
+  TMP="$(mktemp)"
+  jq --arg dir "$HOOKS_DIR" --arg sl "$STATUSLINE" '
+    def strip_pdt(arr; dir):
+      ((arr // []) | map(
+        select(((.hooks // []) | map(.command // "" | startswith(dir)) | any) | not)
+      ));
+    .hooks //= {}
+    | .hooks.PreToolUse  = strip_pdt(.hooks.PreToolUse;  $dir)
+    | .hooks.PostToolUse = strip_pdt(.hooks.PostToolUse; $dir)
+    | .hooks.PostCompact = strip_pdt(.hooks.PostCompact; $dir)
+    | .hooks.Stop        = strip_pdt(.hooks.Stop;        $dir)
+    | (if (.statusLine // {} | .command // "") == $sl then del(.statusLine) else . end)
+    | with_entries(select(.key != "hooks" or (.value | to_entries | map(select(.value | length > 0)) | length > 0)))
+  ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+  say "  cleaned: hooks + statusLine entries pointing to $ROOT removed"
+  REMOVED=$((REMOVED+1))
+else
+  say "  no settings.json or jq missing — skipped"
+fi
+
 # ── 7. PATH entry / symlink ───────────────────────────────────────────────────
 say "7) PATH 등록 제거 (method: ${PATH_METHOD:-unknown})..."
 case "$PATH_METHOD" in
