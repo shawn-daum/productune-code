@@ -494,7 +494,6 @@ command -v jq >/dev/null || die "jq not found. Run: brew install jq"   # require
 ensure_claude_installed
 ensure_claude_authed
 command -v uv >/dev/null || warn "uv not found (optional). Install if needed: brew install uv"
-command -v codex >/dev/null 2>&1 && say "codex CLI 감지됨 (optional fallback engine — '--engine codex' 사용 시만)"
 
 # 1) Symlink agents (and clean up any dangling symlinks from prior renames)
 mkdir -p "$HOME/.claude/agents"
@@ -544,20 +543,10 @@ for BAK in "$HOME"/.codex/po-instructions.md.bak.* "$HOME"/.codex/po-memory.md.b
   mv "$BAK" "${BAK/.codex/.productune}" 2>/dev/null || true
 done
 
-# 2b) Codex CLI config — only if codex CLI is installed (optional fallback engine)
-if command -v codex >/dev/null 2>&1; then
-  mkdir -p "$HOME/.codex"
-  SRC="$ROOT/codex/config.toml"
-  DEST="$HOME/.codex/config.toml"
-  if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
-    mv "$DEST" "$DEST.bak.$TS"
-    warn "backed up existing $DEST → $DEST.bak.$TS"
-  fi
-  cp "$SRC" "$DEST"
-  say "copied codex profile manifest: ~/.codex/config.toml (optional fallback engine)"
-else
-  say "codex CLI 미설치 — codex 프로파일 복사 skip (claude-only 모드)"
-fi
+# 2b) (removed) Codex CLI profile manifest copy.
+#     install.sh no longer touches ~/.codex/. If a user wants `productune --engine codex`
+#     they install Codex CLI themselves and seed `~/.codex/config.toml` from
+#     `<repo>/codex/config.toml` manually — but that's outside install's scope.
 
 # 2c) PO doctrine — productune-owned, lives at ~/.productune/po-instructions.md
 SRC="$ROOT/po/po-instructions.md"
