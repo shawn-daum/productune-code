@@ -63,17 +63,68 @@ emit_block() {
   exit 0
 }
 
+# Derive a heuristic slug + summary from the delegate command's TASK string and
+# write current_task in-place. Returns 0 on success (caller continues without
+# block), 1 on failure (caller falls back to emit_block). Used by R1.
+emit_autofill() {
+  local task slug summary now tmp
+  task="$(printf '%s' "$COMMAND" | python3 -c "
+import shlex, sys
+try:
+    parts = shlex.split(sys.stdin.read().strip())
+    print(parts[-1] if parts and not parts[-1].startswith('-') else '')
+except Exception:
+    print('')
+" 2>/dev/null)"
+
+  slug="$(printf '%s' "$task" | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' \
+    | awk -F- '{n=NF<6?NF:5; for(i=1;i<=n;i++) printf "%s%s", (i>1?"-":""), $i; print ""}' \
+    | cut -c1-50 | sed 's/-*$//')"
+  [ -z "$slug" ] && slug="task-$(date +%s | tail -c 7)"
+
+  summary="$(printf '%s' "$task" | head -c 200)"
+  [ -z "$summary" ] && summary="(auto-fill: empty TASK)"
+
+  now="$(date -u +%FT%TZ)"
+  tmp="$(mktemp)"
+  if jq --arg slug "$slug" --arg now "$now" --arg summary "$summary" '
+    .current_task = ((.current_task // {}) + {
+      slug: $slug,
+      started_at: $now,
+      request_summary: $summary,
+      artifacts: ((.current_task.artifacts // [])),
+      persona_sessions: ((.current_task.persona_sessions // {})),
+      persona_session_meta: ((.current_task.persona_session_meta // {})),
+      auto_filled_by_hook: true
+    })
+  ' "$STATE" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$STATE"
+    printf '[productune] R1 auto-fill: current_task.slug="%s" (PO skipped pre-write — hook seeded; refine at Stage 3 archive if heuristic is off)\n' "$slug" >&2
+    SLUG="$slug"
+    SUMMARY="$summary"
+    return 0
+  else
+    rm -f "$tmp"
+    return 1
+  fi
+}
+
 SLUG="$(jq -r '.current_task.slug // ""' "$STATE" 2>/dev/null)"
 SUMMARY="$(jq -r '.current_task.request_summary // ""' "$STATE" 2>/dev/null)"
 
-# ── R1: semantic slug + request_summary required ─────────────────────────────
+# ── R1: current_task must have semantic slug + summary. Auto-fill if missing ─
+# (Was: block. Now: hook seeds current_task from TASK heuristic, leaving R2/R3/R4
+# to do their normal checks. PO can refine slug at archive time.)
 if [ "$SAME_COMPOUND_WRITES_CT" = "0" ]; then
   if [ -z "$SLUG" ] || [ "${SLUG#auto-}" != "$SLUG" ] || [ -z "$SUMMARY" ] || [ "$SUMMARY" = "(auto-opened by post-delegate hook)" ]; then
-    emit_block "Before delegating, write current_task with a semantic slug and request_summary. Example (portable — no sponge):
+    if ! emit_autofill; then
+      emit_block "R1 auto-fill failed (jq error). Write current_task manually before delegating (portable — no sponge):
 
   jq '.current_task = {slug: \"<kebab-task>\", started_at: \"$(date -u +%FT%TZ)\", request_summary: \"<one-line>\", artifacts: [], persona_sessions: {}, persona_session_meta: {}}' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
 
 (See ~/.productune/sections/lifecycle.md.)"
+    fi
   fi
 fi
 
