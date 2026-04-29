@@ -45,12 +45,9 @@
 
 8. **Execute in dependency order**. Progress markers: `→ delegating to <persona> for task #N (model=X, effort=Y — reason)` then `✓ <persona> complete: <artifact>`.
 
-   **Mandatory mechanical state writes around the call** (no exceptions — without these, resume / calibration / timeline break):
-   - **Before** new task's first persona call: jq-write `current_task` (slug, started_at, request_summary, empty `persona_sessions: {}`, empty `persona_session_meta: {}`).
-   - **First call**: omit `--session-id` entirely. Claude Code returns `.session_id` in response.
-   - **After response**: capture `.session_id` into `persona_sessions.<persona>`, bump `persona_session_meta.<persona>.turns`, append model/effort/complexity to `model_history` / `effort_history` / `complexity_level`.
-   - **Subsequent calls** (same persona, same task): `--resume "$SID"` only. Never both `--session-id` and `--resume`. Never re-generate UUIDs.
-   - **PO-direct turns** (trivial doc fix, no delegation): append entry to `recent_turns` with `actor:"po-direct"`, `kind`, `files`, `summary`. No `current_task` open required.
+   **State writes**: the `post-delegate-state-write` hook handles UUID capture + `persona_session_meta.turns` increment automatically — you don't write those manually. Your job: (a) write a meaningful `current_task` (slug + `request_summary` + `artifacts`) when starting a new task, otherwise the hook uses an `auto-<timestamp>` slug; (b) append model/effort/complexity to `model_history`/`effort_history`/`complexity_level` (the hook doesn't know these); (c) for PO-direct turns (trivial doc fix, no delegation), append a `recent_turns` entry yourself with `actor:"po-direct"`, `kind`, `files`, `summary`.
+
+   First call uses no `--session-id`; subsequent calls use `--resume "$SID"` (read SID from `current_task.persona_sessions.<persona>` after the hook captured it).
 
 9. **Gate 2 (design-review, conditional)**: pdt-designer deliverable user-facing → pause for user approval before pdt-developer.
 
