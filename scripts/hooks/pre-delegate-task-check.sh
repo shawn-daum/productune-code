@@ -69,9 +69,9 @@ SUMMARY="$(jq -r '.current_task.request_summary // ""' "$STATE" 2>/dev/null)"
 # ── R1: semantic slug + request_summary required ─────────────────────────────
 if [ "$SAME_COMPOUND_WRITES_CT" = "0" ]; then
   if [ -z "$SLUG" ] || [ "${SLUG#auto-}" != "$SLUG" ] || [ -z "$SUMMARY" ] || [ "$SUMMARY" = "(auto-opened by post-delegate hook)" ]; then
-    emit_block "Before delegating, write current_task with a semantic slug and request_summary. Example:
+    emit_block "Before delegating, write current_task with a semantic slug and request_summary. Example (portable — no sponge):
 
-  jq '.current_task = {slug: \"<kebab-task>\", started_at: \"$(date -u +%FT%TZ)\", request_summary: \"<one-line>\", artifacts: [], persona_sessions: {}, persona_session_meta: {}}' .productune/po-state.json | sponge .productune/po-state.json
+  jq '.current_task = {slug: \"<kebab-task>\", started_at: \"$(date -u +%FT%TZ)\", request_summary: \"<one-line>\", artifacts: [], persona_sessions: {}, persona_session_meta: {}}' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
 
 (See ~/.productune/sections/lifecycle.md.)"
   fi
@@ -84,14 +84,14 @@ if [ -n "$PREV_SLUG" ] && [ -n "$SLUG" ] && [ "$PREV_SLUG" != "$SLUG" ]; then
     ((.past_tickets // .past_tasks // []) | map(select(.slug == $s)) | length)
   ' "$STATE" 2>/dev/null)"
   if [ "$ARCHIVED" = "0" ]; then
-    emit_block "Switching to task '$SLUG' but previous task '$PREV_SLUG' was never archived. Archive it first:
+    emit_block "Switching to task '$SLUG' but previous task '$PREV_SLUG' was never archived. Archive it first (portable — no sponge):
 
   jq --arg now \"\$(date -u +%FT%TZ)\" '
     if .current_task != null and .current_task.slug != \"$SLUG\" then
       .past_tickets = ((.past_tickets // []) + [(.current_task + {ended_at: \$now, final_status: \"done\", outcome_summary: \"<1-line synthesis>\"})])
       | .past_tickets |= (.[-50:])
     else . end
-  ' .productune/po-state.json | sponge .productune/po-state.json
+  ' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
 
 Then jq-write the new current_task and retry. (See ~/.productune/sections/lifecycle.md §Archive.)"
   fi
