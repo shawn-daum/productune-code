@@ -202,7 +202,7 @@ Keep this in mind during PO suggestions: PO should always propose the **cheapest
 
 If you edit `agents/*.md`, PO will pick up the change on its next invocation (symlinks). You don't need to notify it.
 
-If you add a **new** persona, update `codex/po-instructions.md`'s "Personas you delegate to" table so PO knows it can delegate there. Then re-run `install.sh` to copy the updated `po-instructions.md` to `~/.productune/`.
+If you add a **new** persona, update `po/po-instructions.md`'s "Personas you delegate to" table so PO knows it can delegate there. Then re-run `install.sh` to copy the updated `po-instructions.md` to `~/.productune/`.
 
 If you change PO's doctrine itself (e.g. new gate rule, new evolution trigger), same — edit + `install.sh`.
 

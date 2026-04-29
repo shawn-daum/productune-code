@@ -18,16 +18,17 @@ cat <<'EOF'
 [productune doctrine — re-injected after compaction]
 
 Re-read these files now if anything below feels unclear:
-  - ~/.productune/po-instructions.md   (full PO doctrine)
-  - ~/.productune/po-memory.md         (user prefs + Model/Effort Calibration log)
-  - ./.productune/po-state.json        (current_task, recent_turns)
+  - ~/.productune/po-instructions.md   (entry index — file map + hard rules)
+  - ~/.productune/sections/<name>.md   (detail per topic; load on demand)
+  - ~/.productune/po-memory.md         (user prefs + ## Model/Effort Calibration log)
+  - ./.productune/po-state.json        (current_task, recent_turns, calibration_outcome)
 
 Hard rules that survive compaction:
   - Stage 1 read order: po-memory.md (incl. ## Model/Effort Calibration) → po-state.json.
-  - Calibration log biases this turn's model/effort routing for similar task classes.
-  - Stage 2: complexity ≥ L5 / multi-file / risk area → Plan mode → cross-review (qa, optionally designer) → auto-accept impl. (See §"Plan mode enforcement".)
-  - Stage 3: on task close, append exactly one line to po-memory.md "## Model/Effort Calibration". This is mandatory — it is the feedback signal.
-  - Quality escalation: 3-option menu (Path 1 retry / Path 2 skill / Path 3 proceed). Escalation = under-estimate signal → mark calibration_outcome.escalation_triggered = true.
+  - Calibration log biases this turn's model/effort routing for similar task classes (sections/calibration.md).
+  - Stage 2: complexity ≥ L5 / multi-file / risk area → Plan mode → cross-review (qa, optionally designer) → auto-accept impl (sections/delegation.md).
+  - Stage 3: on task close, append exactly one line to po-memory.md "## Model/Effort Calibration". Mandatory — it is the feedback signal.
+  - Quality escalation: 3-option menu (Path 1 retry / Path 2 skill / Path 3 proceed). Escalation = under-estimate → calibration_outcome.escalation_triggered = true (sections/escalation.md).
   - pdt-developer: Self-verify before QA handoff (build/typecheck → related tests → smoke). Never claim ready_for_qa without it.
   - pdt-qa: For UI features, prefer real browser (Playwright/Chromium MCP, Chrome ext, computer_use) over `curl`.
   - PO never edits code, never commits unless asked, never mutates a persona file silently.

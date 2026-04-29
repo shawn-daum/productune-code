@@ -205,11 +205,17 @@ case "${1:-}" in
     ;;
   init)
     # Project-level scaffold. Idempotent: existing files/dirs are preserved.
+    # Always uses $PWD (matches `git init` / `npm init` UX) — never walks up
+    # to a parent git toplevel, since the parent may belong to a different
+    # project (e.g. ~/Documents/dev/ might be your personal dotfiles repo).
     PROJECT_ROOT="$PWD"
-    if GIT_TOP="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
-      PROJECT_ROOT="$GIT_TOP"
-    else
-      warn "not in a git repo — initializing in $PWD anyway"
+    if GIT_TOP="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" && [ "$GIT_TOP" != "$PWD" ]; then
+      warn "current dir is inside a parent git repo at $GIT_TOP"
+      warn "initializing productune at $PWD (current dir), not the parent."
+      warn "if you wanted the parent, run: cd $GIT_TOP && productune init"
+    elif [ -z "$GIT_TOP" ]; then
+      warn "not in a git repo — productune init still creates files in $PWD."
+      warn "consider running 'git init' first if you want to track them."
     fi
     say "initializing productune project at $PROJECT_ROOT"
 

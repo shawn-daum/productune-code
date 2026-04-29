@@ -6,8 +6,8 @@ set -euo pipefail
 # What it does:
 #   1. Symlinks agents/*.md  →  ~/.claude/agents/*.md        (persona sub-agents, editable in place)
 #   2. Copies  codex/config.toml          →  ~/.codex/config.toml          (Codex CLI profile manifest)
-#      Copies  codex/po-instructions.md   →  ~/.productune/po-instructions.md  (PO doctrine, engine-agnostic)
-#   3. Seeds   codex/po-memory.md.template → ~/.productune/po-memory.md   (PO long-term memory)
+#      Copies  po/po-instructions.md   →  ~/.productune/po-instructions.md  (PO doctrine, engine-agnostic)
+#   3. Seeds   po/po-memory.md.template → ~/.productune/po-memory.md   (PO long-term memory)
 #   4. Writes  ~/.productune/productune.env (engine, wiki backend, repo path)
 #
 # Migration: pre-2026-04 installs stored po-instructions.md, po-memory.md, productune.env
@@ -501,7 +501,7 @@ cp "$SRC" "$DEST"
 say "copied codex profile manifest: ~/.codex/config.toml"
 
 # 2c) PO doctrine — productune-owned, lives at ~/.productune/po-instructions.md
-SRC="$ROOT/codex/po-instructions.md"
+SRC="$ROOT/po/po-instructions.md"
 DEST="$HOME/.productune/po-instructions.md"
 if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
   mv "$DEST" "$DEST.bak.$TS"
@@ -510,10 +510,21 @@ fi
 cp "$SRC" "$DEST"
 say "copied PO doctrine: ~/.productune/po-instructions.md"
 
+# 2d) PO doctrine sections — wiki-style detail files; PO reads on demand
+mkdir -p "$HOME/.productune/sections"
+# Wipe stale section files so removed/renamed sections don't linger
+rm -f "$HOME/.productune/sections"/*.md
+for SF in "$ROOT/po/sections"/*.md; do
+  [ -f "$SF" ] || continue
+  cp "$SF" "$HOME/.productune/sections/$(basename "$SF")"
+done
+SECTION_COUNT=$(ls "$HOME/.productune/sections"/*.md 2>/dev/null | wc -l | tr -d ' ')
+say "copied $SECTION_COUNT PO doctrine section(s) → ~/.productune/sections/"
+
 # 3) PO memory (seed ONLY if user hasn't started one yet — do NOT clobber learnings)
 PO_MEM="$HOME/.productune/po-memory.md"
 if [ ! -e "$PO_MEM" ]; then
-  cp "$ROOT/codex/po-memory.md.template" "$PO_MEM"
+  cp "$ROOT/po/po-memory.md.template" "$PO_MEM"
   say "seeded PO memory at $PO_MEM (PO will append over time)"
 else
   say "PO memory already exists at $PO_MEM — leaving as-is"

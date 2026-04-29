@@ -229,7 +229,7 @@ Local-only 모드 참고 (주석으로 `.mcp.json.local` 같은 대체 파일 �
   [profiles.po]
   approval_policy = "never"
   sandbox_mode = "workspace-write"
-  model_instructions_file = ".codex/po-instructions.md"
+  model_instructions_file = ".po/po-instructions.md"
 
   # 로컬 fallback — 토큰 소진/오프라인 시 "codex --profile local"
   [model_providers.ollama]
@@ -244,9 +244,9 @@ Local-only 모드 참고 (주석으로 `.mcp.json.local` 같은 대체 파일 �
   approval_policy = "never"
   sandbox_mode = "workspace-write"
   model_reasoning_effort = "medium"
-  model_instructions_file = ".codex/po-instructions.md"
+  model_instructions_file = ".po/po-instructions.md"
   ```
-- `.codex/po-instructions.md`: PO doctrine.
+- `.po/po-instructions.md`: PO doctrine.
   - 4 페르소나 카탈로그 및 라우팅 규칙
   - 호출 템플릿 (`claude --agent <p> -p "<t>" --session-id $(jq ...) --resume --output-format json`)
   - `.productune/persona-sessions.json` 읽기/쓰기 (없으면 초기화, 신규는 새 uuid 생성)
@@ -412,7 +412,7 @@ claude --mcp-config .mcp.json -p "Using graphiti, invalidate the fact that says 
 
 - NEW: `.claude/agents/planner.md`, `designer.md`, `developer.md`, `qa.md`
 - NEW: `.mcp.json` (repo-local, basic-memory + graphiti)
-- NEW: `.codex/config.toml`, `.codex/po-instructions.md`, `.productune/persona-sessions.json`
+- NEW: `.codex/config.toml`, `.po/po-instructions.md`, `.productune/persona-sessions.json`
 - MODIFY: `AGENTS.md` (productune + memory model 섹션)
 - MODIFY: `package.json` (scripts 7개)
 - MODIFY: `.gitignore` (+3 항목)

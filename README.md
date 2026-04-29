@@ -262,7 +262,7 @@ git pull
 productune onboard
 ```
 
-`agents/*.md` 가 symlink 라 수정 즉시 반영. Codex config (`codex/config.toml`, `codex/po-instructions.md`) 은 copy 라 `productune onboard` 재실행 필요.
+`agents/*.md` 가 symlink 라 수정 즉시 반영. Codex config (`codex/config.toml`, `po/po-instructions.md`) 은 copy 라 `productune onboard` 재실행 필요.
 
 ## Non-goals / future
 

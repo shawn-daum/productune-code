@@ -80,15 +80,20 @@ else
   say "  not found — already clean"
 fi
 
-# ── 3. po-instructions.md (and .bak siblings) ────────────────────────────────
-say "3) Removing ~/.productune/po-instructions.md..."
-for F in "$HOME/.productune/po-instructions.md" "$HOME"/.codex/po-instructions.md.bak.*; do
+# ── 3. po-instructions.md + sections/ (and .bak siblings) ───────────────────
+say "3) Removing ~/.productune/po-instructions.md and sections/..."
+for F in "$HOME/.productune/po-instructions.md" "$HOME"/.productune/po-instructions.md.bak.* "$HOME"/.codex/po-instructions.md.bak.*; do
   if [ -f "$F" ]; then
     rm -f "$F"
     say "  removed: $F"
     REMOVED=$((REMOVED+1))
   fi
 done
+if [ -d "$HOME/.productune/sections" ]; then
+  rm -rf "$HOME/.productune/sections"
+  say "  removed: ~/.productune/sections/"
+  REMOVED=$((REMOVED+1))
+fi
 
 # ── 4. config.toml — restore latest .bak if available ────────────────────────
 say "4) Restoring ~/.codex/config.toml from backup..."
