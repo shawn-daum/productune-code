@@ -390,19 +390,22 @@ merge_claude_settings_hooks() {
   local fmt="$hooks_dir/post-edit-format.sh"
   local doc="$hooks_dir/post-compact-doctrine.sh"
   local stop="$hooks_dir/stop-verify.sh"
+  local statew="$hooks_dir/post-delegate-state-write.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg dir "$hooks_dir/" '
     def strip_pdt(arr; dir):
       (arr // []) | map(
         select(((.hooks // []) | map(.command // "" | startswith(dir)) | any) | not)
       );
     (. // {})
     | .hooks //= {}
-    | .hooks.PostToolUse = (strip_pdt(.hooks.PostToolUse; $dir) + [{
-        matcher: "Write|Edit",
-        hooks: [{type: "command", command: $fmt}]
-      }])
+    | .hooks.PostToolUse = (strip_pdt(.hooks.PostToolUse; $dir) + [
+        {matcher: "Write|Edit",
+         hooks: [{type: "command", command: $fmt}]},
+        {matcher: "Bash",
+         hooks: [{type: "command", command: $statew}]}
+      ])
     | .hooks.PostCompact = (strip_pdt(.hooks.PostCompact; $dir) + [{
         hooks: [{type: "command", command: $doc}]
       }])
