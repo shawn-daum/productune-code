@@ -15,23 +15,44 @@ UUIDs are strict **8-4-4-4-12 lowercase hex**. Never prefix (`pdt-dev-…`). Nev
 
 ### Minimal template
 
+The TASK payload now ships with a `[ctx]` JSON line so personas don't have to
+re-read `po-state.json`. Persona doctrine reads `[ctx]` if present; falls back
+to a `jq` re-read only when absent (e.g. user-direct prompts).
+
 ```bash
 TARGET=$(pwd); STATE="$TARGET/.productune/po-state.json"
 PERSONA=pdt-developer
-TASK='<verbatim user text + 1-line scope. No ownership boilerplate — pdt-developer doctrine has it.>'
+USER_TEXT='<verbatim user text>'
+SCOPE='<1-line English scope. No ownership boilerplate — persona doctrine has it.>'
 
 # Tier (routing.md): MODEL ∈ {haiku,sonnet,opus} · EFFORT ∈ {low,medium,high,xhigh,max} · COMPLEXITY=L<n>
 MODEL="${MODEL:-sonnet}"; EFFORT="${EFFORT:-medium}"; COMPLEXITY="${COMPLEXITY:-L5}"
 case "$EFFORT" in xhigh|max) [ "$MODEL" = opus ] || MODEL=opus ;; esac
+
+# Build [ctx] slice — single line of JSON, slug + request_summary + artifacts +
+# persona_sessions only. Keeps the cache breakpoint stable across turns.
+CTX=$(jq -c '{
+  slug: .current_task.slug,
+  request_summary: .current_task.request_summary,
+  artifacts: (.current_task.artifacts // []),
+  round: (.current_task.round // null),
+  prd_path: (.current_task.prd_path // null),
+  persona_sessions: (.current_task.persona_sessions // {})
+}' "$STATE")
+
+TASK="$USER_TEXT
+(scope: $SCOPE)
+(extended thinking budget: $EFFORT)
+[ctx] $CTX"
 
 echo "→ delegating to $PERSONA ($COMPLEXITY, $MODEL/$EFFORT — $REASON)"
 
 SID=$(jq -r --arg p "$PERSONA" '.current_task.persona_sessions[$p] // ""' "$STATE")
 OUT=$(mktemp)
 if [ -z "$SID" ]; then
-  NO_COLOR=1 claude --agent "$PERSONA" --model "$MODEL" --print --output-format json "$TASK (extended thinking budget: $EFFORT)" > "$OUT"
+  NO_COLOR=1 claude --agent "$PERSONA" --model "$MODEL" --print --output-format json "$TASK" > "$OUT"
 else
-  NO_COLOR=1 claude --resume "$SID" --model "$MODEL" --print --output-format json "$TASK (extended thinking budget: $EFFORT)" > "$OUT"
+  NO_COLOR=1 claude --resume "$SID" --model "$MODEL" --print --output-format json "$TASK" > "$OUT"
 fi
 
 # Hook already captured session_id, turns, model_history, recent_turns, artifacts.

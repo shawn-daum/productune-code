@@ -83,7 +83,7 @@ The 5 hooks under `~/.productune/scripts/hooks/` enforce mechanical correctness 
 
 - **Stage 1 state read** = `jq` slice (above), not full file `cat`.
 - **State writes** = portable `jq '...' state.json > state.json.tmp && mv state.json.tmp state.json` (1-3 lines), not `python3 -<<PY` blocks. (`sponge` from moreutils is not on default macOS — don't use.)
-- **Delegation TASK** = verbatim user text + 1-line scope. Persona doctrine has its own ownership/anti-revert rules; don't repeat them.
+- **Delegation TASK** = verbatim user text + `(scope: <1-line>)` + `(extended thinking budget: <effort>)` + `[ctx] <one-line JSON>`. Persona doctrine has its own ownership/anti-revert rules; don't repeat them. The `[ctx]` slice (slug, request_summary, artifacts, round, prd_path, persona_sessions) lets personas skip a `jq` re-read of `po-state.json` — full template in `sections/delegation.md`.
 - **Section files** = read once per task; cache mentally for continuation turns.
 - **`po-memory.md`** = read once at task open. Calibration line is appended at close, not refetched mid-task.
 
