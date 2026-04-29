@@ -20,7 +20,17 @@ bash <productune-clone>/scripts/setup-graphiti.sh   # clone 한 경로 그대로
 - `ls ~/.graphiti/mcp_server/main.py` 존재
 - `ollama list | grep nomic-embed-text` 에 모델이 보임
 - `ls ~/.productune/sections/` 에 10개 `.md` (stages, memory, tickets, routing, escalation, delegation, calibration, lifecycle, evolution, prd-and-output)
-- `jq '.hooks.PostToolUse[] | select(.matcher == "Bash")' ~/.claude/settings.json` 에 `post-delegate-state-write.sh` 항목 존재 (PO 위임 시 `po-state.json` 자동 갱신)
+- **Hook 5개 등록 확인** (firm rule 결정론 보장):
+  ```sh
+  jq '{
+    PreToolUse: [.hooks.PreToolUse[]? | .hooks[]?.command] | map(select(test("pre-delegate-task-check"))),
+    PostToolUse: [.hooks.PostToolUse[]? | .hooks[]?.command] | map(select(test("post-delegate-state-write|post-edit-format"))),
+    PostCompact: [.hooks.PostCompact[]? | .hooks[]?.command] | map(select(test("post-compact-doctrine"))),
+    Stop: [.hooks.Stop[]? | .hooks[]?.command] | map(select(test("stop-verify")))
+  }' ~/.claude/settings.json
+  ```
+  4개 키 각각 비어있지 않아야 (R1~R4 firm rule + state mgmt + doctrine refresh + dev typecheck gate).
+- **Engine = claude** 확인: `grep MY_PO_ENGINE ~/.productune/productune.env` → `claude` 권장 (codex 면 hook 미발동)
 
 여기서 실패하면 메모리 관련 phase (2–4) 가 동작 안 함. Phase 1 은 Graphiti 없이도 동작 — MCP spawn 시 경고가 떠도 무시해도 됨.
 
@@ -82,15 +92,15 @@ claude --agent pdt-qa -p "Verify the README change. Run git status and git diff,
 
 ## Phase 3 — 풀 PO 오케스트레이션 + task 라이프사이클 (약 10–15분)
 
-Codex PO 가 여러 페르소나에 위임하는 흐름 + task 단위 세션 모델 (current_task / past_tasks / 부활 / 타임라인 렌더링) 검증.
+PO 가 여러 페르소나에 위임하는 흐름 + task 단위 세션 모델 (current_task / past_tickets / 부활 / 타임라인 렌더링) 검증. **`--engine claude` 가 default — R1~R4 hook firm rule 이 결정론적으로 발동**. Codex 사용 시 hook 미발동 → 모든 검증이 doctrine-only 권고로 강등됨.
 
-> **사전 마이그레이션**: 옛 버전 테스트 스위트로 만든 stale `<project>/.productune/po-state.json` (top-level `persona_sessions` 인 legacy flat schema) 이 남아있으면 먼저 삭제:
+> **사전 마이그레이션**: stale `<project>/.codex/po-state.json` (옛 path) 이 남아있으면 wrapper 가 자동 마이그. legacy flat schema (`top-level persona_sessions`) 면 먼저 삭제:
 >
 > ```sh
-> rm -f /tmp/co-test/.productune/po-state.json
+> rm -f /tmp/co-test/.productune/po-state.json /tmp/co-test/.codex/po-state.json
 > ```
 >
-> PO 가 다음 실행 시 현행 `current_task` / `past_tasks` 스키마로 새로 생성.
+> PO 가 다음 실행 시 현행 `current_task` / `past_tickets` 스키마로 새로 생성.
 
 ```sh
 cd /tmp/co-test
@@ -111,8 +121,11 @@ rm -f .productune/po-state.json
 
 # 3.2 — PO 시작
 
-codex --profile productune
-# → Codex TUI 열림. 아래 prompt 를 TUI 안에서 입력, Enter 로 제출.
+productune                       # default engine = claude (hooks 발동)
+# 또는 명시적으로:
+#   productune --engine claude   # Claude Code TUI — 권장 (R1~R4 firm rule 활성)
+#   productune --engine codex    # Codex TUI — fallback (hooks 미발동, doctrine-only)
+# → TUI 열림. 아래 prompt 를 TUI 안에서 입력, Enter 로 제출.
 
 > README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.
 
@@ -135,7 +148,7 @@ codex --profile productune
 
 ### 3.3 — 후속 turn (같은 task)
 
-**방법 A 또는 B** 로 시작했다면 첫 task 끝나도 Codex TUI 안에 있음 — 그냥 다음 turn 으로 입력. **방법 C** (`codex exec`) 였다면 `codex resume --last` 로 재개.
+같은 TUI 에서 첫 task 끝나도 세션 안에 있음 — 그냥 다음 turn 으로 입력. (Codex 의 경우 `codex exec` 이었으면 `codex resume --last`.)
 
 후속 prompt:
 
@@ -156,7 +169,7 @@ codex --profile productune
 
 ### 3.4 — 새 task (다른 의도 → archive + 새 current_task)
 
-같은 Codex TUI 에서 진짜 무관한 요청:
+같은 TUI 에서 진짜 무관한 요청:
 
 > 이제 README 에 "## License" 섹션 추가해서 MIT 라고 적어줘.
 
@@ -193,15 +206,16 @@ codex --profile productune
 > 아까 만든 sum.js 좀 다시 손대자. 함수 위에 JSDoc 주석 달아줘.
 
 **관찰 포인트:**
-- PO 가 `past_tasks` 의 `artifacts` 또는 slug 에서 "sum.js" 매치 검색.
+- PO 가 `past_tickets` 의 `artifacts` 또는 slug 에서 "sum.js" 매치 검색.
 - PO 가 한 줄 propose: `이건 'add-sum-helper' 후속처럼 보여요. 그 task 이어서 갈까요? (y/n)`. `y` 응답.
 - 확인 후: PO 가 방금 생성한 `add-license-section` task archive, `add-sum-helper` past entry 를 `current_task` 로 복원 — 이전 `persona_sessions.pdt-developer` session id 까지 그대로.
 - 다음 페르소나 호출이 *원래* pdt-developer 세션을 resume → dev 가 sum.js 컨텍스트를 "기억" 함.
+- claude engine 이면 R4 hook 이 잘못된 UUID resume 자동 차단.
 
 **합격 기준:**
 - 부활 후 `jq '.current_task.slug' .productune/po-state.json` 가 부활된 slug 와 일치
-- 부활된 task 의 `pdt-developer` session id 가 직전 archive 된 것과 동일 (사전에 `past_tasks` 스냅샷 떠놨다면 비교)
-- license-section task 가 `past_tasks` 로 이동
+- 부활된 task 의 `pdt-developer` session id 가 직전 archive 된 것과 동일 (사전에 `past_tickets` 스냅샷 떠놨다면 비교)
+- license-section task 가 `past_tickets` 로 이동
 
 ### 3.7 — Disposition override prefix
 
@@ -214,7 +228,7 @@ codex --profile productune
 **관찰 포인트:**
 - PO 가 `/new` prefix 인식, disposition 휴리스틱 전체 스킵.
 - `→ new task 'license-redo'` trace 출력.
-- 이전 task (current 였던 것) 가 `past_tasks` 로 archive.
+- 이전 task (current 였던 것) 가 `past_tickets` 로 archive.
 - `/new <slug>` 뒤 텍스트 (실제 요청) 만 PO decomposition / 페르소나에 전달.
 
 이어서 같은 TUI 에서:
@@ -227,7 +241,7 @@ codex --profile productune
 - prompt 에 continuation 대명사가 없어도 `→ continuing 'license-redo'` trace 출력.
 - 단일 step / 단일 페르소나 요청이라 PO decomposition 생략 ("→ delegating to pdt-developer (decompose 생략, single-step)").
 
-이제 `/resume` prefix 테스트 (3.6 에서 `add-sum-helper` 가 past_tasks 에 있다고 가정):
+이제 `/resume` prefix 테스트 (3.6 에서 `add-sum-helper` 가 past_tickets 에 있다고 가정):
 
 ```
 /resume add-sum-helper  주석 위에 @example 한 줄 더 보강.
@@ -240,7 +254,7 @@ codex --profile productune
 **합격 기준:**
 - 세 trace (`→ new task`, `→ continuing`, `→ resuming`) 모두 정확한 slug 로 출력
 - `jq '.current_task.slug' .productune/po-state.json` 가 가장 최근 prefix 의 slug 와 일치
-- `jq '.past_tasks | map(.slug)' .productune/po-state.json` 에 archive 된 slug 들이 시간순으로 정렬
+- `jq '.past_tickets | map(.slug)' .productune/po-state.json` 에 archive 된 slug 들이 시간순으로 정렬
 
 ### 3.8 — install.sh 멱등 재실행 + autocompact append
 
@@ -254,9 +268,10 @@ grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.pr
 ```
 
 **합격 기준:**
-- `MY_PO_ENGINE=codex` (default)
+- `MY_PO_ENGINE=claude` (default — hooks 발동)
 - `GRAPHITI_LLM_PROVIDER=openai` (default option [1])
 - `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` (Part A append 가 동작)
+- `jq '.hooks | keys' ~/.claude/settings.json` 에 `["PostCompact","PostToolUse","PreToolUse","Stop"]` 4개 모두 존재
 
 멱등성 재확인 — 사용자 override 시뮬레이션을 위해 autocompact 값 수동 변경 후 install.sh 재실행해서 그대로 보존되는지:
 
@@ -355,10 +370,10 @@ EOF
 이제 PO 시작, 아무 작은 task 던지기 (CLI 인자로 prompt 함께 던지면 TUI 가 그걸로 시작):
 
 ```sh
-codex --profile productune 'README.md 에 한 줄 더 추가해줘.'
+productune 'README.md 에 한 줄 더 추가해줘.'
 ```
 
-(동등: `codex --profile productune` 만 실행 후 TUI 안에서 입력.)
+(동등: `productune` 만 실행 후 TUI 안에서 입력. `--engine codex` 로도 가능하나 hook 미발동.)
 
 **관찰 포인트:** 실행 직전에 PO 가 다음 비슷한 안내: "pdt-qa 가 최근 이 프로젝트에서 4/5 실패. sonnet 으로 올려볼까요? (one-off: `--model sonnet`, 영구: agents/pdt-qa.md 수정)".
 

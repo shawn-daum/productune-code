@@ -88,10 +88,10 @@ OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 ski
 ## Prerequisites
 
 - **macOS** (Linux 도 가능, path 조정 필요)
-- `claude` — Claude Code CLI, 인증 완료
-- `codex` — OpenAI Codex CLI (`npm i -g @openai/codex`) — `--engine codex` 사용 시
+- `claude` — Claude Code CLI, 인증 완료 (PO + 페르소나 모두 사용)
 - `jq` — JSON CLI (`brew install jq`)
 - `node` >= 18
+- `codex` — OpenAI Codex CLI (`npm i -g @openai/codex`) — `--engine codex` 사용 시만 (선택)
 
 Wiki backend 에 따라 추가 필요:
 - **Graphiti (권장, 자동 설치)**: Docker Desktop + `uv` (`brew install uv`) + ollama (install 이 자동 설치)
@@ -110,12 +110,13 @@ bash productune/scripts/install.sh
 
 `install.sh` 가 인터랙티브하게 처리:
 
-1. **PO 엔진 선택** — `codex` (OpenAI) 또는 `claude` (100% Anthropic)
+1. **PO 엔진 선택** — `claude` (default, hooks 발동) 또는 `codex` (OpenAI Codex CLI, hooks 미발동)
 2. **Wiki backend 설정** — 하드웨어 자동 감지
    - Tier S (RAM ≥ 16GB) / Tier A (RAM ≥ 8GB): Ollama 로컬 LLM 선택 → 자동 설치 → FalkorDB + Graphiti 자동 셋업
    - Tier B (RAM 부족 / Docker 없음): wiki-keeper agent (Claude API) 자동 선택
-3. **OSS skill 설치** — mattpocock + phuryn skill 라이브러리
-4. **PATH 등록** — 현재 세션 즉시 적용
+3. **Hook 5개 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop 자동 merge (firm rule 결정론 보장)
+4. **OSS skill 설치** — mattpocock + phuryn skill 라이브러리
+5. **PATH 등록** — 현재 세션 즉시 적용
 
 > 모델 목록은 [Ollama registry](https://registry.ollama.ai) 에서 실시간 크기를 조회해 하드웨어 tier 에 맞는 것만 표시합니다 (`config/model-catalog.json` 에서 관리).
 
@@ -125,9 +126,9 @@ bash productune/scripts/install.sh
 cd ~/path/to/target-project
 
 # Full PO flow (권장)
-productune                          # default engine (onboard 에서 설정한 엔진)
-productune --engine claude          # 100% Anthropic stack
-productune --engine codex           # Codex CLI
+productune                          # default = claude (hooks 발동), onboard 에서 변경 가능
+productune --engine claude          # 100% Anthropic stack (default — R1~R4 hook firm rules 활성)
+productune --engine codex           # Codex CLI (hook 미발동 → R1~R4는 doctrine-only)
 
 # 도움말
 productune --help                   # 현재 설정 포함 커맨드 레퍼런스
@@ -158,15 +159,18 @@ claude --agent pdt-developer        # 단일 페르소나
 
 ## Picking a PO engine
 
-| | `--engine codex` | `--engine claude` |
+| | `--engine claude` (**default**) | `--engine codex` |
 |---|---|---|
-| Top-level reasoning | OpenAI hosted (Codex CLI) | Anthropic hosted (Claude Code) |
-| Subscription | ChatGPT Plus / Pro | Claude Pro / Max |
-| Persona subscription | Claude (변동 없음) | Claude (변동 없음) |
-| Cost-split | ✓ | ✗ — all on Anthropic |
-| ToS | OK | **Cleanest** — 100% first-party |
+| Top-level reasoning | Anthropic (Claude Code) | OpenAI (Codex CLI) |
+| Subscription | Claude Pro / Max | ChatGPT Plus / Pro |
+| Persona subscription | Claude | Claude |
+| **Hook firm rules** (R1 slug · R2 archive · R3 `.md` boundary · R4 session reuse) | ✓ deterministic | ✗ doctrine-only (Codex bypasses Claude Code hooks) |
+| Cost-split | ✗ all on Anthropic | ✓ |
+| ToS | **Cleanest** — 100% first-party | OK |
 
-`MY_PO_ENGINE=claude` 또는 `productune --engine claude` 로 변경 가능.
+Default = **claude** because hook-based firm rules (`scripts/hooks/pre-delegate-task-check.sh` etc.) only fire inside Claude Code sessions. Codex spawned PO bypasses them, so boundary/archive/session-reuse violations become PO drift instead of code-blocked.
+
+Switch: `MY_PO_ENGINE=codex` in `~/.productune/productune.env` or `productune --engine codex` per-session.
 
 ## Wiki backend
 
@@ -205,8 +209,9 @@ Cleanup: `productune gc` (dry-run) / `productune gc -y` (자동 정리). 결정 
 ## Ticket system
 
 PO 가 작업을 ticket 단위로 영속화:
-- `<project>/.productune/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
-- Ticket close 시 자동 export — `<project>/docs/tickets/<round-id>/T-<id>.md` git-versioned
+- `<project>/.productune/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets[]`, `rounds`
+- Ticket close 시 PO 가 archive (current → `past_tickets`) + calibration log 한 줄 → `<project>/docs/tickets/<round-id>/T-<id>.md` git-versioned export
+- `pre-delegate-task-check.sh` hook (R2) 가 archive 누락된 채 새 task 시작을 차단
 
 ## Memory promotion
 
@@ -219,43 +224,48 @@ PO 가 작업을 ticket 단위로 영속화:
 
 ```
 productune/
-├── agents/                       # symlinked to ~/.claude/agents/
-│   ├── pdt-po.md                 # PO orchestrator
+├── agents/                              # symlinked to ~/.claude/agents/
+│   ├── pdt-po.md                        # PO orchestrator (entry — full doctrine in po/)
 │   ├── pdt-designer.md
 │   ├── pdt-developer.md
 │   ├── pdt-qa.md
-│   ├── pdt-wiki-keeper.md        # keeper backend 시에만 ~/.claude/agents/에 링크됨
-│   └── variants/                 # backend별 페르소나 variant
-│       ├── graphiti/             # mcp__graphiti__* tools 포함
-│       ├── keeper/               # wiki-keeper 위임 방식
-│       └── fs/
-├── config/
-│   └── model-catalog.json        # tier별 추천 모델 (Ollama registry에서 실시간 크기 조회)
+│   ├── pdt-wiki-keeper.md               # keeper backend 시에만 ~/.claude/agents/에 링크
+│   └── variants/                        # backend별 페르소나 variant (graphiti / keeper / fs)
+├── po/                                   # PO doctrine (engine-agnostic; copied to ~/.productune/)
+│   ├── po-instructions.md               # entry index (~100L)
+│   ├── po-memory.md.template
+│   └── sections/                        # detailed wiki (load on demand)
+│       ├── stages.md  memory.md  tickets.md  routing.md  escalation.md
+│       └── delegation.md  calibration.md  lifecycle.md  evolution.md  prd-and-output.md
 ├── codex/
-│   ├── config.toml               # profiles.productune + local
-│   ├── po-instructions.md        # PO doctrine
-│   └── po-memory.md.template
+│   └── config.toml                      # Codex CLI profile manifest (--engine codex 시)
+├── config/
+│   └── model-catalog.json               # tier별 추천 모델 (Ollama registry 실시간 조회)
 ├── scripts/
-│   ├── install.sh                # onboard — engine / wiki backend / LLM / Graphiti / PATH
+│   ├── install.sh                       # onboard — engine / wiki / LLM / hooks / Graphiti / PATH
 │   ├── uninstall.sh
-│   ├── productune                # daily entrypoint
-│   ├── setup-graphiti.sh         # FalkorDB + Graphiti (onboard에서 자동 호출)
-│   ├── setup-skills.sh           # mattpocock + phuryn skill 설치
-│   └── graphiti-launcher.sh      # provider-aware Graphiti MCP spawn
+│   ├── productune                       # daily entrypoint (default --engine claude)
+│   ├── setup-graphiti.sh / setup-skills.sh / graphiti-launcher.sh
+│   └── hooks/                           # Claude Code hooks (auto-merged into ~/.claude/settings.json)
+│       ├── pre-delegate-task-check.sh   # PreToolUse(Bash) — R1~R4 firm rule blocks
+│       ├── post-delegate-state-write.sh # PostToolUse(Bash) — capture session_id, bump turns
+│       ├── post-edit-format.sh          # PostToolUse(Write|Edit) — formatter
+│       ├── post-compact-doctrine.sh     # PostCompact — re-inject hard rules
+│       └── stop-verify.sh               # Stop(pdt-developer) — typecheck/build gate
 ├── docs/
-│   ├── prd/productune.md
-│   ├── overview.md
-│   ├── pitch.md
-│   └── testing.md
+│   ├── prd/productune.md  overview.md  pitch.md  testing.md
 └── README.md
 ```
 
 ## Troubleshooting
 
 - **"claude doesn't list my personas"** → `productune onboard` 재실행 (symlink 재생성 + dangling sweep)
+- **"hooks didn't fire / boundary keeps drifting"** → 엔진이 `codex` 일 가능성. Claude Code hooks 는 Claude 세션 안에서만 발동. `productune --engine claude` 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=claude` 변경
+- **"hook 등록 누락"** → `jq '.hooks' ~/.claude/settings.json` 으로 PreToolUse / PostToolUse / PostCompact / Stop 4개 키 확인. 빠지면 `productune onboard` 재실행
+- **"`.codex/po-state.json` 이 생긴다"** → `productune` wrapper 가 자동 마이그 (`.codex/` → `.productune/`). 안 되면 `mv <project>/.codex/po-state.json <project>/.productune/po-state.json`
 - **"graphiti MCP fails to start"** → `docker ps` (falkordb 확인), `curl http://localhost:11434/api/tags` (ollama 확인), `productune onboard` 로 graphiti 재셋업
 - **"entity extraction quality is bad"** → `config/model-catalog.json` 에서 더 큰 모델로 교체 후 `productune onboard`
-- **legacy state.json schema** — 옛 `top-level persona_sessions` 면 `rm <project>/.productune/po-state.json` 후 PO 다시 시작
+- **legacy state.json schema** — 옛 `top-level persona_sessions` 면 `rm <project>/.productune/po-state.json` 후 PO 다시 시작 (또는 `productune init` 으로 새로 시드)
 
 ## Updating
 
@@ -265,7 +275,7 @@ git pull
 productune onboard
 ```
 
-`agents/*.md` 가 symlink 라 수정 즉시 반영. Codex config (`codex/config.toml`, `po/po-instructions.md`) 은 copy 라 `productune onboard` 재실행 필요.
+`agents/*.md` + `scripts/hooks/*.sh` 는 repo 그대로 사용 (symlink 또는 path 참조) — 수정 즉시 반영. Codex config (`codex/config.toml`) + PO doctrine (`po/po-instructions.md` → `~/.productune/`) 는 copy 라 `productune onboard` 재실행 필요.
 
 ## Non-goals / future
 
@@ -284,9 +294,13 @@ productune uninstall
 
 ```sh
 rm -rf ~/.claude/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa,pdt-wiki-keeper}.md
-rm ~/.codex/config.toml                         # codex profile manifest
-rm -rf ~/.productune                            # po-instructions, po-memory, productune.env, wiki/
+jq 'del(.hooks.PreToolUse, .hooks.PostToolUse, .hooks.PostCompact, .hooks.Stop)' \
+  ~/.claude/settings.json | sponge ~/.claude/settings.json   # 또는 productune-only 항목만 strip
+rm ~/.codex/config.toml                          # codex profile manifest
+rm -rf ~/.productune                             # po-instructions, sections/, po-memory, productune.env, wiki/
 docker rm -f falkordb && docker volume rm falkordb-data
 rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn}
 rm -rf <clone-dir>       # install 시 clone 한 위치
 ```
+
+> `productune uninstall` 이 hook 등록 + statusLine 까지 자동 strip 합니다. 수동 정리는 fallback 용.
