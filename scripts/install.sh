@@ -239,8 +239,10 @@ activate_backend() {
   for variant in "$variants_dir"/*.md; do
     local name; name="$(basename "$variant")"
     local dest="$ROOT/agents/$name"
+    local claude_dest="$HOME/.claude/agents/$name"
     ln -sfn "$variant" "$dest"
-    say "backend=$backend: agents/$name → variants/$backend/$name"
+    ln -sfn "$dest" "$claude_dest"
+    say "backend=$backend: agents/$name → variants/$backend/$name (linked to ~/.claude/agents)"
   done
 
   # wiki-keeper is only active for the keeper backend.
