@@ -648,93 +648,37 @@ if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$P
   say "auto-compact threshold defaulted to 70% in $PO_ENV_FILE"
 fi
 
-# 7b) Interactive: register Claude Code hooks (idempotent merge into ~/.claude/settings.json)
-if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^PRODUCTUNE_HOOKS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
-  echo
-  printf '\033[1;36m[install]\033[0m Claude Code hooks 등록 (선택, ~/.claude/settings.json 수정):\n'
-  cat <<'PROMPT'
-  - PostToolUse(Write|Edit) → 자동 포매터 (프로젝트의 `format` 스크립트 / prettier 자동 감지)
-  - PostCompact            → PO doctrine 핵심 재주입 (compaction 후 규칙 유지)
-  - Stop (pdt-developer)   → typecheck/build 실행, 실패면 다음 턴 강제
-  기존 사용자 hooks 는 보존되며, productune 항목만 갱신/제거됩니다.
-  비활성화: ~/.claude/settings.json 에서 productune 경로 항목 직접 삭제 또는 productune uninstall.
-
-PROMPT
-  printf '  설치하시겠어요? [Y/n]: '
-  read -r HCHOICE || HCHOICE=""
-  case "$HCHOICE" in
-    n|N|no|NO|skip)
-      printf 'PRODUCTUNE_HOOKS_INSTALLED=skipped\n' >> "$PO_ENV_FILE"
-      say "hooks 설치 건너뜀 — 나중에 install.sh 재실행 시 다시 묻습니다"
-      ;;
-    *)
-      if merge_claude_settings_hooks; then
-        printf 'PRODUCTUNE_HOOKS_INSTALLED=true\n' >> "$PO_ENV_FILE"
-        say "hooks 등록 완료 (~/.claude/settings.json)"
-      else
-        warn "hooks 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
-        printf 'PRODUCTUNE_HOOKS_INSTALLED=failed\n' >> "$PO_ENV_FILE"
-      fi
-      ;;
-  esac
+# 7b) Auto-install Claude Code hooks (idempotent merge into ~/.claude/settings.json)
+if ! grep -qE '^PRODUCTUNE_HOOKS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
+  if merge_claude_settings_hooks; then
+    printf 'PRODUCTUNE_HOOKS_INSTALLED=true\n' >> "$PO_ENV_FILE"
+    say "hooks 등록 완료 (~/.claude/settings.json)"
+  else
+    warn "hooks 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
+    printf 'PRODUCTUNE_HOOKS_INSTALLED=failed\n' >> "$PO_ENV_FILE"
+  fi
 fi
 
-# 7c) Interactive: register statusLine (idempotent — overwrites .statusLine field)
-if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^PRODUCTUNE_STATUSLINE_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
-  echo
-  printf '\033[1;36m[install]\033[0m Claude Code statusLine 등록 (선택):\n'
-  cat <<'PROMPT'
-  활성 persona / ticket / wiki backend 헬스 / git branch 를 statusLine 에 한 줄 표시.
-  기존 statusLine 이 있으면 덮어씁니다 (이전 값은 ~/.claude/settings.json git 이력 참고).
-
-PROMPT
-  printf '  설치하시겠어요? [Y/n]: '
-  read -r SLCHOICE || SLCHOICE=""
-  case "$SLCHOICE" in
-    n|N|no|NO|skip)
-      printf 'PRODUCTUNE_STATUSLINE_INSTALLED=skipped\n' >> "$PO_ENV_FILE"
-      say "statusLine 설치 건너뜀"
-      ;;
-    *)
-      if merge_claude_settings_statusline; then
-        printf 'PRODUCTUNE_STATUSLINE_INSTALLED=true\n' >> "$PO_ENV_FILE"
-        say "statusLine 등록 완료"
-      else
-        warn "statusLine 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
-        printf 'PRODUCTUNE_STATUSLINE_INSTALLED=failed\n' >> "$PO_ENV_FILE"
-      fi
-      ;;
-  esac
+# 7c) Auto-install statusLine (idempotent — overwrites .statusLine field)
+if ! grep -qE '^PRODUCTUNE_STATUSLINE_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
+  if merge_claude_settings_statusline; then
+    printf 'PRODUCTUNE_STATUSLINE_INSTALLED=true\n' >> "$PO_ENV_FILE"
+    say "statusLine 등록 완료"
+  else
+    warn "statusLine 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
+    printf 'PRODUCTUNE_STATUSLINE_INSTALLED=failed\n' >> "$PO_ENV_FILE"
+  fi
 fi
 
-# 8) Interactive: install OSS skill libraries (mattpocock + phuryn) — only if not yet installed
-if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^PRODUCTUNE_SKILLS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
-  echo
-  printf '\033[1;36m[install]\033[0m OSS skill 라이브러리 설치 (productune 페르소나 자동 invoke 활용):\n'
-  cat <<'PROMPT'
-  설치 대상:
-    [Y] mattpocock/skills (Real engineering: to-prd, tdd, triage-issue 등 23개)
-        + phuryn/pm-skills (PM workflow: discovery / strategy / execution 65개)
-  [n]   skip — 나중에 `bash $ROOT/scripts/setup-skills.sh` 로 설치 가능
-
-PROMPT
-  printf '  설치하시겠어요? [Y/n]: '
-  read -r SCHOICE || SCHOICE=""
-  case "$SCHOICE" in
-    n|N|no|NO|skip)
-      printf 'PRODUCTUNE_SKILLS_INSTALLED=skipped\n' >> "$PO_ENV_FILE"
-      say "skill 설치 건너뜀 — 나중에 bash $ROOT/scripts/setup-skills.sh"
-      ;;
-    *)
-      if bash "$ROOT/scripts/setup-skills.sh"; then
-        printf 'PRODUCTUNE_SKILLS_INSTALLED=true\n' >> "$PO_ENV_FILE"
-        say "OSS skill 설치 완료"
-      else
-        warn "skill 설치 중 일부 실패 — 수동 확인: bash $ROOT/scripts/setup-skills.sh"
-        printf 'PRODUCTUNE_SKILLS_INSTALLED=partial\n' >> "$PO_ENV_FILE"
-      fi
-      ;;
-  esac
+# 8) Auto-install OSS skill libraries (mattpocock + phuryn)
+if ! grep -qE '^PRODUCTUNE_SKILLS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
+  if bash "$ROOT/scripts/setup-skills.sh"; then
+    printf 'PRODUCTUNE_SKILLS_INSTALLED=true\n' >> "$PO_ENV_FILE"
+    say "OSS skill 설치 완료"
+  else
+    warn "skill 설치 중 일부 실패 — 수동 확인: bash $ROOT/scripts/setup-skills.sh"
+    printf 'PRODUCTUNE_SKILLS_INSTALLED=partial\n' >> "$PO_ENV_FILE"
+  fi
 fi
 
 # 9) Interactive: PATH registration
