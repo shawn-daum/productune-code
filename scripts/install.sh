@@ -371,6 +371,64 @@ activate_backend() {
   fi
 }
 
+# ── ~/.claude/settings.json hooks merge (idempotent) ──────────────────────────
+# Existing user hooks are preserved. Productune's own hook entries are detected
+# by their `command` starting with $ROOT/scripts/hooks/ — so re-running install
+# replaces them rather than duplicating.
+merge_claude_settings_hooks() {
+  local settings="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude"
+  [ -f "$settings" ] || echo '{}' > "$settings"
+
+  local hooks_dir="$ROOT/scripts/hooks"
+  local fmt="$hooks_dir/post-edit-format.sh"
+  local doc="$hooks_dir/post-compact-doctrine.sh"
+  local stop="$hooks_dir/stop-verify.sh"
+
+  local tmp; tmp="$(mktemp)" || return 1
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg dir "$hooks_dir/" '
+    def strip_pdt(arr; dir):
+      (arr // []) | map(
+        select(((.hooks // []) | map(.command // "" | startswith(dir)) | any) | not)
+      );
+    (. // {})
+    | .hooks //= {}
+    | .hooks.PostToolUse = (strip_pdt(.hooks.PostToolUse; $dir) + [{
+        matcher: "Write|Edit",
+        hooks: [{type: "command", command: $fmt}]
+      }])
+    | .hooks.PostCompact = (strip_pdt(.hooks.PostCompact; $dir) + [{
+        hooks: [{type: "command", command: $doc}]
+      }])
+    | .hooks.Stop = (strip_pdt(.hooks.Stop; $dir) + [{
+        matcher: "pdt-developer",
+        hooks: [{type: "command", command: $stop}]
+      }])
+  ' "$settings" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$settings"
+  return 0
+}
+
+merge_claude_settings_statusline() {
+  local settings="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude"
+  [ -f "$settings" ] || echo '{}' > "$settings"
+
+  local script="$ROOT/scripts/statusline-productune.sh"
+  local tmp; tmp="$(mktemp)" || return 1
+  if ! jq --arg cmd "$script" '
+    (. // {}) | .statusLine = {type: "command", command: $cmd}
+  ' "$settings" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$settings"
+  return 0
+}
+
 # Preflight
 command -v claude >/dev/null || die "claude CLI not found. Install Claude Code first."
 command -v codex  >/dev/null || die "codex CLI not found. Run: npm i -g @openai/codex"
@@ -427,7 +485,9 @@ fi
 
 # 4) Make wrapper scripts executable (idempotent — git checkout usually preserves +x already)
 chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh" \
-         "$ROOT/scripts/wiki-init.sh" "$ROOT/scripts/migrate-graphiti-to-fs.sh"
+         "$ROOT/scripts/wiki-init.sh" "$ROOT/scripts/migrate-graphiti-to-fs.sh" \
+         "$ROOT/scripts/statusline-productune.sh"
+chmod +x "$ROOT/scripts/hooks"/*.sh 2>/dev/null || true
 say "wrapper scripts ready"
 # Legacy `my-po` symlink (compat alias) — recreate if missing.
 if [ ! -e "$ROOT/scripts/my-po" ]; then
@@ -586,6 +646,65 @@ mkdir -p "$(dirname "$PO_ENV_FILE")"
 if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$PO_ENV_FILE"; then
   printf 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\n' >> "$PO_ENV_FILE"
   say "auto-compact threshold defaulted to 70% in $PO_ENV_FILE"
+fi
+
+# 7b) Interactive: register Claude Code hooks (idempotent merge into ~/.claude/settings.json)
+if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^PRODUCTUNE_HOOKS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
+  echo
+  printf '\033[1;36m[install]\033[0m Claude Code hooks 등록 (선택, ~/.claude/settings.json 수정):\n'
+  cat <<'PROMPT'
+  - PostToolUse(Write|Edit) → 자동 포매터 (프로젝트의 `format` 스크립트 / prettier 자동 감지)
+  - PostCompact            → PO doctrine 핵심 재주입 (compaction 후 규칙 유지)
+  - Stop (pdt-developer)   → typecheck/build 실행, 실패면 다음 턴 강제
+  기존 사용자 hooks 는 보존되며, productune 항목만 갱신/제거됩니다.
+  비활성화: ~/.claude/settings.json 에서 productune 경로 항목 직접 삭제 또는 productune uninstall.
+
+PROMPT
+  printf '  설치하시겠어요? [Y/n]: '
+  read -r HCHOICE || HCHOICE=""
+  case "$HCHOICE" in
+    n|N|no|NO|skip)
+      printf 'PRODUCTUNE_HOOKS_INSTALLED=skipped\n' >> "$PO_ENV_FILE"
+      say "hooks 설치 건너뜀 — 나중에 install.sh 재실행 시 다시 묻습니다"
+      ;;
+    *)
+      if merge_claude_settings_hooks; then
+        printf 'PRODUCTUNE_HOOKS_INSTALLED=true\n' >> "$PO_ENV_FILE"
+        say "hooks 등록 완료 (~/.claude/settings.json)"
+      else
+        warn "hooks 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
+        printf 'PRODUCTUNE_HOOKS_INSTALLED=failed\n' >> "$PO_ENV_FILE"
+      fi
+      ;;
+  esac
+fi
+
+# 7c) Interactive: register statusLine (idempotent — overwrites .statusLine field)
+if [ -t 0 ] && [ -t 1 ] && ! grep -qE '^PRODUCTUNE_STATUSLINE_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
+  echo
+  printf '\033[1;36m[install]\033[0m Claude Code statusLine 등록 (선택):\n'
+  cat <<'PROMPT'
+  활성 persona / ticket / wiki backend 헬스 / git branch 를 statusLine 에 한 줄 표시.
+  기존 statusLine 이 있으면 덮어씁니다 (이전 값은 ~/.claude/settings.json git 이력 참고).
+
+PROMPT
+  printf '  설치하시겠어요? [Y/n]: '
+  read -r SLCHOICE || SLCHOICE=""
+  case "$SLCHOICE" in
+    n|N|no|NO|skip)
+      printf 'PRODUCTUNE_STATUSLINE_INSTALLED=skipped\n' >> "$PO_ENV_FILE"
+      say "statusLine 설치 건너뜀"
+      ;;
+    *)
+      if merge_claude_settings_statusline; then
+        printf 'PRODUCTUNE_STATUSLINE_INSTALLED=true\n' >> "$PO_ENV_FILE"
+        say "statusLine 등록 완료"
+      else
+        warn "statusLine 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
+        printf 'PRODUCTUNE_STATUSLINE_INSTALLED=failed\n' >> "$PO_ENV_FILE"
+      fi
+      ;;
+  esac
 fi
 
 # 8) Interactive: install OSS skill libraries (mattpocock + phuryn) — only if not yet installed
