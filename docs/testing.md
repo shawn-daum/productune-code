@@ -2,10 +2,13 @@
 
 점진적 6-phase 테스트 플랜. 각 phase 가 통과해야 다음 phase 로 — 건너뛰면 실패 진단이 어려워짐. **Phase 6 통과 = Phase 1 (CLI MVP) 합격 = Phase 2 (사용자 dogfood) 진입 자격**.
 
+> 사전 가정: `bash scripts/install.sh` 가 한 번 실행돼서 `~/.productune/po-instructions.md` + `~/.productune/sections/*.md` (PO doctrine entry index + 9 wiki sections), `~/.productune/po-memory.md`, `~/.productune/productune.env` 가 모두 자리잡은 상태. Graphiti backend 면 `nomic-embed-text` 도 자동 pull 됨.
+
 ## Phase 0 — 사전 준비 (한 번만, 약 5분)
 
 ```sh
-# 0.1 — Graphiti 가 쓸 임베딩 모델 pull
+# 0.1 — install.sh 가 그래피티 backend 였으면 nomic-embed-text 는 자동 pull 했음.
+# 직접 install.sh 안 돌렸거나 keeper/fs 로 시작했다가 graphiti 로 전환하는 경우만:
 ollama pull nomic-embed-text
 
 # 0.2 — Graphiti infra 기동 (FalkorDB 컨테이너 + graphiti clone + uv sync)
@@ -16,6 +19,7 @@ bash <productune-clone>/scripts/setup-graphiti.sh   # clone 한 경로 그대로
 - `docker ps | grep falkordb` 결과에 컨테이너가 Up 상태로 표시
 - `ls ~/.graphiti/mcp_server/main.py` 존재
 - `ollama list | grep nomic-embed-text` 에 모델이 보임
+- `ls ~/.productune/sections/` 에 9개 `.md` (stages, memory, tickets, routing, escalation, delegation, calibration, lifecycle, evolution, prd-and-output)
 
 여기서 실패하면 메모리 관련 phase (2–4) 가 동작 안 함. Phase 1 은 Graphiti 없이도 동작 — MCP spawn 시 경고가 떠도 무시해도 됨.
 
@@ -43,13 +47,18 @@ claude --agent pdt-po -p "Describe your role in one sentence and list the JSON f
 ```sh
 # 2.1 — 고칠 오타 하나 박힌 일회용 타깃 프로젝트 생성
 mkdir -p /tmp/co-test && cd /tmp/co-test
-git init -q
+productune init   # auto-runs `git init` + scaffolds .productune/, docs/pdt-*/, .gitignore
 cat > README.md <<'EOF'
 # Test project
 This is a temperery test for the productune setup.
 EOF
 git add . && git commit -q -m "init"
 ```
+
+**`productune init` 검증:**
+- `.productune/po-state.json` 이 `schema_version: 1`, 빈 `current_task: null` 로 생성
+- `docs/pdt-{designer,developer,qa}/` 디렉토리 + `.gitkeep` 존재
+- `.gitignore` 에 `.productune/po.lock` 과 `.productune/logs/` 항목 포함
 
 이제 페르소나를 한 번에 하나씩 테스트:
 
@@ -402,25 +411,42 @@ productune
 **관찰 포인트 (PO 가 자발적으로 stage transition announce):**
 
 ```
-→ Stage: PRD 작성 (pdt-po Why-essential, opus, ⚡xhigh)
+→ Stage: PRD 작성 (pdt-po Why-essential, opus, ⚡max)
    ✓ to-prd skill auto-invoke + grill-me 식 문답 시작
-   ✓ docs/prd/<your-slug>.md 또는 docs/prd/productune.md round 헤더 추가
-→ Stage: Test 정의 (pdt-qa What, haiku)
+   ✓ PO 가 직접 docs/prd/<your-slug>.md 작성 (페르소나 위임 X — PO 의 직접 산출물)
+→ Stage: Test 정의 (pdt-qa What, haiku, low)
    ✓ acceptance criteria → test 정의
-→ Stage: Issue 분해 (pdt-po How, sonnet, to-issues skill)
+→ Stage: Issue 분해 (pdt-po How, sonnet, medium, to-issues skill)
    ✓ vertical-slice ticket 생성 (T-001, T-002, ...)
-→ Stage: 구현 (pdt-developer What, sonnet, tdd skill auto-invoke)
-   ✓ 각 ticket 처리, confidence 보고
-→ Stage: QA (pdt-qa What, haiku)
+→ Stage: 구현 — 각 ticket 마다 plan-first (L4+ 강제):
+   → delegating to pdt-developer (PLAN ONLY, opus, ⚡xhigh)
+     ✓ pdt-developer plan returned (no code yet)
+   → PO reviewing plan directly
+     ✓ PO: plan OK
+   → delegating to pdt-developer (impl, sonnet, high)
+     ✓ Self-verify (build/typecheck → tests → smoke) all pass
+→ Stage: QA (pdt-qa What, haiku, low)
    ✓ test 실행, pass/fail
 → 사용자에게 final summary + deploy checklist
 ```
 
 **합격 기준:**
 - 4 페르소나 모두 적어도 1번씩 호출됨 (pdt-po / pdt-designer 또는 skip / pdt-developer / pdt-qa)
-- 각 호출 trace 에 model + effort 명시 (`model=sonnet, effort=medium` 류)
+- 각 호출 trace 에 model + effort 명시 (5-tier 중 하나: low / medium / high / xhigh / max)
+- **opus 호출은 항상 xhigh 이상** (default xhigh — `routing.md` 의 per-model defaults). PRD 첫 라운드 + net-new 시스템 디자인은 `⚡max`
+- **L4+ 작업은 plan-first** — pdt-developer 호출이 두 단계로 나뉨 (plan opus/xhigh → impl sonnet/high). L1–L3 trivials 만 직행 sonnet/medium
+- PRD 작성 trace 에 페르소나 delegation 없음 (PO 자신이 작성)
 - `confidence` 가 출력 JSON 에 들어 있음 — `low` 면 PO 가 3-option 메뉴 surface 했어야 함
 - 적어도 페르소나당 1 개 skill 자동 invoke (mattpocock 또는 phuryn) — trace 에서 확인 가능
+
+**Plan-first 단독 검증:**
+
+```sh
+# 작업 후 calibration log 확인
+grep -A1 "## Model/Effort Calibration" ~/.productune/po-memory.md | tail -3
+```
+
+기대: 각 task 한 줄 — `estimate=opus/xhigh → actual=opus/xhigh` (plan 단계) + `actual=sonnet/high` 가 발견되거나 같은 task class 가 plan-first 흐름 거쳤음을 시사.
 
 ### 6.2 — Ticket 영속화
 
@@ -448,28 +474,35 @@ productune
 ```
 
 **관찰 포인트:**
-- `→ delegating to pdt-developer (model=sonnet, effort=medium)` 첫 시도
-- `✓ pdt-developer: confidence=low, unresolved: [...]`
+- L5+ multi-file/risk 작업이라 PO 가 자동으로 plan-first 흐름 발동:
+  - `→ delegating to pdt-developer (PLAN ONLY, model=opus, effort=⚡xhigh)` 첫 plan 시도
+- 첫 시도 plan/impl 결과 `✓ pdt-developer: confidence=low, unresolved: [...]`
 - `[PO] pdt-developer 결과 confidence=low. [1] retry / [2] skill 검색 / [3] 진행 — [1/2/3]?`
 
-사용자 `1` 응답 시:
-- `→ retry pdt-developer (model=opus, effort=high — same session resume, ⚡tier-up)`
-- 두 번째 시도 후에도 low → opus + ⚡xhigh (Loop cap 2 의 마지막 시도)
+사용자 `1` 응답 시 (Path 1 retry — `escalation.md` 의 tier-up table):
+- 직전 호출이 plan(opus/xhigh) 였다면 → opus 는 capped 이라 effort 만 한 단계 ↑ 시도되지만 xhigh→xhigh 로 이미 cap → `[PO] xhigh capped, surfacing as blocked`
+- 직전이 impl(sonnet/high) 였다면 → opus 자동 승격 + xhigh: `→ retry pdt-developer (sonnet/high → opus/xhigh — same session resume)`
+- xhigh 에서 또 fail → Loop cap 2 후 `blocked` 마크 (max 로 escalate 안 함 — `routing.md` 의 max 는 Stage 1 routing 전용)
 
 **합격 기준:**
 - 3-option 메뉴가 정확히 surface
-- Path 1 retry 시 model + effort 가 한 단계 ↑
-- Loop cap 2 후에도 fail 이면 `blocked` 마크 + final summary 에 follow-up
+- Path 1 retry tier-up: low→medium→high→xhigh, capped (max 안 나옴)
+- xhigh capped 후 fail 이면 `blocked` 마크 + final summary 에 follow-up
+- calibration log 에 `escalation=Path1` 기록 (또는 capped 면 escalation=Path1 + note 에 "xhigh capped, surfaced blocked")
 
 ### 6.4 — 사용자 prefix override
 
 ```sh
 productune
-> "/effort xhigh 디자인 시스템 신규 정의해줘"
-# 기대: → pdt-designer (Why-essential, model=opus auto-promoted, effort=⚡xhigh — user override)
+> "/effort max 디자인 시스템 신규 정의해줘"
+# 기대: → pdt-designer (Why-essential, model=opus auto-promoted, effort=⚡max — user override)
+# (max 는 Stage 1 routing override 로만 가능 — escalation 에서는 도달 못함)
 
-> "/dev:opus/high 그 컴포넌트 멀티-파일 refactor"
-# 기대: → pdt-developer (How, opus, high — user override per-persona)
+> "/effort xhigh 그 컴포넌트 멀티-파일 refactor"
+# 기대: → pdt-developer (PLAN ONLY, model=opus, effort=⚡xhigh — user override) → plan 검수 → impl
+
+> "/dev:opus/max 시스템 차원 architecture 결정"
+# 기대: → pdt-developer (How system-level, opus, ⚡max — user override per-persona)
 
 > "/skill 'next.js 16'"
 # 기대: skill-fetch 호출 → 후보 surface → 사용자 선택
@@ -477,7 +510,8 @@ productune
 
 **합격 기준:**
 - 모든 prefix 인식 + 적용
-- xhigh + sonnet/haiku 충돌 시 자동 opus 승격 (한 줄 confirm 또는 자동)
+- xhigh / max + sonnet/haiku 충돌 시 자동 opus 승격 (한 줄 confirm 또는 자동)
+- max 는 Stage 1 routing override 또는 Stage 1 자동 (PRD 첫 라운드 / net-new 시스템 디자인) 에서만 등장 — Path 1 retry 에서는 절대 안 나옴
 
 ### 6.5 — 종합 (Phase 1 acceptance)
 
@@ -486,8 +520,11 @@ productune
 - [ ] 6.1–6.4 위 phase 모두 pass
 - [ ] `claude agents` 4 페르소나 (no my-planner)
 - [ ] `productune` + `my-po` 둘 다 동작
-- [ ] `bash scripts/install.sh` 재실행 멱등 (env file 보존)
+- [ ] `productune init` 가 fresh 디렉토리에서 git init + scaffolds 정상 (`.productune/po-state.json`, `docs/pdt-*/`, `.gitignore`)
+- [ ] `bash scripts/install.sh` 재실행 멱등 (env file 보존, sections/ 갱신)
 - [ ] `bash scripts/setup-skills.sh` 재실행 멱등
+- [ ] `~/.productune/sections/` 에 9 개 doctrine section 파일 존재
+- [ ] `~/.productune/po-memory.md` 의 `## Model/Effort Calibration` 섹션이 sample task 로 채워짐 (line 형식: `estimate=<m>/<e> → actual=<m>/<e> · escalation=...`)
 - [ ] `docs/prd/productune.md` 의 acceptance criteria 모두 ✓ (또는 의도적 deferred 만 □)
 
 이 phase 통과 시 Phase 1 완료. Phase 2 (사용자 실 프로젝트 dogfood) 진입 가능.
@@ -519,5 +556,23 @@ rm /path/to/project/.productune/po-state.json
 페르소나 tier 지식 (project markdown + Graphiti wiki + MEMORY.md) 은 영향 없음 — in-flight session id 만 리셋. 다음 페르소나 호출이 새 세션으로 시작. 업그레이드 시점에 진행 중이던 task 는 대개 이미 완료 상태라 무리 없음.
 
 **"claude --agent exits with missing `uuidgen`"** — macOS 에는 항상 있음; Linux 면 PO delegation 템플릿에서 `python3 -c 'import uuid; print(uuid.uuid4())'` 로 대체.
+
+**`~/.productune/sections/` 가 비었거나 일부 누락** — install.sh 재실행 후 PO doctrine sections 가 생성됨. 9 개 파일 (stages, memory, tickets, routing, escalation, delegation, calibration, lifecycle, evolution, prd-and-output) 모두 존재해야 PO 가 detail 을 on-demand 로 로드 가능. PO 가 "section file not found" 비슷한 에러를 surface 하면:
+
+```sh
+ls ~/.productune/sections/   # 9 개 .md 확인
+bash <productune-clone>/scripts/install.sh   # missing 이면 재배포
+```
+
+**PO 가 PRD 작성을 designer 로 위임** — doctrine 옛 버전 잔재. `~/.productune/po-instructions.md` 의 "What you DO" 섹션이 PRDs 를 PO 직접 산출물로 명시해야 함:
+
+```sh
+grep -A2 "What you DO" ~/.productune/po-instructions.md | head -10
+# 기대: "PRDs ... Why-mode authoring is your direct output, not a delegation"
+```
+
+오래된 doctrine 이면 `bash scripts/install.sh` 재실행.
+
+**`max` effort 가 Path 1 retry 에서 등장** — 옛 doctrine. `routing.md` 와 `escalation.md` 에 명시: max 는 Stage 1 routing 전용. Path 1 tier-up 은 `low → medium → high → xhigh, capped`. 새 doctrine 으로 갱신 필요.
 
 **일반**: `claude --debug --agent <name> -p "..."` 로 MCP 연결 시도 + tool discovery 확인 가능.
