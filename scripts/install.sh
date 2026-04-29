@@ -556,32 +556,33 @@ if [ -t 0 ] && [ -t 1 ] && [ ! -e "$PO_ENV_FILE" ]; then
   echo
   printf '\033[1;36m[install]\033[0m Pick a default PO engine for `productune`:\n'
   cat <<'PROMPT'
-  [1] codex   — Codex CLI (OpenAI subscription) hosts the PO orchestrator.
-                Personas still run on Claude Code. Splits cost across providers.
-  [2] claude  — Claude Code hosts both PO and personas. 100% Anthropic stack,
-                cleanest ToS posture (no third-party-harness concerns).
-  [Enter]     — skip; default to 'codex'. You can change anytime by editing
+  [1] claude  — Claude Code hosts both PO and personas. Hook-based firm rules
+                (boundary, archive, session reuse) fire deterministically. Default.
+  [2] codex   — Codex CLI hosts the PO orchestrator (Claude Code hooks bypassed
+                — R1-R4 become doctrine-only). Personas still run on Claude Code.
+                Use only if you specifically want OpenAI-side PO billing.
+  [Enter]     — skip; default to 'claude'. You can change anytime by editing
                 ~/.productune/productune.env or running `productune --engine <name>`.
 
 PROMPT
   printf '  Choice [1/2/Enter]: '
   read -r CHOICE || CHOICE=""
   case "$CHOICE" in
-    1|c|codex)
-      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      say "default engine: codex (saved to $PO_ENV_FILE, repo path: $ROOT)"
-      ;;
-    2|a|cl|claude|anthropic)
+    1|a|cl|claude|anthropic)
       printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       say "default engine: claude (saved to $PO_ENV_FILE, repo path: $ROOT)"
       ;;
-    "")
+    2|c|codex)
       printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      say "default engine: codex (no preference picked; saved baseline to $PO_ENV_FILE)"
+      say "default engine: codex (saved to $PO_ENV_FILE, repo path: $ROOT)"
+      ;;
+    "")
+      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      say "default engine: claude (no preference picked; saved baseline to $PO_ENV_FILE)"
       ;;
     *)
-      warn "unrecognized choice '$CHOICE'; saving codex + repo path baseline"
-      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      warn "unrecognized choice '$CHOICE'; saving claude + repo path baseline"
+      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       ;;
   esac
 elif [ -e "$PO_ENV_FILE" ]; then
@@ -593,6 +594,23 @@ elif [ -e "$PO_ENV_FILE" ]; then
     printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   fi
   say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}, repo path refreshed to $ROOT)"
+fi
+
+# 5b) Non-interactive / partial-env safety net — ensure MY_PO_ENGINE + PRODUCTUNE_REPO are
+# always present in the env file. The interactive prompt block above runs only when stdin
+# is a TTY AND the env file doesn't yet exist. Without this, a non-interactive install
+# (e.g. `bash install.sh </dev/null`) creates an env file later (WIKI_BACKEND etc.) without
+# the engine line, and the wrapper falls back to its compiled default — which works, but
+# `grep MY_PO_ENGINE ~/.productune/productune.env` returns nothing, confusing operators.
+mkdir -p "$(dirname "$PO_ENV_FILE")"
+[ -e "$PO_ENV_FILE" ] || : > "$PO_ENV_FILE"
+if ! grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
+  printf 'MY_PO_ENGINE=claude\n' >> "$PO_ENV_FILE"
+  say "ensured: MY_PO_ENGINE=claude (default — appended to $PO_ENV_FILE)"
+fi
+if ! grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
+  printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
+  say "ensured: PRODUCTUNE_REPO=$ROOT (appended to $PO_ENV_FILE)"
 fi
 
 # 6) Wiki memory backend — hardware-aware tier detection + model recommendation
