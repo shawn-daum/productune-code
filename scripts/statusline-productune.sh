@@ -57,8 +57,13 @@ fi
 HEALTH=""
 case "$WIKI" in
   graphiti)
-    if curl -fsS --max-time 1 http://localhost:8000/healthcheck >/dev/null 2>&1 \
-       || curl -fsS --max-time 1 http://localhost:8000/ >/dev/null 2>&1; then
+    # Productune runs the Graphiti MCP server via stdio transport (spawned per
+    # persona on demand) — there is no persistent HTTP listener on :8000.
+    # The right liveness signal is FalkorDB's TCP port (6379), which is the
+    # only piece that must be up at all times. /dev/tcp is a bash builtin —
+    # no curl/nc dependency, and a local connect attempt returns immediately.
+    if (exec 3<>/dev/tcp/localhost/6379) 2>/dev/null; then
+      exec 3<&- 3>&-
       HEALTH="✓"
     else
       HEALTH="✗"
