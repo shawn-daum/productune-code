@@ -32,9 +32,26 @@ CWD="$(json_get workspace.current_dir)"
 [ -z "$CWD" ] && CWD="$PWD"
 
 # Branch (cheap)
+# Note: `git rev-parse --abbrev-ref HEAD` writes the literal string "HEAD"
+# to stdout *and* errors to stderr in two cases:
+#   - detached HEAD       (verifiable: git rev-parse --verify HEAD succeeds)
+#   - unborn HEAD         (no commits yet — git rev-parse --verify HEAD fails)
+# Distinguish them so a freshly `git init`-ed repo doesn't show a meaningless
+# "[HEAD]" badge.
 BRANCH=""
 if [ -d "$CWD/.git" ] || git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
   BRANCH="$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [ "$BRANCH" = "HEAD" ]; then
+    if git -C "$CWD" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+      # Real detached HEAD — show short SHA instead of the literal "HEAD".
+      BRANCH="@$(git -C "$CWD" rev-parse --short HEAD 2>/dev/null)"
+    else
+      # Unborn HEAD (no commits). Show the would-be initial branch name when
+      # the user has init.defaultBranch set; otherwise indicate empty repo.
+      INIT_BRANCH="$(git -C "$CWD" config --get init.defaultBranch 2>/dev/null)"
+      BRANCH="${INIT_BRANCH:+$INIT_BRANCH:}empty"
+    fi
+  fi
 fi
 
 # po-state.json — last-acting persona + active ticket/slug
