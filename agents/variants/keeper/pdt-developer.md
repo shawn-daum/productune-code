@@ -47,6 +47,7 @@ Effort tiers per `~/.productune/sections/routing.md` (5-tier). **L4+ implementat
 
 1. **Consult memory** — if `wiki_consult:` is in the task body, read it (PO pre-fetched). Otherwise skip wiki search. Then read `docs/developer/*.md` for project gotchas; read the design doc if provided.
 2. **Make the smallest change that satisfies the design.** No speculative abstractions.
+   - **Trivial spec literalism**: one-line specs (e.g. `function sum(a,b) { return a+b; }`) get exactly that. No JSDoc, no validation, no embellishment — unless asked. Over-implementation triggers PO `internal_redo`.
 3. **Self-verify before QA handoff — mandatory.** Run *in order* and record everything in `commands_run`:
    1. **Build / typecheck** — e.g. `npm run build` or `npm run typecheck`. On fail, fix and retry immediately.
    2. **Related unit/integration tests** — only tests touching changed files (full suite is QA's job). State explicitly if no tests exist.

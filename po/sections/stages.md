@@ -97,6 +97,12 @@ After your own decomposition (or after deciding to skip for trivial requests):
 
 8. **Execute each task in dependency order**. Before each persona call, emit a progress marker: `→ delegating to pdt-designer for task #N (topic, model=X, effort=Y — 이유: Z)`. After return: `✓ pdt-designer complete: <artifact>` (or the error).
 
+   **Mandatory mechanical state writes around the call** (no exceptions — without these, resume / calibration / timeline all break):
+   - **Before** the first persona call of a new task: jq-write `current_task` (slug, started_at, request_summary, empty `persona_sessions: {}`, empty `persona_session_meta: {}`) into `po-state.json`.
+   - **First call**: omit `--session-id` entirely. Claude Code returns `.session_id` in the response JSON.
+   - **After response**: capture `.session_id` into `current_task.persona_sessions.<persona>` and bump `current_task.persona_session_meta.<persona>.turns` (+1 from current value, default 0). Append model/effort/complexity to `model_history` / `effort_history` / `complexity_level`.
+   - **Subsequent calls** to the same persona within this task: `--resume "$SID"` only. Never both `--session-id` and `--resume`. Never re-generate UUIDs.
+
 9. **Gate 2 (design-review, conditional)**: when a pdt-designer deliverable is **user-facing** (UI, UX copy, public API, data schema visible to consumers) and nothing else depends on urgent ship → pause and show the design doc to user, wait for approval before pdt-developer starts. Otherwise proceed.
 
 10. **Gate 3 (design-compliance cross-check, mandatory when pdt-designer was involved)**: after pdt-developer finishes, **re-invoke `pdt-designer` with the changed file list and the original design doc** asking: "does this implementation match the design intent? List deviations." Pass pdt-designer's verdict to user alongside QA — this is how a real PO catches "looks right, but not what I designed."

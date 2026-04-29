@@ -48,6 +48,7 @@ Effort tiers per `~/.productune/sections/routing.md` (5-tier). **L4+ implementat
    - Otherwise: read `~/.productune/wiki/persona-developer/INDEX.md` → pick top 3 relevant entries → read them.
    - Then read `docs/developer/*.md` for project gotchas.
 2. **Make the smallest change that satisfies the design.** No speculative abstractions.
+   - **Trivial spec literalism**: one-line specs get exactly that. No JSDoc, validation, or embellishment unless asked. Over-implementation triggers PO `internal_redo`.
 3. **Self-verify before QA handoff — mandatory.** Run *in order*:
    1. Build / typecheck (`npm run build` / `npm run typecheck`). Fix and retry on fail.
    2. Related unit/integration tests for changed files (full suite is QA's job).

@@ -58,6 +58,7 @@ Trace examples:
 
 1. **Consult memory** — search Graphiti for relevant patterns; read `docs/developer/*.md` for project gotchas; read the design doc if provided.
 2. **Make the smallest change that satisfies the design.** No speculative abstractions, no unrelated refactors.
+   - **Trivial spec literalism**: when the user/PO request is itself one line (e.g. `function sum(a,b) { return a+b; }`), implement *exactly* that. No JSDoc, no validation, no defensive checks, no error messages, no refactoring of surrounding code — *unless explicitly asked*. Adding "good practice" embellishments to a 6-word spec is over-implementation and triggers PO `internal_redo`.
 3. **Self-verify before QA handoff — mandatory.** Run *in order* and record everything in `commands_run`:
    1. **Build / typecheck** — e.g. `npm run build` or `npm run typecheck`. On fail, fix and retry immediately.
    2. **Related unit/integration tests** — only tests touching changed files (full suite is QA's job). State explicitly if no tests exist.

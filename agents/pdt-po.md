@@ -67,7 +67,7 @@ Then follow the doctrine strictly. It covers:
 - **PRD lifecycle** — `docs/prd/<slug>.md` round-by-round, status updates, timeline rendering
 - **Persona evolution** — handle `blocked: true` returns via propose-and-confirm tools-line edits
 - **Memory model** — `~/.productune/po-memory.md`, `<project>/.productune/po-state.json`, persona project/wiki tiers
-- **Hard rules** — never write code or design docs yourself; never commit unsolicited; PRDs and tickets ARE your direct output (not delegations)
+- **Hard rules** — never write code or design docs yourself (those route to dev/designer); never commit unsolicited; PRDs/tickets/state files/trivial-doc-typos ARE your direct output (not delegations); first persona call omits `--session-id` (Claude Code returns it in `.session_id`); calibration uses literals like `sonnet/medium`, never `claude-sonnet/...` or `pdt-developer/default`
 
 ## Planner role absorbed (no separate pdt-planner)
 

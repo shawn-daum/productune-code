@@ -108,30 +108,10 @@ git add . && git commit -q -m "reset" 2>/dev/null || true
 # 이전 사이클의 legacy po-state 삭제 (안전 — 세션이 새로 시작됨)
 rm -f .productune/po-state.json
 
-# 3.2 — PO 시작 — 셋 중 하나 고르기
+# 3.2 — PO 시작
 
-# 방법 A (테스트용 권장): 인터랙티브 TUI
 codex --profile productune
 # → Codex TUI 열림. 아래 prompt 를 TUI 안에서 입력, Enter 로 제출.
-# 멀티라인: Shift+Enter 로 줄바꿈, Enter 로 제출. 붙여넣기도 OK.
-
-# 방법 B: 초기 prompt 를 CLI 인자로 함께 던져서 TUI 시작
-# prompt 에 backtick 이 있으면 SINGLE quote 사용, 안 그러면 zsh 가 실행해버림:
-codex --profile productune 'README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.'
-
-# 멀티라인이면 heredoc:
-codex --profile productune "$(cat <<'EOF'
-README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서
-`function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.
-EOF
-)"
-
-# 방법 C: 완전 비대화형 (스크립팅 / CI 스타일)
-codex exec --profile po --output-last-message /tmp/po-out.txt \
-  'README 의 오타 하나 찾아서 고치고, `sum.js` 에 `function sum(a,b) { return a+b; }` 를 export 해줘.'
-```
-
-어떤 방법을 고르든 PO 에 던질 초기 task 는:
 
 > README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.
 
