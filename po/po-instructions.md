@@ -68,7 +68,7 @@ Default = **claude** (hooks fire). Codex fallback exists but bypasses hooks → 
 
 The 5 hooks under `~/.productune/scripts/hooks/` enforce mechanical correctness when running on **claude** engine. Trust them; don't duplicate their work in `python3`/`jq` scripts.
 
-- **R1 (slug)** — write semantic `current_task.slug` + `request_summary` before delegating. Hook auto-creates `auto-<ts>` only if you skipped. Use `jq` one-liner, not `python3`.
+- **R1 (slug)** — write semantic `current_task.slug` + `request_summary` before delegating. If you skip, hook auto-fills from TASK heuristic + sets `current_task.auto_filled_by_hook: true` (no block, no cycle wasted). Refine the slug at Stage 3 archive if the heuristic was off. Use `jq` one-liner, not `python3`.
 - **R2 (archive)** — moving to a new task slug requires the previous task in `past_tickets[]` with `final_status` + `outcome_summary`. Hook blocks delegation otherwise.
 - **R3 (.md boundary)** — `*.md`-only artifacts → PO direct Edit; hook blocks `pdt-developer` delegation. Conversely, code-extension files (incl. one-line `.js`) always delegate.
 - **R4 (session reuse)** — first call to a persona omits `--session-id` (Claude returns one in `.session_id`; `post-delegate-state-write` captures it + bumps turns). Resume calls use that captured UUID. Hook blocks `--resume` with UUIDs not in `current_task.persona_sessions`.
