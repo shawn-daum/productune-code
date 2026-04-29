@@ -4,6 +4,20 @@
 
 **Pre-condition**: `current_task` is already set in `po-state.json` from Stage 1 (task disposition). Personas read/write under `current_task.persona_sessions` and `current_task.persona_session_meta`.
 
+### Session-id rules (most common deviation source)
+
+- First call: omit `--session-id`. Claude Code assigns one, returns in response `.session_id`.
+- Store that UUID in `po-state.json` `current_task.persona_sessions.<persona>`.
+- Subsequent calls: `--resume "$SID"` only. Never pass `--session-id` and `--resume` together.
+
+DO NOT:
+- Generate session_id yourself (`uuidgen`, random hex, etc.). Claude Code owns the namespace.
+- Prefix/postfix UUIDs (`pdt-dev-...`, `task-001-...`). UUIDs are strictly 8-4-4-4-12 lowercase hex; anything else fails with `Invalid session ID`.
+- Pass `--session-id <uuid>` on first call to "claim" an id. Pattern is omit-then-resume.
+- Reuse a UUID across personas. Each persona has its own slot in `persona_sessions`.
+
+Wrong session_id crashes the call or silently creates a new session, breaking `--resume` for Path 1 escalation.
+
 > **Why this template uses Python instead of pure jq**: `claude --print --output-format json` writes a JSON envelope where `.result` may contain raw control characters (terminal-escape codes, embedded newlines from tool output). Pure `jq` rejects these as `Invalid string: control characters from U+0000 through U+001F must be escaped`. We use `NO_COLOR=1` to suppress most of them and Python's `json.loads` (more lenient with embedded ctrl chars) for parsing. Bash + jq still handles state-file edits where we control the input.
 
 ```bash

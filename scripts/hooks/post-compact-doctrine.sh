@@ -38,6 +38,8 @@ Hard rules that survive compaction:
   - pdt-developer: Self-verify before QA handoff (build/typecheck → related tests → smoke). Never claim ready_for_qa without it.
   - pdt-qa: For UI features, prefer real browser (Playwright/Chromium MCP, Chrome ext, computer_use) over `curl`.
   - PO never writes code or design docs; PO DOES author PRDs/tickets/state files directly. PO never commits unless asked, never mutates a persona file silently.
+  - Persona invocation: NEVER pre-generate session_id (no uuidgen, no prefixes like "pdt-dev-..."). First call omits --session-id; Claude Code assigns one in the response. Resume calls use --resume <stored-uuid>. UUIDs are strictly 8-4-4-4-12 hex.
+  - Calibration log <model>/<effort> uses literal names: haiku/low, sonnet/medium, sonnet/high, opus/xhigh, opus/max. Never persona names or "default".
 EOF
 
 # If the doctrine file is unexpectedly missing, flag it so the user notices.

@@ -37,12 +37,22 @@ Examples:
 
 Field rules:
 
-- `estimate=<model>/<effort>` — Stage 1 routing's first call (before any escalation). `<effort>` ∈ {low, medium, high, xhigh, max}.
+- `estimate=<model>/<effort>` — Stage 1 routing's first call (before any escalation). `<effort>` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}.
 - `actual=<model>/<effort>` — last actually-used model/effort (after any escalation). When the line shows `actual=opus/max`, that's a Stage 1 routing choice — `max` cannot be reached via Path 1 escalation (see `escalation.md`).
 - `QA pass(N)` — final pdt-qa result + loop count (`current_task.calibration_outcome.qa_loops`). Use `n/a` for tasks without QA (e.g. PRD-only Stage 1 work).
 - `rework=y` — Stage 3 user feedback indicated rework ("다시", "별론데", "이거 아니야").
 - `escalation=Path1|Path2|none` — whether quality escalation triggered. `max` does NOT appear here (it's a Stage 1 choice, not an escalation outcome).
 - `note` — one-line PO judgement. "정상" / "appropriate" if estimate==actual; otherwise why they diverged.
+
+### Format — model/effort slot
+
+Use literal names only, not free-form descriptors.
+
+Valid: `haiku/low`, `sonnet/medium`, `sonnet/high`, `opus/xhigh`, `opus/max`.
+
+Invalid: `pdt-developer/default`, `default/default`, `sonnet/normal`, `opus/extended` (prose), persona names in the model slot.
+
+For plan-first tasks, log the **impl phase's** model/effort (the final substantive call). Plan phase lives in `persona_session_meta.<persona>.effort_history` for retrospective.
 
 ## Mechanical append
 
