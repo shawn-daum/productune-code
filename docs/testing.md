@@ -19,7 +19,8 @@ bash <productune-clone>/scripts/setup-graphiti.sh   # clone 한 경로 그대로
 - `docker ps | grep falkordb` 결과에 컨테이너가 Up 상태로 표시
 - `ls ~/.graphiti/mcp_server/main.py` 존재
 - `ollama list | grep nomic-embed-text` 에 모델이 보임
-- `ls ~/.productune/sections/` 에 9개 `.md` (stages, memory, tickets, routing, escalation, delegation, calibration, lifecycle, evolution, prd-and-output)
+- `ls ~/.productune/sections/` 에 10개 `.md` (stages, memory, tickets, routing, escalation, delegation, calibration, lifecycle, evolution, prd-and-output)
+- `jq '.hooks.PostToolUse[] | select(.matcher == "Bash")' ~/.claude/settings.json` 에 `post-delegate-state-write.sh` 항목 존재 (PO 위임 시 `po-state.json` 자동 갱신)
 
 여기서 실패하면 메모리 관련 phase (2–4) 가 동작 안 함. Phase 1 은 Graphiti 없이도 동작 — MCP spawn 시 경고가 떠도 무시해도 됨.
 
@@ -128,8 +129,9 @@ codex --profile productune
 - PO 가 페르소나 호출 사이에 진척 마커를 찍음
 - 최종 요약은 PO 가 자기 말로 합성한 문장 (raw JSON 덤프 아님)
 - PO 가 시작 시 `→ new task '<slug>'` 한 줄 trace 를 찍음
-- 실행 후 `cat .productune/po-state.json | jq '.current_task'` 결과에 `slug`, `started_at`, `request_summary`, `persona_sessions.pdt-developer` (실제 UUID), `persona_session_meta.pdt-developer.turns ≥ 1` 가 채워져 있음
-- `recent_turns` 에 `current_task.slug` 와 일치하는 `task_slug` entry 가 최소 1개
+- 실행 후 `cat .productune/po-state.json | jq '.current_task'` 결과에 `slug`, `started_at`, `request_summary`, `persona_sessions.pdt-developer` (실제 UUID), `persona_session_meta.pdt-developer.turns ≥ 1` 가 채워져 있음. UUID 캡처와 turns 증분은 `post-delegate-state-write` hook이 자동 처리 — PO 행동과 무관.
+- `recent_turns` 에 `source: "post-delegate-hook"` 또는 PO 직접 entry 가 최소 1개
+- PO가 trivial doc edit (예: README typo) 요청을 받으면 pdt-developer 위임 없이 직접 Edit (확장자 boundary 동작 — `.md` 만 PO 직접). `.js`/`.ts` 등 코드 파일은 한 줄짜리라도 무조건 위임
 
 ### 3.3 — 후속 turn (같은 task)
 
@@ -503,8 +505,10 @@ productune
 - [ ] `productune init` 가 fresh 디렉토리에서 git init + scaffolds 정상 (`.productune/po-state.json`, `docs/pdt-*/`, `.gitignore`)
 - [ ] `bash scripts/install.sh` 재실행 멱등 (env file 보존, sections/ 갱신)
 - [ ] `bash scripts/setup-skills.sh` 재실행 멱등
-- [ ] `~/.productune/sections/` 에 9 개 doctrine section 파일 존재
-- [ ] `~/.productune/po-memory.md` 의 `## Model/Effort Calibration` 섹션이 sample task 로 채워짐 (line 형식: `estimate=<m>/<e> → actual=<m>/<e> · escalation=...`)
+- [ ] `~/.productune/sections/` 에 10 개 doctrine section 파일 존재
+- [ ] `~/.claude/settings.json` 의 `hooks.PostToolUse` 에 `post-delegate-state-write.sh` (matcher Bash) 등록
+- [ ] PO 위임 시 `<project>/.productune/po-state.json` 의 `persona_sessions.<persona>` 에 UUID + `persona_session_meta.<persona>.turns ≥ 1` 자동 갱신 (hook 동작 확인)
+- [ ] `~/.productune/po-memory.md` 의 `## Model/Effort Calibration` 섹션이 sample task 로 채워짐 (line 형식: `estimate=<m>/<e> → actual=<m>/<e> · escalation=...`, 리터럴 모델명 — `claude-sonnet/...` 같은 vendor prefix 없음)
 - [ ] `docs/prd/productune.md` 의 acceptance criteria 모두 ✓ (또는 의도적 deferred 만 □)
 
 이 phase 통과 시 Phase 1 완료. Phase 2 (사용자 실 프로젝트 dogfood) 진입 가능.
@@ -517,7 +521,29 @@ productune
 
 **"persona doesn't respect gate"** — PO 는 시작 시 `po-instructions.md` 를 읽음. 세션 도중에 수정했으면 Codex 재시작.
 
-**"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — (또는 PO 가) `claude --session-id <uuid>` 로 그 id 의 새 세션을 *생성* 시도. 미지원 — `--session-id` 는 fork-session flow 안에서만 허용. 정상 패턴: 첫 호출에 `--session-id` 생략 (Claude 가 할당, 응답 JSON 의 `.session_id` 로 반환), 이후 호출에 `--resume <id>` 사용. `--resume` 와 `--session-id` 동시 사용 금지. PO doctrine 인 `~/.productune/po-instructions.md` 가 이미 이 패턴 — 만약 PO 에서 이 에러를 만나면 `bash scripts/install.sh` 로 최신 doctrine 재배포.
+**"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — PO가 `claude --session-id <uuid>` 로 첫 호출에 ID를 직접 명시함 (정상 패턴은 첫 호출에 omit, Claude Code가 할당 → response `.session_id` 에서 캡처). doctrine 미준수일 때 발생. 단 `post-delegate-state-write` hook이 정상 응답에서 자동 캡처하므로 이 패턴만 안 쓰면 PO가 명시할 필요 자체가 없음. PO가 반복적으로 이 에러를 내면 `bash scripts/install.sh` 로 최신 doctrine + hook 재배포.
+
+**"Invalid session ID. Must be a valid UUID."** — PO가 `pdt-dev-$(uuidgen)` 같은 prefix 붙은 UUID로 `--session-id` 호출. UUID는 strict 8-4-4-4-12 hex만 허용. 진단:
+```sh
+grep -E "claude --session-id" ~/.claude/projects/*/transcripts/*.jsonl | head -3
+```
+도큐먼트가 최신이면 안 발생. 잔존 시 PO에 doctrine 재로드 요청: "다시 `~/.productune/sections/delegation.md` 읽어줘."
+
+**`post-delegate-state-write` hook 미동작** — PO가 위임했는데 `po-state.json` 의 `current_task` / `persona_sessions` 비어 있음:
+```sh
+# 1. 등록 확인
+jq '.hooks.PostToolUse[] | select(.matcher == "Bash")' ~/.claude/settings.json
+# 비었으면 → bash scripts/install.sh 재실행
+
+# 2. hook 자체 단위 테스트
+echo '{"cwd":"/tmp/test","tool_input":{"command":"claude --agent pdt-developer ..."},"tool_response":{"stdout":"{\"session_id\":\"abc12345-6789-4abc-8def-0123456789ab\"}"}}' \
+  | bash <productune-clone>/scripts/hooks/post-delegate-state-write.sh
+# 출력: [productune] state-write: persona=... session=abc12345 turns+=1 → ...
+
+# 3. 권한 확인
+ls -la <productune-clone>/scripts/hooks/post-delegate-state-write.sh
+# +x 필요. chmod +x 누락이면: chmod +x <path>
+```
 
 **`kill -9` 후 stale `.productune/po.lock`** — 수동 정리 불필요. 다음 `productune` 호출이 lock 읽고, `kill -0` 으로 PID 가 죽었음을 확인하면 `[productune] stale lock from pid <X>; reclaiming` 출력 후 lock 삭제, 정상 진행.
 
