@@ -26,10 +26,10 @@ Claude Code 가 페르소나를 인식하고 정상 JSON 으로 응답하는지 
 ```sh
 # 1.1 — 인식된 페르소나 목록
 claude agents
-# 기대: 4 개 user agent — productune / pdt-designer / pdt-developer / pdt-qa
+# 기대: 4 개 user agent — pdt-po / pdt-designer / pdt-developer / pdt-qa
 # (my-planner 는 PO 안으로 흡수됨 — 별도 페르소나 없음)
 
-# 1.2 — productune (PO) 자가 introspection
+# 1.2 — pdt-po (PO) 자가 introspection
 claude --agent pdt-po -p "Describe your role in one sentence and list the JSON fields you produce when planning a task. Return as JSON." --output-format json | jq '.result' -r
 # 기대: PO 역할 설명 + tasks, pipeline, risk_flags, user_facing_artifacts, open_questions 같은 필드 언급
 ```
@@ -54,7 +54,7 @@ git add . && git commit -q -m "init"
 이제 페르소나를 한 번에 하나씩 테스트:
 
 ```sh
-# 2.2 — productune (PO): 요청 분해 (PO 가 자체적으로 planning — 구 my-planner 역할)
+# 2.2 — pdt-po (PO): 요청 분해 (PO 가 자체적으로 planning — 구 my-planner 역할)
 claude --agent pdt-po -p "The README has a typo. Decompose this into tasks (return JSON with tasks array)." --output-format json | jq '.result' -r
 
 # 2.3 — Developer: 실제 fix 수행
@@ -66,7 +66,7 @@ claude --agent pdt-qa -p "Verify the README change. Run git status and git diff,
 ```
 
 **합격 기준:**
-- productune 이 `tasks` 들어 있는 JSON 반환 (planner 역할 흡수)
+- pdt-po 가 `tasks` 들어 있는 JSON 반환 (planner 역할 흡수)
 - Developer 가 README.md 한 글자만 변경 (`temperery` → `temporary`), 그 외 손대지 않음
 - QA 가 pass 보고
 
@@ -386,7 +386,7 @@ git add . && git commit -q -m "init"
 
 # productune 명령 + 페르소나 인식 + skill 라이브러리 + Graphiti 모두 준비된 상태여야 함
 which productune
-claude agents     # productune / pdt-designer / pdt-developer / pdt-qa 4개
+claude agents     # pdt-po / pdt-designer / pdt-developer / pdt-qa 4개
 ls ~/.claude/skills/mattpocock ~/.claude/skills/phuryn  # skill 디렉토리 존재
 ```
 
@@ -402,12 +402,12 @@ productune
 **관찰 포인트 (PO 가 자발적으로 stage transition announce):**
 
 ```
-→ Stage: PRD 작성 (productune Why-essential, opus, ⚡xhigh)
+→ Stage: PRD 작성 (pdt-po Why-essential, opus, ⚡xhigh)
    ✓ to-prd skill auto-invoke + grill-me 식 문답 시작
    ✓ docs/prd/<your-slug>.md 또는 docs/prd/productune.md round 헤더 추가
 → Stage: Test 정의 (pdt-qa What, haiku)
    ✓ acceptance criteria → test 정의
-→ Stage: Issue 분해 (productune How, sonnet, to-issues skill)
+→ Stage: Issue 분해 (pdt-po How, sonnet, to-issues skill)
    ✓ vertical-slice ticket 생성 (T-001, T-002, ...)
 → Stage: 구현 (pdt-developer What, sonnet, tdd skill auto-invoke)
    ✓ 각 ticket 처리, confidence 보고
@@ -417,7 +417,7 @@ productune
 ```
 
 **합격 기준:**
-- 4 페르소나 모두 적어도 1번씩 호출됨 (productune / pdt-designer 또는 skip / pdt-developer / pdt-qa)
+- 4 페르소나 모두 적어도 1번씩 호출됨 (pdt-po / pdt-designer 또는 skip / pdt-developer / pdt-qa)
 - 각 호출 trace 에 model + effort 명시 (`model=sonnet, effort=medium` 류)
 - `confidence` 가 출력 JSON 에 들어 있음 — `low` 면 PO 가 3-option 메뉴 surface 했어야 함
 - 적어도 페르소나당 1 개 skill 자동 invoke (mattpocock 또는 phuryn) — trace 에서 확인 가능

@@ -44,7 +44,7 @@
 
 1. **`productune` 명령어** — 사용자 entry point. terminal 에서 한 줄로 시작.
 2. **4 페르소나 시스템** (Golden Circle):
-   - `productune` (PO; default sonnet) — Why: PRD 수립 / Discovery / 라우팅. How: 티켓 관리 / 교통정리.
+   - `pdt-po` (PO; default sonnet) — Why: PRD 수립 / Discovery / 라우팅. How: 티켓 관리 / 교통정리.
    - `pdt-designer` (default opus) — Why: UX 원칙 + Brand Identity + Design System. How: 검수 / 외부 툴 추천.
    - `pdt-developer` (default sonnet) — What: 명료한 구현. How: 아키텍처 / 디버깅.
    - `pdt-qa` (default haiku) — What: 기능 검증. How: 복잡 UX / e2e / stress.
@@ -68,7 +68,7 @@
 
 다음 모두 충족 시 Phase 1 합격:
 
-- [ ] `claude agents` 가 정확히 4 페르소나 (productune / pdt-designer / pdt-developer / pdt-qa) 인식
+- [ ] `claude agents` 가 정확히 4 페르소나 (pdt-po / pdt-designer / pdt-developer / pdt-qa) 인식
 - [ ] `productune` 명령으로 새 프로젝트에서 시작 가능 (`my-po` 호환 alias 도 동작)
 - [ ] PRD 작성 → test 정의 → issue 분해 → 구현 → QA 의 한 round 가 1 명의 기획자 사용자에 의해 끝까지 완주됨 (manual dogfood)
 - [ ] 라운드 종료 시 `<project>/docs/tickets/<round-id>/` 에 ticket markdown 들이 자동 export 됨
@@ -107,7 +107,7 @@
 - Phase 2 진입 시점: Phase 1 acceptance criteria 다 통과한 후 즉시 vs 1 주일 stabilization 후?
 - Dogfood 프로젝트 후보: 사용자가 직접 픽 (별도 메모)
 - GitHub repo `coolchestration` → `productune` 리네임 시점: Phase 1 완료 후
-- pm-skills 의 65 skill 중 productune (PO) 에 매핑할 우선순위: 각 plugin 의 Discovery / Strategy / Execution 그룹부터
+- pm-skills 의 65 skill 중 pdt-po (PO) 에 매핑할 우선순위: 각 plugin 의 Discovery / Strategy / Execution 그룹부터
 - 한국어/영어 doctrine 분기: 현재 doctrine 영어 + UI 안내 한글 — 일관성 필요?
 
 ## Activity log
