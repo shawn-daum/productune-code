@@ -596,6 +596,23 @@ elif [ -e "$PO_ENV_FILE" ]; then
   say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}, repo path refreshed to $ROOT)"
 fi
 
+# 5b) Non-interactive / partial-env safety net — ensure MY_PO_ENGINE + PRODUCTUNE_REPO are
+# always present in the env file. The interactive prompt block above runs only when stdin
+# is a TTY AND the env file doesn't yet exist. Without this, a non-interactive install
+# (e.g. `bash install.sh </dev/null`) creates an env file later (WIKI_BACKEND etc.) without
+# the engine line, and the wrapper falls back to its compiled default — which works, but
+# `grep MY_PO_ENGINE ~/.productune/productune.env` returns nothing, confusing operators.
+mkdir -p "$(dirname "$PO_ENV_FILE")"
+[ -e "$PO_ENV_FILE" ] || : > "$PO_ENV_FILE"
+if ! grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
+  printf 'MY_PO_ENGINE=claude\n' >> "$PO_ENV_FILE"
+  say "ensured: MY_PO_ENGINE=claude (default — appended to $PO_ENV_FILE)"
+fi
+if ! grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
+  printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
+  say "ensured: PRODUCTUNE_REPO=$ROOT (appended to $PO_ENV_FILE)"
+fi
+
 # 6) Wiki memory backend — hardware-aware tier detection + model recommendation
 WIKI_BACKEND=""
 if grep -qE '^WIKI_BACKEND=' "$PO_ENV_FILE" 2>/dev/null; then
