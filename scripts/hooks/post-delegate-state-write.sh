@@ -85,6 +85,7 @@ find_po_state() {
   local d="${1:-$PWD}"
   while [ "$d" != "/" ] && [ -n "$d" ]; do
     [ -f "$d/.productune/po-state.json" ] && { echo "$d/.productune/po-state.json"; return 0; }
+    [ -f "$d/.codex/po-state.json" ]      && { echo "$d/.codex/po-state.json";      return 0; }
     d="$(dirname "$d")"
   done
   return 1

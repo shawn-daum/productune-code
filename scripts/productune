@@ -253,7 +253,7 @@ case "${1:-}" in
 {
   "schema_version": 1,
   "current_task": null,
-  "past_tasks": [],
+  "past_tickets": [],
   "recent_turns": [],
   "persona_session_meta": {}
 }
@@ -352,6 +352,22 @@ case "$ENGINE" in
   *) die "unknown --engine '$ENGINE' (expected 'codex' or 'claude')" ;;
 esac
 
+ensure_state() {
+  # $1 = project root. Migrates .codex/po-state.json → .productune/po-state.json
+  # if found, then seeds a minimal skeleton if still absent. Keeps PO out of
+  # the .codex/ fallback path that disables hooks.
+  local root="$1"
+  mkdir -p "$root/.productune"
+  if [ -f "$root/.codex/po-state.json" ] && [ ! -f "$root/.productune/po-state.json" ]; then
+    mv "$root/.codex/po-state.json" "$root/.productune/po-state.json"
+    say "migrated: .codex/po-state.json → .productune/po-state.json"
+  fi
+  if [ ! -f "$root/.productune/po-state.json" ]; then
+    printf '{"schema_version":1,"current_task":null,"past_tickets":[],"recent_turns":[]}\n' \
+      > "$root/.productune/po-state.json"
+  fi
+}
+
 run_engine() {
   case "$ENGINE" in
     codex)  exec codex --profile productune "$@" ;;
@@ -369,10 +385,11 @@ run_engine_fg() {
 
 # 1) Resolve project root. Non-git → bypass lock + worktree, just run engine.
 if ! ROOT="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
+  ensure_state "$PWD"
   run_engine "$@"
 fi
 
-mkdir -p "$ROOT/.productune"
+ensure_state "$ROOT"
 LOCK="$ROOT/.productune/po.lock"
 
 # 2) Inspect existing lock.
