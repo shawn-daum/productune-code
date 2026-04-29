@@ -91,7 +91,8 @@ OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 ski
 - `claude` — Claude Code CLI. 미설치 / 미로그인이면 `install.sh` 가 자동으로 `npm install -g @anthropic-ai/claude-code` + `claude auth login` 처리.
 - `jq` — JSON CLI (`brew install jq`)
 - `node` >= 18 (Claude Code npm 설치용)
-- `codex` — OpenAI Codex CLI (`npm i -g @openai/codex`) — `--engine codex` 사용 시만 (선택, install 에선 prompt 안 뜸)
+
+> codex 는 install 에서 완전히 분리됐습니다. 굳이 fallback engine 으로 쓰려면 본인이 직접 `npm i -g @openai/codex` 한 뒤 `<repo>/codex/config.toml` 을 `~/.codex/config.toml` 로 복사하세요.
 
 Wiki backend 에 따라 추가 필요:
 - **Graphiti (권장, 자동 설치)**: Docker Desktop + `uv` (`brew install uv`) + ollama (install 이 자동 설치)
