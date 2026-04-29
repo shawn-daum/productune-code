@@ -556,32 +556,33 @@ if [ -t 0 ] && [ -t 1 ] && [ ! -e "$PO_ENV_FILE" ]; then
   echo
   printf '\033[1;36m[install]\033[0m Pick a default PO engine for `productune`:\n'
   cat <<'PROMPT'
-  [1] codex   — Codex CLI (OpenAI subscription) hosts the PO orchestrator.
-                Personas still run on Claude Code. Splits cost across providers.
-  [2] claude  — Claude Code hosts both PO and personas. 100% Anthropic stack,
-                cleanest ToS posture (no third-party-harness concerns).
-  [Enter]     — skip; default to 'codex'. You can change anytime by editing
+  [1] claude  — Claude Code hosts both PO and personas. Hook-based firm rules
+                (boundary, archive, session reuse) fire deterministically. Default.
+  [2] codex   — Codex CLI hosts the PO orchestrator (Claude Code hooks bypassed
+                — R1-R4 become doctrine-only). Personas still run on Claude Code.
+                Use only if you specifically want OpenAI-side PO billing.
+  [Enter]     — skip; default to 'claude'. You can change anytime by editing
                 ~/.productune/productune.env or running `productune --engine <name>`.
 
 PROMPT
   printf '  Choice [1/2/Enter]: '
   read -r CHOICE || CHOICE=""
   case "$CHOICE" in
-    1|c|codex)
-      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      say "default engine: codex (saved to $PO_ENV_FILE, repo path: $ROOT)"
-      ;;
-    2|a|cl|claude|anthropic)
+    1|a|cl|claude|anthropic)
       printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       say "default engine: claude (saved to $PO_ENV_FILE, repo path: $ROOT)"
       ;;
-    "")
+    2|c|codex)
       printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      say "default engine: codex (no preference picked; saved baseline to $PO_ENV_FILE)"
+      say "default engine: codex (saved to $PO_ENV_FILE, repo path: $ROOT)"
+      ;;
+    "")
+      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      say "default engine: claude (no preference picked; saved baseline to $PO_ENV_FILE)"
       ;;
     *)
-      warn "unrecognized choice '$CHOICE'; saving codex + repo path baseline"
-      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+      warn "unrecognized choice '$CHOICE'; saving claude + repo path baseline"
+      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
       ;;
   esac
 elif [ -e "$PO_ENV_FILE" ]; then
