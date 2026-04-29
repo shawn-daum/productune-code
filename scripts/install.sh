@@ -24,6 +24,31 @@ say() { printf "\033[1;34m[install]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[install]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[install]\033[0m %s\n" "$*" >&2; exit 1; }
 
+# Probe whether the Docker daemon is reachable, with a hard 2s ceiling.
+# `docker info` blocks indefinitely when the CLI is installed but Docker
+# Desktop isn't running, so we ping the unix socket via curl --max-time
+# instead. Returns 0 if reachable, 1 otherwise.
+docker_running() {
+  command -v docker >/dev/null 2>&1 || return 1
+  command -v curl   >/dev/null 2>&1 || return 1
+  local sock candidates=(
+    "${DOCKER_HOST:-}"
+    "$HOME/.docker/run/docker.sock"
+    "$HOME/.docker/desktop/docker.sock"
+    "/var/run/docker.sock"
+  )
+  for sock in "${candidates[@]}"; do
+    [ -z "$sock" ] && continue
+    sock="${sock#unix://}"
+    [ -S "$sock" ] || continue
+    if curl --unix-socket "$sock" --max-time 2 -fsS \
+         http://localhost/_ping >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ── Hardware tier detection ────────────────────────────────────────────────────
 detect_tier() {
   local ram_gb chip arch has_docker disk_free_gb apple_silicon=0
@@ -31,7 +56,7 @@ detect_tier() {
   chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
   arch=$(uname -m)
   has_docker=0
-  command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && has_docker=1
+  docker_running && has_docker=1
   disk_free_gb=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
 
   [[ "$chip" == *"Apple M"* || "$arch" == "arm64" ]] && apple_silicon=1
@@ -656,7 +681,7 @@ if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
 
   RAM_GB=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1024/1024/1024)}' || echo 0)
   CHIP=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
-  HAS_DOCKER=0; command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 && HAS_DOCKER=1
+  HAS_DOCKER=0; docker_running && HAS_DOCKER=1
   DISK_FREE=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
   DETECTED_TIER=$(detect_tier)
 
