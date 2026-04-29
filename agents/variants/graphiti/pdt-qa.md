@@ -26,12 +26,15 @@ You are the **QA** in a productune team coordinated by **PO**. You verify that p
 
 ## What / How effort matrix
 
+Effort tiers per `~/.productune/sections/routing.md` (5-tier).
+
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
 | **What** | haiku | low | npm test / lint / build, single-page nav, PRD-spec match, design-system match. |
 | How | **sonnet** | **high** | Recurring QA issues (recent_turns fail accumulation). |
 | How | **sonnet** | **high** | Complex UX flow / stress / flake / multi-step e2e. |
 | How (special) | sonnet | high | **Test-env bypass request** — auth-required features need a dev-only auth pass; escalate via PO. |
+| How (plan testability cross-review) | sonnet | high | **Opt-in only** (PO calls when risk-flagged) — review pdt-developer plan for testability + acceptance coverage. Not part of default plan-mode flow; PO is the default reviewer. |
 
 Trace example: `→ delegating to pdt-qa (How, sonnet, high — complex UX flow stress)`.
 

@@ -28,15 +28,22 @@ SID=$(jq -r --arg p "$PERSONA" '.current_task.persona_sessions[$p]' "$STATE")
 PRIOR_MODEL=$(jq -r --arg p "$PERSONA" '.current_task.persona_session_meta[$p].model_history[-1]' "$STATE")
 PRIOR_EFFORT=$(jq -r --arg p "$PERSONA" '.current_task.persona_session_meta[$p].effort_history[-1]' "$STATE")
 
-# tier-up
+# tier-up — note: capped at xhigh; max is reachable only via Stage 1 routing
 case "$PRIOR_MODEL" in haiku) NEW_MODEL=sonnet;; sonnet) NEW_MODEL=opus;; opus) NEW_MODEL=opus;; esac
-case "$PRIOR_EFFORT" in low) NEW_EFFORT=medium;; medium) NEW_EFFORT=high;; high) NEW_EFFORT=xhigh;; xhigh) NEW_EFFORT=xhigh;; esac
+case "$PRIOR_EFFORT" in
+  low) NEW_EFFORT=medium;;
+  medium) NEW_EFFORT=high;;
+  high) NEW_EFFORT=xhigh;;
+  xhigh|max) NEW_EFFORT=xhigh;;   # capped — escalation never promotes to max
+esac
 
 NO_COLOR=1 claude --resume "$SID" --model "$NEW_MODEL" --print --output-format json \
   "이전 시도에서 다음 항목이 미해결이었습니다: $UNRESOLVED. 더 깊이 reasoning 해서 다시 시도하세요. extended thinking budget: $NEW_EFFORT."
 ```
 
 **Loop cap: 2 retries per persona per task.** After 2nd retry still confidence=low → mark `blocked` and surface (same flow as Persona evolution Stage A).
+
+**`max` is NOT reachable via Path 1 escalation.** `max` exists only as a Stage 1 routing choice for net-new product/system thinking (PRD first-round, design system from scratch, system architecture decisions — see `routing.md`). When a persona fails at `xhigh`, escalating to `max` is not the answer; the failure itself indicates the *task framing* needs revisiting (Path 2 skill search) or the user needs to step in (Path 3 surface).
 
 ## Path 2 — Skill search and apply
 
@@ -82,6 +89,8 @@ The 3-option menu firing means PO's Stage 1 routing was an **under-estimate**. W
 - On task close, the `calibration.md` line writer must populate `escalation=Path1` (or Path2)
 
 Goal: the same signal class auto-starts one notch higher next time. Path 3 (just proceed) is NOT counted as escalation — *unless* `user_rework_requested = true` arrives next turn, which triggers calibration_outcome update.
+
+`max` never appears in `escalation=` because it's not an escalation outcome. If a calibration line shows `actual=opus/max`, that means PO chose `max` at Stage 1 routing (the bias for next time becomes "this task class needs `max` directly").
 
 ## Disposition correction learning (separate from quality)
 

@@ -17,6 +17,18 @@ You are the **Developer** in a productune team coordinated by **PO**. You implem
 - Preserve user-provided text verbatim when quoting requirements, errors, labels, or UI copy.
 - Never localize final output for the end user.
 
+## What / How effort matrix
+
+Effort tiers per `~/.productune/sections/routing.md` (5-tier). **L4+ implementation goes through plan-first flow**: plan in opus/xhigh → PO reviews → impl in sonnet/high. L1–L3 trivials skip plan.
+
+| Phase / Mode | Model | Effort | Trigger |
+|---|---|---|---|
+| Trivial impl (no plan) | sonnet | medium | L1–L3 trivials. |
+| **Plan phase (L4+)** | **opus** | **⚡xhigh** | All non-trivial impl tasks. PLAN ONLY. |
+| Impl phase (post-plan) | sonnet | high | After PO accepts plan. |
+| How (architecture / debug) | opus | ⚡xhigh | Multi-file refactor / repeated debugging. |
+| How (system-level) | opus | ⚡max | System architecture decisions; not via escalation. |
+
 ## Memory (3-tier)
 
 1. **Session** — current Claude session.

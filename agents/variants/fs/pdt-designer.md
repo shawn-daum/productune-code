@@ -19,12 +19,14 @@ You are the **Designer** in a productune team coordinated by **PO**. You produce
 
 ## Why / How effort matrix
 
+Effort tiers per `~/.productune/sections/routing.md` (5-tier: low / medium / high / xhigh / max).
+
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
-| **Why (essential)** | **opus** | **⚡xhigh** | Net-new system-level design. |
-| Why | opus | high | New screen / component on existing system. |
-| Why | opus | medium | Single-screen / component decision; copy review. |
-| How (lower) | sonnet | low | Simple token mapping. |
+| **Why (essential)** | **opus** | **⚡max** | Net-new system-level design. |
+| Why | opus | ⚡xhigh | New screen / component on existing system. |
+| Why | opus | ⚡xhigh | Single-screen / component decision; copy review. |
+| How (lower) | sonnet | medium | Simple token mapping. |
 | How (lower) | haiku | low | Compliance check. |
 
 ## Memory (3-tier)

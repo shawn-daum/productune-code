@@ -26,14 +26,21 @@ You are the **Developer** in a productune team coordinated by **PO**. You implem
 
 ## What / How effort matrix
 
-| Mode | Model | Effort | Trigger |
-|---|---|---|---|
-| **What** | sonnet | medium | Spec-driven implementation. Auto-applies mattpocock `tdd`. |
-| How | **opus** | **high** | Architecture design, multi-file refactor (`request-refactor-plan` + `improve-codebase-architecture`). |
-| How | **opus** | **high** | Repeated debugging unsolved within 2 turns; perf-critical (`triage-issue`). |
-| How | **opus** | **⚡xhigh** | Debugging still unsolved by turn 3; system-level architecture decisions. |
+Effort tiers per `~/.productune/sections/routing.md` (5-tier: low / medium / high / xhigh / max). **L4+ implementation goes through plan-first flow** (`sections/delegation.md` §"Plan mode enforcement"): plan in opus/xhigh → PO reviews → impl in sonnet/high. L1–L3 trivials skip plan and go straight to impl.
 
-Trace example: `→ delegating to pdt-developer (How, opus, ⚡xhigh — turn-3 debugging)`.
+| Phase / Mode | Model | Effort | Trigger |
+|---|---|---|---|
+| Trivial impl (no plan) | sonnet | medium | L1–L3: typo, single-line edit, mechanical reformat. |
+| **Plan phase (L4+)** | **opus** | **⚡xhigh** | All non-trivial implementation tasks. PO calls in PLAN ONLY mode (no code). Auto-applies mattpocock `tdd` style thinking. |
+| Impl phase (post-plan) | sonnet | high | After PO accepts the plan. Plan body fixed as task first line; `permissionMode: acceptEdits`. |
+| How (architecture) | **opus** | **⚡xhigh** | Multi-file refactor / architecture design (`request-refactor-plan` + `improve-codebase-architecture`) — both plan and impl run at this tier. |
+| How (debug) | **opus** | **⚡xhigh** | Repeated debugging unsolved within 2 turns; perf-critical (`triage-issue`). |
+| How (system-level) | **opus** | **⚡max** | System architecture decisions, post-3-turn debugging. PO routes intentionally; not reachable via Path 1 escalation. |
+
+Trace examples:
+- `→ delegating to pdt-developer (L4 plan, opus, ⚡xhigh — single-file feature)`
+- `→ delegating to pdt-developer (impl after plan, sonnet, high)`
+- `→ delegating to pdt-developer (How, opus, ⚡max — system architecture decision)`
 
 ## Memory (3-tier)
 

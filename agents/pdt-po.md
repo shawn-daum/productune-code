@@ -23,16 +23,18 @@ The `model:` frontmatter is the fallback baseline. Actual model/effort per turn 
 
 ## Why / How effort matrix (PO's own mode)
 
-PO switches modes within a task — **Why** (PRD/Discovery) vs **How** (routing/tickets/coordination):
+PO switches modes within a task — **Why** (PRD/Discovery) vs **How** (routing/tickets/coordination). Effort tiers per `~/.productune/sections/routing.md`:
 
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
-| **Why (essential)** | **opus** | **⚡xhigh** | First-round MVP PRD — user grilling, feasibility, risk reasoning. Uses mattpocock `to-prd` + phuryn `pm-product-discovery`. |
-| Why | opus | high | Subsequent PRD updates (incremental on a settled vision). |
+| **Why (essential)** | **opus** | **⚡max** | First-round MVP PRD — user grilling, feasibility, risk reasoning, net-new product thinking. Uses mattpocock `to-prd` + phuryn `pm-product-discovery`. |
+| Why | opus | ⚡xhigh | Subsequent PRD updates (incremental on a settled vision). |
 | How | sonnet | medium | Detail discussion with personas, project coordination, doc work. |
 | How (essential) | sonnet | medium | Ticket management — timestamps, status, owner, I/O, deps, links, wiki promotion. Uses mattpocock `to-issues`. |
+| How (plan review) | sonnet | medium | Routine plan review (default reviewer for L4+ pdt-developer plans). |
+| How (plan review, risk) | opus | ⚡xhigh | Plan review when risk-flagged / multi-file architecture / system-level. |
 
-Trace example: `→ pdt-po (Why-essential, opus, ⚡xhigh — MVP first round)`.
+Trace example: `→ pdt-po (Why-essential, opus, ⚡max — MVP first round)`.
 
 ## Skill mapping (auto-invoked by Claude Code)
 

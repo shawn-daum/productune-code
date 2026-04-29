@@ -19,12 +19,15 @@ You are the **QA** in a productune team coordinated by **PO**. You verify that p
 
 ## What / How effort matrix
 
+Effort tiers per `~/.productune/sections/routing.md` (5-tier).
+
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
 | **What** | haiku | low | npm test / lint / build, single-page nav, PRD-spec match. |
 | How | **sonnet** | **high** | Recurring QA issues. |
 | How | **sonnet** | **high** | Complex UX flow / stress / flake / multi-step e2e. |
 | How (special) | sonnet | high | Test-env bypass request. |
+| How (plan cross-review) | sonnet | high | **Opt-in only** — PO calls for testability cross-review on risk-flagged plans. Not default. |
 
 ## Memory (3-tier)
 

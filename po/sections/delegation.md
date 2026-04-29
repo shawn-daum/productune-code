@@ -97,24 +97,24 @@ After parse: PO inspects `CONFIDENCE` + `UNRESOLVED`. If `CONFIDENCE=low` or `UN
 
 ---
 
-## Plan mode enforcement
+## Plan mode enforcement (default for L4+ implementation)
 
-Complex implementation tasks benefit from **plan-first → cross-review → auto-accept impl** instead of jumping straight to code. Adapted from Boris Cherny's `shift+tab → plan → other Claude reviews → auto-accept → 1-shot` pattern.
+Implementation tasks of L4+ go through **plan-first (developer authors plan in opus/xhigh) → PO reviews directly → auto-accept impl (sonnet/high)**. Adapted from Boris Cherny's `shift+tab → plan → review → auto-accept → 1-shot` pattern, but using PO as the default reviewer (not pdt-qa) so the reviewer is the same actor that owns the PRD/ticket.
 
 ### When to enforce
 
 Trigger conditions (any one):
 
-- task complexity ≥ **L5** (Generation) — i.e. anything beyond a simple sweep / typo / single line
+- task complexity ≥ **L4** (Summarization) — i.e. anything beyond an L1–L3 trivial (typo, single line, simple reformat)
 - artifacts are **multi-file** (≥2) or cross-cutting (different directory trees)
 - risk-area flag (auth / payments / PII / migration / design system / public API)
 - user explicitly asks for a plan
 
-If none of the above, skip plan mode (waste of time). Stage 2 step 7b in `stages.md` is the branching point.
+L1–L3 trivials (single-line edits, obvious typos, mechanical reformats) skip plan mode — pdt-developer goes straight to impl at sonnet/medium. Stage 2 step 7b in `stages.md` is the branching point.
 
 ### Flow
 
-1. **Plan call** — invoke the impl persona (usually pdt-developer) in plan-only mode. Task body must include:
+1. **Plan call** — invoke pdt-developer in plan-only mode at **`opus + xhigh`** (developer's plan-phase default). Task body:
 
    ```
    PLAN MODE — DO NOT WRITE CODE.
@@ -124,30 +124,52 @@ If none of the above, skip plan mode (waste of time). Stage 2 step 7b in `stages
    Return a step-by-step plan: file-by-file changes, key functions touched, test additions, risks.
    ```
 
-   Use `/effort high` (invest reasoning in the plan itself). Output JSON's `changed_files` must be empty — no code yet. Plan body in `notes` or a separate markdown.
+   Output JSON's `changed_files` must be empty — no code yet. Plan body in `notes` or a separate markdown.
 
-2. **Cross-review** — staff-engineer review of the plan:
-   - **pdt-qa** (mandatory): testability, acceptance criteria coverage, edge cases. Task body: plan + "Critique this plan as if you were preparing the test rubric. Return: missing acceptance criteria, untestable assumptions, regression risks."
-   - **pdt-designer** (conditional, if user-facing): UX impact / design system consistency / copy. Skip for non-user-facing impl plans.
-   - Reviewer output is a list of deviations or OK signal.
+2. **Plan review (PO direct, default)** — PO reads the plan and assesses testability + acceptance coverage + architecture + risk. **No persona cross-review by default.** PO uses its own mode (typically sonnet/medium for routine review, escalates to opus/high for risk-flagged or system-level plans).
 
-3. **Plan revise** — if reviewer flags items the dev missed, resume same dev session and update plan only (still no code). Run cross-review once more. **If 3+ rounds of plan revision are needed**, surface to user: `[PO] plan 이 3 라운드째 수정 중. <plan summary>. 사용자가 (a) 그대로 진행 (b) PRD 다시 확인 (c) 기다리지 말고 한 번에 implement 강행 중 결정해 주세요.`
+   PO records the review verdict as either:
+   - `OK` — plan accepted; proceed to impl
+   - `revise: [item1, item2, ...]` — list of issues for developer to address
 
-4. **Auto-accept implementation** — re-invoke pdt-developer with the agreed plan, this time with **plan body fixed as the first line** of the task and `permissionMode: acceptEdits` (persona frontmatter default). 1-shot implementation. Self-verify (pdt-developer.md Workflow Step 3) is still mandatory.
+3. **Plan revise** — if PO flags items, resume same developer session and update plan only (still no code). PO reviews v2. **If 3+ rounds of plan revision are needed**, surface to user: `[PO] plan 이 3 라운드째 수정 중. <plan summary>. 사용자가 (a) 그대로 진행 (b) PRD 다시 확인 (c) 기다리지 말고 한 번에 implement 강행 중 결정해 주세요.`
 
-5. **Failure → fall back to plan** — if Self-verify or pdt-qa fails accumulate (Path 1 retry from quality escalation already failed once), regress to plan mode and run reviewer again. Mark `escalation_triggered=true` and bump `actual_complexity` one notch in `calibration_outcome`.
+4. **Auto-accept implementation** — re-invoke pdt-developer with the agreed plan at **`sonnet + high`**, plan body fixed as the first line of the task, `permissionMode: acceptEdits` (persona frontmatter default). 1-shot implementation. Self-verify (pdt-developer.md Workflow Step 3) is still mandatory.
+
+5. **Failure → fall back to plan** — if Self-verify or pdt-qa fails accumulate (Path 1 retry already failed once), regress to plan mode at `opus + xhigh` and have PO re-review. Mark `escalation_triggered=true` and bump `actual_complexity` one notch in `calibration_outcome`.
+
+### Optional cross-review escalation
+
+PO can opt to invoke persona cross-reviewers for high-stakes plans:
+
+- **pdt-qa testability cross-review** — when the plan is risk-flagged or has acceptance criteria PO is uncertain about. Task body: plan + "Critique this plan as if preparing the test rubric. Return: missing acceptance criteria, untestable assumptions, regression risks."
+- **pdt-designer UX cross-review** — when impl touches user-facing UI/UX/copy that wasn't already covered by a design doc. Task body: plan + "Critique this plan for UX consistency / design system compliance / copy."
+
+These are *not* part of the default flow — invoke only when PO's own review surfaces specific concerns it can't resolve alone.
 
 ### Trace examples
 
+L4 simple feature (default flow, no cross-review):
 ```
-→ planning 'login-modal-forgot-pw' (L5, multi-file → plan mode required)
-→ delegating to pdt-developer (PLAN ONLY, model=sonnet, effort=high)
-✓ pdt-developer plan returned (3 files, no code)
-→ cross-review: pdt-qa
-✓ pdt-qa plan-review: 1 deviation — 'no test for the disabled link state'
+→ planning 'login-link-color' (L4 → plan mode required)
+→ delegating to pdt-developer (PLAN ONLY, model=opus, effort=⚡xhigh)
+✓ pdt-developer plan returned (1 file, no code)
+→ PO reviewing plan directly
+✓ PO: plan OK
+→ delegating to pdt-developer (impl, model=sonnet, effort=high)
+```
+
+L6 multi-file refactor with PO cross-review escalation:
+```
+→ planning 'auth-middleware-rewrite' (L6 multi-file + risk-flagged → plan mode)
+→ delegating to pdt-developer (PLAN ONLY, model=opus, effort=⚡xhigh)
+✓ pdt-developer plan returned (5 files, no code)
+→ PO reviewing plan — risk-flagged, escalating to pdt-qa cross-review
+→ delegating to pdt-qa (plan testability cross-review, model=sonnet, effort=high)
+✓ pdt-qa: 2 deviations — 'no test for token rotation', 'session-fixation case missing'
 → revising plan with pdt-developer (resume same session)
-✓ plan v2 ready
-→ auto-accept impl: pdt-developer (model=sonnet, effort=high)
+✓ plan v2 ready, PO accepts
+→ delegating to pdt-developer (impl, model=sonnet, effort=high)
 ```
 
 ### Why explicit doctrine

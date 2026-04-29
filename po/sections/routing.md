@@ -43,19 +43,42 @@ Each persona's frontmatter `model:` is a direct-call fallback. PO uses floor + s
 - own decompose returns 1-step trivial
 - recent_turns shows same task class passing at default tier ≥3 times
 
-## Effort 4-tier (xhigh protection)
+## Effort 5-tier
 
 | Effort | Thinking budget | Use |
 |---|---|---|
-| `low` | nearly off | simple sweep, smoke test |
-| `medium` | default extended thinking | normal cases |
-| `high` | extended thinking budget | hypothesis test, trade-off |
-| **`xhigh`** | **max thinking + multi-pass reasoning** | **product design (PRD/UX/DS net-new), repeated debugging, system-level decisions** |
+| `low` | nearly off | smoke tests, lint/build/test runs, L1–L3 trivials |
+| `medium` | default extended thinking | sonnet baseline, ordinary cases |
+| `high` | extended thinking | hypothesis testing, trade-offs, **sonnet impl-after-plan**, opus standard work |
+| `xhigh` | max thinking + multi-pass reasoning | **opus default**, plan authoring, architecture refactor, repeated debugging |
+| **`max`** | **deepest reasoning beyond xhigh** | **first-round MVP PRD, net-new design system / brand identity, system-level architecture decisions** |
 
-`xhigh` protection rules:
-- `xhigh` is **opus-only**. sonnet+xhigh / haiku+xhigh: PO confirms once and auto-promotes to opus.
-- `xhigh` trace emphasizes the choice: `→ delegating to pdt-developer (model=opus, effort=⚡xhigh — turn-3 debugging)`.
-- `xhigh` calls flag separately in `recent_turns` (`effort: "xhigh"`) for cost retrospectives.
+### Per-model defaults
+
+| Model | Default effort | Notes |
+|---|---|---|
+| `haiku` | `low` | classification / simple ops |
+| `sonnet` | `medium` | spec-driven impl / 일반 |
+| `opus` | **`xhigh`** | every opus call is xhigh by default — PO actively uses available reasoning budget |
+
+### `xhigh` / `max` protection rules
+
+- Both `xhigh` and `max` are **opus-only**. sonnet/haiku + xhigh|max → PO confirms once and auto-promotes to opus.
+- `max` is reserved for **Stage 1 routing decisions only** (PO chooses it intentionally for net-new product/system thinking). It is **not** reachable via Path 1 escalation — see `escalation.md`.
+- `max` auto-trigger conditions (PO chooses):
+  - PO Why-essential — first-round MVP PRD authoring (`docs/prd/<slug>.md`)
+  - pdt-designer Why-essential — net-new system-level design (UX principles + brand identity + design system from scratch)
+  - pdt-developer How — system-level architecture decisions, post-3-turn debugging where xhigh isn't enough (PO routes intentionally)
+- `xhigh` auto-trigger conditions:
+  - Any opus call (default)
+  - pdt-developer plan-only phase for L≥4 tasks (see `delegation.md`)
+  - Path 1 retry from `high` (see `escalation.md`)
+- `max` and `xhigh` traces emphasize the choice:
+  ```
+  → delegating to pdt-developer (model=opus, effort=⚡max — net-new architecture)
+  → delegating to pdt-developer (model=opus, effort=⚡xhigh — plan phase L5)
+  ```
+- Both `xhigh` and `max` calls flag separately in `recent_turns` (`effort: "xhigh"` / `effort: "max"`) for cost retrospectives.
 
 ## Decision algorithm (per call)
 
@@ -64,12 +87,13 @@ Each persona's frontmatter `model:` is a direct-call fallback. PO uses floor + s
 2. Start at persona_floor (L).
 3. Apply signals to adjust L (cap: L1, L7).
 4. Map L → tier (table above).
-5. Decide effort (right column).
+5. Decide effort: per-model default (haiku=low, sonnet=medium, opus=xhigh) → adjust by signals.
 6. recent_turns auto-weight: same task / same persona fail ≥2 → tier+1.
-7. xhigh auto-trigger: risk+cross-cutting / Why-essential / 3-turn debug / Path 1 second retry.
-8. Apply user prefix override (`/model`, `/effort`, `/dev:opus/xhigh`, etc.).
-9. Emit trace.
-10. Append to po-state.json `persona_session_meta.<X>.{model_history, effort_history, complexity_level}`.
+7. xhigh auto-trigger: any opus call (default), plan phase L≥4, Path 1 second retry.
+8. max auto-trigger: PRD first-round / net-new design system / system-level architecture (Stage 1 only — never via escalation).
+9. Apply user prefix override (`/model`, `/effort`, `/dev:opus/max`, etc.).
+10. Emit trace.
+11. Append to po-state.json `persona_session_meta.<X>.{model_history, effort_history, complexity_level}`.
 ```
 
 Trace format:
@@ -78,7 +102,7 @@ Trace format:
 ```
 
 User-friendly synonyms (optional):
-- low="빠르게", medium="보통", high="신중히", xhigh="아주 신중히 / 깊이"
+- low="빠르게", medium="보통", high="신중히", xhigh="아주 신중히 / 깊이", max="끝까지 / 깊게 사고"
 - confidence: low="자신 없어요", medium="조금 자신 없어요", high="자신 있어요"
 
 OSS reference (cascade routing): RouteLLM, C3PO, Maxim AI 3-tier cascade.

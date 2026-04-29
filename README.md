@@ -39,15 +39,18 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 
 ## 페르소나 매트릭스 (Why / How / What — Golden Circle)
 
+5-tier effort: `low` → `medium` → `high` → `xhigh` → `max` (deepest).
+
 | 페르소나 | Default 모델 | Why mode | How mode | What mode |
 |---|---|---|---|---|
-| **productune** (PO) | sonnet | **opus + ⚡xhigh** — MVP PRD 첫 round 수립 (Discovery / 실현가능성 / 위험 동시 reasoning) | sonnet/medium — 라우팅 / 티켓 관리 / 교통정리 | — |
-| **pdt-designer** | opus | **opus + ⚡xhigh** — net-new 시스템 디자인 (UX/Brand/DS) | sonnet/low — 단순 token 매핑, haiku — 단일 컴포넌트 compliance | — |
-| **pdt-developer** | sonnet | — | **opus + high** — 아키텍처 / 멀티-파일 refactor / 2턴+ 디버깅. **opus + ⚡xhigh** — 3턴 째 디버깅 / 시스템 차원 결정 | sonnet/medium — PRD 기반 명료한 구현 |
-| **pdt-qa** | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. test 환경 bypass 요청 (auth pass 등) PO 통해 처리 | haiku/low — npm test, lint/build, 단일 페이지 nav |
+| **productune** (PO) | sonnet | **opus + ⚡max** — MVP PRD 첫 round (net-new 제품 사고). Subsequent PRD: opus + ⚡xhigh | sonnet/medium — 라우팅 / 티켓 관리 / plan review (default). 위험 plan review: opus + ⚡xhigh | — |
+| **pdt-designer** | opus | **opus + ⚡max** — net-new 시스템 디자인 (UX/Brand/DS 동시 정의). Existing system 신규 화면: opus + ⚡xhigh | sonnet/medium — token 매핑, haiku/low — 단일 컴포넌트 compliance | — |
+| **pdt-developer** | sonnet | — | **L4+ plan phase: opus + ⚡xhigh** (PLAN ONLY). **System-level: opus + ⚡max** | **L1–L3 trivial: sonnet/medium** (직접 impl). **L4+ impl phase: sonnet/high** (plan 후) |
+| **pdt-qa** | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. **Plan testability cross-review (옵트인)**: sonnet/high | haiku/low — npm test, lint/build, 단일 페이지 nav |
 
 > PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용.
-> Effort `xhigh` 는 opus 에만 허용 (다른 model 은 자동 승격).
+> Effort `xhigh` / `max` 는 **opus 전용** (다른 model 은 자동 승격). `max` 는 Stage 1 라우팅에서만 사용 — escalation Path 1 retry 는 `xhigh` 에서 capped.
+> **L4+ implementation 은 plan-first** — pdt-developer 가 opus/xhigh 로 plan 작성 → PO 가 직접 검수 → sonnet/high 로 1-shot 구현.
 
 ## Why the 3-tier memory
 

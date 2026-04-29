@@ -23,25 +23,26 @@ If 3+ calibration entries point the same direction (estimate < actual ≥2 times
 Task archives to `done` / `blocked` / `abandoned` → append exactly one line at the bottom of `## Model/Effort Calibration`. **Format**:
 
 ```
-- (YYYY-MM-DD) <slug> · <complexity_class> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · escalation=<none|Path1|Path2|xhigh> · note: <one-line learning>
+- (YYYY-MM-DD) <slug> · <complexity_class> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · escalation=<none|Path1|Path2> · note: <one-line learning>
 ```
 
 Examples:
 
 ```
 ## Model/Effort Calibration
-- (2026-04-29) login-modal-forgot-pw · L6-multifile · estimate=sonnet/medium → actual=opus/high · QA pass(1) · rework=n · escalation=Path1 · note: cross-cutting refactor needed opus
+- (2026-04-29) login-modal-forgot-pw · L6-multifile · estimate=sonnet/medium → actual=opus/xhigh · QA pass(1) · rework=n · escalation=Path1 · note: cross-cutting refactor needed opus
 - (2026-04-28) readme-typo · L1-single · estimate=haiku/low → actual=haiku/low · QA pass(0) · rework=n · escalation=none · note: trivial as expected
+- (2026-04-29) ntf-archive-prd · L7-net-new · estimate=opus/max → actual=opus/max · QA n/a · rework=n · escalation=none · note: PRD authored Stage 1 at max — appropriate for net-new product
 ```
 
 Field rules:
 
-- `estimate=<model>/<effort>` — Stage 1 routing's first call (before any escalation).
-- `actual=<model>/<effort>` — last actually-used model/effort (after any escalation).
-- `QA pass(N)` — final pdt-qa result + loop count (`current_task.calibration_outcome.qa_loops`).
+- `estimate=<model>/<effort>` — Stage 1 routing's first call (before any escalation). `<effort>` ∈ {low, medium, high, xhigh, max}.
+- `actual=<model>/<effort>` — last actually-used model/effort (after any escalation). When the line shows `actual=opus/max`, that's a Stage 1 routing choice — `max` cannot be reached via Path 1 escalation (see `escalation.md`).
+- `QA pass(N)` — final pdt-qa result + loop count (`current_task.calibration_outcome.qa_loops`). Use `n/a` for tasks without QA (e.g. PRD-only Stage 1 work).
 - `rework=y` — Stage 3 user feedback indicated rework ("다시", "별론데", "이거 아니야").
-- `escalation=Path1|Path2|xhigh|none` — whether quality escalation triggered.
-- `note` — one-line PO judgement. "정상" if estimate==actual; otherwise why they diverged.
+- `escalation=Path1|Path2|none` — whether quality escalation triggered. `max` does NOT appear here (it's a Stage 1 choice, not an escalation outcome).
+- `note` — one-line PO judgement. "정상" / "appropriate" if estimate==actual; otherwise why they diverged.
 
 ## Mechanical append
 

@@ -19,12 +19,16 @@ You are the **Developer** in a productune team coordinated by **PO**. You implem
 
 ## What / How effort matrix
 
-| Mode | Model | Effort | Trigger |
+Effort tiers per `~/.productune/sections/routing.md` (5-tier). **L4+ implementation goes through plan-first flow** (`sections/delegation.md`): plan in opus/xhigh → PO reviews → impl in sonnet/high. L1–L3 trivials skip plan.
+
+| Phase / Mode | Model | Effort | Trigger |
 |---|---|---|---|
-| **What** | sonnet | medium | Spec-driven implementation. Auto-applies mattpocock `tdd`. |
-| How | **opus** | **high** | Architecture design, multi-file refactor (`request-refactor-plan` + `improve-codebase-architecture`). |
-| How | **opus** | **high** | Repeated debugging unsolved within 2 turns; perf-critical (`triage-issue`). |
-| How | **opus** | **⚡xhigh** | Debugging still unsolved by turn 3; system-level architecture decisions. |
+| Trivial impl (no plan) | sonnet | medium | L1–L3: typo, single-line edit, mechanical reformat. |
+| **Plan phase (L4+)** | **opus** | **⚡xhigh** | All non-trivial implementation tasks. PLAN ONLY (no code). Auto-applies mattpocock `tdd` style thinking. |
+| Impl phase (post-plan) | sonnet | high | After PO accepts the plan. |
+| How (architecture) | **opus** | **⚡xhigh** | Multi-file refactor / architecture (`request-refactor-plan` + `improve-codebase-architecture`). |
+| How (debug) | **opus** | **⚡xhigh** | Repeated debugging unsolved within 2 turns; perf-critical (`triage-issue`). |
+| How (system-level) | **opus** | **⚡max** | System architecture decisions, post-3-turn debugging. PO routes intentionally. |
 
 ## Memory (3-tier)
 
