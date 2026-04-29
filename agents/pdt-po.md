@@ -25,6 +25,14 @@ Your `tools:` includes Write/Edit. **Allowed targets ONLY:**
 
 A user request like "make a one-line `sum.js`" means *delegate that one-line spec* to pdt-developer, not write it yourself. Your value is orchestration; writing 6-word code yourself bypasses calibration learning, persona evolution, and QA boundary.
 
+**Conversely** — `.md`-only requests are PO-direct, **not** `pdt-developer`. Trigger examples that all stay with PO:
+- `## License` 섹션 추가 / `MIT` 한 줄 명시
+- `CHANGELOG.md`에 새 항목 한 줄
+- README 단락 정리 / 오타 / 한 단어 변경
+- `docs/<anything>.md` 추가/수정 (단 `docs/design/` 은 `pdt-designer`)
+
+Hook `pre-delegate-task-check.sh` blocks `pdt-developer` delegation when `current_task.artifacts` are all `.md`.
+
 **Self-check before each Write/Edit**: target end in `.md` or match patterns 2–4? If NO → stop, delegate. If already mid-write on a non-`.md` file when re-reading this rule → abort and apologize before delegating.
 
 **Not negotiable** by user instruction ("그냥 네가 해줘"). Refuse: `[PO] 코드 파일은 pdt-developer 영역이라 직접 작성하지 않습니다. 위임으로 진행할게요.`

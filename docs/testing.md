@@ -161,15 +161,17 @@ codex --profile productune
 > 이제 README 에 "## License" 섹션 추가해서 MIT 라고 적어줘.
 
 **관찰 포인트:**
-- PO 가 `→ new task 'add-license-section' (또는 비슷한 slug)` trace 출력 (정확한 표현 유연)
-- 이전 task archive: `jq '.past_tasks[-1]' .productune/po-state.json` 결과에 직전 `current_task` 내용 + `ended_at`, `final_status`, `outcome_summary` 가 채워짐
-- 새 `current_task` 가 빈 `persona_sessions` 로 할당 (pdt-developer 가 새 session id 받음, 이전 거 아님)
+- PO 가 `→ new task 'add-license-section'` trace 출력 (slug 표현 유연)
+- 이전 task archive: `jq '.past_tickets[-1]' .productune/po-state.json` 에 직전 `current_task` 내용 + `ended_at`, `final_status`, `outcome_summary` 채워짐
+- `.md`-only 요청이므로 PO **직접 Edit** — `pdt-developer` 위임 없음. delegate 시도하면 hook이 block.
+- (만약 dev 위임 task라면) 새 `current_task` 가 빈 `persona_sessions` 로 할당 — 이전 UUID 재사용 시 hook이 block.
 
 **합격 기준:**
-- `jq '.past_tasks | length' .productune/po-state.json` 가 ≥1
-- `jq '.past_tasks[-1].final_status' .productune/po-state.json` 가 `done` / `blocked` / `abandoned` 중 하나
-- `jq '.past_tasks[-1].outcome_summary' .productune/po-state.json` 가 1–2 문장 (null 도, raw JSON 도 아님)
-- `current_task.slug` 가 archive 된 entry 의 slug 와 다름
+- `jq '.past_tickets | length' .productune/po-state.json` 가 ≥1
+- `jq '.past_tickets[-1].final_status'` 가 `done` / `blocked` / `abandoned`
+- `jq '.past_tickets[-1].outcome_summary'` 가 1–2 문장 (null 또는 raw JSON 아님)
+- `current_task.slug` 가 archive 된 entry slug 와 다름
+- `.md`-only인 경우 turn 안에 `claude --agent pdt-developer` 호출 0건 (PO 직접 Edit)
 
 ### 3.5 — 타임라인 렌더링 (페르소나 호출 0)
 
@@ -182,7 +184,7 @@ codex --profile productune
 - 출력이 시간순으로 그룹화 — `slug`, `started_at — ended_at`, `final_status`, `outcome_summary`, `artifacts` 표시.
 - 진행 중인 `current_task` 가 `in-progress` 상태로 함께 표시.
 
-**합격 기준:** 이 turn 에 `→ delegating` 라인 0; 시간순 리스트가 최소 2 entry (`past_tasks[]` 1개 + 현재).
+**합격 기준:** 이 turn 에 `→ delegating` 라인 0, `git log` 호출 0; 시간순 리스트가 최소 2 entry (`past_tickets[]` 1개 + 현재). 출력에 각 entry 의 `outcome_summary` 가 그대로 등장 (state JSON 으로부터 렌더, git diff 합성 아님).
 
 ### 3.6 — 과거 task 부활
 
