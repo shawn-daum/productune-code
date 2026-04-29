@@ -14,3 +14,8 @@ tmp/
 __pycache__/
 *.pyc
 .venv/
+
+# install.sh-generated symlinks (source-of-truth in agents/variants/<backend>/)
+agents/pdt-designer.md
+agents/pdt-developer.md
+agents/pdt-qa.md
