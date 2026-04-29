@@ -296,6 +296,49 @@ ensure_ollama_ready() {
   fi
 }
 
+# ── Persona recognition verifier ───────────────────────────────────────────────
+# Confirms each expected agent file is present in ~/.claude/agents/, the symlink
+# target is readable, and the YAML frontmatter `name:` matches. On failure,
+# prints a small debug block so the user can see what's broken.
+verify_agents_recognized() {
+  local backend="$1"
+  local -a expected=(pdt-po pdt-designer pdt-developer pdt-qa)
+  [[ "$backend" == "keeper" ]] && expected+=(pdt-wiki-keeper)
+
+  local -a missing=() broken=() name_mismatch=()
+  local agent
+  for agent in "${expected[@]}"; do
+    local path="$HOME/.claude/agents/${agent}.md"
+    if [ ! -e "$path" ]; then
+      missing+=("$agent")
+      continue
+    fi
+    if [ -L "$path" ] && [ ! -e "$(readlink "$path")" ]; then
+      broken+=("$agent → $(readlink "$path")")
+      continue
+    fi
+    local declared
+    declared=$(awk '/^name:[[:space:]]*/ {sub(/^name:[[:space:]]*/, ""); print; exit}' "$path" 2>/dev/null || echo "")
+    if [ "$declared" != "$agent" ]; then
+      name_mismatch+=("$agent (frontmatter says: '${declared:-<none>}')")
+    fi
+  done
+
+  if [ ${#missing[@]} -eq 0 ] && [ ${#broken[@]} -eq 0 ] && [ ${#name_mismatch[@]} -eq 0 ]; then
+    say "페르소나 인식 확인 완료: ${expected[*]}"
+    return 0
+  fi
+
+  warn "페르소나 인식 검증 실패:"
+  [ ${#missing[@]} -gt 0 ]       && warn "  • 파일 없음:        ${missing[*]}"
+  [ ${#broken[@]} -gt 0 ]        && warn "  • 깨진 심볼릭 링크: ${broken[*]}"
+  [ ${#name_mismatch[@]} -gt 0 ] && warn "  • frontmatter name 불일치: ${name_mismatch[*]}"
+  warn "디버그:"
+  warn "  ls -la ~/.claude/agents/    # 심볼릭 링크 상태"
+  warn "  bash $ROOT/scripts/install.sh   # 재실행"
+  return 1
+}
+
 # ── Backend variant activator ──────────────────────────────────────────────────
 activate_backend() {
   local backend="$1"   # graphiti | keeper | fs
@@ -533,6 +576,9 @@ fi
 FINAL_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo graphiti)"
 activate_backend "$FINAL_BACKEND"
 
+# Verify Claude recognizes the personas (fail-soft: warn but continue)
+verify_agents_recognized "$FINAL_BACKEND" || true
+
 # 7) Ensure auto-compact threshold default is present in env file.
 #    `productune` sources this with `set -a` so the var is inherited by spawned
 #    codex/claude personas — no manual shell-rc export needed.
@@ -574,6 +620,7 @@ fi
 
 # 9) Interactive: PATH registration
 PATH_REGISTERED=0
+NEEDS_SOURCE=0
 if [ -t 0 ] && [ -t 1 ]; then
   echo
   printf '\033[1;36m[install]\033[0m productune PATH 등록 확인...\n'
@@ -638,12 +685,10 @@ PROMPT
           PATH_REGISTERED=1
         else
           printf '\n# productune\n%s\n' "$EXPORT_LINE" >> "$SHELL_RC"
-          say "PATH 추가 완료: $SHELL_RC"
-          # Apply immediately in the current session so the user doesn't need to re-source manually.
-          export PATH="$ROOT/scripts:$PATH"
-          say "  → 현재 세션에 즉시 적용됨 (새 터미널에서도 자동 적용)"
+          say "PATH 추가 완료: $SHELL_RC (새 터미널에서 자동 적용)"
           printf 'PRODUCTUNE_PATH_METHOD=rc\nPRODUCTUNE_PATH_RC=%s\n' "$SHELL_RC" >> "$PO_ENV_FILE"
           PATH_REGISTERED=1
+          NEEDS_SOURCE=1
         fi
         ;;
     esac
@@ -661,35 +706,46 @@ $(printf "\033[1;32m✓ onboard complete\033[0m")
   PATH         : $([ "$PATH_REGISTERED" = 1 ] && echo "등록됨" || echo "미등록 (위 안내 참고)")
 
 Next steps:
-  1. Wiki backend = $FINAL_BACKEND_DISPLAY
-$(if [ "$FINAL_BACKEND_DISPLAY" = "graphiti" ]; then
-cat <<'GRAPHITI'
-     FalkorDB + Graphiti MCP 시작:
-       bash scripts/setup-graphiti.sh
-     (첫 실행 시 건너뛰어도 됨 — 페르소나는 project docs 폴백으로 동작)
-GRAPHITI
-elif [ "$FINAL_BACKEND_DISPLAY" = "keeper" ]; then
-cat <<'KEEPER'
-     wiki-keeper agent (Claude API) 활성화. 로컬 모델/Docker 불필요.
-     Wiki 저장 위치: ~/.productune/wiki/
-KEEPER
-fi)
+$(if [ "$NEEDS_SOURCE" = 1 ]; then
+cat <<PATHRC
+  1. 현재 셸에 PATH 즉시 적용 (새 터미널에서는 자동 적용되므로 생략 가능):
+       source $SHELL_RC
 
-  2. Claude가 페르소나를 인식하는지 확인:
-       claude agents
-     (기대값: pdt-po, pdt-designer, pdt-developer, pdt-qa$([ "$FINAL_BACKEND_DISPLAY" = "keeper" ] && echo ", pdt-wiki-keeper"))
-
-  3. 프로젝트 디렉터리에서 PO 시작:
+  2. 원하는 프로젝트 폴더로 이동 후 productune 실행:
+       cd <your-project>
        productune
+     → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
+     (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
-  4. Wiki backend 변경 (예: Tier A → B):
+  3. Wiki backend 변경 (예: Tier A → B):
        # ~/.codex/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
        productune onboard
 
-  5. 병렬 작업 후 worktree 정리:
+  4. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run
        productune gc -y     # safe한 것 자동 제거
 
-  6. 완전히 제거할 때:
+  5. 완전히 제거할 때:
        productune uninstall
+PATHRC
+else
+cat <<NOPATH
+  1. 원하는 프로젝트 폴더로 이동 후 productune 실행:
+       cd <your-project>
+       productune
+     → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
+     (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
+
+  2. Wiki backend 변경 (예: Tier A → B):
+       # ~/.codex/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
+       productune onboard
+
+  3. 병렬 작업 후 worktree 정리:
+       productune gc        # dry-run
+       productune gc -y     # safe한 것 자동 제거
+
+  4. 완전히 제거할 때:
+       productune uninstall
+NOPATH
+fi)
 EOF
