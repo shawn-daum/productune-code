@@ -53,8 +53,37 @@ fetch_disk_gb() {
   awk "BEGIN{printf \"%.1f\", $total/1024/1024/1024}"
 }
 
+# List installed Ollama models as "<model>:<tag>" lines.
+# Uses `ollama list` if the daemon is up; otherwise falls back to scanning
+# ~/.ollama/models/manifests/registry.ollama.ai/library/ which works without
+# starting the daemon.
+detect_installed_ollama_models() {
+  command -v ollama >/dev/null 2>&1 || return 0
+
+  local out
+  out=$(ollama list 2>/dev/null) || out=""
+  if [ -n "$out" ]; then
+    printf '%s\n' "$out" | awk 'NR>1 && NF>0 {print $1}'
+    return 0
+  fi
+
+  local manifests="$HOME/.ollama/models/manifests/registry.ollama.ai/library"
+  [ -d "$manifests" ] || return 0
+  local model_dir tag_file
+  for model_dir in "$manifests"/*/; do
+    [ -d "$model_dir" ] || continue
+    local model_name; model_name="$(basename "$model_dir")"
+    for tag_file in "$model_dir"*; do
+      [ -f "$tag_file" ] || continue
+      printf '%s:%s\n' "$model_name" "$(basename "$tag_file")"
+    done
+  done
+}
+
 # Read config/model-catalog.json, fetch sizes in parallel, print filtered menu
 # for the given tier, prompt user, and set LLM_MODEL (or WIKI_BACKEND=keeper).
+# If a catalog model is already installed via Ollama, mark it and use it as
+# the default (saves a multi-GB download).
 select_model_for_tier() {
   local tier="$1"
   local catalog="$ROOT/config/model-catalog.json"
@@ -114,36 +143,69 @@ select_model_for_tier() {
     WIKI_BACKEND=keeper; return
   fi
 
+  # Detect already-installed catalog models — first match becomes the default
+  # so we don't force a multi-GB download when a suitable model is on disk.
+  local -a installed_models=()
+  local installed_str
+  installed_str="$(detect_installed_ollama_models 2>/dev/null || true)"
+  if [ -n "$installed_str" ]; then
+    while IFS= read -r m; do
+      [ -n "$m" ] && installed_models+=("$m")
+    done <<< "$installed_str"
+  fi
+
+  local -a installed_flags=()
+  local default_idx=0
+  local has_installed=0
+  for i in "${!labels[@]}"; do
+    local lbl="${labels[$i]}" is_installed=0
+    local it
+    for it in "${installed_models[@]:-}"; do
+      [[ "$it" == "$lbl" ]] && is_installed=1 && break
+    done
+    installed_flags+=("$is_installed")
+    if [[ "$is_installed" == "1" && "$has_installed" == "0" ]]; then
+      default_idx=$i
+      has_installed=1
+    fi
+  done
+
   echo
-  printf '  로컬 LLM 선택 (Graphiti entity 추출용):\n\n'
+  if [[ "$has_installed" == "1" ]]; then
+    printf '  로컬 LLM 선택 (Graphiti entity 추출용 — 이미 설치된 모델을 기본값으로 추천):\n\n'
+  else
+    printf '  로컬 LLM 선택 (Graphiti entity 추출용):\n\n'
+  fi
   local idx=1
   for i in "${!labels[@]}"; do
     IFS='|' read -r sz plus minus <<< "${descs[$i]}"
-    printf '  [%d] %-24s %s\n' "$idx" "${labels[$i]}" "$(echo "$sz" | tr -d ' ')"
+    local marker=""
+    [[ "${installed_flags[$i]}" == "1" ]] && marker=$' \033[1;32m✓ 이미 설치됨\033[0m'
+    printf '  [%d] %-24s %s%s\n' "$idx" "${labels[$i]}" "$(echo "$sz" | tr -d ' ')" "$marker"
     printf '       +%s\n'  "$(echo "$plus"  | sed 's/^ + //')"
     [[ "$(echo "$minus" | sed 's/^ − //')" != "null" ]] && \
       printf '       −%s\n' "$(echo "$minus" | sed 's/^ − //')"
-    [ "$idx" -eq 1 ] && printf '       *기본 추천*\n'
+    [ $((idx - 1)) -eq "$default_idx" ] && printf '       *기본 추천*\n'
     echo
     idx=$((idx + 1))
   done
   printf '  [k] skip — wiki-keeper(Claude API)로 대신 가기\n\n'
 
-  printf '  선택 [1–%d/k, 기본=1 (%s)]: ' "${#labels[@]}" "${labels[0]}"
+  printf '  선택 [1–%d/k, 기본=%d (%s)]: ' "${#labels[@]}" "$((default_idx + 1))" "${labels[$default_idx]}"
   read -r MCHOICE || MCHOICE=""
 
-  case "${MCHOICE:-1}" in
+  case "${MCHOICE}" in
     k|K) WIKI_BACKEND=keeper; return ;;
-    ''|1) LLM_MODEL="${models[0]}" ;;
-    [2-9]|[1-9][0-9])
+    "") LLM_MODEL="${models[$default_idx]}" ;;
+    [1-9]|[1-9][0-9])
       if [ "$MCHOICE" -ge 1 ] 2>/dev/null && [ "$MCHOICE" -le "${#labels[@]}" ] 2>/dev/null; then
         LLM_MODEL="${models[$((MCHOICE - 1))]}"
       else
-        warn "잘못된 선택 '${MCHOICE}' — 기본값 ${models[0]} 사용"
-        LLM_MODEL="${models[0]}"
+        warn "잘못된 선택 '${MCHOICE}' — 기본값 ${models[$default_idx]} 사용"
+        LLM_MODEL="${models[$default_idx]}"
       fi
       ;;
-    *) LLM_MODEL="${models[0]}" ;;
+    *) LLM_MODEL="${models[$default_idx]}" ;;
   esac
 }
 
@@ -161,20 +223,28 @@ install_local_llm() {
 
   ensure_ollama_ready || return 1
 
-  say "$model pull 중 (한 번만, 5–15분 소요)..."
-  if ! ollama pull "$model"; then
-    echo
-    printf "  [r] 재시도  [k] wiki-keeper(Claude API)로 대신 가기  [q] 중단: "
-    read -r choice || choice="q"
-    case "$choice" in
-      r|R) ollama pull "$model" || return 1 ;;
-      k|K) WIKI_BACKEND=keeper; return 0 ;;
-      *)   return 1 ;;
-    esac
+  if detect_installed_ollama_models 2>/dev/null | grep -qx "$model"; then
+    say "$model — 이미 설치됨 (skip pull)"
+  else
+    say "$model pull 중 (한 번만, 5–15분 소요)..."
+    if ! ollama pull "$model"; then
+      echo
+      printf "  [r] 재시도  [k] wiki-keeper(Claude API)로 대신 가기  [q] 중단: "
+      read -r choice || choice="q"
+      case "$choice" in
+        r|R) ollama pull "$model" || return 1 ;;
+        k|K) WIKI_BACKEND=keeper; return 0 ;;
+        *)   return 1 ;;
+      esac
+    fi
   fi
 
-  say "nomic-embed-text pull 중 (Graphiti 임베딩용, ~275MB)..."
-  ollama pull nomic-embed-text || warn "nomic-embed-text pull 실패 — 나중에 수동으로: ollama pull nomic-embed-text"
+  if detect_installed_ollama_models 2>/dev/null | grep -qE '^nomic-embed-text(:.+)?$'; then
+    say "nomic-embed-text — 이미 설치됨 (skip pull)"
+  else
+    say "nomic-embed-text pull 중 (Graphiti 임베딩용, ~275MB)..."
+    ollama pull nomic-embed-text || warn "nomic-embed-text pull 실패 — 나중에 수동으로: ollama pull nomic-embed-text"
+  fi
 }
 
 wait_for_ollama_ready() {
