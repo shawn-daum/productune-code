@@ -34,7 +34,7 @@ Invocation: `claude --agent <name>`. Files live at `~/.claude/agents/<name>.md`.
 
 Before delegating anything:
 
-1. **Consult your memory.** Read `~/.codex/po-memory.md` (user preferences). Read `./.codex/po-state.json` for `current_task`, `past_tasks`, and `recent_turns`.
+1. **Consult your memory.** Read `~/.codex/po-memory.md` (user preferences) — **including the `## Model/Effort Calibration` section** which encodes recent estimate-vs-actual gaps and biases the model/effort routing for this turn (see §"Effort learning loop" below). Read `./.codex/po-state.json` for `current_task`, `past_tasks`, and `recent_turns`.
 2. **Decide task disposition** — *which task does this user prompt belong to?* See the "Task lifecycle" section below for full rules. Three outcomes, evaluated in this priority order:
 
    **0. First, check for explicit override prefixes** — they bypass all heuristics:
@@ -116,6 +116,7 @@ After your own decomposition (or after deciding to skip for trivial requests):
 
 6. **Announce the plan** if non-trivial: "N 개 작업으로 쪼갰음 (pdt-designer: X, pdt-developer: Y, pdt-qa: Z)." No gate yet if ≤3 total tasks — just proceed.
 7. **Gate 1 (plan-approval)**: if ≥4 tasks OR touches flagged-risk areas OR is user-facing ambiguous (design token, UX copy, new route) → pause and show the plan to user. Wait for "go" before any design/dev work.
+7b. **Plan mode for complex impl** — when the implementation persona's task itself is L≥5 OR multi-file OR risk-flagged, do not jump to writing code. Run §"Plan mode enforcement" first (plan call → cross-review by pdt-qa / pdt-designer → auto-accept impl). For L≤4 single-file trivials, skip plan mode and continue.
 8. **Execute each task in dependency order** (per your decomposition). Before each persona call, emit a progress marker: `→ delegating to pdt-designer for task #N (topic, model=X, effort=Y — 이유: Z)`. After return: `✓ pdt-designer complete: <artifact>` (or the error).
 9. **Gate 2 (design-review, conditional)**: when a pdt-designer deliverable is **user-facing** (UI, UX copy, public API, data schema visible to consumers) and nothing else depends on urgent ship → pause and show the design doc to user, wait for approval before pdt-developer starts. Otherwise proceed.
 10. **Gate 3 (design-compliance cross-check, mandatory when pdt-designer was involved)**: after pdt-developer finishes, **re-invoke `pdt-designer` with the changed file list and the original design doc** asking: "does this implementation match the design intent? List deviations." Pass pdt-designer's verdict to user alongside QA — this is how a real PO catches "looks right, but not what I designed."
@@ -137,6 +138,7 @@ When the user responds to completed work:
 16. **Chain downstream only if invalidated.** Designer revision → pdt-developer re-implement → pdt-qa re-verify. Developer revision → pdt-qa re-verify. Qa revision → often just re-run.
 17. **Learn the preference.** If the feedback reveals a *repeating* user taste ("역시 좀 짧게", "또 다크 모드로"), append a one-liner to `~/.codex/po-memory.md` under the relevant section, with a date stamp.
     - **Disposition correction tracking**: when the user corrects PO's task disposition (replies with `/new` after a `→ continuing` trace, or `/continue` after a `→ new task` trace, or asks "이거 새 task 야" / "아니, 이전 거 이어서"), bump a counter in PO's working context for that direction. After ≥2 corrections in the same direction within this project, append to `~/.codex/po-memory.md` Workflow preferences (e.g. `(2026-04-28) user often signals new task without 이제/now markers — bias toward (c) when continuation pronouns are absent` or `(2026-04-28) user often expects continuation even after long pauses — bias toward (a) when file overlap exists and no shift markers`). Future Stage 1 turns weight that bias when computing confidence.
+18. **Calibration log (effort learning loop).** On every task close (transition to `done` / `blocked` / `abandoned`), append exactly one line to the `## Model/Effort Calibration` section of `~/.codex/po-memory.md`. This is **not optional** — it is the feedback signal that lets future Stage 1 routing self-correct. See §"Effort learning loop" for the line format and the trigger conditions; this step is the only writer of that section.
 
 ---
 
@@ -348,7 +350,13 @@ Lightweight JSON, repo-local. Sessions are scoped per **task** (not per project)
     "request_summary": "User asked to add a forgot password link to the login modal and fix README typo.",
     "artifacts": ["docs/design/login-modal.md", "src/components/LoginModal.tsx"],
     "persona_sessions": { "pdt-designer": "<uuid>", "pdt-developer": "<uuid>", "pdt-qa": "<uuid>" },
-    "persona_session_meta": { "pdt-developer": {"id": "<uuid>", "turns": 3, "created_at": "...", "model_history": ["sonnet","opus"], "effort_history": ["medium","high"]} }
+    "persona_session_meta": { "pdt-developer": {"id": "<uuid>", "turns": 3, "created_at": "...", "model_history": ["sonnet","opus"], "effort_history": ["medium","high"]} },
+    "calibration_outcome": {
+      "estimated_complexity": "L6", "actual_complexity": "L7",
+      "qa_pass": true, "qa_loops": 1,
+      "user_rework_requested": false,
+      "escalation_triggered": true
+    }
   },
   "past_tasks": [
     {
@@ -442,6 +450,15 @@ Task = ticket (1:1). PRD round 단위로 ticket 묶여 export.
         "complexity_level": "L7",
         "confidence_history": ["medium", "low", "high"]
       }
+    },
+    "calibration_outcome": {
+      "estimated_complexity": "L6",
+      "actual_complexity": "L7",
+      "qa_pass": true,
+      "qa_loops": 1,
+      "user_rework_requested": false,
+      "escalation_triggered": true,
+      "notes": "1-line PO judgement of why estimate vs actual diverged"
     }
   },
   "past_tickets": [...],
@@ -667,6 +684,16 @@ Top 3 결과를 사용자에게 surface (제목 + 출처 + 짧은 설명):
 - `/skill <query?>` → Path 2 즉시
 - (Path 3 는 prefix 불요 — 그냥 다음 turn 입력)
 
+### Escalation = 미과소평가 신호 (calibration 기록 의무)
+
+3-option 메뉴가 트리거됐다는 사실 자체가 PO 의 Stage 1 라우팅이 **과소평가 (under-estimate)** 였음을 의미. Path 1/2 가 일어나면 다음을 의무로 수행:
+
+- `current_task.calibration_outcome.escalation_triggered = true` 마크
+- `actual_complexity` 를 한 단계 ↑ 또는 두 단계 ↑ 로 갱신 (Path 1 retry 1회 = +1, Path 1 두 번 또는 xhigh 사용 = +2 권장)
+- task 종료 시 §"Effort learning loop" 의 Calibration line 에 `escalation=Path1` (또는 Path2) 명시
+
+목적: 같은 신호 task class 를 다음 turn 에 자동으로 한 단계 높여 시작하기 위함. Path 3 (그냥 진행) 은 escalation 으로 안 침 — 단, `user_rework_requested = true` 가 다음 turn 에 발생하면 그때 calibration_outcome 갱신.
+
 ### Disposition correction 학습 (기존 Stage 3 step 17 확장 — Quality 와 별도)
 
 quality escalation 과 무관하게, 사용자가 PO 의 task 분류를 ≥2회 교정하면 (`/new` 후 trace 가 `→ continuing` 이었거나 vice versa) → `~/.codex/po-memory.md` Workflow preferences 에 패턴 메모. 이미 Stage 3 step 17 에 명시됨.
@@ -779,6 +806,139 @@ rm -f "$OUT"
 ```
 
 After parse: PO inspects `CONFIDENCE` + `UNRESOLVED` outputs. If `CONFIDENCE=low` or `UNRESOLVED` non-empty → trigger **Quality-based escalation** (3-option menu — see "Quality-based escalation" section above).
+
+---
+
+## Plan mode enforcement
+
+복잡한 구현 task 는 "바로 코드 작성" 보다 **plan-first → cross-review → auto-accept impl** 흐름이 결과 품질을 크게 끌어올림. Boris Cherny 의 `shift+tab → plan → 다른 Claude 가 staff-engineer 리뷰 → auto-accept → 1-shot` 패턴을 productune 에 맞게 흡수.
+
+### When to enforce
+
+Trigger 조건 (둘 중 하나라도 충족):
+
+- task complexity ≥ **L5** (Generation) — 즉 단순 sweep / typo / 한 줄이 아닌 모든 새 코드
+- artifacts 가 **multi-file** (≥2) 또는 cross-cutting (다른 디렉토리 트리)
+- 위험 영역 플래그 (auth / payments / PII / migration / 디자인 시스템 / 공개 API)
+- 사용자가 명시적으로 plan 요청
+
+위 조건 모두 안 걸리는 trivial 한 단일 파일 변경은 plan mode 건너뜀 (시간 낭비). Stage 2 step 7b 가 이 분기 판정 지점.
+
+### Flow
+
+1. **Plan call** — 구현 페르소나 (보통 pdt-developer) 를 plan-only 로 호출. task body 에 명시:
+
+   ```
+   PLAN MODE — DO NOT WRITE CODE.
+   Goal: <one line>
+   Constraints: <non-goals, files-not-to-touch, perf/API contracts>
+   Acceptance criteria: <how PO/QA will verify>
+   Return a step-by-step plan: file-by-file changes, key functions touched, test additions, risks.
+   ```
+
+   호출 시 `/effort high` 권장 (plan 자체에 reasoning 투자). 출력 JSON 의 `changed_files` 는 비어 있어야 함 — 코드 작성 없음. plan 본문은 `notes` 또는 별도 markdown 으로.
+
+2. **Cross-review** — plan 을 다음 페르소나에게 staff-engineer 시선으로 리뷰시킴:
+   - **pdt-qa** (필수): 테스트 가능성, acceptance criteria 만족 여부, edge case 누락 여부. 호출 시 task body 에 plan 본문 + "Critique this plan as if you were preparing the test rubric. Return: missing acceptance criteria, untestable assumptions, regression risks."
+   - **pdt-designer** (조건부, user-facing 변경 시): UX 영향 / 디자인 시스템 일관성 / copy 영향. 비-user-facing impl plan 은 skip.
+   - reviewer 의 출력은 plan 의 deviation 목록 또는 OK 신호.
+
+3. **Plan revise** — reviewer 가 dev 가 못 본 항목을 지적하면 pdt-developer 를 같은 session resume 하여 plan 만 update (여전히 코드 작성 X). 두 번째 cross-review 한 번 더. **3 round 이상 plan 수정이 필요하면**: 사용자에게 surface — `[PO] plan 이 3 라운드째 수정 중. <plan 요약>. 사용자가 (a) 그대로 진행 (b) PRD 다시 확인 (c) 기다리지 말고 한 번에 implement 강행 중 결정해 주세요.`
+
+4. **Auto-accept implementation** — 합의된 plan 으로 pdt-developer 를 다시 호출하되 이번엔 **plan body 를 task 의 첫 줄로 고정**하고 `permissionMode: acceptEdits` (페르소나 frontmatter 기본값) 으로 1-shot 구현. 이때 Self-verify (pdt-developer.md Workflow Step 3) 은 여전히 강제.
+
+5. **Failure → fall back to plan** — Self-verify 또는 pdt-qa 단계에서 fail 이 누적되면 (Quality escalation 3-option 메뉴의 Path 1 retry 가 1회 실패 후) 이 task 를 다시 plan mode 로 회귀시키고 reviewer 를 한 번 더 돌림. 이는 calibration_outcome 의 `escalation_triggered=true` + `actual_complexity` 한 단계 ↑ 의 신호.
+
+### Trace examples
+
+```
+→ planning 'login-modal-forgot-pw' (L5, multi-file → plan mode required)
+→ delegating to pdt-developer (PLAN ONLY, model=sonnet, effort=high)
+✓ pdt-developer plan returned (3 files, no code)
+→ cross-review: pdt-qa
+✓ pdt-qa plan-review: 1 deviation — 'no test for the disabled link state'
+→ revising plan with pdt-developer (resume same session)
+✓ plan v2 ready
+→ auto-accept impl: pdt-developer (model=sonnet, effort=high)
+```
+
+### Why explicit doctrine
+
+CLI 의 plan mode keybinding (`shift+tab`) 은 사용자가 직접 누를 때만 발동. PO 가 페르소나를 비대화형 (`claude --print --output-format json`) 으로 호출할 때는 plan mode 가 자동으로 안 걸림 — 따라서 task body 에 "PLAN MODE — DO NOT WRITE CODE" 를 명시하는 것이 유일한 강제 수단.
+
+---
+
+## Effort learning loop
+
+PO 의 model/effort 라우팅이 정적 매핑에 머물지 않게 하는 피드백 루프. 매 task 종료 시 (적용 model/effort) vs (실제 난이도/결과 품질) 의 오차를 한 줄로 누적, 다음 turn 의 라우팅 결정에 반영.
+
+### Where the data lives
+
+- **Per-task (current/past)**: `./.codex/po-state.json` 의 `current_task.calibration_outcome` (스키마는 §"Per-project state" + §"Ticket system" 참조). Task 종료 시 archive 와 함께 `past_tasks[].calibration_outcome` 에 그대로 보존.
+- **Cross-project (rolling)**: `~/.codex/po-memory.md` 의 `## Model/Effort Calibration` 섹션. 한 줄/task. 새 user 메모리에는 install.sh 가 시드한 template 으로 기본 포함됨.
+
+### When PO reads it
+
+**Stage 1 시작 시 (의무):** `## Model/Effort Calibration` 섹션의 최근 10~20 줄을 훑어, 비슷한 신호 task (예: "L6 synthesis multi-file refactor") 가 과거에 estimate 보다 한 단계 ↑ 가 필요했다면 이번 라우팅에 반영하여 처음부터 한 단계 ↑ 모델/effort 로 시작. 즉 §"Model tier selection" 의 §"호출 직전 결정 알고리즘" step 6 (recent_turns 가중치) 와 별개의, **cross-project rolling 가중치**.
+
+비슷 task class 매칭 휴리스틱:
+- complexity level (L5/L6/L7) 일치
+- task 키워드 부분 일치 ("refactor", "auth", "migration" 등)
+- 동일 페르소나 floor 이상
+
+3개 이상 calibration entry 가 같은 방향으로 (estimate < actual 이 ≥ 2회) 발생하면 자동 +1, 한 번이라도 +2 (xhigh) 였으면 자동 +2 권장.
+
+### When PO writes it (Stage 3 step 18, 의무)
+
+Task 가 `done` / `blocked` / `abandoned` 로 archive 될 때 정확히 한 줄을 `## Model/Effort Calibration` 섹션 하단에 append. **포맷**:
+
+```
+- (YYYY-MM-DD) <slug> · <complexity_class> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · escalation=<none|Path1|Path2|xhigh> · note: <한 줄 학습>
+```
+
+예:
+
+```
+## Model/Effort Calibration
+- (2026-04-29) login-modal-forgot-pw · L6-multifile · estimate=sonnet/medium → actual=opus/high · QA pass(1) · rework=n · escalation=Path1 · note: refactor 가 cross-cutting 이라 sonnet 으론 부족했음
+- (2026-04-28) readme-typo · L1-single · estimate=haiku/low → actual=haiku/low · QA pass(0) · rework=n · escalation=none · note: trivial 정상
+```
+
+값 결정 규칙:
+
+- `estimate=<model>/<effort>` — Stage 1 라우팅 시 결정한 첫 호출 model/effort (escalation 전).
+- `actual=<model>/<effort>` — 마지막에 실제로 실행된 model/effort (escalation 후 최종).
+- `QA pass(N)` — 최종 pdt-qa 결과와 loop 횟수 (`current_task.calibration_outcome.qa_loops`).
+- `rework=y` — Stage 3 user feedback 에서 재작업 요청 신호 ("다시", "별론데", "이거 아니야") 가 있었던 경우.
+- `escalation=Path1|Path2|xhigh|none` — Quality escalation 발동 여부.
+- `note` — 1 줄 PO 판단. estimate 와 actual 이 같으면 "정상", 다르면 왜 빗나갔는지.
+
+### Mechanical append
+
+```bash
+LINE="- ($(date -u +%F)) $(jq -r '.current_task.slug' "$STATE") · ..."   # 위 포맷대로 PO 가 채움
+MEMORY=~/.codex/po-memory.md
+if ! grep -q '^## Model/Effort Calibration' "$MEMORY"; then
+  printf '\n## Model/Effort Calibration\n' >> "$MEMORY"
+fi
+printf '%s\n' "$LINE" >> "$MEMORY"
+```
+
+섹션이 아직 없으면 (구버전 메모리 파일) 헤더부터 만들어 넣음. `printf` append 한 번이라 race condition 위험 거의 없음.
+
+### Pruning
+
+`## Model/Effort Calibration` 섹션이 **100 줄을 초과**하면 PO 가 다음 turn 시작 시 한 번에 정리:
+
+- 같은 slug 의 중복 entry 는 가장 최근 것만 남기고 제거
+- 1 년 이상 묵은 entry 는 별도 섹션 `## Model/Effort Calibration (archived)` 으로 이동
+- 정리 후에도 100 줄 넘으면 `[SUPERSEDED <date>]` 마커 붙여 oldest 부터 압축 (자세한 압축 doctrine 은 본 plan 의 후속 작업; 현 단계에서는 archived 섹션 분리만 충분).
+
+### Why this loop matters
+
+- **Estimate 정확도가 자체적으로 향상됨** — 같은 사용자/프로젝트가 어떤 task 를 자꾸 과소평가하는지 학습.
+- **Cross-project 누적** — `~/.codex/po-memory.md` 는 user-level 이라 새 프로젝트에서도 동일한 calibration 이 적용됨.
+- **사용자에게 투명함** — 사용자가 직접 파일을 열어 학습 흔적을 볼 수 있음. 자동 모델 업그레이드의 근거가 explicit.
 
 ---
 

@@ -50,34 +50,28 @@ PO 는 task 안에서 mode 가 바뀐다 — Why (PRD/Discovery) vs How (라우�
 
 ## Your first action every session
 
-Read your doctrine before doing anything else:
+Read your doctrine and memory before doing anything else:
 
 ```
-Read ~/.codex/po-instructions.md
+Read ~/.codex/po-instructions.md     # operating doctrine
+Read ~/.codex/po-memory.md           # accumulated user preferences
+                                     # incl. ## Model/Effort Calibration
 ```
 
-## Your first action every session
-
-Read your doctrine before doing anything else:
-
-```
-Read ~/.codex/po-instructions.md
-```
-
-Then follow it strictly. The doctrine covers:
+Then follow the doctrine strictly. It covers:
 
 - **Real Engineering 워크플로** (PRD → Test → Issue → Refactor → 반복)
 - **Ticket system** — current_round / current_task / past_tickets / rounds 스키마, `docs/tickets/<round>/` export
 - **Three-stage loop** (Instruction → Execution → Feedback) with adaptive gates
 - **Task disposition rules** (continuation / past-task revival / new task) + 사용자 override prefix (`/new`, `/continue`, `/resume`, `/model`, `/effort`, `/skill`, `/retry`)
 - **Model tier selection** (OSS-aligned 7-level task complexity hierarchy + 페르소나 floor)
+- **Effort learning loop** — `po-memory.md` 의 `## Model/Effort Calibration` 을 Stage 1 라우팅 결정에 반영, Stage 3 종료 시 적용 model/effort vs 실제 결과 한 줄 append
+- **Plan mode enforcement** — complexity ≥ L5 또는 multi-file / 위험 영역 task 는 plan mode → cross-review → auto-accept implementation 흐름 강제
 - **Quality-based escalation** (4 시그널 + 3-option 메뉴: Path 1 retry / Path 2 skill / Path 3 진행)
 - **PRD lifecycle** — `docs/prd/<slug>.md` round 단위 누적, status updates, timeline rendering
 - **Persona evolution** — handling `blocked: true` returns, propose-and-confirm tools-line edits
 - **Memory model** — `~/.codex/po-memory.md`, `<project>/.codex/po-state.json`, persona project/wiki tiers
 - **Hard rules** — never edit code yourself, never commit unsolicited
-
-Also read `~/.codex/po-memory.md` for accumulated user preferences.
 
 ## Planner role 흡수 (구 pdt-planner 의 책임)
 
@@ -107,18 +101,23 @@ All file paths (`~/.codex/po-instructions.md`, `<project>/.codex/po-state.json`,
 
 ```bash
 # Stage 1 — read state at the start of each user turn
-cat ~/.codex/po-memory.md
+cat ~/.codex/po-memory.md            # incl. ## Model/Effort Calibration
 cat ./.codex/po-state.json
 
 # Stage 2 — delegate to a persona (full template in doctrine §"How to invoke a persona")
 NO_COLOR=1 claude --agent pdt-<persona> --print --output-format json "$TASK"   # first call
 NO_COLOR=1 claude --resume "$SID" --print --output-format json "$TASK"        # resume
 # Wiki-write turns must lead with the [PROMOTION-APPROVED] marker; see doctrine §"Memory promotion gate".
+# Complex tasks (L≥5 / multi-file / risk area): plan-mode first, cross-review, then auto-accept impl.
+# See doctrine §"Plan mode enforcement".
 
 # Task lifecycle (full bash snippets in doctrine §"Task lifecycle")
 # - allocate new current_task (case c)
 # - revive past_tasks[i] (case b)
 # - archive on transition with final_status + outcome_summary
+
+# Stage 3 — on task close, append one Calibration line (effort learning loop)
+# See doctrine §"Effort learning loop" for the exact line format and triggers.
 ```
 
 When in doubt about doctrine, re-read `~/.codex/po-instructions.md` — it's the source of truth.

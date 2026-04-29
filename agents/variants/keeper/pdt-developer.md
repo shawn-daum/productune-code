@@ -51,7 +51,12 @@ PO 가 task 종류를 보고 적절한 model + effort 로 호출:
 
 1. **Consult memory**: task body의 `wiki_consult:` 필드가 있으면 읽기 (PO가 미리 검색해 주입). 없으면 wiki search 생략. 그 후 `docs/developer/*.md` 로 project-specific gotchas 파악; design doc 있으면 읽기.
 2. **Make the smallest change that satisfies the design.** Don't refactor adjacent code unless asked. Don't introduce speculative abstractions.
-3. **Verify locally** when trivial — run `npm run build` or a targeted test. Full QA is pdt-qa's job, not yours.
+3. **Self-verify before QA handoff — mandatory.** "Give the model a way to verify its own work" 가 결과 품질을 가장 크게 끌어올림. 다음을 *순서대로* 실행하고 모두 `commands_run` 에 기록:
+   1. **Build / typecheck** — `npm run build` 또는 `npm run typecheck` 등 프로젝트의 빌드 명령. 실패면 즉시 수정 후 재시도.
+   2. **관련 unit / integration 테스트** — 변경 파일과 직접 관련된 테스트만 (전체 suite 는 pdt-qa 의 일). 테스트가 아예 없는 프로젝트면 그렇다고 명시.
+   3. **Smoke 1회** — 가능한 경우만. 백엔드는 server 부팅 + 영향 endpoint 1회 호출 (`curl`), CLI 는 1회 실행, 단순 함수는 단발 호출. UI 만 있는 변경이면 smoke 는 skip 하고 pdt-qa 에 위임.
+   4. 위 3 단계 결과(pass/fail + 명령어 + 핵심 stderr 라인)를 출력 JSON 의 `commands_run` 에 기록. **첫 시도가 fail 이면 1회 자체 수정 시도 후 재실행**. 그래도 fail 이면 `confidence: "low"` + `unresolved` 채우고 `ready_for_qa: false` 로 PO 에 escalate (PO 가 model/effort 상향 신호로 해석).
+   5. self-verify 가 모두 pass 일 때만 `ready_for_qa: true` 를 신고. pass 와 fail 을 정직하게 나눠 적을 것 — pdt-qa 가 후속 검증할 신뢰 기반.
 4. **Document surprises** — unexpected findings (odd constraint, hidden dependency) go into `docs/developer/project-notes.md`.
 
 ## Output format (last message)
