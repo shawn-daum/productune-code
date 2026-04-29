@@ -443,11 +443,58 @@ merge_claude_settings_statusline() {
   return 0
 }
 
+# ── Claude Code preflight — auto-install + auth check ────────────────────────
+ensure_claude_installed() {
+  if command -v claude >/dev/null 2>&1; then
+    return 0
+  fi
+  warn "Claude Code CLI가 설치되어 있지 않습니다."
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    die "비대화형 환경: 먼저 설치 후 install.sh 재실행 — npm install -g @anthropic-ai/claude-code"
+  fi
+  printf '\033[1;36m[install]\033[0m 자동 설치할까요? (npm install -g @anthropic-ai/claude-code) [Y/n]: '
+  read -r ANS || ANS=""
+  case "${ANS:-Y}" in
+    [Yy]*|"")
+      command -v npm >/dev/null 2>&1 || die "npm 미설치 — 먼저 Node.js 설치: https://nodejs.org"
+      npm install -g @anthropic-ai/claude-code || die "Claude Code 설치 실패"
+      command -v claude >/dev/null 2>&1 || die "설치 후에도 claude CLI를 찾을 수 없습니다 — PATH 확인"
+      say "Claude Code 설치 완료: $(claude --version 2>/dev/null | head -1 || echo '?')"
+      ;;
+    *) die "Claude Code 설치 후 install.sh 재실행: npm install -g @anthropic-ai/claude-code" ;;
+  esac
+}
+
+ensure_claude_authed() {
+  local status
+  status="$(claude auth status 2>/dev/null || true)"
+  if printf '%s' "$status" | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+    local who org
+    who="$(printf '%s' "$status" | jq -r '.email // ""' 2>/dev/null)"
+    org="$(printf '%s' "$status" | jq -r '.orgName // ""' 2>/dev/null)"
+    say "Claude Code 인증 OK${who:+ (${who}${org:+ / $org})}"
+    return 0
+  fi
+  warn "Claude Code 로그인이 필요합니다."
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    die "비대화형 환경: 'claude auth login' 먼저 실행 후 install.sh 재실행"
+  fi
+  say "이제 claude 로그인 흐름을 시작합니다 (브라우저가 열릴 수 있습니다)..."
+  claude auth login || die "로그인 실패 — install.sh 재실행 필요"
+  status="$(claude auth status 2>/dev/null || true)"
+  if printf '%s' "$status" | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+    say "로그인 확인 완료"
+  else
+    die "로그인이 완료되지 않았습니다. 'claude auth login' 직접 실행 후 install.sh 재실행"
+  fi
+}
+
 # Preflight
-command -v claude >/dev/null || die "claude CLI not found. Install Claude Code first."
-command -v codex  >/dev/null || die "codex CLI not found. Run: npm i -g @openai/codex"
-command -v uv     >/dev/null || warn "uv not found (optional). Install if needed: brew install uv"
-command -v jq     >/dev/null || die "jq not found. Run: brew install jq"
+command -v jq >/dev/null || die "jq not found. Run: brew install jq"   # required for auth probe + state writes
+ensure_claude_installed
+ensure_claude_authed
+command -v uv >/dev/null || warn "uv not found (optional). Install if needed: brew install uv"
+command -v codex >/dev/null 2>&1 && say "codex CLI 감지됨 (optional fallback engine — '--engine codex' 사용 시만)"
 
 # 1) Symlink agents (and clean up any dangling symlinks from prior renames)
 mkdir -p "$HOME/.claude/agents"
@@ -497,16 +544,20 @@ for BAK in "$HOME"/.codex/po-instructions.md.bak.* "$HOME"/.codex/po-memory.md.b
   mv "$BAK" "${BAK/.codex/.productune}" 2>/dev/null || true
 done
 
-# 2b) Codex CLI config — stays at ~/.codex/config.toml (Codex profile manifest)
-mkdir -p "$HOME/.codex"
-SRC="$ROOT/codex/config.toml"
-DEST="$HOME/.codex/config.toml"
-if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
-  mv "$DEST" "$DEST.bak.$TS"
-  warn "backed up existing $DEST → $DEST.bak.$TS"
+# 2b) Codex CLI config — only if codex CLI is installed (optional fallback engine)
+if command -v codex >/dev/null 2>&1; then
+  mkdir -p "$HOME/.codex"
+  SRC="$ROOT/codex/config.toml"
+  DEST="$HOME/.codex/config.toml"
+  if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
+    mv "$DEST" "$DEST.bak.$TS"
+    warn "backed up existing $DEST → $DEST.bak.$TS"
+  fi
+  cp "$SRC" "$DEST"
+  say "copied codex profile manifest: ~/.codex/config.toml (optional fallback engine)"
+else
+  say "codex CLI 미설치 — codex 프로파일 복사 skip (claude-only 모드)"
 fi
-cp "$SRC" "$DEST"
-say "copied codex profile manifest: ~/.codex/config.toml"
 
 # 2c) PO doctrine — productune-owned, lives at ~/.productune/po-instructions.md
 SRC="$ROOT/po/po-instructions.md"
@@ -550,50 +601,23 @@ if [ ! -e "$ROOT/scripts/my-po" ]; then
   say "created compat symlink scripts/my-po → productune"
 fi
 
-# 5) Interactive: pick default PO engine (only if running in a terminal and not already set)
+# 5) PO engine — claude only (codex selection removed from install)
+#    Power users can still set MY_PO_ENGINE=codex manually in productune.env or pass
+#    `productune --engine codex` per-session, but install no longer prompts for it.
 PO_ENV_FILE="$HOME/.productune/productune.env"
-if [ -t 0 ] && [ -t 1 ] && [ ! -e "$PO_ENV_FILE" ]; then
-  echo
-  printf '\033[1;36m[install]\033[0m Pick a default PO engine for `productune`:\n'
-  cat <<'PROMPT'
-  [1] claude  — Claude Code hosts both PO and personas. Hook-based firm rules
-                (boundary, archive, session reuse) fire deterministically. Default.
-  [2] codex   — Codex CLI hosts the PO orchestrator (Claude Code hooks bypassed
-                — R1-R4 become doctrine-only). Personas still run on Claude Code.
-                Use only if you specifically want OpenAI-side PO billing.
-  [Enter]     — skip; default to 'claude'. You can change anytime by editing
-                ~/.productune/productune.env or running `productune --engine <name>`.
-
-PROMPT
-  printf '  Choice [1/2/Enter]: '
-  read -r CHOICE || CHOICE=""
-  case "$CHOICE" in
-    1|a|cl|claude|anthropic)
-      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      say "default engine: claude (saved to $PO_ENV_FILE, repo path: $ROOT)"
-      ;;
-    2|c|codex)
-      printf 'MY_PO_ENGINE=codex\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      say "default engine: codex (saved to $PO_ENV_FILE, repo path: $ROOT)"
-      ;;
-    "")
-      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      say "default engine: claude (no preference picked; saved baseline to $PO_ENV_FILE)"
-      ;;
-    *)
-      warn "unrecognized choice '$CHOICE'; saving claude + repo path baseline"
-      printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-      ;;
-  esac
-elif [ -e "$PO_ENV_FILE" ]; then
+if [ ! -e "$PO_ENV_FILE" ]; then
+  printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
+  say "default engine: claude (saved to $PO_ENV_FILE, repo path: $ROOT)"
+else
+  # Refresh repo path in case the user moved the clone; preserve any existing engine
+  # override (e.g. someone manually set MY_PO_ENGINE=codex for fallback testing).
   CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
-  # Update repo path in case user moved the clone
   if grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
     sed -i.bak -E "s|^PRODUCTUNE_REPO=.*|PRODUCTUNE_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
   else
     printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   fi
-  say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-?}, repo path refreshed to $ROOT)"
+  say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-claude}, repo path refreshed to $ROOT)"
 fi
 
 # 5b) Non-interactive / partial-env safety net — ensure MY_PO_ENGINE + PRODUCTUNE_REPO are
