@@ -38,7 +38,7 @@ if [ -d "$CWD/.git" ] || git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 # po-state.json — last-acting persona + active ticket/slug
-STATE="$CWD/.codex/po-state.json"
+STATE="$CWD/.productune/po-state.json"
 PERSONA=""
 TICKET=""
 if [ -f "$STATE" ] && command -v jq >/dev/null 2>&1; then
@@ -47,7 +47,7 @@ if [ -f "$STATE" ] && command -v jq >/dev/null 2>&1; then
 fi
 
 # productune.env — wiki backend
-ENV_FILE="$HOME/.codex/productune.env"
+ENV_FILE="$HOME/.productune/productune.env"
 WIKI=""
 if [ -f "$ENV_FILE" ]; then
   WIKI="$(grep -E '^WIKI_BACKEND=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\r\n')"

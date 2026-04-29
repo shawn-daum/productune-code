@@ -77,7 +77,7 @@ fi
 if [ -z "$HAS_LLM" ]; then
   warn "ollama model 'gemma4:26b' not found. Pull it: ollama pull gemma4:26b"
   warn "  (extraction quality depends heavily on this — alternates: gemma2:27b, qwen2.5:32b)"
-  warn "  set GRAPHITI_LLM_MODEL=<chosen-tag> in ~/.codex/productune.env if you pick an alternate"
+  warn "  set GRAPHITI_LLM_MODEL=<chosen-tag> in ~/.productune/productune.env if you pick an alternate"
   warn "  or run install.sh and pick option [4] Hybrid for hosted-quality extraction with local embed"
 fi
 [ -n "$HAS_EMB" ] || warn "no embedding model found on ollama. Recommend: ollama pull nomic-embed-text"

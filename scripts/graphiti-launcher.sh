@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # graphiti-launcher.sh — spawn Graphiti MCP server with provider settings
-# read from ~/.codex/productune.env. Persona name is passed as $1
+# read from ~/.productune/productune.env. Persona name is passed as $1
 # and used as the Graphiti group_id (persona-<name>).
 #
 # Why a launcher (vs. inlining args in agents/*.md):
 # - Provider choice (OpenAI / Anthropic / Ollama) is per-user, picked at
 #   install.sh time. agents/*.md files are git-shared and persona-scoped,
 #   they shouldn't bake in user-specific provider config.
-# - This launcher reads ~/.codex/productune.env at every spawn so
+# - This launcher reads ~/.productune/productune.env at every spawn so
 #   changing the env file takes effect on the next persona invocation
 #   (no re-install needed).
 
@@ -16,7 +16,7 @@ set -euo pipefail
 PERSONA="${1:?usage: graphiti-launcher.sh <persona-name>}"
 
 # Source user config (provider choices, repo path)
-ENV_FILE="$HOME/.codex/productune.env"
+ENV_FILE="$HOME/.productune/productune.env"
 if [ -r "$ENV_FILE" ]; then
   # shellcheck source=/dev/null
   set -a; . "$ENV_FILE"; set +a

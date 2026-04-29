@@ -44,7 +44,7 @@
 ### Session = Claude Code native
 
 - 추가 라이브러리 0 개. `--session-id <uuid>` 로 고정, `--resume <id>` 로 복귀.
-- 페르소나별로 세션 id 를 파일 하나에 저장(`.codex/persona-sessions.json`).
+- 페르소나별로 세션 id 를 파일 하나에 저장(`.productune/persona-sessions.json`).
 
 ### 탈락 후보 (간단히)
 
@@ -82,7 +82,7 @@
 Persona 격리 원칙:
 - Wiki: `group_id="persona:<name>"` 를 각 페르소나 system prompt 에 강제 → 검색/추가 모두 자기 서브그래프로 한정.
 - Memory: `basic-memory --project` 플래그로 프로젝트 디렉토리 격리. 페르소나 간에는 프로젝트 내 네임스페이스(하위 폴더 `designer/`, `developer/` 등)로 분리.
-- Session: 페르소나별 session uuid, `.codex/persona-sessions.json` 에 매핑 보관.
+- Session: 페르소나별 session uuid, `.productune/persona-sessions.json` 에 매핑 보관.
 
 ## 승격(promotion) 정책
 
@@ -249,11 +249,11 @@ Local-only 모드 참고 (주석으로 `.mcp.json.local` 같은 대체 파일 �
 - `.codex/po-instructions.md`: PO doctrine.
   - 4 페르소나 카탈로그 및 라우팅 규칙
   - 호출 템플릿 (`claude --agent <p> -p "<t>" --session-id $(jq ...) --resume --output-format json`)
-  - `.codex/persona-sessions.json` 읽기/쓰기 (없으면 초기화, 신규는 새 uuid 생성)
+  - `.productune/persona-sessions.json` 읽기/쓰기 (없으면 초기화, 신규는 새 uuid 생성)
   - 시퀀스: Planner → Designer → Developer → QA, QA 실패 시 loop-back
   - "PO 는 코드 직접 편집 금지, 구현은 항상 developer 위임"
   - 각 페르소나 결과 JSON 을 PO 가 취합/요약하는 방식
-- `.codex/persona-sessions.json`: `{}` 로 시작, gitignore.
+- `.productune/persona-sessions.json`: `{}` 로 시작, gitignore.
 
 ### D. AGENTS.md 보강
 
@@ -277,8 +277,8 @@ Local-only 모드 참고 (주석으로 `.mcp.json.local` 같은 대체 파일 �
 
 ### F. `.gitignore`
 
-- `.codex/persona-sessions.json`
-- `.codex/logs/`
+- `.productune/persona-sessions.json`
+- `.productune/logs/`
 - `.basic-memory-cache/` (Basic Memory sqlite 가 repo 에 떨어질 경우)
 - (Graphiti 는 `~/.graphiti/` 기본값이므로 repo 에 안 떨어짐)
 
@@ -406,13 +406,13 @@ claude --mcp-config .mcp.json -p "Using graphiti, invalidate the fact that says 
 7. **Project isolation**: 다른 디렉토리에 새 repo 만들고 동일 워크플로 → 이전 프로젝트의 Basic Memory 노트가 안 섞이는지.
 8. **Bi-temporal**: designer 에 "색상은 파스텔" 저장 → 나중에 "색상은 다크 모노톤" 저장 → 검색 시 최신이 우선하는지, 과거가 여전히 `invalidated` 로 남아있는지.
 9. **권한 모드 sanity**: qa 가 `allowedTools` 밖 명령 (예: `npm install <pkg>`) 거부하는지.
-10. **재개**: `codex resume`, `.codex/persona-sessions.json` 유지되는지.
+10. **재개**: `codex resume`, `.productune/persona-sessions.json` 유지되는지.
 
 ## Critical Files (작성/수정 대상)
 
 - NEW: `.claude/agents/planner.md`, `designer.md`, `developer.md`, `qa.md`
 - NEW: `.mcp.json` (repo-local, basic-memory + graphiti)
-- NEW: `.codex/config.toml`, `.codex/po-instructions.md`, `.codex/persona-sessions.json`
+- NEW: `.codex/config.toml`, `.codex/po-instructions.md`, `.productune/persona-sessions.json`
 - MODIFY: `AGENTS.md` (productune + memory model 섹션)
 - MODIFY: `package.json` (scripts 7개)
 - MODIFY: `.gitignore` (+3 항목)

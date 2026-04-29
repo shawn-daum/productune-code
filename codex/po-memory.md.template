@@ -19,4 +19,4 @@
 <!-- Effort learning loop. PO appends one line per task close.
      Format: - (YYYY-MM-DD) <slug> · <complexity_class> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · escalation=<none|Path1|Path2|xhigh> · note: <한 줄 학습>
      Stage 1 reads the recent N lines to bias routing for similar task classes.
-     See ~/.codex/po-instructions.md §"Effort learning loop" for full doctrine. -->
+     See ~/.productune/po-instructions.md §"Effort learning loop" for full doctrine. -->

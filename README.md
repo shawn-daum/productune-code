@@ -175,7 +175,7 @@ claude --agent pdt-developer        # 단일 페르소나
 | 검색 품질 | Knowledge Graph (관계 추론) | 파일 검색 |
 | 활성 페르소나 | pdt-developer, pdt-designer, pdt-qa | + pdt-wiki-keeper |
 
-backend 는 `~/.codex/productune.env` 의 `WIKI_BACKEND=` 로 확인/변경. 변경 후 `productune onboard` 재실행.
+backend 는 `~/.productune/productune.env` 의 `WIKI_BACKEND=` 로 확인/변경. 변경 후 `productune onboard` 재실행.
 
 ## Quality-based escalation
 
@@ -202,7 +202,7 @@ Cleanup: `productune gc` (dry-run) / `productune gc -y` (자동 정리). 결정 
 ## Ticket system
 
 PO 가 작업을 ticket 단위로 영속화:
-- `<project>/.codex/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
+- `<project>/.productune/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
 - Ticket close 시 자동 export — `<project>/docs/tickets/<round-id>/T-<id>.md` git-versioned
 
 ## Memory promotion
@@ -252,7 +252,7 @@ productune/
 - **"claude doesn't list my personas"** → `productune onboard` 재실행 (symlink 재생성 + dangling sweep)
 - **"graphiti MCP fails to start"** → `docker ps` (falkordb 확인), `curl http://localhost:11434/api/tags` (ollama 확인), `productune onboard` 로 graphiti 재셋업
 - **"entity extraction quality is bad"** → `config/model-catalog.json` 에서 더 큰 모델로 교체 후 `productune onboard`
-- **legacy state.json schema** — 옛 `top-level persona_sessions` 면 `rm <project>/.codex/po-state.json` 후 PO 다시 시작
+- **legacy state.json schema** — 옛 `top-level persona_sessions` 면 `rm <project>/.productune/po-state.json` 후 PO 다시 시작
 
 ## Updating
 
@@ -281,8 +281,9 @@ productune uninstall
 
 ```sh
 rm -rf ~/.claude/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa,pdt-wiki-keeper}.md
-rm ~/.codex/{config.toml,po-instructions.md,productune.env}
+rm ~/.codex/config.toml                         # codex profile manifest
+rm -rf ~/.productune                            # po-instructions, po-memory, productune.env, wiki/
 docker rm -f falkordb && docker volume rm falkordb-data
-rm -rf ~/.graphiti ~/.productune ~/.claude/skills/{mattpocock,phuryn}
+rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn}
 rm -rf <clone-dir>       # install 시 clone 한 위치
 ```

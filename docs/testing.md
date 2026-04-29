@@ -74,10 +74,10 @@ claude --agent pdt-qa -p "Verify the README change. Run git status and git diff,
 
 Codex PO 가 여러 페르소나에 위임하는 흐름 + task 단위 세션 모델 (current_task / past_tasks / 부활 / 타임라인 렌더링) 검증.
 
-> **사전 마이그레이션**: 옛 버전 테스트 스위트로 만든 stale `<project>/.codex/po-state.json` (top-level `persona_sessions` 인 legacy flat schema) 이 남아있으면 먼저 삭제:
+> **사전 마이그레이션**: 옛 버전 테스트 스위트로 만든 stale `<project>/.productune/po-state.json` (top-level `persona_sessions` 인 legacy flat schema) 이 남아있으면 먼저 삭제:
 >
 > ```sh
-> rm -f /tmp/co-test/.codex/po-state.json
+> rm -f /tmp/co-test/.productune/po-state.json
 > ```
 >
 > PO 가 다음 실행 시 현행 `current_task` / `past_tasks` 스키마로 새로 생성.
@@ -97,7 +97,7 @@ EOF
 git add . && git commit -q -m "reset" 2>/dev/null || true
 
 # 이전 사이클의 legacy po-state 삭제 (안전 — 세션이 새로 시작됨)
-rm -f .codex/po-state.json
+rm -f .productune/po-state.json
 
 # 3.2 — PO 시작 — 셋 중 하나 고르기
 
@@ -139,7 +139,7 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 - PO 가 페르소나 호출 사이에 진척 마커를 찍음
 - 최종 요약은 PO 가 자기 말로 합성한 문장 (raw JSON 덤프 아님)
 - PO 가 시작 시 `→ new task '<slug>'` 한 줄 trace 를 찍음
-- 실행 후 `cat .codex/po-state.json | jq '.current_task'` 결과에 `slug`, `started_at`, `request_summary`, `persona_sessions.pdt-developer` (실제 UUID), `persona_session_meta.pdt-developer.turns ≥ 1` 가 채워져 있음
+- 실행 후 `cat .productune/po-state.json | jq '.current_task'` 결과에 `slug`, `started_at`, `request_summary`, `persona_sessions.pdt-developer` (실제 UUID), `persona_session_meta.pdt-developer.turns ≥ 1` 가 채워져 있음
 - `recent_turns` 에 `current_task.slug` 와 일치하는 `task_slug` entry 가 최소 1개
 
 ### 3.3 — 후속 turn (같은 task)
@@ -160,8 +160,8 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 **합격 기준:**
 - 위임 전에 `→ continuing '<slug>'` trace 가 보임
 - pdt-developer 만 호출, 새 세션이 아니라 resume 된 세션
-- `jq '.current_task.slug' .codex/po-state.json` 가 이전과 **같은 slug** (archive 도, 새 task 도 없음)
-- `jq '.current_task.persona_session_meta.pdt-developer.turns' .codex/po-state.json` 가 1 증가
+- `jq '.current_task.slug' .productune/po-state.json` 가 이전과 **같은 slug** (archive 도, 새 task 도 없음)
+- `jq '.current_task.persona_session_meta.pdt-developer.turns' .productune/po-state.json` 가 1 증가
 
 ### 3.4 — 새 task (다른 의도 → archive + 새 current_task)
 
@@ -171,13 +171,13 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 
 **관찰 포인트:**
 - PO 가 `→ new task 'add-license-section' (또는 비슷한 slug)` trace 출력 (정확한 표현 유연)
-- 이전 task archive: `jq '.past_tasks[-1]' .codex/po-state.json` 결과에 직전 `current_task` 내용 + `ended_at`, `final_status`, `outcome_summary` 가 채워짐
+- 이전 task archive: `jq '.past_tasks[-1]' .productune/po-state.json` 결과에 직전 `current_task` 내용 + `ended_at`, `final_status`, `outcome_summary` 가 채워짐
 - 새 `current_task` 가 빈 `persona_sessions` 로 할당 (pdt-developer 가 새 session id 받음, 이전 거 아님)
 
 **합격 기준:**
-- `jq '.past_tasks | length' .codex/po-state.json` 가 ≥1
-- `jq '.past_tasks[-1].final_status' .codex/po-state.json` 가 `done` / `blocked` / `abandoned` 중 하나
-- `jq '.past_tasks[-1].outcome_summary' .codex/po-state.json` 가 1–2 문장 (null 도, raw JSON 도 아님)
+- `jq '.past_tasks | length' .productune/po-state.json` 가 ≥1
+- `jq '.past_tasks[-1].final_status' .productune/po-state.json` 가 `done` / `blocked` / `abandoned` 중 하나
+- `jq '.past_tasks[-1].outcome_summary' .productune/po-state.json` 가 1–2 문장 (null 도, raw JSON 도 아님)
 - `current_task.slug` 가 archive 된 entry 의 slug 와 다름
 
 ### 3.5 — 타임라인 렌더링 (페르소나 호출 0)
@@ -206,7 +206,7 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 - 다음 페르소나 호출이 *원래* pdt-developer 세션을 resume → dev 가 sum.js 컨텍스트를 "기억" 함.
 
 **합격 기준:**
-- 부활 후 `jq '.current_task.slug' .codex/po-state.json` 가 부활된 slug 와 일치
+- 부활 후 `jq '.current_task.slug' .productune/po-state.json` 가 부활된 slug 와 일치
 - 부활된 task 의 `pdt-developer` session id 가 직전 archive 된 것과 동일 (사전에 `past_tasks` 스냅샷 떠놨다면 비교)
 - license-section task 가 `past_tasks` 로 이동
 
@@ -246,18 +246,18 @@ codex exec --profile po --output-last-message /tmp/po-out.txt \
 
 **합격 기준:**
 - 세 trace (`→ new task`, `→ continuing`, `→ resuming`) 모두 정확한 slug 로 출력
-- `jq '.current_task.slug' .codex/po-state.json` 가 가장 최근 prefix 의 slug 와 일치
-- `jq '.past_tasks | map(.slug)' .codex/po-state.json` 에 archive 된 slug 들이 시간순으로 정렬
+- `jq '.current_task.slug' .productune/po-state.json` 가 가장 최근 prefix 의 slug 와 일치
+- `jq '.past_tasks | map(.slug)' .productune/po-state.json` 에 archive 된 slug 들이 시간순으로 정렬
 
 ### 3.8 — install.sh 멱등 재실행 + autocompact append
 
 이 sub-phase 는 `productune.env` 를 갈아엎으니 먼저 백업.
 
 ```sh
-cp ~/.codex/productune.env ~/.codex/productune.env.before-test 2>/dev/null || true
-rm ~/.codex/productune.env
+cp ~/.productune/productune.env ~/.productune/productune.env.before-test 2>/dev/null || true
+rm ~/.productune/productune.env
 bash <productune-clone>/scripts/install.sh   # Enter (engine), Enter (Graphiti) 응답
-grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.codex/productune.env
+grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.productune/productune.env
 ```
 
 **합격 기준:**
@@ -268,17 +268,17 @@ grep -E 'GRAPHITI_(LLM|EMBEDDER)_PROVIDER|CLAUDE_AUTOCOMPACT|MY_PO_ENGINE' ~/.co
 멱등성 재확인 — 사용자 override 시뮬레이션을 위해 autocompact 값 수동 변경 후 install.sh 재실행해서 그대로 보존되는지:
 
 ```sh
-sed -i.bak 's/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85/' ~/.codex/productune.env
-rm ~/.codex/productune.env.bak
+sed -i.bak 's/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70/CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85/' ~/.productune/productune.env
+rm ~/.productune/productune.env.bak
 bash <productune-clone>/scripts/install.sh   # 기존 env 파일 인식, 재프롬프트 안 함
-grep CLAUDE_AUTOCOMPACT ~/.codex/productune.env
+grep CLAUDE_AUTOCOMPACT ~/.productune/productune.env
 # 기대: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=85 (보존, 70 으로 리셋 안 됨)
 ```
 
 원래 설정 복원:
 
 ```sh
-mv ~/.codex/productune.env.before-test ~/.codex/productune.env 2>/dev/null || true
+mv ~/.productune/productune.env.before-test ~/.productune/productune.env 2>/dev/null || true
 ```
 
 ## Phase 4 — 메모리 tier (Phase 0 필요)
@@ -344,8 +344,8 @@ QA 실패를 가짜로 주입해 PO 의 evolution 제안 트리거:
 ```sh
 cd /tmp/co-test
 # 가짜 QA 실패 3개를 프로젝트 po-state 에 수동 주입
-mkdir -p .codex
-cat > .codex/po-state.json <<'EOF'
+mkdir -p .productune
+cat > .productune/po-state.json <<'EOF'
 {
   "persona_sessions": {},
   "recent_turns": [
@@ -425,7 +425,7 @@ productune
 ### 6.2 — Ticket 영속화
 
 ```sh
-jq '.current_round, .current_task.ticket_id, .current_task.stage' /tmp/productune-mvp-test/.codex/po-state.json
+jq '.current_round, .current_task.ticket_id, .current_task.stage' /tmp/productune-mvp-test/.productune/po-state.json
 # 기대: "v1.0-MVP", "T-NNN", "<stage>"
 
 ls /tmp/productune-mvp-test/docs/tickets/v1.0-MVP/ 2>/dev/null
@@ -500,11 +500,11 @@ productune
 
 **"persona doesn't respect gate"** — PO 는 시작 시 `po-instructions.md` 를 읽음. 세션 도중에 수정했으면 Codex 재시작.
 
-**"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — (또는 PO 가) `claude --session-id <uuid>` 로 그 id 의 새 세션을 *생성* 시도. 미지원 — `--session-id` 는 fork-session flow 안에서만 허용. 정상 패턴: 첫 호출에 `--session-id` 생략 (Claude 가 할당, 응답 JSON 의 `.session_id` 로 반환), 이후 호출에 `--resume <id>` 사용. `--resume` 와 `--session-id` 동시 사용 금지. PO doctrine 인 `~/.codex/po-instructions.md` 가 이미 이 패턴 — 만약 PO 에서 이 에러를 만나면 `bash scripts/install.sh` 로 최신 doctrine 재배포.
+**"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — (또는 PO 가) `claude --session-id <uuid>` 로 그 id 의 새 세션을 *생성* 시도. 미지원 — `--session-id` 는 fork-session flow 안에서만 허용. 정상 패턴: 첫 호출에 `--session-id` 생략 (Claude 가 할당, 응답 JSON 의 `.session_id` 로 반환), 이후 호출에 `--resume <id>` 사용. `--resume` 와 `--session-id` 동시 사용 금지. PO doctrine 인 `~/.productune/po-instructions.md` 가 이미 이 패턴 — 만약 PO 에서 이 에러를 만나면 `bash scripts/install.sh` 로 최신 doctrine 재배포.
 
-**`kill -9` 후 stale `.codex/po.lock`** — 수동 정리 불필요. 다음 `productune` 호출이 lock 읽고, `kill -0` 으로 PID 가 죽었음을 확인하면 `[productune] stale lock from pid <X>; reclaiming` 출력 후 lock 삭제, 정상 진행.
+**`kill -9` 후 stale `.productune/po.lock`** — 수동 정리 불필요. 다음 `productune` 호출이 lock 읽고, `kill -0` 으로 PID 가 죽었음을 확인하면 `[productune] stale lock from pid <X>; reclaiming` 출력 후 lock 삭제, 정상 진행.
 
-**Legacy `po-state.json` 스키마 (flat `persona_sessions`)** — task-lifecycle 변경 전에 셋업했다면 `<project>/.codex/po-state.json` 이 다음 모양일 수 있음:
+**Legacy `po-state.json` 스키마 (flat `persona_sessions`)** — task-lifecycle 변경 전에 셋업했다면 `<project>/.productune/po-state.json` 이 다음 모양일 수 있음:
 
 ```json
 { "persona_sessions": {"pdt-designer": "uuid", ...}, "recent_turns": [...] }
@@ -513,7 +513,7 @@ productune
 새 doctrine 은 top-level 이 아니라 `current_task.persona_sessions` 아래를 읽음. 가장 단순한 마이그레이션은 그냥 비우고 PO 가 다음 실행에 새로 만들도록 두는 것:
 
 ```sh
-rm /path/to/project/.codex/po-state.json
+rm /path/to/project/.productune/po-state.json
 ```
 
 페르소나 tier 지식 (project markdown + Graphiti wiki + MEMORY.md) 은 영향 없음 — in-flight session id 만 리셋. 다음 페르소나 호출이 새 세션으로 시작. 업그레이드 시점에 진행 중이던 task 는 대개 이미 완료 상태라 무리 없음.

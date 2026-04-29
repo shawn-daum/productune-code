@@ -247,23 +247,23 @@ PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
 | PO 오케스트레이터 | Codex CLI 또는 Claude Code (사용자 선택) |
 | 페르소나 4종 | `agents/{productune,pdt-designer,pdt-developer,pdt-qa}.md` + frontmatter (planner role 흡수) |
 | 페르소나 호출 | `claude --agent X --print --output-format json` |
-| 상태 저장 | `<project>/.codex/po-state.json` (current_task / past_tasks / recent_turns) |
-| 사용자 성향 메모 | `~/.codex/po-memory.md` |
+| 상태 저장 | `<project>/.productune/po-state.json` (current_task / past_tasks / recent_turns) |
+| 사용자 성향 메모 | `~/.productune/po-memory.md` |
 | 단기 기억 (session) | Claude Code 네이티브 `--resume <id>` |
 | 중기 기억 (project) | repo 안 markdown (`docs/<persona>/*.md`) |
 | 장기 기억 (wiki) | Graphiti MCP (FalkorDB + Ollama 로컬) |
-| 병렬 격리 | `git worktree` + `<root>/.codex/po.lock` |
+| 병렬 격리 | `git worktree` + `<root>/.productune/po.lock` |
 | 권한 모델 | persona frontmatter 의 `tools:` 패턴 allow-list |
-| Doctrine | `~/.codex/po-instructions.md` (≤500 줄) |
+| Doctrine | `~/.productune/po-instructions.md` (≤500 줄) |
 
 ---
 
 ## 한계 / 다음 단계
 
 **해결됨 (2026-04-28)**
-- 메모리 압축 자동화 — `install.sh` 가 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 을 `~/.codex/productune.env` 에 기본값으로 박아두고 `my-po` 가 자동 export. shell rc 편집 불필요. (직접 `claude --agent` 호출 시엔 미적용 — 한계로 남음.)
+- 메모리 압축 자동화 — `install.sh` 가 `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` 을 `~/.productune/productune.env` 에 기본값으로 박아두고 `my-po` 가 자동 export. shell rc 편집 불필요. (직접 `claude --agent` 호출 시엔 미적용 — 한계로 남음.)
 - Graphiti 추출 품질 — install.sh 옵션 [3] Local description 보강 (대체 모델 `gemma2:27b`, `qwen2.5:32b` 추천). setup-graphiti.sh sanity-check 에 호스티드 옵션 ([2] Anthropic) fallback 안내 추가.
-- PO disposition 명시화 — silent 분류 폐지. 모든 turn 에 `→ continuing '<slug>'` / `→ new task '<slug>'` 1줄 trace + 사용자 override prefix (`/new`, `/continue`, `/resume <slug>`). 교정이 ≥2번 누적되면 `~/.codex/po-memory.md` 에 패턴 학습.
+- PO disposition 명시화 — silent 분류 폐지. 모든 turn 에 `→ continuing '<slug>'` / `→ new task '<slug>'` 1줄 trace + 사용자 override prefix (`/new`, `/continue`, `/resume <slug>`). 교정이 ≥2번 누적되면 `~/.productune/po-memory.md` 에 패턴 학습.
 
 **여전히 한계**
 - 직접 `claude --agent my-X` 호출 시 autocompact env 미상속 — wrapper 안 거치니 의도된 한계. shell rc 직접 추가로 보완.
@@ -272,7 +272,7 @@ PO 가 persona 호출 0번으로 `po-state.json` 만 읽고 렌더링.
 - Disposition 휴리스틱의 "When in doubt" 케이스 — 명시 trace + override 로 교정창은 짧아졌지만, 분류 자체의 정확도는 휴리스틱 한계 안에 있음. LLM 기반 분류는 비용/지연 trade-off 로 미루기.
 
 **검토 가능한 다음 step**
-- 다중 사용자 / 팀 — `~/.codex/po-memory.md` 가 single-user. 팀 공유하려면 별도 sync 필요
+- 다중 사용자 / 팀 — `~/.productune/po-memory.md` 가 single-user. 팀 공유하려면 별도 sync 필요
 - 시각적 timeline — 지금은 텍스트 렌더링. web UI 또는 Mermaid gantt 차트 출력
 - 페르소나 자동 평가 — 지금은 사용자 피드백으로만 evolution 트리거. 자동 quality metric 가능
 

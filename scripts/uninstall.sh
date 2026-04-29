@@ -5,10 +5,10 @@ set -euo pipefail
 #
 # Removes:
 #   - ~/.claude/agents/*.md  symlinks pointing to this repo
-#   - ~/.codex/productune.env
-#   - ~/.codex/po-instructions.md  (and .bak.* siblings)
+#   - ~/.productune/productune.env
+#   - ~/.productune/po-instructions.md  (and .bak.* siblings)
 #   - ~/.codex/config.toml         (restores latest .bak if present)
-#   - ~/.codex/po-memory.md        (opt-in — contains accumulated PO memory)
+#   - ~/.productune/po-memory.md        (opt-in — contains accumulated PO memory)
 #   - ~/.productune/               (opt-in — wiki/fs backend data)
 #   - PATH entry / symlink         (auto, based on PRODUCTUNE_PATH_METHOD in productune.env)
 
@@ -36,7 +36,7 @@ SKIPPED=0
 # ── 0. Read PATH method from productune.env BEFORE it's deleted ───────────────
 PATH_METHOD=""
 PATH_RC=""
-ENV_FILE="$HOME/.codex/productune.env"
+ENV_FILE="$HOME/.productune/productune.env"
 if [ -f "$ENV_FILE" ]; then
   PATH_METHOD="$(grep -E '^PRODUCTUNE_PATH_METHOD=' "$ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || true)"
   PATH_RC="$(grep -E '^PRODUCTUNE_PATH_RC=' "$ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || true)"
@@ -71,18 +71,18 @@ else
 fi
 
 # ── 2. productune.env ─────────────────────────────────────────────────────────
-say "2) Removing ~/.codex/productune.env..."
-if [ -f "$HOME/.codex/productune.env" ]; then
-  rm -f "$HOME/.codex/productune.env"
-  say "  removed: ~/.codex/productune.env"
+say "2) Removing ~/.productune/productune.env..."
+if [ -f "$HOME/.productune/productune.env" ]; then
+  rm -f "$HOME/.productune/productune.env"
+  say "  removed: ~/.productune/productune.env"
   REMOVED=$((REMOVED+1))
 else
   say "  not found — already clean"
 fi
 
 # ── 3. po-instructions.md (and .bak siblings) ────────────────────────────────
-say "3) Removing ~/.codex/po-instructions.md..."
-for F in "$HOME/.codex/po-instructions.md" "$HOME"/.codex/po-instructions.md.bak.*; do
+say "3) Removing ~/.productune/po-instructions.md..."
+for F in "$HOME/.productune/po-instructions.md" "$HOME"/.codex/po-instructions.md.bak.*; do
   if [ -f "$F" ]; then
     rm -f "$F"
     say "  removed: $F"
@@ -106,36 +106,41 @@ else
 fi
 
 # ── 5. po-memory.md — opt-in (contains accumulated data) ─────────────────────
-say "5) PO memory: ~/.codex/po-memory.md"
-if [ -f "$HOME/.codex/po-memory.md" ]; then
+say "5) PO memory: ~/.productune/po-memory.md"
+if [ -f "$HOME/.productune/po-memory.md" ]; then
   warn "  This file contains accumulated PO learnings. Deleting is permanent."
-  if confirm "Delete ~/.codex/po-memory.md?"; then
-    rm -f "$HOME/.codex/po-memory.md"
-    say "  removed: ~/.codex/po-memory.md"
+  if confirm "Delete ~/.productune/po-memory.md?"; then
+    rm -f "$HOME/.productune/po-memory.md"
+    say "  removed: ~/.productune/po-memory.md"
     REMOVED=$((REMOVED+1))
   else
-    say "  kept: ~/.codex/po-memory.md"
+    say "  kept: ~/.productune/po-memory.md"
     SKIPPED=$((SKIPPED+1))
   fi
 else
   say "  not found — nothing to do"
 fi
 
-# ── 6. ~/.productune/ wiki data — opt-in ─────────────────────────────────────
-say "6) Wiki data: ~/.productune/"
-if [ -d "$HOME/.productune" ]; then
-  WIKI_SIZE=$(du -sh "$HOME/.productune" 2>/dev/null | awk '{print $1}' || echo "?")
+# ── 6. ~/.productune/wiki/ data — opt-in ─────────────────────────────────────
+say "6) Wiki data: ~/.productune/wiki/"
+if [ -d "$HOME/.productune/wiki" ]; then
+  WIKI_SIZE=$(du -sh "$HOME/.productune/wiki" 2>/dev/null | awk '{print $1}' || echo "?")
   warn "  Size: $WIKI_SIZE — contains fs-backend wiki pages."
-  if confirm "Delete ~/.productune/ (all wiki data)?"; then
-    rm -rf "$HOME/.productune"
-    say "  removed: ~/.productune/"
+  if confirm "Delete ~/.productune/wiki/ (all wiki data)?"; then
+    rm -rf "$HOME/.productune/wiki"
+    say "  removed: ~/.productune/wiki/"
     REMOVED=$((REMOVED+1))
   else
-    say "  kept: ~/.productune/"
+    say "  kept: ~/.productune/wiki/"
     SKIPPED=$((SKIPPED+1))
   fi
 else
   say "  not found — nothing to do"
+fi
+
+# Try to remove ~/.productune/ if empty (may still contain wiki, jobs, etc.)
+if [ -d "$HOME/.productune" ] && [ -z "$(ls -A "$HOME/.productune" 2>/dev/null)" ]; then
+  rmdir "$HOME/.productune" 2>/dev/null && say "  removed empty: ~/.productune/"
 fi
 
 # ── 7. PATH entry / symlink ───────────────────────────────────────────────────

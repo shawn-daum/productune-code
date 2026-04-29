@@ -2,7 +2,7 @@
 # Claude Code hook — PostCompact
 # Re-injects the productune PO doctrine essentials into the session right after
 # Claude compacts its context. The doctrine file is the source of truth at
-# ~/.codex/po-instructions.md, but a compaction can drop it from the rolling
+# ~/.productune/po-instructions.md, but a compaction can drop it from the rolling
 # context — this short reminder keeps the critical rules visible.
 #
 # Stdout from a hook is appended to the session as a system message, so we keep
@@ -11,16 +11,16 @@
 
 set +e
 
-DOCTRINE="$HOME/.codex/po-instructions.md"
-MEMORY="$HOME/.codex/po-memory.md"
+DOCTRINE="$HOME/.productune/po-instructions.md"
+MEMORY="$HOME/.productune/po-memory.md"
 
 cat <<'EOF'
 [productune doctrine — re-injected after compaction]
 
 Re-read these files now if anything below feels unclear:
-  - ~/.codex/po-instructions.md   (full PO doctrine)
-  - ~/.codex/po-memory.md         (user prefs + Model/Effort Calibration log)
-  - ./.codex/po-state.json        (current_task, recent_turns)
+  - ~/.productune/po-instructions.md   (full PO doctrine)
+  - ~/.productune/po-memory.md         (user prefs + Model/Effort Calibration log)
+  - ./.productune/po-state.json        (current_task, recent_turns)
 
 Hard rules that survive compaction:
   - Stage 1 read order: po-memory.md (incl. ## Model/Effort Calibration) → po-state.json.

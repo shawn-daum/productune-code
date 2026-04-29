@@ -8,11 +8,11 @@ This doc is the playbook for the common evolutions PO might suggest, or you migh
 
 Use `my-po` (the wrapper from `scripts/my-po`) instead of `codex --profile po` directly. When a second `my-po` is launched in a project where another is already running, the wrapper automatically:
 
-1. Detects the live PO via `<root>/.codex/po.lock` (PID + alive check).
+1. Detects the live PO via `<root>/.productune/po.lock` (PID + alive check).
 2. Creates a `git worktree` at `<parent>/<repo>-my-po-<timestamp>-<pid>` on a new branch `my-po/<timestamp>-<pid>`.
 3. `cd`s into the worktree and launches a fresh codex session there.
 
-The two PO instances now have separate `.codex/po-state.json` files, separate persona session UUIDs, and separate branches — they cannot race on shared state.
+The two PO instances now have separate `.productune/po-state.json` files, separate persona session UUIDs, and separate branches — they cannot race on shared state.
 
 Worktrees auto-created this way **persist after PO exits** (the wrapper does not delete them — your work could still be sitting there uncommitted). Two ways to clean up:
 
@@ -202,7 +202,7 @@ Keep this in mind during PO suggestions: PO should always propose the **cheapest
 
 If you edit `agents/*.md`, PO will pick up the change on its next invocation (symlinks). You don't need to notify it.
 
-If you add a **new** persona, update `codex/po-instructions.md`'s "Personas you delegate to" table so PO knows it can delegate there. Then re-run `install.sh` to copy the updated `po-instructions.md` to `~/.codex/`.
+If you add a **new** persona, update `codex/po-instructions.md`'s "Personas you delegate to" table so PO knows it can delegate there. Then re-run `install.sh` to copy the updated `po-instructions.md` to `~/.productune/`.
 
 If you change PO's doctrine itself (e.g. new gate rule, new evolution trigger), same — edit + `install.sh`.
 

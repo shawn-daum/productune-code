@@ -27,14 +27,14 @@ model_reasoning_effort = "high"
 approval_policy        = "never"
 sandbox_mode           = "danger-full-access"
 model_reasoning_effort = "high"
-model_instructions_file = "~/.codex/po-instructions.md"
+model_instructions_file = "~/.productune/po-instructions.md"
 
 # Legacy alias — keeps `codex --profile po` working for one transition round.
 [profiles.po]
 approval_policy        = "never"
 sandbox_mode           = "danger-full-access"
 model_reasoning_effort = "high"
-model_instructions_file = "~/.codex/po-instructions.md"
+model_instructions_file = "~/.productune/po-instructions.md"
 
 # ────────────────────────────────────────────────
 # profile: local  (Ollama fallback)
@@ -51,4 +51,4 @@ model          = "qwen3.5:4B"
 approval_policy = "never"
 sandbox_mode    = "workspace-write"
 model_reasoning_effort  = "medium"
-model_instructions_file = "~/.codex/po-instructions.md"
+model_instructions_file = "~/.productune/po-instructions.md"

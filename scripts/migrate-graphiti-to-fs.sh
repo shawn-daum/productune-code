@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PO_ENV_FILE="$HOME/.codex/productune.env"
+PO_ENV_FILE="$HOME/.productune/productune.env"
 WIKI_BASE="$HOME/.productune/wiki"
 
 say()  { printf "\033[1;34m[migrate]\033[0m %s\n" "$*"; }

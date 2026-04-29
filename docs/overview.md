@@ -68,7 +68,7 @@ MVP 라운드: `MVP PRD 수립 → test 로 MVP 확립 → 실제 제품 → 배
 
 ## Ticket system
 
-- `<project>/.codex/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
+- `<project>/.productune/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets`, `rounds`
 - Ticket close 시 `<project>/docs/tickets/<round-id>/T-<id>.md` 자동 export (git-versioned)
 - 후일 Phase 3 의 UI dashboard backend
 

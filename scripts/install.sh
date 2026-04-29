@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# install.sh — one-time setup to wire the productune repo into ~/.claude/ and ~/.codex/
+# install.sh — one-time setup to wire the productune repo into ~/.claude/ and ~/.productune/
 #
 # What it does:
 #   1. Symlinks agents/*.md  →  ~/.claude/agents/*.md        (persona sub-agents, editable in place)
-#   2. Copies  codex/config.toml   →  ~/.codex/config.toml   (global Codex config, profiles po + local)
-#   3. Copies  codex/po-instructions.md  →  ~/.codex/po-instructions.md  (referenced by [profiles.po])
+#   2. Copies  codex/config.toml          →  ~/.codex/config.toml          (Codex CLI profile manifest)
+#      Copies  codex/po-instructions.md   →  ~/.productune/po-instructions.md  (PO doctrine, engine-agnostic)
+#   3. Seeds   codex/po-memory.md.template → ~/.productune/po-memory.md   (PO long-term memory)
+#   4. Writes  ~/.productune/productune.env (engine, wiki backend, repo path)
+#
+# Migration: pre-2026-04 installs stored po-instructions.md, po-memory.md, productune.env
+# under ~/.codex/. install.sh detects those legacy files and moves them to ~/.productune/
+# the first time it runs after the rename.
 #
 # Existing files at targets are backed up with a .bak.<timestamp> suffix if they are not already symlinks
 # pointing to this repo.
@@ -461,21 +467,51 @@ if [ -n "$DANGLING" ]; then
   done
 fi
 
-# 2) Codex config (always overwritten, backup if content differs)
-mkdir -p "$HOME/.codex"
-for F in config.toml po-instructions.md; do
-  SRC="$ROOT/codex/$F"
-  DEST="$HOME/.codex/$F"
-  if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
-    mv "$DEST" "$DEST.bak.$TS"
-    warn "backed up existing $DEST → $DEST.bak.$TS"
+# 2a) Migration: pre-rename installs stored productune-owned files under ~/.codex/.
+#     Move po-instructions.md, po-memory.md, productune.env to ~/.productune/ if found.
+#     ~/.codex/config.toml stays where it is — it's Codex CLI's own config.
+mkdir -p "$HOME/.productune"
+for OLD_NAME in po-instructions.md po-memory.md productune.env; do
+  OLD="$HOME/.codex/$OLD_NAME"
+  NEW="$HOME/.productune/$OLD_NAME"
+  if [ -f "$OLD" ] && [ ! -e "$NEW" ]; then
+    mv "$OLD" "$NEW"
+    say "migrated: ~/.codex/$OLD_NAME → ~/.productune/$OLD_NAME"
+  elif [ -f "$OLD" ] && [ -e "$NEW" ]; then
+    # Both exist — keep new, archive old
+    mv "$OLD" "$OLD.legacy.$TS"
+    warn "both ~/.codex/$OLD_NAME and ~/.productune/$OLD_NAME exist; archived legacy → $OLD.legacy.$TS"
   fi
-  cp "$SRC" "$DEST"
-  say "copied codex file: $F"
+done
+# Clean up legacy .bak siblings under ~/.codex/ (they belong to old po-instructions.md)
+for BAK in "$HOME"/.codex/po-instructions.md.bak.* "$HOME"/.codex/po-memory.md.bak.*; do
+  [ -e "$BAK" ] || continue
+  mv "$BAK" "${BAK/.codex/.productune}" 2>/dev/null || true
 done
 
+# 2b) Codex CLI config — stays at ~/.codex/config.toml (Codex profile manifest)
+mkdir -p "$HOME/.codex"
+SRC="$ROOT/codex/config.toml"
+DEST="$HOME/.codex/config.toml"
+if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
+  mv "$DEST" "$DEST.bak.$TS"
+  warn "backed up existing $DEST → $DEST.bak.$TS"
+fi
+cp "$SRC" "$DEST"
+say "copied codex profile manifest: ~/.codex/config.toml"
+
+# 2c) PO doctrine — productune-owned, lives at ~/.productune/po-instructions.md
+SRC="$ROOT/codex/po-instructions.md"
+DEST="$HOME/.productune/po-instructions.md"
+if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
+  mv "$DEST" "$DEST.bak.$TS"
+  warn "backed up existing $DEST → $DEST.bak.$TS"
+fi
+cp "$SRC" "$DEST"
+say "copied PO doctrine: ~/.productune/po-instructions.md"
+
 # 3) PO memory (seed ONLY if user hasn't started one yet — do NOT clobber learnings)
-PO_MEM="$HOME/.codex/po-memory.md"
+PO_MEM="$HOME/.productune/po-memory.md"
 if [ ! -e "$PO_MEM" ]; then
   cp "$ROOT/codex/po-memory.md.template" "$PO_MEM"
   say "seeded PO memory at $PO_MEM (PO will append over time)"
@@ -496,7 +532,7 @@ if [ ! -e "$ROOT/scripts/my-po" ]; then
 fi
 
 # 5) Interactive: pick default PO engine (only if running in a terminal and not already set)
-PO_ENV_FILE="$HOME/.codex/productune.env"
+PO_ENV_FILE="$HOME/.productune/productune.env"
 if [ -t 0 ] && [ -t 1 ] && [ ! -e "$PO_ENV_FILE" ]; then
   echo
   printf '\033[1;36m[install]\033[0m Pick a default PO engine for `productune`:\n'
@@ -506,7 +542,7 @@ if [ -t 0 ] && [ -t 1 ] && [ ! -e "$PO_ENV_FILE" ]; then
   [2] claude  — Claude Code hosts both PO and personas. 100% Anthropic stack,
                 cleanest ToS posture (no third-party-harness concerns).
   [Enter]     — skip; default to 'codex'. You can change anytime by editing
-                ~/.codex/productune.env or running `productune --engine <name>`.
+                ~/.productune/productune.env or running `productune --engine <name>`.
 
 PROMPT
   printf '  Choice [1/2/Enter]: '
@@ -774,14 +810,15 @@ cat <<PATHRC
   1. 현재 셸에 PATH 즉시 적용 (새 터미널에서는 자동 적용되므로 생략 가능):
        source $SHELL_RC
 
-  2. 원하는 프로젝트 폴더로 이동 후 productune 실행:
+  2. 원하는 프로젝트 폴더로 이동 후 init → productune 실행:
        cd <your-project>
-       productune
+       productune init        # 한 번만: .productune/, docs/pdt-*/, .gitignore 세팅
+       productune             # PO 세션 시작
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
   3. Wiki backend 변경 (예: Tier A → B):
-       # ~/.codex/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
+       # ~/.productune/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
        productune onboard
 
   4. 병렬 작업 후 worktree 정리:
@@ -793,14 +830,15 @@ cat <<PATHRC
 PATHRC
 else
 cat <<NOPATH
-  1. 원하는 프로젝트 폴더로 이동 후 productune 실행:
+  1. 원하는 프로젝트 폴더로 이동 후 init → productune 실행:
        cd <your-project>
-       productune
+       productune init        # 한 번만: .productune/, docs/pdt-*/, .gitignore 세팅
+       productune             # PO 세션 시작
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
   2. Wiki backend 변경 (예: Tier A → B):
-       # ~/.codex/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
+       # ~/.productune/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
        productune onboard
 
   3. 병렬 작업 후 worktree 정리:
