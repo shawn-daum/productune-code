@@ -82,7 +82,7 @@ The 5 hooks under `~/.productune/scripts/hooks/` enforce mechanical correctness 
 ## Token-saver patterns
 
 - **Stage 1 state read** = `jq` slice (above), not full file `cat`.
-- **State writes** = `jq '...'  state.json | sponge state.json` (1-3 lines), not `python3 -<<PY` blocks.
+- **State writes** = portable `jq '...' state.json > state.json.tmp && mv state.json.tmp state.json` (1-3 lines), not `python3 -<<PY` blocks. (`sponge` from moreutils is not on default macOS — don't use.)
 - **Delegation TASK** = verbatim user text + 1-line scope. Persona doctrine has its own ownership/anti-revert rules; don't repeat them.
 - **Section files** = read once per task; cache mentally for continuation turns.
 - **`po-memory.md`** = read once at task open. Calibration line is appended at close, not refetched mid-task.
@@ -98,11 +98,11 @@ jq '{ct:.current_task, recent:.recent_turns[-3:], past:(.past_tickets//[])[-3:]}
 NO_COLOR=1 claude --agent pdt-<persona> --print --output-format json "$TASK"   # first call
 NO_COLOR=1 claude --resume "$SID" --print --output-format json "$TASK"          # resume
 
-# Stage 3 close — archive then calibrate
+# Stage 3 close — archive then calibrate (portable — no sponge)
 jq --arg now "$(date -u +%FT%TZ)" --arg s "done" --arg o "<outcome>" '
   .past_tickets = ((.past_tickets // []) + [(.current_task + {ended_at:$now,final_status:$s,outcome_summary:$o})])
   | .past_tickets |= (.[-50:]) | .current_task = null
-' .productune/po-state.json | sponge .productune/po-state.json
+' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
 printf -- '- (%s) <slug> · <Lx> · estimate=<m>/<e> → actual=<m>/<e> · QA pass(N) · rework=<y|n> · escalation=<none|Path1|Path2> · note: ...\n' "$(date +%F)" >> ~/.productune/po-memory.md
 ```
 
