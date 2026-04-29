@@ -1,8 +1,16 @@
 # Global Codex configuration for productune (PO-driven multi-persona orchestration).
 # Installed to ~/.codex/config.toml by scripts/install.sh.
 #
+# *** ENGINE ROLE ***
+# Codex is the *secondary* engine for productune. Claude Code is primary.
+# Productune hooks (R1 slug auto-fill, R2 archive, R4 session reuse) only
+# fire inside Claude Code sessions. On Codex they are doctrine-only —
+# advisory rules PO must self-enforce. R1/R2/R4 will not block you on this
+# engine, but the same correctness expectations apply. Read
+# ~/.productune/po-instructions.md § "Engine" before delegating.
+#
 # Profiles:
-#   productune — hosted Codex, autonomous, orchestrates Claude Code personas (default for work)
+#   productune — hosted Codex, autonomous, orchestrates Claude Code personas (secondary engine)
 #   po         — legacy alias of `productune` (kept for one round; prefer `productune`)
 #   local      — Ollama qwen3.5:4b fallback (for token-soak / offline / cheap triage)
 
