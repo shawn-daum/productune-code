@@ -105,10 +105,38 @@ fi
 
 [ -z "$PERSONA" ] && exit 0
 
-# Mechanical state write — current_task auto-create if missing, capture session_id, bump turns
+# Pull --model from command (best-effort — defaults to persona's frontmatter fallback)
+MODEL="$(printf '%s' "$COMMAND" | sed -nE 's/.*--model[= ]([a-z]+).*/\1/p' | head -1)"
+[ -z "$MODEL" ] && MODEL="default"
+
+# Pull changed_files from response JSON (developer/qa report this)
+CHANGED_FILES="$(printf '%s' "$STDOUT" | python3 -c "
+import json, re, sys
+text = sys.stdin.read()
+m = re.search(r'\{.*\}', text, re.DOTALL)
+if not m: sys.exit(0)
+try:
+    d = json.loads(m.group())
+    inner = d.get('result', '')
+    # result is itself a string that may contain JSON — try second-level parse
+    inner_m = re.search(r'\{.*\}', inner, re.DOTALL)
+    if inner_m:
+        try:
+            inner_d = json.loads(inner_m.group())
+            files = inner_d.get('changed_files', [])
+            print(json.dumps(files))
+            sys.exit(0)
+        except Exception: pass
+    print('[]')
+except Exception:
+    print('[]')
+" 2>/dev/null)"
+[ -z "$CHANGED_FILES" ] && CHANGED_FILES='[]'
+
+# Mechanical state write — capture session_id, bump turns, append model_history, merge artifacts
 NOW="$(date -u +%FT%TZ)"
 TMP="$(mktemp)"
-jq --arg persona "$PERSONA" --arg sid "$SID" --arg now "$NOW" '
+jq --arg persona "$PERSONA" --arg sid "$SID" --arg now "$NOW" --arg model "$MODEL" --argjson files "$CHANGED_FILES" '
   .current_task = (
     .current_task // {
       slug: ("auto-" + ($now | gsub("[^0-9]"; "") | .[:14])),
@@ -121,16 +149,19 @@ jq --arg persona "$PERSONA" --arg sid "$SID" --arg now "$NOW" '
   )
   | .current_task.persona_sessions[$persona] = $sid
   | .current_task.persona_session_meta[$persona] = (
-      (.current_task.persona_session_meta[$persona] // {turns: 0, model_history: [], effort_history: []})
+      (.current_task.persona_session_meta[$persona] // {turns: 0, model_history: [], effort_history: [], confidence_history: []})
       + {id: $sid, last_seen: $now}
       + {turns: ((.current_task.persona_session_meta[$persona].turns // 0) + 1)}
+      + {model_history: ((.current_task.persona_session_meta[$persona].model_history // []) + [$model])}
     )
+  | .current_task.artifacts = (((.current_task.artifacts // []) + ($files | map(tostring))) | unique)
   | .recent_turns = (
       ((.recent_turns // []) + [{
         ts: $now,
         persona: $persona,
         session_id: $sid,
         task_slug: (.current_task.slug // "unknown"),
+        model: $model,
         source: "post-delegate-hook"
       }])[-10:]
     )
