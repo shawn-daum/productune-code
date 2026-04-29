@@ -190,7 +190,7 @@ codex --profile productune
 
 같은 TUI 에서:
 
-> 어제 만든 sum.js 좀 다시 손대자. 함수 위에 JSDoc 주석 달아줘.
+> 아까 만든 sum.js 좀 다시 손대자. 함수 위에 JSDoc 주석 달아줘.
 
 **관찰 포인트:**
 - PO 가 `past_tasks` 의 `artifacts` 또는 slug 에서 "sum.js" 매치 검색.

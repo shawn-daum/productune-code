@@ -4,17 +4,19 @@
 # Legacy `my-po` command name kept as compat alias (symlink to this file).
 #
 # Modes:
-#   productune                              Default engine = codex (or $MY_PO_ENGINE)
-#   productune --engine claude              Spawn `claude --agent pdt-po` instead (100% Anthropic)
-#   productune --engine codex               Spawn `codex --profile productune` (default)
+#   productune                              Default engine = claude (or $MY_PO_ENGINE)
+#   productune --engine claude              Spawn `claude --agent pdt-po` (default — hooks fire)
+#   productune --engine codex               Spawn `codex --profile productune` (fallback; no hooks)
 #   productune gc                           (alias: --cleanup) audit productune/* worktrees, dry-run
 #   productune gc -y                        (alias: --auto, --yes) audit, then remove safe ones
 #   productune init                         Scaffold project: .productune/po-state.json, docs/pdt-*/, .gitignore
 #   productune onboard                      Run install.sh — wire agents, codex config, wiki backend
 #   productune uninstall                    Remove all installed artifacts (agents, codex files, wiki data)
 #
-# Engine selection priority: --engine flag > $MY_PO_ENGINE env > 'codex' default.
+# Engine selection priority: --engine flag > $MY_PO_ENGINE env > 'claude' default.
 # (Env var name MY_PO_ENGINE retained for compat; semantically PRODUCTUNE_ENGINE.)
+# Default = claude because PreToolUse/PostToolUse hooks only fire inside Claude
+# Code sessions. Codex bypasses them, leaving R1-R4 as doctrine-only.
 #
 # Decision basis for cleanup is purely git state. PO process state (alive,
 # crashed, exited cleanly) is irrelevant — a worktree is "safe to remove"
@@ -145,12 +147,12 @@ remove_safe() {
 case "${1:-}" in
   --help|-h)
     # Resolve current config for display
-    _engine="codex"
+    _engine="claude"
     _wiki="?"
     _repo="?"
     if [ -r "$HOME/.productune/productune.env" ]; then
-      _engine="$(grep -E '^MY_PO_ENGINE=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo codex)"
-      _engine="${_engine:-codex}"
+      _engine="$(grep -E '^MY_PO_ENGINE=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo claude)"
+      _engine="${_engine:-claude}"
       _wiki="$(grep -E '^WIKI_BACKEND=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
       _repo="$(grep -E '^PRODUCTUNE_REPO=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
     fi
@@ -325,7 +327,10 @@ esac
 # -------------------- default mode --------------------
 
 # 0) Resolve engine. Priority: --engine flag > $MY_PO_ENGINE in shell env >
-#    saved preference at ~/.productune/productune.env (written by install.sh) > 'codex'.
+#    saved preference at ~/.productune/productune.env (written by install.sh) > 'claude'.
+# Default switched from codex → claude so hook-based firm rules
+# (pre-delegate-task-check + post-delegate-state-write) actually fire — those
+# hooks run inside Claude Code sessions only, not Codex.
 if [ -r "$HOME/.productune/productune.env" ]; then
   # Auto-export every assignment so spawned codex/claude (and the graphiti
   # launcher invoked by personas) see PRODUCTUNE_REPO, GRAPHITI_*, etc.
@@ -334,7 +339,7 @@ if [ -r "$HOME/.productune/productune.env" ]; then
   . "$HOME/.productune/productune.env"
   set +a
 fi
-ENGINE="${MY_PO_ENGINE:-codex}"
+ENGINE="${MY_PO_ENGINE:-claude}"
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
