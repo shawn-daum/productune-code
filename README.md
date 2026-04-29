@@ -171,7 +171,7 @@ claude --agent pdt-developer        # 단일 페르소나
 | Top-level reasoning | Anthropic (Claude Code) | OpenAI (Codex CLI) |
 | Subscription | Claude Pro / Max | ChatGPT Plus / Pro |
 | Persona subscription | Claude | Claude |
-| **Hook firm rules** (R1 slug · R2 archive · R3 `.md` boundary · R4 session reuse) | ✓ deterministic | ✗ doctrine-only (Codex bypasses Claude Code hooks) |
+| **Hook firm rules** (R1 slug · R2 archive · R4 session reuse) | ✓ deterministic | ✗ doctrine-only (Codex bypasses Claude Code hooks) |
 | Cost-split | ✗ all on Anthropic | ✓ |
 | ToS | **Cleanest** — 100% first-party | OK |
 

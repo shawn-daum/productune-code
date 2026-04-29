@@ -143,8 +143,8 @@ productune                       # default engine = claude (hooks 발동)
 - 최종 요약은 PO 가 자기 말로 합성한 문장 (raw JSON 덤프 아님)
 - PO 가 시작 시 `→ new task '<slug>'` 한 줄 trace 를 찍음
 - 실행 후 `cat .productune/po-state.json | jq '.current_task'` 결과에 `slug`, `started_at`, `request_summary`, `persona_sessions.pdt-developer` (실제 UUID), `persona_session_meta.pdt-developer.turns ≥ 1` 가 채워져 있음. UUID 캡처와 turns 증분은 `post-delegate-state-write` hook이 자동 처리 — PO 행동과 무관.
-- `recent_turns` 에 `source: "post-delegate-hook"` 또는 PO 직접 entry 가 최소 1개
-- PO가 trivial doc edit (예: README typo) 요청을 받으면 pdt-developer 위임 없이 직접 Edit (확장자 boundary 동작 — `.md` 만 PO 직접). `.js`/`.ts` 등 코드 파일은 한 줄짜리라도 무조건 위임
+- `recent_turns` 에 `source: "post-delegate-hook"` entry 가 최소 1개 (PO 직접 entry 는 더 이상 발생하지 않음 — orchestrator 모델)
+- PO 가 어떤 산출물도 직접 작성하지 않음. README typo 같은 trivial doc edit 도 pdt-developer 에 위임 (PO 의 frontmatter `tools:` 에는 Write/Edit 자체가 없음). `.js`/`.ts` 등 코드 파일은 한 줄짜리라도 Developer 위임. PRD/ticket/design.md 는 Designer 위임
 
 ### 3.3 — 후속 turn (같은 task)
 
@@ -176,15 +176,15 @@ productune                       # default engine = claude (hooks 발동)
 **관찰 포인트:**
 - PO 가 `→ new task 'add-license-section'` trace 출력 (slug 표현 유연)
 - 이전 task archive: `jq '.past_tickets[-1]' .productune/po-state.json` 에 직전 `current_task` 내용 + `ended_at`, `final_status`, `outcome_summary` 채워짐
-- `.md`-only 요청이므로 PO **직접 Edit** — `pdt-developer` 위임 없음. delegate 시도하면 hook이 block.
-- (만약 dev 위임 task라면) 새 `current_task` 가 빈 `persona_sessions` 로 할당 — 이전 UUID 재사용 시 hook이 block.
+- `.md` 추가 요청이라도 PO 가 직접 Edit 하지 **않음** — pdt-developer 에 위임 (PO frontmatter 에 Write/Edit 없음). 단순 doc 변경이면 model=sonnet/medium.
+- 새 `current_task` 가 빈 `persona_sessions` 로 할당 — 이전 UUID 재사용 시 R4 hook 이 block.
 
 **합격 기준:**
 - `jq '.past_tickets | length' .productune/po-state.json` 가 ≥1
 - `jq '.past_tickets[-1].final_status'` 가 `done` / `blocked` / `abandoned`
 - `jq '.past_tickets[-1].outcome_summary'` 가 1–2 문장 (null 또는 raw JSON 아님)
 - `current_task.slug` 가 archive 된 entry slug 와 다름
-- `.md`-only인 경우 turn 안에 `claude --agent pdt-developer` 호출 0건 (PO 직접 Edit)
+- turn 안에 `claude --agent pdt-developer` 또는 `claude --agent pdt-designer` 호출이 최소 1건 (PO 자체 Edit 호출 0건)
 
 ### 3.5 — 타임라인 렌더링 (페르소나 호출 0)
 
@@ -410,13 +410,18 @@ productune
 **관찰 포인트 (PO 가 자발적으로 stage transition announce):**
 
 ```
-→ Stage: PRD 작성 (pdt-po Why-essential, opus, ⚡max)
-   ✓ to-prd skill auto-invoke + grill-me 식 문답 시작
-   ✓ PO 가 직접 docs/prd/<your-slug>.md 작성 (페르소나 위임 X — PO 의 직접 산출물)
+→ Stage: Discovery interview (PO sonnet/medium, pm-product-discovery + grill-me)
+   ✓ PO 가 사용자에게 1–5 라운드 인터뷰
+   ✓ PO 가 .productune/briefs/<slug>.md 에 brief append
+→ Stage: PRD 작성 (pdt-designer, opus, ⚡max — clarity loop)
+   → delegating to pdt-designer (PRD Round 1, opus, ⚡max — A target ≤ 0.05)
+     ✓ Designer needs-info round 1: "어떤 플랫폼 1순위?" → PO 가 사용자에게 relay
+     ✓ Designer needs-info round 2: ...
+     ✓ Designer ready: A=0.04, prd_path=docs/prd/<slug>.md, tickets=[T-001, T-002, ...]
 → Stage: Test 정의 (pdt-qa What, haiku, low)
    ✓ acceptance criteria → test 정의
-→ Stage: Issue 분해 (pdt-po How, sonnet, medium, to-issues skill)
-   ✓ vertical-slice ticket 생성 (T-001, T-002, ...)
+→ Stage: Issue 라우팅 (PO sonnet/medium)
+   ✓ Designer 가 emit 한 ticket 들을 dependency 순으로 dispatch
 → Stage: 구현 — 각 ticket 마다 plan-first (L4+ 강제):
    → delegating to pdt-developer (PLAN ONLY, opus, ⚡xhigh)
      ✓ pdt-developer plan returned (no code yet)
@@ -430,13 +435,15 @@ productune
 ```
 
 **합격 기준:**
-- 4 페르소나 모두 적어도 1번씩 호출됨 (pdt-po / pdt-designer 또는 skip / pdt-developer / pdt-qa)
+- 4 페르소나 모두 적어도 1번씩 호출됨 (pdt-po / pdt-designer / pdt-developer / pdt-qa)
 - 각 호출 trace 에 model + effort 명시 (5-tier 중 하나: low / medium / high / xhigh / max)
 - **opus 호출은 항상 xhigh 이상** (default xhigh — `routing.md` 의 per-model defaults). PRD 첫 라운드 + net-new 시스템 디자인은 `⚡max`
 - **L4+ 작업은 plan-first** — pdt-developer 호출이 두 단계로 나뉨 (plan opus/xhigh → impl sonnet/high). L1–L3 trivials 만 직행 sonnet/medium
-- PRD 작성 trace 에 페르소나 delegation 없음 (PO 자신이 작성)
+- PRD 작성 trace 가 **pdt-designer 위임으로 시작** — PO 가 PRD 파일 자체를 직접 작성한 흔적 0
+- Designer 응답에 `state` 필드 (`needs-info` 또는 `ready`) + `ambiguity_score` + `slot_clarity` 포함
+- `state: "ready"` 응답에 `tickets: [...]` 배열로 `docs/tickets/r1/T-NNN.md` 경로들 명시
 - `confidence` 가 출력 JSON 에 들어 있음 — `low` 면 PO 가 3-option 메뉴 surface 했어야 함
-- 적어도 페르소나당 1 개 skill 자동 invoke (mattpocock 또는 phuryn) — trace 에서 확인 가능
+- PO 측 brief 파일 (`.productune/briefs/<slug>.md`) 이 인터뷰 라운드별로 append 됨
 
 **Plan-first 단독 검증:**
 
@@ -580,18 +587,20 @@ rm /path/to/project/.productune/po-state.json
 
 **"claude --agent exits with missing `uuidgen`"** — macOS 에는 항상 있음; Linux 면 PO delegation 템플릿에서 `python3 -c 'import uuid; print(uuid.uuid4())'` 로 대체.
 
-**`~/.productune/sections/` 가 비었거나 일부 누락** — install.sh 재실행 후 PO doctrine sections 가 생성됨. 9 개 파일 (stages, memory, tickets, routing, escalation, delegation, calibration, lifecycle, evolution, prd-and-output) 모두 존재해야 PO 가 detail 을 on-demand 로 로드 가능. PO 가 "section file not found" 비슷한 에러를 surface 하면:
+**`~/.productune/sections/` 가 비었거나 일부 누락** — install.sh 재실행 후 PO doctrine sections 가 생성됨. 10 개 파일 (stages, memory, tickets, routing, escalation, delegation, calibration, lifecycle, evolution, prd-and-output) 모두 존재해야 PO 가 detail 을 on-demand 로 로드 가능. PO 가 "section file not found" 비슷한 에러를 surface 하면:
 
 ```sh
-ls ~/.productune/sections/   # 9 개 .md 확인
+ls ~/.productune/sections/   # 10 개 .md 확인
 bash <productune-clone>/scripts/install.sh   # missing 이면 재배포
 ```
 
-**PO 가 PRD 작성을 designer 로 위임** — doctrine 옛 버전 잔재. `~/.productune/po-instructions.md` 의 "What you DO" 섹션이 PRDs 를 PO 직접 산출물로 명시해야 함:
+**PO 가 PRD 를 직접 작성하려고 함** — orchestrator rework 이전 doctrine 잔재. 새 doctrine 에서는 Designer 가 clarity loop 로 PRD 를 작성. `~/.productune/po-instructions.md` 가 다음을 명시해야 함:
 
 ```sh
+grep -A2 "What you NEVER do" ~/.productune/po-instructions.md | head -10
+# 기대: "No PRD authoring. ... Always delegate."
 grep -A2 "What you DO" ~/.productune/po-instructions.md | head -10
-# 기대: "PRDs ... Why-mode authoring is your direct output, not a delegation"
+# 기대: "First-touch interview ... synthesize ... interview brief ... Designer's PRD input"
 ```
 
 오래된 doctrine 이면 `bash scripts/install.sh` 재실행.
