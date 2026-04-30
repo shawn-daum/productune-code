@@ -28,15 +28,16 @@
 | **사용 시점** | 새 MVP 시작 / 기존 제품의 다음 라운드 / 실험 프로토타입 |
 | **사용하지 않는 사람** | 풀스택 개발자가 코드 직접 짜는 것이 더 빠른 케이스 — productune 은 **위임 + 검증** 도구이지 IDE 보조가 아님 |
 
-## How — 3-phase 롤아웃
+## How — 4-phase 롤아웃
 
 | Phase | 목표 | 인터페이스 | 상태 |
 |---|---|---|---|
 | **Phase 1 (지금)** | CLI 기반 핵심 구조 + dogfood-ready | terminal 명령어 (`productune`) | **현재 작업 중** |
 | Phase 2 | 사용자가 실제 프로젝트 1 개로 dogfood 완주 → MVP 검증 | 동일 (CLI) | Phase 1 완료 후 |
 | Phase 3 | UI 화 — onboarding + 일반 사용 모두 UI | web/desktop UI (스펙 미정) | Phase 2 합격 후 |
+| **Phase 4** | **개발 비숙련 기획자 모드** — terminal 무의존 GUI-first 풀 사이클 (PRD → 디자인 → 배포 → 운영) | planner-mode GUI (Phase 3 위에 얹는 layer) | Phase 3 dogfood 후 |
 
-> Phase 1, 2 가 성공해야 Phase 3 진입. UI 는 검증된 흐름 위에 얹는 layer 이지, 검증 전에 만들지 않음.
+> Phase 1, 2 가 성공해야 Phase 3 진입. UI 는 검증된 흐름 위에 얹는 layer 이지, 검증 전에 만들지 않음. Phase 4 는 Phase 3 의 UI 를 한 단계 더 추상화 — "개발을 한 번도 만져보지 않은 기획자도 완주" 가 합격선.
 
 ## What — Phase 1 MVP 범위 (현재 집중)
 
@@ -91,6 +92,122 @@
 - backend = Phase 1 의 ticket system + po-state.json + 페르소나 shell-out 그대로
 - 스펙은 Phase 2 합격 후 별도 PRD round 로 정의
 
+## Phase 4 — 개발 비숙련 기획자 모드 (planner mode, future)
+
+### 컨셉
+
+**"개발 모르는 기획자에게 프로덕트 생산 떠먹여주기."**
+
+Phase 1–3 이 검증한 CLI / orchestration core + 기본 UI 위에, **터미널을 한 번도 직접 열지 않고도 PRD → 디자인 → 구현 → 배포 → 운영 한 사이클을 GUI 만으로 완주** 할 수 있는 모드. Phase 3 의 dogfood 결과 — 진짜 비-개발자 사용자는 환경 설정 / env 관리 / 외부 서비스 가입 단계에서 막힘 — 을 정면으로 해소.
+
+핵심 원칙:
+- **터미널 무의존** — 사용자에게 명령어 외우게 하지 않는다. 필요한 shell 은 agent 가 띄운다.
+- **시각화 우선** — 코드가 아닌 디자인 / 다이어그램 / 카드 단위로 사고할 수 있게.
+- **친절한 안내** — 외재 지식 (최신 공식 문서) 을 실시간 fetch 해 가이드. LLM 의 memorized API 는 신뢰 X.
+- **풀 사이클** — PRD 시작 → 배포 / 운영까지 한 UI 안에서 흐름이 보임.
+
+### 설치 시점 분기
+
+설치 (`productune init`) 단계에서 **사용자 개발 지식 수준 질문** → 모드 결정:
+
+- (a) "터미널 + 코드 기반 개발에 익숙" → **developer mode** (Phase 1–3 그대로, CLI + 가벼운 UI)
+- (b) "기획 / 바이브코딩만 해봤음 — 터미널 무서움" → **planner mode** (Phase 4 GUI-first 경험)
+
+분기 선택은 이후에도 설정에서 변경 가능. planner → developer 로 졸업하는 케이스 자연스럽게 지원. 모드 전환은 단순 config toggle (`mode: planner | developer`) — GUI 는 CLI core 위 view layer 일 뿐이므로 마이그레이션 / state 변환 불필요. 모든 state (`po-state.json`, `docs/*`, `.env.local`, history) 그대로 보존.
+
+### 핵심 기능
+
+1. **간편한 설치 과정 + 분기** — 분기 선택 후 planner mode 가 자동으로 의존성 / Node 버전 / 권한 / 외부 CLI (vercel, supabase 등) 를 setup. terminal 출력은 progress UI 뒤로 숨김. 실패 시 사람이 읽을 수 있는 메시지 + 다음 액션 버튼.
+2. **GUI 시각화 — PO 채팅 (멀티 채팅방)** — n 개 채팅방을 라운드 / 토픽 / 실험 단위로 동시 운영 가능. PRD 작성 → 제품 설계 과정이 dashboard 와 task board 로 시각화. 티켓 카드에 status / 담당 페르소나 / model+effort / 위임 trace / 산출물 링크가 표시. **격리 정책**: 채팅방 = 기존 round 구조에 1:1 매핑 (`docs/tickets/<round>/`). 티켓은 round 별 격리, project-tier 메모리 (`docs/*`) 는 채팅방 간 공유, wiki (persona-global) 는 전체 공유.
+3. **GUI 시각화 — 디자인 단계 명시화** — PRD 직후 곧장 코드로 가지 않고, **디자인 방향성 결정 stage** 가 별도 노출. 산출물 포맷 = **md + Mermaid.js + Excalidraw** (전부 로컬, 외부 서비스 의존 없음). Claude design skill 이 Mermaid 를 native 로 출력 (시퀀스 / 플로우 / 상태도), Phase 4 GUI 는 Electron/React renderer 안에 Mermaid.js 또는 React Mermaid component 를 번들해 markdown code fence 를 inline 렌더링한다. Excalidraw React 컴포넌트를 Electron renderer 에 임베드해 와이어프레임 그리기, 디자인 시스템은 풍부한 md 렌더링 (color swatch / typography preview) 으로 표현. **Figma 연동은 하지 않음** (토큰 비용 예측 불가). 사용자가 코드 diff 가 아닌 **디자인 산출물** 기반으로 검토 / 의사결정.
+
+   현재/수동 검토 경로는 GitHub Markdown preview 또는 VS Code Markdown preview 로 Mermaid fence 를 확인한다. Phase 4 GUI 정상 보기 경로는 외부 CLI 에 의존하지 않는다. Mermaid viewer 는 zoom/pan, source toggle, source copy, render error fallback(원문 코드 + 오류 메시지)을 제공하고, SVG/PNG export 는 필요해지면 후속 옵션으로 추가한다. `@mermaid-js/mermaid-cli` 는 export/자동 이미지 생성용 선택 도구일 뿐 정상 GUI viewing 필수 의존성이 아니며, 도구/라이브러리 추가 설치가 필요할 때는 사용자 동의를 먼저 받는다.
+4. **메모리 / Wiki 편집기 panel** — 현재 저장된 3-tier 메모리 (session / project `docs/*` / wiki Graphiti) 를 GUI 에서 보고 직접 수정 가능. inline edit + diff preview + "이 항목 페르소나에 즉시 반영" 버튼. 잘못 학습된 사실 / 오래된 결정 정정.
+5. **터미널 비의존 dev 환경 — agent 자동화** — `npm run dev`, `supabase start`, `vercel dev` 등 dev 환경이 필요한 시점에 agent 가 자동으로 shell 을 띄우고 health check 후 GUI 에 "준비됨" 만 알림. 사용자는 명령을 외울 필요 없고, 종료 / 재시작도 GUI 버튼. 구현은 **node-pty** — macOS / Linux 의 PTY 와 Windows ConPTY 를 단일 API 로 추상화해 OS 별 분기 코드 최소화.
+6. **터미널 비의존 dev 환경 — 친절한 세팅** — `init` 시 `.env.local` 디폴트 생성 + `.gitignore` 자동 등록. vercel / supabase / github 등 외부 서비스 setup 시 **최신 공식 문서를 실시간 fetch** 해 step-by-step 가이드 제공 (가입 링크부터 토큰 발급, 권한 설정까지). LLM training data 에 의존하지 않음. **Fetch 정책**: TTL 24h + stale-while-revalidate. 오프라인 시 마지막 캐시를 보여주고 "마지막 업데이트: N시간 전" 배너 표시; rate-limit 시 exponential backoff 후 캐시 fallback.
+7. **env 관리 GUI panel — 3-layer + 상태 badge + 코드 스캔 경고** — 환경 3 개 레이어로 정리:
+   - 🖥️ **로컬** ("지금 내 컴퓨터에서 실행할 때" → `.env.local`) — 기본값. `init` 시 자동 생성 + `.gitignore` 자동 등록. plaintext.
+   - 🔍 **미리보기** ("배포 전 테스트할 때" → Vercel preview env) — 배포 준비 시 [+ 환경 추가] 로 선택적 추가.
+   - 🚀 **프로덕션** ("실제 사용자가 쓰는 서비스" → Vercel production env) — 배포 준비 시 선택적 추가.
+
+   **로컬이 기본** — 사용자는 배포 직전까지 미리보기 / 프로덕션 환경을 만들 필요 없음. UI 구조 = 좌측 환경 selector + 우측 variable table. 변수 상태 badge: ✅ 전체 동기 / ⚠️ prod 없음 (배포 시 해당 기능 비활성 경고) / 🔴 로컬 없음 (현재 실행 불가) / 🔒 secret masking (클릭 시 일시 노출). 변수 추가 시 적용 환경 선택 가능 (로컬만 / 전체). agent 가 코드를 스캔해 `process.env.XXX` 를 매핑 → "이 키 없으면 결제 기능 안 됩니다" 수준의 의미 있는 경고 (T-ENV-06). Phase 4 MVP 에서는 외부 (Vercel) 동기는 배포 명령 시점에만; 양방향 실시간 sync 는 미포함.
+8. **풀 사이클 UI** — process 시작 (PRD 작성) → 끝 (배포 + 운영 + 모니터링) → 다음 사이클 진입. 사용자가 **현재 어느 stage 인지 직관적으로 인지** 가능 (PRD / Design / Build / QA / Deploy / Operate 의 6-stage breadcrumb 또는 진행도 시각화).
+9. **프로젝트 관리 UI** — 앱 실행 시 두 진입점:
+   - (a) **[새 프로젝트 만들기]** → `~/productune/projects/<slug>/` 자동 생성 + `init` 자동 실행. 사용자는 파일시스템 탐색 불필요. **planner mode 의 기본 진입점.**
+   - (b) **[기존 폴더 열기]** (developer mode 또는 고급 사용자) → 폴더 선택 → `.productune/` 없으면 "이 폴더에 productune 시작하기" 버튼 노출 → `init` 실행.
+
+   recent projects 리스트로 빠른 재진입.
+10. **Git 추상화 레이어** — 비-개발자에게 git 개념 노출 X. UI 매핑:
+    - **[자동저장 (백그라운드)]** = `git commit` (agent 자동 메시지 — 페르소나 trace 기반).
+    - **[배포하기]** = feature branch push → PR 자동 생성 → merge → deploy.
+    - **[버전 히스토리]** = `git log` 를 카드 UI 로 (커밋 메시지 = 사람이 읽을 수 있는 자연어).
+
+    `main` 직접 push 금지 (productune 수준 차단). 모든 작업은 `feature/round-N-<slug>` 브랜치에서. `init` 시 GitHub OAuth 팝업 → private repo 자동 생성 → remote 자동 설정. 사용자는 `git` 명령어 한 번도 보지 않음.
+11. **페르소나 skill set + 적용 여부 시각화** — 각 페르소나 (PO / Designer / Developer / QA) 의 보유 skill 목록과 현재 task 에서 실제 invoke 된 skill 을 GUI 에서 확인 가능. "이번 작업에 사용된 skill: `to-prd`, `pm-product-discovery:interview-script`" 수준의 trace 표시. 사용자가 어떤 skill 이 동작했는지 / 동작하지 않았는지 한눈에 파악 → quality-based escalation 시 surface 되는 3-option 메뉴와 자연스럽게 연결.
+
+### 기술 스택 (Phase 4 GUI)
+
+- **GUI 런타임**: **Electron + React/TypeScript (Vite renderer)** — 데스크톱 우선, native shell 자동화 / OS keychain / 파일시스템 접근이 필요해 web app 이 아닌 Electron 채택. Vite 로 renderer 빌드 속도 확보.
+- **Shell 자동화**: **node-pty** — mac/linux PTY + Windows ConPTY 단일 API.
+- **다이어그램**: **Mermaid.js** (텍스트 기반, claude design skill native output; Electron/React renderer 에서 inline 렌더링) + **Excalidraw** (와이어프레임, React 컴포넌트 임베드). 정상 viewing 은 Mermaid CLI 없이 동작하며, CLI 는 SVG/PNG export 등 선택 기능에서만 사용.
+- **문서 fetch**: TTL 24h + stale-while-revalidate (offline / rate-limit 대응).
+
+### 배포 플랫폼 전략
+
+`init` 시 배포 플랫폼 선택 (기본값: **Vercel**). Phase 4 MVP = Vercel 완전 구현. 나머지 (Netlify, Railway, Cloudflare Pages 등) 는 코드 수준에서 `DeployProvider` 인터페이스만 정의 — 실제 구현은 Phase 5 에서. 비-개발자에게는 "Vercel (추천 — 가장 쉬움)" 이 기본 선택, 다른 옵션은 회색 처리 + "Phase 5 에서 지원 예정" 안내. 개발자 모드 사용자는 인터페이스에 맞춰 직접 provider plug-in 추가 가능.
+
+`DeployProvider` 가 추상화하는 책임: 프로젝트 생성 / env 동기화 / preview·production deploy 트리거 / 빌드 로그 수신 / 도메인 관리. Vercel 구현체는 `vercel` CLI + Vercel REST API 를 backend 로 사용하되, 사용자에게는 GUI 버튼만 노출.
+
+### Phase 3 → Phase 4 transition notes (dogfood 학습)
+
+Phase 3 dogfood 에서 발견된 두 가지 비-개발자 사용자 페인 — Phase 4 에서 정면 해소:
+
+- **case1: 환경 설정 가이드를 최신 공식 문서 fetch 로 제공** — Phase 3 dogfood 사용자 (개발 비숙련) 는 **vercel 가입부터 해야 하는지조차 인지하지 못함**. 교훈 → 환경 setup 가이드는 **내재된 지식 (LLM training data) 이 아닌 최신 공식 문서를 실시간 fetch** 해 제공. Vercel / Supabase / GitHub / Cloudflare 등 모든 외부 서비스 setup 이 동일 패턴. "이 페이지에서 → 이 버튼 → 이 값을 복사" 수준의 구체성.
+- **case2: env 관리 GUI panel + `.env.local` 자동 생성** — env 를 버전별로 코드 에디터 열어 직접 입력해야 하는 마찰. 교훈 → Phase 4 `init` 시 `.env.local` 디폴트 생성 + `.gitignore` 자동 등록 + GUI env panel 제공. 사용자는 코드 에디터를 열 필요 없음.
+
+### Non-goals (Phase 4)
+
+- Phase 1–3 의 CLI / orchestration core 변경 (Phase 4 는 위에 얹는 GUI layer 만; backend 는 그대로)
+- Multi-user / 팀 협업 / 권한 모델 (별도 phase)
+- 자체 IDE / 코드 에디터 구축 (코드 보고 싶은 사용자는 developer mode 로 졸업)
+- 비-Vercel / 비-Supabase 인프라의 first-class 지원 (Phase 4 는 가장 흔한 stack 부터; 이후 확장)
+- 모바일 / iPad 클라이언트 (desktop GUI 우선)
+- **비-Vercel provider first-class 지원** (Phase 4 는 Vercel only; 다른 provider 는 `DeployProvider` 인터페이스 정의까지 — 실제 구현은 Phase 5)
+- **Figma 연동** (토큰 비용 예측 불가 — Mermaid + Excalidraw 로 대체)
+- **prod / preview env 의 양방향 실시간 sync** (Phase 4 MVP 에서는 배포 시점 단방향 push 만)
+- **OS keychain 기반 secret 저장** (.env.local plaintext + Vercel env 로 충분; keychain 통합은 Phase 5+)
+
+### Acceptance criteria (Phase 4 완료 기준)
+
+다음 모두 충족 시 Phase 4 합격:
+
+- [ ] `productune init` 시 "developer / planner" 분기 질문이 노출되고, 선택에 따라 모드가 결정 + 이후 설정에서 변경 가능
+- [ ] planner mode 사용자가 **한 번도 터미널을 직접 열지 않고** PRD → 디자인 → 구현 → 배포 한 사이클 완주 (manual dogfood; 비-개발자 1 명)
+- [ ] PO 채팅 GUI 가 n 개 채팅방 (라운드 / 토픽 별) 을 동시 운영하며 각 채팅방이 자체 ticket board 를 가짐
+- [ ] PRD 작성 후 **디자인 단계 (디자인 시스템 / UX flow)** 가 코드 단계 진입 전 별도 stage 로 명시 노출되고, 디자인 산출물 (md + Mermaid + Excalidraw) 이 채팅에 inline 표시. Mermaid 는 Electron/React 내장 viewer 로 렌더되며 zoom/pan, source toggle/copy, render error fallback 을 지원하고 외부 CLI 없이 정상 viewing 가능.
+- [ ] 메모리 / wiki 편집기 panel 에서 사용자가 직접 항목 수정 → 다음 페르소나 호출에 즉시 반영 (수정 → 호출 → trace 에 반영 확인 가능)
+- [ ] dev 환경이 필요한 시점에 agent 가 node-pty 기반으로 자동으로 shell 띄우고 (`npm run dev` 등) 사용자는 GUI 에서 status 만 확인 / 종료 가능
+- [ ] `init` 직후 `.env.local` 자동 생성 + `.gitignore` 에 자동 등록 확인 (실제 파일 검증)
+- [ ] vercel / supabase setup 가이드가 **최신 공식 문서 fetch 결과** 로 노출 (training data 에 없는 최근 변경 사항 — 예: 2026 년 신규 UI — 도 정확히 안내) + 오프라인 시 캐시 + "N시간 전 업데이트" 배너 동작
+- [ ] env 관리 panel 3-layer (로컬 / 미리보기 / 프로덕션) + 상태 badge (✅ / ⚠️ / 🔴 / 🔒) + 코드 스캔 기반 누락 경고 동작
+- [ ] 풀 사이클 UI 에서 사용자가 현재 단계 (PRD / Design / Build / QA / Deploy / Operate) 를 한눈에 인지 + 다음 단계 액션 버튼 제공
+- [ ] 앱 실행 시 [새 프로젝트 만들기] → `~/productune/projects/` 하위 자동 생성 + `init` 완료 (planner 가 파일시스템 탐색 없이 시작 가능)
+- [ ] [배포하기] 버튼 → feature branch 생성 → PR → merge → Vercel deploy 전 과정을 agent 가 처리; 사용자는 git 명령어 입력 없음 + `main` 직접 push 차단 검증
+- [ ] 배포 플랫폼 선택 화면에서 Vercel 기본값 + 다른 provider 선택지 노출; Vercel 선택 시 전체 플로우 동작 확인
+- [ ] 페르소나 skill 시각화 panel 에서 각 페르소나 보유 skill 목록 + 현재 task invoke 된 skill 을 사용자가 확인 가능
+
+### Open questions (Phase 4 — 모두 해소됨, 2026-04-30 OQ 세션)
+
+모두 OQ 세션에서 확정:
+
+1. ~~planner mode GUI 런타임~~ → ✅ **Electron + React/TypeScript (Vite renderer)**. native shell / 파일시스템 / 권한 접근이 필요해 web app 배제, Tauri 대신 ecosystem 성숙도와 React 생태계 활용성으로 Electron 선택.
+2. ~~dev shell 자동화 OS 추상화~~ → ✅ **node-pty** (mac/linux PTY + Windows ConPTY 단일 API; OS 별 분기 코드 최소화).
+3. ~~최신 공식 문서 fetch 캐싱 / 오프라인 / rate-limit~~ → ✅ **TTL 24h + stale-while-revalidate**. 오프라인: 마지막 캐시 + "마지막 업데이트: N시간 전" 배너. rate-limit: exponential backoff → 캐시 fallback.
+4. ~~디자인 산출물 포맷 (md only vs Figma)~~ → ✅ **md + Mermaid.js + Excalidraw (전부 로컬, 외부 서비스 의존 X)**. Figma 는 토큰 비용 예측 불가로 제외. Claude design skill 이 Mermaid native 출력, Phase 4 GUI 가 Mermaid.js/React component 로 inline 렌더링, Excalidraw React 컴포넌트로 와이어프레임, 디자인 시스템은 풍부한 md 렌더링. Mermaid CLI 는 export-only 선택 도구.
+5. ~~env secret 저장 위치 (keychain vs 클라우드)~~ → ✅ **`.env.local` (plaintext, gitignored) for 로컬 + Vercel env for prod/preview**. Phase 4 MVP 에서 sync 없음. 사용자는 배포 전까지 prod / preview env 추가 필요 X.
+6. ~~planner → developer 졸업 시 마이그레이션~~ → ✅ **마이그레이션 불필요**. GUI 는 CLI core 위 view layer. 모드 변경 = 단순 config toggle (`mode: planner | developer`). 모든 state (`po-state.json`, `docs/*`, `.env.local`, history) 그대로 보존.
+7. ~~multi-chat 격리 정책~~ → ✅ **새 디자인 불필요**. 기존 round 구조에 1:1 매핑. 티켓: round 별 격리 (`docs/tickets/<round>/`). project-tier 메모리 (`docs/*`): 채팅방 간 공유. wiki (persona-global): 전체 공유.
+
 ## OSS reference
 
 이 PRD 와 doctrine 의 핵심 컨셉은 모두 정립된 OSS standard 위에 구축:
@@ -113,3 +230,5 @@
 ## Activity log
 
 - **2026-04-28** — Round 1 (MVP) 시작. PRD 초안 작성. 4-phase persona 구조 + Real Engineering 워크플로 + dynamic tier + quality escalation + skill 통합 합의. (commit: `0731a09` rebrand)
+- **2026-04-30** — Phase 4 ("개발 비숙련 기획자 모드 / planner mode") 정식 추가. Phase 3 dogfood 학습 (case1: 환경 설정 가이드는 최신 공식 문서 fetch 필요 / case2: env 관리 GUI + `.env.local` 자동 생성) 을 transition notes 로 명문화. 롤아웃 테이블 3-phase → 4-phase 로 확장. Phase 4 acceptance criteria 10 개 + open questions 7 개 정의. install 시점 developer / planner 분기 도입.
+- **2026-04-30 (OQ 세션)** — Phase 4 OQ 7 개 전체 확정. GUI 런타임 = Electron + React/TS (Vite), shell 자동화 = node-pty, 문서 fetch = TTL 24h + stale-while-revalidate, 디자인 산출물 = md + Mermaid + Excalidraw (Figma 제외), env = 로컬 기본 + 환경별 추가, 졸업 마이그레이션 = 불필요 (뷰 토글), 멀티채팅 = 기존 round 구조 매핑. 신규 기능 3 개 추가 (프로젝트 관리 UI, Git 추상화 레이어, 페르소나 skill 시각화). 배포 플랫폼 전략 추가 (Vercel 기본, `DeployProvider` 추상화, Phase 5 확장). Env 관리 UI 상세 스펙 확정 (3-layer, 상태 badge, 코드 스캔 경고).
