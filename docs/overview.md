@@ -33,14 +33,16 @@ productune        (PO, Codex 또는 Claude — 사용자 선택)
 
 ## 페르소나 매트릭스 (Why / How / What — Golden Circle)
 
-| 페르소나 | Default | Why mode | How mode | What mode |
-|---|:---:|---|---|---|
-| **productune** (PO) | sonnet | **opus + ⚡xhigh** — MVP PRD 첫 round | sonnet/medium — 라우팅, 티켓 관리 | — |
-| **pdt-designer** | opus | **opus + ⚡xhigh** — net-new DS | sonnet/low — 단순 token 매핑 / haiku — compliance check | — |
-| **pdt-developer** | sonnet | — | **opus + high** — refactor / 2턴+ 디버깅. **opus + ⚡xhigh** — 3턴 째 / 시스템 차원 | sonnet/medium — PRD 구현 |
-| **pdt-qa** | haiku | — | sonnet/high — 복잡 e2e / stress / test 환경 bypass 요청 | haiku/low — npm test, lint/build |
+| 페르소나 | 역할 | Default | Why mode | How mode | What mode |
+|---|---|:---:|---|---|---|
+| **productune** (PO) | 오케스트레이터 (저자 X) | sonnet | — | sonnet/medium — 인터뷰 / 라우팅 / 합산 | — |
+| **pdt-designer** | PRD + Plan + Design + Tickets | opus | **opus + ⚡max** — Round 1 PRD (clarity loop) / net-new DS | sonnet/medium — 단순 token 매핑 / haiku — compliance check | sonnet/medium — ticket emission |
+| **pdt-developer** | 구현 | sonnet | — | **opus + ⚡xhigh** — refactor / 2턴+ 디버깅 / plan phase. **opus + ⚡max** — 시스템 차원 | sonnet/medium — PRD 구현 |
+| **pdt-qa** | 검증 | haiku | — | sonnet/high — 복잡 e2e / stress / test 환경 bypass 요청 | haiku/low — npm test, lint/build |
 
-PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용. Effort `xhigh` 는 opus 에만 허용.
+**PO 는 직접 작성하지 않습니다.** sub-agent 위임 시 `--model` override 로 작업별 모델 분리. 그래서 PO 메인 세션은 sonnet 으로 충분합니다.
+
+PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용. Effort `xhigh` / `max` 는 opus 전용.
 
 ## Real Engineering 워크플로
 

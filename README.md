@@ -41,16 +41,18 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 
 5-tier effort: `low` → `medium` → `high` → `xhigh` → `max` (deepest).
 
-| 페르소나 | Default 모델 | Why mode | How mode | What mode |
-|---|---|---|---|---|
-| **productune** (PO) | sonnet | **opus + ⚡max** — MVP PRD 첫 round (net-new 제품 사고). Subsequent PRD: opus + ⚡xhigh | sonnet/medium — 라우팅 / 티켓 관리 / plan review (default). 위험 plan review: opus + ⚡xhigh | — |
-| **pdt-designer** | opus | **opus + ⚡max** — net-new 시스템 디자인 (UX/Brand/DS 동시 정의). Existing system 신규 화면: opus + ⚡xhigh | sonnet/medium — token 매핑, haiku/low — 단일 컴포넌트 compliance | — |
-| **pdt-developer** | sonnet | — | **L4+ plan phase: opus + ⚡xhigh** (PLAN ONLY). **System-level: opus + ⚡max** | **L1–L3 trivial: sonnet/medium** (직접 impl). **L4+ impl phase: sonnet/high** (plan 후) |
-| **pdt-qa** | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. **Plan testability cross-review (옵트인)**: sonnet/high | haiku/low — npm test, lint/build, 단일 페이지 nav |
+| 페르소나 | 역할 | Default 모델 | Why mode | How mode | What mode |
+|---|---|---|---|---|---|
+| **productune** (PO) | 오케스트레이터 (저자 X) | **sonnet/medium** | — | sonnet/medium — 인터뷰 / 라우팅 / 합산. 위험 plan review 만 opus + ⚡xhigh | — |
+| **pdt-designer** | PRD 작성 + Plan + Design + Tickets | opus | **opus + ⚡max** — Round 1 MVP PRD (clarity loop A ≤ 0.05) / net-new 시스템 디자인. Round 2+ PRD: opus + ⚡xhigh | sonnet/medium — token 매핑, haiku/low — 단일 컴포넌트 compliance | sonnet/medium — ticket 파일 emission |
+| **pdt-developer** | 구현 | sonnet | — | **L4+ plan phase: opus + ⚡xhigh** (PLAN ONLY). **System-level: opus + ⚡max** | **L1–L3 trivial: sonnet/medium**. **L4+ impl phase: sonnet/high** (plan 후) |
+| **pdt-qa** | 검증 | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. **Plan testability cross-review (옵트인)**: sonnet/high | haiku/low — npm test, lint/build, 단일 페이지 nav |
 
+> **PO 는 산출물을 직접 작성하지 않습니다.** 인터뷰 brief 만 자기 손으로 (`<project>/.productune/briefs/<slug>.md` append) 채우고, PRD/티켓/디자인/코드는 모두 sub-agent 위임. 이 구조 덕분에 sub-agent 호출 시 `--model opus` override 로 작업별 모델 분리가 자동 됩니다.
 > PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용.
 > Effort `xhigh` / `max` 는 **opus 전용** (다른 model 은 자동 승격). `max` 는 Stage 1 라우팅에서만 사용 — escalation Path 1 retry 는 `xhigh` 에서 capped.
 > **L4+ implementation 은 plan-first** — pdt-developer 가 opus/xhigh 로 plan 작성 → PO 가 직접 검수 → sonnet/high 로 1-shot 구현.
+> **PRD 는 clarity loop** — Designer 가 ambiguity score `A = 1 − Σ(clarityᵢ × weightᵢ)` 를 0.05 까지 reasoning 인터뷰로 낮춤. 5 라운드 cap.
 
 ## Why the 3-tier memory
 
@@ -67,11 +69,13 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 ## Real Engineering 워크플로
 
 ```
-PRD (productune Why)         — 사용자 문답 + 실현가능성 (mattpocock to-prd, grill-me)
+Interview (PO)               — 사용자 문답 + brief 합성 (pm-product-discovery, grill-me)
+   ↓
+PRD (Designer Why)            — clarity loop A ≤ 0.05 (opus + ⚡max)
    ↓
 Test (pdt-qa What)            — acceptance criteria → test 정의
    ↓
-Issue (productune How)       — vertical-slice ticket 분해 (mattpocock to-issues)
+Issue (Designer How)         — PRD 와 함께 ticket 파일 emission (mattpocock to-issues)
    ↓
 Impl (pdt-developer What/How) — TDD 사이클 (mattpocock tdd, triage-issue)
    ↓
@@ -167,7 +171,7 @@ claude --agent pdt-developer        # 단일 페르소나
 | Top-level reasoning | Anthropic (Claude Code) | OpenAI (Codex CLI) |
 | Subscription | Claude Pro / Max | ChatGPT Plus / Pro |
 | Persona subscription | Claude | Claude |
-| **Hook firm rules** (R1 slug · R2 archive · R3 `.md` boundary · R4 session reuse) | ✓ deterministic | ✗ doctrine-only (Codex bypasses Claude Code hooks) |
+| **Hook firm rules** (R1 slug · R2 archive · R4 session reuse) | ✓ deterministic | ✗ doctrine-only (Codex bypasses Claude Code hooks) |
 | Cost-split | ✗ all on Anthropic | ✓ |
 | ToS | **Cleanest** — 100% first-party | OK |
 

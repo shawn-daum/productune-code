@@ -4,10 +4,12 @@
 #   R1. current_task must have semantic slug + request_summary (no auto-*).
 #   R2. New task: previous current_task slug must be archived to past_tickets
 #       (else PO is task-switching without proper close).
-#   R3. .md-only artifacts + delegating to pdt-developer = boundary violation
-#       (PO must Edit the .md directly).
 #   R4. --resume <uuid> must use a UUID present in current_task.persona_sessions
 #       (else PO is reusing a session from a prior task).
+#
+# (R3 — the .md-boundary check — was retired in the orchestrator rework. PO
+#  authors no files at all in the new doctrine, so the boundary is the empty
+#  set. Frontmatter `tools:` no longer includes Write/Edit on PO either.)
 
 set +e
 
@@ -114,7 +116,7 @@ SLUG="$(jq -r '.current_task.slug // ""' "$STATE" 2>/dev/null)"
 SUMMARY="$(jq -r '.current_task.request_summary // ""' "$STATE" 2>/dev/null)"
 
 # ── R1: current_task must have semantic slug + summary. Auto-fill if missing ─
-# (Was: block. Now: hook seeds current_task from TASK heuristic, leaving R2/R3/R4
+# (Was: block. Now: hook seeds current_task from TASK heuristic, leaving R2/R4
 # to do their normal checks. PO can refine slug at archive time.)
 if [ "$SAME_COMPOUND_WRITES_CT" = "0" ]; then
   if [ -z "$SLUG" ] || [ "${SLUG#auto-}" != "$SLUG" ] || [ -z "$SUMMARY" ] || [ "$SUMMARY" = "(auto-opened by post-delegate hook)" ]; then
@@ -145,19 +147,6 @@ if [ -n "$PREV_SLUG" ] && [ -n "$SLUG" ] && [ "$PREV_SLUG" != "$SLUG" ]; then
   ' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
 
 Then jq-write the new current_task and retry. (See ~/.productune/sections/lifecycle.md §Archive.)"
-  fi
-fi
-
-# ── R3: .md-only artifacts → PO direct, no dev delegation ────────────────────
-if printf '%s' "$COMMAND" | grep -q -- "--agent pdt-developer"; then
-  ALL_MD="$(jq -r '
-    (.current_task.artifacts // []) as $a
-    | if ($a | length) > 0 and ($a | all(test("\\.md$|\\.MD$"; "i")))
-      then "yes" else "no" end
-  ' "$STATE" 2>/dev/null)"
-  if [ "$ALL_MD" = "yes" ]; then
-    ARTS="$(jq -r '.current_task.artifacts | join(", ")' "$STATE" 2>/dev/null)"
-    emit_block ".md-only artifacts ($ARTS) — PO must Edit directly, not delegate to pdt-developer. File-write authority allows **/*.md. (See agents/pdt-po.md §File-write authority.)"
   fi
 fi
 

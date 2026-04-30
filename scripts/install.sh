@@ -404,8 +404,11 @@ activate_backend() {
 
 # ── ~/.claude/settings.json hooks merge (idempotent) ──────────────────────────
 # Existing user hooks are preserved. Productune's own hook entries are detected
-# by their `command` starting with $ROOT/scripts/hooks/ — so re-running install
-# replaces them rather than duplicating.
+# by EITHER:
+#   - command starting with the current $ROOT/scripts/hooks/  (this clone), OR
+#   - command ending with one of the known productune hook basenames
+#     (catches hooks left behind by a previous install from a different clone path).
+# Re-running install replaces them rather than duplicating.
 merge_claude_settings_hooks() {
   local settings="$HOME/.claude/settings.json"
   mkdir -p "$HOME/.claude"
@@ -420,9 +423,16 @@ merge_claude_settings_hooks() {
 
   local tmp; tmp="$(mktemp)" || return 1
   if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg dir "$hooks_dir/" '
+    def is_pdt(cmd; dir):
+      (cmd | startswith(dir))
+      or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
+      or (cmd | endswith("/scripts/hooks/post-compact-doctrine.sh"))
+      or (cmd | endswith("/scripts/hooks/stop-verify.sh"))
+      or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"));
     def strip_pdt(arr; dir):
       (arr // []) | map(
-        select(((.hooks // []) | map(.command // "" | startswith(dir)) | any) | not)
+        select(((.hooks // []) | map(is_pdt(.command // ""; dir)) | any) | not)
       );
     (. // {})
     | .hooks //= {}
@@ -795,6 +805,96 @@ fi
 # 9) Interactive: PATH registration
 PATH_REGISTERED=0
 NEEDS_SOURCE=0
+
+# 9a) Stale-path sweep — when the user re-runs install.sh from a different clone
+# location, prior PATH entries (symlinks under /usr/local/bin or ~/.local/bin
+# and `export PATH=...` lines in shell rc files) still point at the old clone.
+# `command -v productune` would happily report "already on PATH" and silently
+# leave the stale shim active. Detect and refresh them up front.
+EXPECTED_BIN="$ROOT/scripts/productune"
+abs_readlink() {
+  # Resolve symlink target to absolute path. Avoids GNU `readlink -f`
+  # (BSD readlink on macOS doesn't support -f reliably).
+  local link="$1" target
+  target="$(readlink "$link" 2>/dev/null)" || return 1
+  case "$target" in
+    /*) printf '%s\n' "$target" ;;
+    *)
+      local link_dir; link_dir="$(cd "$(dirname "$link")" 2>/dev/null && pwd)" || return 1
+      local tgt_dir; tgt_dir="$(cd "$link_dir/$(dirname "$target")" 2>/dev/null && pwd)" || return 1
+      printf '%s/%s\n' "$tgt_dir" "$(basename "$target")"
+      ;;
+  esac
+}
+
+for STALE_LINK in "$HOME/.local/bin/productune" "/usr/local/bin/productune"; do
+  [ -L "$STALE_LINK" ] || continue
+  CURRENT_TARGET="$(abs_readlink "$STALE_LINK" || true)"
+  if [ -z "$CURRENT_TARGET" ]; then
+    warn "stale dangling symlink: $STALE_LINK (target unresolvable) — refreshing"
+  elif [ "$CURRENT_TARGET" = "$EXPECTED_BIN" ]; then
+    continue
+  else
+    warn "stale symlink: $STALE_LINK → $CURRENT_TARGET"
+    say  "  refreshing → $EXPECTED_BIN"
+  fi
+  if [ "$STALE_LINK" = "/usr/local/bin/productune" ]; then
+    sudo ln -sfn "$EXPECTED_BIN" "$STALE_LINK" 2>/dev/null \
+      || warn "  sudo 실패. 수동 정리: sudo ln -sfn $EXPECTED_BIN $STALE_LINK"
+  else
+    mkdir -p "$(dirname "$STALE_LINK")"
+    ln -sfn "$EXPECTED_BIN" "$STALE_LINK"
+  fi
+done
+
+# Detect stale productune `export PATH=...` lines in shell rc files. Lines that
+# contain `productune/scripts` but do NOT include the current $ROOT/scripts are
+# leftovers from a clone in a different location.
+for STALE_RC in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  [ -f "$STALE_RC" ] || continue
+  STALE_HITS="$(awk -v root="$ROOT/scripts" '
+    index($0, "productune/scripts") > 0 && index($0, root) == 0 { print NR": "$0 }
+  ' "$STALE_RC")"
+  [ -z "$STALE_HITS" ] && continue
+  warn "stale productune PATH 라인 발견: $STALE_RC"
+  printf '%s\n' "$STALE_HITS" | sed 's/^/    /'
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf '\033[1;33m[install]\033[0m %s 의 stale 라인을 제거할까요? (백업: %s.bak.%s) [y/N]: ' \
+      "$STALE_RC" "$STALE_RC" "$TS"
+    STALE_ANS=""; read -r STALE_ANS || STALE_ANS=""
+    case "$STALE_ANS" in
+      y|Y|yes|YES)
+        cp "$STALE_RC" "$STALE_RC.bak.$TS"
+        STALE_TMP="$(mktemp)"
+        # Drop stale productune lines plus a preceding "# productune" marker
+        # if it directly precedes one (best-effort cleanup).
+        awk -v root="$ROOT/scripts" '
+          BEGIN { hold = "" }
+          {
+            if (hold != "") {
+              if (index($0, "productune/scripts") > 0 && index($0, root) == 0) {
+                hold = ""; next
+              } else {
+                print hold; hold = ""
+              }
+            }
+            if ($0 ~ /^# productune$/) { hold = $0; next }
+            if (index($0, "productune/scripts") > 0 && index($0, root) == 0) next
+            print
+          }
+          END { if (hold != "") print hold }
+        ' "$STALE_RC" > "$STALE_TMP" && mv "$STALE_TMP" "$STALE_RC"
+        say "  제거 완료. 백업: $STALE_RC.bak.$TS"
+        ;;
+      *)
+        warn "  남겨둠 — 수동으로 정리하세요."
+        ;;
+    esac
+  else
+    warn "  비대화형 — 그대로 둠. TTY에서 install.sh를 다시 실행하면 정리 가능."
+  fi
+done
+
 if [ -t 0 ] && [ -t 1 ]; then
   echo
   printf '\033[1;36m[install]\033[0m productune PATH 등록 확인...\n'

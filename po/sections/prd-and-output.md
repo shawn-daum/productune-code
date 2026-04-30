@@ -1,24 +1,96 @@
 # PRD lifecycle + Final output shape
 
-## PRD — Stage 1 of the Real Engineering workflow (mandatory; no longer opt-in)
+## PRD authoring is the Designer's job
 
-PRDs (`docs/prd/<slug>.md`) are the **mandatory Stage 1** of the Real Engineering workflow. Earlier doctrine treated them as opt-in; that's deprecated.
+PRDs (`docs/prd/<slug>.md`) are the mandatory Stage 1 deliverable of every new task. **Designer authors them.** PO never opens, edits, or appends to the PRD file.
 
-- New task / new round → PO Why mode authors or updates the PRD (round headers).
-- One PRD file per slug, accumulating round-by-round (`## Round 1 (MVP, 2026-04-28)`, `## Round 2 (...)`).
-- Acceptance criteria in the PRD becomes pdt-qa's test rubric.
+PO's role:
+1. Run discovery interview (Stage 2A) and synthesize an **interview brief** at `<project>/.productune/briefs/<slug>.md`.
+2. Spawn Designer with `--model opus --print --output-format json`. TASK body includes `[brief] <path>` and `[ctx] <slice>`.
+3. Relay Designer's clarity-loop questions to user verbatim; relay user answers back. Append to brief between rounds.
+4. Receive Designer's final PRD + tickets. Read both, route tickets per `tickets.md`.
 
-**Trivial-task exception**: typo fix, single README line — PRD stage may be skipped. Announce one-line: "→ stage PRD 생략 — trivial single-line". Productune's own PRD lives at `docs/prd/productune.md`, accumulating round-by-round.
+Trivial tasks (typo, single README line) skip PRD only by routing rule, not by PO writing in lieu of Designer:
+- L1 typo / 1-line fix → PO delegates straight to Developer (no Designer step), no PRD created. Announce: `→ stage PRD 생략 — L1 trivial`.
 
-When a PRD exists, update its Status header and Activity log mechanically between persona turns (`sed` / `jq` / small scripts — no Claude call for status ticks).
+---
+
+## Designer-side PRD: Ambiguity-score clarity loop
+
+Designer treats PRD authoring as a **clarity convergence loop**, not one-shot drafting.
+
+### Score formula
+
+```
+A = 1 − Σ(clarityᵢ × weightᵢ)
+   i ∈ PRD slot set
+   clarityᵢ ∈ [0, 1]   — Designer's confidence the slot is well-defined
+   weightᵢ — slot importance weight (Σ weights = 1)
+```
+
+**Target:** `A ≤ 0.05`. Iteration ends only when target met OR 5-round cap reached.
+
+### Default slot weighting (Round 1 MVP)
+
+| Slot | Weight |
+|---|--:|
+| Problem statement & target user | 0.18 |
+| Top user job / outcome (JTBD) | 0.14 |
+| Scope boundary (in / out / later) | 0.13 |
+| Acceptance criteria | 0.12 |
+| Risk & assumption surface | 0.10 |
+| Success metrics (north star + input) | 0.09 |
+| Solution shape (hypothesis) | 0.08 |
+| External dependencies / integrations | 0.06 |
+| Brand / UX direction | 0.05 |
+| Operations / GTM / launch | 0.05 |
+
+Weights are defaults. Designer may rebalance per project and record the override in PRD frontmatter.
+
+### Loop protocol
+
+1. Designer reads `[brief]` + `[ctx]`. Scores each slot's clarity. Computes `A`.
+2. If `A ≤ 0.05`: emit final response with `state: "ready"` (PRD path, tickets, score, slot_clarity).
+3. Else: pick lowest-clarity highest-weight slot. Emit `state: "needs-info"` with one `next_question` (one question per round; batching allowed inside that question text).
+4. PO relays question to user → user answers → PO appends to brief → resumes Designer session.
+5. Loop. Hard cap: 5 user-question rounds. On cap, Designer ships PRD with `## Open Questions` and returns `state: "ready"` plus `confidence: <0.7>`.
+
+### Designer output schema (final turn)
+
+```json
+{
+  "state": "ready",
+  "prd_path": "docs/prd/<slug>.md",
+  "tickets": ["docs/tickets/r1/T-001.md", "docs/tickets/r1/T-002.md"],
+  "ambiguity_score": 0.04,
+  "slot_clarity": {
+    "problem_statement": 1.00,
+    "top_job": 0.95,
+    "scope_boundary": 0.90,
+    "acceptance_criteria": 0.95,
+    "risk_assumptions": 0.85,
+    "success_metrics": 0.90,
+    "solution_shape": 0.95,
+    "dependencies": 1.00,
+    "brand_ux": 0.80,
+    "operations": 0.70
+  },
+  "confidence": 0.92,
+  "unresolved": []
+}
+```
+
+PO uses `ambiguity_score`, `confidence`, and `unresolved` to decide whether to gate-1 stop for user review or proceed straight to ticket routing.
 
 ---
 
 ## Output shape to the user
 
-**Normal turn** (no PRD):
+**Normal turn** (after Designer + Developer cycle):
 
 ```
+PRD: docs/prd/<slug>.md (A=0.04, status: Round 1 draft)
+
 ## Changes
 - <file>: <what>
 
@@ -32,6 +104,13 @@ When a PRD exists, update its Status header and Activity log mechanically betwee
 - <open question / manual verify step>
 ```
 
-**Turn with PRD**: prepend `PRD: docs/prd/<slug>.md (status: ...)`.
+Caveman lite tone for the user-facing prose. Code/path tokens unchanged.
 
-**Feedback turn**: skip the PRD line (the user knows where it is) and lead with what changed since their feedback.
+**Discovery turn** (interview in progress):
+
+```
+인터뷰 진행 중. 현재 brief: <path>
+다음 질문 (Designer 요청): <verbatim from Designer>
+```
+
+**Feedback turn**: skip the PRD line (user knows where it is); lead with what changed since their feedback.

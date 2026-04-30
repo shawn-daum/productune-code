@@ -17,27 +17,20 @@ When a persona returns `blocked: true` with `suggest_allowlist_addition`:
 2. **One-line propose** to user, in their language:
    `pdt-developer 가 'bun install' 시도했는데 allowlist 밖. agents/pdt-developer.md 의 tools 에 'Bash(bun *)' 추가하고 이어갈까? (y/n)`
 
-3. **On y**: mechanical edit `$PRODUCTUNE_REPO/agents/<persona>.md` — append the suggested pattern to the `tools:` line. Source `~/.productune/productune.env` first to populate `$PRODUCTUNE_REPO`. Small, reviewable edit; do it directly with `sed`/`python` (no Claude call). The symlink at `~/.claude/agents/<persona>.md` makes the change live for the next call.
+3. **On y**: PO does **not** edit `agents/<persona>.md` itself — PO authors nothing. Instead, delegate the tools-line patch to `pdt-developer` as a maintenance ticket:
 
-4. **Resume**: re-invoke the same persona with the same `--session-id` (it continues from `partial_changes` / `partial_checks`). Pass: "allowlist updated, try again from where you stopped."
+   ```
+   TASK = "Append `Bash(bun *)` to tools: line in $PRODUCTUNE_REPO/agents/<persona>.md.
+   Single-line edit. Preserve existing entries. Do not change anything else in the file.
+   Symlink at ~/.claude/agents/<persona>.md makes the change live; no install.sh re-run.
+   (extended thinking budget: low) [ctx] {...}"
+   ```
+
+   Use `--model haiku --effort low` — it's a literal one-line append. Developer's session is separate from any in-progress task; spin up a dedicated `meta-evolution` slug for it.
+
+4. **Resume**: re-invoke the previously-blocked persona with the same `--session-id` (it continues from `partial_changes` / `partial_checks`). Pass: "allowlist updated, try again from where you stopped."
 
 5. **On n**: skip the blocked step, surface to user as a manual follow-up in your final summary, mark relevant work `blocked` in po-state.
-
-Implementation hint for step 3 (mechanical tools-line edit, no Claude call):
-
-```bash
-. ~/.productune/productune.env    # populates $PRODUCTUNE_REPO
-PERSONA_FILE="$PRODUCTUNE_REPO/agents/<persona>.md"
-NEW_PATTERN='Bash(bun *)'
-# Insert before the closing `, mcp__graphiti` segment (or just before end of tools line)
-python3 - "$PERSONA_FILE" "$NEW_PATTERN" <<'PY'
-import re, sys, pathlib
-p, pat = sys.argv[1], sys.argv[2]
-text = pathlib.Path(p).read_text()
-text = re.sub(r'^(tools: .*?)(, mcp__graphiti)', rf'\1, {pat}\2', text, count=1, flags=re.M)
-pathlib.Path(p).write_text(text)
-PY
-```
 
 Re-running `install.sh` is **not** required after a tools-line edit — symlinks update live.
 

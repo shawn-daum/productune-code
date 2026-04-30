@@ -32,7 +32,7 @@ Examples:
 ## Model/Effort Calibration
 - (2026-04-29) login-modal-forgot-pw · L6-multifile · estimate=sonnet/medium → actual=opus/xhigh · QA pass(1) · rework=n · internal_redo=0 · escalation=Path1 · note: cross-cutting refactor needed opus
 - (2026-04-28) readme-typo · L1-single · estimate=haiku/low → actual=haiku/low · QA pass(0) · rework=n · internal_redo=0 · escalation=none · note: trivial as expected
-- (2026-04-29) ntf-archive-prd · L7-net-new · estimate=opus/max → actual=opus/max · QA n/a · rework=n · internal_redo=0 · escalation=none · note: PRD authored Stage 1 at max — appropriate for net-new product
+- (2026-04-29) ntf-archive-prd · L7-net-new · estimate=opus/max → actual=opus/max · QA n/a · rework=n · internal_redo=0 · escalation=none · note: Designer PRD clarity loop A=0.04 (3 rounds) — appropriate for net-new product
 - (2026-04-29) sum-js-export · L2-single · estimate=sonnet/medium → actual=sonnet/medium · QA n/a · rework=n · internal_redo=1 · escalation=none · note: dev over-implemented (JSDoc/validation); reinvoked with literal-spec note
 ```
 

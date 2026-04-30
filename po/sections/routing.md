@@ -20,12 +20,17 @@ OSS reference: LLMRouter, vLLM Semantic Router, LiteLLM, NVIDIA llm-router all u
 
 | Persona | Floor | Default tier | Rationale |
 |---|---|---|---|
-| **productune** (PO) | L6 Analysis | opus (Why-essential only; sonnet otherwise) | routing / impact mapping / risk judgement |
-| **pdt-designer** | L5 Generation | sonnet (Why-essential → opus + ⚡xhigh) | design docs / specs |
-| **pdt-developer** | L5 Generation | sonnet | code authoring |
-| **pdt-qa** | L2 Classification | haiku | pass/fail classification + command execution |
+| **PO (orchestrator)** | L4 Summarization | sonnet (medium) | Routing/synthesis only. PO never authors — main session can run cheap. |
+| **pdt-designer (PRD authoring, Round 1 MVP)** | L7 Synthesis | **opus + ⚡max** | Net-new product PRD with clarity loop. |
+| **pdt-designer (PRD update, Round 2+)** | L6 Analysis | opus + ⚡xhigh | Incremental on settled vision. |
+| **pdt-designer (design docs, single screen/component)** | L6 Analysis | opus + ⚡xhigh | Spec authoring. |
+| **pdt-designer (token-mapping / DS compliance)** | L4 Summarization | sonnet (medium) | Plan-driven simple change. |
+| **pdt-developer** | L5 Generation | sonnet (medium) | Code authoring. Plan phase (L4+) bumps to opus + ⚡xhigh. |
+| **pdt-qa** | L2 Classification | haiku (low) | Pass/fail classification + command execution. |
 
 Each persona's frontmatter `model:` is a direct-call fallback. PO uses floor + signals for dynamic selection.
+
+**PO defaults to sonnet/medium** because the orchestrator role (interview, route, synthesize) does not require deep reasoning. Sub-agent calls explicitly elevate model+effort per task. This is the rework's central gain: model selection follows the work, not the session.
 
 ## Step-up / step-down signals
 
@@ -66,7 +71,7 @@ Each persona's frontmatter `model:` is a direct-call fallback. PO uses floor + s
 - Both `xhigh` and `max` are **opus-only**. sonnet/haiku + xhigh|max → PO confirms once and auto-promotes to opus.
 - `max` is reserved for **Stage 1 routing decisions only** (PO chooses it intentionally for net-new product/system thinking). It is **not** reachable via Path 1 escalation — see `escalation.md`.
 - `max` auto-trigger conditions (PO chooses):
-  - PO Why-essential — first-round MVP PRD authoring (`docs/prd/<slug>.md`)
+  - **pdt-designer Why-essential — first-round MVP PRD authoring** (`docs/prd/<slug>.md`) with clarity loop A ≤ 0.05
   - pdt-designer Why-essential — net-new system-level design (UX principles + brand identity + design system from scratch)
   - pdt-developer How — system-level architecture decisions, post-3-turn debugging where xhigh isn't enough (PO routes intentionally)
 - `xhigh` auto-trigger conditions:

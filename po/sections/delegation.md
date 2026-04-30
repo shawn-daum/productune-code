@@ -15,23 +15,53 @@ UUIDs are strict **8-4-4-4-12 lowercase hex**. Never prefix (`pdt-dev-…`). Nev
 
 ### Minimal template
 
+The TASK payload now ships with a `[ctx]` JSON line so personas don't have to
+re-read `po-state.json`. Persona doctrine reads `[ctx]` if present; falls back
+to a `jq` re-read only when absent (e.g. user-direct prompts).
+
 ```bash
 TARGET=$(pwd); STATE="$TARGET/.productune/po-state.json"
 PERSONA=pdt-developer
-TASK='<verbatim user text + 1-line scope. No ownership boilerplate — pdt-developer doctrine has it.>'
+USER_TEXT='<verbatim user text>'
+SCOPE='<1-line English scope. No ownership boilerplate — persona doctrine has it.>'
 
 # Tier (routing.md): MODEL ∈ {haiku,sonnet,opus} · EFFORT ∈ {low,medium,high,xhigh,max} · COMPLEXITY=L<n>
 MODEL="${MODEL:-sonnet}"; EFFORT="${EFFORT:-medium}"; COMPLEXITY="${COMPLEXITY:-L5}"
 case "$EFFORT" in xhigh|max) [ "$MODEL" = opus ] || MODEL=opus ;; esac
+
+# Build [ctx] slice — single line of JSON. Stable cache breakpoint across turns.
+# Compute next_ticket_id once on PO side so Designer doesn't re-read state.
+NEXT_NUM=$(jq -r '
+  ([.past_tickets[]?.ticket_id // empty,
+    .current_task.ticket_id // empty]
+   | map(select(. != null) | sub("^T-"; "") | tonumber) | max // 0) + 1
+' "$STATE" 2>/dev/null || echo 1)
+NEXT_TID=$(printf "T-%03d" "$NEXT_NUM")
+
+CTX=$(jq -c --arg ntid "$NEXT_TID" '{
+  slug: .current_task.slug,
+  request_summary: .current_task.request_summary,
+  artifacts: (.current_task.artifacts // []),
+  round: (.current_task.round // null),
+  prd_path: (.current_task.prd_path // null),
+  brief_path: (.current_task.input.brief_path // null),
+  persona_sessions: (.current_task.persona_sessions // {}),
+  next_ticket_id: $ntid
+}' "$STATE")
+
+TASK="$USER_TEXT
+(scope: $SCOPE)
+(extended thinking budget: $EFFORT)
+[ctx] $CTX"
 
 echo "→ delegating to $PERSONA ($COMPLEXITY, $MODEL/$EFFORT — $REASON)"
 
 SID=$(jq -r --arg p "$PERSONA" '.current_task.persona_sessions[$p] // ""' "$STATE")
 OUT=$(mktemp)
 if [ -z "$SID" ]; then
-  NO_COLOR=1 claude --agent "$PERSONA" --model "$MODEL" --print --output-format json "$TASK (extended thinking budget: $EFFORT)" > "$OUT"
+  NO_COLOR=1 claude --agent "$PERSONA" --model "$MODEL" --print --output-format json "$TASK" > "$OUT"
 else
-  NO_COLOR=1 claude --resume "$SID" --model "$MODEL" --print --output-format json "$TASK (extended thinking budget: $EFFORT)" > "$OUT"
+  NO_COLOR=1 claude --resume "$SID" --model "$MODEL" --print --output-format json "$TASK" > "$OUT"
 fi
 
 # Hook already captured session_id, turns, model_history, recent_turns, artifacts.
@@ -56,6 +86,55 @@ rm -f "$OUT"
 > Why python3 stays here only: `claude --print` JSON `.result` may carry stray control chars; `json.loads` is forgiving. State writes use `jq`.
 
 After parse: inspect `CONFIDENCE` + `UNRESOLVED`. Low/non-empty → quality escalation (`escalation.md`).
+
+---
+
+## PRD delegation (Designer, clarity loop)
+
+When PO finishes the discovery interview (Stage 2A) and needs Designer to author a Round 1 PRD:
+
+```bash
+PERSONA=pdt-designer
+USER_TEXT='<verbatim original user idea>'
+SCOPE='draft Round 1 PRD with clarity loop A ≤ 0.05; emit tickets when ready'
+MODEL=opus; EFFORT=max; COMPLEXITY=L7
+
+# Brief path is already set in current_task.input.brief_path (PO wrote it during Stage 2A).
+BRIEF_PATH=$(jq -r '.current_task.input.brief_path // empty' "$STATE")
+
+TASK="$USER_TEXT
+(scope: $SCOPE)
+(extended thinking budget: $EFFORT)
+[ctx] $CTX
+[brief] $BRIEF_PATH"
+```
+
+Designer returns one of:
+
+```json
+// state: needs-info — relay next_question to user
+{ "state": "needs-info",
+  "next_question": "어떤 기기/플랫폼이 1순위인가요? (모바일 웹 vs 네이티브 vs 데스크톱)",
+  "missing_slot": "scope_boundary",
+  "ambiguity_score": 0.18,
+  "round": 2 }
+
+// state: ready — PRD + tickets shipped
+{ "state": "ready",
+  "prd_path": "docs/prd/<slug>.md",
+  "tickets": ["docs/tickets/r1/T-001.md", "..."],
+  "ambiguity_score": 0.04,
+  "slot_clarity": { "...": "..." },
+  "confidence": 0.92,
+  "unresolved": [] }
+```
+
+PO loop:
+1. Read `data.state` first.
+2. If `needs-info`: print `next_question` to user (caveman lite, in user's language). Append user reply to `$BRIEF_PATH` (`printf >>`). Resume Designer session.
+3. If `ready`: store `prd_path` in `current_task.prd_path`, push `tickets[]` into `current_task.artifacts`, then route tickets per `tickets.md`.
+
+Hard cap: 5 `needs-info` rounds. On the 6th turn, PO instructs Designer in resume body: `"finalize PRD with current state. Move unresolved slots into ## Open Questions."` Designer ships ready with `confidence < 0.7`.
 
 ---
 
