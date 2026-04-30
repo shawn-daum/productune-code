@@ -1,26 +1,26 @@
 # Effort learning loop
 
-PO's model/effort routing is not a static map — it's a feedback loop. On every task close, append one line capturing (estimate model/effort) vs (actual model/effort + result quality). Future Stage 1 routing reads this log and biases accordingly.
+PO model/effort routing is feedback loop, not static map. Every task close → 1 line capturing (estimate model/effort) vs (actual + result quality). Future Stage 1 reads log + biases.
 
-## Where the data lives
+## Where data lives
 
-- **Per-task (current/past)**: `./.productune/po-state.json` `current_task.calibration_outcome` (schema in `memory.md` and `tickets.md`). On task close, archive into `past_tasks[].calibration_outcome` unchanged.
-- **Cross-project (rolling)**: `~/.productune/po-memory.md` `## Model/Effort Calibration` section. One line per task. install.sh seeds the section header in new memory files via `po/po-memory.md.template`.
+- **Per-task (current/past)**: `./.productune/po-state.json` `current_task.calibration_outcome` (schema in `memory.md` + `tickets.md`). Task close → archive into `past_tasks[].calibration_outcome` unchanged.
+- **Cross-project (rolling)**: `~/.productune/po-memory.md` `## Model/Effort Calibration` section. 1 line per task. install.sh seeds section header in new memory files via `po/po-memory.md.template`.
 
-## When PO reads it
+## When PO reads
 
-**Stage 1 startup (mandatory):** scan the last 10–20 entries of `## Model/Effort Calibration`. If similar-signal tasks (e.g. "L6 synthesis multi-file refactor") historically needed estimate+1, start this turn one notch higher. This is a **cross-project rolling weight**, separate from `routing.md`'s `recent_turns` weight.
+**Stage 1 startup (mandatory):** scan last 10–20 entries of `## Model/Effort Calibration`. Similar-signal tasks (e.g. "L6 synthesis multi-file refactor") historically needed estimate+1 → start one notch higher. **Cross-project rolling weight**, separate from `routing.md`'s `recent_turns` weight.
 
 Similarity heuristic:
 - complexity level (L5/L6/L7) match
 - task keyword partial match ("refactor", "auth", "migration" etc.)
 - same persona floor or higher
 
-If 3+ calibration entries point the same direction (estimate < actual ≥2 times), auto-bump +1. If any one was +2 (xhigh), recommend auto +2.
+3+ entries same direction (estimate < actual ≥2 times) → auto-bump +1. Any +2 (xhigh) → recommend +2.
 
-## When PO writes it (Stage 3 step 18, mandatory)
+## When PO writes (Stage 3 step 18, mandatory)
 
-Task archives to `done` / `blocked` / `abandoned` → append exactly one line at the bottom of `## Model/Effort Calibration`. **Format**:
+Task archives `done` / `blocked` / `abandoned` → append exactly 1 line at bottom of `## Model/Effort Calibration`. **Format**:
 
 ```
 - (YYYY-MM-DD) <slug> · <complexity_class> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · internal_redo=<n> · escalation=<none|Path1|Path2> · note: <one-line learning>
@@ -32,53 +32,49 @@ Examples:
 ## Model/Effort Calibration
 - (2026-04-29) login-modal-forgot-pw · L6-multifile · estimate=sonnet/medium → actual=opus/xhigh · QA pass(1) · rework=n · internal_redo=0 · escalation=Path1 · note: cross-cutting refactor needed opus
 - (2026-04-28) readme-typo · L1-single · estimate=haiku/low → actual=haiku/low · QA pass(0) · rework=n · internal_redo=0 · escalation=none · note: trivial as expected
-- (2026-04-29) ntf-archive-prd · L7-net-new · estimate=opus/max → actual=opus/max · QA n/a · rework=n · internal_redo=0 · escalation=none · note: Designer PRD clarity loop A=0.04 (3 rounds) — appropriate for net-new product
+- (2026-04-29) ntf-archive-prd · L7-net-new · estimate=opus/max → actual=opus/max · QA n/a · rework=n · internal_redo=0 · escalation=none · note: Designer PRD clarity loop A=0.04 (3 rounds) — appropriate
 - (2026-04-29) sum-js-export · L2-single · estimate=sonnet/medium → actual=sonnet/medium · QA n/a · rework=n · internal_redo=1 · escalation=none · note: dev over-implemented (JSDoc/validation); reinvoked with literal-spec note
 ```
 
 Field rules:
 
-- `estimate=<model>/<effort>` — Stage 1 routing's first call (before any escalation). `<effort>` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}.
-- `actual=<model>/<effort>` — last actually-used model/effort (after any escalation). When the line shows `actual=opus/max`, that's a Stage 1 routing choice — `max` cannot be reached via Path 1 escalation (see `escalation.md`).
-- `QA pass(N)` — final pdt-qa result + loop count (`current_task.calibration_outcome.qa_loops`). Use `n/a` for tasks without QA (e.g. PRD-only Stage 1 work).
+- `estimate=<model>/<effort>` — Stage 1 routing's first call (before escalation). `<effort>` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}.
+- `actual=<model>/<effort>` — last actually-used (after escalation). `actual=opus/max` → Stage 1 routing choice — `max` cannot be reached via Path 1 (`escalation.md`).
+- `QA pass(N)` — final pdt-qa result + loop count (`current_task.calibration_outcome.qa_loops`). Use `n/a` for tasks without QA (e.g. PRD-only).
 - `rework=y` — Stage 3 **user** feedback indicated rework ("다시", "별론데", "이거 아니야"). Strictly user-driven; NOT for PO-internal redos.
-- `internal_redo=<n>` — count of PO-driven re-invocations of the same persona within the same task because the persona's output didn't match spec (e.g. dev added unsolicited JSDoc). 0 if none. Distinguishes from quality escalation (which uses `escalation=Path1|Path2`).
-- `escalation=Path1|Path2|none` — whether quality escalation triggered. `max` does NOT appear here (it's a Stage 1 choice, not an escalation outcome).
-- `note` — one-line PO judgement. "정상" / "appropriate" if estimate==actual; otherwise why they diverged.
+- `internal_redo=<n>` — count of PO-driven re-invocations of same persona within same task because output didn't match spec (e.g. dev added unsolicited JSDoc). 0 if none. Distinguishes from quality escalation (which uses `escalation=Path1|Path2`).
+- `escalation=Path1|Path2|none` — quality escalation triggered or not. `max` does NOT appear (Stage 1 choice, not escalation outcome).
+- `note` — 1-line PO judgement. "정상" / "appropriate" if estimate==actual; otherwise why diverged.
 
 ### Format — model/effort slot
 
-Use literal names only, not free-form descriptors.
+Literal names only. Valid: `haiku/low`, `sonnet/medium`, `sonnet/high`, `opus/xhigh`, `opus/max`.
 
-Valid: `haiku/low`, `sonnet/medium`, `sonnet/high`, `opus/xhigh`, `opus/max`.
+Invalid: `pdt-developer/default`, `default/default`, `sonnet/normal`, `opus/extended` (prose), persona names in model slot.
 
-Invalid: `pdt-developer/default`, `default/default`, `sonnet/normal`, `opus/extended` (prose), persona names in the model slot.
-
-For plan-first tasks, log the **impl phase's** model/effort (the final substantive call). Plan phase lives in `persona_session_meta.<persona>.effort_history` for retrospective.
+For plan-first tasks, log **impl phase's** model/effort (final substantive call). Plan phase lives in `persona_session_meta.<persona>.effort_history` for retro.
 
 ## Mechanical append
 
 ```bash
 LINE="- ($(date -u +%F)) $(jq -r '.current_task.slug' "$STATE") · ..."   # PO fills per format
 MEMORY=~/.productune/po-memory.md
-if ! grep -q '^## Model/Effort Calibration' "$MEMORY"; then
-  printf '\n## Model/Effort Calibration\n' >> "$MEMORY"
-fi
+grep -q '^## Model/Effort Calibration' "$MEMORY" || printf '\n## Model/Effort Calibration\n' >> "$MEMORY"
 printf '%s\n' "$LINE" >> "$MEMORY"
 ```
 
-If section doesn't exist (legacy memory file), create the header. Single `printf` append → almost no race risk.
+If section missing (legacy file), create header. Single `printf` append → almost no race risk.
 
 ## Pruning
 
-`## Model/Effort Calibration` exceeding **100 lines** triggers cleanup at the start of the next PO turn:
+`## Model/Effort Calibration` >100 lines → cleanup at start of next PO turn:
 
-- Same-slug duplicates: keep only the most recent
-- Entries older than 1 year: move to `## Model/Effort Calibration (archived)`
-- Still >100 lines after that: mark oldest with `[SUPERSEDED <date>]` (deeper compression doctrine is future work; archived split is sufficient for now)
+- Same-slug duplicates: keep most recent
+- Entries >1 year: move to `## Model/Effort Calibration (archived)`
+- Still >100 lines: mark oldest `[SUPERSEDED <date>]` (deeper compression doctrine = future work; archived split sufficient)
 
 ## Why this loop matters
 
 - **Estimates self-improve** — PO learns which task classes this user/project habitually under-estimates.
-- **Cross-project accumulation** — `po-memory.md` is user-level, so calibration carries to new projects.
-- **Transparent to the user** — they can open the file and see the reasoning trail. Auto model upgrades have explicit grounds.
+- **Cross-project accumulation** — `po-memory.md` is user-level → calibration carries to new projects.
+- **Transparent** — user can open file + see reasoning trail. Auto model upgrades have explicit grounds.
