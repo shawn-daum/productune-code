@@ -115,15 +115,16 @@ bash productune/scripts/install.sh
 
 `install.sh` 가 인터랙티브하게 처리:
 
-1. **Claude Code preflight** — CLI 미설치면 자동 설치 (`npm install -g @anthropic-ai/claude-code`), 미로그인이면 `claude auth login` 자동 실행. 이미 연결돼 있으면 바로 다음 단계로 진행. (PO 엔진은 항상 `claude` — codex 선택지는 install 에서 제거됨.)
-2. **Wiki backend 설정** — 하드웨어 자동 감지
+1. **Claude Code preflight** — CLI 미설치면 자동 설치 (`npm install -g @anthropic-ai/claude-code`), 미로그인이면 `claude auth login` 자동 실행. 이미 연결돼 있으면 바로 다음 단계로 진행.
+2. **PO engine 선택** — `[1] claude` (primary, hooks fire) / `[2] codex` (secondary, doctrine-only). codex 를 고르면 `~/.codex/config.toml` 도 자동 배포 (codex CLI 가 PATH 에 있을 때). 비대화형 install 은 claude 로 자동 fallback.
+3. **Wiki backend 설정** — 하드웨어 자동 감지
    - Tier S (RAM ≥ 16GB) / Tier A (RAM ≥ 8GB): Ollama 로컬 LLM 선택 → 자동 설치 → FalkorDB + Graphiti 자동 셋업
    - Tier B (RAM 부족 / Docker 없음): wiki-keeper agent (Claude API) 자동 선택
-3. **Hook 5개 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop 자동 merge (firm rule 결정론 보장)
-4. **OSS skill 설치** — mattpocock + phuryn skill 라이브러리
-5. **PATH 등록** — 현재 세션 즉시 적용
+4. **Hook 5개 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop 자동 merge (firm rule 결정론 보장 — claude 엔진에서만 발동)
+5. **OSS skill 설치** — mattpocock + phuryn skill 라이브러리
+6. **PATH 등록** — 현재 세션 즉시 적용
 
-> codex 를 fallback engine 으로 쓰려면 `~/.productune/productune.env` 의 `MY_PO_ENGINE=codex` 로 수동 변경하거나 per-session `productune --engine codex` (hook 미발동 → R1-R4 doctrine-only).
+> install 후에 엔진을 바꾸고 싶으면 `bash scripts/install.sh` 재실행 (현재 엔진 표시 후 변경 prompt) 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=` 직접 편집. per-session 일회성 변경은 `productune --engine codex`.
 
 > 모델 목록은 [Ollama registry](https://registry.ollama.ai) 에서 실시간 크기를 조회해 하드웨어 tier 에 맞는 것만 표시합니다 (`config/model-catalog.json` 에서 관리).
 
