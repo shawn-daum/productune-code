@@ -578,10 +578,26 @@ for BAK in "$HOME"/.codex/po-instructions.md.bak.* "$HOME"/.codex/po-memory.md.b
   mv "$BAK" "${BAK/.codex/.productune}" 2>/dev/null || true
 done
 
-# 2b) (removed) Codex CLI profile manifest copy.
-#     install.sh no longer touches ~/.codex/. If a user wants `productune --engine codex`
-#     they install Codex CLI themselves and seed `~/.codex/config.toml` from
-#     `<repo>/codex/config.toml` manually — but that's outside install's scope.
+# 2b) Codex CLI profile manifest — only deployed if the user opts into Codex
+#     as their PO engine in section 5 below. install.sh does not pre-install
+#     Codex CLI itself; user must `npm i -g @openai/codex` (or whatever the
+#     packaging is) on their own. We just stage the productune profile manifest
+#     when they pick codex.
+maybe_install_codex_config() {
+  command -v codex >/dev/null 2>&1 || {
+    warn "codex CLI not found on PATH. Install separately, then re-run install.sh to deploy ~/.codex/config.toml."
+    return 0
+  }
+  local src="$ROOT/codex/config.toml"
+  local dest="$HOME/.codex/config.toml"
+  mkdir -p "$HOME/.codex"
+  if [ -e "$dest" ] && ! cmp -s "$src" "$dest"; then
+    mv "$dest" "$dest.bak.$TS"
+    warn "backed up existing $dest → $dest.bak.$TS"
+  fi
+  cp "$src" "$dest"
+  say "copied Codex profile manifest: $dest"
+}
 
 # 2c) PO doctrine — productune-owned, lives at ~/.productune/po-instructions.md
 SRC="$ROOT/po/po-instructions.md"
@@ -625,23 +641,69 @@ if [ ! -e "$ROOT/scripts/my-po" ]; then
   say "created compat symlink scripts/my-po → productune"
 fi
 
-# 5) PO engine — claude only (codex selection removed from install)
-#    Power users can still set MY_PO_ENGINE=codex manually in productune.env or pass
-#    `productune --engine codex` per-session, but install no longer prompts for it.
+# 5) PO engine — claude (primary, hooks fire) or codex (secondary, doctrine-only)
+#    Interactive prompt picks one and seeds productune.env. Non-interactive falls
+#    back to claude. Existing env file with MY_PO_ENGINE is preserved (just
+#    repo-path refresh). Picking codex also drops ~/.codex/config.toml.
 PO_ENV_FILE="$HOME/.productune/productune.env"
+
+choose_engine_interactive() {
+  # Echoes the chosen engine. Returns 0.
+  local _codex_status="not installed"
+  command -v codex >/dev/null 2>&1 && _codex_status="installed"
+  cat >&2 <<PROMPT
+
+[install] PO engine 선택:
+  [1] claude   primary — Claude Code, hooks fire (R1/R2/R4 enforced). 권장.
+  [2] codex    secondary — Codex CLI, doctrine-only (hooks don't fire on codex).
+              codex CLI 상태: $_codex_status
+PROMPT
+  printf '  선택 [1/2, 기본=1]: ' >&2
+  local _ans=""; read -r _ans || _ans=""
+  case "$_ans" in
+    2|codex) printf 'codex' ;;
+    *)       printf 'claude' ;;
+  esac
+}
+
 if [ ! -e "$PO_ENV_FILE" ]; then
-  printf 'MY_PO_ENGINE=claude\nPRODUCTUNE_REPO=%s\n' "$ROOT" > "$PO_ENV_FILE"
-  say "default engine: claude (saved to $PO_ENV_FILE, repo path: $ROOT)"
+  if [ -t 0 ] && [ -t 1 ]; then
+    CHOSEN_ENGINE="$(choose_engine_interactive)"
+  else
+    CHOSEN_ENGINE="claude"
+  fi
+  printf 'MY_PO_ENGINE=%s\nPRODUCTUNE_REPO=%s\n' "$CHOSEN_ENGINE" "$ROOT" > "$PO_ENV_FILE"
+  say "engine: $CHOSEN_ENGINE (saved to $PO_ENV_FILE, repo path: $ROOT)"
+  [ "$CHOSEN_ENGINE" = "codex" ] && maybe_install_codex_config
 else
-  # Refresh repo path in case the user moved the clone; preserve any existing engine
-  # override (e.g. someone manually set MY_PO_ENGINE=codex for fallback testing).
+  # Refresh repo path in case the user moved the clone; preserve any existing engine.
   CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
+  CURRENT_ENGINE="${CURRENT_ENGINE:-claude}"
   if grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
     sed -i.bak -E "s|^PRODUCTUNE_REPO=.*|PRODUCTUNE_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
   else
     printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   fi
-  say "PO engine config exists at $PO_ENV_FILE (current: ${CURRENT_ENGINE:-claude}, repo path refreshed to $ROOT)"
+  if [ -t 0 ] && [ -t 1 ]; then
+    printf '\033[1;36m[install]\033[0m 현재 PO engine=%s. 변경할까요? [y/N]: ' "$CURRENT_ENGINE"
+    SWAP=""; read -r SWAP || SWAP=""
+    case "$SWAP" in
+      y|Y|yes|YES)
+        NEW_ENGINE="$(choose_engine_interactive)"
+        if [ "$NEW_ENGINE" != "$CURRENT_ENGINE" ]; then
+          sed -i.bak -E "s|^MY_PO_ENGINE=.*|MY_PO_ENGINE=$NEW_ENGINE|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
+          CURRENT_ENGINE="$NEW_ENGINE"
+          say "engine switched to $CURRENT_ENGINE"
+          [ "$CURRENT_ENGINE" = "codex" ] && maybe_install_codex_config
+        fi
+        ;;
+      *) ;;
+    esac
+  fi
+  say "PO engine config exists at $PO_ENV_FILE (current: $CURRENT_ENGINE, repo path refreshed to $ROOT)"
+  # Even on no-swap path: if existing config says codex but ~/.codex/config.toml
+  # is stale or missing, refresh it.
+  [ "$CURRENT_ENGINE" = "codex" ] && maybe_install_codex_config
 fi
 
 # 5b) Non-interactive / partial-env safety net — ensure MY_PO_ENGINE + PRODUCTUNE_REPO are
