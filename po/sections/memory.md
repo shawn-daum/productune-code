@@ -1,88 +1,56 @@
 # Memory
 
-Two facets: (1) the **promotion gate** that turns persona suggestions into persisted memory, and (2) the **storage layout** (PO memory + per-project state).
+Two facets: (1) **promotion gate** — persona suggestions → persisted memory; (2) **storage** — PO memory + per-project state.
 
-## Promotion gate (project & wiki tier)
+## Promotion gate
 
-Personas no longer auto-write to project files (`docs/<persona>/*.md`) or to the wiki. They identify candidates and return them in `promotion_candidates`. **You** surface each to the user and on approval do the actual write. Both tiers (project AND wiki) require explicit user approval.
+Personas don't auto-write. Return candidates in `promotion_candidates`. PO surfaces, on approval writes. Project + wiki tier both need user approval.
 
-### After every persona turn
-
-Inspect `promotion_candidates` from the response JSON. For each entry:
-
+After every persona turn, inspect `promotion_candidates`. Per entry:
 ```
 [PO] pdt-designer wants to remember:
      project · docs/pdt-designer/decisions.md
-     "(2026-04-27) login-modal: chose dialog over inline form because focus-trap is critical"
-     reason: design decision; future pdt-designer turns will reference
+     "(2026-04-27) login-modal: chose dialog over inline form (focus-trap critical)"
+     reason: design decision; future pdt-designer references
      save? [y/N]
 ```
+- **y** → write (below). Ack `[PO] saved.`
+- **n / Enter / skip** → drop silently.
+- **edit** → prompt edited version, save.
 
-User input:
-- **y / Y / yes** → write (see "Mechanical writes"). Acknowledge: `[PO] saved.`
-- **n / N / Enter / skip** → drop silently.
-- **edit** → prompt for an edited version, then save edited content.
-
-Group >3 candidates as a numbered list; user replies with `1,3` syntax to selectively approve.
+>3 candidates → numbered list; user replies `1,3` for selective approve.
 
 ### Mechanical writes
 
-**`tier: "project"`** — append a line to a markdown file:
+**`tier:"project"`** — append line:
 ```bash
-TARGET="$(jq -r '.target' <<<"$CANDIDATE")"
-DELTA="$(jq -r '.delta' <<<"$CANDIDATE")"
-mkdir -p "$(dirname "$TARGET")"
-printf '%s\n' "$DELTA" >> "$TARGET"
+TARGET=$(jq -r '.target' <<<"$CANDIDATE"); DELTA=$(jq -r '.delta' <<<"$CANDIDATE")
+mkdir -p "$(dirname "$TARGET")"; printf '%s\n' "$DELTA" >> "$TARGET"
 ```
-No Claude call needed. The file lives in the target project's repo so it'll show up in `git status`.
+File lives in target project repo → shows in `git status`.
 
-**`tier: "wiki"`** — backend-aware dispatch. Read `WIKI_BACKEND` from `~/.productune/productune.env` (sourced at session start via `set -a; source ~/.productune/productune.env; set +a`):
-
+**`tier:"wiki"`** — backend-aware (`WIKI_BACKEND` from `~/.productune/productune.env`):
 ```bash
 WIKI_BACKEND="${WIKI_BACKEND:-graphiti}"
-
 case "$WIKI_BACKEND" in
   graphiti)
-    # Async background write — instant "[PO] saved" then indexing runs behind
     JOB_ID=$(uuidgen 2>/dev/null | head -c 8 || date +%s | tail -c 8)
-    JOBS_DIR="$HOME/.productune/wiki-jobs"
-    mkdir -p "$JOBS_DIR"
-    touch "$JOBS_DIR/$JOB_ID.pending"
-    (
-      NO_COLOR=1 claude --resume "$SID" --print --output-format json \
-        "[PROMOTION-APPROVED]
-         Add this episode to your wiki via mcp__graphiti__add_memory:
-         group_id: \"$TARGET\"
-         name: \"$EPISODE_NAME\"
-         episode_body: \"$EPISODE_BODY\"
-         Don't add anything else; just confirm the write." \
+    JOBS_DIR="$HOME/.productune/wiki-jobs"; mkdir -p "$JOBS_DIR"; touch "$JOBS_DIR/$JOB_ID.pending"
+    ( NO_COLOR=1 claude --resume "$SID" --print --output-format json \
+        "[PROMOTION-APPROVED] mcp__graphiti__add_memory: group_id=\"$TARGET\" name=\"$EPISODE_NAME\" episode_body=\"$EPISODE_BODY\". Confirm only." \
         > "$JOBS_DIR/$JOB_ID.log" 2>&1
-      mv "$JOBS_DIR/$JOB_ID.pending" "$JOBS_DIR/$JOB_ID.done"
-    ) &
-    echo "[PO] saved (background indexing, job=$JOB_ID)"
-    ;;
-
+      mv "$JOBS_DIR/$JOB_ID.pending" "$JOBS_DIR/$JOB_ID.done" ) &
+    echo "[PO] saved (background, job=$JOB_ID)" ;;
   keeper)
-    # wiki-keeper agent handles cross-ref, supersede detection, file split, INDEX update
-    NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku \
-      --print --output-format json \
+    NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
       "WRITE [PROMOTION-APPROVED]
 persona: $TARGET
 episode_name: $EPISODE_NAME
-episode_body: $EPISODE_BODY" | python3 -c "
-import json,sys
-try:
-    data=json.loads(sys.stdin.read())
-    r=data.get('result','')
-    print(r)
-except: pass
-"
-    ;;
-
+episode_body: $EPISODE_BODY" | python3 -c "import json,sys
+try: print(json.loads(sys.stdin.read()).get('result',''))
+except: pass" ;;
   fs)
-    # Direct filesystem write — no Claude call
-    WIKI_DIR="$HOME/.productune/wiki/$TARGET"
-    mkdir -p "$WIKI_DIR"
+    WIKI_DIR="$HOME/.productune/wiki/$TARGET"; mkdir -p "$WIKI_DIR"
     TS=$(date -u '+%Y-%m-%dT%H-%M-%SZ')
     SLUG=$(printf '%s' "$EPISODE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cs 'a-z0-9-' '-' | sed 's/-*$//')
     FILE="$WIKI_DIR/${TS}--${SLUG}.md"
@@ -96,147 +64,86 @@ related: []
 ---
 $EPISODE_BODY
 EPISODE
-    # Regenerate INDEX
-    {
-      echo "# $TARGET wiki index"
-      echo "<!-- auto-generated by PO -->"
-      echo ""
+    { echo "# $TARGET wiki index"; echo "<!-- auto -->"; echo ""
       ls -r "$WIKI_DIR"/*.md 2>/dev/null | grep -v INDEX.md | while read -r f; do
-        name=$(grep -m1 '^episode_name:' "$f" 2>/dev/null | sed 's/episode_name: //')
-        dt=$(grep -m1 '^created_at:' "$f" 2>/dev/null | sed 's/created_at: //' | cut -c1-10)
-        sup=$(grep -m1 '^superseded_by:' "$f" 2>/dev/null | sed 's/superseded_by: //')
-        st="active"; [[ "$sup" != "null" && -n "$sup" ]] && st="superseded"
-        body=$(tail -n +6 "$f" 2>/dev/null | head -1 | cut -c1-80)
-        echo "- [$dt] $name [$st]"
-        [ -n "$body" ] && echo "  $body"
-      done
-    } > "$WIKI_DIR/INDEX.md"
-    echo "[PO] saved to wiki: $FILE"
-    ;;
+        n=$(grep -m1 '^episode_name:' "$f" | sed 's/episode_name: //')
+        d=$(grep -m1 '^created_at:' "$f" | sed 's/created_at: //' | cut -c1-10)
+        s=$(grep -m1 '^superseded_by:' "$f" | sed 's/superseded_by: //'); st="active"; [[ "$s" != "null" && -n "$s" ]] && st="superseded"
+        b=$(tail -n +6 "$f" | head -1 | cut -c1-80)
+        echo "- [$d] $n [$st]"; [ -n "$b" ] && echo "  $b"
+      done; } > "$WIKI_DIR/INDEX.md"
+    echo "[PO] saved: $FILE" ;;
 esac
 ```
 
-**Background job tracking (graphiti)**: at the start of each PO turn, check stale pending jobs:
-
+**Background job tracking (graphiti)** — start of turn:
 ```bash
-JOBS_DIR="$HOME/.productune/wiki-jobs"
-if [ -d "$JOBS_DIR" ]; then
-  rm -f "$JOBS_DIR"/*.done 2>/dev/null
-  for job in "$JOBS_DIR"/*.pending; do
-    [ -f "$job" ] || continue
-    AGE=$(( $(date +%s) - $(stat -f %m "$job" 2>/dev/null || stat -c %Y "$job" 2>/dev/null || echo $(date +%s)) ))
-    if [ "$AGE" -gt 30 ]; then
-      JOB_ID=$(basename "$job" .pending)
-      echo "[PO] background indexing job=$JOB_ID ${AGE}s — Ollama 상태 확인하세요 (cat $JOBS_DIR/$JOB_ID.log)"
-    fi
-  done
-fi
+JOBS_DIR="$HOME/.productune/wiki-jobs"; [ -d "$JOBS_DIR" ] && rm -f "$JOBS_DIR"/*.done 2>/dev/null
+for j in "$JOBS_DIR"/*.pending; do [ -f "$j" ] || continue
+  AGE=$(( $(date +%s) - $(stat -f %m "$j" 2>/dev/null || stat -c %Y "$j" 2>/dev/null || echo $(date +%s)) ))
+  [ "$AGE" -gt 30 ] && echo "[PO] job=$(basename "$j" .pending) ${AGE}s — Ollama 확인 (cat $j.log)"
+done
 ```
 
-**Pre-persona wiki search (keeper)**: before invoking a persona when `WIKI_BACKEND=keeper`, call wiki-keeper SEARCH and inject as `wiki_consult:` in the persona task body:
-
+**Pre-persona wiki search (keeper only)** — inject `wiki_consult:` into TASK:
 ```bash
-if [ "${WIKI_BACKEND:-graphiti}" = "keeper" ]; then
-  WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku \
-    --print --output-format json \
-    "SEARCH
+[ "${WIKI_BACKEND:-graphiti}" = "keeper" ] && WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
+  "SEARCH
 persona: $PERSONA_SHORT
-query: $TASK_KEYWORDS" | python3 -c "
-import json,sys
-try:
-    data=json.loads(sys.stdin.read())
-    r=data.get('result','')
-    import re
-    m=re.search(r'\{.*\}',r,re.DOTALL)
-    if m: print(m.group())
-    else: print('{}')
-except: print('{}')
-" 2>/dev/null || echo '{}')
-  TASK="$TASK
+query: $TASK_KEYWORDS" | python3 -c "import json,sys,re
+try: r=json.loads(sys.stdin.read()).get('result',''); m=re.search(r'\{.*\}',r,re.DOTALL); print(m.group() if m else '{}')
+except: print('{}')" 2>/dev/null || echo '{}') && TASK="$TASK
 wiki_consult: $WIKI_RESULT"
-fi
 ```
 
-(Only for `keeper` — `graphiti` personas call `search_memory_facts` themselves via MCP; `fs` personas read INDEX directly.)
+(`graphiti` personas call `search_memory_facts` themselves via MCP. `fs` personas read INDEX directly.)
 
-### Why gated (was auto-write)
+### Why gated
 
-Earlier doctrine had personas auto-promote on heuristic triggers ("a fact appeared in 2 projects"). That made the system noisy and silently grew memory the user couldn't see. New rule: **personas never persist memory without user approval**. If the user dismisses promotions repeatedly for the same persona, learn it: append to `po-memory.md` Workflow preferences ("user usually rejects pdt-designer wiki promotions; ask less"). Future turns can lower the surface threshold for that persona.
+Earlier doctrine auto-promoted on heuristic. Made memory grow invisibly. New rule: **never persist without user approval**. User dismisses repeatedly → append to `po-memory.md` Workflow preferences; future turns lower surface threshold.
 
 ---
 
 ## PO memory: `~/.productune/po-memory.md`
 
-This is **your** cross-session notepad about how this user works with you. Not facts about projects — facts about *the collaborator*.
+Cross-session notepad about **collaborator** (not project facts).
 
 ```markdown
 # PO memory for <user>
-
 ## Communication preferences
-- (YYYY-MM-DD) ...
-
 ## Product taste
-- (YYYY-MM-DD) ...
-
 ## Workflow preferences
-- (YYYY-MM-DD) ...
-
 ## Recent corrections / to-avoid
 - (YYYY-MM-DD) user asked me not to X because Y
 ```
 
-Read at session start. Append (don't rewrite) at notable moments:
-- user pushes back on something ≥2 times → record
-- user explicitly says "always / never / 내가 싫어하는 건"
-- you notice a pattern across turns
-
-Mark contradictions with `[SUPERSEDED YYYY-MM-DD]` — never delete. You're keeping receipts, not a perfect summary.
+Read at session start. Append (don't rewrite) on: ≥2 pushbacks, "always/never/내가 싫어하는 건", multi-turn pattern. Mark contradictions `[SUPERSEDED YYYY-MM-DD]`. Never delete — receipts not summary.
 
 ---
 
 ## Per-project state: `./.productune/po-state.json`
 
-Lightweight JSON, repo-local. Sessions are scoped per **task** (not per project) — each top-level user request belongs to exactly one task, and a task carries its own persona session ids.
+Repo-local JSON. Sessions scoped per **task** (not project). Each top-level user request = one task with own persona session ids.
 
 ```json
 {
   "current_task": {
-    "slug": "login-modal-forgot-pw",
-    "title": "Add forgot-password link to login modal",
-    "started_at": "2026-04-23T14:30:00Z",
-    "request_summary": "User asked to add a forgot password link to the login modal and fix README typo.",
-    "artifacts": ["docs/design/login-modal.md", "src/components/LoginModal.tsx"],
-    "persona_sessions": { "pdt-designer": "<uuid>", "pdt-developer": "<uuid>", "pdt-qa": "<uuid>" },
-    "persona_session_meta": {
-      "pdt-developer": {"id": "<uuid>", "turns": 3, "created_at": "...",
-        "model_history": ["sonnet","opus"], "effort_history": ["medium","high"]}
-    },
-    "calibration_outcome": {
-      "estimated_complexity": "L6", "actual_complexity": "L7",
-      "qa_pass": true, "qa_loops": 1,
-      "user_rework_requested": false,
-      "escalation_triggered": true
-    }
+    "slug": "login-modal-forgot-pw", "title": "...", "started_at": "2026-04-23T14:30:00Z",
+    "request_summary": "...", "artifacts": ["docs/design/login-modal.md", "..."],
+    "persona_sessions": {"pdt-designer":"<uuid>","pdt-developer":"<uuid>","pdt-qa":"<uuid>"},
+    "persona_session_meta": {"pdt-developer": {"id":"<uuid>","turns":3,"created_at":"...",
+      "model_history":["sonnet","opus"],"effort_history":["medium","high"]}},
+    "calibration_outcome": {"estimated_complexity":"L6","actual_complexity":"L7",
+      "qa_pass":true,"qa_loops":1,"user_rework_requested":false,"escalation_triggered":true}
   },
-  "past_tasks": [
-    {
-      "slug": "...", "title": "...",
-      "started_at": "...", "ended_at": "...",
-      "request_summary": "...", "artifacts": ["..."],
-      "persona_sessions": { "..." }
-    }
-  ],
-  "recent_turns": [
-    {"ts": "2026-04-23T14:30:00Z", "persona": "pdt-qa", "task": "...",
-     "result": "fail", "notes": "build failed on type error"}
-  ]
+  "past_tasks": [{"slug":"...","title":"...","started_at":"...","ended_at":"...",
+                  "request_summary":"...","artifacts":[],"persona_sessions":{}}],
+  "recent_turns": [{"ts":"...","persona":"pdt-qa","task":"...","result":"fail","notes":"..."}]
 }
 ```
 
-`recent_turns` is a project-wide rolling window (last 10), independent of task — used for failure-pattern detection.
+`recent_turns` — project-wide rolling 10, task-independent — failure-pattern detection.
+`past_tasks` — cap 50, drop oldest. Retain `title` + `request_summary` + `artifacts` for revival match.
 
-`past_tasks` cap: 50 entries; drop oldest. Past task entries retain enough info (`title`, `request_summary`, `artifacts`) for matching against future user prompts and proposing revival.
-
-Before delegating, glance at `recent_turns`. If a persona has ≥3 failures out of last 5 attempts → flag in Stage 1 risk-flagging (see `evolution.md`).
-
-After every persona turn, append the outcome and increment `current_task.persona_session_meta.<persona>.turns`. Mechanical JSON edit — use `jq` directly, don't burn a Claude call.
+Pre-delegate: glance `recent_turns`. Persona ≥3 fails / last 5 → flag in Stage 1 risk (`evolution.md`).
+Post-turn: append outcome + bump `current_task.persona_session_meta.<persona>.turns` via `jq`. Never burn Claude call.

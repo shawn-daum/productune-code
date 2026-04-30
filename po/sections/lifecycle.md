@@ -1,17 +1,17 @@
 # Task lifecycle + Timeline
 
-Sessions are scoped per **task**, not per project. Same-intent follow-ups stay in `current_task`. Genuinely different work = new task with fresh persona sessions.
+Sessions scoped per **task**, not project. Same-intent follow-ups stay in `current_task`. Genuinely different work = new task with fresh persona sessions.
 
-State key is `past_tickets` (legacy `past_tasks` read-compat for one round).
+State key is `past_tickets` (legacy `past_tasks` read-compat one round).
 
 ## Disposition (Stage 1 step 2)
 
-Inspect `current_task` and `past_tickets`. Classify:
+Inspect `current_task` + `past_tickets`. Classify:
 
 **(a) Continuation of `current_task`** — silent default:
 - pronouns ("그", "방금", "이거 좀 더", "이어서"), verbs without new scope ("추가", "수정", "다시")
 - references files/PRD slugs in `current_task.artifacts`
-→ keep `current_task`, `--resume` its persona sessions.
+→ keep `current_task`, `--resume` persona sessions.
 
 **(b) Revival of `past_tickets[i]`** — propose-and-confirm:
 - mention of past slug/title or its artifacts; high keyword overlap
@@ -23,24 +23,22 @@ Inspect `current_task` and `past_tickets`. Classify:
 
 ## Archive `current_task` → `past_tickets` (mandatory before b/c)
 
-Always write a **1–2 sentence outcome** before archiving — synthesized verdict (what shipped, what's open, status), not a persona dump.
+Always write **1–2 sentence outcome** before archiving — synthesized verdict (what shipped, what's open, status), not persona dump.
 
 ```bash
-NOW=$(date -u +%FT%TZ)
-FINAL_STATUS="done"   # done | blocked | abandoned
-OUTCOME="Shipped LoginModal.tsx + readme typo. QA pass. Designer flagged 'forgot-pw' copy as TBD."
+NOW=$(date -u +%FT%TZ); FINAL_STATUS="done"   # done | blocked | abandoned
+OUTCOME="Shipped LoginModal.tsx + readme typo. QA pass. 'forgot-pw' copy TBD."
 tmp=$(mktemp) && jq --arg now "$NOW" --arg s "$FINAL_STATUS" --arg o "$OUTCOME" '
   if .current_task != null then
-    .past_tickets = ((.past_tickets // []) + [(.current_task + {ended_at: $now, final_status: $s, outcome_summary: $o})])
-    | .past_tickets |= (.[-50:])
-    | .current_task = null
+    .past_tickets = ((.past_tickets // []) + [(.current_task + {ended_at:$now, final_status:$s, outcome_summary:$o})])
+    | .past_tickets |= (.[-50:]) | .current_task = null
   else . end
 ' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
 
 `final_status`: `done` (delivered/QA pass or N/A) · `blocked` (QA fail loop cap or external dep) · `abandoned` (user moved on / "그냥 접자").
 
-**Hook enforcement**: `pre-delegate-task-check.sh` blocks any new-slug delegation when the previous turn's slug is missing from `past_tickets`. Skipping archive is not optional.
+**Hook enforcement**: `pre-delegate-task-check.sh` blocks new-slug delegation when previous turn's slug missing from `past_tickets`. Skipping archive not optional.
 
 ## Allocate new `current_task` (case c)
 
@@ -52,12 +50,11 @@ tmp=$(mktemp) && jq --arg slug "$SLUG" --arg title "$TITLE" --arg summary "$SUMM
 ' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
 
-## Revive a past ticket (case b)
+## Revive past ticket (case b)
 
 ```bash
-SLUG="login-modal-forgot-pw"; NOW=$(date -u +%FT%TZ)
-# 1. archive current (with outcome)
-# 2. pluck the matching past ticket → make it current (drop ended_at)
+SLUG="login-modal-forgot-pw"
+# 1. archive current (with outcome). 2. pluck matching past → make current (drop ended_at)
 tmp=$(mktemp) && jq --arg slug "$SLUG" '
   (.past_tickets | map(select(.slug == $slug)) | last) as $f
   | if $f != null
@@ -67,9 +64,9 @@ tmp=$(mktemp) && jq --arg slug "$SLUG" '
 ' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
 
-`current_task.persona_sessions` repopulates from the past entry; resume seamlessly.
+`current_task.persona_sessions` repopulates from past entry; resume seamlessly.
 
-## Updating `current_task.artifacts`
+## Update `current_task.artifacts`
 
 ```bash
 ARTIFACT="docs/design/login-modal.md"
@@ -78,17 +75,17 @@ tmp=$(mktemp) && jq --arg a "$ARTIFACT" '.current_task.artifacts |= ((. // []) +
 
 ## Compaction
 
-Auto-compaction defaults to **70%** via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` in `~/.productune/productune.env` (sourced by `productune` wrapper). Direct `claude --agent` calls don't inherit — `export` in shell rc if needed. If a single task exceeds 50 turns on one persona, ask user to split.
+Auto-compaction defaults **70%** via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` in `~/.productune/productune.env` (sourced by `productune` wrapper). Direct `claude --agent` calls don't inherit — `export` in shell rc if needed. Single task >50 turns on one persona → ask user to split.
 
 ## Disk cleanup
 
-Claude Code session transcripts: `cleanupPeriodDays` (default 30) in `~/.claude/settings.json`. `past_tickets` are never auto-deleted; oldest dropped only when length > 50.
+Claude Code session transcripts: `cleanupPeriodDays` (default 30) in `~/.claude/settings.json`. `past_tickets` never auto-deleted; oldest dropped only when length > 50.
 
 ---
 
 ## Timeline / project history
 
-When user asks history / "지금까지 뭐 했어" / 타임라인 — **never invoke a persona, never derive from `git`**. Source of truth = `past_tickets` + `current_task` in `po-state.json`. Sort by `started_at`, render chronologically:
+User asks history / "지금까지 뭐 했어" / 타임라인 — **never invoke persona, never derive from `git`**. Source = `past_tickets` + `current_task` in `po-state.json`. Sort by `started_at`, render chronologically:
 
 ```
 ## 프로젝트 타임라인 (<repo>)
@@ -102,4 +99,4 @@ When user asks history / "지금까지 뭐 했어" / 타임라인 — **never in
 진행중: <current_task.slug>  [in-progress]
 ```
 
-Specific task detail beyond summary: read PRD at `docs/prd/<slug>.md`, persona notes at `docs/<persona>/*.md`, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` against a past session is last resort (re-loads context — never for routine timeline).
+Specific task detail beyond summary: read PRD `docs/prd/<slug>.md`, persona notes `docs/<persona>/*.md`, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` against past session = last resort (re-loads context — never for routine timeline).
