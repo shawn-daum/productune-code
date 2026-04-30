@@ -19,3 +19,9 @@ __pycache__/
 agents/pdt-designer.md
 agents/pdt-developer.md
 agents/pdt-qa.md
+
+# productune-on-productune (self-dogfood) — runtime state only.
+# Artifacts (.productune/briefs/, docs/prd/, docs/tickets/, docs/pdt-*/) stay tracked.
+.productune/po-state.json
+.productune/po.lock
+.productune/logs/
