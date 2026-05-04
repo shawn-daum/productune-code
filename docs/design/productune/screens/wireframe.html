@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>productune — Wireframes</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1a1a1a; color: #888; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; }
+  .nav { background: #111; padding: 12px 24px; display: flex; gap: 16px; align-items: center; border-bottom: 1px solid #333; position: sticky; top: 0; z-index: 100; }
+  .nav a { color: #888; text-decoration: none; padding: 4px 10px; border-radius: 4px; }
+  .nav a:hover, .nav a.active { background: #2a2a2a; color: #ccc; }
+  .nav .title { color: #555; margin-right: 8px; }
+  .screen { display: none; padding: 32px; max-width: 1100px; margin: 0 auto; }
+  .screen.active { display: block; }
+  h2 { color: #aaa; font-size: 13px; margin-bottom: 24px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .label { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+
+  /* wireframe primitives */
+  .wf { background: #111; border: 1.5px solid #333; border-radius: 6px; overflow: hidden; }
+  .wf-box { background: #222; border: 1px dashed #444; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #555; font-size: 11px; }
+  .wf-text { color: #666; }
+  .wf-btn { background: #2a2a2a; border: 1px solid #444; border-radius: 4px; padding: 6px 14px; color: #999; font-size: 11px; display: inline-block; cursor: default; }
+  .wf-btn.primary { border-color: #666; color: #bbb; }
+  .wf-input { background: #1a1a1a; border: 1px solid #444; border-radius: 4px; padding: 6px 10px; color: #777; font-size: 11px; }
+  .wf-divider { border: none; border-top: 1px solid #2a2a2a; margin: 12px 0; }
+  .wf-badge { background: #2a2a2a; border: 1px solid #444; border-radius: 99px; padding: 2px 8px; font-size: 10px; color: #666; display: inline-block; }
+  .wf-card { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 12px; }
+
+  /* ── SCREEN 1: HOME ── */
+  .home-wrap { display: flex; flex-direction: column; align-items: center; gap: 32px; padding: 48px 0; }
+  .home-logo { width: 48px; height: 48px; border: 1.5px dashed #444; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #555; font-size: 10px; }
+  .home-tagline { color: #555; font-size: 11px; text-align: center; line-height: 1.6; max-width: 320px; }
+  .home-actions { display: flex; gap: 12px; }
+  .home-recent { width: 600px; }
+  .home-recent-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid #222; }
+  .home-recent-row:last-child { border-bottom: none; }
+  .home-recent-icon { width: 28px; height: 28px; border: 1px dashed #444; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 9px; color: #555; flex-shrink: 0; }
+  .home-recent-info { flex: 1; }
+  .home-recent-name { color: #888; font-size: 12px; }
+  .home-recent-meta { color: #555; font-size: 10px; margin-top: 2px; }
+  .home-recent-badge { }
+
+  /* ── SCREEN 2: WORKSPACE ── */
+  .ws-shell { display: flex; height: 600px; border: 1.5px solid #333; border-radius: 6px; overflow: hidden; }
+  .ws-sidebar { width: 200px; background: #111; border-right: 1px solid #2a2a2a; display: flex; flex-direction: column; flex-shrink: 0; }
+  .ws-sidebar-header { padding: 10px 12px; border-bottom: 1px solid #222; }
+  .ws-sidebar-project { color: #888; font-size: 11px; }
+  .ws-sidebar-sub { color: #555; font-size: 10px; margin-top: 2px; }
+  .ws-sidebar-nav { flex: 1; padding: 8px 0; }
+  .ws-nav-item { padding: 6px 12px; font-size: 11px; color: #666; display: flex; align-items: center; gap: 8px; cursor: default; }
+  .ws-nav-item.active { background: #1e1e1e; color: #aaa; }
+  .ws-nav-dot { width: 6px; height: 6px; border-radius: 50%; background: #444; flex-shrink: 0; }
+  .ws-nav-dot.po { background: #FF6B2B; opacity: 0.7; }
+  .ws-main { flex: 1; display: flex; flex-direction: column; }
+  .ws-breadcrumb { height: 40px; background: #0f0f0f; border-bottom: 1px solid #2a2a2a; display: flex; align-items: center; padding: 0 16px; gap: 0; flex-shrink: 0; overflow: hidden; }
+  .bc-item { display: flex; align-items: center; gap: 6px; padding: 0 12px; height: 100%; font-size: 10px; color: #555; white-space: nowrap; }
+  .bc-item.active { color: #aaa; border-bottom: 2px solid #A78BFA; }
+  .bc-item.done { color: #555; }
+  .bc-dot { width: 5px; height: 5px; border-radius: 50%; background: #444; }
+  .bc-dot.active { background: #A78BFA; }
+  .bc-dot.done { background: #34D399; }
+  .bc-arrow { color: #333; font-size: 10px; }
+  .ws-body { flex: 1; display: flex; overflow: hidden; }
+  .ws-chat { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #222; }
+  .ws-chat-header { padding: 10px 14px; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 8px; }
+  .ws-chat-title { color: #888; font-size: 11px; }
+  .ws-chat-messages { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+  .msg { padding: 8px 10px; border-radius: 4px; font-size: 11px; line-height: 1.5; }
+  .msg-po { background: #1e1a16; border-left: 2px solid #FF6B2B; color: #999; }
+  .msg-trace { background: #141414; border-left: 2px solid #333; color: #555; font-size: 10px; font-family: monospace; }
+  .msg-user { background: #1e1e1e; color: #888; align-self: flex-end; border: 1px solid #2a2a2a; max-width: 80%; }
+  .ws-chat-input { padding: 10px 14px; border-top: 1px solid #222; display: flex; gap: 8px; }
+  .ws-board { width: 240px; background: #0d0d0d; display: flex; flex-direction: column; }
+  .ws-board-header { padding: 10px 12px; border-bottom: 1px solid #222; font-size: 10px; color: #555; }
+  .ws-board-body { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+  .ticket-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 4px; padding: 8px 10px; }
+  .ticket-id { font-size: 9px; color: #555; }
+  .ticket-title { font-size: 11px; color: #777; margin: 2px 0; }
+  .ticket-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+
+  /* ── SCREEN 3: DESIGN GATE ── */
+  .dg-shell { border: 1.5px solid #333; border-radius: 6px; overflow: hidden; }
+  .dg-header { background: #111; padding: 12px 16px; border-bottom: 1px solid #2a2a2a; display: flex; align-items: center; justify-content: space-between; }
+  .dg-title { color: #888; font-size: 12px; }
+  .dg-actions { display: flex; gap: 8px; }
+  .dg-tabs { background: #0f0f0f; border-bottom: 1px solid #2a2a2a; display: flex; gap: 0; }
+  .dg-tab { padding: 8px 16px; font-size: 11px; color: #555; cursor: default; border-bottom: 2px solid transparent; }
+  .dg-tab.active { color: #A78BFA; border-bottom-color: #A78BFA; }
+  .dg-body { display: flex; height: 380px; }
+  .dg-viewer { flex: 1; background: #111; padding: 16px; }
+  .dg-mockup-preview { width: 100%; height: 100%; border: 1px dashed #333; border-radius: 4px; display: flex; align-items: center; justify-content: center; }
+  .dg-sidebar { width: 200px; background: #0d0d0d; border-left: 1px solid #222; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .dg-sidebar-section { }
+  .dg-sidebar-label { font-size: 9px; color: #444; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
+  .dg-file-item { font-size: 10px; color: #666; padding: 4px 6px; display: flex; align-items: center; gap: 6px; }
+  .dg-file-dot { width: 4px; height: 4px; border-radius: 50%; background: #A78BFA; flex-shrink: 0; }
+  .dg-footer { background: #0f0f0f; border-top: 1px solid #222; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; }
+  .dg-footer-hint { font-size: 10px; color: #555; }
+
+  /* mermaid placeholder */
+  .mermaid-ph { background: #0a0a0a; border: 1px dashed #2a2a2a; border-radius: 4px; padding: 16px; font-size: 10px; color: #444; font-family: monospace; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <span class="title">productune wireframes ·</span>
+  <a href="#" class="active" onclick="show('home',this)">① Home</a>
+  <a href="#" onclick="show('workspace',this)">② Main Workspace</a>
+  <a href="#" onclick="show('design',this)">③ Design Review Gate</a>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     SCREEN 1 — HOME
+═══════════════════════════════════════════════ -->
+<div id="home" class="screen active">
+  <h2>Screen 1 — Home</h2>
+  <div class="wf" style="padding: 0;">
+    <!-- titlebar -->
+    <div style="height:28px; background:#0d0d0d; border-bottom:1px solid #222; display:flex; align-items:center; padding:0 12px; gap:6px;">
+      <div style="width:10px;height:10px;border-radius:50%;background:#2a2a2a;"></div>
+      <div style="width:10px;height:10px;border-radius:50%;background:#2a2a2a;"></div>
+      <div style="width:10px;height:10px;border-radius:50%;background:#2a2a2a;"></div>
+      <span style="color:#444;font-size:10px;margin-left:auto;margin-right:auto;">productune</span>
+    </div>
+    <div class="home-wrap">
+      <div class="home-logo">logo</div>
+      <div>
+        <div style="color:#777;font-size:16px;text-align:center;margin-bottom:6px;">productune</div>
+        <div class="home-tagline">PRD → 디자인 → 빌드 → 배포<br>한 사이클을 GUI 만으로 완주</div>
+      </div>
+      <div class="home-actions">
+        <div class="wf-btn primary">+ 새 프로젝트 만들기</div>
+        <div class="wf-btn">기존 폴더 열기</div>
+      </div>
+      <div class="home-recent wf-card">
+        <div class="label" style="margin-bottom:10px;">최근 프로젝트</div>
+        <div class="home-recent-row">
+          <div class="home-recent-icon">P</div>
+          <div class="home-recent-info">
+            <div class="home-recent-name">productune</div>
+            <div class="home-recent-meta">~/Documents/dev/ntf-products/productune · Phase 1 MVP</div>
+          </div>
+          <div class="wf-badge">in-progress</div>
+        </div>
+        <div class="home-recent-row">
+          <div class="home-recent-icon">M</div>
+          <div class="home-recent-info">
+            <div class="home-recent-name">my-saas</div>
+            <div class="home-recent-meta">~/productune/projects/my-saas · Round 2</div>
+          </div>
+          <div class="wf-badge">done</div>
+        </div>
+        <div class="home-recent-row">
+          <div class="home-recent-icon">L</div>
+          <div class="home-recent-info">
+            <div class="home-recent-name">landing-page</div>
+            <div class="home-recent-meta">~/productune/projects/landing-page · PRD</div>
+          </div>
+          <div class="wf-badge">todo</div>
+        </div>
+      </div>
+      <div style="color:#444;font-size:10px;">v0.1.0 · shawn.kim@axzcorp.com</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     SCREEN 2 — MAIN WORKSPACE
+═══════════════════════════════════════════════ -->
+<div id="workspace" class="screen">
+  <h2>Screen 2 — Main Workspace</h2>
+  <div class="ws-shell">
+    <!-- sidebar -->
+    <div class="ws-sidebar">
+      <div class="ws-sidebar-header">
+        <div class="ws-sidebar-project">productune</div>
+        <div class="ws-sidebar-sub">Phase 1 MVP · Round 1</div>
+      </div>
+      <div class="ws-sidebar-nav">
+        <div class="ws-nav-item active">
+          <div class="ws-nav-dot po"></div>PO 채팅
+        </div>
+        <div class="ws-nav-item">
+          <div class="ws-nav-dot"></div>티켓 보드
+        </div>
+        <div class="ws-nav-item">
+          <div class="ws-nav-dot"></div>메모리 편집기
+        </div>
+        <div class="ws-nav-item">
+          <div class="ws-nav-dot"></div>Env 패널
+        </div>
+        <hr class="wf-divider">
+        <div class="ws-nav-item">
+          <div class="ws-nav-dot"></div>버전 히스토리
+        </div>
+        <div class="ws-nav-item">
+          <div class="ws-nav-dot"></div>설정
+        </div>
+      </div>
+    </div>
+    <!-- main -->
+    <div class="ws-main">
+      <!-- breadcrumb -->
+      <div class="ws-breadcrumb">
+        <div class="bc-item done"><div class="bc-dot done"></div>PRD</div>
+        <div class="bc-arrow">›</div>
+        <div class="bc-item active"><div class="bc-dot active"></div>Design</div>
+        <div class="bc-arrow">›</div>
+        <div class="bc-item"><div class="bc-dot"></div>Build</div>
+        <div class="bc-arrow">›</div>
+        <div class="bc-item"><div class="bc-dot"></div>QA</div>
+        <div class="bc-arrow">›</div>
+        <div class="bc-item"><div class="bc-dot"></div>Deploy</div>
+        <div class="bc-arrow">›</div>
+        <div class="bc-item"><div class="bc-dot"></div>Operate</div>
+      </div>
+      <div class="ws-body">
+        <!-- chat -->
+        <div class="ws-chat">
+          <div class="ws-chat-header">
+            <div class="ws-nav-dot po"></div>
+            <div class="ws-chat-title">Round 1 — Phase 1 MVP</div>
+            <div class="wf-badge" style="margin-left:auto;">Design stage</div>
+          </div>
+          <div class="ws-chat-messages">
+            <div class="msg msg-trace">→ Stage: PRD 완료 (Designer, opus/max, 3턴, A=0.03)</div>
+            <div class="msg msg-po">PRD 완성됐어요. 디자인 단계로 갑니다. design system / UX flow / wireframe / hi-fi mockup 4종 산출물을 Designer에게 위임할게요.</div>
+            <div class="msg msg-trace">→ delegating to pdt-designer (L6, opus/high — design stage)</div>
+            <div class="msg msg-po">Designer가 design system 초안 작성 중...</div>
+            <div class="msg msg-trace">→ pdt-designer turn 1: Design System draft done. UX flow Mermaid 작성 중...</div>
+          </div>
+          <div class="ws-chat-input">
+            <div class="wf-input" style="flex:1;">메시지 입력... (/new /continue /skill)</div>
+            <div class="wf-btn primary">전송</div>
+          </div>
+        </div>
+        <!-- ticket board -->
+        <div class="ws-board">
+          <div class="ws-board-header">티켓 보드 · 4개</div>
+          <div class="ws-board-body">
+            <div class="ticket-card">
+              <div class="ticket-id">T-001 · design</div>
+              <div class="ticket-title">Design System</div>
+              <div class="ticket-meta">
+                <div class="wf-badge" style="font-size:9px;padding:1px 6px;border-color:#A78BFA44;color:#A78BFA88;">in-progress</div>
+              </div>
+            </div>
+            <div class="ticket-card">
+              <div class="ticket-id">T-002 · design</div>
+              <div class="ticket-title">UX Flow (Mermaid)</div>
+              <div class="ticket-meta">
+                <div class="wf-badge" style="font-size:9px;padding:1px 6px;">todo</div>
+              </div>
+            </div>
+            <div class="ticket-card">
+              <div class="ticket-id">T-003 · design</div>
+              <div class="ticket-title">Wireframe (핵심 화면)</div>
+              <div class="ticket-meta">
+                <div class="wf-badge" style="font-size:9px;padding:1px 6px;">todo</div>
+              </div>
+            </div>
+            <div class="ticket-card">
+              <div class="ticket-id">T-004 · design</div>
+              <div class="ticket-title">Hi-fi Mockup (핵심 화면)</div>
+              <div class="ticket-meta">
+                <div class="wf-badge" style="font-size:9px;padding:1px 6px;">todo</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     SCREEN 3 — DESIGN REVIEW GATE
+═══════════════════════════════════════════════ -->
+<div id="design" class="screen">
+  <h2>Screen 3 — Design Review Gate</h2>
+  <div class="dg-shell">
+    <div class="dg-header">
+      <div>
+        <div class="dg-title">디자인 검토 — productune Phase 1 MVP</div>
+        <div style="font-size:10px;color:#555;margin-top:2px;">Designer (opus/high) · 4종 산출물 준비됨 · 승인 후 Build 진입</div>
+      </div>
+      <div class="dg-actions">
+        <div class="wf-btn">다시 작업</div>
+        <div class="wf-btn primary">이대로 진행 →</div>
+      </div>
+    </div>
+    <div class="dg-tabs">
+      <div class="dg-tab active">a. Design System</div>
+      <div class="dg-tab">b. UX Flow</div>
+      <div class="dg-tab">c. Wireframe</div>
+      <div class="dg-tab">d. Hi-fi Mockup</div>
+    </div>
+    <div class="dg-body">
+      <div class="dg-viewer">
+        <!-- design system tab content (placeholder) -->
+        <div style="color:#666;font-size:11px;margin-bottom:12px;">docs/design/productune/system.md</div>
+        <div class="wf-box" style="height:60px;margin-bottom:12px;">Color palette · 14 tokens</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <div class="wf-box" style="flex:1;height:40px;">Typography scale</div>
+          <div class="wf-box" style="flex:1;height:40px;">Spacing (8px grid)</div>
+          <div class="wf-box" style="flex:1;height:40px;">Components</div>
+        </div>
+        <div class="wf-box" style="height:80px;">Layout diagram — Sidebar 240px + Main content</div>
+      </div>
+      <div class="dg-sidebar">
+        <div class="dg-sidebar-section">
+          <div class="dg-sidebar-label">산출물</div>
+          <div class="dg-file-item"><div class="dg-file-dot"></div>system.md</div>
+          <div class="dg-file-item"><div class="dg-file-dot" style="background:#444;"></div>flow.md</div>
+          <div class="dg-file-item"><div class="dg-file-dot" style="background:#444;"></div>wireframe.html</div>
+          <div class="dg-file-item"><div class="dg-file-dot" style="background:#444;"></div>mockup.html</div>
+        </div>
+        <hr class="wf-divider">
+        <div class="dg-sidebar-section">
+          <div class="dg-sidebar-label">Persona Activity</div>
+          <div style="font-size:9px;color:#555;line-height:1.6;">
+            pdt-designer<br>
+            opus/high · 2 turns<br>
+            confidence: 0.87
+          </div>
+        </div>
+        <hr class="wf-divider">
+        <div class="dg-sidebar-section">
+          <div class="dg-sidebar-label">특정 부분 수정</div>
+          <div class="wf-input" style="width:100%;margin-top:4px;">수정 요청 입력...</div>
+          <div class="wf-btn" style="margin-top:6px;width:100%;text-align:center;">Designer에게 전달</div>
+        </div>
+      </div>
+    </div>
+    <div class="dg-footer">
+      <div class="dg-footer-hint">⌘↵ 이대로 진행 · Esc 채팅으로 돌아가기</div>
+      <div style="display:flex;gap:8px;">
+        <div class="wf-btn">← 이전</div>
+        <div class="wf-btn">다음 →</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function show(id, el) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  el.classList.add('active');
+  return false;
+}
+</script>
+</body>
+</html>
