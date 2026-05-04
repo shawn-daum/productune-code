@@ -64,9 +64,29 @@ Designer drives clarity loop (`prd-and-output.md`). Each turn returns:
 
 PO relays Designer's question → user answers → PO appends to brief → resume Designer. Cap: 5 rounds. Beyond → accept Designer's PRD with `Open Questions`.
 
+### 2B'. Design stage (PRD ready → Design 산출물 확정)
+
+**Trigger**: PRD `state:"ready"` + (complexity ≥ L4 OR user-facing change OR `risk_flags` ≠ none).
+
+**Skip condition**: complexity L1–L3 AND not user-facing AND no risk_flags → PO announces `→ stage Design 생략 — L<n> trivial` and proceeds to 2C.
+
+When triggered:
+1. PO announces `→ Stage: Design (Designer) — design system / UX flow / mock UI 3종`.
+2. PO issues **4 design tickets** (Designer emits content; PO sets lifecycle metadata):
+   - `T-NNN-a`: Design System (`docs/design/<slug>/system.md`)
+   - `T-NNN-b`: UX Flow / 화면 전환 Mermaid (`docs/design/<slug>/flow.md`)
+   - `T-NNN-c`: Wireframe — 핵심 화면 a few (Excalidraw, `docs/design/<slug>/screens/*.excalidraw.json`)
+   - `T-NNN-d`: Hi-fi mockup — 핵심 화면 a few (HTML/CSS 정적 프리뷰, `docs/design/<slug>/mockups/*.html`)
+3. PO delegates to Designer (`opus/high`): `"PRD at <prd_path>. Produce: (a) design system, (b) UX flow Mermaid, (c) wireframes for key screens (Excalidraw, a few), (d) hi-fi HTML/CSS mockups for the same key screens. Emit all 4 as separate tickets."`.
+4. Designer returns 4 artifacts + emits tickets. PO updates ticket status/assignee.
+5. PO surfaces design artifacts to user: `→ Design 산출물 준비됨. 검토 후 Build 진입할까요?`
+6. **User gate**: explicit approval required before routing to 2C. User may request revisions → resume Designer.
+
+Design tickets use `stage: design` in frontmatter. Developer `## Inputs` must reference the relevant design doc path.
+
 ### 2C. Routing tickets to Developer / QA
 
-Designer emits `docs/tickets/<round>/T-NNN.md`. PO reads each, picks model/effort per `routing.md`, delegates to `pdt-developer`. After each dev turn, optional gates:
+Designer emits `docs/tickets/<round>/T-NNN.md`. PO reads each, picks model/effort per `routing.md`, updates lifecycle/status metadata as work moves, and delegates to `pdt-developer`. After each dev turn, optional gates:
 
 7. **Gate 1 (plan-approval)**: ≥4 tickets OR risk-area OR user-facing ambiguous → pause, show plan list to user, wait "go".
 
@@ -77,6 +97,18 @@ Designer emits `docs/tickets/<round>/T-NNN.md`. PO reads each, picks model/effor
    **State writes**: `post-delegate-state-write` hook handles UUID capture + `persona_session_meta.turns` increment. PO's job: (a) write meaningful `current_task` (slug + `request_summary` + `artifacts`) on start; otherwise hook uses `auto-<ts>` slug. (b) append model/effort/complexity to `model_history`/`effort_history`/`complexity_level`. PO-direct turns no longer exist — never `actor:"po-direct"`.
 
    First call no `--session-id`; subsequent → `--resume "$SID"` (read SID from `current_task.persona_sessions.<persona>`).
+
+   **Gate 1 — Design Review** (Design → Build 전, 필수): Designer 4종 산출물 완성 후 PO가 사용자에게 노출. 명시적 승인(또는 수정 요청) 후 Build 진입. *(상세: Stage 2B' 참조)*
+
+   **Gate 2 — Ticket Review** (Build 중 티켓마다, 필수): Developer 위임 결과가 돌아올 때마다 PO가 사용자에게 아래 형식으로 노출. 명시적 승인 후 다음 티켓 진행.
+   ```
+   ✓ T-NNN 완성 — <title>
+   변경 파일: <changed_files 목록>
+   요약: <result 1–2줄>
+   [Persona Activity: <persona> · <model>/<effort> · turn <n>]
+   → 승인하고 계속 진행할까요? (y / 수정 요청 입력)
+   ```
+   사용자가 수정 내용 입력 → 동일 Developer 세션 resume. 승인 → 다음 티켓 또는 QA 진입.
 
 9. **Gate 2 (design-review, conditional)**: Designer deliverable user-facing → pause for user approval before Developer.
 
@@ -99,4 +131,4 @@ Designer emits `docs/tickets/<round>/T-NNN.md`. PO reads each, picks model/effor
 17. **Learn repeating preferences.** Append 1-liner to `~/.productune/po-memory.md` with date.
     - **Disposition correction tracking**: `/new` after `→ continuing` (or vice versa) ≥2× same direction in this project → append to Workflow preferences. Future Stage 1 weights this.
 
-18. **Calibration log** (effort learning loop). Every task close (`done`/`blocked`/`abandoned`) → append exactly 1 line to `## Model/Effort Calibration`. Mandatory — see `calibration.md`. Designer-PRD turns logged as `opus/max`. No `po-direct/n-a` (PO authors nothing).
+18. **Calibration log** (effort learning loop). Every task close (`done`/`blocked`/`abandoned`) → append exactly 1 line to `## Model/Effort Calibration`. Mandatory — see `calibration.md`. Designer-PRD turns logged as `opus/max`. No `po-direct/n-a` (PO authors no product content).

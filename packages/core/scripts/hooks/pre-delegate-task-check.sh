@@ -161,4 +161,19 @@ if [ -n "$RESUME_UUID" ]; then
   fi
 fi
 
+# ── R5: pending_verification gate ────────────────────────────────────────────
+# If current_task.pending_verification.resolved = false, block delegation.
+# PO must surface checklist to user and set resolved=true before next ticket.
+PEND_RESOLVED="$(jq -r '.current_task.pending_verification.resolved // "true"' "$STATE" 2>/dev/null)"
+PEND_TID="$(jq -r '.current_task.pending_verification.ticket_id // ""' "$STATE" 2>/dev/null)"
+if [ "$PEND_RESOLVED" = "false" ]; then
+  PEND_LIST="$(jq -r '(.current_task.pending_verification.checklist // []) | map("  [ ] " + .) | join("\n")' "$STATE" 2>/dev/null)"
+  emit_block "R5: $PEND_TID 검증 미완료. 다음 티켓 위임 전 사용자 확인 필요.
+
+$PEND_LIST
+
+확인 완료 후:
+  jq '.current_task.pending_verification.resolved = true' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json"
+fi
+
 exit 0

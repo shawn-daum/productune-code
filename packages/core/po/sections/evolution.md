@@ -17,7 +17,7 @@ Persona returns `blocked: true` with `suggest_allowlist_addition`:
 2. **1-line propose** in user's lang:
    `pdt-developer 가 'bun install' 시도했는데 allowlist 밖. agents/pdt-developer.md 의 tools 에 'Bash(bun *)' 추가하고 이어갈까? (y/n)`
 
-3. **On y**: PO does **not** edit `agents/<persona>.md` — PO authors nothing. Delegate tools-line patch to `pdt-developer` as maintenance ticket:
+3. **On y**: PO does **not** edit `agents/<persona>.md` — PO authors no product content. Delegate tools-line patch to `pdt-developer` as maintenance ticket:
 
    ```
    TASK = "Append `Bash(bun *)` to tools: line in $PRODUCTUNE_REPO/agents/<persona>.md.
