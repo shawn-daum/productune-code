@@ -77,6 +77,9 @@
 - [ ] 페르소나가 confidence + unresolved 필드를 출력 → PO 가 미달 시 3-option 메뉴 surface
 - [ ] 적어도 페르소나당 1 개 skill 이 자동 invoke 됨 (mattpocock 또는 phuryn)
 - [ ] `docs/testing.md` 의 Phase 0–6 모두 pass
+- [ ] L4+ 라운드에서 PRD ready 후 Design stage 가 자동 announce 되고, 디자인 산출물 3 종 (system.md / flow.md / screens/*.md) 티켓이 발행됨 (CLI 시기에도 Phase 4 GUI 의존 없이 검증)
+- [ ] 각 페르소나 위임 직후 해당 티켓의 `## Persona Activity` 표에 1 행 자동 append 됨
+- [ ] PO 가 티켓 lifecycle / `## Persona Activity` 변경 요청을 거절 없이 처리하고, 콘텐츠 변경 요청에만 2-line refusal template 사용
 
 ## Phase 2 — 사용자 dogfood (next round)
 
@@ -106,18 +109,34 @@ Phase 1–3 이 검증한 CLI / orchestration core + 기본 UI 위에, **터미�
 - **친절한 안내** — 외재 지식 (최신 공식 문서) 을 실시간 fetch 해 가이드. LLM 의 memorized API 는 신뢰 X.
 - **풀 사이클** — PRD 시작 → 배포 / 운영까지 한 UI 안에서 흐름이 보임.
 
-### 설치 시점 분기
+### 설치 시점 분기 — 2-level onboarding
 
-설치 (`productune init`) 단계에서 **사용자 개발 지식 수준 질문** → 모드 결정:
+onboarding 은 **앱 레벨**과 **프로젝트 레벨** 두 단계로 분리된다.
 
-- (a) "터미널 + 코드 기반 개발에 익숙" → **developer mode** (Phase 1–3 그대로, CLI + 가벼운 UI)
-- (b) "기획 / 바이브코딩만 해봤음 — 터미널 무서움" → **planner mode** (Phase 4 GUI-first 경험)
+#### Level 1 — 앱 onboarding (최초 1회, `~/.productune/productune.env` 없을 때)
 
-분기 선택은 이후에도 설정에서 변경 가능. planner → developer 로 졸업하는 케이스 자연스럽게 지원. 모드 전환은 단순 config toggle (`mode: planner | developer`) — GUI 는 CLI core 위 view layer 일 뿐이므로 마이그레이션 / state 변환 불필요. 모든 state (`po-state.json`, `docs/*`, `.env.local`, history) 그대로 보존.
+First-run wizard (GUI):
+
+1. **Engine 선택** — `Claude Code` (기본) / `Codex` / 둘 다
+2. **Wiki 백엔드** — `Filesystem` (기본, 의존성 없음) / `Graphiti` (Docker 필요). 하드웨어 tier 자동 감지 후 추천 표시.
+3. **API Key 입력** — 선택한 engine 에 맞는 key (ANTHROPIC_API_KEY / OPENAI_API_KEY). [건너뛰기] 가능 — 나중에 Settings 에서 변경.
+4. **완료** — `~/.productune/productune.env` 생성, agents 심링크, po-instructions.md 복사.
+
+완료 후 → HomeView (프로젝트 선택 화면). 이후 Settings 탭에서 언제든 변경 가능.
+
+#### Level 2 — 프로젝트 onboarding (새 프로젝트마다)
+
+[새 프로젝트 만들기] wizard:
+
+1. **slug 입력** — 프로젝트 이름 (영소문자·하이픈)
+2. **mode 선택** — `planner` (GUI-first, GitHub repo 자동 연결) / `developer` (기존 코드베이스 연동)
+3. **GitHub 연결** (planner 선택 시) — Device Flow OAuth → private repo 자동 생성. 건너뛰기 가능 (로컬 전용).
+
+mode 전환은 이후 Settings 에서 단순 config toggle (`mode: planner | developer`). 마이그레이션 불필요 — GUI 는 CLI core 위 view layer 이므로 모든 state (`po-state.json`, `docs/*`, `.env.local`, history) 그대로 보존. planner → developer 졸업 케이스 자연스럽게 지원.
 
 ### 핵심 기능
 
-1. **간편한 설치 과정 + 분기** — 분기 선택 후 planner mode 가 자동으로 의존성 / Node 버전 / 권한 / 외부 CLI (vercel, supabase 등) 를 setup. terminal 출력은 progress UI 뒤로 숨김. 실패 시 사람이 읽을 수 있는 메시지 + 다음 액션 버튼.
+1. **간편한 설치 과정 + 2-level onboarding** — (a) 앱 최초 실행 시 engine / wiki backend / API key 선택 wizard (T-P4-015); (b) 새 프로젝트마다 slug + planner/developer mode 선택. mode 결정 후 planner 는 자동으로 의존성 / 외부 CLI (vercel, supabase 등) 를 setup. terminal 출력은 progress UI 뒤로 숨김. 실패 시 사람이 읽을 수 있는 메시지 + 다음 액션 버튼. 이후 Settings 탭에서 engine / wiki backend 변경 가능.
 2. **GUI 시각화 — PO 채팅 (멀티 채팅방)** — n 개 채팅방을 라운드 / 토픽 / 실험 단위로 동시 운영 가능. PRD 작성 → 제품 설계 과정이 dashboard 와 task board 로 시각화. 티켓 카드에 status / 담당 페르소나 / model+effort / 위임 trace / 산출물 링크가 표시. **격리 정책**: 채팅방 = 기존 round 구조에 1:1 매핑 (`docs/tickets/<round>/`). 티켓은 round 별 격리, project-tier 메모리 (`docs/*`) 는 채팅방 간 공유, wiki (persona-global) 는 전체 공유.
 3. **GUI 시각화 — 디자인 단계 명시화** — PRD 직후 곧장 코드로 가지 않고, **디자인 방향성 결정 stage** 가 별도 노출. 산출물 포맷 = **md + Mermaid.js + Excalidraw** (전부 로컬, 외부 서비스 의존 없음). Claude design skill 이 Mermaid 를 native 로 출력 (시퀀스 / 플로우 / 상태도), Phase 4 GUI 는 Electron/React renderer 안에 Mermaid.js 또는 React Mermaid component 를 번들해 markdown code fence 를 inline 렌더링한다. Excalidraw React 컴포넌트를 Electron renderer 에 임베드해 와이어프레임 그리기, 디자인 시스템은 풍부한 md 렌더링 (color swatch / typography preview) 으로 표현. **Figma 연동은 하지 않음** (토큰 비용 예측 불가). 사용자가 코드 diff 가 아닌 **디자인 산출물** 기반으로 검토 / 의사결정.
 
@@ -231,4 +250,7 @@ Phase 3 dogfood 에서 발견된 두 가지 비-개발자 사용자 페인 — P
 
 - **2026-04-28** — Round 1 (MVP) 시작. PRD 초안 작성. 4-phase persona 구조 + Real Engineering 워크플로 + dynamic tier + quality escalation + skill 통합 합의. (commit: `0731a09` rebrand)
 - **2026-04-30** — Phase 4 ("개발 비숙련 기획자 모드 / planner mode") 정식 추가. Phase 3 dogfood 학습 (case1: 환경 설정 가이드는 최신 공식 문서 fetch 필요 / case2: env 관리 GUI + `.env.local` 자동 생성) 을 transition notes 로 명문화. 롤아웃 테이블 3-phase → 4-phase 로 확장. Phase 4 acceptance criteria 10 개 + open questions 7 개 정의. install 시점 developer / planner 분기 도입.
+- **2026-04-30 (doctrine 개선)** — 4개 이슈 해결: (1) hook 경로 stale → install.sh 재실행으로 복구. (2) PO ticket 권한 명확화 — lifecycle/Persona Activity는 PO mechanical OK; content는 Designer; 2-line refusal template 도입. (3) Real engineering workflow에 Design stage 정식 삽입 (L4+ mandatory, 산출물 3종 티켓). (4) `## Persona Activity` 섹션 신설 — PO가 매 delegation 후 1행 append.
 - **2026-04-30 (OQ 세션)** — Phase 4 OQ 7 개 전체 확정. GUI 런타임 = Electron + React/TS (Vite), shell 자동화 = node-pty, 문서 fetch = TTL 24h + stale-while-revalidate, 디자인 산출물 = md + Mermaid + Excalidraw (Figma 제외), env = 로컬 기본 + 환경별 추가, 졸업 마이그레이션 = 불필요 (뷰 토글), 멀티채팅 = 기존 round 구조 매핑. 신규 기능 3 개 추가 (프로젝트 관리 UI, Git 추상화 레이어, 페르소나 skill 시각화). 배포 플랫폼 전략 추가 (Vercel 기본, `DeployProvider` 추상화, Phase 5 확장). Env 관리 UI 상세 스펙 확정 (3-layer, 상태 badge, 코드 스캔 경고).
+- **2026-05-04 (Phase 4 GUI 구현 시작)** — Phase 4 self-dogfood 브랜치(`phase4-meta-dogfood`) 개설. T-P4-001: pnpm workspaces + turborepo monorepo 골격 (`packages/core`, `cli`, `gui`). T-P4-002: 기존 CLI core (agents, po, scripts, config) → `packages/core` 이관. T-P4-003: `packages/gui` Electron + React/TS + Vite 보일러플레이트 (main/preload/renderer, contextIsolation, secure IPC). mockup.html VSCode IDE 패러다임 전면 재설계 (4-column: Activity Bar 48px / Side Panel 260px / Main Panel flex-1 탭 시스템 / Right PO Chat 340px) + cmux-style pane splitting + Quick Open palette.
+- **2026-05-04 (Round 1 완료)** — T-P4-010: `packages/core/src/init.ts` — `initProject()` + `init:project` IPC. T-P4-011: NewProjectModal (slug + planner/developer 2-step wizard) + `project:create` IPC. T-P4-012: `dialog:openFolder` IPC + `.productune/` 감지 + init 유도 배너. T-P4-013: HomeView — recent projects 목록 (`projects:list` IPC, created_at 정렬). T-P4-014: GitHub Device Flow OAuth + private repo 자동 생성 + git remote 설정 (`GitHubOAuthFlow` 컴포넌트; `VITE_GITHUB_CLIENT_ID` project-level env). onboarding 2-level 구조 확정 (앱 레벨 T-P4-015 / 프로젝트 레벨 T-P4-011) 및 PRD 반영.
