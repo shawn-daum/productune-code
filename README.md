@@ -87,7 +87,7 @@ QA (pdt-qa What/How)          — 자동화 + manual + e2e
 
 각 stage transition 에 PO 가 1줄 announce. 단순 작업은 stage 일부 skip.
 
-OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 skill) + [phuryn/pm-skills](https://github.com/phuryn/pm-skills) (65 skill, 8 plugin) — `bash scripts/setup-skills.sh` 로 한 번에 설치.
+OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 skill) + [phuryn/pm-skills](https://github.com/phuryn/pm-skills) (65 skill, 8 plugin) — `bash packages/core/scripts/setup-skills.sh` 로 한 번에 설치.
 
 ## Prerequisites
 
@@ -104,9 +104,11 @@ Wiki backend 에 따라 추가 필요:
 
 ## Install
 
+> **Migration note (T-P4-002)**: core 파일이 `packages/core/` 로 이관됐습니다. 기존 설치 사용자는 `bash packages/core/scripts/install.sh` 재실행으로 symlink/hook 경로를 업데이트하세요.
+
 ```sh
 git clone https://github.com/shawn-kim-axz/productune
-bash productune/scripts/install.sh
+bash productune/packages/core/scripts/install.sh
 ```
 
 > Clone 위치는 어디든 OK — symlink target 이라 그대로 유지하면 됩니다 (`~/code/productune`, `~/productune` 등 자유). 단, wiki data 가 저장되는 `~/.productune/` 와 겹치지 않게만 주의.
@@ -124,7 +126,7 @@ bash productune/scripts/install.sh
 5. **OSS skill 설치** — mattpocock + phuryn skill 라이브러리
 6. **PATH 등록** — 현재 세션 즉시 적용
 
-> install 후에 엔진을 바꾸고 싶으면 `bash scripts/install.sh` 재실행 (현재 엔진 표시 후 변경 prompt) 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=` 직접 편집. per-session 일회성 변경은 `productune --engine codex`.
+> install 후에 엔진을 바꾸고 싶으면 `bash packages/core/scripts/install.sh` 재실행 (현재 엔진 표시 후 변경 prompt) 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=` 직접 편집. per-session 일회성 변경은 `productune --engine codex`.
 
 > 모델 목록은 [Ollama registry](https://registry.ollama.ai) 에서 실시간 크기를 조회해 하드웨어 tier 에 맞는 것만 표시합니다 (`config/model-catalog.json` 에서 관리).
 
@@ -176,7 +178,7 @@ claude --agent pdt-developer        # 단일 페르소나
 | Cost-split | ✗ all on Anthropic | ✓ |
 | ToS | **Cleanest** — 100% first-party | OK |
 
-Default = **claude** because hook-based firm rules (`scripts/hooks/pre-delegate-task-check.sh` etc.) only fire inside Claude Code sessions. Codex spawned PO bypasses them, so boundary/archive/session-reuse violations become PO drift instead of code-blocked.
+Default = **claude** because hook-based firm rules (`packages/core/scripts/hooks/pre-delegate-task-check.sh` etc.) only fire inside Claude Code sessions. Codex spawned PO bypasses them, so boundary/archive/session-reuse violations become PO drift instead of code-blocked.
 
 Switch: `MY_PO_ENGINE=codex` in `~/.productune/productune.env` or `productune --engine codex` per-session.
 
@@ -232,34 +234,36 @@ PO 가 작업을 ticket 단위로 영속화:
 
 ```
 productune/
-├── agents/                              # symlinked to ~/.claude/agents/
-│   ├── pdt-po.md                        # PO orchestrator (entry — full doctrine in po/)
-│   ├── pdt-designer.md
-│   ├── pdt-developer.md
-│   ├── pdt-qa.md
-│   ├── pdt-wiki-keeper.md               # keeper backend 시에만 ~/.claude/agents/에 링크
-│   └── variants/                        # backend별 페르소나 variant (graphiti / keeper / fs)
-├── po/                                   # PO doctrine (engine-agnostic; copied to ~/.productune/)
-│   ├── po-instructions.md               # entry index (~100L)
-│   ├── po-memory.md.template
-│   └── sections/                        # detailed wiki (load on demand)
-│       ├── stages.md  memory.md  tickets.md  routing.md  escalation.md
-│       └── delegation.md  calibration.md  lifecycle.md  evolution.md  prd-and-output.md
-├── codex/
-│   └── config.toml                      # Codex CLI profile manifest (--engine codex 시)
-├── config/
-│   └── model-catalog.json               # tier별 추천 모델 (Ollama registry 실시간 조회)
-├── scripts/
-│   ├── install.sh                       # onboard — engine / wiki / LLM / hooks / Graphiti / PATH
-│   ├── uninstall.sh
-│   ├── productune                       # daily entrypoint (default --engine claude)
-│   ├── setup-graphiti.sh / setup-skills.sh / graphiti-launcher.sh
-│   └── hooks/                           # Claude Code hooks (auto-merged into ~/.claude/settings.json)
-│       ├── pre-delegate-task-check.sh   # PreToolUse(Bash) — R1~R4 firm rule blocks
-│       ├── post-delegate-state-write.sh # PostToolUse(Bash) — capture session_id, bump turns
-│       ├── post-edit-format.sh          # PostToolUse(Write|Edit) — formatter
-│       ├── post-compact-doctrine.sh     # PostCompact — re-inject hard rules
-│       └── stop-verify.sh               # Stop(pdt-developer) — typecheck/build gate
+├── packages/
+│   └── core/                            # CLI core (T-P4-002 이관)
+│       ├── agents/                      # symlinked to ~/.claude/agents/
+│       │   ├── pdt-po.md                # PO orchestrator (entry — full doctrine in po/)
+│       │   ├── pdt-designer.md
+│       │   ├── pdt-developer.md
+│       │   ├── pdt-qa.md
+│       │   ├── pdt-wiki-keeper.md       # keeper backend 시에만 ~/.claude/agents/에 링크
+│       │   └── variants/                # backend별 페르소나 variant (graphiti / keeper / fs)
+│       ├── po/                          # PO doctrine (engine-agnostic; copied to ~/.productune/)
+│       │   ├── po-instructions.md       # entry index (~100L)
+│       │   ├── po-memory.md.template
+│       │   └── sections/               # detailed wiki (load on demand)
+│       │       ├── stages.md  memory.md  tickets.md  routing.md  escalation.md
+│       │       └── delegation.md  calibration.md  lifecycle.md  evolution.md  prd-and-output.md
+│       ├── codex/
+│       │   └── config.toml             # Codex CLI profile manifest (--engine codex 시)
+│       ├── config/
+│       │   └── model-catalog.json      # tier별 추천 모델 (Ollama registry 실시간 조회)
+│       └── scripts/
+│           ├── install.sh              # onboard — engine / wiki / LLM / hooks / Graphiti / PATH
+│           ├── uninstall.sh
+│           ├── productune              # daily entrypoint (default --engine claude)
+│           ├── setup-graphiti.sh / setup-skills.sh / graphiti-launcher.sh
+│           └── hooks/                  # Claude Code hooks (auto-merged into ~/.claude/settings.json)
+│               ├── pre-delegate-task-check.sh   # PreToolUse(Bash) — R1~R4 firm rule blocks
+│               ├── post-delegate-state-write.sh # PostToolUse(Bash) — capture session_id, bump turns
+│               ├── post-edit-format.sh          # PostToolUse(Write|Edit) — formatter
+│               ├── post-compact-doctrine.sh     # PostCompact — re-inject hard rules
+│               └── stop-verify.sh              # Stop(pdt-developer) — typecheck/build gate
 ├── docs/
 │   ├── prd/productune.md  overview.md  pitch.md  testing.md
 └── README.md
@@ -283,7 +287,7 @@ git pull
 productune onboard
 ```
 
-`agents/*.md` + `scripts/hooks/*.sh` 는 repo 그대로 사용 (symlink 또는 path 참조) — 수정 즉시 반영. Codex config (`codex/config.toml`) + PO doctrine (`po/po-instructions.md` → `~/.productune/`) 는 copy 라 `productune onboard` 재실행 필요.
+`packages/core/agents/*.md` + `packages/core/scripts/hooks/*.sh` 는 repo 그대로 사용 (symlink 또는 path 참조) — 수정 즉시 반영. Codex config (`packages/core/codex/config.toml`) + PO doctrine (`packages/core/po/po-instructions.md` → `~/.productune/`) 는 copy 라 `productune onboard` 재실행 필요.
 
 ## Non-goals / future
 

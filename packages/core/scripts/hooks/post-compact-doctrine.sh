@@ -48,12 +48,12 @@ EOF
 # If the doctrine file is unexpectedly missing, flag it so the user notices.
 if [ ! -f "$DOCTRINE" ]; then
   echo
-  echo "[!] $DOCTRINE not found — re-run scripts/install.sh to restore it."
+  echo "[!] $DOCTRINE not found — re-run packages/core/scripts/install.sh to restore it."
 fi
 
 if [ ! -f "$MEMORY" ]; then
   echo
-  echo "[!] $MEMORY not found — re-run scripts/install.sh to seed it."
+  echo "[!] $MEMORY not found — re-run packages/core/scripts/install.sh to seed it."
 fi
 
 exit 0

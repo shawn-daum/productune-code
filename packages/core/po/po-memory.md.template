@@ -1,6 +1,6 @@
 # PO memory for <user>
 
-> Installed by `scripts/install.sh` on first run. PO appends to this over time.
+> Installed by `packages/core/scripts/install.sh` on first run. PO appends to this over time.
 > It's your (user's) track record of working with PO — not a summary of projects.
 
 ## Communication preferences

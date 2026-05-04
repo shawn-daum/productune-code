@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>productune — App Showcase</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #080808;
+  font-family: 'Inter', -apple-system, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── ambient glow background ── */
+body::before {
+  content: '';
+  position: fixed;
+  top: -20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 900px;
+  height: 600px;
+  background: radial-gradient(ellipse at center,
+    rgba(255, 107, 43, 0.08) 0%,
+    rgba(167, 139, 250, 0.06) 40%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* subtle dot grid */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle, #1a1a1a 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+  z-index: 0;
+  opacity: .4;
+}
+
+.page {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 1100px;
+  padding: 72px 40px 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* ── BADGE ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 107, 43, 0.08);
+  border: 1px solid rgba(255, 107, 43, 0.25);
+  color: #FF6B2B;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 99px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-bottom: 24px;
+}
+.badge-dot {
+  width: 6px; height: 6px;
+  background: #FF6B2B;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .4; }
+}
+
+/* ── HERO TEXT ── */
+.hero-title {
+  font-size: clamp(36px, 5vw, 56px);
+  font-weight: 800;
+  color: #F0F0F0;
+  text-align: center;
+  line-height: 1.1;
+  letter-spacing: -.02em;
+  margin-bottom: 16px;
+}
+.hero-title .brand { color: #FF6B2B; }
+.hero-sub {
+  font-size: 16px;
+  color: #666;
+  text-align: center;
+  line-height: 1.7;
+  max-width: 480px;
+  margin-bottom: 36px;
+}
+.hero-cta {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 64px;
+}
+.btn-cta {
+  background: #FF6B2B;
+  color: #fff;
+  border: none;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-cta:hover { opacity: .9; }
+.btn-ghost {
+  background: transparent;
+  color: #666;
+  border: 1px solid #2a2a2a;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.btn-ghost:hover { border-color: #444; color: #999; }
+
+/* ── DEVICE FRAME ── */
+.device-wrap {
+  width: 100%;
+  max-width: 1020px;
+  position: relative;
+  margin-bottom: 72px;
+}
+
+/* glow under frame */
+.device-glow {
+  position: absolute;
+  bottom: -40px;
+  left: 10%;
+  right: 10%;
+  height: 120px;
+  background: radial-gradient(ellipse at center,
+    rgba(255, 107, 43, 0.18) 0%,
+    rgba(167, 139, 250, 0.10) 50%,
+    transparent 80%
+  );
+  filter: blur(30px);
+  pointer-events: none;
+}
+
+.device-frame {
+  background: #1a1a1a;
+  border-radius: 14px;
+  border: 1px solid #2e2e2e;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px #111,
+    0 32px 80px rgba(0,0,0,.8),
+    0 8px 24px rgba(0,0,0,.5);
+  position: relative;
+}
+
+/* macOS title bar replica */
+.device-titlebar {
+  height: 36px;
+  background: #141414;
+  border-bottom: 1px solid #252525;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  flex-shrink: 0;
+  gap: 7px;
+  position: relative;
+}
+.device-titlebar::after {
+  content: 'productune — my-saas / Round 3';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: #444;
+  font-weight: 500;
+  pointer-events: none;
+}
+.mac-dot { width: 12px; height: 12px; border-radius: 50%; }
+.mac-r { background: #FF5F57; }
+.mac-y { background: #FFBD2E; }
+.mac-g { background: #28C840; }
+
+/* iframe container */
+.device-screen {
+  width: 100%;
+  height: 620px;
+  position: relative;
+  overflow: hidden;
+  background: #0f0f0f;
+}
+.device-screen iframe {
+  width: 1280px;
+  height: 800px;
+  border: none;
+  transform-origin: top left;
+  transform: scale(var(--iframe-scale, 0.797));
+  pointer-events: none;
+}
+
+/* ── FEATURE CHIPS ── */
+.features {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 64px;
+}
+.feat {
+  background: #111;
+  border: 1px solid #222;
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 280px;
+  transition: border-color .2s;
+}
+.feat:hover { border-color: #333; }
+.feat-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.feat-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c0c0c0;
+  margin-bottom: 3px;
+}
+.feat-desc {
+  font-size: 11px;
+  color: #555;
+  line-height: 1.6;
+}
+
+/* ── PERSONA STRIP ── */
+.persona-strip {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 56px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.persona-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #111;
+  border: 1px solid #222;
+  border-radius: 99px;
+  padding: 6px 14px 6px 10px;
+}
+.p-dot { width: 8px; height: 8px; border-radius: 50%; }
+.p-name { font-size: 12px; color: #999; font-weight: 500; }
+.p-role { font-size: 11px; color: #444; }
+
+/* ── MINI SCREENSHOTS STRIP ── */
+.screenshots {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  max-width: 1020px;
+  margin-bottom: 64px;
+}
+.shot {
+  flex: 1;
+  background: #0f0f0f;
+  border: 1px solid #1e1e1e;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .2s, transform .2s;
+}
+.shot:hover { border-color: #333; transform: translateY(-2px); }
+.shot-bar {
+  height: 28px;
+  background: #141414;
+  border-bottom: 1px solid #1e1e1e;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 5px;
+}
+.shot-dot { width: 8px; height: 8px; border-radius: 50%; }
+.shot-content {
+  height: 160px;
+  overflow: hidden;
+  position: relative;
+}
+.shot-content iframe {
+  width: 1280px;
+  height: 800px;
+  border: none;
+  transform-origin: top left;
+  transform: scale(0.207);
+  pointer-events: none;
+}
+.shot-label {
+  padding: 10px 12px;
+  border-top: 1px solid #1e1e1e;
+  font-size: 11px;
+  color: #555;
+  font-weight: 500;
+}
+
+/* ── FOOTER ── */
+.footer {
+  border-top: 1px solid #1a1a1a;
+  padding-top: 32px;
+  width: 100%;
+  max-width: 1020px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.footer-logo { font-size: 14px; font-weight: 700; color: #333; }
+.footer-logo span { color: #FF6B2B; }
+.footer-right { margin-left: auto; display: flex; gap: 20px; }
+.footer-link { font-size: 12px; color: #444; text-decoration: none; }
+.footer-link:hover { color: #666; }
+
+/* ── SCROLL INDICATOR ── */
+.scroll-cue {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 48px;
+  color: #333;
+  font-size: 11px;
+}
+.scroll-line {
+  width: 1px;
+  height: 40px;
+  background: linear-gradient(to bottom, transparent, #2a2a2a);
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- BADGE -->
+  <div class="badge"><span class="badge-dot"></span>Phase 4 Preview · 2026</div>
+
+  <!-- HERO -->
+  <h1 class="hero-title">
+    <span class="brand">product</span>une<br>
+    <span style="color:#333">by</span> <span style="color:#666;font-weight:500;font-size:.7em">개발 몰라도 되는 AI 오케스트라</span>
+  </h1>
+  <p class="hero-sub">
+    아이디어를 채팅으로 입력하면<br>
+    pdt-po · pdt-designer · pdt-developer · pdt-qa가<br>
+    PRD → 디자인 → 빌드 → 배포까지 한 사이클.
+  </p>
+  <div class="hero-cta">
+    <button class="btn-cta">✦ 시작하기</button>
+    <button class="btn-ghost">Docs →</button>
+  </div>
+
+  <!-- MAIN DEVICE FRAME -->
+  <div class="device-wrap">
+    <div class="device-glow"></div>
+    <div class="device-frame">
+      <div class="device-titlebar">
+        <div class="mac-dot mac-r"></div>
+        <div class="mac-dot mac-y"></div>
+        <div class="mac-dot mac-g"></div>
+      </div>
+      <div class="device-screen" id="main-screen">
+        <iframe src="mockup.html" id="main-iframe" scrolling="no"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- PERSONA STRIP -->
+  <div class="persona-strip">
+    <div class="persona-chip">
+      <div class="p-dot" style="background:#FF6B2B"></div>
+      <div>
+        <div class="p-name">pdt-po</div>
+        <div class="p-role">Orchestrator</div>
+      </div>
+    </div>
+    <div class="persona-chip">
+      <div class="p-dot" style="background:#A78BFA"></div>
+      <div>
+        <div class="p-name">pdt-designer</div>
+        <div class="p-role">PRD · Design · UX</div>
+      </div>
+    </div>
+    <div class="persona-chip">
+      <div class="p-dot" style="background:#38BDF8"></div>
+      <div>
+        <div class="p-name">pdt-developer</div>
+        <div class="p-role">Implementation</div>
+      </div>
+    </div>
+    <div class="persona-chip">
+      <div class="p-dot" style="background:#34D399"></div>
+      <div>
+        <div class="p-name">pdt-qa</div>
+        <div class="p-role">Quality · Testing</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FEATURES -->
+  <div class="features">
+    <div class="feat">
+      <div class="feat-icon">💬</div>
+      <div>
+        <div class="feat-title">채팅으로만 기획</div>
+        <div class="feat-desc">코드 한 줄 없이 아이디어 → PRD → 티켓까지. pdt-po가 clarity loop로 모호함 제거.</div>
+      </div>
+    </div>
+    <div class="feat">
+      <div class="feat-icon">◈</div>
+      <div>
+        <div class="feat-title">Design Review Gate</div>
+        <div class="feat-desc">Design System · UX Flow · Wireframe · Hi-fi 4종 산출물 검토 후 Build 진입 승인.</div>
+      </div>
+    </div>
+    <div class="feat">
+      <div class="feat-icon">◉</div>
+      <div>
+        <div class="feat-title">Ticket Review Gate</div>
+        <div class="feat-desc">개발 티켓마다 diff · AC · Persona Activity 확인 + 승인. 원하면 수정 요청.</div>
+      </div>
+    </div>
+    <div class="feat">
+      <div class="feat-icon">👥</div>
+      <div>
+        <div class="feat-title">Team Management</div>
+        <div class="feat-desc">4개 페르소나 상태 · 모델/effort 캘리브레이션 · 스킬셋 편집 · Wiki 한눈에.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MINI SCREENSHOTS -->
+  <div style="width:100%;max-width:1020px;font-size:11px;color:#444;text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px">화면 미리보기</div>
+  <div class="screenshots">
+    <!-- Home -->
+    <div class="shot" onclick="showState('home')">
+      <div class="shot-bar">
+        <div class="shot-dot mac-r"></div><div class="shot-dot mac-y"></div><div class="shot-dot mac-g"></div>
+      </div>
+      <div class="shot-content">
+        <iframe src="mockup.html?state=home" scrolling="no" id="shot-home"></iframe>
+      </div>
+      <div class="shot-label">🏠 Home · 프로젝트 탐색</div>
+    </div>
+    <!-- Workspace -->
+    <div class="shot" onclick="showState('workspace')">
+      <div class="shot-bar">
+        <div class="shot-dot mac-r"></div><div class="shot-dot mac-y"></div><div class="shot-dot mac-g"></div>
+      </div>
+      <div class="shot-content">
+        <iframe src="mockup.html" scrolling="no" id="shot-ws"></iframe>
+      </div>
+      <div class="shot-label">💬 Workspace · PO 채팅</div>
+    </div>
+    <!-- Design Gate -->
+    <div class="shot" onclick="showState('design-review')">
+      <div class="shot-bar">
+        <div class="shot-dot mac-r"></div><div class="shot-dot mac-y"></div><div class="shot-dot mac-g"></div>
+      </div>
+      <div class="shot-content">
+        <iframe src="mockup.html?state=design-review" scrolling="no" id="shot-dr"></iframe>
+      </div>
+      <div class="shot-label">◈ Gate 1 · Design Review</div>
+    </div>
+    <!-- Team -->
+    <div class="shot" onclick="showState('team')">
+      <div class="shot-bar">
+        <div class="shot-dot mac-r"></div><div class="shot-dot mac-y"></div><div class="shot-dot mac-g"></div>
+      </div>
+      <div class="shot-content">
+        <iframe src="mockup.html?state=team" scrolling="no" id="shot-team"></iframe>
+      </div>
+      <div class="shot-label">👥 Team · Personas · Skills</div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="footer-logo">product<span>une</span></div>
+    <div class="footer-right">
+      <a class="footer-link" href="#">GitHub</a>
+      <a class="footer-link" href="#">Docs</a>
+      <a class="footer-link" href="#">Changelog</a>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Scale iframe to fit device frame
+function scaleIframes() {
+  const screen = document.getElementById('main-screen');
+  const iframe = document.getElementById('main-iframe');
+  if (!screen || !iframe) return;
+  const scale = screen.clientWidth / 1280;
+  iframe.style.transform = `scale(${scale})`;
+  iframe.style.height = `${screen.clientHeight / scale}px`;
+}
+
+window.addEventListener('resize', scaleIframes);
+scaleIframes();
+
+// Switch main frame state via new IDE API
+function showState(state) {
+  const iframe = document.getElementById('main-iframe');
+  try {
+    const w = iframe.contentWindow;
+    if (state === 'home') w.nav('explorer');
+    else if (state === 'workspace') w.nav('project');
+    else if (state === 'design-review') { w.nav('project'); w.setPane('design-review'); }
+    else if (state === 'ticket-review') { w.nav('project'); w.setPane('ticket-review'); }
+    else if (state === 'preview') { w.nav('project'); w.setPane('preview'); }
+    else if (state === 'team') w.nav('team');
+    else if (state === 'board') w.nav('project');
+    else if (state === 'search') w.nav('search');
+    else if (state === 'settings') w.nav('settings');
+  } catch(e) {
+    iframe.src = 'mockup.html#' + state;
+  }
+}
+
+// Init mini shots to their states (after load)
+function initShot(id, state) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('load', () => {
+    try {
+      const w = el.contentWindow;
+      showStateIn(w, state);
+    } catch(e) {}
+  });
+}
+
+function showStateIn(w, state) {
+  if (state === 'home') w.nav('explorer');
+  else if (state === 'team') w.nav('team');
+  else if (state === 'design-review') { w.nav('project'); w.setPane('design-review'); }
+  else if (state === 'workspace') w.nav('project');
+}
+
+initShot('shot-home', 'home');
+initShot('shot-dr', 'design-review');
+initShot('shot-team', 'team');
+</script>
+</body>
+</html>
