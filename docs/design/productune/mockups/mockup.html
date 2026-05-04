@@ -72,6 +72,10 @@ button{font-family:inherit;cursor:pointer}
 .search-box{display:flex;align-items:center;gap:6px;margin:8px;background:var(--bg-overlay);border:1px solid var(--border);border-radius:3px;padding:4px 8px}
 .search-box input{background:transparent;border:none;outline:none;color:var(--txt);font-size:12px;flex:1;font-family:inherit}
 .search-box input::placeholder{color:var(--txt3)}
+.ex-search-wrap{border-bottom:1px solid var(--border);flex-shrink:0}
+.ex-srch-opt{font-size:11px;padding:1px 5px;border-radius:3px;background:transparent;border:1px solid transparent;color:var(--txt3);cursor:pointer}
+.ex-srch-opt:hover{border-color:var(--border);color:var(--txt)}
+.ex-srch-opt.active{background:var(--bg-overlay);border-color:var(--border);color:var(--txt)}
 .sr-file{padding:3px 8px;font-size:11px;font-weight:600;color:var(--txt);margin-top:4px;cursor:pointer}
 .sr-file:hover{background:#1a1a1a}
 .sr-line{display:flex;gap:6px;padding:1px 8px 1px 20px;font-size:11px;cursor:pointer;color:var(--txt2)}
@@ -367,9 +371,6 @@ button{font-family:inherit;cursor:pointer}
     <button class="ab-ic" id="ab-project" onclick="setActivity('project')" title="Project">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="4" width="14" height="12" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M7 8h6M7 11h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
     </button>
-    <button class="ab-ic" id="ab-search" onclick="setActivity('search')" title="Search (⌘⇧F)">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="5" stroke="currentColor" stroke-width="1.4"/><path d="M13 13l3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-    </button>
     <button class="ab-ic" id="ab-team" onclick="setActivity('team')" title="Team">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="8" cy="7" r="3" stroke="currentColor" stroke-width="1.4"/><path d="M3 17c0-3 2.2-5 5-5s5 2 5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M14 10c1.5.4 3 1.6 3 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="14" cy="6" r="2" stroke="currentColor" stroke-width="1.4"/></svg>
     </button>
@@ -386,6 +387,20 @@ button{font-family:inherit;cursor:pointer}
       <div class="sp-hdr">
         <span class="sp-hdr-label">Explorer</span>
         <button class="sp-hdr-btn" onclick="newProject()" title="새 프로젝트">+</button>
+      </div>
+      <div class="ex-search-wrap" id="ex-search-wrap">
+        <div class="search-box" style="margin:0;border-radius:0;border-left:none;border-right:none;border-top:none">
+          <svg width="11" height="11" viewBox="0 0 12 12"><circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M8 8l2.5 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <input type="text" id="ex-search-input" placeholder="파일 검색..." autocomplete="off"
+            oninput="onExplorerSearch(this.value)"
+            style="background:transparent;border:none;outline:none;flex:1;font-size:12px;color:var(--txt);font-family:inherit">
+          <button id="ex-search-clear" onclick="clearExplorerSearch()" style="display:none;background:none;border:none;color:var(--txt3);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button>
+        </div>
+        <div style="display:flex;gap:2px;padding:2px 8px 4px">
+          <button class="ex-srch-opt" id="srch-regex" onclick="toggleSrchOpt(this)" title="정규식">.*</button>
+          <button class="ex-srch-opt" id="srch-case" onclick="toggleSrchOpt(this)" title="대소문자 구분">Aa</button>
+          <button class="ex-srch-opt" id="srch-word" onclick="toggleSrchOpt(this)" title="전체 단어">W</button>
+        </div>
       </div>
       <div class="sp-body" id="explorer-body"></div>
     </div>
@@ -450,31 +465,6 @@ button{font-family:inherit;cursor:pointer}
         <div class="pp-sec-hdr" style="margin-top:4px">Recent Activity</div>
         <div class="pp-row disabled" style="font-family:'JetBrains Mono',monospace;font-size:10px"><span style="color:var(--dev)">Dev</span> T-001 · sonnet/high · turn 2</div>
         <div class="pp-row disabled" style="font-family:'JetBrains Mono',monospace;font-size:10px"><span style="color:var(--designer)">Des</span> PRD · opus/max · turn 3</div>
-      </div>
-    </div>
-
-    <!-- Search -->
-    <div class="sp-view" id="sv-search">
-      <div class="sp-hdr"><span class="sp-hdr-label">Search</span></div>
-      <div class="sp-body">
-        <div class="search-box">
-          <svg width="12" height="12" viewBox="0 0 12 12"><circle cx="5" cy="5" r="3.5" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M8 8l2.5 2.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-          <input type="text" placeholder="검색..." autocomplete="off">
-        </div>
-        <div style="display:flex;gap:2px;padding:0 8px 6px">
-          <button style="font-size:11px;padding:1px 5px;border-radius:3px;background:transparent;border:1px solid transparent;color:var(--txt3);cursor:pointer">.*</button>
-          <button style="font-size:11px;padding:1px 5px;border-radius:3px;background:transparent;border:1px solid transparent;color:var(--txt3);cursor:pointer">Aa</button>
-          <button style="font-size:11px;padding:1px 5px;border-radius:3px;background:transparent;border:1px solid transparent;color:var(--txt3);cursor:pointer">W</button>
-        </div>
-        <div class="sr-file" onclick="openTab('po-inst','markdown',{title:'po-instructions.md',icon:'📄',path:'packages/core/po/po-instructions.md',content:'po-inst'})">
-          po/po-instructions.md <span style="font-size:10px;color:var(--txt3)">(5)</span>
-        </div>
-        <div class="sr-line"><span class="ln">14</span><span>…<span class="match">persona</span> handles lifecycle…</span></div>
-        <div class="sr-line"><span class="ln">27</span><span>…<span class="match">persona</span> ≥3 fails in last…</span></div>
-        <div class="sr-file" onclick="openTab('system-md','markdown',{title:'system.md',icon:'📄',path:'docs/design/productune/system.md',content:'system'})">
-          docs/design/productune/system.md <span style="font-size:10px;color:var(--txt3)">(3)</span>
-        </div>
-        <div class="sr-line"><span class="ln">39</span><span><span class="match">persona</span>-po #FF6B2B</span></div>
       </div>
     </div>
 
@@ -1619,10 +1609,55 @@ function minimizeRP() {
   });
 }
 
+// ── EXPLORER SEARCH ───────────────────────────────────────────────────────────
+const SEARCH_FILES = [
+  { path:'docs/prd/productune.md',        id:'prd',      ct:'markdown', p:{title:'productune.md',icon:'📄',content:'prd'} },
+  { path:'docs/design/productune/system.md', id:'sys-md', ct:'markdown', p:{title:'system.md',icon:'📄',content:'system'} },
+  { path:'docs/tickets/round-3/T-001.md', id:'t001-raw', ct:'ticket-review', p:{id:'T-001',title:'Persona Activity section 신설'} },
+  { path:'docs/tickets/round-3/T-002.md', id:'t002',     ct:'markdown', p:{title:'T-002.md',icon:'📋',content:'ticket2'} },
+  { path:'docs/tickets/round-3/T-003.md', id:'t003',     ct:'markdown', p:{title:'T-003.md',icon:'📋',content:'ticket3'} },
+  { path:'packages/core/po/po-instructions.md', id:'po-inst', ct:'markdown', p:{title:'po-instructions.md',icon:'📄',content:'po-inst'} },
+  { path:'.productune/po-state.json',     id:'proj-mem', ct:'markdown', p:{title:'po-state.json',icon:'⚙',content:'state'} },
+  { path:'packages/core/agents/pdt-po.md',   id:'pd-po', ct:'persona-def', p:{persona:'po'} },
+  { path:'packages/core/agents/pdt-designer.md', id:'pd-des', ct:'persona-def', p:{persona:'designer'} },
+  { path:'packages/core/agents/pdt-developer.md', id:'pd-dev', ct:'persona-def', p:{persona:'developer'} },
+  { path:'packages/core/agents/pdt-qa.md',   id:'pd-qa', ct:'persona-def', p:{persona:'qa'} },
+];
+
+function onExplorerSearch(q) {
+  const clr = document.getElementById('ex-search-clear');
+  if (clr) clr.style.display = q ? 'block' : 'none';
+  renderExplorer(q.trim());
+}
+
+function clearExplorerSearch() {
+  const inp = document.getElementById('ex-search-input');
+  if (inp) inp.value = '';
+  const clr = document.getElementById('ex-search-clear');
+  if (clr) clr.style.display = 'none';
+  renderExplorer('');
+}
+
+function toggleSrchOpt(btn) { btn.classList.toggle('active'); }
+
+function renderSearchResults(q, body) {
+  const ql = q.toLowerCase();
+  const matches = SEARCH_FILES.filter(f => f.path.toLowerCase().includes(ql));
+  if (matches.length === 0) {
+    body.innerHTML = `<div style="padding:16px 12px;font-size:12px;color:var(--txt3)">결과 없음 — "${q}"</div>`;
+    return;
+  }
+  body.innerHTML = matches.map(f => {
+    const hi = f.path.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<span class="match">$1</span>');
+    return `<div class="sr-file" onclick="openTab('${f.id}','${f.ct}',${JSON.stringify(f.p).replace(/"/g,'&quot;')})">${hi}</div>`;
+  }).join('');
+}
+
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
-function renderExplorer() {
+function renderExplorer(searchQ) {
   const body = document.getElementById('explorer-body');
   if (!body) return;
+  if (searchQ && searchQ.length > 0) { renderSearchResults(searchQ, body); return; }
   if (!projectOpen) {
     body.innerHTML = `<div style="padding:20px 14px;display:flex;flex-direction:column;gap:10px">
       <button class="btn-p" style="width:100%;padding:8px" onclick="openProject()">📂 폴더 열기</button>
@@ -1671,7 +1706,7 @@ function createProject() {
 
 // ── SHOWCASE COMPAT ───────────────────────────────────────────────────────────
 window.nav = function(key) {
-  const m = {home:'explorer',workspace:'project',board:'project',team:'team',settings:'settings',explorer:'explorer',project:'project',search:'search'};
+  const m = {home:'explorer',workspace:'project',board:'project',team:'team',settings:'settings',explorer:'explorer',project:'project',search:'explorer'};
   setActivity(m[key]||key);
 };
 window.openTab = openTab;
