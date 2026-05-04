@@ -1610,18 +1610,119 @@ function minimizeRP() {
 }
 
 // ── EXPLORER SEARCH ───────────────────────────────────────────────────────────
-const SEARCH_FILES = [
-  { path:'docs/prd/productune.md',        id:'prd',      ct:'markdown', p:{title:'productune.md',icon:'📄',content:'prd'} },
-  { path:'docs/design/productune/system.md', id:'sys-md', ct:'markdown', p:{title:'system.md',icon:'📄',content:'system'} },
-  { path:'docs/tickets/round-3/T-001.md', id:'t001-raw', ct:'ticket-review', p:{id:'T-001',title:'Persona Activity section 신설'} },
-  { path:'docs/tickets/round-3/T-002.md', id:'t002',     ct:'markdown', p:{title:'T-002.md',icon:'📋',content:'ticket2'} },
-  { path:'docs/tickets/round-3/T-003.md', id:'t003',     ct:'markdown', p:{title:'T-003.md',icon:'📋',content:'ticket3'} },
-  { path:'packages/core/po/po-instructions.md', id:'po-inst', ct:'markdown', p:{title:'po-instructions.md',icon:'📄',content:'po-inst'} },
-  { path:'.productune/po-state.json',     id:'proj-mem', ct:'markdown', p:{title:'po-state.json',icon:'⚙',content:'state'} },
-  { path:'packages/core/agents/pdt-po.md',   id:'pd-po', ct:'persona-def', p:{persona:'po'} },
-  { path:'packages/core/agents/pdt-designer.md', id:'pd-des', ct:'persona-def', p:{persona:'designer'} },
-  { path:'packages/core/agents/pdt-developer.md', id:'pd-dev', ct:'persona-def', p:{persona:'developer'} },
-  { path:'packages/core/agents/pdt-qa.md',   id:'pd-qa', ct:'persona-def', p:{persona:'qa'} },
+// ── EXPLORER SEARCH ───────────────────────────────────────────────────────────
+// Each entry: path, id, ct (content type), p (payload), lines: [{n, text}]
+const SEARCH_DB = [
+  { path:'docs/prd/productune.md', id:'prd', ct:'markdown', p:{title:'productune.md',icon:'📄',content:'prd'}, lines:[
+    {n:1,  t:'# productune — PRD'},
+    {n:5,  t:'**Version**: 0.4.0 · **Round**: 3'},
+    {n:9,  t:'## Problem'},
+    {n:10, t:'개발 모르는 기획자가 아이디어를 실제 작동하는 소프트웨어로 만들고 싶다.'},
+    {n:15, t:'## Target User'},
+    {n:16, t:'스타트업 기획자/PO — 개발 지식 없음'},
+    {n:22, t:'## Key Flow'},
+    {n:23, t:'Idea → PRD → Design → Build → QA → Deploy → Operate (one round)'},
+    {n:30, t:'## Acceptance Criteria'},
+    {n:31, t:'개발 지식 없이 PRD 작성 완료'},
+    {n:32, t:'Design stage가 PRD와 Build 사이 명시 announce'},
+  ]},
+  { path:'docs/design/productune/system.md', id:'sys-md', ct:'markdown', p:{title:'system.md',icon:'📄',content:'system'}, lines:[
+    {n:1,  t:'# Design System — productune GUI (Phase 4)'},
+    {n:8,  t:'- **Dark-first**: 터미널 사용자의 눈에 익숙한 dark theme'},
+    {n:9,  t:'- **Orchestral identity**: 4 페르소나 = 4 색'},
+    {n:37, t:'| `persona-po`       | `#FF6B2B` | pdt-po (PO / 지휘자)'},
+    {n:38, t:'| `persona-designer` | `#A78BFA` | pdt-designer'},
+    {n:39, t:'| `persona-developer`| `#38BDF8` | pdt-developer'},
+    {n:40, t:'| `persona-qa`       | `#34D399` | pdt-qa'},
+    {n:65, t:'UI:   -apple-system, \'SF Pro Text\', \'Helvetica Neue\', sans-serif'},
+    {n:66, t:'Mono: \'JetBrains Mono\', \'Fira Code\', \'Menlo\', monospace'},
+  ]},
+  { path:'docs/tickets/round-3/T-001.md', id:'t001-raw', ct:'ticket-review', p:{id:'T-001',title:'Persona Activity section 신설'}, lines:[
+    {n:1,  t:'# T-001 — Persona Activity section 신설'},
+    {n:3,  t:'**Stage**: build  **Status**: review  **Assignee**: pdt-developer'},
+    {n:8,  t:'## Request'},
+    {n:9,  t:'PO가 매 delegation 후 Persona Activity 행을 ## Persona Activity 섹션에 append'},
+    {n:14, t:'## Acceptance Criteria'},
+    {n:15, t:'- persona, model, effort, turn_count 모두 기록'},
+    {n:16, t:'- PO가 직접 작성, developer 위임 불필요'},
+  ]},
+  { path:'docs/tickets/round-3/T-002.md', id:'t002', ct:'markdown', p:{title:'T-002.md',icon:'📋',content:'ticket2'}, lines:[
+    {n:1,  t:'# T-002 — PO refusal message 개선'},
+    {n:3,  t:'**Stage**: build  **Status**: todo'},
+    {n:8,  t:'## Request'},
+    {n:9,  t:'PO 거절 메시지에 lifecycle vs content 구분 명시. 2-line template 도입.'},
+  ]},
+  { path:'packages/core/po/po-instructions.md', id:'po-inst', ct:'markdown', p:{title:'po-instructions.md',icon:'📄',content:'po-inst'}, lines:[
+    {n:3,  t:'description: Senior Product Owner — orchestrator only'},
+    {n:10, t:'## ALWAYS'},
+    {n:11, t:'- Read ~/.productune/po-memory.md on startup'},
+    {n:12, t:'- Emit 1-line classification trace before every delegation'},
+    {n:13, t:'- Announce stage transitions explicitly'},
+    {n:18, t:'## NEVER'},
+    {n:19, t:'- Write ticket body content (Request, Acceptance, Outcome)'},
+    {n:20, t:'- Author PRD sections directly — delegate to Designer'},
+    {n:27, t:'## Lifecycle exception'},
+    {n:28, t:'PO may write: frontmatter, status lines, ## Persona Activity rows'},
+    {n:35, t:'## Routing rules'},
+    {n:36, t:'complexity L1-L3: haiku/low → sonnet/medium → opus/high'},
+  ]},
+  { path:'packages/core/po/sections/stages.md', id:'stages-md', ct:'markdown', p:{title:'stages.md',icon:'📄',content:'po-inst'}, lines:[
+    {n:1,  t:'# Three stages'},
+    {n:3,  t:'## Stage 1 — Instruction (user → you)'},
+    {n:5,  t:'1. **Consult memory** — read `~/.productune/po-memory.md`'},
+    {n:14, t:'**Topic-shift markers** (force (c) even with file overlap)'},
+    {n:44, t:'## Stage 2 — Execution + Confirmation'},
+    {n:46, t:'### 2A. Discovery interview (new ideas only)'},
+    {n:68, t:'### 2B. Delegate PRD to Designer (clarity loop)'},
+    {n:90, t:'### 2C. Routing tickets to Developer / QA'},
+  ]},
+  { path:'packages/core/agents/pdt-po.md', id:'pd-po', ct:'persona-def', p:{persona:'po'}, lines:[
+    {n:1,  t:'---'},
+    {n:2,  t:'name: pdt-po'},
+    {n:3,  t:'description: Senior Product Owner — orchestrator only'},
+    {n:4,  t:'model: claude-opus-4-7 · effort: max'},
+    {n:10, t:'## ALWAYS'},
+    {n:11, t:'- Emit 1-line classification trace before every delegation'},
+    {n:12, t:'- Announce stage transitions: → Stage: Build (Developer)'},
+    {n:18, t:'## NEVER'},
+    {n:19, t:'- Write ticket body (Request, Acceptance, Outcome, Inputs)'},
+  ]},
+  { path:'packages/core/agents/pdt-designer.md', id:'pd-des', ct:'persona-def', p:{persona:'designer'}, lines:[
+    {n:2,  t:'name: pdt-designer'},
+    {n:3,  t:'description: Product Designer — PRD + design artifacts'},
+    {n:4,  t:'model: claude-opus-4-7 · effort: high'},
+    {n:10, t:'## Role'},
+    {n:11, t:'Author PRD, design system, UX flow, wireframes, hi-fi mockups'},
+    {n:15, t:'## PRD clarity loop'},
+    {n:16, t:'ambiguity_score A: 0.0 = crystal clear, 1.0 = total ambiguity'},
+  ]},
+  { path:'packages/core/agents/pdt-developer.md', id:'pd-dev', ct:'persona-def', p:{persona:'developer'}, lines:[
+    {n:2,  t:'name: pdt-developer'},
+    {n:3,  t:'description: Full-stack Developer — implementation'},
+    {n:4,  t:'model: claude-sonnet-4-6 · effort: high'},
+    {n:10, t:'## Role'},
+    {n:11, t:'Implement tickets. Follow design docs. Write tests.'},
+    {n:15, t:'## Skills applied'},
+    {n:16, t:'tdd, triage-issue, request-refactor-plan, improve-codebase-architecture'},
+  ]},
+  { path:'packages/core/agents/pdt-qa.md', id:'pd-qa', ct:'persona-def', p:{persona:'qa'}, lines:[
+    {n:2,  t:'name: pdt-qa'},
+    {n:3,  t:'description: QA Engineer — verification'},
+    {n:4,  t:'model: claude-haiku-4-5 · effort: medium'},
+    {n:10, t:'## Role'},
+    {n:11, t:'Run test suites. Check design compliance. Report pass/fail.'},
+    {n:15, t:'## Output'},
+    {n:16, t:'overall: pass | fail, suite results, failing excerpts'},
+  ]},
+  { path:'.productune/po-state.json', id:'proj-mem', ct:'markdown', p:{title:'po-state.json',icon:'⚙',content:'state'}, lines:[
+    {n:1,  t:'{'},
+    {n:2,  t:'  "project": "productune",'},
+    {n:3,  t:'  "current_stage": "build",'},
+    {n:4,  t:'  "current_round": 3,'},
+    {n:5,  t:'  "active_ticket": "T-001",'},
+    {n:8,  t:'  "model_history": ["opus/max", "sonnet/high"],'},
+    {n:11, t:'  "persona_sessions": { "developer": "ses_abc123" }'},
+  ]},
 ];
 
 function onExplorerSearch(q) {
@@ -1642,15 +1743,42 @@ function toggleSrchOpt(btn) { btn.classList.toggle('active'); }
 
 function renderSearchResults(q, body) {
   const ql = q.toLowerCase();
-  const matches = SEARCH_FILES.filter(f => f.path.toLowerCase().includes(ql));
-  if (matches.length === 0) {
-    body.innerHTML = `<div style="padding:16px 12px;font-size:12px;color:var(--txt3)">결과 없음 — "${q}"</div>`;
+  const escQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(${escQ})`, 'gi');
+
+  // Search both file paths and line content
+  const fileResults = SEARCH_DB.map(f => {
+    const lineMatches = f.lines.filter(l => l.t.toLowerCase().includes(ql));
+    const pathMatch = f.path.toLowerCase().includes(ql);
+    if (!pathMatch && lineMatches.length === 0) return null;
+    return { ...f, lineMatches, pathMatch };
+  }).filter(Boolean);
+
+  if (fileResults.length === 0) {
+    body.innerHTML = `<div style="padding:16px 12px;font-size:12px;color:var(--txt3)">결과 없음 — "<strong>${q}</strong>"</div>`;
     return;
   }
-  body.innerHTML = matches.map(f => {
-    const hi = f.path.replace(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<span class="match">$1</span>');
-    return `<div class="sr-file" onclick="openTab('${f.id}','${f.ct}',${JSON.stringify(f.p).replace(/"/g,'&quot;')})">${hi}</div>`;
+
+  const totalLines = fileResults.reduce((s, f) => s + f.lineMatches.length, 0);
+  const summary = `<div style="padding:6px 10px 4px;font-size:10px;color:var(--txt3);">${totalLines} result${totalLines!==1?'s':''} in ${fileResults.length} file${fileResults.length!==1?'s':''}</div>`;
+
+  const groups = fileResults.map(f => {
+    const pEnc = JSON.stringify(f.p).replace(/"/g, '&quot;');
+    const pathHi = f.path.replace(re, '<span class="match">$1</span>');
+    const lineHtml = f.lineMatches.slice(0, 5).map(l => {
+      const ctx = l.t.length > 48 ? '…' + l.t.slice(Math.max(0, l.t.toLowerCase().indexOf(ql) - 10)) : l.t;
+      const ctxHi = ctx.replace(re, '<span class="match">$1</span>');
+      return `<div class="sr-line" onclick="openTab('${f.id}','${f.ct}',${pEnc})">
+        <span class="ln">${l.n}</span><span>${ctxHi}</span>
+      </div>`;
+    }).join('');
+    const more = f.lineMatches.length > 5
+      ? `<div style="padding:1px 8px 1px 32px;font-size:10px;color:var(--txt3)">+${f.lineMatches.length-5}개 더...</div>`
+      : '';
+    return `<div class="sr-file" onclick="openTab('${f.id}','${f.ct}',${pEnc})">${pathHi} <span style="font-size:10px;color:var(--txt3)">(${f.lineMatches.length || ''})</span></div>${lineHtml}${more}`;
   }).join('');
+
+  body.innerHTML = summary + groups;
 }
 
 // ── EXPLORER ──────────────────────────────────────────────────────────────────
