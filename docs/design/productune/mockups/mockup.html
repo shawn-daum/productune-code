@@ -116,7 +116,12 @@ button{font-family:inherit;cursor:pointer}
 .tab-bar-wrap{display:flex;align-items:stretch;background:var(--bg-surface);border-bottom:1px solid var(--border);flex-shrink:0;height:35px}
 .tab-bar{display:flex;align-items:stretch;overflow-x:auto;flex:1}
 .tab-bar::-webkit-scrollbar{height:0}
-.tab{display:flex;align-items:center;gap:5px;padding:0 10px;border-right:1px solid var(--border);font-size:12px;color:var(--txt2);cursor:pointer;flex-shrink:0;min-width:80px;max-width:180px;position:relative;background:var(--bg-surface);white-space:nowrap;user-select:none}
+.tab{display:flex;align-items:center;gap:5px;padding:0 10px;border-right:1px solid var(--border);font-size:12px;color:var(--txt2);cursor:pointer;flex-shrink:0;min-width:80px;max-width:180px;position:relative;background:var(--bg-surface);white-space:nowrap;user-select:none;transition:opacity .1s}
+.tab.tab-dragging{opacity:.3;pointer-events:none}
+.tab.drop-before{box-shadow:-2px 0 0 var(--po)}
+.tab.drop-after{box-shadow:2px 0 0 var(--po)}
+.tab-bar.bar-end-drop{box-shadow:inset -3px 0 0 var(--po)}
+.tc-wrap.pane-drop-zone,.empty-state.pane-drop-zone{box-shadow:inset 0 0 0 2px var(--po)}
 .tab:hover{background:#1a1a1a;color:var(--txt)}
 .tab.active{background:var(--bg-base);color:var(--txt-bright)}
 .tab.active::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:var(--bg-base)}
@@ -533,14 +538,14 @@ button{font-family:inherit;cursor:pointer}
     <!-- Pane 0 -->
     <div class="pane active-pane" id="pane-0" onclick="setActivePane(0)">
       <div class="tab-bar-wrap">
-        <div class="tab-bar" id="tb-0"></div>
+        <div class="tab-bar" id="tb-0" ondragover="tabBarDragOver(0,event)" ondrop="tabBarDrop(0,event)" ondragleave="tabBarDragLeave(0,event)"></div>
         <div class="tab-bar-btns">
           <button class="tb-btn" id="split-btn-0" onclick="toggleSplit(event)" title="Split Editor Right">
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M7 1v12" stroke="currentColor" stroke-width="1.2"/></svg>
           </button>
         </div>
       </div>
-      <div class="tc-wrap" id="tc-wrap-0">
+      <div class="tc-wrap" id="tc-wrap-0" ondragover="tcDragOver(0,event)" ondrop="tcDrop(0,event)" ondragleave="tcDragLeave(0,event)">
         <div class="tab-content" id="tc-0" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
         <div class="empty-state" id="es-0">
           <div class="esc-logo">⚡</div>
@@ -562,14 +567,14 @@ button{font-family:inherit;cursor:pointer}
     <!-- Pane 1 -->
     <div class="pane" id="pane-1" style="display:none" onclick="setActivePane(1)">
       <div class="tab-bar-wrap">
-        <div class="tab-bar" id="tb-1"></div>
+        <div class="tab-bar" id="tb-1" ondragover="tabBarDragOver(1,event)" ondrop="tabBarDrop(1,event)" ondragleave="tabBarDragLeave(1,event)"></div>
         <div class="tab-bar-btns">
           <button class="tb-btn" onclick="closeSplit(event)" title="Close Split">
             <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 2l9 9M11 2l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
           </button>
         </div>
       </div>
-      <div class="tc-wrap" id="tc-wrap-1">
+      <div class="tc-wrap" id="tc-wrap-1" ondragover="tcDragOver(1,event)" ondrop="tcDrop(1,event)" ondragleave="tcDragLeave(1,event)">
         <div class="tab-content" id="tc-1" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
         <div class="empty-state" id="es-1">
           <div class="esc-logo" style="font-size:20px;opacity:.2">⊟</div>
@@ -666,6 +671,7 @@ let activeIcon = 'explorer';
 let projectOpen = true;
 let splitEnabled = false;
 let activePaneIdx = 0;
+let dragTab = null; // { pi, tabId }
 let selectedMode = 'planner';
 
 // Each pane has its own tab list
@@ -897,12 +903,152 @@ function typeIcon(type) {
   return m[type] || '📄';
 }
 
+// ── Tab drag & drop ──────────────────────────────────────────────────────────
+
+function clearDragHighlights() {
+  document.querySelectorAll('.drop-before,.drop-after,.bar-end-drop,.pane-drop-zone').forEach(el =>
+    el.classList.remove('drop-before','drop-after','bar-end-drop','pane-drop-zone'));
+}
+
+function tabDragStart(pi, tabId, e) {
+  dragTab = { pi, tabId };
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', tabId);
+  // defer class so browser captures non-faded ghost
+  setTimeout(() => {
+    const el = document.querySelector(`.tab[data-pi="${pi}"][data-tid="${tabId}"]`);
+    if (el) el.classList.add('tab-dragging');
+  }, 0);
+}
+
+function tabDragOver(pi, tabId, e) {
+  if (!dragTab) return;
+  e.preventDefault(); e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  clearDragHighlights();
+  if (dragTab.pi === pi && dragTab.tabId === tabId) return;
+  const el = e.currentTarget;
+  const rect = el.getBoundingClientRect();
+  el.classList.add(e.clientX < rect.left + rect.width / 2 ? 'drop-before' : 'drop-after');
+}
+
+function tabDragLeave(e) {
+  e.currentTarget.classList.remove('drop-before','drop-after');
+}
+
+function tabDrop(pi, tabId, e) {
+  if (!dragTab) return;
+  e.preventDefault(); e.stopPropagation();
+  const { pi: srcPi, tabId: srcTabId } = dragTab;
+  if (srcPi === pi && srcTabId === tabId) { tabDragEnd(); return; }
+
+  const el = e.currentTarget;
+  const rect = el.getBoundingClientRect();
+  const insertBefore = e.clientX < rect.left + rect.width / 2;
+
+  const srcPane = panes[srcPi];
+  const srcIdx = srcPane.tabs.findIndex(t => t.id === srcTabId);
+  if (srcIdx === -1) { tabDragEnd(); return; }
+  const [moved] = srcPane.tabs.splice(srcIdx, 1);
+  if (srcPane.activeTabId === srcTabId) {
+    const nx = srcPane.tabs[Math.min(srcIdx, srcPane.tabs.length - 1)];
+    srcPane.activeTabId = nx ? nx.id : null;
+  }
+
+  const dstPane = panes[pi];
+  let dstIdx = dstPane.tabs.findIndex(t => t.id === tabId);
+  if (!insertBefore) dstIdx++;
+  dstPane.tabs.splice(dstIdx, 0, moved);
+  dstPane.activeTabId = moved.id;
+
+  if (srcPi !== pi) { renderPaneTabBar(srcPi); renderPaneContent(srcPi); }
+  renderPaneTabBar(pi); renderPaneContent(pi);
+  if (activePaneIdx !== pi) setActivePane(pi);
+  tabDragEnd();
+}
+
+function tabDragEnd() {
+  clearDragHighlights();
+  document.querySelectorAll('.tab-dragging').forEach(el => el.classList.remove('tab-dragging'));
+  dragTab = null;
+}
+
+function tabBarDragOver(pi, e) {
+  if (!dragTab) return;
+  e.preventDefault(); e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  clearDragHighlights();
+  const bar = document.getElementById('tb-' + pi);
+  // only show end-drop if dropping onto whitespace after last tab
+  if (bar && !(e.target.classList.contains('tab'))) bar.classList.add('bar-end-drop');
+}
+
+function tabBarDragLeave(pi, e) {
+  const bar = document.getElementById('tb-' + pi);
+  if (bar && !bar.contains(e.relatedTarget)) bar.classList.remove('bar-end-drop');
+}
+
+function tabBarDrop(pi, e) {
+  if (!dragTab) return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.target.closest('.tab')) return; // let tabDrop handle it
+  const { pi: srcPi, tabId: srcTabId } = dragTab;
+
+  const srcPane = panes[srcPi];
+  const srcIdx = srcPane.tabs.findIndex(t => t.id === srcTabId);
+  if (srcIdx === -1) { tabDragEnd(); return; }
+  const [moved] = srcPane.tabs.splice(srcIdx, 1);
+  if (srcPane.activeTabId === srcTabId) {
+    const nx = srcPane.tabs[Math.min(srcIdx, srcPane.tabs.length - 1)];
+    srcPane.activeTabId = nx ? nx.id : null;
+  }
+
+  const dstPane = panes[pi];
+  dstPane.tabs.push(moved);
+  dstPane.activeTabId = moved.id;
+
+  if (srcPi !== pi) { renderPaneTabBar(srcPi); renderPaneContent(srcPi); }
+  renderPaneTabBar(pi); renderPaneContent(pi);
+  if (activePaneIdx !== pi) setActivePane(pi);
+  tabDragEnd();
+}
+
+function tcDragOver(pi, e) {
+  if (!dragTab || dragTab.pi === pi) return;
+  e.preventDefault(); e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  clearDragHighlights();
+  const tc = document.getElementById('tc-wrap-' + pi);
+  if (tc) tc.classList.add('pane-drop-zone');
+}
+
+function tcDragLeave(pi, e) {
+  const tc = document.getElementById('tc-wrap-' + pi);
+  if (tc && !tc.contains(e.relatedTarget)) tc.classList.remove('pane-drop-zone');
+}
+
+function tcDrop(pi, e) {
+  if (!dragTab || dragTab.pi === pi) return;
+  e.preventDefault(); e.stopPropagation();
+  tabBarDrop(pi, e);
+}
+
+// ── End drag & drop ──────────────────────────────────────────────────────────
+
 function renderPaneTabBar(pi) {
   const pane = panes[pi];
   const bar = document.getElementById('tb-' + pi);
   if (!bar) return;
   bar.innerHTML = pane.tabs.map(t => `
-    <div class="tab ${t.id === pane.activeTabId ? 'active':''}" onclick="activateTabInPane(${pi},'${t.id}')">
+    <div class="tab ${t.id === pane.activeTabId ? 'active':''}"
+      draggable="true"
+      data-pi="${pi}" data-tid="${t.id}"
+      onclick="activateTabInPane(${pi},'${t.id}')"
+      ondragstart="tabDragStart(${pi},'${t.id}',event)"
+      ondragover="tabDragOver(${pi},'${t.id}',event)"
+      ondrop="tabDrop(${pi},'${t.id}',event)"
+      ondragleave="tabDragLeave(event)"
+      ondragend="tabDragEnd()">
       <span style="font-size:12px;flex-shrink:0">${t.icon}</span>
       <span class="tab-label">${t.label}</span>
       <button class="tab-close" onclick="closeTab(${pi},'${t.id}',event)">×</button>
