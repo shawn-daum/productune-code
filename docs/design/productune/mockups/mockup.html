@@ -23,7 +23,33 @@ button{font-family:inherit;cursor:pointer}
 .dots{display:flex;gap:6px;margin-right:12px}
 .dot{width:12px;height:12px;border-radius:50%}
 .dot-r{background:#FF5F57}.dot-y{background:#FFBD2E}.dot-g{background:#28C840}
-.title-center{flex:1;text-align:center;font-size:12px;color:#444;font-weight:500}
+.title-center{flex:1;display:flex;justify-content:center}
+.qo-trigger{display:flex;align-items:center;gap:8px;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:6px;padding:4px 14px;min-width:280px;max-width:420px;cursor:pointer;transition:border-color .15s}
+.qo-trigger:hover{border-color:#3a3a3a}
+.qo-trigger-icon{color:#444;flex-shrink:0}
+.qo-trigger-text{font-size:12px;color:#555;flex:1;text-align:center}
+.qo-trigger-kbd{font-size:10px;color:#333;border:1px solid #2a2a2a;border-radius:3px;padding:1px 4px;font-family:'JetBrains Mono',monospace;flex-shrink:0}
+/* Quick Open Modal */
+.qo-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:none;align-items:flex-start;justify-content:center;padding-top:60px}
+.qo-overlay.open{display:flex}
+.qo-box{background:#1e1e1e;border:1px solid #3a3a3a;border-radius:8px;width:600px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,.7);overflow:hidden;display:flex;flex-direction:column;max-height:70vh}
+.qo-input-wrap{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2a2a2a;flex-shrink:0}
+.qo-input{flex:1;background:transparent;border:none;outline:none;color:#e8e8e8;font-size:13px;font-family:inherit}
+.qo-input::placeholder{color:#555}
+.qo-body{overflow-y:auto;flex:1}
+.qo-section-hdr{font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.08em;padding:8px 14px 4px}
+.qo-item{display:flex;align-items:center;gap:10px;padding:6px 14px;cursor:pointer;font-size:13px}
+.qo-item:hover,.qo-item.selected{background:#094771}
+.qo-item-label{flex:1;color:#ccc}
+.qo-item-prefix{color:#888;font-size:12px;margin-left:4px}
+.qo-item-path{font-size:11px;color:#666;margin-left:6px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qo-item-badge{font-size:10px;color:#555;flex-shrink:0}
+.qo-kbds{display:flex;gap:3px;flex-shrink:0}
+.qo-kbd{font-size:10px;color:#555;border:1px solid #333;border-radius:3px;padding:1px 4px;font-family:'JetBrains Mono',monospace;background:#111}
+.qo-divider{height:1px;background:#2a2a2a;margin:4px 0}
+.qo-file-icon{font-size:13px;flex-shrink:0;width:16px;text-align:center}
+.qo-match-highlight{color:#f0a050}
+/* search result line match — already has .match from sr-line */
 
 /* APP */
 .app{flex:1;display:flex;overflow:hidden}
@@ -355,7 +381,26 @@ button{font-family:inherit;cursor:pointer}
 
 <div class="titlebar">
   <div class="dots"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
-  <div class="title-center">productune — my-saas</div>
+  <div class="title-center">
+    <div class="qo-trigger" onclick="openQuickOpen()" title="Quick Open (⌘P)">
+      <svg class="qo-trigger-icon" width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="5.5" cy="5.5" r="4" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M9 9l2.5 2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <span class="qo-trigger-text">productune — my-saas</span>
+      <span class="qo-trigger-kbd">⌘P</span>
+    </div>
+  </div>
+</div>
+
+<!-- QUICK OPEN MODAL -->
+<div class="qo-overlay" id="qo-overlay" onclick="closeQuickOpen(event)">
+  <div class="qo-box" onclick="event.stopPropagation()">
+    <div class="qo-input-wrap">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="6" cy="6" r="4.5" stroke="#666" stroke-width="1.3"/><path d="M10 10l2.5 2.5" stroke="#666" stroke-width="1.3" stroke-linecap="round"/></svg>
+      <input class="qo-input" id="qo-input" placeholder="파일명 검색 (: 줄이동, @ 심볼, % 텍스트검색, > 명령)" autocomplete="off"
+        oninput="onQOInput(this.value)"
+        onkeydown="onQOKey(event)" />
+    </div>
+    <div class="qo-body" id="qo-body"></div>
+  </div>
 </div>
 
 <div class="app">
@@ -1830,6 +1875,195 @@ function createProject() {
   const slug = document.getElementById('slug-input').value||'my-project';
   closeModal(); projectOpen=true; renderExplorer(); setActivity('project');
   addRPMsg('po','pdt-po',`프로젝트 "${slug}" 생성 (${selectedMode}). 어떤 문제를 해결하고 싶으신가요?`);
+}
+
+// ── QUICK OPEN ────────────────────────────────────────────────────────────────
+
+const QO_SHORTCUTS = [
+  { label:'Go to File',             prefix:'',  kbds:['⌘','P'],      action: q => qoFilterFiles(q) },
+  { label:'Show and Run Commands',  prefix:'>',  kbds:['⇧','⌘','P'], action: q => qoCommands() },
+  { label:'Search for Text',        prefix:'%',  kbds:[],             action: q => qoTextSearch(q) },
+  { label:'Go to Line',             prefix:':',  kbds:['⌃','G'],     action: q => qoGotoLine(q) },
+  { label:'Go to Symbol',           prefix:'@',  kbds:['⇧','⌘','O'], action: q => qoSymbols(q) },
+];
+
+const QO_RECENT = [
+  { name:'productune.md',    path:'docs/prd',                      id:'prd',     ct:'markdown', p:{title:'productune.md',icon:'📄',content:'prd'} },
+  { name:'T-001.md',         path:'docs/tickets/round-3',          id:'t001-raw',ct:'ticket-review',p:{id:'T-001',title:'Persona Activity section 신설'} },
+  { name:'system.md',        path:'docs/design/productune',        id:'sys-md',  ct:'markdown', p:{title:'system.md',icon:'📄',content:'system'} },
+  { name:'po-instructions.md',path:'packages/core/po',            id:'po-inst', ct:'markdown', p:{title:'po-instructions.md',icon:'📄',content:'po-inst'} },
+  { name:'pdt-po.md',        path:'packages/core/agents',          id:'pd-po',   ct:'persona-def',p:{persona:'po'} },
+  { name:'stages.md',        path:'packages/core/po/sections',     id:'stages-md',ct:'markdown',p:{title:'stages.md',icon:'📄',content:'po-inst'} },
+  { name:'T-002.md',         path:'docs/tickets/round-3',          id:'t002',    ct:'markdown', p:{title:'T-002.md',icon:'📋',content:'ticket2'} },
+];
+
+let qoSelectedIdx = -1;
+
+function openQuickOpen() {
+  const overlay = document.getElementById('qo-overlay');
+  overlay.classList.add('open');
+  const inp = document.getElementById('qo-input');
+  inp.value = '';
+  qoSelectedIdx = -1;
+  renderQODefault();
+  setTimeout(() => inp.focus(), 30);
+}
+
+function closeQuickOpen(e) {
+  if (e && e.target !== document.getElementById('qo-overlay')) return;
+  document.getElementById('qo-overlay').classList.remove('open');
+}
+
+function onQOKey(e) {
+  const items = document.querySelectorAll('.qo-item');
+  if (e.key === 'Escape') { document.getElementById('qo-overlay').classList.remove('open'); return; }
+  if (e.key === 'ArrowDown') { qoSelectedIdx = Math.min(qoSelectedIdx + 1, items.length - 1); qoUpdateSelection(items); e.preventDefault(); }
+  if (e.key === 'ArrowUp')   { qoSelectedIdx = Math.max(qoSelectedIdx - 1, 0); qoUpdateSelection(items); e.preventDefault(); }
+  if (e.key === 'Enter') {
+    const sel = items[qoSelectedIdx] || items[0];
+    if (sel) sel.click();
+  }
+}
+
+function qoUpdateSelection(items) {
+  items.forEach((el, i) => el.classList.toggle('selected', i === qoSelectedIdx));
+  if (items[qoSelectedIdx]) items[qoSelectedIdx].scrollIntoView({ block:'nearest' });
+}
+
+function onQOInput(val) {
+  qoSelectedIdx = 0;
+  if (val === '') { renderQODefault(); return; }
+  if (val.startsWith('>')) { qoCommands(val.slice(1).trim()); return; }
+  if (val.startsWith('%')) { qoTextSearch(val.slice(1).trim()); return; }
+  if (val.startsWith(':')) { qoGotoLine(val.slice(1).trim()); return; }
+  if (val.startsWith('@')) { qoSymbols(val.slice(1).trim()); return; }
+  qoFilterFiles(val.trim());
+}
+
+function renderQODefault() {
+  const body = document.getElementById('qo-body');
+  const shortcuts = QO_SHORTCUTS.map((s, i) => {
+    const kbdHtml = s.kbds.map(k => `<span class="qo-kbd">${k}</span>`).join('');
+    const pfx = s.prefix ? `<span class="qo-item-prefix">${s.prefix}</span>` : '';
+    return `<div class="qo-item" onclick="qoShortcutClick(${i})" data-idx="${i}">
+      <span class="qo-item-label">${s.label}${pfx}</span>
+      <div class="qo-kbds">${kbdHtml}</div>
+    </div>`;
+  }).join('');
+
+  const recent = QO_RECENT.map(f => {
+    const icon = f.ct === 'persona-def' ? '👤' : f.ct === 'ticket-review' ? '📋' : '📄';
+    const pEnc = JSON.stringify(f.p).replace(/"/g,'&quot;');
+    return `<div class="qo-item" onclick="qoOpenFile('${f.id}','${f.ct}',${pEnc})">
+      <span class="qo-file-icon">${icon}</span>
+      <span class="qo-item-label">${f.name}</span>
+      <span class="qo-item-path">${f.path}</span>
+      <span class="qo-item-badge">recently opened</span>
+    </div>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div>${shortcuts}</div>
+    <div class="qo-divider"></div>
+    <div class="qo-section-hdr">Recently Opened</div>
+    <div>${recent}</div>`;
+}
+
+function qoFilterFiles(q) {
+  const body = document.getElementById('qo-body');
+  if (!q) { renderQODefault(); return; }
+  const ql = q.toLowerCase();
+  const escQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(${escQ})`, 'gi');
+  const hits = SEARCH_DB.filter(f => f.path.toLowerCase().includes(ql));
+  if (!hits.length) { body.innerHTML = `<div style="padding:12px 14px;color:#555;font-size:12px">파일 없음</div>`; return; }
+  body.innerHTML = hits.map(f => {
+    const name = f.path.split('/').pop();
+    const dir  = f.path.split('/').slice(0,-1).join('/');
+    const icon = f.ct === 'persona-def' ? '👤' : f.ct === 'ticket-review' ? '📋' : '📄';
+    const pEnc = JSON.stringify(f.p).replace(/"/g,'&quot;');
+    const nameHi = name.replace(re, '<span class="qo-match-highlight">$1</span>');
+    return `<div class="qo-item" onclick="qoOpenFile('${f.id}','${f.ct}',${pEnc})">
+      <span class="qo-file-icon">${icon}</span>
+      <span class="qo-item-label">${nameHi}</span>
+      <span class="qo-item-path">${dir}</span>
+    </div>`;
+  }).join('');
+}
+
+function qoTextSearch(q) {
+  const body = document.getElementById('qo-body');
+  if (!q) { body.innerHTML = `<div style="padding:12px 14px;color:#555;font-size:12px">텍스트를 입력하세요 — Explorer 패널의 구문 검색과 동일</div>`; return; }
+  const ql = q.toLowerCase();
+  const escQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`(${escQ})`, 'gi');
+  const results = SEARCH_DB.flatMap(f =>
+    f.lines.filter(l => l.t.toLowerCase().includes(ql)).slice(0,3).map(l => ({f, l}))
+  ).slice(0, 20);
+  if (!results.length) { body.innerHTML = `<div style="padding:12px 14px;color:#555;font-size:12px">결과 없음</div>`; return; }
+  body.innerHTML = `<div class="qo-section-hdr">${results.length} matches</div>` +
+    results.map(({f, l}) => {
+      const pEnc = JSON.stringify(f.p).replace(/"/g,'&quot;');
+      const hi = l.t.replace(re, '<span class="qo-match-highlight">$1</span>');
+      return `<div class="qo-item" onclick="qoOpenFile('${f.id}','${f.ct}',${pEnc})">
+        <span class="qo-file-icon" style="color:#666;font-size:11px">${l.n}</span>
+        <span class="qo-item-label" style="font-family:'JetBrains Mono',monospace;font-size:11px">${hi}</span>
+        <span class="qo-item-path">${f.path.split('/').pop()}</span>
+      </div>`;
+    }).join('');
+}
+
+function qoCommands(q) {
+  const body = document.getElementById('qo-body');
+  const cmds = [
+    { label:'New Round (PRD)', action: () => { setActivity('project'); closeQuickOpen({}); } },
+    { label:'Toggle PO Chat',  action: () => { const rp=document.getElementById('right-panel'); rp.classList.contains('collapsed')?openRP():closeRP(); closeQuickOpen({}); } },
+    { label:'Split Editor Right', action: () => { splitRight(activePaneId); closeQuickOpen({}); } },
+    { label:'Split Editor Down',  action: () => { splitDown(activePaneId); closeQuickOpen({}); } },
+    { label:'Open Terminal',   action: () => { openTerminalTab(activePaneId); closeQuickOpen({}); } },
+    { label:'Open Browser',    action: () => { openBrowserTab(activePaneId); closeQuickOpen({}); } },
+    { label:'Design Gate',     action: () => { openTab('design-gate','design-gate',{}); closeQuickOpen({}); } },
+    { label:'QA Result',       action: () => { openTab('qa-result','qa-result',{}); closeQuickOpen({}); } },
+    { label:'Skill Matrix',    action: () => { openTab('skills','skill-matrix',{}); closeQuickOpen({}); } },
+  ];
+  const filtered = q ? cmds.filter(c => c.label.toLowerCase().includes(q.toLowerCase())) : cmds;
+  window.__qoCmds = filtered;
+  body.innerHTML = `<div class="qo-section-hdr">Commands</div>` +
+    filtered.map((c, i) => `<div class="qo-item" onclick="window.__qoCmds[${i}].action()">
+      <span class="qo-file-icon">⚡</span>
+      <span class="qo-item-label">${c.label}</span>
+    </div>`).join('');
+}
+
+function qoGotoLine(q) {
+  const body = document.getElementById('qo-body');
+  const n = parseInt(q);
+  body.innerHTML = `<div class="qo-item" onclick="closeQuickOpen({})">
+    <span class="qo-file-icon" style="color:var(--po)">→</span>
+    <span class="qo-item-label">${n > 0 ? n+'번째 줄로 이동' : '줄 번호를 입력하세요'}</span>
+  </div>`;
+}
+
+function qoSymbols(q) {
+  const body = document.getElementById('qo-body');
+  const syms = ['renderExplorer', 'openTab', 'splitRight', 'splitDown', 'closePane', 'initPanes', 'rerenderMain', 'renderPaneHtml', 'onExplorerSearch', 'renderSearchResults'];
+  const filtered = q ? syms.filter(s => s.toLowerCase().includes(q.toLowerCase())) : syms;
+  body.innerHTML = `<div class="qo-section-hdr">Symbols</div>` +
+    filtered.map(s => `<div class="qo-item" onclick="closeQuickOpen({})">
+      <span class="qo-file-icon" style="color:var(--dev)">ƒ</span>
+      <span class="qo-item-label" style="font-family:'JetBrains Mono',monospace;font-size:12px">${s}</span>
+    </div>`).join('');
+}
+
+function qoShortcutClick(i) {
+  const s = QO_SHORTCUTS[i];
+  const inp = document.getElementById('qo-input');
+  if (s.prefix) { inp.value = s.prefix + ' '; inp.dispatchEvent(new Event('input')); inp.focus(); }
+}
+
+function qoOpenFile(id, ct, p) {
+  openTab(id, ct, p);
+  document.getElementById('qo-overlay').classList.remove('open');
 }
 
 // ── SHOWCASE COMPAT ───────────────────────────────────────────────────────────
