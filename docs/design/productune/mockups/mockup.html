@@ -101,16 +101,39 @@ button{font-family:inherit;cursor:pointer}
 .s-badge.err{background:#2a0d0d;color:var(--err)}
 
 /* MAIN */
-.main{flex:1;display:flex;flex-direction:row;overflow:hidden;background:var(--bg-base)}
+.main{flex:1;display:flex;overflow:hidden;background:var(--bg-base)}
+
+/* LAYOUT TREE */
+.layout-box{display:flex;flex:1;overflow:hidden;min-width:0;min-height:0}
+.layout-hbox{flex-direction:row}
+.layout-vbox{flex-direction:column}
+.layout-child{display:flex;overflow:hidden;min-width:0;min-height:0;flex-direction:column}
+.layout-resize-h{width:4px;cursor:col-resize;background:transparent;flex-shrink:0;z-index:5;position:relative}
+.layout-resize-v{height:4px;cursor:row-resize;background:transparent;flex-shrink:0;z-index:5;position:relative}
+.layout-resize-h:hover,.layout-resize-h.dragging,.layout-resize-v:hover,.layout-resize-v.dragging{background:var(--po)}
 
 /* PANE */
-.pane{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:180px;position:relative}
-.pane+.pane{border-left:1px solid var(--border)}
+.pane{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:150px;min-height:100px;position:relative}
 .pane.active-pane .tab-bar-wrap{background:#0d0d0d}
 
-/* resize handle between panes */
-.pane-resize{width:4px;background:transparent;cursor:col-resize;flex-shrink:0;position:relative;z-index:10}
-.pane-resize:hover,.pane-resize.dragging{background:var(--po)}
+/* TERMINAL TAB */
+.term-content{flex:1;background:#080808;font-family:'JetBrains Mono','Fira Code',monospace;font-size:12px;color:#d4d4d4;padding:10px 14px;overflow-y:auto;line-height:1.7}
+.term-prompt{color:var(--po)}
+.term-path{color:var(--dev)}
+.term-cursor{display:inline-block;width:7px;height:13px;background:var(--po);vertical-align:text-bottom;animation:blink 1s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* BROWSER TAB */
+.browser-wrap{display:flex;flex-direction:column;flex:1;overflow:hidden}
+.browser-chrome{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--bg-surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.browser-dots{display:flex;gap:4px;flex-shrink:0}
+.browser-dot{width:10px;height:10px;border-radius:50%;background:#333}
+.browser-nav{display:flex;gap:2px;flex-shrink:0}
+.browser-nav button{background:none;border:none;color:var(--txt3);font-size:14px;padding:1px 4px;cursor:pointer;border-radius:3px}
+.browser-nav button:hover{background:var(--bg-overlay);color:var(--txt)}
+.browser-url{flex:1;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;padding:3px 10px;font-size:12px;color:var(--txt2);font-family:monospace;outline:none}
+.browser-url:focus{border-color:var(--po);color:var(--txt)}
+.browser-body{flex:1;display:flex;align-items:center;justify-content:center;background:#13131f;color:var(--txt3);font-size:13px;flex-direction:column;gap:10px}
 
 /* TAB BAR */
 .tab-bar-wrap{display:flex;align-items:stretch;background:var(--bg-surface);border-bottom:1px solid var(--border);flex-shrink:0;height:35px}
@@ -536,52 +559,7 @@ button{font-family:inherit;cursor:pointer}
   <div class="main" id="main-panel">
 
     <!-- Pane 0 -->
-    <div class="pane active-pane" id="pane-0" onclick="setActivePane(0)">
-      <div class="tab-bar-wrap">
-        <div class="tab-bar" id="tb-0" ondragover="tabBarDragOver(0,event)" ondrop="tabBarDrop(0,event)" ondragleave="tabBarDragLeave(0,event)"></div>
-        <div class="tab-bar-btns">
-          <button class="tb-btn" id="split-btn-0" onclick="toggleSplit(event)" title="Split Editor Right">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="1" y="1" width="12" height="12" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M7 1v12" stroke="currentColor" stroke-width="1.2"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="tc-wrap" id="tc-wrap-0" ondragover="tcDragOver(0,event)" ondrop="tcDrop(0,event)" ondragleave="tcDragLeave(0,event)">
-        <div class="tab-content" id="tc-0" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
-        <div class="empty-state" id="es-0">
-          <div class="esc-logo">⚡</div>
-          <div><div class="esc-title">productune workspace</div><div style="font-size:11px;color:var(--txt3);text-align:center;margin-top:4px">my-saas · Build stage</div></div>
-          <div class="esc-shortcuts">
-            <div class="scr"><kbd>⌘P</kbd><span>Quick open</span></div>
-            <div class="scr"><kbd>⌘\</kbd><span>Toggle PO chat</span></div>
-            <div class="scr"><kbd>⌘B</kbd><span>Toggle panel</span></div>
-            <div class="scr"><kbd>⌘⇧E</kbd><span>Explorer</span></div>
-          </div>
-          <div style="font-size:11px;color:var(--txt3)">Recent: round-3 · round-2 · round-1</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Resize handle -->
-    <div class="pane-resize" id="split-handle" style="display:none" onmousedown="startResize(event)"></div>
-
-    <!-- Pane 1 -->
-    <div class="pane" id="pane-1" style="display:none" onclick="setActivePane(1)">
-      <div class="tab-bar-wrap">
-        <div class="tab-bar" id="tb-1" ondragover="tabBarDragOver(1,event)" ondrop="tabBarDrop(1,event)" ondragleave="tabBarDragLeave(1,event)"></div>
-        <div class="tab-bar-btns">
-          <button class="tb-btn" onclick="closeSplit(event)" title="Close Split">
-            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 2l9 9M11 2l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-          </button>
-        </div>
-      </div>
-      <div class="tc-wrap" id="tc-wrap-1" ondragover="tcDragOver(1,event)" ondrop="tcDrop(1,event)" ondragleave="tcDragLeave(1,event)">
-        <div class="tab-content" id="tc-1" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
-        <div class="empty-state" id="es-1">
-          <div class="esc-logo" style="font-size:20px;opacity:.2">⊟</div>
-          <div style="font-size:12px;color:var(--txt3)">Split pane — 여기에 탭을 열어보세요</div>
-        </div>
-      </div>
-    </div>
+    <!-- panes rendered dynamically by rerenderMain() -->
 
   </div><!-- /main -->
 
@@ -669,16 +647,14 @@ button{font-family:inherit;cursor:pointer}
 // ── STATE ────────────────────────────────────────────────────────────────────
 let activeIcon = 'explorer';
 let projectOpen = true;
-let splitEnabled = false;
-let activePaneIdx = 0;
+let activePaneId = 0;
+let paneIdCounter = 1;
 let dragTab = null; // { pi, tabId }
 let selectedMode = 'planner';
 
-// Each pane has its own tab list
-let panes = [
-  { id: 0, tabs: [], activeTabId: null },
-  { id: 1, tabs: [], activeTabId: null },
-];
+// panes keyed by paneId; layout = recursive split tree
+let panes = {};
+let layout = null;
 
 // Skill matrix data
 let skills = [
@@ -799,74 +775,190 @@ function setActivity(key) {
   if (sp.classList.contains('collapsed')) { sp.classList.remove('collapsed'); }
 }
 
-// ── SPLIT VIEW ────────────────────────────────────────────────────────────────
-function toggleSplit(e) {
-  if (e) e.stopPropagation();
-  if (splitEnabled) { closeSplit(e); return; }
-  splitEnabled = true;
-  document.getElementById('pane-1').style.display = 'flex';
-  document.getElementById('split-handle').style.display = 'block';
-  document.getElementById('split-btn-0').classList.add('active');
+// ── LAYOUT TREE ───────────────────────────────────────────────────────────────
+
+function initPanes() {
+  panes = { 0: { id:0, tabs:[], activeTabId:null } };
+  layout = { type:'leaf', id:0 };
+  activePaneId = 0;
+  paneIdCounter = 1;
+  rerenderMain();
 }
 
-function closeSplit(e) {
+function splitInTree(node, targetId, boxType, newId) {
+  if (node.type === 'leaf') {
+    return node.id === targetId
+      ? { type:boxType, children:[{type:'leaf',id:targetId},{type:'leaf',id:newId}], sizes:[1,1] }
+      : node;
+  }
+  return { ...node, children: node.children.map(c => splitInTree(c, targetId, boxType, newId)) };
+}
+
+function removeFromTree(node, targetId) {
+  if (node.type === 'leaf') return node.id === targetId ? null : node;
+  const kept = node.children.map(c => removeFromTree(c, targetId)).filter(Boolean);
+  if (kept.length === 0) return null;
+  if (kept.length === 1) return kept[0];
+  return { ...node, children: kept, sizes: kept.map(() => 1) };
+}
+
+function splitRight(paneId, e) {
   if (e) e.stopPropagation();
-  splitEnabled = false;
-  // move pane-1 tabs into pane-0
-  panes[1].tabs.forEach(t => {
-    if (!panes[0].tabs.find(x => x.id === t.id)) panes[0].tabs.push(t);
+  const newId = paneIdCounter++;
+  panes[newId] = { id:newId, tabs:[], activeTabId:null };
+  layout = splitInTree(layout, paneId, 'hbox', newId);
+  rerenderMain();
+  setActivePane(newId);
+}
+
+function splitDown(paneId, e) {
+  if (e) e.stopPropagation();
+  const newId = paneIdCounter++;
+  panes[newId] = { id:newId, tabs:[], activeTabId:null };
+  layout = splitInTree(layout, paneId, 'vbox', newId);
+  rerenderMain();
+  setActivePane(newId);
+}
+
+function closePane(paneId, e) {
+  if (e) e.stopPropagation();
+  // merge tabs into adjacent pane before closing
+  const allIds = Object.keys(panes).map(Number).filter(id => id !== paneId);
+  if (allIds.length > 0) {
+    const dst = panes[allIds[0]];
+    panes[paneId].tabs.forEach(t => { if (!dst.tabs.find(x=>x.id===t.id)) dst.tabs.push(t); });
+  }
+  delete panes[paneId];
+  layout = removeFromTree(layout, paneId);
+  if (!layout || Object.keys(panes).length === 0) { initPanes(); return; }
+  rerenderMain();
+  if (!panes[activePaneId]) setActivePane(parseInt(Object.keys(panes)[0]));
+  else setActivePane(activePaneId);
+}
+
+function setActivePane(paneId) {
+  activePaneId = paneId;
+  document.querySelectorAll('.pane').forEach(el =>
+    el.classList.toggle('active-pane', el.id === 'pane-' + paneId));
+}
+
+function openTerminalTab(paneId, e) {
+  if (e) e.stopPropagation();
+  const tid = 'terminal-' + paneId;
+  openTabInPane(paneId, tid, 'terminal', { title:'Terminal', icon:'>_' });
+  setActivePane(paneId);
+}
+
+function openBrowserTab(paneId, e) {
+  if (e) e.stopPropagation();
+  const tid = 'browser-' + paneId;
+  openTabInPane(paneId, tid, 'browser', { title:'Browser · localhost:3000', icon:'🌐', url:'http://localhost:3000' });
+  setActivePane(paneId);
+}
+
+function renderPaneHtml(paneId) {
+  const svRight = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="1" width="11" height="11" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M7 1v11" stroke="currentColor" stroke-width="1.2"/></svg>`;
+  const svDown  = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="1" width="11" height="11" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M1 7h11" stroke="currentColor" stroke-width="1.2"/></svg>`;
+  const svTerm  = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><rect x="1" y="1" width="11" height="11" rx="1" stroke="currentColor" stroke-width="1.2"/><path d="M3 4.5l3 3-3 3M7.5 10.5h2.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>`;
+  const svBrow  = `<svg width="13" height="13" viewBox="0 0 13 13" fill="none"><circle cx="6.5" cy="6.5" r="5.5" stroke="currentColor" stroke-width="1.2"/><path d="M1 6.5h11M6.5 1c-1.5 1.5-2 3.5-2 5.5s.5 4 2 5.5M6.5 1c1.5 1.5 2 3.5 2 5.5s-.5 4-2 5.5" stroke="currentColor" stroke-width="1.1"/></svg>`;
+  const svClose = `<svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 1.5l8 8M9.5 1.5l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>`;
+  return `<div class="pane" id="pane-${paneId}" onclick="setActivePane(${paneId})">
+    <div class="tab-bar-wrap">
+      <div class="tab-bar" id="tb-${paneId}"
+        ondragover="tabBarDragOver(${paneId},event)"
+        ondrop="tabBarDrop(${paneId},event)"
+        ondragleave="tabBarDragLeave(${paneId},event)"></div>
+      <div class="tab-bar-btns">
+        <button class="tb-btn" title="Open Terminal" onclick="openTerminalTab(${paneId},event)">${svTerm}</button>
+        <button class="tb-btn" title="Open Browser" onclick="openBrowserTab(${paneId},event)">${svBrow}</button>
+        <button class="tb-btn" title="Split Right" onclick="splitRight(${paneId},event)">${svRight}</button>
+        <button class="tb-btn" title="Split Down" onclick="splitDown(${paneId},event)">${svDown}</button>
+        <button class="tb-btn" title="Close Pane" onclick="closePane(${paneId},event)">${svClose}</button>
+      </div>
+    </div>
+    <div class="tc-wrap" id="tc-wrap-${paneId}"
+      ondragover="tcDragOver(${paneId},event)"
+      ondrop="tcDrop(${paneId},event)"
+      ondragleave="tcDragLeave(${paneId},event)">
+      <div class="tab-content" id="tc-${paneId}" style="display:none;flex:1;flex-direction:column;overflow:hidden"></div>
+      <div class="empty-state" id="es-${paneId}">
+        <div class="esc-logo">⚡</div>
+        <div><div class="esc-title">productune workspace</div><div style="font-size:11px;color:var(--txt3);text-align:center;margin-top:4px">my-saas · Build stage</div></div>
+        <div class="esc-shortcuts">
+          <div class="scr"><kbd>⌘P</kbd><span>Quick open</span></div>
+          <div class="scr"><kbd>⌘\\</kbd><span>Toggle PO chat</span></div>
+          <div class="scr"><kbd>⌘B</kbd><span>Toggle panel</span></div>
+        </div>
+        <div style="font-size:11px;color:var(--txt3)">Recent: round-3 · round-2 · round-1</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderNode(node) {
+  if (node.type === 'leaf') return renderPaneHtml(node.id);
+  const isH = node.type === 'hbox';
+  const resizeCls = isH ? 'layout-resize-h' : 'layout-resize-v';
+  const total = node.sizes.reduce((a,b)=>a+b,0);
+  let html = `<div class="layout-box layout-${node.type}">`;
+  node.children.forEach((child, i) => {
+    const pct = (node.sizes[i]/total*100).toFixed(2);
+    const dimStyle = isH ? `width:${pct}%;flex:none` : `height:${pct}%;flex:none`;
+    html += `<div class="layout-child" style="${dimStyle}">${renderNode(child)}</div>`;
+    if (i < node.children.length - 1)
+      html += `<div class="${resizeCls}" onmousedown="startLayoutResize(event)"></div>`;
   });
-  panes[1] = { id:1, tabs:[], activeTabId:null };
-  document.getElementById('pane-1').style.display = 'none';
-  document.getElementById('split-handle').style.display = 'none';
-  document.getElementById('split-btn-0').classList.remove('active');
-  activePaneIdx = 0;
-  setActivePane(0);
-  renderPaneTabBar(0);
-  renderPaneContent(0);
+  return html + '</div>';
 }
 
-function setActivePane(idx) {
-  if (activePaneIdx === idx) return;
-  activePaneIdx = idx;
-  document.querySelectorAll('.pane').forEach((p, i) => p.classList.toggle('active-pane', i === idx));
+function rerenderMain() {
+  const mp = document.getElementById('main-panel');
+  if (!mp || !layout) return;
+  mp.innerHTML = renderNode(layout);
+  Object.keys(panes).forEach(id => {
+    renderPaneTabBar(parseInt(id));
+    renderPaneContent(parseInt(id));
+  });
+  setActivePane(activePaneId);
 }
 
-// resize
-let resizing = false, resizeStartX = 0, resizePane0W = 0;
-function startResize(e) {
-  resizing = true;
-  resizeStartX = e.clientX;
-  resizePane0W = document.getElementById('pane-0').offsetWidth;
-  document.getElementById('split-handle').classList.add('dragging');
-  document.addEventListener('mousemove', doResize);
-  document.addEventListener('mouseup', stopResize);
+function startLayoutResize(e) {
+  const handle = e.currentTarget;
+  const isH = handle.classList.contains('layout-resize-h');
+  const prev = handle.previousElementSibling;
+  const next = handle.nextElementSibling;
+  if (!prev || !next) return;
+  const startPos = isH ? e.clientX : e.clientY;
+  const prevSize = isH ? prev.offsetWidth : prev.offsetHeight;
+  const nextSize = isH ? next.offsetWidth : next.offsetHeight;
+  const total = prevSize + nextSize;
+  handle.classList.add('dragging');
+
+  function onMove(ev) {
+    const delta = (isH ? ev.clientX : ev.clientY) - startPos;
+    const newPrev = Math.max(150, Math.min(total - 150, prevSize + delta));
+    const newNext = total - newPrev;
+    if (isH) { prev.style.width = newPrev+'px'; next.style.width = newNext+'px'; }
+    else      { prev.style.height = newPrev+'px'; next.style.height = newNext+'px'; }
+  }
+  function onUp() {
+    handle.classList.remove('dragging');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
   e.preventDefault();
-}
-function doResize(e) {
-  if (!resizing) return;
-  const dx = e.clientX - resizeStartX;
-  const pane0 = document.getElementById('pane-0');
-  const main = document.getElementById('main-panel');
-  const mainW = main.offsetWidth - 4;
-  const newW = Math.max(200, Math.min(mainW - 200, resizePane0W + dx));
-  pane0.style.flex = 'none';
-  pane0.style.width = newW + 'px';
-}
-function stopResize() {
-  resizing = false;
-  document.getElementById('split-handle').classList.remove('dragging');
-  document.removeEventListener('mousemove', doResize);
-  document.removeEventListener('mouseup', stopResize);
 }
 
 // ── TAB SYSTEM ───────────────────────────────────────────────────────────────
 function openTab(id, type, payload) {
-  openTabInPane(activePaneIdx, id, type, payload);
+  openTabInPane(activePaneId, id, type, payload);
 }
 
 function openTabInPane(pi, id, type, payload) {
   const pane = panes[pi];
+  if (!pane) return;
   const existing = pane.tabs.find(t => t.id === id);
   if (existing) { activateTabInPane(pi, id); return; }
   pane.tabs.push({ id, type, label: payload.title || typeLabel(type, payload), icon: payload.icon || typeIcon(type), payload });
@@ -877,6 +969,7 @@ function openTabInPane(pi, id, type, payload) {
 function closeTab(pi, id, e) {
   if (e) e.stopPropagation();
   const pane = panes[pi];
+  if (!pane) return;
   const idx = pane.tabs.findIndex(t => t.id === id);
   if (idx === -1) return;
   pane.tabs.splice(idx, 1);
@@ -884,22 +977,26 @@ function closeTab(pi, id, e) {
     const nx = pane.tabs[Math.min(idx, pane.tabs.length - 1)];
     pane.activeTabId = nx ? nx.id : null;
   }
+  if (pane.tabs.length === 0 && Object.keys(panes).length > 1) {
+    closePane(pi); return;
+  }
   renderPaneTabBar(pi);
   renderPaneContent(pi);
 }
 
 function activateTabInPane(pi, id) {
+  if (!panes[pi]) return;
   panes[pi].activeTabId = id;
   renderPaneTabBar(pi);
   renderPaneContent(pi);
 }
 
 function typeLabel(type, p) {
-  const m = { 'design-gate':'Design Gate','ticket-review':p.id||'Ticket Review','preview':'Preview · '+(p.env==='local'?'localhost':'Vercel'),'qa-result':'QA Result','persona-def':'pdt-'+(p.persona||''),'env-view':'.env ('+p.layer+')','skill-matrix':'Skill Matrix' };
+  const m = { 'design-gate':'Design Gate','ticket-review':p.id||'Ticket Review','preview':'Preview · '+(p.env==='local'?'localhost':'Vercel'),'qa-result':'QA Result','persona-def':'pdt-'+(p.persona||''),'env-view':'.env ('+p.layer+')','skill-matrix':'Skill Matrix','terminal':'Terminal','browser':p.url||'Browser' };
   return m[type] || type;
 }
 function typeIcon(type) {
-  const m = { 'design-gate':'🎨','ticket-review':'📋','preview':'🌐','qa-result':'✓','persona-def':'👤','env-view':'🔑','skill-matrix':'⚙','markdown':'📄' };
+  const m = { 'design-gate':'🎨','ticket-review':'📋','preview':'🌐','qa-result':'✓','persona-def':'👤','env-view':'🔑','skill-matrix':'⚙','markdown':'📄','terminal':'>_','browser':'🌐' };
   return m[type] || '📄';
 }
 
@@ -963,7 +1060,7 @@ function tabDrop(pi, tabId, e) {
 
   if (srcPi !== pi) { renderPaneTabBar(srcPi); renderPaneContent(srcPi); }
   renderPaneTabBar(pi); renderPaneContent(pi);
-  if (activePaneIdx !== pi) setActivePane(pi);
+  if (activePaneId !== pi) setActivePane(pi);
   tabDragEnd();
 }
 
@@ -1009,7 +1106,7 @@ function tabBarDrop(pi, e) {
 
   if (srcPi !== pi) { renderPaneTabBar(srcPi); renderPaneContent(srcPi); }
   renderPaneTabBar(pi); renderPaneContent(pi);
-  if (activePaneIdx !== pi) setActivePane(pi);
+  if (activePaneId !== pi) setActivePane(pi);
   tabDragEnd();
 }
 
@@ -1087,7 +1184,53 @@ function renderTabContent(tab) {
   if (tab.type === 'persona-def')   return renderPersonaDef(tab.payload);
   if (tab.type === 'env-view')      return renderEnvView(tab.payload);
   if (tab.type === 'skill-matrix')  return renderSkillMatrix();
+  if (tab.type === 'terminal')      return renderTerminalTab(tab.payload);
+  if (tab.type === 'browser')       return renderBrowserTab(tab.payload);
   return `<div style="padding:20px;color:var(--txt2)">Loading…</div>`;
+}
+
+function renderTerminalTab(p) {
+  const lines = [
+    ['path','~/productune'], ['prompt','$'], ['cmd','git status'],
+    ['out','On branch phase4-meta-dogfood'],
+    ['out','Your branch is up to date with \'origin/phase4-meta-dogfood\'.'],
+    ['out',''],
+    ['out','Changes not staged for commit:'],
+    ['out','  (use "git add &lt;file&gt;..." to update what will be committed)'],
+    ['out',''],
+    ['out','  <span style="color:#EF4444">modified:   docs/design/productune/mockups/mockup.html</span>'],
+    ['out',''],
+    ['prompt2','$ '],
+  ];
+  const rendered = lines.map(([t,v]) => {
+    if (t==='path') return `<span class="term-path">${v}</span> `;
+    if (t==='prompt') return `<span class="term-prompt">${v}</span> `;
+    if (t==='cmd') return `${v}\n`;
+    if (t==='out') return `${v}\n`;
+    if (t==='prompt2') return `\n<span class="term-path">~/productune</span> <span class="term-prompt">${v}</span><span class="term-cursor"></span>`;
+    return v;
+  }).join('');
+  return `<div class="term-content"><pre style="margin:0;white-space:pre-wrap">${rendered}</pre></div>`;
+}
+
+function renderBrowserTab(p) {
+  const url = p && p.url ? p.url : 'http://localhost:3000';
+  return `<div class="browser-wrap">
+    <div class="browser-chrome">
+      <div class="browser-dots"><div class="browser-dot" style="background:#EF4444"></div><div class="browser-dot" style="background:#F59E0B"></div><div class="browser-dot" style="background:#22C55E"></div></div>
+      <div class="browser-nav">
+        <button>←</button><button>→</button><button>↻</button>
+      </div>
+      <input class="browser-url" value="${url}" />
+      <button style="background:none;border:none;color:var(--txt3);font-size:11px;padding:2px 6px;cursor:pointer" title="Open in new tab">⊞</button>
+    </div>
+    <div class="browser-body">
+      <div style="font-size:32px;margin-bottom:8px">🌐</div>
+      <div style="color:var(--txt2);font-size:13px">${url}</div>
+      <div style="font-size:11px;color:var(--txt3);margin-top:4px">my-saas preview · localhost:3000</div>
+      <div style="margin-top:16px;padding:8px 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--txt3)">개발 서버를 시작하면 여기에 프리뷰가 표시됩니다</div>
+    </div>
+  </div>`;
 }
 
 // ── MARKDOWN ─────────────────────────────────────────────────────────────────
@@ -1181,7 +1324,7 @@ function showDGTab(key, el) {
 }
 function dgApprove() {
   addRPMsg('po','pdt-po','✓ Design Review 승인. Build 진입.');
-  closeTab(activePaneIdx, 'design-gate', null);
+  closeTab(activePaneId, 'design-gate', null);
 }
 
 // ── TICKET REVIEW ─────────────────────────────────────────────────────────────
@@ -1221,7 +1364,7 @@ function renderTicketReview(p) {
     </div>
   </div>`;
 }
-function trApprove() { addRPMsg('po','pdt-po','✓ T-001 승인. T-002 위임 시작.'); closeTab(activePaneIdx,'t001',null); }
+function trApprove() { addRPMsg('po','pdt-po','✓ T-001 승인. T-002 위임 시작.'); closeTab(activePaneId,'t001',null); }
 function trRevise() { const r=prompt('수정 요청:'); if(r) addRPMsg('user','you',r); }
 
 // ── PREVIEW ───────────────────────────────────────────────────────────────────
@@ -1541,7 +1684,7 @@ window.setPane = function(mode) {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 renderExplorer();
-panes.forEach((_,i) => renderPaneTabBar(i));
+initPanes();
 </script>
 </body>
 </html>
