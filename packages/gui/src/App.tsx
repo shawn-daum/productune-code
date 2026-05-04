@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import NewProjectModal from './components/NewProjectModal'
 import HomeView from './views/HomeView'
+import OnboardingWizard from './views/OnboardingWizard'
 
 interface Project {
   slug: string
@@ -12,9 +13,24 @@ interface InitBanner {
 }
 
 export default function App() {
+  const [envChecked, setEnvChecked] = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
   const [project, setProject] = useState<Project | null>(null)
   const [showNewModal, setShowNewModal] = useState(false)
   const [initBanner, setInitBanner] = useState<InitBanner | null>(null)
+
+  // Check for productune.env on mount — show wizard if missing
+  useEffect(() => {
+    ;(window as any).api.checkEnv()
+      .then((exists: boolean) => {
+        setShowOnboarding(!exists)
+        setEnvChecked(true)
+      })
+      .catch(() => {
+        // If IPC fails (e.g. dev without Electron), skip wizard
+        setEnvChecked(true)
+      })
+  }, [])
 
   async function handleOpenFolder() {
     const result = await (window as any).api.openFolder()
@@ -28,6 +44,19 @@ export default function App() {
 
   function openRecent(projectDir: string, slug: string) {
     setProject({ slug, projectDir })
+  }
+
+  // Wait for env check to avoid layout flash
+  if (!envChecked) {
+    return <div style={splashScreen} />
+  }
+
+  if (showOnboarding) {
+    return (
+      <OnboardingWizard
+        onDone={() => setShowOnboarding(false)}
+      />
+    )
   }
 
   if (project) {
@@ -98,6 +127,9 @@ function WorkspaceView({ project, onBack }: { project: Project; onBack: () => vo
 }
 
 // --- styles ---
+const splashScreen: React.CSSProperties = {
+  background: '#0A0A0A', width: '100vw', height: '100vh',
+}
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 900,
