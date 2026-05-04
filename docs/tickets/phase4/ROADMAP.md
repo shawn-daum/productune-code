@@ -182,9 +182,11 @@ risk_flags: none
 
 ---
 
-### Round 5 — 디자인 단계 gate
+### Round 5 — 디자인 단계 GUI 시각화 layer
 
-목표: PRD 직후 코드로 가기 전 디자인 stage 를 명시 노출 + 사용자가 디자인 산출물 기반으로 검토.
+> **Note**: Design stage (system / flow / mocks 3종 티켓 발행) 는 CLI doctrine (`po/sections/stages.md` Stage 2B')에서 L4+ mandatory로 이미 정의. Round 5 는 그 CLI 흐름을 Electron GUI 에서 시각화하는 레이어. CLI 시기에도 Design stage 는 동작함.
+
+목표: PRD 직후 코드로 가기 전 디자인 stage 를 GUI 에서 명시 노출 + 사용자가 디자인 산출물 기반으로 인터랙티브 검토.
 
 | Ticket | 제목 | 담당 | 비고 |
 |---|---|---|---|
@@ -193,8 +195,9 @@ risk_flags: none
 | **T-P4-052** | Excalidraw React 컴포넌트 embed — 와이어프레임 인터랙티브 편집 | pdt-developer | 저장 = `docs/design/<slug>/<file>.excalidraw.json` |
 | **T-P4-053** | 디자인 시스템 md 렌더링 — 컬러 스와치 + 타이포그래피 프리뷰 + 컴포넌트 갤러리 | pdt-designer + pdt-developer | 풍부한 md (커스텀 react component) — Figma 대체 |
 | **T-P4-054** | 디자인 산출물 → 사용자 검토/승인 flow — "이대로 진행" / "다시 작업" / "특정 부분 수정" | pdt-designer + pdt-developer | 승인 시 Build stage 진입; 거절 시 Designer 재호출 |
+| **T-P4-055** | High-fidelity UI mockup preview — Build 전 현실감 있는 예시 화면 승인 | pdt-designer + pdt-developer | generated image preview 는 visual agreement only. canonical source 는 md/Mermaid/Excalidraw/design system |
 
-**Round 5 합격 기준**: planner 가 디자인 시스템 / UX flow / 와이어프레임 3 종 산출물을 GUI 에서 모두 보고 승인 → Build 진입. Mermaid diagram 은 외부 CLI 없이 앱 안에서 렌더되며, render 실패 시 원문/오류 fallback 으로 검토를 계속할 수 있음.
+**Round 5 합격 기준**: planner 가 디자인 시스템 / UX flow (전체) / 와이어프레임 (핵심 화면 a few) / hi-fi mockup (핵심 화면 a few, HTML/CSS 정적 프리뷰) 4 종 산출물을 GUI 에서 모두 보고 승인 → Build 진입. Mermaid diagram 은 외부 CLI 없이 앱 안에서 렌더되며, render 실패 시 원문/오류 fallback 으로 검토를 계속할 수 있음. Mockup preview 는 실제 텍스트/픽셀/최종 구현을 보장하지 않는 non-canonical visual agreement asset 으로 표시한다.
 
 ---
 
@@ -306,3 +309,4 @@ PRD-level OQ 7 개는 모두 해소됨 — 본 로드맵 실행 중 발생하는
 ## Activity log
 
 - **2026-04-30** — 로드맵 v1 작성. PRD OQ 세션 결과 + Phase 3 dogfood 학습 반영. Round 0–9 + 47 개 티켓 stub 정의. 타임스탬프 표준 + 외부 의존성 + 의존 그래프 명문화. T-PATCH-001 (PO pre-flight + 타임스탬프 스키마) 의 doctrine 반영을 본 로드맵의 prerequisite 로 기재.
+- **2026-04-30** — T-P4-055 추가. Build 전 high-fidelity mockup preview 를 Design stage 승인 산출물로 확장. Preview 는 non-canonical visual agreement asset 으로 제한. 총 48 개 티켓.

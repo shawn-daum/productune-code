@@ -24,11 +24,11 @@ button{font-family:inherit;cursor:pointer}
 .dot{width:12px;height:12px;border-radius:50%}
 .dot-r{background:#FF5F57}.dot-y{background:#FFBD2E}.dot-g{background:#28C840}
 .title-center{flex:1;display:flex;justify-content:center}
-.qo-trigger{display:flex;align-items:center;gap:8px;background:#1c1c1c;border:1px solid #2a2a2a;border-radius:6px;padding:4px 14px;min-width:280px;max-width:420px;cursor:pointer;transition:border-color .15s}
-.qo-trigger:hover{border-color:#3a3a3a}
-.qo-trigger-icon{color:#444;flex-shrink:0}
-.qo-trigger-text{font-size:12px;color:#555;flex:1;text-align:center}
-.qo-trigger-kbd{font-size:10px;color:#333;border:1px solid #2a2a2a;border-radius:3px;padding:1px 4px;font-family:'JetBrains Mono',monospace;flex-shrink:0}
+.qo-trigger{display:flex;align-items:center;gap:8px;background:#2a2a2a;border:1px solid #444;border-radius:6px;padding:4px 14px;min-width:640px;max-width:900px;width:100%;cursor:pointer;transition:border-color .15s,background .15s}
+.qo-trigger:hover{border-color:#666;background:#313131}
+.qo-trigger-icon{color:#888;flex-shrink:0}
+.qo-trigger-text{font-size:12px;color:#aaa;flex:1;text-align:center}
+.qo-trigger-kbd{font-size:10px;color:#777;border:1px solid #444;border-radius:3px;padding:1px 5px;font-family:'JetBrains Mono',monospace;flex-shrink:0;background:#1a1a1a}
 /* Quick Open Modal */
 .qo-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:none;align-items:flex-start;justify-content:center;padding-top:60px}
 .qo-overlay.open{display:flex}
