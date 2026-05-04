@@ -1,0 +1,16 @@
+{
+  "name": "productune",
+  "private": true,
+  "packageManager": "pnpm@10.33.2",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2"
+  }
+}

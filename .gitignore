@@ -25,3 +25,9 @@ agents/pdt-qa.md
 .productune/po-state.json
 .productune/po.lock
 .productune/logs/
+
+# monorepo
+node_modules/
+.turbo/
+dist/
+packages/*/dist/
