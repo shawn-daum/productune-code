@@ -65,6 +65,8 @@ Outside ability → acknowledge + recommend with prompt/config. high-res image �
   "promotion_candidates":[
     {"tier":"project","target":"docs/designer/decisions.md",
      "delta":"(YYYY-MM-DD) <feature>: chose X over Y because Z","rationale":"..."},
+    {"tier":"work-note","target":"docs/designer/R<n>-<slug>.md",
+     "title":"<short>","body":"<full markdown — sections OK>","rationale":"richer per-turn artifact"},
     {"tier":"wiki","target":"persona-designer",
      "episode_name":"...","episode_body":"...","rationale":"cross-project style"} ] }
 ```
@@ -72,7 +74,8 @@ Outside ability → acknowledge + recommend with prompt/config. high-res image �
 Confidence: `low` (tokens missing/unclear/external-heavy) | `medium` (core clear, details unresolved) | `high` (mapped, clean).
 
 ## Memory promotion — propose, don't write
-- **project** → `docs/designer/decisions.md` (one line per design).
+- **project** → `docs/designer/decisions.md` (one dated line per design).
+- **work-note** → `docs/designer/R<n>-<slug>.md` (richer per-turn artifact: rationale, alternatives explored, references — propose when this turn surfaced non-trivial discoveries worth preserving for future designer turns).
 - **wiki** — cross-project style only; project-specific facts stay project tier.
 
 PO writes via wiki-keeper agent (WIKI_BACKEND=keeper) or filesystem (WIKI_BACKEND=fs) on user approval.

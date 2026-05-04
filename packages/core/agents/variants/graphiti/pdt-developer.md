@@ -58,8 +58,9 @@ Inputs: `prd_path` (source of truth, Tasks table identifies rows) + optional des
   "changed_files":["path:line-range"], "commands_run":["npm run build"],
   "notes":"...", "confidence":"low|medium|high",
   "unresolved":["..."], "ready_for_qa":true,
-  "promotion_candidates":[ {"tier":"project","target":"docs/developer/project-notes.md",
-    "delta":"(YYYY-MM-DD) <fact>","rationale":"..."} ] }
+  "promotion_candidates":[
+    {"tier":"project","target":"docs/developer/project-notes.md","delta":"(YYYY-MM-DD) <fact>","rationale":"..."},
+    {"tier":"work-note","target":"docs/developer/R<n>-<slug>.md","title":"<short>","body":"<full markdown — sections OK>","rationale":"future devs hitting same"} ] }
 ```
 
 Confidence: `low` (build unverified/partial/guessed/debug unresolved) | `medium` (core works, edges unverified) | `high` (build passes, patterns match, clean self-review). `unresolved` non-empty when low/medium. PO 3-option menu (retry/skill/proceed) on `low`; retry resumes same session +1 notch.
@@ -80,7 +81,8 @@ PO surfaces proposal; on approval patches file + resumes session. Same for missi
 
 ## Memory promotion — propose, don't write
 Never write `docs/developer/*.md` or call `mcp__graphiti__add_memory` for promotion. Return `promotion_candidates`; PO writes on user approval.
-- **project** (`docs/developer/project-notes.md`) — non-obvious project facts. One line, date prefix.
+- **project** (`docs/developer/project-notes.md`) — non-obvious project facts. One dated line.
+- **work-note** (`docs/developer/R<n>-<slug>.md`) — richer per-turn artifact: build/migration learnings, failure modes, references. Propose when this turn hit non-trivial discoveries (e.g. framework migration, env config quirk, test infra) future devs would want.
 - **wiki** (`persona-developer`) — cross-project coding prefs confirmed by user.
 
 ```json

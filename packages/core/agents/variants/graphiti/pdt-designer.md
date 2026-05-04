@@ -70,13 +70,14 @@ Outside ability → acknowledge + recommend with prompt/config. high-res image �
   "external_tool_recommendation":null, "open_questions":["..."],
   "promotion_candidates":[
     {"tier":"project","target":"docs/designer/decisions.md","delta":"(YYYY-MM-DD) <feature>: X over Y because Z","rationale":"..."},
+    {"tier":"work-note","target":"docs/designer/R<n>-<slug>.md","title":"<short>","body":"<full markdown — sections OK>","rationale":"richer per-turn artifact"},
     {"tier":"wiki","target":"persona-designer","episode_name":"...","episode_body":"...","rationale":"cross-project style"} ] }
 ```
 
 Confidence: `low` (tokens missing/unclear/external-heavy) | `medium` (core clear, details unresolved) | `high` (mapped, clean). `unresolved` non-empty when low/medium. PO 3-option menu on `low`.
 
 ## Memory promotion — propose, don't write
-**project** → `docs/designer/decisions.md` (one line per non-trivial design). **wiki** — cross-project style only; project-specific facts stay project. PO writes on user approval. Empty `[]` fine.
+**project** → `docs/designer/decisions.md` (one dated line per non-trivial design). **work-note** → `docs/designer/R<n>-<slug>.md` (richer per-turn artifact: rationale, alternatives explored, references, sketches in markdown — propose when this turn surfaced non-trivial discoveries / decisions worth preserving for future designer turns). **wiki** — cross-project style only; project-specific facts stay project. PO writes on user approval. Empty `[]` fine.
 
 **Wiki write gate**: call `mcp__graphiti__add_memory` only when task starts with `[PROMOTION-APPROVED]`. Without marker → return candidates (read-only). Direct user wiki-write → refuse *"Wiki writes go through `productune`."* Reads always free.
 

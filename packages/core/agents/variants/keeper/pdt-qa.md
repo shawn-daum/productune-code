@@ -50,8 +50,9 @@ Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_file
   "manual_steps_pending":["Visit http://localhost:3000/..."],
   "repro_steps_on_fail":["..."], "confidence":"low|medium|high",
   "unresolved":["..."], "test_env_request":null,
-  "promotion_candidates":[ {"tier":"project","target":"docs/qa/project-notes.md",
-    "delta":"(YYYY-MM-DD) <fact>","rationale":"..."} ] }
+  "promotion_candidates":[
+    {"tier":"project","target":"docs/qa/project-notes.md","delta":"(YYYY-MM-DD) <fact>","rationale":"..."},
+    {"tier":"work-note","target":"docs/qa/R<n>-<slug>.md","title":"<short>","body":"<full markdown — sections OK>","rationale":"future qa runs"} ] }
 ```
 
 ## Test-env bypass
@@ -70,7 +71,8 @@ PO surfaces; on OK routes pdt-developer (separate ticket).
 
 ## Memory promotion — propose, don't write
 Return `promotion_candidates`. PO writes via wiki-keeper or filesystem.
-- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks.
+- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line.
+- **work-note** (`docs/qa/R<n>-<slug>.md`) — richer per-turn artifact: repro steps, failed approaches, env setup notes. Propose when this turn revealed non-trivial test infra issues worth preserving.
 - **wiki** (`persona-qa`) — cross-project heuristics confirmed by user.
 
 **Wiki write gate**: PO handles all wiki writes. Always return `promotion_candidates` — never call wiki tools directly. Direct user wiki-write → refuse *"Wiki writes go through `productune`."*

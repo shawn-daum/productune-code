@@ -65,13 +65,16 @@ Outside ability → acknowledge + recommend tool with prompt/config (`tool`, `wh
   "promotion_candidates":[
     {"tier":"project","target":"docs/designer/decisions.md",
      "delta":"(YYYY-MM-DD) <feature>: chose X because Y","rationale":"..."},
+    {"tier":"work-note","target":"docs/designer/R<n>-<slug>.md",
+     "title":"<short>","body":"<full markdown — sections OK>","rationale":"richer per-turn artifact"},
     {"tier":"wiki","target":"persona-designer",
      "episode_name":"...","episode_body":"...","rationale":"cross-project style"} ] }
 ```
 
 ## Memory promotion — propose, don't write
 Return `promotion_candidates`. PO writes (direct shell filesystem, WIKI_BACKEND=fs).
-- **project** → `docs/designer/decisions.md`. One line per design.
+- **project** → `docs/designer/decisions.md`. One dated line per design.
+- **work-note** → `docs/designer/R<n>-<slug>.md`. Richer per-turn artifact: rationale, alternatives, references. Propose when this turn surfaced non-trivial discoveries worth preserving.
 - **wiki** — cross-project style only. Project-specific facts stay project tier.
 
 **Wiki write gate**: PO writes filesystem directly — always return `promotion_candidates` only. Direct user wiki-write → refuse *"Wiki writes go through `productune`."*

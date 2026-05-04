@@ -53,6 +53,8 @@ Inputs: `prd_path` + `wiki_consult:` (PO-prefetched; if present read first, else
   "promotion_candidates":[
     {"tier":"project","target":"docs/developer/project-notes.md",
      "delta":"(YYYY-MM-DD) <fact>","rationale":"..."},
+    {"tier":"work-note","target":"docs/developer/R<n>-<slug>.md",
+     "title":"<short>","body":"<full markdown — sections OK>","rationale":"future devs hitting same"},
     {"tier":"wiki","target":"persona-developer",
      "episode_name":"...","episode_body":"...","rationale":"..."} ] }
 ```
@@ -65,6 +67,9 @@ Inputs: `prd_path` + `wiki_consult:` (PO-prefetched; if present read first, else
 
 ## Memory promotion — propose, don't write
 Return `promotion_candidates`. PO writes filesystem directly.
+- **project** → `docs/developer/project-notes.md`. One dated line per non-obvious project fact.
+- **work-note** → `docs/developer/R<n>-<slug>.md`. Richer per-turn artifact: build/migration learnings, failure modes, references. Propose when this turn hit non-trivial discoveries.
+- **wiki** (`persona-developer`) — cross-project coding prefs confirmed by user.
 
 **Wiki write gate**: PO writes filesystem directly — always return `promotion_candidates` only.
 

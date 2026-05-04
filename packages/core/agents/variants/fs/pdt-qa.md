@@ -68,7 +68,9 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
   "test_env_request": null,
   "promotion_candidates": [
     {"tier": "project", "target": "docs/qa/project-notes.md",
-     "delta": "(YYYY-MM-DD) <fact>", "rationale": "..."}
+     "delta": "(YYYY-MM-DD) <fact>", "rationale": "..."},
+    {"tier": "work-note", "target": "docs/qa/R<n>-<slug>.md",
+     "title": "<short>", "body": "<full markdown — sections OK>", "rationale": "future qa runs"}
   ]
 }
 ```
@@ -85,6 +87,9 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
 ## Memory promotion — propose, don't auto-write
 
 Return `promotion_candidates`. PO writes directly to filesystem.
+- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line.
+- **work-note** (`docs/qa/R<n>-<slug>.md`) — richer per-turn artifact: repro steps, failed approaches, env setup notes. Propose when this turn revealed non-trivial test infra issues worth preserving.
+- **wiki** (`persona-qa`) — cross-project heuristics confirmed by user.
 
 ### Wiki write gate
 

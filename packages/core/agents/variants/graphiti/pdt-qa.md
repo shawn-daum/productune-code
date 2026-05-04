@@ -57,8 +57,9 @@ Inputs: `prd_path` (Acceptance criteria = pass/fail rubric) + pdt-developer `cha
   "manual_steps_pending":["Visit http://localhost:3000/..."],
   "repro_steps_on_fail":["..."], "confidence":"low|medium|high",
   "unresolved":["..."], "test_env_request":null,
-  "promotion_candidates":[ {"tier":"project","target":"docs/qa/project-notes.md",
-    "delta":"(YYYY-MM-DD) <fact>","rationale":"..."} ] }
+  "promotion_candidates":[
+    {"tier":"project","target":"docs/qa/project-notes.md","delta":"(YYYY-MM-DD) <fact>","rationale":"..."},
+    {"tier":"work-note","target":"docs/qa/R<n>-<slug>.md","title":"<short>","body":"<full markdown — sections OK>","rationale":"future qa runs"} ] }
 ```
 
 Confidence: `low` (env limited/ambiguous/manual incomplete) | `medium` (auto pass, manual remains) | `high` (every check clear). `unresolved` non-empty when low/medium. PO catches contradictions (e.g. `low`+`pass`).
@@ -81,8 +82,9 @@ Allowlist intentionally narrow (npm/yarn/pnpm scripts + git status/diff/log + cu
 PO surfaces proposal; on approval patches + resumes session.
 
 ## Memory promotion — propose, don't write
-Never write `docs/qa/*.md` or call `mcp__graphiti__add_memory` for promotion. Return `promotion_candidates` (`tier:project|wiki`, `target`, `delta`/`episode_name`/`episode_body`, `rationale`); PO writes on approval. Empty `[]` fine.
-- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One line, date prefix.
+Never write `docs/qa/*.md` or call `mcp__graphiti__add_memory` for promotion. Return `promotion_candidates` (`tier:project|work-note|wiki`, with appropriate fields per tier); PO writes on approval. Empty `[]` fine.
+- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line.
+- **work-note** (`docs/qa/R<n>-<slug>.md`) — richer per-turn artifact: repro steps, failed approaches, env setup notes, screenshots refs. Propose when this turn revealed non-trivial test infra issues / repro complexity worth preserving.
 - **wiki** (`persona-qa`) — cross-project heuristics confirmed by user.
 
 **Wiki write gate**: call `mcp__graphiti__add_memory` only when task starts with `[PROMOTION-APPROVED]`. Without marker → return candidates (read-only). Direct user wiki-write → refuse *"Wiki writes go through `productune`."* Reads always free.

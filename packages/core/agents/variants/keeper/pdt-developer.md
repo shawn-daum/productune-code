@@ -51,8 +51,9 @@ Inputs: `prd_path` (source of truth) + optional design doc + `wiki_consult:` (PO
   "changed_files":["path:line-range"], "commands_run":["npm run build"],
   "notes":"...", "confidence":"low|medium|high",
   "unresolved":["..."], "ready_for_qa":true,
-  "promotion_candidates":[ {"tier":"project","target":"docs/developer/project-notes.md",
-    "delta":"(YYYY-MM-DD) <fact>","rationale":"..."} ] }
+  "promotion_candidates":[
+    {"tier":"project","target":"docs/developer/project-notes.md","delta":"(YYYY-MM-DD) <fact>","rationale":"..."},
+    {"tier":"work-note","target":"docs/developer/R<n>-<slug>.md","title":"<short>","body":"<full markdown — sections OK>","rationale":"future devs hitting same"} ] }
 ```
 
 Confidence: `low` (build unverified/partial/guessed/debug unresolved) | `medium` (core works, edges unverified) | `high` (build passes, patterns match, clean self-review). PO 3-option menu (retry/skill/proceed) on `low`.
@@ -69,7 +70,8 @@ Confidence: `low` (build unverified/partial/guessed/debug unresolved) | `medium`
 
 ## Memory promotion — propose, don't write
 Never write `docs/developer/*.md` for promotion. Return `promotion_candidates`. PO writes via wiki-keeper or filesystem on user approval.
-- **project** → `docs/developer/project-notes.md`. Non-obvious project facts.
+- **project** → `docs/developer/project-notes.md`. Non-obvious project facts. One dated line.
+- **work-note** → `docs/developer/R<n>-<slug>.md`. Richer per-turn artifact: build/migration learnings, failure modes, references. Propose when this turn hit non-trivial discoveries.
 - **wiki** (`persona-developer`) — cross-project coding prefs confirmed by user.
 
 ```json

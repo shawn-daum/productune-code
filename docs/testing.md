@@ -298,7 +298,7 @@ mv ~/.productune/productune.env.before-test ~/.productune/productune.env 2>/dev/
 ```sh
 cd /tmp/co-test
 ls docs/ 2>/dev/null
-# Phase 3 실행 결과로 페르소나가 docs/pdt-developer/project-notes.md 같은 파일 자동 생성했을 수도
+# Phase 3 실행 결과로 페르소나가 docs/developer/project-notes.md 같은 파일 PO 승인 후 추가했을 수도
 find docs/ -type f 2>/dev/null
 ```
 

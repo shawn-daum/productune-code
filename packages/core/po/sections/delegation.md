@@ -6,6 +6,7 @@
 
 PO's remaining writes (hook can't infer):
 - Open `current_task` with semantic `slug` + `request_summary` + `artifacts` *before* delegating (else hook auto-creates `auto-<ts>` + `pre-delegate-task-check` blocks). `jq`, not `python3`.
+- Update `docs/tickets/<round>/T-NNN.md` lifecycle metadata/frontmatter when routing or closing work: status, timestamps, duration, assignee/routing/model/effort/progress refs only. Do not edit ticket body/request/acceptance/scope; delegate those changes to Designer.
 - Read SID from `current_task.persona_sessions.<persona>` (hook blocks unknown UUIDs via R4).
 - Append `effort_history`, `complexity_level`, `confidence_history` after call.
 
@@ -54,24 +55,73 @@ fi
 rm -f "$ERR"
 
 # Hook captured session_id, turns, model_history, recent_turns, artifacts.
-# PO appends only PO-specific meta:
-python3 - "$OUT" "$STATE" "$PERSONA" "$EFFORT" "$COMPLEXITY" <<'PY'
-import json, sys, pathlib
-out, state_p, persona, effort, complexity = sys.argv[1:6]
+# PO appends only PO-specific meta + writes raw turn-log line to .productune/turns/<slug>.jsonl.
+python3 - "$OUT" "$STATE" "$PERSONA" "$EFFORT" "$COMPLEXITY" "$MODEL" "$TARGET" "${TICKET_FILE:-}" "${WIKI_CONSULT_JSON:-}" <<'PY'
+import json, sys, pathlib, datetime
+out, state_p, persona, effort, complexity, model, target_dir, ticket_file, wiki_consult_raw = sys.argv[1:10]
+try:
+    wiki_consult = json.loads(wiki_consult_raw) if wiki_consult_raw and wiki_consult_raw.strip() not in ('', '{}') else None
+except Exception:
+    wiki_consult = None
 data = json.loads(pathlib.Path(out).read_text())
 state = json.loads(pathlib.Path(state_p).read_text())
+
+# (1) persona_session_meta — PO-specific (hook can't infer)
 m = state.setdefault("current_task", {}).setdefault("persona_session_meta", {}).setdefault(persona, {})
 m.setdefault("effort_history", []).append(effort); m["complexity_level"] = complexity
 if (c := data.get("confidence")): m.setdefault("confidence_history", []).append(c)
 pathlib.Path(state_p).write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+
+# (2) Turn-log append (Stream 3 — observability). One line per persona invocation.
+ct = state.get("current_task", {}) or {}
+slug = ct.get("slug") or "unknown"
+session_id = (ct.get("persona_sessions", {}) or {}).get(persona)
+turns_n = (m or {}).get("turns")
+raw = data.get("result", "") or ""
+try:
+    output_full = json.loads(raw)
+except Exception:
+    output_full = {"_raw": raw}
+turn_line = {
+    "kind": "invocation",
+    "ts": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "persona": persona, "task_slug": slug,
+    "ticket_id": ct.get("ticket_id"), "round": ct.get("round"),
+    "turn_index": turns_n,
+    "input_meta": {"model": model, "effort": effort, "complexity": complexity,
+                   "session_id": session_id, "ticket_file": ticket_file or None,
+                   "task_body_chars": len(raw)},
+    "wiki_consult": wiki_consult,  # populated when WIKI_CONSULT_JSON env was set by memory.md pre-search
+    "output_full": output_full,
+}
+turns_dir = pathlib.Path(target_dir) / ".productune" / "turns"
+turns_dir.mkdir(parents=True, exist_ok=True)
+log_path = turns_dir / f"{slug}.jsonl"
+with log_path.open("a", encoding="utf-8") as f:
+    f.write(json.dumps(turn_line, ensure_ascii=False) + "\n")
+
 print("CONFIDENCE=" + str(data.get("confidence")))
 print("UNRESOLVED=" + json.dumps(data.get("unresolved", [])))
-print(data.get("result", ""))
+first_line = next((l.strip() for l in raw.splitlines() if l.strip()), "")
+print("RESULT_ONELINE=" + first_line[:80])
+print("TURN_LOG_PATH=" + str(log_path))
+print(raw)
 PY
 rm -f "$OUT"
+
+# Append one row to ticket's ## Persona Activity (PO mechanical write)
+# TICKET_FILE, ROUND, TID must be set before invoking this template if appending.
+# Skip silently if TICKET_FILE is unset or file doesn't exist.
+if [ -n "${TICKET_FILE:-}" ] && [ -f "$TICKET_FILE" ]; then
+  NOW=$(date -u +%FT%TZ)
+  TURN=$(python3 -c "import json,pathlib; s=json.loads(pathlib.Path('$STATE').read_text()); print(s.get('current_task',{}).get('persona_session_meta',{}).get('$PERSONA',{}).get('turns',1))" 2>/dev/null || echo "?")
+  RESULT_ONELINE="${RESULT_ONELINE:-}"
+  printf "| %s | %s | %s/%s | %s | %s |\n" "$NOW" "$PERSONA" "$MODEL" "$EFFORT" "$TURN" "$RESULT_ONELINE" >> "$TICKET_FILE"
+fi
 ```
 
 > python3 here only: `claude --print` JSON `.result` may carry stray control chars; `json.loads` is forgiving. State writes use `jq`.
+> `TICKET_FILE` = path to the current ticket's `.md`. Set it before the delegation block when a specific ticket is being worked. The `## Persona Activity` section in the ticket template has a comment marker so append lands in the right place.
 
 After parse: inspect `CONFIDENCE` + `UNRESOLVED`. Low/non-empty → quality escalation (`escalation.md`).
 
@@ -104,7 +154,7 @@ Designer returns:
 PO loop:
 1. Read `data.state`.
 2. `needs-info` → print `next_question` (caveman lite, user's lang). Append user reply to `$BRIEF_PATH` (`printf >>`). Resume Designer.
-3. `ready` → store `prd_path` in `current_task.prd_path`, push `tickets[]` into `artifacts`, route per `tickets.md`.
+3. `ready` → store `prd_path` in `current_task.prd_path`, push `tickets[]` into `artifacts`, route per `tickets.md`. PO may set initial lifecycle metadata/status for emitted tickets, but Designer remains owner of ticket content.
 
 Hard cap: 5 `needs-info` rounds. 6th turn → resume body: `"finalize PRD with current state. Move unresolved into ## Open Questions."` Designer ships `ready` with `confidence < 0.7`.
 
