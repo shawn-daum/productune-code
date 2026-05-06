@@ -64,10 +64,17 @@ Designer may rebalance per project + record override in PRD frontmatter.
   "tickets": ["docs/tickets/v1/T-001.md", "docs/tickets/v1/T-002.md"],
   "ambiguity_score": 0.04,
   "slot_clarity": { "problem_statement": 1.00, "top_job": 0.95, "...": "..." },
+  "version_outcome": {
+    "north_star": "checkout completion rate",
+    "input_metrics": ["modal-open-rate", "form-submit-rate"],
+    "validation_method": "PostHog dashboard, 7-day window post-deploy"
+  },
   "confidence": 0.92,
   "unresolved": []
 }
 ```
+
+`version_outcome` derived from PRD `## Success metrics` slot. Free-form prose stays in PRD; this is the structured emit for `po-state.json` `versions[].outcome` (PO mirrors directly into state at PRD-ready time). All three sub-fields nullable when `Success metrics` slot left blank (clarity loop A ≤ 0.05 still passable since metrics slot weight is only 0.09).
 
 PO uses `ambiguity_score`, `confidence`, `unresolved` for gate-1 decision.
 

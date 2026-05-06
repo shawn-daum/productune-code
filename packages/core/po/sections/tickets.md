@@ -75,6 +75,32 @@ pending → pass | fail
 
 design / test / qa stage ticket 에는 이 field 없음 (gate 미적용).
 
+### Outcome measurement (B.1 — PDS See layer)
+
+**Two layers** of outcome tracking, both append-only, neither blocks ticket lifecycle:
+
+**(1) Per-ticket outcome — optional**:
+```yaml
+success_metric: null         # 예: "login success rate ≥ 99% over 7d"
+validation_method: null      # 예: "Sentry query <error.type=auth>"
+observed_result: null        # 예: "99.6% (n=1,287, 2026-05-13~20)"
+```
+Designer sets `success_metric` + `validation_method` at ticket creation when ticket has measurable user outcome (대부분 ticket 은 null — UI tweak / dev infra 같은 건 측정 의미 없음). PO 가 Phase 5 retrospective 에서 `observed_result` 채움. content 변경 (Designer scope) vs lifecycle 변경 (PO scope) 경계 그대로.
+
+**(2) Per-Version outcome — required** (`po-state.json` `versions[].outcome`):
+```json
+{
+  "north_star": "checkout completion rate",
+  "input_metrics": ["modal-open-rate", "form-submit-rate"],
+  "validation_method": "PostHog dashboard, 7-day window post-deploy",
+  "observed_result": null,
+  "retrospective_path": null
+}
+```
+Designer 가 Phase 2 PRD ready 시 `Success metrics` slot 에서 derive 해서 `north_star` + `input_metrics` + `validation_method` 채움. PO 가 Phase 5 retrospective 에서 `observed_result` + `retrospective_path` 채움. 모든 Version 은 outcome 객체 가짐 (값은 null 허용 — PRD가 metrics slot 빈 채로 ship 한 경우).
+
+PRD 본체 (`docs/prd/<slug>.md`) 의 `## Success metrics` slot 은 자유 prose 그대로. Designer 가 거기서 read → versions[].outcome 으로 structured 형태 emit.
+
 ### `stage:test` ticket emission triggers
 
 Designer가 PRD ready 시점에 검토 — 아래 4개 중 1개라도 해당하면 `stage:test` ticket emit.
@@ -124,7 +150,8 @@ PO **never** writes authored content. Lifecycle/frontmatter = state, not authori
 
 | T-NNN.md item | PO direct |
 |---|---|
-| frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, routing/model/effort meta | ✅ sed/awk/perl/printf |
+| frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta | ✅ sed/awk/perl/printf |
+| frontmatter: `success_metric`, `validation_method` (set at ticket creation by Designer; PO doesn't author) | ❌ Designer |
 | Mirrored header status line | ✅ sed |
 | `## Persona Activity` table — 1-row append-only (≤80 char Result) | ✅ printf |
 | `docs/qa/fail-patterns.md` — append from QA's `fail_event` output | ✅ printf >> (mechanical, no semantic) |
@@ -185,7 +212,17 @@ Task = ticket (1:1). One PRD per Version; Version bundles its tickets, exported 
       "escalation_triggered":true,"notes":"1-line PO judgement"}
   },
   "past_tickets": [],
-  "versions": [{"id":"v1.0-MVP","started_at":"...","ended_at":"...","prd_anchor":"docs/prd/<slug>.md#version-1"}],
+  "versions": [{
+    "id":"v1.0-MVP", "started_at":"...", "ended_at":"...",
+    "prd_anchor":"docs/prd/<slug>.md#version-1",
+    "outcome": {
+      "north_star": "checkout completion rate",
+      "input_metrics": ["modal-open-rate", "form-submit-rate"],
+      "validation_method": "Sentry/PostHog dashboard, 7-day window post-deploy",
+      "observed_result": null,
+      "retrospective_path": null
+    }
+  }],
   "recent_turns": []
 }
 ```
@@ -213,6 +250,9 @@ estimated_complexity: L<n>
 risk_flags: <auth|payments|migration|none>
 branch: null                 # set by git-workflow on ticket open (Phase 4 R2)
 worktree_path: null
+success_metric: null         # optional — fill when ticket has measurable user outcome
+validation_method: null      # optional — how observed_result will be measured
+observed_result: null        # filled by PO at Phase 5 retrospective
 ---
 
 # T-042: <title>

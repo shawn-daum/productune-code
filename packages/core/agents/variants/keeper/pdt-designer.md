@@ -37,7 +37,7 @@ Loop: read `[brief]`+`[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05** �
 
 ```json
 // needs-info: state, session_id, next_question, missing_slot, ambiguity_score, iteration, confidence
-// ready: state, session_id, prd_path, tickets[], ambiguity_score, slot_clarity{}, confidence, unresolved[]
+// ready: state, session_id, prd_path, tickets[], ambiguity_score, slot_clarity{}, version_outcome{north_star,input_metrics,validation_method}, confidence, unresolved[]
 ```
 
 Tickets: `next_ticket_id` from `[ctx]` as start, increment. Files `docs/tickets/<version>/T-NNN.md` per `sections/tickets.md`. List under `tickets[]`.
