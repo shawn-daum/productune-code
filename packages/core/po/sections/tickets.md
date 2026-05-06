@@ -1,180 +1,95 @@
 # Engineering workflow + Ticket system
 
+> **Language**: doctrine = English. PO renders user-facing prompts/traces in the user's working language at runtime. Templates in this doc are English.
+
 Two axes — keep separate:
-- **Layer A — Version Cycle Phases** (시간 축, ticket 아닌 단계 포함)
-- **Layer B — Ticket Type / `stage` enum** (분류 축, 개별 ticket의 종류)
+- **Layer A — Version Cycle Phases** (timeline, includes non-ticket steps)
+- **Layer B — Ticket Type / `stage` enum** (per-ticket classification)
 
-Layer A 가 Layer B 를 호출 (어느 phase에서 어떤 stage ticket을 emit하는지).
+Layer A drives Layer B (which Phase emits which `stage` ticket).
 
-## Naming convention
+## Naming
 
-| 맥락 | 표기 | 예 |
-|---|---|---|
-| prose / 산문 | capitalized 역할명 | `PO`, `Designer`, `Developer`, `QA` |
-| code / agent ID / 명령어 / frontmatter `assignee:` | `pdt-` prefix | `pdt-po`, `pdt-designer`, `pdt-developer`, `pdt-qa` |
-
----
+- prose: capitalized roles — `PO`, `Designer`, `Developer`, `QA`
+- code / agent ID / `assignee:` — `pdt-` prefix (`pdt-po`, `pdt-designer`, `pdt-developer`, `pdt-qa`)
 
 ## Layer A — Version Cycle Phases
 
 ```
-Phase 1. Discovery     — PO (인터뷰 → brief)              [no ticket]
-Phase 2. PRD           — Designer (clarity loop A ≤ 0.05) [no ticket — PRD = doc]
-                         opus + ⚡max for Version 1; opus + ⚡xhigh for V2+ updates
-Phase 3. Design        — Designer self-execute            [stage:design ticket × 4]
-                         L4+ / user-facing / risk_flags → mandatory
-                         L1–L3 trivial → skip
-                         산출물 4종:
-                           a. Design System  → docs/design/<slug>/system.md
-                           b. UX Flow Mermaid → docs/design/<slug>/flow.md
-                           c. Wireframe Excalidraw → docs/design/<slug>/screens/*.excalidraw.json
-                           d. Hi-fi mockup HTML/CSS → docs/design/<slug>/mockups/*.html
-                         → user gate before Phase 4
-Phase 4. Build         — ticket execution
-                         · stage:impl     (필수, Developer + auto QA smoke gate)
-                         · stage:refactor (선택, Developer + auto QA smoke gate)
-                         · stage:test     (조건부, QA — trigger 4종 중 1개라도 해당 시)
-                         · stage:qa       (독립 QA work만 — regression / deploy verify 등)
-                         · stage:deploy   (필수, pdt-po+user — env/secret/배포 명령 협업)
-Phase 5. Version close — retrospective + calibration       [no ticket]
-                         5a. Designer (opus + ⚡xhigh) — measurement (lazy) +
-                             feature-history append + 다음 Version 후보 제안
-                         5b. QA (opus + ⚡xhigh) — fail-pattern aggregate +
-                             다음 Version test ticket 후보
-                         5c. Designer (sonnet + medium) — retrospective.md narrative write
-                         5d. PO surface to user (retrospective path + next Version 후보)
+Phase 1 Discovery     PO interview → brief                                     [no ticket]
+Phase 2 PRD           Designer clarity loop A ≤ 0.05                           [no ticket — PRD = doc]
+                      opus + ⚡max for V1; opus + ⚡xhigh for V2+ updates
+Phase 3 Design        Designer self-execute, 4 artifacts (system/flow/wf/mockup) [stage:design × 4]
+                      Trigger: L4+ / user-facing / risk_flags ≠ none. Skip: L1–L3 trivial.
+                      → user gate before Phase 4
+Phase 4 Build         ticket execution
+                      · stage:impl     (required, Developer + auto smoke gate)
+                      · stage:refactor (optional, Developer + auto smoke gate)
+                      · stage:test     (conditional, QA — see triggers)
+                      · stage:qa       (independent QA work only)
+                      · stage:deploy   (required, pdt-po+user — env / secret / deploy)
+Phase 5 Version close retrospective + calibration                              [no ticket]
+                      5a Designer (opus + ⚡xhigh) — measurement (lazy) + feature-history append + next-V backlog
+                      5b QA (opus + ⚡xhigh) — fail-pattern aggregate + next-V test candidates
+                      5c Designer (sonnet + medium) — write docs/retrospectives/<version>.md
+                      5d PO mechanical — calibration log + retrospective_path mirror + user surface
 ```
 
-PO announces phase transition (1 line): `→ Phase 3 Design 진입 (Designer)`. Trivial skip: `→ Phase 3 생략 — L<n> trivial`.
+PO emits trace at every transition (English template, rendered in user's lang): `→ Phase 3 Design entered (Designer)` · trivial skip: `→ Phase 3 skipped — L<n> trivial`. Phase 3 design artifacts: System (`docs/design/<slug>/system.md`) · UX Flow Mermaid (`flow.md`) · Wireframe Excalidraw (`screens/*.excalidraw.json`) · Hi-fi mockup HTML/CSS (`mockups/*.html`). **MVP cycle (V1)**: Discovery → MVP PRD → Design (conditional) → Build → Version close → next Version on usage data.
 
-**MVP cycle (Version 1)**: Discovery → MVP PRD (opus + ⚡max, R1 clarity) → Design (조건부) → Build cycles → Deploy (user manual; PO surfaces checklist) → Version close → next Version PRD update on usage data.
-
-OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` + `to-issues` are now Designer skills.
-
----
+OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` + `to-issues` are Designer skills.
 
 ## Layer B — `stage` enum
 
-| stage | assignee | 자동 QA smoke gate | 언제 (어느 Phase) |
+| stage | assignee | auto smoke gate | When |
 |---|---|---|---|
 | `design` | `pdt-designer` | n/a | Phase 3 |
-| `impl` | `pdt-developer` | **ON** | Phase 4 (필수) |
-| `refactor` | `pdt-developer` | **ON** | Phase 4 (선택) |
-| `test` | `pdt-qa` | n/a (자기 자체가 test 정의) | Phase 4 (조건부) |
-| `qa` | `pdt-qa` | n/a (자기 자체가 QA work) | Phase 4 (독립 QA work) |
-| `deploy` | `pdt-po+user` | n/a (verification 은 step 별 결과 보고) | Phase 4 (필수, 마지막) |
+| `impl` | `pdt-developer` | **ON** | Phase 4 (required) |
+| `refactor` | `pdt-developer` | **ON** | Phase 4 (optional) |
+| `test` | `pdt-qa` | n/a (is the test plan) | Phase 4 (conditional) |
+| `qa` | `pdt-qa` | n/a (is the QA work) | Phase 4 (independent) |
+| `deploy` | `pdt-po+user` | n/a (per-step verify) | Phase 4 (required, last) |
 
-frontmatter `stage:` 값은 위 6개 enum 중 하나. `deploy` ticket 은 `## Steps` 섹션에 1-by-1 list 형식 — 각 step 이 `[PO] <command>` (PO 가 직접 실행) 또는 `[user] <action>` (user 에게 instruction + 결과 보고 받음). 개발 모르는 기획자도 PO 와 티키타카로 배포 완수.
+**`status`** (lifecycle, separate from `stage`): `todo → in-progress → review → done | blocked | abandoned`. Stage is fixed per ticket; status moves.
 
-**Status (lifecycle)** ≠ `stage`. status는 ticket의 진행 상태:
-```
-todo → in-progress → review → done | blocked | abandoned
-```
-같은 ticket이 stage는 고정, status만 변함. 시각화 시 두 축 다 표시.
+**`qa_status`** (impl / refactor only): `pending → pass | fail`. `pass` allows `done`; `fail` → dev resume + `qa_loops += 1`; `qa_loops ≥ 3` → `blocked`. Other stages have no field.
 
-**`qa_status`** = auto QA smoke gate 결과 기록 (impl / refactor ticket에만 존재):
-```
-pending → pass | fail
-```
-- `pending` (default at ticket creation)
-- `pass` — smoke gate 통과 → ticket `done` 허용
-- `fail` — smoke fail → dev resume. fail 누적 3회 → ticket `blocked`
+### Auto QA smoke gate (impl / refactor close condition)
 
-design / test / qa stage ticket 에는 이 field 없음 (gate 미적용).
+User-facing breakage (broken routing, blank pages, console errors, broken navigation) must never reach the user.
+- Tool: Playwright / Chromium MCP / headless browser per allowlist. Non-UI changes: build/typecheck/related unit tests.
+- Coverage: route load, basic navigation, no console errors, sanity check on testable Acceptance items.
+- Budget: ≤ 1 min. Fail loop: dev resume + excerpt; max 3, beyond → `blocked` + user surface.
+- Pass: `done` allowed; 1 row appended to `## Persona Activity`.
 
-### Phase 5 — Version close retrospective
+`stage:test` / `stage:qa` are themselves QA work — no extra gate.
 
-**Trigger** (uniform gate pattern): 모든 Phase 4 ticket (impl + refactor + test + qa + deploy) `done` → PO 가 자동 Phase 4 요약 + `→ Phase 5 Version close 진입할까요?` prompt → user 확인 → Phase 5 시작.
+### `stage:test` emission triggers
 
-**Process** (PO 가 3 개 sub-call 순차 진행):
-
-| Step | Persona | Model/Effort | 산출 |
-|---|---|---|---|
-| 5a | `pdt-designer` | opus + ⚡xhigh | `versions[N].outcome.observed_result` 시도 (lazy: 데이터 없으면 null 유지) · `feature-history.md` append (shipped/deferred/dropped per area) · 다음 Version 후보 (deferred 항목 + 새 가설) |
-| 5b | `pdt-qa` | opus + ⚡xhigh | 이번 Version 의 `fail-patterns.md` entry aggregate · 누적 area trend 분석 · 다음 Version 의 `stage:test` ticket 후보 |
-| 5c | `pdt-designer` | sonnet + medium | 5a + 5b 결과 받아서 `docs/retrospectives/<version>.md` narrative Write |
-| 5d | PO | n/a | retrospective path + 다음 Version 후보 list 를 user 에게 surface · `versions[N].outcome.retrospective_path` mechanical 갱신 · calibration log append |
-
-**Lazy measurement** — `validation_method` 이 외부 데이터 (PostHog / Sentry / GA 등) 요구하면 Phase 5 에서는 측정 안 함. `observed_result: null` 그대로 둠. 다음 Version (N+1) Phase 2 PRD 작성 시 Designer 가 이 null 을 발견하면 user 한테 "지난 Version 의 `<metric>` 알려주세요" 1줄 요청 → Designer 가 `versions[N].outcome.observed_result` 갱신 (content 변경, designer scope) → 그 결과로 새 PRD 가설 조정. PO 는 reminder 안 보냄. user 가 다음 Version 안 시작하면 측정도 안 함 (자연스러움).
-
-**retrospective.md 양식** (`docs/retrospectives/<version>.md`, Designer 5c 에서 Write):
-
-```markdown
-# Retrospective — <version>
-
-**Period**: YYYY-MM-DD ~ YYYY-MM-DD
-**PRD**: docs/prd/<slug>.md
-**Tickets**: <N> done / <M> blocked
-
-## Outcome
-- north_star: <목표> → <observed_result | "pending next Version"> [hit / miss / ?]
-- input metrics:
-  - <metric>: <observed | pending>
-
-## What worked
-- ...
-
-## What didn't
-- area X: <fail pattern>, loops 누적 N회 (cross-Version)
-
-## Carry to next Version
-- deferred from this Version: ...
-- new test ticket candidate: area Y (3+ 누적 fail)
-- new hypothesis: ...
-```
+Designer at PRD-ready time emits `stage:test` if any holds: (1) `risk_flags` includes `auth` / `payments` / `PII` (audit) · (2) multi-step user flow ≥ 3 steps (smoke can't cover) · (3) area-tag has ≥ 3 cumulative fails in `docs/qa/fail-patterns.md` (recurring-fail learning) · (4) user explicit request. Artifact: `docs/qa/<slug>-test-plan.md`. Impl ticket `## Inputs` references it. Smoke gate still runs independently.
 
 ### Outcome measurement (B.1 — PDS See layer)
 
-**Two layers** of outcome tracking, both append-only, neither blocks ticket lifecycle:
+**Per-ticket** (optional frontmatter): `success_metric`, `validation_method` (Designer-set at creation when ticket has measurable user outcome), `observed_result` (PO fills at Phase 5). Most tickets stay null.
 
-**(1) Per-ticket outcome — optional**:
-```yaml
-success_metric: null         # 예: "login success rate ≥ 99% over 7d"
-validation_method: null      # 예: "Sentry query <error.type=auth>"
-observed_result: null        # 예: "99.6% (n=1,287, 2026-05-13~20)"
-```
-Designer sets `success_metric` + `validation_method` at ticket creation when ticket has measurable user outcome (대부분 ticket 은 null — UI tweak / dev infra 같은 건 측정 의미 없음). PO 가 Phase 5 retrospective 에서 `observed_result` 채움. content 변경 (Designer scope) vs lifecycle 변경 (PO scope) 경계 그대로.
+**Per-Version** (required, in `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` (Designer-derived from PRD `## Success metrics` slot at PRD-ready time, emitted via `version_outcome` in ready-turn JSON; PO mirrors into state), `observed_result`, `retrospective_path` (PO fills at Phase 5).
 
-**(2) Per-Version outcome — required** (`po-state.json` `versions[].outcome`):
-```json
-{
-  "north_star": "checkout completion rate",
-  "input_metrics": ["modal-open-rate", "form-submit-rate"],
-  "validation_method": "PostHog dashboard, 7-day window post-deploy",
-  "observed_result": null,
-  "retrospective_path": null
-}
-```
-Designer 가 Phase 2 PRD ready 시 `Success metrics` slot 에서 derive 해서 `north_star` + `input_metrics` + `validation_method` 채움. PO 가 Phase 5 retrospective 에서 `observed_result` + `retrospective_path` 채움. 모든 Version 은 outcome 객체 가짐 (값은 null 허용 — PRD가 metrics slot 빈 채로 ship 한 경우).
+PRD body stays free-form prose; structured emit is via the JSON field, not edits to the PRD.
 
-PRD 본체 (`docs/prd/<slug>.md`) 의 `## Success metrics` slot 은 자유 prose 그대로. Designer 가 거기서 read → versions[].outcome 으로 structured 형태 emit.
+### Phase 5 retrospective
 
-### `stage:test` ticket emission triggers
+**Trigger**: all Phase 4 tickets `done` → PO summarizes Phase 4 + emits prompt with intent "enter Phase 5 Version close?" → user confirms.
 
-Designer가 PRD ready 시점에 검토 — 아래 4개 중 1개라도 해당하면 `stage:test` ticket emit.
+| Step | Persona | Model/Effort | Output |
+|---|---|---|---|
+| 5a | `pdt-designer` | opus + ⚡xhigh | fill `versions[N].outcome.observed_result` if measurable now (lazy: leave null otherwise); append `feature-history.md` (shipped/deferred/dropped per area); propose next-V backlog |
+| 5b | `pdt-qa` | opus + ⚡xhigh | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `stage:test` candidates |
+| 5c | `pdt-designer` | sonnet + medium | write `docs/retrospectives/<version>.md` from 5a + 5b ctx |
+| 5d | PO | mechanical | append calibration log; mirror `retrospective_path`; surface to user with next-V candidates |
 
-| # | 조건 | 출처 / 사유 |
-|---|---|---|
-| 1 | `risk_flags` 에 `auth` / `payments` / `PII` 포함 | 감사/규제 — test plan이 audit artifact |
-| 2 | Multi-step user flow (≥3 step) — auto-smoke 1분 budget 초과 예상 | smoke gate가 못 잡음 |
-| 3 | 같은 area-tag 누적 fail loop ≥3회 (`docs/qa/fail-patterns.md`) | 학습 — 반복 실패 영역 사전 plan |
-| 4 | user 명시 요청 ("테스트 먼저", "test plan 짜줘") | 사용자 override |
+**Lazy measurement**: when `validation_method` requires external data (PostHog/Sentry/etc), leave `observed_result: null`. Designer asks user during the next Version's Phase 2 PRD authoring; PO never reminds.
 
-산출물: `docs/qa/<slug>-test-plan.md`. Impl ticket의 `## Inputs` 에서 reference. impl ticket의 auto-smoke gate 는 Test ticket 존재와 무관하게 동작 (Test = 사전 정의, smoke = 사후 verify).
-
-### 자동 QA smoke gate (Developer ticket close 조건)
-
-`stage:impl` / `stage:refactor` ticket이 close (`done`) 되려면 자동 QA smoke 통과 필수. user 가 routing 깨짐 / page 안 뜸 / console error 같은 user-facing 깨짐을 직접 보지 않도록.
-
-- **Tool**: Playwright / Chromium MCP / headless browser (allowlist 내). UI 없는 dev 변경은 build/typecheck/관련 unit test만 실행.
-- **Coverage**: route 로딩, basic navigation, console error 없음, Acceptance 의 testable 항목 1차 확인.
-- **Time budget**: ≤ 1분. full test plan 아님.
-- **Fail loop**: dev resume + fail excerpt → 최대 3회. 넘으면 `blocked` + user surface.
-- **Pass**: ticket `done` 허용. Persona Activity 에 1행 기록.
-
-`stage:test` / `stage:qa` ticket은 그 자체가 QA work이므로 추가 gate 없음 (자기 자신이 gate).
-
----
+**retrospective.md template**: header (Period · PRD · Tickets done/blocked) · `## Outcome` (north_star → observed | "pending next Version" [hit/miss/?] · input metrics) · `## What worked` · `## What didn't` (per area: fail pattern + cumulative loops cross-V) · `## Carry to next Version` (deferred · new test candidate · new hypothesis).
 
 ## Who writes what
 
@@ -182,221 +97,86 @@ Designer가 PRD ready 시점에 검토 — 아래 4개 중 1개라도 해당하�
 |---|---|---|
 | `<project>/.productune/briefs/<slug>.md` | PO | `printf >>` |
 | `docs/prd/<slug>.md` | Designer | inside delegated session |
-| `docs/tickets/<version>/T-NNN.md` body/AC | Designer | emit alongside PRD |
-| `docs/tickets/<version>/T-NNN.md` lifecycle frontmatter/status | PO | mechanical |
-| `docs/design/**/*.md` | Designer | Designer Write |
-| `docs/designer/feature-history.md` (structured Version log) | Designer | Designer Write at Phase 5 close |
-| `docs/qa/fail-patterns.md` (structured fail log) | PO mechanical | `printf >>` from QA's `fail_event` output |
+| `docs/tickets/<version>/T-NNN.md` body / AC | Designer | emit alongside PRD |
+| `docs/tickets/<version>/T-NNN.md` lifecycle frontmatter | PO | mechanical |
+| `docs/design/**/*.md`, `docs/designer/feature-history.md` | Designer | Designer Write |
+| `docs/qa/fail-patterns.md` | PO mechanical | `printf >>` from QA's `fail_event` |
 | `<project>/.productune/po-state.json` | PO + post-delegate hook | `jq` |
 | `~/.productune/po-memory.md` (calibration) | PO | `printf >>` |
 | Source code, configs, scripts | Developer | Developer Write/Edit |
-| Other `docs/qa/*.md` (project-notes, work-notes) | QA | QA Write (via promotion gate) |
+| Other `docs/qa/*.md` (project-notes, work-notes) | QA | QA Write (promotion-gated) |
 
-PO **never** writes authored content. Lifecycle/frontmatter = state, not authoring.
+PO never authors product content. Lifecycle / frontmatter = state, not authoring.
 
-### PO mechanical write whitelist
+### PO mechanical-write whitelist
 
-| T-NNN.md item | PO direct |
-|---|---|
-| frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta | ✅ sed/awk/perl/printf |
-| frontmatter: `success_metric`, `validation_method` (set at ticket creation by Designer; PO doesn't author) | ❌ Designer |
-| Mirrored header status line | ✅ sed |
-| `## Persona Activity` table — 1-row append-only (≤80 char Result) | ✅ printf |
-| `docs/qa/fail-patterns.md` — append from QA's `fail_event` output | ✅ printf >> (mechanical, no semantic) |
-| `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope` body | ❌ Designer |
-| `## Outcome` narrative | ❌ Designer (Version close) |
-| Title substantive change | ❌ Designer |
+- ✅ ticket frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta
+- ✅ mirrored header status line · `## Persona Activity` 1-row append (≤80-char Result)
+- ✅ `docs/qa/fail-patterns.md` append from QA's `fail_event`
+- ❌ Designer: `success_metric`, `validation_method` (set at creation) · `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope`, `## Outcome`, title changes
 
-**PO refusal 2-line template** (on content-change request):
+**Refusal template** (English intent; PO renders in user's lang on every content-change request):
 ```
-[PO] 콘텐츠 변경(<무엇>)은 Designer 위임 필요. 진행할까요?
-[PO] (lifecycle 메타 / Persona Activity는 직접 가능 — 이건 콘텐츠 변경이라 위임)
+[PO] content change (<what>) requires Designer delegation. proceed?
+[PO] (lifecycle meta / Persona Activity rows are PO-direct; this is content → delegate)
 ```
 
-`branch` / `worktree_path` auto-filled by git-workflow (Phase 4 R2) at ticket open.
-
-**`fail-patterns.md` mechanical append** (after QA emits non-null `fail_event`):
-```bash
-LINE=$(jq -r '.fail_event | "- (\(now | strftime("%Y-%m-%d"))) \(.version) · \(.ticket_id) · \(.area_tag) · loops=\(.loops) · final=\(.final) · note: \(.note)"' "$QA_OUT")
-TARGET="$PROJECT/docs/qa/fail-patterns.md"
-[ -f "$TARGET" ] || { mkdir -p "$(dirname "$TARGET")"; printf '# QA fail patterns\n\nPer-Version log of QA fail loops. Designer reads at Phase 2 (Test ticket trigger #3).\n\n## Entries\n\n' > "$TARGET"; }
-printf '%s\n' "$LINE" >> "$TARGET"
-```
-
----
+`branch` / `worktree_path` filled by git-workflow (Phase 4 R2) at ticket open. `fail-patterns.md` append jq one-liner: `jq -r '.fail_event | "- (\(now | strftime("%Y-%m-%d"))) \(.version) · \(.ticket_id) · \(.area_tag) · loops=\(.loops) · final=\(.final) · note: \(.note)"'`.
 
 ## Ticket system
 
-Task = ticket (1:1). One PRD per Version; Version bundles its tickets, exported per Version. **Designer drafts ticket file, owns content.** PO routes + owns lifecycle: status transitions, timestamps, assignee/routing meta, progress, archive sync with `po-state`.
+Task = ticket (1:1). One PRD per Version; Version bundles its tickets. Designer drafts ticket file + owns content. PO routes + owns lifecycle.
 
-### po-state.json schema
+### po-state.json schema (key paths)
 
-```json
-{
-  "current_version": "v1.0-MVP",
-  "current_phase": 4,
-  "phase_history": [
-    {"phase": 1, "started_at": "...", "completed_at": "...", "summary": "Discovery brief saved", "user_approved_at": "..."},
-    {"phase": 2, "started_at": "...", "completed_at": "...", "summary": "PRD A=0.04 + 12 tickets", "user_approved_at": "..."},
-    {"phase": 3, "started_at": "...", "completed_at": "...", "summary": "4 design tickets (system/flow/wireframe/mockup)", "user_approved_at": "..."}
-  ],
-  "current_task": {
-    "ticket_id": "T-042", "slug": "...", "title": "...",
-    "status": "todo|in-progress|review|done|blocked",
-    "stage": "design|impl|refactor|test|qa|deploy",
-    "qa_status": "pending|pass|fail",
-    "qa_loops": 0,
-    "assignee_persona": "pdt-developer",
-    "started_at": "...", "ended_at": null, "request_summary": "...",
-    "prd_path": "docs/prd/<slug>.md",
-    "branch": "feature/T-042/<slug-kebab>",
-    "worktree_path": "<project>/.productune/worktrees/T-042/",
-    "input": {"prd_path":"...","design_doc":"...","brief_path":"...","deps":["T-040"]},
-    "output": {"changed_files":[],"design_doc":"","test_results":""},
-    "linked_tickets": ["T-043"], "artifacts": [],
-    "persona_sessions": {},
-    "persona_session_meta": {
-      "pdt-designer": {"id":"<uuid>","turns":4,"model_history":["opus"],"effort_history":["max"],
-        "complexity_level":"L6","confidence_history":[0.7,0.92],"ambiguity_score_history":[0.31,0.04]},
-      "pdt-developer": {"id":"<uuid>","turns":3,"model_history":["sonnet","opus"],
-        "effort_history":["medium","high"],"complexity_level":"L7","confidence_history":["high"]}
-    },
-    "calibration_outcome": {"estimated_complexity":"L6","actual_complexity":"L7",
-      "qa_pass":true,"qa_loops":1,"user_rework_requested":false,
-      "escalation_triggered":true,"notes":"1-line PO judgement"}
-  },
-  "past_tickets": [],
-  "versions": [{
-    "id":"v1.0-MVP", "started_at":"...", "ended_at":"...",
-    "prd_anchor":"docs/prd/<slug>.md#version-1",
-    "outcome": {
-      "north_star": "checkout completion rate",
-      "input_metrics": ["modal-open-rate", "form-submit-rate"],
-      "validation_method": "Sentry/PostHog dashboard, 7-day window post-deploy",
-      "observed_result": null,
-      "retrospective_path": null
-    }
-  }],
-  "recent_turns": []
-}
-```
+- `current_version`, `current_phase`, `phase_history[].{phase, started_at, completed_at, summary, user_approved_at}`
+- `current_task.{ticket_id, slug, title, status, stage, qa_status, qa_loops, assignee_persona, started_at, ended_at, request_summary, prd_path, branch, worktree_path}`
+- `current_task.input.{prd_path, design_doc, brief_path, deps[]}` · `current_task.output.{changed_files[], design_doc, test_results}`
+- `current_task.linked_tickets[]`, `artifacts[]`, `persona_sessions{}`, `persona_session_meta.<persona>.{turns, model_history, effort_history, complexity_level, confidence_history}`
+- `current_task.calibration_outcome.{estimated_complexity, actual_complexity, qa_pass, qa_loops, user_rework_requested, escalation_triggered, notes}`
+- `past_tickets[]` (cap 50, drop oldest)
+- `versions[].{id, started_at, ended_at, prd_anchor, outcome.{north_star, input_metrics[], validation_method, observed_result, retrospective_path}}`
+- `recent_turns[]` (rolling 10, project-wide)
 
-(Legacy `past_tasks` + `current_round` / `rounds[]` + `stage:PRD|issue` — read-compat one cycle. New code reads `past_tickets` / `current_version` / `versions[]` / 5-value `stage` enum first; falls back to legacy keys when absent.)
+Legacy keys (`past_tasks`, `current_round`, `rounds[]`, `stage:PRD|issue`) read-compat one cycle; new code reads new keys first and falls back.
 
-### Ticket file format (Designer-emitted, PO-lifecycle-managed)
+### Ticket frontmatter (Designer-authored unless marked PO)
 
-`docs/tickets/<version>/T-NNN.md`:
+Required: `ticket_id`, `version`, `stage`, `status` (PO mechanical), `assignee`, `created_at`, `estimated_complexity`, `risk_flags`. Optional/derived: `started_at` / `completed_at` / `duration_min` (PO mechanical), `branch` / `worktree_path` (git-workflow R2), `qa_status` / `qa_loops` (PO mechanical, impl/refactor only), `success_metric` / `validation_method` (Designer, optional when measurable), `observed_result` (PO mechanical at Phase 5).
 
+Body: `# T-NNN: <title>` · mirrored header line · `## Request` · `## Inputs` · `## Acceptance` · `## Out of scope` · `## Persona Activity` (PO-managed table). Designer owns scope-defining sections; PO touches only lifecycle / mirrored header / Persona Activity rows.
+
+### `stage:deploy` body shape
+
+`assignee: pdt-po+user`. Body has `## Steps` with `[PO] <command>` and `[user] <action>` lines (English template; PO renders `[user]` instructions in user's lang):
 ```markdown
----
-ticket_id: T-042
-version: v1.0-MVP
-stage: impl
-status: todo
-qa_status: pending            # impl/refactor only — pending|pass|fail
-qa_loops: 0                   # impl/refactor only — fail count, max 3
-assignee: pdt-developer
-created_at: 2026-MM-DDTHH:MM:SSZ
-started_at: null
-completed_at: null
-duration_min: null
-estimated_complexity: L<n>
-risk_flags: <auth|payments|migration|none>
-branch: null                 # set by git-workflow on ticket open (Phase 4 R2)
-worktree_path: null
-success_metric: null         # optional — fill when ticket has measurable user outcome
-validation_method: null      # optional — how observed_result will be measured
-observed_result: null        # filled by PO at Phase 5 retrospective
----
-
-# T-042: <title>
-
-**Version**: v1.0-MVP  **Stage**: impl  **Status**: todo  **Assignee**: pdt-developer
-**PRD anchor**: docs/prd/<slug>.md#<section>
-**Estimated complexity**: L<n>  **Risk flags**: <auth|payments|migration|none>
-
-## Request
-<single paragraph: what to build, why, in what context>
-
-## Inputs
-- PRD: docs/prd/<slug>.md#<section>
-- Design: docs/design/<slug>/<file>.md  *(if exists)*
-- Deps: T-040, T-041
-
-## Acceptance
-- [ ] criterion 1 (testable)
-- [ ] criterion 2
-
-## Out of scope
-- explicit non-goals
-
-## Persona Activity
-<!-- PO managed, append-only — Result ≤ 80 chars -->
-| When | Persona | Model/Effort | Turn | Result |
-|---|---|---|---|---|
-```
-
-Designer owns scope-defining fields. PO updates lifecycle/status meta + mirrored header + Persona Activity rows mechanically. If lifecycle work requires content edits, delegate.
-
-### `stage:deploy` ticket body shape
-
-`assignee: pdt-po+user`. body 가 다른 stage 와 다름 — `## Steps` 가 핵심:
-
-```markdown
-# T-099: Deploy v1.0-MVP
-
-**Version**: v1.0-MVP  **Stage**: deploy  **Status**: todo  **Assignee**: pdt-po+user
-
-## Request
-Production 배포. checklist: env var, DB migration, Vercel deploy, smoke verify.
-
 ## Steps
 - [PO] git tag v1.0-MVP && git push --tags
-- [user] Vercel 대시보드 → Settings → Environment Variables → `OPENAI_API_KEY` 추가 후 알려주세요
+- [user] In Vercel dashboard → Settings → Environment Variables, add `OPENAI_API_KEY`. Reply when done.
 - [PO] vercel deploy --prod
-- [user] 배포 URL 접속 → /login 페이지 떠나요? 결과 알려주세요
-- [PO] curl https://<production-url>/api/health → 200 확인
-- [user] PostHog dashboard 에서 deploy event 보이나요?
-
-## Acceptance
-- [ ] 모든 Steps 완료
-- [ ] /login 페이지 정상
-- [ ] /api/health 200
+- [user] Visit the deploy URL — does /login load? Reply with result.
+- [PO] curl https://<production-url>/api/health → expect 200
 ```
+PO runs `[PO]` lines (allowlist), surfaces `[user]` lines (translated) and waits for results. All steps done → ticket closes. No auto smoke gate — verification lives in step results.
 
-PO 가 `[PO]` step 은 직접 실행 (allowlist 안), `[user]` step 은 instruction surface + 결과 받기. 모든 step done → ticket close. 자동 QA smoke gate 없음 (verification 이 step 결과로 직접 들어옴).
+### Mechanical close rules
 
-### Ticket close → mechanical export
-
-```bash
-jq --arg now "$(date -u +%FT%TZ)" --arg s "done" --arg o "<outcome>" '
-  .current_task.status=$s | .current_task.ended_at=$now |
-  .current_task.calibration_outcome.notes=$o
-' "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
-```
-
-Mechanical rules:
 - `todo → in-progress`: set `started_at` if empty.
-- `in-progress|review → done|blocked|abandoned`: set `completed_at`; compute `duration_min` if `started_at` exists.
-- Status transitions: update frontmatter + mirrored header.
-- `assignee`, routing/session refs: metadata only.
-- `branch` / `worktree_path`: set on open; do not delete on close (history).
-- `## Outcome` = content. Delegate if product meaning needed.
-- **QA gate close check** (impl/refactor only):
-  - dev session 이 자기 작업 끝났다고 보고 → PO 가 auto QA smoke gate 호출 → `qa_status` 갱신.
-  - `qa_status: pass` 일 때만 `done` 허용. `fail` 이면 dev resume + `qa_loops += 1`. `qa_loops ≥ 3` 이면 `blocked` + user surface.
-  - design / test / qa stage ticket은 `qa_status` field 자체 없음 (close 시 검증 패스).
+- `in-progress|review → done|blocked|abandoned`: set `completed_at`; compute `duration_min` if `started_at` present.
+- Status transition: update frontmatter + mirrored header.
+- `assignee` / routing / session refs: metadata only.
+- `branch` / `worktree_path`: set on open; never cleared (history).
+- `## Outcome` is content; delegate if product meaning is needed.
+- **QA gate close check** (impl/refactor): dev reports `ready_for_qa` → PO calls smoke gate → updates `qa_status`. `pass` allows `done`; `fail` resumes dev with `qa_loops += 1`; `≥ 3` → `blocked`. Other stages skip the check.
 
-Version close → mechanical status/backfill sweep. Outcome text needed → single Designer call: `"Version v1.0-MVP closed. Append ## Outcome summaries from past_tickets[] without changing scope/AC."`
+Version close → mechanical status/backfill sweep. Outcome text needed → single Designer call: `"Version <id> closed. Append ## Outcome summaries from past_tickets[] without changing scope/AC."`
 
 ### Ticket id allocation
 
-`T-NNN` zero-padded. Monotonic, never resets. Designer reads `[ctx].next_ticket_id`; absent → fall back:
-
+`T-NNN` zero-padded, monotonic, never resets. Designer reads `[ctx].next_ticket_id`; absent → fall back:
 ```bash
 NEXT=$(jq '([.past_tickets[]?.ticket_id // empty, .current_task.ticket_id // empty]
   | map(select(. != null) | sub("^T-"; "") | tonumber) | max // 0) + 1' "$STATE")
 TID=$(printf "T-%03d" "$NEXT")
 ```
-
-PO computes, embeds in `[ctx]` so Designer skips state re-read.
+PO computes and embeds in `[ctx]`; Designer skips state re-read.
