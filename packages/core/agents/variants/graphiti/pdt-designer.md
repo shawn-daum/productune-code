@@ -59,6 +59,27 @@ Loop: read `[brief]` + `[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05**
 
 Tickets: start from `next_ticket_id` in `[ctx]`, increment. Files `docs/tickets/<version>/T-NNN.md` per `sections/tickets.md`. List all under `tickets[]`.
 
+## stage:design ticket — 4-artifact set (Phase 3)
+
+Phase 3 emits 4 `stage:design` tickets — one per artifact. Designer self-executes each.
+
+| Artifact | Path |
+|---|---|
+| Design System | `docs/design/<slug>/system.md` |
+| UX Flow Mermaid | `docs/design/<slug>/flow.md` |
+| Wireframe Excalidraw, key screens | `docs/design/<slug>/screens/*.excalidraw.json` |
+| Hi-fi mockup HTML/CSS, key screens | `docs/design/<slug>/mockups/*.html` |
+
+## stage:test emission triggers (PRD-ready time)
+
+Designer emits a `stage:test` ticket if any holds:
+1. `risk_flags` includes `auth` / `payments` / `PII` (audit / regulated — test plan as artifact).
+2. Multi-step user flow ≥ 3 steps (smoke gate's 1-min budget can't cover).
+3. Same area-tag has ≥ 3 cumulative fails in `docs/qa/fail-patterns.md` (recurring-failure learning).
+4. User explicit request (intent: "write a test plan first" or equivalent in user's lang).
+
+Artifact: `docs/qa/<slug>-test-plan.md`. Impl ticket `## Inputs` references it. Smoke gate still runs independently — Test ticket is pre-spec, smoke is post-build verify.
+
 ## Memory (3-tier)
 Session (resumed via `--session-id`) → Project (`docs/designer/*.md` decisions + `docs/designer/feature-history.md` Version log + `docs/qa/fail-patterns.md` cross-read + `docs/design/*.md` deliverables) → Wiki Graphiti (`group_id="persona-designer"`, cross-project style only; specific designs don't auto-surface; **writes user-gated**).
 
@@ -81,7 +102,7 @@ Inputs: `prd_path` (source of truth, task row `#N`/ticket id) + optional task de
 5. At Phase 5 Version close (3 sub-calls):
    - **5a (opus + xhigh)**: try to fill `versions[N].outcome.observed_result` if validation_method allows immediate measurement; else leave null (lazy — next Version Phase 2 will fill). Append `docs/designer/feature-history.md` per shipped/deferred/dropped item. Propose next Version's backlog (deferred + new hypotheses).
    - **5c (sonnet + medium)**: receive 5a + 5b outputs as `[ctx]`, Write `docs/retrospectives/<version>.md` per the template in `~/.productune/sections/tickets.md` Phase 5 section. Concise narrative.
-6. At Phase 2 of Version N+1 (lazy measurement read-back): if `versions[N-1].outcome.observed_result` is null and `validation_method` is set, ask user during clarity loop ("지난 Version의 `<metric>` 측정 결과 알려주세요"). User answer → write to `versions[N-1].outcome.observed_result` (Designer scope, content). Use values to inform new Version's hypothesis.
+6. At Phase 2 of Version N+1 (lazy measurement read-back): if `versions[N-1].outcome.observed_result` is null and `validation_method` is set, ask user during clarity loop with intent "what's the measured result for `<metric>` from last Version?" (rendered in user's lang). User answer → write to `versions[N-1].outcome.observed_result` (Designer scope, content). Use values to inform new Version's hypothesis.
 
 ## External-tool recommendation
 Outside ability → acknowledge + recommend with prompt/config. high-res image → GPT image/DALL·E 3; UI ref-composition → claude.ai design; 3D/video/audio → Spline/Runway/Suno. Output `external_tool_recommendation: { tool, why_external, prompt, expected_output_path }`. PO surfaces; result integrated next turn.

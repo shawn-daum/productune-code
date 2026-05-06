@@ -81,7 +81,7 @@ esac
 JOBS_DIR="$HOME/.productune/wiki-jobs"; [ -d "$JOBS_DIR" ] && rm -f "$JOBS_DIR"/*.done 2>/dev/null
 for j in "$JOBS_DIR"/*.pending; do [ -f "$j" ] || continue
   AGE=$(( $(date +%s) - $(stat -f %m "$j" 2>/dev/null || stat -c %Y "$j" 2>/dev/null || echo $(date +%s)) ))
-  [ "$AGE" -gt 30 ] && echo "[PO] job=$(basename "$j" .pending) ${AGE}s — Ollama 확인 (cat $j.log)"
+  [ "$AGE" -gt 30 ] && echo "[PO] job=$(basename "$j" .pending) ${AGE}s — check Ollama (cat $j.log)"
 done
 ```
 
@@ -117,33 +117,25 @@ Cross-session notepad about **collaborator**, not project facts.
 - (YYYY-MM-DD) user asked me not to X because Y
 ```
 
-Read at session start. Append (don't rewrite) on: ≥2 pushbacks, "always/never/내가 싫어하는 건", multi-turn pattern. Mark contradictions `[SUPERSEDED YYYY-MM-DD]`. Never delete — receipts not summary.
+Read at session start. Append (don't rewrite) on: ≥2 pushbacks, intent class "always / never / what I dislike" (any user lang), multi-turn pattern. Mark contradictions `[SUPERSEDED YYYY-MM-DD]`. Never delete — receipts not summary.
 
 ---
 
-## Per-project state: `./.productune/po-state.json`
+## Per-project state: `./.productune/po-state.json` (canonical schema)
 
 Repo-local JSON. Sessions scoped per **task**. Each top-level user request = one task with own persona session ids.
 
-```json
-{
-  "current_task": {
-    "slug": "login-modal-forgot-pw", "title": "...", "started_at": "2026-04-23T14:30:00Z",
-    "request_summary": "...", "artifacts": ["docs/design/login-modal.md", "..."],
-    "persona_sessions": {"pdt-designer":"<uuid>","pdt-developer":"<uuid>","pdt-qa":"<uuid>"},
-    "persona_session_meta": {"pdt-developer": {"id":"<uuid>","turns":3,"created_at":"...",
-      "model_history":["sonnet","opus"],"effort_history":["medium","high"]}},
-    "calibration_outcome": {"estimated_complexity":"L6","actual_complexity":"L7",
-      "qa_pass":true,"qa_loops":1,"user_rework_requested":false,"escalation_triggered":true}
-  },
-  "past_tasks": [{"slug":"...","title":"...","started_at":"...","ended_at":"...",
-                  "request_summary":"...","artifacts":[],"persona_sessions":{}}],
-  "recent_turns": [{"ts":"...","persona":"pdt-qa","task":"...","result":"fail","notes":"..."}]
-}
-```
+Key paths:
+- `current_version`, `current_phase`, `phase_history[].{phase, started_at, completed_at, summary, user_approved_at}`
+- `current_task.{ticket_id, slug, title, status, stage, qa_status, qa_loops, assignee_persona, started_at, ended_at, request_summary, prd_path, branch, worktree_path}`
+- `current_task.input.{prd_path, design_doc, brief_path, deps[]}` · `current_task.output.{changed_files[], design_doc, test_results}`
+- `current_task.linked_tickets[]`, `artifacts[]`, `persona_sessions{}`, `persona_session_meta.<persona>.{turns, model_history, effort_history, complexity_level, confidence_history}`
+- `current_task.calibration_outcome.{estimated_complexity, actual_complexity, qa_pass, qa_loops, user_rework_requested, escalation_triggered, notes}`
+- `past_tickets[]` (cap 50, drop oldest) — retain `slug`, `title`, `request_summary`, `artifacts`, `persona_sessions` for revival match
+- `versions[].{id, started_at, ended_at, prd_anchor, outcome.{north_star, input_metrics[], validation_method, observed_result, retrospective_path}}`
+- `recent_turns[]` (rolling 10, project-wide, task-independent — failure-pattern detection)
 
-`recent_turns` — project-wide rolling 10, task-independent — failure-pattern detection.
-`past_tasks` — cap 50, drop oldest. Retain `title` + `request_summary` + `artifacts` for revival match.
+Legacy keys (`past_tasks`, `current_round`, `rounds[]`, `stage:PRD|issue`) read-compat one cycle; new code reads new keys first and falls back.
 
 Pre-delegate: glance `recent_turns`. Persona ≥3 fails / last 5 → flag in Step 1 risk (`evolution.md`).
 Post-turn: append outcome + bump `current_task.persona_session_meta.<persona>.turns` via `jq`. Never burn Claude call.

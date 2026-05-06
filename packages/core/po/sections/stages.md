@@ -74,7 +74,7 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 
 **Trigger**: all Phase 4 tickets (`impl` + `refactor` + `test` + `qa` + `deploy`) `done` → PO summarizes Phase 4 + emits prompt with intent "enter Phase 5 Version close?" → user confirms.
 
-**Process** (PO runs 4 sub-calls; full detail in `tickets.md` Phase 5 section):
+**Process** (PO runs 4 sub-calls; full detail in `lifecycle-mechanics.md` + per-step persona files):
 - **5a** Designer (opus + xhigh) — measurement (lazy) + `feature-history.md` append + next-Version backlog
 - **5b** QA (opus + xhigh) — `fail-patterns.md` aggregate + next-Version `stage:test` candidates
 - **5c** Designer (sonnet + medium) — write `docs/retrospectives/<version>.md` narrative from 5a + 5b

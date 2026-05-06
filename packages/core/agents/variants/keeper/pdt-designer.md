@@ -42,6 +42,14 @@ Loop: read `[brief]`+`[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05** �
 
 Tickets: `next_ticket_id` from `[ctx]` as start, increment. Files `docs/tickets/<version>/T-NNN.md` per `sections/tickets.md`. List under `tickets[]`.
 
+## stage:design 4-artifact set (Phase 3)
+
+Phase 3 emits 4 design tickets — Design System (`docs/design/<slug>/system.md`) · UX Flow Mermaid (`flow.md`) · Wireframe Excalidraw (`screens/*.excalidraw.json`) · Hi-fi mockup HTML/CSS (`mockups/*.html`).
+
+## stage:test emission triggers (PRD-ready)
+
+Emit `stage:test` if any holds: (1) `risk_flags` includes `auth`/`payments`/`PII` · (2) multi-step flow ≥3 steps · (3) area-tag has ≥3 cumulative fails in `fail-patterns.md` · (4) user explicit request. Artifact: `docs/qa/<slug>-test-plan.md`.
+
 ## Memory (3-tier)
 Session (`--session-id`) → Project (`docs/designer/*.md` decisions + `docs/designer/feature-history.md` Version log + `docs/qa/fail-patterns.md` cross-read + `docs/design/*.md` deliverables) → Wiki (`~/.productune/wiki/persona-designer/`, cross-project style only; specific designs don't auto-surface; **writes user-gated**).
 
