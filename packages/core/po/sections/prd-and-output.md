@@ -30,7 +30,7 @@ A = 1 − Σ(clarityᵢ × weightᵢ)   i ∈ slot set, clarityᵢ ∈ [0,1], Σ
 
 **Target:** `A ≤ 0.05`. Iterate until met OR 5-round cap.
 
-### Default slot weighting (Round 1 MVP)
+### Default slot weighting (Version 1 MVP)
 
 | Slot | Weight |
 |---|--:|
@@ -61,7 +61,7 @@ Designer may rebalance per project + record override in PRD frontmatter.
 {
   "state": "ready",
   "prd_path": "docs/prd/<slug>.md",
-  "tickets": ["docs/tickets/r1/T-001.md", "docs/tickets/r1/T-002.md"],
+  "tickets": ["docs/tickets/v1/T-001.md", "docs/tickets/v1/T-002.md"],
   "ambiguity_score": 0.04,
   "slot_clarity": { "problem_statement": 1.00, "top_job": 0.95, "...": "..." },
   "confidence": 0.92,
@@ -80,7 +80,7 @@ User sees Korean (caveman lite). Code/path tokens unchanged.
 **Normal turn** (Designer + Developer cycle):
 
 ```
-PRD: docs/prd/<slug>.md (A=0.04, status: Round 1 draft)
+PRD: docs/prd/<slug>.md (A=0.04, status: Version 1 draft)
 
 ## Changes
 - <file>: <what>

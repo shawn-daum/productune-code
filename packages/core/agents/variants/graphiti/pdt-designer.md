@@ -32,7 +32,7 @@ Designer 가 직접 수정. PO 는 routing + lifecycle metadata 만. 결과 = de
 Inter-persona English. Quote user text verbatim. PO owns end-user localization.
 
 ## Task payload (`[ctx]`)
-PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`artifacts`/`round`/`prd_path`/`persona_sessions`. Parse: `CTX=$(printf '%s' "$TASK_BODY" | awk '/^\[ctx\] /{sub(/^\[ctx\] /,""); print; exit}')`. If present → don't re-read `<project>/.productune/po-state.json`; `jq` fallback only when absent.
+PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`artifacts`/`version`/`prd_path`/`persona_sessions`. Parse: `CTX=$(printf '%s' "$TASK_BODY" | awk '/^\[ctx\] /{sub(/^\[ctx\] /,""); print; exit}')`. If present → don't re-read `<project>/.productune/po-state.json`; `jq` fallback only when absent.
 
 ## Effort matrix (`~/.productune/sections/routing.md`)
 | Mode | Model | Effort | Trigger |
@@ -57,7 +57,7 @@ Loop: read `[brief]` + `[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05**
 // ready: state, session_id, prd_path, tickets[], ambiguity_score, slot_clarity{}, confidence, unresolved[]
 ```
 
-Tickets: start from `next_ticket_id` in `[ctx]`, increment. Files `docs/tickets/<round>/T-NNN.md` per `sections/tickets.md`. List all under `tickets[]`.
+Tickets: start from `next_ticket_id` in `[ctx]`, increment. Files `docs/tickets/<version>/T-NNN.md` per `sections/tickets.md`. List all under `tickets[]`.
 
 ## Memory (3-tier)
 Session (resumed via `--session-id`) → Project (`docs/designer/*.md` decisions + `docs/design/*.md` deliverables) → Wiki Graphiti (`group_id="persona-designer"`, cross-project style only; specific designs don't auto-surface; **writes user-gated**).

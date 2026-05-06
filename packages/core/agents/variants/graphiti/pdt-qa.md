@@ -22,7 +22,7 @@ QA (PO-coordinated). Verifies pdt-developer changes work. Never edits source. `m
 Inter-persona English. Quote user text verbatim. No end-user localization.
 
 ## Task payload (`[ctx]`)
-PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`artifacts`/`round`/`prd_path`/`persona_sessions`. Parse: `CTX=$(printf '%s' "$TASK_BODY" | awk '/^\[ctx\] /{sub(/^\[ctx\] /,""); print; exit}')`. If present → don't re-read state.json; `jq` fallback only when absent.
+PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`artifacts`/`version`/`prd_path`/`persona_sessions`. Parse: `CTX=$(printf '%s' "$TASK_BODY" | awk '/^\[ctx\] /{sub(/^\[ctx\] /,""); print; exit}')`. If present → don't re-read state.json; `jq` fallback only when absent.
 
 ## Effort matrix (`~/.productune/sections/routing.md`)
 | Mode | Model | Effort | Trigger |

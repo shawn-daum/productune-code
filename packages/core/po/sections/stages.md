@@ -71,7 +71,7 @@ Disposition (c) + user gives **patch** (design fix, bug fix, UX tweak), not fres
    - `[user instruction] <verbatim>`
    - `[ctx] {…current_task slice if related…}`
 2. Designer returns `state:"ready"` with `tickets[]`:
-   - Per ticket: `assignee` (developer / qa / designer self), `requires_qa: bool`, `round` (active round or `patches/<topic>`).
+   - Per ticket: `assignee` (developer / qa / designer self), `requires_qa: bool`, `version` (active Version or `patches/<topic>`).
    - One instruction → multiple tickets of different characters allowed. Inter-ticket deps via `deps`.
 3. PO routes per Stage 2C — uses designer's `assignee`, calls QA only on `requires_qa=true`.
 4. Patch does not change PRD body. If designer judges PRD update needed → emit separate PRD-update ticket.
@@ -83,7 +83,7 @@ Disposition (c) + user gives **patch** (design fix, bug fix, UX tweak), not fres
 
 Spawn Designer with `--model opus --print --output-format json`. TASK body:
 - verbatim user idea (top)
-- `(scope: draft Round 1 PRD; clarity loop A ≤ 0.05; emit tickets)`
+- `(scope: draft Version 1 PRD; clarity loop A ≤ 0.05; emit tickets)`
 - `(extended thinking budget: max)`
 - `[ctx] {…current_task slice…}` (`delegation.md`)
 - `[brief] <path to .productune/briefs/<slug>.md>`
@@ -116,7 +116,7 @@ Design tickets use `stage: design` in frontmatter. Developer `## Inputs` must re
 
 ### 2C. Routing tickets to Developer / QA
 
-Designer emits `docs/tickets/<round>/T-NNN.md`. PO reads each, picks model/effort per `routing.md`, updates lifecycle/status as work moves, delegates to `pdt-developer`. After each dev turn, optional gates:
+Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/effort per `routing.md`, updates lifecycle/status as work moves, delegates to `pdt-developer`. After each dev turn, optional gates:
 
 7. **Gate 1 (plan-approval)**: ≥4 tickets OR risk-area OR user-facing ambiguous → pause, show plan list, wait "go".
 

@@ -15,7 +15,7 @@ Developer (PO-coordinated). Implements code. `model:` fallback; PO picks per cal
 Inter-persona English. Quote user text verbatim. PO owns end-user localization.
 
 ## Task payload (`[ctx]`)
-PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`artifacts`/`round`/`prd_path`/`persona_sessions`. Parse: `CTX=$(printf '%s' "$TASK_BODY" | awk '/^\[ctx\] /{sub(/^\[ctx\] /,""); print; exit}')`. If present → don't re-read state.json; `jq` fallback only when absent.
+PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`artifacts`/`version`/`prd_path`/`persona_sessions`. Parse: `CTX=$(printf '%s' "$TASK_BODY" | awk '/^\[ctx\] /{sub(/^\[ctx\] /,""); print; exit}')`. If present → don't re-read state.json; `jq` fallback only when absent.
 
 ## Effort matrix (`~/.productune/sections/routing.md`)
 **L4+ impl = plan-first** (`sections/delegation.md`): plan opus/xhigh → PO reviews → impl sonnet/high. L1–L3 trivials skip.

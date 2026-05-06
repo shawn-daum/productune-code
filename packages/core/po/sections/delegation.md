@@ -6,7 +6,7 @@
 
 PO's remaining writes (hook can't infer):
 - Open `current_task` with semantic `slug` + `request_summary` + `artifacts` *before* delegating (else hook auto-creates `auto-<ts>` slug + `pre-delegate-task-check` blocks). `jq`, not `python3`.
-- Update `docs/tickets/<round>/T-NNN.md` lifecycle metadata when routing/closing: status, timestamps, duration, assignee/routing/model/effort/progress refs only. No body/request/acceptance/scope edits.
+- Update `docs/tickets/<version>/T-NNN.md` lifecycle metadata when routing/closing: status, timestamps, duration, assignee/routing/model/effort/progress refs only. No body/request/acceptance/scope edits.
 - Read SID from `current_task.persona_sessions.<persona>` (hook blocks unknown UUIDs via R4).
 - Append `effort_history`, `complexity_level`, `confidence_history` after call.
 
@@ -30,7 +30,7 @@ NEXT_NUM=$(jq -r '([.past_tickets[]?.ticket_id // empty, .current_task.ticket_id
   | map(select(. != null) | sub("^T-"; "") | tonumber) | max // 0) + 1' "$STATE" 2>/dev/null || echo 1)
 NEXT_TID=$(printf "T-%03d" "$NEXT_NUM")
 CTX=$(jq -c --arg ntid "$NEXT_TID" '{slug:.current_task.slug, request_summary:.current_task.request_summary,
-  artifacts:(.current_task.artifacts // []), round:(.current_task.round // null),
+  artifacts:(.current_task.artifacts // []), version:(.current_task.version // .current_task.round // null),
   prd_path:(.current_task.prd_path // null), brief_path:(.current_task.input.brief_path // null),
   persona_sessions:(.current_task.persona_sessions // {}), next_ticket_id:$ntid}' "$STATE")
 
@@ -93,10 +93,10 @@ After parse: inspect `CONFIDENCE` + `UNRESOLVED`. Low/non-empty → quality esca
 
 ## PRD delegation (Designer, clarity loop)
 
-Stage 2A discovery done → delegate Round 1 PRD:
+Stage 2A discovery done → delegate Version 1 PRD:
 
 ```bash
-PERSONA=pdt-designer; SCOPE='draft Round 1 PRD with clarity loop A ≤ 0.05; emit tickets when ready'
+PERSONA=pdt-designer; SCOPE='draft Version 1 PRD with clarity loop A ≤ 0.05; emit tickets when ready'
 MODEL=opus; EFFORT=max; COMPLEXITY=L7
 BRIEF_PATH=$(jq -r '.current_task.input.brief_path // empty' "$STATE")
 TASK="$USER_TEXT
@@ -111,7 +111,7 @@ Designer returns:
 // needs-info — relay next_question
 {"state":"needs-info","next_question":"어떤 기기/플랫폼이 1순위인가요?","missing_slot":"scope_boundary","ambiguity_score":0.18,"round":2}
 // ready — PRD + tickets shipped
-{"state":"ready","prd_path":"docs/prd/<slug>.md","tickets":["docs/tickets/r1/T-001.md"],
+{"state":"ready","prd_path":"docs/prd/<slug>.md","tickets":["docs/tickets/v1/T-001.md"],
  "ambiguity_score":0.04,"slot_clarity":{},"confidence":0.92,"unresolved":[]}
 ```
 

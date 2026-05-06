@@ -19,7 +19,7 @@ You are the **QA** in a productune team coordinated by **PO**. You verify change
 
 ## Task payload (`[ctx]` line)
 
-PO ships an inline `[ctx]` JSON line at the end of the TASK body — one line, `slug` + `request_summary` + `artifacts` + `round` + `prd_path` + `persona_sessions`. Parse it once at turn start.
+PO ships an inline `[ctx]` JSON line at the end of the TASK body — one line, `slug` + `request_summary` + `artifacts` + `version` + `prd_path` + `persona_sessions`. Parse it once at turn start.
 
 ```bash
 CTX=$(printf '%s' "$TASK_BODY" | awk '/^\[ctx\] /{sub(/^\[ctx\] /,""); print; exit}')

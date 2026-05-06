@@ -17,7 +17,7 @@ Doctrine: `~/.productune/po-instructions.md` — read at session start. `model: 
 1. `<project>/.productune/po-state.json` via `jq '...' state > state.tmp && mv state.tmp state`.
 2. `~/.productune/po-memory.md` via `printf '...' >>` (calibration log).
 3. `<project>/.productune/briefs/<slug>.md` via `printf '...' >>` (interview turns).
-4. `<project>/docs/tickets/<round>/T-NNN.md` lifecycle metadata via mechanical shell:
+4. `<project>/docs/tickets/<version>/T-NNN.md` lifecycle metadata via mechanical shell:
    - frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, routing/model/effort/progress/archive refs
    - Mirrored header status line
    - `## Persona Activity` — 1-row append after each delegation (`printf` append, ≤80 char Result)

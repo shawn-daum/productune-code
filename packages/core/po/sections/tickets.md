@@ -4,7 +4,7 @@
 
 Trivial work skips stages. **Designer owns Stage 1 (PRD) + Stage 3 (Issue split/content). PO owns sequencing/routing + ticket lifecycle state.**
 
-**Normal round**:
+**Normal cycle** (one Version end-to-end):
 ```
 1. PRD     — Designer (opus + ⚡max), clarity loop A ≤ 0.05
 2. Design  — Designer (opus + high)
@@ -23,7 +23,7 @@ Trivial work skips stages. **Designer owns Stage 1 (PRD) + Stage 3 (Issue split/
 → repeat
 ```
 
-**MVP round**: 1. MVP PRD (opus + ⚡max, R1 clarity) · 2. QA acceptance = MVP accepted · 3. Build (Issue → Impl → QA cycles) · 4. Deploy (user manual; PO surfaces checklist) · 5. Next round PRD update (opus + ⚡xhigh on usage data).
+**MVP cycle** (Version 1): 1. MVP PRD (opus + ⚡max, R1 clarity) · 2. QA acceptance = MVP accepted · 3. Build (Issue → Impl → QA loops) · 4. Deploy (user manual; PO surfaces checklist) · 5. Next Version PRD update (opus + ⚡xhigh on usage data).
 
 PO announces stage transitions (1 line): `→ Stage: PRD 작성 (Designer)`. Trivial skip: `→ stage Test 생략 — L1 single-line`.
 
@@ -37,8 +37,8 @@ OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` 
 |---|---|---|
 | `<project>/.productune/briefs/<slug>.md` | PO | `printf >>` |
 | `docs/prd/<slug>.md` | Designer | inside delegated session |
-| `docs/tickets/<round>/T-NNN.md` body/AC | Designer | emit alongside PRD |
-| `docs/tickets/<round>/T-NNN.md` lifecycle frontmatter/status | PO | mechanical |
+| `docs/tickets/<version>/T-NNN.md` body/AC | Designer | emit alongside PRD |
+| `docs/tickets/<version>/T-NNN.md` lifecycle frontmatter/status | PO | mechanical |
 | `docs/design/**/*.md` | Designer | Designer Write |
 | `<project>/.productune/po-state.json` | PO + post-delegate hook | `jq` |
 | `~/.productune/po-memory.md` (calibration) | PO | `printf >>` |
@@ -55,7 +55,7 @@ PO **never** writes authored content. Lifecycle/frontmatter = state, not authori
 | Mirrored header status line | ✅ sed |
 | `## Persona Activity` table — 1-row append-only (≤80 char Result) | ✅ printf |
 | `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope` body | ❌ Designer |
-| `## Outcome` narrative | ❌ Designer (round-close) |
+| `## Outcome` narrative | ❌ Designer (Version close) |
 | Title substantive change | ❌ Designer |
 
 **PO refusal 2-line template** (on content-change request):
@@ -70,13 +70,13 @@ PO **never** writes authored content. Lifecycle/frontmatter = state, not authori
 
 ## Ticket system
 
-Task = ticket (1:1). PRD round bundles tickets, exports per round. **Designer drafts ticket file, owns content.** PO routes + owns lifecycle: status transitions, timestamps, assignee/routing meta, progress, archive sync with `po-state`.
+Task = ticket (1:1). One PRD per Version; Version bundles its tickets, exported per Version. **Designer drafts ticket file, owns content.** PO routes + owns lifecycle: status transitions, timestamps, assignee/routing meta, progress, archive sync with `po-state`.
 
 ### po-state.json schema
 
 ```json
 {
-  "current_round": "v1.0-MVP",
+  "current_version": "v1.0-MVP",
   "current_task": {
     "ticket_id": "T-042", "slug": "...", "title": "...",
     "status": "todo|in-progress|review|done|blocked",
@@ -101,21 +101,21 @@ Task = ticket (1:1). PRD round bundles tickets, exports per round. **Designer dr
       "escalation_triggered":true,"notes":"1-line PO judgement"}
   },
   "past_tickets": [],
-  "rounds": [{"id":"v1.0-MVP","started_at":"...","ended_at":"...","prd_anchor":"docs/prd/<slug>.md#round-1"}],
+  "versions": [{"id":"v1.0-MVP","started_at":"...","ended_at":"...","prd_anchor":"docs/prd/<slug>.md#version-1"}],
   "recent_turns": []
 }
 ```
 
-(Legacy `past_tasks` — read-compat one round. New code reads `past_tickets` first.)
+(Legacy `past_tasks` + `current_round` / `rounds[]` — read-compat one cycle. New code reads `past_tickets` / `current_version` / `versions[]` first; falls back to legacy keys when absent.)
 
 ### Ticket file format (Designer-emitted, PO-lifecycle-managed)
 
-`docs/tickets/<round>/T-NNN.md`:
+`docs/tickets/<version>/T-NNN.md`:
 
 ```markdown
 ---
 ticket_id: T-042
-round: v1.0-MVP
+version: v1.0-MVP
 stage: impl
 status: todo
 assignee: pdt-developer
@@ -131,7 +131,7 @@ worktree_path: null
 
 # T-042: <title>
 
-**Round**: v1.0-MVP  **Stage**: impl  **Status**: todo  **Assignee**: pdt-developer
+**Version**: v1.0-MVP  **Stage**: impl  **Status**: todo  **Assignee**: pdt-developer
 **PRD anchor**: docs/prd/<slug>.md#<section>
 **Estimated complexity**: L<n>  **Risk flags**: <auth|payments|migration|none>
 
@@ -175,7 +175,7 @@ Mechanical rules:
 - `branch` / `worktree_path`: set on open; do not delete on close (history).
 - `## Outcome` = content. Delegate if product meaning needed.
 
-Round close → mechanical status/backfill sweep. Outcome text needed → single Designer call: `"Round v1.0-MVP closed. Append ## Outcome summaries from past_tickets[] without changing scope/AC."`
+Version close → mechanical status/backfill sweep. Outcome text needed → single Designer call: `"Version v1.0-MVP closed. Append ## Outcome summaries from past_tickets[] without changing scope/AC."`
 
 ### Ticket id allocation
 
