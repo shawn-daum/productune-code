@@ -52,7 +52,7 @@ export function bootstrapPersonaMemory(projectDir: string) {
   ensureFile(
     path.join(projectDir, 'docs/qa/fail-patterns.md'),
     '# QA fail patterns\n\n' +
-      'Per-Version log of QA fail loops. Read by Designer at Phase 2 PRD authoring\n' +
+      'Per-Version log of QA fail loops. Read by Designer at Phase 1 PRD authoring\n' +
       '(Test ticket trigger #3: same area-tag ≥3 累累 fail → emit `stage:test` ticket).\n\n' +
       '## Schema\n\n' +
       '- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>\n\n' +
@@ -64,7 +64,7 @@ export function bootstrapPersonaMemory(projectDir: string) {
     path.join(projectDir, 'docs/designer/feature-history.md'),
     '# Feature history\n\n' +
       'Per-Version log of feature decisions / scope choices / deferrals.\n' +
-      'Read at Phase 2 PRD authoring; appended by Designer at Phase 5 Version close.\n\n' +
+      'Read at Phase 1 PRD authoring; appended by Designer at Phase 4 Version close.\n\n' +
       '## Schema\n\n' +
       '- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>\n\n' +
       'decision-type ∈ `shipped | deferred | dropped | scope-change`.\n' +
