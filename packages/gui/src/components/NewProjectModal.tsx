@@ -9,9 +9,8 @@ interface Props {
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,}$/
 
 export default function NewProjectModal({ onCreated, onCancel }: Props) {
-  const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [step, setStep] = useState<1 | 2>(1)
   const [slug, setSlug] = useState('')
-  const [mode, setMode] = useState<'planner' | 'developer'>('planner')
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [createdDir, setCreatedDir] = useState('')
@@ -21,23 +20,15 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
     return ''
   }
 
-  function handleNext() {
+  async function handleCreate() {
     const err = validateSlug(slug)
     if (err) { setError(err); return }
     setError('')
-    setStep(2)
-  }
-
-  async function handleCreate() {
     setCreating(true)
     try {
-      const result = await (window as any).api.createProject({ slug, mode })
-      if (mode === 'planner') {
-        setCreatedDir(result.projectDir)
-        setStep(3)
-      } else {
-        onCreated(result.projectDir, slug)
-      }
+      const result = await (window as any).api.createProject({ slug })
+      setCreatedDir(result.projectDir)
+      setStep(2)
     } catch (e: any) {
       setError(e?.message ?? '생성 실패')
       setCreating(false)
@@ -61,14 +52,14 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
               value={slug}
               autoFocus
               onChange={e => { setSlug(e.target.value); setError('') }}
-              onKeyDown={e => e.key === 'Enter' && handleNext()}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
             />
             {error && <div style={errStyle}>{error}</div>}
             <div style={hint}>영소문자, 숫자, 하이픈만 사용 가능합니다.</div>
           </div>
         )}
 
-        {step === 3 && (
+        {step === 2 && (
           <GitHubOAuthFlow
             slug={slug}
             projectDir={createdDir}
@@ -76,43 +67,12 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
           />
         )}
 
-        {step === 2 && (
-          <div style={body}>
-            <label style={label}>모드 선택</label>
-            {(['planner', 'developer'] as const).map(m => (
-              <div
-                key={m}
-                style={{ ...modeCard, borderColor: mode === m ? '#FF6B2B' : '#333' }}
-                onClick={() => setMode(m)}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ ...radio, background: mode === m ? '#FF6B2B' : 'transparent' }} />
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>
-                    {m === 'planner' ? '🧭 Planner' : '⚡ Developer'}
-                  </span>
-                </div>
-                <div style={{ color: '#A0A0A0', fontSize: 12, marginTop: 4, paddingLeft: 24 }}>
-                  {m === 'planner'
-                    ? 'AI가 PRD·디자인·구현·QA를 모두 처리합니다. GitHub 연동 포함.'
-                    : '기존 코드베이스에 AI를 붙여 쓰는 developer 중심 워크플로.'}
-                </div>
-              </div>
-            ))}
-            {error && <div style={errStyle}>{error}</div>}
-          </div>
-        )}
-
-        {step !== 3 && (
+        {step === 1 && (
           <div style={footer}>
-            <button style={btnSecondary} onClick={step === 1 ? onCancel : () => setStep(1)}>
-              {step === 1 ? '취소' : '← 이전'}
+            <button style={btnSecondary} onClick={onCancel}>취소</button>
+            <button style={{ ...btnPrimary, opacity: creating ? 0.6 : 1 }} onClick={handleCreate} disabled={creating}>
+              {creating ? '생성 중…' : '만들기'}
             </button>
-            {step === 1
-              ? <button style={btnPrimary} onClick={handleNext}>다음 →</button>
-              : <button style={{ ...btnPrimary, opacity: creating ? 0.6 : 1 }} onClick={handleCreate} disabled={creating}>
-                  {creating ? '생성 중…' : '만들기'}
-                </button>
-            }
           </div>
         )}
       </div>
@@ -143,13 +103,6 @@ const input: React.CSSProperties = {
 }
 const hint: React.CSSProperties = { fontSize: 11, color: '#505050' }
 const errStyle: React.CSSProperties = { fontSize: 12, color: '#EF4444' }
-const modeCard: React.CSSProperties = {
-  background: '#242424', border: '1px solid #333', borderRadius: 8,
-  padding: '12px 14px', cursor: 'pointer',
-}
-const radio: React.CSSProperties = {
-  width: 14, height: 14, borderRadius: 9999, border: '2px solid #FF6B2B', flexShrink: 0,
-}
 const btnPrimary: React.CSSProperties = {
   background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
   padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',

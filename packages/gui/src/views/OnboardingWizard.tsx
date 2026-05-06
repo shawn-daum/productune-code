@@ -195,6 +195,10 @@ export default function OnboardingWizard({ onDone }: Props) {
           <>
             <div style={body}>
               <div style={stepLabel}>Step 1 / 4 — AI 엔진 선택</div>
+              <div style={stepIntro}>
+                프로덕트 팀원은 모두 Claude Code로 고정입니다.<br />
+                PO로 사용할 AI 엔진을 선택해주세요.
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                 {engineOptions.map(opt => (
                   <OptionCard
@@ -203,7 +207,8 @@ export default function OnboardingWizard({ onDone }: Props) {
                     onClick={() => setEngine(opt.value)}
                     label={opt.label}
                     badge={opt.badge}
-                    desc={opt.desc}
+                    intro={opt.intro}
+                    tech={opt.tech}
                   />
                 ))}
               </div>
@@ -220,6 +225,10 @@ export default function OnboardingWizard({ onDone }: Props) {
           <>
             <div style={body}>
               <div style={stepLabel}>Step 2 / 4 — 엔진 연결 확인</div>
+              <div style={stepIntro}>
+                선택한 엔진이 정상 연결되어 있는지 확인합니다.<br />
+                미연결 상태로도 진행할 수 있어요 — 나중에 설정에서 다시 연결 가능합니다.
+              </div>
 
               {checkingEngine ? (
                 <div style={hint}>⏳ 엔진 상태 확인 중...</div>
@@ -248,19 +257,22 @@ export default function OnboardingWizard({ onDone }: Props) {
                 </div>
               )}
 
-              {!checkingEngine && !engineFullyReady && (
-                <div style={{ fontSize: 11, color: '#505050', marginTop: 12 }}>
-                  * 터미널에서 로그인 후 재확인 버튼을 누르세요. 미완료 상태로도 진행할 수 있습니다.
-                </div>
-              )}
             </div>
             <div style={footer}>
               <button style={btnSecondary} onClick={() => setStep(1)}>← 이전</button>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button style={btnSkip} onClick={() => setStep(3)}>건너뛰기</button>
+                {!engineFullyReady && (
+                  <button style={btnSkip} onClick={() => setStep(3)}>지금은 건너뛰기</button>
+                )}
                 <button
-                  style={{ ...btnPrimary, opacity: engineFullyReady ? 1 : 0.6 }}
+                  style={{
+                    ...btnPrimary,
+                    opacity: engineFullyReady ? 1 : 0.4,
+                    cursor: engineFullyReady ? 'pointer' : 'not-allowed',
+                    pointerEvents: engineFullyReady ? 'auto' : 'none',
+                  }}
                   onClick={() => setStep(3)}
+                  disabled={!engineFullyReady}
                 >
                   다음 →
                 </button>
@@ -273,7 +285,10 @@ export default function OnboardingWizard({ onDone }: Props) {
         {step === 3 && (
           <>
             <div style={body}>
-              <div style={stepLabel}>Step 3 / 4 — Wiki 메모리 백엔드</div>
+              <div style={stepLabel}>Step 3 / 4 — 기억 저장 방식</div>
+              <div style={stepIntro}>
+                PO와 프로덕트 팀원의 기억을 담당하는 방식을 선택해주세요.
+              </div>
 
               {(detectingHw || !hardware) ? (
                 <div style={hwSpinner}>
@@ -299,7 +314,8 @@ export default function OnboardingWizard({ onDone }: Props) {
                         onClick={() => setWikiBackend(opt.value)}
                         label={opt.label}
                         badge={opt.recommended(hardware.tier) ? '권장' : undefined}
-                        desc={opt.desc}
+                        intro={opt.intro}
+                        tech={opt.tech}
                       />
                     ))}
                   </div>
@@ -459,13 +475,14 @@ export default function OnboardingWizard({ onDone }: Props) {
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 function OptionCard({
-  selected, onClick, label, badge, desc,
+  selected, onClick, label, badge, intro, tech,
 }: {
   selected: boolean
   onClick: () => void
   label: string
   badge?: string
-  desc: string
+  intro: string
+  tech: string
 }) {
   return (
     <div
@@ -488,7 +505,8 @@ function OptionCard({
           </span>
         )}
       </div>
-      <div style={{ fontSize: 12, color: '#707070', marginTop: 4, paddingLeft: 24 }}>{desc}</div>
+      <div style={{ fontSize: 12.5, color: '#A0A0A0', marginTop: 5, paddingLeft: 24, lineHeight: 1.45 }}>{intro}</div>
+      <div style={{ fontSize: 11, color: '#606060', marginTop: 2, paddingLeft: 24, lineHeight: 1.45 }}>{tech}</div>
     </div>
   )
 }
@@ -590,51 +608,56 @@ function logLineColor(line: string): string {
 
 // ── Data ───────────────────────────────────────────────────────────────────────
 
-const engineOptions: { value: Engine; label: string; badge?: string; desc: string }[] = [
+const engineOptions: { value: Engine; label: string; badge?: string; intro: string; tech: string }[] = [
   {
     value: 'claude',
     label: 'Claude Code',
     badge: '권장',
-    desc: 'Claude 3.x 기반. hooks 완전 지원. R1/R2/R4 워크플로 적용.',
+    intro: 'Anthropic Claude로 PO 운영 — 가장 안정적',
+    tech: 'claude-code CLI · hooks/skills 완전 지원',
   },
   {
     value: 'codex',
     label: 'Codex',
-    desc: 'OpenAI Codex CLI. doctrine-only (hooks 미작동).',
+    intro: 'OpenAI 기반으로 PO 운영 (실험적)',
+    tech: 'codex CLI · doctrine만 적용 (hooks 미작동)',
   },
   {
     value: 'both',
     label: '둘 다',
-    desc: 'Claude Code 기본 + Codex 보조 사용.',
+    intro: 'Claude를 기본으로, Codex를 보조로',
+    tech: 'primary=claude-code, secondary=codex',
   },
 ]
 
-const wikiOptions: { value: WikiBackend; label: string; desc: string; recommended: (tier: Tier) => boolean }[] = [
+const wikiOptions: { value: WikiBackend; label: string; intro: string; tech: string; recommended: (tier: Tier) => boolean }[] = [
   {
     value: 'graphiti',
     label: 'Graphiti',
-    desc: '그래프 DB 기반 장기 기억. Docker + 로컬 LLM 필요. Tier S/A 환경 권장.',
+    intro: '그래프 DB 기반 장기기억',
+    tech: 'Docker + 로컬 LLM 필요 (Tier S/A 환경 권장)',
     recommended: (tier) => tier === 'S' || tier === 'A',
   },
   {
     value: 'filesystem',
     label: 'Filesystem',
-    desc: '심플, 의존성 없음. wiki-keeper 에이전트(Claude API)가 마크다운 파일로 기억 관리.',
+    intro: 'Claude가 마크다운 파일로 기억 관리',
+    tech: '라이브러리 의존성 없음 · Claude API 토큰 소모',
     recommended: (tier) => tier === 'B',
   },
 ]
 
 const completionSteps = [
-  '~/.productune/productune.env 생성',
-  'agents/ → ~/.claude/agents/ 심링크',
-  'po-instructions.md 복사',
-  'po-memory.md 초기화',
+  '환경 설정 파일 생성 (~/.productune/productune.env)',
+  'PO 에이전트 등록 (agents/ → ~/.claude/agents/ 심링크)',
+  'PO 지침 적용 (po-instructions.md)',
+  'PO 메모리 초기화 (po-memory.md)',
 ]
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 
 const wrap: React.CSSProperties = {
-  position: 'fixed', inset: 0,
+  flex: 1, minHeight: 0,
   background: '#0A0A0A',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
@@ -671,6 +694,10 @@ const footer: React.CSSProperties = {
 const stepLabel: React.CSSProperties = {
   fontSize: 11, color: '#505050', textTransform: 'uppercase',
   letterSpacing: '0.06em', marginBottom: 8,
+}
+const stepIntro: React.CSSProperties = {
+  fontSize: 12.5, color: '#B0B0B0', lineHeight: 1.55,
+  marginBottom: 12,
 }
 const hint: React.CSSProperties = { fontSize: 12, color: '#505050', marginTop: 8 }
 const hwBadgeRow: React.CSSProperties = {
