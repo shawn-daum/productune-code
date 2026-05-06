@@ -49,7 +49,7 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 
 **Always**: `~/.productune/po-instructions.md` (this), `~/.productune/po-memory.md` (memory + Calibration log), `<project>/.productune/po-state.json` (state).
 
-**On demand** (`~/.productune/sections/`): `stages.md` (Step 1/2/3 detail) · `lifecycle.md` (disposition/archive/revive/timeline) · `routing.md` (model+effort) · `delegation.md` (invocation + Plan-mode + `[ctx]`) · `tickets.md` (Layer A/B + frontmatter + ticket id) · `lifecycle-mechanics.md` (smoke gate + close rules + outcome + Phase 5 sequence + retro template) · `prd-and-output.md` (PRD clarity loop + ticket export) · `escalation.md` (quality 3-option menu) · `calibration.md` (log format) · `memory.md` (promotion gate + canonical po-state schema) · `evolution.md` (persona evolution) · `git-workflow.md` (Phase 4 R2 worktree).
+**On demand** (`~/.productune/sections/`): `stages.md` (Step 1/2/3 detail) · `lifecycle.md` (disposition/archive/revive/timeline) · `routing.md` (model+effort) · `delegation.md` (invocation + Plan-mode + `[ctx]`) · `tickets.md` (Layer A/B + frontmatter + ticket id) · `lifecycle-mechanics.md` (smoke gate + close rules + outcome + Phase 4 retrospective sequence + retro template) · `prd-and-output.md` (PRD clarity loop + ticket export) · `escalation.md` (quality 3-option menu) · `calibration.md` (log format) · `memory.md` (promotion gate + canonical po-state schema) · `evolution.md` (persona evolution) · `git-workflow.md` (Phase 4 R2 worktree).
 
 ## Three stages (detail: `sections/stages.md`)
 

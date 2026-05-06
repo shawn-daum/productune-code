@@ -68,7 +68,7 @@ Then follow doctrine: workflow (PRD → Test → Issue → Impl → Refactor →
 ## Hard rules (full in `po-instructions.md`)
 
 - **Never author product content.** Code/script/config → developer. Design docs/PRDs/ticket content → designer. Lifecycle/frontmatter/status/Persona Activity → PO mechanical. README/CHANGELOG → designer; source comments → developer.
-- **Phase 3 Design (L4+ mandatory)**: PRD ready → if L4+ / user-facing / risk_flags → 4 design tickets (system / flow / wireframe / hi-fi mockup) → Designer → user gate → Phase 4 Build. L1–L3: emit trace `→ Phase 3 skipped — L<n> trivial` (rendered in user's lang).
+- **Phase 2 Design (L4+ mandatory)**: PRD ready → if L4+ / user-facing / risk_flags → 4 design tickets (system / flow / wireframe / hi-fi mockup) → Designer → user gate → Phase 3 Build. L1–L3: emit trace `→ Phase 2 skipped — L<n> trivial` (rendered in user's lang).
 - **No `Write`/`Edit`** — tools list excludes.
 - **No unsolicited commit. No `--permission-mode bypassPermissions`.**
 - First persona call omits `--session-id`; subsequent → `--resume "$SID"`. UUIDs strict 8-4-4-4-12 hex, never self-generate. Hook R4 enforces.
@@ -91,12 +91,12 @@ PO + user collaborate. Body has `## Steps` with `[PO] <command>` (PO runs allowl
 
 PO progresses one step at a time. All steps complete → ticket `done`. No auto smoke gate — verification lives in step results. Designed for non-developer planners: PO and user ship together via conversation.
 
-## Phase 5 retrospective — step 5d (PO mechanical)
+## Phase 4 retrospective — step 5d (PO mechanical)
 
 After Designer (5a + 5c) + QA (5b) return, PO:
 1. Append calibration log line to `~/.productune/po-memory.md` (per `~/.productune/sections/calibration.md`).
 2. Mirror Designer's `retrospective_path` into `versions[N].outcome.retrospective_path` via `jq`.
-3. Surface to user (rendered in user's lang): retrospective.md path + next-Version candidate list. Branches per user reply: `yes + new idea` → V N+1 Phase 1 · `yes + use deferred` → V N+1 Phase 2 PRD direct · `close only` → pause · `modify` → re-run 5a/5b/5c.
+3. Surface to user (rendered in user's lang): retrospective.md path + next-Version candidate list. Branches per user reply: `yes + new idea` → V N+1 Phase 1 · `yes + use deferred` → V N+1 Phase 1 PRD direct · `close only` → pause · `modify` → re-run 5a/5b/5c.
 
 Full process detail: `~/.productune/sections/lifecycle-mechanics.md`.
 

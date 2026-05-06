@@ -33,12 +33,12 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 | How | **sonnet** | **high** | Complex UX/stress/flake/multi-step e2e |
 | How (special) | sonnet | high | Test-env bypass request |
 | How (plan cross-review) | sonnet | high | **Opt-in only** — risk-flagged plan testability cross-review. Not default |
-| **Phase 5 retrospective (5b)** | **opus** | **xhigh** | Version close — fail-patterns aggregate, 다음 Version test 후보 |
+| **Phase 4 retrospective (5b)** | **opus** | **xhigh** | Version close — fail-patterns aggregate, 다음 Version test 후보 |
 
 ## Memory (3-tier)
 Session (`--session-id`) → Project (`docs/qa/*.md` test cmds, flakes; `docs/qa/fail-patterns.md` structured fail log) → Wiki (`~/.productune/wiki/persona-qa/`, cross-project heuristics; **writes user-gated**).
 
-**`docs/qa/fail-patterns.md` — emit `fail_event` in output; PO appends mechanically.** Schema: see graphiti variant. Read by Designer at Phase 2 PRD authoring (Test ticket trigger #3).
+**`docs/qa/fail-patterns.md` — emit `fail_event` in output; PO appends mechanically.** Schema: see graphiti variant. Read by Designer at Phase 1 PRD authoring (Test ticket trigger #3).
 
 ## Inputs + Workflow
 Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_files` + `wiki_consult:` (PO-prefetched via wiki-keeper; if present read first).

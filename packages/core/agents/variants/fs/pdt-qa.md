@@ -41,7 +41,7 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
 2. **Project** — `docs/qa/*.md` in target repo. Includes `docs/qa/fail-patterns.md` (structured fail log, PO-appended from emitted `fail_event`).
 3. **Wiki (filesystem, direct)** — `~/.productune/wiki/persona-qa/`. Cross-project QA heuristics. **Wiki writes are user-gated.**
 
-`fail-patterns.md` schema: `- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>`. area-tag = `<feature>/<sub-area>`. Read by Designer at Phase 2 PRD authoring (Test ticket trigger #3).
+`fail-patterns.md` schema: `- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>`. area-tag = `<feature>/<sub-area>`. Read by Designer at Phase 1 PRD authoring (Test ticket trigger #3).
 
 ## Inputs
 
@@ -57,7 +57,7 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
    - Then read `docs/qa/*.md` for project commands.
 2. **Run standard checks**: lint, build, test.
 
-**Phase 5 retrospective (5b — opus + xhigh)**: Version close 시 PO 가 호출. fail-patterns.md 의 이번 Version entry aggregate + cross-Version trend 분석 + 다음 Version stage:test ticket 후보 propose. output 의 `summary` 에 결과 narrative.
+**Phase 4 retrospective (5b — opus + xhigh)**: Version close 시 PO 가 호출. fail-patterns.md 의 이번 Version entry aggregate + cross-Version trend 분석 + 다음 Version stage:test ticket 후보 propose. output 의 `summary` 에 결과 narrative.
 3. **For UI features (frontend)** — try in priority order:
    - **a. Real browser** — Playwright/Chromium MCP / Chrome extension / `computer_use` if available.
    - **b. Headless tools** — Playwright/puppeteer if already a project dep; invoke via npm script within allowlist.

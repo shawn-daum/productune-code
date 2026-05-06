@@ -88,6 +88,42 @@ auto_migrate_round_to_version() {
 }
 auto_migrate_round_to_version
 
+# Schema migration (Discovery drop): legacy 5-phase numbering shifted to 4-phase.
+# Discovery (was Phase 1) merged into PRD's clarity loop. Mapping:
+#   old 1 (Discovery) → new 1 (PRD)         — Phase 1 stays as PRD entry point
+#   old 2 (PRD)       → new 1 (PRD)
+#   old 3 (Design)    → new 2 (Design)
+#   old 4 (Build)     → new 3 (Build)
+#   old 5 (Close)     → new 4 (Close)
+# Detected via marker key `_phase_schema_v` ; idempotent.
+auto_migrate_phase_5to4() {
+  local tmp; tmp="$(mktemp)"
+  if jq '
+    if (._phase_schema_v // 1) < 2 then
+      ._phase_schema_v = 2
+      | (if has("current_phase") and .current_phase != null
+           then .current_phase = (if .current_phase <= 2 then 1 else .current_phase - 1 end)
+           else . end)
+      | (if has("phase_history") and (.phase_history | type) == "array"
+           then .phase_history |= map(
+               if has("phase") and .phase != null
+                 then .phase = (if .phase <= 2 then 1 else .phase - 1 end)
+                 else . end)
+           else . end)
+    else . end
+  ' "$STATE" > "$tmp" 2>/dev/null; then
+    if ! cmp -s "$STATE" "$tmp"; then
+      mv "$tmp" "$STATE"
+      printf '[productune] schema migrate: 5-phase → 4-phase (Discovery merged into PRD)\n' >&2
+    else
+      rm -f "$tmp"
+    fi
+  else
+    rm -f "$tmp"
+  fi
+}
+auto_migrate_phase_5to4
+
 emit_block() {
   printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$1" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
   exit 0

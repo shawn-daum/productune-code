@@ -6,10 +6,10 @@
 
 - **Stage-specific doctrine** lives with the persona that owns the stage:
   - `stage:design` 4-artifact set + `stage:test` emission triggers → `~/.claude/agents/pdt-designer.md`
-  - `stage:deploy` body shape (`[PO]/[user]` steps) + Phase 5 step 5d → `~/.claude/agents/pdt-po.md`
-  - Phase 5 step 5a / 5c (Designer measurement + retrospective narrative) → `~/.claude/agents/pdt-designer.md`
-  - Phase 5 step 5b (QA fail-pattern aggregate) → `~/.claude/agents/pdt-qa.md`
-- **PO mechanical operations** (smoke gate, close rules, outcome measurement, lazy measurement, retro template, Phase 5 sequence) → `~/.productune/sections/lifecycle-mechanics.md`
+  - `stage:deploy` body shape (`[PO]/[user]` steps) + Phase 4 step 5d → `~/.claude/agents/pdt-po.md`
+  - Phase 4 step 5a / 5c (Designer measurement + retrospective narrative) → `~/.claude/agents/pdt-designer.md`
+  - Phase 4 step 5b (QA fail-pattern aggregate) → `~/.claude/agents/pdt-qa.md`
+- **PO mechanical operations** (smoke gate, close rules, outcome measurement, lazy measurement, retro template, Phase 4 sequence) → `~/.productune/sections/lifecycle-mechanics.md`
 - **`po-state.json` schema** → `~/.productune/sections/memory.md`
 
 This file owns: cycle phase definitions (Layer A), ticket type taxonomy (Layer B), naming convention, ticket file format, ticket id allocation, who-writes-what + PO mechanical-write whitelist.
@@ -30,23 +30,24 @@ Layer A drives Layer B (which Phase emits which `stage` ticket).
 ## Layer A — Version Cycle Phases
 
 ```
-Phase 1 Discovery     PO interview → brief                                     [no ticket]
-Phase 2 PRD           Designer clarity loop A ≤ 0.05                           [no ticket — PRD = doc]
+Phase 1 PRD           Designer clarity loop A ≤ 0.05                           [no ticket — PRD = doc]
                       opus + max for V1; opus + xhigh for V2+ updates
-Phase 3 Design        Designer self-execute, 4 artifacts                       [stage:design × 4]
+                      Clarity loop is the discovery mechanism — PO relays questions
+                      to user and answers back; no separate interview phase.
+Phase 2 Design        Designer self-execute, 4 artifacts                       [stage:design × 4]
                       Trigger: L4+ / user-facing / risk_flags ≠ none. Skip: L1–L3 trivial.
-                      → user gate before Phase 4 (4-artifact paths in pdt-designer.md)
-Phase 4 Build         ticket execution
+                      → user gate before Phase 3 (4-artifact paths in pdt-designer.md)
+Phase 3 Build         ticket execution
                       · stage:impl     (required, Developer + auto smoke gate)
                       · stage:refactor (optional, Developer + auto smoke gate)
                       · stage:test     (conditional, QA — triggers in pdt-designer.md)
                       · stage:qa       (independent QA work only)
                       · stage:deploy   (required, pdt-po+user — body shape in pdt-po.md)
-Phase 5 Version close retrospective + calibration                              [no ticket]
+Phase 4 Version close retrospective + calibration                              [no ticket]
                       sequence in lifecycle-mechanics.md; per-step detail in persona files
 ```
 
-PO emits trace at every Phase transition (English template, rendered in user's lang): `→ Phase 3 Design entered (Designer)` · trivial skip: `→ Phase 3 skipped — L<n> trivial`. **MVP cycle (V1)**: Discovery → MVP PRD → Design (conditional) → Build → Version close → next Version on usage data.
+PO emits trace at every Phase transition (English template, rendered in user's lang): `→ Phase 2 Design entered (Designer)` · trivial skip: `→ Phase 2 skipped — L<n> trivial`. **MVP cycle (V1)**: PRD (clarity loop) → Design (conditional) → Build → Version close → next Version on usage data.
 
 OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` + `to-issues` are Designer skills.
 
@@ -54,12 +55,12 @@ OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` 
 
 | stage | assignee | auto smoke gate | When |
 |---|---|---|---|
-| `design` | `pdt-designer` | n/a | Phase 3 |
-| `impl` | `pdt-developer` | **ON** | Phase 4 (required) |
-| `refactor` | `pdt-developer` | **ON** | Phase 4 (optional) |
-| `test` | `pdt-qa` | n/a (is the test plan) | Phase 4 (conditional) |
-| `qa` | `pdt-qa` | n/a (is the QA work) | Phase 4 (independent) |
-| `deploy` | `pdt-po+user` | n/a (per-step verify) | Phase 4 (required, last) |
+| `design` | `pdt-designer` | n/a | Phase 2 |
+| `impl` | `pdt-developer` | **ON** | Phase 3 (required) |
+| `refactor` | `pdt-developer` | **ON** | Phase 3 (optional) |
+| `test` | `pdt-qa` | n/a (is the test plan) | Phase 3 (conditional) |
+| `qa` | `pdt-qa` | n/a (is the QA work) | Phase 3 (independent) |
+| `deploy` | `pdt-po+user` | n/a (per-step verify) | Phase 3 (required, last) |
 
 Smoke gate behavior + close rules → `lifecycle-mechanics.md`.
 
@@ -71,7 +72,7 @@ Smoke gate behavior + close rules → `lifecycle-mechanics.md`.
 
 `docs/tickets/<version>/T-NNN.md` frontmatter (Designer-authored unless marked PO):
 
-Required: `ticket_id`, `version`, `stage`, `status` (PO mechanical), `assignee`, `created_at`, `estimated_complexity`, `risk_flags`. Optional/derived: `started_at` / `completed_at` / `duration_min` (PO mechanical), `branch` / `worktree_path` (git-workflow R2), `qa_status` / `qa_loops` (PO mechanical, impl/refactor only), `success_metric` / `validation_method` (Designer, optional when measurable), `observed_result` (PO mechanical at Phase 5).
+Required: `ticket_id`, `version`, `stage`, `status` (PO mechanical), `assignee`, `created_at`, `estimated_complexity`, `risk_flags`. Optional/derived: `started_at` / `completed_at` / `duration_min` (PO mechanical), `branch` / `worktree_path` (git-workflow R2), `qa_status` / `qa_loops` (PO mechanical, impl/refactor only), `success_metric` / `validation_method` (Designer, optional when measurable), `observed_result` (PO mechanical at Phase 4).
 
 Body: `# T-NNN: <title>` · mirrored header line · `## Request` · `## Inputs` · `## Acceptance` · `## Out of scope` · `## Persona Activity` (PO-managed table). Designer owns scope-defining sections; PO touches only lifecycle / mirrored header / Persona Activity rows. `stage:deploy` body uses `## Steps` (see `pdt-po.md`).
 
@@ -85,7 +86,7 @@ Body: `# T-NNN: <title>` · mirrored header line · `## Request` · `## Inputs` 
 | `docs/tickets/<version>/T-NNN.md` lifecycle frontmatter | PO | mechanical |
 | `docs/design/**/*.md`, `docs/designer/feature-history.md` | Designer | Designer Write |
 | `docs/qa/fail-patterns.md` | PO mechanical | `printf >>` from QA's `fail_event` |
-| `docs/retrospectives/<version>.md` | Designer | Phase 5 step 5c |
+| `docs/retrospectives/<version>.md` | Designer | Phase 4 step 5c |
 | `<project>/.productune/po-state.json` | PO + post-delegate hook | `jq` |
 | `~/.productune/po-memory.md` (calibration) | PO | `printf >>` |
 | Source code, configs, scripts | Developer | Developer Write/Edit |

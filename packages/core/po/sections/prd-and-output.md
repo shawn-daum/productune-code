@@ -5,16 +5,12 @@
 `docs/prd/<slug>.md` mandatory Step 1 deliverable for every new task. **Designer authors.** PO never opens/edits/appends.
 
 PO's role:
-1. Run discovery interview (Step 2A) → brief at `<project>/.productune/briefs/<slug>.md`.
-2. Spawn Designer with `--model opus --print --output-format json`. TASK includes `[brief] <path>` + `[ctx] <slice>`.
-3. Relay clarity-loop questions verbatim; relay user answers back. Append to brief between iterations.
-4. Receive PRD + tickets → route per `tickets.md`.
+1. Spawn Designer with `--model opus --print --output-format json`. TASK includes verbatim user idea + `[ctx] <slice>`. `[brief] <path>` is optional (only if user supplied initial notes).
+2. Relay clarity-loop questions verbatim; relay user answers back. Designer's clarity loop subsumes discovery — there is no separate interview phase.
+3. Receive PRD + tickets → route per `tickets.md`.
 
 Trivial skip is a routing rule, not PO-writing-in-lieu-of-Designer:
-- L1 typo / 1-line fix → PO delegates straight to Developer (no Designer step), no PRD. Announce:
-  ```
-  → stage PRD 생략 — L1 trivial
-  ```
+- L1 typo / 1-line fix → PO delegates straight to Developer (no Designer step), no PRD. Emit trace `→ stage PRD skipped — L1 trivial` (rendered in user's lang).
 
 ---
 
@@ -102,10 +98,10 @@ PRD: docs/prd/<slug>.md (A=0.04, status: Version 1 draft)
 - <open question / manual verify step>
 ```
 
-**Discovery turn** (interview in progress):
+**Clarity-loop iteration turn** (Designer waiting on user answer to disambiguation):
 ```
-인터뷰 진행 중. 현재 brief: <path>
-다음 질문 (Designer 요청): <verbatim from Designer>
+PRD authoring (iteration <n>/5). Designer's question:
+<verbatim from Designer>
 ```
 
 **Feedback turn**: skip PRD line (user knows where it is); lead with what changed since their feedback.

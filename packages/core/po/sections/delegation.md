@@ -93,7 +93,7 @@ After parse: inspect `CONFIDENCE` + `UNRESOLVED`. Low/non-empty → quality esca
 
 ## PRD delegation (Designer, clarity loop)
 
-Step 2A discovery done → delegate Version 1 PRD:
+User has fresh idea → delegate Version 1 PRD directly (clarity loop subsumes discovery):
 
 ```bash
 PERSONA=pdt-designer; SCOPE='draft Version 1 PRD with clarity loop A ≤ 0.05; emit tickets when ready'

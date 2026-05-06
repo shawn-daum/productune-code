@@ -1,6 +1,6 @@
 import type { Phase } from '../../lib/types'
 
-const PHASES: Phase[] = ['Discovery', 'PRD', 'Design', 'Build', 'Close']
+const PHASES: Phase[] = ['PRD', 'Design', 'Build', 'Close']
 
 interface Props {
   phase: Phase

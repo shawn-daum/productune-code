@@ -22,31 +22,27 @@
 
 ## Step 2 — Execution
 
-### 2A. Discovery interview (new ideas only)
-
-Disposition (c) + fresh idea → PO runs first-touch interview. Skills: `pm-product-discovery:interview-script`, `:brainstorm-ideas-new`, `pm-market-research:user-personas`, `:competitor-analysis`. User-lang, caveman lite, max 5 turns. Synthesize → English brief (~200 words: problem / target user / evidence / constraints / hypothesized scope) at `<project>/.productune/briefs/<slug>.md`. Brief = Designer's input. PO drafts brief only, never PRD.
-
-### 2A'. Ad-hoc patch routing (PRD-external)
+### 2A. Ad-hoc patch routing (PRD-external)
 
 Disposition (c) + user gives a patch (design fix / bug / UX tweak), not fresh idea → skip discovery/PRD, route to Designer. PO never delegates to Developer directly.
 
 - **Cues (semantic)** — patch: user requests a specific fix / change to existing surface ("fix X", "X looks off", "change X color", "debug this"). Fresh idea: user proposes a new feature or open-ended problem ("let's build X", "how should we solve Y", "redesign this flow"). Ambiguous → 1-line paraphrase + confirm.
 - **Trivial direct exception** — typo / import cleanup / single-line rename: PO handles in-conversation. Anything beyond → Designer.
 - **Designer responsibilities** — (a) author plan into `## Request` + `## Acceptance`; (b) split tickets and choose `stage` per ticket. Each `stage` value (`design|impl|refactor|test|qa|deploy`) determines assignee + auto QA smoke gate behavior automatically (see `tickets.md` Layer B); no separate `requires_qa` flag.
-- **Flow** — call Designer (`opus/high` default; light patch `sonnet/medium`) with scope `(ad-hoc patch — author plan, split tickets, choose stage per ticket)` + `[user instruction]` + `[ctx]`. Designer returns `state:"ready"` with `tickets[]`. PO routes per Step 2C (impl/refactor auto-trigger smoke gate). Patch never edits PRD body — Designer emits a separate PRD-update ticket if needed.
+- **Flow** — call Designer (`opus/high` default; light patch `sonnet/medium`) with scope `(ad-hoc patch — author plan, split tickets, choose stage per ticket)` + `[user instruction]` + `[ctx]`. Designer returns `state:"ready"` with `tickets[]`. PO routes per Step 2C (impl/refactor auto-trigger smoke gate). Patch never edits PRD body — Designer emits a separate PRD-update ticket if needed. (Brief at `<project>/.productune/briefs/<slug>.md` is optional — Designer can start cold with the verbatim user idea; if user already has a brief, pass via `[brief] <path>`.)
 - **Phase 4 R2 git-workflow** — patch tickets auto-spawn worktree (`<project>/.productune/worktrees/<ticket-id>/`, branch `fix/<ticket-id>/<slug>`). Trivial exception works on current base. See `git-workflow.md`.
 
-### 2B. Delegate PRD to Designer (clarity loop)
+### 2B. Phase 1 PRD — Delegate PRD to Designer (clarity loop)
 
-Spawn Designer with `--model opus --print --output-format json`. TASK body = verbatim user idea + `(scope: draft Version 1 PRD; clarity loop A ≤ 0.05; emit tickets)` + `(extended thinking budget: max)` + `[ctx]` (`delegation.md`) + `[brief] <path>`. Designer drives clarity loop (`prd-and-output.md`); each turn returns `state:"needs-info"` with `next_question` (relay verbatim) or `state:"ready"` with `prd_path`, `tickets[]`, `ambiguity_score`, `slot_clarity`, `version_outcome`. PO relays question → user → append to brief → resume. Cap 5 iterations. Beyond → accept PRD with `Open Questions`.
+Spawn Designer with `--model opus --print --output-format json`. TASK body = verbatim user idea + `(scope: draft Version 1 PRD; clarity loop A ≤ 0.05; emit tickets)` + `(extended thinking budget: max)` + `[ctx]` (`delegation.md`) + `[brief] <path>` (optional). Designer drives clarity loop (`prd-and-output.md`); each turn returns `state:"needs-info"` with `next_question` (relay verbatim) or `state:"ready"` with `prd_path`, `tickets[]`, `ambiguity_score`, `slot_clarity`, `version_outcome`. PO relays question → user → optionally append to brief → resume. Clarity loop subsumes discovery — no separate interview phase. Cap 5 iterations. Beyond → accept PRD with `Open Questions`.
 
-### 2B'. Phase 3 Design (PRD ready → 4 design artifacts)
+### 2B'. Phase 2 Design (PRD ready → 4 design artifacts)
 
 **Trigger**: PRD `state:"ready"` AND (complexity ≥ L4 OR user-facing OR `risk_flags` ≠ none).
-**Skip**: L1–L3 + not user-facing + no risk_flags → emit trace `→ Phase 3 Design skipped — L<n> trivial`, proceed to 2C.
+**Skip**: L1–L3 + not user-facing + no risk_flags → emit trace `→ Phase 2 Design skipped — L<n> trivial`, proceed to 2C.
 
 When triggered:
-1. Emit trace `→ Phase 3 Design (Designer) — design system / UX flow / mock UI`.
+1. Emit trace `→ Phase 2 Design (Designer) — design system / UX flow / mock UI`.
 2. Designer emits 4 `stage:design` tickets:
    - `T-NNN-a`: Design System (`docs/design/<slug>/system.md`)
    - `T-NNN-b`: UX Flow Mermaid (`docs/design/<slug>/flow.md`)
@@ -70,9 +66,9 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 12. **Process `promotion_candidates`** per `memory.md`. 1-line propose; on `y` delegate wiki write. PO never writes wiki directly.
 13. **Synthesize, don't dump.** Final summary in user's lang, caveman-lite: what changed, QA verdict, design compliance, manual verify steps, open items.
 
-### 2D. Phase 5 — Version close retrospective
+### 2D. Phase 4 — Version close retrospective
 
-**Trigger**: all Phase 4 tickets (`impl` + `refactor` + `test` + `qa` + `deploy`) `done` → PO summarizes Phase 4 + emits prompt with intent "enter Phase 5 Version close?" → user confirms.
+**Trigger**: all Phase 3 tickets (`impl` + `refactor` + `test` + `qa` + `deploy`) `done` → PO summarizes Phase 3 + emits prompt with intent "enter Phase 4 Version close?" → user confirms.
 
 **Process** (PO runs 4 sub-calls; full detail in `lifecycle-mechanics.md` + per-step persona files):
 - **5a** Designer (opus + xhigh) — measurement (lazy) + `feature-history.md` append + next-Version backlog
@@ -80,15 +76,15 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 - **5c** Designer (sonnet + medium) — write `docs/retrospectives/<version>.md` narrative from 5a + 5b
 - **5d** PO mechanical — calibration log append, mirror `versions[N].outcome.retrospective_path`, surface to user
 
-**Lazy measurement**: when `validation_method` requires external data (PostHog/Sentry/etc), keep `observed_result: null`. Designer asks user during the next Version's Phase 2 PRD authoring; PO never reminds.
+**Lazy measurement**: when `validation_method` requires external data (PostHog/Sentry/etc), keep `observed_result: null`. Designer asks user during the next Version's Phase 1 PRD authoring; PO never reminds.
 
 **User branches after surface** (intent classes; PO matches semantically):
-- `yes + new idea` → V N+1 Phase 1 Discovery
-- `yes + use deferred` → V N+1 Phase 2 PRD (skip discovery)
+- `yes + new idea` → V N+1 Phase 1 PRD (clarity loop starts)
+- `yes + use deferred` → V N+1 Phase 1 PRD with deferred items as initial input
 - `close only` → project pause
 - `modify` → re-run 5a/5b/5c
 
-### Uniform phase-transition gate (every Phase 1↔2↔3↔4↔5 boundary)
+### Uniform phase-transition gate (every Phase 1↔2↔3↔4 boundary)
 
 1. PO emits trace `→ Phase N complete` + 1-line summary of artifacts (rendered in user's lang).
 2. PO emits prompt with intent "proceed to Phase N+1? (let me know if anything to change)".

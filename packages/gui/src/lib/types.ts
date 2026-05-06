@@ -1,15 +1,15 @@
 // ── Core domain types — synced with PO doctrine (sections/tickets.md, sections/memory.md) ──
 
 // Layer A — Version Cycle Phase (where in the cycle).
-// Maps to po-state.json `current_phase` (1..5).
-export type Phase = 'Discovery' | 'PRD' | 'Design' | 'Build' | 'Close'
+// Maps to po-state.json `current_phase` (1..4). Discovery was merged into PRD's
+// clarity loop — no separate interview phase.
+export type Phase = 'PRD' | 'Design' | 'Build' | 'Close'
 
 export const PHASE_NAMES: Record<number, Phase> = {
-  1: 'Discovery',
-  2: 'PRD',
-  3: 'Design',
-  4: 'Build',
-  5: 'Close',
+  1: 'PRD',
+  2: 'Design',
+  3: 'Build',
+  4: 'Close',
 }
 
 // Layer B — ticket type (`stage` field on each ticket).
@@ -78,7 +78,7 @@ export interface CurrentTask {
 }
 
 export interface PhaseTransition {
-  phase: number  // 1..5
+  phase: number  // 1..4
   started_at?: string
   completed_at?: string
   summary?: string
@@ -104,7 +104,7 @@ export interface Version {
 export interface PoState {
   project_slug?: string
   current_version?: string
-  current_phase?: number  // 1..5; resolves to Phase via PHASE_NAMES
+  current_phase?: number  // 1..4; resolves to Phase via PHASE_NAMES
   phase_history?: PhaseTransition[]
   current_task?: CurrentTask
   past_tickets?: Ticket[]

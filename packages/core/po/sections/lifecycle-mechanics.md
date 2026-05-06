@@ -1,6 +1,6 @@
 # Lifecycle mechanics
 
-PO-mechanical operations on tickets through their lifecycle. Cross-cutting policy that spans all stages. Read by PO before delegating, before close, and at Phase 5 retrospective.
+PO-mechanical operations on tickets through their lifecycle. Cross-cutting policy that spans all stages. Read by PO before delegating, before close, and at Phase 4 retrospective.
 
 ## Auto QA smoke gate (impl / refactor close condition)
 
@@ -30,19 +30,19 @@ Version close → mechanical status / backfill sweep. Outcome text needed → si
 
 Two append-only layers; neither blocks lifecycle.
 
-**Per-ticket** (optional frontmatter): `success_metric`, `validation_method` — Designer-set at creation when ticket has measurable user outcome. `observed_result` — PO fills at Phase 5. Most tickets stay null (UI tweaks, dev infra have no metric).
+**Per-ticket** (optional frontmatter): `success_metric`, `validation_method` — Designer-set at creation when ticket has measurable user outcome. `observed_result` — PO fills at Phase 4. Most tickets stay null (UI tweaks, dev infra have no metric).
 
-**Per-Version** (required, in `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` — Designer derives from PRD `## Success metrics` slot at PRD-ready time, emits via `version_outcome` in ready-turn JSON; PO mirrors into state. `observed_result`, `retrospective_path` — PO fills at Phase 5.
+**Per-Version** (required, in `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` — Designer derives from PRD `## Success metrics` slot at PRD-ready time, emits via `version_outcome` in ready-turn JSON; PO mirrors into state. `observed_result`, `retrospective_path` — PO fills at Phase 4.
 
 PRD body stays free-form prose; structured emit is the JSON field, not edits to the PRD.
 
 ## Lazy measurement protocol
 
-When `validation_method` requires external data (PostHog / Sentry / GA / etc), Phase 5 leaves `observed_result: null`. Designer asks user during the next Version's Phase 2 PRD authoring — measurement happens just-in-time for hypothesis re-evaluation. PO never reminds. User who never starts a next Version → measurement never runs (correct — no signal needed).
+When `validation_method` requires external data (PostHog / Sentry / GA / etc), Phase 4 leaves `observed_result: null`. Designer asks user during the next Version's Phase 2 PRD authoring — measurement happens just-in-time for hypothesis re-evaluation. PO never reminds. User who never starts a next Version → measurement never runs (correct — no signal needed).
 
 ## retrospective.md template
 
-`docs/retrospectives/<version>.md`, written by Designer in Phase 5 step 5c (sonnet + medium):
+`docs/retrospectives/<version>.md`, written by Designer in Phase 4 step 5c (sonnet + medium):
 
 ```markdown
 # Retrospective — <version>
@@ -66,7 +66,7 @@ When `validation_method` requires external data (PostHog / Sentry / GA / etc), P
 - new hypothesis: ...
 ```
 
-## Phase 5 retrospective sequence (PO orchestrates)
+## Phase 4 retrospective sequence (PO orchestrates)
 
 Per-step detail lives in each persona file (5a/5c in `pdt-designer.md`, 5b in `pdt-qa.md`, 5d in `pdt-po.md`). PO runs in order:
 

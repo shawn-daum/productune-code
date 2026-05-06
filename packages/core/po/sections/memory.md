@@ -166,9 +166,9 @@ Append-only Version-tagged logs. Two layers separate from narrative `decisions.m
 
 | File | Owner of write | Read by | Purpose |
 |---|---|---|---|
-| `docs/qa/fail-patterns.md` | PO mechanical (from QA's `fail_event` output) | Designer at Phase 2 | Test ticket trigger #3 — same area-tag ≥3 累累 fail → emit `stage:test`. |
-| `docs/designer/feature-history.md` | Designer Write at Phase 5 Version close | Designer at Phase 2 (next Version) | Recall prior Version decisions / surface deferred items. |
+| `docs/qa/fail-patterns.md` | PO mechanical (from QA's `fail_event` output) | Designer at Phase 1 | Test ticket trigger #3 — same area-tag ≥3 累累 fail → emit `stage:test`. |
+| `docs/designer/feature-history.md` | Designer Write at Phase 4 Version close | Designer at Phase 1 (next Version) | Recall prior Version decisions / surface deferred items. |
 
-Both share schema convention: `- (YYYY-MM-DD) <version> · <area-tag> · ... · note: <one-line>` where area-tag = `<feature>/<sub-area>`. PO writes for fail-patterns are mechanical (no semantic interpretation) — `printf '%s\n' "$LINE" >> "$TARGET"`. Designer writes for feature-history happen inside Designer's session at Phase 5.
+Both share schema convention: `- (YYYY-MM-DD) <version> · <area-tag> · ... · note: <one-line>` where area-tag = `<feature>/<sub-area>`. PO writes for fail-patterns are mechanical (no semantic interpretation) — `printf '%s\n' "$LINE" >> "$TARGET"`. Designer writes for feature-history happen inside Designer's session at Phase 4.
 
 These are **distinct from promotion-gated memory** (`decisions.md`, `project-notes.md`, work-notes, wiki). They're operational ground truth — like `~/.productune/po-memory.md` calibration log — append-only, no opinion.
