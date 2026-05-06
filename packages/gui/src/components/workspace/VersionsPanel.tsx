@@ -1,11 +1,15 @@
 import type { PoState, Version, Phase } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
+import { useWorkspace } from '../../store/workspace'
 
 interface Props {
   poState: PoState | null
 }
 
 export default function VersionsPanel({ poState }: Props) {
+  const selectedId = useWorkspace((s) => s.selectedVersionId)
+  const setSelected = useWorkspace((s) => s.setSelectedVersionId)
+
   const currentVersionId = poState?.current_version
   const currentPhaseNum = poState?.current_phase
   const versions = poState?.versions ?? []
@@ -18,11 +22,21 @@ export default function VersionsPanel({ poState }: Props) {
     if (t.version) ticketsByVersion.set(t.version, (ticketsByVersion.get(t.version) ?? 0) + 1)
   }
 
+  const onClick = (id: string) => {
+    setSelected(selectedId === id ? null : id)
+  }
+
   return (
     <div style={panel}>
       <div style={sectionLabel}>Active</div>
       {active ? (
-        <ActiveVersionCard version={active} phaseNum={currentPhaseNum} ticketsDone={ticketsByVersion.get(active.id) ?? 0} />
+        <ActiveVersionCard
+          version={active}
+          phaseNum={currentPhaseNum}
+          ticketsDone={ticketsByVersion.get(active.id) ?? 0}
+          selected={selectedId === active.id}
+          onClick={() => onClick(active.id)}
+        />
       ) : (
         <div style={emptyHint}>No active Version. Start a new one via PO chat.</div>
       )}
@@ -32,17 +46,24 @@ export default function VersionsPanel({ poState }: Props) {
         <div style={emptyHint}>None yet.</div>
       ) : (
         past.map((v) => (
-          <PastVersionCard key={v.id} version={v} ticketsDone={ticketsByVersion.get(v.id) ?? 0} />
+          <PastVersionCard
+            key={v.id}
+            version={v}
+            ticketsDone={ticketsByVersion.get(v.id) ?? 0}
+            selected={selectedId === v.id}
+            onClick={() => onClick(v.id)}
+          />
         ))
       )}
     </div>
   )
 }
 
-function ActiveVersionCard({ version, phaseNum, ticketsDone }: { version: Version; phaseNum: number | undefined; ticketsDone: number }) {
+interface ActiveCardProps { version: Version; phaseNum: number | undefined; ticketsDone: number; selected: boolean; onClick: () => void }
+function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }: ActiveCardProps) {
   const phaseLabel: Phase | '?' = (typeof phaseNum === 'number' && PHASE_NAMES[phaseNum]) || '?'
   return (
-    <div style={cardActive}>
+    <div style={selected ? cardActiveSelected : cardActive} onClick={onClick}>
       <div style={cardId}>{version.id}</div>
       <div style={cardLine}>Phase: <span style={cardLineValue}>{phaseLabel}{typeof phaseNum === 'number' ? ` (${phaseNum}/4)` : ''}</span></div>
       <div style={cardLine}>Tickets: <span style={cardLineValue}>{ticketsDone} done</span></div>
@@ -53,12 +74,13 @@ function ActiveVersionCard({ version, phaseNum, ticketsDone }: { version: Versio
   )
 }
 
-function PastVersionCard({ version, ticketsDone }: { version: Version; ticketsDone: number }) {
+interface PastCardProps { version: Version; ticketsDone: number; selected: boolean; onClick: () => void }
+function PastVersionCard({ version, ticketsDone, selected, onClick }: PastCardProps) {
   const closed = version.ended_at ? version.ended_at.slice(0, 10) : '?'
   const observed = version.outcome?.observed_result
   const retro = version.outcome?.retrospective_path
   return (
-    <div style={cardPast}>
+    <div style={selected ? cardPastSelected : cardPast} onClick={onClick}>
       <div style={cardIdMuted}>{version.id}</div>
       <div style={cardLineMuted}>closed {closed}</div>
       <div style={cardLineMuted}>{ticketsDone} tickets</div>
@@ -104,6 +126,19 @@ const cardActive: React.CSSProperties = {
   borderRadius: 6,
   padding: '10px 12px',
   marginBottom: 6,
+  cursor: 'pointer',
+  transition: 'border-color 0.12s',
+}
+
+const cardActiveSelected: React.CSSProperties = {
+  ...{
+    background: '#1A1208',
+    border: '1px solid #FF6B2B',
+    borderRadius: 6,
+    padding: '10px 12px',
+    marginBottom: 6,
+    cursor: 'pointer',
+  },
 }
 
 const cardPast: React.CSSProperties = {
@@ -112,6 +147,17 @@ const cardPast: React.CSSProperties = {
   borderRadius: 6,
   padding: '8px 12px',
   marginBottom: 6,
+  cursor: 'pointer',
+  transition: 'border-color 0.12s',
+}
+
+const cardPastSelected: React.CSSProperties = {
+  background: '#161616',
+  border: '1px solid #505050',
+  borderRadius: 6,
+  padding: '8px 12px',
+  marginBottom: 6,
+  cursor: 'pointer',
 }
 
 const cardId: React.CSSProperties = {

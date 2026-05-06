@@ -6,6 +6,7 @@ interface WorkspaceState {
   project: Project | null
   poState: PoState | null
   phase: Phase  // Layer A — Version cycle position (derived from poState.current_phase)
+  selectedVersionId: string | null  // sidebar Version card click → CenterPane drill
 
   // ── PO session slice (single per project) ────────────────────────────────────
   messages: Message[]
@@ -14,6 +15,7 @@ interface WorkspaceState {
 
   setProject: (p: Project | null) => void
   setPoState: (s: PoState | null) => void
+  setSelectedVersionId: (id: string | null) => void
   setMessages: (messages: Message[]) => void
   appendMessage: (message: Message) => void
   appendToLastMessage: (textChunk: string) => void
@@ -32,6 +34,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   project: null,
   poState: null,
   phase: 'PRD',
+  selectedVersionId: null,
   messages: [],
   claudeSessionId: null,
   streaming: false,
@@ -41,6 +44,8 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   setPoState: (poState) => {
     set({ poState, phase: derivePhase(poState) })
   },
+
+  setSelectedVersionId: (selectedVersionId) => set({ selectedVersionId }),
 
   setMessages: (messages) => set({ messages }),
 
