@@ -4,71 +4,32 @@ Two facets: (1) **promotion gate** — persona suggestions → persisted memory;
 
 ## Promotion gate
 
-Personas don't auto-write. Return candidates in `promotion_candidates`. PO surfaces, on approval writes. Project + wiki tier both need user approval.
+Personas don't auto-write. Return candidates in `promotion_candidates`. PO surfaces; on approval writes. Both project + wiki tier need user approval.
 
 After every persona turn, inspect `promotion_candidates`. Per entry:
 ```
 [PO] pdt-designer wants to remember:
-     project · docs/designer/decisions.md
+     project · docs/pdt-designer/decisions.md
      "(2026-04-27) login-modal: chose dialog over inline form (focus-trap critical)"
      reason: design decision; future pdt-designer references
      save? [y/N]
 ```
-For `tier:"work-note"` (multi-paragraph artifact, not one-liner): show title + body preview (first 6 lines, "…" if more), full path, and reason.
-```
-[PO] pdt-developer wants to remember:
-     work-note · docs/developer/R1-login-modal.md
-     title: "Login modal — Next 16 middleware notes"
-     preview:
-       Implementation hit Next.js 16 routing rename. middleware.ts → proxy.ts.
-       Bun-only deps (`bun add`) replaced with `pnpm` to keep Vercel build green.
-       Test fixture lives in __tests__/login-modal.spec.ts; uses pwfix matcher.
-       …
-     reason: future devs hitting the same router migration need this
-     save? [y/N]
-```
-- **y** → write (below). Ack `[PO] saved: <path>.`
+- **y** → write (below). Ack `[PO] saved.`
 - **n / Enter / skip** → drop silently.
-- **edit** → prompt edited version (project: one line; work-note: open `$EDITOR` on body), save.
+- **edit** → prompt edited version, save.
 
 >3 candidates → numbered list; user replies `1,3` for selective approve.
 
-After all candidates resolved, append a **promotion outcome line** to the same task's turn-log so audit trail is complete:
-```bash
-# After processing every candidate's y/n/edit, before moving on:
-TURNS_DIR="$TARGET/.productune/turns"; SLUG=$(jq -r '.current_task.slug // "unknown"' "$STATE")
-LOG="$TURNS_DIR/$SLUG.jsonl"; mkdir -p "$TURNS_DIR"
-# $OUTCOMES_JSON is a JSON array PO built while running the gate, e.g.:
-# [{"tier":"work-note","target":"docs/developer/R1-login-modal.md","decision":"approved"},
-#  {"tier":"project","target":"docs/developer/project-notes.md","decision":"declined"}]
-python3 -c "
-import json,datetime,sys,pathlib
-line={'kind':'promotion','ts':datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-      'persona':'$PERSONA','task_slug':'$SLUG','session_id':'$SID','outcomes':json.loads('''$OUTCOMES_JSON''')}
-pathlib.Path('$LOG').parent.mkdir(parents=True,exist_ok=True)
-open('$LOG','a',encoding='utf-8').write(json.dumps(line,ensure_ascii=False)+'\n')"
-```
-Outcomes — one per surfaced candidate: `decision ∈ {approved, declined, edited, skipped}`. Empty `[]` when persona returned no candidates (still log the empty turn for completeness).
-
 ### Mechanical writes
 
-**`tier:"project"`** — append dated one-liner:
+**`tier:"project"`** — append line:
 ```bash
 TARGET=$(jq -r '.target' <<<"$CANDIDATE"); DELTA=$(jq -r '.delta' <<<"$CANDIDATE")
 mkdir -p "$(dirname "$TARGET")"; printf '%s\n' "$DELTA" >> "$TARGET"
 ```
-File lives in target project repo → shows in `git status`. `decisions.md` / `project-notes.md` accumulates lines over months — long-term cheat-sheet.
+File lives in target project repo → shows in `git status`.
 
-**`tier:"work-note"`** — create per-turn richer artifact (overwrite-if-exists, not append):
-```bash
-TARGET=$(jq -r '.target' <<<"$CANDIDATE"); TITLE=$(jq -r '.title' <<<"$CANDIDATE")
-BODY=$(jq -r '.body' <<<"$CANDIDATE")
-mkdir -p "$(dirname "$TARGET")"
-{ printf '# %s\n\n' "$TITLE"; printf '%s\n' "$BODY"; } > "$TARGET"
-```
-Path convention `docs/<persona>/<R<n>>-<slug>.md` (e.g. `docs/developer/R1-login-modal.md`). Multi-paragraph, sections OK. Each turn's work-note is a separate file; never append. PO surfaces preview before write so user can edit.
-
-**`tier:"wiki"`** — backend-aware (`WIKI_BACKEND` from `~/.productune/productune.env`):
+**`tier:"wiki"`** — backend-aware (`WIKI_BACKEND` from `productune.env`):
 ```bash
 WIKI_BACKEND="${WIKI_BACKEND:-graphiti}"
 case "$WIKI_BACKEND" in
@@ -78,9 +39,7 @@ case "$WIKI_BACKEND" in
     ( NO_COLOR=1 claude --resume "$SID" --print --output-format json \
         "[PROMOTION-APPROVED] mcp__graphiti__add_memory: group_id=\"$TARGET\" name=\"$EPISODE_NAME\" episode_body=\"$EPISODE_BODY\". Confirm only." \
         > "$JOBS_DIR/$JOB_ID.log" 2>&1
-      RC=$?
-      if [ "$RC" -eq 0 ]; then mv "$JOBS_DIR/$JOB_ID.pending" "$JOBS_DIR/$JOB_ID.done"
-      else mv "$JOBS_DIR/$JOB_ID.pending" "$JOBS_DIR/$JOB_ID.failed"; fi ) &
+      mv "$JOBS_DIR/$JOB_ID.pending" "$JOBS_DIR/$JOB_ID.done" ) &
     echo "[PO] saved (background, job=$JOB_ID)" ;;
   keeper)
     NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
@@ -119,65 +78,35 @@ esac
 
 **Background job tracking (graphiti)** — start of turn:
 ```bash
-JOBS_DIR="$HOME/.productune/wiki-jobs"
-[ -d "$JOBS_DIR" ] || JOBS_DIR=""
-if [ -n "$JOBS_DIR" ]; then
-  # 1) ack completed jobs (1 line per .done) then garbage-collect
-  for j in "$JOBS_DIR"/*.done; do [ -f "$j" ] || continue
-    echo "[PO] wiki saved (job=$(basename "$j" .done))"
-    rm -f "$j"
-  done
-  # 2) surface failed jobs (1 line per .failed) — point user to log; keep file until user clears
-  for j in "$JOBS_DIR"/*.failed; do [ -f "$j" ] || continue
-    echo "[PO] ⚠ wiki save failed (job=$(basename "$j" .failed)) — see $j.log"
-  done
-  # 3) stale .pending — Ollama / network might be down
-  for j in "$JOBS_DIR"/*.pending; do [ -f "$j" ] || continue
-    AGE=$(( $(date +%s) - $(stat -f %m "$j" 2>/dev/null || stat -c %Y "$j" 2>/dev/null || echo $(date +%s)) ))
-    [ "$AGE" -gt 30 ] && echo "[PO] ⚠ wiki job=$(basename "$j" .pending) ${AGE}s pending — Ollama/network 확인 (cat $j.log)"
-  done
-fi
+JOBS_DIR="$HOME/.productune/wiki-jobs"; [ -d "$JOBS_DIR" ] && rm -f "$JOBS_DIR"/*.done 2>/dev/null
+for j in "$JOBS_DIR"/*.pending; do [ -f "$j" ] || continue
+  AGE=$(( $(date +%s) - $(stat -f %m "$j" 2>/dev/null || stat -c %Y "$j" 2>/dev/null || echo $(date +%s)) ))
+  [ "$AGE" -gt 30 ] && echo "[PO] job=$(basename "$j" .pending) ${AGE}s — Ollama 확인 (cat $j.log)"
+done
 ```
 
-**Pre-persona wiki search** — inject `wiki_consult:` into TASK + capture for turn-log.
-
+**Pre-persona wiki search (keeper only)** — inject `wiki_consult:` into TASK:
 ```bash
-WIKI_RESULT='{}'
-case "${WIKI_BACKEND:-graphiti}" in
-  keeper)
-    WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
-      "SEARCH
+[ "${WIKI_BACKEND:-graphiti}" = "keeper" ] && WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
+  "SEARCH
 persona: $PERSONA_SHORT
 query: $TASK_KEYWORDS" | python3 -c "import json,sys,re
 try: r=json.loads(sys.stdin.read()).get('result',''); m=re.search(r'\{.*\}',r,re.DOTALL); print(m.group() if m else '{}')
-except: print('{}')" 2>/dev/null || echo '{}')
-    ;;
-  graphiti)
-    # Pre-search via MCP node lookup so PO can log wiki_consult; persona may also call MCP itself.
-    WIKI_RESULT=$(NO_COLOR=1 claude --agent "$PERSONA" --model haiku --print --output-format json \
-      "PRE-SEARCH ONLY (no writes): mcp__graphiti__search_memory_nodes group_id=\"persona-$PERSONA_SHORT\" query=\"$TASK_KEYWORDS\" max_nodes=3. Return JSON {hits:N, top_titles:[...]} only." \
-      | python3 -c "import json,sys,re
-try: r=json.loads(sys.stdin.read()).get('result',''); m=re.search(r'\{.*\}',r,re.DOTALL); print(m.group() if m else '{}')
-except: print('{}')" 2>/dev/null || echo '{}')
-    ;;
-esac
-[ -n "$WIKI_RESULT" ] && [ "$WIKI_RESULT" != '{}' ] && TASK="$TASK
+except: print('{}')" 2>/dev/null || echo '{}') && TASK="$TASK
 wiki_consult: $WIKI_RESULT"
-# Stash for delegation.md turn-log writer:
-export WIKI_CONSULT_JSON="$WIKI_RESULT"
 ```
 
-(`fs` personas read INDEX directly inside their workflow — no PO pre-search.) The `WIKI_CONSULT_JSON` env var is consumed by the delegation block's python3 turn-log writer when present.
+(`graphiti` personas call `search_memory_facts` themselves via MCP. `fs` personas read INDEX directly.)
 
 ### Why gated
 
-Earlier doctrine auto-promoted on heuristic. Made memory grow invisibly. New rule: **never persist without user approval**. User dismisses repeatedly → append to `po-memory.md` Workflow preferences; future turns lower surface threshold.
+Earlier doctrine auto-promoted on heuristic. Memory grew invisibly. Rule: **never persist without user approval**. Repeated dismissals → append to `po-memory.md` Workflow preferences; future turns lower surface threshold.
 
 ---
 
 ## PO memory: `~/.productune/po-memory.md`
 
-Cross-session notepad about **collaborator** (not project facts).
+Cross-session notepad about **collaborator**, not project facts.
 
 ```markdown
 # PO memory for <user>
@@ -194,7 +123,7 @@ Read at session start. Append (don't rewrite) on: ≥2 pushbacks, "always/never/
 
 ## Per-project state: `./.productune/po-state.json`
 
-Repo-local JSON. Sessions scoped per **task** (not project). Each top-level user request = one task with own persona session ids.
+Repo-local JSON. Sessions scoped per **task**. Each top-level user request = one task with own persona session ids.
 
 ```json
 {

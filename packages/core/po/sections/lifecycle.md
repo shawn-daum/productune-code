@@ -1,29 +1,24 @@
 # Task lifecycle + Timeline
 
-Sessions scoped per **task**, not project. Same-intent follow-ups stay in `current_task`. Genuinely different work = new task with fresh persona sessions.
-
-State key is `past_tickets` (legacy `past_tasks` read-compat one round).
+Sessions scoped per **task** (not project). Same-intent follow-ups stay in `current_task`. State key: `past_tickets` (legacy `past_tasks` read-compat 1 round).
 
 ## Disposition (Stage 1 step 2)
 
 Inspect `current_task` + `past_tickets`. Classify:
 
-**(a) Continuation of `current_task`** — silent default:
-- pronouns ("그", "방금", "이거 좀 더", "이어서"), verbs without new scope ("추가", "수정", "다시")
-- references files/PRD slugs in `current_task.artifacts`
-→ keep `current_task`, `--resume` persona sessions.
-
-**(b) Revival of `past_tickets[i]`** — propose-and-confirm:
-- mention of past slug/title or its artifacts; high keyword overlap
-→ ask: `이건 'login-modal-forgot-pw' 후속처럼 보여요. 그 task 이어서 갈까요? (y/n/[다른 slug])`
-→ on **y**: archive current → past, restore that past entry as current.
-
-**(c) New task** — neither (a) nor (b): different feature/file/intent.
-→ announce `새 task '<slug>' 시작합니다.`, archive current → past, allocate new.
+- **(a) Continuation** — pronouns ("그/방금/이어서"), files in `current_task.artifacts`, same scope → keep, `--resume`.
+- **(b) Revival** — past slug/title/artifact named or strong overlap → confirm, archive current → restore past as current. Prompt:
+  ```
+  이건 'login-modal-forgot-pw' 후속처럼 보여요. 그 task 이어서 갈까요? (y/n/[다른 slug])
+  ```
+- **(c) New** — different feature/file/intent → archive current → past, allocate. Announce:
+  ```
+  새 task '<slug>' 시작합니다.
+  ```
 
 ## Archive `current_task` → `past_tickets` (mandatory before b/c)
 
-Always write **1–2 sentence outcome** before archiving — synthesized verdict (what shipped, what's open, status), not persona dump.
+Always write 1–2 sentence outcome before archiving — synthesized verdict (what shipped, open items, status), not persona dump.
 
 ```bash
 NOW=$(date -u +%FT%TZ); FINAL_STATUS="done"   # done | blocked | abandoned
@@ -38,7 +33,7 @@ tmp=$(mktemp) && jq --arg now "$NOW" --arg s "$FINAL_STATUS" --arg o "$OUTCOME" 
 
 `final_status`: `done` (delivered/QA pass or N/A) · `blocked` (QA fail loop cap or external dep) · `abandoned` (user moved on / "그냥 접자").
 
-**Hook enforcement**: `pre-delegate-task-check.sh` blocks new-slug delegation when previous turn's slug missing from `past_tickets`. Skipping archive not optional.
+Hook `pre-delegate-task-check.sh` blocks new-slug delegation if previous slug missing from `past_tickets`. Skipping not optional.
 
 ## Allocate new `current_task` (case c)
 
@@ -53,8 +48,8 @@ tmp=$(mktemp) && jq --arg slug "$SLUG" --arg title "$TITLE" --arg summary "$SUMM
 ## Revive past ticket (case b)
 
 ```bash
+# 1. archive current (with outcome). 2. pluck matching past → current.
 SLUG="login-modal-forgot-pw"
-# 1. archive current (with outcome). 2. pluck matching past → make current (drop ended_at)
 tmp=$(mktemp) && jq --arg slug "$SLUG" '
   (.past_tickets | map(select(.slug == $slug)) | last) as $f
   | if $f != null
@@ -64,7 +59,7 @@ tmp=$(mktemp) && jq --arg slug "$SLUG" '
 ' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
 
-`current_task.persona_sessions` repopulates from past entry; resume seamlessly.
+`persona_sessions` repopulates from past entry; resume seamlessly.
 
 ## Update `current_task.artifacts`
 
@@ -73,19 +68,17 @@ ARTIFACT="docs/design/login-modal.md"
 tmp=$(mktemp) && jq --arg a "$ARTIFACT" '.current_task.artifacts |= ((. // []) + [$a] | unique)' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
 
-## Compaction
+## Compaction + cleanup
 
-Auto-compaction defaults **70%** via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` in `~/.productune/productune.env` (sourced by `productune` wrapper). Direct `claude --agent` calls don't inherit — `export` in shell rc if needed. Single task >50 turns on one persona → ask user to split.
+Auto-compaction 70% via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` in `productune.env` (sourced by wrapper; direct `claude --agent` doesn't inherit — `export` if needed). >50 turns one persona → ask user to split.
 
-## Disk cleanup
-
-Claude Code session transcripts: `cleanupPeriodDays` (default 30) in `~/.claude/settings.json`. `past_tickets` never auto-deleted; oldest dropped only when length > 50.
+Claude transcripts: `cleanupPeriodDays` (default 30) in `~/.claude/settings.json`. `past_tickets` capped at 50.
 
 ---
 
 ## Timeline / project history
 
-User asks history / "지금까지 뭐 했어" / 타임라인 — **never invoke persona, never derive from `git`**. Source = `past_tickets` + `current_task` in `po-state.json`. Sort by `started_at`, render chronologically:
+User asks history / "지금까지 뭐 했어" — **never invoke persona, never `git log`**. Source = `past_tickets` + `current_task`. Sort by `started_at`, render:
 
 ```
 ## 프로젝트 타임라인 (<repo>)
@@ -99,4 +92,6 @@ User asks history / "지금까지 뭐 했어" / 타임라인 — **never invoke 
 진행중: <current_task.slug>  [in-progress]
 ```
 
-Specific task detail beyond summary: read PRD `docs/prd/<slug>.md`, persona notes `docs/<persona>/*.md`, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` against past session = last resort (re-loads context — never for routine timeline).
+Detail beyond summary: read PRD `docs/prd/<slug>.md`, persona notes, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` past session = last resort.
+
+**Phase 4 R2 git-workflow**: ticket-level commit detail = `git -C <worktree_path> log --oneline` (worktree-isolated). Timeline itself derived from `past_tickets`.
