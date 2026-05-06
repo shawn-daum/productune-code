@@ -1,10 +1,11 @@
 import { create } from 'zustand'
-import type { Project, Stage, PoState, Message } from '../lib/types'
+import type { Project, Phase, PoState, Message } from '../lib/types'
+import { PHASE_NAMES } from '../lib/types'
 
 interface WorkspaceState {
   project: Project | null
   poState: PoState | null
-  stage: Stage
+  phase: Phase  // Layer A — Version cycle position (derived from poState.current_phase)
 
   // ── PO session slice (single per project) ────────────────────────────────────
   messages: Message[]
@@ -21,10 +22,16 @@ interface WorkspaceState {
   resetSession: () => void
 }
 
+function derivePhase(poState: PoState | null): Phase {
+  const num = poState?.current_phase
+  if (typeof num === 'number' && num in PHASE_NAMES) return PHASE_NAMES[num]
+  return 'PRD'  // fallback for projects on legacy schema
+}
+
 export const useWorkspace = create<WorkspaceState>((set) => ({
   project: null,
   poState: null,
-  stage: 'PRD',
+  phase: 'PRD',
   messages: [],
   claudeSessionId: null,
   streaming: false,
@@ -32,8 +39,7 @@ export const useWorkspace = create<WorkspaceState>((set) => ({
   setProject: (project) => set({ project }),
 
   setPoState: (poState) => {
-    const stage = (poState?.current_task?.stage as Stage) ?? 'PRD'
-    set({ poState, stage })
+    set({ poState, phase: derivePhase(poState) })
   },
 
   setMessages: (messages) => set({ messages }),

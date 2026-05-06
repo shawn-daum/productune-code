@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Project } from '../lib/types'
 import { useWorkspace } from '../store/workspace'
-import StageBreadcrumb from '../components/workspace/StageBreadcrumb'
+import PhaseBreadcrumb from '../components/workspace/PhaseBreadcrumb'
 import LeftSidebar from '../components/workspace/LeftSidebar'
 import CenterPane from '../components/workspace/CenterPane'
 import StatusBar from '../components/workspace/StatusBar'
@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function WorkspaceShell({ project, onBack }: Props) {
-  const { stage, setProject, setPoState } = useWorkspace()
+  const { phase, setProject, setPoState } = useWorkspace()
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('rooms')
 
   // Sync project into store on mount / change
@@ -39,7 +39,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
 
       {/* breadcrumb — top-center */}
       <div style={breadcrumbArea}>
-        <StageBreadcrumb stage={stage} />
+        <PhaseBreadcrumb phase={phase} />
       </div>
 
       {/* center pane */}

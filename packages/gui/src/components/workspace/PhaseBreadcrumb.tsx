@@ -1,18 +1,18 @@
-import type { Stage } from '../../lib/types'
+import type { Phase } from '../../lib/types'
 
-const STAGES: Stage[] = ['PRD', 'Design', 'Build', 'QA', 'Deploy', 'Operate']
+const PHASES: Phase[] = ['Discovery', 'PRD', 'Design', 'Build', 'Close']
 
 interface Props {
-  stage: Stage
+  phase: Phase
 }
 
-export default function StageBreadcrumb({ stage }: Props) {
+export default function PhaseBreadcrumb({ phase }: Props) {
   return (
     <div style={wrap}>
-      {STAGES.map((s, i) => (
-        <span key={s} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+      {PHASES.map((p, i) => (
+        <span key={p} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
           {i > 0 && <span style={chevron}>›</span>}
-          <span style={s === stage ? activeNode : inactiveNode}>{s}</span>
+          <span style={p === phase ? activeNode : inactiveNode}>{p}</span>
         </span>
       ))}
     </div>
