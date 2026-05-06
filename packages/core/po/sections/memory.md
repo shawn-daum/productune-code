@@ -4,7 +4,7 @@ Two facets: (1) **promotion gate** — persona suggestions → persisted memory;
 
 ## Promotion gate
 
-Personas don't auto-write. Return candidates in `promotion_candidates`. PO surfaces; on approval writes. Both project + wiki tier need user approval.
+Personas don't auto-write. They return `promotion_candidates`. PO surfaces; on user approval writes. Project + wiki tier both need approval.
 
 After every persona turn, inspect `promotion_candidates`. Per entry:
 ```
@@ -22,61 +22,19 @@ After every persona turn, inspect `promotion_candidates`. Per entry:
 
 ### Mechanical writes
 
-**`tier:"project"`** — append line:
+`tier:"project"` — append one line to a file in the project repo (shows in `git status`):
 ```bash
 TARGET=$(jq -r '.target' <<<"$CANDIDATE"); DELTA=$(jq -r '.delta' <<<"$CANDIDATE")
 mkdir -p "$(dirname "$TARGET")"; printf '%s\n' "$DELTA" >> "$TARGET"
 ```
-File lives in target project repo → shows in `git status`.
 
-**`tier:"wiki"`** — backend-aware (`WIKI_BACKEND` from `productune.env`):
-```bash
-WIKI_BACKEND="${WIKI_BACKEND:-graphiti}"
-case "$WIKI_BACKEND" in
-  graphiti)
-    JOB_ID=$(uuidgen 2>/dev/null | head -c 8 || date +%s | tail -c 8)
-    JOBS_DIR="$HOME/.productune/wiki-jobs"; mkdir -p "$JOBS_DIR"; touch "$JOBS_DIR/$JOB_ID.pending"
-    ( NO_COLOR=1 claude --resume "$SID" --print --output-format json \
-        "[PROMOTION-APPROVED] mcp__graphiti__add_memory: group_id=\"$TARGET\" name=\"$EPISODE_NAME\" episode_body=\"$EPISODE_BODY\". Confirm only." \
-        > "$JOBS_DIR/$JOB_ID.log" 2>&1
-      mv "$JOBS_DIR/$JOB_ID.pending" "$JOBS_DIR/$JOB_ID.done" ) &
-    echo "[PO] saved (background, job=$JOB_ID)" ;;
-  keeper)
-    NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
-      "WRITE [PROMOTION-APPROVED]
-persona: $TARGET
-episode_name: $EPISODE_NAME
-episode_body: $EPISODE_BODY" | python3 -c "import json,sys
-try: print(json.loads(sys.stdin.read()).get('result',''))
-except: pass" ;;
-  fs)
-    WIKI_DIR="$HOME/.productune/wiki/$TARGET"; mkdir -p "$WIKI_DIR"
-    TS=$(date -u '+%Y-%m-%dT%H-%M-%SZ')
-    SLUG=$(printf '%s' "$EPISODE_NAME" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cs 'a-z0-9-' '-' | sed 's/-*$//')
-    FILE="$WIKI_DIR/${TS}--${SLUG}.md"
-    cat > "$FILE" <<EPISODE
----
-persona: $TARGET
-episode_name: $EPISODE_NAME
-created_at: $(date -u '+%FT%TZ')
-superseded_by: null
-related: []
----
-$EPISODE_BODY
-EPISODE
-    { echo "# $TARGET wiki index"; echo "<!-- auto -->"; echo ""
-      ls -r "$WIKI_DIR"/*.md 2>/dev/null | grep -v INDEX.md | while read -r f; do
-        n=$(grep -m1 '^episode_name:' "$f" | sed 's/episode_name: //')
-        d=$(grep -m1 '^created_at:' "$f" | sed 's/created_at: //' | cut -c1-10)
-        s=$(grep -m1 '^superseded_by:' "$f" | sed 's/superseded_by: //'); st="active"; [[ "$s" != "null" && -n "$s" ]] && st="superseded"
-        b=$(tail -n +6 "$f" | head -1 | cut -c1-80)
-        echo "- [$d] $n [$st]"; [ -n "$b" ] && echo "  $b"
-      done; } > "$WIKI_DIR/INDEX.md"
-    echo "[PO] saved: $FILE" ;;
-esac
-```
+`tier:"wiki"` — backend-aware (`WIKI_BACKEND` from `productune.env`):
 
-**Background job tracking (graphiti)** — start of turn:
+- **graphiti** — fire-and-forget `claude --resume "$SID"` with `[PROMOTION-APPROVED] mcp__graphiti__add_memory: group_id="$TARGET" name="$EPISODE_NAME" episode_body="$EPISODE_BODY". Confirm only.` Run in `( ... ) &`; track via job file under `~/.productune/wiki-jobs/<id>.{pending,done}`. Echo `[PO] saved (background, job=<id>)`.
+- **keeper** — invoke `claude --agent pdt-wiki-keeper --model haiku` with `WRITE [PROMOTION-APPROVED]\npersona: $TARGET\nepisode_name: $EPISODE_NAME\nepisode_body: $EPISODE_BODY`. Sync — keeper handles file write + INDEX update.
+- **fs** — direct filesystem. Write `~/.productune/wiki/$TARGET/<ts>--<slug>.md` with frontmatter (`persona`, `episode_name`, `created_at`, `superseded_by:null`, `related:[]`) + body. Rebuild `<dir>/INDEX.md` (one line per file with `[<date>] <name> [active|superseded]` + first-line excerpt). Echo `[PO] saved: <FILE>`.
+
+Background job tracking (graphiti) — at start of every turn:
 ```bash
 JOBS_DIR="$HOME/.productune/wiki-jobs"; [ -d "$JOBS_DIR" ] && rm -f "$JOBS_DIR"/*.done 2>/dev/null
 for j in "$JOBS_DIR"/*.pending; do [ -f "$j" ] || continue
@@ -85,7 +43,7 @@ for j in "$JOBS_DIR"/*.pending; do [ -f "$j" ] || continue
 done
 ```
 
-**Pre-persona wiki search (keeper only)** — inject `wiki_consult:` into TASK:
+Pre-persona wiki search (keeper only) — inject `wiki_consult:` into TASK:
 ```bash
 [ "${WIKI_BACKEND:-graphiti}" = "keeper" ] && WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
   "SEARCH
@@ -96,13 +54,11 @@ except: print('{}')" 2>/dev/null || echo '{}') && TASK="$TASK
 wiki_consult: $WIKI_RESULT"
 ```
 
-(`graphiti` personas call `search_memory_facts` themselves via MCP. `fs` personas read INDEX directly.)
+(`graphiti` personas call `search_memory_facts` themselves via MCP. `fs` personas read `INDEX.md` directly.)
 
 ### Why gated
 
-Earlier doctrine auto-promoted on heuristic. Memory grew invisibly. Rule: **never persist without user approval**. Repeated dismissals → append to `po-memory.md` Workflow preferences; future turns lower surface threshold.
-
----
+Earlier doctrine auto-promoted on heuristic; memory grew invisibly. Rule: **never persist without user approval**. Repeated dismissals → append to `po-memory.md` Workflow preferences; future turns lower the surface threshold.
 
 ## PO memory: `~/.productune/po-memory.md`
 
@@ -121,15 +77,12 @@ Read at session start. Append (don't rewrite) on: ≥2 pushbacks, intent class "
 
 ### `## Product taste` — positive-feedback log
 
-Schema (1 line per validated signal):
-```
-- (YYYY-MM-DD) <area-tag>: <what worked> · "<user phrase verbatim, kept in original lang>"
-```
+Schema: `- (YYYY-MM-DD) <area-tag>: <what worked> · "<user phrase verbatim, kept in original lang>"`.
 
-- **Write trigger**: Step 3 step 14b (positive intent — `stages.md`). PO appends one line per turn-close-time satisfaction signal.
+- **Write trigger**: Step 3 step 14b (positive intent — `stages.md`). One line per turn-close-time satisfaction signal.
 - **Read trigger**: Step 1 disposition. PO scans recent N entries cross-project to bias routing toward validated patterns (similar area-tag → reuse the approach that landed last time).
-- area-tag follows the `<feature>/<sub-area>` convention shared with `fail-patterns.md` and `feature-history.md`.
-- User phrase is kept verbatim (any language) — it's a literal quote, not doctrine prose, so language conversion would distort the signal.
+- area-tag follows `<feature>/<sub-area>` — shared with `fail-patterns.md` and `feature-history.md`.
+- User phrase is kept verbatim in any language. It's a literal quote, not doctrine prose.
 
 Example entries (mixed-lang user phrases preserved):
 ```
@@ -137,14 +90,13 @@ Example entries (mixed-lang user phrases preserved):
 - (2026-05-20) onboarding/welcome: 3-step minimum without skip · "exactly what I wanted"
 ```
 
----
-
 ## Per-project state: `./.productune/po-state.json` (canonical schema)
 
 Repo-local JSON. Sessions scoped per **task**. Each top-level user request = one task with own persona session ids.
 
 Key paths:
 - `current_version`, `current_phase`, `phase_history[].{phase, started_at, completed_at, summary, user_approved_at}`
+- `pending_gate?` (set when PO emits a phase-transition gate prompt; cleared on approve/modify) — `{from_phase, to_phase, summary, prompt, emitted_at}`
 - `current_task.{ticket_id, slug, title, status, stage, qa_status, qa_loops, assignee_persona, started_at, ended_at, request_summary, prd_path, branch, worktree_path}`
 - `current_task.input.{prd_path, design_doc, brief_path, deps[]}` · `current_task.output.{changed_files[], design_doc, test_results}`
 - `current_task.linked_tickets[]`, `artifacts[]`, `persona_sessions{}`, `persona_session_meta.<persona>.{turns, model_history, effort_history, complexity_level, confidence_history}`
@@ -156,9 +108,7 @@ Key paths:
 Legacy keys (`past_tasks`, `current_round`, `rounds[]`, `stage:PRD|issue`) read-compat one cycle; new code reads new keys first and falls back.
 
 Pre-delegate: glance `recent_turns`. Persona ≥3 fails / last 5 → flag in Step 1 risk (`evolution.md`).
-Post-turn: append outcome + bump `current_task.persona_session_meta.<persona>.turns` via `jq`. Never burn Claude call.
-
----
+Post-turn: append outcome + bump `current_task.persona_session_meta.<persona>.turns` via `jq`. Never burn a Claude call.
 
 ## Persona product-memory (structured operational logs)
 
@@ -169,6 +119,6 @@ Append-only Version-tagged logs. Two layers separate from narrative `decisions.m
 | `docs/qa/fail-patterns.md` | PO mechanical (from QA's `fail_event` output) | Designer at Phase 1 | Test ticket trigger #3 — same area-tag ≥3 累累 fail → emit `stage:test`. |
 | `docs/designer/feature-history.md` | Designer Write at Phase 4 Version close | Designer at Phase 1 (next Version) | Recall prior Version decisions / surface deferred items. |
 
-Both share schema convention: `- (YYYY-MM-DD) <version> · <area-tag> · ... · note: <one-line>` where area-tag = `<feature>/<sub-area>`. PO writes for fail-patterns are mechanical (no semantic interpretation) — `printf '%s\n' "$LINE" >> "$TARGET"`. Designer writes for feature-history happen inside Designer's session at Phase 4.
+Both share schema convention: `- (YYYY-MM-DD) <version> · <area-tag> · ... · note: <one-line>`. PO writes for fail-patterns are mechanical (no semantic interpretation) — `printf '%s\n' "$LINE" >> "$TARGET"`. Designer writes for feature-history happen inside Designer's session at Phase 4.
 
 These are **distinct from promotion-gated memory** (`decisions.md`, `project-notes.md`, work-notes, wiki). They're operational ground truth — like `~/.productune/po-memory.md` calibration log — append-only, no opinion.
