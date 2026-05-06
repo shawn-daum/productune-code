@@ -54,7 +54,7 @@ export function bootstrapPersonaMemory(projectDir: string) {
     path.join(turnsDir, 'README.md'),
     '# turn activity log\n\n' +
       'Per-task JSONL files (`<task-slug>.jsonl`). One line per persona invocation:\n' +
-      '`{ ts, persona, task_slug, ticket_id, round, turn_index, input_meta, wiki_consult, output_full, promotion_outcome }`.\n' +
+      '`{ ts, persona, task_slug, ticket_id, version, turn_index, input_meta, wiki_consult, output_full, promotion_outcome }`.\n' +
       'Written by PO. Raw truth; `.productune/po-state.json` is the summary.\n',
   )
 }

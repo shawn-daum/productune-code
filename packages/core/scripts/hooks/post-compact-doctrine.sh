@@ -29,7 +29,7 @@ Hard rules that survive compaction:
   - Stage 2A (new ideas): PO runs first-touch interview using pm-product-discovery / pm-market-research skills, synthesizes a brief at <project>/.productune/briefs/<slug>.md, then delegates PRD authoring to pdt-designer (opus + max, clarity loop A ≤ 0.05). PO relays Designer's `next_question` to user verbatim.
   - Stage 2C: tickets emitted by Designer alongside PRD — PO routes them; PO never writes T-NNN.md.
   - Calibration log biases this turn's model/effort routing for similar task classes (sections/calibration.md).
-  - 5-tier effort: low / medium / high / xhigh / max. opus default = xhigh. `max` = Stage 1 routing only (Designer PRD first-round, net-new design system, system architecture) — never reachable via Path 1 escalation.
+  - 5-tier effort: low / medium / high / xhigh / max. opus default = xhigh. `max` = Stage 1 routing only (Designer Version 1 PRD, net-new design system, system architecture) — never reachable via Path 1 escalation.
   - Stage 2: L4+ / multi-file / risk-area → Plan mode (sections/delegation.md):
       • Plan call: pdt-developer at **opus + xhigh** (PLAN ONLY, no code)
       • Review: PO direct (default). pdt-qa/designer cross-review only opt-in for risk-flagged plans.

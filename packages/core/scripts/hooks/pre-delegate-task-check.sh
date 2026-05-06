@@ -60,6 +60,34 @@ find_po_state() {
 STATE="$(find_po_state "$EVENT_CWD" || find_po_state "$PWD" || true)"
 [ -z "$STATE" ] && exit 0
 
+# Schema migration (Phase A.1): legacy `current_round` / `rounds[]` /
+# `current_task.round` → `current_version` / `versions[]` / `current_task.version`.
+# Only copies when legacy key has data AND new key is absent. Idempotent.
+# Legacy keys preserved one cycle (read-compat); subsequent cleanup will drop.
+auto_migrate_round_to_version() {
+  local tmp; tmp="$(mktemp)"
+  if jq '
+    (if has("current_round") and (has("current_version") | not)
+       then .current_version = .current_round else . end)
+    | (if has("rounds") and (has("versions") | not)
+       then .versions = .rounds else . end)
+    | (if .current_task != null
+         and (.current_task | has("round"))
+         and (.current_task | has("version") | not)
+       then .current_task.version = .current_task.round else . end)
+  ' "$STATE" > "$tmp" 2>/dev/null; then
+    if ! cmp -s "$STATE" "$tmp"; then
+      mv "$tmp" "$STATE"
+      printf '[productune] schema migrate: round → version (legacy keys retained one cycle)\n' >&2
+    else
+      rm -f "$tmp"
+    fi
+  else
+    rm -f "$tmp"
+  fi
+}
+auto_migrate_round_to_version
+
 emit_block() {
   printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$1" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
   exit 0
