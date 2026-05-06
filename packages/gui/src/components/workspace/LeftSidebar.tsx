@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { ActivityIcon } from './ActivityBar'
 import type { Project, Session } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
+import VersionsPanel from './VersionsPanel'
 
 interface Props {
   project: Project
@@ -10,7 +11,7 @@ interface Props {
 }
 
 export default function LeftSidebar({ project, onBack, activeIcon }: Props) {
-  const { messages, setMessages, setClaudeSessionId } = useWorkspace()
+  const { messages, setMessages, setClaudeSessionId, poState } = useWorkspace()
 
   // Mount: load PO session from fs via IPC
   useEffect(() => {
@@ -39,23 +40,24 @@ export default function LeftSidebar({ project, onBack, activeIcon }: Props) {
       {/* 본문 — activeIcon 에 따라 분기 */}
       {activeIcon === 'rooms' && (
         <div style={sessionPanel}>
-          <div style={sectionLabel}>PO 세션</div>
+          <div style={sectionLabel}>PO session</div>
           <div style={sessionMeta}>
-            메시지 <span style={sessionMetaValue}>{messages.length}</span>
+            messages <span style={sessionMetaValue}>{messages.length}</span>
           </div>
           <div style={sessionHint}>
-            우측 채팅창에서 PO 와 대화하세요. (Slice 3 에서 streaming 활성화)
+            Talk to PO in the chat panel on the right. (Streaming wired in Slice 3.)
           </div>
         </div>
       )}
+      {activeIcon === 'versions' && <VersionsPanel poState={poState} />}
       {activeIcon === 'artifacts' && (
         <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>산출물 — 후속 슬라이스에서 추가</span>
+          <span style={panelPlaceholderText}>Artifacts — coming in a later slice</span>
         </div>
       )}
       {activeIcon === 'settings' && (
         <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>설정 — T-P4-024</span>
+          <span style={panelPlaceholderText}>Settings — T-P4-024</span>
         </div>
       )}
     </div>
