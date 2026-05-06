@@ -62,18 +62,17 @@ Disposition (c) + user gives **patch** (design fix, bug fix, UX tweak), not fres
 
 **Designer responsibilities (PRD-external patch):**
 - (a) **Author plan** — write change intent / impact / decomposition into `## Request` + `## Acceptance` of ticket body.
-- (b) **Split tickets + assign personas** — if instruction mixes characters (e.g. design-token fix + behavior bug), split into design ticket + dev ticket.
-- (c) **Decide `requires_qa` per ticket** — based on risk / impact / acceptance verifiability. PO follows designer's call (no override; re-ask if unclear).
+- (b) **Split tickets + choose stage per ticket** — if instruction mixes characters (e.g. design-token fix + behavior bug), split. Each ticket's `stage` value (design/impl/refactor/test/qa) determines assignee + auto QA smoke gate behavior automatically (see `tickets.md` Layer B). Designer doesn't set `requires_qa` — gate is implicit in stage choice.
 
 **Flow:**
 1. Call designer (`opus/high` default; light patch `sonnet/normal`):
-   - `(scope: ad-hoc patch from user — author plan, split into ticket(s), set assignee + requires_qa per ticket)`
+   - `(scope: ad-hoc patch from user — author plan, split into ticket(s), choose stage per ticket)`
    - `[user instruction] <verbatim>`
    - `[ctx] {…current_task slice if related…}`
 2. Designer returns `state:"ready"` with `tickets[]`:
-   - Per ticket: `assignee` (developer / qa / designer self), `requires_qa: bool`, `version` (active Version or `patches/<topic>`).
+   - Per ticket: `stage` (design/impl/refactor/test/qa) + `version` (active Version or `patches/<topic>`). `assignee` derives from `stage` (Layer B table).
    - One instruction → multiple tickets of different characters allowed. Inter-ticket deps via `deps`.
-3. PO routes per Stage 2C — uses designer's `assignee`, calls QA only on `requires_qa=true`.
+3. PO routes per Stage 2C — uses stage-derived assignee. impl/refactor tickets auto-trigger QA smoke gate at close (no `requires_qa` flag needed).
 4. Patch does not change PRD body. If designer judges PRD update needed → emit separate PRD-update ticket.
 5. Mid-patch new instruction → re-enter patch routing (resume same designer session or new patch).
 

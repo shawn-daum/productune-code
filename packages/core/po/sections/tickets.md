@@ -65,6 +65,16 @@ todo → in-progress → review → done | blocked | abandoned
 ```
 같은 ticket이 stage는 고정, status만 변함. 시각화 시 두 축 다 표시.
 
+**`qa_status`** = auto QA smoke gate 결과 기록 (impl / refactor ticket에만 존재):
+```
+pending → pass | fail
+```
+- `pending` (default at ticket creation)
+- `pass` — smoke gate 통과 → ticket `done` 허용
+- `fail` — smoke fail → dev resume. fail 누적 3회 → ticket `blocked`
+
+design / test / qa stage ticket 에는 이 field 없음 (gate 미적용).
+
 ### `stage:test` ticket emission triggers
 
 Designer가 PRD ready 시점에 검토 — 아래 4개 중 1개라도 해당하면 `stage:test` ticket emit.
@@ -114,7 +124,7 @@ PO **never** writes authored content. Lifecycle/frontmatter = state, not authori
 
 | T-NNN.md item | PO direct |
 |---|---|
-| frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, routing/model/effort meta | ✅ sed/awk/perl/printf |
+| frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, routing/model/effort meta | ✅ sed/awk/perl/printf |
 | Mirrored header status line | ✅ sed |
 | `## Persona Activity` table — 1-row append-only (≤80 char Result) | ✅ printf |
 | `docs/qa/fail-patterns.md` — append from QA's `fail_event` output | ✅ printf >> (mechanical, no semantic) |
@@ -153,6 +163,8 @@ Task = ticket (1:1). One PRD per Version; Version bundles its tickets, exported 
     "ticket_id": "T-042", "slug": "...", "title": "...",
     "status": "todo|in-progress|review|done|blocked",
     "stage": "design|impl|refactor|test|qa",
+    "qa_status": "pending|pass|fail",
+    "qa_loops": 0,
     "assignee_persona": "pdt-developer",
     "started_at": "...", "ended_at": null, "request_summary": "...",
     "prd_path": "docs/prd/<slug>.md",
@@ -190,6 +202,8 @@ ticket_id: T-042
 version: v1.0-MVP
 stage: impl
 status: todo
+qa_status: pending            # impl/refactor only — pending|pass|fail
+qa_loops: 0                   # impl/refactor only — fail count, max 3
 assignee: pdt-developer
 created_at: 2026-MM-DDTHH:MM:SSZ
 started_at: null
@@ -246,7 +260,10 @@ Mechanical rules:
 - `assignee`, routing/session refs: metadata only.
 - `branch` / `worktree_path`: set on open; do not delete on close (history).
 - `## Outcome` = content. Delegate if product meaning needed.
-- `stage:impl` / `stage:refactor` ticket이 `done` 되려면 자동 QA smoke pass 필수 (위 Layer B 참조). fail 3회 누적 → `blocked`.
+- **QA gate close check** (impl/refactor only):
+  - dev session 이 자기 작업 끝났다고 보고 → PO 가 auto QA smoke gate 호출 → `qa_status` 갱신.
+  - `qa_status: pass` 일 때만 `done` 허용. `fail` 이면 dev resume + `qa_loops += 1`. `qa_loops ≥ 3` 이면 `blocked` + user surface.
+  - design / test / qa stage ticket은 `qa_status` field 자체 없음 (close 시 검증 패스).
 
 Version close → mechanical status/backfill sweep. Outcome text needed → single Designer call: `"Version v1.0-MVP closed. Append ## Outcome summaries from past_tickets[] without changing scope/AC."`
 
