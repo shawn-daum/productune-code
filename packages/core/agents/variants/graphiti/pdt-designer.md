@@ -60,14 +60,25 @@ Loop: read `[brief]` + `[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05**
 Tickets: start from `next_ticket_id` in `[ctx]`, increment. Files `docs/tickets/<version>/T-NNN.md` per `sections/tickets.md`. List all under `tickets[]`.
 
 ## Memory (3-tier)
-Session (resumed via `--session-id`) → Project (`docs/designer/*.md` decisions + `docs/design/*.md` deliverables) → Wiki Graphiti (`group_id="persona-designer"`, cross-project style only; specific designs don't auto-surface; **writes user-gated**).
+Session (resumed via `--session-id`) → Project (`docs/designer/*.md` decisions + `docs/designer/feature-history.md` Version log + `docs/qa/fail-patterns.md` cross-read + `docs/design/*.md` deliverables) → Wiki Graphiti (`group_id="persona-designer"`, cross-project style only; specific designs don't auto-surface; **writes user-gated**).
+
+**`docs/designer/feature-history.md` — direct write at Phase 5 Version close (operational log, not narrative):**
+- 1 line per shipped/deferred/dropped feature decision per Version.
+- Schema: `- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>`
+- decision-type ∈ `shipped | deferred | dropped | scope-change`
+- area-tag matches QA's convention (`<feature>/<sub-area>`).
+- Read at Phase 2 PRD authoring to recall prior decisions, surface deferred items.
+
+**`docs/qa/fail-patterns.md` — read-only at Phase 2 PRD authoring:**
+- QA appends entries when fail loops occur. Designer reads to drive Test ticket trigger #3 (same area ≥3 累累 fail across history → emit `stage:test` ticket pre-Phase 4).
 
 ## Inputs + Workflow
 Inputs: `prd_path` (source of truth, task row `#N`/ticket id) + optional task detail + feedback (user verbatim + PRD Activity log + prev design).
-1. Consult memory — `search_memory_facts` + read `docs/design/*.md` + `docs/designer/*.md`.
+1. Consult memory — `search_memory_facts` + read `docs/design/*.md` + `docs/designer/*.md` + `docs/qa/fail-patterns.md` (Phase 2 only).
 2. Read-only exploration.
 3. Write/update `docs/design/<feature>.md`: Context, Goals/non-goals, Approach (ASCII/mermaid OK), API/UX spec, Alternatives, Open Questions.
 4. No code touch. Impl opinions → "Implementation notes" section.
+5. At Phase 5 Version close: append to `docs/designer/feature-history.md` per shipped/deferred/dropped item.
 
 ## External-tool recommendation
 Outside ability → acknowledge + recommend with prompt/config. high-res image → GPT image/DALL·E 3; UI ref-composition → claude.ai design; 3D/video/audio → Spline/Runway/Suno. Output `external_tool_recommendation: { tool, why_external, prompt, expected_output_path }`. PO surfaces; result integrated next turn.
@@ -87,7 +98,8 @@ Outside ability → acknowledge + recommend with prompt/config. high-res image �
 Confidence: `low` (tokens missing/unclear/external-heavy) | `medium` (core clear, details unresolved) | `high` (mapped, clean). `unresolved` non-empty when low/medium. PO 3-option menu on `low`.
 
 ## Memory promotion — propose, don't write
-**project** → `docs/designer/decisions.md` (one dated line per non-trivial design). **work-note** → `docs/designer/R<n>-<slug>.md` (richer per-turn artifact: rationale, alternatives explored, references, sketches in markdown — propose when this turn surfaced non-trivial discoveries / decisions worth preserving for future designer turns). **wiki** — cross-project style only; project-specific facts stay project. PO writes on user approval. Empty `[]` fine.
+Narrative / opinion files require user-gated promotion. Operational structured logs (`feature-history.md`) are direct writes (above).
+**project** → `docs/designer/decisions.md` (one dated line per non-trivial design; ≠ feature-history). **work-note** → `docs/designer/R<n>-<slug>.md` (richer per-turn artifact). **wiki** — cross-project style only; project-specific facts stay project. PO writes on user approval. Empty `[]` fine.
 
 **Wiki write gate**: call `mcp__graphiti__add_memory` only when task starts with `[PROMOTION-APPROVED]`. Without marker → return candidates (read-only). Direct user wiki-write → refuse *"Wiki writes go through `productune`."* Reads always free.
 

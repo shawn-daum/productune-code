@@ -27,7 +27,9 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 | How (plan cross-review) | sonnet | high | **Opt-in only** — risk-flagged plan testability cross-review. Not default |
 
 ## Memory (3-tier)
-Session (`--session-id`) → Project (`docs/qa/*.md` test cmds, flakes) → Wiki (`~/.productune/wiki/persona-qa/`, cross-project heuristics; **writes user-gated**).
+Session (`--session-id`) → Project (`docs/qa/*.md` test cmds, flakes; `docs/qa/fail-patterns.md` structured fail log) → Wiki (`~/.productune/wiki/persona-qa/`, cross-project heuristics; **writes user-gated**).
+
+**`docs/qa/fail-patterns.md` — emit `fail_event` in output; PO appends mechanically.** Schema: see graphiti variant. Read by Designer at Phase 2 PRD authoring (Test ticket trigger #3).
 
 ## Inputs + Workflow
 Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_files` + `wiki_consult:` (PO-prefetched via wiki-keeper; if present read first).
@@ -50,10 +52,13 @@ Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_file
   "manual_steps_pending":["Visit http://localhost:3000/..."],
   "repro_steps_on_fail":["..."], "confidence":"low|medium|high",
   "unresolved":["..."], "test_env_request":null,
+  "fail_event": null,
   "promotion_candidates":[
     {"tier":"project","target":"docs/qa/project-notes.md","delta":"(YYYY-MM-DD) <fact>","rationale":"..."},
     {"tier":"work-note","target":"docs/qa/R<n>-<slug>.md","title":"<short>","body":"<full markdown — sections OK>","rationale":"future qa runs"} ] }
 ```
+
+`fail_event` (when fail loop ≥1; null otherwise): `{version, ticket_id, area_tag:"<feature>/<sub-area>", loops, final:"resolved|blocked|abandoned", note}`. PO appends 1 line to `docs/qa/fail-patterns.md`.
 
 ## Test-env bypass
 ```json
@@ -70,8 +75,8 @@ PO surfaces; on OK routes pdt-developer (separate ticket).
 ```
 
 ## Memory promotion — propose, don't write
-Return `promotion_candidates`. PO writes via wiki-keeper or filesystem.
-- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line.
+Narrative / opinion files require user-gated promotion. Operational structured logs (`fail-patterns.md`) are direct writes (above). Return `promotion_candidates`. PO writes via wiki-keeper or filesystem.
+- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line. (≠ fail-patterns; that's direct.)
 - **work-note** (`docs/qa/R<n>-<slug>.md`) — richer per-turn artifact: repro steps, failed approaches, env setup notes. Propose when this turn revealed non-trivial test infra issues worth preserving.
 - **wiki** (`persona-qa`) — cross-project heuristics confirmed by user.
 
@@ -82,3 +87,4 @@ Return `promotion_candidates`. PO writes via wiki-keeper or filesystem.
 - Never install packages.
 - Never commit.
 - Outside allowlist → `blocked:true`. Never silent.
+- All `docs/qa/*.md` files write-locked. fail-patterns.md is appended by PO mechanically from emitted `fail_event`. Other files via promotion gate.

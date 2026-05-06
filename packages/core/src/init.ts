@@ -48,6 +48,29 @@ export function bootstrapPersonaMemory(projectDir: string) {
     fs.mkdirSync(abs, { recursive: true })
     ensureFile(path.join(abs, 'README.md'), readme)
   }
+  // Structured operational logs — Version-tagged, append-only.
+  ensureFile(
+    path.join(projectDir, 'docs/qa/fail-patterns.md'),
+    '# QA fail patterns\n\n' +
+      'Per-Version log of QA fail loops. Read by Designer at Phase 2 PRD authoring\n' +
+      '(Test ticket trigger #3: same area-tag ≥3 累累 fail → emit `stage:test` ticket).\n\n' +
+      '## Schema\n\n' +
+      '- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>\n\n' +
+      'area-tag = `<feature>/<sub-area>` (e.g. `auth/login-modal`).\n' +
+      'Appended by PO mechanically from QA\'s `fail_event` output. No manual edits.\n\n' +
+      '## Entries\n\n',
+  )
+  ensureFile(
+    path.join(projectDir, 'docs/designer/feature-history.md'),
+    '# Feature history\n\n' +
+      'Per-Version log of feature decisions / scope choices / deferrals.\n' +
+      'Read at Phase 2 PRD authoring; appended by Designer at Phase 5 Version close.\n\n' +
+      '## Schema\n\n' +
+      '- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>\n\n' +
+      'decision-type ∈ `shipped | deferred | dropped | scope-change`.\n' +
+      'area-tag = `<feature>/<sub-area>` (matches QA convention).\n\n' +
+      '## Entries\n\n',
+  )
   const turnsDir = path.join(projectDir, '.productune', 'turns')
   fs.mkdirSync(turnsDir, { recursive: true })
   ensureFile(

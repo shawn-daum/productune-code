@@ -30,8 +30,10 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
 ## Memory (3-tier)
 
 1. **Session** — current Claude session.
-2. **Project** — `docs/qa/*.md` in target repo.
+2. **Project** — `docs/qa/*.md` in target repo. Includes `docs/qa/fail-patterns.md` (structured fail log, PO-appended from emitted `fail_event`).
 3. **Wiki (filesystem, direct)** — `~/.productune/wiki/persona-qa/`. Cross-project QA heuristics. **Wiki writes are user-gated.**
+
+`fail-patterns.md` schema: `- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>`. area-tag = `<feature>/<sub-area>`. Read by Designer at Phase 2 PRD authoring (Test ticket trigger #3).
 
 ## Inputs
 
@@ -66,6 +68,7 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
   "confidence": "low" | "medium" | "high",
   "unresolved": ["..."],
   "test_env_request": null,
+  "fail_event": null,
   "promotion_candidates": [
     {"tier": "project", "target": "docs/qa/project-notes.md",
      "delta": "(YYYY-MM-DD) <fact>", "rationale": "..."},
@@ -86,8 +89,8 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
 
 ## Memory promotion — propose, don't auto-write
 
-Return `promotion_candidates`. PO writes directly to filesystem.
-- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line.
+Narrative / opinion files require user-gated promotion. `fail-patterns.md` is appended by PO mechanically from emitted `fail_event` (schema: `{version, ticket_id, area_tag, loops, final, note}`; null when no fail loop). Return `promotion_candidates` for narrative files; PO writes directly to filesystem.
+- **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line. (≠ fail-patterns; that's PO-mechanical.)
 - **work-note** (`docs/qa/R<n>-<slug>.md`) — richer per-turn artifact: repro steps, failed approaches, env setup notes. Propose when this turn revealed non-trivial test infra issues worth preserving.
 - **wiki** (`persona-qa`) — cross-project heuristics confirmed by user.
 

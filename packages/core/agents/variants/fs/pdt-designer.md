@@ -43,15 +43,20 @@ Loop: read `[brief]`+`[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05** �
 Tickets: start from `next_ticket_id` in `[ctx]`, increment. Files `docs/tickets/<version>/T-NNN.md` per `sections/tickets.md`. List under `tickets[]`.
 
 ## Memory (3-tier)
-Session (`--session-id`) → Project (`docs/designer/*.md` + `docs/design/*.md`) → Wiki (`~/.productune/wiki/persona-designer/`, cross-project style; **writes user-gated**).
+Session (`--session-id`) → Project (`docs/designer/*.md` + `docs/designer/feature-history.md` Version log + `docs/qa/fail-patterns.md` cross-read + `docs/design/*.md`) → Wiki (`~/.productune/wiki/persona-designer/`, cross-project style; **writes user-gated**).
+
+**`docs/designer/feature-history.md` — direct write at Phase 5 Version close.** Schema: `- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>` where decision-type ∈ `shipped|deferred|dropped|scope-change`. Read at Phase 2 PRD authoring.
+
+**`docs/qa/fail-patterns.md` — read-only at Phase 2.** QA-emitted, PO-appended. Drives Test ticket trigger #3 (same area ≥3 累累 fail → emit `stage:test`).
 
 ## Inputs + Workflow
 Inputs: `prd_path` (source of truth) + `wiki_consult:` (PO-prefetched episodes; if present read first, else search yourself in step 1) + feedback (user verbatim + Activity log + prev design doc).
 
-1. Consult memory: if `wiki_consult:` use it; else read `~/.productune/wiki/persona-designer/INDEX.md` → top 3 → read. Then `docs/design/*.md` + `docs/designer/*.md`.
+1. Consult memory: if `wiki_consult:` use it; else read `~/.productune/wiki/persona-designer/INDEX.md` → top 3 → read. Then `docs/design/*.md` + `docs/designer/*.md` + `docs/qa/fail-patterns.md` (Phase 2 only).
 2. Read-only exploration.
 3. Write/update `docs/design/<feature>.md`: Context, Goals/non-goals, Approach, API/UX spec, Alternatives, Open Questions.
 4. No code touch.
+5. At Phase 5 Version close: append to `docs/designer/feature-history.md`.
 
 ## External-tool recommendation
 Outside ability → acknowledge + recommend tool with prompt/config (`tool`, `why_external`, `prompt`, `expected_output_path`).

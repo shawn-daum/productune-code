@@ -33,7 +33,7 @@ Phase 3. Design        — Designer self-execute            [stage:design ticket
 Phase 4. Build         — ticket execution
                          · stage:impl     (필수, Developer + auto QA smoke gate)
                          · stage:refactor (선택, Developer + auto QA smoke gate)
-                         · stage:test     (조건부, QA — L≥6 / risk-flagged / 명시 요청 시)
+                         · stage:test     (조건부, QA — trigger 4종 중 1개라도 해당 시)
                          · stage:qa       (독립 QA work만 — regression / deploy verify 등)
 Phase 5. Version close — calibration + outcome            [no ticket]
                          (PDS See stage 자리 — Phase B에서 보강 예정)
@@ -65,6 +65,19 @@ todo → in-progress → review → done | blocked | abandoned
 ```
 같은 ticket이 stage는 고정, status만 변함. 시각화 시 두 축 다 표시.
 
+### `stage:test` ticket emission triggers
+
+Designer가 PRD ready 시점에 검토 — 아래 4개 중 1개라도 해당하면 `stage:test` ticket emit.
+
+| # | 조건 | 출처 / 사유 |
+|---|---|---|
+| 1 | `risk_flags` 에 `auth` / `payments` / `PII` 포함 | 감사/규제 — test plan이 audit artifact |
+| 2 | Multi-step user flow (≥3 step) — auto-smoke 1분 budget 초과 예상 | smoke gate가 못 잡음 |
+| 3 | 같은 area-tag 누적 fail loop ≥3회 (`docs/qa/fail-patterns.md`) | 학습 — 반복 실패 영역 사전 plan |
+| 4 | user 명시 요청 ("테스트 먼저", "test plan 짜줘") | 사용자 override |
+
+산출물: `docs/qa/<slug>-test-plan.md`. Impl ticket의 `## Inputs` 에서 reference. impl ticket의 auto-smoke gate 는 Test ticket 존재와 무관하게 동작 (Test = 사전 정의, smoke = 사후 verify).
+
 ### 자동 QA smoke gate (Developer ticket close 조건)
 
 `stage:impl` / `stage:refactor` ticket이 close (`done`) 되려면 자동 QA smoke 통과 필수. user 가 routing 깨짐 / page 안 뜸 / console error 같은 user-facing 깨짐을 직접 보지 않도록.
@@ -88,10 +101,12 @@ todo → in-progress → review → done | blocked | abandoned
 | `docs/tickets/<version>/T-NNN.md` body/AC | Designer | emit alongside PRD |
 | `docs/tickets/<version>/T-NNN.md` lifecycle frontmatter/status | PO | mechanical |
 | `docs/design/**/*.md` | Designer | Designer Write |
+| `docs/designer/feature-history.md` (structured Version log) | Designer | Designer Write at Phase 5 close |
+| `docs/qa/fail-patterns.md` (structured fail log) | PO mechanical | `printf >>` from QA's `fail_event` output |
 | `<project>/.productune/po-state.json` | PO + post-delegate hook | `jq` |
 | `~/.productune/po-memory.md` (calibration) | PO | `printf >>` |
 | Source code, configs, scripts | Developer | Developer Write/Edit |
-| `docs/qa/*.md` | QA | QA Write |
+| Other `docs/qa/*.md` (project-notes, work-notes) | QA | QA Write (via promotion gate) |
 
 PO **never** writes authored content. Lifecycle/frontmatter = state, not authoring.
 
@@ -102,6 +117,7 @@ PO **never** writes authored content. Lifecycle/frontmatter = state, not authori
 | frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, routing/model/effort meta | ✅ sed/awk/perl/printf |
 | Mirrored header status line | ✅ sed |
 | `## Persona Activity` table — 1-row append-only (≤80 char Result) | ✅ printf |
+| `docs/qa/fail-patterns.md` — append from QA's `fail_event` output | ✅ printf >> (mechanical, no semantic) |
 | `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope` body | ❌ Designer |
 | `## Outcome` narrative | ❌ Designer (Version close) |
 | Title substantive change | ❌ Designer |
@@ -113,6 +129,14 @@ PO **never** writes authored content. Lifecycle/frontmatter = state, not authori
 ```
 
 `branch` / `worktree_path` auto-filled by git-workflow (Phase 4 R2) at ticket open.
+
+**`fail-patterns.md` mechanical append** (after QA emits non-null `fail_event`):
+```bash
+LINE=$(jq -r '.fail_event | "- (\(now | strftime("%Y-%m-%d"))) \(.version) · \(.ticket_id) · \(.area_tag) · loops=\(.loops) · final=\(.final) · note: \(.note)"' "$QA_OUT")
+TARGET="$PROJECT/docs/qa/fail-patterns.md"
+[ -f "$TARGET" ] || { mkdir -p "$(dirname "$TARGET")"; printf '# QA fail patterns\n\nPer-Version log of QA fail loops. Designer reads at Phase 2 (Test ticket trigger #3).\n\n## Entries\n\n' > "$TARGET"; }
+printf '%s\n' "$LINE" >> "$TARGET"
+```
 
 ---
 

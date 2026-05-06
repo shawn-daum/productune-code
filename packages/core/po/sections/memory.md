@@ -147,3 +147,18 @@ Repo-local JSON. Sessions scoped per **task**. Each top-level user request = one
 
 Pre-delegate: glance `recent_turns`. Persona ≥3 fails / last 5 → flag in Stage 1 risk (`evolution.md`).
 Post-turn: append outcome + bump `current_task.persona_session_meta.<persona>.turns` via `jq`. Never burn Claude call.
+
+---
+
+## Persona product-memory (structured operational logs)
+
+Append-only Version-tagged logs. Two layers separate from narrative `decisions.md` / `project-notes.md` (which go through promotion gate):
+
+| File | Owner of write | Read by | Purpose |
+|---|---|---|---|
+| `docs/qa/fail-patterns.md` | PO mechanical (from QA's `fail_event` output) | Designer at Phase 2 | Test ticket trigger #3 — same area-tag ≥3 累累 fail → emit `stage:test`. |
+| `docs/designer/feature-history.md` | Designer Write at Phase 5 Version close | Designer at Phase 2 (next Version) | Recall prior Version decisions / surface deferred items. |
+
+Both share schema convention: `- (YYYY-MM-DD) <version> · <area-tag> · ... · note: <one-line>` where area-tag = `<feature>/<sub-area>`. PO writes for fail-patterns are mechanical (no semantic interpretation) — `printf '%s\n' "$LINE" >> "$TARGET"`. Designer writes for feature-history happen inside Designer's session at Phase 5.
+
+These are **distinct from promotion-gated memory** (`decisions.md`, `project-notes.md`, work-notes, wiki). They're operational ground truth — like `~/.productune/po-memory.md` calibration log — append-only, no opinion.
