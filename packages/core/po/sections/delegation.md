@@ -109,7 +109,7 @@ TASK="$USER_TEXT
 Designer returns:
 ```json
 // needs-info — relay next_question
-{"state":"needs-info","next_question":"어떤 기기/플랫폼이 1순위인가요?","missing_slot":"scope_boundary","ambiguity_score":0.18,"round":2}
+{"state":"needs-info","next_question":"어떤 기기/플랫폼이 1순위인가요?","missing_slot":"scope_boundary","ambiguity_score":0.18,"iteration":2}
 // ready — PRD + tickets shipped
 {"state":"ready","prd_path":"docs/prd/<slug>.md","tickets":["docs/tickets/v1/T-001.md"],
  "ambiguity_score":0.04,"slot_clarity":{},"confidence":0.92,"unresolved":[]}
@@ -120,7 +120,7 @@ PO loop:
 2. `needs-info` → print `next_question` (caveman lite, user's lang). Append user reply to `$BRIEF_PATH` (`printf >>`). Resume Designer.
 3. `ready` → store `prd_path` in `current_task.prd_path`, push `tickets[]` into `artifacts`, route per `tickets.md`. PO may set initial lifecycle metadata; Designer remains content owner.
 
-Hard cap: 5 `needs-info` rounds. 6th turn → resume body: `"finalize PRD with current state. Move unresolved into ## Open Questions."` Designer ships `ready` with `confidence < 0.7`.
+Hard cap: 5 `needs-info` iterations. 6th turn → resume body: `"finalize PRD with current state. Move unresolved into ## Open Questions."` Designer ships `ready` with `confidence < 0.7`.
 
 ---
 
@@ -133,7 +133,7 @@ L4+ goes **plan-first (dev opus/xhigh) → PO reviews → auto-accept impl (sonn
 **Flow:**
 1. Plan call — dev PLAN ONLY, opus/xhigh. Body starts `PLAN MODE — DO NOT WRITE CODE` + Goal/Constraints/Acceptance. `changed_files` must be empty.
 2. PO review — testability + acceptance + architecture + risk. sonnet/medium routine, opus/high risk. Verdict: `OK` or `revise:[...]`.
-3. Plan revise — resume same dev session, plan only, re-review. **3+ rounds** → surface (proceed / re-PRD / strong-implement).
+3. Plan revise — resume same dev session, plan only, re-review. **3+ iterations** → surface (proceed / re-PRD / strong-implement).
 4. Impl — dev sonnet/high, plan as task first line, `acceptEdits`. Self-verify mandatory.
 5. Failure regress — Self-verify / QA fail after Path 1 retry → back to plan (opus/xhigh) + PO re-review. `escalation_triggered=true`, bump `actual_complexity`.
 

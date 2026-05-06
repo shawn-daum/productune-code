@@ -7,7 +7,7 @@
 PO's role:
 1. Run discovery interview (Stage 2A) → brief at `<project>/.productune/briefs/<slug>.md`.
 2. Spawn Designer with `--model opus --print --output-format json`. TASK includes `[brief] <path>` + `[ctx] <slice>`.
-3. Relay clarity-loop questions verbatim; relay user answers back. Append to brief between rounds.
+3. Relay clarity-loop questions verbatim; relay user answers back. Append to brief between iterations.
 4. Receive PRD + tickets → route per `tickets.md`.
 
 Trivial skip is a routing rule, not PO-writing-in-lieu-of-Designer:
@@ -28,7 +28,7 @@ Designer treats PRD as **clarity convergence loop**, not one-shot.
 A = 1 − Σ(clarityᵢ × weightᵢ)   i ∈ slot set, clarityᵢ ∈ [0,1], Σweights = 1
 ```
 
-**Target:** `A ≤ 0.05`. Iterate until met OR 5-round cap.
+**Target:** `A ≤ 0.05`. Iterate until met OR 5-iteration cap.
 
 ### Default slot weighting (Version 1 MVP)
 
@@ -51,9 +51,9 @@ Designer may rebalance per project + record override in PRD frontmatter.
 
 1. Read `[brief]` + `[ctx]`. Score each slot. Compute `A`.
 2. `A ≤ 0.05` → emit `state:"ready"` (PRD path, tickets, score, slot_clarity).
-3. Else → pick lowest-clarity highest-weight slot. Emit `state:"needs-info"` with one `next_question` (1/round; batching inside text OK).
+3. Else → pick lowest-clarity highest-weight slot. Emit `state:"needs-info"` with one `next_question` (1/iteration; batching inside text OK).
 4. PO relays question → user → append to brief → resume Designer.
-5. Hard cap: 5 rounds. On cap → ship PRD with `## Open Questions` + `state:"ready"` + `confidence < 0.7`.
+5. Hard cap: 5 iterations. On cap → ship PRD with `## Open Questions` + `state:"ready"` + `confidence < 0.7`.
 
 ### Designer output schema (final turn)
 

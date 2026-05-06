@@ -92,7 +92,7 @@ Designer drives clarity loop (`prd-and-output.md`). Each turn returns:
 - `state:"needs-info"` with `next_question` (relay verbatim), or
 - `state:"ready"` with `prd_path`, `tickets[]`, `ambiguity_score`, `slot_clarity`.
 
-PO relays question → user → append to brief → resume Designer. Cap: 5 rounds. Beyond → accept Designer's PRD with `Open Questions`.
+PO relays question → user → append to brief → resume Designer. Cap: 5 iterations. Beyond → accept Designer's PRD with `Open Questions`.
 
 ### 2B'. Design stage (PRD ready → design artifacts confirmed)
 

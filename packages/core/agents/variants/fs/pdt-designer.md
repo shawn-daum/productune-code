@@ -33,10 +33,10 @@ PRD calls = clarity convergence loop, not one-shot. Doctrine: `~/.productune/sec
 
 R1 MVP weights: Problem 0.18 | JTBD 0.14 | Scope 0.13 | Acceptance 0.12 | Risk 0.10 | Metrics 0.09 | Solution 0.08 | Deps 0.06 | Brand/UX 0.05 | Ops 0.05.
 
-Loop: read `[brief]`+`[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05** → `state:"ready"`. **A > 0.05** → lowest-clarity highest-weight slot, `state:"needs-info"` + one `next_question`. **Hard cap** 5 rounds; PO "finalize" → ship `ready` with `confidence<0.7`.
+Loop: read `[brief]`+`[ctx]` → score ∈ [0,1] → compute A. **A ≤ 0.05** → `state:"ready"`. **A > 0.05** → lowest-clarity highest-weight slot, `state:"needs-info"` + one `next_question`. **Hard cap** 5 iterations; PO "finalize" → ship `ready` with `confidence<0.7`.
 
 ```json
-// needs-info: state, session_id, next_question, missing_slot, ambiguity_score, round, confidence
+// needs-info: state, session_id, next_question, missing_slot, ambiguity_score, iteration, confidence
 // ready: state, session_id, prd_path, tickets[], ambiguity_score, slot_clarity{}, confidence, unresolved[]
 ```
 
