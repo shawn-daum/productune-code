@@ -1,17 +1,28 @@
+import type { ActivityIcon } from './ActivityBar'
 import { useWorkspace } from '../../store/workspace'
 import VersionDetailView from './VersionDetailView'
+import TicketDashboardView from './TicketDashboardView'
 
-export default function CenterPane() {
+interface Props {
+  activeIcon: ActivityIcon
+}
+
+export default function CenterPane({ activeIcon }: Props) {
   const selectedVersionId = useWorkspace((s) => s.selectedVersionId)
   const poState = useWorkspace((s) => s.poState)
 
   if (selectedVersionId) {
     return <VersionDetailView versionId={selectedVersionId} poState={poState} />
   }
+  if (activeIcon === 'tickets') {
+    return <TicketDashboardView poState={poState} />
+  }
 
   return (
     <div style={wrap}>
-      <p style={placeholder}>Click a Version in the sidebar to see its detail · ticket board / design / deploy panels coming.</p>
+      <p style={placeholder}>
+        Click a Version in the sidebar to see its detail · or open the Tickets dashboard for a cross-Version board.
+      </p>
     </div>
   )
 }

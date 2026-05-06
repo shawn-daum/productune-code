@@ -14,7 +14,7 @@ interface Props {
 }
 
 export default function WorkspaceShell({ project, onBack }: Props) {
-  const { phase, setProject, setPoState } = useWorkspace()
+  const { phase, setProject, setPoState, setSelectedVersionId } = useWorkspace()
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('rooms')
 
   // Sync project into store on mount / change
@@ -28,6 +28,11 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       .then((s: unknown) => setPoState(s as any))
       .catch(() => setPoState(null))
   }, [project.projectDir, setPoState])
+
+  // Clear sidebar Version selection when switching away from the Versions tab.
+  useEffect(() => {
+    if (activeIcon !== 'versions') setSelectedVersionId(null)
+  }, [activeIcon, setSelectedVersionId])
 
   return (
     <div style={grid}>
@@ -43,7 +48,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       </div>
 
       {/* center pane */}
-      <CenterPane />
+      <CenterPane activeIcon={activeIcon} />
 
       {/* status bar */}
       <StatusBar />
