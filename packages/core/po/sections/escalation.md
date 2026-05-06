@@ -28,7 +28,7 @@ SID=$(jq -r --arg p "$PERSONA" '.current_task.persona_sessions[$p]' "$STATE")
 PRIOR_MODEL=$(jq -r --arg p "$PERSONA" '.current_task.persona_session_meta[$p].model_history[-1]' "$STATE")
 PRIOR_EFFORT=$(jq -r --arg p "$PERSONA" '.current_task.persona_session_meta[$p].effort_history[-1]' "$STATE")
 
-# tier-up — capped at xhigh; max only via Stage 1 routing
+# tier-up — capped at xhigh; max only via Step 1 routing
 case "$PRIOR_MODEL" in haiku) NEW_MODEL=sonnet;; sonnet) NEW_MODEL=opus;; opus) NEW_MODEL=opus;; esac
 case "$PRIOR_EFFORT" in
   low) NEW_EFFORT=medium;;
@@ -43,7 +43,7 @@ NO_COLOR=1 claude --resume "$SID" --model "$NEW_MODEL" --print --output-format j
 
 **Loop cap: 2 retries per persona per task.** After 2nd retry confidence still low → mark `blocked` + surface (same flow as Persona evolution Stage A).
 
-**`max` NOT reachable via Path 1.** `max` exists only as Stage 1 routing choice for net-new product/system thinking (PRD R1, design system from scratch, system architecture — `routing.md`). Persona fails at `xhigh` → `max` not the answer; failure indicates *task framing* needs revisiting (Path 2 skill search) or user step-in (Path 3 surface).
+**`max` NOT reachable via Path 1.** `max` exists only as Step 1 routing choice for net-new product/system thinking (PRD R1, design system from scratch, system architecture — `routing.md`). Persona fails at `xhigh` → `max` not the answer; failure indicates *task framing* needs revisiting (Path 2 skill search) or user step-in (Path 3 surface).
 
 ## Path 2 — Skill search and apply
 
@@ -82,7 +82,7 @@ User accepts result as-is. PO surfaces unresolved in final summary's "Follow-ups
 
 ## Escalation = under-estimate signal (calibration mandatory)
 
-3-option menu firing means PO's Stage 1 routing was **under-estimate**. Path 1/2 fires:
+3-option menu firing means PO's Step 1 routing was **under-estimate**. Path 1/2 fires:
 
 - Mark `current_task.calibration_outcome.escalation_triggered = true`
 - Bump `actual_complexity` +1 or +2 (Path 1 retry × 1 = +1; Path 1 × 2 or xhigh use = +2)
@@ -90,8 +90,8 @@ User accepts result as-is. PO surfaces unresolved in final summary's "Follow-ups
 
 Goal: same signal class auto-starts one notch higher next time. Path 3 (just proceed) is NOT counted as escalation — *unless* `user_rework_requested = true` next turn, which triggers calibration_outcome update.
 
-`max` never appears in `escalation=` — not an escalation outcome. Calibration line shows `actual=opus/max` → PO chose `max` at Stage 1 routing (bias for next time: this task class needs `max` directly).
+`max` never appears in `escalation=` — not an escalation outcome. Calibration line shows `actual=opus/max` → PO chose `max` at Step 1 routing (bias for next time: this task class needs `max` directly).
 
 ## Disposition correction learning (separate from quality)
 
-Independent of quality escalation: user corrects PO disposition ≥2× (`/new` after `→ continuing` or vice versa) → append to `po-memory.md` Workflow preferences. (Stage 3 step 17 in `stages.md`.)
+Independent of quality escalation: user corrects PO disposition ≥2× (`/new` after `→ continuing` or vice versa) → append to `po-memory.md` Workflow preferences. (Step 3 step 17 in `stages.md`.)

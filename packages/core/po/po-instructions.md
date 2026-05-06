@@ -49,13 +49,13 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 
 **Always**: `~/.productune/po-instructions.md` (this), `~/.productune/po-memory.md` (memory + Calibration log), `<project>/.productune/po-state.json` (state).
 
-**On demand** (`~/.productune/sections/`): `stages.md` (Stage 1/2/3 detail) · `lifecycle.md` (disposition/archive/revive/timeline) · `routing.md` (model+effort) · `delegation.md` (invocation + Plan-mode + `[ctx]`) · `tickets.md` + `prd-and-output.md` (PRD clarity loop + ticket export) · `escalation.md` (quality 3-option menu) · `calibration.md` (log format) · `memory.md` (promotion gate, wiki, schemas) · `evolution.md` (persona evolution) · `git-workflow.md` (Phase 4 R2 worktree).
+**On demand** (`~/.productune/sections/`): `stages.md` (Step 1/2/3 detail) · `lifecycle.md` (disposition/archive/revive/timeline) · `routing.md` (model+effort) · `delegation.md` (invocation + Plan-mode + `[ctx]`) · `tickets.md` + `prd-and-output.md` (PRD clarity loop + ticket export) · `escalation.md` (quality 3-option menu) · `calibration.md` (log format) · `memory.md` (promotion gate, wiki, schemas) · `evolution.md` (persona evolution) · `git-workflow.md` (Phase 4 R2 worktree).
 
 ## Three stages (detail: `sections/stages.md`)
 
-- **Stage 1.** Read po-memory (1×/task) + state slice (`jq '{ct:.current_task, recent:.recent_turns[-3:], past:(.past_tickets//[])[-3:]}'`). Disposition (`lifecycle.md`). Prefixes: `/new` `/continue` `/resume` `/model` `/effort` `/dev:opus` `/skill` `/retry`.
-- **Stage 2.** New ideas: discovery → brief → PRD (clarity loop, `A ≤ 0.05`). Known scope: delegate directly. Gates: 1 (≥4 tasks/risk), 2 (design-review user-facing), 3 (design-compliance after dev).
-- **Stage 3.** Probe vague feedback, scope to owner persona, resume their session. **Task close**: lifecycle update + archive + calibration line.
+- **Step 1.** Read po-memory (1×/task) + state slice (`jq '{ct:.current_task, recent:.recent_turns[-3:], past:(.past_tickets//[])[-3:]}'`). Disposition (`lifecycle.md`). Prefixes: `/new` `/continue` `/resume` `/model` `/effort` `/dev:opus` `/skill` `/retry`.
+- **Step 2.** New ideas: discovery → brief → PRD (clarity loop, `A ≤ 0.05`). Known scope: delegate directly. Gates: 1 (≥4 tasks/risk), 2 (design-review user-facing), 3 (design-compliance after dev).
+- **Step 3.** Probe vague feedback, scope to owner persona, resume their session. **Task close**: lifecycle update + archive + calibration line.
 
 ## Engine
 
@@ -87,12 +87,12 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 ## Quick reference
 
 ```bash
-# Stage 1
+# Step 1
 jq '{ct:.current_task, recent:.recent_turns[-3:], past:(.past_tickets//[])[-3:]}' .productune/po-state.json
-# Stage 2 — delegate (full: sections/delegation.md)
+# Step 2 — delegate (full: sections/delegation.md)
 NO_COLOR=1 claude --agent pdt-<persona> --model "$MODEL" --print --output-format json "$TASK"   # first
 NO_COLOR=1 claude --resume "$SID"        --model "$MODEL" --print --output-format json "$TASK"  # resume
-# Stage 3 close — archive + calibrate (full: sections/calibration.md)
+# Step 3 close — archive + calibrate (full: sections/calibration.md)
 ```
 
 When uncertain, re-read `sections/<name>.md`.

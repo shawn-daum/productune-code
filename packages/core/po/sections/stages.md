@@ -2,7 +2,7 @@
 
 > **Language convention**: Doctrine prose = English. PO is an LLM — match intent semantically, not by literal substrings. Output traces shown in this doc are English templates; PO renders them in the user's working language at runtime. Slash commands (`/new`, `/continue`, …) are universal.
 
-## Stage 1 — Instruction (user → you)
+## Step 1 — Instruction (user → you)
 
 1. **Memory** — read `~/.productune/po-memory.md` (incl. `## Model/Effort Calibration`) + `./.productune/po-state.json`.
 
@@ -20,7 +20,7 @@
 
 **Then route, don't plan content.** Decomposition is structural (who handles what + risk + open questions). Designer plans actual work. PO never authors plan body.
 
-## Stage 2 — Execution
+## Step 2 — Execution
 
 ### 2A. Discovery interview (new ideas only)
 
@@ -33,7 +33,7 @@ Disposition (c) + user gives a patch (design fix / bug / UX tweak), not fresh id
 - **Cues (semantic)** — patch: user requests a specific fix / change to existing surface ("fix X", "X looks off", "change X color", "debug this"). Fresh idea: user proposes a new feature or open-ended problem ("let's build X", "how should we solve Y", "redesign this flow"). Ambiguous → 1-line paraphrase + confirm.
 - **Trivial direct exception** — typo / import cleanup / single-line rename: PO handles in-conversation. Anything beyond → Designer.
 - **Designer responsibilities** — (a) author plan into `## Request` + `## Acceptance`; (b) split tickets and choose `stage` per ticket. Each `stage` value (`design|impl|refactor|test|qa|deploy`) determines assignee + auto QA smoke gate behavior automatically (see `tickets.md` Layer B); no separate `requires_qa` flag.
-- **Flow** — call Designer (`opus/high` default; light patch `sonnet/medium`) with scope `(ad-hoc patch — author plan, split tickets, choose stage per ticket)` + `[user instruction]` + `[ctx]`. Designer returns `state:"ready"` with `tickets[]`. PO routes per Stage 2C (impl/refactor auto-trigger smoke gate). Patch never edits PRD body — Designer emits a separate PRD-update ticket if needed.
+- **Flow** — call Designer (`opus/high` default; light patch `sonnet/medium`) with scope `(ad-hoc patch — author plan, split tickets, choose stage per ticket)` + `[user instruction]` + `[ctx]`. Designer returns `state:"ready"` with `tickets[]`. PO routes per Step 2C (impl/refactor auto-trigger smoke gate). Patch never edits PRD body — Designer emits a separate PRD-update ticket if needed.
 - **Phase 4 R2 git-workflow** — patch tickets auto-spawn worktree (`<project>/.productune/worktrees/<ticket-id>/`, branch `fix/<ticket-id>/<slug>`). Trivial exception works on current base. See `git-workflow.md`.
 
 ### 2B. Delegate PRD to Designer (clarity loop)
@@ -75,8 +75,8 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 **Trigger**: all Phase 4 tickets (`impl` + `refactor` + `test` + `qa` + `deploy`) `done` → PO summarizes Phase 4 + emits prompt with intent "enter Phase 5 Version close?" → user confirms.
 
 **Process** (PO runs 4 sub-calls; full detail in `tickets.md` Phase 5 section):
-- **5a** Designer (opus + ⚡xhigh) — measurement (lazy) + `feature-history.md` append + next-Version backlog
-- **5b** QA (opus + ⚡xhigh) — `fail-patterns.md` aggregate + next-Version `stage:test` candidates
+- **5a** Designer (opus + xhigh) — measurement (lazy) + `feature-history.md` append + next-Version backlog
+- **5b** QA (opus + xhigh) — `fail-patterns.md` aggregate + next-Version `stage:test` candidates
 - **5c** Designer (sonnet + medium) — write `docs/retrospectives/<version>.md` narrative from 5a + 5b
 - **5d** PO mechanical — calibration log append, mirror `versions[N].outcome.retrospective_path`, surface to user
 
@@ -99,7 +99,7 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 
 Doctrine = source of truth. CLI = text prompt; GUI (Phase D) renders the same state as a card with Approve. Existing Gate 1/2/3 are mid-phase checkpoints, not transition gates.
 
-## Stage 3 — Feedback (user → you, mid-turn or next-turn)
+## Step 3 — Feedback (user → you, mid-turn or next-turn)
 
 14. **Probe vague feedback** (intent: dissatisfaction / "make it simpler" / unspecific complaint) with 1 targeted question. Don't re-run pipeline on vibes.
 15. **Scope to owner persona** by user-input intent class:

@@ -20,10 +20,10 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 ## Effort matrix (`~/.productune/sections/routing.md`)
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
-| **PRD R1 (clarity loop)** | **opus** | **⚡max** | Net-new PRD; A ≤ 0.05 |
-| PRD R2+ update | opus | ⚡xhigh | Incremental on settled vision |
-| **Design system-level** | opus | ⚡max | Net-new DS / identity |
-| Single screen/component | opus | ⚡xhigh | Component decision; copy review |
+| **PRD R1 (clarity loop)** | **opus** | **max** | Net-new PRD; A ≤ 0.05 |
+| PRD R2+ update | opus | xhigh | Incremental on settled vision |
+| **Design system-level** | opus | max | Net-new DS / identity |
+| Single screen/component | opus | xhigh | Component decision; copy review |
 | Token / DS check | sonnet | medium | Plan-driven simple change |
 | DS compliance | haiku | low | Single-component token check |
 | Tickets emission | sonnet | medium | Ticket files alongside PRD |
@@ -57,7 +57,7 @@ Inputs: `prd_path` (source of truth) + `wiki_consult:` (PO-prefetched via wiki-k
 3. Write/update `docs/design/<feature>.md`: Context, Goals/non-goals, Approach (ASCII/mermaid OK), API/UX spec, Alternatives, Open Questions.
 4. No code touch. Impl opinions → "Implementation notes" section; pdt-developer honors or pushes back.
 5. At Phase 5 Version close (3 sub-calls):
-   - **5a (opus + ⚡xhigh)**: fill `versions[N].outcome.observed_result` if measurable now; else null (lazy). Append `feature-history.md`. Propose next Version backlog.
+   - **5a (opus + xhigh)**: fill `versions[N].outcome.observed_result` if measurable now; else null (lazy). Append `feature-history.md`. Propose next Version backlog.
    - **5c (sonnet + medium)**: write `docs/retrospectives/<version>.md` from 5a+5b ctx (template in tickets.md).
 6. At Phase 2 of Version N+1: if `versions[N-1].outcome.observed_result` null and validation_method set, ask user during clarity loop, write answer to outcome.observed_result.
 

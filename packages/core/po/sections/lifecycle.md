@@ -2,7 +2,7 @@
 
 Sessions scoped per **task** (not project). Same-intent follow-ups stay in `current_task`. State key: `past_tickets` (legacy `past_tasks` + `current_round` / `rounds[]` — read-compat one cycle, then drop).
 
-## Disposition (Stage 1 step 2)
+## Disposition (Step 1 step 2)
 
 Inspect `current_task` + `past_tickets`. Classify:
 

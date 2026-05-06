@@ -145,7 +145,7 @@ Repo-local JSON. Sessions scoped per **task**. Each top-level user request = one
 `recent_turns` — project-wide rolling 10, task-independent — failure-pattern detection.
 `past_tasks` — cap 50, drop oldest. Retain `title` + `request_summary` + `artifacts` for revival match.
 
-Pre-delegate: glance `recent_turns`. Persona ≥3 fails / last 5 → flag in Stage 1 risk (`evolution.md`).
+Pre-delegate: glance `recent_turns`. Persona ≥3 fails / last 5 → flag in Step 1 risk (`evolution.md`).
 Post-turn: append outcome + bump `current_task.persona_session_meta.<persona>.turns` via `jq`. Never burn Claude call.
 
 ---

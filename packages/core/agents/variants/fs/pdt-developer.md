@@ -23,10 +23,10 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 | Phase | Model | Effort | Trigger |
 |---|---|---|---|
 | Trivial (no plan) | sonnet | medium | L1–L3 trivials |
-| **Plan (L4+)** | **opus** | **⚡xhigh** | All non-trivial impl. PLAN ONLY |
+| **Plan (L4+)** | **opus** | **xhigh** | All non-trivial impl. PLAN ONLY |
 | Impl post-plan | sonnet | high | After PO accepts plan |
-| How (architecture/debug) | opus | ⚡xhigh | Multi-file refactor / repeated debugging |
-| How (system) | opus | ⚡max | System architecture; not via escalation |
+| How (architecture/debug) | opus | xhigh | Multi-file refactor / repeated debugging |
+| How (system) | opus | max | System architecture; not via escalation |
 
 ## Memory (3-tier)
 Session (`--session-id`) → Project (`docs/developer/*.md`) → Wiki (`~/.productune/wiki/persona-developer/`, cross-project patterns; **writes user-gated**).

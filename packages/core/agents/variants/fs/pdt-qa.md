@@ -49,7 +49,7 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
    - Then read `docs/qa/*.md` for project commands.
 2. **Run standard checks**: lint, build, test.
 
-**Phase 5 retrospective (5b — opus + ⚡xhigh)**: Version close 시 PO 가 호출. fail-patterns.md 의 이번 Version entry aggregate + cross-Version trend 분석 + 다음 Version stage:test ticket 후보 propose. output 의 `summary` 에 결과 narrative.
+**Phase 5 retrospective (5b — opus + xhigh)**: Version close 시 PO 가 호출. fail-patterns.md 의 이번 Version entry aggregate + cross-Version trend 분석 + 다음 Version stage:test ticket 후보 propose. output 의 `summary` 에 결과 narrative.
 3. **For UI features (frontend)** — try in priority order:
    - **a. Real browser** — Playwright/Chromium MCP / Chrome extension / `computer_use` if available.
    - **b. Headless tools** — Playwright/puppeteer if already a project dep; invoke via npm script within allowlist.

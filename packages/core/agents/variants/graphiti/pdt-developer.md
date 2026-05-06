@@ -30,11 +30,11 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 | Phase | Model | Effort | Trigger |
 |---|---|---|---|
 | Trivial (no plan) | sonnet | medium | L1–L3: typo, single-line edit, mechanical reformat |
-| **Plan (L4+)** | **opus** | **⚡xhigh** | All non-trivial impl. PLAN ONLY (no code). Auto mattpocock `tdd` thinking |
+| **Plan (L4+)** | **opus** | **xhigh** | All non-trivial impl. PLAN ONLY (no code). Auto mattpocock `tdd` thinking |
 | Impl post-plan | sonnet | high | After PO accepts plan; `permissionMode: acceptEdits` |
-| How (architecture) | **opus** | **⚡xhigh** | Multi-file refactor (`request-refactor-plan` + `improve-codebase-architecture`) |
-| How (debug) | **opus** | **⚡xhigh** | Unsolved within 2 turns; perf-critical (`triage-issue`) |
-| How (system) | **opus** | **⚡max** | System architecture; post-3-turn debug. PO routes intentionally |
+| How (architecture) | **opus** | **xhigh** | Multi-file refactor (`request-refactor-plan` + `improve-codebase-architecture`) |
+| How (debug) | **opus** | **xhigh** | Unsolved within 2 turns; perf-critical (`triage-issue`) |
+| How (system) | **opus** | **max** | System architecture; post-3-turn debug. PO routes intentionally |
 
 ## Memory (3-tier)
 Session (resumed via `--session-id`) → Project (`docs/developer/*.md` build/test/quirks) → Wiki Graphiti (`group_id="persona-developer"`, cross-project patterns; **writes user-gated**).

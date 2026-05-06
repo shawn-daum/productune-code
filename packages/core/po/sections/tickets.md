@@ -18,7 +18,7 @@ Layer A drives Layer B (which Phase emits which `stage` ticket).
 ```
 Phase 1 Discovery     PO interview → brief                                     [no ticket]
 Phase 2 PRD           Designer clarity loop A ≤ 0.05                           [no ticket — PRD = doc]
-                      opus + ⚡max for V1; opus + ⚡xhigh for V2+ updates
+                      opus + max for V1; opus + xhigh for V2+ updates
 Phase 3 Design        Designer self-execute, 4 artifacts (system/flow/wf/mockup) [stage:design × 4]
                       Trigger: L4+ / user-facing / risk_flags ≠ none. Skip: L1–L3 trivial.
                       → user gate before Phase 4
@@ -29,8 +29,8 @@ Phase 4 Build         ticket execution
                       · stage:qa       (independent QA work only)
                       · stage:deploy   (required, pdt-po+user — env / secret / deploy)
 Phase 5 Version close retrospective + calibration                              [no ticket]
-                      5a Designer (opus + ⚡xhigh) — measurement (lazy) + feature-history append + next-V backlog
-                      5b QA (opus + ⚡xhigh) — fail-pattern aggregate + next-V test candidates
+                      5a Designer (opus + xhigh) — measurement (lazy) + feature-history append + next-V backlog
+                      5b QA (opus + xhigh) — fail-pattern aggregate + next-V test candidates
                       5c Designer (sonnet + medium) — write docs/retrospectives/<version>.md
                       5d PO mechanical — calibration log + retrospective_path mirror + user surface
 ```
@@ -82,8 +82,8 @@ PRD body stays free-form prose; structured emit is via the JSON field, not edits
 
 | Step | Persona | Model/Effort | Output |
 |---|---|---|---|
-| 5a | `pdt-designer` | opus + ⚡xhigh | fill `versions[N].outcome.observed_result` if measurable now (lazy: leave null otherwise); append `feature-history.md` (shipped/deferred/dropped per area); propose next-V backlog |
-| 5b | `pdt-qa` | opus + ⚡xhigh | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `stage:test` candidates |
+| 5a | `pdt-designer` | opus + xhigh | fill `versions[N].outcome.observed_result` if measurable now (lazy: leave null otherwise); append `feature-history.md` (shipped/deferred/dropped per area); propose next-V backlog |
+| 5b | `pdt-qa` | opus + xhigh | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `stage:test` candidates |
 | 5c | `pdt-designer` | sonnet + medium | write `docs/retrospectives/<version>.md` from 5a + 5b ctx |
 | 5d | PO | mechanical | append calibration log; mirror `retrospective_path`; surface to user with next-V candidates |
 
@@ -110,10 +110,9 @@ PO never authors product content. Lifecycle / frontmatter = state, not authoring
 
 ### PO mechanical-write whitelist
 
-- ✅ ticket frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta
-- ✅ mirrored header status line · `## Persona Activity` 1-row append (≤80-char Result)
-- ✅ `docs/qa/fail-patterns.md` append from QA's `fail_event`
-- ❌ Designer: `success_metric`, `validation_method` (set at creation) · `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope`, `## Outcome`, title changes
+**PO direct (mechanical)**: ticket frontmatter (`status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta) · mirrored header status line · `## Persona Activity` 1-row append (≤80-char Result) · `docs/qa/fail-patterns.md` append from QA's `fail_event`.
+
+**Delegate to Designer**: `success_metric`, `validation_method` (set at creation) · `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope`, `## Outcome`, title changes.
 
 **Refusal template** (English intent; PO renders in user's lang on every content-change request):
 ```

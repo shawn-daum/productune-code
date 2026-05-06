@@ -12,7 +12,7 @@ PO picks model (haiku/sonnet/opus) + effort (low/medium/high/xhigh/max) per pers
 | L4 Summarization | Compression | sonnet | low–med |
 | L5 Generation | New content | sonnet | medium |
 | L6 Analysis | Multi-factor reasoning | opus | medium–high |
-| L7 Synthesis | Combine multiple sources | opus | high–⚡xhigh |
+| L7 Synthesis | Combine multiple sources | opus | high–xhigh |
 
 OSS ref: LLMRouter, vLLM Semantic Router, LiteLLM, NVIDIA llm-router.
 
@@ -21,11 +21,11 @@ OSS ref: LLMRouter, vLLM Semantic Router, LiteLLM, NVIDIA llm-router.
 | Persona | Floor | Default | Rationale |
 |---|---|---|---|
 | **PO** | L4 | sonnet/medium | Routing/synthesis only |
-| **pdt-designer (PRD R1 MVP)** | L7 | **opus + ⚡max** | Net-new with clarity loop |
-| **pdt-designer (PRD R2+)** | L6 | opus + ⚡xhigh | Incremental on settled vision |
-| **pdt-designer (design docs single screen)** | L6 | opus + ⚡xhigh | Spec authoring |
+| **pdt-designer (PRD R1 MVP)** | L7 | **opus + max** | Net-new with clarity loop |
+| **pdt-designer (PRD R2+)** | L6 | opus + xhigh | Incremental on settled vision |
+| **pdt-designer (design docs single screen)** | L6 | opus + xhigh | Spec authoring |
 | **pdt-designer (token/DS compliance)** | L4 | sonnet/medium | Plan-driven simple |
-| **pdt-developer** | L5 | sonnet/medium | Code authoring. Plan phase L4+ → opus + ⚡xhigh |
+| **pdt-developer** | L5 | sonnet/medium | Code authoring. Plan phase L4+ → opus + xhigh |
 | **pdt-qa** | L2 | haiku/low | Pass/fail + cmd exec |
 
 PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elevate.
@@ -38,7 +38,7 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 - keywords: "아키텍처", "리팩터", "전반", "시스템", "i18n", "디자인 시스템", "마이그레이션"
 - own decompose L≥6
 - recent_turns same persona fail ≥2
-- risk-area + cross-cutting → auto ⚡xhigh
+- risk-area + cross-cutting → auto xhigh
 
 **Step-down** (L → L-1):
 - single file/string/line, obvious typo
@@ -67,7 +67,7 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 ### `xhigh` / `max` rules
 
 - Both opus-only. sonnet/haiku + xhigh|max → PO confirms once + auto-promote opus.
-- `max` reserved for **Stage 1 routing only** (net-new product/system thinking). **Not** reachable via Path 1 escalation (`escalation.md`).
+- `max` reserved for **Step 1 routing only** (net-new product/system thinking). **Not** reachable via Path 1 escalation (`escalation.md`).
 - `max` auto-trigger:
   - **pdt-designer Why-essential — R1 MVP PRD** (`docs/prd/<slug>.md`) with clarity A ≤ 0.05
   - pdt-designer Why-essential — net-new system-level design (UX + brand + DS from scratch)
@@ -75,8 +75,8 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 - `xhigh` auto-trigger: any opus call · pdt-developer plan-only L≥4 · Path 1 retry from `high`
 - Trace:
   ```
-  → delegating to pdt-developer (model=opus, effort=⚡max — net-new architecture)
-  → delegating to pdt-developer (model=opus, effort=⚡xhigh — plan phase L5)
+  → delegating to pdt-developer (model=opus, effort=max — net-new architecture)
+  → delegating to pdt-developer (model=opus, effort=xhigh — plan phase L5)
   ```
 - Both flagged separately in `recent_turns` (`effort:"xhigh"` / `"max"`) for cost retro.
 
@@ -90,7 +90,7 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 5. Effort: per-model default → adjust.
 6. recent_turns auto-weight: same task/persona fail ≥2 → tier+1.
 7. xhigh auto-trigger: opus default, plan L≥4, Path 1 second retry.
-8. max auto-trigger: PRD R1 / net-new DS / system arch (Stage 1 only).
+8. max auto-trigger: PRD R1 / net-new DS / system arch (Step 1 only).
 9. User prefix override (`/model`, `/effort`, `/dev:opus/max`).
 10. Emit trace.
 11. Append to po-state.json `persona_session_meta.<X>.{model_history, effort_history, complexity_level}`.

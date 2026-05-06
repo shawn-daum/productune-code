@@ -37,10 +37,10 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 ## Effort matrix (`~/.productune/sections/routing.md`)
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
-| **PRD R1 (clarity loop)** | **opus** | **⚡max** | Net-new PRD; A ≤ 0.05 |
-| PRD R2+ update | opus | ⚡xhigh | Incremental on settled vision |
-| **Design system-level** | opus | ⚡max | Net-new DS / identity |
-| Single screen/component | opus | ⚡xhigh | Component decision; copy review |
+| **PRD R1 (clarity loop)** | **opus** | **max** | Net-new PRD; A ≤ 0.05 |
+| PRD R2+ update | opus | xhigh | Incremental on settled vision |
+| **Design system-level** | opus | max | Net-new DS / identity |
+| Single screen/component | opus | xhigh | Component decision; copy review |
 | Token / DS check | sonnet | medium | Plan-driven simple change |
 | DS compliance | haiku | low | Single-component token check |
 | Tickets emission | sonnet | medium | Ticket files alongside PRD |
@@ -79,7 +79,7 @@ Inputs: `prd_path` (source of truth, task row `#N`/ticket id) + optional task de
 3. Write/update `docs/design/<feature>.md`: Context, Goals/non-goals, Approach (ASCII/mermaid OK), API/UX spec, Alternatives, Open Questions.
 4. No code touch. Impl opinions → "Implementation notes" section.
 5. At Phase 5 Version close (3 sub-calls):
-   - **5a (opus + ⚡xhigh)**: try to fill `versions[N].outcome.observed_result` if validation_method allows immediate measurement; else leave null (lazy — next Version Phase 2 will fill). Append `docs/designer/feature-history.md` per shipped/deferred/dropped item. Propose next Version's backlog (deferred + new hypotheses).
+   - **5a (opus + xhigh)**: try to fill `versions[N].outcome.observed_result` if validation_method allows immediate measurement; else leave null (lazy — next Version Phase 2 will fill). Append `docs/designer/feature-history.md` per shipped/deferred/dropped item. Propose next Version's backlog (deferred + new hypotheses).
    - **5c (sonnet + medium)**: receive 5a + 5b outputs as `[ctx]`, Write `docs/retrospectives/<version>.md` per the template in `~/.productune/sections/tickets.md` Phase 5 section. Concise narrative.
 6. At Phase 2 of Version N+1 (lazy measurement read-back): if `versions[N-1].outcome.observed_result` is null and `validation_method` is set, ask user during clarity loop ("지난 Version의 `<metric>` 측정 결과 알려주세요"). User answer → write to `versions[N-1].outcome.observed_result` (Designer scope, content). Use values to inform new Version's hypothesis.
 

@@ -2,10 +2,10 @@
 
 ## PRD authoring = Designer
 
-`docs/prd/<slug>.md` mandatory Stage 1 deliverable for every new task. **Designer authors.** PO never opens/edits/appends.
+`docs/prd/<slug>.md` mandatory Step 1 deliverable for every new task. **Designer authors.** PO never opens/edits/appends.
 
 PO's role:
-1. Run discovery interview (Stage 2A) → brief at `<project>/.productune/briefs/<slug>.md`.
+1. Run discovery interview (Step 2A) → brief at `<project>/.productune/briefs/<slug>.md`.
 2. Spawn Designer with `--model opus --print --output-format json`. TASK includes `[brief] <path>` + `[ctx] <slice>`.
 3. Relay clarity-loop questions verbatim; relay user answers back. Append to brief between iterations.
 4. Receive PRD + tickets → route per `tickets.md`.

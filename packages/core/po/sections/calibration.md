@@ -1,6 +1,6 @@
 # Effort learning loop
 
-PO model/effort routing is feedback loop, not static map. Every task close → 1 line capturing (estimate model/effort) vs (actual + result quality). Future Stage 1 reads log + biases.
+PO model/effort routing is feedback loop, not static map. Every task close → 1 line capturing (estimate model/effort) vs (actual + result quality). Future Step 1 reads log + biases.
 
 ## Where data lives
 
@@ -9,7 +9,7 @@ PO model/effort routing is feedback loop, not static map. Every task close → 1
 
 ## When PO reads
 
-**Stage 1 startup (mandatory):** scan last 10–20 entries of `## Model/Effort Calibration`. Similar-signal tasks (e.g. "L6 synthesis multi-file refactor") historically needed estimate+1 → start one notch higher. **Cross-project rolling weight**, separate from `routing.md`'s `recent_turns` weight.
+**Step 1 startup (mandatory):** scan last 10–20 entries of `## Model/Effort Calibration`. Similar-signal tasks (e.g. "L6 synthesis multi-file refactor") historically needed estimate+1 → start one notch higher. **Cross-project rolling weight**, separate from `routing.md`'s `recent_turns` weight.
 
 Similarity heuristic:
 - complexity level (L5/L6/L7) match
@@ -18,7 +18,7 @@ Similarity heuristic:
 
 3+ entries same direction (estimate < actual ≥2 times) → auto-bump +1. Any +2 (xhigh) → recommend +2.
 
-## When PO writes (Stage 3 step 18, mandatory)
+## When PO writes (Step 3 step 18, mandatory)
 
 Task archives `done` / `blocked` / `abandoned` → append exactly 1 line at bottom of `## Model/Effort Calibration`. **Format**:
 
@@ -38,12 +38,12 @@ Examples:
 
 Field rules:
 
-- `estimate=<model>/<effort>` — Stage 1 routing's first call (before escalation). `<effort>` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}.
-- `actual=<model>/<effort>` — last actually-used (after escalation). `actual=opus/max` → Stage 1 routing choice — `max` cannot be reached via Path 1 (`escalation.md`).
+- `estimate=<model>/<effort>` — Step 1 routing's first call (before escalation). `<effort>` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}.
+- `actual=<model>/<effort>` — last actually-used (after escalation). `actual=opus/max` → Step 1 routing choice — `max` cannot be reached via Path 1 (`escalation.md`).
 - `QA pass(N)` — final pdt-qa result + loop count (`current_task.calibration_outcome.qa_loops`). Use `n/a` for tasks without QA (e.g. PRD-only).
-- `rework=y` — Stage 3 **user** feedback indicated rework ("다시", "별론데", "이거 아니야"). Strictly user-driven; NOT for PO-internal redos.
+- `rework=y` — Step 3 **user** feedback indicated rework ("다시", "별론데", "이거 아니야"). Strictly user-driven; NOT for PO-internal redos.
 - `internal_redo=<n>` — count of PO-driven re-invocations of same persona within same task because output didn't match spec (e.g. dev added unsolicited JSDoc). 0 if none. Distinguishes from quality escalation (which uses `escalation=Path1|Path2`).
-- `escalation=Path1|Path2|none` — quality escalation triggered or not. `max` does NOT appear (Stage 1 choice, not escalation outcome).
+- `escalation=Path1|Path2|none` — quality escalation triggered or not. `max` does NOT appear (Step 1 choice, not escalation outcome).
 - `note` — 1-line PO judgement. "정상" / "appropriate" if estimate==actual; otherwise why diverged.
 
 ### Format — model/effort slot

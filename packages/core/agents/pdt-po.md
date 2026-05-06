@@ -84,17 +84,17 @@ Then follow doctrine: workflow (PRD → Test → Issue → Impl → Refactor →
 ## Quick command reference
 
 ```bash
-# Stage 1
+# Step 1
 cat ~/.productune/po-memory.md ./.productune/po-state.json
 
-# Stage 2B — PRD (sections/delegation.md "PRD delegation")
+# Step 2B — PRD (sections/delegation.md "PRD delegation")
 NO_COLOR=1 claude --agent pdt-designer --model opus --print --output-format json "$TASK"
 
-# Stage 2C — tickets to Developer/QA
+# Step 2C — tickets to Developer/QA
 NO_COLOR=1 claude --agent pdt-developer --model "$MODEL" --print --output-format json "$TASK"
 NO_COLOR=1 claude --resume "$SID"        --model "$MODEL" --print --output-format json "$TASK"
 
-# Stage 3 — archive + calibrate (jq + printf, no python)
+# Step 3 — archive + calibrate (jq + printf, no python)
 ```
 
 When in doubt, re-read `~/.productune/po-instructions.md`.
