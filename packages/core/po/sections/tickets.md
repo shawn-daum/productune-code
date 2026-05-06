@@ -96,7 +96,7 @@ PO never authors product content. Lifecycle / frontmatter = state, not authoring
 
 ### PO mechanical-write whitelist
 
-**PO direct (mechanical)**: ticket frontmatter (`status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta) · mirrored header status line · `## Persona Activity` 1-row append (≤80-char Result) · `docs/qa/fail-patterns.md` append from QA's `fail_event`.
+**PO direct (mechanical)**: ticket frontmatter (`status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta) · mirrored header status line · `## Persona Activity` 1-row append (≤80-char Result) · `docs/qa/fail-patterns.md` append from QA's `fail_event` · `po-state.json` `pending_gate` set/clear at Phase boundary.
 
 **Delegate to Designer**: `success_metric`, `validation_method` (set at creation) · `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope`, `## Outcome`, title changes.
 

@@ -187,7 +187,7 @@ function TicketRow({ ticket }: { ticket: Ticket }) {
 // ── styles ────────────────────────────────────────────────────────────────────
 
 const wrap: React.CSSProperties = {
-  gridArea: 'center',
+  flex: 1,
   background: '#0F0F0F',
   overflow: 'auto',
   padding: '20px 28px',
@@ -415,7 +415,7 @@ function qaBadge(qa: 'pass' | 'fail' | 'pending'): React.CSSProperties {
 }
 
 const empty: React.CSSProperties = {
-  gridArea: 'center',
+  flex: 1,
   background: '#0F0F0F',
   display: 'flex',
   alignItems: 'center',

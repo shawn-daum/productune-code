@@ -85,6 +85,16 @@ export interface PhaseTransition {
   user_approved_at?: string
 }
 
+// Open phase-transition gate. Set by PO when it emits the gate prompt;
+// cleared when user approves (advance) or modifies (stay in current phase).
+export interface PendingGate {
+  from_phase: number  // 1..4
+  to_phase: number    // 2..4 (or null when terminal — Phase 4 close → no next)
+  summary: string     // 1-line description of artifacts produced in from_phase
+  prompt: string      // English template; PO renders in user's lang at runtime
+  emitted_at: string
+}
+
 export interface VersionOutcome {
   north_star?: string | null
   input_metrics?: string[]
@@ -106,6 +116,7 @@ export interface PoState {
   current_version?: string
   current_phase?: number  // 1..4; resolves to Phase via PHASE_NAMES
   phase_history?: PhaseTransition[]
+  pending_gate?: PendingGate | null
   current_task?: CurrentTask
   past_tickets?: Ticket[]
   versions?: Version[]

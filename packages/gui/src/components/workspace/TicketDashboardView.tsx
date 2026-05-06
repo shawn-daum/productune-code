@@ -154,7 +154,7 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
 // ── styles ────────────────────────────────────────────────────────────────────
 
 const wrap: React.CSSProperties = {
-  gridArea: 'center',
+  flex: 1,
   background: '#0F0F0F',
   display: 'flex',
   flexDirection: 'column',

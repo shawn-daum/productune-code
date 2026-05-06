@@ -88,12 +88,13 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 
 1. PO emits trace `→ Phase N complete` + 1-line summary of artifacts (rendered in user's lang).
 2. PO emits prompt with intent "proceed to Phase N+1? (let me know if anything to change)".
-3. User responds: approval / modification request / silence.
-4. Approval → Phase N+1 starts; record transition in `current_phase` + `phase_history[]`.
-5. Modification → handle inside Phase N, then back to step 1.
-6. Silence → wait for next user turn (Phase N stays open).
+3. **PO writes `pending_gate` to `po-state.json`** (mechanical) — `{from_phase, to_phase, summary, prompt, emitted_at}`. GUI reads this to render the gate card; CLI users see the text prompt.
+4. User responds: approval / modification request / silence.
+5. Approval → Phase N+1 starts; record transition in `current_phase` + `phase_history[]`; clear `pending_gate` to `null`.
+6. Modification → handle inside Phase N, then back to step 1; clear `pending_gate` to `null`.
+7. Silence → wait for next user turn (Phase N stays open; `pending_gate` stays set).
 
-Doctrine = source of truth. CLI = text prompt; GUI (Phase D) renders the same state as a card with Approve. Existing Gate 1/2/3 are mid-phase checkpoints, not transition gates.
+Doctrine = source of truth. CLI = text prompt; GUI (Phase D) renders `pending_gate` as a card with Approve / Modify buttons. Existing Gate 1/2/3 are mid-phase checkpoints, not transition gates (they don't write `pending_gate`).
 
 ## Step 3 — Feedback (user → you, mid-turn or next-turn)
 
