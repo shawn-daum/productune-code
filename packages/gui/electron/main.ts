@@ -284,11 +284,38 @@ ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpt
       fs.copyFileSync(poMemTemplate, poMemDest)
     }
 
+    // 5. Pre-warm Playwright MCP cache (used by QA's auto smoke gate).
+    //    Best-effort: triggers `npx` to download @playwright/mcp now so the
+    //    first QA invocation isn't slow. Does NOT block onboarding completion
+    //    on failure — agent's mcpServers block will retry lazily.
+    await prewarmPlaywrightMcp()
+
     return { ok: true }
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'unknown error' }
   }
 })
+
+async function prewarmPlaywrightMcp(): Promise<void> {
+  return new Promise((resolve) => {
+    const child = spawn('npx', ['-y', '@playwright/mcp@latest', '--help'], {
+      stdio: 'ignore',
+      shell: true,
+    })
+    const timeout = setTimeout(() => {
+      try { child.kill() } catch { /* ok */ }
+      resolve()  // best-effort; don't fail onboarding
+    }, 60_000)
+    child.on('exit', () => {
+      clearTimeout(timeout)
+      resolve()
+    })
+    child.on('error', () => {
+      clearTimeout(timeout)
+      resolve()
+    })
+  })
+}
 
 function createWindow(): void {
   const win = new BrowserWindow({

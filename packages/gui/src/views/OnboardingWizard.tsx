@@ -652,6 +652,7 @@ const completionSteps = [
   'PO 에이전트 등록 (agents/ → ~/.claude/agents/ 심링크)',
   'PO 지침 적용 (po-instructions.md)',
   'PO 메모리 초기화 (po-memory.md)',
+  'Playwright MCP 캐시 준비 (QA smoke gate, npx @playwright/mcp)',
 ]
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
