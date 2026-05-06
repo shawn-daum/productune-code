@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Claude Code statusLine — productune-aware single line.
 # Receives a JSON event on stdin (workspace.current_dir, model.id, transcript_path, ...)
-# and prints a single line with: git branch · active persona · ticket · wiki backend health.
+# and prints a single line with: git branch · active persona · ticket.
 #
-# Designed to be cheap (no network calls except a 0.5s curl probe for graphiti).
+# Designed to be cheap (no network calls).
 # Falls back gracefully when fields are missing.
 
 set +e
@@ -63,45 +63,9 @@ if [ -f "$STATE" ] && command -v jq >/dev/null 2>&1; then
   PERSONA=$(jq -r '(.recent_turns | last | .persona) // ""' "$STATE" 2>/dev/null)
 fi
 
-# productune.env — wiki backend
-ENV_FILE="$HOME/.productune/productune.env"
-WIKI=""
-if [ -f "$ENV_FILE" ]; then
-  WIKI="$(grep -E '^WIKI_BACKEND=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\r\n')"
-fi
-
-# Wiki health probe (very short timeout)
-HEALTH=""
-case "$WIKI" in
-  graphiti)
-    # Productune runs the Graphiti MCP server via stdio transport (spawned per
-    # persona on demand) — there is no persistent HTTP listener on :8000.
-    # The right liveness signal is FalkorDB's TCP port (6379), which is the
-    # only piece that must be up at all times. /dev/tcp is a bash builtin —
-    # no curl/nc dependency, and a local connect attempt returns immediately.
-    if (exec 3<>/dev/tcp/localhost/6379) 2>/dev/null; then
-      exec 3<&- 3>&-
-      HEALTH="✓"
-    else
-      HEALTH="✗"
-    fi
-    ;;
-  keeper)
-    HEALTH="·"
-    ;;
-  fs)
-    [ -d "$HOME/.productune/wiki" ] && HEALTH="✓" || HEALTH="-"
-    ;;
-esac
-
-# Compose: [branch] persona · ticket · wiki(health)
+# Compose: [branch] persona · ticket
 parts=()
-[ -n "$BRANCH" ] && parts+=("[$BRANCH]")
-[ -n "$PERSONA" ] && parts+=("👤$PERSONA")
-[ -n "$TICKET" ] && parts+=("🎫$TICKET")
-if [ -n "$WIKI" ]; then
-  parts+=("📚$WIKI$HEALTH")
-fi
+[ -n "$BRANCH" ] && parts+=("[branch: $BRANCH]")
 
 # Print single line; if nothing detected, print a hint.
 if [ "${#parts[@]}" -eq 0 ]; then
