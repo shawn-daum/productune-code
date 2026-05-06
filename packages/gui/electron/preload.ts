@@ -48,16 +48,23 @@ contextBridge.exposeInMainWorld('api', {
   codexLogin: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:codexLogin'),
 
-  initProject: (opts: { slug: string; mode: 'planner' | 'developer'; projectDir: string }) =>
+  initProject: (opts: { slug: string; projectDir: string }) =>
     ipcRenderer.invoke('init:project', opts),
 
-  createProject: (opts: { slug: string; mode: 'planner' | 'developer' }): Promise<{ projectDir: string; config: unknown }> =>
+  createProject: (opts: { slug: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string } }> =>
     ipcRenderer.invoke('project:create', opts),
 
-  openFolder: (): Promise<{ dir: string; hasProductune: boolean; config: unknown } | null> =>
-    ipcRenderer.invoke('dialog:openFolder'),
+  installAt: (opts: { projectDir: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string } }> =>
+    ipcRenderer.invoke('project:installAt', opts),
 
-  listProjects: (): Promise<Array<{ slug: string; mode: string; created_at: string; path: string }>> =>
+  openFolder: (): Promise<
+    | { kind: 'self'; dir: string; config: { slug: string; created_at?: string; [k: string]: any } }
+    | { kind: 'descendant'; dir: string; descendants: Array<{ path: string; config: { slug: string; [k: string]: any } }> }
+    | { kind: 'none'; dir: string }
+    | null
+  > => ipcRenderer.invoke('dialog:openFolder'),
+
+  listProjects: (): Promise<Array<{ slug: string; created_at: string; path: string }>> =>
     ipcRenderer.invoke('projects:list'),
 
   githubCheckToken: () =>
@@ -74,4 +81,31 @@ contextBridge.exposeInMainWorld('api', {
 
   githubSetupRemote: (opts: { projectDir: string; cloneUrl: string }) =>
     ipcRenderer.invoke('github:setupRemote', opts),
+
+  // ── Workspace state ─────────────────────────────────────────────────────────
+  readPoState: (projectDir: string): Promise<unknown> =>
+    ipcRenderer.invoke('state:readPoState', projectDir),
+
+  // ── Design artifacts ────────────────────────────────────────────────────────
+  designListArtifacts: (projectRoot: string): Promise<string[]> =>
+    ipcRenderer.invoke('design:listArtifacts', projectRoot),
+
+  designReadArtifact: (projectRoot: string, relPath: string): Promise<string> =>
+    ipcRenderer.invoke('design:readArtifact', projectRoot, relPath),
+
+  // ── Chat (single PO session per project) ────────────────────────────────────
+  chatGetSession: (projectDir: string): Promise<import('../src/lib/types').Session> =>
+    ipcRenderer.invoke('chat:getSession', projectDir),
+
+  chatAppendMessage: (
+    projectDir: string,
+    message: import('../src/lib/types').Message,
+  ): Promise<void> =>
+    ipcRenderer.invoke('chat:appendMessage', projectDir, message),
+
+  chatSetClaudeSessionId: (projectDir: string, sessionId: string): Promise<void> =>
+    ipcRenderer.invoke('chat:setClaudeSessionId', projectDir, sessionId),
+
+  chatClearSession: (projectDir: string): Promise<void> =>
+    ipcRenderer.invoke('chat:clearSession', projectDir),
 })

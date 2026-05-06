@@ -5,6 +5,8 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo } from '@productune/core'
+import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
+import type { Message } from './chat-store'
 
 const execFileAsync = promisify(execFile)
 
@@ -311,11 +313,11 @@ function createWindow(): void {
 
 ipcMain.handle('ping', () => 'pong')
 
-ipcMain.handle('init:project', (_event, opts: { slug: string; mode: 'planner' | 'developer'; projectDir: string }) => {
+ipcMain.handle('init:project', (_event, opts: { slug: string; projectDir: string }) => {
   return initProject(opts)
 })
 
-ipcMain.handle('project:create', (_event, { slug, mode }: { slug: string; mode: 'planner' | 'developer' }) => {
+ipcMain.handle('project:create', (_event, { slug }: { slug: string }) => {
   const baseDir = path.join(os.homedir(), 'productune', 'projects')
   fs.mkdirSync(baseDir, { recursive: true })
 
@@ -326,7 +328,13 @@ ipcMain.handle('project:create', (_event, { slug, mode }: { slug: string; mode: 
   }
   fs.mkdirSync(projectDir, { recursive: true })
 
-  const config = initProject({ slug, mode, projectDir })
+  const config = initProject({ slug, projectDir })
+  return { projectDir, config }
+})
+
+ipcMain.handle('project:installAt', (_event, { projectDir }: { projectDir: string }) => {
+  const slug = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'project'
+  const config = initProject({ slug, projectDir })
   return { projectDir, config }
 })
 
@@ -353,14 +361,44 @@ ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
   if (result.canceled || result.filePaths.length === 0) return null
   const dir = result.filePaths[0]
-  const configPath = path.join(dir, '.productune', 'config.json')
-  const hasProductune = fs.existsSync(configPath)
-  let config = null
-  if (hasProductune) {
-    try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) } catch {}
+
+  const selfConfig = readProductuneConfig(dir)
+  if (selfConfig) {
+    return { kind: 'self', dir, config: selfConfig }
   }
-  return { dir, hasProductune, config }
+
+  const descendants = scanDescendantsForProductune(dir)
+  if (descendants.length > 0) {
+    return { kind: 'descendant', dir, descendants }
+  }
+
+  return { kind: 'none', dir }
 })
+
+function readProductuneConfig(dir: string): any | null {
+  const configPath = path.join(dir, '.productune', 'config.json')
+  if (!fs.existsSync(configPath)) return null
+  try { return JSON.parse(fs.readFileSync(configPath, 'utf-8')) } catch { return null }
+}
+
+function scanDescendantsForProductune(baseDir: string): { path: string; config: any }[] {
+  const found: { path: string; config: any }[] = []
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(baseDir, { withFileTypes: true })
+  } catch {
+    return found
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    if (entry.name.startsWith('.')) continue
+    if (entry.name === 'node_modules') continue
+    const childPath = path.join(baseDir, entry.name)
+    const config = readProductuneConfig(childPath)
+    if (config) found.push({ path: childPath, config })
+  }
+  return found
+}
 
 ipcMain.handle('github:checkToken', () => {
   return loadCredentials()
@@ -386,6 +424,85 @@ ipcMain.handle('github:setupRemote', async (_event, { projectDir, cloneUrl }: { 
   } catch (e: any) {
     return { ok: false, error: e.message }
   }
+})
+
+// ── Workspace state IPC ───────────────────────────────────────────────────────
+
+ipcMain.handle('state:readPoState', async (_event, projectDir: string) => {
+  const statePath = path.join(projectDir, '.productune', 'po-state.json')
+  try {
+    const raw = fs.readFileSync(statePath, 'utf-8')
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+})
+
+// ── Chat IPC (single PO session per project) ──────────────────────────────────
+
+ipcMain.handle('chat:getSession', (_event, projectDir: string) => {
+  return getSession(projectDir)
+})
+
+ipcMain.handle('chat:appendMessage', (_event, projectDir: string, message: Message) => {
+  appendMessage(projectDir, message)
+})
+
+ipcMain.handle('chat:setClaudeSessionId', (_event, projectDir: string, sessionId: string) => {
+  setClaudeSessionId(projectDir, sessionId)
+})
+
+ipcMain.handle('chat:clearSession', (_event, projectDir: string) => {
+  clearSession(projectDir)
+})
+
+// ── Design artifacts IPC ──────────────────────────────────────────────────────
+
+/**
+ * Walk docs/design/ (1 level of subdirectories) and return relative .md paths.
+ * projectRoot is validated to be an absolute path to an existing directory.
+ */
+ipcMain.handle('design:listArtifacts', (_event, projectRoot: string): string[] => {
+  const designDir = path.resolve(projectRoot, 'docs', 'design')
+  if (!fs.existsSync(designDir)) return []
+
+  const results: string[] = []
+
+  const walk = (dir: string, depth: number) => {
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory() && depth < 1) {
+        walk(fullPath, depth + 1)
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        results.push(path.relative(projectRoot, fullPath))
+      }
+    }
+  }
+
+  walk(designDir, 0)
+  return results.sort()
+})
+
+/**
+ * Read a design artifact file.
+ * relPath must resolve to inside docs/design/ — path traversal is rejected.
+ */
+ipcMain.handle('design:readArtifact', (_event, projectRoot: string, relPath: string): string => {
+  const designDir = path.resolve(projectRoot, 'docs', 'design')
+  const resolved = path.resolve(projectRoot, relPath)
+
+  // Path traversal guard: resolved path must start with designDir + separator
+  if (!resolved.startsWith(designDir + path.sep) && resolved !== designDir) {
+    throw new Error('Path traversal rejected')
+  }
+
+  if (!resolved.endsWith('.md')) {
+    throw new Error('Only .md files are readable via this handler')
+  }
+
+  return fs.readFileSync(resolved, 'utf-8')
 })
 
 app.whenReady().then(() => {

@@ -2,22 +2,25 @@ import { useEffect, useState } from 'react'
 import NewProjectModal from './components/NewProjectModal'
 import HomeView from './views/HomeView'
 import OnboardingWizard from './views/OnboardingWizard'
+import WorkspaceShell from './views/WorkspaceShell'
+import Titlebar from './components/workspace/Titlebar'
+import type { Project } from './lib/types'
 
-interface Project {
-  slug: string
-  projectDir: string
+interface DescendantEntry {
+  path: string
+  config: { slug: string; created_at?: string; [k: string]: any }
 }
 
-interface InitBanner {
-  dir: string
-}
+type OpenPrompt =
+  | { kind: 'install'; dir: string }
+  | { kind: 'descendant'; dir: string; descendants: DescendantEntry[] }
 
 export default function App() {
   const [envChecked, setEnvChecked] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [project, setProject] = useState<Project | null>(null)
   const [showNewModal, setShowNewModal] = useState(false)
-  const [initBanner, setInitBanner] = useState<InitBanner | null>(null)
+  const [openPrompt, setOpenPrompt] = useState<OpenPrompt | null>(null)
 
   // Check for productune.env on mount — show wizard if missing
   useEffect(() => {
@@ -35,10 +38,12 @@ export default function App() {
   async function handleOpenFolder() {
     const result = await (window as any).api.openFolder()
     if (!result) return
-    if (result.hasProductune && result.config) {
+    if (result.kind === 'self') {
       setProject({ slug: result.config.slug, projectDir: result.dir })
+    } else if (result.kind === 'descendant') {
+      setOpenPrompt({ kind: 'descendant', dir: result.dir, descendants: result.descendants })
     } else {
-      setInitBanner({ dir: result.dir })
+      setOpenPrompt({ kind: 'install', dir: result.dir })
     }
   }
 
@@ -46,36 +51,70 @@ export default function App() {
     setProject({ slug, projectDir })
   }
 
-  // Wait for env check to avoid layout flash
-  if (!envChecked) {
-    return <div style={splashScreen} />
+  function openDescendant(entry: DescendantEntry) {
+    setOpenPrompt(null)
+    setProject({ slug: entry.config.slug, projectDir: entry.path })
   }
 
-  if (showOnboarding) {
+  async function installAtPromptDir() {
+    if (!openPrompt) return
+    const dir = openPrompt.dir
+    setOpenPrompt(null)
+    try {
+      const result = await (window as any).api.installAt({ projectDir: dir })
+      setProject({ slug: result.config.slug, projectDir: dir })
+    } catch (e: any) {
+      console.error('installAt failed', e)
+    }
+  }
+
+  // Wait for env check to avoid layout flash
+  if (!envChecked) {
     return (
-      <OnboardingWizard
-        onDone={() => setShowOnboarding(false)}
-      />
+      <div style={appShell}>
+        <Titlebar title="productune" />
+      </div>
     )
   }
 
-  if (project) {
-    return <WorkspaceView project={project} onBack={() => setProject(null)} />
-  }
+  const titleText =
+    showOnboarding ? 'productune 초기 설정'
+    : project ? project.slug
+    : 'productune'
 
   return (
-    <>
-      <HomeView
-        onNewProject={() => setShowNewModal(true)}
-        onOpenFolder={handleOpenFolder}
-        onOpenRecent={openRecent}
-      />
+    <div style={appShell}>
+      <Titlebar title={titleText} />
 
-      {initBanner && (
-        <InitPromptBanner
-          banner={initBanner}
-          onConfirm={() => { setInitBanner(null); setShowNewModal(true) }}
-          onCancel={() => setInitBanner(null)}
+      <div style={viewport}>
+        {showOnboarding ? (
+          <OnboardingWizard onDone={() => setShowOnboarding(false)} />
+        ) : project ? (
+          <WorkspaceShell project={project} onBack={() => setProject(null)} />
+        ) : (
+          <HomeView
+            onNewProject={() => setShowNewModal(true)}
+            onOpenFolder={handleOpenFolder}
+            onOpenRecent={openRecent}
+          />
+        )}
+      </div>
+
+      {openPrompt?.kind === 'install' && (
+        <InstallPromptDialog
+          dir={openPrompt.dir}
+          onConfirm={installAtPromptDir}
+          onCancel={() => setOpenPrompt(null)}
+        />
+      )}
+
+      {openPrompt?.kind === 'descendant' && (
+        <DescendantPromptDialog
+          dir={openPrompt.dir}
+          descendants={openPrompt.descendants}
+          onOpen={openDescendant}
+          onInstallHere={installAtPromptDir}
+          onCancel={() => setOpenPrompt(null)}
         />
       )}
 
@@ -85,50 +124,85 @@ export default function App() {
           onCancel={() => setShowNewModal(false)}
         />
       )}
-    </>
+    </div>
   )
 }
 
-function InitPromptBanner({ banner, onConfirm, onCancel }: { banner: InitBanner; onConfirm: () => void; onCancel: () => void }) {
+function InstallPromptDialog({ dir, onConfirm, onCancel }: { dir: string; onConfirm: () => void; onCancel: () => void }) {
   return (
     <div style={overlay}>
       <div style={bannerCard}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>이 폴더에 productune 시작하기?</div>
-        <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginBottom: 16 }}>{banner.dir}</div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>이 폴더에서 productune을 시작할까요?</div>
+        <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginBottom: 16 }}>{dir}</div>
         <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 20 }}>
-          .productune/ 폴더가 없습니다. 지금 초기화하면 이 폴더에서 productune을 시작할 수 있습니다.
+          이 폴더에는 아직 productune 프로젝트가 설정되지 않았습니다. 지금 설치하면 PRD·디자인·티켓을 이 폴더에서 관리할 수 있습니다.
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button style={btnSecondary} onClick={onCancel}>취소</button>
-          <button style={btnPrimary} onClick={onConfirm}>확인</button>
+          <button style={btnPrimary} onClick={onConfirm}>설치하고 시작</button>
         </div>
       </div>
     </div>
   )
 }
 
-function WorkspaceView({ project, onBack }: { project: Project; onBack: () => void }) {
+function DescendantPromptDialog({
+  dir, descendants, onOpen, onInstallHere, onCancel,
+}: {
+  dir: string
+  descendants: { path: string; config: { slug: string; created_at?: string; [k: string]: any } }[]
+  onOpen: (entry: { path: string; config: { slug: string; [k: string]: any } }) => void
+  onInstallHere: () => void
+  onCancel: () => void
+}) {
   return (
-    <div style={workspaceWrap}>
-      <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 4 }}>
-        <span style={{ color: '#FF6B2B' }}>⚡</span> {project.slug}
+    <div style={overlay}>
+      <div style={{ ...bannerCard, width: 480 }}>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>
+          선택한 폴더 안에 productune 프로젝트가 있습니다.
+        </div>
+        <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginBottom: 16 }}>{dir}</div>
+        <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 16 }}>
+          어떤 폴더를 열까요?
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+          {descendants.map(entry => (
+            <button
+              key={entry.path}
+              style={descendantItem}
+              onClick={() => onOpen(entry)}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#F0F0F0' }}>
+                <span style={{ color: '#FF6B2B', marginRight: 6 }}>⚡</span>
+                {entry.config.slug}
+              </div>
+              <div style={{ fontSize: 11, color: '#707070', fontFamily: 'monospace', marginTop: 2 }}>
+                {entry.path}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <button style={btnGhost} onClick={onInstallHere}>현재 폴더에 새로 설치</button>
+          <button style={btnSecondary} onClick={onCancel}>취소</button>
+        </div>
       </div>
-      <div style={{ fontSize: 11, color: '#505050', fontFamily: 'monospace', marginBottom: 32 }}>
-        {project.projectDir}
-      </div>
-      <div style={{ fontSize: 24, marginBottom: 8 }}>🎉</div>
-      <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>프로젝트 생성 완료</div>
-      <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 32 }}>
-        .productune/config.json 생성됨
-      </div>
-      <button style={btnSecondary} onClick={onBack}>← 홈으로</button>
     </div>
   )
 }
 
-// --- styles ---
-const splashScreen: React.CSSProperties = {
-  background: '#0A0A0A', width: '100vw', height: '100vh',
+// ── styles ────────────────────────────────────────────────────────────────────
+
+const appShell: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column',
+  width: '100vw', height: '100vh',
+  background: '#0A0A0A',
+  overflow: 'hidden',
+}
+const viewport: React.CSSProperties = {
+  flex: 1, display: 'flex', minHeight: 0, position: 'relative',
 }
 const overlay: React.CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
@@ -138,12 +212,6 @@ const bannerCard: React.CSSProperties = {
   background: '#1A1A1A', borderRadius: 12, border: '1px solid #333',
   padding: '24px', width: 400, boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
 }
-const workspaceWrap: React.CSSProperties = {
-  background: '#0F0F0F', width: '100vw', height: '100vh',
-  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-  color: '#F0F0F0', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  userSelect: 'none',
-}
 const btnPrimary: React.CSSProperties = {
   background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
@@ -151,4 +219,13 @@ const btnPrimary: React.CSSProperties = {
 const btnSecondary: React.CSSProperties = {
   background: '#242424', color: '#F0F0F0', border: '1px solid #333', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, cursor: 'pointer', textAlign: 'left',
+}
+const btnGhost: React.CSSProperties = {
+  background: 'transparent', color: '#A0A0A0', border: '1px solid #333', borderRadius: 4,
+  padding: '8px 14px', fontSize: 12, cursor: 'pointer',
+}
+const descendantItem: React.CSSProperties = {
+  background: '#161616', border: '1px solid #2A2A2A', borderRadius: 6,
+  padding: '10px 12px', cursor: 'pointer', textAlign: 'left',
+  transition: 'border-color 0.15s, background 0.15s',
 }

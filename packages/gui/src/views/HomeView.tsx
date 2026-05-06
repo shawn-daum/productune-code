@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 
 interface RecentProject {
   slug: string
-  mode: string
   created_at: string
   path: string
 }
@@ -58,7 +57,6 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
                   <span style={{ fontSize: 13, fontWeight: 500, color: '#F0F0F0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.slug}
                   </span>
-                  <span style={modeBadge(p.mode)}>{p.mode}</span>
                 </div>
                 <span style={{ fontSize: 11, color: '#505050', flexShrink: 0 }}>{relativeDate(p.created_at)}</span>
               </div>
@@ -75,7 +73,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
 }
 
 const wrap: React.CSSProperties = {
-  background: '#0F0F0F', width: '100vw', height: '100vh',
+  background: '#0F0F0F', flex: 1, minHeight: 0,
   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
   color: '#F0F0F0', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   userSelect: 'none',
@@ -89,13 +87,6 @@ const recentCard: React.CSSProperties = {
   background: '#1A1A1A', border: '1px solid #222', borderRadius: 6,
   padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8,
   transition: 'border-color 0.15s',
-}
-function modeBadge(mode: string): React.CSSProperties {
-  return {
-    fontSize: 10, padding: '1px 6px', borderRadius: 9999, flexShrink: 0,
-    background: mode === 'planner' ? '#1C3A5E' : '#1A3A2A',
-    color: mode === 'planner' ? '#38BDF8' : '#34D399',
-  }
 }
 const btnPrimary: React.CSSProperties = {
   background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,

@@ -18,6 +18,16 @@ mcpServers:
 
 Designer (PO-coordinated). UX/brand/DS/screen+component design docs. Never edits code. `model:` fallback; PO sets per call.
 
+## Design doc maintenance (recurring duty)
+
+Design docs (`docs/design/*.md`, `service-flow-and-screens.md`, `service-design-system.md`, `design-direction.md` 등) 은 PRD / 현재 구현 / 결정사항 과 항상 일관 유지. 다음 trigger 시 designer 에 routed:
+- PRD 갱신 후 design doc 미반영 항목 발견
+- layout / UX 결정 변경 (예: chat 위치 이동, 새 panel 추가)
+- 구현 진행 중 design doc 가 실 화면과 어긋난 게 발견
+- 화면 카탈로그 / 어휘 매핑 표 / 동의 흐름 stale 의심
+
+Designer 가 직접 수정. PO 는 routing + lifecycle metadata 만. 결과 = design doc 업데이트 + 변경 요약 + 어디서 무엇이 stale 했는지 1줄 (decisions.md promotion 후보).
+
 ## Language
 Inter-persona English. Quote user text verbatim. PO owns end-user localization.
 

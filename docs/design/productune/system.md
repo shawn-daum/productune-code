@@ -49,7 +49,7 @@
 | `error` | `#EF4444` | 오류 / fail |
 | `info` | `#60A5FA` | 정보 |
 
-### Stage (6-stage breadcrumb)
+### Stage (Project tab strip + PO Chat chip)
 | Stage | Token | Hex |
 |---|---|---|
 | PRD | `stage-prd` | `#A78BFA` |
@@ -152,26 +152,27 @@ hover: border-color → persona-color (dim 60%)
 
 ### Chat bubble
 ```
-PO message  : bg=#1E1A16  border-left: 3px solid persona-po
+PO message  : bg=#1E1A16  border-left: 2px solid persona-po
 System trace: bg=bg-surface  text=text-secondary  mono font  font-size=text-sm
 User message: bg=bg-elevated  align=right
 ```
 
-### Sidebar
+### Activity Bar / Side Panel
 ```
-width: 240px (collapsible → 48px icon-only)
-bg: bg-surface
-border-right: 1px solid border
+Activity Bar: width 48px fixed; active indicator = 2px persona-po bar
+Side Panel : width 260px fixed; collapsed → 0px (Activity Bar remains)
+bg: bg-surface; border-right: 1px solid border
+Tabs: Explorer / Project / Team / Settings
 ```
 
-### 6-stage Breadcrumb
+### Stage strip / ctx chip
 ```
-layout: horizontal strip, full width, height 40px
-bg: bg-surface
-current stage: filled dot + label + persona-color underline
-past stages: check + muted label
+Project tab: inline `stage-strip`, compact horizontal row inside Side Panel
+Right PO Chat: `stage-chip` in ctx line beside round/ticket
+No standalone top breadcrumb row
+current stage: stage-color dot + subtle bg + bright label
+past stages: muted/done state
 future stages: dim dot + dim label
-connector: 1px dashed border
 ```
 
 ### Mermaid / Excalidraw viewer
@@ -187,34 +188,32 @@ error fallback: mono text + error color border
 
 ## Layout (Electron window — IDE paradigm)
 
-VSCode-faithful 4-column layout. 파일/콘텐츠가 중앙 + PO Chat이 우측 global.
+VS Code / cmux-like 4-region IDE shell. 파일/콘텐츠는 Main split-pane workspace, PO Chat 은 우측 global fixed panel.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Titlebar (native macOS, 36px)                               │
+│ Titlebar 36px — traffic dots + centered Quick Open trigger  │
 ├──[48]──┬────[260]────────────┬──────────────┬────[340]──────┤
 │        │                     │              │               │
-│ Acti-  │ Side Panel          │ Main Panel   │ PO Chat       │
-│ vity   │  [Explorer]         │ (Tab system) │ (Global)      │
-│ Bar    │   File tree         │              │               │
+│ Acti-  │ Side Panel          │ Main split   │ PO Chat       │
+│ vity   │  [Explorer]         │ panes+tabs   │ (single)      │
+│ Bar    │   File tree/search  │              │               │
 │        │  [Project]          │ 📄 file.md   │ [P] message   │
-│ 📁 Ex  │   Round/Tickets     │ 🎨 Design    │ [sys] trace   │
-│ ⚡ Pr  │   Preview           │ 📋 T-NNN     │ [you] reply   │
-│ 🔍 Se  │  [Search]           │ 🌐 Preview   │               │
-│ ──     │   results           │              │               │
-│ 👥 Te  │  [Team]             │              │ input + send  │
-│ ⚙ St   │   Personas/Skills   │              │               │
+│ 📁 Ex  │   Stage strip       │ 🎨 Design    │ [stage chip]  │
+│ ⚡ Pr  │   Rounds/Tickets    │ 📋 T-NNN     │ [you] reply   │
+│ 👥 Te  │  [Team]             │ 🌐 Preview   │               │
+│ ⚙ St   │   Personas/Skills   │              │ input + send  │
 ├────────┴─────────────────────┴──────────────┴───────────────┤
-│ Status Bar (22px) — branch · stage · alerts · model · vercel│
+│ Status Bar 22px full-width — task · PO active · alerts · model│
 └─────────────────────────────────────────────────────────────┘
 ```
 
 | Column | Width | Notes |
 |---|---|---|
 | Activity Bar | 48px | fixed |
-| Side Panel | 260px | collapsible (⌘B), min 200 / max 480 |
-| Main Panel | flex-1 | tab system, min visible width |
-| PO Chat | 340px | global, collapsible (⌘\), min 280 / max 600 |
+| Side Panel | 260px | fixed, collapsible to 0 (Activity Bar remains) |
+| Main Panel | flex-1 | recursive hbox/vbox split-pane + tab dispatcher |
+| PO Chat | 340px | global single PO session, collapsible to FAB restore |
 | Status Bar | 22px | full width |
 
-Window min size: 1024 × 680px. Default: 1280 × 800px.
+Window min size: 1024 × 680px. Default: 1280 × 800px. Top standalone breadcrumb row is removed by mockup-source decision (2026-05-06).

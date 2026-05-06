@@ -3,14 +3,12 @@ import path from 'path'
 
 export interface ProjectConfig {
   slug: string
-  mode: 'planner' | 'developer'
   created_at: string
   version: string
 }
 
 export interface InitOptions {
   slug: string
-  mode: 'planner' | 'developer'
   projectDir: string
 }
 
@@ -80,7 +78,6 @@ export function initProject(opts: InitOptions): ProjectConfig {
 
   const config: ProjectConfig = {
     slug: existing.slug ?? opts.slug,
-    mode: opts.mode,
     created_at: existing.created_at ?? new Date().toISOString(),
     version: '0.4.0',
   }
