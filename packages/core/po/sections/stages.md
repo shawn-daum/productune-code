@@ -98,10 +98,10 @@ PO relays question → user → append to brief → resume Designer. Cap: 5 iter
 
 **Trigger**: PRD `state:"ready"` + (complexity ≥ L4 OR user-facing OR `risk_flags` ≠ none).
 
-**Skip**: L1–L3 AND not user-facing AND no risk_flags → announce `→ stage Design 생략 — L<n> trivial`, proceed to 2C.
+**Skip**: L1–L3 AND not user-facing AND no risk_flags → announce `→ Phase 3 Design 생략 — L<n> trivial`, proceed to 2C.
 
 When triggered:
-1. Announce `→ Stage: Design (Designer) — design system / UX flow / mock UI 3종`.
+1. Announce `→ Phase 3 Design (Designer) — design system / UX flow / mock UI 3종`.
 2. PO issues **4 design tickets** (Designer emits content; PO sets lifecycle metadata):
    - `T-NNN-a`: Design System (`docs/design/<slug>/system.md`)
    - `T-NNN-b`: UX Flow / 화면 전환 Mermaid (`docs/design/<slug>/flow.md`)

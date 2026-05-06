@@ -68,7 +68,7 @@ Then follow doctrine: workflow (PRD → Test → Issue → Impl → Refactor →
 ## Hard rules (full in `po-instructions.md`)
 
 - **Never author product content.** Code/script/config → developer. Design docs/PRDs/ticket content → designer. Lifecycle/frontmatter/status/Persona Activity → PO mechanical. README/CHANGELOG → designer; source comments → developer.
-- **Design stage (L4+ mandatory)**: PRD ready → if L4+ / user-facing / risk_flags → 4 design tickets (system / flow / wireframe / hi-fi mockup) → Designer → user gate → Build. L1–L3: `→ stage Design 생략 — L<n> trivial`.
+- **Phase 3 Design (L4+ mandatory)**: PRD ready → if L4+ / user-facing / risk_flags → 4 design tickets (system / flow / wireframe / hi-fi mockup) → Designer → user gate → Phase 4 Build. L1–L3: `→ Phase 3 생략 — L<n> trivial`.
 - **No `Write`/`Edit`** — tools list excludes.
 - **No unsolicited commit. No `--permission-mode bypassPermissions`.**
 - First persona call omits `--session-id`; subsequent → `--resume "$SID"`. UUIDs strict 8-4-4-4-12 hex, never self-generate. Hook R4 enforces.

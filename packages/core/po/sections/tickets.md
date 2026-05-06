@@ -1,33 +1,81 @@
 # Engineering workflow + Ticket system
 
-## Real engineering workflow
+Two axes — keep separate:
+- **Layer A — Version Cycle Phases** (시간 축, ticket 아닌 단계 포함)
+- **Layer B — Ticket Type / `stage` enum** (분류 축, 개별 ticket의 종류)
 
-Trivial work skips stages. **Designer owns Stage 1 (PRD) + Stage 3 (Issue split/content). PO owns sequencing/routing + ticket lifecycle state.**
+Layer A 가 Layer B 를 호출 (어느 phase에서 어떤 stage ticket을 emit하는지).
 
-**Normal cycle** (one Version end-to-end):
+## Naming convention
+
+| 맥락 | 표기 | 예 |
+|---|---|---|
+| prose / 산문 | capitalized 역할명 | `PO`, `Designer`, `Developer`, `QA` |
+| code / agent ID / 명령어 / frontmatter `assignee:` | `pdt-` prefix | `pdt-po`, `pdt-designer`, `pdt-developer`, `pdt-qa` |
+
+---
+
+## Layer A — Version Cycle Phases
+
 ```
-1. PRD     — Designer (opus + ⚡max), clarity loop A ≤ 0.05
-2. Design  — Designer (opus + high)
-             L4+ / user-facing / risk_flags → mandatory; L1–L3 trivial → skip
-             산출물 4종 (each separate ticket, Designer emits):
-               a. Design System  → docs/design/<slug>/system.md
-               b. UX Flow Mermaid → docs/design/<slug>/flow.md
-               c. Wireframe Excalidraw → docs/design/<slug>/screens/*.excalidraw.json
-               d. Hi-fi mockup HTML/CSS → docs/design/<slug>/mockups/*.html
-             PRD ready → PO auto-emits 4 design tickets → Designer → user approval → Build
-3. Test    — pdt-qa (acceptance → test definition)
-4. Issue   — Designer (PRD turn output includes tickets[])
-5. Impl    — pdt-developer (design 산출물 Inputs reference 필수)
-6. Refactor — pdt-developer
-7. QA      — pdt-qa
-→ repeat
+Phase 1. Discovery     — PO (인터뷰 → brief)              [no ticket]
+Phase 2. PRD           — Designer (clarity loop A ≤ 0.05) [no ticket — PRD = doc]
+                         opus + ⚡max for Version 1; opus + ⚡xhigh for V2+ updates
+Phase 3. Design        — Designer self-execute            [stage:design ticket × 4]
+                         L4+ / user-facing / risk_flags → mandatory
+                         L1–L3 trivial → skip
+                         산출물 4종:
+                           a. Design System  → docs/design/<slug>/system.md
+                           b. UX Flow Mermaid → docs/design/<slug>/flow.md
+                           c. Wireframe Excalidraw → docs/design/<slug>/screens/*.excalidraw.json
+                           d. Hi-fi mockup HTML/CSS → docs/design/<slug>/mockups/*.html
+                         → user gate before Phase 4
+Phase 4. Build         — ticket execution
+                         · stage:impl     (필수, Developer + auto QA smoke gate)
+                         · stage:refactor (선택, Developer + auto QA smoke gate)
+                         · stage:test     (조건부, QA — L≥6 / risk-flagged / 명시 요청 시)
+                         · stage:qa       (독립 QA work만 — regression / deploy verify 등)
+Phase 5. Version close — calibration + outcome            [no ticket]
+                         (PDS See stage 자리 — Phase B에서 보강 예정)
 ```
 
-**MVP cycle** (Version 1): 1. MVP PRD (opus + ⚡max, R1 clarity) · 2. QA acceptance = MVP accepted · 3. Build (Issue → Impl → QA loops) · 4. Deploy (user manual; PO surfaces checklist) · 5. Next Version PRD update (opus + ⚡xhigh on usage data).
+PO announces phase transition (1 line): `→ Phase 3 Design 진입 (Designer)`. Trivial skip: `→ Phase 3 생략 — L<n> trivial`.
 
-PO announces stage transitions (1 line): `→ Stage: PRD 작성 (Designer)`. Trivial skip: `→ stage Test 생략 — L1 single-line`.
+**MVP cycle (Version 1)**: Discovery → MVP PRD (opus + ⚡max, R1 clarity) → Design (조건부) → Build cycles → Deploy (user manual; PO surfaces checklist) → Version close → next Version PRD update on usage data.
 
 OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` + `to-issues` are now Designer skills.
+
+---
+
+## Layer B — `stage` enum
+
+| stage | assignee | 자동 QA smoke gate | 언제 (어느 Phase) |
+|---|---|---|---|
+| `design` | `pdt-designer` | n/a | Phase 3 |
+| `impl` | `pdt-developer` | **ON** | Phase 4 (필수) |
+| `refactor` | `pdt-developer` | **ON** | Phase 4 (선택) |
+| `test` | `pdt-qa` | n/a (자기 자체가 test 정의) | Phase 4 (조건부) |
+| `qa` | `pdt-qa` | n/a (자기 자체가 QA work) | Phase 4 (독립 QA work) |
+
+frontmatter `stage:` 값은 위 5개 enum 중 하나.
+
+**Status (lifecycle)** ≠ `stage`. status는 ticket의 진행 상태:
+```
+todo → in-progress → review → done | blocked | abandoned
+```
+같은 ticket이 stage는 고정, status만 변함. 시각화 시 두 축 다 표시.
+
+### 자동 QA smoke gate (Developer ticket close 조건)
+
+`stage:impl` / `stage:refactor` ticket이 close (`done`) 되려면 자동 QA smoke 통과 필수. user 가 routing 깨짐 / page 안 뜸 / console error 같은 user-facing 깨짐을 직접 보지 않도록.
+
+- **Tool**: Playwright / Chromium MCP / headless browser (allowlist 내). UI 없는 dev 변경은 build/typecheck/관련 unit test만 실행.
+- **Coverage**: route 로딩, basic navigation, console error 없음, Acceptance 의 testable 항목 1차 확인.
+- **Time budget**: ≤ 1분. full test plan 아님.
+- **Fail loop**: dev resume + fail excerpt → 최대 3회. 넘으면 `blocked` + user surface.
+- **Pass**: ticket `done` 허용. Persona Activity 에 1행 기록.
+
+`stage:test` / `stage:qa` ticket은 그 자체가 QA work이므로 추가 gate 없음 (자기 자신이 gate).
 
 ---
 
@@ -45,7 +93,7 @@ OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` 
 | Source code, configs, scripts | Developer | Developer Write/Edit |
 | `docs/qa/*.md` | QA | QA Write |
 
-PO **never** writes authored content. Lifecycle/frontmatter = state, not authoring. If status update reveals product scope must change, delegate to Designer.
+PO **never** writes authored content. Lifecycle/frontmatter = state, not authoring.
 
 ### PO mechanical write whitelist
 
@@ -80,7 +128,7 @@ Task = ticket (1:1). One PRD per Version; Version bundles its tickets, exported 
   "current_task": {
     "ticket_id": "T-042", "slug": "...", "title": "...",
     "status": "todo|in-progress|review|done|blocked",
-    "stage": "PRD|test|issue|impl|refactor|qa",
+    "stage": "design|impl|refactor|test|qa",
     "assignee_persona": "pdt-developer",
     "started_at": "...", "ended_at": null, "request_summary": "...",
     "prd_path": "docs/prd/<slug>.md",
@@ -106,7 +154,7 @@ Task = ticket (1:1). One PRD per Version; Version bundles its tickets, exported 
 }
 ```
 
-(Legacy `past_tasks` + `current_round` / `rounds[]` — read-compat one cycle. New code reads `past_tickets` / `current_version` / `versions[]` first; falls back to legacy keys when absent.)
+(Legacy `past_tasks` + `current_round` / `rounds[]` + `stage:PRD|issue` — read-compat one cycle. New code reads `past_tickets` / `current_version` / `versions[]` / 5-value `stage` enum first; falls back to legacy keys when absent.)
 
 ### Ticket file format (Designer-emitted, PO-lifecycle-managed)
 
@@ -156,7 +204,7 @@ worktree_path: null
 |---|---|---|---|---|
 ```
 
-Designer owns scope-defining fields. PO updates lifecycle/status meta + mirrored header + Persona Activity rows mechanically (whitelist above). If lifecycle work requires content edits, delegate.
+Designer owns scope-defining fields. PO updates lifecycle/status meta + mirrored header + Persona Activity rows mechanically. If lifecycle work requires content edits, delegate.
 
 ### Ticket close → mechanical export
 
@@ -174,6 +222,7 @@ Mechanical rules:
 - `assignee`, routing/session refs: metadata only.
 - `branch` / `worktree_path`: set on open; do not delete on close (history).
 - `## Outcome` = content. Delegate if product meaning needed.
+- `stage:impl` / `stage:refactor` ticket이 `done` 되려면 자동 QA smoke pass 필수 (위 Layer B 참조). fail 3회 누적 → `blocked`.
 
 Version close → mechanical status/backfill sweep. Outcome text needed → single Designer call: `"Version v1.0-MVP closed. Append ## Outcome summaries from past_tickets[] without changing scope/AC."`
 
