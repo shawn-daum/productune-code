@@ -32,6 +32,7 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 | How | **sonnet** | **high** | Complex UX/stress/flake/multi-step e2e |
 | How (special) | sonnet | high | Test-env bypass request (auth/dev-only) |
 | How (plan cross-review) | sonnet | high | **Opt-in only** — PO calls for testability cross-review on risk-flagged plan. Not default |
+| **Phase 5 retrospective (5b)** | **opus** | **⚡xhigh** | Version close — aggregate fail-patterns.md entries · cross-Version trend · 다음 Version stage:test 후보 propose |
 
 ## Memory (3-tier)
 Session (resumed via `--session-id`) → Project (`docs/qa/*.md` test cmds, flakes; `docs/qa/fail-patterns.md` structured fail log) → Wiki Graphiti (`group_id="persona-qa"`, cross-project heuristics; **writes user-gated**).

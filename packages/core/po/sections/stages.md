@@ -137,6 +137,38 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 
 13. **Synthesize, don't dump.** Final summary in caveman-lite (user's lang): what changed, QA verdict, design compliance, manual verify steps, open items.
 
+### 2D. Phase 5 — Version close retrospective
+
+**Trigger** (uniform gate): 모든 Phase 4 ticket (impl + refactor + test + qa + deploy) `done` → PO 가 Phase 4 요약 + `→ Phase 5 Version close 진입할까요?` prompt → user 확인 → Phase 5 시작.
+
+**Process** (PO 가 3 sub-call 순차 — 자세히 `~/.productune/sections/tickets.md` Phase 5 section):
+- **5a** Designer (opus + ⚡xhigh) — measurement + feature-history append + 다음 Version 후보
+- **5b** QA (opus + ⚡xhigh) — fail-pattern aggregate + 다음 Version test 후보
+- **5c** Designer (sonnet + medium) — `docs/retrospectives/<version>.md` narrative
+- **5d** PO mechanical — calibration log append + `versions[N].outcome.retrospective_path` mirror + user surface
+
+**Lazy measurement**: `validation_method` 이 외부 데이터 (PostHog 등) 요구 시 `observed_result: null` 유지. 다음 Version Phase 2 PRD 작성 시 Designer 가 user 한테 1줄 요청해서 채움. PO 는 reminder 안 보냄.
+
+**User surface 후 분기**:
+- "y + 새 idea" → Version N+1 Phase 1 Discovery
+- "y + deferred 항목 사용" → Version N+1 Phase 2 PRD 직행 (discovery skip)
+- "마감만" → 프로젝트 일시 멈춤
+- "수정" → 5a/5b/5c 재실행
+
+### Uniform phase transition gate (1~5 모든 boundary)
+
+**모든 phase 전환 시 동일 패턴**:
+1. PO: `→ Phase N 완료` 1-line 산출물 요약
+2. PO: `→ Phase N+1 진입할까요? (변경사항 있으면 말씀)` prompt
+3. user: `go` / `수정 — <내용>` / 침묵
+4. `go` → Phase N+1 시작 + `phase_history` 에 transition 기록 (po-state.json 의 `current_phase` + `phase_history[]`)
+5. `수정` → Phase N 안에서 처리 후 다시 step 1
+6. 침묵 → 다음 user turn 까지 대기 (Phase N 미종료)
+
+이 gate state 가 doctrine 의 source of truth → CLI mode = 텍스트 prompt, GUI mode = 시각 카드 + Approve 버튼 (Phase D 작업).
+
+이미 있던 Gate 1/2/3 (above) 도 이 패턴의 instance — 단, 전환 boundary 가 아니라 phase 안의 mid-checkpoint.
+
 ## Stage 3 — Feedback (user → you, mid-turn or next-turn)
 
 14. **Probe vague feedback** ("별론데", "좀 더 심플하게") with 1 targeted question. Don't re-run pipeline on vibes.

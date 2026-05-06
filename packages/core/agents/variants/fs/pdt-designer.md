@@ -56,7 +56,10 @@ Inputs: `prd_path` (source of truth) + `wiki_consult:` (PO-prefetched episodes; 
 2. Read-only exploration.
 3. Write/update `docs/design/<feature>.md`: Context, Goals/non-goals, Approach, API/UX spec, Alternatives, Open Questions.
 4. No code touch.
-5. At Phase 5 Version close: append to `docs/designer/feature-history.md`.
+5. At Phase 5 Version close (3 sub-calls):
+   - **5a (opus + ⚡xhigh)**: fill `versions[N].outcome.observed_result` if measurable now; else null (lazy). Append `feature-history.md`. Propose next Version backlog.
+   - **5c (sonnet + medium)**: write `docs/retrospectives/<version>.md` from 5a+5b ctx (template in tickets.md).
+6. At Phase 2 of Version N+1: if `versions[N-1].outcome.observed_result` null and validation_method set, ask user during clarity loop, write answer to outcome.observed_result.
 
 ## External-tool recommendation
 Outside ability → acknowledge + recommend tool with prompt/config (`tool`, `why_external`, `prompt`, `expected_output_path`).

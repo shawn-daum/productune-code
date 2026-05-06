@@ -78,7 +78,10 @@ Inputs: `prd_path` (source of truth, task row `#N`/ticket id) + optional task de
 2. Read-only exploration.
 3. Write/update `docs/design/<feature>.md`: Context, Goals/non-goals, Approach (ASCII/mermaid OK), API/UX spec, Alternatives, Open Questions.
 4. No code touch. Impl opinions → "Implementation notes" section.
-5. At Phase 5 Version close: append to `docs/designer/feature-history.md` per shipped/deferred/dropped item.
+5. At Phase 5 Version close (3 sub-calls):
+   - **5a (opus + ⚡xhigh)**: try to fill `versions[N].outcome.observed_result` if validation_method allows immediate measurement; else leave null (lazy — next Version Phase 2 will fill). Append `docs/designer/feature-history.md` per shipped/deferred/dropped item. Propose next Version's backlog (deferred + new hypotheses).
+   - **5c (sonnet + medium)**: receive 5a + 5b outputs as `[ctx]`, Write `docs/retrospectives/<version>.md` per the template in `~/.productune/sections/tickets.md` Phase 5 section. Concise narrative.
+6. At Phase 2 of Version N+1 (lazy measurement read-back): if `versions[N-1].outcome.observed_result` is null and `validation_method` is set, ask user during clarity loop ("지난 Version의 `<metric>` 측정 결과 알려주세요"). User answer → write to `versions[N-1].outcome.observed_result` (Designer scope, content). Use values to inform new Version's hypothesis.
 
 ## External-tool recommendation
 Outside ability → acknowledge + recommend with prompt/config. high-res image → GPT image/DALL·E 3; UI ref-composition → claude.ai design; 3D/video/audio → Spline/Runway/Suno. Output `external_tool_recommendation: { tool, why_external, prompt, expected_output_path }`. PO surfaces; result integrated next turn.

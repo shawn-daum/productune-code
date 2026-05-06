@@ -35,8 +35,14 @@ Phase 4. Build         — ticket execution
                          · stage:refactor (선택, Developer + auto QA smoke gate)
                          · stage:test     (조건부, QA — trigger 4종 중 1개라도 해당 시)
                          · stage:qa       (독립 QA work만 — regression / deploy verify 등)
-Phase 5. Version close — calibration + outcome            [no ticket]
-                         (PDS See stage 자리 — Phase B에서 보강 예정)
+                         · stage:deploy   (필수, pdt-po+user — env/secret/배포 명령 협업)
+Phase 5. Version close — retrospective + calibration       [no ticket]
+                         5a. Designer (opus + ⚡xhigh) — measurement (lazy) +
+                             feature-history append + 다음 Version 후보 제안
+                         5b. QA (opus + ⚡xhigh) — fail-pattern aggregate +
+                             다음 Version test ticket 후보
+                         5c. Designer (sonnet + medium) — retrospective.md narrative write
+                         5d. PO surface to user (retrospective path + next Version 후보)
 ```
 
 PO announces phase transition (1 line): `→ Phase 3 Design 진입 (Designer)`. Trivial skip: `→ Phase 3 생략 — L<n> trivial`.
@@ -56,8 +62,9 @@ OSS ref: [mattpocock/skills](https://github.com/mattpocock/skills) — `to-prd` 
 | `refactor` | `pdt-developer` | **ON** | Phase 4 (선택) |
 | `test` | `pdt-qa` | n/a (자기 자체가 test 정의) | Phase 4 (조건부) |
 | `qa` | `pdt-qa` | n/a (자기 자체가 QA work) | Phase 4 (독립 QA work) |
+| `deploy` | `pdt-po+user` | n/a (verification 은 step 별 결과 보고) | Phase 4 (필수, 마지막) |
 
-frontmatter `stage:` 값은 위 5개 enum 중 하나.
+frontmatter `stage:` 값은 위 6개 enum 중 하나. `deploy` ticket 은 `## Steps` 섹션에 1-by-1 list 형식 — 각 step 이 `[PO] <command>` (PO 가 직접 실행) 또는 `[user] <action>` (user 에게 instruction + 결과 보고 받음). 개발 모르는 기획자도 PO 와 티키타카로 배포 완수.
 
 **Status (lifecycle)** ≠ `stage`. status는 ticket의 진행 상태:
 ```
@@ -74,6 +81,47 @@ pending → pass | fail
 - `fail` — smoke fail → dev resume. fail 누적 3회 → ticket `blocked`
 
 design / test / qa stage ticket 에는 이 field 없음 (gate 미적용).
+
+### Phase 5 — Version close retrospective
+
+**Trigger** (uniform gate pattern): 모든 Phase 4 ticket (impl + refactor + test + qa + deploy) `done` → PO 가 자동 Phase 4 요약 + `→ Phase 5 Version close 진입할까요?` prompt → user 확인 → Phase 5 시작.
+
+**Process** (PO 가 3 개 sub-call 순차 진행):
+
+| Step | Persona | Model/Effort | 산출 |
+|---|---|---|---|
+| 5a | `pdt-designer` | opus + ⚡xhigh | `versions[N].outcome.observed_result` 시도 (lazy: 데이터 없으면 null 유지) · `feature-history.md` append (shipped/deferred/dropped per area) · 다음 Version 후보 (deferred 항목 + 새 가설) |
+| 5b | `pdt-qa` | opus + ⚡xhigh | 이번 Version 의 `fail-patterns.md` entry aggregate · 누적 area trend 분석 · 다음 Version 의 `stage:test` ticket 후보 |
+| 5c | `pdt-designer` | sonnet + medium | 5a + 5b 결과 받아서 `docs/retrospectives/<version>.md` narrative Write |
+| 5d | PO | n/a | retrospective path + 다음 Version 후보 list 를 user 에게 surface · `versions[N].outcome.retrospective_path` mechanical 갱신 · calibration log append |
+
+**Lazy measurement** — `validation_method` 이 외부 데이터 (PostHog / Sentry / GA 등) 요구하면 Phase 5 에서는 측정 안 함. `observed_result: null` 그대로 둠. 다음 Version (N+1) Phase 2 PRD 작성 시 Designer 가 이 null 을 발견하면 user 한테 "지난 Version 의 `<metric>` 알려주세요" 1줄 요청 → Designer 가 `versions[N].outcome.observed_result` 갱신 (content 변경, designer scope) → 그 결과로 새 PRD 가설 조정. PO 는 reminder 안 보냄. user 가 다음 Version 안 시작하면 측정도 안 함 (자연스러움).
+
+**retrospective.md 양식** (`docs/retrospectives/<version>.md`, Designer 5c 에서 Write):
+
+```markdown
+# Retrospective — <version>
+
+**Period**: YYYY-MM-DD ~ YYYY-MM-DD
+**PRD**: docs/prd/<slug>.md
+**Tickets**: <N> done / <M> blocked
+
+## Outcome
+- north_star: <목표> → <observed_result | "pending next Version"> [hit / miss / ?]
+- input metrics:
+  - <metric>: <observed | pending>
+
+## What worked
+- ...
+
+## What didn't
+- area X: <fail pattern>, loops 누적 N회 (cross-Version)
+
+## Carry to next Version
+- deferred from this Version: ...
+- new test ticket candidate: area Y (3+ 누적 fail)
+- new hypothesis: ...
+```
 
 ### Outcome measurement (B.1 — PDS See layer)
 
@@ -186,10 +234,16 @@ Task = ticket (1:1). One PRD per Version; Version bundles its tickets, exported 
 ```json
 {
   "current_version": "v1.0-MVP",
+  "current_phase": 4,
+  "phase_history": [
+    {"phase": 1, "started_at": "...", "completed_at": "...", "summary": "Discovery brief saved", "user_approved_at": "..."},
+    {"phase": 2, "started_at": "...", "completed_at": "...", "summary": "PRD A=0.04 + 12 tickets", "user_approved_at": "..."},
+    {"phase": 3, "started_at": "...", "completed_at": "...", "summary": "4 design tickets (system/flow/wireframe/mockup)", "user_approved_at": "..."}
+  ],
   "current_task": {
     "ticket_id": "T-042", "slug": "...", "title": "...",
     "status": "todo|in-progress|review|done|blocked",
-    "stage": "design|impl|refactor|test|qa",
+    "stage": "design|impl|refactor|test|qa|deploy",
     "qa_status": "pending|pass|fail",
     "qa_loops": 0,
     "assignee_persona": "pdt-developer",
@@ -283,6 +337,34 @@ observed_result: null        # filled by PO at Phase 5 retrospective
 ```
 
 Designer owns scope-defining fields. PO updates lifecycle/status meta + mirrored header + Persona Activity rows mechanically. If lifecycle work requires content edits, delegate.
+
+### `stage:deploy` ticket body shape
+
+`assignee: pdt-po+user`. body 가 다른 stage 와 다름 — `## Steps` 가 핵심:
+
+```markdown
+# T-099: Deploy v1.0-MVP
+
+**Version**: v1.0-MVP  **Stage**: deploy  **Status**: todo  **Assignee**: pdt-po+user
+
+## Request
+Production 배포. checklist: env var, DB migration, Vercel deploy, smoke verify.
+
+## Steps
+- [PO] git tag v1.0-MVP && git push --tags
+- [user] Vercel 대시보드 → Settings → Environment Variables → `OPENAI_API_KEY` 추가 후 알려주세요
+- [PO] vercel deploy --prod
+- [user] 배포 URL 접속 → /login 페이지 떠나요? 결과 알려주세요
+- [PO] curl https://<production-url>/api/health → 200 확인
+- [user] PostHog dashboard 에서 deploy event 보이나요?
+
+## Acceptance
+- [ ] 모든 Steps 완료
+- [ ] /login 페이지 정상
+- [ ] /api/health 200
+```
+
+PO 가 `[PO]` step 은 직접 실행 (allowlist 안), `[user]` step 은 instruction surface + 결과 받기. 모든 step done → ticket close. 자동 QA smoke gate 없음 (verification 이 step 결과로 직접 들어옴).
 
 ### Ticket close → mechanical export
 
