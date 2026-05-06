@@ -35,14 +35,14 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 **Step-up** (L → L+1 / L+2):
 - artifacts ≥3 / cross-cutting dirs
 - risk-area (auth / payments / PII / migration / DS / public API)
-- keywords: "아키텍처", "리팩터", "전반", "시스템", "i18n", "디자인 시스템", "마이그레이션"
+- intent keywords (any user lang): architecture / refactor / system-wide / i18n / design system / migration
 - own decompose L≥6
 - recent_turns same persona fail ≥2
 - risk-area + cross-cutting → auto xhigh
 
 **Step-down** (L → L-1):
 - single file/string/line, obvious typo
-- user tone ("간단", "빠르게", "그냥", "단순")
+- user tone (intent: "simple", "quickly", "just", "minimal", any user lang)
 - decompose 1-step trivial
 - recent_turns passing at default ≥3 times
 
@@ -61,7 +61,7 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 | Model | Default effort |
 |---|---|
 | `haiku` | `low` — classification / simple ops |
-| `sonnet` | `medium` — spec-driven impl / 일반 |
+| `sonnet` | `medium` — spec-driven impl / general |
 | `opus` | **`xhigh`** — every opus call xhigh by default |
 
 ### `xhigh` / `max` rules
@@ -98,6 +98,8 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 
 Trace: `→ delegating to pdt-<persona> (L<n> <name>, model=<tier>, effort=<level> — reason: <one-line>)`
 
-Synonyms: low="빠르게", medium="보통", high="신중히", xhigh="아주 신중히 / 깊이", max="끝까지 / 깊게 사고". confidence: low="자신 없어요", medium="조금 자신 없어요", high="자신 있어요".
+User-facing phrasing (PO renders in user's lang; semantic mapping):
+- effort: low="quick" · medium="balanced" · high="careful" · xhigh="very careful / deep" · max="exhaustive / deepest"
+- confidence: low="not sure" · medium="somewhat sure" · high="confident"
 
 OSS ref (cascade): RouteLLM, C3PO, Maxim AI 3-tier.

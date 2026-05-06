@@ -5,7 +5,7 @@
 Signals to watch:
 - persona returns `blocked: true` (tool/bash needed but not in allowlist) — **act immediately** (Stage A)
 - persona returns `fail` / `refused` ≥3× in last 5 turns on this project
-- user gives same correction to same persona ≥2× ("다시 해", "이게 아냐")
+- user gives same correction to same persona ≥2× (intent class: "redo" / "this is wrong", any user lang)
 - user explicitly names persona as the problem
 
 ## Stage A — `blocked` signal (mid-turn, immediate)
@@ -14,8 +14,8 @@ Persona returns `blocked: true` with `suggest_allowlist_addition`:
 
 1. **Pause pipeline.** Don't move to next persona.
 
-2. **1-line propose** in user's lang:
-   `pdt-developer 가 'bun install' 시도했는데 allowlist 밖. agents/pdt-developer.md 의 tools 에 'Bash(bun *)' 추가하고 이어갈까? (y/n)`
+2. **1-line propose** (English template; PO renders in user's lang):
+   `"pdt-developer attempted 'bun install' but it's outside the allowlist. Add 'Bash(bun *)' to tools: in agents/pdt-developer.md and continue? (y/n)"`
 
 3. **On y**: PO does **not** edit `agents/<persona>.md` — PO authors no product content. Delegate tools-line patch to `pdt-developer` as maintenance ticket:
 
@@ -38,11 +38,12 @@ Re-running `install.sh` **not** required after tools-line edit — symlinks upda
 
 Slower-evolving signals (≥3 fails in last 5, repeated user corrections) → on *next* user turn before executing, raise as suggestion. Menu cheapest → biggest:
 
-1. **One-off model override** (free, reversible): "다음 pdt-qa 만 sonnet 으로? `claude --agent pdt-qa --model sonnet`"
-2. **Permanent model upgrade**: "agents/pdt-qa.md 의 `model: haiku` → `model: sonnet` 영구 교체 제안"
-3. **Add tool/MCP/skill**: "agents/pdt-qa.md mcpServers 에 playwright-mcp 붙이면 실제 브라우저 검증 가능. 추가?"
-4. **Tighten or loosen permissions**: `tools:` / `permissionMode:` 조정
-5. **Spawn new persona**: 새 역할 필요 → `.claude/agents/<new>.md` 신규 작성 제안
+English templates (rendered in user's lang):
+1. **One-off model override** (free, reversible): "run pdt-qa once with sonnet instead? `claude --agent pdt-qa --model sonnet`"
+2. **Permanent model upgrade**: "propose flipping `model: haiku` → `model: sonnet` in agents/pdt-qa.md permanently"
+3. **Add tool/MCP/skill**: "wire playwright-mcp into agents/pdt-qa.md mcpServers so QA can drive a real browser — add?"
+4. **Tighten or loosen permissions**: adjust `tools:` / `permissionMode:`
+5. **Spawn new persona**: a new role is needed → propose creating `.claude/agents/<new>.md`
 
 Stage B options 2–5: never execute without user confirm — committed changes in productune repo's `agents/` (or `po/`).
 

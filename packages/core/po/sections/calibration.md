@@ -41,10 +41,10 @@ Field rules:
 - `estimate=<model>/<effort>` — Step 1 routing's first call (before escalation). `<effort>` ∈ {`low`, `medium`, `high`, `xhigh`, `max`}.
 - `actual=<model>/<effort>` — last actually-used (after escalation). `actual=opus/max` → Step 1 routing choice — `max` cannot be reached via Path 1 (`escalation.md`).
 - `QA pass(N)` — final pdt-qa result + loop count (`current_task.calibration_outcome.qa_loops`). Use `n/a` for tasks without QA (e.g. PRD-only).
-- `rework=y` — Step 3 **user** feedback indicated rework ("다시", "별론데", "이거 아니야"). Strictly user-driven; NOT for PO-internal redos.
+- `rework=y` — Step 3 **user** feedback indicated rework (intent class: "redo" / "no good" / "this isn't it", any user lang). Strictly user-driven; NOT for PO-internal redos.
 - `internal_redo=<n>` — count of PO-driven re-invocations of same persona within same task because output didn't match spec (e.g. dev added unsolicited JSDoc). 0 if none. Distinguishes from quality escalation (which uses `escalation=Path1|Path2`).
 - `escalation=Path1|Path2|none` — quality escalation triggered or not. `max` does NOT appear (Step 1 choice, not escalation outcome).
-- `note` — 1-line PO judgement. "정상" / "appropriate" if estimate==actual; otherwise why diverged.
+- `note` — 1-line PO judgement. `"appropriate"` if estimate==actual; otherwise why diverged.
 
 ### Format — model/effort slot
 

@@ -7,16 +7,16 @@ After persona returns, PO inspects 4 quality signals. Any trips → 3-option men
 1. **Self-reported confidence** — output JSON `confidence: low|medium|high` + `unresolved: [...]`
 2. **Schema completeness** — required fields missing (e.g. dev with `changed_files:[]` + `ready_for_qa:false` + populated `partial_changes`)
 3. **Downstream invalidation** — pdt-qa `overall:fail`, pdt-designer compliance check `deviations:[...]` non-empty
-4. **User feedback** — next turn says "이거 별론데" / "다시" / "안 맞아"
+4. **User feedback** — next turn signals dissatisfaction (intent: "this isn't right" / "redo" / "doesn't match", any user lang).
 
-Any one trips → PO surfaces all 3 options at once:
+Any one trips → PO surfaces all 3 options at once. English template, rendered in user's lang:
 
 ```
-[PO] pdt-developer 결과 confidence=low (unresolved: ["Next 16 middleware 명 변경 못 찾음"]).
+[PO] pdt-developer returned confidence=low (unresolved: ["could not find Next 16 middleware rename"]).
      [1] retry — model sonnet → opus, effort medium → high (resume same session)
-     [2] skill 검색 — "Next.js 16 routing" 키워드로 skill 레지스트리 조회
-     [3] 그냥 진행 (Follow-ups 로 surface)
-     선택? [1/2/3/Enter=1]
+     [2] skill search — query "Next.js 16 routing" against the skill registry
+     [3] proceed as-is (surface in Follow-ups)
+     pick? [1/2/3/Enter=1]
 ```
 
 ## Path 1 — Tier-up retry
@@ -38,7 +38,7 @@ case "$PRIOR_EFFORT" in
 esac
 
 NO_COLOR=1 claude --resume "$SID" --model "$NEW_MODEL" --print --output-format json \
-  "이전 시도 미해결: $UNRESOLVED. 더 깊이 reasoning 해서 다시 시도. extended thinking budget: $NEW_EFFORT."
+  "Previous attempt unresolved: $UNRESOLVED. Reason more deeply and retry. extended thinking budget: $NEW_EFFORT."
 ```
 
 **Loop cap: 2 retries per persona per task.** After 2nd retry confidence still low → mark `blocked` + surface (same flow as Persona evolution Stage A).
@@ -52,16 +52,16 @@ PO calls `skill-fetch search "<query>"`. Query from `unresolved` items or task k
 ```bash
 QUERY="$(echo "$UNRESOLVED" | head -1)"
 RESULTS=$(skill-fetch search "$QUERY" --json --limit 3 2>/dev/null \
-  || echo '[{"name":"<skill-fetch 미설치>","source":"manual","desc":"polyskill.ai 직접 검색"}]')
+  || echo '[{"name":"<skill-fetch not installed>","source":"manual","desc":"search polyskill.ai directly"}]')
 ```
 
-Surface top 3 (title + source + short desc):
+Surface top 3 (title + source + short desc). English template, rendered in user's lang:
 ```
-[PO] skill 검색 결과:
+[PO] skill search results:
      [a] nextjs-routing-15-to-16  (PolySkill, ★42)  — Next.js routing migration helper
      [b] react-server-actions     (Anthropic Skills) — RSC + actions patterns
      [c] middleware-debugging     (skills.sh)        — Edge → Fluid Compute migration
-     선택? [a/b/c/skip]
+     pick? [a/b/c/skip]
 ```
 
 On selection:

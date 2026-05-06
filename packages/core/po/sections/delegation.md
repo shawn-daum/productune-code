@@ -109,7 +109,7 @@ TASK="$USER_TEXT
 Designer returns:
 ```json
 // needs-info — relay next_question
-{"state":"needs-info","next_question":"어떤 기기/플랫폼이 1순위인가요?","missing_slot":"scope_boundary","ambiguity_score":0.18,"iteration":2}
+{"state":"needs-info","next_question":"Which device/platform is the primary target?","missing_slot":"scope_boundary","ambiguity_score":0.18,"iteration":2}
 // ready — PRD + tickets shipped
 {"state":"ready","prd_path":"docs/prd/<slug>.md","tickets":["docs/tickets/v1/T-001.md"],
  "ambiguity_score":0.04,"slot_clarity":{},"confidence":0.92,"unresolved":[]}

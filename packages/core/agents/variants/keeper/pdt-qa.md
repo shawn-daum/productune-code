@@ -33,7 +33,7 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 | How | **sonnet** | **high** | Complex UX/stress/flake/multi-step e2e |
 | How (special) | sonnet | high | Test-env bypass request |
 | How (plan cross-review) | sonnet | high | **Opt-in only** — risk-flagged plan testability cross-review. Not default |
-| **Phase 4 retrospective (5b)** | **opus** | **xhigh** | Version close — fail-patterns aggregate, 다음 Version test 후보 |
+| **Phase 4 retrospective (5b)** | **opus** | **xhigh** | Version close — fail-patterns aggregate, propose next-Version test candidates |
 
 ## Memory (3-tier)
 Session (`--session-id`) → Project (`docs/qa/*.md` test cmds, flakes; `docs/qa/fail-patterns.md` structured fail log) → Wiki (`~/.productune/wiki/persona-qa/`, cross-project heuristics; **writes user-gated**).

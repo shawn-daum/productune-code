@@ -6,15 +6,9 @@ Sessions scoped per **task** (not project). Same-intent follow-ups stay in `curr
 
 Inspect `current_task` + `past_tickets`. Classify:
 
-- **(a) Continuation** — pronouns ("그/방금/이어서"), files in `current_task.artifacts`, same scope → keep, `--resume`.
-- **(b) Revival** — past slug/title/artifact named or strong overlap → confirm, archive current → restore past as current. Prompt:
-  ```
-  이건 'login-modal-forgot-pw' 후속처럼 보여요. 그 task 이어서 갈까요? (y/n/[다른 slug])
-  ```
-- **(c) New** — different feature/file/intent → archive current → past, allocate. Announce:
-  ```
-  새 task '<slug>' 시작합니다.
-  ```
+- **(a) Continuation** — pronouns / temporal back-reference (intent: "that one", "just now", "continue"), files in `current_task.artifacts`, same scope → keep, `--resume`.
+- **(b) Revival** — past slug/title/artifact named or strong overlap → confirm, archive current → restore past as current. Prompt template (rendered in user's lang): `"this looks like a follow-up to '<slug>'. continue that task? (y/n/[other slug])"`.
+- **(c) New** — different feature/file/intent → archive current → past, allocate. Announce: `"starting new task '<slug>'"` (in user's lang).
 
 ## Archive `current_task` → `past_tickets` (mandatory before b/c)
 
@@ -31,7 +25,7 @@ tmp=$(mktemp) && jq --arg now "$NOW" --arg s "$FINAL_STATUS" --arg o "$OUTCOME" 
 ' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
 
-`final_status`: `done` (delivered/QA pass or N/A) · `blocked` (QA fail loop cap or external dep) · `abandoned` (user moved on / "그냥 접자").
+`final_status`: `done` (delivered/QA pass or N/A) · `blocked` (QA fail loop cap or external dep) · `abandoned` (user explicitly drops the task — intent: "let's drop this" / "abandon").
 
 Hook `pre-delegate-task-check.sh` blocks new-slug delegation if previous slug missing from `past_tickets`. Skipping not optional.
 
@@ -78,18 +72,18 @@ Claude transcripts: `cleanupPeriodDays` (default 30) in `~/.claude/settings.json
 
 ## Timeline / project history
 
-User asks history / "지금까지 뭐 했어" — **never invoke persona, never `git log`**. Source = `past_tickets` + `current_task`. Sort by `started_at`, render:
+User asks for project history (intent: "what have we done", "show timeline", "summary so far") — **never invoke persona, never `git log`**. Source = `past_tickets` + `current_task`. Sort by `started_at`, render in user's lang per template:
 
 ```
-## 프로젝트 타임라인 (<repo>)
+## Project timeline (<repo>)
 
 <started_at> – <ended_at>  <slug>  [<final_status>]
-  요청  : <request_summary>
-  플로우: <personas in order, pass/fail>
-  산출물: <artifacts>
-  결과  : <outcome_summary>
+  request : <request_summary>
+  flow    : <personas in order, pass/fail>
+  artifacts: <artifacts>
+  outcome : <outcome_summary>
 
-진행중: <current_task.slug>  [in-progress]
+in progress: <current_task.slug>  [in-progress]
 ```
 
 Detail beyond summary: read PRD `docs/prd/<slug>.md`, persona notes, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` past session = last resort.
