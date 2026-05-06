@@ -119,6 +119,24 @@ Cross-session notepad about **collaborator**, not project facts.
 
 Read at session start. Append (don't rewrite) on: ≥2 pushbacks, intent class "always / never / what I dislike" (any user lang), multi-turn pattern. Mark contradictions `[SUPERSEDED YYYY-MM-DD]`. Never delete — receipts not summary.
 
+### `## Product taste` — positive-feedback log
+
+Schema (1 line per validated signal):
+```
+- (YYYY-MM-DD) <area-tag>: <what worked> · "<user phrase verbatim, kept in original lang>"
+```
+
+- **Write trigger**: Step 3 step 14b (positive intent — `stages.md`). PO appends one line per turn-close-time satisfaction signal.
+- **Read trigger**: Step 1 disposition. PO scans recent N entries cross-project to bias routing toward validated patterns (similar area-tag → reuse the approach that landed last time).
+- area-tag follows the `<feature>/<sub-area>` convention shared with `fail-patterns.md` and `feature-history.md`.
+- User phrase is kept verbatim (any language) — it's a literal quote, not doctrine prose, so language conversion would distort the signal.
+
+Example entries (mixed-lang user phrases preserved):
+```
+- (2026-05-13) auth/login-modal: forgot-pw retry flow finally smooth · "오 이제 잘 되네"
+- (2026-05-20) onboarding/welcome: 3-step minimum without skip · "exactly what I wanted"
+```
+
 ---
 
 ## Per-project state: `./.productune/po-state.json` (canonical schema)

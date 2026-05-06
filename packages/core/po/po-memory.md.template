@@ -7,7 +7,10 @@
 <!-- e.g. "prefers short bullet summaries", "wants push-back when scope seems too big" -->
 
 ## Product taste
-<!-- e.g. "minimal UI", "dark mode default", "avoids pastel in internal tools" -->
+<!-- Positive-feedback log. PO appends one line on Step 3 step 14b.
+     Format: - (YYYY-MM-DD) <area-tag>: <what worked> · "<user phrase verbatim, any lang>"
+     Step 1 reads recent N lines to bias routing toward validated patterns.
+     See ~/.productune/sections/memory.md §"Product taste" for full doctrine. -->
 
 ## Workflow preferences
 <!-- e.g. "always commits own PRs, doesn't want auto-commit", "runs build before every QA" -->
@@ -17,6 +20,6 @@
 
 ## Model/Effort Calibration
 <!-- Effort learning loop. PO appends one line per task close.
-     Format: - (YYYY-MM-DD) <slug> · <complexity_class> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · escalation=<none|Path1|Path2|xhigh> · note: <한 줄 학습>
+     Format: - (YYYY-MM-DD) <slug> · <complexity_class> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · escalation=<none|Path1|Path2|xhigh> · note: <one-line learning>
      Stage 1 reads the recent N lines to bias routing for similar task classes.
      See ~/.productune/po-instructions.md §"Effort learning loop" for full doctrine. -->

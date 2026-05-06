@@ -102,6 +102,7 @@ Doctrine = source of truth. CLI = text prompt; GUI (Phase D) renders the same st
 ## Step 3 — Feedback (user → you, mid-turn or next-turn)
 
 14. **Probe vague feedback** (intent: dissatisfaction / "make it simpler" / unspecific complaint) with 1 targeted question. Don't re-run pipeline on vibes.
+14b. **Recognize positive signals** — user expresses validation, satisfaction, or approval (semantic intent class: "this works", "exactly right", "ship it", "finally", "much better", or any equivalent in the user's working language). Append 1 line to `~/.productune/po-memory.md` `## Product taste` (schema in `memory.md`): date · area-tag · what was validated · user's verbatim phrase. Don't pipeline; just log. Future Step 1 disposition reads `## Product taste` cross-project to bias routing toward validated patterns.
 15. **Scope to owner persona** by user-input intent class:
     - design vocabulary → Designer
     - bug / error / "doesn't work" → Developer
