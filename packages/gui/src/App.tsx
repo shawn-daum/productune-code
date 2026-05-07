@@ -15,6 +15,7 @@ interface DescendantEntry {
 
 type OpenPrompt =
   | { kind: 'install'; dir: string }
+  | { kind: 'legacy'; dir: string; hints: string[] }
   | { kind: 'descendant'; dir: string; descendants: DescendantEntry[] }
 
 export default function App() {
@@ -58,6 +59,8 @@ export default function App() {
     if (!result) return
     if (result.kind === 'self') {
       setProject({ slug: result.config.slug, projectDir: result.dir })
+    } else if (result.kind === 'self-legacy') {
+      setOpenPrompt({ kind: 'legacy', dir: result.dir, hints: result.hints })
     } else if (result.kind === 'descendant') {
       setOpenPrompt({ kind: 'descendant', dir: result.dir, descendants: result.descendants })
     } else {
@@ -83,6 +86,18 @@ export default function App() {
       setProject({ slug: result.config.slug, projectDir: dir })
     } catch (e: any) {
       console.error('installAt failed', e)
+    }
+  }
+
+  async function migrateLegacyDir() {
+    if (!openPrompt || openPrompt.kind !== 'legacy') return
+    const dir = openPrompt.dir
+    setOpenPrompt(null)
+    try {
+      const result = await (window as any).api.migrateLegacy({ projectDir: dir })
+      setProject({ slug: result.config.slug, projectDir: dir })
+    } catch (e: any) {
+      console.error('migrateLegacy failed', e)
     }
   }
 
@@ -126,6 +141,15 @@ export default function App() {
         />
       )}
 
+      {openPrompt?.kind === 'legacy' && (
+        <LegacyMigrateDialog
+          dir={openPrompt.dir}
+          hints={openPrompt.hints}
+          onConfirm={migrateLegacyDir}
+          onCancel={() => setOpenPrompt(null)}
+        />
+      )}
+
       {openPrompt?.kind === 'descendant' && (
         <DescendantPromptDialog
           dir={openPrompt.dir}
@@ -150,15 +174,34 @@ function InstallPromptDialog({ dir, onConfirm, onCancel }: { dir: string; onConf
   const { t } = useTranslation()
   return (
     <div style={overlay}>
-      <div style={bannerCard}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>{t('app.install.title')}</div>
-        <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginBottom: 16 }}>{dir}</div>
-        <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 20 }}>
+      <div style={modalCard}>
+        <div style={modalTitle}>{t('app.install.title')}</div>
+        <div style={modalPath}>{dir}</div>
+        <div style={modalBody}>
           {t('app.install.description')}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button style={btnSecondary} onClick={onCancel}>{t('app.install.cancel')}</button>
           <button style={btnPrimary} onClick={onConfirm}>{t('app.install.confirm')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LegacyMigrateDialog({ dir, hints, onConfirm, onCancel }: { dir: string; hints: string[]; onConfirm: () => void; onCancel: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <div style={overlay}>
+      <div style={modalCard}>
+        <div style={modalTitle}>{t('app.migrate.title')}</div>
+        <div style={modalPath}>{dir}</div>
+        <div style={modalBody}>
+          {t('app.migrate.description', { hints: hints.join(', ') })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button style={btnSecondary} onClick={onCancel}>{t('app.migrate.cancel')}</button>
+          <button style={btnPrimary} onClick={onConfirm}>{t('app.migrate.confirm')}</button>
         </div>
       </div>
     </div>
@@ -177,12 +220,12 @@ function DescendantPromptDialog({
   const { t } = useTranslation()
   return (
     <div style={overlay}>
-      <div style={{ ...bannerCard, width: 480 }}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>
+      <div style={{ ...modalCard, width: 480 }}>
+        <div style={modalTitle}>
           {t('app.descendant.title')}
         </div>
-        <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginBottom: 16 }}>{dir}</div>
-        <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 16 }}>
+        <div style={modalPath}>{dir}</div>
+        <div style={{ ...modalBody, marginBottom: 16 }}>
           {t('app.descendant.prompt')}
         </div>
 
@@ -193,11 +236,11 @@ function DescendantPromptDialog({
               style={descendantItem}
               onClick={() => onOpen(entry)}
             >
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#F0F0F0' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#E8E8EA' }}>
                 <span style={{ color: '#FF6B2B', marginRight: 6 }}>⚡</span>
                 {entry.config.slug}
               </div>
-              <div style={{ fontSize: 11, color: '#707070', fontFamily: 'monospace', marginTop: 2 }}>
+              <div style={{ fontSize: 11, color: '#C8C8CC', fontFamily: 'monospace', marginTop: 2 }}>
                 {entry.path}
               </div>
             </button>
@@ -213,39 +256,63 @@ function DescendantPromptDialog({
   )
 }
 
+// ── Design tokens ─────────────────────────────────────────────────────────────
+// --surface-app:   #0F0F11
+// --surface-modal: #1C1C20   (contrast vs --text-primary #E8E8EA → 12.6:1 AAA)
+// --text-primary:  #E8E8EA   (body text — WCAG AAA on --surface-modal)
+// --text-muted:    #C8C8CC   (path / meta — WCAG AAA on --surface-modal)
+// --border-modal:  rgba(255,255,255,0.10)
+// --shadow-modal:  0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06)
+
 // ── styles ────────────────────────────────────────────────────────────────────
 
 const appShell: React.CSSProperties = {
   display: 'flex', flexDirection: 'column',
   width: '100vw', height: '100vh',
-  background: '#0A0A0A',
+  background: '#0F0F11',
   overflow: 'hidden',
 }
 const viewport: React.CSSProperties = {
   flex: 1, display: 'flex', minHeight: 0, position: 'relative',
 }
 const overlay: React.CSSProperties = {
-  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+  position: 'fixed', inset: 0,
+  background: 'rgba(0,0,0,0.55)',
+  backdropFilter: 'blur(2px)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 900,
 }
-const bannerCard: React.CSSProperties = {
-  background: '#1A1A1A', borderRadius: 12, border: '1px solid #333',
-  padding: '24px', width: 400, boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
+// Updated modal card — design system aligned, WCAG AA+
+const modalCard: React.CSSProperties = {
+  background: '#1C1C20',
+  borderRadius: 12,
+  border: '1px solid rgba(255,255,255,0.10)',
+  padding: '24px 28px',
+  width: 420,
+  boxShadow: '0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06)',
+}
+const modalTitle: React.CSSProperties = {
+  fontWeight: 600, fontSize: 15, color: '#E8E8EA', marginBottom: 8,
+}
+const modalPath: React.CSSProperties = {
+  fontSize: 12, color: '#C8C8CC', fontFamily: 'monospace', marginBottom: 16,
+}
+const modalBody: React.CSSProperties = {
+  fontSize: 14, color: '#E8E8EA', lineHeight: 1.55, marginBottom: 20,
 }
 const btnPrimary: React.CSSProperties = {
   background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
 }
 const btnSecondary: React.CSSProperties = {
-  background: '#242424', color: '#F0F0F0', border: '1px solid #333', borderRadius: 4,
+  background: '#242428', color: '#E8E8EA', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, cursor: 'pointer', textAlign: 'left',
 }
 const btnGhost: React.CSSProperties = {
-  background: 'transparent', color: '#A0A0A0', border: '1px solid #333', borderRadius: 4,
+  background: 'transparent', color: '#C8C8CC', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 4,
   padding: '8px 14px', fontSize: 12, cursor: 'pointer',
 }
 const descendantItem: React.CSSProperties = {
-  background: '#161616', border: '1px solid #2A2A2A', borderRadius: 6,
+  background: '#161618', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6,
   padding: '10px 12px', cursor: 'pointer', textAlign: 'left',
   transition: 'border-color 0.15s, background 0.15s',
 }

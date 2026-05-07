@@ -1,4 +1,4 @@
-export { initProject } from './init'
+export { initProject, bootstrapClaudeSettings } from './init'
 export type { ProjectConfig, InitOptions } from './init'
 
 export { startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo } from './github'

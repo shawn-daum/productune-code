@@ -242,6 +242,12 @@
       "prompt": "Which folder would you like to open?",
       "installHere": "Install in current folder",
       "cancel": "Cancel"
+    },
+    "migrate": {
+      "title": "Legacy productune project detected",
+      "description": "This folder looks like an older productune project. Detected: {{hints}}. Migrating will add config.json — your existing data (briefs, po-state, etc.) will be preserved. Continue?",
+      "confirm": "Migrate",
+      "cancel": "Cancel"
     }
   }
 }

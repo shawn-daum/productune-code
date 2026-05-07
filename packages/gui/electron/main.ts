@@ -4,7 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists } from '@productune/core'
+import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists } from '@productune/core'
 import type { UiLanguage } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
@@ -392,14 +392,57 @@ ipcMain.handle('projects:list', () => {
     .slice(0, 10)
 })
 
+// ── Productune folder detection ───────────────────────────────────────────────
+
+interface DetectResult {
+  kind: 'self-current' | 'self-legacy' | 'none'
+  config?: any
+  hints?: string[]
+}
+
+/**
+ * Detect whether a directory contains a productune project (current or legacy layout).
+ *
+ * - 'self-current': .productune/config.json exists and is parseable.
+ * - 'self-legacy':  .productune/ exists with po-state.json/briefs/po.lock/turns/ but no config.json.
+ * - 'none':         No productune layout detected.
+ */
+function detectProductuneLayout(dir: string): DetectResult {
+  const productuneDir = path.join(dir, '.productune')
+  if (!fs.existsSync(productuneDir)) return { kind: 'none' }
+
+  const configPath = path.join(productuneDir, 'config.json')
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      return { kind: 'self-current', config }
+    } catch {
+      // Corrupt config — treat as legacy
+    }
+  }
+
+  // config.json absent — check for legacy traces
+  const hints: string[] = []
+  if (fs.existsSync(path.join(productuneDir, 'po-state.json'))) hints.push('po-state.json')
+  if (fs.existsSync(path.join(productuneDir, 'briefs'))) hints.push('briefs/')
+  if (fs.existsSync(path.join(productuneDir, 'po.lock'))) hints.push('po.lock')
+  if (fs.existsSync(path.join(productuneDir, 'turns'))) hints.push('turns/')
+
+  if (hints.length > 0) return { kind: 'self-legacy', hints }
+  return { kind: 'none' }
+}
+
 ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
   if (result.canceled || result.filePaths.length === 0) return null
   const dir = result.filePaths[0]
 
-  const selfConfig = readProductuneConfig(dir)
-  if (selfConfig) {
-    return { kind: 'self', dir, config: selfConfig }
+  const detect = detectProductuneLayout(dir)
+  if (detect.kind === 'self-current') {
+    return { kind: 'self', dir, config: detect.config }
+  }
+  if (detect.kind === 'self-legacy') {
+    return { kind: 'self-legacy', dir, hints: detect.hints }
   }
 
   const descendants = scanDescendantsForProductune(dir)
@@ -410,11 +453,11 @@ ipcMain.handle('dialog:openFolder', async () => {
   return { kind: 'none', dir }
 })
 
-function readProductuneConfig(dir: string): any | null {
-  const configPath = path.join(dir, '.productune', 'config.json')
-  if (!fs.existsSync(configPath)) return null
-  try { return JSON.parse(fs.readFileSync(configPath, 'utf-8')) } catch { return null }
-}
+ipcMain.handle('project:migrateLegacy', (_event, { projectDir, slug }: { projectDir: string; slug?: string }) => {
+  const derivedSlug = (slug ?? path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || 'project'
+  const config = initProject({ slug: derivedSlug, projectDir })
+  return { projectDir, config, migrated: true }
+})
 
 function scanDescendantsForProductune(baseDir: string): { path: string; config: any }[] {
   const found: { path: string; config: any }[] = []
@@ -429,8 +472,13 @@ function scanDescendantsForProductune(baseDir: string): { path: string; config: 
     if (entry.name.startsWith('.')) continue
     if (entry.name === 'node_modules') continue
     const childPath = path.join(baseDir, entry.name)
-    const config = readProductuneConfig(childPath)
-    if (config) found.push({ path: childPath, config })
+    const detect = detectProductuneLayout(childPath)
+    if (detect.kind === 'self-current') {
+      found.push({ path: childPath, config: detect.config })
+    } else if (detect.kind === 'self-legacy') {
+      // Include legacy projects in descendant scan — renderer decides how to handle
+      found.push({ path: childPath, config: { slug: entry.name, _legacy: true, hints: detect.hints } })
+    }
   }
   return found
 }

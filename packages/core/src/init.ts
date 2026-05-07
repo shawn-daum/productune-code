@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import os from 'os'
 
 export interface ProjectConfig {
   slug: string
@@ -10,6 +11,113 @@ export interface ProjectConfig {
 export interface InitOptions {
   slug: string
   projectDir: string
+}
+
+// ── settings.local.json hygiene ───────────────────────────────────────────────
+
+/** Regex to detect an absolute /Users/<username>/ path in a permission entry. */
+const FOREIGN_USER_RE = /^[A-Za-z]+\(\/{1,2}Users\/([^/)]+)\//
+
+/**
+ * Default settings.local.json template.
+ * Uses absolute projectDir paths — relative `./**` glob not confirmed working in claude code
+ * permission engine (open question — see design doc §6).
+ */
+function defaultClaudeSettings(projectDir: string): object {
+  return {
+    permissions: {
+      allow: [
+        `Read(${projectDir}/**)`,
+        `Write(${projectDir}/**)`,
+        `Edit(${projectDir}/**)`,
+        'Bash(npm *)',
+        'Bash(pnpm *)',
+        'Bash(git *)',
+        'Bash(node *)',
+        'Bash(python3 *)',
+        'Bash(jq *)',
+        'Bash(claude *)',
+        'Bash(codex *)',
+      ],
+    },
+  }
+}
+
+/**
+ * Ensure .claude/settings.local.json is hygiene-correct for the current user.
+ *
+ * - If file exists: scan permissions.allow for foreign-user absolute paths.
+ *   Foreign detected → backup as legacy-<timestamp>.json + write default template.
+ *   Own user only → no-op (preserve customization).
+ * - If file absent: write default template.
+ * - Idempotent: default template already present → skip.
+ * - Also ensures .gitignore contains `.claude/settings.local.json`.
+ */
+export function bootstrapClaudeSettings(projectDir: string): void {
+  const claudeDir = path.join(projectDir, '.claude')
+  const settingsPath = path.join(claudeDir, 'settings.local.json')
+  const currentUser = process.env['USER'] ?? os.userInfo().username
+
+  fs.mkdirSync(claudeDir, { recursive: true })
+
+  if (fs.existsSync(settingsPath)) {
+    let parsed: any
+    try {
+      parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+    } catch {
+      // Corrupt file — replace with default
+      parsed = null
+    }
+
+    let hasForeign = false
+    if (parsed) {
+      const allow: unknown[] = parsed?.permissions?.allow ?? []
+      for (const entry of allow) {
+        if (typeof entry !== 'string') continue
+        const m = FOREIGN_USER_RE.exec(entry)
+        if (m && m[1] !== currentUser) {
+          hasForeign = true
+          break
+        }
+      }
+
+      // If no foreign and parsed is valid → preserve owner's customization.
+      // Still ensure .gitignore entry (idempotent).
+      if (!hasForeign) {
+        ensureGitignoreEntry(projectDir)
+        return
+      }
+    }
+
+    // Foreign detected (or corrupt) — backup then replace
+    const ts = new Date().toISOString().replace(/[:.]/g, '-')
+    const backupPath = path.join(claudeDir, `settings.local.json.legacy-${ts}.json`)
+    fs.copyFileSync(settingsPath, backupPath)
+    fs.writeFileSync(settingsPath, JSON.stringify(defaultClaudeSettings(projectDir), null, 2))
+  } else {
+    fs.writeFileSync(settingsPath, JSON.stringify(defaultClaudeSettings(projectDir), null, 2))
+  }
+
+  ensureGitignoreEntry(projectDir)
+}
+
+/** Ensure .gitignore has a `.claude/settings.local.json` line. Idempotent. */
+function ensureGitignoreEntry(projectDir: string): void {
+  const gitignorePath = path.join(projectDir, '.gitignore')
+  const entry = '.claude/settings.local.json'
+
+  if (!fs.existsSync(gitignorePath)) {
+    fs.writeFileSync(gitignorePath, `${entry}\n`)
+    return
+  }
+
+  const content = fs.readFileSync(gitignorePath, 'utf-8')
+  const lines = content.split('\n')
+  if (lines.some(l => l.trim() === entry)) return
+
+  // Append — ensure newline before entry
+  const newContent = content.endsWith('\n') ? `${content}${entry}\n` : `${content}\n${entry}\n`
+  fs.writeFileSync(gitignorePath, newContent)
 }
 
 const PERSONA_MEMORY_DIRS: Array<{ dir: string; readme: string }> = [
@@ -107,5 +215,6 @@ export function initProject(opts: InitOptions): ProjectConfig {
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
   bootstrapPersonaMemory(opts.projectDir)
+  bootstrapClaudeSettings(opts.projectDir)
   return config
 }

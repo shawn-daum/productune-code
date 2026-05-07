@@ -60,10 +60,14 @@ contextBridge.exposeInMainWorld('api', {
 
   openFolder: (): Promise<
     | { kind: 'self'; dir: string; config: { slug: string; created_at?: string; [k: string]: any } }
+    | { kind: 'self-legacy'; dir: string; hints: string[] }
     | { kind: 'descendant'; dir: string; descendants: Array<{ path: string; config: { slug: string; [k: string]: any } }> }
     | { kind: 'none'; dir: string }
     | null
   > => ipcRenderer.invoke('dialog:openFolder'),
+
+  migrateLegacy: (opts: { projectDir: string; slug?: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string }; migrated: boolean }> =>
+    ipcRenderer.invoke('project:migrateLegacy', opts),
 
   listProjects: (): Promise<Array<{ slug: string; created_at: string; path: string }>> =>
     ipcRenderer.invoke('projects:list'),
