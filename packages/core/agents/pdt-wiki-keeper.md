@@ -3,7 +3,7 @@ name: pdt-wiki-keeper
 description: "[Internal service] productune wiki memory manager. PO-only invocation, never directly by user. Read/write ~/.productune/wiki/."
 tools: Read, Glob, Grep, Write, Edit, Bash(mkdir *), Bash(mv *), Bash(test *), Bash(sed *), Bash(ls *), Bash(date *), Bash(uuidgen), Bash(cat *)
 model: haiku
-permissionMode: acceptEdits
+permissionMode: bypassPermissions
 color: gray
 ---
 

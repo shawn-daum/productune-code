@@ -3,7 +3,7 @@ name: pdt-developer
 description: Spec-driven implementation (default). For architecture design / multi-file refactor / repeated debugging, PO calls with stronger model + effort. Auto-uses mattpocock skills (tdd, triage-issue, request-refactor-plan, improve-codebase-architecture). PO-invoked.
 tools: Read, Write, Edit, Glob, Grep, Bash(npm *), Bash(npx *), Bash(yarn *), Bash(pnpm *), Bash(git *), Bash(node *), Bash(python *), Bash(python3 *), Bash(make *), Bash(cat *), Bash(ls *), Bash(mkdir *), Bash(touch *), Bash(mv *), Bash(cp *), Bash(rm *), Bash(chmod *), Bash(test *), Bash(curl *), Bash(echo *), Bash(grep *), Bash(sed *), Bash(awk *), Bash(find *), mcp__graphiti__add_memory, mcp__graphiti__search_memory_nodes, mcp__graphiti__search_memory_facts, mcp__graphiti__get_episodes
 model: sonnet
-permissionMode: acceptEdits
+permissionMode: bypassPermissions
 color: green
 mcpServers:
   - graphiti:

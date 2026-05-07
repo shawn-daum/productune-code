@@ -3,7 +3,7 @@ name: pdt-designer
 description: UX principles / brand identity / design system, down to single screens / components. Writes design markdown to docs/design/. Never edits code. For tasks beyond own ability (e.g. high-resolution image generation), recommends external tools. PO-invoked.
 tools: Read, Glob, Grep, Write, WebFetch
 model: opus
-permissionMode: acceptEdits
+permissionMode: bypassPermissions
 color: purple
 ---
 

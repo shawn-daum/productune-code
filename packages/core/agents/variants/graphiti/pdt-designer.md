@@ -3,7 +3,7 @@ name: pdt-designer
 description: UX principles / brand identity / design system, down to single screens / components. Writes design markdown to docs/design/. Never edits code. For tasks beyond own ability (e.g. high-resolution image generation), recommends external tools. PO-invoked.
 tools: Read, Glob, Grep, Write, WebFetch, mcp__graphiti__add_memory, mcp__graphiti__search_memory_nodes, mcp__graphiti__search_memory_facts, mcp__graphiti__get_episodes
 model: opus
-permissionMode: acceptEdits
+permissionMode: bypassPermissions
 color: purple
 mcpServers:
   - graphiti:
