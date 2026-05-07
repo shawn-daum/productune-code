@@ -117,7 +117,7 @@
       "observedPending": "미정 (lazy — 다음 Version Phase 1에서 채움)"
     },
     "tickets": {
-      "title": "티켓",
+      "title": "Tickets",
       "filterAll": "전체",
       "filterCount": "티켓 {{count}}개",
       "noTickets": "필터에 맞는 티켓 없음."
@@ -139,7 +139,7 @@
     "sidebar": {
       "tabs": {
         "versions": "Versions",
-        "tickets": "티켓",
+        "tickets": "Tickets",
         "artifacts": "산출물",
         "settings": "설정"
       },
@@ -182,7 +182,7 @@
     },
     "presence": {
       "chipAriaLabel": "{{persona}} — {{state}}",
-      "doneNoArtifact": "완료"
+      "doneNoArtifact": "done"
     }
   },
   "settings": {
