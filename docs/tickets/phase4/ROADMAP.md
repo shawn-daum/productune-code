@@ -179,8 +179,12 @@ risk_flags: none
 | **~~T-P4-042~~** | ~~멀티 채팅방 (라운드/토픽별)~~ — **deprecated (2026-05-06)** | — | GUI 단일 PO 세션 결정으로 폐기. T-P4-041 이 단일 세션 전체 흡수. CLI/non-GUI 용도로 향후 재발행 가능 |
 | **T-P4-043** | Project 탭 Rounds → Tickets sub-items + Main `ticket-review` 탭 | pdt-designer + pdt-developer | 독립형 ticket board 화면 X. status / assignee / model+effort / trace / 산출물 링크 + timestamp 표시 |
 | **T-P4-044** | Side Panel Team 탭 — Personas + Skills + Wiki/Memory + Promotion candidates | pdt-designer + pdt-developer | Team/skill 은 우측 별도 panel 아님. `Matrix ↗` → Main `skill-matrix` 탭 |
+| **T-P4-045** | Explorer 탭 — 파일 트리 + 검색 (regex/case/word) + ⌘⇧E 토글 | pdt-developer | Activity Bar Explorer icon 진입. fs.readdir 재귀 IPC. 결과 행 클릭 → markdown 탭 |
+| **T-P4-046** | **Main split-pane + tab dispatcher (10 type) + drag-drop** | pdt-developer | **VS Code + cmux 패러다임. 재귀 hbox/vbox 트리 + 10 tab type dispatcher (markdown / design-gate / ticket-review / preview / qa-result / persona-def / env-view / skill-matrix / terminal / browser). drag-tab cross-pane move + pane resize 4px + 키바인딩 ⌘\\ / ⌘W. L5, Round 4 가장 복잡 — 첫 번째 구현 대상 권고.** |
+| **T-P4-047** | Quick Open palette (⌘P) — 파일 / tab / 명령 fuzzy search | pdt-developer | command palette 1차 구현. T-P4-046 dispatcher 와 통합 |
+| **T-P4-048** | Settings 탭 — Environment / Models / MCP / Hooks 통합 | pdt-developer | T-P4-024 stub 채우기. mockup §4.1 Settings spec 준수 |
 
-**Round 4 합격 기준**: 사용자가 Project 탭 stage strip / PO Chat ctx chip 으로 현재 위치를 즉답 가능 + 단일 PO 세션 메시지 유지 확인 + Main split-pane / Quick Open / Team 탭 skill trace 가 mockup 과 정합.
+**Round 4 합격 기준**: 사용자가 Project 탭 stage strip / PO Chat ctx chip 으로 현재 위치를 즉답 가능 + 단일 PO 세션 메시지 유지 확인 + Main split-pane / Quick Open / Team 탭 skill trace 가 mockup 과 정합. **T-P4-046 (Main split-pane) 이 Round 4 의 골격** — 다른 ticket 의 탭 open 은 모두 이 dispatcher API 를 거침.
 
 ---
 
