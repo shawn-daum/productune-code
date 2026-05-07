@@ -285,10 +285,11 @@ flowchart TD
 - **파일**: `packages/gui/scripts/check-locale-protected.sh` 전체 교체. shebang `#!/usr/bin/env bash` 유지. `chmod +x` 보존.
 - **macOS perl 위치**: `/usr/bin/perl` stock 5.30+. shebang `perl` 사용 시 PATH 의존 → `/usr/bin/env perl` 으로 호출하거나 직접 `perl` 명령어 사용. `set -e` + `|| true` 조합으로 perl 비존재 시 graceful fail.
 - **perl 미존재 환경 fallback**: 매우 드물지만 (CI base image 등), 스크립트 시작에서 `command -v perl >/dev/null 2>&1 || { echo "ERROR: perl required for locale linter"; exit 2; }` 추가 권장.
-- **pattern quoting**: perl regex 에서 `"` 는 메타가 아님 → bash variable substitution 안에서 그대로 전달 가능. 단 한글 literal 은 UTF-8 — 스크립트 파일 자체 UTF-8 저장 + perl 의 `use utf8;`/`use open ':std', ':encoding(UTF-8)';` 권장. 1차 구현은 `perl -CSDA` 옵션으로 stdio UTF-8 활성:
+- **pattern quoting**: perl regex 에서 `"` 는 메타가 아님 → bash variable substitution 안에서 그대로 전달 가능. 단 한글 literal 은 UTF-8 — `-CSDA` (stdio UTF-8) **+ `-Mutf8`** (regex source UTF-8 마킹) 둘 다 필요.
   ```bash
-  perl -CSDA -ne 'print "$.: $_" if /'"$pattern"'/' "$file"
+  perl -CSDA -Mutf8 -ne 'print "$.: $_" if /'"$pattern"'/' "$file"
   ```
+  > **함정 (T-P4-057 dev 발견, 2026-05-07)**: macOS perl 5.30+ 에서 `-CSDA` **단독** 사용 시 파일은 Unicode char stream 으로 디코딩되지만 shell 인라인 한글 literal 패턴은 byte string 으로 남아 char/byte 불일치 → silent no-match. `-Mutf8` 병행해야 regex source 도 UTF-8 char 로 해석됨. 후속 .sh linter 작성 시 동일 trap 회피.
 - **회귀 검증 시퀀스**:
   1. T-P4-049 의 `"완료"` 가 ko.json 에 있는 상태에서 새 linter 실행 → fail 확인.
   2. ko.json 에서 `"완료"` 를 `done` (영문) 으로 교체 → linter pass 확인.
