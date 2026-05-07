@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Loader2 } from 'lucide-react'
 
 // Register your own GitHub OAuth App and set the client_id here (or via env)
 const CLIENT_ID = (import.meta as any).env?.VITE_GITHUB_CLIENT_ID ?? ''
@@ -76,7 +77,7 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
 
   return (
     <div style={wrap}>
-      {phase === 'checking' && <StatusLine icon="⏳" text="GitHub 토큰 확인 중…" />}
+      {phase === 'checking' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text="GitHub 토큰 확인 중…" />}
 
       {phase === 'device-code' && (
         <div style={card}>
@@ -95,8 +96,8 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
         </div>
       )}
 
-      {phase === 'polling' && <StatusLine icon="⏳" text="GitHub 인증 대기 중…" />}
-      {phase === 'creating-repo' && <StatusLine icon="⏳" text={`private repo '${slug}' 생성 중…`} />}
+      {phase === 'polling' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text="GitHub 인증 대기 중…" />}
+      {phase === 'creating-repo' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text={`private repo '${slug}' 생성 중…`} />}
 
       {phase === 'done' && (
         <div style={card}>
@@ -122,10 +123,10 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
   )
 }
 
-function StatusLine({ icon, text }: { icon: string; text: string }) {
+function StatusLine({ icon, text }: { icon: ReactNode; text: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#A0A0A0', fontSize: 13 }}>
-      <span>{icon}</span><span>{text}</span>
+      <span style={{ display: 'inline-flex' }}>{icon}</span><span>{text}</span>
     </div>
   )
 }

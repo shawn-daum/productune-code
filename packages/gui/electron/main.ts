@@ -8,6 +8,7 @@ import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPr
 import type { UiLanguage } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
+import { runPoTurn, emitToWebContents, type Persona } from './po-runner'
 
 const execFileAsync = promisify(execFile)
 
@@ -70,33 +71,33 @@ ipcMain.handle('onboarding:installDocker', async (event) => {
 
   try {
     // 1. Check brew
-    send('🔍 Homebrew 확인 중...')
+    send('Homebrew 확인 중...')
     let brewOk = false
     try {
       await execFileAsync(findBrew(), ['--version'])
       brewOk = true
-      send(`✅ Homebrew 감지됨`)
+      send(`OK · Homebrew 감지됨`)
     } catch { /* not found */ }
 
     // 2. Install Homebrew if missing
     if (!brewOk) {
-      send('📦 Homebrew 설치 중... (몇 분 소요)')
+      send('Homebrew 설치 중... (몇 분 소요)')
       const installScript =
         'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'
       await spawnStreaming('/bin/bash', ['-c', installScript], baseEnv, send)
-      send('✅ Homebrew 설치 완료')
+      send('OK · Homebrew 설치 완료')
     }
 
     // 3. brew install --cask docker
-    send('🐳 Docker Desktop 설치 중... (몇 분 소요)')
+    send('Docker Desktop 설치 중... (몇 분 소요)')
     const brew = findBrew()
     await spawnStreaming(brew, ['install', '--cask', 'docker'], baseEnv, send)
-    send('✅ 설치 완료 — Docker Desktop을 실행해주세요')
+    send('OK · 설치 완료 — Docker Desktop을 실행해주세요')
 
     return { ok: true }
   } catch (e: any) {
     const msg = e?.message ?? '알 수 없는 오류'
-    send(`❌ 오류: ${msg}`)
+    send(`ERR · 오류: ${msg}`)
     return { ok: false, error: msg }
   }
 })
@@ -489,6 +490,31 @@ ipcMain.handle('chat:setClaudeSessionId', (_event, projectDir: string, sessionId
 ipcMain.handle('chat:clearSession', (_event, projectDir: string) => {
   clearSession(projectDir)
 })
+
+// ── PO chat streaming (T-P4-041) ──────────────────────────────────────────────
+
+ipcMain.handle(
+  'po:sendMessage',
+  async (
+    event,
+    opts: { projectDir: string; text: string; persona?: Persona; resume?: string | null },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      await runPoTurn(
+        {
+          projectDir: opts.projectDir,
+          text: opts.text,
+          persona: opts.persona,
+          resume: opts.resume ?? null,
+        },
+        emitToWebContents(event.sender),
+      )
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'unknown error' }
+    }
+  },
+)
 
 // ── Design artifacts IPC ──────────────────────────────────────────────────────
 

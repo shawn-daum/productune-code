@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Zap, Plus, FolderOpen } from 'lucide-react'
 
 interface RecentProject {
   slug: string
@@ -32,15 +33,23 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
 
   return (
     <div style={wrap}>
-      <div style={{ fontSize: 48, lineHeight: 1, marginBottom: 16 }}>⚡</div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
+        <Zap size={48} strokeWidth={1.5} color="#FF6B2B" />
+      </div>
       <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 4 }}>
         productune
       </div>
       <div style={{ fontSize: 12, color: '#505050', marginBottom: 40 }}>phase 4 GUI MVP</div>
 
       <div style={btnGroup}>
-        <button style={btnPrimary} onClick={onNewProject}>✨ 새 프로젝트 만들기</button>
-        <button style={btnSecondary} onClick={onOpenFolder}>📂 기존 폴더 열기</button>
+        <button style={btnPrimary} onClick={onNewProject}>
+          <Plus size={14} strokeWidth={2.25} />
+          <span>새 프로젝트 만들기</span>
+        </button>
+        <button style={btnSecondary} onClick={onOpenFolder}>
+          <FolderOpen size={14} strokeWidth={2} />
+          <span>기존 폴더 열기</span>
+        </button>
       </div>
 
       {recents.length > 0 && (
@@ -91,8 +100,10 @@ const recentCard: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+  display: 'flex', alignItems: 'center', gap: 8,
 }
 const btnSecondary: React.CSSProperties = {
   background: '#242424', color: '#F0F0F0', border: '1px solid #333', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, cursor: 'pointer', textAlign: 'left',
+  display: 'flex', alignItems: 'center', gap: 8,
 }

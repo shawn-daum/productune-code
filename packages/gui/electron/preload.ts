@@ -110,6 +110,51 @@ contextBridge.exposeInMainWorld('api', {
   chatClearSession: (projectDir: string): Promise<void> =>
     ipcRenderer.invoke('chat:clearSession', projectDir),
 
+  // ── PO streaming (T-P4-041) ─────────────────────────────────────────────────
+  poSendMessage: (opts: {
+    projectDir: string
+    text: string
+    persona?: 'pdt-po' | 'pdt-designer' | 'pdt-developer' | 'pdt-qa'
+    resume?: string | null
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('po:sendMessage', opts),
+
+  /** First event after `poSendMessage` — main allocates the assistant msgId. */
+  poOnMsgId: (cb: (msgId: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, msgId: string) => cb(msgId)
+    ipcRenderer.on('po:onMsgId', listener)
+    return () => ipcRenderer.removeListener('po:onMsgId', listener)
+  },
+
+  poOnToken: (cb: (msgId: string, chunk: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, msgId: string, chunk: string) =>
+      cb(msgId, chunk)
+    ipcRenderer.on('po:onToken', listener)
+    return () => ipcRenderer.removeListener('po:onToken', listener)
+  },
+
+  poOnAnnounce: (
+    cb: (msgId: string, payload: { level: 'system' | 'tool' | 'error'; text: string }) => void,
+  ) => {
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      msgId: string,
+      payload: { level: 'system' | 'tool' | 'error'; text: string },
+    ) => cb(msgId, payload)
+    ipcRenderer.on('po:onAnnounce', listener)
+    return () => ipcRenderer.removeListener('po:onAnnounce', listener)
+  },
+
+  poOnDone: (cb: (msgId: string, info: { sessionId?: string }) => void) => {
+    const listener = (
+      _e: Electron.IpcRendererEvent,
+      msgId: string,
+      info: { sessionId?: string },
+    ) => cb(msgId, info)
+    ipcRenderer.on('po:onDone', listener)
+    return () => ipcRenderer.removeListener('po:onDone', listener)
+  },
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   getUiLanguage: (): Promise<'en' | 'ko'> =>
     ipcRenderer.invoke('settings:getUiLanguage'),

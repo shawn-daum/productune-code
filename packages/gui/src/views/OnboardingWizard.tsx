@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Loader2, CheckCircle2, XCircle, Check, X, AlertTriangle, Zap } from 'lucide-react'
 import i18next from '../i18n'
 
 type Engine = 'claude' | 'codex' | 'both'
@@ -213,7 +214,7 @@ export default function OnboardingWizard({ onDone }: Props) {
       <div style={card}>
         {/* Header */}
         <div style={header}>
-          <span style={{ fontSize: 20, marginRight: 10 }}>⚡</span>
+          <Zap size={20} strokeWidth={2.25} color="#FF6B2B" style={{ marginRight: 10 }} />
           <span style={{ fontWeight: 700, fontSize: 16 }}>{t('onboarding.title')}</span>
           <div style={stepIndicator}>
             {([0, 1, 2, 3, 4] as const).map(s => (
@@ -368,7 +369,7 @@ export default function OnboardingWizard({ onDone }: Props) {
 
               {(detectingHw || !hardware) ? (
                 <div style={hwSpinner}>
-                  <span style={{ fontSize: 22, marginBottom: 8 }}>⏳</span>
+                  <Loader2 size={22} className="pdt-spin" color="#707070" style={{ marginBottom: 8 }} />
                   <span style={{ fontSize: 12, color: '#505050' }}>{t('onboarding.step3.detectingHw')}</span>
                 </div>
               ) : (
@@ -378,7 +379,10 @@ export default function OnboardingWizard({ onDone }: Props) {
                     <span style={{ fontSize: 12, color: '#707070' }}>
                       RAM {hardware.ram_gb}GB
                       {hardware.apple_silicon && ' · Apple Silicon'}
-                      {' · '}Docker {hardware.docker ? '✓' : '✗'}
+                      {' · Docker '}
+                      {hardware.docker
+                        ? <Check size={12} style={{ display: 'inline', verticalAlign: '-2px' }} color="#34D399" strokeWidth={3} />
+                        : <X size={12} style={{ display: 'inline', verticalAlign: '-2px' }} color="#EF4444" strokeWidth={3} />}
                     </span>
                   </div>
 
@@ -490,7 +494,7 @@ export default function OnboardingWizard({ onDone }: Props) {
             <div style={{ ...body, alignItems: 'center', textAlign: 'center', paddingTop: 32, paddingBottom: 32 }}>
               {completing && (
                 <>
-                  <div style={{ fontSize: 32, marginBottom: 16 }}>⏳</div>
+                  <Loader2 size={32} className="pdt-spin" color="#A0A0A0" style={{ marginBottom: 16 }} />
                   <div style={{ fontSize: 14, color: '#A0A0A0' }}>{t('onboarding.step4.applying')}</div>
                   <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', width: '100%' }}>
                     {completionStepKeys.map(key => (
@@ -505,12 +509,12 @@ export default function OnboardingWizard({ onDone }: Props) {
 
               {!completing && done && (
                 <>
-                  <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+                  <CheckCircle2 size={48} color="#34D399" strokeWidth={1.75} style={{ marginBottom: 12 }} />
                   <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{t('onboarding.step4.done')}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', width: '100%', marginBottom: 24 }}>
                     {completionStepKeys.map(key => (
                       <div key={key} style={{ fontSize: 12, color: '#34D399', display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span>✓</span>
+                        <Check size={12} strokeWidth={3} />
                         {t(key)}
                       </div>
                     ))}
@@ -523,7 +527,7 @@ export default function OnboardingWizard({ onDone }: Props) {
 
               {!completing && !done && completeError && (
                 <>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>❌</div>
+                  <XCircle size={32} color="#EF4444" strokeWidth={1.75} style={{ marginBottom: 12 }} />
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{t('onboarding.step4.failed')}</div>
                   <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 24, wordBreak: 'break-all' }}>
                     {completeError}
@@ -603,12 +607,11 @@ function EngineStatusRow({
   return (
     <div style={engineRow}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span style={{
-          fontSize: 15,
-          color: isReady ? '#34D399' : status?.installed ? '#FBBF24' : '#EF4444',
-        }}>
-          {isReady ? '✓' : status?.installed ? '⚠' : '✗'}
-        </span>
+        {isReady
+          ? <Check size={15} color="#34D399" strokeWidth={3} />
+          : status?.installed
+            ? <AlertTriangle size={15} color="#FBBF24" strokeWidth={2} />
+            : <X size={15} color="#EF4444" strokeWidth={3} />}
         <span style={{ fontWeight: 600, fontSize: 13 }}>{name}</span>
         <span style={{ fontSize: 11, color: '#505050', marginLeft: 'auto' }}>
           {status === null
@@ -677,9 +680,9 @@ function TierBadge({ tier }: { tier: Tier }) {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function logLineColor(line: string): string {
-  if (line.startsWith('✅')) return '#34D399'
-  if (line.startsWith('❌')) return '#EF4444'
-  if (line.startsWith('🔍') || line.startsWith('📦') || line.startsWith('🐳')) return '#FBBF24'
+  if (line.startsWith('OK')) return '#34D399'
+  if (line.startsWith('ERR') || line.includes('오류')) return '#EF4444'
+  if (line.includes('확인 중') || line.includes('설치 중')) return '#FBBF24'
   return '#505050'
 }
 

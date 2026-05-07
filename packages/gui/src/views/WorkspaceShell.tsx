@@ -7,6 +7,7 @@ import MainPanel from '../components/workspace/main/MainPanel'
 import StatusBar from '../components/workspace/StatusBar'
 import ActivityBar, { type ActivityIcon } from '../components/workspace/ActivityBar'
 import ChatPanel from '../components/workspace/ChatPanel'
+import { usePoChat } from '../store/poChat'
 
 interface Props {
   project: Project
@@ -28,6 +29,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
 
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('tickets')
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
+  const chatPanelVisible = usePoChat((s) => s.panelVisible)
 
   // Sync project into store on mount / change
   useEffect(() => {
@@ -148,8 +150,16 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     }
   }, [closeTab, closePane, splitRight, splitDown, addNewTab])
 
+  // Collapse the right column when PO chat is minimized.
+  const dynamicGrid: React.CSSProperties = {
+    ...grid,
+    gridTemplateColumns: chatPanelVisible
+      ? '48px 240px 1fr 340px'
+      : '48px 240px 1fr 0px',
+  }
+
   return (
-    <div style={grid}>
+    <div style={dynamicGrid}>
       <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
       <LeftSidebar project={project} activeIcon={activeIcon} />
 
@@ -178,7 +188,7 @@ function findLeafByIdLocal(root: Pane, paneId: string): LeafPaneNode | null {
 
 const grid: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: '48px 240px 1fr 360px',
+  gridTemplateColumns: '48px 240px 1fr 340px',
   gridTemplateRows: '44px 1fr 28px',
   gridTemplateAreas: `
     "activity sidebar breadcrumb chat"

@@ -1,3 +1,5 @@
+import { Zap } from 'lucide-react'
+
 interface Props {
   title: string
 }
@@ -7,7 +9,7 @@ export default function Titlebar({ title }: Props) {
     <div style={bar}>
       <div style={spacer} />
       <div style={titleBox}>
-        <span style={accent}>⚡</span>
+        <Zap size={11} strokeWidth={2.25} color="#FF6B2B" />
         <span>{title}</span>
       </div>
       <div style={spacer} />

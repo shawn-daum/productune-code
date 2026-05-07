@@ -14,9 +14,13 @@ import path from 'path'
 
 // ── Types (mirrored from src/lib/types.ts — no cross-boundary import in main) ──
 
+export type MessageKind = 'po' | 'designer' | 'dev' | 'qa' | 'trace' | 'user'
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
+  /** UI bubble kind. Optional for backwards compat (T-P4-041). */
+  kind?: MessageKind
   text: string
   status?: 'streaming' | 'done' | 'cancelled'
   created_at: string

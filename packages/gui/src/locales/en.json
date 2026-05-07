@@ -29,7 +29,7 @@
     "step2": {
       "label": "Step 2 / 4 — Engine connection",
       "intro": "Check that your selected engine is connected.\nYou can continue without it and reconnect in Settings later.",
-      "checking": "⏳ Checking engine status...",
+      "checking": "Checking engine status...",
       "statusChecking": "Checking…",
       "statusReady": "installed · authed",
       "statusInstalledNoAuth": "installed · not authed",
@@ -43,10 +43,10 @@
       "intro": "Choose how PO and product team members store memory.",
       "detectingHw": "Detecting hardware...",
       "optionRecommended": "recommended",
-      "dockerNotDetected": "🐳 Docker Desktop not detected. Required for Graphiti.",
-      "brewInstall": "🍺 Auto-install via Homebrew",
+      "dockerNotDetected": "Docker Desktop not detected. Required for Graphiti.",
+      "brewInstall": "Auto-install via Homebrew",
       "installing": "Installing… Restart the app to cancel.",
-      "openDocker": "🐳 Open Docker Desktop",
+      "openDocker": "Open Docker Desktop",
       "redetect": "Redetect"
     },
     "step4": {
@@ -130,11 +130,18 @@
     },
     "chat": {
       "session": "PO session",
+      "title": "PO Chat",
       "messageCount": "{{count}} messages",
-      "emptyHint": "Start a conversation with PO. (streaming enabled in Slice 3)",
+      "emptyHint": "Start a conversation with PO.",
       "messagesPlaceholder": "Messages — filled in Slice 3",
-      "inputPlaceholder": "Type a message… (active in Slice 3)",
-      "send": "Send"
+      "inputPlaceholder": "Type a message… (/ command)",
+      "send": "Send",
+      "minimize": "Minimize",
+      "close": "Close",
+      "restore": "Open PO chat",
+      "personaSelectorAria": "Next delegate",
+      "idleCtx": "Ready",
+      "actionDefault": "in flight"
     },
     "sidebar": {
       "tabs": {

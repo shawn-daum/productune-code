@@ -26,9 +26,21 @@ export interface Project {
   projectDir: string
 }
 
+/**
+ * Bubble style discriminator. `role` (user/assistant/system) is for the LLM
+ * conversation; `kind` is for visual treatment in `ChatPanel`.
+ *  - po / designer / dev / qa: persona response — colored 2 px left border.
+ *  - trace: tool/announce events — gray, no border.
+ *  - user: user input — right-aligned, gray-overlay bg, no border.
+ */
+export type MessageKind = 'po' | 'designer' | 'dev' | 'qa' | 'trace' | 'user'
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system'
+  /** UI bubble kind. Optional for backwards compat with chat.json written
+   *  before T-P4-041; loader patches missing kinds via `role` heuristic. */
+  kind?: MessageKind
   text: string
   status?: 'streaming' | 'done' | 'cancelled'
   created_at: string

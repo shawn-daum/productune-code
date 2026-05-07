@@ -29,7 +29,7 @@
     "step2": {
       "label": "Step 2 / 4 — 엔진 연결 확인",
       "intro": "선택한 엔진이 정상 연결되어 있는지 확인합니다.\n미연결 상태로도 진행할 수 있어요 — 나중에 설정에서 다시 연결 가능합니다.",
-      "checking": "⏳ 엔진 상태 확인 중...",
+      "checking": "엔진 상태 확인 중...",
       "statusChecking": "확인 중…",
       "statusReady": "설치됨 · 인증됨",
       "statusInstalledNoAuth": "설치됨 · 미인증",
@@ -43,10 +43,10 @@
       "intro": "PO와 프로덕트 팀원의 기억을 담당하는 방식을 선택해주세요.",
       "detectingHw": "하드웨어 감지 중...",
       "optionRecommended": "권장",
-      "dockerNotDetected": "🐳 Docker Desktop이 감지되지 않았습니다. Graphiti 사용에 필요합니다.",
-      "brewInstall": "🍺 Homebrew로 자동 설치",
+      "dockerNotDetected": "Docker Desktop이 감지되지 않았습니다. Graphiti 사용에 필요합니다.",
+      "brewInstall": "Homebrew로 자동 설치",
       "installing": "설치 중… 취소하려면 앱을 재시작하세요.",
-      "openDocker": "🐳 Docker Desktop 실행하기",
+      "openDocker": "Docker Desktop 실행하기",
       "redetect": "재감지"
     },
     "step4": {
@@ -130,11 +130,18 @@
     },
     "chat": {
       "session": "PO 세션",
+      "title": "PO 채팅",
       "messageCount": "메시지 {{count}}",
-      "emptyHint": "PO 와 대화를 시작하세요. (Slice 3 에서 streaming 활성화)",
+      "emptyHint": "PO 와 대화를 시작하세요.",
       "messagesPlaceholder": "메시지 표시 — Slice 3 에서 채워짐",
-      "inputPlaceholder": "메시지를 입력하세요… (Slice 3 에서 활성)",
-      "send": "전송"
+      "inputPlaceholder": "메시지 입력… (/ 명령어)",
+      "send": "전송",
+      "minimize": "최소화",
+      "close": "닫기",
+      "restore": "PO 채팅 열기",
+      "personaSelectorAria": "다음 위임 대상",
+      "idleCtx": "대기 중",
+      "actionDefault": "처리 중"
     },
     "sidebar": {
       "tabs": {
