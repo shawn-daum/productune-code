@@ -5,6 +5,7 @@ import type { Project, Session } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import VersionsPanel from './VersionsPanel'
 import LanguageSettings from './LanguageSettings'
+import StageStrip from './StageStrip'
 
 interface Props {
   project: Project
@@ -15,11 +16,14 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
   const { t } = useTranslation()
   const { setMessages, setClaudeSessionId, poState } = useWorkspace()
 
-  const TAB_TITLES: Record<ActivityIcon, string> = {
+  const TAB_TITLES: Partial<Record<ActivityIcon, string>> = {
+    explorer:  t('workspace.activityBar.explorer'),
+    project:   t('workspace.activityBar.project'),
+    team:      t('workspace.activityBar.team'),
+    settings:  t('workspace.activityBar.settings'),
     versions:  t('workspace.sidebar.tabs.versions'),
     tickets:   t('workspace.sidebar.tabs.tickets'),
     artifacts: t('workspace.sidebar.tabs.artifacts'),
-    settings:  t('workspace.sidebar.tabs.settings'),
   }
 
   // Mount: load PO session from fs via IPC
@@ -40,11 +44,36 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
     <div style={wrap}>
       {/* Header — active tab title */}
       <div style={header}>
-        <div style={tabTitle}>{TAB_TITLES[activeIcon]}</div>
+        <div style={tabTitle}>{TAB_TITLES[activeIcon] ?? activeIcon}</div>
         <div style={projectSlugMuted} title={project.slug}>{project.slug}</div>
       </div>
 
       {/* Body — branch by activeIcon */}
+      {activeIcon === 'project' && (
+        <div style={projectBody}>
+          {/* Stage section */}
+          <div style={secHdr}>{t('workspace.stageStrip.sectionLabel')}</div>
+          <StageStrip poState={poState} variant="strip" />
+
+          {/* Placeholder sections — T-P4-047 will fill Rounds/Preview/Recent Activity */}
+          <div style={secHdr} aria-label={t('workspace.stageStrip.roundsSectionAriaLabel')}>
+            {t('workspace.stageStrip.roundsSection')}
+          </div>
+          <div style={panelPlaceholder}>
+            <span style={panelPlaceholderText}>{t('workspace.stageStrip.roundsHint')}</span>
+          </div>
+        </div>
+      )}
+      {activeIcon === 'explorer' && (
+        <div style={panelPlaceholder}>
+          <span style={panelPlaceholderText}>{t('workspace.sidebar.explorerHint')}</span>
+        </div>
+      )}
+      {activeIcon === 'team' && (
+        <div style={panelPlaceholder}>
+          <span style={panelPlaceholderText}>{t('workspace.sidebar.teamHint')}</span>
+        </div>
+      )}
       {activeIcon === 'versions' && <VersionsPanel poState={poState} />}
       {activeIcon === 'tickets' && (
         <div style={panelPlaceholder}>
@@ -116,4 +145,23 @@ const panelPlaceholderText: React.CSSProperties = {
   userSelect: 'none',
   textAlign: 'center',
   padding: '0 12px',
+}
+
+const projectBody: React.CSSProperties = {
+  flex: 1,
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+}
+
+const secHdr: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  padding: '5px 8px 3px',
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#4a4a4a',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  userSelect: 'none',
 }

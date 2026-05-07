@@ -152,7 +152,9 @@
       },
       "ticketsHint": "티켓 보드는 중앙 패널에서",
       "artifactsHint": "산출물 — 추후 슬라이스에서 추가",
-      "settingsHint": "설정 — T-P4-024"
+      "settingsHint": "설정 — T-P4-024",
+      "explorerHint": "탐색 — 파일 트리는 T-P4-047 에서 연결",
+      "teamHint": "팀 — 페르소나·스킬은 T-P4-047 에서 연결"
     },
     "tab": {
       "close": "탭 닫기",
@@ -190,6 +192,28 @@
     "presence": {
       "chipAriaLabel": "{{persona}} — {{state}}",
       "doneNoArtifact": "done"
+    },
+    "activityBar": {
+      "explorer": "탐색",
+      "project": "프로젝트",
+      "team": "팀",
+      "settings": "설정"
+    },
+    "stageStrip": {
+      "sectionLabel": "Stage",
+      "roundsSection": "Rounds",
+      "roundsHint": "Rounds — T-P4-047 에서 연결",
+      "stripAriaLabel": "프로젝트 단계",
+      "chipAriaLabel": "현재 단계: {{stage}}",
+      "roundsSectionAriaLabel": "라운드 섹션",
+      "stageTooltip": {
+        "prd": "PRD — 문제·범위 합의",
+        "design": "Design — 흐름·와이어프레임·시스템",
+        "build": "Build — 티켓 구현",
+        "qa": "QA — 검증·수정",
+        "deploy": "Deploy — 배포 준비·실행",
+        "operate": "Operate — 모니터링·다음 라운드"
+      }
     }
   },
   "settings": {

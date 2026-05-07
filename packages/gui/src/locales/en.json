@@ -152,7 +152,9 @@
       },
       "ticketsHint": "Ticket board is in the center panel",
       "artifactsHint": "Artifacts — added in a future slice",
-      "settingsHint": "Settings — T-P4-024"
+      "settingsHint": "Settings — T-P4-024",
+      "explorerHint": "Explorer — file tree wired in T-P4-047",
+      "teamHint": "Team — personas & skills wired in T-P4-047"
     },
     "tab": {
       "close": "Close tab",
@@ -190,6 +192,28 @@
     "presence": {
       "chipAriaLabel": "{{persona}} — {{state}}",
       "doneNoArtifact": "done"
+    },
+    "activityBar": {
+      "explorer": "Explorer",
+      "project": "Project",
+      "team": "Team",
+      "settings": "Settings"
+    },
+    "stageStrip": {
+      "sectionLabel": "Stage",
+      "roundsSection": "Rounds",
+      "roundsHint": "Rounds — wired in T-P4-047",
+      "stripAriaLabel": "Project stage",
+      "chipAriaLabel": "Current stage: {{stage}}",
+      "roundsSectionAriaLabel": "Rounds section",
+      "stageTooltip": {
+        "prd": "PRD — Problem & scope alignment",
+        "design": "Design — Flow, wireframe & system",
+        "build": "Build — Ticket implementation",
+        "qa": "QA — Validation & fixes",
+        "deploy": "Deploy — Release preparation",
+        "operate": "Operate — Monitoring & next round"
+      }
     }
   },
   "settings": {

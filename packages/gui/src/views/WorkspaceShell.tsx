@@ -27,7 +27,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const splitDown = useWorkspace((s) => s.splitDown)
   const addNewTab = useWorkspace((s) => s.addNewTab)
 
-  const [activeIcon, setActiveIcon] = useState<ActivityIcon>('tickets')
+  const [activeIcon, setActiveIcon] = useState<ActivityIcon>('project')
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
 

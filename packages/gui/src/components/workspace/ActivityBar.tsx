@@ -1,7 +1,12 @@
+import { useTranslation } from 'react-i18next'
 import type { LucideIcon } from 'lucide-react'
-import { FolderOpen, Layers, KanbanSquare, Settings } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, Users, Layers, KanbanSquare, Settings } from 'lucide-react'
 
-export type ActivityIcon = 'versions' | 'tickets' | 'artifacts' | 'settings'
+/** Primary activity icons matching mockup 4-icon spec:
+ *  Explorer / Project / Team / Settings
+ *  Legacy icon values (tickets, artifacts, versions) kept for LeftSidebar compat.
+ */
+export type ActivityIcon = 'explorer' | 'project' | 'team' | 'settings' | 'versions' | 'tickets' | 'artifacts'
 
 interface Props {
   active: ActivityIcon
@@ -11,26 +16,29 @@ interface Props {
 interface IconDef {
   id: ActivityIcon
   Icon: LucideIcon
-  title: string
+  titleKey: string
 }
 
 const ICONS: IconDef[] = [
-  { id: 'tickets',   Icon: KanbanSquare,  title: '티켓' },
-  { id: 'artifacts', Icon: FolderOpen,    title: '산출물' },
-  { id: 'versions',  Icon: Layers,        title: 'Versions' },
-  { id: 'settings',  Icon: Settings,      title: '설정' },
+  { id: 'explorer',  Icon: FolderOpen,       titleKey: 'workspace.activityBar.explorer' },
+  { id: 'project',   Icon: LayoutDashboard,  titleKey: 'workspace.activityBar.project' },
+  { id: 'team',      Icon: Users,            titleKey: 'workspace.activityBar.team' },
+  { id: 'settings',  Icon: Settings,         titleKey: 'workspace.activityBar.settings' },
 ]
 
 export default function ActivityBar({ active, onSelect }: Props) {
+  const { t } = useTranslation()
   return (
     <div style={wrap}>
-      {ICONS.map(({ id, Icon, title }) => {
+      {ICONS.map(({ id, Icon, titleKey }) => {
         const isActive = id === active
+        const title = t(titleKey)
         return (
           <button
             key={id}
             style={btnStyle(isActive)}
             title={title}
+            aria-label={title}
             onClick={() => onSelect(id)}
             onMouseEnter={(e) => {
               if (!isActive) {

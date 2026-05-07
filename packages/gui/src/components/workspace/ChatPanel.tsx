@@ -16,24 +16,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat, delegateToKind, type DelegatePersona } from '../../store/poChat'
-import type { Message, MessageKind, Phase } from '../../lib/types'
-import { PHASE_NAMES } from '../../lib/types'
+import type { Message, MessageKind } from '../../lib/types'
+import { getActiveStageDef } from '../../lib/stage-mapping'
+import StageStrip from './StageStrip'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
 import PoFab from './chat/PoFab'
-
-const PHASE_COLOR: Record<Phase, string> = {
-  PRD:    '#3B82F6',
-  Design: '#A78BFA',
-  Build:  '#38BDF8',
-  Close:  '#34D399',
-}
 
 export default function ChatPanel() {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const messages = useWorkspace((s) => s.messages)
-  const phase = useWorkspace((s) => s.phase)
   const poState = useWorkspace((s) => s.poState)
   const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
   const streaming = useWorkspace((s) => s.streaming)
@@ -248,9 +241,7 @@ export default function ChatPanel() {
 
         {/* rp-ctx */}
         <div style={ctxRow} className="rp-ctx">
-          <span style={{ ...stageChip, background: PHASE_COLOR[phase], color: '#0F0F0F' }}>
-            {PHASE_NAMES[poState?.current_phase ?? 0] ?? phase}
-          </span>
+          <StageStrip poState={poState} variant="chip" />
           <span style={ctxCaptionStyle}>{ctxCaption}</span>
         </div>
 
@@ -371,14 +362,6 @@ const ctxRow: React.CSSProperties = {
   gap: 8,
   borderBottom: '1px solid #1f1f1f',
   background: '#101010',
-}
-
-const stageChip: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 600,
-  padding: '2px 8px',
-  borderRadius: 999,
-  letterSpacing: 0.4,
 }
 
 const ctxCaptionStyle: React.CSSProperties = {
