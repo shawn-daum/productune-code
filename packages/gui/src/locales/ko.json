@@ -189,6 +189,35 @@
     "statusBar": {
       "placeholder": "자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐"
     },
+    "sessionHealth": {
+      "healthy": {
+        "label": "준비됨"
+      },
+      "delegating": {
+        "label": "{{persona}} 위임 중…",
+        "hint": "팀원이 작업 중이에요."
+      },
+      "compacting": {
+        "label": "컨텍스트 정리 중…",
+        "hint": "30–60 초 정도 걸려요."
+      },
+      "rateLimited": {
+        "label": "사용량 제한 도달",
+        "hintWithReset": "{{time}} 에 풀려요.",
+        "hintNoReset": "잠시 후 다시 시도하세요."
+      },
+      "permissionBlocked": {
+        "label": "권한 거부됨",
+        "hint": "권한 규칙으로 세션이 멈췄어요.",
+        "cta": "세션 재시작 ↗"
+      },
+      "errorOther": {
+        "label": "세션 오류",
+        "hint": "PO 가 정상적으로 응답하지 않았어요.",
+        "cta": "재시도",
+        "logCta": "로그 보기 ↗"
+      }
+    },
     "presence": {
       "chipAriaLabel": "{{persona}} — {{state}}",
       "doneNoArtifact": "done"

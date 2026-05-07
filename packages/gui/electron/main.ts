@@ -9,6 +9,12 @@ import type { UiLanguage, GitRules } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
 import { runPoTurn, emitToWebContents, type Persona } from './po-runner'
+import type { ChildProcess } from 'child_process'
+
+// ── Active PO child process tracking (T-P4-059) ───────────────────────────────
+// Allows `po:restartSession` to kill the in-flight process.
+let activePoChild: ChildProcess | null = null
+let capturedPoSessionId: string | null = null
 
 const execFileAsync = promisify(execFile)
 
@@ -563,6 +569,21 @@ ipcMain.handle(
     }
   },
 )
+
+// ── PO session restart (T-P4-059) ─────────────────────────────────────────────
+
+ipcMain.handle('po:restartSession', (event): { ok: boolean } => {
+  // Kill active child if running.
+  if (activePoChild) {
+    try { activePoChild.kill('SIGTERM') } catch { /* ignore */ }
+    activePoChild = null
+  }
+  // Reset captured session id — next send will use --agent (first turn).
+  capturedPoSessionId = null
+  // Notify renderer to reset its session state.
+  event.sender.send('po:sessionRestarted')
+  return { ok: true }
+})
 
 // ── Design artifacts IPC ──────────────────────────────────────────────────────
 

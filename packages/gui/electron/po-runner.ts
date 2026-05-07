@@ -7,6 +7,7 @@
  *   po:onToken     (msgId, chunk)            — assistant text token
  *   po:onAnnounce  (msgId, payload)          — tool_use / system / error
  *   po:onDone      (msgId, { sessionId? })   — turn complete
+ *   po:onHealth    (event: PoHealthEvent)    — session health change (T-P4-059)
  *
  * Doctrine refs (`packages/core/po/po-instructions.md`):
  *   first turn: claude --agent pdt-<persona> --print --output-format json "$TASK"
@@ -42,11 +43,36 @@ export interface AnnouncePayload {
   text: string
 }
 
+// ── Health event types (T-P4-059) ────────────────────────────────────────────
+
+export type PoHealthState =
+  | 'healthy'
+  | 'delegating'
+  | 'compacting'
+  | 'rate-limited'
+  | 'permission-blocked'
+  | 'error-other'
+
+export interface PoHealthDetail {
+  persona?: string
+  resetAt?: string
+  errorMessage?: string
+  deniedPattern?: string
+}
+
+export interface PoHealthEvent {
+  state: PoHealthState
+  detail?: PoHealthDetail
+  at: string
+  msgId?: string
+}
+
 interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
   onAnnounce: (msgId: string, payload: AnnouncePayload) => void
   onDone: (msgId: string, info: { sessionId?: string }) => void
+  onHealth: (event: PoHealthEvent) => void
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -84,11 +110,139 @@ function canSpawnClaude(): boolean {
   return false
 }
 
+// ── Health state machine ──────────────────────────────────────────────────────
+
+interface HealthContext {
+  lastToolUse: string | null        // tool name of the most recent tool_use
+  lastToolUseAt: number | null      // Date.now() of the most recent tool_use
+  lastEmittedState: PoHealthState
+  msgId: string
+  /** setTimeout handle for the permission-blocked timeout heuristic */
+  toolUseTimeoutHandle: ReturnType<typeof setTimeout> | null
+  /** setTimeout handle for the compacting heuristic (silence timeout) */
+  silenceTimeoutHandle: ReturnType<typeof setTimeout> | null
+  lastTokenAt: number | null
+}
+
+const TOOL_USE_TIMEOUT_MS = 30_000   // provisional permission-blocked
+const SILENCE_TIMEOUT_MS  = 15_000   // heuristic compacting
+
+function makeHealthCtx(msgId: string): HealthContext {
+  return {
+    lastToolUse: null,
+    lastToolUseAt: null,
+    lastEmittedState: 'healthy',
+    msgId,
+    toolUseTimeoutHandle: null,
+    silenceTimeoutHandle: null,
+    lastTokenAt: null,
+  }
+}
+
+function emitHealth(
+  state: PoHealthState,
+  detail: PoHealthDetail | undefined,
+  ctx: HealthContext,
+  cb: RunCallbacks,
+): void {
+  // Dedupe — only emit when state changes.
+  if (state === ctx.lastEmittedState) return
+  ctx.lastEmittedState = state
+  cb.onHealth({ state, detail, at: new Date().toISOString(), msgId: ctx.msgId })
+}
+
+function clearToolUseTimeout(ctx: HealthContext): void {
+  if (ctx.toolUseTimeoutHandle !== null) {
+    clearTimeout(ctx.toolUseTimeoutHandle)
+    ctx.toolUseTimeoutHandle = null
+  }
+}
+
+function clearSilenceTimeout(ctx: HealthContext): void {
+  if (ctx.silenceTimeoutHandle !== null) {
+    clearTimeout(ctx.silenceTimeoutHandle)
+    ctx.silenceTimeoutHandle = null
+  }
+}
+
+function armSilenceTimeout(ctx: HealthContext, cb: RunCallbacks): void {
+  clearSilenceTimeout(ctx)
+  ctx.silenceTimeoutHandle = setTimeout(() => {
+    // Only fire if still healthy/delegating (not already in a worse state)
+    if (
+      ctx.lastEmittedState === 'healthy' ||
+      ctx.lastEmittedState === 'delegating'
+    ) {
+      emitHealth('compacting', undefined, ctx, cb)
+    }
+  }, SILENCE_TIMEOUT_MS)
+}
+
+/** Inspect a stderr line for health signals. */
+function handleStderrHealth(line: string, ctx: HealthContext, cb: RunCallbacks): void {
+  // Rate limit — checked before permission so 429 takes priority in stderr
+  if (/rate.?limit/i.test(line) || /quota/i.test(line)) {
+    let resetAt: string | undefined
+    const resetMatch = line.match(/resets?\s+at\s+([0-9:T+\-Z]+)/i)
+    if (resetMatch) resetAt = resetMatch[1]
+    clearToolUseTimeout(ctx)
+    emitHealth('rate-limited', { resetAt }, ctx, cb)
+    return
+  }
+
+  // Permission denied
+  const permissionTools = ['Write', 'Edit', 'Bash']
+  const isPermissionTool = ctx.lastToolUse !== null && permissionTools.includes(ctx.lastToolUse)
+  if (/(permission|denied|deny)/i.test(line) && isPermissionTool) {
+    clearToolUseTimeout(ctx)
+    emitHealth('permission-blocked', { deniedPattern: ctx.lastToolUse ?? undefined }, ctx, cb)
+    return
+  }
+}
+
+/** Inspect an assistant content text for permission patterns. */
+function handleTextHealth(text: string, ctx: HealthContext, cb: RunCallbacks): void {
+  if (/^I (need|require) (your )?permission/i.test(text)) {
+    clearToolUseTimeout(ctx)
+    emitHealth('permission-blocked', { deniedPattern: ctx.lastToolUse ?? undefined }, ctx, cb)
+  }
+}
+
+/** Process a tool_use part — record and arm timeouts. */
+function handleToolUseHealth(toolName: string, ctx: HealthContext, cb: RunCallbacks): void {
+  ctx.lastToolUse = toolName
+  ctx.lastToolUseAt = Date.now()
+
+  // Task tool → delegating
+  if (toolName === 'Task') {
+    clearToolUseTimeout(ctx)
+    clearSilenceTimeout(ctx)
+    emitHealth('delegating', undefined, ctx, cb)
+    return
+  }
+
+  // Write / Edit / Bash → arm provisional permission-blocked timeout
+  const permissionTools = ['Write', 'Edit', 'Bash']
+  if (permissionTools.includes(toolName)) {
+    clearToolUseTimeout(ctx)
+    ctx.toolUseTimeoutHandle = setTimeout(() => {
+      // 30s without a result → provisional permission-blocked
+      if (ctx.lastEmittedState !== 'permission-blocked') {
+        emitHealth('permission-blocked', { deniedPattern: toolName }, ctx, cb)
+      }
+    }, TOOL_USE_TIMEOUT_MS)
+  }
+}
+
 // ── Real spawn ──────────────────────────────────────────────────────────────────
 
 function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<void> {
   return new Promise((resolve) => {
     const persona = opts.persona ?? 'pdt-po'
+    const hCtx = makeHealthCtx(msgId)
+
+    // Emit healthy at turn start.
+    emitHealth('healthy', undefined, hCtx, cb)
 
     // Build args — first call uses `--agent`, resume uses `--resume`.
     const args: string[] = []
@@ -110,13 +264,17 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     let stderrBuf = ''
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      // Arm/reset silence timeout on any stdout data.
+      armSilenceTimeout(hCtx, cb)
+      hCtx.lastTokenAt = Date.now()
+
       stdoutBuf += chunk.toString('utf8')
       let nlIdx
       // eslint-disable-next-line no-cond-assign
       while ((nlIdx = stdoutBuf.indexOf('\n')) >= 0) {
         const line = stdoutBuf.slice(0, nlIdx).trim()
         stdoutBuf = stdoutBuf.slice(nlIdx + 1)
-        if (line) handleStreamJsonLine(line, msgId, cb)
+        if (line) handleStreamJsonLine(line, msgId, cb, hCtx)
       }
     })
 
@@ -127,23 +285,41 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       while ((nlIdx = stderrBuf.indexOf('\n')) >= 0) {
         const line = stderrBuf.slice(0, nlIdx).trim()
         stderrBuf = stderrBuf.slice(nlIdx + 1)
-        if (line) cb.onAnnounce(msgId, { level: 'error', text: line })
+        if (line) {
+          cb.onAnnounce(msgId, { level: 'error', text: line })
+          handleStderrHealth(line, hCtx, cb)
+        }
       }
     })
 
     child.on('error', (err) => {
+      clearToolUseTimeout(hCtx)
+      clearSilenceTimeout(hCtx)
+      emitHealth('error-other', { errorMessage: err.message }, hCtx, cb)
       cb.onAnnounce(msgId, { level: 'error', text: `spawn failed: ${err.message}` })
       cb.onDone(msgId, {})
       resolve()
     })
 
     child.on('close', (code) => {
-      if (stdoutBuf.trim()) handleStreamJsonLine(stdoutBuf.trim(), msgId, cb)
+      clearToolUseTimeout(hCtx)
+      clearSilenceTimeout(hCtx)
+
+      if (stdoutBuf.trim()) handleStreamJsonLine(stdoutBuf.trim(), msgId, cb, hCtx)
       if (stderrBuf.trim()) {
-        cb.onAnnounce(msgId, { level: 'error', text: stderrBuf.trim() })
+        const line = stderrBuf.trim()
+        cb.onAnnounce(msgId, { level: 'error', text: line })
+        handleStderrHealth(line, hCtx, cb)
       }
       if (code !== 0 && code !== null) {
         cb.onAnnounce(msgId, { level: 'error', text: `claude exited with code ${code}` })
+        // Only set error-other if no other state was set.
+        if (hCtx.lastEmittedState === 'healthy') {
+          emitHealth('error-other', { errorMessage: `exit code ${code}` }, hCtx, cb)
+        }
+      } else {
+        // Normal exit — recover to healthy.
+        emitHealth('healthy', undefined, hCtx, cb)
       }
       cb.onDone(msgId, { sessionId: capturedSessionId })
       capturedSessionId = undefined
@@ -155,7 +331,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
 // State scratchpad for one turn — captured during `system.init` event.
 let capturedSessionId: string | undefined
 
-function handleStreamJsonLine(line: string, msgId: string, cb: RunCallbacks): void {
+function handleStreamJsonLine(
+  line: string,
+  msgId: string,
+  cb: RunCallbacks,
+  hCtx: HealthContext,
+): void {
   let obj: any
   try {
     obj = JSON.parse(line)
@@ -173,6 +354,10 @@ function handleStreamJsonLine(line: string, msgId: string, cb: RunCallbacks): vo
     if (obj?.subtype === 'init' && typeof obj?.session_id === 'string') {
       capturedSessionId = obj.session_id
     }
+    // Compacting pre-signal (OQ: may or may not arrive — best-effort).
+    if (obj?.subtype === 'compact_pre' || obj?.compact === true) {
+      emitHealth('compacting', undefined, hCtx, cb)
+    }
     return
   }
 
@@ -182,8 +367,17 @@ function handleStreamJsonLine(line: string, msgId: string, cb: RunCallbacks): vo
     for (const part of content) {
       if (part?.type === 'text' && typeof part?.text === 'string') {
         cb.onToken(msgId, part.text)
+        handleTextHealth(part.text, hCtx, cb)
       } else if (part?.type === 'tool_use' && typeof part?.name === 'string') {
         cb.onAnnounce(msgId, { level: 'tool', text: `→ tool: ${part.name}` })
+        handleToolUseHealth(part.name, hCtx, cb)
+
+        // Extract subagent_type for delegating detail.
+        if (part.name === 'Task' && typeof part?.input?.subagent_type === 'string') {
+          // Re-emit with persona detail (dedupe guard bypassed by clearing lastEmittedState).
+          hCtx.lastEmittedState = 'healthy'   // allow re-emit with detail
+          emitHealth('delegating', { persona: part.input.subagent_type }, hCtx, cb)
+        }
       }
     }
     return
@@ -193,6 +387,16 @@ function handleStreamJsonLine(line: string, msgId: string, cb: RunCallbacks): vo
     if (typeof obj?.session_id === 'string') {
       capturedSessionId = obj.session_id
     }
+    // Error result
+    if (obj?.subtype === 'error' || obj?.is_error === true) {
+      clearToolUseTimeout(hCtx)
+      emitHealth('error-other', { errorMessage: obj?.error ?? 'result error' }, hCtx, cb)
+      return
+    }
+    // Normal result — clear tool-use timeout and recover to healthy.
+    clearToolUseTimeout(hCtx)
+    clearSilenceTimeout(hCtx)
+    emitHealth('healthy', undefined, hCtx, cb)
     return
   }
 
@@ -203,6 +407,10 @@ function handleStreamJsonLine(line: string, msgId: string, cb: RunCallbacks): vo
 
 function echoFallback(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<void> {
   return new Promise((resolve) => {
+    const hCtx = makeHealthCtx(msgId)
+    // Start healthy.
+    emitHealth('healthy', undefined, hCtx, cb)
+
     cb.onAnnounce(msgId, {
       level: 'system',
       text: '(echo mode — claude CLI not detected)',
@@ -212,6 +420,8 @@ function echoFallback(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<
     let i = 0
     const tick = () => {
       if (i >= chunks.length) {
+        // End healthy.
+        emitHealth('healthy', undefined, hCtx, cb)
         cb.onDone(msgId, {})
         resolve()
         return
@@ -238,8 +448,8 @@ function newMsgId(): string {
 // ── Renderer subscription helper (bound by main.ts) ─────────────────────────────
 
 /**
- * Bind a single send invocation to a WebContents — emits the three IPC channels
- * (`po:onMsgId`, `po:onToken`, `po:onAnnounce`, `po:onDone`).
+ * Bind a single send invocation to a WebContents — emits the IPC channels
+ * (`po:onMsgId`, `po:onToken`, `po:onAnnounce`, `po:onDone`, `po:onHealth`).
  */
 export function emitToWebContents(wc: WebContents): RunCallbacks {
   return {
@@ -247,5 +457,6 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     onToken:    (msgId, chunk)      => wc.send('po:onToken', msgId, chunk),
     onAnnounce: (msgId, payload)    => wc.send('po:onAnnounce', msgId, payload),
     onDone:     (msgId, info)       => wc.send('po:onDone', msgId, info),
+    onHealth:   (event)             => wc.send('po:onHealth', event),
   }
 }

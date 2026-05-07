@@ -189,6 +189,35 @@
     "statusBar": {
       "placeholder": "Auto-save / run status / external tools — filled in Slice 6"
     },
+    "sessionHealth": {
+      "healthy": {
+        "label": "Ready"
+      },
+      "delegating": {
+        "label": "Delegating to {{persona}}…",
+        "hint": "The product team is working on this."
+      },
+      "compacting": {
+        "label": "Compacting context…",
+        "hint": "This can take 30–60 seconds."
+      },
+      "rateLimited": {
+        "label": "Rate limit reached",
+        "hintWithReset": "Resets at {{time}}.",
+        "hintNoReset": "Try again in a few minutes."
+      },
+      "permissionBlocked": {
+        "label": "Permission denied",
+        "hint": "The session was stopped by a permission rule.",
+        "cta": "Restart session ↗"
+      },
+      "errorOther": {
+        "label": "Session error",
+        "hint": "The PO process didn't respond as expected.",
+        "cta": "Retry",
+        "logCta": "View log ↗"
+      }
+    },
     "presence": {
       "chipAriaLabel": "{{persona}} — {{state}}",
       "doneNoArtifact": "done"

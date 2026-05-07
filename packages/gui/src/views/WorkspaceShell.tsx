@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Project } from '../lib/types'
 import { useWorkspace } from '../store/workspace'
+import { useSessionHealth } from '../store/sessionHealth'
 import PhaseBreadcrumb from '../components/workspace/PhaseBreadcrumb'
 import LeftSidebar from '../components/workspace/LeftSidebar'
 import MainPanel from '../components/workspace/main/MainPanel'
 import StatusBar from '../components/workspace/StatusBar'
 import ActivityBar, { type ActivityIcon } from '../components/workspace/ActivityBar'
 import ChatPanel from '../components/workspace/ChatPanel'
+import SessionHealthBanner from '../components/workspace/SessionHealthBanner'
+import RestartSessionModal from '../components/workspace/RestartSessionModal'
 import { usePoChat } from '../store/poChat'
 
 interface Props {
@@ -26,8 +29,14 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const splitRight = useWorkspace((s) => s.splitRight)
   const splitDown = useWorkspace((s) => s.splitDown)
   const addNewTab = useWorkspace((s) => s.addNewTab)
+  const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
+  const messages = useWorkspace((s) => s.messages)
+
+  const setHealth = useSessionHealth((s) => s.setHealth)
+  const clearHealth = useSessionHealth((s) => s.clearHealth)
 
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('project')
+  const [restartModalOpen, setRestartModalOpen] = useState(false)
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
 
@@ -51,6 +60,26 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     return () => { offNew?.(); offOpen?.() }
   }, [onBack])
 
+  // ── Session health IPC subscription (T-P4-059) ──────────────────────────────
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.poOnHealth) return
+
+    const offHealth = api.poOnHealth((event: any) => {
+      setHealth(event)
+    })
+
+    const offRestarted = api.poOnSessionRestarted?.(() => {
+      setClaudeSessionId(null)
+      clearHealth()
+    })
+
+    return () => {
+      offHealth?.()
+      offRestarted?.()
+    }
+  }, [setHealth, clearHealth, setClaudeSessionId])
+
   // Open a Tickets board tab when user clicks the tickets activity icon.
   // Subsequent clicks dedupe via openTab's existing-id check.
   const onSelectActivity = (icon: ActivityIcon) => {
@@ -65,6 +94,31 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     openTab('ticket-review:board', 'ticket-review', undefined, 'Tickets')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ── Retry handler: re-send the last user message ─────────────────────────────
+  const handleRetry = () => {
+    // Find the last user message in chat history.
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user')
+    if (!lastUser || !project) return
+
+    const api = (window as any).api
+    const claudeSessionId = useWorkspace.getState().claudeSessionId
+
+    // Re-invoke the streaming turn with the same text + resume sessionId.
+    api.poSendMessage?.({
+      projectDir: project.projectDir,
+      text: lastUser.text,
+      persona: 'pdt-po',
+      resume: claudeSessionId,
+    })
+  }
+
+  // ── View log handler ─────────────────────────────────────────────────────────
+  const handleViewLog = () => {
+    // T-P4-046 dispatcher: open terminal tab.
+    // Fallback: dispatch custom event for future integration.
+    openTab('terminal:po-log', 'terminal', { logPath: `${project.projectDir}/.productune/logs/po-session.log` }, 'PO Log')
+  }
 
   // Keyboard: Cmd+W close active tab; Cmd+\ split right; Cmd+K Cmd+\ split down.
   useEffect(() => {
@@ -164,13 +218,23 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       <LeftSidebar project={project} activeIcon={activeIcon} />
 
       <div style={breadcrumbArea}>
+        {/* Session health banner — severity error only, above breadcrumb */}
+        <SessionHealthBanner
+          onRestartSession={() => setRestartModalOpen(true)}
+          onRetry={handleRetry}
+          onViewLog={handleViewLog}
+        />
         <PhaseBreadcrumb phase={phase} />
       </div>
 
       <MainPanel />
 
-      <StatusBar />
+      <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
       <ChatPanel />
+
+      {restartModalOpen && (
+        <RestartSessionModal onClose={() => setRestartModalOpen(false)} />
+      )}
     </div>
   )
 }
@@ -205,4 +269,6 @@ const grid: React.CSSProperties = {
 const breadcrumbArea: React.CSSProperties = {
   gridArea: 'breadcrumb',
   overflow: 'hidden',
+  display: 'flex',
+  flexDirection: 'column',
 }

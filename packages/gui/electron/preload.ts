@@ -159,6 +159,29 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:onDone', listener)
   },
 
+  /** Subscribe to PO session health events (T-P4-059). Returns an unsubscribe fn. */
+  poOnHealth: (cb: (event: {
+    state: 'healthy' | 'delegating' | 'compacting' | 'rate-limited' | 'permission-blocked' | 'error-other'
+    detail?: { persona?: string; resetAt?: string; errorMessage?: string; deniedPattern?: string }
+    at: string
+    msgId?: string
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, event: any) => cb(event)
+    ipcRenderer.on('po:onHealth', listener)
+    return () => ipcRenderer.removeListener('po:onHealth', listener)
+  },
+
+  /** Restart the PO session — kills active child + resets sessionId. Returns { ok: boolean }. */
+  poRestartSession: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('po:restartSession'),
+
+  /** Subscribe to session-restarted acknowledgement from main. Returns an unsubscribe fn. */
+  poOnSessionRestarted: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('po:sessionRestarted', listener)
+    return () => ipcRenderer.removeListener('po:sessionRestarted', listener)
+  },
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   getUiLanguage: (): Promise<'en' | 'ko'> =>
     ipcRenderer.invoke('settings:getUiLanguage'),
