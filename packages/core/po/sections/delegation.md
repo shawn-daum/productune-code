@@ -4,6 +4,31 @@
 
 `post-delegate-state-write` hook (`scripts/hooks/post-delegate-state-write.sh`, `PostToolUse(Bash)`) handles every `claude --agent pdt-*` / `--resume`: captures `.session_id`, bumps `persona_session_meta.<persona>.turns`, appends `model_history`, merges `recent_turns`, unions `artifacts`. **Don't duplicate.**
 
+## Artifact self-verify gate
+
+When a delegation may produce an artifact, add a self-verify line to `TASK`.
+Artifact means any file or block that another tool must parse, render, build, or
+execute: Mermaid, JSON, YAML, HTML, Markdown tables/links, code, config, SQL,
+shell, screenshots/mockups, or generated docs.
+
+Producer owns Tier 1 checks before returning:
+- parse / render / build / lint / test with the target toolchain when possible
+- if target renderer/version is unknown, state that and use conservative syntax
+- report the exact check performed and result
+
+QA is not default for Tier 1 syntax/render failures. Use QA for Tier 2 review:
+semantic correctness, behavior, risk, acceptance coverage, regression, or
+user-facing quality.
+
+Default line to append to artifact-producing `TASK`:
+
+```text
+For any produced artifact, self-verify with the relevant target toolchain
+(parse/render/build/lint/test as applicable) before returning. Report the
+verification method and result. If target renderer/version is unknown, say so
+and use conservative compatible syntax.
+```
+
 PO's remaining writes (hook can't infer):
 - Open `current_task` with semantic `slug` + `request_summary` + `artifacts` *before* delegating (else hook auto-creates `auto-<ts>` slug + `pre-delegate-task-check` blocks). `jq`, not `python3`.
 - Update `docs/tickets/<version>/T-NNN.md` lifecycle metadata when routing/closing: status, timestamps, duration, assignee/routing/model/effort/progress refs only. No body/request/acceptance/scope edits.
