@@ -4,7 +4,8 @@ import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo } from '@productune/core'
+import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists } from '@productune/core'
+import type { UiLanguage } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
 
@@ -216,6 +217,7 @@ ipcMain.handle('onboarding:detectHardware', async () => {
 interface OnboardingCompleteOpts {
   engine: 'claude' | 'codex' | 'both'
   wikiBackend: 'filesystem' | 'graphiti'
+  uiLanguage?: UiLanguage
 }
 
 ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpts) => {
@@ -289,6 +291,11 @@ ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpt
     //    first QA invocation isn't slow. Does NOT block onboarding completion
     //    on failure — agent's mcpServers block will retry lazily.
     await prewarmPlaywrightMcp()
+
+    // 6. Save UI language selection to settings.json
+    if (opts.uiLanguage) {
+      setUiLanguage(opts.uiLanguage)
+    }
 
     return { ok: true }
   } catch (e: any) {
@@ -530,6 +537,29 @@ ipcMain.handle('design:readArtifact', (_event, projectRoot: string, relPath: str
   }
 
   return fs.readFileSync(resolved, 'utf-8')
+})
+
+// ── Settings IPC ──────────────────────────────────────────────────────────────
+
+ipcMain.handle('settings:getUiLanguage', (): UiLanguage => {
+  return getUiLanguage()
+})
+
+ipcMain.handle('settings:setUiLanguage', (_event, lng: UiLanguage): { ok: boolean; error?: string } => {
+  try {
+    setUiLanguage(lng)
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'unknown error' }
+  }
+})
+
+ipcMain.handle('settings:hasLanguagePref', (): boolean => {
+  return settingsFileExists()
+})
+
+ipcMain.handle('settings:getOsLocale', (): string => {
+  return app.getLocale()
 })
 
 function buildAppMenu(): Menu {

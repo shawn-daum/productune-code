@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('api', {
   completeOnboarding: (opts: {
     engine: 'claude' | 'codex' | 'both'
     wikiBackend: 'filesystem' | 'graphiti'
+    uiLanguage?: 'en' | 'ko'
     anthropicKey?: string
     openaiKey?: string
   }): Promise<{ ok: boolean; error?: string }> =>
@@ -108,6 +109,19 @@ contextBridge.exposeInMainWorld('api', {
 
   chatClearSession: (projectDir: string): Promise<void> =>
     ipcRenderer.invoke('chat:clearSession', projectDir),
+
+  // ── Settings ─────────────────────────────────────────────────────────────────
+  getUiLanguage: (): Promise<'en' | 'ko'> =>
+    ipcRenderer.invoke('settings:getUiLanguage'),
+
+  setUiLanguage: (lng: 'en' | 'ko'): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setUiLanguage', lng),
+
+  hasLanguagePref: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:hasLanguagePref'),
+
+  getOsLocale: (): Promise<string> =>
+    ipcRenderer.invoke('settings:getOsLocale'),
 
   // ── Menubar events (renderer subscribes; main process emits) ─────────────────
   onMenuNewProject: (cb: () => void) => {

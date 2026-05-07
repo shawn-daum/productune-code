@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18next from './i18n'
 import NewProjectModal from './components/NewProjectModal'
 import HomeView from './views/HomeView'
 import OnboardingWizard from './views/OnboardingWizard'
@@ -16,23 +18,39 @@ type OpenPrompt =
   | { kind: 'descendant'; dir: string; descendants: DescendantEntry[] }
 
 export default function App() {
+  const { t } = useTranslation()
   const [envChecked, setEnvChecked] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [project, setProject] = useState<Project | null>(null)
   const [showNewModal, setShowNewModal] = useState(false)
   const [openPrompt, setOpenPrompt] = useState<OpenPrompt | null>(null)
 
-  // Check for productune.env on mount — show wizard if missing
+  // On mount: load saved language + check if onboarding is needed
   useEffect(() => {
-    ;(window as any).api.checkEnv()
-      .then((exists: boolean) => {
-        setShowOnboarding(!exists)
-        setEnvChecked(true)
-      })
-      .catch(() => {
-        // If IPC fails (e.g. dev without Electron), skip wizard
-        setEnvChecked(true)
-      })
+    async function init() {
+      // 1. Load persisted language preference
+      try {
+        const hasLangPref: boolean = await (window as any).api.hasLanguagePref()
+        if (hasLangPref) {
+          const lng: 'en' | 'ko' = await (window as any).api.getUiLanguage()
+          await i18next.changeLanguage(lng)
+        }
+      } catch { /* IPC unavailable in browser dev mode — keep default 'en' */ }
+
+      // 2. Check if productune.env exists (legacy onboarding signal)
+      try {
+        const envExists: boolean = await (window as any).api.checkEnv()
+        // Show onboarding wizard when either:
+        // - productune.env missing (first run), OR
+        // - settings.json has no language pref yet (migration: existing user hasn't seen step 0)
+        const hasLangPref: boolean = await (window as any).api.hasLanguagePref().catch(() => false)
+        setShowOnboarding(!envExists || !hasLangPref)
+      } catch {
+        // IPC unavailable (browser dev mode) — skip wizard
+      }
+      setEnvChecked(true)
+    }
+    init()
   }, [])
 
   async function handleOpenFolder() {
@@ -78,7 +96,7 @@ export default function App() {
   }
 
   const titleText =
-    showOnboarding ? 'productune 초기 설정'
+    showOnboarding ? t('app.onboardingTitle')
     : project ? project.slug
     : 'productune'
 
@@ -129,17 +147,18 @@ export default function App() {
 }
 
 function InstallPromptDialog({ dir, onConfirm, onCancel }: { dir: string; onConfirm: () => void; onCancel: () => void }) {
+  const { t } = useTranslation()
   return (
     <div style={overlay}>
       <div style={bannerCard}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>이 폴더에서 productune을 시작할까요?</div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>{t('app.install.title')}</div>
         <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginBottom: 16 }}>{dir}</div>
         <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 20 }}>
-          이 폴더에는 아직 productune 프로젝트가 설정되지 않았습니다. 지금 설치하면 PRD·디자인·티켓을 이 폴더에서 관리할 수 있습니다.
+          {t('app.install.description')}
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button style={btnSecondary} onClick={onCancel}>취소</button>
-          <button style={btnPrimary} onClick={onConfirm}>설치하고 시작</button>
+          <button style={btnSecondary} onClick={onCancel}>{t('app.install.cancel')}</button>
+          <button style={btnPrimary} onClick={onConfirm}>{t('app.install.confirm')}</button>
         </div>
       </div>
     </div>
@@ -155,15 +174,16 @@ function DescendantPromptDialog({
   onInstallHere: () => void
   onCancel: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <div style={overlay}>
       <div style={{ ...bannerCard, width: 480 }}>
         <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>
-          선택한 폴더 안에 productune 프로젝트가 있습니다.
+          {t('app.descendant.title')}
         </div>
         <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginBottom: 16 }}>{dir}</div>
         <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 16 }}>
-          어떤 폴더를 열까요?
+          {t('app.descendant.prompt')}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
@@ -185,8 +205,8 @@ function DescendantPromptDialog({
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-          <button style={btnGhost} onClick={onInstallHere}>현재 폴더에 새로 설치</button>
-          <button style={btnSecondary} onClick={onCancel}>취소</button>
+          <button style={btnGhost} onClick={onInstallHere}>{t('app.descendant.installHere')}</button>
+          <button style={btnSecondary} onClick={onCancel}>{t('app.descendant.cancel')}</button>
         </div>
       </div>
     </div>

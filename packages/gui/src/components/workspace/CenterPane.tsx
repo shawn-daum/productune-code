@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { ActivityIcon } from './ActivityBar'
 import { useWorkspace } from '../../store/workspace'
 import VersionDetailView from './VersionDetailView'
@@ -9,6 +10,7 @@ interface Props {
 }
 
 export default function CenterPane({ activeIcon }: Props) {
+  const { t } = useTranslation()
   const selectedVersionId = useWorkspace((s) => s.selectedVersionId)
   const poState = useWorkspace((s) => s.poState)
 
@@ -23,7 +25,7 @@ export default function CenterPane({ activeIcon }: Props) {
     body = (
       <div style={placeholderWrap}>
         <p style={placeholder}>
-          사이드바의 Version 클릭 → 상세 보기 · 또는 티켓 탭에서 전체 보드 확인.
+          {t('workspace.center.selectHint')}
         </p>
       </div>
     )

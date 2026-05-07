@@ -1,0 +1,185 @@
+{
+  "common": {
+    "next": "Next →",
+    "prev": "← Back",
+    "skip": "Skip for now",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "save": "Save",
+    "loading": "Loading…",
+    "detecting": "Detecting…",
+    "download": "Download manually ↗"
+  },
+  "onboarding": {
+    "title": "productune setup",
+    "step0": {
+      "label": "Step 0 / 4 — Language / 언어",
+      "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
+      "hint": "(You can change this later in Settings.)",
+      "optionEn": "English",
+      "optionEnDesc": "Standard interface language.",
+      "optionKo": "한글",
+      "optionKoDesc": "한국어 인터페이스 (페르소나 응답은 별도 설정)"
+    },
+    "step1": {
+      "label": "Step 1 / 4 — AI engine",
+      "intro": "All product team members use Claude Code.\nChoose the AI engine for PO.",
+      "optionRecommended": "recommended"
+    },
+    "step2": {
+      "label": "Step 2 / 4 — Engine connection",
+      "intro": "Check that your selected engine is connected.\nYou can continue without it and reconnect in Settings later.",
+      "checking": "⏳ Checking engine status...",
+      "statusChecking": "Checking…",
+      "statusReady": "installed · authed",
+      "statusInstalledNoAuth": "installed · not authed",
+      "statusNotInstalled": "not installed",
+      "installGuide": "Install guide ↗",
+      "loginTerminal": "Login in terminal",
+      "recheck": "Recheck"
+    },
+    "step3": {
+      "label": "Step 3 / 4 — Memory backend",
+      "intro": "Choose how PO and product team members store memory.",
+      "detectingHw": "Detecting hardware...",
+      "optionRecommended": "recommended",
+      "dockerNotDetected": "🐳 Docker Desktop not detected. Required for Graphiti.",
+      "brewInstall": "🍺 Auto-install via Homebrew",
+      "installing": "Installing… Restart the app to cancel.",
+      "openDocker": "🐳 Open Docker Desktop",
+      "redetect": "Redetect"
+    },
+    "step4": {
+      "applying": "Applying settings…",
+      "done": "Setup complete",
+      "start": "Get started →",
+      "failed": "Setup failed",
+      "unknownError": "Unknown error"
+    },
+    "engines": {
+      "claude": {
+        "label": "Claude Code",
+        "intro": "Run PO on Anthropic Claude — most stable",
+        "tech": "claude-code CLI · full hooks/skills support"
+      },
+      "codex": {
+        "label": "Codex",
+        "intro": "Run PO on OpenAI Codex (experimental)",
+        "tech": "codex CLI · doctrine only (hooks not supported)"
+      },
+      "both": {
+        "label": "Both",
+        "intro": "Claude as primary, Codex as secondary",
+        "tech": "primary=claude-code, secondary=codex"
+      }
+    },
+    "wiki": {
+      "graphiti": {
+        "label": "Graphiti",
+        "intro": "Graph DB-based long-term memory",
+        "tech": "Requires Docker + local LLM (Tier S/A recommended)"
+      },
+      "filesystem": {
+        "label": "Filesystem",
+        "intro": "Claude manages memory via markdown files",
+        "tech": "No library dependency · uses Claude API tokens"
+      }
+    },
+    "completionSteps": {
+      "env": "Create env file (~/.productune/productune.env)",
+      "agents": "Register PO agent (agents/ → ~/.claude/agents/ symlink)",
+      "instructions": "Apply PO instructions (po-instructions.md)",
+      "memory": "Initialize PO memory (po-memory.md)",
+      "playwright": "Prepare Playwright MCP cache (QA smoke gate, npx @playwright/mcp)"
+    }
+  },
+  "workspace": {
+    "versions": {
+      "current": "Current",
+      "past": "Past Versions ({{count}})",
+      "noActive": "No active Version. Start a new Version in PO chat.",
+      "noPast": "None.",
+      "ticketsDone": "{{count}} done",
+      "closed": "Closed {{date}}",
+      "tickets": "{{count}} tickets",
+      "retro": "Retro ↗",
+      "phaseLabel": "Phase: "
+    },
+    "versionDetail": {
+      "notFound": "Version `{{id}}` not found in po-state.",
+      "started": "Started {{date}}",
+      "ended": "Ended {{date}}",
+      "active": "active",
+      "sectionPhase": "Phase",
+      "sectionTickets": "Tickets ({{count}})",
+      "sectionOutcome": "Outcome",
+      "noTickets": "No tickets registered for this Version.",
+      "observedPending": "pending (lazy — fill in next Version Phase 1)"
+    },
+    "tickets": {
+      "title": "Tickets",
+      "filterAll": "All",
+      "filterCount": "{{count}} tickets",
+      "noTickets": "No tickets match the current filter."
+    },
+    "phaseGate": {
+      "badge": "Phase Gate",
+      "versionEnd": "Version end",
+      "modify": "Modify…",
+      "approve": "Approve →"
+    },
+    "chat": {
+      "session": "PO session",
+      "messageCount": "{{count}} messages",
+      "emptyHint": "Start a conversation with PO. (streaming enabled in Slice 3)",
+      "messagesPlaceholder": "Messages — filled in Slice 3",
+      "inputPlaceholder": "Type a message… (active in Slice 3)",
+      "send": "Send"
+    },
+    "sidebar": {
+      "tabs": {
+        "versions": "Versions",
+        "tickets": "Tickets",
+        "artifacts": "Artifacts",
+        "settings": "Settings"
+      },
+      "ticketsHint": "Ticket board is in the center panel",
+      "artifactsHint": "Artifacts — added in a future slice",
+      "settingsHint": "Settings — T-P4-024"
+    },
+    "center": {
+      "selectHint": "Click a Version in the sidebar to view details · or see the full board in the Tickets tab."
+    },
+    "statusBar": {
+      "placeholder": "Auto-save / run status / external tools — filled in Slice 6"
+    }
+  },
+  "settings": {
+    "language": {
+      "title": "UI 언어 / Interface language",
+      "tabLabel": "Language / 언어",
+      "description": "GUI 화면 언어를 선택합니다. 페르소나 응답 언어는 별도 설정입니다.",
+      "descriptionEn": "Interface language for GUI chrome. Persona response language is set separately.",
+      "immediateNote": "저장 시 즉시 반영됩니다 (앱 재시작 불필요). / Changes apply immediately (no restart needed).",
+      "optionEn": "English",
+      "optionEnDesc": "Standard interface language.",
+      "optionKo": "한글",
+      "optionKoDesc": "한국어 인터페이스."
+    }
+  },
+  "app": {
+    "onboardingTitle": "productune setup",
+    "install": {
+      "title": "Set up productune in this folder?",
+      "description": "This folder does not have a productune project yet. Installing here will let you manage PRDs, design docs, and tickets in this folder.",
+      "confirm": "Install and open",
+      "cancel": "Cancel"
+    },
+    "descendant": {
+      "title": "Found productune projects inside the selected folder.",
+      "prompt": "Which folder would you like to open?",
+      "installHere": "Install in current folder",
+      "cancel": "Cancel"
+    }
+  }
+}

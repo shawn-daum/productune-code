@@ -1,41 +1,43 @@
+import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
 
 export default function ChatPanel() {
+  const { t } = useTranslation()
   const { messages } = useWorkspace()
 
   return (
     <div style={wrap}>
-      {/* 헤더 */}
+      {/* Header */}
       <div style={header}>
-        <span style={headerTitle}>PO 세션</span>
+        <span style={headerTitle}>{t('workspace.chat.session')}</span>
         <span style={headerSub}>
-          메시지 {messages.length}
+          {t('workspace.chat.messageCount', { count: messages.length })}
         </span>
       </div>
 
-      {/* 본문 */}
+      {/* Body */}
       <div style={body}>
         {messages.length === 0 ? (
           <span style={placeholderText}>
-            PO 와 대화를 시작하세요. (Slice 3 에서 streaming 활성화)
+            {t('workspace.chat.emptyHint')}
           </span>
         ) : (
           <span style={placeholderText}>
-            메시지 표시 — Slice 3 에서 채워짐
+            {t('workspace.chat.messagesPlaceholder')}
           </span>
         )}
       </div>
 
-      {/* 입력 영역 */}
+      {/* Input area */}
       <div style={inputArea}>
         <input
           style={inputField}
           type="text"
-          placeholder="메시지를 입력하세요… (Slice 3 에서 활성)"
+          placeholder={t('workspace.chat.inputPlaceholder')}
           disabled
         />
         <button style={sendBtn} disabled>
-          전송
+          {t('workspace.chat.send')}
         </button>
       </div>
     </div>
@@ -117,7 +119,7 @@ const inputField: React.CSSProperties = {
 const sendBtn: React.CSSProperties = {
   height: 40,
   padding: '0 14px',
-  background: '#1E1E1E',
+  background: '#1E1E2E',
   border: '1px solid #2A2A2A',
   borderRadius: 6,
   color: '#505050',

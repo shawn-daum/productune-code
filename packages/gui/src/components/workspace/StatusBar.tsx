@@ -1,7 +1,10 @@
+import { useTranslation } from 'react-i18next'
+
 export default function StatusBar() {
+  const { t } = useTranslation()
   return (
     <div style={wrap}>
-      <span style={text}>자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐</span>
+      <span style={text}>{t('workspace.statusBar.placeholder')}</span>
     </div>
   )
 }

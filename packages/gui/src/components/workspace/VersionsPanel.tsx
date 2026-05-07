@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { PoState, Version, Phase } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export default function VersionsPanel({ poState }: Props) {
+  const { t } = useTranslation()
   const selectedId = useWorkspace((s) => s.selectedVersionId)
   const setSelected = useWorkspace((s) => s.setSelectedVersionId)
 
@@ -21,8 +23,8 @@ export default function VersionsPanel({ poState }: Props) {
     .sort((a, b) => (b.ended_at ?? '').localeCompare(a.ended_at ?? ''))
 
   const ticketsByVersion = new Map<string, number>()
-  for (const t of poState?.past_tickets ?? []) {
-    if (t.version) ticketsByVersion.set(t.version, (ticketsByVersion.get(t.version) ?? 0) + 1)
+  for (const tk of poState?.past_tickets ?? []) {
+    if (tk.version) ticketsByVersion.set(tk.version, (ticketsByVersion.get(tk.version) ?? 0) + 1)
   }
 
   const onClick = (id: string) => {
@@ -31,7 +33,7 @@ export default function VersionsPanel({ poState }: Props) {
 
   return (
     <div style={panel}>
-      <div style={sectionLabel}>현재</div>
+      <div style={sectionLabel}>{t('workspace.versions.current')}</div>
       {active ? (
         <ActiveVersionCard
           version={active}
@@ -41,12 +43,14 @@ export default function VersionsPanel({ poState }: Props) {
           onClick={() => onClick(active.id)}
         />
       ) : (
-        <div style={emptyHint}>진행 중인 Version 없음. PO 채팅에서 새 Version 시작.</div>
+        <div style={emptyHint}>{t('workspace.versions.noActive')}</div>
       )}
 
-      <div style={{ ...sectionLabel, marginTop: 18 }}>이전 Version ({past.length})</div>
+      <div style={{ ...sectionLabel, marginTop: 18 }}>
+        {t('workspace.versions.past', { count: past.length })}
+      </div>
       {past.length === 0 ? (
-        <div style={emptyHint}>없음.</div>
+        <div style={emptyHint}>{t('workspace.versions.noPast')}</div>
       ) : (
         past.map((v) => (
           <PastVersionCard
@@ -64,12 +68,18 @@ export default function VersionsPanel({ poState }: Props) {
 
 interface ActiveCardProps { version: Version; phaseNum: number | undefined; ticketsDone: number; selected: boolean; onClick: () => void }
 function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }: ActiveCardProps) {
+  const { t } = useTranslation()
   const phaseLabel: Phase | '?' = (typeof phaseNum === 'number' && PHASE_NAMES[phaseNum]) || '?'
   return (
     <div style={selected ? cardActiveSelected : cardActive} onClick={onClick}>
       <div style={cardId}>{version.id}</div>
-      <div style={cardLine}>Phase: <span style={cardLineValue}>{phaseLabel}{typeof phaseNum === 'number' ? ` (${phaseNum}/4)` : ''}</span></div>
-      <div style={cardLine}>티켓: <span style={cardLineValue}>{ticketsDone} 완료</span></div>
+      <div style={cardLine}>
+        {t('workspace.versions.phaseLabel')}
+        <span style={cardLineValue}>{phaseLabel}{typeof phaseNum === 'number' ? ` (${phaseNum}/4)` : ''}</span>
+      </div>
+      <div style={cardLine}>
+        <span style={cardLineValue}>{t('workspace.versions.ticketsDone', { count: ticketsDone })}</span>
+      </div>
       {version.outcome?.north_star && (
         <div style={cardLineMuted}>★ {version.outcome.north_star}</div>
       )}
@@ -79,20 +89,21 @@ function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }
 
 interface PastCardProps { version: Version; ticketsDone: number; selected: boolean; onClick: () => void }
 function PastVersionCard({ version, ticketsDone, selected, onClick }: PastCardProps) {
+  const { t } = useTranslation()
   const closed = version.ended_at ? version.ended_at.slice(0, 10) : '?'
   const observed = version.outcome?.observed_result
   const retro = version.outcome?.retrospective_path
   return (
     <div style={selected ? cardPastSelected : cardPast} onClick={onClick}>
       <div style={cardIdMuted}>{version.id}</div>
-      <div style={cardLineMuted}>{closed} 종료</div>
-      <div style={cardLineMuted}>티켓 {ticketsDone}</div>
+      <div style={cardLineMuted}>{t('workspace.versions.closed', { date: closed })}</div>
+      <div style={cardLineMuted}>{t('workspace.versions.tickets', { count: ticketsDone })}</div>
       {version.outcome?.north_star && (
         <div style={cardLineMuted}>★ {version.outcome.north_star}</div>
       )}
       {observed && <div style={cardLineMuted}>→ {observed}</div>}
       {retro && (
-        <div style={cardLink} title={retro}>회고 ↗</div>
+        <div style={cardLink} title={retro}>{t('workspace.versions.retro')}</div>
       )}
     </div>
   )

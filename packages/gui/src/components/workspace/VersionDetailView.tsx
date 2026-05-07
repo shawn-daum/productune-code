@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { PoState, Version, Ticket, Phase, Stage, Status } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
 
@@ -10,9 +11,10 @@ const PHASE_ORDER: Phase[] = ['PRD', 'Design', 'Build', 'Close']
 const STAGE_ORDER: Stage[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
 
 export default function VersionDetailView({ versionId, poState }: Props) {
+  const { t } = useTranslation()
   const version = (poState?.versions ?? []).find((v) => v.id === versionId)
   if (!version) {
-    return <div style={empty}>Version `{versionId}` 을 po-state에서 찾을 수 없음.</div>
+    return <div style={empty}>{t('workspace.versionDetail.notFound', { id: versionId })}</div>
   }
 
   const isActive = poState?.current_version === versionId
@@ -26,9 +28,9 @@ export default function VersionDetailView({ versionId, poState }: Props) {
       <header style={header}>
         <div style={versionId_}>{version.id}</div>
         <div style={meta}>
-          {version.started_at && <span>{version.started_at.slice(0, 10)} 시작</span>}
-          {version.ended_at && <span> · {version.ended_at.slice(0, 10)} 종료</span>}
-          {!version.ended_at && isActive && <span style={activeBadge}>진행중</span>}
+          {version.started_at && <span>{t('workspace.versionDetail.started', { date: version.started_at.slice(0, 10) })}</span>}
+          {version.ended_at && <span> · {t('workspace.versionDetail.ended', { date: version.ended_at.slice(0, 10) })}</span>}
+          {!version.ended_at && isActive && <span style={activeBadge}>{t('workspace.versionDetail.active')}</span>}
         </div>
       </header>
 
@@ -37,9 +39,9 @@ export default function VersionDetailView({ versionId, poState }: Props) {
       <OutcomeCard version={version} />
 
       <section style={section}>
-        <h3 style={sectionTitle}>티켓 ({tickets.length})</h3>
+        <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionTickets', { count: tickets.length })}</h3>
         {tickets.length === 0 ? (
-          <div style={emptyHint}>이 Version에 등록된 티켓 없음.</div>
+          <div style={emptyHint}>{t('workspace.versionDetail.noTickets')}</div>
         ) : (
           STAGE_ORDER.filter((s) => ticketsByStage[s]?.length).map((s) => (
             <StageGroup key={s} stage={s} tickets={ticketsByStage[s] ?? []} />
@@ -86,9 +88,10 @@ function groupByStage(tickets: Ticket[]): Record<string, Ticket[]> {
 // ── sub-components ─────────────────────────────────────────────────────────────
 
 function PhaseTimeline({ current, ended }: { current: number | undefined; ended: boolean }) {
+  const { t } = useTranslation()
   return (
     <section style={section}>
-      <h3 style={sectionTitle}>Phase</h3>
+      <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionPhase')}</h3>
       <div style={timelineWrap}>
         {PHASE_ORDER.map((p, i) => {
           const num = i + 1
@@ -110,6 +113,7 @@ function PhaseTimeline({ current, ended }: { current: number | undefined; ended:
 }
 
 function OutcomeCard({ version }: { version: Version }) {
+  const { t } = useTranslation()
   const o = version.outcome
   if (!o) return null
   const hasContent = o.north_star || (o.input_metrics && o.input_metrics.length) || o.observed_result || o.retrospective_path
@@ -117,7 +121,7 @@ function OutcomeCard({ version }: { version: Version }) {
 
   return (
     <section style={section}>
-      <h3 style={sectionTitle}>Outcome</h3>
+      <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionOutcome')}</h3>
       <div style={outcomeCard}>
         {o.north_star && (
           <div style={outcomeRow}>
@@ -140,7 +144,7 @@ function OutcomeCard({ version }: { version: Version }) {
         <div style={outcomeRow}>
           <span style={outcomeKey}>observed</span>
           <span style={o.observed_result ? outcomeVal : outcomeValMuted}>
-            {o.observed_result ?? '미정 (lazy — 다음 Version Phase 1에서 채움)'}
+            {o.observed_result ?? t('workspace.versionDetail.observedPending')}
           </span>
         </div>
         {o.retrospective_path && (

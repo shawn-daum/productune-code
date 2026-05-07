@@ -1,23 +1,26 @@
 import { useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ActivityIcon } from './ActivityBar'
 import type { Project, Session } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import VersionsPanel from './VersionsPanel'
+import LanguageSettings from './LanguageSettings'
 
 interface Props {
   project: Project
   activeIcon: ActivityIcon
 }
 
-const TAB_TITLES: Record<ActivityIcon, string> = {
-  versions:  'Versions',
-  tickets:   '티켓',
-  artifacts: '산출물',
-  settings:  '설정',
-}
-
 export default function LeftSidebar({ project, activeIcon }: Props) {
+  const { t } = useTranslation()
   const { setMessages, setClaudeSessionId, poState } = useWorkspace()
+
+  const TAB_TITLES: Record<ActivityIcon, string> = {
+    versions:  t('workspace.sidebar.tabs.versions'),
+    tickets:   t('workspace.sidebar.tabs.tickets'),
+    artifacts: t('workspace.sidebar.tabs.artifacts'),
+    settings:  t('workspace.sidebar.tabs.settings'),
+  }
 
   // Mount: load PO session from fs via IPC
   useEffect(() => {
@@ -35,28 +38,26 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
 
   return (
     <div style={wrap}>
-      {/* Header — active tab title (back-to-home moved to native menubar) */}
+      {/* Header — active tab title */}
       <div style={header}>
         <div style={tabTitle}>{TAB_TITLES[activeIcon]}</div>
         <div style={projectSlugMuted} title={project.slug}>{project.slug}</div>
       </div>
 
-      {/* 본문 — activeIcon 에 따라 분기 */}
+      {/* Body — branch by activeIcon */}
       {activeIcon === 'versions' && <VersionsPanel poState={poState} />}
       {activeIcon === 'tickets' && (
         <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>티켓 보드는 중앙 패널에서</span>
+          <span style={panelPlaceholderText}>{t('workspace.sidebar.ticketsHint')}</span>
         </div>
       )}
       {activeIcon === 'artifacts' && (
         <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>산출물 — 추후 슬라이스에서 추가</span>
+          <span style={panelPlaceholderText}>{t('workspace.sidebar.artifactsHint')}</span>
         </div>
       )}
       {activeIcon === 'settings' && (
-        <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>설정 — T-P4-024</span>
-        </div>
+        <LanguageSettings />
       )}
     </div>
   )

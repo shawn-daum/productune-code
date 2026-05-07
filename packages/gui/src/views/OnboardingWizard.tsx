@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18next from '../i18n'
 
 type Engine = 'claude' | 'codex' | 'both'
 type WikiBackend = 'filesystem' | 'graphiti'
 type Tier = 'S' | 'A' | 'B'
+type UiLang = 'en' | 'ko'
 
 interface HardwareInfo {
   tier: Tier
@@ -21,7 +24,11 @@ interface Props {
 }
 
 export default function OnboardingWizard({ onDone }: Props) {
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
+  const { t } = useTranslation()
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0)
+
+  // Step 0 — Language
+  const [uiLang, setUiLang] = useState<UiLang>('en')
 
   // Step 1
   const [engine, setEngine] = useState<Engine>('claude')
@@ -46,6 +53,25 @@ export default function OnboardingWizard({ onDone }: Props) {
   const [completing, setCompleting] = useState(false)
   const [completeError, setCompleteError] = useState('')
   const [done, setDone] = useState(false)
+
+  // Step 0: detect OS locale to pre-select language default
+  useEffect(() => {
+    async function detectLocale() {
+      try {
+        const locale: string = await (window as any).api.getOsLocale()
+        const defaultLang: UiLang = locale.startsWith('ko') ? 'ko' : 'en'
+        setUiLang(defaultLang)
+        await i18next.changeLanguage(defaultLang)
+      } catch {
+        // Fallback: use navigator.language in browser dev mode
+        const navLang = navigator.language ?? ''
+        const defaultLang: UiLang = navLang.startsWith('ko') ? 'ko' : 'en'
+        setUiLang(defaultLang)
+        await i18next.changeLanguage(defaultLang)
+      }
+    }
+    detectLocale()
+  }, [])
 
   // Reset docker install state when leaving step 3
   useEffect(() => {
@@ -85,16 +111,16 @@ export default function OnboardingWizard({ onDone }: Props) {
     if (step !== 4) return
     setCompleting(true)
     setCompleteError('')
-    ;(window as any).api.completeOnboarding({ engine, wikiBackend })
+    ;(window as any).api.completeOnboarding({ engine, wikiBackend, uiLanguage: uiLang })
       .then((result: { ok: boolean; error?: string }) => {
         if (result.ok) {
           setDone(true)
         } else {
-          setCompleteError(result.error ?? '알 수 없는 오류')
+          setCompleteError(result.error ?? t('onboarding.step4.unknownError'))
         }
       })
       .catch((e: any) => {
-        setCompleteError(e?.message ?? '알 수 없는 오류')
+        setCompleteError(e?.message ?? t('onboarding.step4.unknownError'))
       })
       .finally(() => setCompleting(false))
   }, [step])
@@ -114,6 +140,11 @@ export default function OnboardingWizard({ onDone }: Props) {
       }
     } catch { /* silent */ }
     finally { setCheckingEngine(false) }
+  }
+
+  async function handleSelectLang(lng: UiLang) {
+    setUiLang(lng)
+    await i18next.changeLanguage(lng)
   }
 
   async function handleClaudeLogin() {
@@ -152,12 +183,12 @@ export default function OnboardingWizard({ onDone }: Props) {
       if (result.ok) {
         setInstallPhase('done')
       } else {
-        setInstallError(result.error ?? '알 수 없는 오류')
+        setInstallError(result.error ?? t('onboarding.step4.unknownError'))
         setInstallPhase('error')
       }
     } catch (e: any) {
       unsub?.()
-      setInstallError(e?.message ?? '알 수 없는 오류')
+      setInstallError(e?.message ?? t('onboarding.step4.unknownError'))
       setInstallPhase('error')
     }
   }
@@ -169,15 +200,23 @@ export default function OnboardingWizard({ onDone }: Props) {
   const codexReady = !needsCodex || (codexStatus?.installed && codexStatus?.authed)
   const engineFullyReady = claudeReady && codexReady
 
+  const completionStepKeys = [
+    'onboarding.completionSteps.env',
+    'onboarding.completionSteps.agents',
+    'onboarding.completionSteps.instructions',
+    'onboarding.completionSteps.memory',
+    'onboarding.completionSteps.playwright',
+  ] as const
+
   return (
     <div style={wrap}>
       <div style={card}>
         {/* Header */}
         <div style={header}>
           <span style={{ fontSize: 20, marginRight: 10 }}>⚡</span>
-          <span style={{ fontWeight: 700, fontSize: 16 }}>productune 초기 설정</span>
+          <span style={{ fontWeight: 700, fontSize: 16 }}>{t('onboarding.title')}</span>
           <div style={stepIndicator}>
-            {([1, 2, 3, 4] as const).map(s => (
+            {([0, 1, 2, 3, 4] as const).map(s => (
               <div
                 key={s}
                 style={{
@@ -190,32 +229,70 @@ export default function OnboardingWizard({ onDone }: Props) {
           </div>
         </div>
 
+        {/* Step 0 — Language select */}
+        {step === 0 && (
+          <>
+            <div style={body}>
+              <div style={stepLabel}>{t('onboarding.step0.label')}</div>
+              <div style={stepIntro}>
+                {t('onboarding.step0.description')}
+              </div>
+              <div style={{ fontSize: 11, color: '#606060', marginBottom: 12 }}>
+                {t('onboarding.step0.hint')}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <OptionCard
+                  selected={uiLang === 'en'}
+                  onClick={() => handleSelectLang('en')}
+                  label={t('onboarding.step0.optionEn')}
+                  intro={t('onboarding.step0.optionEnDesc')}
+                  tech=""
+                />
+                <OptionCard
+                  selected={uiLang === 'ko'}
+                  onClick={() => handleSelectLang('ko')}
+                  label={t('onboarding.step0.optionKo')}
+                  intro={t('onboarding.step0.optionKoDesc')}
+                  tech=""
+                />
+              </div>
+            </div>
+            <div style={footer}>
+              <div />
+              <button style={btnPrimary} onClick={() => setStep(1)}>
+                {t('common.next')}
+              </button>
+            </div>
+          </>
+        )}
+
         {/* Step 1 — Engine select */}
         {step === 1 && (
           <>
             <div style={body}>
-              <div style={stepLabel}>Step 1 / 4 — AI 엔진 선택</div>
+              <div style={stepLabel}>{t('onboarding.step1.label')}</div>
               <div style={stepIntro}>
-                프로덕트 팀원은 모두 Claude Code로 고정입니다.<br />
-                PO로 사용할 AI 엔진을 선택해주세요.
+                {t('onboarding.step1.intro').split('\n').map((line, i) => (
+                  <span key={i}>{line}{i === 0 ? <br /> : null}</span>
+                ))}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-                {engineOptions.map(opt => (
+                {(['claude', 'codex', 'both'] as Engine[]).map(val => (
                   <OptionCard
-                    key={opt.value}
-                    selected={engine === opt.value}
-                    onClick={() => setEngine(opt.value)}
-                    label={opt.label}
-                    badge={opt.badge}
-                    intro={opt.intro}
-                    tech={opt.tech}
+                    key={val}
+                    selected={engine === val}
+                    onClick={() => setEngine(val)}
+                    label={t(`onboarding.engines.${val}.label`)}
+                    badge={val === 'claude' ? t('onboarding.step1.optionRecommended') : undefined}
+                    intro={t(`onboarding.engines.${val}.intro`)}
+                    tech={t(`onboarding.engines.${val}.tech`)}
                   />
                 ))}
               </div>
             </div>
             <div style={footer}>
-              <div />
-              <button style={btnPrimary} onClick={() => setStep(2)}>다음 →</button>
+              <button style={btnSecondary} onClick={() => setStep(0)}>{t('common.prev')}</button>
+              <button style={btnPrimary} onClick={() => setStep(2)}>{t('common.next')}</button>
             </div>
           </>
         )}
@@ -224,14 +301,15 @@ export default function OnboardingWizard({ onDone }: Props) {
         {step === 2 && (
           <>
             <div style={body}>
-              <div style={stepLabel}>Step 2 / 4 — 엔진 연결 확인</div>
+              <div style={stepLabel}>{t('onboarding.step2.label')}</div>
               <div style={stepIntro}>
-                선택한 엔진이 정상 연결되어 있는지 확인합니다.<br />
-                미연결 상태로도 진행할 수 있어요 — 나중에 설정에서 다시 연결 가능합니다.
+                {t('onboarding.step2.intro').split('\n').map((line, i) => (
+                  <span key={i}>{line}{i === 0 ? <br /> : null}</span>
+                ))}
               </div>
 
               {checkingEngine ? (
-                <div style={hint}>⏳ 엔진 상태 확인 중...</div>
+                <div style={hint}>{t('onboarding.step2.checking')}</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
                   {needsClaude && (
@@ -259,10 +337,10 @@ export default function OnboardingWizard({ onDone }: Props) {
 
             </div>
             <div style={footer}>
-              <button style={btnSecondary} onClick={() => setStep(1)}>← 이전</button>
+              <button style={btnSecondary} onClick={() => setStep(1)}>{t('common.prev')}</button>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 {!engineFullyReady && (
-                  <button style={btnSkip} onClick={() => setStep(3)}>지금은 건너뛰기</button>
+                  <button style={btnSkip} onClick={() => setStep(3)}>{t('common.skip')}</button>
                 )}
                 <button
                   style={{
@@ -274,7 +352,7 @@ export default function OnboardingWizard({ onDone }: Props) {
                   onClick={() => setStep(3)}
                   disabled={!engineFullyReady}
                 >
-                  다음 →
+                  {t('common.next')}
                 </button>
               </div>
             </div>
@@ -285,15 +363,13 @@ export default function OnboardingWizard({ onDone }: Props) {
         {step === 3 && (
           <>
             <div style={body}>
-              <div style={stepLabel}>Step 3 / 4 — 기억 저장 방식</div>
-              <div style={stepIntro}>
-                PO와 프로덕트 팀원의 기억을 담당하는 방식을 선택해주세요.
-              </div>
+              <div style={stepLabel}>{t('onboarding.step3.label')}</div>
+              <div style={stepIntro}>{t('onboarding.step3.intro')}</div>
 
               {(detectingHw || !hardware) ? (
                 <div style={hwSpinner}>
                   <span style={{ fontSize: 22, marginBottom: 8 }}>⏳</span>
-                  <span style={{ fontSize: 12, color: '#505050' }}>하드웨어 감지 중...</span>
+                  <span style={{ fontSize: 12, color: '#505050' }}>{t('onboarding.step3.detectingHw')}</span>
                 </div>
               ) : (
                 <>
@@ -307,15 +383,15 @@ export default function OnboardingWizard({ onDone }: Props) {
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-                    {wikiOptions.map(opt => (
+                    {(['graphiti', 'filesystem'] as WikiBackend[]).map(val => (
                       <OptionCard
-                        key={opt.value}
-                        selected={wikiBackend === opt.value}
-                        onClick={() => setWikiBackend(opt.value)}
-                        label={opt.label}
-                        badge={opt.recommended(hardware.tier) ? '권장' : undefined}
-                        intro={opt.intro}
-                        tech={opt.tech}
+                        key={val}
+                        selected={wikiBackend === val}
+                        onClick={() => setWikiBackend(val)}
+                        label={t(`onboarding.wiki.${val}.label`)}
+                        badge={(val === 'graphiti' ? (hardware.tier === 'S' || hardware.tier === 'A') : hardware.tier === 'B') ? t('onboarding.step3.optionRecommended') : undefined}
+                        intro={t(`onboarding.wiki.${val}.intro`)}
+                        tech={t(`onboarding.wiki.${val}.tech`)}
                       />
                     ))}
                   </div>
@@ -325,11 +401,11 @@ export default function OnboardingWizard({ onDone }: Props) {
                       {installPhase === 'idle' && (
                         <>
                           <div style={{ fontSize: 12, color: '#FBBF24', marginBottom: 10 }}>
-                            🐳 Docker Desktop이 감지되지 않았습니다. Graphiti 사용에 필요합니다.
+                            {t('onboarding.step3.dockerNotDetected')}
                           </div>
                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             <button style={btnDockerInstall} onClick={startDockerInstall}>
-                              🍺 Homebrew로 자동 설치
+                              {t('onboarding.step3.brewInstall')}
                             </button>
                             <button
                               style={btnRedetect}
@@ -337,7 +413,7 @@ export default function OnboardingWizard({ onDone }: Props) {
                                 'https://www.docker.com/products/docker-desktop/'
                               )}
                             >
-                              수동으로 다운로드 ↗
+                              {t('common.download')}
                             </button>
                           </div>
                         </>
@@ -354,7 +430,7 @@ export default function OnboardingWizard({ onDone }: Props) {
 
                       {installPhase === 'installing' && (
                         <div style={{ fontSize: 11, color: '#505050', marginTop: 8 }}>
-                          설치 중… 취소하려면 앱을 재시작하세요.
+                          {t('onboarding.step3.installing')}
                         </div>
                       )}
 
@@ -364,14 +440,14 @@ export default function OnboardingWizard({ onDone }: Props) {
                             style={btnDockerInstall}
                             onClick={() => (window as any).api.openDockerApp()}
                           >
-                            🐳 Docker Desktop 실행하기
+                            {t('onboarding.step3.openDocker')}
                           </button>
                           <button
                             style={{ ...btnRedetect, opacity: redetecting ? 0.5 : 1 }}
                             onClick={redetectHardware}
                             disabled={redetecting}
                           >
-                            {redetecting ? '감지 중…' : '재감지'}
+                            {redetecting ? t('common.detecting') : t('onboarding.step3.redetect')}
                           </button>
                         </div>
                       )}
@@ -383,7 +459,7 @@ export default function OnboardingWizard({ onDone }: Props) {
                           </div>
                           <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                             <button style={btnDockerInstall} onClick={startDockerInstall}>
-                              다시 시도
+                              {t('common.retry')}
                             </button>
                             <button
                               style={btnRedetect}
@@ -391,7 +467,7 @@ export default function OnboardingWizard({ onDone }: Props) {
                                 'https://www.docker.com/products/docker-desktop/'
                               )}
                             >
-                              수동으로 다운로드 ↗
+                              {t('common.download')}
                             </button>
                           </div>
                         </>
@@ -402,8 +478,8 @@ export default function OnboardingWizard({ onDone }: Props) {
               )}
             </div>
             <div style={footer}>
-              <button style={btnSecondary} onClick={() => setStep(2)}>← 이전</button>
-              <button style={btnPrimary} onClick={() => setStep(4)}>다음 →</button>
+              <button style={btnSecondary} onClick={() => setStep(2)}>{t('common.prev')}</button>
+              <button style={btnPrimary} onClick={() => setStep(4)}>{t('common.next')}</button>
             </div>
           </>
         )}
@@ -415,12 +491,12 @@ export default function OnboardingWizard({ onDone }: Props) {
               {completing && (
                 <>
                   <div style={{ fontSize: 32, marginBottom: 16 }}>⏳</div>
-                  <div style={{ fontSize: 14, color: '#A0A0A0' }}>설정 적용 중…</div>
+                  <div style={{ fontSize: 14, color: '#A0A0A0' }}>{t('onboarding.step4.applying')}</div>
                   <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', width: '100%' }}>
-                    {completionSteps.map(s => (
-                      <div key={s} style={{ fontSize: 12, color: '#505050', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {completionStepKeys.map(key => (
+                      <div key={key} style={{ fontSize: 12, color: '#505050', display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span style={{ color: '#505050' }}>◌</span>
-                        {s}
+                        {t(key)}
                       </div>
                     ))}
                   </div>
@@ -430,17 +506,17 @@ export default function OnboardingWizard({ onDone }: Props) {
               {!completing && done && (
                 <>
                   <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>설정 완료</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{t('onboarding.step4.done')}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', width: '100%', marginBottom: 24 }}>
-                    {completionSteps.map(s => (
-                      <div key={s} style={{ fontSize: 12, color: '#34D399', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {completionStepKeys.map(key => (
+                      <div key={key} style={{ fontSize: 12, color: '#34D399', display: 'flex', alignItems: 'center', gap: 8 }}>
                         <span>✓</span>
-                        {s}
+                        {t(key)}
                       </div>
                     ))}
                   </div>
                   <button style={{ ...btnPrimary, padding: '12px 32px', fontSize: 14 }} onClick={onDone}>
-                    시작하기 →
+                    {t('onboarding.step4.start')}
                   </button>
                 </>
               )}
@@ -448,18 +524,18 @@ export default function OnboardingWizard({ onDone }: Props) {
               {!completing && !done && completeError && (
                 <>
                   <div style={{ fontSize: 32, marginBottom: 12 }}>❌</div>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>설정 실패</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{t('onboarding.step4.failed')}</div>
                   <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 24, wordBreak: 'break-all' }}>
                     {completeError}
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button style={btnSecondary} onClick={() => setStep(3)}>← 이전</button>
+                    <button style={btnSecondary} onClick={() => setStep(3)}>{t('common.prev')}</button>
                     <button style={btnPrimary} onClick={() => {
                       setCompleteError('')
                       setDone(false)
                       setStep(4)
                     }}>
-                      다시 시도
+                      {t('common.retry')}
                     </button>
                   </div>
                 </>
@@ -506,7 +582,7 @@ function OptionCard({
         )}
       </div>
       <div style={{ fontSize: 12.5, color: '#A0A0A0', marginTop: 5, paddingLeft: 24, lineHeight: 1.45 }}>{intro}</div>
-      <div style={{ fontSize: 11, color: '#606060', marginTop: 2, paddingLeft: 24, lineHeight: 1.45 }}>{tech}</div>
+      {tech && <div style={{ fontSize: 11, color: '#606060', marginTop: 2, paddingLeft: 24, lineHeight: 1.45 }}>{tech}</div>}
     </div>
   )
 }
@@ -521,6 +597,7 @@ function EngineStatusRow({
   onLogin: () => void
   onRecheck: () => void
 }) {
+  const { t } = useTranslation()
   const isReady = status?.installed && status?.authed
 
   return (
@@ -535,12 +612,12 @@ function EngineStatusRow({
         <span style={{ fontWeight: 600, fontSize: 13 }}>{name}</span>
         <span style={{ fontSize: 11, color: '#505050', marginLeft: 'auto' }}>
           {status === null
-            ? '확인 중…'
+            ? t('onboarding.step2.statusChecking')
             : isReady
-              ? '설치됨 · 인증됨'
+              ? t('onboarding.step2.statusReady')
               : status.installed
-                ? '설치됨 · 미인증'
-                : '미설치'}
+                ? t('onboarding.step2.statusInstalledNoAuth')
+                : t('onboarding.step2.statusNotInstalled')}
         </span>
       </div>
 
@@ -553,7 +630,7 @@ function EngineStatusRow({
             style={btnEngineAction}
             onClick={() => (window as any).api.openExternal(installUrl)}
           >
-            설치 가이드 ↗
+            {t('onboarding.step2.installGuide')}
           </button>
         </div>
       )}
@@ -561,10 +638,10 @@ function EngineStatusRow({
       {status && status.installed && !status.authed && (
         <div style={{ paddingLeft: 24, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button style={btnEngineAction} onClick={onLogin}>
-            터미널에서 로그인
+            {t('onboarding.step2.loginTerminal')}
           </button>
           <button style={{ ...btnRedetect, fontSize: 11, padding: '4px 10px' }} onClick={onRecheck}>
-            재확인
+            {t('onboarding.step2.recheck')}
           </button>
         </div>
       )}
@@ -572,7 +649,7 @@ function EngineStatusRow({
       {isReady && (
         <div style={{ paddingLeft: 24 }}>
           <button style={{ ...btnRedetect, fontSize: 11, padding: '4px 10px' }} onClick={onRecheck}>
-            재확인
+            {t('onboarding.step2.recheck')}
           </button>
         </div>
       )}
@@ -605,55 +682,6 @@ function logLineColor(line: string): string {
   if (line.startsWith('🔍') || line.startsWith('📦') || line.startsWith('🐳')) return '#FBBF24'
   return '#505050'
 }
-
-// ── Data ───────────────────────────────────────────────────────────────────────
-
-const engineOptions: { value: Engine; label: string; badge?: string; intro: string; tech: string }[] = [
-  {
-    value: 'claude',
-    label: 'Claude Code',
-    badge: '권장',
-    intro: 'Anthropic Claude로 PO 운영 — 가장 안정적',
-    tech: 'claude-code CLI · hooks/skills 완전 지원',
-  },
-  {
-    value: 'codex',
-    label: 'Codex',
-    intro: 'OpenAI 기반으로 PO 운영 (실험적)',
-    tech: 'codex CLI · doctrine만 적용 (hooks 미작동)',
-  },
-  {
-    value: 'both',
-    label: '둘 다',
-    intro: 'Claude를 기본으로, Codex를 보조로',
-    tech: 'primary=claude-code, secondary=codex',
-  },
-]
-
-const wikiOptions: { value: WikiBackend; label: string; intro: string; tech: string; recommended: (tier: Tier) => boolean }[] = [
-  {
-    value: 'graphiti',
-    label: 'Graphiti',
-    intro: '그래프 DB 기반 장기기억',
-    tech: 'Docker + 로컬 LLM 필요 (Tier S/A 환경 권장)',
-    recommended: (tier) => tier === 'S' || tier === 'A',
-  },
-  {
-    value: 'filesystem',
-    label: 'Filesystem',
-    intro: 'Claude가 마크다운 파일로 기억 관리',
-    tech: '라이브러리 의존성 없음 · Claude API 토큰 소모',
-    recommended: (tier) => tier === 'B',
-  },
-]
-
-const completionSteps = [
-  '환경 설정 파일 생성 (~/.productune/productune.env)',
-  'PO 에이전트 등록 (agents/ → ~/.claude/agents/ 심링크)',
-  'PO 지침 적용 (po-instructions.md)',
-  'PO 메모리 초기화 (po-memory.md)',
-  'Playwright MCP 캐시 준비 (QA smoke gate, npx @playwright/mcp)',
-]
 
 // ── Styles ─────────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { PoState, Ticket, Stage, Status } from '../../lib/types'
 
 interface Props {
@@ -10,6 +11,7 @@ const STAGE_ORDER: Stage[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deplo
 const VERSION_ALL = '__all__'
 
 export default function TicketDashboardView({ poState }: Props) {
+  const { t } = useTranslation()
   const [versionFilter, setVersionFilter] = useState<string>(VERSION_ALL)
   const [stageFilter, setStageFilter] = useState<Stage | 'all'>('all')
 
@@ -17,9 +19,9 @@ export default function TicketDashboardView({ poState }: Props) {
   const versionIds = useMemo(() => uniqueVersions(allTickets), [allTickets])
 
   const filtered = useMemo(() => {
-    return allTickets.filter((t) => {
-      if (versionFilter !== VERSION_ALL && t.version !== versionFilter) return false
-      if (stageFilter !== 'all' && t.stage !== stageFilter) return false
+    return allTickets.filter((tk) => {
+      if (versionFilter !== VERSION_ALL && tk.version !== versionFilter) return false
+      if (stageFilter !== 'all' && tk.stage !== stageFilter) return false
       return true
     })
   }, [allTickets, versionFilter, stageFilter])
@@ -29,26 +31,32 @@ export default function TicketDashboardView({ poState }: Props) {
   return (
     <div style={wrap}>
       <header style={header}>
-        <h2 style={title}>티켓</h2>
+        <h2 style={title}>{t('workspace.tickets.title')}</h2>
         <div style={filters}>
           <FilterSelect
             label="Version"
             value={versionFilter}
-            options={[{ value: VERSION_ALL, label: '전체' }, ...versionIds.map((v) => ({ value: v, label: v }))]}
+            options={[
+              { value: VERSION_ALL, label: t('workspace.tickets.filterAll') },
+              ...versionIds.map((v) => ({ value: v, label: v })),
+            ]}
             onChange={setVersionFilter}
           />
           <FilterSelect
             label="Stage"
             value={stageFilter}
-            options={[{ value: 'all', label: '전체' }, ...STAGE_ORDER.map((s) => ({ value: s, label: s }))]}
+            options={[
+              { value: 'all', label: t('workspace.tickets.filterAll') },
+              ...STAGE_ORDER.map((s) => ({ value: s, label: s })),
+            ]}
             onChange={(v) => setStageFilter(v as Stage | 'all')}
           />
-          <span style={count}>티켓 {filtered.length}개</span>
+          <span style={count}>{t('workspace.tickets.filterCount', { count: filtered.length })}</span>
         </div>
       </header>
 
       {filtered.length === 0 ? (
-        <div style={empty}>필터에 맞는 티켓 없음.</div>
+        <div style={empty}>{t('workspace.tickets.noTickets')}</div>
       ) : (
         <div style={kanban}>
           {STATUS_ORDER.map((s) => (
@@ -138,7 +146,17 @@ function Card({ ticket }: { ticket: Ticket }) {
   )
 }
 
-function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void }) {
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+}) {
   return (
     <label style={filterLabel}>
       <span style={filterLabelText}>{label}</span>

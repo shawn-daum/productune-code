@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { PendingGate } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
 
@@ -17,26 +18,27 @@ interface Props {
  * clears `pending_gate` after acting on the user reply.
  */
 export default function PhaseTransitionGate({ gate, onApprove, onModify }: Props) {
+  const { t } = useTranslation()
   const fromName = PHASE_NAMES[gate.from_phase] ?? `Phase ${gate.from_phase}`
   const toName = gate.to_phase ? PHASE_NAMES[gate.to_phase] : null
 
   return (
     <div style={banner}>
       <div style={left}>
-        <span style={badge}>Phase Gate</span>
+        <span style={badge}>{t('workspace.phaseGate.badge')}</span>
         <div style={textBlock}>
           <div style={transitionLine}>
             <span style={phaseFrom}>{fromName}</span>
             <span style={arrow}>→</span>
-            <span style={phaseTo}>{toName ?? 'Version 종료'}</span>
+            <span style={phaseTo}>{toName ?? t('workspace.phaseGate.versionEnd')}</span>
           </div>
           <div style={summaryLine}>{gate.summary}</div>
           <div style={promptLine}>{gate.prompt}</div>
         </div>
       </div>
       <div style={actions}>
-        <button style={modifyBtn} onClick={onModify}>수정…</button>
-        <button style={approveBtn} onClick={onApprove}>승인 →</button>
+        <button style={modifyBtn} onClick={onModify}>{t('workspace.phaseGate.modify')}</button>
+        <button style={approveBtn} onClick={onApprove}>{t('workspace.phaseGate.approve')}</button>
       </div>
     </div>
   )
