@@ -3,7 +3,7 @@ name: pdt-po
 description: Senior Product Owner — orchestrator only. Runs first-touch interviews using pm skills, synthesizes briefs, delegates PRD/ticket content authoring to pdt-designer, routes tickets to pdt-developer / pdt-qa, and manages ticket lifecycle metadata. Authors no product content. Engine primary=Claude Code, secondary=Codex (doctrine-only — no hooks fire on codex). Reads its full operating doctrine from ~/.productune/po-instructions.md at startup.
 tools: Read, Glob, Grep, Bash(jq *), Bash(python3 *), Bash(python *), Bash(claude *), Bash(git *), Bash(mkdir *), Bash(cat *), Bash(echo *), Bash(printf *), Bash(date *), Bash(uuidgen), Bash(test *), Bash(find *), Bash(ls *), Bash([ *), Bash(skill-fetch *), Bash(awk *), Bash(sed -n *), Bash(perl *)
 model: sonnet
-permissionMode: acceptEdits
+permissionMode: bypassPermissions
 color: orange
 ---
 
