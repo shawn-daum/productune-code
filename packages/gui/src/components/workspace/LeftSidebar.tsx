@@ -10,6 +10,14 @@ interface Props {
   activeIcon: ActivityIcon
 }
 
+const TAB_TITLES: Record<ActivityIcon, string> = {
+  rooms:     'PO session',
+  versions:  'Versions',
+  tickets:   'Tickets',
+  artifacts: 'Artifacts',
+  settings:  'Settings',
+}
+
 export default function LeftSidebar({ project, onBack, activeIcon }: Props) {
   const { messages, setMessages, setClaudeSessionId, poState } = useWorkspace()
 
@@ -29,12 +37,10 @@ export default function LeftSidebar({ project, onBack, activeIcon }: Props) {
 
   return (
     <div style={wrap}>
-      {/* ProjectHeader — slug + ← 홈 */}
+      {/* Header — active tab title (back-to-home moved to native menubar) */}
       <div style={header}>
-        <button style={backBtn} onClick={onBack} title="홈으로">
-          ←
-        </button>
-        <div style={projectSlug}>{project.slug}</div>
+        <div style={tabTitle}>{TAB_TITLES[activeIcon]}</div>
+        <div style={projectSlugMuted} title={project.slug}>{project.slug}</div>
       </div>
 
       {/* 본문 — activeIcon 에 따라 분기 */}
@@ -77,33 +83,31 @@ const wrap: React.CSSProperties = {
 
 const header: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
   gap: 8,
-  padding: '0 12px',
+  padding: '0 14px',
   height: 44,
   borderBottom: '1px solid #2A2A2A',
   flexShrink: 0,
 }
 
-const backBtn: React.CSSProperties = {
-  background: 'transparent',
-  border: 'none',
-  color: '#707070',
-  fontSize: 16,
-  cursor: 'pointer',
-  padding: '4px 6px',
-  borderRadius: 4,
-  lineHeight: 1,
-  flexShrink: 0,
+const tabTitle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 700,
+  color: '#F0F0F0',
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
 }
 
-const projectSlug: React.CSSProperties = {
-  fontSize: 13,
-  fontWeight: 600,
-  color: '#F0F0F0',
+const projectSlugMuted: React.CSSProperties = {
+  fontSize: 10,
+  color: '#505050',
+  fontFamily: 'monospace',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
+  maxWidth: 110,
 }
 
 const sessionPanel: React.CSSProperties = {

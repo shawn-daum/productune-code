@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, type MenuItemConstructorOptions } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -532,7 +532,89 @@ ipcMain.handle('design:readArtifact', (_event, projectRoot: string, relPath: str
   return fs.readFileSync(resolved, 'utf-8')
 })
 
+function buildAppMenu(): Menu {
+  const isMac = process.platform === 'darwin'
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' as const },
+        { type: 'separator' as const },
+        { role: 'services' as const },
+        { type: 'separator' as const },
+        { role: 'hide' as const },
+        { role: 'hideOthers' as const },
+        { role: 'unhide' as const },
+        { type: 'separator' as const },
+        { role: 'quit' as const },
+      ],
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Project…',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => sendToFocused('menu:new-project'),
+        },
+        {
+          label: 'New Window',
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click: () => createWindow(),
+        },
+        { type: 'separator' },
+        {
+          label: 'Open Project…',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => sendToFocused('menu:open-project'),
+        },
+        {
+          label: 'Open Recent',
+          submenu: [
+            // Wired in a future slice — emits 'menu:open-recent' with a slug.
+            { label: '(empty)', enabled: false },
+          ],
+        },
+        { type: 'separator' },
+        isMac ? { role: 'close' } : { role: 'quit' },
+      ],
+    },
+    { role: 'editMenu' },
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'productune docs',
+          click: () => shell.openExternal('https://github.com/shawn-kim-axz/productune'),
+        },
+      ],
+    },
+  ]
+  return Menu.buildFromTemplate(template)
+}
+
+function sendToFocused(channel: string): void {
+  const win = BrowserWindow.getFocusedWindow()
+  if (win) win.webContents.send(channel)
+}
+
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(buildAppMenu())
   createWindow()
 
   app.on('activate', () => {

@@ -108,4 +108,16 @@ contextBridge.exposeInMainWorld('api', {
 
   chatClearSession: (projectDir: string): Promise<void> =>
     ipcRenderer.invoke('chat:clearSession', projectDir),
+
+  // ── Menubar events (renderer subscribes; main process emits) ─────────────────
+  onMenuNewProject: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:new-project', listener)
+    return () => ipcRenderer.removeListener('menu:new-project', listener)
+  },
+  onMenuOpenProject: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:open-project', listener)
+    return () => ipcRenderer.removeListener('menu:open-project', listener)
+  },
 })

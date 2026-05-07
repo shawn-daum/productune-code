@@ -34,6 +34,14 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     if (activeIcon !== 'versions') setSelectedVersionId(null)
   }, [activeIcon, setSelectedVersionId])
 
+  // Native menubar → renderer: Open / New Project send the user back to HomeView.
+  useEffect(() => {
+    const api = (window as any).api
+    const offNew = api.onMenuNewProject?.(() => onBack())
+    const offOpen = api.onMenuOpenProject?.(() => onBack())
+    return () => { offNew?.(); offOpen?.() }
+  }, [onBack])
+
   return (
     <div style={grid}>
       {/* 좌 48px ActivityBar */}
