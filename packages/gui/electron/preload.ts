@@ -172,6 +172,13 @@ contextBridge.exposeInMainWorld('api', {
   getOsLocale: (): Promise<string> =>
     ipcRenderer.invoke('settings:getOsLocale'),
 
+  // ── Git workflow rules ───────────────────────────────────────────────────────
+  loadRules: (projectDir: string): Promise<import('@productune/core').GitRules> =>
+    ipcRenderer.invoke('settings:loadRules', projectDir),
+
+  saveRules: (projectDir: string, rules: import('@productune/core').GitRules): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:saveRules', projectDir, rules),
+
   // ── Menubar events (renderer subscribes; main process emits) ─────────────────
   onMenuNewProject: (cb: () => void) => {
     const listener = () => cb()

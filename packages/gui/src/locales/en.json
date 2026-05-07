@@ -217,6 +217,22 @@
     }
   },
   "settings": {
+    "tabWorkflowRules": "작업 흐름 규칙",
+    "tabLanguage": "Language / 언어",
+    "workflowRules": {
+      "sectionTitle": "Workflow Rules",
+      "useDevBranch": "Use intermediate verification environment",
+      "useStagingEnv": "Use external review environment (post-launch)",
+      "featureBranchPrefix": "Feature work prefix",
+      "fixBranchPrefix": "Fix work prefix",
+      "protectedEnvLabel": "Protected environments",
+      "phase5Lock": "Supported in Phase 5",
+      "autosaveTriggersLabel": "Auto-save triggers",
+      "saveSuccess": "Applies from the next task",
+      "saveError": "Failed to save settings.",
+      "retry": "Retry",
+      "prefixPlaceholder": "e.g. feature"
+    },
     "language": {
       "title": "UI 언어 / Interface language",
       "tabLabel": "Language / 언어",

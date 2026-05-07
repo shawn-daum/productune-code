@@ -4,8 +4,8 @@ import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists } from '@productune/core'
-import type { UiLanguage } from '@productune/core'
+import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules } from '@productune/core'
+import type { UiLanguage, GitRules } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
 import { runPoTurn, emitToWebContents, type Persona } from './po-runner'
@@ -634,6 +634,21 @@ ipcMain.handle('settings:hasLanguagePref', (): boolean => {
 
 ipcMain.handle('settings:getOsLocale', (): string => {
   return app.getLocale()
+})
+
+// ── Git workflow rules IPC ─────────────────────────────────────────────────────
+
+ipcMain.handle('settings:loadRules', (_event, projectDir: string): GitRules => {
+  return loadRules(projectDir)
+})
+
+ipcMain.handle('settings:saveRules', (_event, projectDir: string, rules: GitRules): { ok: boolean; error?: string } => {
+  try {
+    saveRules(projectDir, rules)
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'unknown error' }
+  }
 })
 
 function buildAppMenu(): Menu {

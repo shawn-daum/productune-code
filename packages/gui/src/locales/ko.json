@@ -217,6 +217,22 @@
     }
   },
   "settings": {
+    "tabWorkflowRules": "작업 흐름 규칙",
+    "tabLanguage": "Language / 언어",
+    "workflowRules": {
+      "sectionTitle": "작업 흐름 규칙",
+      "useDevBranch": "검증용 중간 환경 사용",
+      "useStagingEnv": "외부 점검 환경 사용 (출시 후)",
+      "featureBranchPrefix": "기능 작업 prefix",
+      "fixBranchPrefix": "수정 작업 prefix",
+      "protectedEnvLabel": "보호된 환경 목록",
+      "phase5Lock": "Phase 5 에서 지원 예정",
+      "autosaveTriggersLabel": "자동저장 트리거",
+      "saveSuccess": "다음 작업부터 적용됩니다",
+      "saveError": "설정 저장에 실패했습니다.",
+      "retry": "다시 시도",
+      "prefixPlaceholder": "예: feature"
+    },
     "language": {
       "title": "UI 언어 / Interface language",
       "tabLabel": "Language / 언어",

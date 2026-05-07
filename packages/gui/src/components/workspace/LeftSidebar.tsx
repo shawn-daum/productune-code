@@ -4,7 +4,7 @@ import type { ActivityIcon } from './ActivityBar'
 import type { Project, Session } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import VersionsPanel from './VersionsPanel'
-import LanguageSettings from './LanguageSettings'
+import SettingsView from './SettingsView'
 import StageStrip from './StageStrip'
 
 interface Props {
@@ -86,7 +86,7 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
         </div>
       )}
       {activeIcon === 'settings' && (
-        <LanguageSettings />
+        <SettingsView projectDir={project.projectDir} />
       )}
     </div>
   )

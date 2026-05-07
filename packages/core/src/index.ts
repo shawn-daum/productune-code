@@ -12,3 +12,11 @@ export {
   settingsFileExists,
 } from './settings/ui-settings'
 export type { UiLanguage, UiSettings } from './settings/ui-settings'
+
+export {
+  loadRules,
+  saveRules,
+  getDefault,
+  getProtectedBranches,
+} from './git-workflow/rules'
+export type { GitRules } from './git-workflow/rules'
