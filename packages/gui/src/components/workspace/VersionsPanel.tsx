@@ -15,7 +15,10 @@ export default function VersionsPanel({ poState }: Props) {
   const versions = poState?.versions ?? []
 
   const active = versions.find((v) => v.id === currentVersionId) ?? null
-  const past = versions.filter((v) => v.id !== currentVersionId)
+  const past = versions
+    .filter((v) => v.id !== currentVersionId)
+    .slice()
+    .sort((a, b) => (b.ended_at ?? '').localeCompare(a.ended_at ?? ''))
 
   const ticketsByVersion = new Map<string, number>()
   for (const t of poState?.past_tickets ?? []) {
@@ -28,7 +31,7 @@ export default function VersionsPanel({ poState }: Props) {
 
   return (
     <div style={panel}>
-      <div style={sectionLabel}>Active</div>
+      <div style={sectionLabel}>현재</div>
       {active ? (
         <ActiveVersionCard
           version={active}
@@ -38,12 +41,12 @@ export default function VersionsPanel({ poState }: Props) {
           onClick={() => onClick(active.id)}
         />
       ) : (
-        <div style={emptyHint}>No active Version. Start a new one via PO chat.</div>
+        <div style={emptyHint}>진행 중인 Version 없음. PO 채팅에서 새 Version 시작.</div>
       )}
 
-      <div style={{ ...sectionLabel, marginTop: 18 }}>Past Versions ({past.length})</div>
+      <div style={{ ...sectionLabel, marginTop: 18 }}>이전 Version ({past.length})</div>
       {past.length === 0 ? (
-        <div style={emptyHint}>None yet.</div>
+        <div style={emptyHint}>없음.</div>
       ) : (
         past.map((v) => (
           <PastVersionCard
@@ -66,7 +69,7 @@ function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }
     <div style={selected ? cardActiveSelected : cardActive} onClick={onClick}>
       <div style={cardId}>{version.id}</div>
       <div style={cardLine}>Phase: <span style={cardLineValue}>{phaseLabel}{typeof phaseNum === 'number' ? ` (${phaseNum}/4)` : ''}</span></div>
-      <div style={cardLine}>Tickets: <span style={cardLineValue}>{ticketsDone} done</span></div>
+      <div style={cardLine}>티켓: <span style={cardLineValue}>{ticketsDone} 완료</span></div>
       {version.outcome?.north_star && (
         <div style={cardLineMuted}>★ {version.outcome.north_star}</div>
       )}
@@ -82,14 +85,14 @@ function PastVersionCard({ version, ticketsDone, selected, onClick }: PastCardPr
   return (
     <div style={selected ? cardPastSelected : cardPast} onClick={onClick}>
       <div style={cardIdMuted}>{version.id}</div>
-      <div style={cardLineMuted}>closed {closed}</div>
-      <div style={cardLineMuted}>{ticketsDone} tickets</div>
+      <div style={cardLineMuted}>{closed} 종료</div>
+      <div style={cardLineMuted}>티켓 {ticketsDone}</div>
       {version.outcome?.north_star && (
         <div style={cardLineMuted}>★ {version.outcome.north_star}</div>
       )}
       {observed && <div style={cardLineMuted}>→ {observed}</div>}
       {retro && (
-        <div style={cardLink} title={retro}>retrospective ↗</div>
+        <div style={cardLink} title={retro}>회고 ↗</div>
       )}
     </div>
   )

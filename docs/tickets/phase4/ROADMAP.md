@@ -21,6 +21,7 @@
 | 프로젝트 관리 | `~/productune/projects/<slug>/` 자동 생성 (기본 진입점) |
 | GUI 모드 | **단일 모드** — planner/developer 분기 없음 (2026-05-04 결정). 동일 GUI 를 모든 사용자가 사용 |
 | **GUI PO 세션** | **단일 PO 세션** — 프로젝트당 하나. 멀티 채팅방 X (2026-05-06 결정). CLI/non-GUI 는 multi-session 가능성 보존 |
+| **UI 언어** | **English default + 한글 opt-in** (2026-05-07 결정). 사용자 wizard Step 0 에서 명시 선택, Settings 에서 사후 변경. 페르소나 응답 언어는 별도 doctrine. T-P4-056 |
 
 ---
 
@@ -182,9 +183,11 @@ risk_flags: none
 | **T-P4-045** | Explorer 탭 — 파일 트리 + 검색 (regex/case/word) + ⌘⇧E 토글 | pdt-developer | Activity Bar Explorer icon 진입. fs.readdir 재귀 IPC. 결과 행 클릭 → markdown 탭 |
 | **T-P4-046** | **Main split-pane + tab dispatcher (10 type) + drag-drop** | pdt-developer | **VS Code + cmux 패러다임. 재귀 hbox/vbox 트리 + 10 tab type dispatcher (markdown / design-gate / ticket-review / preview / qa-result / persona-def / env-view / skill-matrix / terminal / browser). drag-tab cross-pane move + pane resize 4px + 키바인딩 ⌘\\ / ⌘W. L5, Round 4 가장 복잡 — 첫 번째 구현 대상 권고.** |
 | **T-P4-047** | Quick Open palette (⌘P) — 파일 / tab / 명령 fuzzy search | pdt-developer | command palette 1차 구현. T-P4-046 dispatcher 와 통합 |
-| **T-P4-048** | Settings 탭 — Environment / Models / MCP / Hooks 통합 | pdt-developer | T-P4-024 stub 채우기. mockup §4.1 Settings spec 준수 |
+| **T-P4-048** | Settings 탭 — Environment / Models / MCP / Hooks 통합 | pdt-developer | T-P4-024 stub 채우기. mockup §4.1 Settings spec 준수. T-P4-056 land 시 sub-tab list 에 Language 항목 동기 |
+| **T-P4-049** | Persona presence bar — Right Panel PO Chat 세션 헤더 하단 4-페르소나 상태 표시 (24px strip) | pdt-developer | `T-P4-R4-workspace-shell` bundle. T-P4-041 의 한 줄 add-on. 4 칩 (PO/Designer/Dev/QA) × 3 상태 (idle/working/done). content 노출 X — 상태 + artifact 이름만. |
+| **T-P4-056** | UI 언어 토글 (English / 한글) — onboarding Step 0 추가 + GUI 전반 i18n 도입 | pdt-developer + pdt-qa(light) | `react-i18next`. 카탈로그 `packages/gui/src/locales/{en,ko}.json`. 사용자 선택 = `~/.productune/settings.json` user-global. 고유어 (PO/Designer/Phase/stage·status enum/schema field/product name) 추출 금지. 9 컴포넌트 (workspace/* 8 + OnboardingWizard) 한글 추출. Settings 탭 Language sub-tab 추가 — T-P4-048 sub-tab list 동기 필요. dep: T-P4-015, T-P4-024. |
 
-**Round 4 합격 기준**: 사용자가 Project 탭 stage strip / PO Chat ctx chip 으로 현재 위치를 즉답 가능 + 단일 PO 세션 메시지 유지 확인 + Main split-pane / Quick Open / Team 탭 skill trace 가 mockup 과 정합. **T-P4-046 (Main split-pane) 이 Round 4 의 골격** — 다른 ticket 의 탭 open 은 모두 이 dispatcher API 를 거침.
+**Round 4 합격 기준**: 사용자가 Project 탭 stage strip / PO Chat ctx chip 으로 현재 위치를 즉답 가능 + 단일 PO 세션 메시지 유지 확인 + Main split-pane / Quick Open / Team 탭 skill trace 가 mockup 과 정합 + **English / 한글 토글이 wizard Step 0 + Settings 양쪽에서 동작 + 즉시 반영 (앱 재시작 X) + 고유어 (Phase / stage·status enum / 페르소나 ID) 가 두 언어 모두 영문 그대로 표시**. **T-P4-046 (Main split-pane) 이 Round 4 의 골격** — 다른 ticket 의 탭 open 은 모두 이 dispatcher API 를 거침.
 
 ---
 
@@ -287,7 +290,7 @@ Round 4 ──→ Round 7 (메모리/wiki 편집기)
 Round 2 ∪ Round 3 ∪ Round 5 ∪ Round 6 ∪ Round 7 ∪ Round 8 ──→ Round 9 (dogfood QA)
 ```
 
-병렬 가능: Round 1 / Round 3 / Round 4 / Round 6 / Round 7 — 의존 끊긴 라운드는 인력 여유 시 병렬. Round 2 내부에서는 T-P4-024 가 T-P4-020 직후부터 parallel.
+병렬 가능: Round 1 / Round 3 / Round 4 / Round 6 / Round 7 — 의존 끊긴 라운드는 인력 여유 시 병렬. Round 2 내부에서는 T-P4-024 가 T-P4-020 직후부터 parallel. T-P4-056 (i18n) 은 Round 4 안에서 다른 ticket 들과 병렬 — onboarding wizard (T-P4-015 land) + Settings (T-P4-024 land) 만 의존.
 
 ---
 
@@ -314,6 +317,7 @@ PRD-level OQ 6 개는 모두 해소됨 — 본 로드맵 실행 중 발생하는
 - T-P4-035 의 코드 스캔 정밀도: AST-only vs LLM-augmented — Round 3 dogfood 후 결정
 - T-P4-041 의 메시지 streaming 구현: SSE vs WebSocket vs Electron IPC bridge — Round 4 plan 단계 결정
 - T-P4-052 의 Excalidraw 저장 포맷: `.excalidraw.json` (네이티브) vs SVG export 병행 — Round 5 plan 단계 결정
+- ~~T-P4-056 의 OS locale 자동 감지 도입 시점~~ → ✅ **본 ticket 범위 안 = default highlight only** (`navigator.language` / `app.getLocale()` 가 ko-* 면 한글 옵션 pre-select). 자동 skip X — 사용자 Step 0 명시 선택 유지. (2026-05-07 close, PO directive)
 
 ---
 
@@ -325,3 +329,5 @@ PRD-level OQ 6 개는 모두 해소됨 — 본 로드맵 실행 중 발생하는
 - **2026-05-04 (Round 2 재정의 + git workflow 룰)** — Round 2 (Git 추상화 레이어) ticket 4→5 재정의. T-P4-020 = ticket-단위 worktree 자동 생성 + base 차단 (round-N → ticket-id 전환). T-P4-021 = ticket worktree 안 자동 commit. T-P4-022 = [배포 준비] / [배포하기] 2단계 게이트 (사용자 명시 클릭만). T-P4-023 = ticket 단위 그룹 카드 + 페르소나 trace inline. **T-P4-024 신설** = Settings — 작업 흐름 규칙 패널 + `git-rules.json` r/w (`useDevBranch`/`useStagingEnv`/branch prefix 토글). 의존 그래프에 T-P4-024 parallel 추가. Round 2 합격 기준 갱신 — worktree/dev/merge/staging 어휘 무노출 + base branch 직접 push 차단 + Settings 토글 즉시 반영. Open question close 1개 (T-P4-022 squash vs merge → squash). PRD §10 Git 추상화 + L151-156 env 매핑 + Phase 4 AC 13→14 동기 반영. 신규 doctrine `~/.productune/sections/git-workflow.md` 추가.
 - **2026-05-06 (단일 PO 세션 결정)** — GUI multi-chatroom 모델 → single PO session per project. 컨텍스트 표에 "GUI PO 세션 = 단일" 항목 추가. Round 4 목표 갱신 ("멀티 채팅방 운영" → "단일 PO 세션 운영"). T-P4-041 제목/설명 갱신 (Right Panel PO Chat 단일 세션 + FAB 복원). T-P4-042 deprecated 표시 (GUI 에서 폐기 — T-P4-041 흡수, CLI/non-GUI 재발행 가능). Round 4 합격 기준 갱신 ("멀티 채팅방 2개 동시 운영" 제거 → "단일 PO 세션 메시지 유지 확인 + skill trace inline"). CLI/non-GUI multi-session 가능성 보존 명시.
 - **2026-05-06 (mockup-as-source 정렬)** — ROADMAP Round 4 를 `mockup.html` / `showcase.html` 기준으로 재정렬. T-P4-040 = Project stage strip + PO ctx chip, T-P4-041 = Right PO Chat only, T-P4-043 = Project ticket sub-items + Main ticket-review, T-P4-044 = Team 탭. 상단 standalone breadcrumb / 독립 ticket board / 우측 Team panel 문구 제거.
+- **2026-05-07 (T-P4-049 / T-P4-056 추가)** — Round 4 표에 두 ticket 추가. T-P4-049 = Persona presence bar (Right Panel PO Chat 헤더 하단 24px strip, 4 페르소나 × 3 상태 칩). T-P4-056 = UI 언어 토글 + i18n 도입 (English default + 한글 opt-in, react-i18next, onboarding Step 0 신규, Settings Language sub-tab, `~/.productune/settings.json` user-global). 컨텍스트 표에 "UI 언어" 항목 추가. Round 4 합격 기준 갱신 (i18n 토글 + 즉시 반영 + 고유어 영문 보존). T-P4-048 비고에 sub-tab 동기 명시. 본 ticket 은 처음 049 로 발행 요청되었으나 동일 일자 Persona presence bar 와의 번호 충돌로 056 으로 재배정.
+- **2026-05-07 (T-P4-056 OS locale 정책 + redirect 정리)** — PO directive: OS locale 자동 감지를 본 ticket 범위 안에 포함하되 **default highlight 용도로만** (자동 skip X — 사용자 Step 0 명시 선택 유지). design plan §3 / §6 / §7 + ticket Step 0 / Out of scope 갱신. Open question close. `docs/design/T-P4-049-i18n-onboarding-toggle.md` redirect placeholder 삭제 (049 는 Persona presence bar 가 점유 — 빈 redirect 가 혼동 유발).

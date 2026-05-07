@@ -28,15 +28,15 @@ export default function PhaseTransitionGate({ gate, onApprove, onModify }: Props
           <div style={transitionLine}>
             <span style={phaseFrom}>{fromName}</span>
             <span style={arrow}>→</span>
-            <span style={phaseTo}>{toName ?? 'Version close'}</span>
+            <span style={phaseTo}>{toName ?? 'Version 종료'}</span>
           </div>
           <div style={summaryLine}>{gate.summary}</div>
           <div style={promptLine}>{gate.prompt}</div>
         </div>
       </div>
       <div style={actions}>
-        <button style={modifyBtn} onClick={onModify}>Modify…</button>
-        <button style={approveBtn} onClick={onApprove}>Approve →</button>
+        <button style={modifyBtn} onClick={onModify}>수정…</button>
+        <button style={approveBtn} onClick={onApprove}>승인 →</button>
       </div>
     </div>
   )

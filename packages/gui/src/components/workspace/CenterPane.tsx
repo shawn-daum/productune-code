@@ -23,7 +23,7 @@ export default function CenterPane({ activeIcon }: Props) {
     body = (
       <div style={placeholderWrap}>
         <p style={placeholder}>
-          Click a Version in the sidebar to see its detail · or open the Tickets dashboard for a cross-Version board.
+          사이드바의 Version 클릭 → 상세 보기 · 또는 티켓 탭에서 전체 보드 확인.
         </p>
       </div>
     )

@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
-import { MessageSquare, FolderOpen, Layers, KanbanSquare, Settings } from 'lucide-react'
+import { FolderOpen, Layers, KanbanSquare, Settings } from 'lucide-react'
 
-export type ActivityIcon = 'rooms' | 'versions' | 'tickets' | 'artifacts' | 'settings'
+export type ActivityIcon = 'versions' | 'tickets' | 'artifacts' | 'settings'
 
 interface Props {
   active: ActivityIcon
@@ -15,11 +15,10 @@ interface IconDef {
 }
 
 const ICONS: IconDef[] = [
-  { id: 'rooms',     Icon: MessageSquare, title: 'PO session' },
+  { id: 'tickets',   Icon: KanbanSquare,  title: '티켓' },
+  { id: 'artifacts', Icon: FolderOpen,    title: '산출물' },
   { id: 'versions',  Icon: Layers,        title: 'Versions' },
-  { id: 'tickets',   Icon: KanbanSquare,  title: 'Tickets' },
-  { id: 'artifacts', Icon: FolderOpen,    title: 'Artifacts' },
-  { id: 'settings',  Icon: Settings,      title: 'Settings' },
+  { id: 'settings',  Icon: Settings,      title: '설정' },
 ]
 
 export default function ActivityBar({ active, onSelect }: Props) {

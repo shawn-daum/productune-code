@@ -29,26 +29,26 @@ export default function TicketDashboardView({ poState }: Props) {
   return (
     <div style={wrap}>
       <header style={header}>
-        <h2 style={title}>Tickets</h2>
+        <h2 style={title}>티켓</h2>
         <div style={filters}>
           <FilterSelect
             label="Version"
             value={versionFilter}
-            options={[{ value: VERSION_ALL, label: 'all' }, ...versionIds.map((v) => ({ value: v, label: v }))]}
+            options={[{ value: VERSION_ALL, label: '전체' }, ...versionIds.map((v) => ({ value: v, label: v }))]}
             onChange={setVersionFilter}
           />
           <FilterSelect
             label="Stage"
             value={stageFilter}
-            options={[{ value: 'all', label: 'all' }, ...STAGE_ORDER.map((s) => ({ value: s, label: s }))]}
+            options={[{ value: 'all', label: '전체' }, ...STAGE_ORDER.map((s) => ({ value: s, label: s }))]}
             onChange={(v) => setStageFilter(v as Stage | 'all')}
           />
-          <span style={count}>{filtered.length} ticket{filtered.length === 1 ? '' : 's'}</span>
+          <span style={count}>티켓 {filtered.length}개</span>
         </div>
       </header>
 
       {filtered.length === 0 ? (
-        <div style={empty}>No tickets match this filter.</div>
+        <div style={empty}>필터에 맞는 티켓 없음.</div>
       ) : (
         <div style={kanban}>
           {STATUS_ORDER.map((s) => (

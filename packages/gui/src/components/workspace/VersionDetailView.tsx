@@ -12,7 +12,7 @@ const STAGE_ORDER: Stage[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deplo
 export default function VersionDetailView({ versionId, poState }: Props) {
   const version = (poState?.versions ?? []).find((v) => v.id === versionId)
   if (!version) {
-    return <div style={empty}>Version `{versionId}` not found in po-state.</div>
+    return <div style={empty}>Version `{versionId}` 을 po-state에서 찾을 수 없음.</div>
   }
 
   const isActive = poState?.current_version === versionId
@@ -26,9 +26,9 @@ export default function VersionDetailView({ versionId, poState }: Props) {
       <header style={header}>
         <div style={versionId_}>{version.id}</div>
         <div style={meta}>
-          {version.started_at && <span>started {version.started_at.slice(0, 10)}</span>}
-          {version.ended_at && <span> · closed {version.ended_at.slice(0, 10)}</span>}
-          {!version.ended_at && isActive && <span style={activeBadge}>active</span>}
+          {version.started_at && <span>{version.started_at.slice(0, 10)} 시작</span>}
+          {version.ended_at && <span> · {version.ended_at.slice(0, 10)} 종료</span>}
+          {!version.ended_at && isActive && <span style={activeBadge}>진행중</span>}
         </div>
       </header>
 
@@ -37,9 +37,9 @@ export default function VersionDetailView({ versionId, poState }: Props) {
       <OutcomeCard version={version} />
 
       <section style={section}>
-        <h3 style={sectionTitle}>Tickets ({tickets.length})</h3>
+        <h3 style={sectionTitle}>티켓 ({tickets.length})</h3>
         {tickets.length === 0 ? (
-          <div style={emptyHint}>No tickets recorded for this Version yet.</div>
+          <div style={emptyHint}>이 Version에 등록된 티켓 없음.</div>
         ) : (
           STAGE_ORDER.filter((s) => ticketsByStage[s]?.length).map((s) => (
             <StageGroup key={s} stage={s} tickets={ticketsByStage[s] ?? []} />
@@ -140,7 +140,7 @@ function OutcomeCard({ version }: { version: Version }) {
         <div style={outcomeRow}>
           <span style={outcomeKey}>observed</span>
           <span style={o.observed_result ? outcomeVal : outcomeValMuted}>
-            {o.observed_result ?? 'pending (lazy — fills at next Version Phase 1)'}
+            {o.observed_result ?? '미정 (lazy — 다음 Version Phase 1에서 채움)'}
           </span>
         </div>
         {o.retrospective_path && (

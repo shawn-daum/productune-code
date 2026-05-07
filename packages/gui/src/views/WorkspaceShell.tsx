@@ -15,7 +15,7 @@ interface Props {
 
 export default function WorkspaceShell({ project, onBack }: Props) {
   const { phase, setProject, setPoState, setSelectedVersionId } = useWorkspace()
-  const [activeIcon, setActiveIcon] = useState<ActivityIcon>('rooms')
+  const [activeIcon, setActiveIcon] = useState<ActivityIcon>('tickets')
 
   // Sync project into store on mount / change
   useEffect(() => {
@@ -48,7 +48,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       <ActivityBar active={activeIcon} onSelect={setActiveIcon} />
 
       {/* 좌 240px LeftSidebar — activeIcon 따라 내용 분기 */}
-      <LeftSidebar project={project} onBack={onBack} activeIcon={activeIcon} />
+      <LeftSidebar project={project} activeIcon={activeIcon} />
 
       {/* breadcrumb — top-center */}
       <div style={breadcrumbArea}>

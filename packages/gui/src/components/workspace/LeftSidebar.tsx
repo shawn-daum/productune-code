@@ -6,20 +6,18 @@ import VersionsPanel from './VersionsPanel'
 
 interface Props {
   project: Project
-  onBack: () => void
   activeIcon: ActivityIcon
 }
 
 const TAB_TITLES: Record<ActivityIcon, string> = {
-  rooms:     'PO session',
   versions:  'Versions',
-  tickets:   'Tickets',
-  artifacts: 'Artifacts',
-  settings:  'Settings',
+  tickets:   '티켓',
+  artifacts: '산출물',
+  settings:  '설정',
 }
 
-export default function LeftSidebar({ project, onBack, activeIcon }: Props) {
-  const { messages, setMessages, setClaudeSessionId, poState } = useWorkspace()
+export default function LeftSidebar({ project, activeIcon }: Props) {
+  const { setMessages, setClaudeSessionId, poState } = useWorkspace()
 
   // Mount: load PO session from fs via IPC
   useEffect(() => {
@@ -44,26 +42,20 @@ export default function LeftSidebar({ project, onBack, activeIcon }: Props) {
       </div>
 
       {/* 본문 — activeIcon 에 따라 분기 */}
-      {activeIcon === 'rooms' && (
-        <div style={sessionPanel}>
-          <div style={sectionLabel}>PO session</div>
-          <div style={sessionMeta}>
-            messages <span style={sessionMetaValue}>{messages.length}</span>
-          </div>
-          <div style={sessionHint}>
-            Talk to PO in the chat panel on the right. (Streaming wired in Slice 3.)
-          </div>
+      {activeIcon === 'versions' && <VersionsPanel poState={poState} />}
+      {activeIcon === 'tickets' && (
+        <div style={panelPlaceholder}>
+          <span style={panelPlaceholderText}>티켓 보드는 중앙 패널에서</span>
         </div>
       )}
-      {activeIcon === 'versions' && <VersionsPanel poState={poState} />}
       {activeIcon === 'artifacts' && (
         <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>Artifacts — coming in a later slice</span>
+          <span style={panelPlaceholderText}>산출물 — 추후 슬라이스에서 추가</span>
         </div>
       )}
       {activeIcon === 'settings' && (
         <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>Settings — T-P4-024</span>
+          <span style={panelPlaceholderText}>설정 — T-P4-024</span>
         </div>
       )}
     </div>
@@ -83,7 +75,7 @@ const wrap: React.CSSProperties = {
 
 const header: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'baseline',
+  alignItems: 'center',
   justifyContent: 'space-between',
   gap: 8,
   padding: '0 14px',
@@ -108,40 +100,6 @@ const projectSlugMuted: React.CSSProperties = {
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
   maxWidth: 110,
-}
-
-const sessionPanel: React.CSSProperties = {
-  flex: 1,
-  display: 'flex',
-  flexDirection: 'column',
-  padding: '14px 14px 12px',
-  gap: 8,
-}
-
-const sectionLabel: React.CSSProperties = {
-  fontSize: 10,
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-  color: '#505050',
-  fontWeight: 600,
-}
-
-const sessionMeta: React.CSSProperties = {
-  fontSize: 12,
-  color: '#A0A0A0',
-}
-
-const sessionMetaValue: React.CSSProperties = {
-  color: '#F0F0F0',
-  fontWeight: 600,
-  marginLeft: 4,
-}
-
-const sessionHint: React.CSSProperties = {
-  fontSize: 11,
-  color: '#505050',
-  lineHeight: 1.5,
-  marginTop: 4,
 }
 
 const panelPlaceholder: React.CSSProperties = {
