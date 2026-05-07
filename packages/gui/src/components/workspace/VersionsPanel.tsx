@@ -1,16 +1,29 @@
 import { useTranslation } from 'react-i18next'
 import type { PoState, Version, Phase } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
-import { useWorkspace } from '../../store/workspace'
+import { useWorkspace, paneTreeUtil } from '../../store/workspace'
 
 interface Props {
   poState: PoState | null
 }
 
+function tabIdForVersion(id: string): string {
+  return `version-detail:${id}`
+}
+
 export default function VersionsPanel({ poState }: Props) {
   const { t } = useTranslation()
-  const selectedId = useWorkspace((s) => s.selectedVersionId)
-  const setSelected = useWorkspace((s) => s.setSelectedVersionId)
+  const openTab = useWorkspace((s) => s.openTab)
+  // Highlight any version whose detail tab exists in any pane (T-P4-046:
+  // sidebar selection is derived from open tabs rather than a separate slice).
+  const openTabIds = useWorkspace((s) => {
+    const ids = new Set<string>()
+    for (const pid of paneTreeUtil.collectLeafIds(s.panes)) {
+      const leaf = paneTreeUtil.findLeaf(s.panes, pid)
+      if (leaf) for (const tab of leaf.tabs) ids.add(tab.id)
+    }
+    return ids
+  })
 
   const currentVersionId = poState?.current_version
   const currentPhaseNum = poState?.current_phase
@@ -28,8 +41,9 @@ export default function VersionsPanel({ poState }: Props) {
   }
 
   const onClick = (id: string) => {
-    setSelected(selectedId === id ? null : id)
+    openTab(tabIdForVersion(id), 'version-detail', { versionId: id }, id)
   }
+  const isSelected = (id: string) => openTabIds.has(tabIdForVersion(id))
 
   return (
     <div style={panel}>
@@ -39,7 +53,7 @@ export default function VersionsPanel({ poState }: Props) {
           version={active}
           phaseNum={currentPhaseNum}
           ticketsDone={ticketsByVersion.get(active.id) ?? 0}
-          selected={selectedId === active.id}
+          selected={isSelected(active.id)}
           onClick={() => onClick(active.id)}
         />
       ) : (
@@ -57,7 +71,7 @@ export default function VersionsPanel({ poState }: Props) {
             key={v.id}
             version={v}
             ticketsDone={ticketsByVersion.get(v.id) ?? 0}
-            selected={selectedId === v.id}
+            selected={isSelected(v.id)}
             onClick={() => onClick(v.id)}
           />
         ))

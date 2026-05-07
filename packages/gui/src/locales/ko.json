@@ -147,11 +147,42 @@
       "artifactsHint": "산출물 — 추후 슬라이스에서 추가",
       "settingsHint": "설정 — T-P4-024"
     },
-    "center": {
-      "selectHint": "사이드바의 Version 클릭 → 상세 보기 · 또는 티켓 탭에서 전체 보드 확인."
+    "tab": {
+      "close": "탭 닫기",
+      "barEmpty": "여기에 탭 드롭",
+      "splitRight": "오른쪽으로 분할",
+      "splitDown": "아래로 분할",
+      "closePane": "탭그룹 닫기",
+      "newTab": "새 탭",
+      "placeholder": {
+        "body": "{{ticket}} 에서 채워짐"
+      },
+      "markdown": {
+        "crumbUntitled": "제목 없음",
+        "placeholder": "마크다운 뷰어 — 추후 티켓에서 컨텐츠 연결",
+        "preview": "미리보기",
+        "edit": "편집"
+      }
+    },
+    "pane": {
+      "active": "활성 pane"
+    },
+    "emptyPane": {
+      "title": "파일을 열거나 명령을 실행하세요"
+    },
+    "kbd": {
+      "quickOpen": "빠른 열기",
+      "newTab": "새 탭",
+      "splitRight": "오른쪽 분할",
+      "splitDown": "아래 분할",
+      "closeTab": "탭 닫기"
     },
     "statusBar": {
       "placeholder": "자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐"
+    },
+    "presence": {
+      "chipAriaLabel": "{{persona}} — {{state}}",
+      "doneNoArtifact": "완료"
     }
   },
   "settings": {

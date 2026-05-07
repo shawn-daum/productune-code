@@ -606,7 +606,7 @@ function buildAppMenu(): Menu {
           ],
         },
         { type: 'separator' },
-        isMac ? { role: 'close' } : { role: 'quit' },
+        ...(isMac ? [] : [{ role: 'quit' as const }]),
       ],
     },
     { role: 'editMenu' },
@@ -624,7 +624,17 @@ function buildAppMenu(): Menu {
         { role: 'togglefullscreen' },
       ],
     },
-    { role: 'windowMenu' },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' as const },
+        { role: 'zoom' as const },
+        ...(isMac ? [
+          { type: 'separator' as const },
+          { role: 'front' as const },
+        ] : []),
+      ],
+    },
     {
       role: 'help',
       submenu: [

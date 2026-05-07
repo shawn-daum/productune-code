@@ -147,11 +147,42 @@
       "artifactsHint": "Artifacts — added in a future slice",
       "settingsHint": "Settings — T-P4-024"
     },
-    "center": {
-      "selectHint": "Click a Version in the sidebar to view details · or see the full board in the Tickets tab."
+    "tab": {
+      "close": "Close tab",
+      "barEmpty": "Drop a tab here",
+      "splitRight": "Split right",
+      "splitDown": "Split down",
+      "closePane": "Close tab group",
+      "newTab": "New tab",
+      "placeholder": {
+        "body": "Filled in {{ticket}}"
+      },
+      "markdown": {
+        "crumbUntitled": "Untitled",
+        "placeholder": "Markdown viewer — content wired in later tickets",
+        "preview": "Preview",
+        "edit": "Edit"
+      }
+    },
+    "pane": {
+      "active": "Active pane"
+    },
+    "emptyPane": {
+      "title": "Open a file or run a command"
+    },
+    "kbd": {
+      "quickOpen": "Quick Open",
+      "newTab": "New Tab",
+      "splitRight": "Split Right",
+      "splitDown": "Split Down",
+      "closeTab": "Close Tab"
     },
     "statusBar": {
       "placeholder": "Auto-save / run status / external tools — filled in Slice 6"
+    },
+    "presence": {
+      "chipAriaLabel": "{{persona}} — {{state}}",
+      "doneNoArtifact": "done"
     }
   },
   "settings": {

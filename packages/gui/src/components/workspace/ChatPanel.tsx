@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
+import PersonaPresenceBar from './PersonaPresenceBar'
 
 export default function ChatPanel() {
   const { t } = useTranslation()
@@ -7,7 +8,7 @@ export default function ChatPanel() {
 
   return (
     <div style={wrap}>
-      {/* Header */}
+      {/* rp-hdr — session header */}
       <div style={header}>
         <span style={headerTitle}>{t('workspace.chat.session')}</span>
         <span style={headerSub}>
@@ -15,7 +16,10 @@ export default function ChatPanel() {
         </span>
       </div>
 
-      {/* Body */}
+      {/* rp-persona-bar — 24px persona presence strip (T-P4-049) */}
+      <PersonaPresenceBar />
+
+      {/* rp-msgs — message body */}
       <div style={body}>
         {messages.length === 0 ? (
           <span style={placeholderText}>
