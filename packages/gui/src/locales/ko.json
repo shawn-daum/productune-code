@@ -143,6 +143,12 @@
       "modify": "수정…",
       "approve": "승인 →"
     },
+    "restartModal": {
+      "title": "PO 세션 재시작",
+      "body": "새 claude 세션이 시작됩니다. 채팅 기록은 디스크에 보존돼요.",
+      "restartNow": "지금 재시작",
+      "openSettings": "설정 열기"
+    },
     "chat": {
       "session": "PO 세션",
       "title": "PO 채팅",

@@ -143,6 +143,12 @@
       "modify": "Modify…",
       "approve": "Approve →"
     },
+    "restartModal": {
+      "title": "Restart PO session",
+      "body": "Restarting starts a new claude session. Your chat history is preserved on disk.",
+      "restartNow": "Restart now",
+      "openSettings": "Open settings"
+    },
     "chat": {
       "session": "PO session",
       "title": "PO Chat",

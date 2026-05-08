@@ -50,18 +50,9 @@ export default function RestartSessionModal({ onClose }: Props) {
   return (
     <div style={overlay} role="dialog" aria-modal="true" aria-labelledby="rsm-title">
       <div style={modal}>
-        <h2 style={title} id="rsm-title">Restart PO session</h2>
+        <h2 style={title} id="rsm-title">{t('workspace.restartModal.title')}</h2>
 
-        <p style={body}>
-          The current session was stopped by a permission rule. Restarting will
-          start a new claude session — your chat history is preserved on disk.
-        </p>
-
-        <p style={bodySub}>
-          Common cause: another user&apos;s path glob in{' '}
-          <code style={code}>.claude/settings.local.json</code>. See settings
-          hygiene (T-P4-058) for the auto-fix.
-        </p>
+        <p style={body}>{t('workspace.restartModal.body')}</p>
 
         <div style={actions}>
           <button
@@ -69,13 +60,11 @@ export default function RestartSessionModal({ onClose }: Props) {
             onClick={handleRestartNow}
             disabled={restarting}
           >
-            {restarting ? t('common.loading') : 'Restart now'}
+            {restarting ? t('common.loading') : t('workspace.restartModal.restartNow')}
           </button>
 
           <button style={btnSecondary} onClick={handleOpenSettings}>
-            {t('workspace.sessionHealth.permissionBlocked.cta').includes('설정')
-              ? '설정 열기 ↗'
-              : 'Open settings ↗'}
+            {t('workspace.restartModal.openSettings')} ↗
           </button>
 
           <button style={btnGhost} onClick={onClose}>
@@ -124,21 +113,6 @@ const body: React.CSSProperties = {
   fontSize: 12,
   color: '#C0C0C0',
   lineHeight: 1.55,
-}
-
-const bodySub: React.CSSProperties = {
-  margin: 0,
-  fontSize: 11,
-  color: '#909090',
-  lineHeight: 1.5,
-}
-
-const code: React.CSSProperties = {
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  fontSize: 10,
-  background: '#2A2A2A',
-  borderRadius: 3,
-  padding: '1px 4px',
 }
 
 const actions: React.CSSProperties = {
