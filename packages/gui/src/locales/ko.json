@@ -155,7 +155,8 @@
       "filesCount": "파일",
       "removeFile": "파일 제거",
       "minimize": "최소화",
-      "close": "닫기",
+      "restartSession": "세션 재시작",
+      "restartHint": "PO 가 오래 답하지 않거나 너무 느릴 때 사용",
       "restore": "PO 채팅 열기",
       "idleCtx": "대기 중",
       "actionDefault": "처리 중"

@@ -155,7 +155,8 @@
       "filesCount": "files",
       "removeFile": "Remove file",
       "minimize": "Minimize",
-      "close": "Close",
+      "restartSession": "Restart session",
+      "restartHint": "Use when PO is unresponsive or too slow",
       "restore": "Open PO chat",
       "idleCtx": "Ready",
       "actionDefault": "in flight"

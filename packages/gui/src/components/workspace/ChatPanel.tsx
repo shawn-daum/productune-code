@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Paperclip, ArrowUp } from 'lucide-react'
+import { Paperclip, ArrowUp, RefreshCw, Minus } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message, MessageKind } from '../../lib/types'
@@ -247,6 +247,18 @@ export default function ChatPanel() {
 
   const [sendHover, setSendHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
+  const [restartHover, setRestartHover] = useState(false)
+  const [minimizeHover, setMinimizeHover] = useState(false)
+
+  const onRestart = async () => {
+    try {
+      const api = (window as any).api
+      if (!api?.poRestartSession) return
+      await api.poRestartSession()
+      setClaudeSessionId(null)
+      setStreaming(false)
+    } catch { /* ignore */ }
+  }
 
   // ── ctx caption ─────────────────────────────────────────────────────────
   const ctxCaption = useMemo(() => {
@@ -269,17 +281,33 @@ export default function ChatPanel() {
           <span style={poBadge}>P</span>
           <span style={headerTitle}>{t('workspace.chat.title')}</span>
           <button
-            style={iconBtn}
+            style={{
+              ...iconBtn,
+              background: restartHover ? '#2A2A2A' : 'transparent',
+              color: restartHover ? '#F0F0F0' : '#A0A0A0',
+            }}
+            onMouseEnter={() => setRestartHover(true)}
+            onMouseLeave={() => setRestartHover(false)}
+            onClick={onRestart}
+            aria-label={t('workspace.chat.restartSession')}
+            title={t('workspace.chat.restartHint')}
+          >
+            <RefreshCw size={13} strokeWidth={2} />
+          </button>
+          <button
+            style={{
+              ...iconBtn,
+              background: minimizeHover ? '#2A2A2A' : 'transparent',
+              color: minimizeHover ? '#F0F0F0' : '#A0A0A0',
+            }}
+            onMouseEnter={() => setMinimizeHover(true)}
+            onMouseLeave={() => setMinimizeHover(false)}
             onClick={() => setPanelVisible(false)}
             aria-label={t('workspace.chat.minimize')}
             title={t('workspace.chat.minimize')}
-          >─</button>
-          <button
-            style={iconBtn}
-            onClick={() => setPanelVisible(false)}
-            aria-label={t('workspace.chat.close')}
-            title={t('workspace.chat.close')}
-          >×</button>
+          >
+            <Minus size={13} strokeWidth={2} />
+          </button>
         </div>
 
         {/* rp-ctx */}
@@ -439,6 +467,7 @@ const iconBtn: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
+  transition: 'background 0.12s ease, color 0.12s ease',
 }
 
 const ctxRow: React.CSSProperties = {
