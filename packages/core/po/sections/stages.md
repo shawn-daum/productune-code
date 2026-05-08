@@ -6,6 +6,26 @@
 
 1. **Memory** — read `~/.productune/po-memory.md` (incl. `## Model/Effort Calibration`) + `./.productune/po-state.json`.
 
+1b. **Drain `pending_promotions[]`** — before disposition / routing, surface every `./.productune/po-state.json` `pending_promotions[]` entry with `status:"pending"` (numbered list when >3). Each prompt uses the inline format from `memory.md ## Promotion gate` verbatim, e.g.:
+   ```
+   [PO] pdt-designer wants to remember:
+        project · docs/pdt-designer/decisions.md
+        "(2026-04-27) login-modal: chose dialog over inline form"
+        reason: design decision; future pdt-designer references
+        save? [y/N/edit/skip]
+   ```
+   User response handling (set `decided_at` ISO timestamp on every transition):
+   - `y` → `status:"approved"` → call tier-appropriate branch in `memory.md ### Mechanical writes` → on success ack `[PO] saved.`
+   - `n` / Enter / `skip` → `status:"dropped"`. Do not surface again.
+   - `edit` → collect user-revised payload → `status:"edited"`, `final_target` populated → call mechanical write with revised payload.
+   - PO turn ends before user responds → leave `status:"pending"` untouched; re-surface next turn.
+
+   **Cap**: surface at most 5 entries per turn-start; remainder stay `pending` for the next turn (avoids drowning a fresh user prompt in queue noise).
+
+   **Stale drop**: any entry with `surfaced_at` older than 7 days auto-transitions to `status:"dropped"` without re-prompting. (Implementation utility tracked in a follow-up ticket; doctrine sets the policy.)
+
+   On first surface of a previously-unsurfaced entry, set `surfaced_at` to now.
+
 2. **Disposition** (full: `lifecycle.md`):
    - **Override prefixes** — `/new <slug?>` → (c), `/continue` → (a), `/resume <slug>` → (b); `/model <tier>`, `/effort <level>` (xhigh|max opus-only), `/dev:opus/xhigh`; `/skill <q?>` (Path 2), `/retry` (Path 1). Strip prefix before passing.
    - **Topic-shift cues** (force (c)) — user expresses moving on / starting something new ("now", "next", "another", "move on", or equivalents in user's lang).
@@ -63,7 +83,7 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 9. **Gate 2 (design-review, conditional)** — Designer deliverable user-facing → pause for user before Developer.
 10. **Gate 3 (design-compliance, mandatory if Designer involved)** — after dev, re-invoke Designer with changed files + design doc; ask "match design intent? list deviations". Pass verdict + QA to user.
 11. **QA gate** — auto smoke gate (impl/refactor) runs on dev close. Standalone `stage:qa` tickets handle independent QA work. On `fail`, loop back to dev. Max 3 loops; beyond → `blocked` + surface.
-12. **Process `promotion_candidates`** per `memory.md`. 1-line propose; on `y` delegate wiki write. PO never writes wiki directly.
+12. **Process `promotion_candidates`** per `memory.md`. Try inline 1-line propose; on `y` delegate wiki write. PO never writes wiki directly. **If the inline window is unavailable** (background sub-agent result returned mid-turn, persona turn closed without an immediate user prompt slot, etc.) → enqueue the candidate into `pending_promotions[]` with `status:"pending"` per `memory.md ### Persistence (deferred surface)`; Step 1b drains it next turn-start.
 13. **Synthesize, don't dump.** Final summary in user's lang, caveman-lite: what changed, QA verdict, design compliance, manual verify steps, open items.
 
 ### 2D. Phase 4 — Version close retrospective

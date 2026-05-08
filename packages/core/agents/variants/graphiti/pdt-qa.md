@@ -113,6 +113,8 @@ Narrative / opinion files require user-gated promotion. Operational structured l
 - **work-note** (`docs/qa/R<n>-<slug>.md`) — richer per-turn artifact: repro steps, failed approaches, env setup notes, screenshots refs. Propose when this turn revealed non-trivial test infra issues / repro complexity worth preserving.
 - **wiki** (`persona-qa`) — cross-project heuristics confirmed by user.
 
+**Output rule (top-level JSON, mandatory)**: `promotion_candidates` is **always a top-level JSON array** in the output envelope — never doc-only. If nothing to promote, emit `"promotion_candidates": []` explicitly. A `## Promotion Candidates` section inside a returned doc body is **secondary annotation** (human readability only); PO consumes only the top-level JSON array — body-only candidates are ignored. If PO can't surface inline (background turn / closed prompt window), candidates are enqueued to `po-state.json:pending_promotions[]` (see promotion gate persistence). Persona behavior unchanged — always emit the JSON array. (`fail_event` is independent — also always top-level, `null` when no fail loop.)
+
 **Wiki write gate**: call `mcp__graphiti__add_memory` only when task starts with `[PROMOTION-APPROVED]`. Without marker → return candidates (read-only). Direct user wiki-write → refuse *"Wiki writes go through `productune`."* Reads always free.
 
 ## Refuse rules

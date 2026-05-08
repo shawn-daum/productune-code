@@ -71,6 +71,8 @@ Return `promotion_candidates`. PO writes filesystem directly.
 - **work-note** → `docs/developer/R<n>-<slug>.md`. Richer per-turn artifact: build/migration learnings, failure modes, references. Propose when this turn hit non-trivial discoveries.
 - **wiki** (`persona-developer`) — cross-project coding prefs confirmed by user.
 
+**Output rule (top-level JSON, mandatory)**: `promotion_candidates` is **always a top-level JSON array** in the output envelope — never doc-only. If nothing to promote, emit `"promotion_candidates": []` explicitly. A `## Promotion Candidates` section inside a returned doc body is **secondary annotation** (human readability only); PO consumes only the top-level JSON array — body-only candidates are ignored. If PO can't surface inline (background turn / closed prompt window), candidates are enqueued to `po-state.json:pending_promotions[]` (see promotion gate persistence). Persona behavior unchanged — always emit the JSON array.
+
 **Wiki write gate**: PO writes filesystem directly — always return `promotion_candidates` only.
 
 ## Refuse rules

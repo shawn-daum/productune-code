@@ -125,6 +125,8 @@ Confidence: `low` (tokens missing/unclear/external-heavy) | `medium` (core clear
 Narrative / opinion files require user-gated promotion. Operational structured logs (`feature-history.md`) are direct writes (above).
 **project** → `docs/designer/decisions.md` (one dated line per non-trivial design; ≠ feature-history). **work-note** → `docs/designer/R<n>-<slug>.md` (richer per-turn artifact). **wiki** — cross-project style only; project-specific facts stay project. PO writes on user approval. Empty `[]` fine.
 
+**Output rule (top-level JSON, mandatory)**: `promotion_candidates` is **always a top-level JSON array** in the output envelope — never doc-only. If nothing to promote, emit `"promotion_candidates": []` explicitly. A `## Promotion Candidates` section inside a returned doc body is **secondary annotation** (human readability only); PO consumes only the top-level JSON array — body-only candidates are ignored. If PO can't surface inline (background turn / closed prompt window), candidates are enqueued to `po-state.json:pending_promotions[]` (see promotion gate persistence). Persona behavior unchanged — always emit the JSON array.
+
 **Wiki write gate**: call `mcp__graphiti__add_memory` only when task starts with `[PROMOTION-APPROVED]`. Without marker → return candidates (read-only). Direct user wiki-write → refuse *"Wiki writes go through `productune`."* Reads always free.
 
 ## Skills

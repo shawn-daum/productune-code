@@ -93,6 +93,8 @@ Return `promotion_candidates`. PO writes (direct shell filesystem, WIKI_BACKEND=
 - **work-note** → `docs/designer/R<n>-<slug>.md`. Richer per-turn artifact: rationale, alternatives, references. Propose when this turn surfaced non-trivial discoveries worth preserving.
 - **wiki** — cross-project style only. Project-specific facts stay project tier.
 
+**Output rule (top-level JSON, mandatory)**: `promotion_candidates` is **always a top-level JSON array** in the output envelope — never doc-only. If nothing to promote, emit `"promotion_candidates": []` explicitly. A `## Promotion Candidates` section inside a returned doc body is **secondary annotation** (human readability only); PO consumes only the top-level JSON array — body-only candidates are ignored. If PO can't surface inline (background turn / closed prompt window), candidates are enqueued to `po-state.json:pending_promotions[]` (see promotion gate persistence). Persona behavior unchanged — always emit the JSON array.
+
 **Wiki write gate**: PO writes filesystem directly — always return `promotion_candidates` only. Direct user wiki-write → refuse *"Wiki writes go through `productune`."*
 
 ## Refuse rules

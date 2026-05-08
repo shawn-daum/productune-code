@@ -56,6 +56,10 @@ wiki_consult: $WIKI_RESULT"
 
 (`graphiti` personas call `search_memory_facts` themselves via MCP. `fs` personas read `INDEX.md` directly.)
 
+### Persistence (deferred surface)
+
+If candidate can't be surfaced inline (background sub-agent result received mid-turn, persona turn closed without immediate user prompt window, etc.) → enqueue into `pending_promotions[]` (schema below) with `status:"pending"`. Next PO turn-start surfaces queued entries before new work (see `stages.md` — separate ticket).
+
 ### Why gated
 
 Earlier doctrine auto-promoted on heuristic; memory grew invisibly. Rule: **never persist without user approval**. Repeated dismissals → append to `po-memory.md` Workflow preferences; future turns lower the surface threshold.
@@ -104,6 +108,18 @@ Key paths:
 - `past_tickets[]` (cap 50, drop oldest) — retain `slug`, `title`, `request_summary`, `artifacts`, `persona_sessions` for revival match
 - `versions[].{id, started_at, ended_at, prd_anchor, outcome.{north_star, input_metrics[], validation_method, observed_result, retrospective_path}}`
 - `recent_turns[]` (rolling 10, project-wide, task-independent — failure-pattern detection)
+- `pending_promotions[]` — persona-returned `promotion_candidates` queued for user approval (deferred surface). Lifecycle: `pending` → (`approved` | `dropped` | `edited`) on next turn-start prompt.
+  - `id` (string) — `promo-<YYYYMMDD>-<NNN>` (date + per-day sequence). Dedupe within same turn.
+  - `persona` (string) — `pdt-designer` / `pdt-developer` / `pdt-qa` / `pdt-wiki-keeper`.
+  - `turn_id` (string) — persona session turn marker at surface time (snapshot of `persona_session_meta.<persona>.turns`).
+  - `tier` (string) — `project` / `wiki` / `work-note` (drives mechanical-writes branch above).
+  - `target` (string) — `tier=project`: file path · `tier=wiki`: graphiti `group_id` or keeper persona · `tier=work-note`: file path under `docs/<persona>/`.
+  - `delta` (string) — line to append (project / work-note) or episode body (wiki).
+  - `rationale` (string) — one-line reason shown in surface prompt.
+  - `status` (string) — `pending` / `approved` / `dropped` / `edited`.
+  - `surfaced_at` (ISO timestamp, optional) — when PO presented the prompt.
+  - `decided_at` (ISO timestamp, optional) — when user response landed.
+  - `final_target` (string, optional) — populated on `status:"edited"` with user-revised target / delta payload actually written.
 
 Legacy keys (`past_tasks`, `current_round`, `rounds[]`, `stage:PRD|issue`) read-compat one cycle; new code reads new keys first and falls back.
 

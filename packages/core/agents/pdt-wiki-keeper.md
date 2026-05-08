@@ -85,6 +85,9 @@ Sort desc by date. Mark superseded.
 ```
 `proposed_supersede` non-null → output only that, stop. Don't write. PO asks user [a/b/n] and re-invokes.
 
+## Promotion-candidate intake (receiver role)
+wiki-keeper is the **terminal writer** for `tier:wiki` promotion candidates. PO dispatches one `WRITE [PROMOTION-APPROVED]` invocation per approved candidate, sourcing fields (`persona`, `episode_name`, `episode_body`) from the top-level `promotion_candidates` JSON array emitted by personas. Body-only `## Promotion Candidates` sections in persona doc artifacts are **never** consumed by wiki-keeper — only the structured top-level array. If PO couldn't surface a candidate inline, it sits in `po-state.json:pending_promotions[]` until a later turn drains the queue; wiki-keeper sees only the eventual `WRITE [PROMOTION-APPROVED]` call and behaves identically.
+
 ## Hard rules
 - **NEVER** write outside `~/.productune/wiki/`.
 - **NEVER** write unless task starts with `WRITE [PROMOTION-APPROVED]`.
