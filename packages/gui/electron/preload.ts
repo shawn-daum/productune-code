@@ -66,6 +66,9 @@ contextBridge.exposeInMainWorld('api', {
     | null
   > => ipcRenderer.invoke('dialog:openFolder'),
 
+  openFilePicker: (): Promise<string[]> =>
+    ipcRenderer.invoke('dialog:openFilePicker'),
+
   migrateLegacy: (opts: { projectDir: string; slug?: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string }; migrated: boolean }> =>
     ipcRenderer.invoke('project:migrateLegacy', opts),
 

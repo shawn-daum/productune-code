@@ -439,6 +439,14 @@ function detectProductuneLayout(dir: string): DetectResult {
   return { kind: 'none' }
 }
 
+ipcMain.handle('dialog:openFilePicker', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile', 'multiSelections'],
+  })
+  if (result.canceled) return []
+  return result.filePaths
+})
+
 ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
   if (result.canceled || result.filePaths.length === 0) return null

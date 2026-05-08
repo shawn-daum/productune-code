@@ -15,8 +15,9 @@
  * autonomously per `po-instructions.md` Routing. Visibility = PersonaPresenceBar.
  */
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Paperclip, ArrowUp } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message, MessageKind } from '../../lib/types'
@@ -163,8 +164,15 @@ export default function ChatPanel() {
 
   // ── Submit ──────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
-    const text = draft.trim()
-    if (!text || streaming || !project) return
+    const trimmed = draft.trim()
+    if (!trimmed && attachedFiles.length === 0) return
+    if (streaming || !project) return
+
+    // Compose body — attached files prefixed as a small block PO/claude can read.
+    const filesBlock = attachedFiles.length > 0
+      ? `## Attached files\n${attachedFiles.map((p) => `- ${p}`).join('\n')}\n\n`
+      : ''
+    const text = `${filesBlock}${trimmed}`
 
     const userMsg: Message = {
       id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -176,6 +184,7 @@ export default function ChatPanel() {
     }
     appendMessage(userMsg)
     setDraft('')
+    setAttachedFiles([])
     setAutoScrollLocked(false)
 
     const api = (window as any).api
@@ -200,11 +209,44 @@ export default function ChatPanel() {
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // IME composition — don't capture Enter mid-Korean composition.
     if ((e.nativeEvent as any).isComposing) return
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Cmd+Enter (or Ctrl+Enter) → submit. Plain Enter → newline (default).
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       handleSubmit()
     }
   }
+
+  // textarea autosize — height follows content (cap 200px).
+  useEffect(() => {
+    const el = taRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+  }, [draft])
+
+  const [attachedFiles, setAttachedFiles] = useState<string[]>([])
+  const [filesListOpen, setFilesListOpen] = useState(false)
+
+  const onAttachFile = async () => {
+    try {
+      const paths: string[] = await (window as any).api.openFilePicker()
+      if (!paths || paths.length === 0) return
+      // dedupe (drag-add same file twice)
+      setAttachedFiles((prev) => {
+        const set = new Set(prev)
+        for (const p of paths) set.add(p)
+        return Array.from(set)
+      })
+      requestAnimationFrame(() => taRef.current?.focus())
+    } catch { /* IPC unavailable — noop */ }
+  }
+
+  const removeAttached = (path: string) => {
+    setAttachedFiles((prev) => prev.filter((p) => p !== path))
+  }
+
+  const [sendHover, setSendHover] = useState(false)
+  const [attachHover, setAttachHover] = useState(false)
 
   // ── ctx caption ─────────────────────────────────────────────────────────
   const ctxCaption = useMemo(() => {
@@ -258,7 +300,7 @@ export default function ChatPanel() {
           )}
         </div>
 
-        {/* rp-input — textarea + send only (no persona selector, v2 sub-c) */}
+        {/* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */}
         <div style={inputArea}>
           <textarea
             ref={taRef}
@@ -267,16 +309,71 @@ export default function ChatPanel() {
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={t('workspace.chat.inputPlaceholder')}
-            rows={2}
+            rows={1}
             disabled={streaming || !project}
           />
           <div style={inputRow}>
             <button
-              style={{ ...sendBtn, opacity: streaming || !draft.trim() ? 0.4 : 1 }}
+              style={{
+                ...iconActionBtn,
+                background: attachHover ? '#2A2A2A' : 'transparent',
+                color: attachHover ? '#F0F0F0' : '#A0A0A0',
+              }}
+              onMouseEnter={() => setAttachHover(true)}
+              onMouseLeave={() => setAttachHover(false)}
+              onClick={onAttachFile}
+              aria-label={t('workspace.chat.attachFile')}
+              title={t('workspace.chat.attachFile')}
+              disabled={streaming || !project}
+            >
+              <Paperclip size={14} strokeWidth={2} />
+            </button>
+
+            {attachedFiles.length > 0 && (
+              <div
+                style={fileChipWrap}
+                onMouseEnter={() => setFilesListOpen(true)}
+                onMouseLeave={() => setFilesListOpen(false)}
+              >
+                <span style={fileChip}>
+                  {attachedFiles.length === 1
+                    ? basename(attachedFiles[0])
+                    : `${attachedFiles.length} ${t('workspace.chat.filesCount')}`}
+                </span>
+                {filesListOpen && (
+                  <div style={fileListPopup}>
+                    {attachedFiles.map((p) => (
+                      <div key={p} style={fileListRow}>
+                        <span style={fileListPath} title={p}>{p}</span>
+                        <button
+                          style={fileListRemove}
+                          onClick={() => removeAttached(p)}
+                          aria-label={t('workspace.chat.removeFile')}
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div style={{ flex: 1 }} />
+            <button
+              style={{
+                ...sendBtn,
+                opacity: streaming || !draft.trim() ? 0.5 : 1,
+                background: sendHover && !(streaming || !draft.trim()) ? '#FF7A3F' : '#FF6B2B',
+              }}
+              onMouseEnter={() => setSendHover(true)}
+              onMouseLeave={() => setSendHover(false)}
               onClick={handleSubmit}
               disabled={streaming || !draft.trim() || !project}
             >
-              {t('workspace.chat.send')}
+              <ArrowUp size={12} strokeWidth={2.5} />
+              <span>{t('workspace.chat.send')}</span>
+              {sendHover && !(streaming || !draft.trim()) && (
+                <span style={kbdHint}>⌘↵</span>
+              )}
             </button>
           </div>
         </div>
@@ -389,25 +486,40 @@ const inputArea: React.CSSProperties = {
 
 const textarea: React.CSSProperties = {
   width: '100%',
-  minHeight: 40,
-  maxHeight: 120,
+  minHeight: 36,
+  maxHeight: 200,
   background: '#1E1E1E',
   border: '1px solid #2A2A2A',
   borderRadius: 6,
   color: '#F0F0F0',
   fontSize: 12,
-  padding: '6px 8px',
+  padding: '8px 10px',
   outline: 'none',
   resize: 'none',
   fontFamily: 'inherit',
   boxSizing: 'border-box',
+  lineHeight: 1.5,
+  overflow: 'hidden',
 }
 
 const inputRow: React.CSSProperties = {
   display: 'flex',
   gap: 6,
   alignItems: 'center',
-  justifyContent: 'flex-end',
+}
+
+const iconActionBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 28,
+  height: 28,
+  border: 'none',
+  borderRadius: 6,
+  cursor: 'pointer',
+  padding: 0,
+  flexShrink: 0,
+  transition: 'background 0.12s ease, color 0.12s ease',
 }
 
 const sendBtn: React.CSSProperties = {
@@ -415,10 +527,100 @@ const sendBtn: React.CSSProperties = {
   padding: '0 12px',
   background: '#FF6B2B',
   border: 'none',
-  borderRadius: 4,
+  borderRadius: 6,
   color: '#0F0F0F',
   fontSize: 11,
   fontWeight: 600,
   cursor: 'pointer',
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  transition: 'background 0.12s ease, opacity 0.12s ease',
+}
+
+const kbdHint: React.CSSProperties = {
+  fontSize: 10,
+  fontFamily: 'monospace',
+  background: 'rgba(0,0,0,0.18)',
+  borderRadius: 3,
+  padding: '1px 4px',
+  marginLeft: 2,
+}
+
+function basename(p: string): string {
+  const seg = p.split('/').filter(Boolean)
+  const name = seg[seg.length - 1] ?? p
+  return name.length > 24 ? `${name.slice(0, 21)}…` : name
+}
+
+const fileChipWrap: React.CSSProperties = {
+  position: 'relative',
+  display: 'inline-flex',
+  alignItems: 'center',
+}
+
+const fileChip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  height: 24,
+  padding: '0 8px',
+  borderRadius: 4,
+  background: '#1E1E1E',
+  border: '1px solid #2A2A2A',
+  color: '#C8C8CC',
+  fontSize: 11,
+  fontFamily: 'monospace',
+  maxWidth: 180,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  userSelect: 'none',
+}
+
+const fileListPopup: React.CSSProperties = {
+  position: 'absolute',
+  bottom: 'calc(100% + 6px)',
+  left: 0,
+  minWidth: 220,
+  maxWidth: 360,
+  maxHeight: 200,
+  overflowY: 'auto',
+  background: '#1C1C20',
+  border: '1px solid rgba(255,255,255,0.10)',
+  borderRadius: 6,
+  padding: 4,
+  boxShadow: '0 6px 18px rgba(0,0,0,0.45)',
+  zIndex: 200,
+}
+
+const fileListRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '4px 6px',
+  borderRadius: 4,
+  fontSize: 11,
+  fontFamily: 'monospace',
+  color: '#E8E8EA',
+}
+
+const fileListPath: React.CSSProperties = {
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const fileListRemove: React.CSSProperties = {
+  width: 18,
+  height: 18,
+  border: 'none',
+  background: 'transparent',
+  color: '#A0A0A0',
+  cursor: 'pointer',
+  fontSize: 14,
+  lineHeight: 1,
+  borderRadius: 3,
   flexShrink: 0,
 }

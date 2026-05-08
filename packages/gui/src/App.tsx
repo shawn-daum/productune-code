@@ -26,7 +26,15 @@ export default function App() {
   const [showNewModal, setShowNewModal] = useState(false)
   const [openPrompt, setOpenPrompt] = useState<OpenPrompt | null>(null)
 
-  // On mount: load saved language + check if onboarding is needed
+  // Persist last opened project across Cmd+R reload.
+  useEffect(() => {
+    try {
+      if (project) localStorage.setItem('productune.lastProject', JSON.stringify(project))
+      else localStorage.removeItem('productune.lastProject')
+    } catch { /* localStorage may be unavailable */ }
+  }, [project])
+
+  // On mount: load saved language + check if onboarding is needed + restore last project
   useEffect(() => {
     async function init() {
       // 1. Load persisted language preference
@@ -49,6 +57,16 @@ export default function App() {
       } catch {
         // IPC unavailable (browser dev mode) — skip wizard
       }
+
+      // 3. Restore last opened project (Cmd+R / app relaunch)
+      try {
+        const raw = localStorage.getItem('productune.lastProject')
+        if (raw) {
+          const saved = JSON.parse(raw) as Project
+          if (saved?.projectDir && saved?.slug) setProject(saved)
+        }
+      } catch { /* localStorage unavailable or corrupt — start fresh */ }
+
       setEnvChecked(true)
     }
     init()
