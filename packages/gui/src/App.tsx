@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18next from './i18n'
 import NewProjectModal from './components/NewProjectModal'
@@ -25,9 +25,15 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null)
   const [showNewModal, setShowNewModal] = useState(false)
   const [openPrompt, setOpenPrompt] = useState<OpenPrompt | null>(null)
+  const skipFirstSave = useRef(true)
 
-  // Persist last opened project across Cmd+R reload.
+  // Persist last opened project across Cmd+R reload. Skip first mount call —
+  // otherwise it clobbers the saved value before init useEffect can read it.
   useEffect(() => {
+    if (skipFirstSave.current) {
+      skipFirstSave.current = false
+      return
+    }
     try {
       if (project) localStorage.setItem('productune.lastProject', JSON.stringify(project))
       else localStorage.removeItem('productune.lastProject')

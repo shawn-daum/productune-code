@@ -149,7 +149,7 @@
       "messageCount": "{{count}} messages",
       "emptyHint": "Start a conversation with PO.",
       "messagesPlaceholder": "Messages — filled in Slice 3",
-      "inputPlaceholder": "Type a message… (/ command)",
+      "inputPlaceholder": "Type a message…",
       "send": "Send",
       "attachFile": "Attach file path",
       "filesCount": "files",
