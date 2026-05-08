@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import i18next from './i18n'
 import NewProjectModal from './components/NewProjectModal'
@@ -22,18 +22,23 @@ export default function App() {
   const { t } = useTranslation()
   const [envChecked, setEnvChecked] = useState(false)
   const [showOnboarding, setShowOnboarding] = useState(false)
-  const [project, setProject] = useState<Project | null>(null)
+  // Lazy init — read last opened project from localStorage at first render
+  // so Cmd+R / app relaunch immediately mounts WorkspaceShell, no flash to HomeView.
+  const [project, setProject] = useState<Project | null>(() => {
+    try {
+      const raw = localStorage.getItem('productune.lastProject')
+      if (raw) {
+        const saved = JSON.parse(raw) as Project
+        if (saved?.projectDir && saved?.slug) return saved
+      }
+    } catch { /* localStorage unavailable or corrupt — start fresh */ }
+    return null
+  })
   const [showNewModal, setShowNewModal] = useState(false)
   const [openPrompt, setOpenPrompt] = useState<OpenPrompt | null>(null)
-  const skipFirstSave = useRef(true)
 
-  // Persist last opened project across Cmd+R reload. Skip first mount call —
-  // otherwise it clobbers the saved value before init useEffect can read it.
+  // Persist last opened project across Cmd+R reload.
   useEffect(() => {
-    if (skipFirstSave.current) {
-      skipFirstSave.current = false
-      return
-    }
     try {
       if (project) localStorage.setItem('productune.lastProject', JSON.stringify(project))
       else localStorage.removeItem('productune.lastProject')
@@ -64,14 +69,7 @@ export default function App() {
         // IPC unavailable (browser dev mode) — skip wizard
       }
 
-      // 3. Restore last opened project (Cmd+R / app relaunch)
-      try {
-        const raw = localStorage.getItem('productune.lastProject')
-        if (raw) {
-          const saved = JSON.parse(raw) as Project
-          if (saved?.projectDir && saved?.slug) setProject(saved)
-        }
-      } catch { /* localStorage unavailable or corrupt — start fresh */ }
+      // (Restore last opened project handled in useState lazy init above)
 
       setEnvChecked(true)
     }
