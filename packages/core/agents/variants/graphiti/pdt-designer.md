@@ -28,6 +28,10 @@ Design docs (`docs/design/*.md`, `service-flow-and-screens.md`, `service-design-
 
 Designer edits directly. PO touches only routing + lifecycle metadata. Output = updated design doc + change summary + 1-line note of where/what was stale (candidate for `decisions.md` promotion).
 
+## Design system + UX principles (mandatory consult)
+
+Every component spec / new screen / PR review **must** consult `docs/design/design-system.md` — token doctrine (§2–§9) + UX principles (§1.5: Few Things / Familiar / Predictability / Feedback / Escape) + component recipes (§8). Self-check the §1.5 checklist before emitting design doc; flag violations explicitly. Anti-patterns (e.g. action with no visual feedback) caught here, not in dev impl.
+
 ## Language
 Inter-persona English. Quote user text verbatim. PO owns end-user localization.
 

@@ -14,6 +14,16 @@ Trivial skip is a routing rule, not PO-writing-in-lieu-of-Designer:
 
 ---
 
+## User-centric principles (대원칙 1)
+
+PO/Designer ≠ target user. Two sub-rules guide PRD authoring + persona invocation:
+
+**1. Understand the target.** Target user's familiar UI / context / daily apps drive UX patterns — not the team's. Designer's PRD R1 must consult pm-product-discovery skills (`interview-script` / `user-personas` / `market-segments`) before drafting Problem + JTBD slots. Reuse target's mental model; never project our own.
+
+**2. Observe, don't assume.** UX hypothesis 가설 in PRD must pair with an observation process. Codified in `version_outcome.{validation_method, observed_result}` + lazy measurement (lifecycle-mechanics.md ## Outcome measurement / ## Lazy measurement protocol). Critical hypotheses (auth / payments / PII / onboarding flow) require explicit measurement — no inference from assumption alone.
+
+---
+
 ## Designer-side PRD: ambiguity-score clarity loop
 
 Designer treats PRD as **clarity convergence loop**, not one-shot.

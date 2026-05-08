@@ -44,6 +44,174 @@ out_of_scope:
 
 ---
 
+## §1.5 UX principles (대원칙 2 + 3)
+
+§1 은 시각/토큰 레이어. §1.5 는 **사용자 경험 레이어** — productune 전체의 UX 의사결정
+doctrine. PRD / Discovery 영역인 대원칙 1 은 별도 (`docs/designer/*` doctrine).
+본 절은 GUI 컴포넌트와 직접 매핑되는 **대원칙 2 (사용자는 우리가 아니다)** + **대원칙
+3 (사용자를 당황시키지 말라)** 만 다룬다.
+
+> 본 절은 **doctrine** — 컴포넌트 patch 는 별도 ticket. 하지만 신규 컴포넌트 / 신규
+> 화면 PR 은 본 절 5 개 sub-rule 을 자기검증 항목으로 본다.
+
+### 1.5.1 Few Things Per Page (Hick's Law) — 2-1
+
+**정의**. 한 화면 (또는 한 pane) 의 결정 옵션 수가 늘어날수록 사용자 결정 시간은
+log 증가한다. 필요한 만큼만 단순하게. 복잡한 task 는 **단계로 나눈다**.
+
+**왜**. productune GUI 는 IDE-shell (left rail + multi-pane + multi-tab + right
+chat) 이라 base 복잡도가 이미 높다. 각 pane 안에서마저 옵션을 쌓으면 사용자는 길을
+잃는다.
+
+**어디 적용 (productune 매핑)**.
+- **Pane = 한 type 한 가지** — 한 pane 에 PRD viewer + ticket dashboard + activity
+  log 같은 멀티 타입 금지. pane = 단일 콘텐츠 타입 (T-P4-046 split-pane 정합).
+- **Split-pane = 사용자 명시 act 만** — 자동 split 금지. 사용자가 명시적으로 split
+  요청해야 갈라진다 (IDE convention).
+- **Progressive disclosure** — Quick Open (Cmd+P) / Command Palette (Cmd+Shift+P)
+  로 고급 action 은 숨긴다. 평소엔 안 보이고, 호출 시에만 등장.
+- **First-run wizard 단계화** — Engine / Wiki / API Key 를 한 화면에 다 안 넣고
+  step 으로 분리 (T-P4-015 onboarding).
+- **Modal CTA ≤ 2** — primary + secondary 만. 3 개째 CTA 는 menu / kebab 으로 강등.
+
+**위반 사례 (anti-pattern)**.
+- 한 pane 안에 ticket list + ticket detail + activity log 동시 노출 → split-pane
+  으로 사용자가 명시적으로 분리하도록 유도해야 함.
+- Modal 안 footer 에 [저장] [저장 후 닫기] [임시저장] [취소] 4 개 — 정보 위계
+  미정의. → primary 1 + secondary 1 + 나머지는 menu.
+
+### 1.5.2 익숙한 경험 + 점진적 정보 — 2-2
+
+**정의**. 누구나 이해하기 쉬운 글. 익숙한 환경 = 복잡해도 OK / 생소한 환경 = 단순하게.
+초기 화면 = 최소 정보 → 후기 화면 = 점차 늘림.
+
+**왜**. productune 사용자는 두 부류 — (a) developer (IDE 패턴 익숙) (b) PO /
+designer / non-engineer (IDE 생소). 한 doctrine 으로 둘 다 잡으려면 **익숙한 패턴
+차용 + 단계화** 가 답.
+
+**어디 적용**.
+- **IDE 패턴 차용 (developer)** — VSCode-style activity bar (좌 48px) / split-pane
+  / Cmd+P quick open / 탭 / breadcrumb. T-P4-046 정합.
+- **단계화 (non-engineer)** — onboarding wizard step / PRD R1 → R2 → R3 점진적
+  clarity 수렴 / persona session stage gate.
+- **한국어 어휘 + 영문 보호어** (§10) — non-engineer 는 한국어 본문, dev 어휘는
+  영문 보존 (`PRD`, `slug`, `stage`).
+- **초기 화면 = 최소 노출** — 첫 진입 시 PresenceBar / chat / empty pane 만. 고급
+  feature (split / Quick Open / linter) 는 사용자가 학습한 후에 만난다.
+
+**위반 사례**.
+- First-run 진입 즉시 ticket dashboard + persona session view + chat 다 띄우기 →
+  사용자 압도. → wizard 단계로 분리.
+- 한국어 모드에서 "단계" 라고 번역해놓고 다른 곳에선 "stage" 영문 → 어휘 일관성
+  깨짐. T-P4-057 linter 가 catch.
+
+### 1.5.3 Predictability (예상 가능) — 3-1
+
+**정의**. 시각 일관성 — 같은 의미는 같은 모양. empty page 도 placeholder + action
+보여줘서 사용자가 "여기서 뭐 할 수 있는지" 즉시 알게.
+
+**왜**. 사용자는 학습한 패턴으로 다음 행동을 예측한다. 예측이 깨지면 신뢰가 깨진다.
+
+**어디 적용**.
+- **시각 일관성 = §1 token 강제** — 같은 status 는 같은 색, 같은 stage 는 같은
+  색 (§2.6 / §2.7). 예외 0.
+- **Empty state 는 Empty 컴포넌트로** — 빈 pane / 빈 ticket list / 빈 promotion
+  drain 모두 동일 패턴 (icon `--icon-2xl` + headline + 1-line description + 1
+  primary CTA). T-P4-046 Empty pane component 가 본 doctrine 의 reference impl.
+- **Pending state ≠ Empty state** — "아무것도 없음" 과 "로딩 중" 은 다른 component
+  (PendingPromotionDrain 의 empty vs loading 분리 정합).
+- **버튼 위치 일관** — modal footer 의 [Cancel] 항상 좌측 / [Confirm] 항상 우측.
+  카드의 primary action 은 항상 우측 상단 또는 하단 우측.
+- **Hover / focus 동작 일관** — 모든 button 은 hover 시 bg 한 단 밝게 (§8.1).
+
+**위반 사례**.
+- 같은 "blocked" 라벨이 어떤 화면은 빨강, 어떤 화면은 회색 → token 미적용.
+- Empty pane 에 placeholder 만 있고 CTA 없음 → 사용자가 "여기서 뭐 해야 하지" 막힘.
+  → "Open file" / "Create ticket" 같은 1 차 action 노출 필수.
+
+### 1.5.4 Feedback (적재적소 알림) — 3-2
+
+**정의**. 모든 사용자 action 은 **즉시 visual feedback** 받는다. task 완료 알림.
+오류는 명확 + 대안 제시. writing 은 친근 / 비기술적 / non-threatening.
+
+**왜**. 사용자가 클릭했는데 아무 반응 없으면 "버튼 눌린 거 맞나?" 의심한다. 신뢰
+파괴.
+
+**어디 적용**. 모든 action 은 다음 3 단계 중 하나 이상 visual feedback 의무.
+1. **즉시 (≤ 100ms)** — 버튼 pressed state, hover-loss, ripple. CSS `:active`.
+2. **진행 (≥ 100ms)** — Loader2 spinner (§9.2 `pdt-spin`) 또는 inline progress.
+   non-blocking 은 toast 진행 알림.
+3. **완료** — success toast (`--health-success`) / inline checkmark / banner
+   (T-P4-059 SessionHealthBanner). 실패 시 `--health-error` + **대안 CTA** (예:
+   "재시도" / "로그 보기" / "취소").
+
+**Writing 톤**.
+- 친근 — "저장됐습니다" (X "저장 작업 완료").
+- 비기술적 — non-engineer 가 봐도 이해. stack trace 는 details 안에 접어 둠.
+- Non-threatening — "오류 발생!" (X) → "잠시 문제가 생겼어요. 다시 시도해주세요"
+  (O). 단 보호어 (`PRD`, `stage`, `slug`) 는 영문 그대로.
+
+**컴포넌트 매핑**.
+- Toast — task 비동기 완료, non-blocking notice.
+- Inline confirm — 같은 컴포넌트 안에서 즉시 확인 (예: "저장됨 ✓" inline 라벨).
+- SessionHealthBanner (T-P4-059) — session 수준 health (info/warn/error).
+- Status pill 변화 — status `in-progress` → `done` 의 색 변화 자체가 feedback.
+- Spinner — `Loader2` `pdt-spin` (`--motion-fast` 무관, 회전은 1s linear).
+
+**위반 사례 (recent dogfood — 2026-05-07)**.
+- ChatPanel 의 restart 버튼 클릭 시 IPC 호출은 됐지만 UI 변화 0 → 사용자 "뭐가
+  된 건지 모르겠다". **본 doctrine catch 가능**. fix 방향 (별도 ticket): 클릭 즉시
+  버튼 disabled + spinner / 완료 시 toast "session restarted" / 실패 시 inline
+  error + retry CTA.
+- Long-running task 에 spinner 만 있고 progress 정보 없음 → "끝났는지 멈췄는지
+  모름". → toast 또는 banner 로 stage 알림 (`#3 of 5 personas done...`).
+
+### 1.5.5 Escape (출구 제공) — 3-3
+
+**정의**. 사용자는 우리 기대대로 안 움직인다. 모든 진입점에는 안심할 수 있는 **출구**
+가 있어야 한다.
+
+**왜**. 막다른 골목 = 사용자 불안. "여기서 빠져나갈 수 있나?" 가 답이 없으면 클릭
+자체를 안 한다.
+
+**어디 적용**. 모든 modal / overlay / 진입 pane 에 **최소 1 개 명시적 출구** 의무.
+- **Esc 키** — 모든 modal / popover / Quick Open 에서 즉시 닫힘 (§8.5 Modal recipe
+  보강). 단 **destructive confirm modal** 은 Esc 무효 + 명시적 [Cancel] 만 (실수
+  방지).
+- **외부 click** — modal backdrop click 으로 닫힘. 단 form 입력 진행 중인 modal 은
+  "변경사항이 있습니다, 닫을까요?" confirm.
+- **Cancel 버튼** — 모든 modal footer 에 [Cancel] (또는 [닫기]) 명시. footer 없는
+  modal 은 우상단 X 아이콘 (`--icon-md`, `--text-muted`).
+- **FAB 복원** — 닫은 chat / dismiss 한 banner 도 복원 가능. dismiss = 영구 삭제
+  X, 복원 CTA (FAB 또는 menu) 노출.
+- **Quick Open Esc** — Cmd+P palette 도 Esc 로 즉시 닫힘.
+- **PhaseTransitionGate** — stage 진행 modal 도 [뒤로] / [Cancel] 명시. 일방통행
+  금지.
+- **Breadcrumb / back** — pane 안 깊은 view 는 ← 또는 breadcrumb 으로 한 단계
+  뒤로. browser-style.
+
+**위반 사례**.
+- Modal 에 [Confirm] 만 있고 [Cancel] 없음 → 사용자 강제 결정. → Cancel 필수.
+- Onboarding wizard step 3 에서 step 2 로 못 돌아감 → 일방통행. → [Back] 명시.
+- Toast 에 dismiss X 없음 → 사용자가 끄지 못함. → 모든 toast 에 X (auto-dismiss
+  되는 success 도 hover 시 X 노출).
+
+### 1.5.6 Sub-rule 적용 체크리스트 (PR 자기검증)
+
+신규 컴포넌트 / 신규 화면 PR 은 본 5 항목 self-check 후 머지.
+
+| # | sub-rule | 체크 |
+|---|---|---|
+| 2-1 | Few Things | 한 pane / modal 의 primary action 수 ≤ 2. 복잡 task 는 단계 분리. |
+| 2-2 | 익숙한 경험 | IDE 패턴 (dev) + 단계화 (non-engineer) 둘 다 만족. 어휘 보호어 유지. |
+| 3-1 | Predictability | token 강제. empty state 는 Empty 컴포넌트 + CTA. 버튼 위치 일관. |
+| 3-2 | Feedback | 모든 action 의 즉시/진행/완료 단계 중 1 개 이상 visual feedback. error → 대안 CTA. |
+| 3-3 | Escape | Esc + Cancel + 외부 click + dismiss 복원 중 최소 1 개. destructive 는 Esc 무효 정책. |
+
+> 본 체크리스트 위반 = designer review block. PR 본문에 self-check 결과 명시 권장.
+
+---
+
 ## §2 Color tokens
 
 ### 2.1 Surface (배경 계층)
@@ -384,6 +552,9 @@ hover: bg 한 단 밝게 / border `--border-strong`.
 focus-visible: outline `2px solid --accent`, offset `2px`.
 disabled: opacity 0.4, cursor not-allowed.
 
+> **§1.5.4 Feedback 정합** — 모든 button 은 `:active` pressed state + async action
+> 시 inline `Loader2` (§9.2 `pdt-spin`) 의무. action 직후 무반응 = §1.5.4 위반.
+
 ### 8.2 Pill / Chip
 
 uppercase, `pill` typography recipe, `--radius-pill`, padding `--space-1` × `--space-2-5`.
@@ -409,6 +580,9 @@ uppercase, `pill` typography recipe, `--radius-pill`, padding `--space-1` × `--
 matching (`Info`/`AlertTriangle`/`AlertOctagon`/`CheckCircle2`), stroke 2, size 16,
 color = `--health-*`. body = `body-dense` recipe.
 
+> **§1.5.5 Escape 정합** — banner 는 우측 상단 dismiss X (`--icon-sm`,
+> `--text-muted`) 의무. dismiss 후 복원 경로 (FAB 또는 menu) 필수.
+
 ### 8.5 Modal / Dialog (T-P4-058)
 
 | 항목 | token |
@@ -422,6 +596,11 @@ color = `--health-*`. body = `body-dense` recipe.
 | body pad | `--space-3` `--space-6` |
 | footer pad | `--space-3` `--space-6` `--space-5` |
 | close icon | lucide `X`, `--icon-md`, stroke 2, color `--text-muted` |
+
+> **§1.5.5 Escape 정합** — 모든 modal 은 (a) Esc 키 (b) backdrop click (c) 우상단
+> X (d) footer [Cancel] 중 **최소 2 개** 출구 의무. **destructive confirm modal**
+> 은 (a) Esc 무효 + (d) [Cancel] 명시 정책 (실수 방지). form 입력 진행 modal 의
+> backdrop click 은 "변경사항 confirm" 거쳐야 닫힘.
 
 ### 8.6 PersonaPresenceBar (참고 — 기존 코드)
 
@@ -438,6 +617,22 @@ color = `--health-*`. body = `body-dense` recipe.
 
 modal 패턴 위에 stage from→to 표시. stage 색은 `--stage-*` token,
 라벨은 보호어 (영문 보존, §10).
+
+> **§1.5.5 Escape 정합** — gate modal 도 [뒤로] / [Cancel] 명시 의무. 일방통행
+> stage 진행 금지.
+
+### 8.9 Empty pane (T-P4-046)
+
+| 항목 | token |
+|---|---|
+| surface | `--surface-panel` |
+| icon | lucide matching, `--icon-2xl`, stroke `--icon-stroke-decorative`, color `--text-faint` |
+| headline | `heading-section` recipe, `--text-secondary` |
+| description | `body-dense` recipe, `--text-muted`, 1 line |
+| primary CTA | `secondary` button (§8.1) |
+
+> **§1.5.3 Predictability 정합** — 모든 빈 pane / 빈 list 는 본 컴포넌트 사용.
+> placeholder-only 금지, primary CTA 의무 (사용자 다음 행동 명시).
 
 ---
 
@@ -522,6 +717,8 @@ modal 패턴 위에 stage from→to 표시. stage 색은 `--stage-*` token,
 4. **§4 Typography** — recipe 화 (`text-pill`, `text-body-dense` utility class).
 5. **§6 Elevation** + **§9 Motion** — 마지막. shadow/animation 은 사용처가 적어
    영향 작음.
+6. **§1.5 UX principles 정합 audit** — 별도 ticket. recent dogfood (ChatPanel
+   restart button feedback 부재) 같은 위반을 grep + 컴포넌트 patch.
 
 각 단계마다 separate ticket. visual regression (스크린샷) 은 후속 storybook ticket
 도착 후.
@@ -542,6 +739,8 @@ modal 패턴 위에 stage from→to 표시. stage 색은 `--stage-*` token,
 - **OQ-5** — 본 spec 의 token 명을 CSS custom property 네임으로 그대로 쓸지,
   Tailwind config 의 `theme.extend.colors` 키로 매핑할지 — 마이그레이션 ticket 의
   technical decision (developer 페르소나 검토 필요).
+- **OQ-6** — §1.5 sub-rule 체크리스트를 PR template 에 강제 항목으로 박을지,
+  designer review checklist 로만 둘지 — Phase 4 close 전 결정.
 
 ---
 
@@ -565,9 +764,11 @@ modal 패턴 위에 stage from→to 표시. stage 색은 `--stage-*` token,
 - `WorkspaceShell` — font-family stack 출처
 - `StageStrip` — stage color 출처
 - `PersonaPresenceBar` — persona color, blink animation 출처
-- `ChatPanel` — message border (persona), `rp-ctx` chip (stage) 출처
+- `ChatPanel` — message border (persona), `rp-ctx` chip (stage) 출처. **restart
+  button feedback 부재** — §1.5.4 위반 dogfood 사례 (별도 ticket 으로 fix).
 - `TicketDashboardView` — status color 출처
 - `SessionHealthBanner` (T-P4-059) — health color, banner 패턴 출처
 - `Modal` (T-P4-058) — `--surface-modal` 출처
+- `Empty pane` (T-P4-046) — §1.5.3 Predictability empty state reference
 - `lucide-react@1.14.0` — 아이콘 라이브러리 (commit `a505e74`)
 - `docs/designer/decisions.md` — 관련 design decisions log
