@@ -6,6 +6,7 @@ import { useWorkspace } from '../../store/workspace'
 import VersionsPanel from './VersionsPanel'
 import SettingsView from './SettingsView'
 import PhaseStrip from './PhaseStrip'
+import TeamPanel from './TeamPanel'
 
 interface Props {
   project: Project
@@ -70,9 +71,7 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
         </div>
       )}
       {activeIcon === 'team' && (
-        <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>{t('workspace.sidebar.teamHint')}</span>
-        </div>
+        <TeamPanel poState={poState} />
       )}
       {activeIcon === 'versions' && <VersionsPanel poState={poState} />}
       {activeIcon === 'tickets' && (

@@ -260,6 +260,56 @@
         "deploy": "Deploy — Release preparation & ship",
         "close": "Close — Retrospective & next round"
       }
+    },
+    "team": {
+      "title": "Team",
+      "section": {
+        "personas": "Personas (4)",
+        "skills": "Skills",
+        "skillsMatrix": "Matrix ↗",
+        "skillsMore": "+ {{count}} more (see in Matrix)",
+        "wikiMemory": "Wiki / Memory"
+      },
+      "persona": {
+        "po": {
+          "name": "PO",
+          "role": "Product owner"
+        },
+        "designer": {
+          "name": "Designer",
+          "role": "UX / Brand / Design system"
+        },
+        "developer": {
+          "name": "Developer",
+          "role": "Code authoring"
+        },
+        "qa": {
+          "name": "QA",
+          "role": "Pass / fail verifier"
+        }
+      },
+      "wiki": {
+        "backend": {
+          "fs": "fs (local markdown)",
+          "graphiti": "graphiti (knowledge graph)",
+          "keeper": "keeper (Wiki Keeper agent)"
+        },
+        "userMemory": "User memory",
+        "projectState": "Project state",
+        "promotionCandidates": "Promotion candidates"
+      },
+      "activeDot": {
+        "tooltip": "Active (last seen {{seconds}}s ago)"
+      },
+      "skillMatrix": {
+        "title": "Skill Matrix",
+        "search": "Search skills…",
+        "filterAssigned": "Assigned only",
+        "addSkill": "+ Add skill"
+      },
+      "personaDef": {
+        "previewNote": "Preview only — editing persona spec is a Phase 5 feature."
+      }
     }
   },
   "settings": {

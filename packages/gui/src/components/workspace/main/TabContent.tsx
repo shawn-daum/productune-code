@@ -3,6 +3,8 @@ import MarkdownTab from './panes/MarkdownTab'
 import VersionDetailTab from './panes/VersionDetailTab'
 import TicketReviewTab from './panes/TicketReviewTab'
 import PlaceholderTab from './panes/PlaceholderTab'
+import SkillMatrixTab from './panes/SkillMatrixTab'
+import PersonaDefTab from './panes/PersonaDefTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -19,11 +21,11 @@ export default function TabContent({ tab }: Props) {
     case 'markdown':       return <MarkdownTab props={tab.props} />
     case 'version-detail': return <VersionDetailTab props={tab.props} />
     case 'ticket-review':  return <TicketReviewTab props={tab.props} />
+    case 'persona-def':    return <PersonaDefTab props={tab.props} />
+    case 'skill-matrix':   return <SkillMatrixTab props={tab.props} />
     case 'design-gate':
     case 'qa-result':
-    case 'persona-def':
     case 'env-view':
-    case 'skill-matrix':
     case 'preview':
     case 'terminal':
     case 'browser':

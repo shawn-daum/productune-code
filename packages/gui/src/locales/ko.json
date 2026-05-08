@@ -260,6 +260,56 @@
         "deploy": "Deploy — 릴리즈 준비·배포",
         "close": "Close — 회고·다음 라운드"
       }
+    },
+    "team": {
+      "title": "팀",
+      "section": {
+        "personas": "페르소나 (4)",
+        "skills": "스킬",
+        "skillsMatrix": "매트릭스 ↗",
+        "skillsMore": "+ {{count}}개 더 (Matrix에서 전체 보기)",
+        "wikiMemory": "위키 / 메모리"
+      },
+      "persona": {
+        "po": {
+          "name": "PO",
+          "role": "프로덕트 오너"
+        },
+        "designer": {
+          "name": "Designer",
+          "role": "UX / 브랜드 / 디자인 시스템"
+        },
+        "developer": {
+          "name": "Developer",
+          "role": "코드 작성"
+        },
+        "qa": {
+          "name": "QA",
+          "role": "통과 / 실패 검증"
+        }
+      },
+      "wiki": {
+        "backend": {
+          "fs": "fs (local markdown)",
+          "graphiti": "graphiti (knowledge graph)",
+          "keeper": "keeper (Wiki Keeper agent)"
+        },
+        "userMemory": "사용자 메모리",
+        "projectState": "프로젝트 상태",
+        "promotionCandidates": "승급 후보"
+      },
+      "activeDot": {
+        "tooltip": "활동 중 (last seen {{seconds}}초 전)"
+      },
+      "skillMatrix": {
+        "title": "Skill Matrix",
+        "search": "스킬 검색…",
+        "filterAssigned": "배정된 것만",
+        "addSkill": "+ 스킬 추가"
+      },
+      "personaDef": {
+        "previewNote": "미리보기 전용 — 페르소나 spec 편집은 Phase 5 기능입니다."
+      }
     }
   },
   "settings": {
