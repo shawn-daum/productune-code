@@ -259,4 +259,24 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('menu:open-project', listener)
     return () => ipcRenderer.removeListener('menu:open-project', listener)
   },
+
+  // ── Explorer (T-P4-045) ───────────────────────────────────────────────────────
+  explorerListDir: (absPath: string): Promise<Array<{ name: string; path: string; isDir: boolean }>> =>
+    ipcRenderer.invoke('explorer:listDir', absPath),
+
+  explorerWatch: (root: string): Promise<void> =>
+    ipcRenderer.invoke('explorer:watch', root),
+
+  explorerUnwatch: (): Promise<void> =>
+    ipcRenderer.invoke('explorer:unwatch'),
+
+  explorerRevealInOS: (absPath: string): Promise<void> =>
+    ipcRenderer.invoke('explorer:revealInOS', absPath),
+
+  /** Subscribe to explorer fs-change events. Returns an unsubscribe fn. */
+  explorerOnFsChanged: (cb: (payload: { type: string; path: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: { type: string; path: string }) => cb(payload)
+    ipcRenderer.on('explorer:fs-changed', listener)
+    return () => ipcRenderer.removeListener('explorer:fs-changed', listener)
+  },
 })

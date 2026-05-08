@@ -5,6 +5,8 @@ import TicketReviewTab from './panes/TicketReviewTab'
 import PlaceholderTab from './panes/PlaceholderTab'
 import SkillMatrixTab from './panes/SkillMatrixTab'
 import PersonaDefTab from './panes/PersonaDefTab'
+import ImageTab from './panes/ImageTab'
+import BinaryTab from './panes/BinaryTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -23,6 +25,8 @@ export default function TabContent({ tab }: Props) {
     case 'ticket-review':  return <TicketReviewTab props={tab.props} />
     case 'persona-def':    return <PersonaDefTab props={tab.props} />
     case 'skill-matrix':   return <SkillMatrixTab props={tab.props} />
+    case 'image':         return <ImageTab props={tab.props} />
+    case 'binary':        return <BinaryTab props={tab.props} />
     case 'design-gate':
     case 'qa-result':
     case 'env-view':

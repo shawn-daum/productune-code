@@ -240,6 +240,22 @@
       "chipAriaLabel": "{{persona}} — {{state}}",
       "doneNoArtifact": "done"
     },
+    "explorer": {
+      "title": "탐색기",
+      "refresh": "새로고침",
+      "showHidden": "숨김 파일 표시",
+      "hideHidden": "숨김 파일 숨기기",
+      "empty": "(비어 있음)",
+      "noFolder": "열린 폴더 없음",
+      "openFolder": "폴더 열기…",
+      "readError": "디렉터리를 읽을 수 없음",
+      "retry": "재시도",
+      "contextOpen": "열기",
+      "contextReveal": "Finder에서 보기",
+      "contextCopyPath": "경로 복사",
+      "contextCopyRel": "상대 경로 복사",
+      "binaryNoPreview": "바이너리 파일. 미리보기 불가."
+    },
     "activityBar": {
       "explorer": "탐색",
       "project": "프로젝트",

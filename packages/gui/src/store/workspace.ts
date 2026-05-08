@@ -16,6 +16,8 @@ export type TabType =
   | 'preview'
   | 'terminal'
   | 'browser'
+  | 'image'
+  | 'binary'
 
 export interface Tab {
   id: string
@@ -482,6 +484,8 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'preview':        return 'Preview'
     case 'terminal':       return 'Terminal'
     case 'browser':        return 'Browser'
+    case 'image':          return (props?.path as string)?.split('/').pop() ?? 'Image'
+    case 'binary':         return (props?.path as string)?.split('/').pop() ?? 'Binary'
     default:               return type
   }
 }

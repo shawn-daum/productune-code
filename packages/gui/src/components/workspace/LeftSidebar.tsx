@@ -7,6 +7,7 @@ import VersionsPanel from './VersionsPanel'
 import SettingsView from './SettingsView'
 import PhaseStrip from './PhaseStrip'
 import TeamPanel from './TeamPanel'
+import ExplorerPane from '../explorer/ExplorerPane'
 
 interface Props {
   project: Project
@@ -66,9 +67,7 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
         </div>
       )}
       {activeIcon === 'explorer' && (
-        <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>{t('workspace.sidebar.explorerHint')}</span>
-        </div>
+        <ExplorerPane />
       )}
       {activeIcon === 'team' && (
         <TeamPanel poState={poState} />

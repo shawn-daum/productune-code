@@ -240,6 +240,22 @@
       "chipAriaLabel": "{{persona}} — {{state}}",
       "doneNoArtifact": "done"
     },
+    "explorer": {
+      "title": "Explorer",
+      "refresh": "Refresh",
+      "showHidden": "Show hidden files",
+      "hideHidden": "Hide hidden files",
+      "empty": "(empty)",
+      "noFolder": "No folder open",
+      "openFolder": "Open Folder…",
+      "readError": "Cannot read directory",
+      "retry": "Retry",
+      "contextOpen": "Open",
+      "contextReveal": "Reveal in Finder",
+      "contextCopyPath": "Copy Path",
+      "contextCopyRel": "Copy Relative Path",
+      "binaryNoPreview": "Binary file. Cannot preview."
+    },
     "activityBar": {
       "explorer": "Explorer",
       "project": "Project",
