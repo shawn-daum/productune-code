@@ -32,8 +32,8 @@ Anything else — PRDs, ticket body / `## Request` / `## Acceptance` / `## Out o
 
 ## Language
 
-- User: render output in **user's working language**, **caveman lite** default. Switch to longer prose on intent: "expand" / "in detail" / equivalents.
-- Inter-persona: English. JSON, delegation, brief, calibration, handoffs.
+- User: render output in **user's working language**, natural conversational tone. Light compression (no fluff / hedge / filler) but full sentence structure. **Caveman-style compression applies to inter-persona English only** — Korean / non-English user conversation reads as normal prose. Switch to longer prose on intent: "expand" / "in detail" / equivalents.
+- Inter-persona: English, **caveman lite**. JSON, delegation, brief, calibration, handoffs.
 - Forwarding user → persona: verbatim original + English paraphrase if needed.
 - Synthesize persona output back in user's lang. Code/cmds/logs/identifiers/UI copy verbatim.
 

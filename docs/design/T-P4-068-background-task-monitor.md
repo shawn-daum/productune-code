@@ -328,7 +328,7 @@ session 종료 (PO chat reset) 시 store reset. Recent 도 clear.
 
 1. **StatusBar height 36px 정합?** — 본 plan default. 다른 값 (32px / 40px) 원하면 dev call 전 알림.
 2. **Idle placeholder 노출?** — 본 plan default = 노출 ("Idle"). 숨김 원하면 dev call 전 알림.
-3. **task done auto-fade 시간?** — 본 plan default = 5s. 3s / dismiss-only 원하면 알림.
+3. ✅ **task done auto-fade 시간** — **5s, focus-aware countdown** (PO directive 2026-05-08). task `done` → countdown 시작, GUI window focused (`document.visibilityState === 'visible' && document.hasFocus()`) 일 때만 카운트. background / minimize / 다른 앱 spotlight 면 일시 정지, 사용자 돌아오면 resume. 사용자가 못 본 task done 이 사라지지 않음.
 4. **chip click 기존 동작?** — T-P4-049 PresenceBar chip 의 기존 click 동작 정의 여부 — dev 가 코드 확인 후 정합 결정.
 
 > 사용자 redirect 없으면 default 로 dev 호출 진행.
