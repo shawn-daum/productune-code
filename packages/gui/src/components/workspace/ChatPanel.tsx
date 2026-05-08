@@ -258,7 +258,7 @@ export default function ChatPanel() {
   }
   const onRestartEnter = () => {
     const r = restartBtnRef.current?.getBoundingClientRect()
-    if (r) setRestartTipPos({ top: r.bottom + 6, left: r.left + r.width / 2 })
+    if (r) setRestartTipPos({ top: r.bottom + 6, left: r.right })
   }
   const onRestartLeave = () => setRestartTipPos(null)
 
@@ -415,7 +415,7 @@ export default function ChatPanel() {
             position: 'fixed',
             top: restartTipPos.top,
             left: restartTipPos.left,
-            transform: 'translateX(-50%)',
+            transform: 'translateX(-100%)',
             background: '#1E1E1E',
             border: '1px solid #2A2A2A',
             color: '#E0E0E0',
@@ -427,6 +427,7 @@ export default function ChatPanel() {
             pointerEvents: 'none',
             zIndex: 1000,
             boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            maxWidth: 'calc(100vw - 20px)',
           }}
         >
           {t('workspace.chat.restartHint')}
