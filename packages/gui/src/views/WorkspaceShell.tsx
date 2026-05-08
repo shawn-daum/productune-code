@@ -39,12 +39,13 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const clearHealth = useSessionHealth((s) => s.clearHealth)
 
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('project')
-  const [restartModalOpen, setRestartModalOpen] = useState(false)
   const [drainVisible, setDrainVisible] = useState(true)
   const [quickOpenVisible, setQuickOpenVisible] = useState(false)
   const [quickOpenFiles, setQuickOpenFiles] = useState<Array<{ path: string; ext: string }>>([])
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
+  const restartModalOpen = usePoChat((s) => s.restartModalOpen)
+  const setRestartModalOpen = usePoChat((s) => s.setRestartModalOpen)
 
   // ── Ticket source for Quick Open ────────────────────────────────────────────
   const { tickets: scannedTickets } = useTicketScan(project.projectDir)

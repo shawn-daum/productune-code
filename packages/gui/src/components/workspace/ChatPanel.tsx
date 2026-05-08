@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Paperclip, ArrowUp, RefreshCw, Minus } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
@@ -247,18 +248,19 @@ export default function ChatPanel() {
 
   const [sendHover, setSendHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
-  const [restartHover, setRestartHover] = useState(false)
+  const [restartTipPos, setRestartTipPos] = useState<{ top: number; left: number } | null>(null)
   const [minimizeHover, setMinimizeHover] = useState(false)
+  const restartBtnRef = useRef<HTMLButtonElement>(null)
+  const setRestartModalOpen = usePoChat((s) => s.setRestartModalOpen)
 
-  const onRestart = async () => {
-    try {
-      const api = (window as any).api
-      if (!api?.poRestartSession) return
-      await api.poRestartSession()
-      setClaudeSessionId(null)
-      setStreaming(false)
-    } catch { /* ignore */ }
+  const onRestartClick = () => {
+    setRestartModalOpen(true)
   }
+  const onRestartEnter = () => {
+    const r = restartBtnRef.current?.getBoundingClientRect()
+    if (r) setRestartTipPos({ top: r.bottom + 6, left: r.left + r.width / 2 })
+  }
+  const onRestartLeave = () => setRestartTipPos(null)
 
   // ── ctx caption ─────────────────────────────────────────────────────────
   const ctxCaption = useMemo(() => {
@@ -281,16 +283,16 @@ export default function ChatPanel() {
           <span style={poBadge}>P</span>
           <span style={headerTitle}>{t('workspace.chat.title')}</span>
           <button
+            ref={restartBtnRef}
             style={{
               ...iconBtn,
-              background: restartHover ? '#2A2A2A' : 'transparent',
-              color: restartHover ? '#F0F0F0' : '#A0A0A0',
+              background: restartTipPos ? '#2A2A2A' : 'transparent',
+              color: restartTipPos ? '#F0F0F0' : '#A0A0A0',
             }}
-            onMouseEnter={() => setRestartHover(true)}
-            onMouseLeave={() => setRestartHover(false)}
-            onClick={onRestart}
+            onMouseEnter={onRestartEnter}
+            onMouseLeave={onRestartLeave}
+            onClick={onRestartClick}
             aria-label={t('workspace.chat.restartSession')}
-            title={t('workspace.chat.restartHint')}
           >
             <RefreshCw size={13} strokeWidth={2} />
           </button>
@@ -406,6 +408,31 @@ export default function ChatPanel() {
           </div>
         </div>
       </div>
+
+      {restartTipPos && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: restartTipPos.top,
+            left: restartTipPos.left,
+            transform: 'translateX(-50%)',
+            background: '#1E1E1E',
+            border: '1px solid #2A2A2A',
+            color: '#E0E0E0',
+            padding: '4px 9px',
+            borderRadius: 4,
+            fontSize: 11,
+            lineHeight: 1.3,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            zIndex: 1000,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+          }}
+        >
+          {t('workspace.chat.restartHint')}
+        </div>,
+        document.body,
+      )}
     </>
   )
 }

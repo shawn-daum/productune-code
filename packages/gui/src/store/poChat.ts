@@ -19,20 +19,24 @@ interface PoChatState {
   panelVisible: boolean
   inputDraft: string
   autoScrollLocked: boolean
+  restartModalOpen: boolean
 
   setPanelVisible: (v: boolean) => void
   togglePanel: () => void
   setDraft: (s: string) => void
   setAutoScrollLocked: (b: boolean) => void
+  setRestartModalOpen: (v: boolean) => void
 }
 
 export const usePoChat = create<PoChatState>((set) => ({
   panelVisible: true,
   inputDraft: '',
   autoScrollLocked: false,
+  restartModalOpen: false,
 
   setPanelVisible: (panelVisible) => set({ panelVisible }),
   togglePanel: () => set((s) => ({ panelVisible: !s.panelVisible })),
   setDraft: (inputDraft) => set({ inputDraft }),
   setAutoScrollLocked: (autoScrollLocked) => set({ autoScrollLocked }),
+  setRestartModalOpen: (restartModalOpen) => set({ restartModalOpen }),
 }))
