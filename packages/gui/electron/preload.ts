@@ -260,6 +260,10 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('menu:open-project', listener)
   },
 
+  // ── Quick Open file listing (T-P4-047) ──────────────────────────────────────
+  listProjectFiles: (projectDir: string): Promise<Array<{ path: string; ext: string }>> =>
+    ipcRenderer.invoke('slash:listProjectFiles', projectDir),
+
   // ── Explorer (T-P4-045) ───────────────────────────────────────────────────────
   explorerListDir: (absPath: string): Promise<Array<{ name: string; path: string; isDir: boolean }>> =>
     ipcRenderer.invoke('explorer:listDir', absPath),

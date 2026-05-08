@@ -11,7 +11,9 @@ import ChatPanel from '../components/workspace/ChatPanel'
 import SessionHealthBanner from '../components/workspace/SessionHealthBanner'
 import RestartSessionModal from '../components/workspace/RestartSessionModal'
 import PendingPromotionDrain from '../components/workspace/PendingPromotionDrain'
+import QuickOpenPalette, { type QuickOpenItem } from '../components/workspace/QuickOpenPalette'
 import { usePoChat } from '../store/poChat'
+import { useTicketScan } from '../lib/useTicketScan'
 
 interface Props {
   project: Project
@@ -39,8 +41,13 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('project')
   const [restartModalOpen, setRestartModalOpen] = useState(false)
   const [drainVisible, setDrainVisible] = useState(true)
+  const [quickOpenVisible, setQuickOpenVisible] = useState(false)
+  const [quickOpenFiles, setQuickOpenFiles] = useState<Array<{ path: string; ext: string }>>([])
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
+
+  // ── Ticket source for Quick Open ────────────────────────────────────────────
+  const { tickets: scannedTickets } = useTicketScan(project.projectDir)
 
   // Sync project into store on mount / change
   useEffect(() => {
@@ -62,6 +69,26 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       setDrainVisible(true)
     }
   }, [streaming])
+
+  // ── Quick Open listener (T-P4-047) ─────────────────────────────────────────
+  useEffect(() => {
+    const onQuickOpen = () => setQuickOpenVisible((v) => !v)
+    window.addEventListener('productune:quick-open', onQuickOpen)
+    return () => window.removeEventListener('productune:quick-open', onQuickOpen)
+  }, [])
+
+  // Fetch file list when palette opens (1x per open, disposed on close).
+  useEffect(() => {
+    if (!quickOpenVisible) {
+      setQuickOpenFiles([])
+      return
+    }
+    const api = (window as any).api
+    if (!api?.listProjectFiles) return
+    api.listProjectFiles(project.projectDir)
+      .then((files: Array<{ path: string; ext: string }>) => setQuickOpenFiles(files))
+      .catch(() => setQuickOpenFiles([]))
+  }, [quickOpenVisible, project.projectDir])
 
   // Native menubar → renderer: Open / New Project send the user back to HomeView.
   useEffect(() => {
@@ -215,6 +242,71 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     }
   }, [closeTab, closePane, splitRight, splitDown, addNewTab])
 
+  // ── Quick Open items (T-P4-047) ─────────────────────────────────────────────
+  // Built inline so files/tickets/personas are all in scope without extra hooks.
+  const quickOpenItems: QuickOpenItem[] = (() => {
+    const items: QuickOpenItem[] = []
+
+    // -- File source (priority 50; .md=60; prd.md=80) --
+    const FILE_EXT_WHITELIST = new Set(['.md', '.json', '.html', '.txt'])
+    for (const f of quickOpenFiles) {
+      if (!FILE_EXT_WHITELIST.has(f.ext)) continue
+      const name = fileBasename(f.path)
+      const relPath = f.path.startsWith(project.projectDir)
+        ? f.path.slice(project.projectDir.length).replace(/^\//, '')
+        : f.path
+      let priority = 50
+      if (f.ext === '.md') priority = name.toLowerCase().includes('prd') ? 80 : 60
+      items.push({
+        id: `file:${f.path}`,
+        source: 'file',
+        label: name,
+        sublabel: relPath,
+        priority,
+        open: () => openTab(`markdown:${f.path}`, 'markdown', { path: f.path }, name),
+      })
+    }
+
+    // -- Ticket source (open=70, closed=40) --
+    for (const t of scannedTickets) {
+      const isClosed = t.status === 'done' || t.status === 'abandoned'
+      const priority = isClosed ? 40 : 70
+      const round = t.version ?? ''
+      const sublabel = [round, t.status].filter(Boolean).join(' · ')
+      items.push({
+        id: `ticket:${t.ticket_id}`,
+        source: 'ticket',
+        label: t.ticket_id + (t.title ? ` — ${t.title}` : ''),
+        sublabel,
+        priority,
+        open: () => openTab(`ticket-review:${t.ticket_id}`, 'ticket-review', { ticketId: t.ticket_id }, t.ticket_id),
+      })
+    }
+
+    // -- Persona source (priority 30) --
+    const PERSONAS = [
+      'pdt-po',
+      'pdt-designer',
+      'pdt-developer',
+      'pdt-qa',
+      'pdt-wiki-keeper',
+    ]
+    for (const slug of PERSONAS) {
+      items.push({
+        id: `persona:${slug}`,
+        source: 'persona',
+        label: slug,
+        sublabel: 'persona',
+        priority: 30,
+        open: () => openTab(`persona-def:${slug}`, 'persona-def', { personaSlug: slug }, slug),
+      })
+    }
+
+    // -- Skill source (priority 30, Phase 5 placeholder — empty) --
+
+    return items
+  })()
+
   // Collapse the right column when PO chat is minimized.
   const dynamicGrid: React.CSSProperties = {
     ...grid,
@@ -254,6 +346,17 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       {restartModalOpen && (
         <RestartSessionModal onClose={() => setRestartModalOpen(false)} />
       )}
+
+      {quickOpenVisible && (
+        <QuickOpenPalette
+          items={quickOpenItems}
+          onClose={() => setQuickOpenVisible(false)}
+          onPick={(item) => {
+            item.open()
+            setQuickOpenVisible(false)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -261,6 +364,10 @@ export default function WorkspaceShell({ project, onBack }: Props) {
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 import type { Pane, LeafPaneNode } from '../store/workspace'
+
+function fileBasename(p: string): string {
+  return p.split('/').pop() ?? p
+}
 
 function findLeafByIdLocal(root: Pane, paneId: string): LeafPaneNode | null {
   if (root.type === 'leaf') return root.paneId === paneId ? root : null

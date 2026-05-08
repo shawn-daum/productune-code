@@ -963,6 +963,47 @@ ipcMain.handle('explorer:unwatch', (): void => {
   stopExplorerWatch()
 })
 
+// ── Quick Open file listing (T-P4-047) ────────────────────────────────────────
+
+const QO_EXCLUDE = new Set([
+  '.git', 'node_modules', 'dist', 'dist-electron', '.next', 'build',
+  'out', '.turbo', '.cache', '.DS_Store',
+])
+
+const QO_EXT_WHITELIST = new Set(['.md', '.json', '.html', '.txt'])
+
+interface QuickOpenFile {
+  path: string
+  ext: string
+}
+
+function listProjectFilesRecursive(dir: string, out: QuickOpenFile[] = []): QuickOpenFile[] {
+  let entries: import('fs').Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const entry of entries) {
+    if (QO_EXCLUDE.has(entry.name)) continue
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      listProjectFilesRecursive(fullPath, out)
+    } else if (entry.isFile()) {
+      const ext = path.extname(entry.name).toLowerCase()
+      if (QO_EXT_WHITELIST.has(ext)) {
+        out.push({ path: fullPath, ext })
+      }
+    }
+  }
+  return out
+}
+
+ipcMain.handle('slash:listProjectFiles', (_event, projectDir: string): QuickOpenFile[] => {
+  if (!projectDir || !fs.existsSync(projectDir)) return []
+  return listProjectFilesRecursive(projectDir)
+})
+
 function buildAppMenu(): Menu {
   const isMac = process.platform === 'darwin'
   const template: MenuItemConstructorOptions[] = [

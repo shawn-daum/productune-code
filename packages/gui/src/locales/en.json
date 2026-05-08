@@ -197,6 +197,21 @@
     "emptyPane": {
       "title": "Open a file or run a command"
     },
+    "quickOpen": {
+      "placeholder": "Search files, tickets, personas…",
+      "empty": "No results",
+      "hint": {
+        "nav": "↑↓ navigate",
+        "open": "↵ open",
+        "close": "esc close"
+      },
+      "section": {
+        "file": "Files",
+        "ticket": "Tickets",
+        "persona": "Personas",
+        "skill": "Skills"
+      }
+    },
     "kbd": {
       "quickOpen": "Quick Open",
       "newTab": "New Tab",

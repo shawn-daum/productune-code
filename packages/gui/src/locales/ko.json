@@ -197,6 +197,21 @@
     "emptyPane": {
       "title": "파일을 열거나 명령을 실행하세요"
     },
+    "quickOpen": {
+      "placeholder": "파일·ticket·페르소나 검색…",
+      "empty": "결과 없음",
+      "hint": {
+        "nav": "↑↓ 이동",
+        "open": "↵ 열기",
+        "close": "esc 닫기"
+      },
+      "section": {
+        "file": "파일",
+        "ticket": "Tickets",
+        "persona": "페르소나",
+        "skill": "Skills"
+      }
+    },
     "kbd": {
       "quickOpen": "빠른 열기",
       "newTab": "새 탭",
