@@ -91,6 +91,39 @@ contextBridge.exposeInMainWorld('api', {
   readPoState: (projectDir: string): Promise<unknown> =>
     ipcRenderer.invoke('state:readPoState', projectDir),
 
+  // ── Pending promotions (T-P4-066) ────────────────────────────────────────────
+  appendPendingPromotion: (
+    projectDir: string,
+    candidate: import('@productune/core').PendingPromotion,
+  ): Promise<import('@productune/core').PendingPromotion> =>
+    ipcRenderer.invoke('state:appendPendingPromotion', projectDir, candidate),
+
+  listPendingPromotions: (projectDir: string): Promise<import('@productune/core').PendingPromotion[]> =>
+    ipcRenderer.invoke('state:listPendingPromotions', projectDir),
+
+  resolvePendingPromotion: (
+    projectDir: string,
+    id: string,
+    status: 'approved' | 'dropped' | 'edited',
+    finalTarget?: string,
+  ): Promise<import('@productune/core').PendingPromotion | null> =>
+    ipcRenderer.invoke('state:resolvePendingPromotion', projectDir, id, status, finalTarget),
+
+  autoDropStale: (projectDir: string): Promise<number> =>
+    ipcRenderer.invoke('state:autoDropStale', projectDir),
+
+  markSurfaced: (projectDir: string, id: string): Promise<void> =>
+    ipcRenderer.invoke('state:markSurfaced', projectDir, id),
+
+  listAllPromotions: (projectDir: string): Promise<import('@productune/core').PendingPromotion[]> =>
+    ipcRenderer.invoke('state:listAllPromotions', projectDir),
+
+  mechanicalWrite: (
+    promotion: import('@productune/core').PendingPromotion,
+    claudeSessionId?: string,
+  ): Promise<{ ok: boolean; error?: string; jobId?: string }> =>
+    ipcRenderer.invoke('state:mechanicalWrite', promotion, claudeSessionId),
+
   // ── Ticket md scan (v2 sub-f — replaces poState.past_tickets) ───────────────
   scanTickets: (projectDir: string): Promise<import('../src/lib/types').Ticket[]> =>
     ipcRenderer.invoke('tickets:scan', projectDir),

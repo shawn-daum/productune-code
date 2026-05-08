@@ -10,6 +10,7 @@ import ActivityBar, { type ActivityIcon } from '../components/workspace/Activity
 import ChatPanel from '../components/workspace/ChatPanel'
 import SessionHealthBanner from '../components/workspace/SessionHealthBanner'
 import RestartSessionModal from '../components/workspace/RestartSessionModal'
+import PendingPromotionDrain from '../components/workspace/PendingPromotionDrain'
 import { usePoChat } from '../store/poChat'
 
 interface Props {
@@ -37,6 +38,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
 
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('project')
   const [restartModalOpen, setRestartModalOpen] = useState(false)
+  const [drainVisible, setDrainVisible] = useState(true)
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
 
@@ -51,6 +53,15 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       .then((s: unknown) => setPoState(s as any))
       .catch(() => setPoState(null))
   }, [project.projectDir, setPoState])
+
+  // Re-show drain after each PO turn completes (new assistant message landed)
+  const streaming = useWorkspace((s) => s.streaming)
+  useEffect(() => {
+    if (!streaming) {
+      // Turn just finished — re-enable drain so newly queued items surface
+      setDrainVisible(true)
+    }
+  }, [streaming])
 
   // Native menubar → renderer: Open / New Project send the user back to HomeView.
   useEffect(() => {
@@ -225,6 +236,14 @@ export default function WorkspaceShell({ project, onBack }: Props) {
           onViewLog={handleViewLog}
         />
         <PhaseBreadcrumb phase={phase} />
+        {/* Pending promotion drain — turn-start surface (T-P4-066) */}
+        {drainVisible && project && (
+          <PendingPromotionDrain
+            projectDir={project.projectDir}
+            claudeSessionId={useWorkspace.getState().claudeSessionId}
+            onDone={() => setDrainVisible(false)}
+          />
+        )}
       </div>
 
       <MainPanel />

@@ -1,6 +1,6 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { PoState, Version, Ticket, Phase, TaskType, Status } from '../../lib/types'
+import type { PoState, Version, Ticket, Phase, TaskType, Status, PendingPromotion } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
 
@@ -17,6 +17,28 @@ export default function VersionDetailView({ versionId, poState }: Props) {
   const project = useWorkspace((s) => s.project)
   const { tickets: scannedTickets } = useTicketScan(project?.projectDir ?? null)
   const version = (poState?.versions ?? []).find((v) => v.id === versionId)
+  const [approvedPromotions, setApprovedPromotions] = useState<PendingPromotion[]>([])
+
+  // Load approved promotions for this version's date range (D — retrospective read)
+  useEffect(() => {
+    if (!project?.projectDir || !version) return
+    let cancelled = false
+    const api = (window as any).api
+    api.listAllPromotions?.(project.projectDir).then((all: PendingPromotion[]) => {
+      if (cancelled) return
+      const start = version.started_at ? new Date(version.started_at).getTime() : 0
+      const end = version.ended_at ? new Date(version.ended_at).getTime() : Date.now()
+      const filtered = all.filter((p) => {
+        if (p.status !== 'approved' && p.status !== 'edited') return false
+        if (!p.decided_at) return false
+        const decided = new Date(p.decided_at).getTime()
+        return decided >= start && decided <= end
+      })
+      setApprovedPromotions(filtered)
+    }).catch(() => { /* ignore */ })
+    return () => { cancelled = true }
+  }, [project?.projectDir, version])
+
   if (!version) {
     return <div style={empty}>{t('workspace.versionDetail.notFound', { id: versionId })}</div>
   }
@@ -44,6 +66,10 @@ export default function VersionDetailView({ versionId, poState }: Props) {
       <PhaseTimeline current={typeof currentPhase === 'number' ? currentPhase : undefined} ended={!!version.ended_at} />
 
       <OutcomeCard version={version} />
+
+      {approvedPromotions.length > 0 && (
+        <ApprovedPromotionsCard promotions={approvedPromotions} />
+      )}
 
       <section style={section}>
         <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionTickets', { count: tickets.length })}</h3>
@@ -170,6 +196,30 @@ function OutcomeCard({ version }: { version: Version }) {
             <span style={outcomeLink} title={o.retrospective_path}>{o.retrospective_path} ↗</span>
           </div>
         )}
+      </div>
+    </section>
+  )
+}
+
+function ApprovedPromotionsCard({ promotions }: { promotions: PendingPromotion[] }) {
+  const { t } = useTranslation()
+  return (
+    <section style={section}>
+      <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionApprovedPromotions', { count: promotions.length })}</h3>
+      <div style={promoList}>
+        {promotions.map((p) => (
+          <div key={p.id} style={promoRow}>
+            <span style={personaBadge}>{p.persona}</span>
+            <span style={tierBadge}>{p.tier}</span>
+            <span style={promoTarget} title={p.target}>{p.target}</span>
+            <span style={promoDelta} title={p.final_target ?? p.delta}>
+              {(p.final_target ?? p.delta).slice(0, 80)}{((p.final_target ?? p.delta).length > 80) ? '…' : ''}
+            </span>
+            {p.decided_at && (
+              <span style={promoDate}>{p.decided_at.slice(0, 10)}</span>
+            )}
+          </div>
+        ))}
       </div>
     </section>
   )
@@ -449,4 +499,70 @@ const emptyHint: React.CSSProperties = {
   fontSize: 12,
   color: '#3A3A3A',
   marginLeft: 8,
+}
+
+// Approved promotions styles
+const promoList: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+}
+
+const promoRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '5px 10px',
+  background: '#141414',
+  border: '1px solid #1A1A1A',
+  borderRadius: 4,
+  fontSize: 11,
+  flexWrap: 'wrap',
+}
+
+const personaBadge: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 600,
+  color: '#FF6B2B',
+  background: '#2A1808',
+  padding: '1px 5px',
+  borderRadius: 3,
+  fontFamily: 'monospace',
+  flexShrink: 0,
+}
+
+const tierBadge: React.CSSProperties = {
+  fontSize: 10,
+  color: '#A0A0A0',
+  background: '#1A1A1A',
+  padding: '1px 5px',
+  borderRadius: 3,
+  fontFamily: 'monospace',
+  flexShrink: 0,
+}
+
+const promoTarget: React.CSSProperties = {
+  fontSize: 10,
+  color: '#707070',
+  fontFamily: 'monospace',
+  flexShrink: 0,
+  maxWidth: 160,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const promoDelta: React.CSSProperties = {
+  flex: 1,
+  color: '#C0C0C0',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const promoDate: React.CSSProperties = {
+  fontSize: 10,
+  color: '#505050',
+  fontFamily: 'monospace',
+  flexShrink: 0,
 }

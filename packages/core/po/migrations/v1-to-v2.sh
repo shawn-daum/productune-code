@@ -78,6 +78,8 @@ jq '
     | del(.current_task.persona_session_meta)
     | (.versions = ((.versions // []) | sort_by(.started_at // "") | .[-5:]))
     | (.phase_history = (.phase_history // []))
+    # ── pending_promotions[] — ensure array present (T-P4-066) ───────────
+    | (.pending_promotions = (.pending_promotions // []))
     # ── stamp ──────────────────────────────────────────────────────────────
     | .schema_version = 2
   end

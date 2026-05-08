@@ -20,3 +20,13 @@ export {
   getProtectedBranches,
 } from './git-workflow/rules'
 export type { GitRules } from './git-workflow/rules'
+
+export {
+  appendPendingPromotion,
+  listPendingPromotions,
+  resolvePendingPromotion,
+  autoDropStale,
+  markSurfaced,
+  listAllPromotions,
+} from './state/pending-promotions'
+export type { PendingPromotion, PromotionTier, PromotionStatus } from './state/pending-promotions'

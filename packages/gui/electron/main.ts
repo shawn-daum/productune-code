@@ -4,11 +4,12 @@ import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules } from '@productune/core'
-import type { UiLanguage, GitRules } from '@productune/core'
+import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules, appendPendingPromotion, listPendingPromotions, resolvePendingPromotion, autoDropStale, markSurfaced, listAllPromotions } from '@productune/core'
+import type { UiLanguage, GitRules, PendingPromotion } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
 import { runPoTurn, emitToWebContents } from './po-runner'
+import { mechanicalWrite } from './mechanical-write'
 import type { ChildProcess } from 'child_process'
 
 // ── Active PO child process tracking (T-P4-059) ───────────────────────────────
@@ -526,6 +527,66 @@ ipcMain.handle('state:readPoState', async (_event, projectDir: string) => {
     return null
   }
 })
+
+// ── Pending promotions IPC (T-P4-066) ────────────────────────────────────────
+
+ipcMain.handle('state:appendPendingPromotion', (
+  _event,
+  projectDir: string,
+  candidate: Omit<PendingPromotion, 'id' | 'status'>,
+): PendingPromotion => {
+  return appendPendingPromotion(projectDir, candidate)
+})
+
+ipcMain.handle('state:listPendingPromotions', (
+  _event,
+  projectDir: string,
+): PendingPromotion[] => {
+  return listPendingPromotions(projectDir)
+})
+
+ipcMain.handle('state:resolvePendingPromotion', (
+  _event,
+  projectDir: string,
+  id: string,
+  status: 'approved' | 'dropped' | 'edited',
+  finalTarget?: string,
+): PendingPromotion | null => {
+  return resolvePendingPromotion(projectDir, id, status, finalTarget)
+})
+
+ipcMain.handle('state:autoDropStale', (
+  _event,
+  projectDir: string,
+): number => {
+  return autoDropStale(projectDir)
+})
+
+ipcMain.handle('state:markSurfaced', (
+  _event,
+  projectDir: string,
+  id: string,
+): void => {
+  markSurfaced(projectDir, id)
+})
+
+ipcMain.handle('state:listAllPromotions', (
+  _event,
+  projectDir: string,
+): PendingPromotion[] => {
+  return listAllPromotions(projectDir)
+})
+
+ipcMain.handle(
+  'state:mechanicalWrite',
+  async (
+    _event,
+    promotion: PendingPromotion,
+    claudeSessionId?: string,
+  ) => {
+    return mechanicalWrite(promotion, { claudeSessionId })
+  },
+)
 
 // ── Chat IPC (single PO session per project) ──────────────────────────────────
 

@@ -114,8 +114,22 @@
       "sectionPhase": "Phase",
       "sectionTickets": "Tickets ({{count}})",
       "sectionOutcome": "Outcome",
+      "sectionApprovedPromotions": "Approved promotions ({{count}})",
       "noTickets": "No tickets registered for this Version.",
       "observedPending": "pending (lazy — fill in next Version Phase 1)"
+    },
+    "promotion": {
+      "drainTitle": "Pending memory promotions",
+      "drainCount": "{{count}} queued",
+      "save": "Save",
+      "skip": "Skip",
+      "edit": "Edit",
+      "editConfirm": "Confirm",
+      "bulkHint": "Approve by number:",
+      "bulkPlaceholder": "e.g. 1,3",
+      "bulkApprove": "Approve",
+      "savedToast": "[PO] saved.",
+      "writeError": "Write failed: {{error}}"
     },
     "tickets": {
       "title": "Tickets",

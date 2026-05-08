@@ -114,8 +114,22 @@
       "sectionPhase": "Phase",
       "sectionTickets": "티켓 ({{count}})",
       "sectionOutcome": "Outcome",
+      "sectionApprovedPromotions": "승인된 메모리 프로모션 ({{count}})",
       "noTickets": "이 Version에 등록된 티켓 없음.",
       "observedPending": "미정 (lazy — 다음 Version Phase 1에서 채움)"
+    },
+    "promotion": {
+      "drainTitle": "대기 중인 메모리 승인 요청",
+      "drainCount": "{{count}}개 대기",
+      "save": "저장",
+      "skip": "건너뛰기",
+      "edit": "편집",
+      "editConfirm": "확인",
+      "bulkHint": "번호로 승인:",
+      "bulkPlaceholder": "예: 1,3",
+      "bulkApprove": "승인",
+      "savedToast": "[PO] 저장됨.",
+      "writeError": "쓰기 실패: {{error}}"
     },
     "tickets": {
       "title": "Tickets",

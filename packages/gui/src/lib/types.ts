@@ -150,6 +150,29 @@ export interface Version {
   outcome?: VersionOutcome
 }
 
+// ── Pending promotions (T-P4-066) ─────────────────────────────────────────────
+
+export type PromotionTier = 'project' | 'wiki' | 'work-note'
+export type PromotionStatus = 'pending' | 'approved' | 'dropped' | 'edited'
+
+/**
+ * A persona-returned promotion_candidate queued for user approval.
+ * Lifecycle: pending → (approved | dropped | edited) at next turn-start drain.
+ */
+export interface PendingPromotion {
+  id: string
+  persona: string
+  turn_id: string
+  tier: PromotionTier
+  target: string
+  delta: string
+  rationale: string
+  status: PromotionStatus
+  surfaced_at?: string
+  decided_at?: string
+  final_target?: string
+}
+
 /**
  * po-state.json shape. v2 introduces `schema_version`; reads tolerate v1 absent.
  *
@@ -173,6 +196,8 @@ export interface PoState {
   past_tickets?: Ticket[]
   versions?: Version[]
   recent_turns?: unknown[]
+  /** Promotion candidates queued for user approval (deferred surface). */
+  pending_promotions?: PendingPromotion[]
   updated_at?: string
   [key: string]: unknown
 }
