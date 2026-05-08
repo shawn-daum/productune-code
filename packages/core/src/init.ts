@@ -172,7 +172,7 @@ export function bootstrapPersonaMemory(projectDir: string) {
     path.join(projectDir, 'docs/designer/feature-history.md'),
     '# Feature history\n\n' +
       'Per-Version log of feature decisions / scope choices / deferrals.\n' +
-      'Read at Phase 1 PRD authoring; appended by Designer at Phase 4 Version close.\n\n' +
+      'Read at Phase 1 PRD authoring; appended by Designer at Phase 5 Version close.\n\n' +
       '## Schema\n\n' +
       '- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>\n\n' +
       'decision-type ∈ `shipped | deferred | dropped | scope-change`.\n' +

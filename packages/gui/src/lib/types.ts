@@ -1,21 +1,32 @@
 // ── Core domain types — synced with PO doctrine (sections/tickets.md, sections/memory.md) ──
+//
+// po-state.json schema_version: 2 (since 2026-05-08).
+//   - Phase 1..5 (PRD/Design/Build/Deploy/Close) — Layer A
+//   - ticket `type` enum (was `stage`) — Layer B
+//   - po-state slim: no `past_tickets[]`, no `persona_session_meta` post-close;
+//     ticket md (`docs/tickets/<version>/T-NNN.md`) = SoT for ticket-scoped data;
+//     `versions[]` capped at 5.
 
 // Layer A — Version Cycle Phase (where in the cycle).
-// Maps to po-state.json `current_phase` (1..4). Discovery was merged into PRD's
+// Maps to po-state.json `current_phase` (1..5). Discovery was merged into PRD's
 // clarity loop — no separate interview phase.
-export type Phase = 'PRD' | 'Design' | 'Build' | 'Close'
+export type Phase = 'PRD' | 'Design' | 'Build' | 'Deploy' | 'Close'
 
 export const PHASE_NAMES: Record<number, Phase> = {
   1: 'PRD',
   2: 'Design',
   3: 'Build',
-  4: 'Close',
+  4: 'Deploy',
+  5: 'Close',
 }
 
-// Layer B — ticket type (`stage` field on each ticket).
-export type Stage = 'design' | 'impl' | 'refactor' | 'test' | 'qa' | 'deploy'
+// Layer B — ticket type (`type` field on each ticket md frontmatter).
+// Renamed from `Stage` (v2 doctrine, sub-d). Enum values unchanged.
+export type TaskType = 'design' | 'impl' | 'refactor' | 'test' | 'qa' | 'deploy'
 
-// Ticket lifecycle status (separate from `stage`).
+export const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
+
+// Ticket lifecycle status (separate from `type`).
 export type Status = 'todo' | 'in-progress' | 'review' | 'done' | 'blocked' | 'abandoned'
 
 // Auto QA smoke gate result on impl/refactor tickets.
@@ -52,12 +63,22 @@ export interface Session {
   updated_at: string
 }
 
+/**
+ * Ticket — shape parsed from ticket md frontmatter (`docs/tickets/<version>/T-NNN.md`).
+ * Ticket md = single source of truth (v2). `useTicketScan` hook returns the
+ * scan output as `Ticket[]`.
+ *
+ * `stage` is kept as a transient legacy alias for v1 fallback — readers should
+ * prefer `type`. New code never writes `stage`.
+ */
 export interface Ticket {
   ticket_id: string
   version?: string
   slug?: string
   title?: string
-  stage?: Stage
+  type?: TaskType
+  /** @deprecated v1 alias for `type`. Read-only fallback during migration. */
+  stage?: TaskType
   status?: Status
   qa_status?: QaStatus
   qa_loops?: number
@@ -72,6 +93,10 @@ export interface Ticket {
   started_at?: string | null
   completed_at?: string | null
   duration_min?: number | null
+  /** Body-derived (parsed from ticket md `## Request` first paragraph). */
+  request_summary?: string
+  /** Filesystem path of the source ticket md (relative or absolute). */
+  path?: string
 }
 
 // `current_task` slice in po-state.json (live ticket being worked).
@@ -80,7 +105,9 @@ export interface CurrentTask {
   slug?: string
   title?: string
   status?: Status
-  stage?: Stage
+  type?: TaskType
+  /** @deprecated v1 alias — read-only. */
+  stage?: TaskType
   qa_status?: QaStatus
   qa_loops?: number
   assignee_persona?: string
@@ -90,7 +117,7 @@ export interface CurrentTask {
 }
 
 export interface PhaseTransition {
-  phase: number  // 1..4
+  phase: number  // 1..5
   started_at?: string
   completed_at?: string
   summary?: string
@@ -100,8 +127,8 @@ export interface PhaseTransition {
 // Open phase-transition gate. Set by PO when it emits the gate prompt;
 // cleared when user approves (advance) or modifies (stay in current phase).
 export interface PendingGate {
-  from_phase: number  // 1..4
-  to_phase: number    // 2..4 (or null when terminal — Phase 4 close → no next)
+  from_phase: number  // 1..5
+  to_phase: number    // 2..5 (or null when terminal — Phase 5 close → no next)
   summary: string     // 1-line description of artifacts produced in from_phase
   prompt: string      // English template; PO renders in user's lang at runtime
   emitted_at: string
@@ -123,13 +150,26 @@ export interface Version {
   outcome?: VersionOutcome
 }
 
+/**
+ * po-state.json shape. v2 introduces `schema_version`; reads tolerate v1 absent.
+ *
+ * v2 changes:
+ *   - `current_phase`: 1..5 (was 1..4; Phase 4 = Deploy inserted, Phase 5 = Close).
+ *   - `past_tickets[]` REMOVED. GUI derives ticket lists via `useTicketScan`.
+ *   - `versions[]` capped at 5; older versions only via `outcome.retrospective_path`.
+ *   - `current_task.type` replaces `current_task.stage` (legacy alias kept for read).
+ *   - `phase_history[]` is current-version only; cleared on version close.
+ *   - `current_task.persona_sessions{}` and `persona_session_meta{}` dropped on close.
+ */
 export interface PoState {
+  schema_version?: number
   project_slug?: string
   current_version?: string
-  current_phase?: number  // 1..4; resolves to Phase via PHASE_NAMES
+  current_phase?: number  // 1..5; resolves to Phase via PHASE_NAMES
   phase_history?: PhaseTransition[]
   pending_gate?: PendingGate | null
   current_task?: CurrentTask
+  /** @deprecated v1 only — readers ignore in v2; GUI uses `useTicketScan` instead. */
   past_tickets?: Ticket[]
   versions?: Version[]
   recent_turns?: unknown[]

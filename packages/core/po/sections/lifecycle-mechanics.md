@@ -1,6 +1,6 @@
 # Lifecycle mechanics
 
-PO-mechanical operations on tickets through their lifecycle. Cross-cutting policy that spans all stages. Read by PO before delegating, before close, and at Phase 4 retrospective.
+PO-mechanical operations on tickets through their lifecycle. Cross-cutting policy that spans all ticket types. Read by PO before delegating, before close, and at Phase 5 retrospective.
 
 ## Auto QA smoke gate (impl / refactor close condition)
 
@@ -12,7 +12,7 @@ User-facing breakage (broken routing, blank pages, console errors, broken naviga
 - Fail loop: dev resume + fail excerpt; max 3 retries; beyond → `blocked` + user surface.
 - Pass: ticket `done` allowed; 1 row appended to `## Persona Activity`.
 
-`stage:test` / `stage:qa` are themselves QA work — no extra gate. `stage:design` self-verifies. `stage:deploy` verifies per-step (no smoke gate).
+`type:test` / `type:qa` are themselves QA work — no extra gate. `type:design` self-verifies. `type:deploy` verifies per-step (no smoke gate).
 
 ## Mechanical close rules
 
@@ -24,25 +24,25 @@ User-facing breakage (broken routing, blank pages, console errors, broken naviga
 - `## Outcome` is content; delegate to Designer if product meaning is needed.
 - **QA gate close check** (impl / refactor): dev reports `ready_for_qa` → PO calls smoke gate → updates `qa_status`. `pass` allows `done`; `fail` resumes dev + `qa_loops += 1`; `qa_loops ≥ 3` → `blocked`. Other stages skip the check.
 
-Version close → mechanical status / backfill sweep. Outcome text needed → single Designer call: `"Version <id> closed. Append ## Outcome summaries from past_tickets[] without changing scope/AC."`
+Version close → mechanical status / backfill sweep. Outcome text needed → single Designer call: `"Version <id> closed. Append ## Outcome summaries from version's tickets without changing scope/AC."`
 
 ## Outcome measurement (B.1 — PDS See layer)
 
 Two append-only layers; neither blocks lifecycle.
 
-**Per-ticket** (optional frontmatter): `success_metric`, `validation_method` — Designer-set at creation when ticket has measurable user outcome. `observed_result` — PO fills at Phase 4. Most tickets stay null (UI tweaks, dev infra have no metric).
+**Per-ticket** (optional frontmatter): `success_metric`, `validation_method` — Designer-set at creation when ticket has measurable user outcome. `observed_result` — PO fills at Phase 5. Most tickets stay null (UI tweaks, dev infra have no metric).
 
-**Per-Version** (required, in `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` — Designer derives from PRD `## Success metrics` slot at PRD-ready time, emits via `version_outcome` in ready-turn JSON; PO mirrors into state. `observed_result`, `retrospective_path` — PO fills at Phase 4.
+**Per-Version** (required, in `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` — Designer derives from PRD `## Success metrics` slot at PRD-ready time, emits via `version_outcome` in ready-turn JSON; PO mirrors into state. `observed_result`, `retrospective_path` — PO fills at Phase 5.
 
 PRD body stays free-form prose; structured emit is the JSON field, not edits to the PRD.
 
 ## Lazy measurement protocol
 
-When `validation_method` requires external data (PostHog / Sentry / GA / etc), Phase 4 leaves `observed_result: null`. Designer asks user during the next Version's Phase 2 PRD authoring — measurement happens just-in-time for hypothesis re-evaluation. PO never reminds. User who never starts a next Version → measurement never runs (correct — no signal needed).
+When `validation_method` requires external data (PostHog / Sentry / GA / etc), Phase 5 leaves `observed_result: null`. Designer asks user during the next Version's Phase 1 PRD authoring — measurement happens just-in-time for hypothesis re-evaluation. PO never reminds. User who never starts a next Version → measurement never runs (correct — no signal needed).
 
 ## retrospective.md template
 
-`docs/retrospectives/<version>.md`, written by Designer in Phase 4 step 5c (sonnet + medium):
+`docs/retrospectives/<version>.md`, written by Designer in Phase 5 step 5c (sonnet + medium):
 
 ```markdown
 # Retrospective — <version>
@@ -97,6 +97,6 @@ Per-step detail lives in each persona file (5a/5c in `pdt-designer.md`, 5b in `p
 | Step | Persona | Model/Effort | Reads | Output |
 |---|---|---|---|---|
 | 5a | `pdt-designer` | opus + xhigh | 1, 2, 3, 5 | fill outcome.observed_result if measurable now (lazy: null otherwise); append `feature-history.md`; propose next-V backlog |
-| 5b | `pdt-qa` | opus + xhigh | 1, 2, 3, 5 | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `stage:test` candidates |
+| 5b | `pdt-qa` | opus + xhigh | 1, 2, 3, 5 | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `type:test` candidates |
 | 5c | `pdt-designer` | sonnet + medium | 1, 4, 5 + 5a/5b ctx | write `docs/retrospectives/<version>.md` from 5a + 5b ctx + read sources |
 | 5d | PO | mechanical | 4, 5 | append calibration log; mirror `retrospective_path`; surface to user with next-V candidates + dropped promotions |

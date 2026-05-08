@@ -1,7 +1,7 @@
 ---
 ticket_id: T-PATCH-002
 round: phase3-fixes
-stage: doctrine-update
+type: doctrine-update
 status: done
 assignee: pdt-designer
 created_at: 2026-04-30T00:00:00Z
@@ -10,6 +10,9 @@ completed_at: 2026-04-30T06:05:39Z
 duration_min: 5
 estimated_complexity: L3
 risk_flags: doctrine, protocol-change
+slug: untitled
+qa_status: pending
+qa_loops: 0
 ---
 
 # T-PATCH-002: 티켓 완료 후 사용자 검증 게이트

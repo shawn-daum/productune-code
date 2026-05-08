@@ -155,7 +155,7 @@ First-run wizard (GUI):
    - 🛡️ **외부 점검** (선택, 첫 런칭 후 토글) — Settings 의 `useStagingEnv=true` 시 활성. default off.
 
    **base ↔ env 매핑**: 내부 `main` = 🚀 프로덕션, 내부 `dev` (opt-in) = 🔍 미리보기, 내부 `staging` (opt-in, default off, 첫 런칭 후 활용) = 🛡️ 외부 점검. **로컬이 기본** — 사용자는 배포 직전까지 미리보기 / 프로덕션 환경을 만들 필요 없음. UI 구조 = 좌측 환경 selector + 우측 variable table. 변수 상태 badge: ✅ 전체 동기 / ⚠️ prod 없음 (배포 시 해당 기능 비활성 경고) / 🔴 로컬 없음 (현재 실행 불가) / 🔒 secret masking (클릭 시 일시 노출). 변수 추가 시 적용 환경 선택 가능 (로컬만 / 전체). agent 가 코드를 스캔해 `process.env.XXX` 를 매핑 → "이 키 없으면 결제 기능 안 됩니다" 수준의 의미 있는 경고 (T-ENV-06). Phase 4 MVP 에서는 외부 (Vercel) 동기는 배포 명령 시점에만; 양방향 실시간 sync 는 미포함.
-8. **풀 사이클 UI** — process 시작 (PRD 작성) → 끝 (배포 + 운영 + 모니터링) → 다음 사이클 진입. 사용자가 **현재 어느 stage 인지 직관적으로 인지** 가능. 단, 위쪽 독립 6-stage breadcrumb row 는 두지 않고 Stage 정보는 Side Panel **Project 탭 stage strip** 과 Right Panel **PO Chat ctx chip** 에서 노출한다.
+8. **풀 사이클 UI** — process 시작 (PRD 작성) → 끝 (배포 + 마무리) → 다음 사이클 진입. 사용자가 **현재 어느 phase 인지 직관적으로 인지** 가능. 단, 위쪽 독립 5-phase breadcrumb row 는 두지 않고 Phase 정보는 Side Panel **Project 탭 phase strip** 과 Right Panel **PO Chat ctx chip** 에서 노출한다.
 9. **프로젝트 관리 UI** — 앱 실행 시 두 진입점:
    - (a) **[새 프로젝트 만들기]** → `~/productune/projects/<slug>/` 자동 생성 + `init` 자동 실행. 사용자는 파일시스템 탐색 불필요. **기본 진입점.**
    - (b) **[기존 폴더 열기]** (고급 사용자) → 폴더 선택 → `.productune/` 없으면 "이 폴더에 productune 시작하기" 버튼 노출 → `project:installAt` 실행 (선택한 폴더에 직접 init).
@@ -232,7 +232,7 @@ Phase 3 dogfood 에서 발견된 두 가지 비-개발자 사용자 페인 — P
 - [ ] `init` 직후 `.env.local` 자동 생성 + `.gitignore` 에 자동 등록 확인 (실제 파일 검증)
 - [ ] vercel / supabase setup 가이드가 **최신 공식 문서 fetch 결과** 로 노출 (training data 에 없는 최근 변경 사항 — 예: 2026 년 신규 UI — 도 정확히 안내) + 오프라인 시 캐시 + "N시간 전 업데이트" 배너 동작
 - [ ] env 관리 panel 3-layer (로컬 / 미리보기 / 프로덕션) + 상태 badge (✅ / ⚠️ / 🔴 / 🔒) + 코드 스캔 기반 누락 경고 동작
-- [ ] 풀 사이클 UI 에서 사용자가 현재 단계 (PRD / Design / Build / QA / Deploy / Operate) 를 Project 탭 stage strip + PO Chat ctx chip 으로 한눈에 인지 + 다음 단계 액션 버튼 제공
+- [ ] 풀 사이클 UI 에서 사용자가 현재 단계 (PRD / Design / Build / Deploy / Close) 를 Project 탭 phase strip + PO Chat ctx chip 으로 한눈에 인지 + 다음 단계 액션 버튼 제공
 - [ ] 앱 실행 시 [새 프로젝트 만들기] → `~/productune/projects/` 하위 자동 생성 + `init` 완료 (사용자가 파일시스템 탐색 없이 시작 가능)
 - [ ] **[배포하기] 버튼 → 프로덕션 환경 PR 자동 생성 → squash merge → Vercel deploy 전 과정을 agent 가 처리; 사용자는 git 명령어 입력 없음 + 프로덕션 직접 push 차단 검증 + Settings 의 `useDevBranch=true` 시 검증용 중간 환경 직접 push 도 차단됨**
 - [ ] 배포 플랫폼 선택 화면에서 Vercel 기본값 + 다른 provider 선택지 노출; Vercel 선택 시 전체 플로우 동작 확인
@@ -281,3 +281,4 @@ Phase 3 dogfood 에서 발견된 두 가지 비-개발자 사용자 페인 — P
 - **2026-05-04 (git workflow 룰 도입)** — productune 의 git workflow 규약 정식화. **Ticket-단위 worktree** (`<project>/.productune/worktrees/<ticket-id>/`, branch = `feature/<ticket-id>/<slug>` 또는 `fix/...`) + base branch (프로덕션 항상 / 검증용 중간 환경 toggle 시) 직접 push 차단 + **2단계 게이트** ([자동저장] = ticket worktree commit / [배포 준비] = push & 중간 환경 매핑 / [배포하기] = 사용자 명시 클릭만 프로덕션 PR + squash merge). Settings 의 **작업 흐름 규칙 패널** (`<project>/.productune/git-rules.json`) 도입 — `useDevBranch` / `useStagingEnv` / branch prefix 토글. dev / staging 은 default off, 첫 런칭 후 사용자 toggle. 신규 doctrine `~/.productune/sections/git-workflow.md` 추가. Round 2 ticket 4→5 재정의 (T-P4-020 ~ 024) + T-P4-024 (Settings 패널) 신설. 어휘 가드레일에 `worktree` / `dev` / `merge` / `staging` 추가.
 - **2026-05-06 (GUI 단일 PO 세션 결정)** — GUI multi-chatroom 모델 → single PO session per project. 데이터 모델: 다중 `chats/<uuid>.json` → 단일 `<projectDir>/.productune/chat.json`. IPC: listRooms/createRoom 등 제거 → `chat:getSession` / `chat:appendMessage` / `chat:setClaudeSessionId` / `chat:clearSession`. Right Panel: PO Chat 단일 세션 고정. Side Panel 은 Explorer / Project / Team / Settings 탭만 담당. CLI/non-GUI 에서는 multi-session 가능성 보존. T-P4-042 (멀티 채팅방) GUI 부분 deprecated.
 - **2026-05-07 (persona presence bar)** — T-P4-049 신설: Right Panel PO Chat 헤더 하단 24px presence bar, PO/Designer/Dev/QA 4 칩, 상태 idle/working/done 3종 (waiting 제거 — PO 가 wait 직접 조율). Phase 4 Acceptance criteria 에 T-P4-049 항목 추가.
+- **2026-05-08** — 사용자 가시 phase 5단 통일 (PRD / Design / Build / Deploy / Close). 6단 (PRD/Design/Build/QA/Deploy/Operate) 폐기 — QA 는 ticket type 으로, Operate 는 Close phase 의 retrospective 가 흡수. T-P4-065 전체 (sub-a~f).

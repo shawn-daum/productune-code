@@ -44,7 +44,7 @@ Phase 4 의 모든 시각화 (Project 탭 티켓 rows / stage strip / Right PO C
 ---
 ticket_id: T-P4-010
 round: phase4-r1
-stage: impl
+type: impl
 status: todo
 assignee: pdt-developer
 created_at: 2026-MM-DDTHH:MM:SSZ   # 티켓 생성 시각

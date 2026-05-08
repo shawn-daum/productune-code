@@ -1,7 +1,7 @@
 ---
 ticket_id: T-PATCH-004
 round: phase3-fixes
-stage: doctrine-update
+type: doctrine-update
 status: done
 assignee: pdt-designer
 created_at: 2026-05-04T06:30:00Z
@@ -10,6 +10,9 @@ completed_at: 2026-05-04T06:35:00Z
 duration_min: 5
 estimated_complexity: L2
 risk_flags: doctrine, protocol-change
+slug: ad-hoc-patch-routing-designer-ticket
+qa_status: pending
+qa_loops: 0
 ---
 
 # T-PATCH-004: Ad-hoc patch routing — designer 경유 ticket 생성

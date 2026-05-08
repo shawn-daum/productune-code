@@ -5,7 +5,7 @@
 **Companion**: [design-direction.md](./design-direction.md), [service-design-system.md](./service-design-system.md), [service-flow-wireframe.excalidraw.json](./service-flow-wireframe.excalidraw.json), [productune/mockups/mockup.html](./productune/mockups/mockup.html)
 **Mockup-as-source**: 본 문서의 layout / panel / pane / tab / chat 스펙은 `docs/design/productune/mockups/mockup.html` 을 진실의 출처로 한다 (2026-05-06 결정). 위 6 결정 (단일 PO 세션 / lucide-react / chat-on-right / planner 모드 제거 / git workflow rule / chat.json 단일 파일) 과 충돌 시 결정 우선.
 
-> Phase 4 GUI 구현 전 합의해야 하는 **서비스 전체 UX 흐름**. 범위는 install/auth 만이 아니라 프로젝트 시작부터 PRD → Design → Build → QA → Deploy → Operate 한 사이클 전체다. **Build 는 디자인 산출물 명시 승인 전 절대 시작하지 않는다.**
+> Phase 4 GUI 구현 전 합의해야 하는 **서비스 전체 UX 흐름**. 범위는 install/auth 만이 아니라 프로젝트 시작부터 PRD → Design → Build → Deploy → Close 한 사이클 전체다. **Build 는 디자인 산출물 명시 승인 전 절대 시작하지 않는다.**
 
 ---
 
@@ -42,20 +42,18 @@ flowchart LR
   I --> G
 ```
 
-### 2.2 한 라운드의 6-stage 사이클
+### 2.2 한 라운드의 5-phase 사이클
 
 ```mermaid
 flowchart LR
   PRD[1 PRD<br/>문제·범위 합의] --> DESIGN[2 Design<br/>흐름·와이어·시스템]
   DESIGN --> GATE{디자인 승인?}
   GATE -- 수정 요청 --> DESIGN
-  GATE -- 승인 --> BUILD[3 Build<br/>티켓 구현]
-  BUILD --> QA[4 QA<br/>검증·수정]
-  QA -- 실패 --> BUILD
-  QA -- 통과 --> DEPLOY[5 Deploy<br/>배포 준비·실행]
+  GATE -- 승인 --> BUILD[3 Build<br/>티켓 구현·QA]
+  BUILD --> DEPLOY[4 Deploy<br/>배포 준비·실행]
   DEPLOY -- 실패 --> BUILD
-  DEPLOY --> OPERATE[6 Operate<br/>모니터링·다음 라운드]
-  OPERATE --> PRD
+  DEPLOY --> CLOSE[5 Close<br/>회고·다음 라운드]
+  CLOSE --> PRD
 ```
 
 **하드 게이트**: `DESIGN → BUILD` 전이는 사용자가 `[이 디자인으로 Build 시작]` 을 누른 경우만 가능. "대충 진행", "묵시적 승인", "시간 초과 자동 승인" 없음.
@@ -99,7 +97,7 @@ flowchart TB
   Desk --> POChat[Right panel — PO Chat 우측 고정]
   Desk --> Status[Status bar — full width 22px]
   SidePanel --> Explorer[Explorer 탭<br/>파일 트리 + 검색]
-  SidePanel --> Project[Project 탭<br/>Stage strip + Rounds + Sub-items + Preview + Recent Activity]
+  SidePanel --> Project[Project 탭<br/>Phase strip + Rounds + Sub-items + Preview + Recent Activity]
   SidePanel --> Team[Team 탭<br/>Personas + Skills + Wiki/Memory]
   SidePanel --> Settings[Settings 탭<br/>Environment + Models + MCP + Hooks]
 ```
@@ -138,7 +136,7 @@ flowchart TB
 | **Main panel** | 1fr (가변, min 150×100/pane) | **split-capable** — 동적 pane tree (`hbox`/`vbox` 재귀) | 각 leaf pane = tab bar + 컨텐츠. tab 종류 dispatch (§4 의 L3). drag-and-drop tab reorder + cross-pane move. 빈 pane = Quick Open / 단축키 안내 empty-state |
 | **Right panel (PO Chat)** | 340px (고정, collapse 시 0) | PO 와의 대화 — 항상 우측 고정 | §4 의 L4. **단일 세션, 멀티 채팅방 X**. minimize / close 후 우하단 FAB (`💬 PO`) 로 회수 |
 | **Status bar** | 22px (높이, 전체 폭) | 안심 피드백 (PO-orange bg) | 좌측: 작업 식별자(내부 branch-like 값은 숨김) / PO active dot / Design Review pending. 우측: ticket count / model badge / vercel status |
-| **상단 breadcrumb 행** | **제거** | — | Stage 표시는 Project tab Stage strip + Right Panel ctx chip 으로 분산 노출 |
+| **상단 breadcrumb 행** | **제거** | — | Phase 표시는 Project tab Phase strip + Right Panel ctx chip 으로 분산 노출 |
 
 **Activity Bar 전이 규칙**:
 - Explorer (`⌘⇧E`) 클릭 → Side panel = 파일 트리 + 검색 박스 (정규식/대소문자/단어 토글).
@@ -147,11 +145,11 @@ flowchart TB
 - Settings 클릭 → Side panel = Environment + Models + MCP Servers + Hooks (T-P4-024 git workflow 토글 통합).
 - 동일 아이콘 재클릭 = Side panel collapse / expand 토글.
 
-**상단 단독 breadcrumb 행 제거 근거 (2026-05-06)**: 4-region 레이아웃에서 상단 breadcrumb 가 차지하던 64px 는 Right Panel 위쪽에 시각 공백을 만들고 Main 의 split-pane 시스템과 경쟁. Stage 정보는 (a) Project tab 의 Stage strip (현재 / 이전 단계 시각화), (b) Right Panel 의 ctx 라인 stage chip (지금 보고 있는 채팅의 컨텍스트) 두 군데에서 의도적으로 중복 노출 — 사용자가 Project tab 또는 PO Chat 둘 중 하나는 항상 본다는 가정.
+**상단 단독 breadcrumb 행 제거 근거 (2026-05-06)**: 4-region 레이아웃에서 상단 breadcrumb 가 차지하던 64px 는 Right Panel 위쪽에 시각 공백을 만들고 Main 의 split-pane 시스템과 경쟁. Phase 정보는 (a) Project tab 의 Phase strip (현재 / 이전 단계 시각화), (b) Right Panel 의 ctx 라인 phase chip (지금 보고 있는 채팅의 컨텍스트) 두 군데에서 의도적으로 중복 노출 — 사용자가 Project tab 또는 PO Chat 둘 중 하나는 항상 본다는 가정.
 
 **PO chat 우측 고정 결정 근거**: 사용자가 어떤 stage / 어떤 main pane 컨텐츠에서든 PO 에게 즉시 질문할 수 있어야 한다. chat 이 Main 영역과 같은 split-pane 트리에 들어가면 ticket-review 나 디자인 리뷰가 표시될 때 chat 이 사라진다. 우측 고정으로 두 영역이 독립적 폭을 유지. 단 사용자가 임시로 polished view 를 원할 때 minimize → FAB 로 회수 가능.
 
-**PO 세션 단일 모델 (2026-05-06 유지)**: GUI 는 프로젝트당 하나의 PO 세션만 운영. Right Panel 헤더 = `[P] PO Chat`, ctx 라인 = stage chip + round-N + active ticket. 세션 데이터 = `<projectDir>/.productune/chat.json` 단일 파일. CLI/non-GUI 에서는 multi-session 가능성 보존.
+**PO 세션 단일 모델 (2026-05-06 유지)**: GUI 는 프로젝트당 하나의 PO 세션만 운영. Right Panel 헤더 = `[P] PO Chat`, ctx 라인 = phase chip + round-N + active ticket. 세션 데이터 = `<projectDir>/.productune/chat.json` 단일 파일. CLI/non-GUI 에서는 multi-session 가능성 보존.
 
 **페르소나 panel 위치 (2026-05-06 확정)**: Side panel 의 **Team 탭** 안에 통합 — Personas (4) row + Skills 목록 + Matrix ↗ 링크 + Wiki/Memory + Promotion candidates. 우측 별도 panel 사용 X (Right Panel 은 PO Chat 전용).
 
@@ -178,7 +176,7 @@ flowchart TB
 | **Project** | **프로젝트** | Activity Bar UI string |
 | **Team** | **팀** | Activity Bar UI string |
 | **Settings** | **설정** | Activity Bar UI string |
-| **Stage / Rounds / Tickets / Preview / Recent Activity** | **단계 / 라운드 / 티켓 / 미리보기 / 최근 활동** | Project tab sp-sec-hdr |
+| **Phase / Rounds / Tickets / Preview / Recent Activity** | **단계 / 라운드 / 티켓 / 미리보기 / 최근 활동** | Project tab sp-sec-hdr |
 | **Personas / Skills / Wiki / Memory / Promotion candidates** | **페르소나 / 스킬 / 위키 / 메모리 / 승급 후보** | Team tab sp-sec-hdr |
 | **Environment / Models / MCP Servers / Hooks** | **환경 / 모델 / MCP 서버 / 훅** | Settings tab sp-sec-hdr |
 
@@ -195,7 +193,7 @@ flowchart TB
 | A3 | 새 프로젝트 만들기 | 시작 | slug 입력, GitHub OAuth (선택). mockup `modal-bg#new-project-modal` (단, mode 분기 제거 — planner/developer 버튼 무시) |
 | A4 | 기존 폴더 연결 | 시작 | `.productune/` 감지, `project:installAt` 실행 |
 | **B1** | **프로젝트 데스크** | 전체 | **mockup `.app` + `.sb` 전체 — Activity Bar 48 / Side 260 / Main split / Right 340 / Status 22**. 위쪽 단독 breadcrumb 행 없음. |
-| **B2** | **PO 채팅 (Right Panel)** | 전체 | **mockup `.rp` 전체** — 단일 PO 세션, 프로젝트당 하나, 멀티 채팅방 X. header / ctx (stage chip + round + ticket) / msgs (페르소나별 좌측 2px accent) / textarea + persona selector + Send. minimize / close → FAB 회수. |
+| **B2** | **PO 채팅 (Right Panel)** | 전체 | **mockup `.rp` 전체** — 단일 PO 세션, 프로젝트당 하나, 멀티 채팅방 X. header / ctx (phase chip + round + ticket) / msgs (페르소나별 좌측 2px accent) / textarea + Send (persona selector 제거 — sub-c). minimize / close → FAB 회수. |
 | B3 | 티켓 rows / ticket-review 탭 | Build/QA | Project tab 의 Tickets sub-items + Main 의 `ticket-review` 탭 (mockup `tr-body` + `tr-actions`). 별도 보드 화면 X — sidebar 트리 + main viewer 2단 구조. |
 | C1 | 디자인 리뷰 (Design Gate) | Design | Main 의 `design-gate` 탭 (mockup `dg-tabs` + `dg-body` + `dg-footer`). dg-tabs = System / Flow / Wireframe / Mockup. footer = 승인 / 다시 작업 / 특정 부분 수정. |
 | C2 | Mermaid flow viewer | Design | dg-body 안 또는 markdown tab 의 inline render. zoom/pan, source toggle/copy, 오류 fallback. |
@@ -206,7 +204,7 @@ flowchart TB
 | E1 | QA verdict | QA | Main 의 `qa-result` 탭 (mockup `qa-body` + `qa-verdict` + `qa-suite`). status badge pass/fail. |
 | F1 | Env panel | Deploy | Settings 탭 의 Environment sec-hdr 클릭 → Main 의 `env-view` 탭 (mockup `env-table`). |
 | F2 | Deploy panel | Deploy | Project tab 의 Preview (Local / Vercel) + Main 의 `preview` 탭 (mockup `prev-chrome` + `prev-body`). 배포 액션은 별도 [배포하기] CTA. |
-| G1 | Operate dashboard | Operate | Project tab Recent Activity sec + Status bar 의 vercel dot. |
+| G1 | Close / Retrospective dashboard | Close | Project tab Recent Activity sec (회고 source) + Status bar 의 vercel dot (배포 결과 모니터링). retrospective 산출물 = `docs/retrospectives/<version>.md`. |
 | **H1** | **산출물 캐비닛** | 전체 | **Project tab 의 Rounds → Tickets / PRD / Design Gate / QA Verdict sub-items + Explorer tab 의 파일 트리** 분산 노출. 별도 cabinet 화면 X. |
 | **I1** | **페르소나 / 스킬 panel** | 전체 | **Team tab 의 Personas + Skills + Wiki/Memory** (mockup `sv-team` 전체). 우측 별도 panel 아님. Team tab 의 `Matrix ↗` → Main 의 `skill-matrix` 탭. |
 | J1 | External dependency consent | 필요 시 | 모달. 설치/인증 동의. |
@@ -236,9 +234,9 @@ flowchart TB
 
 #### Project 탭 (mockup `sv-project`)
 - `sp-hdr` = "Project" + 우측 프로젝트 slug.
-- **Stage** (`pp-sec-hdr` + `stage-strip`):
-  - 6 stage `sdot-item` (PRD / Design / Build / QA / Deploy / Operate).
-  - 상태: done (gray dot, muted) / cur (bright text + bg + stage 색 dot) / pending (gray-300).
+- **Phase** (`pp-sec-hdr` + `phase-strip`):
+  - 5 phase `pdot-item` (PRD / Design / Build / Deploy / Close).
+  - 상태: done (gray dot, muted) / cur (bright text + bg + phase 색 dot) / pending (gray-300).
   - 가로 스크롤 — 좁은 폭에서는 4개 노출 + scroll.
 - **Rounds** (`pp-sec-hdr Rounds`):
   - round-N pp-row + 펼침 화살표 + 상태 badge (done success / active warn).
@@ -337,7 +335,7 @@ mockup 의 `openTab(tabId, type, props)` 호출이 active pane 에 tab 추가. 1
 │  ┌ user (right-aligned, no border) │
 ├─────────────────────────────────────┤
 │ rp-ta (textarea)                    │
-│ [@ pdt-po ▼]              [↑ Send] │
+│                           [↑ Send] │
 └─────────────────────────────────────┘
 ```
 
@@ -347,7 +345,7 @@ mockup 의 `openTab(tabId, type, props)` 호출이 active pane 에 tab 추가. 1
 - 우측 minimize (`─`) / close (`×`) 버튼.
 
 **Context line (`rp-ctx`)**:
-- `stage-chip` — 현재 stage pill (Build = `#1f2a3a` bg + `var(--stage-build)` text).
+- `phase-chip` — 현재 phase pill (Build = `#1f2a3a` bg + `var(--phase-build)` text).
 - `round-N · T-NNN <action>` — 현재 라운드 / 활성 티켓 / 액션 상태.
 - 8px gap, 10px caption font.
 
@@ -364,7 +362,7 @@ mockup 의 `openTab(tabId, type, props)` 호출이 active pane 에 tab 추가. 1
 
 **Input (`rp-input`)**:
 - `rp-ta` textarea — 6px 9px padding, min 48px, resize none.
-- `rp-bar` — `rp-psel` persona selector (`@ pdt-po / @ pdt-designer / @ pdt-developer / @ pdt-qa`) + 우측 `rp-send` Send 버튼 (PO-orange bg).
+- `rp-bar` — 우측 `rp-send` Send 버튼 (PO-orange bg). persona selector 제거 (sub-c — PO autonomy 회복).
 - Enter = 전송, Shift+Enter = 줄바꿈.
 
 **Minimize / Close → FAB**:
@@ -571,4 +569,5 @@ flowchart TD
 - **2026-04-30** — v1. 전체 서비스 플로우, 화면 카탈로그, 어휘 매핑, 외부 CLI 동의 흐름, OSS skill/workflow 노출 설계.
 - **2026-05-04** — §3.1 Workspace shell 재작성. 레이아웃 `4-column grid 48/240/1fr/360` 확정. ActivityBar 48px (채팅방/산출물/설정 아이콘, VSCode activity bar 패턴) 신규 추가. PO chat panel 360px 우측 고정 명시 (chat-in-center 에서 chat-on-right 로 의도 변경). §4 화면 카탈로그 — B1/B2/B3/H1/K1 위치 설명 갱신, I1 "위치 TBD — Slice 5 재설계 예정" 마킹, L1 ActivityBar / L2 Side panel 신규 항목 추가. §1 멘탈 모델 표 갱신. 페르소나 panel 위치 = TBD (강한 후보: PO chat panel 위쪽 collapsible, Slice 5 designer 결정). 기존 stale 섹션: §3.1 전체 (3-column → 4-column), §4 B2 위치 ("중앙" → "우측 고정").
 - **2026-05-06 (단일 PO 세션)** — GUI multi-chatroom 모델 → single PO session per project. §1 멘탈 모델 표 갱신 (Right Panel 단일 PO Chat, Side Panel 4탭). §3.1 ActivityBar 아이콘 설명 갱신 (Explorer / Project / Team / Settings), Side panel 컨텐츠 갱신 (채팅방 목록 제거). "PO 세션 단일 모델" 설명 추가. §3.2 어휘 매핑 표에 "chat rooms / multi-session → 없음" 행 추가. §4 화면 카탈로그 B2 갱신 ("단일 PO 세션, 프로젝트당 하나, 멀티 채팅방 X"), L1/L2 갱신 (채팅방 → PO 세션). §3.1 Mermaid 정보구조도 갱신 (Right Panel PO Chat 단일 세션, Side Panel 4탭).
+- **2026-05-08** — 사용자 가시 phase 5단 통일 (PRD / Design / Build / Deploy / Close). 6단 (PRD/Design/Build/QA/Deploy/Operate) 폐기 — QA 는 ticket type 으로, Operate 는 Close phase 의 retrospective 가 흡수. T-P4-065 전체 (sub-a~f). §2.2 mermaid 6→5 phase, §3.1/§4.1 stage→phase 어휘 갱신, §4.3 stage-chip→phase-chip / `--stage-build`→`--phase-build`, G1 Operate→Close, persona selector 제거 반영.
 - **2026-05-06 (mockup-as-source 정렬)** — `docs/design/productune/mockups/mockup.html` 을 spec 진실로 채택. **§3.1 전면 재작성** — 4-region (Activity Bar 48 / Side 260 / Main 가변 split-pane / Right 340 / Status 22 full-width). **상단 단독 breadcrumb 행 제거** — Stage = Project tab Stage strip + Right Panel ctx chip 이중 노출. ActivityBar 3 → 4 아이콘 (Explorer ⌘⇧E / Project / Team / Settings). **§3.2 어휘 매핑 표 확장** — Explorer/Project/Team/Settings + Stage/Rounds/Tickets/Preview/Recent Activity + Personas/Skills/Wiki/Memory + Environment/Models/MCP/Hooks 전 영역 한글 매핑 추가. **§4 화면 카탈로그 갱신** — B1/B2/B3/H1/I1/K1 mockup 매핑으로 재작성, L3 (Main split-pane + tab dispatcher) / L4 (Right Panel) / L5 (Status bar) / L6 (Title bar + Quick Open trigger) 신규. I1 "TBD" → "Team tab" 확정. **§4.1 Side panel 4 탭 본문 명시** 신규 — Explorer (검색 박스 + 트리), Project (Stage strip + Rounds + sub-items + Preview + Recent Activity), Team (Personas + Skills + Wiki/Memory), Settings (Environment + Models + MCP + Hooks + workflow rules 통합). **§4.2 Main pane / tab dispatcher** 신규 — 10 tab types (markdown/preview/env-view/ticket-review/persona-def/skill-matrix/design-gate/qa-result/terminal/browser) + pane operations + empty pane. **§4.3 Right panel PO Chat** 신규 — header / ctx / msgs (6 type: po/designer/dev/qa/trace/user) / input / minimize-FAB. **§5.1 산출물 4종** — mockup 추가. **§5.2 Design Gate tab spec** 신규 — dg-tabs 4 sub (System / Flow / Wireframe / Mockup) + footer 액션. **§8.1 Skill panel 구조** 갱신 — Team tab + skill-matrix tab 분리 노출. **§9 empty pane** 항목 추가. **§10 체크리스트** mockup.html / lucide-react 매핑 항목 추가.

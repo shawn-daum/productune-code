@@ -103,7 +103,8 @@
       "closed": "Closed {{date}}",
       "tickets": "{{count}} tickets",
       "retro": "Retro ↗",
-      "phaseLabel": "Phase: "
+      "phaseLabel": "Phase: ",
+      "olderHint": "Older versions: see docs/retrospectives/<version>.md"
     },
     "versionDetail": {
       "notFound": "Version `{{id}}` not found in po-state.",
@@ -139,7 +140,6 @@
       "minimize": "Minimize",
       "close": "Close",
       "restore": "Open PO chat",
-      "personaSelectorAria": "Next delegate",
       "idleCtx": "Ready",
       "actionDefault": "in flight"
     },
@@ -228,20 +228,19 @@
       "team": "Team",
       "settings": "Settings"
     },
-    "stageStrip": {
-      "sectionLabel": "Stage",
+    "phaseStrip": {
+      "sectionLabel": "Phase",
       "roundsSection": "Rounds",
       "roundsHint": "Rounds — wired in T-P4-047",
-      "stripAriaLabel": "Project stage",
-      "chipAriaLabel": "Current stage: {{stage}}",
+      "stripAriaLabel": "Project phase",
+      "chipAriaLabel": "Current phase: {{phase}}",
       "roundsSectionAriaLabel": "Rounds section",
-      "stageTooltip": {
+      "phaseTooltip": {
         "prd": "PRD — Problem & scope alignment",
         "design": "Design — Flow, wireframe & system",
-        "build": "Build — Ticket implementation",
-        "qa": "QA — Validation & fixes",
-        "deploy": "Deploy — Release preparation",
-        "operate": "Operate — Monitoring & next round"
+        "build": "Build — Ticket implementation (incl. QA)",
+        "deploy": "Deploy — Release preparation & ship",
+        "close": "Close — Retrospective & next round"
       }
     }
   },

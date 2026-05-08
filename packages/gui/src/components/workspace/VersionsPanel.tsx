@@ -1,7 +1,9 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PoState, Version, Phase } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
 import { useWorkspace, paneTreeUtil } from '../../store/workspace'
+import { useTicketScan } from '../../lib/useTicketScan'
 
 interface Props {
   poState: PoState | null
@@ -14,6 +16,8 @@ function tabIdForVersion(id: string): string {
 export default function VersionsPanel({ poState }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
+  const project = useWorkspace((s) => s.project)
+  const { tickets: scannedTickets } = useTicketScan(project?.projectDir ?? null)
   // Highlight any version whose detail tab exists in any pane (T-P4-046:
   // sidebar selection is derived from open tabs rather than a separate slice).
   const openTabIds = useWorkspace((s) => {
@@ -28,6 +32,7 @@ export default function VersionsPanel({ poState }: Props) {
   const currentVersionId = poState?.current_version
   const currentPhaseNum = poState?.current_phase
   const versions = poState?.versions ?? []
+  const versionsCapped = versions.length >= 5
 
   const active = versions.find((v) => v.id === currentVersionId) ?? null
   const past = versions
@@ -35,10 +40,19 @@ export default function VersionsPanel({ poState }: Props) {
     .slice()
     .sort((a, b) => (b.ended_at ?? '').localeCompare(a.ended_at ?? ''))
 
-  const ticketsByVersion = new Map<string, number>()
-  for (const tk of poState?.past_tickets ?? []) {
-    if (tk.version) ticketsByVersion.set(tk.version, (ticketsByVersion.get(tk.version) ?? 0) + 1)
-  }
+  const ticketsByVersion = useMemo(() => {
+    const map = new Map<string, number>()
+    // v2: derive from fs-scan instead of past_tickets[]. count current_task once.
+    const ctVer = poState?.current_version
+    const ctId = poState?.current_task?.ticket_id
+    if (ctId && ctVer) map.set(ctVer, (map.get(ctVer) ?? 0) + 1)
+    for (const tk of scannedTickets) {
+      if (!tk.version) continue
+      if (ctId && tk.ticket_id === ctId) continue
+      map.set(tk.version, (map.get(tk.version) ?? 0) + 1)
+    }
+    return map
+  }, [scannedTickets, poState])
 
   const onClick = (id: string) => {
     openTab(tabIdForVersion(id), 'version-detail', { versionId: id }, id)
@@ -76,6 +90,10 @@ export default function VersionsPanel({ poState }: Props) {
           />
         ))
       )}
+
+      {versionsCapped && (
+        <div style={capFooter}>{t('workspace.versions.olderHint')}</div>
+      )}
     </div>
   )
 }
@@ -89,7 +107,7 @@ function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }
       <div style={cardId}>{version.id}</div>
       <div style={cardLine}>
         {t('workspace.versions.phaseLabel')}
-        <span style={cardLineValue}>{phaseLabel}{typeof phaseNum === 'number' ? ` (${phaseNum}/4)` : ''}</span>
+        <span style={cardLineValue}>{phaseLabel}{typeof phaseNum === 'number' ? ` (${phaseNum}/5)` : ''}</span>
       </div>
       <div style={cardLine}>
         <span style={cardLineValue}>{t('workspace.versions.ticketsDone', { count: ticketsDone })}</span>
@@ -226,4 +244,14 @@ const cardLink: React.CSSProperties = {
   marginTop: 4,
   cursor: 'pointer',
   userSelect: 'none',
+}
+
+const capFooter: React.CSSProperties = {
+  marginTop: 12,
+  paddingTop: 10,
+  borderTop: '1px dashed #1A1A1A',
+  fontSize: 10,
+  color: '#505050',
+  fontStyle: 'italic',
+  lineHeight: 1.4,
 }

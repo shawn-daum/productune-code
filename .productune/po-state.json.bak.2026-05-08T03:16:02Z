@@ -1,0 +1,512 @@
+{
+  "_phase_schema_v": 2,
+  "current_version": "v0.4-meta-dogfood",
+  "current_phase": 3,
+  "phase_history": [
+    {
+      "phase": 1,
+      "started_at": "2026-04-25T09:00:00Z",
+      "completed_at": "2026-04-26T15:30:00Z",
+      "summary": "PRD: 4-region IDE shell + PDS See layer + dogfooding meta-doctrine",
+      "user_approved_at": "2026-04-26T15:32:11Z"
+    },
+    {
+      "phase": 2,
+      "started_at": "2026-04-26T15:35:00Z",
+      "completed_at": "2026-04-29T11:20:00Z",
+      "summary": "Design: 4 artifacts (system / flow / wireframes / mockup.html)",
+      "user_approved_at": "2026-04-29T11:25:42Z"
+    },
+    {
+      "phase": 3,
+      "started_at": "2026-04-29T11:30:00Z",
+      "summary": null,
+      "user_approved_at": null
+    }
+  ],
+  "pending_gate": {
+    "from_phase": 3,
+    "to_phase": 4,
+    "summary": "Phase 3 Build complete: 14 tickets done (impl 9 / refactor 2 / qa 1 / deploy 1) + 1 deferred. Ready to ship and retrospect.",
+    "prompt": "Enter Phase 4 Version close? Designer + QA will run the retrospective and lazy measurement will fill observed_result on next Version's Phase 1.",
+    "emitted_at": "2026-05-07T08:55:00Z"
+  },
+  "current_task": {
+    "ticket_id": "T-P4-046",
+    "slug": "split-pane-main",
+    "title": "Main panel — split-pane workspace (VSCode/cmux-style)",
+    "status": "in-progress",
+    "stage": "impl",
+    "qa_status": "pending",
+    "qa_loops": 0,
+    "assignee_persona": "pdt-developer",
+    "started_at": "2026-05-07T08:30:00Z",
+    "ended_at": null,
+    "request_summary": "Recursive hbox/vbox split-pane tree + tab dispatcher in CenterPane + plan-only UX note requested: persona status chips under PO session title + user clarified animation/done tooltip: filled-dot blink, concurrent working allowed, done persists until seen with artifact name tooltip + implementation plan requested for persona status bar; waiting de-prioritized + user requested Designer PRD/ticket update for persona status bar (no implementation now) + user asked Designer fix PRD/ticket after prior hang; split into small capped delegations",
+    "prd_path": "docs/prd/productune.md#phase4-r4",
+    "branch": "feature/T-P4-046/main-split-pane",
+    "worktree_path": ".productune/worktrees/T-P4-046/",
+    "input": {
+      "prd_path": "docs/prd/productune.md#phase4-r4",
+      "design_doc": "docs/design/service-flow-and-screens.md",
+      "brief_path": null,
+      "deps": [
+        "T-P4-045"
+      ]
+    },
+    "output": {
+      "changed_files": [],
+      "design_doc": "",
+      "test_results": ""
+    },
+    "linked_tickets": [],
+    "artifacts": [
+      "docs/design/productune/mockups/mockup.html",
+      "docs/prd/productune.md",
+      "docs/tickets/phase4/ROADMAP.md",
+      "docs/tickets/phase4/T-P4-046.md",
+      "docs/tickets/phase4/T-P4-049.md",
+      "user-provided screenshot: PO session title area"
+    ],
+    "persona_sessions": {
+      "pdt-developer": "11111111-2222-3333-4444-555555555555",
+      "pdt-designer": "f95020db-4717-4535-ad87-d936fbeb1d61"
+    },
+    "persona_session_meta": {
+      "pdt-developer": {
+        "id": "11111111-2222-3333-4444-555555555555",
+        "turns": 1,
+        "model_history": [
+          "opus"
+        ],
+        "effort_history": [
+          "xhigh"
+        ],
+        "complexity_level": "L6",
+        "confidence_history": [
+          "medium"
+        ]
+      },
+      "pdt-designer": {
+        "id": "f95020db-4717-4535-ad87-d936fbeb1d61",
+        "turns": 2,
+        "model_history": [
+          "sonnet",
+          "sonnet"
+        ],
+        "effort_history": [
+          "medium",
+          "medium"
+        ],
+        "complexity_level": "L4",
+        "confidence_history": [
+          "medium",
+          "high"
+        ]
+      }
+    },
+    "calibration_outcome": {
+      "estimated_complexity": "L6",
+      "actual_complexity": null,
+      "qa_pass": null,
+      "qa_loops": 0,
+      "user_rework_requested": false,
+      "escalation_triggered": false,
+      "notes": null
+    }
+  },
+  "past_tickets": [
+    {
+      "ticket_id": "T-P4-014",
+      "version": "v0.1-bootstrap",
+      "slug": "electron-shell",
+      "title": "Electron boilerplate + IPC",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-12T09:00:00Z",
+      "completed_at": "2026-04-12T16:30:00Z",
+      "duration_min": 450,
+      "estimated_complexity": "L5",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-015",
+      "version": "v0.1-bootstrap",
+      "slug": "onboarding-wizard",
+      "title": "First-run Onboarding Wizard",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-13T04:00:00Z",
+      "completed_at": "2026-04-13T09:30:00Z",
+      "duration_min": 330,
+      "estimated_complexity": "L4",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-016",
+      "version": "v0.2-version-rename",
+      "slug": "round-to-version-doctrine",
+      "title": "Doctrine: round → Version + state migration",
+      "stage": "refactor",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 1,
+      "started_at": "2026-04-19T07:00:00Z",
+      "completed_at": "2026-04-19T11:45:00Z",
+      "duration_min": 285,
+      "estimated_complexity": "L5",
+      "risk_flags": "migration"
+    },
+    {
+      "ticket_id": "T-P4-017",
+      "version": "v0.2-version-rename",
+      "slug": "phase-discovery-drop",
+      "title": "Drop Phase 1 Discovery (5→4 phases)",
+      "stage": "refactor",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-21T03:00:00Z",
+      "completed_at": "2026-04-21T05:30:00Z",
+      "duration_min": 150,
+      "estimated_complexity": "L4",
+      "risk_flags": "migration"
+    },
+    {
+      "ticket_id": "T-P4-018",
+      "version": "v0.3-pds-see",
+      "slug": "outcome-schema-b1",
+      "title": "PDS See B.1 — outcome measurement schema",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-26T08:00:00Z",
+      "completed_at": "2026-04-26T09:15:00Z",
+      "duration_min": 75,
+      "estimated_complexity": "L4",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-019",
+      "version": "v0.3-pds-see",
+      "slug": "phase5-retrospective-b2",
+      "title": "PDS See B.2 — Phase 5 retrospective + lazy measurement",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-26T09:30:00Z",
+      "completed_at": "2026-04-26T12:00:00Z",
+      "duration_min": 150,
+      "estimated_complexity": "L5",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-020",
+      "version": "v0.4-meta-dogfood",
+      "slug": "playwright-mcp-doctrine",
+      "title": "Add Playwright MCP to QA persona",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-30T03:00:00Z",
+      "completed_at": "2026-04-30T03:25:00Z",
+      "duration_min": 25,
+      "estimated_complexity": "L2",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-021",
+      "version": "v0.4-meta-dogfood",
+      "slug": "gui-types-sync",
+      "title": "D.0 — GUI types.ts schema sync to new doctrine",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-30T04:00:00Z",
+      "completed_at": "2026-04-30T04:35:00Z",
+      "duration_min": 35,
+      "estimated_complexity": "L3",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-022",
+      "version": "v0.4-meta-dogfood",
+      "slug": "versions-sidebar",
+      "title": "D.1 — Versions sidebar (4th ActivityBar icon)",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-30T05:00:00Z",
+      "completed_at": "2026-04-30T05:50:00Z",
+      "duration_min": 50,
+      "estimated_complexity": "L4",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-023",
+      "version": "v0.4-meta-dogfood",
+      "slug": "version-detail-view",
+      "title": "D.2 — Version detail view (Phase timeline + outcome card + ticket tree)",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-04-30T06:00:00Z",
+      "completed_at": "2026-04-30T07:30:00Z",
+      "duration_min": 90,
+      "estimated_complexity": "L4",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-024",
+      "version": "v0.4-meta-dogfood",
+      "slug": "ticket-kanban",
+      "title": "D.3 — Tickets kanban dashboard (stage × status)",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-05-06T03:00:00Z",
+      "completed_at": "2026-05-06T04:30:00Z",
+      "duration_min": 90,
+      "estimated_complexity": "L4",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-025",
+      "version": "v0.4-meta-dogfood",
+      "slug": "phase-gate-banner",
+      "title": "D.4 — Phase transition gate UI + pending_gate field",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 1,
+      "started_at": "2026-05-06T05:00:00Z",
+      "completed_at": "2026-05-06T06:45:00Z",
+      "duration_min": 105,
+      "estimated_complexity": "L4",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-027",
+      "version": "v0.4-meta-dogfood",
+      "slug": "menubar-tab-title",
+      "title": "Native menubar + sidebar header (active tab title)",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-05-07T08:00:00Z",
+      "completed_at": "2026-05-07T08:25:00Z",
+      "duration_min": 25,
+      "estimated_complexity": "L3",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-040",
+      "version": "v0.4-meta-dogfood",
+      "slug": "playwright-prewarm",
+      "title": "D.5 — Onboarding Playwright MCP cache pre-warm",
+      "stage": "impl",
+      "status": "done",
+      "qa_status": "pass",
+      "qa_loops": 0,
+      "started_at": "2026-05-06T07:00:00Z",
+      "completed_at": "2026-05-06T07:20:00Z",
+      "duration_min": 20,
+      "estimated_complexity": "L2",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-041",
+      "version": "v0.4-meta-dogfood",
+      "slug": "design-direction-doc",
+      "title": "Design Direction doc (mockup-as-source decision)",
+      "stage": "design",
+      "status": "done",
+      "started_at": "2026-04-27T02:00:00Z",
+      "completed_at": "2026-04-27T05:30:00Z",
+      "duration_min": 210,
+      "estimated_complexity": "L5",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-042",
+      "version": "v0.4-meta-dogfood",
+      "slug": "qa-fail-patterns-test-trigger",
+      "title": "Test ticket — auth/login-modal recurring fail trigger #3",
+      "stage": "test",
+      "status": "done",
+      "started_at": "2026-04-28T03:00:00Z",
+      "completed_at": "2026-04-28T03:45:00Z",
+      "duration_min": 45,
+      "estimated_complexity": "L3",
+      "risk_flags": "auth"
+    },
+    {
+      "ticket_id": "T-P4-043",
+      "version": "v0.4-meta-dogfood",
+      "slug": "regression-pre-deploy",
+      "title": "Regression sweep before v0.4 deploy",
+      "stage": "qa",
+      "status": "done",
+      "started_at": "2026-05-06T08:00:00Z",
+      "completed_at": "2026-05-06T08:40:00Z",
+      "duration_min": 40,
+      "estimated_complexity": "L3",
+      "risk_flags": "none"
+    },
+    {
+      "ticket_id": "T-P4-044",
+      "version": "v0.4-meta-dogfood",
+      "slug": "deploy-v0.4",
+      "title": "Deploy v0.4-meta-dogfood to production",
+      "stage": "deploy",
+      "status": "blocked",
+      "started_at": "2026-05-07T07:00:00Z",
+      "completed_at": null,
+      "duration_min": null,
+      "estimated_complexity": "L3",
+      "risk_flags": "none"
+    }
+  ],
+  "versions": [
+    {
+      "id": "v0.1-bootstrap",
+      "started_at": "2026-04-10T00:00:00Z",
+      "ended_at": "2026-04-15T00:00:00Z",
+      "prd_anchor": "docs/prd/productune.md#v0.1",
+      "outcome": {
+        "north_star": "Working Electron shell with PO chat",
+        "input_metrics": [
+          "onboarding completion rate"
+        ],
+        "validation_method": "first-run wizard analytics",
+        "observed_result": "shell + onboarding shipped; analytics not wired",
+        "retrospective_path": "docs/retrospectives/v0.1-bootstrap.md"
+      }
+    },
+    {
+      "id": "v0.2-version-rename",
+      "started_at": "2026-04-18T00:00:00Z",
+      "ended_at": "2026-04-22T00:00:00Z",
+      "prd_anchor": "docs/prd/productune.md#v0.2",
+      "outcome": {
+        "north_star": "round/Version terminology consistency",
+        "input_metrics": [
+          "doctrine grep clean",
+          "GUI build pass"
+        ],
+        "validation_method": "grep round refs across packages/core",
+        "observed_result": "0 stale round refs, GUI tsc passes",
+        "retrospective_path": "docs/retrospectives/v0.2-version-rename.md"
+      }
+    },
+    {
+      "id": "v0.3-pds-see",
+      "started_at": "2026-04-25T00:00:00Z",
+      "ended_at": "2026-04-29T00:00:00Z",
+      "prd_anchor": "docs/prd/productune.md#v0.3",
+      "outcome": {
+        "north_star": "PDS See layer present (outcome + retrospective + product memory)",
+        "input_metrics": [
+          "fail-patterns.md schema in use",
+          "feature-history.md schema in use"
+        ],
+        "validation_method": "live verify (sonnet test) — designer reads fail-patterns at Phase 1",
+        "observed_result": "verified — designer fired Test ticket trigger #3 from real fail-patterns",
+        "retrospective_path": "docs/retrospectives/v0.3-pds-see.md"
+      }
+    },
+    {
+      "id": "v0.4-meta-dogfood",
+      "started_at": "2026-04-25T09:00:00Z",
+      "ended_at": null,
+      "prd_anchor": "docs/prd/productune.md#v0.4",
+      "outcome": {
+        "north_star": "GUI workspace shell schema-driven (Versions/Tickets/Phase gate live from po-state)",
+        "input_metrics": [
+          "all 4 sidebar tabs render real data",
+          "phase gate banner triggers on pending_gate"
+        ],
+        "validation_method": "user visual verification + sample po-state injection",
+        "observed_result": null,
+        "retrospective_path": null
+      }
+    }
+  ],
+  "recent_turns": [
+    {
+      "ts": "2026-05-07T08:25:00Z",
+      "persona": "pdt-developer",
+      "task": "menubar-tab-title",
+      "result": "pass",
+      "notes": "tsc + vite build pass"
+    },
+    {
+      "ts": "2026-05-07T07:30:00Z",
+      "persona": "pdt-qa",
+      "task": "deploy-v0.4",
+      "result": "blocked",
+      "notes": "Vercel env var OPENAI_API_KEY not set in production"
+    },
+    {
+      "ts": "2026-05-06T08:30:00Z",
+      "persona": "pdt-qa",
+      "task": "regression-pre-deploy",
+      "result": "pass",
+      "notes": "all stage:impl tickets re-verified"
+    },
+    {
+      "ts": "2026-05-06T06:30:00Z",
+      "persona": "pdt-developer",
+      "task": "phase-gate-banner",
+      "result": "pass",
+      "notes": "1 fail loop on grid layout (gridArea collision)"
+    },
+    {
+      "ts": "2026-05-06T04:25:00Z",
+      "persona": "pdt-developer",
+      "task": "ticket-kanban",
+      "result": "pass",
+      "notes": "filters + 6-column kanban"
+    },
+    {
+      "ts": "2026-05-07T00:27:38Z",
+      "persona": "pdt-designer",
+      "task": "persona-status-bar-plan",
+      "result": "plan-only",
+      "notes": "status chips under PO session title; content hidden"
+    },
+    {
+      "ts": "2026-05-07T00:31:50Z",
+      "persona": "pdt-designer",
+      "task": "persona-status-bar-plan-v2",
+      "result": "plan-only",
+      "notes": "filled-dot blink; concurrent working; done persists with artifact tooltip"
+    },
+    {
+      "ts": "2026-05-07T00:41:06Z",
+      "persona": "pdt-developer",
+      "task": "persona-status-bar-implementation-plan",
+      "result": "timeout",
+      "notes": "Claude developer plan call did not return; PO surfaced implementation routing plan from inspected GUI structure"
+    },
+    {
+      "ts": "2026-05-07T01:09:45Z",
+      "persona": "codex-as-designer",
+      "task": "persona-presence-docs-fix",
+      "result": "done",
+      "notes": "PRD AC added; T-P4-049 set to idle/working/done; ROADMAP 3-state mention updated"
+    }
+  ]
+}

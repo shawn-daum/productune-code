@@ -8,7 +8,7 @@ import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, 
 import type { UiLanguage, GitRules } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
-import { runPoTurn, emitToWebContents, type Persona } from './po-runner'
+import { runPoTurn, emitToWebContents } from './po-runner'
 import type { ChildProcess } from 'child_process'
 
 // ── Active PO child process tracking (T-P4-059) ───────────────────────────────
@@ -551,14 +551,13 @@ ipcMain.handle(
   'po:sendMessage',
   async (
     event,
-    opts: { projectDir: string; text: string; persona?: Persona; resume?: string | null },
+    opts: { projectDir: string; text: string; resume?: string | null },
   ): Promise<{ ok: boolean; error?: string }> => {
     try {
       await runPoTurn(
         {
           projectDir: opts.projectDir,
           text: opts.text,
-          persona: opts.persona,
           resume: opts.resume ?? null,
         },
         emitToWebContents(event.sender),

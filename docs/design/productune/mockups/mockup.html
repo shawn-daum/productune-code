@@ -11,8 +11,8 @@
   --txt:#cccccc;--txt2:#858585;--txt3:#4a4a4a;--txt-bright:#e8e8e8;
   --po:#FF6B2B;--designer:#A78BFA;--dev:#38BDF8;--qa:#34D399;
   --success:#22C55E;--warn:#F59E0B;--err:#EF4444;
-  --stage-prd:#A78BFA;--stage-design:#F472B6;--stage-build:#38BDF8;
-  --stage-qa:#34D399;--stage-deploy:#FB923C;--stage-operate:#FBBF24;
+  --phase-prd:#A78BFA;--phase-design:#F472B6;--phase-build:#38BDF8;
+  --phase-deploy:#FB923C;--phase-close:#34D399;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg-base);color:var(--txt);font-family:'Inter',-apple-system,sans-serif;font-size:13px;height:100vh;display:flex;flex-direction:column;overflow:hidden;-webkit-font-smoothing:antialiased}
@@ -88,10 +88,10 @@ button{font-family:inherit;cursor:pointer}
 .pp-row.disabled{color:var(--txt3);pointer-events:none}
 .pp-badge{font-size:10px;margin-left:auto;padding:1px 5px;border-radius:3px;background:var(--bg-overlay);color:var(--txt3)}
 .pp-badge.warn{background:#3a2200;color:var(--warn)}
-.stage-strip{display:flex;align-items:center;gap:0;padding:5px 8px;flex-wrap:wrap}
-.sdot-item{display:flex;align-items:center;gap:3px;font-size:10px;padding:2px 4px;border-radius:3px;color:var(--txt3);white-space:nowrap}
-.sdot-item.done{color:#555}
-.sdot-item.cur{color:var(--txt-bright);background:#1f2a3a}
+.phase-strip{display:flex;align-items:center;gap:0;padding:5px 8px;flex-wrap:wrap}
+.pdot-item{display:flex;align-items:center;gap:3px;font-size:10px;padding:2px 4px;border-radius:3px;color:var(--txt3);white-space:nowrap}
+.pdot-item.done{color:#555}
+.pdot-item.cur{color:var(--txt-bright);background:#1f2a3a}
 .sdot{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
 
 /* search */
@@ -227,7 +227,7 @@ button{font-family:inherit;cursor:pointer}
 .dg-tabs{display:flex;align-items:center;border-bottom:1px solid var(--border);background:#111;flex-shrink:0;padding:0 10px}
 .dg-tab{padding:7px 13px;font-size:12px;color:var(--txt2);cursor:pointer;border-bottom:2px solid transparent}
 .dg-tab:hover{color:var(--txt)}
-.dg-tab.active{color:var(--txt-bright);border-bottom-color:var(--stage-design)}
+.dg-tab.active{color:var(--txt-bright);border-bottom-color:var(--phase-design)}
 .dg-body{flex:1;overflow-y:auto;padding:18px}
 .dg-body::-webkit-scrollbar{width:5px}
 .dg-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:3px}
@@ -317,7 +317,7 @@ button{font-family:inherit;cursor:pointer}
 .rp-hbtn{background:transparent;border:none;color:var(--txt3);padding:3px 5px;border-radius:3px;font-size:14px;line-height:1}
 .rp-hbtn:hover{background:var(--bg-overlay);color:var(--txt)}
 .rp-ctx{padding:5px 10px;background:#161616;border-bottom:1px solid var(--border);font-size:10px;color:var(--txt3);flex-shrink:0;display:flex;align-items:center;gap:6px}
-.stage-chip{padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}
+.phase-chip{padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}
 .rp-msgs{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
 .rp-msgs::-webkit-scrollbar{width:3px}
 .rp-msgs::-webkit-scrollbar-thumb{background:#2a2a2a}
@@ -457,15 +457,17 @@ button{font-family:inherit;cursor:pointer}
         <span style="font-size:10px;color:var(--txt3)">my-saas</span>
       </div>
       <div class="sp-body">
-        <div class="pp-sec-hdr">Stage</div>
-        <div class="stage-strip">
-          <span class="sdot-item done"><span class="sdot"></span>PRD</span>
+        <div class="pp-sec-hdr">Phase</div>
+        <div class="phase-strip">
+          <span class="pdot-item done"><span class="sdot"></span>PRD</span>
           <span style="color:#333;font-size:9px">›</span>
-          <span class="sdot-item done"><span class="sdot"></span>Design</span>
+          <span class="pdot-item done"><span class="sdot"></span>Design</span>
           <span style="color:#333;font-size:9px">›</span>
-          <span class="sdot-item cur"><span class="sdot" style="background:var(--stage-build)"></span>Build</span>
+          <span class="pdot-item cur"><span class="sdot" style="background:var(--phase-build)"></span>Build</span>
           <span style="color:#333;font-size:9px">›</span>
-          <span class="sdot-item"><span class="sdot"></span>QA</span>
+          <span class="pdot-item"><span class="sdot"></span>Deploy</span>
+          <span style="color:#333;font-size:9px">›</span>
+          <span class="pdot-item"><span class="sdot"></span>Close</span>
         </div>
 
         <div class="pp-sec-hdr" style="margin-top:4px">Rounds
@@ -607,7 +609,7 @@ button{font-family:inherit;cursor:pointer}
       <button class="rp-hbtn" onclick="closeRP()" title="Close" style="font-size:16px;line-height:1">×</button>
     </div>
     <div class="rp-ctx">
-      <span class="stage-chip" style="background:#1f2a3a;color:var(--stage-build)">Build</span>
+      <span class="phase-chip" style="background:#1f2a3a;color:var(--phase-build)">Build</span>
       round-3 · T-001 in review
     </div>
     <div class="rp-msgs" id="rp-msgs">
@@ -1270,7 +1272,7 @@ function renderBrowserTab(p) {
 
 // ── MARKDOWN ─────────────────────────────────────────────────────────────────
 const mdBodies = {
-  prd:`<h1>productune — PRD</h1><p><strong>Version</strong>: 0.4.0 · <strong>Round</strong>: 3</p><h2>Problem</h2><p>개발 모르는 기획자가 아이디어를 실제 작동하는 소프트웨어로 만들고 싶다.</p><h2>Target User</h2><ul><li>스타트업 기획자/PO — 개발 지식 없음</li><li>사이드 프로젝트 기획자</li></ul><h2>Key Flow</h2><p>Idea → PRD → Design → Build → QA → Deploy → Operate (one round)</p><h2>Acceptance Criteria</h2><ul><li>개발 지식 없이 PRD 작성 완료</li><li>Design stage가 PRD와 Build 사이 명시 announce</li><li>QA pass 후 자동 배포</li></ul>`,
+  prd:`<h1>productune — PRD</h1><p><strong>Version</strong>: 0.4.0 · <strong>Round</strong>: 3</p><h2>Problem</h2><p>개발 모르는 기획자가 아이디어를 실제 작동하는 소프트웨어로 만들고 싶다.</p><h2>Target User</h2><ul><li>스타트업 기획자/PO — 개발 지식 없음</li><li>사이드 프로젝트 기획자</li></ul><h2>Key Flow</h2><p>Idea → PRD → Design → Build → Deploy → Close (one round)</p><h2>Acceptance Criteria</h2><ul><li>개발 지식 없이 PRD 작성 완료</li><li>Design phase가 PRD와 Build 사이 명시 announce</li><li>Deploy 후 Close phase retrospective 진입</li></ul>`,
   ticket2:`<h1>T-002 — PO refusal message 개선</h1><h2>Status</h2><p><span class="sbadge sb-todo">todo</span></p><h2>Request</h2><p>PO 거절 메시지에 lifecycle vs content 구분 명시. 2-line template 도입.</p>`,
   ticket3:`<h1>T-003 — Design stage doctrine</h1><h2>Status</h2><p><span class="sbadge sb-todo">todo</span></p><h2>Request</h2><p>L4+/user-facing 시 mandatory Design stage. Real engineering workflow에 stage 삽입.</p>`,
   'po-inst':`<h1>po-instructions.md</h1><h2>ALWAYS</h2><ul><li>Read ~/.productune/po-memory.md on startup</li><li>Emit 1-line classification trace</li><li>Announce stage transitions</li></ul><h2>NEVER</h2><ul><li>Write ticket body content</li><li>Author PRD directly</li></ul><h2>Lifecycle exception</h2><p>PO <strong>may</strong> write: frontmatter, status lines, <code>## Persona Activity</code> rows.</p>`,
@@ -1292,7 +1294,7 @@ function renderMarkdown(p) {
 // ── DESIGN GATE ───────────────────────────────────────────────────────────────
 function renderDesignGate() {
   const colors = [['persona-po','#FF6B2B','PO'],['persona-designer','#A78BFA','Designer'],['persona-developer','#38BDF8','Developer'],['persona-qa','#34D399','QA']];
-  const stages = [['PRD','#A78BFA'],['Design','#F472B6'],['Build','#38BDF8'],['QA','#34D399'],['Deploy','#FB923C'],['Operate','#FBBF24']];
+  const stages = [['PRD','#A78BFA'],['Design','#F472B6'],['Build','#38BDF8'],['Deploy','#FB923C'],['Close','#34D399']];
   return `<div style="display:flex;flex:1;flex-direction:column;overflow:hidden">
     <div class="dg-tabs">
       <div class="dg-tab active" onclick="showDGTab('system',this)">Design System</div>
@@ -1666,10 +1668,10 @@ const SEARCH_DB = [
     {n:15, t:'## Target User'},
     {n:16, t:'스타트업 기획자/PO — 개발 지식 없음'},
     {n:22, t:'## Key Flow'},
-    {n:23, t:'Idea → PRD → Design → Build → QA → Deploy → Operate (one round)'},
+    {n:23, t:'Idea → PRD → Design → Build → Deploy → Close (one round)'},
     {n:30, t:'## Acceptance Criteria'},
     {n:31, t:'개발 지식 없이 PRD 작성 완료'},
-    {n:32, t:'Design stage가 PRD와 Build 사이 명시 announce'},
+    {n:32, t:'Design phase가 PRD와 Build 사이 명시 announce'},
   ]},
   { path:'docs/design/productune/system.md', id:'sys-md', ct:'markdown', p:{title:'system.md',icon:'📄',content:'system'}, lines:[
     {n:1,  t:'# Design System — productune GUI (Phase 4)'},

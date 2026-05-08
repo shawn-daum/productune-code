@@ -5,7 +5,7 @@ import type { Project, Session } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import VersionsPanel from './VersionsPanel'
 import SettingsView from './SettingsView'
-import StageStrip from './StageStrip'
+import PhaseStrip from './PhaseStrip'
 
 interface Props {
   project: Project
@@ -51,16 +51,16 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
       {/* Body — branch by activeIcon */}
       {activeIcon === 'project' && (
         <div style={projectBody}>
-          {/* Stage section */}
-          <div style={secHdr}>{t('workspace.stageStrip.sectionLabel')}</div>
-          <StageStrip poState={poState} variant="strip" />
+          {/* Phase section */}
+          <div style={secHdr}>{t('workspace.phaseStrip.sectionLabel')}</div>
+          <PhaseStrip poState={poState} variant="strip" />
 
           {/* Placeholder sections — T-P4-047 will fill Rounds/Preview/Recent Activity */}
-          <div style={secHdr} aria-label={t('workspace.stageStrip.roundsSectionAriaLabel')}>
-            {t('workspace.stageStrip.roundsSection')}
+          <div style={secHdr} aria-label={t('workspace.phaseStrip.roundsSectionAriaLabel')}>
+            {t('workspace.phaseStrip.roundsSection')}
           </div>
           <div style={panelPlaceholder}>
-            <span style={panelPlaceholderText}>{t('workspace.stageStrip.roundsHint')}</span>
+            <span style={panelPlaceholderText}>{t('workspace.phaseStrip.roundsHint')}</span>
           </div>
         </div>
       )}

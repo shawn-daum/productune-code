@@ -1,30 +1,35 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { PoState, Ticket, Stage, Status } from '../../lib/types'
+import type { PoState, Ticket, TaskType, Status } from '../../lib/types'
+import { useTicketScan } from '../../lib/useTicketScan'
+import { useWorkspace } from '../../store/workspace'
 
 interface Props {
   poState: PoState | null
 }
 
 const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'done', 'blocked', 'abandoned']
-const STAGE_ORDER: Stage[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
+const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
 const VERSION_ALL = '__all__'
 
 export default function TicketDashboardView({ poState }: Props) {
   const { t } = useTranslation()
+  const project = useWorkspace((s) => s.project)
+  const { tickets: scannedTickets, loading } = useTicketScan(project?.projectDir ?? null)
   const [versionFilter, setVersionFilter] = useState<string>(VERSION_ALL)
-  const [stageFilter, setStageFilter] = useState<Stage | 'all'>('all')
+  const [typeFilter, setTypeFilter] = useState<TaskType | 'all'>('all')
 
-  const allTickets = useMemo(() => collectAllTickets(poState), [poState])
+  const allTickets = useMemo(() => collectAllTickets(poState, scannedTickets), [poState, scannedTickets])
   const versionIds = useMemo(() => uniqueVersions(allTickets), [allTickets])
 
   const filtered = useMemo(() => {
     return allTickets.filter((tk) => {
       if (versionFilter !== VERSION_ALL && tk.version !== versionFilter) return false
-      if (stageFilter !== 'all' && tk.stage !== stageFilter) return false
+      const taskType = (tk.type ?? tk.stage) as TaskType | undefined
+      if (typeFilter !== 'all' && taskType !== typeFilter) return false
       return true
     })
-  }, [allTickets, versionFilter, stageFilter])
+  }, [allTickets, versionFilter, typeFilter])
 
   const byStatus = useMemo(() => groupByStatus(filtered), [filtered])
 
@@ -43,19 +48,21 @@ export default function TicketDashboardView({ poState }: Props) {
             onChange={setVersionFilter}
           />
           <FilterSelect
-            label="Stage"
-            value={stageFilter}
+            label="Type"
+            value={typeFilter}
             options={[
               { value: 'all', label: t('workspace.tickets.filterAll') },
-              ...STAGE_ORDER.map((s) => ({ value: s, label: s })),
+              ...TYPE_ORDER.map((s) => ({ value: s, label: s })),
             ]}
-            onChange={(v) => setStageFilter(v as Stage | 'all')}
+            onChange={(v) => setTypeFilter(v as TaskType | 'all')}
           />
           <span style={count}>{t('workspace.tickets.filterCount', { count: filtered.length })}</span>
         </div>
       </header>
 
-      {filtered.length === 0 ? (
+      {loading && allTickets.length === 0 ? (
+        <div style={empty}>{t('workspace.tickets.noTickets')}</div>
+      ) : filtered.length === 0 ? (
         <div style={empty}>{t('workspace.tickets.noTickets')}</div>
       ) : (
         <div style={kanban}>
@@ -70,22 +77,26 @@ export default function TicketDashboardView({ poState }: Props) {
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-function collectAllTickets(poState: PoState | null): Ticket[] {
+function collectAllTickets(poState: PoState | null, scanned: Ticket[]): Ticket[] {
   const list: Ticket[] = []
   const ct = poState?.current_task
-  if (ct?.ticket_id) {
+  const ctId = ct?.ticket_id
+  if (ctId) {
     list.push({
-      ticket_id: ct.ticket_id ?? '?',
+      ticket_id: ctId,
       version: poState?.current_version,
-      slug: ct.slug,
-      title: ct.title,
-      stage: ct.stage,
-      status: ct.status,
-      qa_status: ct.qa_status,
-      qa_loops: ct.qa_loops,
+      slug: ct?.slug,
+      title: ct?.title,
+      type: ct?.type ?? ct?.stage,
+      status: ct?.status,
+      qa_status: ct?.qa_status,
+      qa_loops: ct?.qa_loops,
     })
   }
-  for (const t of poState?.past_tickets ?? []) list.push(t)
+  for (const t of scanned) {
+    if (ctId && t.ticket_id === ctId) continue   // current_task takes precedence
+    list.push(t)
+  }
   return list
 }
 
@@ -126,6 +137,7 @@ function Column({ status, tickets }: { status: Status; tickets: Ticket[] }) {
 }
 
 function Card({ ticket }: { ticket: Ticket }) {
+  const taskType = (ticket.type ?? ticket.stage) as TaskType | undefined
   return (
     <div style={card}>
       <div style={cardTopRow}>
@@ -134,7 +146,7 @@ function Card({ ticket }: { ticket: Ticket }) {
       </div>
       <div style={cardTitle}>{ticket.title ?? ticket.slug ?? '(no title)'}</div>
       <div style={cardBottomRow}>
-        {ticket.stage && <span style={stageChip(ticket.stage)}>{ticket.stage}</span>}
+        {taskType && <span style={typeChip(taskType)}>{taskType}</span>}
         {ticket.qa_status && ticket.qa_status !== 'pending' && (
           <span style={qaChip(ticket.qa_status)}>qa:{ticket.qa_status}</span>
         )}
@@ -355,8 +367,8 @@ const cardBottomRow: React.CSSProperties = {
   gap: 4,
 }
 
-function stageChip(stage: Stage): React.CSSProperties {
-  const colors: Record<Stage, { fg: string; bg: string }> = {
+function typeChip(type: TaskType): React.CSSProperties {
+  const colors: Record<TaskType, { fg: string; bg: string }> = {
     design:   { fg: '#A878E0', bg: '#1A1228' },
     impl:     { fg: '#60B860', bg: '#0A2A0A' },
     refactor: { fg: '#60B0E0', bg: '#0A1828' },
@@ -364,7 +376,7 @@ function stageChip(stage: Stage): React.CSSProperties {
     qa:       { fg: '#E07060', bg: '#2A0808' },
     deploy:   { fg: '#FF6B2B', bg: '#2A1808' },
   }
-  const c = colors[stage]
+  const c = colors[type]
   return {
     fontSize: 9,
     color: c.fg,

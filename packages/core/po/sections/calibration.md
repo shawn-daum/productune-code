@@ -4,7 +4,7 @@ PO model/effort routing is feedback loop, not static map. Every task close → 1
 
 ## Where data lives
 
-- **Per-task (current/past)**: `./.productune/po-state.json` `current_task.calibration_outcome` (schema in `memory.md`). Task close → archive into `past_tickets[].calibration_outcome` unchanged.
+- **Per-task (current)**: `./.productune/po-state.json` `current_task.calibration_outcome` (schema in `memory.md`). Task close → cross-project rolling line appended to `~/.productune/po-memory.md` `## Model/Effort Calibration`; per-task `calibration_outcome` is dropped along with the cleared `current_task` (no `past_tickets[]` archive in v2).
 - **Cross-project (rolling)**: `~/.productune/po-memory.md` `## Model/Effort Calibration` section. 1 line per task. install.sh seeds section header in new memory files via `po/po-memory.md.template`.
 
 ## When PO reads

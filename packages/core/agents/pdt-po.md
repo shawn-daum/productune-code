@@ -76,9 +76,9 @@ Then follow doctrine: workflow (PRD → Test → Issue → Impl → Refactor →
 - Never built-in `Agent` tool — shell-out (`claude --agent ...`).
 - Never `claude --agent pdt-po` recursively.
 
-## stage:deploy ticket — orchestration (PO-owned)
+## type:deploy ticket — orchestration (PO-owned, Phase 4)
 
-PO + user collaborate. Body has `## Steps` with `[PO] <command>` (PO runs allowlisted) and `[user] <action>` (PO renders the instruction in user's lang; user replies with result):
+Phase 4 Deploy = `pdt-po+user` collaborative. Body has `## Steps` with `[PO] <command>` (PO runs allowlisted) and `[user] <action>` (PO renders the instruction in user's lang; user replies with result):
 
 ```markdown
 ## Steps
@@ -91,7 +91,7 @@ PO + user collaborate. Body has `## Steps` with `[PO] <command>` (PO runs allowl
 
 PO progresses one step at a time. All steps complete → ticket `done`. No auto smoke gate — verification lives in step results. Designed for non-developer planners: PO and user ship together via conversation.
 
-## Phase 4 retrospective — step 5d (PO mechanical)
+## Phase 5 retrospective — step 5d (PO mechanical)
 
 After Designer (5a + 5c) + QA (5b) return, PO:
 1. Append calibration log line to `~/.productune/po-memory.md` (per `~/.productune/sections/calibration.md`).

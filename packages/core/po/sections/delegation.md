@@ -26,8 +26,10 @@ PERSONA=pdt-developer; USER_TEXT='<verbatim>'; SCOPE='<1-line English>'
 MODEL="${MODEL:-sonnet}"; EFFORT="${EFFORT:-medium}"; COMPLEXITY="${COMPLEXITY:-L5}"
 case "$EFFORT" in xhigh|max) [ "$MODEL" = opus ] || MODEL=opus ;; esac
 
-NEXT_NUM=$(jq -r '([.past_tickets[]?.ticket_id // empty, .current_task.ticket_id // empty]
-  | map(select(. != null) | sub("^T-"; "") | tonumber) | max // 0) + 1' "$STATE" 2>/dev/null || echo 1)
+NEXT_NUM=$(node scripts/po/scan-tickets.mjs "$TARGET" 2>/dev/null \
+  | jq -r '([.[].ticket_id // empty]
+    | map(select(. != null) | sub("^T-(P[0-9]+-)?"; "") | tonumber? // 0) | max // 0) + 1' \
+  2>/dev/null || echo 1)
 NEXT_TID=$(printf "T-%03d" "$NEXT_NUM")
 CTX=$(jq -c --arg ntid "$NEXT_TID" '{slug:.current_task.slug, request_summary:.current_task.request_summary,
   artifacts:(.current_task.artifacts // []), version:(.current_task.version // .current_task.round // null),

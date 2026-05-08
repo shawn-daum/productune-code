@@ -1,5 +1,10 @@
-# Three stages
+# PO loop (three steps: Instruction / Execution / Feedback)
 
+> **Naming note**: this file documents the **PO orchestration loop** — the three-step processing cycle PO runs per turn (Instruction → Execution → Feedback). The word "stage" elsewhere in doctrine has historically been overloaded; we now use:
+> - **phase** — Version Cycle Phase (1..5: PRD / Design / Build / Deploy / Close) — see `tickets.md` Layer A
+> - **type** — ticket type (`design / impl / refactor / test / qa / deploy`) — see `tickets.md` Layer B
+> - **step** — PO loop step (Instruction / Execution / Feedback) — this file
+>
 > **Language convention**: Doctrine prose = English. PO is an LLM — match intent semantically, not by literal substrings. Output traces shown in this doc are English templates; PO renders them in the user's working language at runtime. Slash commands (`/new`, `/continue`, …) are universal.
 
 ## Step 1 — Instruction (user → you)
@@ -48,9 +53,9 @@ Disposition (c) + user gives a patch (design fix / bug / UX tweak), not fresh id
 
 - **Cues (semantic)** — patch: user requests a specific fix / change to existing surface ("fix X", "X looks off", "change X color", "debug this"). Fresh idea: user proposes a new feature or open-ended problem ("let's build X", "how should we solve Y", "redesign this flow"). Ambiguous → 1-line paraphrase + confirm.
 - **Trivial direct exception** — typo / import cleanup / single-line rename: PO handles in-conversation. Anything beyond → Designer.
-- **Designer responsibilities** — (a) author plan into `## Request` + `## Acceptance`; (b) split tickets and choose `stage` per ticket. Each `stage` value (`design|impl|refactor|test|qa|deploy`) determines assignee + auto QA smoke gate behavior automatically (see `tickets.md` Layer B); no separate `requires_qa` flag.
-- **Flow** — call Designer (`opus/high` default; light patch `sonnet/medium`) with scope `(ad-hoc patch — author plan, split tickets, choose stage per ticket)` + `[user instruction]` + `[ctx]`. Designer returns `state:"ready"` with `tickets[]`. PO routes per Step 2C (impl/refactor auto-trigger smoke gate). Patch never edits PRD body — Designer emits a separate PRD-update ticket if needed. (Brief at `<project>/.productune/briefs/<slug>.md` is optional — Designer can start cold with the verbatim user idea; if user already has a brief, pass via `[brief] <path>`.)
-- **Phase 4 R2 git-workflow** — patch tickets auto-spawn worktree (`<project>/.productune/worktrees/<ticket-id>/`, branch `fix/<ticket-id>/<slug>`). Trivial exception works on current base. See `git-workflow.md`.
+- **Designer responsibilities** — (a) author plan into `## Request` + `## Acceptance`; (b) split tickets and choose `type` per ticket. Each `type` value (`design|impl|refactor|test|qa|deploy`) determines assignee + auto QA smoke gate behavior automatically (see `tickets.md` Layer B); no separate `requires_qa` flag.
+- **Flow** — call Designer (`opus/high` default; light patch `sonnet/medium`) with scope `(ad-hoc patch — author plan, split tickets, choose type per ticket)` + `[user instruction]` + `[ctx]`. Designer returns `state:"ready"` with `tickets[]`. PO routes per Step 2C (impl/refactor auto-trigger smoke gate). Patch never edits PRD body — Designer emits a separate PRD-update ticket if needed. (Brief at `<project>/.productune/briefs/<slug>.md` is optional — Designer can start cold with the verbatim user idea; if user already has a brief, pass via `[brief] <path>`.)
+- **R2 git-workflow** — patch tickets auto-spawn worktree (`<project>/.productune/worktrees/<ticket-id>/`, branch `fix/<ticket-id>/<slug>`). Trivial exception works on current base. See `git-workflow.md`.
 
 ### 2B. Phase 1 PRD — Delegate PRD to Designer (clarity loop)
 
@@ -63,7 +68,7 @@ Spawn Designer with `--model opus --print --output-format json`. TASK body = ver
 
 When triggered:
 1. Emit trace `→ Phase 2 Design (Designer) — design system / UX flow / mock UI`.
-2. Designer emits 4 `stage:design` tickets:
+2. Designer emits 4 `type:design` tickets:
    - `T-NNN-a`: Design System (`docs/design/<slug>/system.md`)
    - `T-NNN-b`: UX Flow Mermaid (`docs/design/<slug>/flow.md`)
    - `T-NNN-c`: Wireframe Excalidraw, key screens (`docs/design/<slug>/screens/*.excalidraw.json`)
@@ -82,17 +87,25 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 8. **Execute in dependency order**. Markers: `→ delegating to <persona> for ticket T-NNN (model=X, effort=Y — reason)` then `✓ <persona> complete: <artifact>`. State writes are hook-managed (`post-delegate-state-write`); PO writes meaningful `current_task` on start, else hook seeds `auto-<ts>`. First call has no `--session-id`; subsequent uses `--resume "$SID"` from `current_task.persona_sessions.<persona>`.
 9. **Gate 2 (design-review, conditional)** — Designer deliverable user-facing → pause for user before Developer.
 10. **Gate 3 (design-compliance, mandatory if Designer involved)** — after dev, re-invoke Designer with changed files + design doc; ask "match design intent? list deviations". Pass verdict + QA to user.
-11. **QA gate** — auto smoke gate (impl/refactor) runs on dev close. Standalone `stage:qa` tickets handle independent QA work. On `fail`, loop back to dev. Max 3 loops; beyond → `blocked` + surface.
+11. **QA gate** — auto smoke gate (impl/refactor) runs on dev close. Standalone `type:qa` tickets handle independent QA work. On `fail`, loop back to dev. Max 3 loops; beyond → `blocked` + surface.
 12. **Process `promotion_candidates`** per `memory.md`. Try inline 1-line propose; on `y` delegate wiki write. PO never writes wiki directly. **If the inline window is unavailable** (background sub-agent result returned mid-turn, persona turn closed without an immediate user prompt slot, etc.) → enqueue the candidate into `pending_promotions[]` with `status:"pending"` per `memory.md ### Persistence (deferred surface)`; Step 1b drains it next turn-start.
 13. **Synthesize, don't dump.** Final summary in user's lang, caveman-lite: what changed, QA verdict, design compliance, manual verify steps, open items.
 
-### 2D. Phase 4 — Version close retrospective
+### 2C'. Phase 4 — Deploy
 
-**Trigger**: all Phase 3 tickets (`impl` + `refactor` + `test` + `qa` + `deploy`) `done` → PO summarizes Phase 3 + emits prompt with intent "enter Phase 4 Version close?" → user confirms.
+**Trigger**: all Phase 3 tickets (`impl` + `refactor` + `test` + `qa`) `done` AND user confirms deploy intent (Phase 3→4 gate). Phase 3 no longer contains `type:deploy` — Deploy is its own Phase.
+
+**Process**: PO emits a single `type:deploy` ticket (`pdt-po+user` collaborative). Body shape uses `## Steps` (per `pdt-po.md`). Per-step verify; no smoke gate.
+
+**Exit**: deploy ticket `done` → PO emits Phase 4→5 transition gate.
+
+### 2D. Phase 5 — Version close retrospective
+
+**Trigger**: Phase 4 deploy ticket `done` → PO summarizes Phase 4 + emits prompt with intent "enter Phase 5 Version close?" → user confirms.
 
 **Process** (PO runs 4 sub-calls; full detail in `lifecycle-mechanics.md` + per-step persona files):
 - **5a** Designer (opus + xhigh) — measurement (lazy) + `feature-history.md` append + next-Version backlog
-- **5b** QA (opus + xhigh) — `fail-patterns.md` aggregate + next-Version `stage:test` candidates
+- **5b** QA (opus + xhigh) — `fail-patterns.md` aggregate + next-Version `type:test` candidates
 - **5c** Designer (sonnet + medium) — write `docs/retrospectives/<version>.md` narrative from 5a + 5b
 - **5d** PO mechanical — calibration log append, mirror `versions[N].outcome.retrospective_path`, surface to user
 
@@ -104,7 +117,7 @@ Designer emits `docs/tickets/<version>/T-NNN.md`. PO reads each, picks model/eff
 - `close only` → project pause
 - `modify` → re-run 5a/5b/5c
 
-### Uniform phase-transition gate (every Phase 1↔2↔3↔4 boundary)
+### Uniform phase-transition gate (every Phase 1↔2↔3↔4↔5 boundary)
 
 1. PO emits trace `→ Phase N complete` + 1-line summary of artifacts (rendered in user's lang).
 2. PO emits prompt with intent "proceed to Phase N+1? (let me know if anything to change)".

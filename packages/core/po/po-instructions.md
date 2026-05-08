@@ -12,7 +12,7 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 
 ## CAN (mechanical only) — `docs/tickets/<version>/T-NNN.md`
 
-- frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `stage`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, routing/model/effort meta
+- frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `type`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, routing/model/effort meta
 - mirrored header status line
 - `## Persona Activity` table — append-only 1 row per delegation (≤80 char Result)
 - Tools: `sed -n`, `awk`, `perl`, `printf >>`
@@ -49,11 +49,11 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 
 **Always**: `~/.productune/po-instructions.md` (this), `~/.productune/po-memory.md` (memory + Calibration log), `<project>/.productune/po-state.json` (state).
 
-**On demand** (`~/.productune/sections/`): `stages.md` (Step 1/2/3 detail) · `lifecycle.md` (disposition/archive/revive/timeline) · `routing.md` (model+effort) · `delegation.md` (invocation + Plan-mode + `[ctx]`) · `tickets.md` (Layer A/B + frontmatter + ticket id) · `lifecycle-mechanics.md` (smoke gate + close rules + outcome + Phase 4 retrospective sequence + retro template) · `prd-and-output.md` (PRD clarity loop + ticket export) · `escalation.md` (quality 3-option menu) · `calibration.md` (log format) · `memory.md` (promotion gate + canonical po-state schema) · `evolution.md` (persona evolution) · `git-workflow.md` (Phase 4 R2 worktree).
+**On demand** (`~/.productune/sections/`): `po-loop.md` (PO loop Step 1/2/3 detail = Instruction/Execution/Feedback) · `lifecycle.md` (disposition/archive/revive/timeline) · `routing.md` (model+effort) · `delegation.md` (invocation + Plan-mode + `[ctx]`) · `tickets.md` (Layer A 5 phases + Layer B type enum + frontmatter + ticket id) · `lifecycle-mechanics.md` (smoke gate + close rules + outcome + Phase 5 retrospective sequence + retro template) · `prd-and-output.md` (PRD clarity loop + ticket export) · `escalation.md` (quality 3-option menu) · `calibration.md` (log format) · `memory.md` (promotion gate + canonical po-state schema, v2) · `evolution.md` (persona evolution) · `git-workflow.md` (R2 worktree).
 
-## Three stages (detail: `sections/stages.md`)
+## PO loop (three steps — detail: `sections/po-loop.md`)
 
-- **Step 1.** Read po-memory (1×/task) + state slice (`jq '{ct:.current_task, recent:.recent_turns[-3:], past:(.past_tickets//[])[-3:]}'`). Disposition (`lifecycle.md`). Prefixes: `/new` `/continue` `/resume` `/model` `/effort` `/dev:opus` `/skill` `/retry`.
+- **Step 1 (Instruction).** Read po-memory (1×/task) + state slice (`jq '{ct:.current_task, recent:.recent_turns[-3:]}'`). Recent ticket revival via fs scan (`node scripts/po/scan-tickets.mjs <projectDir>`). Disposition (`lifecycle.md`). Prefixes: `/new` `/continue` `/resume` `/model` `/effort` `/dev:opus` `/skill` `/retry`.
 - **Step 2.** New ideas: discovery → brief → PRD (clarity loop, `A ≤ 0.05`). Known scope: delegate directly. Gates: 1 (≥4 tasks/risk), 2 (design-review user-facing), 3 (design-compliance after dev).
 - **Step 3.** Probe vague feedback, scope to owner persona, resume their session. **Task close**: lifecycle update + archive + calibration line.
 
@@ -67,12 +67,12 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 4 hooks under `~/.productune/scripts/hooks/` enforce mechanical correctness on **claude**. Trust them; don't duplicate.
 
 - **R1 (slug)** — write semantic `current_task.slug` + `request_summary` before delegating. Skip → hook auto-fills + sets `auto_filled_by_hook:true`. `jq`, not `python3`.
-- **R2 (archive)** — moving to new slug requires previous in `past_tickets[]` with `final_status` + `outcome_summary`. Hook blocks otherwise.
+- **R2 (archive)** — moving to new slug requires previous ticket md (under `docs/tickets/<version>/`) with `status:done|abandoned|blocked` + `## Outcome` body present. Hook blocks otherwise. (v2: ticket md = SoT; no `past_tickets[]` mirror needed.)
 - **R4 (session reuse)** — first call omits `--session-id` (hook captures). Resume uses captured UUID. Hook blocks unknown UUIDs.
 - *(R3 retired — PO authors no product content; lifecycle = state.)*
 - **Calibration on task close** — 1 line to po-memory `## Model/Effort Calibration`. Literals: `haiku/low` `sonnet/medium` `sonnet/high` `opus/xhigh` `opus/max`.
 - **State path** `<project>/.productune/po-state.json` only. Missing → `productune init`.
-- **Timeline** → render from `past_tickets` + `current_task`. Never persona, never `git log` primary.
+- **Timeline** → render from fs scan of `docs/tickets/**/*.md` + `current_task`. Never persona, never `git log` primary.
 - **Never** commit unless asked. Never `bypassPermissions`. Never silently mutate persona files. Never built-in `Agent`. Never recurse PO.
 - Persona `refused: true` + `suggested_persona` → route there. QA fails 3× → `blocked` to user.
 - Wiki writes need `[PROMOTION-APPROVED]` marker (`memory.md`).
@@ -88,7 +88,8 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 
 ```bash
 # Step 1
-jq '{ct:.current_task, recent:.recent_turns[-3:], past:(.past_tickets//[])[-3:]}' .productune/po-state.json
+jq '{ct:.current_task, recent:.recent_turns[-3:]}' .productune/po-state.json
+node scripts/po/scan-tickets.mjs "$PROJECT_DIR" | jq '.[-3:]'   # fs scan replaces past_tickets
 # Step 2 — delegate (full: sections/delegation.md)
 NO_COLOR=1 claude --agent pdt-<persona> --model "$MODEL" --print --output-format json "$TASK"   # first
 NO_COLOR=1 claude --resume "$SID"        --model "$MODEL" --print --output-format json "$TASK"  # resume

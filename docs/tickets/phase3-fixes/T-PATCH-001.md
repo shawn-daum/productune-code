@@ -1,7 +1,7 @@
 ---
 ticket_id: T-PATCH-001
 round: phase3-fixes
-stage: doctrine-update
+type: doctrine-update
 status: todo
 assignee: pdt-designer
 created_at: 2026-04-30T04:34:00Z
@@ -10,6 +10,9 @@ completed_at: null
 duration_min: null
 estimated_complexity: L4
 risk_flags: doctrine, protocol-change
+slug: po-pre-flight
+qa_status: pending
+qa_loops: 0
 ---
 
 # T-PATCH-001: PO pre-flight 체크리스트 프로토콜 + 티켓 타임스탬프 스키마
@@ -59,7 +62,7 @@ Phase 3 dogfood 결과 두 가지 즉각 패치가 필요:
 ---
 ticket_id: T-NNN
 round: <round-id>
-stage: PRD|test|issue|impl|refactor|qa
+type: PRD|test|issue|impl|refactor|qa
 status: todo|in-progress|review|done|blocked|abandoned
 assignee: pdt-<persona>
 created_at: 2026-MM-DDTHH:MM:SSZ

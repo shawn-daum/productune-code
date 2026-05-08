@@ -1,27 +1,34 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { PoState, Version, Ticket, Phase, Stage, Status } from '../../lib/types'
-import { PHASE_NAMES } from '../../lib/types'
+import type { PoState, Version, Ticket, Phase, TaskType, Status } from '../../lib/types'
+import { useTicketScan } from '../../lib/useTicketScan'
+import { useWorkspace } from '../../store/workspace'
 
 interface Props {
   versionId: string
   poState: PoState | null
 }
 
-const PHASE_ORDER: Phase[] = ['PRD', 'Design', 'Build', 'Close']
-const STAGE_ORDER: Stage[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
+const PHASE_ORDER: Phase[] = ['PRD', 'Design', 'Build', 'Deploy', 'Close']
+const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
 
 export default function VersionDetailView({ versionId, poState }: Props) {
   const { t } = useTranslation()
+  const project = useWorkspace((s) => s.project)
+  const { tickets: scannedTickets } = useTicketScan(project?.projectDir ?? null)
   const version = (poState?.versions ?? []).find((v) => v.id === versionId)
   if (!version) {
     return <div style={empty}>{t('workspace.versionDetail.notFound', { id: versionId })}</div>
   }
 
   const isActive = poState?.current_version === versionId
-  const currentPhase = isActive ? poState?.current_phase : version.ended_at ? 4 : undefined
+  const currentPhase = isActive ? poState?.current_phase : version.ended_at ? 5 : undefined
 
-  const tickets = collectTickets(poState, versionId, isActive)
-  const ticketsByStage = groupByStage(tickets)
+  const tickets = useMemo(
+    () => collectTickets(poState, scannedTickets, versionId, isActive),
+    [poState, scannedTickets, versionId, isActive],
+  )
+  const ticketsByType = useMemo(() => groupByType(tickets), [tickets])
 
   return (
     <div style={wrap}>
@@ -43,8 +50,8 @@ export default function VersionDetailView({ versionId, poState }: Props) {
         {tickets.length === 0 ? (
           <div style={emptyHint}>{t('workspace.versionDetail.noTickets')}</div>
         ) : (
-          STAGE_ORDER.filter((s) => ticketsByStage[s]?.length).map((s) => (
-            <StageGroup key={s} stage={s} tickets={ticketsByStage[s] ?? []} />
+          TYPE_ORDER.filter((s) => ticketsByType[s]?.length).map((s) => (
+            <TypeGroup key={s} type={s} tickets={ticketsByType[s] ?? []} />
           ))
         )}
       </section>
@@ -54,7 +61,12 @@ export default function VersionDetailView({ versionId, poState }: Props) {
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-function collectTickets(poState: PoState | null, versionId: string, isActive: boolean): Ticket[] {
+function collectTickets(
+  poState: PoState | null,
+  scanned: Ticket[],
+  versionId: string,
+  isActive: boolean,
+): Ticket[] {
   const list: Ticket[] = []
   if (isActive && poState?.current_task?.ticket_id) {
     const ct = poState.current_task
@@ -63,22 +75,27 @@ function collectTickets(poState: PoState | null, versionId: string, isActive: bo
       version: versionId,
       slug: ct.slug,
       title: ct.title,
-      stage: ct.stage,
+      type: ct.type ?? ct.stage,
       status: ct.status,
       qa_status: ct.qa_status,
       qa_loops: ct.qa_loops,
     })
   }
-  for (const t of poState?.past_tickets ?? []) {
-    if (t.version === versionId) list.push(t)
+  // fs-scanned tickets — filter to this version, exclude the one already
+  // pulled in from current_task to avoid duplicates.
+  const ctId = poState?.current_task?.ticket_id
+  for (const t of scanned) {
+    if (t.version !== versionId) continue
+    if (isActive && t.ticket_id === ctId) continue
+    list.push(t)
   }
   return list
 }
 
-function groupByStage(tickets: Ticket[]): Record<string, Ticket[]> {
+function groupByType(tickets: Ticket[]): Record<string, Ticket[]> {
   const out: Record<string, Ticket[]> = {}
   for (const t of tickets) {
-    const k = t.stage ?? 'unknown'
+    const k = (t.type ?? t.stage ?? 'unknown') as string
     if (!out[k]) out[k] = []
     out[k].push(t)
   }
@@ -158,12 +175,12 @@ function OutcomeCard({ version }: { version: Version }) {
   )
 }
 
-function StageGroup({ stage, tickets }: { stage: Stage; tickets: Ticket[] }) {
+function TypeGroup({ type, tickets }: { type: TaskType; tickets: Ticket[] }) {
   return (
-    <div style={stageGroup}>
-      <div style={stageHeader}>
-        <span style={stageLabel}>{stage}</span>
-        <span style={stageCount}>{tickets.length}</span>
+    <div style={typeGroup}>
+      <div style={typeHeader}>
+        <span style={typeLabel}>{type}</span>
+        <span style={typeCount}>{tickets.length}</span>
       </div>
       <div style={ticketList}>
         {tickets.map((t) => (
@@ -325,18 +342,18 @@ const outcomeLink: React.CSSProperties = {
   cursor: 'pointer',
 }
 
-const stageGroup: React.CSSProperties = {
+const typeGroup: React.CSSProperties = {
   marginBottom: 12,
 }
 
-const stageHeader: React.CSSProperties = {
+const typeHeader: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
   marginBottom: 6,
 }
 
-const stageLabel: React.CSSProperties = {
+const typeLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   color: '#A0A0A0',
@@ -344,7 +361,7 @@ const stageLabel: React.CSSProperties = {
   letterSpacing: '0.05em',
 }
 
-const stageCount: React.CSSProperties = {
+const typeCount: React.CSSProperties = {
   fontSize: 11,
   color: '#505050',
 }

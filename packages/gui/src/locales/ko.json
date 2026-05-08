@@ -103,7 +103,8 @@
       "closed": "{{date}} 종료",
       "tickets": "티켓 {{count}}",
       "retro": "회고 ↗",
-      "phaseLabel": "Phase: "
+      "phaseLabel": "Phase: ",
+      "olderHint": "이전 Version: docs/retrospectives/<version>.md 참조"
     },
     "versionDetail": {
       "notFound": "Version `{{id}}` 을 po-state에서 찾을 수 없음.",
@@ -139,7 +140,6 @@
       "minimize": "최소화",
       "close": "닫기",
       "restore": "PO 채팅 열기",
-      "personaSelectorAria": "다음 위임 대상",
       "idleCtx": "대기 중",
       "actionDefault": "처리 중"
     },
@@ -228,20 +228,19 @@
       "team": "팀",
       "settings": "설정"
     },
-    "stageStrip": {
-      "sectionLabel": "Stage",
+    "phaseStrip": {
+      "sectionLabel": "Phase",
       "roundsSection": "Rounds",
       "roundsHint": "Rounds — T-P4-047 에서 연결",
-      "stripAriaLabel": "프로젝트 단계",
-      "chipAriaLabel": "현재 단계: {{stage}}",
-      "roundsSectionAriaLabel": "라운드 섹션",
-      "stageTooltip": {
+      "stripAriaLabel": "Project phase",
+      "chipAriaLabel": "Current phase: {{phase}}",
+      "roundsSectionAriaLabel": "Rounds section",
+      "phaseTooltip": {
         "prd": "PRD — 문제·범위 합의",
         "design": "Design — 흐름·와이어프레임·시스템",
-        "build": "Build — 티켓 구현",
-        "qa": "QA — 검증·수정",
-        "deploy": "Deploy — 배포 준비·실행",
-        "operate": "Operate — 모니터링·다음 라운드"
+        "build": "Build — 티켓 구현 (QA 포함)",
+        "deploy": "Deploy — 릴리즈 준비·배포",
+        "close": "Close — 회고·다음 라운드"
       }
     }
   },

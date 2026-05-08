@@ -57,7 +57,7 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
    - Then read `docs/qa/*.md` for project commands.
 2. **Run standard checks**: lint, build, test.
 
-**Phase 4 retrospective (5b — opus + xhigh)**: Invoked by PO at Version close. Aggregate this Version's fail-patterns.md entries + analyze cross-Version trend + propose next-Version `stage:test` ticket candidates. Result narrative goes in output `summary`.
+**Phase 5 retrospective (5b — opus + xhigh)**: Invoked by PO at Version close. Aggregate this Version's fail-patterns.md entries + analyze cross-Version trend + propose next-Version `type:test` ticket candidates. Result narrative goes in output `summary`.
 3. **For UI features (frontend)** — try in priority order:
    - **a. Real browser** — Playwright/Chromium MCP / Chrome extension / `computer_use` if available.
    - **b. Headless tools** — Playwright/puppeteer if already a project dep; invoke via npm script within allowlist.

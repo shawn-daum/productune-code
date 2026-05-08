@@ -2,23 +2,25 @@
  * ChatPanel — Right panel chat UI (T-P4-041, mockup 5-row layout).
  *
  *   rp-hdr        35 px   header (PO badge + title + minimize + close)
- *   rp-ctx       ~28 px   stage chip + round-N · T-NNN action
+ *   rp-ctx       ~28 px   phase chip + round-N · T-NNN action
  *   rp-persona-bar 24 px  T-P4-049 (positioned here via this component)
  *   rp-msgs       flex-1  message list — 6 bubble kinds
- *   rp-input      auto    textarea + persona selector + send
+ *   rp-input      auto    textarea + send button (no persona selector — v2 sub-c)
  *
  * Single PO session per project. Persists to <projectDir>/.productune/chat.json.
  * Streaming via main-process spawn of `claude --output-format stream-json`,
  * with echo-mode fallback when claude CLI isn't installed.
+ *
+ * v2 doctrine sub-c: persona selector removed. PO orchestrator decides dispatch
+ * autonomously per `po-instructions.md` Routing. Visibility = PersonaPresenceBar.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
-import { usePoChat, delegateToKind, type DelegatePersona } from '../../store/poChat'
+import { usePoChat } from '../../store/poChat'
 import type { Message, MessageKind } from '../../lib/types'
-import { getActiveStageDef } from '../../lib/stage-mapping'
-import StageStrip from './StageStrip'
+import PhaseStrip from './PhaseStrip'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
 import PoFab from './chat/PoFab'
@@ -40,8 +42,6 @@ export default function ChatPanel() {
   const setPanelVisible = usePoChat((s) => s.setPanelVisible)
   const draft = usePoChat((s) => s.inputDraft)
   const setDraft = usePoChat((s) => s.setDraft)
-  const nextDelegate = usePoChat((s) => s.nextDelegate)
-  const setNextDelegate = usePoChat((s) => s.setNextDelegate)
   const autoScrollLocked = usePoChat((s) => s.autoScrollLocked)
   const setAutoScrollLocked = usePoChat((s) => s.setAutoScrollLocked)
 
@@ -181,13 +181,14 @@ export default function ChatPanel() {
     const api = (window as any).api
     try { await api.chatAppendMessage(project.projectDir, userMsg) } catch { /* ignore */ }
 
-    inFlightKindRef.current = delegateToKind(nextDelegate)
+    // PO is the sole entry point — pre-allocated assistant bubble is `po` kind.
+    // Dispatch decisions surface via PersonaPresenceBar (T-P4-049), not here.
+    inFlightKindRef.current = 'po'
     setStreaming(true)
     try {
       await api.poSendMessage({
         projectDir: project.projectDir,
         text,
-        persona: nextDelegate,
         resume: claudeSessionId,
       })
     } catch (e) {
@@ -241,7 +242,7 @@ export default function ChatPanel() {
 
         {/* rp-ctx */}
         <div style={ctxRow} className="rp-ctx">
-          <StageStrip poState={poState} variant="chip" />
+          <PhaseStrip poState={poState} variant="chip" />
           <span style={ctxCaptionStyle}>{ctxCaption}</span>
         </div>
 
@@ -257,7 +258,7 @@ export default function ChatPanel() {
           )}
         </div>
 
-        {/* rp-input */}
+        {/* rp-input — textarea + send only (no persona selector, v2 sub-c) */}
         <div style={inputArea}>
           <textarea
             ref={taRef}
@@ -270,17 +271,6 @@ export default function ChatPanel() {
             disabled={streaming || !project}
           />
           <div style={inputRow}>
-            <select
-              style={personaSelect}
-              value={nextDelegate}
-              onChange={(e) => setNextDelegate(e.target.value as DelegatePersona)}
-              aria-label={t('workspace.chat.personaSelectorAria')}
-            >
-              <option value="pdt-po">@ pdt-po</option>
-              <option value="pdt-designer">@ pdt-designer</option>
-              <option value="pdt-developer">@ pdt-developer</option>
-              <option value="pdt-qa">@ pdt-qa</option>
-            </select>
             <button
               style={{ ...sendBtn, opacity: streaming || !draft.trim() ? 0.4 : 1 }}
               onClick={handleSubmit}
@@ -417,19 +407,7 @@ const inputRow: React.CSSProperties = {
   display: 'flex',
   gap: 6,
   alignItems: 'center',
-}
-
-const personaSelect: React.CSSProperties = {
-  flex: 1,
-  height: 28,
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
-  borderRadius: 4,
-  color: '#C0C0C0',
-  fontSize: 11,
-  padding: '0 6px',
-  outline: 'none',
-  cursor: 'pointer',
+  justifyContent: 'flex-end',
 }
 
 const sendBtn: React.CSSProperties = {

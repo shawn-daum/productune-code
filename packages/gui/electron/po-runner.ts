@@ -25,13 +25,16 @@ import os from 'os'
 import fs from 'fs'
 import type { WebContents } from 'electron'
 
-export type Persona = 'pdt-po' | 'pdt-designer' | 'pdt-developer' | 'pdt-qa'
+/**
+ * The chat panel always sends to PO. Other personas are reached via PO
+ * dispatch (Task tool delegation), surfaced to the renderer via
+ * `PersonaPresenceBar` events. (v2 sub-c: persona selector removed.)
+ */
+const PO_AGENT = 'pdt-po' as const
 
 export interface SendOpts {
   /** User message text. */
   text: string
-  /** Next delegate persona. Defaults to `pdt-po` (the chat owner). */
-  persona?: Persona
   /** Existing claude session UUID to `--resume`. Omit for first turn. */
   resume?: string | null
   /** Project working directory — passed as cwd to spawned claude. */
@@ -238,18 +241,17 @@ function handleToolUseHealth(toolName: string, ctx: HealthContext, cb: RunCallba
 
 function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<void> {
   return new Promise((resolve) => {
-    const persona = opts.persona ?? 'pdt-po'
     const hCtx = makeHealthCtx(msgId)
 
     // Emit healthy at turn start.
     emitHealth('healthy', undefined, hCtx, cb)
 
-    // Build args — first call uses `--agent`, resume uses `--resume`.
+    // Build args — first call uses `--agent pdt-po`, resume uses `--resume`.
     const args: string[] = []
     if (opts.resume) {
       args.push('--resume', opts.resume)
     } else {
-      args.push('--agent', persona)
+      args.push('--agent', PO_AGENT)
     }
     args.push('--print', '--output-format', 'stream-json', '--verbose', opts.text)
 

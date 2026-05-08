@@ -1,7 +1,7 @@
 ---
 ticket_id: T-PATCH-003
 round: phase3-fixes
-stage: doctrine-update
+type: doctrine-update
 status: todo
 assignee: pdt-designer
 created_at: 2026-05-04T06:10:00Z
@@ -10,6 +10,9 @@ completed_at: null
 duration_min: null
 estimated_complexity: L3
 risk_flags: doctrine, protocol-change, persona-schema
+slug: response-skills-used-persona-session-meta
+qa_status: pending
+qa_loops: 0
 ---
 
 # T-PATCH-003: 페르소나 response 에 `skills_used` 필드 + persona_session_meta 누적

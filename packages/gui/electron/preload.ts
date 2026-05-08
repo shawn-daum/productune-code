@@ -91,6 +91,17 @@ contextBridge.exposeInMainWorld('api', {
   readPoState: (projectDir: string): Promise<unknown> =>
     ipcRenderer.invoke('state:readPoState', projectDir),
 
+  // ── Ticket md scan (v2 sub-f — replaces poState.past_tickets) ───────────────
+  scanTickets: (projectDir: string): Promise<import('../src/lib/types').Ticket[]> =>
+    ipcRenderer.invoke('tickets:scan', projectDir),
+
+  /** Subscribe to ticket fs-watch change events (debounced 500ms). */
+  onTicketsChanged: (cb: (projectDir: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, projectDir: string) => cb(projectDir)
+    ipcRenderer.on('tickets:changed', listener)
+    return () => ipcRenderer.removeListener('tickets:changed', listener)
+  },
+
   // ── Design artifacts ────────────────────────────────────────────────────────
   designListArtifacts: (projectRoot: string): Promise<string[]> =>
     ipcRenderer.invoke('design:listArtifacts', projectRoot),
@@ -114,11 +125,10 @@ contextBridge.exposeInMainWorld('api', {
   chatClearSession: (projectDir: string): Promise<void> =>
     ipcRenderer.invoke('chat:clearSession', projectDir),
 
-  // ── PO streaming (T-P4-041) ─────────────────────────────────────────────────
+  // ── PO streaming (T-P4-041; v2 sub-c: persona param removed) ────────────────
   poSendMessage: (opts: {
     projectDir: string
     text: string
-    persona?: 'pdt-po' | 'pdt-designer' | 'pdt-developer' | 'pdt-qa'
     resume?: string | null
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('po:sendMessage', opts),
