@@ -64,15 +64,39 @@ When `validation_method` requires external data (PostHog / Sentry / GA / etc), P
 - deferred from this Version: ...
 - new test ticket candidate: area Y (≥3 cumulative fails)
 - new hypothesis: ...
+
+## Approved doctrine promotions (this Version)
+- pdt-<persona> · project · `docs/<persona>/<file>.md`: "<delta>" (decided <date>)
+- pdt-<persona> · wiki · <target>: "<episode_name>" (decided <date>)
+
+## Repeated patterns
+- recent_turns: <persona> ≥3 fails on `<area-tag>` (last <N> turns)
+- fail-patterns: `<area>` cumulative <M> across versions
+- po-memory pushback: "<verbatim>" (≥2 occurrences)
+
+## Surfaced for next Version
+- dropped/deferred promotions: list (next Phase 1 disposition input)
 ```
 
-## Phase 4 retrospective sequence (PO orchestrates)
+## Retrospective read sources (no new persona calls)
 
-Per-step detail lives in each persona file (5a/5c in `pdt-designer.md`, 5b in `pdt-qa.md`, 5d in `pdt-po.md`). PO runs in order:
+5a/5b/5c/5d sub-steps **read stored memory**, never spawn fresh persona analysis. Allowed sources:
 
-| Step | Persona | Model/Effort | Output |
-|---|---|---|---|
-| 5a | `pdt-designer` | opus + xhigh | fill outcome.observed_result if measurable now (lazy: null otherwise); append `feature-history.md`; propose next-V backlog |
-| 5b | `pdt-qa` | opus + xhigh | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `stage:test` candidates |
-| 5c | `pdt-designer` | sonnet + medium | write `docs/retrospectives/<version>.md` from 5a + 5b ctx |
-| 5d | PO | mechanical | append calibration log; mirror `retrospective_path`; surface to user with next-V candidates |
+1. **project notes** — `docs/{designer,developer,qa}/project-notes.md` + `decisions.md` (approved promotions land here)
+2. **po-state recent_turns** — rolling 10 (failure pattern detection)
+3. **wiki / Graphiti persona lessons** — `mcp__graphiti__search_memory_facts` (graphiti) or wiki-keeper SEARCH (keeper) or `~/.productune/wiki/persona-<x>/INDEX.md` (fs)
+4. **po-memory** — `~/.productune/po-memory.md` `## Model/Effort Calibration` + `## Product taste` + `## Recent corrections / to-avoid`
+5. **approved-promotion archive** — `pending_promotions[]` filtered `status ∈ {approved, edited}` ∧ `decided_at ∈ [version.started_at, version.ended_at]`. New audit source — captures what user actually accepted into doctrine this Version.
+
+Persona invocation in 5a/5b/5c is for *synthesis* of these reads, not fresh analysis. 5d is fully mechanical.
+
+## Phase 5 retrospective sequence (PO orchestrates)
+
+Per-step detail lives in each persona file (5a/5c in `pdt-designer.md`, 5b in `pdt-qa.md`, 5d in `pdt-po.md`). PO runs in order. **Reads** column = source set from above (1-5).
+
+| Step | Persona | Model/Effort | Reads | Output |
+|---|---|---|---|---|
+| 5a | `pdt-designer` | opus + xhigh | 1, 2, 3, 5 | fill outcome.observed_result if measurable now (lazy: null otherwise); append `feature-history.md`; propose next-V backlog |
+| 5b | `pdt-qa` | opus + xhigh | 1, 2, 3, 5 | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `stage:test` candidates |
+| 5c | `pdt-designer` | sonnet + medium | 1, 4, 5 + 5a/5b ctx | write `docs/retrospectives/<version>.md` from 5a + 5b ctx + read sources |
+| 5d | PO | mechanical | 4, 5 | append calibration log; mirror `retrospective_path`; surface to user with next-V candidates + dropped promotions |
