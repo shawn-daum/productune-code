@@ -1,5 +1,5 @@
 /**
- * SidePanelCurrentVersion — "현재 버전" sp-section (T-P4-097 sub-area A).
+ * SidePanelCurrentVersion — "현재 버전" sp-section (T-P4-097, simplified T-P4-099).
  *
  * Shows exactly 1 row for the active (current) version, or a read-only
  * fallback row in two cases:
@@ -8,14 +8,13 @@
  *      ("다음 버전 시작 대기 중")
  *
  * Auto-selects + opens tab on mount when a non-closed current version exists.
+ * Phase dot removed (T-P4-099) — phase info is shown by PhaseStrip at sidebar top.
  */
 
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PoState } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
-import { getActivePhaseDef } from '../../lib/phase-mapping'
-import { useTicketScan } from '../../lib/useTicketScan'
 import VersionRow from './VersionRow'
 
 interface Props {
@@ -35,23 +34,13 @@ function isCurrentVersionClosed(poState: PoState | null): boolean {
 export default function SidePanelCurrentVersion({ poState, selectedVersionId, onSelect }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
-  const project = useWorkspace((s) => s.project)
-  const { tickets } = useTicketScan(project?.projectDir ?? null)
 
   const currentVersionId = poState?.current_version ?? null
   const versions = poState?.versions ?? []
   const isClosed = isCurrentVersionClosed(poState)
   const hasVersions = versions.length > 0 && !!currentVersionId
 
-  // Ticket count for current version
-  const ticketCount = currentVersionId
-    ? tickets.filter((tk) => tk.version === currentVersionId).length
-    : 0
-
-  // Phase for current version
-  const activePhaseDef = getActivePhaseDef(poState)
-
-  // Latest activity date
+  // Latest activity date for current version row
   const currentVer = currentVersionId ? versions.find((v) => v.id === currentVersionId) : null
   const latestDate = currentVer?.ended_at ?? currentVer?.started_at ?? null
 
@@ -70,17 +59,11 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVersionId])
 
-  // Sec-hdr phase dot color
-  const phaseColor = activePhaseDef.color
-
   return (
     <div style={sectionWrap}>
       <div style={secHdrStatic}>
         <span style={secHdrText}>{t('workspace.versionHistory.sidePanel.currentTitle')}</span>
-        {/* Right side: phase color dot only */}
-        {hasVersions && !isClosed && (
-          <span style={{ ...phaseDot, background: phaseColor }} title={activePhaseDef.label} />
-        )}
+        {/* Right meta: empty (phase dot removed — phase shown by PhaseStrip only) */}
       </div>
 
       {/* Case 1: no versions → init fallback */}
@@ -101,15 +84,10 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, on
       {hasVersions && !isClosed && (
         <VersionRow
           versionId={currentVersionId!}
-          phaseLabel={activePhaseDef.label}
-          phaseColor={activePhaseDef.color}
-          ticketCount={ticketCount}
-          deployCount={0}
           latestActivityDate={latestDate}
           isCurrent={true}
           isSelected={selectedVersionId === currentVersionId}
           onClick={() => onSelect(currentVersionId!)}
-          poState={poState}
         />
       )}
     </div>
@@ -140,14 +118,6 @@ const secHdrText: React.CSSProperties = {
   textTransform: 'uppercase',
   userSelect: 'none',
   flex: 1,
-}
-
-const phaseDot: React.CSSProperties = {
-  width: 6,
-  height: 6,
-  borderRadius: '50%',
-  flexShrink: 0,
-  display: 'inline-block',
 }
 
 const fallbackRow: React.CSSProperties = {

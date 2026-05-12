@@ -1,19 +1,14 @@
 /**
  * VersionRow — shared row component for SidePanelCurrentVersion + SidePanelPastVersions.
  *
- * Props:
- *  - isCurrent  (renamed from isLatest) — orange pill vs purple pill
- *  - phaseLabel  — 'Build' | 'PRD' | ... | '완료'
- *  - phaseColor  — hex color matching phase token
- *  - poState     — for PhaseStrip hover popover (forceExpanded)
+ * 2-token layout (T-P4-099):
+ *  - Current row:  [id pill] + flex gap + [date]
+ *  - Past row:     [id pill] + flex gap + [close badge] (only if isClosed)
+ *  - Unassigned:   [미배정 pill] + flex gap + [count]  (rendered inline by SidePanelPastVersions)
  *
- * CSS-only hover popover: .vr-row:hover .vr-popover → opacity 0→1, no re-render.
- * Requires version-row.css (imported here).
+ * Phase hover popover removed. No PhaseStrip import.
+ * Close badge reuses PhaseStrip currentBadge shape (same borderRadius/fontSize/padding) with neutral gray.
  */
-
-import './version-row.css'
-import PhaseStrip from './PhaseStrip'
-import type { PoState } from '../../lib/types'
 
 // ── Date helper ───────────────────────────────────────────────────────────────
 
@@ -71,20 +66,6 @@ export const pillUnassigned: React.CSSProperties = {
   flexShrink: 0,
 }
 
-/** "완료" pill — neutral gray-on-dark. Ticket §2-C. */
-export const pillClosed: React.CSSProperties = {
-  fontSize: 9,
-  fontWeight: 600,
-  fontFamily: 'monospace',
-  color: '#606060',
-  background: '#1A1A1A',
-  border: '1px solid #303030',
-  borderRadius: 3,
-  padding: '1px 5px',
-  whiteSpace: 'nowrap',
-  flexShrink: 0,
-}
-
 // ── Row style ─────────────────────────────────────────────────────────────────
 
 export function rowStyle(isSelected: boolean): React.CSSProperties {
@@ -101,7 +82,6 @@ export function rowStyle(isSelected: boolean): React.CSSProperties {
     cursor: 'pointer',
     textAlign: 'left',
     transition: 'background 0.1s',
-    // position:relative is in .vr-row CSS class (needed for popover absolute child)
   }
 }
 
@@ -109,33 +89,25 @@ export function rowStyle(isSelected: boolean): React.CSSProperties {
 
 export interface VersionRowProps {
   versionId: string
-  phaseLabel: string
-  phaseColor: string
-  ticketCount: number
-  deployCount: number
-  latestActivityDate: string | null
+  /** Only rendered on isCurrent=true rows. */
+  latestActivityDate?: string | null
   isCurrent: boolean
+  /** Past rows only: show "close" badge when true. */
+  isClosed?: boolean
   isSelected: boolean
   onClick: () => void
-  /** Used by PhaseStrip forceExpanded popover. Pass poState for live phase data. */
-  poState?: PoState | null
 }
 
 export default function VersionRow({
   versionId,
-  phaseLabel,
-  phaseColor,
-  ticketCount,
-  deployCount,
   latestActivityDate,
   isCurrent,
+  isClosed,
   isSelected,
   onClick,
-  poState,
 }: VersionRowProps) {
   return (
     <button
-      className="vr-row"
       style={rowStyle(isSelected)}
       onClick={onClick}
       onMouseEnter={(e) => {
@@ -146,50 +118,29 @@ export default function VersionRow({
       }}
       aria-current={isSelected ? 'true' : undefined}
     >
-      {/* Version pill */}
+      {/* Version id pill */}
       <span style={isCurrent ? pillLatest : pillPast}>
         {versionId}
       </span>
 
-      {/* Phase label */}
-      <span style={{ ...phaseLabelStyle, color: phaseColor }}>
-        {phaseLabel}
-      </span>
+      {/* Flex gap */}
+      <span style={flexGap} />
 
-      {/* Ticket · deploy count */}
-      <span style={countText}>
-        {ticketCount} · {deployCount}
-      </span>
-
-      {/* Date */}
-      <span style={dateText}>{formatActivityDate(latestActivityDate)}</span>
-
-      {/* CSS-only hover popover — PhaseStrip forceExpanded (no state mutation, 0 re-renders) */}
-      <span className="vr-popover">
-        <PhaseStrip poState={poState ?? null} variant="strip" forceExpanded />
-      </span>
+      {/* Right side: date (current) OR close badge (past, if closed) */}
+      {isCurrent && latestActivityDate && (
+        <span style={dateText}>{formatActivityDate(latestActivityDate)}</span>
+      )}
+      {!isCurrent && isClosed && (
+        <span style={closeBadgeStyle}>close</span>
+      )}
     </button>
   )
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const phaseLabelStyle: React.CSSProperties = {
-  fontSize: 9,
-  fontWeight: 600,
-  fontFamily: 'monospace',
-  whiteSpace: 'nowrap',
-  flexShrink: 0,
-}
-
-const countText: React.CSSProperties = {
+const flexGap: React.CSSProperties = {
   flex: 1,
-  fontSize: 10,
-  fontFamily: 'monospace',
-  color: '#707070',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
 }
 
 const dateText: React.CSSProperties = {
@@ -198,4 +149,24 @@ const dateText: React.CSSProperties = {
   color: '#505050',
   whiteSpace: 'nowrap',
   flexShrink: 0,
+}
+
+/**
+ * Close badge — reuses PhaseStrip itemStyle('cur') shape:
+ * same borderRadius(3) / fontSize(10) / padding('2px 4px') / fontWeight(600).
+ * Color = neutral gray (not phase-current blue).
+ */
+const closeBadgeStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  padding: '2px 4px',
+  borderRadius: 3,
+  fontSize: 10,
+  fontWeight: 600,
+  background: '#1A1A1A',
+  color: '#808080',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+  cursor: 'default',
+  userSelect: 'none',
 }

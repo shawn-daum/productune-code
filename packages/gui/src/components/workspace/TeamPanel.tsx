@@ -1,5 +1,17 @@
+/**
+ * TeamPanel — Team sidebar (T-P4-099 restructure).
+ *
+ * Layout:
+ *  1. Personas section — plain title "페르소나" + PersonaRow × 4 inline (no collapse toggle)
+ *  2. Skills nav row — click → skill-matrix main tab (T-P4-098)
+ *  3. Wiki·Memory nav row — click → team-wiki main tab (NEW T-P4-099)
+ *
+ * Sidebar = nav only. WikiRow list moved to TeamWikiTab (main pane).
+ */
+
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ChevronRight } from 'lucide-react'
 import type { PoState } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import { PERSONA_COLORS } from '../../store/personaPresence'
@@ -24,54 +36,9 @@ const PERSONAS: PersonaDef[] = [
   { key: 'qa',       id: 'pdt-qa',         initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.persona.qa.role',        modelSummary: 'haiku / low'    },
 ]
 
-// ── Skills total (static — SkillMatrixTab owns the SoT data) ─────────────────
+// ── Skills total (static) ────────────────────────────────────────────────────
 
 const SKILLS_TOTAL = 11
-
-// ── Wiki backend ─────────────────────────────────────────────────────────────
-
-type WikiBackend = 'fs' | 'graphiti' | 'keeper'
-
-function wikiBackendFromState(poState: PoState | null): WikiBackend | null {
-  const raw = (poState as any)?.wiki?.backend
-  if (raw === 'fs' || raw === 'graphiti' || raw === 'keeper') return raw
-  return null
-}
-
-// ── Collapsible section ───────────────────────────────────────────────────────
-
-interface SectionProps {
-  title: string
-  storageKey: string
-  children: React.ReactNode
-  right?: React.ReactNode
-}
-
-function Section({ title, storageKey, children, right }: SectionProps) {
-  const lsKey = `workspace.team.collapsed.${storageKey}`
-  const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem(lsKey) === 'true' } catch { return false }
-  })
-
-  const toggle = () => {
-    setCollapsed((c) => {
-      const next = !c
-      try { localStorage.setItem(lsKey, String(next)) } catch {}
-      return next
-    })
-  }
-
-  return (
-    <div style={sectionWrap}>
-      <button style={secHdrBtn} onClick={toggle} aria-expanded={!collapsed}>
-        <span style={secChevron}>{collapsed ? '▶' : '▼'}</span>
-        <span style={secHdrText}>{title}</span>
-        {right && <span style={secHdrRight}>{right}</span>}
-      </button>
-      {!collapsed && <div>{children}</div>}
-    </div>
-  )
-}
 
 // ── Persona row ───────────────────────────────────────────────────────────────
 
@@ -107,30 +74,6 @@ function PersonaRow({ def, isActive, onClick }: PersonaRowProps) {
 
       {/* Model/effort */}
       <span style={personaModel}>{def.modelSummary}</span>
-    </button>
-  )
-}
-
-// ── Wiki / Memory section rows ────────────────────────────────────────────────
-
-interface WikiRowProps {
-  icon: string
-  label: string
-  badge?: React.ReactNode
-  onClick?: () => void
-}
-
-function WikiRow({ icon, label, badge, onClick }: WikiRowProps) {
-  return (
-    <button
-      style={wikiRowStyle(!!onClick)}
-      onClick={onClick}
-      onMouseEnter={(e) => { if (onClick) (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-      onMouseLeave={(e) => { if (onClick) (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-    >
-      <span style={wikiIcon}>{icon}</span>
-      <span style={wikiLabel}>{label}</span>
-      {badge && <span style={wikiBadge}>{badge}</span>}
     </button>
   )
 }
@@ -173,20 +116,22 @@ export default function TeamPanel({ poState }: Props) {
     openTab('skill-matrix', 'skill-matrix', {})
   }
 
-  // Wiki
-  const wikiBackend = wikiBackendFromState(poState)
-  const wikiBackendLabel = wikiBackend
-    ? t(`workspace.team.wiki.backend.${wikiBackend}`)
-    : t('workspace.team.wiki.backend.fs')
+  const handleWikiClick = () => {
+    openTab('team-wiki', 'team-wiki', {})
+  }
 
-  // Promotions
+  // Promotion pending count for wiki nav row warn badge
   const pendingPromos = poState?.pending_promotions?.filter((p) => p.status === 'pending') ?? []
   const promoCount = pendingPromos.length
 
   return (
     <div style={panelWrap}>
-      {/* ── Personas section ── */}
-      <Section title={t('workspace.team.section.personas')} storageKey="personas">
+
+      {/* ── Personas section — plain title + inline list (no collapse) ── */}
+      <div style={sectionWrap}>
+        <div style={plainSecHdr}>
+          <span style={secHdrText}>{t('workspace.team.section.personas')}</span>
+        </div>
         {PERSONAS.map((def) => (
           <PersonaRow
             key={def.id}
@@ -195,67 +140,42 @@ export default function TeamPanel({ poState }: Props) {
             onClick={() => handlePersonaClick(def)}
           />
         ))}
-      </Section>
+      </div>
 
       {/* ── Skills nav row ── */}
       <div style={sectionWrap}>
         <button
-          style={skillsNavBtn}
+          style={navRowBtn}
           onClick={handleMatrixClick}
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
           title={t('workspace.team.section.skillsLink')}
         >
-          <span style={secHdrText}>{t('workspace.team.section.skills')}</span>
-          <span style={skillsNavLabel}>{t('workspace.team.section.skillsLink')}</span>
-          <span style={skillsNavBadge}>
+          <ChevronRight size={12} color="#4a4a4a" style={{ flexShrink: 0 }} />
+          <span style={navRowLabel}>{t('workspace.team.section.skills')}</span>
+          <span style={navRowBadge}>
             {t('workspace.team.section.skillsCount', { count: SKILLS_TOTAL })}
           </span>
         </button>
       </div>
 
-      {/* ── Wiki / Memory section ── */}
-      <Section title={t('workspace.team.section.wikiMemory')} storageKey="wiki">
-        <WikiRow
-          icon={wikiBackend === 'graphiti' ? '\u{1F9E0}' : wikiBackend === 'keeper' ? '\u{1F4DA}' : '\u{1F5C4}'}
-          label={`Wiki: ${wikiBackendLabel}`}
-        />
-        <WikiRow
-          icon="\u{1F9E0}"
-          label={t('workspace.team.wiki.userMemory')}
-          onClick={() =>
-            openTab('user-memory', 'markdown', {
-              path: '~/.productune/po-memory.md',
-              title: 'User Memory',
-            })
-          }
-        />
-        <WikiRow
-          icon="⚙️"
-          label={t('workspace.team.wiki.projectState')}
-          onClick={() =>
-            openTab('project-state', 'markdown', {
-              path: '.productune/po-state.json',
-              title: 'Project State',
-            })
-          }
-        />
-        <WikiRow
-          icon="\u{1F4CC}"
-          label={t('workspace.team.wiki.promotionCandidates')}
-          badge={
-            promoCount > 0 ? (
-              <span style={promoWarnBadge}>{promoCount}</span>
-            ) : null
-          }
-          onClick={() =>
-            openTab('project-state', 'markdown', {
-              path: '.productune/po-state.json',
-              title: 'Promotions',
-            })
-          }
-        />
-      </Section>
+      {/* ── Wiki·Memory nav row ── */}
+      <div style={sectionWrap}>
+        <button
+          style={navRowBtn}
+          onClick={handleWikiClick}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+          title={t('workspace.team.tab.wiki')}
+        >
+          <ChevronRight size={12} color="#4a4a4a" style={{ flexShrink: 0 }} />
+          <span style={navRowLabel}>{t('workspace.team.tab.wiki')}</span>
+          {promoCount > 0 && (
+            <span style={promoWarnBadge}>{promoCount}</span>
+          )}
+        </button>
+      </div>
+
     </div>
   )
 }
@@ -275,23 +195,13 @@ const sectionWrap: React.CSSProperties = {
   borderBottom: '1px solid #1E1E1E',
 }
 
-const secHdrBtn: React.CSSProperties = {
+// Plain (non-clickable) section title for Personas
+const plainSecHdr: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   width: '100%',
   padding: '5px 8px 3px',
-  background: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  color: '#4a4a4a',
-  textAlign: 'left',
   gap: 4,
-}
-
-const secChevron: React.CSSProperties = {
-  fontSize: 8,
-  color: '#4a4a4a',
-  flexShrink: 0,
 }
 
 const secHdrText: React.CSSProperties = {
@@ -304,8 +214,33 @@ const secHdrText: React.CSSProperties = {
   flex: 1,
 }
 
-const secHdrRight: React.CSSProperties = {
-  marginLeft: 'auto',
+// Nav row button (Skills + Wiki·Memory)
+const navRowBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  width: '100%',
+  padding: '6px 8px',
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  gap: 5,
+  textAlign: 'left',
+  transition: 'background 0.1s',
+}
+
+const navRowLabel: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: '#C0C0C0',
+  flex: 1,
+  userSelect: 'none',
+}
+
+const navRowBadge: React.CSSProperties = {
+  fontSize: 9,
+  fontFamily: 'monospace',
+  color: '#505050',
+  flexShrink: 0,
 }
 
 // Persona row
@@ -382,72 +317,7 @@ const personaModel: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-// Skills nav row
-
-const skillsNavBtn: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  width: '100%',
-  padding: '5px 8px 3px',
-  background: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  gap: 4,
-  textAlign: 'left',
-  transition: 'background 0.1s',
-}
-
-const skillsNavLabel: React.CSSProperties = {
-  fontSize: 10,
-  fontFamily: 'monospace',
-  color: '#60A5FA',
-  flexShrink: 0,
-}
-
-const skillsNavBadge: React.CSSProperties = {
-  fontSize: 9,
-  fontFamily: 'monospace',
-  color: '#505050',
-  marginLeft: 4,
-  flexShrink: 0,
-}
-
-// Wiki row
-
-function wikiRowStyle(clickable: boolean): React.CSSProperties {
-  return {
-    display: 'flex',
-    alignItems: 'center',
-    width: '100%',
-    height: 28,
-    padding: '0 8px',
-    background: 'transparent',
-    border: 'none',
-    cursor: clickable ? 'pointer' : 'default',
-    gap: 6,
-    textAlign: 'left',
-    transition: 'background 0.1s',
-  }
-}
-
-const wikiIcon: React.CSSProperties = {
-  fontSize: 12,
-  flexShrink: 0,
-}
-
-const wikiLabel: React.CSSProperties = {
-  fontSize: 11,
-  color: '#C0C0C0',
-  flex: 1,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
-const wikiBadge: React.CSSProperties = {
-  flexShrink: 0,
-}
-
+// Promo warn badge
 const promoWarnBadge: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
@@ -456,4 +326,5 @@ const promoWarnBadge: React.CSSProperties = {
   border: '1px solid #E07B3950',
   borderRadius: 3,
   padding: '0 4px',
+  flexShrink: 0,
 }

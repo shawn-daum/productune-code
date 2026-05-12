@@ -1,15 +1,18 @@
+/**
+ * SettingsView — Settings sidebar (T-P4-099).
+ *
+ * Both sub-tabs (일반 / 작업 흐름 규칙) now open their content in the main pane
+ * via openTab — mirroring the General tab pattern (T-P4-096).
+ * Sidebar = sub-tab nav list only. No inline content rendered here.
+ */
+
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import WorkflowRulesPanel from './WorkflowRulesPanel'
 import { useWorkspace } from '../../store/workspace'
 
 type SettingsSubTab = 'general' | 'workflow'
 
-interface Props {
-  projectDir: string
-}
-
-export default function SettingsView({ projectDir }: Props) {
+export default function SettingsView() {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
   const [activeTab, setActiveTab] = useState<SettingsSubTab>('general')
@@ -23,12 +26,14 @@ export default function SettingsView({ projectDir }: Props) {
     setActiveTab(id)
     if (id === 'general') {
       openTab('general-settings', 'general-settings', undefined, t('settings.tabGeneral', { defaultValue: '일반 설정' }))
+    } else if (id === 'workflow') {
+      openTab('workflow-settings', 'workflow-settings', undefined, t('settings.tabWorkflowRules'))
     }
   }
 
   return (
     <div style={wrap}>
-      {/* Sub-tab list */}
+      {/* Sub-tab list — nav only, content is in main pane */}
       <div style={tabList} role="tablist">
         {tabs.map(tab => (
           <button
@@ -44,11 +49,6 @@ export default function SettingsView({ projectDir }: Props) {
             {tab.label}
           </button>
         ))}
-      </div>
-
-      {/* Tab content */}
-      <div style={tabContent}>
-        {activeTab === 'workflow' && <WorkflowRulesPanel projectDir={projectDir} />}
       </div>
     </div>
   )
@@ -90,11 +90,4 @@ const tabBtnActive: React.CSSProperties = {
   background: '#1E2A3A',
   color: '#E0E0E0',
   fontWeight: 700,
-}
-
-const tabContent: React.CSSProperties = {
-  flex: 1,
-  overflow: 'hidden',
-  display: 'flex',
-  flexDirection: 'column',
 }

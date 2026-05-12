@@ -144,7 +144,7 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
         </div>
       )}
       {activeIcon === 'settings' && (
-        <SettingsView projectDir={project.projectDir} />
+        <SettingsView />
       )}
     </div>
   )

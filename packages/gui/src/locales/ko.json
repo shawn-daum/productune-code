@@ -422,9 +422,11 @@
     },
     "versionHistory": {
       "sidePanel": {
-        "title": "Versions",
+        "title": "지난 버전",
         "empty": "작업 기록 없음 — 새 작업 시작",
         "rowCount": "{{tickets}} · 배포 {{deploys}}",
+        "headerMeta": "{{count}}개 배포 {{deploys}}",
+        "closeBadge": "close",
         "currentTitle": "현재 버전",
         "closed": "완료",
         "currentFallback": "v1 (대기 중) — PRD 작성 시작 시 활성화됩니다",

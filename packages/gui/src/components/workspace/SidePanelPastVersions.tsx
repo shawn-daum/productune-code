@@ -1,13 +1,15 @@
 /**
- * SidePanelPastVersions — "버전 히스토리" sp-section (T-P4-097 sub-area B).
+ * SidePanelPastVersions — "지난 버전" sp-section (T-P4-097, simplified T-P4-099).
  *
- * Renders all versions EXCEPT the current one (poState.current_version).
- * Transient-closed current version (outcome|ended_at set) also moves here.
+ * Renders all versions EXCEPT the active current one.
+ * Transient-closed current version also moves here.
+ *
+ * Row layout (T-P4-099 2-token):
+ *  - Past row: [id pill] + gap + [close badge if closed]
+ *  - Unassigned bucket: [미배정 pill] + gap + [count]
  *
  * Sort: (ended_at ?? started_at) desc — closed version immediately rises to top.
  * Unassigned bucket ([지정 없음]) always at bottom.
- *
- * Row click → onSelect(versionId) → LeftSidebar.handleVersionClick(id, false).
  */
 
 import { useMemo } from 'react'
@@ -16,7 +18,6 @@ import type { PoState } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import { useTicketScan } from '../../lib/useTicketScan'
 import VersionRow, { pillUnassigned, rowStyle } from './VersionRow'
-import { formatActivityDate } from './VersionRow'
 
 interface Props {
   poState: PoState | null
@@ -39,16 +40,14 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
 
   // Versions to show in this section:
   //   - exclude the current version UNLESS it is transient-closed
-  //     (transient-closed current → treated as past, included here)
   const pastVersions = useMemo(() => {
     return rawVersions.filter((v) => {
-      if (v.id !== currentVersionId) return true  // normal past version
-      // Current version id matches — only include if transient-closed
+      if (v.id !== currentVersionId) return true
       return isVersionClosed(v)
     })
   }, [rawVersions, currentVersionId])
 
-  // Sort: (ended_at ?? started_at) desc — just-closed version rises to top
+  // Sort: (ended_at ?? started_at) desc
   const sortedVersions = useMemo(() => {
     return [...pastVersions].sort((a, b) => {
       const ta = a.ended_at ?? a.started_at ?? a.id
@@ -57,34 +56,27 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
     })
   }, [pastVersions])
 
-  // Ticket count per version
-  const ticketsByVersion = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const tk of tickets) {
-      if (!tk.version) continue
-      map.set(tk.version, (map.get(tk.version) ?? 0) + 1)
-    }
-    return map
-  }, [tickets])
-
   // Unassigned count
   const unassignedCount = useMemo(
     () => tickets.filter((tk) => !tk.version).length,
     [tickets],
   )
 
-  // Header meta: N개 · 배포 M
+  // Header meta: "{N}개 배포 {M}" (가운뎃점 없음 — ko mockup verbatim)
   const pastCount = sortedVersions.length
   const totalDeploys = 0  // Vercel REST deferred
   const headerRight = pastCount > 0
-    ? `${pastCount}개 · 배포 ${totalDeploys}`
+    ? t('workspace.versionHistory.sidePanel.headerMeta', {
+        count: pastCount,
+        deploys: totalDeploys,
+        defaultValue: `${pastCount}개 배포 ${totalDeploys}`,
+      })
     : undefined
-
-  const closedLabel = t('workspace.versionHistory.sidePanel.closed')
 
   return (
     <div style={sectionWrap}>
       <div style={secHdrStatic}>
+        {/* "지난 버전" — label changed from "버전 히스토리" (T-P4-099) */}
         <span style={secHdrText}>{t('workspace.versionHistory.sidePanel.title')}</span>
         {headerRight && (
           <span style={secHdrRight}>
@@ -101,22 +93,16 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
             <VersionRow
               key={ver.id}
               versionId={ver.id}
-              phaseLabel={closedLabel}
-              phaseColor="#606060"
-              ticketCount={ticketsByVersion.get(ver.id) ?? 0}
-              deployCount={0}
-              latestActivityDate={ver.ended_at ?? ver.started_at ?? null}
               isCurrent={false}
+              isClosed={isVersionClosed(ver)}
               isSelected={selectedVersionId === ver.id}
               onClick={() => onSelect(ver.id)}
-              poState={poState}
             />
           ))}
 
           {/* Unassigned bucket — always at bottom */}
           {unassignedCount > 0 && (
             <button
-              className="vr-row"
               style={rowStyle(selectedVersionId === '__unassigned__')}
               onClick={() => onSelect('__unassigned__')}
               onMouseEnter={(e) => {
@@ -131,7 +117,6 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
             >
               <span style={pillUnassigned}>{t('workspace.versionHistory.unassigned.label')}</span>
               <span style={countText}>{unassignedCount}</span>
-              <span style={dashLabel}>{formatActivityDate(null)}</span>
             </button>
           )}
         </div>
@@ -188,14 +173,6 @@ const countText: React.CSSProperties = {
   fontFamily: 'monospace',
   color: '#707070',
   whiteSpace: 'nowrap',
-}
-
-const dashLabel: React.CSSProperties = {
-  fontSize: 9,
-  fontFamily: 'monospace',
-  color: '#505050',
-  whiteSpace: 'nowrap',
-  flexShrink: 0,
 }
 
 const emptyState: React.CSSProperties = {

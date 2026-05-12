@@ -422,9 +422,11 @@
     },
     "versionHistory": {
       "sidePanel": {
-        "title": "Versions",
+        "title": "Past versions",
         "empty": "No activity — start a new task",
         "rowCount": "{{tickets}} · {{deploys}} deploys",
+        "headerMeta": "{{count}} versions · {{deploys}} deploys",
+        "closeBadge": "close",
         "currentTitle": "Current version",
         "closed": "Closed",
         "currentFallback": "v1 (pending) — activated when PRD authoring begins",
