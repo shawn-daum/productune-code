@@ -422,7 +422,11 @@
       "sidePanel": {
         "title": "Versions",
         "empty": "작업 기록 없음 — 새 작업 시작",
-        "rowCount": "{{tickets}} · 배포 {{deploys}}"
+        "rowCount": "{{tickets}} · 배포 {{deploys}}",
+        "currentTitle": "현재 버전",
+        "closed": "완료",
+        "currentFallback": "v1 (대기 중) — PRD 작성 시작 시 활성화됩니다",
+        "currentFallbackTransient": "다음 버전 시작 대기 중 — PO 와 새 PRD 시작 시 활성화됩니다"
       },
       "title": "버전 히스토리",
       "empty": "버전을 선택하세요",

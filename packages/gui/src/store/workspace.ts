@@ -95,6 +95,9 @@ interface WorkspaceState {
   moveTab: (fromPaneId: string, tabId: string, target: DropTarget) => void
   setPaneRatio: (path: number[], ratio: number) => void
   setDragHint: (hint: DragHint) => void
+  /** In-place rename: swap tab id (and optional title) across all panes.
+   *  Matching leaf's activeTabId is also swapped. No-op if not found. */
+  updateTabId: (oldId: string, newId: string, newTitle?: string) => void
 }
 
 function derivePhase(poState: PoState | null): Phase {
@@ -472,6 +475,22 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   setDragHint: (dragHint) => set({ dragHint }),
+
+  updateTabId: (oldId, newId, newTitle) => {
+    set((s) => {
+      const newPanes = mapLeaves(s.panes, (leaf) => {
+        const idx = leaf.tabs.findIndex((t) => t.id === oldId)
+        if (idx < 0) return leaf
+        const tabs = leaf.tabs.map((t) =>
+          t.id === oldId ? { ...t, id: newId, title: newTitle ?? t.title } : t
+        )
+        const activeTabId = leaf.activeTabId === oldId ? newId : leaf.activeTabId
+        return { ...leaf, tabs, activeTabId }
+      })
+      if (newPanes === s.panes) return s
+      return { ...s, panes: newPanes }
+    })
+  },
 }))
 
 function defaultTitle(type: TabType, props?: Record<string, unknown>): string {

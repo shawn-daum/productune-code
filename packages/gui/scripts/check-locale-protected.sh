@@ -39,8 +39,9 @@ check_pattern() {
   # `|| true` prevents set -e from aborting on perl non-zero exit.
   local matches
   matches=$(perl -CSDA -Mutf8 -ne '
-    # Skip kanban column label lines — UI labels (status column headers), not enum translations.
-    next if /^\s+"(?:todo|inProgress|qa|done)"\s*:\s*/;
+    # Skip kanban column label lines + version-state labels — UI labels, not enum translations.
+    # "closed" key added T-P4-097: side-panel version closed/completed state (≠ ticket status).
+    next if /^\s+"(?:todo|inProgress|qa|done|closed)"\s*:\s*/;
     print "$.: $_" if /'"$pattern"'/
   ' "$file" 2>/dev/null || true)
 

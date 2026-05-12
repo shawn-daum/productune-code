@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ActivityIcon } from './ActivityBar'
 import type { Project, Session } from '../../lib/types'
@@ -8,7 +8,8 @@ import SettingsView from './SettingsView'
 import PhaseStrip from './PhaseStrip'
 import TeamPanel from './TeamPanel'
 import ExplorerPane from '../explorer/ExplorerPane'
-import SidePanelVersionList from './SidePanelVersionList'
+import SidePanelCurrentVersion from './SidePanelCurrentVersion'
+import SidePanelPastVersions from './SidePanelPastVersions'
 
 interface Props {
   project: Project
@@ -18,6 +19,13 @@ interface Props {
 export default function LeftSidebar({ project, activeIcon }: Props) {
   const { t } = useTranslation()
   const { setMessages, setClaudeSessionId, poState } = useWorkspace()
+  const openTab = useWorkspace((s) => s.openTab)
+  const selectedVersionId = useWorkspace((s) => s.selectedVersionId)
+  const setSelectedVersionId = useWorkspace((s) => s.setSelectedVersionId)
+  const updateTabId = useWorkspace((s) => s.updateTabId)
+
+  // Track previous current_version id for rename guard
+  const prevCurrentVersionRef = useRef<string | null>(null)
 
   const TAB_TITLES: Partial<Record<ActivityIcon, string>> = {
     explorer:  t('workspace.activityBar.explorer'),
@@ -43,6 +51,53 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
       })
   }, [project.projectDir, setMessages, setClaudeSessionId])
 
+  // Rename guard: when current_version id changes (PO rename), swap
+  // selectedVersionId + in-place tab id swap — no close+reopen (T-P4-097 §E).
+  useEffect(() => {
+    const cv = poState?.current_version
+    const versions = poState?.versions ?? []
+    const prev = prevCurrentVersionRef.current
+
+    if (cv && prev && cv !== prev) {
+      // current_version id has changed — this is a rename (not a version cycle)
+      // Only swap if selectedVersionId was the old id
+      if (selectedVersionId === prev) {
+        setSelectedVersionId(cv)
+      }
+      updateTabId(`version-current:${prev}`, `version-current:${cv}`, cv)
+    }
+
+    prevCurrentVersionRef.current = cv ?? null
+  }, [poState?.current_version])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tab dispatch for version row clicks
+  function handleVersionClick(versionId: string, isCurrent: boolean) {
+    setSelectedVersionId(versionId)
+    if (isCurrent) {
+      openTab(
+        `version-current:${versionId}`,
+        'version-history',
+        { mode: 'current' },
+        versionId,
+      )
+    } else if (versionId === '__unassigned__') {
+      openTab(
+        'version-unassigned:main',
+        'version-history',
+        { mode: 'past' },
+        t('workspace.versionHistory.unassigned.label'),
+      )
+    } else {
+      openTab(
+        'version-history:main',
+        'version-history',
+        { mode: 'past' },
+        t('workspace.versionHistory.title'),
+      )
+    }
+    window.dispatchEvent(new CustomEvent('version-select', { detail: { versionId } }))
+  }
+
   return (
     <div style={wrap}>
       {/* Header — active tab title */}
@@ -58,8 +113,17 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
           <div style={secHdr}>{t('workspace.phaseStrip.sectionLabel')}</div>
           <PhaseStrip poState={poState} variant="strip" />
 
-          {/* Versions section — T-P4-023 master-detail master (replaces former VERSIONS / Rounds placeholder) */}
-          <SidePanelVersionList poState={poState} />
+          {/* Versions section — 2 sp-section split (T-P4-097) */}
+          <SidePanelCurrentVersion
+            poState={poState}
+            selectedVersionId={selectedVersionId}
+            onSelect={(id) => handleVersionClick(id, true)}
+          />
+          <SidePanelPastVersions
+            poState={poState}
+            selectedVersionId={selectedVersionId}
+            onSelect={(id) => handleVersionClick(id, false)}
+          />
         </div>
       )}
       {activeIcon === 'explorer' && (

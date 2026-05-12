@@ -422,7 +422,11 @@
       "sidePanel": {
         "title": "Versions",
         "empty": "No activity — start a new task",
-        "rowCount": "{{tickets}} · {{deploys}} deploys"
+        "rowCount": "{{tickets}} · {{deploys}} deploys",
+        "currentTitle": "Current version",
+        "closed": "Closed",
+        "currentFallback": "v1 (pending) — activated when PRD authoring begins",
+        "currentFallbackTransient": "Awaiting next version — activated when you start a new PRD with PO"
       },
       "title": "Version history",
       "empty": "Select a version",

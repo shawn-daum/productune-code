@@ -27,9 +27,12 @@ import type { PoState } from '../../lib/types'
 interface Props {
   poState: PoState | null
   variant?: 'strip' | 'chip'
+  /** When true, always render the 5-dot expanded form and disable mouse events.
+   *  Used by VersionRow CSS-only hover popover (parent CSS drives visibility). */
+  forceExpanded?: boolean
 }
 
-export default function PhaseStrip({ poState, variant = 'strip' }: Props) {
+export default function PhaseStrip({ poState, variant = 'strip', forceExpanded = false }: Props) {
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const activeIndex = getActivePhaseIndex(poState)
@@ -49,16 +52,17 @@ export default function PhaseStrip({ poState, variant = 'strip' }: Props) {
 
   // variant=strip — default 1 dot, hover expand 5 dot
   const active = PHASE_DEFS[activeIndex]
+  const isExpanded = forceExpanded || expanded
 
   return (
     <div
       style={stripWrap}
       aria-label={t('workspace.phaseStrip.stripAriaLabel')}
       role="list"
-      onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
+      onMouseEnter={forceExpanded ? undefined : () => setExpanded(true)}
+      onMouseLeave={forceExpanded ? undefined : () => setExpanded(false)}
     >
-      {!expanded ? (
+      {!isExpanded ? (
         // Default: single dot + label of the current phase
         <div key={active.key} style={itemGroup} role="listitem">
           <span

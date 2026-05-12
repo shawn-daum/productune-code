@@ -1,4 +1,8 @@
 /**
+ * @deprecated T-P4-097: Replaced by SidePanelCurrentVersion + SidePanelPastVersions.
+ * This file is kept for reference only. It is no longer imported anywhere.
+ * Safe to delete after T-P4-097 QA passes.
+ *
  * SidePanelVersionList — Project tab sp-section "버전 히스토리".
  *
  * Master side of the master-detail pattern (T-P4-023).
