@@ -347,6 +347,110 @@
       "personaDef": {
         "previewNote": "미리보기 전용 — 페르소나 spec 편집은 Phase 5 기능입니다."
       }
+    },
+    "deploy": {
+      "confirmTitle": {
+        "planner": "다음 작업들 준비됐어요. 배포 시작할까요?",
+        "dev": "지금 배포할까요? ({{count}}개 작업 준비됨)"
+      },
+      "confirmBody": {
+        "planner": "{{count}}개 작업이 마무리됐어요. 배포해두면 다른 사람이 바로 사용할 수 있어요.",
+        "dev": "준비된 작업: {{ids}}."
+      },
+      "confirmCta": "지금 배포",
+      "confirmDismiss": "나중에",
+      "startTrace": "[system] {{count}}개 작업 배포 준비 중...",
+      "progressTrace": "[system] 배포 진행 중...",
+      "completeTrace": "[system] 배포 완료 — {{minutes}}분 {{seconds}}초 소요",
+      "failedTrace": "[system] 배포 실패 — {{reason}}",
+      "errorAuth": "연결이 끊겼어요. 설정을 확인해주세요.",
+      "errorGeneric": "문제가 생겼어요. 다시 시도해주세요.",
+      "tabTitle": "Deploy",
+      "progressBuilding": "빌드 중",
+      "progressQueued": "대기 중",
+      "progressError": "오류",
+      "progressReady": "Ready",
+      "logsCollapsed": "로그 보기",
+      "logsExpand": "로그 숨기기",
+      "envSummary": "환경 설정",
+      "retryCta": "다시 시도",
+      "cancelCta": "취소",
+      "executeCtaMain": "배포하기",
+      "noDeployment": "진행 중인 배포가 없습니다.",
+      "prCreatedLink": "제출된 작업 확인 ↗",
+      "ticketsInDeploy": "포함된 작업",
+      "envConfigured": "외부 서비스 연결됨",
+      "logsWaiting": "출력 대기 중…",
+      "stepPrCreating": "작업 제출 중…",
+      "stepPrCreated": "작업 제출됨",
+      "stepMerging": "통합 중…",
+      "stepMerged": "통합 완료",
+      "stepDeployTriggering": "배포 시작 중…",
+      "stepDeployTriggered": "배포 시작됨",
+      "stepFailed": "문제가 발생했습니다",
+      "conflict": {
+        "trivialTitle": "사소한 차이가 발견됐어요",
+        "trivialBody": "사소한 형식 차이가 발견됐어요. 자동으로 정리할 수 있습니다.",
+        "trivialCta": "계속 진행",
+        "semanticTitle": "이번 작업과 다른 작업이 같은 파일을 다르게 고쳤습니다",
+        "semanticBodyFiles": "같은 파일 {{count}}곳이 겹쳐요: {{files}}. 어떻게 할까요?",
+        "semanticBodyNoFiles": "이번 작업과 다른 작업이 겹쳐요. 어떻게 할까요?",
+        "moreFiles": "외 {{count}}개…",
+        "actionOurs": "이번 작업 우선",
+        "actionTheirs": "다른 작업 우선",
+        "actionManual": "수동 확인 (외부 도구 사용)"
+      },
+      "error": {
+        "githubAuth": "계정 연결이 끊겼습니다. 다시 연결해주세요.",
+        "branchNotPushed": "이번 작업이 아직 저장되지 않았습니다.",
+        "mergeConflict": "다른 작업이 같은 파일을 변경했습니다. 충돌 안내를 확인해주세요.",
+        "apiRateLimit": "잠시 후 다시 시도해주세요. (약 5분 대기)",
+        "vercelTriggerFail": "배포 시작에 실패했습니다. 외부 서비스 설정을 확인해주세요.",
+        "generic": "배포 중 문제가 발생했습니다.",
+        "actionReconnect": "다시 연결",
+        "actionRetry": "재시도",
+        "actionWaitRetry": "대기 후 재시도",
+        "actionViewLog": "로그 보기"
+      }
+    },
+    "versionHistory": {
+      "sidePanel": {
+        "title": "Versions",
+        "empty": "작업 기록 없음 — 새 작업 시작",
+        "rowCount": "{{tickets}} · 배포 {{deploys}}"
+      },
+      "title": "버전 히스토리",
+      "empty": "버전을 선택하세요",
+      "subtitle": "작업 {{count}} · 배포 {{deploys}} · 소요 {{duration}}",
+      "kanban": {
+        "column": {
+          "todo": "할 일",
+          "inProgress": "진행 중",
+          "qa": "품질 확인",
+          "done": "완료"
+        },
+        "empty": "이 단계에 작업 없음"
+      },
+      "filter": {
+        "persona": {
+          "designer": "designer",
+          "developer": "developer",
+          "qa": "qa",
+          "po": "po"
+        },
+        "dateRange": {
+          "start": "시작일",
+          "end": "종료일",
+          "reset": "초기화"
+        }
+      },
+      "unassigned": {
+        "label": "[지정 없음]"
+      },
+      "deploy": {
+        "loading": "배포 기록 불러오는 중…",
+        "empty": "배포 기록 없음"
+      }
     }
   },
   "settings": {

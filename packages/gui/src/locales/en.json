@@ -347,6 +347,110 @@
       "personaDef": {
         "previewNote": "Preview only — editing persona spec is a Phase 5 feature."
       }
+    },
+    "deploy": {
+      "confirmTitle": {
+        "planner": "These tasks are ready. Start deploying?",
+        "dev": "Deploy now? ({{count}} tickets ready)"
+      },
+      "confirmBody": {
+        "planner": "{{count}} tasks are done. Deploying makes them available to everyone.",
+        "dev": "Tickets ready: {{ids}}."
+      },
+      "confirmCta": "Deploy now",
+      "confirmDismiss": "Later",
+      "startTrace": "[system] Preparing {{count}} tasks for deploy...",
+      "progressTrace": "[system] Deploy in progress...",
+      "completeTrace": "[system] Deploy complete — {{minutes}}m {{seconds}}s",
+      "failedTrace": "[system] Deploy failed — {{reason}}",
+      "errorAuth": "Connection lost. Check your settings.",
+      "errorGeneric": "Something went wrong. Please try again.",
+      "tabTitle": "Deploy",
+      "progressBuilding": "Building",
+      "progressQueued": "Queued",
+      "progressError": "Error",
+      "progressReady": "Ready",
+      "logsCollapsed": "Show logs",
+      "logsExpand": "Hide logs",
+      "envSummary": "Environment",
+      "retryCta": "Retry",
+      "cancelCta": "Cancel",
+      "executeCtaMain": "Start deployment",
+      "noDeployment": "No active deployment.",
+      "prCreatedLink": "View submitted work item ↗",
+      "ticketsInDeploy": "Included tasks",
+      "envConfigured": "External service connected",
+      "logsWaiting": "Waiting for output…",
+      "stepPrCreating": "Submitting work…",
+      "stepPrCreated": "Work submitted",
+      "stepMerging": "Integrating…",
+      "stepMerged": "Integration complete",
+      "stepDeployTriggering": "Starting deployment…",
+      "stepDeployTriggered": "Deployment started",
+      "stepFailed": "Something went wrong",
+      "conflict": {
+        "trivialTitle": "Minor differences found",
+        "trivialBody": "Small formatting differences were detected. They can be cleaned up automatically.",
+        "trivialCta": "Continue",
+        "semanticTitle": "This task changed the same files as another task",
+        "semanticBodyFiles": "Changes overlap in {{count}} file(s): {{files}}. How would you like to proceed?",
+        "semanticBodyNoFiles": "Changes overlap with another task. How would you like to proceed?",
+        "moreFiles": "and {{count}} more…",
+        "actionOurs": "Keep this task's version",
+        "actionTheirs": "Keep the other task's version",
+        "actionManual": "Check manually (external tool)"
+      },
+      "error": {
+        "githubAuth": "The connection to your account was lost. Please reconnect.",
+        "branchNotPushed": "This task hasn't been saved yet.",
+        "mergeConflict": "Another task changed the same file. See the conflict dialog.",
+        "apiRateLimit": "Too many requests. Please wait a moment (approx. 5 min).",
+        "vercelTriggerFail": "Deployment could not be started. Check your external service settings.",
+        "generic": "Something went wrong during deployment.",
+        "actionReconnect": "Reconnect",
+        "actionRetry": "Retry",
+        "actionWaitRetry": "Retry after waiting",
+        "actionViewLog": "View log"
+      }
+    },
+    "versionHistory": {
+      "sidePanel": {
+        "title": "Versions",
+        "empty": "No activity — start a new task",
+        "rowCount": "{{tickets}} · {{deploys}} deploys"
+      },
+      "title": "Version history",
+      "empty": "Select a version",
+      "subtitle": "{{count}} tasks · {{deploys}} deploys · {{duration}}",
+      "kanban": {
+        "column": {
+          "todo": "Todo",
+          "inProgress": "In progress",
+          "qa": "QA",
+          "done": "Done"
+        },
+        "empty": "No tasks at this stage"
+      },
+      "filter": {
+        "persona": {
+          "designer": "designer",
+          "developer": "developer",
+          "qa": "qa",
+          "po": "po"
+        },
+        "dateRange": {
+          "start": "From",
+          "end": "To",
+          "reset": "Reset"
+        }
+      },
+      "unassigned": {
+        "label": "[Unassigned]"
+      },
+      "deploy": {
+        "loading": "Loading deploy events…",
+        "empty": "No deploy events"
+      }
     }
   },
   "settings": {

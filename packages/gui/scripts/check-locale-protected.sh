@@ -38,7 +38,11 @@ check_pattern() {
   # We capture matches into a variable, then check if any output was produced.
   # `|| true` prevents set -e from aborting on perl non-zero exit.
   local matches
-  matches=$(perl -CSDA -Mutf8 -ne 'print "$.: $_" if /'"$pattern"'/' "$file" 2>/dev/null || true)
+  matches=$(perl -CSDA -Mutf8 -ne '
+    # Skip kanban column label lines — UI labels (status column headers), not enum translations.
+    next if /^\s+"(?:todo|inProgress|qa|done)"\s*:\s*/;
+    print "$.: $_" if /'"$pattern"'/
+  ' "$file" 2>/dev/null || true)
 
   if [ -n "$matches" ]; then
     echo "FAIL: protected pattern found in $file"

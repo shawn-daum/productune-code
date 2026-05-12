@@ -16,6 +16,7 @@ export default function WorkflowRulesPanel({ projectDir }: Props) {
     useStagingEnv: false,
     featureBranchPrefix: 'feature',
     fixBranchPrefix: 'fix',
+    protectedBranches: ['main'],
   })
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string>('')

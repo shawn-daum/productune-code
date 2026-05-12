@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PoState, Ticket, TaskType, Status } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
@@ -9,60 +9,24 @@ interface Props {
 }
 
 const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'done', 'blocked', 'abandoned']
-const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
-const VERSION_ALL = '__all__'
 
 export default function TicketDashboardView({ poState }: Props) {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const { tickets: scannedTickets, loading } = useTicketScan(project?.projectDir ?? null)
-  const [versionFilter, setVersionFilter] = useState<string>(VERSION_ALL)
-  const [typeFilter, setTypeFilter] = useState<TaskType | 'all'>('all')
 
   const allTickets = useMemo(() => collectAllTickets(poState, scannedTickets), [poState, scannedTickets])
-  const versionIds = useMemo(() => uniqueVersions(allTickets), [allTickets])
-
-  const filtered = useMemo(() => {
-    return allTickets.filter((tk) => {
-      if (versionFilter !== VERSION_ALL && tk.version !== versionFilter) return false
-      const taskType = (tk.type ?? tk.stage) as TaskType | undefined
-      if (typeFilter !== 'all' && taskType !== typeFilter) return false
-      return true
-    })
-  }, [allTickets, versionFilter, typeFilter])
-
-  const byStatus = useMemo(() => groupByStatus(filtered), [filtered])
+  const byStatus = useMemo(() => groupByStatus(allTickets), [allTickets])
 
   return (
     <div style={wrap}>
       <header style={header}>
         <h2 style={title}>{t('workspace.tickets.title')}</h2>
-        <div style={filters}>
-          <FilterSelect
-            label="Version"
-            value={versionFilter}
-            options={[
-              { value: VERSION_ALL, label: t('workspace.tickets.filterAll') },
-              ...versionIds.map((v) => ({ value: v, label: v })),
-            ]}
-            onChange={setVersionFilter}
-          />
-          <FilterSelect
-            label="Type"
-            value={typeFilter}
-            options={[
-              { value: 'all', label: t('workspace.tickets.filterAll') },
-              ...TYPE_ORDER.map((s) => ({ value: s, label: s })),
-            ]}
-            onChange={(v) => setTypeFilter(v as TaskType | 'all')}
-          />
-          <span style={count}>{t('workspace.tickets.filterCount', { count: filtered.length })}</span>
-        </div>
       </header>
 
       {loading && allTickets.length === 0 ? (
         <div style={empty}>{t('workspace.tickets.noTickets')}</div>
-      ) : filtered.length === 0 ? (
+      ) : allTickets.length === 0 ? (
         <div style={empty}>{t('workspace.tickets.noTickets')}</div>
       ) : (
         <div style={kanban}>
@@ -98,12 +62,6 @@ function collectAllTickets(poState: PoState | null, scanned: Ticket[]): Ticket[]
     list.push(t)
   }
   return list
-}
-
-function uniqueVersions(tickets: Ticket[]): string[] {
-  const set = new Set<string>()
-  for (const t of tickets) if (t.version) set.add(t.version)
-  return Array.from(set).sort()
 }
 
 function groupByStatus(tickets: Ticket[]): Record<string, Ticket[]> {
@@ -158,29 +116,6 @@ function Card({ ticket }: { ticket: Ticket }) {
   )
 }
 
-function FilterSelect({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string
-  value: string
-  options: { value: string; label: string }[]
-  onChange: (v: string) => void
-}) {
-  return (
-    <label style={filterLabel}>
-      <span style={filterLabelText}>{label}</span>
-      <select style={filterSelect} value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-    </label>
-  )
-}
-
 // ── styles ────────────────────────────────────────────────────────────────────
 
 const wrap: React.CSSProperties = {
@@ -205,41 +140,6 @@ const title: React.CSSProperties = {
   fontSize: 18,
   fontWeight: 600,
   color: '#F0F0F0',
-}
-
-const filters: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 16,
-}
-
-const filterLabel: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-}
-
-const filterLabelText: React.CSSProperties = {
-  fontSize: 11,
-  color: '#707070',
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-}
-
-const filterSelect: React.CSSProperties = {
-  background: '#161616',
-  color: '#E0E0E0',
-  border: '1px solid #2A2A2A',
-  borderRadius: 4,
-  padding: '4px 8px',
-  fontSize: 12,
-  fontFamily: 'inherit',
-}
-
-const count: React.CSSProperties = {
-  fontSize: 11,
-  color: '#505050',
-  marginLeft: 4,
 }
 
 const empty: React.CSSProperties = {

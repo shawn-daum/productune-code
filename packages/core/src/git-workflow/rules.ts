@@ -7,6 +7,8 @@ export interface GitRules {
   useStagingEnv: boolean
   featureBranchPrefix: string
   fixBranchPrefix: string
+  /** Derived field — branches that must not be overwritten. Computed from useDevBranch. */
+  protectedBranches: string[]
 }
 
 const DEFAULT_RULES: GitRules = {
@@ -14,6 +16,7 @@ const DEFAULT_RULES: GitRules = {
   useStagingEnv: false,
   featureBranchPrefix: 'feature',
   fixBranchPrefix: 'fix',
+  protectedBranches: ['main'],
 }
 
 const GLOBAL_DEFAULT_PATH = path.join(os.homedir(), '.productune', 'git-rules.default.json')
@@ -105,9 +108,75 @@ export function getProtectedBranches(rules: GitRules): string[] {
   return ['main']
 }
 
+// ── Extended API aliases (T-P4-023/T-P4-024 compat) ──────────────────────────
+
+export interface GitRulesSource {
+  level: 'project' | 'global' | 'default'
+  path?: string
+}
+
+export interface GitRulesReadResult {
+  rules: GitRules
+  /** Alias for rules — worktree.ts uses .merged for readability. */
+  merged: GitRules
+  source: GitRulesSource
+}
+
+export interface AutosaveTriggers {
+  onStatusChange: boolean
+  onQaStatusChange: boolean
+  onQaLoopsChange: boolean
+  onManual: boolean
+}
+
+/** Alias: readGitRules = loadRules wrapped in GitRulesReadResult shape. */
+export function readGitRules(projectDir: string): GitRulesReadResult {
+  const projectPath = projectRulesPath(projectDir)
+  const rules = loadRules(projectDir)
+  if (fs.existsSync(projectPath)) {
+    return { rules, merged: rules, source: { level: 'project', path: projectPath } }
+  }
+  if (fs.existsSync(GLOBAL_DEFAULT_PATH)) {
+    return { rules, merged: rules, source: { level: 'global', path: GLOBAL_DEFAULT_PATH } }
+  }
+  return { rules, merged: rules, source: { level: 'default' } }
+}
+
+/** Write (save) git rules for projectDir. Returns the merged rules. */
+export function writeGitRules(projectDir: string, partial: Partial<GitRules>): { ok: boolean; merged: GitRules; error?: string } {
+  try {
+    const current = loadRules(projectDir)
+    const merged: GitRules = { ...current, ...partial }
+    saveRules(projectDir, merged)
+    return { ok: true, merged }
+  } catch (err) {
+    return { ok: false, merged: loadRules(projectDir), error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Reset project git-rules.json to the global/hard default. */
+export function resetGitRules(projectDir: string): { ok: boolean; merged: GitRules; error?: string } {
+  try {
+    const merged = getDefault()
+    saveRules(projectDir, merged)
+    return { ok: true, merged }
+  } catch (err) {
+    return { ok: false, merged: getDefault(), error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Bootstrap default git-rules.json at project init time. No-op if already present. */
+export function bootstrapGitRules(projectDir: string): void {
+  const projectPath = projectRulesPath(projectDir)
+  if (!fs.existsSync(projectPath)) {
+    saveRules(projectDir, getDefault())
+  }
+}
+
 function mergeWithDefaults(parsed: Partial<GitRules>): GitRules {
+  const useDevBranch = typeof parsed.useDevBranch === 'boolean' ? parsed.useDevBranch : DEFAULT_RULES.useDevBranch
   return {
-    useDevBranch: typeof parsed.useDevBranch === 'boolean' ? parsed.useDevBranch : DEFAULT_RULES.useDevBranch,
+    useDevBranch,
     useStagingEnv: typeof parsed.useStagingEnv === 'boolean' ? parsed.useStagingEnv : DEFAULT_RULES.useStagingEnv,
     featureBranchPrefix: typeof parsed.featureBranchPrefix === 'string' && parsed.featureBranchPrefix.trim()
       ? parsed.featureBranchPrefix.trim()
@@ -115,5 +184,6 @@ function mergeWithDefaults(parsed: Partial<GitRules>): GitRules {
     fixBranchPrefix: typeof parsed.fixBranchPrefix === 'string' && parsed.fixBranchPrefix.trim()
       ? parsed.fixBranchPrefix.trim()
       : DEFAULT_RULES.fixBranchPrefix,
+    protectedBranches: useDevBranch ? ['main', 'dev'] : ['main'],
   }
 }

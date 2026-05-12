@@ -7,6 +7,7 @@ import { PHASE_NAMES } from '../lib/types'
 export type TabType =
   | 'markdown'
   | 'version-detail'
+  | 'version-history'
   | 'ticket-review'
   | 'design-gate'
   | 'qa-result'

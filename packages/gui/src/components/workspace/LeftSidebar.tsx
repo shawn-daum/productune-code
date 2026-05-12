@@ -8,6 +8,7 @@ import SettingsView from './SettingsView'
 import PhaseStrip from './PhaseStrip'
 import TeamPanel from './TeamPanel'
 import ExplorerPane from '../explorer/ExplorerPane'
+import SidePanelVersionList from './SidePanelVersionList'
 
 interface Props {
   project: Project
@@ -57,13 +58,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
           <div style={secHdr}>{t('workspace.phaseStrip.sectionLabel')}</div>
           <PhaseStrip poState={poState} variant="strip" />
 
-          {/* Placeholder sections — T-P4-047 will fill Rounds/Preview/Recent Activity */}
-          <div style={secHdr} aria-label={t('workspace.phaseStrip.roundsSectionAriaLabel')}>
-            {t('workspace.phaseStrip.roundsSection')}
-          </div>
-          <div style={panelPlaceholder}>
-            <span style={panelPlaceholderText}>{t('workspace.phaseStrip.roundsHint')}</span>
-          </div>
+          {/* Versions section — T-P4-023 master-detail master (replaces former VERSIONS / Rounds placeholder) */}
+          <SidePanelVersionList poState={poState} />
         </div>
       )}
       {activeIcon === 'explorer' && (

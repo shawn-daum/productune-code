@@ -283,4 +283,22 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('explorer:fs-changed', listener)
     return () => ipcRenderer.removeListener('explorer:fs-changed', listener)
   },
+
+  // ── Vercel deploy event cross-ref (T-P4-023 sub-c) ──────────────────────────
+  fetchDeployEvents: (args: {
+    projectDir: string
+    projectName: string
+    sinceIso: string
+    untilIso: string
+  }): Promise<{ ok: boolean; events: Array<{
+    deploymentId: string
+    url: string
+    createdAt: string
+    readyAt: string | null
+    state: string
+    gitRef: string | null
+    includedTickets: string[]
+    mergedShaSet: string[]
+  }>; error?: string }> =>
+    ipcRenderer.invoke('deploy:fetch-events', args),
 })

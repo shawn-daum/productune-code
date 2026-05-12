@@ -1004,6 +1004,31 @@ ipcMain.handle('slash:listProjectFiles', (_event, projectDir: string): QuickOpen
   return listProjectFilesRecursive(projectDir)
 })
 
+// ── Deploy event cross-ref (T-P4-023 sub-c) ───────────────────────────────────
+// Uses dynamic import to avoid top-level import conflicts with parallel PRs.
+
+ipcMain.handle(
+  'deploy:fetch-events',
+  async (
+    _event,
+    args: { projectDir: string; projectName: string; sinceIso: string; untilIso: string },
+  ): Promise<{ ok: boolean; events: unknown[]; error?: string }> => {
+    try {
+      const { fetchVercelDeploys } = await import('@productune/core')
+      const events = await fetchVercelDeploys(
+        args.projectName,
+        args.sinceIso,
+        args.untilIso,
+        args.projectDir,
+      )
+      return { ok: true, events }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { ok: false, events: [], error: message }
+    }
+  },
+)
+
 function buildAppMenu(): Menu {
   const isMac = process.platform === 'darwin'
   const template: MenuItemConstructorOptions[] = [
