@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import WorkflowRulesPanel from './WorkflowRulesPanel'
-import LanguageSettings from './LanguageSettings'
+import { useWorkspace } from '../../store/workspace'
 
-type SettingsSubTab = 'workflow' | 'language'
+type SettingsSubTab = 'general' | 'workflow'
 
 interface Props {
   projectDir: string
@@ -11,12 +11,20 @@ interface Props {
 
 export default function SettingsView({ projectDir }: Props) {
   const { t } = useTranslation()
-  const [activeTab, setActiveTab] = useState<SettingsSubTab>('workflow')
+  const openTab = useWorkspace((s) => s.openTab)
+  const [activeTab, setActiveTab] = useState<SettingsSubTab>('general')
 
   const tabs: { id: SettingsSubTab; label: string }[] = [
+    { id: 'general', label: t('settings.tabGeneral', { defaultValue: '일반' }) },
     { id: 'workflow', label: t('settings.tabWorkflowRules') },
-    { id: 'language', label: t('settings.tabLanguage') },
   ]
+
+  const handleTabClick = (id: SettingsSubTab) => {
+    setActiveTab(id)
+    if (id === 'general') {
+      openTab('general-settings', 'general-settings', undefined, t('settings.tabGeneral', { defaultValue: '일반 설정' }))
+    }
+  }
 
   return (
     <div style={wrap}>
@@ -31,7 +39,7 @@ export default function SettingsView({ projectDir }: Props) {
               ...tabBtn,
               ...(activeTab === tab.id ? tabBtnActive : {}),
             }}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => handleTabClick(tab.id)}
           >
             {tab.label}
           </button>
@@ -41,7 +49,6 @@ export default function SettingsView({ projectDir }: Props) {
       {/* Tab content */}
       <div style={tabContent}>
         {activeTab === 'workflow' && <WorkflowRulesPanel projectDir={projectDir} />}
-        {activeTab === 'language' && <LanguageSettings />}
       </div>
     </div>
   )

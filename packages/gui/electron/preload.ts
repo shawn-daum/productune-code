@@ -301,4 +301,50 @@ contextBridge.exposeInMainWorld('api', {
     mergedShaSet: string[]
   }>; error?: string }> =>
     ipcRenderer.invoke('deploy:fetch-events', args),
+
+  // ── Deploy execute + conflict resolution (T-P4-022 3rd PR) ──────────────────
+  deploy: {
+    execute: (args: {
+      projectDir: string
+      owner: string
+      repo: string
+      branchName: string
+      ticketId: string
+      ticketTitle: string
+      ticketAcceptance?: string
+      vercelProject?: string
+    }): Promise<{ ok: boolean; prUrl?: string; deployUrl?: string; error?: string; errorReason?: string }> =>
+      ipcRenderer.invoke('deploy:execute', args),
+
+    resolveConflict: (args: {
+      strategy: 'theirs' | 'ours' | 'manual'
+    }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('deploy:resolve-conflict', args),
+
+    onProgress: (cb: (ev: {
+      step: 'pr-creating' | 'pr-created' | 'merging' | 'merged' | 'deploy-triggering' | 'deploy-triggered' | 'failed'
+      prUrl?: string
+      prNumber?: number
+      sha?: string
+      deployUrl?: string
+      error?: string
+      errorReason?: string
+    }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
+      ipcRenderer.on('deploy:progress', listener)
+      return () => ipcRenderer.removeListener('deploy:progress', listener)
+    },
+
+    onConflict: (cb: (ev: {
+      owner: string
+      repo: string
+      prNumber: number
+      conflictPaths: string[]
+      conflictType?: 'trivial' | 'semantic'
+    }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
+      ipcRenderer.on('deploy:conflict', listener)
+      return () => ipcRenderer.removeListener('deploy:conflict', listener)
+    },
+  },
 })

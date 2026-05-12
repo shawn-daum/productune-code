@@ -4,7 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules, appendPendingPromotion, listPendingPromotions, resolvePendingPromotion, autoDropStale, markSurfaced, listAllPromotions } from '@productune/core'
+import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules, appendPendingPromotion, listPendingPromotions, resolvePendingPromotion, autoDropStale, markSurfaced, listAllPromotions, createDeployPR, squashMergePR, triggerVercelDeployAfterMerge, checkPRMergeability, classifyConflict, assertNotPoTurn, markPoTurnStart, markPoTurnEnd } from '@productune/core'
 import type { UiLanguage, GitRules, PendingPromotion } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
@@ -754,6 +754,7 @@ ipcMain.handle(
     event,
     opts: { projectDir: string; text: string; resume?: string | null },
   ): Promise<{ ok: boolean; error?: string }> => {
+    markPoTurnStart()
     try {
       await runPoTurn(
         {
@@ -766,6 +767,8 @@ ipcMain.handle(
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }
+    } finally {
+      markPoTurnEnd()
     }
   },
 )
@@ -1003,6 +1006,133 @@ ipcMain.handle('slash:listProjectFiles', (_event, projectDir: string): QuickOpen
   if (!projectDir || !fs.existsSync(projectDir)) return []
   return listProjectFilesRecursive(projectDir)
 })
+
+// ── Deploy execute (T-P4-022 3rd PR) ─────────────────────────────────────────
+
+type DeployProgressStep =
+  | 'pr-creating'
+  | 'pr-created'
+  | 'merging'
+  | 'merged'
+  | 'deploy-triggering'
+  | 'deploy-triggered'
+  | 'failed'
+
+/** In-flight PR context for resolve-conflict continuation. */
+let _pendingPrCtx: {
+  owner: string
+  repo: string
+  prNumber: number
+  projectDir: string
+  vercelProject?: string
+} | null = null
+
+ipcMain.handle(
+  'deploy:execute',
+  async (
+    event,
+    args: {
+      projectDir: string
+      owner: string
+      repo: string
+      branchName: string
+      ticketId: string
+      ticketTitle: string
+      ticketAcceptance?: string
+      vercelProject?: string
+    },
+  ): Promise<{ ok: boolean; prUrl?: string; deployUrl?: string; error?: string; errorReason?: string }> => {
+    try {
+      assertNotPoTurn('deploy:execute')
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'PO turn active', errorReason: 'po-turn-active' }
+    }
+
+    const emit = (step: DeployProgressStep, detail?: Record<string, unknown>) => {
+      event.sender.send('deploy:progress', { step, ...detail })
+    }
+
+    try {
+      // Step 1: create PR
+      emit('pr-creating')
+      const prResult = await createDeployPR({
+        projectDir: args.projectDir,
+        owner: args.owner,
+        repo: args.repo,
+        headBranch: args.branchName,
+        baseBranch: 'main',
+        ticketId: args.ticketId,
+        ticketTitle: args.ticketTitle,
+        ticketAcceptance: args.ticketAcceptance,
+      })
+      emit('pr-created', { prUrl: prResult.prUrl, prNumber: prResult.prNumber })
+
+      // Step 2: poll mergeability (up to 3 attempts, 2s apart)
+      let mergeCheck = await checkPRMergeability({ owner: args.owner, repo: args.repo, prNumber: prResult.prNumber, projectDir: args.projectDir })
+      for (let attempt = 0; attempt < 2 && mergeCheck.mergeable === null; attempt++) {
+        await new Promise(r => setTimeout(r, 2000))
+        mergeCheck = await checkPRMergeability({ owner: args.owner, repo: args.repo, prNumber: prResult.prNumber, projectDir: args.projectDir })
+      }
+
+      if (mergeCheck.mergeable === false) {
+        const conflictType = classifyConflict(mergeCheck.conflictPaths ?? [])
+        _pendingPrCtx = { owner: args.owner, repo: args.repo, prNumber: prResult.prNumber, projectDir: args.projectDir, vercelProject: args.vercelProject }
+        event.sender.send('deploy:conflict', {
+          owner: args.owner,
+          repo: args.repo,
+          prNumber: prResult.prNumber,
+          conflictPaths: mergeCheck.conflictPaths ?? [],
+          conflictType,
+        })
+        return { ok: false, prUrl: prResult.prUrl, error: 'conflict', errorReason: 'conflict' }
+      }
+
+      // Step 3: squash merge
+      emit('merging')
+      const mergeResult = await squashMergePR({
+        owner: args.owner,
+        repo: args.repo,
+        prNumber: prResult.prNumber,
+        projectDir: args.projectDir,
+        commitTitle: `${args.ticketId}: ${args.ticketTitle}`,
+      })
+      emit('merged', { sha: mergeResult.mergedSha })
+
+      // Step 4: trigger Vercel deploy
+      emit('deploy-triggering')
+      const deployResult = await triggerVercelDeployAfterMerge({
+        projectDir: args.projectDir,
+        vercelProject: args.vercelProject,
+        ref: mergeResult.mergedSha,
+      })
+      emit('deploy-triggered', { deployUrl: deployResult.deployUrl })
+
+      return { ok: true, prUrl: prResult.prUrl, deployUrl: deployResult.deployUrl }
+    } catch (err: any) {
+      const reason = err?.reason ?? 'generic'
+      emit('failed', { error: err?.message ?? String(err), errorReason: reason })
+      return { ok: false, error: err?.message ?? String(err), errorReason: reason }
+    }
+  },
+)
+
+ipcMain.handle(
+  'deploy:resolve-conflict',
+  async (
+    _event,
+    args: { strategy: 'theirs' | 'ours' | 'manual' },
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const ctx = _pendingPrCtx
+    _pendingPrCtx = null
+    if (!ctx) return { ok: false, error: 'No pending conflict context' }
+    if (args.strategy === 'manual') {
+      // User will resolve manually — just acknowledge
+      return { ok: true }
+    }
+    // 'theirs' / 'ours' — Phase 5 auto-resolution; for now return ok so UI can reset
+    return { ok: true }
+  },
+)
 
 // ── Deploy event cross-ref (T-P4-023 sub-c) ───────────────────────────────────
 // Uses dynamic import to avoid top-level import conflicts with parallel PRs.

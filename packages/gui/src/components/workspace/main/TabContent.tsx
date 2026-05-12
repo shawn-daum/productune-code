@@ -7,6 +7,9 @@ import SkillMatrixTab from './panes/SkillMatrixTab'
 import PersonaDefTab from './panes/PersonaDefTab'
 import ImageTab from './panes/ImageTab'
 import BinaryTab from './panes/BinaryTab'
+import VersionHistoryTab from './panes/VersionHistoryTab'
+import DeployTab from './panes/DeployTab'
+import GeneralSettingsTab from './panes/GeneralSettingsTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -27,6 +30,9 @@ export default function TabContent({ tab }: Props) {
     case 'skill-matrix':   return <SkillMatrixTab props={tab.props} />
     case 'image':         return <ImageTab props={tab.props} />
     case 'binary':        return <BinaryTab props={tab.props} />
+    case 'version-history': return <VersionHistoryTab props={tab.props} />
+    case 'deploy':         return <DeployTab props={tab.props} />
+    case 'general-settings': return <GeneralSettingsTab props={tab.props} />
     case 'design-gate':
     case 'qa-result':
     case 'env-view':

@@ -19,6 +19,8 @@ export type TabType =
   | 'browser'
   | 'image'
   | 'binary'
+  | 'deploy'
+  | 'general-settings'
 
 export interface Tab {
   id: string
@@ -487,6 +489,9 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'browser':        return 'Browser'
     case 'image':          return (props?.path as string)?.split('/').pop() ?? 'Image'
     case 'binary':         return (props?.path as string)?.split('/').pop() ?? 'Binary'
+    case 'version-history': return (props?.versionId as string) ?? '버전 히스토리'
+    case 'deploy':         return '배포'
+    case 'general-settings': return '일반 설정'
     default:               return type
   }
 }
