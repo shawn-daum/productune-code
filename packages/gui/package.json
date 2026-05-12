@@ -8,7 +8,8 @@
     "build": "node scripts/check-locale-keys.js && bash scripts/check-locale-protected.sh && tsc --noEmit && vite build",
     "lint": "node scripts/check-locale-keys.js && bash scripts/check-locale-protected.sh",
     "check-locales": "node scripts/check-locale-keys.js && bash scripts/check-locale-protected.sh",
-    "check-locale": "bash scripts/check-locale-protected.sh"
+    "check-locale": "bash scripts/check-locale-protected.sh",
+    "check-ticket-version": "node scripts/check-ticket-version.mjs"
   },
   "dependencies": {
     "@productune/core": "workspace:*",

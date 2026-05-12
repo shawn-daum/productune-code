@@ -359,7 +359,7 @@ ipcMain.handle('init:project', (_event, opts: { slug: string; projectDir: string
   return initProject(opts)
 })
 
-ipcMain.handle('project:create', (_event, { slug }: { slug: string }) => {
+ipcMain.handle('project:create', (_event, { slug, initialVersionId }: { slug: string; initialVersionId?: string }) => {
   const baseDir = path.join(os.homedir(), 'productune', 'projects')
   fs.mkdirSync(baseDir, { recursive: true })
 
@@ -370,7 +370,7 @@ ipcMain.handle('project:create', (_event, { slug }: { slug: string }) => {
   }
   fs.mkdirSync(projectDir, { recursive: true })
 
-  const config = initProject({ slug, projectDir })
+  const config = initProject({ slug, projectDir, initialVersionId })
   return { projectDir, config }
 })
 

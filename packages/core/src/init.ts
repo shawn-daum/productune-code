@@ -6,11 +6,15 @@ export interface ProjectConfig {
   slug: string
   created_at: string
   version: string
+  /** First version id hint for PO — validated against ^v\d+(\.\d+)?$ at creation */
+  initial_version?: string
 }
 
 export interface InitOptions {
   slug: string
   projectDir: string
+  /** Optional: initial version id hint (validated by caller). Written to config.json as initial_version. */
+  initialVersionId?: string
 }
 
 // ── settings.local.json hygiene ───────────────────────────────────────────────
@@ -211,6 +215,7 @@ export function initProject(opts: InitOptions): ProjectConfig {
     slug: existing.slug ?? opts.slug,
     created_at: existing.created_at ?? new Date().toISOString(),
     version: '0.4.0',
+    ...(opts.initialVersionId ? { initial_version: opts.initialVersionId } : {}),
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2))

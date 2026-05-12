@@ -91,6 +91,11 @@
       "instructions": "PO 지침 적용 (po-instructions.md)",
       "memory": "PO 메모리 초기화 (po-memory.md)",
       "playwright": "Playwright MCP 캐시 준비 (QA smoke gate, npx @playwright/mcp)"
+    },
+    "versionInit": {
+      "label": "첫 번째 Version ID",
+      "intro": "이 프로젝트의 첫 번째 version id를 설정합니다. v1 또는 v0.1 형식으로 입력하세요.",
+      "hint": "버전 이름 형식: v1 또는 v0.1"
     }
   },
   "workspace": {

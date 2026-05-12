@@ -91,6 +91,11 @@
       "instructions": "Apply PO instructions (po-instructions.md)",
       "memory": "Initialize PO memory (po-memory.md)",
       "playwright": "Prepare Playwright MCP cache (QA smoke gate, npx @playwright/mcp)"
+    },
+    "versionInit": {
+      "label": "Initial Version ID",
+      "intro": "Set the first version id for this project. Use v1 or v0.1 format.",
+      "hint": "Version id format: v1 or v0.1"
     }
   },
   "workspace": {

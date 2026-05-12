@@ -57,6 +57,24 @@ fi
 
 `persona_sessions{}` is **not** revived — closed-ticket per-turn meta is dropped per v2 doctrine. New session ids allocated by claude on resume.
 
+## Version id naming rule (T-P4-095)
+
+`versions[].id` MUST match `^v\d+(\.\d+)?$`. Allowed: `v1`, `v2`, `v0.1`, `v1.2`. Rejected: `paepyeong-v1` (slug prefix), `v1-rc`, `V1`, `version-1`, `1.0`.
+
+**version-create validation** — before pushing a new entry to `versions[]`:
+
+```bash
+VERSION_ID="<proposed>"
+if ! echo "$VERSION_ID" | grep -qE '^v[0-9]+(\.[0-9]+)?$'; then
+  echo "version id must match v<N> or v<N>.<M> (e.g. v1, v0.1). Please choose a valid id."
+  exit 1
+fi
+```
+
+User natural-language hints (`"v2 시작"` → use `v2`; `"다음 버전"` → confirm `"v2"` before proceeding). PO appends to `versions[]` only after valid id confirmed.
+
+When project is new (po-state.json absent), read `initial_version` from `.productune/config.json` as the first version id suggestion. Validate before using.
+
 ## Update `current_task.artifacts`
 
 ```bash

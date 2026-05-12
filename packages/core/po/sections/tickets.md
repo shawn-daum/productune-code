@@ -77,6 +77,8 @@ Smoke gate behavior + close rules → `lifecycle-mechanics.md`.
 
 Required: `ticket_id`, `version`, `slug`, `type`, `status` (PO mechanical), `assignee`, `created_at`, `estimated_complexity`, `risk_flags`. Optional/derived: `started_at` / `completed_at` / `duration_min` (PO mechanical), `branch` / `worktree_path` (git-workflow R2), `qa_status` / `qa_loops` (PO mechanical, impl/refactor only; `qa_status ∈ pending|pass|fail`), `success_metric` / `validation_method` (Designer, optional when measurable), `observed_result` (PO mechanical at Phase 5).
 
+**`version:` field format rule (T-P4-095)**: value MUST match `^v\d+(\.\d+)?$` (e.g. `v1`, `v0.1`). Exception: `legacy/phase3-fixes` and similar artificial ids — mark with `legacy: true` in frontmatter. Lint: `packages/gui/scripts/check-ticket-version.mjs` — run during `pnpm build` in gui package and available for project-level use with `--project-dir <path>`.
+
 Body: `# T-NNN: <title>` · mirrored header line · `## Request` · `## Inputs` · `## Acceptance` · `## Out of scope` · `## Persona Activity` (PO-managed table). Designer owns scope-defining sections; PO touches only lifecycle / mirrored header / Persona Activity rows. `type:deploy` body uses `## Steps` (see `pdt-po.md`).
 
 ## Who writes what

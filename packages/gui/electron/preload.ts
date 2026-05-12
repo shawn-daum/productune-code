@@ -52,7 +52,7 @@ contextBridge.exposeInMainWorld('api', {
   initProject: (opts: { slug: string; projectDir: string }) =>
     ipcRenderer.invoke('init:project', opts),
 
-  createProject: (opts: { slug: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string } }> =>
+  createProject: (opts: { slug: string; initialVersionId?: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string; initial_version?: string } }> =>
     ipcRenderer.invoke('project:create', opts),
 
   installAt: (opts: { projectDir: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string } }> =>

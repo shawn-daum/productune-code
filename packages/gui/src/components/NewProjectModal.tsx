@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import GitHubOAuthFlow from './GitHubOAuthFlow'
+import VersionInitStep from './onboarding/VersionInitStep'
+import { isValidVersionId } from '../lib/version-id'
 
 interface Props {
   onCreated: (projectDir: string, slug: string) => void
@@ -9,8 +11,10 @@ interface Props {
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,}$/
 
 export default function NewProjectModal({ onCreated, onCancel }: Props) {
-  const [step, setStep] = useState<1 | 2>(1)
+  // step 1 = slug, 1.5 = version id, 2 = github oauth
+  const [step, setStep] = useState<1 | 1.5 | 2>(1)
   const [slug, setSlug] = useState('')
+  const [versionId, setVersionId] = useState('v1')
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [createdDir, setCreatedDir] = useState('')
@@ -20,13 +24,18 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
     return ''
   }
 
-  async function handleCreate() {
+  function handleSlugNext() {
     const err = validateSlug(slug)
     if (err) { setError(err); return }
     setError('')
+    setStep(1.5)
+  }
+
+  async function handleCreate() {
+    if (!isValidVersionId(versionId)) return
     setCreating(true)
     try {
-      const result = await (window as any).api.createProject({ slug })
+      const result = await (window as any).api.createProject({ slug, initialVersionId: versionId })
       setCreatedDir(result.projectDir)
       setStep(2)
     } catch (e: any) {
@@ -52,11 +61,21 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
               value={slug}
               autoFocus
               onChange={e => { setSlug(e.target.value); setError('') }}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              onKeyDown={e => e.key === 'Enter' && handleSlugNext()}
             />
             {error && <div style={errStyle}>{error}</div>}
             <div style={hint}>영소문자, 숫자, 하이픈만 사용 가능합니다.</div>
           </div>
+        )}
+
+        {step === 1.5 && (
+          <VersionInitStep
+            value={versionId}
+            onChange={setVersionId}
+            onNext={handleCreate}
+            onPrev={() => { setStep(1); setCreating(false) }}
+            stepLabel="첫 번째 Version ID"
+          />
         )}
 
         {step === 2 && (
@@ -70,8 +89,8 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
         {step === 1 && (
           <div style={footer}>
             <button style={btnSecondary} onClick={onCancel}>취소</button>
-            <button style={{ ...btnPrimary, opacity: creating ? 0.6 : 1 }} onClick={handleCreate} disabled={creating}>
-              {creating ? '생성 중…' : '만들기'}
+            <button style={{ ...btnPrimary }} onClick={handleSlugNext}>
+              다음 →
             </button>
           </div>
         )}
