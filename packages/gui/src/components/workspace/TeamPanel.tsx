@@ -24,28 +24,9 @@ const PERSONAS: PersonaDef[] = [
   { key: 'qa',       id: 'pdt-qa',         initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.persona.qa.role',        modelSummary: 'haiku / low'    },
 ]
 
-// ── Static skill list (catalog sampled from persona specs) ──────────────────
+// ── Skills total (static — SkillMatrixTab owns the SoT data) ─────────────────
 
-interface SkillEntry {
-  id: string
-  personas: PersonaKey[]
-}
-
-const SKILL_CATALOG: SkillEntry[] = [
-  { id: 'mattpocock/tdd',                              personas: ['dev'] },
-  { id: 'mattpocock/design-an-interface',              personas: ['designer'] },
-  { id: 'mattpocock/code-review',                      personas: ['dev'] },
-  { id: 'pm-product-discovery/interview-script',       personas: ['po', 'designer'] },
-  { id: 'pm-prd-clarity-loop',                         personas: ['po', 'designer'] },
-  { id: 'triage-issue',                                personas: ['dev'] },
-  { id: 'request-refactor-plan',                       personas: ['dev'] },
-  { id: 'improve-codebase-architecture',               personas: ['dev'] },
-  { id: 'qa-suite-runner',                             personas: ['qa'] },
-  { id: 'to-prd',                                      personas: ['po'] },
-  { id: 'setup-pre-commit',                            personas: ['dev'] },
-]
-
-const SKILL_LIMIT = 8
+const SKILLS_TOTAL = 11
 
 // ── Wiki backend ─────────────────────────────────────────────────────────────
 
@@ -130,38 +111,6 @@ function PersonaRow({ def, isActive, onClick }: PersonaRowProps) {
   )
 }
 
-// ── Skill row ─────────────────────────────────────────────────────────────────
-
-interface SkillRowProps {
-  skill: SkillEntry
-  onClick: () => void
-}
-
-function SkillRow({ skill, onClick }: SkillRowProps) {
-  const shortName = skill.id.length > 30 ? skill.id.slice(0, 28) + '…' : skill.id
-  return (
-    <button
-      style={skillRowStyle}
-      onClick={onClick}
-      title={skill.id}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-    >
-      <span style={skillBullet}>•</span>
-      <span style={skillName}>{shortName}</span>
-      <span style={skillPersonaDots}>
-        {skill.personas.map((p) => (
-          <span
-            key={p}
-            style={{ ...personaDotSmall, background: PERSONA_COLORS[p] }}
-            title={p}
-          />
-        ))}
-      </span>
-    </button>
-  )
-}
-
 // ── Wiki / Memory section rows ────────────────────────────────────────────────
 
 interface WikiRowProps {
@@ -220,10 +169,6 @@ export default function TeamPanel({ poState }: Props) {
     )
   }
 
-  const handleSkillClick = (skillId: string) => {
-    openTab('skill-matrix', 'skill-matrix', { focusRow: skillId })
-  }
-
   const handleMatrixClick = () => {
     openTab('skill-matrix', 'skill-matrix', {})
   }
@@ -237,20 +182,6 @@ export default function TeamPanel({ poState }: Props) {
   // Promotions
   const pendingPromos = poState?.pending_promotions?.filter((p) => p.status === 'pending') ?? []
   const promoCount = pendingPromos.length
-
-  // Skills
-  const visibleSkills = SKILL_CATALOG.slice(0, SKILL_LIMIT)
-  const hiddenCount = Math.max(0, SKILL_CATALOG.length - SKILL_LIMIT)
-
-  // Matrix button
-  const matrixBtn = (
-    <button
-      style={matrixLinkBtn}
-      onClick={(e) => { e.stopPropagation(); handleMatrixClick() }}
-    >
-      {t('workspace.team.section.skillsMatrix')}
-    </button>
-  )
 
   return (
     <div style={panelWrap}>
@@ -266,25 +197,22 @@ export default function TeamPanel({ poState }: Props) {
         ))}
       </Section>
 
-      {/* ── Skills section ── */}
-      <Section
-        title={t('workspace.team.section.skills')}
-        storageKey="skills"
-        right={matrixBtn}
-      >
-        {visibleSkills.map((skill) => (
-          <SkillRow
-            key={skill.id}
-            skill={skill}
-            onClick={() => handleSkillClick(skill.id)}
-          />
-        ))}
-        {hiddenCount > 0 && (
-          <button style={moreLink} onClick={handleMatrixClick}>
-            {t('workspace.team.section.skillsMore', { count: hiddenCount })}
-          </button>
-        )}
-      </Section>
+      {/* ── Skills nav row ── */}
+      <div style={sectionWrap}>
+        <button
+          style={skillsNavBtn}
+          onClick={handleMatrixClick}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+          title={t('workspace.team.section.skillsLink')}
+        >
+          <span style={secHdrText}>{t('workspace.team.section.skills')}</span>
+          <span style={skillsNavLabel}>{t('workspace.team.section.skillsLink')}</span>
+          <span style={skillsNavBadge}>
+            {t('workspace.team.section.skillsCount', { count: SKILLS_TOTAL })}
+          </span>
+        </button>
+      </div>
 
       {/* ── Wiki / Memory section ── */}
       <Section title={t('workspace.team.section.wikiMemory')} storageKey="wiki">
@@ -454,14 +382,13 @@ const personaModel: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-// Skill row
+// Skills nav row
 
-const skillRowStyle: React.CSSProperties = {
+const skillsNavBtn: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   width: '100%',
-  height: 28,
-  padding: '0 8px',
+  padding: '5px 8px 3px',
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
@@ -470,56 +397,19 @@ const skillRowStyle: React.CSSProperties = {
   transition: 'background 0.1s',
 }
 
-const skillBullet: React.CSSProperties = {
+const skillsNavLabel: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
-  flexShrink: 0,
-}
-
-const skillName: React.CSSProperties = {
-  fontSize: 11,
   fontFamily: 'monospace',
-  color: '#C0C0C0',
-  flex: 1,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
-const skillPersonaDots: React.CSSProperties = {
-  display: 'flex',
-  gap: 2,
+  color: '#60A5FA',
   flexShrink: 0,
 }
 
-const personaDotSmall: React.CSSProperties = {
-  width: 8,
-  height: 8,
-  borderRadius: '50%',
-  display: 'inline-block',
-}
-
-const moreLink: React.CSSProperties = {
-  fontSize: 10,
-  color: '#60A5FA',
-  padding: '4px 8px 6px 22px',
-  background: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  textAlign: 'left',
-  width: '100%',
-  userSelect: 'none',
-}
-
-const matrixLinkBtn: React.CSSProperties = {
+const skillsNavBadge: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#60A5FA',
-  background: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  padding: '0 2px',
-  userSelect: 'none',
+  color: '#505050',
+  marginLeft: 4,
+  flexShrink: 0,
 }
 
 // Wiki row

@@ -310,6 +310,8 @@
         "skills": "Skills",
         "skillsMatrix": "Matrix ↗",
         "skillsMore": "+ {{count}} more (see in Matrix)",
+        "skillsLink": "Skill Matrix →",
+        "skillsCount": "{{count}} skills",
         "wikiMemory": "Wiki / Memory"
       },
       "persona": {

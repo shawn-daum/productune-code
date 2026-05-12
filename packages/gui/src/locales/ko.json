@@ -310,6 +310,8 @@
         "skills": "스킬",
         "skillsMatrix": "매트릭스 ↗",
         "skillsMore": "+ {{count}}개 더 (Matrix에서 전체 보기)",
+        "skillsLink": "스킬 매트릭스 →",
+        "skillsCount": "총 {{count}}개",
         "wikiMemory": "위키 / 메모리"
       },
       "persona": {
