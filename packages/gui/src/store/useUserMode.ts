@@ -11,7 +11,7 @@ interface UserModeState {
 }
 
 export const useUserMode = create<UserModeState>((set) => ({
-  mode: null,
+  mode: 'planner',
   bannerReminded: false,
 
   setMode: async (mode: UserMode) => {
@@ -32,7 +32,7 @@ export const useUserMode = create<UserModeState>((set) => ({
       const mode: UserMode = await (window as any).api.getUserMode()
       set({ mode })
     } catch {
-      // IPC unavailable — keep null
+      // IPC unavailable — keep default
     }
   },
 }))

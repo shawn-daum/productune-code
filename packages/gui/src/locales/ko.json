@@ -480,6 +480,25 @@
       "optionEnDesc": "Standard interface language.",
       "optionKo": "한글",
       "optionKoDesc": "한국어 인터페이스."
+    },
+    "tabGeneral": "일반",
+    "general": {
+      "userMode": {
+        "title": "사용자 모드",
+        "description": "인터페이스에서 강조할 기능 영역을 지정합니다.",
+        "developer": {
+          "label": "Developer",
+          "desc": "코드 중심 기능 강조: worktree, branch prefix, env 스캔."
+        },
+        "planner": {
+          "label": "Planner",
+          "desc": "기획·배포 기능 강조: PRD, 티켓, 배포 흐름."
+        },
+        "unset": {
+          "label": "Unset",
+          "desc": "모드 미지정 — 모든 기능이 표시됩니다."
+        }
+      }
     }
   },
   "app": {

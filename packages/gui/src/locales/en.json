@@ -480,6 +480,25 @@
       "optionEnDesc": "Standard interface language.",
       "optionKo": "한글",
       "optionKoDesc": "한국어 인터페이스."
+    },
+    "tabGeneral": "General",
+    "general": {
+      "userMode": {
+        "title": "User Mode",
+        "description": "Controls which features are emphasized in the interface.",
+        "developer": {
+          "label": "Developer",
+          "desc": "Emphasizes code-facing features: worktrees, branch prefix, env scanning."
+        },
+        "planner": {
+          "label": "Planner",
+          "desc": "Emphasizes planning and delivery: PRD, tickets, deploy flow."
+        },
+        "unset": {
+          "label": "Unset",
+          "desc": "No mode preference — all features visible."
+        }
+      }
     }
   },
   "app": {

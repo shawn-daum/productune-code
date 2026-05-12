@@ -12,7 +12,7 @@ interface Props {
 export default function Step0_5UserMode({ onNext, onSkip }: Props) {
   const { t } = useTranslation()
   const setMode = useUserMode((s) => s.setMode)
-  const [selected, setSelected] = useState<UserMode>(null)
+  const [selected, setSelected] = useState<UserMode>('planner')
 
   async function handleSelect() {
     if (!selected) return
