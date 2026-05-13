@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld('api', {
   installAt: (opts: { projectDir: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string } }> =>
     ipcRenderer.invoke('project:installAt', opts),
 
+  /** Check whether a projectDir is a valid productune project (dir + config.json present). */
+  checkProjectExists: (projectDir: string): Promise<boolean> =>
+    ipcRenderer.invoke('project:exists', { projectDir }),
+
   openFolder: (): Promise<
     | { kind: 'self'; dir: string; config: { slug: string; created_at?: string; [k: string]: any } }
     | { kind: 'self-legacy'; dir: string; hints: string[] }

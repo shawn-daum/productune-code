@@ -45,6 +45,24 @@ export default function App() {
     } catch { /* localStorage may be unavailable */ }
   }, [project])
 
+  // (T-P4-091 §A) Stale last-project guard — runs once on mount after lazy init.
+  // If lazy init loaded a projectDir from localStorage, verify it still exists on disk.
+  // false → clear localStorage + fall back to HomeView (silent recovery).
+  // Catch keeps browser-dev-mode working (window.api absent).
+  useEffect(() => {
+    const dir = project?.projectDir
+    if (!dir) return
+    ;(async () => {
+      try {
+        const exists: boolean = await (window as any).api.checkProjectExists(dir)
+        if (!exists) {
+          try { localStorage.removeItem('productune.lastProject') } catch { /* unavailable */ }
+          setProject(null)
+        }
+      } catch { /* IPC unavailable in browser dev mode — keep current state */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // On mount: load saved language + check if onboarding is needed + restore last project
   useEffect(() => {
     async function init() {
@@ -64,7 +82,15 @@ export default function App() {
         // - productune.env missing (first run), OR
         // - settings.json has no language pref yet (migration: existing user hasn't seen step 0)
         const hasLangPref: boolean = await (window as any).api.hasLanguagePref().catch(() => false)
-        setShowOnboarding(!envExists || !hasLangPref)
+        if (!envExists || !hasLangPref) {
+          // (T-P4-091 §C) Onboarding entry = full reset intent. Clear stale lastProject so
+          // onboarding completion always lands on HomeView, not a deleted/stale project.
+          try { localStorage.removeItem('productune.lastProject') } catch { /* unavailable */ }
+          setProject(null)
+          setShowOnboarding(true)
+        } else {
+          setShowOnboarding(false)
+        }
       } catch {
         // IPC unavailable (browser dev mode) — skip wizard
       }

@@ -415,6 +415,21 @@ ipcMain.handle('project:installAt', (_event, { projectDir }: { projectDir: strin
   return { projectDir, config }
 })
 
+// ── Project existence check (T-P4-091) ────────────────────────────────────────
+// Returns true only when the directory AND a .productune/config.json marker both exist.
+// Any exception (empty path, EPERM, etc.) → false (safe fallback).
+ipcMain.handle('project:exists', (_event, { projectDir }: { projectDir: string }): boolean => {
+  try {
+    if (!projectDir) return false
+    return (
+      fs.existsSync(projectDir) &&
+      fs.existsSync(path.join(projectDir, '.productune', 'config.json'))
+    )
+  } catch {
+    return false
+  }
+})
+
 ipcMain.handle('projects:list', () => {
   const baseDir = path.join(os.homedir(), 'productune', 'projects')
   if (!fs.existsSync(baseDir)) return []
