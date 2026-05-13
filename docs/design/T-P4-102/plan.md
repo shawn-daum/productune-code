@@ -1,0 +1,377 @@
+# T-P4-102 plan — v1 탭 = TicketDashboardView (ticket-review reuse, not kanban)
+
+**Slug**: `v1-tab-is-ticket-dashboard` **Round**: r4 **Author**: pdt-designer
+**Created**: 2026-05-13 **Status**: plan only (ticket emit: NO this turn)
+**Output**: `docs/design/T-P4-102/plan.md` (본 문서)
+**Revises**: `docs/design/T-P4-097/plan.md` §2(a) — version-history tab kanban mode reuse (wrong) → ticket-review reuse (correct)
+**Deps landed**: T-P4-097, T-P4-098, T-P4-099, T-P4-095
+
+---
+
+## §1 Background — 왜 mismatch 가 발생했나
+
+### 1.1 T-P4-097 §2(a) 에서 채택된 결정 (now wrong)
+
+T-P4-097 은 "현재 버전 클릭 → 어떤 tab?" 을 결정할 때 옵션 A1 을 다음 이유로 기각했다:
+
+> **A1**. `ticket-review` 재사용 (versionFilter prop) — "ticket-review 는 단일 ticket detail viewer 다. 의미 mismatch" → ✘ 부적합
+
+그리고 **A3** (`version-history` tab + 2 tab id 분리, `version-current:{id}` + kanban 분기 유지) 을 채택했다.
+
+### 1.2 전제가 틀렸다 — ticket-review 는 단일 viewer 가 아니다
+
+코드를 확인한 결과:
+
+```ts
+// packages/gui/src/components/workspace/main/panes/TicketReviewTab.tsx
+export default function TicketReviewTab({ props: _props }: Props) {
+  const poState = useWorkspace((s) => s.poState)
+  return <TicketDashboardView poState={poState} />
+}
+```
+
+`ticket-review` tab type 의 실제 renderer = **`TicketDashboardView`** (전체 kanban board, 6 status column). 단일 ticket detail viewer 가 아니다. T-P4-046 주석에도 "With no ticketId, renders the global board (TicketDashboardView)" 라고 명시되어 있다.
+
+따라서 T-P4-097 §2(a) 의 기각 사유 자체가 사실 오류다.
+
+### 1.3 결과적으로 발생한 3 가지 문제
+
+| 문제 | 현 구현 증거 | 올바른 기대 |
+|---|---|---|
+| **VersionHistoryView 에 kanban 이 embed** | `VersionHistoryView.tsx` lines 742–767 의 `if (isCurrentVersion) return <KanbanBoard>` 분기 | 버전 히스토리 view 는 "과거" 전용 (linear card) 으로 단순화해야 함 |
+| **tab type 불일치** | 현재 버전 tab = `version-history` type. 그러나 실제 보여주는 건 ticket dashboard 패턴 | type = `ticket-review` 가 의미상 정확 |
+| **header "버전 히스토리 — v1"** | `VersionHistoryView` 가 header에 `{t('workspace.versionHistory.title')} — {versionLabel}` 렌더 | 현재 버전 탭은 ticket dashboard 이므로 이 header 는 부적절. tab title = `v1` 로 충분 |
+
+### 1.4 T-P4-097 §2(a) option A1 재평가
+
+| 항목 | T-P4-097 기각 사유 | 2026-05-13 재평가 |
+|---|---|---|
+| "ticket-review = 단일 ticket detail viewer" | 옵션 비교표에 명시 | **사실 아님** — ticket-review renderer = TicketDashboardView (전체 board) |
+| "의미 mismatch" | board 가 아니라 single view 라는 오해에서 비롯 | board 이므로 의미 일치: v1 tab = v1 ticket board |
+| versionFilter prop 필요 | 당시에는 deps로 간주 | TicketDashboardView 에 선택적 prop 1 개 추가로 해결 — surface 최소 |
+
+**결론**: A1 이 채택되어야 한다. A3 는 취소.
+
+---
+
+## §2 Decisions (a–g)
+
+### (a) SidePanelCurrentVersion.onClick — openTab 호출 변경
+
+**Decision**: `SidePanelCurrentVersion` 내부의 mount auto-open effect + LeftSidebar `handleVersionClick(id, true)` 의 `openTab` 호출을 다음으로 변경.
+
+```ts
+// BEFORE (T-P4-097 A3, 틀린 결정)
+openTab(
+  `version-current:${versionId}`,   // tab id
+  'version-history',                  // tab type ← WRONG
+  { mode: 'current' },               // props
+  versionId,                          // title
+)
+
+// AFTER (본 plan A1 채택)
+openTab(
+  `ticket-review:${versionId}`,      // tab id
+  'ticket-review',                    // tab type ← CORRECT
+  { versionFilter: versionId },       // props — 버전 필터 명시
+  versionId,                          // title = "v1" (verbatim version id)
+)
+```
+
+**변경 위치 2 곳**:
+1. `SidePanelCurrentVersion.tsx` mount `useEffect` (line 52–57) — direct `openTab` call
+2. `LeftSidebar.tsx` `handleVersionClick(id, true)` path (lines 77–82) — delegated `openTab` call
+
+**근거**: `ticket-review` tab type = `TicketDashboardView` renderer. `versionFilter` prop 으로 해당 버전 티켓만 scope. tab title = versionId = "v1" → tab strip 에서 즉시 구분 가능. design-direction §reduce-surface (기존 type 재사용, 신규 TabType 추가 없음).
+
+### (b) TicketDashboardView — versionFilter prop 수용 여부
+
+**Decision**: `TicketDashboardView` 에 `versionFilter?: string` prop 추가. `TicketReviewTab` 이 `props.versionFilter` 를 읽어 전달.
+
+**근거 — 코드 확인 결과**:
+
+현재 `TicketDashboardView` props:
+```ts
+interface Props {
+  poState: PoState | null
+  // versionFilter 없음 — 전 버전 ALL 티켓 표시
+}
+```
+
+현재 `collectAllTickets` 로직:
+- `poState.current_task` → `version: poState?.current_version` 으로 자동 태깅
+- `useTicketScan` 결과 → `ticket.version` 필드 기반 grouping 없음, ALL 표시
+
+**변경 spec**:
+
+```ts
+// TicketDashboardView.tsx
+interface Props {
+  poState: PoState | null
+  versionFilter?: string    // 신규 — 설정 시 해당 version 티켓만 표시
+}
+
+export default function TicketDashboardView({ poState, versionFilter }: Props) {
+  // ...
+  const allTickets = useMemo(() => {
+    const raw = collectAllTickets(poState, scannedTickets)
+    if (!versionFilter) return raw                                // 기존 전체 board path 보존
+    return raw.filter((t) => t.version === versionFilter)        // 버전 필터 적용
+  }, [poState, scannedTickets, versionFilter])
+  // ...
+}
+```
+
+```ts
+// TicketReviewTab.tsx
+export default function TicketReviewTab({ props: tabProps }: Props) {
+  const poState = useWorkspace((s) => s.poState)
+  const versionFilter = tabProps?.versionFilter as string | undefined
+  return <TicketDashboardView poState={poState} versionFilter={versionFilter} />
+}
+```
+
+**기존 tab 동작 보존 확인**:
+- `ticket-review:board` (WorkspaceShell — activity bar) → `props` = undefined → `versionFilter` = undefined → ALL tickets. ✓
+- `ticket-review:{ticketId}` (QuickOpen / VersionHistoryView kanban card click) → `props.ticketId` 있음, `props.versionFilter` = undefined → ALL tickets. ✓
+- `ticket-review:v1` (NEW — current version) → `props.versionFilter = 'v1'` → v1 tickets only. ✓
+
+**Tab id 충돌 검증**:
+- `ticket-review:board` — `'board'` 는 T-P4-095 version regex (`^v\d+(\.\d+)?$`) 불통과 → 충돌 없음
+- `ticket-review:T-P4-xxx` (ticket id) — `'T-'` prefix, version id 와 패턴 비분리 → 충돌 없음
+- `ticket-review:v1` (version id) — `'v' + digits` 패턴, ticket id 와 충돌 없음 ✓
+
+**`defaultTitle` 확인** (workspace.ts line 502):
+```ts
+case 'ticket-review': return (props?.ticketId as string) ?? 'Tickets'
+```
+`ticket-review:v1` 의 경우 `props.versionFilter = 'v1'`, `props.ticketId` = undefined → defaultTitle = `'Tickets'`. 그러나 `openTab` 4번째 인자 (`title`) = `versionId` = `'v1'` 이 **명시 전달**되므로 tab strip 제목 = `v1`. defaultTitle 폴백 경로 미도달. ✓
+
+**header title 확인**: `TicketDashboardView` header = `t('workspace.tickets.title')` ("작업" / "Tickets"). "버전 히스토리" 문자 없음 ✓.
+
+### (c) VersionHistoryView — isCurrentVersion → kanban 분기 제거
+
+**Decision**: `VersionHistoryView.tsx` 의 `if (isCurrentVersion)` 블록 전체 제거 + kanban 관련 sub-component / style 코드 전부 삭제.
+
+**제거 대상 (VersionHistoryView.tsx 안)**:
+
+| 항목 | 현재 코드 위치 | 제거 사유 |
+|---|---|---|
+| `if (isCurrentVersion) { return ... }` 블록 | lines ~742–767 | 현재 버전 click 은 이제 ticket-review type 으로 가므로 dead code |
+| `KanbanBoard` function component | lines ~397–437 | dead code |
+| `KanbanColumn` function component | lines ~368–391 | dead code |
+| `KanbanCard` function component | lines ~339–361 | dead code |
+| `KanbanStatus` type alias | line 272 | dead code |
+| `KANBAN_COLUMNS` const | line 274 | dead code |
+| `kanbanColumnLabelKey()` | lines 276–283 | dead code |
+| `kanbanColumnAccentColor()` | lines 285–292 | dead code |
+| `personaChipStyle()` | lines 294–314 | dead code |
+| `qaChipStyle()` | lines 316–332 | dead code |
+| `KanbanCardProps`, `KanbanColumnProps`, `KanbanBoardProps` interfaces | various | dead code |
+| kanban CSS style objects (`kanbanBoard`, `kanbanColumn`, `kanbanColumnHeader`, `kanbanColumnLabel`, `kanbanColumnCount`, `kanbanColumnBody`, `kanbanColumnEmpty`, `kanbanCard`, `kanbanCardTop`, `kanbanCardId`, `kanbanCardTitle`, `kanbanCardBottom`) | lines ~1147–1253 | dead code |
+
+**보존 대상**: `isCurrentVersion` 변수 선언 자체는 삭제 OK (남겨도 무해하나 dead var linter 에 걸릴 수 있음). 관련 Vercel deploy events fetch effect 의 `if (isCurrentVersion || isUnassigned)` guard (line 677) — 이미 `isCurrentVersion` 이 항상 false 가 되지만, **안전 보존 권장** (defensive guard; `isUnassigned` 는 여전히 의미 있음). 구현 시 개발자 판단.
+
+**결과**: `VersionHistoryView.tsx` = 과거 버전 + 미배정 전용 linear card list view 로 단순화. 약 ~300 line 감소 예상.
+
+### (d) workspace store TabType — 'version-current:*' pattern rename
+
+**Decision**:
+- `'version-history'` tab type: **그대로 보존** (과거 버전 + 미배정 row 용).
+- `'ticket-review'` tab type: **그대로 보존** (기존 + 현재 버전 신규 진입점 추가).
+- `'version-current:*'` tab id pattern: **폐기**. 신규 발급 없음. `ticket-review:*` 로 완전 대체.
+- `workspace.ts` `TabType` union: 변경 없음. `defaultTitle` switch: 변경 없음 (위 (b) 확인).
+- `workspace.ts` `updateTabId` helper: 로직 변경 없음. 호출처 (LeftSidebar) 의 인자 패턴만 변경 — (f) 참조.
+
+**기존 `version-history` tab type 의 `defaultTitle`**:
+```ts
+// workspace.ts — 현재 없음. version-history 는 defaultTitle switch 에 없음.
+```
+확인: workspace.ts lines 499-505 에 `version-history` case 없음 → `openTab` 4번째 인자 title 이 항상 명시되므로 문제 없음. 변경 불필요.
+
+### (e) Tab title 결정 — v1 탭 title = versionId, header 에 "버전 히스토리" NO
+
+**Decision**:
+- Tab strip title = `versionId` (예: `"v1"`, `"v0.1"`) — `openTab` 4번째 인자로 명시 전달.
+- `TicketDashboardView` header (`<h2>`) = `t('workspace.tickets.title')` — 기존 그대로. "버전 히스토리" 문자 **NO**.
+- `VersionHistoryView` header = `{t('workspace.versionHistory.title')} — {versionLabel}` — 과거 버전 tab 에서만 표시되므로 그대로 유지.
+- **선택적 구현 힌트** (OQ-1): `TicketDashboardView` 가 `versionFilter` 활성 시 subtitle / header 에 `versionFilter` 값 (예: "v1 · 작업 5") 을 보여주면 사용자 컨텍스트 강화. 구현 판단은 개발자 (본 plan 은 강제 X).
+
+### (f) updateTabId store helper — ticket-review:* id 에도 동작 확인
+
+**Decision**: store 의 `updateTabId(oldId, newId, newTitle?)` helper 는 pane tree 를 재귀 탐색하여 tab id 를 in-place swap 한다. id 패턴에 무관하게 동작 (string 비교) — `ticket-review:*` id 도 그대로 동작. **helper 자체 변경 없음**.
+
+**LeftSidebar 호출처 변경**:
+```ts
+// BEFORE (T-P4-097)
+updateTabId(`version-current:${prev}`, `version-current:${cv}`, cv)
+
+// AFTER (본 plan)
+updateTabId(`ticket-review:${prev}`, `ticket-review:${cv}`, cv)
+```
+
+**근거**: version rename 시 (예: `v0.1` → `v1`) 열린 tab id 도 in-place swap. 사용자 scroll/focus 보존 — T-P4-097 OQ-5 결의 그대로. pattern 만 바뀜.
+
+### (g) ticket-review tab type 기존 openTab 진입점 — sole entry 정합
+
+**현재 진입점 전수 확인**:
+
+| 진입처 | tab id | props | 변경 여부 |
+|---|---|---|---|
+| `WorkspaceShell.tsx` activity bar `'tickets'` icon click | `ticket-review:board` | `undefined` | 변경 없음 |
+| `WorkspaceShell.tsx` mount auto-open `useEffect` | `ticket-review:board` | `undefined` | 변경 없음 |
+| `WorkspaceShell.tsx` quick-open palette (개별 ticket) | `ticket-review:{ticketId}` | `{ ticketId, ticketPath? }` | 변경 없음 |
+| `VersionHistoryView.tsx` `KanbanBoard.handleOpenTicket` (kanban card click) | `ticket-review:{ticketId}` | `{ ticketId, ticketPath }` | **삭제** — (c) kanban branch 제거로 dead code 소멸 |
+| **NEW** `SidePanelCurrentVersion.tsx` mount effect | `ticket-review:{versionId}` | `{ versionFilter: versionId }` | **추가** |
+| **NEW** `LeftSidebar.tsx` `handleVersionClick(id, true)` | `ticket-review:{versionId}` | `{ versionFilter: versionId }` | **변경** (was `version-history`) |
+
+**정합 결론**:
+- `ticket-review:{versionId}` with `versionFilter` = **SidePanelCurrentVersion 단독 진입** (`isCurrent === true` path).
+- `ticket-review:board` with no props = WorkspaceShell 단독 진입 (activity bar / mount).
+- `ticket-review:{ticketId}` with `ticketId` prop = WorkspaceShell quick-open 단독 진입.
+
+세 패턴 모두 단일 진입처. 중복 없음.
+
+---
+
+## §3 ASCII mockup (after)
+
+### 3.1 현재 버전 클릭 후 — main pane tab strip
+
+```
+┌─ main pane tab strip ──────────────────────────────────────────────┐
+│ [PRD] [보드 ×] [v1 ×] [버전 히스토리 ×]                          │
+│        ↑                ↑               ↑
+│ ticket-review:board  ticket-review:v1  version-history:main
+│ (WorkspaceShell)    (현재버전 row)     (과거버전 row)
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.2 ticket-review:v1 탭 내부 (TicketDashboardView, versionFilter='v1')
+
+```
+┌─ tab: [v1]  ────────────────────────────────────────────────────────┐
+│                                                                      │
+│  작업                                                                │  ← t('workspace.tickets.title')
+│  ──────────────────────────────────────────────────────────────────  │     "버전 히스토리" 문자 없음 ✓
+│                                                                      │
+│  ┌─ todo ──┐  ┌─ in-progress ─┐  ┌─ review ─┐  ┌─ done ──┐  ...  │
+│  │    2    │  │      1         │  │    0     │  │    4     │  ...  │
+│  ├─────────┤  ├────────────────┤  ├──────────┤  ├──────────┤  ...  │
+│  │T-P4-102 │  │  T-P4-097     │  │  (빈)    │  │T-P4-095  │  ...  │
+│  │v1 tab...│  │  side panel..  │  │          │  │version-id│  ...  │
+│  │[design] │  │  [designer]   │  │          │  │[impl]    │  ...  │
+│  ├─────────┤  ├────────────────┤  │          │  ├──────────┤  ...  │
+│  │T-P4-103 │  │                │  │          │  │T-P4-099  │  ...  │
+│  │...      │  │                │  │          │  │sidebar...│  ...  │
+│  └─────────┘  └────────────────┘  └──────────┘  └──────────┘  ...  │
+│                                                                      │
+│  ※ versionFilter='v1' → v1 tickets only (다른 버전 티켓 X)         │
+│  ※ 카드 클릭 동작: OQ-2 참조                                        │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.3 version-history:main 탭 내부 (과거 버전, 변경 없음)
+
+```
+┌─ tab: [버전 히스토리]  ──────────────────────────────────────────┐
+│                                                                   │
+│  버전 히스토리 — v0.1                                            │  ← VersionHistoryView header (유지)
+│  작업 7 · 배포 0 · 3d 2h                                        │  ← subtitle (유지)
+│                                                                   │
+│  [po] [designer] [developer] [qa]  [시작날짜] ~ [종료날짜]  초기화│  ← filter toolbar (유지)
+│                                                                   │
+│  ─────────────────── linear card list ──────────────────────────  │
+│  T-P4-023  버전 히스토리 design    [designer]  완료   0.8h       │
+│  T-P4-021  commit parser           [developer] 완료   1.2h       │
+│  배포        2026-05-04            READY       1분 30초          │
+│  ...                                                              │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## §4 Tab dispatch table (after)
+
+| Row 종류 | tab id | tab type | props | tab title |
+|---|---|---|---|---|
+| **현재 버전 row** (SidePanelCurrentVersion) | `ticket-review:{versionId}` | **`ticket-review`** | `{ versionFilter: versionId }` | `{versionId}` (예: `v1`) |
+| 과거 버전 row (closed) | `version-history:main` (단일 공유 tab) | `version-history` | `{ mode: 'past' }` | i18n `workspace.versionHistory.title` ("버전 히스토리") |
+| 미배정 bucket row | `version-unassigned:main` | `version-history` | `{ mode: 'past' }` | i18n `workspace.versionHistory.unassigned.label` ("미배정") |
+| Activity bar `'tickets'` icon | `ticket-review:board` | `ticket-review` | `undefined` | `'Tickets'` |
+| Quick-open palette (개별 ticket) | `ticket-review:{ticketId}` | `ticket-review` | `{ ticketId, ticketPath? }` | `{ticketId}` |
+
+**Routing 진실 출처**:
+- `VersionHistoryView` → `selectedVersionId` (store). `isCurrentVersion` 분기 제거 → 항상 linear card path.
+- `TicketDashboardView` → `versionFilter` prop. 없으면 ALL tickets, 있으면 해당 version 한정.
+
+**Tab lifecycle (현재 버전 관련 변경만)**:
+- 현재 버전 row 클릭 → `ticket-review:{cv}` open (이미 열려있으면 focus).
+- version rename → `updateTabId('ticket-review:{prev}', 'ticket-review:{cv}', cv)` in-place swap.
+- transient close (outcome|ended_at != null) → 현재 버전 row 사라짐. 이미 열린 `ticket-review:{cv}` tab 은 그대로 (사용자가 X 누르기 전까지 — §1.5.5 Escape).
+
+---
+
+## §5 Module Map
+
+### 5.1 변경 대상 파일 (5개)
+
+| 파일 | 변경 내용 | 규모 |
+|---|---|---|
+| `packages/gui/src/components/workspace/SidePanelCurrentVersion.tsx` | mount `useEffect` 의 `openTab` 호출: `version-current:${cv}` / `version-history` / `{mode:'current'}` → `ticket-review:${cv}` / `ticket-review` / `{versionFilter:cv}`. 나머지 로직 (fallback rows / auto-select) 변경 없음. | 소 (openTab 1 호출, ~5 line) |
+| `packages/gui/src/components/workspace/LeftSidebar.tsx` | `handleVersionClick(id, true)` path: `openTab` args 변경 (동일 위). `updateTabId` 호출: `version-current:${prev}` → `ticket-review:${prev}`, `version-current:${cv}` → `ticket-review:${cv}`. | 소 (~6 line) |
+| `packages/gui/src/views/VersionHistoryView.tsx` | `if (isCurrentVersion)` block 전체 제거 + kanban 관련 sub-components / type aliases / style objects 모두 제거. deploy fetch effect 의 `isCurrentVersion` guard 보존 (defensive). `isCurrentVersion` 변수: 삭제 또는 보존 (developer 판단). | 대 (~300 line 감소) |
+| `packages/gui/src/components/workspace/TicketDashboardView.tsx` | `Props` interface 에 `versionFilter?: string` 추가. `allTickets` useMemo 에 version filter 적용 로직 추가 (~4 line). `export default function` signature 변경. | 소 (~8 line) |
+| `packages/gui/src/components/workspace/main/panes/TicketReviewTab.tsx` | `props.versionFilter` 읽어 `TicketDashboardView` 에 전달. | 극소 (~2 line) |
+
+### 5.2 변경 없는 파일 (명시적 보존)
+
+| 파일 | 보존 사유 |
+|---|---|
+| `packages/gui/src/store/workspace.ts` | `TabType` union 변경 없음. `ticket-review` 이미 존재. `updateTabId` helper 로직 변경 없음. |
+| `packages/gui/src/components/workspace/main/TabContent.tsx` | `case 'ticket-review': return <TicketReviewTab props={tab.props} />` 그대로. dispatcher 추가 없음. |
+| `packages/gui/src/components/workspace/main/panes/TicketReviewTab.tsx` — 주의: TicketDashboardView 의 import + 호출은 변경되므로 파일 자체는 변경 있음 (§5.1). |  |
+| `packages/gui/src/components/workspace/SidePanelPastVersions.tsx` | 과거 버전 path 변경 없음. `version-history` type 계속 사용. |
+| `packages/gui/src/views/WorkspaceShell.tsx` | `ticket-review:board` 진입점 변경 없음. |
+| `packages/gui/src/components/workspace/VersionRow.tsx` | row 렌더링 변경 없음. onClick 위임 구조 그대로. |
+
+### 5.3 신규 파일 없음
+
+- 신규 component, 신규 view, 신규 TabType: **없음**. 기존 `ticket-review` type + `TicketDashboardView` 재사용 only.
+
+---
+
+## §6 Open Questions
+
+| ID | Question | 권장 default | Status |
+|---|---|---|---|
+| **OQ-1** | `TicketDashboardView` 가 `versionFilter` 활성 시 header 에 version label 을 추가로 보여줄지? 예: `<h2>작업 — v1</h2>` vs 그냥 `<h2>작업</h2>` | **추가 X (default)** — tab strip title = `v1` 이 이미 version context 충분히 제공. header 변경은 별도 dogfood 후 결정. | ◐ minor |
+| **OQ-2** | `TicketDashboardView` 의 `Card` 컴포넌트에 click handler 가 없다 (`VersionHistoryView.KanbanCard` 에는 있었음). v1 tab 에서 card 클릭 시 개별 ticket tab 열리길 기대하는지? | **현 board behavior 유지** (no card click) — `ticket-review:board` 에서도 동일. 통일성. 개별 ticket open = 추후 dogfood 트리거 시 별 ticket. | ◐ minor (default OK) |
+| **OQ-3** | `VersionHistoryView` 의 `isCurrentVersion` 변수 — dead var 로 두고 linter 에 맡길지, 즉시 제거할지? | **즉시 제거** (`isCurrentVersion` 관련 코드 전체 삭제 — kanban branch 이미 제거이므로 참조처 없음). `isUnassigned` 는 보존. deploy fetch effect guard 를 `(!isUnassigned && selectedVersionId)` 로 단순화. | ◐ minor |
+| **OQ-4** | `version-unassigned:main` tab id — T-P4-097 plan 에서 정의됐지만 실제 구현에서 `LeftSidebar.handleVersionClick(id, false)` 는 미배정 구분 없이 `version-history:main` 을 발급 중. 이번 작업 scope에 미배정 전용 id 분리 포함할지? | **포함 X** — 본 plan scope = current version tab type 수정만. 미배정 tab id 분리는 별 turn. | ◐ scope |
+
+---
+
+## §7 §1.5 self-check (design-system UX principles)
+
+| Sub-rule | 검증 | 결과 |
+|---|---|---|
+| **§1.5.1 Few Things** | v1 tab = `TicketDashboardView` 그대로. 신규 component 없음. 신규 tab type 없음. 사용자가 배울 새 패턴 없음. versionFilter 로 scope 만 좁힘 — 같은 board 패턴. | ✓ pass |
+| **§1.5.2 Familiar** | `ticket-review` tab type = 이미 activity bar `'tickets'` icon 에서 열리는 것과 동일. 사용자 입장에서 "v1 클릭 하면 tickets board 열린다" = 직관적. "버전 히스토리 — v1" 이라는 낯선 label 제거 → 단순화. | ✓ pass |
+| **§1.5.3 Predictability** | 현재 버전 row click → 항상 ticket dashboard with v1 filter. tab title = version id 로 명확 구분. past version row click → 기존 "버전 히스토리" tab (변경 없음). 동작 일관성 유지. | ✓ pass |
+| **§1.5.4 Feedback** | row click → tab open (즉시 시각 변화). selected 표식 변경 (기존 메커니즘). `versionFilter` 로 티켓 scope 좁혀지므로 "v1 티켓만 보이는" 상태 명확. | ✓ pass |
+| **§1.5.5 Escape** | tab X 클릭 = 닫기 (기존). transient close 시 tab 자동 닫기 없음 — 사용자 명시 close 유지. row click 비-destructive. | ✓ pass |
+
+**Anti-pattern 점검**:
+- ❌ "action with no visual feedback" → row click 시 tab open 즉각 (기존 동작 그대로). ✓ 없음
+- ❌ "같은 tab type 에 두 가지 다른 header 패턴" → 제거됨. `ticket-review` = 항상 `TicketDashboardView` header. `version-history` = 항상 `VersionHistoryView` header. 명확 분리. ✓ 없음
+- ❌ "VersionHistoryView 가 context 에 따라 kanban / linear 두 가지 뷰 전환" → 제거. VersionHistoryView = linear only. ✓ 없음
+- ❌ "버전 히스토리 탭 제목인데 내용은 kanban board" (title-content mismatch) → 제거됨. v1 tab = `ticket-review` type + TicketDashboardView = 의미 일치. ✓ 없음
+
+**설계 원칙 위배 없음 확인**: design-direction §reduce-surface — 기존 type/component 재사용, 신규 surface 추가 없음. Tab type count: 변경 없음. Component count: VersionHistoryView 에서 kanban 코드 ~300 line **감소** (surface reduction, not addition). ✓
+
+---
+
+## Activity log
+
+- **2026-05-13 v1** — Plan 작성. T-P4-097 §2(a) 의 decision 전제 오류 분석 및 재결정. `ticket-review` = `TicketDashboardView` (전체 board) 임을 코드 확인으로 증명. decisions (a)–(g) 전부 A1 채택으로 재정의. 영향 범위: 5 파일 변경, 신규 파일 없음, TabType 변경 없음. VersionHistoryView kanban 코드 ~300 line 순감소. §1.5 self-check 통과. OQ 4개 (1–3 minor, 4 scope).
