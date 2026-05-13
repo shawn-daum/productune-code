@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, CheckCircle2, XCircle, Check, X, AlertTriangle, Zap } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle, Check, X, AlertTriangle, Zap, RotateCcw } from 'lucide-react'
 import i18next from '../i18n'
 
 type Engine = 'claude' | 'codex' | 'both'
@@ -49,6 +49,9 @@ export default function OnboardingWizard({ onDone }: Props) {
   const [dockerLogs, setDockerLogs] = useState<string[]>([])
   const [installError, setInstallError] = useState('')
   const logEndRef = useRef<HTMLDivElement>(null)
+
+  // Step 0 — reset CTA
+  const [resetFeedback, setResetFeedback] = useState(false)
 
   // Step 4
   const [completing, setCompleting] = useState(false)
@@ -141,6 +144,16 @@ export default function OnboardingWizard({ onDone }: Props) {
       }
     } catch { /* silent */ }
     finally { setCheckingEngine(false) }
+  }
+
+  async function handleReset() {
+    try {
+      await (window as any).api.clearLocalStorage()
+    } catch { /* force: true — unlikely to fail */ }
+    setResetFeedback(true)
+    setTimeout(() => {
+      window.location.reload()
+    }, 1200)
   }
 
   async function handleSelectLang(lng: UiLang) {
@@ -259,7 +272,16 @@ export default function OnboardingWizard({ onDone }: Props) {
               </div>
             </div>
             <div style={footer}>
-              <div />
+              {resetFeedback ? (
+                <span style={{ fontSize: 11, color: '#34D399' }}>
+                  {t('onboarding.step0.resetToast')}
+                </span>
+              ) : (
+                <button style={btnReset} onClick={handleReset}>
+                  <RotateCcw size={12} style={{ marginRight: 4 }} />
+                  {t('onboarding.step0.resetCta')}
+                </button>
+              )}
               <button style={btnPrimary} onClick={() => setStep(1)}>
                 {t('common.next')}
               </button>
@@ -795,4 +817,9 @@ const btnSecondary: React.CSSProperties = {
 const btnSkip: React.CSSProperties = {
   background: 'transparent', color: '#606060', border: 'none',
   fontSize: 12, cursor: 'pointer', padding: '8px 10px',
+}
+const btnReset: React.CSSProperties = {
+  background: 'transparent', color: '#505050', border: 'none',
+  fontSize: 11, cursor: 'pointer', padding: '4px 8px',
+  display: 'flex', alignItems: 'center',
 }

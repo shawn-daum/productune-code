@@ -19,7 +19,9 @@
       "optionEn": "English",
       "optionEnDesc": "Standard interface language.",
       "optionKo": "한글",
-      "optionKoDesc": "한국어 인터페이스 (페르소나 응답은 별도 설정)"
+      "optionKoDesc": "한국어 인터페이스 (페르소나 응답은 별도 설정)",
+      "resetCta": "Reset & start over",
+      "resetToast": "Local storage cleared. Reloading…"
     },
     "step1": {
       "label": "Step 1 / 4 — AI engine",
@@ -321,7 +323,7 @@
         },
         "designer": {
           "name": "Designer",
-          "role": "UX / Brand / Design system"
+          "role": "Plan, Design"
         },
         "developer": {
           "name": "Developer",
@@ -329,7 +331,7 @@
         },
         "qa": {
           "name": "QA",
-          "role": "Pass / fail verifier"
+          "role": "Test, Validation"
         }
       },
       "wiki": {

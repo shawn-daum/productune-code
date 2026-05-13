@@ -180,6 +180,41 @@ ipcMain.handle('onboarding:codexLogin', async () => {
   }
 })
 
+ipcMain.handle('onboarding:clearLocalStorage', async () => {
+  const home = os.homedir()
+  const platform = process.platform
+
+  // OS-aware path resolution
+  let appDataBase: string
+  if (platform === 'darwin') {
+    appDataBase = path.join(home, 'Library', 'Application Support')
+  } else if (platform === 'win32') {
+    appDataBase = path.join(home, 'AppData', 'Roaming')
+  } else {
+    // Linux and other POSIX
+    appDataBase = path.join(home, '.config')
+  }
+
+  const targets = [
+    path.join(appDataBase, '@productune', 'Local Storage'),
+    path.join(appDataBase, '@productune', 'gui', 'Local Storage'),
+  ]
+
+  const removed: string[] = []
+  const errors: string[] = []
+
+  for (const target of targets) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true })
+      removed.push(target)
+    } catch (e: any) {
+      errors.push(`${target}: ${e?.message}`)
+    }
+  }
+
+  return { ok: errors.length === 0, removed, errors }
+})
+
 // ── Onboarding IPC ────────────────────────────────────────────────────────────
 
 ipcMain.handle('onboarding:checkEnv', () => {

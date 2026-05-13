@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld('api', {
   codexLogin: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:codexLogin'),
 
+  clearLocalStorage: (): Promise<{ ok: boolean; removed: string[]; errors: string[] }> =>
+    ipcRenderer.invoke('onboarding:clearLocalStorage'),
+
   initProject: (opts: { slug: string; projectDir: string }) =>
     ipcRenderer.invoke('init:project', opts),
 
