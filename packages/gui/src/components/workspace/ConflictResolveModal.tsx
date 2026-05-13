@@ -1,45 +1,54 @@
 /**
- * ConflictResolveModal — T-P4-022 sub-e
+ * ConflictResolveModal — T-P4-022 sub-g (3rd PR)
  *
- * Two modes (auto-detected from conflictType):
- *   - trivial: whitespace / lockfile only → single "자동 정리" CTA
- *   - semantic: real code conflicts → conversational 3-action UI
+ * Shown when the source branch has conflicts with base that cannot be
+ * auto-resolved. Presents 3 actions per design service-flow §9 Error 패턴:
+ *   [수정 후 다시 시도] — user will manually fix the conflict and retry
+ *   [다른 작업으로 전환] — abort this deploy, switch to another task
+ *   [도움말]            — open help documentation
  *
- * External vocabulary ZERO — "작업", "같은 파일", "이번 작업" only.
+ * OQ-T022-5 (a): Esc / backdrop click = deploy abort + state preserved
+ * (same as [다른 작업으로 전환]).
+ *
+ * External vocabulary ZERO in UI text — "작업", "같은 위치", etc. only.
+ * `conflict` word visible in dev mode only (per R2 §4.1.1).
  */
 
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useUserMode } from '../../store/useUserMode'
 
-export type ConflictStrategy = 'theirs' | 'ours' | 'manual'
+export type ConflictStrategy = 'manual' | 'abort'
 
 export interface ConflictResolveModalProps {
-  /** 'trivial' = lockfile/whitespace only; 'semantic' = real code conflicts */
-  conflictType: 'trivial' | 'semantic'
-  /** Relative file paths with conflicts (user-friendlified by modal) */
+  /** Relative file paths with conflicts (shown as basename only). */
   conflictPaths?: string[]
+  /** Called when user chooses to fix and retry. */
   onResolve: (strategy: ConflictStrategy) => void
+  /** Called when user chooses to abort deploy (or presses Esc/backdrop). */
   onCancel: () => void
 }
 
 // ── File name friendlification ─────────────────────────────────────────────────
-// Strip path prefix, return base name only (no git internal terms).
 function friendlyFileName(p: string): string {
   return p.split('/').pop() ?? p
 }
 
+const HELP_URL = 'https://productune.dev/docs/deploy-conflict'
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ConflictResolveModal({
-  conflictType,
   conflictPaths = [],
   onResolve,
   onCancel,
 }: ConflictResolveModalProps) {
   const { t } = useTranslation()
-  const primaryRef = useRef<HTMLButtonElement>(null)
+  const retryRef = useRef<HTMLButtonElement>(null)
+  const userMode = useUserMode((s) => s.mode)
+  const isDev = userMode === 'developer'
 
-  // Esc → cancel
+  // Esc → abort (OQ-T022-5 (a): deploy abort + state 보존)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel()
@@ -48,42 +57,14 @@ export default function ConflictResolveModal({
     return () => window.removeEventListener('keydown', handler)
   }, [onCancel])
 
-  // Focus primary action
+  // Focus primary action on mount
   useEffect(() => {
-    primaryRef.current?.focus()
+    retryRef.current?.focus()
   }, [])
 
   const fileNames = conflictPaths.map(friendlyFileName)
   const fileCount = conflictPaths.length
 
-  if (conflictType === 'trivial') {
-    return (
-      <div style={overlay} role="dialog" aria-modal="true" aria-labelledby="crm-title">
-        <div style={modal}>
-          <h2 style={titleStyle} id="crm-title">
-            {t('workspace.deploy.conflict.trivialTitle')}
-          </h2>
-          <p style={bodyStyle}>
-            {t('workspace.deploy.conflict.trivialBody')}
-          </p>
-          <div style={actions}>
-            <button style={btnGhost} onClick={onCancel}>
-              {t('common.cancel')}
-            </button>
-            <button
-              ref={primaryRef}
-              style={btnPrimary}
-              onClick={() => onResolve('theirs')}
-            >
-              {t('workspace.deploy.conflict.trivialCta')}
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Semantic mode
   const bodyText = fileCount > 0
     ? t('workspace.deploy.conflict.semanticBodyFiles', {
         files: fileNames.slice(0, 3).join(', '),
@@ -92,13 +73,23 @@ export default function ConflictResolveModal({
     : t('workspace.deploy.conflict.semanticBodyNoFiles')
 
   return (
-    <div style={overlay} role="dialog" aria-modal="true" aria-labelledby="crm-title">
-      <div style={modal}>
+    // Backdrop click → abort (OQ-T022-5 (a))
+    <div
+      style={overlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="crm-title"
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel() }}
+    >
+      <div style={modal} onClick={(e) => e.stopPropagation()}>
         <h2 style={titleStyle} id="crm-title">
           {t('workspace.deploy.conflict.semanticTitle')}
+          {isDev && <span style={devHint}> (conflict)</span>}
         </h2>
+
         <p style={bodyStyle}>{bodyText}</p>
 
+        {/* File list — shows which files have conflicts (basename only) */}
         {fileCount > 0 && (
           <ul style={fileList}>
             {fileNames.slice(0, 5).map((f, i) => (
@@ -113,19 +104,29 @@ export default function ConflictResolveModal({
         )}
 
         <div style={actions}>
-          <button style={btnGhost} onClick={() => onResolve('manual')}>
-            {t('workspace.deploy.conflict.actionManual')}
-          </button>
-          <button style={btnSecondary} onClick={() => onResolve('theirs')}>
-            {t('workspace.deploy.conflict.actionTheirs')}
-          </button>
+          {/* [도움말] — leftmost, ghost */}
           <button
-            ref={primaryRef}
-            style={btnPrimary}
-            onClick={() => onResolve('ours')}
+            style={btnGhost}
+            onClick={() => (window as any).api?.openExternal?.(HELP_URL)}
           >
-            {t('workspace.deploy.conflict.actionOurs')}
+            {t('workspace.deploy.conflict.actionHelp')}
           </button>
+
+          <div style={actionsRight}>
+            {/* [다른 작업으로 전환] — secondary */}
+            <button style={btnSecondary} onClick={onCancel}>
+              {t('workspace.deploy.conflict.actionSwitch')}
+            </button>
+
+            {/* [수정 후 다시 시도] — primary */}
+            <button
+              ref={retryRef}
+              style={btnPrimary}
+              onClick={() => onResolve('manual')}
+            >
+              {t('workspace.deploy.conflict.actionRetry')}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -164,6 +165,13 @@ const titleStyle: React.CSSProperties = {
   color: '#F0F0F0',
 }
 
+const devHint: React.CSSProperties = {
+  fontSize: 11,
+  color: '#606060',
+  fontFamily: 'monospace',
+  fontWeight: 400,
+}
+
 const bodyStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 13,
@@ -189,8 +197,15 @@ const actions: React.CSSProperties = {
   display: 'flex',
   gap: 8,
   paddingTop: 4,
-  justifyContent: 'flex-end',
+  justifyContent: 'space-between',
+  alignItems: 'center',
   flexWrap: 'wrap',
+}
+
+const actionsRight: React.CSSProperties = {
+  display: 'flex',
+  gap: 8,
+  alignItems: 'center',
 }
 
 const btnPrimary: React.CSSProperties = {

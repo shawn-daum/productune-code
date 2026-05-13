@@ -14,6 +14,8 @@ import PendingPromotionDrain from '../components/workspace/PendingPromotionDrain
 import QuickOpenPalette, { type QuickOpenItem } from '../components/workspace/QuickOpenPalette'
 import { usePoChat } from '../store/poChat'
 import { useTicketScan } from '../lib/useTicketScan'
+import DeployConfirmModal from '../components/workspace/DeployConfirmModal'
+import type { DeployTicketSummary } from '../components/workspace/DeployConfirmModal'
 
 interface Props {
   project: Project
@@ -43,6 +45,22 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const [quickOpenVisible, setQuickOpenVisible] = useState(false)
   const [quickOpenFiles, setQuickOpenFiles] = useState<Array<{ path: string; ext: string }>>([])
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
+
+  // ── Deploy confirm modal state (T-P4-022 3rd PR) ────────────────────────────
+  const [deployModalOpen, setDeployModalOpen] = useState(false)
+  const [deployModalPayload, setDeployModalPayload] = useState<{
+    tickets: DeployTicketSummary[]
+    gitRef: string
+    project: string
+    projectDir?: string
+    owner?: string
+    repo?: string
+    branchName?: string
+    ticketId?: string
+    ticketTitle?: string
+    ticketAcceptance?: string
+    vercelProject?: string
+  } | null>(null)
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
   const restartModalOpen = usePoChat((s) => s.restartModalOpen)
   const setRestartModalOpen = usePoChat((s) => s.setRestartModalOpen)
@@ -118,6 +136,19 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       offRestarted?.()
     }
   }, [setHealth, clearHealth, setClaudeSessionId])
+
+  // ── Deploy modal IPC subscription (T-P4-022 3rd PR) ───────────────────────
+  // PO emits state:openDeployModal → main sends deploy:openModal → renderer opens modal.
+  useEffect(() => {
+    const api = (window as any).api
+    const off = api.onDeployModal?.((payload: typeof deployModalPayload) => {
+      if (!payload) return
+      setDeployModalPayload(payload)
+      setDeployModalOpen(true)
+    })
+    return () => off?.()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Open a Tickets board tab when user clicks the tickets activity icon.
   // Subsequent clicks dedupe via openTab's existing-id check.
@@ -346,6 +377,27 @@ export default function WorkspaceShell({ project, onBack }: Props) {
 
       {restartModalOpen && (
         <RestartSessionModal onClose={() => setRestartModalOpen(false)} />
+      )}
+
+      {/* ── Deploy confirm modal (T-P4-022 3rd PR) — PO-triggered ── */}
+      {deployModalOpen && deployModalPayload && (
+        <DeployConfirmModal
+          tickets={deployModalPayload.tickets}
+          gitRef={deployModalPayload.gitRef}
+          project={deployModalPayload.project}
+          projectDir={deployModalPayload.projectDir}
+          owner={deployModalPayload.owner}
+          repo={deployModalPayload.repo}
+          branchName={deployModalPayload.branchName}
+          ticketId={deployModalPayload.ticketId}
+          ticketTitle={deployModalPayload.ticketTitle}
+          ticketAcceptance={deployModalPayload.ticketAcceptance}
+          vercelProject={deployModalPayload.vercelProject}
+          onClose={() => {
+            setDeployModalOpen(false)
+            setDeployModalPayload(null)
+          }}
+        />
       )}
 
       {quickOpenVisible && (

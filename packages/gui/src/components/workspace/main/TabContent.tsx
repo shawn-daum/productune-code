@@ -32,7 +32,7 @@ export default function TabContent({ tab }: Props) {
     case 'skill-matrix':   return <SkillMatrixTab props={tab.props} />
     case 'image':         return <ImageTab props={tab.props} />
     case 'binary':        return <BinaryTab props={tab.props} />
-    case 'version-history': return <VersionHistoryTab props={tab.props} />
+    case 'version-history': return <VersionHistoryTab />
     case 'deploy':            return <DeployTab props={tab.props} />
     case 'general-settings':  return <GeneralSettingsTab props={tab.props} />
     case 'team-wiki':         return <TeamWikiTab props={tab.props} />

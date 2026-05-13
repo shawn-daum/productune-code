@@ -3,6 +3,7 @@ import path from 'path'
 import os from 'os'
 import { createDeployment } from './vercel'
 import type { CreateDeploymentOptions, DeploymentResult } from './vercel'
+import { getVercelToken } from '../settings/ui-settings'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,19 @@ function loadGitHubToken(): string | null {
   }
 }
 
-function readVercelTokenFromEnv(projectDir: string): string | null {
+/**
+ * Resolve Vercel API token.
+ * Priority order (OQ-T022-1 (b)):
+ *   1. ~/.productune/settings.json integrations.vercel.token (GUI-managed)
+ *   2. <projectDir>/productune.env  VERCEL_TOKEN= line  (legacy / CI paths)
+ *   3. ~/.productune/productune.env VERCEL_TOKEN= line  (home fallback)
+ */
+function resolveVercelTokenForDeploy(projectDir: string): string | null {
+  // 1. settings.json (OQ-T022-1 (b) — "외부 연결" sub-tab)
+  const settingsToken = getVercelToken()
+  if (settingsToken) return settingsToken
+
+  // 2 & 3. Legacy productune.env fallback
   const candidates = [
     path.join(projectDir, 'productune.env'),
     path.join(os.homedir(), '.productune', 'productune.env'),
@@ -178,7 +191,7 @@ export async function squashMergePR(
 export async function triggerVercelDeployAfterMerge(
   opts: TriggerVercelDeployOptions,
 ): Promise<DeploymentResult> {
-  const vercelToken = readVercelTokenFromEnv(opts.projectDir)
+  const vercelToken = resolveVercelTokenForDeploy(opts.projectDir)
   if (!vercelToken) {
     throw new PrMergeError('VERCEL_TOKEN not found — check Settings', 'vercel-trigger-fail')
   }

@@ -4,7 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules, appendPendingPromotion, listPendingPromotions, resolvePendingPromotion, autoDropStale, markSurfaced, listAllPromotions, createDeployPR, squashMergePR, triggerVercelDeployAfterMerge, checkPRMergeability, classifyConflict, assertNotPoTurn, markPoTurnStart, markPoTurnEnd } from '@productune/core'
+import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules, appendPendingPromotion, listPendingPromotions, resolvePendingPromotion, autoDropStale, markSurfaced, listAllPromotions, createDeployPR, squashMergePR, triggerVercelDeployAfterMerge, checkPRMergeability, classifyConflict, assertNotPoTurn, markPoTurnStart, markPoTurnEnd, getVercelToken, setVercelToken } from '@productune/core'
 import type { UiLanguage, GitRules, PendingPromotion } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
@@ -860,6 +860,47 @@ ipcMain.handle('settings:getOsLocale', (): string => {
   return app.getLocale()
 })
 
+// ── Vercel token IPC (OQ-T022-1 (b) — "외부 연결" sub-tab) ───────────────────
+
+ipcMain.handle('settings:getVercelToken', (): string | null => {
+  return getVercelToken()
+})
+
+ipcMain.handle('settings:setVercelToken', (_event, token: string | null): { ok: boolean; error?: string } => {
+  try {
+    setVercelToken(token)
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'unknown error' }
+  }
+})
+
+// ── Deploy modal trigger (T-P4-022 — PO fires state:openDeployModal) ──────────
+// PO (or any main-process code) calls this IPC to open the DeployConfirmModal
+// in the renderer. Renderer listens via preload `onDeployModal`.
+
+ipcMain.handle(
+  'state:openDeployModal',
+  (
+    event,
+    payload: {
+      tickets: Array<{ id: string; title: string }>
+      gitRef: string
+      project: string
+      projectDir?: string
+      owner?: string
+      repo?: string
+      branchName?: string
+      ticketId?: string
+      ticketTitle?: string
+      ticketAcceptance?: string
+      vercelProject?: string
+    },
+  ): void => {
+    event.sender.send('deploy:openModal', payload)
+  },
+)
+
 // ── Git workflow rules IPC ─────────────────────────────────────────────────────
 
 ipcMain.handle('settings:loadRules', (_event, projectDir: string): GitRules => {
@@ -1007,6 +1048,26 @@ ipcMain.handle('slash:listProjectFiles', (_event, projectDir: string): QuickOpen
   return listProjectFilesRecursive(projectDir)
 })
 
+// ── Deploy state poll (T-P4-022 3rd PR) ──────────────────────────────────────
+
+ipcMain.handle(
+  'deploy:state',
+  async (
+    _event,
+    args: { projectDir: string; deploymentId: string },
+  ): Promise<{ ok: boolean; state?: string; error?: string }> => {
+    try {
+      const { getDeploymentState } = await import('@productune/core')
+      const token = getVercelToken()
+      if (!token) return { ok: false, error: 'VERCEL_TOKEN not configured' }
+      const state = await getDeploymentState(args.deploymentId, token)
+      return { ok: true, state }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+)
+
 // ── Deploy execute (T-P4-022 3rd PR) ─────────────────────────────────────────
 
 type DeployProgressStep =
@@ -1056,22 +1117,22 @@ ipcMain.handle(
       // Step 1: create PR
       emit('pr-creating')
       const prResult = await createDeployPR({
-        projectDir: args.projectDir,
+        branchName: args.branchName,
         owner: args.owner,
         repo: args.repo,
-        headBranch: args.branchName,
         baseBranch: 'main',
         ticketId: args.ticketId,
         ticketTitle: args.ticketTitle,
-        ticketAcceptance: args.ticketAcceptance,
+        ticketAcceptance: args.ticketAcceptance ?? '',
+        personaActivity: [],
       })
       emit('pr-created', { prUrl: prResult.prUrl, prNumber: prResult.prNumber })
 
       // Step 2: poll mergeability (up to 3 attempts, 2s apart)
-      let mergeCheck = await checkPRMergeability({ owner: args.owner, repo: args.repo, prNumber: prResult.prNumber, projectDir: args.projectDir })
+      let mergeCheck = await checkPRMergeability(args.owner, args.repo, prResult.prNumber)
       for (let attempt = 0; attempt < 2 && mergeCheck.mergeable === null; attempt++) {
         await new Promise(r => setTimeout(r, 2000))
-        mergeCheck = await checkPRMergeability({ owner: args.owner, repo: args.repo, prNumber: prResult.prNumber, projectDir: args.projectDir })
+        mergeCheck = await checkPRMergeability(args.owner, args.repo, prResult.prNumber)
       }
 
       if (mergeCheck.mergeable === false) {
@@ -1093,7 +1154,6 @@ ipcMain.handle(
         owner: args.owner,
         repo: args.repo,
         prNumber: prResult.prNumber,
-        projectDir: args.projectDir,
         commitTitle: `${args.ticketId}: ${args.ticketTitle}`,
       })
       emit('merged', { sha: mergeResult.mergedSha })
@@ -1102,12 +1162,12 @@ ipcMain.handle(
       emit('deploy-triggering')
       const deployResult = await triggerVercelDeployAfterMerge({
         projectDir: args.projectDir,
-        vercelProject: args.vercelProject,
-        ref: mergeResult.mergedSha,
+        project: args.vercelProject ?? '',
+        gitRef: mergeResult.mergedSha,
       })
-      emit('deploy-triggered', { deployUrl: deployResult.deployUrl })
+      emit('deploy-triggered', { deployUrl: deployResult.deploymentUrl })
 
-      return { ok: true, prUrl: prResult.prUrl, deployUrl: deployResult.deployUrl }
+      return { ok: true, prUrl: prResult.prUrl, deployUrl: deployResult.deploymentUrl }
     } catch (err: any) {
       const reason = err?.reason ?? 'generic'
       emit('failed', { error: err?.message ?? String(err), errorReason: reason })

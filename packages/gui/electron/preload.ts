@@ -228,6 +228,33 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:sessionRestarted', listener)
   },
 
+  // ── Vercel integration token (OQ-T022-1 (b)) ────────────────────────────────
+  getVercelToken: (): Promise<string | null> =>
+    ipcRenderer.invoke('settings:getVercelToken'),
+
+  setVercelToken: (token: string | null): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setVercelToken', token),
+
+  // ── Deploy modal trigger (T-P4-022 — PO → renderer) ─────────────────────────
+  /** Subscribe to PO-initiated deploy confirm modal trigger. Returns unsubscribe fn. */
+  onDeployModal: (cb: (payload: {
+    tickets: Array<{ id: string; title: string }>
+    gitRef: string
+    project: string
+    projectDir?: string
+    owner?: string
+    repo?: string
+    branchName?: string
+    ticketId?: string
+    ticketTitle?: string
+    ticketAcceptance?: string
+    vercelProject?: string
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('deploy:openModal', listener)
+    return () => ipcRenderer.removeListener('deploy:openModal', listener)
+  },
+
   // ── Settings ─────────────────────────────────────────────────────────────────
   getUiLanguage: (): Promise<'en' | 'ko'> =>
     ipcRenderer.invoke('settings:getUiLanguage'),
@@ -304,6 +331,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── Deploy execute + conflict resolution (T-P4-022 3rd PR) ──────────────────
   deploy: {
+    /** Poll the current state of a Vercel deployment. */
+    state: (args: { projectDir: string; deploymentId: string }): Promise<{ ok: boolean; state?: string; error?: string }> =>
+      ipcRenderer.invoke('deploy:state', args),
+
     execute: (args: {
       projectDir: string
       owner: string

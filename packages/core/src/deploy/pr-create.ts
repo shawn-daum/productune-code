@@ -30,8 +30,8 @@ export interface PersonaActivityEntry {
 }
 
 export interface CreateDeployPROptions {
-  /** Absolute path to the git worktree for this ticket */
-  worktreePath: string
+  /** Absolute path to the git worktree for this ticket (optional — unused by REST-only path) */
+  worktreePath?: string
   /** The branch name to open PR from (e.g. feature/T-P4-022/deploy-gate) */
   branchName: string
   /** Ticket identifier, e.g. T-P4-022 */

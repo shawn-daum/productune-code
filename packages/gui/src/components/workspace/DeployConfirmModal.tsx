@@ -1,11 +1,14 @@
 /**
- * DeployConfirmModal — T-P4-022 sub-d.
+ * DeployConfirmModal — T-P4-022 sub-d (updated for 3rd PR).
  *
  * Shown by PO when ≥1 ticket is done+qa-passed and conditions are met (§2).
- * User confirms → deploy:create IPC + ChatPanel trace.
- * User dismisses → caller handles 30-min snooze (2nd PR sub-b).
+ * [지금 배포] → opens deploy tab (singleton) + calls deploy:execute IPC.
+ * [나중에] / Esc / backdrop → caller handles 30-min snooze.
  *
- * Manual test path (1st PR): import and render with mock tickets prop.
+ * 3rd PR additions:
+ *   - Extended Props to include deploy execution context (owner/repo/branchName etc.)
+ *   - handleDeploy now calls api.deploy.execute (replaces api.deploy.create stub)
+ *   - Opens deploy tab immediately on confirm (singleton via tabId='deploy:main')
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -22,18 +25,35 @@ export interface DeployTicketSummary {
 
 interface Props {
   tickets: DeployTicketSummary[]
+  /** Git ref used for deploy (e.g. 'main' or a SHA) */
   gitRef: string
+  /** Vercel project name */
   project: string
   onClose: () => void
+  // 3rd PR: deploy execution context
+  projectDir?: string
+  owner?: string
+  repo?: string
+  branchName?: string
+  ticketId?: string
+  ticketTitle?: string
+  ticketAcceptance?: string
+  /** Vercel project id (may differ from `project` display name) */
+  vercelProject?: string
 }
 
-export default function DeployConfirmModal({ tickets, gitRef, project, onClose }: Props) {
+export default function DeployConfirmModal({
+  tickets, gitRef, project, onClose,
+  projectDir, owner, repo, branchName,
+  ticketId, ticketTitle, ticketAcceptance, vercelProject,
+}: Props) {
   const { t } = useTranslation()
   const [deploying, setDeploying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dismissRef = useRef<HTMLButtonElement>(null)
 
   const appendMessage = useWorkspace((s) => s.appendMessage)
+  const openTab       = useWorkspace((s) => s.openTab)
   const projectStore  = useWorkspace((s) => s.project)
   const userMode      = useUserMode((s) => s.mode)
   const isDev         = userMode === 'developer'
@@ -68,21 +88,50 @@ export default function DeployConfirmModal({ tickets, gitRef, project, onClose }
     setDeploying(true)
     setError(null)
 
-    const projectDir = projectStore?.projectDir ?? ''
+    const effectiveProjectDir = projectDir ?? projectStore?.projectDir ?? ''
     injectTrace('workspace.deploy.startTrace', { count: String(tickets.length) })
 
-    const api = (window as any).api
-    const started = Date.now()
+    // 1. Open deploy tab immediately (singleton — deduped by tabId)
+    openTab(
+      'deploy:main',
+      'deploy',
+      {
+        candidates: tickets.map((tk) => ({ ticket_id: tk.id, title: tk.title })),
+        projectDir: effectiveProjectDir,
+        owner: owner ?? '',
+        repo: repo ?? '',
+        branchName: branchName ?? '',
+        ticketId: ticketId ?? tickets[0]?.id ?? '',
+        ticketTitle: ticketTitle ?? tickets[0]?.title ?? '',
+        ticketAcceptance: ticketAcceptance ?? '',
+        vercelProject: vercelProject ?? project,
+      },
+      t('workspace.deploy.tabTitle'),
+    )
 
+    const api = (window as any).api
+
+    // 2. Call deploy:execute — PR create + squash merge + Vercel deploy
     try {
-      const result = await api.deploy?.create({
-        projectDir,
-        project,
-        gitRef,
-        options: { target: 'production' as const },
+      const result = await api.deploy?.execute({
+        projectDir: effectiveProjectDir,
+        owner: owner ?? '',
+        repo: repo ?? '',
+        branchName: branchName ?? '',
+        ticketId: ticketId ?? tickets[0]?.id ?? '',
+        ticketTitle: ticketTitle ?? tickets[0]?.title ?? '',
+        ticketAcceptance: ticketAcceptance ?? '',
+        vercelProject: vercelProject ?? project,
       })
 
       if (!result?.ok) {
+        // Conflict is handled by ConflictResolveModal in DeployTab
+        if (result?.errorReason === 'conflict') {
+          // Modal stays open for context — user switches to deploy tab
+          setDeploying(false)
+          onClose()
+          return
+        }
         const errMsg = result?.code === 'auth'
           ? t('workspace.deploy.errorAuth')
           : (result?.error ?? t('workspace.deploy.errorGeneric'))
@@ -92,13 +141,6 @@ export default function DeployConfirmModal({ tickets, gitRef, project, onClose }
         return
       }
 
-      const elapsed = Math.round((Date.now() - started) / 1000)
-      const mins = Math.floor(elapsed / 60)
-      const secs = elapsed % 60
-      injectTrace('workspace.deploy.completeTrace', {
-        minutes: String(mins),
-        seconds: String(secs),
-      })
       onClose()
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -117,19 +159,31 @@ export default function DeployConfirmModal({ tickets, gitRef, project, onClose }
     : t('workspace.deploy.confirmBody.planner', { count: tickets.length })
 
   return (
-    <div style={overlay} role="dialog" aria-modal="true" aria-labelledby="dcm-title">
-      <div style={modal}>
+    // Backdrop click → dismiss (§5.2.2: same as "나중에")
+    <div
+      style={overlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dcm-title"
+      onClick={(e) => { if (e.target === e.currentTarget && !deploying) onClose() }}
+    >
+      <div style={modal} onClick={(e) => e.stopPropagation()}>
         <h2 style={titleStyle} id="dcm-title">{title}</h2>
 
         <p style={bodyStyle}>{bodyIntro}</p>
 
         <ul style={ticketList}>
-          {tickets.map((tk) => (
+          {tickets.slice(0, 5).map((tk) => (
             <li key={tk.id} style={ticketItem}>
-              {isDev && <span style={ticketId}>{tk.id}</span>}
-              <span style={ticketTitle}>{tk.title}</span>
+              {isDev && <span style={ticketId_}>{tk.id}</span>}
+              <span style={ticketTitle_}>{tk.title}</span>
             </li>
           ))}
+          {tickets.length > 5 && (
+            <li style={{ ...ticketItem, color: '#505050' }}>
+              ... +{tickets.length - 5}
+            </li>
+          )}
         </ul>
 
         {error && <p style={errorStyle}>{error}</p>}
@@ -217,14 +271,14 @@ const ticketItem: React.CSSProperties = {
   alignItems: 'baseline',
 }
 
-const ticketId: React.CSSProperties = {
+const ticketId_: React.CSSProperties = {
   fontSize: 10,
   color: '#606060',
   fontFamily: 'monospace',
   flexShrink: 0,
 }
 
-const ticketTitle: React.CSSProperties = {
+const ticketTitle_: React.CSSProperties = {
   color: '#C0C0C0',
 }
 

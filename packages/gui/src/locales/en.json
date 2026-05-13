@@ -399,13 +399,17 @@
         "trivialTitle": "Minor differences found",
         "trivialBody": "Small formatting differences were detected. They can be cleaned up automatically.",
         "trivialCta": "Continue",
-        "semanticTitle": "This task changed the same files as another task",
+        "semanticTitle": "Two tasks changed the same location",
         "semanticBodyFiles": "Changes overlap in {{count}} file(s): {{files}}. How would you like to proceed?",
         "semanticBodyNoFiles": "Changes overlap with another task. How would you like to proceed?",
         "moreFiles": "and {{count}} more…",
         "actionOurs": "Keep this task's version",
         "actionTheirs": "Keep the other task's version",
-        "actionManual": "Check manually (external tool)"
+        "actionManual": "Check manually (external tool)",
+        "actionRetry": "Fix and retry",
+        "actionSwitch": "Switch to another task",
+        "actionHelp": "Help",
+        "abort": "Cancel deployment"
       },
       "error": {
         "githubAuth": "The connection to your account was lost. Please reconnect.",

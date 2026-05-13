@@ -12,8 +12,11 @@ export {
   getUserMode,
   setUserMode,
   settingsFileExists,
+  getVercelToken,
+  setVercelToken,
+  markVercelTokenValidated,
 } from './settings/ui-settings'
-export type { UiLanguage, UiSettings, UserMode } from './settings/ui-settings'
+export type { UiLanguage, UiSettings, UserMode, IntegrationsSettings } from './settings/ui-settings'
 
 export {
   loadRules,

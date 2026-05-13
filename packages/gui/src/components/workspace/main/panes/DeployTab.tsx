@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next'
 import type { DeploymentState } from '@productune/core'
 import ConflictResolveModal from '../../ConflictResolveModal'
 import type { ConflictStrategy } from '../../ConflictResolveModal'
+// ConflictStrategy = 'manual' | 'abort' (3rd PR — updated from 3-option to 2-option)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -142,7 +143,6 @@ export default function DeployTab({ props }: Props) {
 
   // 3rd PR: conflict modal state
   const [conflictModalOpen, setConflictModalOpen] = useState(false)
-  const [conflictType, setConflictType] = useState<'trivial' | 'semantic'>('semantic')
   const [conflictPaths, setConflictPaths] = useState<string[]>([])
   const [conflictCtx, setConflictCtx] = useState<{ owner: string; repo: string; prNumber?: number } | null>(null)
 
@@ -244,7 +244,6 @@ export default function DeployTab({ props }: Props) {
       conflictType?: 'trivial' | 'semantic'
     }) => {
       setConflictPaths(ev.conflictPaths ?? [])
-      setConflictType(ev.conflictType ?? 'semantic')
       setConflictCtx({
         owner: ev.owner,
         repo: ev.repo,
@@ -295,18 +294,23 @@ export default function DeployTab({ props }: Props) {
   }, [executing, projectDir, owner, repo, branchName, ticketId, ticketTitle, ticketAcceptance, vercelProject])
 
   // 3rd PR: conflict resolution handler
+  // strategy === 'manual': user will manually fix conflict and retry
+  // strategy === 'abort': deploy aborted (same as cancel / Esc)
   const handleConflictResolve = useCallback(async (strategy: ConflictStrategy) => {
     setConflictModalOpen(false)
-    if (!conflictCtx) return
+    if (strategy === 'abort') {
+      setExecuting(false)
+      return
+    }
+    // 'manual': acknowledge and reset state — user will retry from DeployTab
     const api = (window as any).api
     await api?.deploy?.resolveConflict({
       strategy,
-      owner: conflictCtx.owner,
-      repo: conflictCtx.repo,
-      prNumber: conflictCtx.prNumber,
+      owner: conflictCtx?.owner ?? '',
+      repo: conflictCtx?.repo ?? '',
+      prNumber: conflictCtx?.prNumber,
       projectDir: projectDir ?? '',
     })
-    // After resolution, reset executing state
     setExecuting(false)
   }, [conflictCtx, projectDir])
 
@@ -332,10 +336,9 @@ export default function DeployTab({ props }: Props) {
 
   return (
     <>
-      {/* ── ConflictResolveModal (sub-e) ── */}
+      {/* ── ConflictResolveModal (sub-g, 3rd PR) ── */}
       {conflictModalOpen && (
         <ConflictResolveModal
-          conflictType={conflictType}
           conflictPaths={conflictPaths}
           onResolve={handleConflictResolve}
           onCancel={handleConflictCancel}
