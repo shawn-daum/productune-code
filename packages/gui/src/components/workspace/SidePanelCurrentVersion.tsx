@@ -50,9 +50,9 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, on
     if (selectedVersionId) return  // already selected externally
     onSelect(currentVersionId)
     openTab(
-      `version-current:${currentVersionId}`,
-      'version-history',
-      { mode: 'current' },
+      `ticket-review:${currentVersionId}`,
+      'ticket-review',
+      { versionFilter: currentVersionId },
       currentVersionId,
     )
     window.dispatchEvent(new CustomEvent('version-select', { detail: { versionId: currentVersionId } }))

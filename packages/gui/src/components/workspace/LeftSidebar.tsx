@@ -64,7 +64,7 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
       if (selectedVersionId === prev) {
         setSelectedVersionId(cv)
       }
-      updateTabId(`version-current:${prev}`, `version-current:${cv}`, cv)
+      updateTabId(`ticket-review:${prev}`, `ticket-review:${cv}`, cv)
     }
 
     prevCurrentVersionRef.current = cv ?? null
@@ -75,9 +75,9 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
     setSelectedVersionId(versionId)
     if (isCurrent) {
       openTab(
-        `version-current:${versionId}`,
-        'version-history',
-        { mode: 'current' },
+        `ticket-review:${versionId}`,
+        'ticket-review',
+        { versionFilter: versionId },
         versionId,
       )
     } else if (versionId === '__unassigned__') {

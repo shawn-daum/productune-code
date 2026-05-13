@@ -262,180 +262,6 @@ function EmptyState({ message }: { message: string }) {
   )
 }
 
-// ── Kanban board (current version) ────────────────────────────────────────────
-//
-// 4 columns: todo / in-progress / review (= QA stage) / done.
-// Maps `review` status to the "품질 확인 / QA" column label.
-// Read-only: no drag-drop, no status mutation.
-// Card click → opens ticket-review tab for that ticket (plan §2.2.1).
-
-type KanbanStatus = 'todo' | 'in-progress' | 'review' | 'done'
-
-const KANBAN_COLUMNS: KanbanStatus[] = ['todo', 'in-progress', 'review', 'done']
-
-function kanbanColumnLabelKey(status: KanbanStatus): string {
-  switch (status) {
-    case 'todo':        return 'workspace.versionHistory.kanban.column.todo'
-    case 'in-progress': return 'workspace.versionHistory.kanban.column.inProgress'
-    case 'review':      return 'workspace.versionHistory.kanban.column.qa'
-    case 'done':        return 'workspace.versionHistory.kanban.column.done'
-  }
-}
-
-function kanbanColumnAccentColor(status: KanbanStatus): string {
-  switch (status) {
-    case 'todo':        return '#505050'
-    case 'in-progress': return '#FF6B2B'
-    case 'review':      return '#E0B040'
-    case 'done':        return '#60B860'
-  }
-}
-
-function personaChipStyle(persona: string): React.CSSProperties {
-  const colorMap: Record<string, string> = {
-    'pdt-po':        '#FF6B2B',
-    'pdt-designer':  '#A878E0',
-    'pdt-developer': '#60B860',
-    'pdt-qa':        '#E07060',
-  }
-  const color = colorMap[persona] ?? '#707070'
-  return {
-    fontSize: 9,
-    fontWeight: 700,
-    color,
-    background: color + '22',
-    padding: '1px 5px',
-    borderRadius: 2,
-    fontFamily: 'monospace',
-    display: 'inline-block',
-    flexShrink: 0,
-    whiteSpace: 'nowrap',
-  }
-}
-
-function qaChipStyle(qa: string): React.CSSProperties {
-  const c =
-    qa === 'pass' ? { fg: '#60B860', bg: '#0A2A0A' } :
-    qa === 'fail' ? { fg: '#E04040', bg: '#2A0808' } :
-                    { fg: '#606060', bg: '#1A1A1A' }
-  return {
-    fontSize: 9,
-    fontWeight: 700,
-    color: c.fg,
-    background: c.bg,
-    padding: '1px 5px',
-    borderRadius: 2,
-    fontFamily: 'monospace',
-    flexShrink: 0,
-    whiteSpace: 'nowrap',
-  }
-}
-
-interface KanbanCardProps {
-  ticket: Ticket
-  onOpenTicket: (ticket: Ticket) => void
-}
-
-function KanbanCard({ ticket, onOpenTicket }: KanbanCardProps) {
-  const assignee = (ticket as any).assignee as string | undefined
-  const qaStatus = (ticket as any).qa_status as string | undefined
-
-  return (
-    <button
-      style={kanbanCard}
-      onClick={() => onOpenTicket(ticket)}
-      aria-label={`${ticket.ticket_id} — ${ticket.title ?? ''}`}
-    >
-      <div style={kanbanCardTop}>
-        <span style={kanbanCardId}>{ticket.ticket_id}</span>
-        {assignee && <span style={personaChipStyle(assignee)}>{assignee.replace('pdt-', '')}</span>}
-      </div>
-      <div style={kanbanCardTitle}>{ticket.title ?? ticket.slug ?? '(no title)'}</div>
-      {qaStatus && (
-        <div style={kanbanCardBottom}>
-          <span style={qaChipStyle(qaStatus)}>qa:{qaStatus}</span>
-        </div>
-      )}
-    </button>
-  )
-}
-
-interface KanbanColumnProps {
-  status: KanbanStatus
-  tickets: Ticket[]
-  onOpenTicket: (ticket: Ticket) => void
-}
-
-function KanbanColumn({ status, tickets, onOpenTicket }: KanbanColumnProps) {
-  const { t } = useTranslation()
-  const accent = kanbanColumnAccentColor(status)
-  return (
-    <div style={kanbanColumn}>
-      <div style={{ ...kanbanColumnHeader, borderBottom: `2px solid ${accent}` }}>
-        <span style={kanbanColumnLabel}>{t(kanbanColumnLabelKey(status))}</span>
-        <span style={kanbanColumnCount}>{tickets.length}</span>
-      </div>
-      <div style={kanbanColumnBody}>
-        {tickets.length === 0 ? (
-          <div style={kanbanColumnEmpty}>
-            {t('workspace.versionHistory.kanban.empty')}
-          </div>
-        ) : (
-          tickets.map((tk) => (
-            <KanbanCard key={tk.ticket_id} ticket={tk} onOpenTicket={onOpenTicket} />
-          ))
-        )}
-      </div>
-    </div>
-  )
-}
-
-interface KanbanBoardProps {
-  tickets: Ticket[]
-}
-
-function KanbanBoard({ tickets }: KanbanBoardProps) {
-  const openTab = useWorkspace((s) => s.openTab)
-
-  const byStatus = useMemo(() => {
-    const out: Record<KanbanStatus, Ticket[]> = { todo: [], 'in-progress': [], review: [], done: [] }
-    for (const tk of tickets) {
-      const s = (tk.status ?? 'todo') as string
-      const col: KanbanStatus =
-        s === 'in-progress' ? 'in-progress' :
-        s === 'review'      ? 'review' :
-        s === 'done'        ? 'done' :
-                              'todo'
-      out[col].push(tk)
-    }
-    return out
-  }, [tickets])
-
-  const handleOpenTicket = (ticket: Ticket) => {
-    const ticketId = ticket.ticket_id
-    const ticketPath = (ticket as any).path as string | undefined
-    openTab(
-      `ticket-review:${ticketId}`,
-      'ticket-review',
-      { ticketId, ticketPath },
-      ticketId,
-    )
-  }
-
-  return (
-    <div style={kanbanBoard}>
-      {KANBAN_COLUMNS.map((col) => (
-        <KanbanColumn
-          key={col}
-          status={col}
-          tickets={byStatus[col]}
-          onOpenTicket={handleOpenTicket}
-        />
-      ))}
-    </div>
-  )
-}
-
 // ── Filter toolbar component ──────────────────────────────────────────────────
 
 const PERSONA_COLORS: Record<PersonaKey, string> = {
@@ -635,9 +461,7 @@ export default function VersionHistoryView() {
     return <EmptyState message={t('workspace.versionHistory.empty')} />
   }
 
-  // Branch logic (plan §2.2.3):
-  const currentVersionId = poState?.current_version ?? null
-  const isCurrentVersion = selectedVersionId !== null && selectedVersionId === currentVersionId
+  // Branch logic:
   const isUnassigned = selectedVersionId === '__unassigned__'
 
   // Find version metadata (not applicable for unassigned)
@@ -672,9 +496,9 @@ export default function VersionHistoryView() {
     dispatch({ type: 'reset-dates', from: defaultFrom, to: defaultTo })
   }, [selectedVersionId, defaultFrom, defaultTo])
 
-  // Fetch Vercel deploy events on past-version select (not current, not unassigned)
+  // Fetch Vercel deploy events on past-version select (not unassigned)
   useEffect(() => {
-    if (isCurrentVersion || isUnassigned || !selectedVersionId) {
+    if (isUnassigned || !selectedVersionId) {
       setDeployEvents([])
       setDeployLoading(false)
       lastFetchedVersionRef.current = null
@@ -710,7 +534,7 @@ export default function VersionHistoryView() {
       setDeployLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedVersionId, isCurrentVersion, isUnassigned])
+  }, [selectedVersionId, isUnassigned])
 
   // Subtitle counts
   const ticketCount = versionTickets.length
@@ -734,37 +558,6 @@ export default function VersionHistoryView() {
     deploys: deployCount,
     duration: durationLabel ?? '—',
   })
-
-  // ── Current version → kanban board (no filter toolbar per §2.4 original spec)
-  // NOTE: §2.4 says filter applies to kanban too. We add it on both paths.
-  // ─────────────────────────────────────────────────────────────────────────────
-
-  if (isCurrentVersion) {
-    // Kanban filter: persona + date applied to tickets
-    const filteredKanbanTickets = versionTickets.filter((tk) => {
-      if (!personaMatchesFilter(tk, filter.personas)) return false
-      const d = ticketDateKey(tk)
-      return dateInRange(d, filter.dateFrom, filter.dateTo)
-    })
-
-    return (
-      <div style={viewWrap}>
-        <div style={headerWrap}>
-          <div style={headerTitle}>
-            {t('workspace.versionHistory.title')} — {versionLabel}
-          </div>
-          <div style={headerSubtitle}>{subtitle}</div>
-        </div>
-        <FilterToolbar
-          filter={filter}
-          dispatch={dispatch}
-          defaultFrom={defaultFrom}
-          defaultTo={defaultTo}
-        />
-        <KanbanBoard tickets={filteredKanbanTickets} />
-      </div>
-    )
-  }
 
   // ── Past / Unassigned → linear card list + filter toolbar ─────────────────
 
@@ -1143,110 +936,3 @@ const emptyText: React.CSSProperties = {
   lineHeight: 1.5,
 }
 
-// ── Kanban board styles ────────────────────────────────────────────────────────
-
-const kanbanBoard: React.CSSProperties = {
-  flex: 1,
-  display: 'grid',
-  gridTemplateColumns: 'repeat(4, minmax(160px, 1fr))',
-  gap: 8,
-  padding: '12px 16px',
-  overflowX: 'auto',
-  overflowY: 'hidden',
-}
-
-const kanbanColumn: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  background: '#0A0A0A',
-  border: '1px solid #1A1A1A',
-  borderRadius: 6,
-  overflow: 'hidden',
-  minWidth: 160,
-}
-
-const kanbanColumnHeader: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  padding: '8px 10px',
-  background: '#0F0F0F',
-  flexShrink: 0,
-}
-
-const kanbanColumnLabel: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 700,
-  color: '#E0E0E0',
-  textTransform: 'uppercase',
-  letterSpacing: '0.05em',
-}
-
-const kanbanColumnCount: React.CSSProperties = {
-  fontSize: 11,
-  color: '#707070',
-  fontFamily: 'monospace',
-}
-
-const kanbanColumnBody: React.CSSProperties = {
-  flex: 1,
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 6,
-  padding: 8,
-  overflowY: 'auto',
-}
-
-const kanbanColumnEmpty: React.CSSProperties = {
-  fontSize: 11,
-  color: '#3A3A3A',
-  textAlign: 'center',
-  padding: '12px 4px',
-  lineHeight: 1.5,
-}
-
-const kanbanCard: React.CSSProperties = {
-  background: '#141414',
-  border: '1px solid #1A1A1A',
-  borderRadius: 4,
-  padding: '8px 10px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 5,
-  cursor: 'pointer',
-  textAlign: 'left',
-  width: '100%',
-  transition: 'border-color 0.1s',
-}
-
-const kanbanCardTop: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 6,
-}
-
-const kanbanCardId: React.CSSProperties = {
-  fontSize: 10,
-  color: '#FF6B2B',
-  fontFamily: 'monospace',
-  fontWeight: 700,
-  flexShrink: 0,
-}
-
-const kanbanCardTitle: React.CSSProperties = {
-  fontSize: 11,
-  color: '#E0E0E0',
-  lineHeight: 1.4,
-  overflow: 'hidden',
-  display: '-webkit-box',
-  WebkitLineClamp: 2,
-  WebkitBoxOrient: 'vertical',
-}
-
-const kanbanCardBottom: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 4,
-  flexWrap: 'wrap',
-}

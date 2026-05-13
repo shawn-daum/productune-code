@@ -11,7 +11,8 @@ interface Props {
   props?: Record<string, unknown>
 }
 
-export default function TicketReviewTab({ props: _props }: Props) {
+export default function TicketReviewTab({ props: tabProps }: Props) {
   const poState = useWorkspace((s) => s.poState)
-  return <TicketDashboardView poState={poState} />
+  const versionFilter = tabProps?.versionFilter as string | undefined
+  return <TicketDashboardView poState={poState} versionFilter={versionFilter} />
 }

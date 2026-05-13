@@ -6,16 +6,21 @@ import { useWorkspace } from '../../store/workspace'
 
 interface Props {
   poState: PoState | null
+  versionFilter?: string
 }
 
 const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'done', 'blocked', 'abandoned']
 
-export default function TicketDashboardView({ poState }: Props) {
+export default function TicketDashboardView({ poState, versionFilter }: Props) {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const { tickets: scannedTickets, loading } = useTicketScan(project?.projectDir ?? null)
 
-  const allTickets = useMemo(() => collectAllTickets(poState, scannedTickets), [poState, scannedTickets])
+  const allTickets = useMemo(() => {
+    const raw = collectAllTickets(poState, scannedTickets)
+    if (!versionFilter) return raw
+    return raw.filter((t) => t.version === versionFilter)
+  }, [poState, scannedTickets, versionFilter])
   const byStatus = useMemo(() => groupByStatus(allTickets), [allTickets])
 
   return (
