@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Project } from '../lib/types'
 import { useWorkspace } from '../store/workspace'
 import { useSessionHealth } from '../store/sessionHealth'
@@ -16,6 +17,8 @@ import { usePoChat } from '../store/poChat'
 import { useTicketScan } from '../lib/useTicketScan'
 import DeployConfirmModal from '../components/workspace/DeployConfirmModal'
 import type { DeployTicketSummary } from '../components/workspace/DeployConfirmModal'
+import BaseDirtyModal from '../components/workspace/BaseDirtyModal'
+import type { Message } from '../lib/types'
 
 interface Props {
   project: Project
@@ -25,6 +28,7 @@ interface Props {
 const CHORD_TIMEOUT_MS = 1000
 
 export default function WorkspaceShell({ project, onBack }: Props) {
+  const { t } = useTranslation()
   const phase = useWorkspace((s) => s.phase)
   const setProject = useWorkspace((s) => s.setProject)
   const setPoState = useWorkspace((s) => s.setPoState)
@@ -36,6 +40,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const addNewTab = useWorkspace((s) => s.addNewTab)
   const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
   const messages = useWorkspace((s) => s.messages)
+  const appendMessage = useWorkspace((s) => s.appendMessage)
 
   const setHealth = useSessionHealth((s) => s.setHealth)
   const clearHealth = useSessionHealth((s) => s.clearHealth)
@@ -61,6 +66,15 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     ticketAcceptance?: string
     vercelProject?: string
   } | null>(null)
+
+  // ── BaseDirtyModal state (T-P4-092) ─────────────────────────────────────────
+  const [baseDirtyModal, setBaseDirtyModal] = useState<{
+    projectDir: string
+    ticketId: string
+    slug: string
+    type: 'feature' | 'fix'
+  } | null>(null)
+
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
   const restartModalOpen = usePoChat((s) => s.restartModalOpen)
   const setRestartModalOpen = usePoChat((s) => s.setRestartModalOpen)
@@ -149,6 +163,59 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     return () => off?.()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ── Worktree create result IPC subscription (T-P4-092) ─────────────────────
+  // main emits worktree:createResult → show trace or BaseDirtyModal.
+  useEffect(() => {
+    const api = (window as any).api
+    const off = api.worktree?.onCreateResult?.((payload: {
+      result: any
+      ticketId: string
+      slug: string
+      type: string
+      projectDir: string
+    }) => {
+      const { result, ticketId, slug, type, projectDir: pDir } = payload
+
+      const appendTrace = (text: string) => {
+        const trace: Message = {
+          id: `wt-trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          role: 'system',
+          kind: 'trace',
+          text,
+          status: 'done',
+          created_at: new Date().toISOString(),
+        }
+        appendMessage(trace)
+      }
+
+      if (result.ok) {
+        appendTrace(t('workspace.worktree.autoCreatedTrace'))
+        return
+      }
+
+      switch (result.reason) {
+        case 'base-dirty':
+          setBaseDirtyModal({
+            projectDir: pDir,
+            ticketId,
+            slug,
+            type: type === 'fix' ? 'fix' : 'feature',
+          })
+          break
+        case 'branch-exists':
+          appendTrace(t('workspace.worktree.branchExistsTrace'))
+          break
+        case 'hook-not-installed':
+          appendTrace(t('workspace.worktree.hookMissingTrace'))
+          break
+        default:
+          appendTrace(t('workspace.worktree.gitErrorTrace'))
+      }
+    })
+    return () => off?.()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t, appendMessage])
 
   // Open a Tickets board tab when user clicks the tickets activity icon.
   // Subsequent clicks dedupe via openTab's existing-id check.
@@ -396,6 +463,20 @@ export default function WorkspaceShell({ project, onBack }: Props) {
           onClose={() => {
             setDeployModalOpen(false)
             setDeployModalPayload(null)
+          }}
+        />
+      )}
+
+      {/* ── BaseDirtyModal (T-P4-092) — base branch dirty on worktree create ── */}
+      {baseDirtyModal && (
+        <BaseDirtyModal
+          projectDir={baseDirtyModal.projectDir}
+          ticketId={baseDirtyModal.ticketId}
+          slug={baseDirtyModal.slug}
+          type={baseDirtyModal.type}
+          onClose={() => setBaseDirtyModal(null)}
+          onSuccess={() => {
+            setBaseDirtyModal(null)
           }}
         />
       )}

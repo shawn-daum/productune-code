@@ -426,6 +426,20 @@
         "actionViewLog": "로그 보기"
       }
     },
+    "worktree": {
+      "autoCreatedTrace": "[system] 작업 공간이 준비됐어요",
+      "branchExistsTrace": "[system] 같은 이름의 작업 공간이 있어요. 이어서 작업할게요",
+      "hookMissingTrace": "[system] 기본 안전장치가 아직 설치되지 않았어요. 잠시 후 다시 시도해주세요",
+      "gitErrorTrace": "[system] 작업 공간을 만들지 못했어요. 설정에서 다시 시도할 수 있어요"
+    },
+    "baseDirty": {
+      "title": "저장 안 된 변경이 있어요",
+      "body": "현재 작업 중인 변경이 보존 안 되어 있어요. 보관 후 새 작업 시작 / 지금 저장 / 취소 중 선택해주세요.",
+      "cancel": "취소 — ticket 은 유지, 작업 공간만 보류",
+      "saveNow": "지금 저장",
+      "setAside": "보관",
+      "inlineError": "작업 공간을 준비하지 못했어요. 다른 방법을 선택해주세요."
+    },
     "versionHistory": {
       "sidePanel": {
         "title": "지난 버전",

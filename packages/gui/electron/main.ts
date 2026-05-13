@@ -4,8 +4,8 @@ import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
-import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules, appendPendingPromotion, listPendingPromotions, resolvePendingPromotion, autoDropStale, markSurfaced, listAllPromotions, createDeployPR, squashMergePR, triggerVercelDeployAfterMerge, checkPRMergeability, classifyConflict, assertNotPoTurn, markPoTurnStart, markPoTurnEnd, getVercelToken, setVercelToken } from '@productune/core'
-import type { UiLanguage, GitRules, PendingPromotion } from '@productune/core'
+import { initProject, bootstrapClaudeSettings, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, getUiLanguage, setUiLanguage, settingsFileExists, loadRules, saveRules, appendPendingPromotion, listPendingPromotions, resolvePendingPromotion, autoDropStale, markSurfaced, listAllPromotions, createDeployPR, squashMergePR, triggerVercelDeployAfterMerge, checkPRMergeability, classifyConflict, assertNotPoTurn, markPoTurnStart, markPoTurnEnd, getVercelToken, setVercelToken, createWorktree, stashAndCreate, commitAndCreate } from '@productune/core'
+import type { UiLanguage, GitRules, PendingPromotion, CreateWorktreeArgs } from '@productune/core'
 import { getSession, appendMessage, setClaudeSessionId, clearSession } from './chat-store'
 import type { Message } from './chat-store'
 import { runPoTurn, emitToWebContents } from './po-runner'
@@ -965,6 +965,60 @@ ipcMain.handle('settings:saveRules', (_event, projectDir: string, rules: GitRule
     return { ok: false, error: e?.message ?? 'unknown error' }
   }
 })
+
+// ── Worktree IPC (T-P4-092) ──────────────────────────────────────────────────
+// Three invoke handlers: create / stashAndCreate / commitAndCreate.
+// After worktree:create succeeds or fails, main emits worktree:createResult
+// to the renderer so WorkspaceShell can show traces / BaseDirtyModal.
+
+ipcMain.handle(
+  'worktree:create',
+  async (event, args: CreateWorktreeArgs) => {
+    const result = await createWorktree(args)
+    event.sender.send('worktree:createResult', {
+      result,
+      ticketId: args.ticketId,
+      slug: args.slug,
+      type: args.type,
+      projectDir: args.projectDir,
+    })
+    return result
+  },
+)
+
+ipcMain.handle(
+  'worktree:stashAndCreate',
+  async (event, args: CreateWorktreeArgs) => {
+    const result = await stashAndCreate(args)
+    if (result.ok) {
+      event.sender.send('worktree:createResult', {
+        result,
+        ticketId: args.ticketId,
+        slug: args.slug,
+        type: args.type,
+        projectDir: args.projectDir,
+      })
+    }
+    return result
+  },
+)
+
+ipcMain.handle(
+  'worktree:commitAndCreate',
+  async (event, args: CreateWorktreeArgs & { message?: string }) => {
+    const result = await commitAndCreate(args)
+    if (result.ok) {
+      event.sender.send('worktree:createResult', {
+        result,
+        ticketId: args.ticketId,
+        slug: args.slug,
+        type: args.type,
+        projectDir: args.projectDir,
+      })
+    }
+    return result
+  },
+)
 
 // ── Explorer IPC (T-P4-045) ───────────────────────────────────────────────────
 

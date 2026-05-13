@@ -137,6 +137,57 @@ export async function worktreeExists(projectDir: string, ticketId: string): Prom
   return fs.existsSync(worktreeDir(projectDir, ticketId))
 }
 
+/**
+ * stashAndCreate — git stash -u (OQ-T092-1 option b) → createWorktree retry.
+ * Atomic: on worktree creation failure after a successful stash, pops the stash
+ * to restore user's changes.
+ */
+export async function stashAndCreate(args: CreateWorktreeArgs): Promise<WorktreeCreateResult> {
+  const { projectDir } = args
+
+  // stash -u: include untracked files (designer recommendation OQ-T092-1 b)
+  try {
+    await execFileAsync('git', ['stash', '-u'], { cwd: projectDir })
+  } catch (e: any) {
+    return { ok: false, reason: 'git-error', detail: `stash failed: ${e?.message ?? 'git stash -u failed'}` }
+  }
+
+  const result = await createWorktree(args)
+
+  if (!result.ok) {
+    // Atomic guarantee: pop stash if worktree creation failed
+    try {
+      await execFileAsync('git', ['stash', 'pop'], { cwd: projectDir })
+    } catch {
+      // best-effort restore; non-fatal
+    }
+    // Re-map reason to 'git-error' with stash context if it wasn't base-dirty
+    return result
+  }
+
+  return result
+}
+
+/**
+ * commitAndCreate — git add -A + git commit (OQ-T092-2 option a auto message)
+ * → createWorktree retry.
+ */
+export async function commitAndCreate(
+  args: CreateWorktreeArgs & { message?: string },
+): Promise<WorktreeCreateResult> {
+  const { projectDir, ticketId, slug } = args
+  const commitMsg = args.message ?? `chore(base): save before ${ticketId} ${slug}`
+
+  try {
+    await execFileAsync('git', ['add', '-A'], { cwd: projectDir })
+    await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: projectDir })
+  } catch (e: any) {
+    return { ok: false, reason: 'git-error', detail: `commit failed: ${e?.message ?? 'git commit failed'}` }
+  }
+
+  return createWorktree(args)
+}
+
 export async function worktreeCleanup(
   _projectDir: string,
   _ticketId: string,

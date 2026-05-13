@@ -336,6 +336,50 @@ contextBridge.exposeInMainWorld('api', {
   }>; error?: string }> =>
     ipcRenderer.invoke('deploy:fetch-events', args),
 
+  // ── Worktree IPC (T-P4-092) ──────────────────────────────────────────────────
+  worktree: {
+    /** Create a new worktree for a ticket. Returns WorktreeCreateResult. */
+    create: (args: {
+      projectDir: string
+      ticketId: string
+      slug: string
+      type: 'feature' | 'fix'
+    }): Promise<any> =>
+      ipcRenderer.invoke('worktree:create', args),
+
+    /** Stash base changes (git stash -u) then create worktree. */
+    stashAndCreate: (args: {
+      projectDir: string
+      ticketId: string
+      slug: string
+      type: 'feature' | 'fix'
+    }): Promise<any> =>
+      ipcRenderer.invoke('worktree:stashAndCreate', args),
+
+    /** Commit base changes (auto message) then create worktree. */
+    commitAndCreate: (args: {
+      projectDir: string
+      ticketId: string
+      slug: string
+      type: 'feature' | 'fix'
+      message?: string
+    }): Promise<any> =>
+      ipcRenderer.invoke('worktree:commitAndCreate', args),
+
+    /** Subscribe to worktree:createResult push events (main → renderer). */
+    onCreateResult: (cb: (payload: {
+      result: any
+      ticketId: string
+      slug: string
+      type: string
+      projectDir: string
+    }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+      ipcRenderer.on('worktree:createResult', listener)
+      return () => ipcRenderer.removeListener('worktree:createResult', listener)
+    },
+  },
+
   // ── Deploy execute + conflict resolution (T-P4-022 3rd PR) ──────────────────
   deploy: {
     /** Poll the current state of a Vercel deployment. */

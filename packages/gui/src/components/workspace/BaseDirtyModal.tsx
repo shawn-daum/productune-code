@@ -67,11 +67,11 @@ export default function BaseDirtyModal({
 
   const handleResult = (result: any) => {
     if (result.ok) {
-      appendTrace(t('settings.worktree.autoCreated', { ticketId }))
+      appendTrace(t('workspace.worktree.autoCreatedTrace', { ticketId }))
       onSuccess(result.worktreePath, result.branchName)
       onClose()
     } else {
-      setInlineError(t('settings.worktree.baseDirtyInlineError'))
+      setInlineError(t('workspace.baseDirty.inlineError'))
     }
   }
 
@@ -84,7 +84,7 @@ export default function BaseDirtyModal({
       const result = await api.worktree.stashAndCreate({ projectDir, ticketId, slug, type })
       handleResult(result)
     } catch {
-      setInlineError(t('settings.worktree.baseDirtyInlineError'))
+      setInlineError(t('workspace.baseDirty.inlineError'))
     } finally {
       setBusy(null)
     }
@@ -99,7 +99,7 @@ export default function BaseDirtyModal({
       const result = await api.worktree.commitAndCreate({ projectDir, ticketId, slug, type })
       handleResult(result)
     } catch {
-      setInlineError(t('settings.worktree.baseDirtyInlineError'))
+      setInlineError(t('workspace.baseDirty.inlineError'))
     } finally {
       setBusy(null)
     }
@@ -113,11 +113,11 @@ export default function BaseDirtyModal({
     <div style={overlay} role="dialog" aria-modal="true" aria-labelledby="bdm-title" onClick={handleOverlayClick}>
       <div style={modal}>
         <h2 style={titleStyle} id="bdm-title">
-          {t('settings.worktree.baseDirtyTitle')}
+          {t('workspace.baseDirty.title')}
         </h2>
 
         <p style={bodyStyle}>
-          {t('settings.worktree.baseDirtyBody')}
+          {t('workspace.baseDirty.body')}
         </p>
 
         {inlineError && (
@@ -131,7 +131,7 @@ export default function BaseDirtyModal({
             onClick={onClose}
             disabled={!!busy}
           >
-            {t('settings.worktree.baseDirtyCancel')}
+            {t('workspace.baseDirty.cancel')}
           </button>
 
           <button
@@ -144,7 +144,7 @@ export default function BaseDirtyModal({
                 <Loader2 size={13} className="pdt-spin" />
                 {t('common.loading')}
               </>
-            ) : t('settings.worktree.baseDirtySaveNow')}
+            ) : t('workspace.baseDirty.saveNow')}
           </button>
 
           <button
@@ -157,7 +157,7 @@ export default function BaseDirtyModal({
                 <Loader2 size={13} className="pdt-spin" />
                 {t('common.loading')}
               </>
-            ) : t('settings.worktree.baseDirtySetAside')}
+            ) : t('workspace.baseDirty.setAside')}
           </button>
         </div>
       </div>

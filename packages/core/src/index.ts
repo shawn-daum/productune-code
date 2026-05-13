@@ -32,6 +32,8 @@ export type { GitRules, GitRulesSource, GitRulesReadResult, AutosaveTriggers } f
 
 export {
   createWorktree,
+  stashAndCreate,
+  commitAndCreate,
   worktreeExists,
   worktreeCleanup,
 } from './git-workflow/worktree'
