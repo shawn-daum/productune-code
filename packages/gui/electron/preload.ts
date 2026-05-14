@@ -235,6 +235,52 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:sessionRestarted', listener)
   },
 
+  // ── MCP Servers (T-P4-048-mh) ────────────────────────────────────────────────
+  mcpGetServers: (projectDir?: string): Promise<Array<{
+    name: string
+    config: {
+      type?: 'stdio' | 'sse' | 'http'
+      command?: string
+      args?: string[]
+      url?: string
+      env?: Record<string, string>
+    }
+    source: 'global' | 'project'
+  }>> =>
+    ipcRenderer.invoke('mcp:getServers', projectDir),
+
+  mcpSave: (
+    serverName: string,
+    config: {
+      type?: 'stdio' | 'sse' | 'http'
+      command?: string
+      args?: string[]
+      url?: string
+      env?: Record<string, string>
+    },
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('mcp:save', serverName, config),
+
+  mcpTestConnection: (
+    serverName: string,
+    config: {
+      type?: 'stdio' | 'sse' | 'http'
+      command?: string
+      url?: string
+      env?: Record<string, string>
+    },
+  ): Promise<{ ok: boolean; ms?: number; error?: string }> =>
+    ipcRenderer.invoke('mcp:testConnection', serverName, config),
+
+  // ── Hooks (T-P4-048-mh) ───────────────────────────────────────────────────────
+  hooksList: (): Promise<Array<{
+    eventType: string
+    matcher: string | null
+    commandBasename: string
+    commandFull: string
+  }>> =>
+    ipcRenderer.invoke('hooks:list'),
+
   // ── Vercel integration token (OQ-T022-1 (b)) ────────────────────────────────
   getVercelToken: (): Promise<string | null> =>
     ipcRenderer.invoke('settings:getVercelToken'),

@@ -23,6 +23,8 @@ export type TabType =
   | 'general-settings'
   | 'team-wiki'
   | 'workflow-settings'
+  | 'mcp-servers'
+  | 'hooks'
 
 export interface Tab {
   id: string
@@ -515,6 +517,8 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'general-settings':  return '일반 설정'
     case 'team-wiki':         return '위키·메모리'
     case 'workflow-settings': return '작업 흐름 규칙'
+    case 'mcp-servers':       return 'MCP 서버'
+    case 'hooks':             return '훅'
     default:                  return type
   }
 }

@@ -12,6 +12,8 @@ import DeployTab from './panes/DeployTab'
 import GeneralSettingsTab from './panes/GeneralSettingsTab'
 import TeamWikiTab from './panes/TeamWikiTab'
 import WorkflowSettingsTab from './panes/WorkflowSettingsTab'
+import McpServersTab from './panes/McpServersTab'
+import HooksTab from './panes/HooksTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -37,6 +39,8 @@ export default function TabContent({ tab }: Props) {
     case 'general-settings':  return <GeneralSettingsTab props={tab.props} />
     case 'team-wiki':         return <TeamWikiTab props={tab.props} />
     case 'workflow-settings': return <WorkflowSettingsTab props={tab.props} />
+    case 'mcp-servers':       return <McpServersTab props={tab.props} />
+    case 'hooks':             return <HooksTab props={tab.props} />
     case 'design-gate':
     case 'qa-result':
     case 'env-view':

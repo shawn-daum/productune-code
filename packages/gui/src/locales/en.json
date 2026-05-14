@@ -514,6 +514,45 @@
       "optionKoDesc": "한국어 인터페이스."
     },
     "tabGeneral": "General",
+    "tabMcp": "MCP Servers",
+    "tabHooks": "Hooks",
+    "mcp": {
+      "title": "MCP Servers",
+      "statusConnected": "Connected",
+      "statusUnauth": "Auth required",
+      "statusChecking": "Checking",
+      "emptyTitle": "No MCP servers configured.",
+      "emptyDesc": "Add servers via install.sh.",
+      "footerHint": "MCP servers are external tools used by the AI engine.",
+      "addBtn": "Add server",
+      "addBtnTooltip": "Adding new servers is supported in Phase 5.",
+      "testFailed": "Connection failed",
+      "toastSaved": "Saved",
+      "toastRestartNeeded": "Restart the AI engine to apply.",
+      "modal": {
+        "titleSuffix": "Settings",
+        "nameLabel": "Name",
+        "transportLabel": "Transport",
+        "commandLabel": "Command",
+        "urlLabel": "URL",
+        "envLabel": "Credentials",
+        "addEnvRow": "Add",
+        "testBtn": "Test connection",
+        "restartNotice": "Changes apply after restarting the AI engine.",
+        "saveBtn": "Save",
+        "cancelBtn": "Cancel"
+      }
+    },
+    "hooks": {
+      "title": "Hooks",
+      "emptyHint": "No hooks configured in ~/.claude/settings.json.",
+      "noMatcher": "—",
+      "editHint": "Edit ~/.claude/settings.json and restart",
+      "addHint": "Add via install.sh",
+      "docsLink": "View install guide",
+      "copyBtn": "Copy",
+      "footerHint": "Hooks are managed in ~/.claude/settings.json"
+    },
     "general": {
       "userMode": {
         "title": "User Mode",

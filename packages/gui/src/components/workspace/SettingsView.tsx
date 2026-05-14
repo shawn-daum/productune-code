@@ -10,7 +10,8 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
 
-type SettingsSubTab = 'general' | 'workflow'
+// T-P4-022 §16.3: 'integrations' placeholder reserved for external-connections sub-tab
+type SettingsSubTab = 'general' | 'workflow' | 'mcp' | 'hooks'
 
 export default function SettingsView() {
   const { t } = useTranslation()
@@ -18,8 +19,10 @@ export default function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsSubTab>('general')
 
   const tabs: { id: SettingsSubTab; label: string }[] = [
-    { id: 'general', label: t('settings.tabGeneral', { defaultValue: '일반' }) },
+    { id: 'general',  label: t('settings.tabGeneral', { defaultValue: '일반' }) },
     { id: 'workflow', label: t('settings.tabWorkflowRules') },
+    { id: 'mcp',      label: t('settings.tabMcp') },
+    { id: 'hooks',    label: t('settings.tabHooks') },
   ]
 
   const handleTabClick = (id: SettingsSubTab) => {
@@ -28,6 +31,10 @@ export default function SettingsView() {
       openTab('general-settings', 'general-settings', undefined, t('settings.tabGeneral', { defaultValue: '일반 설정' }))
     } else if (id === 'workflow') {
       openTab('workflow-settings', 'workflow-settings', undefined, t('settings.tabWorkflowRules'))
+    } else if (id === 'mcp') {
+      openTab('mcp-servers', 'mcp-servers', undefined, t('settings.tabMcp'))
+    } else if (id === 'hooks') {
+      openTab('hooks', 'hooks', undefined, t('settings.tabHooks'))
     }
   }
 

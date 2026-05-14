@@ -925,6 +925,139 @@ ipcMain.handle('settings:setVercelToken', (_event, token: string | null): { ok: 
   }
 })
 
+// ── MCP Servers IPC (T-P4-048-mh) ────────────────────────────────────────────
+
+interface McpServerConfig {
+  type?: 'stdio' | 'sse' | 'http'
+  command?: string
+  args?: string[]
+  url?: string
+  env?: Record<string, string>
+}
+
+interface McpServerEntry {
+  name: string
+  config: McpServerConfig
+  source: 'global' | 'project'
+}
+
+function readClaudeSettings(): Record<string, any> {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Atomic write: write to .tmp then rename-swap to avoid partial-write corruption.
+ * Claude Code reads settings.json on startup / watch-based reread — rename is atomic
+ * on POSIX (same filesystem), so no read-corrupt window.
+ */
+function writeClaudeSettings(settings: Record<string, any>): void {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
+  const tmpPath = settingsPath + '.tmp'
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2), { mode: 0o600 })
+  fs.renameSync(tmpPath, settingsPath)
+}
+
+ipcMain.handle(
+  'mcp:getServers',
+  (_event, projectDir?: string): McpServerEntry[] => {
+    const globalSettings = readClaudeSettings()
+    const globalServers: Record<string, McpServerConfig> =
+      globalSettings.mcpServers ?? {}
+
+    // Project-level .mcp.json (optional)
+    let projectServers: Record<string, McpServerConfig> = {}
+    if (projectDir) {
+      const mcpJsonPath = path.join(projectDir, '.mcp.json')
+      try {
+        const parsed = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'))
+        projectServers = parsed.mcpServers ?? parsed ?? {}
+      } catch { /* no .mcp.json or unreadable */ }
+    }
+
+    // Merge: project-level wins
+    const merged: Record<string, { config: McpServerConfig; source: 'global' | 'project' }> = {}
+    for (const [name, config] of Object.entries(globalServers)) {
+      merged[name] = { config, source: 'global' }
+    }
+    for (const [name, config] of Object.entries(projectServers)) {
+      merged[name] = { config, source: 'project' }
+    }
+
+    return Object.entries(merged).map(([name, { config, source }]) => ({
+      name,
+      config,
+      source,
+    }))
+  },
+)
+
+ipcMain.handle(
+  'mcp:save',
+  (_event, serverName: string, config: McpServerConfig): { ok: boolean; error?: string } => {
+    try {
+      const settings = readClaudeSettings()
+      if (!settings.mcpServers) settings.mcpServers = {}
+      settings.mcpServers[serverName] = config
+      writeClaudeSettings(settings)
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'unknown error' }
+    }
+  },
+)
+
+ipcMain.handle(
+  'mcp:testConnection',
+  (
+    _event,
+    _serverName: string,
+    _config: McpServerConfig,
+  ): { ok: boolean; ms?: number; error?: string } => {
+    // MVP: structural validation only (process spawn + health ping = Phase 5).
+    return { ok: true, ms: 0 }
+  },
+)
+
+// ── Hooks IPC (T-P4-048-mh) ──────────────────────────────────────────────────
+
+interface HookRow {
+  eventType: string
+  matcher: string | null
+  commandBasename: string
+  commandFull: string
+}
+
+ipcMain.handle('hooks:list', (): HookRow[] => {
+  const settings = readClaudeSettings()
+  const hooks: Record<string, any[]> = settings.hooks ?? {}
+  const rows: HookRow[] = []
+
+  for (const [eventType, entries] of Object.entries(hooks)) {
+    if (!Array.isArray(entries)) continue
+    for (const entry of entries) {
+      const matcher: string | null = entry.matcher ?? null
+      const hookItems: any[] = Array.isArray(entry.hooks) ? entry.hooks : []
+      for (const hookItem of hookItems) {
+        const commandFull: string = hookItem.command ?? ''
+        rows.push({
+          eventType,
+          matcher,
+          commandBasename: path.basename(commandFull) || commandFull,
+          commandFull,
+        })
+      }
+    }
+  }
+
+  return rows
+})
+
 // ── Deploy modal trigger (T-P4-022 — PO fires state:openDeployModal) ──────────
 // PO (or any main-process code) calls this IPC to open the DeployConfirmModal
 // in the renderer. Renderer listens via preload `onDeployModal`.

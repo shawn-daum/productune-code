@@ -514,6 +514,45 @@
       "optionKoDesc": "한국어 인터페이스."
     },
     "tabGeneral": "일반",
+    "tabMcp": "MCP 서버",
+    "tabHooks": "훅",
+    "mcp": {
+      "title": "MCP 서버",
+      "statusConnected": "연결됨",
+      "statusUnauth": "인증 필요",
+      "statusChecking": "확인 중",
+      "emptyTitle": "연결된 MCP 서버가 없어요.",
+      "emptyDesc": "install.sh 로 서버를 추가할 수 있어요.",
+      "footerHint": "MCP 서버는 AI 엔진이 런타임에 사용하는 외부 도구예요.",
+      "addBtn": "서버 추가",
+      "addBtnTooltip": "Phase 5 에서 지원 예정이에요.",
+      "testFailed": "연결 실패",
+      "toastSaved": "저장됐어요",
+      "toastRestartNeeded": "AI 엔진을 재시작해야 적용돼요.",
+      "modal": {
+        "titleSuffix": "설정",
+        "nameLabel": "이름",
+        "transportLabel": "연결 방식",
+        "commandLabel": "명령어",
+        "urlLabel": "URL",
+        "envLabel": "인증 정보",
+        "addEnvRow": "추가",
+        "testBtn": "연결 테스트",
+        "restartNotice": "변경사항은 AI 엔진 재시작 후 적용돼요.",
+        "saveBtn": "저장",
+        "cancelBtn": "취소"
+      }
+    },
+    "hooks": {
+      "title": "훅",
+      "emptyHint": "~/.claude/settings.json 에 hooks 설정이 없어요.",
+      "noMatcher": "—",
+      "editHint": "수정: ~/.claude/settings.json 직접 편집 후 재시작",
+      "addHint": "추가: install.sh 통해 등록",
+      "docsLink": "설치 안내 보기",
+      "copyBtn": "복사",
+      "footerHint": "훅은 ~/.claude/settings.json 의 hooks 블록에서 관리돼요."
+    },
     "general": {
       "userMode": {
         "title": "사용자 모드",
