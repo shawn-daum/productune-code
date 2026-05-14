@@ -70,12 +70,24 @@ export interface PoHealthEvent {
   msgId?: string
 }
 
+// ── Todo items (T-P4-113) ─────────────────────────────────────────────────────
+
+/** Raw todo item shape as parsed from PO envelope JSON. */
+export interface TodoItemRaw {
+  id?: string
+  description: string
+  type?: 'check' | 'text-input' | 'link'
+  href?: string
+}
+
 interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
   onAnnounce: (msgId: string, payload: AnnouncePayload) => void
   onDone: (msgId: string, info: { sessionId?: string }) => void
   onHealth: (event: PoHealthEvent) => void
+  /** Emitted when PO response contains manual_steps_pending / pending_user_actions. */
+  onTodoItems: (items: TodoItemRaw[]) => void
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -399,10 +411,76 @@ function handleStreamJsonLine(
     clearToolUseTimeout(hCtx)
     clearSilenceTimeout(hCtx)
     emitHealth('healthy', undefined, hCtx, cb)
+
+    // ── Todo item extraction (T-P4-113) ───────────────────────────────────
+    // Parse manual_steps_pending / pending_user_actions from final result text.
+    if (typeof obj?.result === 'string') {
+      const todoItems = parseTodoItems(obj.result)
+      if (todoItems.length > 0) {
+        cb.onTodoItems(todoItems)
+      }
+    }
     return
   }
 
   // Unknown envelope — silent.
+}
+
+// ── Todo item parser (T-P4-113) ────────────────────────────────────────────────
+
+/**
+ * Attempt to extract todo items from a PO result text.
+ * Looks for a JSON block (```json … ```) or raw `{…}` containing
+ * `manual_steps_pending` or `pending_user_actions` arrays.
+ */
+function parseTodoItems(text: string): TodoItemRaw[] {
+  // Collect candidate JSON strings: prefer ```json block, then raw object.
+  const candidates: string[] = []
+
+  const jsonBlockMatch = text.match(/```json\s*([\s\S]*?)\s*```/)
+  if (jsonBlockMatch?.[1]) candidates.push(jsonBlockMatch[1])
+
+  // Raw JSON object — be conservative: only if we see the key names we need.
+  if (/manual_steps_pending|pending_user_actions/.test(text)) {
+    const rawObjMatch = text.match(/\{[\s\S]*\}/)
+    if (rawObjMatch?.[0]) candidates.push(rawObjMatch[0])
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (parsed && typeof parsed === 'object') {
+        const obj = parsed as Record<string, unknown>
+        for (const key of ['manual_steps_pending', 'pending_user_actions']) {
+          const arr = obj[key]
+          if (Array.isArray(arr)) {
+            const items: TodoItemRaw[] = arr
+              .filter(
+                (item): item is Record<string, unknown> =>
+                  item !== null && typeof item === 'object',
+              )
+              .filter((item) => typeof item.description === 'string')
+              .map((item) => ({
+                id: typeof item.id === 'string' ? item.id : undefined,
+                description: item.description as string,
+                type:
+                  item.type === 'check' ||
+                  item.type === 'text-input' ||
+                  item.type === 'link'
+                    ? item.type
+                    : 'check',
+                href: typeof item.href === 'string' ? item.href : undefined,
+              }))
+            if (items.length > 0) return items
+          }
+        }
+      }
+    } catch {
+      /* ignore parse failures */
+    }
+  }
+
+  return []
 }
 
 // ── Echo fallback (no claude installed / no env) ───────────────────────────────
@@ -424,6 +502,7 @@ function echoFallback(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<
       if (i >= chunks.length) {
         // End healthy.
         emitHealth('healthy', undefined, hCtx, cb)
+        // Echo mode: no todo items emitted (onTodoItems noop).
         cb.onDone(msgId, {})
         resolve()
         return
@@ -455,10 +534,12 @@ function newMsgId(): string {
  */
 export function emitToWebContents(wc: WebContents): RunCallbacks {
   return {
-    onMsgId:    (msgId)             => wc.send('po:onMsgId', msgId),
-    onToken:    (msgId, chunk)      => wc.send('po:onToken', msgId, chunk),
-    onAnnounce: (msgId, payload)    => wc.send('po:onAnnounce', msgId, payload),
-    onDone:     (msgId, info)       => wc.send('po:onDone', msgId, info),
-    onHealth:   (event)             => wc.send('po:onHealth', event),
+    onMsgId:     (msgId)          => wc.send('po:onMsgId', msgId),
+    onToken:     (msgId, chunk)   => wc.send('po:onToken', msgId, chunk),
+    onAnnounce:  (msgId, payload) => wc.send('po:onAnnounce', msgId, payload),
+    onDone:      (msgId, info)    => wc.send('po:onDone', msgId, info),
+    onHealth:    (event)          => wc.send('po:onHealth', event),
+    // T-P4-113: emit parsed todo items to renderer
+    onTodoItems: (items)          => wc.send('po:todo-items', items),
   }
 }

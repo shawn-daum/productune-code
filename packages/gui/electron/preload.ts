@@ -224,6 +224,26 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:onHealth', listener)
   },
 
+  // ── Todo items (T-P4-113) ──────────────────────────────────────────────────
+  /** Subscribe to todo items pushed by PO (parsed from manual_steps_pending / pending_user_actions). */
+  poOnTodoItems: (cb: (items: Array<{
+    id?: string
+    description: string
+    type?: 'check' | 'text-input' | 'link'
+    href?: string
+  }>) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, items: any[]) => cb(items)
+    ipcRenderer.on('po:todo-items', listener)
+    return () => ipcRenderer.removeListener('po:todo-items', listener)
+  },
+
+  /** Subscribe to PO-initiated todo dismiss events (receive channel only — T-P4-113). */
+  poOnTodoDismiss: (cb: (ids: string[]) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, ids: string[]) => cb(ids)
+    ipcRenderer.on('po:todo-dismiss', listener)
+    return () => ipcRenderer.removeListener('po:todo-dismiss', listener)
+  },
+
   /** Restart the PO session — kills active child + resets sessionId. Returns { ok: boolean }. */
   poRestartSession: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('po:restartSession'),

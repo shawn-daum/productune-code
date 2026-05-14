@@ -21,11 +21,14 @@ import { useTranslation } from 'react-i18next'
 import { Paperclip, ArrowUp, RefreshCw, Minus } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
+import { useUserTodo } from '../../store/useUserTodo'
 import type { Message, MessageKind } from '../../lib/types'
 import PhaseStrip from './PhaseStrip'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
 import PoFab from './chat/PoFab'
+import TodoChip from './chat/TodoChip'
+import TodoListPanel from './chat/TodoListPanel'
 
 export default function ChatPanel() {
   const { t } = useTranslation()
@@ -34,6 +37,10 @@ export default function ChatPanel() {
   const poState = useWorkspace((s) => s.poState)
   const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
   const streaming = useWorkspace((s) => s.streaming)
+
+  // T-P4-113: todo store actions (subscribed via IPC below)
+  const pushTodoItems = useUserTodo((s) => s.pushItems)
+  const dismissTodosByIds = useUserTodo((s) => s.dismissByIds)
 
   const setMessages = useWorkspace((s) => s.setMessages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
@@ -147,6 +154,26 @@ export default function ChatPanel() {
       offDone?.()
     }
   }, [appendMessage, setClaudeSessionId, setStreaming])
+
+  // ── Subscribe to todo IPC events (T-P4-113) ──────────────────────────────
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.poOnTodoItems) return
+
+    const offTodoItems = api.poOnTodoItems((items: any[]) => {
+      pushTodoItems(items)
+    })
+
+    // Receive-only dismiss channel (PO side emit is a separate ticket).
+    const offTodoDismiss = api.poOnTodoDismiss?.((ids: string[]) => {
+      dismissTodosByIds(ids)
+    })
+
+    return () => {
+      offTodoItems?.()
+      offTodoDismiss?.()
+    }
+  }, [pushTodoItems, dismissTodosByIds])
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -320,6 +347,12 @@ export default function ChatPanel() {
 
         {/* rp-persona-bar (T-P4-049) — placed directly under rp-ctx */}
         <PersonaPresenceBar />
+
+        {/* rp-todo-chip (T-P4-113) — hidden when openCount === 0 */}
+        <TodoChip />
+
+        {/* rp-todo-panel (T-P4-113) — accordion, expands below chip */}
+        <TodoListPanel />
 
         {/* rp-msgs */}
         <div style={msgs} ref={msgsRef} onScroll={onScroll} className="rp-msgs">

@@ -171,7 +171,10 @@
       "restartHint": "Use when PO is unresponsive or too slow",
       "restore": "Open PO chat",
       "idleCtx": "Ready",
-      "actionDefault": "in flight"
+      "actionDefault": "in flight",
+      "todoChipLabel": "To-do {{count}}",
+      "todoEmpty": "No tasks",
+      "todoSubmit": "Submit"
     },
     "sidebar": {
       "tabs": {

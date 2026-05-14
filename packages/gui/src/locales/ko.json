@@ -171,7 +171,10 @@
       "restartHint": "PO 가 오래 답하지 않거나 너무 느릴 때 사용",
       "restore": "PO 채팅 열기",
       "idleCtx": "대기 중",
-      "actionDefault": "처리 중"
+      "actionDefault": "처리 중",
+      "todoChipLabel": "할 일 {{count}}",
+      "todoEmpty": "할 일 없음",
+      "todoSubmit": "제출"
     },
     "sidebar": {
       "tabs": {
