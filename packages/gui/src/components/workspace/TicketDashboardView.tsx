@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AlertTriangle } from 'lucide-react'
 import type { PoState, Ticket, TaskType, Status } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
@@ -10,6 +11,8 @@ interface Props {
 }
 
 const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'done', 'blocked', 'abandoned']
+/** Set derived from STATUS_ORDER — single source of truth for known status strings. */
+const KNOWN_STATUS_SET = new Set<string>(STATUS_ORDER)
 
 export default function TicketDashboardView({ poState, versionFilter }: Props) {
   const { t } = useTranslation()
@@ -21,13 +24,17 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
     if (!versionFilter) return raw
     return raw.filter((t) => t.version === versionFilter)
   }, [poState, scannedTickets, versionFilter])
-  const byStatus = useMemo(() => groupByStatus(allTickets), [allTickets])
+  const { byStatus, unknownCount } = useMemo(() => groupByStatus(allTickets), [allTickets])
 
   return (
     <div style={wrap}>
       <header style={header}>
         <h2 style={title}>{t('workspace.tickets.title')}</h2>
       </header>
+
+      {unknownCount > 0 && (
+        <SchemaMismatchBanner count={unknownCount} />
+      )}
 
       {loading && allTickets.length === 0 ? (
         <div style={empty}>{t('workspace.tickets.noTickets')}</div>
@@ -69,17 +76,44 @@ function collectAllTickets(poState: PoState | null, scanned: Ticket[]): Ticket[]
   return list
 }
 
-function groupByStatus(tickets: Ticket[]): Record<string, Ticket[]> {
-  const out: Record<string, Ticket[]> = {}
+interface GroupByStatusResult {
+  byStatus: Record<string, Ticket[]>
+  /** Number of tickets whose status was not in STATUS_ORDER and was silently mapped to 'todo'. */
+  unknownCount: number
+}
+
+function groupByStatus(tickets: Ticket[]): GroupByStatusResult {
+  const byStatus: Record<string, Ticket[]> = {}
+  let unknownCount = 0
   for (const t of tickets) {
-    const k = (t.status as Status) ?? 'todo'
-    if (!out[k]) out[k] = []
-    out[k].push(t)
+    const raw = (t.status as string) ?? 'todo'
+    const known = KNOWN_STATUS_SET.has(raw)
+    // Unknown status → 'todo' fallback. Only count as unknown when status was
+    // explicitly set to a non-standard value (not null/undefined).
+    if (!known && t.status != null) unknownCount++
+    const k: Status = known ? (raw as Status) : 'todo'
+    if (!byStatus[k]) byStatus[k] = []
+    byStatus[k].push(t)
   }
-  return out
+  return { byStatus, unknownCount }
 }
 
 // ── sub-components ─────────────────────────────────────────────────────────────
+
+/** Thin warning banner — shown when ≥1 ticket has an unknown status value. */
+function SchemaMismatchBanner({ count }: { count: number }) {
+  const { t } = useTranslation()
+  return (
+    <div style={mismatchBannerWrap} role="status" aria-live="polite">
+      <span style={mismatchIconWrap}>
+        <AlertTriangle size={12} color="#A08050" />
+      </span>
+      <span style={mismatchMsg}>
+        {t('workspace.tickets.schemaMismatchBanner', { count })}
+      </span>
+    </div>
+  )
+}
 
 function Column({ status, tickets }: { status: Status; tickets: Ticket[] }) {
   return (
@@ -154,6 +188,33 @@ const empty: React.CSSProperties = {
   justifyContent: 'center',
   color: '#3A3A3A',
   fontSize: 13,
+}
+
+const mismatchBannerWrap: React.CSSProperties = {
+  height: 32,
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '0 16px',
+  background: '#161610',
+  borderLeft: '3px solid #706030',
+  borderBottom: '1px solid #262410',
+}
+
+const mismatchIconWrap: React.CSSProperties = {
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+}
+
+const mismatchMsg: React.CSSProperties = {
+  fontSize: 11,
+  color: '#A0A080',
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 
 const kanban: React.CSSProperties = {

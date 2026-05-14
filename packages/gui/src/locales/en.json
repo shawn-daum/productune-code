@@ -140,7 +140,8 @@
       "title": "Tickets",
       "filterAll": "All",
       "filterCount": "{{count}} tickets",
-      "noTickets": "No tickets match the current filter."
+      "noTickets": "No tickets match the current filter.",
+      "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"). Project status enum may not match productune doctrine."
     },
     "phaseGate": {
       "badge": "Phase Gate",

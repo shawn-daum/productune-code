@@ -140,7 +140,8 @@
       "title": "Tickets",
       "filterAll": "전체",
       "filterCount": "티켓 {{count}}개",
-      "noTickets": "필터에 맞는 티켓 없음."
+      "noTickets": "필터에 맞는 티켓 없음.",
+      "schemaMismatchBanner": "스키마 mismatch — 알 수 없는 status 의 ticket {{count}}개를 \"todo\" 로 fallback 함. 본 project 의 status enum 이 productune doctrine 과 다를 수 있어요."
     },
     "phaseGate": {
       "badge": "Phase Gate",
