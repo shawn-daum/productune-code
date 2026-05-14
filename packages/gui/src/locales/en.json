@@ -15,11 +15,8 @@
     "step0": {
       "label": "Step 0 / 4 — Language / 언어",
       "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
-      "hint": "(You can change this later in Settings.)",
       "optionEn": "English",
-      "optionEnDesc": "Standard interface language.",
       "optionKo": "한글",
-      "optionKoDesc": "한국어 인터페이스 (페르소나 응답은 별도 설정)",
       "resetCta": "Reset & start over",
       "resetToast": "Local storage cleared. Reloading…"
     },

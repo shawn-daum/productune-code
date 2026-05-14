@@ -251,22 +251,19 @@ export default function OnboardingWizard({ onDone }: Props) {
               <div style={stepIntro}>
                 {t('onboarding.step0.description')}
               </div>
-              <div style={{ fontSize: 11, color: '#606060', marginBottom: 12 }}>
-                {t('onboarding.step0.hint')}
-              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <OptionCard
                   selected={uiLang === 'en'}
                   onClick={() => handleSelectLang('en')}
                   label={t('onboarding.step0.optionEn')}
-                  intro={t('onboarding.step0.optionEnDesc')}
+                  intro=""
                   tech=""
                 />
                 <OptionCard
                   selected={uiLang === 'ko'}
                   onClick={() => handleSelectLang('ko')}
                   label={t('onboarding.step0.optionKo')}
-                  intro={t('onboarding.step0.optionKoDesc')}
+                  intro=""
                   tech=""
                 />
               </div>
