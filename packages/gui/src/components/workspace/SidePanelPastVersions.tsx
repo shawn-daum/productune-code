@@ -25,9 +25,12 @@ interface Props {
   onSelect: (id: string) => void
 }
 
-/** Returns true when a version is considered closed. */
+/** Returns true when a version is considered closed.
+ *  Close = ended_at set OR outcome.observed_result set (measured result populated).
+ *  Planning-time outcome object (north_star / input_metrics / validation_method) is NOT a close trigger.
+ */
 function isVersionClosed(ver: NonNullable<PoState['versions']>[number]): boolean {
-  return !!ver.outcome || !!ver.ended_at
+  return !!ver.outcome?.observed_result || !!ver.ended_at
 }
 
 export default function SidePanelPastVersions({ poState, selectedVersionId, onSelect }: Props) {

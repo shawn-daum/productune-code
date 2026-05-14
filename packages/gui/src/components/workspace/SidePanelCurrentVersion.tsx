@@ -4,7 +4,8 @@
  * Shows exactly 1 row for the active (current) version, or a read-only
  * fallback row in two cases:
  *   1. versions[] is empty → "v1 (대기 중)" hint (PRD not yet started)
- *   2. current version has outcome|ended_at set → transient-close fallback
+ *   2. current version has outcome.observed_result|ended_at set → transient-close fallback
+ *      (planning-time outcome object with north_star/input_metrics is NOT a close trigger)
  *      ("다음 버전 시작 대기 중")
  *
  * Auto-selects + opens tab on mount when a non-closed current version exists.
@@ -28,7 +29,7 @@ function isCurrentVersionClosed(poState: PoState | null): boolean {
   if (!poState?.current_version) return false
   const ver = (poState.versions ?? []).find((v) => v.id === poState.current_version)
   if (!ver) return false
-  return !!ver.outcome || !!ver.ended_at
+  return !!ver.outcome?.observed_result || !!ver.ended_at
 }
 
 export default function SidePanelCurrentVersion({ poState, selectedVersionId, onSelect }: Props) {
