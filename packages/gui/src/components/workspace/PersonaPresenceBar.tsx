@@ -8,6 +8,7 @@ import {
   type PersonaId,
   type PersonaEntry,
 } from '../../store/personaPresence'
+import { useWorkspace } from '../../store/workspace'
 
 // ── Keyframe injection (once per document) ───────────────────────────────────
 
@@ -24,6 +25,38 @@ function ensureBlinkKeyframe() {
     }
   `
   document.head.appendChild(style)
+}
+
+// ── PO presence derive (T-P4-093) ────────────────────────────────────────────
+// Drives PO chip state from workspace.streaming — one-way derive.
+//   streaming true  → setPersonaState('po', 'working')  (blink with PO color)
+//   streaming false → setPersonaState('po', 'idle')     (immediate; no done flash)
+//
+// Source of truth: useWorkspace.streaming is set true on PO turn start and
+// false on completion/reset — same signal WorkspaceShell already subscribes to.
+//
+// §B done policy: PO transitions directly to idle (done state not used).
+//   PO artifact = ChatPanel bubble itself; chip done flash would be redundant.
+//
+// §C popup policy: PO chip must NOT open BackgroundTaskPopup.
+//   Current chip hover shows done-tooltip only; PO never reaches done state,
+//   so popup is naturally skipped. When T-P4-080 chip-popup integration lands,
+//   add `if (persona === 'po') return` early guard to openChipPopup().
+//
+// Sub-agent derive (designer/dev/qa) is a separate path; DERIVE_PERSONAS
+// array is unchanged and this hook does not affect it.
+
+function usePOPresenceDerive() {
+  const streaming = useWorkspace((s) => s.streaming)
+
+  useEffect(() => {
+    const { entries, setPersonaState } = usePersonaPresence.getState()
+    if (streaming) {
+      if (entries.po.state !== 'working') setPersonaState('po', 'working')
+    } else {
+      if (entries.po.state === 'working') setPersonaState('po', 'idle')
+    }
+  }, [streaming])
 }
 
 // ── Chip component ───────────────────────────────────────────────────────────
@@ -165,6 +198,9 @@ export default function PersonaPresenceBar() {
   useEffect(() => {
     ensureBlinkKeyframe()
   }, [])
+
+  // PO chip working blink — T-P4-093 (workspace.streaming → personaPresence.po)
+  usePOPresenceDerive()
 
   return (
     <div style={barStyle} className="rp-persona-bar" aria-label="Persona presence">
