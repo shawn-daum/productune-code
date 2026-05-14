@@ -34,13 +34,27 @@ export const PHASE_DEFS: PhaseDef[] = [
 
 /**
  * Returns the active phase index (0-4) from `current_phase` (1..5).
- * Defaults to 0 (PRD) when state absent or `current_phase` out of range.
+ *
+ * Fallback chain (T-P4-115):
+ *   1. `current_phase` if in range 1..5
+ *   2. Latest `phase_history` entry's `phase` if available
+ *   3. Default 0 (PRD)
+ *
+ * Handles paepyeong-style state where current_phase is undefined but
+ * phase_history already has entries from a prior manual jq write.
  */
 export function getActivePhaseIndex(poState: PoState | null): number {
   const phase = poState?.current_phase
-  if (typeof phase !== 'number') return 0
-  if (phase < 1 || phase > 5) return 0
-  return phase - 1
+  if (typeof phase === 'number' && phase >= 1 && phase <= 5) return phase - 1
+
+  // Fallback: use latest phase_history entry when current_phase missing/invalid
+  const history = poState?.phase_history
+  if (Array.isArray(history) && history.length > 0) {
+    const latest = history[history.length - 1].phase
+    if (typeof latest === 'number' && latest >= 1 && latest <= 5) return latest - 1
+  }
+
+  return 0  // default PRD
 }
 
 /**

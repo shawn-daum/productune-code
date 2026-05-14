@@ -101,6 +101,16 @@ contextBridge.exposeInMainWorld('api', {
   readPoState: (projectDir: string): Promise<unknown> =>
     ipcRenderer.invoke('state:readPoState', projectDir),
 
+  /** Approve a pending phase transition gate — writes po-state.json directly (T-P4-115). */
+  approvePhase: (args: {
+    projectDir: string
+    fromPhase: number
+    toPhase: number
+    summary?: string
+    userApprovedAt: string
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('phase:approve', args),
+
   // ── Pending promotions (T-P4-066) ────────────────────────────────────────────
   appendPendingPromotion: (
     projectDir: string,

@@ -647,6 +647,43 @@ ipcMain.handle('state:readPoState', async (_event, projectDir: string) => {
   }
 })
 
+// ── Phase approve IPC (T-P4-115) ──────────────────────────────────────────────
+// Direct mechanical write to po-state.json on user [승인 →] click.
+// Updates current_phase, appends phase_history entry, clears pending_gate.
+
+interface ApprovePhaseArgs {
+  projectDir: string
+  fromPhase: number       // gate.from_phase (1..5)
+  toPhase: number         // gate.to_phase (2..5)
+  summary?: string        // gate.summary
+  userApprovedAt: string  // ISO timestamp (client-generated)
+}
+
+ipcMain.handle('phase:approve', (_event, args: ApprovePhaseArgs): { ok: boolean; error?: string } => {
+  const statePath = path.join(args.projectDir, '.productune', 'po-state.json')
+  try {
+    const raw = fs.readFileSync(statePath, 'utf-8')
+    const state = JSON.parse(raw)
+
+    state.current_phase = args.toPhase
+
+    if (!Array.isArray(state.phase_history)) state.phase_history = []
+    state.phase_history.push({
+      phase: args.toPhase,
+      started_at: args.userApprovedAt,
+      summary: args.summary ?? '',
+      user_approved_at: args.userApprovedAt,
+    })
+
+    state.pending_gate = null
+
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'unknown error' }
+  }
+})
+
 // ── Tickets fs-scan IPC (T-P4-065 sub-f) ─────────────────────────────────────
 
 interface ScannedTicket {

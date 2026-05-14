@@ -107,6 +107,14 @@ interface WorkspaceState {
 function derivePhase(poState: PoState | null): Phase {
   const num = poState?.current_phase
   if (typeof num === 'number' && num in PHASE_NAMES) return PHASE_NAMES[num]
+
+  // Fallback: use latest phase_history entry when current_phase missing/invalid (T-P4-115)
+  const history = poState?.phase_history
+  if (Array.isArray(history) && history.length > 0) {
+    const latest = history[history.length - 1].phase
+    if (typeof latest === 'number' && latest in PHASE_NAMES) return PHASE_NAMES[latest]
+  }
+
   return 'PRD'
 }
 
