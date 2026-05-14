@@ -116,6 +116,33 @@ export default function App() {
     }
   }
 
+  // Open Recent → macOS `open-file` IPC → no dialog, just detect + open (T-P4-111)
+  async function handleOpenKnownDir(dirPath: string) {
+    try {
+      const result = await (window as any).api.openKnownDir?.(dirPath)
+      if (!result) return
+      if (result.kind === 'self') {
+        setProject({ slug: result.config.slug, projectDir: result.dir })
+      } else if (result.kind === 'self-legacy') {
+        setOpenPrompt({ kind: 'legacy', dir: result.dir, hints: result.hints })
+      } else if (result.kind === 'descendant') {
+        setOpenPrompt({ kind: 'descendant', dir: result.dir, descendants: result.descendants })
+      } else {
+        setOpenPrompt({ kind: 'install', dir: result.dir })
+      }
+    } catch (e) {
+      console.error('handleOpenKnownDir failed', e)
+    }
+  }
+
+  // Subscribe to macOS Open Recent item click events (T-P4-111)
+  useEffect(() => {
+    const unsub = (window as any).api.onOpenRecentProject?.((dirPath: string) => {
+      handleOpenKnownDir(dirPath)
+    })
+    return () => unsub?.()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   function openRecent(projectDir: string, slug: string) {
     setProject({ slug, projectDir })
   }

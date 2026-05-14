@@ -17,6 +17,25 @@ import type { ChildProcess } from 'child_process'
 let activePoChild: ChildProcess | null = null
 let capturedPoSessionId: string | null = null
 
+// ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
+// macOS may fire `open-file` before app.whenReady / before a window exists.
+// Store the path and flush it once the first window finishes loading.
+let deferredOpenPath: string | null = null
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  if (process.platform === 'darwin') {
+    app.addRecentDocument(filePath)
+  }
+  const win =
+    BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('open-recent-project', filePath)
+  } else {
+    deferredOpenPath = filePath
+  }
+})
+
 const execFileAsync = promisify(execFile)
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
@@ -381,6 +400,14 @@ function createWindow(): void {
     },
   })
 
+  // Flush deferred open-file path (T-P4-111 §E queue pattern).
+  win.webContents.once('did-finish-load', () => {
+    if (deferredOpenPath) {
+      win.webContents.send('open-recent-project', deferredOpenPath)
+      deferredOpenPath = null
+    }
+  })
+
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL)
   } else {
@@ -406,12 +433,14 @@ ipcMain.handle('project:create', (_event, { slug, initialVersionId }: { slug: st
   fs.mkdirSync(projectDir, { recursive: true })
 
   const config = initProject({ slug, projectDir, initialVersionId })
+  if (process.platform === 'darwin') app.addRecentDocument(projectDir)
   return { projectDir, config }
 })
 
 ipcMain.handle('project:installAt', (_event, { projectDir }: { projectDir: string }) => {
   const slug = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'project'
   const config = initProject({ slug, projectDir })
+  if (process.platform === 'darwin') app.addRecentDocument(projectDir)
   return { projectDir, config }
 })
 
@@ -504,6 +533,35 @@ ipcMain.handle('dialog:openFolder', async () => {
 
   const detect = detectProductuneLayout(dir)
   if (detect.kind === 'self-current') {
+    if (process.platform === 'darwin') app.addRecentDocument(dir)
+    return { kind: 'self', dir, config: detect.config }
+  }
+  if (detect.kind === 'self-legacy') {
+    return { kind: 'self-legacy', dir, hints: detect.hints }
+  }
+
+  const descendants = scanDescendantsForProductune(dir)
+  if (descendants.length > 0) {
+    return { kind: 'descendant', dir, descendants }
+  }
+
+  return { kind: 'none', dir }
+})
+
+// ── Open a known directory path without dialog (T-P4-111 — Open Recent flow) ──
+// Mirrors dialog:openFolder but accepts a pre-known path instead of showing a picker.
+
+ipcMain.handle('project:openKnownDir', (_event, dir: string) => {
+  if (!dir) return null
+  try {
+    if (!fs.existsSync(dir)) return null
+  } catch {
+    return null
+  }
+
+  const detect = detectProductuneLayout(dir)
+  if (detect.kind === 'self-current') {
+    if (process.platform === 'darwin') app.addRecentDocument(dir)
     return { kind: 'self', dir, config: detect.config }
   }
   if (detect.kind === 'self-legacy') {
@@ -521,6 +579,7 @@ ipcMain.handle('dialog:openFolder', async () => {
 ipcMain.handle('project:migrateLegacy', (_event, { projectDir, slug }: { projectDir: string; slug?: string }) => {
   const derivedSlug = (slug ?? path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || 'project'
   const config = initProject({ slug: derivedSlug, projectDir })
+  if (process.platform === 'darwin') app.addRecentDocument(projectDir)
   return { projectDir, config, migrated: true }
 })
 
@@ -1494,9 +1553,12 @@ function buildAppMenu(): Menu {
         },
         {
           label: 'Open Recent',
+          role: 'recentDocuments' as const,
           submenu: [
-            // Wired in a future slice — emits 'menu:open-recent' with a slug.
-            { label: '(empty)', enabled: false },
+            {
+              label: 'Clear Menu',
+              role: 'clearRecentDocuments' as const,
+            },
           ],
         },
         { type: 'separator' },

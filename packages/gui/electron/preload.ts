@@ -340,6 +340,23 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('menu:open-project', listener)
   },
 
+  // ── Open Recent (T-P4-111) ────────────────────────────────────────────────────
+  /** Subscribe to macOS Open Recent item clicks (main → renderer). Returns unsubscribe fn. */
+  onOpenRecentProject: (cb: (dirPath: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, dirPath: string) => cb(dirPath)
+    ipcRenderer.on('open-recent-project', listener)
+    return () => ipcRenderer.removeListener('open-recent-project', listener)
+  },
+
+  /** Open a known directory path (no dialog) — mirrors openFolder result shape. */
+  openKnownDir: (dir: string): Promise<
+    | { kind: 'self'; dir: string; config: { slug: string; created_at?: string; [k: string]: any } }
+    | { kind: 'self-legacy'; dir: string; hints: string[] }
+    | { kind: 'descendant'; dir: string; descendants: Array<{ path: string; config: { slug: string; [k: string]: any } }> }
+    | { kind: 'none'; dir: string }
+    | null
+  > => ipcRenderer.invoke('project:openKnownDir', dir),
+
   // ── Quick Open file listing (T-P4-047) ──────────────────────────────────────
   listProjectFiles: (projectDir: string): Promise<Array<{ path: string; ext: string }>> =>
     ipcRenderer.invoke('slash:listProjectFiles', projectDir),
