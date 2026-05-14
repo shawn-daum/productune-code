@@ -244,6 +244,9 @@ function copyDoctrineFile(
  * - Any update (hash mismatch) → "업데이트했습니다" message.
  * - Fresh install only           → "설치 완료" message.
  * - All skipped (idempotent)     → silent.
+ *
+ * @note Electron IPC path only. CLI (`productune init`) path uses
+ *       packages/core/scripts/lib/bootstrap-doctrine.sh.
  */
 export function bootstrapUserGlobalDoctrine(): void {
   const PRODUCTUNE_HOME = path.join(os.homedir(), '.productune')

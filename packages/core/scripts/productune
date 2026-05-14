@@ -212,6 +212,19 @@ case "${1:-}" in
     # project (e.g. ~/Documents/dev/ might be your personal dotfiles repo).
     # Resolve symlinks so the comparison vs `git rev-parse --show-toplevel`
     # works (macOS reports /private/var/... while $PWD may be /var/...).
+    #
+    # Flags:
+    #   --skip-doctrine   Skip user-global doctrine bootstrap.
+    #                     CI / custom doctrine environments escape hatch.
+    #                     Project-level scaffold still runs normally.
+    SKIP_DOCTRINE=0
+    for _init_arg in "${@:2}"; do
+      case "$_init_arg" in
+        --skip-doctrine) SKIP_DOCTRINE=1 ;;
+        *) die "unknown option: $_init_arg (usage: productune init [--skip-doctrine])" ;;
+      esac
+    done
+
     PROJECT_ROOT="$(cd "$PWD" && pwd -P)"
     GIT_TOP="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
 
@@ -290,6 +303,18 @@ EOF
     else
       printf '%s' "$GITIGNORE_BLOCK" > "$GITIGNORE"
       say "created: .gitignore (productune entries)"
+    fi
+
+    # User-global doctrine bootstrap (install/update ~/.productune/ system files).
+    # Skipped when --skip-doctrine is passed (CI / custom doctrine environments).
+    if [ "$SKIP_DOCTRINE" = 1 ]; then
+      warn "doctrine bootstrap skipped (--skip-doctrine)"
+    else
+      SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+      DOCTRINE_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
+      # shellcheck source=lib/bootstrap-doctrine.sh
+      source "$SCRIPTS_DIR/lib/bootstrap-doctrine.sh"
+      bootstrap_user_global_doctrine "$DOCTRINE_ROOT"
     fi
 
     echo

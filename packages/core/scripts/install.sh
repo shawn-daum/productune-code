@@ -603,35 +603,10 @@ maybe_install_codex_config() {
   say "copied Codex profile manifest: $dest"
 }
 
-# 2c) PO doctrine — productune-owned, lives at ~/.productune/po-instructions.md
-SRC="$ROOT/po/po-instructions.md"
-DEST="$HOME/.productune/po-instructions.md"
-if [ -e "$DEST" ] && ! cmp -s "$SRC" "$DEST"; then
-  mv "$DEST" "$DEST.bak.$TS"
-  warn "backed up existing $DEST → $DEST.bak.$TS"
-fi
-cp "$SRC" "$DEST"
-say "copied PO doctrine: ~/.productune/po-instructions.md"
-
-# 2d) PO doctrine sections — wiki-style detail files; PO reads on demand
-mkdir -p "$HOME/.productune/sections"
-# Wipe stale section files so removed/renamed sections don't linger
-rm -f "$HOME/.productune/sections"/*.md
-for SF in "$ROOT/po/sections"/*.md; do
-  [ -f "$SF" ] || continue
-  cp "$SF" "$HOME/.productune/sections/$(basename "$SF")"
-done
-SECTION_COUNT=$(ls "$HOME/.productune/sections"/*.md 2>/dev/null | wc -l | tr -d ' ')
-say "copied $SECTION_COUNT PO doctrine section(s) → ~/.productune/sections/"
-
-# 3) PO memory (seed ONLY if user hasn't started one yet — do NOT clobber learnings)
-PO_MEM="$HOME/.productune/po-memory.md"
-if [ ! -e "$PO_MEM" ]; then
-  cp "$ROOT/po/po-memory.md.template" "$PO_MEM"
-  say "seeded PO memory at $PO_MEM (PO will append over time)"
-else
-  say "PO memory already exists at $PO_MEM — leaving as-is"
-fi
+# 2c–3) PO doctrine + memory — delegated to shared bash lib (idempotent)
+# shellcheck source=lib/bootstrap-doctrine.sh
+source "$ROOT/scripts/lib/bootstrap-doctrine.sh"
+bootstrap_user_global_doctrine "$ROOT"
 
 # 4) Make wrapper scripts executable (idempotent — git checkout usually preserves +x already)
 chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh" \
