@@ -434,6 +434,15 @@
       "hookMissingTrace": "[system] 기본 안전장치가 아직 설치되지 않았어요. 잠시 후 다시 시도해주세요",
       "gitErrorTrace": "[system] 작업 공간을 만들지 못했어요. 설정에서 다시 시도할 수 있어요"
     },
+    "browser": {
+      "navPlaceholder": "URL 입력",
+      "refresh": "새로고침",
+      "openExternal": "외부 브라우저에서 열기",
+      "loadError": "이 페이지는 로드할 수 없습니다"
+    },
+    "artifacts": {
+      "autoOpenToast": "{{count}}개 파일이 변경됨 — Quick Open(Cmd+P) 으로 추가 확인"
+    },
     "baseDirty": {
       "title": "저장 안 된 변경이 있어요",
       "body": "현재 작업 중인 변경이 보존 안 되어 있어요. 보관 후 새 작업 시작 / 지금 저장 / 취소 중 선택해주세요.",

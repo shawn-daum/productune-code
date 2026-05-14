@@ -1,15 +1,18 @@
 /**
  * MessageBubble — single chat message renderer (T-P4-041).
+ * T-P4-114 §C/§E: linkifyText preprocessing + ptn: href routing in <a>.
  *
  * Six bubble kinds:
  *   po / designer / dev / qa  → 2 px left border in persona color
  *   trace                     → caption gray, no border
- *   user                      → right-aligned, gray-overlay bg
+ *   user                      → right-aligned, gray-overlay bg (linkify NOT applied)
  */
 
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Message, MessageKind } from '../../../lib/types'
+import { linkifyText } from '../../../lib/linkifyText'
+import { useWorkspace } from '../../../store/workspace'
 
 const PERSONA_COLOR: Record<Exclude<MessageKind, 'trace' | 'user'>, string> = {
   po:       '#FF6B2B',
@@ -52,14 +55,15 @@ function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'desi
         <span style={cmTime}>· {time}</span>
       </div>
       <div style={cmBubble}>
-        <Markdown text={message.text} />
+        {/* T-P4-114: linkifyText applied before react-markdown */}
+        <Markdown text={linkifyText(message.text)} />
         {message.status === 'streaming' && <span style={cursorStyle}>▋</span>}
       </div>
     </div>
   )
 }
 
-// ── User bubble (right-aligned) ──────────────────────────────────────────────
+// ── User bubble (right-aligned) — linkify NOT applied (XSS 방어) ──────────────
 
 function UserBubble({ message }: { message: Message }) {
   const time = formatTime(message.created_at)
@@ -76,17 +80,17 @@ function UserBubble({ message }: { message: Message }) {
   )
 }
 
-// ── Trace line ───────────────────────────────────────────────────────────────
+// ── Trace line — linkifyText applied so file/ticket mentions are clickable ────
 
 function TraceLine({ message }: { message: Message }) {
   return (
     <div style={traceLine}>
-      {message.text}
+      <Markdown text={linkifyText(message.text)} />
     </div>
   )
 }
 
-// ── Markdown wrapper — minimal allowed nodes ─────────────────────────────────
+// ── Markdown wrapper ──────────────────────────────────────────────────────────
 
 function Markdown({ text }: { text: string }) {
   return (
@@ -98,15 +102,91 @@ function Markdown({ text }: { text: string }) {
           code: ({ children }) => <code style={mdCode}>{children}</code>,
           ul:   ({ children }) => <ul style={mdList}>{children}</ul>,
           ol:   ({ children }) => <ol style={mdList}>{children}</ol>,
-          a:    ({ href, children }) => (
-            <a href={href} style={mdLink} target="_blank" rel="noreferrer">{children}</a>
-          ),
+          // T-P4-114: ptn: href routing + external URL → browser tab
+          a:    ({ href, children }) => <MdLink href={href}>{children}</MdLink>,
         }}
       >
         {text}
       </ReactMarkdown>
     </div>
   )
+}
+
+// ── MdLink — ptn: prefix router ───────────────────────────────────────────────
+
+function MdLink({ href, children }: { href?: string; children: React.ReactNode }) {
+  const handleClick = (e: React.MouseEvent) => {
+    e.preventDefault()
+    if (!href) return
+    routeLink(href)
+  }
+
+  return (
+    <a
+      href={href}
+      style={getLinkStyle(href)}
+      onClick={handleClick}
+      // keep cursor pointer even though onClick handles navigation
+    >
+      {children}
+    </a>
+  )
+}
+
+/**
+ * Route a link href to the correct workspace action.
+ * Called from onClick handler so it has access to the current store state.
+ */
+function routeLink(href: string): void {
+  const openTab = useWorkspace.getState().openTab
+
+  if (href.startsWith('ptn:ticket/')) {
+    const id = href.slice('ptn:ticket/'.length)
+    openTab(`ticket-review:${id}`, 'ticket-review', { ticketId: id }, id)
+    return
+  }
+
+  if (href.startsWith('ptn:file/')) {
+    const filePath = href.slice('ptn:file/'.length)
+    const basename = filePath.split('/').pop() ?? filePath
+    openTab(`markdown:${filePath}`, 'markdown', { path: filePath }, basename)
+    return
+  }
+
+  if (/^https?:\/\//.test(href)) {
+    let hostname: string
+    try {
+      hostname = new URL(href).hostname
+    } catch {
+      hostname = href.replace(/^https?:\/\//, '').split('/')[0] ?? href
+    }
+    const encodedUrl = encodeURIComponent(href)
+    openTab(`browser:${encodedUrl}`, 'browser', { url: href }, hostname)
+    return
+  }
+
+  if (href.startsWith('ptn:')) {
+    // Unknown ptn: prefix — noop (security guard)
+    return
+  }
+
+  // Non-ptn, non-http: prevent default (already done by onClick) — noop
+}
+
+/**
+ * Derive link color from href prefix.
+ *   ptn:ticket/  → #A78BFA  (--persona-designer, purple)
+ *   ptn:file/    → #38BDF8  (--persona-dev, blue)
+ *   https?://    → #C8C8CC  (--text-secondary, gray)
+ *   fallback     → #38BDF8  (existing mdLink color)
+ */
+function getLinkStyle(href?: string): React.CSSProperties {
+  const base: React.CSSProperties = { textDecoration: 'underline', cursor: 'pointer' }
+  if (!href) return { ...base, color: '#38BDF8' }
+  if (href.startsWith('ptn:ticket/')) return { ...base, color: '#A78BFA' }
+  if (href.startsWith('ptn:file/'))   return { ...base, color: '#38BDF8' }
+  if (/^https?:\/\//.test(href))      return { ...base, color: '#C8C8CC' }
+  return { ...base, color: '#38BDF8' }
 }
 
 function formatTime(iso: string): string {
@@ -203,9 +283,4 @@ const mdCode: React.CSSProperties = {
 const mdList: React.CSSProperties = {
   margin: '4px 0',
   paddingLeft: 18,
-}
-
-const mdLink: React.CSSProperties = {
-  color: '#38BDF8',
-  textDecoration: 'underline',
 }

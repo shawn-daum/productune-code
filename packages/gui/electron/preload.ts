@@ -244,6 +244,30 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:todo-dismiss', listener)
   },
 
+  // ── Ticket focus (T-P4-114 §B) ─────────────────────────────────────────────
+
+  /** Subscribe to ticket focus events emitted when PO issues / dispatches tickets. */
+  poOnTicketFocus: (cb: (payload: { ticketId: string; reason: 'emit' | 'dispatch' }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('po:ticket-focus', listener)
+    return () => ipcRenderer.removeListener('po:ticket-focus', listener)
+  },
+
+  // ── Artifact auto-open (T-P4-114 §A) ────────────────────────────────────────
+
+  /** Subscribe to artifact open events emitted when changed_files[] detected in PO envelope. */
+  poOnArtifactOpen: (cb: (payload: { files: string[] }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('po:artifact-open', listener)
+    return () => ipcRenderer.removeListener('po:artifact-open', listener)
+  },
+
+  // ── Browser tab IPC (T-P4-114 §D) ────────────────────────────────────────────
+
+  /** Notify main process that a browser tab was opened (T-P4-115 IPC bridge stub). */
+  browserOpened: (payload: { url: string; tabId: string }): void =>
+    ipcRenderer.send('browser:opened', payload),
+
   /** Restart the PO session — kills active child + resets sessionId. Returns { ok: boolean }. */
   poRestartSession: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('po:restartSession'),

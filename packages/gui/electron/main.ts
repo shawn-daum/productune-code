@@ -397,6 +397,8 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, 'preload.js'),
+      // T-P4-114 §D: enable <webview> tag for BrowserTab
+      webviewTag: true,
     },
   })
 
@@ -853,6 +855,13 @@ ipcMain.handle('chat:setClaudeSessionId', (_event, projectDir: string, sessionId
 
 ipcMain.handle('chat:clearSession', (_event, projectDir: string) => {
   clearSession(projectDir)
+})
+
+// ── Browser tab IPC (T-P4-114 §D) ────────────────────────────────────────────
+// Channel reserved for T-P4-115 Playwright MCP integration.
+// BrowserTab renderer emits this on mount; main process noop until T-P4-115 fills it.
+ipcMain.on('browser:opened', (_e, payload: { url: string; tabId: string }) => {
+  void payload  // noop — T-P4-115 will replace with playwrightMcp.navigate(url)
 })
 
 // ── PO chat streaming (T-P4-041) ──────────────────────────────────────────────

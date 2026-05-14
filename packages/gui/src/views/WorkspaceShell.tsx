@@ -50,6 +50,9 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const [quickOpenVisible, setQuickOpenVisible] = useState(false)
   const [quickOpenFiles, setQuickOpenFiles] = useState<Array<{ path: string; ext: string }>>([])
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
+  // T-P4-114 §A: artifact overflow toast (shown when >3 files would auto-open)
+  const [artifactToast, setArtifactToast] = useState<string | null>(null)
+  const artifactToastTimerRef = useRef<number | null>(null)
 
   // ── Deploy confirm modal state (T-P4-022 3rd PR) ────────────────────────────
   const [deployModalOpen, setDeployModalOpen] = useState(false)
@@ -163,6 +166,58 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     return () => off?.()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // ── Ticket focus IPC subscription (T-P4-114 §B) ────────────────────────────
+  // Opens ticket-review tab when PO issues / dispatches a ticket.
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.poOnTicketFocus) return
+    const off = api.poOnTicketFocus(({ ticketId }: { ticketId: string }) => {
+      // openTab dedupe: already-open tab → focus only
+      openTab(`ticket-review:${ticketId}`, 'ticket-review', { ticketId }, ticketId)
+    })
+    return () => off?.()
+  }, [openTab])
+
+  // ── Artifact auto-open IPC subscription (T-P4-114 §A) ──────────────────────
+  // Opens .md / spec tabs (max 3) when changed_files[] detected in PO envelope.
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.poOnArtifactOpen) return
+
+    const off = api.poOnArtifactOpen(({ files }: { files: string[] }) => {
+      const openable = files.flatMap((f) => {
+        const result = artifactOpenType(f)
+        return result ? [{ file: f, type: result }] : []
+      })
+
+      const toOpen = openable.slice(0, ARTIFACT_OPEN_CAP)
+
+      for (const { file, type } of toOpen) {
+        const name = file.split('/').pop() ?? file
+        if (type === 'markdown') {
+          openTab(`markdown:${file}`, 'markdown', { path: file }, name)
+        } else {
+          openTab(`qa-result:${file}`, 'qa-result', { path: file }, name)
+        }
+      }
+
+      // Show overflow toast when total openable > cap
+      if (openable.length > ARTIFACT_OPEN_CAP) {
+        const msg = t('workspace.artifacts.autoOpenToast', { count: files.length })
+        if (artifactToastTimerRef.current !== null) {
+          window.clearTimeout(artifactToastTimerRef.current)
+        }
+        setArtifactToast(msg)
+        artifactToastTimerRef.current = window.setTimeout(() => {
+          setArtifactToast(null)
+          artifactToastTimerRef.current = null
+        }, 5000)
+      }
+    })
+    return () => off?.()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTab, t])
 
   // ── Worktree create result IPC subscription (T-P4-092) ─────────────────────
   // main emits worktree:createResult → show trace or BaseDirtyModal.
@@ -501,6 +556,13 @@ export default function WorkspaceShell({ project, onBack }: Props) {
           }}
         />
       )}
+
+      {/* T-P4-114 §A: artifact overflow toast */}
+      {artifactToast && (
+        <div style={artifactToastStyle}>
+          {artifactToast}
+        </div>
+      )}
     </div>
   )
 }
@@ -516,6 +578,36 @@ function fileBasename(p: string): string {
 function findLeafByIdLocal(root: Pane, paneId: string): LeafPaneNode | null {
   if (root.type === 'leaf') return root.paneId === paneId ? root : null
   return findLeafByIdLocal(root.children[0], paneId) ?? findLeafByIdLocal(root.children[1], paneId)
+}
+
+// ── T-P4-114 §A: artifact auto-open helpers ───────────────────────────────────
+
+const ARTIFACT_OPEN_CAP = 3
+
+/**
+ * Decide whether a changed file should auto-open and which tab type to use.
+ * Returns null to skip (src/**, scripts/**, lock files).
+ */
+function artifactOpenType(filePath: string): 'markdown' | 'qa-result' | null {
+  if (/^docs\/(design|tickets|qa)\/.*\.md$/.test(filePath)) return 'markdown'
+  if (/\.(spec|test)\.ts$/.test(filePath)) return 'qa-result'
+  return null
+}
+
+const artifactToastStyle: React.CSSProperties = {
+  position: 'fixed',
+  bottom: 36,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  background: '#1E1E1E',
+  border: '1px solid #3A3A3A',
+  borderRadius: 6,
+  color: '#C8C8CC',
+  fontSize: 12,
+  padding: '8px 16px',
+  zIndex: 9999,
+  pointerEvents: 'none',
+  whiteSpace: 'nowrap',
 }
 
 // ── styles ────────────────────────────────────────────────────────────────────

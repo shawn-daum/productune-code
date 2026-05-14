@@ -14,6 +14,7 @@ import TeamWikiTab from './panes/TeamWikiTab'
 import WorkflowSettingsTab from './panes/WorkflowSettingsTab'
 import McpServersTab from './panes/McpServersTab'
 import HooksTab from './panes/HooksTab'
+import BrowserTab from './panes/BrowserTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -41,12 +42,13 @@ export default function TabContent({ tab }: Props) {
     case 'workflow-settings': return <WorkflowSettingsTab props={tab.props} />
     case 'mcp-servers':       return <McpServersTab props={tab.props} />
     case 'hooks':             return <HooksTab props={tab.props} />
+    case 'browser':
+      return <BrowserTab tabId={tab.id} props={tab.props} />
     case 'design-gate':
     case 'qa-result':
     case 'env-view':
     case 'preview':
     case 'terminal':
-    case 'browser':
       return <PlaceholderTab type={tab.type} props={tab.props} />
     default:
       // Defensive — typescript exhaustiveness should prevent this.

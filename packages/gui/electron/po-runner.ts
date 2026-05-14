@@ -80,6 +80,13 @@ export interface TodoItemRaw {
   href?: string
 }
 
+// ── Ticket focus (T-P4-114 §B) ───────────────────────────────────────────────
+
+export interface TicketFocusItem {
+  ticketId: string
+  reason: 'emit' | 'dispatch'
+}
+
 interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
@@ -88,6 +95,10 @@ interface RunCallbacks {
   onHealth: (event: PoHealthEvent) => void
   /** Emitted when PO response contains manual_steps_pending / pending_user_actions. */
   onTodoItems: (items: TodoItemRaw[]) => void
+  /** T-P4-114 §B: ticket emit / dispatch detected in PO envelope. */
+  onTicketFocus: (ticketId: string, reason: 'emit' | 'dispatch') => void
+  /** T-P4-114 §A: changed_files[] detected in PO envelope. */
+  onArtifactOpen: (files: string[]) => void
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -413,12 +424,22 @@ function handleStreamJsonLine(
     emitHealth('healthy', undefined, hCtx, cb)
 
     // ── Todo item extraction (T-P4-113) ───────────────────────────────────
-    // Parse manual_steps_pending / pending_user_actions from final result text.
+    // ── Ticket focus + artifact open (T-P4-114) ───────────────────────────
     if (typeof obj?.result === 'string') {
-      const todoItems = parseTodoItems(obj.result)
-      if (todoItems.length > 0) {
-        cb.onTodoItems(todoItems)
+      const resultText = obj.result
+
+      const todoItems = parseTodoItems(resultText)
+      if (todoItems.length > 0) cb.onTodoItems(todoItems)
+
+      // T-P4-114 §B: ticket emit/dispatch
+      const ticketItems = parseTicketFocusItems(resultText)
+      for (const item of ticketItems) {
+        cb.onTicketFocus(item.ticketId, item.reason)
       }
+
+      // T-P4-114 §A: artifact changed_files
+      const artifactFiles = parseArtifactFiles(resultText)
+      if (artifactFiles.length > 0) cb.onArtifactOpen(artifactFiles)
     }
     return
   }
@@ -502,7 +523,7 @@ function echoFallback(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<
       if (i >= chunks.length) {
         // End healthy.
         emitHealth('healthy', undefined, hCtx, cb)
-        // Echo mode: no todo items emitted (onTodoItems noop).
+        // Echo mode: no todo/ticket/artifact items emitted (noop).
         cb.onDone(msgId, {})
         resolve()
         return
@@ -526,6 +547,89 @@ function newMsgId(): string {
   return `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+// ── Shared JSON candidate extractor ───────────────────────────────────────────
+
+/**
+ * Extract JSON string candidates from a result text.
+ * Tries a ```json ... ``` fence block first, then falls back to a raw `{...}` match.
+ */
+function extractJsonCandidates(text: string): string[] {
+  const candidates: string[] = []
+  const fenceMatch = text.match(/```json\s*([\s\S]*?)\s*```/)
+  if (fenceMatch?.[1]) candidates.push(fenceMatch[1])
+  const rawMatch = text.match(/\{[\s\S]*\}/)
+  if (rawMatch?.[0]) candidates.push(rawMatch[0])
+  return candidates
+}
+
+// ── Ticket focus parser (T-P4-114 §B) ────────────────────────────────────────
+
+/**
+ * Extract ticket focus items from PO result text.
+ *
+ * - `tickets[]` key → reason 'emit'  (PO issued new tickets)
+ * - `delegation.ticket_id` key → reason 'dispatch'  (PO delegated work)
+ */
+function parseTicketFocusItems(text: string): TicketFocusItem[] {
+  const results: TicketFocusItem[] = []
+
+  for (const candidate of extractJsonCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (!parsed || typeof parsed !== 'object') continue
+      const obj = parsed as Record<string, unknown>
+
+      // tickets[] → 'emit'
+      if (Array.isArray(obj.tickets)) {
+        for (const t of obj.tickets) {
+          // Ticket entry may be a plain string ID or an object with ticket_id / id key
+          const id =
+            typeof t === 'string'
+              ? t
+              : typeof (t as any)?.ticket_id === 'string'
+              ? (t as any).ticket_id
+              : typeof (t as any)?.id === 'string'
+              ? (t as any).id
+              : null
+          if (id) results.push({ ticketId: id, reason: 'emit' })
+        }
+      }
+
+      // delegation.ticket_id → 'dispatch'
+      if (obj.delegation && typeof obj.delegation === 'object') {
+        const delegation = obj.delegation as Record<string, unknown>
+        if (typeof delegation.ticket_id === 'string' && delegation.ticket_id) {
+          results.push({ ticketId: delegation.ticket_id, reason: 'dispatch' })
+        }
+      }
+
+      if (results.length > 0) return results
+    } catch { /* ignore */ }
+  }
+
+  return results
+}
+
+// ── Artifact open parser (T-P4-114 §A) ───────────────────────────────────────
+
+/**
+ * Extract changed_files[] from PO result text.
+ * Returns an empty array when the key is absent or unparseable.
+ */
+function parseArtifactFiles(text: string): string[] {
+  for (const candidate of extractJsonCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (!parsed || typeof parsed !== 'object') continue
+      const obj = parsed as Record<string, unknown>
+      if (Array.isArray(obj.changed_files)) {
+        return obj.changed_files.filter((f): f is string => typeof f === 'string')
+      }
+    } catch { /* ignore */ }
+  }
+  return []
+}
+
 // ── Renderer subscription helper (bound by main.ts) ─────────────────────────────
 
 /**
@@ -534,12 +638,15 @@ function newMsgId(): string {
  */
 export function emitToWebContents(wc: WebContents): RunCallbacks {
   return {
-    onMsgId:     (msgId)          => wc.send('po:onMsgId', msgId),
-    onToken:     (msgId, chunk)   => wc.send('po:onToken', msgId, chunk),
-    onAnnounce:  (msgId, payload) => wc.send('po:onAnnounce', msgId, payload),
-    onDone:      (msgId, info)    => wc.send('po:onDone', msgId, info),
-    onHealth:    (event)          => wc.send('po:onHealth', event),
+    onMsgId:       (msgId)                  => wc.send('po:onMsgId', msgId),
+    onToken:       (msgId, chunk)           => wc.send('po:onToken', msgId, chunk),
+    onAnnounce:    (msgId, payload)         => wc.send('po:onAnnounce', msgId, payload),
+    onDone:        (msgId, info)            => wc.send('po:onDone', msgId, info),
+    onHealth:      (event)                  => wc.send('po:onHealth', event),
     // T-P4-113: emit parsed todo items to renderer
-    onTodoItems: (items)          => wc.send('po:todo-items', items),
+    onTodoItems:   (items)                  => wc.send('po:todo-items', items),
+    // T-P4-114: ticket focus (§B) + artifact open (§A)
+    onTicketFocus: (ticketId, reason)       => wc.send('po:ticket-focus', { ticketId, reason }),
+    onArtifactOpen:(files)                  => wc.send('po:artifact-open', { files }),
   }
 }

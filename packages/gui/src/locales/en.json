@@ -434,6 +434,15 @@
       "hookMissingTrace": "[system] Safety check still installing — try again shortly",
       "gitErrorTrace": "[system] Couldn't prepare workspace — see Settings to retry"
     },
+    "browser": {
+      "navPlaceholder": "Enter URL",
+      "refresh": "Refresh",
+      "openExternal": "Open in external browser",
+      "loadError": "This page could not be loaded"
+    },
+    "artifacts": {
+      "autoOpenToast": "{{count}} files changed — use Quick Open (Cmd+P) to see more"
+    },
     "baseDirty": {
       "title": "Unsaved changes detected",
       "body": "Your current work in progress isn't preserved yet. Set it aside, save it now, or cancel.",
