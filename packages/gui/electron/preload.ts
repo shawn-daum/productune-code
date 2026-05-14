@@ -52,6 +52,15 @@ contextBridge.exposeInMainWorld('api', {
   clearLocalStorage: (): Promise<{ ok: boolean; removed: string[]; errors: string[] }> =>
     ipcRenderer.invoke('onboarding:clearLocalStorage'),
 
+  // ── Project onboarding state (T-P4-101) ─────────────────────────────────────
+  /** Read project-scoped onboarding status. Returns 'pending' | 'done' | null (legacy/absent). */
+  onboardingRead: (projectDir: string): Promise<'pending' | 'done' | null> =>
+    ipcRenderer.invoke('onboarding:readProject', projectDir),
+
+  /** Mark project onboarding as done (pending → done). */
+  onboardingSetDone: (projectDir: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('onboarding:setDone', projectDir),
+
   initProject: (opts: { slug: string; projectDir: string }) =>
     ipcRenderer.invoke('init:project', opts),
 

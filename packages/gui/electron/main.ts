@@ -423,6 +423,48 @@ ipcMain.handle('init:project', (_event, opts: { slug: string; projectDir: string
   return initProject(opts)
 })
 
+// ── Onboarding state helpers (T-P4-101) ──────────────────────────────────────
+
+interface OnboardingRecord {
+  status: 'pending' | 'done'
+  source: 'gui-create' | 'install-at' | 'legacy-fallback'
+  updated_at: string
+}
+
+function writeOnboardingPending(projectDir: string, source: OnboardingRecord['source']): void {
+  const onboardingPath = path.join(projectDir, '.productune', 'onboarding.json')
+  const record: OnboardingRecord = {
+    status: 'pending',
+    source,
+    updated_at: new Date().toISOString(),
+  }
+  fs.writeFileSync(onboardingPath, JSON.stringify(record, null, 2), 'utf-8')
+}
+
+ipcMain.handle('onboarding:readProject', (_event, projectDir: string): 'pending' | 'done' | null => {
+  try {
+    const p = path.join(projectDir, '.productune', 'onboarding.json')
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8')) as Partial<OnboardingRecord>
+    return data.status ?? null
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('onboarding:setDone', (_event, projectDir: string): { ok: boolean; error?: string } => {
+  try {
+    const p = path.join(projectDir, '.productune', 'onboarding.json')
+    let data: Partial<OnboardingRecord> = {}
+    try { data = JSON.parse(fs.readFileSync(p, 'utf-8')) } catch { /* new file */ }
+    data.status = 'done'
+    data.updated_at = new Date().toISOString()
+    fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'unknown error' }
+  }
+})
+
 ipcMain.handle('project:create', (_event, { slug, initialVersionId }: { slug: string; initialVersionId?: string }) => {
   const baseDir = path.join(os.homedir(), 'productune', 'projects')
   fs.mkdirSync(baseDir, { recursive: true })
@@ -435,6 +477,8 @@ ipcMain.handle('project:create', (_event, { slug, initialVersionId }: { slug: st
   fs.mkdirSync(projectDir, { recursive: true })
 
   const config = initProject({ slug, projectDir, initialVersionId })
+  // Decision B (T-P4-101): write onboarding pending immediately after init success.
+  try { writeOnboardingPending(projectDir, 'gui-create') } catch { /* non-fatal */ }
   if (process.platform === 'darwin') app.addRecentDocument(projectDir)
   return { projectDir, config }
 })
@@ -442,6 +486,8 @@ ipcMain.handle('project:create', (_event, { slug, initialVersionId }: { slug: st
 ipcMain.handle('project:installAt', (_event, { projectDir }: { projectDir: string }) => {
   const slug = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'project'
   const config = initProject({ slug, projectDir })
+  // Decision B (T-P4-101): write onboarding pending after install success.
+  try { writeOnboardingPending(projectDir, 'install-at') } catch { /* non-fatal */ }
   if (process.platform === 'darwin') app.addRecentDocument(projectDir)
   return { projectDir, config }
 })

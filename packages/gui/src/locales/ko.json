@@ -511,6 +511,14 @@
       "tabTitle": "확인 필요",
       "todoCheck": "{{description}} 후 체크"
     },
+    "freshComposer": {
+      "headline": "만들고 싶은 제품 아이디어를 얘기해주세요.",
+      "supporting": "Idea를 PO와 인터뷰해서 PRD 작성을 먼저 시작합니다.",
+      "placeholder": "Idea를 PO와 인터뷰해서 PRD 작성을 먼저 시작합니다.",
+      "cta": "시작하기",
+      "keyHint": "Enter로 전송 · Shift+Enter = 줄바꿈",
+      "error": "잠시 문제가 생겼어요. 다시 시도해주세요."
+    },
     "browser": {
       "back": "뒤로",
       "forward": "앞으로",

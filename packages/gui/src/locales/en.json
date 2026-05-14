@@ -511,6 +511,14 @@
       "tabTitle": "Confirm Required",
       "todoCheck": "{{description}} — check after review"
     },
+    "freshComposer": {
+      "headline": "Tell us the product idea you want to build.",
+      "supporting": "PO will interview the idea first and start by drafting the PRD.",
+      "placeholder": "PO will interview the idea first and start by drafting the PRD.",
+      "cta": "Get started",
+      "keyHint": "Enter to send · Shift+Enter = new line",
+      "error": "Something went wrong. Please try again."
+    },
     "browser": {
       "back": "Back",
       "forward": "Forward",

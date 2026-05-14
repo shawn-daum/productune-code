@@ -4,7 +4,7 @@ import i18next from './i18n'
 import NewProjectModal from './components/NewProjectModal'
 import HomeView from './views/HomeView'
 import OnboardingWizard from './views/OnboardingWizard'
-import WorkspaceShell from './views/WorkspaceShell'
+import EntryGate from './components/EntryGate'
 import Titlebar from './components/workspace/Titlebar'
 import type { Project } from './lib/types'
 
@@ -198,7 +198,9 @@ export default function App() {
         {showOnboarding ? (
           <OnboardingWizard onDone={() => setShowOnboarding(false)} />
         ) : project ? (
-          <WorkspaceShell project={project} onBack={() => setProject(null)} />
+          /* T-P4-101: EntryGate reads onboarding.json and routes to
+             FreshComposer (pending) or WorkspaceShell (done/legacy). */
+          <EntryGate project={project} onBack={() => setProject(null)} />
         ) : (
           <HomeView
             onNewProject={() => setShowNewModal(true)}
