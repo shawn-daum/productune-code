@@ -1,0 +1,355 @@
+# T-P4-114 · Main panel auto-open + chat hyperlink + browser tab
+
+**Slug**: `main-panel-auto-open-hyperlink-browser-persona-debug`
+**Date**: 2026-05-14
+**Round**: r4
+**Author**: pdt-designer
+**Artifact**: plan only (1/1 for this dispatch)
+**Status**: ready
+**Origin**: 사용자 directive — dogfood 2026-05-14
+
+---
+
+## §1 Background
+
+**사용자 verbatim**:
+
+> "Main panel 자동 오픈 로직 필요. - 산출물 자동 open. - 현재 진행중인 티켓 focus - po가 ticket을 발행하거나 작업 위임했을 경우 ticket detail page open. - po가 특정 산출물, 파일, 티켓을 언급했을때 해당 언급에 하이퍼링크 달아줘야하고 클릭시 오픈. - po가 url 언급했을 경우에 하이퍼 링크 달고 클릭시 main panel에서 브라우저 오픈 (po와 persona가 브라우저 인풋 아웃풋 읽을 수 있음 for debug)"
+
+**현재 상태 (drift root-cause)**:
+
+현재 PO chat 메시지는 `react-markdown` + `remark-gfm` 으로 렌더링되지만 **auto-link 없음**.
+PO 가 파일 경로 / ticket ID / URL 을 언급해도:
+
+| 시나리오 | 현재 사용자 행동 | 문제 |
+|:--|:--|:--|
+| `docs/design/T-P4-114/plan.md` 언급 | Quick Open 또는 FileTree 수동 클릭 | 컨텍스트 전환 마찰 |
+| `T-P4-113` 언급 | TicketDashboard 수동 탐색 | ticket 내용 확인까지 최소 2-step |
+| `https://vercel.com` 언급 | 외부 브라우저 열림 | Electron GUI 밖 — persona debug 불가 |
+| PO 가 ticket emit / dev dispatch | 알림 없음, tab 자동 open 없음 | §1.5.4 Feedback 위반 |
+
+§1.5 위반 2건:
+- **Predictability** — PO 언급 → 자동 열리지 않음. 같은 참조가 문맥마다 다르게 작동.
+- **Feedback** — ticket 발행 직후 main pane 에 시각적 반응 없음.
+
+---
+
+## §2 Decisions
+
+### A. 산출물 자동 open (artifact auto-open)
+
+**trigger**: dev / persona 작업 완료 후 변경 파일 목록 (`changed_files: string[]`) 을 envelope 에 포함.
+Main process 가 파싱 → `po:artifact-open` IPC → renderer `WorkspaceShell` 구독 → `openTab` 호출.
+
+**필터 규칙 (어떤 파일만 자동 open)**:
+
+| 조건 | open 탭 type |
+|:--|:--|
+| `docs/design/**/*.md` 또는 `docs/tickets/**/*.md` | `markdown` |
+| `docs/qa/**/*.md` | `markdown` |
+| `**/*.spec.ts` / `**/*.test.ts` | `qa-result` (PlaceholderTab → 추후 확장) |
+| `src/**`, `scripts/**`, lock 파일 | **skip** (코드는 자동 open 안 함) |
+
+**cap**: 한 번의 artifact-open event 에서 최대 3개 탭만 open. 초과분은 info toast
+`"N개 파일이 변경됨 — Quick Open(Cmd+P) 으로 추가 확인"`. tab 폭발 방지.
+
+**dedupe**: `openTab` 의 기존 dedupe 로직 활용 — 이미 열린 tab ID 는 focus 이동만.
+
+> T-P4-112 (dev-qa loop) 에서 `changed_files` envelope 포맷 확정 예정.
+> 본 ticket 은 IPC 수신부 + `openTab` 라우팅만 구현. 포맷 미확정 시 `path[]` 배열 단순 가정.
+
+---
+
+### B. ticket focus — dispatch 직후 ticket detail tab 자동 open
+
+**trigger**: PO 가 ticket 발행 (`po:ticket-focus { ticketId, reason: 'emit' }`) 또는
+작업 위임 (`po:ticket-focus { ticketId, reason: 'dispatch' }`).
+
+**action**: `openTab('ticket-review:' + ticketId, 'ticket-review', { ticketId }, ticketId)`.
+
+**IPC channel**: `po:ticket-focus` — `{ ticketId: string; reason: 'emit' | 'dispatch' }`.
+
+Main process 파싱 위치: PO envelope JSON 에서 `tickets[]` key (emit) 또는
+`delegation.ticket_id` key (dispatch) 를 detect → emit.
+
+**UX 보장**:
+- 이미 해당 tab 이 열려 있으면 focus 이동만 (tab 중복 추가 금지).
+- dispatch 이후 사용자가 tab 을 닫아도 다음 dispatch 전까지 강제 재open 없음
+  (once-per-event 원칙).
+
+---
+
+### C. chat message 내 hyperlink 자동 감지 + 내부 라우팅
+
+**패턴 우선순위 (linkifyText 유틸리티)**:
+
+| 우선순위 | 패턴 | 변환 형식 | 색상 힌트 |
+|:--|:--|:--|:--|
+| 1 | 이미 마크다운 `[text](href)` | 그대로 유지 (override만) | 기존 mdLink (#38BDF8) |
+| 2 | 티켓 ID: `T-P4-\d+` bare | `[T-P4-NNN](ptn:ticket/T-P4-NNN)` | `--persona-designer` (#A78BFA) |
+| 3 | 파일 경로: `(docs\|packages)/[\w/.\-]+\.(md\|tsx\|ts\|sh\|json)` | `[basename](ptn:file/<path>)` | `--persona-dev` (#38BDF8) |
+| 4 | bare URL: `https?://[^\s<>"]+` | `[hostname](https://...)` | `--text-secondary` (#C8C8CC) |
+
+**skip 조건** (linkifyText 가 변환 안 하는 영역):
+- 백틱 `` `code` `` 블록 안.
+- ` ```fence``` ` 코드 블록 안.
+- 이미 `[…](…)` 로 감싸진 링크의 href 부분.
+
+**구현 방식 — Option 2 (preprocessor) 채택**:
+
+`linkifyText(text: string): string` 유틸리티가 render 전 `message.text` 를 처리
+→ bare 패턴을 `[…](ptn:…)` md link 로 치환 → 기존 `react-markdown` `a` 컴포넌트가 처리.
+
+Option 1 (rehype plugin) 은 버전 호환 위험 + bundle 증가. Option 2 가 의존성 0, 단일 유틸 함수.
+
+**click handler — `a` component override**:
+
+```
+href 접두사 → action
+─────────────────────────────────────────────────────
+ptn:ticket/<id>   → openTab('ticket-review:'+id, 'ticket-review', { ticketId: id }, id)
+ptn:file/<path>   → openTab('markdown:'+path, 'markdown', { path }, basename(path))
+https?://…        → openTab('browser:'+encodedUrl, 'browser', { url }, hostname)
+(기타)            → e.preventDefault() + noop (보안 방어)
+```
+
+- `e.preventDefault()` 필수 (Electron 외부 nav 방지).
+- hook 불가 위치이므로 `useWorkspace.getState().openTab(...)` store 직접 호출.
+
+---
+
+### D. browser tab type 구현 (`BrowserTab` component)
+
+**현재 상태**: `browser` 는 `TabType` union 에 정의 완료, `PlaceholderTab` fallback.
+**이번 ticket**: `BrowserTab.tsx` 실제 구현.
+
+**renderer 결정**:
+
+| 후보 | CSP | Electron sandbox | 채택 |
+|:--|:--|:--|:--|
+| `<iframe>` | X-Frame-Options 차단 다수 | sandbox attr 필요 | ✗ |
+| `<webview>` | CSP 우회 가능 (Electron 전용) | allowpopups + partition | **✓** |
+
+```html
+<webview
+  src={url}
+  style={{ flex: 1, border: 'none', background: '#0F0F0F' }}
+  allowpopups
+  partition="persist:browser-tab"
+/>
+```
+
+**Nav bar** (BrowserTab 상단 32px row):
+
+```
+[ ← ] [ → ] [ ↺ ]  [  URL input (flex-1)  ]  [ ExternalLink icon ]
+```
+
+- ← / → : `webviewRef.current.goBack()` / `goForward()` — Electron webview API.
+- ↺ : `webviewRef.current.reload()` (lucide `RefreshCw`).
+- URL input: 사용자가 직접 수정 + Enter → `webviewRef.current.loadURL(newUrl)`.
+- ExternalLink: 외부 브라우저에서 열기 (`shell.openExternal` IPC).
+
+**Playwright MCP integration (persona debug) — IPC 브릿지 예약**:
+
+```
+BrowserTab mount
+  → window.api.browserOpened({ url, tabId })  [IPC emit]
+  → main: ipcMain.on('browser:opened', ...) → noop handler (T-P4-115 에서 채움)
+```
+
+T-P4-115 가 빈 handler 를 채워 `playwrightMcp.navigate(url)` → snapshot → `browser:snapshot` emit.
+본 ticket 은 IPC 채널 선언 + noop handler 등록만.
+
+---
+
+### E. MessageBubble renderer 갱신
+
+수정 대상: `packages/gui/src/components/workspace/chat/MessageBubble.tsx`
+
+- `Markdown` 컴포넌트 내 `a` component override — href prefix 해석 → 내부 라우팅.
+- `PersonaBubble` / `TraceLine` 의 text 를 `linkifyText(text)` 로 전처리 후 `<Markdown>` 에 전달.
+- `UserBubble` 은 linkify **미적용** — 사용자 입력 XSS 방어.
+- linkify 된 `a` 스타일: file `--persona-dev` / ticket `--persona-designer` / URL `--text-secondary`.
+  기존 `mdLink` 색 (`#38BDF8`) 은 URL type 의 fallback 유지.
+
+---
+
+### F. dispatch 후 행동 시퀀스 (canonical UX flow)
+
+```
+[PO 발행 / dispatch]
+        │
+        ▼
+  (1) po:ticket-focus IPC
+      → ticket detail tab 자동 open + main pane focus 이동   [§B]
+        │
+        ▼
+  (2) dev 작업 완료
+      → po:artifact-open IPC (changed_files[])
+      → .md / spec 최대 3개 tab 자동 open                     [§A / T-P4-112]
+        │
+        ▼
+  (3) QA dispatch (T-P4-112 dev-qa loop)
+      → qa-result tab open (T-P4-112 scope)
+        │
+        ▼
+  (4) PO chat 메시지 stream
+      → linkifyText: T-P4-XXX / file path / URL → hyperlink   [§C / §E]
+        │
+        ▼
+  (5) 사용자 click hyperlink
+      → ticket-review tab | markdown tab | browser tab open   [§D]
+```
+
+---
+
+## §3 ASCII mockup — chat message hyperlink 시각화
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  rp-msgs (ChatPanel)                                       │
+│                                                            │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ PO  ·  14:31                                         │  │
+│  │                                                      │  │
+│  │  T-P4-114 plan 을 작성했습니다.                      │  │
+│  │                                                      │  │
+│  │  산출물:                                             │  │
+│  │  [docs/design/T-P4-114/plan.md]                     │  │
+│  │   ↑ #38BDF8 밑줄 hyperlink (ptn:file/...)           │  │
+│  │   click → markdown tab open in main pane            │  │
+│  │                                                      │  │
+│  │  [T-P4-113] 도 참고하세요.                           │  │
+│  │   ↑ #A78BFA 밑줄 hyperlink (ptn:ticket/T-P4-113)    │  │
+│  │   click → ticket-review tab open                    │  │
+│  │                                                      │  │
+│  │  배포 확인: [https://productune.vercel.app]          │  │
+│  │             ↑ #C8C8CC 밑줄 (bare URL)               │  │
+│  │             click → browser tab + webview           │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
+
+Main pane — click 후:
+┌───────────────────────────────────────────────────────────────────────┐
+│ [plan.md ×]  [T-P4-113 ×]  [productune.vercel.app ×]                 │  ← tab bar
+├─────────────────┬─────────────────────────────────────────────────────┤
+│  (active tab)   │                                                      │
+│  markdown view  │  (다른 탭 클릭 시 전환)                              │
+│  또는           │                                                      │
+│  ticket-review  │                                                      │
+│  또는 webview   │                                                      │
+└─────────────────┴─────────────────────────────────────────────────────┘
+
+BrowserTab nav bar (type=browser 탭 활성 시):
+┌───────────────────────────────────────────────────────────────────────┐
+│ [←][→][↺]  [ https://productune.vercel.app         ]  [⧉]           │  32px
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│                     <webview>                                          │
+│          partition="persist:browser-tab"                               │
+│                                                                        │
+└───────────────────────────────────────────────────────────────────────┘
+
+색상 범례:
+  ██ #38BDF8  (--persona-dev)      file path hyperlink
+  ██ #A78BFA  (--persona-designer) ticket ID hyperlink
+  ██ #C8C8CC  (--text-secondary)   bare URL hyperlink
+```
+
+---
+
+## §4 Module Map
+
+| 서브영역 | 파일 | 신규/수정 | 내용 |
+|:--|:--|:--|:--|
+| C / E | `packages/gui/src/lib/linkifyText.ts` | **신규** | `linkifyText(text: string): string`. 티켓 ID / 파일 경로 / bare URL → `[…](ptn:…)` md link. backtick / fence / 기존 link 내부 skip. |
+| C / E | `packages/gui/src/components/workspace/chat/MessageBubble.tsx` | **수정** | `Markdown.a` component override → href prefix 해석 + `openTab` / `browser:open`. `PersonaBubble` / `TraceLine` 에 `linkifyText` 전처리 추가. `UserBubble` 은 미적용. |
+| D | `packages/gui/src/components/workspace/main/panes/BrowserTab.tsx` | **신규** | `<webview>` + nav bar (url input + ←/→/↺ + ExternalLink). mount 시 `window.api.browserOpened({ url, tabId })`. `allowpopups`, `partition="persist:browser-tab"`. |
+| D | `packages/gui/src/components/workspace/main/TabContent.tsx` | **수정** | `case 'browser'` → `<BrowserTab props={tab.props} />` (PlaceholderTab 교체). |
+| B | `packages/gui/src/views/WorkspaceShell.tsx` | **수정** | `useEffect`: `api.poOnTicketFocus(({ ticketId }) => openTab('ticket-review:'+ticketId, 'ticket-review', { ticketId }, ticketId))`. |
+| A | `packages/gui/src/views/WorkspaceShell.tsx` | **수정** | `useEffect`: `api.poOnArtifactOpen(({ files }) => { /* filter + cap + openTab loop */ })`. |
+| B / A / D | preload (main process, `packages/main/src/preload.ts` 또는 등가) | **수정** | `poOnTicketFocus`, `poOnArtifactOpen`, `browserOpened` IPC bridge 노출. |
+| B / A | main process (po-runner 또는 ipc handler) | **수정** | PO envelope 파싱: `tickets[]` → `po:ticket-focus` emit. `changed_files[]` → `po:artifact-open` emit. |
+| D | main process | **수정** | `ipcMain.on('browser:opened', noop)` — T-P4-115 용 채널 예약. |
+| i18n | `packages/gui/src/locales/ko/workspace.json` (또는 등가) | **수정** | `"browser.navPlaceholder"` ("URL 입력"), `"browser.refresh"` ("새로고침"), `"browser.openExternal"` ("외부 브라우저에서 열기"), `"artifacts.autoOpenToast"` ("N개 파일이 변경됨 — Quick Open(Cmd+P) 으로 추가 확인") |
+
+**마크다운 lib**: 기존 `react-markdown` + `remark-gfm` 유지. 추가 npm 패키지 **없음** — `linkifyText` preprocessor 로 대체. bundle 증가 0.
+
+**Playwright MCP integration spec** (IPC 브릿지 예약 — T-P4-115 stub):
+
+```ts
+// packages/main/src/ipc/browser.ts  (신규 — T-P4-115 에서 채워질 파일)
+import { ipcMain } from 'electron'
+
+// T-P4-115: playwrightMcp.navigate(url) + snapshot 로직으로 교체
+ipcMain.on('browser:opened', (_e, { url, tabId }: { url: string; tabId: string }) => {
+  // noop — channel reserved for T-P4-115 Playwright MCP integration
+  void url; void tabId
+})
+```
+
+---
+
+## §5 §1.5 Self-check (UX Principles)
+
+| Principle | 검증 | 상태 |
+|:--|:--|:--|
+| **Few Things Per Page (Hick's Law)** | hyperlink 는 bubble 인라인 — 별도 UI 면 추가 없음. browser tab / ticket tab 은 사용자 명시 click 또는 dispatch event 에만 open (IDE split-pane 정합: "사용자 명시 act 만"). tab cap 3개로 폭발 방지. | ✅ |
+| **Familiar (익숙한 경험)** | 파란/보라 밑줄 = 범용 "클릭 가능" 신호. ticket detail tab = IDE-style file-open. browser nav bar = 브라우저 주소창 패턴. 기존 `openTab` 동작 (dedupe + focus) 그대로 유지. | ✅ |
+| **Predictability (예상 가능)** | ticket emit → 항상 ticket-review tab. file path click → 항상 markdown tab. URL click → 항상 browser tab. 예외 없는 1:1 매핑. token 색상도 일관 (file=#38BDF8, ticket=#A78BFA, URL=#C8C8CC). | ✅ |
+| **Feedback (적재적소 알림)** | hyperlink hover → `cursor: pointer`. click 즉시 tab open 또는 focus 이동 (100ms 내). artifact cap 초과 시 info toast. browser tab 로딩 중 webview native 로딩 인디케이터. | ✅ |
+| **Escape (출구 제공)** | 자동 open 된 tab → Cmd+W 로 즉시 닫힘. browser webview → nav bar URL 수정으로 다른 페이지 탈출. 자동 open 은 once-per-event — 탭 닫은 후 강제 재open 없음. | ✅ |
+
+**주의 (OQ-1)**: tab 자동 open 이 빈번하면 "탭 폭발" 발생 가능 — §7 OQ-1 에서 frequency cap 및 preference toggle 검토.
+
+---
+
+## §6 §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `auto pdt-qa dispatch` |
+| **test target** | `linkifyText` utility + `MessageBubble` a-component override + `BrowserTab` webview mount + `WorkspaceShell` `po:ticket-focus` / `po:artifact-open` 구독 |
+| **사용자 dogfood** | ① PO chat 에 `T-P4-113` bare mention → 보라 링크 등장 → click → ticket-review tab open 확인. ② PO chat 에 `docs/design/T-P4-114/plan.md` mention → 파란 링크 → click → markdown tab open. ③ PO chat 에 `https://vercel.com` mention → 회색 링크 → click → browser tab + webview 로드. ④ 실제 PO dispatch (ticket emit) → ticket detail tab 자동 open + main pane focus 이동 확인. ⑤ 기존 마크다운 bold / code / list 회귀 없음 확인. |
+| **regression check** | `MessageBubble.tsx` — 기존 bold / code / list / 기존 마크다운 `[text](https://...)` 외부 링크 동작 회귀 없음. `WorkspaceShell.tsx` — 기존 IPC 구독 (deploy modal, baseDirty, session health, worktree) 회귀 없음. `TabContent.tsx` — 기존 탭 type 12종 (markdown, version-detail, ticket-review 등) 회귀 없음. |
+
+**QA invoke 선정 근거**: 복수 IPC channel (po:ticket-focus / po:artifact-open / browser:opened) + chat renderer + tab 라우터 합성 — 5-step user flow 이상. 회귀 surface 넓음.
+
+---
+
+## §7 Open Questions
+
+| # | 질문 | 권장 |
+|:--|:--|:--|
+| OQ-1 | tab 자동 open frequency cap — PO 가 한 메시지에 10개 파일 언급 시 탭 10개 폭발 가능. | **권장**: `po:artifact-open` handler 에 max 3 탭 cap. 초과분 info toast. ticket-focus 는 1개씩이므로 cap 불필요. 추후 settings preference toggle (별 ticket). |
+| OQ-2 | `linkifyText` 의 backtick skip 정확도 — 중첩 마크다운 구조에서 regex lookbehind 충분한지. | **권장**: 구현 시 `linkifyText.test.ts` unit test 포함 — 코드 블록 내 경로가 링크 변환 안 되는지, 기존 markdown link 이 double-wrap 되지 않는지 검증. |
+| OQ-3 | `<webview>` CSP sandbox 이슈 — 특정 사이트(`X-Frame-Options: DENY`)에서 blank 렌더링 가능. | **권장**: webview 채택 유지 (`<iframe>` 보다 우수). `partition="persist:browser-tab"` 세션 분리. localhost dev 서버 반드시 테스트. CSP 차단 시 "이 페이지는 로드할 수 없습니다" 오류 UI 표시 (webview `did-fail-load` 이벤트). |
+| OQ-4 | Playwright MCP 가 현재 productune 에 구성되어 있는지. | **권장**: T-P4-115 설계 시 확인. 본 ticket 은 IPC 브릿지 예약만 — Playwright MCP 없어도 BrowserTab 정상 동작. |
+| OQ-5 | main process 의 PO envelope 파싱 위치 — po-runner 파일 실제 경로 확인 필요. | T-P4-113 §8 OQ-1 과 동일 미결. 구현자가 glob 으로 확인 후 동일 파싱 지점에 채널 추가 권장. |
+| OQ-6 | ticket-focus IPC — envelope 에서 어떤 key 로 ticket emit vs dispatch 구분? | **권장**: `tickets[]` key 존재 → reason `'emit'`. `delegation.ticket_id` key → reason `'dispatch'`. 두 key 모두 없으면 noop. 구현자가 실제 PO envelope 스키마 확인 후 조정 허용. |
+
+---
+
+## §8 Out of scope
+
+- **Playwright MCP → browser snapshot / console 통합 UI** — T-P4-115 별 ticket. 본 ticket 은 IPC 브릿지 예약만.
+- **BrowserTab DevPane** (console / network log 오버레이) — T-P4-115 이후.
+- **UserBubble linkify** — 사용자 입력은 미적용 (보안 / XSS 방어).
+- **tab 자동 open preference toggle** (settings UI) — hardcode 필터로 고정. UI toggle 별 ticket.
+- **artifact-open 필터 설정 UI** — `docs/**`, `.md` hardcode 필터 유지.
+- **browser tab history / back-forward** — nav bar 는 url input + refresh + ←/→ 버튼만 (`goBack/goForward`). 탭별 history list UI 별 ticket.
+- **streaming 중 linkify re-render 최적화** — streaming 중 bubble 은 패턴 변환 매 tick 으로 debounce 미적용 (streaming 완료 후 안정). 최적화 별 ticket.
+- **activity Log / ROADMAP 갱신** — PO mechanical.
+
+---
+
+## §9 Dependencies
+
+| 의존성 | 관계 | Blocking? |
+|:--|:--|:--|
+| **T-P4-046** (split-pane + openTab) | `openTab` API + `TabType 'browser'` 이미 정의 완료 — 본 ticket 이 소비. `browser` case 는 PlaceholderTab 에서 BrowserTab 으로 교체. | **Non-blocking** (landed) |
+| **T-P4-041** (ChatPanel / MessageBubble) | `MessageBubble.tsx` 수정 기반. `react-markdown` + `remark-gfm` 이미 있음. | **Non-blocking** (landed) |
+| **T-P4-112** (dev-qa loop / changed_files envelope) | A. artifact auto-open 이 `changed_files[]` 포맷에 의존. T-P4-112 미착수 (TODO). | **Non-blocking** — 본 ticket 은 IPC 수신부만 구현. `path[]` 단순 포맷 가정. T-P4-112 land 시 포맷 정합. |
+| **T-P4-113** (user todo chip) | po-runner envelope 파싱 지점 공유 가능. 동일 파일에서 `po:todo-items` + `po:ticket-focus` + `po:artifact-open` 3 채널 emit. | **Non-blocking** (병렬 — 동일 파싱 지점, 다른 key detect) |
+| **T-P4-115** (Playwright MCP browser debug) | D. BrowserTab `browser:opened` IPC 브릿지가 T-P4-115 의 전제조건. | **Non-blocking** — 본 ticket 이 IPC 채널 예약 + noop handler 등록 → T-P4-115 가 handler 채움. |
