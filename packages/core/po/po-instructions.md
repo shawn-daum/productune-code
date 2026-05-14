@@ -12,7 +12,7 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 
 ## CAN (mechanical only) — `docs/tickets/<version>/T-NNN.md`
 
-- frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `type`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, routing/model/effort meta
+- frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `type`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `version` (stamp `poState.current_version` if absent at emit — T-P4-086), routing/model/effort meta
 - mirrored header status line
 - `## Persona Activity` table — append-only 1 row per delegation (≤80 char Result)
 - Tools: `sed -n`, `awk`, `perl`, `printf >>`

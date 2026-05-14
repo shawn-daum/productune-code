@@ -1,5 +1,6 @@
 ---
 ticket_id: T-PATCH-002
+version: legacy/phase3-fixes
 round: phase3-fixes
 type: doctrine-update
 status: done

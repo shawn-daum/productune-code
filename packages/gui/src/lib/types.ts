@@ -73,7 +73,7 @@ export interface Session {
  */
 export interface Ticket {
   ticket_id: string
-  version?: string
+  version?: string | null
   slug?: string
   title?: string
   type?: TaskType

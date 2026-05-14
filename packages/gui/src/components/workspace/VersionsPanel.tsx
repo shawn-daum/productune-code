@@ -54,6 +54,12 @@ export default function VersionsPanel({ poState }: Props) {
     return map
   }, [scannedTickets, poState])
 
+  // Tickets with no version assignment (T-P4-086 sub-e)
+  const unassignedCount = useMemo(
+    () => scannedTickets.filter((tk) => !tk.version).length,
+    [scannedTickets],
+  )
+
   const onClick = (id: string) => {
     openTab(tabIdForVersion(id), 'version-detail', { versionId: id }, id)
   }
@@ -93,6 +99,14 @@ export default function VersionsPanel({ poState }: Props) {
 
       {versionsCapped && (
         <div style={capFooter}>{t('workspace.versions.olderHint')}</div>
+      )}
+
+      {/* Unassigned bucket — T-P4-086 sub-e: null-version tickets */}
+      {unassignedCount > 0 && (
+        <div style={{ ...sectionLabel, marginTop: 18 }}>
+          <span style={unassignedLabel}>{t('workspace.versions.unassigned')}</span>
+          <span style={unassignedBadge}>{unassignedCount}</span>
+        </div>
       )}
     </div>
   )
@@ -254,4 +268,24 @@ const capFooter: React.CSSProperties = {
   color: '#505050',
   fontStyle: 'italic',
   lineHeight: 1.4,
+}
+
+// Unassigned bucket — T-P4-086: neutral muted styling (non-canonical, no active highlight)
+const unassignedLabel: React.CSSProperties = {
+  fontSize: 10,
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+  color: 'var(--text-muted, #3A3A3A)',
+  fontWeight: 600,
+}
+
+const unassignedBadge: React.CSSProperties = {
+  marginLeft: 6,
+  fontSize: 9,
+  fontFamily: 'monospace',
+  color: 'var(--text-muted, #3A3A3A)',
+  background: '#141414',
+  border: '1px solid #2A2A2A',
+  borderRadius: 3,
+  padding: '0 4px',
 }

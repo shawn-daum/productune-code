@@ -14,13 +14,18 @@ function parseArgs() {
   const args = process.argv.slice(2)
   let apply = false
   let projectDir = process.cwd()
+  let poStatePath = null
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--apply') apply = true
     if (args[i] === '--project-dir' && args[i + 1]) {
       projectDir = args[++i]
     }
+    // Allow overriding po-state.json location (e.g. when running inside a git worktree)
+    if (args[i] === '--po-state-path' && args[i + 1]) {
+      poStatePath = args[++i]
+    }
   }
-  return { apply, projectDir }
+  return { apply, projectDir, poStatePath }
 }
 
 function parseFrontmatter(content) {
@@ -71,14 +76,16 @@ function closestVersion(ts, versions) {
 }
 
 function main() {
-  const { apply, projectDir } = parseArgs()
+  const { apply, projectDir, poStatePath: poStatePathOverride } = parseArgs()
 
-  const poStatePath = path.join(projectDir, '.productune', 'po-state.json')
-  if (!fs.existsSync(poStatePath)) {
-    console.error(`ERROR: po-state.json not found at ${poStatePath}`)
+  const resolvedPoStatePath = poStatePathOverride
+    ?? path.join(projectDir, '.productune', 'po-state.json')
+  if (!fs.existsSync(resolvedPoStatePath)) {
+    console.error(`ERROR: po-state.json not found at ${resolvedPoStatePath}`)
+    console.error('  Tip: if running inside a git worktree, pass --po-state-path <main-repo>/.productune/po-state.json')
     process.exit(1)
   }
-  const poState = JSON.parse(fs.readFileSync(poStatePath, 'utf-8'))
+  const poState = JSON.parse(fs.readFileSync(resolvedPoStatePath, 'utf-8'))
   const versions = poState.versions ?? []
   const currentVersion = poState.current_version ?? null
 

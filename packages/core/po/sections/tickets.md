@@ -77,7 +77,9 @@ Smoke gate behavior + close rules → `lifecycle-mechanics.md`.
 
 Required: `ticket_id`, `version`, `slug`, `type`, `status` (PO mechanical), `assignee`, `created_at`, `estimated_complexity`, `risk_flags`. Optional/derived: `started_at` / `completed_at` / `duration_min` (PO mechanical), `branch` / `worktree_path` (git-workflow R2), `qa_status` / `qa_loops` (PO mechanical, impl/refactor only; `qa_status ∈ pending|pass|fail`), `success_metric` / `validation_method` (Designer, optional when measurable), `observed_result` (PO mechanical at Phase 5).
 
-**`version:` field format rule (T-P4-095)**: value MUST match `^v\d+(\.\d+)?$` (e.g. `v1`, `v0.1`). Exception: `legacy/phase3-fixes` and similar artificial ids — mark with `legacy: true` in frontmatter. Lint: `packages/gui/scripts/check-ticket-version.mjs` — run during `pnpm build` in gui package and available for project-level use with `--project-dir <path>`.
+**`version:` field format rule (T-P4-086)**: value MUST match `^v\d+(\.\d+)?(-[\w-]+)?$` — i.e. the full semantic slug from `poState.versions[].id` (e.g. `v1`, `v0.1`, `v0.4-meta-dogfood`). Exception: artificial archive ids (e.g. `legacy/phase3-fixes`) are also allowed — mark with `legacy: true` in frontmatter. Lint: `packages/gui/scripts/check-ticket-version.mjs` — available for project-level use with `--project-dir <path>`.
+
+**Ticket emit sequence — version stamp** (T-P4-086 sub-c): When Designer emits a new ticket md, if `version:` is absent or empty, PO mechanical-writes `poState.current_version` into the frontmatter immediately after delegation (post-delegate hook). Verification: `jq -r '.current_version' .productune/po-state.json` → stamp into ticket `ticket_id` line + 1.
 
 Body: `# T-NNN: <title>` · mirrored header line · `## Request` · `## Inputs` · `## Acceptance` · `## Out of scope` · `## Persona Activity` (PO-managed table). Designer owns scope-defining sections; PO touches only lifecycle / mirrored header / Persona Activity rows. `type:deploy` body uses `## Steps` (see `pdt-po.md`).
 
@@ -101,7 +103,7 @@ PO never authors product content. Lifecycle / frontmatter = state, not authoring
 
 ### PO mechanical-write whitelist
 
-**PO direct (mechanical)**: ticket frontmatter (`status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `type`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, routing/model/effort meta) · mirrored header status line · `## Persona Activity` 1-row append (≤80-char Result) · `docs/qa/fail-patterns.md` append from QA's `fail_event` · `po-state.json` `pending_gate` set/clear at Phase boundary.
+**PO direct (mechanical)**: ticket frontmatter (`status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `type`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `qa_status`, `qa_loops`, `observed_result`, **`version`** (stamp at emit if absent — T-P4-086), routing/model/effort meta) · mirrored header status line · `## Persona Activity` 1-row append (≤80-char Result) · `docs/qa/fail-patterns.md` append from QA's `fail_event` · `po-state.json` `pending_gate` set/clear at Phase boundary.
 
 **Delegate to Designer**: `success_metric`, `validation_method` (set at creation) · `## Request`, `## Inputs`, `## Acceptance`, `## Out of scope`, `## Outcome`, title changes.
 

@@ -108,7 +108,8 @@
       "tickets": "티켓 {{count}}",
       "retro": "회고 ↗",
       "phaseLabel": "Phase: ",
-      "olderHint": "이전 Version: docs/retrospectives/<version>.md 참조"
+      "olderHint": "이전 Version: docs/retrospectives/<version>.md 참조",
+      "unassigned": "할당 안 됨"
     },
     "versionDetail": {
       "notFound": "Version `{{id}}` 을 po-state에서 찾을 수 없음.",

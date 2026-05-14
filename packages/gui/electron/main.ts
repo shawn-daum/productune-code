@@ -590,7 +590,7 @@ ipcMain.handle('state:readPoState', async (_event, projectDir: string) => {
 
 interface ScannedTicket {
   ticket_id: string
-  version?: string
+  version: string | null
   slug?: string
   title?: string
   type?: string
@@ -685,7 +685,7 @@ ipcMain.handle('tickets:scan', async (_event, projectDir: string): Promise<Scann
       const ticket_id = String(fm.ticket_id ?? path.basename(file, '.md'))
       const ticket: ScannedTicket = {
         ticket_id,
-        version: fm.version ?? versionDir,
+        version: (fm.version && String(fm.version).trim()) || null,
         slug: fm.slug,
         title: fm.title,
         type: fm.type,

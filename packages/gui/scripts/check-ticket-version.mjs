@@ -16,7 +16,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // Repo root = 3 levels up from packages/gui/scripts/
 const REPO_ROOT = path.resolve(__dirname, '../../..')
 
-const VERSION_ID_RE = /^v\d+(\.\d+)?$/
+// Matches: v1, v0.1, v0.4-meta-dogfood, v1.2-some-slug (T-P4-086: semantic slug format)
+const VERSION_ID_RE = /^v\d+(\.\d+)?(-[\w-]+)?$/
 const LEGACY_RE = /^legacy\/.+/
 
 function parseArgs() {

@@ -108,7 +108,8 @@
       "tickets": "{{count}} tickets",
       "retro": "Retro ↗",
       "phaseLabel": "Phase: ",
-      "olderHint": "Older versions: see docs/retrospectives/<version>.md"
+      "olderHint": "Older versions: see docs/retrospectives/<version>.md",
+      "unassigned": "Unassigned"
     },
     "versionDetail": {
       "notFound": "Version `{{id}}` not found in po-state.",
