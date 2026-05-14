@@ -1,6 +1,8 @@
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { fileURLToPath } from 'url'
 
 export interface ProjectConfig {
   slug: string
@@ -15,6 +17,8 @@ export interface InitOptions {
   projectDir: string
   /** Optional: initial version id hint (validated by caller). Written to config.json as initial_version. */
   initialVersionId?: string
+  /** Skip user-global doctrine install (escape hatch for CI / custom doctrine environments). */
+  skipDoctrine?: boolean
 }
 
 // ── settings.local.json hygiene ───────────────────────────────────────────────
@@ -194,6 +198,109 @@ export function bootstrapPersonaMemory(projectDir: string) {
   )
 }
 
+// ── user-global doctrine bootstrap ───────────────────────────────────────────
+
+/** Absolute path to the bundled `po/` directory (packages/core/po/). */
+const DOCTRINE_SRC = fileURLToPath(new URL('../po', import.meta.url))
+
+/** SHA-256 hex digest of a file. */
+function sha256(filePath: string): string {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
+}
+
+type DoctrineTraceState = 'silent' | 'installed' | 'updated'
+
+/**
+ * Copy a single doctrine file from src → dest with hash-compare / backup logic.
+ * Returns the (potentially escalated) trace state.
+ */
+function copyDoctrineFile(
+  src: string,
+  dest: string,
+  state: DoctrineTraceState,
+): DoctrineTraceState {
+  if (!fs.existsSync(dest)) {
+    fs.copyFileSync(src, dest)
+    return state === 'updated' ? 'updated' : 'installed'
+  }
+  if (sha256(src) === sha256(dest)) return state // identical — skip
+  // Hash mismatch → backup + update
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  fs.copyFileSync(dest, `${dest}.bak.${ts}`)
+  fs.copyFileSync(src, dest)
+  return 'updated'
+}
+
+/**
+ * Idempotently install/update user-global PO doctrine files under ~/.productune/.
+ *
+ * Behaviour:
+ * - po-instructions.md : hash compare; backup + update on mismatch.
+ * - po-memory.md        : seed-only (never overwrite — user long-term memory).
+ * - sections/*.md       : per-file hash compare; backup + update on mismatch.
+ * - productune.env      : seed-only (engine=claude default).
+ *
+ * Stderr trace (once at end):
+ * - Any update (hash mismatch) → "업데이트했습니다" message.
+ * - Fresh install only           → "설치 완료" message.
+ * - All skipped (idempotent)     → silent.
+ */
+export function bootstrapUserGlobalDoctrine(): void {
+  const PRODUCTUNE_HOME = path.join(os.homedir(), '.productune')
+  const SECTIONS_HOME = path.join(PRODUCTUNE_HOME, 'sections')
+
+  fs.mkdirSync(PRODUCTUNE_HOME, { recursive: true })
+  fs.mkdirSync(SECTIONS_HOME, { recursive: true })
+
+  let traceState: DoctrineTraceState = 'silent'
+
+  // ── po-instructions.md — hash compare + backup + update ──
+  const instrSrc = path.join(DOCTRINE_SRC, 'po-instructions.md')
+  const instrDest = path.join(PRODUCTUNE_HOME, 'po-instructions.md')
+  if (fs.existsSync(instrSrc)) {
+    traceState = copyDoctrineFile(instrSrc, instrDest, traceState)
+  }
+
+  // ── po-memory.md — seed only (절대 overwrite 금지) ──
+  const memDest = path.join(PRODUCTUNE_HOME, 'po-memory.md')
+  if (!fs.existsSync(memDest)) {
+    const memSrc = path.join(DOCTRINE_SRC, 'po-memory.md.template')
+    if (fs.existsSync(memSrc)) {
+      fs.copyFileSync(memSrc, memDest)
+      if (traceState === 'silent') traceState = 'installed'
+    }
+  }
+
+  // ── sections/*.md — file-by-file hash compare + backup + update ──
+  const sectionsDir = path.join(DOCTRINE_SRC, 'sections')
+  if (fs.existsSync(sectionsDir)) {
+    for (const file of fs.readdirSync(sectionsDir)) {
+      if (!file.endsWith('.md')) continue
+      const srcFile = path.join(sectionsDir, file)
+      const destFile = path.join(SECTIONS_HOME, file)
+      traceState = copyDoctrineFile(srcFile, destFile, traceState)
+    }
+  }
+
+  // ── productune.env — seed only ──
+  const envDest = path.join(PRODUCTUNE_HOME, 'productune.env')
+  if (!fs.existsSync(envDest)) {
+    fs.writeFileSync(envDest, 'engine=claude\n')
+    if (traceState === 'silent') traceState = 'installed'
+  }
+
+  // ── stderr trace (1 line; silent on idempotent re-run) ──
+  if (traceState === 'updated') {
+    process.stderr.write(
+      '[init] 시스템 파일을 최신 버전으로 업데이트했습니다. (기존 파일 .bak 백업됨)\n',
+    )
+  } else if (traceState === 'installed') {
+    process.stderr.write('[init] 시스템 파일 설치 완료\n')
+  }
+}
+
+// ── project init ──────────────────────────────────────────────────────────────
+
 export function initProject(opts: InitOptions): ProjectConfig {
   const dotDir = path.join(opts.projectDir, '.productune')
   const configPath = path.join(dotDir, 'config.json')
@@ -221,5 +328,6 @@ export function initProject(opts: InitOptions): ProjectConfig {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
   bootstrapPersonaMemory(opts.projectDir)
   bootstrapClaudeSettings(opts.projectDir)
+  if (!opts.skipDoctrine) bootstrapUserGlobalDoctrine()
   return config
 }
