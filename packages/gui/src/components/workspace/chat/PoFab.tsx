@@ -22,6 +22,10 @@ function ensureFabAnims(): void {
   style.textContent = `
     @keyframes fab-pulse   { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:0.5;transform:scale(1.15);} }
     @keyframes fab-blink   { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+    @media (prefers-reduced-motion: reduce) {
+      @keyframes fab-pulse { 0%,100%{opacity:1;transform:scale(1);} }
+      @keyframes fab-blink { 0%,100%{opacity:1;} }
+    }
   `
   document.head.appendChild(style)
 }

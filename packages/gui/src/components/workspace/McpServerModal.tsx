@@ -7,7 +7,7 @@
  * T-P4-067 modal pattern:
  *   - Esc key = cancel (dirty guard: confirm before close).
  *   - Backdrop click = cancel.
- *   - [저장] left-anchored → primary, [취소] right-of-save = secondary.
+ *   - [취소] left (ghost) / [저장 (primary)] right — §1.5.3 fix T-P4-069.
  *   - Restart notice always visible.
  *
  * [+ 서버 추가] (new server name field editable) = Phase 5 lock (OQ-2).
@@ -267,17 +267,17 @@ export default function McpServerModal({ server, onClose, onSaved }: Props) {
         {/* Restart notice — always visible */}
         <div style={restartNotice}>ⓘ {t('settings.mcp.modal.restartNotice')}</div>
 
-        {/* Footer: [저장] [취소] */}
+        {/* Footer: [취소] [저장] — §1.5.3: cancel left, primary right */}
         <div style={footerActions}>
+          <button style={btnSecondary} onClick={onClose}>
+            {t('settings.mcp.modal.cancelBtn')}
+          </button>
           <button
             style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}
             onClick={handleSave}
             disabled={saving}
           >
             {saving ? t('common.loading') : t('settings.mcp.modal.saveBtn')}
-          </button>
-          <button style={btnSecondary} onClick={onClose}>
-            {t('settings.mcp.modal.cancelBtn')}
           </button>
         </div>
       </div>

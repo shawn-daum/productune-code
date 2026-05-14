@@ -140,7 +140,9 @@
       "title": "Tickets",
       "filterAll": "All",
       "filterCount": "{{count}} tickets",
+      "loading": "Loading tickets…",
       "noTickets": "No tickets match the current filter.",
+      "noTicketsCta": "Ask PO to start →",
       "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"). Project status enum may not match productune doctrine."
     },
     "phaseGate": {
@@ -210,7 +212,8 @@
       "active": "Active pane"
     },
     "emptyPane": {
-      "title": "Open a file or run a command"
+      "title": "Open a file or run a command",
+      "ctaLabel": "Quick Open"
     },
     "quickOpen": {
       "placeholder": "Search files, tickets, personas…",

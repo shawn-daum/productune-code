@@ -2,10 +2,10 @@
  * RestartSessionModal — confirmation dialog for session restart (T-P4-059).
  *
  * Shown when user clicks "Restart session" CTA on permission-blocked banner.
- * Three actions:
- *   Restart now    → po:restartSession IPC → renderer sessionId = null
- *   Open settings  → navigate to Settings tab (T-P4-058 land target)
- *   Cancel         → modal close only, banner preserved
+ * Two footer CTAs (§1.5.1 ≤2 rule, §1.5.3 order fix — T-P4-069):
+ *   Cancel         → modal close only, banner preserved   [left ghost]
+ *   Restart now    → po:restartSession IPC → renderer sessionId = null   [right primary]
+ * Open settings → demoted to text link in body (§1.5.1 CTA count fix).
  */
 
 import { useState } from 'react'
@@ -54,21 +54,24 @@ export default function RestartSessionModal({ onClose }: Props) {
 
         <p style={body}>{t('workspace.restartModal.body')}</p>
 
+        {/* Open settings — demoted to text link (§1.5.1 ≤2 CTA rule) */}
+        <p style={settingsLinkRow}>
+          <button style={btnSettingsLink} onClick={handleOpenSettings}>
+            {t('workspace.restartModal.openSettings')} ↗
+          </button>
+        </p>
+
+        {/* Footer: [Cancel] left, [Restart Now] right — §1.5.3 order */}
         <div style={actions}>
+          <button style={btnGhost} onClick={onClose}>
+            {t('common.cancel')}
+          </button>
           <button
             style={{ ...btnPrimary, opacity: restarting ? 0.6 : 1 }}
             onClick={handleRestartNow}
             disabled={restarting}
           >
             {restarting ? t('common.loading') : t('workspace.restartModal.restartNow')}
-          </button>
-
-          <button style={btnSecondary} onClick={handleOpenSettings}>
-            {t('workspace.restartModal.openSettings')} ↗
-          </button>
-
-          <button style={btnGhost} onClick={onClose}>
-            {t('common.cancel')}
           </button>
         </div>
       </div>
@@ -115,11 +118,27 @@ const body: React.CSSProperties = {
   lineHeight: 1.55,
 }
 
+const settingsLinkRow: React.CSSProperties = {
+  margin: 0,
+}
+
+const btnSettingsLink: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: '#707070',
+  fontSize: 11,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  padding: 0,
+  textDecoration: 'underline',
+  textDecorationColor: '#404040',
+}
+
 const actions: React.CSSProperties = {
   display: 'flex',
   gap: 8,
   paddingTop: 4,
-  flexWrap: 'wrap',
+  justifyContent: 'flex-end',
 }
 
 const btnPrimary: React.CSSProperties = {
@@ -131,18 +150,6 @@ const btnPrimary: React.CSSProperties = {
   borderRadius: 4,
   fontSize: 12,
   fontWeight: 600,
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-}
-
-const btnSecondary: React.CSSProperties = {
-  height: 30,
-  padding: '0 14px',
-  background: 'transparent',
-  color: '#C0C0C0',
-  border: '1px solid #3A3A3A',
-  borderRadius: 4,
-  fontSize: 12,
   cursor: 'pointer',
   fontFamily: 'inherit',
 }

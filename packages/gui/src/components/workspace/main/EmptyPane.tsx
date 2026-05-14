@@ -2,10 +2,16 @@ import { useTranslation } from 'react-i18next'
 
 /**
  * Body shown when a leaf pane has zero tabs. Mirrors VS Code's "Welcome" pane:
- * 28px logo at 0.25 opacity, escape title, three keyboard hints.
+ * 28px logo at 0.25 opacity, escape title, keyboard hints, + primary CTA.
+ * §1.5.3 CTA added (T-P4-069 fix C-1): [Quick Open] button dispatches ⌘P.
  */
 export default function EmptyPane() {
   const { t } = useTranslation()
+
+  const handleQuickOpen = () => {
+    window.dispatchEvent(new CustomEvent('productune:quick-open'))
+  }
+
   return (
     <div style={wrap}>
       <div style={logo} aria-hidden>P</div>
@@ -16,6 +22,9 @@ export default function EmptyPane() {
         <KbdRow chord={['⌘', '\\']} label={t('workspace.kbd.splitRight')} />
         <KbdRow chord={['⌘', 'W']} label={t('workspace.kbd.closeTab')} />
       </div>
+      <button style={ctaBtn} onClick={handleQuickOpen}>
+        {t('workspace.emptyPane.ctaLabel')}
+      </button>
     </div>
   )
 }
@@ -104,4 +113,19 @@ const kbd: React.CSSProperties = {
 
 const rowLabel: React.CSSProperties = {
   color: '#505050',
+}
+
+const ctaBtn: React.CSSProperties = {
+  marginTop: 8,
+  height: 28,
+  padding: '0 16px',
+  background: '#FF6B2B',
+  color: '#0F0F0F',
+  border: 'none',
+  borderRadius: 4,
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: 'pointer',
+  fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif',
+  letterSpacing: 0.2,
 }

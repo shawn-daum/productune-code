@@ -45,10 +45,15 @@ export default function PendingPromotionDrain({ projectDir, claudeSessionId, onD
   }, [projectDir])
 
   const addToast = useCallback((id: string, msg: string, ok: boolean) => {
-    setToasts((prev) => [...prev, { id: `${id}-${Date.now()}`, msg, ok }])
+    const toastId = `${id}-${Date.now()}`
+    setToasts((prev) => [...prev, { id: toastId, msg, ok }])
     setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== `${id}-${Date.now()}`))
+      setToasts((prev) => prev.filter((t) => t.id !== toastId))
     }, 4000)
+  }, [])
+
+  const dismissToast = useCallback((toastId: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== toastId))
   }, [])
 
   const removeItem = useCallback((id: string) => {
@@ -216,7 +221,14 @@ export default function PendingPromotionDrain({ projectDir, claudeSessionId, onD
 
       {toasts.map((toast) => (
         <div key={toast.id} style={toastStyle(toast.ok)}>
-          {toast.msg}
+          <span style={toastMsg}>{toast.msg}</span>
+          <button
+            style={toastCloseBtn}
+            onClick={() => dismissToast(toast.id)}
+            aria-label={t('common.cancel')}
+          >
+            ×
+          </button>
         </div>
       ))}
     </div>
@@ -419,10 +431,29 @@ const bulkInput_: React.CSSProperties = {
 
 function toastStyle(ok: boolean): React.CSSProperties {
   return {
-    padding: '6px 12px',
+    display: 'flex',
+    alignItems: 'center',
+    padding: '6px 8px 6px 12px',
     fontSize: 11,
     color: ok ? '#60B860' : '#E04040',
     background: ok ? '#0A2A0A' : '#2A0808',
     borderTop: `1px solid ${ok ? '#1A3A1A' : '#3A1A1A'}`,
   }
+}
+
+const toastMsg: React.CSSProperties = {
+  flex: 1,
+}
+
+const toastCloseBtn: React.CSSProperties = {
+  flexShrink: 0,
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  color: 'inherit',
+  fontSize: 14,
+  lineHeight: 1,
+  padding: '0 4px',
+  opacity: 0.7,
+  fontFamily: 'inherit',
 }

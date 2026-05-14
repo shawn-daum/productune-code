@@ -1,9 +1,10 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import type { PoState, Ticket, TaskType, Status } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
+import { usePoChat } from '../../store/poChat'
 
 interface Props {
   poState: PoState | null
@@ -18,6 +19,7 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const { tickets: scannedTickets, loading } = useTicketScan(project?.projectDir ?? null)
+  const setPanelVisible = usePoChat((s) => s.setPanelVisible)
 
   const allTickets = useMemo(() => {
     const raw = collectAllTickets(poState, scannedTickets)
@@ -37,9 +39,18 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
       )}
 
       {loading && allTickets.length === 0 ? (
-        <div style={empty}>{t('workspace.tickets.noTickets')}</div>
+        /* §1.5.4: pending state — Loader2 spinner (T-P4-069 fix C-2) */
+        <div style={loadingWrap} role="status" aria-label={t('workspace.tickets.loading')}>
+          <Loader2 size={20} color="#505050" className="pdt-spin" />
+        </div>
       ) : allTickets.length === 0 ? (
-        <div style={empty}>{t('workspace.tickets.noTickets')}</div>
+        /* §1.5.3: empty state — distinct from loading (T-P4-069 fix C-2) */
+        <div style={empty}>
+          <span>{t('workspace.tickets.noTickets')}</span>
+          <button style={noTicketsCta} onClick={() => setPanelVisible(true)}>
+            {t('workspace.tickets.noTicketsCta')}
+          </button>
+        </div>
       ) : (
         <div style={kanban}>
           {STATUS_ORDER.map((s) => (
@@ -181,13 +192,35 @@ const title: React.CSSProperties = {
   color: '#F0F0F0',
 }
 
-const empty: React.CSSProperties = {
+const loadingWrap: React.CSSProperties = {
   flex: 1,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
+}
+
+const empty: React.CSSProperties = {
+  flex: 1,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 12,
   color: '#3A3A3A',
   fontSize: 13,
+}
+
+const noTicketsCta: React.CSSProperties = {
+  height: 28,
+  padding: '0 14px',
+  background: '#FF6B2B',
+  color: '#0F0F0F',
+  border: 'none',
+  borderRadius: 4,
+  fontSize: 11,
+  fontWeight: 600,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
 }
 
 const mismatchBannerWrap: React.CSSProperties = {
