@@ -10,7 +10,7 @@ interface Props {
   versionFilter?: string
 }
 
-const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'done', 'blocked', 'abandoned']
+const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'user-verify', 'done', 'blocked', 'abandoned']
 /** Set derived from STATUS_ORDER — single source of truth for known status strings. */
 const KNOWN_STATUS_SET = new Set<string>(STATUS_ORDER)
 
@@ -239,12 +239,13 @@ const column: React.CSSProperties = {
 
 function columnHeader(status: Status): React.CSSProperties {
   const colors: Record<Status, string> = {
-    'todo':        '#505050',
-    'in-progress': '#FF6B2B',
-    'review':      '#E0B040',
-    'done':        '#60B860',
-    'blocked':     '#E04040',
-    'abandoned':   '#3A3A3A',
+    'todo':         '#505050',
+    'in-progress':  '#38BDF8',
+    'review':       '#F59E0B',
+    'user-verify':  '#A78BFA',
+    'done':         '#34D399',
+    'blocked':      '#EF4444',
+    'abandoned':    '#3A3A3A',
   }
   const c = colors[status] ?? '#505050'
   return {

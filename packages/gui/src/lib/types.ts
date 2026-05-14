@@ -27,7 +27,8 @@ export type TaskType = 'design' | 'impl' | 'refactor' | 'test' | 'qa' | 'deploy'
 export const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
 
 // Ticket lifecycle status (separate from `type`).
-export type Status = 'todo' | 'in-progress' | 'review' | 'done' | 'blocked' | 'abandoned'
+// Plan-Do-See lifecycle: todo → in-progress → review → user-verify → done | blocked | abandoned
+export type Status = 'todo' | 'in-progress' | 'review' | 'user-verify' | 'done' | 'blocked' | 'abandoned'
 
 // Auto QA smoke gate result on impl/refactor tickets.
 export type QaStatus = 'pending' | 'pass' | 'fail'

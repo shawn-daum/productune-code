@@ -495,6 +495,30 @@
         "loading": "Loading deploy events…",
         "empty": "No deploy events"
       }
+    },
+    "artifacts": {
+      "sectionLabel": "Artifacts",
+      "openAll": "+ open all ({{count}})",
+      "empty": "No artifacts in this session"
+    },
+    "qaLoop": {
+      "attempt": "attempt {{current}}/{{max}}"
+    },
+    "userVerify": {
+      "tabTitle": "Confirm Required",
+      "todoCheck": "{{description}} — check after review"
+    },
+    "browser": {
+      "back": "Back",
+      "forward": "Forward",
+      "reload": "Reload",
+      "popout": "Open in browser",
+      "addressPlaceholder": "Enter URL…",
+      "addressLabel": "Address bar",
+      "iframeTitle": "Browser",
+      "emptyHint": "No URL loaded",
+      "loadError": "Page could not be loaded",
+      "retry": "Retry"
     }
   },
   "settings": {

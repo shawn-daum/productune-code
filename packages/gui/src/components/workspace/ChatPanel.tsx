@@ -22,6 +22,8 @@ import { Paperclip, ArrowUp, RefreshCw, Minus } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import { useUserTodo } from '../../store/useUserTodo'
+import { useArtifacts } from '../../store/useArtifacts'
+import { useQaLoop } from '../../store/useQaLoop'
 import type { Message, MessageKind } from '../../lib/types'
 import PhaseStrip from './PhaseStrip'
 import PersonaPresenceBar from './PersonaPresenceBar'
@@ -41,6 +43,11 @@ export default function ChatPanel() {
   // T-P4-113: todo store actions (subscribed via IPC below)
   const pushTodoItems = useUserTodo((s) => s.pushItems)
   const dismissTodosByIds = useUserTodo((s) => s.dismissByIds)
+
+  // T-P4-112: artifact + qa-loop store actions (subscribed via IPC below)
+  const pushArtifactFiles = useArtifacts((s) => s.pushFiles)
+  const markArtifactOpened = useArtifacts((s) => s.markOpened)
+  const setQaLoopEntry = useQaLoop((s) => s.setEntry)
 
   const setMessages = useWorkspace((s) => s.setMessages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
@@ -174,6 +181,83 @@ export default function ChatPanel() {
       offTodoDismiss?.()
     }
   }, [pushTodoItems, dismissTodosByIds])
+
+  // ── Subscribe to Plan-Do-See IPC events (T-P4-112) ───────────────────────
+  // OQ-5: subscribed here (same pattern as todo / health IPC above).
+  const openTabFn = useWorkspace.getState().openTab
+  useEffect(() => {
+    const api = (window as any).api
+
+    // A. artifact files — auto-open ≤ 3 tabs; rest show in SidePanelArtifacts
+    const offArtifactFiles = api?.onArtifactFiles?.((payload: {
+      files: string[]
+      ticketId?: string
+    }) => {
+      const { files, ticketId } = payload
+      pushArtifactFiles(files, ticketId)
+      const toOpen = files.slice(0, 3)
+      const store = useArtifacts.getState()
+      for (const filePath of toOpen) {
+        const art = store.files.find((f) => f.path === filePath)
+        const tabType = art?.tabType ?? 'markdown'
+        const name = filePath.split('/').filter(Boolean).pop() ?? filePath
+        openTabFn(filePath, tabType, { path: filePath }, name)
+        markArtifactOpened(filePath)
+      }
+    })
+
+    // C. browser-open — auto-open browser tab (QA smoke or noop if already open)
+    const offBrowserOpen = api?.onBrowserOpen?.((payload: {
+      url: string
+      ticketId: string
+      purpose: 'qa-smoke' | 'user-verify'
+    }) => {
+      const tabId = `browser:${payload.ticketId}:${payload.purpose}`
+      openTabFn(tabId, 'browser', { url: payload.url }, 'Browser')
+    })
+
+    // E. user-verify — open browser tab (if url) + push user TODO
+    const offUserVerify = api?.onUserVerify?.((payload: {
+      url?: string
+      description: string
+      ticketId: string
+    }) => {
+      // Step 1: browser tab (if url present)
+      if (payload.url) {
+        openTabFn(
+          `user-verify:${payload.ticketId}`,
+          'browser',
+          { url: payload.url },
+          '확인 필요',
+        )
+      }
+      // Step 2: user TODO push
+      pushTodoItems([{
+        id: `verify-${payload.ticketId}`,
+        description: `${payload.description} 후 체크`,
+        type: payload.url ? 'link' : 'check',
+        href: payload.url,
+      }])
+    })
+
+    // B. qa-loop-update — update qa-loop store (badge in BackgroundTaskSegment)
+    const offQaLoopUpdate = api?.onQaLoopUpdate?.((payload: {
+      ticketId: string
+      attempt: number
+      maxAttempts: number
+      status: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required'
+      lastFailReason?: string
+    }) => {
+      setQaLoopEntry(payload)
+    })
+
+    return () => {
+      offArtifactFiles?.()
+      offBrowserOpen?.()
+      offUserVerify?.()
+      offQaLoopUpdate?.()
+    }
+  }, [pushArtifactFiles, markArtifactOpened, pushTodoItems, setQaLoopEntry])
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────
   useEffect(() => {

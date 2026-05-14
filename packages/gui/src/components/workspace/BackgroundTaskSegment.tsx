@@ -19,6 +19,7 @@ import {
   type BackgroundTaskPersona,
   type PopupAnchor,
 } from '../../store/useBackgroundTasks'
+import { useQaLoop, type QaLoopEntry } from '../../store/useQaLoop'
 import { PERSONA_COLORS, type PersonaId } from '../../store/personaPresence'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -192,9 +193,11 @@ interface RowProps {
   onDismiss?: (id: string) => void
   now: number
   t: (k: string, opts?: any) => string
+  /** QA loop entry for this task (shown when persona === 'qa'). */
+  qaLoopEntry?: QaLoopEntry
 }
 
-function TaskRow({ task, fading = false, onDismiss, now, t }: RowProps) {
+function TaskRow({ task, fading = false, onDismiss, now, t, qaLoopEntry }: RowProps) {
   const [hovered, setHovered] = useState(false)
   const isRunning = task.status === 'running'
   const isError   = task.status === 'error'
@@ -249,6 +252,21 @@ function TaskRow({ task, fading = false, onDismiss, now, t }: RowProps) {
           </span>
         </div>
         <div style={{ fontSize: 11, color: TEXT_MUTED, lineHeight: '16px' }}>
+          {/* QA attempt badge — shown for running QA tasks with loop tracking */}
+          {task.persona === 'qa' && qaLoopEntry && task.status === 'running' && (
+            <span style={{
+              color: qaLoopEntry.attempt >= qaLoopEntry.maxAttempts ? HEALTH_ERROR : 'var(--health-warn, #F59E0B)',
+              marginRight: 4,
+              fontWeight: 600,
+            }}>
+              {t('workspace.qaLoop.attempt', {
+                current: qaLoopEntry.attempt,
+                max: qaLoopEntry.maxAttempts,
+                defaultValue: `attempt ${qaLoopEntry.attempt}/${qaLoopEntry.maxAttempts}`,
+              })}
+              {' · '}
+            </span>
+          )}
           {formatDuration(task.started_at, task.completed_at)}
           {' · '}
           <span style={{ color: statusColor }}>{statusLabel}</span>
@@ -305,6 +323,9 @@ function BackgroundTaskPopup({
 }: PopupProps) {
   const popupRef = useRef<HTMLDivElement>(null)
   const now = Date.now()
+  const qaLoopEntries = useQaLoop((s) => s.entries)
+  // Active qa-running entry (at most 1 at a time in normal flow)
+  const activeQaEntry = Object.values(qaLoopEntries).find((e) => e.status === 'qa-running')
 
   // Esc closes
   useEffect(() => {
@@ -438,6 +459,7 @@ function BackgroundTaskPopup({
                     onDismiss={onDismiss}
                     now={now}
                     t={t}
+                    qaLoopEntry={task.persona === 'qa' ? activeQaEntry : undefined}
                   />
                 ))}
                 {fadingTasks.map((task) => (

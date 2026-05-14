@@ -452,12 +452,13 @@ const ticketTitle: React.CSSProperties = {
 
 function statusBadge(status: Status): React.CSSProperties {
   const colors: Record<Status, { fg: string; bg: string }> = {
-    'todo':        { fg: '#707070', bg: '#1A1A1A' },
-    'in-progress': { fg: '#FF6B2B', bg: '#2A1808' },
-    'review':      { fg: '#E0B040', bg: '#2A2008' },
-    'done':        { fg: '#60B860', bg: '#0A2A0A' },
-    'blocked':     { fg: '#E04040', bg: '#2A0808' },
-    'abandoned':   { fg: '#505050', bg: '#1A1A1A' },
+    'todo':         { fg: '#707070', bg: '#1A1A1A' },
+    'in-progress':  { fg: '#38BDF8', bg: '#082028' },
+    'review':       { fg: '#F59E0B', bg: '#2A2008' },
+    'user-verify':  { fg: '#A78BFA', bg: '#1A0A2A' },
+    'done':         { fg: '#34D399', bg: '#0A2A1A' },
+    'blocked':      { fg: '#EF4444', bg: '#2A0808' },
+    'abandoned':    { fg: '#505050', bg: '#1A1A1A' },
   }
   const c = colors[status] ?? colors['todo']
   return {

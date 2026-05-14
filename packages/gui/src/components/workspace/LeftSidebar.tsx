@@ -10,6 +10,7 @@ import TeamPanel from './TeamPanel'
 import ExplorerPane from '../explorer/ExplorerPane'
 import SidePanelCurrentVersion from './SidePanelCurrentVersion'
 import SidePanelPastVersions from './SidePanelPastVersions'
+import SidePanelArtifacts from './SidePanelArtifacts'
 
 interface Props {
   project: Project
@@ -124,6 +125,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
             selectedVersionId={selectedVersionId}
             onSelect={(id) => handleVersionClick(id, false)}
           />
+          {/* T-P4-112: Artifact auto-display — session artifacts from dev/designer */}
+          <SidePanelArtifacts />
         </div>
       )}
       {activeIcon === 'explorer' && (
