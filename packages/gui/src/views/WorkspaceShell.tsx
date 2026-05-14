@@ -13,19 +13,32 @@ import SessionHealthBanner from '../components/workspace/SessionHealthBanner'
 import RestartSessionModal from '../components/workspace/RestartSessionModal'
 import PendingPromotionDrain from '../components/workspace/PendingPromotionDrain'
 import QuickOpenPalette, { type QuickOpenItem } from '../components/workspace/QuickOpenPalette'
+import ColumnResizeHandle from '../components/workspace/ColumnResizeHandle'
 import { usePoChat } from '../store/poChat'
 import { useTicketScan } from '../lib/useTicketScan'
 import DeployConfirmModal from '../components/workspace/DeployConfirmModal'
 import type { DeployTicketSummary } from '../components/workspace/DeployConfirmModal'
 import BaseDirtyModal from '../components/workspace/BaseDirtyModal'
 import type { Message } from '../lib/types'
+import type { Pane, LeafPaneNode } from '../store/workspace'
 
 interface Props {
   project: Project
   onBack: () => void
 }
 
-const CHORD_TIMEOUT_MS = 1000
+const CHORD_TIMEOUT_MS      = 1000
+const ACTIVITY_BAR_WIDTH    = 48
+const RESIZE_HANDLE_WIDTH   = 4
+const SIDEBAR_MIN_WIDTH     = 200
+const SIDEBAR_MAX_WIDTH     = 420
+const SIDEBAR_DEFAULT_WIDTH = 240
+const PO_CHAT_MIN_WIDTH     = 280
+const PO_CHAT_MAX_WIDTH     = 560
+const PO_CHAT_DEFAULT_WIDTH = 340
+const CENTER_MIN_WIDTH      = 480
+const SIDEBAR_STORAGE_KEY   = 'workspace.shell.sidebarWidth'
+const PO_CHAT_STORAGE_KEY   = 'workspace.shell.poChatWidth'
 
 export default function WorkspaceShell({ project, onBack }: Props) {
   const { t } = useTranslation()
@@ -54,6 +67,15 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const [artifactToast, setArtifactToast] = useState<string | null>(null)
   const artifactToastTimerRef = useRef<number | null>(null)
 
+  // ── Drag-resize width state (T-P4-117) ──────────────────────────────────────
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    readStoredWidth(SIDEBAR_STORAGE_KEY, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
+  )
+  const [poChatWidth, setPoChatWidth] = useState(() =>
+    readStoredWidth(PO_CHAT_STORAGE_KEY, PO_CHAT_DEFAULT_WIDTH, PO_CHAT_MIN_WIDTH, PO_CHAT_MAX_WIDTH),
+  )
+  const [activeResizeHandle, setActiveResizeHandle] = useState<'sidebar' | 'chat' | null>(null)
+
   // ── Deploy confirm modal state (T-P4-022 3rd PR) ────────────────────────────
   const [deployModalOpen, setDeployModalOpen] = useState(false)
   const [deployModalPayload, setDeployModalPayload] = useState<{
@@ -81,6 +103,161 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const chatPanelVisible = usePoChat((s) => s.panelVisible)
   const restartModalOpen = usePoChat((s) => s.restartModalOpen)
   const setRestartModalOpen = usePoChat((s) => s.setRestartModalOpen)
+
+  // ── Drag-resize refs (T-P4-117) ──────────────────────────────────────────────
+  const shellRef            = useRef<HTMLDivElement>(null)
+  const sidebarWidthRef     = useRef(sidebarWidth)
+  const poChatWidthRef      = useRef(poChatWidth)
+  const chatPanelVisibleRef = useRef(false)
+  const dragStateRef        = useRef<{ kind: 'sidebar' | 'chat'; startX: number; startWidth: number } | null>(null)
+  const bodyStyleRef        = useRef<{ cursor: string; userSelect: string } | null>(null)
+
+  // ── Ref sync effects (T-P4-117) ─────────────────────────────────────────────
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth
+  }, [sidebarWidth])
+
+  useEffect(() => {
+    poChatWidthRef.current = poChatWidth
+  }, [poChatWidth])
+
+  useEffect(() => {
+    chatPanelVisibleRef.current = chatPanelVisible
+  }, [chatPanelVisible])
+
+  // ── Viewport sync (T-P4-117) ────────────────────────────────────────────────
+  const syncLayoutWidthsToViewport = () => {
+    const shellWidth = shellRef.current?.getBoundingClientRect().width ?? 0
+    if (shellWidth <= 0) return
+
+    let nextSidebar = clampSidebarWidth(
+      sidebarWidthRef.current,
+      shellWidth,
+      poChatWidthRef.current,
+      chatPanelVisibleRef.current,
+    )
+    let nextChat = chatPanelVisibleRef.current
+      ? clampPoChatWidth(poChatWidthRef.current, shellWidth, nextSidebar)
+      : poChatWidthRef.current
+
+    if (chatPanelVisibleRef.current) {
+      nextSidebar = clampSidebarWidth(nextSidebar, shellWidth, nextChat, true)
+      nextChat = clampPoChatWidth(nextChat, shellWidth, nextSidebar)
+    }
+
+    if (nextSidebar !== sidebarWidthRef.current) {
+      sidebarWidthRef.current = nextSidebar
+      setSidebarWidth(nextSidebar)
+    }
+    if (nextChat !== poChatWidthRef.current) {
+      poChatWidthRef.current = nextChat
+      setPoChatWidth(nextChat)
+    }
+  }
+
+  useEffect(() => {
+    syncLayoutWidthsToViewport()
+    window.addEventListener('resize', syncLayoutWidthsToViewport)
+    return () => window.removeEventListener('resize', syncLayoutWidthsToViewport)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    syncLayoutWidthsToViewport()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatPanelVisible])
+
+  // ── Drag mousemove / mouseup handler (T-P4-117) ─────────────────────────────
+  useEffect(() => {
+    const finishDrag = (shouldUpdateState = true) => {
+      const dragState = dragStateRef.current
+      if (!dragState) return
+
+      if (dragState.kind === 'sidebar') {
+        persistWidth(SIDEBAR_STORAGE_KEY, sidebarWidthRef.current)
+      } else {
+        persistWidth(PO_CHAT_STORAGE_KEY, poChatWidthRef.current)
+      }
+
+      dragStateRef.current = null
+      if (shouldUpdateState) {
+        setActiveResizeHandle(null)
+      }
+
+      const previousBodyStyle = bodyStyleRef.current
+      if (previousBodyStyle) {
+        document.body.style.cursor = previousBodyStyle.cursor
+        document.body.style.userSelect = previousBodyStyle.userSelect
+        bodyStyleRef.current = null
+      } else {
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+    }
+
+    const stopDrag = () => {
+      finishDrag(true)
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      const dragState = dragStateRef.current
+      if (!dragState) return
+
+      event.preventDefault()
+      const shellWidth = shellRef.current?.getBoundingClientRect().width ?? 0
+      if (shellWidth <= 0) return
+
+      const delta = event.clientX - dragState.startX
+      if (dragState.kind === 'sidebar') {
+        const nextWidth = clampSidebarWidth(
+          dragState.startWidth + delta,
+          shellWidth,
+          poChatWidthRef.current,
+          chatPanelVisibleRef.current,
+        )
+        if (nextWidth !== sidebarWidthRef.current) {
+          sidebarWidthRef.current = nextWidth
+          setSidebarWidth(nextWidth)
+        }
+        return
+      }
+
+      const nextWidth = clampPoChatWidth(
+        dragState.startWidth - delta,
+        shellWidth,
+        sidebarWidthRef.current,
+      )
+      if (nextWidth !== poChatWidthRef.current) {
+        poChatWidthRef.current = nextWidth
+        setPoChatWidth(nextWidth)
+      }
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', stopDrag)
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', stopDrag)
+      finishDrag(false)
+    }
+  }, [])
+
+  const startResize = (kind: 'sidebar' | 'chat', event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    bodyStyleRef.current = {
+      cursor: document.body.style.cursor,
+      userSelect: document.body.style.userSelect,
+    }
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    dragStateRef.current = {
+      kind,
+      startX: event.clientX,
+      startWidth: kind === 'sidebar' ? sidebarWidthRef.current : poChatWidthRef.current,
+    }
+    setActiveResizeHandle(kind)
+  }
 
   // ── Ticket source for Quick Open ────────────────────────────────────────────
   const { tickets: scannedTickets } = useTicketScan(project.projectDir)
@@ -471,18 +648,30 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     return items
   })()
 
-  // Collapse the right column when PO chat is minimized.
+  // Dynamic grid: 6-column layout with drag-resizable sidebar + PO chat (T-P4-117).
   const dynamicGrid: React.CSSProperties = {
     ...grid,
+    gridTemplateAreas: `
+      "activity sidebar sidebarResize breadcrumb chatResize chat"
+      "activity sidebar sidebarResize center     chatResize chat"
+      "activity sidebar sidebarResize status     chatResize chat"
+    `,
     gridTemplateColumns: chatPanelVisible
-      ? '48px 240px 1fr 340px'
-      : '48px 240px 1fr 0px',
+      ? `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`
+      : `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) 0px 0px`,
   }
 
   return (
-    <div style={dynamicGrid}>
+    <div ref={shellRef} style={dynamicGrid}>
       <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
       <LeftSidebar project={project} activeIcon={activeIcon} />
+      <div style={sidebarResizeArea}>
+        <ColumnResizeHandle
+          active={activeResizeHandle === 'sidebar'}
+          ariaLabel="Resize left sidebar"
+          onMouseDown={(event) => startResize('sidebar', event)}
+        />
+      </div>
 
       <div style={breadcrumbArea}>
         {/* Session health banner — severity error only, above breadcrumb */}
@@ -505,6 +694,15 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       <MainPanel />
 
       <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
+      {chatPanelVisible && (
+        <div style={chatResizeArea}>
+          <ColumnResizeHandle
+            active={activeResizeHandle === 'chat'}
+            ariaLabel="Resize PO chat"
+            onMouseDown={(event) => startResize('chat', event)}
+          />
+        </div>
+      )}
       <ChatPanel />
 
       {restartModalOpen && (
@@ -569,8 +767,6 @@ export default function WorkspaceShell({ project, onBack }: Props) {
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-import type { Pane, LeafPaneNode } from '../store/workspace'
-
 function fileBasename(p: string): string {
   return p.split('/').pop() ?? p
 }
@@ -594,6 +790,101 @@ function artifactOpenType(filePath: string): 'markdown' | 'qa-result' | null {
   return null
 }
 
+// ── T-P4-117: drag-resize localStorage helpers ────────────────────────────────
+
+function readStoredWidth(key: string, defaultWidth: number, min: number, max: number): number {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return defaultWidth
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+      return defaultWidth
+    }
+    return parsed
+  } catch {
+    return defaultWidth
+  }
+}
+
+function persistWidth(key: string, width: number): void {
+  try {
+    window.localStorage.setItem(key, String(Math.round(width)))
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function clampSidebarWidth(
+  requestedWidth: number,
+  shellWidth: number,
+  poChatWidth: number,
+  chatPanelVisible: boolean,
+): number {
+  const availableMax = shellWidth
+    - ACTIVITY_BAR_WIDTH
+    - RESIZE_HANDLE_WIDTH
+    - CENTER_MIN_WIDTH
+    - (chatPanelVisible ? RESIZE_HANDLE_WIDTH + poChatWidth : 0)
+
+  return clampPanelWidth(requestedWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, availableMax)
+}
+
+function clampPoChatWidth(
+  requestedWidth: number,
+  shellWidth: number,
+  sidebarWidth: number,
+): number {
+  const availableMax = shellWidth
+    - ACTIVITY_BAR_WIDTH
+    - RESIZE_HANDLE_WIDTH
+    - sidebarWidth
+    - RESIZE_HANDLE_WIDTH
+    - CENTER_MIN_WIDTH
+
+  return clampPanelWidth(requestedWidth, PO_CHAT_MIN_WIDTH, PO_CHAT_MAX_WIDTH, availableMax)
+}
+
+function clampPanelWidth(requestedWidth: number, min: number, max: number, availableMax: number): number {
+  const boundedMax = Math.min(max, availableMax)
+  if (boundedMax <= 0) return 0
+  if (boundedMax < min) return clamp(requestedWidth, 0, boundedMax)
+  return clamp(requestedWidth, min, boundedMax)
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+// ── styles ────────────────────────────────────────────────────────────────────
+
+const grid: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateRows: '44px 1fr 28px',
+  flex: 1,
+  minHeight: 0,
+  background: '#0F0F0F',
+  color: '#F0F0F0',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  overflow: 'hidden',
+}
+
+const breadcrumbArea: React.CSSProperties = {
+  gridArea: 'breadcrumb',
+  overflow: 'hidden',
+  display: 'flex',
+  flexDirection: 'column',
+}
+
+const sidebarResizeArea: React.CSSProperties = {
+  gridArea: 'sidebarResize',
+  overflow: 'hidden',
+}
+
+const chatResizeArea: React.CSSProperties = {
+  gridArea: 'chatResize',
+  overflow: 'hidden',
+}
+
 const artifactToastStyle: React.CSSProperties = {
   position: 'fixed',
   bottom: 36,
@@ -608,29 +899,4 @@ const artifactToastStyle: React.CSSProperties = {
   zIndex: 9999,
   pointerEvents: 'none',
   whiteSpace: 'nowrap',
-}
-
-// ── styles ────────────────────────────────────────────────────────────────────
-
-const grid: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '48px 240px 1fr 340px',
-  gridTemplateRows: '44px 1fr 28px',
-  gridTemplateAreas: `
-    "activity sidebar breadcrumb chat"
-    "activity sidebar center     chat"
-    "activity sidebar status     chat"
-  `,
-  flex: 1, minHeight: 0,
-  background: '#0F0F0F',
-  color: '#F0F0F0',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  overflow: 'hidden',
-}
-
-const breadcrumbArea: React.CSSProperties = {
-  gridArea: 'breadcrumb',
-  overflow: 'hidden',
-  display: 'flex',
-  flexDirection: 'column',
 }
