@@ -217,18 +217,28 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, appendMessage])
 
-  // Open a Tickets board tab when user clicks the tickets activity icon.
+  // Open a Tickets tab when user clicks the tickets activity icon.
+  // If current_version is set, open the version-scoped tab; otherwise fall back to board.
   // Subsequent clicks dedupe via openTab's existing-id check.
   const onSelectActivity = (icon: ActivityIcon) => {
     setActiveIcon(icon)
     if (icon === 'tickets') {
-      openTab('ticket-review:board', 'ticket-review', undefined, 'Tickets')
+      const cv = useWorkspace.getState().poState?.current_version
+      if (cv) {
+        openTab(`ticket-review:${cv}`, 'ticket-review', { versionFilter: cv }, cv)
+      } else {
+        openTab('ticket-review:board', 'ticket-review', undefined, 'Tickets')
+      }
     }
   }
 
-  // Auto-open the board on first mount so the empty pane doesn't greet a fresh user.
+  // Auto-open the current version ticket tab on first mount (if current_version is set).
+  // If no current_version, do nothing — EmptyPane greets the user instead.
   useEffect(() => {
-    openTab('ticket-review:board', 'ticket-review', undefined, 'Tickets')
+    const cv = useWorkspace.getState().poState?.current_version
+    if (cv) {
+      openTab(`ticket-review:${cv}`, 'ticket-review', { versionFilter: cv }, cv)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
