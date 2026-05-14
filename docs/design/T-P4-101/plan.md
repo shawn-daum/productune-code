@@ -1,0 +1,323 @@
+# T-P4-101 plan — Fresh project entry: "아이디어 먼저" 1-input 화면
+
+**Slug**: `fresh-project-idea-first-entry`
+**Round**: phase4-r4 **Author**: pdt-designer (PO takeover — prior codex work폐기)
+**Created**: 2026-05-14 **Status**: design-ready (ticket emit — impl only)
+**Output**: `docs/design/T-P4-101/plan.md` (본 문서, SoT)
+**Companion**: [design-system.md](../design-system.md) §1.5 · [T-P4-101.md](../../tickets/phase4/T-P4-101.md)
+
+---
+
+## §1 Background
+
+### 1.1 사용자 요청 verbatim (2026-05-12)
+
+> "Gui project onboarding gui으로 프로젝트 생성하거나 init했을때, 모든 UI를 다 보여주지말고 pochat에 default로 '만들고 싶은 제품 아이디어를 얘기해주세요. Idea를 PO와 인터뷰해서 PRD작성을 먼저 시작합니다.' 대충 이런 내용으로 넣어줘. Chatgpt / lovable 초기 input 화면 처럼 딱 입력창 하나만 넣어주고. 이거 입력하고나면 우리 전체 ui를 보여줘."
+
+### 1.2 현재 상태 진단
+
+신규 프로젝트 진입 경로 **전부** 가 즉시 full workspace 로 들어간다.
+
+| 진입 경로 | 현재 동작 | 문제 |
+|:--|:--|:--|
+| `project:create` 성공 | `App.tsx` → `WorkspaceShell` 즉시 mount | 사용자가 아이디어 1문장도 없는 상태에서 밀도 높은 IDE 운영 화면 노출 |
+| `project:installAt` 성공 | 동일 | 동일 |
+| `lastProject` app relaunch | localStorage raw restore → `WorkspaceShell` | stale path 문제(T-P4-091 fix)와 별개로 진입 gating 없음 |
+
+`WorkspaceShell` mount 직후 노출되는 요소 목록:
+ActivityBar / LeftSidebar / Breadcrumb / MainPanel / StatusBar / ChatPanel + Tickets board tab auto-open.
+
+사용자의 mental model 은 `아이디어 말하기 → PO 인터뷰 → PRD 시작` 순이지만, 실제 화면은 이 순서가 역전된 상태.
+
+### 1.3 기존 fresh 판정 접근의 한계 (ticket §1.3 요약)
+
+기존 구상 (`chat.json.messages.length === 0` + `po-state` cleanliness 추론) 은:
+
+- 명시적 상태가 아닌 "여러 파일의 깨끗함 추론" 에 의존 → fragile
+- hydration gating 이 매 mount 마다 누적 복잡 → flash 위험
+- "새 프로젝트 첫 진입" 과 "채팅이 우연히 비어있는 기존 프로젝트" 를 구분 못함
+
+**Primary contract** 로 쓰기 부적합 → 명시적 persisted onboarding state 가 필요.
+
+### 1.4 Risk flags (ticket frontmatter)
+
+| Flag | 내용 |
+|:--|:--|
+| `first-impression` | 이 화면이 사용자가 productune 을 처음 경험하는 순간 — UX 실수는 신뢰 파괴 |
+| `hydration-gating` | onboarding state resolve 전에 full grid 가 잠깐 노출되는 flash 방지 |
+| `chat-bootstrap` | 첫 send 성공/실패 판정을 기준으로 state 전이 — partial success 오판 금지 |
+
+---
+
+## §2 Decisions (A–G)
+
+### A. Persisted onboarding state 저장 위치
+
+**Decision**: 프로젝트 단위 persisted state. 권장 위치 = `.productune/onboarding.json` (프로젝트 디렉터리 내부).
+
+```json
+{
+  "status": "pending" | "done",
+  "source": "gui-create" | "install-at" | "legacy-fallback",
+  "updated_at": "ISO8601"
+}
+```
+
+**왜 global `~/.productune/onboarding-<hash>.json` 이 아닌가**:
+- 프로젝트를 다른 머신으로 옮겨도 상태 유지됨 (T-P4-058 init hygiene 정합)
+- `.productune/` 이미 존재하는 project-scoped state store → 동일 계층 자연스러움
+- hash 기반 global file 은 path 변경 시 mismatch
+
+**대안 고려**: `po-state.json` 에 `onboarding` 필드 추가 → reject. po-state 는 PO 오케스트레이터 런타임 state (세션마다 갱신) — onboarding 은 생애주기 1회 전환이므로 파일 책임 분리가 맞음.
+
+> ⚠️ 정확한 필드명·파일명은 impl 책임 (본 plan 의 계약은 "프로젝트 단위 persisted, 앱 재실행 후 유지, 오직 두 시점에서만 pending 기록").
+
+### B. Trigger — `pending` 기록 시점
+
+`pending` 은 **오직 두 순간** 에만 기록한다. 매 mount 시 재계산해서 덮어쓰지 않는다.
+
+| 시점 | IPC / 트리거 | 비고 |
+|:--|:--|:--|
+| GUI 새 프로젝트 생성 성공 | `project:create` IPC 성공 응답 직후 | T-P4-058 init hygiene 이후 |
+| non-productune 폴더 init/install 성공 완료 | `project:installAt` IPC 성공 완료 직후 | 실패/중단 시 pending 기록 X |
+
+**Workspace entry** 시 persisted state 를 읽어 분기만 함 — 재계산하거나 `pending` 을 새로 쓰지 않음.
+
+### C. Workspace entry 분기 — EntryGate
+
+`App.tsx` 의 project mount 직후:
+
+| onboarding.status | 보여줄 화면 |
+|:--|:--|
+| `pending` (또는 `null` + secondary fallback → fresh 신호) | **FreshComposer** (본 ticket) |
+| `done` | 기존 `WorkspaceShell` full UI |
+| onboarding field 없음 (legacy) | secondary fallback — 작업 흔적 없으면 FreshComposer, 흔적 있으면 WorkspaceShell |
+| state resolve 전 (loading) | blank dark shell (`--surface-body` `#0F0F0F`) — full grid X, flash 방지 |
+
+`loading-entry` 동안 Tickets board auto-open side effect 실행 금지.
+
+### D. FreshComposer UI spec
+
+> 사용자 verbatim: "ChatGPT / Lovable 초기 input 화면처럼 딱 입력창 하나만"
+
+**레이아웃**:
+- 전체 화면 단독 표시 (`position: absolute; inset: 0` 또는 root-level replace)
+- background: `--surface-body` (`#0F0F0F`)
+- 중앙 정렬 (flexbox `align-items: center; justify-content: center; flex-direction: column`)
+- 콘텐츠 영역 max-width: 680px (min-width 적용 없이, mobile-narrow 허용)
+
+**Hero copy** (UI text — `chat.json` 에 synthetic assistant message 로 저장 X):
+- headline: `만들고 싶은 제품 아이디어를 얘기해주세요.`
+  - i18n en: `Tell us the product idea you want to build.`
+  - 토큰: `--text-primary` (`#E8E8EA`), 폰트: ~22px semi-bold (본 plan 권장, dev 조정 OK)
+- supporting copy: `Idea를 PO와 인터뷰해서 PRD 작성을 먼저 시작합니다.`
+  - i18n en: `PO will interview the idea first and start by drafting the PRD.`
+  - 토큰: `--text-secondary` (`#C8C8CC`), 폰트: ~14px regular
+  - `PO`, `PRD` literal 양 locale 동일 유지 (T-P4-057 보호어)
+
+**Composer 요소 (only)**:
+- textarea 1개 — autofocus, placeholder = supporting copy 와 동일 문구 (또는 더 짧은 variant), 현 `ChatPanel` textarea 스타일 재사용 / 동일 토큰
+- Send CTA 버튼 1개 — primary, `--accent` (`#FF6B2B`), lucide `SendHorizonal` 아이콘 또는 단순 텍스트 "시작하기" (dev 판단)
+- **없는 것**: 파일 첨부, persona selector, quick prompts, recent list, sidebar chrome, breadcrumb, status bar, ActivityBar
+
+**접근성**:
+- keyboard-only send 가능 (`Cmd+Enter` 또는 `Enter` — Shift+Enter = 개행)
+- 한국어 IME 조합 중 (`isComposing === true`) Enter submit 금지
+- focus ring: `--accent` (`#FF6B2B`) 2px
+
+### E. Send 트리거 — `pending → done` 전이 + full workspace reveal
+
+첫 submit 성공 판정 순서:
+
+1. 사용자 idea-entry 에 첫 real text 입력 후 submit
+2. user message persist 성공 (`.productune/chat/...` 기록)
+3. `po:sendMessage` / send-start handshake 성공 (IPC 왕복 확인)
+4. **여기서** onboarding status `pending → done` persisted 기록
+5. FreshComposer unmount → WorkspaceShell mount (기존 full UI)
+6. PO Chat 에 방금 보낸 첫 user message + 이어지는 stream 표시
+
+**중요 순서 보장**:
+- Step 4는 반드시 step 3 이후 (send/start handshake 성공 확인 후)
+- reveal (step 5) 은 assistant 답변 완료를 기다리지 않음 (step 3 성공 후 즉시)
+- WorkspaceShell mount 와 stream 표시가 동시 진행 (UX continuity)
+
+### F. Send 실패 경로
+
+IPC 오류 / `po:sendMessage` 실패 시:
+- onboarding status → `pending` 유지 (전이 없음)
+- FreshComposer 유지 (full workspace reveal X)
+- draft 텍스트 보존 (textarea value 초기화 금지)
+- inline 1-line error 표시 (design-system §1.5.4 Feedback — `--health-error` 색, 비기술적 문구)
+  - 예: `"잠시 문제가 생겼어요. 다시 시도해주세요."`
+- 재시도 CTA — Send 버튼 재활성 (spinner → error → 다시 Send 상태로)
+- 사용자 재시도 → send/start 성공 시 그때 `done` 전환 + reveal
+
+### G. `project:create` / `project:installAt` IPC 갱신
+
+새 프로젝트 IPC 핸들러 성공 callback 에 onboarding `pending` 기록 추가.
+
+| IPC | 추가 작업 | 시점 |
+|:--|:--|:--|
+| `project:create` | `onboarding.json` write (`status: 'pending', source: 'gui-create'`) | `initProject()` 성공 완료 직후 |
+| `project:installAt` | 동일 write (`source: 'install-at'`) | install 성공 완료 직후 |
+
+**실패 시 기록하지 않는다** — install 중단 / 실패 = onboarding contract 미개시.
+
+---
+
+## §3 ASCII mockup — FreshComposer 화면
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                                                                     │
+│                                                                     │
+│                                                                     │
+│                                                                     │
+│              만들고 싶은 제품 아이디어를 얘기해주세요.               │
+│          Idea를 PO와 인터뷰해서 PRD 작성을 먼저 시작합니다.          │
+│                                                                     │
+│   ┌─────────────────────────────────────────────────────────────┐   │
+│   │                                                             │   │
+│   │  Idea를 PO와 인터뷰해서 PRD 작성을 먼저 시작합니다.          │   │
+│   │  (placeholder — fades on first keystroke)                   │   │
+│   │                                                             │   │
+│   │                                                             │   │
+│   │                                               [시작하기  →] │   │
+│   └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│            Cmd+Enter 또는 Enter 로 전송 (Shift+Enter = 개행)         │
+│                                                                     │
+│                                                                     │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+surface-body #0F0F0F 전체 — ActivityBar/Sidebar/MainPanel/StatusBar 없음
+headline: --text-primary #E8E8EA  ~22px semi-bold
+copy: --text-secondary #C8C8CC  ~14px regular
+textarea: --surface-subpanel #1A1A1A bg, --border-strong #2A2A2A border, max-w 680px
+CTA: --accent #FF6B2B, lucide SendHorizonal or text "시작하기"
+```
+
+**오류 상태 (send 실패 inline)**:
+
+```
+│   ┌─────────────────────────────────────────────────────────────┐   │
+│   │  [draft text preserved]                                     │   │
+│   │                                                             │   │
+│   │                                               [다시 시도 →] │   │
+│   └─────────────────────────────────────────────────────────────┘   │
+│            ⚠  잠시 문제가 생겼어요. 다시 시도해주세요.              │
+│                                             -- health-error color   │
+```
+
+---
+
+## §4 Module Map
+
+| 모듈 | 경로 (추정) | 변경 유형 | 역할 |
+|:--|:--|:--|:--|
+| **`EntryGate`** | `packages/gui/src/components/EntryGate.tsx` | 신규 | onboarding state read → `loading-entry` / `idea-entry` / `full-workspace` / `legacy-fallback` 분기 로직. `App.tsx` 에서 project mount 시 호출 |
+| **`FreshComposer`** | `packages/gui/src/components/FreshComposer.tsx` | 신규 | 1-input 화면 전체. hero copy + textarea + send CTA + 실패 inline error. 기존 ChatPanel textarea 스타일 token reuse |
+| **`App.tsx`** | `packages/gui/src/App.tsx` | 수정 | fresh state branch 추가 — project mount 후 `EntryGate` 경유. `onboarding.status === 'pending'` 이면 WorkspaceShell 대신 FreshComposer. 기존 Cmd+R lazy init guard (T-P4-091) 와 공존 |
+| **`WorkspaceShell`** | `packages/gui/src/components/WorkspaceShell.tsx` | 수정 (최소) | mount guard — onboarding `pending` 인 상태에서 Tickets board auto-open side effect 실행 금지. `status === 'done'` 이 확인된 뒤 기존 동작 전부 수행 |
+| **onboarding IPC** | `packages/gui/electron/main.ts` (또는 handlers/onboarding.ts) | 수정 | `onboarding:read` (project onboarding.json → status 반환), `onboarding:setDone` (pending → done 기록) IPC 핸들러 2개. preload expose |
+| **`project:create` handler** | `packages/gui/electron/main.ts` | 수정 | 성공 callback → `onboarding.json` write (`status: 'pending', source: 'gui-create'`) |
+| **`project:installAt` handler** | `packages/gui/electron/main.ts` | 수정 | 성공 완료 callback → 동일 write (`source: 'install-at'`) |
+| **i18n keys** | `packages/gui/src/locales/en.json` + `ko.json` | 수정 | hero headline / supporting copy / error msg / send label — 4~5 key 신규 |
+
+**`EntryGate` state machine (간략)**:
+
+```
+project mount
+  │
+  ├─ onboarding:read IPC ──→ { loading }  →  blank dark shell (#0F0F0F)
+  │       │
+  │    resolved
+  │       │
+  │  status === 'pending'  ──→  <FreshComposer />
+  │       │
+  │  status === 'done'     ──→  <WorkspaceShell />
+  │       │
+  │  no field (legacy)     ──→  secondary fallback
+  │       ├─ no work traces  → <FreshComposer />
+  │       └─ has traces      → <WorkspaceShell />
+```
+
+---
+
+## §5 §1.5 self-check (design-system UX principles)
+
+| Sub-rule | 검증 | 결과 |
+|:--|:--|:--|
+| **§1.5.1 Few Things** | FreshComposer = textarea 1개 + CTA 1개. 다른 모든 chrome (ActivityBar / Sidebar / MainPanel / StatusBar) 없음. 결정 옵션 = 사실상 1개 ("입력하기"). 복잡 task 를 "첫 입력" 이라는 1-step 으로 극단 단순화. | ✓ pass |
+| **§1.5.2 익숙한 경험** | ChatGPT / Lovable 류의 "빈 캔버스 + 첫 질문" 패턴 — 비개발자·개발자 모두 인지 가능한 UX. 한국어 hero copy + `PO`, `PRD` 영문 보호어 유지 (T-P4-057 정합). 초기 화면 = 최소 노출 원칙. | ✓ pass |
+| **§1.5.3 Predictability** | textarea 에 placeholder 로 expected action 명시. 빈 화면이어도 "여기서 뭐 해야 하는지" 명확 (§1.5.3 empty state CTA 규칙 충족 — textarea + CTA 가 그 역할). Send 버튼 위치 일관 (우하단). | ✓ pass |
+| **§1.5.4 Feedback** | Send 클릭 즉시: 버튼 disabled + `Loader2 pdt-spin` 스피너 (≤ 100ms). 실패 시: inline error (`--health-error`) + retry CTA + draft 보존. 성공 시: WorkspaceShell reveal (화면 전환 자체가 명확한 완료 피드백). | ✓ pass |
+| **§1.5.5 Escape** | FreshComposer 는 "막다른 골목" 이 아님 — textarea 는 언제든 focus-out 가능. **단, 의도적 one-way gate**: onboarding pending 인 한 full workspace 로 갈 수 없음 (escape = app quit / 앱 닫기). 이 one-way 는 §1.5.5 위반이 아님 — 사용자가 앱을 끄면 다음 mount 에서 FreshComposer 다시 표시 (pending 유지). 강제 결정 CTA 없음. Esc key = textarea focus-out 또는 OS 기본 동작 (modal/overlay 아님). | ✓ pass — 명시적 출구 = 앱 종료, 재진입 시 상태 복원 |
+
+**Anti-pattern 점검**:
+- ❌ "action 에 visual feedback 없음" → Send click 즉시 spinner + disabled state 명시
+- ❌ "오류 발생 후 draft 사라짐" → 실패 시 draft 보존 명시
+- ❌ "hydration 중 full UI flash" → loading-entry 상태 = blank dark shell, full grid render X
+- ❌ "hero copy 가 chat.json 에 synthetic assistant 메시지로 저장" → UI text only (ticket §3 Decision F)
+
+---
+
+## §6 §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `manual smoke only` |
+| **test target** | `EntryGate` mount conditional + `FreshComposer` send flow |
+| **사용자 dogfood** | 새 프로젝트 생성 → FreshComposer 1-input 화면 노출 확인 → 아이디어 입력 후 send → full WorkspaceShell reveal + PO Chat 에 첫 메시지 표시 확인 → 앱 재시작 후 동일 프로젝트 → full WorkspaceShell 즉시 진입 확인 (onboarding done 유지) |
+| **regression check** | `App.tsx` lazy init guard (T-P4-091) — existing project 의 lastProject restore 동작 깨지지 않는지 / WorkspaceShell 기존 동작 (split-pane / ChatPanel stream / Tickets auto-open) 이 `done` 상태 프로젝트에서 그대로인지 |
+
+---
+
+## §7 Open Questions
+
+| ID | Question | 권장 default | Priority |
+|:--|:--|:--|:--|
+| OQ-1 | `pending → done` reveal animation — fade-in (opacity 0→1, ~250ms) vs 즉시 swap? | **즉시 swap** (Minimal motion §1 원칙 — 장식 animation 금지. reduced-motion 환경 고려). reveal 자체가 충분한 피드백. | minor |
+| OQ-2 | FreshComposer keyboard shortcut — Cmd+Enter (multi-line 허용 + Enter = send) vs Enter = send (Shift+Enter = 개행)? | **Enter = send, Shift+Enter = 개행** (ChatGPT 기본 패턴, Lovable 동일 — §1.5.2 Familiar). Cmd+Enter 도 동작 OK. | minor |
+| OQ-3 | onboarding.json 파일 위치 — `.productune/onboarding.json` vs `.productune/config.json` 내 `onboarding` 필드? | **별도 `onboarding.json`** 선호 (config.json 는 init 설정 담당, onboarding 은 UX lifecycle 상태 — 파일 책임 분리). 단, developer 판단으로 config.json 필드 채택도 OK. | medium |
+| OQ-4 | legacy project secondary fallback 판정 기준 구체화 — "작업 흔적" = `chat.json` messages 길이? `po-state.json` phase 진행 여부? 둘 다? | **`chat.json` messages.length > 0 OR `po-state.json` phase_history 비어있지 않음** 이면 full-workspace 우선. 빠른 boilerplate check (mount 1 turn). | medium |
+| OQ-5 | `FreshComposer` 의 max-width 680px — ChatPanel 과 동일 너비 vs 더 넓게 (760px)? | **680px** (ChatGPT 기본값 근사. 더 좁으면 단어 wrap 이 자연스럽지 않음). | minor |
+
+---
+
+## §8 Out of Scope
+
+- full workspace 구조 자체 재설계 (grid layout, split-pane, ChatPanel pipeline)
+- PO 응답 품질 / 첫 PRD 프롬프트 내용 변경
+- Tickets board / Main pane 기본 탭 정책 재설계
+- onboarding wizard (`productune.env`, language, engine, wiki) 흐름 변경
+- legacy 프로젝트 일괄 onboarding migration
+- onboarding 재오픈 (reset) 기능 — 명시적 reset ticket 미존재
+- mid-message edit 중 onboarding 전이 처리
+- 다중 fresh project 동시 처리 (same window 멀티 project = productune 미지원)
+- FreshComposer 의 animation 세부 easing 값 (dev 자유 판단)
+
+---
+
+## §9 Dependencies
+
+| Ticket | Status | Why dep | 순서 |
+|:--|:--|:--|:--|
+| **T-P4-091** | done | `App.tsx` lazy init guard + `project:exists` IPC. 본 ticket 의 `EntryGate` 는 T-P4-091 의 exists check 이후 실행 (stale project 판정 → null 되면 EntryGate 진입 안 함). 코드 레이어 충돌 없도록 순서 보장 필요. | 선행 land |
+| **T-P4-103** | done | onboarding LS cleanup IPC — FreshComposer 첫 mount 시 Electron LS 정리 side effect 와 충돌 없는지 확인 필요. 본 ticket 은 onboarding.json (파일 기반) / T-P4-103 은 localStorage 기반 — 레이어 다름, 충돌 X. | 참조 |
+| **T-P4-058** | design | init hygiene — `project:create` / `project:installAt` 성공 직후 onboarding.json write 타이밍이 T-P4-058 의 settings.local.json hygiene write 와 동일 callsite 에서 묶을 수 있음. 단, T-P4-058 이 land 안 됐어도 본 ticket 독립 구현 가능. | 공존 |
+| **T-P4-057** | land | i18n key 신규 4~5개 — locale protected-token linter 통과 필요 (`PO`, `PRD` 보호어 en/ko 동일 유지). | impl 중 |
+| **T-P4-046** | land | `WorkspaceShell` mount 의 Tickets board auto-open side effect 가 `TabContent` dispatcher 에 의존 — mount guard 추가 시 기존 dispatcher 미변경. | reuse |
+
+---
+
+## Activity log
+
+- **2026-05-14 v1** — PO takeover (codex 진행 중이던 ticket — 사용자 directive). Ticket §1–§8 을 fully hydrate 해 plan SoT 작성. 주요 결정: persisted onboarding contract = `.productune/onboarding.json` (project-scoped) / EntryGate 신규 분기 / FreshComposer 신규 컴포넌트 (textarea 1 + CTA 1) / pending→done 전이 = send/start handshake 성공 직후 / failure = draft 보존 + inline error + pending 유지 / full workspace reveal = assistant 응답 완료 대기 X / hero copy = UI text only (chat.json 저장 X) / loading-entry = blank dark shell (flash 방지) / animation = 즉시 swap (minimal motion). §1.5 self-check 5/5 pass. §QA = manual smoke only.
+
+---
+
+## Promotion Candidates
+
+- (2026-05-14) fresh-project-idea-first-entry: "아이디어 먼저" UX = persisted onboarding state (project-scoped .productune/onboarding.json, pending/done) 로 gating. FreshComposer = 1-input screen only. pending→done 전이는 send/start handshake 성공 직후. hero copy = UI text (chat.json synthetic message X). loading-entry = blank dark shell (hydration flash 방지). §1.5.1 Few Things + §1.5.2 Familiar (ChatGPT/Lovable 패턴) + §1.5.4 Feedback (send spinner + failure inline) 핵심 적용.
