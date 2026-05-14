@@ -210,6 +210,8 @@ designer / non-engineer (IDE 생소). 한 doctrine 으로 둘 다 잡으려면 *
 
 > 본 체크리스트 위반 = designer review block. PR 본문에 self-check 결과 명시 권장.
 
+> **Tone-aware messaging**: UX vocabulary splits on `userMode` (`developer`/`planner`) — tone-aware messaging doctrine: T-P4-084 (store) + T-P4-107 (PO routing).
+
 ---
 
 ## §2 Color tokens

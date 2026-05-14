@@ -45,9 +45,10 @@ PO ships inline `[ctx]` JSON at TASK body end — `slug`/`request_summary`/`arti
 | PRD R2+ update | opus | xhigh | Incremental on settled vision |
 | **Design system-level** | opus | max | Net-new DS / identity |
 | Single screen/component | opus | xhigh | Component decision; copy review |
+| **Plan** | **sonnet** | **high** | T-P4-107 doctrine; risk-flagged → opus/xhigh |
 | Token / DS check | sonnet | medium | Plan-driven simple change |
 | DS compliance | haiku | low | Single-component token check |
-| Tickets emission | sonnet | medium | Ticket files alongside PRD |
+| Tickets emission | sonnet | high | T-P4-107 doctrine (L1 trivial → sonnet/medium) |
 
 ## PRD authoring (clarity loop)
 PRD calls = clarity convergence loop, not one-shot. Doctrine: `~/.productune/sections/prd-and-output.md`. Score: `A = 1 − Σ(clarityᵢ × weightᵢ)`, target `A ≤ 0.05`.
@@ -73,6 +74,35 @@ Phase 2 emits 4 `type:design` tickets — one per artifact. Designer self-execut
 | UX Flow Mermaid | `docs/design/<slug>/flow.md` |
 | Wireframe Excalidraw, key screens | `docs/design/<slug>/screens/*.excalidraw.json` |
 | Hi-fi mockup HTML/CSS, key screens | `docs/design/<slug>/mockups/*.html` |
+
+### Plan §QA scope (mandatory — T-P4-107)
+
+Every `plan.md` and every `type:design` ticket body **must** include a `## §QA scope` section. Insert after `§Out of scope`, before `§Open Questions` (or at end if absent).
+
+```markdown
+## §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `auto pdt-qa dispatch` \| `manual smoke only` \| `skip` |
+| **test target** | [specific function name / component name / e2e flow — or `—` if skip] |
+| **사용자 dogfood** | [항목 명시 — PO 가 사용자에게 직접 verify 요청. 없으면 `—`] |
+| **regression check** | [file path or feature — 회귀 가능성. 없으면 `—`] |
+```
+
+**QA invoke selection guide:**
+
+| Choice | When to use |
+|:--|:--|
+| `auto pdt-qa dispatch` | Multi-step user flow ≥ 3 steps; risk_flags includes auth/payments/PII; same area ≥ 3 cumulative fail-patterns |
+| `manual smoke only` | Single component change; L1–L3 trivial scope; no regression surface; self-verify sufficient |
+| `skip` | Pure doctrine/doc update (plan.md, design doc only); zero user-facing code change |
+
+**PO reject gate**: If §QA scope absent from returned plan → PO resumes Designer: `"plan missing §QA scope — please add per T-P4-107 doctrine before PO review."` Max 1 retry. This rejection does **not** count as a failed turn.
+
+**Applies to**: every plan.md + every companion ticket.md body (both emitted in same dispatch).
+
+---
 
 ## type:test emission triggers (PRD-ready time)
 

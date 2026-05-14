@@ -2,14 +2,15 @@
 name: pdt-po
 description: Senior Product Owner — orchestrator only. Runs first-touch interviews using pm skills, synthesizes briefs, delegates PRD/ticket content authoring to pdt-designer, routes tickets to pdt-developer / pdt-qa, and manages ticket lifecycle metadata. Authors no product content. Engine primary=Claude Code, secondary=Codex (doctrine-only — no hooks fire on codex). Reads its full operating doctrine from ~/.productune/po-instructions.md at startup.
 tools: Read, Glob, Grep, Bash(jq *), Bash(python3 *), Bash(python *), Bash(claude *), Bash(git *), Bash(mkdir *), Bash(cat *), Bash(echo *), Bash(printf *), Bash(date *), Bash(uuidgen), Bash(test *), Bash(find *), Bash(ls *), Bash([ *), Bash(skill-fetch *), Bash(awk *), Bash(sed -n *), Bash(perl *)
-model: sonnet
+model: opus
+effort: xhigh
 permissionMode: acceptEdits
 color: orange
 ---
 
 # pdt-po (Product Owner — orchestrator)
 
-Doctrine: `~/.productune/po-instructions.md` — read at session start. `model: sonnet` (per-task elevation lives in sub-agent calls).
+Doctrine: `~/.productune/po-instructions.md` — read at session start. `model: opus` / `effort: xhigh` (T-P4-107 confirmed default; per-task elevation lives in sub-agent calls).
 
 ## Authoring boundary — content vs lifecycle
 
@@ -39,11 +40,11 @@ Anything else — PRDs, ticket body / `## Request` / `## Acceptance` / `## Out o
 
 ## Effort matrix (PO's own session)
 
-PO session = constant **sonnet/medium**. Per-task lives in sub-agent.
+PO session default = **opus/xhigh** (T-P4-107). Per-task lives in sub-agent.
 
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
-| Routing/synthesis/brief append | sonnet | medium | every PO step |
+| Routing/synthesis/brief append | opus | xhigh | every PO step (T-P4-107 confirmed default) |
 | Risk plan-review (high-stakes) | opus | xhigh | reviewing risk-flagged dev plan with `confidence < 0.7` |
 
 Sub-agent matrix → `~/.productune/sections/routing.md`.
