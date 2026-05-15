@@ -281,6 +281,43 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:artifact-open', listener)
   },
 
+  // ── QA loop IPC (T-P4-116) ────────────────────────────────────────────────────
+
+  /** QA envelope browser_url 감지 시 emit — browser tab auto-open trigger. */
+  onBrowserOpen: (cb: (payload: {
+    url: string
+    ticketId: string
+    purpose: 'qa-smoke' | 'user-verify'
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('po:browser-open', listener)
+    return () => ipcRenderer.removeListener('po:browser-open', listener)
+  },
+
+  /** QA pass + verify_url 감지 시 emit — user-verify flow trigger. */
+  onUserVerify: (cb: (payload: {
+    url?: string
+    description: string
+    ticketId: string
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('po:user-verify', listener)
+    return () => ipcRenderer.removeListener('po:user-verify', listener)
+  },
+
+  /** QA loop 상태 갱신 — BackgroundTaskSegment attempt badge 갱신용. */
+  onQaLoopUpdate: (cb: (payload: {
+    ticketId: string
+    attempt: number
+    maxAttempts: number
+    status: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required'
+    lastFailReason?: string
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('po:qa-loop-update', listener)
+    return () => ipcRenderer.removeListener('po:qa-loop-update', listener)
+  },
+
   // ── Browser tab IPC (T-P4-114 §D) ────────────────────────────────────────────
 
   /** Notify main process that a browser tab was opened (T-P4-115 IPC bridge stub). */

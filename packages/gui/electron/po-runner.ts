@@ -99,6 +99,26 @@ interface RunCallbacks {
   onTicketFocus: (ticketId: string, reason: 'emit' | 'dispatch') => void
   /** T-P4-114 §A: changed_files[] detected in PO envelope. */
   onArtifactOpen: (files: string[]) => void
+  /** T-P4-116: QA envelope browser_url 감지 → browser tab auto-open. */
+  onBrowserOpen: (
+    url: string,
+    ticketId: string,
+    purpose: 'qa-smoke' | 'user-verify',
+  ) => void
+  /** T-P4-116: QA pass + verify_url 감지 → user-verify flow. */
+  onUserVerify: (
+    url: string | undefined,
+    description: string,
+    ticketId: string,
+  ) => void
+  /** T-P4-116: QA loop 상태 변화 감지 → BackgroundTaskSegment badge 갱신. */
+  onQaLoopUpdate: (entry: {
+    ticketId: string
+    attempt: number
+    maxAttempts: number
+    status: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required'
+    lastFailReason?: string
+  }) => void
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -440,6 +460,58 @@ function handleStreamJsonLine(
       // T-P4-114 §A: artifact changed_files
       const artifactFiles = parseArtifactFiles(resultText)
       if (artifactFiles.length > 0) cb.onArtifactOpen(artifactFiles)
+
+      // T-P4-116: QA envelope dispatch
+      const qaEnv = parseQaEnvelope(resultText)
+      if (qaEnv) {
+        const ticketId =
+          typeof qaEnv.ticket_id === 'string' ? qaEnv.ticket_id : ''
+
+        // browser_url 있으면 browser-open
+        if (typeof qaEnv.browser_url === 'string' && qaEnv.browser_url) {
+          cb.onBrowserOpen(qaEnv.browser_url, ticketId, 'qa-smoke')
+        }
+
+        // qa_status === 'pass' → user-verify
+        if (qaEnv.qa_status === 'pass') {
+          cb.onUserVerify(
+            typeof qaEnv.verify_url === 'string' ? qaEnv.verify_url : undefined,
+            typeof qaEnv.verify_description === 'string'
+              ? qaEnv.verify_description
+              : '구현 결과 확인',
+            ticketId,
+          )
+        }
+
+        // qa_loops 또는 qa_status 변화 → qa-loop-update
+        if (qaEnv.qa_loops !== undefined || qaEnv.qa_status !== undefined) {
+          const rawStatus = qaEnv.qa_status
+          const loopStatus: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required' =
+            rawStatus === 'pass'    ? 'pass'       :
+            rawStatus === 'fail'    ? 'fail'       :
+            rawStatus === 'running' ? 'qa-running' :
+            'qa-running'
+          cb.onQaLoopUpdate({
+            ticketId,
+            attempt: typeof qaEnv.qa_loops === 'number' ? qaEnv.qa_loops : 1,
+            maxAttempts: 3,
+            status: loopStatus,
+            lastFailReason: typeof qaEnv.fail_reason === 'string'
+              ? qaEnv.fail_reason
+              : undefined,
+          })
+        }
+
+        // auth_required → po:todo-items (기존 onTodoItems 채널 재사용)
+        if (qaEnv.auth_required && typeof qaEnv.auth_required === 'object') {
+          const { service, instruction, type } = qaEnv.auth_required
+          cb.onTodoItems([{
+            id: `qa-auth-${ticketId}-${Date.now()}`,
+            description: `인증 필요: ${service} — ${instruction}`,
+            type: type === 'env-var' ? 'text-input' : 'check',
+          }])
+        }
+      }
     }
     return
   }
@@ -630,6 +702,47 @@ function parseArtifactFiles(text: string): string[] {
   return []
 }
 
+// ── QA envelope parser (T-P4-116) ─────────────────────────────────────────────
+
+interface QaEnvelope {
+  persona?: string
+  ticket_id?: string
+  qa_status?: 'pass' | 'fail' | 'running'
+  qa_loops?: number
+  browser_url?: string | null
+  verify_url?: string | null
+  verify_description?: string | null
+  auth_required?: {
+    service: string
+    instruction: string
+    type: 'manual' | 'oauth' | 'env-var'
+  } | null
+  fail_reason?: string | null
+}
+
+/**
+ * QA persona 결과 텍스트에서 QA envelope 추출.
+ * 판별 조건: persona === 'pdt-qa' OR qa_status 키 존재 OR browser_url 키 존재.
+ * 없으면 null 반환 (noop).
+ */
+function parseQaEnvelope(text: string): QaEnvelope | null {
+  for (const candidate of extractJsonCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (!parsed || typeof parsed !== 'object') continue
+      const obj = parsed as Record<string, unknown>
+      if (
+        obj.persona === 'pdt-qa' ||
+        obj.qa_status !== undefined ||
+        obj.browser_url !== undefined
+      ) {
+        return obj as QaEnvelope
+      }
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
 // ── Renderer subscription helper (bound by main.ts) ─────────────────────────────
 
 /**
@@ -648,5 +761,9 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     // T-P4-114: ticket focus (§B) + artifact open (§A)
     onTicketFocus: (ticketId, reason)       => wc.send('po:ticket-focus', { ticketId, reason }),
     onArtifactOpen:(files)                  => wc.send('po:artifact-open', { files }),
+    // T-P4-116: QA loop IPC
+    onBrowserOpen: (url, ticketId, purpose) => wc.send('po:browser-open', { url, ticketId, purpose }),
+    onUserVerify:  (url, description, ticketId) => wc.send('po:user-verify', { url, description, ticketId }),
+    onQaLoopUpdate:(entry)                  => wc.send('po:qa-loop-update', entry),
   }
 }

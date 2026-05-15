@@ -22,7 +22,6 @@ import { Paperclip, ArrowUp, RefreshCw, Minus } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import { useUserTodo } from '../../store/useUserTodo'
-import { useArtifacts } from '../../store/useArtifacts'
 import { useQaLoop } from '../../store/useQaLoop'
 import type { Message, MessageKind } from '../../lib/types'
 import PhaseStrip from './PhaseStrip'
@@ -44,9 +43,7 @@ export default function ChatPanel() {
   const pushTodoItems = useUserTodo((s) => s.pushItems)
   const dismissTodosByIds = useUserTodo((s) => s.dismissByIds)
 
-  // T-P4-112: artifact + qa-loop store actions (subscribed via IPC below)
-  const pushArtifactFiles = useArtifacts((s) => s.pushFiles)
-  const markArtifactOpened = useArtifacts((s) => s.markOpened)
+  // T-P4-116: qa-loop store action (subscribed via IPC below)
   const setQaLoopEntry = useQaLoop((s) => s.setEntry)
 
   const setMessages = useWorkspace((s) => s.setMessages)
@@ -182,29 +179,13 @@ export default function ChatPanel() {
     }
   }, [pushTodoItems, dismissTodosByIds])
 
-  // ── Subscribe to Plan-Do-See IPC events (T-P4-112) ───────────────────────
-  // OQ-5: subscribed here (same pattern as todo / health IPC above).
+  // ── Subscribe to QA loop IPC events (T-P4-116) ───────────────────────────
+  // onBrowserOpen / onUserVerify / onQaLoopUpdate — preload bridges added T-P4-116.
+  // onArtifactFiles was dead-code (no preload bridge); WorkspaceShell covers via
+  // poOnArtifactOpen (T-P4-114 §A). Removed here.
   const openTabFn = useWorkspace.getState().openTab
   useEffect(() => {
     const api = (window as any).api
-
-    // A. artifact files — auto-open ≤ 3 tabs; rest show in SidePanelArtifacts
-    const offArtifactFiles = api?.onArtifactFiles?.((payload: {
-      files: string[]
-      ticketId?: string
-    }) => {
-      const { files, ticketId } = payload
-      pushArtifactFiles(files, ticketId)
-      const toOpen = files.slice(0, 3)
-      const store = useArtifacts.getState()
-      for (const filePath of toOpen) {
-        const art = store.files.find((f) => f.path === filePath)
-        const tabType = art?.tabType ?? 'markdown'
-        const name = filePath.split('/').filter(Boolean).pop() ?? filePath
-        openTabFn(filePath, tabType, { path: filePath }, name)
-        markArtifactOpened(filePath)
-      }
-    })
 
     // C. browser-open — auto-open browser tab (QA smoke or noop if already open)
     const offBrowserOpen = api?.onBrowserOpen?.((payload: {
@@ -252,12 +233,11 @@ export default function ChatPanel() {
     })
 
     return () => {
-      offArtifactFiles?.()
       offBrowserOpen?.()
       offUserVerify?.()
       offQaLoopUpdate?.()
     }
-  }, [pushArtifactFiles, markArtifactOpened, pushTodoItems, setQaLoopEntry])
+  }, [pushTodoItems, setQaLoopEntry])
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────
   useEffect(() => {
