@@ -2,16 +2,25 @@
  * TeamWikiTab — main pane for team-wiki tab type (T-P4-099).
  *
  * Replaces the inline WikiRow list that was in TeamPanel sidebar.
- * Shows 4 wiki/memory rows with click → markdown tab (or relevant tab).
+ * Shows wiki/memory rows with click → markdown tab (or relevant tab).
  * Promotion pending badge on the candidates row.
+ *
+ * personaKey (T-P4-140): when provided via paneProps, shows a persona-scoped
+ * header + filtered rows relevant to that persona. No personaKey → aggregated view.
  */
 
 import { useTranslation } from 'react-i18next'
+import { FileText, BrainCircuit, BookOpen, Brain, Settings2, Pin } from 'lucide-react'
 import { useWorkspace } from '../../../../store/workspace'
+import type { TabType } from '../../../../store/workspace'
 
-// ── Wiki backend helper ───────────────────────────────────────────────────────
+// ── Wiki backend types ────────────────────────────────────────────────────────
 
+// Backend as stored in poState (wiki config)
 type WikiBackend = 'fs' | 'graphiti' | 'keeper'
+
+// Backend scope key from sidebar sub-row (T-P4-140 amend)
+type SidebarBackend = 'fs' | 'userMemory' | 'projectState' | 'promo'
 
 function wikiBackendFromState(poState: unknown): WikiBackend | null {
   const raw = (poState as any)?.wiki?.backend
@@ -22,7 +31,7 @@ function wikiBackendFromState(poState: unknown): WikiBackend | null {
 // ── WikiRow sub-component ─────────────────────────────────────────────────────
 
 interface WikiRowProps {
-  icon: string
+  icon: React.ReactElement
   label: string
   badge?: React.ReactNode
   onClick?: () => void
@@ -40,12 +49,14 @@ function WikiRow({ icon, label, badge, onClick }: WikiRowProps) {
         if (onClick) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
       }}
     >
-      <span style={wikiIcon}>{icon}</span>
+      <span style={wikiIconWrap}>{icon}</span>
       <span style={wikiLabel}>{label}</span>
       {badge && <span style={wikiBadge}>{badge}</span>}
     </button>
   )
 }
+
+type PersonaKey = 'po' | 'designer' | 'dev' | 'qa'
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -53,10 +64,13 @@ interface Props {
   props?: Record<string, unknown>
 }
 
-export default function TeamWikiTab(_: Props) {
+export default function TeamWikiTab({ props: paneProps }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
   const poState = useWorkspace((s) => s.poState)
+
+  const personaKey = paneProps?.personaKey as PersonaKey | undefined
+  const backend = paneProps?.backend as SidebarBackend | undefined
 
   const wikiBackend = wikiBackendFromState(poState)
   const wikiBackendLabel = wikiBackend
@@ -66,56 +80,114 @@ export default function TeamWikiTab(_: Props) {
   const pendingPromos = poState?.pending_promotions?.filter((p) => p.status === 'pending') ?? []
   const promoCount = pendingPromos.length
 
+  // ── Shared rows (reused in both views) ──
+  const rowUserMemory = (
+    <WikiRow
+      key="user-memory"
+      icon={<Brain size={14} color="#808080" />}
+      label={t('workspace.team.wiki.userMemory')}
+      onClick={() =>
+        openTab('user-memory', 'markdown', {
+          path: '~/.productune/po-memory.md',
+          title: 'User Memory',
+        })
+      }
+    />
+  )
+  const rowProjectState = (
+    <WikiRow
+      key="project-state"
+      icon={<Settings2 size={14} color="#808080" />}
+      label={t('workspace.team.wiki.projectState')}
+      onClick={() =>
+        openTab('project-state', 'markdown', {
+          path: '.productune/po-state.json',
+          title: 'Project State',
+        })
+      }
+    />
+  )
+  const rowPromo = (
+    <WikiRow
+      key="promo"
+      icon={<Pin size={14} color="#808080" />}
+      label={t('workspace.team.wiki.promotionCandidates')}
+      badge={promoCount > 0 ? <span style={promoWarnBadge}>{promoCount}</span> : null}
+      onClick={() =>
+        openTab('project-state', 'markdown', {
+          path: '.productune/po-state.json',
+          title: 'Promotions',
+        })
+      }
+    />
+  )
+
+  // ── Backend-scoped view (sidebar sub-row click, T-P4-140 amend) ──
+  if (backend) {
+    const scopedRow: React.ReactNode = (() => {
+      switch (backend) {
+        case 'fs':
+          return (
+            <WikiRow
+              key="wiki-fs"
+              icon={
+                wikiBackend === 'graphiti' ? <BrainCircuit size={14} color="#808080" /> :
+                wikiBackend === 'keeper'   ? <BookOpen size={14} color="#808080" /> :
+                                             <FileText size={14} color="#808080" />
+              }
+              label={`Wiki: ${wikiBackendLabel}`}
+            />
+          )
+        case 'userMemory':  return rowUserMemory
+        case 'projectState': return rowProjectState
+        case 'promo':       return rowPromo
+      }
+    })()
+    return (
+      <div style={wrap}>
+        <div style={listWrap}>{scopedRow}</div>
+      </div>
+    )
+  }
+
+  // ── Persona-scoped view (간단 filter) ──
+  if (personaKey) {
+    const scopedRows: React.ReactNode[] = (() => {
+      switch (personaKey) {
+        case 'po':       return [rowUserMemory, rowProjectState, rowPromo]
+        case 'designer': return [rowProjectState, rowPromo]
+        case 'dev':      return [rowProjectState, rowPromo]
+        case 'qa':       return [rowProjectState]
+      }
+    })()
+    return (
+      <div style={wrap}>
+        <div style={personaHeader}>
+          <span style={personaHeaderText}>{t(`workspace.team.wiki.role.${personaKey}`)}</span>
+        </div>
+        <div style={listWrap}>{scopedRows}</div>
+      </div>
+    )
+  }
+
+  // ── Aggregated view (no personaKey) ──
   return (
     <div style={wrap}>
       <div style={listWrap}>
 
         {/* Row 1: Wiki backend (read-only label) */}
         <WikiRow
-          icon={wikiBackend === 'graphiti' ? '\u{1F9E0}' : wikiBackend === 'keeper' ? '\u{1F4DA}' : '\u{1F5C4}'}
+          icon={
+            wikiBackend === 'graphiti' ? <BrainCircuit size={14} color="#808080" /> :
+            wikiBackend === 'keeper'   ? <BookOpen size={14} color="#808080" /> :
+                                         <FileText size={14} color="#808080" />
+          }
           label={`Wiki: ${wikiBackendLabel}`}
         />
 
-        {/* Row 2: User memory */}
-        <WikiRow
-          icon="\u{1F9E0}"
-          label={t('workspace.team.wiki.userMemory')}
-          onClick={() =>
-            openTab('user-memory', 'markdown', {
-              path: '~/.productune/po-memory.md',
-              title: 'User Memory',
-            })
-          }
-        />
-
-        {/* Row 3: Project state */}
-        <WikiRow
-          icon="⚙️"
-          label={t('workspace.team.wiki.projectState')}
-          onClick={() =>
-            openTab('project-state', 'markdown', {
-              path: '.productune/po-state.json',
-              title: 'Project State',
-            })
-          }
-        />
-
-        {/* Row 4: Promotion candidates */}
-        <WikiRow
-          icon="\u{1F4CC}"
-          label={t('workspace.team.wiki.promotionCandidates')}
-          badge={
-            promoCount > 0 ? (
-              <span style={promoWarnBadge}>{promoCount}</span>
-            ) : null
-          }
-          onClick={() =>
-            openTab('project-state', 'markdown', {
-              path: '.productune/po-state.json',
-              title: 'Promotions',
-            })
-          }
-        />
+        {rowUserMemory}
+        {rowProjectState}
+        {rowPromo}
 
       </div>
     </div>
@@ -154,8 +226,9 @@ function wikiRowStyle(clickable: boolean): React.CSSProperties {
   }
 }
 
-const wikiIcon: React.CSSProperties = {
-  fontSize: 14,
+const wikiIconWrap: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
   flexShrink: 0,
 }
 
@@ -180,4 +253,18 @@ const promoWarnBadge: React.CSSProperties = {
   border: '1px solid #E07B3950',
   borderRadius: 3,
   padding: '0 4px',
+}
+
+const personaHeader: React.CSSProperties = {
+  padding: '10px 16px 6px',
+  borderBottom: '1px solid #1E1E1E',
+}
+
+const personaHeaderText: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#4a4a4a',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  userSelect: 'none',
 }

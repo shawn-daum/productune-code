@@ -220,6 +220,7 @@ function copyDoctrineFile(
   state: DoctrineTraceState,
 ): DoctrineTraceState {
   if (!fs.existsSync(dest)) {
+    fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.copyFileSync(src, dest)
     return state === 'updated' ? 'updated' : 'installed'
   }
@@ -232,13 +233,37 @@ function copyDoctrineFile(
 }
 
 /**
+ * Walk a directory recursively, returning all `.md` file paths.
+ * Includes sub-dirs (e.g. `_formats/`, `_details/`) — T-P4-126 doctrine sub-file split.
+ */
+function walkMdRecursive(root: string): string[] {
+  const results: string[] = []
+  if (!fs.existsSync(root)) return results
+  const stack: string[] = [root]
+  while (stack.length > 0) {
+    const dir = stack.pop()!
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(full)
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        results.push(full)
+      }
+    }
+  }
+  return results
+}
+
+/**
  * Idempotently install/update user-global PO doctrine files under ~/.productune/.
  *
  * Behaviour:
- * - po-instructions.md : hash compare; backup + update on mismatch.
- * - po-memory.md        : seed-only (never overwrite — user long-term memory).
- * - sections/*.md       : per-file hash compare; backup + update on mismatch.
- * - productune.env      : seed-only (engine=claude default).
+ * - po-instructions.md       : hash compare; backup + update on mismatch.
+ * - po-memory.md             : seed-only (never overwrite — user long-term memory).
+ * - sections/**\/*.md        : per-file hash compare; backup + update on mismatch.
+ *                              Recursive (T-P4-126: sections/_formats/ + sections/_details/
+ *                              sub-files picked up automatically).
+ * - productune.env           : seed-only (engine=claude default).
  *
  * Stderr trace (once at end):
  * - Any update (hash mismatch) → "업데이트했습니다" message.
@@ -264,7 +289,7 @@ export function bootstrapUserGlobalDoctrine(): void {
     traceState = copyDoctrineFile(instrSrc, instrDest, traceState)
   }
 
-  // ── po-memory.md — seed only (절대 overwrite 금지) ──
+  // ── po-memory.md — seed only (never overwrite — user long-term memory) ──
   const memDest = path.join(PRODUCTUNE_HOME, 'po-memory.md')
   if (!fs.existsSync(memDest)) {
     const memSrc = path.join(DOCTRINE_SRC, 'po-memory.md.template')
@@ -274,13 +299,13 @@ export function bootstrapUserGlobalDoctrine(): void {
     }
   }
 
-  // ── sections/*.md — file-by-file hash compare + backup + update ──
+  // ── sections/**\/*.md — recursive hash compare + backup + update ──
+  // T-P4-126: walk sections/ recursively so _formats/ + _details/ sub-files install too.
   const sectionsDir = path.join(DOCTRINE_SRC, 'sections')
   if (fs.existsSync(sectionsDir)) {
-    for (const file of fs.readdirSync(sectionsDir)) {
-      if (!file.endsWith('.md')) continue
-      const srcFile = path.join(sectionsDir, file)
-      const destFile = path.join(SECTIONS_HOME, file)
+    for (const srcFile of walkMdRecursive(sectionsDir)) {
+      const relPath = path.relative(sectionsDir, srcFile)
+      const destFile = path.join(SECTIONS_HOME, relPath)
       traceState = copyDoctrineFile(srcFile, destFile, traceState)
     }
   }

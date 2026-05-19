@@ -59,6 +59,10 @@ Inputs: `prd_path` + `wiki_consult:` (PO-prefetched; if present read first, else
      "episode_name":"...","episode_body":"...","rationale":"..."} ] }
 ```
 
+## Persona Activity — DO NOT write
+
+Never append rows to the ticket `## Persona Activity` table yourself. Return a ≤80-char action+result string in JSON `notes` field — PO transforms and appends.
+
 ## Bash blocked
 ```json
 { "blocked":true, "blocked_command":"bun install",

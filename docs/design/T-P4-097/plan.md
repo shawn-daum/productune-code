@@ -92,7 +92,9 @@
 
 ### (d) Version history row "완료" badge
 
-**Decision**: row 메타 우측 = 한 개의 신호 — **`ended_at != null` OR `outcome != null` 이면 "완료" pill**.
+**Decision**: row 메타 우측 = 한 개의 신호 — **`ended_at != null` OR `outcome.observed_result != null` 이면 "완료" pill**.
+
+> **[T-P4-110 fix]** `!!outcome` (object 존재) 가 아닌 `!!outcome?.observed_result` (실측값 set) 기준. Planning-time outcome object (north_star / input_metrics / validation_method) 는 close trigger 가 아님.
 
 - 라벨 = "완료" (OQ-1 resolved §5). 영어 카탈로그 = `"Closed"` (T-P4-057 보호어 미해당, 자유 번역).
 - `versions[i].outcome` 의 enum mapping (north_star / observed_result / retrospective_path) 은 **side panel row 에서 노출 X** — 정보 과부하 (§1.5.1 Few Things).
@@ -134,7 +136,7 @@
   ```ts
   const currentVersion = poState.versions.find(v => v.id === poState.current_version)
   const isCurrentClosed =
-    !!currentVersion?.outcome ||
+    !!currentVersion?.outcome?.observed_result ||  // [T-P4-110] observed_result 기준 (outcome object 존재 ≠ closed)
     !!currentVersion?.ended_at
   // isCurrentClosed === true → 해당 row 는 history section 으로 (현재 section 은 fallback)
   ```

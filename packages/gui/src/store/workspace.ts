@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Project, Phase, PoState, Message } from '../lib/types'
+import type { Project, Phase, PoState, Message, MessageKind } from '../lib/types'
 import { PHASE_NAMES } from '../lib/types'
 
 // ── Pane tree types (T-P4-046) ──────────────────────────────────────────────
@@ -70,6 +70,12 @@ interface WorkspaceState {
   messages: Message[]
   claudeSessionId: string | null
   streaming: boolean
+
+  // ── In-flight assistant message tracking (T-P4-119 — ref→state uplift) ──
+  inFlightMsgId: string | null
+  inFlightKind: MessageKind
+  setInFlightMsgId: (id: string | null) => void
+  setInFlightKind: (kind: MessageKind) => void
 
   // ── Pane tree slice (T-P4-046) ─────────────────────────
   panes: Pane
@@ -240,13 +246,18 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   messages: [],
   claudeSessionId: null,
   streaming: false,
+  inFlightMsgId: null,
+  inFlightKind: 'po',
 
   panes: makeEmptyLeaf(INIT_PANE_ID),
   activePaneId: INIT_PANE_ID,
   nextPaneSeq: 2,
   dragHint: null,
 
-  setProject: (project) => set({ project }),
+  // T-P4-119 follow-up: also reset inFlight state on project switch so no
+  // streaming UI artefacts bleed across projects.  Avoids the old
+  // useWorkspace.subscribe → useWorkspace.setState re-entrant pattern.
+  setProject: (project) => set({ project, inFlightMsgId: null, inFlightKind: 'po', streaming: false }),
 
   setPoState: (poState) => {
     set({ poState, phase: derivePhase(poState) })
@@ -270,7 +281,10 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
 
   setStreaming: (streaming) => set({ streaming }),
 
-  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false }),
+  setInFlightMsgId: (inFlightMsgId) => set({ inFlightMsgId }),
+  setInFlightKind: (inFlightKind) => set({ inFlightKind }),
+
+  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false, inFlightMsgId: null, inFlightKind: 'po' }),
 
   // ── pane tree ops ──────────────────────────────────────────────────────────
 

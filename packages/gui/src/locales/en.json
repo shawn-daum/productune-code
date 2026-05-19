@@ -76,7 +76,26 @@
       "graphiti": {
         "label": "Graphiti",
         "intro": "Graph DB-based long-term memory",
-        "tech": "Requires Docker + local LLM (Tier S/A recommended)"
+        "tech": "Requires Docker + local LLM (Tier S/A recommended)",
+        "localLLM": {
+          "title": "Local LLM Setup",
+          "tierSummary": "Tier {{tier}} · {{ram_gb}}GB RAM{{chip}}",
+          "selectModel": "Select LLM model for Graphiti",
+          "installBtn": "Install & Configure",
+          "installing": "Installing Ollama…",
+          "pullingModel": "Pulling {{model}}…",
+          "pullingEmbedder": "Pulling embedder (nomic-embed-text, ~275MB)…",
+          "settingUpGraphiti": "Setting up Graphiti…",
+          "registeringMCP": "Registering Graphiti MCP with Claude Code…",
+          "done": "Local LLM ready — Graphiti configured",
+          "failed": "Setup failed",
+          "retryBtn": "Retry",
+          "skipToKeeper": "Use filesystem instead"
+        },
+        "tierB": {
+          "title": "Hardware below recommended",
+          "body": "Local LLM requires Tier A+ (≥8GB RAM + Apple Silicon, or ≥16GB RAM). Proceeding with filesystem backend."
+        }
       },
       "filesystem": {
         "label": "Filesystem",
@@ -98,6 +117,9 @@
     }
   },
   "workspace": {
+    "common": {
+      "viewFullText": "View full text"
+    },
     "versions": {
       "current": "Current",
       "past": "Past Versions ({{count}})",
@@ -143,7 +165,16 @@
       "loading": "Loading tickets…",
       "noTickets": "No tickets match the current filter.",
       "noTicketsCta": "Ask PO to start →",
-      "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"). Project status enum may not match productune doctrine."
+      "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"). Project status enum may not match productune doctrine.",
+      "status": {
+        "todo": "To Do",
+        "in-progress": "In Progress",
+        "review": "Review",
+        "user-verify": "Awaiting Verify",
+        "done": "Done",
+        "blocked": "Blocked",
+        "abandoned": "Abandoned"
+      }
     },
     "phaseGate": {
       "badge": "Phase Gate",
@@ -319,7 +350,18 @@
         "skillsMore": "+ {{count}} more (see in Matrix)",
         "skillsLink": "Skill Matrix →",
         "skillsCount": "{{count}} skills",
-        "wikiMemory": "Wiki / Memory"
+        "wikiMemory": "Wiki Memory",
+        "mcpServers": "MCP Servers",
+        "mcpLink": "Open MCP Servers"
+      },
+      "wikiMenu": {
+        "fs": "Wiki (local markdown)",
+        "userMemory": "User Memory",
+        "projectState": "Project State",
+        "promo": "Promotion Candidates"
+      },
+      "mcp": {
+        "empty": "No MCP servers configured"
       },
       "persona": {
         "po": {
@@ -347,7 +389,16 @@
         },
         "userMemory": "User memory",
         "projectState": "Project state",
-        "promotionCandidates": "Promotion candidates"
+        "promotionCandidates": "Promotion candidates",
+        "designerDecisions": "Design Decisions",
+        "featureHistory": "Feature History",
+        "failPatterns": "QA Fail Patterns",
+        "role": {
+          "po": "PO Memory",
+          "designer": "Designer Memory",
+          "dev": "Developer Memory",
+          "qa": "QA Memory"
+        }
       },
       "activeDot": {
         "tooltip": "Active (last seen {{seconds}}s ago)"
@@ -356,10 +407,14 @@
         "title": "Skill Matrix",
         "search": "Search skills…",
         "filterAssigned": "Assigned only",
-        "addSkill": "+ Add skill"
+        "addSkill": "+ Add skill",
+        "viewDescription": "View description"
       },
       "personaDef": {
         "previewNote": "Preview only — editing persona spec is a Phase 5 feature."
+      },
+      "tab": {
+        "wiki": "Wiki"
       }
     },
     "deploy": {
@@ -438,13 +493,21 @@
       "gitErrorTrace": "[system] Couldn't prepare workspace — see Settings to retry"
     },
     "browser": {
-      "navPlaceholder": "Enter URL",
-      "refresh": "Refresh",
-      "openExternal": "Open in external browser",
-      "loadError": "This page could not be loaded"
+      "back": "Back",
+      "forward": "Forward",
+      "reload": "Reload",
+      "popout": "Open in browser",
+      "addressPlaceholder": "Enter URL…",
+      "addressLabel": "Address bar",
+      "iframeTitle": "Browser",
+      "emptyHint": "No URL loaded",
+      "loadError": "Page could not be loaded",
+      "retry": "Retry"
     },
     "artifacts": {
-      "autoOpenToast": "{{count}} files changed — use Quick Open (Cmd+P) to see more"
+      "sectionLabel": "Artifacts",
+      "openAll": "+ open all ({{count}})",
+      "empty": "No artifacts in this session"
     },
     "baseDirty": {
       "title": "Unsaved changes detected",
@@ -499,11 +562,6 @@
         "empty": "No deploy events"
       }
     },
-    "artifacts": {
-      "sectionLabel": "Artifacts",
-      "openAll": "+ open all ({{count}})",
-      "empty": "No artifacts in this session"
-    },
     "qaLoop": {
       "attempt": "attempt {{current}}/{{max}}"
     },
@@ -516,24 +574,12 @@
       "supporting": "PO will interview the idea first and start by drafting the PRD.",
       "placeholder": "PO will interview the idea first and start by drafting the PRD.",
       "cta": "Get started",
-      "keyHint": "Enter to send · Shift+Enter = new line",
+      "keyHint": "Cmd+Enter to send · Enter = new line",
       "error": "Something went wrong. Please try again."
-    },
-    "browser": {
-      "back": "Back",
-      "forward": "Forward",
-      "reload": "Reload",
-      "popout": "Open in browser",
-      "addressPlaceholder": "Enter URL…",
-      "addressLabel": "Address bar",
-      "iframeTitle": "Browser",
-      "emptyHint": "No URL loaded",
-      "loadError": "Page could not be loaded",
-      "retry": "Retry"
     }
   },
   "settings": {
-    "tabWorkflowRules": "작업 흐름 규칙",
+    "tabWorkflowRules": "Workflow Rules",
     "tabLanguage": "Language / 언어",
     "workflowRules": {
       "sectionTitle": "Workflow Rules",
@@ -617,6 +663,63 @@
           "desc": "No mode preference — all features visible."
         }
       }
+    }
+  },
+  "skills": {
+    "descriptions": {
+      "mattpocock_skills_engineering_diagnose_SKILL_md": "Disciplined diagnosis loop for hard bugs and performance regressions. Reproduce → minimise → hypothesise → instrument → fix → regression-test. Use when user says \"diagnose this\" / \"debug this\", reports a bug, says something is broken/throwing/failing, or describes a performance regression.",
+      "mattpocock_skills_engineering_grill_with_docs_SKILL_md": "Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates documentation (CONTEXT.md, ADRs) inline as decisions crystallise. Use when user wants to stress-test a plan against their project's language and documented decisions.",
+      "mattpocock_skills_engineering_improve_codebase_architecture_SKILL_md": "Find deepening opportunities in a codebase, informed by the domain language in CONTEXT.md and the decisions in docs/adr/. Use when the user wants to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable and AI-navigable.",
+      "mattpocock_skills_engineering_prototype_SKILL_md": "Build a throwaway prototype to flesh out a design before committing to it. Routes between two branches — a runnable terminal app for state/business-logic questions, or several radically different UI variations toggleable from one route. Use when the user wants to prototype, sanity-check a data model or state machine, mock up a UI, explore design options, or says \"prototype this\", \"let me play with it\", \"try a few designs\".",
+      "mattpocock_skills_engineering_setup_matt_pocock_skills_SKILL_md": "Sets up an ## Agent skills block in AGENTS.md/CLAUDE.md and docs/agents/ so the engineering skills know this repo's issue tracker (GitHub or local markdown), triage label vocabulary, and domain doc layout. Run before first use of to-issues, to-prd, triage, diagnose, tdd, improve-codebase-architecture, or zoom-out.",
+      "mattpocock_skills_engineering_tdd_SKILL_md": "Test-driven development with red-green-refactor loop. Use when user wants to build features or fix bugs using TDD, mentions \"red-green-refactor\", wants integration tests, or asks for test-first development.",
+      "mattpocock_skills_engineering_to_issues_SKILL_md": "Break a plan, spec, or PRD into independently-grabbable issues on the project issue tracker using tracer-bullet vertical slices. Use when user wants to convert a plan into issues, create implementation tickets, or break down work into issues.",
+      "mattpocock_skills_engineering_triage_SKILL_md": "Triage issues through a state machine driven by triage roles. Use when user wants to create an issue, triage issues, review incoming bugs or feature requests, prepare issues for an AFK agent, or manage issue workflow.",
+      "mattpocock_skills_engineering_zoom_out_SKILL_md": "Tell the agent to zoom out and give broader context or a higher-level perspective. Use when you're unfamiliar with a section of code or need to understand how it fits into the bigger picture.",
+      "mattpocock_skills_misc_git_guardrails_claude_code_SKILL_md": "Set up Claude Code hooks to block dangerous git commands (push, reset --hard, clean, branch -D, etc.) before they execute. Use when user wants to prevent destructive git operations, add git safety hooks, or block git push/reset in Claude Code.",
+      "mattpocock_skills_misc_setup_pre_commit_SKILL_md": "Set up Husky pre-commit hooks with lint-staged (Prettier), type checking, and tests in the current repo. Use when user wants to add pre-commit hooks, set up Husky, configure lint-staged, or add commit-time formatting/typechecking/testing.",
+      "mattpocock_skills_productivity_caveman_SKILL_md": "Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, articles, and pleasantries while keeping full technical accuracy. Use when user says \"caveman mode\", \"talk like caveman\", \"use caveman\", \"less tokens\", \"be brief\", or invokes /caveman.",
+      "mattpocock_skills_productivity_grill_me_SKILL_md": "Interview the user relentlessly about a plan or design until reaching shared understanding, resolving each branch of the decision tree. Use when user wants to stress-test a plan, get grilled on their design, or mentions \"grill me\".",
+      "mattpocock_skills_productivity_handoff_SKILL_md": "Compact the current conversation into a handoff document for another agent to pick up.",
+      "mattpocock_skills_productivity_write_a_skill_SKILL_md": "Create new agent skills with proper structure, progressive disclosure, and bundled resources. Use when user wants to create, write, or build a new skill.",
+      "phuryn_pm_data_analytics_skills_ab_test_analysis_SKILL_md": "Analyze A/B test results with statistical significance, sample size validation, confidence intervals, and ship/extend/stop recommendations. Use when evaluating experiment results, checking if a test reached significance, interpreting split test data, or deciding whether to ship a variant.",
+      "phuryn_pm_data_analytics_skills_cohort_analysis_SKILL_md": "Perform cohort analysis on user engagement data — retention curves, feature adoption trends, and segment-level insights. Use when analyzing user retention by cohort, studying feature adoption over time, investigating churn patterns, or identifying engagement trends.",
+      "phuryn_pm_data_analytics_skills_sql_queries_SKILL_md": "Generate SQL queries from natural language descriptions. Supports BigQuery, PostgreSQL, MySQL, and other dialects. Reads database schemas from uploaded diagrams or documentation. Use when writing SQL, building data reports, exploring databases, or translating business questions into queries.",
+      "phuryn_pm_execution_skills_job_stories_SKILL_md": "Create job stories using the 'When [situation], I want to [motivation], so I can [outcome]' format with detailed acceptance criteria. Use when writing job stories, creating JTBD-style backlog items, or expressing user situations and motivations.",
+      "phuryn_pm_execution_skills_outcome_roadmap_SKILL_md": "Transform an output-focused roadmap into an outcome-focused one that communicates strategic intent. Rewrites initiatives as outcome statements reflecting user and business impacts. Use when shifting to outcome roadmaps, making a roadmap more strategic, or rewriting feature lists as outcomes.",
+      "phuryn_pm_execution_skills_pre_mortem_SKILL_md": "Run a pre-mortem risk analysis on a PRD or launch plan. Categorizes risks as Tigers (real problems), Paper Tigers (overblown concerns), and Elephants (unspoken worries), then classifies as launch-blocking, fast-follow, or track.",
+      "phuryn_pm_execution_skills_prioritization_frameworks_SKILL_md": "Reference guide to 9 prioritization frameworks with formulas, when-to-use guidance, and templates — RICE, ICE, Kano, MoSCoW, Opportunity Score, and more. Use when selecting a prioritization method, comparing frameworks like RICE vs ICE, or learning how different prioritization approaches work.",
+      "phuryn_pm_execution_skills_release_notes_SKILL_md": "Generate user-facing release notes from tickets, PRDs, or changelogs. Creates clear, engaging summaries organized by category (new features, improvements, fixes). Use when writing release notes, creating changelogs, announcing product updates, or summarizing what shipped.",
+      "phuryn_pm_execution_skills_retro_SKILL_md": "Facilitate a structured sprint retrospective — what went well, what didn't, and prioritized action items with owners and deadlines. Use when running a retrospective, reflecting on a sprint, creating action items from team feedback, or learning how to run effective retros.",
+      "phuryn_pm_execution_skills_test_scenarios_SKILL_md": "Create comprehensive test scenarios from user stories with test objectives, starting conditions, user roles, step-by-step actions, and expected outcomes. Use when writing QA test cases, creating test plans, defining acceptance tests, or preparing for feature validation.",
+      "phuryn_pm_execution_skills_wwas_SKILL_md": "Create product backlog items in Why-What-Acceptance format — independent, valuable, testable items with strategic context. Use when writing structured backlog items, breaking features into work items, or using the WWA format.",
+      "phuryn_pm_go_to_market_skills_gtm_strategy_SKILL_md": "Create a go-to-market strategy covering marketing channels, messaging, success metrics, and launch timeline. Use when planning a product launch, creating a GTM plan from scratch, or defining a launch strategy for a new market.",
+      "phuryn_pm_go_to_market_skills_ideal_customer_profile_SKILL_md": "Identify the Ideal Customer Profile (ICP) from research data with demographics, behaviors, JTBD, and needs. Use when defining your ICP, analyzing PMF survey data, or understanding who your best customers are.",
+      "phuryn_pm_market_research_skills_competitor_analysis_SKILL_md": "Analyze competitors with strengths, weaknesses, and differentiation opportunities. Identifies direct competitors and maps the competitive landscape. Use when doing competitive research, preparing a competitive brief, or finding differentiation opportunities.",
+      "phuryn_pm_market_research_skills_customer_journey_map_SKILL_md": "Create an end-to-end customer journey map with stages, touchpoints, emotions, pain points, and opportunities. Use when mapping the customer experience, identifying friction points, improving onboarding, or visualizing the user journey.",
+      "phuryn_pm_market_research_skills_market_segments_SKILL_md": "Identify 3-5 potential customer segments with demographics, JTBD, and product fit analysis. Use when exploring market segments, identifying target audiences, evaluating new markets, or learning how to segment a market.",
+      "phuryn_pm_market_research_skills_market_sizing_SKILL_md": "Estimate market size using TAM, SAM, and SOM with top-down and bottom-up approaches. Use when sizing a market opportunity, estimating addressable market, preparing for investor pitches, or evaluating market entry.",
+      "phuryn_pm_market_research_skills_sentiment_analysis_SKILL_md": "Analyze user feedback data to identify segments with sentiment scores, JTBD, and product satisfaction insights. Use when analyzing user feedback at scale, running sentiment analysis on reviews or surveys, or identifying satisfaction patterns.",
+      "phuryn_pm_market_research_skills_user_personas_SKILL_md": "Create refined user personas from research data — 3 personas with JTBD, pains, gains, and unexpected insights. Use when building personas from survey data, creating user profiles from research, or segmenting users for product decisions.",
+      "phuryn_pm_market_research_skills_user_segmentation_SKILL_md": "Segment users from feedback data based on behavior, JTBD, and needs. Identifies at least 3 distinct user segments. Use when segmenting a user base, analyzing diverse user feedback, or building a segmentation model.",
+      "phuryn_pm_marketing_growth_skills_north_star_metric_SKILL_md": "Define a North Star Metric and 3-5 supporting input metrics that form a metrics constellation. Classify the business game (Attention, Transaction, Productivity) and validate against 7 criteria for an effective North Star.",
+      "phuryn_pm_marketing_growth_skills_value_prop_statements_SKILL_md": "Generate value proposition statements for marketing, sales, and onboarding from existing value propositions. Use when writing marketing copy, creating sales messaging, or crafting onboarding messages.",
+      "phuryn_pm_product_discovery_skills_analyze_feature_requests_SKILL_md": "Analyze and prioritize a list of feature requests by theme, strategic alignment, impact, effort, and risk. Use when reviewing customer feature requests, triaging a backlog, or making prioritization decisions.",
+      "phuryn_pm_product_discovery_skills_brainstorm_experiments_existing_SKILL_md": "Design experiments to test assumptions for an existing product — prototypes, A/B tests, spikes, and other low-effort validation methods. Use when validating assumptions, testing feature ideas cheaply, or planning product experiments.",
+      "phuryn_pm_product_discovery_skills_brainstorm_experiments_new_SKILL_md": "Design lean startup experiments (pretotypes) for a new product. Creates XYZ hypotheses and suggests low-effort validation methods like landing pages, explainer videos, and pre-orders. Use when validating a new product idea, creating pretotypes, or testing market demand.",
+      "phuryn_pm_product_discovery_skills_brainstorm_ideas_existing_SKILL_md": "Brainstorm product ideas for an existing product using multi-perspective ideation from PM, Designer, and Engineer viewpoints. Use when generating new feature ideas, brainstorming solutions for an identified opportunity, or ideating with a product trio.",
+      "phuryn_pm_product_discovery_skills_brainstorm_ideas_new_SKILL_md": "Brainstorm feature ideas for a new product in initial discovery from PM, Designer, and Engineer perspectives. Use when starting product discovery for a new product, exploring features for a startup idea, or doing initial ideation.",
+      "phuryn_pm_product_discovery_skills_identify_assumptions_existing_SKILL_md": "Identify risky assumptions for a feature idea in an existing product across Value, Usability, Viability, and Feasibility. Uses multi-perspective devil's advocate thinking. Use when stress-testing a feature idea, doing risk assessment, or preparing for assumption mapping.",
+      "phuryn_pm_product_discovery_skills_identify_assumptions_new_SKILL_md": "Identify risky assumptions for a new product idea across 8 risk categories including Go-to-Market, Strategy, and Team. Use when evaluating startup risks, assessing a new product concept, or mapping assumptions for a new venture.",
+      "phuryn_pm_product_discovery_skills_interview_script_SKILL_md": "Create a structured customer interview script with JTBD probing questions, warm-up, core exploration, and wrap-up sections. Follows The Mom Test principles — no leading questions, no pitching, focus on past behavior.",
+      "phuryn_pm_product_discovery_skills_metrics_dashboard_SKILL_md": "Define and design a product metrics dashboard with key metrics, data sources, visualization types, and alert thresholds. Use when creating a metrics dashboard, defining KPIs, setting up product analytics, or building a data monitoring plan.",
+      "phuryn_pm_product_discovery_skills_opportunity_solution_tree_SKILL_md": "Build an Opportunity Solution Tree (OST) to structure product discovery — map a desired outcome to opportunities, solutions, and experiments. Based on Teresa Torres' Continuous Discovery Habits.",
+      "phuryn_pm_product_discovery_skills_prioritize_assumptions_SKILL_md": "Prioritize assumptions using an Impact × Risk matrix and suggest experiments for each. Use when triaging a list of assumptions, deciding what to test first, or applying the assumption prioritization canvas.",
+      "phuryn_pm_product_discovery_skills_prioritize_features_SKILL_md": "Prioritize a backlog of feature ideas based on impact, effort, risk, and strategic alignment with top 5 recommendations. Use when prioritizing a feature backlog, making scope decisions, or ranking product ideas.",
+      "phuryn_pm_product_discovery_skills_summarize_interview_SKILL_md": "Summarize a customer interview transcript into a structured template with JTBD, satisfaction signals, and action items. Use when processing interview recordings or transcripts, synthesizing discovery interviews, or creating interview summaries.",
+      "phuryn_pm_product_strategy_skills_lean_canvas_SKILL_md": "Generate a Lean Canvas with problem, solution, metrics, cost structure, UVP, unfair advantage, channels, segments, and revenue. Use when exploring a lean startup canvas, testing a business hypothesis, or modeling a new venture.",
+      "phuryn_pm_product_strategy_skills_product_vision_SKILL_md": "Brainstorm an inspiring, achievable, and emotional product vision that motivates teams and aligns stakeholders. Use when defining or refining a product vision, creating a vision statement, or aligning the team around a shared direction.",
+      "phuryn_pm_product_strategy_skills_value_proposition_SKILL_md": "Design a detailed value proposition using a 6-part JTBD template — Who, Why, What before, How, What after, Alternatives. Use when creating a value proposition, analyzing customer value delivery, or articulating why customers should choose your product."
     }
   },
   "app": {

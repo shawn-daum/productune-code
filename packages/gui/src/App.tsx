@@ -7,6 +7,7 @@ import OnboardingWizard from './views/OnboardingWizard'
 import EntryGate from './components/EntryGate'
 import Titlebar from './components/workspace/Titlebar'
 import type { Project } from './lib/types'
+import './store/poEvents' // T-P4-119: PO IPC subscriptions registered at module load.
 
 interface DescendantEntry {
   path: string

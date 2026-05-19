@@ -7,6 +7,20 @@ type Engine = 'claude' | 'codex' | 'both'
 type WikiBackend = 'filesystem' | 'graphiti'
 type Tier = 'S' | 'A' | 'B'
 type UiLang = 'en' | 'ko'
+type WizardStep = 0 | 1 | 2 | 3 | '3.5' | 4
+
+interface GraphitiConfig {
+  llmProvider: 'ollama'
+  llmModel: string
+  embedderProvider: 'ollama'
+  embedderModel: string
+}
+
+/** Recommended LLM models by hardware tier (ordered by preference). */
+const MODEL_RECS: Record<'S' | 'A', string[]> = {
+  S: ['qwen2.5:14b', 'qwen2.5:7b', 'llama3.1:8b'],
+  A: ['qwen2.5:7b', 'llama3.1:8b', 'gemma2:9b'],
+}
 
 interface HardwareInfo {
   tier: Tier
@@ -26,7 +40,7 @@ interface Props {
 
 export default function OnboardingWizard({ onDone }: Props) {
   const { t } = useTranslation()
-  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0)
+  const [step, setStep] = useState<WizardStep>(0)
 
   // Step 0 — Language
   const [uiLang, setUiLang] = useState<UiLang>('en')
@@ -49,6 +63,16 @@ export default function OnboardingWizard({ onDone }: Props) {
   const [dockerLogs, setDockerLogs] = useState<string[]>([])
   const [installError, setInstallError] = useState('')
   const logEndRef = useRef<HTMLDivElement>(null)
+
+  // Step 3.5 — Local LLM setup
+  type LlmPhase = 'idle' | 'installing' | 'setup-graphiti' | 'registering-mcp' | 'done' | 'error'
+  const [llmPhase, setLlmPhase] = useState<LlmPhase>('idle')
+  const [selectedModel, setSelectedModel] = useState<string>('')
+  const [installedModels, setInstalledModels] = useState<string[]>([])
+  const [llmLogs, setLlmLogs] = useState<string[]>([])
+  const [llmError, setLlmError] = useState('')
+  const [graphitiConfig, setGraphitiConfig] = useState<GraphitiConfig | null>(null)
+  const llmLogEndRef = useRef<HTMLDivElement>(null)
 
   // Step 0 — reset CTA
   const [resetFeedback, setResetFeedback] = useState(false)
@@ -77,19 +101,37 @@ export default function OnboardingWizard({ onDone }: Props) {
     detectLocale()
   }, [])
 
-  // Reset docker install state when leaving step 3
+  // Reset docker install state when leaving step 3 / 3.5
   useEffect(() => {
-    if (step !== 3) {
+    if (step !== 3 && step !== '3.5') {
       setInstallPhase('idle')
       setDockerLogs([])
       setInstallError('')
     }
   }, [step])
 
-  // Auto-scroll log area to bottom
+  // Auto-scroll docker log area to bottom
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [dockerLogs])
+
+  // Auto-scroll LLM log area to bottom
+  useEffect(() => {
+    llmLogEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [llmLogs])
+
+  // Load installed models + pre-select default when entering step 3.5
+  useEffect(() => {
+    if (step !== '3.5') return
+    ;(window as any).api.listOllamaModels()
+      .then((models: string[]) => setInstalledModels(models))
+      .catch(() => setInstalledModels([]))
+    // Pre-select first recommended model for the detected tier
+    if (!selectedModel && hardware) {
+      const recs = MODEL_RECS[hardware.tier as 'S' | 'A'] ?? ['qwen2.5:7b']
+      setSelectedModel(recs[0])
+    }
+  }, [step])
 
   // Check engine status when entering step 2
   useEffect(() => {
@@ -115,7 +157,9 @@ export default function OnboardingWizard({ onDone }: Props) {
     if (step !== 4) return
     setCompleting(true)
     setCompleteError('')
-    ;(window as any).api.completeOnboarding({ engine, wikiBackend, uiLanguage: uiLang })
+    const completeOpts: Record<string, unknown> = { engine, wikiBackend, uiLanguage: uiLang }
+    if (graphitiConfig) completeOpts.graphitiConfig = graphitiConfig
+    ;(window as any).api.completeOnboarding(completeOpts)
       .then((result: { ok: boolean; error?: string }) => {
         if (result.ok) {
           setDone(true)
@@ -207,6 +251,68 @@ export default function OnboardingWizard({ onDone }: Props) {
     }
   }
 
+  async function startLLMSetup() {
+    setLlmPhase('installing')
+    setLlmLogs([])
+    setLlmError('')
+
+    const unsub: (() => void) | undefined =
+      (window as any).api.onInstallProgress((line: string) => {
+        setLlmLogs(prev => [...prev.slice(-500), line])
+      })
+
+    try {
+      // Phase 1: install Ollama + pull model + nomic-embed-text
+      const llmResult: { ok: boolean; error?: string } =
+        await (window as any).api.installLocalLLM({ model: selectedModel })
+      unsub?.()
+      if (!llmResult.ok) {
+        setLlmError(llmResult.error ?? t('onboarding.wiki.graphiti.localLLM.failed'))
+        setLlmPhase('error')
+        return
+      }
+
+      // Phase 2: setup Graphiti (FalkorDB + containers)
+      setLlmPhase('setup-graphiti')
+      setLlmLogs([])
+      const unsubG: (() => void) | undefined =
+        (window as any).api.onGraphitiProgress((line: string) => {
+          setLlmLogs(prev => [...prev.slice(-500), line])
+        })
+      const gResult: { ok: boolean; error?: string } =
+        await (window as any).api.setupGraphiti()
+      unsubG?.()
+      if (!gResult.ok) {
+        setLlmError(gResult.error ?? t('onboarding.wiki.graphiti.localLLM.failed'))
+        setLlmPhase('error')
+        return
+      }
+
+      // Phase 3: register graphiti MCP with Claude Code (non-fatal)
+      setLlmPhase('registering-mcp')
+      const mcpResult: { ok: boolean; alreadyRegistered: boolean; error?: string } =
+        await (window as any).api.registerGraphitiMCP()
+      if (!mcpResult.ok && !mcpResult.alreadyRegistered) {
+        setLlmLogs(prev => [...prev,
+          `WARN: ${mcpResult.error ?? 'graphiti MCP 등록 실패 — claude mcp add graphiti ... 수동 실행 필요'}`
+        ])
+      }
+
+      // Done — save config for onboarding:complete
+      setGraphitiConfig({
+        llmProvider: 'ollama',
+        llmModel: selectedModel,
+        embedderProvider: 'ollama',
+        embedderModel: 'nomic-embed-text',
+      })
+      setLlmPhase('done')
+    } catch (e: any) {
+      unsub?.()
+      setLlmError(e?.message ?? t('onboarding.wiki.graphiti.localLLM.failed'))
+      setLlmPhase('error')
+    }
+  }
+
   // Engine step 2: is everything ready to proceed?
   const needsClaude = engine === 'claude' || engine === 'both'
   const needsCodex = engine === 'codex' || engine === 'both'
@@ -230,16 +336,20 @@ export default function OnboardingWizard({ onDone }: Props) {
           <Zap size={20} strokeWidth={2.25} color="#FF6B2B" style={{ marginRight: 10 }} />
           <span style={{ fontWeight: 700, fontSize: 16 }}>{t('onboarding.title')}</span>
           <div style={stepIndicator}>
-            {([0, 1, 2, 3, 4] as const).map(s => (
-              <div
-                key={s}
-                style={{
-                  ...stepDot,
-                  background: s === step ? '#FF6B2B' : s < step ? '#FF6B2B55' : '#333',
-                  width: s === step ? 24 : 8,
-                }}
-              />
-            ))}
+            {(() => {
+              // '3.5' renders as step 3 in the indicator
+              const stepNum = step === '3.5' ? 3 : (step as number)
+              return ([0, 1, 2, 3, 4] as const).map(s => (
+                <div
+                  key={s}
+                  style={{
+                    ...stepDot,
+                    background: s === stepNum ? '#FF6B2B' : s < stepNum ? '#FF6B2B55' : '#333',
+                    width: s === stepNum ? 24 : 8,
+                  }}
+                />
+              ))
+            })()}
           </div>
         </div>
 
@@ -500,9 +610,170 @@ export default function OnboardingWizard({ onDone }: Props) {
                 </>
               )}
             </div>
+            {/* Tier B warning: graphiti not available, will use filesystem */}
+            {wikiBackend === 'graphiti' && hardware?.tier === 'B' && (
+              <div style={tierBBox}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <AlertTriangle size={13} color="#FBBF24" />
+                  <span style={{ fontWeight: 600, fontSize: 12, color: '#FBBF24' }}>
+                    {t('onboarding.wiki.graphiti.tierB.title')}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: '#A09060' }}>
+                  {t('onboarding.wiki.graphiti.tierB.body')}
+                </div>
+              </div>
+            )}
             <div style={footer}>
               <button style={btnSecondary} onClick={() => setStep(2)}>{t('common.prev')}</button>
-              <button style={btnPrimary} onClick={() => setStep(4)}>{t('common.next')}</button>
+              <button
+                style={btnPrimary}
+                onClick={() => {
+                  if (wikiBackend === 'graphiti' && hardware?.tier !== 'B') {
+                    // Tier S/A + graphiti → run local LLM setup
+                    setStep('3.5')
+                  } else {
+                    // Tier B or filesystem → auto keeper, skip to completion
+                    if (wikiBackend === 'graphiti' && hardware?.tier === 'B') {
+                      setWikiBackend('filesystem')
+                    }
+                    setStep(4)
+                  }
+                }}
+              >
+                {t('common.next')}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Step 3.5 — Local LLM setup */}
+        {step === '3.5' && (
+          <>
+            <div style={body}>
+              <div style={stepLabel}>{t('onboarding.wiki.graphiti.localLLM.title')}</div>
+
+              {/* Tier + RAM summary */}
+              {hardware && (
+                <div style={{ fontSize: 12, color: '#707070', marginBottom: 10 }}>
+                  {t('onboarding.wiki.graphiti.localLLM.tierSummary', {
+                    tier: hardware.tier,
+                    ram_gb: hardware.ram_gb,
+                    chip: hardware.apple_silicon ? ' · Apple Silicon' : '',
+                  })}
+                </div>
+              )}
+
+              {/* Model selection (idle phase) */}
+              {llmPhase === 'idle' && (
+                <>
+                  <div style={{ fontSize: 12, color: '#A0A0A0', marginBottom: 8 }}>
+                    {t('onboarding.wiki.graphiti.localLLM.selectModel')}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                    {(MODEL_RECS[hardware?.tier as 'S' | 'A'] ?? ['qwen2.5:7b']).map(m => (
+                      <div
+                        key={m}
+                        style={{
+                          ...optionCard,
+                          borderColor: selectedModel === m ? '#FF6B2B' : '#2A2A2A',
+                          background: selectedModel === m ? '#1E1108' : '#161616',
+                          padding: '8px 12px',
+                        }}
+                        onClick={() => setSelectedModel(m)}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ ...radio, background: selectedModel === m ? '#FF6B2B' : 'transparent' }} />
+                          <span style={{ fontWeight: 600, fontSize: 12, color: '#F0F0F0' }}>{m}</span>
+                          {installedModels.some(im => im === m || im.startsWith(m + ':')) && (
+                            <span style={{ fontSize: 10, color: '#34D399', marginLeft: 4 }}>
+                              ✓ installed
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Progress log (installing phases) */}
+              {(llmPhase === 'installing' || llmPhase === 'setup-graphiti' || llmPhase === 'registering-mcp') && (
+                <>
+                  <div style={{ fontSize: 12, color: '#A0A0A0', marginBottom: 8 }}>
+                    {llmPhase === 'installing' &&
+                      t('onboarding.wiki.graphiti.localLLM.pullingModel', { model: selectedModel })}
+                    {llmPhase === 'setup-graphiti' &&
+                      t('onboarding.wiki.graphiti.localLLM.settingUpGraphiti')}
+                    {llmPhase === 'registering-mcp' &&
+                      t('onboarding.wiki.graphiti.localLLM.registeringMCP')}
+                  </div>
+                  <div style={logArea}>
+                    {llmLogs.map((line, i) => (
+                      <div key={i} style={{ color: logLineColor(line) }}>{line}</div>
+                    ))}
+                    <div ref={llmLogEndRef} />
+                  </div>
+                  <div style={{ fontSize: 11, color: '#505050', marginTop: 8 }}>
+                    {llmPhase === 'installing' && t('onboarding.wiki.graphiti.localLLM.installing')}
+                  </div>
+                </>
+              )}
+
+              {/* Done */}
+              {llmPhase === 'done' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#34D399', marginTop: 8 }}>
+                  <CheckCircle2 size={16} strokeWidth={2} />
+                  {t('onboarding.wiki.graphiti.localLLM.done')}
+                </div>
+              )}
+
+              {/* Error */}
+              {llmPhase === 'error' && (
+                <>
+                  <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 8 }}>{llmError}</div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button style={btnDockerInstall} onClick={startLLMSetup}>
+                      {t('onboarding.wiki.graphiti.localLLM.retryBtn')}
+                    </button>
+                    <button
+                      style={btnRedetect}
+                      onClick={() => {
+                        setWikiBackend('filesystem')
+                        setLlmPhase('idle')
+                        setStep(4)
+                      }}
+                    >
+                      {t('onboarding.wiki.graphiti.localLLM.skipToKeeper')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div style={footer}>
+              {llmPhase === 'idle' ? (
+                <>
+                  <button style={btnSecondary} onClick={() => setStep(3)}>{t('common.prev')}</button>
+                  <button
+                    style={{ ...btnPrimary, opacity: selectedModel ? 1 : 0.4, cursor: selectedModel ? 'pointer' : 'not-allowed' }}
+                    onClick={startLLMSetup}
+                    disabled={!selectedModel}
+                  >
+                    {t('onboarding.wiki.graphiti.localLLM.installBtn')}
+                  </button>
+                </>
+              ) : llmPhase === 'done' ? (
+                <>
+                  <div />
+                  <button style={btnPrimary} onClick={() => setStep(4)}>
+                    {t('common.next')}
+                  </button>
+                </>
+              ) : (
+                // Installing / error phases — no nav (except error has retry buttons above)
+                <div />
+              )}
             </div>
           </>
         )}
@@ -701,7 +972,8 @@ function TierBadge({ tier }: { tier: Tier }) {
 function logLineColor(line: string): string {
   if (line.startsWith('OK')) return '#34D399'
   if (line.startsWith('ERR') || line.includes('오류')) return '#EF4444'
-  if (line.includes('확인 중') || line.includes('설치 중')) return '#FBBF24'
+  if (line.startsWith('WARN') || line.includes('WARN:')) return '#FBBF24'
+  if (line.includes('확인 중') || line.includes('설치 중') || line.includes('pull 중')) return '#FBBF24'
   return '#505050'
 }
 
@@ -819,4 +1091,9 @@ const btnReset: React.CSSProperties = {
   background: 'transparent', color: '#505050', border: 'none',
   fontSize: 11, cursor: 'pointer', padding: '4px 8px',
   display: 'flex', alignItems: 'center',
+}
+const tierBBox: React.CSSProperties = {
+  marginTop: 8, padding: '10px 12px',
+  background: '#1A1200', border: '1px solid #FBBF2444',
+  borderRadius: 6,
 }

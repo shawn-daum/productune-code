@@ -3,15 +3,19 @@
  *
  * Layout:
  *  1. Personas section — plain title "페르소나" + PersonaRow × 4 inline (no collapse toggle)
+ *     Each PersonaRow click → team-wiki tab filtered by personaKey (T-P4-140)
  *  2. Skills nav row — click → skill-matrix main tab (T-P4-098)
- *  3. Wiki·Memory nav row — click → team-wiki main tab (NEW T-P4-099)
+ *  3. 위키 메모리 section header + 4 sub-rows (T-P4-140 amend):
+ *     Wiki: fs / 사용자 메모리 / 프로젝트 상태 / 승급 후보
+ *     Each sub-row click → team-wiki tab filtered by backend key
+ *  4. MCP Servers nav row
  *
- * Sidebar = nav only. WikiRow list moved to TeamWikiTab (main pane).
+ * Sidebar = nav only. WikiRow list lives in TeamWikiTab (main pane).
  */
 
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight } from 'lucide-react'
+import { FileText, Brain, Settings2, Pin } from 'lucide-react'
 import type { PoState } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import { PERSONA_COLORS } from '../../store/personaPresence'
@@ -30,15 +34,11 @@ interface PersonaDef {
 }
 
 const PERSONAS: PersonaDef[] = [
-  { key: 'po',       id: 'pdt-po',        initial: 'P', nameKey: 'workspace.team.persona.po.name',       roleKey: 'workspace.team.persona.po.role',       modelSummary: 'sonnet / medium' },
+  { key: 'po',       id: 'pdt-po',        initial: 'P', nameKey: 'workspace.team.persona.po.name',       roleKey: 'workspace.team.persona.po.role',       modelSummary: 'opus / xhigh'   },
   { key: 'designer', id: 'pdt-designer',   initial: 'D', nameKey: 'workspace.team.persona.designer.name',  roleKey: 'workspace.team.persona.designer.role',  modelSummary: 'opus / xhigh'   },
   { key: 'dev',      id: 'pdt-developer',  initial: 'D', nameKey: 'workspace.team.persona.developer.name', roleKey: 'workspace.team.persona.developer.role', modelSummary: 'sonnet / high'  },
   { key: 'qa',       id: 'pdt-qa',         initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.persona.qa.role',        modelSummary: 'haiku / low'    },
 ]
-
-// ── Skills total (static) ────────────────────────────────────────────────────
-
-const SKILLS_TOTAL = 11
 
 // ── Persona row ───────────────────────────────────────────────────────────────
 
@@ -78,6 +78,30 @@ function PersonaRow({ def, isActive, onClick }: PersonaRowProps) {
   )
 }
 
+// ── Wiki sub-row (위키 메모리 section items) ──────────────────────────────────
+
+interface WikiSubRowProps {
+  icon: React.ReactElement
+  label: string
+  badge?: number
+  onClick: () => void
+}
+
+function WikiSubRow({ icon, label, badge, onClick }: WikiSubRowProps) {
+  return (
+    <button
+      style={wikiSubRowStyle}
+      onClick={onClick}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+    >
+      <span style={wikiSubIconWrap}>{icon}</span>
+      <span style={wikiSubLabel}>{label}</span>
+      {badge !== undefined && badge > 0 && <span style={promoWarnBadge}>{badge}</span>}
+    </button>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -88,6 +112,15 @@ export default function TeamPanel({ poState }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
   const [now, setNow] = useState(Date.now())
+
+  // Dynamic skills count
+  const [skillsTotal, setSkillsTotal] = useState<number | null>(null)
+
+  useEffect(() => {
+    ;(window as any).api.listSkills()
+      .then((entries: unknown[]) => setSkillsTotal(entries.length))
+      .catch(() => setSkillsTotal(null))
+  }, [])
 
   // Refresh active dot every 15s
   useEffect(() => {
@@ -104,23 +137,20 @@ export default function TeamPanel({ poState }: Props) {
     return diff < 60
   }
 
+  // Persona row click → team-wiki scoped by personaKey (T-P4-140)
   const handlePersonaClick = (def: PersonaDef) => {
-    openTab(
-      `persona-def:${def.id}`,
-      'persona-def',
-      { persona: def.id, sourcePath: `~/.claude/agents/${def.id}.md` },
-    )
+    openTab('team-wiki', 'team-wiki', { personaKey: def.key })
   }
 
   const handleMatrixClick = () => {
     openTab('skill-matrix', 'skill-matrix', {})
   }
 
-  const handleWikiClick = () => {
-    openTab('team-wiki', 'team-wiki', {})
+  const handleMcpClick = () => {
+    openTab('mcp-servers', 'mcp-servers', {})
   }
 
-  // Promotion pending count for wiki nav row warn badge
+  // Promotion pending count for wiki sub-row badge
   const pendingPromos = poState?.pending_promotions?.filter((p) => p.status === 'pending') ?? []
   const promoCount = pendingPromos.length
 
@@ -151,28 +181,53 @@ export default function TeamPanel({ poState }: Props) {
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
           title={t('workspace.team.section.skillsLink')}
         >
-          <ChevronRight size={12} color="#4a4a4a" style={{ flexShrink: 0 }} />
           <span style={navRowLabel}>{t('workspace.team.section.skills')}</span>
           <span style={navRowBadge}>
-            {t('workspace.team.section.skillsCount', { count: SKILLS_TOTAL })}
+            {skillsTotal !== null
+              ? t('workspace.team.section.skillsCount', { count: skillsTotal })
+              : <span style={{ color: '#3A3A3A' }}>?</span>}
           </span>
         </button>
       </div>
 
-      {/* ── Wiki·Memory nav row ── */}
+      {/* ── 위키 메모리 section — header + 4 sub-rows (T-P4-140 amend) ── */}
+      <div style={sectionWrap}>
+        <div style={plainSecHdr}>
+          <span style={secHdrText}>{t('workspace.team.section.wikiMemory')}</span>
+        </div>
+        <WikiSubRow
+          icon={<FileText size={14} color="#808080" />}
+          label={t('workspace.team.wikiMenu.fs')}
+          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'fs' })}
+        />
+        <WikiSubRow
+          icon={<Brain size={14} color="#808080" />}
+          label={t('workspace.team.wikiMenu.userMemory')}
+          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'userMemory' })}
+        />
+        <WikiSubRow
+          icon={<Settings2 size={14} color="#808080" />}
+          label={t('workspace.team.wikiMenu.projectState')}
+          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'projectState' })}
+        />
+        <WikiSubRow
+          icon={<Pin size={14} color="#808080" />}
+          label={t('workspace.team.wikiMenu.promo')}
+          badge={promoCount}
+          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'promo' })}
+        />
+      </div>
+
+      {/* ── MCP Servers nav row ── */}
       <div style={sectionWrap}>
         <button
           style={navRowBtn}
-          onClick={handleWikiClick}
+          onClick={handleMcpClick}
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-          title={t('workspace.team.tab.wiki')}
+          title={t('workspace.team.section.mcpLink')}
         >
-          <ChevronRight size={12} color="#4a4a4a" style={{ flexShrink: 0 }} />
-          <span style={navRowLabel}>{t('workspace.team.tab.wiki')}</span>
-          {promoCount > 0 && (
-            <span style={promoWarnBadge}>{promoCount}</span>
-          )}
+          <span style={navRowLabel}>{t('workspace.team.section.mcpServers')}</span>
         </button>
       </div>
 
@@ -328,3 +383,35 @@ const promoWarnBadge: React.CSSProperties = {
   padding: '0 4px',
   flexShrink: 0,
 }
+
+// Wiki sub-row (위키 메모리 section items)
+const wikiSubRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  width: '100%',
+  height: 28,
+  paddingLeft: 24,
+  paddingRight: 8,
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  gap: 6,
+  textAlign: 'left',
+  transition: 'background 0.1s',
+}
+
+const wikiSubIconWrap: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  flexShrink: 0,
+}
+
+const wikiSubLabel: React.CSSProperties = {
+  fontSize: 13,
+  color: '#C0C0C0',
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+

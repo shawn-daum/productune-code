@@ -19,8 +19,12 @@ contextBridge.exposeInMainWorld('api', {
     engine: 'claude' | 'codex' | 'both'
     wikiBackend: 'filesystem' | 'graphiti'
     uiLanguage?: 'en' | 'ko'
-    anthropicKey?: string
-    openaiKey?: string
+    graphitiConfig?: {
+      llmProvider: 'ollama'
+      llmModel: string
+      embedderProvider: 'ollama'
+      embedderModel: string
+    }
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:complete', opts),
 
@@ -33,6 +37,38 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('onboarding:installDocker:log', listener)
     return () => ipcRenderer.removeListener('onboarding:installDocker:log', listener)
   },
+
+  // ── Local LLM + Graphiti setup (T-P4-125) ────────────────────────────────
+
+  /** List installed Ollama models (name:tag). Returns [] if ollama not installed. */
+  listOllamaModels: (): Promise<string[]> =>
+    ipcRenderer.invoke('onboarding:listOllamaModels'),
+
+  /** Install Ollama + pull <model> + pull nomic-embed-text. Streams progress via onInstallProgress. */
+  installLocalLLM: (opts: { model: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('onboarding:installLocalLLM', opts),
+
+  /** Subscribe to streamed log lines from installLocalLLM. Returns an unsubscribe fn. */
+  onInstallProgress: (cb: (line: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, line: string) => cb(line)
+    ipcRenderer.on('onboarding:installLocalLLM:log', listener)
+    return () => ipcRenderer.removeListener('onboarding:installLocalLLM:log', listener)
+  },
+
+  /** Run setup-graphiti.sh (FalkorDB + Graphiti containers). Streams progress via onGraphitiProgress. */
+  setupGraphiti: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('onboarding:setupGraphiti'),
+
+  /** Subscribe to streamed log lines from setupGraphiti. Returns an unsubscribe fn. */
+  onGraphitiProgress: (cb: (line: string) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, line: string) => cb(line)
+    ipcRenderer.on('onboarding:setupGraphiti:log', listener)
+    return () => ipcRenderer.removeListener('onboarding:setupGraphiti:log', listener)
+  },
+
+  /** Register graphiti MCP with Claude Code. Idempotent — safe to call multiple times. */
+  registerGraphitiMCP: (): Promise<{ ok: boolean; alreadyRegistered: boolean; error?: string }> =>
+    ipcRenderer.invoke('onboarding:registerGraphitiMCP'),
 
   openDockerApp: (): Promise<void> =>
     ipcRenderer.invoke('onboarding:openDockerApp'),
@@ -345,7 +381,7 @@ contextBridge.exposeInMainWorld('api', {
       url?: string
       env?: Record<string, string>
     }
-    source: 'global' | 'project'
+    source: 'productune' | 'local' | 'project'
   }>> =>
     ipcRenderer.invoke('mcp:getServers', projectDir),
 
@@ -358,8 +394,9 @@ contextBridge.exposeInMainWorld('api', {
       url?: string
       env?: Record<string, string>
     },
+    projectDir?: string,
   ): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('mcp:save', serverName, config),
+    ipcRenderer.invoke('mcp:save', serverName, config, projectDir),
 
   mcpTestConnection: (
     serverName: string,
@@ -371,6 +408,10 @@ contextBridge.exposeInMainWorld('api', {
     },
   ): Promise<{ ok: boolean; ms?: number; error?: string }> =>
     ipcRenderer.invoke('mcp:testConnection', serverName, config),
+
+  // ── Skills (T-P4-118) ─────────────────────────────────────────────────────────
+  listSkills: (): Promise<import('../src/lib/types').SkillEntry[]> =>
+    ipcRenderer.invoke('skills:list'),
 
   // ── Hooks (T-P4-048-mh) ───────────────────────────────────────────────────────
   hooksList: (): Promise<Array<{

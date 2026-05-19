@@ -76,13 +76,9 @@ export default function FreshComposer({ project, onConfirm }: Props) {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter = send.  Shift+Enter = new line.  IME composing = no send.
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-      e.preventDefault()
-      handleSend()
-    }
-    // Cmd+Enter also sends.
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+    if (e.nativeEvent.isComposing) return
+    // Cmd+Enter = send. Plain Enter = newline (service-wide convention).
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       handleSend()
     }

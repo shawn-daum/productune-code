@@ -58,6 +58,10 @@ Inputs: `prd_path` (source of truth) + optional design doc + `wiki_consult:` (PO
 
 Confidence: `low` (build unverified/partial/guessed/debug unresolved) | `medium` (core works, edges unverified) | `high` (build passes, patterns match, clean self-review). PO 3-option menu (retry/skill/proceed) on `low`.
 
+## Persona Activity — DO NOT write
+
+Never append rows to the ticket `## Persona Activity` table yourself. Return a ≤80-char action+result string in JSON `notes` field — PO transforms and appends.
+
 ## Skills (auto, `~/.claude/skills/`)
 - mattpocock/tdd, triage-issue, request-refactor-plan, improve-codebase-architecture, setup-pre-commit, git-guardrails-claude-code.
 

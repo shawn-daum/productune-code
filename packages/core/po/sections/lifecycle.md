@@ -6,26 +6,24 @@ Sessions scoped per **task** (not project). Same-intent follow-ups stay in `curr
 
 Inspect `current_task` + recent ticket md (fs scan, last 5 closed). Classify:
 
-- **(a) Continuation** — pronouns / temporal back-reference (intent: "that one", "just now", "continue"), files in `current_task.artifacts`, same scope → keep, `--resume`.
-- **(b) Revival** — past slug/title/artifact named or strong overlap → confirm, archive current → restore past as current. Prompt template (rendered in user's lang): `"this looks like a follow-up to '<slug>'. continue that task? (y/n/[other slug])"`.
+- **(a) Continuation** — pronouns / temporal back-reference ("that one", "just now", "continue"), files in `current_task.artifacts`, same scope → keep, `--resume`.
+- **(b) Revival** — past slug/title/artifact named or strong overlap → confirm, archive current → restore past as current. Prompt template (in user's lang): `"this looks like follow-up to '<slug>'. continue that task? (y/n/[other slug])"`.
 - **(c) New** — different feature/file/intent → archive current → past, allocate. Announce: `"starting new task '<slug>'"` (in user's lang).
 
 ## Archive `current_task` → ticket md (mandatory before b/c)
 
-Always write 1–2 sentence outcome before archiving — synthesized verdict (what shipped, open items, status), not persona dump. Outcome lands in ticket md `## Outcome` section (Designer-authored when content needed; PO appends mechanical row to `## Persona Activity` table). State `current_task` is then cleared.
+Always write 1–2 sentence outcome before archiving — synthesized verdict (what shipped, open items, status), not persona dump. Outcome lands in ticket md `## Outcome` section (Designer-authored when content needed; PO appends mechanical row to `## Persona Activity` table). State `current_task` cleared.
 
 ```bash
 NOW=$(date -u +%FT%TZ); FINAL_STATUS="done"   # done | blocked | abandoned
-# 1. PO updates ticket md frontmatter mechanically (status, completed_at, duration_min)
 TID=$(jq -r '.current_task.ticket_id' "$STATE")
 VER=$(jq -r '.current_task.version // .current_version' "$STATE")
 TICKET_MD="docs/tickets/$VER/$TID.md"
 sed -i.bak -E "s/^status:.*/status: $FINAL_STATUS/" "$TICKET_MD" && rm -f "${TICKET_MD}.bak"
-# 2. PO clears current_task (live state)
 tmp=$(mktemp) && jq '.current_task = null' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
 ```
 
-`final_status`: `done` (delivered/QA pass or N/A) · `blocked` (QA fail loop cap or external dep) · `abandoned` (user explicitly drops the task — intent: "let's drop this" / "abandon").
+`final_status`: `done` (delivered/QA pass or N/A) · `blocked` (QA fail loop cap or external dep) · `abandoned` (user explicitly drops — intent: "let's drop this" / "abandon").
 
 Hook `pre-delegate-task-check.sh` blocks new-slug delegation if previous ticket md missing required `status` and `## Outcome`. Skipping not optional.
 
@@ -55,25 +53,25 @@ if [ -n "$MATCH" ] && [ "$MATCH" != "null" ]; then
 fi
 ```
 
-`persona_sessions{}` is **not** revived — closed-ticket per-turn meta is dropped per v2 doctrine. New session ids allocated by claude on resume.
+`persona_sessions{}` **not** revived — closed-ticket per-turn meta dropped per v2. New session ids allocated by claude on resume.
 
 ## Version id naming rule (T-P4-095)
 
 `versions[].id` MUST match `^v\d+(\.\d+)?$`. Allowed: `v1`, `v2`, `v0.1`, `v1.2`. Rejected: `paepyeong-v1` (slug prefix), `v1-rc`, `V1`, `version-1`, `1.0`.
 
-**version-create validation** — before pushing a new entry to `versions[]`:
+**version-create validation** — before pushing new entry to `versions[]`:
 
 ```bash
 VERSION_ID="<proposed>"
 if ! echo "$VERSION_ID" | grep -qE '^v[0-9]+(\.[0-9]+)?$'; then
-  echo "version id must match v<N> or v<N>.<M> (e.g. v1, v0.1). Please choose a valid id."
+  echo "version id must match v<N> or v<N>.<M> (e.g. v1, v0.1). Please choose valid id."
   exit 1
 fi
 ```
 
-User natural-language hints (`"v2 시작"` → use `v2`; `"다음 버전"` → confirm `"v2"` before proceeding). PO appends to `versions[]` only after valid id confirmed.
+User natural-language hints (`"start v2"` → use `v2`; `"next version"` → confirm `"v2"` before proceeding). PO appends to `versions[]` only after valid id confirmed.
 
-When project is new (po-state.json absent), read `initial_version` from `.productune/config.json` as the first version id suggestion. Validate before using.
+When project new (po-state.json absent), read `initial_version` from `.productune/config.json` as first version id suggestion. Validate before using.
 
 ## Update `current_task.artifacts`
 
@@ -88,24 +86,4 @@ Auto-compaction 70% via `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70` in `productune.env`
 
 Claude transcripts: `cleanupPeriodDays` (default 30) in `~/.claude/settings.json`. Ticket md files retained indefinitely (= SoT). `versions[]` in po-state capped at 5; older versions reachable via `outcome.retrospective_path` (`docs/retrospectives/<version>.md`).
 
----
-
-## Timeline / project history
-
-User asks for project history (intent: "what have we done", "show timeline", "summary so far") — **never invoke persona, never `git log`**. Source = fs scan of `docs/tickets/**/*.md` + `current_task` + `versions[]` in state. Sort by `started_at`, render in user's lang per template:
-
-```
-## Project timeline (<repo>)
-
-<started_at> – <ended_at>  <slug>  [<final_status>]
-  request : <request_summary>
-  flow    : <personas in order, pass/fail>
-  artifacts: <artifacts>
-  outcome : <outcome_summary>
-
-in progress: <current_task.slug>  [in-progress]
-```
-
-Detail beyond summary: read PRD `docs/prd/<slug>.md`, persona notes, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` past session = last resort.
-
-**R2 git-workflow**: ticket-level commit detail = `git -C <worktree_path> log --oneline` (worktree-isolated). Timeline itself derived from fs scan of ticket md files.
+## Timeline / project history → `sections/_details/lifecycle-timeline.md`

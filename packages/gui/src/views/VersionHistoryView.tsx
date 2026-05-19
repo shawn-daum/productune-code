@@ -23,6 +23,7 @@
 
 import { useState, useMemo, useEffect, useReducer, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InfoPopover } from '../components/shared/InfoPopover'
 // ── Filter state (T-P4-023 sub-a) ─────────────────────────────────────────────
 
 type PersonaKey = 'po' | 'designer' | 'developer' | 'qa'
@@ -175,6 +176,7 @@ interface TicketCardProps {
 }
 
 function TicketCard({ ticket, commits }: TicketCardProps) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
 
   const status = ticket.status ?? 'todo'
@@ -198,9 +200,12 @@ function TicketCard({ ticket, commits }: TicketCardProps) {
       <div style={cardHeader}>
         <span style={cardTicketId}>{ticket.ticket_id}</span>
         {ticket.title && (
-          <span style={cardTitle}>{ticket.title}</span>
+          <>
+            <span style={cardTitle}>{ticket.title}</span>
+            <InfoPopover text={ticket.title} />
+          </>
         )}
-        <span style={statusPill(status)}>{statusLabel(status)}</span>
+        <span style={statusPill(status)}>{t('workspace.tickets.status.' + status, { defaultValue: status })}</span>
       </div>
 
       {/* Card meta line */}
@@ -217,6 +222,7 @@ function TicketCard({ ticket, commits }: TicketCardProps) {
             <div key={i} style={activityRow}>
               <span style={activityPersona}>{row.persona}</span>
               <span style={activityResult}>{row.result}</span>
+              <InfoPopover text={row.result} threshold={40} />
             </div>
           ))}
         </div>
@@ -638,18 +644,6 @@ export default function VersionHistoryView() {
 // ── Status helpers ─────────────────────────────────────────────────────────────
 
 type StatusKey = 'todo' | 'in-progress' | 'review' | 'done' | 'blocked' | 'abandoned' | string
-
-function statusLabel(status: StatusKey): string {
-  const map: Record<string, string> = {
-    'todo':        '대기',
-    'in-progress': '진행 중',
-    'review':      '검토 중',
-    'done':        '완료',
-    'blocked':     '차단',
-    'abandoned':   '취소',
-  }
-  return map[status] ?? status
-}
 
 function statusPill(status: StatusKey): React.CSSProperties {
   const palette: Record<string, { fg: string; bg: string }> = {

@@ -62,12 +62,17 @@ Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_file
   "repro_steps_on_fail":["..."], "confidence":"low|medium|high",
   "unresolved":["..."], "test_env_request":null,
   "fail_event": null,
+  "notes": "...",
   "promotion_candidates":[
     {"tier":"project","target":"docs/qa/project-notes.md","delta":"(YYYY-MM-DD) <fact>","rationale":"..."},
     {"tier":"work-note","target":"docs/qa/R<n>-<slug>.md","title":"<short>","body":"<full markdown — sections OK>","rationale":"future qa runs"} ] }
 ```
 
 `fail_event` (when fail loop ≥1; null otherwise): `{version, ticket_id, area_tag:"<feature>/<sub-area>", loops, final:"resolved|blocked|abandoned", note}`. PO appends 1 line to `docs/qa/fail-patterns.md`.
+
+## Persona Activity — DO NOT write
+
+Never append rows to the ticket `## Persona Activity` table yourself. Return a ≤80-char action+result string in JSON `notes` field — PO transforms and appends.
 
 ## Test-env bypass
 ```json

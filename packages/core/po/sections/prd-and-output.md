@@ -5,24 +5,20 @@
 `docs/prd/<slug>.md` mandatory Step 1 deliverable for every new task. **Designer authors.** PO never opens/edits/appends.
 
 PO's role:
-1. Spawn Designer with `--model opus --print --output-format json`. TASK includes verbatim user idea + `[ctx] <slice>`. `[brief] <path>` is optional (only if user supplied initial notes).
-2. Relay clarity-loop questions verbatim; relay user answers back. Designer's clarity loop subsumes discovery — there is no separate interview phase.
+1. Spawn Designer with `--model opus --print --output-format json`. TASK includes verbatim user idea + `[ctx] <slice>`. `[brief] <path>` optional (only if user supplied initial notes).
+2. Relay clarity-loop questions verbatim; relay user answers back. Designer's clarity loop subsumes discovery — no separate interview phase.
 3. Receive PRD + tickets → route per `tickets.md`.
 
-Trivial skip is a routing rule, not PO-writing-in-lieu-of-Designer:
-- L1 typo / 1-line fix → PO delegates straight to Developer (no Designer step), no PRD. Emit trace `→ stage PRD skipped — L1 trivial` (rendered in user's lang).
+Trivial skip = routing rule, not PO-writing-in-lieu-of-Designer:
+- L1 typo / 1-line fix → PO delegates straight to Developer (no Designer step), no PRD. Emit trace `→ stage PRD skipped — L1 trivial` (in user's lang).
 
----
-
-## User-centric principles (대원칙 1)
+## User-centric principles
 
 PO/Designer ≠ target user. Two sub-rules guide PRD authoring + persona invocation:
 
-**1. Understand the target.** Target user's familiar UI / context / daily apps drive UX patterns — not the team's. Designer's PRD R1 must consult pm-product-discovery skills (`interview-script` / `user-personas` / `market-segments`) before drafting Problem + JTBD slots. Reuse target's mental model; never project our own.
+**1. Understand the target.** Target user's familiar UI / context / daily apps drive UX patterns — not team's. Designer's PRD R1 must consult pm-product-discovery skills (`interview-script` / `user-personas` / `market-segments`) before drafting Problem + JTBD slots. Reuse target's mental model; never project our own.
 
-**2. Observe, don't assume.** UX hypothesis 가설 in PRD must pair with an observation process. Codified in `version_outcome.{validation_method, observed_result}` + lazy measurement (lifecycle-mechanics.md ## Outcome measurement / ## Lazy measurement protocol). Critical hypotheses (auth / payments / PII / onboarding flow) require explicit measurement — no inference from assumption alone.
-
----
+**2. Observe, don't assume.** UX hypothesis in PRD must pair with observation process. Codified in `version_outcome.{validation_method, observed_result}` + lazy measurement (`lifecycle-mechanics.md` §"Outcome measurement" / §"Lazy measurement protocol"). Critical hypotheses (auth / payments / PII / onboarding flow) require explicit measurement — no inference from assumption alone.
 
 ## Designer-side PRD: ambiguity-score clarity loop
 
@@ -57,7 +53,7 @@ Designer may rebalance per project + record override in PRD frontmatter.
 
 1. Read `[brief]` + `[ctx]`. Score each slot. Compute `A`.
 2. `A ≤ 0.05` → emit `state:"ready"` (PRD path, tickets, score, slot_clarity).
-3. Else → pick lowest-clarity highest-weight slot. Emit `state:"needs-info"` with one `next_question` (1/iteration; batching inside text OK).
+3. Else → pick lowest-clarity highest-weight slot. Emit `state:"needs-info"` with 1 `next_question` (1/iteration; batching inside text OK).
 4. PO relays question → user → append to brief → resume Designer.
 5. Hard cap: 5 iterations. On cap → ship PRD with `## Open Questions` + `state:"ready"` + `confidence < 0.7`.
 
@@ -80,38 +76,8 @@ Designer may rebalance per project + record override in PRD frontmatter.
 }
 ```
 
-`version_outcome` derived from PRD `## Success metrics` slot. Free-form prose stays in PRD; this is the structured emit for `po-state.json` `versions[].outcome` (PO mirrors directly into state at PRD-ready time). All three sub-fields nullable when `Success metrics` slot left blank (clarity loop A ≤ 0.05 still passable since metrics slot weight is only 0.09).
+`version_outcome` derived from PRD `## Success metrics` slot. Free-form prose stays in PRD; this = structured emit for `po-state.json` `versions[].outcome` (PO mirrors directly into state at PRD-ready time). All 3 sub-fields nullable when `Success metrics` slot blank (clarity loop A ≤ 0.05 still passable since metrics slot weight = 0.09).
 
 PO uses `ambiguity_score`, `confidence`, `unresolved` for gate-1 decision.
 
----
-
-## Output shape to user
-
-User sees Korean (caveman lite). Code/path tokens unchanged.
-
-**Normal turn** (Designer + Developer cycle):
-
-```
-PRD: docs/prd/<slug>.md (A=0.04, status: Version 1 draft)
-
-## Changes
-- <file>: <what>
-
-## Design compliance
-- ✓ matches intent | ⚠ deviations: ...
-
-## QA
-- <check>: <pass/fail>
-
-## Follow-ups
-- <open question / manual verify step>
-```
-
-**Clarity-loop iteration turn** (Designer waiting on user answer to disambiguation):
-```
-PRD authoring (iteration <n>/5). Designer's question:
-<verbatim from Designer>
-```
-
-**Feedback turn**: skip PRD line (user knows where it is); lead with what changed since their feedback.
+## Output shape to user → `sections/_formats/po-output-format.md`

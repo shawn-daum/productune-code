@@ -55,6 +55,22 @@ export default function EntryGate({ project, onBack }: Props) {
       }
 
       if (status === 'pending') {
+        // Even if pending, skip FreshComposer when the project already has chat history.
+        try {
+          const [session, poState] = await Promise.all([
+            api.chatGetSession?.(project.projectDir).catch(() => null),
+            api.readPoState?.(project.projectDir).catch(() => null),
+          ])
+          const hasMessages =
+            Array.isArray((session as any)?.messages) && (session as any).messages.length > 0
+          const hasPhaseHistory =
+            Array.isArray((poState as any)?.phase_history) &&
+            (poState as any).phase_history.length > 0
+          if (hasMessages || hasPhaseHistory) {
+            if (!cancelled) setGate('workspace')
+            return
+          }
+        } catch { /* ignore — fall through to fresh */ }
         if (!cancelled) setGate('fresh')
         return
       }

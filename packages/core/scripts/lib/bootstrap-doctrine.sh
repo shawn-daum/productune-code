@@ -23,11 +23,13 @@ fi
 # bootstrap_user_global_doctrine <DOCTRINE_ROOT>
 #
 #   Idempotent file policies:
-#     po-instructions.md — cmp -s same → skip silently;
-#                          different   → .bak.<ISO-ts> backup + overwrite
-#     po-memory.md       — [ ! -e ] guard: seed-only; NEVER overwrite user memory
-#     sections/*.md      — wipe stale files first, then sweep copy from source
-#     productune.env     — [ ! -e ] guard: seed engine=claude; never overwrite
+#     po-instructions.md       — cmp -s same → skip silently;
+#                                different   → .bak.<ISO-ts> backup + overwrite
+#     po-memory.md             — [ ! -e ] guard: seed-only; NEVER overwrite user memory
+#     sections/**/*.md         — wipe stale .md (recursive, hidden dirs incl.), then sweep
+#                                copy from source preserving sub-dir structure (T-P4-126:
+#                                sections/_formats/, sections/_details/ sub-files included)
+#     productune.env           — [ ! -e ] guard: seed engine=claude; never overwrite
 #
 #   Completion trace (stderr via say()):
 #     Fresh install / update → "doctrine 시스템 파일 설치 완료." (once)
@@ -67,25 +69,34 @@ bootstrap_user_global_doctrine() {
     # else: identical hash — skip silently (idempotent re-run)
   fi
 
-  # ── sections/*.md: wipe stale files, then sweep copy ────────────────────────
-  # Remove stale section files so removed/renamed sections don't linger.
-  local _stale
-  for _stale in "$HOME/.productune/sections/"*.md; do
-    [ -f "$_stale" ] || continue
-    rm -f "$_stale"
-  done
-  local _section_count=0
-  local _sf
-  for _sf in "$_po_src/sections/"*.md; do
-    [ -f "$_sf" ] || continue
-    cp "$_sf" "$HOME/.productune/sections/$(basename "$_sf")"
-    _section_count=$((_section_count + 1))
-  done
-  if [ "$_did_install" = 1 ] && [ "$_section_count" -gt 0 ]; then
-    say "doctrine: ~/.productune/sections/ ($_section_count files)"
+  # ── sections/**/*.md: recursive wipe + recursive sweep copy (T-P4-126) ──────
+  # Stale wipe — remove ALL .md files under sections/ recursively (incl. _formats/,
+  # _details/ sub-dirs). Pruned-named source dirs (sub-files removed in source) won't
+  # linger in user's home.
+  if [ -d "$HOME/.productune/sections" ]; then
+    find "$HOME/.productune/sections" -type f -name '*.md' -delete 2>/dev/null || true
+    # Also remove empty sub-dirs left after wipe (so renamed dirs don't accumulate).
+    find "$HOME/.productune/sections" -mindepth 1 -type d -empty -delete 2>/dev/null || true
   fi
 
-  # ── po-memory.md: seed-only (절대 overwrite 금지 — user long-term memory) ───
+  # Sweep copy — preserve sub-dir structure under sections/ (sections/_formats/<x>.md,
+  # sections/_details/<x>.md, etc. all picked up). Uses find + relative path expansion.
+  local _section_count=0
+  local _sf _rel _dest_dir
+  if [ -d "$_po_src/sections" ]; then
+    while IFS= read -r -d '' _sf; do
+      _rel="${_sf#$_po_src/sections/}"
+      _dest_dir="$HOME/.productune/sections/$(dirname "$_rel")"
+      mkdir -p "$_dest_dir"
+      cp "$_sf" "$HOME/.productune/sections/$_rel"
+      _section_count=$((_section_count + 1))
+    done < <(find "$_po_src/sections" -type f -name '*.md' -print0 2>/dev/null)
+  fi
+  if [ "$_did_install" = 1 ] && [ "$_section_count" -gt 0 ]; then
+    say "doctrine: ~/.productune/sections/ ($_section_count files incl. _formats/ + _details/ sub-dirs)"
+  fi
+
+  # ── po-memory.md: seed-only (never overwrite — user long-term memory) ───────
   local _mem_dest="$HOME/.productune/po-memory.md"
   if [ ! -e "$_mem_dest" ]; then
     if [ -f "$_po_src/po-memory.md.template" ]; then

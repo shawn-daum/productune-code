@@ -11,7 +11,8 @@ interface Props {
   versionFilter?: string
 }
 
-const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'user-verify', 'done', 'blocked', 'abandoned']
+// blocked=urgent-attention left / abandoned=terminal-archive right / workflow natural middle (T-P4-138)
+const STATUS_ORDER: Status[] = ['blocked', 'todo', 'in-progress', 'review', 'user-verify', 'done', 'abandoned']
 /** Set derived from STATUS_ORDER — single source of truth for known status strings. */
 const KNOWN_STATUS_SET = new Set<string>(STATUS_ORDER)
 
@@ -127,10 +128,11 @@ function SchemaMismatchBanner({ count }: { count: number }) {
 }
 
 function Column({ status, tickets }: { status: Status; tickets: Ticket[] }) {
+  const { t } = useTranslation()
   return (
     <div style={column}>
       <div style={columnHeader(status)}>
-        <span style={columnLabel}>{status}</span>
+        <span style={columnLabel}>{t(`workspace.tickets.status.${status}`, { defaultValue: status })}</span>
         <span style={columnCount}>{tickets.length}</span>
       </div>
       <div style={columnBody}>
@@ -253,7 +255,7 @@ const mismatchMsg: React.CSSProperties = {
 const kanban: React.CSSProperties = {
   flex: 1,
   display: 'grid',
-  gridTemplateColumns: 'repeat(6, minmax(180px, 1fr))',
+  gridTemplateColumns: 'repeat(7, minmax(160px, 1fr))',
   gap: 8,
   padding: 16,
   overflowX: 'auto',
@@ -369,14 +371,16 @@ const cardBottomRow: React.CSSProperties = {
 
 function typeChip(type: TaskType): React.CSSProperties {
   const colors: Record<TaskType, { fg: string; bg: string }> = {
-    design:   { fg: '#A878E0', bg: '#1A1228' },
-    impl:     { fg: '#60B860', bg: '#0A2A0A' },
-    refactor: { fg: '#60B0E0', bg: '#0A1828' },
-    test:     { fg: '#E0B040', bg: '#2A2008' },
-    qa:       { fg: '#E07060', bg: '#2A0808' },
-    deploy:   { fg: '#FF6B2B', bg: '#2A1808' },
+    design:        { fg: '#A878E0', bg: '#1A1228' },
+    impl:          { fg: '#60B860', bg: '#0A2A0A' },
+    refactor:      { fg: '#60B0E0', bg: '#0A1828' },
+    test:          { fg: '#E0B040', bg: '#2A2008' },
+    qa:            { fg: '#E07060', bg: '#2A0808' },
+    deploy:        { fg: '#FF6B2B', bg: '#2A1808' },
+    doctrine:      { fg: '#9090C0', bg: '#181828' },
+    'design+impl': { fg: '#C090E0', bg: '#1E1230' },
   }
-  const c = colors[type]
+  const c = colors[type] ?? { fg: '#707070', bg: '#1A1A1A' }
   return {
     fontSize: 9,
     color: c.fg,

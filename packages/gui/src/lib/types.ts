@@ -22,9 +22,11 @@ export const PHASE_NAMES: Record<number, Phase> = {
 
 // Layer B — ticket type (`type` field on each ticket md frontmatter).
 // Renamed from `Stage` (v2 doctrine, sub-d). Enum values unchanged.
-export type TaskType = 'design' | 'impl' | 'refactor' | 'test' | 'qa' | 'deploy'
+// `doctrine` added 2026-05-15 (T-P4-119 hotfix — whiteboard crash on unknown type).
+// `design+impl` added same — composite type Designer emits for cross-phase tickets.
+export type TaskType = 'design' | 'impl' | 'refactor' | 'test' | 'qa' | 'deploy' | 'doctrine' | 'design+impl'
 
-export const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
+export const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy', 'doctrine', 'design+impl']
 
 // Ticket lifecycle status (separate from `type`).
 // Plan-Do-See lifecycle: todo → in-progress → review → user-verify → done | blocked | abandoned
@@ -149,6 +151,27 @@ export interface Version {
   ended_at?: string | null
   prd_anchor?: string
   outcome?: VersionOutcome
+}
+
+// ── Skill catalog entry (T-P4-118 — IPC dynamic scan) ─────────────────────────
+
+/** Persona column keys — mirrors SkillMatrixTab PersonaCol. */
+export type SkillPersona = 'po' | 'designer' | 'dev' | 'qa'
+
+/**
+ * A single skill entry returned by the `skills:list` IPC handler.
+ * `id`       — relative path from ~/.claude/skills root (slash-separated).
+ * `name`     — frontmatter `name` field, or last-directory fallback.
+ * `description` — frontmatter `description` field, or "".
+ * `personas` — frontmatter `personas` array, or path-inference result, or [].
+ * `filePath` — absolute path (for future deep-link / viewer).
+ */
+export interface SkillEntry {
+  id: string
+  name: string
+  description: string
+  personas: SkillPersona[]
+  filePath: string
 }
 
 // ── Pending promotions (T-P4-066) ─────────────────────────────────────────────

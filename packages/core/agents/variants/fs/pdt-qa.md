@@ -79,6 +79,7 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
   "unresolved": ["..."],
   "test_env_request": null,
   "fail_event": null,
+  "notes": "...",
   "promotion_candidates": [
     {"tier": "project", "target": "docs/qa/project-notes.md",
      "delta": "(YYYY-MM-DD) <fact>", "rationale": "..."},
@@ -87,6 +88,10 @@ If `[ctx]` is present, **do not re-read** `<project>/.productune/po-state.json` 
   ]
 }
 ```
+
+## Persona Activity — DO NOT write
+
+Never append rows to the ticket `## Persona Activity` table yourself. Return a ≤80-char action+result string in JSON `notes` field — PO transforms and appends.
 
 ## When a check is blocked
 

@@ -5,7 +5,6 @@ import type { Project, Session } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import VersionsPanel from './VersionsPanel'
 import SettingsView from './SettingsView'
-import PhaseStrip from './PhaseStrip'
 import TeamPanel from './TeamPanel'
 import ExplorerPane from '../explorer/ExplorerPane'
 import SidePanelCurrentVersion from './SidePanelCurrentVersion'
@@ -110,10 +109,6 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
       {/* Body — branch by activeIcon */}
       {activeIcon === 'project' && (
         <div style={projectBody}>
-          {/* Phase section */}
-          <div style={secHdr}>{t('workspace.phaseStrip.sectionLabel')}</div>
-          <PhaseStrip poState={poState} variant="strip" />
-
           {/* Versions section — 2 sp-section split (T-P4-097) */}
           <SidePanelCurrentVersion
             poState={poState}
@@ -215,14 +210,3 @@ const projectBody: React.CSSProperties = {
   flexDirection: 'column',
 }
 
-const secHdr: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  padding: '5px 8px 3px',
-  fontSize: 10,
-  fontWeight: 700,
-  color: '#4a4a4a',
-  letterSpacing: '0.07em',
-  textTransform: 'uppercase',
-  userSelect: 'none',
-}

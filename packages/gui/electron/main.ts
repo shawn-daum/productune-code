@@ -276,10 +276,121 @@ ipcMain.handle('onboarding:detectHardware', async () => {
   return { tier, ram_gb, apple_silicon, docker }
 })
 
+// ── Graphiti / local LLM IPC handlers (T-P4-125) ─────────────────────────────
+
+ipcMain.handle('onboarding:listOllamaModels', async () => {
+  try {
+    const { stdout } = await execFileAsync('ollama', ['list'])
+    // Format: NAME  ID  SIZE  MODIFIED — one model per line, skip header
+    const models = stdout
+      .split('\n')
+      .slice(1)
+      .map(l => l.trim().split(/\s+/)[0])
+      .filter(Boolean)
+    return models
+  } catch {
+    // ollama not installed or daemon not running — return empty list
+    return []
+  }
+})
+
+ipcMain.handle('onboarding:installLocalLLM', async (event, opts: { model: string }) => {
+  const send = (line: string) =>
+    event.sender.send('onboarding:installLocalLLM:log', line)
+
+  const coreDir = path.join(app.getAppPath(), '..', 'core')
+  const helperPath = path.join(coreDir, 'scripts', 'install-local-llm.sh')
+
+  const baseEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}`,
+  }
+
+  try {
+    send(`로컬 LLM 설치 시작: ${opts.model}`)
+    await spawnStreaming('/bin/bash', [helperPath, opts.model], baseEnv, send)
+    send(`OK · ${opts.model} 설치 완료`)
+    return { ok: true }
+  } catch (e: any) {
+    const msg = e?.message ?? '알 수 없는 오류'
+    send(`ERR · 오류: ${msg}`)
+    return { ok: false, error: msg }
+  }
+})
+
+ipcMain.handle('onboarding:setupGraphiti', async (event) => {
+  const send = (line: string) =>
+    event.sender.send('onboarding:setupGraphiti:log', line)
+
+  const coreDir = path.join(app.getAppPath(), '..', 'core')
+  const scriptPath = path.join(coreDir, 'scripts', 'setup-graphiti.sh')
+
+  const baseEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}`,
+  }
+
+  try {
+    send('Graphiti 세팅 시작 (FalkorDB + Graphiti MCP)...')
+    await spawnStreaming('/bin/bash', [scriptPath], baseEnv, send)
+    send('OK · Graphiti 세팅 완료')
+    return { ok: true }
+  } catch (e: any) {
+    const msg = e?.message ?? '알 수 없는 오류'
+    send(`ERR · 오류: ${msg}`)
+    return { ok: false, error: msg }
+  }
+})
+
+ipcMain.handle('onboarding:registerGraphitiMCP', async () => {
+  const coreDir = path.join(app.getAppPath(), '..', 'core')
+  const launcher = path.join(coreDir, 'scripts', 'graphiti-launcher.sh')
+
+  // Check claude CLI is available
+  const claudePath = [
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    'claude',
+  ].find(p => {
+    try { return p === 'claude' || fs.existsSync(p) } catch { return false }
+  }) ?? 'claude'
+
+  try {
+    await execFileAsync(claudePath, ['--version'])
+  } catch {
+    return { ok: false, alreadyRegistered: false, error: 'claude CLI 미설치' }
+  }
+
+  // Check if already registered
+  try {
+    const { stdout } = await execFileAsync(claudePath, ['mcp', 'list'])
+    if (stdout.split('\n').some(l => l.startsWith('graphiti'))) {
+      return { ok: true, alreadyRegistered: true }
+    }
+  } catch { /* list failed — try registering anyway */ }
+
+  // Register
+  try {
+    await execFileAsync(claudePath, ['mcp', 'add', 'graphiti', launcher, '--', 'designer'])
+    return { ok: true, alreadyRegistered: false }
+  } catch (e: any) {
+    return { ok: false, alreadyRegistered: false, error: e?.message ?? 'MCP 등록 실패' }
+  }
+})
+
+interface GraphitiConfig {
+  llmProvider: 'ollama'
+  llmModel: string
+  embedderProvider: 'ollama'
+  embedderModel: string
+}
+
 interface OnboardingCompleteOpts {
   engine: 'claude' | 'codex' | 'both'
   wikiBackend: 'filesystem' | 'graphiti'
   uiLanguage?: UiLanguage
+  /** Set when wikiBackend==='graphiti' and local LLM was installed in step 3.5. */
+  graphitiConfig?: GraphitiConfig
 }
 
 ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpts) => {
@@ -297,10 +408,20 @@ ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpt
     // 1. Write productune.env (mode 0600)
     const envPath = path.join(productuneDir, 'productune.env')
     const engineVal = opts.engine === 'both' ? 'claude' : opts.engine
-    const backendVal = opts.wikiBackend === 'graphiti' ? 'graphiti' : 'keeper'
+    // If graphiti backend was chosen but no graphitiConfig was set (e.g. tier B user),
+    // fall back to keeper (prevents writing an incomplete graphiti env).
+    const backendVal =
+      opts.wikiBackend === 'graphiti' && opts.graphitiConfig ? 'graphiti' : 'keeper'
     let envContent = `MY_PO_ENGINE=${engineVal}\n`
     envContent += `PRODUCTUNE_REPO=${coreDir}\n`
     envContent += `WIKI_BACKEND=${backendVal}\n`
+    if (backendVal === 'graphiti' && opts.graphitiConfig) {
+      const g = opts.graphitiConfig
+      envContent += `GRAPHITI_LLM_PROVIDER=${g.llmProvider}\n`
+      envContent += `GRAPHITI_LLM_MODEL=${g.llmModel}\n`
+      envContent += `GRAPHITI_EMBEDDER_PROVIDER=${g.embedderProvider}\n`
+      envContent += `GRAPHITI_EMBEDDER_MODEL=${g.embedderModel}\n`
+    }
     envContent += `created_at=${new Date().toISOString()}\n`
     fs.writeFileSync(envPath, envContent, { mode: 0o600 })
 
@@ -1089,7 +1210,7 @@ interface McpServerConfig {
 interface McpServerEntry {
   name: string
   config: McpServerConfig
-  source: 'global' | 'project'
+  source: 'productune' | 'local' | 'project'
 }
 
 function readClaudeSettings(): Record<string, any> {
@@ -1099,6 +1220,26 @@ function readClaudeSettings(): Record<string, any> {
   } catch {
     return {}
   }
+}
+
+/** Read ~/.claude.json — Claude Code's own state file (MCP local-tier registrations). */
+function readClaudeJson(): Record<string, any> {
+  const p = path.join(os.homedir(), '.claude.json')
+  try { return JSON.parse(fs.readFileSync(p, 'utf-8')) }
+  catch { return {} }
+}
+
+/**
+ * Atomic write to ~/.claude.json — read-modify-write preserving all existing keys.
+ * Uses tmp+rename POSIX atomic pattern (same as writeClaudeSettings).
+ * CAUTION: ~/.claude.json is Claude Code's own state file. Never truncate — always
+ * merge with existing content. Only call after readClaudeJson().
+ */
+function writeClaudeJson(data: Record<string, any>): void {
+  const p = path.join(os.homedir(), '.claude.json')
+  const tmp = p + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, p)
 }
 
 /**
@@ -1117,45 +1258,66 @@ function writeClaudeSettings(settings: Record<string, any>): void {
 ipcMain.handle(
   'mcp:getServers',
   (_event, projectDir?: string): McpServerEntry[] => {
-    const globalSettings = readClaudeSettings()
-    const globalServers: Record<string, McpServerConfig> =
-      globalSettings.mcpServers ?? {}
+    // Tier 1 (lowest): productune — ~/.claude/settings.json
+    const productuneCfg = readClaudeSettings()
+    const productuneTier: Record<string, McpServerConfig> =
+      productuneCfg.mcpServers ?? {}
 
-    // Project-level .mcp.json (optional)
-    let projectServers: Record<string, McpServerConfig> = {}
+    // Tier 2: local — ~/.claude.json projects[projectDir].mcpServers
+    const claudeJson = readClaudeJson()
+    const localTier: Record<string, McpServerConfig> =
+      (projectDir && claudeJson.projects?.[projectDir]?.mcpServers) ?? {}
+
+    // Tier 3 (highest): project — <projectDir>/.mcp.json
+    let projectTier: Record<string, McpServerConfig> = {}
     if (projectDir) {
-      const mcpJsonPath = path.join(projectDir, '.mcp.json')
       try {
-        const parsed = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'))
-        projectServers = parsed.mcpServers ?? parsed ?? {}
-      } catch { /* no .mcp.json or unreadable */ }
+        const parsed = JSON.parse(
+          fs.readFileSync(path.join(projectDir, '.mcp.json'), 'utf-8')
+        )
+        projectTier = parsed.mcpServers ?? parsed ?? {}
+      } catch { /* no .mcp.json */ }
     }
 
-    // Merge: project-level wins
-    const merged: Record<string, { config: McpServerConfig; source: 'global' | 'project' }> = {}
-    for (const [name, config] of Object.entries(globalServers)) {
-      merged[name] = { config, source: 'global' }
-    }
-    for (const [name, config] of Object.entries(projectServers)) {
-      merged[name] = { config, source: 'project' }
-    }
+    // Merge: later tier wins
+    const merged = new Map<
+      string,
+      { config: McpServerConfig; source: 'productune' | 'local' | 'project' }
+    >()
+    for (const [n, c] of Object.entries(productuneTier)) merged.set(n, { config: c, source: 'productune' })
+    for (const [n, c] of Object.entries(localTier))     merged.set(n, { config: c, source: 'local'      })
+    for (const [n, c] of Object.entries(projectTier))   merged.set(n, { config: c, source: 'project'    })
 
-    return Object.entries(merged).map(([name, { config, source }]) => ({
-      name,
-      config,
-      source,
+    return Array.from(merged.entries()).map(([name, { config, source }]) => ({
+      name, config, source,
     }))
   },
 )
 
 ipcMain.handle(
   'mcp:save',
-  (_event, serverName: string, config: McpServerConfig): { ok: boolean; error?: string } => {
+  (
+    _event,
+    serverName: string,
+    config: McpServerConfig,
+    projectDir?: string,
+  ): { ok: boolean; error?: string } => {
     try {
-      const settings = readClaudeSettings()
-      if (!settings.mcpServers) settings.mcpServers = {}
-      settings.mcpServers[serverName] = config
-      writeClaudeSettings(settings)
+      if (projectDir) {
+        // Primary path: write to local tier (~/.claude.json)
+        const claudeJson = readClaudeJson()
+        if (!claudeJson.projects)                              claudeJson.projects = {}
+        if (!claudeJson.projects[projectDir])                  claudeJson.projects[projectDir] = {}
+        if (!claudeJson.projects[projectDir].mcpServers)       claudeJson.projects[projectDir].mcpServers = {}
+        claudeJson.projects[projectDir].mcpServers[serverName] = config
+        writeClaudeJson(claudeJson)
+      } else {
+        // Fallback (no projectDir): write to productune tier (~/.claude/settings.json)
+        const settings = readClaudeSettings()
+        if (!settings.mcpServers) settings.mcpServers = {}
+        settings.mcpServers[serverName] = config
+        writeClaudeSettings(settings)
+      }
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }
@@ -1207,6 +1369,134 @@ ipcMain.handle('hooks:list', (): HookRow[] => {
   }
 
   return rows
+})
+
+// ── Skills IPC (T-P4-118) ─────────────────────────────────────────────────────
+
+type SkillPersona = 'po' | 'designer' | 'dev' | 'qa'
+
+interface SkillEntry {
+  id: string
+  name: string
+  description: string
+  personas: SkillPersona[]
+  filePath: string
+}
+
+/** Recursively collect all *.md files under a root directory. */
+function collectMdFiles(dir: string, out: string[] = []): string[] {
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+    if (entry.isDirectory() && !entry.name.startsWith('.')) {
+      collectMdFiles(fullPath, out)
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      out.push(fullPath)
+    }
+  }
+  return out
+}
+
+/** Parse YAML frontmatter from a markdown string using regex only. */
+function parseSkillFrontmatter(content: string): Record<string, string | string[]> {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+  const block = match[1]
+  const result: Record<string, string | string[]> = {}
+  for (const line of block.split('\n')) {
+    const m = line.match(/^([a-zA-Z_][\w-]*):\s*(.*)$/)
+    if (!m) continue
+    const key = m[1]
+    const raw = m[2].trim()
+    // YAML inline array: [a, b, c] or ['a', 'b']
+    if (raw.startsWith('[')) {
+      const inner = raw.slice(1, raw.lastIndexOf(']'))
+      result[key] = inner
+        .split(',')
+        .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean)
+    } else {
+      result[key] = raw.replace(/^['"]|['"]$/g, '')
+    }
+  }
+  return result
+}
+
+/** Infer personas from file path when frontmatter `personas:` is absent. */
+function inferPersonasFromPath(filePath: string): SkillPersona[] {
+  if (filePath.includes('mattpocock/skills/productivity/')) return ['po', 'designer', 'dev', 'qa']
+  if (filePath.includes('mattpocock/skills/engineering/')) return ['dev']
+  if (filePath.includes('mattpocock/skills/deprecated/')) return []
+  if (filePath.includes('mattpocock/skills/misc/')) return ['dev']
+  if (filePath.includes('mattpocock/skills/personal/')) return []
+  // ── phuryn pm-* overrides (T-P4-143 · 2026-05-20 · OQ-c resolution) ───────
+  // Groups entirely po-only
+  if (filePath.includes('phuryn/pm-data-analytics/')) return ['po']
+  if (filePath.includes('phuryn/pm-execution/')) return ['po']
+  // pm-market-research: 5 skills po-only; customer-journey-map + user-personas → default below
+  if (filePath.includes('phuryn/pm-market-research/skills/competitor-analysis/')) return ['po']
+  if (filePath.includes('phuryn/pm-market-research/skills/market-segments/')) return ['po']
+  if (filePath.includes('phuryn/pm-market-research/skills/market-sizing/')) return ['po']
+  if (filePath.includes('phuryn/pm-market-research/skills/sentiment-analysis/')) return ['po']
+  if (filePath.includes('phuryn/pm-market-research/skills/user-segmentation/')) return ['po']
+  // pm-go-to-market: ideal-customer-profile po-only; gtm-strategy → default below
+  if (filePath.includes('phuryn/pm-go-to-market/skills/ideal-customer-profile/')) return ['po']
+  // Default phuryn fallback: po+designer
+  // (covers: pm-discovery, pm-product-strategy, pm-marketing-growth,
+  //  pm-market-research/{customer-journey-map,user-personas}, pm-go-to-market/gtm-strategy)
+  if (filePath.includes('phuryn/pm-')) return ['po', 'designer']
+  return []
+}
+
+ipcMain.handle('skills:list', (): SkillEntry[] => {
+  const skillsRoot = path.join(os.homedir(), '.claude', 'skills')
+  if (!fs.existsSync(skillsRoot)) return []
+
+  const files = collectMdFiles(skillsRoot)
+  const entries: SkillEntry[] = []
+
+  for (const filePath of files) {
+    let content: string
+    try {
+      content = fs.readFileSync(filePath, 'utf-8')
+    } catch {
+      continue
+    }
+
+    const fm = parseSkillFrontmatter(content)
+
+    // Skip supplementary docs — only skill entry files carry both name + description.
+    const fmName = (fm.name as string | undefined)?.trim()
+    const fmDescription = (fm.description as string | undefined)?.trim()
+    if (!fmName || !fmDescription) continue
+
+    const id = filePath.slice(skillsRoot.length + 1).replace(/\\/g, '/')
+
+    const name = fmName
+    const description = fmDescription
+
+    let personas: SkillPersona[]
+    if (fm.personas) {
+      const raw = fm.personas
+      const arr: string[] = Array.isArray(raw)
+        ? raw
+        : String(raw).split(',').map((s) => s.trim()).filter(Boolean)
+      personas = arr.filter((p): p is SkillPersona =>
+        p === 'po' || p === 'designer' || p === 'dev' || p === 'qa'
+      )
+    } else {
+      personas = inferPersonasFromPath(filePath)
+    }
+
+    entries.push({ id, name, description, personas, filePath })
+  }
+
+  return entries
 })
 
 // ── Deploy modal trigger (T-P4-022 — PO fires state:openDeployModal) ──────────

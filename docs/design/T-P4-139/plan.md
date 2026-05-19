@@ -1,0 +1,275 @@
+# T-P4-139 · Phase gate removal + LeftSidebar PhaseStrip removal
+**Slug**: phase-gate-remove-chat-driven
+**Date**: 2026-05-19
+**Round**: phase4-r4
+**Artifact**: plan (1/1)
+**Status**: ready
+
+---
+
+## §1 Context — verified findings
+
+| Finding | Location | Detail |
+|:--|:--|:--|
+| `PhaseTransitionGate` mount | `MainPanel.tsx:48–52` | `{gate && <div style={gateSticky}><PhaseTransitionGate …/></div>}` |
+| `gate` variable | `MainPanel.tsx:19` | `const gate = poState?.pending_gate ?? null` |
+| `onApprove` callback | `MainPanel.tsx:21–39` | `useCallback` — IPC `phase:approve` + `setPoState` on success |
+| `onModify` callback | `MainPanel.tsx:41–44` | `useCallback` — console stub only |
+| Selectors used only for gate | `MainPanel.tsx:16–18` | `poState`, `project`, `setPoState` — all unused after removal |
+| `useCallback` import | `MainPanel.tsx:1` | Only used for `onApprove` / `onModify` — unused after removal |
+| `PhaseTransitionGate` import | `MainPanel.tsx:3` | `import PhaseTransitionGate from '../PhaseTransitionGate'` — unused after removal |
+| `gateSticky` style | `MainPanel.tsx:70–75` | `position: sticky; top: 0; zIndex: 10` — unused after removal |
+| PhaseStrip strip in LeftSidebar | `LeftSidebar.tsx:112–115` | Comment + `secHdr` section label + `<PhaseStrip poState={poState} variant="strip">` |
+| `secHdr` style | `LeftSidebar.tsx:218–228` | Only reference = Phase section header — unused after removal |
+| `PhaseStrip` import | `LeftSidebar.tsx:8` | `import PhaseStrip from './PhaseStrip'` — unused in LeftSidebar after removal |
+| ChatPanel chip preserved | `ChatPanel.tsx:236` | `<PhaseStrip poState={poState} variant="chip">` — keep |
+| `PhaseStrip.tsx` component file | `components/workspace/PhaseStrip.tsx` | Keep — chip variant still used in ChatPanel |
+| `phase:approve` IPC handler | `electron/main.ts` | Keep — legacy fallback; no GUI surface |
+| Doctrine: gate section | `~/.productune/sections/_details/po-loop-extras.md:23–33` | References GUI gate card + Approve/Modify buttons |
+| Doctrine: cross-ref line | `~/.productune/sections/po-loop.md:79` | "GUI renders gate card" |
+| Doctrine: schema field | `~/.productune/sections/_formats/po-state-schema.md:11` | `pending_gate?` — deprecation annotation needed |
+
+---
+
+## §2 Change 1 — MainPanel.tsx: remove PhaseTransitionGate surface
+
+### Before (current full file)
+
+```tsx
+import { useCallback } from 'react'
+import { useWorkspace } from '../../../store/workspace'
+import PhaseTransitionGate from '../PhaseTransitionGate'
+import PaneNode from './PaneNode'
+
+/**
+ * Root of the workspace main area (T-P4-046). Renders the recursive pane tree
+ * with a sticky PhaseTransitionGate banner above when po-state has a pending
+ * gate.
+ * T-P4-115: onApprove wires gate approval → phase:approve IPC → po-state re-read.
+ *           onModify is a minimal stub (chat-inject path not yet spec'd).
+ */
+export default function MainPanel() {
+  const panes = useWorkspace((s) => s.panes)
+  const poState = useWorkspace((s) => s.poState)
+  const project = useWorkspace((s) => s.project)
+  const setPoState = useWorkspace((s) => s.setPoState)
+  const gate = poState?.pending_gate ?? null
+
+  const onApprove = useCallback(async () => {
+    if (!gate || !project) return
+    const api = (window as any).api
+    const result: { ok: boolean; error?: string } = await api.approvePhase({…})
+    if (result.ok) {
+      api.readPoState(project.projectDir)
+        .then((s: unknown) => setPoState(s as any))
+        .catch(() => {})
+    } else {
+      console.error('[PhaseGate] approvePhase failed:', result.error)
+    }
+  }, [gate, project, setPoState])
+
+  const onModify = useCallback(() => {
+    console.log('[PhaseGate] modify intent — staying in current phase')
+  }, [])
+
+  return (
+    <div style={wrap}>
+      {gate && (
+        <div style={gateSticky}>
+          <PhaseTransitionGate gate={gate} onApprove={onApprove} onModify={onModify} />
+        </div>
+      )}
+      <div style={paneTreeWrap}>
+        <PaneNode pane={panes} path={[]} />
+      </div>
+    </div>
+  )
+}
+```
+
+### After
+
+```tsx
+import { useWorkspace } from '../../../store/workspace'
+import PaneNode from './PaneNode'
+
+/**
+ * Root of the workspace main area (T-P4-046). Renders the recursive pane tree.
+ *
+ * Phase transition is chat-driven (T-P4-139): no gate banner is rendered here.
+ * PhaseTransitionGate component file retained; phase:approve IPC retained as
+ * legacy fallback. `pending_gate` in po-state.json is deprecated — field
+ * preserved for schema compatibility only.
+ */
+export default function MainPanel() {
+  const panes = useWorkspace((s) => s.panes)
+
+  return (
+    <div style={wrap}>
+      <div style={paneTreeWrap}>
+        <PaneNode pane={panes} path={[]} />
+      </div>
+    </div>
+  )
+}
+```
+
+**Lines removed**: 1 (`useCallback` import), 3 (`PhaseTransitionGate` import), 16–18 (`poState`/`project`/`setPoState` selectors), 19 (`gate`), 21–44 (both `useCallback` callbacks), 48–52 (`{gate && …}` JSX block), 70–75 (`gateSticky` style const).
+
+**Retained**: `wrap`, `paneTreeWrap` styles unchanged. `PhaseTransitionGate.tsx` file not deleted.
+
+### PhaseTransitionGate.tsx — JSDoc update only
+
+Update the existing JSDoc block to note deprecation:
+
+```tsx
+/**
+ * [DEPRECATED — T-P4-139] No longer mounted.
+ * Phase transition is chat-driven; this component is retained for reference
+ * only. phase:approve IPC handler in main.ts is also retained as legacy fallback.
+ *
+ * Original: top-pinned banner shown when po-state.json has a non-null
+ * `pending_gate`. Doctrine: stages.md "Uniform phase-transition gate".
+ */
+```
+
+---
+
+## §3 Change 2 — LeftSidebar.tsx: remove PhaseStrip strip variant
+
+### Remove from JSX (LeftSidebar.tsx:112–115)
+
+**Before**:
+```tsx
+{activeIcon === 'project' && (
+  <div style={projectBody}>
+    {/* Phase section */}
+    <div style={secHdr}>{t('workspace.phaseStrip.sectionLabel')}</div>
+    <PhaseStrip poState={poState} variant="strip" />
+
+    {/* Versions section — 2 sp-section split (T-P4-097) */}
+    <SidePanelCurrentVersion …
+```
+
+**After**:
+```tsx
+{activeIcon === 'project' && (
+  <div style={projectBody}>
+    {/* Versions section — 2 sp-section split (T-P4-097) */}
+    <SidePanelCurrentVersion …
+```
+
+Remove the 3 lines: comment, `secHdr` div, `PhaseStrip` line.
+
+### Remove import (LeftSidebar.tsx:8)
+
+```ts
+// Remove:
+import PhaseStrip from './PhaseStrip'
+```
+
+### Remove unused style const (LeftSidebar.tsx:218–228)
+
+```ts
+// Remove — only reference was Phase section label:
+const secHdr: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  padding: '5px 8px 3px',
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#4a4a4a',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  userSelect: 'none',
+}
+```
+
+### Spacing check
+
+`SidePanelCurrentVersion` becomes the first child of `projectBody` after removal. Developer verifies: top padding of the Versions section label is visually adequate — no extra `paddingTop` should be needed since `projectBody` has no explicit top padding and `SidePanelCurrentVersion` has its own internal header. Visual smoke check sufficient.
+
+---
+
+## §4 Change 3 — Doctrine updates (PO-applies directly)
+
+> These are `~/.productune/` files — PO applies; not developer-patched.
+
+### 4.1 `~/.productune/sections/_details/po-loop-extras.md` — update §"Uniform phase-transition gate"
+
+**Before** (L23–33):
+```
+## Uniform phase-transition gate (Phase 1↔2↔3↔4↔5 boundary)
+
+1. PO emits trace `→ Phase N complete` + 1-line summary of artifacts (rendered in user's lang).
+2. PO emits prompt with intent "proceed to Phase N+1? (let me know if anything to change)".
+3. **PO writes `pending_gate` to `po-state.json`** (mechanical) — `{from_phase, to_phase, summary, prompt, emitted_at}`. GUI reads to render gate card; CLI shows text prompt.
+4. User responds: approval / modification request / silence.
+5. Approval → Phase N+1 starts; record transition in `current_phase` + `phase_history[]`; clear `pending_gate` to `null`.
+6. Modification → handle inside Phase N, back to step 1; clear `pending_gate` to `null`.
+7. Silence → wait for next user turn (Phase N stays open; `pending_gate` stays set).
+
+Doctrine = source of truth. CLI = text prompt; GUI (Phase D) renders `pending_gate` as card with Approve / Modify buttons. Existing Gate 1/2/3 = mid-phase checkpoints, not transition gates (don't write `pending_gate`).
+```
+
+**After**:
+```
+## Uniform phase-transition gate (Phase 1↔2↔3↔4↔5 boundary)
+
+**Transition method: chat-driven (T-P4-139).** User replies directly in chat — no modal banner or Approve/Modify button.
+
+1. PO emits trace `→ Phase N complete` + 1-line summary of artifacts (rendered in user's lang).
+2. PO emits prompt with intent "proceed to Phase N+1? (let me know if anything to change)".
+3. **PO writes `pending_gate` to `po-state.json`** (mechanical — field deprecated in GUI, T-P4-139; retained for legacy compat) — `{from_phase, to_phase, summary, prompt, emitted_at}`.
+4. User responds in chat: approval / modification request / silence.
+5. Approval → Phase N+1 starts; record transition in `current_phase` + `phase_history[]`; clear `pending_gate` to `null`.
+6. Modification → handle inside Phase N, back to step 1; clear `pending_gate` to `null`.
+7. Silence → wait for next user turn (Phase N stays open; `pending_gate` stays set).
+
+Existing Gate 1/2/3 = mid-phase checkpoints, not transition gates (don't write `pending_gate`).
+```
+
+### 4.2 `~/.productune/sections/po-loop.md` — update §"Uniform phase-transition gate" cross-ref (L79)
+
+**Before**:
+```
+Every Phase 1↔2↔3↔4↔5 boundary — PO emits trace + prompt + writes `pending_gate` to po-state.json. GUI renders gate card; CLI shows text. Full sequence → **`sections/_details/po-loop-extras.md`** §"Uniform phase-transition gate".
+```
+
+**After**:
+```
+Every Phase 1↔2↔3↔4↔5 boundary — PO emits trace + prompt in chat; user replies in the same thread (chat-driven, T-P4-139 — no GUI banner). `pending_gate` written to po-state.json for legacy compat. Full sequence → **`sections/_details/po-loop-extras.md`** §"Uniform phase-transition gate".
+```
+
+### 4.3 `~/.productune/sections/_formats/po-state-schema.md` — deprecate `pending_gate` field annotation (L11)
+
+**Before**:
+```
+- `pending_gate?` (set when PO emits phase-transition gate prompt; cleared on approve/modify) — `{from_phase, to_phase, summary, prompt, emitted_at}`
+```
+
+**After**:
+```
+- `pending_gate?` *(deprecated GUI surface — T-P4-139; field retained for legacy compat; PO still writes/clears)* — `{from_phase, to_phase, summary, prompt, emitted_at}`
+```
+
+---
+
+## §Out of scope
+
+- Deleting `PhaseTransitionGate.tsx` component file — retained (reference + potential future use).
+- Removing `phase:approve` IPC handler from `electron/main.ts` — legacy fallback retained.
+- Removing `pending_gate` field from `po-state.json` schema — legacy compatibility.
+- `VersionDetailView` PHASE_ORDER (5-phase version chart) — separate context, unchanged.
+- `PhaseStrip.tsx` component file — retained (chip variant in ChatPanel).
+- i18n key `workspace.phaseStrip.sectionLabel` — prune in separate i18n cleanup ticket.
+- Spacing changes to `ChatPanel` or `PaneNode` — not affected.
+
+## §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `manual smoke only` |
+| **test target** | `MainPanel` (no gate banner) + `LeftSidebar` project panel (no PHASE section) + `ChatPanel` chip preservation |
+| **사용자 dogfood** | (1) 임의 프로젝트 열기 → MainPanel 에 PhaseTransitionGate 주황 배너 없음 확인. (2) LeftSidebar Project 탭 → PHASE 섹션 없음; Versions 섹션이 바로 최상단에 위치 확인. (3) ChatPanel 좌측 상단 → PhaseStrip chip (variant=chip) 여전히 표시됨 확인. |
+| **regression check** | `ChatPanel.tsx:236` `<PhaseStrip variant="chip">` 동작 정상 (LeftSidebar import 제거가 ChatPanel 에 영향 없음). `phase:approve` IPC handler 미삭제 확인 (`electron/main.ts` grep). `PhaseTransitionGate.tsx` 파일 미삭제 확인. |

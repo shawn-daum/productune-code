@@ -24,6 +24,10 @@ say() { printf "\033[1;34m[install]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[install]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[install]\033[0m %s\n" "$*" >&2; exit 1; }
 
+# Source shared LLM install helper (also used as GUI IPC subprocess).
+# shellcheck source=scripts/install-local-llm.sh
+source "$ROOT/scripts/install-local-llm.sh"
+
 # Probe whether the Docker daemon is reachable, with a hard 2s ceiling.
 # `docker info` blocks indefinitely when the CLI is installed but Docker
 # Desktop isn't running, so we ping the unix socket via curl --max-time
@@ -84,32 +88,6 @@ fetch_disk_gb() {
   awk "BEGIN{printf \"%.1f\", $total/1024/1024/1024}"
 }
 
-# List installed Ollama models as "<model>:<tag>" lines.
-# Uses `ollama list` if the daemon is up; otherwise falls back to scanning
-# ~/.ollama/models/manifests/registry.ollama.ai/library/ which works without
-# starting the daemon.
-detect_installed_ollama_models() {
-  command -v ollama >/dev/null 2>&1 || return 0
-
-  local out
-  out=$(ollama list 2>/dev/null) || out=""
-  if [ -n "$out" ]; then
-    printf '%s\n' "$out" | awk 'NR>1 && NF>0 {print $1}'
-    return 0
-  fi
-
-  local manifests="$HOME/.ollama/models/manifests/registry.ollama.ai/library"
-  [ -d "$manifests" ] || return 0
-  local model_dir tag_file
-  for model_dir in "$manifests"/*/; do
-    [ -d "$model_dir" ] || continue
-    local model_name; model_name="$(basename "$model_dir")"
-    for tag_file in "$model_dir"*; do
-      [ -f "$tag_file" ] || continue
-      printf '%s:%s\n' "$model_name" "$(basename "$tag_file")"
-    done
-  done
-}
 
 # Read config/model-catalog.json, fetch sizes in parallel, print filtered menu
 # for the given tier, prompt user, and set LLM_MODEL (or WIKI_BACKEND=keeper).
@@ -240,89 +218,27 @@ select_model_for_tier() {
   esac
 }
 
-# ── Local LLM installer (Tier S/A only) ───────────────────────────────────────
-install_local_llm() {
-  local model="$1"
+# (install_local_llm / wait_for_ollama_ready / ensure_ollama_ready defined in
+#  install-local-llm.sh, sourced above)
 
-  if ! command -v ollama >/dev/null 2>&1; then
-    say "Ollama 미설치. 설치 시작..."
-    curl -fsSL https://ollama.com/install.sh | sh || {
-      warn "ollama 공식 설치 스크립트 실패. https://ollama.com/download 에서 수동 설치 후 재실행."
-      return 1
-    }
+# ── Graphiti MCP auto-register ────────────────────────────────────────────────
+register_graphiti_mcp() {
+  if ! command -v claude >/dev/null 2>&1; then
+    warn "claude CLI 미설치 — graphiti MCP 자동 등록 건너뜀."
+    warn "수동: claude mcp add graphiti \"$ROOT/scripts/graphiti-launcher.sh\" -- designer"
+    return 1
   fi
-
-  ensure_ollama_ready || return 1
-
-  if detect_installed_ollama_models 2>/dev/null | grep -qx "$model"; then
-    say "$model — 이미 설치됨 (skip pull)"
+  if claude mcp list 2>/dev/null | grep -q '^graphiti'; then
+    say "graphiti MCP — 이미 등록됨 (claude mcp list)"
+    return 0
+  fi
+  local LAUNCHER="$ROOT/scripts/graphiti-launcher.sh"
+  say "Claude Code 에 graphiti MCP 등록 중..."
+  if claude mcp add graphiti "$LAUNCHER" -- designer >/dev/null 2>&1; then
+    say "graphiti MCP 등록 완료"
+    return 0
   else
-    say "$model pull 중 (한 번만, 5–15분 소요)..."
-    if ! ollama pull "$model"; then
-      echo
-      printf "  [r] 재시도  [k] wiki-keeper(Claude API)로 대신 가기  [q] 중단: "
-      read -r choice || choice="q"
-      case "$choice" in
-        r|R) ollama pull "$model" || return 1 ;;
-        k|K) WIKI_BACKEND=keeper; return 0 ;;
-        *)   return 1 ;;
-      esac
-    fi
-  fi
-
-  if detect_installed_ollama_models 2>/dev/null | grep -qE '^nomic-embed-text(:.+)?$'; then
-    say "nomic-embed-text — 이미 설치됨 (skip pull)"
-  else
-    say "nomic-embed-text pull 중 (Graphiti 임베딩용, ~275MB)..."
-    ollama pull nomic-embed-text || warn "nomic-embed-text pull 실패 — 나중에 수동으로: ollama pull nomic-embed-text"
-  fi
-}
-
-wait_for_ollama_ready() {
-  local i
-  for i in $(seq 1 45); do
-    if curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-  return 1
-}
-
-ensure_ollama_ready() {
-  # Already responding — nothing to do.
-  if curl -fsS http://localhost:11434/api/tags >/dev/null 2>&1; then
-    return 0
-  fi
-
-  mkdir -p "$HOME/.ollama"
-  local log_file="$HOME/.ollama/productune-ollama.log"
-
-  # macOS: prefer the managed app to avoid server conflicts with launchd.
-  if [ -d "/Applications/Ollama.app" ]; then
-    say "Ollama app 시작 중..."
-    open -a Ollama
-    if ! wait_for_ollama_ready; then
-      warn "Ollama 준비 실패. /Applications/Ollama.app 수동 실행 후 재시도하세요."
-      return 1
-    fi
-    return 0
-  fi
-
-  # Non-app install (Linux / CLI-only): only spawn serve if not already running.
-  if pgrep -x ollama >/dev/null 2>&1; then
-    say "Ollama 프로세스 감지 — 준비 대기 중..."
-    if ! wait_for_ollama_ready; then
-      warn "Ollama 준비 실패. 로그 확인: $log_file"
-      return 1
-    fi
-    return 0
-  fi
-
-  say "Ollama daemon 시작..."
-  nohup ollama serve >"$log_file" 2>&1 &
-  if ! wait_for_ollama_ready; then
-    warn "Ollama 준비 실패. 로그 확인: $log_file"
+    warn "graphiti MCP 등록 실패 — 수동: claude mcp add graphiti $LAUNCHER -- designer"
     return 1
   fi
 }
@@ -770,6 +686,7 @@ GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
 EOF
         WIKI_BACKEND=graphiti
         say "Graphiti backend 설정 완료 ($LLM_MODEL)"
+        register_graphiti_mcp || true
       else
         warn "Graphiti 세팅 실패 — wiki-keeper로 fallback"
         WIKI_BACKEND=keeper

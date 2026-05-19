@@ -12,22 +12,8 @@ import { ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react
 import { useTranslation } from 'react-i18next'
 
 // ── Electron webview JSX type ─────────────────────────────────────────────────
-
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace JSX {
-    interface IntrinsicElements {
-      webview: React.DetailedHTMLProps<
-        React.HTMLAttributes<HTMLElement>,
-        HTMLElement
-      > & {
-        src?: string
-        allowpopups?: string
-        partition?: string
-      }
-    }
-  }
-}
+// Note: @types/react 19+ provides WebViewHTMLAttributes<HTMLWebViewElement>
+// for the intrinsic 'webview' element — no augmentation needed.
 
 interface ElectronWebview extends HTMLElement {
   src: string
@@ -173,7 +159,7 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
         <webview
           ref={webviewRef as any}
           src={initialUrl}
-          allowpopups="true"
+          allowpopups={true}
           partition="persist:browser-tab"
           style={webviewEl}
         />

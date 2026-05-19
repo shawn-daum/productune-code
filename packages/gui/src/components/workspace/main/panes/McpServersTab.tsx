@@ -23,7 +23,7 @@ export interface McpServerEntry {
     url?: string
     env?: Record<string, string>
   }
-  source: 'global' | 'project' | 'merged'
+  source: 'productune' | 'local' | 'project'
   status: McpStatus
 }
 
@@ -85,6 +85,7 @@ export default function McpServersTab(_: Props) {
               onClick={() => setSelectedServer(server)}
             >
               <span style={serverNameStyle}>{server.name}</span>
+              <span style={tierPill}>[{server.source}]</span>
               <StatusBadge status={server.status} t={t} />
             </button>
           ))}
@@ -110,6 +111,7 @@ export default function McpServersTab(_: Props) {
       {selectedServer && (
         <McpServerModal
           server={selectedServer}
+          projectDir={project?.projectDir}
           onClose={() => setSelectedServer(null)}
           onSaved={handleSaved}
         />
@@ -190,6 +192,17 @@ const rowBtn: React.CSSProperties = {
 
 const serverNameStyle: React.CSSProperties = {
   fontWeight: 500,
+}
+
+const tierPill: React.CSSProperties = {
+  fontSize: 9,
+  fontFamily: 'monospace',
+  color: '#404040',
+  border: '1px solid #2A2A2A',
+  borderRadius: 2,
+  padding: '0 3px',
+  flexShrink: 0,
+  userSelect: 'none',
 }
 
 const badgeBase: React.CSSProperties = {

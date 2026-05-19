@@ -22,7 +22,7 @@ const PERSONA_META: Record<string, PersonaMeta> = {
     id: 'pdt-po', key: 'po', initial: 'P',
     nameKey: 'workspace.team.persona.po.name',
     roleKey: 'workspace.team.persona.po.role',
-    modelSummary: 'sonnet / medium',
+    modelSummary: 'opus / xhigh',
     permissionMode: 'acceptEdits',
     mcpServers: [],
   },

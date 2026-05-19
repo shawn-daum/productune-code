@@ -1,0 +1,507 @@
+# T-P4-140 · TeamPanel: MCP nav-row + 3-tier IPC fix + Wiki Memory persona-style
+**Slug**: team-panel-mcp-wiki-restructure
+**Date**: 2026-05-19 (amended same day — OQ resolved)
+**Round**: phase4-r4
+**Artifact**: plan (1/1, amended)
+**Status**: ready
+
+---
+
+## §1 Context — verified findings
+
+| Finding | Location | Detail |
+|:--|:--|:--|
+| TeamPanel MCP section = inline collapsible list | `TeamPanel.tsx:228–254` | `<Section>` with per-server rows + `StatusDot` + in-sidebar `McpServerModal` |
+| `Section` component | `TeamPanel.tsx:46–73` | Collapsible; only used once (MCP section) after C-1 removal → dead code |
+| `secHdrBtn`/`secChevron` styles | `TeamPanel.tsx:426–442` | Used only by `Section` → remove with it |
+| `mcp-servers` tabType registered | `workspace.ts:26`, `TabContent.tsx:43` | `openTab('mcp-servers', 'mcp-servers', {})` → `<McpServersTab>` |
+| **C-2 root cause confirmed** | `main.ts:1216–1243` | `readClaudeSettings()` reads `~/.claude/settings.json` (productune hooks file — zero `mcpServers` key) |
+| Local tier confirmed | `~/.claude.json:1139–1155` | `projects["/…/productune"].mcpServers` = `{"graphiti": {…}, "playwright": {…}}` |
+| `~/.claude.json` structure | `~/.claude.json:497` | Top-level `"projects"` key; each entry has `.mcpServers{}` |
+| `McpServerEntry.source` current type | `McpServersTab.tsx:26` | `'global' \| 'project' \| 'merged'` — stale; needs renaming |
+| `mcpSave` call site | `McpServerModal.tsx:114` | `api.mcpSave?.(server.name, buildConfig())` — no `projectDir` |
+| `preload.ts mcpSave` sig | `preload.ts:388–398` | `(serverName, config)` — no `projectDir` |
+| TeamPanel wiki nav-row | `TeamPanel.tsx:256–270` | Single `navRowBtn` → `openTab('team-wiki', 'team-wiki', {})` |
+| TeamWikiTab Row 1 = no onClick | `TeamWikiTab.tsx:74–82` | Intentionally read-only (backend status label); user expected navigation |
+
+---
+
+## §2 Change 1 — TeamPanel.tsx: MCP section → single nav-row + Section removal
+
+### 2a. Remove inline MCP section (L228–254 + supporting code)
+
+```tsx
+// REMOVE: Section + all children
+<Section title={t('workspace.team.section.mcpServers')} storageKey="mcp">
+  …inline server rows + StatusDot + McpServerModal…
+</Section>
+```
+
+**Also remove** (now unused after inline section gone):
+- `import type { McpServerEntry } from './main/panes/McpServersTab'` (L17)
+- `import McpServerModal from './McpServerModal'` (L18)
+- `type McpStatus = 'ok' | 'err' | 'checking'` (L77)
+- `function StatusDot(…)` component (L79–83)
+- `mcpServers`, `mcpLoading`, `selectedMcp` state (L136–138)
+- `loadMcpServers` useCallback + useEffect (L140–156)
+- Style consts: `mcpRowBtn`, `mcpName`, `mcpMuted` (L444–472)
+
+### 2b. Remove Section component + styles (OQ#2 resolved → remove)
+
+```tsx
+// REMOVE: entire Section component (L46–73)
+function Section({ title, storageKey, children }: SectionProps) { … }
+
+// REMOVE: SectionProps interface (L46–50)
+
+// REMOVE: style consts (L426–442):
+const secHdrBtn: React.CSSProperties = { … }
+const secChevron: React.CSSProperties = { … }
+```
+
+~30 lines total cleanup. No other usages of `Section` in TeamPanel after MCP removal.
+
+### 2c. Add MCP nav-row (between Skills and 위키 메모리)
+
+```tsx
+{/* ── MCP Servers nav row ── */}
+<div style={sectionWrap}>
+  <button
+    style={navRowBtn}
+    onClick={handleMcpClick}
+    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+    title={t('workspace.team.section.mcpLink')}
+  >
+    <span style={navRowLabel}>{t('workspace.team.section.mcpServers')}</span>
+  </button>
+</div>
+```
+
+```ts
+const handleMcpClick = () => openTab('mcp-servers', 'mcp-servers', {})
+```
+
+No count badge — server count visible in McpServersTab on open.
+
+**Final TeamPanel section order:**
+1. 페르소나 (plain title + 4 PersonaRows)
+2. Skills (nav-row + count badge)
+3. MCP 서버 (nav-row) ← new
+4. 위키 메모리 (persona-style section) ← D-1
+
+---
+
+## §3 Change 2 — main.ts + preload.ts + modal: 3-tier mcp:getServers + mcp:save local
+
+### 3a. Tier definitions (resolved OQ#1)
+
+| Tier | Source file | Key | Priority |
+|:--|:--|:--|:--|
+| `productune` | `~/.claude/settings.json` | `.mcpServers{}` | lowest |
+| `local` | `~/.claude.json` | `.projects[projectDir].mcpServers{}` | middle |
+| `project` | `<projectDir>/.mcp.json` | `.mcpServers{}` or root `{}` | **highest** |
+
+Merge order: `productune` < `local` < `project` (later wins).
+
+### 3b. Add readClaudeJson + writeClaudeJson to main.ts (after readClaudeSettings L1223)
+
+```ts
+/** Read ~/.claude.json — Claude Code's own state file (MCP local-tier registrations). */
+function readClaudeJson(): Record<string, any> {
+  const p = path.join(os.homedir(), '.claude.json')
+  try { return JSON.parse(fs.readFileSync(p, 'utf-8')) }
+  catch { return {} }
+}
+
+/**
+ * Atomic write to ~/.claude.json — read-modify-write preserving all existing keys.
+ * Uses tmp+rename POSIX atomic pattern (same as writeClaudeSettings).
+ * CAUTION: ~/.claude.json is Claude Code's own state file. Never truncate — always
+ * merge with existing content. Only call after readClaudeJson().
+ */
+function writeClaudeJson(data: Record<string, any>): void {
+  const p = path.join(os.homedir(), '.claude.json')
+  const tmp = p + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, p)
+}
+```
+
+### 3c. Update McpServerEntry interface in main.ts (L1210–1214)
+
+```ts
+// Before:
+interface McpServerEntry {
+  name: string
+  config: McpServerConfig
+  source: 'global' | 'project'
+}
+
+// After:
+interface McpServerEntry {
+  name: string
+  config: McpServerConfig
+  source: 'productune' | 'local' | 'project'
+}
+```
+
+### 3d. Replace mcp:getServers handler (L1238–1269)
+
+```ts
+ipcMain.handle(
+  'mcp:getServers',
+  (_event, projectDir?: string): McpServerEntry[] => {
+    // Tier 1 (lowest): productune — ~/.claude/settings.json
+    const productuneCfg = readClaudeSettings()
+    const productuneTier: Record<string, McpServerConfig> =
+      productuneCfg.mcpServers ?? {}
+
+    // Tier 2: local — ~/.claude.json projects[projectDir].mcpServers
+    const claudeJson = readClaudeJson()
+    const localTier: Record<string, McpServerConfig> =
+      (projectDir && claudeJson.projects?.[projectDir]?.mcpServers) ?? {}
+
+    // Tier 3 (highest): project — <projectDir>/.mcp.json
+    let projectTier: Record<string, McpServerConfig> = {}
+    if (projectDir) {
+      try {
+        const parsed = JSON.parse(
+          fs.readFileSync(path.join(projectDir, '.mcp.json'), 'utf-8')
+        )
+        projectTier = parsed.mcpServers ?? parsed ?? {}
+      } catch { /* no .mcp.json */ }
+    }
+
+    // Merge: later tier wins
+    const merged = new Map<
+      string,
+      { config: McpServerConfig; source: 'productune' | 'local' | 'project' }
+    >()
+    for (const [n, c] of Object.entries(productuneTier)) merged.set(n, { config: c, source: 'productune' })
+    for (const [n, c] of Object.entries(localTier))     merged.set(n, { config: c, source: 'local'     })
+    for (const [n, c] of Object.entries(projectTier))   merged.set(n, { config: c, source: 'project'   })
+
+    return Array.from(merged.entries()).map(([name, { config, source }]) => ({
+      name, config, source,
+    }))
+  },
+)
+```
+
+### 3e. Replace mcp:save handler (L1272–1285) — write to local tier
+
+```ts
+ipcMain.handle(
+  'mcp:save',
+  (
+    _event,
+    serverName: string,
+    config: McpServerConfig,
+    projectDir?: string,
+  ): { ok: boolean; error?: string } => {
+    try {
+      if (projectDir) {
+        // Primary path: write to local tier (~/.claude.json)
+        const claudeJson = readClaudeJson()
+        if (!claudeJson.projects)                           claudeJson.projects = {}
+        if (!claudeJson.projects[projectDir])               claudeJson.projects[projectDir] = {}
+        if (!claudeJson.projects[projectDir].mcpServers)    claudeJson.projects[projectDir].mcpServers = {}
+        claudeJson.projects[projectDir].mcpServers[serverName] = config
+        writeClaudeJson(claudeJson)
+      } else {
+        // Fallback (no projectDir): write to productune tier (~/.claude/settings.json)
+        const settings = readClaudeSettings()
+        if (!settings.mcpServers) settings.mcpServers = {}
+        settings.mcpServers[serverName] = config
+        writeClaudeSettings(settings)
+      }
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'unknown error' }
+    }
+  },
+)
+```
+
+### 3f. Update preload.ts mcpSave signature (L388–398)
+
+```ts
+// Before:
+mcpSave: (
+  serverName: string,
+  config: { type?, command?, args?, url?, env? },
+): Promise<{ ok: boolean; error?: string }> =>
+  ipcRenderer.invoke('mcp:save', serverName, config),
+
+// After:
+mcpSave: (
+  serverName: string,
+  config: { type?: 'stdio' | 'sse' | 'http'; command?: string; args?: string[]; url?: string; env?: Record<string, string> },
+  projectDir?: string,
+): Promise<{ ok: boolean; error?: string }> =>
+  ipcRenderer.invoke('mcp:save', serverName, config, projectDir),
+```
+
+Also update `mcpGetServers` return type `source` in preload.ts (L384):
+```ts
+// Before: source: 'global' | 'project'
+// After:  source: 'productune' | 'local' | 'project'
+```
+
+### 3g. Update McpServerModal.tsx — accept + pass projectDir
+
+**Props interface** (add `projectDir`):
+```tsx
+interface Props {
+  server: McpServerEntry
+  projectDir?: string      // ← new
+  onClose: () => void
+  onSaved: () => void
+}
+```
+
+**handleSave** (pass projectDir):
+```tsx
+const result = await api.mcpSave?.(server.name, buildConfig(), projectDir)
+```
+
+**McpServersTab.tsx** — pass projectDir to modal:
+```tsx
+<McpServerModal
+  server={selectedServer}
+  projectDir={project?.projectDir}    // ← new
+  onClose={() => setSelectedServer(null)}
+  onSaved={handleSaved}
+/>
+```
+
+**McpServerEntry source type** in McpServersTab.tsx (L26):
+```ts
+// Before: source: 'global' | 'project' | 'merged'
+// After:  source: 'productune' | 'local' | 'project'
+```
+
+---
+
+## §4 Change 3 — McpServersTab.tsx: source tier pill
+
+Add a muted source pill to each server row — left of the StatusBadge:
+
+```tsx
+// In the server list row button (after serverNameStyle span):
+<span style={tierPill}>[{server.source}]</span>
+<StatusBadge status={server.status} t={t} />
+```
+
+```ts
+const tierPill: React.CSSProperties = {
+  fontSize: 9,
+  fontFamily: 'monospace',
+  color: '#404040',
+  border: '1px solid #2A2A2A',
+  borderRadius: 2,
+  padding: '0 3px',
+  flexShrink: 0,
+  userSelect: 'none',
+}
+```
+
+Visual: `graphiti  [local]  ◌ checking`  
+`myServer  [productune]  ● connected`
+
+---
+
+## §5 Change 4 — TeamPanel.tsx: Wiki Memory → persona-style section (D-1)
+
+### Remove (single wiki nav-row, L256–270)
+
+```tsx
+{/* ── Wiki·Memory nav row ── */}
+<div style={sectionWrap}>
+  <button style={navRowBtn} onClick={handleWikiClick} …>
+    <span style={navRowLabel}>{t('workspace.team.tab.wiki')}</span>
+    {promoCount > 0 && <span style={promoWarnBadge}>{promoCount}</span>}
+  </button>
+</div>
+```
+
+Remove `handleWikiClick` function.
+
+### Add (persona-style section — mirrors Personas section)
+
+```tsx
+{/* ── 위키 메모리 section ── */}
+<div style={sectionWrap}>
+  <div style={plainSecHdr}>
+    <span style={secHdrText}>{t('workspace.team.section.wikiMemory')}</span>
+  </div>
+  {WIKI_PERSONAS.map((wp) => (
+    <button
+      key={wp.key}
+      style={personaRowStyle}
+      onClick={() => handleWikiPersonaClick(wp.key)}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+    >
+      <span style={{ ...avatarStyle, background: PERSONA_COLORS[wp.key] }}>
+        {wp.initial}
+      </span>
+      <span style={personaInfo}>
+        <span style={personaName}>{t(wp.nameKey)}</span>
+        <span style={personaRole}>{t(wp.roleKey)}</span>
+      </span>
+      {wp.key === 'po' && promoCount > 0 && (
+        <span style={promoWarnBadge}>{promoCount}</span>
+      )}
+    </button>
+  ))}
+</div>
+```
+
+**Add constants** (after `PERSONAS` array):
+
+```ts
+interface WikiPersonaDef {
+  key: PersonaKey
+  initial: string
+  nameKey: string
+  roleKey: string
+}
+
+const WIKI_PERSONAS: WikiPersonaDef[] = [
+  { key: 'po',       initial: 'P', nameKey: 'workspace.team.persona.po.name',        roleKey: 'workspace.team.wiki.role.po'       },
+  { key: 'designer', initial: 'D', nameKey: 'workspace.team.persona.designer.name',  roleKey: 'workspace.team.wiki.role.designer' },
+  { key: 'dev',      initial: 'D', nameKey: 'workspace.team.persona.developer.name', roleKey: 'workspace.team.wiki.role.dev'      },
+  { key: 'qa',       initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.wiki.role.qa'       },
+]
+```
+
+**Add handler**:
+
+```ts
+const handleWikiPersonaClick = (persona: PersonaKey) => {
+  openTab(`team-wiki:${persona}`, 'team-wiki', { persona })
+}
+```
+
+---
+
+## §6 Change 5 — TeamWikiTab.tsx: persona prop + persona-scoped rows (D-1 + D-2 fix)
+
+`props.persona` (`'po' | 'designer' | 'dev' | 'qa' | undefined`) drives which rows render. When undefined → legacy 4-row backend view (unchanged; backward compat).
+
+### Persona row definitions
+
+| Persona | Rows | Paths |
+|:--|:--|:--|
+| `po` | User memory · Project state · Promotions | `~/.productune/po-memory.md` · `.productune/po-state.json` |
+| `designer` | Design Decisions · Feature History · Promotions | `docs/designer/decisions.md` · `docs/designer/feature-history.md` |
+| `dev` | Project state · Promotions | `.productune/po-state.json` |
+| `qa` | Fail Patterns · Project state | `docs/qa/fail-patterns.md` · `.productune/po-state.json` |
+
+### Code structure
+
+```ts
+type WikiPersonaScope = 'po' | 'designer' | 'dev' | 'qa'
+
+// Helper returns row props for each persona scope
+function getPersonaRows(
+  persona: WikiPersonaScope,
+  openTab: (...args: any[]) => void,
+  t: (k: string) => string,
+  promoCount: number,
+): WikiRowProps[] { … }
+```
+
+### Render update
+
+```tsx
+export default function TeamWikiTab({ props: paneProps }: Props) {
+  const { t } = useTranslation()
+  const openTab = useWorkspace((s) => s.openTab)
+  const poState = useWorkspace((s) => s.poState)
+  const persona = paneProps?.persona as WikiPersonaScope | undefined
+
+  const pendingPromos = poState?.pending_promotions?.filter((p) => p.status === 'pending') ?? []
+  const promoCount = pendingPromos.length
+
+  if (persona) {
+    const rows = getPersonaRows(persona, openTab, t, promoCount)
+    return (
+      <div style={wrap}>
+        <div style={personaHeader}>
+          <span style={personaHeaderText}>{t(`workspace.team.wiki.role.${persona}`)}</span>
+        </div>
+        <div style={listWrap}>
+          {rows.map((row, i) => <WikiRow key={i} {...row} />)}
+        </div>
+      </div>
+    )
+  }
+
+  // Legacy (no persona) — existing layout unchanged
+  return <div style={wrap}><div style={listWrap}>…existing rows…</div></div>
+}
+```
+
+**Add style consts**:
+```ts
+const personaHeader: React.CSSProperties = {
+  padding: '10px 16px 6px',
+  borderBottom: '1px solid #1E1E1E',
+  flexShrink: 0,
+}
+const personaHeaderText: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 700,
+  color: '#505050',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+}
+```
+
+---
+
+## §7 D-2 — wiki fs 동작 안됨: implicit fix via D-1
+
+Root cause: Row 1 in TeamWikiTab had no `onClick` (intentional status indicator). With D-1, the sidebar entry is now 4 persona rows — each persona row opens scoped content with full navigation. The backend-label-only row is replaced.
+
+No separate IPC fix. `fs` wiki = `openTab('markdown', { path })`, which functions correctly (rows 2–4 in existing view work).
+
+---
+
+## §8 i18n keys (ko.json + en.json)
+
+Insert inside `workspace.team` namespace:
+
+| key | ko | en |
+|:--|:--|:--|
+| `section.wikiMemory` | 위키 메모리 | Wiki Memory |
+| `section.mcpLink` | MCP 서버 목록 열기 | Open MCP Servers |
+| `wiki.role.po` | PO 메모리 | PO Memory |
+| `wiki.role.designer` | 디자이너 메모리 | Designer Memory |
+| `wiki.role.dev` | 개발자 메모리 | Developer Memory |
+| `wiki.role.qa` | QA 메모리 | QA Memory |
+| `wiki.designerDecisions` | 디자인 결정 | Design Decisions |
+| `wiki.featureHistory` | 기능 히스토리 | Feature History |
+| `wiki.failPatterns` | QA 실패 패턴 | QA Fail Patterns |
+
+---
+
+## §Out of scope
+
+- McpServersTab persona matrix (MCP × persona grid) — separate ticket.
+- `mcp:save` delete/remove server entry.
+- Project `.mcp.json` write path (only reads `.mcp.json`; writes go to local tier).
+- Wiki backend graphiti/keeper redesign.
+- `workspace.team.tab.wiki` i18n key pruning — cleanup ticket.
+
+## §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `manual smoke only` |
+| **test target** | `mcp:getServers` 3-tier merge · `mcp:save` local write · McpServersTab source pill · TeamPanel MCP nav-row · Wiki Memory persona rows · TeamWikiTab persona scope |
+| **사용자 dogfood** | (1) Team 사이드바 MCP 서버 nav-row 클릭 → McpServersTab 열림. `graphiti` + `playwright` 2개 표시, 각 `[local]` tier 라벨 확인. (2) McpServerModal 저장 → `~/.claude.json` `projects[dir].mcpServers` 에 저장됨 확인 (파일 직접 inspect). (3) 위키 메모리 섹션 → PO/Designer/Dev/QA 4 row. PO 클릭 → User Memory + Project State + Promotions. Designer 클릭 → Design Decisions + Feature History. QA 클릭 → Fail Patterns. (4) Section 컴포넌트 없음 — MCP 인라인 리스트 사라짐 확인. |
+| **regression check** | Settings → MCP 경로 (`SettingsView` `openTab('mcp-servers', …)`) 여전히 동작. `PersonaRow` 클릭 → persona-def 탭 정상. McpServersTab 자체 `McpServerModal` 동작 정상. `mcp:save` fallback path (no projectDir) → productune tier write 정상. |

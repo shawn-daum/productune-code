@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { PoState, Version, Ticket, Phase, TaskType, Status, PendingPromotion } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
+import { InfoPopover } from '../shared/InfoPopover'
 
 interface Props {
   versionId: string
@@ -212,9 +213,10 @@ function ApprovedPromotionsCard({ promotions }: { promotions: PendingPromotion[]
             <span style={personaBadge}>{p.persona}</span>
             <span style={tierBadge}>{p.tier}</span>
             <span style={promoTarget} title={p.target}>{p.target}</span>
-            <span style={promoDelta} title={p.final_target ?? p.delta}>
-              {(p.final_target ?? p.delta).slice(0, 80)}{((p.final_target ?? p.delta).length > 80) ? '…' : ''}
+            <span style={promoDelta}>
+              {p.final_target ?? p.delta}
             </span>
+            <InfoPopover text={p.final_target ?? p.delta} threshold={80} />
             {p.decided_at && (
               <span style={promoDate}>{p.decided_at.slice(0, 10)}</span>
             )}
@@ -247,6 +249,7 @@ function TicketRow({ ticket }: { ticket: Ticket }) {
     <div style={ticketRow}>
       <span style={ticketId}>{ticket.ticket_id}</span>
       <span style={ticketTitle}>{ticket.title ?? ticket.slug ?? '(no title)'}</span>
+      <InfoPopover text={ticket.title ?? ticket.slug ?? ''} />
       <span style={statusBadge(status)}>{status}</span>
       {ticket.qa_status && ticket.qa_status !== 'pending' && (
         <span style={qaBadge(ticket.qa_status)}>qa:{ticket.qa_status}</span>

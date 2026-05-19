@@ -1,6 +1,20 @@
 # Lifecycle mechanics
 
-PO-mechanical operations on tickets through their lifecycle. Cross-cutting policy that spans all ticket types. Read by PO before delegating, before close, and at Phase 5 retrospective.
+PO-mechanical operations on tickets through their lifecycle. Cross-cutting policy spanning all ticket types. Read by PO before delegating, before close, and at Phase 5 retrospective.
+
+## Phase transition mechanical write
+
+GUI [Approve →] click → `phase:approve` IPC → direct `po-state.json` mechanical write (`current_phase` ++, `phase_history` append, `pending_gate = null`). PO script `jq` write path = equivalent; either suffices. Manual `jq` bypass:
+
+```bash
+jq '.current_phase = <N> | .phase_history += [{"phase":<N>,"started_at":"<ISO>","user_approved_at":"<ISO>"}] | .pending_gate = null' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
+```
+
+## PO mechanical wiki write (T-P4-121)
+
+PO = sole executor via `claude --print` (no `--agent`) subprocess. Subagent path retired — claude code 2.1.142 MCP non-inheritance + agent whitelist tool-name resolution structurally non-functional. See `po-instructions.md` `## CAN (mechanical only)` for top-level rationale.
+
+Preconditions + bash invocation template + `source_description` auto-gen + job tracking + "what PO does NOT do" → **`sections/_formats/wiki-write-template.md`**.
 
 ## Auto QA smoke gate (impl / refactor close condition)
 
@@ -21,7 +35,7 @@ User-facing breakage (broken routing, blank pages, console errors, broken naviga
 - Status transition: update frontmatter + mirrored header.
 - `assignee` / routing / session refs: metadata only.
 - `branch` / `worktree_path`: set on open; never cleared (history).
-- `## Outcome` is content; delegate to Designer if product meaning is needed.
+- `## Outcome` = content; delegate to Designer if product meaning needed.
 - **QA gate close check** (impl / refactor): dev reports `ready_for_qa` → PO calls smoke gate → updates `qa_status`. `pass` allows `done`; `fail` resumes dev + `qa_loops += 1`; `qa_loops ≥ 3` → `blocked`. Other stages skip the check.
 
 Version close → mechanical status / backfill sweep. Outcome text needed → single Designer call: `"Version <id> closed. Append ## Outcome summaries from version's tickets without changing scope/AC."`
@@ -34,7 +48,7 @@ Two append-only layers; neither blocks lifecycle.
 
 **Per-Version** (required, in `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` — Designer derives from PRD `## Success metrics` slot at PRD-ready time, emits via `version_outcome` in ready-turn JSON; PO mirrors into state. `observed_result`, `retrospective_path` — PO fills at Phase 5.
 
-PRD body stays free-form prose; structured emit is the JSON field, not edits to the PRD.
+PRD body stays free-form prose; structured emit = JSON field, not edits to PRD.
 
 ## Lazy measurement protocol
 
@@ -42,61 +56,10 @@ When `validation_method` requires external data (PostHog / Sentry / GA / etc), P
 
 ## retrospective.md template
 
-`docs/retrospectives/<version>.md`, written by Designer in Phase 5 step 5c (sonnet + medium):
+`docs/retrospectives/<version>.md`, written by Designer in Phase 5 step 5c (sonnet + medium). Full template → **`sections/_formats/retrospective-md.md`**.
 
-```markdown
-# Retrospective — <version>
+## Retrospective sources + Phase 5 sequence
 
-**Period**: YYYY-MM-DD ~ YYYY-MM-DD  **PRD**: docs/prd/<slug>.md  **Tickets**: <N> done / <M> blocked
+5a/5b/5c/5d sub-steps **read stored memory** (5 source classes: project notes, recent_turns, graphiti/wiki, po-memory, approved-promotion archive), never spawn fresh persona analysis. PO orchestrates 4-step sequence; per-step persona file owns detail.
 
-## Outcome
-- north_star: <target> → <observed | "pending next Version"> [hit / miss / ?]
-- input metrics:
-  - <metric>: <observed | pending>
-
-## What worked
-- ...
-
-## What didn't
-- area X: <fail pattern>, N cumulative loops (cross-Version)
-
-## Carry to next Version
-- deferred from this Version: ...
-- new test ticket candidate: area Y (≥3 cumulative fails)
-- new hypothesis: ...
-
-## Approved doctrine promotions (this Version)
-- pdt-<persona> · project · `docs/<persona>/<file>.md`: "<delta>" (decided <date>)
-- pdt-<persona> · wiki · <target>: "<episode_name>" (decided <date>)
-
-## Repeated patterns
-- recent_turns: <persona> ≥3 fails on `<area-tag>` (last <N> turns)
-- fail-patterns: `<area>` cumulative <M> across versions
-- po-memory pushback: "<verbatim>" (≥2 occurrences)
-
-## Surfaced for next Version
-- dropped/deferred promotions: list (next Phase 1 disposition input)
-```
-
-## Retrospective read sources (no new persona calls)
-
-5a/5b/5c/5d sub-steps **read stored memory**, never spawn fresh persona analysis. Allowed sources:
-
-1. **project notes** — `docs/{designer,developer,qa}/project-notes.md` + `decisions.md` (approved promotions land here)
-2. **po-state recent_turns** — rolling 10 (failure pattern detection)
-3. **wiki / Graphiti persona lessons** — `mcp__graphiti__search_memory_facts` (graphiti) or wiki-keeper SEARCH (keeper) or `~/.productune/wiki/persona-<x>/INDEX.md` (fs)
-4. **po-memory** — `~/.productune/po-memory.md` `## Model/Effort Calibration` + `## Product taste` + `## Recent corrections / to-avoid`
-5. **approved-promotion archive** — `pending_promotions[]` filtered `status ∈ {approved, edited}` ∧ `decided_at ∈ [version.started_at, version.ended_at]`. New audit source — captures what user actually accepted into doctrine this Version.
-
-Persona invocation in 5a/5b/5c is for *synthesis* of these reads, not fresh analysis. 5d is fully mechanical.
-
-## Phase 5 retrospective sequence (PO orchestrates)
-
-Per-step detail lives in each persona file (5a/5c in `pdt-designer.md`, 5b in `pdt-qa.md`, 5d in `pdt-po.md`). PO runs in order. **Reads** column = source set from above (1-5).
-
-| Step | Persona | Model/Effort | Reads | Output |
-|---|---|---|---|---|
-| 5a | `pdt-designer` | opus + xhigh | 1, 2, 3, 5 | fill outcome.observed_result if measurable now (lazy: null otherwise); append `feature-history.md`; propose next-V backlog |
-| 5b | `pdt-qa` | opus + xhigh | 1, 2, 3, 5 | aggregate this V's `fail-patterns.md`; cross-V trend; propose next-V `type:test` candidates |
-| 5c | `pdt-designer` | sonnet + medium | 1, 4, 5 + 5a/5b ctx | write `docs/retrospectives/<version>.md` from 5a + 5b ctx + read sources |
-| 5d | PO | mechanical | 4, 5 | append calibration log; mirror `retrospective_path`; surface to user with next-V candidates + dropped promotions |
+Full detail (5 read sources + 4-step orchestration table) → **`sections/_details/phase5-retrospective.md`**.

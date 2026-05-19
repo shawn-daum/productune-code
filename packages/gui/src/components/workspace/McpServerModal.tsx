@@ -25,11 +25,12 @@ interface EnvRow {
 
 interface Props {
   server: McpServerEntry
+  projectDir?: string
   onClose: () => void
   onSaved: () => void
 }
 
-export default function McpServerModal({ server, onClose, onSaved }: Props) {
+export default function McpServerModal({ server, projectDir, onClose, onSaved }: Props) {
   const { t } = useTranslation()
 
   const [transport, setTransport] = useState<'stdio' | 'sse' | 'http'>(
@@ -111,7 +112,7 @@ export default function McpServerModal({ server, onClose, onSaved }: Props) {
     setSaving(true)
     try {
       const api = (window as any).api
-      const result = await api.mcpSave?.(server.name, buildConfig())
+      const result = await api.mcpSave?.(server.name, buildConfig(), projectDir)
       if (result?.ok) {
         showToast(t('settings.mcp.toastSaved'), 'success')
         setTimeout(() => showToast(t('settings.mcp.toastRestartNeeded'), 'info'), 600)

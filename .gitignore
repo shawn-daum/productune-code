@@ -27,6 +27,7 @@ agents/pdt-qa.md
 .productune/logs/
 
 # monorepo
+node_modules
 node_modules/
 .turbo/
 dist/

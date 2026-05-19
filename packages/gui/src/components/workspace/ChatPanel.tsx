@@ -21,9 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { Paperclip, ArrowUp, RefreshCw, Minus } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
-import { useUserTodo } from '../../store/useUserTodo'
-import { useQaLoop } from '../../store/useQaLoop'
-import type { Message, MessageKind } from '../../lib/types'
+import type { Message } from '../../lib/types'
 import PhaseStrip from './PhaseStrip'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
@@ -38,13 +36,6 @@ export default function ChatPanel() {
   const poState = useWorkspace((s) => s.poState)
   const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
   const streaming = useWorkspace((s) => s.streaming)
-
-  // T-P4-113: todo store actions (subscribed via IPC below)
-  const pushTodoItems = useUserTodo((s) => s.pushItems)
-  const dismissTodosByIds = useUserTodo((s) => s.dismissByIds)
-
-  // T-P4-116: qa-loop store action (subscribed via IPC below)
-  const setQaLoopEntry = useQaLoop((s) => s.setEntry)
 
   const setMessages = useWorkspace((s) => s.setMessages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
@@ -61,10 +52,6 @@ export default function ChatPanel() {
   const msgsRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
-  // Track the in-progress assistant msgId so onToken can target it.
-  const inFlightMsgIdRef = useRef<string | null>(null)
-  const inFlightKindRef = useRef<MessageKind>('po')
-
   // ── Load session on project change ───────────────────────────────────────
   useEffect(() => {
     if (!project) return
@@ -78,166 +65,6 @@ export default function ChatPanel() {
       setClaudeSessionId(session?.claude_session_id ?? null)
     }).catch(() => { /* no session yet */ })
   }, [project, setMessages, setClaudeSessionId])
-
-  // ── Subscribe to streaming events once ───────────────────────────────────
-  useEffect(() => {
-    const api = (window as any).api
-    if (!api?.poOnToken) return
-
-    const offMsgId = api.poOnMsgId((msgId: string) => {
-      // Insert the placeholder bubble bound to this msgId.
-      const placeholder: Message = {
-        id: msgId,
-        role: 'assistant',
-        kind: inFlightKindRef.current,
-        text: '',
-        status: 'streaming',
-        created_at: new Date().toISOString(),
-      }
-      inFlightMsgIdRef.current = msgId
-      appendMessage(placeholder)
-    })
-
-    const offToken = api.poOnToken((msgId: string, chunk: string) => {
-      // Append to the matching message — guard against stale ids.
-      useWorkspace.setState((s) => {
-        const idx = s.messages.findIndex((m) => m.id === msgId)
-        if (idx < 0) return s
-        const updated = { ...s.messages[idx], text: s.messages[idx].text + chunk }
-        const next = [...s.messages]
-        next[idx] = updated
-        return { messages: next }
-      })
-    })
-
-    const offAnnounce = api.poOnAnnounce((_msgId: string, payload: { level: string; text: string }) => {
-      const trace: Message = {
-        id: `trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        role: 'system',
-        kind: 'trace',
-        text: payload.text,
-        status: 'done',
-        created_at: new Date().toISOString(),
-      }
-      appendMessage(trace)
-    })
-
-    const offDone = api.poOnDone(async (msgId: string, info: { sessionId?: string }) => {
-      // Mark message done + persist to chat.json + update sessionId.
-      const finalMsg = await new Promise<Message | null>((resolve) => {
-        useWorkspace.setState((s) => {
-          const idx = s.messages.findIndex((m) => m.id === msgId)
-          if (idx < 0) {
-            resolve(null)
-            return s
-          }
-          const updated = { ...s.messages[idx], status: 'done' as const }
-          const next = [...s.messages]
-          next[idx] = updated
-          resolve(updated)
-          return { messages: next }
-        })
-      })
-      const proj = useWorkspace.getState().project
-      const api = (window as any).api
-      if (proj && finalMsg) {
-        try { await api.chatAppendMessage(proj.projectDir, finalMsg) } catch { /* ignore */ }
-      }
-      if (proj && info.sessionId) {
-        setClaudeSessionId(info.sessionId)
-        try { await api.chatSetClaudeSessionId(proj.projectDir, info.sessionId) } catch { /* ignore */ }
-      }
-      setStreaming(false)
-      inFlightMsgIdRef.current = null
-    })
-
-    return () => {
-      offMsgId?.()
-      offToken?.()
-      offAnnounce?.()
-      offDone?.()
-    }
-  }, [appendMessage, setClaudeSessionId, setStreaming])
-
-  // ── Subscribe to todo IPC events (T-P4-113) ──────────────────────────────
-  useEffect(() => {
-    const api = (window as any).api
-    if (!api?.poOnTodoItems) return
-
-    const offTodoItems = api.poOnTodoItems((items: any[]) => {
-      pushTodoItems(items)
-    })
-
-    // Receive-only dismiss channel (PO side emit is a separate ticket).
-    const offTodoDismiss = api.poOnTodoDismiss?.((ids: string[]) => {
-      dismissTodosByIds(ids)
-    })
-
-    return () => {
-      offTodoItems?.()
-      offTodoDismiss?.()
-    }
-  }, [pushTodoItems, dismissTodosByIds])
-
-  // ── Subscribe to QA loop IPC events (T-P4-116) ───────────────────────────
-  // onBrowserOpen / onUserVerify / onQaLoopUpdate — preload bridges added T-P4-116.
-  // onArtifactFiles was dead-code (no preload bridge); WorkspaceShell covers via
-  // poOnArtifactOpen (T-P4-114 §A). Removed here.
-  const openTabFn = useWorkspace.getState().openTab
-  useEffect(() => {
-    const api = (window as any).api
-
-    // C. browser-open — auto-open browser tab (QA smoke or noop if already open)
-    const offBrowserOpen = api?.onBrowserOpen?.((payload: {
-      url: string
-      ticketId: string
-      purpose: 'qa-smoke' | 'user-verify'
-    }) => {
-      const tabId = `browser:${payload.ticketId}:${payload.purpose}`
-      openTabFn(tabId, 'browser', { url: payload.url }, 'Browser')
-    })
-
-    // E. user-verify — open browser tab (if url) + push user TODO
-    const offUserVerify = api?.onUserVerify?.((payload: {
-      url?: string
-      description: string
-      ticketId: string
-    }) => {
-      // Step 1: browser tab (if url present)
-      if (payload.url) {
-        openTabFn(
-          `user-verify:${payload.ticketId}`,
-          'browser',
-          { url: payload.url },
-          '확인 필요',
-        )
-      }
-      // Step 2: user TODO push
-      pushTodoItems([{
-        id: `verify-${payload.ticketId}`,
-        description: `${payload.description} 후 체크`,
-        type: payload.url ? 'link' : 'check',
-        href: payload.url,
-      }])
-    })
-
-    // B. qa-loop-update — update qa-loop store (badge in BackgroundTaskSegment)
-    const offQaLoopUpdate = api?.onQaLoopUpdate?.((payload: {
-      ticketId: string
-      attempt: number
-      maxAttempts: number
-      status: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required'
-      lastFailReason?: string
-    }) => {
-      setQaLoopEntry(payload)
-    })
-
-    return () => {
-      offBrowserOpen?.()
-      offUserVerify?.()
-      offQaLoopUpdate?.()
-    }
-  }, [pushTodoItems, setQaLoopEntry])
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -284,7 +111,8 @@ export default function ChatPanel() {
 
     // PO is the sole entry point — pre-allocated assistant bubble is `po` kind.
     // Dispatch decisions surface via PersonaPresenceBar (T-P4-049), not here.
-    inFlightKindRef.current = 'po'
+    // inFlightKind/Id state now lives in workspace store (T-P4-119 uplift).
+    useWorkspace.getState().setInFlightKind('po')
     setStreaming(true)
     try {
       await api.poSendMessage({
@@ -294,7 +122,7 @@ export default function ChatPanel() {
       })
     } catch (e) {
       setStreaming(false)
-      inFlightMsgIdRef.current = null
+      useWorkspace.getState().setInFlightMsgId(null)
     }
   }
 

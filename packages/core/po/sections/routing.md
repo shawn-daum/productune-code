@@ -1,5 +1,4 @@
 # Model + Effort routing
-
 PO picks model (haiku/sonnet/opus) + effort (low/medium/high/xhigh/max) per persona call. Dynamic — frontmatter `model:` = fallback.
 
 ## 7-level task complexity (OSS standard)
@@ -42,7 +41,7 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 
 **Step-down** (L → L-1):
 - single file/string/line, obvious typo
-- user tone (intent: "simple", "quickly", "just", "minimal", any user lang)
+- user tone ("simple", "quickly", "just", "minimal", any user lang)
 - decompose 1-step trivial
 - recent_turns passing at default ≥3 times
 
@@ -73,11 +72,7 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
   - pdt-designer Why-essential — net-new system-level design (UX + brand + DS from scratch)
   - pdt-developer How — system-level architecture, post-3-turn debug where xhigh fails
 - `xhigh` auto-trigger: any opus call · pdt-developer plan-only L≥4 · Path 1 retry from `high`
-- Trace:
-  ```
-  → delegating to pdt-developer (model=opus, effort=max — net-new architecture)
-  → delegating to pdt-developer (model=opus, effort=xhigh — plan phase L5)
-  ```
+- Trace: `→ delegating to pdt-developer (model=opus, effort=max — net-new architecture)`
 - Both flagged separately in `recent_turns` (`effort:"xhigh"` / `"max"`) for cost retro.
 
 ## Decision algorithm
@@ -98,7 +93,7 @@ PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elev
 
 Trace: `→ delegating to pdt-<persona> (L<n> <name>, model=<tier>, effort=<level> — reason: <one-line>)`
 
-User-facing phrasing (PO renders in user's lang; semantic mapping):
+User-facing phrasing (PO renders in user's lang):
 - effort: low="quick" · medium="balanced" · high="careful" · xhigh="very careful / deep" · max="exhaustive / deepest"
 - confidence: low="not sure" · medium="somewhat sure" · high="confident"
 

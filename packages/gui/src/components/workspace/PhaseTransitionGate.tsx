@@ -9,13 +9,12 @@ interface Props {
 }
 
 /**
- * Top-pinned banner shown when po-state.json has a non-null `pending_gate`.
- * Rendered above the breadcrumb so it's always visible regardless of which
- * sidebar tab the user is on. Doctrine: stages.md "Uniform phase-transition gate".
+ * [DEPRECATED — T-P4-139] No longer mounted.
+ * Phase transition is chat-driven; this component is retained for reference
+ * only. phase:approve IPC handler in main.ts is also retained as legacy fallback.
  *
- * The Approve / Modify buttons are visual only in this slice — clicking emits
- * the chosen intent into the chat (handled by parent / chat panel), and PO
- * clears `pending_gate` after acting on the user reply.
+ * Original: top-pinned banner shown when po-state.json has a non-null
+ * `pending_gate`. Doctrine: stages.md "Uniform phase-transition gate".
  */
 export default function PhaseTransitionGate({ gate, onApprove, onModify }: Props) {
   const { t } = useTranslation()

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Project } from '../lib/types'
 import { useWorkspace } from '../store/workspace'
-import { useSessionHealth } from '../store/sessionHealth'
 import PhaseBreadcrumb from '../components/workspace/PhaseBreadcrumb'
 import LeftSidebar from '../components/workspace/LeftSidebar'
 import MainPanel from '../components/workspace/main/MainPanel'
@@ -51,12 +50,8 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const splitRight = useWorkspace((s) => s.splitRight)
   const splitDown = useWorkspace((s) => s.splitDown)
   const addNewTab = useWorkspace((s) => s.addNewTab)
-  const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
   const messages = useWorkspace((s) => s.messages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
-
-  const setHealth = useSessionHealth((s) => s.setHealth)
-  const clearHealth = useSessionHealth((s) => s.clearHealth)
 
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('project')
   const [drainVisible, setDrainVisible] = useState(true)
@@ -311,26 +306,6 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     return () => { offNew?.(); offOpen?.() }
   }, [onBack])
 
-  // ── Session health IPC subscription (T-P4-059) ──────────────────────────────
-  useEffect(() => {
-    const api = (window as any).api
-    if (!api?.poOnHealth) return
-
-    const offHealth = api.poOnHealth((event: any) => {
-      setHealth(event)
-    })
-
-    const offRestarted = api.poOnSessionRestarted?.(() => {
-      setClaudeSessionId(null)
-      clearHealth()
-    })
-
-    return () => {
-      offHealth?.()
-      offRestarted?.()
-    }
-  }, [setHealth, clearHealth, setClaudeSessionId])
-
   // ── Deploy modal IPC subscription (T-P4-022 3rd PR) ───────────────────────
   // PO emits state:openDeployModal → main sends deploy:openModal → renderer opens modal.
   useEffect(() => {
@@ -343,18 +318,6 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     return () => off?.()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // ── Ticket focus IPC subscription (T-P4-114 §B) ────────────────────────────
-  // Opens ticket-review tab when PO issues / dispatches a ticket.
-  useEffect(() => {
-    const api = (window as any).api
-    if (!api?.poOnTicketFocus) return
-    const off = api.poOnTicketFocus(({ ticketId }: { ticketId: string }) => {
-      // openTab dedupe: already-open tab → focus only
-      openTab(`ticket-review:${ticketId}`, 'ticket-review', { ticketId }, ticketId)
-    })
-    return () => off?.()
-  }, [openTab])
 
   // ── Artifact auto-open IPC subscription (T-P4-114 §A) ──────────────────────
   // Opens .md / spec tabs (max 3) when changed_files[] detected in PO envelope.

@@ -1,34 +1,26 @@
 import { useRef, useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PERSONA_COLORS } from '../../../../store/personaPresence'
+import type { SkillEntry } from '../../../../lib/types'
+import { InfoPopover } from '../../../shared/InfoPopover'
 
-// ── Static skill catalog ──────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Convert skill.id to a dot-notation-safe i18n key.
+ * e.g. "mattpocock/skills/engineering/tdd/SKILL.md"
+ *   → "mattpocock_skills_engineering_tdd_SKILL_md"
+ */
+function skillIdToI18nKey(id: string): string {
+  return id.replace(/[/.\-]/g, '_')
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 type PersonaCol = 'po' | 'designer' | 'dev' | 'qa'
 
-interface SkillRow {
-  id: string
-  description: string
-  personas: PersonaCol[]
-}
-
 const PERSONA_COLS: PersonaCol[] = ['po', 'designer', 'dev', 'qa']
-const PERSONA_INITIALS: Record<PersonaCol, string> = { po: 'P', designer: 'D', dev: 'D', qa: 'Q' }
-
-const SKILL_CATALOG: SkillRow[] = [
-  { id: 'mattpocock/tdd',                         description: 'Test-driven development',                   personas: ['dev'] },
-  { id: 'mattpocock/design-an-interface',          description: 'Interface design prompting',                personas: ['designer'] },
-  { id: 'mattpocock/code-review',                  description: 'Code review workflow',                      personas: ['dev'] },
-  { id: 'pm-product-discovery/interview-script',   description: 'User interview script generation',          personas: ['po', 'designer'] },
-  { id: 'pm-prd-clarity-loop',                     description: 'PRD clarity loop iteration',                personas: ['po', 'designer'] },
-  { id: 'triage-issue',                            description: 'Debug triage process',                      personas: ['dev'] },
-  { id: 'request-refactor-plan',                   description: 'Refactor planning prompt',                  personas: ['dev'] },
-  { id: 'improve-codebase-architecture',           description: 'Architecture improvement prompt',           personas: ['dev'] },
-  { id: 'qa-suite-runner',                         description: 'Test suite execution & reporting',          personas: ['qa'] },
-  { id: 'to-prd',                                  description: 'Brief → PRD conversion',                    personas: ['po'] },
-  { id: 'setup-pre-commit',                        description: 'Pre-commit hook setup',                     personas: ['dev'] },
-  { id: 'git-guardrails-claude-code',              description: 'Git safety guardrails',                     personas: ['dev'] },
-]
+const PERSONA_INITIALS: Record<PersonaCol, string> = { po: 'PO', designer: 'Des', dev: 'Dev', qa: 'QA' }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -40,26 +32,57 @@ export default function SkillMatrixTab({ props }: Props) {
   const { t } = useTranslation()
   const focusRow = props?.focusRow as string | undefined
 
+  const [skills, setSkills] = useState<SkillEntry[]>([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [personaFilter, setPersonaFilter] = useState<Set<PersonaCol>>(new Set())
   const [assignedOnly, setAssignedOnly] = useState(false)
   const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map())
 
+  // Initial fetch on mount
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    ;(window as any).api.listSkills().then((entries: SkillEntry[]) => {
+      if (!cancelled) {
+        setSkills(entries)
+        setLoading(false)
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setSkills([])
+        setLoading(false)
+      }
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  // Re-fetch on window focus (detect skills dir changes)
+  useEffect(() => {
+    const refetch = () => {
+      ;(window as any).api.listSkills()
+        .then((entries: SkillEntry[]) => setSkills(entries))
+        .catch(() => setSkills([]))
+    }
+    window.addEventListener('focus', refetch)
+    return () => window.removeEventListener('focus', refetch)
+  }, [])
+
   const filteredSkills = useMemo(() => {
-    return SKILL_CATALOG.filter((skill) => {
-      if (search && !skill.id.toLowerCase().includes(search.toLowerCase())) return false
+    return skills.filter((skill) => {
+      if (search && !skill.id.toLowerCase().includes(search.toLowerCase()) && !skill.name.toLowerCase().includes(search.toLowerCase())) return false
       if (assignedOnly && skill.personas.length === 0) return false
       if (personaFilter.size > 0 && !([...personaFilter].some((p) => skill.personas.includes(p)))) return false
       return true
-    })
-  }, [search, personaFilter, assignedOnly])
+    }).sort((a, b) => b.personas.length - a.personas.length || a.name.localeCompare(b.name))
+  }, [skills, search, personaFilter, assignedOnly])
 
-  // Scroll to focus row on mount/props change
+  // Scroll to focus row — also runs after loading completes so the row exists
   useEffect(() => {
     if (!focusRow) return
     const el = rowRefs.current.get(focusRow)
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  }, [focusRow])
+  }, [focusRow, loading])
 
   const togglePersona = (p: PersonaCol) => {
     setPersonaFilter((prev) => {
@@ -103,54 +126,73 @@ export default function SkillMatrixTab({ props }: Props) {
         </div>
       </div>
 
+      {/* Loading state */}
+      {loading && (
+        <div style={loadingPane}>Scanning skills…</div>
+      )}
+
+      {/* Empty state */}
+      {!loading && skills.length === 0 && (
+        <div style={emptyPane}>
+          <div style={emptyPrimary}>~/.claude/skills/ 에 설치된 skill 없음</div>
+          <div style={emptySecondary}>skill install 후 다시 시도하세요</div>
+        </div>
+      )}
+
       {/* Table */}
-      <div style={tableWrap}>
-        <table style={table}>
-          <thead>
-            <tr style={headerRow}>
-              <th style={thSkill}>Skill</th>
-              {PERSONA_COLS.map((p) => (
-                <th key={p} style={thPersona}>
-                  <span style={{ ...personaDot, background: PERSONA_COLORS[p] }} />
-                  {PERSONA_INITIALS[p]}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filteredSkills.map((skill) => {
-              const isFocus = skill.id === focusRow
-              return (
-                <tr
-                  key={skill.id}
-                  ref={(el) => { if (el) rowRefs.current.set(skill.id, el); else rowRefs.current.delete(skill.id) }}
-                  style={isFocus ? trFocus : tr}
-                >
-                  <td style={tdSkill}>
-                    <span style={skillId}>{skill.id}</span>
-                    <span style={skillDesc}>{skill.description}</span>
-                  </td>
-                  {PERSONA_COLS.map((p) => (
-                    <td key={p} style={tdCheck}>
-                      {skill.personas.includes(p) ? (
-                        <span style={{ color: PERSONA_COLORS[p], fontSize: 13 }}>✓</span>
-                      ) : null}
+      {!loading && skills.length > 0 && (
+        <div style={tableWrap}>
+          <table style={table}>
+            <thead>
+              <tr style={headerRow}>
+                <th style={thSkill}>Skill</th>
+                {PERSONA_COLS.map((p) => (
+                  <th key={p} style={thPersona}>
+                    <span style={{ ...personaDot, background: PERSONA_COLORS[p] }} />
+                    {PERSONA_INITIALS[p]}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredSkills.map((skill) => {
+                const isFocus = skill.id === focusRow
+                return (
+                  <tr
+                    key={skill.id}
+                    ref={(el) => { if (el) rowRefs.current.set(skill.id, el); else rowRefs.current.delete(skill.id) }}
+                    style={isFocus ? trFocus : tr}
+                  >
+                    <td style={tdSkill}>
+                      <span style={skillIdStyle}>{skill.name}</span>
+                      <InfoPopover
+                        text={t(`skills.descriptions.${skillIdToI18nKey(skill.id)}`, { defaultValue: skill.description })}
+                        ariaLabel={t('workspace.team.skillMatrix.viewDescription')}
+                      />
                     </td>
-                  ))}
-                </tr>
-              )
-            })}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={5} style={addSkillCell}>
-                <span style={addSkillDisabled}>{t('workspace.team.skillMatrix.addSkill')}</span>
-                <span style={addSkillPhase5}> — Phase 5</span>
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
+                    {PERSONA_COLS.map((p) => (
+                      <td key={p} style={tdCheck}>
+                        {skill.personas.includes(p) ? (
+                          <span style={{ color: PERSONA_COLORS[p], fontSize: 13 }}>✓</span>
+                        ) : null}
+                      </td>
+                    ))}
+                  </tr>
+                )
+              })}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={5} style={addSkillCell}>
+                  <span style={addSkillDisabled}>{t('workspace.team.skillMatrix.addSkill')}</span>
+                  <span style={addSkillPhase5}> — Phase 5</span>
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
     </div>
   )
 }
@@ -256,7 +298,7 @@ const thSkill: React.CSSProperties = {
 }
 
 const thPersona: React.CSSProperties = {
-  width: 40,
+  width: 52,
   textAlign: 'center',
   padding: '6px 4px',
   fontSize: 10,
@@ -288,20 +330,36 @@ const tdSkill: React.CSSProperties = {
   verticalAlign: 'middle',
 }
 
-const skillId: React.CSSProperties = {
+const loadingPane: React.CSSProperties = {
+  color: '#505050',
+  fontSize: 12,
+  padding: '24px 16px',
+}
+
+const emptyPane: React.CSSProperties = {
+  padding: '24px 16px',
+}
+
+const emptyPrimary: React.CSSProperties = {
+  fontSize: 12,
+  color: '#505050',
+  marginBottom: 4,
+}
+
+const emptySecondary: React.CSSProperties = {
+  fontSize: 11,
+  color: '#3A3A3A',
+}
+
+const skillIdStyle: React.CSSProperties = {
   fontFamily: 'monospace',
   fontSize: 11,
   color: '#D0D0D0',
-  marginRight: 8,
-}
-
-const skillDesc: React.CSSProperties = {
-  fontSize: 10,
-  color: '#505050',
+  marginRight: 6,
 }
 
 const tdCheck: React.CSSProperties = {
-  width: 40,
+  width: 52,
   textAlign: 'center',
   padding: '5px 4px',
   verticalAlign: 'middle',
@@ -322,3 +380,4 @@ const addSkillPhase5: React.CSSProperties = {
   fontSize: 10,
   color: '#2A2A2A',
 }
+

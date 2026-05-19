@@ -41,7 +41,8 @@ check_pattern() {
   matches=$(perl -CSDA -Mutf8 -ne '
     # Skip kanban column label lines + version-state labels — UI labels, not enum translations.
     # "closed" key added T-P4-097: side-panel version closed/completed state (≠ ticket status).
-    next if /^\s+"(?:todo|inProgress|qa|done|closed)"\s*:\s*/;
+    # Status enum display keys added T-P4-138: workspace.tickets.status.* UI labels need translation.
+    next if /^\s+"(?:todo|inProgress|qa|done|closed|in-progress|review|user-verify|blocked|abandoned)"\s*:\s*/;
     print "$.: $_" if /'"$pattern"'/
   ' "$file" 2>/dev/null || true)
 

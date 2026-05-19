@@ -1,0 +1,156 @@
+# T-P4-138 · Kanban: 7-column grid + STATUS_ORDER reorder + status i18n
+**Slug**: kanban-column-layout-i18n
+**Date**: 2026-05-19
+**Round**: phase4-r4
+**Artifact**: plan (1/1)
+**Status**: ready
+
+---
+
+## §1 Context — verified findings
+
+| Finding | Location | Detail |
+|:--|:--|:--|
+| 6-column grid, 7 statuses | `TicketDashboardView.tsx:256` | `repeat(6, minmax(180px, 1fr))` → `abandoned` wraps to row 2 |
+| Raw status string as label | `Column` component L133 | `<span>{status}</span>` — no i18n |
+| STATUS_ORDER | L14 | `['todo', 'in-progress', 'review', 'user-verify', 'done', 'blocked', 'abandoned']` — blocked buried 6th, abandoned 7th |
+| No `workspace.tickets.status` i18n block | `ko.json:161`, `en.json:161` | `workspace.tickets` object has no `status` sub-key |
+| VersionHistoryView `statusLabel()` | L647–657 | Hardcoded Korean map, missing `user-verify` entry, not i18n |
+| VersionHistoryView already has `useTranslation` | L25, L287, L339, L357, L446 | Unification trivial — no new import needed |
+
+---
+
+## §2 Change 1 — STATUS_ORDER reorder
+
+**Before** (L14):
+```ts
+const STATUS_ORDER: Status[] = ['todo', 'in-progress', 'review', 'user-verify', 'done', 'blocked', 'abandoned']
+```
+
+**After**:
+```ts
+const STATUS_ORDER: Status[] = ['blocked', 'todo', 'in-progress', 'review', 'user-verify', 'done', 'abandoned']
+```
+
+Rationale:
+- `blocked` → leftmost (urgent/attention-required — draws eye immediately)
+- `todo → in-progress → review → user-verify → done` → natural workflow left-to-right
+- `abandoned` → rightmost (terminal archive state — visually separated from active flow)
+
+---
+
+## §3 Change 2 — Grid 6 → 7 columns
+
+**Before** (L256, inside `kanban` style object):
+```ts
+gridTemplateColumns: 'repeat(6, minmax(180px, 1fr))',
+```
+
+**After**:
+```ts
+gridTemplateColumns: 'repeat(7, minmax(160px, 1fr))',
+```
+
+- Count: 6 → 7 to match STATUS_ORDER length
+- minWidth: 180 → 160 to keep 7 columns comfortably on typical 1440px+ monitors without forced horizontal scroll
+- `overflowX: 'auto'` already present on `kanban` — narrower viewports scroll horizontally (correct behaviour)
+
+---
+
+## §4 Change 3 — Column label i18n
+
+**Before** (`Column` component, L133):
+```tsx
+function Column({ status, tickets }: { status: Status; tickets: Ticket[] }) {
+  return (
+    <div style={column}>
+      <div style={columnHeader(status)}>
+        <span style={columnLabel}>{status}</span>
+```
+
+**After**:
+```tsx
+function Column({ status, tickets }: { status: Status; tickets: Ticket[] }) {
+  const { t } = useTranslation()
+  return (
+    <div style={column}>
+      <div style={columnHeader(status)}>
+        <span style={columnLabel}>{t(`workspace.tickets.status.${status}`, { defaultValue: status })}</span>
+```
+
+`defaultValue: status` ensures graceful fallback if a key is ever missing — renders raw status string rather than a missing-key error.
+
+---
+
+## §5 Change 4 — i18n keys (ko.json + en.json)
+
+Insert `"status"` block inside `workspace.tickets` object (after `"schemaMismatchBanner"` line) in **both** locale files.
+
+**ko.json** — `workspace.tickets.status`:
+```json
+"status": {
+  "todo":        "대기",
+  "in-progress": "진행 중",
+  "review":      "검토 중",
+  "user-verify": "검증 대기",
+  "done":        "완료",
+  "blocked":     "차단",
+  "abandoned":   "취소"
+}
+```
+
+**en.json** — `workspace.tickets.status`:
+```json
+"status": {
+  "todo":        "To Do",
+  "in-progress": "In Progress",
+  "review":      "Review",
+  "user-verify": "Awaiting Verify",
+  "done":        "Done",
+  "blocked":     "Blocked",
+  "abandoned":   "Abandoned"
+}
+```
+
+Note on ko.json reuse: VersionHistoryView's hardcoded map already uses the same Korean strings (`대기`, `진행 중`, `검토 중`, `완료`, `차단`, `취소`). `user-verify: 검증 대기` is new (was missing from the hardcoded map).
+
+---
+
+## §6 Change 5 — VersionHistoryView statusLabel unification (in scope — trivial)
+
+**Before** (L207):
+```tsx
+<span style={statusPill(status)}>{statusLabel(status)}</span>
+```
+
+**After**:
+```tsx
+<span style={statusPill(status)}>{t('workspace.tickets.status.' + status, { defaultValue: status })}</span>
+```
+
+`t` is already destructured in every sub-component of VersionHistoryView that renders tickets. Confirm which component L207 lives in → use the existing `t` from that component's `useTranslation()` call. No new import needed.
+
+**Remove** the `statusLabel` function (L647–657) — now unused.
+
+Benefits:
+- `user-verify` automatically covered via i18n key (was missing from hardcoded map → showed raw `user-verify` string)
+- Single source of truth for status labels across TicketDashboardView + VersionHistoryView
+- Language toggle in future automatically covers both views
+
+---
+
+## §Out of scope
+
+- Changing `statusPill` / `columnHeader` color palette — visual colour assignments unchanged.
+- Adding sort/filter controls to kanban — separate feature.
+- i18n for ticket `type` chip labels (`impl`, `design`, etc.) — separate ticket.
+- `KNOWN_STATUS_SET` change — unchanged; still derived from `STATUS_ORDER` (reorder has no effect on set membership).
+
+## §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `manual smoke only` |
+| **test target** | `TicketDashboardView` kanban grid + column labels |
+| **사용자 dogfood** | (1) Tickets tab 열기 → 7 column 이 한 줄에 배치됨 확인. (2) 왼쪽 첫 컬럼 = blocked, 오른쪽 마지막 = abandoned 확인. (3) 컬럼 헤더 라벨 한글 표시 확인 (대기 / 진행 중 / 검토 중 / 검증 대기 / 완료 / 차단 / 취소). (4) VersionHistoryView → ticket status pill 라벨 동일 번역 확인. (5) `user-verify` 상태 ticket 이 있다면 "검증 대기" 표시 확인. |
+| **regression check** | `groupByStatus` 로직 — STATUS_ORDER 변경이 ticket routing 에 영향 없음 확인 (KNOWN_STATUS_SET set membership 동일). VersionHistoryView `statusPill` 색상 정상 (statusLabel 제거 후 statusPill 함수는 독립 유지). |

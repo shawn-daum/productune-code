@@ -6,59 +6,23 @@ Two facets: (1) **promotion gate** — persona suggestions → persisted memory;
 
 Personas don't auto-write. They return `promotion_candidates`. PO surfaces; on user approval writes. Project + wiki tier both need approval.
 
-After every persona turn, inspect `promotion_candidates`. Per entry:
-```
-[PO] pdt-designer wants to remember:
-     project · docs/pdt-designer/decisions.md
-     "(2026-04-27) login-modal: chose dialog over inline form (focus-trap critical)"
-     reason: design decision; future pdt-designer references
-     save? [y/N]
-```
-- **y** → write (below). Ack `[PO] saved.`
-- **n / Enter / skip** → drop silently.
-- **edit** → prompt edited version, save.
-
->3 candidates → numbered list; user replies `1,3` for selective approve.
+Surface prompt format + user response handling (y/n/edit/skip) → **`sections/_formats/promotion-surface-prompt.md`**.
 
 ### Mechanical writes
 
-`tier:"project"` — append one line to a file in the project repo (shows in `git status`):
+`tier:"project"` — append 1 line to file in project repo (shows in `git status`):
 ```bash
 TARGET=$(jq -r '.target' <<<"$CANDIDATE"); DELTA=$(jq -r '.delta' <<<"$CANDIDATE")
 mkdir -p "$(dirname "$TARGET")"; printf '%s\n' "$DELTA" >> "$TARGET"
 ```
 
-`tier:"wiki"` — backend-aware (`WIKI_BACKEND` from `productune.env`):
+`tier:"work-note"` — `printf` full markdown body to `docs/<persona>/R<n>-<slug>.md`.
 
-- **graphiti** — fire-and-forget `claude --resume "$SID"` with `[PROMOTION-APPROVED] mcp__graphiti__add_memory: group_id="$TARGET" name="$EPISODE_NAME" episode_body="$EPISODE_BODY". Confirm only.` Run in `( ... ) &`; track via job file under `~/.productune/wiki-jobs/<id>.{pending,done}`. Echo `[PO] saved (background, job=<id>)`.
-- **keeper** — invoke `claude --agent pdt-wiki-keeper --model haiku` with `WRITE [PROMOTION-APPROVED]\npersona: $TARGET\nepisode_name: $EPISODE_NAME\nepisode_body: $EPISODE_BODY`. Sync — keeper handles file write + INDEX update.
-- **fs** — direct filesystem. Write `~/.productune/wiki/$TARGET/<ts>--<slug>.md` with frontmatter (`persona`, `episode_name`, `created_at`, `superseded_by:null`, `related:[]`) + body. Rebuild `<dir>/INDEX.md` (one line per file with `[<date>] <name> [active|superseded]` + first-line excerpt). Echo `[PO] saved: <FILE>`.
-
-Background job tracking (graphiti) — at start of every turn:
-```bash
-JOBS_DIR="$HOME/.productune/wiki-jobs"; [ -d "$JOBS_DIR" ] && rm -f "$JOBS_DIR"/*.done 2>/dev/null
-for j in "$JOBS_DIR"/*.pending; do [ -f "$j" ] || continue
-  AGE=$(( $(date +%s) - $(stat -f %m "$j" 2>/dev/null || stat -c %Y "$j" 2>/dev/null || echo $(date +%s)) ))
-  [ "$AGE" -gt 30 ] && echo "[PO] job=$(basename "$j" .pending) ${AGE}s — check Ollama (cat $j.log)"
-done
-```
-
-Pre-persona wiki search (keeper only) — inject `wiki_consult:` into TASK:
-```bash
-[ "${WIKI_BACKEND:-graphiti}" = "keeper" ] && WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
-  "SEARCH
-persona: $PERSONA_SHORT
-query: $TASK_KEYWORDS" | python3 -c "import json,sys,re
-try: r=json.loads(sys.stdin.read()).get('result',''); m=re.search(r'\{.*\}',r,re.DOTALL); print(m.group() if m else '{}')
-except: print('{}')" 2>/dev/null || echo '{}') && TASK="$TASK
-wiki_consult: $WIKI_RESULT"
-```
-
-(`graphiti` personas call `search_memory_facts` themselves via MCP. `fs` personas read `INDEX.md` directly.)
+`tier:"wiki"` — backend-aware (`WIKI_BACKEND` from `productune.env`). 3 branches (graphiti / keeper / fs) + background job tracking + pre-persona wiki search → **`sections/_details/wiki-backend-branches.md`**.
 
 ### Persistence (deferred surface)
 
-If candidate can't be surfaced inline (background sub-agent result received mid-turn, persona turn closed without immediate user prompt window, etc.) → enqueue into `pending_promotions[]` (schema below) with `status:"pending"`. Next PO turn-start surfaces queued entries before new work (see `stages.md` — separate ticket).
+Candidate can't be surfaced inline (background sub-agent result received mid-turn, persona turn closed without immediate user prompt window, etc.) → enqueue into `pending_promotions[]` (schema in `_formats/po-state-schema.md`) with `status:"pending"`. Next PO turn-start surfaces queued entries before new work (Step 1b).
 
 ### Why gated
 
@@ -83,10 +47,10 @@ Read at session start. Append (don't rewrite) on: ≥2 pushbacks, intent class "
 
 Schema: `- (YYYY-MM-DD) <area-tag>: <what worked> · "<user phrase verbatim, kept in original lang>"`.
 
-- **Write trigger**: Step 3 step 14b (positive intent — `stages.md`). One line per turn-close-time satisfaction signal.
-- **Read trigger**: Step 1 disposition. PO scans recent N entries cross-project to bias routing toward validated patterns (similar area-tag → reuse the approach that landed last time).
+- **Write trigger**: Step 3 #14b (positive intent — `po-loop.md`). 1 line per turn-close satisfaction signal.
+- **Read trigger**: Step 1 disposition. PO scans recent N entries cross-project to bias routing toward validated patterns (similar area-tag → reuse approach that landed last time).
 - area-tag follows `<feature>/<sub-area>` — shared with `fail-patterns.md` and `feature-history.md`.
-- User phrase is kept verbatim in any language. It's a literal quote, not doctrine prose.
+- User phrase verbatim in any language. Literal quote, not doctrine prose.
 
 Example entries (mixed-lang user phrases preserved):
 ```
@@ -94,40 +58,9 @@ Example entries (mixed-lang user phrases preserved):
 - (2026-05-20) onboarding/welcome: 3-step minimum without skip · "exactly what I wanted"
 ```
 
-## Per-project state: `./.productune/po-state.json` (canonical schema)
+## Per-project state: `./.productune/po-state.json`
 
-Repo-local JSON. Sessions scoped per **task**. Each top-level user request = one task with own persona session ids.
-
-`schema_version: 2` (v1 → v2 introduced 2026-05-08 — Phase 5단 + ticket type rename + slim. Migration in `migrations/v1-to-v2.sh`.)
-
-Key paths:
-- `schema_version: 2` (top-level int — informational; migration is structure-presence based)
-- `current_version`, `current_phase` (1..5), `phase_history[].{phase: 1..5, started_at, completed_at, summary, user_approved_at}` — current-version only; on Version close PO appends summary to retrospective md and clears
-- `pending_gate?` (set when PO emits a phase-transition gate prompt; cleared on approve/modify) — `{from_phase: 1..5, to_phase: 2..5 (or null = terminal), summary, prompt, emitted_at}`
-- `current_task.{ticket_id, slug, title, status, type, qa_status, qa_loops, assignee_persona, started_at, ended_at, request_summary, prd_path, branch, worktree_path}`
-- `current_task.input.{prd_path, design_doc, brief_path, deps[]}` · `current_task.output.{changed_files[], design_doc, test_results}`
-- `current_task.linked_tickets[]`, `artifacts[]`, `persona_sessions{}` (live only — dropped on ticket close), `persona_session_meta.<persona>.{turns, model_history, effort_history, complexity_level, confidence_history}` (live only — dropped on ticket close; per-turn audit lives in ticket md `## Persona Activity`)
-- `current_task.calibration_outcome.{estimated_complexity, actual_complexity, qa_pass, qa_loops, user_rework_requested, escalation_triggered, notes}`
-- ~~`past_tickets[]`~~ — **removed in v2** (ticket md = single source of truth). PO + GUI derive ticket lists by fs scan of `docs/tickets/**/*.md`. Revival match: `node scripts/po/scan-tickets.mjs <projectDir>` then jq filter on `slug` similarity.
-- `versions[]` (cap 5 — older versions: see `outcome.retrospective_path` reference). Schema: `{id, started_at, ended_at, prd_anchor, outcome.{north_star, input_metrics[], validation_method, observed_result, retrospective_path}}`
-- `recent_turns[]` (rolling 10, project-wide, task-independent — failure-pattern detection)
-- `pending_promotions[]` — persona-returned `promotion_candidates` queued for user approval (deferred surface). Lifecycle: `pending` → (`approved` | `dropped` | `edited`) on next turn-start prompt.
-  - `id` (string) — `promo-<YYYYMMDD>-<NNN>` (date + per-day sequence). Dedupe within same turn.
-  - `persona` (string) — `pdt-designer` / `pdt-developer` / `pdt-qa` / `pdt-wiki-keeper`.
-  - `turn_id` (string) — persona session turn marker at surface time (snapshot of `persona_session_meta.<persona>.turns`).
-  - `tier` (string) — `project` / `wiki` / `work-note` (drives mechanical-writes branch above).
-  - `target` (string) — `tier=project`: file path · `tier=wiki`: graphiti `group_id` or keeper persona · `tier=work-note`: file path under `docs/<persona>/`.
-  - `delta` (string) — line to append (project / work-note) or episode body (wiki).
-  - `rationale` (string) — one-line reason shown in surface prompt.
-  - `status` (string) — `pending` / `approved` / `dropped` / `edited`.
-  - `surfaced_at` (ISO timestamp, optional) — when PO presented the prompt.
-  - `decided_at` (ISO timestamp, optional) — when user response landed.
-  - `final_target` (string, optional) — populated on `status:"edited"` with user-revised target / delta payload actually written.
-
-Legacy keys (`past_tasks`, `past_tickets`, `current_round`, `rounds[]`, `stage:PRD|issue`, `current_task.stage`) read-compat one cycle; new code reads new keys first and falls back. `past_tickets` is no longer written in v2; reads ignore. `current_task.stage` migrated to `current_task.type` in v2.
-
-Pre-delegate: glance `recent_turns`. Persona ≥3 fails / last 5 → flag in Step 1 risk (`evolution.md`).
-Post-turn: append outcome + bump `current_task.persona_session_meta.<persona>.turns` via `jq`. Never burn a Claude call. (Both `persona_sessions{}` and `persona_session_meta{}` are dropped on ticket close — per-ticket audit lives in ticket md `## Persona Activity` table.)
+Repo-local JSON. Sessions scoped per **task**. Schema v2 — full canonical schema (key paths + `pending_promotions[]` lifecycle + legacy keys + access patterns) → **`sections/_formats/po-state-schema.md`**.
 
 ## Persona product-memory (structured operational logs)
 
@@ -135,9 +68,9 @@ Append-only Version-tagged logs. Two layers separate from narrative `decisions.m
 
 | File | Owner of write | Read by | Purpose |
 |---|---|---|---|
-| `docs/qa/fail-patterns.md` | PO mechanical (from QA's `fail_event` output) | Designer at Phase 1 | Test ticket trigger #3 — same area-tag ≥3 累累 fail → emit `type:test`. |
+| `docs/qa/fail-patterns.md` | PO mechanical (from QA's `fail_event` output) | Designer at Phase 1 | Test ticket trigger #3 — same area-tag ≥3 cumulative fail → emit `type:test`. |
 | `docs/designer/feature-history.md` | Designer Write at Phase 5 Version close | Designer at Phase 1 (next Version) | Recall prior Version decisions / surface deferred items. |
 
-Both share schema convention: `- (YYYY-MM-DD) <version> · <area-tag> · ... · note: <one-line>`. PO writes for fail-patterns are mechanical (no semantic interpretation) — `printf '%s\n' "$LINE" >> "$TARGET"`. Designer writes for feature-history happen inside Designer's session at Phase 5.
+Both share schema: `- (YYYY-MM-DD) <version> · <area-tag> · ... · note: <one-line>`. PO writes for fail-patterns = mechanical (no semantic interpretation) — `printf '%s\n' "$LINE" >> "$TARGET"`. Designer writes for feature-history happen inside Designer's session at Phase 5.
 
-These are **distinct from promotion-gated memory** (`decisions.md`, `project-notes.md`, work-notes, wiki). They're operational ground truth — like `~/.productune/po-memory.md` calibration log — append-only, no opinion.
+Distinct from promotion-gated memory (`decisions.md`, `project-notes.md`, work-notes, wiki). Operational ground truth — like `~/.productune/po-memory.md` calibration log — append-only, no opinion.
