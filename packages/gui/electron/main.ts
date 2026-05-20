@@ -940,7 +940,7 @@ ipcMain.handle('tickets:scan', async (_event, projectDir: string): Promise<Scann
     const dirPath = path.join(ticketsRoot, versionDir)
     let files: string[] = []
     try {
-      files = fs.readdirSync(dirPath).filter((f) => f.endsWith('.md'))
+      files = fs.readdirSync(dirPath).filter((f) => /^T-[A-Z0-9-]+\.md$/.test(f))
     } catch { continue }
     for (const file of files) {
       const filePath = path.join(dirPath, file)

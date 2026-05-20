@@ -1,0 +1,360 @@
+# T-P4-152 plan — Agent doctrine compress (token-opt-3)
+
+**ticket**: T-P4-152
+**version**: v0.4-meta-dogfood
+**area**: agent-doctrine / token-opt
+**complexity**: L3
+**model/effort**: sonnet / high
+**authored**: 2026-05-20
+
+---
+
+## Goal
+
+Compress all 9 persona variant files
+(`packages/core/agents/variants/{graphiti,keeper,fs}/pdt-{designer,developer,qa}.md`)
+to ≤100 lines each via: (a) extracting three shared verbose sections into new
+`packages/core/po/sections/_details/` sub-files, (b) caveman lite compression of
+remaining prose, and (c) completing the truncated `graphiti/pdt-developer.md`.
+
+**Expected savings**: 30-40% cache_creation reduction per fresh persona dispatch
+(~$0.375 → $0.25 per call).
+
+**Precedents**: T-P4-126 (PO → external doctrine), T-P4-142 (sections/ ≤100 enforcement).
+
+---
+
+## Constraints
+
+- **depends_on: T-P4-150** — T-P4-150 adds `summary`/`user_surface` fields + enforcement
+  rule to all 9 variant `## Output format` sections (~3-4 lines/file). T-P4-152 must run
+  **after** T-P4-150 to avoid overwriting those additions. Developer: re-run `wc -l` on all
+  target files after T-P4-150 is applied, then cut to ≤100.
+- Content-preserving compress only — no semantic changes to any section.
+- `graphiti/pdt-developer.md` completion: cross-reference `fs/pdt-developer.md` and
+  `keeper/pdt-developer.md` to identify exact missing content; restore without guessing.
+- Sub-files go in `_details/` (not `_formats/`): they are persona-consumed references, not
+  PO-formatting templates.
+
+---
+
+## §Current line counts (pre-T-P4-150)
+
+| File | Lines | +T-P4-150 | Effective | Must cut |
+|:--|:--|:--|:--|:--|
+| `graphiti/pdt-designer.md` | 167 | +4 | ~171 | **71** |
+| `graphiti/pdt-qa.md` | 146 | +4 | ~150 | **50** |
+| `fs/pdt-qa.md` | 122 | +4 | ~126 | **26** |
+| `keeper/pdt-designer.md` | 109 | +4 | ~113 | **13** |
+| `keeper/pdt-qa.md` | 107 | +4 | ~111 | **11** |
+| `fs/pdt-designer.md` | 103 | +4 | ~107 | **7** |
+| `graphiti/pdt-developer.md` | 92 (truncated) | +4 | ~96+missing | restore + cap |
+| `fs/pdt-developer.md` | 84 | +4 | ~88 | no-touch |
+| `keeper/pdt-developer.md` | 93 | +4 | ~97 | no-touch |
+
+---
+
+## §Approach
+
+### A. Three new shared sub-files in `packages/core/po/sections/_details/`
+
+**Bootstrap pickup — no code changes required.** `bootstrap-doctrine.sh` uses:
+```bash
+find "$_po_src/sections" -type f -name '*.md' -print0
+```
+`init.ts` uses `walkMdRecursive(sectionsDir)`. Both already handle `_details/` sub-dirs
+recursively (T-P4-126 doctrine sub-file split). New files auto-install on next
+`productune init` or `install.sh` run.
+
+---
+
+#### A1. `_details/promotion-rule.md` (exact content, ~8 lines)
+
+Persona-facing promotion candidates output contract. Currently duplicated as a 6-8 line
+`**Output rule (top-level JSON, mandatory)**` boilerplate paragraph in every variant file.
+
+```markdown
+# Promotion candidates — output rule
+
+`promotion_candidates` is **always a top-level JSON array** in the output envelope —
+never doc-only. Emit `"promotion_candidates": []` when nothing to promote. If PO can't
+surface inline (background turn / closed window), candidates are enqueued to
+`po-state.json:pending_promotions[]`. A `## Promotion Candidates` body section inside
+returned docs is **secondary annotation** only — PO consumes only the top-level JSON array.
+
+See `_details/promotion-lifecycle.md` for T-P4-121 PO-side mechanics (wiki write gate).
+```
+
+**Replace in every designer + qa variant (6 files)**: delete the multi-line
+`**Output rule (top-level JSON, mandatory)**` paragraph, insert 1 line:
+```
+Promotion rule: `~/.productune/sections/_details/promotion-rule.md` — always emit top-level array.
+```
+
+---
+
+#### A2. `_details/qa-scope-table.md` (exact content, ~28 lines)
+
+Full §QA scope mandatory doctrine table + selection guide + PO reject gate. Currently
+inline (25 lines) in `graphiti/pdt-designer.md`; a shorter version exists in keeper/fs.
+
+```markdown
+# §QA scope — mandatory doctrine (T-P4-107)
+
+Every `plan.md` and every `type:design` ticket body **must** include a `## §QA scope`
+section. Insert after `§Out of scope`, before `§Open Questions` (or at end if absent).
+
+## §QA scope (template)
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `auto pdt-qa dispatch` \| `manual smoke only` \| `skip` |
+| **test target** | [function / component / e2e flow — or `—` if skip] |
+| **사용자 dogfood** | [PO asks user to verify directly. `—` if none] |
+| **regression check** | [file path or feature. `—` if none] |
+
+## QA invoke selection guide
+
+| Choice | When |
+|:--|:--|
+| `auto pdt-qa dispatch` | Multi-step flow ≥3 steps; risk_flags = auth/payments/PII; same area ≥3 cumulative fail-patterns |
+| `manual smoke only` | Single component; L1–L3 trivial; no regression surface |
+| `skip` | Pure doc update; zero user-facing code change |
+
+**PO reject gate**: §QA scope absent from returned plan → PO resumes Designer:
+`"plan missing §QA scope — add per T-P4-107."` Max 1 retry. Not a failed turn.
+
+**Applies to**: every plan.md + every companion ticket.md body.
+```
+
+**Replace in all designer variants (3 files)**: delete the `### Plan §QA scope` block,
+insert 2 lines:
+```markdown
+### Plan §QA scope (mandatory — T-P4-107)
+Full table + selection guide: `~/.productune/sections/_details/qa-scope-table.md`.
+```
+
+---
+
+#### A3. `_details/qa-gui-fields.md` (exact content, ~28 lines)
+
+Plan-Do-See GUI envelope fields (T-P4-112) + `fail_event` schema. Currently inline in
+`graphiti/pdt-qa.md` only (~30 lines across two blocks).
+
+```markdown
+# QA GUI output fields — Plan-Do-See (T-P4-112)
+
+Add to every `pdt-qa` JSON output envelope:
+
+| Field | Type | Purpose |
+|:--|:--|:--|
+| `ticket_id` | string | ticket being tested |
+| `qa_status` | `"pass"\|"fail"` | GUI status transition driver |
+| `qa_loops` | int | retry count (0 on first attempt) |
+| `browser_url` | string\|null | local URL for smoke (`null` = no browser test) |
+| `verify_url` | string\|null | URL user verifies after QA pass |
+| `verify_description` | string | one-line what user should check |
+| `fail_reason` | string\|null | ≤80 char failure; `null` on pass |
+| `auth_required` | object\|null | `{"service","instruction","type":"manual\|oauth\|env-var"}` on auth failure |
+| `start_dev_server` | bool | `true` → PO spawns `pnpm dev` before retry. Default `false` |
+
+## `fail_event` schema
+
+Emit when fail loop ≥1 during this task; `null` otherwise. PO appends 1 line to
+`docs/qa/fail-patterns.md` mechanically.
+
+```json
+{
+  "version": "v1.0-MVP",
+  "ticket_id": "T-042",
+  "area_tag": "<feature>/<sub-area>",
+  "loops": 3,
+  "final": "resolved|blocked|abandoned",
+  "note": "<≤80 char>"
+}
+```
+```
+
+**Replace in graphiti/pdt-qa.md only**: delete the Plan-Do-See paragraph (~23 lines) +
+`fail_event` schema block (~8 lines), insert 2 lines:
+```markdown
+**GUI envelope fields + fail_event schema (T-P4-112)**:
+`~/.productune/sections/_details/qa-gui-fields.md` — include all fields every turn.
+```
+
+---
+
+### B. Per-file compression targets
+
+#### B1 — `graphiti/pdt-designer.md` (effective ~171 → ≤100, cut 71+)
+
+| Section to cut | Current | Target | Method |
+|:--|:--|:--|:--|
+| `### Plan §QA scope` full block | ~27 | 2 | Sub-file A2 ref |
+| `## type:test emission triggers` | ~11 | 3 | Caveman: 1 sentence + 4-item inline list |
+| `## Memory (3-tier)` | ~12 | 5 | Compress to match fs/keeper pattern |
+| `## Design doc maintenance` | ~9 | 3 | 3-bullet condensed list |
+| Promotion rule paragraph | ~6 | 1 | Sub-file A1 ref |
+| Wiki write gate prose (T-P4-121) | ~9 | 2 | Caveman pattern (see §C) |
+| `## External-tool recommendation` | ~3 | 1 | 1-sentence inline |
+| `## Inputs + Workflow` steps 5a/5c | ~10 | 6 | Compress sub-bullets |
+| `## PRD authoring` prose | ~12 | 8 | Compress intro; keep formula + weights |
+| T-P4-150 additions | +4 | absorbed | Offsets above |
+
+Projected: 171 − 72 ≈ **99 lines** ✓
+
+#### B2 — `graphiti/pdt-qa.md` (effective ~150 → ≤100, cut 50+)
+
+| Section to cut | Current | Target | Method |
+|:--|:--|:--|:--|
+| GUI fields paragraph (~23 ln) + `fail_event` (~8 ln) | ~31 | 2 | Sub-file A3 ref |
+| `## Memory (3-tier)` + fail-patterns sub-section | ~13 | 6 | Compress; keep schema 1-liner |
+| `## Memory promotion` prose | ~15 | 5 | Compress to 3-bullet caveman |
+| Promotion rule paragraph | ~6 | 1 | Sub-file A1 ref |
+| Wiki write gate prose (T-P4-121) | ~9 | 2 | Caveman pattern (see §C) |
+| `## Test-env bypass` | ~5 | 3 | Remove explanation; keep JSON example |
+| `## Refuse rules` | ~5 | 3 | Remove expansion prose |
+| T-P4-150 additions | +4 | absorbed | |
+
+Projected: 150 − 51 ≈ **99 lines** ✓
+
+#### B3 — `fs/pdt-qa.md` (effective ~126 → ≤100, cut 26+)
+
+| Section to cut | Current | Target | Method |
+|:--|:--|:--|:--|
+| Promotion rule paragraph | ~6 | 1 | Sub-file A1 ref |
+| `## Memory promotion` prose | ~10 | 4 | Compress to bullets |
+| `## Workflow` check steps | ~10 | 7 | Compress; keep lettered sub-steps |
+| `## Output format` | ~20 | 17 | Minor trim + T-P4-150 absorbed |
+| T-P4-150 additions | +4 | absorbed | |
+
+Projected: 126 − 27 ≈ **99 lines** ✓
+
+#### B4 — `keeper/pdt-qa.md` (effective ~111 → ≤100, cut 11+)
+
+| Section to cut | Current | Target | Method |
+|:--|:--|:--|:--|
+| Promotion rule paragraph | ~6 | 1 | Sub-file A1 ref |
+| `## Memory promotion` prose | ~6 | 3 | Compress |
+| T-P4-150 additions | +4 | absorbed | |
+
+Projected: 111 − 12 ≈ **99 lines** ✓
+
+#### B5 — `keeper/pdt-designer.md` (effective ~113 → ≤100, cut 13+)
+
+| Section to cut | Current | Target | Method |
+|:--|:--|:--|:--|
+| `### Plan §QA scope` block | ~10 | 2 | Sub-file A2 ref |
+| Promotion rule paragraph | ~6 | 1 | Sub-file A1 ref |
+| `## Skills` + wiki write gate | ~5 | 1 | Compress: Skills = "(none currently)"; wiki gate = 1 line |
+| T-P4-150 additions | +4 | absorbed | |
+
+Projected: 113 − 14 ≈ **99 lines** ✓
+
+#### B6 — `fs/pdt-designer.md` (effective ~107 → ≤100, cut 7+)
+
+| Section to cut | Current | Target | Method |
+|:--|:--|:--|:--|
+| `### Plan §QA scope` block | ~8 | 2 | Sub-file A2 ref |
+| Promotion rule paragraph | ~6 | 1 | Sub-file A1 ref |
+| T-P4-150 additions | +4 | absorbed | |
+
+Projected: 107 − 11 ≈ **96 lines** ✓
+
+#### B7 — `graphiti/pdt-developer.md` (restore + compress to ≤100)
+
+File truncated at line 92 — ends mid-sentence in `## Memory promotion`. Missing sections
+vs `fs/pdt-developer.md` and `keeper/pdt-developer.md`:
+- work-note tier in `## Memory promotion`
+- wiki (Graphiti) tier in `## Memory promotion`
+- Promotion rule paragraph (→ sub-file A1 ref immediately)
+- Wiki write gate prose (→ caveman §C)
+- `## Refuse rules`
+
+Steps:
+1. Read `fs/pdt-developer.md` and `keeper/pdt-developer.md` to identify exact missing content.
+2. Restore missing sections following graphiti pattern (wiki tier = Graphiti, not filesystem).
+3. Apply sub-file A1 (promotion rule ref) and §C wiki gate compress.
+4. Verify T-P4-150 additions already present (if T-P4-150 ran first); do not re-add.
+
+Projected: ~92 (existing) + 15 (restore) + 4 (T-P4-150) − 13 (compress) ≈ **98 lines** ✓
+
+---
+
+### C. Wiki write gate caveman pattern (graphiti variants only)
+
+Current prose (T-P4-121) in graphiti designer/developer/qa is 9 lines. Replace with
+3-line caveman:
+
+```markdown
+**Wiki write gate (T-P4-121)**: Propose `tier:"wiki"` in `promotion_candidates` — PO
+subprocess writes. Never call `mcp__graphiti__add_memory`. `tools:` exposes no graphiti
+MCP tools. Need graphiti context → surface in `open_questions`.
+```
+
+---
+
+## §Files changed
+
+| File | Type | Change |
+|:--|:--|:--|
+| `packages/core/po/sections/_details/promotion-rule.md` | **NEW** | Persona output rule (§A1) |
+| `packages/core/po/sections/_details/qa-scope-table.md` | **NEW** | §QA scope table + guide (§A2) |
+| `packages/core/po/sections/_details/qa-gui-fields.md` | **NEW** | GUI fields + fail_event (§A3) |
+| `packages/core/agents/variants/graphiti/pdt-designer.md` | edit | B1: 71-line cut |
+| `packages/core/agents/variants/keeper/pdt-designer.md` | edit | B5: 13-line cut |
+| `packages/core/agents/variants/fs/pdt-designer.md` | edit | B6: 7-line cut |
+| `packages/core/agents/variants/graphiti/pdt-qa.md` | edit | B2: 50-line cut |
+| `packages/core/agents/variants/keeper/pdt-qa.md` | edit | B4: 11-line cut |
+| `packages/core/agents/variants/fs/pdt-qa.md` | edit | B3: 26-line cut |
+| `packages/core/agents/variants/graphiti/pdt-developer.md` | edit | B7: restore + compress |
+| `~/.productune/sections/_details/promotion-rule.md` | **NEW (mirror)** | Immediate effect |
+| `~/.productune/sections/_details/qa-scope-table.md` | **NEW (mirror)** | Immediate effect |
+| `~/.productune/sections/_details/qa-gui-fields.md` | **NEW (mirror)** | Immediate effect |
+
+**Total**: 3 new doctrine sub-files + 7 agent variant edits + 3 user-global mirrors
+= **13 file ops**. No TypeScript changes; no `src/` touch.
+
+---
+
+## §Acceptance
+
+| # | Criterion |
+|:--|:--|
+| A1 | After T-P4-150 applied: `wc -l packages/core/agents/variants/{graphiti,keeper,fs}/pdt-{designer,developer,qa}.md` — all ≤100 |
+| A2 | 3 new sub-files exist: `packages/core/po/sections/_details/{promotion-rule,qa-scope-table,qa-gui-fields}.md` |
+| A3 | `graphiti/pdt-developer.md` is complete: has `## Memory promotion` (project + work-note + wiki tiers) + `## Refuse rules` |
+| A4 | All compressed designer/qa files retain: frontmatter, effort matrix, memory section, output format JSON, refuse rules |
+| A5 | User-global mirrors present: `~/.productune/sections/_details/{promotion-rule,qa-scope-table,qa-gui-fields}.md` |
+| A6 | Bootstrap smoke: `find packages/core/po/sections -type f -name '*.md' | grep _details | wc -l` ≥ 13 (10 existing + 3 new) |
+
+---
+
+## §Out of scope
+
+- `pdt-po.md` (126 lines) — PO scope; external-doctrine pattern already in use
+- `pdt-wiki-keeper.md` (97 lines) — already at cap; no-touch
+- `fs/pdt-developer.md`, `keeper/pdt-developer.md` — under cap post-T-P4-150; no-touch
+- Semantic content changes to any extracted section (verbatim extract / compress only)
+- Modifying `bootstrap-doctrine.sh` or `init.ts` — recursive `_details/` already handled
+- Cache measurement infrastructure (line count is the proxy metric)
+
+---
+
+## §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `manual smoke only` |
+| **test target** | `wc -l packages/core/agents/variants/**/*.md` → all ≤100; `ls packages/core/po/sections/_details/` → 3 new files visible |
+| **사용자 dogfood** | 다음 persona dispatch 후 graphiti designer/qa/developer agent 시스템 프롬프트 라인 수 ≤100 확인 |
+| **regression check** | `cat ~/.productune/sections/_details/promotion-rule.md` — file present; `graphiti/pdt-developer.md` has `## Refuse rules` |
+
+---
+
+## §Open Questions
+
+1. **graphiti/pdt-developer.md truncation cause** — verify T-P4-150 didn't already partially
+   restore; avoid double-applying any section.
+2. **T-P4-150 line delta** — actual additions may vary (schema complexity per persona). Re-count
+   after T-P4-150 and adjust cuts if any file is already ≤100 (skip that file).

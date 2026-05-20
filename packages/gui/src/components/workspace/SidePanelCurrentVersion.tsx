@@ -1,27 +1,31 @@
 /**
  * SidePanelCurrentVersion — "현재 버전" sp-section (T-P4-097, simplified T-P4-099).
  *
- * Shows exactly 1 row for the active (current) version, or a read-only
- * fallback row in two cases:
- *   1. versions[] is empty → "v1 (대기 중)" hint (PRD not yet started)
- *   2. current version has outcome.observed_result|ended_at set → transient-close fallback
- *      (planning-time outcome object with north_star/input_metrics is NOT a close trigger)
- *      ("다음 버전 시작 대기 중")
+ * Always-expanded detail card (no chevron). Shows:
+ *   - Version ID pill + Phase badge
+ *   - Ticket done/total count (when tickets exist)
+ *   - Start date + elapsed days
  *
- * Auto-selects + opens tab on mount when a non-closed current version exists.
- * Phase dot removed (T-P4-099) — phase info is shown by PhaseStrip at sidebar top.
+ * Clickable visual cue = left border accent + hover background (no chevron).
+ *
+ * Fallback rows:
+ *   1. versions[] is empty → "v1 (대기 중)" hint
+ *   2. current version closed → "다음 버전 시작 대기 중"
  */
 
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PoState } from '../../lib/types'
+import { PHASE_NAMES } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
-import VersionRow from './VersionRow'
+import { useTicketScan } from '../../lib/useTicketScan'
+import { formatActivityDate } from './VersionRow'
 
 interface Props {
   poState: PoState | null
   selectedVersionId: string | null
-  onSelect: (id: string) => void
+  // onSelect removed — current-version card click must never touch selectedVersionId.
+  // The card opens the kanban tab directly via openTab; version history tab owns selection.
 }
 
 /** Returns true when the current version has been closed (transient close). */
@@ -32,31 +36,53 @@ function isCurrentVersionClosed(poState: PoState | null): boolean {
   return !!ver.outcome?.observed_result || !!ver.ended_at
 }
 
-export default function SidePanelCurrentVersion({ poState, selectedVersionId, onSelect }: Props) {
+/** e.g. "오늘 시작" or "14일째" */
+function elapsedLabel(isoDate: string | null | undefined): string {
+  if (!isoDate) return ''
+  const start = new Date(isoDate)
+  if (isNaN(start.getTime())) return ''
+  const days = Math.floor((Date.now() - start.getTime()) / 86_400_000)
+  if (days === 0) return '오늘 시작'
+  return `${days}일째`
+}
+
+export default function SidePanelCurrentVersion({ poState, selectedVersionId }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
+  const project = useWorkspace((s) => s.project)
+  const { tickets } = useTicketScan(project?.projectDir ?? null)
 
   const currentVersionId = poState?.current_version ?? null
   const versions = poState?.versions ?? []
   const isClosed = isCurrentVersionClosed(poState)
   const hasVersions = versions.length > 0 && !!currentVersionId
 
-  // Latest activity date for current version row
   const currentVer = currentVersionId ? versions.find((v) => v.id === currentVersionId) : null
-  const latestDate = currentVer?.ended_at ?? currentVer?.started_at ?? null
 
-  // Auto-select + open tab on mount when non-closed current version exists
+  // Phase name (Build / Design / PRD / Deploy / Close)
+  const phaseName = PHASE_NAMES[poState?.current_phase ?? 0] ?? null
+
+  // Ticket stats for current version
+  const versionTickets = tickets.filter((tk) => tk.version === currentVersionId)
+  const doneCount = versionTickets.filter((tk) => tk.status === 'done').length
+  const totalCount = versionTickets.length
+
+  // Elapsed duration
+  const elapsed = elapsedLabel(currentVer?.started_at)
+
+  const isSelected = selectedVersionId === currentVersionId
+
+  // Auto-open kanban tab on mount when non-closed current version exists.
+  // NOTE: selectedVersionId (version history tab's selection) must NEVER be
+  // touched here or in the card's onClick. openTab only.
   useEffect(() => {
     if (!currentVersionId || isClosed) return
-    if (selectedVersionId) return  // already selected externally
-    onSelect(currentVersionId)
     openTab(
       `ticket-review:${currentVersionId}`,
       'ticket-review',
       { versionFilter: currentVersionId },
       currentVersionId,
     )
-    window.dispatchEvent(new CustomEvent('version-select', { detail: { versionId: currentVersionId } }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentVersionId])
 
@@ -64,7 +90,6 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, on
     <div style={sectionWrap}>
       <div style={secHdrStatic}>
         <span style={secHdrText}>{t('workspace.versionHistory.sidePanel.currentTitle')}</span>
-        {/* Right meta: empty (phase dot removed — phase shown by PhaseStrip only) */}
       </div>
 
       {/* Case 1: no versions → init fallback */}
@@ -81,15 +106,64 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, on
         </div>
       )}
 
-      {/* Case 3: active current version row */}
+      {/* Case 3: always-expanded detail card */}
       {hasVersions && !isClosed && (
-        <VersionRow
-          versionId={currentVersionId!}
-          latestActivityDate={latestDate}
-          isCurrent={true}
-          isSelected={selectedVersionId === currentVersionId}
-          onClick={() => onSelect(currentVersionId!)}
-        />
+        <div
+          style={detailCard(isSelected)}
+          role="button"
+          tabIndex={0}
+          aria-current={isSelected ? 'true' : undefined}
+          onClick={() => {
+            if (!currentVersionId) return
+            openTab(
+              `ticket-review:${currentVersionId}`,
+              'ticket-review',
+              { versionFilter: currentVersionId },
+              currentVersionId,
+            )
+          }}
+          onMouseEnter={(e) => {
+            if (!isSelected)
+              (e.currentTarget as HTMLDivElement).style.background = '#181818'
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLDivElement).style.background =
+              isSelected ? '#1A1208' : '#141414'
+          }}
+          onKeyDown={(e) => {
+            if ((e.key === 'Enter' || e.key === ' ') && currentVersionId) {
+              openTab(
+                `ticket-review:${currentVersionId}`,
+                'ticket-review',
+                { versionFilter: currentVersionId },
+                currentVersionId,
+              )
+            }
+          }}
+        >
+          {/* Row 1: Version ID pill + Phase badge */}
+          <div style={cardRow}>
+            <span style={versionPill}>{currentVersionId}</span>
+            {phaseName && <span style={phaseBadge}>{phaseName}</span>}
+          </div>
+
+          {/* Row 2: Ticket stats (only when tickets exist) */}
+          {totalCount > 0 && (
+            <div style={cardRow}>
+              <span style={metaKey}>티켓</span>
+              <span style={metaVal}>{doneCount}&thinsp;/&thinsp;{totalCount} done</span>
+            </div>
+          )}
+
+          {/* Row 3: Start date + elapsed */}
+          <div style={cardRow}>
+            <span style={metaKey}>시작</span>
+            <span style={metaVal}>
+              {formatActivityDate(currentVer?.started_at)}
+              {elapsed ? ` · ${elapsed}` : ''}
+            </span>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -129,4 +203,71 @@ const fallbackRow: React.CSSProperties = {
   cursor: 'default',
   userSelect: 'none',
   fontStyle: 'italic',
+}
+
+function detailCard(isSelected: boolean): React.CSSProperties {
+  return {
+    margin: '4px 8px 10px',
+    padding: '10px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 7,
+    background: isSelected ? '#1A1208' : '#141414',
+    border: '1px solid #222222',
+    borderLeft: `3px solid ${isSelected ? '#FF6B2B' : '#2A2A2A'}`,
+    borderRadius: 4,
+    cursor: 'pointer',
+    transition: 'background 0.1s',
+    outline: 'none',
+  }
+}
+
+const cardRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+}
+
+const versionPill: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  fontFamily: 'monospace',
+  color: '#FF6B2B',
+  background: '#1A0E05',
+  border: '1px solid #FF6B2B50',
+  borderRadius: 3,
+  padding: '2px 6px',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+}
+
+const phaseBadge: React.CSSProperties = {
+  fontSize: 9,
+  fontWeight: 600,
+  color: '#38BDF8',
+  background: '#071523',
+  border: '1px solid #38BDF830',
+  borderRadius: 3,
+  padding: '1px 5px',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
+  marginLeft: 'auto',
+}
+
+const metaKey: React.CSSProperties = {
+  fontSize: 9,
+  color: '#4A4A4A',
+  fontFamily: 'monospace',
+  flexShrink: 0,
+  minWidth: 24,
+}
+
+const metaVal: React.CSSProperties = {
+  fontSize: 10,
+  color: '#707070',
+  fontFamily: 'monospace',
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }

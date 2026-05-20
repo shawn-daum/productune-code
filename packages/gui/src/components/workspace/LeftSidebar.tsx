@@ -70,17 +70,12 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
     prevCurrentVersionRef.current = cv ?? null
   }, [poState?.current_version])  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tab dispatch for version row clicks
-  function handleVersionClick(versionId: string, isCurrent: boolean) {
+  // Tab dispatch for past-version row clicks only.
+  // Current-version card click is handled directly in SidePanelCurrentVersion
+  // (openTab only — never touches selectedVersionId).
+  function handleVersionClick(versionId: string) {
     setSelectedVersionId(versionId)
-    if (isCurrent) {
-      openTab(
-        `ticket-review:${versionId}`,
-        'ticket-review',
-        { versionFilter: versionId },
-        versionId,
-      )
-    } else if (versionId === '__unassigned__') {
+    if (versionId === '__unassigned__') {
       openTab(
         'version-unassigned:main',
         'version-history',
@@ -113,12 +108,11 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
           <SidePanelCurrentVersion
             poState={poState}
             selectedVersionId={selectedVersionId}
-            onSelect={(id) => handleVersionClick(id, true)}
           />
           <SidePanelPastVersions
             poState={poState}
             selectedVersionId={selectedVersionId}
-            onSelect={(id) => handleVersionClick(id, false)}
+            onSelect={(id) => handleVersionClick(id)}
           />
           {/* T-P4-112: Artifact auto-display — session artifacts from dev/designer */}
           <SidePanelArtifacts />

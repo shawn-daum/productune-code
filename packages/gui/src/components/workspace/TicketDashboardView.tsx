@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Loader2 } from 'lucide-react'
-import type { PoState, Ticket, TaskType, Status } from '../../lib/types'
+import type { PoState, Ticket, Status } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
@@ -79,6 +79,7 @@ function collectAllTickets(poState: PoState | null, scanned: Ticket[]): Ticket[]
       status: ct?.status,
       qa_status: ct?.qa_status,
       qa_loops: ct?.qa_loops,
+      assignee: ct?.assignee_persona,
     })
   }
   for (const t of scanned) {
@@ -146,17 +147,28 @@ function Column({ status, tickets }: { status: Status; tickets: Ticket[] }) {
   )
 }
 
+/** Resolve assignee for display. Falls back to 'user' for deploy-type tickets (user-step). */
+function resolveAssignee(ticket: Ticket): string | null {
+  if (ticket.assignee) return ticket.assignee
+  const type = ticket.type ?? ticket.stage
+  if (type === 'deploy') return 'user'
+  return null
+}
+
 function Card({ ticket }: { ticket: Ticket }) {
-  const taskType = (ticket.type ?? ticket.stage) as TaskType | undefined
+  const assignee = resolveAssignee(ticket)
   return (
     <div style={card}>
       <div style={cardTopRow}>
         <span style={cardId}>{ticket.ticket_id}</span>
-        {ticket.version && <span style={cardVersion}>{ticket.version}</span>}
+        {/* B: version span removed */}
       </div>
       <div style={cardTitle}>{ticket.title ?? ticket.slug ?? '(no title)'}</div>
       <div style={cardBottomRow}>
-        {taskType && <span style={typeChip(taskType)}>{taskType}</span>}
+        {/* C: assignee chip — hide when no assignee */}
+        {assignee && (
+          <span style={assigneeChip(assignee)}>{assigneeLabel(assignee)}</span>
+        )}
         {ticket.qa_status && ticket.qa_status !== 'pending' && (
           <span style={qaChip(ticket.qa_status)}>qa:{ticket.qa_status}</span>
         )}
@@ -313,7 +325,7 @@ const columnBody: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 6,
-  padding: 8,
+  padding: '8px 0',     // A: 좌우 0 → card 자체 margin으로 균등 처리 (overflow:hidden 우측 클리핑 방지)
   overflowY: 'auto',
   overflowX: 'hidden',   // T-P4-144: 컬럼 경계 밖 카드 노출 차단
 }
@@ -333,8 +345,11 @@ const card: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 6,
-  minWidth: 0,        // T-P4-144: flex item min-width:auto 재정의 → 컬럼 너비 초과 방지
-  overflow: 'hidden', // T-P4-144: 내용 clipping
+  minWidth: 0,                  // T-P4-144: flex item min-width:auto 재정의 → 컬럼 너비 초과 방지
+  flexShrink: 0,                // B: flex column 안에서 압축 차단 → height = content-fit 보장
+  minHeight: 80,                // content 없는 카드 최소 높이 floor
+  width: 'calc(100% - 16px)',   // C: columnBody 좌우 padding 0 기준 → 8px 양쪽 균등 margin
+  margin: '0 auto',             // C: 좌우 균등 센터링
 }
 
 const cardTopRow: React.CSSProperties = {
@@ -350,20 +365,13 @@ const cardId: React.CSSProperties = {
   fontFamily: 'monospace',
 }
 
-const cardVersion: React.CSSProperties = {
-  fontSize: 10,
-  color: '#505050',
-  fontFamily: 'monospace',
-  textOverflow: 'ellipsis',
-  overflow: 'hidden',
-  whiteSpace: 'nowrap',
-}
+// B: cardVersion removed — version no longer shown on cards
 
 const cardTitle: React.CSSProperties = {
   fontSize: 12,
   color: '#E0E0E0',
   lineHeight: 1.4,
-  overflowWrap: 'break-word', // T-P4-144: 긴 한글·영문 제목 줄바꿈
+  wordBreak: 'break-word',    // A: line-clamp 제거 → title 전체 노출. 긴 단어 줄바꿈 유지.
 }
 
 const cardBottomRow: React.CSSProperties = {
@@ -373,18 +381,22 @@ const cardBottomRow: React.CSSProperties = {
   gap: 4,
 }
 
-function typeChip(type: TaskType): React.CSSProperties {
-  const colors: Record<TaskType, { fg: string; bg: string }> = {
-    design:        { fg: '#A878E0', bg: '#1A1228' },
-    impl:          { fg: '#60B860', bg: '#0A2A0A' },
-    refactor:      { fg: '#60B0E0', bg: '#0A1828' },
-    test:          { fg: '#E0B040', bg: '#2A2008' },
-    qa:            { fg: '#E07060', bg: '#2A0808' },
-    deploy:        { fg: '#FF6B2B', bg: '#2A1808' },
-    doctrine:      { fg: '#9090C0', bg: '#181828' },
-    'design+impl': { fg: '#C090E0', bg: '#1E1230' },
-  }
-  const c = colors[type] ?? { fg: '#707070', bg: '#1A1A1A' }
+// C: typeChip removed — replaced by assigneeChip
+
+const ASSIGNEE_COLORS: Record<string, { fg: string; bg: string; label: string }> = {
+  'pdt-po':        { fg: '#FB923C', bg: '#2A1500', label: 'PO' },
+  'pdt-designer':  { fg: '#A78BFA', bg: '#1A1228', label: 'Des' },
+  'pdt-developer': { fg: '#34D399', bg: '#0A2A1A', label: 'Dev' },
+  'pdt-qa':        { fg: '#EF4444', bg: '#2A0808', label: 'QA' },
+  'user':          { fg: '#707070', bg: '#1A1A1A', label: 'User' },
+}
+
+function assigneeLabel(assignee: string): string {
+  return ASSIGNEE_COLORS[assignee]?.label ?? assignee
+}
+
+function assigneeChip(assignee: string): React.CSSProperties {
+  const c = ASSIGNEE_COLORS[assignee] ?? { fg: '#707070', bg: '#1A1A1A' }
   return {
     fontSize: 9,
     color: c.fg,
@@ -393,7 +405,6 @@ function typeChip(type: TaskType): React.CSSProperties {
     borderRadius: 2,
     fontWeight: 600,
     fontFamily: 'monospace',
-    textTransform: 'lowercase',
   }
 }
 

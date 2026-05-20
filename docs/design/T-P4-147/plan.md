@@ -1,0 +1,314 @@
+# Plan: autosaveTriggers UI 활성화 (T-P4-147)
+
+version: v0.4 | area: settings/workflow | created: 2026-05-20
+
+---
+
+## §Context
+
+`WorkflowRulesPanel.tsx` L133-137 에 `autosaveTriggers` row 가
+`phase5Lock` chip + `lockedRow` (opacity 0.45) 로 비활성화 상태.
+
+v0.4 Phase 5 deferral unlock — 이 row 를 편집 가능한 트리거 chip 목록으로 교체.
+저장소: `~/.productune/settings.json` → `workflow.autosaveTriggers: string[]`.
+
+기존 `GitRules` / `settings:saveRules` IPC 는 변경 없음 (별도 도메인).
+
+---
+
+## §Goals
+
+- autosaveTriggers row 활성화: chip 목록 + Add input
+- 기본 3개 built-in 트리거 (`ticket-close` / `phase-transition` / `user-idle-5min`)
+- 사용자 추가 / 삭제 가능
+- `~/.productune/settings.json` 에 `workflow.autosaveTriggers` 저장 (atomic tmp+rename)
+- 신규 IPC: `settings:getAutosaveTriggers` · `settings:saveAutosaveTriggers`
+- i18n: 한·영 신규 6개 키
+
+## §Non-goals
+
+- 트리거 실제 동작 (autosave action on trigger event) — 별도 ticket
+- `rules.ts` 의 기존 `AutosaveTriggers` boolean interface 수정/통합
+- Trigger chip drag-and-drop 재정렬
+- Global 기본값 변경 UI
+
+---
+
+## §Approach
+
+### A1 — `packages/core/src/settings/ui-settings.ts`
+
+**추가할 상수:**
+```ts
+const DEFAULT_AUTOSAVE_TRIGGERS: string[] = [
+  'ticket-close',
+  'phase-transition',
+  'user-idle-5min',
+]
+```
+
+**Raw-read 헬퍼** (기존 `loadSettings()` 구조 유지, 별도 low-level reader):
+```ts
+function readRawSettings(): Record<string, any> {
+  try { return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8')) }
+  catch { return {} }
+}
+```
+
+**신규 export:**
+```ts
+export function getAutosaveTriggers(): string[] {
+  const raw = readRawSettings()
+  const arr = raw?.workflow?.autosaveTriggers
+  return Array.isArray(arr)
+    ? arr.filter((t): t is string => typeof t === 'string')
+    : [...DEFAULT_AUTOSAVE_TRIGGERS]
+}
+
+export function setAutosaveTriggers(triggers: string[]): void {
+  const raw = readRawSettings()
+  if (!raw.workflow) raw.workflow = {}
+  raw.workflow.autosaveTriggers = triggers
+  const dir = path.dirname(SETTINGS_PATH)
+  fs.mkdirSync(dir, { recursive: true })
+  const tmp = SETTINGS_PATH + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(raw, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, SETTINGS_PATH)
+}
+```
+
+> 주의: `readRawSettings()` 는 전체 JSON 을 보존하며 read-modify-write 패턴.
+> 기존 `loadSettings()` 의 strip 동작(ui.language 만 반환)과 충돌 없음.
+
+### A2 — `packages/core/src/index.ts`
+
+기존 settings export 라인에 `getAutosaveTriggers, setAutosaveTriggers` 추가.
+
+### A3 — `packages/gui/electron/main.ts`
+
+`// ── Settings IPC` 블록 하단에 추가 (기존 `settings:setUiLanguage` 이후):
+
+```ts
+ipcMain.handle('settings:getAutosaveTriggers', (): string[] => {
+  return getAutosaveTriggers()
+})
+
+ipcMain.handle(
+  'settings:saveAutosaveTriggers',
+  (_event, triggers: string[]): { ok: boolean; error?: string } => {
+    try {
+      setAutosaveTriggers(triggers)
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'unknown error' }
+    }
+  },
+)
+```
+
+상단 import 라인에 `getAutosaveTriggers, setAutosaveTriggers` 추가.
+
+### A4 — `packages/gui/electron/preload.ts`
+
+settings block 끝에 추가 (기존 `saveRules` 이후):
+
+```ts
+getAutosaveTriggers: (): Promise<string[]> =>
+  ipcRenderer.invoke('settings:getAutosaveTriggers'),
+
+saveAutosaveTriggers: (triggers: string[]): Promise<{ ok: boolean; error?: string }> =>
+  ipcRenderer.invoke('settings:saveAutosaveTriggers', triggers),
+```
+
+### A5 — `packages/gui/src/components/workspace/WorkflowRulesPanel.tsx`
+
+**State 추가** (기존 `rules`, `saveStatus` 바로 아래):
+```ts
+const [triggers, setTriggers] = useState<string[]>([])
+const [newTrigger, setNewTrigger] = useState('')
+```
+
+**Mount effect** (기존 loadRules effect 와 별개):
+```ts
+useEffect(() => {
+  ;(window as any).api
+    .getAutosaveTriggers()
+    .then((t: string[]) => setTriggers(t))
+    .catch(() => {})
+}, [])
+```
+
+**Handler:**
+```ts
+const persistTriggers = useCallback(async (next: string[]) => {
+  if (successTimerRef.current) { clearTimeout(successTimerRef.current); successTimerRef.current = null }
+  setSaveStatus('idle'); setSaveError('')
+  try {
+    const result = await (window as any).api.saveAutosaveTriggers(next)
+    if (!result.ok) throw new Error(result.error ?? 'unknown error')
+    setSaveStatus('success')
+    successTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
+  } catch (e: any) {
+    setSaveError(e?.message ?? t('settings.workflowRules.saveError'))
+    setSaveStatus('error')
+  }
+}, [t])
+
+const handleAddTrigger = useCallback(() => {
+  const val = newTrigger.trim()
+  if (!val || triggers.includes(val)) return
+  const next = [...triggers, val]
+  setTriggers(next)
+  setNewTrigger('')
+  persistTriggers(next)
+}, [newTrigger, triggers, persistTriggers])
+
+const handleRemoveTrigger = useCallback((id: string) => {
+  const next = triggers.filter(t => t !== id)
+  setTriggers(next)
+  persistTriggers(next)
+}, [triggers, persistTriggers])
+```
+
+**Render — lockedRow 제거 → 교체:**
+```tsx
+{/* autosaveTriggers — 활성 (v0.4 unlock) */}
+<div style={fieldRow}>
+  <div style={fieldLabel}>{t('settings.workflowRules.autosaveTriggersLabel')}</div>
+  <div style={chipsRow}>
+    {triggers.map(tr => (
+      <span key={tr} style={triggerChip}>
+        {t(`settings.workflowRules.autosaveTriggerLabel_${tr}`,
+          { defaultValue: tr })}
+        <button
+          style={chipRemoveBtn}
+          onClick={() => handleRemoveTrigger(tr)}
+          aria-label={t('settings.workflowRules.autosaveTriggerRemove')}
+        >×</button>
+      </span>
+    ))}
+  </div>
+  <div style={addRow}>
+    <input
+      style={{ ...textInput, flex: 1 }}
+      value={newTrigger}
+      placeholder={t('settings.workflowRules.autosaveTriggerAddPlaceholder')}
+      onChange={e => setNewTrigger(e.target.value)}
+      onKeyDown={e => e.key === 'Enter' && handleAddTrigger()}
+      spellCheck={false}
+    />
+    <button style={addBtn} onClick={handleAddTrigger}>
+      {t('settings.workflowRules.autosaveTriggerAdd')}
+    </button>
+  </div>
+</div>
+```
+
+**신규 style 상수:**
+```ts
+const triggerChip: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  fontSize: 11,
+  fontFamily: 'monospace',
+  background: '#1A2A1A',
+  color: '#6EE7A0',
+  borderRadius: 4,
+  padding: '2px 4px 2px 8px',
+}
+
+const chipRemoveBtn: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: '#6EE7A0',
+  cursor: 'pointer',
+  fontSize: 13,
+  padding: 0,
+  lineHeight: 1,
+  opacity: 0.7,
+}
+
+const addRow: React.CSSProperties = {
+  display: 'flex',
+  gap: 6,
+  alignItems: 'center',
+}
+
+const addBtn: React.CSSProperties = {
+  fontSize: 11,
+  color: '#FF6B2B',
+  background: 'transparent',
+  border: '1px solid #FF6B2B',
+  borderRadius: 4,
+  padding: '4px 10px',
+  cursor: 'pointer',
+  flexShrink: 0,
+}
+```
+
+**`lockedRow` + `phase5Chip` style 상수 삭제** (미사용 → TS lint 경고 방지).
+
+### A6 — i18n (`ko.json` + `en.json`)
+
+`settings.workflowRules` 에 추가:
+
+| key | ko | en |
+|:--|:--|:--|
+| `autosaveTriggerAddPlaceholder` | `트리거 추가…` | `Add trigger…` |
+| `autosaveTriggerAdd` | `추가` | `Add` |
+| `autosaveTriggerRemove` | `제거` | `Remove` |
+| `autosaveTriggerLabel_ticket-close` | `티켓 완료 시` | `On ticket close` |
+| `autosaveTriggerLabel_phase-transition` | `Phase 전환 시` | `On phase transition` |
+| `autosaveTriggerLabel_user-idle-5min` | `5분 대기 후` | `After 5 min idle` |
+
+`phase5Lock` 키: WorkflowRulesPanel 에서 제거되나, i18n 파일에서는 **삭제 금지**
+(dead key cleanup = 별도 ticket).
+
+### A7 — Build check
+
+```bash
+pnpm -F core build && pnpm -F gui build
+# TypeScript error 0
+```
+
+---
+
+## §Acceptance
+
+| # | 조건 |
+|:--|:--|
+| A1 | autosaveTriggers row: lockedRow opacity 없음, phase5Chip 없음 |
+| A2 | 첫 실행 시 default 3개 chip 표시 (`~/.productune/settings.json` 없을 때) |
+| A3 | ×버튼으로 트리거 삭제 → chip 사라짐 → saveSuccess banner |
+| A4 | Add input → Enter 또는 "추가" → chip 추가 → 저장 |
+| A5 | 빈 문자열 / 중복 trigger → Add 무시 (chip 불변) |
+| A6 | 앱 재시작 후 마지막 저장 목록 복원 |
+| A7 | `pnpm -F core build && pnpm -F gui build` — 에러 없음 |
+
+---
+
+## §Out of scope
+
+- autosave 실제 동작 구현 (trigger → autosave action)
+- `rules.ts` 의 `AutosaveTriggers` boolean interface 수정
+- Trigger chip drag-and-drop
+- `phase5Lock` i18n key cleanup
+
+---
+
+## §QA scope
+
+| Field | Value |
+|:--|:--|
+| **QA invoke** | `manual smoke only` |
+| **test target** | `WorkflowRulesPanel` — autosaveTriggers section |
+| **사용자 dogfood** | (1) row 활성화 — chip 3개 표시. (2) ×로 하나 삭제 → 저장. (3) Add input → Enter → chip 추가 + 저장. (4) 앱 재시작 → 목록 유지. |
+| **regression check** | `settings:loadRules` / `settings:saveRules` 영향 없음. 언어 설정·Vercel token 저장 동작 side-effect 없음 (raw read-modify-write 패턴). |
+
+---
+
+## §Open Questions
+
+- `AutosaveTriggers` boolean interface (`rules.ts`) — 기존 코드에 선언만 있고 미사용.
+  현재 ticket 에서 건드리지 않음. 향후 autosave 기능 구현 시 통합 여부 결정.
