@@ -531,6 +531,7 @@
       },
       "title": "버전 히스토리",
       "empty": "버전을 선택하세요",
+      "noActivity": "이 버전에 기록된 작업 없음",
       "subtitle": "작업 {{count}} · 배포 {{deploys}} · 소요 {{duration}}",
       "kanban": {
         "column": {

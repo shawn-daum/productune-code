@@ -531,6 +531,7 @@
       },
       "title": "Version history",
       "empty": "Select a version",
+      "noActivity": "No activity recorded in this version",
       "subtitle": "{{count}} tasks · {{deploys}} deploys · {{duration}}",
       "kanban": {
         "column": {

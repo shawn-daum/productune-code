@@ -623,7 +623,7 @@ export default function VersionHistoryView() {
       <div style={cardListWrap}>
         {deployLoading && <DeployLoadingSkeleton />}
         {allCards.length === 0 && !deployLoading && (
-          <EmptyState message={t('workspace.versionHistory.empty')} />
+          <EmptyState message={t('workspace.versionHistory.noActivity')} />
         )}
         {allCards.map((item) =>
           item.kind === 'ticket' ? (
