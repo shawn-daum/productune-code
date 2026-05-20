@@ -12,8 +12,6 @@ import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../../../store/workspace'
 import McpServerModal from '../../McpServerModal'
 
-type McpStatus = 'ok' | 'err' | 'checking'
-
 export interface McpServerEntry {
   name: string
   config: {
@@ -24,7 +22,7 @@ export interface McpServerEntry {
     env?: Record<string, string>
   }
   source: 'productune' | 'local' | 'project'
-  status: McpStatus
+  // status 필드 제거 — Phase 5 에서 testConnection 구현 시 재추가
 }
 
 interface Props {
@@ -42,9 +40,9 @@ export default function McpServersTab(_: Props) {
     setLoading(true)
     try {
       const api = (window as any).api
-      const raw: Array<Omit<McpServerEntry, 'status'>> =
+      const raw: Array<McpServerEntry> =
         (await api.mcpGetServers?.(project?.projectDir)) ?? []
-      setServers(raw.map((s) => ({ ...s, status: 'checking' as McpStatus })))
+      setServers(raw)
     } catch {
       setServers([])
     } finally {
@@ -86,7 +84,6 @@ export default function McpServersTab(_: Props) {
             >
               <span style={serverNameStyle}>{server.name}</span>
               <span style={tierPill}>[{server.source}]</span>
-              <StatusBadge status={server.status} t={t} />
             </button>
           ))}
         </div>
@@ -117,34 +114,6 @@ export default function McpServersTab(_: Props) {
         />
       )}
     </div>
-  )
-}
-
-// ── Sub-component ─────────────────────────────────────────────────────────────
-
-function StatusBadge({
-  status,
-  t,
-}: {
-  status: McpStatus
-  t: (k: string) => string
-}) {
-  if (status === 'ok')
-    return (
-      <span style={{ ...badgeBase, color: '#4ADE80' }}>
-        ● {t('settings.mcp.statusConnected')}
-      </span>
-    )
-  if (status === 'err')
-    return (
-      <span style={{ ...badgeBase, color: '#EF4444' }}>
-        ✗ {t('settings.mcp.statusUnauth')}
-      </span>
-    )
-  return (
-    <span style={{ ...badgeBase, color: '#707070' }}>
-      ◌ {t('settings.mcp.statusChecking')}
-    </span>
   )
 }
 
@@ -203,11 +172,6 @@ const tierPill: React.CSSProperties = {
   padding: '0 3px',
   flexShrink: 0,
   userSelect: 'none',
-}
-
-const badgeBase: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 500,
 }
 
 const centeredHint: React.CSSProperties = {

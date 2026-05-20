@@ -350,15 +350,8 @@
         "skillsMore": "+ {{count}}개 더 (Matrix에서 전체 보기)",
         "skillsLink": "스킬 매트릭스 →",
         "skillsCount": "총 {{count}}개",
-        "wikiMemory": "위키 메모리",
         "mcpServers": "MCP 서버",
         "mcpLink": "MCP 서버 목록 열기"
-      },
-      "wikiMenu": {
-        "fs": "위키 (로컬 마크다운)",
-        "userMemory": "사용자 메모리",
-        "projectState": "프로젝트 상태",
-        "promo": "승급 후보"
       },
       "mcp": {
         "empty": "연결된 MCP 서버 없음"

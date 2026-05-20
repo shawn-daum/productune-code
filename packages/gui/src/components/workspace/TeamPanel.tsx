@@ -1,21 +1,18 @@
 /**
- * TeamPanel — Team sidebar (T-P4-099 restructure).
+ * TeamPanel — Team sidebar (T-P4-099 restructure, T-P4-145 bug fix).
  *
  * Layout:
  *  1. Personas section — plain title "페르소나" + PersonaRow × 4 inline (no collapse toggle)
- *     Each PersonaRow click → team-wiki tab filtered by personaKey (T-P4-140)
+ *     Each PersonaRow click → persona-def:<key> tab (T-P4-145 Bug 5)
  *  2. Skills nav row — click → skill-matrix main tab (T-P4-098)
- *  3. 위키 메모리 section header + 4 sub-rows (T-P4-140 amend):
- *     Wiki: fs / 사용자 메모리 / 프로젝트 상태 / 승급 후보
- *     Each sub-row click → team-wiki tab filtered by backend key
- *  4. MCP Servers nav row
+ *  3. MCP Servers nav row
  *
- * Sidebar = nav only. WikiRow list lives in TeamWikiTab (main pane).
+ * 위키 메모리 section removed (T-P4-145 Bug 6): memory content absorbed into PersonaDefTab sections.
+ * Sidebar = nav only.
  */
 
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FileText, Brain, Settings2, Pin } from 'lucide-react'
 import type { PoState } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import { PERSONA_COLORS } from '../../store/personaPresence'
@@ -78,30 +75,6 @@ function PersonaRow({ def, isActive, onClick }: PersonaRowProps) {
   )
 }
 
-// ── Wiki sub-row (위키 메모리 section items) ──────────────────────────────────
-
-interface WikiSubRowProps {
-  icon: React.ReactElement
-  label: string
-  badge?: number
-  onClick: () => void
-}
-
-function WikiSubRow({ icon, label, badge, onClick }: WikiSubRowProps) {
-  return (
-    <button
-      style={wikiSubRowStyle}
-      onClick={onClick}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-    >
-      <span style={wikiSubIconWrap}>{icon}</span>
-      <span style={wikiSubLabel}>{label}</span>
-      {badge !== undefined && badge > 0 && <span style={promoWarnBadge}>{badge}</span>}
-    </button>
-  )
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface Props {
@@ -137,9 +110,14 @@ export default function TeamPanel({ poState }: Props) {
     return diff < 60
   }
 
-  // Persona row click → team-wiki scoped by personaKey (T-P4-140)
+  // Persona row click → persona-def tab, distinct tabId per persona (T-P4-145)
   const handlePersonaClick = (def: PersonaDef) => {
-    openTab('team-wiki', 'team-wiki', { personaKey: def.key })
+    openTab(
+      `persona-def:${def.key}`,
+      'persona-def',
+      { personaKey: def.key },
+      t(def.nameKey),
+    )
   }
 
   const handleMatrixClick = () => {
@@ -149,10 +127,6 @@ export default function TeamPanel({ poState }: Props) {
   const handleMcpClick = () => {
     openTab('mcp-servers', 'mcp-servers', {})
   }
-
-  // Promotion pending count for wiki sub-row badge
-  const pendingPromos = poState?.pending_promotions?.filter((p) => p.status === 'pending') ?? []
-  const promoCount = pendingPromos.length
 
   return (
     <div style={panelWrap}>
@@ -188,34 +162,6 @@ export default function TeamPanel({ poState }: Props) {
               : <span style={{ color: '#3A3A3A' }}>?</span>}
           </span>
         </button>
-      </div>
-
-      {/* ── 위키 메모리 section — header + 4 sub-rows (T-P4-140 amend) ── */}
-      <div style={sectionWrap}>
-        <div style={plainSecHdr}>
-          <span style={secHdrText}>{t('workspace.team.section.wikiMemory')}</span>
-        </div>
-        <WikiSubRow
-          icon={<FileText size={14} color="#808080" />}
-          label={t('workspace.team.wikiMenu.fs')}
-          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'fs' })}
-        />
-        <WikiSubRow
-          icon={<Brain size={14} color="#808080" />}
-          label={t('workspace.team.wikiMenu.userMemory')}
-          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'userMemory' })}
-        />
-        <WikiSubRow
-          icon={<Settings2 size={14} color="#808080" />}
-          label={t('workspace.team.wikiMenu.projectState')}
-          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'projectState' })}
-        />
-        <WikiSubRow
-          icon={<Pin size={14} color="#808080" />}
-          label={t('workspace.team.wikiMenu.promo')}
-          badge={promoCount}
-          onClick={() => openTab('team-wiki', 'team-wiki', { backend: 'promo' })}
-        />
       </div>
 
       {/* ── MCP Servers nav row ── */}
@@ -372,46 +318,4 @@ const personaModel: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-// Promo warn badge
-const promoWarnBadge: React.CSSProperties = {
-  fontSize: 9,
-  fontFamily: 'monospace',
-  color: '#E07B39',
-  background: '#1A0E05',
-  border: '1px solid #E07B3950',
-  borderRadius: 3,
-  padding: '0 4px',
-  flexShrink: 0,
-}
-
-// Wiki sub-row (위키 메모리 section items)
-const wikiSubRowStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  width: '100%',
-  height: 28,
-  paddingLeft: 24,
-  paddingRight: 8,
-  background: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  gap: 6,
-  textAlign: 'left',
-  transition: 'background 0.1s',
-}
-
-const wikiSubIconWrap: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  flexShrink: 0,
-}
-
-const wikiSubLabel: React.CSSProperties = {
-  fontSize: 13,
-  color: '#C0C0C0',
-  flex: 1,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
 

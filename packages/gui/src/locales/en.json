@@ -350,15 +350,8 @@
         "skillsMore": "+ {{count}} more (see in Matrix)",
         "skillsLink": "Skill Matrix →",
         "skillsCount": "{{count}} skills",
-        "wikiMemory": "Wiki Memory",
         "mcpServers": "MCP Servers",
         "mcpLink": "Open MCP Servers"
-      },
-      "wikiMenu": {
-        "fs": "Wiki (local markdown)",
-        "userMemory": "User Memory",
-        "projectState": "Project State",
-        "promo": "Promotion Candidates"
       },
       "mcp": {
         "empty": "No MCP servers configured"

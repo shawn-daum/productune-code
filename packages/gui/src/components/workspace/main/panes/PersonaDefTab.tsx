@@ -1,8 +1,17 @@
 import { useTranslation } from 'react-i18next'
 import { PERSONA_COLORS } from '../../../../store/personaPresence'
 import type { PersonaId } from '../../../../store/personaPresence'
+import { useWorkspace } from '../../../../store/workspace'
+import { FileText, ChevronRight as ChevRight } from 'lucide-react'
 
 // ── Static persona metadata (T-P4-044 dispatch target, Phase 4 preview-only) ─
+
+const KEY_TO_ID: Record<string, string> = {
+  po:       'pdt-po',
+  designer: 'pdt-designer',
+  dev:      'pdt-developer',
+  qa:       'pdt-qa',
+}
 
 type PersonaKey = PersonaId
 
@@ -52,6 +61,15 @@ const PERSONA_META: Record<string, PersonaMeta> = {
   },
 }
 
+// ── Long-term memory file config per persona ──────────────────────────────────
+
+const LT_MEMORY: Record<string, { path: string; tabId: string; title: string }[]> = {
+  po:       [{ path: '~/.productune/po-memory.md',       tabId: 'user-memory',        title: 'User Memory' }],
+  designer: [{ path: 'docs/designer/decisions.md',       tabId: 'designer-decisions', title: 'Designer Decisions' }],
+  dev:      [{ path: 'docs/developer/feature-history.md', tabId: 'feature-history',   title: 'Feature History' }],
+  qa:       [{ path: 'docs/qa/fail-patterns.md',         tabId: 'qa-fail-patterns',   title: 'QA Fail Patterns' }],
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -60,7 +78,16 @@ interface Props {
 
 export default function PersonaDefTab({ props }: Props) {
   const { t } = useTranslation()
-  const personaId = (props?.persona as string) ?? ''
+
+  // Store bindings — before any early return (Rules of Hooks)
+  const poState   = useWorkspace((s) => s.poState)
+  const openTabFn = useWorkspace((s) => s.openTab)
+
+  // personaId derivation: persona prop (WorkspaceShell path) OR personaKey → KEY_TO_ID (TeamPanel path)
+  const personaKeyProp = (props?.personaKey as string) ?? ''
+  const personaIdProp  = (props?.persona    as string) ?? ''
+  const personaId = personaIdProp || KEY_TO_ID[personaKeyProp] || ''
+
   const sourcePath = (props?.sourcePath as string) ?? `~/.claude/agents/${personaId}.md`
   const meta = PERSONA_META[personaId] ?? null
 
@@ -73,6 +100,21 @@ export default function PersonaDefTab({ props }: Props) {
   }
 
   const color = PERSONA_COLORS[meta.key]
+
+  // Long-term memory rows for this persona
+  const ltRows = LT_MEMORY[meta.key] ?? []
+
+  // Project memory derived from poState
+  const currentVersion = poState?.current_version ?? '—'
+  const ct = poState?.current_task
+  const activeTask = ct?.assignee_persona === meta.id
+    ? (ct?.ticket_id ?? '—')
+    : '—'
+  const promoCount = (poState?.pending_promotions ?? [])
+    .filter((p) => (p as any).persona === meta.id && p.status === 'pending').length
+  const lastSeen: string =
+    ((poState as any)?.current_task?.persona_session_meta?.[meta.id]?.last_seen as string | undefined)
+      ?.slice(0, 10) ?? '—'
 
   return (
     <div style={wrap}>
@@ -112,9 +154,42 @@ export default function PersonaDefTab({ props }: Props) {
         </div>
       </div>
 
-      {/* Preview note */}
-      <div style={previewNote}>
-        {t('workspace.team.personaDef.previewNote')}
+      {/* Long-term memory */}
+      <div style={sectionSubHdr}>LONG-TERM MEMORY</div>
+      {ltRows.length === 0 && <div style={memoryEmpty}>—</div>}
+      {ltRows.map((cfg) => (
+        <button
+          key={cfg.tabId}
+          style={memoryRow}
+          onClick={() => openTabFn(cfg.tabId, 'markdown', { path: cfg.path, title: cfg.title }, cfg.title)}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+        >
+          <FileText size={13} color="#505050" />
+          <span style={memoryRowPath}>{cfg.path}</span>
+          <ChevRight size={12} color="#505050" style={{ marginLeft: 'auto', flexShrink: 0 }} />
+        </button>
+      ))}
+
+      {/* Project memory */}
+      <div style={sectionSubHdr}>PROJECT MEMORY</div>
+      <div style={metaSection}>
+        <div style={metaRow}>
+          <span style={metaLabel}>current version</span>
+          <span style={metaValue}>{currentVersion}</span>
+        </div>
+        <div style={metaRow}>
+          <span style={metaLabel}>active task</span>
+          <span style={metaValue}>{activeTask}</span>
+        </div>
+        <div style={metaRow}>
+          <span style={metaLabel}>promo pending</span>
+          <span style={metaValue}>{promoCount}</span>
+        </div>
+        <div style={metaRow}>
+          <span style={metaLabel}>last seen</span>
+          <span style={metaValue}>{lastSeen}</span>
+        </div>
       </div>
     </div>
   )
@@ -222,10 +297,42 @@ const metaValue: React.CSSProperties = {
   color: '#C0C0C0',
 }
 
-const previewNote: React.CSSProperties = {
+const sectionSubHdr: React.CSSProperties = {
   fontSize: 10,
+  fontWeight: 700,
   color: '#3A3A3A',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  borderTop: '1px solid #1E1E1E',
+  padding: '10px 0 6px',
+  marginTop: 4,
+}
+
+const memoryRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '5px 0',
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  width: '100%',
+  textAlign: 'left',
+}
+
+const memoryRowPath: React.CSSProperties = {
+  fontSize: 11,
+  fontFamily: 'monospace',
+  color: '#707070',
+  flex: 1,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const memoryEmpty: React.CSSProperties = {
+  fontSize: 11,
+  color: '#3A3A3A',
+  padding: '4px 0',
   fontStyle: 'italic',
-  borderTop: '1px dashed #1E1E1E',
-  paddingTop: 12,
 }

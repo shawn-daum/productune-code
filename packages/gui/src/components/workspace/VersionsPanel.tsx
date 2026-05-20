@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { ChevronRight } from 'lucide-react'
 import type { PoState, Version, Phase } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
 import { useWorkspace, paneTreeUtil } from '../../store/workspace'
@@ -117,8 +118,20 @@ function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }
   const { t } = useTranslation()
   const phaseLabel: Phase | '?' = (typeof phaseNum === 'number' && PHASE_NAMES[phaseNum]) || '?'
   return (
-    <div style={selected ? cardActiveSelected : cardActive} onClick={onClick}>
-      <div style={cardId}>{version.id}</div>
+    <div
+      style={selected ? cardActiveSelected : cardActive}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLDivElement).style.borderColor = '#FF6B2B'
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLDivElement).style.borderColor = '#FF6B2B33'
+      }}
+    >
+      <div style={cardIdRow}>
+        <span style={cardId}>{version.id}</span>
+        <ChevronRight size={12} color="#FF6B2B66" style={chevronStyle} />
+      </div>
       <div style={cardLine}>
         {t('workspace.versions.phaseLabel')}
         <span style={cardLineValue}>{phaseLabel}{typeof phaseNum === 'number' ? ` (${phaseNum}/5)` : ''}</span>
@@ -184,7 +197,7 @@ const cardActive: React.CSSProperties = {
   background: '#1A1208',
   border: '1px solid #FF6B2B33',
   borderRadius: 6,
-  padding: '10px 12px',
+  padding: '12px 14px',
   marginBottom: 6,
   cursor: 'pointer',
   transition: 'border-color 0.12s',
@@ -218,6 +231,18 @@ const cardPastSelected: React.CSSProperties = {
   padding: '8px 12px',
   marginBottom: 6,
   cursor: 'pointer',
+}
+
+const cardIdRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  marginBottom: 4,
+}
+
+const chevronStyle: React.CSSProperties = {
+  marginLeft: 'auto',
+  flexShrink: 0,
+  transition: 'color 0.12s',
 }
 
 const cardId: React.CSSProperties = {

@@ -1,6 +1,6 @@
 ---
 ticket_id: T-PATCH-002
-version: legacy/phase3-fixes
+version: v0.4-meta-dogfood
 round: phase3-fixes
 type: doctrine-update
 status: done

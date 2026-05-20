@@ -315,6 +315,7 @@ const columnBody: React.CSSProperties = {
   gap: 6,
   padding: 8,
   overflowY: 'auto',
+  overflowX: 'hidden',   // T-P4-144: 컬럼 경계 밖 카드 노출 차단
 }
 
 const columnEmpty: React.CSSProperties = {
@@ -332,6 +333,8 @@ const card: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 6,
+  minWidth: 0,        // T-P4-144: flex item min-width:auto 재정의 → 컬럼 너비 초과 방지
+  overflow: 'hidden', // T-P4-144: 내용 clipping
 }
 
 const cardTopRow: React.CSSProperties = {
@@ -360,6 +363,7 @@ const cardTitle: React.CSSProperties = {
   fontSize: 12,
   color: '#E0E0E0',
   lineHeight: 1.4,
+  overflowWrap: 'break-word', // T-P4-144: 긴 한글·영문 제목 줄바꿈
 }
 
 const cardBottomRow: React.CSSProperties = {
