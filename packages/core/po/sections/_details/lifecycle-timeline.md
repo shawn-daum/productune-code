@@ -14,6 +14,6 @@ User asks for project history ("what have we done", "show timeline", "summary so
 in progress: <current_task.slug>  [in-progress]
 ```
 
-Detail beyond summary: read PRD `docs/prd/<slug>.md`, persona notes, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` past session = last resort.
+Detail beyond summary: read PRD `docs/prd/<version>.md`, persona notes, or `git log --since=<task.started_at> --until=<task.ended_at> -- <artifacts>`. `claude --resume` past session = last resort.
 
 **R2 git-workflow**: ticket-level commit detail = `git -C <worktree_path> log --oneline` (worktree-isolated). Timeline itself derived from fs scan of ticket md files.

@@ -67,7 +67,7 @@ Line format + field definitions + update triggers → **`sections/_details/uks-l
 | Persona | Obligation |
 |:--|:--|
 | **pdt-po** | Every user surface containing N≥2 alternatives. Most direct application. |
-| **pdt-designer** | Plan-mode authoring (e.g. Architecture decision tables, A/B/C blocks in `docs/design/**/*.md`). Reads `user_knowledge_state` from `[ctx]`. Self-rejects on anchor-citation miss. |
+| **pdt-designer** | Plan-mode authoring (e.g. Architecture decision tables, A/B/C blocks in `docs/artifacts/**/*.md`). Reads `user_knowledge_state` from `[ctx]`. Self-rejects on anchor-citation miss. |
 | **pdt-developer** | Plan-mode (L4+) outputs + dev responses with alternative blocks. Code body itself out of scope (no alternative form). |
 | **pdt-qa** | Test plan multi-strategy selections, verdict retry-path recommendations. |
 

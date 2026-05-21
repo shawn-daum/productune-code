@@ -45,8 +45,13 @@ Inputs: `prd_path` + `wiki_consult:` (PO-prefetched; if present read first, else
 4. Document surprises → `docs/developer/project-notes.md`.
 
 ## Output format
+
+**JSON-only output rule (T-P4-150)**: Response MUST be a single JSON object. stdout first char = `{`. No body prose before or after. No markdown tables outside JSON values. Human content → `summary` (≤200 char, required) + `user_surface` (≤500 char, optional). Doctrine: `~/.productune/sections/_formats/persona-output-format.md`.
+
 ```json
 { "persona":"pdt-developer", "session_id":"<uuid>",
+  "summary": "<≤200 char — what was implemented/changed this turn>",
+  "user_surface": "<≤500 char — optional; omit for plan-mode turns>",
   "changed_files":["path:line-range"], "commands_run":["npm run build"],
   "notes":"...", "confidence":"low|medium|high",
   "unresolved":["..."], "ready_for_qa":true,

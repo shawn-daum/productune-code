@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pending Gate UI — 4 Options Mockup · productune</title>
+  <style>
+    /* ── Design Tokens ─────────────────────────────── */
+    :root {
+      --surface-base:     #0A0A0A;
+      --surface-body:     #0F0F0F;
+      --surface-panel:    #141414;
+      --surface-subpanel: #1A1A1A;
+      --surface-modal:    #1C1C20;
+      --border-subtle:    #1A1A1A;
+      --border-default:   #1F1F1F;
+      --border-strong:    #2A2A2A;
+      --border-muted:     #3A3A3A;
+      --text-primary:     #E8E8EA;
+      --text-emphasis:    #F0F0F0;
+      --text-secondary:   #C8C8CC;
+      --text-muted:       #A0A0A0;
+      --text-faint:       #707070;
+      --text-disabled:    #505050;
+      --accent:           #FF6B2B;
+      --brand-orange:     #FF6B2B;
+      --persona-po:       #FF6B2B;
+      --persona-designer: #A78BFA;
+      --persona-dev:      #38BDF8;
+      --persona-qa:       #34D399;
+      --stage-build:      #38BDF8;
+      --status-done:      #60B860;
+      --status-in-progress: #FF6B2B;
+      --health-info:      #38BDF8;
+      --health-warn:      #FBBF24;
+      --health-success:   #34D399;
+      --health-error:     #EF4444;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--surface-base);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      font-size: 13px;
+      line-height: 1.4;
+      min-height: 100vh;
+    }
+
+    /* ── Page Header ─────────────────────────────── */
+    .page-header {
+      position: sticky; top: 0; z-index: 200;
+      background: var(--surface-panel);
+      border-bottom: 1px solid var(--border-default);
+      padding: 12px 24px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .brand-mark {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--brand-orange); flex-shrink: 0;
+      box-shadow: 0 0 6px rgba(255,107,43,0.5);
+    }
+    .page-header h1 {
+      font-size: 14px; font-weight: 600; color: var(--text-emphasis);
+    }
+    .page-header .meta {
+      font-size: 11px; color: var(--text-faint); margin-left: auto;
+    }
+    .interact-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: rgba(255,107,43,0.1); border: 1px solid rgba(255,107,43,0.25);
+      border-radius: 4px; padding: 2px 7px;
+      font-size: 10px; color: var(--accent);
+    }
+
+    /* ── Grid ─────────────────────────────── */
+    .options-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      padding: 20px 24px 0;
+    }
+
+    /* ── Option Card ─────────────────────────────── */
+    .option-card {
+      background: var(--surface-panel);
+      border: 1px solid var(--border-default);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .option-label {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-default);
+      background: var(--surface-subpanel);
+    }
+    .opt-id {
+      font-size: 10px; font-weight: 700; color: var(--accent);
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .opt-title {
+      font-size: 13px; font-weight: 600; color: var(--text-emphasis);
+      margin-top: 1px;
+    }
+    .opt-desc {
+      font-size: 11px; color: var(--text-muted);
+      margin-top: 3px; line-height: 1.5;
+    }
+
+    /* ── Mini Workspace ─────────────────────────────── */
+    .workspace {
+      display: flex;
+      height: 370px;
+      position: relative;
+      overflow: hidden;
+      flex: 1;
+    }
+
+    /* Activity bar */
+    .act-bar {
+      width: 38px; flex-shrink: 0;
+      background: var(--surface-base);
+      border-right: 1px solid var(--border-subtle);
+      display: flex; flex-direction: column; align-items: center;
+      padding: 8px 0; gap: 3px;
+    }
+    .act-icon {
+      width: 26px; height: 26px; border-radius: 5px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; position: relative;
+      transition: background 0.1s;
+    }
+    .act-icon:hover { background: var(--surface-subpanel); }
+    .act-icon.active { background: var(--surface-subpanel); }
+    .act-icon svg { opacity: 0.55; }
+    .act-icon.active svg { opacity: 1; }
+    .act-badge {
+      position: absolute; top: 3px; right: 3px;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--health-warn); border: 1px solid var(--surface-base);
+    }
+
+    /* Left sidebar */
+    .l-sidebar {
+      width: 168px; flex-shrink: 0;
+      background: var(--surface-panel);
+      border-right: 1px solid var(--border-default);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+    .sb-head {
+      padding: 9px 11px 7px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .sb-title {
+      font-size: 9px; font-weight: 700; color: var(--text-faint);
+      letter-spacing: 0.1em; text-transform: uppercase;
+    }
+    .sb-nav { flex: 1; padding: 5px 0; overflow-y: auto; }
+    .nav-row {
+      display: flex; align-items: center; gap: 7px;
+      padding: 4px 11px; cursor: pointer;
+      font-size: 11px; color: var(--text-secondary);
+      transition: background 0.1s;
+    }
+    .nav-row:hover { background: var(--surface-subpanel); }
+    .nav-row.active { background: var(--surface-subpanel); color: var(--text-emphasis); }
+    .nav-row svg { flex-shrink: 0; opacity: 0.65; }
+    .nav-row.active svg { opacity: 1; }
+    .nav-chip {
+      margin-left: auto;
+      background: var(--accent); color: #fff;
+      font-size: 9px; font-weight: 700;
+      padding: 1px 5px; border-radius: 8px; min-width: 15px; text-align: center;
+    }
+    .nav-row.pending-row {
+      border-left: 2px solid var(--health-warn);
+      color: var(--health-warn) !important;
+      background: rgba(251,191,36,0.06);
+    }
+    .nav-row.pending-row svg { opacity: 1 !important; }
+    .nav-chip.warn { background: var(--health-warn); color: #000; }
+
+    /* Stage strip */
+    .stage-strip {
+      padding: 7px 11px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .stage-row {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 10px; color: var(--text-muted);
+    }
+    .s-dot {
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    }
+    .s-dot.done   { background: var(--status-done); }
+    .s-dot.active { background: var(--stage-build); }
+    .s-dot.idle   { background: var(--border-muted); }
+
+    /* Main panel */
+    .main-panel {
+      flex: 1; min-width: 0;
+      background: var(--surface-body);
+      display: flex; flex-direction: column;
+      position: relative; overflow: hidden;
+    }
+    .tabs-row {
+      display: flex; align-items: center;
+      height: 33px; background: var(--surface-panel);
+      border-bottom: 1px solid var(--border-default);
+      padding: 0 8px; gap: 0; flex-shrink: 0;
+    }
+    .tab {
+      display: flex; align-items: center; gap: 4px;
+      padding: 0 9px; height: 33px;
+      font-size: 11px; color: var(--text-muted);
+      cursor: pointer; border-bottom: 2px solid transparent;
+      white-space: nowrap; transition: color 0.1s;
+    }
+    .tab:hover { color: var(--text-secondary); }
+    .tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
+    .tab.gate-tab { color: var(--health-warn); border-bottom-color: var(--health-warn); }
+    .tab svg { opacity: 0.7; }
+    .tab.active svg, .tab.gate-tab svg { opacity: 1; }
+    .tab-badge {
+      background: var(--health-warn); color: #000;
+      font-size: 9px; font-weight: 700;
+      padding: 1px 4px; border-radius: 5px;
+    }
+    .panel-body { flex: 1; padding: 14px; overflow-y: auto; }
+    /* placeholder content blocks */
+    .blk {
+      height: 9px; background: var(--surface-subpanel);
+      border-radius: 3px; margin-bottom: 7px;
+    }
+    .blk.s { width: 55%; } .blk.m { width: 78%; } .blk.l { width: 100%; }
+
+    /* PO Chat panel */
+    .chat-panel {
+      width: 205px; flex-shrink: 0;
+      background: var(--surface-panel);
+      border-left: 1px solid var(--border-default);
+      display: flex; flex-direction: column;
+      position: relative; overflow: visible;
+    }
+    .chat-head {
+      padding: 8px 11px;
+      border-bottom: 1px solid var(--border-default);
+      display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+    }
+    .po-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--persona-po); flex-shrink: 0; }
+    .po-name { font-size: 11px; font-weight: 600; color: var(--text-primary); }
+    .online-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--health-success); margin-left: auto; }
+    .chat-msgs {
+      flex: 1; padding: 8px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .msg {
+      background: var(--surface-subpanel);
+      border-radius: 5px; padding: 6px 8px;
+      font-size: 10px; color: var(--text-secondary); line-height: 1.5;
+    }
+    .msg.po { border-left: 2px solid var(--persona-po); }
+    .msg-lbl {
+      font-size: 9px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;
+    }
+    .chat-input-wrap {
+      padding: 7px 8px;
+      border-top: 1px solid var(--border-subtle); flex-shrink: 0;
+    }
+    .chat-inp {
+      width: 100%;
+      background: var(--surface-subpanel);
+      border: 1px solid var(--border-strong);
+      border-radius: 5px; padding: 5px 8px;
+      font-size: 10px; color: var(--text-primary);
+      outline: none; font-family: inherit;
+    }
+    .chat-inp::placeholder { color: var(--text-faint); }
+
+    /* ── Shared Gate UI atoms ──────────────────────── */
+    .gate-card {
+      background: var(--surface-modal);
+      border: 1px solid rgba(251,191,36,0.35);
+      border-radius: 7px; padding: 12px 14px;
+    }
+    .gate-head {
+      display: flex; align-items: center; gap: 7px;
+      margin-bottom: 8px;
+    }
+    .gate-icon-wrap {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: rgba(251,191,36,0.12);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .gate-label {
+      font-size: 10px; font-weight: 700; color: var(--health-warn);
+      text-transform: uppercase; letter-spacing: 0.07em;
+    }
+    .pill-row { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+    .pill {
+      display: inline-flex; align-items: center;
+      padding: 2px 6px; border-radius: 4px;
+      font-size: 9px; font-weight: 600;
+    }
+    .pill.build { background: rgba(56,189,248,0.12); color: var(--stage-build); }
+    .pill.close { background: rgba(96,184,96,0.12); color: var(--status-done); }
+    .pill-arrow { font-size: 9px; color: var(--text-muted); }
+    .gate-q {
+      font-size: 11px; color: var(--text-primary);
+      line-height: 1.6; margin-bottom: 8px;
+    }
+    .gate-meta { font-size: 10px; color: var(--text-muted); margin-bottom: 9px; }
+    .ans-row { display: flex; gap: 5px; align-items: stretch; }
+    .ans-inp {
+      flex: 1;
+      background: var(--surface-subpanel);
+      border: 1px solid var(--border-strong);
+      border-radius: 5px; padding: 5px 8px;
+      font-size: 10px; color: var(--text-primary);
+      outline: none; font-family: inherit;
+      resize: none;
+    }
+    .ans-inp::placeholder { color: var(--text-faint); }
+    .ans-inp:focus { border-color: rgba(255,107,43,0.5); }
+    .send-btn {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: 5px; padding: 5px 9px;
+      font-size: 10px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; gap: 4px;
+      font-family: inherit; white-space: nowrap;
+      transition: background 0.1s;
+    }
+    .send-btn:hover { background: #FF7E45; }
+    .action-row { display: flex; gap: 5px; margin-top: 7px; }
+    .act-approve {
+      flex: 1; background: rgba(96,184,96,0.1);
+      border: 1px solid rgba(96,184,96,0.25);
+      color: var(--status-done); border-radius: 5px;
+      padding: 4px; font-size: 10px; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+      transition: background 0.1s;
+    }
+    .act-approve:hover { background: rgba(96,184,96,0.18); }
+    .act-hold {
+      flex: 1; background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.2);
+      color: var(--health-error); border-radius: 5px;
+      padding: 4px; font-size: 10px; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+      transition: background 0.1s;
+    }
+    .act-hold:hover { background: rgba(239,68,68,0.15); }
+    .act-more {
+      background: var(--surface-subpanel);
+      border: 1px solid var(--border-strong);
+      color: var(--text-muted); border-radius: 5px;
+      padding: 4px 8px; font-size: 10px;
+      cursor: pointer; font-family: inherit;
+    }
+
+    /* ── Option A: Sticky chip + popover ────────────── */
+    .gate-chip {
+      padding: 5px 10px;
+      border-bottom: 1px solid var(--border-default);
+      background: rgba(251,191,36,0.07);
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; flex-shrink: 0;
+      transition: background 0.1s;
+    }
+    .gate-chip:hover { background: rgba(251,191,36,0.13); }
+    .pulse-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--health-warn); flex-shrink: 0;
+      animation: blink 2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+    .chip-lbl { font-size: 10px; font-weight: 600; color: var(--health-warn); flex: 1; }
+    .chip-cnt {
+      background: var(--health-warn); color: #000;
+      font-size: 9px; font-weight: 700;
+      padding: 1px 5px; border-radius: 8px;
+    }
+
+    /* Popover */
+    .popover-wrap {
+      position: absolute; inset: 0; z-index: 80; display: none;
+    }
+    .popover-wrap.open { display: block; }
+    .pop-backdrop {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.35);
+    }
+    .popover {
+      position: absolute;
+      background: var(--surface-modal);
+      border: 1px solid rgba(251,191,36,0.4);
+      border-radius: 7px;
+      width: 226px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.55);
+      z-index: 1;
+    }
+    .pop-arr {
+      position: absolute; top: -5px; right: 18px;
+      width: 9px; height: 9px;
+      background: var(--surface-modal);
+      border-left: 1px solid rgba(251,191,36,0.4);
+      border-top: 1px solid rgba(251,191,36,0.4);
+      transform: rotate(45deg);
+    }
+    .pop-head {
+      padding: 9px 11px 8px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .pop-title { font-size: 10px; font-weight: 700; color: var(--health-warn); flex: 1; text-transform: uppercase; letter-spacing: 0.07em; }
+    .pop-x { cursor: pointer; color: var(--text-muted); font-size: 13px; line-height: 1; padding: 0 2px; }
+    .pop-body { padding: 10px 11px; }
+
+    /* ── Option C: Floating drawer ────────────────── */
+    .float-bar {
+      position: absolute; right: 0; top: 50%;
+      transform: translateY(-50%); z-index: 40;
+    }
+    .float-btn {
+      width: 14px; height: 56px;
+      background: var(--health-warn);
+      border-radius: 4px 0 0 4px;
+      cursor: pointer; display: flex;
+      align-items: center; justify-content: center;
+      transition: background 0.1s; position: relative;
+    }
+    .float-btn:hover { background: #FCD34D; }
+    .float-btn-lbl {
+      writing-mode: vertical-rl;
+      transform: rotate(180deg);
+      font-size: 7px; font-weight: 700; color: #000;
+      white-space: nowrap; letter-spacing: 0.06em;
+    }
+    .float-dot {
+      position: absolute; top: 3px; right: 2px;
+      width: 5px; height: 5px; border-radius: 50%; background: #000;
+    }
+    .float-drawer {
+      position: absolute; top: 0; right: 0; bottom: 0;
+      width: 0; overflow: hidden;
+      background: var(--surface-modal);
+      border-left: 1px solid rgba(251,191,36,0.35);
+      transition: width 0.2s ease; z-index: 39;
+    }
+    .float-drawer.open { width: 210px; }
+    .drawer-inner {
+      width: 210px; padding: 12px; height: 100%;
+      overflow-y: auto; display: flex; flex-direction: column; gap: 0;
+    }
+    .drawer-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .drawer-title { font-size: 10px; font-weight: 700; color: var(--health-warn); text-transform: uppercase; letter-spacing: 0.07em; }
+    .drawer-x { cursor: pointer; color: var(--text-muted); font-size: 13px; }
+
+    /* ── Option D: Global topbar + dropdown ─────────── */
+    .topbar {
+      height: 30px; flex-shrink: 0;
+      background: var(--surface-base);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; padding: 0 10px; gap: 8px;
+      position: relative;
+    }
+    .tb-brand { font-size: 11px; font-weight: 700; color: var(--brand-orange); letter-spacing: 0.04em; }
+    .tb-stage { display: flex; align-items: center; gap: 5px; }
+    .tb-spacer { flex: 1; }
+    .notif-chip {
+      display: flex; align-items: center; gap: 5px;
+      background: rgba(251,191,36,0.08);
+      border: 1px solid rgba(251,191,36,0.28);
+      border-radius: 10px; padding: 3px 9px;
+      cursor: pointer; transition: background 0.1s;
+    }
+    .notif-chip:hover { background: rgba(251,191,36,0.15); }
+    .notif-chip-lbl { font-size: 10px; font-weight: 600; color: var(--health-warn); }
+    .notif-cnt {
+      background: var(--health-warn); color: #000;
+      font-size: 9px; font-weight: 700;
+      padding: 0 4px; border-radius: 6px; min-width: 14px; text-align: center;
+    }
+    .tb-avatar {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--surface-subpanel); border: 1px solid var(--border-strong);
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* Dropdown */
+    .notif-drop {
+      position: absolute; top: 32px; right: 8px;
+      width: 252px;
+      background: var(--surface-modal);
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      z-index: 150; display: none;
+    }
+    .notif-drop.open { display: block; }
+    .nd-head {
+      padding: 9px 11px 7px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nd-title { font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em; }
+    .nd-x { cursor: pointer; color: var(--text-muted); font-size: 12px; }
+    .nd-item { padding: 10px 11px; border-bottom: 1px solid var(--border-subtle); }
+    .nd-item-head { display: flex; align-items: center; gap: 5px; margin-bottom: 4px; }
+    .nd-item-lbl { font-size: 9px; font-weight: 700; color: var(--health-warn); text-transform: uppercase; letter-spacing: 0.05em; }
+    .nd-q { font-size: 11px; color: var(--text-primary); line-height: 1.55; margin-bottom: 6px; }
+    .nd-meta { font-size: 10px; color: var(--text-muted); margin-bottom: 7px; }
+    .nd-ans-row { display: flex; gap: 5px; margin-bottom: 6px; }
+    .nd-inp {
+      flex: 1; background: var(--surface-subpanel);
+      border: 1px solid var(--border-strong); border-radius: 5px;
+      padding: 4px 7px; font-size: 10px; color: var(--text-primary);
+      outline: none; font-family: inherit;
+    }
+    .nd-inp::placeholder { color: var(--text-faint); }
+    .nd-send {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: 5px; padding: 4px 9px;
+      font-size: 10px; font-weight: 600; cursor: pointer; font-family: inherit;
+    }
+    .nd-footer { padding: 7px 11px; font-size: 10px; color: var(--text-faint); text-align: center; }
+
+    /* ── Option note ─────────────────────────────── */
+    .opt-note {
+      padding: 8px 14px;
+      border-top: 1px solid var(--border-subtle);
+      background: var(--surface-base);
+      font-size: 10px; color: var(--text-muted); line-height: 1.5;
+    }
+    .note-accent { color: var(--accent); margin-right: 3px; }
+
+    /* ── Comparison Table ─────────────────────────── */
+    .compare-section {
+      margin: 20px 24px 32px;
+      background: var(--surface-panel);
+      border: 1px solid var(--border-default);
+      border-radius: 8px; overflow: hidden;
+    }
+    .compare-head {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-default);
+      background: var(--surface-subpanel);
+      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th {
+      text-align: left; padding: 7px 12px;
+      color: var(--text-muted); font-weight: 600;
+      border-bottom: 1px solid var(--border-default);
+      background: var(--surface-subpanel);
+    }
+    td { padding: 7px 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border-subtle); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.015); }
+    td.opt-letter { font-weight: 700; color: var(--accent); }
+    td.pro { color: var(--health-success); }
+    td.con { color: #C87878; }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 3px; height: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border-muted); border-radius: 2px; }
+  </style>
+</head>
+<body>
+
+<!-- ═══ Page Header ═══════════════════════════════════════════════════════ -->
+<div class="page-header">
+  <div class="brand-mark"></div>
+  <h1>Pending Gate UI — 옵션 비교 (4 variants)</h1>
+  <span class="interact-badge">▶ 클릭 인터랙션 가능</span>
+  <div class="meta">productune · 2026-05-21 · designer</div>
+</div>
+
+<!-- ═══ Options Grid ═══════════════════════════════════════════════════════ -->
+<div class="options-grid">
+
+  <!-- ──────────────────────────────────────────────────────────────────
+       OPTION A  ·  PO Chat 상단 sticky chip + popover
+  ─────────────────────────────────────────────────────────────────── -->
+  <div class="option-card">
+    <div class="option-label">
+      <div class="opt-id">Option A</div>
+      <div class="opt-title">PO Chat 상단 sticky chip + popover</div>
+      <div class="opt-desc">PO 채팅 패널 최상단에 고정 chip → 클릭 시 chat 위로 popover 펼침. PO 대화 흐름과 자연스럽게 연결됨.</div>
+    </div>
+
+    <div class="workspace">
+      <!-- Activity bar -->
+      <div class="act-bar">
+        <div class="act-icon active">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E8E8EA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="act-icon">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        </div>
+        <div class="act-icon">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+        </div>
+      </div>
+
+      <!-- Left sidebar -->
+      <div class="l-sidebar">
+        <div class="sb-head"><div class="sb-title">productune</div></div>
+        <div class="sb-nav">
+          <div class="nav-row active">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PRD
+          </div>
+          <div class="nav-row">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Tickets
+          </div>
+          <div class="nav-row">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Explorer
+          </div>
+        </div>
+        <div class="stage-strip">
+          <div class="stage-row"><div class="s-dot done"></div>PRD</div>
+          <div class="stage-row"><div class="s-dot done"></div>Design</div>
+          <div class="stage-row"><div class="s-dot active"></div><strong style="color:var(--stage-build);">Build</strong> ←</div>
+          <div class="stage-row"><div class="s-dot idle"></div>QA</div>
+          <div class="stage-row"><div class="s-dot idle"></div>Close</div>
+        </div>
+      </div>
+
+      <!-- Main panel -->
+      <div class="main-panel">
+        <div class="tabs-row">
+          <div class="tab active">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+            productune.md
+          </div>
+          <div class="tab">tickets</div>
+        </div>
+        <div class="panel-body">
+          <div class="blk l"></div><div class="blk m"></div><div class="blk s"></div>
+          <div style="height:7px"></div>
+          <div class="blk l"></div><div class="blk m"></div><div class="blk l"></div><div class="blk s"></div>
+          <div style="height:7px"></div>
+          <div class="blk m"></div><div class="blk l"></div>
+        </div>
+      </div>
+
+      <!-- PO Chat panel (contains popover trigger) -->
+      <div class="chat-panel">
+        <div class="chat-head">
+          <div class="po-dot"></div>
+          <div class="po-name">PO</div>
+          <span style="font-size:9px;color:var(--text-faint);margin-left:2px;">online</span>
+          <div class="online-dot"></div>
+        </div>
+
+        <!-- ★ Option A: sticky chip -->
+        <div class="gate-chip" onclick="toggleA()">
+          <div class="pulse-dot"></div>
+          <div class="chip-lbl">결정 대기</div>
+          <div class="chip-cnt">1</div>
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#A0A0A0" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+
+        <div class="chat-msgs">
+          <div class="msg po">
+            <div class="msg-lbl">PO</div>
+            Phase 3 Build 가 마무리됐습니다. 다음 단계 진행 여부를 결정해 주세요.
+          </div>
+          <div class="msg">
+            <div class="msg-lbl">system</div>
+            Build stage 완료 — 10/10 tickets done
+          </div>
+        </div>
+        <div class="chat-input-wrap">
+          <input class="chat-inp" placeholder="메시지 입력..." />
+        </div>
+
+        <!-- ★ Popover (positioned inside chat-panel, extends left) -->
+        <div class="popover-wrap" id="pop-a">
+          <div class="pop-backdrop" onclick="toggleA()"></div>
+          <div class="popover" style="top:54px; left:-232px;">
+            <div class="pop-arr"></div>
+            <div class="pop-head">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div class="pop-title">Pending Gate</div>
+              <div class="pop-x" onclick="toggleA()">✕</div>
+            </div>
+            <div class="pop-body">
+              <div class="pill-row">
+                <span class="pill build">● Build</span>
+                <span class="pill-arrow">→</span>
+                <span class="pill close">● Close</span>
+              </div>
+              <div class="gate-q">Phase 3 (Build) 끝 → Phase 5 (Close) 진입할까요?</div>
+              <div class="gate-meta">PO · 방금 전 · Build 완료 10/10</div>
+              <div class="ans-row">
+                <input class="ans-inp" placeholder="답변 입력..." style="height:28px;" />
+                <button class="send-btn" style="padding:4px 8px;">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  보내기
+                </button>
+              </div>
+              <div class="action-row">
+                <button class="act-approve">✓ 진입 승인</button>
+                <button class="act-hold">✕ 보류</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /chat-panel -->
+    </div><!-- /workspace -->
+
+    <div class="opt-note">
+      <span class="note-accent">★</span>
+      PO 대화 맥락과 동일 패널 — 흐름이 자연스럽게 연결됨. PO Chat 패널이 닫혀 있으면 진입점이 숨겨지는 한계.
+    </div>
+  </div><!-- /option-card A -->
+
+
+  <!-- ──────────────────────────────────────────────────────────────────
+       OPTION B  ·  LeftSidebar nav row → 메인 패널 결정 대기 탭
+  ─────────────────────────────────────────────────────────────────── -->
+  <div class="option-card">
+    <div class="option-label">
+      <div class="opt-id">Option B</div>
+      <div class="opt-title">LeftSidebar nav row → 메인 패널 결정 대기 탭</div>
+      <div class="opt-desc">사이드바에 "결정 대기" nav row 상시 노출 (badge 포함). 클릭 시 MainPanel 에 전용 탭으로 열림. IDE 네비게이션 패턴.</div>
+    </div>
+
+    <div class="workspace">
+      <!-- Activity bar -->
+      <div class="act-bar">
+        <div class="act-icon active">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E8E8EA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="act-icon">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        </div>
+        <div class="act-icon" style="position:relative;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <div class="act-badge"></div>
+        </div>
+      </div>
+
+      <!-- Left sidebar -->
+      <div class="l-sidebar">
+        <div class="sb-head"><div class="sb-title">productune</div></div>
+        <div class="sb-nav">
+          <div class="nav-row" id="b-nav-prd" onclick="bShowPrd()">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PRD
+          </div>
+          <div class="nav-row" id="b-nav-tkt">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Tickets
+          </div>
+          <!-- ★ Option B: pending gate nav row -->
+          <div class="nav-row pending-row" id="b-nav-gate" onclick="bShowGate()">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            결정 대기
+            <div class="nav-chip warn">1</div>
+          </div>
+          <div class="nav-row">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Explorer
+          </div>
+        </div>
+        <div class="stage-strip">
+          <div class="stage-row"><div class="s-dot done"></div>PRD</div>
+          <div class="stage-row"><div class="s-dot done"></div>Design</div>
+          <div class="stage-row"><div class="s-dot active"></div><strong style="color:var(--stage-build);">Build</strong> ←</div>
+          <div class="stage-row"><div class="s-dot idle"></div>QA</div>
+          <div class="stage-row"><div class="s-dot idle"></div>Close</div>
+        </div>
+      </div>
+
+      <!-- Main panel -->
+      <div class="main-panel">
+        <div class="tabs-row">
+          <div class="tab" id="b-tab-prd" onclick="bShowPrd()">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+            productune.md
+          </div>
+          <!-- ★ gate tab always visible -->
+          <div class="tab gate-tab active" id="b-tab-gate" onclick="bShowGate()">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            결정 대기
+            <span class="tab-badge">1</span>
+          </div>
+        </div>
+
+        <!-- Gate panel content -->
+        <div class="panel-body" id="b-panel-gate">
+          <div class="gate-card">
+            <div class="gate-head">
+              <div class="gate-icon-wrap">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <div class="gate-label">Pending Gate</div>
+              <div class="pill-row" style="margin:0 0 0 auto;">
+                <span class="pill build">Build</span>
+                <span class="pill-arrow">→</span>
+                <span class="pill close">Close</span>
+              </div>
+            </div>
+            <div class="gate-q">Phase 3 (Build) 끝 → Phase 5 (Close) 진입할까요?</div>
+            <div class="gate-meta">PO · 방금 전 · Build 완료 10/10 tickets</div>
+            <div class="ans-row">
+              <input class="ans-inp" placeholder="답변 또는 의견을 입력하세요..." />
+              <button class="send-btn">
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                보내기
+              </button>
+            </div>
+            <div class="action-row">
+              <button class="act-approve">✓ 진입 승인</button>
+              <button class="act-hold">✕ 보류</button>
+              <button class="act-more">···</button>
+            </div>
+          </div>
+          <div style="margin-top:8px;font-size:10px;color:var(--text-faint);">결정 대기 1개 항목</div>
+        </div>
+
+        <!-- PRD panel content (hidden by default) -->
+        <div class="panel-body" id="b-panel-prd" style="display:none;">
+          <div class="blk l"></div><div class="blk m"></div><div class="blk s"></div>
+          <div style="height:7px"></div>
+          <div class="blk l"></div><div class="blk m"></div><div class="blk l"></div>
+        </div>
+      </div>
+
+      <!-- PO Chat -->
+      <div class="chat-panel">
+        <div class="chat-head">
+          <div class="po-dot"></div><div class="po-name">PO</div>
+          <span style="font-size:9px;color:var(--text-faint);margin-left:2px;">online</span>
+          <div class="online-dot"></div>
+        </div>
+        <div class="chat-msgs">
+          <div class="msg po">
+            <div class="msg-lbl">PO</div>
+            Build 완료. 사이드바 "결정 대기" 항목을 확인해주세요.
+          </div>
+        </div>
+        <div class="chat-input-wrap">
+          <input class="chat-inp" placeholder="메시지 입력..." />
+        </div>
+      </div>
+    </div><!-- /workspace -->
+
+    <div class="opt-note">
+      <span class="note-accent">★</span>
+      IDE nav 패턴 — PO Chat 과 독립된 전용 진입점. 항상 사이드바에 노출. 메인 패널 탭 전환이 발생함.
+    </div>
+  </div><!-- /option-card B -->
+
+
+  <!-- ──────────────────────────────────────────────────────────────────
+       OPTION C  ·  메인 패널 우측 floating drawer (toggle bar)
+  ─────────────────────────────────────────────────────────────────── -->
+  <div class="option-card">
+    <div class="option-label">
+      <div class="opt-id">Option C</div>
+      <div class="opt-title">메인 패널 우측 floating drawer</div>
+      <div class="opt-desc">MainPanel 우측 엣지에 얇은 toggle bar. 클릭 시 오버레이 drawer 로 슬라이드 펼침. 현재 작업 컨텍스트 최대 보존.</div>
+    </div>
+
+    <div class="workspace">
+      <!-- Activity bar -->
+      <div class="act-bar">
+        <div class="act-icon active">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E8E8EA" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="act-icon">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        </div>
+      </div>
+
+      <!-- Left sidebar -->
+      <div class="l-sidebar">
+        <div class="sb-head"><div class="sb-title">productune</div></div>
+        <div class="sb-nav">
+          <div class="nav-row active">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PRD
+          </div>
+          <div class="nav-row">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Tickets
+          </div>
+          <div class="nav-row">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Explorer
+          </div>
+        </div>
+        <div class="stage-strip">
+          <div class="stage-row"><div class="s-dot done"></div>PRD</div>
+          <div class="stage-row"><div class="s-dot done"></div>Design</div>
+          <div class="stage-row"><div class="s-dot active"></div><strong style="color:var(--stage-build);">Build</strong> ←</div>
+          <div class="stage-row"><div class="s-dot idle"></div>QA</div>
+          <div class="stage-row"><div class="s-dot idle"></div>Close</div>
+        </div>
+      </div>
+
+      <!-- Main panel with floating elements -->
+      <div class="main-panel" style="overflow:hidden;">
+        <div class="tabs-row">
+          <div class="tab active">
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+            productune.md
+          </div>
+          <div class="tab">tickets</div>
+        </div>
+        <div class="panel-body" style="padding-right:18px;">
+          <div class="blk l"></div><div class="blk m"></div><div class="blk s"></div>
+          <div style="height:7px"></div>
+          <div class="blk l"></div><div class="blk m"></div><div class="blk l"></div>
+          <div style="height:7px"></div>
+          <div class="blk m"></div><div class="blk l"></div>
+        </div>
+
+        <!-- ★ Option C: floating toggle bar -->
+        <div class="float-bar">
+          <div class="float-btn" onclick="toggleC()">
+            <div class="float-dot"></div>
+            <span class="float-btn-lbl">대기 1</span>
+          </div>
+        </div>
+
+        <!-- ★ floating drawer (slides in from right inside main panel) -->
+        <div class="float-drawer" id="drawer-c">
+          <div class="drawer-inner">
+            <div class="drawer-hd">
+              <div class="drawer-title">Pending Gate</div>
+              <div class="drawer-x" onclick="toggleC()">✕</div>
+            </div>
+            <div class="pill-row" style="margin-bottom:9px;">
+              <span class="pill build">Build</span>
+              <span class="pill-arrow">→</span>
+              <span class="pill close">Close</span>
+            </div>
+            <div class="gate-q" style="font-size:11px;margin-bottom:7px;">
+              Phase 3 (Build) 끝 → Phase 5 (Close) 진입할까요?
+            </div>
+            <div class="gate-meta">PO · 방금 전</div>
+            <textarea class="ans-inp" placeholder="답변을 입력하세요..." style="height:52px;width:100%;display:block;resize:none;margin-bottom:6px;"></textarea>
+            <button class="send-btn" style="width:100%;justify-content:center;margin-bottom:6px;">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              보내기
+            </button>
+            <div class="action-row">
+              <button class="act-approve">✓ 승인</button>
+              <button class="act-hold">✕ 보류</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PO Chat -->
+      <div class="chat-panel">
+        <div class="chat-head">
+          <div class="po-dot"></div><div class="po-name">PO</div>
+          <div class="online-dot"></div>
+        </div>
+        <div class="chat-msgs">
+          <div class="msg po">
+            <div class="msg-lbl">PO</div>
+            Build 완료. 패널 우측 토글 바를 클릭해주세요.
+          </div>
+        </div>
+        <div class="chat-input-wrap">
+          <input class="chat-inp" placeholder="메시지 입력..." />
+        </div>
+      </div>
+    </div><!-- /workspace -->
+
+    <div class="opt-note">
+      <span class="note-accent">★</span>
+      현재 작업 중인 파일/탭 유지 — 오버레이 방식. 토글 bar 의 발견성이 낮아 초기 학습 필요. Escape 로 닫기 가능.
+    </div>
+  </div><!-- /option-card C -->
+
+
+  <!-- ──────────────────────────────────────────────────────────────────
+       OPTION D  ·  글로벌 상단 notification chip + dropdown
+  ─────────────────────────────────────────────────────────────────── -->
+  <div class="option-card">
+    <div class="option-label">
+      <div class="opt-id">Option D</div>
+      <div class="opt-title">글로벌 상단 notification chip + dropdown</div>
+      <div class="opt-desc">앱 최상단 topbar 에 알림 chip 상시 노출. 클릭 시 dropdown. 어느 화면·패널에 있어도 항상 접근 가능한 글로벌 진입점.</div>
+    </div>
+
+    <!-- workspace D is flex-column to accommodate topbar -->
+    <div class="workspace" style="flex-direction:column;">
+
+      <!-- ★ Option D: global topbar (in-flow, flex-column child) -->
+      <div class="topbar">
+        <div class="tb-brand">productune</div>
+        <div class="tb-stage">
+          <span class="pill build" style="font-size:9px;">Build</span>
+          <span style="font-size:9px;color:var(--text-faint);">→ QA → Close</span>
+        </div>
+        <div class="tb-spacer"></div>
+
+        <!-- Notification chip -->
+        <div class="notif-chip" onclick="toggleD(event)">
+          <div class="pulse-dot"></div>
+          <div class="notif-chip-lbl">결정 대기</div>
+          <div class="notif-cnt">1</div>
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+
+        <div style="width:1px;height:13px;background:var(--border-default);margin:0 4px;"></div>
+        <div class="tb-avatar">
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#A0A0A0" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+
+        <!-- ★ Dropdown (positioned absolute relative to topbar) -->
+        <div class="notif-drop" id="drop-d">
+          <div class="nd-head">
+            <div class="nd-title">결정 대기</div>
+            <div class="nd-x" onclick="toggleD(event)">✕</div>
+          </div>
+          <div class="nd-item">
+            <div class="nd-item-head">
+              <div class="pulse-dot" style="animation:none;"></div>
+              <div class="nd-item-lbl">Pending Gate</div>
+              <span class="pill build" style="margin-left:auto;font-size:9px;">Build</span>
+              <span class="pill-arrow">→</span>
+              <span class="pill close" style="font-size:9px;">Close</span>
+            </div>
+            <div class="nd-q">Phase 3 (Build) 끝 → Phase 5 (Close) 진입할까요?</div>
+            <div class="nd-meta">PO · 방금 전 · Build 완료 10/10 tickets</div>
+            <div class="nd-ans-row">
+              <input class="nd-inp" placeholder="답변 입력..." />
+              <button class="nd-send">보내기</button>
+            </div>
+            <div class="action-row" style="margin-top:0;">
+              <button class="act-approve">✓ 진입 승인</button>
+              <button class="act-hold">✕ 보류</button>
+            </div>
+          </div>
+          <div class="nd-footer">1개 항목</div>
+        </div>
+      </div><!-- /topbar -->
+
+      <!-- Workspace row below topbar -->
+      <div style="display:flex;flex:1;overflow:hidden;">
+        <!-- Activity bar -->
+        <div class="act-bar">
+          <div class="act-icon active">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E8E8EA" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div class="act-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          </div>
+          <div class="act-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#707070" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+        </div>
+
+        <!-- Left sidebar -->
+        <div class="l-sidebar">
+          <div class="sb-head"><div class="sb-title">productune</div></div>
+          <div class="sb-nav">
+            <div class="nav-row active">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>PRD
+            </div>
+            <div class="nav-row">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>Tickets
+            </div>
+            <div class="nav-row">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Explorer
+            </div>
+          </div>
+          <div class="stage-strip">
+            <div class="stage-row"><div class="s-dot done"></div>PRD</div>
+            <div class="stage-row"><div class="s-dot done"></div>Design</div>
+            <div class="stage-row"><div class="s-dot active"></div><strong style="color:var(--stage-build);">Build</strong> ←</div>
+            <div class="stage-row"><div class="s-dot idle"></div>QA</div>
+            <div class="stage-row"><div class="s-dot idle"></div>Close</div>
+          </div>
+        </div>
+
+        <!-- Main panel -->
+        <div class="main-panel">
+          <div class="tabs-row">
+            <div class="tab active">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+              productune.md
+            </div>
+            <div class="tab">tickets</div>
+          </div>
+          <div class="panel-body">
+            <div class="blk l"></div><div class="blk m"></div><div class="blk s"></div>
+            <div style="height:7px"></div>
+            <div class="blk l"></div><div class="blk m"></div><div class="blk l"></div>
+          </div>
+        </div>
+
+        <!-- PO Chat -->
+        <div class="chat-panel">
+          <div class="chat-head">
+            <div class="po-dot"></div><div class="po-name">PO</div>
+            <div class="online-dot"></div>
+          </div>
+          <div class="chat-msgs">
+            <div class="msg po">
+              <div class="msg-lbl">PO</div>
+              Build 완료. 상단 알림 chip 을 확인해주세요.
+            </div>
+          </div>
+          <div class="chat-input-wrap">
+            <input class="chat-inp" placeholder="메시지 입력..." />
+          </div>
+        </div>
+      </div><!-- /inner row -->
+    </div><!-- /workspace D -->
+
+    <div class="opt-note">
+      <span class="note-accent">★</span>
+      글로벌 진입점 — 현재 뷰와 무관하게 항상 접근 가능. topbar 추가가 현재 레이아웃 구조 변경을 수반함.
+    </div>
+  </div><!-- /option-card D -->
+
+</div><!-- /options-grid -->
+
+
+<!-- ═══ Comparison Table ══════════════════════════════════════════════════ -->
+<div class="compare-section">
+  <div class="compare-head">옵션 비교 요약</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:7%;">옵션</th>
+        <th style="width:20%;">진입 위치</th>
+        <th style="width:20%;">트리거 패턴</th>
+        <th style="width:24%;">장점</th>
+        <th style="width:29%;">단점 / 고려사항</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="opt-letter">A</td>
+        <td>PO Chat 상단 sticky chip</td>
+        <td>chip → popover</td>
+        <td class="pro">PO 대화 맥락과 자연 연결 · 레이아웃 변경 없음</td>
+        <td class="con">PO Chat 닫힘 시 진입점 숨겨짐 · Chat 폭에 종속</td>
+      </tr>
+      <tr>
+        <td class="opt-letter">B</td>
+        <td>LeftSidebar nav row</td>
+        <td>nav item → 전용 탭</td>
+        <td class="pro">IDE 패턴 · PO Chat 독립 · 항상 노출 · 배지 카운트</td>
+        <td class="con">MainPanel 탭 전환 발생 · 현재 작업 컨텍스트 전환</td>
+      </tr>
+      <tr>
+        <td class="opt-letter">C</td>
+        <td>MainPanel 우측 엣지 toggle bar</td>
+        <td>toggle bar → 오버레이 drawer</td>
+        <td class="pro">현재 파일/탭 유지 · 오버레이 방식 · 구조 변경 없음</td>
+        <td class="con">발견성 낮음 · 토글 bar 14px — 작은 클릭 타겟</td>
+      </tr>
+      <tr>
+        <td class="opt-letter">D</td>
+        <td>글로벌 topbar chip</td>
+        <td>chip → dropdown</td>
+        <td class="pro">어느 화면·탭에서나 접근 가능 · OS 알림 패턴 친숙</td>
+        <td class="con">topbar 추가 = 레이아웃 구조 변경 필요 · 현재 미존재</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+  /* ── Option A ── */
+  function toggleA() {
+    document.getElementById('pop-a').classList.toggle('open');
+  }
+
+  /* ── Option B ── */
+  function bShowGate() {
+    document.getElementById('b-panel-gate').style.display = 'block';
+    document.getElementById('b-panel-prd').style.display  = 'none';
+    document.getElementById('b-tab-gate').classList.add('active');
+    document.getElementById('b-tab-prd').classList.remove('active');
+    document.getElementById('b-nav-gate').classList.add('active');
+    document.getElementById('b-nav-prd').classList.remove('active');
+  }
+  function bShowPrd() {
+    document.getElementById('b-panel-prd').style.display  = 'block';
+    document.getElementById('b-panel-gate').style.display = 'none';
+    document.getElementById('b-tab-prd').classList.add('active');
+    document.getElementById('b-tab-gate').classList.remove('active');
+    document.getElementById('b-nav-prd').classList.add('active');
+    document.getElementById('b-nav-gate').classList.remove('active');
+  }
+
+  /* ── Option C ── */
+  function toggleC() {
+    document.getElementById('drawer-c').classList.toggle('open');
+  }
+  /* Esc closes drawer C (§1.5.5 Escape rule) */
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+      document.getElementById('drawer-c').classList.remove('open');
+      document.getElementById('pop-a').classList.remove('open');
+      document.getElementById('drop-d').classList.remove('open');
+    }
+  });
+
+  /* ── Option D ── */
+  function toggleD(e) {
+    e.stopPropagation();
+    document.getElementById('drop-d').classList.toggle('open');
+  }
+  document.addEventListener('click', function(e) {
+    const drop = document.getElementById('drop-d');
+    if (!e.target.closest('#drop-d') && !e.target.closest('.notif-chip')) {
+      drop.classList.remove('open');
+    }
+  });
+</script>
+</body>
+</html>

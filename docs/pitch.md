@@ -45,7 +45,7 @@ Claude Code 한 세션으로 디자인·구현·QA 다 시키면:
 사용자 ─한 문장─▶ productune (PO, Codex 또는 Claude Code 선택)
                    │   ├ 자체 decompose / risk-flag / pipeline (구 my-planner 흡수)
                    │
-                   ├─ pdt-designer   (UX 원칙 / Brand / DS / docs/design/*.md, default opus)
+                   ├─ pdt-designer   (UX 원칙 / Brand / DS / docs/artifacts/*.md, default opus)
                    ├─ pdt-developer  (코드 구현, default sonnet)
                    └─ pdt-qa         (lint/build/test, default haiku)
                    │
@@ -150,7 +150,7 @@ Codex/Claude TUI 가 뜨고, 한 문장 던지면:
 [PO] 새 task 'login-forgot-pw' 시작합니다.
 → planning 2 개 작업 (pdt-designer + pdt-developer)
 → delegating to pdt-designer for task #1 (model=opus, effort=high — UI 디자인)...
-✓ pdt-designer: docs/design/login-forgot-pw.md
+✓ pdt-designer: docs/artifacts/login-forgot-pw.md
 → delegating to pdt-developer for task #2...
 ✓ pdt-developer: 2 files changed
 → design-compliance cross-check (pdt-designer)...
@@ -160,7 +160,7 @@ Codex/Claude TUI 가 뜨고, 한 문장 던지면:
 
 ## Changes
 - src/components/LoginModal.tsx: 비번 찾기 링크 추가
-- docs/design/login-forgot-pw.md: 디자인 명세
+- docs/artifacts/login-forgot-pw.md: 디자인 명세
 
 ## QA
 - lint: pass / build: pass
@@ -176,7 +176,7 @@ Codex/Claude TUI 가 뜨고, 한 문장 던지면:
 
 [PO] pdt-designer 후속으로 보고 그 세션 resume.
 → delegating to pdt-designer (resumed)...
-✓ pdt-designer: docs/design/login-forgot-pw.md (v2)
+✓ pdt-designer: docs/artifacts/login-forgot-pw.md (v2)
 → pdt-developer (디자인 변경 반영)...
 → pdt-qa (재검증)...
 [PO] ## Changes ...

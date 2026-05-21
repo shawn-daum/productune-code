@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>productune Design System — R4 Reference</title>
+<style>
+  /* ══════════════════════════════════════════
+     DESIGN TOKENS
+  ══════════════════════════════════════════ */
+  :root {
+    --surface-base:     #0A0A0A;
+    --surface-body:     #0F0F0F;
+    --surface-panel:    #141414;
+    --surface-subpanel: #1A1A1A;
+    --surface-modal:    #1C1C20;
+    --border-subtle:    #1A1A1A;
+    --border-default:   #1F1F1F;
+    --border-strong:    #2A2A2A;
+    --border-muted:     #3A3A3A;
+    --text-primary:     #E8E8EA;
+    --text-emphasis:    #F0F0F0;
+    --text-secondary:   #C8C8CC;
+    --text-muted:       #A0A0A0;
+    --text-faint:       #707070;
+    --text-disabled:    #505050;
+    --text-ghost:       #3A3A3A;
+    --brand-orange:     #FF6B2B;
+    --accent:           #FF6B2B;
+    --persona-po:       #FF6B2B;
+    --persona-designer: #A78BFA;
+    --persona-dev:      #38BDF8;
+    --persona-qa:       #34D399;
+    --stage-prd:        #A78BFA;
+    --stage-design:     #F472B6;
+    --stage-build:      #38BDF8;
+    --stage-qa:         #34D399;
+    --stage-deploy:     #FBBF24;
+    --stage-operate:    #60B860;
+    --status-todo:        #505050;
+    --status-in-progress: #FF6B2B;
+    --status-review:      #E0B040;
+    --status-done:        #60B860;
+    --status-blocked:     #E04040;
+    --status-abandoned:   #3A3A3A;
+    --health-info:    #38BDF8;
+    --health-success: #34D399;
+    --health-warn:    #FBBF24;
+    --health-error:   #EF4444;
+    --space-1:   4px;   --space-1-5: 6px;  --space-2:  8px;
+    --space-2-5: 10px;  --space-3:  12px;  --space-4:  16px;
+    --space-5:   20px;  --space-6:  24px;  --space-8:  32px;
+    --space-10:  40px;  --space-12: 48px;
+    --radius-xs:   2px;  --radius-sm:  3px;  --radius-md:  4px;
+    --radius-lg:   6px;  --radius-xl:  8px;  --radius-pill: 20px;
+    --elev-sm: 0 2px 8px rgba(0,0,0,.4);
+    --elev-md: 0 6px 18px rgba(0,0,0,.45);
+    --elev-lg: 0 12px 32px rgba(0,0,0,.5);
+    --motion-fast: 120ms; --motion-base: 180ms; --motion-slow: 240ms;
+    --easing-standard:   cubic-bezier(.2,0,0,1);
+    --easing-emphasized: cubic-bezier(.3,0,0,1);
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+  }
+
+  /* ══════════════════════════════════════════
+     RESET
+  ══════════════════════════════════════════ */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--surface-body);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ══════════════════════════════════════════
+     ANIMATIONS
+  ══════════════════════════════════════════ */
+  @keyframes pdt-spin       { to { transform: rotate(360deg); } }
+  @keyframes persona-blink  { from { opacity:.4; } to { opacity:1; } }
+  @keyframes banner-slide   { from { transform:translateY(-8px); opacity:0; } to { transform:none; opacity:1; } }
+  @keyframes reveal         { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration:1ms !important; animation-iteration-count:1 !important; transition-duration:1ms !important; }
+  }
+
+  /* ══════════════════════════════════════════
+     STICKY NAV
+  ══════════════════════════════════════════ */
+  .ds-nav {
+    position: sticky; top: 0; z-index: 200;
+    background: var(--surface-panel);
+    border-bottom: 1px solid var(--border-default);
+    display: flex; align-items: center;
+    padding: 0 28px; height: 44px;
+    overflow-x: auto; scrollbar-width: none;
+  }
+  .ds-nav::-webkit-scrollbar { display: none; }
+  .ds-nav-brand {
+    display: flex; align-items: center; gap: 8px;
+    margin-right: 20px; flex-shrink: 0;
+  }
+  .ds-nav-brand .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--brand-orange);
+    box-shadow: 0 0 8px rgba(255,107,43,.55);
+  }
+  .ds-nav-brand span { font-size: 13px; font-weight: 700; color: var(--text-emphasis); letter-spacing: -.01em; }
+  .ds-nav a {
+    display: flex; align-items: center; height: 44px;
+    padding: 0 11px; font-size: 10px; font-weight: 600;
+    color: var(--text-muted); text-decoration: none;
+    border-bottom: 2px solid transparent; white-space: nowrap;
+    letter-spacing: .05em; text-transform: uppercase;
+    transition: color var(--motion-fast) var(--easing-standard),
+                border-color var(--motion-fast) var(--easing-standard);
+  }
+  .ds-nav a:hover { color: var(--text-secondary); }
+  .ds-nav a.active { color: var(--text-emphasis); border-bottom-color: var(--accent); }
+  .ds-nav-end { margin-left: auto; display: flex; align-items: center; gap: 6px; padding-left: 16px; flex-shrink: 0; }
+  .tag {
+    font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 20px;
+  }
+  .tag-orange { background: rgba(255,107,43,.12); color: var(--accent); border: 1px solid rgba(255,107,43,.2); }
+  .tag-green  { background: rgba(52,211,153,.10); color: var(--persona-qa); border: 1px solid rgba(52,211,153,.18); }
+  .tag-warn   { background: rgba(251,191,36,.10); color: var(--health-warn); border: 1px solid rgba(251,191,36,.2); }
+
+  /* ══════════════════════════════════════════
+     PAGE LAYOUT
+  ══════════════════════════════════════════ */
+  .ds-page { max-width: 1160px; margin: 0 auto; padding: 0 32px 96px; }
+
+  /* ══════════════════════════════════════════
+     HERO
+  ══════════════════════════════════════════ */
+  .ds-hero {
+    padding: 60px 0 48px;
+    border-bottom: 1px solid var(--border-subtle);
+    animation: reveal .5s var(--easing-standard) both;
+  }
+  .hero-eyebrow {
+    font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 18px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .hero-eyebrow::before { content:''; width:28px; height:1px; background:var(--accent); }
+  .ds-hero h1 {
+    font-size: 52px; font-weight: 800; color: var(--text-emphasis);
+    letter-spacing: -.025em; line-height: 1.05; margin-bottom: 18px;
+  }
+  .ds-hero h1 em { color: var(--accent); font-style: normal; }
+  .ds-hero-sub {
+    font-size: 15px; color: var(--text-secondary); line-height: 1.65;
+    max-width: 580px; margin-bottom: 36px;
+  }
+  .ds-hero-meta { display: flex; gap: 32px; flex-wrap: wrap; }
+  .meta-item { display: flex; flex-direction: column; gap: 3px; }
+  .meta-item .ml { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+  .meta-item .mv { font-size: 13px; font-weight: 500; color: var(--text-primary); }
+
+  /* ══════════════════════════════════════════
+     SECTION SHELL
+  ══════════════════════════════════════════ */
+  .ds-section {
+    padding-top: 52px;
+    animation: reveal .4s var(--easing-standard) both;
+  }
+  .ds-section-hdr {
+    display: flex; align-items: baseline; gap: 12px;
+    margin-bottom: 28px; padding-bottom: 14px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .sec-num { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: .04em; }
+  .ds-section-hdr h2 { font-size: 22px; font-weight: 700; color: var(--text-emphasis); letter-spacing: -.01em; }
+  .sec-desc { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+  .sub-title {
+    font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--text-muted); margin: 28px 0 12px;
+  }
+  .sub-title:first-of-type { margin-top: 0; }
+
+  /* ══════════════════════════════════════════
+     PRINCIPLE CARDS
+  ══════════════════════════════════════════ */
+  .principle-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(210px,1fr)); gap: 10px;
+  }
+  .principle-card {
+    background: var(--surface-panel); border: 1px solid var(--border-default);
+    border-radius: 6px; padding: 16px;
+    transition: border-color var(--motion-fast);
+  }
+  .principle-card:hover { border-color: var(--border-strong); }
+  .pc-tag { font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .pc-text { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+  .pc-text code { font-family: var(--font-mono); font-size: 10px; padding: 1px 4px; background: rgba(255,255,255,.06); border-radius: 2px; color: var(--text-muted); }
+
+  /* ══════════════════════════════════════════
+     COLOR SWATCHES
+  ══════════════════════════════════════════ */
+  .swatch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px,1fr)); gap: 8px; margin-bottom: 6px; }
+  .swatch {
+    border-radius: 6px; overflow: hidden; border: 1px solid var(--border-default);
+    transition: transform var(--motion-fast), border-color var(--motion-fast);
+  }
+  .swatch:hover { transform: translateY(-2px); border-color: var(--border-strong); }
+  .swatch-block { height: 60px; }
+  .swatch-info { padding: 8px 10px; background: var(--surface-panel); }
+  .sw-tok { font-family: var(--font-mono); font-size: 9px; color: var(--text-muted); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sw-hex { font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--text-primary); }
+  .sw-use { font-size: 9px; color: var(--text-faint); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ══════════════════════════════════════════
+     TEXT CONTRAST TABLE
+  ══════════════════════════════════════════ */
+  .ds-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ds-table th {
+    text-align: left; padding: 6px 12px;
+    font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--text-faint); border-bottom: 1px solid var(--border-default);
+  }
+  .ds-table td { padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); vertical-align: middle; }
+  .ds-table tr:hover td { background: rgba(255,255,255,.018); }
+  .mono { font-family: var(--font-mono); font-size: 11px; color: var(--text-primary); }
+  .mono-sm { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+
+  .cb { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+  .cb-aaa  { background: rgba(52,211,153,.12); color: #34D399; }
+  .cb-aa   { background: rgba(251,191,36,.12);  color: #FBBF24; }
+  .cb-aal  { background: rgba(251,191,36,.07);  color: #9a8000; }
+  .cb-fail { background: rgba(239,68,68,.12);   color: #EF4444; }
+
+  /* ══════════════════════════════════════════
+     SPACING VISUALIZER
+  ══════════════════════════════════════════ */
+  .sp-list { display: flex; flex-direction: column; gap: 5px; }
+  .sp-row { display: flex; align-items: center; gap: 16px; padding: 4px 0; }
+  .sp-meta { width: 190px; flex-shrink: 0; display: flex; gap: 10px; align-items: center; }
+  .sp-tok { font-family: var(--font-mono); font-size: 10px; color: var(--accent); width: 86px; }
+  .sp-val { font-size: 10px; color: var(--text-faint); width: 34px; }
+  .sp-bar-wrap { flex: 1; display: flex; align-items: center; gap: 10px; }
+  .sp-bar { height: 11px; background: rgba(255,107,43,.18); border-right: 2px solid var(--accent); border-radius: 1px; transition: background var(--motion-fast); }
+  .sp-row:hover .sp-bar { background: rgba(255,107,43,.32); }
+  .sp-desc { font-size: 10px; color: var(--text-faint); }
+
+  /* ══════════════════════════════════════════
+     TYPOGRAPHY SCALE
+  ══════════════════════════════════════════ */
+  .type-scale-wrap {
+    background: var(--surface-panel); border: 1px solid var(--border-default);
+    border-radius: 8px; padding: 20px; margin-bottom: 24px;
+  }
+  .ts-row { display: flex; align-items: baseline; gap: 20px; padding: 9px 0; border-bottom: 1px solid var(--border-subtle); }
+  .ts-row:last-child { border-bottom: none; }
+  .ts-meta { width: 200px; flex-shrink: 0; }
+  .ts-tok  { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+  .ts-val  { font-size: 10px; color: var(--text-faint); margin-top: 2px; }
+  .ts-samp { color: var(--text-primary); line-height: 1.2; }
+
+  /* Recipe grid */
+  .recipe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px,1fr)); gap: 10px; margin-top: 14px; }
+  .recipe-card {
+    background: var(--surface-panel); border: 1px solid var(--border-default);
+    border-radius: 6px; padding: 16px;
+    transition: border-color var(--motion-fast);
+  }
+  .recipe-card:hover { border-color: var(--border-strong); }
+  .rc-name { font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .rc-spec { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); line-height: 1.9; margin-bottom: 10px; }
+
+  /* ══════════════════════════════════════════
+     RADIUS SHOWCASE
+  ══════════════════════════════════════════ */
+  .radius-row { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-end; }
+  .rad-item { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .rad-block {
+    width: 54px; height: 54px; background: var(--surface-subpanel);
+    border: 1px solid var(--border-strong);
+    transition: background var(--motion-fast), border-color var(--motion-fast);
+  }
+  .rad-item:hover .rad-block { background: rgba(255,107,43,.1); border-color: var(--accent); }
+  .rad-lbl { font-family: var(--font-mono); font-size: 9px; color: var(--text-faint); text-align: center; line-height: 1.6; }
+  .rad-lbl strong { display: block; color: var(--accent); font-size: 10px; }
+
+  /* ══════════════════════════════════════════
+     ELEVATION SHOWCASE
+  ══════════════════════════════════════════ */
+  .elev-row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-end; padding: 20px 0; }
+  .elev-item { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .elev-block {
+    width: 96px; height: 68px; background: var(--surface-subpanel);
+    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    transition: transform var(--motion-fast);
+  }
+  .elev-item:hover .elev-block { transform: translateY(-3px); }
+  .elev-lbl { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); text-align: center; line-height: 1.6; }
+  .elev-lbl strong { display: block; color: var(--accent); font-size: 11px; }
+
+  /* ══════════════════════════════════════════
+     BUTTONS
+  ══════════════════════════════════════════ */
+  .btn-showcase {
+    display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    padding: 22px; background: var(--surface-panel);
+    border-radius: 8px; border: 1px solid var(--border-default); margin-bottom: 12px;
+  }
+  .btn-row-label {
+    font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--text-faint); width: 100%; margin-bottom: 2px;
+  }
+  .pdt-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 8px 16px; border-radius: 4px;
+    font-family: var(--font-sans); font-size: 14px; font-weight: 500;
+    cursor: pointer; border: 1px solid transparent;
+    transition: background var(--motion-fast) var(--easing-standard),
+                border-color var(--motion-fast), opacity var(--motion-fast);
+  }
+  .pdt-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pdt-btn:active { transform: scale(.98); }
+  .pdt-btn-primary    { background: var(--accent); color: #0F0F0F; }
+  .pdt-btn-primary:hover { background: #FF7C40; }
+  .pdt-btn-secondary  { background: var(--surface-subpanel); color: var(--text-primary); border-color: var(--border-default); }
+  .pdt-btn-secondary:hover { background: #202020; border-color: var(--border-strong); }
+  .pdt-btn-ghost      { background: transparent; color: var(--text-secondary); }
+  .pdt-btn-ghost:hover { background: rgba(255,255,255,.05); color: var(--text-primary); }
+  .pdt-btn-destructive { background: var(--health-error); color: #0F0F0F; }
+  .pdt-btn-destructive:hover { background: #f55; }
+  .pdt-btn[disabled]   { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+  /* ══════════════════════════════════════════
+     PILLS / CHIPS
+  ══════════════════════════════════════════ */
+  .pill-showcase {
+    display: flex; flex-wrap: wrap; gap: 7px; align-items: center;
+    padding: 18px 22px; background: var(--surface-panel);
+    border-radius: 8px; border: 1px solid var(--border-default); margin-bottom: 10px;
+  }
+  .pdt-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: 20px;
+    font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; line-height: 1.3;
+  }
+  .pill-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+  .pill-row-lbl { font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint); width: 100%; margin-bottom: 3px; }
+
+  /* ══════════════════════════════════════════
+     BANNERS
+  ══════════════════════════════════════════ */
+  .banner-stack { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .pdt-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--surface-subpanel);
+    border-radius: 6px; border-left: 3px solid transparent;
+    font-size: 12px;
+    animation: banner-slide var(--motion-slow) var(--easing-standard) both;
+  }
+  .pdt-banner .bn-icon { flex-shrink: 0; width: 16px; height: 16px; }
+  .pdt-banner .bn-text { flex: 1; color: var(--text-secondary); line-height: 1.5; }
+  .pdt-banner .bn-x    { width: 14px; height: 14px; color: var(--text-muted); cursor: pointer; flex-shrink: 0; }
+  .bn-info    { border-left-color: var(--health-info); }
+  .bn-success { border-left-color: var(--health-success); }
+  .bn-warn    { border-left-color: var(--health-warn); }
+  .bn-error   { border-left-color: var(--health-error); }
+
+  /* ══════════════════════════════════════════
+     STAGE STRIP
+  ══════════════════════════════════════════ */
+  .stage-strip {
+    display: flex; gap: 3px; padding: 16px 20px;
+    background: var(--surface-panel); border-radius: 8px;
+    border: 1px solid var(--border-default); align-items: center;
+    overflow-x: auto; margin-bottom: 16px;
+  }
+  .stg {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+  }
+  .stg.done   { color: var(--text-faint); border: 1px solid transparent; }
+  .stg.done::after { content:''; width:5px; height:5px; border-radius:50%; background:currentColor; opacity:.6; }
+  .stg.active { border: 1px solid currentColor; }
+  .stg.locked { color: var(--text-disabled); border: 1px solid var(--border-default); }
+  .stg-conn   { width: 16px; height: 1px; background: var(--border-default); flex-shrink: 0; }
+
+  /* ══════════════════════════════════════════
+     PRESENCE BAR
+  ══════════════════════════════════════════ */
+  .presence-bar {
+    display: flex; flex-direction: column; gap: 1px;
+    padding: 14px; background: var(--surface-panel);
+    border-radius: 8px; border: 1px solid var(--border-default); width: 240px;
+  }
+  .pb-hdr { font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-faint); padding: 2px 6px 8px; }
+  .pb-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 6px; border-radius: 4px;
+    transition: background var(--motion-fast);
+  }
+  .pb-row:hover { background: rgba(255,255,255,.03); }
+  .pb-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .pb-dot.working { animation: persona-blink .8s ease-in-out infinite alternate; }
+  .pb-name  { font-size: 13px; font-weight: 500; color: var(--text-primary); flex: 1; }
+  .pb-state { font-size: 11px; color: var(--text-muted); }
+
+  /* ══════════════════════════════════════════
+     ICON SIZE ROW
+  ══════════════════════════════════════════ */
+  .icon-row {
+    display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap;
+    padding: 20px 24px; background: var(--surface-panel);
+    border-radius: 8px; border: 1px solid var(--border-default);
+  }
+  .icon-item { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .icon-lbl  { font-family: var(--font-mono); font-size: 9px; color: var(--text-faint); text-align: center; line-height: 1.55; }
+  .icon-lbl strong { display: block; color: var(--accent); font-size: 10px; }
+
+  /* ══════════════════════════════════════════
+     MOTION
+  ══════════════════════════════════════════ */
+  .motion-row { display: flex; gap: 18px; flex-wrap: wrap; padding: 16px 0; }
+  .motion-item { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 116px; }
+  .motion-track { height: 4px; background: var(--border-default); border-radius: 2px; width: 100%; overflow: hidden; position: relative; }
+  .motion-fill { position: absolute; top:0; left:-100%; height:100%; background: var(--accent); border-radius: 2px; width: 100%; }
+  .motion-item:hover .motion-fill { left: 0; }
+  .mf-fast  { transition: left var(--motion-fast)  var(--easing-standard); }
+  .mf-base  { transition: left var(--motion-base)  var(--easing-standard); }
+  .mf-slow  { transition: left var(--motion-slow)  var(--easing-standard); }
+  .motion-lbl { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-align: center; line-height: 1.6; }
+  .motion-lbl strong { color: var(--accent); }
+
+  .spin-demo {
+    display: flex; gap: 28px; align-items: center; flex-wrap: wrap;
+    padding: 20px 24px; background: var(--surface-panel);
+    border-radius: 8px; border: 1px solid var(--border-default);
+  }
+  .spin-item { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .spin-lbl  { font-family: var(--font-mono); font-size: 9px; color: var(--text-faint); text-align: center; line-height: 1.6; }
+  .pdt-spinner { animation: pdt-spin 1s linear infinite; }
+
+  /* ══════════════════════════════════════════
+     EMPTY PANE SAMPLE
+  ══════════════════════════════════════════ */
+  .empty-pane {
+    flex: 1; min-width: 200px;
+    background: var(--surface-panel); border: 1px solid var(--border-default);
+    border-radius: 8px; padding: 36px 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center;
+  }
+
+  /* ══════════════════════════════════════════
+     OPEN QUESTIONS
+  ══════════════════════════════════════════ */
+  .oq-list { display: flex; flex-direction: column; gap: 8px; }
+  .oq {
+    display: flex; gap: 12px; padding: 12px 14px;
+    background: rgba(251,191,36,.04); border: 1px solid rgba(251,191,36,.14);
+    border-radius: 6px; font-size: 12px;
+  }
+  .oq-id { font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: var(--health-warn); white-space: nowrap; padding-top: 1px; }
+  .oq-txt { color: var(--text-secondary); line-height: 1.55; }
+  .oq-txt code { font-family: var(--font-mono); font-size: 10px; background: rgba(255,255,255,.06); padding: 1px 4px; border-radius: 2px; color: var(--text-muted); }
+
+  /* ══════════════════════════════════════════
+     PROTECTED WORDS
+  ══════════════════════════════════════════ */
+  .pw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px,1fr)); gap: 8px; }
+  .pw-group {
+    background: var(--surface-panel); border: 1px solid var(--border-default);
+    border-radius: 6px; padding: 14px;
+    transition: border-color var(--motion-fast);
+  }
+  .pw-group:hover { border-color: var(--border-strong); }
+  .pw-lbl { font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 10px; }
+  .pw-words { display: flex; flex-wrap: wrap; gap: 4px; }
+  .pw-word {
+    font-family: var(--font-mono); font-size: 10px; padding: 2px 6px;
+    border-radius: 2px; background: rgba(167,139,250,.1);
+    color: var(--persona-designer); border: 1px solid rgba(167,139,250,.14);
+  }
+
+  /* ══════════════════════════════════════════
+     FOOTER
+  ══════════════════════════════════════════ */
+  .ds-footer {
+    margin-top: 72px; padding: 24px 0;
+    border-top: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  .footer-brand { display: flex; align-items: center; gap: 8px; }
+  .footer-brand .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand-orange); }
+  .footer-brand span { font-size: 12px; font-weight: 600; color: var(--text-faint); }
+  .footer-meta { font-size: 11px; color: var(--text-ghost); text-align: right; line-height: 1.7; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-muted); }
+
+  code { font-family: var(--font-mono); font-size: 11px; padding: 1px 4px; background: rgba(255,255,255,.06); border-radius: 2px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<!-- ── NAV ────────────────────────────────────────────────── -->
+<nav class="ds-nav">
+  <div class="ds-nav-brand">
+    <div class="dot"></div>
+    <span>productune DS</span>
+  </div>
+  <a href="#principles">원칙</a>
+  <a href="#color">Color §2</a>
+  <a href="#spacing">Spacing §3</a>
+  <a href="#typography">Type §4</a>
+  <a href="#radius">Radius §5</a>
+  <a href="#elevation">Elevation §6</a>
+  <a href="#components">Components §7–8</a>
+  <a href="#motion">Motion §9</a>
+  <a href="#i18n">i18n §10</a>
+  <a href="#oq">Open Q</a>
+  <div class="ds-nav-end">
+    <span class="tag tag-orange">R4</span>
+    <span class="tag tag-green">Dark-only</span>
+    <span class="tag tag-warn">Draft</span>
+  </div>
+</nav>
+
+<!-- ── PAGE ──────────────────────────────────────────────── -->
+<div class="ds-page">
+
+  <!-- HERO -->
+  <section class="ds-hero">
+    <div class="hero-eyebrow">Design System</div>
+    <h1>productune <em>GUI</em></h1>
+    <p class="ds-hero-sub">
+      shadcn-style 모노크롬 + 의미 기반 token + lucide 아이콘.
+      본 문서는 <strong>정의 only</strong> — hardcode → CSS variable 마이그레이션은 후속 ticket.
+      모든 ticket / design doc / 코드 리뷰는 본 문서의 token 명을 single source of truth 로 참조.
+    </p>
+    <div class="ds-hero-meta">
+      <div class="meta-item"><span class="ml">Round</span><span class="mv">R4</span></div>
+      <div class="meta-item"><span class="ml">Date</span><span class="mv">2026-05-07</span></div>
+      <div class="meta-item"><span class="ml">Theme</span><span class="mv">Dark-only · light = Phase 5</span></div>
+      <div class="meta-item"><span class="ml">Applies to</span><span class="mv">Tauri WorkspaceShell + React panes</span></div>
+      <div class="meta-item"><span class="ml">Icons</span><span class="mv">lucide-react@1.14.0</span></div>
+      <div class="meta-item"><span class="ml">Status</span><span class="mv" style="color:var(--health-warn)">Design gate draft</span></div>
+    </div>
+  </section>
+
+  <!-- ── §1 PRINCIPLES ──────────────────────────────────── -->
+  <section class="ds-section" id="principles">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§1</span>
+      <h2>Principles</h2>
+    </div>
+    <div class="principle-grid">
+      <div class="principle-card"><div class="pc-tag">P1 — Token-driven</div><p class="pc-text">컴포넌트는 hex 가 아닌 semantic token (<code>--surface-modal</code>, <code>--status-blocked</code>) 만 참조한다. inline hex 는 마이그레이션 대상.</p></div>
+      <div class="principle-card"><div class="pc-tag">P2 — Monochrome 우선</div><p class="pc-text">neutral 그레이스케일이 베이스. accent / status / persona / stage / health 만 색을 가진다. 같은 화면에서 색 요소 <strong>4종 초과 금지</strong>.</p></div>
+      <div class="principle-card"><div class="pc-tag">P3 — Minimal motion</div><p class="pc-text">정보 변화 (loader, persona working blink) 외 장식 motion 금지. <code>prefers-reduced-motion</code> 에서 모두 비활성.</p></div>
+      <div class="principle-card"><div class="pc-tag">P4 — shadcn 패턴</div><p class="pc-text">Radix-style primitives + slot 합성. 현 단계 라이브러리화 X — 패턴·네이밍·구조 정합만 채택.</p></div>
+      <div class="principle-card"><div class="pc-tag">P5 — i18n 어휘 가드</div><p class="pc-text">한국어 모드에서도 보호어 enum (<code>PRD</code>, <code>stage</code>, <code>slug</code>) 은 영문 보존. T-P4-057 linter 강제.</p></div>
+      <div class="principle-card"><div class="pc-tag">P6 — Dark-only</div><p class="pc-text">light theme = Phase 5. 모든 hex 는 dark surface 기준. token 명은 테마 invariant — light 추가 시 hex 만 교체.</p></div>
+    </div>
+
+    <!-- §1.5 UX 원칙 요약 -->
+    <div class="sub-title" style="margin-top:32px;">§1.5 UX 원칙 (대원칙 2+3) — PR self-check 5항목</div>
+    <table class="ds-table">
+      <thead><tr><th>#</th><th>Sub-rule</th><th>핵심</th><th>Anti-pattern</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">2-1</td><td style="color:var(--text-primary);font-weight:500;">Few Things (Hick's Law)</td><td style="color:var(--text-secondary)">한 pane/modal primary action ≤ 2. 복잡 task 는 단계 분리.</td><td style="color:var(--text-faint)">한 pane 에 ticket list + detail + activity log 동시 노출</td></tr>
+        <tr><td class="mono">2-2</td><td style="color:var(--text-primary);font-weight:500;">익숙한 경험 + 점진적 정보</td><td style="color:var(--text-secondary)">IDE 패턴 (dev) + 단계화 (non-engineer). 보호어 유지.</td><td style="color:var(--text-faint)">First-run 진입 즉시 full dashboard 노출</td></tr>
+        <tr><td class="mono">3-1</td><td style="color:var(--text-primary);font-weight:500;">Predictability</td><td style="color:var(--text-secondary)">token 강제. empty state = Empty 컴포넌트 + CTA. 버튼 위치 일관.</td><td style="color:var(--text-faint)">같은 "blocked" 가 어떤 화면은 빨강 / 어떤 화면은 회색</td></tr>
+        <tr><td class="mono">3-2</td><td style="color:var(--text-primary);font-weight:500;">Feedback</td><td style="color:var(--text-secondary)">모든 action 의 즉시 / 진행 / 완료 중 1개 이상 visual feedback.</td><td style="color:var(--text-faint)">restart 버튼 클릭 후 UI 변화 0 (2026-05-07 dogfood)</td></tr>
+        <tr><td class="mono">3-3</td><td style="color:var(--text-primary);font-weight:500;">Escape</td><td style="color:var(--text-secondary)">Esc / Cancel / backdrop click / dismiss 복원 중 최소 1개.</td><td style="color:var(--text-faint)">Modal 에 [Confirm] 만, [Cancel] 없음</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ── §2 COLOR ───────────────────────────────────────── -->
+  <section class="ds-section" id="color">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§2</span>
+      <h2>Color Tokens</h2>
+      <span class="sec-desc">dark surface 기준 · 전체 hex 표기</span>
+    </div>
+
+    <div class="sub-title">§2.1 Surface — 배경 계층 (깊을수록 어두움)</div>
+    <div class="swatch-grid">
+      <div class="swatch"><div class="swatch-block" style="background:#0A0A0A;border-bottom:1px solid #1F1F1F;"></div><div class="swatch-info"><div class="sw-tok">--surface-base</div><div class="sw-hex">#0A0A0A</div><div class="sw-use">body alt · 가장 깊은 바닥</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#0F0F0F;border-bottom:1px solid #1F1F1F;"></div><div class="swatch-info"><div class="sw-tok">--surface-body</div><div class="sw-hex">#0F0F0F</div><div class="sw-use">WorkspaceShell body bg</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#141414;border-bottom:1px solid #1F1F1F;"></div><div class="swatch-info"><div class="sw-tok">--surface-panel</div><div class="sw-hex">#141414</div><div class="sw-use">left/right pane, dashboard</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#1A1A1A;border-bottom:1px solid #1F1F1F;"></div><div class="swatch-info"><div class="sw-tok">--surface-subpanel</div><div class="sw-hex">#1A1A1A</div><div class="sw-use">nested card, message bubble</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#1C1C20;border-bottom:1px solid #1F1F1F;"></div><div class="swatch-info"><div class="sw-tok">--surface-modal</div><div class="sw-hex">#1C1C20</div><div class="sw-use">Dialog / Sheet / Popover</div></div></div>
+    </div>
+
+    <div class="sub-title">§2.2 Border</div>
+    <div class="swatch-grid" style="grid-template-columns:repeat(auto-fill,minmax(120px,1fr))">
+      <div class="swatch"><div class="swatch-block" style="background:#1A1A1A;"></div><div class="swatch-info"><div class="sw-tok">--border-subtle</div><div class="sw-hex">#1A1A1A</div><div class="sw-use">같은 surface 약한 구분</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#1F1F1F;"></div><div class="swatch-info"><div class="sw-tok">--border-default</div><div class="sw-hex">#1F1F1F</div><div class="sw-use">panel 외곽, list 구분</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#2A2A2A;"></div><div class="swatch-info"><div class="sw-tok">--border-strong</div><div class="sw-hex">#2A2A2A</div><div class="sw-use">hover/focus, 카드 강조</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#3A3A3A;"></div><div class="swatch-info"><div class="sw-tok">--border-muted</div><div class="sw-hex">#3A3A3A</div><div class="sw-use">disabled 영역 외곽</div></div></div>
+    </div>
+
+    <div class="sub-title">§2.3 Text — contrast vs #0F0F0F</div>
+    <table class="ds-table" style="margin-bottom:20px;">
+      <thead><tr><th>Token</th><th>Live sample</th><th>Hex</th><th>Contrast</th><th>용도</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">--text-primary</td>   <td style="color:#E8E8EA;font-size:14px;font-weight:500;">본문 텍스트 Primary</td>  <td class="mono-sm">#E8E8EA</td><td><span class="cb cb-aaa">AAA 14.6:1</span></td><td style="color:var(--text-faint)">본문, headline</td></tr>
+        <tr><td class="mono">--text-emphasis</td>  <td style="color:#F0F0F0;font-size:14px;font-weight:600;">강조 라벨 Emphasis</td>   <td class="mono-sm">#F0F0F0</td><td><span class="cb cb-aaa">AAA 15.7:1</span></td><td style="color:var(--text-faint)">강조, 활성 탭</td></tr>
+        <tr><td class="mono">--text-secondary</td> <td style="color:#C8C8CC;font-size:13px;">보조 본문 secondary</td>                  <td class="mono-sm">#C8C8CC</td><td><span class="cb cb-aaa">AAA 11.0:1</span></td><td style="color:var(--text-faint)">보조, helper</td></tr>
+        <tr><td class="mono">--text-muted</td>     <td style="color:#A0A0A0;font-size:12px;">metadata · 2026-05-07</td>                <td class="mono-sm">#A0A0A0</td><td><span class="cb cb-aaa">AAA 7.4:1</span></td><td style="color:var(--text-faint)">metadata, timestamp</td></tr>
+        <tr><td class="mono">--text-faint</td>     <td style="color:#707070;font-size:12px;">placeholder hint</td>                      <td class="mono-sm">#707070</td><td><span class="cb cb-aal">AA large 4.0:1</span></td><td style="color:var(--text-faint)">18px+ / 14px bold만</td></tr>
+        <tr><td class="mono">--text-disabled</td>  <td style="color:#505050;font-size:12px;">비활성 시각 only</td>                     <td class="mono-sm">#505050</td><td><span class="cb cb-fail">✗ 2.4:1</span></td><td style="color:var(--text-faint)">decorative only</td></tr>
+        <tr><td class="mono">--text-ghost</td>     <td style="color:#3A3A3A;font-size:12px;">divider 잔영</td>                          <td class="mono-sm">#3A3A3A</td><td><span class="cb cb-fail">✗ 1.6:1</span></td><td style="color:var(--text-faint)">non-text only</td></tr>
+      </tbody>
+    </table>
+
+    <div class="sub-title">§2.4 Accent &amp; Brand</div>
+    <div class="swatch-grid" style="grid-template-columns:repeat(auto-fill,minmax(132px,1fr));margin-bottom:16px;">
+      <div class="swatch" style="border-color:rgba(255,107,43,.35)"><div class="swatch-block" style="background:#FF6B2B;"></div><div class="swatch-info"><div class="sw-tok">--accent / --brand-orange</div><div class="sw-hex">#FF6B2B</div><div class="sw-use">로고 · primary CTA · focus ring</div></div></div>
+    </div>
+
+    <div class="sub-title">§2.5 Persona</div>
+    <div class="swatch-grid">
+      <div class="swatch"><div class="swatch-block" style="background:#FF6B2B;"></div><div class="swatch-info"><div class="sw-tok">--persona-po</div><div class="sw-hex">#FF6B2B</div><div class="sw-use">PO · = --accent</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#A78BFA;"></div><div class="swatch-info"><div class="sw-tok">--persona-designer</div><div class="sw-hex">#A78BFA</div><div class="sw-use">designer</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#38BDF8;"></div><div class="swatch-info"><div class="sw-tok">--persona-dev</div><div class="sw-hex">#38BDF8</div><div class="sw-use">developer</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#34D399;"></div><div class="swatch-info"><div class="sw-tok">--persona-qa</div><div class="sw-hex">#34D399</div><div class="sw-use">qa</div></div></div>
+    </div>
+
+    <div class="sub-title">§2.6 Stage</div>
+    <div class="swatch-grid">
+      <div class="swatch"><div class="swatch-block" style="background:#A78BFA;"></div><div class="swatch-info"><div class="sw-tok">--stage-prd</div><div class="sw-hex">#A78BFA</div><div class="sw-use">= --persona-designer</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#F472B6;"></div><div class="swatch-info"><div class="sw-tok">--stage-design</div><div class="sw-hex">#F472B6</div><div class="sw-use">pink-400</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#38BDF8;"></div><div class="swatch-info"><div class="sw-tok">--stage-build</div><div class="sw-hex">#38BDF8</div><div class="sw-use">= --persona-dev</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#34D399;"></div><div class="swatch-info"><div class="sw-tok">--stage-qa</div><div class="sw-hex">#34D399</div><div class="sw-use">TBD → stage-mapping.ts (OQ-1)</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#FBBF24;"></div><div class="swatch-info"><div class="sw-tok">--stage-deploy</div><div class="sw-hex">#FBBF24</div><div class="sw-use">TBD (OQ-1)</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#60B860;"></div><div class="swatch-info"><div class="sw-tok">--stage-operate</div><div class="sw-hex">#60B860</div><div class="sw-use">TBD (OQ-1)</div></div></div>
+    </div>
+
+    <div class="sub-title">§2.7 Status</div>
+    <div class="swatch-grid">
+      <div class="swatch"><div class="swatch-block" style="background:#505050;"></div><div class="swatch-info"><div class="sw-tok">--status-todo</div><div class="sw-hex">#505050</div><div class="sw-use">미착수 (neutral)</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#FF6B2B;"></div><div class="swatch-info"><div class="sw-tok">--status-in-progress</div><div class="sw-hex">#FF6B2B</div><div class="sw-use">진행 중 (= accent)</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#E0B040;"></div><div class="swatch-info"><div class="sw-tok">--status-review</div><div class="sw-hex">#E0B040</div><div class="sw-use">리뷰 대기 (warm)</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#60B860;"></div><div class="swatch-info"><div class="sw-tok">--status-done</div><div class="sw-hex">#60B860</div><div class="sw-use">완료 (success)</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#E04040;"></div><div class="swatch-info"><div class="sw-tok">--status-blocked</div><div class="sw-hex">#E04040</div><div class="sw-use">차단 (error)</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#3A3A3A;"></div><div class="swatch-info"><div class="sw-tok">--status-abandoned</div><div class="sw-hex">#3A3A3A</div><div class="sw-use">폐기 (ghost)</div></div></div>
+    </div>
+
+    <div class="sub-title">§2.8 Health / Feedback</div>
+    <div class="swatch-grid" style="grid-template-columns:repeat(auto-fill,minmax(132px,1fr))">
+      <div class="swatch"><div class="swatch-block" style="background:#38BDF8;"></div><div class="swatch-info"><div class="sw-tok">--health-info</div><div class="sw-hex">#38BDF8</div><div class="sw-use">정보, 안내</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#34D399;"></div><div class="swatch-info"><div class="sw-tok">--health-success</div><div class="sw-hex">#34D399</div><div class="sw-use">성공</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#FBBF24;"></div><div class="swatch-info"><div class="sw-tok">--health-warn</div><div class="sw-hex">#FBBF24</div><div class="sw-use">경고</div></div></div>
+      <div class="swatch"><div class="swatch-block" style="background:#EF4444;"></div><div class="swatch-info"><div class="sw-tok">--health-error</div><div class="sw-hex">#EF4444</div><div class="sw-use">오류</div></div></div>
+    </div>
+  </section>
+
+  <!-- ── §3 SPACING ─────────────────────────────────────── -->
+  <section class="ds-section" id="spacing">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§3</span>
+      <h2>Spacing Scale</h2>
+      <span class="sec-desc">8px 그리드 + 4px sub-step · hover 시 강조</span>
+    </div>
+    <div class="sp-list">
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-0-5</span><span class="sp-val">2px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:2px"></div><span class="sp-desc">hairline</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-1</span><span class="sp-val">4px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:4px"></div><span class="sp-desc">icon gap · badge padding-y</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-1-5</span><span class="sp-val">6px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:6px"></div><span class="sp-desc">tight inline gap</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-2</span><span class="sp-val">8px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:8px"></div><span class="sp-desc">default inline gap · button padding-y</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-2-5</span><span class="sp-val">10px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:10px"></div><span class="sp-desc">legacy — 8 또는 12 로 정렬 권장</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-3</span><span class="sp-val">12px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:12px"></div><span class="sp-desc">card padding inner</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-4</span><span class="sp-val">16px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:16px"></div><span class="sp-desc">section gap · default panel padding</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-5</span><span class="sp-val">20px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:20px"></div><span class="sp-desc">column gap</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-6</span><span class="sp-val">24px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:24px"></div><span class="sp-desc">major section gap</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-8</span><span class="sp-val">32px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:32px"></div><span class="sp-desc">hero spacing</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-10</span><span class="sp-val">40px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:40px"></div><span class="sp-desc">hero spacing</span></div></div>
+      <div class="sp-row"><div class="sp-meta"><span class="sp-tok">--space-12</span><span class="sp-val">48px</span></div><div class="sp-bar-wrap"><div class="sp-bar" style="width:48px"></div><span class="sp-desc">activity bar 폭 · modal outer</span></div></div>
+    </div>
+  </section>
+
+  <!-- ── §4 TYPOGRAPHY ──────────────────────────────────── -->
+  <section class="ds-section" id="typography">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§4</span>
+      <h2>Typography</h2>
+      <span class="sec-desc">system font stack · 한국어 OS fallback</span>
+    </div>
+
+    <div class="sub-title">Font stacks</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px;">
+      <div style="flex:1;min-width:240px;background:var(--surface-panel);border:1px solid var(--border-default);border-radius:6px;padding:16px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);margin-bottom:8px;">--font-sans</div>
+        <div style="font-size:22px;font-weight:600;color:var(--text-emphasis);margin-bottom:6px;letter-spacing:-.01em;">The quick brown fox.</div>
+        <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-faint);">-apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif</div>
+      </div>
+      <div style="flex:1;min-width:240px;background:var(--surface-panel);border:1px solid var(--border-default);border-radius:6px;padding:16px;">
+        <div style="font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);margin-bottom:8px;">--font-mono</div>
+        <div style="font-family:var(--font-mono);font-size:18px;font-weight:400;color:var(--text-emphasis);margin-bottom:6px;">const x = () =&gt; {}</div>
+        <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-faint);">ui-monospace, "SF Mono", "Menlo", "Consolas", monospace</div>
+      </div>
+    </div>
+
+    <div class="sub-title">§4.2 Size scale — live samples</div>
+    <div class="type-scale-wrap">
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-display</div><div class="ts-val">48px · extrabold · lh 1.1</div></div><div class="ts-samp" style="font-size:48px;font-weight:800;letter-spacing:-.025em;">productune</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-3xl</div><div class="ts-val">32px · bold · lh 1.2</div></div><div class="ts-samp" style="font-size:32px;font-weight:700;">Onboarding 헤드라인</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-2xl</div><div class="ts-val">28px · bold · lh 1.3</div></div><div class="ts-samp" style="font-size:28px;font-weight:700;">Route headline</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-xl</div><div class="ts-val">22px · semibold · lh 1.3</div></div><div class="ts-samp" style="font-size:22px;font-weight:600;">Pane title</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-lg</div><div class="ts-val">18px · semibold · lh 1.3</div></div><div class="ts-samp" style="font-size:18px;font-weight:600;">Section heading</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-md-plus</div><div class="ts-val">15px · regular · lh 1.5</div></div><div class="ts-samp" style="font-size:15px;font-weight:400;">Dialog body text</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-md</div><div class="ts-val">14px · medium · lh 1.5</div></div><div class="ts-samp" style="font-size:14px;font-weight:500;">Body comfortable · Button label</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-base</div><div class="ts-val">13px · regular · lh 1.4</div></div><div class="ts-samp" style="font-size:13px;font-weight:400;">Body default — dense panes</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-sm</div><div class="ts-val">12px · regular · lh 1.4</div></div><div class="ts-samp" style="font-size:12px;color:var(--text-secondary);">Helper · secondary metadata</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-xs-plus</div><div class="ts-val">11px · regular</div></div><div class="ts-samp" style="font-size:11px;color:var(--text-muted);">Timestamp · breadcrumb 2026-05-07</div></div>
+      <div class="ts-row"><div class="ts-meta"><div class="ts-tok">--text-xs</div><div class="ts-val">10px · semibold · uppercase</div></div><div class="ts-samp" style="font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);">STATUS PILL · MICRO LABEL</div></div>
+    </div>
+
+    <div class="sub-title">§4.6 Pair recipes</div>
+    <div class="recipe-grid">
+      <div class="recipe-card"><div class="rc-name">body</div><div class="rc-spec">14px · regular · 0em · lh 1.5</div><div style="font-size:14px;font-weight:400;line-height:1.5;color:var(--text-primary);">productune 기본 body 레시피. 일반 본문에 사용한다.</div></div>
+      <div class="recipe-card"><div class="rc-name">body-dense</div><div class="rc-spec">13px · regular · 0em · lh 1.4</div><div style="font-size:13px;font-weight:400;line-height:1.4;color:var(--text-secondary);">Dense pane 용. 공간이 좁은 pane 에서 정보 밀도를 높인다.</div></div>
+      <div class="recipe-card"><div class="rc-name">metadata</div><div class="rc-spec">12px · regular · 0.02em · lh 1.4</div><div style="font-size:12px;font-weight:400;line-height:1.4;letter-spacing:.02em;color:var(--text-muted);">2026-05-07 · T-P4-057 · slug: ds-html</div></div>
+      <div class="recipe-card"><div class="rc-name">label</div><div class="rc-spec">14px · medium · 0em · lh 1.4</div><div style="font-size:14px;font-weight:500;line-height:1.4;color:var(--text-primary);">Button 라벨 · 메뉴 항목</div></div>
+      <div class="recipe-card"><div class="rc-name">pill</div><div class="rc-spec">10px · semibold · 0.06em · uppercase</div><div style="font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);">IN-PROGRESS · DONE · BLOCKED</div></div>
+      <div class="recipe-card"><div class="rc-name">heading-pane</div><div class="rc-spec">22px · semibold · 0em · lh 1.3</div><div style="font-size:22px;font-weight:600;line-height:1.3;color:var(--text-emphasis);">Pane title</div></div>
+      <div class="recipe-card"><div class="rc-name">heading-section</div><div class="rc-spec">18px · semibold · 0em · lh 1.3</div><div style="font-size:18px;font-weight:600;line-height:1.3;color:var(--text-emphasis);">Section heading</div></div>
+      <div class="recipe-card"><div class="rc-name">display-onboarding</div><div class="rc-spec">48px · extrabold · -0.025em · lh 1.05</div><div style="font-size:38px;font-weight:800;line-height:1.05;letter-spacing:-.025em;color:var(--text-emphasis);">Welcome</div></div>
+    </div>
+  </section>
+
+  <!-- ── §5 BORDER RADIUS ───────────────────────────────── -->
+  <section class="ds-section" id="radius">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§5</span>
+      <h2>Border Radius</h2>
+      <span class="sec-desc">hover 시 accent 강조</span>
+    </div>
+    <div class="radius-row">
+      <div class="rad-item"><div class="rad-block" style="border-radius:2px;"></div><div class="rad-lbl"><strong>--radius-xs</strong>2px · hairline pill</div></div>
+      <div class="rad-item"><div class="rad-block" style="border-radius:3px;"></div><div class="rad-lbl"><strong>--radius-sm</strong>3px · (legacy)</div></div>
+      <div class="rad-item"><div class="rad-block" style="border-radius:4px;"></div><div class="rad-lbl"><strong>--radius-md</strong>4px · input · button</div></div>
+      <div class="rad-item"><div class="rad-block" style="border-radius:6px;"></div><div class="rad-lbl"><strong>--radius-lg</strong>6px · card · bubble</div></div>
+      <div class="rad-item"><div class="rad-block" style="border-radius:8px;"></div><div class="rad-lbl"><strong>--radius-xl</strong>8px · modal · panel</div></div>
+      <div class="rad-item"><div class="rad-block" style="border-radius:20px;"></div><div class="rad-lbl"><strong>--radius-pill</strong>20px · pill / chip</div></div>
+      <div class="rad-item"><div class="rad-block" style="border-radius:9999px;width:54px;height:54px;"></div><div class="rad-lbl"><strong>--radius-full</strong>9999px · avatar · dot</div></div>
+    </div>
+  </section>
+
+  <!-- ── §6 ELEVATION ───────────────────────────────────── -->
+  <section class="ds-section" id="elevation">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§6</span>
+      <h2>Elevation</h2>
+      <span class="sec-desc">dark theme — shadow = modal 분리용</span>
+    </div>
+    <div class="elev-row">
+      <div class="elev-item"><div class="elev-block" style="border:1px solid var(--border-default);"><span style="font-size:10px;color:var(--text-faint)">—</span></div><div class="elev-lbl"><strong>--elev-0</strong>none<br><span style="color:var(--text-faint)">평면, 본문</span></div></div>
+      <div class="elev-item"><div class="elev-block" style="box-shadow:var(--elev-sm);"><span style="font-size:10px;color:var(--text-faint)">sm</span></div><div class="elev-lbl"><strong>--elev-sm</strong>0 2px 8px .4<br><span style="color:var(--text-faint)">tooltip · popover</span></div></div>
+      <div class="elev-item"><div class="elev-block" style="box-shadow:var(--elev-md);"><span style="font-size:10px;color:var(--text-faint)">md</span></div><div class="elev-lbl"><strong>--elev-md</strong>0 6px 18px .45<br><span style="color:var(--text-faint)">FAB · dropdown</span></div></div>
+      <div class="elev-item"><div class="elev-block" style="box-shadow:var(--elev-lg);"><span style="font-size:10px;color:var(--text-faint)">lg</span></div><div class="elev-lbl"><strong>--elev-lg</strong>0 12px 32px .5<br><span style="color:var(--text-faint)">dialog · sheet</span></div></div>
+    </div>
+  </section>
+
+  <!-- ── §7–8 COMPONENTS ────────────────────────────────── -->
+  <section class="ds-section" id="components">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§7–8</span>
+      <h2>Icons &amp; Components</h2>
+      <span class="sec-desc">lucide-react · Buttons · Pills · Banners · Stage · Presence · Empty</span>
+    </div>
+
+    <!-- Icon sizes -->
+    <div class="sub-title">§7 Iconography — size tokens (inline SVG preview)</div>
+    <div class="icon-row">
+      <div class="icon-item">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div class="icon-lbl"><strong>--icon-xs</strong>12px · sw-3<br>chip · small btn</div>
+      </div>
+      <div class="icon-item">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <div class="icon-lbl"><strong>--icon-sm</strong>14px · sw-2<br>dense list</div>
+      </div>
+      <div class="icon-item">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
+        <div class="icon-lbl"><strong>--icon-md</strong>16px · sw-2<br>default · button · menu</div>
+      </div>
+      <div class="icon-item">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <div class="icon-lbl"><strong>--icon-lg</strong>20px · sw-2<br>activity bar · nav</div>
+      </div>
+      <div class="icon-item">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        <div class="icon-lbl"><strong>--icon-xl</strong>22px · sw-1.75<br>section header</div>
+      </div>
+      <div class="icon-item">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <div class="icon-lbl"><strong>--icon-2xl</strong>32px · sw-1.5<br>empty state</div>
+      </div>
+      <div class="icon-item">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        <div class="icon-lbl"><strong>--icon-hero</strong>48px · sw-1.5<br>first-run wizard</div>
+      </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="sub-title" style="margin-top:32px;">§8.1 Button variants</div>
+    <div class="btn-showcase">
+      <span class="btn-row-label">Default size · 14px · medium · radius-md</span>
+      <button class="pdt-btn pdt-btn-primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+        primary
+      </button>
+      <button class="pdt-btn pdt-btn-secondary">secondary</button>
+      <button class="pdt-btn pdt-btn-ghost">ghost</button>
+      <button class="pdt-btn pdt-btn-destructive">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+        destructive
+      </button>
+      <button class="pdt-btn pdt-btn-primary" disabled>disabled</button>
+    </div>
+    <div class="btn-showcase" style="background:var(--surface-subpanel);">
+      <span class="btn-row-label">Async action — Loader2 spinner (§9.2 pdt-spin)</span>
+      <button class="pdt-btn pdt-btn-primary">
+        <svg class="pdt-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        저장 중...
+      </button>
+      <button class="pdt-btn pdt-btn-secondary">
+        <svg class="pdt-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--health-info)" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        loading
+      </button>
+    </div>
+
+    <!-- Pills -->
+    <div class="sub-title" style="margin-top:32px;">§8.2 Pill / Chip variants</div>
+    <div class="pill-showcase">
+      <span class="pill-row-lbl">Status pills</span>
+      <span class="pdt-pill" style="background:rgba(80,80,80,.12);color:#505050;"><span class="pill-dot" style="background:#505050"></span>TODO</span>
+      <span class="pdt-pill" style="background:rgba(255,107,43,.12);color:var(--accent);"><span class="pill-dot" style="background:var(--accent)"></span>IN-PROGRESS</span>
+      <span class="pdt-pill" style="background:rgba(224,176,64,.12);color:#E0B040;"><span class="pill-dot" style="background:#E0B040"></span>REVIEW</span>
+      <span class="pdt-pill" style="background:rgba(96,184,96,.12);color:#60B860;"><span class="pill-dot" style="background:#60B860"></span>DONE</span>
+      <span class="pdt-pill" style="background:rgba(224,64,64,.12);color:#E04040;"><span class="pill-dot" style="background:#E04040"></span>BLOCKED</span>
+      <span class="pdt-pill" style="background:rgba(58,58,58,.2);color:#707070;"><span class="pill-dot" style="background:#3A3A3A"></span>ABANDONED</span>
+    </div>
+    <div class="pill-showcase" style="background:var(--surface-subpanel);">
+      <span class="pill-row-lbl">Stage pills</span>
+      <span class="pdt-pill" style="background:rgba(167,139,250,.12);color:#A78BFA;">PRD</span>
+      <span class="pdt-pill" style="background:rgba(244,114,182,.12);color:#F472B6;">Design</span>
+      <span class="pdt-pill" style="background:rgba(56,189,248,.12);color:#38BDF8;">Build</span>
+      <span class="pdt-pill" style="background:rgba(52,211,153,.12);color:#34D399;">QA</span>
+      <span class="pdt-pill" style="background:rgba(251,191,36,.12);color:#FBBF24;">Deploy</span>
+      <span class="pdt-pill" style="background:rgba(96,184,96,.12);color:#60B860;">Operate</span>
+    </div>
+    <div class="pill-showcase">
+      <span class="pill-row-lbl">Persona chips</span>
+      <span class="pdt-pill" style="background:rgba(255,107,43,.12);color:var(--persona-po);">PO</span>
+      <span class="pdt-pill" style="background:rgba(167,139,250,.12);color:var(--persona-designer);">designer</span>
+      <span class="pdt-pill" style="background:rgba(56,189,248,.12);color:var(--persona-dev);">developer</span>
+      <span class="pdt-pill" style="background:rgba(52,211,153,.12);color:var(--persona-qa);">qa</span>
+    </div>
+
+    <!-- Banners -->
+    <div class="sub-title" style="margin-top:32px;">§8.4 Banner — SessionHealthBanner (좌 4px solid bar + dismiss X)</div>
+    <div class="banner-stack">
+      <div class="pdt-banner bn-info">
+        <svg class="bn-icon" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="8"/><line x1="12" y1="12" x2="12" y2="16"/></svg>
+        <span class="bn-text">공식 문서를 불러오는 중입니다. 잠시 기다려주세요.</span>
+        <svg class="bn-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
+      <div class="pdt-banner bn-success">
+        <svg class="bn-icon" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <span class="bn-text">저장됐습니다. PRD 초안이 업데이트됐어요.</span>
+        <svg class="bn-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
+      <div class="pdt-banner bn-warn">
+        <svg class="bn-icon" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span class="bn-text">승인 대기 중입니다. Design 산출물 3종을 확인해주세요.</span>
+        <svg class="bn-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
+      <div class="pdt-banner bn-error">
+        <svg class="bn-icon" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <span class="bn-text">잠시 문제가 생겼어요. 다시 시도해주세요.</span>
+        <svg class="bn-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </div>
+    </div>
+
+    <!-- Stage Strip -->
+    <div class="sub-title" style="margin-top:32px;">§8.7 StageStrip — current: Build · done: PRD, Design · locked: QA, Deploy, Operate</div>
+    <div class="stage-strip">
+      <div class="stg done"   style="color:var(--stage-prd)">PRD</div>
+      <div class="stg-conn"></div>
+      <div class="stg done"   style="color:var(--stage-design)">Design</div>
+      <div class="stg-conn"></div>
+      <div class="stg active" style="color:var(--stage-build);background:rgba(56,189,248,.08);">Build</div>
+      <div class="stg-conn"></div>
+      <div class="stg locked">QA</div>
+      <div class="stg-conn"></div>
+      <div class="stg locked">Deploy</div>
+      <div class="stg-conn"></div>
+      <div class="stg locked">Operate</div>
+    </div>
+
+    <!-- Presence Bar + Empty Pane -->
+    <div class="sub-title" style="margin-top:32px;">§8.6 PersonaPresenceBar &amp; §8.9 Empty pane</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+      <div class="presence-bar">
+        <div class="pb-hdr">Personas</div>
+        <div class="pb-row">
+          <div class="pb-dot working" style="background:var(--persona-po);"></div>
+          <span class="pb-name">PO</span>
+          <span class="pb-state">질문 정리 중</span>
+        </div>
+        <div class="pb-row">
+          <div class="pb-dot working" style="background:var(--persona-designer);"></div>
+          <span class="pb-name">designer</span>
+          <span class="pb-state">디자인 작성 중</span>
+        </div>
+        <div class="pb-row">
+          <div class="pb-dot" style="background:var(--persona-dev);opacity:.35;"></div>
+          <span class="pb-name" style="color:var(--text-muted);">developer</span>
+          <span class="pb-state">대기 중</span>
+        </div>
+        <div class="pb-row">
+          <div class="pb-dot" style="background:var(--persona-qa);opacity:.35;"></div>
+          <span class="pb-name" style="color:var(--text-muted);">qa</span>
+          <span class="pb-state">대기 중</span>
+        </div>
+      </div>
+
+      <div class="empty-pane">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 12h6M9 15h4"/></svg>
+        <div style="font-size:18px;font-weight:600;color:var(--text-secondary);line-height:1.3;">열린 파일이 없습니다</div>
+        <div style="font-size:13px;color:var(--text-muted);line-height:1.4;">PRD나 티켓을 열어 작업을 시작하세요.</div>
+        <button class="pdt-btn pdt-btn-secondary" style="margin-top:4px;">파일 열기</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── §9 MOTION ──────────────────────────────────────── -->
+  <section class="ds-section" id="motion">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§9</span>
+      <h2>Motion</h2>
+      <span class="sec-desc">각 duration 카드에 hover 해서 bar 채움 확인</span>
+    </div>
+
+    <div class="motion-row">
+      <div class="motion-item">
+        <div class="motion-track"><div class="motion-fill mf-fast"></div></div>
+        <div class="motion-lbl"><strong>--motion-fast</strong>120ms<br>hover · focus</div>
+      </div>
+      <div class="motion-item">
+        <div class="motion-track"><div class="motion-fill mf-base"></div></div>
+        <div class="motion-lbl"><strong>--motion-base</strong>180ms<br>toggle · accordion</div>
+      </div>
+      <div class="motion-item">
+        <div class="motion-track"><div class="motion-fill mf-slow"></div></div>
+        <div class="motion-lbl"><strong>--motion-slow</strong>240ms<br>modal enter/exit</div>
+      </div>
+    </div>
+
+    <div class="sub-title">§9.2 Allowed animations — 4종 only (추가 시 designer review 필요)</div>
+    <div class="spin-demo">
+      <div class="spin-item">
+        <svg class="pdt-spinner" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--health-info)" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+        <div class="spin-lbl"><strong style="color:var(--accent)">pdt-spin</strong>1s linear ∞<br>Loader2</div>
+      </div>
+      <div class="spin-item">
+        <div style="width:8px;height:8px;border-radius:50%;background:var(--persona-po);animation:persona-blink .8s ease-in-out infinite alternate;"></div>
+        <div class="spin-lbl"><strong style="color:var(--accent)">persona-blink</strong>0.8s ∞ alt<br>working dot</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-left:8px;">
+        <div style="font-size:11px;color:var(--text-secondary);">banner-slide-in</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-faint);">translateY(-8px)→0 + opacity · --motion-slow</div>
+        <div style="font-size:11px;color:var(--text-secondary);margin-top:8px;">modal-fade-scale</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-faint);">opacity + scale(0.98)→1 · --motion-slow --easing-emphasized</div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;padding:12px 14px;background:rgba(56,189,248,.05);border:1px solid rgba(56,189,248,.15);border-radius:6px;font-size:12px;color:var(--text-secondary);line-height:1.55;">
+      <strong style="color:var(--health-info);">prefers-reduced-motion:</strong> 위 4개 animation 모두 duration 1ms + iteration 1. spinner 는 정적 아이콘 + <code>aria-live</code> 로 진행 알림.
+    </div>
+  </section>
+
+  <!-- ── §10 i18n ────────────────────────────────────────── -->
+  <section class="ds-section" id="i18n">
+    <div class="ds-section-hdr">
+      <span class="sec-num">§10</span>
+      <h2>i18n &amp; 어휘 가드</h2>
+      <span class="sec-desc">T-P4-057 linter 강제</span>
+    </div>
+    <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:20px;">
+      한국어 모드에서도 아래 보호어는 <strong style="color:var(--text-primary);">번역하지 않는다</strong>. T-P4-057 i18n linter 가 강제. 코드 키 값에도 영문 그대로 들어간다 (<code>stage.qa.label = "QA"</code>).
+    </p>
+    <div class="pw-grid">
+      <div class="pw-group"><div class="pw-lbl">페르소나</div><div class="pw-words"><span class="pw-word">PO</span><span class="pw-word">designer</span><span class="pw-word">developer</span><span class="pw-word">qa</span></div></div>
+      <div class="pw-group"><div class="pw-lbl">Phase</div><div class="pw-words"><span class="pw-word">Phase 1</span><span class="pw-word">Phase 2</span><span class="pw-word">Phase 3</span><span class="pw-word">Phase 4</span><span class="pw-word">Phase 5</span></div></div>
+      <div class="pw-group"><div class="pw-lbl">Stage</div><div class="pw-words"><span class="pw-word">PRD</span><span class="pw-word">Design</span><span class="pw-word">Build</span><span class="pw-word">QA</span><span class="pw-word">Deploy</span><span class="pw-word">Operate</span></div></div>
+      <div class="pw-group"><div class="pw-lbl">Status</div><div class="pw-words"><span class="pw-word">todo</span><span class="pw-word">in-progress</span><span class="pw-word">review</span><span class="pw-word">done</span><span class="pw-word">blocked</span><span class="pw-word">abandoned</span></div></div>
+      <div class="pw-group"><div class="pw-lbl">Schema field</div><div class="pw-words"><span class="pw-word">slug</span><span class="pw-word">round</span><span class="pw-word">prd_path</span><span class="pw-word">tickets</span><span class="pw-word">confidence</span><span class="pw-word">ambiguity_score</span></div></div>
+      <div class="pw-group"><div class="pw-lbl">Product</div><div class="pw-words"><span class="pw-word">productune</span><span class="pw-word">pdt-po</span><span class="pw-word">pdt-designer</span><span class="pw-word">pdt-developer</span><span class="pw-word">pdt-qa</span></div></div>
+    </div>
+  </section>
+
+  <!-- ── OPEN QUESTIONS ─────────────────────────────────── -->
+  <section class="ds-section" id="oq">
+    <div class="ds-section-hdr">
+      <span class="sec-num">OQ</span>
+      <h2>Open Questions</h2>
+      <span class="sec-desc" style="color:var(--health-warn);">6 unresolved</span>
+    </div>
+    <div class="oq-list">
+      <div class="oq"><span class="oq-id">OQ-1</span><span class="oq-txt"><strong>--stage-qa / --stage-deploy / --stage-operate</strong> hex 값을 <code>stage-mapping.ts</code> 에서 확정 후 §2.6 표 채우기. 본 spec 은 임시 hex 로 표기.</span></div>
+      <div class="oq"><span class="oq-id">OQ-2</span><span class="oq-txt"><strong>--text-faint #707070</strong> 의 large-text-only 정책 — 한국어 본문 (16px regular) 적용 시 hinting 가독성 별도 검증 필요.</span></div>
+      <div class="oq"><span class="oq-id">OQ-3</span><span class="oq-txt">브랜드 오렌지 = PO 페르소나 alias — Phase 5 light theme 에서 분리 여부. PO 결정 필요.</span></div>
+      <div class="oq"><span class="oq-id">OQ-4</span><span class="oq-txt"><code>--health-info</code> / <code>--health-success</code> hex 가 persona 와 겹치는 것 — 색약 검증 후 분리 여부 결정 (OQ-4).</span></div>
+      <div class="oq"><span class="oq-id">OQ-5</span><span class="oq-txt">token 명을 CSS custom property 그대로 쓸지 vs Tailwind <code>theme.extend.colors</code> 매핑할지 — developer 페르소나 검토 필요.</span></div>
+      <div class="oq"><span class="oq-id">OQ-6</span><span class="oq-txt">§1.5 sub-rule 체크리스트를 PR template 강제 항목으로 박을지, designer review checklist 로만 둘지 — Phase 4 close 전 결정.</span></div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <div class="ds-footer">
+    <div class="footer-brand">
+      <div class="dot"></div>
+      <span>productune design system</span>
+    </div>
+    <div class="footer-meta">
+      R4 · 2026-05-07 · dark-only · lucide-react@1.14.0<br>
+      owner: pdt-designer · status: design gate draft
+    </div>
+  </div>
+
+</div><!-- /ds-page -->
+
+<script>
+(function() {
+  const sections = document.querySelectorAll('section[id], div[id]');
+  const links    = document.querySelectorAll('.ds-nav a[href^="#"]');
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const a = document.querySelector('.ds-nav a[href="#' + e.target.id + '"]');
+        if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-15% 0px -75% 0px' });
+  sections.forEach(s => io.observe(s));
+})();
+</script>
+</body>
+</html>

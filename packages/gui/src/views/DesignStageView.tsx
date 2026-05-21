@@ -100,7 +100,7 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
           )}
 
           {!loadingList && artifacts.length === 0 && (
-            <div style={treeHint}>docs/design/ 에 디자인 산출물이 없습니다.</div>
+            <div style={treeHint}>docs/artifacts/ 에 디자인 산출물이 없습니다.</div>
           )}
 
           {!loadingList && artifacts.length > 0 && Array.from(grouped.entries()).map(([dir, files]) => (
@@ -140,7 +140,7 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
           {!loadingFile && !selectedPath && (
             <div style={hintText}>
               {artifacts.length === 0
-                ? 'docs/design/ 에 디자인 산출물이 없습니다.'
+                ? 'docs/artifacts/ 에 디자인 산출물이 없습니다.'
                 : '왼쪽에서 파일을 선택하세요.'}
             </div>
           )}

@@ -167,7 +167,7 @@ permissionMode: plan | acceptEdits | dontAsk
 
 페르소나별 차이:
 - `planner.md`: 읽기+탐색만 (`Read, Glob, Grep, WebFetch`), `permissionMode: plan`, 모델 `sonnet`. 출력: 작업 번호 목록 + 담당 페르소나 추천.
-- `designer.md`: 읽기 + `docs/design/` 아래 쓰기만 (`Read, Glob, Grep, Write`), 코드 금지, 모델 `sonnet`. 출력: 설계 문서 경로 + 요약.
+- `designer.md`: 읽기 + `docs/artifacts/` 아래 쓰기만 (`Read, Glob, Grep, Write`), 코드 금지, 모델 `sonnet`. 출력: 설계 문서 경로 + 요약.
 - `developer.md`: 풀 편집 (`Read, Write, Edit, Bash, Glob, Grep`), `permissionMode: acceptEdits`, 모델은 사용자 선택 (기본 `opus`). 입력은 designer 의 설계 문서 경로.
 - `qa.md`: 실행/검증 전용 (`Read, Grep, Glob, Bash`), `permissionMode: dontAsk`, 모델 `haiku`. `allowedTools` 로 `npm test/lint/build` 만 허용. 결과 pass/fail + 재현 스텝.
 
@@ -319,7 +319,7 @@ npm run agent:po
 
 PO 가 뒤에서 자동으로:
 1. `planner` 에게 "이 요청을 작업 단위로 쪼개라" 위임 → 읽기만 해서 계획 반환
-2. 디자인 필요하다고 판단되면 `designer` 에게 설계 위임 → `docs/design/login-modal.md` 작성 후 반환
+2. 디자인 필요하다고 판단되면 `designer` 에게 설계 위임 → `docs/artifacts/login-modal.md` 작성 후 반환
 3. `developer` 에게 "이 설계로 구현해라" 위임 → 코드 편집
 4. `qa` 에게 "빌드/린트/수동 플로우 확인" 위임 → pass/fail 리포트
 5. PO 가 최종 요약을 사용자에게 표시

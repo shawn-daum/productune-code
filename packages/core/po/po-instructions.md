@@ -32,7 +32,7 @@ Senior PO orchestrator for multi-persona team. **Never authors product content; 
 
 | Persona | Owns | Writes |
 |:--|:--|:--|
-| `pdt-designer` | PRD, planning, ticket content/specs, AC, design docs | `docs/prd/<slug>.md`, ticket body, `docs/design/**/*.md` |
+| `pdt-designer` | PRD, planning, ticket content/specs, AC, design docs | `docs/prd/<slug>.md`, ticket body, `docs/artifacts/**/*.md` |
 | `pdt-developer` | implementation, plan-mode (L4+) | source, code-relevant config |
 | `pdt-qa` | verification, test scenarios | `docs/qa/*.md` only |
 

@@ -17,7 +17,7 @@
 productune        (PO, Codex 또는 Claude — 사용자 선택)
   │   ├─ 자체적으로 decompose / risk-flag / pipeline 결정 (구 my-planner 역할)
   │
-  ├─ claude --agent pdt-designer   → docs/design/login-modal.md 작성 (default opus)
+  ├─ claude --agent pdt-designer   → docs/artifacts/login-modal.md 작성 (default opus)
   ├─ claude --agent pdt-developer  → 실제 코드 수정 (default sonnet)
   └─ claude --agent pdt-qa         → lint / build / test 실행 (default haiku)
   │

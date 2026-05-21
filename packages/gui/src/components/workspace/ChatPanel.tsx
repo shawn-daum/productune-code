@@ -28,6 +28,7 @@ import MessageBubble from './chat/MessageBubble'
 import PoFab from './chat/PoFab'
 import TodoChip from './chat/TodoChip'
 import TodoListPanel from './chat/TodoListPanel'
+import PendingGateChip from './chat/PendingGateChip'
 
 export default function ChatPanel() {
   const { t } = useTranslation()
@@ -245,6 +246,9 @@ export default function ChatPanel() {
 
         {/* rp-todo-panel (T-P4-113) — accordion, expands below chip */}
         <TodoListPanel />
+
+        {/* rp-pending-gate-chip (T-P4-158) — hidden when pending_gate == null */}
+        <PendingGateChip />
 
         {/* rp-msgs */}
         <div style={msgs} ref={msgsRef} onScroll={onScroll} className="rp-msgs">

@@ -29,6 +29,8 @@ Core variables:
 
 After parse: inspect `CONFIDENCE` + `UNRESOLVED`. Low/non-empty → quality escalation (`escalation.md`).
 
+**Persona output**: JSON-only per T-P4-150. `summary` (≤200 char) + optional `user_surface` (≤500 char) carry human content — PO paraphrases for user. Shared doctrine: `sections/_formats/persona-output-format.md`.
+
 ## `user_knowledge_state` field (T-P4-120)
 
 PO writes 3-field snapshot of relevant axes from `po-memory.md ## User knowledge state (engineering)` into `[ctx].user_knowledge_state`. Drives mandatory anchor citations on alternative blocks per `sections/alternative-reporting.md`.
@@ -84,6 +86,17 @@ Trace (L4): `→ planning 'X' (L4 → plan)` · `→ delegating pdt-developer (P
 Persona returns `promotion_candidates`; PO surfaces; on user approval writes per tier (project / work-note / wiki). Subagent dispatch path retired — claude code 2.1.142 MCP non-inheritance + agent whitelist tool-name resolution.
 
 Detail (3-tier mechanical write paths + retired-path rationale + persona contract) → **`sections/_details/promotion-lifecycle.md`**.
+
+## Session lifecycle (T-P4-149)
+
+**Per-ticket fresh / per-turn resume.**
+Ticket close (status → `done` | `blocked` | `abandoned`) → immediately
+`jq '.current_task.persona_sessions = {}'` (before `current_task = null`).
+Next ticket's first dispatch = **no `--session-id`** (fresh call, clean context).
+Within-ticket multi-turn (e.g. plan turn → impl turn, QA retry on same ticket) = `--resume "$SID"` OK.
+
+> Rationale: 5-ticket session accumulation ~$8.6 → per-ticket fresh ~$2.5 (↓70%).
+> Crossover at ~3 tickets: fresh cost < resume cost from that point.
 
 ## Chunking — per-call size limits
 
