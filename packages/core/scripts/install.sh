@@ -337,9 +337,10 @@ merge_claude_settings_hooks() {
   local statew="$hooks_dir/post-delegate-state-write.sh"
   local precheck="$hooks_dir/pre-delegate-task-check.sh"
   local chunkwarn="$hooks_dir/pre-chunking-warn.sh"
+  local strip="$hooks_dir/post-bash-strip-cost.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg chunkwarn "$chunkwarn" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -347,7 +348,8 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/stop-verify.sh"))
       or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
       or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"));
+      or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
+      or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"));
     def strip_pdt(arr; dir):
       (arr // []) | map(
         select(((.hooks // []) | map(is_pdt(.command // ""; dir)) | any) | not)
@@ -364,7 +366,9 @@ merge_claude_settings_hooks() {
         {matcher: "Write|Edit",
          hooks: [{type: "command", command: $fmt}]},
         {matcher: "Bash",
-         hooks: [{type: "command", command: $statew}]}
+         hooks: [{type: "command", command: $statew}]},
+        {matcher: "Bash",
+         hooks: [{type: "command", command: $strip}]}
       ])
     | .hooks.PostCompact = (strip_pdt(.hooks.PostCompact; $dir) + [{
         hooks: [{type: "command", command: $doc}]

@@ -156,9 +156,18 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
   STATUSLINE="$ROOT/scripts/statusline-productune.sh"
   TMP="$(mktemp)"
   jq --arg dir "$HOOKS_DIR" --arg sl "$STATUSLINE" '
+    def is_pdt(cmd; dir):
+      (cmd | startswith(dir))
+      or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
+      or (cmd | endswith("/scripts/hooks/post-compact-doctrine.sh"))
+      or (cmd | endswith("/scripts/hooks/stop-verify.sh"))
+      or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
+      or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"));
     def strip_pdt(arr; dir):
       ((arr // []) | map(
-        select(((.hooks // []) | map(.command // "" | startswith(dir)) | any) | not)
+        select(((.hooks // []) | map(.command // "" | is_pdt(.; dir)) | any) | not)
       ));
     .hooks //= {}
     | .hooks.PreToolUse  = strip_pdt(.hooks.PreToolUse;  $dir)
