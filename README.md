@@ -3,17 +3,17 @@
 > 오케스트라처럼 — 들으면서 곡 (제품) 을 tune 해 나가는 컨셉.
 > **개발에 대해 잘 알지 못하는 기획자가 프로덕트를 성공적으로 만들 수 있는 툴**.
 
-CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 → Refactor** 를 4 명의 전문가 페르소나가 함께 돌리는 로컬 dev-workflow 도구.
+CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deploy → Close** 5-Phase 를 4 명의 전문가 페르소나 + Skill 시스템이 함께 돌리는 로컬 dev-workflow 도구.
 
 ```
 사용자 ─한 문장─▶ productune (PO orchestrator, sonnet/opus)
                    │
-                   ├── claude --agent pdt-designer   → UX/Brand/Design System (default opus)
+                   ├── claude --agent pdt-designer   → PRD 작성 / UX / Design System / Tickets
                    ├── claude --agent pdt-developer  → 구현 (default sonnet)
                    └── claude --agent pdt-qa         → 검증 (default haiku)
                                                   │
                                                   └─ 각 페르소나 3-tier 메모리:
-                                                     1. session  — Claude session (per ticket)
+                                                     1. session  — per-ticket fresh session
                                                      2. project  — docs/<persona>/*.md
                                                      3. wiki     — Graphiti KG (graphiti backend)
                                                                    또는 filesystem (keeper backend)
@@ -31,8 +31,8 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 
 | Phase | 목표 | 인터페이스 | 상태 |
 |---|---|---|---|
-| **Phase 1 (지금)** | CLI 기반 핵심 + dogfood-ready | terminal `productune` | **현재 작업 중** |
-| Phase 2 | 사용자가 실제 프로젝트 1 개로 dogfood 완주 | 동일 (CLI) | Phase 1 완료 후 |
+| **Phase 1 (v0.1–v0.4)** | CLI 기반 핵심 + dogfood-ready | terminal `productune` | **✅ 완료 (v0.4 close 2026-05-21)** |
+| **Phase 2 (v0.5~)** | 사용자가 실제 프로젝트 1 개로 dogfood 완주 | 동일 (CLI) | 진행 중 |
 | Phase 3 | UI 화 (onboarding + 일반 사용 모두 GUI) | web/desktop | Phase 2 합격 후 |
 
 자체 PRD 는 [`docs/prd/productune.md`](./docs/prd/productune.md) — round 단위 누적.
@@ -48,11 +48,61 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 | **pdt-developer** | 구현 | sonnet | — | **L4+ plan phase: opus + ⚡xhigh** (PLAN ONLY). **System-level: opus + ⚡max** | **L1–L3 trivial: sonnet/medium**. **L4+ impl phase: sonnet/high** (plan 후) |
 | **pdt-qa** | 검증 | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. **Plan testability cross-review (옵트인)**: sonnet/high | haiku/low — npm test, lint/build, 단일 페이지 nav |
 
-> **PO 는 산출물을 직접 작성하지 않습니다.** 인터뷰 brief 만 자기 손으로 (`<project>/.productune/briefs/<slug>.md` append) 채우고, PRD/티켓/디자인/코드는 모두 sub-agent 위임. 이 구조 덕분에 sub-agent 호출 시 `--model opus` override 로 작업별 모델 분리가 자동 됩니다.
-> PO 가 task 난이도 → tier 매핑 시 [OSS 7-level task complexity hierarchy](https://github.com/ulab-uiuc/LLMRouter) 차용.
-> Effort `xhigh` / `max` 는 **opus 전용** (다른 model 은 자동 승격). `max` 는 Stage 1 라우팅에서만 사용 — escalation Path 1 retry 는 `xhigh` 에서 capped.
-> **L4+ implementation 은 plan-first** — pdt-developer 가 opus/xhigh 로 plan 작성 → PO 가 직접 검수 → sonnet/high 로 1-shot 구현.
-> **PRD 는 clarity loop** — Designer 가 ambiguity score `A = 1 − Σ(clarityᵢ × weightᵢ)` 를 0.05 까지 reasoning 인터뷰로 낮춤. 5 라운드 cap.
+> **PO 는 산출물을 직접 작성하지 않습니다.** 인터뷰 brief 만 자기 손으로 채우고, PRD/티켓/디자인/코드는 모두 sub-agent 위임.
+> **모든 페르소나 출력 = JSON-only** (`stdout` 첫 글자 `{`). `summary` ≤200자 + `user_surface` ≤500자로 PO 가 표면에 번역. ~80% output-token 절감.
+> **세션 라이프사이클**: 티켓 1개 = fresh session 1개. 동일 티켓 내 multi-turn 만 resume. 티켓 close 시 session drop.
+> Effort `xhigh` / `max` 는 **opus 전용** (다른 model 은 자동 승격).
+> **PRD 는 clarity loop** — Designer 가 ambiguity score `A = 1 − Σ(clarityᵢ × weightᵢ)` 를 0.05 까지 낮춤. 5 라운드 cap.
+
+### Skill 시스템
+
+각 페르소나는 `~/.claude/skills/` 의 OSS + 자체 skill 을 장착합니다.
+
+| Skill | 장착 페르소나 | 발동 조건 |
+|---|---|---|
+| `anthropic/frontend-design` | pdt-designer | Phase 2 Gate A 승인 후 (interactive component 코드 생성) |
+| `mattpocock/*` (23개) | pdt-developer | plan/tdd/refactor 등 개발 flow |
+| `phuryn/pm-skills` (65개) | PO, pdt-designer | PRD / 인터뷰 / 이슈 추출 |
+
+`bash packages/core/scripts/setup-skills.sh` 로 한 번에 설치.
+
+## 5-Phase Lifecycle
+
+모든 버전이 이 5단을 순서대로 통과합니다.
+
+```
+Phase 1: PRD          Phase 2: Design         Phase 3: Build
+  │                     │                         │
+  ├─ Designer:          ├─ Ticket 1:              ├─ Developer: impl
+  │   clarity loop        Design System           │
+  │   A ≤ 0.05            UX Flow (Mermaid)       ├─ QA: 검증
+  │                       Wireframe               │
+  ├─ 자동 ticket          Hi-fi mockup (HTML)     └─ [Close Gate ×3]
+  │  emit (type:design,    │                          ① 디자인 요소 검토
+  │  PRD 작성)             ▼ Gate A (user OK)          ② 보안 6-prompt
+  │                     Ticket 2:                      ③ PRD AC 확인
+  └─ version: v<숫자>    frontend-design skill
+      only               → interactive TSX/HTML
+                          │
+                          ▼ Gate B (user OK)
+
+Phase 4: Deploy       Phase 5: Close
+  │                     │
+  ├─ 자동 skip           ├─ Retrospective 작성
+  │  (조건: no          ├─ feature-history.md 갱신
+  │  deploy changes)    └─ 다음 버전 backlog 제안
+  └─ Vercel / 수동
+```
+
+### Phase gate 상세
+
+| Phase | Auto-emit | Gate | 완료 조건 |
+|---|---|---|---|
+| **1 PRD** | type:design ticket 1개 (PRD 작성 vehicle) | A ≤ 0.05 or PO "finalize" | PRD `state:"ready"` |
+| **2 Design** | type:design × 2 (static → Gate A → interactive → Gate B) | Gate A = 사용자 static artifacts OK · Gate B = 사용자 interactive code OK | Ticket 2 merged |
+| **3 Build** | — | Close Gate 3항목 모두 ✓ (no open ✗) | 3-item checklist clear |
+| **4 Deploy** | — | Skip 규칙: 배포 변경 없으면 자동 pass | deploy log or skip note |
+| **5 Close** | — | Retrospective 작성 완료 | `docs/retrospectives/<version>.md` |
 
 ## Why the 3-tier memory
 
@@ -60,34 +110,11 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Test → Issue → 구현 
 
 | Tier | Scope | Where | Who writes |
 |---|---|---|---|
-| **Session** | 한 ticket | Claude Code session (`--session-id`) | Claude 자동 |
+| **Session** | 한 ticket | Claude Code session (`--session-id`, per-ticket fresh) | Claude 자동 |
 | **Project** | 한 repo | `docs/<persona>/*.md` (committed) | PO, 사용자 승인 후 |
 | **Wiki** | persona-global cross-project | Graphiti KG (`group_id=persona-<name>`, FalkorDB) or `~/.productune/wiki/` | PO, `[PROMOTION-APPROVED]` 마커 + 사용자 승인 |
 
-핵심 제약: **pdt-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — project tier 가 디렉토리 격리, generalized 원칙만 wiki promote. Graphiti bi-temporal 로 옛 사실 자동 deprecate.
-
-## Real Engineering 워크플로
-
-```
-Interview (PO)               — 사용자 문답 + brief 합성 (pm-product-discovery, grill-me)
-   ↓
-PRD (Designer Why)            — clarity loop A ≤ 0.05 (opus + ⚡max)
-   ↓
-Test (pdt-qa What)            — acceptance criteria → test 정의
-   ↓
-Issue (Designer How)         — PRD 와 함께 ticket 파일 emission (mattpocock to-issues)
-   ↓
-Impl (pdt-developer What/How) — TDD 사이클 (mattpocock tdd, triage-issue)
-   ↓
-Refactor (pdt-developer How)  — request-refactor-plan, improve-codebase-architecture
-   ↓
-QA (pdt-qa What/How)          — 자동화 + manual + e2e
-   ↓ (반복)
-```
-
-각 stage transition 에 PO 가 1줄 announce. 단순 작업은 stage 일부 skip.
-
-OSS reference: [mattpocock/skills](https://github.com/mattpocock/skills) (23 skill) + [phuryn/pm-skills](https://github.com/phuryn/pm-skills) (65 skill, 8 plugin) — `bash packages/core/scripts/setup-skills.sh` 로 한 번에 설치.
+핵심 제약: **pdt-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — project tier 가 디렉토리 격리, generalized 원칙만 wiki promote.
 
 ## Prerequisites
 
@@ -117,18 +144,43 @@ bash productune/packages/core/scripts/install.sh
 
 `install.sh` 가 인터랙티브하게 처리:
 
-1. **Claude Code preflight** — CLI 미설치면 자동 설치 (`npm install -g @anthropic-ai/claude-code`), 미로그인이면 `claude auth login` 자동 실행. 이미 연결돼 있으면 바로 다음 단계로 진행.
-2. **PO engine 선택** — `[1] claude` (primary, hooks fire) / `[2] codex` (secondary, doctrine-only). codex 를 고르면 `~/.codex/config.toml` 도 자동 배포 (codex CLI 가 PATH 에 있을 때). 비대화형 install 은 claude 로 자동 fallback.
+1. **Claude Code preflight** — CLI 미설치면 자동 설치, 미로그인이면 `claude auth login` 자동 실행.
+2. **PO engine 선택** — `[1] claude` (primary, hooks fire) / `[2] codex` (secondary, doctrine-only).
 3. **Wiki backend 설정** — 하드웨어 자동 감지
-   - Tier S (RAM ≥ 16GB) / Tier A (RAM ≥ 8GB): Ollama 로컬 LLM 선택 → 자동 설치 → FalkorDB + Graphiti 자동 셋업
+   - Tier S (RAM ≥ 16GB) / Tier A (RAM ≥ 8GB): Ollama 로컬 LLM → 자동 설치 → FalkorDB + Graphiti 자동 셋업
    - Tier B (RAM 부족 / Docker 없음): wiki-keeper agent (Claude API) 자동 선택
-4. **Hook 5개 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop 자동 merge (firm rule 결정론 보장 — claude 엔진에서만 발동)
-5. **OSS skill 설치** — mattpocock + phuryn skill 라이브러리
+4. **Hook 5개 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop 자동 merge
+5. **OSS skill 설치** — mattpocock + phuryn + `anthropic/frontend-design` skill
 6. **PATH 등록** — 현재 세션 즉시 적용
 
-> install 후에 엔진을 바꾸고 싶으면 `bash packages/core/scripts/install.sh` 재실행 (현재 엔진 표시 후 변경 prompt) 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=` 직접 편집. per-session 일회성 변경은 `productune --engine codex`.
+> install 후에 엔진을 바꾸고 싶으면 `bash packages/core/scripts/install.sh` 재실행 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=` 직접 편집.
 
-> 모델 목록은 [Ollama registry](https://registry.ollama.ai) 에서 실시간 크기를 조회해 하드웨어 tier 에 맞는 것만 표시합니다 (`config/model-catalog.json` 에서 관리).
+## 신규 프로젝트 시작 (dogfood guide)
+
+```sh
+# 1. target project 로 이동
+cd ~/my-awesome-product
+
+# 2. productune 시작 (처음이면 project init 자동)
+productune
+
+# 3. PO 가 인터뷰. 한 문장으로 무엇을 만들지 말해주세요.
+#    예: "비개발자가 AI 로 앱을 만들 수 있는 노코드 툴"
+
+# 4. PO 가 Designer 를 호출 → PRD clarity loop 시작
+#    A ≤ 0.05 되면 Phase 1 완료, Tickets 자동 emit
+
+# 5. Phase 2: Designer 가 Design System + UX Flow + Mockup 생성
+#    Gate A 승인 후 frontend-design skill 로 interactive code 생성
+
+# 6. Phase 3: Developer 가 구현 → QA → Close Gate (3항목 체크)
+
+# 7. Phase 4: Deploy (또는 auto-skip)
+
+# 8. Phase 5: Close — Retrospective + 다음 버전 backlog
+
+# 버전 이름: v1, v2, v3 ... (v<숫자> 형식만 유효)
+```
 
 ## Daily use
 
@@ -136,9 +188,9 @@ bash productune/packages/core/scripts/install.sh
 cd ~/path/to/target-project
 
 # Full PO flow (권장)
-productune                          # default = claude (hooks 발동), onboard 에서 변경 가능
-productune --engine claude          # 100% Anthropic stack (default — R1~R4 hook firm rules 활성)
-productune --engine codex           # Codex CLI (hook 미발동 → R1~R4는 doctrine-only)
+productune                          # default = claude (hooks 발동)
+productune --engine claude          # 100% Anthropic stack (default)
+productune --engine codex           # Codex CLI (hook 미발동 → doctrine-only)
 
 # 도움말
 productune --help                   # 현재 설정 포함 커맨드 레퍼런스
@@ -151,7 +203,7 @@ productune gc -y                    # 안전한 worktree 자동 정리
 
 # 직접 호출 (worktree split / parallel-safety 없음)
 claude --agent pdt-po
-claude --agent pdt-developer        # 단일 페르소나
+claude --agent pdt-designer         # 단일 페르소나
 ```
 
 ### 사용자 prefix override (PO turn 안에서)
@@ -174,11 +226,10 @@ claude --agent pdt-developer        # 단일 페르소나
 | Top-level reasoning | Anthropic (Claude Code) | OpenAI (Codex CLI) |
 | Subscription | Claude Pro / Max | ChatGPT Plus / Pro |
 | Persona subscription | Claude | Claude |
-| **Hook firm rules** (R1 slug · R2 archive · R4 session reuse) | ✓ deterministic | ✗ doctrine-only (Codex bypasses Claude Code hooks) |
+| **Hook firm rules** | ✓ deterministic | ✗ doctrine-only |
 | Cost-split | ✗ all on Anthropic | ✓ |
-| ToS | **Cleanest** — 100% first-party | OK |
 
-Default = **claude** because hook-based firm rules (`packages/core/scripts/hooks/pre-delegate-task-check.sh` etc.) only fire inside Claude Code sessions. Codex spawned PO bypasses them, so boundary/archive/session-reuse violations become PO drift instead of code-blocked.
+Default = **claude** — hook-based firm rules 는 Claude Code 세션 안에서만 발동.
 
 Switch: `MY_PO_ENGINE=codex` in `~/.productune/productune.env` or `productune --engine codex` per-session.
 
@@ -192,7 +243,7 @@ Switch: `MY_PO_ENGINE=codex` in `~/.productune/productune.env` or `productune --
 | 검색 품질 | Knowledge Graph (관계 추론) | 파일 검색 |
 | 활성 페르소나 | pdt-developer, pdt-designer, pdt-qa | + pdt-wiki-keeper |
 
-backend 는 `~/.productune/productune.env` 의 `WIKI_BACKEND=` 로 확인/변경. 변경 후 `productune onboard` 재실행.
+backend 는 `~/.productune/productune.env` 의 `WIKI_BACKEND=` 로 확인/변경.
 
 ## Quality-based escalation
 
@@ -214,70 +265,109 @@ backend 는 `~/.productune/productune.env` 의 `WIKI_BACKEND=` 로 확인/변경
 [productune] creating worktree at .../my-project-productune-<ts> on branch productune/<ts>
 ```
 
-Cleanup: `productune gc` (dry-run) / `productune gc -y` (자동 정리). 결정 기준은 **순수 git state** — 커밋 + push 또는 main merge 됐으면 ✓ safe, 아니면 ❌ unsafe (보존).
+Cleanup: `productune gc` (dry-run) / `productune gc -y` (자동 정리).
 
 ## Ticket system
 
 PO 가 작업을 ticket 단위로 영속화:
-- `<project>/.productune/po-state.json` 에 `current_round`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets), `past_tickets[]`, `rounds`
-- Ticket close 시 PO 가 archive (current → `past_tickets`) + calibration log 한 줄 → `<project>/docs/tickets/<round-id>/T-<id>.md` git-versioned export
-- `pre-delegate-task-check.sh` hook (R2) 가 archive 누락된 채 새 task 시작을 차단
+- `<project>/.productune/po-state.json` 에 `current_version`, `current_task` (with `ticket_id`, `stage`, `assignee_persona`, deps, linked_tickets)
+- Ticket 파일 = SoT → `<project>/docs/tickets/<version>/T-NNN.md`
+- **Version naming**: `v<숫자>` 형식만 유효 (예: `v1`, `v2`, `v0.5`). 숫자 외 suffix 불가.
+- **po-state hygiene** — 매 turn 시작 시 자동 staleness sweep (5 field):
+  - H1: past_tickets 완전 제거 (ticket md = SoT)
+  - H2: recent_turns cap = 5
+  - H3: pending_gate staleness (7일 이상 → drop)
+  - H4: current_task stage mismatch
+  - H5: persona_sessions stale key cleanup
+
+## Artifact + Doc 경로 규칙
+
+```
+docs/
+├── prd/<version>.md                          # PRD (Designer 작성, English)
+├── artifacts/<version>/                      # Version bucket (flat, 3 category)
+│   ├── T-NNN-<slug>.<ext>                    # ticket artifact
+│   ├── <slug>.<ext>                          # version-loose artifact
+│   └── design-system-snapshot.md            # PO 가 version close 시 snapshot
+├── tickets/<version>/                        # Ticket 파일 SoT
+│   └── T-NNN.md
+├── designer/                                 # Designer master files (global)
+│   ├── design-system.md                      # ← 단일 global instance (per-feature copy X)
+│   ├── feature-history.md                    # Version 결정 log (Phase 1 read / Phase 5 write)
+│   ├── decisions.md                          # Non-trivial design decisions
+│   └── R<n>-<slug>.md                        # Work notes
+├── qa/
+│   ├── <slug>-test-plan.md
+│   └── fail-patterns.md                      # QA 누적 실패 패턴 (Phase 1 read)
+└── retrospectives/<version>.md               # Phase 5 close (Designer 작성)
+```
+
+글로벌 singleton: `docs/designer/design-system.md` — 개발 중 per-feature copy 절대 금지. Version close 시 PO 가 `docs/artifacts/<version>/design-system-snapshot.md` 로 snapshot.
 
 ## Memory promotion
 
-각 페르소나는 `[PROMOTION-APPROVED]` 마커 게이트. 직접 호출 시 wiki write 거절. 절차:
-- Persona 가 promotion_candidate 만 리턴 (자동 write 안 함)
+각 페르소나는 `promotion_candidates` 만 리턴 (자동 write 안 함). 절차:
+- Persona 가 `promotion_candidates[]` 배열로 제안
 - PO 가 사용자에 한 줄 propose
-- 사용자 `y` → PO 가 mechanical write (project tier: `printf >>`, wiki tier: `[PROMOTION-APPROVED]` 마커 prefix 후 페르소나 재호출)
+- 사용자 `y` → PO 가 mechanical write
+  - project tier: `docs/designer/decisions.md` append
+  - wiki tier: PO `claude --print` (no `--agent`) subprocess 으로 graphiti 직접 호출 (wiki write 유일 경로)
 
 ## Files
 
 ```
 productune/
 ├── packages/
-│   └── core/                            # CLI core (T-P4-002 이관)
+│   └── core/                            # CLI core
 │       ├── agents/                      # symlinked to ~/.claude/agents/
-│       │   ├── pdt-po.md                # PO orchestrator (entry — full doctrine in po/)
+│       │   ├── pdt-po.md                # PO orchestrator
 │       │   ├── pdt-designer.md
 │       │   ├── pdt-developer.md
 │       │   ├── pdt-qa.md
-│       │   ├── pdt-wiki-keeper.md       # keeper backend 시에만 ~/.claude/agents/에 링크
-│       │   └── variants/                # backend별 페르소나 variant (graphiti / keeper / fs)
-│       ├── po/                          # PO doctrine (engine-agnostic; copied to ~/.productune/)
-│       │   ├── po-instructions.md       # entry index (~100L)
+│       │   ├── pdt-wiki-keeper.md       # keeper backend 시에만
+│       │   └── variants/                # backend별 variant (graphiti/keeper/fs)
+│       ├── po/                          # PO doctrine (~/.productune/ 로 copy)
+│       │   ├── po-instructions.md       # entry index
 │       │   ├── po-memory.md.template
-│       │   └── sections/               # detailed wiki (load on demand)
+│       │   └── sections/               # sub-files (load on demand)
 │       │       ├── stages.md  memory.md  tickets.md  routing.md  escalation.md
-│       │       └── delegation.md  calibration.md  lifecycle.md  evolution.md  prd-and-output.md
-│       ├── codex/
-│       │   └── config.toml             # Codex CLI profile manifest (--engine codex 시)
+│       │       ├── lifecycle.md  prd-and-output.md  po-loop.md
+│       │       ├── _formats/           # output shape sub-files (8개)
+│       │       └── _details/           # reference sub-files (9개)
 │       ├── config/
-│       │   └── model-catalog.json      # tier별 추천 모델 (Ollama registry 실시간 조회)
+│       │   └── model-catalog.json      # tier별 추천 모델
 │       └── scripts/
-│           ├── install.sh              # onboard — engine / wiki / LLM / hooks / Graphiti / PATH
+│           ├── install.sh              # onboard — engine/wiki/LLM/hooks/skills/PATH
 │           ├── uninstall.sh
-│           ├── productune              # daily entrypoint (default --engine claude)
+│           ├── productune              # daily entrypoint
 │           ├── setup-graphiti.sh / setup-skills.sh / graphiti-launcher.sh
-│           └── hooks/                  # Claude Code hooks (auto-merged into ~/.claude/settings.json)
-│               ├── pre-delegate-task-check.sh   # PreToolUse(Bash) — R1~R4 firm rule blocks
-│               ├── post-delegate-state-write.sh # PostToolUse(Bash) — capture session_id, bump turns
+│           └── hooks/
+│               ├── pre-delegate-task-check.sh   # PreToolUse(Bash) — firm rule blocks
+│               ├── post-delegate-state-write.sh # PostToolUse(Bash) — session_id, turns
 │               ├── post-edit-format.sh          # PostToolUse(Write|Edit) — formatter
-│               ├── post-compact-doctrine.sh     # PostCompact — re-inject hard rules
+│               ├── post-compact-doctrine.sh     # PostCompact — hard rules re-inject
 │               └── stop-verify.sh              # Stop(pdt-developer) — typecheck/build gate
 ├── docs/
-│   ├── prd/productune.md  overview.md  pitch.md  testing.md
+│   ├── prd/                            # PRD (English, Designer 작성)
+│   ├── tickets/<version>/T-NNN.md      # Ticket SoT
+│   ├── artifacts/<version>/            # Design + QA artifacts (flat per version)
+│   ├── designer/                       # Designer master + global DS
+│   ├── qa/                             # Test plans + fail-patterns
+│   └── retrospectives/                 # Phase 5 close reviews
 └── README.md
 ```
 
 ## Troubleshooting
 
 - **"claude doesn't list my personas"** → `productune onboard` 재실행 (symlink 재생성 + dangling sweep)
-- **"hooks didn't fire / boundary keeps drifting"** → 엔진이 `codex` 일 가능성. Claude Code hooks 는 Claude 세션 안에서만 발동. `productune --engine claude` 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=claude` 변경
-- **"hook 등록 누락"** → `jq '.hooks' ~/.claude/settings.json` 으로 PreToolUse / PostToolUse / PostCompact / Stop 4개 키 확인. 빠지면 `productune onboard` 재실행
-- **"`.codex/po-state.json` 이 생긴다"** → `productune` wrapper 가 자동 마이그 (`.codex/` → `.productune/`). 안 되면 `mv <project>/.codex/po-state.json <project>/.productune/po-state.json`
+- **"hooks didn't fire / boundary keeps drifting"** → 엔진이 `codex` 일 가능성. `productune --engine claude` 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=claude` 변경
+- **"hook 등록 누락"** → `jq '.hooks' ~/.claude/settings.json` 으로 PreToolUse / PostToolUse / PostCompact / Stop 확인. 빠지면 `productune onboard` 재실행
+- **"persona output 이 JSON 이 아니다"** → 페르소나 md 버전 낡은 것. `productune onboard` 재실행 (agent file 재링크)
+- **"po-state.json 이 너무 크다"** → hygiene 자동 sweep (H1–H5) 이 미동작한 것. `productune` 재시작하면 turn-start 에 자동 정리
+- **"version naming 오류"** → `v<숫자>` 형식만 유효 (예: `v1`, `v2`, `v0.5`). 다른 형식이면 validator 가 차단
 - **"graphiti MCP fails to start"** → `docker ps` (falkordb 확인), `curl http://localhost:11434/api/tags` (ollama 확인), `productune onboard` 로 graphiti 재셋업
 - **"entity extraction quality is bad"** → `config/model-catalog.json` 에서 더 큰 모델로 교체 후 `productune onboard`
-- **legacy state.json schema** — 옛 `top-level persona_sessions` 면 `rm <project>/.productune/po-state.json` 후 PO 다시 시작 (또는 `productune init` 으로 새로 시드)
+- **legacy state.json schema** — 옛 schema 면 `rm <project>/.productune/po-state.json` 후 PO 다시 시작
 
 ## Updating
 
@@ -287,14 +377,14 @@ git pull
 productune onboard
 ```
 
-`packages/core/agents/*.md` + `packages/core/scripts/hooks/*.sh` 는 repo 그대로 사용 (symlink 또는 path 참조) — 수정 즉시 반영. Codex config (`packages/core/codex/config.toml`) + PO doctrine (`packages/core/po/po-instructions.md` → `~/.productune/`) 는 copy 라 `productune onboard` 재실행 필요.
+`packages/core/agents/*.md` + `packages/core/scripts/hooks/*.sh` 는 repo 그대로 사용 — 수정 즉시 반영. PO doctrine (`packages/core/po/` → `~/.productune/`) 는 copy 라 `productune onboard` 재실행 필요.
 
 ## Non-goals / future
 
-- UI 는 Phase 3 — 지금은 OOS
+- UI 는 Phase 3 — 지금은 OOS (v0.5 dogfood 완주 후)
 - Codex 페르소나 (sub-agent 런타임으로) 통합 — Codex agent 의 권한 / MCP 격리 모델이 1:1 매칭 안 됨, 별도 plan
 - Multi-user / 팀 공유 — 현 single-user 가정
-- 자동 deploy / CI 통합
+- Phase 5 deferral unlock (MCP 추가 / autosave triggers / persona spec 편집) — v1.0 carry
 
 ## Uninstall
 
@@ -307,12 +397,11 @@ productune uninstall
 ```sh
 rm -rf ~/.claude/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa,pdt-wiki-keeper}.md
 jq 'del(.hooks.PreToolUse, .hooks.PostToolUse, .hooks.PostCompact, .hooks.Stop)' \
-  ~/.claude/settings.json | sponge ~/.claude/settings.json   # 또는 productune-only 항목만 strip
-rm ~/.codex/config.toml                          # codex profile manifest
-rm -rf ~/.productune                             # po-instructions, sections/, po-memory, productune.env, wiki/
+  ~/.claude/settings.json | sponge ~/.claude/settings.json
+rm -rf ~/.productune                             # po-instructions, sections/, productune.env, wiki/
 docker rm -f falkordb && docker volume rm falkordb-data
-rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn}
-rm -rf <clone-dir>       # install 시 clone 한 위치
+rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn,anthropic}
+rm -rf <clone-dir>
 ```
 
 > `productune uninstall` 이 hook 등록 + statusLine 까지 자동 strip 합니다. 수동 정리는 fallback 용.

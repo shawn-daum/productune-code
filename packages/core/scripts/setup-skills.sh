@@ -8,6 +8,8 @@ set -euo pipefail
 #      triage-issue, request-refactor-plan, improve-codebase-architecture 등 23개)
 #   2. phuryn/pm-skills — PM 워크플로 (pm-product-discovery / -strategy /
 #      -execution / -market-research 등 65 skill, 8 plugin)
+#   3. anthropic/skills — Anthropic 공식 skill (frontend-design 등)
+#      → ~/.claude/skills/anthropic/skills/frontend-design/SKILL.md
 #
 # 설치 방식: ~/.claude/skills/<source>/ 디렉토리에 git clone. Claude Code 가
 # description 매치로 자동 invoke (per Claude Code skills doc).
@@ -28,6 +30,7 @@ say "skills root: $SKILLS_ROOT"
 # Repo URL override 가능 (fork 등)
 MATTPOCOCK_URL="${PRODUCTUNE_MATTPOCOCK_URL:-https://github.com/mattpocock/skills.git}"
 PHURYN_URL="${PRODUCTUNE_PHURYN_URL:-https://github.com/phuryn/pm-skills.git}"
+ANTHROPIC_SKILLS_URL="${PRODUCTUNE_ANTHROPIC_SKILLS_URL:-https://github.com/anthropics/skills.git}"
 
 clone_or_pull() {
   local NAME="$1" URL="$2"
@@ -37,12 +40,22 @@ clone_or_pull() {
     git -C "$DIR" pull --ff-only || warn "$NAME pull 실패; 기존 checkout 유지"
   else
     say "$NAME 클론 중 ($URL)..."
+    mkdir -p "$(dirname "$DIR")"
     git clone --depth 1 "$URL" "$DIR"
   fi
 }
 
-clone_or_pull "mattpocock" "$MATTPOCOCK_URL"
-clone_or_pull "phuryn"     "$PHURYN_URL"
+clone_or_pull "mattpocock"      "$MATTPOCOCK_URL"
+clone_or_pull "phuryn"          "$PHURYN_URL"
+clone_or_pull "anthropic/skills" "$ANTHROPIC_SKILLS_URL"
+
+# frontend-design 설치 확인 (최소 요건)
+FD_SKILL="$SKILLS_ROOT/anthropic/skills/frontend-design/SKILL.md"
+if [ ! -f "$FD_SKILL" ]; then
+  warn "frontend-design/SKILL.md 를 못 찾음 — repo 구조 확인: ls $SKILLS_ROOT/anthropic/skills/"
+else
+  say "frontend-design skill OK: $FD_SKILL"
+fi
 
 # Sanity check — Claude Code 가 SKILL.md 들을 찾을 수 있는지
 SKILL_COUNT=$(find "$SKILLS_ROOT" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
@@ -66,6 +79,7 @@ $(printf "\033[1;32m✓ skills setup complete\033[0m")
 
   pdt-designer:
     - mattpocock/design-an-interface
+    - anthropic/skills/frontend-design
 
   pdt-developer:
     - mattpocock/tdd, triage-issue, request-refactor-plan,
