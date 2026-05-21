@@ -14,7 +14,7 @@ NEXT_NUM=$(node scripts/po/scan-tickets.mjs "$TARGET" 2>/dev/null \
   2>/dev/null || echo 1)
 NEXT_TID=$(printf "T-%03d" "$NEXT_NUM")
 
-# user_knowledge_state snapshot (T-P4-120) — see _details/uks-field.md
+# user_knowledge_state snapshot — see _details/uks-field.md
 UKS=$(jq -nc \
   --arg ref '~/.productune/po-memory.md#user-knowledge-state-engineering' \
   --arg asof "$(date -u +%F)" \

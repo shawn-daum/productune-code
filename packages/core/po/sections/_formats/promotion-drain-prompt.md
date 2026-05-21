@@ -16,8 +16,8 @@ Example (translate to user's lang):
 ```
 [PO] Promotion 3/5 — "Sidebar nav-row pattern" 결정 박을까?
 
-  T-P4-099에서 만든 룰 (사이드바 = nav만, 자세한 건 메인 패널 탭) 을
-  T-P4-130 MCP inline list 가 한 번 위반. 이번에 재확립.
+  이전에 만든 룰 (사이드바 = nav만, 자세한 건 메인 패널 탭) 을
+  MCP inline list 가 한 번 위반. 이번에 재확립.
 
   박으면 → 다음에 사이드바 섹션 추가하는 designer 가 헷갈리지 않음.
   안 박으면 → 비슷한 위반 재발 가능.

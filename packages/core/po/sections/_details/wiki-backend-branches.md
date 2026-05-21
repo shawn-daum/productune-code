@@ -2,7 +2,7 @@
 
 `tier:"wiki"` mechanical write — backend-aware (`WIKI_BACKEND` from `productune.env`).
 
-## graphiti (T-P4-121)
+## graphiti
 
 PO mechanical via `claude --print` (no `--agent`) subprocess. Persona / subagent dispatch path retired (claude code 2.1.142 MCP non-inheritance + agent whitelist tool-name resolution structurally non-functional). Invocation template + preconditions + `source_description` auto-gen → `sections/_formats/wiki-write-template.md`. Run fire-and-forget in `( ... ) &`; job tracked under `~/.productune/wiki-jobs/<id>.{pending,done}`. Echo `[PO] saved (background, job=<id>)`.
 
@@ -40,4 +40,4 @@ except: print('{}')" 2>/dev/null || echo '{}') && TASK="$TASK
 wiki_consult: $WIKI_RESULT"
 ```
 
-(`graphiti` backend — pre-persona memory consult goes through PO subprocess `claude --print` calling `mcp__graphiti__search_memory_facts` / `search_memory_nodes` / `get_episodes`. Personas no longer call MCP wiki tools directly — see T-P4-121 doctrine + `lifecycle-mechanics.md` §"Retrospective read sources". `fs` personas read `INDEX.md` directly.)
+(`graphiti` backend — pre-persona memory consult goes through PO subprocess `claude --print` calling `mcp__graphiti__search_memory_facts` / `search_memory_nodes` / `get_episodes`. Personas no longer call MCP wiki tools directly — see doctrine + `lifecycle-mechanics.md` §"Retrospective read sources". `fs` personas read `INDEX.md` directly.)

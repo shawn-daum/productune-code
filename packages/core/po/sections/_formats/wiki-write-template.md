@@ -1,4 +1,4 @@
-# PO mechanical wiki write — invocation template (T-P4-121)
+# PO mechanical wiki write — invocation template
 
 PO is sole mechanical executor of approved wiki episodes. Subagent dispatch path retired — claude code 2.1.142 MCP non-inheritance + agent whitelist tool-name resolution. PO subprocess (`claude --print` with no `--agent`) = only currently-functional path.
 
@@ -52,8 +52,8 @@ PO synthesizes mechanically (no semantic interpretation). Two forms:
 Drawn from `current_task.ticket_id` + `current_task.slug` + today date.
 
 Examples:
-- `"T-P4-120 doctrine adoption"`
-- `"T-P4-120 + 2026-05-15 dogfood retry after env restore"`
+- `"<ticket_id> doctrine adoption"`
+- `"<ticket_id> + 2026-05-15 dogfood retry after env restore"`
 
 ## Job tracking
 

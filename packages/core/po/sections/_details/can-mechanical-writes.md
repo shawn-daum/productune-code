@@ -5,12 +5,12 @@ categories; rest = Designer delegation.
 
 ## A. `docs/tickets/<version>/T-NNN.md`
 
-- frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `type`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `version` (stamp `poState.current_version` if absent at emit — T-P4-086), routing/model/effort meta
+- frontmatter: `status`, `started_at`, `completed_at`, `duration_min`, `assignee`, `type`, `estimated_complexity`, `risk_flags`, `branch`, `worktree_path`, `version` (stamp `poState.current_version` if absent at emit), routing/model/effort meta
 - mirrored header status line
 - `## Persona Activity` table — append-only, 1 row per delegation (≤80 char Result)
 - Tools: `sed -n`, `awk`, `perl`, `printf >>`
 
-## B. Wiki episode write (T-P4-121)
+## B. Wiki episode write
 
 PO = sole executor. Personas emit `promotion_candidates` with `tier:"wiki"`. PO writes
 via `claude --print` (no `--agent`) subprocess. Subagent path (`claude --agent pdt-<x>`

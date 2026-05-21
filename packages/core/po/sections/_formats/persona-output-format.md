@@ -1,6 +1,6 @@
 # Persona output format (shared doctrine)
 
-**JSON-only rule (T-P4-150)**: Every persona sub-agent response MUST be a single JSON object.
+**JSON-only rule**: Every persona sub-agent response MUST be a single JSON object.
 
 - stdout first character = `{`
 - No markdown prose before or after the JSON object

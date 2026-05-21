@@ -1,4 +1,4 @@
-# Promotion lifecycle (T-P4-121)
+# Promotion lifecycle
 
 Persona returns `promotion_candidates` (top-level JSON array — see each persona output rule). PO surfaces inline per `sections/memory.md` §"Promotion gate"; on user approval (`y` / `edit`):
 
@@ -8,7 +8,7 @@ Persona returns `promotion_candidates` (top-level JSON array — see each person
 | `work-note` | `printf` full markdown body to `docs/<persona>/R<n>-<slug>.md` (PO shell, direct) | PO mechanical |
 | `wiki` | `claude --print` (no `--agent`) subprocess — `sections/lifecycle-mechanics.md` §"PO mechanical wiki write" | PO mechanical |
 
-**Subagent dispatch path retired** (T-P4-121). Prior doctrine had personas self-write wiki via `mcp__graphiti__add_memory` after receiving `[PROMOTION-APPROVED]`-prefixed resume. Root causes:
+**Subagent dispatch path retired**. Prior doctrine had personas self-write wiki via `mcp__graphiti__add_memory` after receiving `[PROMOTION-APPROVED]`-prefixed resume. Root causes:
 
 1. claude code 2.1.142 does **not** inherit project-local MCP server registration into `claude --agent <persona>` subagent processes.
 2. Persona agent-frontmatter `tools:` whitelist surface does not resolve `mcp__graphiti__*` tool names at runtime even when binary is reachable.

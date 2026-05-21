@@ -1,4 +1,4 @@
-# `user_knowledge_state` field (T-P4-120)
+# `user_knowledge_state` field
 
 PO writes 3-field snapshot of relevant axes from `~/.productune/po-memory.md ## User knowledge state (engineering)` into `[ctx].user_knowledge_state`:
 

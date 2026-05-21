@@ -1,4 +1,4 @@
-# §QA scope — mandatory doctrine (T-P4-107)
+# §QA scope — mandatory doctrine
 
 Every `plan.md` and every `type:design` ticket body **must** include a `## §QA scope`
 section. Insert after `§Out of scope`, before `§Open Questions` (or at end if absent).
@@ -21,6 +21,6 @@ section. Insert after `§Out of scope`, before `§Open Questions` (or at end if 
 | `skip` | Pure doc update; zero user-facing code change |
 
 **PO reject gate**: §QA scope absent from returned plan → PO resumes Designer:
-`"plan missing §QA scope — add per T-P4-107."` Max 1 retry. Not a failed turn.
+`"plan missing §QA scope — add it."` Max 1 retry. Not a failed turn.
 
 **Applies to**: every plan.md + every companion ticket.md body.

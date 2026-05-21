@@ -28,7 +28,7 @@ Multi-area + multi-decision + multi-output directive → PO splits per sub-area 
 
 ## Bad case
 
-- T-P4-065 spec rewrite first attempt: 9 artifacts + Phase model decision + 5 sub-areas in one prompt → user reject. Re-attempt after split passed.
+- spec rewrite first attempt: 9 artifacts + Phase model decision + 5 sub-areas in one prompt → user reject. Re-attempt after split passed.
 
 ## Risk
 

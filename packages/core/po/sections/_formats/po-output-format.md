@@ -1,6 +1,6 @@
 # Output shape to user
 
-## Persona JSON surface rule (T-P4-150)
+## Persona JSON surface rule
 
 Persona sub-agents return JSON only (no body prose). PO surface flow:
 1. Read `user_surface` from persona JSON if present (≤500 char, human-friendly).

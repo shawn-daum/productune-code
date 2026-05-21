@@ -1,4 +1,4 @@
-# Dev-QA auto-loop protocol (T-P4-112 — Build mode)
+# Dev-QA auto-loop protocol (Build mode)
 
 After impl ticket dispatched (status → `in-progress`):
 

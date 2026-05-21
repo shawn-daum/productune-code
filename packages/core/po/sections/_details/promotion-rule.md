@@ -6,4 +6,4 @@ surface inline (background turn / closed window), candidates are enqueued to
 `po-state.json:pending_promotions[]`. A `## Promotion Candidates` body section inside
 returned docs is **secondary annotation** only — PO consumes only the top-level JSON array.
 
-See `_details/promotion-lifecycle.md` for T-P4-121 PO-side mechanics (wiki write gate).
+See `_details/promotion-lifecycle.md` for PO-side mechanics (wiki write gate).
