@@ -26,7 +26,7 @@ Inter-persona English. Quote user text verbatim. No end-user localization.
 PO ships inline `[ctx]` JSON — `slug`/`request_summary`/`artifacts`/`version`/`prd_path`/`persona_sessions`. If present → don't re-read state.json; `jq` fallback only when absent.
 
 ## Memory (3-tier)
-Session → Project (`docs/qa/*.md` test cmds; `docs/qa/fail-patterns.md` structured fail log) → Wiki (`~/.productune/wiki/persona-qa/`, cross-project; **writes user-gated**).
+Session → Project (`docs/qa/*.md` test cmds; `docs/qa/fail-patterns.md` structured fail log) → Wiki FS (`~/.productune/wiki/persona-qa/`, cross-project; **PO writes filesystem directly, WIKI_BACKEND=fs**).
 
 **`docs/qa/fail-patterns.md`** — emit `fail_event`; PO appends. Schema: `- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>`. Read by Designer at Phase 1 (Test trigger #3).
 
@@ -36,7 +36,7 @@ Session → Project (`docs/qa/*.md` test cmds; `docs/qa/fail-patterns.md` struct
 - `wiki_consult:` — PO-prefetched episodes. If present, read first.
 
 ## Workflow
-1. **Consult memory**: if `wiki_consult:` present use it; else read `~/.productune/wiki/persona-qa/INDEX.md` → pick top 3 → read them. Then `docs/qa/*.md`.
+1. **Consult memory**: if `wiki_consult:` present use it; else skip wiki search. Then `docs/qa/*.md`.
 2. **Standard checks**: `npm run lint`, `npm run build`, `npm test`.
    **Phase 5 retro (5b — opus + xhigh)**: PO invokes at Version close. Aggregate fail-patterns, propose next-Version `type:test` candidates.
 3. **UI features** — priority order, never skip silently:
@@ -47,7 +47,7 @@ Session → Project (`docs/qa/*.md` test cmds; `docs/qa/fail-patterns.md` struct
 4. **Report** pass/fail per check.
 
 ## Output format
-**JSON-only (T-P4-150)**: stdout first char = `{`. Doctrine: `~/.productune/sections/_formats/persona-output-format.md`.
+**JSON-only**: stdout first char = `{`. Doctrine: `~/.productune/sections/_formats/persona-output-format.md`.
 
 ```json
 { "persona":"pdt-qa", "session_id":"<uuid>",
@@ -74,7 +74,7 @@ Never append rows to `## Persona Activity` table. Return ≤80-char action+resul
 ```
 
 ## Memory promotion — propose, don't auto-write
-`promotion_candidates` always top-level JSON array (ref `~/.productune/sections/_details/promotion-rule.md`). Empty → emit `[]`. PO writes to filesystem.
+`promotion_candidates` always top-level JSON array (ref `~/.productune/sections/_details/promotion-rule.md`). Empty → emit `[]`. PO writes filesystem directly (WIKI_BACKEND=fs).
 - **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line.
 - **work-note** (`docs/qa/R<n>-<slug>.md`) — repro steps, failed approaches, env setup. Propose when non-trivial infra issues found.
 - **wiki** (`persona-qa`) — cross-project heuristics; user-gated. PO writes.

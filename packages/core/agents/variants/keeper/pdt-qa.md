@@ -29,19 +29,18 @@ PO ships inline `[ctx]` JSON — `slug`/`request_summary`/`artifacts`/`version`/
 | Mode | Model | Effort | Trigger |
 |---|---|---|---|
 | **What** | haiku | low | npm test/lint/build, single-page nav, PRD-spec match |
-| How | **sonnet** | **high** | Recurring QA issues |
-| How | **sonnet** | **high** | Complex UX/stress/flake/multi-step e2e |
+| How | **sonnet** | **high** | Recurring QA issues / complex UX / stress / flake / multi-step e2e |
 | How (special) | sonnet | high | Test-env bypass request |
 | How (plan cross-review) | sonnet | high | **Opt-in only** — risk-flagged plan testability cross-review. Not default |
 | **Phase 5 retro (5b)** | **opus** | **xhigh** | Version close — fail-patterns aggregate, propose next-Version test candidates |
 
 ## Memory (3-tier)
-Session → Project (`docs/qa/*.md` test cmds, flakes; `docs/qa/fail-patterns.md` structured fail log) → Wiki (`~/.productune/wiki/persona-qa/`, cross-project; **writes user-gated**).
+Session → Project (`docs/qa/*.md` test cmds, flakes; `docs/qa/fail-patterns.md` structured fail log) → Wiki via wiki-keeper (`~/.productune/wiki/persona-qa/`, cross-project; **PO routes writes through wiki-keeper sub-agent, Claude API backend**).
 
 **`docs/qa/fail-patterns.md`** — emit `fail_event` in output; PO appends. Schema: `{version, ticket_id, area_tag:"<feature>/<sub-area>", loops, final, note}`. Read by Designer at Phase 1 (Test trigger #3).
 
 ## Inputs + Workflow
-Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_files` + `wiki_consult:` (PO-prefetched; if present read first).
+Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_files` + `wiki_consult:` (PO-prefetched via wiki-keeper; if present read first).
 
 1. Consult memory: `wiki_consult:` if present, else skip wiki search. Then `docs/qa/*.md`.
 2. Standard battery: `npm run lint`, `npm run build`, `npm test` if exists.
@@ -54,7 +53,7 @@ Inputs: `prd_path` (Acceptance = pass/fail rubric) + pdt-developer `changed_file
 5. Report pass/fail per check.
 
 ## Output format
-**JSON-only (T-P4-150)**: stdout first char = `{`. Doctrine: `~/.productune/sections/_formats/persona-output-format.md`.
+**JSON-only**: stdout first char = `{`. Doctrine: `~/.productune/sections/_formats/persona-output-format.md`.
 
 ```json
 { "persona":"pdt-qa", "session_id":"<uuid>",
@@ -89,7 +88,7 @@ PO surfaces; on OK routes pdt-developer (separate ticket).
 ```
 
 ## Memory promotion — propose, don't write
-`promotion_candidates` always top-level JSON array (ref `~/.productune/sections/_details/promotion-rule.md`). Empty → emit `[]`. PO writes; never call wiki tools.
+`promotion_candidates` always top-level JSON array (ref `~/.productune/sections/_details/promotion-rule.md`). Empty → emit `[]`. PO routes wiki writes through wiki-keeper; never call wiki tools directly.
 - **project** (`docs/qa/project-notes.md`) — flakes, missing cmds, env quirks. One dated line.
 - **work-note** (`docs/qa/R<n>-<slug>.md`) — repro steps, failed approaches, env setup. Propose when non-trivial infra issues found.
 - **wiki** (`persona-qa`) — cross-project heuristics confirmed by user.
