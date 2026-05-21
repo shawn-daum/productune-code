@@ -19,7 +19,7 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
                                                                    또는 filesystem (keeper backend)
 ```
 
-> **planner 역할은 Designer, PO 안으로 흡수**
+> **planner 역할은 Designer, PO가 담당**
 
 ## 누구를 위한 도구인가
 
@@ -43,10 +43,10 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
 
 | 페르소나 | 역할 | Default 모델 | Why mode | How mode | What mode |
 |---|---|---|---|---|---|
-| **productune** (PO) | 오케스트레이터 (저자 X) | **sonnet/medium** | — | sonnet/medium — 인터뷰 / 라우팅 / 합산. 위험 plan review 만 opus + ⚡xhigh | — |
-| **pdt-designer** | PRD 작성 + Plan + Design + Tickets | opus | **opus + ⚡max** — Round 1 MVP PRD (clarity loop A ≤ 0.05) / net-new 시스템 디자인. Round 2+ PRD: opus + ⚡xhigh | sonnet/medium — token 매핑, haiku/low — 단일 컴포넌트 compliance | sonnet/medium — ticket 파일 emission |
-| **pdt-developer** | 구현 | sonnet | — | **L4+ plan phase: opus + ⚡xhigh** (PLAN ONLY). **System-level: opus + ⚡max** | **L1–L3 trivial: sonnet/medium**. **L4+ impl phase: sonnet/high** (plan 후) |
-| **pdt-qa** | 검증 | haiku | — | sonnet/high — 복잡 UX flow, stress, e2e, 반복 QA issue. **Plan testability cross-review (옵트인)**: sonnet/high | haiku/low — npm test, lint/build, 단일 페이지 nav |
+| **productune** (PO) | 오케스트레이터 (저자 X) | **opus/xhigh** | — | opus/xhigh — 인터뷰 / 라우팅 / 합산 / brief append (default). 위험 plan review = opus/xhigh 유지 | — |
+| **pdt-designer** | PRD 작성 + Plan + Design + Tickets | opus | **opus + ⚡max** — Round 1 MVP PRD (clarity loop A ≤ 0.05) / net-new 시스템 디자인. Round 2+ PRD: opus + ⚡xhigh | opus + ⚡xhigh — design docs (single screen / 컴포넌트 spec). sonnet/medium — token/DS compliance, haiku/low — 단일 컴포넌트 compliance | sonnet/medium — ticket 파일 emission |
+| **pdt-developer** | 구현 | sonnet | — | **L4+ plan phase: opus + ⚡xhigh** (PLAN ONLY). **System-level: opus + ⚡max** | **baseline sonnet/medium** (L1–L3 trivial). **L4+ impl phase: sonnet/high** (plan 후) |
+| **pdt-qa** | 검증 | haiku | — | sonnet/high — stress / e2e / 반복 QA issue. **Plan testability cross-review (옵트인)**: sonnet/high | **baseline haiku/low** — npm test, lint/build, 단일 페이지 nav |
 
 > **PO 는 산출물을 직접 작성하지 않습니다.** 인터뷰 brief 만 자기 손으로 채우고, PRD/티켓/디자인/코드는 모두 sub-agent 위임.
 > **모든 페르소나 출력 = JSON-only** (`stdout` 첫 글자 `{`). `summary` ≤200자 + `user_surface` ≤500자로 PO 가 표면에 번역. ~80% output-token 절감.
@@ -60,7 +60,7 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
 
 | Skill | 장착 페르소나 | 발동 조건 |
 |---|---|---|
-| `anthropic/frontend-design` | pdt-designer | Phase 2 Gate A 승인 후 (interactive component 코드 생성) |
+| `anthropic/frontend-design` | pdt-designer | Phase 2 T4 (hi-fi mockup, interactive component 코드 생성) |
 | `mattpocock/*` (23개) | pdt-developer | plan/tdd/refactor 등 개발 flow |
 | `phuryn/pm-skills` (65개) | PO, pdt-designer | PRD / 인터뷰 / 이슈 추출 |
 
@@ -71,27 +71,35 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
 모든 버전이 이 5단을 순서대로 통과합니다.
 
 ```
-Phase 1: PRD          Phase 2: Design         Phase 3: Build
-  │                     │                         │
-  ├─ Designer:          ├─ Ticket 1:              ├─ Developer: impl
-  │   clarity loop        Design System           │
-  │   A ≤ 0.05            UX Flow (Mermaid)       ├─ QA: 검증
-  │                       Wireframe               │
-  ├─ 자동 ticket          Hi-fi mockup (HTML)     └─ [Close Gate ×3]
-  │  emit (type:design,    │                          ① 디자인 요소 검토
-  │  PRD 작성)             ▼ Gate A (user OK)          ② 보안 6-prompt
-  │                     Ticket 2:                      ③ PRD AC 확인
-  └─ version: v<숫자>    frontend-design skill
-      only               → interactive TSX/HTML
-                          │
-                          ▼ Gate B (user OK)
+Phase 1: PRD          Phase 2: Design               Phase 3: Build
+  │                     │                              │
+  ├─ Designer:          ├─ 4 design tickets emit:      ├─ Developer: impl
+  │   clarity loop      │   ① Design System            │
+  │   A ≤ 0.05          │   ② UX Flow (Mermaid)        ├─ QA: 검증
+  │                     │   ③ Wireframe                │
+  ├─ 자동 ticket        │   ④ Hi-fi mockup (HTML)      └─ [Close Gate ×3]
+  │  emit (type:design, │                                  ① 디자인 요소 검토
+  │  PRD 작성)          ├─ Skip 조건: L1–L3 +              ② 보안 6-prompt
+  │                     │  not user-facing +                ③ PRD AC 확인
+  └─ version: v<숫자>   │  no risk_flags
+      only              │  (trace: → Phase 2 skipped
+                        │   — L<n> trivial)
+                        │
+                        └─ Gate: 사용자 4 artifacts OK
+                           (L4+ user-facing + risk_flags 필수)
 
-Phase 4: Deploy       Phase 5: Close
-  │                     │
-  ├─ 자동 skip           ├─ Retrospective 작성
-  │  (조건: no          ├─ feature-history.md 갱신
-  │  deploy changes)    └─ 다음 버전 backlog 제안
-  └─ Vercel / 수동
+Phase 4: Deploy                            Phase 5: Close
+  │                                          │
+  ├─ pdt-po + 사용자 협업                    ├─ type:close × 3:
+  │  type:deploy 티켓 1개                    │   5a Retrospective (Designer)
+  │  body "## Steps" =                       │   5b Test coverage retro (QA)
+  │    [PO] allowlisted command              │   5c feature-history (Designer)
+  │    [user] action                         │
+  ├─ PO 한 단계씩 진행 →                     └─ 5d PO mechanical
+  │  사용자 회신 → next                          (calibration log +
+  └─ 모든 step done → ticket close                po-state mirror)
+     (자동 smoke gate 없음 —
+      검증은 step 결과 안에서)
 ```
 
 ### Phase gate 상세
@@ -99,10 +107,10 @@ Phase 4: Deploy       Phase 5: Close
 | Phase | Auto-emit | Gate | 완료 조건 |
 |---|---|---|---|
 | **1 PRD** | type:design ticket 1개 (PRD 작성 vehicle) | A ≤ 0.05 or PO "finalize" | PRD `state:"ready"` |
-| **2 Design** | type:design × 2 (static → Gate A → interactive → Gate B) | Gate A = 사용자 static artifacts OK · Gate B = 사용자 interactive code OK | Ticket 2 merged |
+| **2 Design** | type:design × 4 (system / flow / wireframe / hi-fi mockup) | 사용자 4 artifacts OK | 4 design tickets merged + user gate |
 | **3 Build** | — | Close Gate 3항목 모두 ✓ (no open ✗) | 3-item checklist clear |
-| **4 Deploy** | — | Skip 규칙: 배포 변경 없으면 자동 pass | deploy log or skip note |
-| **5 Close** | — | Retrospective 작성 완료 | `docs/retrospectives/<version>.md` |
+| **4 Deploy** | type:deploy 1개 (PO+user collaborative steps) — N/A skip 시 type:deploy 미생성 | 모든 [PO]/[user] step done; N/A skip 시 자동 통과 | ticket close 또는 N/A skip 표시 (productune-internal / library / docs-only / Electron desktop 등 배포 단계 없는 프로젝트) |
+| **5 Close** | type:close × 3 (5a/5b/5c) | 3 close tickets done + 5d PO mechanical | `docs/retrospectives/<version>.md` + `feature-history.md` 갱신 |
 
 ## Why the 3-tier memory
 
@@ -131,7 +139,7 @@ Wiki backend 에 따라 추가 필요:
 
 ## Install
 
-> **Migration note (T-P4-002)**: core 파일이 `packages/core/` 로 이관됐습니다. 기존 설치 사용자는 `bash packages/core/scripts/install.sh` 재실행으로 symlink/hook 경로를 업데이트하세요.
+> **Migration note**: core 파일이 `packages/core/` 로 이관됐습니다. 기존 설치 사용자는 `bash packages/core/scripts/install.sh` 재실행으로 symlink/hook 경로를 업데이트하세요.
 
 ```sh
 git clone https://github.com/shawn-kim-axz/productune
@@ -171,13 +179,13 @@ productune
 #    A ≤ 0.05 되면 Phase 1 완료, Tickets 자동 emit
 
 # 5. Phase 2: Designer 가 Design System + UX Flow + Mockup 생성
-#    Gate A 승인 후 frontend-design skill 로 interactive code 생성
+#    4 design tickets (system/flow/wireframe/hi-fi mockup) emit → user 일괄 승인
 
 # 6. Phase 3: Developer 가 구현 → QA → Close Gate (3항목 체크)
 
 # 7. Phase 4: Deploy (또는 auto-skip)
 
-# 8. Phase 5: Close — Retrospective + 다음 버전 backlog
+# 8. Phase 5: Close — Designer 회고 + QA 패턴 정리 + 다음 버전 후보 + PO calibration
 
 # 버전 이름: v1, v2, v3 ... (v<숫자> 형식만 유효)
 ```
@@ -299,7 +307,7 @@ docs/
 ├── qa/
 │   ├── <slug>-test-plan.md
 │   └── fail-patterns.md                      # QA 누적 실패 패턴 (Phase 1 read)
-└── retrospectives/<version>.md               # Phase 5 close (Designer 작성)
+└── retrospectives/<version>.md               # Phase 5 5c 회고 산출물 (Designer)
 ```
 
 글로벌 singleton: `docs/designer/design-system.md` — 개발 중 per-feature copy 절대 금지. Version close 시 PO 가 `docs/artifacts/<version>/design-system-snapshot.md` 로 snapshot.
