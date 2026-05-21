@@ -10,7 +10,7 @@ GUI [Approve →] click → `phase:approve` IPC → direct `po-state.json` mecha
 jq '.current_phase = <N> | .phase_history += [{"phase":<N>,"started_at":"<ISO>","user_approved_at":"<ISO>"}] | .pending_gate = null' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
 ```
 
-## PO mechanical wiki write (T-P4-121)
+## PO mechanical wiki write
 
 PO = sole executor via `claude --print` (no `--agent`) subprocess. Subagent path retired — claude code 2.1.142 MCP non-inheritance + agent whitelist tool-name resolution structurally non-functional. See `po-instructions.md` `## CAN (mechanical only)` for top-level rationale.
 

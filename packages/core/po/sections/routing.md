@@ -19,7 +19,7 @@ OSS ref: LLMRouter, vLLM Semantic Router, LiteLLM, NVIDIA llm-router.
 
 | Persona | Floor | Default | Rationale |
 |---|---|---|---|
-| **PO** | L4 | sonnet/medium | Routing/synthesis only |
+| **PO** | L4 | opus/xhigh | Routing/synthesis (incl interview, brief append, surface) |
 | **pdt-designer (PRD R1 MVP)** | L7 | **opus + max** | Net-new with clarity loop |
 | **pdt-designer (PRD R2+)** | L6 | opus + xhigh | Incremental on settled vision |
 | **pdt-designer (design docs single screen)** | L6 | opus + xhigh | Spec authoring |
@@ -27,7 +27,7 @@ OSS ref: LLMRouter, vLLM Semantic Router, LiteLLM, NVIDIA llm-router.
 | **pdt-developer** | L5 | sonnet/medium | Code authoring. Plan phase L4+ → opus + xhigh |
 | **pdt-qa** | L2 | haiku/low | Pass/fail + cmd exec |
 
-PO defaults sonnet/medium — orchestrator role. Sub-agent calls explicitly elevate.
+PO defaults opus/xhigh — orchestrator role. Per-task elevation lives in sub-agent calls.
 
 ## Step-up / step-down signals
 
