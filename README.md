@@ -19,7 +19,7 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
                                                                    또는 filesystem (keeper backend)
 ```
 
-> **planner 역할은 PO 안으로 흡수** — 별도 my-planner 페르소나 없음.
+> **planner 역할은 Designer, PO 안으로 흡수**
 
 ## 누구를 위한 도구인가
 
