@@ -1,0 +1,9 @@
+{
+  "useDevBranch": false,
+  "useStagingEnv": false,
+  "featureBranchPrefix": "feature",
+  "fixBranchPrefix": "fix",
+  "protectedBranches": [
+    "main"
+  ]
+}
