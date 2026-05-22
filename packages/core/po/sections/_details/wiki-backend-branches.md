@@ -1,12 +1,15 @@
-# Wiki backend branches — graphiti / keeper / fs
+# Wiki backend branches — keeper (default) / graphiti (advanced) / fs
 
 `tier:"wiki"` mechanical write — backend-aware (`WIKI_BACKEND` from `productune.env`).
 
-## graphiti
+**Default: wiki-keeper.** Graphiti is an advanced opt-in (Docker + Ollama + FalkorDB required);
+activated via `install.sh` end-of-install prompt or `PRODUCTUNE_SKIP_ADVANCED=1` override.
+
+## graphiti *(advanced opt-in)*
 
 PO mechanical via `claude --print` (no `--agent`) subprocess. Persona / subagent dispatch path retired (claude code 2.1.142 MCP non-inheritance + agent whitelist tool-name resolution structurally non-functional). Invocation template + preconditions + `source_description` auto-gen → `sections/_formats/wiki-write-template.md`. Run fire-and-forget in `( ... ) &`; job tracked under `~/.productune/wiki-jobs/<id>.{pending,done}`. Echo `[PO] saved (background, job=<id>)`.
 
-## keeper
+## keeper *(default)*
 
 Invoke `claude --agent pdt-wiki-keeper --model haiku` with `WRITE [PROMOTION-APPROVED]\npersona: $TARGET\nepisode_name: $EPISODE_NAME\nepisode_body: $EPISODE_BODY`. Sync — keeper handles file write + INDEX update. (keeper backend = non-MCP — subagent path remains valid here.)
 
@@ -31,7 +34,7 @@ done
 Inject `wiki_consult:` into TASK:
 
 ```bash
-[ "${WIKI_BACKEND:-graphiti}" = "keeper" ] && WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
+[ "${WIKI_BACKEND:-keeper}" = "keeper" ] && WIKI_RESULT=$(NO_COLOR=1 claude --agent pdt-wiki-keeper --model haiku --print --output-format json \
   "SEARCH
 persona: $PERSONA_SHORT
 query: $TASK_KEYWORDS" | python3 -c "import json,sys,re

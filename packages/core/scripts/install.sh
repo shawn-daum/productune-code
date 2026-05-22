@@ -540,40 +540,6 @@ if [ ! -e "$ROOT/scripts/my-po" ]; then
   say "created compat symlink scripts/my-po → productune"
 fi
 
-# 4b) User mode — developer (full advanced opts) or planner (safe defaults)
-choose_user_mode_interactive() {
-  cat >&2 <<MODEPROMPT
-
-[install] productune 사용자 모드 선택:
-  [1] developer  풀스택 개발자. Docker / 엔진 / 고급 옵션 표시.
-  [2] planner    비개발자 기획자. 복잡 prompt skip, 안전 기본값 (wiki-keeper).
-MODEPROMPT
-  printf '  선택 [1/2, 기본=2]: ' >&2
-  local _ans=""; read -r _ans || _ans=""
-  case "$_ans" in
-    1|developer) printf 'developer' ;;
-    *)           printf 'planner' ;;
-  esac
-}
-
-# Read existing USER_MODE from env file if present (idempotent reinstall)
-USER_MODE=""
-if [ -e "$HOME/.productune/productune.env" ]; then
-  USER_MODE="$(grep -E '^USER_MODE=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || true)"
-fi
-if [ -z "$USER_MODE" ]; then
-  if [ -t 0 ] && [ -t 1 ]; then
-    USER_MODE="$(choose_user_mode_interactive)"
-  else
-    USER_MODE="planner"  # non-interactive default: safe
-  fi
-  # Do NOT pre-create productune.env here — step 5 creates it with engine+repo
-  # using `>` overwrite; we write USER_MODE in step 5b safety-net instead.
-  say "user mode: $USER_MODE (will be saved to ~/.productune/productune.env at step 5b)"
-else
-  say "user mode: $USER_MODE (existing)"
-fi
-
 # 5) PO engine — claude (primary, hooks fire) or codex (secondary, doctrine-only)
 #    Interactive prompt picks one and seeds productune.env. Non-interactive falls
 #    back to claude. Existing env file with MY_PO_ENGINE is preserved (just
@@ -600,7 +566,7 @@ PROMPT
 }
 
 if [ ! -e "$PO_ENV_FILE" ]; then
-  if [ -t 0 ] && [ -t 1 ] && [ "${USER_MODE:-}" != "planner" ]; then
+  if [ -t 0 ] && [ -t 1 ]; then
     CHOSEN_ENGINE="$(choose_engine_interactive)"
   else
     CHOSEN_ENGINE="claude"
@@ -620,7 +586,7 @@ else
   else
     printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   fi
-  if [ -t 0 ] && [ -t 1 ] && [ "${USER_MODE:-}" != "planner" ]; then
+  if [ -t 0 ] && [ -t 1 ]; then
     printf '\033[1;36m[install]\033[0m 현재 PO engine=%s. 변경할까요? [y/N]: ' "$CURRENT_ENGINE"
     SWAP=""; read -r SWAP || SWAP=""
     case "$SWAP" in
@@ -658,187 +624,45 @@ if ! grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
   printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   say "ensured: PRODUCTUNE_REPO=$ROOT (appended to $PO_ENV_FILE)"
 fi
-if ! grep -qE '^USER_MODE=' "$PO_ENV_FILE"; then
-  printf 'USER_MODE=%s\n' "${USER_MODE:-planner}" >> "$PO_ENV_FILE"
-  say "ensured: USER_MODE=${USER_MODE:-planner} (appended to $PO_ENV_FILE)"
+# Remove legacy USER_MODE line if present (removed 2026-05-22 — wiki-keeper default)
+if grep -qE '^USER_MODE=' "$PO_ENV_FILE" 2>/dev/null; then
+  TMP_ENV="$PO_ENV_FILE.tmp.$$"
+  grep -Ev '^USER_MODE=' "$PO_ENV_FILE" > "$TMP_ENV" || true
+  mv "$TMP_ENV" "$PO_ENV_FILE"
+  say "removed legacy USER_MODE from $PO_ENV_FILE"
 fi
 
-# 6) Wiki memory backend — hardware-aware tier detection + model recommendation
+# 6) Wiki memory backend — wiki-keeper is the universal default.
+#    Graphiti (advanced, Docker + Ollama required) is configured via the
+#    end-of-install opt-in (step 9b) for users who explicitly want it.
 WIKI_BACKEND=""
 if grep -qE '^WIKI_BACKEND=' "$PO_ENV_FILE" 2>/dev/null; then
   WIKI_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
-  if [ "$WIKI_BACKEND" = "keeper" ] && [ -t 0 ] && [ -t 1 ]; then
-    printf '\033[1;36m[install]\033[0m 현재 Wiki backend=keeper 입니다. 로컬 Graphiti/Ollama 설정을 다시 시도할까요? [y/N]: '
-    read -r RETRY_LOCAL || RETRY_LOCAL=""
-    case "$RETRY_LOCAL" in
-      y|Y|yes|YES)
-        TMP_ENV="$PO_ENV_FILE.tmp.$$"
-        grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' "$PO_ENV_FILE" > "$TMP_ENV" || true
-        mv "$TMP_ENV" "$PO_ENV_FILE"
-        WIKI_BACKEND=""
-        say "Wiki backend 설정 초기화 완료. 하드웨어 감지를 다시 실행합니다."
-        ;;
-      *)
-        say "Wiki backend already configured: $WIKI_BACKEND (skipping detection)"
-        ;;
-    esac
-  else
-    say "Wiki backend already configured: $WIKI_BACKEND (skipping detection)"
-  fi
+  say "Wiki backend existing config: $WIKI_BACKEND"
 fi
 
-if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
-  echo
-  printf '\033[1;36m[install]\033[0m Wiki memory backend 설정 (하드웨어 감지 중)...\n'
+# Non-interactive with graphiti in env → switch to keeper (no prompts available).
+if [ "$WIKI_BACKEND" = "graphiti" ] && ([ ! -t 0 ] || [ ! -t 1 ]); then
+  TMP_ENV="$PO_ENV_FILE.tmp.$$"
+  grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' \
+    "$PO_ENV_FILE" > "$TMP_ENV" || true
+  mv "$TMP_ENV" "$PO_ENV_FILE"
+  printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
+  WIKI_BACKEND=keeper
+  say "Non-interactive: Graphiti → wiki-keeper (default)"
+  bash "$ROOT/scripts/wiki-init.sh"
+fi
 
-  RAM_GB=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1024/1024/1024)}' || echo 0)
-  CHIP=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
-  HAS_DOCKER=0; docker_running && HAS_DOCKER=1
-  DISK_FREE=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
-  DETECTED_TIER=$(detect_tier)
-
-  printf "  감지 결과: %s, RAM %dGB, Docker=%s, 여유디스크=%dGB\n" \
-    "$CHIP" "$RAM_GB" "$([ $HAS_DOCKER -eq 1 ] && echo yes || echo no)" "$DISK_FREE"
-
-  # planner mode: skip all interactive setup → wiki-keeper (safe default)
-  if [ "${USER_MODE:-}" = "planner" ]; then
-    say "(planner 모드) Wiki backend 설정 prompt skip → wiki-keeper 자동 선택"
-    WIKI_BACKEND=keeper
-  fi
-
-  # ── Docker auto-install prompt ─────────────────────────────────────────────
-  # Offer Docker Desktop install when the machine would qualify for Tier A/S
-  # but is being degraded to B solely because Docker is absent.
-  if [ "$HAS_DOCKER" -eq 0 ] && [ "$DISK_FREE" -ge 5 ] && [ "${USER_MODE:-}" != "planner" ]; then
-    _ARCH="$(uname -m 2>/dev/null || echo '')"
-    _WOULD_BE_TIER="B"
-    if [[ "$CHIP" == *"Apple M"* || "$_ARCH" == "arm64" ]]; then
-      if [[ "$RAM_GB" -ge 16 && "$DISK_FREE" -ge 10 ]]; then
-        _WOULD_BE_TIER="S"
-      elif [[ "$RAM_GB" -ge 8 ]]; then
-        _WOULD_BE_TIER="A"
-      fi
-    else
-      if [[ "$RAM_GB" -ge 32 && "$DISK_FREE" -ge 10 ]]; then
-        _WOULD_BE_TIER="S"
-      elif [[ "$RAM_GB" -ge 16 ]]; then
-        _WOULD_BE_TIER="A"
-      fi
-    fi
-
-    if [ "$_WOULD_BE_TIER" != "B" ]; then
-      echo
-      printf '\033[1;33m⚠️  Docker 미설치 — 현재 Tier B 로 자동 강등됩니다.\033[0m\n\n'
-      printf '    이 기기는 RAM %dGB 로 Tier %s (Docker 있으면 Graphiti 백엔드 사용 가능) 입니다.\n\n' \
-        "$RAM_GB" "$_WOULD_BE_TIER"
-      printf '    Docker Desktop 설치 시:\n'
-      printf '      \033[1;32m✓\033[0m Wiki 백엔드 = Graphiti (지식 그래프 + 관계 추론)\n'
-      printf '      \033[1;31m✗\033[0m Docker Desktop 디스크 ~5GB 차지\n'
-      printf '      \033[1;31m✗\033[0m 실행 시 메모리 ~2-3GB (FalkorDB 컨테이너 1개)\n'
-      printf '      \033[1;31m✗\033[0m Ollama 모델 추론 시 별도로 ~9GB peak (qwen2.5:14b)\n'
-      printf '      \033[1;31m✗\033[0m 회사 라이선스 정책에 따라 사용 제한 있을 수 있음\n\n'
-      printf '    Docker 안 받으면 wiki-keeper 백엔드 사용 — fully functional 이지만 단순 파일 검색만.\n\n'
-      printf '    Docker Desktop 설치할까요? (Homebrew 필요) [y/N]: '
-      read -r _INSTALL_DOCKER_ANS || _INSTALL_DOCKER_ANS=""
-
-      case "$_INSTALL_DOCKER_ANS" in
-        y|Y|yes|YES)
-          if ! command -v brew >/dev/null 2>&1; then
-            warn "Homebrew 미설치 — 수동 설치 후 'productune onboard' 재실행해주세요."
-            warn "Docker Desktop 다운로드: https://www.docker.com/products/docker-desktop"
-          else
-            say "Homebrew로 Docker Desktop 설치 중 (몇 분 소요)..."
-            if brew install --cask docker; then
-              say "Docker Desktop 설치 완료. 앱 실행 중..."
-              open -a Docker 2>/dev/null || true
-              printf '  \033[1;34m[install]\033[0m Docker 데몬 시작 대기 중 (최대 30초)...'
-              _DOCKER_WAIT=0
-              while [ "$_DOCKER_WAIT" -lt 30 ]; do
-                sleep 2
-                _DOCKER_WAIT=$((_DOCKER_WAIT + 2))
-                if docker_running; then
-                  printf ' 완료!\n'
-                  HAS_DOCKER=1
-                  DETECTED_TIER=$(detect_tier)
-                  break
-                fi
-                printf '.'
-              done
-              if [ "$HAS_DOCKER" -eq 0 ]; then
-                printf '\n'
-                warn "Docker 설치 완료, 데몬 시작 실패 — 수동으로 Docker.app 실행 후 'productune onboard' 재실행해주세요."
-              fi
-            else
-              warn "Docker Desktop 설치 실패 — wiki-keeper로 fallback"
-            fi
-          fi
-          ;;
-        *)
-          say "Docker 설치 건너뜀 → Tier B (wiki-keeper) 사용"
-          ;;
-      esac
-    fi
-  fi
-  # ──────────────────────────────────────────────────────────────────────────
-
-  case "$DETECTED_TIER" in
-    S)
-      printf '\033[1;32m  → Tier S (Smooth)\033[0m 감지. Graphiti + async write 권장.\n'
-      if [ -z "$WIKI_BACKEND" ]; then select_model_for_tier S; fi
-      ;;
-    A)
-      printf '\033[1;33m  → Tier A (Acceptable)\033[0m 감지. Graphiti + 소형 LLM 권장.\n'
-      if [ -z "$WIKI_BACKEND" ]; then select_model_for_tier A; fi
-      ;;
-    B|*)
-      printf '\033[1;31m  → Tier B (Constrained)\033[0m 감지 (RAM 부족 또는 Docker 없음).\n'
-      printf '  wiki-keeper agent (Claude API) 자동 선택.\n'
-      WIKI_BACKEND=keeper
-      ;;
-  esac
-
-  # If not overridden to keeper, proceed with LLM install → Graphiti setup → env write
-  if [ -z "$WIKI_BACKEND" ] && [ -n "${LLM_MODEL:-}" ]; then
-    say "로컬 LLM 설치 시작: $LLM_MODEL"
-    if install_local_llm "$LLM_MODEL"; then
-      say "Graphiti 세팅 시작 (FalkorDB + Graphiti MCP)..."
-      if bash "$ROOT/scripts/setup-graphiti.sh"; then
-        cat >> "$PO_ENV_FILE" <<EOF
-WIKI_BACKEND=graphiti
-GRAPHITI_LLM_PROVIDER=ollama
-GRAPHITI_LLM_MODEL=$LLM_MODEL
-GRAPHITI_EMBEDDER_PROVIDER=ollama
-GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
-EOF
-        WIKI_BACKEND=graphiti
-        say "Graphiti backend 설정 완료 ($LLM_MODEL)"
-        register_graphiti_mcp || true
-      else
-        warn "Graphiti 세팅 실패 — wiki-keeper로 fallback"
-        WIKI_BACKEND=keeper
-      fi
-    else
-      warn "LLM 설치 실패 — wiki-keeper로 fallback"
-      WIKI_BACKEND=keeper
-    fi
-  fi
-
-  # keeper fallback: write env and init wiki dirs
-  if [ "$WIKI_BACKEND" = "keeper" ]; then
-    printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
-    say "Wiki backend: wiki-keeper agent (Claude API). 로컬 LLM/Docker 불필요."
-    bash "$ROOT/scripts/wiki-init.sh"
-  fi
-elif [ -z "$WIKI_BACKEND" ]; then
-  # Non-interactive (CI / piped) — default to keeper (safest, no local deps)
+# Not set at all → default to keeper.
+if [ -z "$WIKI_BACKEND" ]; then
   WIKI_BACKEND=keeper
   printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
-  say "Non-interactive mode: wiki-keeper backend selected"
+  say "Wiki backend: wiki-keeper (default)"
   bash "$ROOT/scripts/wiki-init.sh"
 fi
 
 # Activate backend-specific agent variants
-FINAL_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo graphiti)"
+FINAL_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo keeper)"
 activate_backend "$FINAL_BACKEND"
 
 # Verify Claude recognizes the personas (fail-soft: warn but continue)
@@ -1053,6 +877,134 @@ PROMPT
   fi
 fi
 
+# 9b) Advanced opt-in — Graphiti wiki backend + Codex engine (interactive only)
+#     Skipped automatically in non-interactive mode or when PRODUCTUNE_SKIP_ADVANCED=1.
+if [ -t 0 ] && [ -t 1 ] && [ "${PRODUCTUNE_SKIP_ADVANCED:-0}" != "1" ]; then
+
+  # ── Existing Graphiti users: confirm keep or migrate to keeper ────────────
+  if [ "$WIKI_BACKEND" = "graphiti" ]; then
+    echo
+    printf '\033[1;33m[install]\033[0m 기존 Graphiti wiki 백엔드가 감지됐습니다.\n'
+    printf '  (Docker + Ollama + FalkorDB가 필요한 고급 옵션)\n'
+    docker_running 2>/dev/null \
+      || printf '  \033[1;31m⚠️  Docker 데몬이 현재 실행 중이지 않습니다.\033[0m\n'
+    printf '  기존 설정을 유지하시겠어요? [y/N, 기본=N (wiki-keeper로 전환)]: '
+    read -r _KEEP_GR || _KEEP_GR=""
+    case "$_KEEP_GR" in
+      y|Y|yes|YES)
+        say "Graphiti 백엔드 유지됩니다."
+        register_graphiti_mcp || true
+        ;;
+      *)
+        TMP_ENV="$PO_ENV_FILE.tmp.$$"
+        grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' \
+          "$PO_ENV_FILE" > "$TMP_ENV" || true
+        mv "$TMP_ENV" "$PO_ENV_FILE"
+        printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
+        WIKI_BACKEND=keeper
+        say "Wiki backend → wiki-keeper"
+        bash "$ROOT/scripts/wiki-init.sh"
+        activate_backend keeper
+        ;;
+    esac
+
+  else
+    # ── Fresh / keeper users: optional advanced features ─────────────────
+    echo
+    printf '\033[1;36m[install]\033[0m 고급 옵션 활성화하시겠어요? (대부분 사용자에게 불필요) [y/N]: '
+    read -r _ADV_ANS || _ADV_ANS=""
+    case "$_ADV_ANS" in
+      y|Y|yes|YES)
+        echo
+        printf '  고급 옵션 선택:\n\n'
+        printf '  [1] Graphiti wiki 백엔드  (Docker + Ollama 필요, 지식 그래프 + 관계 추론)\n'
+        printf '  [2] Codex 엔진            (OpenAI ChatGPT 구독 cost-split)\n'
+        printf '  [3] 둘 다\n'
+        printf '  [Enter] skip (현재 기본 유지)\n\n'
+        printf '  선택 [1/2/3, Enter=skip]: '
+        read -r _ADV_CHOICE || _ADV_CHOICE=""
+
+        # ── Graphiti setup (choices 1 or 3) ──────────────────────────────
+        if [ "$_ADV_CHOICE" = "1" ] || [ "$_ADV_CHOICE" = "3" ]; then
+          echo
+          say "Graphiti 백엔드 설정 시작..."
+          _ADV_RAM=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1024/1024/1024)}' || echo 0)
+          _ADV_CHIP=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+          _ADV_DOCKER=0; docker_running && _ADV_DOCKER=1
+          _ADV_DISK=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
+          _ADV_TIER=$(detect_tier)
+          printf "  하드웨어: %s, RAM %dGB, Docker=%s, 여유디스크=%dGB, Tier=%s\n" \
+            "$_ADV_CHIP" "$_ADV_RAM" \
+            "$([ "$_ADV_DOCKER" -eq 1 ] && echo yes || echo no)" \
+            "$_ADV_DISK" "$_ADV_TIER"
+
+          if [ "$_ADV_DOCKER" -eq 0 ]; then
+            warn "Docker 미설치 — Graphiti는 Docker가 필요합니다."
+            warn "  Docker Desktop: https://www.docker.com/products/docker-desktop"
+            warn "  설치 후 install.sh 재실행 또는 'productune onboard'"
+          elif [ "$_ADV_DISK" -lt 5 ]; then
+            warn "여유 디스크 공간 부족 (${_ADV_DISK}GB) — Graphiti 최소 5GB 필요"
+          else
+            LLM_MODEL=""
+            select_model_for_tier "$_ADV_TIER"
+            if [ -n "${LLM_MODEL:-}" ]; then
+              say "로컬 LLM 설치 시작: $LLM_MODEL"
+              if install_local_llm "$LLM_MODEL"; then
+                say "Graphiti 세팅 시작 (FalkorDB + Graphiti MCP)..."
+                if bash "$ROOT/scripts/setup-graphiti.sh"; then
+                  TMP_ENV="$PO_ENV_FILE.tmp.$$"
+                  grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' \
+                    "$PO_ENV_FILE" > "$TMP_ENV" || true
+                  mv "$TMP_ENV" "$PO_ENV_FILE"
+                  cat >> "$PO_ENV_FILE" <<GEOF
+WIKI_BACKEND=graphiti
+GRAPHITI_LLM_PROVIDER=ollama
+GRAPHITI_LLM_MODEL=$LLM_MODEL
+GRAPHITI_EMBEDDER_PROVIDER=ollama
+GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
+GEOF
+                  WIKI_BACKEND=graphiti
+                  say "Graphiti backend 설정 완료 ($LLM_MODEL)"
+                  register_graphiti_mcp || true
+                  activate_backend graphiti
+                else
+                  warn "Graphiti 세팅 실패 — wiki-keeper 유지"
+                fi
+              else
+                warn "LLM 설치 실패 — wiki-keeper 유지"
+              fi
+            else
+              warn "이 기기에 적합한 모델이 없습니다 (Tier B) — wiki-keeper 유지"
+            fi
+          fi
+        fi
+
+        # ── Codex engine setup (choices 2 or 3) ──────────────────────────
+        if [ "$_ADV_CHOICE" = "2" ] || [ "$_ADV_CHOICE" = "3" ]; then
+          say "Codex 엔진 설정 중..."
+          if grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
+            sed -i.bak -E "s|^MY_PO_ENGINE=.*|MY_PO_ENGINE=codex|" "$PO_ENV_FILE" \
+              && rm -f "$PO_ENV_FILE.bak"
+          else
+            printf 'MY_PO_ENGINE=codex\n' >> "$PO_ENV_FILE"
+          fi
+          maybe_install_codex_config
+          say "Codex 엔진 설정 완료"
+        fi
+
+        if [ -z "$_ADV_CHOICE" ] || \
+           { [ "$_ADV_CHOICE" != "1" ] && [ "$_ADV_CHOICE" != "2" ] && [ "$_ADV_CHOICE" != "3" ]; }; then
+          say "고급 옵션 skip — 기본 설정 유지"
+        fi
+        ;;
+      *)
+        say "고급 옵션 skip — 기본 설정 유지"
+        ;;
+    esac
+  fi
+
+fi
+
 # 10) Summary + next steps
 FINAL_BACKEND_DISPLAY="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
 
@@ -1076,9 +1028,8 @@ cat <<PATHRC
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
-  3. Wiki backend 변경 (예: Tier A → B):
-       # ~/.productune/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
-       productune onboard
+  3. 고급 옵션 변경 (Graphiti / Codex):
+       bash $ROOT/scripts/install.sh   # end-of-install 고급 opt-in 에서 선택
 
   4. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run
@@ -1096,9 +1047,8 @@ cat <<NOPATH
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
-  2. Wiki backend 변경 (예: Tier A → B):
-       # ~/.productune/productune.env 에서 WIKI_BACKEND=keeper 로 수정 후
-       productune onboard
+  2. 고급 옵션 변경 (Graphiti / Codex):
+       bash $ROOT/scripts/install.sh   # end-of-install 고급 opt-in 에서 선택
 
   3. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run
