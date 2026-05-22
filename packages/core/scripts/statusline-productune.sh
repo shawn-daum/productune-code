@@ -131,19 +131,12 @@ if os.path.isdir(ticket_dir):
 print(version + ' | phase ' + str(phase) + ': ' + phase_name + ' (' + str(done) + '/' + str(total) + ')')
 " "$STATE" "$CWD" 2>/dev/null)"
 
-  # Active persona + ticket / slug  (jq, optional)
-  if command -v jq >/dev/null 2>&1; then
-    TICKET=$(jq -r '.current_task.ticket_id // .current_task.slug // ""' "$STATE" 2>/dev/null)
-    PERSONA=$(jq -r '(.recent_turns | last | .persona) // ""' "$STATE" 2>/dev/null)
-  fi
 fi
 
 # ── Compose output ────────────────────────────────────────────────────────────
-# Right segment: branch · persona · ticket
+# Right segment: branch only
 RIGHT=""
 [ -n "$BRANCH" ] && RIGHT="branch: $BRANCH"
-[ -n "$PERSONA" ] && RIGHT="${RIGHT:+$RIGHT · }persona: $PERSONA"
-[ -n "$TICKET"  ] && RIGHT="${RIGHT:+$RIGHT · }$TICKET"
 
 # Join segments with ' | '
 OUTPUT=""
