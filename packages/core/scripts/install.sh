@@ -540,6 +540,40 @@ if [ ! -e "$ROOT/scripts/my-po" ]; then
   say "created compat symlink scripts/my-po → productune"
 fi
 
+# 4b) User mode — developer (full advanced opts) or planner (safe defaults)
+choose_user_mode_interactive() {
+  cat >&2 <<MODEPROMPT
+
+[install] productune 사용자 모드 선택:
+  [1] developer  풀스택 개발자. Docker / 엔진 / 고급 옵션 표시.
+  [2] planner    비개발자 기획자. 복잡 prompt skip, 안전 기본값 (wiki-keeper).
+MODEPROMPT
+  printf '  선택 [1/2, 기본=2]: ' >&2
+  local _ans=""; read -r _ans || _ans=""
+  case "$_ans" in
+    1|developer) printf 'developer' ;;
+    *)           printf 'planner' ;;
+  esac
+}
+
+# Read existing USER_MODE from env file if present (idempotent reinstall)
+USER_MODE=""
+if [ -e "$HOME/.productune/productune.env" ]; then
+  USER_MODE="$(grep -E '^USER_MODE=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || true)"
+fi
+if [ -z "$USER_MODE" ]; then
+  if [ -t 0 ] && [ -t 1 ]; then
+    USER_MODE="$(choose_user_mode_interactive)"
+  else
+    USER_MODE="planner"  # non-interactive default: safe
+  fi
+  # Do NOT pre-create productune.env here — step 5 creates it with engine+repo
+  # using `>` overwrite; we write USER_MODE in step 5b safety-net instead.
+  say "user mode: $USER_MODE (will be saved to ~/.productune/productune.env at step 5b)"
+else
+  say "user mode: $USER_MODE (existing)"
+fi
+
 # 5) PO engine — claude (primary, hooks fire) or codex (secondary, doctrine-only)
 #    Interactive prompt picks one and seeds productune.env. Non-interactive falls
 #    back to claude. Existing env file with MY_PO_ENGINE is preserved (just
@@ -566,7 +600,7 @@ PROMPT
 }
 
 if [ ! -e "$PO_ENV_FILE" ]; then
-  if [ -t 0 ] && [ -t 1 ]; then
+  if [ -t 0 ] && [ -t 1 ] && [ "${USER_MODE:-}" != "planner" ]; then
     CHOSEN_ENGINE="$(choose_engine_interactive)"
   else
     CHOSEN_ENGINE="claude"
@@ -586,7 +620,7 @@ else
   else
     printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   fi
-  if [ -t 0 ] && [ -t 1 ]; then
+  if [ -t 0 ] && [ -t 1 ] && [ "${USER_MODE:-}" != "planner" ]; then
     printf '\033[1;36m[install]\033[0m 현재 PO engine=%s. 변경할까요? [y/N]: ' "$CURRENT_ENGINE"
     SWAP=""; read -r SWAP || SWAP=""
     case "$SWAP" in
@@ -623,6 +657,10 @@ fi
 if ! grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
   printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
   say "ensured: PRODUCTUNE_REPO=$ROOT (appended to $PO_ENV_FILE)"
+fi
+if ! grep -qE '^USER_MODE=' "$PO_ENV_FILE"; then
+  printf 'USER_MODE=%s\n' "${USER_MODE:-planner}" >> "$PO_ENV_FILE"
+  say "ensured: USER_MODE=${USER_MODE:-planner} (appended to $PO_ENV_FILE)"
 fi
 
 # 6) Wiki memory backend — hardware-aware tier detection + model recommendation
@@ -662,10 +700,16 @@ if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
   printf "  감지 결과: %s, RAM %dGB, Docker=%s, 여유디스크=%dGB\n" \
     "$CHIP" "$RAM_GB" "$([ $HAS_DOCKER -eq 1 ] && echo yes || echo no)" "$DISK_FREE"
 
+  # planner mode: skip all interactive setup → wiki-keeper (safe default)
+  if [ "${USER_MODE:-}" = "planner" ]; then
+    say "(planner 모드) Wiki backend 설정 prompt skip → wiki-keeper 자동 선택"
+    WIKI_BACKEND=keeper
+  fi
+
   # ── Docker auto-install prompt ─────────────────────────────────────────────
   # Offer Docker Desktop install when the machine would qualify for Tier A/S
   # but is being degraded to B solely because Docker is absent.
-  if [ "$HAS_DOCKER" -eq 0 ] && [ "$DISK_FREE" -ge 5 ]; then
+  if [ "$HAS_DOCKER" -eq 0 ] && [ "$DISK_FREE" -ge 5 ] && [ "${USER_MODE:-}" != "planner" ]; then
     _ARCH="$(uname -m 2>/dev/null || echo '')"
     _WOULD_BE_TIER="B"
     if [[ "$CHIP" == *"Apple M"* || "$_ARCH" == "arm64" ]]; then
@@ -740,11 +784,11 @@ if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
   case "$DETECTED_TIER" in
     S)
       printf '\033[1;32m  → Tier S (Smooth)\033[0m 감지. Graphiti + async write 권장.\n'
-      select_model_for_tier S
+      if [ -z "$WIKI_BACKEND" ]; then select_model_for_tier S; fi
       ;;
     A)
       printf '\033[1;33m  → Tier A (Acceptable)\033[0m 감지. Graphiti + 소형 LLM 권장.\n'
-      select_model_for_tier A
+      if [ -z "$WIKI_BACKEND" ]; then select_model_for_tier A; fi
       ;;
     B|*)
       printf '\033[1;31m  → Tier B (Constrained)\033[0m 감지 (RAM 부족 또는 Docker 없음).\n'
