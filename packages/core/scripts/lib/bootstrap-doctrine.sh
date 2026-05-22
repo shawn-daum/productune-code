@@ -106,10 +106,10 @@ bootstrap_user_global_doctrine() {
     fi
   fi
 
-  # ── productune.env: seed-only (engine=claude default) ───────────────────────
+  # ── productune.env: seed-only (MY_PO_ENGINE=claude default) ─────────────────
   local _env_dest="$HOME/.productune/productune.env"
   if [ ! -e "$_env_dest" ]; then
-    printf 'engine=claude\n' > "$_env_dest"
+    printf 'MY_PO_ENGINE=claude\n' > "$_env_dest"
     say "doctrine: seeded ~/.productune/productune.env"
     _did_install=1
   fi

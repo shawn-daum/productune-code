@@ -576,7 +576,10 @@ if [ ! -e "$PO_ENV_FILE" ]; then
   [ "$CHOSEN_ENGINE" = "codex" ] && maybe_install_codex_config
 else
   # Refresh repo path in case the user moved the clone; preserve any existing engine.
-  CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
+  CURRENT_ENGINE=""
+  if grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
+    CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
+  fi
   CURRENT_ENGINE="${CURRENT_ENGINE:-claude}"
   if grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
     sed -i.bak -E "s|^PRODUCTUNE_REPO=.*|PRODUCTUNE_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
