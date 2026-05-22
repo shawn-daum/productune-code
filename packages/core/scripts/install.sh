@@ -24,224 +24,6 @@ say() { printf "\033[1;34m[install]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[install]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[install]\033[0m %s\n" "$*" >&2; exit 1; }
 
-# Source shared LLM install helper (also used as GUI IPC subprocess).
-# shellcheck source=scripts/install-local-llm.sh
-source "$ROOT/scripts/install-local-llm.sh"
-
-# Probe whether the Docker daemon is reachable, with a hard 2s ceiling.
-# `docker info` blocks indefinitely when the CLI is installed but Docker
-# Desktop isn't running, so we ping the unix socket via curl --max-time
-# instead. Returns 0 if reachable, 1 otherwise.
-docker_running() {
-  command -v docker >/dev/null 2>&1 || return 1
-  command -v curl   >/dev/null 2>&1 || return 1
-  local sock candidates=(
-    "${DOCKER_HOST:-}"
-    "$HOME/.docker/run/docker.sock"
-    "$HOME/.docker/desktop/docker.sock"
-    "/var/run/docker.sock"
-  )
-  for sock in "${candidates[@]}"; do
-    [ -z "$sock" ] && continue
-    sock="${sock#unix://}"
-    [ -S "$sock" ] || continue
-    if curl --unix-socket "$sock" --max-time 2 -fsS \
-         http://localhost/_ping >/dev/null 2>&1; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-# ── Hardware tier detection ────────────────────────────────────────────────────
-detect_tier() {
-  local ram_gb chip arch has_docker disk_free_gb apple_silicon=0
-  ram_gb=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1024/1024/1024)}' || echo 0)
-  chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
-  arch=$(uname -m)
-  has_docker=0
-  docker_running && has_docker=1
-  disk_free_gb=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
-
-  [[ "$chip" == *"Apple M"* || "$arch" == "arm64" ]] && apple_silicon=1
-
-  if [[ $has_docker == 0 || $disk_free_gb -lt 5 ]]; then echo "B"; return; fi
-  if [[ $apple_silicon == 1 && $ram_gb -ge 16 && $disk_free_gb -ge 10 ]]; then echo "S"; return; fi
-  if [[ $apple_silicon == 1 && $ram_gb -ge 8 ]]; then echo "A"; return; fi
-  if [[ $ram_gb -ge 32 && $disk_free_gb -ge 10 ]]; then echo "S"; return; fi
-  if [[ $ram_gb -ge 16 ]]; then echo "A"; return; fi
-  echo "B"
-}
-
-# ── Dynamic model catalog (registry.ollama.ai) ────────────────────────────────
-
-# Fetch total disk size of a model tag from Ollama registry.
-# Outputs size in GB (e.g. "4.7"), or returns 1 on failure.
-fetch_disk_gb() {
-  local model="$1" tag="$2"
-  local manifest total
-  manifest=$(curl -fsSL --max-time 8 \
-    -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-    "https://registry.ollama.ai/v2/library/${model}/manifests/${tag}" 2>/dev/null) || return 1
-  total=$(printf '%s' "$manifest" | jq '[.layers[].size] | add // empty' 2>/dev/null) || return 1
-  [[ "$total" =~ ^[0-9]+$ ]] || return 1
-  awk "BEGIN{printf \"%.1f\", $total/1024/1024/1024}"
-}
-
-
-# Read config/model-catalog.json, fetch sizes in parallel, print filtered menu
-# for the given tier, prompt user, and set LLM_MODEL (or WIKI_BACKEND=keeper).
-# If a catalog model is already installed via Ollama, mark it and use it as
-# the default (saves a multi-GB download).
-select_model_for_tier() {
-  local tier="$1"
-  local catalog="$ROOT/config/model-catalog.json"
-
-  if [ ! -f "$catalog" ]; then
-    warn "model-catalog.json not found at $catalog — keeper로 전환"
-    WIKI_BACKEND=keeper; return
-  fi
-
-  local max_disk
-  max_disk=$(jq -r ".tiers.\"${tier}\".max_disk_gb" "$catalog")
-
-  say "모델 크기 조회 중 (registry.ollama.ai, 병렬)..."
-
-  local tmpdir; tmpdir=$(mktemp -d)
-  local count; count=$(jq '.catalog | length' "$catalog")
-
-  # Parallel fetch — one background job per catalog entry
-  local i
-  for i in $(seq 0 $((count - 1))); do
-    local m t
-    m=$(jq -r ".catalog[$i].model" "$catalog")
-    t=$(jq -r ".catalog[$i].tag"   "$catalog")
-    (
-      sz=$(fetch_disk_gb "$m" "$t" 2>/dev/null) && printf '%s' "$sz" > "$tmpdir/${i}.size"
-    ) &
-  done
-  wait
-
-  # Collect entries that fit the tier
-  local -a labels=() models=() descs=()
-  for i in $(seq 0 $((count - 1))); do
-    local m t fallback strengths weaknesses size_gb
-    m=$(jq -r         ".catalog[$i].model"       "$catalog")
-    t=$(jq -r         ".catalog[$i].tag"          "$catalog")
-    fallback=$(jq -r  ".catalog[$i].fallback_gb"  "$catalog")
-    strengths=$(jq -r ".catalog[$i].strengths"    "$catalog")
-    weaknesses=$(jq -r ".catalog[$i].weaknesses"  "$catalog")
-
-    if [ -f "$tmpdir/${i}.size" ]; then
-      size_gb=$(cat "$tmpdir/${i}.size")
-    else
-      size_gb="$fallback"
-    fi
-
-    awk "BEGIN{exit !($size_gb <= $max_disk)}" || continue
-
-    labels+=("${m}:${t}")
-    models+=("${m}:${t}")
-    descs+=("${size_gb}GB | + ${strengths} | − ${weaknesses}")
-  done
-
-  rm -rf "$tmpdir"
-
-  if [ ${#labels[@]} -eq 0 ]; then
-    warn "tier ${tier}에 적합한 모델 없음 — wiki-keeper로 전환"
-    WIKI_BACKEND=keeper; return
-  fi
-
-  # Detect already-installed catalog models — first match becomes the default
-  # so we don't force a multi-GB download when a suitable model is on disk.
-  local -a installed_models=()
-  local installed_str
-  installed_str="$(detect_installed_ollama_models 2>/dev/null || true)"
-  if [ -n "$installed_str" ]; then
-    while IFS= read -r m; do
-      [ -n "$m" ] && installed_models+=("$m")
-    done <<< "$installed_str"
-  fi
-
-  local -a installed_flags=()
-  local default_idx=0
-  local has_installed=0
-  for i in "${!labels[@]}"; do
-    local lbl="${labels[$i]}" is_installed=0
-    local it
-    for it in "${installed_models[@]:-}"; do
-      [[ "$it" == "$lbl" ]] && is_installed=1 && break
-    done
-    installed_flags+=("$is_installed")
-    if [[ "$is_installed" == "1" && "$has_installed" == "0" ]]; then
-      default_idx=$i
-      has_installed=1
-    fi
-  done
-
-  echo
-  if [[ "$has_installed" == "1" ]]; then
-    printf '  로컬 LLM 선택 (Graphiti entity 추출용 — 이미 설치된 모델을 기본값으로 추천):\n\n'
-  else
-    printf '  로컬 LLM 선택 (Graphiti entity 추출용):\n\n'
-  fi
-  local idx=1
-  for i in "${!labels[@]}"; do
-    IFS='|' read -r sz plus minus <<< "${descs[$i]}"
-    local marker=""
-    [[ "${installed_flags[$i]}" == "1" ]] && marker=$' \033[1;32m✓ 이미 설치됨\033[0m'
-    printf '  [%d] %-24s %s%s\n' "$idx" "${labels[$i]}" "$(echo "$sz" | tr -d ' ')" "$marker"
-    printf '       +%s\n'  "$(echo "$plus"  | sed 's/^ + //')"
-    [[ "$(echo "$minus" | sed 's/^ − //')" != "null" ]] && \
-      printf '       −%s\n' "$(echo "$minus" | sed 's/^ − //')"
-    [ $((idx - 1)) -eq "$default_idx" ] && printf '       *기본 추천*\n'
-    echo
-    idx=$((idx + 1))
-  done
-  printf '  [k] skip — wiki-keeper(Claude API)로 대신 가기\n\n'
-
-  printf '  선택 [1–%d/k, 기본=%d (%s)]: ' "${#labels[@]}" "$((default_idx + 1))" "${labels[$default_idx]}"
-  read -r MCHOICE || MCHOICE=""
-
-  case "${MCHOICE}" in
-    k|K) WIKI_BACKEND=keeper; return ;;
-    "") LLM_MODEL="${models[$default_idx]}" ;;
-    [1-9]|[1-9][0-9])
-      if [ "$MCHOICE" -ge 1 ] 2>/dev/null && [ "$MCHOICE" -le "${#labels[@]}" ] 2>/dev/null; then
-        LLM_MODEL="${models[$((MCHOICE - 1))]}"
-      else
-        warn "잘못된 선택 '${MCHOICE}' — 기본값 ${models[$default_idx]} 사용"
-        LLM_MODEL="${models[$default_idx]}"
-      fi
-      ;;
-    *) LLM_MODEL="${models[$default_idx]}" ;;
-  esac
-}
-
-# (install_local_llm / wait_for_ollama_ready / ensure_ollama_ready defined in
-#  install-local-llm.sh, sourced above)
-
-# ── Graphiti MCP auto-register ────────────────────────────────────────────────
-register_graphiti_mcp() {
-  if ! command -v claude >/dev/null 2>&1; then
-    warn "claude CLI 미설치 — graphiti MCP 자동 등록 건너뜀."
-    warn "수동: claude mcp add graphiti \"$ROOT/scripts/graphiti-launcher.sh\" -- designer"
-    return 1
-  fi
-  if claude mcp list 2>/dev/null | grep -q '^graphiti'; then
-    say "graphiti MCP — 이미 등록됨 (claude mcp list)"
-    return 0
-  fi
-  local LAUNCHER="$ROOT/scripts/graphiti-launcher.sh"
-  say "Claude Code 에 graphiti MCP 등록 중..."
-  if claude mcp add graphiti "$LAUNCHER" -- designer >/dev/null 2>&1; then
-    say "graphiti MCP 등록 완료"
-    return 0
-  else
-    warn "graphiti MCP 등록 실패 — 수동: claude mcp add graphiti $LAUNCHER -- designer"
-    return 1
-  fi
-}
 
 # ── Persona recognition verifier ───────────────────────────────────────────────
 # Confirms each expected agent file is present in ~/.claude/agents/, the symlink
@@ -288,7 +70,7 @@ verify_agents_recognized() {
 
 # ── Backend variant activator ──────────────────────────────────────────────────
 activate_backend() {
-  local backend="$1"   # graphiti | keeper | fs
+  local backend="$1"   # keeper | fs
   local variants_dir="$ROOT/agents/variants/$backend"
 
   if [ ! -d "$variants_dir" ]; then
@@ -529,8 +311,8 @@ source "$ROOT/scripts/lib/bootstrap-doctrine.sh"
 bootstrap_user_global_doctrine "$ROOT"
 
 # 4) Make wrapper scripts executable (idempotent — git checkout usually preserves +x already)
-chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/setup-graphiti.sh" "$ROOT/scripts/install.sh" \
-         "$ROOT/scripts/wiki-init.sh" "$ROOT/scripts/migrate-graphiti-to-fs.sh" \
+chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/install.sh" \
+         "$ROOT/scripts/wiki-init.sh" \
          "$ROOT/scripts/statusline-productune.sh"
 chmod +x "$ROOT/scripts/hooks"/*.sh 2>/dev/null || true
 say "wrapper scripts ready"
@@ -633,23 +415,24 @@ if grep -qE '^USER_MODE=' "$PO_ENV_FILE" 2>/dev/null; then
 fi
 
 # 6) Wiki memory backend — wiki-keeper is the universal default.
-#    Graphiti (advanced, Docker + Ollama required) is configured via the
-#    end-of-install opt-in (step 9b) for users who explicitly want it.
+#    Graphiti backend has been retired (2026-05-22). Any existing graphiti config
+#    is automatically migrated to keeper.
 WIKI_BACKEND=""
 if grep -qE '^WIKI_BACKEND=' "$PO_ENV_FILE" 2>/dev/null; then
   WIKI_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
   say "Wiki backend existing config: $WIKI_BACKEND"
 fi
 
-# Non-interactive with graphiti in env → switch to keeper (no prompts available).
-if [ "$WIKI_BACKEND" = "graphiti" ] && ([ ! -t 0 ] || [ ! -t 1 ]); then
+# Existing graphiti users: force migrate to keeper (graphiti backend is retired).
+if [ "$WIKI_BACKEND" = "graphiti" ]; then
+  warn "이전 graphiti 백엔드는 폐기됐습니다. wiki-keeper 로 자동 전환합니다."
   TMP_ENV="$PO_ENV_FILE.tmp.$$"
   grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' \
     "$PO_ENV_FILE" > "$TMP_ENV" || true
   mv "$TMP_ENV" "$PO_ENV_FILE"
   printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
   WIKI_BACKEND=keeper
-  say "Non-interactive: Graphiti → wiki-keeper (default)"
+  say "Graphiti → wiki-keeper 전환 완료 (이전 FalkorDB 컨테이너: docker stop falkordb && docker rm falkordb)"
   bash "$ROOT/scripts/wiki-init.sh"
 fi
 
@@ -877,131 +660,30 @@ PROMPT
   fi
 fi
 
-# 9b) Advanced opt-in — Graphiti wiki backend + Codex engine (interactive only)
+# 9b) Advanced opt-in — Codex engine (interactive only)
 #     Skipped automatically in non-interactive mode or when PRODUCTUNE_SKIP_ADVANCED=1.
 if [ -t 0 ] && [ -t 1 ] && [ "${PRODUCTUNE_SKIP_ADVANCED:-0}" != "1" ]; then
 
-  # ── Existing Graphiti users: confirm keep or migrate to keeper ────────────
-  if [ "$WIKI_BACKEND" = "graphiti" ]; then
-    echo
-    printf '\033[1;33m[install]\033[0m 기존 Graphiti wiki 백엔드가 감지됐습니다.\n'
-    printf '  (Docker + Ollama + FalkorDB가 필요한 고급 옵션)\n'
-    docker_running 2>/dev/null \
-      || printf '  \033[1;31m⚠️  Docker 데몬이 현재 실행 중이지 않습니다.\033[0m\n'
-    printf '  기존 설정을 유지하시겠어요? [y/N, 기본=N (wiki-keeper로 전환)]: '
-    read -r _KEEP_GR || _KEEP_GR=""
-    case "$_KEEP_GR" in
-      y|Y|yes|YES)
-        say "Graphiti 백엔드 유지됩니다."
-        register_graphiti_mcp || true
-        ;;
-      *)
-        TMP_ENV="$PO_ENV_FILE.tmp.$$"
-        grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' \
-          "$PO_ENV_FILE" > "$TMP_ENV" || true
-        mv "$TMP_ENV" "$PO_ENV_FILE"
-        printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
-        WIKI_BACKEND=keeper
-        say "Wiki backend → wiki-keeper"
-        bash "$ROOT/scripts/wiki-init.sh"
-        activate_backend keeper
-        ;;
-    esac
-
-  else
-    # ── Fresh / keeper users: optional advanced features ─────────────────
-    echo
-    printf '\033[1;36m[install]\033[0m 고급 옵션 활성화하시겠어요? (대부분 사용자에게 불필요) [y/N]: '
-    read -r _ADV_ANS || _ADV_ANS=""
-    case "$_ADV_ANS" in
-      y|Y|yes|YES)
-        echo
-        printf '  고급 옵션 선택:\n\n'
-        printf '  [1] Graphiti wiki 백엔드  (Docker + Ollama 필요, 지식 그래프 + 관계 추론)\n'
-        printf '  [2] Codex 엔진            (OpenAI ChatGPT 구독 cost-split)\n'
-        printf '  [3] 둘 다\n'
-        printf '  [Enter] skip (현재 기본 유지)\n\n'
-        printf '  선택 [1/2/3, Enter=skip]: '
-        read -r _ADV_CHOICE || _ADV_CHOICE=""
-
-        # ── Graphiti setup (choices 1 or 3) ──────────────────────────────
-        if [ "$_ADV_CHOICE" = "1" ] || [ "$_ADV_CHOICE" = "3" ]; then
-          echo
-          say "Graphiti 백엔드 설정 시작..."
-          _ADV_RAM=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1024/1024/1024)}' || echo 0)
-          _ADV_CHIP=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
-          _ADV_DOCKER=0; docker_running && _ADV_DOCKER=1
-          _ADV_DISK=$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print int($4)}' || echo 0)
-          _ADV_TIER=$(detect_tier)
-          printf "  하드웨어: %s, RAM %dGB, Docker=%s, 여유디스크=%dGB, Tier=%s\n" \
-            "$_ADV_CHIP" "$_ADV_RAM" \
-            "$([ "$_ADV_DOCKER" -eq 1 ] && echo yes || echo no)" \
-            "$_ADV_DISK" "$_ADV_TIER"
-
-          if [ "$_ADV_DOCKER" -eq 0 ]; then
-            warn "Docker 미설치 — Graphiti는 Docker가 필요합니다."
-            warn "  Docker Desktop: https://www.docker.com/products/docker-desktop"
-            warn "  설치 후 install.sh 재실행 또는 'productune onboard'"
-          elif [ "$_ADV_DISK" -lt 5 ]; then
-            warn "여유 디스크 공간 부족 (${_ADV_DISK}GB) — Graphiti 최소 5GB 필요"
-          else
-            LLM_MODEL=""
-            select_model_for_tier "$_ADV_TIER"
-            if [ -n "${LLM_MODEL:-}" ]; then
-              say "로컬 LLM 설치 시작: $LLM_MODEL"
-              if install_local_llm "$LLM_MODEL"; then
-                say "Graphiti 세팅 시작 (FalkorDB + Graphiti MCP)..."
-                if bash "$ROOT/scripts/setup-graphiti.sh"; then
-                  TMP_ENV="$PO_ENV_FILE.tmp.$$"
-                  grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' \
-                    "$PO_ENV_FILE" > "$TMP_ENV" || true
-                  mv "$TMP_ENV" "$PO_ENV_FILE"
-                  cat >> "$PO_ENV_FILE" <<GEOF
-WIKI_BACKEND=graphiti
-GRAPHITI_LLM_PROVIDER=ollama
-GRAPHITI_LLM_MODEL=$LLM_MODEL
-GRAPHITI_EMBEDDER_PROVIDER=ollama
-GRAPHITI_EMBEDDER_MODEL=nomic-embed-text
-GEOF
-                  WIKI_BACKEND=graphiti
-                  say "Graphiti backend 설정 완료 ($LLM_MODEL)"
-                  register_graphiti_mcp || true
-                  activate_backend graphiti
-                else
-                  warn "Graphiti 세팅 실패 — wiki-keeper 유지"
-                fi
-              else
-                warn "LLM 설치 실패 — wiki-keeper 유지"
-              fi
-            else
-              warn "이 기기에 적합한 모델이 없습니다 (Tier B) — wiki-keeper 유지"
-            fi
-          fi
-        fi
-
-        # ── Codex engine setup (choices 2 or 3) ──────────────────────────
-        if [ "$_ADV_CHOICE" = "2" ] || [ "$_ADV_CHOICE" = "3" ]; then
-          say "Codex 엔진 설정 중..."
-          if grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
-            sed -i.bak -E "s|^MY_PO_ENGINE=.*|MY_PO_ENGINE=codex|" "$PO_ENV_FILE" \
-              && rm -f "$PO_ENV_FILE.bak"
-          else
-            printf 'MY_PO_ENGINE=codex\n' >> "$PO_ENV_FILE"
-          fi
-          maybe_install_codex_config
-          say "Codex 엔진 설정 완료"
-        fi
-
-        if [ -z "$_ADV_CHOICE" ] || \
-           { [ "$_ADV_CHOICE" != "1" ] && [ "$_ADV_CHOICE" != "2" ] && [ "$_ADV_CHOICE" != "3" ]; }; then
-          say "고급 옵션 skip — 기본 설정 유지"
-        fi
-        ;;
-      *)
-        say "고급 옵션 skip — 기본 설정 유지"
-        ;;
-    esac
-  fi
+  # ── Codex engine opt-in ───────────────────────────────────────────────────
+  echo
+  printf '\033[1;36m[install]\033[0m Codex 엔진 활성화할까요? (OpenAI ChatGPT 구독 cost-split, 대부분 불필요) [y/N]: '
+  read -r _CODEX_ANS || _CODEX_ANS=""
+  case "$_CODEX_ANS" in
+    y|Y|yes|YES)
+      say "Codex 엔진 설정 중..."
+      if grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
+        sed -i.bak -E "s|^MY_PO_ENGINE=.*|MY_PO_ENGINE=codex|" "$PO_ENV_FILE" \
+          && rm -f "$PO_ENV_FILE.bak"
+      else
+        printf 'MY_PO_ENGINE=codex\n' >> "$PO_ENV_FILE"
+      fi
+      maybe_install_codex_config
+      say "Codex 엔진 설정 완료"
+      ;;
+    *)
+      say "Codex 엔진 opt-in skip — 기본 설정 유지"
+      ;;
+  esac
 
 fi
 
@@ -1028,8 +710,8 @@ cat <<PATHRC
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
-  3. 고급 옵션 변경 (Graphiti / Codex):
-       bash $ROOT/scripts/install.sh   # end-of-install 고급 opt-in 에서 선택
+  3. 고급 옵션 변경 (Codex 엔진):
+       bash $ROOT/scripts/install.sh   # end-of-install Codex opt-in 에서 선택
 
   4. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run
@@ -1047,8 +729,8 @@ cat <<NOPATH
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
-  2. 고급 옵션 변경 (Graphiti / Codex):
-       bash $ROOT/scripts/install.sh   # end-of-install 고급 opt-in 에서 선택
+  2. 고급 옵션 변경 (Codex 엔진):
+       bash $ROOT/scripts/install.sh   # end-of-install Codex opt-in 에서 선택
 
   3. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run

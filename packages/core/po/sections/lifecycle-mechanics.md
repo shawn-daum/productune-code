@@ -12,7 +12,7 @@ jq '.current_phase = <N> | .phase_history += [{"phase":<N>,"started_at":"<ISO>",
 
 ## PO mechanical wiki write
 
-PO = sole executor via `claude --print` (no `--agent`) subprocess. Subagent path retired — claude code 2.1.142 MCP non-inheritance + agent whitelist tool-name resolution structurally non-functional. See `po-instructions.md` `## CAN (mechanical only)` for top-level rationale.
+PO routes wiki writes through `pdt-wiki-keeper` sub-agent (keeper backend) or direct filesystem (fs backend). See `po-instructions.md` `## CAN (mechanical only)` for top-level rationale.
 
 Preconditions + bash invocation template + `source_description` auto-gen + job tracking + "what PO does NOT do" → **`sections/_formats/wiki-write-template.md`**.
 
@@ -60,6 +60,6 @@ When `validation_method` requires external data (PostHog / Sentry / GA / etc), P
 
 ## Retrospective sources + Phase 5 sequence
 
-5a/5b/5c/5d sub-steps **read stored memory** (5 source classes: project notes, recent_turns, graphiti/wiki, po-memory, approved-promotion archive), never spawn fresh persona analysis. PO orchestrates 4-step sequence; per-step persona file owns detail.
+5a/5b/5c/5d sub-steps **read stored memory** (5 source classes: project notes, recent_turns, wiki, po-memory, approved-promotion archive), never spawn fresh persona analysis. PO orchestrates 4-step sequence; per-step persona file owns detail.
 
 Full detail (5 read sources + 4-step orchestration table) → **`sections/_details/phase5-retrospective.md`**.

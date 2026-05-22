@@ -12,11 +12,8 @@ categories; rest = Designer delegation.
 
 ## B. Wiki episode write
 
-PO = sole executor. Personas emit `promotion_candidates` with `tier:"wiki"`. PO writes
-via `claude --print` (no `--agent`) subprocess. Subagent path (`claude --agent pdt-<x>`
-or `claude --resume "$SID"`) **non-functional in claude code 2.1.142** — project-local
-MCP server registration not inherited by subagent + agent-frontmatter tool whitelist
-does not resolve `mcp__graphiti__*` at runtime.
+PO = sole executor. Personas emit `promotion_candidates` with `tier:"wiki"`. PO routes
+via `pdt-wiki-keeper` sub-agent (keeper backend) or direct filesystem (fs backend).
 
 ### Preconditions (PO self-check)
 
@@ -24,8 +21,5 @@ does not resolve `mcp__graphiti__*` at runtime.
    explicit approval of previously-surfaced wiki promotion candidate).
 2. Verbatim persona-emitted `episode_body` (from original `promotion_candidates[]`
    entry — PO never authors / edits body content).
-3. Parent PO shell has graphiti MCP registered. Quick check:
-   `claude mcp list | grep -q '^graphiti'` (missing → surface
-   `"MISSING — run claude mcp add graphiti ..."` to user; do not invoke).
 
 Invocation template → `_formats/wiki-write-template.md`.

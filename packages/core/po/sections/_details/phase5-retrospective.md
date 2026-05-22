@@ -6,7 +6,7 @@
 
 1. **project notes** — `docs/{designer,developer,qa}/project-notes.md` + `decisions.md` (approved promotions land here)
 2. **po-state recent_turns** — rolling 10 (failure pattern detection)
-3. **wiki / Graphiti persona lessons** — read-only graphiti search from PO subprocess (`claude --print` calling `mcp__graphiti__search_memory_facts` / `search_memory_nodes` / `get_episodes`), or wiki-keeper SEARCH (keeper) or `~/.productune/wiki/persona-<x>/INDEX.md` (fs)
+3. **wiki persona lessons** — wiki-keeper SEARCH via PO subprocess (keeper) or `~/.productune/wiki/persona-<x>/INDEX.md` (fs)
 4. **po-memory** — `~/.productune/po-memory.md` `## Model/Effort Calibration` + `## Product taste` + `## Recent corrections / to-avoid`
 5. **approved-promotion archive** — `pending_promotions[]` filtered `status ∈ {approved, edited}` ∧ `decided_at ∈ [version.started_at, version.ended_at]`. New audit source — captures what user actually accepted into doctrine this Version.
 

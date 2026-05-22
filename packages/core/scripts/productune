@@ -357,8 +357,8 @@ esac
 # (pre-delegate-task-check + post-delegate-state-write) actually fire — those
 # hooks run inside Claude Code sessions only, not Codex.
 if [ -r "$HOME/.productune/productune.env" ]; then
-  # Auto-export every assignment so spawned codex/claude (and the graphiti
-  # launcher invoked by personas) see PRODUCTUNE_REPO, GRAPHITI_*, etc.
+  # Auto-export every assignment so spawned codex/claude sub-agents
+  # see PRODUCTUNE_REPO, WIKI_BACKEND, etc.
   set -a
   # shellcheck source=/dev/null
   . "$HOME/.productune/productune.env"

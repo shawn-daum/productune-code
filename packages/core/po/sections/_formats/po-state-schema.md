@@ -25,7 +25,7 @@ Persona-returned `promotion_candidates` queued for user approval (deferred surfa
 - `persona` (string) — `pdt-designer` / `pdt-developer` / `pdt-qa` / `pdt-wiki-keeper`.
 - `turn_id` (string) — persona session turn marker at surface time (snapshot of `persona_session_meta.<persona>.turns`).
 - `tier` (string) — `project` / `wiki` / `work-note` (drives mechanical-writes branch).
-- `target` (string) — `tier=project`: file path · `tier=wiki`: graphiti `group_id` or keeper persona · `tier=work-note`: file path under `docs/<persona>/`.
+- `target` (string) — `tier=project`: file path · `tier=wiki`: keeper persona name (e.g. `persona-developer`) or fs path · `tier=work-note`: file path under `docs/<persona>/`.
 - `delta` (string) — line to append (project / work-note) or episode body (wiki).
 - `rationale` (string) — one-line reason shown in surface prompt.
 - `status` (string) — `pending` / `approved` / `dropped` / `edited`.

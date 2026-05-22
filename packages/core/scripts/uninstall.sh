@@ -130,7 +130,7 @@ fi
 say "6) Wiki data: ~/.productune/wiki/"
 if [ -d "$HOME/.productune/wiki" ]; then
   WIKI_SIZE=$(du -sh "$HOME/.productune/wiki" 2>/dev/null | awk '{print $1}' || echo "?")
-  warn "  Size: $WIKI_SIZE — contains fs-backend wiki pages."
+  warn "  Size: $WIKI_SIZE — contains wiki-keeper backend data."
   if confirm "Delete ~/.productune/wiki/ (all wiki data)?"; then
     rm -rf "$HOME/.productune/wiki"
     say "  removed: ~/.productune/wiki/"
@@ -141,6 +141,34 @@ if [ -d "$HOME/.productune/wiki" ]; then
   fi
 else
   say "  not found — nothing to do"
+fi
+
+# ── 6c. ~/.productune/graphiti/ — legacy Graphiti data ───────────────────────
+say "6c) Legacy Graphiti data: ~/.productune/graphiti/"
+if [ -d "$HOME/.productune/graphiti" ]; then
+  rm -rf "$HOME/.productune/graphiti"
+  say "  removed: ~/.productune/graphiti/ (graphiti backend retired)"
+  REMOVED=$((REMOVED+1))
+else
+  say "  not found — nothing to do"
+fi
+
+# ── 6d. ~/.productune/wiki-jobs/ — legacy background job tracking ─────────────
+say "6d) Legacy wiki-jobs: ~/.productune/wiki-jobs/"
+if [ -d "$HOME/.productune/wiki-jobs" ]; then
+  rm -rf "$HOME/.productune/wiki-jobs"
+  say "  removed: ~/.productune/wiki-jobs/"
+  REMOVED=$((REMOVED+1))
+else
+  say "  not found — nothing to do"
+fi
+
+# Graphiti users: FalkorDB Docker container hint
+if command -v docker >/dev/null 2>&1; then
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^falkordb$'; then
+    warn "이전 Graphiti 사용자: FalkorDB 컨테이너가 감지됐습니다."
+    warn "  docker stop falkordb && docker rm falkordb"
+  fi
 fi
 
 # Try to remove ~/.productune/ if empty (may still contain wiki, jobs, etc.)

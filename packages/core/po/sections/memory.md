@@ -18,7 +18,7 @@ mkdir -p "$(dirname "$TARGET")"; printf '%s\n' "$DELTA" >> "$TARGET"
 
 `tier:"work-note"` — `printf` full markdown body to `docs/<persona>/R<n>-<slug>.md`.
 
-`tier:"wiki"` — backend-aware (`WIKI_BACKEND` from `productune.env`). 3 branches (graphiti / keeper / fs) + background job tracking + pre-persona wiki search → **`sections/_details/wiki-backend-branches.md`**.
+`tier:"wiki"` — backend-aware (`WIKI_BACKEND` from `productune.env`). 2 branches (keeper / fs) + pre-persona wiki search → **`sections/_details/wiki-backend-branches.md`**.
 
 ### Persistence (deferred surface)
 

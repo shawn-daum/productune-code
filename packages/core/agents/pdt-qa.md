@@ -1,1 +1,1 @@
-variants/graphiti/pdt-qa.md
+variants/keeper/pdt-qa.md
