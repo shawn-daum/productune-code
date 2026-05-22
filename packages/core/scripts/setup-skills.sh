@@ -3,66 +3,64 @@ set -euo pipefail
 
 # setup-skills.sh — productune 페르소나가 활용하는 OSS skill 라이브러리 설치.
 #
-# 설치 대상:
+# 설치 대상 (vendored — 외부 네트워크 불필요):
 #   1. mattpocock/skills — Real engineering 컨셉 (to-prd, to-issues, tdd,
-#      triage-issue, request-refactor-plan, improve-codebase-architecture 등 23개)
+#      triage-issue, request-refactor-plan, improve-codebase-architecture 등)
 #   2. phuryn/pm-skills — PM 워크플로 (pm-product-discovery / -strategy /
-#      -execution / -market-research 등 65 skill, 8 plugin)
+#      -execution / -market-research 등)
 #   3. anthropic/skills — Anthropic 공식 skill (frontend-design 등)
 #      → ~/.claude/skills/anthropic/skills/frontend-design/SKILL.md
 #
-# 설치 방식: ~/.claude/skills/<source>/ 디렉토리에 git clone. Claude Code 가
-# description 매치로 자동 invoke (per Claude Code skills doc).
+# 설치 방식: packages/core/skills/ 에 vendor된 .md 파일들을
+#   ~/.claude/skills/<source>/ 디렉토리로 복사. git clone 불필요.
 #
-# Idempotent — 이미 클론돼 있으면 git pull 만. 사용자가 자기 fork 를 쓰고 싶으면
-# 환경변수로 override 가능.
+# Idempotent — 기존 디렉토리는 rm -rf 후 재복사 (stale clone 덮어쓰기).
+# upstream 업데이트 = repo에 재vendor 후 재실행.
 
 say()  { printf '\033[1;34m[skills]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[skills]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[skills]\033[0m %s\n' "$*" >&2; exit 1; }
 
-command -v git >/dev/null || die "git not found."
+# Resolve script location → packages/core/
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SKILLS_SRC="$ROOT/skills"
+SKILLS_DEST="${PRODUCTUNE_SKILLS_ROOT:-$HOME/.claude/skills}"
 
-SKILLS_ROOT="${PRODUCTUNE_SKILLS_ROOT:-$HOME/.claude/skills}"
-mkdir -p "$SKILLS_ROOT"
-say "skills root: $SKILLS_ROOT"
+[ -d "$SKILLS_SRC" ] || die "vendored skills 디렉토리 없음: $SKILLS_SRC"
+mkdir -p "$SKILLS_DEST"
+say "skills src : $SKILLS_SRC"
+say "skills dest: $SKILLS_DEST"
 
-# Repo URL override 가능 (fork 등)
-MATTPOCOCK_URL="${PRODUCTUNE_MATTPOCOCK_URL:-https://github.com/mattpocock/skills.git}"
-PHURYN_URL="${PRODUCTUNE_PHURYN_URL:-https://github.com/phuryn/pm-skills.git}"
-ANTHROPIC_SKILLS_URL="${PRODUCTUNE_ANTHROPIC_SKILLS_URL:-https://github.com/anthropics/skills.git}"
-
-clone_or_pull() {
-  local NAME="$1" URL="$2"
-  local DIR="$SKILLS_ROOT/$NAME"
-  if [ -d "$DIR/.git" ]; then
-    say "$NAME 이미 클론돼있음 — git pull"
-    git -C "$DIR" pull --ff-only || warn "$NAME pull 실패; 기존 checkout 유지"
-  else
-    say "$NAME 클론 중 ($URL)..."
-    mkdir -p "$(dirname "$DIR")"
-    git clone --depth 1 "$URL" "$DIR"
+for lib in mattpocock phuryn anthropic; do
+  src="$SKILLS_SRC/$lib"
+  dest="$SKILLS_DEST/$lib"
+  if [ ! -d "$src" ]; then
+    warn "$lib vendored 디렉토리 없음 — skip"
+    continue
   fi
-}
+  if [ -d "$dest" ]; then
+    rm -rf "$dest"
+  fi
+  cp -R "$src" "$dest"
+  skill_count="$(find "$dest" -name 'SKILL.md' 2>/dev/null | wc -l | tr -d ' ')"
+  say "$lib vendored skills 복사 완료 (${skill_count} SKILL.md)"
+done
 
-clone_or_pull "mattpocock"      "$MATTPOCOCK_URL"
-clone_or_pull "phuryn"          "$PHURYN_URL"
-clone_or_pull "anthropic/skills" "$ANTHROPIC_SKILLS_URL"
-
-# frontend-design 설치 확인 (최소 요건)
-FD_SKILL="$SKILLS_ROOT/anthropic/skills/frontend-design/SKILL.md"
-if [ ! -f "$FD_SKILL" ]; then
-  warn "frontend-design/SKILL.md 를 못 찾음 — repo 구조 확인: ls $SKILLS_ROOT/anthropic/skills/"
+# frontend-design 설치 확인 — 동적 탐색 (anthropic 내부 구조 변경에 유연)
+FD_PATH="$(find "$SKILLS_DEST/anthropic" -name 'frontend-design' -type d 2>/dev/null | head -1)"
+if [ -n "$FD_PATH" ] && [ -f "$FD_PATH/SKILL.md" ]; then
+  say "frontend-design skill OK: $FD_PATH/SKILL.md"
 else
-  say "frontend-design skill OK: $FD_SKILL"
+  warn "frontend-design 못 찾음 — vendor 누락? find $SKILLS_DEST/anthropic -name 'frontend-design'"
 fi
 
-# Sanity check — Claude Code 가 SKILL.md 들을 찾을 수 있는지
-SKILL_COUNT=$(find "$SKILLS_ROOT" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+# Sanity check — 전체 SKILL.md 수
+SKILL_COUNT="$(find "$SKILLS_DEST" -name 'SKILL.md' 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$SKILL_COUNT" = "0" ]; then
-  warn "SKILL.md 파일을 못 찾음 — repo 구조가 예상과 다를 수 있음. 수동 확인 필요:"
-  warn "  ls $SKILLS_ROOT/mattpocock/"
-  warn "  ls $SKILLS_ROOT/phuryn/"
+  warn "SKILL.md 파일을 못 찾음 — 복사 실패 가능성. 수동 확인:"
+  warn "  ls $SKILLS_DEST/mattpocock/"
+  warn "  ls $SKILLS_DEST/phuryn/"
+  warn "  ls $SKILLS_DEST/anthropic/"
 else
   say "$SKILL_COUNT 개 SKILL.md 발견 — Claude Code 가 description 매치로 자동 invoke"
 fi
@@ -88,14 +86,6 @@ $(printf "\033[1;32m✓ skills setup complete\033[0m")
   pdt-qa:
     - mattpocock/tdd (검증 모드)
 
-부족하면 productune 의 quality escalation Path 2 가 'skill-fetch search'
-로 9 registry 확장 검색 (skill-fetch CLI 설치 시).
-
-skill-fetch 설치 (선택):
-  npm i -g skill-fetch    # 또는 사용자 환경에 맞춰
-
-이후 productune 호출 시 description 매치되는 skill 이 자동 surface 됨.
-
-업데이트:
-  bash $0    # idempotent, git pull 만 수행
+업데이트 (upstream 재vendor 후):
+  bash $0    # idempotent, vendored 복사 재실행
 EOF
