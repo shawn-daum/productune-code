@@ -1,1 +1,1 @@
-/Users/x/Documents/dev/ntf-products/productune/packages/core/agents/variants/graphiti/pdt-designer.md
+variants/graphiti/pdt-designer.md
