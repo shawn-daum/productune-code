@@ -662,6 +662,80 @@ if [ -z "$WIKI_BACKEND" ] && [ -t 0 ] && [ -t 1 ]; then
   printf "  감지 결과: %s, RAM %dGB, Docker=%s, 여유디스크=%dGB\n" \
     "$CHIP" "$RAM_GB" "$([ $HAS_DOCKER -eq 1 ] && echo yes || echo no)" "$DISK_FREE"
 
+  # ── Docker auto-install prompt ─────────────────────────────────────────────
+  # Offer Docker Desktop install when the machine would qualify for Tier A/S
+  # but is being degraded to B solely because Docker is absent.
+  if [ "$HAS_DOCKER" -eq 0 ] && [ "$DISK_FREE" -ge 5 ]; then
+    _ARCH="$(uname -m 2>/dev/null || echo '')"
+    _WOULD_BE_TIER="B"
+    if [[ "$CHIP" == *"Apple M"* || "$_ARCH" == "arm64" ]]; then
+      if [[ "$RAM_GB" -ge 16 && "$DISK_FREE" -ge 10 ]]; then
+        _WOULD_BE_TIER="S"
+      elif [[ "$RAM_GB" -ge 8 ]]; then
+        _WOULD_BE_TIER="A"
+      fi
+    else
+      if [[ "$RAM_GB" -ge 32 && "$DISK_FREE" -ge 10 ]]; then
+        _WOULD_BE_TIER="S"
+      elif [[ "$RAM_GB" -ge 16 ]]; then
+        _WOULD_BE_TIER="A"
+      fi
+    fi
+
+    if [ "$_WOULD_BE_TIER" != "B" ]; then
+      echo
+      printf '\033[1;33m⚠️  Docker 미설치 — 현재 Tier B 로 자동 강등됩니다.\033[0m\n\n'
+      printf '    이 기기는 RAM %dGB 로 Tier %s (Docker 있으면 Graphiti 백엔드 사용 가능) 입니다.\n\n' \
+        "$RAM_GB" "$_WOULD_BE_TIER"
+      printf '    Docker Desktop 설치 시:\n'
+      printf '      \033[1;32m✓\033[0m Wiki 백엔드 = Graphiti (지식 그래프 + 관계 추론)\n'
+      printf '      \033[1;31m✗\033[0m Docker Desktop 디스크 ~5GB 차지\n'
+      printf '      \033[1;31m✗\033[0m 실행 시 백그라운드 메모리 4~8GB 사용\n'
+      printf '      \033[1;31m✗\033[0m 회사 라이선스 정책에 따라 사용 제한 있을 수 있음\n\n'
+      printf '    Docker 안 받으면 wiki-keeper 백엔드 사용 — fully functional 이지만 단순 파일 검색만.\n\n'
+      printf '    Docker Desktop 설치할까요? (Homebrew 필요) [y/N]: '
+      read -r _INSTALL_DOCKER_ANS || _INSTALL_DOCKER_ANS=""
+
+      case "$_INSTALL_DOCKER_ANS" in
+        y|Y|yes|YES)
+          if ! command -v brew >/dev/null 2>&1; then
+            warn "Homebrew 미설치 — 수동 설치 후 'productune onboard' 재실행해주세요."
+            warn "Docker Desktop 다운로드: https://www.docker.com/products/docker-desktop"
+          else
+            say "Homebrew로 Docker Desktop 설치 중 (몇 분 소요)..."
+            if brew install --cask docker; then
+              say "Docker Desktop 설치 완료. 앱 실행 중..."
+              open -a Docker 2>/dev/null || true
+              printf '  \033[1;34m[install]\033[0m Docker 데몬 시작 대기 중 (최대 30초)...'
+              _DOCKER_WAIT=0
+              while [ "$_DOCKER_WAIT" -lt 30 ]; do
+                sleep 2
+                _DOCKER_WAIT=$((_DOCKER_WAIT + 2))
+                if docker_running; then
+                  printf ' 완료!\n'
+                  HAS_DOCKER=1
+                  DETECTED_TIER=$(detect_tier)
+                  break
+                fi
+                printf '.'
+              done
+              if [ "$HAS_DOCKER" -eq 0 ]; then
+                printf '\n'
+                warn "Docker 설치 완료, 데몬 시작 실패 — 수동으로 Docker.app 실행 후 'productune onboard' 재실행해주세요."
+              fi
+            else
+              warn "Docker Desktop 설치 실패 — wiki-keeper로 fallback"
+            fi
+          fi
+          ;;
+        *)
+          say "Docker 설치 건너뜀 → Tier B (wiki-keeper) 사용"
+          ;;
+      esac
+    fi
+  fi
+  # ──────────────────────────────────────────────────────────────────────────
+
   case "$DETECTED_TIER" in
     S)
       printf '\033[1;32m  → Tier S (Smooth)\033[0m 감지. Graphiti + async write 권장.\n'
