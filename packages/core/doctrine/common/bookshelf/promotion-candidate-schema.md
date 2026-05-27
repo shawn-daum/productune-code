@@ -41,4 +41,4 @@ If the user asks you to write a long-term tier directly (skipping promotion), re
 
 ## Always emit the array
 
-Include the top-level `promotion_candidates` array on every dispatch (empty `[]` is valid). PO consumes only that array; in-doc `## Promotion Candidates` annotations are secondary.
+PO consumes only that array; in-doc `## Promotion Candidates` annotations are secondary.

@@ -57,15 +57,15 @@ chase). Never remind. No next Version → measurement never runs.
 
 ## Phase ticket auto-emit summary
 
-- **P1 PRD** (new version): T+0 `type:design` "PRD 작성" (Designer, opus/max V1;
+- **P1 PRD** (new version): T+0 `type:design` "PRD authoring" (Designer, opus/max V1;
   opus/xhigh V2+). `## Plan` = clarity loop. Outputs: `docs/prd/PRD.md` (master EN) +
   `docs/artifacts/<version>/PRD.html` (user-lang).
 - **P2 Design** (L4+ / user-facing / risk_flags ≠ none): T+0 × 3 `type:design`:
   T1 design system + mockup · T2 user flow + wireframe · T3 hi-fi mockup
   (frontend-design skill). Single user gate after all 3 surfaced.
-- **P3 Build close**: T+0 `type:design` 디자인 검토 (Designer sonnet/medium,
+- **P3 Build close**: T+0 `type:design` design review (Designer sonnet/medium,
   **mandatory, no waiver** — see `designer/bookshelf/phase3-close-gate.md`) → T+1
-  `type:design` PRD 요구사항 (PO + user, waivable) → T+2 `type:qa` 보안 6항목
+  `type:design` PRD requirements (PO + user, waivable) → T+2 `type:qa` 6 security items
   (waivable). Sequential.
 - **P4 Deploy** — project-type gate. Meaningful (web/API/mobile) = run normally.
   N/A (internal / library / docs-only) = skip; P3 → P5 direct.

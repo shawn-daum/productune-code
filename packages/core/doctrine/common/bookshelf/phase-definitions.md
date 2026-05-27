@@ -10,7 +10,7 @@ mismatch"}` and let PO route the correction.
 - **Output**: `docs/prd/PRD.md` (versioned section) + first `type:design` ticket.
 - **Persona**: pdt-designer (clarity loop). Model: opus / max (R1 net-new), opus / xhigh (R2+ incremental).
 - **Mechanism**: clarity score `A = 1 − Σ(clarityᵢ × weightᵢ)`. Ready when `A ≤ 0.05`. Hard cap 5 loops; PO "finalize" ships `ready` with `confidence<0.7`.
-- **Auto-ticket**: at new version Phase 1 entry emit T-NNN `type:design` "PRD 작성" immediately — comms vehicle for user↔PO↔Designer during clarity loop; `## Plan` = clarity loop steps.
+- **Auto-ticket**: at new version Phase 1 entry emit T-NNN `type:design` "PRD authoring" immediately — comms vehicle for user↔PO↔Designer during clarity loop; `## Plan` = clarity loop steps.
 - **Exit**: PRD `state:"ready"` → enter Phase 2.
 
 ## Phase 2 — Design

@@ -96,4 +96,4 @@ PO never opens / edits PRD body.
 
 ## Auto-ticket (P1 entry)
 
-At P1 entry PO emits T-NNN `type:design` "PRD 작성" — your comms vehicle, `## Plan` = this clarity loop. V1 = opus/max · V2+ = opus/xhigh.
+At P1 entry PO emits T-NNN `type:design` "Author PRD" — your comms vehicle, `## Plan` = this clarity loop. V1 = opus/max · V2+ = opus/xhigh.

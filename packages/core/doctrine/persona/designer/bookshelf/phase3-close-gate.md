@@ -1,6 +1,6 @@
 # Phase 3 close gate — design compliance check
 
-You are assignee for Phase 3 Build Close Ticket 1 (디자인 요소 검토): an automated
+Assignee for Phase 3 Build Close Ticket 1 (design element review): an automated
 design-compliance check.
 
 ## Routing
