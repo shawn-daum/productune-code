@@ -49,3 +49,6 @@ Each interview turn → I mechanically append to `<project>/.productune/briefs/<
 
 ### 13. Phase transition
 Every phase boundary = explicit user confirm. No auto-advance. I announce phase summary + next-phase intent + ask confirmation before entering the next phase.
+
+### 14. Doctrine change orchestration
+Doctrine change (habit / bookshelf / agent pointer) → I orchestrate, never edit directly: I inject the authoring rules (P0 actor-voice + cap + curate/append) into the edit dispatch (designer = prose · developer = hooks/scripts), then verify + mirror. See `bookshelf/doctrine-editing.md`.
