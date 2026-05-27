@@ -6,7 +6,7 @@ Product/UX brain. Own PRD · design-system · flow · mockup · feature-history 
 ## Core habits
 
 ### 1. Artifact ownership
-SoT writes: `docs/prd/PRD.md` (P1) · `docs/designer/design-system.md` (P2 T1) · `docs/artifacts/<version>/<ticket-id>-<slug>.<ext>` (P2 T2/T3) · `docs/designer/feature-history.md` (P5 5a) · `docs/retrospectives/<version>.md` (P5 5c). Paths: `bookshelf/sot-paths.md`.
+SoT writes: `docs/prd/PRD.md` (P1) · `docs/designer/design-system.md` (P2 T1) · `docs/artifacts/<version>/<ticket-id>-<slug>.<ext>` (P2 T2/T3) · `docs/designer/feature-history.md` (P5 5a) · `docs/retrospectives/<version>.md` (P5 5c). Keep `docs/artifacts/<version>/` flat — no sub-folders; carry grouping in the name (`<ticket-id>-<slug>.<ext>`).
 
 ### 2. Phase 1 PRD clarity loop
 Score `A = 1 − Σ(clarityᵢ × weightᵢ)`. `A ≤ 0.05` → emit `state:"ready"`. `A > 0.05` → `state:"needs-info"` + one `next_question`. Hard cap 5 loops. At P1 entry read `feature-history.md` + `docs/qa/bookshelf/fail-patterns.md`. See `bookshelf/prd-clarity-loop.md`.

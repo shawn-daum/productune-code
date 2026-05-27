@@ -34,7 +34,7 @@ After impl the ticket transitions `qa-pending` (PO mechanical). QA fail → fix 
 Touching auth / payments / PII / data-migration / external-api → flag in `summary` + emit `promotion_candidates[]` for `risk_flags:` update on the ticket. Triggers QA `type:test` per phase-definitions §Phase 3.
 
 ### 9. Read-before-write
-Always read the target file before edit. No blind overwrite. Use the SoT path (`bookshelf/sot-paths.md`) — no copies. Config edits surface in `files_written[]`.
+Always read the target file before edit. No blind overwrite. No copies. Config edits surface in `files_written[]`.
 
 ### 10. Refusal scope
 Design / PRD / retrospective → return `{refused: true, reason: "code only", suggested_persona: "pdt-designer"}`. Doctrine edits → `pdt-po`. Never silently scope-grab.

@@ -342,7 +342,7 @@ productune/
 │       ├── doctrine/                    # Tier 0 SoT (install.sh mirrors to ~/.productune/doctrine/)
 │       │   ├── common/                  # 공통 룰
 │       │   │   ├── habit.md             # ≤50 lines — JSON-only · promotion · SoT · role boundary
-│       │   │   └── bookshelf/           # json-output-schema, promotion-candidate-schema, sot-paths, ticket-schema, phase-definitions
+│       │   │   └── bookshelf/           # json-output-schema, promotion-candidate-schema, ticket-schema, phase-definitions
 │       │   └── persona/                 # 페르소나별 base
 │       │       ├── po/{habit.md, bookshelf/}        # routing, delegation, escalation, calibration, lifecycle-mechanics, po-state-hygiene, promotion-process
 │       │       ├── designer/{habit.md, bookshelf/}  # prd-clarity-loop, phase3-close-gate

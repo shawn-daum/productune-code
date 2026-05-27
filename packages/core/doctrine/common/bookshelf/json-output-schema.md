@@ -1,16 +1,6 @@
 # JSON output envelope schema
 
-Return a single JSON object per dispatch.
-
-## Required fields
-| field | type | max | note |
-|:--|:--|:--|:--|
-| `persona` | string | — | `pdt-designer` / `pdt-developer` / `pdt-qa` / `pdt-po` |
-| `task` | string | 80 | short task descriptor |
-| `session_id` | string | — | matches `--session-id` (= ticket-id within ticket) |
-| `summary` | string | 200 | machine-readable outcome of the turn |
-| `confidence` | number | 0..1 | self-assessed |
-| `promotion_candidates` | array | — | always present; `[]` when nothing to promote |
+Optional fields + situational envelopes. Core required-field format: see common/habit rule 1.
 
 ## Optional fields
 | field | type | when |
@@ -23,12 +13,6 @@ Return a single JSON object per dispatch.
 | `next_question` | string | when `state: needs-info` |
 | `files_written` | array<path> | doc-write turns |
 | `external_tool_recommendation` | object | designer: out-of-ability tool referral `{tool, why_external, prompt, expected_output_path}` |
-
-## Output rules
-- stdout char 0 = `{`
-- no markdown prose outside JSON string values
-- no markdown tables outside JSON string values
-- one object per dispatch (no array, no NDJSON)
 
 ## Refusal envelope
 ```json

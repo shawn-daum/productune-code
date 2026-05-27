@@ -14,7 +14,7 @@ packages/core/
 ├── doctrine/               # Tier 0 SoT (install.sh mirrors to ~/.productune/doctrine/)
 │   ├── common/             # shared across designer/developer/qa
 │   │   ├── habit.md        # ≤50 lines — JSON-only · promotion · SoT · role boundary
-│   │   └── bookshelf/      # json-output-schema, promotion-candidate-schema, sot-paths, ticket-schema, phase-definitions
+│   │   └── bookshelf/      # json-output-schema, promotion-candidate-schema, ticket-schema, phase-definitions
 │   └── persona/<role>/     # role-specific base habit + bookshelf
 │       ├── habit.md
 │       └── bookshelf/      # e.g. designer/prd-clarity-loop, designer/phase3-close-gate, po/routing …
