@@ -10,8 +10,8 @@
 #   productune gc                           (alias: --cleanup) audit productune/* worktrees, dry-run
 #   productune gc -y                        (alias: --auto, --yes) audit, then remove safe ones
 #   productune init                         Scaffold project: .productune/po-state.json, docs/pdt-*/, .gitignore
-#   productune onboard                      Run install.sh — wire agents, codex config, wiki backend
-#   productune uninstall                    Remove all installed artifacts (agents, codex files, wiki data)
+#   productune onboard                      Run install.sh — wire agents, codex config
+#   productune uninstall                    Remove all installed artifacts (agents, codex files)
 #
 # Engine selection priority: --engine flag > $MY_PO_ENGINE env > 'claude' default.
 # (Env var name MY_PO_ENGINE retained for compat; semantically PRODUCTUNE_ENGINE.)
@@ -148,12 +148,10 @@ case "${1:-}" in
   --help|-h)
     # Resolve current config for display
     _engine="claude"
-    _wiki="?"
     _repo="?"
     if [ -r "$HOME/.productune/productune.env" ]; then
       _engine="$(grep -E '^MY_PO_ENGINE=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo claude)"
       _engine="${_engine:-claude}"
-      _wiki="$(grep -E '^WIKI_BACKEND=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
       _repo="$(grep -E '^PRODUCTUNE_REPO=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
     fi
     B=$(printf '\033[1m') R=$(printf '\033[0m')
@@ -167,7 +165,7 @@ case "${1:-}" in
   ${B}COMMANDS${R}
     (default)          Start a PO session with the configured engine
     init               Scaffold project — .productune/, docs/pdt-*/, .gitignore
-    onboard            Run install — wire agents, wiki backend, PATH
+    onboard            Run install — wire agents, PATH
     uninstall          Remove all installed artifacts
     gc                 Audit productune/* worktrees (dry-run)
     gc -y              Remove safe worktrees automatically
@@ -179,7 +177,6 @@ case "${1:-}" in
 
   ${B}CURRENT CONFIG${R}  (~/.productune/productune.env)
     engine       %s
-    wiki         %s
     repo         %s
 
   ${B}PERSONAS${R}  (always run on Claude Code)
@@ -187,7 +184,6 @@ case "${1:-}" in
     pdt-developer    Implementation
     pdt-designer     UX / Design System
     pdt-qa           QA / Test validation
-    pdt-wiki-keeper  Wiki memory (keeper backend only)
 
   ${B}EXAMPLES${R}
     productune init                   Scaffold a new project (run once per repo)
@@ -196,7 +192,7 @@ case "${1:-}" in
     productune gc -y                  Clean up merged worktrees
     productune onboard                Re-run setup
 
-" "$_engine" "$_wiki" "$_repo"
+" "$_engine" "$_repo"
     exit 0
     ;;
   onboard)
@@ -358,7 +354,7 @@ esac
 # hooks run inside Claude Code sessions only, not Codex.
 if [ -r "$HOME/.productune/productune.env" ]; then
   # Auto-export every assignment so spawned codex/claude sub-agents
-  # see PRODUCTUNE_REPO, WIKI_BACKEND, etc.
+  # see PRODUCTUNE_REPO, etc.
   set -a
   # shellcheck source=/dev/null
   . "$HOME/.productune/productune.env"

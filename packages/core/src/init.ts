@@ -193,15 +193,15 @@ export function bootstrapPersonaMemory(projectDir: string) {
     path.join(turnsDir, 'README.md'),
     '# turn activity log\n\n' +
       'Per-task JSONL files (`<task-slug>.jsonl`). One line per persona invocation:\n' +
-      '`{ ts, persona, task_slug, ticket_id, version, turn_index, input_meta, wiki_consult, output_full, promotion_outcome }`.\n' +
+      '`{ ts, persona, task_slug, ticket_id, version, turn_index, input_meta, output_full, promotion_outcome }`.\n' +
       'Written by PO. Raw truth; `.productune/po-state.json` is the summary.\n',
   )
 }
 
 // ── user-global doctrine bootstrap ───────────────────────────────────────────
 
-/** Absolute path to the bundled `po/` directory (packages/core/po/). */
-const DOCTRINE_SRC = fileURLToPath(new URL('../po', import.meta.url))
+/** Absolute path to the bundled `doctrine/` directory (packages/core/doctrine/). */
+const DOCTRINE_SRC = fileURLToPath(new URL('../doctrine', import.meta.url))
 
 /** SHA-256 hex digest of a file. */
 function sha256(filePath: string): string {
@@ -255,15 +255,16 @@ function walkMdRecursive(root: string): string[] {
 }
 
 /**
- * Idempotently install/update user-global PO doctrine files under ~/.productune/.
+ * Idempotently install/update user-global doctrine files under ~/.productune/doctrine/.
  *
  * Behaviour:
- * - po-instructions.md       : hash compare; backup + update on mismatch.
- * - po-memory.md             : seed-only (never overwrite — user long-term memory).
- * - sections/**\/*.md        : per-file hash compare; backup + update on mismatch.
- *                              Recursive (T-P4-126: sections/_formats/ + sections/_details/
- *                              sub-files picked up automatically).
+ * - doctrine/**\/*.md        : per-file hash compare; backup + update on mismatch.
+ *                              Mirrors packages/core/doctrine/ → ~/.productune/doctrine/
+ *                              preserving full sub-directory structure.
  * - productune.env           : seed-only (engine=claude default).
+ *
+ * Legacy files (po-instructions.md, po-memory.md, sections/) are no longer installed
+ * by this function — they belong to the pre-redesign doctrine format.
  *
  * Stderr trace (once at end):
  * - Any update (hash mismatch) → "업데이트했습니다" message.
@@ -275,37 +276,20 @@ function walkMdRecursive(root: string): string[] {
  */
 export function bootstrapUserGlobalDoctrine(): void {
   const PRODUCTUNE_HOME = path.join(os.homedir(), '.productune')
-  const SECTIONS_HOME = path.join(PRODUCTUNE_HOME, 'sections')
+  const DOCTRINE_HOME = path.join(PRODUCTUNE_HOME, 'doctrine')
 
   fs.mkdirSync(PRODUCTUNE_HOME, { recursive: true })
-  fs.mkdirSync(SECTIONS_HOME, { recursive: true })
+  fs.mkdirSync(DOCTRINE_HOME, { recursive: true })
 
   let traceState: DoctrineTraceState = 'silent'
 
-  // ── po-instructions.md — hash compare + backup + update ──
-  const instrSrc = path.join(DOCTRINE_SRC, 'po-instructions.md')
-  const instrDest = path.join(PRODUCTUNE_HOME, 'po-instructions.md')
-  if (fs.existsSync(instrSrc)) {
-    traceState = copyDoctrineFile(instrSrc, instrDest, traceState)
-  }
-
-  // ── po-memory.md — seed only (never overwrite — user long-term memory) ──
-  const memDest = path.join(PRODUCTUNE_HOME, 'po-memory.md')
-  if (!fs.existsSync(memDest)) {
-    const memSrc = path.join(DOCTRINE_SRC, 'po-memory.md.template')
-    if (fs.existsSync(memSrc)) {
-      fs.copyFileSync(memSrc, memDest)
-      if (traceState === 'silent') traceState = 'installed'
-    }
-  }
-
-  // ── sections/**\/*.md — recursive hash compare + backup + update ──
-  // T-P4-126: walk sections/ recursively so _formats/ + _details/ sub-files install too.
-  const sectionsDir = path.join(DOCTRINE_SRC, 'sections')
-  if (fs.existsSync(sectionsDir)) {
-    for (const srcFile of walkMdRecursive(sectionsDir)) {
-      const relPath = path.relative(sectionsDir, srcFile)
-      const destFile = path.join(SECTIONS_HOME, relPath)
+  // ── doctrine/**/*.md — recursive hash compare + backup + update ──
+  // Walk packages/core/doctrine/ and mirror to ~/.productune/doctrine/,
+  // preserving sub-directory structure (common/, persona/po/bookshelf/, etc.).
+  if (fs.existsSync(DOCTRINE_SRC)) {
+    for (const srcFile of walkMdRecursive(DOCTRINE_SRC)) {
+      const relPath = path.relative(DOCTRINE_SRC, srcFile)
+      const destFile = path.join(DOCTRINE_HOME, relPath)
       traceState = copyDoctrineFile(srcFile, destFile, traceState)
     }
   }

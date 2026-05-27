@@ -4,7 +4,7 @@
 # `claude --resume <uuid>`, then deterministically writes the resulting
 # session_id into <project>/.productune/po-state.json. Without this hook,
 # PO sometimes skips the mechanical state writes that doctrine requires
-# (~/.productune/po-instructions.md "Mechanical state writes — every turn").
+# (~/.productune/doctrine/persona/po/habit.md §Mechanical write whitelist).
 #
 # Silent on no-match. Prints a one-liner on successful update so PO and
 # the user see what changed.

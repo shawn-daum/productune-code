@@ -3,7 +3,7 @@ import path from 'path'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
-export type PromotionTier = 'project' | 'wiki' | 'work-note'
+export type PromotionTier = 'project' | 'work-note'
 export type PromotionStatus = 'pending' | 'approved' | 'dropped' | 'edited'
 
 export interface PendingPromotion {

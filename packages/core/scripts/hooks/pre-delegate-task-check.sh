@@ -189,7 +189,7 @@ if [ "$SAME_COMPOUND_WRITES_CT" = "0" ]; then
 
   jq '.current_task = {slug: \"<kebab-task>\", started_at: \"$(date -u +%FT%TZ)\", request_summary: \"<one-line>\", artifacts: [], persona_sessions: {}, persona_session_meta: {}}' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
 
-(See ~/.productune/sections/lifecycle.md.)"
+(See ~/.productune/doctrine/persona/po/bookshelf/lifecycle-mechanics.md.)"
     fi
   fi
 fi
@@ -210,7 +210,7 @@ if [ -n "$PREV_SLUG" ] && [ -n "$SLUG" ] && [ "$PREV_SLUG" != "$SLUG" ]; then
     else . end
   ' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
 
-Then jq-write the new current_task and retry. (See ~/.productune/sections/lifecycle.md §Archive.)"
+Then jq-write the new current_task and retry. (See ~/.productune/doctrine/persona/po/bookshelf/lifecycle-mechanics.md §Archive.)"
   fi
 fi
 
@@ -221,7 +221,7 @@ if [ -n "$RESUME_UUID" ]; then
     ((.current_task.persona_sessions // {}) | to_entries | map(select(.value == $u)) | length)
   ' "$STATE" 2>/dev/null)"
   if [ "$KNOWN" = "0" ]; then
-    emit_block "Resume UUID $RESUME_UUID is not in current_task.persona_sessions for slug '$SLUG'. New task = first call WITHOUT --session-id (Claude Code returns one in .session_id). Don't reuse UUIDs from past tasks. (See ~/.productune/po-instructions.md §Hard rules — Persona invocation.)"
+    emit_block "Resume UUID $RESUME_UUID is not in current_task.persona_sessions for slug '$SLUG'. New task = first call WITHOUT --session-id (Claude Code returns one in .session_id). Don't reuse UUIDs from past tasks. (See ~/.productune/doctrine/persona/po/habit.md §Session lifecycle.)"
   fi
 fi
 

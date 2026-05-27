@@ -5,14 +5,13 @@ set -euo pipefail
 #
 # What it does:
 #   1. Symlinks agents/*.md  →  ~/.claude/agents/*.md        (persona sub-agents, editable in place)
-#   2. Copies  codex/config.toml          →  ~/.codex/config.toml          (Codex CLI profile manifest)
-#      Copies  po/po-instructions.md   →  ~/.productune/po-instructions.md  (PO doctrine, engine-agnostic)
-#   3. Seeds   po/po-memory.md.template → ~/.productune/po-memory.md   (PO long-term memory)
-#   4. Writes  ~/.productune/productune.env (engine, wiki backend, repo path)
+#   2. Mirrors  packages/core/doctrine/  → ~/.productune/doctrine/  (Tier 0 live mirror, idempotent)
+#   3. Scaffolds ~/.productune/{po,designer,developer,qa}/   Tier 2 skeleton (seed-only, never overwrite)
+#   4. Writes  ~/.productune/productune.env (engine, repo path)
 #
 # Migration: pre-2026-04 installs stored po-instructions.md, po-memory.md, productune.env
 # under ~/.codex/. install.sh detects those legacy files and moves them to ~/.productune/
-# the first time it runs after the rename.
+# the first time it runs after the rename. (Orphaned artifacts removed in chunk 10.)
 #
 # Existing files at targets are backed up with a .bak.<timestamp> suffix if they are not already symlinks
 # pointing to this repo.
@@ -30,9 +29,7 @@ die() { printf "\033[1;31m[install]\033[0m %s\n" "$*" >&2; exit 1; }
 # target is readable, and the YAML frontmatter `name:` matches. On failure,
 # prints a small debug block so the user can see what's broken.
 verify_agents_recognized() {
-  local backend="$1"
   local -a expected=(pdt-po pdt-designer pdt-developer pdt-qa)
-  [[ "$backend" == "keeper" ]] && expected+=(pdt-wiki-keeper)
 
   local -a missing=() broken=() name_mismatch=()
   local agent
@@ -66,38 +63,6 @@ verify_agents_recognized() {
   warn "  ls -la ~/.claude/agents/    # 심볼릭 링크 상태"
   warn "  bash $ROOT/scripts/install.sh   # 재실행"
   return 1
-}
-
-# ── Backend variant activator ──────────────────────────────────────────────────
-activate_backend() {
-  local backend="$1"   # keeper | fs
-  local variants_dir="$ROOT/agents/variants/$backend"
-
-  if [ ! -d "$variants_dir" ]; then
-    warn "variants dir not found: $variants_dir — leaving current agents as-is"
-    return
-  fi
-
-  for variant in "$variants_dir"/*.md; do
-    local name; name="$(basename "$variant")"
-    local dest="$ROOT/agents/$name"
-    local claude_dest="$HOME/.claude/agents/$name"
-    ln -sfn "$variant" "$dest"
-    ln -sfn "$dest" "$claude_dest"
-    say "backend=$backend: agents/$name → variants/$backend/$name (linked to ~/.claude/agents)"
-  done
-
-  # wiki-keeper is only active for the keeper backend.
-  # Manage the ~/.claude/agents/ symlink directly so Claude Code sees/doesn't see it.
-  local keeper_claude="$HOME/.claude/agents/pdt-wiki-keeper.md"
-  local keeper_src="$ROOT/agents/pdt-wiki-keeper.md"
-  if [[ "$backend" == "keeper" ]]; then
-    ln -sfn "$keeper_src" "$keeper_claude"
-    say "linked pdt-wiki-keeper agent (backend=keeper)"
-  else
-    rm -f "$keeper_claude"
-    say "unlinked pdt-wiki-keeper agent (backend=$backend — not needed)"
-  fi
 }
 
 # ── ~/.claude/settings.json hooks merge (idempotent) ──────────────────────────
@@ -305,14 +270,36 @@ maybe_install_codex_config() {
   say "copied Codex profile manifest: $dest"
 }
 
-# 2c–3) PO doctrine + memory — delegated to shared bash lib (idempotent)
-# shellcheck source=lib/bootstrap-doctrine.sh
-source "$ROOT/scripts/lib/bootstrap-doctrine.sh"
-bootstrap_user_global_doctrine "$ROOT"
+# 2c) Setup ~/.productune/doctrine/ — Tier 0 live mirror (byte-identical copy of SoT)
+#     cp -r overwrites on re-run, which is intentional: re-running install.sh = doctrine update.
+say "Tier 0 doctrine mirror 설정 중..."
+mkdir -p \
+  "$HOME/.productune/doctrine/common/bookshelf" \
+  "$HOME/.productune/doctrine/persona/po/bookshelf" \
+  "$HOME/.productune/doctrine/persona/designer/bookshelf" \
+  "$HOME/.productune/doctrine/persona/developer/bookshelf" \
+  "$HOME/.productune/doctrine/persona/qa/bookshelf"
+if [ -d "$ROOT/doctrine" ]; then
+  cp -r "$ROOT/doctrine/." "$HOME/.productune/doctrine/"
+  say "doctrine mirror 완료: ~/.productune/doctrine/"
+else
+  warn "doctrine/ not found at $ROOT/doctrine — Tier 0 mirror skipped (run again after doctrine/ is present)"
+fi
+
+# 3) Setup ~/.productune/<persona>/ — Tier 2 scaffolding (seed-only, never overwrite)
+#    Creates bookshelf/ dir + empty habit.md header for fresh installs.
+for _PERSONA in po designer developer qa; do
+  mkdir -p "$HOME/.productune/$_PERSONA/bookshelf"
+  _HABIT="$HOME/.productune/$_PERSONA/habit.md"
+  if [ ! -e "$_HABIT" ]; then
+    printf '# %s Tier 2 habit\n\n> Per-user, cross-project, curated. \xe2\x89\xa4100 lines.\n\n## Entries\n\n<!-- append manually -->\n' \
+      "$_PERSONA" > "$_HABIT"
+    say "Tier 2 scaffold: ~/.productune/$_PERSONA/habit.md"
+  fi
+done
 
 # 4) Make wrapper scripts executable (idempotent — git checkout usually preserves +x already)
 chmod +x "$ROOT/scripts/productune" "$ROOT/scripts/install.sh" \
-         "$ROOT/scripts/wiki-init.sh" \
          "$ROOT/scripts/statusline-productune.sh"
 chmod +x "$ROOT/scripts/hooks"/*.sh 2>/dev/null || true
 say "wrapper scripts ready"
@@ -393,7 +380,7 @@ fi
 # 5b) Non-interactive / partial-env safety net — ensure MY_PO_ENGINE + PRODUCTUNE_REPO are
 # always present in the env file. The interactive prompt block above runs only when stdin
 # is a TTY AND the env file doesn't yet exist. Without this, a non-interactive install
-# (e.g. `bash install.sh </dev/null`) creates an env file later (WIKI_BACKEND etc.) without
+# (e.g. `bash install.sh </dev/null`) creates an env file without
 # the engine line, and the wrapper falls back to its compiled default — which works, but
 # `grep MY_PO_ENGINE ~/.productune/productune.env` returns nothing, confusing operators.
 mkdir -p "$(dirname "$PO_ENV_FILE")"
@@ -414,42 +401,8 @@ if grep -qE '^USER_MODE=' "$PO_ENV_FILE" 2>/dev/null; then
   say "removed legacy USER_MODE from $PO_ENV_FILE"
 fi
 
-# 6) Wiki memory backend — wiki-keeper is the universal default.
-#    Graphiti backend has been retired (2026-05-22). Any existing graphiti config
-#    is automatically migrated to keeper.
-WIKI_BACKEND=""
-if grep -qE '^WIKI_BACKEND=' "$PO_ENV_FILE" 2>/dev/null; then
-  WIKI_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
-  say "Wiki backend existing config: $WIKI_BACKEND"
-fi
-
-# Existing graphiti users: force migrate to keeper (graphiti backend is retired).
-if [ "$WIKI_BACKEND" = "graphiti" ]; then
-  warn "이전 graphiti 백엔드는 폐기됐습니다. wiki-keeper 로 자동 전환합니다."
-  TMP_ENV="$PO_ENV_FILE.tmp.$$"
-  grep -Ev '^(WIKI_BACKEND|GRAPHITI_LLM_PROVIDER|GRAPHITI_LLM_MODEL|GRAPHITI_EMBEDDER_PROVIDER|GRAPHITI_EMBEDDER_MODEL)=' \
-    "$PO_ENV_FILE" > "$TMP_ENV" || true
-  mv "$TMP_ENV" "$PO_ENV_FILE"
-  printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
-  WIKI_BACKEND=keeper
-  say "Graphiti → wiki-keeper 전환 완료 (이전 FalkorDB 컨테이너: docker stop falkordb && docker rm falkordb)"
-  bash "$ROOT/scripts/wiki-init.sh"
-fi
-
-# Not set at all → default to keeper.
-if [ -z "$WIKI_BACKEND" ]; then
-  WIKI_BACKEND=keeper
-  printf 'WIKI_BACKEND=keeper\n' >> "$PO_ENV_FILE"
-  say "Wiki backend: wiki-keeper (default)"
-  bash "$ROOT/scripts/wiki-init.sh"
-fi
-
-# Activate backend-specific agent variants
-FINAL_BACKEND="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo keeper)"
-activate_backend "$FINAL_BACKEND"
-
 # Verify Claude recognizes the personas (fail-soft: warn but continue)
-verify_agents_recognized "$FINAL_BACKEND" || true
+verify_agents_recognized || true
 
 # 7) Ensure auto-compact threshold default is present in env file.
 #    `productune` sources this with `set -a` so the var is inherited by spawned
@@ -688,13 +641,10 @@ if [ -t 0 ] && [ -t 1 ] && [ "${PRODUCTUNE_SKIP_ADVANCED:-0}" != "1" ]; then
 fi
 
 # 10) Summary + next steps
-FINAL_BACKEND_DISPLAY="$(grep -E '^WIKI_BACKEND=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
-
 cat <<EOF
 
 $(printf "\033[1;32m✓ onboard complete\033[0m")
 
-  Wiki backend : $FINAL_BACKEND_DISPLAY
   PATH         : $([ "$PATH_REGISTERED" = 1 ] && echo "등록됨" || echo "미등록 (위 안내 참고)")
 
 Next steps:

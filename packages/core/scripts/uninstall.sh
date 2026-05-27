@@ -6,11 +6,16 @@ set -euo pipefail
 # Removes:
 #   - ~/.claude/agents/*.md  symlinks pointing to this repo
 #   - ~/.productune/productune.env
-#   - ~/.productune/po-instructions.md  (and .bak.* siblings)
-#   - ~/.codex/config.toml         (restores latest .bak if present)
-#   - ~/.productune/po-memory.md        (opt-in — contains accumulated PO memory)
-#   - ~/.productune/               (opt-in — wiki/fs backend data)
-#   - PATH entry / symlink         (auto, based on PRODUCTUNE_PATH_METHOD in productune.env)
+#   - ~/.productune/po-instructions.md  (legacy; and .bak.* siblings)
+#   - ~/.productune/*-memory.md         (legacy)
+#   - ~/.productune/sections/           (legacy)
+#   - ~/.productune/doctrine/           (new doctrine tree)
+#   - ~/.productune/po/                 (new PO persona dir)
+#   - ~/.productune/designer/           (new designer persona dir)
+#   - ~/.productune/developer/          (new developer persona dir)
+#   - ~/.productune/qa/                 (new qa persona dir)
+#   - ~/.codex/config.toml              (restores latest .bak if present)
+#   - PATH entry / symlink              (auto, based on PRODUCTUNE_PATH_METHOD in productune.env)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -80,8 +85,13 @@ else
   say "  not found — already clean"
 fi
 
-# ── 3. po-instructions.md + sections/ (and .bak siblings) ───────────────────
-say "3) Removing ~/.productune/po-instructions.md and sections/..."
+# ── 3. Legacy doctrine files + new doctrine tree ─────────────────────────────
+# Covers both pre-redesign (po-instructions.md / sections/) and post-redesign
+# (doctrine/ / po/ / designer/ / developer/ / qa/) to ensure clean removal on
+# any vintage of install.
+say "3) Removing ~/.productune doctrine artifacts (old + new)..."
+
+# Legacy: po-instructions.md + .bak siblings
 for F in "$HOME/.productune/po-instructions.md" "$HOME"/.productune/po-instructions.md.bak.* "$HOME"/.codex/po-instructions.md.bak.*; do
   if [ -f "$F" ]; then
     rm -f "$F"
@@ -89,11 +99,31 @@ for F in "$HOME/.productune/po-instructions.md" "$HOME"/.productune/po-instructi
     REMOVED=$((REMOVED+1))
   fi
 done
+
+# Legacy: *-memory.md files
+for F in "$HOME"/.productune/*-memory.md; do
+  if [ -f "$F" ]; then
+    rm -f "$F"
+    say "  removed: $F"
+    REMOVED=$((REMOVED+1))
+  fi
+done
+
+# Legacy: sections/ tree
 if [ -d "$HOME/.productune/sections" ]; then
   rm -rf "$HOME/.productune/sections"
   say "  removed: ~/.productune/sections/"
   REMOVED=$((REMOVED+1))
 fi
+
+# New doctrine tree: doctrine/, po/, designer/, developer/, qa/
+for DIR in doctrine po designer developer qa; do
+  if [ -d "$HOME/.productune/$DIR" ]; then
+    rm -rf "$HOME/.productune/$DIR"
+    say "  removed: ~/.productune/$DIR/"
+    REMOVED=$((REMOVED+1))
+  fi
+done
 
 # ── 4. config.toml — restore latest .bak if available ────────────────────────
 say "4) Restoring ~/.codex/config.toml from backup..."
@@ -110,68 +140,14 @@ else
   warn "  if config.toml was originally empty or Codex-default, consider deleting it manually."
 fi
 
-# ── 5. po-memory.md — opt-in (contains accumulated data) ─────────────────────
-say "5) PO memory: ~/.productune/po-memory.md"
-if [ -f "$HOME/.productune/po-memory.md" ]; then
-  warn "  This file contains accumulated PO learnings. Deleting is permanent."
-  if confirm "Delete ~/.productune/po-memory.md?"; then
-    rm -f "$HOME/.productune/po-memory.md"
-    say "  removed: ~/.productune/po-memory.md"
-    REMOVED=$((REMOVED+1))
-  else
-    say "  kept: ~/.productune/po-memory.md"
-    SKIPPED=$((SKIPPED+1))
-  fi
-else
-  say "  not found — nothing to do"
-fi
+# ── 5. ~/.productune/po/bookshelf/calibration-log.md — opt-in ────────────────
+# New doctrine: calibration log lives at ~/.productune/po/bookshelf/calibration-log.md
+# (removed with po/ dir in step 3). Legacy po-memory.md also removed in step 3.
+# This step is now a no-op kept for structural clarity.
+say "5) PO calibration log: handled in step 3 (po/ dir removal)."
+say "  nothing further to do."
 
-# ── 6. ~/.productune/wiki/ data — opt-in ─────────────────────────────────────
-say "6) Wiki data: ~/.productune/wiki/"
-if [ -d "$HOME/.productune/wiki" ]; then
-  WIKI_SIZE=$(du -sh "$HOME/.productune/wiki" 2>/dev/null | awk '{print $1}' || echo "?")
-  warn "  Size: $WIKI_SIZE — contains wiki-keeper backend data."
-  if confirm "Delete ~/.productune/wiki/ (all wiki data)?"; then
-    rm -rf "$HOME/.productune/wiki"
-    say "  removed: ~/.productune/wiki/"
-    REMOVED=$((REMOVED+1))
-  else
-    say "  kept: ~/.productune/wiki/"
-    SKIPPED=$((SKIPPED+1))
-  fi
-else
-  say "  not found — nothing to do"
-fi
-
-# ── 6c. ~/.productune/graphiti/ — legacy Graphiti data ───────────────────────
-say "6c) Legacy Graphiti data: ~/.productune/graphiti/"
-if [ -d "$HOME/.productune/graphiti" ]; then
-  rm -rf "$HOME/.productune/graphiti"
-  say "  removed: ~/.productune/graphiti/ (graphiti backend retired)"
-  REMOVED=$((REMOVED+1))
-else
-  say "  not found — nothing to do"
-fi
-
-# ── 6d. ~/.productune/wiki-jobs/ — legacy background job tracking ─────────────
-say "6d) Legacy wiki-jobs: ~/.productune/wiki-jobs/"
-if [ -d "$HOME/.productune/wiki-jobs" ]; then
-  rm -rf "$HOME/.productune/wiki-jobs"
-  say "  removed: ~/.productune/wiki-jobs/"
-  REMOVED=$((REMOVED+1))
-else
-  say "  not found — nothing to do"
-fi
-
-# Graphiti users: FalkorDB Docker container hint
-if command -v docker >/dev/null 2>&1; then
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^falkordb$'; then
-    warn "이전 Graphiti 사용자: FalkorDB 컨테이너가 감지됐습니다."
-    warn "  docker stop falkordb && docker rm falkordb"
-  fi
-fi
-
-# Try to remove ~/.productune/ if empty (may still contain wiki, jobs, etc.)
+# Try to remove ~/.productune/ if empty
 if [ -d "$HOME/.productune" ] && [ -z "$(ls -A "$HOME/.productune" 2>/dev/null)" ]; then
   rmdir "$HOME/.productune" 2>/dev/null && say "  removed empty: ~/.productune/"
 fi

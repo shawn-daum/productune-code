@@ -12,11 +12,9 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
                    ├── claude --agent pdt-developer  → 구현 (default sonnet)
                    └── claude --agent pdt-qa         → 검증 (default haiku)
                                                   │
-                                                  └─ 각 페르소나 3-tier 메모리:
-                                                     1. session  — per-ticket fresh session
-                                                     2. project  — docs/<persona>/*.md
-                                                     3. wiki     — Graphiti KG (graphiti backend)
-                                                                   또는 filesystem (keeper backend)
+                                                  └─ 모든 페르소나는 4-tier doctrine
+                                                     (common / persona / project / personal)
+                                                     을 session entry 에서 읽음.
 ```
 
 > **planner 역할은 Designer, PO가 담당**
@@ -112,17 +110,35 @@ Phase 4: Deploy                            Phase 5: Close
 | **4 Deploy** | type:deploy 1개 (PO+user collaborative steps) — N/A skip 시 type:deploy 미생성 | 모든 [PO]/[user] step done; N/A skip 시 자동 통과 | ticket close 또는 N/A skip 표시 (productune-internal / library / docs-only / Electron desktop 등 배포 단계 없는 프로젝트) |
 | **5 Close** | type:close × 3 (5a/5b/5c) | 3 close tickets done + 5d PO mechanical | `docs/retrospectives/<version>.md` + `feature-history.md` 갱신 |
 
-## Why the 3-tier memory
+## Doctrine architecture (4-tier)
 
-사람의 단기 / 중기 / 장기 기억 모방.
+각 페르소나는 session entry 마다 4 tier 의 doctrine 을 순서대로 읽습니다. 상위 tier 가 base, 하위 tier 가 override / specialize.
+
+| Tier | Scope | Path | Who writes |
+|---|---|---|---|
+| **0 common** | designer/developer/qa 공통 룰 (JSON-only, promotion emit, SoT, role boundary) | SoT: `packages/core/doctrine/common/{habit.md, bookshelf/}` → mirror: `~/.productune/doctrine/common/` | productune 메인테이너 (SoT) — install.sh 가 mirror |
+| **0 persona** | 페르소나별 base habit + 참조 bookshelf | SoT: `packages/core/doctrine/persona/<role>/{habit.md, bookshelf/}` → mirror: `~/.productune/doctrine/persona/<role>/` | productune 메인테이너 (SoT) — install.sh 가 mirror |
+| **1 project** | repo-specific 룰 / 학습 / 패턴 | `docs/<persona>/{habit.md, bookshelf/<file>.md}` (committed) | PO, 사용자 승인 후 mechanical write |
+| **2 personal** | 사용자별 cross-project 선호 / promoted 패턴 | `~/.productune/<persona>/{habit.md, bookshelf/<file>.md}` | PO, promotion 승인 시 mechanical append |
+
+- **habit.md** = curated 룰 (≤100 lines, source tag 없음).
+- **bookshelf/<file>.md** = append-only patterns (source tag + 1줄 entry).
+- Agent 파일 (`packages/core/agents/<persona>.md`) 은 ≤30 lines 의 thin pointer — 위 4 tier 를 읽어 들임.
+- Designer master 파일 (`design-system.md`, `feature-history.md`) 은 Tier 1 에 함께 위치.
+
+> Tier 0 은 SoT (repo) → mirror (`~/.productune/`) 1-way. 페르소나는 항상 mirror 를 읽음. 수정은 SoT 에서, `install.sh` / `onboard` 가 mirror 동기화.
+
+## Why the 3-tier memory (legacy framing)
+
+Doctrine 4-tier 와 별개로, 페르소나의 작업 기억은 단기/중기/장기로도 분리됩니다.
 
 | Tier | Scope | Where | Who writes |
 |---|---|---|---|
 | **Session** | 한 ticket | Claude Code session (`--session-id`, per-ticket fresh) | Claude 자동 |
-| **Project** | 한 repo | `docs/<persona>/*.md` (committed) | PO, 사용자 승인 후 |
-| **Wiki** | persona-global cross-project | Graphiti KG (`group_id=persona-<name>`, FalkorDB) or `~/.productune/wiki/` | PO, `[PROMOTION-APPROVED]` 마커 + 사용자 승인 |
+| **Project** | 한 repo | `docs/<persona>/*.md` (committed) — doctrine Tier 1 과 같은 경로 | PO, 사용자 승인 후 |
+| **Personal** | 사용자별 cross-project | `~/.productune/<persona>/` — doctrine Tier 2 와 같은 경로 | PO, promotion 승인 후 |
 
-핵심 제약: **pdt-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — project tier 가 디렉토리 격리, generalized 원칙만 wiki promote.
+핵심 제약: **pdt-designer 가 옛 프로젝트 색감을 새 프로젝트에서 즉시 떠올리지 않음** — Tier 1 project 가 디렉토리 격리, generalized 원칙만 Tier 2 personal 로 promote.
 
 ## Prerequisites
 
@@ -133,33 +149,30 @@ Phase 4: Deploy                            Phase 5: Close
 
 > codex 는 install 에서 완전히 분리됐습니다. 굳이 fallback engine 으로 쓰려면 본인이 직접 `npm i -g @openai/codex` 한 뒤 `<repo>/codex/config.toml` 을 `~/.codex/config.toml` 로 복사하세요.
 
-Wiki backend 에 따라 추가 필요:
-- **Graphiti (권장, 자동 설치)**: Docker Desktop + `uv` (`brew install uv`) + ollama (install 이 자동 설치)
-- **keeper**: 추가 불필요 (Claude API 사용)
-
 ## Install
 
-> **Migration note**: core 파일이 `packages/core/` 로 이관됐습니다. 기존 설치 사용자는 `bash packages/core/scripts/install.sh` 재실행으로 symlink/hook 경로를 업데이트하세요.
+> **Migration note**: core 파일이 `packages/core/` 로 이관됐습니다. 기존 설치 사용자는 `bash packages/core/scripts/install.sh` 재실행으로 symlink/hook/doctrine mirror 경로를 업데이트하세요.
 
 ```sh
 git clone https://github.com/shawn-kim-axz/productune
 bash productune/packages/core/scripts/install.sh
 ```
 
-> Clone 위치는 어디든 OK — symlink target 이라 그대로 유지하면 됩니다 (`~/code/productune`, `~/productune` 등 자유). 단, wiki data 가 저장되는 `~/.productune/` 와 겹치지 않게만 주의.
+> Clone 위치는 어디든 OK — symlink target 이라 그대로 유지하면 됩니다 (`~/code/productune`, `~/productune` 등 자유). 단, `~/.productune/` (Tier 0 mirror + Tier 2 personal store) 와 겹치지 않게만 주의.
 
 이후엔 어디서든 `productune onboard` 로 재실행 가능 (PATH 등록은 첫 install 마지막에 처리됨).
 
 `install.sh` 가 인터랙티브하게 처리:
 
 1. **Claude Code preflight** — CLI 미설치면 자동 설치, 미로그인이면 `claude auth login` 자동 실행.
-2. **PO engine 선택** — `[1] claude` (primary, hooks fire) / `[2] codex` (secondary, doctrine-only).
-3. **Wiki backend 설정** — 하드웨어 자동 감지
-   - Tier S (RAM ≥ 16GB) / Tier A (RAM ≥ 8GB): Ollama 로컬 LLM → 자동 설치 → FalkorDB + Graphiti 자동 셋업
-   - Tier B (RAM 부족 / Docker 없음): wiki-keeper agent (Claude API) 자동 선택
-4. **Hook 5개 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop 자동 merge
-5. **OSS skill 설치** — mattpocock + phuryn + `anthropic/frontend-design` skill
-6. **PATH 등록** — 현재 세션 즉시 적용
+2. **Agent 심볼릭 링크** — `packages/core/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa}.md` → `~/.claude/agents/*.md` (edit-in-place).
+3. **Tier 0 doctrine mirror** — `packages/core/doctrine/` → `~/.productune/doctrine/{common,persona/<role>}/` (common + persona habit.md / bookshelf, idempotent rsync).
+4. **Tier 2 personal scaffold** — `~/.productune/{po,designer,developer,qa}/{habit.md,bookshelf/}` seed-only (절대 overwrite X).
+5. **PO engine 선택** — `[1] claude` (primary, hooks fire) / `[2] codex` (secondary, doctrine-only).
+6. **Hook 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop / Pre-Chunking 자동 merge.
+7. **OSS skill 설치** — mattpocock + phuryn + `anthropic/frontend-design` skill 을 `~/.claude/skills/` 에 복사.
+8. **`~/.productune/productune.env`** — engine, repo path 기록.
+9. **PATH 등록** — 현재 세션 즉시 적용.
 
 > install 후에 엔진을 바꾸고 싶으면 `bash packages/core/scripts/install.sh` 재실행 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=` 직접 편집.
 
@@ -241,18 +254,6 @@ Default = **claude** — hook-based firm rules 는 Claude Code 세션 안에서�
 
 Switch: `MY_PO_ENGINE=codex` in `~/.productune/productune.env` or `productune --engine codex` per-session.
 
-## Wiki backend
-
-| | `graphiti` | `keeper` |
-|---|---|---|
-| 저장소 | FalkorDB (로컬 Docker) | `~/.productune/wiki/` (파일) |
-| LLM | Ollama 로컬 모델 (백그라운드) | Claude API |
-| 추가 설치 | Docker + ollama (onboard 자동) | 없음 |
-| 검색 품질 | Knowledge Graph (관계 추론) | 파일 검색 |
-| 활성 페르소나 | pdt-developer, pdt-designer, pdt-qa | + pdt-wiki-keeper |
-
-backend 는 `~/.productune/productune.env` 의 `WIKI_BACKEND=` 로 확인/변경.
-
 ## Quality-based escalation
 
 페르소나가 confidence=low 또는 unresolved 항목 보고 → PO 가 3-option 메뉴 surface:
@@ -299,14 +300,20 @@ docs/
 │   └── design-system-snapshot.md            # PO 가 version close 시 snapshot
 ├── tickets/<version>/                        # Ticket 파일 SoT
 │   └── T-NNN.md
-├── designer/                                 # Designer master files (global)
+├── designer/                                 # Tier 1 designer doctrine + masters
+│   ├── habit.md                              # ← project-level curated rules
+│   ├── bookshelf/                            # ← append-with-source patterns
 │   ├── design-system.md                      # ← 단일 global instance (per-feature copy X)
 │   ├── feature-history.md                    # Version 결정 log (Phase 1 read / Phase 5 write)
-│   ├── decisions.md                          # Non-trivial design decisions
 │   └── R<n>-<slug>.md                        # Work notes
-├── qa/
-│   ├── <slug>-test-plan.md
-│   └── fail-patterns.md                      # QA 누적 실패 패턴 (Phase 1 read)
+├── developer/                                # Tier 1 developer doctrine
+│   ├── habit.md
+│   └── bookshelf/                            # project-notes.md, self-check.md, ...
+├── qa/                                       # Tier 1 qa doctrine + masters
+│   ├── habit.md
+│   ├── bookshelf/fail-patterns.md            # QA 누적 실패 패턴 (Phase 1 read)
+│   └── version-summaries/<version>.md
+├── po/                                       # PO project notes
 └── retrospectives/<version>.md               # Phase 5 5c 회고 산출물 (Designer)
 ```
 
@@ -315,11 +322,11 @@ docs/
 ## Memory promotion
 
 각 페르소나는 `promotion_candidates` 만 리턴 (자동 write 안 함). 절차:
-- Persona 가 `promotion_candidates[]` 배열로 제안
+- Persona 가 `promotion_candidates[]` 배열로 제안 (scope: `project-habit` / `project-bookshelf` / `global-bookshelf`)
 - PO 가 사용자에 한 줄 propose
 - 사용자 `y` → PO 가 mechanical write
-  - project tier: `docs/designer/decisions.md` append
-  - wiki tier: PO `claude --print` (no `--agent`) subprocess 으로 graphiti 직접 호출 (wiki write 유일 경로)
+  - Tier 1 (project): `docs/<persona>/habit.md` curated rule append, 또는 `docs/<persona>/bookshelf/<file>.md` source-tagged 1-line append
+  - Tier 2 (personal): `~/.productune/<persona>/habit.md` or `~/.productune/<persona>/bookshelf/<file>.md` append
 
 ## Files
 
@@ -327,40 +334,44 @@ docs/
 productune/
 ├── packages/
 │   └── core/                            # CLI core
-│       ├── agents/                      # symlinked to ~/.claude/agents/
-│       │   ├── pdt-po.md                # PO orchestrator
+│       ├── agents/                      # ≤30-line thin pointers, symlinked to ~/.claude/agents/
+│       │   ├── pdt-po.md
 │       │   ├── pdt-designer.md
 │       │   ├── pdt-developer.md
-│       │   ├── pdt-qa.md
-│       │   ├── pdt-wiki-keeper.md       # keeper backend 시에만
-│       │   └── variants/                # backend별 variant (graphiti/keeper/fs)
-│       ├── po/                          # PO doctrine (~/.productune/ 로 copy)
-│       │   ├── po-instructions.md       # entry index
-│       │   ├── po-memory.md.template
-│       │   └── sections/               # sub-files (load on demand)
-│       │       ├── stages.md  memory.md  tickets.md  routing.md  escalation.md
-│       │       ├── lifecycle.md  prd-and-output.md  po-loop.md
-│       │       ├── _formats/           # output shape sub-files (8개)
-│       │       └── _details/           # reference sub-files (9개)
+│       │   └── pdt-qa.md
+│       ├── doctrine/                    # Tier 0 SoT (install.sh mirrors to ~/.productune/doctrine/)
+│       │   ├── common/                  # 공통 룰
+│       │   │   ├── habit.md             # ≤50 lines — JSON-only · promotion · SoT · role boundary
+│       │   │   └── bookshelf/           # json-output-schema, promotion-candidate-schema, sot-paths, ticket-schema, phase-definitions
+│       │   └── persona/                 # 페르소나별 base
+│       │       ├── po/{habit.md, bookshelf/}        # routing, delegation, escalation, calibration, lifecycle-mechanics, po-state-hygiene, promotion-process
+│       │       ├── designer/{habit.md, bookshelf/}  # prd-clarity-loop, phase3-close-gate
+│       │       ├── developer/{habit.md, bookshelf/}
+│       │       └── qa/{habit.md, bookshelf/}
+│       ├── po/                          # legacy PO doctrine (sections/, _formats/, _details/) — migrating to doctrine/persona/po/
 │       ├── config/
-│       │   └── model-catalog.json      # tier별 추천 모델
+│       │   └── model-catalog.json
 │       └── scripts/
-│           ├── install.sh              # onboard — engine/wiki/LLM/hooks/skills/PATH
+│           ├── install.sh               # mirror doctrine + scaffold Tier 2 + symlink agents + merge hooks + install skills + PATH
 │           ├── uninstall.sh
-│           ├── productune              # daily entrypoint
-│           ├── setup-graphiti.sh / setup-skills.sh / graphiti-launcher.sh
+│           ├── productune               # daily entrypoint
+│           ├── setup-skills.sh
 │           └── hooks/
 │               ├── pre-delegate-task-check.sh   # PreToolUse(Bash) — firm rule blocks
+│               ├── pre-chunking-warn.sh         # PreToolUse — chunk size warning
 │               ├── post-delegate-state-write.sh # PostToolUse(Bash) — session_id, turns
 │               ├── post-edit-format.sh          # PostToolUse(Write|Edit) — formatter
+│               ├── post-bash-strip-cost.sh      # PostToolUse(Bash) — strip cost lines
 │               ├── post-compact-doctrine.sh     # PostCompact — hard rules re-inject
-│               └── stop-verify.sh              # Stop(pdt-developer) — typecheck/build gate
+│               └── stop-verify.sh               # Stop(pdt-developer) — typecheck/build gate
 ├── docs/
 │   ├── prd/                            # PRD (English, Designer 작성)
 │   ├── tickets/<version>/T-NNN.md      # Ticket SoT
 │   ├── artifacts/<version>/            # Design + QA artifacts (flat per version)
-│   ├── designer/                       # Designer master + global DS
-│   ├── qa/                             # Test plans + fail-patterns
+│   ├── designer/                       # Tier 1 designer doctrine + masters (habit.md, bookshelf/, design-system.md, feature-history.md)
+│   ├── developer/                      # Tier 1 developer doctrine (habit.md, bookshelf/)
+│   ├── qa/                             # Tier 1 qa doctrine (habit.md, bookshelf/fail-patterns.md, version-summaries/)
+│   ├── po/                             # PO project notes
 │   └── retrospectives/                 # Phase 5 close reviews
 └── README.md
 ```
@@ -370,11 +381,10 @@ productune/
 - **"claude doesn't list my personas"** → `productune onboard` 재실행 (symlink 재생성 + dangling sweep)
 - **"hooks didn't fire / boundary keeps drifting"** → 엔진이 `codex` 일 가능성. `productune --engine claude` 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=claude` 변경
 - **"hook 등록 누락"** → `jq '.hooks' ~/.claude/settings.json` 으로 PreToolUse / PostToolUse / PostCompact / Stop 확인. 빠지면 `productune onboard` 재실행
-- **"persona output 이 JSON 이 아니다"** → 페르소나 md 버전 낡은 것. `productune onboard` 재실행 (agent file 재링크)
+- **"persona output 이 JSON 이 아니다"** → 페르소나 md 버전 낡은 것, 또는 Tier 0 mirror 가 오래된 것. `productune onboard` 재실행 (agent 재링크 + doctrine 재mirror)
+- **"Tier 0 doctrine 수정이 반영 안 됨"** → SoT (`packages/core/doctrine/`) 만 수정하고 `~/.productune/doctrine/` 는 read-only mirror. `productune onboard` 가 동기화
 - **"po-state.json 이 너무 크다"** → hygiene 자동 sweep (H1–H5) 이 미동작한 것. `productune` 재시작하면 turn-start 에 자동 정리
 - **"version naming 오류"** → `v<숫자>` 형식만 유효 (예: `v1`, `v2`, `v0.5`). 다른 형식이면 validator 가 차단
-- **"graphiti MCP fails to start"** → `docker ps` (falkordb 확인), `curl http://localhost:11434/api/tags` (ollama 확인), `productune onboard` 로 graphiti 재셋업
-- **"entity extraction quality is bad"** → `config/model-catalog.json` 에서 더 큰 모델로 교체 후 `productune onboard`
 - **legacy state.json schema** — 옛 schema 면 `rm <project>/.productune/po-state.json` 후 PO 다시 시작
 
 ## Updating
@@ -382,10 +392,10 @@ productune/
 ```sh
 cd <clone-dir>           # install 시 clone 한 위치 (예: ~/code/productune)
 git pull
-productune onboard
+productune onboard       # Tier 0 mirror + agent symlink + hooks 재동기화
 ```
 
-`packages/core/agents/*.md` + `packages/core/scripts/hooks/*.sh` 는 repo 그대로 사용 — 수정 즉시 반영. PO doctrine (`packages/core/po/` → `~/.productune/`) 는 copy 라 `productune onboard` 재실행 필요.
+`packages/core/agents/*.md` + `packages/core/scripts/hooks/*.sh` 는 repo 그대로 사용 — 수정 즉시 반영. `packages/core/doctrine/` 는 `~/.productune/doctrine/` 로 mirror 되는 SoT 라 `productune onboard` 재실행 필요.
 
 ## Non-goals / future
 
@@ -403,12 +413,11 @@ productune uninstall
 또는 수동으로:
 
 ```sh
-rm -rf ~/.claude/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa,pdt-wiki-keeper}.md
+rm -rf ~/.claude/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa}.md
 jq 'del(.hooks.PreToolUse, .hooks.PostToolUse, .hooks.PostCompact, .hooks.Stop)' \
   ~/.claude/settings.json | sponge ~/.claude/settings.json
-rm -rf ~/.productune                             # po-instructions, sections/, productune.env, wiki/
-docker rm -f falkordb && docker volume rm falkordb-data
-rm -rf ~/.graphiti ~/.claude/skills/{mattpocock,phuryn,anthropic}
+rm -rf ~/.productune                             # doctrine mirror, productune.env, Tier 2 personal store
+rm -rf ~/.claude/skills/{mattpocock,phuryn,anthropic}
 rm -rf <clone-dir>
 ```
 
