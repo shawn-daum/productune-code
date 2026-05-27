@@ -1,11 +1,9 @@
 # Common habit (Tier 0 — designer / developer / qa)
 
-≤50 lines. English. Caveman lite OK. PO has own habit (not bound by common).
-
 ## 1. JSON-only output
 Every reply = single JSON object. stdout char 0 = `{`.
-`summary` (≤200) + `user_surface` (≤500).
-Schema: `bookshelf/json-output-schema.md`.
+Carry `summary` (≤200) — machine outcome for PO.
+Full field set + envelopes: `bookshelf/json-output-schema.md`.
 
 ## 2. Promotion (emit-only)
 Emit `promotion_candidates[]` for memory-worthy findings.

@@ -1,43 +1,40 @@
 # SoT (Source of Truth) paths
 
-One canonical location per artifact. No copies during dev. Edit at SoT. ≤100 lines.
-Version-close = PO snapshots to `docs/artifacts/<version>/`.
+Read each artifact at its one canonical location. Edit only at the SoT, keep no copies during dev. At version-close PO snapshots to `docs/artifacts/<version>/`.
 
-## Doctrine (Tier 0 — always-read)
+## Doctrine (Tier 0 — always read)
 
-| role | SoT path (mirror = ~/.productune/doctrine/...) |
+| role | SoT path — read from mirror `~/.productune/doctrine/...` |
 |:--|:--|
 | common habit | `packages/core/doctrine/common/habit.md` |
 | common bookshelf | `packages/core/doctrine/common/bookshelf/*.md` |
 | persona habit | `packages/core/doctrine/persona/<persona>/habit.md` |
 | persona bookshelf | `packages/core/doctrine/persona/<persona>/bookshelf/*.md` |
 
-Repo = SoT. `~/.productune/doctrine/` = byte-identical live mirror, 동일 path 구조.
+## Project memory (Tier 1 — this repo)
 
-## Project memory (Tier 1 — per repo)
-
-| role | path | cap | mode |
-|:--|:--|:--|:--|
-| persona habit | `docs/<persona>/habit.md` | 100 lines | curated, no source |
-| persona bookshelf | `docs/<persona>/bookshelf/<file>.md` | 100 lines | append + source `[T-NNN]` |
+| role | path |
+|:--|:--|
+| persona habit | `docs/<persona>/habit.md` |
+| persona bookshelf | `docs/<persona>/bookshelf/<file>.md` |
 
 ## Long-term memory (Tier 2 — cross-project)
 
-| role | path | cap | mode |
-|:--|:--|:--|:--|
-| persona habit | `~/.productune/<persona>/habit.md` | 100 lines | curated, no source |
-| persona bookshelf | `~/.productune/<persona>/bookshelf/<file>.md` | 100 lines | append + source `[T-NNN]` |
+| role | path |
+|:--|:--|
+| persona habit | `~/.productune/<persona>/habit.md` |
+| persona bookshelf | `~/.productune/<persona>/bookshelf/<file>.md` |
 
-Write path: PO direct file write only. Persona is read-only.
+Read-only here — PO writes Tier 1/2 directly.
 
-## Product artifacts (per repo)
+## Product artifacts (this repo)
 
 | path | owner | when |
 |:--|:--|:--|
 | `docs/prd/PRD.md` | pdt-designer | Phase 1 ready |
 | `docs/designer/design-system.md` | pdt-designer | Phase 2 T1 / DS evolution |
 | `docs/designer/feature-history.md` | pdt-designer | Phase 5 direct write |
-| `docs/qa/bookshelf/fail-patterns.md` | pdt-qa | append on test fail (read-only by designer at Phase 1) |
+| `docs/qa/bookshelf/fail-patterns.md` | pdt-qa | append on test fail (designer reads at Phase 1) |
 | `docs/qa/version-summaries/<version>.md` | pdt-qa | Phase 5 close |
 | `docs/tickets/<version>/T-NNN.md` | persona-routed | per ticket (folder auto-created) |
 | `docs/artifacts/<version>/<ticket-id>-<slug>.<ext>` | pdt-designer | Phase 2 ticket artifact (flat) |
@@ -50,16 +47,16 @@ Write path: PO direct file write only. Persona is read-only.
 
 | path | owner |
 |:--|:--|
-| `.productune/po-state.json` | pdt-po (mechanical lifecycle: versions, current_version, ticket lifecycle, pending_promotions) |
+| `.productune/po-state.json` | pdt-po (versions, current_version, ticket lifecycle, pending_promotions) |
 
 ## Cross-tier read order
 
-Persona dispatch reads in order:
+Read in order each dispatch:
 
 1. **Tier 0 doctrine** (always) — common habit + persona habit (from mirror).
 2. **Tier 1 project** (always) — `docs/<persona>/habit.md` + relevant bookshelf files per current ticket / phase.
-3. **Tier 2 long-term** (conditional) — `~/.productune/<persona>/{habit,bookshelf}.md`; PO file-reads ahead and injects relevant slices via `[ctx]` global memory payload. Persona does not auto-fetch.
+3. **Tier 2 long-term** (conditional) — `~/.productune/<persona>/{habit,bookshelf}.md`; consume the slices PO injects via `[ctx]` global memory payload. Do not auto-fetch.
 
 ## Flat-folder rule
 
-`docs/artifacts/<version>/` is flat. No sub-folders during dev. Naming carries grouping (`<ticket-id>-<slug>.<ext>`).
+Keep `docs/artifacts/<version>/` flat — no sub-folders during dev. Carry grouping in the name (`<ticket-id>-<slug>.<ext>`).

@@ -1,17 +1,17 @@
 # po-state hygiene — turn-start cleanup
 
-5-rule sweep at every turn-start. PO shell mechanical. Steady-state ~4–5 KB. ≤100 lines.
+Run this 5-rule sweep at every turn-start (PO shell, mechanical). Steady-state ~4–5 KB.
 
 ## When
 
-Step 1 of every PO turn (right after reading ~/.productune/po/habit.md + po-state.json). Skip silently if
-po-state.json absent (new project / fresh init).
+Step 1 of every PO turn (right after reading `~/.productune/po/habit.md` + `po-state.json`).
+Skip silently if `po-state.json` absent (new project / fresh init).
 
 ## 5 rules
 
 ### 1. Always-purge `past_tickets[]`
 
-V2 schema removed this field — ticket md = SoT. Any residual data is stale.
+Ticket md is SoT; any residual data is stale — purge unconditionally.
 
 ```bash
 jq '.past_tickets = []' .productune/po-state.json > /tmp/ps.json \
@@ -20,7 +20,7 @@ jq '.past_tickets = []' .productune/po-state.json > /tmp/ps.json \
 
 ### 2. Trim `recent_turns[]` to last 5
 
-Project-wide rolling window. Failure-pattern detection input.
+Project-wide rolling window; feeds failure-pattern detection.
 
 ```bash
 jq '.recent_turns |= .[-5:]' .productune/po-state.json > /tmp/ps.json \
@@ -30,8 +30,6 @@ jq '.recent_turns |= .[-5:]' .productune/po-state.json > /tmp/ps.json \
 Reset to `[]` at Version close (failure context = version-scoped).
 
 ### 3. Clear stale `pending_gate`
-
-GUI-deprecated; field retained for legacy compat.
 
 - `current_phase > from_phase` → auto-clear (`jq '.pending_gate = null'`).
 - Age ≥ 7d AND `current_phase == from_phase` → surface once: `"pending_gate is {N}d
@@ -46,13 +44,13 @@ jq '.current_task.persona_sessions = {}' "$STATE"      # clear sessions FIRST
 jq '.current_task = null' "$STATE"                     # THEN null current_task
 ```
 
-Order matters: persona_sessions cleared *before* `current_task = null`.
+Order matters: clear persona_sessions *before* `current_task = null`.
 
 ### 5. Prune dead `persona_sessions{}`
 
-Per-ticket session ids. On ticket close, both `persona_sessions{}` and
-`persona_session_meta{}` dropped (audit lives in ticket md `## Persona Activity`).
-Sweep removes orphaned entries where `current_task` is null or status terminal.
+On ticket close, drop both `persona_sessions{}` and `persona_session_meta{}` (audit lives
+in ticket md `## Persona Activity`). Remove orphaned entries where `current_task` is null or
+status terminal.
 
 ## Non-blocking lazy prompts
 
@@ -68,8 +66,8 @@ User silence → leave field as-is.
 
 ## `versions[]` cap
 
-≤5 entries retained. Older = `outcome.retrospective_path` ref. Not purged — rotated
-out of state file for size.
+Retain ≤5 entries. Replace older with an `outcome.retrospective_path` ref — rotate out of
+the state file for size (not purged).
 
 ## NOT touched
 

@@ -1,11 +1,11 @@
 # Lifecycle mechanics — 5-Phase orchestration detail
 
-PO-mechanical operations on tickets through their lifecycle. See
-`../../common/bookshelf/phase-definitions.md` for phase contract. ≤100 lines.
+Run these mechanical ticket operations through the lifecycle. Phase contract:
+`../../common/bookshelf/phase-definitions.md`.
 
 ## Phase transition write
 
-User approval (chat reply) → PO writes:
+On user approval (chat reply), write:
 
 ```bash
 jq '.current_phase = <N>
@@ -15,7 +15,7 @@ jq '.current_phase = <N>
 
 ## Auto QA smoke gate (impl / refactor close)
 
-User-facing breakage must never reach user.
+Never let user-facing breakage reach the user.
 
 - Tool: Playwright / Chromium MCP / headless. Non-UI = build / typecheck / unit tests.
 - Coverage: route load · navigation · no console errors · sanity Acceptance check.
@@ -32,9 +32,9 @@ User-facing breakage must never reach user.
   `duration_min` if `started_at` present.
 - Status transition: update frontmatter + mirrored header.
 - `assignee` / routing / session refs: metadata only.
-- `branch` / `worktree_path`: set on open; never cleared (history).
+- `branch` / `worktree_path`: set on open; never clear (history).
 - `## Outcome` = content; delegate Designer if product meaning needed.
-- **QA gate close** (impl / refactor): dev `ready_for_qa` → PO smoke gate → update
+- **QA gate close** (impl / refactor): dev `ready_for_qa` → run smoke gate → update
   `qa_status`. Pass → `done`. Fail → resume dev + `qa_loops += 1`. ≥3 → `blocked`.
 
 ## Outcome measurement (See layer)
@@ -42,18 +42,18 @@ User-facing breakage must never reach user.
 Two append-only layers; neither blocks lifecycle:
 
 **Per-ticket** (optional frontmatter): `success_metric`, `validation_method` —
-Designer-set when measurable. `observed_result` — PO fills P5. Most stay null.
+Designer-set when measurable. `observed_result` — fill at P5. Most stay null.
 
 **Per-Version** (required `versions[].outcome`): `north_star`, `input_metrics[]`,
 `validation_method` — Designer derives from PRD at ready time, emits via
-`version_outcome` in ready-turn JSON; PO mirrors into state. `observed_result`,
-`retrospective_path` — PO fills P5.
+`version_outcome` in ready-turn JSON; mirror into state. `observed_result`,
+`retrospective_path` — fill at P5.
 
 ## Lazy measurement protocol
 
-`validation_method` needs external data (PostHog / Sentry / GA) → P5 leaves
-`observed_result: null`. Designer asks user during next Version's P1 (P1 N+1 outcome
-chase). PO never reminds. No next Version → measurement never runs (correct).
+`validation_method` needs external data (PostHog / Sentry / GA) → leave
+`observed_result: null` at P5. Designer asks user during next Version's P1 (P1 N+1 outcome
+chase). Never remind. No next Version → measurement never runs.
 
 ## Phase ticket auto-emit summary
 
@@ -74,12 +74,12 @@ chase). PO never reminds. No next Version → measurement never runs (correct).
 
 ## Retrospective read sources (P5 — no fresh persona calls)
 
-5a/5b/5c **read stored memory**, never spawn fresh analysis. Allowed:
+At 5a/5b/5c, read stored memory only; never spawn fresh analysis. Allowed:
 
 1. **project notes** — `docs/{designer,developer,qa}/bookshelf/*.md`
 2. **po-state recent_turns** — rolling 5
 3. **global persona memory** — `~/.productune/<persona>/{habit,bookshelf}.md`
-   (PO file-reads ahead and injects via `[ctx]`)
+   (file-read ahead and inject via `[ctx]`)
 4. **po-memory** — `~/.productune/po/habit.md` (product taste + workflow prefs) +
    `~/.productune/po/bookshelf/calibration-log.md` (model/effort calibration)
 5. **approved-promotion archive** — `pending_promotions[]` `status ∈ {approved, edited}`
@@ -95,5 +95,3 @@ mkdir -p "docs/artifacts/$VERSION"
 cp docs/designer/design-system.md "docs/artifacts/$VERSION/design-system-snapshot.md"
 cp docs/prd/PRD.md "docs/artifacts/$VERSION/PRD-snapshot.md"
 ```
-
-Masters cycle-spanning, Designer in-place. Snapshots = immutable `.md` archives.

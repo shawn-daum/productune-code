@@ -1,6 +1,6 @@
 # JSON output envelope schema
 
-Every persona dispatch returns a single JSON object. ≤100 lines.
+Return a single JSON object per dispatch.
 
 ## Required fields
 | field | type | max | note |
@@ -15,7 +15,6 @@ Every persona dispatch returns a single JSON object. ≤100 lines.
 ## Optional fields
 | field | type | when |
 |:--|:--|:--|
-| `user_surface` | string ≤500 | omit on plan-only / needs-info / blocked / doc-no-functional turns |
 | `open_questions` | array<string> | ambiguity needing user input |
 | `unresolved` | array<string> | known gaps for follow-up |
 | `blocked` | boolean | true → explain in `summary` |
@@ -37,7 +36,7 @@ Every persona dispatch returns a single JSON object. ≤100 lines.
 ```
 
 ## Plan-mode envelope
-`summary` set + `user_surface` omitted + no file writes. PO surfaces plan-only.
+`summary` set + no file writes. PO surfaces plan-only.
 
 ## Needs-info envelope (PRD clarity loop)
 ```json

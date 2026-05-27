@@ -1,25 +1,24 @@
 # Calibration log — deviation-only entries
 
-PO model/effort routing is feedback loop, not static map. Every task close → 1 line
-capturing (estimate) vs (actual + result quality) **when they deviate**. Future Step 1
-reads log + biases. ≤100 lines.
+Treat model/effort routing as a feedback loop, not a static map. At every task close,
+append 1 line capturing (estimate) vs (actual + result quality) **when they deviate**.
+Read this log at Step 1 startup and bias the next routing.
 
 ## Where data lives
 
 - **Per-task (live)**: `./.productune/po-state.json :: current_task.calibration_outcome`.
-  Task close → cross-project rolling line appended to `~/.productune/po/bookshelf/calibration-log.md`.
-  Per-task `calibration_outcome` dropped with `current_task = null`.
-- **Cross-project (rolling)**: `~/.productune/po/bookshelf/calibration-log.md`.
-  1 line per task. install.sh seeds the file with header comment.
+  Task close → append a cross-project rolling line to `~/.productune/po/bookshelf/calibration-log.md`.
+  Per-task `calibration_outcome` drops with `current_task = null`.
+- **Cross-project (rolling)**: `~/.productune/po/bookshelf/calibration-log.md` — 1 line per task.
 
 ## Deviation-only entries
 
 Append only when estimate ≠ actual OR escalation triggered OR rework requested.
-Tasks where estimate == actual + smooth pass → no entry (signal noise reduction).
+Tasks where estimate == actual + smooth pass → no entry.
 
 ## 3-tuple key
 
-Entry retrieval / similarity = `(persona, complexity_class, area_tag)`:
+Retrieve / match entries by `(persona, complexity_class, area_tag)`:
 
 - `persona` ∈ `pdt-designer | pdt-developer | pdt-qa`
 - `complexity_class` ∈ `L1-single | L2-classify | ... | L7-net-new`
@@ -31,8 +30,8 @@ Step 1 startup similarity: all 3 → high weight; 2/3 → moderate; 1/3 → igno
 ## Read
 
 **Step 1 startup (mandatory):** scan last 10–20 entries. Similar-signal tasks
-historically needed estimate+1 → start one notch higher. Cross-project rolling weight,
-separate from `routing.md` `recent_turns`.
+historically needed estimate+1 → start one notch higher. This cross-project rolling weight
+is separate from `routing.md` `recent_turns`.
 
 ## Write (Step 3 step 18, mandatory)
 
@@ -67,13 +66,13 @@ Examples:
 Valid: `haiku/low`, `sonnet/medium`, `sonnet/high`, `opus/xhigh`, `opus/max`.
 Invalid: `pdt-developer/default`, `default/default`, `sonnet/normal`, `opus/extended`.
 
-For plan-first tasks, log **impl phase's** model/effort (final substantive call).
+For plan-first tasks, log the **impl phase's** model/effort (final substantive call).
 Plan phase lives in `persona_session_meta.<persona>.effort_history` for retro.
 
 ## Mechanical append
 
 ```bash
-LINE="- ($(date -u +%F)) ..."   # PO fills per format
+LINE="- ($(date -u +%F)) ..."   # fill per format
 CALIBRATION_LOG=~/.productune/po/bookshelf/calibration-log.md
 printf '%s\n' "$LINE" >> "$CALIBRATION_LOG"
 ```
@@ -87,10 +86,3 @@ Single `printf` append → almost no race risk.
 1. Same-3-tuple duplicates — keep most recent.
 2. Entries >1 year — move to `## Model/Effort Calibration (archived)`.
 3. Still >100 — mark oldest `[SUPERSEDED <date>]`.
-
-## Why this loop
-
-- **Self-improving** — PO learns task classes user/project habitually under-estimates.
-- **Cross-project** — `calibration-log.md` user-level → calibration carries to new projects.
-- **Transparent** — user opens file, sees reasoning. Auto upgrades have explicit grounds.
-- **Deviation-only** = less noise, higher signal density.

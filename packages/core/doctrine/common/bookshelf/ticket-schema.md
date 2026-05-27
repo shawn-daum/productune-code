@@ -1,7 +1,6 @@
 # Ticket md schema
 
-Path: `docs/tickets/<version>/T-NNN.md`. `<version>` = `po-state.current_version`.
-Folder auto-created on first ticket of version. ≤100 lines.
+Write each ticket at `docs/tickets/<version>/T-NNN.md`, where `<version>` = `po-state.current_version`. Folder auto-created on the first ticket of a version.
 
 ## Frontmatter
 
@@ -72,7 +71,7 @@ duration_min: <int>   # PO mechanical
 - <explicit nons — prevents scope creep>
 
 ## Plan
-<inline plan — replaces deprecated `plan_path:`. Includes §QA scope table when type ∈ impl/refactor.>
+<inline plan. Includes §QA scope table when type ∈ impl/refactor.>
 
 ## Outcome
 <filled at Phase 5 by assignee: shipped | deferred | dropped | scope-change + observed_result | null>

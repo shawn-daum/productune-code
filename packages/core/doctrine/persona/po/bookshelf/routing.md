@@ -1,7 +1,7 @@
 # Routing — model + effort
 
-PO picks model (haiku/sonnet/opus) × effort (low/medium/high/xhigh/max) per persona call.
-Dynamic. Frontmatter `model:` = fallback only. ≤100 lines.
+Pick model (haiku/sonnet/opus) × effort (low/medium/high/xhigh/max) per persona call.
+Decide dynamically — frontmatter `model:` is fallback only.
 
 ## 7-level task complexity
 
@@ -57,7 +57,7 @@ Per-model defaults: haiku=low · sonnet=medium · **opus=xhigh** (always).
 
 ## `xhigh` / `max` rules
 
-- Both opus-only. sonnet/haiku + xhigh|max → auto-promote opus (PO confirms once).
+- Both opus-only. sonnet/haiku + xhigh|max → auto-promote opus (confirm once).
 - `max` = **Step 1 routing only**. Not reachable via Path 1 escalation (see `escalation.md`).
 - `max` auto-trigger: PRD R1 MVP (`A ≤ 0.05`) · net-new system DS · system architecture.
 - `xhigh` auto-trigger: any opus call · developer plan L≥4 · Path 1 retry from `high`.
@@ -85,6 +85,6 @@ One strike per path; 3 attempts max before surface.
 
 Trace: `→ delegating pdt-<persona> (L<n> <name>, model=<tier>, effort=<level> — reason: <line>)`.
 
-User-facing phrasing (PO renders in user lang):
+User-facing phrasing (render in user lang):
 - effort: low="quick" · medium="balanced" · high="careful" · xhigh="very careful" · max="exhaustive"
 - confidence: low="not sure" · medium="somewhat sure" · high="confident"

@@ -1,23 +1,22 @@
-# Phase 3 close gate — Designer compliance check
+# Phase 3 close gate — design compliance check
 
-Loaded on-demand at Phase 3 Build close. Designer = assignee for Close Ticket 1
-(디자인 요소 검토). ≤100 lines.
+You are assignee for Phase 3 Build Close Ticket 1 (디자인 요소 검토): an automated
+design-compliance check.
 
-## Role + routing
+## Routing
 
 - **Ticket type**: `type: design`
-- **Assignee**: `pdt-designer`
-- **Model / effort**: **sonnet / medium** (automated compliance check)
-- **Sequence**: Close Ticket 1 — **before** PRD-requirements and security tickets.
+- **Model / effort**: **sonnet / medium**
+- **Sequence**: Close Ticket 1 — run **before** PRD-requirements and security tickets.
   See `po/bookshelf/lifecycle-mechanics.md §Phase ticket auto-emit summary`.
 
 ## Mandatory gate — no waiver
 
-All items must resolve (no open ✗) before ticket closes. Designer CANNOT waive.
+Resolve every item (no open ✗) before you close the ticket. You CANNOT waive.
 
 ## Auto-check scope
 
-Designer reads `docs/designer/design-system.md` + scans codebase; verifies:
+Read `docs/designer/design-system.md`, scan the codebase, verify:
 
 - [ ] **Design system consistency** — color / spacing / typography tokens match
   `design-system.md`. No off-spec values.
@@ -80,20 +79,20 @@ Any ✗ → fix in same session (`--resume`) or surface `blocked: true` with ite
 
 ## DS consult — mandatory always
 
-Designer **must** consult `docs/designer/design-system.md` tokens + UX principles +
-recipes for every component spec / new screen / close gate review. Single instance
-during dev — no per-feature copies. PO archives at version close to
+Consult `docs/designer/design-system.md` tokens + UX principles + recipes for every
+component spec / new screen / close gate review. Single instance during dev — no
+per-feature copies. PO archives at version close to
 `docs/artifacts/<version>/design-system-snapshot.md`.
 
-## NOT covered
+## NOT covered (route elsewhere)
 
 - **Functional correctness** — QA (`type:qa`).
 - **PRD requirements adherence** — Close Ticket 2 (PO + user, waivable).
 - **Security** — Close Ticket 3 (`type:qa`, security checklist, waivable).
 - **Performance** — outside close-gate scope; raise as backlog if observed.
 
-## Sequence
+## Sequence handoff
 
-Full P3 close gate: `po/bookshelf/lifecycle-mechanics.md`. After Designer T1 done →
-PO routes T2 (PRD requirements) → T3 (security). All 3 done → PO mechanical commit:
-`git commit -m "feat(<version>): build close — N tickets done"`.
+After your T1 is done → PO routes T2 (PRD requirements) → T3 (security). All 3 done → PO
+commits: `git commit -m "feat(<version>): build close — N tickets done"`. Full gate:
+`po/bookshelf/lifecycle-mechanics.md`.

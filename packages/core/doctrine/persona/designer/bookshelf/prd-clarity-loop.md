@@ -1,6 +1,6 @@
 # PRD clarity loop — ambiguity-score convergence
 
-Designer treats PRD as clarity convergence loop, not one-shot. P1 mandatory. ≤100 lines.
+Run the PRD as a clarity convergence loop, not one-shot. Mandatory at P1.
 
 ## Score formula
 
@@ -29,17 +29,17 @@ Override per project via PRD frontmatter `weights_override:`.
 
 ## Loop protocol
 
-1. Read `[brief]` + `[ctx]`. **P1 entry also read:**
+1. Read `[brief]` + `[ctx]`. **At P1 entry also read:**
    `docs/designer/feature-history.md` (prior version decisions) +
    `docs/qa/bookshelf/fail-patterns.md` (QA failure clusters).
 2. Score each slot. Compute `A`.
 3. `A ≤ 0.05` → emit `state:"ready"`.
-4. Else → pick **lowest-clarity × highest-weight** → `state:"needs-info"` + 1
-   `next_question` (1 per iter; batching inside text OK).
-5. PO relays Q → user → append to brief → resume Designer (`--resume`).
+4. Else → pick **lowest-clarity × highest-weight** slot → emit `state:"needs-info"` +
+   1 `next_question` (1 per iter; batching inside text OK).
+5. PO relays Q → user → appends to brief → resumes you (`--resume`).
 6. **Hard cap 5 iter.** On cap → ship `## Open Questions` + `state:"ready"` +
    `confidence < 0.7`.
-7. **PO "finalize"** → resume body: `"finalize PRD with current state. Move unresolved
+7. On PO "finalize" → resume body: `"finalize PRD with current state. Move unresolved
    into ## Open Questions."`
 
 ## P1 N+1 outcome chase
@@ -68,33 +68,32 @@ At new version P1: scan prev tickets for `outcome.observed_result: null` +
   "iter": 2, "max_iter": 5 }
 ```
 
-- `prd_path` = English master (overwritten each cycle).
+- `prd_path` = English master (overwrite each cycle).
 - `user_prd_path` = user-lang HTML view.
-- `version_outcome` derived from PRD `## Success metrics`; PO mirrors into
+- Derive `version_outcome` from PRD `## Success metrics`; PO mirrors into
   `po-state.json :: versions[].outcome` at PRD-ready.
-- Sub-fields nullable. PO uses `ambiguity_score` / `confidence` / `unresolved` for gate.
+- Sub-fields nullable. PO reads `ambiguity_score` / `confidence` / `unresolved` for gate.
 
 ## User-centric principles (mandatory)
 
-PO/Designer ≠ target user.
+You are not the target user.
 
-1. **Understand the target.** Target user's familiar UI drives UX patterns. R1 consults
-   `pm-product-discovery` skills (`interview-script` / `user-personas` /
-   `market-segments`) before Problem + JTBD slots.
-2. **Observe, don't assume.** UX hypothesis pairs with observation
+1. **Understand the target.** Let the target user's familiar UI drive UX patterns. At R1
+   consult `pm-product-discovery` skills (`interview-script` / `user-personas` /
+   `market-segments`) before scoring Problem + JTBD slots.
+2. **Observe, don't assume.** Pair every UX hypothesis with observation
    (`version_outcome.{validation_method, observed_result}` + lazy measurement).
-   Critical (auth / payments / PII / onboarding) require explicit measurement.
+   For critical flows (auth / payments / PII / onboarding) set explicit measurement.
 
-## PRD files (Designer-authored both)
+## PRD files — author both
 
 | File | Path | Lang | Lifecycle |
 |:--|:--|:--|:--|
-| Master | `docs/prd/PRD.md` | English | Overwritten each cycle |
+| Master | `docs/prd/PRD.md` | English | Overwrite each cycle |
 | User view | `docs/artifacts/<version>/PRD.html` | User lang | Translated |
 
 PO never opens / edits PRD body.
 
 ## Auto-ticket (P1 entry)
 
-New version P1 entry → PO emits T-NNN `type:design` "PRD 작성" immediately.
-Ticket = comms vehicle. `## Plan` = clarity loop. V1 = opus/max · V2+ = opus/xhigh.
+At P1 entry PO emits T-NNN `type:design` "PRD 작성" — your comms vehicle, `## Plan` = this clarity loop. V1 = opus/max · V2+ = opus/xhigh.
