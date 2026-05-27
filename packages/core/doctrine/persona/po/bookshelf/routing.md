@@ -58,17 +58,17 @@ Per-model defaults: haiku=low · sonnet=medium · **opus=xhigh** (always).
 ## `xhigh` / `max` rules
 
 - Both opus-only. sonnet/haiku + xhigh|max → auto-promote opus (confirm once).
-- `max` = **Step 1 routing only**. Not reachable via Path 1 escalation (see `escalation.md`).
+- `max` = **Step 1 routing only**. Not reachable via Strike 2 model-up escalation (see `escalation.md`).
 - `max` auto-trigger: PRD R1 MVP (`A ≤ 0.05`) · net-new system DS · system architecture.
-- `xhigh` auto-trigger: any opus call · developer plan L≥4 · Path 1 retry from `high`.
+- `xhigh` auto-trigger: any opus call · developer plan L≥4 · Strike 2 (model-up) retry from `high`.
 - Flag separately in `recent_turns` (`effort:"xhigh"` / `"max"`) for cost retro.
 
-## Escalation tier ladder (3-strike → see `escalation.md`)
+## Escalation ladder (3-strike → see `escalation.md`)
 
-Path 1 = model up + effort up (haiku→sonnet→opus, low→medium→high→xhigh; **never max**).
-Path 2 = skill search (consult skill index, retry with skill).
-Path 3 = user surface (block + ask).
-One strike per path; 3 attempts max before surface.
+Strike 1 = skill search (auto-install top match, re-invoke same session).
+Strike 2 = model up + effort up (haiku→sonnet→opus, low→medium→high→xhigh; **never max**).
+Strike 3 = user surface (present alternatives, user chooses).
+Strikes 1–2 automatic; user asked only at Strike 3. One attempt per strike, auto 1→2→3.
 
 ## Decision algorithm
 
@@ -78,7 +78,7 @@ One strike per path; 3 attempts max before surface.
 4. L → tier (table above).
 5. Effort per-model default → adjust.
 6. `recent_turns` auto-weight: same task/persona fail ≥2 → tier+1.
-7. `xhigh` auto-trigger: opus default · plan L≥4 · Path 1 retry from high.
+7. `xhigh` auto-trigger: opus default · plan L≥4 · Strike 2 model-up retry from high.
 8. `max` auto-trigger: PRD R1 / net-new DS / system arch (Step 1 only).
 9. User prefix override (`/model`, `/effort`, `/dev:opus/max`).
 10. Emit trace.

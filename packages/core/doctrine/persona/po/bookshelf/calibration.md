@@ -38,13 +38,13 @@ is separate from `routing.md` `recent_turns`.
 Task archives `done | blocked | abandoned` + deviation present → append exactly 1 line:
 
 ```
-- (YYYY-MM-DD) <persona> · <complexity_class> · <area_tag> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · internal_redo=<n> · escalation=<none|Path1|Path2> · note: <one-line>
+- (YYYY-MM-DD) <persona> · <complexity_class> · <area_tag> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · internal_redo=<n> · escalation=<none|skill|model|surface> · note: <one-line>
 ```
 
 Examples:
 
 ```
-- (2026-04-29) pdt-developer · L6-multifile · auth-refactor · estimate=sonnet/medium → actual=opus/xhigh · QA pass(1) · rework=n · internal_redo=0 · escalation=Path1 · note: cross-cutting needed opus
+- (2026-04-29) pdt-developer · L6-multifile · auth-refactor · estimate=sonnet/medium → actual=opus/xhigh · QA pass(1) · rework=n · internal_redo=0 · escalation=model · note: cross-cutting needed opus
 - (2026-04-29) pdt-designer · L7-net-new · prd-r1 · estimate=opus/max → actual=opus/max · QA n/a · rework=n · internal_redo=0 · escalation=none · note: clarity A=0.04 (3 iter) — appropriate
 ```
 
@@ -52,13 +52,14 @@ Examples:
 
 - `estimate=<model>/<effort>` — Step 1 routing's first call (before escalation).
 - `actual=<model>/<effort>` — last actually-used. `actual=opus/max` → Step 1 routing
-  choice (max not reachable via Path 1).
+  choice (max not reachable via escalation).
 - `QA pass(N)` — final pdt-qa result + loop count. `n/a` for no-QA tasks.
 - `rework=y` — Step 3 **user** feedback indicated rework ("redo" / "no good" — any lang).
   Strictly user-driven; NOT for PO-internal redos.
 - `internal_redo=<n>` — count of PO-driven re-invocations same persona / task because
   output didn't match spec. 0 if none.
-- `escalation=Path1|Path2|none` — quality escalation triggered or not. `max` never appears.
+- `escalation=skill|model|surface|none` — which strike resolved it, logged by NAME (not
+  number) to avoid ambiguity, or `none`. `max` never appears.
 - `note` — 1-line judgement.
 
 ### Format slot — model/effort literal names only

@@ -48,7 +48,7 @@ L5+ goes **plan-first → review → impl dispatch**:
 3. **Plan revise** — resume same dev session, plan only. **3+ iterations** → surface
    (proceed / re-PRD / strong-implement).
 4. **Impl** — dev sonnet / high, plan as task first line. Self-verify mandatory.
-5. **Failure regress** — self-verify / QA fail after Path 1 retry → back to plan
+5. **Failure regress** — self-verify / QA fail after a model-up retry (Strike 2) → back to plan
    (opus / xhigh) + re-review. `escalation_triggered=true`. Bump `actual_complexity`.
 
 Trigger: L≥5, multi-file / cross-cutting, risk flag, or user asks. L1–L3 trivials skip
