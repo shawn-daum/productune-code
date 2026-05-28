@@ -22,3 +22,6 @@
 
 ### 5. External-tool recommendation
 - Beyond own ability (hi-res image / 3D / video / audio), emit `external_tool_recommendation: {tool, why_external, prompt, expected_output_path}`. Never fake the output — acknowledge and refer.
+
+### 6. Decision log — non-trivial design choices
+- Surfaces `→ bookshelf/decisions.md` index: append non-trivial choices to `docs/designer/bookshelf/decisions.md` (1 line + `[T-NNN]` source). Skim before re-deciding the same topic (consistency). Route via promotion gate — emit `promotion_candidates[]` (`project, bookshelf`); PO writes on user approval.

@@ -17,14 +17,38 @@ resolved target on user `y`:
 
 | Quadrant (scope/pattern) | Target path | Write |
 |:--|:--|:--|
-| (project, bookshelf) | `docs/<persona>/bookshelf/<file>.md` | **auto** on `y` — `printf '%s\n' "$DELTA" >> <target>` |
+| (project, bookshelf) | `docs/<persona>/bookshelf/<file>.md` | **auto** on `y` — append + habit-index sync (§ below) |
 | (project, habit) | `docs/<persona>/habit.md` | curated edit (PO shell on `y`) |
-| (global, bookshelf) | `~/.productune/<persona>/bookshelf/<file>.md` | append (PO shell on `y`) |
+| (global, bookshelf) | `~/.productune/<persona>/bookshelf/<file>.md` | append + habit-index sync (PO shell on `y`) |
 | (global, habit) | `~/.productune/<persona>/habit.md` | curated edit (PO shell on `y`) |
 
 - **(project, bookshelf)** = **auto-write** on user `y` (low-stakes append + source label).
 - **(project, habit)** + both **global** quadrants = **user-approval surface** (curated edit / lifestyle change).
 - Never write global silently — persona proposes, you write only on a user decision.
+
+## Habit-as-index — bookshelf 와 habit 은 한 쌍
+
+bookshelf = 본문 (on-demand), 같은 layer 의 habit = 그 인덱스 (always-read).
+Personas only ever read habit on session start; if habit carries no cross-link to a
+bookshelf file, the bookshelf exists but is never consulted (orphan). Every bookshelf
+write therefore pairs with a habit-index action:
+
+- **New bookshelf file (first entry)** — add a one-line index in the same-layer habit:
+  `- <topic 요약> → \`bookshelf/<file>.md\`` so the persona opens it when that topic
+  comes up. (Tier 0 standard files = doctrine SoT habit; project = Tier 1; personal =
+  Tier 2 — the layer the bookshelf lives in is the layer the index belongs in.)
+- **Append to existing bookshelf** — leave the index line as-is (the one-line topic
+  summary doesn't change with each entry).
+- **Bookshelf split (cap ≥100 reached)** — split the habit index line too so each
+  resulting bookshelf file gets its own pointer.
+
+The index entry is **curated** (no `[T-NNN]` source), even when the bookshelf append
+itself is `auto`. PO writes it directly during the same approval turn.
+
+| Quadrant | bookshelf write target | same-layer habit to keep in sync |
+|:--|:--|:--|
+| (project, bookshelf) | `docs/<persona>/bookshelf/<file>.md` | `docs/<persona>/habit.md` |
+| (global, bookshelf)  | `~/.productune/<persona>/bookshelf/<file>.md` | `~/.productune/<persona>/habit.md` |
 
 ## Schema (per candidate)
 

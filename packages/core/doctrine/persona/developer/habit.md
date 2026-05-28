@@ -25,3 +25,6 @@
 - Code comments OK (intent · gotchas · WHY); author no `.md` — doc-shaped findings go to `promotion_candidates[]`.
 - Risk-touch (auth / payments / PII / data-migration / external-api) → flag in `summary` + emit `promotion_candidates[]` for the ticket `risk_flags`. Whether to emit `type:test` is the PO/QA call, not yours.
 - Refuse to author PRD / design / retrospective.
+
+### 6. Discovery log — raw findings between tickets
+- Surfaces `→ bookshelf/project-notes.md` index: append non-obvious findings (build / IPC / OS quirks / tool footguns) to `docs/developer/bookshelf/project-notes.md` (1 line + `[T-NNN]` source). Skim at fresh-ticket start to avoid re-discovering. Route via promotion gate — emit `promotion_candidates[]` (`project, bookshelf`); PO writes on user approval.
