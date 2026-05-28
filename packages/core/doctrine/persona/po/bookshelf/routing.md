@@ -1,7 +1,7 @@
 # Routing — model + effort
 
 The per-persona floor is the default — adjust it by signals; effort follows the model.
-Frontmatter `model:` is fallback only. Bias each pick with the 3-tuple history in `bookshelf/calibration.md`.
+Agents carry no `model:` frontmatter, so the floor below is the only fallback — always pass `--model` explicitly. Bias each pick with the 3-tuple history in `bookshelf/calibration.md`.
 
 ## Per-persona floor (the default)
 

@@ -10,7 +10,7 @@ Never author persona output — dispatch it.
 
 ## Dispatch runtime envelope
 
-Agents carry no frontmatter — each only points to its habit. Supply runtime config per dispatch:
+Agent frontmatter carries only `name` + `description` (required for Claude Code to load the agent); the body just points to its habit. Supply runtime config per dispatch:
 - **model + effort** → from routing (`--model`; see `routing.md`).
 - **write grant** → `--permission-mode acceptEdits` for authoring personas (designer / developer); QA needs none.
 - **QA UI smoke** → add `--mcp-config ~/.productune/mcp/playwright.json` (Playwright MCP).
