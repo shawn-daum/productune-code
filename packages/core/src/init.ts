@@ -128,28 +128,25 @@ function ensureGitignoreEntry(projectDir: string): void {
   fs.writeFileSync(gitignorePath, newContent)
 }
 
-const PERSONA_MEMORY_DIRS: Array<{ dir: string; readme: string }> = [
-  {
-    dir: 'docs/designer',
-    readme:
-      '# pdt-designer project memory\n\n' +
-      '`decisions.md` — non-trivial design decisions, one dated line each (PO appends on user approval).\n' +
-      'Round-scoped work-notes (`R<n>-<slug>.md`) — richer per-task artifacts (PO writes on user approval).\n',
-  },
-  {
-    dir: 'docs/developer',
-    readme:
-      '# pdt-developer project memory\n\n' +
-      '`project-notes.md` — non-obvious project facts (build/test/quirks), one dated line each (PO appends on user approval).\n' +
-      'Round-scoped work-notes (`R<n>-<slug>.md`) — richer per-task artifacts (PO writes on user approval).\n',
-  },
-  {
-    dir: 'docs/qa',
-    readme:
-      '# pdt-qa project memory\n\n' +
-      '`project-notes.md` — flakes, missing cmds, env quirks, one dated line each (PO appends on user approval).\n' +
-      'Round-scoped work-notes (`R<n>-<slug>.md`) — richer per-task artifacts (PO writes on user approval).\n',
-  },
+/**
+ * Persona Tier-1 habit shell — the project-local overlay file every persona
+ * agent reads via `docs/<persona>/habit.md` in its reader chain.
+ *
+ * Body intentionally minimal: Tier 0 doctrine already names the cap (≤100
+ * lines, curated, no source label) and the work patterns (decisions.md /
+ * project-notes.md / fail-patterns.md). Tier 1 is a blank overlay that PO
+ * curates on user approval via the promotion gate.
+ */
+function habitShell(persona: string): string {
+  const Cap = persona.charAt(0).toUpperCase() + persona.slice(1)
+  return `# ${Cap} project habit\n\nPer-repo curated rules / prefs / decisions distilled. Tier 1 project memory.\n\n## Entries\n`
+}
+
+const PERSONA_MEMORY_DIRS: string[] = [
+  'docs/po',
+  'docs/designer',
+  'docs/developer',
+  'docs/qa',
 ]
 
 function ensureFile(filePath: string, contents: string) {
@@ -159,34 +156,53 @@ function ensureFile(filePath: string, contents: string) {
 }
 
 export function bootstrapPersonaMemory(projectDir: string) {
-  for (const { dir, readme } of PERSONA_MEMORY_DIRS) {
+  // Tier-1 habit shell per persona — including pdt-po.
+  for (const dir of PERSONA_MEMORY_DIRS) {
     const abs = path.join(projectDir, dir)
     fs.mkdirSync(abs, { recursive: true })
-    ensureFile(path.join(abs, 'README.md'), readme)
+    const persona = path.basename(dir)
+    ensureFile(path.join(abs, 'habit.md'), habitShell(persona))
   }
-  // Structured operational logs — Version-tagged, append-only.
+
+  // Persona bookshelves — empty dirs are not enough (git can't track empty),
+  // so seed each with the canonical first file referenced by Tier 0 doctrine:
+  //   - qa habit § QA-loop  → docs/qa/bookshelf/fail-patterns.md
+  //   - developer habit § 6 → docs/developer/bookshelf/project-notes.md
+  //   - designer habit § 6  → docs/designer/bookshelf/decisions.md
+  // Each gets a 1-line header so the file exists and the cross-link resolves;
+  // entries land on later promotions.
   ensureFile(
-    path.join(projectDir, 'docs/qa/fail-patterns.md'),
+    path.join(projectDir, 'docs/qa/bookshelf/fail-patterns.md'),
     '# QA fail patterns\n\n' +
-      'Per-Version log of QA fail loops. Read by Designer at Phase 1 PRD authoring\n' +
-      '(Test ticket trigger #3: same area-tag ≥3 累累 fail → emit `stage:test` ticket).\n\n' +
-      '## Schema\n\n' +
-      '- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>\n\n' +
-      'area-tag = `<feature>/<sub-area>` (e.g. `auth/login-modal`).\n' +
-      'Appended by PO mechanically from QA\'s `fail_event` output. No manual edits.\n\n' +
-      '## Entries\n\n',
+      'Per-Version log of QA fail loops. Read by Designer at Phase 1 PRD authoring.\n' +
+      '`- (YYYY-MM-DD) <version> · <ticket-id> · <area-tag> · loops=<N> · final=<resolved|blocked|abandoned> · note: <one-line>`.\n' +
+      'Appended mechanically by PO from QA `fail_event` output.\n\n## Entries\n',
   )
+  ensureFile(
+    path.join(projectDir, 'docs/developer/bookshelf/project-notes.md'),
+    '# Developer project notes\n\n' +
+      'Non-obvious findings (build / IPC / OS quirks / tool footguns). Skim at fresh-ticket start.\n' +
+      '`- (YYYY-MM-DD) [T-NNN] <area-tag> · <note>`. Route via promotion gate.\n\n## Entries\n',
+  )
+  ensureFile(
+    path.join(projectDir, 'docs/designer/bookshelf/decisions.md'),
+    '# Designer decisions\n\n' +
+      'Non-trivial design choices. Skim before re-deciding the same topic.\n' +
+      '`- (YYYY-MM-DD) [T-NNN] <area-tag> · <decision>`. Route via promotion gate.\n\n## Entries\n',
+  )
+
+  // Designer master — feature-history.md stays at docs/designer/ top level
+  // (Tier 0 common habit names it as a SoT write target).
   ensureFile(
     path.join(projectDir, 'docs/designer/feature-history.md'),
     '# Feature history\n\n' +
       'Per-Version log of feature decisions / scope choices / deferrals.\n' +
-      'Read at Phase 1 PRD authoring; appended by Designer at Phase 5 Version close.\n\n' +
-      '## Schema\n\n' +
-      '- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>\n\n' +
-      'decision-type ∈ `shipped | deferred | dropped | scope-change`.\n' +
-      'area-tag = `<feature>/<sub-area>` (matches QA convention).\n\n' +
-      '## Entries\n\n',
+      'Read at Phase 1 PRD authoring; appended by Designer at Phase 5 Version close.\n' +
+      '`- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>`.\n' +
+      'decision-type ∈ `shipped | deferred | dropped | scope-change`.\n\n## Entries\n',
   )
+
+  // Activity-log dir (raw per-task JSONL).
   const turnsDir = path.join(projectDir, '.productune', 'turns')
   fs.mkdirSync(turnsDir, { recursive: true })
   ensureFile(
