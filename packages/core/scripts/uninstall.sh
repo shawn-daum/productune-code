@@ -168,7 +168,8 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
       or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
       or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"))
       or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
-      or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"));
+      or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"));
     def strip_pdt(arr; dir):
       ((arr // []) | map(
         select(((.hooks // []) | map(.command // "" | is_pdt(.; dir)) | any) | not)

@@ -85,9 +85,10 @@ merge_claude_settings_hooks() {
   local precheck="$hooks_dir/pre-delegate-task-check.sh"
   local chunkwarn="$hooks_dir/pre-chunking-warn.sh"
   local strip="$hooks_dir/post-bash-strip-cost.sh"
+  local fmlint="$hooks_dir/pre-frontmatter-lint.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -96,7 +97,8 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
       or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"))
       or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
-      or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"));
+      or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"));
     def strip_pdt(arr; dir):
       (arr // []) | map(
         select(((.hooks // []) | map(is_pdt(.command // ""; dir)) | any) | not)
@@ -107,7 +109,9 @@ merge_claude_settings_hooks() {
         {matcher: "Bash",
          hooks: [{type: "command", command: $precheck}]},
         {matcher: "Bash",
-         hooks: [{type: "command", command: $chunkwarn}]}
+         hooks: [{type: "command", command: $chunkwarn}]},
+        {matcher: "Write|Edit",
+         hooks: [{type: "command", command: $fmlint}]}
       ])
     | .hooks.PostToolUse = (strip_pdt(.hooks.PostToolUse; $dir) + [
         {matcher: "Write|Edit",
@@ -532,9 +536,10 @@ PROMPT
       *)
         EXPORT_LINE="export PATH=\"$ROOT/scripts:\$PATH\""
         if grep -qF "$ROOT/scripts" "$SHELL_RC" 2>/dev/null; then
-          say "이미 $SHELL_RC 에 등록되어 있습니다"
+          say "이미 $SHELL_RC 에 등록되어 있습니다 (현재 셸 미적용 — source 필요)"
           printf 'PRODUCTUNE_PATH_METHOD=rc\nPRODUCTUNE_PATH_RC=%s\n' "$SHELL_RC" >> "$PO_ENV_FILE"
           PATH_REGISTERED=1
+          NEEDS_SOURCE=1
         else
           printf '\n# productune\n%s\n' "$EXPORT_LINE" >> "$SHELL_RC"
           say "PATH 추가 완료: $SHELL_RC (새 터미널에서 자동 적용)"
@@ -548,47 +553,70 @@ PROMPT
 fi
 
 # 10) Summary + next steps
+#
+# PATH 상태는 3가지:
+#   A. 즉시 사용 가능       (PATH_REGISTERED=1, NEEDS_SOURCE=0)
+#      → 이미 셸에서 productune 명령 인식됨. PATH 등록 step 생략.
+#   B. rc 추가됨, 셸 미적용   (PATH_REGISTERED=1, NEEDS_SOURCE=1)
+#      → source 명령 안내.
+#   C. 미등록               (PATH_REGISTERED=0)
+#      → 수동 등록 옵션 3가지 안내.
+# "등록됨"이라고 거짓말하지 않도록 NEEDS_SOURCE도 반영해서 표기.
+
+case "${SHELL:-}" in
+  */zsh)  SHELL_RC="${SHELL_RC:-$HOME/.zshrc}" ;;
+  */bash) SHELL_RC="${SHELL_RC:-$HOME/.bashrc}" ;;
+  *)      SHELL_RC="${SHELL_RC:-$HOME/.zshrc}" ;;
+esac
+
+if [ "$PATH_REGISTERED" = 1 ] && [ "$NEEDS_SOURCE" = 0 ]; then
+  PATH_STATUS="등록됨 (즉시 사용 가능)"
+elif [ "$PATH_REGISTERED" = 1 ] && [ "$NEEDS_SOURCE" = 1 ]; then
+  PATH_STATUS="rc 추가됨 — 현재 셸 적용 필요 (아래 1번)"
+else
+  PATH_STATUS="미등록 (아래 1번 참고)"
+fi
+
 cat <<EOF
 
 $(printf "\033[1;32m✓ onboard complete\033[0m")
 
-  PATH         : $([ "$PATH_REGISTERED" = 1 ] && echo "등록됨" || echo "미등록 (위 안내 참고)")
+  PATH         : $PATH_STATUS
 
 Next steps:
-$(if [ "$NEEDS_SOURCE" = 1 ]; then
+EOF
+
+STEP=1
+if [ "$NEEDS_SOURCE" = 1 ]; then
 cat <<PATHRC
-  1. 현재 셸에 PATH 즉시 적용 (새 터미널에서는 자동 적용되므로 생략 가능):
+  $STEP. PATH 등록 (현재 셸에 즉시 적용 — 새 터미널은 자동 적용되므로 생략 가능):
        source $SHELL_RC
 
-  2. 원하는 프로젝트 폴더로 이동 후 init → productune 실행:
-       cd <your-project>
-       productune init        # 한 번만: .productune/, docs/pdt-*/, .gitignore 세팅
-       productune             # PO 세션 시작
-     → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
-     (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
-
-  3. 병렬 작업 후 worktree 정리:
-       productune gc        # dry-run
-       productune gc -y     # safe한 것 자동 제거
-
-  4. 완전히 제거할 때:
-       productune uninstall
 PATHRC
-else
+  STEP=$((STEP + 1))
+elif [ "$PATH_REGISTERED" = 0 ]; then
 cat <<NOPATH
-  1. 원하는 프로젝트 폴더로 이동 후 init → productune 실행:
-       cd <your-project>
-       productune init        # 한 번만: .productune/, docs/pdt-*/, .gitignore 세팅
-       productune             # PO 세션 시작
-     → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
-     (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
+  $STEP. PATH 등록 — 다음 중 하나 선택:
+       # 옵션 a) 셸 rc 파일에 추가 (권장, sudo 불필요)
+       echo 'export PATH="$ROOT/scripts:\$PATH"' >> $SHELL_RC && source $SHELL_RC
 
-  2. 병렬 작업 후 worktree 정리:
-       productune gc        # dry-run
-       productune gc -y     # safe한 것 자동 제거
+       # 옵션 b) ~/.local/bin 심볼릭 링크 (sudo 불필요)
+       mkdir -p ~/.local/bin && ln -sf $ROOT/scripts/productune ~/.local/bin/productune
 
-  3. 완전히 제거할 때:
-       productune uninstall
+       # 옵션 c) /usr/local/bin 심볼릭 링크 (sudo 필요할 수 있음)
+       sudo ln -sf $ROOT/scripts/productune /usr/local/bin/productune
+
 NOPATH
-fi)
+  STEP=$((STEP + 1))
+fi
+
+cat <<EOF
+  $STEP. 원하는 프로젝트 폴더로 이동 후 실행:
+       cd <your-project>
+       productune init        # 해당 폴더에서 한 번만 실행
+       productune             # PO와 대화 시작
+     → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
+
+  $((STEP + 1)). 완전히 제거할 때:
+       productune uninstall
 EOF
