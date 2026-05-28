@@ -41,7 +41,7 @@ Reader chain (Tier 0 common → Tier 0 persona → Tier 1 project → Tier 2 per
 | **supersede** — 기존 outdated | 삭제 + new, user 명시 (`X → Y 대체 OK?`) |
 | **conflict** — 두 룰 모순 | append 금지, conflict surface → 통합안 |
 
-`(global, habit)` 은 supersede / conflict 시 user 명시 확인 필수 — 자동 처리 X.
+`(global, habit)` decision 전 PO 는 **Tier 0 base 를 매번 다시 read** (persona Tier 0 habit + 그 habit 의 bookshelf 인덱스 라인). 그 위에 merge classifier 돌려서 분류. supersede / conflict 시 user 명시 확인 필수 — 자동 처리 X. 특히 Tier 0 mechanical workflow (self-check · dispatch 순서 · refusal · gate 등) 를 weaken / 우회하는 변경이면 단순 `X → Y OK?` 가 아니라 **명시 경고** surface (예: `Tier 0 § N 의 ___ 를 weaken 합니다. 의도 맞으세요?`). user explicit confirm 후에만 write.
 
 ## Habit-as-index — bookshelf 와 habit 은 한 쌍
 
