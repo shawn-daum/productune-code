@@ -18,13 +18,30 @@ resolved target on user `y`:
 | Quadrant (scope/pattern) | Target path | Write |
 |:--|:--|:--|
 | (project, bookshelf) | `docs/<persona>/bookshelf/<file>.md` | **auto** on `y` — append + habit-index sync (§ below) |
-| (project, habit) | `docs/<persona>/habit.md` | curated edit (PO shell on `y`) |
+| (project, habit) | `docs/<persona>/habit.md` | curated edit + merge check (§ below) (PO shell on `y`) |
 | (global, bookshelf) | `~/.productune/<persona>/bookshelf/<file>.md` | append + habit-index sync (PO shell on `y`) |
-| (global, habit) | `~/.productune/<persona>/habit.md` | curated edit (PO shell on `y`) |
+| (global, habit) | `~/.productune/<persona>/habit.md` | curated edit + merge check (§ below) (PO shell on `y`) |
 
 - **(project, bookshelf)** = **auto-write** on user `y` (low-stakes append + source label).
 - **(project, habit)** + both **global** quadrants = **user-approval surface** (curated edit / lifestyle change).
 - Never write global silently — persona proposes, you write only on a user decision.
+
+## Layer priority — chain 의 뒤가 앞을 덮는다
+
+Reader chain (Tier 0 common → Tier 0 persona → Tier 1 project → Tier 2 personal) 의 **last layer wins**. 같은 topic 이 두 layer 에 있으면 뒤가 override. (Tier 1/2 = Tier 0 위 overlay — productune doctrine 직접 건드리지 않고 진화 가능.)
+
+## Merge on promotion — habit write 는 append 가 아니라 curated merge
+
+`(*, habit)` write 는 target 기존 entries 와 conflict check:
+
+| 관계 | 처리 |
+|:--|:--|
+| **new** — 무관 topic | § 자리에 맞춰 append |
+| **refine** — 같은 topic, 더 정확 | replace + 변경 사유 1줄 surface |
+| **supersede** — 기존 outdated | 삭제 + new, user 명시 (`X → Y 대체 OK?`) |
+| **conflict** — 두 룰 모순 | append 금지, conflict surface → 통합안 |
+
+`(global, habit)` 은 supersede / conflict 시 user 명시 확인 필수 — 자동 처리 X.
 
 ## Habit-as-index — bookshelf 와 habit 은 한 쌍
 
