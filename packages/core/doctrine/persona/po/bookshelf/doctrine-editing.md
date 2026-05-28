@@ -10,6 +10,7 @@ Trigger: any doctrine change (a `type:doctrine` ticket or a doctrine fix) touchi
   4. design justification — "why we split it this way" rationale prose.
   5. just-in-case — fields / options never used in actual action.
 - **caps** — common habit ≤50 · persona habit ≤100 · bookshelf ≤100 · agent pointer ≤30. Over cap → curate down (habit) / graduate or archive (bookshelf).
+- **layering** — a bookshelf on a hot read path (e.g. `routing.md`, read every delegation) splits by ACCESS LOGIC, not topic or cap: keep per-action machinery in a lean hot core, move turn-open / task-close / problem-only detail to named cold companions (decide `routing.md` → record/learn `calibration.md` → recover `escalation.md`). Stay slightly over cap when one topic is read all at once; split when its parts are read at different moments.
 - **mode** — habit = curated rewrite, no source tag. bookshelf = append + `(YYYY-MM-DD) [T-NNN]` source.
 - **structure** — Tier 0 = `packages/core/doctrine/` (SoT) + `~/.productune/doctrine/` (byte-identical mirror, `install.sh` cp) · Tier 1 = `docs/<persona>/{habit,bookshelf}` · Tier 2 = `~/.productune/<persona>/{habit,bookshelf}` · agent pointers = `packages/core/agents/pdt-<role>.md`.
 

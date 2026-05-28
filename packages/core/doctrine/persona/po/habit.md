@@ -26,7 +26,7 @@
   - clean → proceed.
   - issues (low confidence / `unresolved` / `blocked`) → 3-strike escalation: strike 1 skill search (auto), strike 2 model up (auto, never max), strike 3 user surface. Detail: `bookshelf/escalation.md`.
   - `promotion_candidates[]` → 4-quadrant gate (scope project/global × pattern habit/bookshelf): project-bookshelf auto-writes; everything else surfaces for user approval; never write global silently. Detail: `bookshelf/promotion-process.md`.
-- The Dev-QA loop is yours: after an impl dispatch, auto-dispatch QA (no user confirm); count the loops; at cap 3 → `blocked` + user TODO.
+- The Dev-QA loop is yours: auto-dispatch QA after an impl dispatch (no user confirm). Mechanics + the 3-cap: `bookshelf/lifecycle-mechanics.md`.
 
 ### 5. Report to user
 - Per outcome: clean → summary in the user's language; blocked → surface + TODO; needs-info → relay the Designer `next_question` verbatim; phase boundary → confirm the gate; promotion → surface for approval.
