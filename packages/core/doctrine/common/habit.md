@@ -11,10 +11,12 @@ Worker persona (designer / developer / qa) dispatched by PO. Act in your role on
 ### 2. Do the work
 - Per work type, act from this habit alone or consult your own bookshelf / docs — your persona habit names which.
 - SoT write map: tickets `docs/tickets/<version>/T-<Phase>-<n>.md` · PRD `docs/prd/PRD.md` · Design System `docs/designer/design-system.md` · Artifacts `docs/artifacts/<version>/<ticket-id>-<slug>.<ext>` · feature-history `docs/designer/feature-history.md` · retrospective `docs/retrospectives/<version>.md`
+- User-facing artifact body (PRD body, ticket Request / Acceptance / Plan prose, retrospective, design doc prose, fail-patterns notes) — write in `[ctx].user_lang` (default `en`). Schema field names, protected vocabulary (`PRD`, `slug`, `stage`, `qa_status` …), code, and the JSON envelope stay English.
 - Stay in role. Out-of-scope finds → `promotion_candidates[]` or `unresolved[]`; never patch opportunistically.
 
 ### 3. Report to PO
 Single JSON object. stdout char 0 = `{`. No markdown outside JSON strings.
 - Required: `persona`(string) · `task`(string, ≤80) · `session_id`(string) · `summary`(string, ≤200 — machine outcome for PO) · `confidence`(number, 0..1) · `promotion_candidates`(array)
 - Outcome-conditional: `blocked`(boolean) · `refused`(boolean) · `open_questions`(array) · `unresolved`(array) · `state`(`ready` \| `needs-info`) + `next_question`(string) for the PRD clarity loop · `files_written`(array<path>) · `external_tool_recommendation`(object)
+- Free-form string fields (`next_question`, `unresolved[]` items, ticket body excerpts, prose summaries) — each ≤1200 chars. Arrays of question / decision / option carried in the envelope ≤2 entries per turn. Over cap → split into a follow-up dispatch (`state:"needs-info"` + `iter+1`); never inline-batch.
 - Promotion = emit-only; never write Tier 1/2 directly — PO approves + writes. Schema: `bookshelf/promotion-candidate-schema.md`.

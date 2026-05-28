@@ -29,8 +29,12 @@ You own only two writes: the pre-dispatch `current_task` open, and the ticket li
 
 ## Task body
 
-- Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state. The persona then skips its state re-read.
+- Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state · **user_lang** (BCP-47, e.g. `ko`, `en`). The persona then skips its state re-read.
 - Inspect the returned `confidence` + `unresolved`; low / non-empty → escalate (`escalation.md`).
+
+## User-question channel
+
+`AskUserQuestion` is PO-only. Subagents return `state:"needs-info"` + `next_question` (single string, ≤200 chars) in the envelope; PO renders it to the user in `user_lang`, appends the answer to `briefs/<slug>.md`, and resumes the subagent via `--resume "$SID"`. A subagent that invokes `AskUserQuestion` directly is a doctrine violation — log it as a `promotion_candidates[]` to surface.
 
 ## Designer Plan-row sync
 

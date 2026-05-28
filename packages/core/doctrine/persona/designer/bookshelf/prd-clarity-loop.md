@@ -35,8 +35,9 @@ Override per project via PRD frontmatter `weights_override:`.
 2. Score each slot. Compute `A`.
 3. `A ≤ 0.05` → emit `state:"ready"`.
 4. Else → pick **lowest-clarity × highest-weight** slot → emit `state:"needs-info"` +
-   1 `next_question` (1 per iter; batching inside text OK).
-5. PO relays Q → user → appends to brief → resumes you (`--resume`).
+   1 `next_question` — single concise string ≤200 chars, exactly one question
+   inside. No multi-question batching in the text, no comma-joined sub-asks.
+5. PO renders Q to user in `user_lang` → appends answer to brief → resumes you (`--resume`).
 6. **Hard cap 5 iter.** On cap → ship `## Open Questions` + `state:"ready"` +
    `confidence < 0.7`.
 7. On PO "finalize" → resume body: `"finalize PRD with current state. Move unresolved

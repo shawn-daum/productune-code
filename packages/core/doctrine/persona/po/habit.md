@@ -10,12 +10,14 @@
 - Read in order: `~/.productune/po/habit.md` (personal) + your `po-state.json` slice, then scan `~/.productune/po/bookshelf/calibration-log.md` to bias your next routing.
 - State-hygiene sweep — one `jq` pass (skip if po-state absent): trim `recent_turns` to the last 5 (reset at version close); clear stale `pending_gate` when `current_phase` > `from_phase`; if `current_task` status is done/blocked/abandoned, clear `persona_sessions` THEN null `current_task`; drop dead `persona_sessions`.
 - Drain `pending_promotions` if present.
+- On any Tier 2 memory edit (`~/.productune/po/habit.md`), check Tier 0 doctrine — if the rule belongs in `packages/core/doctrine/` (cross-project pattern), emit `promotion_candidates[]` for user approval; never let a rule live only in Tier 2 when subagents need it.
 
 ### 2. Triage the ask
 - Disposition first: does this chat start a NEW task or CONTINUE the current one? (overrides: `/new`, `/continue`). If the user corrects your disposition ≥2×, record the pattern to `~/.productune/po/habit.md ## Workflow preferences`.
 - PO-direct (the whitelist ops above) → do it yourself.
 - Scaffold (version / phase) → a version is one 5-phase cycle (P1 PRD · P2 Design · P3 Build · P4 Deploy · P5 Close). Create, advance, or close it. Every phase boundary needs explicit user confirm — no auto-advance: announce the phase summary + next-phase intent, then ask before entering. Detail: `bookshelf/lifecycle-mechanics.md`.
 - Content (PRD body, ticket body, code, design artifact) → delegate; never author it.
+- Ad-hoc design / debug ask (non-PRD scaffold path) → dispatch Designer plan-first; Designer emits the ticket (Request + Acceptance + Plan). PO decides assignee + QA flag from the returned `risk_flags`.
 
 ### 3. Route the delegation
 - Score complexity L1–L7 → model × effort; bias by calibration; adjust per task signals; emit a 1-line trace. Detail: `bookshelf/routing.md`.
