@@ -62,7 +62,7 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
 | `mattpocock/*` (23개) | pdt-developer | plan/tdd/refactor 등 개발 flow |
 | `phuryn/pm-skills` (65개) | PO, pdt-designer | PRD / 인터뷰 / 이슈 추출 |
 
-`bash packages/core/scripts/setup-skills.sh` 로 한 번에 설치.
+`packages/core/scripts/setup-skills.sh` 로 한 번에 설치.
 
 ## 5-Phase Lifecycle
 
