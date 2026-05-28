@@ -249,27 +249,6 @@ for BAK in "$HOME"/.codex/po-instructions.md.bak.* "$HOME"/.codex/po-memory.md.b
   mv "$BAK" "${BAK/.codex/.productune}" 2>/dev/null || true
 done
 
-# 2b) Codex CLI profile manifest — only deployed if the user opts into Codex
-#     as their PO engine in section 5 below. install.sh does not pre-install
-#     Codex CLI itself; user must `npm i -g @openai/codex` (or whatever the
-#     packaging is) on their own. We just stage the productune profile manifest
-#     when they pick codex.
-maybe_install_codex_config() {
-  command -v codex >/dev/null 2>&1 || {
-    warn "codex CLI not found on PATH. Install separately, then re-run install.sh to deploy ~/.codex/config.toml."
-    return 0
-  }
-  local src="$ROOT/codex/config.toml"
-  local dest="$HOME/.codex/config.toml"
-  mkdir -p "$HOME/.codex"
-  if [ -e "$dest" ] && ! cmp -s "$src" "$dest"; then
-    mv "$dest" "$dest.bak.$TS"
-    warn "backed up existing $dest → $dest.bak.$TS"
-  fi
-  cp "$src" "$dest"
-  say "copied Codex profile manifest: $dest"
-}
-
 # 2c) Setup ~/.productune/doctrine/ — Tier 0 live mirror (byte-identical copy of SoT)
 #     cp -r overwrites on re-run, which is intentional: re-running install.sh = doctrine update.
 say "Tier 0 doctrine mirror 설정 중..."
@@ -321,90 +300,33 @@ if [ ! -e "$ROOT/scripts/my-po" ]; then
   say "created compat symlink scripts/my-po → productune"
 fi
 
-# 5) PO engine — claude (primary, hooks fire) or codex (secondary, doctrine-only)
-#    Interactive prompt picks one and seeds productune.env. Non-interactive falls
-#    back to claude. Existing env file with MY_PO_ENGINE is preserved (just
-#    repo-path refresh). Picking codex also drops ~/.codex/config.toml.
+# 5) PO env file — claude is the only engine. Seed productune.env idempotently,
+#    refresh PRODUCTUNE_REPO in case the clone moved, and migrate any legacy
+#    MY_PO_ENGINE=codex (or other non-claude value) from older installs.
 PO_ENV_FILE="$HOME/.productune/productune.env"
-
-choose_engine_interactive() {
-  # Echoes the chosen engine. Returns 0.
-  local _codex_status="not installed"
-  command -v codex >/dev/null 2>&1 && _codex_status="installed"
-  cat >&2 <<PROMPT
-
-[install] PO engine 선택:
-  [1] claude   primary — Claude Code, hooks fire (R1/R2/R4 enforced). 권장.
-  [2] codex    secondary — Codex CLI, doctrine-only (hooks don't fire on codex).
-              codex CLI 상태: $_codex_status
-PROMPT
-  printf '  선택 [1/2, 기본=1]: ' >&2
-  local _ans=""; read -r _ans || _ans=""
-  case "$_ans" in
-    2|codex) printf 'codex' ;;
-    *)       printf 'claude' ;;
-  esac
-}
-
-if [ ! -e "$PO_ENV_FILE" ]; then
-  if [ -t 0 ] && [ -t 1 ]; then
-    CHOSEN_ENGINE="$(choose_engine_interactive)"
-  else
-    CHOSEN_ENGINE="claude"
-  fi
-  printf 'MY_PO_ENGINE=%s\nPRODUCTUNE_REPO=%s\n' "$CHOSEN_ENGINE" "$ROOT" > "$PO_ENV_FILE"
-  say "engine: $CHOSEN_ENGINE (saved to $PO_ENV_FILE, repo path: $ROOT)"
-  [ "$CHOSEN_ENGINE" = "codex" ] && maybe_install_codex_config
-else
-  # Refresh repo path in case the user moved the clone; preserve any existing engine.
-  CURRENT_ENGINE=""
-  if grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
-    CURRENT_ENGINE="$(grep -E '^MY_PO_ENGINE=' "$PO_ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n')"
-  fi
-  CURRENT_ENGINE="${CURRENT_ENGINE:-claude}"
-  if grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
-    sed -i.bak -E "s|^PRODUCTUNE_REPO=.*|PRODUCTUNE_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
-  else
-    printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
-  fi
-  if [ -t 0 ] && [ -t 1 ]; then
-    printf '\033[1;36m[install]\033[0m 현재 PO engine=%s. 변경할까요? [y/N]: ' "$CURRENT_ENGINE"
-    SWAP=""; read -r SWAP || SWAP=""
-    case "$SWAP" in
-      y|Y|yes|YES)
-        NEW_ENGINE="$(choose_engine_interactive)"
-        if [ "$NEW_ENGINE" != "$CURRENT_ENGINE" ]; then
-          sed -i.bak -E "s|^MY_PO_ENGINE=.*|MY_PO_ENGINE=$NEW_ENGINE|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
-          CURRENT_ENGINE="$NEW_ENGINE"
-          say "engine switched to $CURRENT_ENGINE"
-          [ "$CURRENT_ENGINE" = "codex" ] && maybe_install_codex_config
-        fi
-        ;;
-      *) ;;
-    esac
-  fi
-  say "PO engine config exists at $PO_ENV_FILE (current: $CURRENT_ENGINE, repo path refreshed to $ROOT)"
-  # Even on no-swap path: if existing config says codex but ~/.codex/config.toml
-  # is stale or missing, refresh it.
-  [ "$CURRENT_ENGINE" = "codex" ] && maybe_install_codex_config
-fi
-
-# 5b) Non-interactive / partial-env safety net — ensure MY_PO_ENGINE + PRODUCTUNE_REPO are
-# always present in the env file. The interactive prompt block above runs only when stdin
-# is a TTY AND the env file doesn't yet exist. Without this, a non-interactive install
-# (e.g. `bash install.sh </dev/null`) creates an env file without
-# the engine line, and the wrapper falls back to its compiled default — which works, but
-# `grep MY_PO_ENGINE ~/.productune/productune.env` returns nothing, confusing operators.
 mkdir -p "$(dirname "$PO_ENV_FILE")"
 [ -e "$PO_ENV_FILE" ] || : > "$PO_ENV_FILE"
-if ! grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
+
+# MY_PO_ENGINE — kept as a literal claude marker so external scripts that grep
+# for it keep working. Legacy codex values are rewritten in place.
+if grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
+  if ! grep -qE '^MY_PO_ENGINE=claude$' "$PO_ENV_FILE"; then
+    sed -i.bak -E 's|^MY_PO_ENGINE=.*|MY_PO_ENGINE=claude|' "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
+    warn "migrated legacy MY_PO_ENGINE → claude in $PO_ENV_FILE"
+  fi
+else
   printf 'MY_PO_ENGINE=claude\n' >> "$PO_ENV_FILE"
-  say "ensured: MY_PO_ENGINE=claude (default — appended to $PO_ENV_FILE)"
+  say "seeded MY_PO_ENGINE=claude in $PO_ENV_FILE"
 fi
-if ! grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
+
+# PRODUCTUNE_REPO — always refresh to the current clone path.
+if grep -qE '^PRODUCTUNE_REPO=' "$PO_ENV_FILE"; then
+  sed -i.bak -E "s|^PRODUCTUNE_REPO=.*|PRODUCTUNE_REPO=$ROOT|" "$PO_ENV_FILE" && rm -f "$PO_ENV_FILE.bak"
+else
   printf 'PRODUCTUNE_REPO=%s\n' "$ROOT" >> "$PO_ENV_FILE"
-  say "ensured: PRODUCTUNE_REPO=$ROOT (appended to $PO_ENV_FILE)"
 fi
+say "PO env ready: $PO_ENV_FILE (engine=claude, repo=$ROOT)"
+
 # Remove legacy USER_MODE line if present (removed 2026-05-22 — wiki-keeper default)
 if grep -qE '^USER_MODE=' "$PO_ENV_FILE" 2>/dev/null; then
   TMP_ENV="$PO_ENV_FILE.tmp.$$"
@@ -418,7 +340,7 @@ verify_agents_recognized || true
 
 # 7) Ensure auto-compact threshold default is present in env file.
 #    `productune` sources this with `set -a` so the var is inherited by spawned
-#    codex/claude personas — no manual shell-rc export needed.
+#    claude personas — no manual shell-rc export needed.
 mkdir -p "$(dirname "$PO_ENV_FILE")"
 if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$PO_ENV_FILE"; then
   printf 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=70\n' >> "$PO_ENV_FILE"
@@ -625,33 +547,6 @@ PROMPT
   fi
 fi
 
-# 9b) Advanced opt-in — Codex engine (interactive only)
-#     Skipped automatically in non-interactive mode or when PRODUCTUNE_SKIP_ADVANCED=1.
-if [ -t 0 ] && [ -t 1 ] && [ "${PRODUCTUNE_SKIP_ADVANCED:-0}" != "1" ]; then
-
-  # ── Codex engine opt-in ───────────────────────────────────────────────────
-  echo
-  printf '\033[1;36m[install]\033[0m Codex 엔진 활성화할까요? (OpenAI ChatGPT 구독 cost-split, 대부분 불필요) [y/N]: '
-  read -r _CODEX_ANS || _CODEX_ANS=""
-  case "$_CODEX_ANS" in
-    y|Y|yes|YES)
-      say "Codex 엔진 설정 중..."
-      if grep -qE '^MY_PO_ENGINE=' "$PO_ENV_FILE"; then
-        sed -i.bak -E "s|^MY_PO_ENGINE=.*|MY_PO_ENGINE=codex|" "$PO_ENV_FILE" \
-          && rm -f "$PO_ENV_FILE.bak"
-      else
-        printf 'MY_PO_ENGINE=codex\n' >> "$PO_ENV_FILE"
-      fi
-      maybe_install_codex_config
-      say "Codex 엔진 설정 완료"
-      ;;
-    *)
-      say "Codex 엔진 opt-in skip — 기본 설정 유지"
-      ;;
-  esac
-
-fi
-
 # 10) Summary + next steps
 cat <<EOF
 
@@ -672,14 +567,11 @@ cat <<PATHRC
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
-  3. 고급 옵션 변경 (Codex 엔진):
-       bash $ROOT/scripts/install.sh   # end-of-install Codex opt-in 에서 선택
-
-  4. 병렬 작업 후 worktree 정리:
+  3. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run
        productune gc -y     # safe한 것 자동 제거
 
-  5. 완전히 제거할 때:
+  4. 완전히 제거할 때:
        productune uninstall
 PATHRC
 else
@@ -691,14 +583,11 @@ cat <<NOPATH
      → 대화를 시작해서 만들고 싶은 제품을 말하면, 대화를 통해 PRD를 완성해 나갑니다.
      (페르소나 인식이 안 되면: ls -la ~/.claude/agents/ 확인 후 install.sh 재실행)
 
-  2. 고급 옵션 변경 (Codex 엔진):
-       bash $ROOT/scripts/install.sh   # end-of-install Codex opt-in 에서 선택
-
-  3. 병렬 작업 후 worktree 정리:
+  2. 병렬 작업 후 worktree 정리:
        productune gc        # dry-run
        productune gc -y     # safe한 것 자동 제거
 
-  4. 완전히 제거할 때:
+  3. 완전히 제거할 때:
        productune uninstall
 NOPATH
 fi)

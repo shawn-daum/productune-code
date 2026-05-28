@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# productune — wrapper for the PO orchestrator (Codex or Claude Code) with
-# auto-worktree split when another productune is already running on the same root.
+# productune — wrapper for the PO orchestrator (Claude Code) with auto-worktree
+# split when another productune is already running on the same root.
 # Legacy `my-po` command name kept as compat alias (symlink to this file).
 #
 # Modes:
-#   productune                              Default engine = claude (or $MY_PO_ENGINE)
-#   productune --engine claude              Spawn `claude --agent pdt-po` (default — hooks fire)
-#   productune --engine codex               Spawn `codex --profile productune` (fallback; no hooks)
+#   productune                              Spawn `claude --agent pdt-po`
 #   productune gc                           (alias: --cleanup) audit productune/* worktrees, dry-run
 #   productune gc -y                        (alias: --auto, --yes) audit, then remove safe ones
 #   productune init                         Scaffold project: .productune/po-state.json, docs/pdt-*/, .gitignore
-#   productune onboard                      Run install.sh — wire agents, codex config
-#   productune uninstall                    Remove all installed artifacts (agents, codex files)
+#   productune onboard                      Run install.sh — wire agents, hooks, PATH
+#   productune uninstall                    Remove all installed artifacts
 #
-# Engine selection priority: --engine flag > $MY_PO_ENGINE env > 'claude' default.
-# (Env var name MY_PO_ENGINE retained for compat; semantically PRODUCTUNE_ENGINE.)
-# Default = claude because PreToolUse/PostToolUse hooks only fire inside Claude
-# Code sessions. Codex bypasses them, leaving R1-R4 as doctrine-only.
+# Claude Code is the only supported PO engine — PreToolUse/PostToolUse hooks
+# (R1/R4 dispatch guards, state-write, doctrine re-inject) only fire there.
 #
 # Decision basis for cleanup is purely git state. PO process state (alive,
 # crashed, exited cleanly) is irrelevant — a worktree is "safe to remove"
@@ -146,40 +142,32 @@ remove_safe() {
 # -------------------- cleanup mode (gc / --cleanup / uninstall) --------------------
 case "${1:-}" in
   --help|-h)
-    # Resolve current config for display
-    _engine="claude"
+    # Resolve current repo path for display
     _repo="?"
     if [ -r "$HOME/.productune/productune.env" ]; then
-      _engine="$(grep -E '^MY_PO_ENGINE=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo claude)"
-      _engine="${_engine:-claude}"
       _repo="$(grep -E '^PRODUCTUNE_REPO=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '\n' || echo '?')"
     fi
     B=$(printf '\033[1m') R=$(printf '\033[0m')
     printf "
-  ${B}productune${R} — AI product team orchestrator
+  ${B}productune${R} — AI product team orchestrator (PO on Claude Code)
 
   ${B}USAGE${R}
-    productune [--engine <engine>] [prompt...]
+    productune [prompt...]
     productune <command> [options]
 
   ${B}COMMANDS${R}
-    (default)          Start a PO session with the configured engine
+    (default)          Start a PO session (claude --agent pdt-po)
     init               Scaffold project — .productune/, docs/pdt-*/, .gitignore
-    onboard            Run install — wire agents, PATH
+    onboard            Run install — wire agents, hooks, PATH
     uninstall          Remove all installed artifacts
     gc                 Audit productune/* worktrees (dry-run)
     gc -y              Remove safe worktrees automatically
     --help, -h         Show this help
 
-  ${B}ENGINE OPTIONS${R}
-    --engine codex     PO on Codex CLI   (codex --profile productune)
-    --engine claude    PO on Claude Code (claude --agent pdt-po)
-
   ${B}CURRENT CONFIG${R}  (~/.productune/productune.env)
-    engine       %s
     repo         %s
 
-  ${B}PERSONAS${R}  (always run on Claude Code)
+  ${B}PERSONAS${R}
     pdt-po           Product Owner — orchestrator
     pdt-developer    Implementation
     pdt-designer     UX / Design System
@@ -188,11 +176,10 @@ case "${1:-}" in
   ${B}EXAMPLES${R}
     productune init                   Scaffold a new project (run once per repo)
     productune                        Start PO session
-    productune --engine claude        Force Claude engine this session
     productune gc -y                  Clean up merged worktrees
     productune onboard                Re-run setup
 
-" "$_engine" "$_repo"
+" "$_repo"
     exit 0
     ;;
   onboard)
@@ -347,51 +334,23 @@ esac
 
 # -------------------- default mode --------------------
 
-# 0) Resolve engine. Priority: --engine flag > $MY_PO_ENGINE in shell env >
-#    saved preference at ~/.productune/productune.env (written by install.sh) > 'claude'.
-# Default switched from codex → claude so hook-based firm rules
-# (pre-delegate-task-check + post-delegate-state-write) actually fire — those
-# hooks run inside Claude Code sessions only, not Codex.
+# 0) Source ~/.productune/productune.env so spawned sub-agents see
+#    PRODUCTUNE_REPO, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, etc.
 if [ -r "$HOME/.productune/productune.env" ]; then
-  # Auto-export every assignment so spawned codex/claude sub-agents
-  # see PRODUCTUNE_REPO, etc.
   set -a
   # shellcheck source=/dev/null
   . "$HOME/.productune/productune.env"
   set +a
 fi
-ENGINE="${MY_PO_ENGINE:-claude}"
-ARGS=()
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --engine)
-      ENGINE="$2"; shift 2 ;;
-    --engine=*)
-      ENGINE="${1#--engine=}"; shift ;;
-    *)
-      ARGS+=("$1"); shift ;;
-  esac
-done
-set -- "${ARGS[@]+"${ARGS[@]}"}"
-case "$ENGINE" in
-  codex|claude) ;;
-  *) die "unknown --engine '$ENGINE' (expected 'codex' or 'claude')" ;;
-esac
 
-# Engine policy banner (one line — terse). Skipped when piping (-p) or non-TTY.
+# Banner (terse, one line). Skipped when piping or non-TTY.
 if [ -t 1 ] && [ -z "${PRODUCTUNE_QUIET_BANNER:-}" ]; then
-  case "$ENGINE" in
-    claude)
-      printf '\033[1;34m[productune]\033[0m engine=%s (primary — hooks fire)\n' "$ENGINE" >&2 ;;
-    codex)
-      printf '\033[1;33m[productune]\033[0m engine=%s (secondary — doctrine-only; hooks no-op)\n' "$ENGINE" >&2 ;;
-  esac
+  printf '\033[1;34m[productune]\033[0m engine=claude (hooks fire)\n' >&2
 fi
 
 ensure_state() {
-  # $1 = project root. Migrates .codex/po-state.json → .productune/po-state.json
-  # if found, then seeds a minimal skeleton if still absent. Keeps PO out of
-  # the .codex/ fallback path that disables hooks.
+  # $1 = project root. Migrates legacy .codex/po-state.json (pre-rename) →
+  # .productune/po-state.json if found, then seeds a minimal skeleton if absent.
   local root="$1"
   mkdir -p "$root/.productune"
   if [ -f "$root/.codex/po-state.json" ] && [ ! -f "$root/.productune/po-state.json" ]; then
@@ -405,18 +364,12 @@ ensure_state() {
 }
 
 run_engine() {
-  case "$ENGINE" in
-    codex)  exec codex --profile productune "$@" ;;
-    claude) exec claude --agent pdt-po "$@" ;;
-  esac
+  exec claude --agent pdt-po "$@"
 }
 
 run_engine_fg() {
   # Foreground (not exec) so EXIT trap can fire after engine returns.
-  case "$ENGINE" in
-    codex)  codex --profile productune "$@" ;;
-    claude) claude --agent pdt-po "$@" ;;
-  esac
+  claude --agent pdt-po "$@"
 }
 
 # 1) Resolve project root. Non-git → bypass lock + worktree, just run engine.
@@ -448,8 +401,8 @@ if [ -f "$LOCK" ]; then
 fi
 
 # 3) Acquire lock.
-printf '{"pid": %s, "started_at": "%s", "cwd": "%s", "engine": "%s"}\n' \
-  "$$" "$(date -u +%FT%TZ)" "$ROOT" "$ENGINE" > "$LOCK"
+printf '{"pid": %s, "started_at": "%s", "cwd": "%s"}\n' \
+  "$$" "$(date -u +%FT%TZ)" "$ROOT" > "$LOCK"
 trap 'rm -f "$LOCK"' EXIT INT TERM
 
 # 4) Run the chosen engine (foreground, NOT exec — so trap fires when it exits).

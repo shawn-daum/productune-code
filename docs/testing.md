@@ -30,7 +30,6 @@ bash <productune-clone>/scripts/setup-graphiti.sh   # clone 한 경로 그대로
   }' ~/.claude/settings.json
   ```
   4개 키 각각 비어있지 않아야 (R1~R4 firm rule + state mgmt + doctrine refresh + dev typecheck gate).
-- **Engine = claude** 확인: `grep MY_PO_ENGINE ~/.productune/productune.env` → `claude` 권장 (codex 면 hook 미발동)
 
 여기서 실패하면 메모리 관련 phase (2–4) 가 동작 안 함. Phase 1 은 Graphiti 없이도 동작 — MCP spawn 시 경고가 떠도 무시해도 됨.
 
@@ -92,7 +91,7 @@ claude --agent pdt-qa -p "Verify the README change. Run git status and git diff,
 
 ## Phase 3 — 풀 PO 오케스트레이션 + task 라이프사이클 (약 10–15분)
 
-PO 가 여러 페르소나에 위임하는 흐름 + task 단위 세션 모델 (current_task / past_tickets / 부활 / 타임라인 렌더링) 검증. **`--engine claude` 가 default — R1~R4 hook firm rule 이 결정론적으로 발동**. Codex 사용 시 hook 미발동 → 모든 검증이 doctrine-only 권고로 강등됨.
+PO 가 여러 페르소나에 위임하는 흐름 + task 단위 세션 모델 (current_task / past_tickets / 부활 / 타임라인 렌더링) 검증. PO 는 Claude Code 에서 돌며 R1~R4 hook firm rule 이 결정론적으로 발동.
 
 > **사전 마이그레이션**: stale `<project>/.codex/po-state.json` (옛 path) 이 남아있으면 wrapper 가 자동 마이그. legacy flat schema (`top-level persona_sessions`) 면 먼저 삭제:
 >
@@ -121,10 +120,7 @@ rm -f .productune/po-state.json
 
 # 3.2 — PO 시작
 
-productune                       # default engine = claude (hooks 발동)
-# 또는 명시적으로:
-#   productune --engine claude   # Claude Code TUI — 권장 (R1~R4 firm rule 활성)
-#   productune --engine codex    # Codex TUI — fallback (hooks 미발동, doctrine-only)
+productune                       # claude --agent pdt-po (hooks 발동)
 # → TUI 열림. 아래 prompt 를 TUI 안에서 입력, Enter 로 제출.
 
 > README 의 오타 하나 찾아서 고치고, 그 다음 `sum.js` 라는 파일 만들어서 `function sum(a,b) { return a+b; }` 를 export 해줘. 테스트는 안 돌려도 되고.
@@ -148,7 +144,7 @@ productune                       # default engine = claude (hooks 발동)
 
 ### 3.3 — 후속 turn (같은 task)
 
-같은 TUI 에서 첫 task 끝나도 세션 안에 있음 — 그냥 다음 turn 으로 입력. (Codex 의 경우 `codex exec` 이었으면 `codex resume --last`.)
+같은 TUI 에서 첫 task 끝나도 세션 안에 있음 — 그냥 다음 turn 으로 입력.
 
 후속 prompt:
 
@@ -373,7 +369,7 @@ EOF
 productune 'README.md 에 한 줄 더 추가해줘.'
 ```
 
-(동등: `productune` 만 실행 후 TUI 안에서 입력. `--engine codex` 로도 가능하나 hook 미발동.)
+(동등: `productune` 만 실행 후 TUI 안에서 입력.)
 
 **관찰 포인트:** 실행 직전에 PO 가 다음 비슷한 안내: "pdt-qa 가 최근 이 프로젝트에서 4/5 실패. sonnet 으로 올려볼까요? (one-off: `--model sonnet`, 영구: agents/pdt-qa.md 수정)".
 
@@ -541,9 +537,7 @@ productune
 
 **"MCP server 'graphiti' failed to start"** — Phase 0 미완. `setup-graphiti.sh` 실행. wiki tier 가 필요 없는 phase 라면 경고 무시 가능.
 
-**"codex --profile productune fails to parse config"** — 드물지만 Ollama 의 `responses` API 가 준비 안 됐으면 profile `local` 이 에러 가능. `productune` 에는 영향 없음. 우회: `codex --oss --local-provider ollama -m qwen3.5:4B` 를 `--profile local` 대신 사용.
-
-**"persona doesn't respect gate"** — PO 는 시작 시 `po-instructions.md` 를 읽음. 세션 도중에 수정했으면 Codex 재시작.
+**"persona doesn't respect gate"** — PO 는 시작 시 `~/.productune/doctrine/persona/po/habit.md` (Tier 0) + `docs/po/habit.md` (Tier 1, 있으면) + `~/.productune/po/habit.md` (Tier 2, 있으면) 순서로 읽음. 세션 도중에 doctrine 을 수정했으면 새 PO 세션 시작.
 
 **"--session-id can only be used with --continue or --resume if --fork-session is also specified"** — PO가 `claude --session-id <uuid>` 로 첫 호출에 ID를 직접 명시함 (정상 패턴은 첫 호출에 omit, Claude Code가 할당 → response `.session_id` 에서 캡처). doctrine 미준수일 때 발생. 단 `post-delegate-state-write` hook이 정상 응답에서 자동 캡처하므로 이 패턴만 안 쓰면 PO가 명시할 필요 자체가 없음. PO가 반복적으로 이 에러를 내면 `bash scripts/install.sh` 로 최신 doctrine + hook 재배포.
 

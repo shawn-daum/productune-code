@@ -147,15 +147,13 @@ Doctrine 4-tier 와 별개로, 페르소나의 작업 기억은 단기/중기/�
 - `jq` — JSON CLI (`brew install jq`)
 - `node` >= 18 (Claude Code npm 설치용)
 
-> codex 는 install 에서 완전히 분리됐습니다. 굳이 fallback engine 으로 쓰려면 본인이 직접 `npm i -g @openai/codex` 한 뒤 `<repo>/codex/config.toml` 을 `~/.codex/config.toml` 로 복사하세요.
-
 ## Install
 
-> **Migration note**: core 파일이 `packages/core/` 로 이관됐습니다. 기존 설치 사용자는 `bash packages/core/scripts/install.sh` 재실행으로 symlink/hook/doctrine mirror 경로를 업데이트하세요.
+> **Migration note**: core 파일이 `packages/core/` 로 이관됐습니다. 기존 설치 사용자는 `packages/core/scripts/install.sh` 재실행으로 symlink/hook/doctrine mirror 경로를 업데이트하세요.
 
 ```sh
 git clone https://github.com/shawn-kim-axz/productune
-bash productune/packages/core/scripts/install.sh
+productune/packages/core/scripts/install.sh
 ```
 
 > Clone 위치는 어디든 OK — symlink target 이라 그대로 유지하면 됩니다 (`~/code/productune`, `~/productune` 등 자유). 단, `~/.productune/` (Tier 0 mirror + Tier 2 personal store) 와 겹치지 않게만 주의.
@@ -168,13 +166,10 @@ bash productune/packages/core/scripts/install.sh
 2. **Agent 심볼릭 링크** — `packages/core/agents/{pdt-po,pdt-designer,pdt-developer,pdt-qa}.md` → `~/.claude/agents/*.md` (edit-in-place).
 3. **Tier 0 doctrine mirror** — `packages/core/doctrine/` → `~/.productune/doctrine/{common,persona/<role>}/` (common + persona habit.md / bookshelf, idempotent rsync).
 4. **Tier 2 personal scaffold** — `~/.productune/{po,designer,developer,qa}/{habit.md,bookshelf/}` seed-only (절대 overwrite X).
-5. **PO engine 선택** — `[1] claude` (primary, hooks fire) / `[2] codex` (secondary, doctrine-only).
-6. **Hook 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop / Pre-Chunking 자동 merge.
-7. **OSS skill 설치** — mattpocock + phuryn + `anthropic/frontend-design` skill 을 `~/.claude/skills/` 에 복사.
-8. **`~/.productune/productune.env`** — engine, repo path 기록.
-9. **PATH 등록** — 현재 세션 즉시 적용.
-
-> install 후에 엔진을 바꾸고 싶으면 `bash packages/core/scripts/install.sh` 재실행 또는 `~/.productune/productune.env` 의 `MY_PO_ENGINE=` 직접 편집.
+5. **Hook 등록** — `~/.claude/settings.json` 에 PreToolUse / PostToolUse / PostCompact / Stop / Pre-Chunking 자동 merge.
+6. **OSS skill 설치** — mattpocock + phuryn + `anthropic/frontend-design` skill 을 `~/.claude/skills/` 에 복사.
+7. **`~/.productune/productune.env`** — repo path 기록.
+8. **PATH 등록** — 현재 세션 즉시 적용.
 
 ## 신규 프로젝트 시작 (dogfood guide)
 

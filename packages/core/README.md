@@ -46,7 +46,7 @@ Bookshelf files load on-demand per habit references. Output = single JSON envelo
 From the repo root:
 
 ```sh
-bash packages/core/scripts/install.sh
+packages/core/scripts/install.sh
 ```
 
 This script is idempotent — re-run after pulling to refresh agent symlinks, doctrine mirror, and hooks. Doctrine edits go in `packages/core/doctrine/` (SoT); never edit `~/.productune/doctrine/` directly (it gets overwritten on `onboard`).
