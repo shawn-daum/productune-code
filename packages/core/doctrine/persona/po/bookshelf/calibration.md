@@ -38,7 +38,7 @@ Field rules:
 - `escalation=skill|model|surface|none` — which strike resolved it, by name; `max` never appears.
 - `note` — 1-line judgement.
 - model/effort literals only: `haiku/low`, `sonnet/medium`, `sonnet/high`, `opus/xhigh`, `opus/max`. Never `default` / `normal` / `extended`.
-- Plan-first tasks: log the impl phase's model/effort (final substantive call); the plan phase lives in `persona_session_meta.<persona>.effort_history`.
+- Plan-first tasks: log the impl phase's model/effort (the final substantive call).
 
 Append (mechanical):
 

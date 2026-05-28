@@ -2,8 +2,6 @@
 # Claude Code hook — PreToolUse, matcher: Bash
 # Firm rules before `claude --agent pdt-*` / `--resume`:
 #   R1. current_task must have semantic slug + request_summary (no auto-*).
-#   R2. New task: previous current_task slug must be archived to past_tickets
-#       (else PO is task-switching without proper close).
 #   R4. --resume <uuid> must use a UUID present in current_task.persona_sessions
 #       (else PO is reusing a session from a prior task).
 #
@@ -180,8 +178,8 @@ SLUG="$(jq -r '.current_task.slug // ""' "$STATE" 2>/dev/null)"
 SUMMARY="$(jq -r '.current_task.request_summary // ""' "$STATE" 2>/dev/null)"
 
 # ── R1: current_task must have semantic slug + summary. Auto-fill if missing ─
-# (Was: block. Now: hook seeds current_task from TASK heuristic, leaving R2/R4
-# to do their normal checks. PO can refine slug at archive time.)
+# (Was: block. Now: hook seeds current_task from TASK heuristic, leaving R4
+# to do its normal check.)
 if [ "$SAME_COMPOUND_WRITES_CT" = "0" ]; then
   if [ -z "$SLUG" ] || [ "${SLUG#auto-}" != "$SLUG" ] || [ -z "$SUMMARY" ] || [ "$SUMMARY" = "(auto-opened by post-delegate hook)" ]; then
     if ! emit_autofill; then
@@ -191,26 +189,6 @@ if [ "$SAME_COMPOUND_WRITES_CT" = "0" ]; then
 
 (See ~/.productune/doctrine/persona/po/bookshelf/lifecycle-mechanics.md.)"
     fi
-  fi
-fi
-
-# ── R2: new task — previous slug must be archived ────────────────────────────
-PREV_SLUG="$(jq -r '.recent_turns // [] | (last // {}) | .task_slug // ""' "$STATE" 2>/dev/null)"
-if [ -n "$PREV_SLUG" ] && [ -n "$SLUG" ] && [ "$PREV_SLUG" != "$SLUG" ]; then
-  ARCHIVED="$(jq -r --arg s "$PREV_SLUG" '
-    ((.past_tickets // .past_tasks // []) | map(select(.slug == $s)) | length)
-  ' "$STATE" 2>/dev/null)"
-  if [ "$ARCHIVED" = "0" ]; then
-    emit_block "Switching to task '$SLUG' but previous task '$PREV_SLUG' was never archived. Archive it first (portable — no sponge):
-
-  jq --arg now \"\$(date -u +%FT%TZ)\" '
-    if .current_task != null and .current_task.slug != \"$SLUG\" then
-      .past_tickets = ((.past_tickets // []) + [(.current_task + {ended_at: \$now, final_status: \"done\", outcome_summary: \"<1-line synthesis>\"})])
-      | .past_tickets |= (.[-50:])
-    else . end
-  ' .productune/po-state.json > .productune/po-state.json.tmp && mv .productune/po-state.json.tmp .productune/po-state.json
-
-Then jq-write the new current_task and retry. (See ~/.productune/doctrine/persona/po/bookshelf/lifecycle-mechanics.md §Archive.)"
   fi
 fi
 

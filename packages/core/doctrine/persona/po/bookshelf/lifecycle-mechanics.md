@@ -63,7 +63,8 @@ jq '.current_phase = <N>
 - `assignee` / routing / session refs: metadata only.
 - `branch` / `worktree_path`: set on open; never clear (history).
 - `## Outcome` is content — delegate Designer if product meaning is needed.
-- **QA gate close** (impl / refactor): dev `ready_for_qa` → run the smoke gate → set `qa_status`. Pass → `done`; fail → resume dev + `qa_loops += 1`; ≥3 → `blocked`.
+- **QA gate close** (impl / refactor): on dev `ready_for_qa`, run the *Auto QA smoke gate* below and set status by its outcome.
+- **`user-verify`**: result needs user confirmation (UI placement / visual check) → set status `user-verify` + surface to the user; user confirms → `done`; user rejects → back to `in-progress`. Typically after a QA pass on user-facing visual work.
 
 ## Auto QA smoke gate
 Never let user-facing breakage reach the user.
@@ -75,8 +76,7 @@ Never let user-facing breakage reach the user.
 - `type:test` / `type:qa` / `type:design` self-verify; `type:deploy` verifies per-step.
 
 ## Outcome measurement
-Two append-only layers; neither blocks lifecycle.
-- **Per-ticket** (optional frontmatter): `success_metric`, `validation_method` — Designer-set when measurable; `observed_result` filled at P5. Most stay null.
+Append-only; never blocks lifecycle.
 - **Per-version** (required `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` — Designer derives from the ready PRD, emits via `version_outcome` in the ready-turn JSON; mirror into state. `observed_result`, `retrospective_path` filled at P5.
 - **Lazy protocol**: when `validation_method` needs external data (PostHog / Sentry / GA), leave `observed_result: null` at P5; Designer chases it in the next version's P1. Never remind. No next version → it never runs.
 

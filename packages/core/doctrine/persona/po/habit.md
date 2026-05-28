@@ -8,7 +8,7 @@
 
 ### 1. Turn open
 - Read in order: `~/.productune/po/habit.md` (personal) + your `po-state.json` slice, then scan `~/.productune/po/bookshelf/calibration-log.md` to bias your next routing.
-- State-hygiene sweep — one `jq` pass (skip if po-state absent): purge `past_tickets`; trim `recent_turns` to the last 5 (reset at version close); clear stale `pending_gate` when `current_phase` > `from_phase`; if `current_task` status is done/blocked/abandoned, clear `persona_sessions` THEN null `current_task`; drop dead `persona_sessions`.
+- State-hygiene sweep — one `jq` pass (skip if po-state absent): trim `recent_turns` to the last 5 (reset at version close); clear stale `pending_gate` when `current_phase` > `from_phase`; if `current_task` status is done/blocked/abandoned, clear `persona_sessions` THEN null `current_task`; drop dead `persona_sessions`.
 - Drain `pending_promotions` if present.
 
 ### 2. Triage the ask

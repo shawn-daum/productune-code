@@ -12,12 +12,15 @@ Persona never writes long-term memory — you route all writes.
 
 ## 4-quadrant classification
 
-Inspect each candidate. 2 axes × 2 values = 4 quadrants:
+Inspect each candidate. 2 axes × 2 values = 4 quadrants. Classify it, then write to the
+resolved target on user `y`:
 
-| Scope ↓ / Pattern → | habit (always-read, curated, no source) | bookshelf (on-demand, append + source) |
+| Quadrant (scope/pattern) | Target path | Write |
 |:--|:--|:--|
-| **project** (this repo) | `docs/<persona>/habit.md` | `docs/<persona>/bookshelf/<file>.md` |
-| **global** (cross-project) | `~/.productune/<persona>/habit.md` | `~/.productune/<persona>/bookshelf/<file>.md` |
+| (project, bookshelf) | `docs/<persona>/bookshelf/<file>.md` | **auto** on `y` — `printf '%s\n' "$DELTA" >> <target>` |
+| (project, habit) | `docs/<persona>/habit.md` | curated edit (PO shell on `y`) |
+| (global, bookshelf) | `~/.productune/<persona>/bookshelf/<file>.md` | append (PO shell on `y`) |
+| (global, habit) | `~/.productune/<persona>/habit.md` | curated edit (PO shell on `y`) |
 
 - **(project, bookshelf)** = **auto-write** on user `y` (low-stakes append + source label).
 - **(project, habit)** + both **global** quadrants = **user-approval surface** (curated edit / lifestyle change).
@@ -25,23 +28,10 @@ Inspect each candidate. 2 axes × 2 values = 4 quadrants:
 
 ## Schema (per candidate)
 
-Each candidate object uses the canonical `scope` + `pattern` vocabulary
-(`common/bookshelf/promotion-candidate-schema.md`):
-
-```json
-{
-  "scope": "project" | "global",
-  "pattern": "habit" | "bookshelf",
-  "target": "<file path>",
-  "delta": "<line / episode body>",
-  "rationale": "<one-line reason>",
-  "area_tag": "<kebab-area>",
-  "source_ticket": "T-NNN"
-}
-```
-
-Attach PO-managed lifecycle fields during disposition (not persona-emitted):
-`status` (`pending|approved|dropped|edited`), `decided_at`, `final_target` (set on `edited`).
+Each candidate uses the canonical `scope` + `pattern` vocabulary —
+`common/bookshelf/promotion-candidate-schema.md`. Attach PO-managed lifecycle fields during
+disposition (not persona-emitted): `status` (`pending|approved|dropped|edited`), `decided_at`,
+`final_target` (set on `edited`).
 
 ## Lifecycle
 
@@ -50,15 +40,7 @@ Attach PO-managed lifecycle fields during disposition (not persona-emitted):
    `po-state.json :: pending_promotions[]` with `status:"pending"`.
 3. **Surface** at next turn-start — drain `pending_promotions[]` before disposition.
 4. **User decides** per candidate: `y` (approve), `n` (drop), `edit` (modify delta/target).
-5. **Write** per quadrant (mechanical):
-
-| Quadrant (scope/pattern) | Mechanical write path |
-|:--|:--|
-| (project, bookshelf) | `printf '%s\n' "$DELTA" >> docs/<persona>/bookshelf/<file>.md` (auto on `y`) |
-| (project, habit) | curated edit `docs/<persona>/habit.md` (PO shell on `y`) |
-| (global, bookshelf) | append `~/.productune/<persona>/bookshelf/<file>.md` (PO shell on `y`) |
-| (global, habit) | curated edit `~/.productune/<persona>/habit.md` (PO shell on `y`) |
-
+5. **Write** per the 4-quadrant table above (mechanical).
 6. **Update** `pending_promotions[].status` + `decided_at`. Set `final_target` on
    `status:"edited"` with the user-revised payload actually written.
 

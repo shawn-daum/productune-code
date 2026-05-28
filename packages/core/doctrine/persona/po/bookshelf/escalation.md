@@ -16,43 +16,15 @@ without asking; the user is consulted ONLY at Strike 3. Each strike = 1 attempt,
 
 ## Strike 1 — Skill search (automatic)
 
-Query `skill-fetch search "<query>"`. Build query from `unresolved` items or task keywords:
-
-```bash
-QUERY="$(echo "$UNRESOLVED" | head -1)"
-TOP=$(skill-fetch search "$QUERY" --json --limit 1 2>/dev/null | jq -r '.[0].name')
-```
-
-Auto-install the top match (`skill-fetch install "$TOP"`) → re-invoke the same persona in
-the same `session_id` (skill auto-loads + task body cites the skill path). No user prompt.
-
-Fall through to Strike 2 automatically when ANY holds — no user prompt:
-- skill-fetch unavailable (not installed),
-- no usable match returned,
-- install fails or the skill does not fit.
+Query skill-fetch search with the unresolved items or task keywords; auto-install the top
+match and re-invoke the same session. No usable match / skill-fetch unavailable / install
+fails → fall through to Strike 2 automatically (no user prompt).
 
 ## Strike 2 — Model up (automatic)
 
-Resume the same `session_id` (persona keeps prior context) + bump model and effort one notch:
-
-```bash
-case "$PRIOR_MODEL" in
-  haiku) NEW_MODEL=sonnet ;;
-  sonnet) NEW_MODEL=opus ;;
-  opus) NEW_MODEL=opus ;;
-esac
-case "$PRIOR_EFFORT" in
-  low) NEW_EFFORT=medium ;;
-  medium) NEW_EFFORT=high ;;
-  high) NEW_EFFORT=xhigh ;;
-  xhigh|max) NEW_EFFORT=xhigh ;;   # capped — never max via escalation
-esac
-```
-
-**Cap: one model-up attempt per persona per task.** `max` is NOT reachable here — it stays a
-Step 1 routing choice for net-new product thinking only (PRD R1, design system from scratch,
-system arch — see `routing.md`). A persona still failing at `xhigh` → do not reach for max;
-go to Strike 3.
+Resume the same session and bump model one tier (haiku→sonnet→opus) + effort one notch
+(low→medium→high→xhigh) — never max. One model-up attempt per persona per task; still failing
+at `xhigh` → Strike 3.
 
 ## Strike 3 — User surface (only user-interaction point)
 
@@ -77,14 +49,13 @@ SOLE place the user is asked. English template, render in user lang:
 
 ## Under-estimate signal (calibration mandatory)
 
-Any strike firing → the Step 1 routing was an **under-estimate**:
+Any strike firing means Step 1 under-estimated — mark
+`current_task.calibration_outcome.escalation_triggered = true` and bump `actual_complexity`
+(+1 one strike, +2 if model-up reached `xhigh`). The calibration line logs escalation by
+name — format lives in `bookshelf/calibration.md`.
 
-- Mark `current_task.calibration_outcome.escalation_triggered = true`.
-- Bump `actual_complexity` +1 (one strike) or +2 (model up reaching `xhigh`, or strikes 1+2).
-- On task close, the calibration line logs `escalation=<skill|model|surface>` (by name).
-
-Strike 3 `[3] accept` is NOT counted as escalation — *unless* `user_rework_requested = true`
-next turn. `max` never appears in `escalation=` — `actual=opus/max` means max chosen at Step 1.
+Strike 3 `[3] accept` is NOT escalation unless `user_rework_requested` next turn; `max` never
+appears in `escalation=` (`opus/max` means max chosen at Step 1).
 
 ## Disposition correction (separate from quality)
 

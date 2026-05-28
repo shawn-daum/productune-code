@@ -10,10 +10,13 @@ Never author persona output — dispatch it.
 
 ## Write these (the hook can't infer)
 
+You own only two writes: the pre-dispatch `current_task` open, and the ticket lifecycle frontmatter.
+
 - Open `current_task` with a semantic `slug` + `request_summary` + `artifacts` *before* dispatch (else the hook auto-creates an `auto-<ts>` slug and `pre-delegate-task-check` blocks). Use `jq`.
 - Update `docs/tickets/<version>/T-NNN.md` lifecycle metadata only — status · timestamps · duration · assignee · routing · model · effort · progress refs. No body / scope edits.
-- Read the SID from `current_task.persona_sessions.<persona>`.
-- After the call, append `effort_history`, `complexity_level`, `confidence_history`.
+- Read the SID from `current_task.persona_sessions.<persona>` to resume.
+
+`session_id`, `persona_session_meta.turns`, `model_history`, `recent_turns`, and the `artifacts` merge are hook-written — never hand-write or duplicate them.
 
 ## Task body
 
