@@ -15,13 +15,8 @@ __pycache__/
 *.pyc
 .venv/
 
-# install.sh-generated symlinks (source-of-truth in agents/variants/<backend>/)
-agents/pdt-designer.md
-agents/pdt-developer.md
-agents/pdt-qa.md
-
 # productune-on-productune (self-dogfood) — runtime state only.
-# Artifacts (.productune/briefs/, docs/prd/, docs/tickets/, docs/pdt-*/) stay tracked.
+# Artifacts (.productune/briefs/, docs/prd/, docs/tickets/, docs/{designer,developer,po,qa}/) stay tracked.
 .productune/po-state.json
 .productune/po.lock
 .productune/logs/
@@ -32,3 +27,4 @@ node_modules/
 .turbo/
 dist/
 packages/*/dist/
+packages/*/dist-electron/
