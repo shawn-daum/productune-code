@@ -11,7 +11,7 @@ Frontmatter `model:` is fallback only. Bias each pick with the 3-tuple history i
 | Designer (PRD R2+) | L6 | opus + xhigh | incremental |
 | Designer (single screen / DS) | L6 | opus + xhigh | spec authoring |
 | Designer (token / DS compliance) | L4 | sonnet / medium | plan-driven |
-| Developer | L5 | sonnet / medium | code authoring (plan = opus / xhigh) |
+| Developer | L5 | sonnet / medium | code authoring |
 | QA | L2 | haiku / low | pass/fail + cmd |
 
 ## Complexity scale (L1–L7)
@@ -22,7 +22,7 @@ L1 extraction · L2 classify · L3 transform · L4 summarize · L5 generate · L
 ## Adjust the default
 
 - **Step-up +1** (model tier and/or effort): risk area (auth / payments / PII / migration / DS / public API) · ≥3 artifacts or cross-cutting · intent keywords (architecture / refactor / system-wide / i18n / migration) · `recent_turns` same-persona fail ≥2 · calibration 3-tuple history.
-- **Step-down −1**: trivial single-file / typo · decompose = 1 trivial step · user tone (simple / quickly / just / minimal).
+- **Step-down −1**: trivial single-file / typo · decompose = 1 trivial step.
 - **Recovery on a bad result** → `bookshelf/escalation.md` (3-strike; a model-up never reaches `max`).
 
 ## Effort follows the model

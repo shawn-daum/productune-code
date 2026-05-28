@@ -6,7 +6,7 @@ Never author persona output — dispatch it.
 
 - `claude --agent pdt-<persona>` (first call) / `--resume "$SID"` (intra-ticket).
 - UUIDs are strict **8-4-4-4-12 lowercase hex**: never prefix, never self-generate. The first call omits `--session-id` (Claude returns it); a resume passes `--resume "$SID"`. Mixing is rejected.
-- The `post-delegate-state-write` hook (`PostToolUse(Bash)`) auto-captures the session id and bumps `persona_session_meta.<persona>.turns`, appends `model_history`, merges `recent_turns`, unions `artifacts` — don't duplicate that.
+- The `post-delegate-state-write` hook (`PostToolUse(Bash)`) captures the session id, sets `persona_session_meta.<persona>.last_seen`, merges `recent_turns`, unions `artifacts` — don't duplicate that.
 
 ## Dispatch runtime envelope
 
@@ -25,7 +25,7 @@ You own only two writes: the pre-dispatch `current_task` open, and the ticket li
 - Update `docs/tickets/<version>/T-NNN.md` lifecycle metadata only — status · timestamps · duration · assignee · routing · model · effort · progress refs. No body / scope edits.
 - Read the SID from `current_task.persona_sessions.<persona>` to resume.
 
-`session_id`, `persona_session_meta.turns`, `model_history`, `recent_turns`, and the `artifacts` merge are hook-written — never hand-write or duplicate them.
+`session_id`, `persona_session_meta.<persona>.last_seen`, `recent_turns`, and the `artifacts` merge are hook-written — never hand-write or duplicate them.
 
 ## Task body
 

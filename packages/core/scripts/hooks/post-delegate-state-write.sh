@@ -134,7 +134,7 @@ except Exception:
 " 2>/dev/null)"
 [ -z "$CHANGED_FILES" ] && CHANGED_FILES='[]'
 
-# Mechanical state write — capture session_id, bump turns, append model_history, merge artifacts
+# Mechanical state write — capture session_id, set last_seen, merge recent_turns + artifacts
 NOW="$(date -u +%FT%TZ)"
 TMP="$(mktemp)"
 jq --arg persona "$PERSONA" --arg sid "$SID" --arg now "$NOW" --arg model "$MODEL" --argjson files "$CHANGED_FILES" '
@@ -150,10 +150,8 @@ jq --arg persona "$PERSONA" --arg sid "$SID" --arg now "$NOW" --arg model "$MODE
   )
   | .current_task.persona_sessions[$persona] = $sid
   | .current_task.persona_session_meta[$persona] = (
-      (.current_task.persona_session_meta[$persona] // {turns: 0, model_history: [], effort_history: [], confidence_history: []})
+      (.current_task.persona_session_meta[$persona] // {})
       + {id: $sid, last_seen: $now}
-      + {turns: ((.current_task.persona_session_meta[$persona].turns // 0) + 1)}
-      + {model_history: ((.current_task.persona_session_meta[$persona].model_history // []) + [$model])}
     )
   | .current_task.artifacts = (((.current_task.artifacts // []) + ($files | map(tostring))) | unique)
   | .recent_turns = (
@@ -171,7 +169,7 @@ jq --arg persona "$PERSONA" --arg sid "$SID" --arg now "$NOW" --arg model "$MODE
 if [ -s "$TMP" ]; then
   mv "$TMP" "$STATE"
   SHORT_SID="$(echo "$SID" | cut -c1-8)"
-  echo "[productune] state-write: persona=$PERSONA session=$SHORT_SID turns+=1 → $STATE"
+  echo "[productune] state-write: persona=$PERSONA session=$SHORT_SID → $STATE"
 else
   rm -f "$TMP"
 fi

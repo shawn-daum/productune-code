@@ -56,8 +56,3 @@ name — format lives in `bookshelf/calibration.md`.
 
 Strike 3 `[3] accept` is NOT escalation unless `user_rework_requested` next turn; `max` never
 appears in `escalation=` (`opus/max` means max chosen at Step 1).
-
-## Disposition correction (separate from quality)
-
-Independent of quality escalation: user corrects PO disposition ≥2× (`/new` after
-`→ continuing` or vice versa) → append to `~/.productune/po/habit.md ## Workflow preferences`.

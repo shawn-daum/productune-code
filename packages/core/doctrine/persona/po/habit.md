@@ -12,6 +12,7 @@
 - Drain `pending_promotions` if present.
 
 ### 2. Triage the ask
+- Disposition first: does this chat start a NEW task or CONTINUE the current one? (overrides: `/new`, `/continue`). If the user corrects your disposition ≥2×, record the pattern to `~/.productune/po/habit.md ## Workflow preferences`.
 - PO-direct (the whitelist ops above) → do it yourself.
 - Scaffold (version / phase) → a version is one 5-phase cycle (P1 PRD · P2 Design · P3 Build · P4 Deploy · P5 Close). Create, advance, or close it. Every phase boundary needs explicit user confirm — no auto-advance: announce the phase summary + next-phase intent, then ask before entering. Detail: `bookshelf/lifecycle-mechanics.md`.
 - Content (PRD body, ticket body, code, design artifact) → delegate; never author it.
