@@ -1,97 +1,107 @@
-# Lifecycle mechanics — 5-Phase orchestration detail
+# Lifecycle mechanics — version + phase orchestration
 
-Run these mechanical ticket operations through the lifecycle. Phase contract:
-`../../common/bookshelf/phase-definitions.md`.
+A version is one 5-phase cycle: P1 PRD → P2 Design → P3 Build → P4 Deploy → P5 Close.
+Every ticket carries a `phase:` and lives in exactly one phase — keep it there, never skip
+ahead. Advance only on explicit user confirm at each boundary.
+
+## The 5 phases
+
+### P1 — PRD
+- **In**: the user's raw ask + a read of `feature-history.md` + `fail-patterns.md`.
+- **Out**: `docs/prd/PRD.md` (versioned section, master EN) + `docs/artifacts/<version>/PRD.html` (user-lang).
+- **Persona**: pdt-designer, clarity loop — opus/max (R1 net-new), opus/xhigh (R2+).
+- **Emit at entry**: one `type:design` "PRD authoring" ticket immediately — the user↔PO↔Designer comms vehicle; its `## Plan` holds the clarity-loop steps.
+- **Mechanism**: clarity score `A = 1 − Σ(clarityᵢ × weightᵢ)`; ready at `A ≤ 0.05`. Hard cap 5 loops; a PO "finalize" ships `ready` even at `confidence < 0.7`.
+- **Exit**: PRD `state:"ready"` → P2.
+
+### P2 — Design  (skip unless L4+ / user-facing / `risk_flags` ≠ none)
+- **In**: ready PRD.
+- **Emit**: 3 sequential `type:design` tickets (you emit, Designer executes via session resume), opus/xhigh each:
+  - **T1 design system + key screens** — `docs/designer/design-system.md` (opus/max net-new) + up to 3 screens (T1a: 3 candidates → user picks; T1b: finalize on the chosen system).
+  - **T2 user flow + wireframe** — `docs/artifacts/<version>/<slug>-flow.md` + optional `…-wireframe.excalidraw.json`.
+  - **T3 hi-fi mockup** — `docs/artifacts/<version>/<ticket-id>-mockup.{html,tsx}` via the `frontend-design` skill (shadcn/ui + react-icons default; productune-internal = lucide-react).
+- **Gate**: one user gate after all 3 are surfaced.
+- **Exit**: user approval → P3.
+
+### P3 — Build
+- **In**: approved design + emitted `impl` / `refactor` / `test` / `qa` tickets.
+- **Out**: working code, QA pass, close-gate items resolved.
+- **Persona**: pdt-developer (impl/refactor), pdt-qa (test/qa loop), pdt-designer (close-gate review).
+- **Build loop**: impl ↔ qa auto-loop, PO-owned — see *Auto QA smoke gate* below.
+- **Test trigger**: emit `type:test` on any of — risk flag ∈ {auth, payments, PII} · multi-step flow ≥3 · area-tag ≥3 cumulative fails in `fail-patterns.md` · user explicit.
+- **Close gate** (sequential, once build is complete): T+0 `type:design` design review (Designer sonnet/medium, **mandatory, no waiver** — `designer/bookshelf/phase3-close-gate.md`) → T+1 `type:design` PRD-requirements check (PO + user, waivable) → T+2 `type:qa` 6 security items (waivable).
+- **Exit**: all close-gate tickets `done` → P4.
+
+### P4 — Deploy  (project-type gate)
+- Meaningful target (web / API / mobile) → run. N/A (internal / library / docs-only) → skip; P3 goes straight to P5.
+- **In**: green build. **Out**: deployed env + verified health.
+- **Persona**: pdt-po (deploy coord, `## Steps` body), pdt-developer (env config), pdt-qa (post-deploy smoke).
+- **Mechanism**: one `type:deploy` ticket; manage env via platform-native tools (e.g. `vercel env`).
+- **Exit**: deploy verified → P5.
+
+### P5 — Close  (stored-memory only; never spawn fresh analysis)
+- **In**: shipped version. Run 5a → 5b → 5c → 5d:
+  - **5a** Designer (opus/xhigh): fill `outcome.observed_result`, append `docs/designer/feature-history.md` (direct write), propose next-version backlog.
+  - **5b** QA (opus/xhigh): aggregate fail-patterns → `docs/qa/version-summaries/<version>.md`.
+  - **5c** Designer (sonnet/medium): write `docs/retrospectives/<version>.md`.
+  - **5d** PO: append the calibration line, drain `pending_promotions` to the user, copy the DS snapshot.
+- **Mechanism**: `outcome.observed_result` lazy-fills (null if not yet observable); the next version's P1 picks up the null + `validation_method` and asks the user.
+- **Exit**: version archived; next version's P1 opens.
 
 ## Phase transition write
-
-On user approval (chat reply), write:
-
+On user approval (chat reply):
 ```bash
 jq '.current_phase = <N>
   | .phase_history += [{"phase":<N>,"started_at":"<ISO>","user_approved_at":"<ISO>"}]
   | .pending_gate = null' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
 ```
 
-## Auto QA smoke gate (impl / refactor close)
-
-Never let user-facing breakage reach the user.
-
-- Tool: Playwright / Chromium MCP / headless. Non-UI = build / typecheck / unit tests.
-- Coverage: route load · navigation · no console errors · sanity Acceptance check.
-- Budget: ≤1 min. Not full test plan.
-- Fail loop: dev resume + fail excerpt; max 3 retries; beyond → `blocked` + surface.
-- Pass: ticket `done` allowed; 1 row appended to `## Persona Activity`.
-
-`type:test` / `type:qa` self-verify. `type:design` self-verifies. `type:deploy` verifies per-step.
-
 ## Mechanical close rules
-
 - `todo → in-progress`: set `started_at` if empty.
-- `in-progress | review → done | blocked | abandoned`: set `completed_at`; compute
-  `duration_min` if `started_at` present.
+- `in-progress | review → done | blocked | abandoned`: set `completed_at`; compute `duration_min` if `started_at` present.
 - Status transition: update frontmatter + mirrored header.
 - `assignee` / routing / session refs: metadata only.
 - `branch` / `worktree_path`: set on open; never clear (history).
-- `## Outcome` = content; delegate Designer if product meaning needed.
-- **QA gate close** (impl / refactor): dev `ready_for_qa` → run smoke gate → update
-  `qa_status`. Pass → `done`. Fail → resume dev + `qa_loops += 1`. ≥3 → `blocked`.
+- `## Outcome` is content — delegate Designer if product meaning is needed.
+- **QA gate close** (impl / refactor): dev `ready_for_qa` → run the smoke gate → set `qa_status`. Pass → `done`; fail → resume dev + `qa_loops += 1`; ≥3 → `blocked`.
 
-## Outcome measurement (See layer)
+## Auto QA smoke gate
+Never let user-facing breakage reach the user.
+- Tool: Playwright / Chromium MCP / headless. Non-UI = build / typecheck / unit tests.
+- Coverage: route load · navigation · no console errors · sanity Acceptance check.
+- Budget: ≤1 min — not the full test plan.
+- Fail loop: resume dev with the fail excerpt; max 3 retries; beyond → `blocked` + surface.
+- Pass: ticket `done` allowed; append 1 row to `## Persona Activity`.
+- `type:test` / `type:qa` / `type:design` self-verify; `type:deploy` verifies per-step.
 
-Two append-only layers; neither blocks lifecycle:
+## Outcome measurement
+Two append-only layers; neither blocks lifecycle.
+- **Per-ticket** (optional frontmatter): `success_metric`, `validation_method` — Designer-set when measurable; `observed_result` filled at P5. Most stay null.
+- **Per-version** (required `versions[].outcome`): `north_star`, `input_metrics[]`, `validation_method` — Designer derives from the ready PRD, emits via `version_outcome` in the ready-turn JSON; mirror into state. `observed_result`, `retrospective_path` filled at P5.
+- **Lazy protocol**: when `validation_method` needs external data (PostHog / Sentry / GA), leave `observed_result: null` at P5; Designer chases it in the next version's P1. Never remind. No next version → it never runs.
 
-**Per-ticket** (optional frontmatter): `success_metric`, `validation_method` —
-Designer-set when measurable. `observed_result` — fill at P5. Most stay null.
+## Retrospective read sources (P5)
+At 5a/5b/5c read stored memory only; never spawn fresh analysis:
+1. project notes — `docs/{designer,developer,qa}/bookshelf/*.md`
+2. po-state `recent_turns` — rolling 5
+3. global persona memory — `~/.productune/<persona>/{habit,bookshelf}.md` (file-read ahead, inject via `[ctx]`)
+4. po-memory — `~/.productune/po/habit.md` + `~/.productune/po/bookshelf/calibration-log.md`
+5. approved-promotion archive — `pending_promotions[]` with `status ∈ {approved, edited}` ∧ `decided_at ∈ [version.started_at, version.ended_at]`
 
-**Per-Version** (required `versions[].outcome`): `north_star`, `input_metrics[]`,
-`validation_method` — Designer derives from PRD at ready time, emits via
-`version_outcome` in ready-turn JSON; mirror into state. `observed_result`,
-`retrospective_path` — fill at P5.
-
-## Lazy measurement protocol
-
-`validation_method` needs external data (PostHog / Sentry / GA) → leave
-`observed_result: null` at P5. Designer asks user during next Version's P1 (P1 N+1 outcome
-chase). Never remind. No next Version → measurement never runs.
-
-## Phase ticket auto-emit summary
-
-- **P1 PRD** (new version): T+0 `type:design` "PRD authoring" (Designer, opus/max V1;
-  opus/xhigh V2+). `## Plan` = clarity loop. Outputs: `docs/prd/PRD.md` (master EN) +
-  `docs/artifacts/<version>/PRD.html` (user-lang).
-- **P2 Design** (L4+ / user-facing / risk_flags ≠ none): T+0 × 3 `type:design`:
-  T1 design system + mockup · T2 user flow + wireframe · T3 hi-fi mockup
-  (frontend-design skill). Single user gate after all 3 surfaced.
-- **P3 Build close**: T+0 `type:design` design review (Designer sonnet/medium,
-  **mandatory, no waiver** — see `designer/bookshelf/phase3-close-gate.md`) → T+1
-  `type:design` PRD requirements (PO + user, waivable) → T+2 `type:qa` 6 security items
-  (waivable). Sequential.
-- **P4 Deploy** — project-type gate. Meaningful (web/API/mobile) = run normally.
-  N/A (internal / library / docs-only) = skip; P3 → P5 direct.
-- **P5 Close**: 5a Designer outcome (opus/xhigh) → 5b QA fail-pattern aggregate
-  (opus/xhigh) → 5c Designer retrospective (sonnet/medium) → 5d PO calibration.
-
-## Retrospective read sources (P5 — no fresh persona calls)
-
-At 5a/5b/5c, read stored memory only; never spawn fresh analysis. Allowed:
-
-1. **project notes** — `docs/{designer,developer,qa}/bookshelf/*.md`
-2. **po-state recent_turns** — rolling 5
-3. **global persona memory** — `~/.productune/<persona>/{habit,bookshelf}.md`
-   (file-read ahead and inject via `[ctx]`)
-4. **po-memory** — `~/.productune/po/habit.md` (product taste + workflow prefs) +
-   `~/.productune/po/bookshelf/calibration-log.md` (model/effort calibration)
-5. **approved-promotion archive** — `pending_promotions[]` `status ∈ {approved, edited}`
-   ∧ `decided_at ∈ [version.started_at, version.ended_at]`
-
-5d mechanical: append calibration log; mirror `retrospective_path`; surface next-V
-candidates + dropped promotions.
-
-## Master archive at Version close
-
+## Master archive at version close
 ```bash
 mkdir -p "docs/artifacts/$VERSION"
 cp docs/designer/design-system.md "docs/artifacts/$VERSION/design-system-snapshot.md"
 cp docs/prd/PRD.md "docs/artifacts/$VERSION/PRD-snapshot.md"
 ```
+
+## State lazy-prompts + versions cap
+Surface only when the condition holds, ask once, leave the field as-is on silence:
+
+| Field | Condition | Ask |
+|:--|:--|:--|
+| `phase_history[]` | open > 14d | "Phase {n} open {N}d — still active?" |
+| `pending_gate` | age ≥ 7d, same phase | "pending_gate {N}d old — keep / clear?" |
+| `versions[].outcome.observed_result` | null + `ended_at` non-null | "Version {id} closed — what happened?" |
+
+`versions[]` cap: retain ≤5; rotate older entries to an `outcome.retrospective_path` ref (out of the state file for size, not purged).

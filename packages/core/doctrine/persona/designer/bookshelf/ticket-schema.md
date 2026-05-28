@@ -7,7 +7,7 @@ Write each ticket at `docs/tickets/<version>/T-NNN.md`, where `<version>` = `po-
 ```yaml
 ---
 ticket_id: T-NNN
-version: v0.4-meta-dogfood
+version: version name
 slug: short-kebab
 title: Human-friendly title
 type: design | impl | refactor | test | qa | deploy | close | docs | doctrine
@@ -20,9 +20,9 @@ area_tag: <kebab-area>
 estimated_complexity: L1 | L2 | L3 | L4 | L5 | L6 | L7
 risk_flags: []        # auth | payments | PII | data-migration | external-api
 created_at: ISO8601
-started_at: ISO8601   # PO mechanical
-completed_at: ISO8601 # PO mechanical
-duration_min: <int>   # PO mechanical
+started_at: ISO8601   
+completed_at: ISO8601
+duration_min: <int> 
 ---
 ```
 
@@ -79,8 +79,3 @@ duration_min: <int>   # PO mechanical
 ## Persona Activity
 <PO-managed table: dispatch rows — persona / session_id / started_at / completed_at / model / effort>
 ```
-
-## Ownership
-- Designer owns scope-defining sections (Request / Acceptance / Out of scope / Plan).
-- PO touches only lifecycle frontmatter + Persona Activity rows + mirrored header line.
-- `type:deploy` uses `## Steps` body section instead of `## Plan` (see `pdt-po.md`).

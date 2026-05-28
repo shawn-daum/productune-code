@@ -1,87 +1,53 @@
 # Delegation — persona dispatch + plan mode
 
-Orchestrate persona invocations. Never author persona output.
+Never author persona output — dispatch it.
 
 ## Invocation channel
 
-`claude --agent pdt-<persona>` (first call) / `--resume <SID>` (intra-ticket).
-`post-delegate-state-write` hook (`PostToolUse(Bash)`) auto-captures session id +
-bumps `persona_session_meta.<persona>.turns`, appends `model_history`, merges
-`recent_turns`, unions `artifacts`. Don't duplicate.
+- `claude --agent pdt-<persona>` (first call) / `--resume "$SID"` (intra-ticket).
+- UUIDs are strict **8-4-4-4-12 lowercase hex**: never prefix, never self-generate. The first call omits `--session-id` (Claude returns it); a resume passes `--resume "$SID"`. Mixing is rejected.
+- The `post-delegate-state-write` hook (`PostToolUse(Bash)`) auto-captures the session id and bumps `persona_session_meta.<persona>.turns`, appends `model_history`, merges `recent_turns`, unions `artifacts` — don't duplicate that.
 
-UUIDs strict **8-4-4-4-12 lowercase hex**. Never prefix. Never self-generate.
-First call: omit `--session-id` (Claude returns). Resume: `--resume "$SID"`. Mixing rejected.
+## Write these (the hook can't infer)
 
-## Write these (hook can't infer)
-
-- Open `current_task` with semantic `slug` + `request_summary` + `artifacts` *before* dispatch
-  (else hook auto-creates `auto-<ts>` slug + `pre-delegate-task-check` blocks). Use `jq`.
-- Update `docs/tickets/<version>/T-NNN.md` lifecycle metadata only: status · timestamps ·
-  duration · assignee · routing · model · effort · progress refs. **No body / scope edits.**
-- Read SID from `current_task.persona_sessions.<persona>`.
-- Append `effort_history`, `complexity_level`, `confidence_history` after call.
+- Open `current_task` with a semantic `slug` + `request_summary` + `artifacts` *before* dispatch (else the hook auto-creates an `auto-<ts>` slug and `pre-delegate-task-check` blocks). Use `jq`.
+- Update `docs/tickets/<version>/T-NNN.md` lifecycle metadata only — status · timestamps · duration · assignee · routing · model · effort · progress refs. No body / scope edits.
+- Read the SID from `current_task.persona_sessions.<persona>`.
+- After the call, append `effort_history`, `complexity_level`, `confidence_history`.
 
 ## Task body
 
-`[ctx]` inline JSON line — slug · request_summary · artifacts · version · prd_path ·
-persona_sessions · next_ticket_id · user_knowledge_state. Persona skips state re-read.
+- Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state. The persona then skips its state re-read.
+- Inspect the returned `confidence` + `unresolved`; low / non-empty → escalate (`escalation.md`).
 
-Inspect returned `confidence` + `unresolved`. Low / non-empty → escalation
-(see `escalation.md`).
+## Designer Plan-row sync
 
-## Designer Plan row sync
+Ticket `## Plan` is Designer-authored — never edit Plan rows. If a delegation ships plan changes, mirror only the lifecycle frontmatter (status, model, effort, ts); body diffs surface via the Designer `summary` → append a 1-line entry to `## Persona Activity`.
 
-Ticket `## Plan` is **Designer-authored**. Never edit Plan rows. After delegation, if
-Designer ships plan changes, mirror **only** lifecycle frontmatter (status, model, effort,
-ts). Body diffs surface via Designer's `summary` field — append a 1-line entry to
-`## Persona Activity`.
+## Plan mode — L5+ plan-only
 
-## Plan mode — L5+ plan-only doctrine
+Run L5+ as plan-first → review → impl:
 
-L5+ goes **plan-first → review → impl dispatch**:
+1. **Plan call** — Developer/Designer PLAN ONLY, opus / xhigh. Body opens `PLAN MODE — DO NOT WRITE CODE` + Goal · Constraints · Acceptance; `changed_files` must be empty.
+2. **Review** — check testability + acceptance + architecture + risk (opus / xhigh; opus / max if risk-flagged). Verdict `OK` or `revise:[...]`.
+3. **Plan revise** — resume the same session, plan only. 3+ iterations → surface (proceed / re-PRD / strong-implement).
+4. **Impl** — dev sonnet / high, plan as the task's first line. Self-verify mandatory.
+5. **Failure regress** — a self-verify / QA fail after a model-up recovery retry (`escalation.md`) → back to plan (opus / xhigh) + re-review; set `escalation_triggered=true`; bump `actual_complexity`.
 
-1. **Plan call** — Developer/Designer **PLAN ONLY**, opus / xhigh. Body starts
-   `PLAN MODE — DO NOT WRITE CODE` + Goal · Constraints · Acceptance.
-   `changed_files` must be empty.
-2. **Review** — check testability + acceptance + architecture + risk. opus / xhigh default.
-   Verdict: `OK` or `revise:[...]`. Opus / max if risk-flagged.
-3. **Plan revise** — resume same dev session, plan only. **3+ iterations** → surface
-   (proceed / re-PRD / strong-implement).
-4. **Impl** — dev sonnet / high, plan as task first line. Self-verify mandatory.
-5. **Failure regress** — self-verify / QA fail after a model-up retry (Strike 2) → back to plan
-   (opus / xhigh) + re-review. `escalation_triggered=true`. Bump `actual_complexity`.
-
-Trigger: L≥5, multi-file / cross-cutting, risk flag, or user asks. L1–L3 trivials skip
-→ straight sonnet / medium impl.
-
-Optional cross-review (high-stakes): pdt-qa testability, pdt-designer UX/DS/copy.
-
-`claude --print` never auto-engages plan mode — the body `PLAN MODE — DO NOT WRITE CODE`
-string is your only non-interactive enforcement, so always include it.
+Trigger on L≥5, multi-file / cross-cutting, a risk flag, or user request. L1–L3 trivials skip straight to sonnet / medium impl. Optional high-stakes cross-review: pdt-qa testability, pdt-designer UX/DS/copy. `claude --print` never auto-engages plan mode, so the `PLAN MODE — DO NOT WRITE CODE` line is the only non-interactive enforcement — always include it.
 
 ## Dev-QA auto-loop
 
-After impl dispatch (status → `in-progress`), auto-dispatch QA without user confirm.
-Max 3 attempts. Fail (cap) → `blocked` + user TODO. AUTH_REQUIRED → pause + auth todo.
-
-State machine + chat trace + GUI integration → linked detail bookshelf.
+After an impl dispatch, auto-dispatch QA (no user confirm); cap 3 attempts; fail at cap → `blocked` + user TODO (`AUTH_REQUIRED` → pause + auth todo). Full mechanics: `bookshelf/lifecycle-mechanics.md` (Auto QA smoke gate).
 
 ## Session lifecycle
 
-**Per-ticket fresh / per-turn resume.** On ticket close (`done|blocked|abandoned`), run
-`jq '.current_task.persona_sessions = {}'` immediately (before `current_task = null`).
-Next ticket's first dispatch = no `--session-id` (fresh). Within-ticket multi-turn
-(plan→impl, QA retry) = `--resume "$SID"` OK.
+Per-ticket fresh, per-turn resume. On ticket close (`done | blocked | abandoned`), run `jq '.current_task.persona_sessions = {}'` before nulling `current_task`. The next ticket's first dispatch is fresh (no `--session-id`); within-ticket multi-turn (plan→impl, QA retry) uses `--resume "$SID"`.
 
 ## Chunking — per-call size
 
-Split multi-area / multi-decision / multi-output directives per sub-area. Per-persona
-ceilings + good/bad examples → linked detail. Rule: 1–2 artifacts per Designer call max.
+Split multi-area / multi-decision / multi-output directives per sub-area; max 1–2 artifacts per Designer call.
 
 ## PRD delegation
 
-Fresh idea → delegate Version 1 PRD direct (clarity loop subsumes discovery):
-`PERSONA=pdt-designer · MODEL=opus · EFFORT=max · COMPLEXITY=L7`.
-Designer returns `state:"needs-info"` (relay `next_question`) or `state:"ready"`
-(PRD path + tickets + ambiguity_score + version_outcome). Hard cap 5 needs-info loops;
-6th turn = ship "finalize" resume body. Full: `prd-clarity-loop.md` (designer bookshelf).
+Fresh idea → delegate the Version 1 PRD directly (the clarity loop subsumes discovery): `PERSONA=pdt-designer · MODEL=opus · EFFORT=max · COMPLEXITY=L7`. Designer returns `state:"needs-info"` (relay `next_question`) or `state:"ready"` (PRD path + tickets + ambiguity_score + version_outcome). Hard cap 5 needs-info loops; the 6th turn ships a "finalize" resume body. Full: `designer/bookshelf/prd-clarity-loop.md`.

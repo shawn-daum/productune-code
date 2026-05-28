@@ -1,0 +1,3 @@
+1. T1 design system + mockup — `design-system.md` + up to 3 key screens (T1a: 3 candidates → user picks · T1b: finalize)
+2. T2 user flow + wireframe — flow.md + optional `*.excalidraw.json`
+3. T3 hi-fi mockup — interactive `{html,tsx}` via `anthropic/frontend-design` skill. Stack: shadcn/ui + react-icons (default) / lucide-react (productune-internal per `feedback_icon_set`). Output: `docs/artifacts/<version>/<ticket-id>-<slug>.{tsx,html}`.
