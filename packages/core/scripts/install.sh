@@ -286,6 +286,18 @@ else
   warn "doctrine/ not found at $ROOT/doctrine — Tier 0 mirror skipped (run again after doctrine/ is present)"
 fi
 
+# 2d) Setup ~/.productune/mcp/ — dispatch-time MCP configs (--mcp-config files)
+#     Agents are frontmatter-less habit pointers now; QA gets playwright at
+#     dispatch via `claude --agent pdt-qa --mcp-config ~/.productune/mcp/playwright.json`.
+#     cp overwrites on re-run, matching the doctrine mirror (re-run = config update).
+mkdir -p "$HOME/.productune/mcp"
+if [ -f "$ROOT/agents/mcp/playwright.json" ]; then
+  cp "$ROOT/agents/mcp/playwright.json" "$HOME/.productune/mcp/playwright.json"
+  say "MCP config 설치 완료: ~/.productune/mcp/playwright.json"
+else
+  warn "agents/mcp/playwright.json not found at $ROOT/agents/mcp — playwright MCP config skipped"
+fi
+
 # 3) Setup ~/.productune/<persona>/ — Tier 2 scaffolding (seed-only, never overwrite)
 #    Creates bookshelf/ dir + empty habit.md header for fresh installs.
 for _PERSONA in po designer developer qa; do

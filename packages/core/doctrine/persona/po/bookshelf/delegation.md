@@ -8,6 +8,15 @@ Never author persona output — dispatch it.
 - UUIDs are strict **8-4-4-4-12 lowercase hex**: never prefix, never self-generate. The first call omits `--session-id` (Claude returns it); a resume passes `--resume "$SID"`. Mixing is rejected.
 - The `post-delegate-state-write` hook (`PostToolUse(Bash)`) auto-captures the session id and bumps `persona_session_meta.<persona>.turns`, appends `model_history`, merges `recent_turns`, unions `artifacts` — don't duplicate that.
 
+## Dispatch runtime envelope
+
+Agents carry no frontmatter — each only points to its habit. Supply runtime config per dispatch:
+- **model + effort** → from routing (`--model`; see `routing.md`).
+- **write grant** → `--permission-mode acceptEdits` for authoring personas (designer / developer); QA needs none.
+- **QA UI smoke** → add `--mcp-config ~/.productune/mcp/playwright.json` (Playwright MCP).
+
+Per-persona tool sandboxing is NOT CLI-enforced — role limits live in each persona habit (write-scope + refusal).
+
 ## Write these (the hook can't infer)
 
 You own only two writes: the pre-dispatch `current_task` open, and the ticket lifecycle frontmatter.
