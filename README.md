@@ -41,9 +41,9 @@ CLI 한 줄 (`productune`) 로 시작해서 **PRD → Design → Build → Deplo
 
 | 페르소나 | 역할 | Default 모델 | Why mode | How mode | What mode |
 |---|---|---|---|---|---|
-| **productune** (PO) | 오케스트레이터 (저자 X) | **opus/xhigh** | — | opus/xhigh — 인터뷰 / 라우팅 / 합산 / brief append (default). 위험 plan review = opus/xhigh 유지 | — |
-| **pdt-designer** | PRD 작성 + Plan + Design + Tickets | opus | **opus + ⚡max** — Round 1 MVP PRD (clarity loop A ≤ 0.05) / net-new 시스템 디자인. Round 2+ PRD: opus + ⚡xhigh | opus + ⚡xhigh — design docs (single screen / 컴포넌트 spec). sonnet/medium — token/DS compliance, haiku/low — 단일 컴포넌트 compliance | sonnet/medium — ticket 파일 emission |
-| **pdt-developer** | 구현 | sonnet | — | **L4+ plan phase: opus + ⚡xhigh** (PLAN ONLY). **System-level: opus + ⚡max** | **baseline sonnet/medium** (L1–L3 trivial). **L4+ impl phase: sonnet/high** (plan 후) |
+| **productune** (PO) | 오케스트레이터 (저자 X) | **opus/high** | — | opus/high — 인터뷰 / 라우팅 / 합산 / brief append (default). 위험 plan review = opus/xhigh 유지 | — |
+| **pdt-designer** | PRD 작성 + Plan + Design + Tickets | opus | **opus + ⚡max** — Round 1 MVP PRD (clarity loop A ≤ 0.05) / net-new 시스템 디자인. Round 2+ PRD: opus + ⚡high | opus + ⚡high — design docs (single screen / 컴포넌트 spec). sonnet/medium — token/DS compliance, haiku/low — 단일 컴포넌트 compliance | sonnet/medium — ticket 파일 emission |
+| **pdt-developer** | 구현 | sonnet | — | **L4+ plan phase: opus + ⚡high** (PLAN ONLY). **System-level: opus + ⚡max** | **baseline sonnet/medium** (L1–L3 trivial). **L4+ impl phase: sonnet/high** (plan 후) |
 | **pdt-qa** | 검증 | haiku | — | sonnet/high — stress / e2e / 반복 QA issue. **Plan testability cross-review (옵트인)**: sonnet/high | **baseline haiku/low** — npm test, lint/build, 단일 페이지 nav |
 
 > **PO 는 산출물을 직접 작성하지 않습니다.** 인터뷰 brief 만 자기 손으로 채우고, PRD/티켓/디자인/코드는 모두 sub-agent 위임.
@@ -218,6 +218,7 @@ productune gc                       # productune/* worktree audit (dry-run)
 productune gc -y                    # 안전한 worktree 자동 정리
 
 # 직접 호출 (worktree split / parallel-safety 없음)
+# 항상 foreground 실행 (절대 background 금지). portable form: --add-dir ~/.productune 선행
 claude --agent pdt-po
 claude --agent pdt-designer         # 단일 페르소나
 ```
@@ -356,7 +357,7 @@ productune/
 │               ├── pre-chunking-warn.sh         # PreToolUse — chunk size warning
 │               ├── post-delegate-state-write.sh # PostToolUse(Bash) — session_id, turns
 │               ├── post-edit-format.sh          # PostToolUse(Write|Edit) — formatter
-│               ├── post-bash-strip-cost.sh      # PostToolUse(Bash) — strip cost lines
+│               ├── post-bash-strip-cost.sh      # PostToolUse(Bash) — strip cost — JSON fields + text-mode lines
 │               ├── post-compact-doctrine.sh     # PostCompact — hard rules re-inject
 │               └── stop-verify.sh               # Stop(pdt-developer) — typecheck/build gate
 ├── docs/
