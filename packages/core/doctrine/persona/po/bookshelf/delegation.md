@@ -4,7 +4,9 @@ Never author persona output — dispatch it.
 
 ## Invocation channel
 
-- `claude --agent pdt-<persona>` (first call) / `--resume "$SID"` (intra-ticket).
+- Dispatch FOREGROUND / synchronous — wait for it to return; never background it (a backgrounded nested `claude --agent` deadlocks at startup). Read the result envelope from stdout.
+- Portable form (first call): `claude --add-dir ~/.productune -p --agent pdt-<persona> --permission-mode acceptEdits --model <tier> "<[ctx] + task>"`. Put `--add-dir` FIRST — late placement drops the prompt.
+- `--resume "$SID"` for an intra-ticket follow-up (same session: plan→impl / QA retry).
 - UUIDs are strict **8-4-4-4-12 lowercase hex**: never prefix, never self-generate. The first call omits `--session-id` (Claude returns it); a resume passes `--resume "$SID"`. Mixing is rejected.
 - The `post-delegate-state-write` hook (`PostToolUse(Bash)`) captures the session id, sets `persona_session_meta.<persona>.last_seen`, merges `recent_turns`, unions `artifacts` — don't duplicate that.
 

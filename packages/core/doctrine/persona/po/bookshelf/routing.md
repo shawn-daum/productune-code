@@ -8,8 +8,8 @@ Agents carry no `model:` frontmatter, so the floor below is the only fallback �
 | Persona | Floor | Default | Why |
 |:--|:--|:--|:--|
 | Designer (PRD R1 MVP) | L7 | opus + max | net-new clarity loop |
-| Designer (PRD R2+) | L6 | opus + xhigh | incremental |
-| Designer (single screen / DS) | L6 | opus + xhigh | spec authoring |
+| Designer (PRD R2+) | L6 | opus + high | incremental |
+| Designer (single screen / DS) | L6 | opus + high | spec authoring |
 | Designer (token / DS compliance) | L4 | sonnet / medium | plan-driven |
 | Developer | L5 | sonnet / medium | code authoring |
 | QA | L2 | haiku / low | pass/fail + cmd |
@@ -27,9 +27,9 @@ L1 extraction · L2 classify · L3 transform · L4 summarize · L5 generate · L
 
 ## Effort follows the model
 
-- haiku = low · sonnet = medium · opus = xhigh (always).
-- `max` is opus-only and Step-1-only — for the floor rows R1 MVP PRD (`A ≤ 0.05`) / net-new design system / system architecture; never reached via recovery.
-- A step-up bumps effort one tier alongside the model.
+- haiku = low · sonnet = medium · opus = high.
+- A step-up bumps effort one tier alongside the model: opus high → xhigh.
+- `max` is opus-only and Step-1-only — for the floor rows R1 MVP PRD (`A ≤ 0.05`) / net-new design system / system architecture; never reached via a step-up or recovery.
 
 ## Emit
 
