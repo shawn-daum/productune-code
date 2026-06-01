@@ -169,16 +169,30 @@ ensure_claude_installed() {
       command -v npm >/dev/null 2>&1 || die "npm 미설치 — 먼저 Node.js 설치: https://nodejs.org"
       npm install -g @anthropic-ai/claude-code || die "Claude Code 설치 실패"
       # Refresh PATH so the newly installed claude binary is visible in this session.
-      # npm may install to a bin dir not yet in $PATH (e.g. ~/.nvm/…/bin, ~/.npm-global/bin).
-      _NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin"
-      if [ -d "$_NPM_GLOBAL_BIN" ] && [[ ":$PATH:" != *":$_NPM_GLOBAL_BIN:"* ]]; then
-        export PATH="$_NPM_GLOBAL_BIN:$PATH"
-        say "PATH에 npm global bin 추가: $_NPM_GLOBAL_BIN"
-      fi
-      unset _NPM_GLOBAL_BIN
+      # Two strategies cover most setups (Homebrew, nvm, fnm, custom .npmrc prefix):
+      #   S1: npm prefix -g → the configured global prefix's bin dir
+      #   S2: dirname of npm itself → the bin dir where Homebrew/system places binaries
+      #       (covers cases where npm prefix -g differs from the real npm bin dir)
+      _path_prepend() {
+        local d="$1"
+        [ -d "$d" ] || return 0
+        case ":$PATH:" in
+          *":$d:"*) return 0 ;;
+        esac
+        export PATH="$d:$PATH"
+        say "PATH 추가: $d"
+      }
+      _path_prepend "$(npm prefix -g 2>/dev/null || true)/bin"   # S1
+      _path_prepend "$(dirname "$(command -v npm 2>/dev/null || echo /nonexistent)")"  # S2
+      unset -f _path_prepend
       # Clear bash/zsh command hash cache so 'command -v claude' picks up the new binary.
       hash -r 2>/dev/null || rehash 2>/dev/null || true
-      command -v claude >/dev/null 2>&1 || die "설치 후에도 claude CLI를 찾을 수 없습니다 — PATH를 확인하세요. 수동 확인: npm prefix -g"
+      command -v claude >/dev/null 2>&1 || die "설치 후에도 claude CLI를 찾을 수 없습니다.
+  진단:
+    npm 위치: $(command -v npm 2>/dev/null || echo '?')
+    npm prefix -g: $(npm prefix -g 2>/dev/null || echo '?')
+    현재 PATH: $PATH
+  수동 해결: export PATH=\"\$(dirname \"\$(which npm)\"):\$PATH\" && exec \$SHELL"
       say "Claude Code 설치 완료: $(claude --version 2>/dev/null | head -1 || echo '?')"
       ;;
     *) die "Claude Code 설치 후 install.sh 재실행: npm install -g @anthropic-ai/claude-code" ;;
