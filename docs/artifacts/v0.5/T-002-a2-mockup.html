@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>T-002 · A2 Artifacts viewer — hi-fi mockup</title>
+<!-- T-002 A2 Artifacts viewer · chunk 2/2 · implements docs/artifacts/v0.5/T-002-a2-flow.md
+     DS tokens: docs/designer/design-system.md (R4, violet-brand palette). md-* recipes: T-004-a9-flow.md §1.1.
+     Read-only. lucide icons only (inline SVG, stroke-2, currentColor). NO color emoji. -->
+<style>
+  :root{
+    /* §2.1 surface */
+    --surface-base:#0A0A0A; --surface-body:#0F0F0F; --surface-panel:#141414;
+    --surface-subpanel:#1A1A1A; --surface-modal:#1C1C20;
+    /* §2.2 border */
+    --border-subtle:#1A1A1A; --border-default:#1F1F1F; --border-strong:#2A2A2A; --border-muted:#3A3A3A;
+    /* §2.3 text */
+    --text-primary:#E8E8EA; --text-emphasis:#F0F0F0; --text-secondary:#C8C8CC;
+    --text-muted:#A0A0A0; --text-faint:#707070; --text-disabled:#505050;
+    /* §2.4 accent / brand (violet) */
+    --brand-purple:#8B5CF6; --accent:#8B5CF6;
+    /* §2.5 persona */
+    --persona-po:#8B5CF6; --persona-designer:#FB923C; --persona-dev:#38BDF8; --persona-qa:#34D399;
+    /* §2.6 stage */
+    --stage-prd:#FB923C;
+    /* §2.8 health */
+    --health-info:#38BDF8; --health-success:#34D399; --health-warn:#FBBF24; --health-error:#EF4444;
+    /* §4.1 family */
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","Menlo","Consolas",monospace;
+    /* §5 radius */
+    --radius-xs:2px; --radius-md:4px; --radius-lg:6px; --radius-xl:8px; --radius-pill:20px; --radius-full:9999px;
+    /* §6 elevation */
+    --elev-md:0 6px 18px rgba(0,0,0,0.45); --elev-lg:0 12px 32px rgba(0,0,0,0.5);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--surface-base);color:var(--text-primary);font-family:var(--font-sans);
+    font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;padding:24px}
+  .caption{font-size:11px;color:var(--text-muted);letter-spacing:.02em;margin:0 0 8px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 18px;font-size:11px;color:var(--text-muted)}
+  .legend b{color:var(--text-secondary);font-weight:500}
+  .legend .dot{display:inline-block;width:8px;height:8px;border-radius:var(--radius-full);margin-right:5px;vertical-align:middle}
+
+  /* ---- WorkspaceShell 3-pane ---- */
+  .shell{display:flex;border:1px solid var(--border-default);border-radius:var(--radius-xl);
+    overflow:hidden;background:var(--surface-body);box-shadow:var(--elev-lg);height:760px}
+
+  /* activity bar (48px) §3 --space-12 */
+  .activity{width:48px;background:var(--surface-base);border-right:1px solid var(--border-default);
+    display:flex;flex-direction:column;align-items:center;padding-top:12px;gap:4px;flex-shrink:0}
+  .activity .ab{width:40px;height:40px;display:flex;align-items:center;justify-content:center;
+    color:var(--text-muted);border-radius:var(--radius-md);cursor:default;position:relative}
+  .activity .ab:hover{color:var(--text-secondary)}
+  /* §8.3 Tab — vertical rail, active = --text-emphasis + 2px --accent underline (here: left bar) */
+  .activity .ab.active{color:var(--text-emphasis)}
+  .activity .ab.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;
+    background:var(--accent);border-radius:var(--radius-xs)}
+  .ab-label{position:absolute;left:46px;font-size:10px;white-space:nowrap;color:var(--text-faint);display:none}
+
+  /* left list pane §2.1 --surface-panel */
+  .list-pane{width:248px;background:var(--surface-panel);border-right:1px solid var(--border-default);
+    display:flex;flex-direction:column;flex-shrink:0}
+  .list-head{padding:14px 14px 10px;border-bottom:1px solid var(--border-default);
+    display:flex;align-items:center;justify-content:space-between}
+  .list-title{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-emphasis)}
+  /* PRD stage chip = orange §2.6 / §8.2 stage variant */
+  .stage-chip{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+    padding:2px 8px;border-radius:var(--radius-pill);color:var(--stage-prd);
+    background:color-mix(in oklab,var(--stage-prd) 12%,transparent)}
+  .scope-group{padding:10px 0 2px}
+  .scope-label{font-size:10px;font-weight:500;letter-spacing:.04em;color:var(--text-faint);
+    padding:2px 14px 4px;font-family:var(--font-mono)}
+  /* §8 list row: body-dense + --border-default separators */
+  .row{display:flex;align-items:center;gap:8px;padding:7px 14px;cursor:default;
+    border-left:2px solid transparent;color:var(--text-secondary)}
+  .row:hover{background:var(--surface-subpanel);color:var(--text-primary)}
+  .row .ico{color:var(--text-muted);flex-shrink:0;display:flex}
+  .row .nm{font-size:13px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* selected row = --surface-subpanel + violet left accent (NOT orange) */
+  .row.sel{background:var(--surface-subpanel);color:var(--text-emphasis);border-left-color:var(--accent)}
+  .row.sel .ico{color:var(--accent)}
+
+  /* main panel */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--surface-body)}
+  /* main-panel tab strip §8.3 */
+  .tabstrip{display:flex;background:var(--surface-panel);border-bottom:1px solid var(--border-default);
+    height:38px;align-items:stretch}
+  .mtab{display:flex;align-items:center;gap:7px;padding:0 14px;font-size:12px;color:var(--text-muted);
+    border-right:1px solid var(--border-default);position:relative}
+  .mtab .ico{display:flex}
+  .mtab.active{color:var(--text-emphasis);background:var(--surface-body)}
+  .mtab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--accent)}
+  .ro-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--text-faint);
+    margin-left:6px;padding:1px 6px;border:1px solid var(--border-default);border-radius:var(--radius-pill)}
+  .breadcrumb{padding:7px 16px;font-size:11px;color:var(--text-muted);font-family:var(--font-mono);
+    border-bottom:1px solid var(--border-subtle);background:var(--surface-body);
+    display:flex;align-items:center;gap:6px}
+  .breadcrumb .chev{color:var(--text-ghost,#3A3A3A)}
+
+  /* viewer scroll area */
+  .viewer{flex:1;overflow:auto;padding:24px 28px}
+
+  /* ===== md-* render recipes (T-004-a9-flow §1.1) ===== */
+  .md{max-width:780px}
+  .md-h1{font-size:18px;font-weight:600;line-height:1.3;color:var(--text-emphasis);margin:20px 0 8px}
+  .md-h1:first-child{margin-top:0}
+  .md-h2{font-size:15px;font-weight:600;line-height:1.3;color:var(--text-primary);margin:16px 0 8px}
+  .md-h3{font-size:14px;font-weight:500;line-height:1.4;color:var(--text-secondary);margin:12px 0 6px}
+  .md-body{font-size:13px;color:var(--text-primary);line-height:1.6;margin:0 0 8px}
+  .md-strong{font-weight:600;color:var(--text-emphasis)}
+  .md-link{color:var(--accent);text-decoration:none}
+  .md-link:hover{text-decoration:underline}
+  /* R7 inline code */
+  .md-code-inline{font-family:var(--font-mono);font-size:12px;color:var(--text-primary);
+    background:var(--surface-subpanel);padding:1px 4px;border-radius:var(--radius-xs)}
+  /* R8 fenced block: bg --surface-base (one step deeper than bubble), border, radius-lg */
+  .md-code-block{font-family:var(--font-mono);font-size:12px;line-height:1.4;background:var(--surface-base);
+    border:1px solid var(--border-default);border-radius:var(--radius-lg);padding:12px 14px;margin:0 0 8px;overflow:auto}
+  .md-code-block .cmt{color:var(--text-faint)}          /* md-syntax-comment */
+  .md-code-block .kw{color:var(--text-emphasis);font-weight:600}  /* md-syntax-keyword (weight-coded) */
+  .md-code-block .str{color:var(--health-success)}      /* md-syntax-string (single hue ≤1) */
+  .md-code-block .num{color:var(--text-primary)}        /* md-syntax-number */
+  .md-code-block .pun{color:var(--text-muted)}          /* md-syntax-punctuation */
+  .md-code-block .def{color:var(--text-secondary)}      /* md-syntax-default */
+  /* R10/R11 lists */
+  .md-ul,.md-ol{margin:0 0 8px;padding-left:16px}
+  .md-ul li,.md-ol li{font-size:13px;color:var(--text-primary);line-height:1.6;margin-bottom:4px}
+  .md-ul li::marker{color:var(--text-muted)}
+  .md-ol li::marker{color:var(--text-muted);font-family:var(--font-mono)}
+  /* R12 blockquote */
+  .md-blockquote{border-left:3px solid var(--border-strong);background:var(--surface-subpanel);
+    color:var(--text-secondary);padding:8px 12px;border-radius:var(--radius-md);margin:0 0 8px;font-size:13px}
+  /* R13-16 table */
+  .md-table{border-collapse:collapse;border:1px solid var(--border-default);border-radius:var(--radius-lg);
+    overflow:hidden;font-size:12px;margin:0 0 8px;width:100%}
+  .md-table th{background:var(--surface-subpanel);color:var(--text-emphasis);font-weight:600;text-align:left;
+    border-bottom:1px solid var(--border-strong);padding:6px 12px}
+  .md-table td{color:var(--text-primary);padding:6px 12px;border-bottom:1px solid var(--border-subtle)}
+  .md-table tr:nth-child(even) td{background:var(--surface-panel)}  /* R16 zebra */
+  .md-table tr:last-child td{border-bottom:none}
+  /* R17 hr */
+  .md-hr{border:none;border-top:1px solid var(--border-default);margin:12px 0}
+
+  /* ===== compact secondary panels (mermaid + html states) ===== */
+  .compact-row{display:flex;gap:16px;margin-top:24px;border-top:1px solid var(--border-subtle);padding-top:18px}
+  .compact{flex:1;min-width:0}
+  .compact .cap{font-size:11px;color:var(--text-muted);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+  .compact .cap .ico{color:var(--text-faint);display:flex}
+  .mini-pane{border:1px solid var(--border-default);border-radius:var(--radius-lg);
+    background:var(--surface-panel);height:208px;display:flex;flex-direction:column;overflow:hidden}
+
+  /* mermaid viewer (reuse Phase-4 look): toolbar + canvas */
+  .mm-toolbar{height:30px;background:var(--surface-subpanel);border-bottom:1px solid var(--border-default);
+    display:flex;align-items:center;gap:6px;padding:0 8px}
+  .mm-btn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;
+    color:var(--text-muted);border-radius:var(--radius-md)}
+  .mm-canvas{flex:1;display:flex;align-items:center;justify-content:center;
+    background:var(--surface-base);position:relative}
+  .mm-grid{position:absolute;inset:0;opacity:.4;
+    background-image:radial-gradient(var(--border-subtle) 1px,transparent 1px);background-size:16px 16px}
+  .mm-node{border:1.5px solid var(--border-strong);background:var(--surface-subpanel);color:var(--text-secondary);
+    border-radius:var(--radius-md);padding:5px 10px;font-size:11px;z-index:1}
+  .mm-flow{display:flex;flex-direction:column;align-items:center;gap:7px;z-index:1}
+  .mm-edge{width:1px;height:10px;background:var(--border-muted)}
+  .zoom-pill{position:absolute;bottom:6px;right:8px;font-size:10px;color:var(--text-faint);
+    font-family:var(--font-mono);background:var(--surface-subpanel);padding:1px 6px;border-radius:var(--radius-pill);z-index:1}
+
+  /* html via <webview>: browser chrome */
+  .bw-chrome{height:30px;background:var(--surface-subpanel);border-bottom:1px solid var(--border-default);
+    display:flex;align-items:center;gap:8px;padding:0 8px}
+  .bw-nav{display:flex;gap:4px}
+  .bw-nav .ico{color:var(--text-faint);display:flex}
+  .bw-url{flex:1;background:var(--surface-base);border:1px solid var(--border-default);border-radius:var(--radius-md);
+    font-size:10px;font-family:var(--font-mono);color:var(--text-muted);padding:3px 8px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
+  .bw-page{flex:1;background:#15151a;padding:14px;overflow:hidden}
+  .bw-page .ph{height:8px;border-radius:var(--radius-xs);background:var(--border-strong);margin-bottom:8px}
+  .bw-page .ph.t{width:55%;height:12px;background:var(--accent);opacity:.55}
+  .bw-page .ph.s{width:80%} .bw-page .ph.m{width:92%} .bw-page .ph.sm{width:40%}
+
+  /* empty + error mini states */
+  .state-row{display:flex;gap:16px;margin-top:16px}
+  .state-pane{flex:1;border:1px solid var(--border-default);border-radius:var(--radius-lg);
+    background:var(--surface-panel);height:150px;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;text-align:center;padding:0 20px}
+  .state-pane .ico{margin-bottom:10px}
+  .state-pane .hl{font-size:14px;font-weight:600;color:var(--text-secondary);line-height:1.3;margin-bottom:5px}
+  .state-pane .desc{font-size:13px;color:var(--text-muted);line-height:1.4}
+  /* §2.8 health-error inline (load-error branch, flow step 9) */
+  .err-inline{display:flex;align-items:flex-start;gap:8px;background:var(--surface-subpanel);
+    border-left:4px solid var(--health-error);border-radius:var(--radius-md);padding:10px 12px;text-align:left;width:100%}
+  .err-inline .ico{color:var(--health-error);margin:1px 0 0}
+  .err-inline .txt{font-size:13px;color:var(--text-secondary)}
+  .err-inline .retry{margin-top:6px;display:inline-flex;align-items:center;gap:5px;font-size:11px;
+    color:var(--text-primary);background:var(--surface-subpanel);border:1px solid var(--border-default);
+    border-radius:var(--radius-md);padding:3px 8px}
+
+  h1.page{font-size:16px;font-weight:600;color:var(--text-emphasis);margin-bottom:4px}
+  .sub{font-size:12px;color:var(--text-muted);margin-bottom:16px}
+</style>
+</head>
+<body>
+<h1 class="page">T-002 · A2 산출물 (Artifacts) viewer — hi-fi mockup</h1>
+<p class="sub">3-pane: 산출물 tab (vertical rail) → scoped file list → read-only main-panel viewer · DS R4 (violet brand) · md-* recipes from T-004-a9 §1.1</p>
+<div class="legend">
+  <span><b>Palette:</b></span>
+  <span><i class="dot" style="background:var(--accent)"></i><b>violet</b> = accent / active tab / focus / selected row</span>
+  <span><i class="dot" style="background:var(--persona-designer)"></i><b>orange</b> = designer · PRD stage</span>
+  <span><i class="dot" style="background:var(--persona-dev)"></i>dev sky</span>
+  <span><i class="dot" style="background:var(--persona-qa)"></i>qa emerald</span>
+  <span><b>read-only</b> — no edit affordance anywhere</span>
+</div>
+
+<div class="shell">
+  <!-- ============ activity bar — 산출물 tab active ============ -->
+  <nav class="activity" aria-label="activity bar (DS §8.3 vertical Tab rail)">
+    <!-- chat / PO -->
+    <div class="ab" title="PO chat">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+    </div>
+    <!-- tickets -->
+    <div class="ab" title="Tickets">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg>
+    </div>
+    <!-- 산출물 (Artifacts) — ACTIVE: --text-emphasis + 2px --accent bar -->
+    <div class="ab active" title="산출물 (Artifacts)" aria-current="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3h11l5 5v13H4Z"/><path d="M15 3v5h5"/><path d="M8 13h8"/><path d="M8 17h8"/></svg>
+    </div>
+  </nav>
+
+  <!-- ============ scoped file list (--surface-panel) ============ -->
+  <section class="list-pane" aria-label="Artifacts list — scoped to 3 roots">
+    <div class="list-head">
+      <span class="list-title">산출물</span>
+      <span class="stage-chip" title="PRD stage = designer orange">PRD</span>
+    </div>
+    <div style="overflow:auto">
+      <!-- scope 1: docs/prd/ -->
+      <div class="scope-group">
+        <div class="scope-label">docs/prd/</div>
+        <div class="row sel" aria-selected="true">
+          <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M8 13h6"/><path d="M8 17h5"/></svg></span>
+          <span class="nm">productune.md</span>
+        </div>
+      </div>
+      <!-- scope 2: docs/artifacts/<version>/ -->
+      <div class="scope-group">
+        <div class="scope-label">docs/artifacts/v0.5/</div>
+        <div class="row">
+          <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M8 13h6"/><path d="M8 17h5"/></svg></span>
+          <span class="nm">T-002-a2-flow.md</span>
+        </div>
+        <!-- mermaid type glyph -->
+        <div class="row">
+          <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M6.5 10v4h7"/><path d="M17.5 14V9h-7"/></svg></span>
+          <span class="nm">T-001-state-machine.mmd</span>
+        </div>
+        <!-- html type glyph -->
+        <div class="row">
+          <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></span>
+          <span class="nm">T-002-a2-mockup.html</span>
+        </div>
+      </div>
+      <!-- scope 3: docs/designer/ -->
+      <div class="scope-group">
+        <div class="scope-label">docs/designer/</div>
+        <div class="row">
+          <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M8 13h6"/><path d="M8 17h5"/></svg></span>
+          <span class="nm">design-system.md</span>
+        </div>
+        <div class="row">
+          <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M8 13h6"/><path d="M8 17h5"/></svg></span>
+          <span class="nm">feature-history.md</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ main panel — md viewer (primary state) ============ -->
+  <section class="main" aria-label="main-panel viewer (read-only)">
+    <div class="tabstrip">
+      <div class="mtab active">
+        <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v5h5"/><path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/></svg></span>
+        productune.md
+      </div>
+    </div>
+    <div class="breadcrumb">
+      <span>docs</span><span class="chev">/</span><span>prd</span><span class="chev">/</span><span style="color:var(--text-secondary)">productune.md</span>
+      <span class="ro-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>읽기 전용</span>
+    </div>
+
+    <div class="viewer">
+      <div class="md">
+        <!-- md-h1 -->
+        <h1 class="md-h1">A2 — 산출물 (Artifacts) tab</h1>
+        <!-- md-body + md-strong + md-link + md-code-inline -->
+        <p class="md-body">GUI 안에서 <span class="md-strong">읽기 전용</span>으로 산출물을 열람한다. 좌측 목록은 <span class="md-code-inline">docs/prd/</span>, <span class="md-code-inline">docs/artifacts/&lt;version&gt;/</span>, <span class="md-code-inline">docs/designer/</span> 세 루트로 스코프된다. 자세한 흐름은 <a href="#" class="md-link">T-002-a2-flow.md</a> 참조.</p>
+
+        <!-- md-h2 -->
+        <h2 class="md-h2">타입 → 뷰어 라우팅</h2>
+        <!-- md-table (R13-16) -->
+        <table class="md-table">
+          <thead><tr><th>파일 타입</th><th>뷰어</th><th>재사용</th></tr></thead>
+          <tbody>
+            <tr><td><span class="md-code-inline">.md</span></td><td>Markdown viewer</td><td>md-* recipes</td></tr>
+            <tr><td><span class="md-code-inline">.mmd</span> / <span class="md-code-inline">.mermaid</span></td><td>Mermaid viewer</td><td>Phase-4 viewer</td></tr>
+            <tr><td><span class="md-code-inline">.html</span></td><td>Browser <span class="md-code-inline">&lt;webview&gt;</span></td><td>browser tab type</td></tr>
+          </tbody>
+        </table>
+
+        <!-- md-h3 -->
+        <h3 class="md-h3">제약 (이번 버전)</h3>
+        <!-- md-ul (R10) -->
+        <ul class="md-ul">
+          <li>읽기 전용 — 편집 버튼 / 인라인 에디터 / 저장 없음</li>
+          <li>rich nav / TOC 템플릿 제외 (→ v0.6)</li>
+        </ul>
+
+        <!-- md-blockquote (R12) -->
+        <blockquote class="md-blockquote">읽기 전용은 버전 전체 불변식이다. 세 뷰어 모두 어떤 편집 affordance 도 노출하지 않는다.</blockquote>
+
+        <!-- md-h2 + md-code-block with md-syntax-* -->
+        <h2 class="md-h2">라우팅 의사코드</h2>
+        <pre class="md-code-block"><code><span class="cmt">// resolve viewer by file extension</span>
+<span class="kw">function</span> <span class="def">resolveViewer</span><span class="pun">(</span><span class="def">path</span><span class="pun">)</span> <span class="pun">{</span>
+  <span class="kw">const</span> <span class="def">ext</span> <span class="pun">=</span> <span class="def">extname</span><span class="pun">(</span><span class="def">path</span><span class="pun">)</span><span class="pun">;</span>
+  <span class="kw">if</span> <span class="pun">(</span><span class="def">ext</span> <span class="pun">===</span> <span class="str">".md"</span><span class="pun">)</span>   <span class="kw">return</span> <span class="str">"markdown"</span><span class="pun">;</span>
+  <span class="kw">if</span> <span class="pun">(</span><span class="def">isMermaid</span><span class="pun">(</span><span class="def">ext</span><span class="pun">))</span>   <span class="kw">return</span> <span class="str">"mermaid"</span><span class="pun">;</span>  <span class="cmt">// reuse Phase-4</span>
+  <span class="kw">if</span> <span class="pun">(</span><span class="def">ext</span> <span class="pun">===</span> <span class="str">".html"</span><span class="pun">)</span> <span class="kw">return</span> <span class="str">"browser"</span><span class="pun">;</span> <span class="cmt">// &lt;webview&gt;</span>
+  <span class="kw">return</span> <span class="num">null</span><span class="pun">;</span> <span class="cmt">// → inline error state</span>
+<span class="pun">}</span></code></pre>
+
+        <!-- md-ol (R11) + md-hr (R17) -->
+        <h3 class="md-h3">단계 요약</h3>
+        <ol class="md-ol">
+          <li>좌측 <span class="md-code-inline">산출물</span> tab 클릭 → 목록 전환</li>
+          <li>행 선택 → 확장자로 뷰어 라우팅</li>
+          <li>메인 패널 탭 open/focus (read-only)</li>
+        </ol>
+        <hr class="md-hr" />
+        <p class="md-body" style="color:var(--text-muted)">PRD A2 acceptance: md / mermaid / html 각각 올바른 뷰어로 열림 · html 은 <span class="md-code-inline">&lt;webview&gt;</span> · GUI 만으로 도달.</p>
+
+        <!-- ===== compact: mermaid viewer + html webview states ===== -->
+        <div class="compact-row">
+          <!-- mermaid-viewer state (reuse Phase-4 look) -->
+          <div class="compact">
+            <div class="cap"><span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M6.5 10v4h7"/></svg></span>mermaid-viewer state — <span class="md-code-inline" style="font-size:11px">.mmd</span> (Phase-4 재사용, pan/zoom)</div>
+            <div class="mini-pane">
+              <div class="mm-toolbar">
+                <span class="mm-btn" title="zoom out"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/><path d="M8 11h6"/></svg></span>
+                <span class="mm-btn" title="zoom in"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/><path d="M11 8v6"/><path d="M8 11h6"/></svg></span>
+                <span class="mm-btn" title="fit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg></span>
+              </div>
+              <div class="mm-canvas">
+                <div class="mm-grid"></div>
+                <div class="mm-flow">
+                  <div class="mm-node">산출물 tab</div>
+                  <div class="mm-edge"></div>
+                  <div class="mm-node">resolve type</div>
+                  <div class="mm-edge"></div>
+                  <div class="mm-node">viewer (read-only)</div>
+                </div>
+                <span class="zoom-pill">100%</span>
+              </div>
+            </div>
+          </div>
+          <!-- html via <webview> state (browser chrome) -->
+          <div class="compact">
+            <div class="cap"><span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></span>html state — <span class="md-code-inline" style="font-size:11px">&lt;webview&gt;</span> (browser tab type 재사용)</div>
+            <div class="mini-pane">
+              <div class="bw-chrome">
+                <div class="bw-nav">
+                  <span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
+                  <span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span>
+                </div>
+                <div class="bw-url"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>file://…/v0.5/T-002-a2-mockup.html</div>
+              </div>
+              <div class="bw-page">
+                <div class="ph t"></div>
+                <div class="ph m"></div><div class="ph s"></div><div class="ph m"></div><div class="ph sm"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== compact: empty + load-error branch states ===== -->
+        <div class="state-row">
+          <!-- §8.9 Empty pane (flow step 3) — read-only: no create CTA -->
+          <div class="state-pane">
+            <span class="ico"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6A2 2 0 0 1 18.46 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/></svg></span>
+            <div class="hl">표시할 산출물이 없습니다</div>
+            <div class="desc">세 스코프 루트에 파일이 생기면 여기 나타납니다.</div>
+          </div>
+          <!-- §2.8 health-error inline (flow step 9) -->
+          <div class="state-pane" style="align-items:stretch;justify-content:center">
+            <div class="err-inline">
+              <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86Z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg></span>
+              <div>
+                <div class="txt">파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요.</div>
+                <span class="retry"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>다시 시도</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

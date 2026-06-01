@@ -262,21 +262,38 @@ dark surface 5 등급. 화면이 깊어질수록 한 단계 밝아진다 (modal/
 
 | token | hex | alias | 용도 |
 |---|---|---|---|
-| `--brand-orange` | `#FF6B2B` | productune 브랜드 | 로고, 주요 CTA |
-| `--accent` | `#FF6B2B` | = `--brand-orange` = `--persona-po` | primary action, focus ring |
+| `--brand-purple` | `#8B5CF6` | productune 브랜드 | 로고, 주요 CTA |
+| `--accent` | `#8B5CF6` | = `--brand-purple` = `--persona-po` | primary action, focus ring |
 
-> **alias 정합** — productune 브랜드 오렌지는 PO 페르소나 색과 동일하다. 의도된
-> 정합 (PO 가 사용자 face-to-product). 코드에서는 맥락에 맞는 token 을 골라 쓴다:
-> 브랜드/CTA 맥락 → `--accent`, 페르소나 식별 맥락 → `--persona-po`.
+> **alias 정합** — productune 브랜드 퍼플은 PO 페르소나 색과 동일하다 (CLI 의
+> `pdt-po` `color: purple` 정합 — `#8B5CF6` Violet 500). 의도된 정합 (PO 가 사용자
+> face-to-product). 코드에서는 맥락에 맞는 token 을 골라 쓴다: 브랜드/CTA 맥락 →
+> `--accent`, 페르소나 식별 맥락 → `--persona-po`.
+>
+> **migration (T-006)** — v0.4 의 `--brand-orange` `#FF6B2B` 에서 CLI purple 로 이관.
+> token 명도 `--brand-orange` → `--brand-purple` 로 rename (색·명칭 정합). PO 가
+> violet 을 단독 소유한다 (T-006 Option B). designer 페르소나는 violet 밖
+> `--persona-designer` `#A78BFA` (Violet 400) → `#FB923C` (Orange 400) 로 이동했으므로
+> hue 자체가 달라 PO 와 명확히 구별된다 (§2.5 · OQ-3 RESOLVED). 비어 있던 orange 자리는
+> designer 페르소나가 재사용 (brand 가 violet 으로 떠나며 free 가 된 hue).
 
 ### 2.5 Persona
 
 | token | hex | 페르소나 | 용도 |
 |---|---|---|---|
-| `--persona-po` | `#FF6B2B` | PO | PresenceBar dot, message border, 주요 CTA |
-| `--persona-designer` | `#A78BFA` | designer | 동상 |
-| `--persona-dev` | `#38BDF8` | developer | 동상 |
-| `--persona-qa` | `#34D399` | qa | 동상 |
+| `--persona-po` | `#8B5CF6` | PO | PresenceBar dot, message border, 주요 CTA (Violet — PO 단독 소유) |
+| `--persona-designer` | `#FB923C` | designer | 동상 (Orange 400 — violet 밖 별도 hue, T-006 Option B) |
+| `--persona-dev` | `#38BDF8` | developer | 동상 (Sky 400) |
+| `--persona-qa` | `#34D399` | qa | 동상 (Emerald 400) |
+
+> **T-006 Option B (RESOLVED OQ-3).** designer 는 v0.4 의 `#A78BFA` (Violet 400) 에서
+> `#FB923C` (Orange 400) 로 이동. 이유 — brand/PO 가 `#8B5CF6` (Violet) 로 오면서 PO 와
+> designer 가 같은 violet hue 의 인접 단계 (명도차 ~1.6:1) 가 되어 저시력/순간 혼동
+> 여지가 있었다. designer 를 **다른 hue 계열 (orange)** 로 옮겨 4 페르소나가 hue 로
+> 서로 분리된다: PO violet / designer orange / dev sky / qa emerald. orange 는 brand 가
+> violet 으로 떠나며 비워진 자리라 신규 hue 도입 없이 재사용. amber `--health-warn`
+> `#FBBF24` 와는 hue (orange ~27° vs amber ~43°) + 사용 맥락 (persona dot vs health
+> banner bar) 으로 분리 — 같은 화면에서 co-locate 하지 않는다.
 
 ### 2.6 Stage (PRD/Design/Build/QA/Deploy/Operate)
 
@@ -286,7 +303,7 @@ PRD/Design/Build 는 코드에서 확정. QA/Deploy/Operate 는
 
 | token | hex | stage | 비고 |
 |---|---|---|---|
-| `--stage-prd` | `#A78BFA` | PRD | designer 페르소나 색과 동일 (PRD = designer 책임) |
+| `--stage-prd` | `#FB923C` | PRD | designer 페르소나 색과 동일 (PRD = designer 책임). T-006 Option B 로 designer 와 함께 `#A78BFA`→`#FB923C` 이동 |
 | `--stage-design` | `#F472B6` | Design | pink 400 |
 | `--stage-build` | `#38BDF8` | Build | dev 페르소나 색과 동일 |
 | `--stage-qa` | TBD | QA | `stage-mapping.ts` 정합 필요 (OQ-1) |
@@ -300,7 +317,7 @@ TicketDashboardView column header 기준.
 | token | hex | status | 의미 |
 |---|---|---|---|
 | `--status-todo` | `#505050` | todo | 미착수 (neutral) |
-| `--status-in-progress` | `#FF6B2B` | in-progress | 진행 중 (= accent — 주의 환기) |
+| `--status-in-progress` | `#8B5CF6` | in-progress | 진행 중 (= accent — 주의 환기) |
 | `--status-review` | `#E0B040` | review | 리뷰 대기 (warm) |
 | `--status-done` | `#60B860` | done | 완료 (success) |
 | `--status-blocked` | `#E04040` | blocked | 차단 (error) |
@@ -331,8 +348,8 @@ T-P4-059 SessionHealthBanner 기준. 일반 toast/inline 메시지에도 동일 
 | `--text-muted` | 7.4:1 | AAA | metadata OK |
 | `--text-faint` | 4.0:1 | AA large | 18px+ 또는 14px bold 만 |
 | `--text-disabled` | 2.4:1 | ✗ | 비활성 시각 only — 정보 전달 X |
-| `--accent` `#FF6B2B` | 5.4:1 | AA | 본문 가능, 18px+ 권장 |
-| `--persona-designer` `#A78BFA` | 7.6:1 | AAA | OK |
+| `--accent` `#8B5CF6` | 4.53:1 | AA | 본문 가능 (AA, AAA 아님), 14px+ 권장. 주 용도 = non-text (3:1 여유) |
+| `--persona-designer` `#FB923C` | 8.47:1 | AAA | OK (T-006 Option B — Orange 400) |
 | `--persona-dev` `#38BDF8` | 7.5:1 | AAA | OK |
 | `--persona-qa` `#34D399` | 9.8:1 | AAA | OK |
 | `--health-error` `#EF4444` | 4.7:1 | AA | OK |
@@ -733,9 +750,13 @@ modal 패턴 위에 stage from→to 표시. stage 색은 `--stage-*` token,
   `stage-mapping.ts` 에서 확정 후 §2.6 표 채우기. 본 spec 에서는 자리만 확보.
 - **OQ-2** — `--text-faint` `#707070` 의 large-text-only 정책을 i18n 한국어 본문
   (16px regular) 에서 어떻게 표기할지 — 한국어 hinting 가독성 별도 검증 필요.
-- **OQ-3** — productune 브랜드 오렌지 = PO 페르소나 색 alias 의 향후 분리 가능성.
-  Phase 5 light theme 에서 PO 페르소나는 색 그대로, 브랜드는 별도 hex 로 분리할지
-  PO 결정 필요.
+- **OQ-3** — ~~designer `#A78BFA` 와 PO `#8B5CF6` 인접 violet 단계 분리 강화~~
+  **RESOLVED (T-006 Option B, 2026-06-01).** 사용자가 Option B 선택 — designer 페르소나를
+  violet 밖으로 이동: `--persona-designer` + `--stage-prd` `#A78BFA` → `#FB923C`
+  (Orange 400). PO 가 violet 단독 소유, 4 페르소나가 hue 로 분리 (PO violet / designer
+  orange / dev sky / qa emerald). 상세 §2.5 + `docs/artifacts/v0.5/T-006-brand-accent-purple.md`
+  의 "Option B — FINAL" 절. *(잔여 — Phase 5 light theme 에서 brand vs PO 페르소나
+  hex 분리 가능성은 별도 light-theme 작업으로 이월.)*
 - **OQ-4** — `health-info` / `health-success` hex 가 persona 와 겹치는 것을 의도된
   alias 로 둘지 분리할지 — 색약 사용자 검증 후 결정.
 - **OQ-5** — 본 spec 의 token 명을 CSS custom property 네임으로 그대로 쓸지,

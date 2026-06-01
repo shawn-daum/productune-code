@@ -250,6 +250,227 @@ Phase 3 dogfood 에서 발견된 두 가지 비-개발자 사용자 페인 — P
 5. ~~env secret 저장 위치 (keychain vs 클라우드)~~ → ✅ **`.env.local` (plaintext, gitignored) for 로컬 + Vercel env for prod/preview**. Phase 4 MVP 에서 sync 없음. 사용자는 배포 전까지 prod / preview env 추가 필요 X.
 6. ~~multi-chat 격리 정책~~ → ✅ **GUI 단일 PO 세션 (2026-05-06 결정)**. GUI 에서는 프로젝트당 하나의 PO 세션만 운영. 스토리지 = `<projectDir>/.productune/chat.json`. CLI / non-GUI 환경에서는 multi-session 가능성 보존.
 
+## v0.5 — Planner UX, first serious pass (Phase 4 sub-cycle)
+
+> **Slug**: v0.5-p1-prd  ·  **Status**: PRD ready (clarity loop converged, A ≈ 0.04)  ·  **Authored**: 2026-06-01 (pdt-designer)
+>
+> v0.5 is a **build cycle inside Phase 4** (terminal-free GUI full cycle). v0.4 landed the
+> doctrine architecture (4-tier memory, 9 ticket types, 7 status) + a schema-driven GUI
+> workspace. v0.5 is the first cycle that takes **planner UX itself** as the primary goal:
+> the GUI and PO absorb the backend↔frontend technical seam and re-surface it as
+> *layered, simple information with a clear next-action at every moment*, so a non-developer
+> planner never has to look at the seam directly. The Phase-4 acceptance ethos
+> ("complete a cycle without ever opening a terminal") is carried one level deeper here.
+
+### Why
+
+A planner can describe *what* to build but is not fluent in CLI and does not hold deep
+build/debug/architecture knowledge. v0.4 proved the orchestration core and the GUI shell,
+but information was still surfaced flat — everything visible at once, with no per-moment
+"do this next" signal. v0.5 closes that gap: **stratified information + a clear action at
+each point in the cycle**, so attention is spent on product decisions, not on hunting
+through the interface or the technical layer underneath it.
+
+### Who
+
+Unchanged from the master Who/Phase-4 — the planner / solo-PM / product owner who defines
+*what* but does not code. v0.5 specifically optimizes the moments where this user previously
+had to drop to the terminal or read raw technical artifacts.
+
+### How — 3 tracks, 14 items
+
+- **Track A — Planner UX (9):** the core of the version. Reorders and adds the navigation
+  surface, the artifacts viewer, ticket-detail, search, keyboard movement, rate-limit
+  visibility, and a PO-chat upgrade.
+- **Track B — Persona / infra (4):** brings the GUI in sync with the new doctrine
+  architecture, makes the skill 2-layer model explicit, adds OS-level notifications, and
+  ships an unsigned `.dmg`.
+- **Track C — Infra hardening (1):** a fresh-install CI smoke test.
+
+### What — 14 items (intent · in / out · solution shape · per-item AC)
+
+#### A1 — Left-panel reorder
+- **Intent**: a fixed, predictable 5-tab order that puts deliverables up front.
+- **In**: Project → **Artifacts (new)** → Team → Explorer → Settings, order fixed.
+- **Out**: any tab-content rework beyond ordering (A2 owns Artifacts content).
+- **Solution**: reorder `ActivityBar.tsx` entries; Explorer = the existing file-tree tab.
+- **AC**: ActivityBar renders exactly these 5 in this order; order is not user-reorderable.
+
+#### A2 — Artifacts tab (new)
+- **Intent**: read internal design deliverables in-GUI without a file explorer or terminal.
+- **In**: left list → main-panel viewer for `docs/prd/`, `docs/artifacts/<version>/`,
+  `docs/designer/`. md → md viewer (code-block syntax highlight); mermaid → mermaid viewer;
+  html → browser-style view via `<webview>`.
+- **Out**: editing artifacts (read-only this version); rich nav / TOC template (→ v0.6).
+- **Solution**: new sidebar list + main-pane tab type; reuse the existing `browser`
+  tab-type (`<webview>`, per `TabContent.tsx`) for html; reuse the Phase-4 Mermaid viewer.
+- **AC**: each of md / mermaid / html opens in its correct viewer from the list; html renders
+  in `<webview>`; no terminal or OS file explorer needed to reach any listed artifact.
+
+#### A3 — Project-menu cleanup
+- **Intent**: remove the detour through the GUI home for common project actions; one Recent.
+- **In**: (a) File → Open Project = OS finder dialog directly (no GUI home); (b) Open New
+  Window = home (not the same project); (c) home Recent ↔ status-bar Recent unified to a
+  single source (home currently shows root project only; status-bar drops root project).
+- **Out**: project-creation wizard changes.
+- **Solution**: single Recent source feeding both surfaces; menu wiring to the OS dialog.
+- **AC**: Open Project opens the OS dialog with no home stop; Open New Window lands on home;
+  the same Recent list (same entries, same order) appears in home and status-bar.
+
+#### A4 — CLI statusline
+- **Intent**: see phase + in-phase ticket progress from the `productune` CLI prompt.
+- **In**: phase label next to branch (`prd / build / …`) + in-phase ticket progress, e.g.
+  `[v0.5 P1·3/12]`.
+- **Out**: GUI statusline (this is the terminal statusline).
+- **Solution**: statusline reads phase + ticket counts from `po-state.json` / ticket scan.
+- **AC**: the CLI statusline shows the current phase and an `[<version> P<phase>·<done>/<total>]`
+  progress token that updates as tickets close.
+
+#### A5 — Chat rate-limit display
+- **Intent**: when the Anthropic API session is rate-limited, show recovery time instead of a
+  silent stall.
+- **In**: parse rate-limit response headers (`retry-after` etc.) → surface a recovery
+  countdown in the chat UI. **Scope = Anthropic API direct responses only** this version.
+- **Out**: MCP / AI-gateway / other-provider rate-limit surfacing (future).
+- **Solution**: header parse in the PO response path → countdown component in chat.
+- **AC**: under a 429/limit response, the chat shows a recovery countdown derived from the
+  response header; normal responses show nothing.
+
+#### A6 — cmd+p header expansion
+- **Intent**: one VS Code-style search entry covering everything navigable.
+- **In**: inline search bar in the GUI header; cmd+p expands that bar; search targets =
+  tickets / tabs / skills / MCP / artifacts / personas.
+- **Out**: full-text content search inside artifacts.
+- **Solution**: extend the existing `QuickOpenPalette` index (already covers
+  files/tickets/personas/skills) with tabs / MCP / artifacts; bind to the header bar.
+- **AC**: cmd+p expands the header search; each of the 6 target categories is reachable and
+  returns results; selecting a result routes to the right surface.
+
+#### A7 — Ticket detail view
+- **Intent**: selecting a ticket shows a real detail page, not a jump into the Tickets tab.
+- **In**: cmd+p select ticket → **ticket detail page in the main panel**; shows the Korean
+  body (authored by designer, `## Request (KR)`-style section *inside the ticket md* — no
+  sidecar, no runtime translation, per decision-2) + dispatch progress visual (persona
+  session state / next action).
+- **Out**: editing the ticket from the detail view.
+- **Solution**: new main-pane ticket-detail tab type; renders ticket md + dispatch state.
+- **AC**: cmd+p ticket-select opens the detail page in the main panel (does **not** switch to
+  the Tickets tab); the page shows the KR body and the dispatch/persona progress visual.
+
+#### A8 — cmd 1/2/3/4
+- **Intent**: keyboard jump to the Nth tab in the active tab-group.
+- **In**: cmd 1/2/3/4 → move to `leaf.tabs[N-1]` of the active `LeafPaneNode`.
+- **Out**: cross-pane movement; tabs beyond 4.
+- **Solution**: keybind → active-leaf tab index (per `store/workspace.ts`).
+- **AC**: with ≥N tabs in the focused pane, cmd N activates the Nth tab; no-op past the count.
+
+#### A9 — PO chat upgrade
+- **Intent**: PO chat reads as a first-class surface and lets the user act inline.
+- **In**: (a) markdown render polish — tables (currently ugly), code blocks, lists,
+  blockquotes all on consistent design-system tokens; (b) inline action buttons / native
+  AskUserQuestion — clickable option cards when the PO asks a question; promotion
+  approve/reject also inline.
+- **Out**: streaming/markdown engine swap.
+- **Solution**: design-system token pass on the markdown renderer + an inline
+  action-card component bound to the PO question / promotion events.
+- **AC**: tables/code/list/blockquote render on design-system tokens; a PO question renders
+  clickable option cards; promotion approve/reject is actionable inline from chat.
+
+#### B1 — GUI ↔ doctrine sync
+- **Intent**: the GUI fully reflects the new doctrine architecture.
+- **In**: 4-tier memory, 9 ticket types, 7 status reflected across TeamPanel / TicketsTab /
+  VersionHistoryView / SkillMatrixTab / promotion-drain UI / statusline / file-watcher.
+  **Absorbs** carried-forward T-P4-146 (MCP server add + name rename), T-P4-147
+  (autosaveTriggers UI enable), T-P4-148 (PersonaDefTab persona-spec edit).
+- **Out**: doctrine *content* changes (this is GUI reflection of existing doctrine).
+- **Solution**: enum/schema alignment across the listed components; unlock the three
+  Phase-5-locked panels.
+- **AC**: ticket-type / status / tier enums in the GUI match doctrine 1:1; MCP add+rename,
+  autosaveTriggers UI, and PersonaDefTab editing are all live.
+
+#### B2 — Skill 2-layer made explicit
+- **Intent**: make the explicit-allowlist vs auto-invoke distinction a stated doctrine rule
+  and show it in the GUI.
+- **In**: doctrine states Layer 1 (explicit allowlist) vs Layer 2 (auto-invoke); mapping
+  expansion (phuryn pm-toolkit; mattpocock prototype / zoom-out / diagnose); productune-
+  domain-irrelevant categories (pm-data-analytics, pm-marketing-growth) get a skip-install
+  option; SkillMatrixTab gains `[explicit] / [auto] / [unused]` labels.
+- **Out**: new skill authoring (designer-author-skill deferral stays separate).
+- **Solution**: doctrine section + mapping table update; SkillMatrix label rendering; install
+  skip toggle for irrelevant categories.
+- **AC**: doctrine names the 2 layers; SkillMatrix shows the 3 labels per skill; irrelevant
+  categories can be skipped at install.
+
+#### B3 — OS notifications
+- **Intent**: background dispatch is core to the product, so completion/escalation/gate
+  moments must reach the user outside the window.
+- **In**: OS-level notification on dispatch-done / escalation-raised / phase-gate-entry.
+- **Out (this version)**: notification preferences/quiet-hours UI. **Platform scope =
+  macOS (Notification Center) first** (matches the `.dmg`/Phase-4 desktop target); Windows
+  parity is a follow-up, not a v0.5 gate.
+- **Solution**: Electron `Notification` on the three event types from the PO event stream.
+- **AC**: each of the three events fires a native macOS notification while the window is
+  backgrounded; clicking focuses the relevant surface.
+
+#### B4 — Unsigned `.dmg` distribution
+- **Intent**: hand teammates an installable build without code-signing.
+- **In**: electron-builder devDependency + config + `.icns` app icon + `dist:mac` script +
+  team README right-click→Open Gatekeeper-bypass guide. `install.sh` and `.dmg` stay
+  separate (option A).
+- **Out**: code signing / notarization; auto-update.
+- **Solution**: electron-builder mac target producing an unsigned `.dmg`; README bypass note.
+- **AC**: `dist:mac` produces a `.dmg` that installs on a clean mac via the documented
+  right-click→Open path; `install.sh` flow is unchanged.
+
+#### C1 — Fresh-install CI smoke
+- **Intent**: catch install regressions before they reach a teammate.
+- **In**: CI workflow that, in an isolated `$HOME`, runs `install.sh < /dev/null` to pass;
+  a lint hook grepping/blocking absolute-path symlink targets; bootstrap-doctrine ↔
+  install.sh env-file key parity check; one post-install PO session to confirm
+  dispatch-cost-strip behavior.
+- **Out**: full e2e GUI CI.
+- **Solution**: GitHub Actions job with isolated `$HOME`, the four checks above.
+- **AC**: CI fails on any of — non-interactive install break, absolute-path symlink target,
+  env-key drift, or broken dispatch-cost-strip — and passes a clean install.
+
+### Carried-forward reconciliation (v0.4 deferrals)
+
+| v0.4 deferral | v0.5 disposition |
+|---|---|
+| T-P4-091 / T-P4-092 — Round 9 full-cycle non-dev dogfood (13-AC evidence) | **IN** — folded into the v0.5 acceptance gate (see below). |
+| T-P4-146 / 147 / 148 — Phase-5 unlocks (MCP add+rename / autosaveTriggers UI / PersonaDef edit) | **IN** — absorbed into **B1**. |
+| T-P4-050~055 design-gate viewer (Mermaid/Excalidraw/design-system/hi-fi) | **PARTIAL** — Mermaid/md/html viewing covered by **A2**; Excalidraw + hi-fi mockup preview remain **OUT** (later cycle). |
+| T-P4-060~064 dev-env automation · T-P4-070~072 memory/wiki editor · T-P4-080~082 deploy abstraction · T-P4-069 §1.5 audit · T-P4-124 designer-author-skill | **OUT** — not in v0.5 scope; remain deferred. |
+| PRD HTML full template (sidebar TOC, rich nav) | **OUT** — moved to v0.6 (decision-3). |
+
+### Acceptance — v0.5 gate
+
+Gate = **(b) full-cycle non-developer dogfood.** v0.5 passes when **both** hold:
+
+- [ ] All **14 items** each meet their per-item AC above.
+- [ ] A non-developer planner completes **one full cycle (PRD → Design → Build → Deploy →
+      Close) using the GUI only**, without ever opening a terminal or reading the raw
+      technical seam — incorporating the carried-forward **Round 9 full-cycle non-dev
+      dogfood** (T-P4-091/092, 13-AC evidence) as the run of record.
+
+This is the direct test of the v0.5 thesis ("the planner reaches the goal directly").
+
+### Success metrics → version_outcome
+
+- **North star**: a non-developer planner completes one GUI-only full cycle (PRD→Close)
+  with **zero terminal use and zero raw-technical-seam reads** — the carried-forward Round 9
+  full-cycle non-dev dogfood, run to completion.
+- **Input metrics**:
+  1. 14 / 14 scope items pass their per-item AC.
+  2. Count of forced terminal drops during the cycle = **0**.
+  3. The three B3 OS notifications (dispatch-done / escalation / phase-gate) each fire at the
+     correct moment during the run.
+  4. Every navigation the cycle requires (Artifacts viewer, ticket-detail, cmd+p across all 6
+     targets, cmd 1–4) is reachable GUI-only.
+  5. Round 9 13-AC evidence collected (T-P4-091/092).
+- **Validation method**: observed full-cycle non-dev dogfood — one planner, one real project,
+  PRD→Design→Build→Deploy→Close, GUI-only — paired with the 14-item per-AC checklist pass.
+
 ## OSS reference
 
 이 PRD 와 doctrine 의 핵심 컨셉은 모두 정립된 OSS standard 위에 구축:
@@ -282,3 +503,4 @@ Phase 3 dogfood 에서 발견된 두 가지 비-개발자 사용자 페인 — P
 - **2026-05-06 (GUI 단일 PO 세션 결정)** — GUI multi-chatroom 모델 → single PO session per project. 데이터 모델: 다중 `chats/<uuid>.json` → 단일 `<projectDir>/.productune/chat.json`. IPC: listRooms/createRoom 등 제거 → `chat:getSession` / `chat:appendMessage` / `chat:setClaudeSessionId` / `chat:clearSession`. Right Panel: PO Chat 단일 세션 고정. Side Panel 은 Explorer / Project / Team / Settings 탭만 담당. CLI/non-GUI 에서는 multi-session 가능성 보존. T-P4-042 (멀티 채팅방) GUI 부분 deprecated.
 - **2026-05-07 (persona presence bar)** — T-P4-049 신설: Right Panel PO Chat 헤더 하단 24px presence bar, PO/Designer/Dev/QA 4 칩, 상태 idle/working/done 3종 (waiting 제거 — PO 가 wait 직접 조율). Phase 4 Acceptance criteria 에 T-P4-049 항목 추가.
 - **2026-05-08** — 사용자 가시 phase 5단 통일 (PRD / Design / Build / Deploy / Close). 6단 (PRD/Design/Build/QA/Deploy/Operate) 폐기 — QA 는 ticket type 으로, Operate 는 Close phase 의 retrospective 가 흡수. T-P4-065 전체 (sub-a~f).
+- **2026-06-01 (v0.5 PRD ready)** — v0.5 "기획자 UX 1차 본격화" PRD 섹션 작성 (Phase 4 sub-cycle). clarity loop 수렴 (iter 2, A≈0.04). 3 트랙 14 항목 (A 기획자 UX 9 · B 페르소나/인프라 4 · C fresh-install CI smoke 1) 각 의도·범위(in/out)·솔루션·항목별 AC 정의. 이월 정리: T-P4-091/092 Round 9 full-cycle non-dev dogfood IN (= v0.5 acceptance gate), T-P4-146/147/148 → B1 흡수, T-P4-050~055 일부(Mermaid/md/html)는 A2 흡수·Excalidraw/hi-fi OUT, PRD HTML 풀템플릿 → v0.6 (decision-3). acceptance gate = (b) 풀사이클 비-개발자 도그푸드 (GUI-only PRD→Close + 14항목 AC). version_outcome (north star + 5 input metric + validation method) 도출. 산출물: PRD master EN 섹션 + `docs/artifacts/v0.5/PRD.html` (KR) + T-001 (T-P4 → v0.5 T-NNN id 체계 전환).
