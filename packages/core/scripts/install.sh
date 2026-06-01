@@ -168,7 +168,17 @@ ensure_claude_installed() {
     [Yy]*|"")
       command -v npm >/dev/null 2>&1 || die "npm 미설치 — 먼저 Node.js 설치: https://nodejs.org"
       npm install -g @anthropic-ai/claude-code || die "Claude Code 설치 실패"
-      command -v claude >/dev/null 2>&1 || die "설치 후에도 claude CLI를 찾을 수 없습니다 — PATH 확인"
+      # Refresh PATH so the newly installed claude binary is visible in this session.
+      # npm may install to a bin dir not yet in $PATH (e.g. ~/.nvm/…/bin, ~/.npm-global/bin).
+      _NPM_GLOBAL_BIN="$(npm prefix -g 2>/dev/null)/bin"
+      if [ -d "$_NPM_GLOBAL_BIN" ] && [[ ":$PATH:" != *":$_NPM_GLOBAL_BIN:"* ]]; then
+        export PATH="$_NPM_GLOBAL_BIN:$PATH"
+        say "PATH에 npm global bin 추가: $_NPM_GLOBAL_BIN"
+      fi
+      unset _NPM_GLOBAL_BIN
+      # Clear bash/zsh command hash cache so 'command -v claude' picks up the new binary.
+      hash -r 2>/dev/null || rehash 2>/dev/null || true
+      command -v claude >/dev/null 2>&1 || die "설치 후에도 claude CLI를 찾을 수 없습니다 — PATH를 확인하세요. 수동 확인: npm prefix -g"
       say "Claude Code 설치 완료: $(claude --version 2>/dev/null | head -1 || echo '?')"
       ;;
     *) die "Claude Code 설치 후 install.sh 재실행: npm install -g @anthropic-ai/claude-code" ;;
@@ -178,13 +188,26 @@ ensure_claude_installed() {
 ensure_claude_authed() {
   local status
   status="$(claude auth status 2>/dev/null || true)"
-  if printf '%s' "$status" | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+
+  # Helper: returns 0 if $1 (status string) indicates authenticated.
+  # Tries JSON parse first; falls back to plain-text grep for CLI versions
+  # that output "Logged in as ..." instead of JSON.
+  _is_authed() {
+    local s="$1"
+    printf '%s' "$s" | jq -e '.loggedIn == true' >/dev/null 2>&1 && return 0
+    printf '%s' "$s" | grep -qiE '(logged in|authenticated)' 2>/dev/null && return 0
+    return 1
+  }
+
+  if _is_authed "$status"; then
     local who org
-    who="$(printf '%s' "$status" | jq -r '.email // ""' 2>/dev/null)"
-    org="$(printf '%s' "$status" | jq -r '.orgName // ""' 2>/dev/null)"
+    who="$(printf '%s' "$status" | jq -r '.email // ""' 2>/dev/null || true)"
+    org="$(printf '%s' "$status" | jq -r '.orgName // ""' 2>/dev/null || true)"
     say "Claude Code 인증 OK${who:+ (${who}${org:+ / $org})}"
+    unset -f _is_authed
     return 0
   fi
+
   warn "Claude Code 로그인이 필요합니다."
   if [ ! -t 0 ] || [ ! -t 1 ]; then
     die "비대화형 환경: 'claude auth login' 먼저 실행 후 install.sh 재실행"
@@ -192,11 +215,12 @@ ensure_claude_authed() {
   say "이제 claude 로그인 흐름을 시작합니다 (브라우저가 열릴 수 있습니다)..."
   claude auth login || die "로그인 실패 — install.sh 재실행 필요"
   status="$(claude auth status 2>/dev/null || true)"
-  if printf '%s' "$status" | jq -e '.loggedIn == true' >/dev/null 2>&1; then
+  if _is_authed "$status"; then
     say "로그인 확인 완료"
   else
     die "로그인이 완료되지 않았습니다. 'claude auth login' 직접 실행 후 install.sh 재실행"
   fi
+  unset -f _is_authed
 }
 
 # Preflight
