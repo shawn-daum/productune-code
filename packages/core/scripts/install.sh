@@ -23,6 +23,16 @@ say() { printf "\033[1;34m[install]\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m[install]\033[0m %s\n" "$*" >&2; }
 die() { printf "\033[1;31m[install]\033[0m %s\n" "$*" >&2; exit 1; }
 
+# upsert_env KEY VALUE FILE — set or update a key in an env file (no duplicates).
+upsert_env() {
+  local key="$1" val="$2" file="$3"
+  if grep -qE "^${key}=" "$file" 2>/dev/null; then
+    sed -i.bak -E "s|^${key}=.*|${key}=${val}|" "$file" && rm -f "${file}.bak"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+  fi
+}
+
 
 # ── Persona recognition verifier ───────────────────────────────────────────────
 # Confirms each expected agent file is present in ~/.claude/agents/, the symlink
@@ -451,25 +461,24 @@ if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$P
 fi
 
 # 7b) Auto-install Claude Code hooks (idempotent merge into ~/.claude/settings.json)
-if ! grep -qE '^PRODUCTUNE_HOOKS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
-  if merge_claude_settings_hooks; then
-    printf 'PRODUCTUNE_HOOKS_INSTALLED=true\n' >> "$PO_ENV_FILE"
-    say "hooks 등록 완료 (~/.claude/settings.json)"
-  else
-    warn "hooks 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
-    printf 'PRODUCTUNE_HOOKS_INSTALLED=failed\n' >> "$PO_ENV_FILE"
-  fi
+# Always re-run: merge function strips old productune hooks by basename so stale
+# absolute paths (clone moved to new device or new directory) are replaced correctly.
+if merge_claude_settings_hooks; then
+  upsert_env 'PRODUCTUNE_HOOKS_INSTALLED' 'true' "$PO_ENV_FILE"
+  say "hooks 등록 완료 (~/.claude/settings.json)"
+else
+  upsert_env 'PRODUCTUNE_HOOKS_INSTALLED' 'failed' "$PO_ENV_FILE"
+  warn "hooks 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
 fi
 
-# 7c) Auto-install statusLine (항상 실행 — 새 머신/dotfiles 공유 환경에서도 settings.json에 반영)
-# 원샷 guard를 두지 않고 매 실행마다 덮어씀. merge_claude_settings_statusline 자체가 idempotent.
+# 7c) Auto-install statusLine (idempotent — always overwrites .statusLine with current clone path)
+# Always re-run: statusLine command embeds an absolute path to this repo; re-running
+# install.sh (e.g. after git pull on a new device) must update it to the new path.
 if merge_claude_settings_statusline; then
-  # 플래그는 여전히 기록하되, 존재 유무와 무관하게 항상 실행.
-  if ! grep -qE '^PRODUCTUNE_STATUSLINE_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
-    printf 'PRODUCTUNE_STATUSLINE_INSTALLED=true\n' >> "$PO_ENV_FILE"
-  fi
+  upsert_env 'PRODUCTUNE_STATUSLINE_INSTALLED' 'true' "$PO_ENV_FILE"
   say "statusLine 등록 완료"
 else
+  upsert_env 'PRODUCTUNE_STATUSLINE_INSTALLED' 'failed' "$PO_ENV_FILE"
   warn "statusLine 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
 fi
 
