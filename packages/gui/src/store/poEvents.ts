@@ -154,6 +154,25 @@ function register() {
       `ticket-review:${ticketId}`, 'ticket-review', { ticketId }, ticketId,
     )
   }))
+
+  // ── notification:navigate (T-019 §B3) ────────────────────────────────────
+  // User clicked a native OS notification → main focused the window + sent the
+  // route here. Route to the relevant surface via the existing openTab action.
+  //   - ticket-review: open/focus the ticket review tab (dispatch-done / escalation)
+  //   - phase-gate:    window focus alone surfaces the sticky PendingGateChip in
+  //                    ChatPanel; no tab to open, so this is a no-op beyond focus.
+  offFns.push(api.onNotificationNavigate?.((route: {
+    surface: 'ticket-review' | 'phase-gate'
+    ticketId?: string
+  }) => {
+    if (route.surface === 'ticket-review' && route.ticketId) {
+      useWorkspace.getState().openTab(
+        `ticket-review:${route.ticketId}`, 'ticket-review',
+        { ticketId: route.ticketId }, route.ticketId,
+      )
+    }
+    // phase-gate: PendingGateChip is sticky in ChatPanel; window focus suffices.
+  }))
 }
 
 try {

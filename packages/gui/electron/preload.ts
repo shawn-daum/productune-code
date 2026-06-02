@@ -381,6 +381,23 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:qa-loop-update', listener)
   },
 
+  // ── OS notification click routing (T-019 §B3) ────────────────────────────────
+
+  /**
+   * Subscribe to notification-click navigation requests from main.
+   * Fires when the user clicks a native OS notification; the renderer routes to
+   * the relevant surface (ticket-review tab / phase-gate chip). Returns an
+   * unsubscribe fn.
+   */
+  onNotificationNavigate: (cb: (route: {
+    surface: 'ticket-review' | 'phase-gate'
+    ticketId?: string
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, route: any) => cb(route)
+    ipcRenderer.on('notification:navigate', listener)
+    return () => ipcRenderer.removeListener('notification:navigate', listener)
+  },
+
   // ── Browser tab IPC (T-P4-114 §D) ────────────────────────────────────────────
 
   /** Notify main process that a browser tab was opened (T-P4-115 IPC bridge stub). */

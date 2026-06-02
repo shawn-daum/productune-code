@@ -24,6 +24,7 @@ import path from 'path'
 import os from 'os'
 import fs from 'fs'
 import type { WebContents } from 'electron'
+import { fireNotification } from './notifications'
 
 /**
  * The chat panel always sends to PO. Other personas are reached via PO
@@ -89,6 +90,15 @@ export interface TicketFocusItem {
   reason: 'emit' | 'dispatch'
 }
 
+// ── Phase-transition gate (T-019 §B3) ─────────────────────────────────────────
+
+/** Minimal slice of a pending_gate envelope needed for notification copy. */
+export interface PendingGateInfo {
+  fromPhase?: number
+  toPhase?: number
+  summary?: string
+}
+
 interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
@@ -121,6 +131,8 @@ interface RunCallbacks {
     status: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required'
     lastFailReason?: string
   }) => void
+  /** T-019 §B3: PO emitted a phase-transition gate (pending_gate) in its envelope. */
+  onPhaseGate: (gate: PendingGateInfo) => void
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -538,6 +550,10 @@ function handleStreamJsonLine(
           }])
         }
       }
+
+      // T-019 §B3: phase-transition gate emit → notification
+      const gate = parsePendingGate(resultText)
+      if (gate) cb.onPhaseGate(gate)
     }
     return
   }
@@ -769,6 +785,36 @@ function parseQaEnvelope(text: string): QaEnvelope | null {
   return null
 }
 
+// ── Pending-gate parser (T-019 §B3) ───────────────────────────────────────────
+
+/**
+ * Extract a phase-transition gate from PO result text.
+ *
+ * The PO emits a `pending_gate` object (see lib/types.ts PendingGate +
+ * po/bookshelf/lifecycle-mechanics.md) when a phase boundary is reached. We
+ * read the minimal slice needed for notification copy. Returns null when the
+ * key is absent or unparseable.
+ */
+function parsePendingGate(text: string): PendingGateInfo | null {
+  for (const candidate of extractJsonCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (!parsed || typeof parsed !== 'object') continue
+      const obj = parsed as Record<string, unknown>
+      const gate = obj.pending_gate
+      if (gate && typeof gate === 'object') {
+        const g = gate as Record<string, unknown>
+        return {
+          fromPhase: typeof g.from_phase === 'number' ? g.from_phase : undefined,
+          toPhase: typeof g.to_phase === 'number' ? g.to_phase : undefined,
+          summary: typeof g.summary === 'string' ? g.summary : undefined,
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
 // ── Renderer subscription helper (bound by main.ts) ─────────────────────────────
 
 /**
@@ -790,6 +836,44 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     // T-P4-116: QA loop IPC
     onBrowserOpen: (url, ticketId, purpose) => wc.send('po:browser-open', { url, ticketId, purpose }),
     onUserVerify:  (url, description, ticketId) => wc.send('po:user-verify', { url, description, ticketId }),
-    onQaLoopUpdate:(entry)                  => wc.send('po:qa-loop-update', entry),
+    onQaLoopUpdate:(entry) => {
+      wc.send('po:qa-loop-update', entry)
+      // ── T-019 §B3: OS notifications on QA-loop terminal states ──────────────
+      // dispatch-done: a dispatched ticket finished its QA loop (pass).
+      if (entry.status === 'pass') {
+        fireNotification({
+          kind: 'dispatch-done',
+          title: '작업 완료',
+          body: `${entry.ticketId} — QA 통과`,
+          route: { surface: 'ticket-review', ticketId: entry.ticketId },
+        })
+      }
+      // escalation-raised: 3-cap hit (capped) or auth needed (auth-required).
+      else if (entry.status === 'capped' || entry.status === 'auth-required') {
+        const reason =
+          entry.status === 'capped'
+            ? `QA 재시도 한도 도달${entry.lastFailReason ? ` — ${entry.lastFailReason}` : ''}`
+            : '인증 필요'
+        fireNotification({
+          kind: 'escalation-raised',
+          title: '확인 필요',
+          body: `${entry.ticketId} — ${reason}`,
+          route: { surface: 'ticket-review', ticketId: entry.ticketId },
+        })
+      }
+    },
+    // T-019 §B3: phase-gate-entry — PO emitted a phase-transition gate.
+    onPhaseGate: (gate) => {
+      const phaseLabel =
+        gate.fromPhase !== undefined && gate.toPhase !== undefined
+          ? `Phase ${gate.fromPhase} → ${gate.toPhase}`
+          : '다음 단계'
+      fireNotification({
+        kind: 'phase-gate-entry',
+        title: '단계 전환 승인 대기',
+        body: gate.summary ? `${phaseLabel} — ${gate.summary}` : phaseLabel,
+        route: { surface: 'phase-gate' },
+      })
+    },
   }
 }
