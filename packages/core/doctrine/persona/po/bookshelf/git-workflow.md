@@ -8,10 +8,10 @@ Exception: Developer may run git commands scoped to their own worktree during im
 | Branch | Created at | From | Merged to | Deleted at |
 |---|---|---|---|---|
 | `v<N>` | P1 entry | `main` | `main` | P5 close (post-merge) |
-| `<version>/T-<N>-<slug>` | ticket open | `v<N>` | `v<N>` | ticket done (post-merge) |
+| `v<N>-T-<N>-<slug>` | ticket open | `v<N>` | `v<N>` | ticket done (post-merge) |
 
 - Always branch tickets from the version branch, never from `main`.
-- Naming: lowercase kebab. E.g. `v0.5/T-3-user-flow`.
+- Naming: lowercase kebab. E.g. `v0.5-T-3-user-flow`.
 
 ## Commit rules
 
