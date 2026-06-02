@@ -74,8 +74,16 @@ try:
 except Exception:
     sys.exit(0)
 
-version=state.get('current_version','')
-phase=state.get('current_phase')
+# Support both schema versions:
+#   legacy (flat):  current_version = "v1.0",  current_phase = 2  (top-level)
+#   current (A4+):  current_version = {id, label, current_phase, ...}
+cv=state.get('current_version','')
+if isinstance(cv, dict):
+    version=cv.get('id','')
+    phase=cv.get('current_phase')
+else:
+    version=cv
+    phase=state.get('current_phase')
 
 if not version:
     sys.exit(0)
