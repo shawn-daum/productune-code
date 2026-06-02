@@ -36,9 +36,9 @@ export const PERSONA_LABELS: Record<PersonaId, string> = {
 // injected inline here as fallback until global token sheet lands).
 
 export const PERSONA_COLORS: Record<PersonaId, string> = {
-  po:       '#E07B39',  // --po
-  designer: '#A78BFA',  // --designer
-  dev:      '#60A5FA',  // --dev
+  po:       '#8B5CF6',  // --po  (brand violet, T-006 Option B)
+  designer: '#FB923C',  // --designer (orange-400, T-006 Option B)
+  dev:      '#38BDF8',  // --dev (sky-400)
   qa:       '#34D399',  // --qa
 }
 

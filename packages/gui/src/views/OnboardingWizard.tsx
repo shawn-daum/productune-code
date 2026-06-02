@@ -299,7 +299,7 @@ export default function OnboardingWizard({ onDone }: Props) {
       <div style={card}>
         {/* Header */}
         <div style={header}>
-          <Zap size={20} strokeWidth={2.25} color="#FF6B2B" style={{ marginRight: 10 }} />
+          <Zap size={20} strokeWidth={2.25} color="#8B5CF6" style={{ marginRight: 10 }} />
           <span style={{ fontWeight: 700, fontSize: 16 }}>{t('onboarding.title')}</span>
           <div style={stepIndicator}>
             {(() => {
@@ -310,7 +310,7 @@ export default function OnboardingWizard({ onDone }: Props) {
                   key={s}
                   style={{
                     ...stepDot,
-                    background: s === stepNum ? '#FF6B2B' : s < stepNum ? '#FF6B2B55' : '#333',
+                    background: s === stepNum ? '#8B5CF6' : s < stepNum ? '#8B5CF655' : '#333',
                     width: s === stepNum ? 24 : 8,
                   }}
                 />

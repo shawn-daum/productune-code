@@ -268,7 +268,7 @@ function bar(isActivePane: boolean): React.CSSProperties {
     alignItems: 'stretch',
     height: 32,
     background: '#0A0A0A',
-    borderBottom: `1px solid ${isActivePane ? '#FF6B2B33' : '#1A1A1A'}`,
+    borderBottom: `1px solid ${isActivePane ? '#8B5CF633' : '#1A1A1A'}`,
     flexShrink: 0,
     position: 'relative',
   }
@@ -305,7 +305,7 @@ function tabBtn(isActive: boolean): React.CSSProperties {
     background: isActive ? '#0F0F0F' : 'transparent',
     border: 'none',
     borderRight: '1px solid #1A1A1A',
-    borderTop: isActive ? '2px solid #FF6B2B' : '2px solid transparent',
+    borderTop: isActive ? '2px solid #8B5CF6' : '2px solid transparent',
     color: isActive ? '#F0F0F0' : '#A0A0A0',
     fontSize: 12,
     fontFamily: 'inherit',
@@ -341,7 +341,7 @@ const tabInsertLineBase: React.CSSProperties = {
   top: 0,
   bottom: 0,
   width: 2,
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   zIndex: 2,
   pointerEvents: 'none',
 }

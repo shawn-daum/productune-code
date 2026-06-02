@@ -110,8 +110,8 @@ function wrap(isActive: boolean): React.CSSProperties {
     minWidth: 150,
     minHeight: 100,
     background: '#0F0F0F',
-    border: `1px solid ${isActive ? '#FF6B2B66' : '#1A1A1A'}`,
-    boxShadow: isActive ? '0 0 0 1px #FF6B2B33 inset' : 'none',
+    border: `1px solid ${isActive ? '#8B5CF666' : '#1A1A1A'}`,
+    boxShadow: isActive ? '0 0 0 1px #8B5CF633 inset' : 'none',
     overflow: 'hidden',
   }
 }
@@ -127,8 +127,8 @@ const body: React.CSSProperties = {
 function zoneOverlayStyle(zone: Zone): React.CSSProperties {
   const base: React.CSSProperties = {
     position: 'absolute',
-    background: '#FF6B2B22',
-    border: '1px dashed #FF6B2B',
+    background: '#8B5CF622',
+    border: '1px dashed #8B5CF6',
     pointerEvents: 'none',
     transition: 'all 0.08s',
     zIndex: 5,

@@ -60,13 +60,13 @@ function LanguageOption({
     <div
       style={{
         ...optionCard,
-        borderColor: selected ? '#FF6B2B' : '#2A2A2A',
-        background: selected ? '#1E1108' : '#161616',
+        borderColor: selected ? '#8B5CF6' : '#2A2A2A',
+        background: selected ? '#160F28' : '#161616',
       }}
       onClick={() => onSelect(value)}
     >
       <div style={optionTop}>
-        <div style={{ ...radio, background: selected ? '#FF6B2B' : 'transparent' }} />
+        <div style={{ ...radio, background: selected ? '#8B5CF6' : 'transparent' }} />
         <span style={optionLabel}>{label}</span>
       </div>
       <div style={optionDesc}>{desc}</div>
@@ -123,7 +123,7 @@ const radio: React.CSSProperties = {
   width: 14,
   height: 14,
   borderRadius: 9999,
-  border: '2px solid #FF6B2B',
+  border: '2px solid #8B5CF6',
   flexShrink: 0,
   transition: 'background 0.15s',
 }

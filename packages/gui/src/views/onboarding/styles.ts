@@ -91,11 +91,11 @@ export const optionCard: React.CSSProperties = {
 }
 export const radio: React.CSSProperties = {
   width: 14, height: 14, borderRadius: 9999,
-  border: '2px solid #FF6B2B', flexShrink: 0,
+  border: '2px solid #8B5CF6', flexShrink: 0,
   transition: 'background 0.15s',
 }
 export const btnPrimary: React.CSSProperties = {
-  background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
+  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
   padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
 }
 export const btnSecondary: React.CSSProperties = {

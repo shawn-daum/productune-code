@@ -248,9 +248,9 @@ const wikiBadge: React.CSSProperties = {
 const promoWarnBadge: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#E07B39',
-  background: '#1A0E05',
-  border: '1px solid #E07B3950',
+  color: '#8B5CF6',
+  background: '#120A2A',
+  border: '1px solid #8B5CF650',
   borderRadius: 3,
   padding: '0 4px',
 }

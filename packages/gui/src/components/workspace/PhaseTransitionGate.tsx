@@ -51,9 +51,9 @@ const banner: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 16,
   padding: '12px 20px',
-  background: '#1F1408',
-  borderBottom: '1px solid #FF6B2B66',
-  borderTop: '2px solid #FF6B2B',
+  background: '#160F28',
+  borderBottom: '1px solid #8B5CF666',
+  borderTop: '2px solid #8B5CF6',
 }
 
 const left: React.CSSProperties = {
@@ -67,7 +67,7 @@ const left: React.CSSProperties = {
 const badge: React.CSSProperties = {
   flexShrink: 0,
   padding: '4px 10px',
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#0A0A0A',
   borderRadius: 4,
   fontSize: 10,
@@ -98,7 +98,7 @@ const phaseFrom: React.CSSProperties = {
 }
 
 const phaseTo: React.CSSProperties = {
-  color: '#FF6B2B',
+  color: '#8B5CF6',
 }
 
 const arrow: React.CSSProperties = {
@@ -139,7 +139,7 @@ const modifyBtn: React.CSSProperties = {
 }
 
 const approveBtn: React.CSSProperties = {
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#0A0A0A',
   border: 'none',
   borderRadius: 4,

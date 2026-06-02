@@ -399,7 +399,7 @@ const ansInputS: React.CSSProperties = {
 const sendBtnS: React.CSSProperties = {
   height: 28,
   padding: '0 9px',
-  background: '#FF6B2B',                         // --accent
+  background: '#8B5CF6',                         // --accent
   border: 'none',
   borderRadius: 5,
   color: '#0F0F0F',
@@ -417,9 +417,9 @@ const actionRowS: React.CSSProperties = { display: 'flex', gap: 5 }
 
 const approveBtnS: React.CSSProperties = {
   flex: 1,
-  background: 'rgba(96,184,96,0.1)',
-  border: '1px solid rgba(96,184,96,0.25)',
-  color: '#60B860',                              // --status-done
+  background: 'rgba(52,211,153,0.1)',
+  border: '1px solid rgba(52,211,153,0.25)',
+  color: '#34D399',                              // --status-done
   borderRadius: 5,
   padding: '5px 0',
   fontSize: 10,

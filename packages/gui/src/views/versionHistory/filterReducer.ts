@@ -5,10 +5,10 @@ export const LS_PERSONA_KEY = 'workspace.versionHistory.filter.persona'
 export const ALL_PERSONAS: PersonaKey[] = ['po', 'designer', 'developer', 'qa']
 
 export const PERSONA_COLORS: Record<PersonaKey, string> = {
-  po:        '#FF6B2B',
-  designer:  '#9B7FD4',
-  developer: '#60B860',
-  qa:        '#E07060',
+  po:        '#8B5CF6',  // brand violet
+  designer:  '#FB923C',  // orange-400
+  developer: '#38BDF8',  // sky-400
+  qa:        '#34D399',  // emerald-400
 }
 
 export function loadPersonaFilter(): Set<PersonaKey> {

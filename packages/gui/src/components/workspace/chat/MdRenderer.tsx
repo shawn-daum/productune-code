@@ -40,7 +40,7 @@ function routeLink(href: string): void {
 
 function getLinkColor(href?: string): string {
   if (!href) return '#38BDF8'
-  if (href.startsWith('ptn:ticket/')) return '#A78BFA'
+  if (href.startsWith('ptn:ticket/')) return '#8B5CF6'
   if (href.startsWith('ptn:file/'))   return '#38BDF8'
   if (/^https?:\/\//.test(href))      return '#C8C8CC'
   return '#38BDF8'

@@ -227,7 +227,7 @@ const empty: React.CSSProperties = {
 const noTicketsCta: React.CSSProperties = {
   height: 28,
   padding: '0 14px',
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#0F0F0F',
   border: 'none',
   borderRadius: 4,
@@ -289,7 +289,7 @@ function columnHeader(status: Status): React.CSSProperties {
     'todo':         '#505050',
     'in-progress':  '#38BDF8',
     'review':       '#F59E0B',
-    'user-verify':  '#A78BFA',
+    'user-verify':  '#FB923C',
     'done':         '#34D399',
     'blocked':      '#EF4444',
     'abandoned':    '#3A3A3A',
@@ -384,10 +384,10 @@ const cardBottomRow: React.CSSProperties = {
 // C: typeChip removed — replaced by assigneeChip
 
 const ASSIGNEE_COLORS: Record<string, { fg: string; bg: string; label: string }> = {
-  'pdt-po':        { fg: '#FB923C', bg: '#2A1500', label: 'PO' },
-  'pdt-designer':  { fg: '#A78BFA', bg: '#1A1228', label: 'Des' },
-  'pdt-developer': { fg: '#34D399', bg: '#0A2A1A', label: 'Dev' },
-  'pdt-qa':        { fg: '#EF4444', bg: '#2A0808', label: 'QA' },
+  'pdt-po':        { fg: '#8B5CF6', bg: '#120A2A', label: 'PO' },
+  'pdt-designer':  { fg: '#FB923C', bg: '#261008', label: 'Des' },
+  'pdt-developer': { fg: '#38BDF8', bg: '#0A1828', label: 'Dev' },
+  'pdt-qa':        { fg: '#34D399', bg: '#0A2A1A', label: 'QA' },
   'user':          { fg: '#707070', bg: '#1A1A1A', label: 'User' },
 }
 
@@ -409,7 +409,7 @@ function assigneeChip(assignee: string): React.CSSProperties {
 }
 
 function qaChip(qa: 'pass' | 'fail' | 'pending'): React.CSSProperties {
-  const c = qa === 'pass' ? { fg: '#60B860', bg: '#0A2A0A' } : qa === 'fail' ? { fg: '#E04040', bg: '#2A0808' } : { fg: '#707070', bg: '#1A1A1A' }
+  const c = qa === 'pass' ? { fg: '#34D399', bg: '#0A2A1A' } : qa === 'fail' ? { fg: '#E04040', bg: '#2A0808' } : { fg: '#707070', bg: '#1A1A1A' }
   return {
     fontSize: 9,
     color: c.fg,

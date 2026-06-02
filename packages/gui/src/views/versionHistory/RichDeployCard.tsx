@@ -40,7 +40,7 @@ export default function RichDeployCard({ deploy }: RichDeployCardProps) {
       {deploy.includedTickets.length > 0 && (
         <div style={cardMeta}>
           {deploy.includedTickets.map((tid) => (
-            <span key={tid} style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: '#FF6B2B', flexShrink: 0 }}>{tid}</span>
+            <span key={tid} style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: '#8B5CF6', flexShrink: 0 }}>{tid}</span>
           ))}
         </div>
       )}

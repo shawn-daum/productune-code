@@ -34,7 +34,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
   return (
     <div style={wrap}>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
-        <Zap size={48} strokeWidth={1.5} color="#FF6B2B" />
+        <Zap size={48} strokeWidth={1.5} color="#8B5CF6" />
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 4 }}>
         productune
@@ -98,7 +98,7 @@ const recentCard: React.CSSProperties = {
   transition: 'border-color 0.15s',
 }
 const btnPrimary: React.CSSProperties = {
-  background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
+  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
   display: 'flex', alignItems: 'center', gap: 8,
 }

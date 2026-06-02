@@ -88,7 +88,7 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
           <div style={codeBox}>{userCode}</div>
           <a
             href={verifyUrl}
-            style={{ fontSize: 12, color: '#60A5FA', marginTop: 8 }}
+            style={{ fontSize: 12, color: '#38BDF8', marginTop: 8 }}
             onClick={e => { e.preventDefault(); (window as any).electron?.shell?.openExternal(verifyUrl) }}
           >
             {verifyUrl}

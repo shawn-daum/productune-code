@@ -223,7 +223,7 @@ function fileItem(active: boolean): React.CSSProperties {
     textAlign: 'left',
     background: active ? '#1E1E1E' : 'transparent',
     border: 'none',
-    borderLeft: active ? '2px solid #FF6B2B' : '2px solid transparent',
+    borderLeft: active ? '2px solid #8B5CF6' : '2px solid transparent',
     color: active ? '#F0F0F0' : '#A0A0A0',
     fontSize: 12,
     padding: '5px 12px 5px 12px',

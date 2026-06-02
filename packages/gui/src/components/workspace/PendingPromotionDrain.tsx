@@ -257,7 +257,7 @@ const headerRow: React.CSSProperties = {
 const headerLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: '#FF6B2B',
+  color: '#8B5CF6',
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
 }
@@ -304,8 +304,8 @@ const indexBadge: React.CSSProperties = {
 const personaTag: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: '#FF6B2B',
-  background: '#2A1808',
+  color: '#8B5CF6',
+  background: '#120A2A',
   padding: '1px 6px',
   borderRadius: 3,
   fontFamily: 'monospace',
@@ -385,7 +385,7 @@ const btnBase: React.CSSProperties = {
 
 const btnSave: React.CSSProperties = {
   ...btnBase,
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#FFFFFF',
 }
 
@@ -435,8 +435,8 @@ function toastStyle(ok: boolean): React.CSSProperties {
     alignItems: 'center',
     padding: '6px 8px 6px 12px',
     fontSize: 11,
-    color: ok ? '#60B860' : '#E04040',
-    background: ok ? '#0A2A0A' : '#2A0808',
+    color: ok ? '#34D399' : '#E04040',
+    background: ok ? '#0A2A1A' : '#2A0808',
     borderTop: `1px solid ${ok ? '#1A3A1A' : '#3A1A1A'}`,
   }
 }

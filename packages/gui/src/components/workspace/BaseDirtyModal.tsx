@@ -222,7 +222,7 @@ const actions: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   height: 30,
   padding: '0 16px',
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#0F0F0F',
   border: 'none',
   borderRadius: 4,

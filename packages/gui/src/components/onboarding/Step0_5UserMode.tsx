@@ -35,7 +35,7 @@ export default function Step0_5UserMode({ onNext, onSkip }: Props) {
           <ModeCard
             value="developer"
             selected={selected === 'developer'}
-            icon={<Code2 size={20} strokeWidth={1.75} color="#FF6B2B" />}
+            icon={<Code2 size={20} strokeWidth={1.75} color="#8B5CF6" />}
             title={t('onboarding.step0_5.card.developer.title')}
             body={t('onboarding.step0_5.card.developer.body')}
             onSelect={setSelected}
@@ -43,7 +43,7 @@ export default function Step0_5UserMode({ onNext, onSkip }: Props) {
           <ModeCard
             value="planner"
             selected={selected === 'planner'}
-            icon={<UserCog size={20} strokeWidth={1.75} color="#FF6B2B" />}
+            icon={<UserCog size={20} strokeWidth={1.75} color="#8B5CF6" />}
             title={t('onboarding.step0_5.card.planner.title')}
             body={t('onboarding.step0_5.card.planner.body')}
             onSelect={setSelected}
@@ -91,13 +91,13 @@ function ModeCard({
     <div
       style={{
         ...card,
-        borderColor: selected ? '#FF6B2B' : '#2A2A2A',
-        background: selected ? '#1E1108' : '#161616',
+        borderColor: selected ? '#8B5CF6' : '#2A2A2A',
+        background: selected ? '#160F28' : '#161616',
       }}
       onClick={() => onSelect(value)}
     >
       <div style={cardTop}>
-        <div style={{ ...radio, background: selected ? '#FF6B2B' : 'transparent' }} />
+        <div style={{ ...radio, background: selected ? '#8B5CF6' : 'transparent' }} />
         <span style={cardIcon}>{icon}</span>
         <span style={cardTitle}>{title}</span>
       </div>
@@ -157,7 +157,7 @@ const radio: React.CSSProperties = {
   width: 14,
   height: 14,
   borderRadius: 9999,
-  border: '2px solid #FF6B2B',
+  border: '2px solid #8B5CF6',
   flexShrink: 0,
   transition: 'background 0.15s',
 }
@@ -182,7 +182,7 @@ const cardBody: React.CSSProperties = {
 }
 
 const btnPrimary: React.CSSProperties = {
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#fff',
   border: 'none',
   borderRadius: 4,

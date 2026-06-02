@@ -39,7 +39,7 @@ export const cardListWrap: React.CSSProperties = {
 export const cardWrap: React.CSSProperties = {
   background: '#141414',
   border: '1px solid #1F1F1F',
-  borderLeft: '2px solid #FF6B2B30',
+  borderLeft: '2px solid #8B5CF630',
   borderRadius: 6,
   padding: '10px 12px',
   display: 'flex',
@@ -58,7 +58,7 @@ export const cardTicketId: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#FF6B2B',
+  color: '#8B5CF6',
   flexShrink: 0,
 }
 
@@ -113,7 +113,7 @@ export const activityRow: React.CSSProperties = {
 }
 
 export const activityPersona: React.CSSProperties = {
-  color: '#9B7FD4',
+  color: '#FB923C',
   fontFamily: 'monospace',
   flexShrink: 0,
   minWidth: 90,
@@ -202,7 +202,7 @@ export function statusPill(status: StatusKey): React.CSSProperties {
     'todo':        { fg: '#707070', bg: '#1A1A1A' },
     'in-progress': { fg: '#60A8E0', bg: '#0A1828' },
     'review':      { fg: '#E0B040', bg: '#2A2008' },
-    'done':        { fg: '#60B860', bg: '#0A2A0A' },
+    'done':        { fg: '#34D399', bg: '#0A2A1A' },
     'blocked':     { fg: '#E04040', bg: '#2A0808' },
     'abandoned':   { fg: '#505050', bg: '#141414' },
   }

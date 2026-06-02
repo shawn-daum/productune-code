@@ -57,7 +57,7 @@ const STATUS_COLORS: Record<string, string> = {
   'in-progress':  '#8B5CF6',
   'review':       '#E0B040',
   'user-verify':  '#38BDF8',
-  'done':         '#60B860',
+  'done':         '#34D399',
   'blocked':      '#E04040',
   'abandoned':    '#3A3A3A',
 }

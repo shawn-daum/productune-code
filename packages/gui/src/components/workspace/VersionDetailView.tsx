@@ -290,8 +290,8 @@ const meta: React.CSSProperties = {
 const activeBadge: React.CSSProperties = {
   marginLeft: 12,
   padding: '2px 8px',
-  background: '#FF6B2B22',
-  color: '#FF6B2B',
+  background: '#8B5CF622',
+  color: '#8B5CF6',
   borderRadius: 4,
   fontSize: 10,
   fontWeight: 600,
@@ -330,8 +330,8 @@ function timelineNode(isCurrent: boolean, isPast: boolean): React.CSSProperties 
     gap: 8,
     padding: '6px 12px',
     borderRadius: 6,
-    background: isCurrent ? '#2A1808' : isPast ? '#161616' : '#0F0F0F',
-    border: `1px solid ${isCurrent ? '#FF6B2B' : isPast ? '#3A3A3A' : '#1A1A1A'}`,
+    background: isCurrent ? '#1A1228' : isPast ? '#161616' : '#0F0F0F',
+    border: `1px solid ${isCurrent ? '#8B5CF6' : isPast ? '#3A3A3A' : '#1A1A1A'}`,
   }
 }
 
@@ -391,7 +391,7 @@ const outcomeValMuted: React.CSSProperties = {
 }
 
 const outcomeLink: React.CSSProperties = {
-  color: '#FF6B2B',
+  color: '#8B5CF6',
   cursor: 'pointer',
 }
 
@@ -458,7 +458,7 @@ function statusBadge(status: Status): React.CSSProperties {
     'todo':         { fg: '#707070', bg: '#1A1A1A' },
     'in-progress':  { fg: '#38BDF8', bg: '#082028' },
     'review':       { fg: '#F59E0B', bg: '#2A2008' },
-    'user-verify':  { fg: '#A78BFA', bg: '#1A0A2A' },
+    'user-verify':  { fg: '#FB923C', bg: '#261008' },
     'done':         { fg: '#34D399', bg: '#0A2A1A' },
     'blocked':      { fg: '#EF4444', bg: '#2A0808' },
     'abandoned':    { fg: '#505050', bg: '#1A1A1A' },
@@ -477,7 +477,7 @@ function statusBadge(status: Status): React.CSSProperties {
 }
 
 function qaBadge(qa: 'pass' | 'fail' | 'pending'): React.CSSProperties {
-  const c = qa === 'pass' ? { fg: '#60B860', bg: '#0A2A0A' } : qa === 'fail' ? { fg: '#E04040', bg: '#2A0808' } : { fg: '#707070', bg: '#1A1A1A' }
+  const c = qa === 'pass' ? { fg: '#34D399', bg: '#0A2A1A' } : qa === 'fail' ? { fg: '#E04040', bg: '#2A0808' } : { fg: '#707070', bg: '#1A1A1A' }
   return {
     fontSize: 10,
     color: c.fg,
@@ -527,8 +527,8 @@ const promoRow: React.CSSProperties = {
 const personaBadge: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: '#FF6B2B',
-  background: '#2A1808',
+  color: '#8B5CF6',
+  background: '#120A2A',
   padding: '1px 5px',
   borderRadius: 3,
   fontFamily: 'monospace',

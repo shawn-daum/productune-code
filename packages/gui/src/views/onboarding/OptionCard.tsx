@@ -14,18 +14,18 @@ export default function OptionCard({ selected, onClick, label, badge, intro, tec
     <div
       style={{
         ...optionCard,
-        borderColor: selected ? '#FF6B2B' : '#2A2A2A',
-        background: selected ? '#1E1108' : '#161616',
+        borderColor: selected ? '#8B5CF6' : '#2A2A2A',
+        background: selected ? '#160F28' : '#161616',
       }}
       onClick={onClick}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ ...radio, background: selected ? '#FF6B2B' : 'transparent' }} />
+        <div style={{ ...radio, background: selected ? '#8B5CF6' : 'transparent' }} />
         <span style={{ fontWeight: 600, fontSize: 13, color: '#F0F0F0' }}>{label}</span>
         {badge && (
           <span style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 9999,
-            background: '#2A1A08', color: '#FF6B2B', border: '1px solid #FF6B2B55',
+            background: '#120A2A', color: '#8B5CF6', border: '1px solid #8B5CF655',
           }}>
             {badge}
           </span>

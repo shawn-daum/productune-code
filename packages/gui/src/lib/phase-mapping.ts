@@ -25,7 +25,7 @@ export interface PhaseDef {
 }
 
 export const PHASE_DEFS: PhaseDef[] = [
-  { key: 'prd',     label: 'PRD',     color: '#A78BFA' },  // designer alias
+  { key: 'prd',     label: 'PRD',     color: '#FB923C' },  // designer alias (T-006 Option B)
   { key: 'design',  label: 'Design',  color: '#F472B6' },  // pink-400
   { key: 'build',   label: 'Build',   color: '#38BDF8' },  // dev alias
   { key: 'deploy',  label: 'Deploy',  color: '#FB923C' },  // orange-400

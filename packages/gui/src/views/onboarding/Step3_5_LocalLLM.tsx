@@ -59,14 +59,14 @@ export default function Step3_5_LocalLLM({
                   key={m}
                   style={{
                     ...optionCard,
-                    borderColor: selectedModel === m ? '#FF6B2B' : '#2A2A2A',
-                    background: selectedModel === m ? '#1E1108' : '#161616',
+                    borderColor: selectedModel === m ? '#8B5CF6' : '#2A2A2A',
+                    background: selectedModel === m ? '#160F28' : '#161616',
                     padding: '8px 12px',
                   }}
                   onClick={() => onSelectModel(m)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ ...radio, background: selectedModel === m ? '#FF6B2B' : 'transparent' }} />
+                    <div style={{ ...radio, background: selectedModel === m ? '#8B5CF6' : 'transparent' }} />
                     <span style={{ fontWeight: 600, fontSize: 12, color: '#F0F0F0' }}>{m}</span>
                     {installedModels.some(im => im === m || im.startsWith(m + ':')) && (
                       <span style={{ fontSize: 10, color: '#34D399', marginLeft: 4 }}>

@@ -31,9 +31,9 @@ export const pillLatest: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#FF6B2B',
-  background: '#1A0E05',
-  border: '1px solid #FF6B2B50',
+  color: '#8B5CF6',
+  background: '#120A2A',
+  border: '1px solid #8B5CF650',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -44,9 +44,9 @@ export const pillPast: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
   fontFamily: 'monospace',
-  color: '#9B7FD4',
-  background: '#120F1A',
-  border: '1px solid #9B7FD440',
+  color: '#FB923C',
+  background: '#261008',
+  border: '1px solid #FB923C40',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -76,9 +76,9 @@ export function rowStyle(isSelected: boolean): React.CSSProperties {
     height: 26,
     padding: '0 8px',
     gap: 6,
-    background: isSelected ? '#1A1208' : 'transparent',
+    background: isSelected ? '#120A2A' : 'transparent',
     border: 'none',
-    borderLeft: isSelected ? '2px solid #FF6B2B' : '2px solid transparent',
+    borderLeft: isSelected ? '2px solid #8B5CF6' : '2px solid transparent',
     cursor: 'pointer',
     textAlign: 'left',
     transition: 'background 0.1s',
@@ -114,7 +114,7 @@ export default function VersionRow({
         if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
       }}
       onMouseLeave={(e) => {
-        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = isSelected ? '#1A1208' : 'transparent'
+        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = isSelected ? '#120A2A' : 'transparent'
       }}
       aria-current={isSelected ? 'true' : undefined}
     >

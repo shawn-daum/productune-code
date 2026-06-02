@@ -216,7 +216,7 @@ const STATUS_PILL_STYLE: Record<string, React.CSSProperties> = {
   todo:       { background: 'rgba(80,80,80,0.18)',   color: '#A0A0A0' },
   'in-progress': { background: 'rgba(139,92,246,0.14)', color: '#8B5CF6' },
   review:     { background: 'rgba(224,176,64,0.14)', color: '#E0B040' },
-  done:       { background: 'rgba(96,184,96,0.14)',  color: '#60B860' },
+  done:       { background: 'rgba(52,211,153,0.14)',  color: '#34D399' },
   blocked:    { background: 'rgba(224,64,64,0.14)',  color: '#E04040' },
   abandoned:  { background: 'rgba(58,58,58,0.18)',   color: '#505050' },
 }

@@ -125,7 +125,7 @@ const errorStyle: React.CSSProperties = {
 }
 
 const btnPrimary: React.CSSProperties = {
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#fff',
   border: 'none',
   borderRadius: 4,
