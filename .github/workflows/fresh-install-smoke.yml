@@ -1,0 +1,76 @@
+# T-021 (v0.5 C1) — fresh-install CI smoke.
+#
+# Catches install regressions before they reach a teammate. Runs four checks in
+# an isolated $HOME (PRD §C1, docs/prd/productune.md lines 425-434):
+#
+#   (a) install.sh < /dev/null               — non-interactive install passes
+#   (b) check-symlink-targets.sh             — block absolute-path symlink targets
+#   (c) check-env-key-parity.mjs             — install.sh <-> bootstrap-doctrine env-key parity
+#   (d) check-dispatch-cost-strip.sh         — dispatch-cost-strip behavior intact
+#
+# CI fails on any of: non-interactive install break, absolute-path symlink
+# target, env-key drift, or broken dispatch-cost-strip. Passes a clean install.
+#
+# Out of scope: full e2e GUI CI.
+
+name: fresh-install-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Least-privilege: this job only reads the checkout.
+permissions:
+  contents: read
+
+jobs:
+  fresh-install-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # Symlink lint (check b) inspects git-tracked blobs; no submodules needed.
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Ensure jq present
+        # jq is preinstalled on ubuntu-latest; assert it so a runner image change
+        # surfaces loudly instead of silently skewing checks (a)/(d).
+        run: jq --version
+
+      - name: Make CI check scripts executable
+        run: chmod +x scripts/ci/*.sh scripts/ci/*.mjs
+
+      # ── (b) absolute-path symlink target lint ──────────────────────────────
+      # Run first: it is the cheapest static check and pins the first of the two
+      # real fresh-install bugs (absolute-path symlink) from the deferred
+      # candidate v0.5-fresh-install-ci-smoke.
+      - name: (b) Lint symlink targets
+        run: bash scripts/ci/check-symlink-targets.sh
+
+      # ── (c) env-file key parity ────────────────────────────────────────────
+      # Second real bug: install.sh and bootstrap-doctrine.sh both seed
+      # ~/.productune/productune.env and must agree on the engine key.
+      - name: (c) Env-key parity (install.sh <-> bootstrap-doctrine)
+        run: node scripts/ci/check-env-key-parity.mjs
+
+      # ── (a) non-interactive install in an isolated $HOME ───────────────────
+      # The harness creates a throwaway $HOME, stubs claude/npm so the install
+      # body runs past the auth preflight, runs install.sh < /dev/null, then
+      # asserts fresh-install invariants (agent symlinks, env seed, hooks).
+      - name: (a) Non-interactive install smoke (isolated HOME)
+        run: bash scripts/ci/run-install-smoke.sh
+
+      # ── (d) dispatch-cost-strip behavior ───────────────────────────────────
+      # A post-install PO session pipes each dispatch result through the
+      # post-bash-strip-cost hook. A real authed PO session is unavailable on a
+      # clean runner, so this drives the same hook with representative fixtures.
+      - name: (d) Dispatch-cost-strip behavior
+        run: bash scripts/ci/check-dispatch-cost-strip.sh

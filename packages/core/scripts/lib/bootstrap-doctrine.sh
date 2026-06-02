@@ -26,7 +26,7 @@ fi
 #     doctrine/**/*.md         — per-file cmp: same → skip; different → .bak.<ISO-ts> backup + overwrite.
 #                                Mirrors packages/core/doctrine/ → ~/.productune/doctrine/
 #                                preserving full sub-directory structure.
-#     productune.env           — [ ! -e ] guard: seed engine=claude; never overwrite
+#     productune.env           — [ ! -e ] guard: seed MY_PO_ENGINE=claude; never overwrite
 #
 #   Completion trace (stderr via say()):
 #     Fresh install / update → "doctrine 시스템 파일 설치 완료." (once)
@@ -79,7 +79,7 @@ bootstrap_user_global_doctrine() {
   # ── productune.env: seed-only ────────────────────────────────────────────────
   local _env_dest="$HOME/.productune/productune.env"
   if [ ! -e "$_env_dest" ]; then
-    printf 'engine=claude\n' > "$_env_dest"
+    printf 'MY_PO_ENGINE=claude\n' > "$_env_dest"
     say "doctrine: seeded ~/.productune/productune.env"
     _did_install=1
   fi
