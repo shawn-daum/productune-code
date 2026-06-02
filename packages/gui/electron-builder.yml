@@ -1,0 +1,53 @@
+# electron-builder config — T-020 (B4) unsigned macOS .dmg distribution.
+#
+# Layout note (vite-plugin-electron/simple):
+#   - main process  → dist-electron/main.js   (BrowserWindow.main entry)
+#   - preload       → dist-electron/preload.js
+#   - renderer      → dist/index.html + dist/assets/**
+#   package.json `main` = "dist-electron/main.js", so dist-electron/ MUST keep its
+#   path inside the asar (entry-point lookup is literal). main.ts then loads the
+#   renderer via `path.join(__dirname, '../renderer/index.html')` → relative to
+#   dist-electron/ that is `<asar-root>/renderer/index.html`. So we map vite's
+#   `dist/` output to a top-level `renderer/` dir and keep `dist-electron/` as-is.
+#
+# Unsigned by design: no `identity`, no notarization, no `afterSign` hook.
+# Teammates open the app once via right-click → Open (see README Gatekeeper note).
+appId: com.productune.gui
+productName: productune
+# package.json `version` is 0.0.0 (workspace placeholder, consumed by other tooling
+# so left untouched). extraMetadata overrides only the package.json copied into the
+# asar, giving a real version for the artifact name + CFBundleVersion/ShortVersion.
+extraMetadata:
+  version: 0.5.0
+
+directories:
+  output: release
+  buildResources: build
+
+# Only the built output goes into the app; map vite's split dirs into the
+# layout main.ts expects at runtime.
+files:
+  - from: dist-electron
+    to: dist-electron
+    filter:
+      - "**/*"
+  - from: dist
+    to: renderer
+    filter:
+      - "**/*"
+  - package.json
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  # Unsigned: skip signing + notarization entirely. `identity: null` tells
+  # electron-builder not to attempt to discover a signing identity.
+  identity: null
+
+dmg:
+  title: "${productName} ${version}"

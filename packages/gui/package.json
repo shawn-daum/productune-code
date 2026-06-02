@@ -9,7 +9,8 @@
     "lint": "node scripts/check-locale-keys.js && bash scripts/check-locale-protected.sh",
     "check-locales": "node scripts/check-locale-keys.js && bash scripts/check-locale-protected.sh",
     "check-locale": "bash scripts/check-locale-protected.sh",
-    "check-ticket-version": "node scripts/check-ticket-version.mjs"
+    "check-ticket-version": "node scripts/check-ticket-version.mjs",
+    "dist:mac": "pnpm run build && electron-builder --mac dmg --config electron-builder.yml"
   },
   "dependencies": {
     "@productune/core": "workspace:*",
@@ -30,6 +31,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^36.1.0",
+    "electron-builder": "26.8.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.3",
     "vite-plugin-electron": "^0.28.8"

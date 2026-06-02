@@ -171,6 +171,31 @@ productune/packages/core/scripts/install.sh
 7. **`~/.productune/productune.env`** — repo path 기록.
 8. **PATH 등록** — 현재 세션 즉시 적용.
 
+## GUI 데스크톱 빌드 (무서명 `.dmg`)
+
+> 위 `install.sh` (CLI) 와 GUI `.dmg` 는 **별개 배포 경로**입니다 (option A). `.dmg` 설치는 `install.sh` 플로우를 전혀 건드리지 않습니다.
+
+팀원에게 GUI 데스크톱 앱을 **코드 서명 없이** 전달할 때 사용합니다.
+
+```sh
+# packages/gui 에서 빌드 (renderer + electron main 빌드 → electron-builder 무서명 .dmg)
+pnpm --filter @productune/gui run dist:mac
+# 결과물: packages/gui/release/productune-<version>-<arch>.dmg
+```
+
+`dist:mac` 은 `pnpm build` (locale 검증 + `tsc --noEmit` + vite build) 후 `electron-builder --mac dmg` 를 무서명으로 실행합니다 (`electron-builder.yml` 의 `identity: null`). 코드 서명 / notarization / auto-update 는 포함하지 않습니다.
+
+### 첫 실행 — Gatekeeper 우회 (우클릭 → 열기)
+
+무서명 `.dmg` 라서 macOS Gatekeeper 가 첫 실행을 차단합니다 ("개발자를 확인할 수 없으므로 열 수 없습니다"). 더블클릭 대신 아래 경로로 **한 번만** 우회하면 이후엔 정상 실행됩니다.
+
+1. `.dmg` 를 열고 `productune.app` 을 `Applications` 폴더로 드래그.
+2. `Applications` 에서 `productune.app` 을 **우클릭 (또는 Control-클릭) → 열기**.
+3. 경고 다이얼로그에서 **열기** 버튼을 클릭 (더블클릭 시에는 이 버튼이 나타나지 않습니다).
+4. 한 번 허용하면 이후부터는 더블클릭으로 정상 실행됩니다.
+
+> macOS 15+ 에서 우클릭→열기 옵션이 보이지 않으면: **시스템 설정 → 개인정보 보호 및 보안** 하단의 차단 알림에서 **무시하고 열기 (Open Anyway)** 를 클릭하세요.
+
 ## 신규 프로젝트 시작 (dogfood guide)
 
 ```sh
