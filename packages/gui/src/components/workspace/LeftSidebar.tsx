@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { RefreshCw } from 'lucide-react'
 import type { ActivityIcon } from './ActivityBar'
 import type { Project, Session } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
@@ -94,12 +95,26 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
     window.dispatchEvent(new CustomEvent('version-select', { detail: { versionId } }))
   }
 
+  const isFocused = activeIcon === 'project'
+
+  // Header action slot: RefreshCw for artifacts tab
+  const headerAction = activeIcon === 'artifacts' ? (
+    <button
+      style={headerActionBtn}
+      title="새로고침"
+      aria-label="새로고침"
+      onClick={() => window.dispatchEvent(new CustomEvent('artifacts:reload'))}
+    >
+      <RefreshCw size={13} strokeWidth={2} />
+    </button>
+  ) : null
+
   return (
     <div style={wrap}>
       {/* Header — active tab title */}
       <div style={header}>
         <div style={tabTitle}>{TAB_TITLES[activeIcon] ?? activeIcon}</div>
-        <div style={projectSlugMuted} title={project.slug}>{project.slug}</div>
+        <div style={headerActionSlot}>{headerAction}</div>
       </div>
 
       {/* Body — branch by activeIcon */}
@@ -109,6 +124,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
           <SidePanelCurrentVersion
             poState={poState}
             selectedVersionId={selectedVersionId}
+            isFocused={isFocused}
+            onSelect={(id) => handleVersionClick(id)}
           />
           <SidePanelPastVersions
             poState={poState}
@@ -171,14 +188,25 @@ const tabTitle: React.CSSProperties = {
   letterSpacing: '0.04em',
 }
 
-const projectSlugMuted: React.CSSProperties = {
-  fontSize: 10,
-  color: '#505050',
-  fontFamily: 'monospace',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  maxWidth: 110,
+const headerActionSlot: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  flexShrink: 0,
+}
+
+const headerActionBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 24,
+  height: 24,
+  background: 'none',
+  border: 'none',
+  borderRadius: 4,
+  color: '#707070',
+  cursor: 'pointer',
+  padding: 0,
 }
 
 const panelPlaceholder: React.CSSProperties = {

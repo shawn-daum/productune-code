@@ -9,7 +9,7 @@ export default function Titlebar({ title }: Props) {
     <div style={bar}>
       <div style={spacer} />
       <div style={titleBox}>
-        <Zap size={11} strokeWidth={2.25} color="#FF6B2B" />
+        <Zap size={11} strokeWidth={2.25} color="#8B5CF6" />
         <span>{title}</span>
       </div>
       <div style={spacer} />
@@ -46,6 +46,6 @@ const titleBox: React.CSSProperties = {
 }
 
 const accent: React.CSSProperties = {
-  color: '#FF6B2B',
+  color: '#8B5CF6',
   fontSize: 11,
 }

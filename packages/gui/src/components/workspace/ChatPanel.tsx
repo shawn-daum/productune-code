@@ -193,13 +193,9 @@ export default function ChatPanel() {
   // ── ctx caption ─────────────────────────────────────────────────────────
   const ctxCaption = useMemo(() => {
     const ticketId = poState?.current_task?.ticket_id
-    const phaseNum = poState?.current_phase ?? 0
-    const versionsCount = (poState?.versions?.length as number | undefined) ?? 0
-    const round = versionsCount > 0 ? versionsCount : phaseNum > 0 ? 1 : 0
-    if (!round && !ticketId) return t('workspace.chat.idleCtx')
+    if (!ticketId) return t('workspace.chat.idleCtx')
     const action = t('workspace.chat.actionDefault')
-    if (ticketId) return `round-${round || 1} · ${ticketId} ${action}`
-    return `round-${round}`
+    return `${ticketId} ${action}`
   }, [poState, t])
 
   return (
@@ -536,7 +532,7 @@ const sendBtn: React.CSSProperties = {
   background: '#8B5CF6',
   border: 'none',
   borderRadius: 6,
-  color: '#0F0F0F',
+  color: '#FFFFFF',
   fontSize: 11,
   fontWeight: 600,
   cursor: 'pointer',

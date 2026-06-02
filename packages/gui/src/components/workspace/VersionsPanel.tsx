@@ -122,15 +122,15 @@ function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }
       style={selected ? cardActiveSelected : cardActive}
       onClick={onClick}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = '#FF6B2B'
+        (e.currentTarget as HTMLDivElement).style.borderColor = '#8B5CF6'
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = '#FF6B2B33'
+        (e.currentTarget as HTMLDivElement).style.borderColor = '#8B5CF633'
       }}
     >
       <div style={cardIdRow}>
         <span style={cardId}>{version.id}</span>
-        <ChevronRight size={12} color="#FF6B2B66" style={chevronStyle} />
+        <ChevronRight size={12} color="#8B5CF666" style={chevronStyle} />
       </div>
       <div style={cardLine}>
         {t('workspace.versions.phaseLabel')}
@@ -194,8 +194,8 @@ const emptyHint: React.CSSProperties = {
 }
 
 const cardActive: React.CSSProperties = {
-  background: '#1A1208',
-  border: '1px solid #FF6B2B33',
+  background: '#1A1030',
+  border: '1px solid #8B5CF633',
   borderRadius: 6,
   padding: '12px 14px',
   marginBottom: 6,
@@ -205,8 +205,8 @@ const cardActive: React.CSSProperties = {
 
 const cardActiveSelected: React.CSSProperties = {
   ...{
-    background: '#1A1208',
-    border: '1px solid #FF6B2B',
+    background: '#1A1030',
+    border: '1px solid #8B5CF6',
     borderRadius: 6,
     padding: '10px 12px',
     marginBottom: 6,
@@ -248,7 +248,7 @@ const chevronStyle: React.CSSProperties = {
 const cardId: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
-  color: '#FF6B2B',
+  color: '#8B5CF6',
   marginBottom: 4,
 }
 
@@ -279,7 +279,7 @@ const cardLineMuted: React.CSSProperties = {
 
 const cardLink: React.CSSProperties = {
   fontSize: 11,
-  color: '#FF6B2B',
+  color: '#8B5CF6',
   marginTop: 4,
   cursor: 'pointer',
   userSelect: 'none',

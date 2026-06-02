@@ -251,7 +251,7 @@ const textInput: React.CSSProperties = {
 const submitBtn: React.CSSProperties = {
   height: 24,
   padding: '0 10px',
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   border: 'none',
   borderRadius: 4,
   color: '#0F0F0F',

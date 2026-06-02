@@ -24,8 +24,8 @@ import { formatActivityDate } from './VersionRow'
 interface Props {
   poState: PoState | null
   selectedVersionId: string | null
-  // onSelect removed — current-version card click must never touch selectedVersionId.
-  // The card opens the kanban tab directly via openTab; version history tab owns selection.
+  isFocused: boolean
+  onSelect: (id: string) => void
 }
 
 /** Returns true when the current version has been closed (transient close). */
@@ -46,7 +46,7 @@ function elapsedLabel(isoDate: string | null | undefined): string {
   return `${days}일째`
 }
 
-export default function SidePanelCurrentVersion({ poState, selectedVersionId }: Props) {
+export default function SidePanelCurrentVersion({ poState, selectedVersionId, isFocused, onSelect }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
   const project = useWorkspace((s) => s.project)
@@ -109,12 +109,13 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId }: 
       {/* Case 3: always-expanded detail card */}
       {hasVersions && !isClosed && (
         <div
-          style={detailCard(isSelected)}
+          style={detailCard(isSelected, isFocused)}
           role="button"
           tabIndex={0}
           aria-current={isSelected ? 'true' : undefined}
           onClick={() => {
             if (!currentVersionId) return
+            onSelect(currentVersionId)
             openTab(
               `ticket-review:${currentVersionId}`,
               'ticket-review',
@@ -128,10 +129,11 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId }: 
           }}
           onMouseLeave={(e) => {
             (e.currentTarget as HTMLDivElement).style.background =
-              isSelected ? '#1A1208' : '#141414'
+              isSelected ? '#1A1030' : '#141414'
           }}
           onKeyDown={(e) => {
             if ((e.key === 'Enter' || e.key === ' ') && currentVersionId) {
+              onSelect(currentVersionId)
               openTab(
                 `ticket-review:${currentVersionId}`,
                 'ticket-review',
@@ -205,20 +207,24 @@ const fallbackRow: React.CSSProperties = {
   fontStyle: 'italic',
 }
 
-function detailCard(isSelected: boolean): React.CSSProperties {
+function detailCard(isSelected: boolean, isFocused: boolean): React.CSSProperties {
+  const borderColor = isSelected
+    ? (isFocused ? '#8B5CF6' : '#8B5CF633')
+    : '#2A2A2A'
   return {
     margin: '4px 8px 10px',
     padding: '10px 12px',
     display: 'flex',
     flexDirection: 'column',
     gap: 7,
-    background: isSelected ? '#1A1208' : '#141414',
+    background: isSelected ? '#1A1030' : '#141414',
     border: '1px solid #222222',
-    borderLeft: `3px solid ${isSelected ? '#FF6B2B' : '#2A2A2A'}`,
+    borderLeft: `3px solid ${borderColor}`,
     borderRadius: 4,
     cursor: 'pointer',
     transition: 'background 0.1s',
     outline: 'none',
+    opacity: isSelected && !isFocused ? 0.4 : 1,
   }
 }
 
@@ -232,9 +238,9 @@ const versionPill: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#FF6B2B',
-  background: '#1A0E05',
-  border: '1px solid #FF6B2B50',
+  color: '#8B5CF6',
+  background: '#1A1030',
+  border: '1px solid #8B5CF650',
   borderRadius: 3,
   padding: '2px 6px',
   whiteSpace: 'nowrap',

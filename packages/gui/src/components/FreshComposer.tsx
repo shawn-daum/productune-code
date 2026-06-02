@@ -155,7 +155,7 @@ export default function FreshComposer({ project, onConfirm }: Props) {
 //   --text-secondary:  #C8C8CC (~14px regular)
 //   --surface-subpanel:#1A1A1A (textarea bg)
 //   --border-strong:   #2A2A2A (textarea border)
-//   --accent:          #FF6B2B (CTA)
+//   --accent:          #8B5CF6 (CTA)
 //   --health-error:    #F87171 (inline error)
 
 const container: React.CSSProperties = {
@@ -233,7 +233,7 @@ const ctaBase: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 0,
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#fff',
   border: 'none',
   borderRadius: 6,

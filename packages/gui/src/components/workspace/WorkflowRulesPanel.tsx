@@ -161,7 +161,7 @@ function ToggleRow({ label, value, onToggle }: { label: string; value: boolean; 
       aria-pressed={value}
     >
       <span style={fieldLabel}>{label}</span>
-      <div style={{ ...toggleTrack, background: value ? '#FF6B2B' : '#2A2A2A' }}>
+      <div style={{ ...toggleTrack, background: value ? '#8B5CF6' : '#2A2A2A' }}>
         <div style={{ ...toggleThumb, transform: value ? 'translateX(14px)' : 'translateX(0)' }} />
       </div>
     </div>

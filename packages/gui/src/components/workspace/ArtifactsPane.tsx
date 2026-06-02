@@ -2,7 +2,7 @@
  * ArtifactsPane — T-014
  *
  * Scoped file list for the artifacts ActivityBar slot.
- * Scans three fixed roots: docs/prd/, docs/artifacts/<version>/, docs/designer/
+ * Scans: docs/artifacts/<version>/
  * On file row click → openTab with extension-based routing.
  *
  * Empty state: DS §8.9 (FolderOpen + headline + helper, no CTA).
@@ -18,7 +18,7 @@ import {
   FolderOpen,
   Loader2,
   AlertOctagon,
-  RefreshCw,
+  RefreshCw as RefreshCwIcon,
 } from 'lucide-react'
 import type { Project, PoState } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
@@ -29,7 +29,7 @@ interface ArtifactEntry {
   relPath: string
   absPath: string
   ext: string
-  scopeGroup: 'prd' | 'artifacts' | 'designer'
+  scopeGroup: 'artifacts'
 }
 
 interface Props {
@@ -42,9 +42,7 @@ type LoadState = 'idle' | 'loading' | 'done' | 'error'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const SCOPE_LABELS: Record<ArtifactEntry['scopeGroup'], string> = {
-  prd: 'docs/prd/',
   artifacts: 'docs/artifacts/',
-  designer: 'docs/designer/',
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -75,6 +73,12 @@ export default function ArtifactsPane({ project, poState }: Props) {
 
   useEffect(() => {
     load()
+  }, [load])
+
+  useEffect(() => {
+    const handler = () => load()
+    window.addEventListener('artifacts:reload', handler)
+    return () => window.removeEventListener('artifacts:reload', handler)
   }, [load])
 
   function handleRowClick(entry: ArtifactEntry) {
@@ -110,7 +114,7 @@ export default function ArtifactsPane({ project, poState }: Props) {
           <div>
             <div style={errorText}>파일 목록을 불러오지 못했어요.</div>
             <button style={retryBtn} onClick={load}>
-              <RefreshCw size={11} />
+              <RefreshCwIcon size={11} />
               다시 시도
             </button>
           </div>
@@ -125,29 +129,19 @@ export default function ArtifactsPane({ project, poState }: Props) {
       <div style={centerPane}>
         <FolderOpen size={32} style={{ color: '#505050', marginBottom: 10 }} strokeWidth={1.5} />
         <div style={emptyHeadline}>표시할 산출물이 없습니다</div>
-        <div style={emptyHelper}>세 스코프 루트에 파일이 생기면 여기 나타납니다.</div>
+        <div style={emptyHelper}>docs/artifacts/ 폴더에 산출물이 생기면 여기 나타납니다.</div>
       </div>
     )
   }
 
   // ── File list ──────────────────────────────────────────────────────────────
-  // Group entries in fixed order: prd → artifacts → designer
-  const groups: Array<{ scope: ArtifactEntry['scopeGroup']; items: ArtifactEntry[] }> = []
-  const scopeOrder: ArtifactEntry['scopeGroup'][] = ['prd', 'artifacts', 'designer']
-  for (const scope of scopeOrder) {
-    const items = entries.filter((e) => e.scopeGroup === scope)
-    if (items.length > 0) groups.push({ scope, items })
-  }
+  // All entries belong to 'artifacts' scope
+  const groups: Array<{ scope: ArtifactEntry['scopeGroup']; items: ArtifactEntry[] }> = [
+    { scope: 'artifacts', items: entries },
+  ]
 
   return (
     <div style={listPane}>
-      {/* Refresh button in header area */}
-      <div style={paneToolbar}>
-        <button style={refreshIconBtn} onClick={load} title="새로고침">
-          <RefreshCw size={12} />
-        </button>
-      </div>
-
       <div style={scrollArea}>
         {groups.map(({ scope, items }) => (
           <div key={scope} style={scopeGroup}>
@@ -197,28 +191,6 @@ const listPane: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-}
-
-const paneToolbar: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  padding: '4px 8px',
-  borderBottom: '1px solid #1A1A1A',
-  flexShrink: 0,
-}
-
-const refreshIconBtn: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: 22,
-  height: 22,
-  background: 'none',
-  border: 'none',
-  borderRadius: 4,
-  color: '#505050',
-  cursor: 'pointer',
-  padding: 0,
 }
 
 const scrollArea: React.CSSProperties = {

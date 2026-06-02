@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { RefreshCw, Eye, EyeOff } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { useExplorer } from '../../store/explorer'
 import { useWorkspace } from '../../store/workspace'
 import type { TabType } from '../../store/workspace'
@@ -30,7 +30,7 @@ function resolveTabKind(filePath: string): { type: TabType; readonly?: boolean }
 export default function ExplorerPane() {
   const { t } = useTranslation()
   const { project, openTab } = useWorkspace()
-  const { showHidden, toggleShowHidden, resetTree } = useExplorer()
+  const { showHidden, resetTree } = useExplorer()
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const projectDir = project?.projectDir ?? null
 
@@ -122,14 +122,6 @@ export default function ExplorerPane() {
             onClick={handleRefresh}
           >
             <RefreshCw size={13} strokeWidth={2} />
-          </button>
-          <button
-            style={iconBtn}
-            title={showHidden ? t('workspace.explorer.hideHidden') : t('workspace.explorer.showHidden')}
-            aria-label={showHidden ? t('workspace.explorer.hideHidden') : t('workspace.explorer.showHidden')}
-            onClick={toggleShowHidden}
-          >
-            {showHidden ? <EyeOff size={13} strokeWidth={2} /> : <Eye size={13} strokeWidth={2} />}
           </button>
         </div>
       </div>

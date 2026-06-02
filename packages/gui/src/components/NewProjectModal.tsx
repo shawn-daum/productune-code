@@ -48,7 +48,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
     <div style={overlay}>
       <div style={modal}>
         <div style={header}>
-          <span style={{ color: '#FF6B2B', fontWeight: 700 }}>⚡</span>
+          <span style={{ color: '#8B5CF6', fontWeight: 700 }}>⚡</span>
           <span style={{ marginLeft: 8, fontWeight: 600, fontSize: 15 }}>새 프로젝트 만들기</span>
         </div>
 
@@ -123,7 +123,7 @@ const input: React.CSSProperties = {
 const hint: React.CSSProperties = { fontSize: 11, color: '#505050' }
 const errStyle: React.CSSProperties = { fontSize: 12, color: '#EF4444' }
 const btnPrimary: React.CSSProperties = {
-  background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
+  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
   padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
 }
 const btnSecondary: React.CSSProperties = {

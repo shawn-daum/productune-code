@@ -5,10 +5,10 @@ import fs from 'fs'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ArtifactEntry {
-  relPath: string       // relative to projectDir, e.g. "docs/prd/productune.md"
+  relPath: string       // relative to projectDir, e.g. "docs/artifacts/v1/flow.md"
   absPath: string
   ext: string           // ".md" | ".mmd" | ".mermaid" | ".html" (lower-cased)
-  scopeGroup: 'prd' | 'artifacts' | 'designer'
+  scopeGroup: 'artifacts'
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ const ALLOWED_EXTS = new Set(['.md', '.mmd', '.mermaid', '.html'])
 function scanDir(
   dir: string,
   projectDir: string,
-  scopeGroup: ArtifactEntry['scopeGroup'],
+  scopeGroup: 'artifacts',
   out: ArtifactEntry[],
 ): void {
   if (!fs.existsSync(dir)) return
@@ -56,10 +56,7 @@ export function register(): void {
 
       const result: ArtifactEntry[] = []
 
-      // 1. docs/prd/
-      scanDir(path.join(projectDir, 'docs', 'prd'), projectDir, 'prd', result)
-
-      // 2. docs/artifacts/<currentVersion>/ — or all subdirs if null
+      // docs/artifacts/<currentVersion>/ — or all subdirs if null
       const artifactsBase = path.join(projectDir, 'docs', 'artifacts')
       if (currentVersion) {
         const versionDir = path.join(artifactsBase, currentVersion)
@@ -81,9 +78,6 @@ export function register(): void {
           }
         }
       }
-
-      // 3. docs/designer/
-      scanDir(path.join(projectDir, 'docs', 'designer'), projectDir, 'designer', result)
 
       return result
     },

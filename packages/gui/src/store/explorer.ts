@@ -33,7 +33,7 @@ interface ExplorerState {
 export const useExplorer = create<ExplorerState>((set) => ({
   expanded: new Set<string>(),
   cache: new Map<string, DirEntry>(),
-  showHidden: false,
+  showHidden: true,
 
   toggleExpanded: (absPath) =>
     set((s) => {

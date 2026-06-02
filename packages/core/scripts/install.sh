@@ -164,9 +164,9 @@ merge_claude_settings_statusline() {
 }
 
 # ── ~/.claude/settings.json permissions.allow merge (idempotent) ─────────────
-# Ensures standard dev/qa Bash tool patterns are globally allowed so that
-# pdt-developer and pdt-qa subagents can run build/read commands in any
-# managed project without hitting auto-mode silent denials.
+# Ensures all productune persona Bash patterns are globally allowed so that
+# pdt-po / pdt-developer / pdt-qa subagents can run their required commands in
+# any managed project without hitting auto-mode silent denials.
 # Existing user entries in allow[] are preserved; only new patterns are appended.
 merge_claude_settings_permissions() {
   local settings="$HOME/.claude/settings.json"
@@ -194,7 +194,22 @@ merge_claude_settings_permissions() {
         "Bash(git log*)",
         "Bash(git add *)",
         "Bash(tsc *)",
-        "Bash(eslint *)"
+        "Bash(eslint *)",
+        "Bash(python3 *)",
+        "Bash(jq *)",
+        "Bash(mv *)",
+        "Bash(cp *)",
+        "Bash(git commit*)",
+        "Bash(git merge*)",
+        "Bash(git checkout*)",
+        "Bash(git branch*)",
+        "Bash(git tag*)",
+        "Bash(git push*)",
+        "Bash(git worktree*)",
+        "Bash(gh *)",
+        "Bash(sed *)",
+        "Bash(bash *)",
+        "Bash(sh *)"
       ] as $pdt_patterns
     | ($existing + ($pdt_patterns - $existing)) as $merged
     | $root

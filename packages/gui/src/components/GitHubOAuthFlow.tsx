@@ -142,7 +142,7 @@ const codeBox: React.CSSProperties = {
   padding: '12px 24px', fontFamily: 'monospace', fontSize: 22, letterSpacing: '0.12em', color: '#F0F0F0',
 }
 const btnPrimary: React.CSSProperties = {
-  marginTop: 16, background: '#FF6B2B', color: '#fff', border: 'none',
+  marginTop: 16, background: '#8B5CF6', color: '#fff', border: 'none',
   borderRadius: 4, padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
 }
 const btnSecondary: React.CSSProperties = {

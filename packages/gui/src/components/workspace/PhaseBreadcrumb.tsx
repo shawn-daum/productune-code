@@ -42,8 +42,8 @@ const baseNode: React.CSSProperties = {
 
 const activeNode: React.CSSProperties = {
   ...baseNode,
-  background: '#2A1808',
-  color: '#FF6B2B',
+  background: '#1A1030',
+  color: '#8B5CF6',
   fontWeight: 600,
 }
 

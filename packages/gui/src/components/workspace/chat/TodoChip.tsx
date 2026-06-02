@@ -74,7 +74,7 @@ const badge: React.CSSProperties = {
   minWidth: 16,
   height: 16,
   borderRadius: 8,
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#0F0F0F',
   fontSize: 10,
   fontWeight: 700,

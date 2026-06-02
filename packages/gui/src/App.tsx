@@ -332,7 +332,7 @@ function DescendantPromptDialog({
               onClick={() => onOpen(entry)}
             >
               <div style={{ fontSize: 13, fontWeight: 600, color: '#E8E8EA' }}>
-                <span style={{ color: '#FF6B2B', marginRight: 6 }}>⚡</span>
+                <span style={{ color: '#8B5CF6', marginRight: 6 }}>⚡</span>
                 {entry.config.slug}
               </div>
               <div style={{ fontSize: 11, color: '#C8C8CC', fontFamily: 'monospace', marginTop: 2 }}>
@@ -395,7 +395,7 @@ const modalBody: React.CSSProperties = {
   fontSize: 14, color: '#E8E8EA', lineHeight: 1.55, marginBottom: 20,
 }
 const btnPrimary: React.CSSProperties = {
-  background: '#FF6B2B', color: '#fff', border: 'none', borderRadius: 4,
+  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
 }
 const btnSecondary: React.CSSProperties = {
