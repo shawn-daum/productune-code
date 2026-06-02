@@ -155,10 +155,17 @@ merge_claude_settings_statusline() {
 
 # ── Claude Code preflight — auto-install + auth check ────────────────────────
 ensure_claude_installed() {
+  # command -v only checks PATH presence; also verify the binary actually runs.
+  # A broken npm install (broken symlink, wrong node version, etc.) passes command -v
+  # but fails on execution — catch that here so we can reinstall.
   if command -v claude >/dev/null 2>&1; then
-    return 0
+    if claude --version >/dev/null 2>&1; then
+      return 0
+    fi
+    warn "claude binary가 PATH에 있지만 실행할 수 없습니다 (broken install) — 재설치를 시도합니다."
+  else
+    warn "Claude Code CLI가 설치되어 있지 않습니다."
   fi
-  warn "Claude Code CLI가 설치되어 있지 않습니다."
   if [ ! -t 0 ] || [ ! -t 1 ]; then
     die "비대화형 환경: 먼저 설치 후 install.sh 재실행 — npm install -g @anthropic-ai/claude-code"
   fi
@@ -187,12 +194,21 @@ ensure_claude_installed() {
       unset -f _path_prepend
       # Clear bash/zsh command hash cache so 'command -v claude' picks up the new binary.
       hash -r 2>/dev/null || rehash 2>/dev/null || true
-      command -v claude >/dev/null 2>&1 || die "설치 후에도 claude CLI를 찾을 수 없습니다.
+      if ! command -v claude >/dev/null 2>&1; then
+        die "설치 후에도 claude CLI를 찾을 수 없습니다.
   진단:
     npm 위치: $(command -v npm 2>/dev/null || echo '?')
     npm prefix -g: $(npm prefix -g 2>/dev/null || echo '?')
     현재 PATH: $PATH
   수동 해결: export PATH=\"\$(dirname \"\$(which npm)\"):\$PATH\" && exec \$SHELL"
+      fi
+      if ! claude --version >/dev/null 2>&1; then
+        die "claude binary를 찾았지만 실행할 수 없습니다 (node 버전 불일치 또는 broken install).
+  진단:
+    claude 경로: $(command -v claude 2>/dev/null || echo '?')
+    node 버전: $(node --version 2>/dev/null || echo '?')
+  수동 해결: npm uninstall -g @anthropic-ai/claude-code && npm install -g @anthropic-ai/claude-code"
+      fi
       say "Claude Code 설치 완료: $(claude --version 2>/dev/null | head -1 || echo '?')"
       ;;
     *) die "Claude Code 설치 후 install.sh 재실행: npm install -g @anthropic-ai/claude-code" ;;
