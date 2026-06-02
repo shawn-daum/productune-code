@@ -12,3 +12,7 @@ Appended by PO mechanically from QA's `fail_event` output. No manual edits. ≤1
 
 ## Entries
 
+- (2026-06-02) v0.5 · T-014 · artifacts-viewer/ipc-security · loops=1 · final=resolved · note: artifacts:readFile missing projectDir traversal guard — extension whitelist only, no startsWith(projectDir) check
+- (2026-06-02) v0.5 · T-016 · ticket-detail/ipc-security · loops=1 · final=resolved · note: tickets:read handler has no path-traversal guard — ticketId passed directly to path.join without startsWith(ticketsRoot) check
+- (2026-06-02) v0.5 · T-016 · ticket-detail/css-class · loops=1 · final=resolved · note: pdt-persona-blink CSS class referenced in TicketDetailTab.tsx but never defined in any stylesheet — blink animation silently no-ops
+

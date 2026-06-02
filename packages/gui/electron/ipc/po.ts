@@ -36,6 +36,51 @@ export function register(): void {
     void payload  // noop — T-P4-115 will replace with playwrightMcp.navigate(url)
   })
 
+  // ── T-013 (b) AskUserQuestion answer ─────────────────────────────────────────
+  // Stub handler: stores chosen key in chat.json's message payload.resolved and
+  // echoes the answer text back to PO via poSendMessage.
+  // Full trigger (PO instruction emitting ask-user-question via claude tool-use)
+  // is a follow-up scope (risk_flags: ipc-action-card-event-shape).
+  ipcMain.handle(
+    'chat:answerQuestion',
+    async (
+      _event,
+      opts: { projectDir: string; messageId: string; chosenKey: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        // Patch the message in chat.json — reuse appendMessage-level store logic.
+        // For now: noop stub (PO trigger not yet implemented).
+        // When PO emits ask-user-question, this handler will:
+        //   1. Read session, find message by id, patch payload.resolved
+        //   2. Call poSendMessage with the chosen answer text
+        void opts
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'unknown' }
+      }
+    },
+  )
+
+  // ── T-013 (c) PromotionCard resolve ──────────────────────────────────────────
+  // Stub handler: stores outcome in chat.json's message payload.resolved.
+  // Full trigger (PO instruction emitting promotion-candidate via claude tool-use)
+  // is a follow-up scope (risk_flags: promotion-event-trigger-undefined).
+  ipcMain.handle(
+    'chat:resolvePromotion',
+    async (
+      _event,
+      opts: { projectDir: string; messageId: string; outcome: 'approved' | 'rejected' },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        // Stub: noop until PO promotion-candidate trigger ships.
+        void opts
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'unknown' }
+      }
+    },
+  )
+
   // ── PO chat streaming (T-P4-041) ──────────────────────────────────────────────
   ipcMain.handle(
     'po:sendMessage',

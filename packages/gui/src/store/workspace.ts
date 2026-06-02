@@ -25,6 +25,9 @@ export type TabType =
   | 'workflow-settings'
   | 'mcp-servers'
   | 'hooks'
+  | 'artifact-md'
+  | 'artifact-mermaid'
+  | 'ticket-detail'
 
 export interface Tab {
   id: string
@@ -541,6 +544,9 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'workflow-settings': return '작업 흐름 규칙'
     case 'mcp-servers':       return 'MCP 서버'
     case 'hooks':             return '훅'
+    case 'artifact-md':       return (props?.relPath as string)?.split('/').pop() ?? 'Artifact'
+    case 'artifact-mermaid':  return (props?.relPath as string)?.split('/').pop() ?? 'Diagram'
+    case 'ticket-detail':     return (props?.ticketId as string) ?? 'Ticket'
     default:                  return type
   }
 }

@@ -1,11 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import type { LucideIcon } from 'lucide-react'
-import { FolderOpen, LayoutDashboard, Users, Layers, KanbanSquare, Settings } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, Users, Layers, KanbanSquare, Settings, Package } from 'lucide-react'
 
-/** Primary activity icons matching mockup 4-icon spec:
- *  Explorer / Project / Team / Settings
- *  Legacy icon values (tickets, artifacts, versions) kept for LeftSidebar compat.
- */
+/** Primary activity icons — Project / Artifacts / Team / Explorer / Settings */
 export type ActivityIcon = 'explorer' | 'project' | 'team' | 'settings' | 'versions' | 'tickets' | 'artifacts'
 
 interface Props {
@@ -20,10 +17,11 @@ interface IconDef {
 }
 
 const ICONS: IconDef[] = [
-  { id: 'explorer',  Icon: FolderOpen,       titleKey: 'workspace.activityBar.explorer' },
-  { id: 'project',   Icon: LayoutDashboard,  titleKey: 'workspace.activityBar.project' },
-  { id: 'team',      Icon: Users,            titleKey: 'workspace.activityBar.team' },
-  { id: 'settings',  Icon: Settings,         titleKey: 'workspace.activityBar.settings' },
+  { id: 'project',   Icon: LayoutDashboard,  titleKey: 'workspace.activityBar.project'   },
+  { id: 'artifacts', Icon: Package,          titleKey: 'workspace.activityBar.artifacts' },
+  { id: 'team',      Icon: Users,            titleKey: 'workspace.activityBar.team'      },
+  { id: 'explorer',  Icon: FolderOpen,       titleKey: 'workspace.activityBar.explorer'  },
+  { id: 'settings',  Icon: Settings,         titleKey: 'workspace.activityBar.settings'  },
 ]
 
 export default function ActivityBar({ active, onSelect }: Props) {

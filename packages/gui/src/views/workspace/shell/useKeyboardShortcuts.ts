@@ -9,10 +9,11 @@ interface KeyboardShortcutsParams {
   splitRight: (paneId: string) => void
   splitDown: (paneId: string) => void
   addNewTab: (paneId: string) => void
+  setActiveTab: (paneId: string, tabId: string) => void
 }
 
 export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
-  const { closeTab, closePane, splitRight, splitDown, addNewTab } = params
+  const { closeTab, closePane, splitRight, splitDown, addNewTab, setActiveTab } = params
   const chordRef = useRef<{ kind: 'cmd-k'; timer: number } | null>(null)
 
   useEffect(() => {
@@ -86,6 +87,19 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
         window.dispatchEvent(new CustomEvent('productune:quick-open'))
         return
       }
+
+      // cmd+1 ~ cmd+4: jump to Nth tab in active leaf
+      const n = parseInt(e.key, 10)
+      if (n >= 1 && n <= 4) {
+        e.preventDefault()
+        const s = useWorkspace.getState()
+        const leaf = findLeafByIdLocal(s.panes, s.activePaneId)
+        if (leaf && leaf.tabs.length >= n) {
+          setActiveTab(s.activePaneId, leaf.tabs[n - 1].id)
+        }
+        // no-op if leaf has fewer than n tabs
+        return
+      }
     }
 
     window.addEventListener('keydown', onKeyDown)
@@ -93,5 +107,5 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
       window.removeEventListener('keydown', onKeyDown)
       clearChord()
     }
-  }, [closeTab, closePane, splitRight, splitDown, addNewTab])
+  }, [closeTab, closePane, splitRight, splitDown, addNewTab, setActiveTab])
 }

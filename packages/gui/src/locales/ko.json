@@ -321,9 +321,10 @@
       "binaryNoPreview": "바이너리 파일. 미리보기 불가."
     },
     "activityBar": {
-      "explorer": "탐색",
       "project": "프로젝트",
+      "artifacts": "Artifacts",
       "team": "팀",
+      "explorer": "탐색",
       "settings": "설정"
     },
     "phaseStrip": {

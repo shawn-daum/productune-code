@@ -29,6 +29,8 @@ import PoFab from './chat/PoFab'
 import TodoChip from './chat/TodoChip'
 import TodoListPanel from './chat/TodoListPanel'
 import PendingGateChip from './chat/PendingGateChip'
+import RateLimitBanner from './chat/RateLimitBanner'
+import { useSessionHealth } from '../../store/sessionHealth'
 
 export default function ChatPanel() {
   const { t } = useTranslation()
@@ -42,6 +44,12 @@ export default function ChatPanel() {
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
   const setStreaming = useWorkspace((s) => s.setStreaming)
+
+  // ── Session health (T-012) ────────────────────────────────────────────────
+  const healthState = useSessionHealth((s) => s.state)
+  const healthDetail = useSessionHealth((s) => s.detail)
+  const clearHealth = useSessionHealth((s) => s.clearHealth)
+  const rateLimited = healthState === 'rate-limited'
 
   const panelVisible = usePoChat((s) => s.panelVisible)
   const setPanelVisible = usePoChat((s) => s.setPanelVisible)
@@ -259,6 +267,17 @@ export default function ChatPanel() {
           )}
         </div>
 
+        {/* rp-rate-limit-banner (T-012) — visible only when rate-limited */}
+        {rateLimited && (
+          <RateLimitBanner
+            detail={healthDetail}
+            onExpired={() => {
+              clearHealth()
+              setStreaming(false)
+            }}
+          />
+        )}
+
         {/* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */}
         <div style={inputArea}>
           <textarea
@@ -269,7 +288,7 @@ export default function ChatPanel() {
             onKeyDown={onKeyDown}
             placeholder={t('workspace.chat.inputPlaceholder')}
             rows={1}
-            disabled={streaming || !project}
+            disabled={streaming || !project || rateLimited}
           />
           <div style={inputRow}>
             <button
@@ -283,7 +302,7 @@ export default function ChatPanel() {
               onClick={onAttachFile}
               aria-label={t('workspace.chat.attachFile')}
               title={t('workspace.chat.attachFile')}
-              disabled={streaming || !project}
+              disabled={streaming || !project || rateLimited}
             >
               <Paperclip size={14} strokeWidth={2} />
             </button>
@@ -320,13 +339,14 @@ export default function ChatPanel() {
             <button
               style={{
                 ...sendBtn,
-                opacity: streaming || !draft.trim() ? 0.5 : 1,
-                background: sendHover && !(streaming || !draft.trim()) ? '#FF7A3F' : '#FF6B2B',
+                opacity: streaming || !draft.trim() || rateLimited ? 0.5 : 1,
+                // T-013 / T-006 Option B: send button = --persona-po violet
+                background: sendHover && !(streaming || !draft.trim() || rateLimited) ? '#9D74F8' : '#8B5CF6',
               }}
               onMouseEnter={() => setSendHover(true)}
               onMouseLeave={() => setSendHover(false)}
               onClick={handleSubmit}
-              disabled={streaming || !draft.trim() || !project}
+              disabled={streaming || !draft.trim() || !project || rateLimited}
             >
               <ArrowUp size={12} strokeWidth={2.5} />
               <span>{t('workspace.chat.send')}</span>
@@ -390,11 +410,12 @@ const header: React.CSSProperties = {
   padding: '0 12px',
 }
 
+// T-013 / T-006 Option B: poBadge = --persona-po violet (was orange #FF6B2B)
 const poBadge: React.CSSProperties = {
   width: 20,
   height: 20,
   borderRadius: 4,
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   color: '#0F0F0F',
   fontSize: 11,
   fontWeight: 700,
@@ -508,10 +529,11 @@ const iconActionBtn: React.CSSProperties = {
   transition: 'background 0.12s ease, color 0.12s ease',
 }
 
+// T-013 / T-006 Option B: sendBtn base bg overridden inline per sendHover state
 const sendBtn: React.CSSProperties = {
   height: 28,
   padding: '0 12px',
-  background: '#FF6B2B',
+  background: '#8B5CF6',
   border: 'none',
   borderRadius: 6,
   color: '#0F0F0F',

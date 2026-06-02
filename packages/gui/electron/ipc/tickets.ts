@@ -78,9 +78,85 @@ function extractRequestSummary(content: string): string | undefined {
   return para.length > 240 ? para.slice(0, 237) + '…' : (para || undefined)
 }
 
+// ── Helpers for tickets:read ──────────────────────────────────────────────────
+
+/**
+ * Strip YAML frontmatter block (lines between --- delimiters) and return
+ * the remaining markdown body.
+ */
+function stripFrontmatter(content: string): string {
+  const lines = content.split('\n')
+  if (lines[0]?.trim() !== '---') return content
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') {
+      return lines.slice(i + 1).join('\n').replace(/^\n+/, '')
+    }
+  }
+  return content
+}
+
+/**
+ * Extract the content of the first section whose heading ends with `(KR)`.
+ * Returns text from immediately after that heading until the next `##`-level
+ * heading (or end of file), preserving all content. Returns null if absent.
+ */
+function extractKrSection(body: string): string | null {
+  const lines = body.split('\n')
+  let startIdx = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s+.+\(KR\)\s*$/.test(lines[i])) {
+      startIdx = i + 1
+      break
+    }
+  }
+  if (startIdx < 0) return null
+  const out: string[] = []
+  for (let i = startIdx; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i])) break
+    out.push(lines[i])
+  }
+  return out.join('\n').replace(/^\n+/, '').replace(/\n+$/, '') || null
+}
+
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
+  // ── tickets:read — single ticket by ticketId ──────────────────────────────
+  ipcMain.handle(
+    'tickets:read',
+    async (
+      _event,
+      projectDir: string,
+      ticketId: string,
+    ): Promise<{ frontmatter: Record<string, unknown>; body: string; krBody: string | null } | null> => {
+      const ticketsRoot = path.join(projectDir, 'docs', 'tickets')
+      if (!fs.existsSync(ticketsRoot)) return null
+      let versionDirs: string[] = []
+      try {
+        versionDirs = fs.readdirSync(ticketsRoot, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name)
+      } catch { return null }
+      // Search all version dirs for <ticketId>.md
+      for (const versionDir of versionDirs) {
+        const filePath = path.join(ticketsRoot, versionDir, `${ticketId}.md`)
+        const resolved = path.resolve(filePath)
+        const root = path.resolve(ticketsRoot)
+        if (!resolved.startsWith(root + path.sep)) {
+          throw new Error('path traversal rejected')
+        }
+        if (!fs.existsSync(filePath)) continue
+        let content: string
+        try { content = fs.readFileSync(filePath, 'utf-8') } catch { continue }
+        const frontmatter = parseFrontmatter(content)
+        const body = stripFrontmatter(content)
+        const krBody = extractKrSection(body)
+        return { frontmatter, body, krBody }
+      }
+      return null
+    },
+  )
+
   ipcMain.handle('tickets:scan', async (_event, projectDir: string): Promise<ScannedTicket[]> => {
     const ticketsRoot = path.join(projectDir, 'docs', 'tickets')
     if (!fs.existsSync(ticketsRoot)) return []

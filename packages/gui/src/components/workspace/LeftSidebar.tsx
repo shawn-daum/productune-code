@@ -10,6 +10,7 @@ import ExplorerPane from '../explorer/ExplorerPane'
 import SidePanelCurrentVersion from './SidePanelCurrentVersion'
 import SidePanelPastVersions from './SidePanelPastVersions'
 import SidePanelArtifacts from './SidePanelArtifacts'
+import ArtifactsPane from './ArtifactsPane'
 
 interface Props {
   project: Project
@@ -131,9 +132,7 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
         </div>
       )}
       {activeIcon === 'artifacts' && (
-        <div style={panelPlaceholder}>
-          <span style={panelPlaceholderText}>{t('workspace.sidebar.artifactsHint')}</span>
-        </div>
+        <ArtifactsPane project={project} poState={poState} />
       )}
       {activeIcon === 'settings' && (
         <SettingsView />

@@ -1,27 +1,32 @@
 /**
  * MessageBubble — single chat message renderer (T-P4-041).
  * T-P4-114 §C/§E: linkifyText preprocessing + ptn: href routing in <a>.
+ * T-013: MdRenderer replaces inline Markdown fn; action-card kind dispatch added.
  *
- * Six bubble kinds:
+ * Eight bubble kinds:
  *   po / designer / dev / qa  → 2 px left border in persona color
  *   trace                     → caption gray, no border
  *   user                      → right-aligned, gray-overlay bg (linkify NOT applied)
+ *   ask-user-question         → AskUserQuestionCard (T-013 b)
+ *   promotion-candidate       → PromotionCard (T-013 c)
  */
 
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import type { Message, MessageKind } from '../../../lib/types'
 import { linkifyText } from '../../../lib/linkifyText'
-import { useWorkspace } from '../../../store/workspace'
+import MdRenderer from './MdRenderer'
+import AskUserQuestionCard from './AskUserQuestionCard'
+import PromotionCard from './PromotionCard'
 
-const PERSONA_COLOR: Record<Exclude<MessageKind, 'trace' | 'user'>, string> = {
-  po:       '#FF6B2B',
-  designer: '#A78BFA',
+// T-006 Option B — PO = violet #8B5CF6 (was orange #FF6B2B)
+// designer moved to orange #FB923C (no longer violet)
+const PERSONA_COLOR: Record<string, string> = {
+  po:       '#8B5CF6',
+  designer: '#FB923C',
   dev:      '#38BDF8',
   qa:       '#34D399',
 }
 
-const PERSONA_LABEL: Record<Exclude<MessageKind, 'trace' | 'user'>, string> = {
+const PERSONA_LABEL: Record<string, string> = {
   po:       'PO',
   designer: 'Designer',
   dev:      'Developer',
@@ -36,16 +41,20 @@ export default function MessageBubble({ message }: Props) {
   const kind: MessageKind =
     message.kind ?? (message.role === 'user' ? 'user' : 'po')
 
+  // T-013: action-card dispatch
+  if (kind === 'ask-user-question') return <AskUserQuestionCard message={message} />
+  if (kind === 'promotion-candidate') return <PromotionCard message={message} />
+
   if (kind === 'user') return <UserBubble message={message} />
   if (kind === 'trace') return <TraceLine message={message} />
-  return <PersonaBubble message={message} kind={kind} />
+  return <PersonaBubble message={message} kind={kind as 'po' | 'designer' | 'dev' | 'qa'} />
 }
 
 // ── Persona bubble (po / designer / dev / qa) ────────────────────────────────
 
 function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'designer' | 'dev' | 'qa' }) {
-  const color = PERSONA_COLOR[kind]
-  const label = PERSONA_LABEL[kind]
+  const color = PERSONA_COLOR[kind] ?? '#8B5CF6'
+  const label = PERSONA_LABEL[kind] ?? kind
   const time = formatTime(message.created_at)
 
   return (
@@ -56,7 +65,8 @@ function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'desi
       </div>
       <div style={cmBubble}>
         {/* T-P4-114: linkifyText applied before react-markdown */}
-        <Markdown text={linkifyText(message.text)} />
+        {/* T-013: MdRenderer replaces inline Markdown fn */}
+        <MdRenderer text={linkifyText(message.text)} />
         {message.status === 'streaming' && <span style={cursorStyle}>▋</span>}
       </div>
     </div>
@@ -74,7 +84,7 @@ function UserBubble({ message }: { message: Message }) {
         <span style={cmNameUser}>You</span>
       </div>
       <div style={{ ...cmBubble, ...userBubble }}>
-        <Markdown text={message.text} />
+        <MdRenderer text={message.text} />
       </div>
     </div>
   )
@@ -85,109 +95,12 @@ function UserBubble({ message }: { message: Message }) {
 function TraceLine({ message }: { message: Message }) {
   return (
     <div style={traceLine}>
-      <Markdown text={linkifyText(message.text)} />
+      <MdRenderer text={linkifyText(message.text)} />
     </div>
   )
 }
 
-// ── Markdown wrapper ──────────────────────────────────────────────────────────
-
-function Markdown({ text }: { text: string }) {
-  return (
-    <div style={{ display: 'inline' }}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          p:    ({ children }) => <span style={mdP}>{children}</span>,
-          code: ({ children }) => <code style={mdCode}>{children}</code>,
-          ul:   ({ children }) => <ul style={mdList}>{children}</ul>,
-          ol:   ({ children }) => <ol style={mdList}>{children}</ol>,
-          // T-P4-114: ptn: href routing + external URL → browser tab
-          a:    ({ href, children }) => <MdLink href={href}>{children}</MdLink>,
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  )
-}
-
-// ── MdLink — ptn: prefix router ───────────────────────────────────────────────
-
-function MdLink({ href, children }: { href?: string; children: React.ReactNode }) {
-  const handleClick = (e: React.MouseEvent) => {
-    e.preventDefault()
-    if (!href) return
-    routeLink(href)
-  }
-
-  return (
-    <a
-      href={href}
-      style={getLinkStyle(href)}
-      onClick={handleClick}
-      // keep cursor pointer even though onClick handles navigation
-    >
-      {children}
-    </a>
-  )
-}
-
-/**
- * Route a link href to the correct workspace action.
- * Called from onClick handler so it has access to the current store state.
- */
-function routeLink(href: string): void {
-  const openTab = useWorkspace.getState().openTab
-
-  if (href.startsWith('ptn:ticket/')) {
-    const id = href.slice('ptn:ticket/'.length)
-    openTab(`ticket-review:${id}`, 'ticket-review', { ticketId: id }, id)
-    return
-  }
-
-  if (href.startsWith('ptn:file/')) {
-    const filePath = href.slice('ptn:file/'.length)
-    const basename = filePath.split('/').pop() ?? filePath
-    openTab(`markdown:${filePath}`, 'markdown', { path: filePath }, basename)
-    return
-  }
-
-  if (/^https?:\/\//.test(href)) {
-    let hostname: string
-    try {
-      hostname = new URL(href).hostname
-    } catch {
-      hostname = href.replace(/^https?:\/\//, '').split('/')[0] ?? href
-    }
-    const encodedUrl = encodeURIComponent(href)
-    openTab(`browser:${encodedUrl}`, 'browser', { url: href }, hostname)
-    return
-  }
-
-  if (href.startsWith('ptn:')) {
-    // Unknown ptn: prefix — noop (security guard)
-    return
-  }
-
-  // Non-ptn, non-http: prevent default (already done by onClick) — noop
-}
-
-/**
- * Derive link color from href prefix.
- *   ptn:ticket/  → #A78BFA  (--persona-designer, purple)
- *   ptn:file/    → #38BDF8  (--persona-dev, blue)
- *   https?://    → #C8C8CC  (--text-secondary, gray)
- *   fallback     → #38BDF8  (existing mdLink color)
- */
-function getLinkStyle(href?: string): React.CSSProperties {
-  const base: React.CSSProperties = { textDecoration: 'underline', cursor: 'pointer' }
-  if (!href) return { ...base, color: '#38BDF8' }
-  if (href.startsWith('ptn:ticket/')) return { ...base, color: '#A78BFA' }
-  if (href.startsWith('ptn:file/'))   return { ...base, color: '#38BDF8' }
-  if (/^https?:\/\//.test(href))      return { ...base, color: '#C8C8CC' }
-  return { ...base, color: '#38BDF8' }
-}
+// MdLink and routeLink moved to MdRenderer.tsx (T-013)
 
 function formatTime(iso: string): string {
   try {
@@ -262,25 +175,11 @@ const traceLine: React.CSSProperties = {
   margin: '2px 0',
 }
 
+// T-013 / T-006 Option B: streaming cursor = --persona-po violet (was orange #FF6B2B)
 const cursorStyle: React.CSSProperties = {
-  color: '#FF6B2B',
+  color: '#8B5CF6',
   marginLeft: 2,
   animation: 'persona-blink 0.8s ease infinite',
 }
 
-const mdP: React.CSSProperties = {
-  margin: 0,
-}
-
-const mdCode: React.CSSProperties = {
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  background: '#0F0F0F',
-  padding: '1px 4px',
-  borderRadius: 3,
-  fontSize: 11,
-}
-
-const mdList: React.CSSProperties = {
-  margin: '4px 0',
-  paddingLeft: 18,
-}
+// md-* styles moved to MdRenderer.tsx + md-recipes.css (T-013)

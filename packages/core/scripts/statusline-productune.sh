@@ -54,13 +54,15 @@ fi
 # ── productune state ──────────────────────────────────────────────────────────
 STATE="$CWD/.productune/po-state.json"
 PRODUCTUNE_PART=""
+PHASE_TOKEN=""   # A4: compact [vX.Y PZ·done/total] token for the branch segment
 PERSONA=""
 TICKET=""
 
 if [ -f "$STATE" ]; then
   # Phase + progress counter (python3, local IO only — no network)
   # Values passed as argv to avoid shell injection via path characters.
-  PRODUCTUNE_PART="$(python3 -c "
+  # Outputs two lines: line 1 = verbose PRODUCTUNE_PART, line 2 = compact PHASE_TOKEN.
+  _STATE_OUT="$(python3 -c "
 import json,os,re,sys
 
 state_path=sys.argv[1]
@@ -80,24 +82,21 @@ if not version:
 
 if phase is None:
     print(version + ' | phase: closed')
+    print('')
     sys.exit(0)
 
-phase_names={1:'PRD',2:'Design',3:'Build',4:'Deploy',5:'Close'}
-phase_name=phase_names.get(phase,str(phase))
+phase_names_long={1:'PRD',2:'Design',3:'Build',4:'Deploy',5:'Close'}
+phase_names_short={1:'prd',2:'design',3:'build',4:'deploy',5:'close'}
+phase_name_long=phase_names_long.get(phase,str(phase))
+phase_name_short=phase_names_short.get(phase,str(phase))
 
 if phase==1:
-    print(version + ' | phase ' + str(phase) + ': ' + phase_name + ' (prd authoring)')
+    print(version + ' | phase ' + str(phase) + ': ' + phase_name_long + ' (prd authoring)')
+    # A4 compact token for phase 1 — no ticket count (PRD authoring has no sub-tickets)
+    print('[' + version + ' P' + str(phase) + '·' + phase_name_short + ']')
     sys.exit(0)
 
-# Ticket type membership per phase
-PHASE_TYPES={
-    2:{'design','design-plan'},
-    3:{'impl','refactor','test','qa','design+impl','feature'},
-    4:{'deploy'},
-    5:{'close'},
-}
-types_for_phase=PHASE_TYPES.get(phase,set())
-
+# Count tickets by phase field (A4: phase-field-based, not type-based)
 ticket_dir=os.path.join(cwd,'docs','tickets',version)
 done=total=0
 
@@ -118,25 +117,40 @@ if os.path.isdir(ticket_dir):
         if end<0:
             continue
         fm=head[3:end]
-        tm=re.search(r'^type:\s*(\S+)',fm,re.M)
+        pm=re.search(r'^phase:\s*(\S+)',fm,re.M)
         sm=re.search(r'^status:\s*(\S+)',fm,re.M)
-        if not tm or not sm:
+        if not pm or not sm:
             continue
-        if tm.group(1) not in types_for_phase:
+        try:
+            ticket_phase=int(pm.group(1))
+        except ValueError:
+            continue
+        if ticket_phase!=phase:
             continue
         total+=1
         if sm.group(1)=='done':
             done+=1
 
-print(version + ' | phase ' + str(phase) + ': ' + phase_name + ' (' + str(done) + '/' + str(total) + ')')
+# Line 1: verbose (existing format)
+print(version + ' | phase ' + str(phase) + ': ' + phase_name_long + ' (' + str(done) + '/' + str(total) + ')')
+# Line 2: A4 compact token
+print('[' + version + ' P' + str(phase) + '·' + str(done) + '/' + str(total) + ']')
 " "$STATE" "$CWD" 2>/dev/null)"
 
+  PRODUCTUNE_PART="$(printf '%s' "$_STATE_OUT" | sed -n '1p')"
+  PHASE_TOKEN="$(printf '%s' "$_STATE_OUT" | sed -n '2p')"
 fi
 
 # ── Compose output ────────────────────────────────────────────────────────────
-# Right segment: branch only
+# Right segment: branch + A4 phase token
 RIGHT=""
-[ -n "$BRANCH" ] && RIGHT="branch: $BRANCH"
+if [ -n "$BRANCH" ]; then
+  if [ -n "$PHASE_TOKEN" ]; then
+    RIGHT="branch: $BRANCH $PHASE_TOKEN"
+  else
+    RIGHT="branch: $BRANCH"
+  fi
+fi
 
 # Join segments with ' | '
 OUTPUT=""

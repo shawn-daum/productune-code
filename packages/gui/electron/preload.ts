@@ -193,6 +193,14 @@ contextBridge.exposeInMainWorld('api', {
   scanTickets: (projectDir: string): Promise<import('../src/lib/types').Ticket[]> =>
     ipcRenderer.invoke('tickets:scan', projectDir),
 
+  // ── Ticket detail read (T-016 · A7) ─────────────────────────────────────────
+  /** Read a single ticket md by ticketId. Searches all version dirs under docs/tickets/. */
+  ticketsRead: (
+    projectDir: string,
+    ticketId: string,
+  ): Promise<{ frontmatter: Record<string, unknown>; body: string; krBody: string | null } | null> =>
+    ipcRenderer.invoke('tickets:read', projectDir, ticketId),
+
   /** Subscribe to ticket fs-watch change events (debounced 500ms). */
   onTicketsChanged: (cb: (projectDir: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, projectDir: string) => cb(projectDir)
@@ -210,6 +218,25 @@ contextBridge.exposeInMainWorld('api', {
   // ── Chat (single PO session per project) ────────────────────────────────────
   chatGetSession: (projectDir: string): Promise<import('../src/lib/types').Session> =>
     ipcRenderer.invoke('chat:getSession', projectDir),
+
+  // T-013 (b) AskUserQuestion answer — sends user choice to main process.
+  // IPC handler stub: if po-runner does not yet emit ask-user-question events,
+  // the UI resolves locally; this channel is wired for when the trigger ships.
+  chatAnswerQuestion: (opts: {
+    projectDir: string
+    messageId: string
+    chosenKey: string
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:answerQuestion', opts),
+
+  // T-013 (c) PromotionCard resolve — sends approve/reject to main process.
+  // IPC handler stub: same follow-up scope as chatAnswerQuestion.
+  chatResolvePromotion: (opts: {
+    projectDir: string
+    messageId: string
+    outcome: 'approved' | 'rejected'
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:resolvePromotion', opts),
 
   chatAppendMessage: (
     projectDir: string,
@@ -481,6 +508,13 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('menu:open-project', listener)
   },
 
+  // (T-009 flow-b) New Window → HomeView reset
+  onResetToHome: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('reset-to-home', listener)
+    return () => ipcRenderer.removeListener('reset-to-home', listener)
+  },
+
   // ── Open Recent (T-P4-111) ────────────────────────────────────────────────────
   /** Subscribe to macOS Open Recent item clicks (main → renderer). Returns unsubscribe fn. */
   onOpenRecentProject: (cb: (dirPath: string) => void) => {
@@ -633,4 +667,23 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('deploy:conflict', listener)
     },
   },
+
+  // ── Artifacts viewer (T-014) ─────────────────────────────────────────────────
+
+  /** List scoped artifact files under the three fixed roots. */
+  artifactsListScoped: (
+    projectDir: string,
+    currentVersion: string | null,
+  ): Promise<Array<{
+    relPath: string
+    absPath: string
+    ext: string
+    scopeGroup: 'prd' | 'artifacts' | 'designer'
+  }>> =>
+    ipcRenderer.invoke('artifacts:listScoped', projectDir, currentVersion),
+
+  /** Read artifact file content as UTF-8 string.
+   *  projectDir is required for the path-traversal guard on the main-process side. */
+  artifactsReadFile: (projectDir: string, absPath: string): Promise<string> =>
+    ipcRenderer.invoke('artifacts:readFile', projectDir, absPath),
 })

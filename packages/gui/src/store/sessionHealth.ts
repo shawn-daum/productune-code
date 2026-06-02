@@ -24,6 +24,8 @@ export interface PoHealthDetail {
   persona?: string
   /** rate-limited — ISO reset timestamp (optional) */
   resetAt?: string
+  /** rate-limited — retry-after seconds extracted from stderr or stream-json envelope */
+  retryAfterSec?: number
   /** error-other — human-readable error message */
   errorMessage?: string
   /** permission-blocked — which tool was denied (Write / Edit / Bash) */

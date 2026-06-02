@@ -2,6 +2,7 @@ import { StrictMode, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import 'pretendard/dist/web/variable/pretendardvariable.css'
+import './styles/md-recipes.css'
 import './i18n'
 import App from './App'
 

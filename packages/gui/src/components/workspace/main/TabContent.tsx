@@ -15,6 +15,9 @@ import WorkflowSettingsTab from './panes/WorkflowSettingsTab'
 import McpServersTab from './panes/McpServersTab'
 import HooksTab from './panes/HooksTab'
 import BrowserTab from './panes/BrowserTab'
+import ArtifactMdTab from './panes/ArtifactMdTab'
+import ArtifactMermaidTab from './panes/ArtifactMermaidTab'
+import TicketDetailTab from './panes/TicketDetailTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -44,6 +47,12 @@ export default function TabContent({ tab }: Props) {
     case 'hooks':             return <HooksTab props={tab.props} />
     case 'browser':
       return <BrowserTab tabId={tab.id} props={tab.props} />
+    case 'artifact-md':
+      return <ArtifactMdTab props={tab.props} />
+    case 'artifact-mermaid':
+      return <ArtifactMermaidTab props={tab.props} />
+    case 'ticket-detail':
+      return <TicketDetailTab props={tab.props} />
     case 'design-gate':
     case 'qa-result':
     case 'env-view':

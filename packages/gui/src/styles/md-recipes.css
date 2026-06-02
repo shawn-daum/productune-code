@@ -1,0 +1,473 @@
+/*
+ * md-recipes.css — T-013 (a)
+ * Markdown render token recipes (md-*) + syntax highlight subset (sx-*).
+ * DS token hex: design-system.md §2–§9. Dark theme only (Phase 5 = light).
+ * Single source imported once from main.tsx.
+ */
+
+/* ── DS token variables ──────────────────────────────────────────────────── */
+:root {
+  --surface-base:      #0A0A0A;
+  --surface-body:      #0F0F0F;
+  --surface-panel:     #141414;
+  --surface-subpanel:  #1A1A1A;
+  --border-subtle:     #1A1A1A;
+  --border-default:    #1F1F1F;
+  --border-strong:     #2A2A2A;
+  --border-muted:      #3A3A3A;
+  --text-primary:      #E8E8EA;
+  --text-emphasis:     #F0F0F0;
+  --text-secondary:    #C8C8CC;
+  --text-muted:        #A0A0A0;
+  --text-faint:        #707070;
+  --accent:            #8B5CF6;
+  --persona-po:        #8B5CF6;
+  --persona-designer:  #FB923C;
+  --persona-dev:       #38BDF8;
+  --persona-qa:        #34D399;
+  --health-success:    #34D399;
+  --health-error:      #EF4444;
+  --font-sans:         -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono:         ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+  --text-xs:           10px;
+  --text-sm:           12px;
+  --text-base:         13px;
+  --text-md:           14px;
+  --text-md-plus:      15px;
+  --text-lg:           18px;
+  --weight-regular:    400;
+  --weight-medium:     500;
+  --weight-semibold:   600;
+  --leading-tight:     1.3;
+  --leading-snug:      1.4;
+  --leading-normal:    1.5;
+  --tracking-wide:     0.02em;
+  --tracking-widest:   0.06em;
+  --space-0-5:         2px;
+  --space-1:           4px;
+  --space-1-5:         6px;
+  --space-2:           8px;
+  --space-2-5:         10px;
+  --space-3:           12px;
+  --space-4:           16px;
+  --radius-xs:         2px;
+  --radius-md:         4px;
+  --radius-lg:         6px;
+  --radius-pill:       20px;
+  --motion-fast:       120ms;
+  --easing-standard:   cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ── md-* markdown render recipes ───────────────────────────────────────── */
+
+/* R1 md-h1 */
+.md-h1 {
+  display: block;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--text-emphasis);
+  margin-top: 20px;
+  margin-bottom: 8px;
+}
+.md-h1:first-child { margin-top: 0; }
+
+/* R2 md-h2 */
+.md-h2 {
+  display: block;
+  font-size: var(--text-md-plus);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  color: var(--text-primary);
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+/* R3 md-h3 */
+.md-h3 {
+  display: block;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+  color: var(--text-secondary);
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+/* R4 md-body (p) */
+.md-body {
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+  margin: 0;
+}
+
+/* R5 md-strong */
+.md-strong {
+  font-weight: var(--weight-semibold);
+  color: var(--text-emphasis);
+}
+
+/* R7 md-code-inline */
+.md-code-inline {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  background: var(--surface-subpanel);
+  padding: var(--space-0-5) var(--space-1);
+  border-radius: var(--radius-xs);
+}
+
+/* R8 md-code-block (pre wrapper) */
+.md-code-block {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--text-secondary);
+  background: var(--surface-base);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  overflow-x: auto;
+  margin: 4px 0;
+}
+/* code inside pre: reset bg/padding (already set on pre) */
+.md-code-block code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* R10 md-ul */
+.md-ul {
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  margin: 4px 0;
+}
+.md-ul > li {
+  position: relative;
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+.md-ul > li::before {
+  content: "\2022"; /* • glyph */
+  position: absolute;
+  left: calc(-1 * var(--space-4));
+  width: var(--space-4);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* R11 md-ol */
+.md-ol {
+  padding-left: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  counter-reset: md-ol;
+  margin: 4px 0;
+}
+.md-ol > li {
+  position: relative;
+  counter-increment: md-ol;
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+}
+.md-ol > li::before {
+  content: counter(md-ol) ".";
+  position: absolute;
+  left: calc(-1 * var(--space-4));
+  width: var(--space-4);
+  text-align: right;
+  padding-right: var(--space-1);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* R12 md-blockquote */
+.md-blockquote {
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface-subpanel);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  margin: 4px 0;
+}
+
+/* R13 md-table */
+.md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--text-sm);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin: 4px 0;
+}
+
+/* R14 md-table-th */
+.md-table-th {
+  background: var(--surface-subpanel);
+  color: var(--text-emphasis);
+  font-weight: var(--weight-semibold);
+  text-align: left;
+  padding: var(--space-1-5) var(--space-3);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+/* R15 md-table-td */
+.md-table-td {
+  color: var(--text-primary);
+  padding: var(--space-1-5) var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* R16 zebra (even rows) */
+.md-table tbody tr:nth-child(even) {
+  background: var(--surface-panel);
+}
+
+/* R17 md-hr */
+.md-hr {
+  border: none;
+  border-top: 1px solid var(--border-default);
+  margin: var(--space-3) 0;
+}
+
+/* ── sx-* syntax highlight subset (monochrome + single hue on strings) ──── */
+/* OQ-A9-1 multi-hue palette = NOT implemented per spec */
+
+.sx-default  { color: var(--text-secondary); }
+.sx-comment  { color: var(--text-faint); }
+.sx-keyword  { color: var(--text-emphasis); font-weight: var(--weight-semibold); }
+.sx-string   { color: var(--health-success); } /* #34D399 — single hue accent */
+.sx-number   { color: var(--text-primary); }
+.sx-punct    { color: var(--text-muted); }
+
+/* ── action-card shared shell (T-013 b/c) ────────────────────────────────── */
+.action-card {
+  background: var(--surface-subpanel);
+  border-radius: var(--radius-lg);
+  border-left: 3px solid var(--persona-po);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* resolved promotion states */
+.action-card.resolved-approve { border-left-color: var(--health-success); }
+.action-card.resolved-reject  { border-left-color: var(--border-muted); opacity: 0.85; }
+
+/* ── resolved chip (pill neutral §8.2) ──────────────────────────────────── */
+.resolved-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: var(--surface-subpanel);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-2-5);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+}
+
+/* ── option buttons (Surface A) ──────────────────────────────────────────── */
+.opt-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2-5);
+  background: var(--surface-subpanel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-2-5) var(--space-3);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--easing-standard),
+    border-color var(--motion-fast) var(--easing-standard);
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-primary);
+  width: 100%;
+}
+.opt:hover {
+  background: var(--surface-panel);
+  border-color: var(--border-strong);
+}
+.opt.selected {
+  border-color: var(--accent);
+  background: var(--surface-panel);
+}
+.opt.selected .opt-title {
+  color: var(--text-emphasis);
+  font-weight: var(--weight-semibold);
+}
+.opt.dimmed {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.opt-key {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  padding: var(--space-0-5) var(--space-1);
+  line-height: 1.4;
+  margin-top: 1px;
+}
+
+.opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+}
+
+.opt-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  line-height: var(--leading-snug);
+}
+
+.opt-desc {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: var(--leading-snug);
+}
+
+.opt-check {
+  margin-left: auto;
+  flex: none;
+  align-self: center;
+}
+
+/* ── pill (neutral + tier variant, §8.2) ─────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: var(--surface-subpanel);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-2-5);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-widest);
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+.pill.tier {
+  background: color-mix(in oklab, var(--persona-po) 12%, transparent);
+  border-color: transparent;
+  color: var(--persona-po);
+}
+
+/* ── promotion CTA buttons (§8.1) ────────────────────────────────────────── */
+.cta-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.btn {
+  font-family: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  transition: background var(--motion-fast) var(--easing-standard);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #0F0F0F;
+  border: none;
+}
+.btn-primary:hover { background: #9D74F8; }
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+.btn-ghost:hover {
+  background: var(--surface-panel);
+  color: var(--text-primary);
+}
+
+/* ── resolved promotion labels ───────────────────────────────────────────── */
+.resolved-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.resolved-label.ok { color: var(--health-success); }
+.resolved-label.no { color: var(--text-muted); }
+
+/* ── system / metadata transcript line (§4.6 metadata recipe) ───────────── */
+.sys-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  justify-content: center;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  letter-spacing: var(--tracking-wide);
+  margin: 2px 0;
+}
+
+/* ── animations (§9.2) ───────────────────────────────────────────────────── */
+@keyframes pdt-spin {
+  to { transform: rotate(360deg); }
+}
+.pdt-spin {
+  animation: pdt-spin 1s linear infinite;
+}
+
+@keyframes pdt-persona-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.pdt-persona-blink {
+  animation: pdt-persona-blink 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pdt-spin { animation: none; }
+  .pdt-persona-blink { animation: none; }
+}

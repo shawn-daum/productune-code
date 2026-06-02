@@ -46,8 +46,36 @@ export interface Project {
  *  - po / designer / dev / qa: persona response — colored 2 px left border.
  *  - trace: tool/announce events — gray, no border.
  *  - user: user input — right-aligned, gray-overlay bg, no border.
+ *  - ask-user-question: inline option-card surface (T-013 sub-b).
+ *  - promotion-candidate: inline approve/reject card surface (T-013 sub-c).
  */
-export type MessageKind = 'po' | 'designer' | 'dev' | 'qa' | 'trace' | 'user'
+export type MessageKind =
+  | 'po'
+  | 'designer'
+  | 'dev'
+  | 'qa'
+  | 'trace'
+  | 'user'
+  | 'ask-user-question'    // T-013 (b)
+  | 'promotion-candidate'  // T-013 (c)
+
+// ── T-013 action-card payload types ──────────────────────────────────────────
+
+export interface AskUserQuestionPayload {
+  question: string
+  options: Array<{ key: string; title: string; description?: string }>
+  /** Present once resolved — drives idempotent resolved-chip render. */
+  resolved?: { chosenKey: string }
+}
+
+export interface PromotionPayload {
+  candidateSummary: string
+  targetTier: string
+  rationale: string
+  sourceTicketId: string
+  /** Present once resolved — drives idempotent resolved-card render. */
+  resolved?: { outcome: 'approved' | 'rejected' }
+}
 
 export interface Message {
   id: string
@@ -58,6 +86,8 @@ export interface Message {
   text: string
   status?: 'streaming' | 'done' | 'cancelled'
   created_at: string
+  /** Action-card payload (T-013). Present only for ask-user-question / promotion-candidate kinds. */
+  payload?: AskUserQuestionPayload | PromotionPayload
 }
 
 export interface Session {

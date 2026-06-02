@@ -59,6 +59,8 @@ export type PoHealthState =
 export interface PoHealthDetail {
   persona?: string
   resetAt?: string
+  /** rate-limited — retry-after seconds extracted from stderr or stream-json envelope */
+  retryAfterSec?: number
   errorMessage?: string
   deniedPattern?: string
 }
@@ -229,10 +231,26 @@ function handleStderrHealth(line: string, ctx: HealthContext, cb: RunCallbacks):
   // Rate limit — checked before permission so 429 takes priority in stderr
   if (/rate.?limit/i.test(line) || /quota/i.test(line)) {
     let resetAt: string | undefined
-    const resetMatch = line.match(/resets?\s+at\s+([0-9:T+\-Z]+)/i)
-    if (resetMatch) resetAt = resetMatch[1]
+    let retryAfterSec: number | undefined
+
+    // Priority 1: retry-after: <seconds>
+    const retryAfterMatch = line.match(/retry-after:\s*(\d+)/i)
+    if (retryAfterMatch) retryAfterSec = parseInt(retryAfterMatch[1], 10)
+
+    // Priority 2: x-ratelimit-reset-requests: <ISO>
+    if (!resetAt) {
+      const xResetMatch = line.match(/x-ratelimit-reset-requests:\s*([0-9T:+\-Z.]+)/i)
+      if (xResetMatch) resetAt = xResetMatch[1]
+    }
+
+    // Priority 3: resets? at <ISO>
+    if (!resetAt) {
+      const resetMatch = line.match(/resets?\s+at\s+([0-9:T+\-Z.]+)/i)
+      if (resetMatch) resetAt = resetMatch[1]
+    }
+
     clearToolUseTimeout(ctx)
-    emitHealth('rate-limited', { resetAt }, ctx, cb)
+    emitHealth('rate-limited', { resetAt, retryAfterSec }, ctx, cb)
     return
   }
 
@@ -435,7 +453,15 @@ function handleStreamJsonLine(
     // Error result
     if (obj?.subtype === 'error' || obj?.is_error === true) {
       clearToolUseTimeout(hCtx)
-      emitHealth('error-other', { errorMessage: obj?.error ?? 'result error' }, hCtx, cb)
+      const errStr = JSON.stringify(obj?.error ?? '')
+      if (/rate_limit_error|429|rate.?limit/i.test(errStr)) {
+        let retryAfterSec: number | undefined
+        let resetAt: string | undefined
+        if (typeof obj?.retry_after === 'number') retryAfterSec = obj.retry_after
+        emitHealth('rate-limited', { retryAfterSec, resetAt }, hCtx, cb)
+      } else {
+        emitHealth('error-other', { errorMessage: obj?.error ?? 'result error' }, hCtx, cb)
+      }
       return
     }
     // Normal result — clear tool-use timeout and recover to healthy.

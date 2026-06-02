@@ -15,6 +15,7 @@ import { register as registerSettings }   from './ipc/settings'
 import { register as registerDesign }     from './ipc/design'
 import { register as registerExplorer }   from './ipc/explorer'
 import { register as registerWorktree }   from './ipc/worktree'
+import { register as registerArtifacts }  from './ipc/artifacts'
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
 // macOS may fire `open-file` before app.whenReady / before a window exists.
@@ -49,10 +50,11 @@ registerSettings()
 registerDesign()
 registerExplorer()
 registerWorktree()
+registerArtifacts()
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -81,6 +83,8 @@ function createWindow(): void {
   } else {
     win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
+
+  return win
 }
 
 function buildAppMenu(): Menu {
@@ -111,7 +115,12 @@ function buildAppMenu(): Menu {
         {
           label: 'New Window',
           accelerator: 'CmdOrCtrl+Shift+N',
-          click: () => createWindow(),
+          click: () => {
+            const win = createWindow()
+            win.webContents.once('did-finish-load', () => {
+              win.webContents.send('reset-to-home')
+            })
+          },
         },
         { type: 'separator' },
         {

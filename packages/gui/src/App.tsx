@@ -144,6 +144,23 @@ export default function App() {
     return () => unsub?.()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // (T-009 flow-a) File → Open Project: bypass home screen, open dialog directly.
+  useEffect(() => {
+    const unsub = (window as any).api.onMenuOpenProject?.(() => {
+      handleOpenFolder()
+    })
+    return () => unsub?.()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // (T-009 flow-b) File → New Window: new window always starts at HomeView.
+  useEffect(() => {
+    const unsub = (window as any).api.onResetToHome?.(() => {
+      try { localStorage.removeItem('productune.lastProject') } catch { /* unavailable */ }
+      setProject(null)
+    })
+    return () => unsub?.()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   function openRecent(projectDir: string, slug: string) {
     setProject({ slug, projectDir })
   }
@@ -201,7 +218,7 @@ export default function App() {
         ) : project ? (
           /* T-P4-101: EntryGate reads onboarding.json and routes to
              FreshComposer (pending) or WorkspaceShell (done/legacy). */
-          <EntryGate project={project} onBack={() => setProject(null)} />
+          <EntryGate project={project} onBack={() => setProject(null)} onOpenRecent={openRecent} />
         ) : (
           <HomeView
             onNewProject={() => setShowNewModal(true)}

@@ -321,9 +321,10 @@
       "binaryNoPreview": "Binary file. Cannot preview."
     },
     "activityBar": {
-      "explorer": "Explorer",
       "project": "Project",
+      "artifacts": "Artifacts",
       "team": "Team",
+      "explorer": "Explorer",
       "settings": "Settings"
     },
     "phaseStrip": {
