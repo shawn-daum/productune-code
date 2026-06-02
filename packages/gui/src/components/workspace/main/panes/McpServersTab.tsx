@@ -4,7 +4,7 @@
  * Loads servers from ~/.claude/settings.json mcpServers + project .mcp.json (merge).
  * Row click → McpServerModal (auth + endpoint edit + save).
  * Empty state shown when no servers configured.
- * [+ 서버 추가] = Phase 5 disabled placeholder (OQ-2 decision).
+ * [+ 서버 추가] opens McpServerModal in create mode (v0.5 B1 / T-017).
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -35,6 +35,16 @@ export default function McpServersTab(_: Props) {
   const [servers, setServers] = useState<McpServerEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedServer, setSelectedServer] = useState<McpServerEntry | null>(null)
+  const [creating, setCreating] = useState(false)
+
+  // Blank entry seed for the create flow. New servers land in the local tier
+  // (~/.claude.json) when a project is open, else the productune tier — matching
+  // the mcp:save write path.
+  const newServerSeed: McpServerEntry = {
+    name: '',
+    config: { type: 'stdio' },
+    source: project?.projectDir ? 'local' : 'productune',
+  }
 
   const loadServers = useCallback(async () => {
     setLoading(true)
@@ -56,6 +66,7 @@ export default function McpServersTab(_: Props) {
 
   const handleSaved = () => {
     setSelectedServer(null)
+    setCreating(false)
     // Re-poll status after save (500ms — main process writes, then re-reads)
     setTimeout(() => loadServers(), 500)
   }
@@ -93,16 +104,14 @@ export default function McpServersTab(_: Props) {
 
       <div style={footerHint}>ⓘ {t('settings.mcp.footerHint')}</div>
 
-      {/* [+ 서버 추가] — Phase 5 lock (OQ-2) */}
+      {/* [+ 서버 추가] — opens the modal in create mode (v0.5 B1) */}
       <div style={addBtnWrap}>
         <button
-          style={addBtnDisabled}
-          disabled
-          title={t('settings.mcp.addBtnTooltip')}
+          style={addBtn}
+          onClick={() => setCreating(true)}
         >
           + {t('settings.mcp.addBtn')}
         </button>
-        <span style={phaseLockLabel}>{t('settings.workflowRules.phase5Lock')}</span>
       </div>
 
       {selectedServer && (
@@ -110,6 +119,16 @@ export default function McpServersTab(_: Props) {
           server={selectedServer}
           projectDir={project?.projectDir}
           onClose={() => setSelectedServer(null)}
+          onSaved={handleSaved}
+        />
+      )}
+
+      {creating && (
+        <McpServerModal
+          server={newServerSeed}
+          projectDir={project?.projectDir}
+          isNew
+          onClose={() => setCreating(false)}
           onSaved={handleSaved}
         />
       )}
@@ -226,19 +245,13 @@ const addBtnWrap: React.CSSProperties = {
   marginTop: 8,
 }
 
-const addBtnDisabled: React.CSSProperties = {
+const addBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #2A2A2A',
+  border: '1px solid #3A3A3A',
   borderRadius: 4,
-  color: '#404040',
-  cursor: 'not-allowed',
+  color: '#C0C0C0',
+  cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 12,
   padding: '4px 12px',
-}
-
-const phaseLockLabel: React.CSSProperties = {
-  color: '#505050',
-  fontSize: 11,
-  fontStyle: 'italic',
 }

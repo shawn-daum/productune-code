@@ -9,6 +9,18 @@ export interface GitRules {
   fixBranchPrefix: string
   /** Derived field — branches that must not be overwritten. Computed from useDevBranch. */
   protectedBranches: string[]
+  /**
+   * Per-trigger autosave config (v0.5 B1 / T-017). Controls which ticket-md
+   * frontmatter changes trigger an autosave commit. Persisted in git-rules.json.
+   */
+  autosaveTriggers: AutosaveTriggers
+}
+
+const DEFAULT_AUTOSAVE_TRIGGERS: AutosaveTriggers = {
+  onStatusChange: true,
+  onQaStatusChange: true,
+  onQaLoopsChange: true,
+  onManual: true,
 }
 
 const DEFAULT_RULES: GitRules = {
@@ -17,6 +29,7 @@ const DEFAULT_RULES: GitRules = {
   featureBranchPrefix: 'feature',
   fixBranchPrefix: 'fix',
   protectedBranches: ['main'],
+  autosaveTriggers: { ...DEFAULT_AUTOSAVE_TRIGGERS },
 }
 
 const GLOBAL_DEFAULT_PATH = path.join(os.homedir(), '.productune', 'git-rules.default.json')
@@ -173,6 +186,17 @@ export function bootstrapGitRules(projectDir: string): void {
   }
 }
 
+function mergeAutosaveTriggers(parsed: Partial<AutosaveTriggers> | undefined): AutosaveTriggers {
+  const d = DEFAULT_AUTOSAVE_TRIGGERS
+  if (!parsed || typeof parsed !== 'object') return { ...d }
+  return {
+    onStatusChange: typeof parsed.onStatusChange === 'boolean' ? parsed.onStatusChange : d.onStatusChange,
+    onQaStatusChange: typeof parsed.onQaStatusChange === 'boolean' ? parsed.onQaStatusChange : d.onQaStatusChange,
+    onQaLoopsChange: typeof parsed.onQaLoopsChange === 'boolean' ? parsed.onQaLoopsChange : d.onQaLoopsChange,
+    onManual: typeof parsed.onManual === 'boolean' ? parsed.onManual : d.onManual,
+  }
+}
+
 function mergeWithDefaults(parsed: Partial<GitRules>): GitRules {
   const useDevBranch = typeof parsed.useDevBranch === 'boolean' ? parsed.useDevBranch : DEFAULT_RULES.useDevBranch
   return {
@@ -185,5 +209,6 @@ function mergeWithDefaults(parsed: Partial<GitRules>): GitRules {
       ? parsed.fixBranchPrefix.trim()
       : DEFAULT_RULES.fixBranchPrefix,
     protectedBranches: useDevBranch ? ['main', 'dev'] : ['main'],
+    autosaveTriggers: mergeAutosaveTriggers(parsed.autosaveTriggers),
   }
 }

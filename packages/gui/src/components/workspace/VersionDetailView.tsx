@@ -1,6 +1,7 @@
 import { useMemo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PoState, Version, Ticket, Phase, TaskType, Status, PendingPromotion } from '../../lib/types'
+import { TYPE_ORDER } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
 import { InfoPopover } from '../shared/InfoPopover'
@@ -11,7 +12,6 @@ interface Props {
 }
 
 const PHASE_ORDER: Phase[] = ['PRD', 'Design', 'Build', 'Deploy', 'Close']
-const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy']
 
 export default function VersionDetailView({ versionId, poState }: Props) {
   const { t } = useTranslation()
@@ -202,6 +202,21 @@ function OutcomeCard({ version }: { version: Version }) {
   )
 }
 
+/**
+ * Display label for a promotion's classification (v0.5 B1 / T-017): canonical
+ * scope×kind, derived from the target path for legacy entries so it never blanks.
+ */
+function promotionTierLabel(p: PendingPromotion): string {
+  if (p.scope && p.kind) return `${p.scope}/${p.kind}`
+  const target = p.final_target ?? p.target ?? ''
+  if (target) {
+    const scope = target.startsWith('~') || target.includes('.productune') ? 'global' : 'project'
+    const kind = /(^|\/)bookshelf(\/|$)/.test(target) ? 'bookshelf' : 'habit'
+    return `${scope}/${kind}`
+  }
+  return p.tier ?? '—'
+}
+
 function ApprovedPromotionsCard({ promotions }: { promotions: PendingPromotion[] }) {
   const { t } = useTranslation()
   return (
@@ -211,7 +226,7 @@ function ApprovedPromotionsCard({ promotions }: { promotions: PendingPromotion[]
         {promotions.map((p) => (
           <div key={p.id} style={promoRow}>
             <span style={personaBadge}>{p.persona}</span>
-            <span style={tierBadge}>{p.tier}</span>
+            <span style={tierBadge}>{promotionTierLabel(p)}</span>
             <span style={promoTarget} title={p.target}>{p.target}</span>
             <span style={promoDelta}>
               {p.final_target ?? p.delta}

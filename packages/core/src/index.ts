@@ -93,7 +93,13 @@ export {
   markSurfaced,
   listAllPromotions,
 } from './state/pending-promotions'
-export type { PendingPromotion, PromotionTier, PromotionStatus } from './state/pending-promotions'
+export type {
+  PendingPromotion,
+  PromotionScope,
+  PromotionKind,
+  PromotionTier,
+  PromotionStatus,
+} from './state/pending-promotions'
 
 export {
   naturalizeCommit,

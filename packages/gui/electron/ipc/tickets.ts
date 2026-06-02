@@ -172,7 +172,10 @@ export function register(): void {
       const dirPath = path.join(ticketsRoot, versionDir)
       let files: string[] = []
       try {
-        files = fs.readdirSync(dirPath).filter((f) => /^T-[A-Z0-9-]+\.md$/.test(f))
+        // Case-insensitive: ticket filenames may carry lowercase suffixes
+        // (e.g. T-P4-048-em.md). The earlier [A-Z0-9-] class silently dropped
+        // any such file → tickets vanished from the GUI.
+        files = fs.readdirSync(dirPath).filter((f) => /^T-[A-Za-z0-9-]+\.md$/.test(f))
       } catch { continue }
       for (const file of files) {
         const filePath = path.join(dirPath, file)

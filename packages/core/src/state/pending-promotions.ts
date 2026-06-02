@@ -2,15 +2,33 @@ import fs from 'fs'
 import path from 'path'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
+//
+// Canonical promotion classification — doctrine scope × kind (v0.5 B1 / T-017).
+// The legacy 3-tier model (`project | wiki | work-note`) is abolished; `wiki` is
+// no longer a target and `work-note` collapsed into the scope×kind grid.
+//   - scope: project (repo-local docs/) vs global (cross-project ~/.productune/)
+//   - kind:  habit (always-read, curated) vs bookshelf (on-demand, append)
+// This shape is the SoT the GUI renderer (`packages/gui/src/lib/types.ts`)
+// mirrors structurally — keep the two in lockstep.
 
-export type PromotionTier = 'project' | 'work-note'
+export type PromotionScope = 'project' | 'global'
+export type PromotionKind = 'habit' | 'bookshelf'
+
+/** Canonical display token `<scope>/<kind>`, e.g. `project/habit`. */
+export type PromotionTier = `${PromotionScope}/${PromotionKind}`
+
 export type PromotionStatus = 'pending' | 'approved' | 'dropped' | 'edited'
 
 export interface PendingPromotion {
   id: string
   persona: string
   turn_id: string
-  tier: PromotionTier
+  /** Canonical classification — doctrine scope×kind. */
+  scope?: PromotionScope
+  kind?: PromotionKind
+  /** @deprecated legacy 3-tier classifier — superseded by scope×kind. Read-only
+   *  for backward-compat with entries persisted under the old model. */
+  tier?: string
   target: string
   delta: string
   rationale: string

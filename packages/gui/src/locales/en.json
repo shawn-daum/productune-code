@@ -405,7 +405,12 @@
         "viewDescription": "View description"
       },
       "personaDef": {
-        "previewNote": "Preview only — editing persona spec is a Phase 5 feature."
+        "previewNote": "Preview only — editing persona spec is a Phase 5 feature.",
+        "specHeader": "PERSONA SPEC",
+        "specEdit": "Edit",
+        "specSave": "Save",
+        "specHint": "{{path}} — click Edit to modify the persona spec.",
+        "specSaved": "Saved (applies after AI engine restart)"
       },
       "tab": {
         "wiki": "Wiki"
@@ -585,6 +590,10 @@
       "protectedEnvLabel": "Protected environments",
       "phase5Lock": "Supported in Phase 5",
       "autosaveTriggersLabel": "Auto-save triggers",
+      "autosaveOnStatusChange": "Auto-save on status change",
+      "autosaveOnQaStatusChange": "Auto-save on QA status change",
+      "autosaveOnQaLoopsChange": "Auto-save on QA loops change",
+      "autosaveOnManual": "Allow manual save",
       "saveSuccess": "Applies from the next task",
       "saveError": "Failed to save settings.",
       "retry": "Retry",
@@ -619,7 +628,10 @@
       "toastRestartNeeded": "Restart the AI engine to apply.",
       "modal": {
         "titleSuffix": "Settings",
+        "titleNew": "Add MCP server",
         "nameLabel": "Name",
+        "namePlaceholder": "my-server",
+        "nameRequired": "A server name is required.",
         "transportLabel": "Transport",
         "commandLabel": "Command",
         "urlLabel": "URL",

@@ -137,6 +137,56 @@ export function register(): void {
   )
 
   ipcMain.handle(
+    'mcp:rename',
+    (
+      _event,
+      oldName: string,
+      newName: string,
+      projectDir?: string,
+    ): { ok: boolean; error?: string } => {
+      try {
+        const trimmed = newName.trim()
+        if (!trimmed) return { ok: false, error: 'empty name' }
+        if (trimmed === oldName) return { ok: true }
+
+        // Rename in whichever store the server lives in. Check project-local
+        // (~/.claude.json) first when a projectDir is given, then productune
+        // tier (~/.claude/settings.json). Project .mcp.json is repo-tracked and
+        // edited via the repo, so we don't mutate it here.
+        if (projectDir) {
+          const claudeJson = readClaudeJson()
+          const servers = claudeJson.projects?.[projectDir]?.mcpServers
+          if (servers && Object.prototype.hasOwnProperty.call(servers, oldName)) {
+            if (Object.prototype.hasOwnProperty.call(servers, trimmed)) {
+              return { ok: false, error: 'name already exists' }
+            }
+            servers[trimmed] = servers[oldName]
+            delete servers[oldName]
+            writeClaudeJson(claudeJson)
+            return { ok: true }
+          }
+        }
+
+        const settings = readClaudeSettings()
+        const servers = settings.mcpServers
+        if (servers && Object.prototype.hasOwnProperty.call(servers, oldName)) {
+          if (Object.prototype.hasOwnProperty.call(servers, trimmed)) {
+            return { ok: false, error: 'name already exists' }
+          }
+          servers[trimmed] = servers[oldName]
+          delete servers[oldName]
+          writeClaudeSettings(settings)
+          return { ok: true }
+        }
+
+        return { ok: false, error: 'server not found in a writable tier' }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'unknown error' }
+      }
+    },
+  )
+
+  ipcMain.handle(
     'mcp:testConnection',
     (
       _event,

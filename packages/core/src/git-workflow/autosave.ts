@@ -19,6 +19,7 @@ export type AutosaveSkipReason =
   | 'base-worktree'
   | 'snapshot-init'
   | 'worktree-missing'
+  | 'trigger-disabled'
   | 'manager-error'
 
 export interface AutosaveCommitResult {
@@ -262,6 +263,21 @@ export async function triggerAutosave(
     return { committed: false, skipReason: 'manager-error', detail: 'cannot read ticket file' }
   }
 
+  // Gate on the persisted per-trigger autosaveTriggers flags (v0.5 B1 / T-017).
+  // A false flag means this trigger must not fire an autosave; a missing flag
+  // defaults to true (mergeAutosaveTriggers preserves prior behavior).
+  const { rules } = readGitRules(projectDir)
+  const triggers = rules.autosaveTriggers
+  const triggerEnabled: Record<AutosaveChangeReason, boolean> = {
+    'status-change': triggers.onStatusChange,
+    'qa-status-change': triggers.onQaStatusChange,
+    'qa-loops-change': triggers.onQaLoopsChange,
+    manual: triggers.onManual,
+  }
+  if (!triggerEnabled[changeReason]) {
+    return { committed: false, skipReason: 'trigger-disabled', detail: changeReason }
+  }
+
   const fm = parseFrontmatter(content)
   const worktreePath = worktreePathFromFrontmatter(projectDir, fm)
 
@@ -291,9 +307,6 @@ export async function triggerAutosave(
       return { committed: false, skipReason: 'manager-error', detail: e?.message ?? 'git commit failed' }
     }
   }
-
-  const rules = readGitRules(projectDir)
-  void rules
 
   return {
     committed: true,

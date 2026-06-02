@@ -10,7 +10,10 @@
  *   - [취소] left (ghost) / [저장 (primary)] right — §1.5.3 fix T-P4-069.
  *   - Restart notice always visible.
  *
- * [+ 서버 추가] (new server name field editable) = Phase 5 lock (OQ-2).
+ * v0.5 B1 (T-017): server add + rename unlocked.
+ *   - `isNew` → name field is a required, editable text input (create flow).
+ *   - existing server → name field is editable; on save, a changed name is
+ *     applied via `mcpRename` before the config write.
  */
 
 import { useState, useEffect, useRef } from 'react'
@@ -26,13 +29,16 @@ interface EnvRow {
 interface Props {
   server: McpServerEntry
   projectDir?: string
+  /** Create flow — name is required and the entry does not yet exist. */
+  isNew?: boolean
   onClose: () => void
   onSaved: () => void
 }
 
-export default function McpServerModal({ server, projectDir, onClose, onSaved }: Props) {
+export default function McpServerModal({ server, projectDir, isNew = false, onClose, onSaved }: Props) {
   const { t } = useTranslation()
 
+  const [name, setName] = useState(server.name)
   const [transport, setTransport] = useState<'stdio' | 'sse' | 'http'>(
     server.config.type ?? 'stdio',
   )
@@ -109,10 +115,25 @@ export default function McpServerModal({ server, projectDir, onClose, onSaved }:
 
   const handleSave = async () => {
     if (saving) return
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      showToast(t('settings.mcp.modal.nameRequired'), 'error')
+      return
+    }
     setSaving(true)
     try {
       const api = (window as any).api
-      const result = await api.mcpSave?.(server.name, buildConfig(), projectDir)
+      // Rename first for an existing server whose name changed, so the
+      // config write below targets the new key (and we don't orphan the old).
+      if (!isNew && trimmedName !== server.name) {
+        const renamed = await api.mcpRename?.(server.name, trimmedName, projectDir)
+        if (!renamed?.ok) {
+          showToast(renamed?.error ?? '이름 변경 실패', 'error')
+          setSaving(false)
+          return
+        }
+      }
+      const result = await api.mcpSave?.(trimmedName, buildConfig(), projectDir)
       if (result?.ok) {
         showToast(t('settings.mcp.toastSaved'), 'success')
         setTimeout(() => showToast(t('settings.mcp.toastRestartNeeded'), 'info'), 600)
@@ -155,13 +176,25 @@ export default function McpServerModal({ server, projectDir, onClose, onSaved }:
     <div style={overlay} role="dialog" aria-modal="true" onClick={handleBackdrop}>
       <div style={modal}>
         <h2 style={titleStyle}>
-          {server.name} {t('settings.mcp.modal.titleSuffix')}
+          {isNew
+            ? t('settings.mcp.modal.titleNew')
+            : `${server.name} ${t('settings.mcp.modal.titleSuffix')}`}
         </h2>
 
-        {/* Name — read-only (key rename = Phase 5) */}
+        {/* Name — editable (create + rename, v0.5 B1) */}
         <div style={fieldGroup}>
           <label style={labelStyle}>{t('settings.mcp.modal.nameLabel')}</label>
-          <input style={inputReadOnly} value={server.name} readOnly />
+          <input
+            style={inputStyle}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value)
+              markDirty()
+            }}
+            placeholder={t('settings.mcp.modal.namePlaceholder')}
+            autoFocus={isNew}
+            spellCheck={false}
+          />
         </div>
 
         {/* Transport */}

@@ -17,6 +17,12 @@ export default function WorkflowRulesPanel({ projectDir }: Props) {
     featureBranchPrefix: 'feature',
     fixBranchPrefix: 'fix',
     protectedBranches: ['main'],
+    autosaveTriggers: {
+      onStatusChange: true,
+      onQaStatusChange: true,
+      onQaLoopsChange: true,
+      onManual: true,
+    },
   })
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
   const [saveError, setSaveError] = useState<string>('')
@@ -54,6 +60,16 @@ export default function WorkflowRulesPanel({ projectDir }: Props) {
 
   const handleToggle = useCallback((key: 'useDevBranch' | 'useStagingEnv') => {
     const next = { ...rules, [key]: !rules[key] }
+    setRules(next)
+    persistRules(next)
+  }, [rules, persistRules])
+
+  const handleAutosaveToggle = useCallback((key: keyof GitRules['autosaveTriggers']) => {
+    const triggers = rules.autosaveTriggers
+    const next: GitRules = {
+      ...rules,
+      autosaveTriggers: { ...triggers, [key]: !triggers[key] },
+    }
     setRules(next)
     persistRules(next)
   }, [rules, persistRules])
@@ -130,11 +146,28 @@ export default function WorkflowRulesPanel({ projectDir }: Props) {
 
       <div style={divider} />
 
-      {/* autosaveTriggers — Phase 5 lock */}
-      <div style={lockedRow}>
-        <div style={fieldLabel}>{t('settings.workflowRules.autosaveTriggersLabel')}</div>
-        <span style={phase5Chip}>{t('settings.workflowRules.phase5Lock')}</span>
-      </div>
+      {/* autosaveTriggers — per-trigger toggles (v0.5 B1 / T-017) */}
+      <div style={fieldLabel}>{t('settings.workflowRules.autosaveTriggersLabel')}</div>
+      <ToggleRow
+        label={t('settings.workflowRules.autosaveOnStatusChange')}
+        value={rules.autosaveTriggers.onStatusChange}
+        onToggle={() => handleAutosaveToggle('onStatusChange')}
+      />
+      <ToggleRow
+        label={t('settings.workflowRules.autosaveOnQaStatusChange')}
+        value={rules.autosaveTriggers.onQaStatusChange}
+        onToggle={() => handleAutosaveToggle('onQaStatusChange')}
+      />
+      <ToggleRow
+        label={t('settings.workflowRules.autosaveOnQaLoopsChange')}
+        value={rules.autosaveTriggers.onQaLoopsChange}
+        onToggle={() => handleAutosaveToggle('onQaLoopsChange')}
+      />
+      <ToggleRow
+        label={t('settings.workflowRules.autosaveOnManual')}
+        value={rules.autosaveTriggers.onManual}
+        onToggle={() => handleAutosaveToggle('onManual')}
+      />
 
       {/* Save status feedback */}
       {saveStatus === 'success' && (

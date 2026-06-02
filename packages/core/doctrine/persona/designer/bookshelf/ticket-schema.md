@@ -11,7 +11,7 @@ version: version name
 slug: short-kebab
 title: Human-friendly title
 type: design | impl | refactor | test | qa | deploy | close | docs | doctrine
-status: planned | in-progress | qa-pending | user-pending | done | blocked | cancelled
+status: todo | in-progress | review | user-verify | done | blocked | abandoned
 phase: 1 | 2 | 3 | 4 | 5
 assignee: pdt-designer | pdt-developer | pdt-qa | pdt-po
 requires_qa: true | false
@@ -48,13 +48,13 @@ duration_min: <int>
 ## 7 status values
 | status | meaning |
 |:--|:--|
-| `planned` | emitted, not started |
+| `todo` | emitted, not started |
 | `in-progress` | assignee dispatched |
-| `qa-pending` | impl done, awaiting QA |
-| `user-pending` | awaiting user gate / approval |
+| `review` | impl done, awaiting QA |
+| `user-verify` | awaiting user gate / approval |
 | `done` | closed |
 | `blocked` | assignee returned blocked |
-| `cancelled` | superseded / dropped |
+| `abandoned` | superseded / dropped |
 
 ## Body sections
 

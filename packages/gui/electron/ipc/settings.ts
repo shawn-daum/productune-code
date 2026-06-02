@@ -1,4 +1,7 @@
 import { app, ipcMain } from 'electron'
+import path from 'path'
+import os from 'os'
+import fs from 'fs'
 import {
   getUiLanguage,
   setUiLanguage,
@@ -9,6 +12,16 @@ import {
   setVercelToken,
 } from '@productune/core'
 import type { UiLanguage, GitRules } from '@productune/core'
+
+// ── Persona-spec edit (v0.5 B1 / T-017) ──────────────────────────────────────
+// Persona agent specs live at ~/.claude/agents/<id>.md. Only the 4 known
+// productune personas are addressable — guards against arbitrary path writes.
+const PERSONA_SPEC_IDS = new Set(['pdt-po', 'pdt-designer', 'pdt-developer', 'pdt-qa'])
+
+function personaSpecPath(personaId: string): string | null {
+  if (!PERSONA_SPEC_IDS.has(personaId)) return null
+  return path.join(os.homedir(), '.claude', 'agents', `${personaId}.md`)
+}
 
 // ── Register ──────────────────────────────────────────────────────────────────
 
@@ -61,4 +74,36 @@ export function register(): void {
       return { ok: false, error: e?.message ?? 'unknown error' }
     }
   })
+
+  // ── Persona-spec read/write (v0.5 B1 / T-017) ────────────────────────────────
+  ipcMain.handle(
+    'persona:readSpec',
+    (_event, personaId: string): { ok: boolean; content?: string; exists?: boolean; error?: string } => {
+      const specPath = personaSpecPath(personaId)
+      if (!specPath) return { ok: false, error: 'unknown persona' }
+      try {
+        if (!fs.existsSync(specPath)) return { ok: true, content: '', exists: false }
+        return { ok: true, content: fs.readFileSync(specPath, 'utf-8'), exists: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'read failed' }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'persona:writeSpec',
+    (_event, personaId: string, content: string): { ok: boolean; error?: string } => {
+      const specPath = personaSpecPath(personaId)
+      if (!specPath) return { ok: false, error: 'unknown persona' }
+      try {
+        fs.mkdirSync(path.dirname(specPath), { recursive: true })
+        const tmp = specPath + '.tmp'
+        fs.writeFileSync(tmp, content, 'utf-8')
+        fs.renameSync(tmp, specPath)
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'write failed' }
+      }
+    },
+  )
 }

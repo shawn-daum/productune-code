@@ -21,12 +21,33 @@ export const PHASE_NAMES: Record<number, Phase> = {
 }
 
 // Layer B — ticket type (`type` field on each ticket md frontmatter).
-// Renamed from `Stage` (v2 doctrine, sub-d). Enum values unchanged.
-// `doctrine` added 2026-05-15 (T-P4-119 hotfix — whiteboard crash on unknown type).
-// `design+impl` added same — composite type Designer emits for cross-phase tickets.
-export type TaskType = 'design' | 'impl' | 'refactor' | 'test' | 'qa' | 'deploy' | 'doctrine' | 'design+impl'
+// Renamed from `Stage` (v2 doctrine, sub-d).
+// Canonical 9 types — SoT: persona/designer/bookshelf/ticket-schema.md.
+// `close` / `docs` added for v0.5 B1 (T-017) doctrine sync.
+// `design+impl` removed for v0.5 B1 — not a doctrine type (was a transient
+// composite never emitted by the canonical schema); unused across the GUI.
+export type TaskType =
+  | 'design'
+  | 'impl'
+  | 'refactor'
+  | 'test'
+  | 'qa'
+  | 'deploy'
+  | 'close'
+  | 'docs'
+  | 'doctrine'
 
-export const TYPE_ORDER: TaskType[] = ['design', 'impl', 'refactor', 'test', 'qa', 'deploy', 'doctrine', 'design+impl']
+export const TYPE_ORDER: TaskType[] = [
+  'design',
+  'impl',
+  'refactor',
+  'test',
+  'qa',
+  'deploy',
+  'close',
+  'docs',
+  'doctrine',
+]
 
 // Ticket lifecycle status (separate from `type`).
 // Plan-Do-See lifecycle: todo → in-progress → review → user-verify → done | blocked | abandoned
@@ -206,18 +227,54 @@ export interface SkillEntry {
 
 // ── Pending promotions (T-P4-066) ─────────────────────────────────────────────
 
-export type PromotionTier = 'project' | 'wiki' | 'work-note'
+/**
+ * Promotion classification — doctrine scope × kind (v0.5 B1 / T-017).
+ * SoT: po/bookshelf/promotion-process.md + common/bookshelf/promotion-candidate-schema.md.
+ *
+ * The legacy 3-tier model (`project | wiki | work-note`) is abolished: `wiki`
+ * is no longer a promotion target, and `work-note` collapsed into the
+ * scope×kind grid. Promotions are now 4 quadrants on 2 axes:
+ *   - `scope`: project (repo-local) vs global (cross-project, ~/.productune)
+ *   - `kind`:  habit (always-read, curated edit) vs bookshelf (on-demand, append)
+ * Path resolution:
+ *   project → docs/<persona>/...     global → ~/.productune/<persona>/...
+ *   habit   → habit.md (curated)     bookshelf → bookshelf/<file>.md (append)
+ */
+export type PromotionScope = 'project' | 'global'
+export type PromotionKind = 'habit' | 'bookshelf'
+
+/**
+ * Canonical promotion classification token used for display/labels:
+ * `<scope>/<kind>`, e.g. `project/habit`, `global/bookshelf`.
+ */
+export type PromotionTier = `${PromotionScope}/${PromotionKind}`
+
+export const PROMOTION_TIERS: PromotionTier[] = [
+  'project/habit',
+  'project/bookshelf',
+  'global/habit',
+  'global/bookshelf',
+]
+
 export type PromotionStatus = 'pending' | 'approved' | 'dropped' | 'edited'
 
 /**
  * A persona-returned promotion_candidate queued for user approval.
  * Lifecycle: pending → (approved | dropped | edited) at next turn-start drain.
+ *
+ * `scope` / `kind` are the canonical classification (doctrine scope×kind).
+ * `tier` is retained as an optional legacy field for backward-compat with
+ * promotions already persisted under the old 3-tier model — readers derive
+ * scope×kind from `target` path when `scope`/`kind` are absent.
  */
 export interface PendingPromotion {
   id: string
   persona: string
   turn_id: string
-  tier: PromotionTier
+  scope?: PromotionScope
+  kind?: PromotionKind
+  /** @deprecated legacy 3-tier classifier — superseded by scope×kind. Read-only. */
+  tier?: string
   target: string
   delta: string
   rationale: string

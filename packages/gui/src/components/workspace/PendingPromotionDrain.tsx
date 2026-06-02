@@ -10,6 +10,20 @@ interface Props {
 
 const CAP_PER_TURN = 5
 
+/**
+ * Display label for a promotion's classification (v0.5 B1 / T-017).
+ * Prefers canonical scope×kind; falls back to a legacy `tier`, then derives
+ * scope×kind from the target path so legacy-persisted entries never render blank.
+ */
+function tierLabel(item: PendingPromotion): string {
+  if (item.scope && item.kind) return `${item.scope}/${item.kind}`
+  const target = item.final_target ?? item.target ?? ''
+  const scope = target.startsWith('~') || target.includes('.productune') ? 'global' : 'project'
+  const kind = /(^|\/)bookshelf(\/|$)/.test(target) ? 'bookshelf' : 'habit'
+  if (target) return `${scope}/${kind}`
+  return item.tier ?? '—'
+}
+
 export default function PendingPromotionDrain({ projectDir, claudeSessionId, onDone }: Props) {
   const { t } = useTranslation()
   const [items, setItems] = useState<PendingPromotion[]>([])
@@ -146,7 +160,7 @@ export default function PendingPromotionDrain({ projectDir, claudeSessionId, onD
           <div style={cardBody}>
             <div style={cardMeta}>
               <span style={personaTag}>{item.persona}</span>
-              <span style={tierTag}>{item.tier}</span>
+              <span style={tierTag}>{tierLabel(item)}</span>
               <span style={targetText} title={item.target}>{item.target}</span>
             </div>
             <div style={deltaText} title={item.delta}>

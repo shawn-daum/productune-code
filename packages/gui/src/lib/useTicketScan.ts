@@ -12,7 +12,27 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { Ticket } from './types'
+import type { Ticket, Status } from './types'
+
+/**
+ * R2 (T-017) — legacy designer-vocabulary → canonical 7-status synonym map.
+ *
+ * Tickets already on disk may carry the OLD designer status vocabulary
+ * (`designer/ticket-schema.md` pre-doctrine-unification). Map on read so they
+ * render canonically instead of falling through to an "unknown" status badge.
+ * Canonical 7-status: todo | in-progress | review | user-verify | done | blocked | abandoned.
+ */
+const LEGACY_STATUS_SYNONYMS: Record<string, Status> = {
+  planned: 'todo',
+  'qa-pending': 'review',
+  'user-pending': 'user-verify',
+  cancelled: 'abandoned',
+}
+
+function normalizeStatus(raw: Status | string | undefined): Status | undefined {
+  if (raw == null) return undefined
+  return LEGACY_STATUS_SYNONYMS[raw as string] ?? (raw as Status)
+}
 
 interface State {
   tickets: Ticket[]
@@ -43,10 +63,12 @@ export function useTicketScan(projectDir: string | null): {
         return
       }
       const tickets: Ticket[] = await api.scanTickets(projectDir)
-      // Tolerate v1 shape (`stage` field) by aliasing into `type`.
+      // Tolerate v1 shape (`stage` field) by aliasing into `type`, and map
+      // legacy designer status vocabulary onto the canonical 7-status (R2).
       const normalized = tickets.map((t) => ({
         ...t,
         type: t.type ?? t.stage,
+        status: normalizeStatus(t.status),
       }))
       setState({ tickets: normalized, loading: false, error: null })
     } catch (e: any) {

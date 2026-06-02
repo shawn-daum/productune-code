@@ -186,7 +186,7 @@ contextBridge.exposeInMainWorld('api', {
   mechanicalWrite: (
     promotion: import('@productune/core').PendingPromotion,
     claudeSessionId?: string,
-  ): Promise<{ ok: boolean; error?: string; jobId?: string }> =>
+  ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('state:mechanicalWrite', promotion, claudeSessionId),
 
   // ── Ticket md scan (v2 sub-f — replaces poState.past_tickets) ───────────────
@@ -442,6 +442,13 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('mcp:save', serverName, config, projectDir),
 
+  mcpRename: (
+    oldName: string,
+    newName: string,
+    projectDir?: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('mcp:rename', oldName, newName, projectDir),
+
   mcpTestConnection: (
     serverName: string,
     config: {
@@ -512,6 +519,13 @@ contextBridge.exposeInMainWorld('api', {
 
   saveRules: (projectDir: string, rules: import('@productune/core').GitRules): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:saveRules', projectDir, rules),
+
+  // ── Persona-spec read/write (v0.5 B1 / T-017) ────────────────────────────────
+  readPersonaSpec: (personaId: string): Promise<{ ok: boolean; content?: string; exists?: boolean; error?: string }> =>
+    ipcRenderer.invoke('persona:readSpec', personaId),
+
+  writePersonaSpec: (personaId: string, content: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('persona:writeSpec', personaId, content),
 
   // ── Menubar events (renderer subscribes; main process emits) ─────────────────
   onMenuNewProject: (cb: () => void) => {
