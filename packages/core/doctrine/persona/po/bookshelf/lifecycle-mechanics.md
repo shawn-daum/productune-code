@@ -12,15 +12,17 @@ ahead. Advance only on explicit user confirm at each boundary.
 - **Persona**: pdt-designer, clarity loop — opus/max (R1 net-new), opus/xhigh (R2+).
 - **Emit at entry**: one `type:design` "PRD authoring" ticket immediately — the user↔PO↔Designer comms vehicle; its `## Plan` holds the clarity-loop steps.
 - **Mechanism**: clarity score `A = 1 − Σ(clarityᵢ × weightᵢ)`; ready at `A ≤ 0.05`. Hard cap 5 loops; a PO "finalize" ships `ready` even at `confidence < 0.7`.
+- **Git**: `git checkout -b v<N> main` on P1 entry. All version work lives on this branch.
 - **Exit**: PRD `state:"ready"` → P2.
 
 ### P2 — Design  (skip unless L4+ / user-facing / `risk_flags` ≠ none)
 - **In**: ready PRD.
 - **Emit**: 3 sequential `type:design` tickets (you emit, Designer executes via session resume), opus/xhigh each:
   - **T1 design system + key screens** — `docs/designer/design-system.md` (opus/max net-new) + up to 3 screens (T1a: 3 candidates → user picks; T1b: finalize on the chosen system).
-  - **T2 user flow + wireframe** — `docs/artifacts/<version>/<slug>-flow.md` + optional `…-wireframe.excalidraw.json`.
+  - **T2 user flow + wireframe** — `docs/artifacts/<version>/<slug>-flow.html` + optional `…-wireframe.excalidraw.json`.
   - **T3 hi-fi mockup** — `docs/artifacts/<version>/<ticket-id>-mockup.{html,tsx}` via the `frontend-design` skill (shadcn/ui + react-icons default; productune-internal = lucide-react).
 - **Gate**: one user gate after all 3 are surfaced.
+- **P2 close — archive non-SoT artifacts**: On user approval, move all T1/T3 candidate files that were NOT adopted as SoT (i.e. rejected mockup variants) to `docs/artifacts/<version>/archive/`. The adopted SoT file stays in `docs/artifacts/<version>/`.
 - **Exit**: user approval → P3.
 
 ### P3 — Build
@@ -40,6 +42,7 @@ ahead. Advance only on explicit user confirm at each boundary.
 - **Exit**: deploy verified → P5.
 
 ### P5 — Close  (stored-memory only; never spawn fresh analysis)
+- **Git**: open PR `v<N> → main`, surface to user for final approval → merge + `git tag v<N>` → delete version branch. Full: `bookshelf/git-workflow.md`.
 - **In**: shipped version. Run 5a → 5b → 5c → 5d:
   - **5a** Designer (opus/xhigh): fill `outcome.observed_result`, append `docs/designer/feature-history.md` (direct write), propose next-version backlog.
   - **5b** QA (opus/xhigh): aggregate fail-patterns → `docs/qa/version-summaries/<version>.md`.
@@ -55,6 +58,11 @@ jq '.current_phase = <N>
   | .phase_history += [{"phase":<N>,"started_at":"<ISO>","user_approved_at":"<ISO>"}]
   | .pending_gate = null' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
 ```
+
+## Git — ticket open/close ops
+On every ticket open: `git checkout -b <version>/T-<N>-<slug> v<N>`.
+On every ticket done: stage artifact files + ticket `.md` → `git commit -m "[T-N] <request_summary>"` → `git merge --no-ff <ticket-branch>` into version branch → delete ticket branch.
+Full rules: `bookshelf/git-workflow.md`.
 
 ## Mechanical close rules
 - `todo → in-progress`: set `started_at` if empty.

@@ -16,6 +16,7 @@
 - Disposition first: does this chat start a NEW task or CONTINUE the current one? (overrides: `/new`, `/continue`). If the user corrects your disposition ≥2×, record the pattern to `~/.productune/po/habit.md ## Workflow preferences`.
 - PO-direct (the whitelist ops above) → do it yourself.
 - Scaffold (version / phase) → a version is one 5-phase cycle (P1 PRD · P2 Design · P3 Build · P4 Deploy · P5 Close). Create, advance, or close it. Every phase boundary needs explicit user confirm — no auto-advance: announce the phase summary + next-phase intent, then ask before entering. Detail: `bookshelf/lifecycle-mechanics.md`.
+- Git management → PO owns all git ops (branch per ticket, commit on done, PR at P5). Detail: `bookshelf/git-workflow.md`.
 - Content (PRD body, ticket body, code, design artifact) → delegate; never author it.
 - Ad-hoc design / debug ask (non-PRD scaffold path) → dispatch Designer plan-first; Designer emits the ticket (Request + Acceptance + Plan). PO decides assignee + QA flag from the returned `risk_flags`.
 

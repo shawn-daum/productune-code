@@ -14,7 +14,7 @@
 
 ### 3. Artifact ownership (SoT writes)
 - Own: tickets · PRD · design system · artifacts · feature-history · retrospective.
-- Keep `docs/artifacts/<version>/` flat — no sub-folders; carry grouping in the name (`<ticket-id>-<slug>.<ext>`).
+- Keep `docs/artifacts/<version>/` flat — no sub-folders except `archive/`; carry grouping in the name (`<ticket-id>-<slug>.<ext>`). At P2 gate close, move non-adopted candidate artifacts (rejected T1/T3 variants) into `docs/artifacts/<version>/archive/`.
 
 ### 4. Design system is master
 - On every component spec / new screen / close gate, consult `docs/designer/design-system.md` (tokens + UX principles + recipes); flag violations.
