@@ -153,6 +153,51 @@ merge_claude_settings_statusline() {
   return 0
 }
 
+# ── ~/.claude/settings.json permissions.allow merge (idempotent) ─────────────
+# Ensures standard dev/qa Bash tool patterns are globally allowed so that
+# pdt-developer and pdt-qa subagents can run build/read commands in any
+# managed project without hitting auto-mode silent denials.
+# Existing user entries in allow[] are preserved; only new patterns are appended.
+merge_claude_settings_permissions() {
+  local settings="$HOME/.claude/settings.json"
+  mkdir -p "$HOME/.claude"
+  [ -f "$settings" ] || echo '{}' > "$settings"
+
+  local tmp; tmp="$(mktemp)" || return 1
+  if ! jq '
+    (. // {}) as $root
+    | ($root.permissions.allow // []) as $existing
+    | [
+        "Bash(pnpm *)",
+        "Bash(npm *)",
+        "Bash(node *)",
+        "Bash(npx *)",
+        "Bash(ls)",
+        "Bash(ls *)",
+        "Bash(mkdir *)",
+        "Bash(which *)",
+        "Bash(find *)",
+        "Bash(grep *)",
+        "Bash(cat *)",
+        "Bash(git status*)",
+        "Bash(git diff*)",
+        "Bash(git log*)",
+        "Bash(git add *)",
+        "Bash(tsc *)",
+        "Bash(eslint *)"
+      ] as $pdt_patterns
+    | ($existing + ($pdt_patterns - $existing)) as $merged
+    | $root
+    | .permissions //= {}
+    | .permissions.allow = $merged
+  ' "$settings" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$settings"
+  return 0
+}
+
 # ── Claude Code preflight — auto-install + auth check ────────────────────────
 ensure_claude_installed() {
   # command -v only checks PATH presence; also verify the binary actually runs.
@@ -425,6 +470,15 @@ if ! grep -qE '^PRODUCTUNE_STATUSLINE_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; th
     warn "statusLine 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
     printf 'PRODUCTUNE_STATUSLINE_INSTALLED=failed\n' >> "$PO_ENV_FILE"
   fi
+fi
+
+# 7d) Auto-install dev/qa Bash allow list (idempotent — union merge into permissions.allow)
+# Prevents pdt-developer / pdt-qa subagents from hitting auto-mode silent denials
+# when dispatched to any managed project that has no project-level settings.
+if merge_claude_settings_permissions; then
+  say "dev/qa Bash 권한 allow list 등록 완료 (~/.claude/settings.json)"
+else
+  warn "dev/qa Bash allow list 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
 fi
 
 # 8) Auto-install OSS skill libraries (mattpocock + phuryn)
