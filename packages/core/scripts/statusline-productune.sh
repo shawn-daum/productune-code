@@ -145,11 +145,7 @@ fi
 # Right segment: branch + A4 phase token
 RIGHT=""
 if [ -n "$BRANCH" ]; then
-  if [ -n "$PHASE_TOKEN" ]; then
-    RIGHT="branch: $BRANCH $PHASE_TOKEN"
-  else
-    RIGHT="branch: $BRANCH"
-  fi
+  RIGHT="branch: $BRANCH"
 fi
 
 # Join segments with ' | '

@@ -461,15 +461,16 @@ if ! grep -qE '^PRODUCTUNE_HOOKS_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
   fi
 fi
 
-# 7c) Auto-install statusLine (idempotent — overwrites .statusLine field)
-if ! grep -qE '^PRODUCTUNE_STATUSLINE_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
-  if merge_claude_settings_statusline; then
+# 7c) Auto-install statusLine (항상 실행 — 새 머신/dotfiles 공유 환경에서도 settings.json에 반영)
+# 원샷 guard를 두지 않고 매 실행마다 덮어씀. merge_claude_settings_statusline 자체가 idempotent.
+if merge_claude_settings_statusline; then
+  # 플래그는 여전히 기록하되, 존재 유무와 무관하게 항상 실행.
+  if ! grep -qE '^PRODUCTUNE_STATUSLINE_INSTALLED=' "$PO_ENV_FILE" 2>/dev/null; then
     printf 'PRODUCTUNE_STATUSLINE_INSTALLED=true\n' >> "$PO_ENV_FILE"
-    say "statusLine 등록 완료"
-  else
-    warn "statusLine 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
-    printf 'PRODUCTUNE_STATUSLINE_INSTALLED=failed\n' >> "$PO_ENV_FILE"
   fi
+  say "statusLine 등록 완료"
+else
+  warn "statusLine 등록 실패 — ~/.claude/settings.json 수동 확인 필요"
 fi
 
 # 7d) Auto-install dev/qa Bash allow list (idempotent — union merge into permissions.allow)
