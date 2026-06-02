@@ -26,10 +26,39 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILLS_SRC="$ROOT/skills"
 SKILLS_DEST="${PRODUCTUNE_SKILLS_ROOT:-$HOME/.claude/skills}"
 
+# ── T-018: skip list for domain-irrelevant phuryn categories ─────────────────
+# Set PRODUCTUNE_SKILL_SKIP to a colon-separated list of category paths to exclude.
+# Each entry is matched as a substring of the source path.
+# Default (unset or empty) = install all.
+# Example: PRODUCTUNE_SKILL_SKIP="phuryn/pm-data-analytics:phuryn/pm-marketing-growth"
+#
+# Pre-built constant for the two doctrine-irrelevant categories (T-018):
+PRODUCTUNE_IRRELEVANT_CATEGORIES="phuryn/pm-data-analytics:phuryn/pm-marketing-growth"
+
+# Merge the pre-built irrelevant list with any user-supplied extra skips.
+# User can override entirely by exporting PRODUCTUNE_SKILL_SKIP=... before calling.
+_skip_list="${PRODUCTUNE_SKILL_SKIP:-$PRODUCTUNE_IRRELEVANT_CATEGORIES}"
+
+# Returns 0 (true) if the given path matches any skip pattern, 1 otherwise.
+_should_skip() {
+  local check_path="$1"
+  local IFS=':'
+  for pattern in $_skip_list; do
+    [ -z "$pattern" ] && continue
+    case "$check_path" in
+      *"$pattern"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 [ -d "$SKILLS_SRC" ] || die "vendored skills 디렉토리 없음: $SKILLS_SRC"
 mkdir -p "$SKILLS_DEST"
 say "skills src : $SKILLS_SRC"
 say "skills dest: $SKILLS_DEST"
+if [ -n "$_skip_list" ]; then
+  say "skip list  : $_skip_list"
+fi
 
 for lib in mattpocock phuryn anthropic; do
   src="$SKILLS_SRC/$lib"
@@ -38,10 +67,33 @@ for lib in mattpocock phuryn anthropic; do
     warn "$lib vendored 디렉토리 없음 — skip"
     continue
   fi
+  # If the entire lib is skipped, skip it wholesale.
+  if _should_skip "$lib"; then
+    say "$lib — skip list 일치, 건너뜀"
+    continue
+  fi
   if [ -d "$dest" ]; then
     rm -rf "$dest"
   fi
-  cp -R "$src" "$dest"
+  # Copy top-level lib directory first (non-category files, e.g. .claude-plugin).
+  # Then copy sub-directories selectively, honouring skip list.
+  mkdir -p "$dest"
+  # Copy non-directory items at the lib root.
+  for item in "$src"/.*; do
+    [ -e "$item" ] || continue
+    basename_item="$(basename "$item")"
+    [ "$basename_item" = "." ] || [ "$basename_item" = ".." ] && continue
+    cp -R "$item" "$dest/"
+  done
+  for item in "$src"/*; do
+    [ -e "$item" ] || continue
+    rel="${item#"$SKILLS_SRC/"}"  # e.g. "phuryn/pm-data-analytics"
+    if _should_skip "$rel"; then
+      say "skip: $rel"
+      continue
+    fi
+    cp -R "$item" "$dest/"
+  done
   skill_count="$(find "$dest" -name 'SKILL.md' 2>/dev/null | wc -l | tr -d ' ')"
   say "$lib vendored skills 복사 완료 (${skill_count} SKILL.md)"
 done

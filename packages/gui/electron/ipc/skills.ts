@@ -7,12 +7,19 @@ import os from 'os'
 
 type SkillPersona = 'po' | 'designer' | 'dev' | 'qa'
 
+/**
+ * Skill layer classification (T-018 / v0.5 B2).
+ * Mirrors SkillLayer in src/lib/types.ts — keep in sync.
+ */
+type SkillLayer = 'explicit' | 'auto' | 'unused'
+
 interface SkillEntry {
   id: string
   name: string
   description: string
   personas: SkillPersona[]
   filePath: string
+  layer: SkillLayer
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -69,8 +76,14 @@ function inferPersonasFromPath(filePath: string): SkillPersona[] {
   if (filePath.includes('mattpocock/skills/misc/')) return ['dev']
   if (filePath.includes('mattpocock/skills/personal/')) return []
   // ── phuryn pm-* overrides (T-P4-143 · 2026-05-20 · OQ-c resolution) ───────
+  // ── T-018 (2026-06-02): pm-toolkit added; pm-marketing-growth reclassified unused ──
+  // pm-toolkit: general writing/doc utility tools → po only
+  if (filePath.includes('phuryn/pm-toolkit/')) return ['po']
+  // pm-data-analytics: domain-irrelevant → unused (skill layer = unused)
+  if (filePath.includes('phuryn/pm-data-analytics/')) return []
+  // pm-marketing-growth: domain-irrelevant → unused (skill layer = unused)
+  if (filePath.includes('phuryn/pm-marketing-growth/')) return []
   // Groups entirely po-only
-  if (filePath.includes('phuryn/pm-data-analytics/')) return ['po']
   if (filePath.includes('phuryn/pm-execution/')) return ['po']
   // pm-market-research: 5 skills po-only; customer-journey-map + user-personas → default below
   if (filePath.includes('phuryn/pm-market-research/skills/competitor-analysis/')) return ['po']
@@ -81,10 +94,48 @@ function inferPersonasFromPath(filePath: string): SkillPersona[] {
   // pm-go-to-market: ideal-customer-profile po-only; gtm-strategy → default below
   if (filePath.includes('phuryn/pm-go-to-market/skills/ideal-customer-profile/')) return ['po']
   // Default phuryn fallback: po+designer
-  // (covers: pm-discovery, pm-product-strategy, pm-marketing-growth,
+  // (covers: pm-discovery, pm-product-strategy,
   //  pm-market-research/{customer-journey-map,user-personas}, pm-go-to-market/gtm-strategy)
   if (filePath.includes('phuryn/pm-')) return ['po', 'designer']
   return []
+}
+
+/**
+ * Path substrings that mark a skill as domain-irrelevant for this project.
+ *
+ * Mirrors PRODUCTUNE_IRRELEVANT_CATEGORIES in setup-skills.sh plus the
+ * mattpocock categories whose inferPersonasFromPath explicitly returns []:
+ *   - phuryn/pm-data-analytics  — analytics tooling, domain-irrelevant
+ *   - phuryn/pm-marketing-growth — marketing/growth, domain-irrelevant
+ *   - mattpocock/skills/deprecated — deliberately retired skills
+ *   - mattpocock/skills/personal   — personal/non-project skills
+ *
+ * Keep in sync with PRODUCTUNE_IRRELEVANT_CATEGORIES in setup-skills.sh.
+ */
+const SKIP_LIST = [
+  'phuryn/pm-data-analytics',
+  'phuryn/pm-marketing-growth',
+  'mattpocock/skills/deprecated',
+  'mattpocock/skills/personal',
+  'mattpocock/skills/in-progress',
+] as const
+
+/**
+ * Classify a skill into Layer 1/2/unused per doctrine (common/bookshelf/skills.md).
+ *
+ * Deterministic order (T-018 fix round 1 — 2026-06-02):
+ *  1. personas.length >= 1  → 'explicit'  (Layer 1: pinned to ≥1 persona)
+ *  2. filePath matches SKIP_LIST entry → 'unused'  (domain-irrelevant / retired)
+ *  3. otherwise             → 'auto'      (Layer 2: installed, not pinned, not skipped)
+ *
+ * This correctly separates "deliberately skipped" (unused) from
+ * "installed but not persona-pinned" (auto). Vendored anthropic/* skills and
+ * any other unpinned-but-available skills now resolve to Layer 2 auto.
+ */
+function classifyLayer(personas: SkillPersona[], filePath: string): SkillLayer {
+  if (personas.length >= 1) return 'explicit'
+  if (SKIP_LIST.some((pattern) => filePath.includes(pattern))) return 'unused'
+  return 'auto'
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
@@ -98,6 +149,9 @@ export function register(): void {
     const entries: SkillEntry[] = []
 
     for (const filePath of files) {
+      // Skip template scaffolds — they are not real skills.
+      if (filePath.includes('/template/')) continue
+
       let content: string
       try {
         content = fs.readFileSync(filePath, 'utf-8')
@@ -130,7 +184,8 @@ export function register(): void {
         personas = inferPersonasFromPath(filePath)
       }
 
-      entries.push({ id, name, description, personas, filePath })
+      const layer: SkillLayer = classifyLayer(personas, filePath)
+      entries.push({ id, name, description, personas, filePath, layer })
     }
 
     return entries

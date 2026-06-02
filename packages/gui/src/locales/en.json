@@ -402,7 +402,17 @@
         "search": "Search skills…",
         "filterAssigned": "Assigned only",
         "addSkill": "+ Add skill",
-        "viewDescription": "View description"
+        "viewDescription": "View description",
+        "layerLabel": {
+          "explicit": "explicit",
+          "auto": "auto",
+          "unused": "unused"
+        },
+        "layerTooltip": {
+          "explicit": "Layer 1 — explicitly provisioned to ≥1 persona. Invoke only when on the project allowlist.",
+          "auto": "Layer 2 — description-match sufficient; auto-selectable without provisioning.",
+          "unused": "Not provisioned for this project. Skippable at install."
+        }
       },
       "personaDef": {
         "previewNote": "Preview only — editing persona spec is a Phase 5 feature.",

@@ -210,12 +210,25 @@ export interface Version {
 export type SkillPersona = 'po' | 'designer' | 'dev' | 'qa'
 
 /**
+ * Skill layer classification (T-018 / v0.5 B2).
+ * Operationalises the 2-layer doctrine from common/bookshelf/skills.md:
+ *  - explicit  (Layer 1) — intentionally provisioned to ≥1 persona; invoke only
+ *                          when on the project allowlist.
+ *  - auto      (Layer 2) — description-match sufficient; any project of this type
+ *                          benefits → Claude may auto-select without provisioning.
+ *  - unused               — domain-irrelevant category OR unmapped (personas == []);
+ *                          skip at install, never invoke.
+ */
+export type SkillLayer = 'explicit' | 'auto' | 'unused'
+
+/**
  * A single skill entry returned by the `skills:list` IPC handler.
  * `id`       — relative path from ~/.claude/skills root (slash-separated).
  * `name`     — frontmatter `name` field, or last-directory fallback.
  * `description` — frontmatter `description` field, or "".
  * `personas` — frontmatter `personas` array, or path-inference result, or [].
  * `filePath` — absolute path (for future deep-link / viewer).
+ * `layer`    — T-018 2-layer classification: explicit | auto | unused.
  */
 export interface SkillEntry {
   id: string
@@ -223,6 +236,7 @@ export interface SkillEntry {
   description: string
   personas: SkillPersona[]
   filePath: string
+  layer: SkillLayer
 }
 
 // ── Pending promotions (T-P4-066) ─────────────────────────────────────────────

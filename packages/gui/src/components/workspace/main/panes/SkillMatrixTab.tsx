@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Layers, Zap, EyeOff } from 'lucide-react'
 import { PERSONA_COLORS } from '../../../../store/personaPresence'
-import type { SkillEntry } from '../../../../lib/types'
+import type { SkillEntry, SkillLayer } from '../../../../lib/types'
 import { InfoPopover } from '../../../shared/InfoPopover'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -21,6 +22,47 @@ type PersonaCol = 'po' | 'designer' | 'dev' | 'qa'
 
 const PERSONA_COLS: PersonaCol[] = ['po', 'designer', 'dev', 'qa']
 const PERSONA_INITIALS: Record<PersonaCol, string> = { po: 'PO', designer: 'Des', dev: 'Dev', qa: 'QA' }
+
+// ── Layer chip ────────────────────────────────────────────────────────────────
+
+const LAYER_ICON: Record<SkillLayer, React.ReactNode> = {
+  explicit: <Layers size={9} strokeWidth={2} />,
+  auto:     <Zap size={9} strokeWidth={2} />,
+  unused:   <EyeOff size={9} strokeWidth={2} />,
+}
+
+const LAYER_COLORS: Record<SkillLayer, string> = {
+  explicit: '#38BDF8',
+  auto:     '#A3E635',
+  unused:   '#404040',
+}
+
+function SkillLayerChip({ layer, tooltip }: { layer: SkillLayer; tooltip: string }) {
+  const color = LAYER_COLORS[layer]
+  return (
+    <span
+      title={tooltip}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+        fontSize: 9,
+        fontFamily: 'monospace',
+        padding: '1px 5px',
+        borderRadius: 3,
+        border: `1px solid ${color}44`,
+        background: `${color}14`,
+        color,
+        flexShrink: 0,
+        cursor: 'default',
+        userSelect: 'none',
+      }}
+    >
+      {LAYER_ICON[layer]}
+      {layer}
+    </span>
+  )
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -146,6 +188,7 @@ export default function SkillMatrixTab({ props }: Props) {
             <thead>
               <tr style={headerRow}>
                 <th style={thSkill}>Skill</th>
+                <th style={thLayer}>Layer</th>
                 {PERSONA_COLS.map((p) => (
                   <th key={p} style={thPersona}>
                     <span style={{ ...personaDot, background: PERSONA_COLORS[p] }} />
@@ -170,6 +213,12 @@ export default function SkillMatrixTab({ props }: Props) {
                         ariaLabel={t('workspace.team.skillMatrix.viewDescription')}
                       />
                     </td>
+                    <td style={tdLayer}>
+                      <SkillLayerChip
+                        layer={skill.layer}
+                        tooltip={t(`workspace.team.skillMatrix.layerTooltip.${skill.layer}`)}
+                      />
+                    </td>
                     {PERSONA_COLS.map((p) => (
                       <td key={p} style={tdCheck}>
                         {skill.personas.includes(p) ? (
@@ -183,7 +232,7 @@ export default function SkillMatrixTab({ props }: Props) {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={5} style={addSkillCell}>
+                <td colSpan={6} style={addSkillCell}>
                   <span style={addSkillDisabled}>{t('workspace.team.skillMatrix.addSkill')}</span>
                   <span style={addSkillPhase5}> — Phase 5</span>
                 </td>
@@ -297,6 +346,19 @@ const thSkill: React.CSSProperties = {
   borderBottom: '1px solid #1E1E1E',
 }
 
+const thLayer: React.CSSProperties = {
+  width: 80,
+  textAlign: 'left',
+  padding: '6px 8px',
+  fontSize: 10,
+  fontWeight: 600,
+  color: '#505050',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  borderBottom: '1px solid #1E1E1E',
+  whiteSpace: 'nowrap',
+}
+
 const thPersona: React.CSSProperties = {
   width: 52,
   textAlign: 'center',
@@ -356,6 +418,13 @@ const skillIdStyle: React.CSSProperties = {
   fontSize: 11,
   color: '#D0D0D0',
   marginRight: 6,
+}
+
+const tdLayer: React.CSSProperties = {
+  width: 80,
+  padding: '5px 8px',
+  verticalAlign: 'middle',
+  whiteSpace: 'nowrap',
 }
 
 const tdCheck: React.CSSProperties = {

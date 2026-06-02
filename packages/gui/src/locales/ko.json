@@ -402,7 +402,17 @@
         "search": "스킬 검색…",
         "filterAssigned": "배정된 것만",
         "addSkill": "+ 스킬 추가",
-        "viewDescription": "설명 보기"
+        "viewDescription": "설명 보기",
+        "layerLabel": {
+          "explicit": "explicit",
+          "auto": "auto",
+          "unused": "unused"
+        },
+        "layerTooltip": {
+          "explicit": "Layer 1 — 페르소나에 명시적으로 배정됨. 프로젝트 allowlist에 있을 때만 실행.",
+          "auto": "Layer 2 — description 매치만으로 자동 실행 가능.",
+          "unused": "이 프로젝트에 배정되지 않음. install 시 skip 가능."
+        }
       },
       "personaDef": {
         "previewNote": "미리보기 전용 — 페르소나 spec 편집은 Phase 5 기능입니다.",
