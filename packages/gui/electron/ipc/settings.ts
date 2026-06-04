@@ -106,4 +106,32 @@ export function register(): void {
       }
     },
   )
+
+  // ── Long-term memory read (v0.5 T-PATCH-009 #11) ─────────────────────────────
+  // Reads a Tier-2 long-term memory file (~/.productune/<persona>/habit.md) for the
+  // PersonaDefTab viewer. Expands `~`, then guards the resolved path stays inside
+  // ~/.productune and is a .md file — rejects traversal / arbitrary reads.
+  ipcMain.handle(
+    'memory:readFile',
+    (_event, rawPath: string): { ok: boolean; content?: string; exists?: boolean; error?: string } => {
+      if (!rawPath) return { ok: false, error: 'path is required' }
+      const productuneRoot = path.join(os.homedir(), '.productune')
+      const expanded = rawPath.startsWith('~/')
+        ? path.join(os.homedir(), rawPath.slice(2))
+        : rawPath
+      const resolved = path.resolve(expanded)
+      if (resolved !== productuneRoot && !resolved.startsWith(productuneRoot + path.sep)) {
+        return { ok: false, error: 'path outside ~/.productune rejected' }
+      }
+      if (path.extname(resolved).toLowerCase() !== '.md') {
+        return { ok: false, error: 'only .md files allowed' }
+      }
+      try {
+        if (!fs.existsSync(resolved)) return { ok: true, content: '', exists: false }
+        return { ok: true, content: fs.readFileSync(resolved, 'utf-8'), exists: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'read failed' }
+      }
+    },
+  )
 }

@@ -1,9 +1,13 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 /**
- * Generic markdown tab — toolbar (crumb + edit/preview toggle stub) + viewer
- * stub. T-P4-046 lands the shell; PRD/notes/etc. content wires in via props
- * in later tickets (T-P4-047/048/050+) by passing { path, body } props.
+ * Generic markdown tab — toolbar (crumb + edit/preview toggle stub) + viewer.
+ * T-P4-046 lands the shell; content arrives via props as { path, body }.
+ *
+ * T-PATCH-009 #11: when given a `~/.productune/...` path (Tier-2 long-term
+ * memory, e.g. PersonaDefTab habit.md rows) and no inline `body`, fetch the
+ * file via the memory:readFile IPC so the viewer actually shows the file.
  */
 interface Props {
   props?: Record<string, unknown>
@@ -12,7 +16,34 @@ interface Props {
 export default function MarkdownTab({ props }: Props) {
   const { t } = useTranslation()
   const path = (props?.path as string) ?? null
-  const body = (props?.body as string) ?? null
+  const inlineBody = (props?.body as string) ?? null
+
+  const [fetched, setFetched] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  // Fetch Tier-2 memory file content when given a ~/.productune path + no body.
+  useEffect(() => {
+    setFetched(null)
+    setError(null)
+    if (inlineBody !== null || !path || !path.startsWith('~/.productune/')) return
+    const api = (window as any).api
+    if (!api?.readMemoryFile) return
+    let cancelled = false
+    setLoading(true)
+    api.readMemoryFile(path)
+      .then((res: { ok: boolean; content?: string; exists?: boolean; error?: string }) => {
+        if (cancelled) return
+        if (res?.ok) setFetched(res.exists === false ? '' : (res.content ?? ''))
+        else setError(res?.error ?? 'read failed')
+      })
+      .catch((e: any) => { if (!cancelled) setError(e?.message ?? 'read failed') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [path, inlineBody])
+
+  const body = inlineBody ?? fetched
+  const isEmptyMemory = fetched === '' && !error
 
   return (
     <div style={wrap}>
@@ -24,8 +55,14 @@ export default function MarkdownTab({ props }: Props) {
         </div>
       </div>
       <div style={view}>
-        {body ? (
+        {loading ? (
+          <p style={hint}>{t('common.loading')}</p>
+        ) : error ? (
+          <pre style={{ ...pre, color: '#E04040' }}>{error}</pre>
+        ) : body ? (
           <pre style={pre}>{body}</pre>
+        ) : isEmptyMemory ? (
+          <p style={hint}>{t('workspace.tab.markdown.emptyFile')}</p>
         ) : (
           <p style={hint}>{t('workspace.tab.markdown.placeholder')}</p>
         )}

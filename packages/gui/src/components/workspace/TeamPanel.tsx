@@ -215,7 +215,7 @@ const secHdrText: React.CSSProperties = {
   flex: 1,
 }
 
-// Nav row button (Skills + Wiki·Memory)
+// Nav row button (Skills + MCP)
 const navRowBtn: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',

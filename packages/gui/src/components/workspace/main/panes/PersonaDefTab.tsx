@@ -64,11 +64,13 @@ const PERSONA_META: Record<string, PersonaMeta> = {
 
 // ── Long-term memory file config per persona ──────────────────────────────────
 
+// Tier-2 long-term memory (4-tier doctrine model): ~/.productune/<persona>/habit.md.
+// Note the persona key→dir split: the PersonaKey 'dev' maps to the 'developer' dir.
 const LT_MEMORY: Record<string, { path: string; tabId: string; title: string }[]> = {
-  po:       [{ path: '~/.productune/po-memory.md',       tabId: 'user-memory',        title: 'User Memory' }],
-  designer: [{ path: 'docs/designer/decisions.md',       tabId: 'designer-decisions', title: 'Designer Decisions' }],
-  dev:      [{ path: 'docs/developer/feature-history.md', tabId: 'feature-history',   title: 'Feature History' }],
-  qa:       [{ path: 'docs/qa/fail-patterns.md',         tabId: 'qa-fail-patterns',   title: 'QA Fail Patterns' }],
+  po:       [{ path: '~/.productune/po/habit.md',        tabId: 'lt-memory-po',        title: 'PO Memory (habit.md)' }],
+  designer: [{ path: '~/.productune/designer/habit.md',  tabId: 'lt-memory-designer',  title: 'Designer Memory (habit.md)' }],
+  dev:      [{ path: '~/.productune/developer/habit.md', tabId: 'lt-memory-developer', title: 'Developer Memory (habit.md)' }],
+  qa:       [{ path: '~/.productune/qa/habit.md',        tabId: 'lt-memory-qa',        title: 'QA Memory (habit.md)' }],
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────

@@ -107,7 +107,7 @@
       "env": "환경 설정 파일 생성 (~/.productune/productune.env)",
       "agents": "PO 에이전트 등록 (agents/ → ~/.claude/agents/ 심링크)",
       "instructions": "PO 지침 적용 (po-instructions.md)",
-      "memory": "PO 메모리 초기화 (po-memory.md)",
+      "memory": "장기 메모리 적용 (~/.productune/<persona>/habit.md)",
       "playwright": "Playwright MCP 캐시 준비 (QA smoke gate, npx @playwright/mcp)"
     },
     "versionInit": {
@@ -235,6 +235,7 @@
       "markdown": {
         "crumbUntitled": "제목 없음",
         "placeholder": "마크다운 뷰어 — 추후 티켓에서 컨텐츠 연결",
+        "emptyFile": "이 파일은 비어 있어요.",
         "preview": "미리보기",
         "edit": "편집"
       }
@@ -375,25 +376,6 @@
           "role": "테스트 · 검증"
         }
       },
-      "wiki": {
-        "backend": {
-          "fs": "fs (local markdown)",
-          "graphiti": "graphiti (knowledge graph)",
-          "keeper": "keeper (Wiki Keeper agent)"
-        },
-        "userMemory": "사용자 메모리",
-        "projectState": "프로젝트 상태",
-        "promotionCandidates": "승급 후보",
-        "designerDecisions": "디자인 결정",
-        "featureHistory": "기능 히스토리",
-        "failPatterns": "QA 실패 패턴",
-        "role": {
-          "po": "PO 메모리",
-          "designer": "디자이너 메모리",
-          "dev": "개발자 메모리",
-          "qa": "QA 메모리"
-        }
-      },
       "activeDot": {
         "tooltip": "활동 중 (last seen {{seconds}}초 전)"
       },
@@ -421,9 +403,6 @@
         "specSave": "저장",
         "specHint": "{{path}} — [편집] 을 눌러 페르소나 spec 을 수정하세요.",
         "specSaved": "저장됐어요 (AI 엔진 재시작 후 적용)"
-      },
-      "tab": {
-        "wiki": "위키"
       }
     },
     "deploy": {

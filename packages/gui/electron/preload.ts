@@ -527,6 +527,10 @@ contextBridge.exposeInMainWorld('api', {
   writePersonaSpec: (personaId: string, content: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('persona:writeSpec', personaId, content),
 
+  // ── Long-term memory read (v0.5 T-PATCH-009 #11) ─────────────────────────────
+  readMemoryFile: (path: string): Promise<{ ok: boolean; content?: string; exists?: boolean; error?: string }> =>
+    ipcRenderer.invoke('memory:readFile', path),
+
   // ── Menubar events (renderer subscribes; main process emits) ─────────────────
   onMenuNewProject: (cb: () => void) => {
     const listener = () => cb()

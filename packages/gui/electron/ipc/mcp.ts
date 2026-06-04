@@ -38,6 +38,40 @@ export function readClaudeJson(): Record<string, any> {
 }
 
 /**
+ * Resolve the local-tier mcpServers for a projectDir from ~/.claude.json.
+ *
+ * T-PATCH-009 #7: Claude Code keys projects[] by the exact cwd it was launched
+ * in, but the GUI's runtime projectDir may differ by a trailing slash, symlink
+ * (realpath), or case. Exact-key lookup then silently misses a registered server
+ * (e.g. `playwright`). Match defensively: try the raw key first, then a
+ * normalized comparison (strip trailing sep + realpath) against every project key.
+ */
+export function resolveLocalMcpServers(
+  claudeJson: Record<string, any>,
+  projectDir?: string,
+): Record<string, McpServerConfig> {
+  if (!projectDir) return {}
+  const projects = claudeJson.projects
+  if (!projects || typeof projects !== 'object') return {}
+
+  // 1. Fast path — exact key.
+  if (projects[projectDir]?.mcpServers) return projects[projectDir].mcpServers
+
+  // 2. Normalized match (trailing-sep strip + realpath, best-effort).
+  const norm = (p: string): string => {
+    const stripped = p.length > 1 && p.endsWith(path.sep) ? p.slice(0, -1) : p
+    try { return fs.realpathSync(stripped) } catch { return stripped }
+  }
+  const target = norm(projectDir)
+  for (const key of Object.keys(projects)) {
+    if (norm(key) === target && projects[key]?.mcpServers) {
+      return projects[key].mcpServers
+    }
+  }
+  return {}
+}
+
+/**
  * Atomic write to ~/.claude.json — read-modify-write preserving all existing keys.
  * Uses tmp+rename POSIX atomic pattern (same as writeClaudeSettings).
  * CAUTION: ~/.claude.json is Claude Code's own state file. Never truncate — always
@@ -75,9 +109,11 @@ export function register(): void {
         productuneCfg.mcpServers ?? {}
 
       // Tier 2: local — ~/.claude.json projects[projectDir].mcpServers
+      // Key lookup is normalized (trailing slash / realpath / casing) so a
+      // registered server surfaces even when projectDir != the exact stored key.
       const claudeJson = readClaudeJson()
       const localTier: Record<string, McpServerConfig> =
-        (projectDir && claudeJson.projects?.[projectDir]?.mcpServers) ?? {}
+        resolveLocalMcpServers(claudeJson, projectDir)
 
       // Tier 3 (highest): project — <projectDir>/.mcp.json
       let projectTier: Record<string, McpServerConfig> = {}

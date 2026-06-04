@@ -431,7 +431,7 @@ export function register(): void {
       const variantDir = path.join(coreDir, 'agents', 'variants', backendVal === 'graphiti' ? 'graphiti' : 'keeper')
       const baseAgentsDir = path.join(coreDir, 'agents')
 
-      // Base agents (pdt-po.md, pdt-wiki-keeper.md don't have variants)
+      // Base agents (pdt-po.md doesn't have variants)
       const baseFiles = fs.readdirSync(baseAgentsDir).filter(f => f.endsWith('.md') && !fs.statSync(path.join(baseAgentsDir, f)).isDirectory())
       for (const file of baseFiles) {
         const src = path.join(baseAgentsDir, file)
@@ -451,11 +451,10 @@ export function register(): void {
         }
       }
 
-      // Remove pdt-wiki-keeper for graphiti backend (not needed)
-      if (backendVal === 'graphiti') {
-        const keeperDest = path.join(claudeAgentsDir, 'pdt-wiki-keeper.md')
-        try { fs.unlinkSync(keeperDest) } catch { /* ok */ }
-      }
+      // pdt-wiki-keeper was abolished in the doctrine redesign (T-017). Clean up
+      // any stale symlink left by a pre-redesign install so the persona no longer
+      // surfaces in ~/.claude/agents/.
+      try { fs.unlinkSync(path.join(claudeAgentsDir, 'pdt-wiki-keeper.md')) } catch { /* ok if absent */ }
 
       // 3. Copy po-instructions.md → ~/.productune/
       const poSrc = path.join(coreDir, 'po', 'po-instructions.md')
@@ -463,12 +462,9 @@ export function register(): void {
         fs.copyFileSync(poSrc, path.join(productuneDir, 'po-instructions.md'))
       }
 
-      // 4. Seed po-memory.md only if not already present
-      const poMemDest = path.join(productuneDir, 'po-memory.md')
-      const poMemTemplate = path.join(coreDir, 'po', 'po-memory.md.template')
-      if (!fs.existsSync(poMemDest) && fs.existsSync(poMemTemplate)) {
-        fs.copyFileSync(poMemTemplate, poMemDest)
-      }
+      // 4. Tier-2 long-term memory (~/.productune/<persona>/habit.md) is installed by
+      //    the doctrine install path, not GUI-seeded. The legacy po-memory.md seed was
+      //    retired in the 4-tier redesign (T-PATCH-009 #11) — do not re-create it here.
 
       // 5. Pre-warm Playwright MCP cache (used by QA's auto smoke gate).
       //    Best-effort: triggers `npx` to download @playwright/mcp now so the

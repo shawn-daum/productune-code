@@ -107,7 +107,7 @@
       "env": "Create env file (~/.productune/productune.env)",
       "agents": "Register PO agent (agents/ → ~/.claude/agents/ symlink)",
       "instructions": "Apply PO instructions (po-instructions.md)",
-      "memory": "Initialize PO memory (po-memory.md)",
+      "memory": "Apply long-term memory (~/.productune/<persona>/habit.md)",
       "playwright": "Prepare Playwright MCP cache (QA smoke gate, npx @playwright/mcp)"
     },
     "versionInit": {
@@ -235,6 +235,7 @@
       "markdown": {
         "crumbUntitled": "Untitled",
         "placeholder": "Markdown viewer — content wired in later tickets",
+        "emptyFile": "This file is empty.",
         "preview": "Preview",
         "edit": "Edit"
       }
@@ -375,25 +376,6 @@
           "role": "Test, Validation"
         }
       },
-      "wiki": {
-        "backend": {
-          "fs": "fs (local markdown)",
-          "graphiti": "graphiti (knowledge graph)",
-          "keeper": "keeper (Wiki Keeper agent)"
-        },
-        "userMemory": "User memory",
-        "projectState": "Project state",
-        "promotionCandidates": "Promotion candidates",
-        "designerDecisions": "Design Decisions",
-        "featureHistory": "Feature History",
-        "failPatterns": "QA Fail Patterns",
-        "role": {
-          "po": "PO Memory",
-          "designer": "Designer Memory",
-          "dev": "Developer Memory",
-          "qa": "QA Memory"
-        }
-      },
       "activeDot": {
         "tooltip": "Active (last seen {{seconds}}s ago)"
       },
@@ -421,9 +403,6 @@
         "specSave": "Save",
         "specHint": "{{path}} — click Edit to modify the persona spec.",
         "specSaved": "Saved (applies after AI engine restart)"
-      },
-      "tab": {
-        "wiki": "Wiki"
       }
     },
     "deploy": {

@@ -10,7 +10,6 @@ import BinaryTab from './panes/BinaryTab'
 import VersionHistoryTab from './panes/VersionHistoryTab'
 import DeployTab from './panes/DeployTab'
 import GeneralSettingsTab from './panes/GeneralSettingsTab'
-import TeamWikiTab from './panes/TeamWikiTab'
 import WorkflowSettingsTab from './panes/WorkflowSettingsTab'
 import McpServersTab from './panes/McpServersTab'
 import HooksTab from './panes/HooksTab'
@@ -41,7 +40,6 @@ export default function TabContent({ tab }: Props) {
     case 'version-history': return <VersionHistoryTab />
     case 'deploy':            return <DeployTab props={tab.props} />
     case 'general-settings':  return <GeneralSettingsTab props={tab.props} />
-    case 'team-wiki':         return <TeamWikiTab props={tab.props} />
     case 'workflow-settings': return <WorkflowSettingsTab props={tab.props} />
     case 'mcp-servers':       return <McpServersTab props={tab.props} />
     case 'hooks':             return <HooksTab props={tab.props} />

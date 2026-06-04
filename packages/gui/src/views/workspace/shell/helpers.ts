@@ -143,7 +143,9 @@ export interface ArtifactEntry {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const FILE_EXT_WHITELIST = new Set(['.md', '.json', '.html', '.txt'])
-const PERSONAS = ['pdt-po', 'pdt-designer', 'pdt-developer', 'pdt-qa', 'pdt-wiki-keeper']
+// Canonical 4 productune persona ids (single source for the palette).
+// `pdt-wiki-keeper` was abolished in the doctrine redesign (T-017) — do not add it back.
+const PERSONAS = ['pdt-po', 'pdt-designer', 'pdt-developer', 'pdt-qa'] as const
 
 // Ext → TabType for artifacts
 function extToTabType(ext: string): TabType {
@@ -279,19 +281,19 @@ export function buildQuickOpenItems(
 
   // ── Persona items ──
   for (const slug of PERSONAS) {
-    const personaKey = slug.replace('pdt-', '') as 'po' | 'designer' | 'dev' | 'qa' | string
-    const dotKey = personaKey === 'developer' ? 'dev'
-      : personaKey === 'wiki-keeper' ? 'po'
-      : personaKey as 'po' | 'designer' | 'dev' | 'qa'
+    // Full id (pdt-developer) → PersonaPresence dot key (dev). PersonaDefTab is
+    // keyed by the full `pdt-*` id, so we pass `persona: slug` (the id) directly.
+    const bare = slug.replace('pdt-', '')
+    const dotKey: 'po' | 'designer' | 'dev' | 'qa' = bare === 'developer' ? 'dev' : (bare as 'po' | 'designer' | 'qa')
     items.push({
       id: `persona:${slug}`,
       source: 'persona',
       category: 'personas',
       label: slug,
       sublabel: 'persona',
-      meta: { personaDot: dotKey as 'po' | 'designer' | 'dev' | 'qa' },
+      meta: { personaDot: dotKey },
       priority: 30,
-      open: () => openTab(`persona-def:${slug}`, 'persona-def', { personaSlug: slug }, slug),
+      open: () => openTab(`persona-def:${slug}`, 'persona-def', { persona: slug }, slug),
     })
   }
 
