@@ -4,7 +4,6 @@ import { AlertTriangle, Loader2 } from 'lucide-react'
 import type { PoState, Ticket, Status } from '../../lib/types'
 import { useTicketScan, normalizeStatus } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
-import { usePoChat } from '../../store/poChat'
 
 interface Props {
   poState: PoState | null
@@ -20,7 +19,6 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const { tickets: scannedTickets, loading } = useTicketScan(project?.projectDir ?? null)
-  const setPanelVisible = usePoChat((s) => s.setPanelVisible)
 
   const allTickets = useMemo(() => {
     const raw = collectAllTickets(poState, scannedTickets)
@@ -48,7 +46,7 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
         /* §1.5.3: empty state — distinct from loading (T-P4-069 fix C-2) */
         <div style={empty}>
           <span>{t('workspace.tickets.noTickets')}</span>
-          <button style={noTicketsCta} onClick={() => setPanelVisible(true)}>
+          <button style={noTicketsCta}>
             {t('workspace.tickets.noTicketsCta')}
           </button>
         </div>

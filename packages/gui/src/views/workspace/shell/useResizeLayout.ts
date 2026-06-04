@@ -14,7 +14,7 @@ export interface ResizeLayoutResult {
   startResize: (kind: 'sidebar' | 'chat', event: React.MouseEvent<HTMLDivElement>) => void
 }
 
-export function useResizeLayout(chatPanelVisible: boolean): ResizeLayoutResult {
+export function useResizeLayout(): ResizeLayoutResult {
   const [sidebarWidth, setSidebarWidth] = useState(() =>
     readStoredWidth(SIDEBAR_STORAGE_KEY, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH),
   )
@@ -23,12 +23,11 @@ export function useResizeLayout(chatPanelVisible: boolean): ResizeLayoutResult {
   )
   const [activeResizeHandle, setActiveResizeHandle] = useState<'sidebar' | 'chat' | null>(null)
 
-  const shellRef            = useRef<HTMLDivElement>(null)
-  const sidebarWidthRef     = useRef(sidebarWidth)
-  const poChatWidthRef      = useRef(poChatWidth)
-  const chatPanelVisibleRef = useRef(false)
-  const dragStateRef        = useRef<{ kind: 'sidebar' | 'chat'; startX: number; startWidth: number } | null>(null)
-  const bodyStyleRef        = useRef<{ cursor: string; userSelect: string } | null>(null)
+  const shellRef        = useRef<HTMLDivElement>(null)
+  const sidebarWidthRef = useRef(sidebarWidth)
+  const poChatWidthRef  = useRef(poChatWidth)
+  const dragStateRef    = useRef<{ kind: 'sidebar' | 'chat'; startX: number; startWidth: number } | null>(null)
+  const bodyStyleRef    = useRef<{ cursor: string; userSelect: string } | null>(null)
 
   // ── Ref sync effects ─────────────────────────────────────────────────────────
   useEffect(() => {
@@ -39,11 +38,8 @@ export function useResizeLayout(chatPanelVisible: boolean): ResizeLayoutResult {
     poChatWidthRef.current = poChatWidth
   }, [poChatWidth])
 
-  useEffect(() => {
-    chatPanelVisibleRef.current = chatPanelVisible
-  }, [chatPanelVisible])
-
   // ── Viewport sync ────────────────────────────────────────────────────────────
+  // T-026: chat is always visible — clamp both sidebar and chat unconditionally.
   const syncLayoutWidthsToViewport = () => {
     const shellWidth = shellRef.current?.getBoundingClientRect().width ?? 0
     if (shellWidth <= 0) return
@@ -52,16 +48,12 @@ export function useResizeLayout(chatPanelVisible: boolean): ResizeLayoutResult {
       sidebarWidthRef.current,
       shellWidth,
       poChatWidthRef.current,
-      chatPanelVisibleRef.current,
     )
-    let nextChat = chatPanelVisibleRef.current
-      ? clampPoChatWidth(poChatWidthRef.current, shellWidth, nextSidebar)
-      : poChatWidthRef.current
+    let nextChat = clampPoChatWidth(poChatWidthRef.current, shellWidth, nextSidebar)
 
-    if (chatPanelVisibleRef.current) {
-      nextSidebar = clampSidebarWidth(nextSidebar, shellWidth, nextChat, true)
-      nextChat = clampPoChatWidth(nextChat, shellWidth, nextSidebar)
-    }
+    // Second pass — sidebar may need to shrink further after chat clamping.
+    nextSidebar = clampSidebarWidth(nextSidebar, shellWidth, nextChat)
+    nextChat    = clampPoChatWidth(nextChat, shellWidth, nextSidebar)
 
     if (nextSidebar !== sidebarWidthRef.current) {
       sidebarWidthRef.current = nextSidebar
@@ -79,11 +71,6 @@ export function useResizeLayout(chatPanelVisible: boolean): ResizeLayoutResult {
     return () => window.removeEventListener('resize', syncLayoutWidthsToViewport)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  useEffect(() => {
-    syncLayoutWidthsToViewport()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatPanelVisible])
 
   // ── Drag mousemove / mouseup handler ────────────────────────────────────────
   useEffect(() => {
@@ -131,7 +118,6 @@ export function useResizeLayout(chatPanelVisible: boolean): ResizeLayoutResult {
           dragState.startWidth + delta,
           shellWidth,
           poChatWidthRef.current,
-          chatPanelVisibleRef.current,
         )
         if (nextWidth !== sidebarWidthRef.current) {
           sidebarWidthRef.current = nextWidth

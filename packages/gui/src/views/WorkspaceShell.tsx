@@ -112,11 +112,10 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const [quickOpenMcp, setQuickOpenMcp] = useState<McpServerEntry[]>([])
   const [quickOpenArtifacts, setQuickOpenArtifacts] = useState<ArtifactEntry[]>([])
 
-  const chatPanelVisible = usePoChat((s) => s.panelVisible)
   const restartModalOpen = usePoChat((s) => s.restartModalOpen)
   const setRestartModalOpen = usePoChat((s) => s.setRestartModalOpen)
 
-  const { shellRef, sidebarWidth, poChatWidth, activeResizeHandle, startResize } = useResizeLayout(chatPanelVisible)
+  const { shellRef, sidebarWidth, poChatWidth, activeResizeHandle, startResize } = useResizeLayout()
   useKeyboardShortcuts({ closeTab, closePane, splitRight, splitDown, addNewTab, setActiveTab })
   const { deployModalOpen, deployModalPayload, baseDirtyModal, artifactToast,
     setDeployModalOpen, setDeployModalPayload, setBaseDirtyModal } =
@@ -246,9 +245,7 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
       "activity sidebar sidebarResize center     chatResize chat"
       "activity sidebar sidebarResize status     chatResize chat"
     `,
-    gridTemplateColumns: chatPanelVisible
-      ? `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`
-      : `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) 0px 0px`,
+    gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
   }
 
   return (
@@ -276,12 +273,10 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
       <MainPanel />
       <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} onOpenRecent={onOpenRecent} />
 
-      {chatPanelVisible && (
-        <div style={chatResizeArea}>
-          <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"
-            onMouseDown={(event) => startResize('chat', event)} />
-        </div>
-      )}
+      <div style={chatResizeArea}>
+        <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"
+          onMouseDown={(event) => startResize('chat', event)} />
+      </div>
       <ChatPanel />
 
       {restartModalOpen && <RestartSessionModal onClose={() => setRestartModalOpen(false)} />}

@@ -30,17 +30,18 @@ export function persistWidth(key: string, width: number): void {
   }
 }
 
+// T-026: chat is always visible — chat budget is always deducted.
 export function clampSidebarWidth(
   requestedWidth: number,
   shellWidth: number,
   poChatWidth: number,
-  chatPanelVisible: boolean,
 ): number {
   const availableMax = shellWidth
     - ACTIVITY_BAR_WIDTH
     - RESIZE_HANDLE_WIDTH
     - CENTER_MIN_WIDTH
-    - (chatPanelVisible ? RESIZE_HANDLE_WIDTH + poChatWidth : 0)
+    - RESIZE_HANDLE_WIDTH
+    - poChatWidth
 
   return clampPanelWidth(requestedWidth, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH, availableMax)
 }

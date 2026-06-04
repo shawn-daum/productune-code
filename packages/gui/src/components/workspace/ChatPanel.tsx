@@ -1,7 +1,7 @@
 /**
  * ChatPanel — Right panel chat UI (T-P4-041, mockup 5-row layout).
  *
- *   rp-hdr        35 px   header (PO badge + title + minimize + close)
+ *   rp-hdr        35 px   header (PO badge + title + restart)
  *   rp-ctx       ~28 px   phase chip + round-N · T-NNN action
  *   rp-persona-bar 24 px  T-P4-049 (positioned here via this component)
  *   rp-msgs       flex-1  message list — 6 bubble kinds
@@ -18,14 +18,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Paperclip, ArrowUp, RefreshCw, Minus } from 'lucide-react'
+import { Paperclip, ArrowUp, RefreshCw } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message } from '../../lib/types'
 import PhaseStrip from './PhaseStrip'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
-import PoFab from './chat/PoFab'
 import TodoChip from './chat/TodoChip'
 import TodoListPanel from './chat/TodoListPanel'
 import PendingGateChip from './chat/PendingGateChip'
@@ -51,8 +50,6 @@ export default function ChatPanel() {
   const clearHealth = useSessionHealth((s) => s.clearHealth)
   const rateLimited = healthState === 'rate-limited'
 
-  const panelVisible = usePoChat((s) => s.panelVisible)
-  const setPanelVisible = usePoChat((s) => s.setPanelVisible)
   const draft = usePoChat((s) => s.inputDraft)
   const setDraft = usePoChat((s) => s.setDraft)
   const autoScrollLocked = usePoChat((s) => s.autoScrollLocked)
@@ -177,7 +174,6 @@ export default function ChatPanel() {
   const [sendHover, setSendHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
   const [restartTipPos, setRestartTipPos] = useState<{ top: number; left: number } | null>(null)
-  const [minimizeHover, setMinimizeHover] = useState(false)
   const restartBtnRef = useRef<HTMLButtonElement>(null)
   const setRestartModalOpen = usePoChat((s) => s.setRestartModalOpen)
 
@@ -200,8 +196,7 @@ export default function ChatPanel() {
 
   return (
     <>
-      {!panelVisible && <PoFab />}
-      <div style={{ ...wrap, display: panelVisible ? 'flex' : 'none' }}>
+      <div style={wrap}>
         {/* rp-hdr */}
         <div style={header}>
           <span style={poBadge}>P</span>
@@ -219,20 +214,6 @@ export default function ChatPanel() {
             aria-label={t('workspace.chat.restartSession')}
           >
             <RefreshCw size={13} strokeWidth={2} />
-          </button>
-          <button
-            style={{
-              ...iconBtn,
-              background: minimizeHover ? '#2A2A2A' : 'transparent',
-              color: minimizeHover ? '#F0F0F0' : '#A0A0A0',
-            }}
-            onMouseEnter={() => setMinimizeHover(true)}
-            onMouseLeave={() => setMinimizeHover(false)}
-            onClick={() => setPanelVisible(false)}
-            aria-label={t('workspace.chat.minimize')}
-            title={t('workspace.chat.minimize')}
-          >
-            <Minus size={13} strokeWidth={2} />
           </button>
         </div>
 
