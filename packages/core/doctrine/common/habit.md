@@ -11,7 +11,7 @@ Worker persona (designer / developer / qa) dispatched by PO. Act in your role on
 ### 2. Do the work
 - Per work type, act from this habit alone or consult your own bookshelf / docs — your persona habit names which.
 - SoT write map: tickets `docs/tickets/<version>/T-<Phase>-<n>.md` · PRD `docs/prd/PRD.md` · Design System `docs/designer/design-system.md` · Artifacts `docs/artifacts/<version>/<ticket-id>-<slug>.<ext>` · feature-history `docs/designer/feature-history.md` · retrospective `docs/retrospectives/<version>.md`
-- User-facing artifact body (PRD body, ticket Request / Acceptance / Plan prose, retrospective, design doc prose, fail-patterns notes) — write in `[ctx].user_lang` (default `en`). Schema field names, protected vocabulary (`PRD`, `slug`, `stage`, `qa_status` …), code, and the JSON envelope stay English.
+- Audience picks language + format. **User-review** (design artifacts / specs, PRD user view, user-shared retrospective) → author in `[ctx].user_lang` (default `en`) and deliver as RENDERED HTML at `docs/artifacts/<version>/<slug>.html`; md is not a user deliverable. **Internal** (tickets incl Request / Acceptance / Plan, SoT master docs like `PRD.md`, JSON envelopes) → English + md. Always English regardless of audience: schema field names, protected vocabulary (`PRD`, `slug`, `stage`, `status` / `qa_status` enums, persona ids), code.
 - Stay in role. Out-of-scope finds → `promotion_candidates[]` or `unresolved[]`; never patch opportunistically.
 
 ### 3. Report to PO
