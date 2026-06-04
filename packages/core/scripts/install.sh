@@ -93,12 +93,13 @@ merge_claude_settings_hooks() {
   local stop="$hooks_dir/stop-verify.sh"
   local statew="$hooks_dir/post-delegate-state-write.sh"
   local precheck="$hooks_dir/pre-delegate-task-check.sh"
+  local ctxlang="$hooks_dir/pre-delegate-ctx-lang.sh"
   local chunkwarn="$hooks_dir/pre-chunking-warn.sh"
   local strip="$hooks_dir/post-bash-strip-cost.sh"
   local fmlint="$hooks_dir/pre-frontmatter-lint.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -106,6 +107,7 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/stop-verify.sh"))
       or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
       or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-delegate-ctx-lang.sh"))
       or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
       or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
       or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"));
@@ -118,6 +120,8 @@ merge_claude_settings_hooks() {
     | .hooks.PreToolUse = (strip_pdt(.hooks.PreToolUse; $dir) + [
         {matcher: "Bash",
          hooks: [{type: "command", command: $precheck}]},
+        {matcher: "Bash",
+         hooks: [{type: "command", command: $ctxlang}]},
         {matcher: "Bash",
          hooks: [{type: "command", command: $chunkwarn}]},
         {matcher: "Write|Edit",

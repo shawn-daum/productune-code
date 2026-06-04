@@ -23,17 +23,23 @@ except Exception:
     print('')
 " 2>/dev/null)"
 
+# Match the real portable dispatch, not an adjacency glob. The documented form
+# interposes flags between `claude` and `--agent`
+#   (NO_COLOR=1 claude --add-dir ~/.productune -p --agent pdt-<persona> …),
+# so the old `*"claude --agent pdt-"*` glob required `claude` ADJACENT to
+# `--agent` and silently never fired. Require `claude` AND the flag token
+# separately — same approach as pre-delegate-ctx-lang.sh.
 case "$COMMAND" in
-  *"claude --agent pdt-"*) ;;
-  *"claude --resume "*)    ;;
+  *"claude"*"--agent pdt-"*) ;;
+  *"claude"*"--resume "*)    ;;
   *) exit 0 ;;
 esac
 
 # Same compound command writes current_task before delegating → R1 satisfied
 SAME_COMPOUND_WRITES_CT=0
 case "$COMMAND" in
-  *"current_task"*"jq"*"claude --agent"*)        SAME_COMPOUND_WRITES_CT=1 ;;
-  *"jq"*".current_task ="*"claude --agent"*)     SAME_COMPOUND_WRITES_CT=1 ;;
+  *"current_task"*"jq"*"claude"*"--agent"*)        SAME_COMPOUND_WRITES_CT=1 ;;
+  *"jq"*".current_task ="*"claude"*"--agent"*)     SAME_COMPOUND_WRITES_CT=1 ;;
 esac
 
 EVENT_CWD="$(printf '%s' "$EVENT_JSON" | python3 -c "
