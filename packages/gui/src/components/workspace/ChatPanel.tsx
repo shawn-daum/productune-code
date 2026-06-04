@@ -29,6 +29,7 @@ import TodoChip from './chat/TodoChip'
 import TodoListPanel from './chat/TodoListPanel'
 import PendingGateChip from './chat/PendingGateChip'
 import RateLimitBanner from './chat/RateLimitBanner'
+import UsageBar from './chat/UsageBar'
 import { useSessionHealth } from '../../store/sessionHealth'
 
 export default function ChatPanel() {
@@ -254,6 +255,9 @@ export default function ChatPanel() {
             }}
           />
         )}
+
+        {/* rp-usage-bar (T-025) — near-live 5h/7d usage; hidden for non-subscribers */}
+        <UsageBar />
 
         {/* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */}
         <div style={inputArea}>

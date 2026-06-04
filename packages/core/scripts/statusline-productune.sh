@@ -168,3 +168,60 @@ if [ -z "$OUTPUT" ]; then
 else
   printf '%s' "$OUTPUT"
 fi
+
+# ── Usage state write (T-025) ──────────────────────────────────────────────────
+# Parse rate_limits.{five_hour,seven_day} from the statusLine hook JSON (stdin).
+# Only present for claude.ai / firstParty subscribers; either key may be absent.
+# Atomically write ~/.productune/usage-state.json so the GUI fs.watch picks it up.
+# No-op when the fields are absent (free-tier / API-key users).
+python3 - "$INPUT" <<'PYEOF' 2>/dev/null
+import json, os, sys, time, tempfile
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ''
+if not raw:
+    sys.exit(0)
+
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(0)
+
+rl = data.get('rate_limits')
+if not rl or not isinstance(rl, dict):
+    sys.exit(0)
+
+payload = {}
+for key in ('five_hour', 'seven_day'):
+    axis = rl.get(key)
+    if not isinstance(axis, dict):
+        continue
+    pct = axis.get('used_percentage')
+    resets = axis.get('resets_at')
+    if pct is None:
+        continue
+    entry = {'used_percentage': pct}
+    if resets is not None:
+        entry['resets_at'] = resets
+    payload[key] = entry
+
+if not payload:
+    sys.exit(0)
+
+payload['updated_at'] = int(time.time())
+
+dest = os.path.expanduser('~/.productune/usage-state.json')
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+
+# Atomic write: write to tmp in same dir, then rename.
+dirpath = os.path.dirname(dest)
+fd, tmp = tempfile.mkstemp(dir=dirpath, suffix='.tmp')
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(payload, f)
+    os.replace(tmp, dest)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+PYEOF

@@ -648,6 +648,22 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  // ── Usage bar (T-025) ─────────────────────────────────────────────────────────
+  /**
+   * Subscribe to near-live Claude usage updates derived from the statusLine hook.
+   * Payload contains optional `five_hour` and `seven_day` axes; either may be
+   * absent when the subscriber plan doesn't expose that limit.
+   * Only fires for claude.ai / firstParty subscribers. Returns an unsubscribe fn.
+   */
+  onUsageUpdate: (cb: (payload: {
+    five_hour?: { used_percentage: number; resets_at?: string | number }
+    seven_day?: { used_percentage: number; resets_at?: string | number }
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('productune:usage-update', listener)
+    return () => ipcRenderer.removeListener('productune:usage-update', listener)
+  },
+
   // ── Artifacts viewer (T-014) ─────────────────────────────────────────────────
 
   /** List scoped artifact files under the three fixed roots. */

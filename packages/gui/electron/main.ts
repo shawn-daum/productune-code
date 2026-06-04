@@ -16,6 +16,7 @@ import { register as registerDesign }     from './ipc/design'
 import { register as registerExplorer }   from './ipc/explorer'
 import { register as registerWorktree }   from './ipc/worktree'
 import { register as registerArtifacts }  from './ipc/artifacts'
+import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
 // macOS may fire `open-file` before app.whenReady / before a window exists.
@@ -71,10 +72,17 @@ function createWindow(): BrowserWindow {
   })
 
   // Flush deferred open-file path (T-P4-111 §E queue pattern).
+  // Also re-send the current usage payload so UsageBar is populated on first
+  // load even though startUsageWatch()'s initial broadcast ran before any
+  // window existed (T-025 fix-round-1).
   win.webContents.once('did-finish-load', () => {
     if (deferredOpenPath) {
       win.webContents.send('open-recent-project', deferredOpenPath)
       deferredOpenPath = null
+    }
+    const usagePayload = readInitialPayload()
+    if (usagePayload) {
+      win.webContents.send('productune:usage-update', usagePayload)
     }
   })
 
@@ -190,6 +198,7 @@ function sendToFocused(channel: string): void {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(buildAppMenu())
+  startUsageWatch()
   createWindow()
 
   app.on('activate', () => {
@@ -200,6 +209,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  stopUsageWatch()
   if (process.platform !== 'darwin') {
     app.quit()
   }
