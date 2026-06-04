@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import type { Project, Message } from '../lib/types'
@@ -124,11 +124,38 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
 
   const { tickets: scannedTickets } = useTicketScan(project.projectDir)
 
-  useEffect(() => { setProject(project) }, [project, setProject])
+  // T-PATCH-010 #3: track whether this render is a project switch so the
+  // current-version tab opens after poState loads (switch only, not icon-click).
+  const prevProjectDirRef = useRef<string | null>(null)
+  const pendingSwitchTabRef = useRef(false)
+
+  useEffect(() => {
+    const isSwitch = prevProjectDirRef.current !== project.projectDir
+    prevProjectDirRef.current = project.projectDir
+    if (isSwitch) pendingSwitchTabRef.current = true
+    setProject(project)
+  }, [project, setProject])
 
   useEffect(() => {
     ;(window as any).api.readPoState(project.projectDir)
-      .then((s: unknown) => setPoState(s as any))
+      .then((s: unknown) => {
+        setPoState(s as any)
+        // T-PATCH-010 #3: on project switch, open the new project's current-version
+        // tab once after poState loads. Clear the flag so repeated setPoState calls
+        // (live updates) don't re-open the tab.
+        if (pendingSwitchTabRef.current) {
+          pendingSwitchTabRef.current = false
+          const cv = (s as any)?.current_version as string | undefined
+          if (cv) {
+            useWorkspace.getState().openTab(
+              `ticket-review:${cv}`,
+              'ticket-review',
+              { versionFilter: cv },
+              cv,
+            )
+          }
+        }
+      })
       .catch(() => setPoState(null))
   }, [project.projectDir, setPoState])
 
@@ -181,12 +208,6 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
     const offNew = api.onMenuNewProject?.(() => onBack())
     return () => { offNew?.() }
   }, [onBack])
-
-  useEffect(() => {
-    const cv = useWorkspace.getState().poState?.current_version
-    if (cv) openTab(`ticket-review:${cv}`, 'ticket-review', { versionFilter: cv }, cv)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const onSelectActivity = (icon: ActivityIcon) => {
     setActiveIcon(icon)

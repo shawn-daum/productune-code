@@ -13,7 +13,6 @@
  *   2. current version closed → "다음 버전 시작 대기 중"
  */
 
-import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PoState } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
@@ -71,20 +70,6 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
   const elapsed = elapsedLabel(currentVer?.started_at)
 
   const isSelected = selectedVersionId === currentVersionId
-
-  // Auto-open kanban tab on mount when non-closed current version exists.
-  // NOTE: selectedVersionId (version history tab's selection) must NEVER be
-  // touched here or in the card's onClick. openTab only.
-  useEffect(() => {
-    if (!currentVersionId || isClosed) return
-    openTab(
-      `ticket-review:${currentVersionId}`,
-      'ticket-review',
-      { versionFilter: currentVersionId },
-      currentVersionId,
-    )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentVersionId])
 
   return (
     <div style={sectionWrap}>

@@ -97,6 +97,19 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
 
   const isFocused = activeIcon === 'project'
 
+  // T-PATCH-010 #8: hide past-versions section when there are no past versions.
+  // A version is "past" if it is not the current active version, OR if it is the
+  // current version but has been transient-closed.
+  const hasPastVersions = (() => {
+    const cv = poState?.current_version ?? null
+    const versions = poState?.versions ?? []
+    return versions.some((v) => {
+      if (v.id !== cv) return true
+      // transient-closed current version counts as past
+      return !!(v.outcome?.observed_result || v.ended_at)
+    })
+  })()
+
   // Header action slot: RefreshCw for artifacts tab
   const headerAction = activeIcon === 'artifacts' ? (
     <button
@@ -127,11 +140,13 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
             isFocused={isFocused}
             onSelect={(id) => handleVersionClick(id)}
           />
-          <SidePanelPastVersions
-            poState={poState}
-            selectedVersionId={selectedVersionId}
-            onSelect={(id) => handleVersionClick(id)}
-          />
+          {hasPastVersions && (
+            <SidePanelPastVersions
+              poState={poState}
+              selectedVersionId={selectedVersionId}
+              onSelect={(id) => handleVersionClick(id)}
+            />
+          )}
           {/* T-P4-112: Artifact auto-display — session artifacts from dev/designer */}
           <SidePanelArtifacts />
         </div>

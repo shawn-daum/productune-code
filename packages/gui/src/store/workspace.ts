@@ -87,6 +87,8 @@ interface WorkspaceState {
 
   setProject: (p: Project | null) => void
   setPoState: (s: PoState | null) => void
+  /** Reset panes to a single empty leaf. Used on project switch (T-PATCH-010 #3). */
+  resetPanes: () => void
   setSelectedVersionId: (id: string | null) => void
   setMessages: (messages: Message[]) => void
   appendMessage: (message: Message) => void
@@ -259,10 +261,48 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   // T-P4-119 follow-up: also reset inFlight state on project switch so no
   // streaming UI artefacts bleed across projects.  Avoids the old
   // useWorkspace.subscribe → useWorkspace.setState re-entrant pattern.
-  setProject: (project) => set({ project, inFlightMsgId: null, inFlightKind: 'po', streaming: false }),
+  //
+  // T-PATCH-010 #3: on actual project switch (different projectDir), reset the
+  // pane tree so previous project's tabs don't bleed into the new project.
+  setProject: (project) => {
+    const prev = get().project
+    const isSwitch = project?.projectDir !== prev?.projectDir
+    if (isSwitch) {
+      set((s) => {
+        const freshId = `pane-${s.nextPaneSeq}`
+        return {
+          project,
+          inFlightMsgId: null,
+          inFlightKind: 'po',
+          streaming: false,
+          panes: makeEmptyLeaf(freshId),
+          activePaneId: freshId,
+          nextPaneSeq: s.nextPaneSeq + 1,
+          poState: null,
+          phase: 'PRD',
+          selectedVersionId: null,
+          messages: [],
+          claudeSessionId: null,
+        }
+      })
+    } else {
+      set({ project, inFlightMsgId: null, inFlightKind: 'po', streaming: false })
+    }
+  },
 
   setPoState: (poState) => {
     set({ poState, phase: derivePhase(poState) })
+  },
+
+  resetPanes: () => {
+    set((s) => {
+      const freshId = `pane-${s.nextPaneSeq}`
+      return {
+        panes: makeEmptyLeaf(freshId),
+        activePaneId: freshId,
+        nextPaneSeq: s.nextPaneSeq + 1,
+      }
+    })
   },
 
   setSelectedVersionId: (selectedVersionId) => set({ selectedVersionId }),
