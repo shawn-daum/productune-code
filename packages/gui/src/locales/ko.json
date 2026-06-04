@@ -72,37 +72,6 @@
         "tech": "primary=claude-code, secondary=codex"
       }
     },
-    "wiki": {
-      "graphiti": {
-        "label": "Graphiti",
-        "intro": "그래프 DB 기반 장기기억",
-        "tech": "Docker + 로컬 LLM 필요 (Tier S/A 환경 권장)",
-        "localLLM": {
-          "title": "로컬 LLM 설치",
-          "tierSummary": "Tier {{tier}} · RAM {{ram_gb}}GB{{chip}}",
-          "selectModel": "Graphiti 에 사용할 LLM 모델 선택",
-          "installBtn": "설치 및 설정",
-          "installing": "Ollama 설치 중…",
-          "pullingModel": "{{model}} 다운로드 중…",
-          "pullingEmbedder": "임베더 다운로드 중 (nomic-embed-text, ~275MB)…",
-          "settingUpGraphiti": "Graphiti 설정 중…",
-          "registeringMCP": "Claude Code 에 Graphiti MCP 등록 중…",
-          "done": "로컬 LLM 준비 완료 — Graphiti 설정됨",
-          "failed": "설치 실패",
-          "retryBtn": "재시도",
-          "skipToKeeper": "파일시스템으로 대신 사용"
-        },
-        "tierB": {
-          "title": "권장 하드웨어 미달",
-          "body": "로컬 LLM은 Tier A+ (Apple Silicon ≥8GB RAM 또는 일반 ≥16GB RAM) 가 필요합니다. 파일시스템 백엔드로 진행합니다."
-        }
-      },
-      "filesystem": {
-        "label": "Filesystem",
-        "intro": "Claude가 마크다운 파일로 기억 관리",
-        "tech": "라이브러리 의존성 없음 · Claude API 토큰 소모"
-      }
-    },
     "completionSteps": {
       "env": "환경 설정 파일 생성 (~/.productune/productune.env)",
       "agents": "PO 에이전트 등록 (agents/ → ~/.claude/agents/ 심링크)",

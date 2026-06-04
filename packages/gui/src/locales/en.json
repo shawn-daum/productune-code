@@ -72,37 +72,6 @@
         "tech": "primary=claude-code, secondary=codex"
       }
     },
-    "wiki": {
-      "graphiti": {
-        "label": "Graphiti",
-        "intro": "Graph DB-based long-term memory",
-        "tech": "Requires Docker + local LLM (Tier S/A recommended)",
-        "localLLM": {
-          "title": "Local LLM Setup",
-          "tierSummary": "Tier {{tier}} · {{ram_gb}}GB RAM{{chip}}",
-          "selectModel": "Select LLM model for Graphiti",
-          "installBtn": "Install & Configure",
-          "installing": "Installing Ollama…",
-          "pullingModel": "Pulling {{model}}…",
-          "pullingEmbedder": "Pulling embedder (nomic-embed-text, ~275MB)…",
-          "settingUpGraphiti": "Setting up Graphiti…",
-          "registeringMCP": "Registering Graphiti MCP with Claude Code…",
-          "done": "Local LLM ready — Graphiti configured",
-          "failed": "Setup failed",
-          "retryBtn": "Retry",
-          "skipToKeeper": "Use filesystem instead"
-        },
-        "tierB": {
-          "title": "Hardware below recommended",
-          "body": "Local LLM requires Tier A+ (≥8GB RAM + Apple Silicon, or ≥16GB RAM). Proceeding with filesystem backend."
-        }
-      },
-      "filesystem": {
-        "label": "Filesystem",
-        "intro": "Claude manages memory via markdown files",
-        "tech": "No library dependency · uses Claude API tokens"
-      }
-    },
     "completionSteps": {
       "env": "Create env file (~/.productune/productune.env)",
       "agents": "Register PO agent (agents/ → ~/.claude/agents/ symlink)",

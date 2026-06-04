@@ -11,19 +11,9 @@ const execFileAsync = promisify(execFile)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface GraphitiConfig {
-  llmProvider: 'ollama'
-  llmModel: string
-  embedderProvider: 'ollama'
-  embedderModel: string
-}
-
 interface OnboardingCompleteOpts {
   engine: 'claude' | 'codex' | 'both'
-  wikiBackend: 'filesystem' | 'graphiti'
   uiLanguage?: UiLanguage
-  /** Set when wikiBackend==='graphiti' and local LLM was installed in step 3.5. */
-  graphitiConfig?: GraphitiConfig
 }
 
 interface OnboardingRecord {
@@ -33,33 +23,6 @@ interface OnboardingRecord {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Run a command, stream each stdout/stderr line to the renderer via event. */
-function spawnStreaming(
-  cmd: string,
-  args: string[],
-  env: NodeJS.ProcessEnv,
-  onLine: (line: string) => void,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
-
-    const pipe = (data: Buffer) => {
-      for (const line of data.toString('utf8').split('\n')) {
-        const trimmed = line.trimEnd()
-        if (trimmed) onLine(trimmed)
-      }
-    }
-    child.stdout?.on('data', pipe)
-    child.stderr?.on('data', pipe)
-
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`프로세스 종료 코드: ${code}`))
-    })
-  })
-}
 
 /** Open macOS Terminal with the given shell command. Fire-and-forget. */
 async function openTerminalWith(cmd: string) {
@@ -103,70 +66,6 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
-  ipcMain.handle('onboarding:installDocker', async (event) => {
-    const send = (line: string) =>
-      event.sender.send('onboarding:installDocker:log', line)
-
-    // Homebrew binary — Apple Silicon installs to /opt/homebrew, Intel to /usr/local
-    const brewCandidates = [
-      '/opt/homebrew/bin/brew',
-      '/usr/local/bin/brew',
-      'brew',
-    ]
-    const findBrew = () => brewCandidates.find(b => {
-      try { return b === 'brew' || fs.existsSync(b) } catch { return false }
-    }) ?? 'brew'
-
-    const baseEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      NONINTERACTIVE: '1',
-      CI: '1',
-      // Ensure Homebrew paths are available in the spawned shell
-      PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}`,
-    }
-
-    try {
-      // 1. Check brew
-      send('Homebrew 확인 중...')
-      let brewOk = false
-      try {
-        await execFileAsync(findBrew(), ['--version'])
-        brewOk = true
-        send(`OK · Homebrew 감지됨`)
-      } catch { /* not found */ }
-
-      // 2. Install Homebrew if missing
-      if (!brewOk) {
-        send('Homebrew 설치 중... (몇 분 소요)')
-        const installScript =
-          'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash'
-        await spawnStreaming('/bin/bash', ['-c', installScript], baseEnv, send)
-        send('OK · Homebrew 설치 완료')
-      }
-
-      // 3. brew install --cask docker
-      send('Docker Desktop 설치 중... (몇 분 소요)')
-      const brew = findBrew()
-      await spawnStreaming(brew, ['install', '--cask', 'docker'], baseEnv, send)
-      send('OK · 설치 완료 — Docker Desktop을 실행해주세요')
-
-      return { ok: true }
-    } catch (e: any) {
-      const msg = e?.message ?? '알 수 없는 오류'
-      send(`ERR · 오류: ${msg}`)
-      return { ok: false, error: msg }
-    }
-  })
-
-  ipcMain.handle('onboarding:openDockerApp', async () => {
-    try {
-      await execFileAsync('open', ['-a', 'Docker'])
-    } catch {
-      // Fallback: direct .app path
-      try { await execFileAsync('open', ['/Applications/Docker.app']) } catch { /* ignore */ }
-    }
-  })
-
   ipcMain.handle('onboarding:checkClaude', async () => {
     let installed = false
     try {
@@ -259,141 +158,6 @@ export function register(): void {
     return fs.existsSync(envPath)
   })
 
-  ipcMain.handle('onboarding:detectHardware', async () => {
-    const ram_gb = Math.floor(os.totalmem() / (1024 * 1024 * 1024))
-    const apple_silicon = process.platform === 'darwin' && process.arch === 'arm64'
-
-    // Docker probe — hard 2 s timeout
-    let docker = false
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const child = execFile('docker', ['info'], { timeout: 2000 }, (err) => {
-          if (err) reject(err); else resolve()
-        })
-        child.on('error', reject)
-      })
-      docker = true
-    } catch { /* not reachable or not running */ }
-
-    // Tier logic mirrors install.sh detect_tier()
-    let tier: 'S' | 'A' | 'B'
-    if (!docker) {
-      tier = 'B'
-    } else if (apple_silicon && ram_gb >= 16) {
-      tier = 'S'
-    } else if (apple_silicon && ram_gb >= 8) {
-      tier = 'A'
-    } else if (ram_gb >= 32) {
-      tier = 'S'
-    } else if (ram_gb >= 16) {
-      tier = 'A'
-    } else {
-      tier = 'B'
-    }
-
-    return { tier, ram_gb, apple_silicon, docker }
-  })
-
-  ipcMain.handle('onboarding:listOllamaModels', async () => {
-    try {
-      const { stdout } = await execFileAsync('ollama', ['list'])
-      // Format: NAME  ID  SIZE  MODIFIED — one model per line, skip header
-      const models = stdout
-        .split('\n')
-        .slice(1)
-        .map(l => l.trim().split(/\s+/)[0])
-        .filter(Boolean)
-      return models
-    } catch {
-      // ollama not installed or daemon not running — return empty list
-      return []
-    }
-  })
-
-  ipcMain.handle('onboarding:installLocalLLM', async (event, opts: { model: string }) => {
-    const send = (line: string) =>
-      event.sender.send('onboarding:installLocalLLM:log', line)
-
-    const coreDir = path.join(app.getAppPath(), '..', 'core')
-    const helperPath = path.join(coreDir, 'scripts', 'install-local-llm.sh')
-
-    const baseEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}`,
-    }
-
-    try {
-      send(`로컬 LLM 설치 시작: ${opts.model}`)
-      await spawnStreaming('/bin/bash', [helperPath, opts.model], baseEnv, send)
-      send(`OK · ${opts.model} 설치 완료`)
-      return { ok: true }
-    } catch (e: any) {
-      const msg = e?.message ?? '알 수 없는 오류'
-      send(`ERR · 오류: ${msg}`)
-      return { ok: false, error: msg }
-    }
-  })
-
-  ipcMain.handle('onboarding:setupGraphiti', async (event) => {
-    const send = (line: string) =>
-      event.sender.send('onboarding:setupGraphiti:log', line)
-
-    const coreDir = path.join(app.getAppPath(), '..', 'core')
-    const scriptPath = path.join(coreDir, 'scripts', 'setup-graphiti.sh')
-
-    const baseEnv: NodeJS.ProcessEnv = {
-      ...process.env,
-      PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}`,
-    }
-
-    try {
-      send('Graphiti 세팅 시작 (FalkorDB + Graphiti MCP)...')
-      await spawnStreaming('/bin/bash', [scriptPath], baseEnv, send)
-      send('OK · Graphiti 세팅 완료')
-      return { ok: true }
-    } catch (e: any) {
-      const msg = e?.message ?? '알 수 없는 오류'
-      send(`ERR · 오류: ${msg}`)
-      return { ok: false, error: msg }
-    }
-  })
-
-  ipcMain.handle('onboarding:registerGraphitiMCP', async () => {
-    const coreDir = path.join(app.getAppPath(), '..', 'core')
-    const launcher = path.join(coreDir, 'scripts', 'graphiti-launcher.sh')
-
-    // Check claude CLI is available
-    const claudePath = [
-      '/opt/homebrew/bin/claude',
-      '/usr/local/bin/claude',
-      'claude',
-    ].find(p => {
-      try { return p === 'claude' || fs.existsSync(p) } catch { return false }
-    }) ?? 'claude'
-
-    try {
-      await execFileAsync(claudePath, ['--version'])
-    } catch {
-      return { ok: false, alreadyRegistered: false, error: 'claude CLI 미설치' }
-    }
-
-    // Check if already registered
-    try {
-      const { stdout } = await execFileAsync(claudePath, ['mcp', 'list'])
-      if (stdout.split('\n').some(l => l.startsWith('graphiti'))) {
-        return { ok: true, alreadyRegistered: true }
-      }
-    } catch { /* list failed — try registering anyway */ }
-
-    // Register
-    try {
-      await execFileAsync(claudePath, ['mcp', 'add', 'graphiti', launcher, '--', 'designer'])
-      return { ok: true, alreadyRegistered: false }
-    } catch (e: any) {
-      return { ok: false, alreadyRegistered: false, error: e?.message ?? 'MCP 등록 실패' }
-    }
-  })
-
   ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpts) => {
     try {
       const home = os.homedir()
@@ -409,26 +173,13 @@ export function register(): void {
       // 1. Write productune.env (mode 0600)
       const envPath = path.join(productuneDir, 'productune.env')
       const engineVal = opts.engine === 'both' ? 'claude' : opts.engine
-      // If graphiti backend was chosen but no graphitiConfig was set (e.g. tier B user),
-      // fall back to keeper (prevents writing an incomplete graphiti env).
-      const backendVal =
-        opts.wikiBackend === 'graphiti' && opts.graphitiConfig ? 'graphiti' : 'keeper'
       let envContent = `MY_PO_ENGINE=${engineVal}\n`
       envContent += `PRODUCTUNE_REPO=${coreDir}\n`
-      envContent += `WIKI_BACKEND=${backendVal}\n`
-      if (backendVal === 'graphiti' && opts.graphitiConfig) {
-        const g = opts.graphitiConfig
-        envContent += `GRAPHITI_LLM_PROVIDER=${g.llmProvider}\n`
-        envContent += `GRAPHITI_LLM_MODEL=${g.llmModel}\n`
-        envContent += `GRAPHITI_EMBEDDER_PROVIDER=${g.embedderProvider}\n`
-        envContent += `GRAPHITI_EMBEDDER_MODEL=${g.embedderModel}\n`
-      }
       envContent += `created_at=${new Date().toISOString()}\n`
       fs.writeFileSync(envPath, envContent, { mode: 0o600 })
 
       // 2. Symlink agents/*.md → ~/.claude/agents/
-      //    Uses keeper variant for filesystem backend, graphiti variant for graphiti.
-      const variantDir = path.join(coreDir, 'agents', 'variants', backendVal === 'graphiti' ? 'graphiti' : 'keeper')
+      const variantDir = path.join(coreDir, 'agents', 'variants', 'keeper')
       const baseAgentsDir = path.join(coreDir, 'agents')
 
       // Base agents (pdt-po.md doesn't have variants)

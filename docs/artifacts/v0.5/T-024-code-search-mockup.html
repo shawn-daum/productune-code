@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>T-024 · Explorer code-content search — hi-fi mockup</title>
+<style>
+  /* ============================================================
+     productune DS tokens — exact hex from design-system.md §2–§9 (R4).
+     Brand accent = VIOLET #8B5CF6 (T-006 Option B).
+     PO=violet · designer=orange · dev=sky · qa=emerald.
+     Parity: T-005-a6-mockup.html (Explorer / palette family).
+     ============================================================ */
+  :root {
+    /* §2.1 surface */
+    --surface-base:#0A0A0A; --surface-body:#0F0F0F; --surface-panel:#141414;
+    --surface-subpanel:#1A1A1A; --surface-modal:#1C1C20;
+    /* §2.2 border */
+    --border-subtle:#1A1A1A; --border-default:#1F1F1F; --border-strong:#2A2A2A; --border-muted:#3A3A3A;
+    /* §2.3 text */
+    --text-primary:#E8E8EA; --text-emphasis:#F0F0F0; --text-secondary:#C8C8CC;
+    --text-muted:#A0A0A0; --text-faint:#707070; --text-disabled:#505050; --text-ghost:#3A3A3A;
+    /* §2.4 accent / brand (VIOLET) */
+    --brand-purple:#8B5CF6; --accent:#8B5CF6;
+    /* §2.5 persona */
+    --persona-po:#8B5CF6; --persona-designer:#FB923C; --persona-dev:#38BDF8; --persona-qa:#34D399;
+    /* §2.7 status */
+    --status-todo:#505050; --status-in-progress:#8B5CF6; --status-review:#E0B040;
+    --status-done:#60B860; --status-blocked:#E04040; --status-abandoned:#3A3A3A;
+    /* §2.8 health */
+    --health-info:#38BDF8; --health-success:#34D399; --health-warn:#FBBF24; --health-error:#EF4444;
+    /* match-highlight (VS Code style) — accent at low alpha + warm text */
+    --match-bg: color-mix(in oklab, var(--accent) 30%, transparent);
+    --match-bg-active: color-mix(in oklab, var(--accent) 55%, transparent);
+    /* §3 spacing */
+    --space-0-5:2px; --space-1:4px; --space-1-5:6px; --space-2:8px; --space-2-5:10px;
+    --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --space-8:32px;
+    /* §4 family / size / weight / leading / tracking */
+    --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","Menlo","Consolas",monospace;
+    --text-xs:10px; --text-xs-plus:11px; --text-sm:12px; --text-base:13px; --text-md:14px;
+    --text-md-plus:15px; --text-lg:18px; --text-xl:22px;
+    --weight-regular:400; --weight-medium:500; --weight-semibold:600; --weight-bold:700;
+    --leading-tight:1.3; --leading-snug:1.4; --leading-normal:1.5;
+    --tracking-wide:0.02em; --tracking-wider:0.04em; --tracking-widest:0.06em;
+    /* §5 radius */
+    --radius-xs:2px; --radius-md:4px; --radius-lg:6px; --radius-xl:8px; --radius-pill:20px; --radius-full:9999px;
+    /* §6 elevation */
+    --elev-sm:0 2px 8px rgba(0,0,0,0.4); --elev-md:0 6px 18px rgba(0,0,0,0.45); --elev-lg:0 12px 32px rgba(0,0,0,0.5);
+    /* §9 motion */
+    --motion-fast:120ms; --motion-base:180ms; --motion-slow:240ms;
+    --easing-standard:cubic-bezier(0.2,0,0,1);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body {
+    background:var(--surface-base); color:var(--text-primary);
+    font-family:var(--font-sans); font-size:var(--text-base); line-height:var(--leading-normal);
+    -webkit-font-smoothing:antialiased; padding:var(--space-6); overflow-y:auto;
+  }
+  svg { display:block; }
+  .ic { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2;
+        stroke-linecap:round; stroke-linejoin:round; flex:none; }
+  .ic.lg { width:20px; height:20px; }
+  .ic.sm { width:14px; height:14px; }
+  .ic.xs { width:12px; height:12px; stroke-width:2.5; }
+  .ic.dec { stroke-width:1.5; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration:1ms !important; animation-iteration-count:1 !important;
+        transition-duration:1ms !important; }
+  }
+
+  /* ── page scaffold (annotation harness, not part of product) ── */
+  .doc-head { max-width:1280px; margin:0 auto var(--space-6); }
+  .doc-title { font-size:var(--text-xl); font-weight:var(--weight-semibold); letter-spacing:var(--tracking-wide); }
+  .doc-sub { color:var(--text-muted); font-size:var(--text-sm); margin-top:var(--space-1); }
+  .doc-note {
+    color:var(--text-faint); font-size:var(--text-xs-plus); margin-top:var(--space-2);
+    border-left:2px solid var(--border-strong); padding-left:var(--space-2);
+  }
+
+  /* state switcher */
+  .switcher { display:flex; gap:var(--space-1); margin:var(--space-4) auto 0; max-width:1280px; flex-wrap:wrap; }
+  .switcher button {
+    font-family:inherit; font-size:var(--text-sm); font-weight:var(--weight-medium);
+    background:var(--surface-subpanel); color:var(--text-secondary);
+    border:1px solid var(--border-default); border-radius:var(--radius-md);
+    padding:var(--space-1-5) var(--space-3); cursor:pointer; transition:all var(--motion-fast) var(--easing-standard);
+  }
+  .switcher button:hover { border-color:var(--border-strong); color:var(--text-primary); }
+  .switcher button[aria-pressed="true"] {
+    background:color-mix(in oklab, var(--accent) 16%, transparent);
+    color:var(--text-emphasis); border-color:var(--accent);
+  }
+
+  /* ── IDE shell mock ── */
+  .shell {
+    max-width:1280px; margin:var(--space-5) auto 0;
+    display:grid; grid-template-columns:48px 340px 1fr;
+    height:660px; background:var(--surface-body);
+    border:1px solid var(--border-default); border-radius:var(--radius-xl);
+    overflow:hidden; box-shadow:var(--elev-lg);
+  }
+
+  /* activity bar (left rail, §1.5.2 IDE pattern) */
+  .rail { background:var(--surface-base); display:flex; flex-direction:column; align-items:center;
+          padding:var(--space-3) 0; gap:var(--space-3); border-right:1px solid var(--border-default); }
+  .rail .item { width:32px; height:32px; display:flex; align-items:center; justify-content:center;
+                color:var(--text-disabled); border-radius:var(--radius-md); position:relative; cursor:pointer; }
+  .rail .item:hover { color:var(--text-secondary); }
+  .rail .item.active { color:var(--text-emphasis); }
+  .rail .item.active::before { content:''; position:absolute; left:-12px; top:6px; bottom:6px; width:2px;
+                               background:var(--accent); border-radius:var(--radius-full); }
+
+  /* ── sidebar (Explorer pane) ── */
+  .sidebar { background:var(--surface-panel); display:flex; flex-direction:column;
+             border-right:1px solid var(--border-default); min-height:0; }
+  .pane-head { height:32px; flex:none; display:flex; align-items:center; justify-content:space-between;
+               padding:0 var(--space-2) 0 var(--space-3); border-bottom:1px solid var(--border-default); }
+  .pane-title { font-size:var(--text-xs-plus); font-weight:var(--weight-bold); color:var(--text-faint);
+                text-transform:uppercase; letter-spacing:var(--tracking-widest); user-select:none; }
+  .pane-head-actions { display:flex; gap:var(--space-0-5); }
+  .icon-btn { background:transparent; border:none; color:var(--text-disabled); cursor:pointer;
+              width:22px; height:22px; display:flex; align-items:center; justify-content:center;
+              border-radius:var(--radius-md); transition:all var(--motion-fast) var(--easing-standard); }
+  .icon-btn:hover { color:var(--text-secondary); background:var(--surface-subpanel); }
+  .icon-btn.on { color:var(--accent); background:color-mix(in oklab, var(--accent) 14%, transparent); }
+
+  /* collapsible section header inside Explorer (FILES / SEARCH) */
+  .section-head { display:flex; align-items:center; gap:var(--space-1); height:24px; padding:0 var(--space-2);
+                  color:var(--text-faint); cursor:pointer; user-select:none; }
+  .section-head:hover { color:var(--text-muted); }
+  .section-head .chev { transition:transform var(--motion-fast) var(--easing-standard); }
+  .section-head .label { font-size:var(--text-xs-plus); font-weight:var(--weight-bold);
+                         text-transform:uppercase; letter-spacing:var(--tracking-widest); }
+  .section-head .count-pill { margin-left:auto; font-size:var(--text-xs); font-weight:var(--weight-semibold);
+                              color:var(--text-muted); background:var(--surface-subpanel);
+                              border-radius:var(--radius-pill); padding:0 var(--space-1-5); line-height:16px; }
+
+  /* search controls */
+  .search-zone { padding:var(--space-2) var(--space-2) var(--space-2-5); border-bottom:1px solid var(--border-subtle);
+                 display:flex; flex-direction:column; gap:var(--space-1-5); }
+  .search-field {
+    display:flex; align-items:center; gap:var(--space-1-5);
+    background:var(--surface-body); border:1px solid var(--border-default);
+    border-radius:var(--radius-md); padding:var(--space-1-5) var(--space-2);
+    transition:border-color var(--motion-fast) var(--easing-standard);
+  }
+  .search-field:focus-within { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .search-field .lead { color:var(--text-faint); }
+  .search-field input {
+    flex:1; background:transparent; border:none; outline:none; color:var(--text-primary);
+    font-family:inherit; font-size:var(--text-base); min-width:0;
+  }
+  .search-field input::placeholder { color:var(--text-faint); }
+  .opt-row { display:flex; align-items:center; gap:var(--space-0-5); margin-left:auto; }
+  /* VS-Code-style toggle squares: Aa / word / .* */
+  .opt {
+    width:22px; height:22px; display:flex; align-items:center; justify-content:center;
+    border-radius:var(--radius-xs); cursor:pointer; color:var(--text-faint);
+    font-size:var(--text-xs); font-weight:var(--weight-bold); font-family:var(--font-mono);
+    border:1px solid transparent; transition:all var(--motion-fast) var(--easing-standard); user-select:none;
+  }
+  .opt:hover { color:var(--text-secondary); background:var(--surface-subpanel); }
+  .opt[aria-pressed="true"] { color:var(--text-emphasis);
+    background:color-mix(in oklab, var(--accent) 18%, transparent); border-color:var(--accent); }
+
+  /* scope selector row */
+  .scope-row { display:flex; align-items:center; gap:var(--space-1-5); }
+  .scope-select {
+    flex:1; display:flex; align-items:center; gap:var(--space-1-5);
+    background:var(--surface-body); border:1px solid var(--border-default);
+    border-radius:var(--radius-md); padding:var(--space-1) var(--space-2);
+    color:var(--text-secondary); font-size:var(--text-sm); cursor:pointer;
+  }
+  .scope-select:hover { border-color:var(--border-strong); }
+  .scope-select .val { color:var(--text-primary); }
+  .scope-select .chev-down { margin-left:auto; color:var(--text-faint); }
+  .ignore-hint { display:flex; align-items:center; gap:var(--space-1); color:var(--text-faint);
+                 font-size:var(--text-xs); padding-left:var(--space-0-5); }
+
+  /* results summary bar */
+  .result-summary { display:flex; align-items:center; gap:var(--space-1-5); padding:var(--space-1-5) var(--space-3);
+                    color:var(--text-muted); font-size:var(--text-sm); border-bottom:1px solid var(--border-subtle); }
+  .result-summary b { color:var(--text-secondary); font-weight:var(--weight-semibold); }
+  .result-summary .spin { color:var(--health-info); }
+  .result-summary .collapse-all { margin-left:auto; }
+
+  /* results list */
+  .results { flex:1; overflow-y:auto; min-height:0; padding:var(--space-1) 0 var(--space-3); }
+
+  .file-group { border-bottom:1px solid var(--border-subtle); }
+  .file-row { display:flex; align-items:center; gap:var(--space-1); height:26px; padding:0 var(--space-2) 0 var(--space-1);
+              cursor:pointer; user-select:none; }
+  .file-row:hover { background:var(--surface-subpanel); }
+  .file-row .chev { color:var(--text-faint); transition:transform var(--motion-fast) var(--easing-standard); flex:none; }
+  .file-row .ftype { flex:none; }
+  .file-row .fname { color:var(--text-primary); font-size:var(--text-base); font-weight:var(--weight-medium);
+                     white-space:nowrap; }
+  .file-row .fpath { color:var(--text-faint); font-size:var(--text-sm); overflow:hidden; text-overflow:ellipsis;
+                     white-space:nowrap; flex:1; min-width:0; }
+  .file-row .fbadge { flex:none; font-size:var(--text-xs); font-weight:var(--weight-semibold); color:var(--text-muted);
+                      background:var(--surface-subpanel); border-radius:var(--radius-full);
+                      min-width:18px; text-align:center; padding:0 var(--space-1); line-height:16px; }
+
+  .file-group.collapsed .matches { display:none; }
+  .file-group.collapsed .file-row .chev { transform:rotate(-90deg); }
+
+  /* per-match line (mono, line number + code + highlight) */
+  .matches { display:flex; flex-direction:column; }
+  .match-line { display:flex; align-items:flex-start; gap:var(--space-2); padding:1px var(--space-2) 1px 0;
+                cursor:pointer; font-family:var(--font-mono); font-size:var(--text-sm); line-height:1.55; }
+  .match-line:hover { background:var(--surface-subpanel); }
+  .match-line.active { background:color-mix(in oklab, var(--accent) 12%, transparent); }
+  .match-line .ln { flex:none; width:42px; text-align:right; color:var(--text-disabled);
+                    padding-right:var(--space-1); user-select:none; }
+  .match-line:hover .ln { color:var(--text-faint); }
+  .match-line .code { color:var(--text-secondary); white-space:pre; overflow:hidden; text-overflow:ellipsis;
+                      flex:1; min-width:0; }
+  .match-line .code mark { background:var(--match-bg); color:var(--text-emphasis); border-radius:var(--radius-xs);
+                           padding:0 1px; font-weight:var(--weight-semibold); }
+  .match-line.active .code mark { background:var(--match-bg-active); }
+
+  /* ── empty / loading / no-result states (Empty pane recipe §8.9) ── */
+  .state-pane { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+                text-align:center; gap:var(--space-3); padding:var(--space-6); }
+  .state-pane .glyph { color:var(--text-faint); }
+  .state-pane h3 { font-size:var(--text-lg); font-weight:var(--weight-semibold); color:var(--text-secondary);
+                   letter-spacing:0; }
+  .state-pane p { font-size:var(--text-base); color:var(--text-muted); max-width:240px; line-height:var(--leading-snug); }
+  .state-pane .kbd { font-family:var(--font-mono); font-size:var(--text-xs); color:var(--text-secondary);
+                     background:var(--surface-subpanel); border:1px solid var(--border-default);
+                     border-radius:var(--radius-xs); padding:1px var(--space-1); }
+  .state-pane .ghost-btn { font-family:inherit; font-size:var(--text-md); font-weight:var(--weight-medium);
+                           background:var(--surface-subpanel); color:var(--text-primary);
+                           border:1px solid var(--border-default); border-radius:var(--radius-md);
+                           padding:var(--space-2) var(--space-4); cursor:pointer; }
+  .state-pane .ghost-btn:hover { border-color:var(--border-strong); }
+
+  /* skeleton loading rows */
+  .skeleton-list { width:100%; padding:0 var(--space-3); display:flex; flex-direction:column; gap:var(--space-3); }
+  .sk-group { display:flex; flex-direction:column; gap:var(--space-1-5); }
+  .sk-bar { height:9px; border-radius:var(--radius-xs);
+            background:linear-gradient(90deg, var(--surface-subpanel) 0%, var(--border-strong) 50%, var(--surface-subpanel) 100%);
+            background-size:200% 100%; animation:sk-shimmer 1.2s ease-in-out infinite; }
+  .sk-bar.file { width:55%; height:11px; }
+  .sk-bar.l1 { width:88%; } .sk-bar.l2 { width:70%; margin-left:42px; } .sk-bar.l3 { width:80%; margin-left:42px; }
+  @keyframes sk-shimmer { 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
+  .spin { animation:pdt-spin 1s linear infinite; }
+  @keyframes pdt-spin { to { transform:rotate(360deg); } }
+
+  /* ── main panel (editor with opened file at match) ── */
+  .main { display:flex; flex-direction:column; min-width:0; background:var(--surface-body); }
+  .tabstrip { height:34px; flex:none; display:flex; align-items:stretch; border-bottom:1px solid var(--border-default);
+              background:var(--surface-panel); }
+  .tab { display:flex; align-items:center; gap:var(--space-1-5); padding:0 var(--space-3);
+         font-size:var(--text-sm); color:var(--text-muted); border-right:1px solid var(--border-default);
+         cursor:pointer; position:relative; }
+  .tab.active { color:var(--text-emphasis); background:var(--surface-body); }
+  .tab.active::after { content:''; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--accent); }
+  .tab .x { color:var(--text-disabled); }
+  .tab .x:hover { color:var(--text-secondary); }
+  .breadcrumb { height:26px; flex:none; display:flex; align-items:center; gap:var(--space-1); padding:0 var(--space-3);
+                color:var(--text-faint); font-size:var(--text-sm); border-bottom:1px solid var(--border-subtle); }
+  .breadcrumb .sep { color:var(--text-disabled); }
+  .breadcrumb .leaf { color:var(--text-secondary); }
+  .editor { flex:1; overflow:auto; padding:var(--space-2) 0; font-family:var(--font-mono); font-size:var(--text-md);
+            line-height:1.65; }
+  .eline { display:flex; gap:var(--space-3); padding:0 var(--space-4); }
+  .eline .eln { width:34px; text-align:right; color:var(--text-disabled); user-select:none; flex:none; }
+  .eline .ecode { color:var(--text-secondary); white-space:pre; }
+  .eline.hit { background:color-mix(in oklab, var(--accent) 14%, transparent);
+               box-shadow:inset 2px 0 0 var(--accent); }
+  .eline.hit .eln { color:var(--accent); }
+  .eline .ecode mark { background:var(--match-bg-active); color:var(--text-emphasis); border-radius:var(--radius-xs);
+                       padding:0 1px; }
+  .tok-kw { color:#C792EA; } .tok-fn { color:#82AAFF; } .tok-str { color:#C3E88D; }
+  .tok-com { color:var(--text-disabled); font-style:italic; } .tok-num { color:#F78C6C; }
+
+  /* annotation callouts (harness only) */
+  .anno { max-width:1280px; margin:var(--space-4) auto 0; display:grid; grid-template-columns:repeat(2,1fr);
+          gap:var(--space-3); }
+  .anno .card { background:var(--surface-panel); border:1px solid var(--border-default); border-radius:var(--radius-lg);
+                padding:var(--space-3) var(--space-4); }
+  .anno .card h4 { font-size:var(--text-sm); font-weight:var(--weight-semibold); color:var(--accent);
+                   text-transform:uppercase; letter-spacing:var(--tracking-wider); margin-bottom:var(--space-1-5);
+                   display:flex; align-items:center; gap:var(--space-1-5); }
+  .anno .card p { font-size:var(--text-sm); color:var(--text-muted); line-height:var(--leading-snug); }
+  .anno .card p + p { margin-top:var(--space-1-5); }
+  .anno .card code { font-family:var(--font-mono); font-size:var(--text-xs-plus); color:var(--text-secondary); }
+</style>
+</head>
+<body>
+
+<div class="doc-head">
+  <div class="doc-title">T-024 · Explorer code-content search</div>
+  <div class="doc-sub">VS-Code-style full-text search in the Explorer pane — hi-fi interactive mockup for USER review (impl gated on approval).</div>
+  <div class="doc-note">All color/spacing/type/radius from design-system.md (R4). Dark-only. lucide-style icons (inline SVG). Click the state buttons below; in the RESULTS state, click a match line to open the file in the main panel at that line.</div>
+</div>
+
+<div class="switcher" role="tablist" aria-label="state switcher">
+  <button data-state="empty" aria-pressed="false">① Empty (no query)</button>
+  <button data-state="loading" aria-pressed="false">② Searching / loading</button>
+  <button data-state="results" aria-pressed="true">③ Results (multi-file)</button>
+  <button data-state="noresult" aria-pressed="false">④ No results</button>
+</div>
+
+<div class="shell">
+  <!-- ░░ activity bar ░░ -->
+  <nav class="rail" aria-label="activity bar">
+    <div class="item active" title="Explorer (search lives inside)">
+      <svg class="ic lg" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3"/><path d="M3 9h18v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    </div>
+    <div class="item" title="Tickets">
+      <svg class="ic lg" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></svg>
+    </div>
+    <div class="item" title="Personas">
+      <svg class="ic lg" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+    </div>
+  </nav>
+
+  <!-- ░░ Explorer sidebar ░░ -->
+  <aside class="sidebar">
+    <div class="pane-head">
+      <span class="pane-title">Explorer</span>
+      <div class="pane-head-actions">
+        <button class="icon-btn" title="Collapse folders" aria-label="collapse">
+          <svg class="ic sm" viewBox="0 0 24 24"><path d="M4 8l4 4 4-4M16 16l-4-4-4 4"/></svg>
+        </button>
+        <button class="icon-btn" title="Refresh" aria-label="refresh">
+          <svg class="ic sm" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- SEARCH section (collapsible inside Explorer; design choice — see annotations) -->
+    <div class="section-head" title="toggle search section">
+      <svg class="ic xs chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      <span class="label">Search in files</span>
+      <span class="count-pill" id="sectionCount" style="display:none">0</span>
+    </div>
+
+    <div class="search-zone">
+      <!-- query field + VS-Code-style option toggles -->
+      <div class="search-field">
+        <span class="lead">
+          <svg class="ic sm" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        </span>
+        <input id="queryInput" type="text" placeholder="Search project files…" spellcheck="false" />
+        <span class="opt-row">
+          <span class="opt" id="optCase" role="button" aria-pressed="false" title="Match case (Aa)">Aa</span>
+          <span class="opt" id="optWord" role="button" aria-pressed="false" title="Match whole word" style="font-size:11px">|ab|</span>
+          <span class="opt" id="optRegex" role="button" aria-pressed="false" title="Use regular expression">.*</span>
+        </span>
+      </div>
+
+      <!-- scope selector (current folder vs whole project) -->
+      <div class="scope-row">
+        <div class="scope-select" id="scopeSel" title="Search scope">
+          <svg class="ic xs dec" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v3"/><path d="M3 9h18v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <span>Scope:</span><span class="val" id="scopeVal">Whole project</span>
+          <svg class="ic xs chev-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+      </div>
+      <div class="ignore-hint">
+        <svg class="ic xs dec" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+        node_modules · .git · build 제외 (ignore 규칙 준수)
+      </div>
+    </div>
+
+    <!-- ░ STATE: results summary bar ░ -->
+    <div class="result-summary" id="summaryBar">
+      <span id="summaryText"><b>17건</b> · 파일 <b>3개</b></span>
+      <button class="icon-btn collapse-all" id="collapseAllBtn" title="Collapse all" aria-label="collapse all">
+        <svg class="ic sm" viewBox="0 0 24 24"><path d="M4 8l4 4 4-4M16 16l-4-4-4 4"/></svg>
+      </button>
+    </div>
+
+    <!-- ░ STATE: results list ░ -->
+    <div class="results" id="resultsList"><!-- injected by JS --></div>
+
+    <!-- ░ STATE: empty / loading / noresult panes ░ -->
+    <div class="state-pane" id="emptyPane" style="display:none">
+      <span class="glyph"><svg class="ic dec" style="width:32px;height:32px" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></span>
+      <h3>파일 내용 검색</h3>
+      <p>프로젝트 파일 전체에서 텍스트를 찾습니다. 위 입력란에 검색어를 입력하세요.</p>
+      <p style="font-size:var(--text-sm);color:var(--text-faint)">단축키 <span class="kbd">⌘⇧F</span> 로 바로 열기</p>
+    </div>
+
+    <div class="state-pane" id="loadingPane" style="display:none">
+      <div class="skeleton-list" aria-live="polite" aria-label="검색 중">
+        <div class="sk-group"><div class="sk-bar file"></div><div class="sk-bar l1"></div><div class="sk-bar l2"></div></div>
+        <div class="sk-group"><div class="sk-bar file"></div><div class="sk-bar l1"></div><div class="sk-bar l3"></div><div class="sk-bar l2"></div></div>
+        <div class="sk-group"><div class="sk-bar file"></div><div class="sk-bar l3"></div></div>
+      </div>
+    </div>
+
+    <div class="state-pane" id="noresultPane" style="display:none">
+      <span class="glyph"><svg class="ic dec" style="width:32px;height:32px" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M8 11h6"/></svg></span>
+      <h3>결과 없음</h3>
+      <p>"<span id="noresultQuery" style="color:var(--text-secondary)">qux_nonexistent</span>" 와(과) 일치하는 항목이 없습니다.</p>
+      <p style="font-size:var(--text-sm);color:var(--text-faint)">대소문자 / 정규식 옵션이나 검색 범위를 바꿔보세요.</p>
+    </div>
+  </aside>
+
+  <!-- ░░ main editor panel ░░ -->
+  <section class="main">
+    <div class="tabstrip">
+      <div class="tab active">
+        <svg class="ic xs" viewBox="0 0 24 24" style="color:var(--persona-dev)"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        ticketStore.ts
+        <span class="x"><svg class="ic xs" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+      </div>
+    </div>
+    <div class="breadcrumb">
+      packages <span class="sep">›</span> gui <span class="sep">›</span> src <span class="sep">›</span> store
+      <span class="sep">›</span> <span class="leaf">ticketStore.ts</span>
+    </div>
+    <div class="editor" id="editorBody"><!-- injected by JS --></div>
+  </section>
+</div>
+
+<!-- ░░ annotations (harness only — not shipped) ░░ -->
+<div class="anno">
+  <div class="card">
+    <h4>① 검색 위치 — Explorer 내부 섹션</h4>
+    <p>VS Code 는 검색을 별도 activity-bar view 로 둔다. productune 은 ticket 범위(AC-1)대로 <b>Explorer pane 안의 접이식 "Search in files" 섹션</b>으로 배치 — rail 아이콘을 늘리지 않아 §1.5.1 Few-Things 를 지킨다. 입력 후 FILES 트리는 자동 접힘.</p>
+  </div>
+  <div class="card">
+    <h4>② 옵션 토글 — VS Code 관용</h4>
+    <p><code>Aa</code> 대소문자 · <code>|ab|</code> 전체 단어 · <code>.*</code> 정규식. 입력란 우측 정사각 토글(22px), on = accent 테두리 + 18% fill. 같은 화면 색상 요소 ≤ 4 (§1.2) 준수: accent 한 종만 추가.</p>
+  </div>
+  <div class="card">
+    <h4>③ 결과 그루핑 + 라인</h4>
+    <p>파일별 group(파일명 + 경로 + match 수 badge) → 펼치면 <b>라인번호 + 코드 + match 하이라이트</b>(<mark style="background:var(--match-bg);color:var(--text-emphasis);padding:0 1px;border-radius:2px">mark</mark> = accent 30% alpha). mono 폰트. group 헤더 클릭 = 접기/펼치기, summary 의 collapse-all 로 일괄.</p>
+  </div>
+  <div class="card">
+    <h4>④ open-at-match (AC-3)</h4>
+    <p>match 라인 클릭 → 기존 <code>openTab</code> 경로로 파일 탭 열고 <b>해당 라인으로 스크롤 + 줄 하이라이트</b>(좌측 2px accent bar). 활성 match 는 더 진한 하이라이트(55% alpha)로 출처 표시.</p>
+  </div>
+  <div class="card">
+    <h4>⑤ 상태 4종 (§1.5.3 / §8.9)</h4>
+    <p><b>Empty</b> 입력 전 placeholder + 단축키 안내 · <b>Loading</b> skeleton shimmer + aria-live("검색 중") · <b>Results</b> summary(건수·파일수) + 목록 · <b>No-result</b> Empty-pane 패턴 + 옵션/범위 조정 제안(출구, §1.5.5).</p>
+  </div>
+  <div class="card">
+    <h4>⑥ scope + ignore (AC-4)</h4>
+    <p>scope 선택자: <b>Whole project ↔ 현재 폴더</b>. node_modules / .git / build 항상 제외 — hint 로 명시. 입력은 debounce(설계 의도, 240ms), 결과 streaming 표시로 UI freeze 방지(impl 노트).</p>
+  </div>
+</div>
+
+<script>
+/* ── mock data ──────────────────────────────────────────────── */
+const QUERY = 'ticket';
+const groups = [
+  {
+    name:'ticketStore.ts', dir:'packages/gui/src/store', icon:'dev', open:true,
+    matches:[
+      {ln:12, pre:'export interface ', mark:'Ticket', post:'State {'},
+      {ln:28, pre:'  const [', mark:'ticket', post:'s, setTickets] = useState<Ticket[]>([])'},
+      {ln:41, pre:'  function add', mark:'Ticket', post:'(t: Ticket) {'},
+      {ln:55, pre:'    return ', mark:'ticket', post:'s.filter(t => t.status !== "abandoned")'},
+    ]
+  },
+  {
+    name:'tickets.ts', dir:'packages/gui/electron/ipc', icon:'dev', open:true,
+    matches:[
+      {ln:7,  pre:"ipcMain.handle('", mark:'ticket', post:":list', async () => {"},
+      {ln:19, pre:'  const dir = path.join(root, "docs", "', mark:'ticket', post:'s")'},
+      {ln:33, pre:'  return read', mark:'Ticket', post:'sFromDisk(dir)'},
+    ]
+  },
+  {
+    name:'T-024.md', dir:'docs/tickets/v0.5', icon:'md', open:true,
+    matches:[
+      {ln:14, pre:'# T-024: Explorer code-content search', mark:'', post:''},
+      {ln:20, pre:'Add VS-Code-style full-text content search to the Explorer ', mark:'tab', post:''},
+    ]
+  },
+];
+/* the file we "open" when a match is clicked */
+const fileSource = [
+  {ln:9,  html:'<span class="tok-com">// store/ticketStore.ts</span>'},
+  {ln:10, html:'<span class="tok-kw">import</span> { create } <span class="tok-kw">from</span> <span class="tok-str">\'zustand\'</span>'},
+  {ln:11, html:''},
+  {ln:12, html:'<span class="tok-kw">export interface</span> <span class="tok-fn">__MARK__State</span> {'},
+  {ln:13, html:'  tickets: Ticket[]'},
+  {ln:14, html:'  loading: <span class="tok-kw">boolean</span>'},
+  {ln:15, html:'}'},
+];
+
+/* ── icon helper ── */
+function fileIcon(kind){
+  const color = kind==='md' ? 'var(--persona-designer)' : 'var(--persona-dev)';
+  return `<svg class="ic xs ftype" viewBox="0 0 24 24" style="color:${color}"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>`;
+}
+function chev(){ return '<svg class="ic xs chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>'; }
+
+/* ── render results ── */
+function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function renderResults(){
+  const root = document.getElementById('resultsList');
+  root.innerHTML = '';
+  let total = 0;
+  groups.forEach((g, gi) => {
+    total += g.matches.length;
+    const gEl = document.createElement('div');
+    gEl.className = 'file-group' + (g.open ? '' : ' collapsed');
+    const head = document.createElement('div');
+    head.className = 'file-row';
+    head.innerHTML = chev() + fileIcon(g.icon) +
+      `<span class="fname">${esc(g.name)}</span><span class="fpath">${esc(g.dir)}</span><span class="fbadge">${g.matches.length}</span>`;
+    head.onclick = () => gEl.classList.toggle('collapsed');
+    gEl.appendChild(head);
+    const mWrap = document.createElement('div'); mWrap.className = 'matches';
+    g.matches.forEach((m, mi) => {
+      const line = document.createElement('div');
+      line.className = 'match-line' + (gi===0 && mi===0 ? ' active' : '');
+      const code = m.mark
+        ? `${esc(m.pre)}<mark>${esc(m.mark)}</mark>${esc(m.post)}`
+        : `${esc(m.pre)}${esc(m.post)}`;
+      line.innerHTML = `<span class="ln">${m.ln}</span><span class="code">${code}</span>`;
+      line.onclick = () => openAtMatch(gi, mi, g, m);
+      mWrap.appendChild(line);
+    });
+    gEl.appendChild(mWrap);
+    root.appendChild(gEl);
+  });
+  document.getElementById('summaryText').innerHTML =
+    `<b>${total}건</b> · 파일 <b>${groups.length}개</b>`;
+}
+
+/* ── open file at match (AC-3) ── */
+function openAtMatch(gi, mi, g, m){
+  document.querySelectorAll('.match-line').forEach(el=>el.classList.remove('active'));
+  const idx = [...document.querySelectorAll('.match-line')];
+  // find the clicked one
+  let counter=0, target=null;
+  groups.forEach((gg,ggi)=>gg.matches.forEach((mm,mmi)=>{ if(ggi===gi&&mmi===mi) target=idx[counter]; counter++; }));
+  if(target) target.classList.add('active');
+
+  // update tab + breadcrumb + editor
+  const tab = document.querySelector('.tab.active');
+  tab.childNodes[2].textContent = ' ' + g.name + ' ';
+  const crumbDir = g.dir.split('/');
+  const bc = document.querySelector('.breadcrumb');
+  bc.innerHTML = crumbDir.map(d=>`${esc(d)} <span class="sep">›</span> `).join('') +
+                 `<span class="leaf">${esc(g.name)}</span>`;
+  renderEditor(m);
+}
+function renderEditor(activeMatch){
+  const body = document.getElementById('editorBody');
+  body.innerHTML = '';
+  // synthesize lines around the active match
+  const center = activeMatch.ln;
+  for(let ln = center-3; ln <= center+3; ln++){
+    if(ln < 1) continue;
+    const el = document.createElement('div');
+    const isHit = ln === center;
+    el.className = 'eline' + (isHit ? ' hit' : '');
+    let codeHtml;
+    if(isHit){
+      const code = activeMatch.mark
+        ? `${esc(activeMatch.pre)}<mark>${esc(activeMatch.mark)}</mark>${esc(activeMatch.post)}`
+        : `${esc(activeMatch.pre)}${esc(activeMatch.post)}`;
+      codeHtml = code;
+    } else {
+      codeHtml = `<span class="tok-com">${ln%2 ? '// …' : ''}</span>`;
+    }
+    el.innerHTML = `<span class="eln">${ln}</span><span class="ecode">${codeHtml}</span>`;
+    body.appendChild(el);
+  }
+}
+
+/* ── state switching ── */
+const panes = {
+  summary: document.getElementById('summaryBar'),
+  results: document.getElementById('resultsList'),
+  empty: document.getElementById('emptyPane'),
+  loading: document.getElementById('loadingPane'),
+  noresult: document.getElementById('noresultPane'),
+};
+function setState(s){
+  panes.summary.style.display = (s==='results') ? 'flex' : 'none';
+  panes.results.style.display = (s==='results') ? 'block' : 'none';
+  panes.empty.style.display   = (s==='empty') ? 'flex' : 'none';
+  panes.loading.style.display = (s==='loading') ? 'flex' : 'none';
+  panes.noresult.style.display= (s==='noresult') ? 'flex' : 'none';
+  // sync query field text per state
+  const q = document.getElementById('queryInput');
+  if(s==='empty') q.value='';
+  else if(s==='noresult') q.value='qux_nonexistent';
+  else q.value = QUERY;
+  document.querySelectorAll('.switcher button').forEach(b=>{
+    b.setAttribute('aria-pressed', b.dataset.state===s ? 'true':'false');
+  });
+}
+document.querySelectorAll('.switcher button').forEach(b=>{
+  b.onclick = ()=>setState(b.dataset.state);
+});
+
+/* option toggles */
+['optCase','optWord','optRegex'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.onclick=()=>{ const on = el.getAttribute('aria-pressed')==='true'; el.setAttribute('aria-pressed', (!on).toString()); };
+});
+document.getElementById('optWord').setAttribute('aria-pressed','false');
+document.getElementById('optCase').setAttribute('aria-pressed','true');
+
+/* scope toggle (cycles for demo) */
+document.getElementById('scopeSel').onclick=()=>{
+  const v=document.getElementById('scopeVal');
+  v.textContent = v.textContent==='Whole project' ? '현재 폴더 (store/)' : 'Whole project';
+};
+/* collapse-all */
+document.getElementById('collapseAllBtn').onclick=()=>{
+  const allCollapsed=[...document.querySelectorAll('.file-group')].every(g=>g.classList.contains('collapsed'));
+  document.querySelectorAll('.file-group').forEach(g=>g.classList.toggle('collapsed', !allCollapsed));
+};
+
+/* init */
+renderResults();
+renderEditor(groups[0].matches[0]);
+setState('results');
+</script>
+</body>
+</html>

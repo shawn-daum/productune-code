@@ -12,66 +12,11 @@ contextBridge.exposeInMainWorld('api', {
   checkEnv: (): Promise<boolean> =>
     ipcRenderer.invoke('onboarding:checkEnv'),
 
-  detectHardware: (): Promise<{ tier: 'S' | 'A' | 'B'; ram_gb: number; apple_silicon: boolean; docker: boolean }> =>
-    ipcRenderer.invoke('onboarding:detectHardware'),
-
   completeOnboarding: (opts: {
     engine: 'claude' | 'codex' | 'both'
-    wikiBackend: 'filesystem' | 'graphiti'
     uiLanguage?: 'en' | 'ko'
-    graphitiConfig?: {
-      llmProvider: 'ollama'
-      llmModel: string
-      embedderProvider: 'ollama'
-      embedderModel: string
-    }
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:complete', opts),
-
-  installDocker: (): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:installDocker'),
-
-  /** Subscribe to streamed log lines from installDocker. Returns an unsubscribe fn. */
-  onDockerLog: (cb: (line: string) => void) => {
-    const listener = (_e: Electron.IpcRendererEvent, line: string) => cb(line)
-    ipcRenderer.on('onboarding:installDocker:log', listener)
-    return () => ipcRenderer.removeListener('onboarding:installDocker:log', listener)
-  },
-
-  // ── Local LLM + Graphiti setup (T-P4-125) ────────────────────────────────
-
-  /** List installed Ollama models (name:tag). Returns [] if ollama not installed. */
-  listOllamaModels: (): Promise<string[]> =>
-    ipcRenderer.invoke('onboarding:listOllamaModels'),
-
-  /** Install Ollama + pull <model> + pull nomic-embed-text. Streams progress via onInstallProgress. */
-  installLocalLLM: (opts: { model: string }): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:installLocalLLM', opts),
-
-  /** Subscribe to streamed log lines from installLocalLLM. Returns an unsubscribe fn. */
-  onInstallProgress: (cb: (line: string) => void) => {
-    const listener = (_e: Electron.IpcRendererEvent, line: string) => cb(line)
-    ipcRenderer.on('onboarding:installLocalLLM:log', listener)
-    return () => ipcRenderer.removeListener('onboarding:installLocalLLM:log', listener)
-  },
-
-  /** Run setup-graphiti.sh (FalkorDB + Graphiti containers). Streams progress via onGraphitiProgress. */
-  setupGraphiti: (): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:setupGraphiti'),
-
-  /** Subscribe to streamed log lines from setupGraphiti. Returns an unsubscribe fn. */
-  onGraphitiProgress: (cb: (line: string) => void) => {
-    const listener = (_e: Electron.IpcRendererEvent, line: string) => cb(line)
-    ipcRenderer.on('onboarding:setupGraphiti:log', listener)
-    return () => ipcRenderer.removeListener('onboarding:setupGraphiti:log', listener)
-  },
-
-  /** Register graphiti MCP with Claude Code. Idempotent — safe to call multiple times. */
-  registerGraphitiMCP: (): Promise<{ ok: boolean; alreadyRegistered: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:registerGraphitiMCP'),
-
-  openDockerApp: (): Promise<void> =>
-    ipcRenderer.invoke('onboarding:openDockerApp'),
 
   checkClaude: (): Promise<{ installed: boolean; authed: boolean }> =>
     ipcRenderer.invoke('onboarding:checkClaude'),
