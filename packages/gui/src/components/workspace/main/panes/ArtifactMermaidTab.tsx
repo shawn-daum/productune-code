@@ -1,14 +1,20 @@
 /**
- * ArtifactMermaidTab — T-014
+ * ArtifactMermaidTab — T-014 / T-022
  *
  * Read-only mermaid diagram viewer for .mmd / .mermaid artifact files.
  * Reuses MermaidBlock (zoom/pan/source-toggle/copy).
  * No edit affordance — read-only invariant.
+ *
+ * T-022: Exposes explicit +/−/reset zoom buttons in the header wired to
+ * MermaidBlock's internal TransformWrapper via a forwarded ref so the header
+ * controls and the in-canvas wheel/drag/pinch all operate the same transform.
  */
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { AlertOctagon, Loader2, Lock, ChevronRight } from 'lucide-react'
+import { ReactZoomPanPinchRef } from 'react-zoom-pan-pinch'
 import MermaidBlock from '../../../MermaidBlock'
+import ZoomControls, { ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './ZoomControls'
 
 interface Props {
   props?: Record<string, unknown>
@@ -23,6 +29,32 @@ export default function ArtifactMermaidTab({ props: tabProps }: Props) {
 
   const [content, setContent] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
+
+  // Track displayed zoom level to keep the percentage readout in sync.
+  // MermaidBlock starts at scale 1. We mirror changes when the user clicks
+  // our header buttons; wheel/pinch changes are not reflected in the readout
+  // (that would require an onTransformed callback plumbed through MermaidBlock
+  // — acceptable limitation for this fix round).
+  const [zoom, setZoom] = useState<number>(ZOOM_DEFAULT)
+
+  // Ref forwarded into MermaidBlock so header buttons can call the
+  // TransformWrapper imperative API (zoomIn / zoomOut / resetTransform).
+  const transformRef = useRef<ReactZoomPanPinchRef>(null)
+
+  const zoomIn = useCallback(() => {
+    transformRef.current?.zoomIn(ZOOM_STEP)
+    setZoom(z => Math.min(ZOOM_MAX, parseFloat((z + ZOOM_STEP).toFixed(2))))
+  }, [])
+
+  const zoomOut = useCallback(() => {
+    transformRef.current?.zoomOut(ZOOM_STEP)
+    setZoom(z => Math.max(ZOOM_MIN, parseFloat((z - ZOOM_STEP).toFixed(2))))
+  }, [])
+
+  const zoomReset = useCallback(() => {
+    transformRef.current?.resetTransform()
+    setZoom(ZOOM_DEFAULT)
+  }, [])
 
   const load = useCallback(() => {
     if (!absPath || !projectDir) {
@@ -50,7 +82,7 @@ export default function ArtifactMermaidTab({ props: tabProps }: Props) {
 
   return (
     <div style={wrap}>
-      {/* Header bar: breadcrumb + read-only badge */}
+      {/* Header bar: breadcrumb + zoom controls + read-only badge */}
       <div style={headerBar}>
         <div style={breadcrumbRow}>
           {crumbParts.map((part, idx) => (
@@ -65,9 +97,20 @@ export default function ArtifactMermaidTab({ props: tabProps }: Props) {
             <span style={crumbSeg}>{absPath || 'diagram'}</span>
           )}
         </div>
-        <div style={roBadge}>
-          <Lock size={11} style={{ flexShrink: 0 }} />
-          <span>읽기 전용</span>
+        <div style={headerRight}>
+          {/* Zoom controls — only shown when diagram is rendered */}
+          {loadState === 'done' && content !== null && (
+            <ZoomControls
+              zoom={zoom}
+              onZoomIn={zoomIn}
+              onZoomOut={zoomOut}
+              onReset={zoomReset}
+            />
+          )}
+          <div style={roBadge}>
+            <Lock size={11} style={{ flexShrink: 0 }} />
+            <span>읽기 전용</span>
+          </div>
         </div>
       </div>
 
@@ -95,7 +138,7 @@ export default function ArtifactMermaidTab({ props: tabProps }: Props) {
 
         {loadState === 'done' && content !== null && (
           <div style={viewerWrap}>
-            <MermaidBlock code={content} />
+            <MermaidBlock code={content} transformRef={transformRef} />
           </div>
         )}
       </div>
@@ -147,6 +190,13 @@ const crumbLast: React.CSSProperties = {
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+}
+
+const headerRight: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexShrink: 0,
 }
 
 const roBadge: React.CSSProperties = {

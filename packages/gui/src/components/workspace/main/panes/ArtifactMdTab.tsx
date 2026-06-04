@@ -9,6 +9,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AlertOctagon, Loader2, Lock, ChevronRight } from 'lucide-react'
 import MdRenderer from '../../chat/MdRenderer'
+import ZoomControls, { ZOOM_STEP, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT } from './ZoomControls'
 
 interface Props {
   props?: Record<string, unknown>
@@ -23,6 +24,13 @@ export default function ArtifactMdTab({ props: tabProps }: Props) {
 
   const [content, setContent] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
+  const [zoom, setZoom] = useState<number>(ZOOM_DEFAULT)
+
+  const zoomIn = useCallback(() =>
+    setZoom(z => Math.min(ZOOM_MAX, parseFloat((z + ZOOM_STEP).toFixed(2)))), [])
+  const zoomOut = useCallback(() =>
+    setZoom(z => Math.max(ZOOM_MIN, parseFloat((z - ZOOM_STEP).toFixed(2)))), [])
+  const zoomReset = useCallback(() => setZoom(ZOOM_DEFAULT), [])
 
   const load = useCallback(() => {
     if (!absPath || !projectDir) {
@@ -66,9 +74,18 @@ export default function ArtifactMdTab({ props: tabProps }: Props) {
             <span style={crumbSeg}>{absPath || 'artifact'}</span>
           )}
         </div>
-        <div style={roBadge}>
-          <Lock size={11} style={{ flexShrink: 0 }} />
-          <span>읽기 전용</span>
+        <div style={headerRight}>
+          {/* Zoom controls */}
+          <ZoomControls
+            zoom={zoom}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onReset={zoomReset}
+          />
+          <div style={roBadge}>
+            <Lock size={11} style={{ flexShrink: 0 }} />
+            <span>읽기 전용</span>
+          </div>
         </div>
       </div>
 
@@ -95,8 +112,10 @@ export default function ArtifactMdTab({ props: tabProps }: Props) {
         )}
 
         {loadState === 'done' && content !== null && (
-          <div style={viewerWrap}>
-            <MdRenderer text={content} />
+          <div style={zoomOuter}>
+            <div style={{ ...viewerWrap, transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%` }}>
+              <MdRenderer text={content} />
+            </div>
           </div>
         )}
       </div>
@@ -150,6 +169,13 @@ const crumbLast: React.CSSProperties = {
   textOverflow: 'ellipsis',
 }
 
+const headerRight: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexShrink: 0,
+}
+
 const roBadge: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -166,6 +192,11 @@ const roBadge: React.CSSProperties = {
 const body: React.CSSProperties = {
   flex: 1,
   overflow: 'auto',
+}
+
+const zoomOuter: React.CSSProperties = {
+  overflow: 'visible',
+  minHeight: '100%',
 }
 
 const centerState: React.CSSProperties = {

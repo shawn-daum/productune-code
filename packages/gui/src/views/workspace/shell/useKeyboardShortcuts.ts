@@ -88,9 +88,9 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
         return
       }
 
-      // cmd+1 ~ cmd+4: jump to Nth tab in active leaf
+      // cmd+1 ~ cmd+9: jump to Nth tab in active leaf
       const n = parseInt(e.key, 10)
-      if (n >= 1 && n <= 4) {
+      if (n >= 1 && n <= 9) {
         e.preventDefault()
         const s = useWorkspace.getState()
         const leaf = findLeafByIdLocal(s.panes, s.activePaneId)

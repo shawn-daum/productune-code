@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch'
+import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from 'react-zoom-pan-pinch'
 import ErrorBoundary from './ErrorBoundary'
 
 // Mermaid is initialized once per session
@@ -18,9 +18,12 @@ async function ensureMermaid() {
 
 interface Props {
   code: string
+  /** Optional ref forwarded to the TransformWrapper so parent can call
+   *  zoomIn / zoomOut / resetTransform from outside (e.g. header buttons). */
+  transformRef?: React.Ref<ReactZoomPanPinchRef>
 }
 
-function MermaidBlockInner({ code }: Props) {
+function MermaidBlockInner({ code, transformRef }: Props) {
   const uid = useId().replace(/:/g, '')
   const containerId = `mermaid-${uid}`
   const containerRef = useRef<HTMLDivElement>(null)
@@ -98,6 +101,7 @@ function MermaidBlockInner({ code }: Props) {
       {/* SVG diagram with zoom/pan */}
       {!renderError && !showSource && svg && (
         <TransformWrapper
+          ref={transformRef}
           minScale={0.3}
           maxScale={6}
           wheel={{ step: 0.1 }}
@@ -133,7 +137,8 @@ export default function MermaidBlock(props: Props) {
         </div>
       )}
     >
-      <MermaidBlockInner {...props} />
+      {/* transformRef must be passed explicitly — spread loses the ref type */}
+      <MermaidBlockInner code={props.code} transformRef={props.transformRef} />
     </ErrorBoundary>
   )
 }
