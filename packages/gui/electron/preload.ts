@@ -682,4 +682,34 @@ contextBridge.exposeInMainWorld('api', {
    *  projectDir is required for the path-traversal guard on the main-process side. */
   artifactsReadFile: (projectDir: string, absPath: string): Promise<string> =>
     ipcRenderer.invoke('artifacts:readFile', projectDir, absPath),
+
+  // ── Explorer content search (T-024) ──────────────────────────────────────────
+
+  /** Full-text content search across project files (fixed ignore rules, perf-capped). */
+  searchContent: (req: {
+    projectDir: string
+    scopeDir?: string | null
+    query: string
+    options: { caseSensitive: boolean; wholeWord: boolean; regex: boolean }
+  }): Promise<{
+    groups: Array<{
+      absPath: string
+      relPath: string
+      name: string
+      dir: string
+      matches: Array<{ line: number; text: string; ranges: Array<{ start: number; end: number }> }>
+    }>
+    totalMatches: number
+    fileCount: number
+    truncated: boolean
+    error?: string
+  }> =>
+    ipcRenderer.invoke('search:content', req),
+
+  /** Read a text file split into lines (for open-at-line in a search result tab). */
+  searchReadFileLines: (
+    projectDir: string,
+    absPath: string,
+  ): Promise<{ ok: boolean; lines?: string[]; error?: string; truncated?: boolean }> =>
+    ipcRenderer.invoke('search:readFileLines', projectDir, absPath),
 })

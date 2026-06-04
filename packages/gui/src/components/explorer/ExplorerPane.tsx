@@ -5,6 +5,7 @@ import { useExplorer } from '../../store/explorer'
 import { useWorkspace } from '../../store/workspace'
 import type { TabType } from '../../store/workspace'
 import FileTree from './FileTree'
+import SearchPane from './SearchPane'
 
 // ── dispatcher helper ──────────────────────────────────────────────────────────
 
@@ -125,6 +126,9 @@ export default function ExplorerPane() {
           </button>
         </div>
       </div>
+
+      {/* Content search section (T-024) */}
+      <SearchPane projectDir={projectDir} />
 
       {/* Tree */}
       <div style={treeScroll} id="explorer-body" aria-label={t('workspace.explorer.title')}>

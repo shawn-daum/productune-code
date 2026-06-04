@@ -14,6 +14,7 @@ import { register as registerDeploy }     from './ipc/deploy'
 import { register as registerSettings }   from './ipc/settings'
 import { register as registerDesign }     from './ipc/design'
 import { register as registerExplorer }   from './ipc/explorer'
+import { register as registerSearch }     from './ipc/search'
 import { register as registerWorktree }   from './ipc/worktree'
 import { register as registerArtifacts }  from './ipc/artifacts'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
@@ -50,6 +51,7 @@ registerDeploy()
 registerSettings()
 registerDesign()
 registerExplorer()
+registerSearch()
 registerWorktree()
 registerArtifacts()
 

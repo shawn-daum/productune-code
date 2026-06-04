@@ -27,6 +27,7 @@ export type TabType =
   | 'artifact-md'
   | 'artifact-mermaid'
   | 'ticket-detail'
+  | 'code-search'
 
 export interface Tab {
   id: string
@@ -620,6 +621,7 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'artifact-md':       return (props?.relPath as string)?.split('/').pop() ?? 'Artifact'
     case 'artifact-mermaid':  return (props?.relPath as string)?.split('/').pop() ?? 'Diagram'
     case 'ticket-detail':     return (props?.ticketId as string) ?? 'Ticket'
+    case 'code-search':       return (props?.path as string)?.split('/').pop() ?? 'File'
     default:                  return type
   }
 }
