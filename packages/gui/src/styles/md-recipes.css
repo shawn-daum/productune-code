@@ -58,6 +58,24 @@
   --easing-standard:   cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* ── artifact-md font-size zoom (T-PATCH-017) ────────────────────────────── */
+/*
+ * ArtifactMdTab zooms by font-size (reflows layout) instead of transform:scale,
+ * so the scroll container measures true content height and nothing is clipped.
+ * The md-* recipes read absolute px from :root vars; here we re-declare those
+ * size vars as em (relative to this wrapper's font-size) so a single font-size
+ * on .artifact-md-zoom scales every heading/body/code/list/table consistently.
+ * Base reference = --text-base (13px) → 1em.
+ */
+.artifact-md-zoom {
+  --text-xs:      0.7692em;  /* 10/13 */
+  --text-sm:      0.9231em;  /* 12/13 */
+  --text-base:    1em;       /* 13/13 */
+  --text-md:      1.0769em;  /* 14/13 */
+  --text-md-plus: 1.1538em;  /* 15/13 */
+  --text-lg:      1.3846em;  /* 18/13 */
+}
+
 /* ── md-* markdown render recipes ───────────────────────────────────────── */
 
 /* R1 md-h1 */

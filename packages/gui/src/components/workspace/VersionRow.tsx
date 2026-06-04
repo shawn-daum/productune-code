@@ -10,6 +10,8 @@
  * Close badge reuses PhaseStrip currentBadge shape (same borderRadius/fontSize/padding) with neutral gray.
  */
 
+import i18next from '../../i18n'
+
 // ── Date helper ───────────────────────────────────────────────────────────────
 
 export function formatActivityDate(iso: string | null | undefined): string {
@@ -21,7 +23,7 @@ export function formatActivityDate(iso: string | null | undefined): string {
     date.getFullYear() === today.getFullYear() &&
     date.getMonth() === today.getMonth() &&
     date.getDate() === today.getDate()
-  if (isToday) return '오늘'
+  if (isToday) return i18next.t('workspace.versions.today')
   return date.toISOString().slice(0, 10)
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 
 interface MenuItem {
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function ContextMenu({ x, y, items, onClose }: Props) {
+  const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close on outside click or Escape.
@@ -40,7 +42,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
       ref={menuRef}
       style={menuStyle(x, y)}
       role="menu"
-      aria-label="context menu"
+      aria-label={t('workspace.explorer.contextMenuAria')}
     >
       {items.map((item, i) => (
         <button

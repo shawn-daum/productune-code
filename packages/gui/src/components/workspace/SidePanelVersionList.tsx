@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import i18next from '../../i18n'
 import type { PoState } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import { useTicketScan } from '../../lib/useTicketScan'
@@ -36,7 +37,7 @@ function formatActivityDate(iso: string | null | undefined): string {
     date.getFullYear() === today.getFullYear() &&
     date.getMonth() === today.getMonth() &&
     date.getDate() === today.getDate()
-  if (isToday) return '오늘'
+  if (isToday) return i18next.t('workspace.versions.today')
   // YYYY-MM-DD
   return date.toISOString().slice(0, 10)
 }
@@ -147,7 +148,7 @@ export default function SidePanelVersionList({ poState }: Props) {
   const totalTickets = tickets.length
   const totalDeploys = 0  // deferred to 2nd PR
   const headerRight = versions.length > 0
-    ? `${totalTickets} · 배포 ${totalDeploys}`
+    ? t('workspace.versions.ticketDeploySummary', { tickets: totalTickets, deploys: totalDeploys })
     : undefined
 
   // Auto-select first (latest) version on first mount
@@ -156,7 +157,7 @@ export default function SidePanelVersionList({ poState }: Props) {
       const firstId = versions[0].id
       setSelectedVersionId(firstId)
       // Open the tab proactively
-      openTab('version-history:main', 'version-history', {}, '버전 히스토리')
+      openTab('version-history:main', 'version-history', {}, t('workspace.versionHistory.title'))
       window.dispatchEvent(new CustomEvent('version-select', { detail: { versionId: firstId } }))
     }
     // Only run once on mount (versions may be empty on first render)
@@ -165,7 +166,7 @@ export default function SidePanelVersionList({ poState }: Props) {
 
   const handleRowClick = (versionId: string) => {
     setSelectedVersionId(versionId)
-    openTab('version-history:main', 'version-history', {}, '버전 히스토리')
+    openTab('version-history:main', 'version-history', {}, t('workspace.versionHistory.title'))
     window.dispatchEvent(new CustomEvent('version-select', { detail: { versionId } }))
   }
 

@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Clock } from 'lucide-react'
 import type { PoHealthDetail } from '../../../store/sessionHealth'
 
@@ -22,6 +23,7 @@ interface RateLimitBannerProps {
 }
 
 export default function RateLimitBanner({ detail, onExpired }: RateLimitBannerProps) {
+  const { t } = useTranslation()
   // deadline 은 마운트 시 1회 계산 (ref — re-render 마다 재계산 X)
   const deadlineRef = useRef<number>(calcDeadline(detail))
 
@@ -51,8 +53,8 @@ export default function RateLimitBanner({ detail, onExpired }: RateLimitBannerPr
   }, [])
 
   const text = isEstimate
-    ? `API 한도 도달 — 약 ${remaining}초 후 재시도 가능 (추정)`
-    : `API 한도 도달 — ${remaining}초 후 재시도 가능`
+    ? t('workspace.chat.rateLimit.estimated', { n: remaining })
+    : t('workspace.chat.rateLimit.exact', { n: remaining })
 
   return (
     <div style={banner}>

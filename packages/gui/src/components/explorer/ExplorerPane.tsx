@@ -22,8 +22,10 @@ function resolveTabKind(filePath: string): { type: TabType; readonly?: boolean }
   if (MD_EXTS.has(ext))    return { type: 'markdown' }
   if (HTML_EXTS.has(ext))  return { type: 'preview' }
   if (IMAGE_EXTS.has(ext)) return { type: 'image' }
-  if (TEXT_EXTS.has(ext))  return { type: 'markdown', readonly: true }
-  return { type: 'binary' }
+  if (TEXT_EXTS.has(ext))  return { type: 'code-view', readonly: true }
+  // Unknown/extensionless: route to the code viewer and let the IPC's
+  // looksBinary guard decide whether to show the no-preview state. (T-PATCH-016)
+  return { type: 'code-view', readonly: true }
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -84,9 +86,12 @@ export default function ExplorerPane() {
       const tabId = `file:${absPath}`
       const props: Record<string, unknown> = { path: absPath }
       if (readonly) props.readonly = true
+      // code-view reads via the project-dir-scoped search:readFileLines IPC
+      // (path-traversal + size + binary guards), so it needs projectDir. (T-PATCH-016)
+      if (type === 'code-view' && projectDir) props.projectDir = projectDir
       openTab(tabId, type, props, fileName)
     },
-    [openTab],
+    [openTab, projectDir],
   )
 
   // Reveal in OS via IPC.

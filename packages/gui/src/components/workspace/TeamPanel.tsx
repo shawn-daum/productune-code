@@ -110,12 +110,14 @@ export default function TeamPanel({ poState }: Props) {
     return diff < 60
   }
 
-  // Persona row click → persona-def tab, distinct tabId per persona (T-P4-145)
+  // Persona row click → persona-def tab. Canonical tab id + prop shape uses the
+  // full `pdt-*` id (def.id) so this coalesces with the search-palette open path
+  // (helpers.ts: `persona-def:${slug}`, { persona: slug }). T-PATCH-014.
   const handlePersonaClick = (def: PersonaDef) => {
     openTab(
-      `persona-def:${def.key}`,
+      `persona-def:${def.id}`,
       'persona-def',
-      { personaKey: def.key },
+      { persona: def.id },
       t(def.nameKey),
     )
   }

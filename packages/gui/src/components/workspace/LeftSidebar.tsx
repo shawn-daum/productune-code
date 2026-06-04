@@ -114,8 +114,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
   const headerAction = activeIcon === 'artifacts' ? (
     <button
       style={headerActionBtn}
-      title="새로고침"
-      aria-label="새로고침"
+      title={t('workspace.sidebar.refresh')}
+      aria-label={t('workspace.sidebar.refresh')}
       onClick={() => window.dispatchEvent(new CustomEvent('artifacts:reload'))}
     >
       <RefreshCw size={13} strokeWidth={2} />
@@ -138,7 +138,10 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
             poState={poState}
             selectedVersionId={selectedVersionId}
             isFocused={isFocused}
-            onSelect={(id) => handleVersionClick(id)}
+            // T-PATCH-013 B1: current-version card click must ONLY set selection;
+            // it must NOT go through handleVersionClick (which opens version-history
+            // and dispatches version-select). The card opens its own ticket-review tab.
+            onSelect={(id) => setSelectedVersionId(id)}
           />
           {hasPastVersions && (
             <SidePanelPastVersions

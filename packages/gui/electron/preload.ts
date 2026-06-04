@@ -370,7 +370,9 @@ contextBridge.exposeInMainWorld('api', {
       url?: string
       env?: Record<string, string>
     }
-    source: 'productune' | 'local' | 'project'
+    source: 'productune' | 'local' | 'project' | 'managed' | 'plugin'
+    connected?: boolean
+    editable: boolean
   }>> =>
     ipcRenderer.invoke('mcp:getServers', projectDir),
 

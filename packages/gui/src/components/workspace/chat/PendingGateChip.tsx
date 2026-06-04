@@ -9,6 +9,7 @@
  */
 
 import { useRef, useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
 import { ChevronDown, X, AlertCircle, Send, CheckCircle2 } from 'lucide-react'
 import { useWorkspace } from '../../../store/workspace'
@@ -16,6 +17,7 @@ import { PHASE_NAMES } from '../../../lib/types'
 import type { Message } from '../../../lib/types'
 
 export default function PendingGateChip() {
+  const { t }           = useTranslation()
   const project         = useWorkspace((s) => s.project)
   const poState         = useWorkspace((s) => s.poState)
   const streaming       = useWorkspace((s) => s.streaming)
@@ -42,7 +44,7 @@ export default function PendingGateChip() {
   if (!gate) return null   // count = 0 → zero height, no render
 
   const fromName = PHASE_NAMES[gate.from_phase] ?? `Phase ${gate.from_phase}`
-  const toName   = gate.to_phase ? (PHASE_NAMES[gate.to_phase] ?? `Phase ${gate.to_phase}`) : '종료'
+  const toName   = gate.to_phase ? (PHASE_NAMES[gate.to_phase] ?? `Phase ${gate.to_phase}`) : t('workspace.gate.phaseEnd')
 
   const handleChipClick = () => {
     if (!open) setChipRect(chipRef.current?.getBoundingClientRect() ?? null)
@@ -116,7 +118,7 @@ export default function PendingGateChip() {
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="결정 대기 항목"
+            aria-label={t('workspace.gate.pendingAria')}
             style={{
               ...popoverS,
               top:   chipRect.top,
@@ -129,7 +131,7 @@ export default function PendingGateChip() {
             <div style={popHeadS}>
               <AlertCircle size={11} strokeWidth={2} color="#FBBF24" />
               <span style={popTitleS}>Pending Gate</span>
-              <button style={closeXS} onClick={() => setOpen(false)} aria-label="닫기">
+              <button style={closeXS} onClick={() => setOpen(false)} aria-label={t('common.close')}>
                 <X size={12} strokeWidth={2} />
               </button>
             </div>
@@ -161,7 +163,7 @@ export default function PendingGateChip() {
                       handleSend()
                     }
                   }}
-                  placeholder="답변 입력..."
+                  placeholder={t('workspace.gate.answerPlaceholder')}
                   rows={2}
                   disabled={submitting}
                 />
@@ -171,7 +173,7 @@ export default function PendingGateChip() {
                   disabled={!draft.trim() || submitting}
                 >
                   <Send size={11} strokeWidth={2} />
-                  보내기
+                  {t('workspace.gate.send')}
                 </button>
               </div>
 
@@ -180,11 +182,11 @@ export default function PendingGateChip() {
                 {/* primary: 승인 */}
                 <button style={approveBtnS} onClick={handleApprove} disabled={submitting}>
                   <CheckCircle2 size={11} strokeWidth={2} />
-                  진입 승인
+                  {t('workspace.gate.approveEnter')}
                 </button>
                 {/* ghost: 보류 — §1.5.1 CTA ≤ 2 (ghost = non-weight) */}
                 <button style={holdBtnS} onClick={() => setOpen(false)} disabled={submitting}>
-                  보류
+                  {t('workspace.gate.hold')}
                 </button>
               </div>
             </div>
@@ -205,10 +207,10 @@ export default function PendingGateChip() {
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleChipClick() }}
         aria-expanded={open}
-        aria-label={`결정 대기 항목 ${open ? '닫기' : '열기'}`}
+        aria-label={t('workspace.gate.toggleAria', { state: open ? t('common.close') : t('workspace.explorer.contextOpen') })}
       >
         <span style={pulseDotS} />
-        <span style={chipLabelS}>결정 대기</span>
+        <span style={chipLabelS}>{t('workspace.gate.pendingLabel')}</span>
         <span style={chipCountS}>1</span>
         <ChevronDown
           size={11}

@@ -66,13 +66,13 @@ const PREFIX_MAP: Record<string, QuickOpenCategory> = {
   'p:': 'personas',
 }
 
-const LEGEND_CHIPS: Array<{ prefix: string; label: string }> = [
-  { prefix: 't:', label: '티켓' },
-  { prefix: 'tab:', label: '탭' },
-  { prefix: 's:', label: '스킬' },
-  { prefix: 'mcp:', label: 'MCP' },
-  { prefix: 'a:', label: '산출물' },
-  { prefix: 'p:', label: '페르소나' },
+const LEGEND_CHIPS: Array<{ prefix: string; labelKey: string | null; literal?: string }> = [
+  { prefix: 't:', labelKey: 'workspace.quickOpen.section.ticket' },
+  { prefix: 'tab:', labelKey: 'workspace.quickOpen.section.tab' },
+  { prefix: 's:', labelKey: 'workspace.quickOpen.section.skill' },
+  { prefix: 'mcp:', labelKey: null, literal: 'MCP' },
+  { prefix: 'a:', labelKey: 'workspace.quickOpen.section.artifact' },
+  { prefix: 'p:', labelKey: 'workspace.quickOpen.section.persona' },
 ]
 
 const RECENT_KEY = 'productune:quickopen:recent'
@@ -333,6 +333,7 @@ interface RestingStateProps {
 }
 
 function RestingState({ items }: RestingStateProps) {
+  const { t } = useTranslation()
   const recentIds = loadRecentIds()
   const recentItems = recentIds
     .map((rid) => items.find((it) => it.id === rid))
@@ -357,7 +358,7 @@ function RestingState({ items }: RestingStateProps) {
         {LEGEND_CHIPS.map((chip) => (
           <span key={chip.prefix} style={legendChipStyle}>
             <code style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10, color: '#707070' }}>{chip.prefix}</code>
-            <span style={{ fontSize: 11, color: '#A0A0A0' }}>{chip.label}</span>
+            <span style={{ fontSize: 11, color: '#A0A0A0' }}>{chip.labelKey ? t(chip.labelKey) : chip.literal}</span>
           </span>
         ))}
       </div>
@@ -366,15 +367,16 @@ function RestingState({ items }: RestingStateProps) {
 }
 
 function NoMatchState() {
+  const { t } = useTranslation()
   return (
     <div style={noMatchContainerStyle}>
       <Search size={28} color="#707070" strokeWidth={1.5} />
-      <div style={{ fontSize: 14, color: '#C8C8CC', fontWeight: 500 }}>결과 없음</div>
+      <div style={{ fontSize: 14, color: '#C8C8CC', fontWeight: 500 }}>{t('workspace.quickOpen.empty')}</div>
       <div style={{ fontSize: 12, color: '#A0A0A0', lineHeight: 1.4, textAlign: 'center' }}>
-        티켓 · 탭 · 스킬 · MCP · 산출물 · 페르소나<br />전체에서 검색했어요
+        {t('workspace.quickOpen.searchedScope')}<br />{t('workspace.quickOpen.searchedAll')}
       </div>
       <div style={{ fontSize: 11, color: '#707070', marginTop: 4 }}>
-        <kbd style={kbdStyle}>Esc</kbd> 로 닫기
+        <kbd style={kbdStyle}>Esc</kbd> {t('workspace.quickOpen.hint.close')}
       </div>
     </div>
   )
@@ -498,7 +500,7 @@ export default function QuickOpenPalette({ items, onClose, onPick }: Props) {
             <button
               style={clearBtnStyle}
               onClick={() => setQuery('')}
-              aria-label="검색어 지우기"
+              aria-label={t('workspace.quickOpen.clearAria')}
             >
               ✕
             </button>
@@ -536,20 +538,20 @@ export default function QuickOpenPalette({ items, onClose, onPick }: Props) {
         <div style={footerStyle}>
           <span style={footLegStyle}>
             <kbd style={kbdStyle}>↑</kbd><kbd style={kbdStyle}>↓</kbd>
-            <span style={{ marginLeft: 4 }}>이동</span>
+            <span style={{ marginLeft: 4 }}>{t('workspace.quickOpen.hint.nav')}</span>
           </span>
           <span style={footLegStyle}>
             <kbd style={kbdStyle}>↵</kbd>
-            <span style={{ marginLeft: 4 }}>열기</span>
+            <span style={{ marginLeft: 4 }}>{t('workspace.quickOpen.hint.open')}</span>
           </span>
           <span style={footLegStyle}>
             <kbd style={{ ...kbdStyle, fontSize: 9 }}>t: tab: s: mcp: a: p:</kbd>
-            <span style={{ marginLeft: 4 }}>범위</span>
+            <span style={{ marginLeft: 4 }}>{t('workspace.quickOpen.hint.scope')}</span>
           </span>
           <span style={{ flex: 1 }} />
           <span style={footLegStyle}>
             <kbd style={kbdStyle}>Esc</kbd>
-            <span style={{ marginLeft: 4 }}>닫기</span>
+            <span style={{ marginLeft: 4 }}>{t('workspace.quickOpen.hint.close')}</span>
           </span>
         </div>
       </div>

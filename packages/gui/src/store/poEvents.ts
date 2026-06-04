@@ -14,6 +14,7 @@
  *   - poOnArtifactOpen                  ← WorkspaceShell 에 유지 (local toast state 의존)
  */
 
+import i18next from '../i18n'
 import { useWorkspace } from './workspace'
 import { useUserTodo } from './useUserTodo'
 import { useQaLoop } from './useQaLoop'
@@ -117,12 +118,12 @@ function register() {
   }) => {
     if (payload.url) {
       useWorkspace.getState().openTab(
-        `user-verify:${payload.ticketId}`, 'browser', { url: payload.url }, '확인 필요',
+        `user-verify:${payload.ticketId}`, 'browser', { url: payload.url }, i18next.t('workspace.userVerify.tabTitle'),
       )
     }
     useUserTodo.getState().pushItems([{
       id: `verify-${payload.ticketId}`,
-      description: `${payload.description} 후 체크`,
+      description: i18next.t('workspace.userVerify.todoCheck', { description: payload.description }),
       type: payload.url ? 'link' : 'check',
       href: payload.url,
     }])

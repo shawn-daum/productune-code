@@ -75,7 +75,7 @@ export default function TicketCard({ ticket, commits }: TicketCardProps) {
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
         >
-          {expanded ? '▲ 접기' : `▼ 자동저장 기록 ${commits.length}건`}
+          {expanded ? t('workspace.versionHistory.ticketCard.collapse') : t('workspace.versionHistory.ticketCard.autosaveCount', { n: commits.length })}
         </button>
       )}
 

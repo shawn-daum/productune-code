@@ -7,13 +7,6 @@ import { FileText, ChevronRight as ChevRight, Pencil, Save, X } from 'lucide-rea
 
 // ── Static persona metadata (T-P4-044 dispatch target, Phase 4 preview-only) ─
 
-const KEY_TO_ID: Record<string, string> = {
-  po:       'pdt-po',
-  designer: 'pdt-designer',
-  dev:      'pdt-developer',
-  qa:       'pdt-qa',
-}
-
 type PersonaKey = PersonaId
 
 interface PersonaMeta {
@@ -94,10 +87,9 @@ export default function PersonaDefTab({ props }: Props) {
   const [specError, setSpecError] = useState<string | null>(null)
   const [specSaved, setSpecSaved] = useState(false)
 
-  // personaId derivation: persona prop (WorkspaceShell path) OR personaKey → KEY_TO_ID (TeamPanel path)
-  const personaKeyProp = (props?.personaKey as string) ?? ''
-  const personaIdProp  = (props?.persona    as string) ?? ''
-  const personaId = personaIdProp || KEY_TO_ID[personaKeyProp] || ''
+  // personaId derivation: both open paths (search palette + TeamPanel row) now pass
+  // the canonical full `pdt-*` id via the `persona` prop. T-PATCH-014 unified this.
+  const personaId = (props?.persona as string) ?? ''
 
   const sourcePath = (props?.sourcePath as string) ?? `~/.claude/agents/${personaId}.md`
   const meta = PERSONA_META[personaId] ?? null

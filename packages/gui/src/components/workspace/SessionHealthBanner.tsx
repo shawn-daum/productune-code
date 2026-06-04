@@ -91,8 +91,8 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
         <button
           style={dismissBtn}
           onClick={dismissBanner}
-          aria-label="Dismiss"
-          title="Dismiss"
+          aria-label={t('common.dismiss')}
+          title={t('common.dismiss')}
         >
           ×
         </button>

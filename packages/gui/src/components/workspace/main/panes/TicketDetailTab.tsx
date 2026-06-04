@@ -24,6 +24,9 @@ import {
 } from 'lucide-react'
 import MdRenderer from '../../chat/MdRenderer'
 import { useWorkspace } from '../../../../store/workspace'
+import { useUserModeT } from '../../../../i18n/useUserModeT'
+
+type TModeFn = (key: string, options?: Record<string, unknown>) => string
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -82,29 +85,32 @@ function deriveNextAction(
   status: string | undefined,
   assignee: string | undefined,
   qaStatus: string | undefined,
+  tMode: TModeFn,
 ): string {
-  const personaName = assignee?.replace('pdt-', '') ?? '담당자'
+  const personaName = assignee?.replace('pdt-', '') ?? tMode('workspace.ticketDetail.defaultAssignee')
 
   switch (status) {
     case 'blocked':
-      return '차단 — blocker 해소 대기'
+      return tMode('workspace.ticketDetail.statusBlocked')
     case 'review':
-      return `${personaName} 리뷰 대기`
+      return tMode('workspace.ticketDetail.statusReview', { persona: personaName })
     case 'user-verify':
-      return 'qa 검증 대기 (user-verify)'
+      return tMode('workspace.ticketDetail.statusUserVerify')
     case 'in-progress':
       if (qaStatus && qaStatus !== 'n/a' && qaStatus === 'pending') {
-        return `qa 검증 대기 (qa_status: pending)`
+        return tMode('workspace.ticketDetail.statusQaPending')
       }
-      return `${personaName} 진행 중`
+      return tMode('workspace.ticketDetail.statusInProgress', { persona: personaName })
     case 'todo':
-      return `${personaName} 착수 대기`
+      return tMode('workspace.ticketDetail.statusTodo', { persona: personaName })
     case 'done':
-      return '완료 — 다음 action 없음'
+      return tMode('workspace.ticketDetail.statusDone')
     case 'abandoned':
-      return '폐기됨'
+      return tMode('workspace.ticketDetail.statusAbandoned')
     default:
-      return assignee ? `${personaName} 대기 중` : '담당자 미지정'
+      return assignee
+        ? tMode('workspace.ticketDetail.statusWaiting', { persona: personaName })
+        : tMode('workspace.ticketDetail.unassigned')
   }
 }
 
@@ -121,6 +127,7 @@ const PERSONA_COLORS: Record<string, string> = {
 function buildRail(
   assignee: string | undefined,
   personaSessions: Record<string, unknown> | null,
+  tMode: TModeFn,
 ): PersonaRailEntry[] {
   const personas: Array<{ id: 'po' | 'designer' | 'developer' | 'qa'; label: string }> = [
     { id: 'po',         label: 'PO' },
@@ -142,10 +149,10 @@ function buildRail(
 
     if (isOwner && (hasSession || assignee)) {
       railState = 'active'
-      stateLabel = 'working · 진행 중'
+      stateLabel = tMode('workspace.ticketDetail.railActive')
     } else if (hasSession) {
       railState = 'idle'
-      stateLabel = 'idle · 세션 live'
+      stateLabel = tMode('workspace.ticketDetail.railIdle')
     } else {
       railState = 'off'
       stateLabel = '—'
@@ -164,6 +171,7 @@ function buildRail(
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TicketDetailTab({ props: tabProps }: Props) {
+  const { tMode, t } = useUserModeT()
   const ticketId = typeof tabProps?.ticketId === 'string' ? tabProps.ticketId : ''
   const project = useWorkspace((s) => s.project)
   const poState = useWorkspace((s) => s.poState)
@@ -213,8 +221,8 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
   const personaSessions = poState
     ? ((poState as any).persona_sessions as Record<string, unknown> | null | undefined) ?? null
     : null
-  const rail = buildRail(assignee, personaSessions)
-  const nextAction = deriveNextAction(status, assignee, qaStatus)
+  const rail = buildRail(assignee, personaSessions, tMode)
+  const nextAction = deriveNextAction(status, assignee, qaStatus, tMode)
 
   // ── Breadcrumb → open Tickets tab ─────────────────────────────────────────
   const openTab = useWorkspace((s) => s.openTab)
@@ -232,7 +240,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
 
       {/* ── Breadcrumb (§2.0 — §1.5.5 Escape) ─────────────────────────────── */}
       <div style={breadcrumbBar}>
-        <button style={crumbBack} onClick={handleBreadcrumb} title="Tickets 탭으로">
+        <button style={crumbBack} onClick={handleBreadcrumb} title={t('workspace.ticketDetail.crumbBack')}>
           <ChevronLeft size={14} style={{ color: '#A0A0A0', flexShrink: 0 }} />
           <span>Tickets</span>
         </button>
@@ -257,9 +265,9 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
               <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
               <div>
                 <div style={errorText}>
-                  티켓을 불러오지 못했어요. 티켓 파일이 존재하는지 확인해주세요.
+                  {t('workspace.ticketDetail.loadError')}
                 </div>
-                <button style={retryBtn} onClick={load}>다시 시도</button>
+                <button style={retryBtn} onClick={load}>{t('common.retry')}</button>
               </div>
             </div>
           )}
@@ -301,7 +309,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                   )}
                   <span style={roMarker}>
                     <Lock size={12} style={{ flexShrink: 0 }} />
-                    <span>읽기 전용</span>
+                    <span>{t('workspace.common.readOnly')}</span>
                   </span>
                 </div>
               </header>
@@ -315,7 +323,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                 <div style={noKrHint}>
                   <Info size={13} style={{ color: '#505050', flexShrink: 0 }} />
                   <span style={{ color: '#707070', fontSize: 12 }}>
-                    Korean body section (Request KR) 없음 — 전체 spec 을 확인하세요.
+                    {t('workspace.ticketDetail.noKrBody')}
                   </span>
                 </div>
               )}
@@ -353,7 +361,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                   <span style={dpTitle}>Dispatch progress</span>
                   <span style={dpRo}>
                     <Info size={11} style={{ flexShrink: 0 }} />
-                    파생 · 읽기 전용
+                    {t('workspace.ticketDetail.derivedReadOnly')}
                   </span>
                 </div>
 
@@ -405,7 +413,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                     <ArrowRight size={15} />
                   </span>
                   <span style={naText}>
-                    다음 — <strong style={{ color: '#F0F0F0', fontWeight: 600 }}>
+                    {t('workspace.ticketDetail.nextLabel')} <strong style={{ color: '#F0F0F0', fontWeight: 600 }}>
                       {nextAction}
                     </strong>
                     {status && (

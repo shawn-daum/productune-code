@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Zap, Plus, FolderOpen } from 'lucide-react'
 
 interface RecentProject {
@@ -13,18 +15,19 @@ interface Props {
   onOpenRecent: (projectDir: string, slug: string) => void
 }
 
-function relativeDate(iso: string): string {
+function relativeDate(iso: string, t: TFunction): string {
   const diff = Date.now() - new Date(iso).getTime()
   const min = Math.floor(diff / 60000)
-  if (min < 1) return '방금'
-  if (min < 60) return `${min}분 전`
+  if (min < 1) return t('app.home.relTimeJustNow')
+  if (min < 60) return t('app.home.relTimeMin', { n: min })
   const hrs = Math.floor(min / 60)
-  if (hrs < 24) return `${hrs}시간 전`
+  if (hrs < 24) return t('app.home.relTimeHour', { n: hrs })
   const days = Math.floor(hrs / 24)
-  return `${days}일 전`
+  return t('app.home.relTimeDay', { n: days })
 }
 
 export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: Props) {
+  const { t } = useTranslation()
   const [recents, setRecents] = useState<RecentProject[]>([])
 
   useEffect(() => {
@@ -44,11 +47,11 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
       <div style={btnGroup}>
         <button style={btnPrimary} onClick={onNewProject}>
           <Plus size={14} strokeWidth={2.25} />
-          <span>새 프로젝트 만들기</span>
+          <span>{t('app.home.newProject')}</span>
         </button>
         <button style={btnSecondary} onClick={onOpenFolder}>
           <FolderOpen size={14} strokeWidth={2} />
-          <span>기존 폴더 열기</span>
+          <span>{t('app.home.openExisting')}</span>
         </button>
       </div>
 
@@ -67,7 +70,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
                     {p.slug}
                   </span>
                 </div>
-                <span style={{ fontSize: 11, color: '#505050', flexShrink: 0 }}>{relativeDate(p.created_at)}</span>
+                <span style={{ fontSize: 11, color: '#505050', flexShrink: 0 }}>{relativeDate(p.created_at, t)}</span>
               </div>
             ))}
           </div>
@@ -75,7 +78,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
       )}
 
       {recents.length === 0 && (
-        <div style={{ marginTop: 40, color: '#505050', fontSize: 13 }}>최근 프로젝트 없음</div>
+        <div style={{ marginTop: 40, color: '#505050', fontSize: 13 }}>{t('app.home.noRecent')}</div>
       )}
     </div>
   )

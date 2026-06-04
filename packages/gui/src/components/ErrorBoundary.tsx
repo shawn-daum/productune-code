@@ -1,4 +1,5 @@
 import { Component, ReactNode } from 'react'
+import i18next from '../i18n'
 
 interface Props {
   fallback?: (error: Error) => ReactNode
@@ -22,7 +23,7 @@ export default class ErrorBoundary extends Component<Props, State> {
       if (this.props.fallback) return this.props.fallback(error)
       return (
         <div style={errWrap}>
-          <div style={errTitle}>렌더 오류</div>
+          <div style={errTitle}>{i18next.t('app.errorBoundary.title')}</div>
           <pre style={errMsg}>{error.message}</pre>
         </div>
       )

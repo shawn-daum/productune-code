@@ -17,6 +17,7 @@
  */
 
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, Loader2, ChevronRight } from 'lucide-react'
 import type { Message, PromotionPayload } from '../../../lib/types'
 import { useWorkspace } from '../../../store/workspace'
@@ -45,6 +46,7 @@ export default function PromotionCard({ message }: Props) {
 type Phase = 'idle' | 'approving' | 'confirming-reject' | 'rejecting'
 
 function LiveCard({ message, payload }: { message: Message; payload: PromotionPayload }) {
+  const { t } = useTranslation()
   const [phase, setPhase] = useState<Phase>('idle')
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const setMessages = useWorkspace((s) => s.setMessages)
@@ -80,8 +82,8 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
   const appendSystemLine = (outcome: 'approved' | 'rejected') => {
     const text =
       outcome === 'approved'
-        ? `candidate 가 ${payload.targetTier} 에 promote 되었습니다`
-        : `candidate 가 거절되었습니다`
+        ? t('workspace.promotion.promoted', { tier: payload.targetTier })
+        : t('workspace.promotion.rejected')
     const sysMsg: Message = {
       id: `sys-${Date.now()}`,
       role: 'assistant',
@@ -162,7 +164,7 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
               onClick={handleRejectRequest}
               disabled={phase === 'approving'}
             >
-              거절
+              {t('workspace.promotion.rejectCta')}
             </button>
             <button
               className="btn btn-primary"
@@ -172,7 +174,7 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
               {phase === 'approving' ? (
                 <Loader2 size={13} className="pdt-spin" />
               ) : null}
-              승인
+              {t('workspace.promotion.approveCta')}
             </button>
           </div>
         )}
@@ -192,7 +194,7 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
               gap: 10,
             }}
           >
-            <span>거절하면 candidate 가 사라집니다 — 거절하시겠습니까?</span>
+            <span>{t('workspace.promotion.rejectConfirm')}</span>
             <div className="cta-row">
               <button
                 className="btn btn-ghost"
@@ -215,7 +217,7 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
                 {phase === 'rejecting' ? (
                   <Loader2 size={12} className="pdt-spin" />
                 ) : null}
-                거절
+                {t('workspace.promotion.rejectCta')}
               </button>
             </div>
           </div>

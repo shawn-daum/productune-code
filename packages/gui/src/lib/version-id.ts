@@ -13,9 +13,6 @@ export function isValidVersionId(id: string): boolean {
   return VERSION_ID_RE.test(id)
 }
 
-export const VERSION_ID_HINT_KO = '버전 이름 형식: v1 또는 v0.1'
-export const VERSION_ID_HINT_EN = 'Version id format: v1 or v0.1'
-
 /**
  * Attempt to strip a slug prefix from a legacy version id.
  * Returns the stripped id if the pattern matches, otherwise null.

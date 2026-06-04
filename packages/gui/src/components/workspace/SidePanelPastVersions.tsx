@@ -72,7 +72,6 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
     ? t('workspace.versionHistory.sidePanel.headerMeta', {
         count: pastCount,
         deploys: totalDeploys,
-        defaultValue: `${pastCount}개 배포 ${totalDeploys}`,
       })
     : undefined
 

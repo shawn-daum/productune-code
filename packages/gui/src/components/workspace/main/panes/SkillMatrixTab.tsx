@@ -176,8 +176,8 @@ export default function SkillMatrixTab({ props }: Props) {
       {/* Empty state */}
       {!loading && skills.length === 0 && (
         <div style={emptyPane}>
-          <div style={emptyPrimary}>~/.claude/skills/ 에 설치된 skill 없음</div>
-          <div style={emptySecondary}>skill install 후 다시 시도하세요</div>
+          <div style={emptyPrimary}>{t('workspace.team.skillMatrix.emptyPrimary')}</div>
+          <div style={emptySecondary}>{t('workspace.team.skillMatrix.emptySecondary')}</div>
         </div>
       )}
 

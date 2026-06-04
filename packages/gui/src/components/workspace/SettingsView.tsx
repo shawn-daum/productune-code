@@ -19,7 +19,7 @@ export default function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsSubTab>('general')
 
   const tabs: { id: SettingsSubTab; label: string }[] = [
-    { id: 'general',  label: t('settings.tabGeneral', { defaultValue: '일반' }) },
+    { id: 'general',  label: t('settings.tabGeneral') },
     { id: 'workflow', label: t('settings.tabWorkflowRules') },
     { id: 'mcp',      label: t('settings.tabMcp') },
     { id: 'hooks',    label: t('settings.tabHooks') },
@@ -28,7 +28,7 @@ export default function SettingsView() {
   const handleTabClick = (id: SettingsSubTab) => {
     setActiveTab(id)
     if (id === 'general') {
-      openTab('general-settings', 'general-settings', undefined, t('settings.tabGeneral', { defaultValue: '일반 설정' }))
+      openTab('general-settings', 'general-settings', undefined, t('settings.generalTabTitle'))
     } else if (id === 'workflow') {
       openTab('workflow-settings', 'workflow-settings', undefined, t('settings.tabWorkflowRules'))
     } else if (id === 'mcp') {

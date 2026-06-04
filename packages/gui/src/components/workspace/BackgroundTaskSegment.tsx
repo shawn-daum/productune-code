@@ -434,7 +434,7 @@ function BackgroundTaskPopup({
             cursor: 'pointer', color: TEXT_MUTED, display: 'flex', alignItems: 'center',
           }}
           onClick={onClose}
-          aria-label="Close"
+          aria-label={t('common.close')}
         >
           <X size={13} />
         </button>

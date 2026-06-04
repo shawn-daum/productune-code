@@ -8,7 +8,9 @@
     "save": "Save",
     "loading": "Loading…",
     "detecting": "Detecting…",
-    "download": "Download manually ↗"
+    "download": "Download manually ↗",
+    "close": "Close",
+    "dismiss": "Dismiss"
   },
   "onboarding": {
     "title": "productune setup",
@@ -87,7 +89,71 @@
   },
   "workspace": {
     "common": {
-      "viewFullText": "View full text"
+      "viewFullText": "View full text",
+      "readOnly": "Read-only",
+      "fileLoadError": "Could not load file. Try again shortly."
+    },
+    "mermaid": {
+      "renderError": "Mermaid render error",
+      "sourceLabel": "Source:",
+      "rendering": "Rendering…",
+      "componentError": "Mermaid component error"
+    },
+    "designStage": {
+      "readError": "_Cannot read file._",
+      "empty": "No design artifacts in docs/artifacts/.",
+      "back": "← Back",
+      "selectHint": "Select a file on the left."
+    },
+    "sidebar": {
+      "refresh": "Refresh"
+    },
+    "statusBar": {
+      "recentProjects": "Recent projects"
+    },
+    "zoom": {
+      "out": "Zoom out",
+      "reset": "Reset zoom",
+      "in": "Zoom in"
+    },
+    "todo": {
+      "inputPlaceholder": "Type and submit…"
+    },
+    "gate": {
+      "phaseEnd": "End",
+      "pendingAria": "Pending decision",
+      "answerPlaceholder": "Type your answer…",
+      "send": "Send",
+      "approveEnter": "Approve entry",
+      "hold": "Hold",
+      "toggleAria": "Pending decision {{state}}",
+      "pendingLabel": "Pending decision"
+    },
+    "ticketDetail": {
+      "defaultAssignee": "Assignee",
+      "statusBlocked": "Blocked — waiting",
+      "statusBlocked.dev": "Blocked — waiting on blocker",
+      "statusReview": "Awaiting {{persona}} review",
+      "statusUserVerify": "Verification pending",
+      "statusUserVerify.dev": "qa verification pending (user-verify)",
+      "statusQaPending": "Verification pending",
+      "statusQaPending.dev": "qa verification pending (qa_status: pending)",
+      "statusInProgress": "{{persona}} in progress",
+      "statusTodo": "{{persona}} not started",
+      "statusDone": "Done",
+      "statusDone.dev": "Done — no next action",
+      "statusAbandoned": "Abandoned",
+      "statusWaiting": "{{persona}} waiting",
+      "unassigned": "Unassigned",
+      "railActive": "Active",
+      "railActive.dev": "working · active",
+      "railIdle": "Idle",
+      "railIdle.dev": "idle · session live",
+      "crumbBack": "To Tickets tab",
+      "loadError": "Could not load ticket. Check that the ticket file exists.",
+      "noKrBody": "No Request (KR) section — see full spec.",
+      "derivedReadOnly": "Derived · read-only",
+      "nextLabel": "Next —"
     },
     "versions": {
       "current": "Current",
@@ -100,7 +166,14 @@
       "retro": "Retro ↗",
       "phaseLabel": "Phase: ",
       "olderHint": "Older versions: see docs/retrospectives/<version>.md",
-      "unassigned": "Unassigned"
+      "unassigned": "Unassigned",
+      "today": "Today",
+      "ticketDeploySummary": "{{tickets}} · {{deploys}} deploys",
+      "pastSummary": "{{count}} versions · {{deploys}} deploys",
+      "startedToday": "Started today",
+      "daysSince": "Day {{n}}",
+      "startedLabel": "Started",
+      "ticketsLabel": "Tickets"
     },
     "versionDetail": {
       "notFound": "Version `{{id}}` not found in po-state.",
@@ -125,7 +198,12 @@
       "bulkPlaceholder": "e.g. 1,3",
       "bulkApprove": "Approve",
       "savedToast": "[PO] saved.",
-      "writeError": "Write failed: {{error}}"
+      "writeError": "Write failed: {{error}}",
+      "promoted": "Candidate promoted to {{tier}}",
+      "rejected": "Candidate rejected",
+      "rejectCta": "Reject",
+      "approveCta": "Approve",
+      "rejectConfirm": "Rejecting removes the candidate — reject it?"
     },
     "tickets": {
       "title": "Tickets",
@@ -174,7 +252,11 @@
       "actionDefault": "in flight",
       "todoChipLabel": "To-do {{count}}",
       "todoEmpty": "No tasks",
-      "todoSubmit": "Submit"
+      "todoSubmit": "Submit",
+      "rateLimit": {
+        "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
+        "exact": "API limit reached — retry in {{n}}s"
+      }
     },
     "sidebar": {
       "tabs": {
@@ -217,16 +299,24 @@
     "quickOpen": {
       "placeholder": "Search files, tickets, personas…",
       "empty": "No results",
+      "ariaLabel": "Quick Open — ⌘P",
+      "searchHint": "Search — tickets · tabs · skills · MCP · artifacts · personas",
+      "searchedScope": "tickets · tabs · skills · MCP · artifacts · personas",
+      "searchedAll": "Searched everything",
+      "clearAria": "Clear search",
       "hint": {
-        "nav": "↑↓ navigate",
-        "open": "↵ open",
-        "close": "esc close"
+        "nav": "navigate",
+        "open": "open",
+        "close": "close",
+        "scope": "scope"
       },
       "section": {
         "file": "Files",
         "ticket": "Tickets",
         "persona": "Personas",
-        "skill": "Skills"
+        "skill": "Skills",
+        "tab": "Tabs",
+        "artifact": "Artifacts"
       }
     },
     "kbd": {
@@ -286,7 +376,8 @@
       "contextReveal": "Reveal in Finder",
       "contextCopyPath": "Copy Path",
       "contextCopyRel": "Copy Relative Path",
-      "binaryNoPreview": "Binary file. Cannot preview."
+      "binaryNoPreview": "Binary file. Cannot preview.",
+      "contextMenuAria": "Context menu"
     },
     "search": {
       "sectionTitle": "Search in files",
@@ -312,6 +403,12 @@
       "errorBody": "The search could not be completed.",
       "openError": "Could not open this file.",
       "lineLabel": "Line {{line}}"
+    },
+    "codeView": {
+      "readonlyBadge": "Read-only",
+      "openError": "Could not open this file.",
+      "binaryNoPreview": "Binary file. Cannot preview.",
+      "truncated": "Truncated — file is longer than the preview limit."
     },
     "activityBar": {
       "project": "Project",
@@ -377,6 +474,8 @@
         "filterAssigned": "Assigned only",
         "addSkill": "+ Add skill",
         "viewDescription": "View description",
+        "emptyPrimary": "No skills installed in ~/.claude/skills/",
+        "emptySecondary": "Install a skill, then retry",
         "layerLabel": {
           "explicit": "explicit",
           "auto": "auto",
@@ -487,7 +586,10 @@
     "artifacts": {
       "sectionLabel": "Artifacts",
       "openAll": "+ open all ({{count}})",
-      "empty": "No artifacts in this session"
+      "empty": "No artifacts in this session",
+      "loadError": "Could not load file list.",
+      "emptyHeadline": "No artifacts to show",
+      "emptyHelper": "Artifacts appear here once added to docs/artifacts/."
     },
     "baseDirty": {
       "title": "Unsaved changes detected",
@@ -540,7 +642,17 @@
       },
       "deploy": {
         "loading": "Loading deploy events…",
-        "empty": "No deploy events"
+        "empty": "No deploy events",
+        "durMinSec": "{{m}}m {{s}}s",
+        "durSec": "{{s}}s",
+        "pill": "Deploy",
+        "took": "took {{dur}}",
+        "collapse": "▲ Collapse",
+        "urlLabel": "▼ Deploy URL"
+      },
+      "ticketCard": {
+        "collapse": "▲ Collapse",
+        "autosaveCount": "▼ {{n}} autosaves"
       }
     },
     "qaLoop": {
@@ -592,13 +704,19 @@
       "optionKoDesc": "한국어 인터페이스."
     },
     "tabGeneral": "General",
+    "generalTabTitle": "General settings",
     "tabMcp": "MCP Servers",
     "tabHooks": "Hooks",
     "mcp": {
       "title": "MCP Servers",
+      "renameFailed": "Rename failed",
+      "saveFailed": "Save failed",
       "statusConnected": "Connected",
       "statusUnauth": "Auth required",
       "statusChecking": "Checking",
+      "sourceManaged": "managed",
+      "sourcePlugin": "plugin",
+      "readOnlyHint": "Managed by your account / a plugin — not editable here.",
       "emptyTitle": "No MCP servers configured.",
       "emptyDesc": "Add servers via install.sh.",
       "footerHint": "MCP servers are external tools used by the AI engine.",
@@ -621,7 +739,9 @@
         "testBtn": "Test connection",
         "restartNotice": "Changes apply after restarting the AI engine.",
         "saveBtn": "Save",
-        "cancelBtn": "Cancel"
+        "cancelBtn": "Cancel",
+        "confirmClose": "You have unsaved changes. Close anyway?",
+        "removeEnv": "Remove"
       }
     },
     "hooks": {
@@ -712,6 +832,39 @@
   },
   "app": {
     "onboardingTitle": "productune setup",
+    "errorBoundary": {
+      "title": "Render error"
+    },
+    "newProject": {
+      "slugRuleError": "Lowercase, digits, hyphens only; min 2 chars",
+      "createFailed": "Creation failed",
+      "title": "New project",
+      "nameLabel": "Project name (slug)",
+      "slugHint": "Lowercase letters, digits, and hyphens only.",
+      "firstVersionLabel": "First Version ID"
+    },
+    "github": {
+      "oauthFailed": "OAuth failed",
+      "repoCreateFailed": "Repo creation failed",
+      "checkingToken": "Checking GitHub token…",
+      "authTitle": "GitHub authentication",
+      "enterCode": "Enter the code below on GitHub.",
+      "waitingAuth": "Waiting for GitHub authentication…",
+      "creatingRepo": "Creating private repo '{{slug}}'…",
+      "connected": "Connected",
+      "openWorkspace": "Open workspace",
+      "connectFailed": "Connection failed",
+      "continueLocal": "Continue local-only"
+    },
+    "home": {
+      "relTimeJustNow": "just now",
+      "relTimeMin": "{{n}}m ago",
+      "relTimeHour": "{{n}}h ago",
+      "relTimeDay": "{{n}}d ago",
+      "newProject": "New project",
+      "openExisting": "Open existing folder",
+      "noRecent": "No recent projects"
+    },
     "install": {
       "title": "Set up productune in this folder?",
       "description": "This folder does not have a productune project yet. Installing here will let you manage PRDs, design docs, and tickets in this folder.",

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 
 // Register your own GitHub OAuth App and set the client_id here (or via env)
@@ -13,6 +14,7 @@ interface Props {
 }
 
 export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
+  const { t } = useTranslation()
   const [phase, setPhase] = useState<Phase>('checking')
   const [userCode, setUserCode] = useState('')
   const [verifyUrl, setVerifyUrl] = useState('')
@@ -56,7 +58,7 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
       })
       await createAndConnect(creds.access_token)
     } catch (e: any) {
-      setErrorMsg(e.message ?? 'OAuth 실패')
+      setErrorMsg(e.message ?? t('app.github.oauthFailed'))
       setPhase('error')
     }
   }
@@ -70,20 +72,20 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
       setRepoUrl(repo.clone_url)
       setPhase('done')
     } catch (e: any) {
-      setErrorMsg(e.message ?? 'repo 생성 실패')
+      setErrorMsg(e.message ?? t('app.github.repoCreateFailed'))
       setPhase('error')
     }
   }
 
   return (
     <div style={wrap}>
-      {phase === 'checking' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text="GitHub 토큰 확인 중…" />}
+      {phase === 'checking' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text={t('app.github.checkingToken')} />}
 
       {phase === 'device-code' && (
         <div style={card}>
-          <div style={title}>GitHub 인증</div>
+          <div style={title}>{t('app.github.authTitle')}</div>
           <div style={{ fontSize: 13, color: '#A0A0A0', marginBottom: 16 }}>
-            아래 코드를 GitHub에 입력하세요.
+            {t('app.github.enterCode')}
           </div>
           <div style={codeBox}>{userCode}</div>
           <a
@@ -96,26 +98,26 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
         </div>
       )}
 
-      {phase === 'polling' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text="GitHub 인증 대기 중…" />}
-      {phase === 'creating-repo' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text={`private repo '${slug}' 생성 중…`} />}
+      {phase === 'polling' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text={t('app.github.waitingAuth')} />}
+      {phase === 'creating-repo' && <StatusLine icon={<Loader2 size={14} className="pdt-spin" />} text={t('app.github.creatingRepo', { slug })} />}
 
       {phase === 'done' && (
         <div style={card}>
           <div style={{ color: '#34D399', fontSize: 20, marginBottom: 8 }}>✓</div>
-          <div style={title}>연결 완료</div>
+          <div style={title}>{t('app.github.connected')}</div>
           <div style={{ fontSize: 12, color: '#505050', fontFamily: 'monospace', marginTop: 4 }}>{repoUrl}</div>
-          <button style={btnPrimary} onClick={() => onDone(repoUrl)}>워크스페이스 열기</button>
+          <button style={btnPrimary} onClick={() => onDone(repoUrl)}>{t('app.github.openWorkspace')}</button>
         </div>
       )}
 
       {phase === 'error' && (
         <div style={card}>
           <div style={{ color: '#EF4444', fontSize: 20, marginBottom: 8 }}>✗</div>
-          <div style={title}>연결 실패</div>
+          <div style={title}>{t('app.github.connectFailed')}</div>
           <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 16 }}>{errorMsg}</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button style={btnSecondary} onClick={() => onDone()}>로컬 전용으로 계속</button>
-            <button style={btnPrimary} onClick={() => { setPhase('checking'); run() }}>재시도</button>
+            <button style={btnSecondary} onClick={() => onDone()}>{t('app.github.continueLocal')}</button>
+            <button style={btnPrimary} onClick={() => { setPhase('checking'); run() }}>{t('common.retry')}</button>
           </div>
         </div>
       )}

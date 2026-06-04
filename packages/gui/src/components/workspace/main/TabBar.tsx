@@ -69,6 +69,7 @@ const TAB_ICONS: Record<TabType, LucideIcon> = {
   'artifact-md': FileText,
   'artifact-mermaid': Network,
   'code-search': FileCode,
+  'code-view': FileCode,
 }
 
 function iconFor(type: TabType): LucideIcon {

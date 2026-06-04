@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertOctagon, Loader2, Lock, ChevronRight } from 'lucide-react'
 import { ReactZoomPanPinchRef } from 'react-zoom-pan-pinch'
 import MermaidBlock from '../../../MermaidBlock'
@@ -23,6 +24,7 @@ interface Props {
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
 
 export default function ArtifactMermaidTab({ props: tabProps }: Props) {
+  const { t } = useTranslation()
   const absPath = typeof tabProps?.absPath === 'string' ? tabProps.absPath : ''
   const relPath = typeof tabProps?.relPath === 'string' ? tabProps.relPath : ''
   const projectDir = typeof tabProps?.projectDir === 'string' ? tabProps.projectDir : ''
@@ -109,7 +111,7 @@ export default function ArtifactMermaidTab({ props: tabProps }: Props) {
           )}
           <div style={roBadge}>
             <Lock size={11} style={{ flexShrink: 0 }} />
-            <span>읽기 전용</span>
+            <span>{t('workspace.common.readOnly')}</span>
           </div>
         </div>
       </div>
@@ -127,10 +129,10 @@ export default function ArtifactMermaidTab({ props: tabProps }: Props) {
             <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
             <div>
               <div style={errorText}>
-                파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요.
+                {t('workspace.common.fileLoadError')}
               </div>
               <button style={retryBtn} onClick={load}>
-                다시 시도
+                {t('common.retry')}
               </button>
             </div>
           </div>

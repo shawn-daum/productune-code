@@ -2,6 +2,10 @@ import { ipcMain } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+
+const execFileAsync = promisify(execFile)
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -13,10 +17,32 @@ interface McpServerConfig {
   env?: Record<string, string>
 }
 
+/**
+ * Origin of a server entry.
+ * - File tiers (`productune` | `local` | `project`) are read from local config
+ *   files and are EDITABLE via the add/rename/save IPC paths.
+ * - `managed` (account-level `claude.ai *`) and `plugin` servers are discovered
+ *   only through `claude mcp list`; their configs live in account-synced state /
+ *   the plugins tree the GUI does not own, so they are READ-ONLY (T-PATCH-015).
+ */
+type McpServerSource = 'productune' | 'local' | 'project' | 'managed' | 'plugin'
+
 interface McpServerEntry {
   name: string
   config: McpServerConfig
-  source: 'productune' | 'local' | 'project'
+  source: McpServerSource
+  /** True health from `claude mcp list`; undefined when status is unknown. */
+  connected?: boolean
+  /** Whether the add/rename/save paths can mutate this server (file tiers only). */
+  editable: boolean
+}
+
+/** One parsed row from `claude mcp list` plain-text output. */
+interface CliMcpServer {
+  name: string
+  endpoint?: string
+  connected: boolean
+  source: McpServerSource
 }
 
 // ── Helpers (exported for hooks.ts) ──────────────────────────────────────────
@@ -97,12 +123,79 @@ function writeClaudeSettings(settings: Record<string, any>): void {
   fs.renameSync(tmpPath, settingsPath)
 }
 
+/**
+ * Classify a server name into a source/origin.
+ * `claude.ai *` → account-managed; `plugin:*` → plugin-provided; else file-tier.
+ */
+function classifyCliSource(name: string): McpServerSource {
+  if (name.startsWith('plugin:')) return 'plugin'
+  if (name.startsWith('claude.ai ')) return 'managed'
+  return 'local' // file-tier server seen by the CLI (e.g. playwright)
+}
+
+/**
+ * Parse one line of `claude mcp list` plain-text output.
+ *
+ * Format (per the installed Claude Code version, no `--json` flag):
+ *   `<name>: <endpoint> - <status>`
+ * where <status> is one of `✓ Connected`, `✗ Failed to connect`,
+ * `! Needs authentication`. Both <name> and <endpoint> may themselves contain
+ * `:` (e.g. `plugin:vercel-plugin:vercel: https://... (HTTP) - ...`), so we split
+ * the name on the FIRST `: ` and the status on the LAST ` - `.
+ */
+function parseCliMcpLine(line: string): CliMcpServer | null {
+  const trimmed = line.trim()
+  if (!trimmed) return null
+  // Skip the "Checking MCP server health…" preamble and any non-entry line.
+  const nameSep = trimmed.indexOf(': ')
+  if (nameSep < 0) return null
+  const name = trimmed.slice(0, nameSep).trim()
+  if (!name) return null
+
+  const rest = trimmed.slice(nameSep + 2)
+  const statusSep = rest.lastIndexOf(' - ')
+  const endpoint = statusSep >= 0 ? rest.slice(0, statusSep).trim() : undefined
+  const status = statusSep >= 0 ? rest.slice(statusSep + 3).trim() : rest.trim()
+
+  // Connected only when explicitly ✓/Connected. Failed / Needs auth = not connected.
+  const connected = /✓/.test(status) || /^connected\b/i.test(status)
+
+  return { name, endpoint, connected, source: classifyCliSource(name) }
+}
+
+/**
+ * Shell out to `claude mcp list` (the DISPLAY source-of-truth per T-PATCH-015 PO
+ * decision) and parse the server list + live connection status. Returns an empty
+ * array if the CLI is unavailable / errors — callers fall back to the file tiers.
+ *
+ * Reuses the same PATH-based `claude` resolution as the other ipc handlers
+ * (onboarding.ts / po-runner.ts) — `claude` is expected on PATH.
+ */
+async function listClaudeCliServers(): Promise<CliMcpServer[]> {
+  try {
+    const { stdout } = await execFileAsync('claude', ['mcp', 'list'], {
+      timeout: 15_000,
+      env: { ...process.env, NO_COLOR: '1' },
+      maxBuffer: 1024 * 1024,
+    })
+    const out: CliMcpServer[] = []
+    for (const line of stdout.split('\n')) {
+      const parsed = parseCliMcpLine(line)
+      if (parsed) out.push(parsed)
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
   ipcMain.handle(
     'mcp:getServers',
-    (_event, projectDir?: string): McpServerEntry[] => {
+    async (_event, projectDir?: string): Promise<McpServerEntry[]> => {
+      // ── File tiers (EDITABLE) — kept verbatim so playwright/.mcp.json still work.
       // Tier 1 (lowest): productune — ~/.claude/settings.json
       const productuneCfg = readClaudeSettings()
       const productuneTier: Record<string, McpServerConfig> =
@@ -126,18 +219,44 @@ export function register(): void {
         } catch { /* no .mcp.json */ }
       }
 
-      // Merge: later tier wins
-      const merged = new Map<
-        string,
-        { config: McpServerConfig; source: 'productune' | 'local' | 'project' }
-      >()
-      for (const [n, c] of Object.entries(productuneTier)) merged.set(n, { config: c, source: 'productune' })
-      for (const [n, c] of Object.entries(localTier))     merged.set(n, { config: c, source: 'local'      })
-      for (const [n, c] of Object.entries(projectTier))   merged.set(n, { config: c, source: 'project'    })
+      // Merge file tiers: later tier wins. These entries are editable.
+      const merged = new Map<string, McpServerEntry>()
+      const setFileTier = (
+        n: string,
+        config: McpServerConfig,
+        source: 'productune' | 'local' | 'project',
+      ) => merged.set(n, { name: n, config, source, editable: true })
+      for (const [n, c] of Object.entries(productuneTier)) setFileTier(n, c, 'productune')
+      for (const [n, c] of Object.entries(localTier))      setFileTier(n, c, 'local')
+      for (const [n, c] of Object.entries(projectTier))    setFileTier(n, c, 'project')
 
-      return Array.from(merged.entries()).map(([name, { config, source }]) => ({
-        name, config, source,
-      }))
+      // ── CLI list (DISPLAY source-of-truth, T-PATCH-015) — adds account-managed
+      // (`claude.ai *`) + plugin servers the file tiers never carry, and supplies
+      // the real `connected` flag. One shell-out per refresh (panel already polls).
+      const cli = await listClaudeCliServers()
+      for (const c of cli) {
+        const existing = merged.get(c.name)
+        if (existing) {
+          // De-dupe by name: keep the file-tier (editable) config + source, but
+          // let the CLI status win for `connected`.
+          existing.connected = c.connected
+        } else {
+          // managed / plugin server — read-only, status from the CLI.
+          const config: McpServerConfig =
+            c.endpoint && /^https?:\/\//.test(c.endpoint)
+              ? { type: 'http', url: c.endpoint }
+              : { type: 'stdio', command: c.endpoint }
+          merged.set(c.name, {
+            name: c.name,
+            config,
+            source: c.source,
+            connected: c.connected,
+            editable: c.source !== 'managed' && c.source !== 'plugin',
+          })
+        }
+      }
+
+      return Array.from(merged.values())
     },
   )
 

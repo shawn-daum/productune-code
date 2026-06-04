@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -28,6 +29,7 @@ function basename(p: string): string {
 }
 
 export default function DesignStageView({ projectRoot, onClose }: Props) {
+  const { t } = useTranslation()
   const [artifacts, setArtifacts] = useState<string[]>([])
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [content, setContent] = useState<string>('')
@@ -57,7 +59,7 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
     setLoadingFile(true)
     ;(window as any).api.designReadArtifact(projectRoot, selectedPath)
       .then((text: string) => setContent(text))
-      .catch(() => setContent('_파일을 읽을 수 없습니다._'))
+      .catch(() => setContent(t('workspace.designStage.readError')))
       .finally(() => setLoadingFile(false))
   }, [projectRoot, selectedPath])
 
@@ -96,11 +98,11 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
 
         <div style={fileTree}>
           {loadingList && (
-            <div style={treeHint}>로딩 중...</div>
+            <div style={treeHint}>{t('common.loading')}</div>
           )}
 
           {!loadingList && artifacts.length === 0 && (
-            <div style={treeHint}>docs/artifacts/ 에 디자인 산출물이 없습니다.</div>
+            <div style={treeHint}>{t('workspace.designStage.empty')}</div>
           )}
 
           {!loadingList && artifacts.length > 0 && Array.from(grouped.entries()).map(([dir, files]) => (
@@ -128,20 +130,20 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
         <div style={topBar}>
           <span style={topBarPath}>{selectedPath ?? ''}</span>
           {onClose && (
-            <button style={closeBtn} onClick={onClose}>← 뒤로</button>
+            <button style={closeBtn} onClick={onClose}>{t('workspace.designStage.back')}</button>
           )}
         </div>
 
         <div style={markdownArea}>
           {loadingFile && (
-            <div style={hintText}>로딩 중...</div>
+            <div style={hintText}>{t('common.loading')}</div>
           )}
 
           {!loadingFile && !selectedPath && (
             <div style={hintText}>
               {artifacts.length === 0
-                ? 'docs/artifacts/ 에 디자인 산출물이 없습니다.'
-                : '왼쪽에서 파일을 선택하세요.'}
+                ? t('workspace.designStage.empty')
+                : t('workspace.designStage.selectHint')}
             </div>
           )}
 

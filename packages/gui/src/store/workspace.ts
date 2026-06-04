@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import i18next from '../i18n'
 import type { Project, Phase, PoState, Message, MessageKind } from '../lib/types'
 import { PHASE_NAMES } from '../lib/types'
 
@@ -28,6 +30,7 @@ export type TabType =
   | 'artifact-mermaid'
   | 'ticket-detail'
   | 'code-search'
+  | 'code-view'
 
 export interface Tab {
   id: string
@@ -73,6 +76,12 @@ interface WorkspaceState {
   poState: PoState | null
   phase: Phase
   selectedVersionId: string | null
+
+  // T-PATCH-013 B3: project-scope marker persisted alongside the pane tree in
+  // sessionStorage. On cmd-R reload, WorkspaceShell compares this against the
+  // restored project's dir to decide whether the rehydrated panes belong to the
+  // active project (keep) or a different one (discard + fresh switch).
+  persistedProjectDir: string | null
 
   // ── PO session slice ────────────────────────────────────
   messages: Message[]
@@ -252,11 +261,12 @@ function setRatioAtPath(root: Pane, path: number[], ratio: number): Pane {
 
 const INIT_PANE_ID = 'pane-1'
 
-export const useWorkspace = create<WorkspaceState>((set, get) => ({
+export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   project: null,
   poState: null,
   phase: 'PRD',
   selectedVersionId: null,
+  persistedProjectDir: null,
   messages: [],
   claudeSessionId: null,
   streaming: false,
@@ -277,12 +287,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   // pane tree so previous project's tabs don't bleed into the new project.
   setProject: (project) => {
     const prev = get().project
-    const isSwitch = project?.projectDir !== prev?.projectDir
+    // T-PATCH-013 B3: a "switch" is a real change to a DIFFERENT project dir.
+    // First mount after a cmd-R reload (prev === null) must NOT be treated as a
+    // switch when the rehydrated panes already belong to this project — that
+    // would clobber the restored pane tree. We detect that case by comparing the
+    // rehydrated persistedProjectDir marker against the incoming project dir.
+    const prevDir = prev?.projectDir ?? null
+    const sameAsPersisted =
+      prevDir === null &&
+      get().persistedProjectDir !== null &&
+      get().persistedProjectDir === (project?.projectDir ?? null)
+    const isSwitch = project?.projectDir !== prevDir && !sameAsPersisted
     if (isSwitch) {
       set((s) => {
         const freshId = `pane-${s.nextPaneSeq}`
         return {
           project,
+          persistedProjectDir: project?.projectDir ?? null,
           inFlightMsgId: null,
           inFlightKind: 'po',
           streaming: false,
@@ -297,7 +318,14 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         }
       })
     } else {
-      set({ project, inFlightMsgId: null, inFlightKind: 'po', streaming: false })
+      // Same project (incl. cmd-R rehydrate for the same dir): keep restored panes.
+      set({
+        project,
+        persistedProjectDir: project?.projectDir ?? null,
+        inFlightMsgId: null,
+        inFlightKind: 'po',
+        streaming: false,
+      })
     }
   },
 
@@ -595,6 +623,19 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       return { ...s, panes: newPanes }
     })
   },
+}), {
+  // T-PATCH-013 B3: persist ONLY the serializable pane/tab/version shape +
+  // project-scope marker. sessionStorage survives a cmd-R renderer reload but is
+  // cleared on app quit, keeping "across full RESTART" out of scope (T-PATCH-010).
+  name: 'productune.workspace',
+  storage: createJSONStorage(() => sessionStorage),
+  partialize: (s) => ({
+    panes: s.panes,
+    activePaneId: s.activePaneId,
+    nextPaneSeq: s.nextPaneSeq,
+    selectedVersionId: s.selectedVersionId,
+    persistedProjectDir: s.persistedProjectDir,
+  }),
 }))
 
 function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
@@ -612,16 +653,17 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'browser':        return 'Browser'
     case 'image':          return (props?.path as string)?.split('/').pop() ?? 'Image'
     case 'binary':         return (props?.path as string)?.split('/').pop() ?? 'Binary'
-    case 'version-history': return (props?.versionId as string) ?? '버전 히스토리'
-    case 'deploy':            return '배포'
-    case 'general-settings':  return '일반 설정'
-    case 'workflow-settings': return '작업 흐름 규칙'
-    case 'mcp-servers':       return 'MCP 서버'
-    case 'hooks':             return '훅'
+    case 'version-history': return (props?.versionId as string) ?? i18next.t('workspace.versionHistory.title')
+    case 'deploy':            return i18next.t('workspace.deploy.tabTitle')
+    case 'general-settings':  return i18next.t('settings.generalTabTitle')
+    case 'workflow-settings': return i18next.t('settings.tabWorkflowRules')
+    case 'mcp-servers':       return i18next.t('settings.tabMcp')
+    case 'hooks':             return i18next.t('settings.tabHooks')
     case 'artifact-md':       return (props?.relPath as string)?.split('/').pop() ?? 'Artifact'
     case 'artifact-mermaid':  return (props?.relPath as string)?.split('/').pop() ?? 'Diagram'
     case 'ticket-detail':     return (props?.ticketId as string) ?? 'Ticket'
     case 'code-search':       return (props?.path as string)?.split('/').pop() ?? 'File'
+    case 'code-view':         return (props?.path as string)?.split('/').pop() ?? 'File'
     default:                  return type
   }
 }

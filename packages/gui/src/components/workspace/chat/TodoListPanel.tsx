@@ -123,7 +123,7 @@ export default function TodoListPanel() {
                           }
                         }}
                         disabled={streaming}
-                        placeholder="입력 후 제출…"
+                        placeholder={t('workspace.todo.inputPlaceholder')}
                       />
                       <button
                         style={{

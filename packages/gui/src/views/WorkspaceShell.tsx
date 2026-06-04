@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import type { Project, Message } from '../lib/types'
 import { useWorkspace } from '../store/workspace'
-import type { Tab } from '../store/workspace'
+import type { Tab, Pane } from '../store/workspace'
 import PhaseBreadcrumb from '../components/workspace/PhaseBreadcrumb'
 import LeftSidebar from '../components/workspace/LeftSidebar'
 import MainPanel from '../components/workspace/main/MainPanel'
@@ -39,11 +39,12 @@ interface HeaderSearchBarProps {
 }
 
 function HeaderSearchBar({ onClick }: HeaderSearchBarProps) {
+  const { t } = useTranslation()
   return (
     <div
       role="button"
       tabIndex={0}
-      aria-label="Quick Open — ⌘P"
+      aria-label={t('workspace.quickOpen.ariaLabel')}
       onClick={onClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onClick()
@@ -52,7 +53,7 @@ function HeaderSearchBar({ onClick }: HeaderSearchBarProps) {
     >
       <Search size={14} color="currentColor" style={{ flexShrink: 0 }} />
       <span style={{ flex: 1, fontSize: 12, color: '#707070' }}>
-        검색 — 티켓 · 탭 · 스킬 · MCP · 산출물 · 페르소나
+        {t('workspace.quickOpen.searchHint')}
       </span>
       <kbd style={headerKbdStyle}>⌘P</kbd>
     </div>
@@ -82,6 +83,14 @@ const headerKbdStyle: React.CSSProperties = {
   padding: '1px 4px',
   lineHeight: 1.5,
   background: '#141414',
+}
+
+// T-PATCH-013 B3: a "fresh" workspace = single empty leaf, no tabs anywhere.
+// Used to tell a rehydrated pane tree (has tabs) from the initial empty state,
+// so a cmd-R reload for the same project does not get treated as a switch.
+function isEmptyPaneTree(root: Pane): boolean {
+  if (root.type === 'leaf') return root.tabs.length === 0
+  return isEmptyPaneTree(root.children[0]) && isEmptyPaneTree(root.children[1])
 }
 
 // ── WorkspaceShell ────────────────────────────────────────────────────────────
@@ -129,9 +138,28 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const pendingSwitchTabRef = useRef(false)
 
   useEffect(() => {
-    const isSwitch = prevProjectDirRef.current !== project.projectDir
+    const prevDir = prevProjectDirRef.current
     prevProjectDirRef.current = project.projectDir
-    if (isSwitch) pendingSwitchTabRef.current = true
+
+    // T-PATCH-013 B3: distinguish a genuine project switch from a cmd-R reload
+    // rehydrate for the SAME project. On first mount after reload, prevDir is
+    // null; if the rehydrated workspace state (sessionStorage) already belongs to
+    // this projectDir AND has restored panes, this is a rehydrate — NOT a switch.
+    // We must not reset panes nor auto-open a duplicate current-version tab (AC-5),
+    // nor force the ActivityBar icon (B2 guard).
+    const rehydrated = useWorkspace.getState()
+    const isRehydrateSameProject =
+      prevDir === null &&
+      rehydrated.persistedProjectDir === project.projectDir &&
+      !isEmptyPaneTree(rehydrated.panes)
+
+    const isSwitch = prevDir !== project.projectDir && !isRehydrateSameProject
+    if (isSwitch) {
+      pendingSwitchTabRef.current = true
+      // T-PATCH-013 B2: re-assert the ActivityBar 'project' icon on a real switch,
+      // regardless of which icon was active before. Skipped on reload-rehydrate.
+      setActiveIcon('project')
+    }
     setProject(project)
   }, [project, setProject])
 

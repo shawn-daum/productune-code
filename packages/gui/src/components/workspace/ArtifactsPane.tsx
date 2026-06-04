@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   FileText,
   Code2,
@@ -48,6 +49,7 @@ const SCOPE_LABELS: Record<ArtifactEntry['scopeGroup'], string> = {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ArtifactsPane({ project, poState }: Props) {
+  const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
 
   const [entries, setEntries] = useState<ArtifactEntry[]>([])
@@ -112,10 +114,10 @@ export default function ArtifactsPane({ project, poState }: Props) {
         <div style={errorBanner}>
           <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
           <div>
-            <div style={errorText}>파일 목록을 불러오지 못했어요.</div>
+            <div style={errorText}>{t('workspace.artifacts.loadError')}</div>
             <button style={retryBtn} onClick={load}>
               <RefreshCwIcon size={11} />
-              다시 시도
+              {t('common.retry')}
             </button>
           </div>
         </div>
@@ -128,8 +130,8 @@ export default function ArtifactsPane({ project, poState }: Props) {
     return (
       <div style={centerPane}>
         <FolderOpen size={32} style={{ color: '#505050', marginBottom: 10 }} strokeWidth={1.5} />
-        <div style={emptyHeadline}>표시할 산출물이 없습니다</div>
-        <div style={emptyHelper}>docs/artifacts/ 폴더에 산출물이 생기면 여기 나타납니다.</div>
+        <div style={emptyHeadline}>{t('workspace.artifacts.emptyHeadline')}</div>
+        <div style={emptyHelper}>{t('workspace.artifacts.emptyHelper')}</div>
       </div>
     )
   }

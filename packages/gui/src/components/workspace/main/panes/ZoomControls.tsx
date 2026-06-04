@@ -7,6 +7,7 @@
  */
 
 import React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ZoomIn, ZoomOut } from 'lucide-react'
 
 export const ZOOM_STEP = 0.15
@@ -31,22 +32,23 @@ export default function ZoomControls({
   min = ZOOM_MIN,
   max = ZOOM_MAX,
 }: ZoomControlsProps) {
+  const { t } = useTranslation()
   return (
     <div style={zoomGroup}>
       <button
         style={zoomBtn}
         onClick={onZoomOut}
         disabled={zoom <= min}
-        title="축소"
-        aria-label="축소"
+        title={t('workspace.zoom.out')}
+        aria-label={t('workspace.zoom.out')}
       >
         <ZoomOut size={12} />
       </button>
       <button
         style={zoomResetBtn}
         onClick={onReset}
-        title="줌 초기화"
-        aria-label="줌 초기화"
+        title={t('workspace.zoom.reset')}
+        aria-label={t('workspace.zoom.reset')}
       >
         {Math.round(zoom * 100)}%
       </button>
@@ -54,8 +56,8 @@ export default function ZoomControls({
         style={zoomBtn}
         onClick={onZoomIn}
         disabled={zoom >= max}
-        title="확대"
-        aria-label="확대"
+        title={t('workspace.zoom.in')}
+        aria-label={t('workspace.zoom.in')}
       >
         <ZoomIn size={12} />
       </button>

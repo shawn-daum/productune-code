@@ -6,7 +6,7 @@
  */
 
 import { useTranslation } from 'react-i18next'
-import { isValidVersionId, VERSION_ID_HINT_KO } from '../../lib/version-id'
+import { isValidVersionId } from '../../lib/version-id'
 
 interface Props {
   value: string
@@ -17,10 +17,9 @@ interface Props {
 }
 
 export default function VersionInitStep({ value, onChange, onNext, onPrev, stepLabel }: Props) {
-  const { t, i18n } = useTranslation()
-  const isKo = i18n.language === 'ko'
+  const { t } = useTranslation()
   const valid = isValidVersionId(value)
-  const hint = isKo ? VERSION_ID_HINT_KO : t('onboarding.versionInit.hint')
+  const hint = t('onboarding.versionInit.hint')
 
   return (
     <>

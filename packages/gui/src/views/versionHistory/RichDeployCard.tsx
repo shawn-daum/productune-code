@@ -22,19 +22,19 @@ export default function RichDeployCard({ deploy }: RichDeployCardProps) {
     const diffMs = end.getTime() - start.getTime()
     const mins = Math.floor(diffMs / (1000 * 60))
     const secs = Math.floor((diffMs % (1000 * 60)) / 1000)
-    if (mins > 0) return `${mins}분 ${secs}초`
-    return `${secs}초`
-  }, [deploy.createdAt, deploy.readyAt])
+    if (mins > 0) return t('workspace.versionHistory.deploy.durMinSec', { m: mins, s: secs })
+    return t('workspace.versionHistory.deploy.durSec', { s: secs })
+  }, [deploy.createdAt, deploy.readyAt, t])
 
   return (
     <div style={{ ...cardWrap, borderLeft: '2px solid #22C55E40' }}>
       <div style={cardHeader}>
-        <span style={deployPill}>배포</span>
+        <span style={deployPill}>{t('workspace.versionHistory.deploy.pill')}</span>
         <span style={cardTitle}>{deploy.createdAt.slice(0, 10)}</span>
         <span style={{ ...deployPill, background: deploy.state === 'READY' ? '#0A2A0A' : '#1A0808', color: deploy.state === 'READY' ? '#22C55E' : '#E04040' }}>
           {deploy.state}
         </span>
-        {durationLabel && <span style={metaItem}>{durationLabel} 소요</span>}
+        {durationLabel && <span style={metaItem}>{t('workspace.versionHistory.deploy.took', { dur: durationLabel })}</span>}
       </div>
 
       {deploy.includedTickets.length > 0 && (
@@ -56,7 +56,7 @@ export default function RichDeployCard({ deploy }: RichDeployCardProps) {
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
       >
-        {expanded ? '▲ 접기' : `▼ 배포 URL`}
+        {expanded ? t('workspace.versionHistory.deploy.collapse') : t('workspace.versionHistory.deploy.urlLabel')}
       </button>
 
       {expanded && (

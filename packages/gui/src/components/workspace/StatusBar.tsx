@@ -68,7 +68,7 @@ export default function StatusBar({ onOpenHealthBanner, onOpenRecent }: Props) {
       <div style={cluster}>
         {project && (
           <div ref={dropdownRef} style={slugWrap}>
-            <button style={slugBtn} onClick={handleSlugClick} title="Recent projects">
+            <button style={slugBtn} onClick={handleSlugClick} title={t('workspace.statusBar.recentProjects')}>
               {project.slug}
               <ChevronDown size={10} style={{ marginLeft: 3, flexShrink: 0 }} />
             </button>

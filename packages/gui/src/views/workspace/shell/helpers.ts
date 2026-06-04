@@ -130,8 +130,9 @@ export interface McpServerEntry {
     url?: string
     env?: Record<string, string>
   }
-  source: 'productune' | 'local' | 'project'
+  source: 'productune' | 'local' | 'project' | 'managed' | 'plugin'
   connected?: boolean
+  editable: boolean
 }
 
 export interface ArtifactEntry {

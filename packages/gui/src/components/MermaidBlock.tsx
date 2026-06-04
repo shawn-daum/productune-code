@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from 'react-zoom-pan-pinch'
 import ErrorBoundary from './ErrorBoundary'
 
@@ -24,6 +25,7 @@ interface Props {
 }
 
 function MermaidBlockInner({ code, transformRef }: Props) {
+  const { t } = useTranslation()
   const uid = useId().replace(/:/g, '')
   const containerId = `mermaid-${uid}`
   const containerRef = useRef<HTMLDivElement>(null)
@@ -86,9 +88,9 @@ function MermaidBlockInner({ code, transformRef }: Props) {
       {/* Render error fallback */}
       {renderError && (
         <div style={errorWrap}>
-          <div style={errorTitle}>Mermaid 렌더 오류</div>
+          <div style={errorTitle}>{t('workspace.mermaid.renderError')}</div>
           <pre style={errorMsg}>{renderError}</pre>
-          <div style={{ marginTop: 8, fontSize: 11, color: '#A0A0A0' }}>원문 소스:</div>
+          <div style={{ marginTop: 8, fontSize: 11, color: '#A0A0A0' }}>{t('workspace.mermaid.sourceLabel')}</div>
           <pre style={sourceCode}>{code}</pre>
         </div>
       )}
@@ -121,18 +123,19 @@ function MermaidBlockInner({ code, transformRef }: Props) {
 
       {/* Loading placeholder */}
       {!renderError && !svg && (
-        <div style={loadingPlaceholder}>렌더링 중...</div>
+        <div style={loadingPlaceholder}>{t('workspace.mermaid.rendering')}</div>
       )}
     </div>
   )
 }
 
 export default function MermaidBlock(props: Props) {
+  const { t } = useTranslation()
   return (
     <ErrorBoundary
       fallback={(err) => (
         <div style={{ background: '#1A0A0A', border: '1px solid #4A1A1A', borderRadius: 6, padding: '12px 16px', margin: '8px 0' }}>
-          <div style={{ fontSize: 12, color: '#F87171', fontWeight: 600, marginBottom: 4 }}>Mermaid 컴포넌트 오류</div>
+          <div style={{ fontSize: 12, color: '#F87171', fontWeight: 600, marginBottom: 4 }}>{t('workspace.mermaid.componentError')}</div>
           <pre style={{ fontSize: 11, color: '#F87171', margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>{err.message}</pre>
         </div>
       )}

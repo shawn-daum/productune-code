@@ -14,6 +14,7 @@
  */
 
 import { useTranslation } from 'react-i18next'
+import i18next from '../../i18n'
 import type { PoState } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
@@ -41,8 +42,8 @@ function elapsedLabel(isoDate: string | null | undefined): string {
   const start = new Date(isoDate)
   if (isNaN(start.getTime())) return ''
   const days = Math.floor((Date.now() - start.getTime()) / 86_400_000)
-  if (days === 0) return '오늘 시작'
-  return `${days}일째`
+  if (days === 0) return i18next.t('workspace.versions.startedToday')
+  return i18next.t('workspace.versions.daysSince', { n: days })
 }
 
 export default function SidePanelCurrentVersion({ poState, selectedVersionId, isFocused, onSelect }: Props) {
@@ -137,14 +138,14 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
           {/* Row 2: Ticket stats (only when tickets exist) */}
           {totalCount > 0 && (
             <div style={cardRow}>
-              <span style={metaKey}>티켓</span>
+              <span style={metaKey}>{t('workspace.versions.ticketsLabel')}</span>
               <span style={metaVal}>{doneCount}&thinsp;/&thinsp;{totalCount} done</span>
             </div>
           )}
 
           {/* Row 3: Start date + elapsed */}
           <div style={cardRow}>
-            <span style={metaKey}>시작</span>
+            <span style={metaKey}>{t('workspace.versions.startedLabel')}</span>
             <span style={metaVal}>
               {formatActivityDate(currentVer?.started_at)}
               {elapsed ? ` · ${elapsed}` : ''}

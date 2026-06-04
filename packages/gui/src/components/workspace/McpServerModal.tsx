@@ -66,7 +66,7 @@ export default function McpServerModal({ server, projectDir, isNew = false, onCl
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      if (dirtyRef.current && !window.confirm('변경사항이 있습니다. 닫을까요?')) return
+      if (dirtyRef.current && !window.confirm(t('settings.mcp.modal.confirmClose'))) return
       onClose()
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -75,7 +75,7 @@ export default function McpServerModal({ server, projectDir, isNew = false, onCl
 
   const handleBackdrop = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target !== e.currentTarget) return
-    if (dirtyRef.current && !window.confirm('변경사항이 있습니다. 닫을까요?')) return
+    if (dirtyRef.current && !window.confirm(t('settings.mcp.modal.confirmClose'))) return
     onClose()
   }
 
@@ -128,7 +128,7 @@ export default function McpServerModal({ server, projectDir, isNew = false, onCl
       if (!isNew && trimmedName !== server.name) {
         const renamed = await api.mcpRename?.(server.name, trimmedName, projectDir)
         if (!renamed?.ok) {
-          showToast(renamed?.error ?? '이름 변경 실패', 'error')
+          showToast(renamed?.error ?? t('settings.mcp.renameFailed'), 'error')
           setSaving(false)
           return
         }
@@ -140,10 +140,10 @@ export default function McpServerModal({ server, projectDir, isNew = false, onCl
         dirtyRef.current = false
         onSaved()
       } else {
-        showToast(result?.error ?? '저장 실패', 'error')
+        showToast(result?.error ?? t('settings.mcp.saveFailed'), 'error')
       }
     } catch (e: any) {
-      showToast(e?.message ?? '저장 실패', 'error')
+      showToast(e?.message ?? t('settings.mcp.saveFailed'), 'error')
     } finally {
       setSaving(false)
     }
@@ -265,7 +265,7 @@ export default function McpServerModal({ server, projectDir, isNew = false, onCl
                 <button
                   style={envRemoveBtn}
                   onClick={() => removeEnvRow(idx)}
-                  title="Remove"
+                  title={t('settings.mcp.modal.removeEnv')}
                 >
                   ✕
                 </button>

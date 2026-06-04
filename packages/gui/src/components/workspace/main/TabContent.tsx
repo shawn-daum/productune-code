@@ -18,6 +18,7 @@ import ArtifactMdTab from './panes/ArtifactMdTab'
 import ArtifactMermaidTab from './panes/ArtifactMermaidTab'
 import TicketDetailTab from './panes/TicketDetailTab'
 import CodeSearchTab from './panes/CodeSearchTab'
+import CodeViewTab from './panes/CodeViewTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -54,6 +55,8 @@ export default function TabContent({ tab }: Props) {
       return <TicketDetailTab props={tab.props} />
     case 'code-search':
       return <CodeSearchTab props={tab.props} />
+    case 'code-view':
+      return <CodeViewTab props={tab.props} />
     case 'design-gate':
     case 'qa-result':
     case 'env-view':

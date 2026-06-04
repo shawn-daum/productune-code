@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import GitHubOAuthFlow from './GitHubOAuthFlow'
 import VersionInitStep from './onboarding/VersionInitStep'
 import { isValidVersionId } from '../lib/version-id'
@@ -11,6 +12,7 @@ interface Props {
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,}$/
 
 export default function NewProjectModal({ onCreated, onCancel }: Props) {
+  const { t } = useTranslation()
   // step 1 = slug, 1.5 = version id, 2 = github oauth
   const [step, setStep] = useState<1 | 1.5 | 2>(1)
   const [slug, setSlug] = useState('')
@@ -20,7 +22,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
   const [createdDir, setCreatedDir] = useState('')
 
   function validateSlug(v: string) {
-    if (!SLUG_RE.test(v)) return '영소문자·숫자·하이픈만, 2자 이상'
+    if (!SLUG_RE.test(v)) return t('app.newProject.slugRuleError')
     return ''
   }
 
@@ -39,7 +41,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
       setCreatedDir(result.projectDir)
       setStep(2)
     } catch (e: any) {
-      setError(e?.message ?? '생성 실패')
+      setError(e?.message ?? t('app.newProject.createFailed'))
       setCreating(false)
     }
   }
@@ -49,12 +51,12 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
       <div style={modal}>
         <div style={header}>
           <span style={{ color: '#8B5CF6', fontWeight: 700 }}>⚡</span>
-          <span style={{ marginLeft: 8, fontWeight: 600, fontSize: 15 }}>새 프로젝트 만들기</span>
+          <span style={{ marginLeft: 8, fontWeight: 600, fontSize: 15 }}>{t('app.newProject.title')}</span>
         </div>
 
         {step === 1 && (
           <div style={body}>
-            <label style={label}>프로젝트 이름 (slug)</label>
+            <label style={label}>{t('app.newProject.nameLabel')}</label>
             <input
               style={{ ...input, borderColor: error ? '#EF4444' : '#333' }}
               placeholder="my-saas"
@@ -64,7 +66,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
               onKeyDown={e => e.key === 'Enter' && handleSlugNext()}
             />
             {error && <div style={errStyle}>{error}</div>}
-            <div style={hint}>영소문자, 숫자, 하이픈만 사용 가능합니다.</div>
+            <div style={hint}>{t('app.newProject.slugHint')}</div>
           </div>
         )}
 
@@ -74,7 +76,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
             onChange={setVersionId}
             onNext={handleCreate}
             onPrev={() => { setStep(1); setCreating(false) }}
-            stepLabel="첫 번째 Version ID"
+            stepLabel={t('app.newProject.firstVersionLabel')}
           />
         )}
 
@@ -88,9 +90,9 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
 
         {step === 1 && (
           <div style={footer}>
-            <button style={btnSecondary} onClick={onCancel}>취소</button>
+            <button style={btnSecondary} onClick={onCancel}>{t('common.cancel')}</button>
             <button style={{ ...btnPrimary }} onClick={handleSlugNext}>
-              다음 →
+              {t('common.next')}
             </button>
           </div>
         )}

@@ -112,16 +112,16 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
         <button
           style={navBtn}
           onClick={() => webviewRef.current?.goBack()}
-          title="Back"
-          aria-label="Back"
+          title={t('workspace.browser.back')}
+          aria-label={t('workspace.browser.back')}
         >
           <ChevronLeft size={14} />
         </button>
         <button
           style={navBtn}
           onClick={() => webviewRef.current?.goForward()}
-          title="Forward"
-          aria-label="Forward"
+          title={t('workspace.browser.forward')}
+          aria-label={t('workspace.browser.forward')}
         >
           <ChevronRight size={14} />
         </button>

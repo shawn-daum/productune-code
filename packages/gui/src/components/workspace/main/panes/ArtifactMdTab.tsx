@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertOctagon, Loader2, Lock, ChevronRight } from 'lucide-react'
 import MdRenderer from '../../chat/MdRenderer'
 import ZoomControls, { ZOOM_STEP, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT } from './ZoomControls'
@@ -17,7 +18,12 @@ interface Props {
 
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
 
+// Base font-size (px) at zoom = 1.0 — matches md-recipes --text-base (13px).
+// Zoom scales this via CSS font-size so layout reflows (no transform:scale clipping).
+const BASE_FONT_PX = 13
+
 export default function ArtifactMdTab({ props: tabProps }: Props) {
+  const { t } = useTranslation()
   const absPath = typeof tabProps?.absPath === 'string' ? tabProps.absPath : ''
   const relPath = typeof tabProps?.relPath === 'string' ? tabProps.relPath : ''
   const projectDir = typeof tabProps?.projectDir === 'string' ? tabProps.projectDir : ''
@@ -84,7 +90,7 @@ export default function ArtifactMdTab({ props: tabProps }: Props) {
           />
           <div style={roBadge}>
             <Lock size={11} style={{ flexShrink: 0 }} />
-            <span>읽기 전용</span>
+            <span>{t('workspace.common.readOnly')}</span>
           </div>
         </div>
       </div>
@@ -102,20 +108,21 @@ export default function ArtifactMdTab({ props: tabProps }: Props) {
             <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
             <div>
               <div style={errorText}>
-                파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요.
+                {t('workspace.common.fileLoadError')}
               </div>
               <button style={retryBtn} onClick={load}>
-                다시 시도
+                {t('common.retry')}
               </button>
             </div>
           </div>
         )}
 
         {loadState === 'done' && content !== null && (
-          <div style={zoomOuter}>
-            <div style={{ ...viewerWrap, transform: `scale(${zoom})`, transformOrigin: 'top left', width: `${100 / zoom}%` }}>
-              <MdRenderer text={content} />
-            </div>
+          <div
+            className="artifact-md-zoom"
+            style={{ ...viewerWrap, fontSize: `${(zoom * BASE_FONT_PX).toFixed(2)}px` }}
+          >
+            <MdRenderer text={content} />
           </div>
         )}
       </div>
@@ -192,11 +199,6 @@ const roBadge: React.CSSProperties = {
 const body: React.CSSProperties = {
   flex: 1,
   overflow: 'auto',
-}
-
-const zoomOuter: React.CSSProperties = {
-  overflow: 'visible',
-  minHeight: '100%',
 }
 
 const centerState: React.CSSProperties = {

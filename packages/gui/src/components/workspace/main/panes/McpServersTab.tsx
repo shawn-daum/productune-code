@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Lock } from 'lucide-react'
 import { useWorkspace } from '../../../../store/workspace'
 import McpServerModal from '../../McpServerModal'
 
@@ -21,8 +22,12 @@ export interface McpServerEntry {
     url?: string
     env?: Record<string, string>
   }
-  source: 'productune' | 'local' | 'project'
-  // status 필드 제거 — Phase 5 에서 testConnection 구현 시 재추가
+  // 'managed' = account-level claude.ai *, 'plugin' = plugin-provided (T-PATCH-015).
+  source: 'productune' | 'local' | 'project' | 'managed' | 'plugin'
+  /** Live connection status from `claude mcp list`; undefined when unknown. */
+  connected?: boolean
+  /** Editable only for file-tier servers; managed/plugin are read-only. */
+  editable: boolean
 }
 
 interface Props {
@@ -44,6 +49,7 @@ export default function McpServersTab(_: Props) {
     name: '',
     config: { type: 'stdio' },
     source: project?.projectDir ? 'local' : 'productune',
+    editable: true,
   }
 
   const loadServers = useCallback(async () => {
@@ -87,16 +93,46 @@ export default function McpServersTab(_: Props) {
         </div>
       ) : (
         <div style={listWrap}>
-          {servers.map((server) => (
-            <button
-              key={server.name}
-              style={rowBtn}
-              onClick={() => setSelectedServer(server)}
-            >
-              <span style={serverNameStyle}>{server.name}</span>
-              <span style={tierPill}>[{server.source}]</span>
-            </button>
-          ))}
+          {servers.map((server) => {
+            const readOnly = !server.editable
+            const sourceLabel =
+              server.source === 'managed'
+                ? t('settings.mcp.sourceManaged')
+                : server.source === 'plugin'
+                  ? t('settings.mcp.sourcePlugin')
+                  : server.source
+            return (
+              <button
+                key={server.name}
+                style={{ ...rowBtn, cursor: readOnly ? 'default' : 'pointer' }}
+                onClick={() => { if (!readOnly) setSelectedServer(server) }}
+                title={
+                  readOnly
+                    ? t('settings.mcp.readOnlyHint')
+                    : undefined
+                }
+              >
+                <span style={rowLeft}>
+                  <span
+                    style={{
+                      ...connDot,
+                      background: server.connected ? '#4ADE80' : '#505050',
+                    }}
+                    aria-label={
+                      server.connected
+                        ? t('settings.mcp.statusConnected')
+                        : t('settings.mcp.statusUnauth')
+                    }
+                  />
+                  <span style={serverNameStyle}>{server.name}</span>
+                </span>
+                <span style={rowRight}>
+                  {readOnly && <Lock size={10} style={lockIcon} />}
+                  <span style={tierPill}>[{sourceLabel}]</span>
+                </span>
+              </button>
+            )
+          })}
         </div>
       )}
 
@@ -178,8 +214,38 @@ const rowBtn: React.CSSProperties = {
   width: '100%',
 }
 
+const rowLeft: React.CSSProperties = {
+  alignItems: 'center',
+  display: 'flex',
+  gap: 8,
+  minWidth: 0,
+  overflow: 'hidden',
+}
+
+const rowRight: React.CSSProperties = {
+  alignItems: 'center',
+  display: 'flex',
+  flexShrink: 0,
+  gap: 4,
+}
+
+const connDot: React.CSSProperties = {
+  borderRadius: '50%',
+  flexShrink: 0,
+  height: 6,
+  width: 6,
+}
+
+const lockIcon: React.CSSProperties = {
+  color: '#707070',
+  flexShrink: 0,
+}
+
 const serverNameStyle: React.CSSProperties = {
   fontWeight: 500,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 
 const tierPill: React.CSSProperties = {
