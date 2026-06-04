@@ -50,17 +50,22 @@ export interface BoxPaneNode {
 
 export type Pane = LeafPaneNode | BoxPaneNode
 
+// Pane drop zones: four half-edges + center join + four corner quarters (T-023 #4b).
+export type PaneZone =
+  | 'top' | 'right' | 'bottom' | 'left' | 'center'
+  | 'q-tl' | 'q-tr' | 'q-bl' | 'q-br'
+
 export type DragHint =
   | null
   | { kind: 'tab-before'; paneId: string; tabId: string }
   | { kind: 'tab-after'; paneId: string; tabId: string }
   | { kind: 'bar-end'; paneId: string }
-  | { kind: 'pane-zone'; paneId: string; zone: 'top' | 'right' | 'bottom' | 'left' | 'center' }
+  | { kind: 'pane-zone'; paneId: string; zone: PaneZone }
 
 export type DropTarget =
   | { kind: 'tab-before' | 'tab-after'; paneId: string; refTabId: string }
   | { kind: 'bar-end'; paneId: string }
-  | { kind: 'pane-zone'; paneId: string; zone: 'top' | 'right' | 'bottom' | 'left' | 'center' }
+  | { kind: 'pane-zone'; paneId: string; zone: PaneZone }
 
 interface WorkspaceState {
   project: Project | null
@@ -84,6 +89,9 @@ interface WorkspaceState {
   activePaneId: string
   nextPaneSeq: number
   dragHint: DragHint
+  /** True while a tab drag is in progress. Drives pointer-event suppression on
+   *  webviews/iframes so pane drop-zones stay hit-testable (T-023 #4c). */
+  tabDragActive: boolean
 
   setProject: (p: Project | null) => void
   setPoState: (s: PoState | null) => void
@@ -109,6 +117,7 @@ interface WorkspaceState {
   moveTab: (fromPaneId: string, tabId: string, target: DropTarget) => void
   setPaneRatio: (path: number[], ratio: number) => void
   setDragHint: (hint: DragHint) => void
+  setTabDragActive: (active: boolean) => void
   /** In-place rename: swap tab id (and optional title) across all panes.
    *  Matching leaf's activeTabId is also swapped. No-op if not found. */
   updateTabId: (oldId: string, newId: string, newTitle?: string) => void
@@ -257,6 +266,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   activePaneId: INIT_PANE_ID,
   nextPaneSeq: 2,
   dragHint: null,
+  tabDragActive: false,
 
   // T-P4-119 follow-up: also reset inFlight state on project switch so no
   // streaming UI artefacts bleed across projects.  Avoids the old
@@ -514,9 +524,6 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
         return { ...s, panes: tree, activePaneId: targetPaneId, dragHint: null }
       }
 
-      // edge zones — split target pane and move tab into the new pane
-      const newId = `pane-${s.nextPaneSeq}`
-      const nextSeq = s.nextPaneSeq + 1
       // Remove from origin first; if origin == target leaf, removing cleans the
       // tab off, but the leaf is then split — and the tab is added to the new
       // pane. If origin is a different leaf, this works straightforwardly.
@@ -526,6 +533,32 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       // they can stay empty). So target should still be present.
       const targetStillPresent = !!findLeaf(tree, targetPaneId)
       if (!targetStillPresent) return s
+
+      // ── Quarter zones (T-023 #4b): two-step split → corner quadrant. ──
+      // First split horizontally (target leaf keeps content, new column added on
+      // the corner's side), then split that column vertically and drop the tab
+      // into the corner cell. Consumes two pane ids.
+      if (zone === 'q-tl' || zone === 'q-tr' || zone === 'q-bl' || zone === 'q-br') {
+        const colId = `pane-${s.nextPaneSeq}`         // intermediate column leaf
+        const cornerId = `pane-${s.nextPaneSeq + 1}`  // final corner cell (gets the tab)
+        const nextSeqQ = s.nextPaneSeq + 2
+        const onLeft = zone === 'q-tl' || zone === 'q-bl'
+        const onTop = zone === 'q-tl' || zone === 'q-tr'
+        const emptyCol: LeafPaneNode = makeEmptyLeaf(colId)
+        const cornerLeaf: LeafPaneNode = { type: 'leaf', paneId: cornerId, tabs: [movingTab], activeTabId: movingTab.id }
+        // Vertical split inside the new column: corner cell on top or bottom.
+        const colChildren: [Pane, Pane] = onTop ? [cornerLeaf, emptyCol] : [emptyCol, cornerLeaf]
+        const column: BoxPaneNode = { type: 'vbox', ratio: 0.5, children: colChildren }
+        tree = replaceLeaf(tree, targetPaneId, (l) => {
+          const rowChildren: [Pane, Pane] = onLeft ? [column, l] : [l, column]
+          return { type: 'hbox', ratio: 0.5, children: rowChildren }
+        })
+        return { ...s, panes: tree, activePaneId: cornerId, nextPaneSeq: nextSeqQ, dragHint: null }
+      }
+
+      // edge zones — split target pane and move tab into the new pane
+      const newId = `pane-${s.nextPaneSeq}`
+      const nextSeq = s.nextPaneSeq + 1
       const newLeaf: LeafPaneNode = { type: 'leaf', paneId: newId, tabs: [movingTab], activeTabId: movingTab.id }
       tree = replaceLeaf(tree, targetPaneId, (l) => {
         const axis = zone === 'top' || zone === 'bottom' ? 'vbox' : 'hbox'
@@ -543,6 +576,8 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   setDragHint: (dragHint) => set({ dragHint }),
+
+  setTabDragActive: (tabDragActive) => set({ tabDragActive }),
 
   updateTabId: (oldId, newId, newTitle) => {
     set((s) => {

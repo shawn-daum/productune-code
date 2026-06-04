@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import type { Pane } from '../../../store/workspace'
+import { paneTreeUtil } from '../../../store/workspace'
 import LeafPane from './LeafPane'
 import ResizeHandle from './ResizeHandle'
 
@@ -33,6 +34,14 @@ export default function PaneNode({ pane, path }: Props) {
     overflow: 'hidden',
   })
 
+  // T-023 #4d: key each child slot by the *identity* of its first leaf rather
+  // than by positional index. When a leaf is split it becomes the first child
+  // of a new box, so its first-leaf id is unchanged — React then reconciles the
+  // existing LeafPane subtree (and its <webview>) in place instead of tearing
+  // it down and remounting it, which had caused the full HTML/iframe reload lag.
+  const key0 = paneTreeUtil.firstLeaf(pane.children[0]).paneId
+  const key1 = paneTreeUtil.firstLeaf(pane.children[1]).paneId
+
   return (
     <div
       ref={containerRef}
@@ -45,7 +54,7 @@ export default function PaneNode({ pane, path }: Props) {
         overflow: 'hidden',
       }}
     >
-      <div style={childStyle(firstFlex)}>
+      <div key={key0} style={childStyle(firstFlex)}>
         <PaneNode pane={pane.children[0]} path={[...path, 0]} />
       </div>
       <ResizeHandle
@@ -54,7 +63,7 @@ export default function PaneNode({ pane, path }: Props) {
         startRatio={ratio}
         containerRef={containerRef}
       />
-      <div style={childStyle(secondFlex)}>
+      <div key={key1} style={childStyle(secondFlex)}>
         <PaneNode pane={pane.children[1]} path={[...path, 1]} />
       </div>
     </div>

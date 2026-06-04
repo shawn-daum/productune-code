@@ -1,9 +1,78 @@
-import { useRef, useState, type ReactNode, type ButtonHTMLAttributes } from 'react'
+import {
+  useRef,
+  useState,
+  useLayoutEffect,
+  type ReactNode,
+  type ButtonHTMLAttributes,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { SplitSquareHorizontal, SplitSquareVertical, X } from 'lucide-react'
-import type { LeafPaneNode, Tab } from '../../../store/workspace'
+import {
+  SplitSquareHorizontal,
+  SplitSquareVertical,
+  X,
+  FileText,
+  FileCode,
+  GitBranch,
+  BookOpen,
+  Image as ImageIcon,
+  Binary as BinaryIcon,
+  Terminal,
+  Globe,
+  Settings,
+  Workflow,
+  Server,
+  Webhook,
+  Rocket,
+  Network,
+  Box,
+  LayoutGrid,
+  GitCompare,
+  ScrollText,
+  type LucideIcon,
+} from 'lucide-react'
+import type { LeafPaneNode, Tab, TabType } from '../../../store/workspace'
 import { useWorkspace } from '../../../store/workspace'
+
+// ── Tab density tiers (T-023 #4a) ────────────────────────────────────────────
+// Driven by measured per-tab width. comfortable: icon+title+×; tight: hide
+// inactive × ; min: also hide the leading icon. Active tab is always exempt and
+// keeps title + ×.
+type Density = 'comfortable' | 'tight' | 'min'
+const TAB_MIN = 34
+const TAB_MAX = 200
+const TIGHT_BELOW = 120
+const MIN_AT_OR_BELOW = 56
+
+// Per-type leading icon (lucide only; no color emoji per house style).
+const TAB_ICONS: Record<TabType, LucideIcon> = {
+  markdown: FileText,
+  'version-detail': GitCompare,
+  'version-history': GitBranch,
+  'ticket-review': ScrollText,
+  'ticket-detail': ScrollText,
+  'design-gate': LayoutGrid,
+  'qa-result': LayoutGrid,
+  'persona-def': BookOpen,
+  'env-view': Settings,
+  'skill-matrix': LayoutGrid,
+  preview: Globe,
+  terminal: Terminal,
+  browser: Globe,
+  image: ImageIcon,
+  binary: BinaryIcon,
+  deploy: Rocket,
+  'general-settings': Settings,
+  'workflow-settings': Workflow,
+  'mcp-servers': Server,
+  hooks: Webhook,
+  'artifact-md': FileText,
+  'artifact-mermaid': Network,
+}
+
+function iconFor(type: TabType): LucideIcon {
+  return TAB_ICONS[type] ?? Box
+}
 
 const DRAG_MIME = 'application/x-productune-tab'
 
@@ -82,9 +151,27 @@ export default function TabBar({ leaf, isActivePane }: Props) {
   const moveTab = useWorkspace((s) => s.moveTab)
   const setDragHint = useWorkspace((s) => s.setDragHint)
   const dragHint = useWorkspace((s) => s.dragHint)
+  const setTabDragActive = useWorkspace((s) => s.setTabDragActive)
   const splitRight = useWorkspace((s) => s.splitRight)
   const splitDown = useWorkspace((s) => s.splitDown)
   const closePane = useWorkspace((s) => s.closePane)
+
+  // #4a: measure the tab strip to derive per-tab width → density tier + scroll
+  // fallback. The strip flexes; controls are a protected flex-shrink:0 sibling.
+  const stripRef = useRef<HTMLDivElement | null>(null)
+  const [stripWidth, setStripWidth] = useState(0)
+  useLayoutEffect(() => {
+    const el = stripRef.current
+    if (!el) return
+    const update = () => setStripWidth(el.clientWidth)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const tabCount = leaf.tabs.length
+  const overflow = computeOverflow(stripWidth, tabCount)
 
   const onSplitRight = () => {
     setActivePane(leaf.paneId)
@@ -130,6 +217,9 @@ export default function TabBar({ leaf, isActivePane }: Props) {
     const payload: DragPayload = { fromPaneId: leaf.paneId, tabId: tab.id }
     e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload))
     e.dataTransfer.effectAllowed = 'move'
+    // #4c: flag the global drag so panes mount a capture layer + webviews stop
+    // intercepting pointer/drag events, keeping drop-zones hit-testable.
+    setTabDragActive(true)
   }
 
   const onTabDragOver = (e: React.DragEvent, tab: Tab) => {
@@ -179,7 +269,10 @@ export default function TabBar({ leaf, isActivePane }: Props) {
   }
 
   const onDragLeaveBar = () => setDragHint(null)
-  const onDragEnd = () => setDragHint(null)
+  const onDragEnd = () => {
+    setDragHint(null)
+    setTabDragActive(false)
+  }
 
   return (
     <div
@@ -187,49 +280,63 @@ export default function TabBar({ leaf, isActivePane }: Props) {
       onDragLeave={onDragLeaveBar}
       onMouseDown={() => setActivePane(leaf.paneId)}
     >
-      {leaf.tabs.map((tab) => {
-        const isActive = leaf.activeTabId === tab.id
-        const indicator = dragHintMatch(dragHint, leaf.paneId, tab.id)
-        return (
-          <div
-            key={tab.id}
-            style={tabWrap}
-            onClick={() => setActiveTab(leaf.paneId, tab.id)}
-            draggable
-            onDragStart={(e) => onTabDragStart(e, tab)}
-            onDragEnd={onDragEnd}
-            onDragOver={(e) => onTabDragOver(e, tab)}
-            onDrop={(e) => onTabDrop(e, tab)}
-          >
-            {indicator === 'before' && <div style={tabInsertLineLeft} />}
-            <button
-              type="button"
-              style={tabBtn(isActive)}
-              title={tab.title}
+      {/* Flexing tab strip — shrinks tabs Chrome-style; scrolls when even
+          min-width can't fit. Never encroaches the protected control cluster. */}
+      <div ref={stripRef} style={tabStrip(overflow.scroll)}>
+        {leaf.tabs.map((tab) => {
+          const isActive = leaf.activeTabId === tab.id
+          const indicator = dragHintMatch(dragHint, leaf.paneId, tab.id)
+          // Active tab is exempt from density hiding (always title + ×).
+          const showIcon = isActive || overflow.density !== 'min'
+          const showClose = isActive || overflow.density === 'comfortable'
+          const Icon = iconFor(tab.type)
+          return (
+            <div
+              key={tab.id}
+              style={tabWrap(overflow)}
+              onClick={() => setActiveTab(leaf.paneId, tab.id)}
+              draggable
+              onDragStart={(e) => onTabDragStart(e, tab)}
+              onDragEnd={onDragEnd}
+              onDragOver={(e) => onTabDragOver(e, tab)}
+              onDrop={(e) => onTabDrop(e, tab)}
             >
-              <span style={tabTitle}>{tab.title}</span>
-              <span
-                role="button"
-                aria-label={`${t('workspace.tab.close')} (⌘W)`}
-                title={`${t('workspace.tab.close')} (⌘W)`}
-                style={closeBtn}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  closeTab(leaf.paneId, tab.id)
-                }}
-              >
-                ×
-              </span>
-            </button>
-            {indicator === 'after' && <div style={tabInsertLineRight} />}
-          </div>
-        )
-      })}
-      <div
-        style={barEnd(dragHint?.kind === 'bar-end' && dragHint.paneId === leaf.paneId)}
-        onDragOver={onBarEndDragOver}
-        onDrop={onBarEndDrop}
-      />
+              {indicator === 'before' && <div style={tabInsertLineLeft} />}
+              <button type="button" style={tabBtn(isActive)} title={tab.title}>
+                {showIcon && (
+                  <Icon size={13} strokeWidth={1.75} style={tabIcon} aria-hidden />
+                )}
+                <span style={tabTitle}>{tab.title}</span>
+                {showClose && (
+                  <span
+                    role="button"
+                    aria-label={`${t('workspace.tab.close')} (⌘W)`}
+                    title={`${t('workspace.tab.close')} (⌘W)`}
+                    style={closeBtn}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      closeTab(leaf.paneId, tab.id)
+                    }}
+                  >
+                    ×
+                  </span>
+                )}
+              </button>
+              {indicator === 'after' && <div style={tabInsertLineRight} />}
+            </div>
+          )
+        })}
+        {/* bar-end drop target. In scroll mode it has no flex-grow (the strip
+            scrolls); otherwise it absorbs slack so tabs sit flush-left. */}
+        <div
+          style={barEnd(
+            dragHint?.kind === 'bar-end' && dragHint.paneId === leaf.paneId,
+            overflow.scroll,
+          )}
+          onDragOver={onBarEndDragOver}
+          onDrop={onBarEndDrop}
+        />
+      </div>
       {splitButtons}
     </div>
   )
@@ -247,6 +354,32 @@ function parsePayload(raw: string): DragPayload | null {
     if (typeof v?.fromPaneId === 'string' && typeof v?.tabId === 'string') return v
   } catch { /* ignore */ }
   return null
+}
+
+interface Overflow {
+  density: Density
+  perTab: number
+  scroll: boolean
+}
+
+/**
+ * #4a: derive per-tab width + density tier from the measured strip width.
+ * - basis = stripWidth / N, clamped to [TAB_MIN .. TAB_MAX]
+ * - density: comfortable ≥120 · tight <120 · min ≤56
+ * - scroll fallback: even at TAB_MIN all tabs don't fit (TAB_MIN·N > strip)
+ */
+function computeOverflow(stripWidth: number, count: number): Overflow {
+  if (count === 0 || stripWidth === 0) {
+    return { density: 'comfortable', perTab: TAB_MAX, scroll: false }
+  }
+  const raw = stripWidth / count
+  const perTab = Math.max(TAB_MIN, Math.min(TAB_MAX, raw))
+  let density: Density = 'comfortable'
+  if (perTab <= MIN_AT_OR_BELOW) density = 'min'
+  else if (perTab < TIGHT_BELOW) density = 'tight'
+  // If TAB_MIN-wide tabs still overflow the strip, scroll instead of overlap.
+  const scroll = TAB_MIN * count > stripWidth + 1
+  return { density, perTab, scroll }
 }
 
 function dragHintMatch(
@@ -289,10 +422,31 @@ const emptyHint: React.CSSProperties = {
   userSelect: 'none',
 }
 
-const tabWrap: React.CSSProperties = {
-  position: 'relative',
-  display: 'flex',
-  alignItems: 'stretch',
+/** Flexing strip that holds the tabs. Protected controls are a sibling. */
+function tabStrip(scroll: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'stretch',
+    flex: '1 1 auto',
+    minWidth: 0,
+    overflowX: scroll ? 'auto' : 'hidden',
+    overflowY: 'hidden',
+    // thin scrollbar in scroll mode
+    scrollbarWidth: scroll ? 'thin' : undefined,
+  }
+}
+
+function tabWrap(o: Overflow): React.CSSProperties {
+  return {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'stretch',
+    // Each tab flexes equally; clamp to [TAB_MIN .. TAB_MAX]. In scroll mode
+    // tabs hold a fixed TAB_MIN basis and the strip scrolls.
+    flex: o.scroll ? `0 0 ${TAB_MIN}px` : '1 1 0',
+    minWidth: TAB_MIN,
+    maxWidth: o.scroll ? TAB_MIN : TAB_MAX,
+  }
 }
 
 function tabBtn(isActive: boolean): React.CSSProperties {
@@ -300,6 +454,7 @@ function tabBtn(isActive: boolean): React.CSSProperties {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 6,
+    width: '100%',
     height: '100%',
     padding: '0 10px',
     background: isActive ? '#0F0F0F' : 'transparent',
@@ -310,15 +465,22 @@ function tabBtn(isActive: boolean): React.CSSProperties {
     fontSize: 12,
     fontFamily: 'inherit',
     cursor: 'pointer',
-    maxWidth: 200,
+    minWidth: 0,
+    overflow: 'hidden',
   }
+}
+
+const tabIcon: React.CSSProperties = {
+  flexShrink: 0,
+  opacity: 0.8,
 }
 
 const tabTitle: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-  maxWidth: 160,
+  minWidth: 0,
+  flex: '1 1 auto',
 }
 
 const closeBtn: React.CSSProperties = {
@@ -349,10 +511,12 @@ const tabInsertLineBase: React.CSSProperties = {
 const tabInsertLineLeft: React.CSSProperties = { ...tabInsertLineBase, left: -1 }
 const tabInsertLineRight: React.CSSProperties = { ...tabInsertLineBase, right: -1 }
 
-function barEnd(hot: boolean): React.CSSProperties {
+function barEnd(hot: boolean, scroll: boolean): React.CSSProperties {
   return {
-    flex: 1,
-    minWidth: 24,
+    // In scroll mode it must not grow (the strip scrolls instead); otherwise it
+    // absorbs slack so tabs sit flush-left when there are only a few.
+    flex: scroll ? '0 0 8px' : '1 1 auto',
+    minWidth: scroll ? 8 : 24,
     background: hot ? '#1A1208' : 'transparent',
     transition: 'background 0.08s',
   }

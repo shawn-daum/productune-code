@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useWorkspace } from '../../../../store/workspace'
 
 // ── Electron webview JSX type ─────────────────────────────────────────────────
 // Note: @types/react 19+ provides WebViewHTMLAttributes<HTMLWebViewElement>
@@ -40,6 +41,10 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
   const [inputUrl, setInputUrl] = useState(initialUrl)
   const [loadFailed, setLoadFailed] = useState(false)
   const webviewRef = useRef<ElectronWebview | null>(null)
+  // #4c (T-023): while a tab drag is active, drop pointer events on the webview
+  // so the pane's drop-zone overlay receives dragover/drop instead of the
+  // webview swallowing them.
+  const tabDragActive = useWorkspace((s) => s.tabDragActive)
 
   // On mount: notify main process — noop until T-P4-115 fills the handler
   useEffect(() => {
@@ -161,7 +166,7 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
           src={initialUrl}
           allowpopups={true}
           partition="persist:browser-tab"
-          style={webviewEl}
+          style={tabDragActive ? { ...webviewEl, pointerEvents: 'none' } : webviewEl}
         />
       </div>
     </div>
