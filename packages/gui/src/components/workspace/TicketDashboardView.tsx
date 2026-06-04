@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import type { PoState, Ticket, Status } from '../../lib/types'
-import { useTicketScan } from '../../lib/useTicketScan'
+import { useTicketScan, normalizeStatus } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 
@@ -76,7 +76,10 @@ function collectAllTickets(poState: PoState | null, scanned: Ticket[]): Ticket[]
       slug: ct?.slug,
       title: ct?.title,
       type: ct?.type ?? ct?.stage,
-      status: ct?.status,
+      // T-PATCH-011: normalise current_task.status through the same synonym map
+      // used for scanned tickets — po-state may carry project-specific values
+      // (e.g. "design-proposal") that are not canonical 7-status strings.
+      status: normalizeStatus(ct?.status),
       qa_status: ct?.qa_status,
       qa_loops: ct?.qa_loops,
       assignee: ct?.assignee_persona,

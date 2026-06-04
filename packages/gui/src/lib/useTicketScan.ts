@@ -21,15 +21,21 @@ import type { Ticket, Status } from './types'
  * (`designer/ticket-schema.md` pre-doctrine-unification). Map on read so they
  * render canonically instead of falling through to an "unknown" status badge.
  * Canonical 7-status: todo | in-progress | review | user-verify | done | blocked | abandoned.
+ *
+ * T-PATCH-011: `design-proposal` is used by issue-tracker's po-state `current_task.status`
+ * to indicate active designer work (options being produced). Maps to `in-progress`.
+ * This entry also lives here because `normalizeStatus` is called on `current_task.status`
+ * in `TicketDashboardView.collectAllTickets` (cross-source normalization point).
  */
 const LEGACY_STATUS_SYNONYMS: Record<string, Status> = {
   planned: 'todo',
   'qa-pending': 'review',
   'user-pending': 'user-verify',
   cancelled: 'abandoned',
+  'design-proposal': 'in-progress',
 }
 
-function normalizeStatus(raw: Status | string | undefined): Status | undefined {
+export function normalizeStatus(raw: Status | string | undefined): Status | undefined {
   if (raw == null) return undefined
   return LEGACY_STATUS_SYNONYMS[raw as string] ?? (raw as Status)
 }
