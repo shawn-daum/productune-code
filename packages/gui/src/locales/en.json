@@ -93,6 +93,14 @@
       "readOnly": "Read-only",
       "fileLoadError": "Could not load file. Try again shortly."
     },
+    "doctrineFile": {
+      "preview": "Preview",
+      "edit": "Edit",
+      "save": "Save",
+      "saved": "Saved",
+      "conflict": "File changed on disk since you opened it. Reopen to get the latest, then re-apply your edits.",
+      "lineCapTooltip": "{{count}} of {{cap}} recommended lines (advisory — does not block save)"
+    },
     "mermaid": {
       "renderError": "Mermaid render error",
       "sourceLabel": "Source:",
@@ -495,6 +503,30 @@
         "specHint": "{{path}} — click Edit to modify the persona spec.",
         "specSaved": "Saved (applies after AI engine restart)"
       }
+    },
+    "doctrine": {
+      "tierT0": "T0 · Doctrine",
+      "tierT1": "T1 · Project",
+      "tierT2": "T2 · Personal",
+      "bookshelfLabel": "bookshelf/",
+      "emptyTier": "No files in this tier",
+      "missingHabit": "habit.md not created yet",
+      "loadError": "Could not load tier info",
+      "save": {
+        "title": "How do you want to save this change?",
+        "body": "Save directly overwrites the file immediately. Request PO review does NOT save now — a change summary is queued for PO approval, and the PO reviews and applies it manually.",
+        "direct": "Save directly",
+        "requestReview": "Request PO review",
+        "cancel": "Cancel"
+      },
+      "savedToast": "Saved.",
+      "reviewRequestedToast": "Sent for PO review — the file is not saved yet.",
+      "writeError": "Save failed: {{error}}",
+      "dirtyTitle": "You have unsaved changes",
+      "dirtyBody": "This tab has unsaved changes. Discard and close, or save?",
+      "dirtyDiscard": "Discard & close",
+      "dirtySave": "Save",
+      "dirtyCancel": "Cancel"
     },
     "deploy": {
       "confirmTitle": {

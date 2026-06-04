@@ -93,6 +93,14 @@
       "readOnly": "읽기 전용",
       "fileLoadError": "파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
     },
+    "doctrineFile": {
+      "preview": "미리보기",
+      "edit": "편집",
+      "save": "저장",
+      "saved": "저장됨",
+      "conflict": "연 뒤에 디스크에서 파일이 변경됐어요. 다시 열어 최신 내용을 받은 다음 수정사항을 재적용해주세요.",
+      "lineCapTooltip": "권장 {{cap}}줄 중 {{count}}줄 (참고용 — 저장을 막지 않아요)"
+    },
     "mermaid": {
       "renderError": "Mermaid 렌더 오류",
       "sourceLabel": "원문 소스:",
@@ -495,6 +503,30 @@
         "specHint": "{{path}} — [편집] 을 눌러 페르소나 spec 을 수정하세요.",
         "specSaved": "저장됐어요 (AI 엔진 재시작 후 적용)"
       }
+    },
+    "doctrine": {
+      "tierT0": "T0 · 교리",
+      "tierT1": "T1 · 프로젝트",
+      "tierT2": "T2 · 개인",
+      "bookshelfLabel": "bookshelf/",
+      "emptyTier": "이 계층에 파일 없음",
+      "missingHabit": "habit.md 아직 없음",
+      "loadError": "계층 정보를 불러오지 못했어요",
+      "save": {
+        "title": "이 변경을 어떻게 저장할까요?",
+        "body": "바로 저장하면 파일이 즉시 덮어쓰기 됩니다. PO 검토 요청을 선택하면 지금 저장되지 않고, 변경 요약이 PO 승인 대기열로 전달돼 PO가 직접 검토 후 반영합니다.",
+        "direct": "바로 저장",
+        "requestReview": "PO 검토 요청",
+        "cancel": "취소"
+      },
+      "savedToast": "저장됐어요.",
+      "reviewRequestedToast": "PO 검토 요청됨 — 파일은 아직 저장되지 않았어요.",
+      "writeError": "저장 실패: {{error}}",
+      "dirtyTitle": "저장하지 않은 변경이 있어요",
+      "dirtyBody": "이 탭에 저장하지 않은 변경이 있습니다. 버리고 닫을까요, 저장할까요?",
+      "dirtyDiscard": "버리고 닫기",
+      "dirtySave": "저장",
+      "dirtyCancel": "취소"
     },
     "deploy": {
       "confirmTitle": {

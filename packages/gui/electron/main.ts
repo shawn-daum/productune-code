@@ -17,6 +17,7 @@ import { register as registerExplorer }   from './ipc/explorer'
 import { register as registerSearch }     from './ipc/search'
 import { register as registerWorktree }   from './ipc/worktree'
 import { register as registerArtifacts }  from './ipc/artifacts'
+import { register as registerDoctrine }   from './ipc/doctrine'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
@@ -54,6 +55,7 @@ registerExplorer()
 registerSearch()
 registerWorktree()
 registerArtifacts()
+registerDoctrine()
 
 // ── Window ────────────────────────────────────────────────────────────────────
 

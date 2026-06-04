@@ -274,7 +274,12 @@
   <p>따라서 이 기능은 T1/T2 doctrine 에 대한 <strong>최초의 human-direct full-file write</strong> 를 도입합니다. 저장 의미 두 가지(사용자 결정 필요):</p>
 
   <div class="opt rec">
-    <span class="ot">Option A — direct write (v1 권장)</span>
+    <span class="ot">RESOLVED (사용자 확정) — 저장 시점마다 사용자가 선택</span>
+    <p style="margin:6px 0 0">두 경로를 모두 구현하고, T1/T2 저장 때마다 선택 다이얼로그(<strong>바로 저장</strong> | <strong>PO 검토 요청</strong>)를 띄워 사용자가 매번 고릅니다. "바로 저장" = whitelisted <code>doctrine:writeFile</code> 직접 쓰기(whole-file replace), "PO 검토 요청" = 기존 <code>pending_promotions[]</code> 승인 흐름(<code>state:appendPendingPromotion</code>)에 큐잉 → PO 가 기존 promotion UI 에서 승인. 빌드: <code>T-PATCH-022</code>. (참고: mechanical-write 가 append 의미라 PO 경로는 full-file 가 아니라 변경 요약 delta 를 큐잉 — T-PATCH-022 GAP-1.)</p>
+  </div>
+
+  <div class="opt">
+    <span class="ot">Option A — direct write (원래 권장안, 위 결정에 포섭)</span>
     <p style="margin:6px 0 0">T1/T2 는 명시적으로 사용자 소유 계층이며, 사람이 GUI 에서 자기 project/personal doctrine 을 편집하는 것 자체가 human curation 단계입니다.
     엄격한 path whitelist(resolved path 가 <code>docs/&lt;p&gt;/</code> 또는 <code>~/.productune/&lt;p&gt;/</code> 안 · 확장자 <code>.md</code> · persona ∈ 4)와 함께 <code>doctrine:writeFile</code>로 직접 씁니다.
     기존 <code>memory:readFile</code> whitelist guard(<code>electron/ipc/settings.ts</code> 118–128행)를 그대로 따릅니다.</p>
@@ -358,9 +363,9 @@
 
   <h2><span class="num">7</span>사용자에게 묻는 open questions</h2>
   <ol class="oq">
-    <li><strong>저장 의미</strong> — Option A(T1/T2 에 직접 whitelisted write, 권장) vs Option B(GUI 편집을 promotion-approval gate 경유)?</li>
+    <li><strong>저장 의미</strong> — <strong>RESOLVED:</strong> 저장 시점마다 사용자 선택 (바로 저장 = 직접 whitelisted write, PO 검토 요청 = 기존 <code>pending_promotions[]</code> 승인 흐름 경유). 두 경로 모두 구현. → <code>T-PATCH-022</code>.</li>
     <li><strong>Common Tier-0</strong> — <code>~/.productune/doctrine/common/</code>(공유, per-persona 아님) — 5번째 "common" read-only 컬럼/의사 페르소나로 노출할지, 아니면 이 surface 에서 완전히 제외할지?</li>
-    <li><strong>진입점</strong> — 전용 새 Activity 아이콘 "Doctrine"(권장, 계층 side-by-side 가능) vs 기존 Team → PersonaDefTab memory 행을 그 자리에서 키우기?</li>
+    <li><strong>진입점</strong> — <strong>RESOLVED:</strong> 새 Activity 아이콘 없음. 기존 <strong>Team 패널</strong>(<code>TeamPanel.tsx</code>, 이미 4 persona 나열)에 per-persona 확장형 tier/file 네비게이터를 통합. 파일 클릭 → <code>doctrine-file</code> 탭. 사이드바가 좁아 side-by-side 3컬럼 대신 persona 아래 수직 확장 트리(T0→T1→T2). → <code>T-PATCH-021</code>.</li>
     <li><strong>doctrine caps</strong> — 줄-cap(50/100/100)을 non-blocking advisory 배지로만 표시 vs 초과 시 hard-warn/저장 차단?</li>
     <li><strong>Bookshelf 파일 생성/삭제</strong> — v1 은 기존 파일 편집만. 에디터에서 T1/T2 bookshelf 파일 <em>생성</em>·<em>삭제</em>도 허용할지, v1 범위 밖인지?</li>
     <li><strong>T2 non-doctrine 파일</strong> — <code>po-state.json</code> / <code>usage-state.json</code> / env 파일을 이 에디터에서 계속 숨김(runtime state 로 취급, doctrine 아님) 확정?</li>

@@ -478,6 +478,51 @@ contextBridge.exposeInMainWorld('api', {
   readMemoryFile: (path: string): Promise<{ ok: boolean; content?: string; exists?: boolean; error?: string }> =>
     ipcRenderer.invoke('memory:readFile', path),
 
+  // ── Doctrine tiers (T-PATCH-019, #7) ─────────────────────────────────────────
+  // Backs the Persona Tier Editor. NOTE: `persona` here is the **dir name**
+  // (`po` | `designer` | `developer` | `qa`) — the caller maps the runtime key
+  // `dev` → `developer` before invoking. `projectDir` resolves the Tier-1 root
+  // (`<projectDir>/docs/<persona>/`) and is also threaded through read/write so
+  // Tier-1 paths pass the main-process whitelist.
+  doctrineListTiers: (
+    persona: string,
+    projectDir: string,
+  ): Promise<
+    {
+      tiers: Array<{
+        tier: 0 | 1 | 2
+        role: string
+        root: string
+        editable: boolean
+        files: Array<{
+          tier: 0 | 1 | 2
+          persona: string
+          role: string
+          absPath: string
+          relName: string
+          editable: boolean
+          exists: boolean
+          mtimeMs: number | null
+          sizeBytes: number | null
+        }>
+      }>
+    } & { ok: boolean; error?: string }
+  > => ipcRenderer.invoke('doctrine:listTiers', persona, projectDir),
+
+  doctrineReadFile: (
+    absPath: string,
+    projectDir?: string,
+  ): Promise<{ ok: boolean; content?: string; exists?: boolean; mtimeMs?: number | null; error?: string }> =>
+    ipcRenderer.invoke('doctrine:readFile', absPath, projectDir),
+
+  doctrineWriteFile: (
+    absPath: string,
+    content: string,
+    expectedMtimeMs?: number | null,
+    projectDir?: string,
+  ): Promise<{ ok: boolean; mtimeMs?: number; conflict?: boolean; currentMtimeMs?: number; error?: string }> =>
+    ipcRenderer.invoke('doctrine:writeFile', absPath, content, expectedMtimeMs, projectDir),
+
   // ── Menubar events (renderer subscribes; main process emits) ─────────────────
   onMenuNewProject: (cb: () => void) => {
     const listener = () => cb()

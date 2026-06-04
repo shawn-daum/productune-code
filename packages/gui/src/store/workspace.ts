@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import i18next from '../i18n'
 import type { Project, Phase, PoState, Message, MessageKind } from '../lib/types'
 import { PHASE_NAMES } from '../lib/types'
+import { canCloseTab } from './tabCloseGuard'
 
 // ── Pane tree types (T-P4-046) ──────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ export type TabType =
   | 'ticket-detail'
   | 'code-search'
   | 'code-view'
+  | 'doctrine-file'
 
 export interface Tab {
   id: string
@@ -407,6 +409,10 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   },
 
   closeTab: (paneId, tabId) => {
+    // T-PATCH-022 AC-4: a dirty editor (doctrine-file) may veto its own close
+    // to surface an unsaved-changes confirmation. The guard owner re-issues
+    // closeTab once the user confirms discard/save.
+    if (!canCloseTab(tabId)) return
     set((s) => ({
       ...s,
       panes: replaceLeaf(s.panes, paneId, (l) => {
@@ -664,6 +670,7 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'ticket-detail':     return (props?.ticketId as string) ?? 'Ticket'
     case 'code-search':       return (props?.path as string)?.split('/').pop() ?? 'File'
     case 'code-view':         return (props?.path as string)?.split('/').pop() ?? 'File'
+    case 'doctrine-file':     return (props?.relName as string) ?? (props?.absPath as string)?.split('/').pop() ?? 'Doctrine'
     default:                  return type
   }
 }
