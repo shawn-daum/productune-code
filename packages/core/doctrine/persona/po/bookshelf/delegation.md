@@ -33,6 +33,7 @@ You own only two writes: the pre-dispatch `current_task` open, and the ticket li
 
 - Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state · **user_lang** (BCP-47, e.g. `ko`, `en`). The persona then skips its state re-read.
 - Every `[ctx]` carries `version` + `user_lang` + `audience` (`user` | `internal`) so the persona keys language + format off audience itself. Never hand-author a persona-owned write path — pass only the inputs; the persona applies its own write-map (`docs/artifacts/<version>/<id|slug>.<ext>`). Holds for ad-hoc / non-scaffold delegation too, not just the P2 scaffold. (2026-06-04) [T-PATCH-DOCTRINE]
+- Working-language source = `~/.productune/settings.json` `.ui.language` (onboarding-set); PO reads it and passes it as `[ctx].user_lang`. (2026-06-05) [T-PATCH-DOCTRINE]
 - Inspect the returned `confidence` + `unresolved`; low / non-empty → escalate (`escalation.md`).
 
 ## User-question channel
