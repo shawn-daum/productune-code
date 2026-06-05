@@ -263,6 +263,14 @@
     "image": {
       "noPath": "No path provided."
     },
+    "findBar": {
+      "placeholder": "Find…",
+      "noResults": "No results",
+      "matchCount": "{{current}} of {{total}}",
+      "prev": "Previous match",
+      "next": "Next match",
+      "close": "Close find bar"
+    },
     "chat": {
       "session": "PO session",
       "title": "PO Chat",

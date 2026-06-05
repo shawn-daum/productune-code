@@ -587,6 +587,13 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('html:writeFile', projectDir, absPath, content, expectedMtimeMs),
 
   // ── Menubar events (renderer subscribes; main process emits) ─────────────────
+  // T-PATCH-046: find bar trigger from Electron menu bar (CmdOrCtrl+F)
+  onMenuFind: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:find', listener)
+    return () => ipcRenderer.removeListener('menu:find', listener)
+  },
+
   onMenuNewProject: (cb: () => void) => {
     const listener = () => cb()
     ipcRenderer.on('menu:new-project', listener)

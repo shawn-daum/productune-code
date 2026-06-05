@@ -7,10 +7,18 @@
  * Requires webviewTag: true in BrowserWindow webPreferences (main.ts).
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../../../store/workspace'
+
+// T-PATCH-046: FindHandle — exposed to LeafPane via forwardRef / useImperativeHandle
+export interface BrowserFindHandle {
+  findInPage: (text: string, opts?: { forward?: boolean; findNext?: boolean }) => void
+  stopFindInPage: () => void
+  /** Subscribe to found-in-page result events (returns an unsubscribe fn). */
+  onFoundInPage: (cb: (result: { activeMatchOrdinal: number; matches: number }) => void) => () => void
+}
 
 // ── Electron webview JSX type ─────────────────────────────────────────────────
 // Note: @types/react 19+ provides WebViewHTMLAttributes<HTMLWebViewElement>
@@ -22,6 +30,9 @@ interface ElectronWebview extends HTMLElement {
   goForward: () => void
   reload: () => void
   loadURL: (url: string) => void
+  // T-PATCH-046: in-page find API
+  findInPage: (text: string, opts?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }) => void
+  stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -31,7 +42,9 @@ interface Props {
   props?: Record<string, unknown>
 }
 
-export default function BrowserTab({ tabId, props: tabProps }: Props) {
+// T-PATCH-046: forwardRef so LeafPane can obtain the BrowserFindHandle.
+// Typed as BrowserFindHandle | null to match useRef<BrowserFindHandle | null>(null).
+const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserTab({ tabId, props: tabProps }, findRef) {
   const { t } = useTranslation()
   const initialUrl =
     typeof tabProps?.url === 'string' && tabProps.url
@@ -45,6 +58,25 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
   // so the pane's drop-zone overlay receives dragover/drop instead of the
   // webview swallowing them.
   const tabDragActive = useWorkspace((s) => s.tabDragActive)
+
+  // T-PATCH-046: expose find handle via forwardRef
+  useImperativeHandle(findRef, () => ({
+    findInPage: (text: string, opts) => {
+      webviewRef.current?.findInPage(text, opts)
+    },
+    stopFindInPage: () => {
+      webviewRef.current?.stopFindInPage('clearSelection')
+    },
+    onFoundInPage: (cb: (result: { activeMatchOrdinal: number; matches: number }) => void) => {
+      const wv = webviewRef.current
+      if (!wv) return () => {}
+      const handler = (e: any) => {
+        if (e?.result) cb({ activeMatchOrdinal: e.result.activeMatchOrdinal, matches: e.result.matches })
+      }
+      wv.addEventListener('found-in-page', handler)
+      return () => wv.removeEventListener('found-in-page', handler)
+    },
+  }), [])
 
   // On mount: notify main process — noop until T-P4-115 fills the handler
   useEffect(() => {
@@ -70,7 +102,7 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
       if (!meta) return
       const key = input.key?.toLowerCase()
       const isAppShortcut =
-        key === 't' || key === 'w' || key === '\\' ||
+        key === 't' || key === 'w' || key === '\\' || key === 'f' ||
         (key >= '1' && key <= '9')
       if (!isAppShortcut) return
       // Re-dispatch as a real KeyboardEvent on window so useKeyboardShortcuts
@@ -210,7 +242,9 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
       </div>
     </div>
   )
-}
+})
+
+export default BrowserTab
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 

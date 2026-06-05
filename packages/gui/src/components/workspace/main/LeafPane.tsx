@@ -1,9 +1,11 @@
-import { useRef } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import type { LeafPaneNode, PaneZone } from '../../../store/workspace'
 import { useWorkspace } from '../../../store/workspace'
 import TabBar from './TabBar'
 import TabContent from './TabContent'
 import EmptyPane from './EmptyPane'
+import FindBar from './FindBar'
+import type { BrowserFindHandle } from './panes/BrowserTab'
 
 const DRAG_MIME = 'application/x-productune-tab'
 
@@ -22,6 +24,138 @@ export default function LeafPane({ leaf }: Props) {
 
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const activeTab = leaf.tabs.find((t) => t.id === leaf.activeTabId) ?? null
+
+  // ── T-PATCH-046: find bar state ───────────────────────────────────────────
+  const [findOpen, setFindOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  const [matchInfo, setMatchInfo] = useState<{ current: number; total: number } | null>(null)
+  // Ref to browser tab find API (only populated when active tab is browser type)
+  const browserFindRef = useRef<BrowserFindHandle | null>(null)
+  // Track unsubscribe fn for found-in-page events
+  const foundInPageUnsub = useRef<(() => void) | null>(null)
+
+  const isBrowserTab = activeTab?.type === 'browser'
+
+  const TEXT_TAB_TYPES = new Set(['markdown', 'artifact-md', 'code-view', 'doctrine-file'])
+  const isTextTab = activeTab ? TEXT_TAB_TYPES.has(activeTab.type) : false
+
+  // Open find bar
+  const openFind = useCallback(() => {
+    setFindOpen(true)
+  }, [])
+
+  // Close find bar — stop any running find
+  const closeFind = useCallback(() => {
+    setFindOpen(false)
+    setFindQuery('')
+    setMatchInfo(null)
+    if (isBrowserTab && browserFindRef.current) {
+      browserFindRef.current.stopFindInPage()
+      foundInPageUnsub.current?.()
+      foundInPageUnsub.current = null
+    } else {
+      // Clear window.find selection
+      window.getSelection()?.removeAllRanges()
+    }
+  }, [isBrowserTab])
+
+  // Run find in browser tab
+  const runBrowserFind = useCallback((text: string, forward: boolean, findNext: boolean) => {
+    const handle = browserFindRef.current
+    if (!handle) return
+    if (!text) {
+      handle.stopFindInPage()
+      setMatchInfo(null)
+      return
+    }
+    // Subscribe to found-in-page result (once per session)
+    if (!foundInPageUnsub.current) {
+      foundInPageUnsub.current = handle.onFoundInPage((result) => {
+        setMatchInfo({ current: result.activeMatchOrdinal, total: result.matches })
+      })
+    }
+    handle.findInPage(text, { forward, findNext })
+  }, [])
+
+  // Run find in text (DOM) tab using window.find()
+  const runTextFind = useCallback((text: string, forward: boolean) => {
+    if (!text) {
+      window.getSelection()?.removeAllRanges()
+      setMatchInfo(null)
+      return
+    }
+    const found = (window as any).find(
+      text,
+      /* caseSensitive */ false,
+      /* backwards */ !forward,
+      /* wrapAround */ true,
+    ) as boolean
+    // window.find() doesn't give a match count — show minimal feedback only
+    setMatchInfo(found ? { current: 1, total: 1 } : { current: 0, total: 0 })
+  }, [])
+
+  // Handle query changes
+  const handleQueryChange = useCallback((q: string) => {
+    setFindQuery(q)
+    setMatchInfo(null)
+    if (isBrowserTab) {
+      runBrowserFind(q, true, false)
+    } else if (isTextTab) {
+      runTextFind(q, true)
+    }
+  }, [isBrowserTab, isTextTab, runBrowserFind, runTextFind])
+
+  // Next match
+  const handleNext = useCallback(() => {
+    if (isBrowserTab) {
+      runBrowserFind(findQuery, true, true)
+    } else if (isTextTab) {
+      runTextFind(findQuery, true)
+    }
+  }, [isBrowserTab, isTextTab, findQuery, runBrowserFind, runTextFind])
+
+  // Prev match
+  const handlePrev = useCallback(() => {
+    if (isBrowserTab) {
+      runBrowserFind(findQuery, false, true)
+    } else if (isTextTab) {
+      runTextFind(findQuery, false)
+    }
+  }, [isBrowserTab, isTextTab, findQuery, runBrowserFind, runTextFind])
+
+  // Close find when active tab changes
+  useEffect(() => {
+    if (findOpen) closeFind()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab?.id])
+
+  // ── Keyboard shortcut: cmd+F / ctrl+F opens find bar ─────────────────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMeta = e.metaKey || e.ctrlKey
+      if (isMeta && e.key === 'f' && isActive) {
+        // Only handle if a supported tab is active
+        if (activeTab && (isBrowserTab || isTextTab)) {
+          e.preventDefault()
+          openFind()
+        }
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isActive, activeTab, isBrowserTab, isTextTab, openFind])
+
+  // ── IPC: menu:find from Electron menu bar ─────────────────────────────────
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.onMenuFind) return
+    const unsub = api.onMenuFind(() => {
+      if (isActive && activeTab && (isBrowserTab || isTextTab)) {
+        openFind()
+      }
+    })
+    return unsub
+  }, [isActive, activeTab, isBrowserTab, isTextTab, openFind])
 
   const computeZone = (e: React.DragEvent): PaneZone | null => {
     const el = bodyRef.current
@@ -104,7 +238,25 @@ export default function LeafPane({ leaf }: Props) {
         onDragLeave={onBodyDragLeave}
         onDrop={onBodyDrop}
       >
-        {activeTab ? <TabContent key={activeTab.id} tab={activeTab} /> : <EmptyPane />}
+        {/* T-PATCH-046: find bar overlay (absolute, z-index 20) */}
+        {findOpen && (
+          <FindBar
+            query={findQuery}
+            onQueryChange={handleQueryChange}
+            onNext={handleNext}
+            onPrev={handlePrev}
+            onClose={closeFind}
+            matchInfo={matchInfo}
+          />
+        )}
+
+        {activeTab
+          ? <TabContent
+              key={activeTab.id}
+              tab={activeTab}
+              browserFindRef={isBrowserTab ? browserFindRef : undefined}
+            />
+          : <EmptyPane />}
 
         {/* #4c — transparent capture layer over the body while a tab drag is in
             progress. A <webview>/iframe would otherwise swallow the drag events

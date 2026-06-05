@@ -263,6 +263,14 @@
     "image": {
       "noPath": "경로가 없어요."
     },
+    "findBar": {
+      "placeholder": "찾기…",
+      "noResults": "결과 없음",
+      "matchCount": "{{current}} / {{total}}",
+      "prev": "이전 일치",
+      "next": "다음 일치",
+      "close": "찾기 창 닫기"
+    },
     "chat": {
       "session": "PO 세션",
       "title": "PO 채팅",

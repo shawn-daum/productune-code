@@ -1,4 +1,6 @@
+import type { RefObject } from 'react'
 import type { Tab } from '../../../store/workspace'
+import type { BrowserFindHandle } from './panes/BrowserTab'
 import MarkdownTab from './panes/MarkdownTab'
 import VersionDetailTab from './panes/VersionDetailTab'
 import TicketReviewTab from './panes/TicketReviewTab'
@@ -29,9 +31,11 @@ import HtmlViewer from './panes/HtmlViewer'
  */
 interface Props {
   tab: Tab
+  // T-PATCH-046: ref for find-in-page API (browser tab only)
+  browserFindRef?: RefObject<BrowserFindHandle | null>
 }
 
-export default function TabContent({ tab }: Props) {
+export default function TabContent({ tab, browserFindRef }: Props) {
   switch (tab.type) {
     case 'markdown':       return <MarkdownTab props={tab.props} />
     case 'version-detail': return <VersionDetailTab props={tab.props} />
@@ -46,7 +50,7 @@ export default function TabContent({ tab }: Props) {
     case 'mcp-servers':       return <McpServersTab props={tab.props} />
     case 'hooks':             return <HooksTab props={tab.props} />
     case 'browser':
-      return <BrowserTab tabId={tab.id} props={tab.props} />
+      return <BrowserTab ref={browserFindRef ?? null} tabId={tab.id} props={tab.props} />
     case 'artifact-md':
       return <ArtifactMdTab props={tab.props} />
     case 'artifact-mermaid':

@@ -156,7 +156,33 @@ function buildAppMenu(): Menu {
         ...(isMac ? [] : [{ role: 'quit' as const }]),
       ],
     },
-    { role: 'editMenu' },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' as const },
+        { role: 'redo' as const },
+        { type: 'separator' as const },
+        { role: 'cut' as const },
+        { role: 'copy' as const },
+        { role: 'paste' as const },
+        ...(isMac ? [
+          { role: 'pasteAndMatchStyle' as const },
+          { role: 'delete' as const },
+          { role: 'selectAll' as const },
+        ] : [
+          { role: 'delete' as const },
+          { type: 'separator' as const },
+          { role: 'selectAll' as const },
+        ]),
+        { type: 'separator' as const },
+        // T-PATCH-046: open inline find bar in the active pane
+        {
+          label: 'Find',
+          accelerator: 'CmdOrCtrl+F',
+          click: () => sendToFocused('menu:find'),
+        },
+      ],
+    },
     {
       label: 'View',
       submenu: [
