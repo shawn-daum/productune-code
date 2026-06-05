@@ -521,9 +521,9 @@
       }
     },
     "doctrine": {
-      "tierT0": "T0 · Doctrine",
-      "tierT1": "T1 · Project",
-      "tierT2": "T2 · Personal",
+      "tierT0": "T0 · Common Memory",
+      "tierT1": "T1 · Project Memory",
+      "tierT2": "T2 · Personal Memory",
       "bookshelfLabel": "bookshelf/",
       "emptyTier": "No files in this tier",
       "missingHabit": "habit.md not created yet",

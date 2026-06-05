@@ -31,7 +31,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import type { LeafPaneNode, Tab, TabType } from '../../../store/workspace'
-import { useWorkspace } from '../../../store/workspace'
+import { useWorkspace, paneTreeUtil } from '../../../store/workspace'
 
 // ── Tab density tiers (T-023 #4a) ────────────────────────────────────────────
 // Driven by measured per-tab width. comfortable: icon+title+×; tight: hide
@@ -156,6 +156,8 @@ export default function TabBar({ leaf, isActivePane }: Props) {
   const splitRight = useWorkspace((s) => s.splitRight)
   const splitDown = useWorkspace((s) => s.splitDown)
   const closePane = useWorkspace((s) => s.closePane)
+  // T-PATCH-055 AC-4: hide X close btn when only 1 leaf pane remains
+  const totalLeafCount = useWorkspace((s) => paneTreeUtil.collectLeafIds(s.panes).length)
 
   // #4a: measure the tab strip to derive per-tab width → density tier + scroll
   // fallback. The strip flexes; controls are a protected flex-shrink:0 sibling.
@@ -288,8 +290,9 @@ export default function TabBar({ leaf, isActivePane }: Props) {
           const isActive = leaf.activeTabId === tab.id
           const indicator = dragHintMatch(dragHint, leaf.paneId, tab.id)
           // Active tab is exempt from density hiding (always title + ×).
+          // T-PATCH-055: when only 1 leaf pane remains, hide X on all tabs
           const showIcon = isActive || overflow.density !== 'min'
-          const showClose = isActive || overflow.density === 'comfortable'
+          const showClose = totalLeafCount > 1 && (isActive || overflow.density === 'comfortable')
           const Icon = iconFor(tab.type)
           return (
             <div

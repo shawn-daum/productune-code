@@ -237,7 +237,7 @@
       "status": {
         "todo": "할 일",
         "in-progress": "진행 중",
-        "review": "팀 검토",
+        "review": "QA",
         "user-verify": "유저 검토",
         "done": "완료",
         "blocked": "보류",
@@ -521,9 +521,9 @@
       }
     },
     "doctrine": {
-      "tierT0": "T0 · 교리",
-      "tierT1": "T1 · 프로젝트",
-      "tierT2": "T2 · 개인",
+      "tierT0": "T0 · 공통 기억",
+      "tierT1": "T1 · 프로젝트 기억",
+      "tierT2": "T2 · 개인 기억",
       "bookshelfLabel": "bookshelf/",
       "emptyTier": "이 계층에 파일 없음",
       "missingHabit": "habit.md 아직 없음",

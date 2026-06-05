@@ -26,8 +26,8 @@ export const PERSONA_ORDER: PersonaId[] = ['po', 'designer', 'dev', 'qa']
 
 export const PERSONA_LABELS: Record<PersonaId, string> = {
   po:       'PO',
-  designer: 'designer',
-  dev:      'dev',
+  designer: 'Designer',
+  dev:      'Developer',
   qa:       'QA',
 }
 
