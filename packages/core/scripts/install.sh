@@ -97,9 +97,10 @@ merge_claude_settings_hooks() {
   local chunkwarn="$hooks_dir/pre-chunking-warn.sh"
   local strip="$hooks_dir/post-bash-strip-cost.sh"
   local fmlint="$hooks_dir/pre-frontmatter-lint.sh"
+  local gitposture="$hooks_dir/pre-git-posture.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg gitposture "$gitposture" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -110,7 +111,8 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/pre-delegate-ctx-lang.sh"))
       or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
       or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"));
+      or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"));
     def strip_pdt(arr; dir):
       (arr // []) | map(
         select(((.hooks // []) | map(is_pdt(.command // ""; dir)) | any) | not)
@@ -124,6 +126,8 @@ merge_claude_settings_hooks() {
          hooks: [{type: "command", command: $ctxlang}]},
         {matcher: "Bash",
          hooks: [{type: "command", command: $chunkwarn}]},
+        {matcher: "Bash",
+         hooks: [{type: "command", command: $gitposture}]},
         {matcher: "Write|Edit",
          hooks: [{type: "command", command: $fmlint}]}
       ])
