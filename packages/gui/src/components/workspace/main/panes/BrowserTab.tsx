@@ -53,6 +53,45 @@ export default function BrowserTab({ tabId, props: tabProps }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // T-PATCH-047: forward app-level shortcuts from webview to renderer window.
+  // When webview has keyboard focus it swallows key events; window.keydown never
+  // fires. `before-input-event` fires on the webview element itself — intercept
+  // cmd+T / cmd+W / cmd+1-9 and re-dispatch them on the window so
+  // useKeyboardShortcuts picks them up (AC-1, AC-3).
+  useEffect(() => {
+    const wv = webviewRef.current
+    if (!wv) return
+
+    const onBeforeInput = (e: any) => {
+      // `input` payload from the webview's before-input-event.
+      const input = e as { key: string; modifiers: string[]; type: string }
+      if (input.type !== 'keyDown') return
+      const meta = input.modifiers?.includes('meta') || input.modifiers?.includes('control')
+      if (!meta) return
+      const key = input.key?.toLowerCase()
+      const isAppShortcut =
+        key === 't' || key === 'w' || key === '\\' ||
+        (key >= '1' && key <= '9')
+      if (!isAppShortcut) return
+      // Re-dispatch as a real KeyboardEvent on window so useKeyboardShortcuts
+      // handles it identically to non-webview focus (AC-2: form inputs inside
+      // webview are unaffected — webview's own bubbling is separate).
+      const synth = new KeyboardEvent('keydown', {
+        key: input.key,
+        metaKey: input.modifiers?.includes('meta'),
+        ctrlKey: input.modifiers?.includes('control'),
+        bubbles: true,
+        cancelable: true,
+      })
+      window.dispatchEvent(synth)
+    }
+
+    wv.addEventListener('before-input-event', onBeforeInput)
+    return () => {
+      wv.removeEventListener('before-input-event', onBeforeInput)
+    }
+  }, [])
+
   // Wire webview navigation events to keep URL bar in sync
   useEffect(() => {
     const wv = webviewRef.current
