@@ -12,6 +12,19 @@ ahead. Advance only on explicit user confirm at each boundary.
 - **P4 Deploy** — green build → deployed + verified env. pdt-po / pdt-developer / pdt-qa. Project-type gate. Detail: `lifecycle/p4-deploy.md`.
 - **P5 Close** — shipped version → archived; next P1 opens. pdt-designer / pdt-qa / pdt-po. Detail: `lifecycle/p5-close.md`.
 
+## Session is ephemeral — po-state is the SoT (2026-06-05)[T-PATCH-040]
+
+The claude session backing a PO is throwaway. po-state (`version` / `phase` / `current_task` / `persona_sessions` / `recent_turns`) carries all continuity. Every turn, re-orient from po-state — never trust in-session memory to still hold the latest doctrine or work-state.
+
+Run a fresh cycle (drop the resume id → next turn starts via `claude --agent pdt-po`, then re-read doctrine + re-orient from po-state) on these triggers:
+
+- **Phase boundary** — cycle at every base phase transition.
+- **Session over threshold** — when a Build session crosses its turn/context threshold (set below the compaction limit so compaction is only the last-resort net), cycle at the **next safe boundary** (ticket done / dev-QA loop end). Never cut mid-work.
+- **Manual "new session"** — honor the user's explicit reset.
+- **Doctrine changed** — on a doctrine edit, cycle (or notify) so the fresh session loads it.
+
+The chat stream stays continuous across a cycle — only the session id rotates; the visible conversation does not break.
+
 ## Phase transition write
 
 On user approval (chat reply):
