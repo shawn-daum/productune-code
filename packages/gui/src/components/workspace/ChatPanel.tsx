@@ -18,7 +18,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Paperclip, ArrowUp, RefreshCw } from 'lucide-react'
+import { Paperclip, Command, CornerDownLeft, RefreshCw } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message } from '../../lib/types'
@@ -338,12 +338,15 @@ export default function ChatPanel() {
               onMouseLeave={() => setSendHover(false)}
               onClick={handleSubmit}
               disabled={streaming || !draft.trim() || !project || rateLimited}
+              title={t('workspace.chat.sendShortcut')}
+              aria-label={`${t('workspace.chat.send')} (${t('workspace.chat.sendShortcut')})`}
             >
-              <ArrowUp size={12} strokeWidth={2.5} />
               <span>{t('workspace.chat.send')}</span>
-              {sendHover && !(streaming || !draft.trim()) && (
-                <span style={kbdHint}>⌘↵</span>
-              )}
+              {/* ⌘+Enter shortcut representation — lucide glyphs, §7 stroke-bold @≤12px */}
+              <span style={kbdHint} aria-hidden="true">
+                <Command size={11} strokeWidth={2.5} />
+                <CornerDownLeft size={11} strokeWidth={2.5} />
+              </span>
             </button>
           </div>
         </div>
@@ -578,11 +581,12 @@ const sendBtn: React.CSSProperties = {
 }
 
 const kbdHint: React.CSSProperties = {
-  fontSize: 10,
-  fontFamily: 'monospace',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 1,
   background: 'rgba(0,0,0,0.18)',
   borderRadius: 3,
-  padding: '1px 4px',
+  padding: '2px 4px',
   marginLeft: 2,
 }
 

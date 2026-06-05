@@ -79,7 +79,10 @@ interface UsageRowProps {
 }
 
 function UsageRow({ icon, label, axis }: UsageRowProps) {
-  const pct = Math.max(0, Math.min(100, axis.used_percentage))
+  // Clamp 0..100, then round to an integer (kill float artifacts like
+  // "55.00000000000001%"). Math.round (not ceil) so a remaining-% never
+  // rounds UP past the actual value.
+  const pct = Math.round(Math.max(0, Math.min(100, axis.used_percentage)))
   const resetLabel = useResetLabel(axis.resets_at)
 
   // Color: green below 70%, yellow-green 70-89%, red 90%+.
@@ -93,7 +96,7 @@ function UsageRow({ icon, label, axis }: UsageRowProps) {
     <div style={rowWrap}>
       {icon}
       <span style={labelStyle}>{label}</span>
-      {/* track */}
+      {/* track — fixed width so 5h/7d rows share the same scale (comparable) */}
       <div style={track}>
         <div style={{ ...fill, width: `${pct}%`, background: barColor }} />
       </div>
@@ -183,12 +186,14 @@ const labelStyle: React.CSSProperties = {
 }
 
 const track: React.CSSProperties = {
-  flex: 1,
+  // Fixed width (not flex) → both rows render an identical-length track so
+  // the 5h vs 7d fills are visually comparable regardless of reset-label text.
+  width: 120,
   height: 4,
   background: '#252530',
   borderRadius: 2,
   overflow: 'hidden',
-  minWidth: 0,
+  flexShrink: 0,
 }
 
 const fill: React.CSSProperties = {
@@ -210,9 +215,9 @@ const resetStyle: React.CSSProperties = {
   fontSize: 9,
   color: '#505060',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  flexShrink: 0,
+  flex: 1,
+  minWidth: 0,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
-  maxWidth: 100,
 }

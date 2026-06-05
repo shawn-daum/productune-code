@@ -264,6 +264,7 @@
       "messagesPlaceholder": "메시지 표시 — Slice 3 에서 채워짐",
       "inputPlaceholder": "메시지 입력…",
       "send": "전송",
+      "sendShortcut": "⌘+Enter 로 전송",
       "attachFile": "파일 경로 첨부",
       "filesCount": "파일",
       "removeFile": "파일 제거",

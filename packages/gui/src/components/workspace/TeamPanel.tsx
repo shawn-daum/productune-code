@@ -340,12 +340,14 @@ export default function TeamPanel({ poState }: Props) {
   // Persona row click → persona-def tab. Canonical tab id + prop shape uses the
   // full `pdt-*` id (def.id) so this coalesces with the search-palette open path
   // (helpers.ts: `persona-def:${slug}`, { persona: slug }). T-PATCH-014.
+  // Title omitted (T-PATCH-035): defaultTitle('persona-def') is the single
+  // canonical source (localized persona name) — both entry points now resolve to
+  // the SAME tab title, so the deduped tab no longer flips name by entry point.
   const handlePersonaClick = (def: PersonaDef) => {
     openTab(
       `persona-def:${def.id}`,
       'persona-def',
       { persona: def.id },
-      t(def.nameKey),
     )
   }
 

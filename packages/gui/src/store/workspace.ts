@@ -643,6 +643,20 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   }),
 }))
 
+// Canonical persona-def tab title (T-PATCH-035). Single source of truth for the
+// tab name regardless of entry point (search palette vs Team panel). Maps the
+// full `pdt-*` id → localized persona name (consistent with the Team panel rows),
+// so the deduped tab always shows ONE stable name. `pdt-developer` → `developer`
+// key (the locale namespace uses the doctrine dir name, not the `dev` dot-key).
+export function personaDefTitle(personaId: string | undefined): string {
+  if (!personaId) return 'Persona'
+  const bare = personaId.replace(/^pdt-/, '')
+  const translated = i18next.t(`workspace.team.persona.${bare}.name`)
+  // i18next echoes the key back on a miss — fall back to the raw id so an unknown
+  // persona never renders the literal key path.
+  return translated === `workspace.team.persona.${bare}.name` ? personaId : translated
+}
+
 function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
   switch (type) {
     case 'markdown':       return (props?.title as string) ?? 'Markdown'
@@ -650,7 +664,7 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'ticket-review':  return (props?.ticketId as string) ?? 'Tickets'
     case 'design-gate':    return 'Design Gate'
     case 'qa-result':      return 'QA'
-    case 'persona-def':    return (props?.persona as string) ?? 'Persona'
+    case 'persona-def':    return personaDefTitle(props?.persona as string | undefined)
     case 'env-view':       return (props?.layer as string) ?? 'Env'
     case 'skill-matrix':   return 'Skills'
     case 'preview':        return (props?.path as string)?.split('/').pop()

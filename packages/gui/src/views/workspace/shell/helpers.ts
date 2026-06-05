@@ -295,7 +295,10 @@ export function buildQuickOpenItems(
       sublabel: 'persona',
       meta: { personaDot: dotKey },
       priority: 30,
-      open: () => openTab(`persona-def:${slug}`, 'persona-def', { persona: slug }, slug),
+      // Title omitted: defaultTitle('persona-def') is the single canonical source
+      // (localized persona name) so this coalesces 1:1 with the Team-panel open
+      // path and the deduped tab shows one stable name. T-PATCH-035.
+      open: () => openTab(`persona-def:${slug}`, 'persona-def', { persona: slug }),
     })
   }
 
