@@ -4,6 +4,8 @@
 
 One jq pass (skip if po-state absent): trim `recent_turns` to last 5 (reset at version close); clear stale `pending_gate` when `current_phase` > `from_phase`; if `current_task` status done/blocked/abandoned, clear `persona_sessions` THEN null `current_task`; drop dead `persona_sessions`.
 
+`close_gate`: if `current_phase` has an enumerable gate (P3) and `close_gate` is absent/empty → lazy-instantiate from that phase's sub-file (same mapping as the phase-transition write); phases with no enumerable gate stay empty. Absent `close_gate` is never an error. (2026-06-05)[T-PATCH-041]
+
 ## State lazy-prompts + versions cap
 
 Surface only when the condition holds, ask once, leave the field as-is on silence:

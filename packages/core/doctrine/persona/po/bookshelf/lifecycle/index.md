@@ -29,10 +29,24 @@ The chat stream stays continuous across a cycle — only the session id rotates;
 
 On user approval (chat reply):
 ```bash
-jq '.current_phase = <N>
-  | .phase_history += [{"phase":<N>,"started_at":"<ISO>","user_approved_at":"<ISO>"}]
-  | .pending_gate = null' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
+jq --argjson N <N> --arg now "<ISO>" '
+  .current_phase = $N
+  | .phase_history += [{"phase":$N,"started_at":$now,"user_approved_at":$now}]
+  | .pending_gate = null
+  | ._phase_schema_v = 3
+  | .close_gate = (if $N == 3 then [
+      {"step":"backlog_triage","status":"pending","waivable":false},
+      {"step":"design_review","type":"design","status":"pending","waivable":false},
+      {"step":"prd_check","type":"design","status":"pending","waivable":true},
+      {"step":"security_6","type":"qa","status":"pending","waivable":true}
+    ] else [] end)' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
 ```
+
+`close_gate` = ordered checklist; each item `{step, status: pending|done|waived|na, waivable, type?, ticket_id?}` — `type` (design|qa) present only when the step opens a typed close ticket. Definition SoT = entering phase's sub-file (P3 = `p3-build.md`); never enumerate gate steps here. (2026-06-05)[T-PATCH-041]
+
+## Phase / gate boundary answer
+
+Answering "which phase / what's the close gate": state `current_phase` FIRST, then report `close_gate` items verbatim from po-state — read the gate for the current/entering phase only, never an adjacent phase. po-state is the answer source; never recall the gate from session memory. (2026-06-05)[T-PATCH-041]
 
 ## Sub-files
 
