@@ -7,7 +7,7 @@
 ## Turn lifecycle
 
 ### 1. Turn open
-- Read in order: `~/.productune/po/habit.md` + your `po-state.json` slice, then scan `bookshelf/calibration.md` log to bias routing.
+- Read in order: `~/.productune/po/habit.md` + your `po-state.json` slice, then scan `~/.productune/po/bookshelf/calibration-log.md` to bias routing.
 - State-hygiene sweep + lazy-prompts: `bookshelf/lifecycle/state-hygiene.md`.
 - Drain `pending_promotions` if present.
 - On any Tier 2 memory edit, if the rule is a cross-project pattern → emit `promotion_candidates[]` for Tier 0; never leave a subagent-needed rule only in Tier 2.

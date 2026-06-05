@@ -1,5 +1,9 @@
 # State hygiene
 
+## Turn-open sweep
+
+One jq pass (skip if po-state absent): trim `recent_turns` to last 5 (reset at version close); clear stale `pending_gate` when `current_phase` > `from_phase`; if `current_task` status done/blocked/abandoned, clear `persona_sessions` THEN null `current_task`; drop dead `persona_sessions`.
+
 ## State lazy-prompts + versions cap
 
 Surface only when the condition holds, ask once, leave the field as-is on silence:
