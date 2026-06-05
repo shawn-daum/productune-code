@@ -173,6 +173,12 @@ export default function TabBar({ leaf, isActivePane }: Props) {
     return () => ro.disconnect()
   }, [])
 
+  // T-PATCH-044 AC-5: scroll active tab into view when activeTabId changes
+  const activeTabRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    activeTabRef.current?.scrollIntoView({ inline: 'nearest', behavior: 'smooth', block: 'nearest' })
+  }, [leaf.activeTabId])
+
   const tabCount = leaf.tabs.length
   const overflow = computeOverflow(stripWidth, tabCount)
 
@@ -297,6 +303,7 @@ export default function TabBar({ leaf, isActivePane }: Props) {
           return (
             <div
               key={tab.id}
+              ref={isActive ? activeTabRef : null}
               style={tabWrap(overflow)}
               onClick={() => setActiveTab(leaf.paneId, tab.id)}
               draggable
@@ -427,16 +434,16 @@ const emptyHint: React.CSSProperties = {
 }
 
 /** Flexing strip that holds the tabs. Protected controls are a sibling. */
-function tabStrip(scroll: boolean): React.CSSProperties {
+function tabStrip(_scroll: boolean): React.CSSProperties {
   return {
     display: 'flex',
     alignItems: 'stretch',
     flex: '1 1 auto',
     minWidth: 0,
-    overflowX: scroll ? 'auto' : 'hidden',
+    // T-PATCH-044: always allow horizontal scroll; thin overlay scrollbar
+    overflowX: 'auto',
     overflowY: 'hidden',
-    // thin scrollbar in scroll mode
-    scrollbarWidth: scroll ? 'thin' : undefined,
+    scrollbarWidth: 'thin',
   }
 }
 
@@ -445,11 +452,12 @@ function tabWrap(o: Overflow): React.CSSProperties {
     position: 'relative',
     display: 'flex',
     alignItems: 'stretch',
-    // Each tab flexes equally; clamp to [TAB_MIN .. TAB_MAX]. In scroll mode
-    // tabs hold a fixed TAB_MIN basis and the strip scrolls.
-    flex: o.scroll ? `0 0 ${TAB_MIN}px` : '1 1 0',
+    // T-PATCH-044: fit-content width — no grow, no shrink; strip scrolls on overflow
+    flexShrink: 0,
+    flexGrow: 0,
+    width: 'fit-content',
     minWidth: TAB_MIN,
-    maxWidth: o.scroll ? TAB_MIN : TAB_MAX,
+    maxWidth: o.scroll ? undefined : TAB_MAX,
   }
 }
 
