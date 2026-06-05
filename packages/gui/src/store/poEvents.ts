@@ -25,6 +25,33 @@ import type { Message, MessageKind } from '../lib/types'
 let registered = false
 const offFns: Array<(() => void) | undefined> = []
 
+// ── T-PATCH-036: chronological text↔tool interleave ─────────────────────────────
+// The runner (po-runner.ts:442-457) already emits text/tool parts in execution
+// order, but the store previously collapsed a whole turn into ONE text bubble
+// (frozen at its early array index) + N tail-appended traces — so groupToolTraces
+// folded all tools BELOW all text. Fix = text SEGMENTATION: when a tool trace
+// arrives mid-turn we "seal" the active text bubble; the next onToken opens a NEW
+// text bubble appended AFTER the trace(s). messages[] then becomes chronological
+// ([seg-A][trace][trace][seg-B]…) and the existing adjacency-fold yields inline
+// groups at their true spot — no change to groupToolTraces / ToolUseGroup (T-033).
+//
+// State lives in module scope (one in-flight turn at a time; the renderer only
+// ever streams a single assistant turn — `streaming` is a boolean, `inFlightMsgId`
+// a single id). We track:
+//   - segActiveId: id of the text bubble currently receiving tokens.
+//   - segSealed:   true once a tool trace arrived since the last token, meaning the
+//                  next token must open a fresh segment.
+//   - turnSegIds:  every text-segment id created during this turn, in order, so
+//                  onDone can finalize + persist ALL of them (not just msgId).
+// Reset on each onMsgId (turn start) and after onDone.
+let segActiveId: string | null = null
+let segSealed = false
+let turnSegIds: string[] = []
+
+function newSegmentId(): string {
+  return `seg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+}
+
 // ── IPC listener registration ─────────────────────────────────────────────────
 function register() {
   if (registered) return
@@ -48,12 +75,45 @@ function register() {
       messages: [...s.messages, placeholder],
       inFlightMsgId: msgId,
     }))
+    // T-PATCH-036: this first bubble is segment #1 of the turn — active, unsealed.
+    segActiveId = msgId
+    segSealed = false
+    turnSegIds = [msgId]
   }))
 
-  // ── po:onToken — placeholder 에 chunk append ──────────────────────────────
+  // ── po:onToken — active segment 에 chunk append (T-PATCH-036) ─────────────
+  // The runner always passes the original turn msgId; we route the chunk to the
+  // CURRENT segment (segActiveId). If a tool trace sealed the segment since the
+  // last token, open a NEW text bubble first and make it active (segment open).
   offFns.push(api.poOnToken?.((msgId: string, chunk: string) => {
+    // Fallback for the (defensive) case where a token arrives with no prior
+    // onMsgId — treat the incoming msgId as the active segment.
+    if (segActiveId === null) {
+      segActiveId = msgId
+      segSealed = false
+      if (!turnSegIds.includes(msgId)) turnSegIds = [msgId]
+    }
+    if (segSealed) {
+      // Open a fresh segment appended AFTER the trace(s) that sealed the last one.
+      const newId = newSegmentId()
+      const kind: MessageKind = useWorkspace.getState().inFlightKind ?? 'po'
+      const seg: Message = {
+        id: newId,
+        role: 'assistant',
+        kind,
+        text: chunk,
+        status: 'streaming',
+        created_at: new Date().toISOString(),
+      }
+      segActiveId = newId
+      segSealed = false
+      turnSegIds.push(newId)
+      useWorkspace.setState((s) => ({ messages: [...s.messages, seg] }))
+      return
+    }
+    const activeId = segActiveId
     useWorkspace.setState((s) => {
-      const idx = s.messages.findIndex((m) => m.id === msgId)
+      const idx = s.messages.findIndex((m) => m.id === activeId)
       if (idx < 0) return s
       const updated = { ...s.messages[idx], text: s.messages[idx].text + chunk }
       const next = [...s.messages]
@@ -75,23 +135,57 @@ function register() {
       created_at: new Date().toISOString(),
     }
     useWorkspace.setState((s) => ({ messages: [...s.messages, trace] }))
+    // T-PATCH-036: a `tool` trace is a segment boundary — seal the active text
+    // bubble so the next token opens a fresh segment BELOW this trace. Only `tool`
+    // seals (matches groupToolTraces, which only folds `tool` traces); other
+    // announce levels don't fragment the text flow. An all-text turn (no tool
+    // trace) never seals → stays one bubble (AC3). A trace before any token (e.g.
+    // tool-only turn) seals an empty active bubble; the empty seg is pruned at
+    // onDone so no orphan renders (AC4).
+    if (payload.level === 'tool') segSealed = true
   }))
 
   // ── po:onDone — done 표시 + chat.json persist + sessionId 갱신 ───────────
+  // T-PATCH-036: a turn may now have MULTIPLE text segments (turnSegIds). We:
+  //   1. drop empty segments (e.g. the initial placeholder of a tool-only turn,
+  //      or a trailing seg opened by a seal that never received tokens) — AC3/AC4
+  //      no orphan empty bubble.
+  //   2. mark every surviving segment `done` (in array, preserving order).
+  //   3. persist each surviving segment to chat.json IN ORDER (AC6) — append-only
+  //      per-message model (OQ-1: persist-at-done rather than a shared turnId; the
+  //      lower-regression path against the existing chatAppendMessage API).
+  // NOTE: tool `trace` messages are not persisted (unchanged pre-T-036 behavior —
+  // onAnnounce never persisted); reload re-renders text segments in order. Tool
+  // group re-hydration on reload is a separate data-plumbing concern (see T-033
+  // toolDetailUnavailable / out-of-scope).
   offFns.push(api.poOnDone?.(async (msgId: string, info: { sessionId?: string }) => {
-    let finalMsg: Message | null = null
+    const segIds = turnSegIds.length > 0 ? turnSegIds : [msgId]
+    const finalMsgs: Message[] = []
     useWorkspace.setState((s) => {
-      const idx = s.messages.findIndex((m) => m.id === msgId)
-      if (idx < 0) return s
-      const updated = { ...s.messages[idx], status: 'done' as const }
-      finalMsg = updated
-      const next = [...s.messages]
-      next[idx] = updated
+      const segSet = new Set(segIds)
+      const next: Message[] = []
+      for (const m of s.messages) {
+        if (segSet.has(m.id)) {
+          // Prune empty text segments — no content to show or persist.
+          if (m.text.length === 0) continue
+          const done = { ...m, status: 'done' as const }
+          finalMsgs.push(done)
+          next.push(done)
+        } else {
+          next.push(m)
+        }
+      }
       return { messages: next, streaming: false, inFlightMsgId: null }
     })
+    // Reset turn-local segmentation state.
+    segActiveId = null
+    segSealed = false
+    turnSegIds = []
     const proj = useWorkspace.getState().project
-    if (proj && finalMsg) {
-      try { await api.chatAppendMessage(proj.projectDir, finalMsg) } catch { /* ignore */ }
+    if (proj && finalMsgs.length > 0) {
+      for (const fm of finalMsgs) {
+        try { await api.chatAppendMessage(proj.projectDir, fm) } catch { /* ignore */ }
+      }
     }
     if (proj && info.sessionId) {
       useWorkspace.setState({ claudeSessionId: info.sessionId })
