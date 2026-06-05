@@ -18,11 +18,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Paperclip, Command, CornerDownLeft, RefreshCw } from 'lucide-react'
+import { Paperclip, Command, CornerDownLeft } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message } from '../../lib/types'
-import PhaseStrip from './PhaseStrip'
+import { PHASE_NAMES } from '../../lib/types'
+import PhaseBreadcrumb from './PhaseBreadcrumb'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
 import ToolUseGroup from './chat/ToolUseGroup'
@@ -243,36 +244,35 @@ export default function ChatPanel() {
     return `${ticketId} ${action}`
   }, [poState, t])
 
+  // T-PATCH-053: derive Phase for PhaseBreadcrumb from poState.current_phase
+  const currentPhase = PHASE_NAMES[poState?.current_phase ?? 0] ?? 'PRD'
+
   // T-PATCH-051: wide enough to place UsageBar inline with input row (AC-1)
   const usageInline = panelWidth >= USAGE_INLINE_WIDTH
 
   return (
     <>
       <div style={wrap} ref={panelRef}>
-        {/* rp-hdr */}
+        {/* rp-hdr — T-PATCH-053: [P badge] [title] [status badge] [restart text btn] */}
         <div style={header}>
           <span style={poBadge}>P</span>
           <span style={headerTitle}>{t('workspace.chat.title')}</span>
+          <span style={statusBadge}>{ctxCaption}</span>
           <button
             ref={restartBtnRef}
-            style={{
-              ...iconBtn,
-              background: restartTipPos ? '#2A2A2A' : 'transparent',
-              color: restartTipPos ? '#F0F0F0' : '#A0A0A0',
-            }}
+            style={restartTextBtn}
             onMouseEnter={onRestartEnter}
             onMouseLeave={onRestartLeave}
             onClick={onRestartClick}
             aria-label={t('workspace.chat.restartSession')}
           >
-            <RefreshCw size={13} strokeWidth={2} />
+            {t('workspace.chat.restartSession')}
           </button>
         </div>
 
-        {/* rp-ctx */}
+        {/* rp-ctx — T-PATCH-053: PhaseBreadcrumb replaces PhaseStrip chip; ctxCaption moved to header */}
         <div style={ctxRow} className="rp-ctx">
-          <PhaseStrip poState={poState} variant="chip" />
-          <span style={ctxCaptionStyle}>{ctxCaption}</span>
+          <PhaseBreadcrumb phase={currentPhase} />
         </div>
 
         {/* rp-persona-bar (T-P4-049) — placed directly under rp-ctx */}
@@ -574,36 +574,39 @@ const headerTitle: React.CSSProperties = {
   flex: 1,
 }
 
-const iconBtn: React.CSSProperties = {
-  width: 22,
+// T-PATCH-053: status badge in title row (replaces ctxCaptionStyle in ctxRow)
+const statusBadge: React.CSSProperties = {
+  fontSize: 10,
+  color: '#707070',
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  flexShrink: 0,
+  maxWidth: 120,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+// T-PATCH-053: text button replacing RefreshCw icon (AC-4)
+const restartTextBtn: React.CSSProperties = {
   height: 22,
   background: 'transparent',
-  border: 'none',
-  color: '#909090',
-  fontSize: 14,
+  border: '1px solid #2A2A2A',
+  color: '#707070',
+  fontSize: 10,
   cursor: 'pointer',
-  borderRadius: 3,
-  padding: 0,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  transition: 'background 0.12s ease, color 0.12s ease',
+  borderRadius: 4,
+  padding: '0 8px',
+  fontFamily: 'inherit',
+  flexShrink: 0,
+  whiteSpace: 'nowrap',
 }
 
+// T-PATCH-053: ctxRow now holds PhaseBreadcrumb (which owns its own border/bg/padding)
 const ctxRow: React.CSSProperties = {
   flexShrink: 0,
-  padding: '4px 12px',
   display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  borderBottom: '1px solid #1f1f1f',
-  background: '#101010',
-}
-
-const ctxCaptionStyle: React.CSSProperties = {
-  fontSize: 10,
-  color: '#909090',
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  alignItems: 'stretch',
+  minHeight: 30,
 }
 
 const msgs: React.CSSProperties = {

@@ -268,7 +268,7 @@
       "attachFile": "파일 경로 첨부",
       "filesCount": "파일",
       "removeFile": "파일 제거",
-      "restartSession": "세션 재시작",
+      "restartSession": "세션 초기화",
       "restartHint": "PO 가 오래 답하지 않거나 너무 느릴 때 사용",
       "restartCompletedToast": "세션이 초기화되었습니다.",
       "sessionDivider": "세션 초기화",

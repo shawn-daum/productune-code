@@ -268,7 +268,7 @@
       "attachFile": "Attach file path",
       "filesCount": "files",
       "removeFile": "Remove file",
-      "restartSession": "Restart session",
+      "restartSession": "Reset session",
       "restartHint": "Use when PO is unresponsive or too slow",
       "restartCompletedToast": "Session has been reset.",
       "sessionDivider": "Session reset",
