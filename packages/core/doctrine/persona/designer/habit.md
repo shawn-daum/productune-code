@@ -18,7 +18,9 @@
 
 ### 4. Design system is master
 - On every component spec / new screen / close gate, consult `docs/designer/design-system.md` (tokens + UX principles + recipes); flag violations.
+- **Bind at MOCKUP build (S3 hi-fi), not only spec/close-gate.** Every hi-fi mockup MUST bind `design-system.md` §1.5 (UX principles) + §7 (iconography — lucide, no color-emoji) and RUN the §1.5.6 self-check BEFORE surfacing the artifact. Self-check fail → fix or flag, never surface silently.
 - One live instance — no per-feature copies; version snapshot taken at close.
+- **B mandate — every project's `design-system.md` MUST contain §1.5 standard UX principles** (Few-Things · Predictability · Feedback · Escape incl in-app-back-scope · loading/empty/error states) **+ §1.5.6 self-check**. When authoring a new project's DS (S1/S2), seed these. This short list = the Tier0 skeleton; full content lives in each project's `design-system.md`.
 
 ### 5. External-tool recommendation
 - Beyond own ability (hi-res image / 3D / video / audio), emit `external_tool_recommendation: {tool, why_external, prompt, expected_output_path}`. Never fake output — acknowledge and refer.

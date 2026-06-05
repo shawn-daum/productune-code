@@ -189,12 +189,23 @@ designer / non-engineer (IDE 생소). 한 doctrine 으로 둘 다 잡으려면 *
   금지.
 - **Breadcrumb / back** — pane 안 깊은 view 는 ← 또는 breadcrumb 으로 한 단계
   뒤로. browser-style.
+- **In-app 뒤로가기 = 앱 nav-scope 기준** — 인앱 [뒤로] / ← 는 **앱 자체의
+  nav-stack / route** 를 기준으로 동작한다. **global / browser back 호출 금지**
+  (앱 nav-stack 을 우회해 사용자를 앱 밖으로 튕긴다). cross-service · deep-link 로
+  바로 진입한 페이지에서도 [뒤로] 는 **앱 내 상위/이전 route 로 복귀**해야 하며,
+  앱 바깥 (이전 서비스 / 빈 화면) 으로 튕기지 않음을 검증한다. nav-stack 이 비어
+  진입한 deep-link 의 경우 fallback route (홈 / 부모 view) 로 보낸다. 위 §1.5.5
+  [뒤로] / [Cancel] gate 정합 (출구 존재) 과 **별개** — 이 rule 은 출구의
+  *목적지 scope* 를 규정한다.
 
 **위반 사례**.
 - Modal 에 [Confirm] 만 있고 [Cancel] 없음 → 사용자 강제 결정. → Cancel 필수.
 - Onboarding wizard step 3 에서 step 2 로 못 돌아감 → 일방통행. → [Back] 명시.
 - Toast 에 dismiss X 없음 → 사용자가 끄지 못함. → 모든 toast 에 X (auto-dismiss
   되는 success 도 hover 시 X 노출).
+- Deep-link 진입 페이지에서 [뒤로] 클릭 시 browser back 이 호출돼 앱 밖 (이전
+  서비스 탭 / about:blank) 으로 튕김 → nav-scope 위반. → 앱 nav-stack 기준 복귀 +
+  stack empty 시 fallback route.
 
 ### 1.5.6 Sub-rule 적용 체크리스트 (PR 자기검증)
 
@@ -207,6 +218,7 @@ designer / non-engineer (IDE 생소). 한 doctrine 으로 둘 다 잡으려면 *
 | 3-1 | Predictability | token 강제. empty state 는 Empty 컴포넌트 + CTA. 버튼 위치 일관. |
 | 3-2 | Feedback | 모든 action 의 즉시/진행/완료 단계 중 1 개 이상 visual feedback. error → 대안 CTA. |
 | 3-3 | Escape | Esc + Cancel + 외부 click + dismiss 복원 중 최소 1 개. destructive 는 Esc 무효 정책. |
+| 3-3 | Back/nav scope | 인앱 [뒤로] / ← 는 앱 nav-stack 기준. global/browser back 금지. deep-link 진입 시 [뒤로] = 앱 내 복귀 (밖으로 안 튕김) + stack empty 시 fallback route. |
 
 > 본 체크리스트 위반 = designer review block. PR 본문에 self-check 결과 명시 권장.
 
