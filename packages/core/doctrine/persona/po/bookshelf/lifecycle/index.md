@@ -34,15 +34,11 @@ jq --argjson N <N> --arg now "<ISO>" '
   | .phase_history += [{"phase":$N,"started_at":$now,"user_approved_at":$now}]
   | .pending_gate = null
   | ._phase_schema_v = 3
-  | .close_gate = (if $N == 3 then [
-      {"step":"backlog_triage","status":"pending","waivable":false},
-      {"step":"design_review","type":"design","status":"pending","waivable":false},
-      {"step":"prd_check","type":"design","status":"pending","waivable":true},
-      {"step":"security_6","type":"qa","status":"pending","waivable":true}
-    ] else [] end)' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
+  | .close_gate = []' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
 ```
 
-`close_gate` = ordered checklist; each item `{step, status: pending|done|waived|na, waivable, type?, ticket_id?}` — `type` (design|qa) present only when the step opens a typed close ticket. Definition SoT = entering phase's sub-file (P3 = `p3-build.md`); never enumerate gate steps here. (2026-06-05)[T-PATCH-041]
+`close_gate` = ordered checklist; each item `{step, status: pending|done|waived|na, waivable, type?, ticket_id?}` — `type` (design|qa) present only when the step opens a typed close ticket. Definition SoT = `p3-build.md`; never enumerate gate steps here. (2026-06-05)[T-PATCH-041]
+Entry sets `.close_gate = []` and does NOT carry the executable literal — the 4-step array is materialized by the turn-open sweep (`lifecycle/state-hygiene.md`), the sole executable site. This relies on the fresh-cycle-at-phase-boundary rule (sweep runs the turn immediately after a boundary), and the sweep heals both `[]` and absent — so jq write + GUI `phase:approve` entry paths converge. (2026-06-05)[T-PATCH-042]
 
 ## Phase / gate boundary answer
 
