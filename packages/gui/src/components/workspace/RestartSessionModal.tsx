@@ -22,13 +22,15 @@ export default function RestartSessionModal({ onClose }: Props) {
   const [restarting, setRestarting] = useState(false)
   const clearHealth   = useSessionHealth((s) => s.clearHealth)
   const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
+  const project = useWorkspace((s) => s.project)
 
   const handleRestartNow = async () => {
     if (restarting) return
     setRestarting(true)
     try {
       const api = (window as any).api
-      await api.poRestartSession?.()
+      // T-PATCH-040: pass projectDir so main re-snapshots the fresh-cycle window.
+      await api.poRestartSession?.(project?.projectDir)
       // Reset renderer session state.
       setClaudeSessionId(null)
       clearHealth()

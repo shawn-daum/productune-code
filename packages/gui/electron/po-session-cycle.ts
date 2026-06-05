@@ -1,0 +1,158 @@
+/**
+ * po-session-cycle.ts — PO session fresh-cycle decision (T-PATCH-040).
+ *
+ * Why: a PO claude session resumed over many turns (a) stops picking up doctrine
+ * edits (the resumed session keeps its old system prompt — the "caveman" bug) and
+ * (b) bloats context until compaction shaves spec tokens. The fix is to
+ * periodically start a FRESH session (drop the resume id → next turn spawns
+ * `claude --agent pdt-po`, re-reading doctrine + re-orienting from po-state).
+ *
+ * po-state is the work-state SoT, so the session is ephemeral — rotating it loses
+ * no continuity. The chat.json messages are preserved (only the session id
+ * rotates), so the visible conversation does not break.
+ *
+ * Hard constraint: NEVER cut mid-work. A threshold-driven cycle only fires at a
+ * SAFE BOUNDARY — i.e. a ticket was closed or the phase changed since the current
+ * session started. Phase change alone always cycles (it is itself a boundary).
+ *
+ * This module is pure decision/bookkeeping — it does NOT touch chat-store or the
+ * runner; the caller (ipc/po.ts) applies the SID drop. Main-process only.
+ */
+
+import fs from 'fs'
+import path from 'path'
+
+// ── Threshold ───────────────────────────────────────────────────────────────
+//
+// PO turn-count is the metric: deterministic and cheap (incremented at each
+// turn's onDone). Kept well BELOW the claude compaction limit so compaction is
+// only ever the last-resort safety net, never the primary context bound.
+// Tunable; an optional context-size proxy (token/usage aggregation) is OOS.
+export const PO_TURN_CYCLE_THRESHOLD = 20
+
+// ── Per-project session tracking ──────────────────────────────────────────────
+
+interface SessionTracker {
+  /** PO turns completed in the CURRENT (post-cycle) session window. */
+  turnCount: number
+  /** po-state snapshot captured at session start — used to detect safe boundaries. */
+  startPhase: number | null
+  startTaskSlug: string | null
+}
+
+/** projectDir → tracker. Module-scope (single GUI process). */
+const trackers = new Map<string, SessionTracker>()
+
+// ── po-state read (minimal slice) ──────────────────────────────────────────────
+
+interface PoStateSlice {
+  phase: number | null
+  /** current_task.slug, or null when current_task is null/absent (ticket closed). */
+  taskSlug: string | null
+}
+
+/**
+ * Read the minimal po-state slice needed for boundary detection. Returns nulls
+ * when po-state is absent/unparseable (echo-mode / fresh project) so the cycle
+ * logic degrades to a safe no-cycle.
+ */
+function readPoStateSlice(projectDir: string): PoStateSlice {
+  const statePath = path.join(projectDir, '.productune', 'po-state.json')
+  try {
+    const raw = fs.readFileSync(statePath, 'utf-8')
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    const phase = typeof obj.current_phase === 'number' ? obj.current_phase : null
+    const ct = obj.current_task
+    // Doctrine (state-hygiene): on ticket close PO nulls current_task. So a
+    // non-null→null transition (or a slug change) signals a ticket boundary.
+    const taskSlug =
+      ct && typeof ct === 'object' && typeof (ct as Record<string, unknown>).slug === 'string'
+        ? ((ct as Record<string, unknown>).slug as string)
+        : null
+    return { phase, taskSlug }
+  } catch {
+    return { phase: null, taskSlug: null }
+  }
+}
+
+function ensureTracker(projectDir: string): SessionTracker {
+  let t = trackers.get(projectDir)
+  if (!t) {
+    const slice = readPoStateSlice(projectDir)
+    t = { turnCount: 0, startPhase: slice.phase, startTaskSlug: slice.taskSlug }
+    trackers.set(projectDir, t)
+  }
+  return t
+}
+
+// ── Public API ──────────────────────────────────────────────────────────────
+
+export interface CycleDecision {
+  cycle: boolean
+  /** Diagnostic reason (for trace/announce). */
+  reason: 'phase-change' | 'threshold+boundary' | null
+}
+
+/**
+ * Evaluate whether THIS turn (about to start) should begin a fresh session.
+ * Call at turn START (po:sendMessage), before spawning.
+ *
+ * Cycle when EITHER:
+ *  - phase changed since session start (a phase boundary — always safe to cycle), OR
+ *  - turnCount >= threshold AND a safe boundary was crossed since session start
+ *    (the start-of-session ticket has since closed or changed).
+ *
+ * "Safe boundary crossed" = the current_task slug differs from the one captured
+ * at session start. Per state-hygiene doctrine, closing a ticket nulls
+ * current_task, and opening the next sets a new slug — either way the slug moves
+ * off its session-start value. This guarantees we are NOT mid-work on the same
+ * ticket we started the session on (AC1/AC2).
+ */
+export function evaluateCycle(projectDir: string): CycleDecision {
+  const t = ensureTracker(projectDir)
+  const now = readPoStateSlice(projectDir)
+
+  // Phase change → always cycle (AC6). Compare only when both are known.
+  if (t.startPhase !== null && now.phase !== null && now.phase !== t.startPhase) {
+    return { cycle: true, reason: 'phase-change' }
+  }
+
+  // Threshold + safe boundary. Boundary = current_task moved off its
+  // session-start slug (ticket closed → null, or a different ticket opened).
+  if (t.turnCount >= PO_TURN_CYCLE_THRESHOLD) {
+    const boundaryCrossed = now.taskSlug !== t.startTaskSlug
+    if (boundaryCrossed) {
+      return { cycle: true, reason: 'threshold+boundary' }
+    }
+  }
+
+  return { cycle: false, reason: null }
+}
+
+/**
+ * Reset the tracker to a fresh session window. Call right after applying a cycle
+ * (SID dropped) AND on manual restart. Re-snapshots phase/task from current
+ * po-state so the next window measures boundaries from here.
+ */
+export function resetSessionWindow(projectDir: string): void {
+  const slice = readPoStateSlice(projectDir)
+  trackers.set(projectDir, {
+    turnCount: 0,
+    startPhase: slice.phase,
+    startTaskSlug: slice.taskSlug,
+  })
+}
+
+/**
+ * Record one completed PO turn. Call from the turn's onDone. Lazily snapshots
+ * the session window on first turn for a project.
+ */
+export function recordTurnDone(projectDir: string): void {
+  const t = ensureTracker(projectDir)
+  t.turnCount += 1
+}
+
+/** Test/diagnostic hook — current turn count for a project (0 if untracked). */
+export function getTurnCount(projectDir: string): number {
+  return trackers.get(projectDir)?.turnCount ?? 0
+}

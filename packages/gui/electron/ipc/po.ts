@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron'
 import type { WebContents } from 'electron'
 import type { ChildProcess } from 'child_process'
-import { getSession, appendMessage, setClaudeSessionId, clearSession, patchMessage } from '../chat-store'
+import { getSession, appendMessage, setClaudeSessionId, clearSession, clearClaudeSessionId, patchMessage } from '../chat-store'
 import type { Message } from '../chat-store'
 import { runPoTurn, emitToWebContents } from '../po-runner'
 import { markPoTurnStart, markPoTurnEnd } from '@productune/core'
+import { evaluateCycle, recordTurnDone, resetSessionWindow } from '../po-session-cycle'
 
 // ── Active PO child process tracking (T-P4-059) ───────────────────────────────
 // Allows `po:restartSession` to kill the in-flight process.
@@ -16,16 +17,19 @@ let activePoChild: ChildProcess | null = null
 let capturedPoSessionId: string | null = null
 
 /**
- * Wrap a RunCallbacks bundle so its onDone also records the session id into the
- * module-scope `capturedPoSessionId` (T-PATCH-037). Keeps the renderer-bound
- * emit behavior intact.
+ * Wrap a RunCallbacks bundle so its onDone also (a) records the session id into
+ * the module-scope `capturedPoSessionId` (T-PATCH-037) and (b) increments the
+ * per-project PO turn count for the session-cycle threshold (T-PATCH-040).
+ * Keeps the renderer-bound emit behavior intact.
  */
-function withSessionCapture(wc: WebContents) {
+function withSessionCapture(wc: WebContents, projectDir: string) {
   const base = emitToWebContents(wc)
   return {
     ...base,
     onDone: (msgId: string, info: { sessionId?: string }) => {
       if (info.sessionId) capturedPoSessionId = info.sessionId
+      // T-PATCH-040: count completed PO turns toward the fresh-cycle threshold.
+      recordTurnDone(projectDir)
       base.onDone(msgId, info)
     },
   }
@@ -99,7 +103,7 @@ export function register(): void {
               text: opts.answerText,
               resume,
             },
-            withSessionCapture(event.sender),
+            withSessionCapture(event.sender, opts.projectDir),
           )
         } finally {
           markPoTurnEnd()
@@ -140,13 +144,38 @@ export function register(): void {
     ): Promise<{ ok: boolean; error?: string }> => {
       markPoTurnStart()
       try {
+        // ── T-PATCH-040: PO session fresh-cycle decision (turn START) ──────────
+        // Evaluate BEFORE spawning. If we should cycle (phase changed, OR the
+        // turn threshold is crossed AND a safe boundary [ticket close / phase
+        // change] occurred since this session started), rotate the session:
+        //   - drop the claude_session_id from chat.json (messages PRESERVED — the
+        //     visible conversation stays continuous, AC4),
+        //   - clear the module-scope captured id,
+        //   - force THIS turn's resume to null so it spawns `claude --agent
+        //     pdt-po` fresh → re-reads doctrine + re-orients from po-state (AC3/AC5),
+        //   - reset the session window so counting restarts here,
+        //   - notify the renderer to null its in-memory session id (does NOT
+        //     touch messages) so subsequent turns resume the NEW session.
+        // The decision only runs on a fresh user turn (po:sendMessage), never on
+        // an in-flight resume (chat:answerQuestion) — so we never cut mid-work
+        // (AC1/AC2).
+        let resume = opts.resume ?? null
+        const decision = evaluateCycle(opts.projectDir)
+        if (decision.cycle) {
+          clearClaudeSessionId(opts.projectDir)
+          capturedPoSessionId = null
+          resume = null
+          resetSessionWindow(opts.projectDir)
+          event.sender.send('po:sessionRestarted')
+        }
+
         await runPoTurn(
           {
             projectDir: opts.projectDir,
             text: opts.text,
-            resume: opts.resume ?? null,
+            resume,
           },
-          withSessionCapture(event.sender),
+          withSessionCapture(event.sender, opts.projectDir),
         )
         return { ok: true }
       } catch (e: any) {
@@ -158,7 +187,7 @@ export function register(): void {
   )
 
   // ── PO session restart (T-P4-059) ─────────────────────────────────────────────
-  ipcMain.handle('po:restartSession', (event): { ok: boolean } => {
+  ipcMain.handle('po:restartSession', (event, projectDir?: string): { ok: boolean } => {
     // Kill active child if running.
     if (activePoChild) {
       try { activePoChild.kill('SIGTERM') } catch { /* ignore */ }
@@ -166,6 +195,9 @@ export function register(): void {
     }
     // Reset captured session id — next send will use --agent (first turn).
     capturedPoSessionId = null
+    // T-PATCH-040: re-snapshot the cycle window so the manual fresh session
+    // starts counting from zero (no-op if projectDir is omitted by older callers).
+    if (projectDir) resetSessionWindow(projectDir)
     // Notify renderer to reset its session state.
     event.sender.send('po:sessionRestarted')
     return { ok: true }

@@ -147,3 +147,26 @@ export function clearSession(projectDir: string): void {
   const empty: Session = { messages: [], updated_at: new Date().toISOString() }
   atomicWrite(chatJsonPath(projectDir), JSON.stringify(empty, null, 2))
 }
+
+/**
+ * Drop ONLY the claude_session_id, preserving the messages array (T-PATCH-040).
+ *
+ * Used by the PO session fresh-cycle: when a session crosses its turn threshold
+ * at a safe boundary (ticket close / phase change), we rotate the claude session
+ * id so the next turn spawns fresh (`claude --agent pdt-po`, re-reading doctrine
+ * + re-orienting from po-state) — WITHOUT cutting the visible chat stream. The
+ * displayed conversation must stay continuous (AC4), so unlike `clearSession`
+ * this keeps `messages` intact and only removes `claude_session_id`.
+ *
+ * No-op (writes nothing) if there is no stored session id to drop.
+ */
+export function clearClaudeSessionId(projectDir: string): void {
+  const session = getSession(projectDir)
+  if (session.claude_session_id === undefined) return
+  const next: Session = {
+    ...session,
+    updated_at: new Date().toISOString(),
+  }
+  delete next.claude_session_id
+  atomicWrite(chatJsonPath(projectDir), JSON.stringify(next, null, 2))
+}

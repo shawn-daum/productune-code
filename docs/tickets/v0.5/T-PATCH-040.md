@@ -3,7 +3,7 @@ ticket_id: T-PATCH-040
 version: v0.5
 phase: 3
 type: feature
-status: ready
+status: done
 assignee: pdt-developer
 estimated_complexity: L4
 risk_flags:
@@ -12,6 +12,7 @@ risk_flags:
   - chat-stream-continuity-across-sid-rotation
   - doctrine-mtime-watch-optional-scope
 qa: true
+qa_status: pending-live
 slug: po-session-cycle
 ---
 

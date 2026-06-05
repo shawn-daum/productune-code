@@ -385,9 +385,10 @@ contextBridge.exposeInMainWorld('api', {
   browserOpened: (payload: { url: string; tabId: string }): void =>
     ipcRenderer.send('browser:opened', payload),
 
-  /** Restart the PO session — kills active child + resets sessionId. Returns { ok: boolean }. */
-  poRestartSession: (): Promise<{ ok: boolean }> =>
-    ipcRenderer.invoke('po:restartSession'),
+  /** Restart the PO session — kills active child + resets sessionId. Returns { ok: boolean }.
+   *  T-PATCH-040: optional projectDir re-snapshots the fresh-cycle turn window. */
+  poRestartSession: (projectDir?: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('po:restartSession', projectDir),
 
   /** Subscribe to session-restarted acknowledgement from main. Returns an unsubscribe fn. */
   poOnSessionRestarted: (cb: () => void) => {
