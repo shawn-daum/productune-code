@@ -1,16 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Lock } from 'lucide-react'
+import { Lock, FileX } from 'lucide-react'
+import ZoomControls, { ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './ZoomControls'
 
 /**
- * Read-only code/text file viewer for generic project files opened from the
- * Explorer (T-PATCH-016). Mirrors CodeSearchTab's monospace + line-gutter
- * renderer but drops the search-match / highlight / scroll-to-line concerns.
+ * CodeTextViewer — canonical read-only code/text file viewer for generic
+ * project files opened from the Explorer (T-PATCH-016, renamed/unified in
+ * T-PATCH-030). Mirrors CodeSearchTab's monospace + line-gutter renderer but
+ * drops the search-match / highlight / scroll-to-line concerns.
  *
  * Loads via the project-dir-scoped `search:readFileLines` IPC (size/line-capped,
  * binary-guarded). A `binary file` result renders a graceful "no preview" state
- * instead of a blank pane — this replaces the old BinaryTab path for the
- * Explorer's unknown-extension fallback.
+ * (lucide FileX + filename + hint) instead of a blank pane — this folds in the
+ * old BinaryTab path (deleted in T-PATCH-030) for the Explorer's
+ * unknown-extension / binary fallback.
+ *
+ * Zoom scales the monospace body font-size (shared ZoomControls); the gutter
+ * shares the same font-size so alignment holds at every zoom level.
  *
  * props: { projectDir, path }
  */
@@ -18,7 +24,7 @@ interface Props {
   props?: Record<string, unknown>
 }
 
-export default function CodeViewTab({ props }: Props) {
+export default function CodeTextViewer({ props }: Props) {
   const { t } = useTranslation()
   const projectDir = typeof props?.projectDir === 'string' ? props.projectDir : ''
   const absPath = typeof props?.path === 'string' ? props.path : ''
@@ -28,6 +34,13 @@ export default function CodeViewTab({ props }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [isBinary, setIsBinary] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [zoom, setZoom] = useState<number>(ZOOM_DEFAULT)
+
+  const zoomIn = useCallback(() =>
+    setZoom(z => Math.min(ZOOM_MAX, parseFloat((z + ZOOM_STEP).toFixed(2)))), [])
+  const zoomOut = useCallback(() =>
+    setZoom(z => Math.max(ZOOM_MIN, parseFloat((z - ZOOM_STEP).toFixed(2)))), [])
+  const zoomReset = useCallback(() => setZoom(ZOOM_DEFAULT), [])
 
   useEffect(() => {
     setLines(null)
@@ -65,26 +78,42 @@ export default function CodeViewTab({ props }: Props) {
   const relPath = projectDir && absPath.startsWith(projectDir)
     ? absPath.slice(projectDir.length).replace(/^\//, '')
     : absPath
+  const fileName = absPath.split('/').pop() ?? absPath
+
+  // Font-size scales with zoom so the gutter (same fontSize) stays aligned.
+  const bodyFontSize = Math.round(BASE_FONT_SIZE * zoom * 100) / 100
 
   return (
     <div style={wrap}>
       <div style={toolbar}>
         <span style={crumb} title={absPath}>{relPath}</span>
-        <span style={roBadge}>
-          <Lock size={10} strokeWidth={2} />
-          {t('workspace.codeView.readonlyBadge')}
-        </span>
+        <div style={toolbarRight}>
+          <span style={roBadge}>
+            <Lock size={10} strokeWidth={2} />
+            {t('workspace.codeView.readonlyBadge')}
+          </span>
+          <ZoomControls
+            zoom={zoom}
+            onZoomIn={zoomIn}
+            onZoomOut={zoomOut}
+            onReset={zoomReset}
+          />
+        </div>
       </div>
       <div style={view}>
         {loading ? (
           <p style={hint}>{t('common.loading')}</p>
         ) : isBinary ? (
-          <p style={hint}>{t('workspace.codeView.binaryNoPreview')}</p>
+          <div style={noPreview}>
+            <FileX size={32} strokeWidth={1.5} style={noPreviewIcon} />
+            <div style={noPreviewName}>{fileName}</div>
+            <div style={noPreviewHint}>{t('workspace.codeView.binaryNoPreview')}</div>
+          </div>
         ) : error ? (
           <pre style={{ ...pre, color: '#E04040' }}>{error}</pre>
         ) : lines ? (
           <>
-            <div style={code}>
+            <div style={{ ...code, fontSize: bodyFontSize }}>
               {lines.map((ln, i) => (
                 <div key={i} style={row}>
                   <span style={gutter}>{i + 1}</span>
@@ -102,6 +131,8 @@ export default function CodeViewTab({ props }: Props) {
 
 // ── Styles (mirrors CodeSearchTab) ─────────────────────────────────────────────
 
+const BASE_FONT_SIZE = 12
+
 const wrap: React.CSSProperties = {
   flex: 1,
   display: 'flex',
@@ -117,6 +148,13 @@ const toolbar: React.CSSProperties = {
   padding: '6px 14px',
   borderBottom: '1px solid #1A1A1A',
   background: '#0F0F0F',
+  flexShrink: 0,
+}
+
+const toolbarRight: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
   flexShrink: 0,
 }
 
@@ -149,7 +187,7 @@ const view: React.CSSProperties = {
 
 const code: React.CSSProperties = {
   fontFamily: 'monospace',
-  fontSize: 12,
+  fontSize: BASE_FONT_SIZE,
   lineHeight: 1.65,
 }
 
@@ -160,7 +198,7 @@ const row: React.CSSProperties = {
 }
 
 const gutter: React.CSSProperties = {
-  width: 44,
+  width: '3em',
   textAlign: 'right',
   color: '#505050',
   userSelect: 'none',
@@ -195,4 +233,36 @@ const truncHint: React.CSSProperties = {
   color: '#707070',
   fontFamily: 'monospace',
   borderTop: '1px solid #1A1A1A',
+}
+
+// ── No-preview (binary) state — folds in the deleted BinaryTab (T-PATCH-030) ───
+
+const noPreview: React.CSSProperties = {
+  flex: 1,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 8,
+  padding: 24,
+  color: '#505050',
+  minHeight: 160,
+}
+
+const noPreviewIcon: React.CSSProperties = {
+  color: '#505050',
+  marginBottom: 8,
+}
+
+const noPreviewName: React.CSSProperties = {
+  fontSize: 14,
+  color: '#707070',
+  fontFamily: 'monospace',
+}
+
+const noPreviewHint: React.CSSProperties = {
+  fontSize: 12,
+  color: '#404040',
+  textAlign: 'center',
+  maxWidth: 320,
 }

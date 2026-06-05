@@ -101,6 +101,19 @@
       "conflict": "연 뒤에 디스크에서 파일이 변경됐어요. 다시 열어 최신 내용을 받은 다음 수정사항을 재적용해주세요.",
       "lineCapTooltip": "권장 {{cap}}줄 중 {{count}}줄 (참고용 — 저장을 막지 않아요)"
     },
+    "htmlViewer": {
+      "preview": "미리보기",
+      "edit": "편집",
+      "save": "저장",
+      "reload": "미리보기 새로고침",
+      "editHint": "원본 HTML 소스 편집 중",
+      "previewFrameTitle": "HTML 미리보기",
+      "savedToast": "저장됐어요.",
+      "writeError": "저장 실패: {{error}}",
+      "conflict": "연 뒤에 디스크에서 파일이 변경됐어요. 다시 불러와 최신 내용을 받은 다음 수정사항을 재적용해주세요.",
+      "reloadFromDisk": "디스크에서 다시 불러오기",
+      "loadError": "파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+    },
     "mermaid": {
       "renderError": "Mermaid 렌더 오류",
       "sourceLabel": "원문 소스:",
@@ -384,7 +397,6 @@
       "contextReveal": "Finder에서 보기",
       "contextCopyPath": "경로 복사",
       "contextCopyRel": "상대 경로 복사",
-      "binaryNoPreview": "바이너리 파일. 미리보기 불가.",
       "contextMenuAria": "컨텍스트 메뉴"
     },
     "search": {

@@ -21,7 +21,6 @@ export type TabType =
   | 'terminal'
   | 'browser'
   | 'image'
-  | 'binary'
   | 'deploy'
   | 'general-settings'
   | 'workflow-settings'
@@ -654,11 +653,11 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'persona-def':    return (props?.persona as string) ?? 'Persona'
     case 'env-view':       return (props?.layer as string) ?? 'Env'
     case 'skill-matrix':   return 'Skills'
-    case 'preview':        return 'Preview'
+    case 'preview':        return (props?.path as string)?.split('/').pop()
+                                  ?? (props?.url as string) ?? 'Preview'
     case 'terminal':       return 'Terminal'
     case 'browser':        return 'Browser'
     case 'image':          return (props?.path as string)?.split('/').pop() ?? 'Image'
-    case 'binary':         return (props?.path as string)?.split('/').pop() ?? 'Binary'
     case 'version-history': return (props?.versionId as string) ?? i18next.t('workspace.versionHistory.title')
     case 'deploy':            return i18next.t('workspace.deploy.tabTitle')
     case 'general-settings':  return i18next.t('settings.generalTabTitle')

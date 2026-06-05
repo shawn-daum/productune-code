@@ -523,6 +523,25 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<{ ok: boolean; mtimeMs?: number; conflict?: boolean; currentMtimeMs?: number; error?: string }> =>
     ipcRenderer.invoke('doctrine:writeFile', absPath, content, expectedMtimeMs, projectDir),
 
+  // ── Local .html read/write (T-PATCH-032) ─────────────────────────────────────
+  // Backs HtmlViewer for project-scoped .html / .htm files. Both are guarded in
+  // the main process (containment + extension whitelist; write adds an mtime
+  // conflict guard + atomic temp-file write). Mirrors the doctrine read/write
+  // exposure shape so the viewer's save/conflict flow reuses the house pattern.
+  htmlReadFile: (
+    projectDir: string,
+    absPath: string,
+  ): Promise<{ ok: boolean; content?: string; exists?: boolean; mtimeMs?: number | null; error?: string }> =>
+    ipcRenderer.invoke('html:readFile', projectDir, absPath),
+
+  htmlWriteFile: (
+    projectDir: string,
+    absPath: string,
+    content: string,
+    expectedMtimeMs?: number | null,
+  ): Promise<{ ok: boolean; mtimeMs?: number; conflict?: boolean; currentMtimeMs?: number; error?: string }> =>
+    ipcRenderer.invoke('html:writeFile', projectDir, absPath, content, expectedMtimeMs),
+
   // ── Menubar events (renderer subscribes; main process emits) ─────────────────
   onMenuNewProject: (cb: () => void) => {
     const listener = () => cb()

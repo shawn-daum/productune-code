@@ -101,6 +101,19 @@
       "conflict": "File changed on disk since you opened it. Reopen to get the latest, then re-apply your edits.",
       "lineCapTooltip": "{{count}} of {{cap}} recommended lines (advisory — does not block save)"
     },
+    "htmlViewer": {
+      "preview": "Preview",
+      "edit": "Edit",
+      "save": "Save",
+      "reload": "Reload preview",
+      "editHint": "Editing raw HTML source",
+      "previewFrameTitle": "HTML preview",
+      "savedToast": "Saved.",
+      "writeError": "Save failed: {{error}}",
+      "conflict": "File changed on disk since you opened it. Reload to get the latest, then re-apply your edits.",
+      "reloadFromDisk": "Reload from disk",
+      "loadError": "Could not load file. Try again shortly."
+    },
     "mermaid": {
       "renderError": "Mermaid render error",
       "sourceLabel": "Source:",
@@ -384,7 +397,6 @@
       "contextReveal": "Reveal in Finder",
       "contextCopyPath": "Copy Path",
       "contextCopyRel": "Copy Relative Path",
-      "binaryNoPreview": "Binary file. Cannot preview.",
       "contextMenuAria": "Context menu"
     },
     "search": {

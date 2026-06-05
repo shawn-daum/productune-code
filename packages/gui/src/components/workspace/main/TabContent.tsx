@@ -6,7 +6,6 @@ import PlaceholderTab from './panes/PlaceholderTab'
 import SkillMatrixTab from './panes/SkillMatrixTab'
 import PersonaDefTab from './panes/PersonaDefTab'
 import ImageTab from './panes/ImageTab'
-import BinaryTab from './panes/BinaryTab'
 import VersionHistoryTab from './panes/VersionHistoryTab'
 import DeployTab from './panes/DeployTab'
 import GeneralSettingsTab from './panes/GeneralSettingsTab'
@@ -18,8 +17,9 @@ import ArtifactMdTab from './panes/ArtifactMdTab'
 import ArtifactMermaidTab from './panes/ArtifactMermaidTab'
 import TicketDetailTab from './panes/TicketDetailTab'
 import CodeSearchTab from './panes/CodeSearchTab'
-import CodeViewTab from './panes/CodeViewTab'
+import CodeTextViewer from './panes/CodeViewTab'
 import DoctrineFileTabHost from './panes/DoctrineFileTabHost'
+import HtmlViewer from './panes/HtmlViewer'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -39,7 +39,6 @@ export default function TabContent({ tab }: Props) {
     case 'persona-def':    return <PersonaDefTab props={tab.props} />
     case 'skill-matrix':   return <SkillMatrixTab props={tab.props} />
     case 'image':         return <ImageTab props={tab.props} />
-    case 'binary':        return <BinaryTab props={tab.props} />
     case 'version-history': return <VersionHistoryTab />
     case 'deploy':            return <DeployTab props={tab.props} />
     case 'general-settings':  return <GeneralSettingsTab props={tab.props} />
@@ -57,13 +56,16 @@ export default function TabContent({ tab }: Props) {
     case 'code-search':
       return <CodeSearchTab props={tab.props} />
     case 'code-view':
-      return <CodeViewTab props={tab.props} />
+      return <CodeTextViewer props={tab.props} />
     case 'doctrine-file':
       return <DoctrineFileTabHost tab={tab} />
+    case 'preview':
+      // Local .html/.htm (path + projectDir) → rendered Preview + raw-source
+      // Edit/Save; http(s) `url` → BrowserTab/<webview>. (T-PATCH-032)
+      return <HtmlViewer tabId={tab.id} props={tab.props} />
     case 'design-gate':
     case 'qa-result':
     case 'env-view':
-    case 'preview':
     case 'terminal':
       return <PlaceholderTab type={tab.type} props={tab.props} />
     default:

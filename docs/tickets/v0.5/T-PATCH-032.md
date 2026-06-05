@@ -3,7 +3,7 @@ ticket_id: T-PATCH-032
 version: v0.5
 phase: 3
 type: feature
-status: ready
+status: done
 assignee: pdt-developer
 estimated_complexity: M
 risk_flags:
@@ -11,6 +11,8 @@ risk_flags:
   - webview-local-file
   - dangling-tabtype-resolve
 qa: true
+qa_status: pass
+qa_loops: 1
 slug: html-viewer
 depends_on: []
 ---

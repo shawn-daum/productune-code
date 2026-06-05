@@ -3,13 +3,15 @@ ticket_id: T-PATCH-029
 version: v0.5
 phase: 3
 type: feature
-status: ready
+status: done
 assignee: pdt-developer
 estimated_complexity: M
 risk_flags:
   - many-tab-openers-aliased
   - repo-md-loader-path-scoping
 qa: true
+qa_status: pass
+qa_loops: 1
 slug: migrate-md-tabs
 depends_on:
   - T-PATCH-028

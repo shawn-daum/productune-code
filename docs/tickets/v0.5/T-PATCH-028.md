@@ -3,13 +3,15 @@ ticket_id: T-PATCH-028
 version: v0.5
 phase: 3
 type: feature
-status: ready
+status: done
 assignee: pdt-developer
 estimated_complexity: M
 risk_flags:
   - shared-primitive-extraction
   - save-conflict-seam-preservation
 qa: true
+qa_status: pass
+qa_loops: 1
 slug: markdown-viewer-primitive
 depends_on: []
 ---

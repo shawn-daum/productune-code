@@ -3,12 +3,14 @@ ticket_id: T-PATCH-030
 version: v0.5
 phase: 3
 type: feature
-status: ready
+status: done
 assignee: pdt-developer
 estimated_complexity: S
 risk_flags:
   - tab-dispatcher-removal
 qa: true
+qa_status: pass
+qa_loops: 1
 slug: code-text-viewer
 depends_on: []
 ---

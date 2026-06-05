@@ -89,6 +89,10 @@ export default function ExplorerPane() {
       // code-view reads via the project-dir-scoped search:readFileLines IPC
       // (path-traversal + size + binary guards), so it needs projectDir. (T-PATCH-016)
       if (type === 'code-view' && projectDir) props.projectDir = projectDir
+      // preview (local .html/.htm → HtmlViewer) reads + writes via the
+      // project-scoped html:readFile / html:writeFile IPC, so it needs
+      // projectDir to scope + path-guard the file. (T-PATCH-032)
+      if (type === 'preview' && projectDir) props.projectDir = projectDir
       openTab(tabId, type, props, fileName)
     },
     [openTab, projectDir],
