@@ -16,11 +16,11 @@
 - Own: tickets · PRD · design system · artifacts · feature-history · retrospective.
 - Keep `docs/artifacts/<version>/` flat — no sub-folders except `archive/`; carry grouping in the name (`<ticket-id>-<slug>.<ext>`). At P2 gate close, move non-adopted candidates (rejected T1/T3 variants) into `archive/`.
 
-### 4. Design system is master
-- On every component spec / new screen / close gate, consult `docs/designer/design-system.md` (tokens + UX principles + recipes); flag violations.
-- **Bind at MOCKUP build (S3 hi-fi), not only spec/close-gate.** Every hi-fi mockup MUST bind `design-system.md` §1.5 (UX principles) + §7 (iconography — lucide, no color-emoji) and RUN the §1.5.6 self-check BEFORE surfacing the artifact. Self-check fail → fix or flag, never surface silently.
-- One live instance — no per-feature copies; version snapshot taken at close.
-- **B mandate — every project's `design-system.md` MUST contain §1.5 standard UX principles** (Few-Things · Predictability · Feedback · Escape incl in-app-back-scope · loading/empty/error states) **+ §1.5.6 self-check**. When authoring a new project's DS (S1/S2), seed these. This short list = the Tier0 skeleton; full content lives in each project's `design-system.md`.
+### 4. UX principles (Tier0) + design system (project) are master
+- For ALL design (flow / mockup / spec / close gate), consult **Tier0 `bookshelf/ux-principles.md`** (generic UX craft — applies cross-project) + `docs/designer/design-system.md` (project tokens / recipes / deltas) + RUN the DS §1.5.6 self-check. Flag violations.
+- **Bind at MOCKUP build (S3 hi-fi), not only spec/close-gate.** Every hi-fi mockup MUST bind Tier0 ux-principles + `design-system.md` §1.5 (project deltas) + §7 (iconography — lucide, no color-emoji) and RUN the §1.5.6 self-check BEFORE surfacing the artifact. Self-check fail → fix or flag, never surface silently.
+- One live DS instance — no per-feature copies; version snapshot taken at close.
+- **Tier0 ux-principles is the generic home** — auto-applies cross-project, no per-project re-author. Each project's `design-system.md` APPLIES it + holds project-specific deltas / token mappings / examples + the §1.5.6 self-check.
 
 ### 5. External-tool recommendation
 - Beyond own ability (hi-res image / 3D / video / audio), emit `external_tool_recommendation: {tool, why_external, prompt, expected_output_path}`. Never fake output — acknowledge and refer.

@@ -10,7 +10,7 @@
 - **Worktree isolation** — own branch `feat/T-NNN-<slug>` (or per PO routing); session id = ticket id; `--resume` keeps the worktree; no cross-ticket file mutation.
 - **Read before write** — read target first; no blind overwrite / copies; config edits → `files_written[]`.
 - **Single-task focus** — no out-of-scope edits (per common §2/§3 → `unresolved[]` + `promotion_candidates[]`).
-- **UI binds the design system** — `docs/designer/design-system.md` tokens / recipes / UX principles are master; on drift, stop + flag Designer.
+- **UI binds the design system** — `docs/designer/design-system.md` tokens / recipes are master; UX principles resolve to Tier0 `designer/bookshelf/ux-principles.md` (generic) + `design-system.md` §1.5 (project deltas). On drift, stop + flag Designer.
 
 ### 3. Before handoff
 - 3-item self-check: build green · typecheck clean · lint clean. One fail → fix in-loop or `blocked`. Report in `summary`. Detail: `docs/developer/bookshelf/self-check.md`.

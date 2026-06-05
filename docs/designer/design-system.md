@@ -44,172 +44,97 @@ out_of_scope:
 
 ---
 
-## §1.5 UX principles (대원칙 2 + 3)
+## §1.5 UX principles — Tier0 적용 + project deltas
 
-§1 은 시각/토큰 레이어. §1.5 는 **사용자 경험 레이어** — productune 전체의 UX 의사결정
-doctrine. PRD / Discovery 영역인 대원칙 1 은 별도 (`docs/designer/*` doctrine).
-본 절은 GUI 컴포넌트와 직접 매핑되는 **대원칙 2 (사용자는 우리가 아니다)** + **대원칙
-3 (사용자를 당황시키지 말라)** 만 다룬다.
+§1 은 시각/토큰 레이어. §1.5 는 **사용자 경험 레이어** — productune 의 UX 의사결정.
 
-> 본 절은 **doctrine** — 컴포넌트 patch 는 별도 ticket. 하지만 신규 컴포넌트 / 신규
-> 화면 PR 은 본 절 5 개 sub-rule 을 자기검증 항목으로 본다.
+**이 프로젝트는 Tier0 `designer/bookshelf/ux-principles.md` 를 적용**한다 (Few Things /
+Hick's · Predictability · Feedback · Escape · nav/back-scope · 상태(loading/empty/
+error/skeleton) · a11y · IA · 반응형 · microcopy · motion · form/validation 등 generic
+UX craft 의 단일 출처). 본 절은 그 위에 얹는 **productune-specific deltas / 예시 / token
+매핑** 만 다룬다. generic 원칙 prose 는 중복하지 않는다 (Tier0 가 master).
 
-### 1.5.1 Few Things Per Page (Hick's Law) — 2-1
+PRD / Discovery 영역인 대원칙 1 은 별도 (`docs/designer/*` doctrine).
 
-**정의**. 한 화면 (또는 한 pane) 의 결정 옵션 수가 늘어날수록 사용자 결정 시간은
-log 증가한다. 필요한 만큼만 단순하게. 복잡한 task 는 **단계로 나눈다**.
+> 본 절은 **doctrine** — 컴포넌트 patch 는 별도 ticket. 신규 컴포넌트 / 신규 화면 PR 은
+> Tier0 원칙 + 아래 deltas 를 §1.5.6 self-check 항목으로 본다.
 
-**왜**. productune GUI 는 IDE-shell (left rail + multi-pane + multi-tab + right
-chat) 이라 base 복잡도가 이미 높다. 각 pane 안에서마저 옵션을 쌓으면 사용자는 길을
-잃는다.
+### 1.5.1 Few Things — productune deltas
 
-**어디 적용 (productune 매핑)**.
-- **Pane = 한 type 한 가지** — 한 pane 에 PRD viewer + ticket dashboard + activity
-  log 같은 멀티 타입 금지. pane = 단일 콘텐츠 타입 (T-P4-046 split-pane 정합).
-- **Split-pane = 사용자 명시 act 만** — 자동 split 금지. 사용자가 명시적으로 split
-  요청해야 갈라진다 (IDE convention).
-- **Progressive disclosure** — Quick Open (Cmd+P) / Command Palette (Cmd+Shift+P)
-  로 고급 action 은 숨긴다. 평소엔 안 보이고, 호출 시에만 등장.
-- **First-run wizard 단계화** — Engine / Wiki / API Key 를 한 화면에 다 안 넣고
-  step 으로 분리 (T-P4-015 onboarding).
-- **Modal CTA ≤ 2** — primary + secondary 만. 3 개째 CTA 는 menu / kebab 으로 강등.
+Tier0 §1 적용. productune GUI 는 IDE-shell (left rail + multi-pane + multi-tab + right
+chat) 이라 base 복잡도가 이미 높다 → pane 내부 옵션 누적에 특히 엄격.
+- **Pane = 단일 콘텐츠 타입** — 한 pane 에 PRD viewer + ticket dashboard + activity log
+  같은 멀티 타입 금지 (T-P4-046 split-pane 정합).
+- **Split-pane = 사용자 명시 act 만** — 자동 split 금지 (IDE convention).
+- **Progressive disclosure** — 고급 action 은 Quick Open (Cmd+P) / Command Palette
+  (Cmd+Shift+P) 로 숨긴다.
+- **First-run wizard 단계화** — Engine / Wiki / API Key 를 한 화면에 안 넣고 step 분리
+  (T-P4-015 onboarding).
+- **Modal CTA ≤ 2** — 3 개째 CTA 는 menu / kebab 으로 강등.
 
-**위반 사례 (anti-pattern)**.
-- 한 pane 안에 ticket list + ticket detail + activity log 동시 노출 → split-pane
-  으로 사용자가 명시적으로 분리하도록 유도해야 함.
-- Modal 안 footer 에 [저장] [저장 후 닫기] [임시저장] [취소] 4 개 — 정보 위계
-  미정의. → primary 1 + secondary 1 + 나머지는 menu.
+### 1.5.2 익숙한 경험 + 점진적 정보 — productune deltas
 
-### 1.5.2 익숙한 경험 + 점진적 정보 — 2-2
+Tier0 §1 (progressive disclosure) 적용. productune 사용자 = (a) developer (IDE 익숙)
+(b) PO / designer / non-engineer (IDE 생소) → **익숙한 패턴 차용 + 단계화** 로 둘 다.
+- **IDE 패턴 차용 (dev)** — VSCode-style activity bar (좌 48px) / split-pane / Cmd+P /
+  탭 / breadcrumb (T-P4-046).
+- **단계화 (non-engineer)** — onboarding wizard step / PRD R1→R2→R3 점진 수렴 / persona
+  session stage gate.
+- **한국어 어휘 + 영문 보호어** (§10) — non-engineer 는 한국어 본문, dev 어휘 (`PRD`,
+  `slug`, `stage`) 는 영문 보존. T-P4-057 linter 가 강제.
+- **초기 화면 = 최소 노출** — 첫 진입 = PresenceBar / chat / empty pane 만.
 
-**정의**. 누구나 이해하기 쉬운 글. 익숙한 환경 = 복잡해도 OK / 생소한 환경 = 단순하게.
-초기 화면 = 최소 정보 → 후기 화면 = 점차 늘림.
+### 1.5.3 Predictability — productune deltas
 
-**왜**. productune 사용자는 두 부류 — (a) developer (IDE 패턴 익숙) (b) PO /
-designer / non-engineer (IDE 생소). 한 doctrine 으로 둘 다 잡으려면 **익숙한 패턴
-차용 + 단계화** 가 답.
+Tier0 §2 (predictability) + §4 (상태) 적용.
+- **시각 일관성 = §1 token 강제** — 같은 status / stage = 같은 색 (§2.6 / §2.7). 예외 0.
+- **Empty state 는 Empty 컴포넌트로** — icon `--icon-2xl` + headline + 1-line desc + 1
+  primary CTA. **T-P4-046 Empty pane = 본 프로젝트 reference impl** of Tier0 §4.
+- **Pending ≠ Empty** — PendingPromotionDrain 의 empty vs loading 분리 정합.
+- **버튼 위치** — modal footer [Cancel] 좌 / [Confirm] 우 (Tier0 §2 의 productune 고정).
+- **Hover/focus** — 모든 button hover 시 bg 한 단 밝게 (§8.1).
 
-**어디 적용**.
-- **IDE 패턴 차용 (developer)** — VSCode-style activity bar (좌 48px) / split-pane
-  / Cmd+P quick open / 탭 / breadcrumb. T-P4-046 정합.
-- **단계화 (non-engineer)** — onboarding wizard step / PRD R1 → R2 → R3 점진적
-  clarity 수렴 / persona session stage gate.
-- **한국어 어휘 + 영문 보호어** (§10) — non-engineer 는 한국어 본문, dev 어휘는
-  영문 보존 (`PRD`, `slug`, `stage`).
-- **초기 화면 = 최소 노출** — 첫 진입 시 PresenceBar / chat / empty pane 만. 고급
-  feature (split / Quick Open / linter) 는 사용자가 학습한 후에 만난다.
+### 1.5.4 Feedback — productune token 매핑
 
-**위반 사례**.
-- First-run 진입 즉시 ticket dashboard + persona session view + chat 다 띄우기 →
-  사용자 압도. → wizard 단계로 분리.
-- 한국어 모드에서 "단계" 라고 번역해놓고 다른 곳에선 "stage" 영문 → 어휘 일관성
-  깨짐. T-P4-057 linter 가 catch.
+Tier0 §3 적용. 단계별 productune 컴포넌트/token:
+1. **즉시 (≤100ms)** — pressed state, hover-loss, CSS `:active`.
+2. **진행 (≥100ms)** — `Loader2` spinner (§9.2 `pdt-spin`, 회전 1s linear) 또는 inline
+   progress / non-blocking toast.
+3. **완료** — success toast (`--health-success`) / inline checkmark / SessionHealthBanner
+   (T-P4-059). 실패 = `--health-error` + 대안 CTA (재시도 / 로그 보기 / 취소).
 
-### 1.5.3 Predictability (예상 가능) — 3-1
+**컴포넌트 매핑** — Toast (비동기 완료 / non-blocking) · Inline confirm ("저장됨 ✓") ·
+SessionHealthBanner (session health info/warn/error) · Status pill 색 변화 자체가 feedback.
 
-**정의**. 시각 일관성 — 같은 의미는 같은 모양. empty page 도 placeholder + action
-보여줘서 사용자가 "여기서 뭐 할 수 있는지" 즉시 알게.
+**Writing 톤** — Tier0 §11 적용. 친근 ("저장됐습니다") / 비기술적 (stack trace 는 details
+접기) / non-threatening ("잠시 문제가 생겼어요. 다시 시도해주세요"). 보호어 (`PRD`,
+`stage`, `slug`) 는 영문 그대로.
 
-**왜**. 사용자는 학습한 패턴으로 다음 행동을 예측한다. 예측이 깨지면 신뢰가 깨진다.
+**Dogfood 위반 사례 (2026-05-07)** — ChatPanel restart 버튼 클릭 시 IPC 만 가고 UI 변화 0
+→ Tier0 §3 위반. fix (별도 ticket): 클릭 즉시 disabled + spinner / 완료 toast / 실패 inline
+error + retry. Long-running task 에 progress 정보 없음 → banner 로 stage 알림
+(`#3 of 5 personas done`).
 
-**어디 적용**.
-- **시각 일관성 = §1 token 강제** — 같은 status 는 같은 색, 같은 stage 는 같은
-  색 (§2.6 / §2.7). 예외 0.
-- **Empty state 는 Empty 컴포넌트로** — 빈 pane / 빈 ticket list / 빈 promotion
-  drain 모두 동일 패턴 (icon `--icon-2xl` + headline + 1-line description + 1
-  primary CTA). T-P4-046 Empty pane component 가 본 doctrine 의 reference impl.
-- **Pending state ≠ Empty state** — "아무것도 없음" 과 "로딩 중" 은 다른 component
-  (PendingPromotionDrain 의 empty vs loading 분리 정합).
-- **버튼 위치 일관** — modal footer 의 [Cancel] 항상 좌측 / [Confirm] 항상 우측.
-  카드의 primary action 은 항상 우측 상단 또는 하단 우측.
-- **Hover / focus 동작 일관** — 모든 button 은 hover 시 bg 한 단 밝게 (§8.1).
+### 1.5.5 Escape — productune deltas
 
-**위반 사례**.
-- 같은 "blocked" 라벨이 어떤 화면은 빨강, 어떤 화면은 회색 → token 미적용.
-- Empty pane 에 placeholder 만 있고 CTA 없음 → 사용자가 "여기서 뭐 해야 하지" 막힘.
-  → "Open file" / "Create ticket" 같은 1 차 action 노출 필수.
-
-### 1.5.4 Feedback (적재적소 알림) — 3-2
-
-**정의**. 모든 사용자 action 은 **즉시 visual feedback** 받는다. task 완료 알림.
-오류는 명확 + 대안 제시. writing 은 친근 / 비기술적 / non-threatening.
-
-**왜**. 사용자가 클릭했는데 아무 반응 없으면 "버튼 눌린 거 맞나?" 의심한다. 신뢰
-파괴.
-
-**어디 적용**. 모든 action 은 다음 3 단계 중 하나 이상 visual feedback 의무.
-1. **즉시 (≤ 100ms)** — 버튼 pressed state, hover-loss, ripple. CSS `:active`.
-2. **진행 (≥ 100ms)** — Loader2 spinner (§9.2 `pdt-spin`) 또는 inline progress.
-   non-blocking 은 toast 진행 알림.
-3. **완료** — success toast (`--health-success`) / inline checkmark / banner
-   (T-P4-059 SessionHealthBanner). 실패 시 `--health-error` + **대안 CTA** (예:
-   "재시도" / "로그 보기" / "취소").
-
-**Writing 톤**.
-- 친근 — "저장됐습니다" (X "저장 작업 완료").
-- 비기술적 — non-engineer 가 봐도 이해. stack trace 는 details 안에 접어 둠.
-- Non-threatening — "오류 발생!" (X) → "잠시 문제가 생겼어요. 다시 시도해주세요"
-  (O). 단 보호어 (`PRD`, `stage`, `slug`) 는 영문 그대로.
-
-**컴포넌트 매핑**.
-- Toast — task 비동기 완료, non-blocking notice.
-- Inline confirm — 같은 컴포넌트 안에서 즉시 확인 (예: "저장됨 ✓" inline 라벨).
-- SessionHealthBanner (T-P4-059) — session 수준 health (info/warn/error).
-- Status pill 변화 — status `in-progress` → `done` 의 색 변화 자체가 feedback.
-- Spinner — `Loader2` `pdt-spin` (`--motion-fast` 무관, 회전은 1s linear).
-
-**위반 사례 (recent dogfood — 2026-05-07)**.
-- ChatPanel 의 restart 버튼 클릭 시 IPC 호출은 됐지만 UI 변화 0 → 사용자 "뭐가
-  된 건지 모르겠다". **본 doctrine catch 가능**. fix 방향 (별도 ticket): 클릭 즉시
-  버튼 disabled + spinner / 완료 시 toast "session restarted" / 실패 시 inline
-  error + retry CTA.
-- Long-running task 에 spinner 만 있고 progress 정보 없음 → "끝났는지 멈췄는지
-  모름". → toast 또는 banner 로 stage 알림 (`#3 of 5 personas done...`).
-
-### 1.5.5 Escape (출구 제공) — 3-3
-
-**정의**. 사용자는 우리 기대대로 안 움직인다. 모든 진입점에는 안심할 수 있는 **출구**
-가 있어야 한다.
-
-**왜**. 막다른 골목 = 사용자 불안. "여기서 빠져나갈 수 있나?" 가 답이 없으면 클릭
-자체를 안 한다.
-
-**어디 적용**. 모든 modal / overlay / 진입 pane 에 **최소 1 개 명시적 출구** 의무.
-- **Esc 키** — 모든 modal / popover / Quick Open 에서 즉시 닫힘 (§8.5 Modal recipe
-  보강). 단 **destructive confirm modal** 은 Esc 무효 + 명시적 [Cancel] 만 (실수
-  방지).
-- **외부 click** — modal backdrop click 으로 닫힘. 단 form 입력 진행 중인 modal 은
-  "변경사항이 있습니다, 닫을까요?" confirm.
-- **Cancel 버튼** — 모든 modal footer 에 [Cancel] (또는 [닫기]) 명시. footer 없는
-  modal 은 우상단 X 아이콘 (`--icon-md`, `--text-muted`).
-- **FAB 복원** — 닫은 chat / dismiss 한 banner 도 복원 가능. dismiss = 영구 삭제
-  X, 복원 CTA (FAB 또는 menu) 노출.
-- **Quick Open Esc** — Cmd+P palette 도 Esc 로 즉시 닫힘.
-- **PhaseTransitionGate** — stage 진행 modal 도 [뒤로] / [Cancel] 명시. 일방통행
-  금지.
-- **Breadcrumb / back** — pane 안 깊은 view 는 ← 또는 breadcrumb 으로 한 단계
-  뒤로. browser-style.
-- **In-app 뒤로가기 = 앱 nav-scope 기준** — 인앱 [뒤로] / ← 는 **앱 자체의
-  nav-stack / route** 를 기준으로 동작한다. **global / browser back 호출 금지**
-  (앱 nav-stack 을 우회해 사용자를 앱 밖으로 튕긴다). cross-service · deep-link 로
-  바로 진입한 페이지에서도 [뒤로] 는 **앱 내 상위/이전 route 로 복귀**해야 하며,
-  앱 바깥 (이전 서비스 / 빈 화면) 으로 튕기지 않음을 검증한다. nav-stack 이 비어
-  진입한 deep-link 의 경우 fallback route (홈 / 부모 view) 로 보낸다. 위 §1.5.5
-  [뒤로] / [Cancel] gate 정합 (출구 존재) 과 **별개** — 이 rule 은 출구의
-  *목적지 scope* 를 규정한다.
-
-**위반 사례**.
-- Modal 에 [Confirm] 만 있고 [Cancel] 없음 → 사용자 강제 결정. → Cancel 필수.
-- Onboarding wizard step 3 에서 step 2 로 못 돌아감 → 일방통행. → [Back] 명시.
-- Toast 에 dismiss X 없음 → 사용자가 끄지 못함. → 모든 toast 에 X (auto-dismiss
-  되는 success 도 hover 시 X 노출).
-- Deep-link 진입 페이지에서 [뒤로] 클릭 시 browser back 이 호출돼 앱 밖 (이전
-  서비스 탭 / about:blank) 으로 튕김 → nav-scope 위반. → 앱 nav-stack 기준 복귀 +
-  stack empty 시 fallback route.
+Tier0 §5 (escape) + §6 (nav/back-scope) 적용. productune surface 별 출구:
+- **Esc** — 모든 modal / popover / Quick Open 즉시 닫힘 (§8.5). destructive confirm 은
+  Esc 무효 + 명시 [Cancel] 만 (Tier0 §5 정합).
+- **외부 click** — modal backdrop 닫힘. form 입력 중 modal 은 "변경사항이 있습니다,
+  닫을까요?" confirm.
+- **Cancel 버튼** — modal footer 에 [Cancel]/[닫기]; footer 없으면 우상단 X (`--icon-md`,
+  `--text-muted`).
+- **FAB 복원** — 닫은 chat / dismiss 한 banner 복원 가능 (Tier0 §5 dismiss≠delete).
+- **PhaseTransitionGate** — stage 진행 modal 도 [뒤로] / [Cancel] 명시. 일방통행 금지.
+- **In-app back = 앱 nav-scope** — Tier0 §6 적용. 인앱 [뒤로] / ← 는 앱 nav-stack 기준,
+  browser/global back 금지. deep-link 진입 페이지도 [뒤로] = 앱 내 상위 route 복귀
+  (밖으로 안 튕김), stack empty 시 fallback route (홈 / 부모 view).
 
 ### 1.5.6 Sub-rule 적용 체크리스트 (PR 자기검증)
 
-신규 컴포넌트 / 신규 화면 PR 은 본 5 항목 self-check 후 머지.
+신규 컴포넌트 / 신규 화면 PR 은 본 항목 self-check 후 머지. 각 항목은 Tier0
+`designer/bookshelf/ux-principles.md` 의 원칙을 productune surface 에 적용한 검증 게이트다
+(원칙 정의는 Tier0, 아래는 그 act-time 체크).
 
 | # | sub-rule | 체크 |
 |---|---|---|

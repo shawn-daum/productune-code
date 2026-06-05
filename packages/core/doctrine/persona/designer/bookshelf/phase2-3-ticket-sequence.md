@@ -21,6 +21,7 @@ without the prior gate cleared. Accept advances; refuse loops back.
   `docs/artifacts/<version>/design-system-<n>.html`.
 - **Gate**: user accepts 1–3. Refuse → interview → back to S1 (re-propose).
 - The accepted system is written to `docs/designer/design-system.md` (SoT, master).
+- When authoring it, SEED §1.5 (apply Tier0 ux-principles + project deltas) + §1.5.6 self-check (project-surface, cites Tier0 principle ids) — Tier0 does NOT auto-supply §1.5.6.
 
 ### S3 — mockup candidates (HTML)
 - Mock 1–2 key pages, candidates in parallel, collapsed into ONE page:
