@@ -5,8 +5,11 @@ import { Zap, Plus, FolderOpen } from 'lucide-react'
 
 interface RecentProject {
   slug: string
-  created_at: string
-  path: string
+  projectDir: string
+  openedAt: string
+  // legacy compat fields (projects:list)
+  created_at?: string
+  path?: string
 }
 
 interface Props {
@@ -31,7 +34,20 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
   const [recents, setRecents] = useState<RecentProject[]>([])
 
   useEffect(() => {
-    ;(window as any).api.listProjects().then(setRecents).catch(() => {})
+    // T-PATCH-050: use recents:list which covers all open methods; fall back to
+    // projects:list (legacy projects dir only) when recents IPC is unavailable.
+    const api = (window as any).api
+    if (api.listRecents) {
+      api.listRecents().then((entries: RecentProject[]) => setRecents(entries)).catch(() => {
+        api.listProjects?.().then((ps: any[]) =>
+          setRecents(ps.map((p) => ({ slug: p.slug, projectDir: p.path, openedAt: p.created_at })))
+        ).catch(() => {})
+      })
+    } else {
+      api.listProjects?.().then((ps: any[]) =>
+        setRecents(ps.map((p) => ({ slug: p.slug, projectDir: p.path, openedAt: p.created_at })))
+      ).catch(() => {})
+    }
   }, [])
 
   return (
@@ -61,16 +77,16 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {recents.map(p => (
               <div
-                key={p.path}
+                key={p.projectDir}
                 style={recentCard}
-                onClick={() => onOpenRecent(p.path, p.slug)}
+                onClick={() => onOpenRecent(p.projectDir, p.slug)}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
                   <span style={{ fontSize: 13, fontWeight: 500, color: '#F0F0F0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {p.slug}
                   </span>
                 </div>
-                <span style={{ fontSize: 11, color: '#505050', flexShrink: 0 }}>{relativeDate(p.created_at, t)}</span>
+                <span style={{ fontSize: 11, color: '#505050', flexShrink: 0 }}>{relativeDate(p.openedAt, t)}</span>
               </div>
             ))}
           </div>

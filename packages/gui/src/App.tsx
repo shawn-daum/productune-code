@@ -162,11 +162,15 @@ export default function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function openRecent(projectDir: string, slug: string) {
+    // T-PATCH-050: always add to recents when opening via any path
+    ;(window as any).api.addRecent?.({ projectDir, slug }).catch(() => {})
     setProject({ slug, projectDir })
   }
 
   function openDescendant(entry: DescendantEntry) {
     setOpenPrompt(null)
+    // T-PATCH-050: add to recents for descendant open path
+    ;(window as any).api.addRecent?.({ projectDir: entry.path, slug: entry.config.slug }).catch(() => {})
     setProject({ slug: entry.config.slug, projectDir: entry.path })
   }
 

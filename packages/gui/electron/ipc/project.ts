@@ -17,6 +17,44 @@ interface DetectResult {
   hints?: string[]
 }
 
+export interface RecentProjectEntry {
+  slug: string
+  projectDir: string
+  openedAt: string  // ISO timestamp
+}
+
+// ── Recents helpers (T-PATCH-050) ─────────────────────────────────────────────
+
+const RECENTS_MAX = 10
+const RECENTS_PATH = path.join(os.homedir(), '.productune', 'recents.json')
+
+function loadRecents(): RecentProjectEntry[] {
+  try {
+    if (!fs.existsSync(RECENTS_PATH)) return []
+    return JSON.parse(fs.readFileSync(RECENTS_PATH, 'utf-8')) as RecentProjectEntry[]
+  } catch {
+    return []
+  }
+}
+
+function saveRecents(entries: RecentProjectEntry[]): void {
+  try {
+    fs.mkdirSync(path.dirname(RECENTS_PATH), { recursive: true })
+    fs.writeFileSync(RECENTS_PATH, JSON.stringify(entries, null, 2), 'utf-8')
+  } catch { /* non-fatal */ }
+}
+
+/** Add or update a recent project entry. Deduplicates by projectDir, moves to top, caps at RECENTS_MAX. */
+export function addToRecents(projectDir: string, slug: string): void {
+  const existing = loadRecents().filter((e) => e.projectDir !== projectDir)
+  const entry: RecentProjectEntry = { slug, projectDir, openedAt: new Date().toISOString() }
+  saveRecents([entry, ...existing].slice(0, RECENTS_MAX))
+  // Also register with macOS Dock recent menu
+  if (process.platform === 'darwin') {
+    try { app.addRecentDocument(projectDir) } catch { /* non-fatal */ }
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -102,7 +140,7 @@ export function register(): void {
     const config = initProject({ slug, projectDir, initialVersionId })
     // Decision B (T-P4-101): write onboarding pending immediately after init success.
     try { writeOnboardingPending(projectDir, 'gui-create') } catch { /* non-fatal */ }
-    if (process.platform === 'darwin') app.addRecentDocument(projectDir)
+    addToRecents(projectDir, slug)
     return { projectDir, config }
   })
 
@@ -111,7 +149,7 @@ export function register(): void {
     const config = initProject({ slug, projectDir })
     // Decision B (T-P4-101): write onboarding pending after install success.
     try { writeOnboardingPending(projectDir, 'install-at') } catch { /* non-fatal */ }
-    if (process.platform === 'darwin') app.addRecentDocument(projectDir)
+    addToRecents(projectDir, slug)
     return { projectDir, config }
   })
 
@@ -149,6 +187,18 @@ export function register(): void {
       .slice(0, 10)
   })
 
+  // T-PATCH-050: recents list/add IPC — covers all open methods
+  ipcMain.handle('recents:list', () => {
+    return loadRecents().filter((e) => {
+      try { return fs.existsSync(e.projectDir) } catch { return false }
+    })
+  })
+
+  ipcMain.handle('recents:add', (_event, { projectDir, slug }: { projectDir: string; slug: string }) => {
+    addToRecents(projectDir, slug)
+    return { ok: true }
+  })
+
   ipcMain.handle('dialog:openFilePicker', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile', 'multiSelections'],
@@ -164,7 +214,8 @@ export function register(): void {
 
     const detect = detectProductuneLayout(dir)
     if (detect.kind === 'self-current') {
-      if (process.platform === 'darwin') app.addRecentDocument(dir)
+      // T-PATCH-050: always add to recents on all open paths
+      addToRecents(dir, detect.config?.slug ?? path.basename(dir))
       return { kind: 'self', dir, config: detect.config }
     }
     if (detect.kind === 'self-legacy') {
@@ -191,7 +242,8 @@ export function register(): void {
 
     const detect = detectProductuneLayout(dir)
     if (detect.kind === 'self-current') {
-      if (process.platform === 'darwin') app.addRecentDocument(dir)
+      // T-PATCH-050: always add to recents on all open paths
+      addToRecents(dir, detect.config?.slug ?? path.basename(dir))
       return { kind: 'self', dir, config: detect.config }
     }
     if (detect.kind === 'self-legacy') {
@@ -209,7 +261,7 @@ export function register(): void {
   ipcMain.handle('project:migrateLegacy', (_event, { projectDir, slug }: { projectDir: string; slug?: string }) => {
     const derivedSlug = (slug ?? path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || 'project'
     const config = initProject({ slug: derivedSlug, projectDir })
-    if (process.platform === 'darwin') app.addRecentDocument(projectDir)
+    addToRecents(projectDir, derivedSlug)
     return { projectDir, config, migrated: true }
   })
 

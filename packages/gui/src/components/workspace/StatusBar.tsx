@@ -16,8 +16,11 @@ import SessionHealthSegment from './SessionHealthSegment'
 
 interface RecentEntry {
   slug: string
-  created_at: string
-  path: string
+  projectDir: string
+  openedAt: string
+  // legacy compat
+  created_at?: string
+  path?: string
 }
 
 interface Props {
@@ -48,7 +51,15 @@ export default function StatusBar({ onOpenHealthBanner, onOpenRecent }: Props) {
   async function handleSlugClick() {
     if (!project) return
     try {
-      const list: RecentEntry[] = await (window as any).api.listProjects?.() ?? []
+      const api = (window as any).api
+      // T-PATCH-050: prefer recents:list (all open methods) over projects:list (dir-only)
+      let list: RecentEntry[]
+      if (api.listRecents) {
+        list = await api.listRecents()
+      } else {
+        const ps = await api.listProjects?.() ?? []
+        list = ps.map((p: any) => ({ slug: p.slug, projectDir: p.path, openedAt: p.created_at }))
+      }
       setRecents(list)
       setDropdownOpen((v) => !v)
     } catch {
@@ -58,8 +69,9 @@ export default function StatusBar({ onOpenHealthBanner, onOpenRecent }: Props) {
 
   function handleSelectRecent(entry: RecentEntry) {
     setDropdownOpen(false)
-    if (!project || entry.path === project.projectDir) return
-    onOpenRecent?.(entry.path, entry.slug)
+    const dir = entry.projectDir
+    if (!project || dir === project.projectDir) return
+    onOpenRecent?.(dir, entry.slug)
   }
 
   return (
@@ -79,10 +91,11 @@ export default function StatusBar({ onOpenHealthBanner, onOpenRecent }: Props) {
                   <div style={dropdownEmpty}>no recent projects</div>
                 ) : (
                   recents.map((entry) => {
-                    const isCurrent = entry.path === project.projectDir
+                    const dir = entry.projectDir
+                    const isCurrent = dir === project.projectDir
                     return (
                       <button
-                        key={entry.path}
+                        key={dir}
                         style={isCurrent ? { ...dropdownItem, ...dropdownItemDimmed } : dropdownItem}
                         disabled={isCurrent}
                         onClick={() => handleSelectRecent(entry)}

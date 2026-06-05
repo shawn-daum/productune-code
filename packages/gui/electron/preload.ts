@@ -72,6 +72,13 @@ contextBridge.exposeInMainWorld('api', {
   listProjects: (): Promise<Array<{ slug: string; created_at: string; path: string }>> =>
     ipcRenderer.invoke('projects:list'),
 
+  // T-PATCH-050: recents API — covers all open methods
+  listRecents: (): Promise<Array<{ slug: string; projectDir: string; openedAt: string }>> =>
+    ipcRenderer.invoke('recents:list'),
+
+  addRecent: (opts: { projectDir: string; slug: string }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('recents:add', opts),
+
   githubCheckToken: () =>
     ipcRenderer.invoke('github:checkToken'),
 
