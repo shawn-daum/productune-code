@@ -16,14 +16,11 @@ ahead. Advance only on explicit user confirm at each boundary.
 - **Exit**: PRD `state:"ready"` → P2.
 
 ### P2 — Design  (skip unless L4+ / user-facing / `risk_flags` ≠ none)
-- **In**: ready PRD.
-- **Emit**: 3 sequential `type:design` tickets (you emit, Designer executes via session resume), opus/xhigh each:
-  - **T1 design system + key screens** — `docs/designer/design-system.md` (opus/max net-new) + up to 3 screens (T1a: 3 candidates → user picks; T1b: finalize on the chosen system).
-  - **T2 user flow + wireframe** — `docs/artifacts/<version>/<slug>-flow.html` + optional `…-wireframe.excalidraw.json`.
-  - **T3 hi-fi mockup** — `docs/artifacts/<version>/<ticket-id>-mockup.{html,tsx}` via the `frontend-design` skill (shadcn/ui + react-icons default; productune-internal = lucide-react).
-- **Gate**: one user gate after all 3 are surfaced.
-- **P2 close — archive non-SoT artifacts**: On user approval, move all T1/T3 candidate files that were NOT adopted as SoT (i.e. rejected mockup variants) to `docs/artifacts/<version>/archive/`. The adopted SoT file stays in `docs/artifacts/<version>/`.
-- **Exit**: user approval → P3.
+- **In**: ready PRD. Designer executes via `type:design` tickets, opus/xhigh.
+- **Drive the per-step gated chain** in `designer/bookshelf/phase2-3-ticket-sequence.md` — do NOT restate its steps here. Surface a user gate at EACH step (not one end-gate); accept advances, refuse loops back via interview.
+- **Branch** picks the entry step from the PRD case: A net-new → full chain · B new feature on existing system → skip system steps · C small UI → hi-fi only, one gate.
+- **Per-step archive**: at every gate accept move that step's non-adopted candidates to `docs/artifacts/<version>/archive/` immediately (not deferred to P2 close); the adopted SoT artifact stays flat in `docs/artifacts/<version>/`.
+- **Exit**: final hi-fi gate accepted → P3.
 
 ### P3 — Build
 - **In**: approved design + emitted `impl` / `refactor` / `test` / `qa` tickets.
