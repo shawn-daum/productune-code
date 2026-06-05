@@ -20,4 +20,10 @@ Single JSON object. stdout char 0 = `{`. No markdown outside JSON strings.
 - Outcome-conditional: `blocked`(boolean) · `refused`(boolean) · `open_questions`(array) · `unresolved`(array) · `state`(`ready` \| `needs-info`) + `next_question`(string) for the PRD clarity loop · `files_written`(array<path>) · `external_tool_recommendation`(object)
 - Free-form string fields (`next_question`, `unresolved[]` items, ticket body excerpts, prose summaries) each ≤1200 chars. Question / decision / option arrays in the envelope ≤2 entries per turn. Over cap → split into a follow-up dispatch (`state:"needs-info"` + `iter+1`); never inline-batch.
 - Promotion = emit-only; never write Tier 1/2 directly — PO approves + writes. Schema: `bookshelf/promotion-candidate-schema.md`.
-- Machine traffic (PO→persona dispatch, persona↔persona, return envelopes) = caveman (full): telegraphic English / JSON, drop articles / grammar / filler / politeness / rationale / background, keep ALL load-bearing tokens (paths, constraints, AC, decisions); NOT ultra. Compress STYLE only — never drop spec.
+- Machine traffic (PO→persona dispatch, persona↔persona, return envelopes) = caveman (full).
+
+### 4. caveman (comms compression; origin: `caveman` skill — always-on, not trigger-gated)
+- **lite** (user-facing, in user working lang): lead with the answer / decision; drop filler, pleasantries, hedging; keep it short. Non-English (e.g. 한글) keeps natural grammar for readability — no fragment spam.
+- **full** (machine: dispatch / envelope, English / JSON): fragments; drop articles + filler + pleasantries + hedging; abbrev (DB / auth / cfg / fn / impl); causal arrows (X -> Y); keep ALL load-bearing tokens (paths, constraints, AC, decisions); reproduce technical / code / errors exactly.
+- **ultra** = highly telegraphic — AVOID (loses spec tokens).
+- Auto-clarity exceptions (drop caveman, resume after): security warnings · irreversible-action confirmations · multi-step where fragment ordering could misread · when re-asked for clarification.
