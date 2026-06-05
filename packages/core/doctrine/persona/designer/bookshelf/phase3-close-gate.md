@@ -8,7 +8,7 @@ design-compliance check.
 - **Ticket type**: `type: design`
 - **Model / effort**: **sonnet / medium**
 - **Sequence**: Close Ticket 1 — run **before** PRD-requirements and security tickets.
-  See `po/bookshelf/lifecycle-mechanics.md §Phase ticket auto-emit summary`.
+  See `po/bookshelf/lifecycle/index.md §The 5 phases`.
 
 ## Mandatory gate — no waiver
 
@@ -95,4 +95,4 @@ per-feature copies. PO archives at version close to
 
 After your T1 is done → PO routes T2 (PRD requirements) → T3 (security). All 3 done → PO
 commits: `git commit -m "feat(<version>): build close — N tickets done"`. Full gate:
-`po/bookshelf/lifecycle-mechanics.md`.
+`po/bookshelf/lifecycle/p3-build.md`.

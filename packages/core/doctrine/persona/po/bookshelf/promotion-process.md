@@ -101,7 +101,7 @@ disposition (not persona-emitted): `status` (`pending|approved|dropped|edited`),
 At Version close, drain all `pending_promotions[]` in a single batch surface to the user.
 After drain, the snapshot of `pending_promotions` with `status ∈ {approved, edited, dropped}`
 ∧ `decided_at ∈ [version.started_at, version.ended_at]` is the **5th retrospective read
-source** (see `lifecycle-mechanics.md`).
+source** (see `lifecycle/p5-close.md`).
 
 ## Refusal — direct user long-term write
 

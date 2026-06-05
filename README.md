@@ -365,7 +365,7 @@ productune/
 │       │   │   ├── habit.md             # ≤50 lines — JSON-only · promotion · SoT · role boundary
 │       │   │   └── bookshelf/           # json-output-schema, promotion-candidate-schema, ticket-schema, phase-definitions
 │       │   └── persona/                 # 페르소나별 base
-│       │       ├── po/{habit.md, bookshelf/}        # routing, delegation, escalation, calibration, lifecycle-mechanics, po-state-hygiene, promotion-process
+│       │       ├── po/{habit.md, bookshelf/}        # routing, delegation, escalation, calibration, promotion-process, git-workflow, doctrine-editing, lifecycle/ (index · p1/p3/p4/p5 · ticket-ops · state-hygiene)
 │       │       ├── designer/{habit.md, bookshelf/}  # prd-clarity-loop, phase3-close-gate
 │       │       ├── developer/{habit.md, bookshelf/}
 │       │       └── qa/{habit.md, bookshelf/}

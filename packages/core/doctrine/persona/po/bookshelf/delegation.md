@@ -57,7 +57,7 @@ Trigger on L≥5, multi-file / cross-cutting, a risk flag, or user request. L1�
 
 ## Dev-QA auto-loop
 
-After an impl dispatch, auto-dispatch QA (no user confirm); cap 3 attempts; fail at cap → `blocked` + user TODO (`AUTH_REQUIRED` → pause + auth todo). Full mechanics: `bookshelf/lifecycle-mechanics.md` (Auto QA smoke gate).
+After an impl dispatch, auto-dispatch QA (no user confirm); cap 3 attempts; fail at cap → `blocked` + user TODO (`AUTH_REQUIRED` → pause + auth todo). Full mechanics: `bookshelf/lifecycle/ticket-ops.md` (Auto QA smoke gate).
 
 ## Session lifecycle
 
