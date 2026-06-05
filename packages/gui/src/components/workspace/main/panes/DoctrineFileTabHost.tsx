@@ -335,6 +335,7 @@ export default function DoctrineFileTabHost({ tab }: Props) {
       {choiceOpen && (
         <DoctrineSaveChoiceModal
           busy={choiceBusy}
+          showReview={!!projectDir}
           onCancel={handleChoiceCancel}
           onChoose={handleChoose}
         />

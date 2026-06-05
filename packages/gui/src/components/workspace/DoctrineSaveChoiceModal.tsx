@@ -23,11 +23,19 @@ export type SaveChoice = 'direct' | 'review'
 interface Props {
   /** Disables actions + spinners the chosen button while an IPC call runs. */
   busy: SaveChoice | null
+  /**
+   * Whether the PO-review path is applicable (T-PATCH-031). PO review enqueues a
+   * pending-promotion against a project, so it requires a projectDir. For a T2
+   * personal-memory file opened without a project (no projectDir), review is
+   * inapplicable and the option is hidden — only direct save is offered. The
+   * dialog body also swaps to a single-path explanation in that case.
+   */
+  showReview?: boolean
   onCancel: () => void
   onChoose: (choice: SaveChoice) => void
 }
 
-export default function DoctrineSaveChoiceModal({ busy, onCancel, onChoose }: Props) {
+export default function DoctrineSaveChoiceModal({ busy, showReview = true, onCancel, onChoose }: Props) {
   const { t } = useTranslation()
   const directRef = useRef<HTMLButtonElement>(null)
 
@@ -58,7 +66,9 @@ export default function DoctrineSaveChoiceModal({ busy, onCancel, onChoose }: Pr
           {t('workspace.doctrine.save.title')}
         </h2>
 
-        <p style={bodyStyle}>{t('workspace.doctrine.save.body')}</p>
+        <p style={bodyStyle}>
+          {t(showReview ? 'workspace.doctrine.save.body' : 'workspace.doctrine.save.bodyDirectOnly')}
+        </p>
 
         <div style={actions}>
           <button
@@ -69,18 +79,20 @@ export default function DoctrineSaveChoiceModal({ busy, onCancel, onChoose }: Pr
             {t('workspace.doctrine.save.cancel')}
           </button>
 
-          <button
-            style={{ ...btnSecondary, opacity: isBusy ? 0.5 : 1 }}
-            onClick={() => onChoose('review')}
-            disabled={isBusy}
-          >
-            {busy === 'review' ? (
-              <Loader2 size={13} className="pdt-spin" />
-            ) : (
-              <Send size={13} />
-            )}
-            {t('workspace.doctrine.save.requestReview')}
-          </button>
+          {showReview && (
+            <button
+              style={{ ...btnSecondary, opacity: isBusy ? 0.5 : 1 }}
+              onClick={() => onChoose('review')}
+              disabled={isBusy}
+            >
+              {busy === 'review' ? (
+                <Loader2 size={13} className="pdt-spin" />
+              ) : (
+                <Send size={13} />
+              )}
+              {t('workspace.doctrine.save.requestReview')}
+            </button>
+          )}
 
           <button
             ref={directRef}

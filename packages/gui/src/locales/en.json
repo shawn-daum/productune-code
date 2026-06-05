@@ -528,6 +528,7 @@
       "save": {
         "title": "How do you want to save this change?",
         "body": "Save directly overwrites the file immediately. Request PO review does NOT save now — a change summary is queued for PO approval, and the PO reviews and applies it manually.",
+        "bodyDirectOnly": "This saves directly to the file. PO review isn't available here because this file isn't tied to a project.",
         "direct": "Save directly",
         "requestReview": "Request PO review",
         "cancel": "Cancel"

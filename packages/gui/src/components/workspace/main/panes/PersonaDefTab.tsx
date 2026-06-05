@@ -1,9 +1,13 @@
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PERSONA_COLORS } from '../../../../store/personaPresence'
 import type { PersonaId } from '../../../../store/personaPresence'
 import { useWorkspace } from '../../../../store/workspace'
-import { FileText, ChevronRight as ChevRight, Pencil, Save, X } from 'lucide-react'
+import { FileText, ChevronRight as ChevRight } from 'lucide-react'
+import MarkdownViewer, {
+  type DoctrineOnSave,
+  type MarkdownLoadResult,
+} from './MarkdownViewer'
 
 // ── Static persona metadata (T-P4-044 dispatch target, Phase 4 preview-only) ─
 
@@ -80,14 +84,6 @@ export default function PersonaDefTab({ props }: Props) {
   const poState   = useWorkspace((s) => s.poState)
   const openTabFn = useWorkspace((s) => s.openTab)
 
-  // Persona-spec editor state (v0.5 B1 / T-017) — hooks before early return.
-  const [specEditing, setSpecEditing] = useState(false)
-  const [specDraft, setSpecDraft] = useState('')
-  const [specLoading, setSpecLoading] = useState(false)
-  const [specSaving, setSpecSaving] = useState(false)
-  const [specError, setSpecError] = useState<string | null>(null)
-  const [specSaved, setSpecSaved] = useState(false)
-
   // personaId derivation: both open paths (search palette + TeamPanel row) now pass
   // the canonical full `pdt-*` id via the `persona` prop. T-PATCH-014 unified this.
   const personaId = (props?.persona as string) ?? ''
@@ -95,51 +91,33 @@ export default function PersonaDefTab({ props }: Props) {
   const sourcePath = (props?.sourcePath as string) ?? `~/.claude/agents/${personaId}.md`
   const meta = PERSONA_META[personaId] ?? null
 
-  const handleEditSpec = useCallback(async () => {
-    setSpecError(null)
-    setSpecSaved(false)
-    setSpecLoading(true)
-    try {
-      const api = (window as any).api
-      const res = await api.readPersonaSpec?.(personaId)
-      if (res?.ok) {
-        setSpecDraft(res.content ?? '')
-        setSpecEditing(true)
-      } else {
-        setSpecError(res?.error ?? 'read failed')
-      }
-    } catch (e: any) {
-      setSpecError(e?.message ?? 'read failed')
-    } finally {
-      setSpecLoading(false)
-    }
+  // Persona-spec viewer seam (T-PATCH-031): the spec (~/.claude/agents/<id>.md)
+  // now renders through the shared MarkdownViewer primitive (Preview default +
+  // raw Edit toggle + Save), consistent with the doctrine-file viewer. The
+  // persona IPC carries no mtime, so we expose mtimeMs:null — MarkdownViewer's
+  // conflict pre-check is a no-op when the snapshot mtime is null.
+  const loadSpec = useCallback((): Promise<MarkdownLoadResult> => {
+    const api = (window as any).api
+    const read = api.readPersonaSpec?.(personaId)
+    if (!read) return Promise.resolve({ ok: false, error: 'read failed' })
+    return Promise.resolve(read).then((res: any) =>
+      res?.ok
+        ? { ok: true, content: res.content ?? '', mtimeMs: null }
+        : { ok: false, error: res?.error ?? 'read failed' },
+    )
   }, [personaId])
 
-  const handleSaveSpec = useCallback(async () => {
-    setSpecSaving(true)
-    setSpecError(null)
-    try {
+  const saveSpec = useCallback<DoctrineOnSave>(
+    (_p, content) => {
       const api = (window as any).api
-      const res = await api.writePersonaSpec?.(personaId, specDraft)
-      if (res?.ok) {
-        setSpecEditing(false)
-        setSpecSaved(true)
-        setTimeout(() => setSpecSaved(false), 2000)
-      } else {
-        setSpecError(res?.error ?? 'write failed')
-      }
-    } catch (e: any) {
-      setSpecError(e?.message ?? 'write failed')
-    } finally {
-      setSpecSaving(false)
-    }
-  }, [personaId, specDraft])
-
-  const handleCancelSpec = useCallback(() => {
-    setSpecEditing(false)
-    setSpecDraft('')
-    setSpecError(null)
-  }, [])
+      const write = api.writePersonaSpec?.(personaId, content)
+      if (!write) return Promise.resolve({ ok: false, error: 'write failed' })
+      return Promise.resolve(write).then((res: any) =>
+        res?.ok ? { ok: true } : { ok: false, error: res?.error ?? 'write failed' },
+      )
+    },
+    [personaId],
+  )
 
   if (!meta) {
     return (
@@ -181,7 +159,7 @@ export default function PersonaDefTab({ props }: Props) {
 
       {/* Model × effort is decided dynamically per task by routing (no fixed
           per-persona model) — show that as an honest hint, not a flat fact. */}
-      <div style={modelHint}>{t('workspace.personaDef.modelHint')}</div>
+      <div style={modelHint}>{t('workspace.team.personaDef.modelHint')}</div>
 
       {/* Metadata */}
       <div style={metaSection}>
@@ -205,47 +183,24 @@ export default function PersonaDefTab({ props }: Props) {
         </div>
       </div>
 
-      {/* Persona spec — editable (v0.5 B1 / T-017) */}
+      {/* Persona spec — editable, rendered via the shared MarkdownViewer
+          primitive (T-PATCH-031): Preview default + raw Edit toggle + Save,
+          consistent with the doctrine-file viewer. */}
       <div style={specHeaderRow}>
-        <span style={sectionSubHdrInline}>{t('workspace.personaDef.specHeader')}</span>
-        {!specEditing ? (
-          <button
-            style={specActionBtn}
-            onClick={handleEditSpec}
-            disabled={specLoading}
-            title={t('workspace.personaDef.specEdit')}
-          >
-            <Pencil size={11} color="#909090" />
-            <span>{specLoading ? t('common.loading') : t('workspace.personaDef.specEdit')}</span>
-          </button>
-        ) : (
-          <div style={specBtnGroup}>
-            <button style={specActionBtn} onClick={handleSaveSpec} disabled={specSaving}>
-              <Save size={11} color="#34D399" />
-              <span>{specSaving ? t('common.loading') : t('workspace.personaDef.specSave')}</span>
-            </button>
-            <button style={specActionBtn} onClick={handleCancelSpec} disabled={specSaving}>
-              <X size={11} color="#909090" />
-              <span>{t('common.cancel')}</span>
-            </button>
-          </div>
-        )}
+        <span style={sectionSubHdrInline}>{t('workspace.team.personaDef.specHeader')}</span>
       </div>
-      {specEditing ? (
-        <textarea
-          style={specTextarea}
-          value={specDraft}
-          onChange={(e) => setSpecDraft(e.target.value)}
-          spellCheck={false}
-          autoFocus
+      <div style={specViewerWrap}>
+        <MarkdownViewer
+          key={personaId}
+          load={loadSpec}
+          absPath={sourcePath}
+          relName={sourcePath}
+          editable={true}
+          onSave={saveSpec}
+          emptyCrumb="persona"
         />
-      ) : (
-        <div style={specHint}>
-          {t('workspace.personaDef.specHint', { path: sourcePath })}
-        </div>
-      )}
-      {specError && <div style={specErrorText}>{specError}</div>}
-      {specSaved && <div style={specSavedText}>{t('workspace.personaDef.specSaved')}</div>}
+      </div>
+      <div style={specHint}>{t('workspace.team.personaDef.specSaved')}</div>
 
       {/* Long-term memory */}
       <div style={sectionSubHdr}>LONG-TERM MEMORY</div>
@@ -411,38 +366,17 @@ const sectionSubHdrInline: React.CSSProperties = {
   textTransform: 'uppercase',
 }
 
-const specBtnGroup: React.CSSProperties = {
+// The persona-spec MarkdownViewer is a flex column that fills its own height;
+// give it a bounded, framed box inside the scrolling detail pane so its internal
+// Preview/Edit body scrolls independently rather than stretching the page.
+const specViewerWrap: React.CSSProperties = {
   display: 'flex',
-  gap: 6,
-}
-
-const specActionBtn: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 4,
-  background: 'transparent',
-  border: '1px solid #2A2A2A',
-  borderRadius: 4,
-  color: '#A0A0A0',
-  cursor: 'pointer',
-  fontFamily: 'inherit',
-  fontSize: 10,
-  padding: '2px 8px',
-}
-
-const specTextarea: React.CSSProperties = {
-  background: '#0A0A0A',
-  border: '1px solid #2A2A2A',
-  borderRadius: 4,
-  color: '#E0E0E0',
-  fontFamily: 'monospace',
-  fontSize: 11,
-  lineHeight: 1.5,
-  minHeight: 240,
-  outline: 'none',
-  padding: '8px 10px',
-  resize: 'vertical',
-  width: '100%',
+  flexDirection: 'column',
+  height: 360,
+  border: '1px solid #1E1E1E',
+  borderRadius: 6,
+  overflow: 'hidden',
+  marginBottom: 6,
 }
 
 const specHint: React.CSSProperties = {
@@ -450,18 +384,6 @@ const specHint: React.CSSProperties = {
   color: '#606060',
   fontStyle: 'italic',
   padding: '2px 0',
-}
-
-const specErrorText: React.CSSProperties = {
-  fontSize: 11,
-  color: '#E04040',
-  marginTop: 4,
-}
-
-const specSavedText: React.CSSProperties = {
-  fontSize: 11,
-  color: '#34D399',
-  marginTop: 4,
 }
 
 const memoryRow: React.CSSProperties = {
