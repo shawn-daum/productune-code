@@ -401,6 +401,24 @@ else
   warn "doctrine/ not found at $ROOT/doctrine — Tier 0 mirror skipped (run again after doctrine/ is present)"
 fi
 
+# 2c-2) One-time per-machine migration: personal-po-state DEPRECATION.
+#       Work-state now lives ONLY in each project's .productune/po-state.json.
+#       This resets a leftover personal ~/.productune/po/po-state.json that still
+#       carries work fields (backup + _deprecated marker). Idempotent: no-op when
+#       the file is missing, already deprecated, or has no work fields. Never
+#       touches any project po-state. Runs after the doctrine mirror.
+# ROOT here is packages/core; the migration script lives at the repo root's
+# scripts/ dir. Resolve the repo root via git, falling back to $ROOT/..
+_REPO_ROOT="$(cd "$ROOT/.." 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$_REPO_ROOT" ] || _REPO_ROOT="$(cd "$ROOT/.." 2>/dev/null && pwd || true)"
+_MIGRATE_SCRIPT="$_REPO_ROOT/scripts/migrate-po-state-scope.mjs"
+if command -v node >/dev/null 2>&1 && [ -f "$_MIGRATE_SCRIPT" ]; then
+  node "$_MIGRATE_SCRIPT" "$(date +%Y-%m-%d 2>/dev/null || true)" || \
+    warn "personal po-state migration reported a non-zero exit — see output above (install continues)"
+else
+  warn "skipped personal po-state migration (node missing or migrate-po-state-scope.mjs not found at $_MIGRATE_SCRIPT)"
+fi
+
 # 2d) Setup ~/.productune/mcp/ — dispatch-time MCP configs (--mcp-config files)
 #     Agents are frontmatter-less habit pointers now; QA gets playwright at
 #     dispatch via `claude --agent pdt-qa --mcp-config ~/.productune/mcp/playwright.json`.
