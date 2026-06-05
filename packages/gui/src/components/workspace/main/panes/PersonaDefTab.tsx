@@ -15,17 +15,18 @@ interface PersonaMeta {
   initial: string
   nameKey: string
   roleKey: string
-  modelSummary: string
   permissionMode: string
   mcpServers?: string[]
 }
 
+// modelSummary removed (T-PATCH-024): there is no fixed per-persona model —
+// routing.md scores task complexity (L1–L7) and picks model × effort per task.
+// The detail view shows that dynamic hint instead (see modelHint below).
 const PERSONA_META: Record<string, PersonaMeta> = {
   'pdt-po': {
     id: 'pdt-po', key: 'po', initial: 'P',
     nameKey: 'workspace.team.persona.po.name',
     roleKey: 'workspace.team.persona.po.role',
-    modelSummary: 'opus / xhigh',
     permissionMode: 'acceptEdits',
     mcpServers: [],
   },
@@ -33,7 +34,6 @@ const PERSONA_META: Record<string, PersonaMeta> = {
     id: 'pdt-designer', key: 'designer', initial: 'D',
     nameKey: 'workspace.team.persona.designer.name',
     roleKey: 'workspace.team.persona.designer.role',
-    modelSummary: 'opus / xhigh',
     permissionMode: 'bypassPermissions',
     mcpServers: ['graphiti'],
   },
@@ -41,7 +41,6 @@ const PERSONA_META: Record<string, PersonaMeta> = {
     id: 'pdt-developer', key: 'dev', initial: 'D',
     nameKey: 'workspace.team.persona.developer.name',
     roleKey: 'workspace.team.persona.developer.role',
-    modelSummary: 'sonnet / high',
     permissionMode: 'bypassPermissions',
     mcpServers: ['graphiti'],
   },
@@ -49,7 +48,6 @@ const PERSONA_META: Record<string, PersonaMeta> = {
     id: 'pdt-qa', key: 'qa', initial: 'Q',
     nameKey: 'workspace.team.persona.qa.name',
     roleKey: 'workspace.team.persona.qa.role',
-    modelSummary: 'haiku / low',
     permissionMode: 'bypassPermissions',
     mcpServers: [],
   },
@@ -176,10 +174,11 @@ export default function PersonaDefTab({ props }: Props) {
           <div style={personaName}>{t(meta.nameKey)}</div>
           <div style={personaRole}>{t(meta.roleKey)}</div>
         </div>
-        <div style={headerRight}>
-          <div style={modelBadge}>{meta.modelSummary}</div>
-        </div>
       </div>
+
+      {/* Model × effort is decided dynamically per task by routing (no fixed
+          per-persona model) — show that as an honest hint, not a flat fact. */}
+      <div style={modelHint}>{t('workspace.personaDef.modelHint')}</div>
 
       {/* Metadata */}
       <div style={metaSection}>
@@ -348,18 +347,11 @@ const personaRole: React.CSSProperties = {
   marginTop: 2,
 }
 
-const headerRight: React.CSSProperties = {
-  flexShrink: 0,
-}
-
-const modelBadge: React.CSSProperties = {
-  fontSize: 9,
-  fontFamily: 'monospace',
-  color: '#A0A0A0',
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
-  borderRadius: 4,
-  padding: '2px 6px',
+const modelHint: React.CSSProperties = {
+  fontSize: 11,
+  color: '#707070',
+  lineHeight: 1.5,
+  marginBottom: 16,
 }
 
 const metaSection: React.CSSProperties = {

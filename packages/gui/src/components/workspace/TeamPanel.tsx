@@ -41,14 +41,16 @@ interface PersonaDef {
   initial: string
   nameKey: string
   roleKey: string
-  modelSummary: string
 }
 
+// modelSummary intentionally removed (T-PATCH-024): routing.md decides model ×
+// effort dynamically per task complexity (L1–L7); there is no fixed per-persona
+// model, so the old flat row label was doctrinally false.
 const PERSONAS: PersonaDef[] = [
-  { key: 'po',       id: 'pdt-po',        initial: 'P', nameKey: 'workspace.team.persona.po.name',       roleKey: 'workspace.team.persona.po.role',       modelSummary: 'opus / xhigh'   },
-  { key: 'designer', id: 'pdt-designer',   initial: 'D', nameKey: 'workspace.team.persona.designer.name',  roleKey: 'workspace.team.persona.designer.role',  modelSummary: 'opus / xhigh'   },
-  { key: 'dev',      id: 'pdt-developer',  initial: 'D', nameKey: 'workspace.team.persona.developer.name', roleKey: 'workspace.team.persona.developer.role', modelSummary: 'sonnet / high'  },
-  { key: 'qa',       id: 'pdt-qa',         initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.persona.qa.role',        modelSummary: 'haiku / low'    },
+  { key: 'po',       id: 'pdt-po',        initial: 'P', nameKey: 'workspace.team.persona.po.name',       roleKey: 'workspace.team.persona.po.role'       },
+  { key: 'designer', id: 'pdt-designer',   initial: 'D', nameKey: 'workspace.team.persona.designer.name',  roleKey: 'workspace.team.persona.designer.role'  },
+  { key: 'dev',      id: 'pdt-developer',  initial: 'D', nameKey: 'workspace.team.persona.developer.name', roleKey: 'workspace.team.persona.developer.role' },
+  { key: 'qa',       id: 'pdt-qa',         initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.persona.qa.role'        },
 ]
 
 // ── Persona row ───────────────────────────────────────────────────────────────
@@ -109,9 +111,6 @@ function PersonaRow({ def, isActive, expanded, onClick, onToggle }: PersonaRowPr
         <span style={personaName}>{t(def.nameKey)}</span>
         <span style={personaRole}>{t(def.roleKey)}</span>
       </span>
-
-      {/* Model/effort */}
-      <span style={personaModel}>{def.modelSummary}</span>
     </div>
   )
 }
@@ -198,8 +197,11 @@ function PersonaDoctrineTree({ personaKey, projectDir, onOpenFile }: PersonaDoct
 
   return (
     <div style={treeWrap}>
-      {state.tiers.map((group) => (
-        <div key={group.tier}>
+      {state.tiers.map((group, i) => (
+        // Hairline divider between tier groups (not before the first) so T0 /
+        // T1 / T2 read as three separated sections inside the drawer box
+        // (T-PATCH-023). Border color matches the existing #1E1E1E dividers.
+        <div key={group.tier} style={i > 0 ? tierGroupDivided : undefined}>
           {/* Tier header: label + lock (T0) / pencil (T1/T2) glyph */}
           <div style={tierHeader}>
             <span style={tierHeaderText}>{t(TIER_LABEL_KEY[group.tier])}</span>
@@ -376,11 +378,16 @@ export default function TeamPanel({ poState }: Props) {
                 tree's fetched/cached tiers survive without a refetch (AC-2). */}
             {opened.has(def.key) && (
               <div style={{ display: expanded.has(def.key) ? 'block' : 'none' }}>
-                <PersonaDoctrineTree
-                  personaKey={def.key}
-                  projectDir={projectDir}
-                  onOpenFile={handleOpenDoctrineFile}
-                />
+                {/* Dark inset "drawer" box visually contains the expanded tier
+                    tree, distinguishing it from the persona list around it
+                    (T-PATCH-023). Styling only — no behavior change. */}
+                <div style={drawerBox}>
+                  <PersonaDoctrineTree
+                    personaKey={def.key}
+                    projectDir={projectDir}
+                    onOpenFile={handleOpenDoctrineFile}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -551,14 +558,6 @@ const personaRole: React.CSSProperties = {
   textOverflow: 'ellipsis',
 }
 
-const personaModel: React.CSSProperties = {
-  fontSize: 9,
-  fontFamily: 'monospace',
-  color: '#505050',
-  flexShrink: 0,
-  whiteSpace: 'nowrap',
-}
-
 // ── Doctrine tier tree (T-PATCH-021) ──────────────────────────────────────────
 
 const chevronHit: React.CSSProperties = {
@@ -569,6 +568,25 @@ const chevronHit: React.CSSProperties = {
   height: 24,
   flexShrink: 0,
   cursor: 'pointer',
+}
+
+// Dark inset "drawer" that contains the expanded tier tree — a notch darker
+// than the panel bg (#141414) with subtle inset padding + rounded corners and a
+// hairline border, so the expanded area reads as a contained region (T-PATCH-023).
+const drawerBox: React.CSSProperties = {
+  background: '#0D0D0D',
+  border: '1px solid #1E1E1E',
+  borderRadius: 6,
+  margin: '2px 8px 6px',
+  padding: '2px 0',
+}
+
+// Hairline rule separating each tier group from the previous one inside the
+// drawer box (T-PATCH-023). Matches the existing #1E1E1E divider tone.
+const tierGroupDivided: React.CSSProperties = {
+  borderTop: '1px solid #1E1E1E',
+  marginTop: 2,
+  paddingTop: 2,
 }
 
 const treeWrap: React.CSSProperties = {
