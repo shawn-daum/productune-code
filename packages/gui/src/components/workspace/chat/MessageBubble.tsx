@@ -11,6 +11,7 @@
  *   promotion-candidate       → PromotionCard (T-013 c)
  */
 
+import { useTranslation } from 'react-i18next'
 import type { Message, MessageKind } from '../../../lib/types'
 import { linkifyText } from '../../../lib/linkifyText'
 import MdRenderer from './MdRenderer'
@@ -76,12 +77,13 @@ function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'desi
 // ── User bubble (right-aligned) — linkify NOT applied (XSS 방어) ──────────────
 
 function UserBubble({ message }: { message: Message }) {
+  const { t } = useTranslation()
   const time = formatTime(message.created_at)
   return (
     <div style={rowR}>
       <div style={cmHead}>
         <span style={cmTime}>{time} ·</span>
-        <span style={cmNameUser}>You</span>
+        <span style={cmNameUser}>{t('workspace.chat.you')}</span>
       </div>
       <div style={{ ...cmBubble, ...userBubble }}>
         <MdRenderer text={message.text} />

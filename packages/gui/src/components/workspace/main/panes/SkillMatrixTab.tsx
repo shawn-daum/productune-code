@@ -175,7 +175,7 @@ export default function SkillMatrixTab({ props }: Props) {
 
       {/* Loading state */}
       {loading && (
-        <div style={loadingPane}>Scanning skills…</div>
+        <div style={loadingPane}>{t('workspace.team.skillMatrix.scanningSkills')}</div>
       )}
 
       {/* Empty state */}
@@ -192,8 +192,8 @@ export default function SkillMatrixTab({ props }: Props) {
           <table style={table}>
             <thead>
               <tr style={headerRow}>
-                <th style={thSkill}>Skill</th>
-                <th style={thLayer}>Layer</th>
+                <th style={thSkill}>{t('workspace.team.skillMatrix.headerSkill')}</th>
+                <th style={thLayer}>{t('workspace.team.skillMatrix.headerLayer')}</th>
                 {PERSONA_COLS.map((p) => (
                   <th key={p} style={thPersona}>
                     <span style={{ ...personaDot, background: PERSONA_COLORS[p] }} />
@@ -239,7 +239,7 @@ export default function SkillMatrixTab({ props }: Props) {
               <tr>
                 <td colSpan={6} style={addSkillCell}>
                   <span style={addSkillDisabled}>{t('workspace.team.skillMatrix.addSkill')}</span>
-                  <span style={addSkillPhase5}> — Phase 5</span>
+                  <span style={addSkillPhase5}> {t('workspace.team.skillMatrix.addSkillPhase5')}</span>
                 </td>
               </tr>
             </tfoot>

@@ -93,7 +93,7 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
       {/* Sidebar */}
       <aside style={sidebar}>
         <div style={sidebarHeader}>
-          <span style={sidebarTitle}>Design Artifacts</span>
+          <span style={sidebarTitle}>{t('workspace.designStage.sidebarTitle')}</span>
         </div>
 
         <div style={fileTree}>

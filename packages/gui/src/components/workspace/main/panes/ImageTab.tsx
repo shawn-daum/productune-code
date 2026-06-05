@@ -8,6 +8,7 @@
  */
 
 import { useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronRight } from 'lucide-react'
 import ZoomControls, { ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './ZoomControls'
 
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export default function ImageTab({ props }: Props) {
+  const { t } = useTranslation()
   const absPath = props?.path as string | undefined
   const [zoom, setZoom] = useState<number>(ZOOM_DEFAULT)
 
@@ -31,7 +33,7 @@ export default function ImageTab({ props }: Props) {
   if (!absPath) {
     return (
       <div style={wrap}>
-        <span style={muted}>No path provided.</span>
+        <span style={muted}>{t('workspace.image.noPath')}</span>
       </div>
     )
   }

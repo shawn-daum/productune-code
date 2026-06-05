@@ -242,7 +242,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
       <div style={breadcrumbBar}>
         <button style={crumbBack} onClick={handleBreadcrumb} title={t('workspace.ticketDetail.crumbBack')}>
           <ChevronLeft size={14} style={{ color: '#A0A0A0', flexShrink: 0 }} />
-          <span>Tickets</span>
+          <span>{t('workspace.ticketDetail.crumbTickets')}</span>
         </button>
         <span style={crumbSep}>/</span>
         <span style={crumbCur}>{ticketId}</span>
@@ -358,7 +358,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                 {/* Section header */}
                 <div style={dpHead}>
                   <Activity size={15} style={{ color: '#707070', flexShrink: 0 }} />
-                  <span style={dpTitle}>Dispatch progress</span>
+                  <span style={dpTitle}>{t('workspace.ticketDetail.dispatchProgress')}</span>
                   <span style={dpRo}>
                     <Info size={11} style={{ flexShrink: 0 }} />
                     {t('workspace.ticketDetail.derivedReadOnly')}

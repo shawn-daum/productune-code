@@ -130,7 +130,7 @@ export default function PendingGateChip() {
             {/* head */}
             <div style={popHeadS}>
               <AlertCircle size={11} strokeWidth={2} color="#FBBF24" />
-              <span style={popTitleS}>Pending Gate</span>
+              <span style={popTitleS}>{t('workspace.gate.title')}</span>
               <button style={closeXS} onClick={() => setOpen(false)} aria-label={t('common.close')}>
                 <X size={12} strokeWidth={2} />
               </button>

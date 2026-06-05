@@ -121,6 +121,7 @@
       "componentError": "Mermaid component error"
     },
     "designStage": {
+      "sidebarTitle": "Design Artifacts",
       "readError": "_Cannot read file._",
       "empty": "No design artifacts in docs/artifacts/.",
       "back": "← Back",
@@ -143,6 +144,7 @@
     "gate": {
       "phaseEnd": "End",
       "pendingAria": "Pending decision",
+      "title": "Pending Gate",
       "answerPlaceholder": "Type your answer…",
       "send": "Send",
       "approveEnter": "Approve entry",
@@ -171,6 +173,8 @@
       "railIdle": "Idle",
       "railIdle.dev": "idle · session live",
       "crumbBack": "To Tickets tab",
+      "crumbTickets": "Tickets",
+      "dispatchProgress": "Dispatch progress",
       "loadError": "Could not load ticket. Check that the ticket file exists.",
       "noKrBody": "No Request (KR) section — see full spec.",
       "derivedReadOnly": "Derived · read-only",
@@ -256,9 +260,13 @@
       "restartNow": "Restart now",
       "openSettings": "Open settings"
     },
+    "image": {
+      "noPath": "No path provided."
+    },
     "chat": {
       "session": "PO session",
       "title": "PO Chat",
+      "you": "You",
       "messageCount": "{{count}} messages",
       "emptyHint": "Start a conversation with PO.",
       "messagesPlaceholder": "Messages — filled in Slice 3",
@@ -498,7 +506,11 @@
         "search": "Search skills…",
         "filterAssigned": "Assigned only",
         "addSkill": "+ Add skill",
+        "addSkillPhase5": "— Phase 5",
         "viewDescription": "View description",
+        "scanningSkills": "Scanning skills…",
+        "headerSkill": "Skill",
+        "headerLayer": "Layer",
         "emptyPrimary": "No skills installed in ~/.claude/skills/",
         "emptySecondary": "Install a skill, then retry",
         "layerLabel": {
@@ -914,7 +926,8 @@
       "relTimeDay": "{{n}}d ago",
       "newProject": "New project",
       "openExisting": "Open existing folder",
-      "noRecent": "No recent projects"
+      "noRecent": "No recent projects",
+      "recent": "Recent"
     },
     "install": {
       "title": "Set up productune in this folder?",

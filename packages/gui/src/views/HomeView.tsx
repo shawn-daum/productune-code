@@ -73,7 +73,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
 
       {recents.length > 0 && (
         <div style={recentSection}>
-          <div style={recentLabel}>Recent</div>
+          <div style={recentLabel}>{t('app.home.recent')}</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {recents.map(p => (
               <div
