@@ -1,6 +1,6 @@
 # Promotion candidate schema
 
-Emit `promotion_candidates[]` in every dispatch envelope — `[]` when nothing to promote. Never write a long-term tier (Tier 1/2) yourself: PO surfaces your candidate, the user approves, then PO writes.
+Field schema + classification for `promotion_candidates[]` (emit-only gate: `common/habit.md` §3). Emit the array every dispatch — `[]` when nothing to promote. PO consumes only the array; in-doc `## Promotion Candidates` notes are secondary.
 
 ## 7 fields per candidate
 
@@ -16,29 +16,19 @@ Emit `promotion_candidates[]` in every dispatch envelope — `[]` when nothing t
 }
 ```
 
-## Classify before you emit — scope × pattern
+## Classify before emit — scope × pattern
 
 |              | habit (always-read, curated, no source)   | bookshelf (on-demand, append + source)         |
 |:--           |:--                                         |:--                                              |
 | **project**  | `docs/<persona>/habit.md`                  | `docs/<persona>/bookshelf/<file>.md`            |
 | **global**   | `~/.productune/<persona>/habit.md`         | `~/.productune/<persona>/bookshelf/<file>.md`   |
 
-- **project / habit** — repo-local rule that fires every dispatch in this repo: naming conventions, default lib choice, repo idioms.
-- **project / bookshelf** — repo-local reference loaded on demand: e.g. `fail-patterns.md`, `feature-history.md`, recipe collections.
-- **global / habit** — cross-project rule that fires every dispatch everywhere: e.g. JSON-only, session lifecycle, promotion gate.
-- **global / bookshelf** — cross-project reference on demand: e.g. shadcn recipe, lighthouse threshold rationale, framework gotchas.
+- **project / habit** — repo-local rule firing every dispatch in this repo: naming conventions, default lib, repo idioms.
+- **project / bookshelf** — repo-local on-demand reference: `fail-patterns.md`, `feature-history.md`, recipe collections.
+- **global / habit** — cross-project rule firing every dispatch everywhere: JSON-only, session lifecycle, promotion gate.
+- **global / bookshelf** — cross-project on-demand reference: shadcn recipe, lighthouse threshold rationale, framework gotchas.
 
-## Approval flow (your part)
+## Refusal
 
-1. Emit `promotion_candidates[]` in your output envelope.
-2. PO paraphrases each to the user (what / why save / recommendation); the user approves, rejects, or edits; PO writes the approved tier.
-3. Stay read-only for every long-term tier.
-
-## Refusal rule
-
-If the user asks you to write a long-term tier directly (skipping promotion), refuse:
+User asks to write a long-term tier directly (skip the gate) → refuse:
 `"Long-term memory writes route through the productune promotion gate."`
-
-## Always emit the array
-
-PO consumes only that array; in-doc `## Promotion Candidates` annotations are secondary.

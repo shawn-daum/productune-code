@@ -4,16 +4,16 @@ Never author persona output — dispatch it.
 
 ## Invocation channel
 
-- Dispatch FOREGROUND / synchronous — wait for it to return; never background it (a backgrounded nested `claude --agent` deadlocks at startup). Read the result envelope from stdout.
-- Portable form (first call): `claude --add-dir ~/.productune -p --agent pdt-<persona> --permission-mode acceptEdits --model <tier> "<[ctx] + task>"`. Put `--add-dir` FIRST — late placement drops the prompt.
+- Dispatch FOREGROUND / synchronous — wait, never background (nested `claude --agent` deadlocks). Read the result envelope from stdout.
+- Portable form (first call): `claude --add-dir ~/.productune -p --agent pdt-<persona> --permission-mode acceptEdits --model <tier> "<[ctx] + task>"`. `--add-dir` FIRST.
 - `--resume "$SID"` for an intra-ticket follow-up (same session: plan→impl / QA retry).
-- UUIDs are strict **8-4-4-4-12 lowercase hex**: never prefix, never self-generate. The first call omits `--session-id` (Claude returns it); a resume passes `--resume "$SID"`. Mixing is rejected.
-- The `post-delegate-state-write` hook (`PostToolUse(Bash)`) captures the session id, sets `persona_session_meta.<persona>.last_seen`, merges `recent_turns`, unions `artifacts` — don't duplicate that.
+- UUIDs strict **8-4-4-4-12 lowercase hex**: never prefix, never self-generate. First call omits `--session-id`; resume passes `--resume "$SID"`. Mixing rejected.
+- `post-delegate-state-write` hook (`PostToolUse(Bash)`) writes `session_id`, `persona_session_meta.<persona>.last_seen`, `recent_turns` merge, `artifacts` union — never hand-write or duplicate.
 
 ## Dispatch runtime envelope
 
-Agent frontmatter carries only `name` + `description` (required for Claude Code to load the agent); the body just points to its habit. Supply runtime config per dispatch:
-- **model + effort** → from routing (`--model`; see `routing.md`).
+Agent frontmatter = `name` + `description` only; body points to its habit. Supply per dispatch:
+- **model + effort** → `routing.md` (always pass `--model`).
 - **write grant** → `--permission-mode acceptEdits` for authoring personas (designer / developer); QA needs none.
 - **QA UI smoke** → add `--mcp-config ~/.productune/mcp/playwright.json` (Playwright MCP).
 
@@ -21,48 +21,46 @@ Per-persona tool sandboxing is NOT CLI-enforced — role limits live in each per
 
 ## Write these (the hook can't infer)
 
-You own only two writes: the pre-dispatch `current_task` open, and the ticket lifecycle frontmatter.
+You own two writes: the pre-dispatch `current_task` open + the ticket lifecycle frontmatter.
 
-- Open `current_task` with a semantic `slug` + `request_summary` + `artifacts` *before* dispatch (else the hook auto-creates an `auto-<ts>` slug and `pre-delegate-task-check` blocks). Use `jq`.
+- Open `current_task` with a semantic `slug` + `request_summary` + `artifacts` *before* dispatch (else `pre-delegate-task-check` blocks on an `auto-<ts>` slug). Use `jq`.
 - Update `docs/tickets/<version>/T-NNN.md` lifecycle metadata only — status · timestamps · duration · assignee · routing · model · effort · progress refs. No body / scope edits.
 - Read the SID from `current_task.persona_sessions.<persona>` to resume.
 
-`session_id`, `persona_session_meta.<persona>.last_seen`, `recent_turns`, and the `artifacts` merge are hook-written — never hand-write or duplicate them.
-
 ## Task body
 
-- Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state · **user_lang** (BCP-47, e.g. `ko`, `en`). The persona then skips its state re-read.
-- Every `[ctx]` carries `version` + `user_lang` + `audience` (`user` | `internal`) so the persona keys language + format off audience itself. Never hand-author a persona-owned write path — pass only the inputs; the persona applies its own write-map (`docs/artifacts/<version>/<id|slug>.<ext>`). Holds for ad-hoc / non-scaffold delegation too, not just the P2 scaffold. (2026-06-04) [T-PATCH-DOCTRINE]
-- Working-language source = `~/.productune/settings.json` `.ui.language` (onboarding-set); PO reads it and passes it as `[ctx].user_lang`. (2026-06-05) [T-PATCH-DOCTRINE]
-- Inspect the returned `confidence` + `unresolved`; low / non-empty → escalate (`escalation.md`).
+- Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state · **user_lang** (BCP-47) · **audience** (`user` | `internal`). Persona then skips its state re-read + keys language/format off audience.
+- `user_lang` source = `~/.productune/settings.json` `.ui.language`; PO reads + passes it.
+- Never hand-author a persona-owned write path — pass inputs only; the persona applies its own write-map (`docs/artifacts/<version>/<id|slug>.<ext>`). Holds for ad-hoc delegation too.
+- Inspect returned `confidence` + `unresolved`; low / non-empty → escalate (`escalation.md`).
 
 ## User-question channel
 
-`AskUserQuestion` is PO-only. Subagents return `state:"needs-info"` + `next_question` (single string, ≤200 chars) in the envelope; PO renders it to the user in `user_lang`, appends the answer to `briefs/<slug>.md`, and resumes the subagent via `--resume "$SID"`. A subagent that invokes `AskUserQuestion` directly is a doctrine violation — log it as a `promotion_candidates[]` to surface.
+`AskUserQuestion` is PO-only. Subagents return `state:"needs-info"` + `next_question` (single string, ≤200 chars); PO renders it in `user_lang`, appends the answer to `briefs/<slug>.md`, resumes via `--resume "$SID"`. A subagent invoking `AskUserQuestion` directly = doctrine violation → log a `promotion_candidates[]`.
 
 ## Designer Plan-row sync
 
-Ticket `## Plan` is Designer-authored — never edit Plan rows. If a delegation ships plan changes, mirror only the lifecycle frontmatter (status, model, effort, ts); body diffs surface via the Designer `summary` → append a 1-line entry to `## Persona Activity`.
+Ticket `## Plan` is Designer-authored — never edit Plan rows. A delegation shipping plan changes mirrors only lifecycle frontmatter (status, model, effort, ts); body diffs surface via the Designer `summary` → append a 1-line `## Persona Activity` entry.
 
 ## Plan mode — L5+ plan-only
 
-Run L5+ as plan-first → review → impl:
+Run L5+ plan-first → review → impl:
 
-1. **Plan call** — Developer/Designer PLAN ONLY, opus / xhigh. Body opens `PLAN MODE — DO NOT WRITE CODE` + Goal · Constraints · Acceptance; `changed_files` must be empty.
-2. **Review** — check testability + acceptance + architecture + risk (opus / xhigh; opus / max if risk-flagged). Verdict `OK` or `revise:[...]`.
-3. **Plan revise** — resume the same session, plan only. 3+ iterations → surface (proceed / re-PRD / strong-implement).
+1. **Plan call** — Developer/Designer PLAN ONLY, opus / xhigh. Body opens `PLAN MODE — DO NOT WRITE CODE` + Goal · Constraints · Acceptance; `changed_files` empty.
+2. **Review** — testability + acceptance + architecture + risk (opus / xhigh; opus / max if risk-flagged). Verdict `OK` or `revise:[...]`.
+3. **Plan revise** — resume same session, plan only. 3+ iters → surface (proceed / re-PRD / strong-implement).
 4. **Impl** — dev sonnet / high, plan as the task's first line. Self-verify mandatory.
-5. **Failure regress** — a self-verify / QA fail after a model-up recovery retry (`escalation.md`) → back to plan (opus / xhigh) + re-review; set `escalation_triggered=true`; bump `actual_complexity`.
+5. **Failure regress** — self-verify / QA fail after a model-up recovery retry (`escalation.md`) → back to plan (opus / xhigh) + re-review; set `escalation_triggered=true`; bump `actual_complexity`.
 
-Trigger on L≥5, multi-file / cross-cutting, a risk flag, or user request. L1–L3 trivials skip straight to sonnet / medium impl. Optional high-stakes cross-review: pdt-qa testability, pdt-designer UX/DS/copy. `claude --print` never auto-engages plan mode, so the `PLAN MODE — DO NOT WRITE CODE` line is the only non-interactive enforcement — always include it.
+Trigger on L≥5, multi-file / cross-cutting, a risk flag, or user request. L1–L3 trivials skip to sonnet / medium impl. Optional cross-review: pdt-qa testability, pdt-designer UX/DS/copy. `claude --print` never auto-engages plan mode, so the `PLAN MODE — DO NOT WRITE CODE` line is the only non-interactive enforcement — always include it.
 
 ## Dev-QA auto-loop
 
-After an impl dispatch, auto-dispatch QA (no user confirm); cap 3 attempts; fail at cap → `blocked` + user TODO (`AUTH_REQUIRED` → pause + auth todo). Full mechanics: `bookshelf/lifecycle/ticket-ops.md` (Auto QA smoke gate).
+After an impl dispatch, auto-dispatch QA (no user confirm). Full mechanics + cap / blocked: `bookshelf/lifecycle/ticket-ops.md` (Auto QA smoke gate). `AUTH_REQUIRED` is a distinct blocked sub-type: a fail at cap whose excerpt signals an auth wall → `pause` + emit a user `auth todo` (not the generic surface).
 
 ## Session lifecycle
 
-Per-ticket fresh, per-turn resume. On ticket close (`done | blocked | abandoned`), run `jq '.current_task.persona_sessions = {}'` before nulling `current_task`. The next ticket's first dispatch is fresh (no `--session-id`); within-ticket multi-turn (plan→impl, QA retry) uses `--resume "$SID"`.
+Per-ticket fresh, per-turn resume. On ticket close (`done | blocked | abandoned`), run `jq '.current_task.persona_sessions = {}'` before nulling `current_task`. Next ticket's first dispatch is fresh; within-ticket multi-turn uses `--resume "$SID"`.
 
 ## Chunking — per-call size
 
@@ -70,4 +68,4 @@ Split multi-area / multi-decision / multi-output directives per sub-area; max 1�
 
 ## PRD delegation
 
-Fresh idea → delegate the Version 1 PRD directly (the clarity loop subsumes discovery): `PERSONA=pdt-designer · MODEL=opus · EFFORT=max · COMPLEXITY=L7`. Designer returns `state:"needs-info"` (relay `next_question`) or `state:"ready"` (PRD path + tickets + ambiguity_score + version_outcome). Hard cap 5 needs-info loops; the 6th turn ships a "finalize" resume body. Full: `designer/bookshelf/prd-clarity-loop.md`.
+Fresh idea → delegate the Version 1 PRD directly: `PERSONA=pdt-designer · MODEL=opus · EFFORT=max · COMPLEXITY=L7`. Designer returns `state:"needs-info"` (relay `next_question`) or `state:"ready"` (PRD path + tickets + ambiguity_score + version_outcome). Full mechanics incl 5-iter cap + finalize: `designer/bookshelf/prd-clarity-loop.md`.

@@ -1,6 +1,6 @@
 # Ticket md schema
 
-Write each ticket at `docs/tickets/<version>/T-NNN.md`, where `<version>` = `po-state.current_version`. Folder auto-created on the first ticket of a version.
+Write each ticket at `docs/tickets/<version>/T-NNN.md` where `<version>` = `po-state.current_version`. Folder `docs/tickets/<version>/` auto-created on the first ticket of a version (create if absent).
 
 ## Frontmatter
 
