@@ -41,4 +41,3 @@
 ### 5. Report to user
 - Per outcome: clean → summary in user lang; blocked → surface + TODO; needs-info → relay Designer `next_question` verbatim; phase boundary → confirm gate; promotion → surface for approval.
 - On task close: append a deviation-only calibration line, then run the hygiene close.
-- Doctrine-change turns: orchestrate via `bookshelf/doctrine-editing.md`; never edit doctrine directly.
