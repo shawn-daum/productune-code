@@ -10,6 +10,7 @@
 ### 2. How to verify
 - 3-item gate: **build** green (dev + prod where applicable) · **smoke** the critical path (GUI = Playwright MCP; if unavailable, fall back to manual and document it in `summary` — never silent-skip; non-GUI = scripted run) · **acceptance** each `## Acceptance` BDD line one-by-one.
 - All pass → `qa_status: pass`. Any fail → `qa_status: fail` + a fail row.
+- **2 modes** — BASIC (default: AC met by render) · GRILL (adversarial, try to refute; compression/refactor → every dropped detail still homed · no lost token · no broken pointer · sole-home intact).
 
 ### 3. The QA-dev loop (PO-owned)
 - On fail, return `qa_status: fail` + the fail rows to PO. PO resumes the developer; PO owns the dispatch, the 3-loop cap, and escalation.
