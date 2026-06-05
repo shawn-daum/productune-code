@@ -12,6 +12,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSessionHealth } from '../../store/sessionHealth'
 import { useWorkspace } from '../../store/workspace'
+import { usePoChat } from '../../store/poChat'
 
 interface Props {
   onClose: () => void
@@ -23,10 +24,12 @@ export default function RestartSessionModal({ onClose }: Props) {
   const clearHealth   = useSessionHealth((s) => s.clearHealth)
   const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
   const project = useWorkspace((s) => s.project)
+  const setRestartCompleted = usePoChat((s) => s.setRestartCompleted)
 
   const handleRestartNow = async () => {
     if (restarting) return
     setRestarting(true)
+    let succeeded = false
     try {
       const api = (window as any).api
       // T-PATCH-040: pass projectDir so main re-snapshots the fresh-cycle window.
@@ -34,10 +37,13 @@ export default function RestartSessionModal({ onClose }: Props) {
       // Reset renderer session state.
       setClaudeSessionId(null)
       clearHealth()
+      succeeded = true
     } catch {
       // Ignore — main process will have already killed the child.
     } finally {
       setRestarting(false)
+      // T-PATCH-052: signal ChatPanel to show toast + insert divider (AC-1, AC-2)
+      if (succeeded) setRestartCompleted(true)
       onClose()
     }
   }

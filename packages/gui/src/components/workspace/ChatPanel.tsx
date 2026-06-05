@@ -44,8 +44,18 @@ export default function ChatPanel() {
   const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
   const streaming = useWorkspace((s) => s.streaming)
 
+  // T-PATCH-052: session restart state — declare before renderItems useMemo
+  const restartCompleted = usePoChat((s) => s.restartCompleted)
+  const setRestartCompleted = usePoChat((s) => s.setRestartCompleted)
+  const [restartToastVisible, setRestartToastVisible] = useState(false)
+  const [restartDividerMarkers, setRestartDividerMarkers] = useState<Array<string | null>>([])
+
   // T-PATCH-033: fold consecutive tool-use traces into one group node.
-  const renderItems = useMemo(() => groupToolTraces(messages), [messages])
+  // T-PATCH-052: inject session dividers at restart marker positions.
+  const renderItems = useMemo(
+    () => injectDividers(groupToolTraces(messages), restartDividerMarkers),
+    [messages, restartDividerMarkers],
+  )
 
   const setMessages = useWorkspace((s) => s.setMessages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
@@ -178,6 +188,20 @@ export default function ChatPanel() {
   const [attachedFiles, setAttachedFiles] = useState<string[]>([])
   const [filesListOpen, setFilesListOpen] = useState(false)
 
+  // T-PATCH-052: session restart completion effect — toast + divider
+  useEffect(() => {
+    if (!restartCompleted) return
+    // Consume the signal
+    setRestartCompleted(false)
+    // Record the divider position: after the current last message
+    const lastMsg = messages.length > 0 ? messages[messages.length - 1].id : null
+    setRestartDividerMarkers((prev) => [...prev, lastMsg])
+    // Show toast for 3s (AC-1)
+    setRestartToastVisible(true)
+    const timer = setTimeout(() => setRestartToastVisible(false), 3000)
+    return () => clearTimeout(timer)
+  }, [restartCompleted, setRestartCompleted, messages])
+
   const onAttachFile = async () => {
     try {
       const paths: string[] = await (window as any).api.openFilePicker()
@@ -271,6 +295,13 @@ export default function ChatPanel() {
             renderItems.map((item) =>
               item.kind === 'tool-group' ? (
                 <ToolUseGroup key={item.key} tools={item.tools} />
+              ) : item.kind === 'session-divider' ? (
+                // T-PATCH-052: session restart divider (AC-2, AC-3)
+                <div key={item.key} style={sessionDivider}>
+                  <span style={sessionDividerLine} />
+                  <span style={sessionDividerLabel}>{t('workspace.chat.sessionDivider')}</span>
+                  <span style={sessionDividerLine} />
+                </div>
               ) : (
                 <MessageBubble key={item.message.id} message={item.message} />
               ),
@@ -382,6 +413,13 @@ export default function ChatPanel() {
             </button>
           </div>
         </div>
+
+        {/* T-PATCH-052: session restart completion toast (AC-1) */}
+        {restartToastVisible && (
+          <div style={restartToast}>
+            {t('workspace.chat.restartCompletedToast')}
+          </div>
+        )}
       </div>
 
       {restartTipPos && createPortal(
@@ -423,6 +461,43 @@ export default function ChatPanel() {
 type RenderItem =
   | { kind: 'message'; message: Message }
   | { kind: 'tool-group'; key: string; tools: Message[] }
+  | { kind: 'session-divider'; key: string }
+
+/**
+ * T-PATCH-052: inject session-divider items after the message with the given id,
+ * or at the start when afterId === null. Multiple dividers are each inserted at
+ * their recorded position (stable across new messages arriving after restart).
+ */
+function injectDividers(items: RenderItem[], markers: Array<string | null>): RenderItem[] {
+  if (markers.length === 0) return items
+
+  const result: RenderItem[] = []
+  let dividerIdx = 0
+
+  // dividers with null → prepend before first item
+  for (const marker of markers) {
+    if (marker === null) {
+      result.push({ kind: 'session-divider', key: `sd-null-${dividerIdx++}` })
+    }
+  }
+
+  for (const item of items) {
+    result.push(item)
+    const msgId =
+      item.kind === 'message' ? item.message.id
+      : item.kind === 'tool-group' ? item.tools[item.tools.length - 1]?.id
+      : null
+    if (msgId) {
+      for (const marker of markers) {
+        if (marker === msgId) {
+          result.push({ kind: 'session-divider', key: `sd-${msgId}-${dividerIdx++}` })
+        }
+      }
+    }
+  }
+
+  return result
+}
 
 function isToolTrace(m: Message): boolean {
   return m.kind === 'trace' && m.traceLevel === 'tool'
@@ -463,6 +538,8 @@ const wrap: React.CSSProperties = {
   flexDirection: 'column',
   overflow: 'hidden',
   minWidth: 0,
+  // T-PATCH-052: needed for absolute-positioned restart toast
+  position: 'relative',
 }
 
 const header: React.CSSProperties = {
@@ -714,4 +791,45 @@ const usageInlineSide: React.CSSProperties = {
   flexShrink: 0,
   // Remove top border from UsageBar container when inline — parent inputArea provides it
   paddingTop: 2,
+}
+
+// T-PATCH-052: session restart toast (AC-1) — bottom-center of the panel, 3s auto-dismiss
+const restartToast: React.CSSProperties = {
+  position: 'absolute',
+  bottom: 60,
+  left: '50%',
+  transform: 'translateX(-50%)',
+  background: '#1A2A1A',
+  border: '1px solid #2A3A2A',
+  color: '#34D399',
+  fontSize: 11,
+  padding: '6px 14px',
+  borderRadius: 6,
+  whiteSpace: 'nowrap',
+  pointerEvents: 'none',
+  zIndex: 500,
+  boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+}
+
+// T-PATCH-052: session divider in message list (AC-2, AC-3)
+const sessionDivider: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '8px 4px',
+  flexShrink: 0,
+}
+
+const sessionDividerLine: React.CSSProperties = {
+  flex: 1,
+  height: 1,
+  background: '#2A2A2A',
+}
+
+const sessionDividerLabel: React.CSSProperties = {
+  fontSize: 10,
+  color: '#505050',
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  whiteSpace: 'nowrap',
+  flexShrink: 0,
 }

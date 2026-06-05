@@ -21,18 +21,23 @@ interface PoChatState {
   inputDraft: string
   autoScrollLocked: boolean
   restartModalOpen: boolean
+  /** T-PATCH-052: set to true after a successful session restart; ChatPanel consumes + resets. */
+  restartCompleted: boolean
 
   setDraft: (s: string) => void
   setAutoScrollLocked: (b: boolean) => void
   setRestartModalOpen: (v: boolean) => void
+  setRestartCompleted: (v: boolean) => void
 }
 
 export const usePoChat = create<PoChatState>((set) => ({
   inputDraft: '',
   autoScrollLocked: false,
   restartModalOpen: false,
+  restartCompleted: false,
 
   setDraft: (inputDraft) => set({ inputDraft }),
   setAutoScrollLocked: (autoScrollLocked) => set({ autoScrollLocked }),
   setRestartModalOpen: (restartModalOpen) => set({ restartModalOpen }),
+  setRestartCompleted: (restartCompleted) => set({ restartCompleted }),
 }))

@@ -270,6 +270,8 @@
       "removeFile": "Remove file",
       "restartSession": "Restart session",
       "restartHint": "Use when PO is unresponsive or too slow",
+      "restartCompletedToast": "Session has been reset.",
+      "sessionDivider": "Session reset",
       "idleCtx": "Ready",
       "actionDefault": "in flight",
       "todoChipLabel": "To-do {{count}}",
