@@ -15,6 +15,20 @@ const PERSONA_DIRS = new Set(['po', 'designer', 'developer', 'qa'])
 
 type Tier = 0 | 1 | 2
 
+/**
+ * Expand a leading `~` / `~/` to the user home dir before resolving. The Tier-2
+ * memory rows in the Persona Tier Editor carry tilde paths (e.g.
+ * `~/.productune/po/habit.md`); `path.resolve` does NOT expand `~`, so without
+ * this the containment check below would never match the Tier-2 root.
+ */
+function expandHome(p: string): string {
+  if (p === '~') return os.homedir()
+  if (p.startsWith('~/') || p.startsWith('~' + path.sep)) {
+    return path.join(os.homedir(), p.slice(2))
+  }
+  return p
+}
+
 const TIER_ROLE: Record<Tier, string> = {
   0: 'doctrine',
   1: 'project',
@@ -70,7 +84,7 @@ function isAllowedDoctrinePath(
   opts: { write: boolean; projectDir?: string },
 ): { ok: boolean; tier?: Tier; persona?: string; error?: string } {
   if (!absPath) return { ok: false, error: 'path is required' }
-  const resolved = path.resolve(absPath)
+  const resolved = path.resolve(expandHome(absPath))
 
   if (path.extname(resolved).toLowerCase() !== '.md') {
     return { ok: false, error: 'only .md files allowed' }
@@ -221,7 +235,7 @@ export function register(): void {
     (_event, absPath: string, projectDir?: string) => {
       const guard = isAllowedDoctrinePath(absPath, { write: false, projectDir })
       if (!guard.ok) return { ok: false, error: guard.error }
-      const resolved = path.resolve(absPath)
+      const resolved = path.resolve(expandHome(absPath))
       try {
         if (!fs.existsSync(resolved)) {
           return { ok: true, content: '', exists: false, mtimeMs: null }
@@ -241,7 +255,7 @@ export function register(): void {
     (_event, absPath: string, content: string, expectedMtimeMs?: number | null, projectDir?: string) => {
       const guard = isAllowedDoctrinePath(absPath, { write: true, projectDir })
       if (!guard.ok) return { ok: false, error: guard.error }
-      const resolved = path.resolve(absPath)
+      const resolved = path.resolve(expandHome(absPath))
       try {
         // Conflict check: if a stamp was captured at read time and the file
         // exists, reject when the on-disk mtime has drifted (e.g. an agent

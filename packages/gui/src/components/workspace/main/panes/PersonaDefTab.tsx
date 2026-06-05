@@ -57,11 +57,14 @@ const PERSONA_META: Record<string, PersonaMeta> = {
 
 // Tier-2 long-term memory (4-tier doctrine model): ~/.productune/<persona>/habit.md.
 // Note the persona key→dir split: the PersonaKey 'dev' maps to the 'developer' dir.
-const LT_MEMORY: Record<string, { path: string; tabId: string; title: string }[]> = {
-  po:       [{ path: '~/.productune/po/habit.md',        tabId: 'lt-memory-po',        title: 'PO Memory (habit.md)' }],
-  designer: [{ path: '~/.productune/designer/habit.md',  tabId: 'lt-memory-designer',  title: 'Designer Memory (habit.md)' }],
-  dev:      [{ path: '~/.productune/developer/habit.md', tabId: 'lt-memory-developer', title: 'Developer Memory (habit.md)' }],
-  qa:       [{ path: '~/.productune/qa/habit.md',        tabId: 'lt-memory-qa',        title: 'QA Memory (habit.md)' }],
+// `dir` is the doctrine IPC's persona dir-name (PERSONA_DIRS in electron/ipc/doctrine.ts)
+// and `relName` the in-tier path — both feed the `doctrine-file` tab so these rows
+// open in DoctrineFileTab (rendered Preview via MdRenderer + edit), not the raw viewer.
+const LT_MEMORY: Record<string, { path: string; dir: string; relName: string; tabId: string; title: string }[]> = {
+  po:       [{ path: '~/.productune/po/habit.md',        dir: 'po',        relName: 'habit.md', tabId: 'lt-memory-po',        title: 'PO Memory (habit.md)' }],
+  designer: [{ path: '~/.productune/designer/habit.md',  dir: 'designer',  relName: 'habit.md', tabId: 'lt-memory-designer',  title: 'Designer Memory (habit.md)' }],
+  dev:      [{ path: '~/.productune/developer/habit.md', dir: 'developer', relName: 'habit.md', tabId: 'lt-memory-developer', title: 'Developer Memory (habit.md)' }],
+  qa:       [{ path: '~/.productune/qa/habit.md',        dir: 'qa',        relName: 'habit.md', tabId: 'lt-memory-qa',        title: 'QA Memory (habit.md)' }],
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -251,7 +254,7 @@ export default function PersonaDefTab({ props }: Props) {
         <button
           key={cfg.tabId}
           style={memoryRow}
-          onClick={() => openTabFn(cfg.tabId, 'markdown', { path: cfg.path, title: cfg.title }, cfg.title)}
+          onClick={() => openTabFn(cfg.tabId, 'doctrine-file', { tier: 2, persona: cfg.dir, absPath: cfg.path, relName: cfg.relName, editable: true }, cfg.title)}
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
         >

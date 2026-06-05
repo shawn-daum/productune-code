@@ -1,13 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Lock } from 'lucide-react'
+import MdRenderer from '../../chat/MdRenderer'
 
 /**
- * Generic markdown tab — toolbar (crumb + edit/preview toggle stub) + viewer.
- * T-P4-046 lands the shell; content arrives via props as { path, body }.
+ * Generic markdown tab — toolbar (crumb + read-only badge) + rendered viewer.
  *
- * T-PATCH-009 #11: when given a `~/.productune/...` path (Tier-2 long-term
- * memory, e.g. PersonaDefTab habit.md rows) and no inline `body`, fetch the
- * file via the memory:readFile IPC so the viewer actually shows the file.
+ * Read-only by design: this is the catch-all viewer for any `markdown` tab
+ * opener (Explorer helpers, TodoListPanel, useIpcSubscriptions, MdRenderer
+ * `ptn:file/...` links). Rich rendering goes through MdRenderer (T-013) — the
+ * same renderer ArtifactMdTab / DoctrineFileTab use — so headings, tables,
+ * lists, and code fences render instead of showing raw markdown source. Editing
+ * doctrine tier files lives in DoctrineFileTab, not here (T-PATCH-027).
+ *
+ * T-PATCH-009 #11: when given a `~/.productune/...` path and no inline `body`,
+ * fetch the file via the memory:readFile IPC so the viewer shows the file.
  */
 interface Props {
   props?: Record<string, unknown>
@@ -49,9 +56,9 @@ export default function MarkdownTab({ props }: Props) {
     <div style={wrap}>
       <div style={toolbar}>
         <span style={crumb}>{path ?? t('workspace.tab.markdown.crumbUntitled')}</span>
-        <div style={toolbarRight}>
-          <button style={toggleBtn(true)} type="button">{t('workspace.tab.markdown.preview')}</button>
-          <button style={toggleBtn(false)} type="button">{t('workspace.tab.markdown.edit')}</button>
+        <div style={roBadge}>
+          <Lock size={11} style={{ flexShrink: 0 }} />
+          <span>{t('workspace.common.readOnly')}</span>
         </div>
       </div>
       <div style={view}>
@@ -60,7 +67,9 @@ export default function MarkdownTab({ props }: Props) {
         ) : error ? (
           <pre style={{ ...pre, color: '#E04040' }}>{error}</pre>
         ) : body ? (
-          <pre style={pre}>{body}</pre>
+          <div style={viewerWrap}>
+            <MdRenderer text={body} />
+          </div>
         ) : isEmptyMemory ? (
           <p style={hint}>{t('workspace.tab.markdown.emptyFile')}</p>
         ) : (
@@ -97,23 +106,17 @@ const crumb: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-const toolbarRight: React.CSSProperties = {
-  display: 'flex',
+const roBadge: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
   gap: 4,
+  fontSize: 10,
+  color: '#707070',
+  padding: '1px 6px',
+  border: '1px solid #1F1F1F',
+  borderRadius: 20,
   flexShrink: 0,
-}
-
-function toggleBtn(active: boolean): React.CSSProperties {
-  return {
-    background: active ? '#1A1A1A' : 'transparent',
-    color: active ? '#E0E0E0' : '#707070',
-    border: '1px solid #2A2A2A',
-    borderRadius: 3,
-    padding: '3px 10px',
-    fontSize: 11,
-    cursor: 'pointer',
-    fontFamily: 'inherit',
-  }
+  whiteSpace: 'nowrap',
 }
 
 const view: React.CSSProperties = {
@@ -121,6 +124,15 @@ const view: React.CSSProperties = {
   padding: '16px 20px',
   overflow: 'auto',
   background: '#0F0F0F',
+}
+
+// Block-layout wrapper for MdRenderer (whose own root is display:inline, tuned
+// for the chat bubble). Mirrors ArtifactMdTab / DoctrineFileTab viewerWrap so
+// headings / tables / lists lay out as blocks here too.
+const viewerWrap: React.CSSProperties = {
+  maxWidth: 780,
+  lineHeight: 1.65,
+  fontSize: 13,
 }
 
 const pre: React.CSSProperties = {
