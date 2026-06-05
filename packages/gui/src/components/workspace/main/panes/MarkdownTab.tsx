@@ -1,20 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock } from 'lucide-react'
-import MdRenderer from '../../chat/MdRenderer'
+import { useWorkspace } from '../../../../store/workspace'
+import MarkdownViewer, { type MarkdownLoadResult } from './MarkdownViewer'
 
 /**
- * Generic markdown tab — toolbar (crumb + read-only badge) + rendered viewer.
+ * Generic markdown tab — migrated onto MarkdownViewer (T-PATCH-029).
  *
- * Read-only by design: this is the catch-all viewer for any `markdown` tab
- * opener (Explorer helpers, TodoListPanel, useIpcSubscriptions, MdRenderer
- * `ptn:file/...` links). Rich rendering goes through MdRenderer (T-013) — the
- * same renderer ArtifactMdTab / DoctrineFileTab use — so headings, tables,
- * lists, and code fences render instead of showing raw markdown source. Editing
- * doctrine tier files lives in DoctrineFileTab, not here (T-PATCH-027).
+ * Read-only catch-all viewer for any `markdown` tab opener (Explorer helpers,
+ * TodoListPanel, useIpcSubscriptions, MdRenderer `ptn:file/...` links). Content
+ * resolves by loader precedence:
+ *   1. inline `body` prop (used directly, no fetch);
+ *   2. `~/.productune/...` path → `readMemoryFile` (Tier-2 memory);
+ *   3. any other path under the project → the generic project-file reader
+ *      (`artifactsReadFile(projectDir, absPath)`), so Explorer repo `.md` files
+ *      render their on-disk content instead of the placeholder (T-PATCH-029 AC-3).
  *
- * T-PATCH-009 #11: when given a `~/.productune/...` path and no inline `body`,
- * fetch the file via the memory:readFile IPC so the viewer shows the file.
+ * Rich rendering / loading / error / zoom-less header all live in the shared
+ * MarkdownViewer primitive (T-PATCH-028). The empty-memory ("emptyFile") and the
+ * no-source ("placeholder") hint states are kept here — the primitive has no
+ * italic-hint surface — preserving the prior behaviour exactly. Editing doctrine
+ * tier files lives in DoctrineFileTab, not here (T-PATCH-027).
  */
 interface Props {
   props?: Record<string, unknown>
@@ -24,34 +30,66 @@ export default function MarkdownTab({ props }: Props) {
   const { t } = useTranslation()
   const path = (props?.path as string) ?? null
   const inlineBody = (props?.body as string) ?? null
+  const projectDir = useWorkspace((s) => s.project?.projectDir ?? null)
 
-  const [fetched, setFetched] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  // True only after a memory read resolves to an empty file — drives the
+  // "emptyFile" hint instead of rendering an empty MdRenderer (prior behaviour).
+  const [emptyMemory, setEmptyMemory] = useState(false)
 
-  // Fetch Tier-2 memory file content when given a ~/.productune path + no body.
-  useEffect(() => {
-    setFetched(null)
-    setError(null)
-    if (inlineBody !== null || !path || !path.startsWith('~/.productune/')) return
+  const isMemoryPath = !!path && path.startsWith('~/.productune/')
+  // A repo path is renderable through the generic reader only with a projectDir.
+  const isRepoPath = !!path && !isMemoryPath && !!projectDir
+
+  // Whether a real content source exists. When none → placeholder (TodoListPanel
+  // opens `markdown` with `{}`; or a repo path arrives with no active project).
+  const hasSource = inlineBody !== null || isMemoryPath || isRepoPath
+
+  const load = useCallback(async (): Promise<MarkdownLoadResult> => {
+    setEmptyMemory(false)
+
+    // 1) inline body — no fetch.
+    if (inlineBody !== null) return { ok: true, content: inlineBody }
+
     const api = (window as any).api
-    if (!api?.readMemoryFile) return
-    let cancelled = false
-    setLoading(true)
-    api.readMemoryFile(path)
-      .then((res: { ok: boolean; content?: string; exists?: boolean; error?: string }) => {
-        if (cancelled) return
-        if (res?.ok) setFetched(res.exists === false ? '' : (res.content ?? ''))
-        else setError(res?.error ?? 'read failed')
-      })
-      .catch((e: any) => { if (!cancelled) setError(e?.message ?? 'read failed') })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [path, inlineBody])
 
-  const body = inlineBody ?? fetched
-  const isEmptyMemory = fetched === '' && !error
+    // 2) ~/.productune memory file (Tier-2).
+    if (isMemoryPath) {
+      if (!api?.readMemoryFile) return { ok: false }
+      const res: { ok: boolean; content?: string; exists?: boolean; error?: string } =
+        await api.readMemoryFile(path)
+      if (!res?.ok) return { ok: false, error: res?.error ?? 'read failed' }
+      const content = res.exists === false ? '' : (res.content ?? '')
+      if (content === '') setEmptyMemory(true)
+      return { ok: true, content }
+    }
 
+    // 3) generic project-file read (repo .md not under ~/.productune).
+    if (isRepoPath) {
+      try {
+        const text: string = await api.artifactsReadFile(projectDir, path)
+        return { ok: true, content: text }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'read failed' }
+      }
+    }
+
+    return { ok: false }
+  }, [inlineBody, isMemoryPath, isRepoPath, path, projectDir])
+
+  if (hasSource && !emptyMemory) {
+    return (
+      <MarkdownViewer
+        load={load}
+        absPath={path ?? ''}
+        relName={path ?? ''}
+        editable={false}
+        emptyCrumb={t('workspace.tab.markdown.crumbUntitled')}
+      />
+    )
+  }
+
+  // No resolvable source (or memory file resolved empty): keep the prior toolbar
+  // + italic-hint surface for the empty / placeholder states.
   return (
     <div style={wrap}>
       <div style={toolbar}>
@@ -62,15 +100,7 @@ export default function MarkdownTab({ props }: Props) {
         </div>
       </div>
       <div style={view}>
-        {loading ? (
-          <p style={hint}>{t('common.loading')}</p>
-        ) : error ? (
-          <pre style={{ ...pre, color: '#E04040' }}>{error}</pre>
-        ) : body ? (
-          <div style={viewerWrap}>
-            <MdRenderer text={body} />
-          </div>
-        ) : isEmptyMemory ? (
+        {emptyMemory ? (
           <p style={hint}>{t('workspace.tab.markdown.emptyFile')}</p>
         ) : (
           <p style={hint}>{t('workspace.tab.markdown.placeholder')}</p>
@@ -124,24 +154,6 @@ const view: React.CSSProperties = {
   padding: '16px 20px',
   overflow: 'auto',
   background: '#0F0F0F',
-}
-
-// Block-layout wrapper for MdRenderer (whose own root is display:inline, tuned
-// for the chat bubble). Mirrors ArtifactMdTab / DoctrineFileTab viewerWrap so
-// headings / tables / lists lay out as blocks here too.
-const viewerWrap: React.CSSProperties = {
-  maxWidth: 780,
-  lineHeight: 1.65,
-  fontSize: 13,
-}
-
-const pre: React.CSSProperties = {
-  margin: 0,
-  fontSize: 12,
-  fontFamily: 'monospace',
-  color: '#E0E0E0',
-  whiteSpace: 'pre-wrap',
-  lineHeight: 1.5,
 }
 
 const hint: React.CSSProperties = {
