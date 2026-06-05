@@ -43,6 +43,7 @@ import { registerTabCloseGuard } from '../../../../store/tabCloseGuard'
 import { useWorkspace } from '../../../../store/workspace'
 import GenericDirtyModal from '../../GenericDirtyModal'
 import BrowserTab from './BrowserTab'
+import ZoomControls, { ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './ZoomControls'
 
 interface Props {
   tabId: string
@@ -112,6 +113,22 @@ function LocalHtmlViewer({ tabId, props: tabProps }: Props) {
   // Bumped after a successful save so the Preview <iframe> remounts with the
   // new srcdoc (AC-4 "Preview reflects the new content").
   const [previewKey, setPreviewKey] = useState(0)
+
+  // Zoom state (T-PATCH-045): scales iframe via CSS zoom property.
+  // Range 0.5–3.0 (AC-3), step 0.1 (AC-2).
+  const [zoom, setZoom] = useState<number>(ZOOM_DEFAULT)
+  const IFRAME_ZOOM_MIN = 0.5
+  const IFRAME_ZOOM_MAX = 3.0
+  const IFRAME_ZOOM_STEP = 0.1
+  const zoomIn = useCallback(
+    () => setZoom((z) => Math.min(IFRAME_ZOOM_MAX, parseFloat((z + IFRAME_ZOOM_STEP).toFixed(2)))),
+    [],
+  )
+  const zoomOut = useCallback(
+    () => setZoom((z) => Math.max(IFRAME_ZOOM_MIN, parseFloat((z - IFRAME_ZOOM_STEP).toFixed(2)))),
+    [],
+  )
+  const zoomReset = useCallback(() => setZoom(ZOOM_DEFAULT), [])
 
   // Live dirty flag for the close-guard (read inside the guard closure).
   const dirty = editing && draft !== content
@@ -266,6 +283,15 @@ function LocalHtmlViewer({ tabId, props: tabProps }: Props) {
         <div style={headerRight}>
           {!editing ? (
             <>
+              {/* T-PATCH-045: zoom controls in preview mode (AC-1) */}
+              <ZoomControls
+                zoom={zoom}
+                onZoomIn={zoomIn}
+                onZoomOut={zoomOut}
+                onReset={zoomReset}
+                min={IFRAME_ZOOM_MIN}
+                max={IFRAME_ZOOM_MAX}
+              />
               <button
                 style={actionBtn}
                 onClick={runLoad}
@@ -351,12 +377,13 @@ function LocalHtmlViewer({ tabId, props: tabProps }: Props) {
                   <span>{t('workspace.htmlViewer.preview')}</span>
                 </div>
                 {/* Sandboxed: empty sandbox => no scripts, no same-origin. */}
+                {/* T-PATCH-045: CSS zoom scales iframe content (AC-2, AC-3) */}
                 <iframe
                   key={previewKey}
                   title={t('workspace.htmlViewer.previewFrameTitle')}
                   srcDoc={content}
                   sandbox=""
-                  style={iframeEl}
+                  style={{ ...iframeEl, zoom: zoom }}
                 />
               </div>
             )}

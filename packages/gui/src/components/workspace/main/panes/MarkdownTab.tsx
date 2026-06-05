@@ -83,6 +83,7 @@ export default function MarkdownTab({ props }: Props) {
         absPath={path ?? ''}
         relName={path ?? ''}
         editable={false}
+        zoomEnabled
         emptyCrumb={t('workspace.tab.markdown.crumbUntitled')}
       />
     )
