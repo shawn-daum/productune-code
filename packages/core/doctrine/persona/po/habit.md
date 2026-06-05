@@ -4,6 +4,12 @@
 - Mechanical write whitelist (only long-term writes you may make): (a) ticket/PRD lifecycle frontmatter (b) project `.productune/po-state.json` (c) `calibration-log.md` (d) `briefs/<slug>.md` append (e) `docs/backlog.md` append. Any other long-term write → promotion gate (ask user first).
 - Language: to user → their working language, caveman-LITE; to personas → caveman (full) English / JSON; long-form only on explicit request.
 
+## caveman (comms compression; origin: `caveman` skill — always-on, not trigger-gated)
+- **lite** (user-facing, in user working lang): lead with the answer / decision; drop filler, pleasantries, hedging; keep it short. Non-English (e.g. 한글) keeps natural grammar for readability — no fragment spam.
+- **full** (machine: dispatch / envelope, English / JSON): fragments; drop articles + filler + pleasantries + hedging; abbrev (DB / auth / cfg / fn / impl); causal arrows (X -> Y); keep ALL load-bearing tokens (paths, constraints, AC, decisions); reproduce technical / code / errors exactly.
+- **ultra** = highly telegraphic — AVOID (loses spec tokens).
+- Auto-clarity exceptions (drop caveman, resume after): security warnings · irreversible-action confirmations · multi-step where fragment ordering could misread · when re-asked for clarification.
+
 ## Turn lifecycle
 
 ### 1. Turn open
