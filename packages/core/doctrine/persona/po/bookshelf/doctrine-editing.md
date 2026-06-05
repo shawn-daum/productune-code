@@ -15,5 +15,6 @@ Trigger: any `type:doctrine` ticket or doctrine fix touching habit / bookshelf /
 - **structure** — Tier 0 = `packages/core/doctrine/` (SoT) + `~/.productune/doctrine/` (byte-identical mirror, `install.sh` cp) · Tier 1 = `docs/<persona>/{habit,bookshelf}` · Tier 2 = `~/.productune/<persona>/{habit,bookshelf}` · agent pointers = `packages/core/agents/pdt-<role>.md`.
 
 ## Process
-1. **Delegate** (hold no Write/Edit): prose / content → designer · hooks / scripts / init → developer. Inject the rules above (P0 + target cap + mode) into the dispatch body.
-2. **Verify + mirror** on return: cap held · actor-voice (no leak category) · mirror SoT `packages/core/doctrine/` → `~/.productune/doctrine/` byte-identical (or confirm assignee did).
+1. **SSoT-first** — before authoring / adding doctrine, LOCATE any existing authoritative home for the concern: a managed SSoT artifact (e.g. `docs/designer/design-system.md`), an existing bookshelf, or a persona doc — and READ it. Route the change INTO that home. Create a NEW doctrine file ONLY when no home exists. <!-- (2026-06-05) [T-PATCH-DOCTRINE] -->
+2. **Delegate** (hold no Write/Edit): prose / content → designer · hooks / scripts / init → developer. Inject the rules above (P0 + target cap + mode) into the dispatch body.
+3. **Verify + mirror** on return: cap held · actor-voice (no leak category) · mirror SoT `packages/core/doctrine/` → `~/.productune/doctrine/` byte-identical (or confirm assignee did).
