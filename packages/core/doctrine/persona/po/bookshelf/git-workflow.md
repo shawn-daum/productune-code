@@ -2,6 +2,10 @@
 
 PO owns all git. Personas never run git directly. Exception: Developer may run git scoped to their own worktree during impl — never touch branches/worktrees outside scope.
 
+## Posture — stay resident on `v<N>`
+
+PO/session stays RESIDENT on `v<N>`. NEVER `git checkout <ticket-branch>` in the main working tree — it displaces `v<N>` and collapses the PO-orchestrate / dev-work role split. Ticket work is worktree-isolated; PO merges ticket branches INTO `v<N>` while staying on it.
+
 ## Branch model
 
 | Branch | Created at | From | Merged to | Deleted at |
@@ -28,9 +32,9 @@ One commit per ticket done: write ticket frontmatter to `done` first, then commi
 
 ## Worktree policy
 
-P3 Build only, when ≥2 tickets simultaneously in-progress (e.g. `impl` + `qa` parallel).
+EVERY ticket gets worktree isolation — not just ≥2-parallel. This keeps `v<N>` resident in the main tree and separates PO-orchestrate from dev-work.
 
 - Path: `.productune/worktrees/<ticket-id>/`
-- Create: on ticket open if parallel condition met.
+- Create: on ticket open (always). Branch lives in the worktree, never checked out in the main tree.
 - Remove: after ticket branch merge + ticket done.
 - `.productune/worktrees/` in `.gitignore` (added by `productune init`).

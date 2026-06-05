@@ -2,7 +2,7 @@
 
 ## Git — ticket open/close ops
 
-On every ticket open: `git checkout -b <version>/T-<N>-<slug> v<N>`.
+On every ticket open: `git worktree add .productune/worktrees/<ticket-id>/ -b <version>/T-<N>-<slug> v<N>` — never `git checkout` the ticket branch in the main tree (stay resident on `v<N>`; see `bookshelf/git-workflow.md` ## Posture).
 On every ticket done: stage artifact files + ticket `.md` → `git commit -m "[T-N] <request_summary>"` → `git merge --no-ff <ticket-branch>` into version branch → delete ticket branch.
 Full rules: `bookshelf/git-workflow.md`.
 
