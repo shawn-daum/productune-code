@@ -52,6 +52,26 @@ function newSegmentId(): string {
   return `seg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
 
+// ── T-PATCH-038: seal the active text segment ───────────────────────────────────
+// When a segment boundary arrives (tool trace / AskUserQuestion card), the prior
+// active text bubble is no longer receiving tokens. Flip its `status`
+// 'streaming' → 'done' so MessageBubble stops rendering the blinking cursor (▋)
+// on it. Only the CURRENT active segment (or the next one a trailing token opens)
+// keeps status 'streaming' → at most one live cursor at the bottom. onDone still
+// finalizes/persists all segments; this only affects the in-flight render.
+function sealActiveSegment(): void {
+  segSealed = true
+  const sealId = segActiveId
+  if (!sealId) return
+  useWorkspace.setState((s) => {
+    const idx = s.messages.findIndex((m) => m.id === sealId)
+    if (idx < 0 || s.messages[idx].status !== 'streaming') return s
+    const next = [...s.messages]
+    next[idx] = { ...next[idx], status: 'done' }
+    return { messages: next }
+  })
+}
+
 // ── IPC listener registration ─────────────────────────────────────────────────
 function register() {
   if (registered) return
@@ -142,7 +162,9 @@ function register() {
     // trace) never seals → stays one bubble (AC3). A trace before any token (e.g.
     // tool-only turn) seals an empty active bubble; the empty seg is pruned at
     // onDone so no orphan renders (AC4).
-    if (payload.level === 'tool') segSealed = true
+    // T-PATCH-038: seal also flips the sealed segment's status off 'streaming'
+    // so its cursor disappears the moment the tool trace lands.
+    if (payload.level === 'tool') sealActiveSegment()
   }))
 
   // ── po:onAskUserQuestion — inline option card (T-PATCH-037) ──────────────
@@ -173,7 +195,8 @@ function register() {
         }
         useWorkspace.setState((s) => ({ messages: [...s.messages, card] }))
         // Seal so trailing tokens open a fresh segment below the card.
-        segSealed = true
+        // T-PATCH-038: also turns the prior segment's cursor off.
+        sealActiveSegment()
         // Persist now (the onDone prune only walks turnSegIds, which excludes
         // this distinct card id) so the card survives reload — the resolved
         // chip later re-renders from payload.resolved patched by the answer IPC.
