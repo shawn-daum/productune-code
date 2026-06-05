@@ -192,6 +192,22 @@ if [ "$(is_plain_commit)" = "yes" ]; then
   done
 
   if [ -n "$STATE" ]; then
+    # SKIP entirely if this is a tooling repo (productune itself is developed
+    # directly on main → the Gate B signature is expected, not a violation).
+    # Real product builds lack this flag, so the WARN still fires for them.
+    # Fail-open: any parse error → treat as NOT a tooling repo (warn may proceed).
+    TOOLING="$(python3 -c "
+import json,sys
+try:
+    s=json.load(open('$STATE'))
+    print('yes' if s.get('tooling_repo') is True else 'no')
+except Exception:
+    print('no')
+" 2>/dev/null)"
+    if [ "$TOOLING" = "yes" ]; then
+      exit 0
+    fi
+
     # phase + version present? (handle both legacy flat + A4 nested shapes)
     PHASE="$(python3 -c "
 import json,sys
