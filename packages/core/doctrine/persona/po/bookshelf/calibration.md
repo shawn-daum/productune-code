@@ -4,7 +4,8 @@ Read at turn-open, write at task-close. Cross-project weight, separate from `rou
 `recent_turns`.
 
 Data: per-task `.productune/po-state.json :: current_task.calibration_outcome` (drops with
-`current_task = null`); cross-project rolling `~/.productune/po/bookshelf/calibration-log.md`,
+`current_task = null`); cross-project rolling `$HOME/.productune/po/bookshelf/calibration-log.md`
+(read at turn-open by resolving `$HOME` + `cat` via Bash — never Read the literal `~`/guess home),
 1 line/task.
 
 ## Read (turn open, mandatory)

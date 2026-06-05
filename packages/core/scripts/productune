@@ -364,11 +364,15 @@ ensure_state() {
 }
 
 run_engine() {
+  # T-PATCH-043 (AC1): `--agent pdt-po` must stay UNCONDITIONAL — including on
+  # `--resume` turns passed through "$@" — so the agent system prompt + the
+  # SessionStart `agent_type` survive resume (no behavior change here).
   exec claude --agent pdt-po "$@"
 }
 
 run_engine_fg() {
   # Foreground (not exec) so EXIT trap can fire after engine returns.
+  # `--agent pdt-po` unconditional — survives `--resume` turns (see run_engine).
   claude --agent pdt-po "$@"
 }
 

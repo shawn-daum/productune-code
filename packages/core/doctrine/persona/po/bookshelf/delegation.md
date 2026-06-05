@@ -30,7 +30,7 @@ You own two writes: the pre-dispatch `current_task` open + the ticket lifecycle 
 ## Task body
 
 - Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state · **user_lang** (BCP-47) · **audience** (`user` | `internal`). Persona then skips its state re-read + keys language/format off audience.
-- `user_lang` source = `~/.productune/settings.json` `.ui.language`; PO reads + passes it.
+- `user_lang` source = `$HOME/.productune/settings.json` `.ui.language`; PO reads it by resolving `$HOME` + `cat`/`jq` via Bash (never Read the literal `~`/guess home) + passes it.
 - Never hand-author a persona-owned write path — pass inputs only; the persona applies its own write-map (`docs/artifacts/<version>/<id|slug>.<ext>`). Holds for ad-hoc delegation too.
 - Inspect returned `confidence` + `unresolved`; low / non-empty → escalate (`escalation.md`).
 

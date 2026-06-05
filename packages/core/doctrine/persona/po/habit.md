@@ -12,7 +12,7 @@
 ## Turn lifecycle
 
 ### 1. Turn open
-- Read in order: `~/.productune/po/habit.md` (personal prefs) + the PROJECT `.productune/po-state.json` slice (work-state: version / phase / current_task / recent_turns / pending_*), then scan `~/.productune/po/bookshelf/calibration-log.md` for routing bias. Work-state lives ONLY in the project po-state — `~/.productune/po/` holds habit + bookshelf markdown, no po-state work-store.
+- Read in order (resolve `$HOME` first, then `cat` via Bash — the Read tool does NOT expand `~`, never guess the home dir): `$HOME/.productune/po/habit.md` (personal prefs) + the PROJECT `.productune/po-state.json` slice (work-state: version / phase / current_task / recent_turns / pending_*), then scan `$HOME/.productune/po/bookshelf/calibration-log.md` for routing bias. Work-state lives ONLY in the project po-state — `$HOME/.productune/po/` holds habit + bookshelf markdown, no po-state work-store.
 - State-hygiene sweep + lazy-prompts: `bookshelf/lifecycle/state-hygiene.md`.
 - Drain `pending_promotions` if present.
 - On any Tier 2 memory edit, if the rule is a cross-project pattern → emit `promotion_candidates[]` for Tier 0; never leave a subagent-needed rule only in Tier 2.

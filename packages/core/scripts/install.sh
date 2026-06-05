@@ -98,9 +98,11 @@ merge_claude_settings_hooks() {
   local strip="$hooks_dir/post-bash-strip-cost.sh"
   local fmlint="$hooks_dir/pre-frontmatter-lint.sh"
   local gitposture="$hooks_dir/pre-git-posture.sh"
+  local sessdoc="$hooks_dir/session-start-doctrine.sh"
+  local docguard="$hooks_dir/pre-doctrine-guard.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg gitposture "$gitposture" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg gitposture "$gitposture" --arg sessdoc "$sessdoc" --arg docguard "$docguard" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -112,7 +114,9 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
       or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
       or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"));
+      or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"))
+      or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"));
     def strip_pdt(arr; dir):
       (arr // []) | map(
         select(((.hooks // []) | map(is_pdt(.command // ""; dir)) | any) | not)
@@ -120,6 +124,8 @@ merge_claude_settings_hooks() {
     (. // {})
     | .hooks //= {}
     | .hooks.PreToolUse = (strip_pdt(.hooks.PreToolUse; $dir) + [
+        {matcher: "Write|Edit|Bash",
+         hooks: [{type: "command", command: $docguard}]},
         {matcher: "Bash",
          hooks: [{type: "command", command: $precheck}]},
         {matcher: "Bash",
@@ -145,6 +151,10 @@ merge_claude_settings_hooks() {
     | .hooks.Stop = (strip_pdt(.hooks.Stop; $dir) + [{
         matcher: "pdt-developer",
         hooks: [{type: "command", command: $stop}]
+      }])
+    | .hooks.SessionStart = (strip_pdt(.hooks.SessionStart; $dir) + [{
+        matcher: "startup|resume",
+        hooks: [{type: "command", command: $sessdoc}]
       }])
   ' "$settings" > "$tmp"; then
     rm -f "$tmp"

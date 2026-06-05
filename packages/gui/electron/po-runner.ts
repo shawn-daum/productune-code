@@ -343,7 +343,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // Build args — first call uses `--agent pdt-po`, resume uses `--resume`.
     const args: string[] = []
     if (opts.resume) {
-      args.push('--resume', opts.resume)
+      // T-PATCH-043 (AC1): re-pass `--agent` on resume turns too. `--resume`
+      // alone does NOT restore the agent system prompt (hardened pointer) nor
+      // populate `agent_type` in the SessionStart hook input — so doctrine
+      // would be lost on every resume turn (most GUI turns). Live-confirmed
+      // that `--resume` + `--agent` coexist safely.
+      args.push('--resume', opts.resume, '--agent', PO_AGENT)
     } else {
       args.push('--agent', PO_AGENT)
     }
