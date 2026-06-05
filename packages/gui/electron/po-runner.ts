@@ -99,6 +99,18 @@ export interface PendingGateInfo {
   summary?: string
 }
 
+// ── AskUserQuestion (T-PATCH-037) ─────────────────────────────────────────────
+
+/**
+ * Main-process mirror of `AskUserQuestionPayload` (src/lib/types.ts:85).
+ * Field names are byte-identical so the renderer can consume it directly.
+ * `resolved` is omitted here — it's stamped renderer-side on selection.
+ */
+export interface AskUserQuestionPayload {
+  question: string
+  options: Array<{ key: string; title: string; description?: string }>
+}
+
 interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
@@ -133,6 +145,12 @@ interface RunCallbacks {
   }) => void
   /** T-019 §B3: PO emitted a phase-transition gate (pending_gate) in its envelope. */
   onPhaseGate: (gate: PendingGateInfo) => void
+  /**
+   * T-PATCH-037: PO emitted an AskUserQuestion. `msgId` is the turn's msgId
+   * (renderer derives a distinct card id from it). Dual-path: fires from the
+   * assistant tool_use stream (Path A) OR the result-text marker (Path B).
+   */
+  onAskUserQuestion: (msgId: string, payload: AskUserQuestionPayload) => void
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -316,6 +334,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
   return new Promise((resolve) => {
     const hCtx = makeHealthCtx(msgId)
 
+    // T-PATCH-037: reset per-turn AskUserQuestion de-dupe flag.
+    askEmitted = false
+
     // Emit healthy at turn start.
     emitHealth('healthy', undefined, hCtx, cb)
 
@@ -398,6 +419,7 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       }
       cb.onDone(msgId, { sessionId: capturedSessionId })
       capturedSessionId = undefined
+      askEmitted = false   // T-PATCH-037: clear de-dupe for the next turn
       resolve()
     })
   })
@@ -405,6 +427,11 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
 
 // State scratchpad for one turn — captured during `system.init` event.
 let capturedSessionId: string | undefined
+
+// T-PATCH-037: per-turn de-dupe flag (AC3). Path A (assistant tool_use) sets it;
+// Path B (result-text marker) only emits when still false. Reset on turn start
+// (spawnClaude) and after onDone — single in-flight turn model.
+let askEmitted = false
 
 function handleStreamJsonLine(
   line: string,
@@ -444,6 +471,20 @@ function handleStreamJsonLine(
         cb.onToken(msgId, part.text)
         handleTextHealth(part.text, hCtx, cb)
       } else if (part?.type === 'tool_use' && typeof part?.name === 'string') {
+        // ── T-PATCH-037 Path A: AskUserQuestion tool_use (PO-only) ──────────
+        // Normalize Claude's AskUserQuestion input → AskUserQuestionPayload and
+        // emit the card. Skip the generic `→ tool:` announce + health for this
+        // tool so it doesn't (a) leave a stray trace, or (b) arm a permission
+        // timeout. v1 surfaces the FIRST question only (multi-question = OOS).
+        if (part.name === 'AskUserQuestion') {
+          const payload = normalizeAskUserQuestion(part.input)
+          if (payload && !askEmitted) {
+            askEmitted = true
+            cb.onAskUserQuestion(msgId, payload)
+          }
+          continue
+        }
+
         cb.onAnnounce(msgId, { level: 'tool', text: `→ tool: ${part.name}` })
         handleToolUseHealth(part.name, hCtx, cb)
 
@@ -554,6 +595,19 @@ function handleStreamJsonLine(
       // T-019 §B3: phase-transition gate emit → notification
       const gate = parsePendingGate(resultText)
       if (gate) cb.onPhaseGate(gate)
+
+      // ── T-PATCH-037 Path B: AskUserQuestion result-text marker (fallback) ──
+      // Doctrine-clean channel — PO is the only AskUserQuestion caller and
+      // already returns a structured result JSON, so it can surface the
+      // question via an `ask_user_question` marker even when --print cancels the
+      // raw tool_use before flushing it. Emit only if Path A didn't fire (AC3).
+      if (!askEmitted) {
+        const askPayload = parseAskUserQuestion(resultText)
+        if (askPayload) {
+          askEmitted = true
+          cb.onAskUserQuestion(msgId, askPayload)
+        }
+      }
     }
     return
   }
@@ -815,6 +869,111 @@ function parsePendingGate(text: string): PendingGateInfo | null {
   return null
 }
 
+// ── AskUserQuestion normalizers (T-PATCH-037) ─────────────────────────────────
+
+/** Stable option key from an index: 0→A, 1→B, … 25→Z, then A1/A2… (defensive). */
+function optionKeyForIndex(i: number): string {
+  if (i < 26) return String.fromCharCode(65 + i)
+  return `A${i - 25}`
+}
+
+/**
+ * Normalize one question's options array (Claude AskUserQuestion shape:
+ * `{ label, description? }`, or a plain string) → `{ key, title, description? }`
+ * with synthesized stable keys. Returns null if no usable options.
+ */
+function normalizeOptions(
+  raw: unknown,
+): Array<{ key: string; title: string; description?: string }> | null {
+  if (!Array.isArray(raw)) return null
+  const out: Array<{ key: string; title: string; description?: string }> = []
+  for (const o of raw) {
+    let title: string | null = null
+    let description: string | undefined
+    if (typeof o === 'string') {
+      title = o
+    } else if (o && typeof o === 'object') {
+      const obj = o as Record<string, unknown>
+      // Claude tool shape uses `label`; the marker may use `title`.
+      if (typeof obj.label === 'string') title = obj.label
+      else if (typeof obj.title === 'string') title = obj.title
+      if (typeof obj.description === 'string') description = obj.description
+    }
+    if (title) out.push({ key: optionKeyForIndex(out.length), title, description })
+  }
+  return out.length > 0 ? out : null
+}
+
+/**
+ * Normalize Claude's `AskUserQuestion` tool input (Path A) → payload.
+ *
+ * Input shape: `{ questions: [{ question | header, options: [...] }, …] }`.
+ * v1 surfaces the FIRST question only (multi-question = out of scope).
+ */
+function normalizeAskUserQuestion(input: unknown): AskUserQuestionPayload | null {
+  if (!input || typeof input !== 'object') return null
+  const obj = input as Record<string, unknown>
+  const questions = obj.questions
+  if (!Array.isArray(questions) || questions.length === 0) return null
+
+  const first = questions[0]
+  if (!first || typeof first !== 'object') return null
+  const q = first as Record<string, unknown>
+
+  const question =
+    typeof q.question === 'string'
+      ? q.question
+      : typeof q.header === 'string'
+      ? q.header
+      : null
+  if (!question) return null
+
+  const options = normalizeOptions(q.options)
+  if (!options) return null
+
+  return { question, options }
+}
+
+/**
+ * Path B parser — extract an `ask_user_question` (or `askUserQuestion`) marker
+ * from the PO result text. Mirrors `parsePendingGate` structure, reusing
+ * `extractJsonCandidates`. Accepts either:
+ *   - the Claude tool shape `{ questions: [{ question, options }] }`, or
+ *   - a flat `{ question, options }` marker.
+ * Returns null when the key is absent or unparseable.
+ */
+function parseAskUserQuestion(text: string): AskUserQuestionPayload | null {
+  for (const candidate of extractJsonCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (!parsed || typeof parsed !== 'object') continue
+      const obj = parsed as Record<string, unknown>
+      const marker = obj.ask_user_question ?? obj.askUserQuestion
+      if (!marker || typeof marker !== 'object') continue
+      const m = marker as Record<string, unknown>
+
+      // Nested `questions[]` (tool shape) → reuse the Path-A normalizer.
+      if (Array.isArray(m.questions)) {
+        const payload = normalizeAskUserQuestion(m)
+        if (payload) return payload
+      }
+
+      // Flat `{ question, options }` marker.
+      const question =
+        typeof m.question === 'string'
+          ? m.question
+          : typeof m.header === 'string'
+          ? m.header
+          : null
+      if (!question) continue
+      const options = normalizeOptions(m.options)
+      if (!options) continue
+      return { question, options }
+    } catch { /* ignore */ }
+  }
+  return null
+}
+
 // ── Renderer subscription helper (bound by main.ts) ─────────────────────────────
 
 /**
@@ -862,6 +1021,8 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
         })
       }
     },
+    // T-PATCH-037: AskUserQuestion card emit.
+    onAskUserQuestion: (msgId, payload) => wc.send('po:onAskUserQuestion', msgId, payload),
     // T-019 §B3: phase-gate-entry — PO emitted a phase-transition gate.
     onPhaseGate: (gate) => {
       const phaseLabel =

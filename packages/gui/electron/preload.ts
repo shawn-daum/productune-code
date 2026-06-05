@@ -164,13 +164,17 @@ contextBridge.exposeInMainWorld('api', {
   chatGetSession: (projectDir: string): Promise<import('../src/lib/types').Session> =>
     ipcRenderer.invoke('chat:getSession', projectDir),
 
-  // T-013 (b) AskUserQuestion answer — sends user choice to main process.
-  // IPC handler stub: if po-runner does not yet emit ask-user-question events,
-  // the UI resolves locally; this channel is wired for when the trigger ships.
+  // T-013 (b) / T-PATCH-037 AskUserQuestion answer — sends the user's choice to
+  // main, which patches payload.resolved in chat.json and RESUMES the PO turn
+  // with `answerText` as the next input. `sessionId` is the renderer-held claude
+  // session id (workspace store) so resume threads the same session (not a fresh
+  // --agent turn). `answerText` is the chosen option's title.
   chatAnswerQuestion: (opts: {
     projectDir: string
     messageId: string
     chosenKey: string
+    answerText: string
+    sessionId?: string | null
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('chat:answerQuestion', opts),
 
@@ -215,6 +219,23 @@ contextBridge.exposeInMainWorld('api', {
       cb(msgId, chunk)
     ipcRenderer.on('po:onToken', listener)
     return () => ipcRenderer.removeListener('po:onToken', listener)
+  },
+
+  // ── AskUserQuestion card emit (T-PATCH-037) ────────────────────────────────
+  /** Subscribe to PO AskUserQuestion emits. Returns an unsubscribe fn. */
+  poOnAskUserQuestion: (
+    cb: (
+      msgId: string,
+      payload: {
+        question: string
+        options: Array<{ key: string; title: string; description?: string }>
+      },
+    ) => void,
+  ) => {
+    const listener = (_e: Electron.IpcRendererEvent, msgId: string, payload: any) =>
+      cb(msgId, payload)
+    ipcRenderer.on('po:onAskUserQuestion', listener)
+    return () => ipcRenderer.removeListener('po:onAskUserQuestion', listener)
   },
 
   poOnAnnounce: (

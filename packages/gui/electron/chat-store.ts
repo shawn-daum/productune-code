@@ -14,7 +14,15 @@ import path from 'path'
 
 // ── Types (mirrored from src/lib/types.ts — no cross-boundary import in main) ──
 
-export type MessageKind = 'po' | 'designer' | 'dev' | 'qa' | 'trace' | 'user'
+export type MessageKind =
+  | 'po'
+  | 'designer'
+  | 'dev'
+  | 'qa'
+  | 'trace'
+  | 'user'
+  | 'ask-user-question'    // T-013 (b) / T-PATCH-037
+  | 'promotion-candidate'  // T-013 (c)
 
 export interface Message {
   id: string
@@ -24,6 +32,15 @@ export interface Message {
   text: string
   status?: 'streaming' | 'done' | 'cancelled'
   created_at: string
+  /**
+   * Action-card payload (T-013 / T-PATCH-037). Opaque to the store — persisted
+   * round-trip so the renderer's typed payload (AskUserQuestionPayload /
+   * PromotionPayload) survives reload. `unknown` keeps main free of a
+   * cross-boundary import of src/lib/types.
+   */
+  payload?: unknown
+  /** Trace sub-level (T-PATCH-033) — carried for `kind: 'trace'` messages. */
+  traceLevel?: string
 }
 
 export interface Session {
@@ -78,6 +95,34 @@ export function appendMessage(projectDir: string, message: Message): void {
     updated_at: new Date().toISOString(),
   }
   atomicWrite(chatJsonPath(projectDir), JSON.stringify(next, null, 2))
+}
+
+/**
+ * Patch a single stored message in place by id (shallow-merge `partial`).
+ * No-op if the id is absent. Used by `chat:answerQuestion` (T-PATCH-037) to
+ * stamp `payload.resolved` onto an ask-user-question card. Returns true if a
+ * message was patched.
+ */
+export function patchMessage(
+  projectDir: string,
+  id: string,
+  partial: Partial<Message>,
+): boolean {
+  const session = getSession(projectDir)
+  let found = false
+  const messages = session.messages.map((m) => {
+    if (m.id !== id) return m
+    found = true
+    return { ...m, ...partial }
+  })
+  if (!found) return false
+  const next: Session = {
+    ...session,
+    messages,
+    updated_at: new Date().toISOString(),
+  }
+  atomicWrite(chatJsonPath(projectDir), JSON.stringify(next, null, 2))
+  return true
 }
 
 /**

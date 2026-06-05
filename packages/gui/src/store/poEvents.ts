@@ -145,6 +145,46 @@ function register() {
     if (payload.level === 'tool') segSealed = true
   }))
 
+  // ── po:onAskUserQuestion — inline option card (T-PATCH-037) ──────────────
+  // PO emitted an AskUserQuestion. Append an 'ask-user-question' Message that
+  // AskUserQuestionCard renders inline. Treat it like a tool-trace boundary:
+  // seal the active text segment so the card lands chronologically AFTER any
+  // preceding prose and a fresh text segment opens for trailing tokens
+  // (mirrors the onAnnounce 'tool' seal). The card uses a distinct id
+  // (auq-<msgId>) so it never collides with turnSegIds — the onDone prune must
+  // not treat it as an empty text segment.
+  offFns.push(
+    api.poOnAskUserQuestion?.(
+      (
+        msgId: string,
+        payload: {
+          question: string
+          options: Array<{ key: string; title: string; description?: string }>
+        },
+      ) => {
+        const card: Message = {
+          id: `auq-${msgId}`,
+          role: 'assistant',
+          kind: 'ask-user-question',
+          text: '',
+          status: 'done',
+          payload,
+          created_at: new Date().toISOString(),
+        }
+        useWorkspace.setState((s) => ({ messages: [...s.messages, card] }))
+        // Seal so trailing tokens open a fresh segment below the card.
+        segSealed = true
+        // Persist now (the onDone prune only walks turnSegIds, which excludes
+        // this distinct card id) so the card survives reload — the resolved
+        // chip later re-renders from payload.resolved patched by the answer IPC.
+        const proj = useWorkspace.getState().project
+        if (proj) {
+          void api.chatAppendMessage(proj.projectDir, card).catch(() => {})
+        }
+      },
+    ),
+  )
+
   // ── po:onDone — done 표시 + chat.json persist + sessionId 갱신 ───────────
   // T-PATCH-036: a turn may now have MULTIPLE text segments (turnSegIds). We:
   //   1. drop empty segments (e.g. the initial placeholder of a tool-only turn,

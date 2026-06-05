@@ -47,32 +47,22 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const setMessages = useWorkspace((s) => s.setMessages)
   const project = useWorkspace((s) => s.project)
+  const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
 
   const handleSelect = async (key: string) => {
     if (selectedKey !== null || pending) return
 
-    // ≤100ms: immediate visual selection
+    // ≤100ms: immediate visual selection (AC6 Feedback).
     setSelectedKey(key)
     setPending(true)
 
     const chosen = payload.options.find((o) => o.key === key)
     const chosenLabel = chosen?.title ?? key
 
-    // Attempt IPC answer (stub if unavailable)
-    const api = (window as any).api
-    if (api?.chatAnswerQuestion && project) {
-      try {
-        await api.chatAnswerQuestion({
-          projectDir: project.projectDir,
-          messageId: message.id,
-          chosenKey: key,
-        })
-      } catch {
-        // IPC not yet wired — continue with local resolution
-      }
-    }
-
-    // Echo user selection into transcript
+    // Optimistic local resolve so the card shows the chip + the chosen answer
+    // surfaces as a user bubble immediately. The RESUME itself originates in
+    // main (chat:answerQuestion → runPoTurn), so the card must NOT also fire a
+    // second turn — this is a single user echo, not a duplicate dispatch.
     const echoMsg: Message = {
       id: `u-auq-${Date.now()}`,
       role: 'user',
@@ -83,7 +73,7 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
     }
     appendMessage(echoMsg)
 
-    // Patch original message payload to resolved in store (idempotent on remount)
+    // Patch original message payload to resolved in store (idempotent on remount).
     const msgs = useWorkspace.getState().messages
     const patched = msgs.map((m) =>
       m.id === message.id
@@ -98,11 +88,30 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
     )
     setMessages(patched)
 
-    // Also persist to chat.json if IPC available
+    // Persist the user echo to chat.json (the card's resolved patch is persisted
+    // main-side by the answer handler). Then flag the in-flight resumed turn so
+    // the composer/stream UI reflects it; onDone clears streaming.
+    const api = (window as any).api
     if (api?.chatAppendMessage && project) {
+      try { await api.chatAppendMessage(project.projectDir, echoMsg) } catch { /* noop */ }
+    }
+
+    if (api?.chatAnswerQuestion && project) {
+      useWorkspace.getState().setStreaming(true)
+      useWorkspace.getState().setInFlightKind('po')
       try {
-        await api.chatAppendMessage(project.projectDir, echoMsg)
-      } catch { /* noop */ }
+        await api.chatAnswerQuestion({
+          projectDir: project.projectDir,
+          messageId: message.id,
+          chosenKey: key,
+          answerText: chosenLabel,
+          sessionId: claudeSessionId,
+        })
+      } catch {
+        // IPC unavailable / resume failed — drop the streaming flag so the
+        // composer doesn't stay locked (AC4 non-trapping).
+        useWorkspace.getState().setStreaming(false)
+      }
     }
 
     setPending(false)

@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
+import type { WebContents } from 'electron'
 import type { ChildProcess } from 'child_process'
-import { getSession, appendMessage, setClaudeSessionId, clearSession } from '../chat-store'
+import { getSession, appendMessage, setClaudeSessionId, clearSession, patchMessage } from '../chat-store'
 import type { Message } from '../chat-store'
 import { runPoTurn, emitToWebContents } from '../po-runner'
 import { markPoTurnStart, markPoTurnEnd } from '@productune/core'
@@ -8,7 +9,27 @@ import { markPoTurnStart, markPoTurnEnd } from '@productune/core'
 // ── Active PO child process tracking (T-P4-059) ───────────────────────────────
 // Allows `po:restartSession` to kill the in-flight process.
 let activePoChild: ChildProcess | null = null
+// T-PATCH-037: latest claude session id, captured from every turn's onDone so a
+// resume (e.g. chat:answerQuestion) can thread the same session. Previously
+// declared-never-assigned; now wired via `withSessionCapture`. `po:restartSession`
+// resets it so the next turn starts fresh (--agent).
 let capturedPoSessionId: string | null = null
+
+/**
+ * Wrap a RunCallbacks bundle so its onDone also records the session id into the
+ * module-scope `capturedPoSessionId` (T-PATCH-037). Keeps the renderer-bound
+ * emit behavior intact.
+ */
+function withSessionCapture(wc: WebContents) {
+  const base = emitToWebContents(wc)
+  return {
+    ...base,
+    onDone: (msgId: string, info: { sessionId?: string }) => {
+      if (info.sessionId) capturedPoSessionId = info.sessionId
+      base.onDone(msgId, info)
+    },
+  }
+}
 
 // ── Register ──────────────────────────────────────────────────────────────────
 
@@ -36,24 +57,53 @@ export function register(): void {
     void payload  // noop — T-P4-115 will replace with playwrightMcp.navigate(url)
   })
 
-  // ── T-013 (b) AskUserQuestion answer ─────────────────────────────────────────
-  // Stub handler: stores chosen key in chat.json's message payload.resolved and
-  // echoes the answer text back to PO via poSendMessage.
-  // Full trigger (PO instruction emitting ask-user-question via claude tool-use)
-  // is a follow-up scope (risk_flags: ipc-action-card-event-shape).
+  // ── T-013 (b) / T-PATCH-037 AskUserQuestion answer ───────────────────────────
+  // Real handler: (1) patch the stored card's payload.resolved = { chosenKey }
+  // in chat.json (idempotent resolved-chip on reload), then (2) RESUME the PO
+  // turn via the same runPoTurn path po:sendMessage uses, feeding the chosen
+  // option text as the next input. Resume threads the captured claude session id
+  // (renderer-held `sessionId` preferred; falls back to module-scope
+  // `capturedPoSessionId`) so PO continues from the answer (not a fresh session).
   ipcMain.handle(
     'chat:answerQuestion',
     async (
-      _event,
-      opts: { projectDir: string; messageId: string; chosenKey: string },
+      event,
+      opts: {
+        projectDir: string
+        messageId: string
+        chosenKey: string
+        answerText: string
+        sessionId?: string | null
+      },
     ): Promise<{ ok: boolean; error?: string }> => {
       try {
-        // Patch the message in chat.json — reuse appendMessage-level store logic.
-        // For now: noop stub (PO trigger not yet implemented).
-        // When PO emits ask-user-question, this handler will:
-        //   1. Read session, find message by id, patch payload.resolved
-        //   2. Call poSendMessage with the chosen answer text
-        void opts
+        // (1) Patch payload.resolved on the stored card. Re-read so we merge into
+        // the existing payload rather than clobbering question/options.
+        const session = getSession(opts.projectDir)
+        const card = session.messages.find((m) => m.id === opts.messageId)
+        const basePayload =
+          card && card.payload && typeof card.payload === 'object'
+            ? (card.payload as Record<string, unknown>)
+            : {}
+        patchMessage(opts.projectDir, opts.messageId, {
+          payload: { ...basePayload, resolved: { chosenKey: opts.chosenKey } },
+        })
+
+        // (2) Resume the PO turn with the chosen answer text as input.
+        const resume = opts.sessionId ?? capturedPoSessionId
+        markPoTurnStart()
+        try {
+          await runPoTurn(
+            {
+              projectDir: opts.projectDir,
+              text: opts.answerText,
+              resume,
+            },
+            withSessionCapture(event.sender),
+          )
+        } finally {
+          markPoTurnEnd()
+        }
         return { ok: true }
       } catch (e: any) {
         return { ok: false, error: e?.message ?? 'unknown' }
@@ -96,7 +146,7 @@ export function register(): void {
             text: opts.text,
             resume: opts.resume ?? null,
           },
-          emitToWebContents(event.sender),
+          withSessionCapture(event.sender),
         )
         return { ok: true }
       } catch (e: any) {
