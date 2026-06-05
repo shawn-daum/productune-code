@@ -48,6 +48,19 @@ let segActiveId: string | null = null
 let segSealed = false
 let turnSegIds: string[] = []
 
+// ── T-PATCH-039: duplicate-chunk guard (defense-in-depth) ───────────────────────
+// The runner emits each assistant text part exactly ONCE per turn (verified:
+// `claude --print --output-format stream-json` delivers full text blocks, never
+// deltas-then-cumulative and never a re-fired assistant event). So a chunk that
+// arrives byte-identical to the immediately-preceding chunk for the SAME active
+// segment is a duplicate delivery, never legitimate streaming. We drop it. This
+// is belt-and-suspenders behind the preload single-subscriber fix: even if a
+// duplicate po:onToken slips through (stacked listener, main-side double send),
+// the active bubble can never self-concatenate the same text. Keyed by segment
+// id so a fresh segment (post-seal) starts clean and an intentional repeat in a
+// LATER segment is unaffected. Reset on turn start / done.
+let lastChunkBySeg: Record<string, string> = {}
+
 function newSegmentId(): string {
   return `seg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 }
@@ -99,6 +112,7 @@ function register() {
     segActiveId = msgId
     segSealed = false
     turnSegIds = [msgId]
+    lastChunkBySeg = {}  // T-PATCH-039: fresh dup-guard per turn
   }))
 
   // ── po:onToken — active segment 에 chunk append (T-PATCH-036) ─────────────
@@ -128,10 +142,15 @@ function register() {
       segActiveId = newId
       segSealed = false
       turnSegIds.push(newId)
+      lastChunkBySeg[newId] = chunk  // T-PATCH-039: seed dup-guard for the new seg
       useWorkspace.setState((s) => ({ messages: [...s.messages, seg] }))
       return
     }
     const activeId = segActiveId
+    // T-PATCH-039: drop a byte-identical immediate repeat for this segment — it is
+    // a duplicate delivery, not real streaming (see lastChunkBySeg note above).
+    if (lastChunkBySeg[activeId] === chunk) return
+    lastChunkBySeg[activeId] = chunk
     useWorkspace.setState((s) => {
       const idx = s.messages.findIndex((m) => m.id === activeId)
       if (idx < 0) return s
@@ -244,6 +263,7 @@ function register() {
     segActiveId = null
     segSealed = false
     turnSegIds = []
+    lastChunkBySeg = {}  // T-PATCH-039
     const proj = useWorkspace.getState().project
     if (proj && finalMsgs.length > 0) {
       for (const fm of finalMsgs) {

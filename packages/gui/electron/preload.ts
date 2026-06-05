@@ -208,8 +208,19 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('po:sendMessage', opts),
 
   /** First event after `poSendMessage` — main allocates the assistant msgId. */
+  // T-PATCH-039: the PO chat streaming channels are single-subscriber by design
+  // (poEvents.register runs once at module load). Defensively clear any prior
+  // listener on the channel before binding so that a re-register — HMR dispose
+  // that fails to fully unbind, a StrictMode/module re-eval, or any double
+  // subscription — can NEVER stack N listeners. A stacked listener was the
+  // segmentation-duplication root cause: each extra po:onToken listener appended
+  // the same full text chunk again to the active bubble (→ "...시점입니다.Phase 3…"
+  // self-concatenation) and each extra po:onMsgId spawned another placeholder
+  // bubble (→ several duplicate bubbles per turn). removeAllListeners guarantees
+  // exactly one live subscriber per channel → text renders exactly once.
   poOnMsgId: (cb: (msgId: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msgId: string) => cb(msgId)
+    ipcRenderer.removeAllListeners('po:onMsgId')
     ipcRenderer.on('po:onMsgId', listener)
     return () => ipcRenderer.removeListener('po:onMsgId', listener)
   },
@@ -217,6 +228,7 @@ contextBridge.exposeInMainWorld('api', {
   poOnToken: (cb: (msgId: string, chunk: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, msgId: string, chunk: string) =>
       cb(msgId, chunk)
+    ipcRenderer.removeAllListeners('po:onToken')
     ipcRenderer.on('po:onToken', listener)
     return () => ipcRenderer.removeListener('po:onToken', listener)
   },
@@ -234,6 +246,7 @@ contextBridge.exposeInMainWorld('api', {
   ) => {
     const listener = (_e: Electron.IpcRendererEvent, msgId: string, payload: any) =>
       cb(msgId, payload)
+    ipcRenderer.removeAllListeners('po:onAskUserQuestion')  // T-PATCH-039: single-subscriber
     ipcRenderer.on('po:onAskUserQuestion', listener)
     return () => ipcRenderer.removeListener('po:onAskUserQuestion', listener)
   },
@@ -246,6 +259,7 @@ contextBridge.exposeInMainWorld('api', {
       msgId: string,
       payload: { level: 'system' | 'tool' | 'error'; text: string },
     ) => cb(msgId, payload)
+    ipcRenderer.removeAllListeners('po:onAnnounce')  // T-PATCH-039: single-subscriber
     ipcRenderer.on('po:onAnnounce', listener)
     return () => ipcRenderer.removeListener('po:onAnnounce', listener)
   },
@@ -256,6 +270,7 @@ contextBridge.exposeInMainWorld('api', {
       msgId: string,
       info: { sessionId?: string },
     ) => cb(msgId, info)
+    ipcRenderer.removeAllListeners('po:onDone')  // T-PATCH-039: single-subscriber
     ipcRenderer.on('po:onDone', listener)
     return () => ipcRenderer.removeListener('po:onDone', listener)
   },
