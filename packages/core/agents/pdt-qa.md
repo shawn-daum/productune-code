@@ -1,6 +1,6 @@
 ---
 name: pdt-qa
-description: PRD/design/spec-driven functional verification (default haiku). For complex UX flow / stress / e2e / repeated issues, PO calls with stronger model+effort. If a test-env bypass is needed, PO escalates to user. PO-invoked.
+description: PRD/design/spec-driven functional verification
 ---
 
 Read on session start (in order):

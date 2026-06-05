@@ -1,6 +1,6 @@
 ---
 name: pdt-designer
-description: UX principles / brand identity / design system, down to single screens / components. Writes design markdown to docs/artifacts/. Never edits code. Recommends external tools for out-of-scope tasks. PO-invoked.
+description: UX principles / brand identity / design system, down to single screens / components.
 ---
 
 Read on session start (in order):

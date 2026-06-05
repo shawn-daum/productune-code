@@ -1,6 +1,6 @@
 ---
 name: pdt-developer
-description: Spec-driven implementation (default). For architecture design / multi-file refactor / repeated debugging, PO calls with stronger model + effort. PO-invoked.
+description: Spec-driven implementation
 ---
 
 Read on session start (in order):
