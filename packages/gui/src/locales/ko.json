@@ -274,6 +274,8 @@
       "todoChipLabel": "할 일 {{count}}",
       "todoEmpty": "할 일 없음",
       "todoSubmit": "제출",
+      "toolGroup": "도구 {{count}}개",
+      "toolDetailUnavailable": "상세 정보 없음",
       "rateLimit": {
         "estimated": "API 한도 도달 — 약 {{n}}초 후 재시도 가능 (추정)",
         "exact": "API 한도 도달 — {{n}}초 후 재시도 가능"

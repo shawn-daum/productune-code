@@ -109,6 +109,12 @@ export interface Message {
   created_at: string
   /** Action-card payload (T-013). Present only for ask-user-question / promotion-candidate kinds. */
   payload?: AskUserQuestionPayload | PromotionPayload
+  /**
+   * Trace sub-level (T-PATCH-033). Carried from AnnouncePayload.level for `kind: 'trace'`
+   * messages so the renderer can group consecutive `tool` traces under one disclosure
+   * without brittle text-prefix sniffing. Absent for non-trace messages.
+   */
+  traceLevel?: string
 }
 
 export interface Session {

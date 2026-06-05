@@ -274,6 +274,8 @@
       "todoChipLabel": "To-do {{count}}",
       "todoEmpty": "No tasks",
       "todoSubmit": "Submit",
+      "toolGroup": "{{count}} tools",
+      "toolDetailUnavailable": "detail unavailable",
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
         "exact": "API limit reached — retry in {{n}}s"

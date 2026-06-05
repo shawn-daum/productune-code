@@ -69,6 +69,8 @@ function register() {
       role: 'system',
       kind: 'trace',
       text: payload.text,
+      // T-PATCH-033: carry level so the renderer can group consecutive `tool` traces.
+      traceLevel: payload.level,
       status: 'done',
       created_at: new Date().toISOString(),
     }

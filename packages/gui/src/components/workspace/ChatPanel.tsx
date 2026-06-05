@@ -25,6 +25,7 @@ import type { Message } from '../../lib/types'
 import PhaseStrip from './PhaseStrip'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
+import ToolUseGroup from './chat/ToolUseGroup'
 import TodoChip from './chat/TodoChip'
 import TodoListPanel from './chat/TodoListPanel'
 import PendingGateChip from './chat/PendingGateChip'
@@ -39,6 +40,9 @@ export default function ChatPanel() {
   const poState = useWorkspace((s) => s.poState)
   const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
   const streaming = useWorkspace((s) => s.streaming)
+
+  // T-PATCH-033: fold consecutive tool-use traces into one group node.
+  const renderItems = useMemo(() => groupToolTraces(messages), [messages])
 
   const setMessages = useWorkspace((s) => s.setMessages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
@@ -241,7 +245,13 @@ export default function ChatPanel() {
           {messages.length === 0 ? (
             <div style={emptyHint}>{t('workspace.chat.emptyHint')}</div>
           ) : (
-            messages.map((m) => <MessageBubble key={m.id} message={m} />)
+            renderItems.map((item) =>
+              item.kind === 'tool-group' ? (
+                <ToolUseGroup key={item.key} tools={item.tools} />
+              ) : (
+                <MessageBubble key={item.message.id} message={item.message} />
+              ),
+            )
           )}
         </div>
 
@@ -366,6 +376,45 @@ export default function ChatPanel() {
       )}
     </>
   )
+}
+
+// ── T-PATCH-033: tool-trace grouping ──────────────────────────────────────────
+// Fold a run of adjacent `trace` messages whose traceLevel === 'tool' into one
+// `tool-group` node; everything else passes through unchanged. A non-tool message
+// breaks the run (AC1). Group key = first tool message id → stable React
+// reconciliation while a turn is still streaming new tool lines into the group (AC5).
+// N=1 still produces a group (no flat-line special path, AC2).
+
+type RenderItem =
+  | { kind: 'message'; message: Message }
+  | { kind: 'tool-group'; key: string; tools: Message[] }
+
+function isToolTrace(m: Message): boolean {
+  return m.kind === 'trace' && m.traceLevel === 'tool'
+}
+
+function groupToolTraces(messages: Message[]): RenderItem[] {
+  const items: RenderItem[] = []
+  let run: Message[] | null = null
+
+  const flush = () => {
+    if (run && run.length > 0) {
+      items.push({ kind: 'tool-group', key: `tg-${run[0].id}`, tools: run })
+    }
+    run = null
+  }
+
+  for (const m of messages) {
+    if (isToolTrace(m)) {
+      if (run) run.push(m)
+      else run = [m]
+    } else {
+      flush()
+      items.push({ kind: 'message', message: m })
+    }
+  }
+  flush()
+  return items
 }
 
 // ── styles ────────────────────────────────────────────────────────────────────
