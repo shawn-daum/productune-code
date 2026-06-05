@@ -33,6 +33,9 @@ import RateLimitBanner from './chat/RateLimitBanner'
 import UsageBar from './chat/UsageBar'
 import { useSessionHealth } from '../../store/sessionHealth'
 
+// T-PATCH-051: breakpoint for inline UsageBar layout (AC-1, AC-2)
+const USAGE_INLINE_WIDTH = 400
+
 export default function ChatPanel() {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
@@ -62,6 +65,23 @@ export default function ChatPanel() {
 
   const msgsRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  // T-PATCH-051: track panel width for inline UsageBar breakpoint (AC-1, AC-2)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelWidth, setPanelWidth] = useState(0)
+
+  // T-PATCH-051: ResizeObserver on the panel root → drives inline UsageBar toggle
+  useEffect(() => {
+    const el = panelRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0
+      setPanelWidth(w)
+    })
+    ro.observe(el)
+    // Seed initial width (before first ResizeObserver callback)
+    setPanelWidth(el.getBoundingClientRect().width)
+    return () => ro.disconnect()
+  }, [])
 
   // ── Load session on project change ───────────────────────────────────────
   useEffect(() => {
@@ -199,9 +219,12 @@ export default function ChatPanel() {
     return `${ticketId} ${action}`
   }, [poState, t])
 
+  // T-PATCH-051: wide enough to place UsageBar inline with input row (AC-1)
+  const usageInline = panelWidth >= USAGE_INLINE_WIDTH
+
   return (
     <>
-      <div style={wrap}>
+      <div style={wrap} ref={panelRef}>
         {/* rp-hdr */}
         <div style={header}>
           <span style={poBadge}>P</span>
@@ -266,14 +289,17 @@ export default function ChatPanel() {
           />
         )}
 
-        {/* rp-usage-bar (T-025) — near-live 5h/7d usage; hidden for non-subscribers */}
-        <UsageBar />
+        {/* rp-usage-bar (T-025) — near-live 5h/7d usage; hidden for non-subscribers.
+            T-PATCH-051: stacked below input when narrow, inline when wide (AC-1, AC-2). */}
+        {!usageInline && <UsageBar />}
 
         {/* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */}
         <div style={inputArea}>
+          {/* T-PATCH-051: when wide, UsageBar sits to the right of the textarea (AC-1) */}
+          <div style={usageInline ? inputWithUsageRow : undefined}>
           <textarea
             ref={taRef}
-            style={textarea}
+            style={usageInline ? { ...textarea, flex: 1 } : textarea}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
@@ -281,6 +307,12 @@ export default function ChatPanel() {
             rows={1}
             disabled={streaming || !project || rateLimited}
           />
+          {usageInline && (
+            <div style={usageInlineSide}>
+              <UsageBar inline />
+            </div>
+          )}
+          </div>
           <div style={inputRow}>
             <button
               style={{
@@ -665,4 +697,21 @@ const fileListRemove: React.CSSProperties = {
   lineHeight: 1,
   borderRadius: 3,
   flexShrink: 0,
+}
+
+// T-PATCH-051: styles for inline UsageBar layout
+const inputWithUsageRow: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'row',
+  gap: 8,
+  alignItems: 'flex-start',
+}
+
+const usageInlineSide: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  flexShrink: 0,
+  // Remove top border from UsageBar container when inline — parent inputArea provides it
+  paddingTop: 2,
 }

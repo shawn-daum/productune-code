@@ -37,7 +37,15 @@ interface UsagePayload {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function UsageBar() {
+interface UsageBarProps {
+  /**
+   * T-PATCH-051: when true, renders without the top border / dark background —
+   * used when embedded inline in the input row (wide panel layout).
+   */
+  inline?: boolean
+}
+
+export default function UsageBar({ inline = false }: UsageBarProps) {
   const [payload, setPayload] = useState<UsagePayload | null>(null)
 
   useEffect(() => {
@@ -51,7 +59,7 @@ export default function UsageBar() {
   if (!payload || (!payload.five_hour && !payload.seven_day)) return null
 
   return (
-    <div style={container}>
+    <div style={inline ? containerInline : container}>
       {payload.five_hour && (
         <UsageRow
           icon={<Clock size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />}
@@ -165,6 +173,15 @@ const container: React.CSSProperties = {
   padding: '4px 12px',
   borderTop: '1px solid #1C1C1C',
   background: '#0F0F0F',
+}
+
+// T-PATCH-051: inline variant — no border-top/background; embedded in input row
+const containerInline: React.CSSProperties = {
+  flexShrink: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 3,
+  padding: '4px 8px',
 }
 
 const rowWrap: React.CSSProperties = {
