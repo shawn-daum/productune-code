@@ -2,12 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ChevronDown, ChevronRight, Search, Loader2, Info,
-  File, FileText, FileCode, FileImage, FolderClosed,
+  File, FileText, FileCode, FileImage,
 } from 'lucide-react'
 import { useSearch } from '../../store/search'
 import type { SearchFileGroup, SearchMatch, SearchMatchRange } from '../../store/search'
-import { useWorkspace, paneTreeUtil } from '../../store/workspace'
-import type { Pane } from '../../store/workspace'
+import { useWorkspace } from '../../store/workspace'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -30,16 +29,6 @@ function fileIcon(name: string) {
     return <FileImage size={13} strokeWidth={1.75} color="#8ab4f8" />
   }
   return <File size={13} strokeWidth={1.75} color="#606060" />
-}
-
-/** Directory of the active tab's file (for "current folder" scope), or null. */
-function activeFileDir(panes: Pane, activePaneId: string): string | null {
-  const leaf = paneTreeUtil.findLeaf(panes, activePaneId)
-  if (!leaf || !leaf.activeTabId) return null
-  const tab = leaf.tabs.find((t) => t.id === leaf.activeTabId)
-  const p = tab?.props?.path
-  if (typeof p !== 'string' || !p.includes('/')) return null
-  return p.slice(0, p.lastIndexOf('/'))
 }
 
 /** Split a match line into segments around the highlight ranges. */
@@ -72,14 +61,11 @@ interface Props {
 export default function SearchPane({ projectDir }: Props) {
   const { t } = useTranslation()
   const {
-    query, options, scope, status, result, errorMsg,
-    collapsed, setQuery, toggleOption, setScope, setStatus, setResult, setError,
+    query, options, status, result, errorMsg,
+    collapsed, setQuery, toggleOption, setStatus, setResult, setError,
     toggleCollapsed, collapseAll, expandAll,
   } = useSearch()
-  const { openTab, panes, activePaneId } = useWorkspace()
-
-  // "Current folder" scope = directory of the active tab's file (else project root).
-  const folderDir = activeFileDir(panes, activePaneId)
+  const { openTab } = useWorkspace()
 
   const [open, setOpen] = useState(true)
   const [activeMatch, setActiveMatch] = useState<string | null>(null)
@@ -100,9 +86,8 @@ export default function SearchPane({ projectDir }: Props) {
       }
       const seq = ++reqSeqRef.current
       setStatus('searching')
-      // Whole project (default) → null scopeDir. Current folder → active file's
-      // dir; falls back to project root when no file tab is active.
-      const scopeDir = scope === 'folder' ? (folderDir ?? projectDir) : null
+      // Always project-wide — scopeDir = null (T-PATCH-049: scope toggle removed)
+      const scopeDir = null
       api.searchContent({ projectDir, scopeDir, query: trimmed, options })
         .then((res: any) => {
           // Ignore stale responses (a newer request superseded this one).
@@ -123,15 +108,15 @@ export default function SearchPane({ projectDir }: Props) {
           setStatus('error')
         })
     },
-    [projectDir, scope, options, folderDir, setStatus, setResult, setError],
+    [projectDir, options, setStatus, setResult, setError],
   )
 
-  // Re-run on query / options / scope change (debounced).
+  // Re-run on query / options change (debounced).
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     debounceRef.current = setTimeout(() => runSearch(query), DEBOUNCE_MS)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [query, options, scope, folderDir, runSearch])
+  }, [query, options, runSearch])
 
   // ── Open file at match (AC-3) ──────────────────────────────────────────────
   const handleOpenMatch = useCallback(
@@ -215,25 +200,6 @@ export default function SearchPane({ projectDir }: Props) {
                   onClick={() => toggleOption('regex')}
                 />
               </span>
-            </div>
-
-            {/* Scope toggle — default = whole project (AC-5). No glob fields. */}
-            <div
-              style={scopeSelect}
-              onClick={() => setScope(scope === 'project' ? 'folder' : 'project')}
-              role="button"
-              title={t('workspace.search.scopeTitle')}
-            >
-              <FolderClosed size={12} strokeWidth={1.75} color="#707070" style={{ flexShrink: 0 }} />
-              <span style={{ color: '#A0A0A0' }}>{t('workspace.search.scopeLabel')}</span>
-              <span style={scopeVal}>
-                {scope === 'project'
-                  ? t('workspace.search.scopeProject')
-                  : folderDir
-                    ? `${folderDir.split('/').filter(Boolean).pop()}/`
-                    : t('workspace.search.scopeFolder')}
-              </span>
-              <ChevronDown size={12} strokeWidth={1.75} color="#707070" style={{ marginLeft: 'auto' }} />
             </div>
 
             <div style={ignoreHint}>
@@ -320,7 +286,6 @@ export default function SearchPane({ projectDir }: Props) {
             <div style={statePane}>
               <Search size={28} strokeWidth={1.5} color="#707070" />
               <h3 style={stateTitle}>{t('workspace.search.emptyTitle')}</h3>
-              <p style={stateText}>{t('workspace.search.emptyBody')}</p>
             </div>
           )}
 
@@ -472,23 +437,6 @@ const optOn: React.CSSProperties = {
   color: '#F0F0F0',
   background: 'color-mix(in oklab, #8B5CF6 18%, transparent)',
   borderColor: ACCENT,
-}
-
-const scopeSelect: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  background: '#0F0F0F',
-  border: '1px solid #1F1F1F',
-  borderRadius: 4,
-  padding: '4px 8px',
-  color: '#A0A0A0',
-  fontSize: 12,
-  cursor: 'pointer',
-}
-
-const scopeVal: React.CSSProperties = {
-  color: '#E8E8EA',
 }
 
 const ignoreHint: React.CSSProperties = {
