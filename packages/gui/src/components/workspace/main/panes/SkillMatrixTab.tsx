@@ -148,17 +148,22 @@ export default function SkillMatrixTab({ props }: Props) {
           spellCheck={false}
         />
         <div style={filterArea}>
-          {PERSONA_COLS.map((p) => (
-            <button
-              key={p}
-              style={personaChipStyle(personaFilter.has(p), PERSONA_COLORS[p])}
-              onClick={() => togglePersona(p)}
-              title={p}
-            >
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: PERSONA_COLORS[p], display: 'inline-block', flexShrink: 0 }} />
-              {p}
-            </button>
-          ))}
+          {PERSONA_COLS.map((p) => {
+            // T-PATCH-054: dynamic per-persona skill count badge
+            const count = skills.filter((s) => s.personas.includes(p)).length
+            return (
+              <button
+                key={p}
+                style={personaChipStyle(personaFilter.has(p), PERSONA_COLORS[p])}
+                onClick={() => togglePersona(p)}
+                title={p}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: PERSONA_COLORS[p], display: 'inline-block', flexShrink: 0 }} />
+                {p}
+                <span style={personaCountBadge}>{count}</span>
+              </button>
+            )
+          })}
           <button
             style={assignedChipStyle(assignedOnly)}
             onClick={() => setAssignedOnly((v) => !v)}
@@ -300,6 +305,13 @@ function personaChipStyle(active: boolean, color: string): React.CSSProperties {
     cursor: 'pointer',
     userSelect: 'none',
   }
+}
+
+const personaCountBadge: React.CSSProperties = {
+  fontSize: 9,
+  color: '#707070',
+  marginLeft: 2,
+  fontFamily: 'monospace',
 }
 
 function assignedChipStyle(active: boolean): React.CSSProperties {
