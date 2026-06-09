@@ -3,13 +3,13 @@ ticket_id: T-PATCH-062
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L4
 risk_flags: ask-user-question, chat-panel, popover, ipc
 slug: ask-user-question-popup-above-input
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-chat
 ---
@@ -93,3 +93,7 @@ if (
 
 - `AskUserQuestionCard` import, `handleSelect`, `api.chatAnswerQuestion` 로직은 변경 없음
 - 팝업 포지셔닝: absolute/fixed portal 불필요. ChatPanel 하단 flex column 안에서 inputArea 바로 위 형제 div면 충분 (Claude Code UI와 동일한 방식)
+
+## Close note (PO 2026-06-09)
+
+Superseded by T-PATCH-065 — small input-popup redesigned into full ChatPanel overlay modal. Implemented in T-065 (questionModal/dismissedQuestionId/modalCloseBtn).

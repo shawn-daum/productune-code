@@ -3,13 +3,13 @@ ticket_id: T-PATCH-056
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L2
 risk_flags: tabbar-css, scrollbar, tab-x-button
 slug: tabbar-scrollbar-bg-x-button-fix
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-main-panel
 parent_ticket: T-PATCH-044
@@ -54,3 +54,7 @@ T-PATCH-044 후속 QA. 두 가지 잔여 문제:
      ```
    - `tabStrip` div에 `className="tab-strip-scroll"` 추가
    - inline style의 `scrollbarWidth: 'thin'`은 유지
+
+## Close note (PO 2026-06-09)
+
+Closed per PO decision (2026-06-09): scrollbar transparent-track CSS + totalLeafCount removal landed. showClose keeps '&& tabCount > 1' by design — last remaining tab is non-closable (accepted divergence from literal AC-2).

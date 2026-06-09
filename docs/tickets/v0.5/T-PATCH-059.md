@@ -3,13 +3,13 @@ ticket_id: T-PATCH-059
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L3
 risk_flags: iframe-sandbox, keyboard-shortcut, focus
 slug: html-iframe-cmd-shortcut-fix
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-main-panel
 parent_ticket: T-PATCH-047
@@ -61,3 +61,7 @@ iframe 내부를 클릭하면 window의 keyboard focus가 iframe 내부 document
    ```
 
 Note: `window.addEventListener('blur', ...)` 는 iframe이 focus를 가져갈 때 발생함 (window losing focus to its child iframe). `document.activeElement`가 `IFRAME` 태그인 경우에만 복원하여 다른 창 전환 시에는 적용하지 않음.
+
+## Close note (PO 2026-06-09)
+
+Superseded by T-PATCH-066/T-PATCH-067 — iframe focus/shortcut solved via postMessage focus-bridge (sandbox=allow-scripts), not the window.blur approach planned here. Closed without separate impl.

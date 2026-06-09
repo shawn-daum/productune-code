@@ -3,7 +3,7 @@ ticket_id: T-PATCH-037
 version: v0.5
 phase: 3
 type: bug
-status: ready
+status: done
 assignee: pdt-developer
 estimated_complexity: L4
 risk_flags:

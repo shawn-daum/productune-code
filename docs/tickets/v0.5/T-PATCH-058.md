@@ -3,13 +3,13 @@ ticket_id: T-PATCH-058
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L4
 risk_flags: findbar, window-find, webview-dom-ready, overlay-position
 slug: findbar-focus-domready-position-fix
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-main-panel
 parent_ticket: T-PATCH-046
@@ -108,3 +108,7 @@ const barStyle: React.CSSProperties = {
 ```
 - `borderBottom` → `border`로 변경, `borderRadius` 추가
 - `top: 0` → `top: 8` (약간 아래)
+
+## Close note (PO 2026-06-09)
+
+Closed: focus-restore (inputRef) + FindBar width 320 landed here; dom-ready error + 한글자 bug root-fixed in T-PATCH-067 (find moved to main process, selection-preserve).

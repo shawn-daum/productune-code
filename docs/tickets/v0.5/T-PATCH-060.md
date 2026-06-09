@@ -3,13 +3,13 @@ ticket_id: T-PATCH-060
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L1
 risk_flags: search-pane-empty-state
 slug: search-pane-idle-empty-state-remove
-qa_status: pending
+qa_status: skipped
 requires_qa: false
 area_tag: gui-explorer
 parent_ticket: T-PATCH-049

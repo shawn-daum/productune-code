@@ -3,13 +3,13 @@ ticket_id: T-PATCH-063
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L2
 risk_flags: iframe-focus, blur-event, keyboard-shortcut
 slug: html-iframe-cmd-shortcut-refix
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-main-panel
 parent_ticket: T-PATCH-059
@@ -68,3 +68,7 @@ useEffect(() => {
 - `addEventListener('blur', ...)` → `addEventListener('blur', ..., true)` (capture phase 추가)
 - 함수명 `onWindowBlur` → `onBlurCapture`
 - `removeEventListener` 에도 `true` 추가
+
+## Close note (PO 2026-06-09)
+
+Superseded by T-PATCH-066/T-PATCH-067 — document-blur-capture approach replaced by postMessage iframe-focus bridge. Closed without separate impl.

@@ -3,13 +3,13 @@ ticket_id: T-PATCH-057
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L3
 risk_flags: html-viewer, zoom, webview
 slug: html-viewer-zoom-fix
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-main-panel
 parent_ticket: T-PATCH-045

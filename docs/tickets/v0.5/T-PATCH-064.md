@@ -3,13 +3,13 @@ ticket_id: T-PATCH-064
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L2
 risk_flags: findbar-live-search, preview-tab-find
 slug: findbar-live-search-on-change
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-main-panel
 parent_ticket: T-PATCH-058
@@ -75,3 +75,7 @@ Cmd+F 오픈 조건도 동일하게 업데이트:
 if (activeTab && (isBrowserTab || isTextTab)) {
 // preview도 cmd+F로 FindBar 열 수 있도록 → isTextTab이 이미 preview 포함하면 자동 처리
 ```
+
+## Close note (PO 2026-06-09)
+
+Superseded by T-PATCH-067 R4 — preview/iframe live find handled via isPreviewTab + postMessage find protocol (CSS Custom Highlight). Closed.

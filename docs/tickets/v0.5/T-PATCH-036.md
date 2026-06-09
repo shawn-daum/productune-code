@@ -3,7 +3,7 @@ ticket_id: T-PATCH-036
 version: v0.5
 phase: 3
 type: feature
-status: ready
+status: done
 assignee: pdt-developer
 estimated_complexity: M
 risk_flags: [stream-ordering, renderer-model-boundary, t033-interplay]

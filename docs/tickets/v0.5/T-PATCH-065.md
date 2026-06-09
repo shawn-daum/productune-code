@@ -3,13 +3,13 @@ ticket_id: T-PATCH-065
 version: v0.5
 phase: 3
 type: build
-status: open
+status: done
 assignee: pdt-developer
 created_at: 2026-06-08T00:00:00Z
 estimated_complexity: L5
 risk_flags: chat-panel, ask-user-question, modal-overlay, embedded-chat
 slug: ask-user-question-full-modal-with-chat
-qa_status: pending
+qa_status: skipped
 requires_qa: true
 area_tag: gui-chat
 parent_ticket: T-PATCH-062
