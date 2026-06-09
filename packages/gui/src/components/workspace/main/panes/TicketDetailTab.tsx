@@ -4,7 +4,7 @@
  * Main-pane peer tab (type: ticket-detail). Opens via ticket-open intent
  * (cmd+p or Tickets-tab row click). Read-only viewer — no edit affordance.
  *
- * Regions (per T-003-a7-flow.md §2):
+ * Regions (per docs/designer/archive/v0.5/T-003-a7-flow.md §2):
  *   §2.0 Header  — breadcrumb + ticket ID + title + status pill + read-only marker
  *   §2a  KR body — md-* recipes via MdRenderer (## Request (KR) section)
  *   §2b  DispatchProgress — persona rail + derived next-action (informational)
@@ -79,7 +79,7 @@ function statusColor(status: string | undefined): string {
   return STATUS_COLORS[status ?? ''] ?? '#505050'
 }
 
-// ── Next-action derivation (T-003-a7-flow.md §2b) ────────────────────────────
+// ── Next-action derivation (docs/designer/archive/v0.5/T-003-a7-flow.md §2b) ──
 
 function deriveNextAction(
   status: string | undefined,

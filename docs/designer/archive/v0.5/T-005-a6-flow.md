@@ -11,7 +11,7 @@
 > files / tickets / personas / skills). This doc only adds **3 new index sources** (tabs / MCP /
 > artifacts) and binds the palette to the header bar. No new search engine.
 > **A7 seam (honored, not re-derived)** — selecting a **ticket** result emits exactly the
-> `ticket-open { ticketId }` intent defined in `docs/artifacts/v0.5/T-003-a7-flow.md §1.1 step 3`
+> `ticket-open { ticketId }` intent defined in `docs/designer/archive/v0.5/T-003-a7-flow.md §1.1 step 3`
 > (opens a `type: ticket-detail` **peer** main-pane tab — **NOT** a jump into the Tickets tab).
 > A6 owns *emitting* that intent; A7 owns everything after it.
 > Out (PRD A6-Out): **full-text content search inside artifact contents** — artifacts are indexed by
