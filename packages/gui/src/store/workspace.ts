@@ -32,12 +32,15 @@ export type TabType =
   | 'code-search'
   | 'code-view'
   | 'doctrine-file'
+  | 'project-env'
 
 export interface Tab {
   id: string
   type: TabType
   title: string
   props?: Record<string, unknown>
+  /** T-PATCH-079: set by auto-surface; cleared when user explicitly focuses the tab. */
+  needsReview?: boolean
 }
 
 export interface LeafPaneNode {
@@ -120,7 +123,11 @@ interface WorkspaceState {
   resetSession: () => void
 
   // pane tree ops
-  openTab: (tabId: string, type: TabType, props?: Record<string, unknown>, title?: string) => void
+  openTab: (tabId: string, type: TabType, props?: Record<string, unknown>, title?: string, opts?: { needsReview?: boolean }) => void
+  /** T-PATCH-079: add tab without activating (background open). Always sets needsReview:true. Dedupes by tabId globally — no-op if already open. */
+  openTabBackground: (tabId: string, type: TabType, props?: Record<string, unknown>, title?: string) => void
+  /** T-PATCH-079: returns true if the currently active tab has an unsaved-changes guard (is dirty/mid-edit). */
+  isActiveTabDirty: () => boolean
   addNewTab: (paneId: string) => void
   closeTab: (paneId: string, tabId: string) => void
   setActiveTab: (paneId: string, tabId: string) => void
@@ -384,7 +391,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
 
   // ── pane tree ops ──────────────────────────────────────────────────────────
 
-  openTab: (tabId, type, props, title) => {
+  openTab: (tabId, type, props, title, opts) => {
     set((s) => {
       // dedupe globally — if any pane already has this tab id, focus it instead.
       const leafIds = collectLeafIds(s.panes)
@@ -394,18 +401,53 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
           return {
             ...s,
             activePaneId: pid,
-            panes: replaceLeaf(s.panes, pid, (l) => ({ ...l, activeTabId: tabId })),
+            panes: replaceLeaf(s.panes, pid, (l) => ({
+              ...l,
+              activeTabId: tabId,
+              ...(opts?.needsReview
+                ? { tabs: l.tabs.map((t) => t.id === tabId ? { ...t, needsReview: true } : t) }
+                : {}),
+            })),
           }
         }
       }
       const targetPaneId = leafIds.includes(s.activePaneId) ? s.activePaneId : leafIds[0]
-      const newTab: Tab = { id: tabId, type, title: title ?? defaultTitle(type, props), props }
+      const newTab: Tab = { id: tabId, type, title: title ?? defaultTitle(type, props), props, ...(opts?.needsReview ? { needsReview: true } : {}) }
       return {
         ...s,
         panes: replaceLeaf(s.panes, targetPaneId, (l) => appendTabToLeaf(l, newTab)),
         activePaneId: targetPaneId,
       }
     })
+  },
+
+  openTabBackground: (tabId, type, props, title) => {
+    set((s) => {
+      // Global dedupe: if already open anywhere, no-op (don't steal focus).
+      const leafIds = collectLeafIds(s.panes)
+      for (const pid of leafIds) {
+        const leaf = findLeaf(s.panes, pid)
+        if (leaf && leaf.tabs.some((t) => t.id === tabId)) return s
+      }
+      const targetPaneId = leafIds.includes(s.activePaneId) ? s.activePaneId : leafIds[0]
+      const newTab: Tab = { id: tabId, type, title: title ?? defaultTitle(type, props), props, needsReview: true }
+      return {
+        ...s,
+        // Add to leaf WITHOUT updating activeTabId (background — no focus steal)
+        panes: replaceLeaf(s.panes, targetPaneId, (l) => ({
+          ...l,
+          tabs: [...l.tabs, newTab],
+        })),
+        // activePaneId unchanged
+      }
+    })
+  },
+
+  isActiveTabDirty: () => {
+    const s = get()
+    const leaf = findLeaf(s.panes, s.activePaneId)
+    if (!leaf?.activeTabId) return false
+    return !canCloseTab(leaf.activeTabId)
   },
 
   addNewTab: (paneId) => {
@@ -445,7 +487,13 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
     set((s) => ({
       ...s,
       activePaneId: paneId,
-      panes: replaceLeaf(s.panes, paneId, (l) => ({ ...l, activeTabId: tabId })),
+      panes: replaceLeaf(s.panes, paneId, (l) => ({
+        ...l,
+        activeTabId: tabId,
+        tabs: l.tabs.map((t) =>
+          t.id === tabId && t.needsReview ? { ...t, needsReview: false } : t,
+        ),
+      })),
     }))
   },
 
@@ -700,6 +748,7 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'code-search':       return (props?.path as string)?.split('/').pop() ?? 'File'
     case 'code-view':         return (props?.path as string)?.split('/').pop() ?? 'File'
     case 'doctrine-file':     return (props?.relName as string) ?? (props?.absPath as string)?.split('/').pop() ?? 'Doctrine'
+    case 'project-env':       return (props?.filename as string) ?? '.env'
     default:                  return type
   }
 }

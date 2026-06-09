@@ -21,3 +21,6 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 ## next-version (v0.x)
 
 ## pre-deploy
+
+## next-version (v0.x) — codex 폐기
+- Codex 엔진 폐기 — claude code only 결정(2026-06-09, shawn). MY_PO_ENGINE codex/both 옵션 + 온보딩 엔진선택(Step1_Engine/Step2_EngineConnect/types.ts) + checkCodex/codexLogin IPC(preload/onboarding) + i18n codex 키 전부 제거 대상. T-PATCH-077 Claude Code 연결상태가 단일 엔진 전제로 자리잡음 → 미러 불필요. (cleanup 티켓 별도 발행 필요)

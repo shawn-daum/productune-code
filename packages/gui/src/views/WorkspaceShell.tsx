@@ -22,6 +22,7 @@ import BaseDirtyModal from '../components/workspace/BaseDirtyModal'
 import { useResizeLayout } from './workspace/shell/useResizeLayout'
 import { useKeyboardShortcuts } from './workspace/shell/useKeyboardShortcuts'
 import { useIpcSubscriptions } from './workspace/shell/useIpcSubscriptions'
+import { useAutoSurfaceArtifacts } from './workspace/shell/useAutoSurfaceArtifacts'
 import { grid, breadcrumbArea, sidebarResizeArea, chatResizeArea, artifactToastStyle } from './workspace/shell/styles'
 import { buildQuickOpenItems, collectAllTabs, type McpServerEntry, type ArtifactEntry } from './workspace/shell/helpers'
 import { ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH } from './workspace/shell/constants'
@@ -131,6 +132,14 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
     useIpcSubscriptions(openTab, appendMessage, t)
 
   const { tickets: scannedTickets } = useTicketScan(project.projectDir)
+
+  const poStateVersion = useWorkspace((s) => s.poState?.current_version ?? null)
+
+  useAutoSurfaceArtifacts({
+    projectDir: project.projectDir,
+    currentVersion: poStateVersion,
+    tickets: scannedTickets,
+  })
 
   // T-PATCH-010 #3: track whether this render is a project switch so the
   // current-version tab opens after poState loads (switch only, not icon-click).

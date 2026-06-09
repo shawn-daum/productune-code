@@ -17,6 +17,7 @@ interface ScannedTicket {
   assignee?: string
   estimated_complexity?: string
   risk_flags?: string
+  requires_user_gate?: boolean
   branch?: string
   worktree_path?: string
   success_metric?: string | null
@@ -196,6 +197,7 @@ export function register(): void {
           assignee: fm.assignee,
           estimated_complexity: fm.estimated_complexity,
           risk_flags: fm.risk_flags,
+          requires_user_gate: typeof fm.requires_user_gate === 'boolean' ? fm.requires_user_gate : undefined,
           branch: fm.branch ?? undefined,
           worktree_path: fm.worktree_path ?? undefined,
           success_metric: fm.success_metric ?? null,

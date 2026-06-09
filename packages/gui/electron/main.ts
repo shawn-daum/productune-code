@@ -20,6 +20,7 @@ import { register as registerArtifacts }  from './ipc/artifacts'
 import { register as registerDoctrine }   from './ipc/doctrine'
 import { register as registerHtml }       from './ipc/html'
 import { register as registerBrowserFind } from './ipc/browserFind'
+import { register as registerProjectEnv }  from './ipc/projectEnv'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
@@ -60,6 +61,7 @@ registerArtifacts()
 registerDoctrine()
 registerHtml()
 registerBrowserFind()
+registerProjectEnv()
 
 // ── Window ────────────────────────────────────────────────────────────────────
 

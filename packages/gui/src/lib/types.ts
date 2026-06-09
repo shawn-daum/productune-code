@@ -145,6 +145,7 @@ export interface Ticket {
   assignee?: string
   estimated_complexity?: string
   risk_flags?: string
+  requires_user_gate?: boolean   // frontmatter gate flag for auto-surface (T-PATCH-079)
   branch?: string
   worktree_path?: string
   success_metric?: string | null

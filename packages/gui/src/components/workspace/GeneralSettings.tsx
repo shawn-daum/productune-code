@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import i18next from '../../i18n'
 import { useUserMode } from '../../store/useUserMode'
 import type { UserMode } from '../../store/useUserMode'
@@ -68,7 +70,101 @@ export default function GeneralSettings() {
         />
       </div>
 
+      <div style={divider} />
+
+      {/* Claude Code connection — T-PATCH-077 */}
+      <ClaudeConnection />
+
       <div style={noteText}>{t('settings.language.immediateNote')}</div>
+    </div>
+  )
+}
+
+// ── Claude Code Connection ─────────────────────────────────────────────────────
+
+type ClaudeStatus = 'checking' | 'connected' | 'not-connected'
+
+function ClaudeConnection() {
+  const { t } = useTranslation()
+  const [status, setStatus] = useState<ClaudeStatus>('checking')
+  const [installed, setInstalled] = useState(false)
+
+  async function probe() {
+    setStatus('checking')
+    try {
+      const result: { installed: boolean; authed: boolean } =
+        await (window as any).api.checkClaude()
+      setInstalled(result.installed)
+      setStatus(result.installed && result.authed ? 'connected' : 'not-connected')
+    } catch {
+      // IPC unavailable in browser dev mode — degrade gracefully
+      setStatus('not-connected')
+    }
+  }
+
+  useEffect(() => {
+    probe()
+    window.addEventListener('focus', probe)
+    return () => window.removeEventListener('focus', probe)
+  }, [])
+
+  async function handleConnect() {
+    try {
+      await (window as any).api.claudeLogin()
+    } catch { /* IPC unavailable in browser dev mode */ }
+  }
+
+  const iconColor =
+    status === 'connected' ? '#4ADE80' :
+    status === 'checking'  ? '#606060' :
+    '#EF4444'
+
+  const StatusIcon =
+    status === 'checking'  ? <Loader2 size={13} color={iconColor} className="pdt-spin" /> :
+    status === 'connected' ? <CheckCircle2 size={13} color={iconColor} /> :
+                             <XCircle size={13} color={iconColor} />
+
+  return (
+    <div>
+      <div style={sectionTitle}>{t('settings.claudeConnection.title')}</div>
+
+      {/* Status row */}
+      <div style={claudeStatusRow}>
+        {StatusIcon}
+        <span style={{ ...description, color: iconColor }}>
+          {status === 'checking'
+            ? t('settings.claudeConnection.statusChecking')
+            : status === 'connected'
+            ? t('settings.claudeConnection.statusConnected')
+            : t('settings.claudeConnection.statusNotConnected')}
+        </span>
+      </div>
+
+      {/* Not-connected affordances */}
+      {status === 'not-connected' && (
+        <div style={{ marginTop: 6 }}>
+          <div style={description}>
+            {!installed
+              ? t('settings.claudeConnection.installHint')
+              : t('settings.claudeConnection.authHint')}
+          </div>
+          {installed && (
+            <div style={{ ...description, color: '#505050', marginTop: 4 }}>
+              {t('settings.claudeConnection.terminalNote')}
+            </div>
+          )}
+          <div style={claudeActions}>
+            {installed && (
+              <button style={claudeConnectBtn} onClick={handleConnect}>
+                {t('settings.claudeConnection.connectBtn')}
+              </button>
+            )}
+            <button style={claudeRecheckBtn} onClick={probe}>
+              {t('settings.claudeConnection.recheckBtn')}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -180,4 +276,41 @@ const noteText: React.CSSProperties = {
   color: '#505050',
   lineHeight: 1.5,
   marginTop: 4,
+}
+
+const claudeStatusRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  marginTop: 4,
+}
+
+const claudeActions: React.CSSProperties = {
+  display: 'flex',
+  gap: 6,
+  marginTop: 8,
+}
+
+const claudeConnectBtn: React.CSSProperties = {
+  background: '#8B5CF6',
+  border: 'none',
+  borderRadius: 5,
+  color: '#FFFFFF',
+  cursor: 'pointer',
+  fontSize: 11,
+  fontWeight: 600,
+  padding: '4px 10px',
+  transition: 'opacity 0.15s',
+}
+
+const claudeRecheckBtn: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid #2A2A2A',
+  borderRadius: 5,
+  color: '#A0A0A0',
+  cursor: 'pointer',
+  fontSize: 11,
+  fontWeight: 500,
+  padding: '4px 10px',
+  transition: 'border-color 0.15s, color 0.15s',
 }

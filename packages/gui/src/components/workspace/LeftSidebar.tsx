@@ -11,6 +11,7 @@ import ExplorerPane from '../explorer/ExplorerPane'
 import SidePanelCurrentVersion from './SidePanelCurrentVersion'
 import SidePanelPastVersions from './SidePanelPastVersions'
 import SidePanelArtifacts from './SidePanelArtifacts'
+import SidePanelProjectEnv from './SidePanelProjectEnv'
 import ArtifactsPane from './ArtifactsPane'
 
 interface Props {
@@ -143,6 +144,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
             // and dispatches version-select). The card opens its own ticket-review tab.
             onSelect={(id) => setSelectedVersionId(id)}
           />
+          {/* T-PATCH-076: project .env viewer/editor — directly below current-version card */}
+          <SidePanelProjectEnv />
           {hasPastVersions && (
             <SidePanelPastVersions
               poState={poState}

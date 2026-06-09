@@ -897,4 +897,24 @@ contextBridge.exposeInMainWorld('api', {
     absPath: string,
   ): Promise<{ ok: boolean; lines?: string[]; error?: string; truncated?: boolean }> =>
     ipcRenderer.invoke('search:readFileLines', projectDir, absPath),
+
+  // ── Project .env* viewer/editor (T-PATCH-076 rev) ────────────────────────────
+  // Enumerates ALL .env* files in projectDir. Values are NEVER logged.
+
+  /** Read all .env* files in projectDir. Returns file groups (filename+entries+raw). */
+  projectEnvRead: (
+    projectDir: string,
+  ): Promise<{
+    files: Array<{ filename: string; entries: Array<{ key: string; value: string }>; raw: string }>
+  }> =>
+    ipcRenderer.invoke('projectEnv:read', projectDir),
+
+  /** Write a named .env* file in projectDir at mode 0600. filename must match /^\.env[a-zA-Z0-9._-]*$/. */
+  projectEnvWrite: (
+    projectDir: string,
+    filename: string,
+    entries: Array<{ key: string; value: string }>,
+    originalRaw: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('projectEnv:write', projectDir, filename, entries, originalRaw),
 })

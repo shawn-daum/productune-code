@@ -154,7 +154,9 @@ function PastVersionCard({ version, ticketsDone, selected, onClick }: PastCardPr
   const retro = version.outcome?.retrospective_path
   return (
     <div style={selected ? cardPastSelected : cardPast} onClick={onClick}>
-      <div style={cardIdMuted}>{version.id}</div>
+      <div style={cardIdRow}>
+        <div style={cardIdMuted}>{version.id}</div>
+      </div>
       <div style={cardLineMuted}>{t('workspace.versions.closed', { date: closed })}</div>
       <div style={cardLineMuted}>{t('workspace.versions.tickets', { count: ticketsDone })}</div>
       {version.outcome?.north_star && (
@@ -314,3 +316,4 @@ const unassignedBadge: React.CSSProperties = {
   borderRadius: 3,
   padding: '0 4px',
 }
+

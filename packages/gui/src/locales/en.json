@@ -128,10 +128,20 @@
       "selectHint": "Select a file on the left."
     },
     "sidebar": {
-      "refresh": "Refresh"
+      "tabs": {
+        "versions": "Versions",
+        "tickets": "Tickets",
+        "artifacts": "Artifacts",
+        "settings": "Settings"
+      },
+      "ticketsHint": "Ticket board is in the center panel",
+      "artifactsHint": "Artifacts — added in a future slice",
+      "settingsHint": "Settings — T-P4-024",
+      "explorerHint": "Explorer — file tree wired in T-P4-047",
+      "teamHint": "Team — personas & skills wired in T-P4-047"
     },
     "statusBar": {
-      "recentProjects": "Recent projects"
+      "placeholder": "Auto-save / run status / external tools — filled in Slice 6"
     },
     "zoom": {
       "out": "Zoom out",
@@ -210,7 +220,9 @@
       "sectionOutcome": "Outcome",
       "sectionApprovedPromotions": "Approved promotions ({{count}})",
       "noTickets": "No tickets registered for this Version.",
-      "observedPending": "pending (lazy — fill in next Version Phase 1)"
+      "observedPending": "pending (lazy — fill in next Version Phase 1)",
+      "sectionPrd": "PRD",
+      "prdNone": "No PRD artifact for this version."
     },
     "promotion": {
       "drainTitle": "Pending memory promotions",
@@ -300,19 +312,6 @@
         "exact": "API limit reached — retry in {{n}}s"
       }
     },
-    "sidebar": {
-      "tabs": {
-        "versions": "Versions",
-        "tickets": "Tickets",
-        "artifacts": "Artifacts",
-        "settings": "Settings"
-      },
-      "ticketsHint": "Ticket board is in the center panel",
-      "artifactsHint": "Artifacts — added in a future slice",
-      "settingsHint": "Settings — T-P4-024",
-      "explorerHint": "Explorer — file tree wired in T-P4-047",
-      "teamHint": "Team — personas & skills wired in T-P4-047"
-    },
     "tab": {
       "close": "Close tab",
       "barEmpty": "Drop a tab here",
@@ -367,9 +366,6 @@
       "splitRight": "Split Right",
       "splitDown": "Split Down",
       "closeTab": "Close Tab"
-    },
-    "statusBar": {
-      "placeholder": "Auto-save / run status / external tools — filled in Slice 6"
     },
     "sessionHealth": {
       "healthy": {
@@ -655,7 +651,8 @@
       "empty": "No artifacts in this session",
       "loadError": "Could not load file list.",
       "emptyHeadline": "No artifacts to show",
-      "emptyHelper": "Artifacts appear here once added to docs/artifacts/."
+      "emptyHelper": "Artifacts appear here once added to docs/artifacts/.",
+      "needsReview": "Needs your review"
     },
     "baseDirty": {
       "title": "Unsaved changes detected",
@@ -735,6 +732,29 @@
       "cta": "Get started",
       "keyHint": "Cmd+Enter to send · Enter = new line",
       "error": "Something went wrong. Please try again."
+    },
+    "projectEnv": {
+      "sectionTitle": "Project .env",
+      "loading": "Loading…",
+      "readError": "Failed to read .env",
+      "writeError": "Failed to write .env",
+      "emptyState": "No .env* files found — no keys",
+      "emptyHint": "KEY=value only. Multi-line values, export prefix, and interpolation are not supported.",
+      "keyPlaceholder": "KEY",
+      "valuePlaceholder": "value",
+      "keyLabel": "Key",
+      "valueLabel": "Value",
+      "revealValue": "Reveal value",
+      "maskValue": "Mask value",
+      "addKey": "Add key",
+      "removeKey": "Remove",
+      "save": "Save",
+      "errorEmptyKey": "Key cannot be empty",
+      "errorDuplicateKey": "Duplicate key",
+      "openFile": "Open {{filename}} in editor",
+      "noKeys": "No keys yet — add one below",
+      "fileNotFound": "File not found in project directory.",
+      "securityBadge": "masked by default"
     }
   },
   "settings": {
@@ -837,6 +857,17 @@
           "desc": "No mode preference — all features visible."
         }
       }
+    },
+    "claudeConnection": {
+      "title": "Claude Code Connection",
+      "statusChecking": "Checking…",
+      "statusConnected": "Connected",
+      "statusNotConnected": "Not connected",
+      "installHint": "Claude Code CLI is not installed. Install it from claude.ai/code to use the AI engine.",
+      "authHint": "Claude Code is installed but not authenticated. Click Connect to sign in via terminal.",
+      "connectBtn": "Connect",
+      "recheckBtn": "Re-check",
+      "terminalNote": "A terminal window will open to complete authentication."
     }
   },
   "skills": {

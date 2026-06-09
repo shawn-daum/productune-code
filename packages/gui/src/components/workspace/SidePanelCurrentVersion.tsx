@@ -129,7 +129,7 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
             }
           }}
         >
-          {/* Row 1: Version ID pill + Phase badge */}
+          {/* Row 1: Version ID pill + Phase badge + PRD affordance (AC-2, T-PATCH-078) */}
           <div style={cardRow}>
             <span style={versionPill}>{currentVersionId}</span>
             {phaseName && <span style={phaseBadge}>{phaseName}</span>}
@@ -263,3 +263,4 @@ const metaVal: React.CSSProperties = {
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 }
+

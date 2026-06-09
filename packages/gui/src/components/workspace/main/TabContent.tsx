@@ -22,6 +22,7 @@ import CodeSearchTab from './panes/CodeSearchTab'
 import CodeTextViewer from './panes/CodeViewTab'
 import DoctrineFileTabHost from './panes/DoctrineFileTabHost'
 import HtmlViewer from './panes/HtmlViewer'
+import ProjectEnvPane from './panes/ProjectEnvPane'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -67,6 +68,8 @@ export default function TabContent({ tab, browserFindRef, previewFindQuery, prev
       return <CodeTextViewer props={tab.props} />
     case 'doctrine-file':
       return <DoctrineFileTabHost tab={tab} />
+    case 'project-env':
+      return <ProjectEnvPane props={tab.props} />
     case 'preview':
       // Local .html/.htm (path + projectDir) → rendered Preview + raw-source
       // Edit/Save; http(s) `url` → BrowserTab/<webview>. (T-PATCH-032)

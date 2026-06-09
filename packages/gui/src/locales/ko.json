@@ -128,10 +128,20 @@
       "selectHint": "왼쪽에서 파일을 선택하세요."
     },
     "sidebar": {
-      "refresh": "새로고침"
+      "tabs": {
+        "versions": "Versions",
+        "tickets": "Tickets",
+        "artifacts": "산출물",
+        "settings": "설정"
+      },
+      "ticketsHint": "티켓 보드는 중앙 패널에서",
+      "artifactsHint": "산출물 — 추후 슬라이스에서 추가",
+      "settingsHint": "설정 — T-P4-024",
+      "explorerHint": "탐색 — 파일 트리는 T-P4-047 에서 연결",
+      "teamHint": "팀 — 페르소나·스킬은 T-P4-047 에서 연결"
     },
     "statusBar": {
-      "recentProjects": "최근 프로젝트"
+      "placeholder": "자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐"
     },
     "zoom": {
       "out": "축소",
@@ -210,7 +220,9 @@
       "sectionOutcome": "Outcome",
       "sectionApprovedPromotions": "승인된 메모리 프로모션 ({{count}})",
       "noTickets": "이 Version에 등록된 티켓 없음.",
-      "observedPending": "미정 (lazy — 다음 Version Phase 1에서 채움)"
+      "observedPending": "미정 (lazy — 다음 Version Phase 1에서 채움)",
+      "sectionPrd": "PRD",
+      "prdNone": "이 버전의 PRD 문서가 없습니다."
     },
     "promotion": {
       "drainTitle": "대기 중인 메모리 승인 요청",
@@ -300,19 +312,6 @@
         "exact": "API 한도 도달 — {{n}}초 후 재시도 가능"
       }
     },
-    "sidebar": {
-      "tabs": {
-        "versions": "Versions",
-        "tickets": "Tickets",
-        "artifacts": "산출물",
-        "settings": "설정"
-      },
-      "ticketsHint": "티켓 보드는 중앙 패널에서",
-      "artifactsHint": "산출물 — 추후 슬라이스에서 추가",
-      "settingsHint": "설정 — T-P4-024",
-      "explorerHint": "탐색 — 파일 트리는 T-P4-047 에서 연결",
-      "teamHint": "팀 — 페르소나·스킬은 T-P4-047 에서 연결"
-    },
     "tab": {
       "close": "탭 닫기",
       "barEmpty": "여기에 탭 드롭",
@@ -367,9 +366,6 @@
       "splitRight": "오른쪽 분할",
       "splitDown": "아래 분할",
       "closeTab": "탭 닫기"
-    },
-    "statusBar": {
-      "placeholder": "자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐"
     },
     "sessionHealth": {
       "healthy": {
@@ -655,7 +651,8 @@
       "empty": "이 세션에 산출물이 없습니다",
       "loadError": "파일 목록을 불러오지 못했어요.",
       "emptyHeadline": "표시할 산출물이 없습니다",
-      "emptyHelper": "docs/artifacts/ 폴더에 산출물이 생기면 여기 나타납니다."
+      "emptyHelper": "docs/artifacts/ 폴더에 산출물이 생기면 여기 나타납니다.",
+      "needsReview": "검토 필요"
     },
     "baseDirty": {
       "title": "저장 안 된 변경이 있어요",
@@ -735,6 +732,29 @@
       "cta": "시작하기",
       "keyHint": "Cmd+Enter로 전송 · Enter = 줄바꿈",
       "error": "잠시 문제가 생겼어요. 다시 시도해주세요."
+    },
+    "projectEnv": {
+      "sectionTitle": "프로젝트 .env",
+      "loading": "불러오는 중…",
+      "readError": ".env 읽기 실패",
+      "writeError": ".env 쓰기 실패",
+      "emptyState": ".env* 파일 없음 — 키 없음",
+      "emptyHint": "KEY=value 형식만 지원. 멀티라인·export 접두사·변수 보간 미지원.",
+      "keyPlaceholder": "KEY",
+      "valuePlaceholder": "값",
+      "keyLabel": "키",
+      "valueLabel": "값",
+      "revealValue": "값 보기",
+      "maskValue": "값 숨기기",
+      "addKey": "키 추가",
+      "removeKey": "삭제",
+      "save": "저장",
+      "errorEmptyKey": "키를 입력하세요",
+      "errorDuplicateKey": "중복된 키",
+      "openFile": "{{filename}} 편집기에서 열기",
+      "noKeys": "키가 없습니다 — 아래에서 추가하세요",
+      "fileNotFound": "프로젝트 디렉토리에서 파일을 찾을 수 없습니다.",
+      "securityBadge": "기본값 마스킹"
     }
   },
   "settings": {
@@ -837,6 +857,17 @@
           "desc": "모드 미지정 — 모든 기능이 표시됩니다."
         }
       }
+    },
+    "claudeConnection": {
+      "title": "Claude Code 연결",
+      "statusChecking": "확인 중…",
+      "statusConnected": "연결됨",
+      "statusNotConnected": "연결 안 됨",
+      "installHint": "Claude Code CLI가 설치되어 있지 않아요. claude.ai/code 에서 설치 후 AI 엔진을 사용할 수 있어요.",
+      "authHint": "Claude Code는 설치됐지만 아직 인증이 필요해요. 연결 버튼을 눌러 터미널에서 로그인하세요.",
+      "connectBtn": "연결하기",
+      "recheckBtn": "다시 확인",
+      "terminalNote": "인증을 완료하려면 터미널 창이 열립니다."
     }
   },
   "skills": {

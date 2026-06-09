@@ -11,6 +11,7 @@ import {
   SplitSquareHorizontal,
   SplitSquareVertical,
   X,
+  Circle,
   FileText,
   FileCode,
   GitBranch,
@@ -28,6 +29,7 @@ import {
   LayoutGrid,
   GitCompare,
   ScrollText,
+  KeyRound,
   type LucideIcon,
 } from 'lucide-react'
 import type { LeafPaneNode, Pane, Tab, TabType } from '../../../store/workspace'
@@ -69,6 +71,7 @@ const TAB_ICONS: Record<TabType, LucideIcon> = {
   'code-search': FileCode,
   'code-view': FileCode,
   'doctrine-file': BookOpen,
+  'project-env': KeyRound,
 }
 
 function iconFor(type: TabType): LucideIcon {
@@ -320,6 +323,15 @@ export default function TabBar({ leaf, isActivePane }: Props) {
                   <Icon size={13} strokeWidth={1.75} style={tabIcon} aria-hidden />
                 )}
                 <span style={tabTitle}>{tab.title}</span>
+                {tab.needsReview && (
+                  <Circle
+                    size={6}
+                    fill="var(--health-warn, #F59E0B)"
+                    color="var(--health-warn, #F59E0B)"
+                    aria-label={t('workspace.artifacts.needsReview')}
+                    style={{ flexShrink: 0 }}
+                  />
+                )}
                 {showClose && (
                   <span
                     role="button"

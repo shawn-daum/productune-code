@@ -37,7 +37,6 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const { tickets } = useTicketScan(project?.projectDir ?? null)
-
   const currentVersionId = poState?.current_version ?? null
   const rawVersions = poState?.versions ?? []
 

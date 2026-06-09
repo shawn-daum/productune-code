@@ -5,6 +5,7 @@ import { TYPE_ORDER } from '../../lib/types'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
 import { InfoPopover } from '../shared/InfoPopover'
+import PrdSection from './PrdSection'
 
 interface Props {
   versionId: string
@@ -71,6 +72,8 @@ export default function VersionDetailView({ versionId, poState }: Props) {
       {approvedPromotions.length > 0 && (
         <ApprovedPromotionsCard promotions={approvedPromotions} />
       )}
+
+      <PrdSection versionId={versionId} />
 
       <section style={section}>
         <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionTickets', { count: tickets.length })}</h3>
