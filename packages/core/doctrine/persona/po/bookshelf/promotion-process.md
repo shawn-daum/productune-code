@@ -27,6 +27,8 @@ Attach PO-managed lifecycle fields during disposition (not persona-emitted): `st
 
 Reader chain (Tier 0 common → Tier 0 persona → Tier 1 project → Tier 2 personal): **last layer wins**. 같은 topic 두 layer 에 있으면 뒤가 override. (Tier 1/2 = Tier 0 overlay — productune doctrine 직접 안 건드리고 진화.)
 
+**Promotion never targets Tier 0.** 4 quadrants 는 Tier 1/2 전용. Tier 0 core doctrine 변경 (all-subagent-read rule 포함) 은 이 gate 가 아니라 Designer doctrine-editing flow (user-approved) 로 route.
+
 ## Merge on promotion — habit write 는 curated merge
 
 `(*, habit)` write 는 target 기존 entries 와 conflict check:

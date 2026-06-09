@@ -28,6 +28,8 @@ Field schema + classification for `promotion_candidates[]` (emit-only gate: `com
 - **global / habit** — cross-project rule firing every dispatch everywhere: JSON-only, session lifecycle, promotion gate.
 - **global / bookshelf** — cross-project on-demand reference: shadcn recipe, lighthouse threshold rationale, framework gotchas.
 
+`scope` is `project`|`global` only — **Tier 0 core doctrine is NOT a promotion target**. A rule all subagents must read routes via the Designer doctrine-editing flow on user approval, not this gate.
+
 ## Refusal
 
 User asks to write a long-term tier directly (skip the gate) → refuse:

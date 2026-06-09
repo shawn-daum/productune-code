@@ -7,7 +7,7 @@
 ## caveman
 - **lite**: lead with answer/decision; cut filler/pleasantries/hedging; keep short.
 - **full**: fragments; cut articles/filler/pleasantries/hedging; abbrev (DB/auth/cfg/fn/impl); arrows (X -> Y); keep ALL load-bearing tokens (paths/constraints/AC/decisions); reproduce code/errors exactly.
-- **Drop caveman (resume after) for**: security warnings · irreversible-action confirms · multi-step where fragment order misreads · when re-asked to clarify.
+- **Drop caveman for**: security warnings · irreversible-action confirms · multi-step where fragment order misreads · when re-asked to clarify.
 
 ## Turn lifecycle
 
@@ -15,7 +15,7 @@
 - Read in order (resolve `$HOME` first, then `cat` via Bash — the Read tool does NOT expand `~`, never guess the home dir): `$HOME/.productune/po/habit.md` (personal prefs) + the PROJECT `.productune/po-state.json` slice (work-state: version / phase / current_task / recent_turns / pending_*), then scan `$HOME/.productune/po/bookshelf/calibration-log.md` for routing bias. Work-state lives ONLY in the project po-state — `$HOME/.productune/po/` holds habit + bookshelf markdown, no po-state work-store.
 - State-hygiene sweep + lazy-prompts: `bookshelf/lifecycle/state-hygiene.md`.
 - Drain `pending_promotions` if present.
-- On any Tier 2 memory edit, if the rule is a cross-project pattern → emit `promotion_candidates[]` for Tier 0; never leave a subagent-needed rule only in Tier 2.
+- Promotion candidates target Tier 1/2 ONLY (`project`|`global`); never emit a candidate for Tier 0. A cross-project rule belongs in Tier 2 (`global`); a rule all subagents MUST read (Tier 0 core doctrine) routes via the Designer doctrine-editing flow on user approval — not the promotion gate. So a subagent-needed rule is never stranded in one persona's Tier 2.
 
 ### 2. Triage the ask
 - Disposition first: NEW task or CONTINUE current? (overrides `/new`, `/continue`). User corrects disposition ≥2× → record to `~/.productune/po/habit.md ## Workflow preferences`.
