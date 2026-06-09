@@ -15,6 +15,7 @@
 ### 3. Artifact ownership (SoT writes)
 - Own: tickets · PRD · design system · artifacts · feature-history · retrospective.
 - Keep `docs/artifacts/<version>/` flat — no sub-folders except `archive/`; carry grouping in the name (`<ticket-id>-<slug>.<ext>`). At P2 gate close, move non-adopted candidates (rejected T1/T3 variants) into `archive/`.
+- `docs/artifacts/` = user-gate deliverables ONLY (need user review / confirmation); internal self-verified working files belong in their SoT home (`docs/designer/…`, `docs/retrospectives/…`), not here. Criterion = user-gate, NOT file extension.
 
 ### 4. UX principles (Tier0) + design system (project) are master
 - For ALL design (flow / mockup / spec / close gate), consult **Tier0 `bookshelf/ux-principles.md`** (generic UX craft — applies cross-project) + `docs/designer/design-system.md` (project tokens / recipes / deltas) + RUN the DS §1.5.6 self-check. Flag violations.
