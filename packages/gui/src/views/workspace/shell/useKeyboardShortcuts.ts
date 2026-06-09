@@ -108,4 +108,85 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
       clearChord()
     }
   }, [closeTab, closePane, splitRight, splitDown, addNewTab, setActiveTab])
+
+  // T-PATCH-066 R4: menu accelerator IPC subscriptions.
+  // Menu accelerators fire window-wide even when focus is inside the sandboxed
+  // OOPIF iframe — the proven mechanism (same path as cmd+F / menu:find).
+  // before-input-event path removed; each channel calls the SAME action as the
+  // keydown handler above. Editable-focus guard mirrors the keyboard path.
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api) return
+
+    const isEditable = (): boolean => {
+      const ae = document.activeElement
+      return !!(
+        ae &&
+        ((ae as HTMLElement).tagName === 'INPUT' ||
+          (ae as HTMLElement).tagName === 'TEXTAREA' ||
+          (ae as HTMLElement).isContentEditable)
+      )
+    }
+
+    const subs: Array<(() => void) | undefined> = []
+
+    if (api.onMenuNewTab) {
+      subs.push(
+        api.onMenuNewTab(() => {
+          if (isEditable()) return
+          const { activePaneId } = useWorkspace.getState()
+          addNewTab(activePaneId)
+        }),
+      )
+    }
+
+    if (api.onMenuCloseTab) {
+      subs.push(
+        api.onMenuCloseTab(() => {
+          if (isEditable()) return
+          const s = useWorkspace.getState()
+          const leaf = findLeafByIdLocal(s.panes, s.activePaneId)
+          if (leaf && leaf.tabs.length > 0 && leaf.activeTabId) {
+            closeTab(s.activePaneId, leaf.activeTabId)
+          } else {
+            closePane(s.activePaneId)
+          }
+        }),
+      )
+    }
+
+    if (api.onMenuSplitRight) {
+      subs.push(
+        api.onMenuSplitRight(() => {
+          if (isEditable()) return
+          const { activePaneId } = useWorkspace.getState()
+          splitRight(activePaneId)
+        }),
+      )
+    }
+
+    if (api.onMenuQuickOpen) {
+      subs.push(
+        api.onMenuQuickOpen(() => {
+          if (isEditable()) return
+          window.dispatchEvent(new CustomEvent('productune:quick-open'))
+        }),
+      )
+    }
+
+    if (api.onMenuGotoTab) {
+      subs.push(
+        api.onMenuGotoTab((index: number) => {
+          if (isEditable()) return
+          const s = useWorkspace.getState()
+          const leaf = findLeafByIdLocal(s.panes, s.activePaneId)
+          if (leaf && leaf.tabs.length >= index) {
+            setActiveTab(s.activePaneId, leaf.tabs[index - 1].id)
+          }
+        }),
+      )
+    }
+
+    return () => subs.forEach((fn) => fn?.())
+  }, [closeTab, closePane, splitRight, addNewTab, setActiveTab])
 }

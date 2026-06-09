@@ -15,13 +15,13 @@
  * autonomously per `po-instructions.md` Routing. Visibility = PersonaPresenceBar.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Paperclip, Command, CornerDownLeft } from 'lucide-react'
+import { Paperclip, Command, CornerDownLeft, X } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
-import type { Message } from '../../lib/types'
+import type { Message, AskUserQuestionPayload } from '../../lib/types'
 import { PHASE_NAMES } from '../../lib/types'
 import PhaseBreadcrumb from './PhaseBreadcrumb'
 import PersonaPresenceBar from './PersonaPresenceBar'
@@ -32,10 +32,9 @@ import TodoListPanel from './chat/TodoListPanel'
 import PendingGateChip from './chat/PendingGateChip'
 import RateLimitBanner from './chat/RateLimitBanner'
 import UsageBar from './chat/UsageBar'
+import AskUserQuestionCard from './chat/AskUserQuestionCard'
 import { useSessionHealth } from '../../store/sessionHealth'
 
-// T-PATCH-051: breakpoint for inline UsageBar layout (AC-1, AC-2)
-const USAGE_INLINE_WIDTH = 400
 
 export default function ChatPanel() {
   const { t } = useTranslation()
@@ -58,6 +57,19 @@ export default function ChatPanel() {
     [messages, restartDividerMarkers],
   )
 
+  // T-PATCH-065: dismissed question id — hides modal without resolving
+  const [dismissedQuestionId, setDismissedQuestionId] = useState<string | null>(null)
+
+  // T-PATCH-068: most-recent-only — last ask-user-question is the ONLY pending candidate.
+  // resolved or dismissed → nothing pending; older questions never resurface (AC-6/7/8).
+  const pendingQuestion = useMemo(() => {
+    const last = [...messages].reverse().find((m) => m.kind === 'ask-user-question')
+    if (!last) return undefined
+    if ((last.payload as any)?.resolved) return undefined   // option-select → chip → no pending (AC-7)
+    if (last.id === dismissedQuestionId) return undefined    // X-dismiss → no pending (AC-7)
+    return last
+  }, [messages, dismissedQuestionId])
+
   const setMessages = useWorkspace((s) => s.setMessages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
@@ -76,23 +88,6 @@ export default function ChatPanel() {
 
   const msgsRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
-  // T-PATCH-051: track panel width for inline UsageBar breakpoint (AC-1, AC-2)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const [panelWidth, setPanelWidth] = useState(0)
-
-  // T-PATCH-051: ResizeObserver on the panel root → drives inline UsageBar toggle
-  useEffect(() => {
-    const el = panelRef.current
-    if (!el) return
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width ?? 0
-      setPanelWidth(w)
-    })
-    ro.observe(el)
-    // Seed initial width (before first ResizeObserver callback)
-    setPanelWidth(el.getBoundingClientRect().width)
-    return () => ro.disconnect()
-  }, [])
 
   // ── Load session on project change ───────────────────────────────────────
   useEffect(() => {
@@ -178,6 +173,91 @@ export default function ChatPanel() {
     }
   }
 
+  // T-PATCH-065: modal draft state + send/keydown handlers
+  const [modalDraft, setModalDraft] = useState('')
+
+  const handleModalSend = useCallback(async () => {
+    const trimmed = modalDraft.trim()
+    if (!trimmed || streaming || !project) return
+
+    const userMsg: Message = {
+      id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      role: 'user',
+      kind: 'user',
+      text: trimmed,
+      status: 'done',
+      created_at: new Date().toISOString(),
+    }
+    appendMessage(userMsg)
+    setModalDraft('')
+    setAutoScrollLocked(false)
+
+    const api = (window as any).api
+    try { await api.chatAppendMessage(project.projectDir, userMsg) } catch { /* ignore */ }
+
+    useWorkspace.getState().setInFlightKind('po')
+    setStreaming(true)
+    try {
+      await api.poSendMessage({
+        projectDir: project.projectDir,
+        text: trimmed,
+        resume: claudeSessionId,
+      })
+    } catch {
+      setStreaming(false)
+      useWorkspace.getState().setInFlightMsgId(null)
+    }
+  }, [modalDraft, streaming, project, claudeSessionId, appendMessage, setAutoScrollLocked, setStreaming])
+
+  const onModalKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.nativeEvent as any).isComposing) return
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      handleModalSend()
+    }
+  }
+
+  // T-PATCH-068/073: X button — no LLM round-trip; synthesise a PO bubble + persist (AC-5~8)
+  // T-PATCH-073: also stamps payload.resolved: { chosenKey: '__dismissed__' } so
+  // pendingQuestion's !resolved guard excludes the card after remount / reload.
+  const handleDismissQuestion = useCallback(async () => {
+    if (!pendingQuestion || !project) return
+
+    // T-PATCH-073: optimistic store patch — excluded by pendingQuestion on re-render
+    const msgs = useWorkspace.getState().messages
+    setMessages(
+      msgs.map((m) =>
+        m.id === pendingQuestion.id
+          ? {
+              ...m,
+              payload: {
+                ...(m.payload as AskUserQuestionPayload),
+                resolved: { chosenKey: '__dismissed__' },
+              },
+            }
+          : m,
+      ),
+    )
+
+    setDismissedQuestionId(pendingQuestion.id)   // immediate hide guard (AC-8)
+
+    const poMsg: Message = {
+      id: `po-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      role: 'assistant',
+      kind: 'po',
+      text: '질문 답변 보류, 어떻게 진행하시겠어요?',
+      status: 'done',
+      created_at: new Date().toISOString(),
+    }
+    appendMessage(poMsg)
+    setAutoScrollLocked(false)
+
+    const api = (window as any).api
+    try { await api.chatAppendMessage(project.projectDir, poMsg) } catch { /* noop */ }  // persist PO bubble (AC-7)
+    // T-PATCH-073: persist resolved/dismissed to chat.json — no PO resume
+    try { await api.chatDismissQuestion({ projectDir: project.projectDir, messageId: pendingQuestion.id }) } catch { /* noop */ }
+  }, [pendingQuestion, project, appendMessage, setAutoScrollLocked, setMessages])
+
   // textarea autosize — height follows content (cap 200px).
   useEffect(() => {
     const el = taRef.current
@@ -247,12 +327,11 @@ export default function ChatPanel() {
   // T-PATCH-053: derive Phase for PhaseBreadcrumb from poState.current_phase
   const currentPhase = PHASE_NAMES[poState?.current_phase ?? 0] ?? 'PRD'
 
-  // T-PATCH-051: wide enough to place UsageBar inline with input row (AC-1)
-  const usageInline = panelWidth >= USAGE_INLINE_WIDTH
+  // T-PATCH-068: questionOverlayNode removed — replaced by in-flow docked panel below (AC-1).
 
   return (
     <>
-      <div style={wrap} ref={panelRef}>
+      <div style={wrap}>
         {/* rp-hdr — T-PATCH-053: [P badge] [title] [status badge] [restart text btn] */}
         <div style={header}>
           <span style={poBadge}>P</span>
@@ -303,7 +382,12 @@ export default function ChatPanel() {
                   <span style={sessionDividerLine} />
                 </div>
               ) : (
-                <MessageBubble key={item.message.id} message={item.message} />
+                // T-PATCH-062: suppress unresolved pendingQuestion from list (AC-2); resolved still shows (AC-3)
+                item.message.kind === 'ask-user-question' &&
+                !(item.message.payload as any)?.resolved &&
+                pendingQuestion?.id === item.message.id ? null : (
+                  <MessageBubble key={item.message.id} message={item.message} />
+                )
               ),
             )
           )}
@@ -320,17 +404,50 @@ export default function ChatPanel() {
           />
         )}
 
-        {/* rp-usage-bar (T-025) — near-live 5h/7d usage; hidden for non-subscribers.
-            T-PATCH-051: stacked below input when narrow, inline when wide (AC-1, AC-2). */}
-        {!usageInline && <UsageBar />}
-
-        {/* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */}
+        {/* T-PATCH-068: in-flow docked question panel — replaces composer while pending (AC-1/2) */}
+        {pendingQuestion ? (
+          <div style={questionDock}>
+            <div style={dockHeader}>
+              <span style={dockLabel}>질문</span>
+              <button style={modalCloseBtn} onClick={handleDismissQuestion} aria-label="질문 보류">
+                <X size={16} strokeWidth={2} />
+              </button>
+            </div>
+            <div style={dockBody}>
+              <AskUserQuestionCard message={pendingQuestion} />
+            </div>
+            <div style={modalInputArea}>
+              <textarea
+                style={modalTextarea}
+                value={modalDraft}
+                onChange={(e) => setModalDraft(e.target.value)}
+                onKeyDown={onModalKeyDown}
+                placeholder={t('workspace.chat.inputPlaceholder')}
+                rows={1}
+                disabled={streaming || !project || rateLimited}
+              />
+              <button
+                style={{
+                  ...modalSendBtn,
+                  opacity: streaming || !modalDraft.trim() ? 0.5 : 1,
+                  cursor: streaming || !modalDraft.trim() ? 'not-allowed' : 'pointer',
+                }}
+                onClick={handleModalSend}
+                disabled={streaming || !modalDraft.trim()}
+              >
+                {t('workspace.chat.send')}
+              </button>
+            </div>
+          </div>
+        ) : (
+        /* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */
         <div style={inputArea}>
-          {/* T-PATCH-051: when wide, UsageBar sits to the right of the textarea (AC-1) */}
-          <div style={usageInline ? inputWithUsageRow : undefined}>
+          {/* rp-usage-bar (T-025, T-PATCH-071) — always 2-row column; horizontal prop removed so
+              "resets in …" never truncates regardless of panel width. */}
+          <UsageBar />
           <textarea
             ref={taRef}
-            style={usageInline ? { ...textarea, flex: 1 } : textarea}
+            style={textarea}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
@@ -338,12 +455,6 @@ export default function ChatPanel() {
             rows={1}
             disabled={streaming || !project || rateLimited}
           />
-          {usageInline && (
-            <div style={usageInlineSide}>
-              <UsageBar inline />
-            </div>
-          )}
-          </div>
           <div style={inputRow}>
             <button
               style={{
@@ -413,6 +524,7 @@ export default function ChatPanel() {
             </button>
           </div>
         </div>
+        )} {/* T-PATCH-068: end pendingQuestion ternary — normal composer restored */}
 
         {/* T-PATCH-052: session restart completion toast (AC-1) */}
         {restartToastVisible && (
@@ -779,21 +891,89 @@ const fileListRemove: React.CSSProperties = {
   flexShrink: 0,
 }
 
-// T-PATCH-051: styles for inline UsageBar layout
-const inputWithUsageRow: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'row',
-  gap: 8,
-  alignItems: 'flex-start',
-}
-
-const usageInlineSide: React.CSSProperties = {
+// T-PATCH-068: in-flow docked question panel — replaces composer, no overlay/scrim (AC-1/3/5)
+const questionDock: React.CSSProperties = {
+  flexShrink: 0,
+  maxHeight: '55%',                 // cap → rp-msgs keeps space above + stays scrollable (AC-3/4)
   display: 'flex',
   flexDirection: 'column',
-  justifyContent: 'center',
+  overflow: 'hidden',
+  borderTop: '1px solid #2A2A2A',  // same as inputArea border
+  background: '#121212',
+}
+
+// T-PATCH-068: dock header — label left + X right (AC-4)
+const dockHeader: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  padding: '8px 12px',
   flexShrink: 0,
-  // Remove top border from UsageBar container when inline — parent inputArea provides it
-  paddingTop: 2,
+  borderBottom: '1px solid #1E1E1E',
+}
+
+// T-PATCH-068: "질문" label in dock header
+const dockLabel: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: '#A0A0A0',
+}
+
+// T-PATCH-068: scrollable body inside dock — holds AskUserQuestionCard (AC-4)
+const dockBody: React.CSSProperties = {
+  flex: '1 1 auto',
+  minHeight: 0,                     // allow flex child to shrink + scroll internally
+  overflowY: 'auto',
+  padding: '12px 16px',
+}
+
+// T-PATCH-068: position:absolute 제거 → dockHeader flex row의 justify-content:space-between 으로 정렬
+const modalCloseBtn: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: '#707070',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 28,
+  height: 28,
+  borderRadius: 4,
+  padding: 0,
+}
+
+
+const modalInputArea: React.CSSProperties = {
+  borderTop: '1px solid #2A2A2A',
+  padding: '8px 12px',
+  display: 'flex',
+  gap: 8,
+  alignItems: 'flex-end',
+  flexShrink: 0,
+  marginTop: 'auto',
+}
+
+const modalTextarea: React.CSSProperties = {
+  flex: 1,
+  background: 'transparent',
+  border: 'none',
+  outline: 'none',
+  color: '#E5E5E5',
+  fontSize: 13,
+  resize: 'none',
+  lineHeight: 1.5,
+  fontFamily: 'inherit',
+}
+
+const modalSendBtn: React.CSSProperties = {
+  background: '#7C3AED',
+  border: 'none',
+  color: '#fff',
+  cursor: 'pointer',
+  borderRadius: 6,
+  padding: '6px 14px',
+  fontSize: 13,
+  flexShrink: 0,
 }
 
 // T-PATCH-052: session restart toast (AC-1) — bottom-center of the panel, 3s auto-dismiss

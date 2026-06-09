@@ -27,7 +27,7 @@
  * banner offering reload, consistent with the MarkdownViewer conflict copy.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Eye,
@@ -48,6 +48,10 @@ import ZoomControls, { ZOOM_DEFAULT, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './Zoo
 interface Props {
   tabId: string
   props?: Record<string, unknown>
+  // T-PATCH-067 R4: iframe-internal find bridge (preview / local HTML artifact tabs)
+  findQuery?: string
+  findNavRef?: MutableRefObject<((forward: boolean) => void) | null>
+  onFindResult?: (info: { total: number; current: number }) => void
 }
 
 interface ToastItem {
@@ -74,21 +78,28 @@ type HtmlWriteResult = {
   error?: string
 }
 
-export default function HtmlViewer({ tabId, props: tabProps }: Props) {
+export default function HtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFindResult }: Props) {
   const url = typeof tabProps?.url === 'string' ? tabProps.url : ''
   const isHttp = /^https?:\/\//i.test(url)
-
   // ── http(s) branch — delegate to the existing webview path ─────────────────
   if (isHttp) {
     return <BrowserTab tabId={tabId} props={tabProps} />
   }
 
-  return <LocalHtmlViewer tabId={tabId} props={tabProps} />
+  return (
+    <LocalHtmlViewer
+      tabId={tabId}
+      props={tabProps}
+      findQuery={findQuery}
+      findNavRef={findNavRef}
+      onFindResult={onFindResult}
+    />
+  )
 }
 
 // ── Local-file viewer ─────────────────────────────────────────────────────────
 
-function LocalHtmlViewer({ tabId, props: tabProps }: Props) {
+function LocalHtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFindResult }: Props) {
   const { t } = useTranslation()
   const absPath = typeof tabProps?.path === 'string' ? tabProps.path : ''
   const projectDir = typeof tabProps?.projectDir === 'string' ? tabProps.projectDir : ''
@@ -102,6 +113,11 @@ function LocalHtmlViewer({ tabId, props: tabProps }: Props) {
   // mtime snapshot captured at read/write — drives the conflict guard.
   const snapshotMtimeRef = useRef<number | null>(null)
 
+  // T-PATCH-067 R4: ref to the preview <iframe> for postMessage find bridge.
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  // T-PATCH-067 R5: track latest findQuery for the iframe onLoad resend (avoids stale closure).
+  const findQueryRef = useRef<string>('')
+
   // Edit-mode UI state (mirrors MarkdownViewer).
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
@@ -113,6 +129,135 @@ function LocalHtmlViewer({ tabId, props: tabProps }: Props) {
   // Bumped after a successful save so the Preview <iframe> remounts with the
   // new srcdoc (AC-4 "Preview reflects the new content").
   const [previewKey, setPreviewKey] = useState(0)
+
+  // T-PATCH-066 D1 + T-PATCH-067 R4: inject into iframe srcdoc:
+  //   • focus bridge  — first mousedown/focus → parent.postMessage({type:"iframe-focus"})
+  //     so the parent promotes this pane to activePaneId (cmd+F / accelerators land here).
+  //   • find bridge   — respond to find-query / find-nav postMessages; CSS Custom Highlight
+  //     inside the iframe; report find-result back to parent.
+  //   • ::highlight styles injected so they apply within the iframe document.
+  // Keep sandbox="allow-scripts", NO allow-same-origin.
+  const srcDocWithFocusBridge = useMemo(() => {
+    const injection = [
+      // Highlight styles for matches inside the iframe
+      '<style>',
+      '::highlight(find){background-color:#FFE066;color:#1A1A1A;}',
+      '::highlight(find-active){background-color:#FF9900;color:#1A1A1A;}',
+      '<\/style>',
+      '<script>',
+      '(function(){',
+      // ── D1: iframe-focus bridge ──────────────────────────────────────────
+      'var sent=false;',
+      'function sig(){if(!sent){sent=true;parent.postMessage({type:"iframe-focus"},"*");}}',
+      'window.addEventListener("focus",sig);',
+      'document.addEventListener("mousedown",sig,{once:true});',
+      // ── B1: iframe-internal find bridge ─────────────────────────────────
+      'var fr=[];',   // find ranges
+      'var fc=-1;',  // find current index
+      'function wt(root,q){',
+        'var found=[];var lower=q.toLowerCase();',
+        'var walker=document.createTreeWalker(root||document.body,NodeFilter.SHOW_TEXT,null);',
+        'var n;while((n=walker.nextNode())){',
+          'var v=n.nodeValue||"";var lv=v.toLowerCase();',
+          'var i=0,p;while((p=lv.indexOf(lower,i))!==-1){',
+            'var r=document.createRange();r.setStart(n,p);r.setEnd(n,p+q.length);',
+            'found.push(r);i=p+lower.length;',
+          '}',
+        '}',
+        'return found;',
+      '}',
+      'function paint(){',
+        'if(typeof CSS==="undefined"||!CSS.highlights||typeof Highlight==="undefined")return;',
+        'CSS.highlights.delete("find");CSS.highlights.delete("find-active");',
+        'if(fr.length===0)return;',
+        'CSS.highlights.set("find",new Highlight(...fr));',
+        'if(fr[fc]){',
+          'CSS.highlights.set("find-active",new Highlight(fr[fc]));',
+          'var sc=fr[fc].startContainer;',
+          'var el=sc.nodeType===1?sc:sc.parentElement;',
+          'if(el)el.scrollIntoView({block:"nearest",behavior:"smooth"});',
+        '}',
+      '}',
+      'window.addEventListener("message",function(e){',
+        'if(!e.data)return;',
+        'if(e.data.type==="find-query"){',
+          'var q=e.data.q||"";var tid=e.data.tabId||"";',
+          'if(!q){fr=[];fc=-1;paint();parent.postMessage({type:"find-result",total:0,current:0,tabId:tid},"*");return;}',
+          'fr=wt(document.body,q);',
+          'fc=fr.length>0?0:-1;',
+          'paint();',
+          'parent.postMessage({type:"find-result",total:fr.length,current:fr.length>0?1:0,tabId:tid},"*");',
+        '}else if(e.data.type==="find-nav"){',
+          'if(fr.length===0)return;',
+          'fc=e.data.forward?(fc+1)%fr.length:(fc-1+fr.length)%fr.length;',
+          'paint();',
+          'parent.postMessage({type:"find-result",total:fr.length,current:fc+1,tabId:e.data.tabId||""},"*");',
+        '}',
+      '});',
+      '})();',
+      '<\/script>',
+    ].join('')
+    return content.includes('</head>')
+      ? content.replace('</head>', injection + '</head>')
+      : injection + content
+  }, [content])
+
+  // T-PATCH-066 D1 + T-PATCH-067 R4: unified iframe message listener.
+  // Handles two message types from the injected iframe bridge:
+  //   {type:"iframe-focus"} — first click inside iframe → promote pane to activePaneId
+  //   {type:"find-result", total, current} — find result → propagate to FindBar
+  // Discriminate by e.source to avoid leaking cross-tab find results in split panes.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (!e.data) return
+      if (e.data.type === 'iframe-focus') {
+        const { panes, setActivePane } = useWorkspace.getState()
+        const walk = (n: any): string | null => {
+          if (n.type === 'leaf') return n.tabs.some((x: any) => x.id === tabId) ? n.paneId : null
+          for (const c of n.children ?? []) {
+            const r = walk(c)
+            if (r) return r
+          }
+          return null
+        }
+        const paneId = walk(panes)
+        if (paneId) setActivePane(paneId)
+      } else if (e.data.type === 'find-result') {
+        // Guard: match tabId echoed by the iframe instead of e.source identity —
+        // sandboxed opaque-origin iframes make contentWindow identity unreliable,
+        // which is why the source-guard was silently dropping all find-results.
+        const matched = e.data.tabId === tabId
+        if (!matched) return
+        onFindResult?.({ total: e.data.total ?? 0, current: e.data.current ?? 0 })
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [tabId, onFindResult])
+
+  // T-PATCH-067 R5: live find-query → postMessage into iframe on each keystroke.
+  // Also keeps findQueryRef current so the iframe onLoad handler resends the latest query.
+  // Empty string clears highlights in the iframe.
+  useEffect(() => {
+    findQueryRef.current = findQuery ?? ''
+    const win = iframeRef.current?.contentWindow
+    if (!win) return
+    win.postMessage({ type: 'find-query', q: findQuery ?? '', tabId }, '*')
+  }, [findQuery, tabId])
+
+  // T-PATCH-067 R4: assign nav fn to findNavRef so LeafPane can trigger navigation.
+  // Stable across renders — only depends on the ref objects themselves.
+  useEffect(() => {
+    if (!findNavRef) return
+    findNavRef.current = (forward: boolean) => {
+      iframeRef.current?.contentWindow?.postMessage({ type: 'find-nav', forward, tabId }, '*')
+    }
+    return () => {
+      if (findNavRef) findNavRef.current = null
+    }
+  // findNavRef is a stable ref object — its identity doesn't change across renders
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Zoom state (T-PATCH-045): scales iframe via CSS zoom property.
   // Range 0.5–3.0 (AC-3), step 0.1 (AC-2).
@@ -376,14 +521,24 @@ function LocalHtmlViewer({ tabId, props: tabProps }: Props) {
                   <Eye size={11} color="#505050" />
                   <span>{t('workspace.htmlViewer.preview')}</span>
                 </div>
-                {/* Sandboxed: empty sandbox => no scripts, no same-origin. */}
+                {/* T-PATCH-066: allow-scripts enables the iframe-focus bridge (D1). */}
+                {/* T-PATCH-067 R4: same sandbox; find bridge runs inside iframe via postMessage. */}
+                {/* No allow-same-origin — iframe scripts cannot access parent DOM. */}
                 {/* T-PATCH-045: CSS zoom scales iframe content (AC-2, AC-3) */}
                 <iframe
                   key={previewKey}
+                  ref={iframeRef}
                   title={t('workspace.htmlViewer.previewFrameTitle')}
-                  srcDoc={content}
-                  sandbox=""
+                  srcDoc={srcDocWithFocusBridge}
+                  sandbox="allow-scripts"
                   style={{ ...iframeEl, zoom: zoom }}
+                  onLoad={() => {
+                    // T-PATCH-067 R5: resend current query after iframe loads/reloads so a
+                    // query typed before the iframe was ready still reaches the injected listener.
+                    const win = iframeRef.current?.contentWindow
+                    if (!win) return
+                    win.postMessage({ type: 'find-query', q: findQueryRef.current, tabId }, '*')
+                  }}
                 />
               </div>
             )}

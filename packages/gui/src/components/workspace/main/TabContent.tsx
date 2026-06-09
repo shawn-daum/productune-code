@@ -1,4 +1,4 @@
-import type { RefObject } from 'react'
+import type { RefObject, MutableRefObject } from 'react'
 import type { Tab } from '../../../store/workspace'
 import type { BrowserFindHandle } from './panes/BrowserTab'
 import MarkdownTab from './panes/MarkdownTab'
@@ -33,9 +33,13 @@ interface Props {
   tab: Tab
   // T-PATCH-046: ref for find-in-page API (browser tab only)
   browserFindRef?: RefObject<BrowserFindHandle | null>
+  // T-PATCH-067 R4: preview (HTML artifact) iframe find bridge
+  previewFindQuery?: string
+  previewFindNavRef?: MutableRefObject<((forward: boolean) => void) | null>
+  onPreviewFindResult?: (info: { total: number; current: number }) => void
 }
 
-export default function TabContent({ tab, browserFindRef }: Props) {
+export default function TabContent({ tab, browserFindRef, previewFindQuery, previewFindNavRef, onPreviewFindResult }: Props) {
   switch (tab.type) {
     case 'markdown':       return <MarkdownTab props={tab.props} />
     case 'version-detail': return <VersionDetailTab props={tab.props} />
@@ -66,7 +70,16 @@ export default function TabContent({ tab, browserFindRef }: Props) {
     case 'preview':
       // Local .html/.htm (path + projectDir) → rendered Preview + raw-source
       // Edit/Save; http(s) `url` → BrowserTab/<webview>. (T-PATCH-032)
-      return <HtmlViewer tabId={tab.id} props={tab.props} />
+      // T-PATCH-067 R4: pass iframe find bridge props down.
+      return (
+        <HtmlViewer
+          tabId={tab.id}
+          props={tab.props}
+          findQuery={previewFindQuery}
+          findNavRef={previewFindNavRef}
+          onFindResult={onPreviewFindResult}
+        />
+      )
     case 'design-gate':
     case 'qa-result':
     case 'env-view':

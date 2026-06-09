@@ -282,13 +282,6 @@ export default function SearchPane({ projectDir }: Props) {
             </div>
           )}
 
-          {status === 'idle' && (
-            <div style={statePane}>
-              <Search size={28} strokeWidth={1.5} color="#707070" />
-              <h3 style={stateTitle}>{t('workspace.search.emptyTitle')}</h3>
-            </div>
-          )}
-
           {status === 'noresult' && (
             <div style={statePane}>
               <Search size={28} strokeWidth={1.5} color="#707070" />

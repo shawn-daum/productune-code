@@ -89,7 +89,10 @@ export default function ArtifactsPane({ project, poState }: Props) {
     const title = entry.relPath.split('/').pop() ?? entry.relPath
 
     if (entry.ext === '.html') {
-      openTab(tabId, 'browser', { url: `file://${entry.absPath}` }, title)
+      // T-PATCH-067 R3: re-routed from 'browser' (file:// webview, findInPage broken) to
+      // 'preview' (LocalHtmlViewer sandboxed srcDoc + iframe find bridge). Bypasses
+      // Electron findInPage entirely; cmd+F works via postMessage CSS Custom Highlight.
+      openTab(tabId, 'preview', { path: entry.absPath, projectDir: project.projectDir, relPath: entry.relPath }, title)
     } else if (entry.ext === '.mmd' || entry.ext === '.mermaid') {
       openTab(tabId, 'artifact-mermaid', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
     } else {

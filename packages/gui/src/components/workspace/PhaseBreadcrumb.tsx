@@ -22,6 +22,10 @@ export default function PhaseBreadcrumb({ phase }: Props) {
 // ── styles ────────────────────────────────────────────────────────────────────
 
 const wrap: React.CSSProperties = {
+  // T-PATCH-071: width:100% ensures the borderBottom spans the full panel width when
+  // the chat panel is wide. Without this, the flex item is content-sized inside ctxRow
+  // (flex row), so the divider line is cut short at wide widths.
+  width: '100%',
   display: 'flex',
   alignItems: 'center',
   gap: 0,

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useWorkspace } from '../../../store/workspace'
 import {
   SIDEBAR_STORAGE_KEY, PO_CHAT_STORAGE_KEY,
   SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH,
@@ -87,6 +88,8 @@ export function useResizeLayout(): ResizeLayoutResult {
       dragStateRef.current = null
       if (shouldUpdateState) {
         setActiveResizeHandle(null)
+        // T-PATCH-074: re-enable webview pointer events on drag end
+        useWorkspace.getState().setResizeDragActive(false)
       }
 
       const previousBodyStyle = bodyStyleRef.current
@@ -161,6 +164,8 @@ export function useResizeLayout(): ResizeLayoutResult {
       startWidth: kind === 'sidebar' ? sidebarWidthRef.current : poChatWidthRef.current,
     }
     setActiveResizeHandle(kind)
+    // T-PATCH-074: suppress webview pointer events during column resize drag
+    useWorkspace.getState().setResizeDragActive(true)
   }
 
   return { shellRef, sidebarWidth, poChatWidth, activeResizeHandle, startResize }

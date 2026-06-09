@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHand
 import { ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../../../store/workspace'
+import ZoomControls, { ZOOM_DEFAULT, ZOOM_STEP } from './ZoomControls'
 
 // T-PATCH-046: FindHandle — exposed to LeafPane via forwardRef / useImperativeHandle
 export interface BrowserFindHandle {
@@ -30,9 +31,13 @@ interface ElectronWebview extends HTMLElement {
   goForward: () => void
   reload: () => void
   loadURL: (url: string) => void
-  // T-PATCH-046: in-page find API
-  findInPage: (text: string, opts?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }) => void
-  stopFindInPage: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void
+  // T-PATCH-067 R7: find moved to MAIN process. We no longer call findInPage /
+  // stopFindInPage on the <webview> element (the DOM find path is broken — see
+  // electron/ipc/browserFind.ts). Instead we resolve the underlying webContents
+  // id and drive webContents.findInPage from main via IPC.
+  getWebContentsId: () => number
+  // T-PATCH-057: zoom
+  setZoomFactor: (factor: number) => void
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -53,30 +58,92 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
 
   const [inputUrl, setInputUrl] = useState(initialUrl)
   const [loadFailed, setLoadFailed] = useState(false)
+  // T-PATCH-057: zoom state — range 0.5–3.0, step 0.1 (AC-3, AC-4)
+  const [zoom, setZoom] = useState(ZOOM_DEFAULT)
   const webviewRef = useRef<ElectronWebview | null>(null)
   // #4c (T-023): while a tab drag is active, drop pointer events on the webview
   // so the pane's drop-zone overlay receives dragover/drop instead of the
   // webview swallowing them.
   const tabDragActive = useWorkspace((s) => s.tabDragActive)
+  // T-PATCH-074: suppress webview pointer events during column/pane resize drags
+  const resizeDragActive = useWorkspace((s) => s.resizeDragActive)
 
-  // T-PATCH-046: expose find handle via forwardRef
+  // T-PATCH-067 R7: id of the underlying webContents (the find target in main).
+  // Resolved lazily via webview.getWebContentsId() — available after dom-ready.
+  // Lazy resolution (vs a dom-ready useEffect) sidesteps the file:// race where
+  // dom-ready fires before any listener registers: the find bar only opens on a
+  // loaded tab, so by the time findInPage runs the id resolves on first call.
+  const webContentsIdRef = useRef<number | null>(null)
+
+  // T-PATCH-067 R8: PUSH-DRIVEN latest requestId. findNext:false finds are now issued
+  // on a LATER tick in main (stop-then-next-tick), so the browserFind invoke can NO
+  // LONGER return the real requestId — it resolves to -1 before the find runs. So the
+  // "latest" is driven ENTIRELY by the found-in-page PUSH: we track the MAX requestId
+  // seen across pushes (monotonically increasing per webContents). A push is dropped
+  // only if its requestId is BELOW the max already seen (a stale "zo" update arriving
+  // after "zone"); the newest query always carries the highest requestId, so this
+  // never hides the latest result.
+  const latestRequestIdRef = useRef<number>(-1)
+
+  // Lazily resolve the webContents id (throws before dom-ready → null + retry).
+  const getWebContentsId = useCallback((): number | null => {
+    if (webContentsIdRef.current != null) return webContentsIdRef.current
+    const wv = webviewRef.current
+    if (!wv) return null
+    try {
+      const id = wv.getWebContentsId()
+      webContentsIdRef.current = id
+      return id
+    } catch {
+      return null // not ready yet — caller retries on next keystroke
+    }
+  }, [])
+
+  // T-PATCH-067 R7: find handle now routes through MAIN-process IPC.
   useImperativeHandle(findRef, () => ({
     findInPage: (text: string, opts) => {
-      webviewRef.current?.findInPage(text, opts)
+      const id = getWebContentsId()
+      const api = (window as any).api
+      if (id == null || !api?.browserFind) {
+        return
+      }
+      api
+        .browserFind({ webContentsId: id, text, options: opts })
+        .then(() => {
+          // T-PATCH-067 R8: do NOT bump latestRequestIdRef from the invoke return.
+          // For findNext:false res.requestId is -1 (find deferred to a later tick in
+          // main); the ref is now driven solely by found-in-page pushes (see below).
+        })
     },
     stopFindInPage: () => {
-      webviewRef.current?.stopFindInPage('clearSelection')
+      const id = getWebContentsId()
+      const api = (window as any).api
+      if (id == null || !api?.browserStopFind) return
+      api.browserStopFind({ webContentsId: id })
     },
     onFoundInPage: (cb: (result: { activeMatchOrdinal: number; matches: number }) => void) => {
-      const wv = webviewRef.current
-      if (!wv) return () => {}
-      const handler = (e: any) => {
-        if (e?.result) cb({ activeMatchOrdinal: e.result.activeMatchOrdinal, matches: e.result.matches })
-      }
-      wv.addEventListener('found-in-page', handler)
-      return () => wv.removeEventListener('found-in-page', handler)
+      const api = (window as any).api
+      if (!api?.onBrowserFoundInPage) return () => {}
+      return api.onBrowserFoundInPage(
+        (payload: {
+          webContentsId: number
+          requestId: number
+          activeMatchOrdinal: number
+          matches: number
+          finalUpdate: boolean
+        }) => {
+          // Filter to THIS webview's webContents.
+          if (payload.webContentsId !== webContentsIdRef.current) return
+          const willDrop = payload.requestId < latestRequestIdRef.current
+          // Push-driven latest-wins: drop only STALE pushes (requestId below the max
+          // already seen). Newest query always carries the highest requestId.
+          if (willDrop) return
+          latestRequestIdRef.current = payload.requestId
+          cb({ activeMatchOrdinal: payload.activeMatchOrdinal, matches: payload.matches })
+        },
+      )
     },
-  }), [])
+  }), [getWebContentsId])
 
   // On mount: notify main process — noop until T-P4-115 fills the handler
   useEffect(() => {
@@ -155,6 +222,29 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
     }
   }, [])
 
+  // T-PATCH-057: zoom handlers — clamp to [0.5, 3.0], step 0.1
+  const BROWSER_ZOOM_MIN = 0.5
+  const BROWSER_ZOOM_MAX = 3.0
+  const BROWSER_ZOOM_STEP = ZOOM_STEP
+  const zoomIn = useCallback(() => {
+    setZoom((z) => {
+      const next = parseFloat(Math.min(BROWSER_ZOOM_MAX, z + BROWSER_ZOOM_STEP).toFixed(2))
+      webviewRef.current?.setZoomFactor(next)
+      return next
+    })
+  }, [])
+  const zoomOut = useCallback(() => {
+    setZoom((z) => {
+      const next = parseFloat(Math.max(BROWSER_ZOOM_MIN, z - BROWSER_ZOOM_STEP).toFixed(2))
+      webviewRef.current?.setZoomFactor(next)
+      return next
+    })
+  }, [])
+  const zoomReset = useCallback(() => {
+    setZoom(ZOOM_DEFAULT)
+    webviewRef.current?.setZoomFactor(ZOOM_DEFAULT)
+  }, [])
+
   const navigate = useCallback((target: string) => {
     const wv = webviewRef.current
     if (!wv) return
@@ -223,6 +313,16 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
         >
           <ExternalLink size={13} />
         </button>
+
+        {/* T-PATCH-057: zoom controls (AC-3) */}
+        <ZoomControls
+          zoom={zoom}
+          onZoomIn={zoomIn}
+          onZoomOut={zoomOut}
+          onReset={zoomReset}
+          min={BROWSER_ZOOM_MIN}
+          max={BROWSER_ZOOM_MAX}
+        />
       </div>
 
       {/* ── Webview area ──────────────────────────────────────────────────── */}
@@ -237,7 +337,7 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
           src={initialUrl}
           allowpopups={true}
           partition="persist:browser-tab"
-          style={tabDragActive ? { ...webviewEl, pointerEvents: 'none' } : webviewEl}
+          style={(tabDragActive || resizeDragActive) ? { ...webviewEl, pointerEvents: 'none' } : webviewEl}
         />
       </div>
     </div>

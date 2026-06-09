@@ -485,7 +485,15 @@
   animation: pdt-persona-blink 1.4s ease-in-out infinite;
 }
 
+/* T-PATCH-068: bottom-sheet slide-up (questionSheet; inline style cannot host @keyframes) */
+@keyframes questionSheetSlideUp {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pdt-spin { animation: none; }
   .pdt-persona-blink { animation: none; }
+  /* suppress slide-up for a11y */
+  .question-sheet-slide { animation: none; }
 }

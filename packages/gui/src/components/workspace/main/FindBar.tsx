@@ -27,11 +27,15 @@ interface Props {
   onPrev: () => void
   onClose: () => void
   matchInfo: MatchInfo | null
+  /** T-PATCH-058: optional ref forwarded from LeafPane for focus restoration */
+  inputRef?: React.RefObject<HTMLInputElement>
 }
 
-export default function FindBar({ query, onQueryChange, onNext, onPrev, onClose, matchInfo }: Props) {
+export default function FindBar({ query, onQueryChange, onNext, onPrev, onClose, matchInfo, inputRef: externalInputRef }: Props) {
   const { t } = useTranslation()
-  const inputRef = useRef<HTMLInputElement | null>(null)
+  // Fall back to a local ref when no external ref is provided
+  const localInputRef = useRef<HTMLInputElement | null>(null)
+  const inputRef = externalInputRef ?? localInputRef
 
   // Auto-focus input on mount
   useEffect(() => {
@@ -110,20 +114,23 @@ export default function FindBar({ query, onQueryChange, onNext, onPrev, onClose,
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
+// T-PATCH-058: vscode-style right-top overlay (was full-width borderBottom bar)
 const barStyle: React.CSSProperties = {
   position: 'absolute',
-  top: 0,
-  left: 0,
-  right: 0,
-  height: 36,
+  top: 8,
+  right: 12,
+  left: 'auto',
+  width: 320,
+  height: 'auto',
   zIndex: 20,
   display: 'flex',
   alignItems: 'center',
   gap: 4,
-  padding: '0 8px',
-  background: '#1A1A1A',
-  borderBottom: '1px solid #2A2A2A',
-  boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+  padding: '4px 6px',
+  background: '#252526',
+  border: '1px solid #454545',
+  borderRadius: 4,
+  boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
   flexShrink: 0,
 }
 

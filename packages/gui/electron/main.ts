@@ -19,6 +19,7 @@ import { register as registerWorktree }   from './ipc/worktree'
 import { register as registerArtifacts }  from './ipc/artifacts'
 import { register as registerDoctrine }   from './ipc/doctrine'
 import { register as registerHtml }       from './ipc/html'
+import { register as registerBrowserFind } from './ipc/browserFind'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
@@ -58,6 +59,7 @@ registerWorktree()
 registerArtifacts()
 registerDoctrine()
 registerHtml()
+registerBrowserFind()
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
@@ -181,6 +183,20 @@ function buildAppMenu(): Menu {
           accelerator: 'CmdOrCtrl+F',
           click: () => sendToFocused('menu:find'),
         },
+        // T-PATCH-066: Tab navigation — hidden accelerators; visible:false items still fire
+        // window-wide (incl. when keyboard focus is inside the sandboxed OOPIF iframe).
+        // This is the PROVEN mechanism (same as cmd+F above). before-input-event was removed.
+        { label: 'New Tab',     accelerator: 'CmdOrCtrl+T',  visible: false, click: () => sendToFocused('menu:new-tab')    },
+        { label: 'Close Tab',   accelerator: 'CmdOrCtrl+W',  visible: false, click: () => sendToFocused('menu:close-tab')  },
+        { label: 'Split Right', accelerator: 'CmdOrCtrl+\\', visible: false, click: () => sendToFocused('menu:split-right') },
+        { label: 'Quick Open',  accelerator: 'CmdOrCtrl+P',  visible: false, click: () => sendToFocused('menu:quick-open') },
+        // cmd+1..9 — single channel menu:goto-tab, index in payload
+        ...Array.from({ length: 9 }, (_, i): MenuItemConstructorOptions => ({
+          label: `Go to Tab ${i + 1}`,
+          accelerator: `CmdOrCtrl+${i + 1}`,
+          visible: false,
+          click: () => sendToFocusedData('menu:goto-tab', { index: i + 1 }),
+        })),
       ],
     },
     {
@@ -224,6 +240,11 @@ function buildAppMenu(): Menu {
 function sendToFocused(channel: string): void {
   const win = BrowserWindow.getFocusedWindow()
   if (win) win.webContents.send(channel)
+}
+
+function sendToFocusedData(channel: string, data: unknown): void {
+  const win = BrowserWindow.getFocusedWindow()
+  if (win) win.webContents.send(channel, data)
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────

@@ -115,6 +115,33 @@ export function register(): void {
     },
   )
 
+  // ── T-PATCH-073: dismiss ask-user-question (X) — persist resolved, no PO resume ──
+  // Stamps payload.resolved: { chosenKey: '__dismissed__' } to chat.json so the
+  // card is excluded by pendingQuestion's !resolved guard after remount / reload.
+  // Does NOT resume a PO turn (contrast: chat:answerQuestion which does both).
+  ipcMain.handle(
+    'chat:dismissQuestion',
+    async (
+      _event,
+      opts: { projectDir: string; messageId: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      try {
+        const session = getSession(opts.projectDir)
+        const card = session.messages.find((m) => m.id === opts.messageId)
+        const basePayload =
+          card && card.payload && typeof card.payload === 'object'
+            ? (card.payload as Record<string, unknown>)
+            : {}
+        patchMessage(opts.projectDir, opts.messageId, {
+          payload: { ...basePayload, resolved: { chosenKey: '__dismissed__' } },
+        })
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'unknown' }
+      }
+    },
+  )
+
   // ── T-013 (c) PromotionCard resolve ──────────────────────────────────────────
   // Stub handler: stores outcome in chat.json's message payload.resolved.
   // Full trigger (PO instruction emitting promotion-candidate via claude tool-use)

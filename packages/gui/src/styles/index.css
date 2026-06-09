@@ -1,0 +1,10 @@
+/*
+ * index.css — T-PATCH-056
+ * Global CSS rules that cannot be expressed via inline React styles.
+ * Imported once from main.tsx.
+ */
+
+/* ── TabBar thin scrollbar — transparent track (T-PATCH-056) ──────────────── */
+.tab-strip-scroll::-webkit-scrollbar { height: 3px; background: transparent; }
+.tab-strip-scroll::-webkit-scrollbar-track { background: transparent; }
+.tab-strip-scroll::-webkit-scrollbar-thumb { background: #2A2A2A; border-radius: 2px; }

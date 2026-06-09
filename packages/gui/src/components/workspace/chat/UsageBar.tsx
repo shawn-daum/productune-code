@@ -43,9 +43,14 @@ interface UsageBarProps {
    * used when embedded inline in the input row (wide panel layout).
    */
   inline?: boolean
+  /**
+   * T-PATCH-061: when true, renders both UsageRow items side-by-side in a
+   * horizontal flex row above the textarea input area.
+   */
+  horizontal?: boolean
 }
 
-export default function UsageBar({ inline = false }: UsageBarProps) {
+export default function UsageBar({ inline = false, horizontal = false }: UsageBarProps) {
   const [payload, setPayload] = useState<UsagePayload | null>(null)
 
   useEffect(() => {
@@ -58,8 +63,10 @@ export default function UsageBar({ inline = false }: UsageBarProps) {
   // Render nothing when no data (non-subscriber / fully idle).
   if (!payload || (!payload.five_hour && !payload.seven_day)) return null
 
+  const containerStyle = horizontal ? containerHorizontal : inline ? containerInline : container
+
   return (
-    <div style={inline ? containerInline : container}>
+    <div style={containerStyle}>
       {payload.five_hour && (
         <UsageRow
           icon={<Clock size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />}
@@ -182,6 +189,18 @@ const containerInline: React.CSSProperties = {
   flexDirection: 'column',
   gap: 3,
   padding: '4px 8px',
+}
+
+// T-PATCH-061: horizontal variant — both rows side-by-side above the textarea
+const containerHorizontal: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'row',
+  gap: 16,
+  padding: '4px 12px',
+  alignItems: 'center',
+  borderTop: '1px solid #1C1C1C',
+  background: '#0F0F0F',
+  flexShrink: 0,
 }
 
 const rowWrap: React.CSSProperties = {

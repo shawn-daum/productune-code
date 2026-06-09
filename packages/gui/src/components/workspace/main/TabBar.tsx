@@ -30,8 +30,8 @@ import {
   ScrollText,
   type LucideIcon,
 } from 'lucide-react'
-import type { LeafPaneNode, Tab, TabType } from '../../../store/workspace'
-import { useWorkspace, paneTreeUtil } from '../../../store/workspace'
+import type { LeafPaneNode, Pane, Tab, TabType } from '../../../store/workspace'
+import { useWorkspace } from '../../../store/workspace'
 
 // ── Tab density tiers (T-023 #4a) ────────────────────────────────────────────
 // Driven by measured per-tab width. comfortable: icon+title+×; tight: hide
@@ -156,9 +156,9 @@ export default function TabBar({ leaf, isActivePane }: Props) {
   const splitRight = useWorkspace((s) => s.splitRight)
   const splitDown = useWorkspace((s) => s.splitDown)
   const closePane = useWorkspace((s) => s.closePane)
-  // T-PATCH-055 AC-4: hide X close btn when only 1 leaf pane remains
-  const totalLeafCount = useWorkspace((s) => paneTreeUtil.collectLeafIds(s.panes).length)
-
+  // T-PATCH-072: pane-close × only renders when >1 leaf; lone pane cannot be closed.
+  // Selector returns a number → Zustand compares by value → no spurious re-renders.
+  const totalLeafCount = useWorkspace((s) => countLeaves(s.panes))
   // #4a: measure the tab strip to derive per-tab width → density tier + scroll
   // fallback. The strip flexes; controls are a protected flex-shrink:0 sibling.
   const stripRef = useRef<HTMLDivElement | null>(null)
@@ -206,9 +206,12 @@ export default function TabBar({ leaf, isActivePane }: Props) {
       <TooltipButton label={splitDownLabel} style={splitBtn} onClick={onSplitDown}>
         <SplitSquareVertical size={14} strokeWidth={1.75} />
       </TooltipButton>
-      <TooltipButton label={closePaneLabel} style={splitBtn} onClick={onClosePane}>
-        <X size={14} strokeWidth={1.75} />
-      </TooltipButton>
+      {/* T-PATCH-072: hide × when lone pane — closing the last pane is a no-op / UX dead end. */}
+      {totalLeafCount > 1 && (
+        <TooltipButton label={closePaneLabel} style={splitBtn} onClick={onClosePane}>
+          <X size={14} strokeWidth={1.75} />
+        </TooltipButton>
+      )}
     </div>
   )
 
@@ -291,14 +294,13 @@ export default function TabBar({ leaf, isActivePane }: Props) {
     >
       {/* Flexing tab strip — shrinks tabs Chrome-style; scrolls when even
           min-width can't fit. Never encroaches the protected control cluster. */}
-      <div ref={stripRef} style={tabStrip(overflow.scroll)}>
+      <div ref={stripRef} className="tab-strip-scroll" style={tabStrip(overflow.scroll)}>
         {leaf.tabs.map((tab) => {
           const isActive = leaf.activeTabId === tab.id
           const indicator = dragHintMatch(dragHint, leaf.paneId, tab.id)
           // Active tab is exempt from density hiding (always title + ×).
-          // T-PATCH-055: when only 1 leaf pane remains, hide X on all tabs
           const showIcon = isActive || overflow.density !== 'min'
-          const showClose = totalLeafCount > 1 && (isActive || overflow.density === 'comfortable')
+          const showClose = (isActive || overflow.density === 'comfortable') && tabCount > 1
           const Icon = iconFor(tab.type)
           return (
             <div
@@ -354,6 +356,15 @@ export default function TabBar({ leaf, isActivePane }: Props) {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * T-PATCH-072: count leaf panes in the pane tree.
+ * Used to gate the pane-close × button (only shown when >1 leaf exists).
+ */
+function countLeaves(p: Pane): number {
+  if (p.type === 'leaf') return 1
+  return countLeaves(p.children[0]) + countLeaves(p.children[1])
+}
 
 function hasTabDrag(e: React.DragEvent): boolean {
   return Array.from(e.dataTransfer.types).includes(DRAG_MIME)
@@ -444,6 +455,8 @@ function tabStrip(_scroll: boolean): React.CSSProperties {
     overflowX: 'auto',
     overflowY: 'hidden',
     scrollbarWidth: 'thin',
+    // T-PATCH-056: transparent scrollbar track (Firefox)
+    scrollbarColor: 'transparent transparent',
   }
 }
 

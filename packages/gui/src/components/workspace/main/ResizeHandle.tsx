@@ -23,9 +23,12 @@ export default function ResizeHandle({ axis, path, startRatio, containerRef }: P
       setPaneRatio(path, ratio)
     }
     const onUp = () => {
+      if (!dragState.current) return
       dragState.current = null
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      // T-PATCH-074: re-enable webview pointer events on pane split drag end
+      useWorkspace.getState().setResizeDragActive(false)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -48,6 +51,8 @@ export default function ResizeHandle({ axis, path, startRatio, containerRef }: P
     }
     document.body.style.cursor = axis === 'h' ? 'col-resize' : 'row-resize'
     document.body.style.userSelect = 'none'
+    // T-PATCH-074: suppress webview pointer events during pane split drag
+    useWorkspace.getState().setResizeDragActive(true)
   }
 
   return <div style={style(axis)} onMouseDown={onMouseDown} role="separator" aria-orientation={axis === 'h' ? 'vertical' : 'horizontal'} />

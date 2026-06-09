@@ -185,6 +185,13 @@ contextBridge.exposeInMainWorld('api', {
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('chat:answerQuestion', opts),
 
+  // T-PATCH-073: X-dismiss — patches payload.resolved WITHOUT resuming PO turn.
+  chatDismissQuestion: (opts: {
+    projectDir: string
+    messageId: string
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('chat:dismissQuestion', opts),
+
   // T-013 (c) PromotionCard resolve — sends approve/reject to main process.
   // IPC handler stub: same follow-up scope as chatAnswerQuestion.
   chatResolvePromotion: (opts: {
@@ -392,6 +399,39 @@ contextBridge.exposeInMainWorld('api', {
   browserOpened: (payload: { url: string; tabId: string }): void =>
     ipcRenderer.send('browser:opened', payload),
 
+  // ── Browser-tab find — MAIN PROCESS path (T-PATCH-067 R7) ────────────────────
+  // The renderer <webview> DOM find API is broken on this build (found-in-page
+  // never fires; active session blocks new queries). These route find ops to
+  // main's webContents.findInPage, which is reliable. `webContentsId` comes from
+  // BrowserTab via webview.getWebContentsId().
+
+  /** Run a find on the <webview>'s webContents (main process). Returns the requestId. */
+  browserFind: (args: {
+    webContentsId: number
+    text: string
+    options?: { forward?: boolean; findNext?: boolean; matchCase?: boolean }
+  }): Promise<{ ok: boolean; requestId?: number; error?: string }> =>
+    ipcRenderer.invoke('browser:find', args),
+
+  /** End the active find session on the <webview>'s webContents (clear highlight). */
+  browserStopFind: (args: { webContentsId: number }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('browser:stop-find', args),
+
+  /** Subscribe to main-process found-in-page results. Returns an unsubscribe fn. */
+  onBrowserFoundInPage: (
+    cb: (payload: {
+      webContentsId: number
+      requestId: number
+      activeMatchOrdinal: number
+      matches: number
+      finalUpdate: boolean
+    }) => void,
+  ) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('browser:found-in-page', listener)
+    return () => ipcRenderer.removeListener('browser:found-in-page', listener)
+  },
+
   /** Restart the PO session — kills active child + resets sessionId. Returns { ok: boolean }.
    *  T-PATCH-040: optional projectDir re-snapshots the fresh-cycle turn window. */
   poRestartSession: (projectDir?: string): Promise<{ ok: boolean }> =>
@@ -592,6 +632,34 @@ contextBridge.exposeInMainWorld('api', {
     const listener = () => cb()
     ipcRenderer.on('menu:find', listener)
     return () => ipcRenderer.removeListener('menu:find', listener)
+  },
+
+  // T-PATCH-066: tab navigation — menu accelerator IPC bridge (R4).
+  // before-input-event removed (didn't reach OOPIF); menu accelerators do.
+  onMenuNewTab: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:new-tab', listener)
+    return () => ipcRenderer.removeListener('menu:new-tab', listener)
+  },
+  onMenuCloseTab: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:close-tab', listener)
+    return () => ipcRenderer.removeListener('menu:close-tab', listener)
+  },
+  onMenuSplitRight: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:split-right', listener)
+    return () => ipcRenderer.removeListener('menu:split-right', listener)
+  },
+  onMenuQuickOpen: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:quick-open', listener)
+    return () => ipcRenderer.removeListener('menu:quick-open', listener)
+  },
+  onMenuGotoTab: (cb: (index: number) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, data: { index: number }) => cb(data?.index ?? 1)
+    ipcRenderer.on('menu:goto-tab', listener)
+    return () => ipcRenderer.removeListener('menu:goto-tab', listener)
   },
 
   onMenuNewProject: (cb: () => void) => {

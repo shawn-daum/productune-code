@@ -103,6 +103,9 @@ interface WorkspaceState {
   /** True while a tab drag is in progress. Drives pointer-event suppression on
    *  webviews/iframes so pane drop-zones stay hit-testable (T-023 #4c). */
   tabDragActive: boolean
+  /** True while a column/pane resize drag is active. Suppresses webview pointer
+   *  events so mousemove/mouseup reach the resize handler uninterrupted (T-PATCH-074). */
+  resizeDragActive: boolean
 
   setProject: (p: Project | null) => void
   setPoState: (s: PoState | null) => void
@@ -129,6 +132,7 @@ interface WorkspaceState {
   setPaneRatio: (path: number[], ratio: number) => void
   setDragHint: (hint: DragHint) => void
   setTabDragActive: (active: boolean) => void
+  setResizeDragActive: (active: boolean) => void
   /** In-place rename: swap tab id (and optional title) across all panes.
    *  Matching leaf's activeTabId is also swapped. No-op if not found. */
   updateTabId: (oldId: string, newId: string, newTitle?: string) => void
@@ -279,6 +283,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   nextPaneSeq: 2,
   dragHint: null,
   tabDragActive: false,
+  resizeDragActive: false,
 
   // T-P4-119 follow-up: also reset inFlight state on project switch so no
   // streaming UI artefacts bleed across projects.  Avoids the old
@@ -349,7 +354,16 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
 
   setMessages: (messages) => set({ messages }),
 
-  appendMessage: (message) => set((s) => ({ messages: [...s.messages, message] })),
+  appendMessage: (message) =>
+    set((s) => {
+      const idx = s.messages.findIndex((m) => m.id === message.id)
+      if (idx !== -1) {
+        const next = s.messages.slice()
+        next[idx] = message
+        return { messages: next }
+      }
+      return { messages: [...s.messages, message] }
+    }),
 
   appendToLastMessage: (textChunk) =>
     set((s) => {
@@ -612,6 +626,8 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   setDragHint: (dragHint) => set({ dragHint }),
 
   setTabDragActive: (tabDragActive) => set({ tabDragActive }),
+
+  setResizeDragActive: (resizeDragActive) => set({ resizeDragActive }),
 
   updateTabId: (oldId, newId, newTitle) => {
     set((s) => {

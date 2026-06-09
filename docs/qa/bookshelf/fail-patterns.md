@@ -16,3 +16,5 @@ Appended by PO mechanically from QA's `fail_event` output. No manual edits. ≤1
 - (2026-06-02) v0.5 · T-016 · ticket-detail/ipc-security · loops=1 · final=resolved · note: tickets:read handler has no path-traversal guard — ticketId passed directly to path.join without startsWith(ticketsRoot) check
 - (2026-06-02) v0.5 · T-016 · ticket-detail/css-class · loops=1 · final=resolved · note: pdt-persona-blink CSS class referenced in TicketDetailTab.tsx but never defined in any stylesheet — blink animation silently no-ops
 
+
+- (2026-06-08) v0.5 · T-PATCH-067 · main-panel-find/wrong-primitive · loops=3 · final=resolved · note: window.find() cannot search sandboxed/cross-origin <iframe> content (preview/HTML-artifact tabs) and is selection-anchored so focusing the find <input> blanks the highlight — never route iframe-rendered tab types through a window.find-based find bar; for DOM tabs use CSS Custom Highlight API (focus-independent), for iframe tabs run find INSIDE the frame doc or disable it.

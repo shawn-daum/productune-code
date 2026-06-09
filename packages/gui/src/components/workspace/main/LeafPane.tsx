@@ -25,6 +25,9 @@ export default function LeafPane({ leaf }: Props) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const activeTab = leaf.tabs.find((t) => t.id === leaf.activeTabId) ?? null
 
+  // ── T-PATCH-058: ref to the FindBar <input> for focus restoration ─────────
+  const findInputRef = useRef<HTMLInputElement | null>(null)
+
   // ── T-PATCH-046: find bar state ───────────────────────────────────────────
   const [findOpen, setFindOpen] = useState(false)
   const [findQuery, setFindQuery] = useState('')
@@ -33,31 +36,85 @@ export default function LeafPane({ leaf }: Props) {
   const browserFindRef = useRef<BrowserFindHandle | null>(null)
   // Track unsubscribe fn for found-in-page events
   const foundInPageUnsub = useRef<(() => void) | null>(null)
+  // T-PATCH-067 R6: debounce timer for live browser-find (findNext:false) — see live useEffect.
+  const liveBrowserFindTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const BROWSER_FIND_DEBOUNCE_MS = 150
 
   const isBrowserTab = activeTab?.type === 'browser'
 
+  // T-PATCH-067: parent-side CSS Custom Highlight for these four tab types.
   const TEXT_TAB_TYPES = new Set(['markdown', 'artifact-md', 'code-view', 'doctrine-file'])
   const isTextTab = activeTab ? TEXT_TAB_TYPES.has(activeTab.type) : false
+
+  // T-PATCH-067 R4: 'preview' (local HTML artifact) — find routed into the iframe
+  // via postMessage bridge. HtmlViewer owns the iframe ref + highlight logic.
+  const isPreviewTab = activeTab?.type === 'preview'
+
+  // Nav callback ref: HtmlViewer assigns its postMessage fn here; LeafPane calls it.
+  const htmlViewerNavRef = useRef<((forward: boolean) => void) | null>(null)
+
+  // T-PATCH-067: CSS Custom Highlight API state for text-tab find.
+  // Unique names per pane so concurrent find in split panes don't overwrite each other.
+  const FIND_HL = `pdt-find-${leaf.paneId}`
+  const FIND_HL_ACTIVE = `pdt-find-active-${leaf.paneId}`
+  const matchRangesRef = useRef<Range[]>([])
+  const currentMatchIdxRef = useRef<number>(-1)
 
   // Open find bar
   const openFind = useCallback(() => {
     setFindOpen(true)
   }, [])
 
+  // T-PATCH-067: Inject per-pane ::highlight CSS rules once on mount.
+  // Unique names (FIND_HL / FIND_HL_ACTIVE) scoped to this pane so concurrent
+  // find in split panes don't overwrite each other's CSS.highlights entries.
+  useEffect(() => {
+    if (typeof CSS === 'undefined' || !('highlights' in CSS)) return
+    const styleEl = document.createElement('style')
+    styleEl.setAttribute('data-pdt-find-pane', leaf.paneId)
+    styleEl.textContent =
+      `::highlight(${FIND_HL}){background-color:#FFE066;color:#1A1A1A;}` +
+      `::highlight(${FIND_HL_ACTIVE}){background-color:#FF9900;color:#1A1A1A;}`
+    document.head.appendChild(styleEl)
+    return () => {
+      styleEl.remove()
+      if (typeof CSS !== 'undefined' && 'highlights' in CSS) {
+        ;(CSS as any).highlights.delete(FIND_HL)
+        ;(CSS as any).highlights.delete(FIND_HL_ACTIVE)
+      }
+    }
+  // FIND_HL / FIND_HL_ACTIVE are derived from leaf.paneId which is stable
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaf.paneId])
+
+  // T-PATCH-067: Clear CSS Highlight API state (does not affect matchInfo state).
+  const clearHighlight = useCallback(() => {
+    if (typeof CSS !== 'undefined' && 'highlights' in CSS) {
+      ;(CSS as any).highlights.delete(FIND_HL)
+      ;(CSS as any).highlights.delete(FIND_HL_ACTIVE)
+    }
+    matchRangesRef.current = []
+    currentMatchIdxRef.current = -1
+  }, [FIND_HL, FIND_HL_ACTIVE])
+
   // Close find bar — stop any running find
   const closeFind = useCallback(() => {
     setFindOpen(false)
     setFindQuery('')
     setMatchInfo(null)
+    // R6: cancel any pending debounced live search so it can't fire after close.
+    if (liveBrowserFindTimer.current) {
+      clearTimeout(liveBrowserFindTimer.current)
+      liveBrowserFindTimer.current = null
+    }
     if (isBrowserTab && browserFindRef.current) {
       browserFindRef.current.stopFindInPage()
       foundInPageUnsub.current?.()
       foundInPageUnsub.current = null
     } else {
-      // Clear window.find selection
-      window.getSelection()?.removeAllRanges()
+      clearHighlight()
     }
-  }, [isBrowserTab])
+  }, [isBrowserTab, clearHighlight])
 
   // Run find in browser tab
   const runBrowserFind = useCallback((text: string, forward: boolean, findNext: boolean) => {
@@ -74,54 +131,186 @@ export default function LeafPane({ leaf }: Props) {
         setMatchInfo({ current: result.activeMatchOrdinal, total: result.matches })
       })
     }
+    // T-PATCH-067 R6: per-keystroke stopFindInPage() REMOVED (was the R2/R5 "fix").
+    // ROOT CAUSE of the real bug is upstream of here: Chromium's find engine treats every
+    // findInPage(findNext:false) as a NEW find session that ABORTS the previous in-flight
+    // request. The scoping pass that produces found-in-page is async; one request per
+    // keystroke means each new request cancels the prior before it emits its final event, so
+    // only the first char + a settled/Enter request ever complete. stopFindInPage did NOT help
+    // — it adds ANOTHER async cancellation into the same flooded pipe, making coalescing worse.
+    // The fix is to stop flooding: the live useEffect now DEBOUNCES so exactly one clean
+    // findInPage(findNext:false) is issued per typing pause. With a single request in flight
+    // Chromium completes scoping and emits found-in-page. findInPage(findNext:false) already
+    // starts a fresh session in Chromium, so an explicit stop before it is redundant.
+    // stopFindInPage is now reserved for clear (empty query, above) and close (closeFind).
+    // The R5 requestId latest-wins filter in BrowserTab is KEPT: found-in-page fires multiple
+    // times per request (intermediate updates) and a debounced request can still supersede a
+    // slow predecessor — the filter discards stale events defensively. Nav (findNext:true,
+    // Enter/Shift+Enter) continues the active session and stays IMMEDIATE (not debounced).
     handle.findInPage(text, { forward, findNext })
   }, [])
 
-  // Run find in text (DOM) tab using window.find()
-  const runTextFind = useCallback((text: string, forward: boolean) => {
+  // T-PATCH-067: Replace window.find() with CSS Custom Highlight API.
+  // Walks the pane body's text nodes, builds a Range per case-insensitive match,
+  // paints via CSS.highlights — focus-independent so the find <input> keeps focus
+  // and highlights persist while typing (fixes AC-1 / AC-2).
+  // Also yields a real total count and scrolls the active match into view.
+  const runTextFind = useCallback((text: string) => {
+    // Always clear previous highlights before rebuilding
+    if (typeof CSS !== 'undefined' && 'highlights' in CSS) {
+      ;(CSS as any).highlights.delete(FIND_HL)
+      ;(CSS as any).highlights.delete(FIND_HL_ACTIVE)
+    }
+    matchRangesRef.current = []
+    currentMatchIdxRef.current = -1
+
     if (!text) {
-      window.getSelection()?.removeAllRanges()
       setMatchInfo(null)
       return
     }
-    const found = (window as any).find(
-      text,
-      /* caseSensitive */ false,
-      /* backwards */ !forward,
-      /* wrapAround */ true,
-    ) as boolean
-    // window.find() doesn't give a match count — show minimal feedback only
-    setMatchInfo(found ? { current: 1, total: 1 } : { current: 0, total: 0 })
-  }, [])
 
-  // Handle query changes
+    if (typeof CSS === 'undefined' || !('highlights' in CSS)) {
+      // CSS Custom Highlight API unavailable (old Electron build) — degrade gracefully
+      setMatchInfo({ current: 0, total: 0 })
+      return
+    }
+
+    const root = bodyRef.current
+    if (!root) {
+      setMatchInfo({ current: 0, total: 0 })
+      return
+    }
+
+    const ranges: Range[] = []
+    const query = text.toLowerCase()
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null)
+    let node: Node | null
+    while ((node = walker.nextNode()) !== null) {
+      const textNode = node as Text
+      const val = textNode.nodeValue ?? ''
+      const lower = val.toLowerCase()
+      let idx = 0
+      let found: number
+      while ((found = lower.indexOf(query, idx)) !== -1) {
+        const range = document.createRange()
+        range.setStart(textNode, found)
+        range.setEnd(textNode, found + query.length)
+        ranges.push(range)
+        idx = found + query.length
+      }
+    }
+
+    matchRangesRef.current = ranges
+
+    if (ranges.length === 0) {
+      setMatchInfo({ current: 0, total: 0 })
+      return
+    }
+
+    const hl = (CSS as any).highlights
+    // Paint all matches
+    hl.set(FIND_HL, new (window as any).Highlight(...ranges))
+    // First match is active
+    currentMatchIdxRef.current = 0
+    hl.set(FIND_HL_ACTIVE, new (window as any).Highlight(ranges[0]))
+    ;(ranges[0].startContainer as Element).parentElement?.scrollIntoView({
+      block: 'nearest',
+      behavior: 'smooth',
+    })
+    setMatchInfo({ current: 1, total: ranges.length })
+  }, [FIND_HL, FIND_HL_ACTIVE])
+
+  // Navigate within already-built ranges (Enter / Shift+Enter).
+  const navigateTextFind = useCallback((forward: boolean) => {
+    const ranges = matchRangesRef.current
+    if (ranges.length === 0) return
+    currentMatchIdxRef.current = forward
+      ? (currentMatchIdxRef.current + 1) % ranges.length
+      : (currentMatchIdxRef.current - 1 + ranges.length) % ranges.length
+    const activeRange = ranges[currentMatchIdxRef.current]
+    if (typeof CSS !== 'undefined' && 'highlights' in CSS) {
+      ;(CSS as any).highlights.set(FIND_HL_ACTIVE, new (window as any).Highlight(activeRange))
+    }
+    ;(activeRange.startContainer as Element).parentElement?.scrollIntoView({
+      block: 'nearest',
+      behavior: 'smooth',
+    })
+    setMatchInfo({ current: currentMatchIdxRef.current + 1, total: ranges.length })
+  }, [FIND_HL_ACTIVE])
+
+  // Handle query changes — state update only; live search is driven by useEffect below
   const handleQueryChange = useCallback((q: string) => {
     setFindQuery(q)
     setMatchInfo(null)
-    if (isBrowserTab) {
-      runBrowserFind(q, true, false)
-    } else if (isTextTab) {
-      runTextFind(q, true)
-    }
-  }, [isBrowserTab, isTextTab, runBrowserFind, runTextFind])
+  }, [])
 
-  // Next match
+  // T-PATCH-067 R4: callback from HtmlViewer → update match count in FindBar.
+  const handlePreviewFindResult = useCallback((info: { total: number; current: number }) => {
+    setMatchInfo(info)
+  }, [])
+
+  // Next match (Enter)
   const handleNext = useCallback(() => {
     if (isBrowserTab) {
       runBrowserFind(findQuery, true, true)
     } else if (isTextTab) {
-      runTextFind(findQuery, true)
+      navigateTextFind(true)
+    } else if (isPreviewTab) {
+      htmlViewerNavRef.current?.(true)
     }
-  }, [isBrowserTab, isTextTab, findQuery, runBrowserFind, runTextFind])
+  }, [isBrowserTab, isTextTab, isPreviewTab, findQuery, runBrowserFind, navigateTextFind])
 
-  // Prev match
+  // Prev match (Shift+Enter)
   const handlePrev = useCallback(() => {
     if (isBrowserTab) {
       runBrowserFind(findQuery, false, true)
     } else if (isTextTab) {
-      runTextFind(findQuery, false)
+      navigateTextFind(false)
+    } else if (isPreviewTab) {
+      htmlViewerNavRef.current?.(false)
     }
-  }, [isBrowserTab, isTextTab, findQuery, runBrowserFind, runTextFind])
+  }, [isBrowserTab, isTextTab, isPreviewTab, findQuery, runBrowserFind, navigateTextFind])
+
+  // T-PATCH-067: Live search — fires on every findQuery change while find bar is open.
+  // Decoupled from handleQueryChange so React commit completes before searching.
+  //
+  // R6 — browser (<webview>) path is now DEBOUNCED. Chromium aborts an in-flight
+  // findInPage(findNext:false) when a newer one arrives, so per-keystroke calls cancel each
+  // other and only the first char + a settled request emit found-in-page. We wait
+  // BROWSER_FIND_DEBOUNCE_MS (150ms) after the LAST keystroke, then issue exactly ONE
+  // findInPage — a single in-flight request completes its scoping and emits the event.
+  // The text-tab (CSS Custom Highlight) path is synchronous + local, so it stays immediate.
+  useEffect(() => {
+    if (!findOpen) return
+
+    if (isBrowserTab) {
+      // Reset any pending debounced search on each keystroke (clear-then-reschedule).
+      if (liveBrowserFindTimer.current) {
+        clearTimeout(liveBrowserFindTimer.current)
+        liveBrowserFindTimer.current = null
+      }
+      if (!findQuery) {
+        // Empty query → clear IMMEDIATELY (no debounce delay on clear).
+        runBrowserFind('', true, false)
+        return
+      }
+      const q = findQuery
+      liveBrowserFindTimer.current = setTimeout(() => {
+        runBrowserFind(q, true, false)
+        liveBrowserFindTimer.current = null
+      }, BROWSER_FIND_DEBOUNCE_MS)
+      return () => {
+        if (liveBrowserFindTimer.current) {
+          clearTimeout(liveBrowserFindTimer.current)
+          liveBrowserFindTimer.current = null
+        }
+      }
+    }
+
+    if (isTextTab) {
+      runTextFind(findQuery)
+    }
+  }, [findQuery, findOpen, isBrowserTab, isTextTab, runBrowserFind, runTextFind])
 
   // Close find when active tab changes
   useEffect(() => {
@@ -135,7 +324,7 @@ export default function LeafPane({ leaf }: Props) {
       const isMeta = e.metaKey || e.ctrlKey
       if (isMeta && e.key === 'f' && isActive) {
         // Only handle if a supported tab is active
-        if (activeTab && (isBrowserTab || isTextTab)) {
+        if (activeTab && (isBrowserTab || isTextTab || isPreviewTab)) {
           e.preventDefault()
           openFind()
         }
@@ -143,19 +332,19 @@ export default function LeafPane({ leaf }: Props) {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isActive, activeTab, isBrowserTab, isTextTab, openFind])
+  }, [isActive, activeTab, isBrowserTab, isTextTab, isPreviewTab, openFind])
 
   // ── IPC: menu:find from Electron menu bar ─────────────────────────────────
   useEffect(() => {
     const api = (window as any).api
     if (!api?.onMenuFind) return
     const unsub = api.onMenuFind(() => {
-      if (isActive && activeTab && (isBrowserTab || isTextTab)) {
+      if (isActive && activeTab && (isBrowserTab || isTextTab || isPreviewTab)) {
         openFind()
       }
     })
     return unsub
-  }, [isActive, activeTab, isBrowserTab, isTextTab, openFind])
+  }, [isActive, activeTab, isBrowserTab, isTextTab, isPreviewTab, openFind])
 
   const computeZone = (e: React.DragEvent): PaneZone | null => {
     const el = bodyRef.current
@@ -247,6 +436,7 @@ export default function LeafPane({ leaf }: Props) {
             onPrev={handlePrev}
             onClose={closeFind}
             matchInfo={matchInfo}
+            inputRef={findInputRef}
           />
         )}
 
@@ -255,6 +445,9 @@ export default function LeafPane({ leaf }: Props) {
               key={activeTab.id}
               tab={activeTab}
               browserFindRef={isBrowserTab ? browserFindRef : undefined}
+              previewFindQuery={isPreviewTab ? findQuery : undefined}
+              previewFindNavRef={isPreviewTab ? htmlViewerNavRef : undefined}
+              onPreviewFindResult={isPreviewTab ? handlePreviewFindResult : undefined}
             />
           : <EmptyPane />}
 

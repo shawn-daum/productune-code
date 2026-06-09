@@ -28,10 +28,14 @@ export default function AskUserQuestionCard({ message }: Props) {
 
   // Already resolved — idempotent chip
   if (payload.resolved) {
-    const chosen = payload.options.find((o) => o.key === payload.resolved!.chosenKey)
+    const { chosenKey } = payload.resolved
+    const chipLabel =
+      chosenKey === '__dismissed__'
+        ? '보류'
+        : (payload.options.find((o) => o.key === chosenKey)?.title ?? chosenKey)
     return (
       <div style={{ paddingLeft: 8, margin: '4px 0' }}>
-        <ResolvedChip label={chosen?.title ?? payload.resolved.chosenKey} />
+        <ResolvedChip label={chipLabel} />
       </div>
     )
   }
