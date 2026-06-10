@@ -115,15 +115,42 @@ $(cat "$COMMON_TIER0")
 "
   fi
 
+  # Tier 1 (project, cwd walk-up) + Tier 2 (personal) — optional files, injected
+  # when present. Injection order = layer priority (0 common → 0 persona → 1 → 2,
+  # last wins), so the read-order rule is structural, not instructional.
+  TIER1_BLOCK=""
+  PROJ="$EVENT_CWD"
+  while [ -n "$PROJ" ] && [ "$PROJ" != "/" ]; do
+    [ -f "$PROJ/.productune/po-state.json" ] && break
+    PROJ="$(dirname "$PROJ")"
+  done
+  if [ -n "$PROJ" ] && [ "$PROJ" != "/" ] && [ -f "$PROJ/docs/$PERSONA/habit.md" ]; then
+    TIER1_BLOCK="
+
+----- BEGIN Tier 1 project ($PROJ/docs/$PERSONA/habit.md) -----
+$(cat "$PROJ/docs/$PERSONA/habit.md")
+----- END Tier 1 project -----"
+  fi
+
+  TIER2_BLOCK=""
+  TIER2_FILE="$HOME/.productune/$PERSONA/habit.md"
+  if [ -f "$TIER2_FILE" ]; then
+    TIER2_BLOCK="
+
+----- BEGIN Tier 2 personal ($TIER2_FILE) -----
+$(cat "$TIER2_FILE")
+----- END Tier 2 personal -----"
+  fi
+
   MIGRATION_BLOCK=""
   [ "$PERSONA" = "po" ] && MIGRATION_BLOCK="$(build_migration_block "$EVENT_CWD")"
 
-  emit_ctx "[productune doctrine — $AGENT_TYPE session start — Tier 0 injected]
-Your Tier 0 doctrine is injected in full below. Do NOT re-read the injected file(s); act on the injected text. Bookshelf detail files referenced inside still load on demand via Bash \`cat\` under the \$HOME-expanded base $HOME/.productune/ (the Read tool does NOT expand \`~\`; never guess \`/root\`).
+  emit_ctx "[productune doctrine — $AGENT_TYPE session start — all habit tiers injected]
+Your habit tiers are injected in full below, in layer-priority order (later layers override earlier on the same topic). Bookshelf detail files referenced inside load on demand via Bash \`cat\` under the \$HOME-expanded base $HOME/.productune/ (the Read tool does NOT expand \`~\`; never guess \`/root\`).
 
 $COMMON_BLOCK----- BEGIN Tier 0 persona ($PERSONA_TIER0) -----
 $(cat "$PERSONA_TIER0")
------ END Tier 0 persona -----
+----- END Tier 0 persona -----$TIER1_BLOCK$TIER2_BLOCK
 
 Act per the doctrine above.$MIGRATION_BLOCK"
 fi

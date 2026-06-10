@@ -57,30 +57,49 @@ $(cat "$COMMON")
 "
 fi
 
+# Tier 1 (project, cwd walk-up) + Tier 2 (personal) — optional, injected when present.
+EVENT_CWD="$(printf '%s' "$EVENT_JSON" | jq -r '.cwd // ""' 2>/dev/null)"
+TIER1_BLOCK=""
+PROJ="${EVENT_CWD:-$PWD}"
+while [ -n "$PROJ" ] && [ "$PROJ" != "/" ]; do
+  [ -f "$PROJ/.productune/po-state.json" ] && break
+  PROJ="$(dirname "$PROJ")"
+done
+if [ -n "$PROJ" ] && [ "$PROJ" != "/" ] && [ -f "$PROJ/docs/$PERSONA/habit.md" ]; then
+  TIER1_BLOCK="
+
+----- BEGIN Tier 1 project ($PROJ/docs/$PERSONA/habit.md) -----
+$(cat "$PROJ/docs/$PERSONA/habit.md")
+----- END Tier 1 project -----"
+fi
+
+TIER2_BLOCK=""
+if [ -f "$PERSONAL" ]; then
+  TIER2_BLOCK="
+
+----- BEGIN Tier 2 personal ($PERSONAL) -----
+$(cat "$PERSONAL")
+----- END Tier 2 personal -----"
+fi
+
 # Unquoted heredoc so $HOME-expanded absolute paths and the $(cat …) injections
 # expand (NOT a literal `~` — the Read tool does not expand `~`). `\$` keeps an
 # intended literal `$`; the repo-relative po-state path stays literal (it is
 # relative to cwd, not $HOME).
 cat <<EOF
-[productune doctrine — re-injected after compaction — Tier 0 injected]
+[productune doctrine — re-injected after compaction — all habit tiers injected]
 
-Your Tier 0 doctrine is injected in full below. Do NOT re-read the injected file(s); act on the injected text.
+Your habit tiers are injected in full below, in layer-priority order (later layers override earlier on the same topic).
 
 $COMMON_BLOCK----- BEGIN Tier 0 persona/$PERSONA ($DOCTRINE) -----
 $(cat "$DOCTRINE")
------ END Tier 0 persona -----
+----- END Tier 0 persona -----$TIER1_BLOCK$TIER2_BLOCK
 
-Dynamic state — re-read these now (load via Bash \`cat\`; the Read tool does NOT expand \`~\`):
-  - $PERSONAL                            (Tier 2 personal — user prefs + product taste + workflow)
+Dynamic state — re-read now (load via Bash \`cat\`; the Read tool does NOT expand \`~\`):
   - ./.productune/po-state.json          (current_task, recent_turns, close_gate — PO only)
   - $HOME/.productune/doctrine/persona/$PERSONA/bookshelf/<name>.md  (detail per topic; load on demand)
 
 PO is orchestrator-only — authors no content; never self-generate a session_id.
 EOF
-
-if [ ! -f "$PERSONAL" ]; then
-  echo
-  echo "[!] $PERSONAL not found — re-run packages/core/scripts/install.sh to restore it."
-fi
 
 exit 0

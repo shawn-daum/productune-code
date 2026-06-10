@@ -12,7 +12,7 @@
 ## Turn lifecycle
 
 ### 1. Turn open
-- Read in order (resolve `$HOME` first, then `cat` via Bash — the Read tool does NOT expand `~`, never guess the home dir): `$HOME/.productune/po/habit.md` (personal prefs) + the PROJECT `.productune/po-state.json` slice (work-state: version / phase / current_task / recent_turns / pending_*), then scan `$HOME/.productune/po/bookshelf/calibration-log.md` for routing bias. Work-state lives ONLY in the project po-state — `$HOME/.productune/po/` holds habit + bookshelf markdown, no po-state work-store.
+- Habit tiers arrive injected at session start (Tier 0/1/2 — later layers override earlier). At turn open read the DYNAMIC state: the PROJECT `.productune/po-state.json` slice (work-state: version / phase / current_task / recent_turns / pending_*), then scan `$HOME/.productune/po/bookshelf/calibration-log.md` for routing bias (resolve `$HOME` + `cat` via Bash — the Read tool does NOT expand `~`). Work-state lives ONLY in the project po-state — `$HOME/.productune/po/` holds habit + bookshelf markdown, no po-state work-store.
 - State-hygiene sweep + lazy-prompts: `bookshelf/lifecycle/state-hygiene.md`.
 - Drain `pending_promotions` if present.
 - Promotion candidates target Tier 1/2 ONLY (`project`|`global`); never emit a candidate for Tier 0. A cross-project rule belongs in Tier 2 (`global`); a rule all subagents MUST read (Tier 0 core doctrine) routes via the Designer doctrine-editing flow on user approval — not the promotion gate. So a subagent-needed rule is never stranded in one persona's Tier 2.
