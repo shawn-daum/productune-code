@@ -1,8 +1,10 @@
 # PRD: productune
 
-**Slug**: productune    **Created**: 2026-04-28    **Status**: Round 1 / MVP — in-progress
+**Slug**: productune    **Created**: 2026-04-28    **Status**: v0.5 — Phase 3 Build in-progress
 
 > 자체 PRD. productune 이 만들고자 하는 제품에 대한 정의이자, 동시에 productune 자기 자신의 다음 라운드 목표를 누적 기록하는 곳.
+>
+> **버전 스냅샷**: 닫힌 버전의 PRD 는 [`versions/`](./versions/) 에 close 시점 불변 기록으로 보존 (P5 close 시 자동 — `versions/v0.4.md` 등). 이 파일은 항상 현재 그림.
 
 ---
 
@@ -32,68 +34,16 @@
 
 | Phase | 목표 | 인터페이스 | 상태 |
 |---|---|---|---|
-| **Phase 1 (지금)** | CLI 기반 핵심 구조 + dogfood-ready | terminal 명령어 (`productune`) | **현재 작업 중** |
-| Phase 2 | 사용자가 실제 프로젝트 1 개로 dogfood 완주 → MVP 검증 | 동일 (CLI) | Phase 1 완료 후 |
-| Phase 3 | UI 화 — onboarding + 일반 사용 모두 UI | web/desktop UI (스펙 미정) | Phase 2 합격 후 |
-| **Phase 4** | **terminal 무의존 GUI 풀 사이클** — PRD → 디자인 → 구현 → 배포 → 운영을 터미널 없이 완주 | GUI (Phase 3 위에 얹는 layer) | Phase 3 dogfood 후 |
+| Phase 1 | CLI 기반 핵심 구조 + dogfood-ready | terminal 명령어 (`productune`) | ✅ 완료 (v0.1~v0.3) |
+| Phase 2 | 사용자가 실제 프로젝트 1 개로 dogfood 완주 → MVP 검증 | 동일 (CLI) | ✅ 완료 (issue-tracker · paepyeong dogfood) |
+| Phase 3 | UI 화 — onboarding + 일반 사용 모두 UI | web/desktop UI | ✅ 완료 (v0.4 GUI) |
+| **Phase 4 (지금)** | **terminal 무의존 GUI 풀 사이클** — PRD → 디자인 → 구현 → 배포 → 운영을 터미널 없이 완주 | GUI (Phase 3 위에 얹는 layer) | **진행 중 — v0.5 Planner UX** |
 
 > Phase 1, 2 가 성공해야 Phase 3 진입. UI 는 검증된 흐름 위에 얹는 layer 이지, 검증 전에 만들지 않음. Phase 4 는 Phase 3 의 UI 를 한 단계 더 추상화 — "개발을 한 번도 만져보지 않은 사람도 완주" 가 합격선.
 
-## What — Phase 1 MVP 범위 (현재 집중)
+## 완료된 라운드 — Phase 1 ~ 3 (스냅샷 참조)
 
-### 핵심 기능
-
-1. **`productune` 명령어** — 사용자 entry point. terminal 에서 한 줄로 시작.
-2. **4 페르소나 시스템** (Golden Circle):
-   - `pdt-po` (PO; default sonnet) — Why: PRD 수립 / Discovery / 라우팅. How: 티켓 관리 / 교통정리.
-   - `pdt-designer` (default opus) — Why: UX 원칙 + Brand Identity + Design System. How: 검수 / 외부 툴 추천.
-   - `pdt-developer` (default sonnet) — What: 명료한 구현. How: 아키텍처 / 디버깅.
-   - `pdt-qa` (default haiku) — What: 기능 검증. How: 복잡 UX / e2e / stress.
-3. **Real Engineering 워크플로** — `PRD → Test → Issue → Refactor → 반복`. PO 가 각 stage 에 적절한 페르소나 호출 + transition 시 사용자에게 1줄 announce.
-4. **Ticket system** — task 가 ticket 단위로 영속화 (`po-state.json` + `docs/tickets/<round>/T-<id>.md`). status / 작업자 / I/O / dependency / 링크 추적. 후일 UI dashboard 의 backend.
-5. **Dynamic model tier + effort** — task 난이도에 맞춰 PO 가 페르소나마다 모델 (haiku/sonnet/opus) + effort (low/medium/high/⚡xhigh) 동적 선택. OSS 7-level task complexity hierarchy 차용.
-6. **Quality-based escalation** — 페르소나 산출물의 confidence 가 낮으면 사용자 확인 후 (a) tier-up retry 또는 (b) skill 검색 + 적용.
-7. **Skill 통합** — [mattpocock/skills](https://github.com/mattpocock/skills) (Real engineering 컨셉) + [phuryn/pm-skills](https://github.com/phuryn/pm-skills) (PM 워크플로) 페르소나별 자동 매핑.
-8. **3-tier 메모리** — Session / Project (`docs/<persona>/*.md`) / Wiki (Graphiti, persona-global). User-gated promotion.
-
-### Non-goals (Phase 1)
-
-- Web/desktop UI
-- Multi-user / 팀 공유
-- Codex agent 를 페르소나 런타임으로 사용
-- 자동 deploy / CI 통합
-- GitHub repo rename (현 `coolchestration` → `productune` 은 별도 결정)
-- Filesystem dir rename
-
-## Acceptance criteria (Phase 1 완료 기준)
-
-다음 모두 충족 시 Phase 1 합격:
-
-- [ ] `claude agents` 가 정확히 4 페르소나 (pdt-po / pdt-designer / pdt-developer / pdt-qa) 인식
-- [ ] `productune` 명령으로 새 프로젝트에서 시작 가능 (`my-po` 호환 alias 도 동작)
-- [ ] PRD 작성 → test 정의 → issue 분해 → 구현 → QA 의 한 round 가 1 명의 기획자 사용자에 의해 끝까지 완주됨 (manual dogfood)
-- [ ] 라운드 종료 시 `<project>/docs/tickets/<round-id>/` 에 ticket markdown 들이 자동 export 됨
-- [ ] PO 가 task 별로 model + effort 를 동적 선택하고 trace 에 명시 (`→ delegating to pdt-developer (model=opus, effort=⚡xhigh — 3턴 째 디버깅)`)
-- [ ] 페르소나가 confidence + unresolved 필드를 출력 → PO 가 미달 시 3-option 메뉴 surface
-- [ ] 적어도 페르소나당 1 개 skill 이 자동 invoke 됨 (mattpocock 또는 phuryn)
-- [ ] `docs/testing.md` 의 Phase 0–6 모두 pass
-- [ ] L4+ 라운드에서 PRD ready 후 Design stage 가 자동 announce 되고, 디자인 산출물 3 종 (system.md / flow.md / screens/*.md) 티켓이 발행됨 (CLI 시기에도 Phase 4 GUI 의존 없이 검증)
-- [ ] 각 페르소나 위임 직후 해당 티켓의 `## Persona Activity` 표에 1 행 자동 append 됨
-- [ ] PO 가 티켓 lifecycle / `## Persona Activity` 변경 요청을 거절 없이 처리하고, 콘텐츠 변경 요청에만 2-line refusal template 사용
-
-## Phase 2 — 사용자 dogfood (next round)
-
-- 사용자가 자기 실제 프로젝트 1 개에 productune 적용
-- MVP PRD → test → 구현 → 배포 한 사이클
-- 사용 후기 → docs/prd/productune.md Round 2 로 누적 (이 파일 자체)
-- Phase 2 합격 기준은 Round 2 진입 시점에 정의
-
-## Phase 3 — UI 화 (future)
-
-- onboarding (install + 첫 setup) 을 GUI 로
-- 일반 사용 (PRD 작성 / ticket 진행 / timeline 보기) 을 GUI 로
-- backend = Phase 1 의 ticket system + po-state.json + 페르소나 shell-out 그대로
-- 스펙은 Phase 2 합격 후 별도 PRD round 로 정의
+Phase 1 (CLI MVP — 4 페르소나 / ticket system / dynamic routing / skill / 3-tier 메모리), Phase 2 (실프로젝트 dogfood), Phase 3 (GUI 화) 는 v0.1~v0.4 에서 완료. 당시 범위 · Non-goals · acceptance criteria 전문은 close 시점 불변 스냅샷 [`versions/v0.4.md`](./versions/v0.4.md) 참조.
 
 ## Phase 4 — terminal 무의존 GUI 풀 사이클 (future)
 

@@ -529,7 +529,7 @@ productune
 - [ ] `~/.claude/settings.json` 의 `hooks.PostToolUse` 에 `post-delegate-state-write.sh` (matcher Bash) 등록
 - [ ] PO 위임 시 `<project>/.productune/po-state.json` 의 `persona_sessions.<persona>` 에 UUID + `persona_session_meta.<persona>.turns ≥ 1` 자동 갱신 (hook 동작 확인)
 - [ ] `~/.productune/po-memory.md` 의 `## Model/Effort Calibration` 섹션이 sample task 로 채워짐 (line 형식: `estimate=<m>/<e> → actual=<m>/<e> · escalation=...`, 리터럴 모델명 — `claude-sonnet/...` 같은 vendor prefix 없음)
-- [ ] `docs/prd/productune.md` 의 acceptance criteria 모두 ✓ (또는 의도적 deferred 만 □)
+- [ ] `docs/prd/PRD.md` 의 acceptance criteria 모두 ✓ (또는 의도적 deferred 만 □)
 
 이 phase 통과 시 Phase 1 완료. Phase 2 (사용자 실 프로젝트 dogfood) 진입 가능.
 
