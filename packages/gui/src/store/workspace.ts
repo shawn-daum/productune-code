@@ -28,6 +28,7 @@ export type TabType =
   | 'hooks'
   | 'artifact-md'
   | 'artifact-mermaid'
+  | 'artifact-json'
   | 'ticket-detail'
   | 'code-search'
   | 'code-view'
@@ -755,6 +756,7 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'hooks':             return i18next.t('settings.tabHooks')
     case 'artifact-md':       return (props?.relPath as string)?.split('/').pop() ?? 'Artifact'
     case 'artifact-mermaid':  return (props?.relPath as string)?.split('/').pop() ?? 'Diagram'
+    case 'artifact-json':     return (props?.relPath as string)?.split('/').pop() ?? 'JSON'
     case 'ticket-detail':     return (props?.ticketId as string) ?? 'Ticket'
     case 'code-search':       return (props?.path as string)?.split('/').pop() ?? 'File'
     case 'code-view':         return (props?.path as string)?.split('/').pop() ?? 'File'

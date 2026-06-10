@@ -17,6 +17,7 @@ import HooksTab from './panes/HooksTab'
 import BrowserTab from './panes/BrowserTab'
 import ArtifactMdTab from './panes/ArtifactMdTab'
 import ArtifactMermaidTab from './panes/ArtifactMermaidTab'
+import ArtifactJsonTab from './panes/ArtifactJsonTab'
 import TicketDetailTab from './panes/TicketDetailTab'
 import CodeSearchTab from './panes/CodeSearchTab'
 import CodeTextViewer from './panes/CodeViewTab'
@@ -60,6 +61,8 @@ export default function TabContent({ tab, browserFindRef, previewFindQuery, prev
       return <ArtifactMdTab props={tab.props} />
     case 'artifact-mermaid':
       return <ArtifactMermaidTab props={tab.props} />
+    case 'artifact-json':
+      return <ArtifactJsonTab props={tab.props} />
     case 'ticket-detail':
       return <TicketDetailTab props={tab.props} />
     case 'code-search':

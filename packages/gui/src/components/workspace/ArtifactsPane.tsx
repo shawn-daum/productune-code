@@ -16,6 +16,7 @@ import {
   FileText,
   Code2,
   GitGraph,
+  Braces,
   FolderOpen,
   Loader2,
   AlertOctagon,
@@ -97,6 +98,8 @@ export default function ArtifactsPane({ project, poState }: Props) {
       openTab(tabId, 'preview', { path: entry.absPath, projectDir: project.projectDir, relPath: entry.relPath }, title)
     } else if (entry.ext === '.mmd' || entry.ext === '.mermaid') {
       openTab(tabId, 'artifact-mermaid', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
+    } else if (entry.ext === '.json') {
+      openTab(tabId, 'artifact-json', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
     } else {
       // .md
       openTab(tabId, 'artifact-md', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
@@ -189,6 +192,9 @@ function getIcon(ext: string) {
   }
   if (ext === '.html') {
     return <Code2 size={14} strokeWidth={2} />
+  }
+  if (ext === '.json') {
+    return <Braces size={14} strokeWidth={2} />
   }
   // .md (default)
   return <FileText size={14} strokeWidth={2} />

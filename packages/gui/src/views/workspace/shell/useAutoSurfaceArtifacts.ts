@@ -44,9 +44,10 @@ function extractTicketId(relPath: string): string | null {
 }
 
 /** Extension → TabType routing (mirrors ArtifactsPane.handleRowClick). */
-function artifactTabType(ext: string): 'preview' | 'artifact-mermaid' | 'artifact-md' {
+function artifactTabType(ext: string): 'preview' | 'artifact-mermaid' | 'artifact-md' | 'artifact-json' {
   if (ext === '.html') return 'preview'
   if (ext === '.mmd' || ext === '.mermaid') return 'artifact-mermaid'
+  if (ext === '.json') return 'artifact-json'
   return 'artifact-md'
 }
 

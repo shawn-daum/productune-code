@@ -159,12 +159,14 @@ const PERSONAS = ['pdt-po', 'pdt-designer', 'pdt-developer', 'pdt-qa'] as const
 function extToTabType(ext: string): TabType {
   if (ext === '.html') return 'browser'
   if (ext === '.md') return 'artifact-md'
+  if (ext === '.json') return 'artifact-json'
   return 'artifact-mermaid'
 }
 
 function extToBadge(ext: string): string {
   if (ext === '.html') return 'html'
   if (ext === '.md') return 'md'
+  if (ext === '.json') return 'json'
   return 'mmd'
 }
 

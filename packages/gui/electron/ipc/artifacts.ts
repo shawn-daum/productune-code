@@ -24,7 +24,7 @@ export interface ArtifactEntry {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ALLOWED_EXTS = new Set(['.md', '.mmd', '.mermaid', '.html'])
+const ALLOWED_EXTS = new Set(['.md', '.mmd', '.mermaid', '.html', '.json'])
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,6 +68,8 @@ function scanDir(
   const manifest = loadManifest(dir)
   const files = entries
     .filter((e) => e.isFile())
+    // manifest.json is the registry itself, not an artifact
+    .filter((e) => e.name !== 'manifest.json')
     .map((e) => ({ name: e.name, ext: path.extname(e.name).toLowerCase() }))
     .filter((f) => ALLOWED_EXTS.has(f.ext))
     .sort((a, b) => a.name.localeCompare(b.name))
