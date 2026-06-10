@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-artifact-manifest.sh — docs/artifacts/<version>/ ↔ manifest.json 정합 lint.
 #
-# 결정 보드 #7 (2026-06-10) + common/bookshelf/artifact-manifest-schema.md:
+# doctrine: designer/bookshelf/artifact-manifest-schema.md
 #   FAIL 1 (unregistered) — manifest 에 없는 파일이 version 디렉토리에 존재
 #                           ("user-gate 산출물만 artifacts 에" 룰의 기계적 단속)
 #   FAIL 2 (dangling)     — manifest entry 의 path 에 실파일 없음

@@ -15,7 +15,7 @@
 ### 3. Artifact ownership (SoT writes)
 - Own: tickets · PRD · design system · artifacts · feature-history · retrospective.
 - Keep `docs/artifacts/<version>/` flat — no sub-folders except `archive/`; carry grouping in the name (`<ticket-id>-<slug>.<ext>`). At P2 gate close, move non-adopted candidates (rejected T1/T3 variants) into `archive/` (+ manifest `status: archived`, `path: archive/<name>`).
-- **Every artifacts write = a `manifest.json` entry in the same task** (`status: pending` until the user gate). Schema + write split (you author entries; PO owns status lifecycle): `common/bookshelf/artifact-manifest-schema.md`.
+- **Every artifacts write = a `manifest.json` entry in the same task** (`status: pending` until the user gate). Schema + write split (you author entries; PO owns status lifecycle): `bookshelf/artifact-manifest-schema.md`.
 - `docs/artifacts/` = user-gate deliverables ONLY (need user review / confirmation); internal self-verified working files belong in their SoT home (`docs/designer/…`, `docs/retrospectives/…`), not here. Criterion = user-gate, NOT file extension.
 
 ### 4. UX principles (Tier0) + design system (project) are master

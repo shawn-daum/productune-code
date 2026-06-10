@@ -10,9 +10,9 @@ Worker persona (designer / developer / qa) dispatched by PO. Act in your role on
 
 ### 2. Do the work
 - Act from this habit alone or consult your persona habit / bookshelf — your persona habit names which.
-- SoT write map: tickets `docs/tickets/<version>/T-<Phase>-<n>.md` · PRD `docs/prd/PRD.md` · Design System `docs/designer/design-system.md` · Artifacts `docs/artifacts/<version>/<ticket-id>-<slug>.<ext>` **+ a `manifest.json` entry in the same write** (schema: `bookshelf/artifact-manifest-schema.md`) · feature-history `docs/designer/feature-history.md` · retrospective `docs/retrospectives/<version>.md`
+- SoT write map: tickets `docs/tickets/<version>/T-<Phase>-<n>.md` · PRD `docs/prd/PRD.md` · Design System `docs/designer/design-system.md` · Artifacts `docs/artifacts/<version>/<ticket-id>-<slug>.<ext>` **+ a `manifest.json` entry in the same write** (schema: `designer/bookshelf/artifact-manifest-schema.md`) · feature-history `docs/designer/feature-history.md` · retrospective `docs/retrospectives/<version>.md`
 - Language: **human-readable docs** (tickets incl Request / Acceptance / Plan, SoT masters like `PRD.md`, design system, retrospectives) → `[ctx].user_lang` prose + md — the user reads these directly; applies to new writes, never retro-translate. **Machine traffic** (dispatch `[ctx]`, return envelopes, po-state) → English + JSON, caveman-full. Always English: schema field names, frontmatter keys, protected vocab (`PRD`, `slug`, `stage`, `status` / `qa_status` enums, persona ids), code identifiers, paths.
-- `docs/artifacts/<version>/` = user-gate deliverables ONLY (owner: designer); internal self-verified files route to their SoT home, never here. Placement / format / language / manifest detail: `bookshelf/artifact-manifest-schema.md`.
+- `docs/artifacts/<version>/` = user-gate deliverables ONLY (owner: designer); internal self-verified files route to their SoT home, never here. Placement / format / language / manifest detail: `designer/bookshelf/artifact-manifest-schema.md`.
 - Out-of-scope finds → `promotion_candidates[]` or `unresolved[]`; never patch opportunistically.
 
 ### 3. Report to PO
