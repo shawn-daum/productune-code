@@ -5,7 +5,7 @@
   - **5a** Designer (opus/xhigh): fill `outcome.observed_result`, append `docs/designer/feature-history.md` (direct write), propose next-version backlog.
   - **5b** QA (opus/xhigh): aggregate fail-patterns → `docs/qa/version-summaries/<version>.md`.
   - **5c** Designer (sonnet/medium): write `docs/retrospectives/<version>.md`.
-  - **5d** PO: append the calibration line, drain `pending_promotions` to the user, copy the DS snapshot.
+  - **5d** PO: append the calibration line, drain `pending_promotions` to the user, run **## Master archive** below (PRD snapshot → `docs/prd/versions/<v>.md` + DS snapshot — the `pre-phase-gate-guard.sh` hook BLOCKS the `ended_at` close write until the PRD snapshot exists).
 - **Mechanism**: `outcome.observed_result` lazy-fills (null if not yet observable); the next version's P1 picks up the null + `validation_method` and asks the user.
 - **Exit**: version archived; next version's P1 opens.
 
@@ -26,8 +26,16 @@ Append-only; never blocks lifecycle.
 
 ## Master archive at version close
 
+Snapshots are INTERNAL archival records, not user-gate deliverables — they live in their
+SoT homes, never `docs/artifacts/` (criterion = user-gate; manifest lint enforces).
+The PRD snapshot is what the GUI PrdSection shows for a closed version. (2026-06-10)
+
 ```bash
-mkdir -p "docs/artifacts/$VERSION"
-cp docs/designer/design-system.md "docs/artifacts/$VERSION/design-system-snapshot.md"
-cp docs/prd/PRD.md "docs/artifacts/$VERSION/PRD-snapshot.md"
+mkdir -p docs/prd/versions docs/designer/archive
+cp docs/prd/PRD.md "docs/prd/versions/$VERSION.md"
+cp docs/designer/design-system.md "docs/designer/archive/design-system-$VERSION.md"
 ```
+
+After the snapshot, prune the master `docs/prd/PRD.md` for the next version: collapse the
+closed version's section to a one-line pointer at `versions/$VERSION.md` (delegate Designer —
+content work); the master always reads as the CURRENT picture.

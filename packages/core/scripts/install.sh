@@ -100,9 +100,11 @@ merge_claude_settings_hooks() {
   local gitposture="$hooks_dir/pre-git-posture.sh"
   local sessdoc="$hooks_dir/session-start-doctrine.sh"
   local docguard="$hooks_dir/pre-doctrine-guard.sh"
+  local phasegate="$hooks_dir/pre-phase-gate-guard.sh"
+  local gateinject="$hooks_dir/prompt-gate-inject.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg gitposture "$gitposture" --arg sessdoc "$sessdoc" --arg docguard "$docguard" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg gitposture "$gitposture" --arg sessdoc "$sessdoc" --arg docguard "$docguard" --arg phasegate "$phasegate" --arg gateinject "$gateinject" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -116,7 +118,9 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"))
       or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"))
       or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"));
+      or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-phase-gate-guard.sh"))
+      or (cmd | endswith("/scripts/hooks/prompt-gate-inject.sh"));
     def strip_pdt(arr; dir):
       (arr // []) | map(
         select(((.hooks // []) | map(is_pdt(.command // ""; dir)) | any) | not)
@@ -134,6 +138,8 @@ merge_claude_settings_hooks() {
          hooks: [{type: "command", command: $chunkwarn}]},
         {matcher: "Bash",
          hooks: [{type: "command", command: $gitposture}]},
+        {matcher: "Bash",
+         hooks: [{type: "command", command: $phasegate}]},
         {matcher: "Write|Edit",
          hooks: [{type: "command", command: $fmlint}]}
       ])
@@ -155,6 +161,9 @@ merge_claude_settings_hooks() {
     | .hooks.SessionStart = (strip_pdt(.hooks.SessionStart; $dir) + [{
         matcher: "startup|resume",
         hooks: [{type: "command", command: $sessdoc}]
+      }])
+    | .hooks.UserPromptSubmit = (strip_pdt(.hooks.UserPromptSubmit; $dir) + [{
+        hooks: [{type: "command", command: $gateinject}]
       }])
   ' "$settings" > "$tmp"; then
     rm -f "$tmp"
@@ -409,6 +418,14 @@ if [ -d "$ROOT/doctrine" ]; then
   say "doctrine mirror 완료: ~/.productune/doctrine/"
 else
   warn "doctrine/ not found at $ROOT/doctrine — Tier 0 mirror skipped (run again after doctrine/ is present)"
+fi
+
+# 2c-1b) Mirror shared config literals (close-gate canonical array etc.) —
+#        single-source for hooks + the doctrine turn-open sweep; no drift.
+mkdir -p "$HOME/.productune/config"
+if [ -f "$ROOT/config/close-gate.p3.json" ]; then
+  cp "$ROOT/config/close-gate.p3.json" "$HOME/.productune/config/close-gate.p3.json"
+  say "config mirror 완료: ~/.productune/config/close-gate.p3.json"
 fi
 
 # 2c-2) One-time per-machine migration: personal-po-state DEPRECATION.

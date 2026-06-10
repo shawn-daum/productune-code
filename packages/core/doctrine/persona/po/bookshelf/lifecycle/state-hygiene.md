@@ -4,17 +4,15 @@
 
 One jq pass (skip if po-state absent): trim `recent_turns` to last 5 (reset at version close); clear stale `pending_gate` when `current_phase` > `from_phase`; if `current_task` status done/blocked/abandoned, clear `persona_sessions` THEN null `current_task`; drop dead `persona_sessions`.
 
-In the SAME pass, deterministically self-heal `close_gate` for the only enumerable gate (P3) — fires only when P3 && absent/null/empty (idempotent: in-progress `done`/`waived` items untouched), all other phases no-op (future phases extend this as an `elif` chain): (2026-06-05)[T-PATCH-042]
+In the SAME pass, deterministically self-heal `close_gate` for the only enumerable gate (P3) — fires only when P3 && absent/null/empty (idempotent: in-progress `done`/`waived` items untouched), all other phases no-op (future phases extend this as an `elif` chain). The canonical 4-step array lives in ONE shared literal file — `$HOME/.productune/config/close-gate.p3.json` — read by every executable site (this sweep, `pre-phase-gate-guard.sh`, `prompt-gate-inject.sh`); never inline the array. (2026-06-05)[T-PATCH-042] (2026-06-10 literal extracted to shared file)
 
 ```
-| ( if (.current_phase == 3) and ((.close_gate // []) | length == 0)
-    then .close_gate = [
-      {"step":"backlog_triage","status":"pending","waivable":false},
-      {"step":"design_review","type":"design","status":"pending","waivable":false},
-      {"step":"prd_check","type":"design","status":"pending","waivable":true},
-      {"step":"security_6","type":"qa","status":"pending","waivable":true}
-    ] else . end )
+jq --argjson gate "$(cat "$HOME/.productune/config/close-gate.p3.json")" '
+  … | ( if (.current_phase == 3) and ((.close_gate // []) | length == 0)
+        then .close_gate = $gate else . end ) | …'
 ```
+
+NOTE: the `pre-phase-gate-guard.sh` + `prompt-gate-inject.sh` hooks (2026-06-10) already run this self-heal mechanically at turn-open and before any phase write — the sweep clause is the doctrine-level backstop for environments where the hooks are not wired.
 
 ## State lazy-prompts + versions cap
 

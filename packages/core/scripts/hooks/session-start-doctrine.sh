@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Claude Code hook — SessionStart, matcher: startup|resume
-# Injects machine-independent doctrine-load instructions at session start so the
-# agent loads its Tier 0 doctrine via $HOME-EXPANDED ABSOLUTE PATHS — never a
-# literal `~` (the Read tool does NOT expand `~`; on a foreign $HOME the model
-# would otherwise guess `/root` and silently proceed without doctrine).
+# INJECTS the Tier 0 doctrine content directly into the session context
+# (decision 2026-06-10: injection over instruction — "cat this file" relies on
+# model compliance and silently degrades after compaction; the habit files are
+# small (≤60 lines each) so we pay the tokens and remove the failure mode).
+#
+# Bookshelf detail files stay load-on-demand via Bash `cat` with $HOME-expanded
+# ABSOLUTE PATHS — never a literal `~` (the Read tool does NOT expand `~`; on a
+# foreign $HOME the model would otherwise guess `/root`).
 #
 # SessionStart CANNOT block a session (only PreToolUse can). This hook only
 # *injects context*; the hard-stop on missing doctrine lives in
-# pre-doctrine-guard.sh. Here we inject via hookSpecificOutput.additionalContext
+# pre-doctrine-guard.sh. We inject via hookSpecificOutput.additionalContext
 # (NOT bare stdout) to avoid interleaving with plugin-hook output.
 #
 # Input JSON (stdin): may include `agent_type` (present ONLY when this very
@@ -58,11 +62,18 @@ STOP. Do not proceed. Run packages/core/scripts/install.sh to restore doctrine.
 Do not act without doctrine."
   fi
 
-  emit_ctx "[productune doctrine — $AGENT_TYPE session start]
-Load your Tier 0 doctrine NOW via Bash \`cat\` (the Read tool does NOT expand \`~\`; never guess \`/root\`). Absolute paths on this machine:
-  cat $COMMON_TIER0
-  cat $PERSONA_TIER0
-These are \$HOME-expanded absolute paths — read them exactly as shown. Do not act without doctrine."
+  emit_ctx "[productune doctrine — $AGENT_TYPE session start — Tier 0 injected]
+Your Tier 0 doctrine is injected in full below. Do NOT re-read these two files; act on the injected text. Bookshelf detail files referenced inside still load on demand via Bash \`cat\` under the \$HOME-expanded base $HOME/.productune/ (the Read tool does NOT expand \`~\`; never guess \`/root\`).
+
+----- BEGIN Tier 0 common ($COMMON_TIER0) -----
+$(cat "$COMMON_TIER0")
+----- END Tier 0 common -----
+
+----- BEGIN Tier 0 persona ($PERSONA_TIER0) -----
+$(cat "$PERSONA_TIER0")
+----- END Tier 0 persona -----
+
+Act per the doctrine above."
 fi
 
 # ── Fallback: no agent_type (resume w/o --agent, source clear/compact, etc.) ──
@@ -75,5 +86,11 @@ STOP. Do not proceed. Run packages/core/scripts/install.sh to restore doctrine.
 Do not act without doctrine."
 fi
 
-emit_ctx "[productune doctrine — session start, persona unspecified]
-Resolve \$HOME on this machine. Your agent pointer lists your Tier 0 doctrine files under the \$HOME-expanded base $HOME/.productune/. Load them via Bash \`cat\` (the Read tool does NOT expand \`~\`; never guess \`/root\`). Do not act without doctrine."
+emit_ctx "[productune doctrine — session start, persona unspecified — Tier 0 common injected]
+The Tier 0 common doctrine is injected below. If you are a pdt-* persona, ALSO load your persona habit before acting: Bash \`cat $HOME/.productune/doctrine/persona/<persona>/habit.md\` (\$HOME-expanded absolute path — the Read tool does NOT expand \`~\`; never guess \`/root\`).
+
+----- BEGIN Tier 0 common ($COMMON_TIER0) -----
+$(cat "$COMMON_TIER0")
+----- END Tier 0 common -----
+
+Act per the doctrine above."

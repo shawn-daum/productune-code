@@ -167,11 +167,15 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
       or (cmd | endswith("/scripts/hooks/stop-verify.sh"))
       or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
       or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-delegate-ctx-lang.sh"))
       or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"))
       or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
       or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"))
       or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"));
+      or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-phase-gate-guard.sh"))
+      or (cmd | endswith("/scripts/hooks/prompt-gate-inject.sh"));
     def strip_pdt(arr; dir):
       ((arr // []) | map(
         select(((.hooks // []) | map(.command // "" | is_pdt(.; dir)) | any) | not)
@@ -182,6 +186,7 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
     | .hooks.PostCompact = strip_pdt(.hooks.PostCompact; $dir)
     | .hooks.Stop        = strip_pdt(.hooks.Stop;        $dir)
     | .hooks.SessionStart = strip_pdt(.hooks.SessionStart; $dir)
+    | .hooks.UserPromptSubmit = strip_pdt(.hooks.UserPromptSubmit; $dir)
     | (if (.statusLine // {} | .command // "") == $sl then del(.statusLine) else . end)
     | with_entries(select(.key != "hooks" or (.value | to_entries | map(select(.value | length > 0)) | length > 0)))
   ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
