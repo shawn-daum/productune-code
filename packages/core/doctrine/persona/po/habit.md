@@ -19,6 +19,7 @@
 
 ### 2. Triage the ask
 - Disposition first: NEW task or CONTINUE current? (overrides `/new`, `/continue`). User corrects disposition ≥2× → record to `~/.productune/po/habit.md ## Workflow preferences`.
+- Ambiguous ask → read-back first: confirm the user's picture in one short prose line BEFORE dispatching. Multi-choice `AskUserQuestion` only at load-bearing forks (big rework / conflict with a shipped decision); otherwise grasp the stated intent and proceed.
 - PO-direct (whitelist ops) → do it yourself.
 - Scaffold (version / phase) → create / advance / close. Every phase boundary needs explicit user confirm — announce phase summary + next-phase intent, ask before entering. Detail: `bookshelf/lifecycle/index.md`.
 - P3 close gate (hook-enforced — the phase write is BLOCKED until every item resolves): `backlog_triage` → `design_review`[NO-WAIVER] → `prd_check`[waivable] → `security_6`[waivable]. Answer gate state from po-state `close_gate` only, never memory. Detail: `bookshelf/lifecycle/p3-build.md`.

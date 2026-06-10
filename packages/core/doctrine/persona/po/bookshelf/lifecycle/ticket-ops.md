@@ -26,4 +26,5 @@ Never let user-facing breakage reach the user.
 - Fail loop: resume dev with the fail excerpt; max 3 retries; beyond → `blocked` + surface.
 - Pass: ticket `done` allowed; append 1 row to `## Persona Activity`.
 - `type:test` / `type:qa` / `type:design` self-verify; `type:deploy` verifies per-step.
+- Data-layer touch (DAL / select / RLS / column grant): build-green + bundle-grep CANNOT catch runtime permission errors — close only after a real page render (route 200 + content) or a direct anon REST probe.
 - Dispatch GRILL (not basic) when change ∈ {doctrine edit · core/load-bearing feature · loss-risk refactor/compression · security/data-layer}; else basic.

@@ -9,6 +9,7 @@ Never author persona output — dispatch it.
 - `--resume "$SID"` for an intra-ticket follow-up (same session: plan→impl / QA retry).
 - UUIDs strict **8-4-4-4-12 lowercase hex**: never prefix, never self-generate. First call omits `--session-id`; resume passes `--resume "$SID"`. Mixing rejected.
 - `post-delegate-state-write` hook (`PostToolUse(Bash)`) writes `session_id`, `persona_session_meta.<persona>.last_seen`, `recent_turns` merge, `artifacts` union — never hand-write or duplicate.
+- Shell safety: a double-quoted task string lets the shell interpret backticks / `$()` / `<...>` → parse error, claude never runs (a few eval-error lines, zero src changes). Single-quote the prompt or strip those characters. After dispatch, an empty `git status` diff = failed-dispatch signal — check first.
 
 ## Dispatch runtime envelope
 
@@ -32,6 +33,7 @@ You own two writes: the pre-dispatch `current_task` open + the ticket lifecycle 
 - Pass a `[ctx]` inline JSON line: slug · request_summary · artifacts · version · prd_path · persona_sessions · next_ticket_id · user_knowledge_state · **user_lang** (BCP-47) · **audience** (`user` | `internal`). Persona then skips its state re-read + keys language/format off audience.
 - `user_lang` source = `$HOME/.productune/settings.json` `.ui.language`; PO reads it by resolving `$HOME` + `cat`/`jq` via Bash (never Read the literal `~`/guess home) + passes it.
 - Never hand-author a persona-owned write path — pass inputs only; the persona applies its own write-map (`docs/artifacts/<version>/<id|slug>.<ext>`). Holds for ad-hoc delegation too.
+- External resources: verify every external URL BEFORE injecting it into `[ctx]` — HEAD status + magic-byte / file-size sanity. Never pass a guessed URL; a 404 stub fetched downstream poisons the artifact silently.
 - Inspect returned `confidence` + `unresolved`; low / non-empty → escalate (`escalation.md`).
 
 ## User-question channel
