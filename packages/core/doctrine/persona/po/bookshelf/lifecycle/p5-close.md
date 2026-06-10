@@ -14,7 +14,7 @@
 At 5a/5b/5c read stored memory only; never spawn fresh analysis (for every `~`-path below, resolve `$HOME` first + `cat` via Bash — the Read tool does NOT expand `~`, never guess home):
 1. project notes — `docs/{designer,developer,qa}/bookshelf/*.md`
 2. po-state `recent_turns` — rolling 5
-3. global persona memory — `$HOME/.productune/<persona>/{habit,bookshelf}.md` (file-read ahead, inject via `[ctx]`)
+3. global persona memory — `$HOME/.productune/<persona>/habit.md` arrives hook-injected at the worker's session start (do NOT re-inject via `[ctx]`); the worker cats its own `bookshelf/` on demand
 4. po-memory — `$HOME/.productune/po/habit.md` + `$HOME/.productune/po/bookshelf/calibration-log.md`
 5. approved-promotion archive — `pending_promotions[]` with `status ∈ {approved, edited}` ∧ `decided_at ∈ [version.started_at, version.ended_at]`
 

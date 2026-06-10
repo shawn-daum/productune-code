@@ -13,7 +13,7 @@ Never author persona output — dispatch it.
 
 ## Dispatch runtime envelope
 
-Agent frontmatter = `name` + `description` only; body points to its habit. Supply per dispatch:
+The worker's habit tiers (0 common+persona / 1 project / 2 personal) are HOOK-INJECTED at its session start — the task body carries ONLY per-dispatch context (`[ctx]` + the task itself). Never paste doctrine, habits, or standing rules into a dispatch: they are already in the worker's context, and duplication wastes tokens + risks drift. Supply per dispatch:
 - **model + effort** → `routing.md` (always pass `--model`).
 - **write grant** → `--permission-mode acceptEdits` for authoring personas (designer / developer); QA needs none.
 - **QA UI smoke** → add `--mcp-config ~/.productune/mcp/playwright.json` (Playwright MCP).
