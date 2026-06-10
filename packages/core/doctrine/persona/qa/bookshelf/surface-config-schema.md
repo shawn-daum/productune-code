@@ -25,6 +25,16 @@ QA resolves build & smoke commands from project config — never by guessing fro
 - Driver map: web → playwright · electron → playwright-electron (scripted
   `_electron.launch`, NOT the browser MCP) · ios / android → maestro.
 
+## Driver prerequisites (env fail ≠ product fail)
+
+- playwright / playwright-electron / script — repo-local devDependencies:
+  install green = env ready; no gate step.
+- maestro (ios / android) — OS-level, NOT repo-installable:
+  iOS = Xcode + simulator runtime (`xcodebuild -downloadPlatform iOS`) ·
+  Android = SDK + AVD. PO verifies at P3 open (po `lifecycle/p3-build.md`).
+- A smoke failure from a missing device / driver is an ENV fail, not a product
+  fail: QA → manual fallback + `summary` note — never a product `qa_status: fail` row.
+
 ## Write rules
 
 - Owner: PO — authors entries at init and whenever a surface or its build changes

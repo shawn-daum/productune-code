@@ -1,6 +1,7 @@
 # P3 — Build
 
 - **In**: approved design + emitted `impl` / `refactor` / `test` / `qa` tickets.
+- **Env readiness (P3 open)**: when any `surfaces[*].type` ∈ {ios, android}, verify the simulator prerequisite BEFORE dispatching build tickets (detail: `qa/bookshelf/surface-config-schema.md` *Driver prerequisites*). Missing → surface a one-line setup ask to the user. Repo-local-dep surfaces (electron / web / node-lib) need no step — install green = env ready.
 - **Out**: working code, QA pass, close-gate items resolved.
 - **Persona**: pdt-developer (impl/refactor), pdt-qa (test/qa loop), pdt-designer (close-gate review).
 - **Build loop**: impl ↔ qa auto-loop, PO-owned — see `lifecycle/ticket-ops.md` *Auto QA smoke gate*.
