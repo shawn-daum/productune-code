@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Zap, Plus, FolderOpen } from 'lucide-react'
+import { Plus, FolderOpen } from 'lucide-react'
+import logoUrl from '../assets/logo.png'
 
 interface RecentProject {
   slug: string
@@ -53,7 +54,12 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
   return (
     <div style={wrap}>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
-        <Zap size={48} strokeWidth={1.5} color="#8B5CF6" />
+        <img
+          src={logoUrl}
+          alt="productune"
+          style={{ height: 52, width: 'auto', objectFit: 'contain', display: 'block' }}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+        />
       </div>
       <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 4 }}>
         productune

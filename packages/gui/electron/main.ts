@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, shell, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, shell, Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
 import path from 'path'
 import fs from 'fs'
 
@@ -372,6 +372,21 @@ function sendToFocusedData(channel: string, data: unknown): void {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(buildAppMenu())
+
+  // T-PATCH-109 §4.b QA-fix: macOS ignores BrowserWindow.icon for the Dock —
+  // the Dock tile must be set explicitly via app.dock.setIcon. resolveAppIcon()
+  // reuses the existsSync guard so a missing asset never throws; createFromPath
+  // returns an empty image on a bad path, so we skip empty results too. Packaged
+  // .app/.dmg Dock icon is still owned by electron-builder's mac.icon — this is the
+  // dev/non-packaged Dock supplement (win/linux keep using BrowserWindow.icon).
+  if (process.platform === 'darwin') {
+    const iconPath = resolveAppIcon()
+    if (iconPath) {
+      const dockImage = nativeImage.createFromPath(iconPath)
+      if (!dockImage.isEmpty()) app.dock?.setIcon(dockImage)
+    }
+  }
+
   startUsageWatch()
   createWindow()
 

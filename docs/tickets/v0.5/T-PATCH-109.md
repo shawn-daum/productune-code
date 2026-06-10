@@ -108,6 +108,18 @@ shawn (ad-hoc): 신규 브랜드 로고 — near-black(거의 검정) 배경 위
 3. `dist:mac` 으로 아이콘 오류 없이 `.dmg` 빌드 green 확인.
 4. (사용자 단계) 실물 자산을 §4.A 경로에 드롭 → 코드 변경 없이 실물 마크 반영 확인(AC-5).
 
+### §4.b QA-feedback (round-2)
+
+사용자 QA 결과 두 가지 결함 확인 → 본 라운드에서 수정.
+
+**BUG 1 — 로고가 잘못된 화면에 적용됨.** 첫 시작 화면 로고가 `FreshComposer` 에 들어갔으나, 사용자의 실제 "첫 시작 페이지" 는 런처 `packages/gui/src/views/HomeView.tsx` (lucide `Zap` 브랜드 마크 + "productune" + "phase 4 GUI MVP" + 새 프로젝트/기존 폴더/최근 항목) 이다. → `HomeView.tsx` 의 `<Zap size={48} … />` 브랜드 마크를 실물 로고 이미지로 교체: `import logoUrl from '../assets/logo.png'`(`src/views/` → `src/assets/logo.png` = `../assets/logo.png`), `<img src={logoUrl} alt="productune" />` (height 52 / width auto / objectFit contain / display block, `onError` 로 깨진 이미지 숨김). title/tagline/layout 유지, 미사용 `Zap` import 제거. `FreshComposer` 의 로고는 무해하므로 그대로 둠.
+
+**BUG 2 — macOS Dock 아이콘이 기본 Electron 아톰.** `electron/main.ts` 의 `resolveAppIcon()` + `BrowserWindow.icon` 옵션은 macOS Dock 아이콘을 설정하지 못한다(macOS 는 `BrowserWindow.icon` 무시 — `app.dock.setIcon` 필요). → `nativeImage` 를 `electron` 에서 import; `app.whenReady` 진입부(`createWindow()` 직전)에서 darwin 일 때 `app.dock?.setIcon(nativeImage.createFromPath(iconPath))` 호출. `iconPath` 는 `resolveAppIcon()`(기존 existsSync 가드 재사용) 결과 → 자산 부재 시 throw 없음. `createFromPath` 가 빈 이미지를 반환하면(`isEmpty()`) skip. 기존 `BrowserWindow.icon` 옵션은 win/linux 용으로 유지.
+
+> **Dock 아이콘 반영 조건**: `app.dock.setIcon` 은 런타임 Dock 타일만 갱신한다. 변경이 보이려면 사용자가 **dist-electron 을 재빌드(electron build) 후 앱을 재시작**해야 한다(dev 핫리로드로는 main 프로세스 변경이 적용되지 않음). 패키징된 `.app`/`.dmg` 의 정적 아이콘은 여전히 `electron-builder.yml` `mac.icon: build/icon.icns` 소관.
+
+touched: `HomeView.tsx`, `electron/main.ts` (+ 본 티켓). 신규 i18n 키 없음(`alt="productune"` 리터럴) → en/ko parity 무영향. `tsc --noEmit -p tsconfig.json`(src+electron 포함) → **0 errors**. full build/`vite build`/`dist:mac` 미실행(비요청).
+
 ## §5. QA — smoke
 
 | Area | Check |
@@ -171,3 +183,26 @@ shawn (ad-hoc): 신규 브랜드 로고 — near-black(거의 검정) 배경 위
 → 위 경로에 실물 자산 드롭 시 **코드 변경 없이** 반영(AC5 완료). `.icns` 재생성은 §4 노트(iconutil/electron-builder PNG→icns).
 
 qa_status: smoke → **pass** (배선 전부 PASS; asset-gated 비주얼은 사용자 자산 드롭 의존성으로 노트 — fail 아님; runtime 은 user-verify 위임).
+
+### pdt-developer — qa-fix (round-2, status stays review)
+
+QA-feedback 2건 수정(§4.b). 자산은 사용자가 이미 드롭함(`src/assets/logo.png` 263KB, `build/icon.png` 928KB 존재 확인).
+
+**Files**
+- `packages/gui/src/views/HomeView.tsx` — (BUG 1) 첫 시작 런처의 `<Zap size={48} … />` 브랜드 마크를 `<img src={logoUrl} alt="productune" />`(height 52 / width auto / objectFit contain / display block, `onError`→`display:none`)로 교체. `import logoUrl from '../assets/logo.png'` 추가, 미사용 `Zap` import 제거(`Plus`/`FolderOpen` 유지). title/tagline/btnGroup/recent 레이아웃 무변경.
+- `packages/gui/electron/main.ts` — (BUG 2) `nativeImage` 를 `electron` import 에 추가. `app.whenReady` 의 `createWindow()` 직전에 darwin 가드 + `resolveAppIcon()`(existsSync 재사용) → `app.dock?.setIcon(nativeImage.createFromPath(iconPath))`, `isEmpty()` skip. 기존 `BrowserWindow.icon`(win/linux) 옵션 유지, `resolveAppIcon`/`createWindow` 나머지 로직 무변경.
+
+**Verify**: `tsc --noEmit -p tsconfig.json`(include = src + electron) → **0 errors**. full build/`dist:mac` 미실행(비요청).
+
+**User action (Dock 아이콘 반영)**: dist-electron 재빌드 + 앱 재시작 필요(§4.b 노트). dev 핫리로드로는 main 프로세스 변경 미적용.
+
+**Not touched**: FreshComposer(기존 로고 무해하게 유지) / electron-builder.yml / preload.ts / 기타.
+
+### pdt-qa — verify by code inspection (round-2, qa_status pass)
+
+- BUG1 ✅ `HomeView.tsx` L4 `Zap` 제거(`Plus`/`FolderOpen` 잔존), L5 `import logoUrl from '../assets/logo.png'`. 브랜드 마크 블록(L55~)이 `<img src={logoUrl} alt="productune" … onError=hide />`. `../assets/logo.png` 경로 정합(`src/views/` 기준), 실물 파일 존재. title/tagline 무변경.
+- BUG2 ✅ `main.ts` L1 `nativeImage` import. `app.whenReady` 진입부 darwin 가드 → `resolveAppIcon()`(`build/icon.png` 우선, existsSync) → `app.dock?.setIcon(nativeImage.createFromPath(...))`, `isEmpty()` skip. `BrowserWindow.icon` 옵션(L155) 유지.
+- parity ✅ 신규 i18n 키 없음(`alt` 리터럴) → en/ko 무영향. tsc 0 errors.
+- runtime user-verify: 첫 화면(HomeView)에 실물 로고 렌더 확인; Dock 아이콘은 **재빌드+재시작 후** 확인(런타임 setIcon 특성).
+
+verdict: **PASS** (code inspection). status: review 유지.
