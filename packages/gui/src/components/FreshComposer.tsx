@@ -24,7 +24,7 @@ import type { Project } from '../lib/types'
 // user-provided dependency — drop the final file at src/assets/logo.svg
 // (PNG fallback: src/assets/logo.png) to replace the placeholder with NO
 // code change. A missing/broken asset is hidden via onError (no broken glyph).
-import logoUrl from '../assets/logo.svg'
+import logoUrl from '../assets/logo.png'
 
 interface Props {
   project: Project
