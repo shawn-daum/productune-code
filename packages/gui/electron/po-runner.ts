@@ -41,6 +41,13 @@ export interface SendOpts {
   resume?: string | null
   /** Project working directory — passed as cwd to spawned claude. */
   projectDir: string
+  /**
+   * T-PATCH-100: how this turn began — `'user-requested'` for a direct user
+   * utterance (po:sendMessage), `'auto'` for non-utterance turns (answerQuestion
+   * resume, fresh-cycle re-orient). Stamped onto any promotion candidate emitted
+   * during the turn. Omitted → conservative `'auto'` fallback at the emit site.
+   */
+  turnOrigin?: 'user-requested' | 'auto'
 }
 
 export interface AnnouncePayload {
@@ -50,6 +57,13 @@ export interface AnnouncePayload {
   kind?: 'turn-aborted' | 'exit-error'
   /** T-PATCH-087: exit code for exit-error kind. */
   code?: number
+  /** T-PATCH-108: tool_use.name — only set for level:'tool'. */
+  toolName?: string
+  /**
+   * T-PATCH-108: tool_use.input — only set for level:'tool'. Forwarded raw
+   * (no serialization/truncation here — the renderer owns that, AC4 single source).
+   */
+  toolInput?: unknown
 }
 
 // ── Health event types (T-P4-059) ────────────────────────────────────────────
@@ -116,6 +130,42 @@ export interface AskUserQuestionPayload {
   options: Array<{ key: string; title: string; description?: string }>
 }
 
+// ── Promotion candidate (T-PATCH-100 / 097 follow-up) ─────────────────────────
+
+/**
+ * Raw promotion candidate as emitted in a PO envelope. Mirrors the doctrine
+ * `promotion_candidates[]` schema (common/bookshelf/promotion-candidate-schema.md):
+ * 7 fields, none of which is `origin` — origin is a GUI/transport concern inferred
+ * by ipc/po.ts, NOT part of doctrine (T-PATCH-100 §3, doctrine unchanged).
+ */
+export interface PromotionCandidateRaw {
+  scope?: string
+  pattern?: string
+  target?: string
+  delta?: string
+  rationale?: string
+  area_tag?: string
+  source_ticket?: string
+}
+
+/**
+ * Main-process mirror of `PromotionPayload` (src/lib/types.ts:92) — the shape the
+ * renderer's PromotionCard / PromotionQuestionCard consume. `origin` is stamped by
+ * the IPC layer (turn-origin inference); `resolved` is stamped renderer-side.
+ */
+export interface PromotionPayload {
+  candidateSummary: string
+  targetTier: string
+  rationale: string
+  sourceTicketId: string
+  origin?: 'user-requested' | 'auto'
+}
+
+/** Per-candidate emit metadata. `origin` is filled by the IPC binding closure. */
+export interface PromotionCandidateMeta {
+  origin?: 'user-requested' | 'auto'
+}
+
 interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
@@ -156,6 +206,18 @@ interface RunCallbacks {
    * assistant tool_use stream (Path A) OR the result-text marker (Path B).
    */
   onAskUserQuestion: (msgId: string, payload: AskUserQuestionPayload) => void
+  /**
+   * T-PATCH-100: PO emitted one or more `promotion_candidates[]` in its envelope.
+   * Fires once per candidate. `meta.origin` is inferred by the IPC layer (whether
+   * the turn began as a user utterance via po:sendMessage). Mirrors the
+   * `onAskUserQuestion` result-text path (Path B) — promotions have no tool_use
+   * surface, so there is no Path A for them.
+   */
+  onPromotionCandidate: (
+    msgId: string,
+    payload: PromotionPayload,
+    meta: PromotionCandidateMeta,
+  ) => void
 }
 
 // ── Active child tracking (T-PATCH-081) ──────────────────────────────────────────
@@ -371,6 +433,9 @@ function handleToolUseHealth(toolName: string, ctx: HealthContext, cb: RunCallba
 function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<void> {
   return new Promise((resolve) => {
     const hCtx = makeHealthCtx(msgId)
+    // T-PATCH-100: capture turn origin for any promotion candidate emitted this
+    // turn. Conservative default = 'auto' when the caller didn't stamp it.
+    const turnOrigin: 'user-requested' | 'auto' = opts.turnOrigin ?? 'auto'
 
     // T-PATCH-037: reset per-turn AskUserQuestion de-dupe flag.
     askEmitted = false
@@ -415,7 +480,7 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       while ((nlIdx = stdoutBuf.indexOf('\n')) >= 0) {
         const line = stdoutBuf.slice(0, nlIdx).trim()
         stdoutBuf = stdoutBuf.slice(nlIdx + 1)
-        if (line) handleStreamJsonLine(line, msgId, cb, hCtx)
+        if (line) handleStreamJsonLine(line, msgId, cb, hCtx, turnOrigin)
       }
     })
 
@@ -448,7 +513,7 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       clearToolUseTimeout(hCtx)
       clearSilenceTimeout(hCtx)
 
-      if (stdoutBuf.trim()) handleStreamJsonLine(stdoutBuf.trim(), msgId, cb, hCtx)
+      if (stdoutBuf.trim()) handleStreamJsonLine(stdoutBuf.trim(), msgId, cb, hCtx, turnOrigin)
       if (stderrBuf.trim()) {
         const line = stderrBuf.trim()
         cb.onAnnounce(msgId, { level: 'error', text: line })
@@ -492,6 +557,7 @@ function handleStreamJsonLine(
   msgId: string,
   cb: RunCallbacks,
   hCtx: HealthContext,
+  turnOrigin: 'user-requested' | 'auto',
 ): void {
   let obj: any
   try {
@@ -539,7 +605,15 @@ function handleStreamJsonLine(
           continue
         }
 
-        cb.onAnnounce(msgId, { level: 'tool', text: `→ tool: ${part.name}` })
+        // T-PATCH-108: forward the parsed tool name + raw input so the renderer
+        // can show per-tool detail. `text` kept for backward compat. Raw input is
+        // structured-clone-safe plain object; renderer serializes/truncates.
+        cb.onAnnounce(msgId, {
+          level: 'tool',
+          text: `→ tool: ${part.name}`,
+          toolName: part.name,
+          toolInput: part.input,
+        })
         handleToolUseHealth(part.name, hCtx, cb)
 
         // Extract subagent_type for delegating detail.
@@ -661,6 +735,17 @@ function handleStreamJsonLine(
           askEmitted = true
           cb.onAskUserQuestion(msgId, askPayload)
         }
+      }
+
+      // ── T-PATCH-100: promotion_candidates[] → promotion-candidate card(s) ──
+      // Mirror of the AskUserQuestion result-text path: PO returns a structured
+      // result JSON; we extract any promotion candidates and surface one card per
+      // candidate. `turnOrigin` (user-requested vs auto) is GUI-inferred (§B) and
+      // stamped onto each payload via meta. doctrine schema is untouched (§3).
+      const promoCandidates = parsePromotionCandidates(resultText)
+      for (const raw of promoCandidates) {
+        const payload = mapPromotionCandidate(raw, turnOrigin)
+        cb.onPromotionCandidate(msgId, payload, { origin: turnOrigin })
       }
     }
     return
@@ -923,6 +1008,69 @@ function parsePendingGate(text: string): PendingGateInfo | null {
   return null
 }
 
+// ── Promotion candidate parser + mapper (T-PATCH-100) ─────────────────────────
+
+/**
+ * Extract a `promotion_candidates[]` array from PO result text. Mirrors
+ * `parsePendingGate` / `parseAskUserQuestion`: reuses `extractJsonCandidates`,
+ * conservative about shape. Also accepts a single `promotion_candidate` object
+ * for forward-compat. Returns `[]` when the key is absent or unparseable.
+ */
+function parsePromotionCandidates(text: string): PromotionCandidateRaw[] {
+  for (const candidate of extractJsonCandidates(text)) {
+    try {
+      const parsed: unknown = JSON.parse(candidate)
+      if (!parsed || typeof parsed !== 'object') continue
+      const obj = parsed as Record<string, unknown>
+
+      // Plural array form (canonical).
+      if (Array.isArray(obj.promotion_candidates)) {
+        const out = obj.promotion_candidates.filter(
+          (c): c is Record<string, unknown> => c !== null && typeof c === 'object',
+        )
+        if (out.length > 0) return out as PromotionCandidateRaw[]
+      }
+
+      // Singular object form (forward-compat).
+      const single = obj.promotion_candidate
+      if (single && typeof single === 'object') {
+        return [single as PromotionCandidateRaw]
+      }
+    } catch { /* ignore */ }
+  }
+  return []
+}
+
+/** Trim a delta to a 1-line summary (truncate overly long deltas for the card). */
+function summarizeDelta(delta: string | undefined): string {
+  if (!delta) return ''
+  const oneLine = delta.replace(/\s+/g, ' ').trim()
+  return oneLine.length > 160 ? `${oneLine.slice(0, 157)}…` : oneLine
+}
+
+/**
+ * Map the doctrine 7-field promotion candidate → renderer `PromotionPayload`
+ * (T-PATCH-100 §4 mapping table). `scope`+`pattern` → `<scope>/<pattern>` token
+ * (PromotionTier shape, e.g. `global/habit`). `origin` is GUI-inferred (§B).
+ */
+function mapPromotionCandidate(
+  raw: PromotionCandidateRaw,
+  origin: 'user-requested' | 'auto',
+): PromotionPayload {
+  const scope = typeof raw.scope === 'string' ? raw.scope : ''
+  const pattern = typeof raw.pattern === 'string' ? raw.pattern : ''
+  const targetTier = scope && pattern ? `${scope}/${pattern}` : (scope || pattern)
+  return {
+    candidateSummary: summarizeDelta(
+      typeof raw.delta === 'string' ? raw.delta : undefined,
+    ),
+    targetTier,
+    rationale: typeof raw.rationale === 'string' ? raw.rationale : '',
+    sourceTicketId: typeof raw.source_ticket === 'string' ? raw.source_ticket : '',
+    origin,
+  }
+}
+
 // ── AskUserQuestion normalizers (T-PATCH-037) ─────────────────────────────────
 
 /** Stable option key from an index: 0→A, 1→B, … 25→Z, then A1/A2… (defensive). */
@@ -1086,6 +1234,10 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     },
     // T-PATCH-037: AskUserQuestion card emit.
     onAskUserQuestion: (msgId, payload) => wc.send('po:onAskUserQuestion', msgId, payload),
+    // T-PATCH-100: promotion-candidate card emit. `origin` is already baked into
+    // payload by mapPromotionCandidate; meta is forwarded for symmetry/debug.
+    onPromotionCandidate: (msgId, payload) =>
+      wc.send('po:onPromotionCandidate', msgId, payload),
     // T-019 §B3: phase-gate-entry — PO emitted a phase-transition gate.
     onPhaseGate: (gate) => {
       const phaseLabel =

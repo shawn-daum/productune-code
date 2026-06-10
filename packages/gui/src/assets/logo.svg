@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PLACEHOLDER logo (T-PATCH-109).
+  Neon-glassy `{ }` brace mark on near-black, dark-bg friendly.
+  The real brand asset is a user-provided dependency: drop the final file at
+  this exact path (packages/gui/src/assets/logo.svg) to replace this placeholder
+  with NO code change. Optional PNG fallback: packages/gui/src/assets/logo.png.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80" viewBox="0 0 200 80" fill="none" role="img" aria-label="productune">
+  <defs>
+    <linearGradient id="neon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#glow)" stroke="url(#neon)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M78 18 C66 18 70 36 58 40 C70 44 66 62 78 62"/>
+    <path d="M122 18 C134 18 130 36 142 40 C130 44 134 62 122 62"/>
+  </g>
+</svg>

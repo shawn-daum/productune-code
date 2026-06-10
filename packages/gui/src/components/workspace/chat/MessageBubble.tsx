@@ -8,15 +8,18 @@
  *   trace                     → caption gray, no border
  *   user                      → right-aligned, gray-overlay bg (linkify NOT applied)
  *   ask-user-question         → AskUserQuestionCard (T-013 b)
- *   promotion-candidate       → PromotionCard (T-013 c)
+ *   promotion-candidate       → PromotionCard (T-013 c) |
+ *                               PromotionQuestionCard when payload.origin ===
+ *                               'user-requested' (T-PATCH-097)
  */
 
 import { useTranslation } from 'react-i18next'
-import type { Message, MessageKind } from '../../../lib/types'
+import type { Message, MessageKind, PromotionPayload } from '../../../lib/types'
 import { linkifyText } from '../../../lib/linkifyText'
 import MdRenderer from './MdRenderer'
 import AskUserQuestionCard from './AskUserQuestionCard'
 import PromotionCard from './PromotionCard'
+import PromotionQuestionCard from './PromotionQuestionCard'
 
 // T-006 Option B — PO = violet #8B5CF6 (was orange #FF6B2B)
 // designer moved to orange #FB923C (no longer violet)
@@ -44,7 +47,15 @@ export default function MessageBubble({ message }: Props) {
 
   // T-013: action-card dispatch
   if (kind === 'ask-user-question') return <AskUserQuestionCard message={message} />
-  if (kind === 'promotion-candidate') return <PromotionCard message={message} />
+  if (kind === 'promotion-candidate') {
+    // T-PATCH-097: user-requested promotion gates render as a question-style
+    // card; auto-surfaced candidates (origin absent or 'auto') keep the classic
+    // PromotionCard — safe no-regression fallback when the origin signal is
+    // missing from the payload.
+    const origin = (message.payload as PromotionPayload | undefined)?.origin
+    if (origin === 'user-requested') return <PromotionQuestionCard message={message} />
+    return <PromotionCard message={message} />
+  }
 
   if (kind === 'user') return <UserBubble message={message} />
   if (kind === 'trace') return <TraceLine message={message} />

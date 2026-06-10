@@ -1,16 +1,24 @@
 /**
- * ArtifactsPane — T-014
+ * ArtifactsPane — T-014, restructured T-PATCH-107
  *
- * Scoped file list for the artifacts ActivityBar slot.
- * Scans: docs/artifacts/<version>/
- * On file row click → openTab with extension-based routing.
+ * Version-tree file list for the artifacts ActivityBar slot.
+ * Header label = current version name (poState.current_version).
+ * Layout:
+ *   - FLAT section: current-version level-1 artifacts (always open, no section header).
+ *   - "archive" toggle: current-version archived artifacts (collapsed default).
+ *   - "version history" toggle: past versions (po-state versions[]), each nested
+ *     with the same flat / archive structure (collapsed default).
+ *
+ * Data source: artifacts:listTree IPC → { current, past[] }, each version split
+ * into flat (root, archive/ + manifest.json excluded) and archived (manifest
+ * status:'archived' SoT ∪ archive/ physical scan, basename dedupe).
  *
  * Empty state: DS §8.9 (FolderOpen + headline + helper, no CTA).
  * Load error:  DS §2.8 inline health-error + retry.
  * Read-only invariant: no create/edit affordance.
  */
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   FileText,
@@ -20,6 +28,8 @@ import {
   FolderOpen,
   Loader2,
   AlertOctagon,
+  ChevronRight,
+  ChevronDown,
   RefreshCw as RefreshCwIcon,
 } from 'lucide-react'
 import type { Project, PoState } from '../../lib/types'
@@ -36,6 +46,17 @@ interface ArtifactEntry {
   meta?: { ticket: string | null; kind: string; status: string }
 }
 
+interface VersionArtifacts {
+  version: string
+  flat: ArtifactEntry[]
+  archived: ArtifactEntry[]
+}
+
+interface ArtifactTree {
+  current: VersionArtifacts
+  past: VersionArtifacts[]
+}
+
 interface Props {
   project: Project
   poState: PoState | null
@@ -43,11 +64,7 @@ interface Props {
 
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const SCOPE_LABELS: Record<ArtifactEntry['scopeGroup'], string> = {
-  artifacts: 'docs/artifacts/',
-}
+const HEADER_FALLBACK = 'docs/artifacts/'
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -55,26 +72,50 @@ export default function ArtifactsPane({ project, poState }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
 
-  const [entries, setEntries] = useState<ArtifactEntry[]>([])
+  const currentVersion = poState?.current_version ?? null
+
+  // Past version ids in po-state order: (ended_at ?? started_at ?? id) desc,
+  // matching SidePanelPastVersions. current_version excluded.
+  const pastVersionIds = useMemo(() => {
+    const versions = poState?.versions ?? []
+    return [...versions]
+      .filter((v) => v.id !== currentVersion)
+      .sort((a, b) => {
+        const ta = a.ended_at ?? a.started_at ?? a.id
+        const tb = b.ended_at ?? b.started_at ?? b.id
+        return tb.localeCompare(ta)
+      })
+      .map((v) => v.id)
+  }, [poState?.versions, currentVersion])
+
+  // Stable dep key for the version id array.
+  const versionIdsKey = pastVersionIds.join('\n')
+
+  const [tree, setTree] = useState<ArtifactTree | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [selectedRelPath, setSelectedRelPath] = useState<string | null>(null)
+
+  // Toggle state — collapsed by default.
+  const [archiveOpen, setArchiveOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set())
+  const [openVersionArchives, setOpenVersionArchives] = useState<Set<string>>(new Set())
 
   const load = useCallback(() => {
     setLoadState('loading')
     const api = (window as any).api
+    // IPC contract: pass current + past ids; main has no po-state.
+    const ids = versionIdsKey ? versionIdsKey.split('\n') : []
     api
-      .artifactsListScoped(
-        project.projectDir,
-        poState?.current_version ?? null,
-      )
-      .then((result: ArtifactEntry[]) => {
-        setEntries(result)
+      .artifactsListTree(project.projectDir, currentVersion, ids)
+      .then((result: ArtifactTree) => {
+        setTree(result)
         setLoadState('done')
       })
       .catch(() => {
         setLoadState('error')
       })
-  }, [project.projectDir, poState?.current_version])
+  }, [project.projectDir, currentVersion, versionIdsKey])
 
   useEffect(() => {
     load()
@@ -86,25 +127,40 @@ export default function ArtifactsPane({ project, poState }: Props) {
     return () => window.removeEventListener('artifacts:reload', handler)
   }, [load])
 
-  function handleRowClick(entry: ArtifactEntry) {
-    setSelectedRelPath(entry.relPath)
-    const tabId = `artifact:${entry.relPath}`
-    const title = entry.relPath.split('/').pop() ?? entry.relPath
+  const handleRowClick = useCallback(
+    (entry: ArtifactEntry) => {
+      setSelectedRelPath(entry.relPath)
+      const tabId = `artifact:${entry.relPath}`
+      const title = entry.relPath.split('/').pop() ?? entry.relPath
 
-    if (entry.ext === '.html') {
-      // T-PATCH-067 R3: re-routed from 'browser' (file:// webview, findInPage broken) to
-      // 'preview' (LocalHtmlViewer sandboxed srcDoc + iframe find bridge). Bypasses
-      // Electron findInPage entirely; cmd+F works via postMessage CSS Custom Highlight.
-      openTab(tabId, 'preview', { path: entry.absPath, projectDir: project.projectDir, relPath: entry.relPath }, title)
-    } else if (entry.ext === '.mmd' || entry.ext === '.mermaid') {
-      openTab(tabId, 'artifact-mermaid', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
-    } else if (entry.ext === '.json') {
-      openTab(tabId, 'artifact-json', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
-    } else {
-      // .md
-      openTab(tabId, 'artifact-md', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
-    }
-  }
+      if (entry.ext === '.html') {
+        openTab(tabId, 'preview', { path: entry.absPath, projectDir: project.projectDir, relPath: entry.relPath }, title)
+      } else if (entry.ext === '.mmd' || entry.ext === '.mermaid') {
+        openTab(tabId, 'artifact-mermaid', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
+      } else if (entry.ext === '.json') {
+        openTab(tabId, 'artifact-json', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
+      } else {
+        openTab(tabId, 'artifact-md', { absPath: entry.absPath, relPath: entry.relPath, projectDir: project.projectDir }, title)
+      }
+    },
+    [openTab, project.projectDir],
+  )
+
+  const toggleVersion = useCallback((v: string) => {
+    setOpenVersions((prev) => {
+      const next = new Set(prev)
+      next.has(v) ? next.delete(v) : next.add(v)
+      return next
+    })
+  }, [])
+
+  const toggleVersionArchive = useCallback((v: string) => {
+    setOpenVersionArchives((prev) => {
+      const next = new Set(prev)
+      next.has(v) ? next.delete(v) : next.add(v)
+      return next
+    })
+  }, [])
 
   // ── Loading state ──────────────────────────────────────────────────────────
   if (loadState === 'loading' || loadState === 'idle') {
@@ -133,8 +189,11 @@ export default function ArtifactsPane({ project, poState }: Props) {
     )
   }
 
-  // ── Empty state ────────────────────────────────────────────────────────────
-  if (entries.length === 0) {
+  const current = tree?.current ?? { version: '', flat: [], archived: [] }
+  const past = tree?.past ?? []
+
+  // ── Empty state — current version has no flat AND no archived artifacts ──────
+  if (current.flat.length === 0 && current.archived.length === 0) {
     return (
       <div style={centerPane}>
         <FolderOpen size={32} style={{ color: '#505050', marginBottom: 10 }} strokeWidth={1.5} />
@@ -144,43 +203,238 @@ export default function ArtifactsPane({ project, poState }: Props) {
     )
   }
 
-  // ── File list ──────────────────────────────────────────────────────────────
-  // All entries belong to 'artifacts' scope
-  const groups: Array<{ scope: ArtifactEntry['scopeGroup']; items: ArtifactEntry[] }> = [
-    { scope: 'artifacts', items: entries },
-  ]
+  const headerLabel = currentVersion ?? HEADER_FALLBACK
 
   return (
     <div style={listPane}>
       <div style={scrollArea}>
-        {groups.map(({ scope, items }) => (
-          <div key={scope} style={scopeGroup}>
-            <div style={scopeLabel}>{SCOPE_LABELS[scope]}</div>
-            {items.map((entry) => {
-              const isSelected = entry.relPath === selectedRelPath
-              const basename = entry.relPath.split('/').pop() ?? entry.relPath
-              return (
-                <button
-                  key={entry.relPath}
-                  style={rowStyle(isSelected)}
-                  onClick={() => handleRowClick(entry)}
-                  title={entry.relPath}
-                  type="button"
-                >
-                  <span style={iconWrap(isSelected)}>
-                    {getIcon(entry.ext)}
-                  </span>
-                  <span style={rowName}>{basename}</span>
-                  {entry.meta?.status === 'pending' ? (
-                    <span style={pendingDot} title="user-gate pending" />
-                  ) : null}
-                </button>
-              )
-            })}
-          </div>
-        ))}
+        {/* Header = current version name */}
+        <div style={scopeLabel}>{headerLabel}</div>
+
+        {/* FLAT section — current version, always open, no section header */}
+        <FileList
+          items={current.flat}
+          indent={0}
+          selectedRelPath={selectedRelPath}
+          onRowClick={handleRowClick}
+        />
+
+        {/* archive toggle — current version. Hidden when no archived artifacts. */}
+        {current.archived.length > 0 && (
+          <ArchiveToggle
+            count={current.archived.length}
+            open={archiveOpen}
+            onToggle={() => setArchiveOpen((v) => !v)}
+            indent={0}
+            label={t('workspace.artifacts.archiveLabel')}
+          >
+            <FileList
+              items={current.archived}
+              indent={1}
+              selectedRelPath={selectedRelPath}
+              onRowClick={handleRowClick}
+            />
+          </ArchiveToggle>
+        )}
+
+        {/* version history toggle — past versions */}
+        {past.length > 0 && (
+          <SectionToggle
+            label={t('workspace.artifacts.versionHistoryLabel')}
+            count={past.length}
+            open={historyOpen}
+            onToggle={() => setHistoryOpen((v) => !v)}
+            indent={0}
+          >
+            {past.map((ver) => (
+              <VersionNode
+                key={ver.version}
+                ver={ver}
+                open={openVersions.has(ver.version)}
+                archiveOpen={openVersionArchives.has(ver.version)}
+                onToggle={() => toggleVersion(ver.version)}
+                onToggleArchive={() => toggleVersionArchive(ver.version)}
+                selectedRelPath={selectedRelPath}
+                onRowClick={handleRowClick}
+                archiveLabel={t('workspace.artifacts.archiveLabel')}
+                emptyLabel={t('workspace.artifacts.versionEmpty')}
+              />
+            ))}
+          </SectionToggle>
+        )}
       </div>
     </div>
+  )
+}
+
+// ── Version node (past version, nested flat + archive) ─────────────────────────
+
+interface VersionNodeProps {
+  ver: VersionArtifacts
+  open: boolean
+  archiveOpen: boolean
+  onToggle: () => void
+  onToggleArchive: () => void
+  selectedRelPath: string | null
+  onRowClick: (entry: ArtifactEntry) => void
+  archiveLabel: string
+  emptyLabel: string
+}
+
+function VersionNode({
+  ver,
+  open,
+  archiveOpen,
+  onToggle,
+  onToggleArchive,
+  selectedRelPath,
+  onRowClick,
+  archiveLabel,
+  emptyLabel,
+}: VersionNodeProps) {
+  const isEmpty = ver.flat.length === 0 && ver.archived.length === 0
+
+  return (
+    <div>
+      <ToggleHeader
+        label={ver.version}
+        open={open}
+        onToggle={onToggle}
+        indent={1}
+        mono
+      />
+      {open && (
+        <div>
+          {isEmpty ? (
+            <div style={versionEmptyText}>{emptyLabel}</div>
+          ) : (
+            <>
+              <FileList
+                items={ver.flat}
+                indent={2}
+                selectedRelPath={selectedRelPath}
+                onRowClick={onRowClick}
+              />
+              {ver.archived.length > 0 && (
+                <ArchiveToggle
+                  count={ver.archived.length}
+                  open={archiveOpen}
+                  onToggle={onToggleArchive}
+                  indent={2}
+                  label={archiveLabel}
+                >
+                  <FileList
+                    items={ver.archived}
+                    indent={3}
+                    selectedRelPath={selectedRelPath}
+                    onRowClick={onRowClick}
+                  />
+                </ArchiveToggle>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Toggle primitives ──────────────────────────────────────────────────────────
+
+interface ToggleHeaderProps {
+  label: string
+  open: boolean
+  onToggle: () => void
+  indent: number
+  count?: number
+  mono?: boolean
+}
+
+function ToggleHeader({ label, open, onToggle, indent, count, mono }: ToggleHeaderProps) {
+  return (
+    <div
+      style={{ ...secHdr, paddingLeft: 8 + indent * 14 }}
+      onClick={onToggle}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onToggle() }}
+      aria-expanded={open}
+    >
+      <span style={chevronWrap}>
+        {open
+          ? <ChevronDown size={10} strokeWidth={2.5} />
+          : <ChevronRight size={10} strokeWidth={2.5} />}
+      </span>
+      <span style={mono ? secHdrTextMono : secHdrText}>{label}</span>
+      {typeof count === 'number' && <span style={countText}>({count})</span>}
+    </div>
+  )
+}
+
+function SectionToggle({
+  label,
+  count,
+  open,
+  onToggle,
+  indent,
+  children,
+}: ToggleHeaderProps & { children: React.ReactNode }) {
+  return (
+    <div style={sectionWrap}>
+      <ToggleHeader label={label} open={open} onToggle={onToggle} indent={indent} count={count} />
+      {open && <div>{children}</div>}
+    </div>
+  )
+}
+
+function ArchiveToggle({
+  label,
+  count,
+  open,
+  onToggle,
+  indent,
+  children,
+}: ToggleHeaderProps & { children: React.ReactNode }) {
+  return (
+    <div style={sectionWrap}>
+      <ToggleHeader label={label} open={open} onToggle={onToggle} indent={indent} count={count} mono />
+      {open && <div>{children}</div>}
+    </div>
+  )
+}
+
+// ── File list (shared flat / archive / version renderer) ───────────────────────
+
+interface FileListProps {
+  items: ArtifactEntry[]
+  indent: number
+  selectedRelPath: string | null
+  onRowClick: (entry: ArtifactEntry) => void
+}
+
+function FileList({ items, indent, selectedRelPath, onRowClick }: FileListProps) {
+  return (
+    <>
+      {items.map((entry) => {
+        const isSelected = entry.relPath === selectedRelPath
+        const basename = entry.relPath.split('/').pop() ?? entry.relPath
+        return (
+          <button
+            key={entry.relPath}
+            style={rowStyle(isSelected, indent)}
+            onClick={() => onRowClick(entry)}
+            title={entry.relPath}
+            type="button"
+          >
+            <span style={iconWrap(isSelected)}>{getIcon(entry.ext)}</span>
+            <span style={rowName}>{basename}</span>
+            {entry.meta?.status === 'pending' ? (
+              <span style={pendingDot} title="user-gate pending" />
+            ) : null}
+          </button>
+        )
+      })}
+    </>
   )
 }
 
@@ -212,11 +466,13 @@ const listPane: React.CSSProperties = {
 const scrollArea: React.CSSProperties = {
   flex: 1,
   overflowY: 'auto',
+  paddingTop: 8,
+  paddingBottom: 8,
 }
 
-const scopeGroup: React.CSSProperties = {
-  paddingTop: 8,
-  paddingBottom: 2,
+const sectionWrap: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
 }
 
 const pendingDot: React.CSSProperties = {
@@ -237,12 +493,59 @@ const scopeLabel: React.CSSProperties = {
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 }
 
-function rowStyle(selected: boolean): React.CSSProperties {
+const secHdr: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  padding: '5px 8px 3px',
+  gap: 4,
+  cursor: 'pointer',
+  userSelect: 'none',
+}
+
+const chevronWrap: React.CSSProperties = {
+  color: '#3A3A3A',
+  display: 'flex',
+  alignItems: 'center',
+  flexShrink: 0,
+}
+
+const secHdrText: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#4a4a4a',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+}
+
+const secHdrTextMono: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: '#A0A0A0',
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+}
+
+const countText: React.CSSProperties = {
+  marginLeft: 4,
+  fontSize: 9,
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  color: '#505050',
+  whiteSpace: 'nowrap',
+}
+
+const versionEmptyText: React.CSSProperties = {
+  fontSize: 11,
+  color: '#505050',
+  padding: '4px 14px 4px 50px',
+  fontStyle: 'italic',
+}
+
+function rowStyle(selected: boolean, indent: number): React.CSSProperties {
   return {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
     padding: '7px 14px',
+    paddingLeft: 14 + indent * 14,
     width: '100%',
     background: selected ? '#1A1A1A' : 'none',
     border: 'none',

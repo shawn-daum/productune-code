@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InfoPopover } from '../../components/shared/InfoPopover'
+import { useWorkspace } from '../../store/workspace'
 import type { Ticket } from '../../lib/types'
 import type { CommitLine } from './types'
 import { parsePersonaActivity, commitSummaryLine } from './helpers'
 import {
-  cardWrap, cardHeader, cardTicketId, cardTitle, cardMeta, metaItem,
+  cardWrap, cardHeader, cardHeaderOpen, cardTicketId, cardTitle, cardMeta, metaItem,
   activityList, activityRow, activityPersona, activityResult,
   expandBtn, commitList, commitRow, commitDate, commitSummary, statusPill,
 } from './styles'
@@ -17,7 +18,19 @@ export interface TicketCardProps {
 
 export default function TicketCard({ ticket, commits }: TicketCardProps) {
   const { t } = useTranslation()
+  const openTab = useWorkspace((s) => s.openTab)
   const [expanded, setExpanded] = useState(false)
+
+  // Canonical ticket-detail entry — same signature as TicketDashboardView Card
+  // and command palette. Tab id `ticket-detail:<id>` is fixed, so openTab dedups
+  // (re-click focuses the existing tab instead of opening a new one).
+  const handleOpen = () =>
+    openTab(
+      `ticket-detail:${ticket.ticket_id}`,
+      'ticket-detail',
+      { ticketId: ticket.ticket_id },
+      ticket.ticket_id,
+    )
 
   const status = ticket.status ?? 'todo'
   const assignee = (ticket as any).assignee as string | undefined
@@ -36,14 +49,22 @@ export default function TicketCard({ ticket, commits }: TicketCardProps) {
 
   return (
     <div style={cardWrap}>
-      {/* Card header */}
+      {/* Card header — id/title open the ticket-detail tab (T-PATCH-103) */}
       <div style={cardHeader}>
-        <span style={cardTicketId}>{ticket.ticket_id}</span>
+        <button
+          type="button"
+          style={cardHeaderOpen}
+          onClick={handleOpen}
+          title={t('workspace.versionHistory.ticketCard.openDetail', { id: ticket.ticket_id })}
+          aria-label={t('workspace.versionHistory.ticketCard.openDetail', { id: ticket.ticket_id })}
+        >
+          <span style={cardTicketId}>{ticket.ticket_id}</span>
+          {ticket.title && <span style={cardTitle}>{ticket.title}</span>}
+        </button>
         {ticket.title && (
-          <>
-            <span style={cardTitle}>{ticket.title}</span>
+          <span onClick={(e) => e.stopPropagation()}>
             <InfoPopover text={ticket.title} />
-          </>
+          </span>
         )}
         <span style={statusPill(status)}>{t('workspace.tickets.status.' + status, { defaultValue: status })}</span>
       </div>
@@ -72,7 +93,7 @@ export default function TicketCard({ ticket, commits }: TicketCardProps) {
       {commits.length > 0 && (
         <button
           style={expandBtn}
-          onClick={() => setExpanded((v) => !v)}
+          onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v) }}
           aria-expanded={expanded}
         >
           {expanded ? t('workspace.versionHistory.ticketCard.collapse') : t('workspace.versionHistory.ticketCard.autosaveCount', { n: commits.length })}

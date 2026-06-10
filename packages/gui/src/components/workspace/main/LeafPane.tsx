@@ -50,8 +50,16 @@ export default function LeafPane({ leaf }: Props) {
   // via postMessage bridge. HtmlViewer owns the iframe ref + highlight logic.
   const isPreviewTab = activeTab?.type === 'preview'
 
+  // T-PATCH-094: 'artifact-json' — find routed into the JSON tree component, which
+  // owns its own auto-expand + CSS-highlight logic (the tree is plain DOM, not an
+  // iframe, but collapsed nodes aren't in the DOM so the generic text path can't
+  // reach them). Mirrors the preview nav-ref + result-callback contract.
+  const isJsonTab = activeTab?.type === 'artifact-json'
+
   // Nav callback ref: HtmlViewer assigns its postMessage fn here; LeafPane calls it.
   const htmlViewerNavRef = useRef<((forward: boolean) => void) | null>(null)
+  // Nav callback ref: ArtifactJsonTab assigns its in-tree nav fn here.
+  const jsonViewerNavRef = useRef<((forward: boolean) => void) | null>(null)
 
   // T-PATCH-067: CSS Custom Highlight API state for text-tab find.
   // Unique names per pane so concurrent find in split panes don't overwrite each other.
@@ -249,6 +257,11 @@ export default function LeafPane({ leaf }: Props) {
     setMatchInfo(info)
   }, [])
 
+  // T-PATCH-094: callback from ArtifactJsonTab → update match count in FindBar.
+  const handleJsonFindResult = useCallback((info: { total: number; current: number }) => {
+    setMatchInfo(info)
+  }, [])
+
   // Next match (Enter)
   const handleNext = useCallback(() => {
     if (isBrowserTab) {
@@ -257,8 +270,10 @@ export default function LeafPane({ leaf }: Props) {
       navigateTextFind(true)
     } else if (isPreviewTab) {
       htmlViewerNavRef.current?.(true)
+    } else if (isJsonTab) {
+      jsonViewerNavRef.current?.(true)
     }
-  }, [isBrowserTab, isTextTab, isPreviewTab, findQuery, runBrowserFind, navigateTextFind])
+  }, [isBrowserTab, isTextTab, isPreviewTab, isJsonTab, findQuery, runBrowserFind, navigateTextFind])
 
   // Prev match (Shift+Enter)
   const handlePrev = useCallback(() => {
@@ -268,8 +283,10 @@ export default function LeafPane({ leaf }: Props) {
       navigateTextFind(false)
     } else if (isPreviewTab) {
       htmlViewerNavRef.current?.(false)
+    } else if (isJsonTab) {
+      jsonViewerNavRef.current?.(false)
     }
-  }, [isBrowserTab, isTextTab, isPreviewTab, findQuery, runBrowserFind, navigateTextFind])
+  }, [isBrowserTab, isTextTab, isPreviewTab, isJsonTab, findQuery, runBrowserFind, navigateTextFind])
 
   // T-PATCH-067: Live search — fires on every findQuery change while find bar is open.
   // Decoupled from handleQueryChange so React commit completes before searching.
@@ -324,7 +341,7 @@ export default function LeafPane({ leaf }: Props) {
       const isMeta = e.metaKey || e.ctrlKey
       if (isMeta && e.key === 'f' && isActive) {
         // Only handle if a supported tab is active
-        if (activeTab && (isBrowserTab || isTextTab || isPreviewTab)) {
+        if (activeTab && (isBrowserTab || isTextTab || isPreviewTab || isJsonTab)) {
           e.preventDefault()
           openFind()
         }
@@ -332,19 +349,19 @@ export default function LeafPane({ leaf }: Props) {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isActive, activeTab, isBrowserTab, isTextTab, isPreviewTab, openFind])
+  }, [isActive, activeTab, isBrowserTab, isTextTab, isPreviewTab, isJsonTab, openFind])
 
   // ── IPC: menu:find from Electron menu bar ─────────────────────────────────
   useEffect(() => {
     const api = (window as any).api
     if (!api?.onMenuFind) return
     const unsub = api.onMenuFind(() => {
-      if (isActive && activeTab && (isBrowserTab || isTextTab || isPreviewTab)) {
+      if (isActive && activeTab && (isBrowserTab || isTextTab || isPreviewTab || isJsonTab)) {
         openFind()
       }
     })
     return unsub
-  }, [isActive, activeTab, isBrowserTab, isTextTab, isPreviewTab, openFind])
+  }, [isActive, activeTab, isBrowserTab, isTextTab, isPreviewTab, isJsonTab, openFind])
 
   const computeZone = (e: React.DragEvent): PaneZone | null => {
     const el = bodyRef.current
@@ -448,6 +465,9 @@ export default function LeafPane({ leaf }: Props) {
               previewFindQuery={isPreviewTab ? findQuery : undefined}
               previewFindNavRef={isPreviewTab ? htmlViewerNavRef : undefined}
               onPreviewFindResult={isPreviewTab ? handlePreviewFindResult : undefined}
+              jsonFindQuery={isJsonTab ? findQuery : undefined}
+              jsonFindNavRef={isJsonTab ? jsonViewerNavRef : undefined}
+              onJsonFindResult={isJsonTab ? handleJsonFindResult : undefined}
             />
           : <EmptyPane />}
 

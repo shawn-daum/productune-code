@@ -94,6 +94,18 @@ export interface PromotionPayload {
   targetTier: string
   rationale: string
   sourceTicketId: string
+  /**
+   * Trigger origin (T-PATCH-097). Distinguishes a user-requested promotion gate
+   * (render as a question-style card) from an auto-surfaced candidate (classic
+   * PromotionCard). Absent → treated as `'auto'` so existing payloads written
+   * before this field are a safe no-regression fallback to PromotionCard.
+   *
+   * DEPENDENCY: the gate-emit path (engine / IPC) must stamp
+   * `origin: 'user-requested'` on promotions created from a user utterance/action
+   * for the question-style branch to activate. Until that lands, every promotion
+   * payload lacks the field and renders as the classic PromotionCard.
+   */
+  origin?: 'user-requested' | 'auto'
   /** Present once resolved — drives idempotent resolved-card render. */
   resolved?: { outcome: 'approved' | 'rejected' }
 }
@@ -115,6 +127,12 @@ export interface Message {
    * without brittle text-prefix sniffing. Absent for non-trace messages.
    */
   traceLevel?: string
+  /** T-PATCH-108: tool_use.input for kind:'trace' & traceLevel:'tool'. Raw input
+   *  object forwarded from the runner; the renderer serializes/truncates it. */
+  toolInput?: unknown
+  /** T-PATCH-108: tool name parsed from the runner (avoids re-stripping the text
+   *  prefix). Present for kind:'trace' & traceLevel:'tool'. */
+  toolName?: string
 }
 
 export interface Session {

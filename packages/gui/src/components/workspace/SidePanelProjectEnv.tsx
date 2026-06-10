@@ -82,8 +82,8 @@ export default function SidePanelProjectEnv() {
     )
   }
 
-  // Total key count for the section badge
-  const totalKeys = files.reduce((sum, f) => sum + f.entries.length, 0)
+  // File count for the section badge (number of .env* files, not summed keys)
+  const fileCount = files.length
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -98,8 +98,8 @@ export default function SidePanelProjectEnv() {
         aria-label={t('workspace.projectEnv.sectionTitle')}
       >
         <span style={secHdrText}>{t('workspace.projectEnv.sectionTitle')}</span>
-        {totalKeys > 0 && !loading ? (
-          <span style={countBadge}>{totalKeys}</span>
+        {fileCount > 0 && !loading ? (
+          <span style={countBadge}>{fileCount}</span>
         ) : null}
       </button>
 

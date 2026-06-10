@@ -172,7 +172,40 @@ function ensureFile(filePath: string, contents: string) {
   fs.writeFileSync(filePath, contents)
 }
 
-export function bootstrapPersonaMemory(projectDir: string) {
+/**
+ * Ensure a directory exists and is git-tracked via a `.gitkeep` seed.
+ * No-overwrite: an existing `.gitkeep` (or any content) is left untouched.
+ */
+function ensureDir(absDir: string) {
+  fs.mkdirSync(absDir, { recursive: true })
+  ensureFile(path.join(absDir, '.gitkeep'), '')
+}
+
+/**
+ * Version id naming rule — local copy of GUI `lib/version-id.ts:10`
+ * (`VERSION_ID_RE = /^v\d+(\.\d+)?$/`). Core cannot depend on the GUI package,
+ * so the constant is duplicated here; the two MUST stay equivalent.
+ */
+const VERSION_ID_RE = /^v\d+(\.\d+)?$/
+
+/**
+ * Scaffold the doctrine-aligned project skeleton.
+ *
+ * Always created (seed/empty, only when absent — idempotent + no-overwrite via
+ * `ensureFile`/`ensureDir`):
+ *   - Tier-1 habit shells + persona bookshelf seeds + turns/ log dir (legacy).
+ *   - docs/backlog.md (seed), docs/prd/PRD.md (stub).
+ *   - docs/prd/versions/, docs/designer/archive/, briefs/ (each .gitkeep).
+ *
+ * Conditionally created (only when `initialVersionId` matches VERSION_ID_RE):
+ *   - docs/artifacts/<v>/manifest.json (schema-valid empty manifest, schema_v 1).
+ *   - docs/tickets/<v>/ (.gitkeep).
+ *
+ * Lifecycle-owned (NOT created here — see T-PATCH-102 §3):
+ *   .productune/po-state.json (PO), docs/prd/versions/<v>.md snapshots (P5),
+ *   DS snapshots, artifact/ticket/brief content files. init lays only skeleton.
+ */
+export function bootstrapPersonaMemory(projectDir: string, initialVersionId?: string) {
   // Tier-1 habit shell per persona — including pdt-po.
   for (const dir of PERSONA_MEMORY_DIRS) {
     const abs = path.join(projectDir, dir)
@@ -229,6 +262,40 @@ export function bootstrapPersonaMemory(projectDir: string) {
       '`{ ts, persona, task_slug, ticket_id, version, turn_index, input_meta, output_full, promotion_outcome }`.\n' +
       'Written by PO. Raw truth; `.productune/po-state.json` is the summary.\n',
   )
+
+  // ── doctrine-aligned skeleton (version-agnostic — always) ──────────────────
+  // backlog.md — PO append target (po/habit.md:4 e). Seed empty skeleton.
+  ensureFile(
+    path.join(projectDir, 'docs/backlog.md'),
+    '# Backlog\n\n' +
+      '다음 버전 후보. PO 가 P5 close 또는 사용자 요청 시 append.\n' +
+      '`- (YYYY-MM-DD) <area-tag> · <one-line>`\n\n## Entries\n',
+  )
+  // PRD.md — single SoT, GUI renders directly (lifecycle/p1-prd.md). Stub only;
+  // body is lifecycle-owned (Designer writes at P1).
+  ensureFile(
+    path.join(projectDir, 'docs/prd/PRD.md'),
+    '# PRD\n\n' +
+      '단일 SoT. P1 에서 Designer 가 clarity-loop 로 작성한다(`lifecycle/p1-prd.md`).\n' +
+      'GUI 는 이 파일을 직접 렌더한다.\n',
+  )
+  // Empty skeleton dirs — git can't track empty dirs, seed .gitkeep.
+  ensureDir(path.join(projectDir, 'docs/prd/versions')) // P5 close drops <v>.md snapshots here
+  ensureDir(path.join(projectDir, 'docs/designer/archive')) // P5 DS/archive snapshots land here
+  ensureDir(path.join(projectDir, 'briefs')) // PO appends briefs/<slug>.md
+
+  // ── version-tagged skeleton (conditional — only on valid initial_version) ──
+  if (initialVersionId && VERSION_ID_RE.test(initialVersionId)) {
+    const v = initialVersionId
+    // artifacts/<v>/manifest.json — schema-valid empty manifest (schema_v 1,
+    // artifact-manifest-schema.md). GUI loadManifest reads this as SoT.
+    ensureFile(
+      path.join(projectDir, 'docs/artifacts', v, 'manifest.json'),
+      JSON.stringify({ schema_v: 1, version: v, entries: [] }, null, 2) + '\n',
+    )
+    // tickets/<v>/ — Designer issues tickets here; init lays only the dir.
+    ensureDir(path.join(projectDir, 'docs/tickets', v))
+  }
 }
 
 // ── user-global doctrine bootstrap ───────────────────────────────────────────
@@ -373,7 +440,7 @@ export function initProject(opts: InitOptions): ProjectConfig {
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
-  bootstrapPersonaMemory(opts.projectDir)
+  bootstrapPersonaMemory(opts.projectDir, config.initial_version)
   bootstrapClaudeSettings(opts.projectDir)
   if (!opts.skipDoctrine) bootstrapUserGlobalDoctrine()
   return config

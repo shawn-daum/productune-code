@@ -122,6 +122,22 @@ export function register(): void {
     return shell.openExternal(url)
   })
 
+  // T-PATCH-106: open a local file/path in the OS default app — fallback for
+  // PO-chat absolute links that can't render in-pane (non-doctrine, off-project).
+  // Absolute paths only (expand `~` first); relative/empty are rejected.
+  ipcMain.handle('shell:openPath', (_event, p: string) => {
+    if (typeof p !== 'string' || p.length === 0) {
+      return { ok: false, error: 'empty path' }
+    }
+    let abs = p
+    if (abs === '~') abs = os.homedir()
+    else if (abs.startsWith('~/') || abs.startsWith('~' + path.sep)) {
+      abs = path.join(os.homedir(), abs.slice(2))
+    }
+    if (!path.isAbsolute(abs)) return { ok: false, error: 'not an absolute path' }
+    return shell.openPath(abs).then((error) => ({ ok: error === '', error: error || undefined }))
+  })
+
   ipcMain.handle('init:project', (_event, opts: { slug: string; projectDir: string }) => {
     return initProject(opts)
   })

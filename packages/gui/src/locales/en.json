@@ -174,8 +174,11 @@
       "statusAbandoned": "Abandoned",
       "statusWaiting": "{{persona}} waiting",
       "unassigned": "Unassigned",
-      "railActive": "Active",
-      "railIdle": "Idle",
+      "stageDone": "done",
+      "stageCurrent": "current",
+      "stageUpcoming": "upcoming",
+      "stageBlocked": "blocked",
+      "qaMeta": "qa_status: {{status}} · loops {{loops}}",
       "crumbBack": "To Tickets tab",
       "crumbTickets": "Tickets",
       "dispatchProgress": "Dispatch progress",
@@ -236,7 +239,12 @@
       "rejected": "Candidate rejected",
       "rejectCta": "Reject",
       "approveCta": "Approve",
-      "rejectConfirm": "Rejecting removes the candidate — reject it?"
+      "rejectConfirm": "Rejecting removes the candidate — reject it?",
+      "question": {
+        "prompt": "You asked to promote this. Apply it?",
+        "approveDesc": "Promote to {{tier}}",
+        "rejectDesc": "Don't promote — discard the request"
+      }
     },
     "tickets": {
       "title": "Tickets",
@@ -292,6 +300,8 @@
       "attachFile": "Attach file path",
       "filesCount": "files",
       "removeFile": "Remove file",
+      "removeImage": "Remove image",
+      "imageLabel": "image",
       "restartSession": "Reset session",
       "restartHint": "Use when PO is unresponsive or too slow",
       "restartCompletedToast": "Session has been reset.",
@@ -303,6 +313,11 @@
       "todoSubmit": "Submit",
       "toolGroup": "{{count}} tools",
       "toolDetailUnavailable": "detail unavailable",
+      "toolDetail": {
+        "truncatedMore": "… (+{{count}} more lines)",
+        "result": "Result",
+        "error": "Error"
+      },
       "stop": "Stop",
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
@@ -656,7 +671,10 @@
       "loadError": "Could not load file list.",
       "emptyHeadline": "No artifacts to show",
       "emptyHelper": "Artifacts appear here once added to docs/artifacts/.",
-      "needsReview": "Needs your review"
+      "needsReview": "Needs your review",
+      "archiveLabel": "archive",
+      "versionHistoryLabel": "Version history",
+      "versionEmpty": "(no artifacts)"
     },
     "baseDirty": {
       "title": "Unsaved changes detected",
@@ -719,7 +737,8 @@
       },
       "ticketCard": {
         "collapse": "▲ Collapse",
-        "autosaveCount": "▼ {{n}} autosaves"
+        "autosaveCount": "▼ {{n}} autosaves",
+        "openDetail": "Open ticket detail: {{id}}"
       }
     },
     "qaLoop": {

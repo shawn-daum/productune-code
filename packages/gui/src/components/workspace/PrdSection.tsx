@@ -1,12 +1,14 @@
 /**
  * PrdSection — T-PATCH-078 shared component
  *
- * Renders the PRD row for a version (md-single-SoT decision, 2026-06-10):
- *   1. closed version → docs/prd/versions/<versionId>.md (P5 close 불변 스냅샷)
- *   2. fallback       → docs/prd/PRD.md (살아있는 master — current version)
- * Snapshot-first probe via artifactsReadFile (throws on missing file), so the
- * component needs no "which version is current" knowledge. On click opens an
- * artifact-md tab (MarkdownViewer). Neither file → subtle placeholder.
+ * Renders the PRD row for a version. Path is chosen deterministically from
+ * whether versionId is the OPEN (current) version or a CLOSED one:
+ *   - OPEN / current (or no versionId) → docs/prd/PRD.md (살아있는 master SoT)
+ *   - CLOSED                           → docs/prd/versions/<versionId>.md (P5 불변 스냅샷)
+ * OPEN vs CLOSED is decided by comparing versionId to po-state current_version,
+ * so no snapshot-first guess probe is needed (snapshots only exist post-close).
+ * On click opens an artifact-md tab (MarkdownViewer). Missing file → subtle
+ * placeholder (graceful empty-state).
  *
  * Used in:
  *   - VersionDetailView (version-detail tab)
@@ -27,6 +29,7 @@ export default function PrdSection({ versionId }: Props) {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const openTab = useWorkspace((s) => s.openTab)
+  const currentVersion = useWorkspace((s) => s.poState?.current_version)
   const projectDir = project?.projectDir ?? ''
 
   // undefined = checking, null = not found
@@ -36,16 +39,20 @@ export default function PrdSection({ versionId }: Props) {
     if (!projectDir) { setPrd(null); return }
     let cancelled = false
     const api = (window as any).api
-    const probe = (relPath: string) => {
-      const absPath = `${projectDir}/${relPath}`
-      return api.artifactsReadFile?.(projectDir, absPath).then(() => ({ absPath, relPath }))
-    }
-    const snapshotRel = versionId ? `docs/prd/versions/${versionId}.md` : null
-    ;(snapshotRel ? probe(snapshotRel).catch(() => probe(PRD_MASTER_REL)) : probe(PRD_MASTER_REL))
-      .then((found: { absPath: string; relPath: string }) => { if (!cancelled) setPrd(found) })
+    // OPEN (current version, or no versionId) reads the live master PRD.md;
+    // CLOSED versions read the immutable docs/prd/versions/<v>.md snapshot.
+    const isOpen = !versionId || versionId === currentVersion
+    const relPath = isOpen ? PRD_MASTER_REL : `docs/prd/versions/${versionId}.md`
+    const absPath = `${projectDir}/${relPath}`
+    // Handler returns null on a missing file (no ENOENT throw) → treat as not-found.
+    Promise.resolve(api.artifactsReadFile?.(projectDir, absPath))
+      .then((content: string | null | undefined) => {
+        if (cancelled) return
+        setPrd(content == null ? null : { absPath, relPath })
+      })
       .catch(() => { if (!cancelled) setPrd(null) })
     return () => { cancelled = true }
-  }, [projectDir, versionId])
+  }, [projectDir, versionId, currentVersion])
 
   const openPrd = useCallback(() => {
     if (!prd || !projectDir) return
