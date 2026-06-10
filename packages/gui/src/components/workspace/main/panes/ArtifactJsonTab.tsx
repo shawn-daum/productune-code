@@ -3,8 +3,8 @@
  *
  * docs/artifacts/ 에는 .json 산출물 (excalidraw wireframe 등) 도 들어온다.
  * Loads via the project-scoped `artifactsReadFile(projectDir, absPath)` IPC,
- * parses, and renders a collapsible tree (objects/arrays toggle; default open
- * to depth 2). Invalid JSON falls back to the raw text with an error banner.
+ * parses, and renders a collapsible tree (objects/arrays toggle; everything
+ * open by default). Invalid JSON falls back to the raw text with an error banner.
  * Header mirrors the other artifact panes: mono breadcrumb + read-only badge.
  */
 
@@ -20,8 +20,6 @@ type LoadState =
   | { phase: 'ok'; value: unknown }
   | { phase: 'invalid'; raw: string; error: string }
   | { phase: 'error'; error: string }
-
-const DEFAULT_OPEN_DEPTH = 2
 
 export default function ArtifactJsonTab({ props: tabProps }: Props) {
   const absPath = typeof tabProps?.absPath === 'string' ? tabProps.absPath : ''
@@ -89,7 +87,7 @@ export default function ArtifactJsonTab({ props: tabProps }: Props) {
 
 function JsonNode({ value, depth, label }: { value: unknown; depth: number; label?: string }) {
   const isObj = value !== null && typeof value === 'object'
-  const [open, setOpen] = useState(depth < DEFAULT_OPEN_DEPTH)
+  const [open, setOpen] = useState(true)
 
   const labelEl = label !== undefined ? <span style={keyStyle}>{label}: </span> : null
 
