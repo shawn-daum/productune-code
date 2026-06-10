@@ -23,10 +23,8 @@ import {
   ArrowRight,
 } from 'lucide-react'
 import MdRenderer from '../../chat/MdRenderer'
+import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../../../store/workspace'
-import { useUserModeT } from '../../../../i18n/useUserModeT'
-
-type TModeFn = (key: string, options?: Record<string, unknown>) => string
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -85,32 +83,32 @@ function deriveNextAction(
   status: string | undefined,
   assignee: string | undefined,
   qaStatus: string | undefined,
-  tMode: TModeFn,
+  t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
-  const personaName = assignee?.replace('pdt-', '') ?? tMode('workspace.ticketDetail.defaultAssignee')
+  const personaName = assignee?.replace('pdt-', '') ?? t('workspace.ticketDetail.defaultAssignee')
 
   switch (status) {
     case 'blocked':
-      return tMode('workspace.ticketDetail.statusBlocked')
+      return t('workspace.ticketDetail.statusBlocked')
     case 'review':
-      return tMode('workspace.ticketDetail.statusReview', { persona: personaName })
+      return t('workspace.ticketDetail.statusReview', { persona: personaName })
     case 'user-verify':
-      return tMode('workspace.ticketDetail.statusUserVerify')
+      return t('workspace.ticketDetail.statusUserVerify')
     case 'in-progress':
       if (qaStatus && qaStatus !== 'n/a' && qaStatus === 'pending') {
-        return tMode('workspace.ticketDetail.statusQaPending')
+        return t('workspace.ticketDetail.statusQaPending')
       }
-      return tMode('workspace.ticketDetail.statusInProgress', { persona: personaName })
+      return t('workspace.ticketDetail.statusInProgress', { persona: personaName })
     case 'todo':
-      return tMode('workspace.ticketDetail.statusTodo', { persona: personaName })
+      return t('workspace.ticketDetail.statusTodo', { persona: personaName })
     case 'done':
-      return tMode('workspace.ticketDetail.statusDone')
+      return t('workspace.ticketDetail.statusDone')
     case 'abandoned':
-      return tMode('workspace.ticketDetail.statusAbandoned')
+      return t('workspace.ticketDetail.statusAbandoned')
     default:
       return assignee
-        ? tMode('workspace.ticketDetail.statusWaiting', { persona: personaName })
-        : tMode('workspace.ticketDetail.unassigned')
+        ? t('workspace.ticketDetail.statusWaiting', { persona: personaName })
+        : t('workspace.ticketDetail.unassigned')
   }
 }
 
@@ -127,7 +125,10 @@ const PERSONA_COLORS: Record<string, string> = {
 function buildRail(
   assignee: string | undefined,
   personaSessions: Record<string, unknown> | null,
-  tMode: TModeFn,
+  t: (key: string, options?: Record<string, unknown>) => string,
+  viewedTicketId: string,
+  currentTaskTicketId: string | undefined,
+  currentTaskAssignee: string | undefined,
 ): PersonaRailEntry[] {
   const personas: Array<{ id: 'po' | 'designer' | 'developer' | 'qa'; label: string }> = [
     { id: 'po',         label: 'PO' },
@@ -136,23 +137,25 @@ function buildRail(
     { id: 'qa',         label: 'qa' },
   ]
 
-  const ownerKey = assignee?.replace('pdt-', '') ?? ''
+  // Active = current_task matches this ticket AND this persona is the assignee
+  const isCurrentTicket = !!viewedTicketId && viewedTicketId === currentTaskTicketId
+  const isActivePersona = (id: string) =>
+    isCurrentTicket && currentTaskAssignee?.replace('pdt-', '') === id
 
   return personas.map(({ id, label }) => {
     const hasSession = personaSessions
       ? Object.keys(personaSessions).some((k) => k.includes(id))
       : false
-    const isOwner = id === ownerKey || (id === 'po' && ownerKey === 'po')
 
     let railState: PersonaRailState
     let stateLabel: string
 
-    if (isOwner && (hasSession || assignee)) {
+    if (isActivePersona(id)) {
       railState = 'active'
-      stateLabel = tMode('workspace.ticketDetail.railActive')
+      stateLabel = t('workspace.ticketDetail.railActive')
     } else if (hasSession) {
       railState = 'idle'
-      stateLabel = tMode('workspace.ticketDetail.railIdle')
+      stateLabel = t('workspace.ticketDetail.railIdle')
     } else {
       railState = 'off'
       stateLabel = '—'
@@ -171,14 +174,14 @@ function buildRail(
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TicketDetailTab({ props: tabProps }: Props) {
-  const { tMode, t } = useUserModeT()
+  const { t } = useTranslation()
   const ticketId = typeof tabProps?.ticketId === 'string' ? tabProps.ticketId : ''
   const project = useWorkspace((s) => s.project)
   const poState = useWorkspace((s) => s.poState)
 
   const [ticket, setTicket] = useState<TicketData | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
-  const [showFullSpec, setShowFullSpec] = useState(false)
+  const [showFullSpec, setShowFullSpec] = useState(true)
 
   const load = useCallback(() => {
     if (!ticketId || !project?.projectDir) {
@@ -221,8 +224,15 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
   const personaSessions = poState
     ? ((poState as any).persona_sessions as Record<string, unknown> | null | undefined) ?? null
     : null
-  const rail = buildRail(assignee, personaSessions, tMode)
-  const nextAction = deriveNextAction(status, assignee, qaStatus, tMode)
+  const rail = buildRail(
+    assignee,
+    personaSessions,
+    t,
+    ticketId,
+    poState?.current_task?.ticket_id,
+    poState?.current_task?.assignee_persona,
+  )
+  const nextAction = deriveNextAction(status, assignee, qaStatus, t)
 
   // ── Breadcrumb → open Tickets tab ─────────────────────────────────────────
   const openTab = useWorkspace((s) => s.openTab)
@@ -328,31 +338,6 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                 </div>
               )}
 
-              {/* Collapsible full spec (§2 spec intent — "Show full spec") */}
-              <div style={fullSpecSection}>
-                <button
-                  style={fullSpecToggle}
-                  onClick={() => setShowFullSpec((v) => !v)}
-                  aria-expanded={showFullSpec}
-                >
-                  <ArrowRight
-                    size={13}
-                    style={{
-                      color: '#707070',
-                      flexShrink: 0,
-                      transform: showFullSpec ? 'rotate(90deg)' : 'none',
-                      transition: '120ms',
-                    }}
-                  />
-                  <span>{showFullSpec ? 'Hide full spec' : 'Show full spec'}</span>
-                </button>
-                {showFullSpec && (
-                  <div style={fullSpecBody}>
-                    <MdRenderer text={fullBody} />
-                  </div>
-                )}
-              </div>
-
               {/* §2b DispatchProgress */}
               <section style={dispatchWrap} aria-label="dispatch progress">
                 {/* Section header */}
@@ -422,6 +407,31 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                   </span>
                 </div>
               </section>
+
+              {/* Collapsible full spec (§2 spec intent — "Show full spec") */}
+              <div style={fullSpecSection}>
+                <button
+                  style={fullSpecToggle}
+                  onClick={() => setShowFullSpec((v) => !v)}
+                  aria-expanded={showFullSpec}
+                >
+                  <ArrowRight
+                    size={13}
+                    style={{
+                      color: '#707070',
+                      flexShrink: 0,
+                      transform: showFullSpec ? 'rotate(90deg)' : 'none',
+                      transition: '120ms',
+                    }}
+                  />
+                  <span>{showFullSpec ? t('workspace.ticketDetail.hideFullSpec') : t('workspace.ticketDetail.showFullSpec')}</span>
+                </button>
+                {showFullSpec && (
+                  <div style={fullSpecBody}>
+                    <MdRenderer text={fullBody} />
+                  </div>
+                )}
+              </div>
             </>
           )}
 

@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Paperclip, Command, CornerDownLeft, X } from 'lucide-react'
+import { Paperclip, Command, CornerDownLeft, X, Square } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message, AskUserQuestionPayload } from '../../lib/types'
@@ -163,6 +163,9 @@ export default function ChatPanel() {
     }
   }
 
+  // T-PATCH-081 AC-5: keyboard guard confirmed. Cmd+Enter calls handleSubmit() which
+  // has an early-return guard `if (streaming || !project) return` (line ~125 above).
+  // So the keyboard path is blocked during streaming — no new code needed here.
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // IME composition — don't capture Enter mid-Korean composition.
     if ((e.nativeEvent as any).isComposing) return
@@ -209,6 +212,8 @@ export default function ChatPanel() {
     }
   }, [modalDraft, streaming, project, claudeSessionId, appendMessage, setAutoScrollLocked, setStreaming])
 
+  // T-PATCH-081 AC-6: modal keyboard guard confirmed. Cmd+Enter calls handleModalSend()
+  // which has `if (!trimmed || streaming || !project) return` — blocked during streaming.
   const onModalKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.nativeEvent as any).isComposing) return
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -258,6 +263,18 @@ export default function ChatPanel() {
     try { await api.chatDismissQuestion({ projectDir: project.projectDir, messageId: pendingQuestion.id }) } catch { /* noop */ }
   }, [pendingQuestion, project, appendMessage, setAutoScrollLocked, setMessages])
 
+  // T-PATCH-081: abort the running PO turn via IPC + immediately unlock the UI.
+  // AC-11: fire-and-forget IPC (no await needed for UI responsiveness).
+  // AC-11: belt-and-suspenders setStreaming(false) so UI never hangs if child.on('close') is delayed.
+  // AC-13: echo-mode safe — abortPoTurn() maps to a safe no-op when activeChild === null.
+  const handleAbort = useCallback(() => {
+    const api = (window as any).api
+    // Fire-and-forget; silence any IPC or API errors so UI always unlocks.
+    try { api.abortPoTurn?.().catch?.(() => {}) } catch { /* noop */ }
+    // Immediate UI unlock regardless of main-process child.on('close') timing.
+    setStreaming(false)
+  }, [setStreaming])
+
   // textarea autosize — height follows content (cap 200px).
   useEffect(() => {
     const el = taRef.current
@@ -302,6 +319,7 @@ export default function ChatPanel() {
   }
 
   const [sendHover, setSendHover] = useState(false)
+  const [stopHover, setStopHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
   const [restartTipPos, setRestartTipPos] = useState<{ top: number; left: number } | null>(null)
   const restartBtnRef = useRef<HTMLButtonElement>(null)
@@ -426,17 +444,29 @@ export default function ChatPanel() {
                 rows={1}
                 disabled={streaming || !project || rateLimited}
               />
-              <button
-                style={{
-                  ...modalSendBtn,
-                  opacity: streaming || !modalDraft.trim() ? 0.5 : 1,
-                  cursor: streaming || !modalDraft.trim() ? 'not-allowed' : 'pointer',
-                }}
-                onClick={handleModalSend}
-                disabled={streaming || !modalDraft.trim()}
-              >
-                {t('workspace.chat.send')}
-              </button>
+              {/* T-PATCH-081 AC-4: modal composer also shows stop while streaming */}
+              {streaming ? (
+                <button
+                  style={{ ...modalSendBtn, background: '#EF4444' }}
+                  onClick={handleAbort}
+                  aria-label="Stop generation"
+                  title={t('workspace.chat.stop')}
+                >
+                  <Square size={14} strokeWidth={2.5} />
+                </button>
+              ) : (
+                <button
+                  style={{
+                    ...modalSendBtn,
+                    opacity: !modalDraft.trim() ? 0.5 : 1,
+                    cursor: !modalDraft.trim() ? 'not-allowed' : 'pointer',
+                  }}
+                  onClick={handleModalSend}
+                  disabled={!modalDraft.trim()}
+                >
+                  {t('workspace.chat.send')}
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -501,27 +531,44 @@ export default function ChatPanel() {
             )}
 
             <div style={{ flex: 1 }} />
-            <button
-              style={{
-                ...sendBtn,
-                opacity: streaming || !draft.trim() || rateLimited ? 0.5 : 1,
-                // T-013 / T-006 Option B: send button = --persona-po violet
-                background: sendHover && !(streaming || !draft.trim() || rateLimited) ? '#9D74F8' : '#8B5CF6',
-              }}
-              onMouseEnter={() => setSendHover(true)}
-              onMouseLeave={() => setSendHover(false)}
-              onClick={handleSubmit}
-              disabled={streaming || !draft.trim() || !project || rateLimited}
-              title={t('workspace.chat.sendShortcut')}
-              aria-label={`${t('workspace.chat.send')} (${t('workspace.chat.sendShortcut')})`}
-            >
-              <span>{t('workspace.chat.send')}</span>
-              {/* ⌘+Enter shortcut representation — lucide glyphs, §7 stroke-bold @≤12px */}
-              <span style={kbdHint} aria-hidden="true">
-                <Command size={11} strokeWidth={2.5} />
-                <CornerDownLeft size={11} strokeWidth={2.5} />
-              </span>
-            </button>
+            {/* T-PATCH-081 AC-1/2: stop button replaces send while streaming; AC-2: not in DOM when idle */}
+            {streaming ? (
+              <button
+                style={{
+                  ...sendBtn,
+                  background: stopHover ? '#DC2626' : '#EF4444',
+                }}
+                onMouseEnter={() => setStopHover(true)}
+                onMouseLeave={() => setStopHover(false)}
+                onClick={handleAbort}
+                aria-label="Stop generation"
+                title={t('workspace.chat.stop')}
+              >
+                <Square size={14} strokeWidth={2.5} />
+              </button>
+            ) : (
+              <button
+                style={{
+                  ...sendBtn,
+                  opacity: !draft.trim() || rateLimited ? 0.5 : 1,
+                  // T-013 / T-006 Option B: send button = --persona-po violet
+                  background: sendHover && !(!draft.trim() || rateLimited) ? '#9D74F8' : '#8B5CF6',
+                }}
+                onMouseEnter={() => setSendHover(true)}
+                onMouseLeave={() => setSendHover(false)}
+                onClick={handleSubmit}
+                disabled={!draft.trim() || !project || rateLimited}
+                title={t('workspace.chat.sendShortcut')}
+                aria-label={`${t('workspace.chat.send')} (${t('workspace.chat.sendShortcut')})`}
+              >
+                <span>{t('workspace.chat.send')}</span>
+                {/* ⌘+Enter shortcut representation — lucide glyphs, §7 stroke-bold @≤12px */}
+                <span style={kbdHint} aria-hidden="true">
+                  <Command size={11} strokeWidth={2.5} />
+                  <CornerDownLeft size={11} strokeWidth={2.5} />
+                </span>
+              </button>
+            )}
           </div>
         </div>
         )} {/* T-PATCH-068: end pendingQuestion ternary — normal composer restored */}

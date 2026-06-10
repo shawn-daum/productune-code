@@ -16,7 +16,6 @@
 
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useUserMode } from '../../store/useUserMode'
 
 export type ConflictStrategy = 'manual' | 'abort'
 
@@ -45,8 +44,6 @@ export default function ConflictResolveModal({
 }: ConflictResolveModalProps) {
   const { t } = useTranslation()
   const retryRef = useRef<HTMLButtonElement>(null)
-  const userMode = useUserMode((s) => s.mode)
-  const isDev = userMode === 'developer'
 
   // Esc → abort (OQ-T022-5 (a): deploy abort + state 보존)
   useEffect(() => {
@@ -84,7 +81,6 @@ export default function ConflictResolveModal({
       <div style={modal} onClick={(e) => e.stopPropagation()}>
         <h2 style={titleStyle} id="crm-title">
           {t('workspace.deploy.conflict.semanticTitle')}
-          {isDev && <span style={devHint}> (conflict)</span>}
         </h2>
 
         <p style={bodyStyle}>{bodyText}</p>
@@ -163,13 +159,6 @@ const titleStyle: React.CSSProperties = {
   fontSize: 15,
   fontWeight: 600,
   color: '#F0F0F0',
-}
-
-const devHint: React.CSSProperties = {
-  fontSize: 11,
-  color: '#606060',
-  fontFamily: 'monospace',
-  fontWeight: 400,
 }
 
 const bodyStyle: React.CSSProperties = {

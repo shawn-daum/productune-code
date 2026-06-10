@@ -342,7 +342,7 @@ function register() {
   //   - phase-gate:    window focus alone surfaces the sticky PendingGateChip in
   //                    ChatPanel; no tab to open, so this is a no-op beyond focus.
   offFns.push(api.onNotificationNavigate?.((route: {
-    surface: 'ticket-review' | 'phase-gate'
+    surface: 'ticket-review' | 'phase-gate' | 'chat'
     ticketId?: string
   }) => {
     if (route.surface === 'ticket-review' && route.ticketId) {
@@ -352,6 +352,8 @@ function register() {
       )
     }
     // phase-gate: PendingGateChip is sticky in ChatPanel; window focus suffices.
+    // chat (po-turn-done): ChatPanel is the default visible surface; window
+    // focus (handled by main) is sufficient — no tab open needed.
   }))
 }
 

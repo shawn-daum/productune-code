@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, shell, Menu, type MenuItemConstructorOptions } from 'electron'
 import path from 'path'
 
 // ── IPC module imports ────────────────────────────────────────────────────────
@@ -22,6 +22,7 @@ import { register as registerHtml }       from './ipc/html'
 import { register as registerBrowserFind } from './ipc/browserFind'
 import { register as registerProjectEnv }  from './ipc/projectEnv'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
+import { abortActiveTurn, isPoRunning } from './po-runner'
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
 // macOS may fire `open-file` before app.whenReady / before a window exists.
@@ -65,6 +66,59 @@ registerProjectEnv()
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
+// T-PATCH-086: module-level window ref, accessed by handleQuitRequest.
+// Assigned on every createWindow() call so multi-window scenarios always track
+// the most recent window (quit guard targets the last-focused window).
+let mainWindow: BrowserWindow | null = null
+
+// ── Quit guard state (T-PATCH-086) ────────────────────────────────────────────
+// Two-tap pattern: first ⌘Q arms a 1.5 s window; second ⌘Q within it quits.
+// quitTimer ref is cleared before each assignment → no timer leak path.
+let quitPending = false
+let quitTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Menu click handler that replaces the default `role: 'quit'` entry.
+ * Intercepts the quit keystroke before the OS processes it so:
+ *   - Single press → arms a 1.5 s guard window + shows QuitGuardToast in renderer.
+ *   - Second press within window → confirms quit immediately.
+ *   - If a PO turn is active (T-PATCH-081 activeChild) → shows native abort dialog.
+ */
+async function handleQuitRequest(): Promise<void> {
+  // ── PO turn guard ─────────────────────────────────────────────────────────
+  if (isPoRunning()) {
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      buttons: ['Abort & Quit', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      message: 'PO turn in progress',
+      detail: 'Quitting now will abort the running dispatch. Continue?',
+    })
+    if (response === 0) {
+      abortActiveTurn()
+      app.quit()
+    }
+    return
+  }
+
+  // ── Two-tap hold-to-quit ──────────────────────────────────────────────────
+  if (quitPending) {
+    if (quitTimer) clearTimeout(quitTimer)
+    quitPending = false
+    app.quit()
+    return
+  }
+
+  quitPending = true
+  mainWindow?.webContents.send('quit:pending', { timeoutMs: 1500 })
+  quitTimer = setTimeout(() => {
+    quitPending = false
+    quitTimer = null
+    mainWindow?.webContents.send('quit:cancelled')
+  }, 1500)
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
@@ -102,6 +156,9 @@ function createWindow(): BrowserWindow {
     win.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 
+  // T-PATCH-086: update module-level ref so handleQuitRequest can send IPC.
+  mainWindow = win
+
   return win
 }
 
@@ -119,7 +176,15 @@ function buildAppMenu(): Menu {
         { role: 'hideOthers' as const },
         { role: 'unhide' as const },
         { type: 'separator' as const },
-        { role: 'quit' as const },
+        // T-PATCH-086: custom handler replaces role:'quit' so ⌘Q is intercepted
+        // before the OS processes it (two-tap guard + PO-turn abort dialog).
+        // Dock right-click → Quit bypasses this handler → quits directly (accepted,
+        // matches Chrome behaviour; window-all-closed still fires stopUsageWatch).
+        {
+          label: 'Quit productune',
+          accelerator: 'CmdOrCtrl+Q',
+          click: handleQuitRequest,
+        },
       ],
     }] : []),
     {
@@ -157,7 +222,12 @@ function buildAppMenu(): Menu {
           ],
         },
         { type: 'separator' },
-        ...(isMac ? [] : [{ role: 'quit' as const }]),
+        // T-PATCH-086: custom handler (non-macOS) — same two-tap guard via menu.
+        ...(isMac ? [] : [{
+          label: 'Quit',
+          accelerator: 'CmdOrCtrl+Q',
+          click: handleQuitRequest,
+        }]),
       ],
     },
     {

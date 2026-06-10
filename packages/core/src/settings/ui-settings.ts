@@ -13,10 +13,30 @@ export interface IntegrationsSettings {
   }
 }
 
+// ── T-PATCH-083: notification toggle settings ─────────────────────────────────
+
+/**
+ * Per-user notification toggle settings, persisted under ui.notifications in
+ * ~/.productune/settings.json. All fields default true — a missing key is
+ * treated the same as true (never crash on old settings files, AC-3).
+ */
+export interface NotificationSettings {
+  /** Master switch — when false, no notification type fires regardless of per-type values. */
+  enabled: boolean
+  /** Per-type switches. Each defaults true; a type fires only when enabled AND its key is true. */
+  types: {
+    'dispatch-done': boolean
+    'escalation-raised': boolean
+    'phase-gate-entry': boolean
+    'po-turn-done': boolean
+  }
+}
+
 export interface UiSettings {
   version: 1
   ui: {
     language: UiLanguage
+    notifications: NotificationSettings
   }
   integrations?: IntegrationsSettings
 }
@@ -25,22 +45,72 @@ const SETTINGS_PATH = path.join(os.homedir(), '.productune', 'settings.json')
 
 const DEFAULT_SETTINGS: UiSettings = {
   version: 1,
-  ui: { language: 'en' },
+  ui: {
+    language: 'en',
+    notifications: {
+      enabled: true,
+      types: {
+        'dispatch-done': true,
+        'escalation-raised': true,
+        'phase-gate-entry': true,
+        'po-turn-done': true,
+      },
+    },
+  },
+}
+
+/**
+ * AC-3: missing or non-false value → true; exactly `false` → false.
+ * Ensures old settings.json files without the key behave as "all-on".
+ */
+function boolDefault(v: unknown): boolean {
+  return v !== false
+}
+
+/** AC-3: deep-merge raw persisted notifications object; any missing key defaults true. */
+function mergeNotifications(raw: any): NotificationSettings {
+  const t = raw?.types
+  return {
+    enabled: boolDefault(raw?.enabled),
+    types: {
+      'dispatch-done': boolDefault(t?.['dispatch-done']),
+      'escalation-raised': boolDefault(t?.['escalation-raised']),
+      'phase-gate-entry': boolDefault(t?.['phase-gate-entry']),
+      'po-turn-done': boolDefault(t?.['po-turn-done']),
+    },
+  }
 }
 
 export function loadSettings(): UiSettings {
   try {
     const raw = fs.readFileSync(SETTINGS_PATH, 'utf-8')
     const parsed = JSON.parse(raw)
-    // Read-merge: preserve defaults for missing fields
+    // Read-merge: preserve defaults for missing/unknown fields; integrations preserved
+    // to prevent data loss when any helper round-trips through load→save (AC-3).
     return {
       version: 1,
       ui: {
         language: parsed?.ui?.language === 'ko' ? 'ko' : 'en',
+        notifications: mergeNotifications(parsed?.ui?.notifications),
       },
+      ...(parsed?.integrations !== undefined ? { integrations: parsed.integrations } : {}),
     }
   } catch {
-    return { ...DEFAULT_SETTINGS, ui: { ...DEFAULT_SETTINGS.ui } }
+    return {
+      version: 1,
+      ui: {
+        language: 'en',
+        notifications: {
+          enabled: true,
+          types: {
+            'dispatch-done': true,
+            'escalation-raised': true,
+            'phase-gate-entry': true,
+            'po-turn-done': true,
+          },
+        },
+      },
+    }
   }
 }
 
@@ -60,6 +130,26 @@ export function getUiLanguage(): UiLanguage {
 export function setUiLanguage(lng: UiLanguage): void {
   const current = loadSettings()
   current.ui.language = lng
+  saveSettings(current)
+}
+
+// ── T-PATCH-083: notification settings helpers ────────────────────────────────
+
+/**
+ * Returns the full notification toggle settings from ~/.productune/settings.json.
+ * Defaults all-on when the key is absent (AC-3 — backcompat with old settings files).
+ */
+export function getNotificationSettings(): NotificationSettings {
+  return loadSettings().ui.notifications
+}
+
+/**
+ * Persists the full notification toggle settings to ~/.productune/settings.json.
+ * Uses the same atomic-tmp-rename pattern as `setUiLanguage`.
+ */
+export function setNotificationSettings(n: NotificationSettings): void {
+  const current = loadSettings()
+  current.ui.notifications = n
   saveSettings(current)
 }
 
@@ -115,29 +205,3 @@ export function settingsFileExists(): boolean {
   }
 }
 
-// ── User mode (T-P4-023 compat — added to bridge parallel PR state) ───────────
-
-export type UserMode = 'developer' | 'planner'
-
-const USER_MODE_PATH = path.join(os.homedir(), '.productune', 'user-mode.json')
-
-export function getUserMode(): UserMode | null {
-  try {
-    const raw = fs.readFileSync(USER_MODE_PATH, 'utf-8')
-    const parsed = JSON.parse(raw)
-    if (parsed?.mode === 'developer' || parsed?.mode === 'planner') {
-      return parsed.mode as UserMode
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-export function setUserMode(mode: UserMode | null): void {
-  const dir = path.dirname(USER_MODE_PATH)
-  fs.mkdirSync(dir, { recursive: true })
-  const tmp = USER_MODE_PATH + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify({ mode }), { mode: 0o600 })
-  fs.renameSync(tmp, USER_MODE_PATH)
-}

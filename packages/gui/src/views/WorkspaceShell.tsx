@@ -19,13 +19,25 @@ import { usePoChat } from '../store/poChat'
 import { useTicketScan } from '../lib/useTicketScan'
 import DeployConfirmModal from '../components/workspace/DeployConfirmModal'
 import BaseDirtyModal from '../components/workspace/BaseDirtyModal'
+import QuitGuardToast from '../components/workspace/QuitGuardToast'
 import { useResizeLayout } from './workspace/shell/useResizeLayout'
 import { useKeyboardShortcuts } from './workspace/shell/useKeyboardShortcuts'
 import { useIpcSubscriptions } from './workspace/shell/useIpcSubscriptions'
 import { useAutoSurfaceArtifacts } from './workspace/shell/useAutoSurfaceArtifacts'
 import { grid, breadcrumbArea, sidebarResizeArea, chatResizeArea, artifactToastStyle } from './workspace/shell/styles'
 import { buildQuickOpenItems, collectAllTabs, type McpServerEntry, type ArtifactEntry } from './workspace/shell/helpers'
-import { ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH } from './workspace/shell/constants'
+import {
+  ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH,
+  SIDEBAR_MIN_WIDTH, CENTER_MIN_LAYOUT, PO_CHAT_MIN_WIDTH,
+} from './workspace/shell/constants'
+
+// T-PATCH-085 QA fix: sum of column minimums → below this the scroll wrapper
+// triggers overflowX instead of visually crushing the grid columns.
+// = ACTIVITY_BAR_WIDTH(48) + SIDEBAR_MIN_WIDTH(200) + RESIZE_HANDLE_WIDTH(4)
+// + CENTER_MIN_LAYOUT(320) + RESIZE_HANDLE_WIDTH(4) + PO_CHAT_MIN_WIDTH(280) = 856
+const SHELL_MIN_WIDTH =
+  ACTIVITY_BAR_WIDTH + SIDEBAR_MIN_WIDTH + RESIZE_HANDLE_WIDTH +
+  CENTER_MIN_LAYOUT + RESIZE_HANDLE_WIDTH + PO_CHAT_MIN_WIDTH
 
 interface Props {
   project: Project
@@ -277,6 +289,14 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
 
   const dynamicGrid: React.CSSProperties = {
     ...grid,
+    // T-PATCH-085 QA fix: minWidth = sum of column minimums (856 px).
+    // Forces the grid element to be at least 856 px wide so that:
+    //   (a) shellRef.getBoundingClientRect().width never reports < 856 → clamp
+    //       functions always see enough space to protect sidebar at 200 px floor.
+    //   (b) when the viewport is < 856 px, the grid overflows its scroll-wrapper
+    //       and overflowX:auto on the wrapper shows a horizontal scrollbar instead
+    //       of visually crushing the sidebar column.
+    minWidth: SHELL_MIN_WIDTH,
     gridTemplateAreas: `
       "activity sidebar sidebarResize breadcrumb chatResize chat"
       "activity sidebar sidebarResize center     chatResize chat"
@@ -286,7 +306,10 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   }
 
   return (
-    <div ref={shellRef} style={dynamicGrid}>
+    // Scroll wrapper: constrained to viewport width, lets the grid overflow
+    // horizontally at very small windows (<856 px) → scrollbar instead of crush.
+    <div style={shellScrollWrapper}>
+      <div ref={shellRef} style={dynamicGrid}>
       <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
       <LeftSidebar project={project} activeIcon={activeIcon} />
       <div style={sidebarResizeArea}>
@@ -345,6 +368,23 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
       )}
 
       {artifactToast && <div style={artifactToastStyle}>{artifactToast}</div>}
+      </div>
+      {/* T-PATCH-086: quit guard overlay. position:fixed escapes the grid; always
+          in the DOM so the IPC subscription is registered from first render. */}
+      <QuitGuardToast />
     </div>
   )
+}
+
+// Scroll wrapper that sits between the flex viewport and the grid element.
+// Must be a flex container so the grid's flex:1 fills it. At window < 856 px
+// the grid (minWidth:856) overflows this wrapper → overflowX:auto shows the
+// horizontal scrollbar without affecting the vertical layout.
+const shellScrollWrapper: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  overflowX: 'auto',
+  overflowY: 'hidden',
+  background: '#0F0F0F', // match grid background so scrollbar gutter is themed
 }

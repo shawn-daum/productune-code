@@ -15,7 +15,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
-import { useUserMode } from '../../store/useUserMode'
 import type { Message } from '../../lib/types'
 
 export interface DeployTicketSummary {
@@ -55,8 +54,6 @@ export default function DeployConfirmModal({
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const openTab       = useWorkspace((s) => s.openTab)
   const projectStore  = useWorkspace((s) => s.project)
-  const userMode      = useUserMode((s) => s.mode)
-  const isDev         = userMode === 'developer'
 
   // Esc dismiss — not while deploying
   useEffect(() => {
@@ -150,13 +147,9 @@ export default function DeployConfirmModal({
     }
   }
 
-  const title = isDev
-    ? t('workspace.deploy.confirmTitle.dev', { count: tickets.length })
-    : t('workspace.deploy.confirmTitle.planner', { count: tickets.length })
+  const title = t('workspace.deploy.confirmTitle.planner', { count: tickets.length })
 
-  const bodyIntro = isDev
-    ? t('workspace.deploy.confirmBody.dev', { ids: tickets.map((tk) => tk.id).join(', ') })
-    : t('workspace.deploy.confirmBody.planner', { count: tickets.length })
+  const bodyIntro = t('workspace.deploy.confirmBody.planner', { count: tickets.length })
 
   return (
     // Backdrop click → dismiss (§5.2.2: same as "나중에")
@@ -175,7 +168,6 @@ export default function DeployConfirmModal({
         <ul style={ticketList}>
           {tickets.slice(0, 5).map((tk) => (
             <li key={tk.id} style={ticketItem}>
-              {isDev && <span style={ticketId_}>{tk.id}</span>}
               <span style={ticketTitle_}>{tk.title}</span>
             </li>
           ))}
@@ -269,13 +261,6 @@ const ticketItem: React.CSSProperties = {
   display: 'flex',
   gap: 6,
   alignItems: 'baseline',
-}
-
-const ticketId_: React.CSSProperties = {
-  fontSize: 10,
-  color: '#606060',
-  fontFamily: 'monospace',
-  flexShrink: 0,
 }
 
 const ticketTitle_: React.CSSProperties = {

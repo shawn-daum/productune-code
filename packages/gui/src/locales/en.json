@@ -165,30 +165,26 @@
     "ticketDetail": {
       "defaultAssignee": "Assignee",
       "statusBlocked": "Blocked — waiting",
-      "statusBlocked.dev": "Blocked — waiting on blocker",
       "statusReview": "Awaiting {{persona}} review",
       "statusUserVerify": "Verification pending",
-      "statusUserVerify.dev": "qa verification pending (user-verify)",
       "statusQaPending": "Verification pending",
-      "statusQaPending.dev": "qa verification pending (qa_status: pending)",
       "statusInProgress": "{{persona}} in progress",
       "statusTodo": "{{persona}} not started",
       "statusDone": "Done",
-      "statusDone.dev": "Done — no next action",
       "statusAbandoned": "Abandoned",
       "statusWaiting": "{{persona}} waiting",
       "unassigned": "Unassigned",
       "railActive": "Active",
-      "railActive.dev": "working · active",
       "railIdle": "Idle",
-      "railIdle.dev": "idle · session live",
       "crumbBack": "To Tickets tab",
       "crumbTickets": "Tickets",
       "dispatchProgress": "Dispatch progress",
       "loadError": "Could not load ticket. Check that the ticket file exists.",
       "noKrBody": "No Request (KR) section — see full spec.",
       "derivedReadOnly": "Derived · read-only",
-      "nextLabel": "Next —"
+      "nextLabel": "Next —",
+      "showFullSpec": "Show full spec",
+      "hideFullSpec": "Hide full spec"
     },
     "versions": {
       "current": "Current",
@@ -307,6 +303,7 @@
       "todoSubmit": "Submit",
       "toolGroup": "{{count}} tools",
       "toolDetailUnavailable": "detail unavailable",
+      "stop": "Stop",
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
         "exact": "API limit reached — retry in {{n}}s"
@@ -840,24 +837,6 @@
       "copyBtn": "Copy",
       "footerHint": "Hooks are managed in ~/.claude/settings.json"
     },
-    "general": {
-      "userMode": {
-        "title": "User Mode",
-        "description": "Controls which features are emphasized in the interface.",
-        "developer": {
-          "label": "Developer",
-          "desc": "Emphasizes code-facing features: worktrees, branch prefix, env scanning."
-        },
-        "planner": {
-          "label": "Planner",
-          "desc": "Emphasizes planning and delivery: PRD, tickets, deploy flow."
-        },
-        "unset": {
-          "label": "Unset",
-          "desc": "No mode preference — all features visible."
-        }
-      }
-    },
     "claudeConnection": {
       "title": "Claude Code Connection",
       "statusChecking": "Checking…",
@@ -868,6 +847,19 @@
       "connectBtn": "Connect",
       "recheckBtn": "Re-check",
       "terminalNote": "A terminal window will open to complete authentication."
+    },
+    "notifications": {
+      "title": "Notifications",
+      "description": "Choose which background events show a desktop notification while productune isn't focused.",
+      "master": "Enable notifications",
+      "dispatchDone": "Dispatch complete",
+      "dispatchDoneDesc": "A dispatched ticket finished its QA loop (pass).",
+      "escalationRaised": "Escalation raised",
+      "escalationRaisedDesc": "A QA loop hit the retry cap or needs authentication.",
+      "phaseGateEntry": "Phase gate",
+      "phaseGateEntryDesc": "The PO reached a phase-transition gate awaiting approval.",
+      "poTurnDone": "PO turn complete",
+      "poTurnDoneDesc": "The PO finished a turn and is waiting on you."
     }
   },
   "skills": {
@@ -980,6 +972,10 @@
       "description": "This folder looks like an older productune project. Detected: {{hints}}. Migrating will add config.json — your existing data (briefs, po-state, etc.) will be preserved. Continue?",
       "confirm": "Migrate",
       "cancel": "Cancel"
+    },
+    "quitGuard": {
+      "mac": "Press ⌘Q again to quit",
+      "win": "Press Ctrl+Q again to quit"
     }
   }
 }

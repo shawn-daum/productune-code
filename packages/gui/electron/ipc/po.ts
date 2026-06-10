@@ -3,7 +3,7 @@ import type { WebContents } from 'electron'
 import type { ChildProcess } from 'child_process'
 import { getSession, appendMessage, setClaudeSessionId, clearSession, clearClaudeSessionId, patchMessage } from '../chat-store'
 import type { Message } from '../chat-store'
-import { runPoTurn, emitToWebContents } from '../po-runner'
+import { runPoTurn, emitToWebContents, abortActiveTurn } from '../po-runner'
 import { markPoTurnStart, markPoTurnEnd } from '@productune/core'
 import { evaluateCycle, recordTurnDone, resetSessionWindow } from '../po-session-cycle'
 
@@ -212,6 +212,14 @@ export function register(): void {
       }
     },
   )
+
+  // ── PO turn abort (T-PATCH-081) ───────────────────────────────────────────────
+  // Renderer clicks stop button → po:abort → abortActiveTurn() SIGTERMs the child.
+  // Returns { ok: true } immediately (fire-and-forget from the renderer's perspective).
+  ipcMain.handle('po:abort', (): { ok: boolean } => {
+    abortActiveTurn()
+    return { ok: true }
+  })
 
   // ── PO session restart (T-P4-059) ─────────────────────────────────────────────
   ipcMain.handle('po:restartSession', (event, projectDir?: string): { ok: boolean } => {

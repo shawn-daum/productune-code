@@ -5,7 +5,7 @@ import type { QuickOpenItem } from '../../../components/workspace/QuickOpenPalet
 import {
   SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH,
   PO_CHAT_MIN_WIDTH, PO_CHAT_MAX_WIDTH,
-  ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH, CENTER_MIN_WIDTH,
+  ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH, CENTER_MIN_LAYOUT,
 } from './constants'
 
 export function readStoredWidth(key: string, defaultWidth: number, min: number, max: number): number {
@@ -31,6 +31,8 @@ export function persistWidth(key: string, width: number): void {
 }
 
 // T-026: chat is always visible — chat budget is always deducted.
+// T-PATCH-085: use CENTER_MIN_LAYOUT (320) here, not CENTER_MIN_WIDTH (480).
+// This lowers the sidebar-protection threshold from 1016 px → 856 px.
 export function clampSidebarWidth(
   requestedWidth: number,
   shellWidth: number,
@@ -39,7 +41,7 @@ export function clampSidebarWidth(
   const availableMax = shellWidth
     - ACTIVITY_BAR_WIDTH
     - RESIZE_HANDLE_WIDTH
-    - CENTER_MIN_WIDTH
+    - CENTER_MIN_LAYOUT        // was CENTER_MIN_WIDTH (480) — T-PATCH-085
     - RESIZE_HANDLE_WIDTH
     - poChatWidth
 
@@ -56,7 +58,7 @@ export function clampPoChatWidth(
     - RESIZE_HANDLE_WIDTH
     - sidebarWidth
     - RESIZE_HANDLE_WIDTH
-    - CENTER_MIN_WIDTH
+    - CENTER_MIN_LAYOUT        // was CENTER_MIN_WIDTH (480) — T-PATCH-085
 
   return clampPanelWidth(requestedWidth, PO_CHAT_MIN_WIDTH, PO_CHAT_MAX_WIDTH, availableMax)
 }
@@ -64,7 +66,11 @@ export function clampPoChatWidth(
 export function clampPanelWidth(requestedWidth: number, min: number, max: number, availableMax: number): number {
   const boundedMax = Math.min(max, availableMax)
   if (boundedMax <= 0) return 0
-  if (boundedMax < min) return clamp(requestedWidth, 0, boundedMax)
+  // T-PATCH-085 QA fix: hard floor — return min when space is tight.
+  // The shell grid's minWidth ensures the container never reports < sum-of-mins,
+  // so this path only fires at truly extreme sizes (<856 px window) where the
+  // scroll wrapper (overflowX:auto) kicks in instead of visual column crush.
+  if (boundedMax < min) return min
   return clamp(requestedWidth, min, boundedMax)
 }
 

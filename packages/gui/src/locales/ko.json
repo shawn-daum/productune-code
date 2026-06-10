@@ -165,30 +165,26 @@
     "ticketDetail": {
       "defaultAssignee": "담당자",
       "statusBlocked": "차단 — 해소 대기",
-      "statusBlocked.dev": "차단 — blocker 해소 대기",
       "statusReview": "{{persona}} 리뷰 대기",
       "statusUserVerify": "검증 대기",
-      "statusUserVerify.dev": "qa 검증 대기 (user-verify)",
       "statusQaPending": "검증 대기",
-      "statusQaPending.dev": "qa 검증 대기 (qa_status: pending)",
       "statusInProgress": "{{persona}} 진행 중",
       "statusTodo": "{{persona}} 착수 대기",
       "statusDone": "Done",
-      "statusDone.dev": "Done — no next action",
       "statusAbandoned": "폐기됨",
       "statusWaiting": "{{persona}} 대기 중",
       "unassigned": "담당자 미지정",
       "railActive": "Active",
-      "railActive.dev": "working · active",
       "railIdle": "대기",
-      "railIdle.dev": "idle · 세션 live",
       "crumbBack": "Tickets 탭으로",
       "crumbTickets": "Tickets",
       "dispatchProgress": "Dispatch progress",
       "loadError": "티켓을 불러오지 못했어요. 티켓 파일이 존재하는지 확인해주세요.",
       "noKrBody": "Request KR 섹션 없음 — 전체 spec 을 확인하세요.",
       "derivedReadOnly": "파생 · 읽기 전용",
-      "nextLabel": "다음 —"
+      "nextLabel": "다음 —",
+      "showFullSpec": "전체 spec 보기",
+      "hideFullSpec": "전체 spec 숨기기"
     },
     "versions": {
       "current": "현재",
@@ -307,6 +303,7 @@
       "todoSubmit": "제출",
       "toolGroup": "도구 {{count}}개",
       "toolDetailUnavailable": "상세 정보 없음",
+      "stop": "중단",
       "rateLimit": {
         "estimated": "API 한도 도달 — 약 {{n}}초 후 재시도 가능 (추정)",
         "exact": "API 한도 도달 — {{n}}초 후 재시도 가능"
@@ -840,24 +837,6 @@
       "copyBtn": "복사",
       "footerHint": "훅은 ~/.claude/settings.json 의 hooks 블록에서 관리돼요."
     },
-    "general": {
-      "userMode": {
-        "title": "사용자 모드",
-        "description": "인터페이스에서 강조할 기능 영역을 지정합니다.",
-        "developer": {
-          "label": "Developer",
-          "desc": "코드 중심 기능 강조: worktree, branch prefix, env 스캔."
-        },
-        "planner": {
-          "label": "Planner",
-          "desc": "기획·배포 기능 강조: PRD, 티켓, 배포 흐름."
-        },
-        "unset": {
-          "label": "Unset",
-          "desc": "모드 미지정 — 모든 기능이 표시됩니다."
-        }
-      }
-    },
     "claudeConnection": {
       "title": "Claude Code 연결",
       "statusChecking": "확인 중…",
@@ -868,6 +847,19 @@
       "connectBtn": "연결하기",
       "recheckBtn": "다시 확인",
       "terminalNote": "인증을 완료하려면 터미널 창이 열립니다."
+    },
+    "notifications": {
+      "title": "알림",
+      "description": "productune 창이 포커스를 잃은 동안 표시할 데스크탑 알림 유형을 선택하세요.",
+      "master": "알림 활성화",
+      "dispatchDone": "디스패치 완료",
+      "dispatchDoneDesc": "배정된 티켓이 QA 루프를 통과했습니다.",
+      "escalationRaised": "에스컬레이션 발생",
+      "escalationRaisedDesc": "QA 루프가 재시도 한도에 도달하거나 인증이 필요합니다.",
+      "phaseGateEntry": "페이즈 게이트",
+      "phaseGateEntryDesc": "PO가 승인을 기다리는 페이즈 전환 게이트에 도달했습니다.",
+      "poTurnDone": "PO 턴 완료",
+      "poTurnDoneDesc": "PO가 턴을 마치고 다음 응답을 기다리고 있습니다."
     }
   },
   "skills": {
@@ -980,6 +972,10 @@
       "description": "이 폴더는 옛 productune 프로젝트로 보입니다. 감지된 항목: {{hints}}. 최신 layout 으로 업데이트하면 기존 작업 내역은 그대로 보존됩니다. 진행할까요?",
       "confirm": "업데이트",
       "cancel": "취소"
+    },
+    "quitGuard": {
+      "mac": "⌘Q를 다시 누르면 종료됩니다",
+      "win": "Ctrl+Q를 다시 누르면 종료됩니다"
     }
   }
 }

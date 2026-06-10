@@ -26,13 +26,18 @@
  */
 
 import { BrowserWindow, Notification } from 'electron'
+import { getNotificationSettings } from '@productune/core'
 
-export type NotifyKind = 'dispatch-done' | 'escalation-raised' | 'phase-gate-entry'
+export type NotifyKind =
+  | 'dispatch-done'
+  | 'escalation-raised'
+  | 'phase-gate-entry'
+  | 'po-turn-done'
 
 /** Surface the renderer should route to when a notification is clicked. */
 export interface NotifyRoute {
   /** Renderer-side surface identifier — interpreted in store/poEvents.ts. */
-  surface: 'ticket-review' | 'phase-gate'
+  surface: 'ticket-review' | 'phase-gate' | 'chat'
   /** Ticket id for ticket-review routing; absent for phase-gate. */
   ticketId?: string
 }
@@ -68,6 +73,13 @@ export function fireNotification(spec: NotifySpec): boolean {
   if (!Notification.isSupported()) return false
   // AC-1: only when no window is focused.
   if (!isBackgrounded()) return false
+
+  // AC-8 (T-PATCH-083): respect user notification toggle settings.
+  // master off → no notification fires; per-type off → that kind suppressed.
+  // Runs after isBackgrounded() so the settings I/O only happens when needed.
+  const notifSettings = getNotificationSettings()
+  if (!notifSettings.enabled) return false
+  if (!notifSettings.types[spec.kind]) return false
 
   const notification = new Notification({
     title: spec.title,

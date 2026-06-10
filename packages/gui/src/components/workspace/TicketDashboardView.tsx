@@ -158,8 +158,17 @@ function resolveAssignee(ticket: Ticket): string | null {
 
 function Card({ ticket }: { ticket: Ticket }) {
   const assignee = resolveAssignee(ticket)
+  const openTab = useWorkspace((s) => s.openTab)
   return (
-    <div style={card}>
+    <div
+      style={card}
+      onClick={() => openTab(
+        'ticket-detail:' + ticket.ticket_id,
+        'ticket-detail',
+        { ticketId: ticket.ticket_id },
+        ticket.ticket_id,
+      )}
+    >
       <div style={cardTopRow}>
         <span style={cardId}>{ticket.ticket_id}</span>
         {/* B: version span removed */}
@@ -351,6 +360,7 @@ const card: React.CSSProperties = {
   minHeight: 80,                // content 없는 카드 최소 높이 floor
   width: 'calc(100% - 16px)',   // C: columnBody 좌우 padding 0 기준 → 8px 양쪽 균등 margin
   margin: '0 auto',             // C: 좌우 균등 센터링
+  cursor: 'pointer',
 }
 
 const cardTopRow: React.CSSProperties = {

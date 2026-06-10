@@ -10,8 +10,10 @@ import {
   saveRules,
   getVercelToken,
   setVercelToken,
+  getNotificationSettings,
+  setNotificationSettings,
 } from '@productune/core'
-import type { UiLanguage, GitRules } from '@productune/core'
+import type { UiLanguage, GitRules, NotificationSettings } from '@productune/core'
 
 // ── Persona-spec edit (v0.5 B1 / T-017) ──────────────────────────────────────
 // Persona agent specs live at ~/.claude/agents/<id>.md. Only the 4 known
@@ -60,6 +62,23 @@ export function register(): void {
       return { ok: false, error: e?.message ?? 'unknown error' }
     }
   })
+
+  // ── Notification settings IPC (T-PATCH-083) ───────────────────────────────────
+  ipcMain.handle('settings:getNotifications', (): NotificationSettings => {
+    return getNotificationSettings()
+  })
+
+  ipcMain.handle(
+    'settings:setNotifications',
+    (_event, n: NotificationSettings): { ok: boolean; error?: string } => {
+      try {
+        setNotificationSettings(n)
+        return { ok: true }
+      } catch (e: any) {
+        return { ok: false, error: e?.message ?? 'unknown error' }
+      }
+    },
+  )
 
   // ── Git workflow rules IPC ─────────────────────────────────────────────────────
   ipcMain.handle('settings:loadRules', (_event, projectDir: string): GitRules => {

@@ -20,6 +20,7 @@
  */
 
 import { spawn } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
@@ -151,6 +152,34 @@ interface RunCallbacks {
    * assistant tool_use stream (Path A) OR the result-text marker (Path B).
    */
   onAskUserQuestion: (msgId: string, payload: AskUserQuestionPayload) => void
+}
+
+// ── Active child tracking (T-PATCH-081) ──────────────────────────────────────────
+// Single-turn model: only one claude child runs at a time. Module-level ref allows
+// abortActiveTurn() to SIGTERM it from the po:abort IPC handler without threading
+// the handle through callbacks. Cleared on close so repeated aborts are safe no-ops.
+
+let activeChild: ChildProcess | null = null
+
+/**
+ * Abort the currently running PO turn by sending SIGTERM to the claude child.
+ * Safe to call when no child is running (activeChild === null → no-op).
+ * Echo-mode safe: spawnClaude is not called → activeChild stays null → no-op.
+ */
+export function abortActiveTurn(): void {
+  if (activeChild && !activeChild.killed) {
+    activeChild.kill('SIGTERM')
+  }
+  activeChild = null
+}
+
+/**
+ * T-PATCH-086: check whether a PO turn is currently in flight.
+ * Used by the quit guard to decide whether to show the native abort-and-quit dialog
+ * instead of the two-tap overlay.
+ */
+export function isPoRunning(): boolean {
+  return activeChild != null && !activeChild.killed
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -360,6 +389,8 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       cwd: opts.projectDir,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    // T-PATCH-081: track active child for po:abort IPC abort path.
+    activeChild = child
 
     let stdoutBuf = ''
     let stderrBuf = ''
@@ -403,6 +434,8 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     })
 
     child.on('close', (code) => {
+      // T-PATCH-081: clear active child ref on close (handles both normal exit and SIGTERM).
+      activeChild = null
       clearToolUseTimeout(hCtx)
       clearSilenceTimeout(hCtx)
 
@@ -990,7 +1023,16 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     onMsgId:       (msgId)                  => wc.send('po:onMsgId', msgId),
     onToken:       (msgId, chunk)           => wc.send('po:onToken', msgId, chunk),
     onAnnounce:    (msgId, payload)         => wc.send('po:onAnnounce', msgId, payload),
-    onDone:        (msgId, info)            => wc.send('po:onDone', msgId, info),
+    onDone:        (msgId, info)            => {
+      wc.send('po:onDone', msgId, info)
+      // T-PATCH-082: notify when PO turn fully completes (once per turn).
+      fireNotification({
+        kind: 'po-turn-done',
+        title: 'productune',
+        body: 'PO turn complete — response ready.',
+        route: { surface: 'chat' },
+      })
+    },
     onHealth:      (event)                  => wc.send('po:onHealth', event),
     // T-P4-113: emit parsed todo items to renderer
     onTodoItems:   (items)                  => wc.send('po:todo-items', items),

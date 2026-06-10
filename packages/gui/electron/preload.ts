@@ -432,6 +432,11 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('browser:found-in-page', listener)
   },
 
+  /** Abort the currently running PO turn (SIGTERM the claude child). Safe no-op when idle.
+   *  T-PATCH-081: renderer stop button → IPC → abortActiveTurn() in po-runner.ts. */
+  abortPoTurn: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('po:abort'),
+
   /** Restart the PO session — kills active child + resets sessionId. Returns { ok: boolean }.
    *  T-PATCH-040: optional projectDir re-snapshots the fresh-cycle turn window. */
   poRestartSession: (projectDir?: string): Promise<{ ok: boolean }> =>
@@ -537,6 +542,15 @@ contextBridge.exposeInMainWorld('api', {
 
   setUiLanguage: (lng: 'en' | 'ko'): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:setUiLanguage', lng),
+
+  // ── Notification toggles (T-PATCH-083) ───────────────────────────────────────
+  getNotifications: (): Promise<import('@productune/core').NotificationSettings> =>
+    ipcRenderer.invoke('settings:getNotifications'),
+
+  setNotifications: (
+    n: import('@productune/core').NotificationSettings,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setNotifications', n),
 
   hasLanguagePref: (): Promise<boolean> =>
     ipcRenderer.invoke('settings:hasLanguagePref'),
@@ -917,4 +931,13 @@ contextBridge.exposeInMainWorld('api', {
     originalRaw: string,
   ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('projectEnv:write', projectDir, filename, entries, originalRaw),
+
+  // ── Quit guard IPC (T-PATCH-086) ────────────────────────────────────────────
+  /** Subscribe to quit-pending: first ⌘Q pressed — show overlay with progress bar. */
+  onQuitPending: (cb: (data: { timeoutMs: number }) => void) =>
+    ipcRenderer.on('quit:pending', (_e: Electron.IpcRendererEvent, data: { timeoutMs: number }) => cb(data)),
+
+  /** Subscribe to quit-cancelled: guard window expired — hide overlay. */
+  onQuitCancelled: (cb: () => void) =>
+    ipcRenderer.on('quit:cancelled', (_e: Electron.IpcRendererEvent) => cb()),
 })

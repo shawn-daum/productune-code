@@ -2,26 +2,39 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
 import i18next from '../../i18n'
-import { useUserMode } from '../../store/useUserMode'
-import type { UserMode } from '../../store/useUserMode'
 
 type Lang = 'en' | 'ko'
+
+// ── T-PATCH-083: local mirror of NotificationSettings (avoids core import in renderer) ──
+interface NotificationSettingsLocal {
+  enabled: boolean
+  types: {
+    'dispatch-done': boolean
+    'escalation-raised': boolean
+    'phase-gate-entry': boolean
+    'po-turn-done': boolean
+  }
+}
+
+const DEFAULT_NOTIF: NotificationSettingsLocal = {
+  enabled: true,
+  types: {
+    'dispatch-done': true,
+    'escalation-raised': true,
+    'phase-gate-entry': true,
+    'po-turn-done': true,
+  },
+}
 
 export default function GeneralSettings() {
   const { t, i18n } = useTranslation()
   const currentLang = i18n.language as Lang
-  const mode = useUserMode((s) => s.mode)
-  const setMode = useUserMode((s) => s.setMode)
 
   async function handleLangChange(lng: Lang) {
     await i18next.changeLanguage(lng)
     try {
       await (window as any).api.setUiLanguage(lng)
     } catch { /* IPC unavailable in browser dev mode */ }
-  }
-
-  async function handleModeChange(m: UserMode) {
-    await setMode(m)
   }
 
   return (
@@ -46,29 +59,8 @@ export default function GeneralSettings() {
 
       <div style={divider} />
 
-      {/* User mode */}
-      <div style={sectionTitle}>{t('settings.general.userMode.title')}</div>
-      <div style={description}>{t('settings.general.userMode.description')}</div>
-      <div style={options}>
-        <RadioOption
-          selected={mode === 'developer'}
-          label={t('settings.general.userMode.developer.label')}
-          desc={t('settings.general.userMode.developer.desc')}
-          onSelect={() => handleModeChange('developer')}
-        />
-        <RadioOption
-          selected={mode === 'planner'}
-          label={t('settings.general.userMode.planner.label')}
-          desc={t('settings.general.userMode.planner.desc')}
-          onSelect={() => handleModeChange('planner')}
-        />
-        <RadioOption
-          selected={mode === null}
-          label={t('settings.general.userMode.unset.label')}
-          desc={t('settings.general.userMode.unset.desc')}
-          onSelect={() => handleModeChange(null)}
-        />
-      </div>
+      {/* Notifications — T-PATCH-083 */}
+      <NotificationsSection />
 
       <div style={divider} />
 
@@ -165,6 +157,139 @@ function ClaudeConnection() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Notifications section (T-PATCH-083) ──────────────────────────────────────
+
+// Explicit kind→locale-key map (AC-15 — never interpolate hyphenated kind into i18n path).
+const NOTIFY_TYPE_ROWS: Array<{
+  kind: keyof NotificationSettingsLocal['types']
+  labelKey: string
+  descKey: string
+}> = [
+  {
+    kind: 'dispatch-done',
+    labelKey: 'settings.notifications.dispatchDone',
+    descKey: 'settings.notifications.dispatchDoneDesc',
+  },
+  {
+    kind: 'escalation-raised',
+    labelKey: 'settings.notifications.escalationRaised',
+    descKey: 'settings.notifications.escalationRaisedDesc',
+  },
+  {
+    kind: 'phase-gate-entry',
+    labelKey: 'settings.notifications.phaseGateEntry',
+    descKey: 'settings.notifications.phaseGateEntryDesc',
+  },
+  {
+    kind: 'po-turn-done',
+    labelKey: 'settings.notifications.poTurnDone',
+    descKey: 'settings.notifications.poTurnDoneDesc',
+  },
+]
+
+function NotificationsSection() {
+  const { t } = useTranslation()
+  const [notif, setNotif] = useState<NotificationSettingsLocal>(DEFAULT_NOTIF)
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const n = await (window as any).api?.getNotifications?.()
+        if (n) setNotif(n)
+      } catch { /* IPC unavailable in browser dev mode */ }
+    }
+    load()
+  }, [])
+
+  async function handleMasterToggle() {
+    // rerender-functional-setstate: derive next from prev to avoid stale closure.
+    setNotif((prev) => {
+      const next = { ...prev, enabled: !prev.enabled }
+      ;(async () => {
+        try {
+          await (window as any).api?.setNotifications?.(next)
+        } catch { /* IPC unavailable in browser dev mode */ }
+      })()
+      return next
+    })
+  }
+
+  async function handleTypeToggle(kind: keyof NotificationSettingsLocal['types']) {
+    setNotif((prev) => {
+      const next: NotificationSettingsLocal = {
+        ...prev,
+        types: { ...prev.types, [kind]: !prev.types[kind] },
+      }
+      ;(async () => {
+        try {
+          await (window as any).api?.setNotifications?.(next)
+        } catch { /* IPC unavailable in browser dev mode */ }
+      })()
+      return next
+    })
+  }
+
+  const typesDisabled = !notif.enabled
+
+  return (
+    <div>
+      <div style={sectionTitle}>{t('settings.notifications.title')}</div>
+      <div style={description}>{t('settings.notifications.description')}</div>
+
+      {/* Master toggle */}
+      <ToggleRow
+        label={t('settings.notifications.master')}
+        checked={notif.enabled}
+        onToggle={handleMasterToggle}
+      />
+
+      {/* Per-type toggles — visually disabled when master is off (AC-13). */}
+      <div style={typesDisabled ? toggleTypesDisabled : toggleTypes}>
+        {NOTIFY_TYPE_ROWS.map(({ kind, labelKey, descKey }) => (
+          <ToggleRow
+            key={kind}
+            label={t(labelKey)}
+            desc={t(descKey)}
+            checked={notif.types[kind]}
+            onToggle={() => handleTypeToggle(kind)}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── ToggleRow (AC-16) — label/desc on left, switch on right ──────────────────
+
+function ToggleRow({
+  label,
+  desc,
+  checked,
+  onToggle,
+}: {
+  label: string
+  desc?: string
+  checked: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div style={toggleRowWrap} onClick={onToggle}>
+      <div style={toggleRowLeft}>
+        <span style={optionLabel}>{label}</span>
+        {desc != null ? <span style={description}>{desc}</span> : null}
+      </div>
+      <div style={{ ...toggleTrack, background: checked ? '#8B5CF6' : '#2A2A2A' }}>
+        <div
+          style={{
+            ...toggleKnob,
+            transform: checked ? 'translateX(14px)' : 'translateX(2px)',
+          }}
+        />
+      </div>
     </div>
   )
 }
@@ -313,4 +438,50 @@ const claudeRecheckBtn: React.CSSProperties = {
   fontWeight: 500,
   padding: '4px 10px',
   transition: 'border-color 0.15s, color 0.15s',
+}
+
+// ── ToggleRow + NotificationsSection styles (T-PATCH-083) ─────────────────────
+
+const toggleRowWrap: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: '6px 0',
+  cursor: 'pointer',
+}
+
+const toggleRowLeft: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  flex: 1,
+  paddingRight: 12,
+}
+
+const toggleTrack: React.CSSProperties = {
+  width: 32,
+  height: 18,
+  borderRadius: 9,
+  position: 'relative',
+  flexShrink: 0,
+  transition: 'background 0.15s',
+}
+
+const toggleKnob: React.CSSProperties = {
+  width: 14,
+  height: 14,
+  borderRadius: '50%',
+  background: '#F0F0F0',
+  position: 'absolute',
+  top: 2,
+  transition: 'transform 0.15s',
+}
+
+// AC-13: per-type rows container — visually disabled when master is off.
+// Values are preserved (not reset); pointer-events off prevents clicks.
+const toggleTypes: React.CSSProperties = {}
+
+const toggleTypesDisabled: React.CSSProperties = {
+  opacity: 0.4,
+  pointerEvents: 'none',
 }

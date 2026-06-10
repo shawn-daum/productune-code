@@ -9,14 +9,14 @@ export {
   saveSettings,
   getUiLanguage,
   setUiLanguage,
-  getUserMode,
-  setUserMode,
   settingsFileExists,
   getVercelToken,
   setVercelToken,
   markVercelTokenValidated,
+  getNotificationSettings,
+  setNotificationSettings,
 } from './settings/ui-settings'
-export type { UiLanguage, UiSettings, UserMode, IntegrationsSettings } from './settings/ui-settings'
+export type { UiLanguage, UiSettings, IntegrationsSettings, NotificationSettings } from './settings/ui-settings'
 
 export {
   loadRules,
