@@ -1,2 +1,9 @@
 # electron-builder output (T-020 / B4 unsigned .dmg dist)
 release/
+
+# smoke: repo-layout shim — renderer -> dist symlink (see package.json "smoke")
+renderer
+
+# playwright
+test-results/
+playwright-report/

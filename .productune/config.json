@@ -7,7 +7,7 @@
     "gui": {
       "type": "electron",
       "build": "pnpm --filter @productune/gui build",
-      "smoke": null,
+      "smoke": "pnpm --filter @productune/gui smoke",
       "smoke_driver": "playwright-electron"
     },
     "core": {
