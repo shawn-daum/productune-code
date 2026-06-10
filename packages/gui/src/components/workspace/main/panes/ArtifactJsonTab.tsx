@@ -89,7 +89,7 @@ function JsonNode({ value, depth, label }: { value: unknown; depth: number; labe
   const isObj = value !== null && typeof value === 'object'
   const [open, setOpen] = useState(true)
 
-  const labelEl = label !== undefined ? <span style={keyStyle}>{label}: </span> : null
+  const labelEl = label !== undefined ? <span style={keyStyle(depth)}>{label}: </span> : null
 
   if (!isObj) {
     return (
@@ -233,12 +233,13 @@ const treeWrap: React.CSSProperties = {
   lineHeight: 1.65,
 }
 
+// Long values wrap — keys/chevrons must pin to the FIRST line (top-aligned),
+// never float to the vertical middle of a wrapped value block.
 const row = (depth: number): React.CSSProperties => ({
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   paddingLeft: 14 + depth * 16,
   paddingRight: 14,
-  whiteSpace: 'nowrap',
 })
 
 const chevron: React.CSSProperties = {
@@ -247,6 +248,7 @@ const chevron: React.CSSProperties = {
   width: 14,
   flexShrink: 0,
   color: '#505050',
+  paddingTop: 4, // optical first-line alignment (line-height 1.65 × 11.5px)
 }
 
 const chevronSpacer: React.CSSProperties = {
@@ -255,7 +257,14 @@ const chevronSpacer: React.CSSProperties = {
   flexShrink: 0,
 }
 
-const keyStyle: React.CSSProperties = { color: '#9CA3AF' }
+// Key color cycles by depth — hierarchy cue. Hues avoid the value colors
+// (string green / number amber / keyword violet).
+const KEY_COLORS = ['#9CA3AF', '#7EA8CF', '#CF9E9E', '#8FBFB4']
+const keyStyle = (depth: number): React.CSSProperties => ({
+  color: KEY_COLORS[depth % KEY_COLORS.length],
+  flexShrink: 0,
+  whiteSpace: 'nowrap',
+})
 const punct: React.CSSProperties = { color: '#505050' }
 const collapsedHint: React.CSSProperties = { color: '#3F3F3F', fontStyle: 'italic' }
 const strVal: React.CSSProperties = { color: '#7FB07F', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
