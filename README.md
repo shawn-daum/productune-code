@@ -160,6 +160,16 @@ productune/packages/core/scripts/install.sh
 
 이후엔 어디서든 `productune onboard` 로 재실행 가능 (PATH 등록은 첫 install 마지막에 처리됨).
 
+## Update (기존 사용자)
+
+```sh
+productune update
+```
+
+한 줄로 끝: `git pull --ff-only` → `install.sh` 재실행 (doctrine mirror / hook / agent 갱신) → 동봉 migration 목록 안내. (기존 방식 `git pull` + `install.sh` 수동 실행과 동치 — 이제 repo 위치를 찾아갈 필요가 없습니다.)
+
+**프로젝트 구조 변경이 필요한 업데이트**는 `packages/core/migrations/NNNN-*.md` 로 동봉됩니다 (감지 조건 `auto_check` + `## PO 지시 프롬프트`). 업데이트 후 해당 프로젝트 터미널에서 `productune` 을 실행하면 **PO 가 미적용 migration 을 자동 감지해 적용을 제안**합니다 — 사용자가 승인하면 PO 가 적용하고 `.productune/config.json :: schema_v` 를 올립니다. migration 이 필요 없으면 아무것도 묻지 않습니다.
+
 `install.sh` 가 인터랙티브하게 처리:
 
 1. **Claude Code preflight** — CLI 미설치면 자동 설치, 미로그인이면 `claude auth login` 자동 실행.

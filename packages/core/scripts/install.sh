@@ -428,6 +428,15 @@ if [ -f "$ROOT/config/close-gate.p3.json" ]; then
   say "config mirror 완료: ~/.productune/config/close-gate.p3.json"
 fi
 
+# 2c-1c) Mirror migrations — session-start hook 이 프로젝트별 미적용분을 감지해
+#        PO 가 적용을 제안한다 (auto_check + PO 지시 프롬프트 동봉).
+if [ -d "$ROOT/migrations" ] && ls "$ROOT/migrations"/*.md >/dev/null 2>&1; then
+  mkdir -p "$HOME/.productune/migrations"
+  rm -f "$HOME/.productune/migrations"/*.md
+  cp "$ROOT/migrations/"*.md "$HOME/.productune/migrations/"
+  say "migrations mirror 완료: ~/.productune/migrations/ ($(ls "$ROOT/migrations"/*.md | wc -l | tr -d ' ')개)"
+fi
+
 # 2c-2) One-time per-machine migration: personal-po-state DEPRECATION.
 #       Work-state now lives ONLY in each project's .productune/po-state.json.
 #       This resets a leftover personal ~/.productune/po/po-state.json that still

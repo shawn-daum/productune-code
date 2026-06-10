@@ -159,6 +159,7 @@ case "${1:-}" in
     (default)          Start a PO session (claude --agent pdt-po)
     init               Scaffold project — .productune/, docs/pdt-*/, .gitignore
     onboard            Run install — wire agents, hooks, PATH
+    update             git pull + reinstall + migration notice (기존 사용자 업데이트)
     uninstall          Remove all installed artifacts
     gc                 Audit productune/* worktrees (dry-run)
     gc -y              Remove safe worktrees automatically
@@ -184,6 +185,46 @@ case "${1:-}" in
     ;;
   onboard)
     exec bash "$(dirname "$0")/install.sh"
+    ;;
+  update)
+    # 기존 사용자 업데이트: git pull --ff-only → install.sh 재실행 → migration 안내.
+    # repo 해석: productune.env 우선, fallback = 이 스크립트의 실제 위치(symlink 해소).
+    REPO=""
+    if [ -r "$HOME/.productune/productune.env" ]; then
+      REPO="$(grep -E '^PRODUCTUNE_REPO=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\n' || true)"
+    fi
+    if [ -z "$REPO" ] || [ ! -d "$REPO/.git" ]; then
+      _self="$(realpath "$0" 2>/dev/null || echo "$0")"
+      REPO="$(cd "$(dirname "$_self")/../../.." 2>/dev/null && pwd || true)"
+    fi
+    [ -n "$REPO" ] && [ -d "$REPO/.git" ] || die "productune repo 를 찾을 수 없습니다 (productune.env 의 PRODUCTUNE_REPO 확인)"
+    say "repo: $REPO"
+
+    # tracked 변경이 있으면 pull 중단 (untracked 는 허용)
+    if ! git -C "$REPO" diff --quiet 2>/dev/null || ! git -C "$REPO" diff --cached --quiet 2>/dev/null; then
+      die "repo 에 커밋 안 된 변경이 있어 중단합니다 — 정리 후 재시도: git -C $REPO status"
+    fi
+
+    say "git pull --ff-only..."
+    git -C "$REPO" pull --ff-only || die "pull 실패 (히스토리 분기?) — repo 에서 수동 해결 후 재시도"
+
+    say "install.sh 재실행 (doctrine mirror / hook / agent 갱신)..."
+    bash "$REPO/packages/core/scripts/install.sh" || die "install.sh 실패"
+
+    # migration 안내 — 적용 여부는 프로젝트별 (productune 시작 시 PO 가 자동 감지·제안)
+    MIG_DIR="$REPO/packages/core/migrations"
+    if [ -d "$MIG_DIR" ] && ls "$MIG_DIR"/*.md >/dev/null 2>&1; then
+      say "동봉된 migration:"
+      for f in "$MIG_DIR"/*.md; do
+        _id="$(grep -m1 '^id:' "$f" | awk '{print $2}')"
+        _title="$(grep -m1 '^title:' "$f" | sed 's/^title:[[:space:]]*//')"
+        printf '    %04d  %s\n' "${_id:-0}" "${_title:-?}"
+      done
+      say "프로젝트 구조 변경이 필요한 항목은 해당 프로젝트 터미널에서 productune 실행 시"
+      say "PO 가 미적용분을 자동 감지해 적용을 제안합니다 (PO 주도, 사용자 승인 후 적용)."
+    fi
+    say "업데이트 완료. 각 프로젝트에서 productune 을 다시 실행하세요."
+    exit 0
     ;;
   uninstall)
     exec bash "$(dirname "$0")/uninstall.sh"

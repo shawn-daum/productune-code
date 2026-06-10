@@ -25,12 +25,51 @@ EVENT_JSON="$(cat 2>/dev/null || true)"
 
 AGENT_TYPE=""
 SOURCE=""
+EVENT_CWD=""
 if [ -n "$EVENT_JSON" ] && command -v jq >/dev/null 2>&1; then
   AGENT_TYPE="$(printf '%s' "$EVENT_JSON" | jq -r '.agent_type // ""' 2>/dev/null)"
   SOURCE="$(printf '%s' "$EVENT_JSON" | jq -r '.source // ""' 2>/dev/null)"
+  EVENT_CWD="$(printf '%s' "$EVENT_JSON" | jq -r '.cwd // ""' 2>/dev/null)"
 fi
 
 COMMON_TIER0="$HOME/.productune/doctrine/common/habit.md"
+
+# ── Pending-migration scan (PO only) ──────────────────────────────────────────
+# ~/.productune/migrations/*.md (id / auto_check frontmatter) 를 프로젝트의
+# .productune/config.json :: schema_v 와 대조. auto_check exit 0 = 적용 필요.
+# 결과 블록은 PO 컨텍스트에 주입 — PO 가 turn 시작에 사용자에게 적용을 제안한다.
+build_migration_block() {
+  local d="${1:-}" proj=""
+  while [ "$d" != "/" ] && [ -n "$d" ]; do
+    [ -f "$d/.productune/po-state.json" ] && { proj="$d"; break; }
+    d="$(dirname "$d")"
+  done
+  [ -z "$proj" ] && return 0
+  local migdir="$HOME/.productune/migrations"
+  [ -d "$migdir" ] || return 0
+  local schema_v
+  schema_v="$(jq -r '.schema_v // 0' "$proj/.productune/config.json" 2>/dev/null)"
+  case "$schema_v" in (''|*[!0-9]*) schema_v=0 ;; esac
+  local pending="" f id check title
+  for f in "$migdir"/*.md; do
+    [ -f "$f" ] || continue
+    id="$(grep -m1 '^id:' "$f" | awk '{print $2}')"
+    case "$id" in (''|*[!0-9]*) continue ;; esac
+    [ "$id" -le "$schema_v" ] && continue
+    check="$(grep -m1 '^auto_check:' "$f" | sed 's/^auto_check:[[:space:]]*//')"
+    if [ -n "$check" ]; then
+      ( cd "$proj" && bash -c "$check" ) >/dev/null 2>&1 || continue
+    fi
+    title="$(grep -m1 '^title:' "$f" | sed 's/^title:[[:space:]]*//')"
+    pending="$pending
+  - migration $id: $title — task spec: $f"
+  done
+  [ -z "$pending" ] && return 0
+  printf '%s' "
+
+[productune migrations — PENDING for this project]$pending
+At turn start, surface these to the user (1-line each, user lang) and offer to apply. Each file's '## PO 지시 프롬프트' section IS the task — route it per normal delegation rules. Apply ONLY on user approval; after migration N completes, set .productune/config.json schema_v=N via jq."
+}
 
 # Emit the additionalContext JSON envelope and exit. $1 = the context text.
 emit_ctx() {
@@ -76,6 +115,9 @@ $(cat "$COMMON_TIER0")
 "
   fi
 
+  MIGRATION_BLOCK=""
+  [ "$PERSONA" = "po" ] && MIGRATION_BLOCK="$(build_migration_block "$EVENT_CWD")"
+
   emit_ctx "[productune doctrine — $AGENT_TYPE session start — Tier 0 injected]
 Your Tier 0 doctrine is injected in full below. Do NOT re-read the injected file(s); act on the injected text. Bookshelf detail files referenced inside still load on demand via Bash \`cat\` under the \$HOME-expanded base $HOME/.productune/ (the Read tool does NOT expand \`~\`; never guess \`/root\`).
 
@@ -83,7 +125,7 @@ $COMMON_BLOCK----- BEGIN Tier 0 persona ($PERSONA_TIER0) -----
 $(cat "$PERSONA_TIER0")
 ----- END Tier 0 persona -----
 
-Act per the doctrine above."
+Act per the doctrine above.$MIGRATION_BLOCK"
 fi
 
 # ── Fallback: no agent_type (resume w/o --agent, source clear/compact, etc.) ──
