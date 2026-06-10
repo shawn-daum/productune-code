@@ -4,11 +4,22 @@ import fs from 'fs'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export interface ArtifactManifestMeta {
+  ticket: string | null
+  kind: string          // prd-view | mockup | wireframe | design-system | spec | doc
+  status: string        // pending | approved | archived
+  lang?: string
+  source?: string
+  source_hash?: string
+}
+
 export interface ArtifactEntry {
   relPath: string       // relative to projectDir, e.g. "docs/artifacts/v1/flow.md"
   absPath: string
   ext: string           // ".md" | ".mmd" | ".mermaid" | ".html" (lower-cased)
   scopeGroup: 'artifacts'
+  /** docs/artifacts/<v>/manifest.json entry, when registered (artifact-manifest-schema.md) */
+  meta?: ArtifactManifestMeta
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -16,6 +27,30 @@ export interface ArtifactEntry {
 const ALLOWED_EXTS = new Set(['.md', '.mmd', '.mermaid', '.html'])
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Load docs/artifacts/<v>/manifest.json entries keyed by in-version path. */
+function loadManifest(dir: string): Map<string, ArtifactManifestMeta> {
+  const map = new Map<string, ArtifactManifestMeta>()
+  const manifestPath = path.join(dir, 'manifest.json')
+  if (!fs.existsSync(manifestPath)) return map
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+    for (const e of parsed?.entries ?? []) {
+      if (typeof e?.path !== 'string') continue
+      map.set(e.path, {
+        ticket: e.ticket ?? null,
+        kind: e.kind ?? 'doc',
+        status: e.status ?? 'pending',
+        lang: e.lang,
+        source: e.source,
+        source_hash: e.source_hash,
+      })
+    }
+  } catch {
+    // malformed manifest → treat as absent; lint surfaces it
+  }
+  return map
+}
 
 function scanDir(
   dir: string,
@@ -30,6 +65,7 @@ function scanDir(
   } catch {
     return
   }
+  const manifest = loadManifest(dir)
   const files = entries
     .filter((e) => e.isFile())
     .map((e) => ({ name: e.name, ext: path.extname(e.name).toLowerCase() }))
@@ -39,7 +75,7 @@ function scanDir(
   for (const f of files) {
     const absPath = path.join(dir, f.name)
     const relPath = path.relative(projectDir, absPath)
-    out.push({ relPath, absPath, ext: f.ext, scopeGroup })
+    out.push({ relPath, absPath, ext: f.ext, scopeGroup, meta: manifest.get(f.name) })
   }
 }
 

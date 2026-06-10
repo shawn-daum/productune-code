@@ -5,6 +5,7 @@
 
 import { useTranslation } from 'react-i18next'
 import { useVersionHistory } from './versionHistory/useVersionHistory'
+import PrdSection from '../components/workspace/PrdSection'
 import TicketCard from './versionHistory/TicketCard'
 import EmptyState from './versionHistory/EmptyState'
 import FilterToolbar from './versionHistory/FilterToolbar'
@@ -29,6 +30,10 @@ export default function VersionHistoryView() {
         <div style={headerTitle}>{t('workspace.versionHistory.title')} — {versionLabel}</div>
         <div style={headerSubtitle}>{subtitle}</div>
       </div>
+
+      {/* PRD row — closed version opens its docs/prd/versions/<v>.md snapshot,
+          current version opens the live master (same UI as VersionDetailView) */}
+      <PrdSection versionId={selectedVersionId} />
 
       <FilterToolbar filter={filter} dispatch={dispatch} defaultFrom={defaultFrom} defaultTo={defaultTo} />
 

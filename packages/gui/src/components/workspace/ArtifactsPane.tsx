@@ -31,6 +31,8 @@ interface ArtifactEntry {
   absPath: string
   ext: string
   scopeGroup: 'artifacts'
+  /** manifest.json entry when registered (artifact-manifest-schema.md) */
+  meta?: { ticket: string | null; kind: string; status: string }
 }
 
 interface Props {
@@ -166,6 +168,9 @@ export default function ArtifactsPane({ project, poState }: Props) {
                     {getIcon(entry.ext)}
                   </span>
                   <span style={rowName}>{basename}</span>
+                  {entry.meta?.status === 'pending' ? (
+                    <span style={pendingDot} title="user-gate pending" />
+                  ) : null}
                 </button>
               )
             })}
@@ -206,6 +211,15 @@ const scrollArea: React.CSSProperties = {
 const scopeGroup: React.CSSProperties = {
   paddingTop: 8,
   paddingBottom: 2,
+}
+
+const pendingDot: React.CSSProperties = {
+  width: 6,
+  height: 6,
+  borderRadius: '50%',
+  background: '#D97706',
+  flexShrink: 0,
+  marginLeft: 4,
 }
 
 const scopeLabel: React.CSSProperties = {

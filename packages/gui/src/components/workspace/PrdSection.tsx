@@ -1,9 +1,12 @@
 /**
  * PrdSection — T-PATCH-078 shared component
  *
- * Checks docs/artifacts/<versionId>/PRD.html via artifactsListScoped.
- * On click opens as preview tab (artifact:<relPath>, deduped by tabId).
- * No PRD.html → subtle placeholder.
+ * Renders the PRD row for a version (md-single-SoT decision, 2026-06-10):
+ *   1. closed version → docs/prd/versions/<versionId>.md (P5 close 불변 스냅샷)
+ *   2. fallback       → docs/prd/PRD.md (살아있는 master — current version)
+ * Snapshot-first probe via artifactsReadFile (throws on missing file), so the
+ * component needs no "which version is current" knowledge. On click opens an
+ * artifact-md tab (MarkdownViewer). Neither file → subtle placeholder.
  *
  * Used in:
  *   - VersionDetailView (version-detail tab)
@@ -14,8 +17,10 @@ import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 
+const PRD_MASTER_REL = 'docs/prd/PRD.md'
+
 interface Props {
-  versionId: string
+  versionId?: string
 }
 
 export default function PrdSection({ versionId }: Props) {
@@ -24,46 +29,38 @@ export default function PrdSection({ versionId }: Props) {
   const openTab = useWorkspace((s) => s.openTab)
   const projectDir = project?.projectDir ?? ''
 
-  // undefined = checking, null = not found, string = found absPath
-  const [prdAbsPath, setPrdAbsPath] = useState<string | null | undefined>(undefined)
-  const [prdRelPath, setPrdRelPath] = useState<string>('')
+  // undefined = checking, null = not found
+  const [prd, setPrd] = useState<{ absPath: string; relPath: string } | null | undefined>(undefined)
 
   useEffect(() => {
-    if (!projectDir || !versionId) { setPrdAbsPath(null); return }
+    if (!projectDir) { setPrd(null); return }
     let cancelled = false
     const api = (window as any).api
-    const expectedRel = `docs/artifacts/${versionId}/PRD.html`
-    api.artifactsListScoped?.(projectDir, versionId)
-      .then((entries: Array<{ relPath: string; absPath: string; ext: string }>) => {
-        if (cancelled) return
-        const match = entries.find(
-          (e: { relPath: string; absPath: string; ext: string }) => e.relPath === expectedRel,
-        )
-        if (match) {
-          setPrdAbsPath(match.absPath)
-          setPrdRelPath(match.relPath)
-        } else {
-          setPrdAbsPath(null)
-        }
-      })
-      .catch(() => { if (!cancelled) setPrdAbsPath(null) })
+    const probe = (relPath: string) => {
+      const absPath = `${projectDir}/${relPath}`
+      return api.artifactsReadFile?.(projectDir, absPath).then(() => ({ absPath, relPath }))
+    }
+    const snapshotRel = versionId ? `docs/prd/versions/${versionId}.md` : null
+    ;(snapshotRel ? probe(snapshotRel).catch(() => probe(PRD_MASTER_REL)) : probe(PRD_MASTER_REL))
+      .then((found: { absPath: string; relPath: string }) => { if (!cancelled) setPrd(found) })
+      .catch(() => { if (!cancelled) setPrd(null) })
     return () => { cancelled = true }
   }, [projectDir, versionId])
 
   const openPrd = useCallback(() => {
-    if (!prdAbsPath || !projectDir) return
+    if (!prd || !projectDir) return
     openTab(
-      `artifact:${prdRelPath}`,
-      'preview',
-      { path: prdAbsPath, projectDir, relPath: prdRelPath },
-      `${versionId}/PRD.html`,
+      `artifact:${prd.relPath}`,
+      'artifact-md',
+      { absPath: prd.absPath, relPath: prd.relPath, projectDir },
+      prd.relPath.split('/').pop() ?? 'PRD.md',
     )
-  }, [prdAbsPath, prdRelPath, projectDir, versionId, openTab])
+  }, [prd, projectDir, openTab])
 
   return (
     <section style={section}>
       <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionPrd')}</h3>
-      {prdAbsPath === undefined ? null : prdAbsPath === null ? (
+      {prd === undefined ? null : prd === null ? (
         <div style={prdNonePlaceholder}>{t('workspace.versionDetail.prdNone')}</div>
       ) : (
         <button
@@ -79,7 +76,7 @@ export default function PrdSection({ versionId }: Props) {
           }}
         >
           <FileText size={12} style={{ color: '#505050', flexShrink: 0 }} />
-          <span style={prdRowLabel}>{versionId}/PRD.html</span>
+          <span style={prdRowLabel}>{prd.relPath}</span>
           <span style={prdRowArrow}>↗</span>
         </button>
       )}
