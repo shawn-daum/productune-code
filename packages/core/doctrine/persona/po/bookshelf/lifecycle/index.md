@@ -12,7 +12,7 @@ ahead. Advance only on explicit user confirm at each boundary.
 - **P4 Deploy** — green build → deployed + verified env. pdt-po / pdt-developer / pdt-qa. Project-type gate. Detail: `lifecycle/p4-deploy.md`.
 - **P5 Close** — shipped version → archived; next P1 opens. pdt-designer / pdt-qa / pdt-po. Detail: `lifecycle/p5-close.md`.
 
-## Session is ephemeral — po-state is the SoT (2026-06-05)[T-PATCH-040]
+## Session is ephemeral — po-state is the SoT
 
 The claude session backing a PO is throwaway. po-state (`version` / `phase` / `current_task` / `persona_sessions` / `recent_turns`) carries all continuity. Every turn, re-orient from po-state — never trust in-session memory to still hold the latest doctrine or work-state.
 
@@ -37,12 +37,12 @@ jq --argjson N <N> --arg now "<ISO>" '
   | .close_gate = []' .productune/po-state.json > /tmp/ps.json && mv /tmp/ps.json .productune/po-state.json
 ```
 
-`close_gate` = ordered checklist; each item `{step, status: pending|done|waived|na, waivable, type?, ticket_id?}` — `type` (design|qa) present only when the step opens a typed close ticket. Definition SoT = `p3-build.md`; never enumerate gate steps here. (2026-06-05)[T-PATCH-041]
-Entry sets `.close_gate = []` and does NOT carry the executable literal — the 4-step array is materialized by the turn-open sweep (`lifecycle/state-hygiene.md`), the sole executable site. This relies on the fresh-cycle-at-phase-boundary rule (sweep runs the turn immediately after a boundary), and the sweep heals both `[]` and absent — so jq write + GUI `phase:approve` entry paths converge. (2026-06-05)[T-PATCH-042]
+`close_gate` = ordered checklist; each item `{step, status: pending|done|waived|na, waivable, type?, ticket_id?}` — `type` (design|qa) present only when the step opens a typed close ticket. Definition SoT = `p3-build.md`; never enumerate gate steps here.
+Entry sets `.close_gate = []` and does NOT carry the executable literal — the 4-step array lives in the shared file `$HOME/.productune/config/close-gate.p3.json` and is materialized by the gate hooks (`prompt-gate-inject.sh` at turn-open, `pre-phase-gate-guard.sh` before any phase write) with the turn-open sweep (`lifecycle/state-hygiene.md`) as the doctrine-level backstop. All sites read the same literal and heal both `[]` and absent — so jq write + GUI `phase:approve` entry paths converge.
 
 ## Phase / gate boundary answer
 
-Answering "which phase / what's the close gate": state `current_phase` FIRST, then report `close_gate` items verbatim from po-state — read the gate for the current/entering phase only, never an adjacent phase. po-state is the answer source; never recall the gate from session memory. (2026-06-05)[T-PATCH-041]
+Answering "which phase / what's the close gate": state `current_phase` FIRST, then report `close_gate` items verbatim from po-state — read the gate for the current/entering phase only, never an adjacent phase. po-state is the answer source; never recall the gate from session memory.
 
 ## Sub-files
 

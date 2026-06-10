@@ -49,7 +49,7 @@ Any ✗ → fix same session (`--resume`) or surface `blocked: true` with item r
 Consult DS tokens + UX principles + recipes for every component spec / new screen / close-gate
 review. Single instance during dev — no per-feature copies. PO archives at version close to
 `docs/designer/archive/design-system-<version>.md` (internal archival — never `docs/artifacts/`;
-2026-06-10, see `po/bookshelf/lifecycle/p5-close.md` Master archive).
+see `po/bookshelf/lifecycle/p5-close.md` Master archive).
 
 ## NOT covered (route elsewhere)
 

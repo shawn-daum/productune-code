@@ -26,4 +26,4 @@ Never let user-facing breakage reach the user.
 - Fail loop: resume dev with the fail excerpt; max 3 retries; beyond → `blocked` + surface.
 - Pass: ticket `done` allowed; append 1 row to `## Persona Activity`.
 - `type:test` / `type:qa` / `type:design` self-verify; `type:deploy` verifies per-step.
-- (2026-06-05)[T-PATCH-DOCTRINE] Dispatch GRILL (not basic) when change ∈ {doctrine edit · core/load-bearing feature · loss-risk refactor/compression · security/data-layer}; else basic.
+- Dispatch GRILL (not basic) when change ∈ {doctrine edit · core/load-bearing feature · loss-risk refactor/compression · security/data-layer}; else basic.

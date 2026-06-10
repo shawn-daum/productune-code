@@ -1,8 +1,20 @@
-# Artifact manifest — `docs/artifacts/<version>/manifest.json`
+# Artifacts — placement, format, manifest (`docs/artifacts/<version>/manifest.json`)
 
-Every user-gate deliverable in `docs/artifacts/<version>/` is addressed through this
+Every user-gate deliverable in `docs/artifacts/<version>/` is addressed through the
 manifest — the GUI reads the manifest, NOT directory globs or magic filenames. A file
-absent from the manifest = misplaced (lint-flagged). (2026-06-10, board #7)
+absent from the manifest = misplaced (lint-flagged).
+
+## Placement & format (owner: designer)
+
+- **Criterion = user-gate, NOT file extension**: anything needing user review / confirmation
+  (design artifacts / specs / mockups, PRD gate view, user-shared retrospective) lives here;
+  internal files the PO self-verifies (working flows, build plans, DS snapshots, notes) never
+  do — route them to their SoT home (`docs/designer/…`, `docs/retrospectives/…`, etc).
+- **Language**: author in `[ctx].user_lang` (default `en`).
+- **Format follows the deliverable's nature**: rendered spec / mockup / PRD-view = HTML;
+  an inherently-textual deliverable (terms, policy) MAY be md.
+- Flat layout — no sub-folders except `archive/`; grouping lives in the filename
+  (`<ticket-id>-<slug>.<ext>`).
 
 ## Schema (schema_v 1)
 

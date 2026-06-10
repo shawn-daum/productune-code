@@ -63,7 +63,7 @@ ask user → write answer. Additive (not 5-iter cap).
   "iter": 2, "max_iter": 5 }
 ```
 
-- `prd_path` = the user-lang master (overwrite each cycle; 2026-06-10 md-single-SoT). `user_prd_path` = optional disposable HTML render for the gate (manifest `kind: prd-view` + `source_hash`), null when the gate reviews the md directly.
+- `prd_path` = the user-lang master (overwrite each cycle). `user_prd_path` = optional disposable HTML render for the gate (manifest `kind: prd-view` + `source_hash`), null when the gate reviews the md directly.
 - Derive `version_outcome` from PRD `## Success metrics`; PO mirrors into `po-state.json :: versions[].outcome` at PRD-ready.
 - Sub-fields nullable. PO reads `ambiguity_score` / `confidence` / `unresolved` for gate.
 

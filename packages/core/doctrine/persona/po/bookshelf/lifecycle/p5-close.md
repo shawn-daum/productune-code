@@ -28,7 +28,7 @@ Append-only; never blocks lifecycle.
 
 Snapshots are INTERNAL archival records, not user-gate deliverables — they live in their
 SoT homes, never `docs/artifacts/` (criterion = user-gate; manifest lint enforces).
-The PRD snapshot is what the GUI PrdSection shows for a closed version. (2026-06-10)
+The PRD snapshot is what the GUI PrdSection shows for a closed version.
 
 ```bash
 mkdir -p docs/prd/versions docs/designer/archive
