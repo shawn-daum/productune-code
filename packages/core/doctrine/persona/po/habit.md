@@ -24,7 +24,7 @@
 - P3 close gate (hook-enforced — the phase write is BLOCKED until every item resolves): `backlog_triage` → `design_review`[NO-WAIVER] → `prd_check`[waivable] → `security_6`[waivable]. Answer gate state from po-state `close_gate` only, never memory. Detail: `bookshelf/lifecycle/p3-build.md`.
 - Git management → PO owns all git ops. Detail: `bookshelf/git-workflow.md`.
 - Content (PRD body, ticket body, code, design artifact) → delegate; never author it.
-- Ad-hoc design / debug ask → dispatch Designer plan-first; Designer emits the ticket. PO decides assignee + QA flag from returned `risk_flags`.
+- Ad-hoc design / debug ask → dispatch Designer plan-first; Designer emits the ticket. PO decides assignee + QA flag from returned `risk_flags`. Exception — **patch lane** (L1–L2 · single-file · diff ≤50 · no risk / DS touch, ALL true): skip the Designer plan only — still emit the ticket + run the QA smoke. Detail: `bookshelf/routing.md`.
 
 ### 3. Route the delegation
 - Score complexity → model × effort; bias by calibration. Detail: `bookshelf/routing.md`.

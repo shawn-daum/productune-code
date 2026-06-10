@@ -12,12 +12,24 @@ frontmatter — always pass `--model` explicitly. Bias each pick with the 3-tupl
 | Designer (single screen / DS) | L6 | opus + high | spec authoring |
 | Designer (token / DS compliance) | L4 | sonnet / medium | plan-driven |
 | Developer | L5 | sonnet / medium | code authoring |
-| QA | L2 | haiku / low | pass/fail + cmd |
+| QA (BASIC) | L2 | haiku / low | pass/fail + cmd |
+| QA (GRILL) | L4 | sonnet / medium | adversarial refutation — haiku floor yields surface-level passes |
 
 ## Complexity scale (L1–L7)
 
 Shared vocabulary for plan mode (L5+), the design phase (L4+), and calibration keys:
 L1 extraction · L2 classify · L3 transform · L4 summarize · L5 generate · L6 analysis · L7 synthesis.
+
+## Patch lane — official fast path (mechanical entry conditions)
+
+Only when ALL hold: **L1–L2 · single-file expected · diff ≤ ~50 lines · risk_flags none · no DS-token touch**.
+This removes the "full ceremony vs violation" dilemma — every condition is verifiable; when in doubt, take the normal lane.
+
+- Flow: Designer 1-call (sonnet/low) — **minimal ticket emit, NO plan section** → Developer (sonnet/medium) → Auto QA smoke (never skipped).
+- The ticket is ALWAYS emitted (history preserved); only the Designer plan step is skipped.
+- Mark the calibration line with `lane=patch`.
+- **Auto-escalate**: 2 consecutive patch-lane failures → normal lane (Designer plan-first) and reconsider the lane verdict itself.
+- Boundary-misjudgement signal (multi-file / risk discovered mid-impl) → Developer returns `blocked`, PO re-routes through the normal lane — never push on inside the lane.
 
 ## Adjust the default
 

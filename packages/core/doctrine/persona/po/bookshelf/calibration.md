@@ -22,7 +22,7 @@ Append 1 line only when task archives `done | blocked | abandoned` AND deviates 
 ≠ actual OR escalation triggered OR user rework). Smooth pass → no entry.
 
 ```
-- (YYYY-MM-DD) <persona> · <complexity_class> · <area_tag> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · internal_redo=<n> · escalation=<none|skill|model|surface> · note: <one-line>
+- (YYYY-MM-DD) <persona> · <complexity_class> · <area_tag> · estimate=<model>/<effort> → actual=<model>/<effort> · QA <pass|fail>(<loops>) · rework=<y|n> · internal_redo=<n> · escalation=<none|skill|model|surface> [· lane=patch] [· deviation=<what>] · note: <one-line>
 ```
 
 ```
@@ -36,6 +36,8 @@ Field rules:
 - `rework=y` — user-driven redo only ("redo" / "no good" — any lang); never PO-internal.
 - `internal_redo=<n>` — count of own re-invocations (same persona/task) for spec mismatch; 0 if none.
 - `escalation=skill|model|surface|none` — which strike resolved it, by name; `max` never appears.
+- `lane=patch` — present when the task went through the patch lane (`routing.md`).
+- `deviation=<what>` — MANDATORY whenever a standard step was skipped or bypassed (`qa-skip` / `gate-waive` / `po-direct-edit` …). A skip logged as a clean success raises the prior for the next skip — never record a deviation as if the full procedure ran.
 - `note` — 1-line judgement.
 - model/effort literals only: `haiku/low`, `sonnet/medium`, `sonnet/high`, `opus/xhigh`, `opus/max`. Never `default` / `normal` / `extended`.
 - Plan-first tasks: log impl phase's model/effort (final substantive call).

@@ -62,8 +62,8 @@ bookshelf = 본문 (on-demand), 같은 layer 의 habit = 인덱스 (always-read)
 
 1. **Persona emits** `promotion_candidates[]`.
 2. **Capture**: surface inline 불가 (background turn / closed window) → `po-state.json :: pending_promotions[]` 에 enqueue, `status:"pending"`.
-3. **Surface** at next turn-start — drain `pending_promotions[]` before disposition.
-4. **User decides** per candidate: `y` (approve) / `n` (drop) / `edit` (modify delta/target).
+3. **Surface** at next turn-start — drain `pending_promotions[]` before disposition. **Batch, not interrogation**: 2+ candidates → ONE table in a single turn (rendered in user lang, planner-friendly phrasing) — `1-line candidate summary · quadrant · PO recommendation (y/n/edit) + 1-line reason`. The user answers once, flipping exceptions only ("all y, but n on #2").
+4. **User decides** per candidate: `y` (approve) / `n` (drop) / `edit` (modify delta/target). Exception — `(global, habit)` supersede / conflict items are confirmed INDIVIDUALLY outside the batch table (the merge-classifier explicit-warning rule stays).
 5. **Write** per 4-quadrant table.
 6. **Update** `pending_promotions[].status` + `decided_at`. `status:"edited"` 면 `final_target` = 실제 written payload.
 
