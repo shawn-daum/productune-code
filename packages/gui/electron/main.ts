@@ -23,6 +23,7 @@ import { register as registerBrowserFind } from './ipc/browserFind'
 import { register as registerProjectEnv }  from './ipc/projectEnv'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { abortActiveTurn, isPoRunning } from './po-runner'
+import { getCloseToTray, getLaunchAtLogin, setLaunchAtLogin, getZoomFactor } from '@productune/core'
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
 // macOS may fire `open-file` before app.whenReady / before a window exists.
@@ -135,6 +136,12 @@ function createWindow(): BrowserWindow {
     },
   })
 
+  // T-PATCH-091 R3: restore persisted zoom factor.
+  // NOTE: View-menu role:zoomIn/zoomOut/resetZoom also call setZoomFactor internally
+  // but do NOT persist to settings.json — this is accepted for v0.5 (T-PATCH-091 OOS).
+  const zf = getZoomFactor()
+  if (zf !== 1.0) win.webContents.setZoomFactor(zf)
+
   // Flush deferred open-file path (T-P4-111 §E queue pattern).
   // Also re-send the current usage payload so UsageBar is populated on first
   // load even though startUsageWatch()'s initial broadcast ran before any
@@ -158,6 +165,21 @@ function createWindow(): BrowserWindow {
 
   // T-PATCH-086: update module-level ref so handleQuitRequest can send IPC.
   mainWindow = win
+
+  // T-PATCH-090 R1: close-to-tray (macOS only).
+  // When pref is on, intercept window close → hide instead of destroy.
+  // win.hide() does NOT trigger window-all-closed, so stopUsageWatch is NOT called
+  // and the PO loop stays alive. The pref is read from disk at close-time so a
+  // mid-session toggle takes effect on the next close without a restart.
+  // app.quit() bypasses event.preventDefault() (Electron behavior) so ⌘Q always
+  // quits regardless of the pref.
+  win.on('close', (event) => {
+    if (process.platform === 'darwin' && getCloseToTray()) {
+      event.preventDefault()
+      win.hide()
+      // window-all-closed does NOT fire; stopUsageWatch NOT called; PO loop stays alive.
+    }
+  })
 
   return win
 }
@@ -326,13 +348,33 @@ app.whenReady().then(() => {
   startUsageWatch()
   createWindow()
 
+  // T-PATCH-090 R1: re-show a window that was hidden by close-to-tray.
+  // If no windows exist, create a new one (normal cold-launch path).
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    const wins = BrowserWindow.getAllWindows()
+    if (wins.length === 0) {
       createWindow()
+    } else {
+      const [win] = wins
+      if (!win.isVisible()) win.show()  // re-show hidden window (close-to-tray)
     }
   })
+
+  // T-PATCH-090 R2: OS login-item reconciliation.
+  // Runs after registerSettings() (IPC registered above). OS value is authoritative —
+  // the user may have toggled in System Settings directly between launches.
+  // getLoginItemSettings may throw on non-supported platforms — caught silently.
+  try {
+    const osLogin = app.getLoginItemSettings().openAtLogin
+    if (osLogin !== getLaunchAtLogin()) setLaunchAtLogin(osLogin)
+  } catch { /* non-mac or unsupported — silently skip */ }
 })
 
+// T-PATCH-090 R1: this event fires only on genuine window destruction (win.destroy /
+// app.quit). When close-to-tray is on (mac), win.hide() is used — NOT destroy — so
+// this handler does NOT fire on tray-hide. It fires only when the user truly quits
+// (⌘Q two-tap, Dock→Quit, etc.), which bypasses event.preventDefault() in the close
+// handler. stopUsageWatch is therefore called only on a real quit — never on hide.
 app.on('window-all-closed', () => {
   stopUsageWatch()
   if (process.platform !== 'darwin') {

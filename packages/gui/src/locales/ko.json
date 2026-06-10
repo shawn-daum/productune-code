@@ -307,6 +307,13 @@
       "rateLimit": {
         "estimated": "API 한도 도달 — 약 {{n}}초 후 재시도 가능 (추정)",
         "exact": "API 한도 도달 — {{n}}초 후 재시도 가능"
+      },
+      "turn": {
+        "aborted": "요청에 따라 작업을 중단했습니다.",
+        "exitError": "claude가 오류로 종료되었습니다 (코드 {{code}})."
+      },
+      "askQuestion": {
+        "dismissed": "보류"
       }
     },
     "tab": {
@@ -859,7 +866,26 @@
       "phaseGateEntry": "페이즈 게이트",
       "phaseGateEntryDesc": "PO가 승인을 기다리는 페이즈 전환 게이트에 도달했습니다.",
       "poTurnDone": "PO 턴 완료",
-      "poTurnDoneDesc": "PO가 턴을 마치고 다음 응답을 기다리고 있습니다."
+      "poTurnDoneDesc": "PO가 턴을 마치고 다음 응답을 기다리고 있습니다.",
+      "test": {
+        "button": "테스트 알림 보내기",
+        "shown": "전송됨. 알림이 나타나지 않으면 아래 macOS 알림 및 집중 모드 설정을 확인하세요.",
+        "blockedToggle": "테스트를 보내려면 위에서 알림을 켜세요.",
+        "unsupported": "이 시스템에서는 네이티브 알림이 지원되지 않습니다."
+      },
+      "macosHint": "productune은 시스템 설정 ▸ 알림에서 허용되어야 합니다. 처음 알림을 보낼 때 목록에 추가됩니다. macOS 집중 모드 / 방해 금지 설정도 알림을 차단할 수 있습니다. 서명되지 않은 개발 빌드에서는 앱이 \"Electron\"으로 표시됩니다.",
+      "openMacosSettings": "macOS 알림 설정 열기"
+    },
+    "app": {
+      "title": "앱",
+      "closeToTray": "백그라운드에서 계속 실행",
+      "closeToTrayDesc": "창을 닫아도 productune이 실행 유지돼요. 독에서 다시 열 수 있어요.",
+      "launchAtLogin": "로그인 시 자동 실행",
+      "launchAtLoginDesc": "로그인할 때 productune을 자동으로 열어줘요.",
+      "zoom": "화면 배율",
+      "zoomDesc": "UI 크기를 조정해요. 즉시 반영돼요.",
+      "statusBar": "상태 표시줄 보기",
+      "statusBarDesc": "프로젝트 이름과 세션 상태를 보여주는 하단 바예요."
     }
   },
   "skills": {

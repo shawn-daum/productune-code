@@ -162,12 +162,19 @@ function register() {
   }))
 
   // ── po:onAnnounce — system trace 메시지 ──────────────────────────────────
-  offFns.push(api.poOnAnnounce?.((_msgId: string, payload: { level: string; text: string }) => {
+  // T-PATCH-087: resolve structured kind → localized string via i18next.
+  const resolveText = (payload: { level: string; text: string; kind?: string; code?: number }): string => {
+    if (payload.kind === 'turn-aborted') return i18next.t('workspace.chat.turn.aborted')
+    if (payload.kind === 'exit-error')   return i18next.t('workspace.chat.turn.exitError', { code: payload.code })
+    return payload.text
+  }
+
+  offFns.push(api.poOnAnnounce?.((_msgId: string, payload: { level: string; text: string; kind?: string; code?: number }) => {
     const trace: Message = {
       id: `trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       role: 'system',
       kind: 'trace',
-      text: payload.text,
+      text: resolveText(payload),
       // T-PATCH-033: carry level so the renderer can group consecutive `tool` traces.
       traceLevel: payload.level,
       status: 'done',

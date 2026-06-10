@@ -1,15 +1,12 @@
 import { ipcMain } from 'electron'
 import type { WebContents } from 'electron'
-import type { ChildProcess } from 'child_process'
 import { getSession, appendMessage, setClaudeSessionId, clearSession, clearClaudeSessionId, patchMessage } from '../chat-store'
 import type { Message } from '../chat-store'
 import { runPoTurn, emitToWebContents, abortActiveTurn } from '../po-runner'
 import { markPoTurnStart, markPoTurnEnd } from '@productune/core'
 import { evaluateCycle, recordTurnDone, resetSessionWindow } from '../po-session-cycle'
 
-// ── Active PO child process tracking (T-P4-059) ───────────────────────────────
-// Allows `po:restartSession` to kill the in-flight process.
-let activePoChild: ChildProcess | null = null
+// po:restartSession kills any in-flight child via abortActiveTurn() (po-runner.ts).
 // T-PATCH-037: latest claude session id, captured from every turn's onDone so a
 // resume (e.g. chat:answerQuestion) can thread the same session. Previously
 // declared-never-assigned; now wired via `withSessionCapture`. `po:restartSession`
@@ -223,11 +220,7 @@ export function register(): void {
 
   // ── PO session restart (T-P4-059) ─────────────────────────────────────────────
   ipcMain.handle('po:restartSession', (event, projectDir?: string): { ok: boolean } => {
-    // Kill active child if running.
-    if (activePoChild) {
-      try { activePoChild.kill('SIGTERM') } catch { /* ignore */ }
-      activePoChild = null
-    }
+    abortActiveTurn()
     // Reset captured session id — next send will use --agent (first turn).
     capturedPoSessionId = null
     // T-PATCH-040: re-snapshot the cycle window so the manual fresh session

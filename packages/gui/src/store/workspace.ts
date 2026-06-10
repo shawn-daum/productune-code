@@ -110,6 +110,11 @@ interface WorkspaceState {
    *  events so mousemove/mouseup reach the resize handler uninterrupted (T-PATCH-074). */
   resizeDragActive: boolean
 
+  // ── Status bar visibility (T-PATCH-091 R4) ─────────────────────────────────
+  /** Whether the 28 px StatusBar is visible. Persisted via IPC; seeded on WorkspaceShell mount. Default true. */
+  statusBarVisible: boolean
+  setStatusBarVisible: (v: boolean) => void
+
   setProject: (p: Project | null) => void
   setPoState: (s: PoState | null) => void
   /** Reset panes to a single empty leaf. Used on project switch (T-PATCH-010 #3). */
@@ -291,6 +296,9 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   dragHint: null,
   tabDragActive: false,
   resizeDragActive: false,
+
+  // T-PATCH-091 R4: seeded from IPC on WorkspaceShell mount; default true.
+  statusBarVisible: true,
 
   // T-P4-119 follow-up: also reset inFlight state on project switch so no
   // streaming UI artefacts bleed across projects.  Avoids the old
@@ -676,6 +684,9 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   setTabDragActive: (tabDragActive) => set({ tabDragActive }),
 
   setResizeDragActive: (resizeDragActive) => set({ resizeDragActive }),
+
+  // T-PATCH-091 R4
+  setStatusBarVisible: (statusBarVisible) => set({ statusBarVisible }),
 
   updateTabId: (oldId, newId, newTitle) => {
     set((s) => {

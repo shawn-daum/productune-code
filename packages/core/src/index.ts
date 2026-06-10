@@ -15,6 +15,14 @@ export {
   markVercelTokenValidated,
   getNotificationSettings,
   setNotificationSettings,
+  getCloseToTray,
+  setCloseToTray,
+  getLaunchAtLogin,
+  setLaunchAtLogin,
+  getZoomFactor,
+  setZoomFactor,
+  getStatusBarVisible,
+  setStatusBarVisible,
 } from './settings/ui-settings'
 export type { UiLanguage, UiSettings, IntegrationsSettings, NotificationSettings } from './settings/ui-settings'
 

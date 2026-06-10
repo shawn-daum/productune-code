@@ -44,8 +44,12 @@ export interface SendOpts {
 }
 
 export interface AnnouncePayload {
-  level: 'system' | 'tool' | 'error'
+  level: 'system' | 'tool' | 'error' | 'info'
   text: string
+  /** T-PATCH-087: structured kind so the renderer can localize via t(). */
+  kind?: 'turn-aborted' | 'exit-error'
+  /** T-PATCH-087: exit code for exit-error kind. */
+  code?: number
 }
 
 // ── Health event types (T-P4-059) ────────────────────────────────────────────
@@ -161,6 +165,10 @@ interface RunCallbacks {
 
 let activeChild: ChildProcess | null = null
 
+/** T-PATCH-087: set true by abortActiveTurn() so the close handler emits a
+ *  localized info trace instead of a raw error. Reset at end of close handler. */
+let wasAborted = false
+
 /**
  * Abort the currently running PO turn by sending SIGTERM to the claude child.
  * Safe to call when no child is running (activeChild === null → no-op).
@@ -168,6 +176,7 @@ let activeChild: ChildProcess | null = null
  */
 export function abortActiveTurn(): void {
   if (activeChild && !activeChild.killed) {
+    wasAborted = true   // T-PATCH-087: mark before SIGTERM so close handler knows
     activeChild.kill('SIGTERM')
   }
   activeChild = null
@@ -446,10 +455,16 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
         handleStderrHealth(line, hCtx, cb)
       }
       if (code !== 0 && code !== null) {
-        cb.onAnnounce(msgId, { level: 'error', text: `claude exited with code ${code}` })
-        // Only set error-other if no other state was set.
-        if (hCtx.lastEmittedState === 'healthy') {
-          emitHealth('error-other', { errorMessage: `exit code ${code}` }, hCtx, cb)
+        if (wasAborted) {
+          // User-initiated abort — localized info, not an error.
+          cb.onAnnounce(msgId, { level: 'info', kind: 'turn-aborted', text: '' })
+        } else {
+          // Real crash — renderer localizes via kind; text kept as English fallback.
+          cb.onAnnounce(msgId, { level: 'error', kind: 'exit-error', code: code ?? undefined, text: `claude exited with code ${code}` })
+          // Only set error-other if no other state was set.
+          if (hCtx.lastEmittedState === 'healthy') {
+            emitHealth('error-other', { errorMessage: `exit code ${code}` }, hCtx, cb)
+          }
         }
       } else {
         // Normal exit — recover to healthy.
@@ -458,6 +473,7 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       cb.onDone(msgId, { sessionId: capturedSessionId })
       capturedSessionId = undefined
       askEmitted = false   // T-PATCH-037: clear de-dupe for the next turn
+      wasAborted = false   // T-PATCH-087: reset flag for next turn
       resolve()
     })
   })

@@ -14,6 +14,7 @@
  */
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, Loader2 } from 'lucide-react'
 import type { Message, AskUserQuestionPayload } from '../../../lib/types'
 import { useWorkspace } from '../../../store/workspace'
@@ -23,6 +24,7 @@ interface Props {
 }
 
 export default function AskUserQuestionCard({ message }: Props) {
+  const { t } = useTranslation()
   const payload = message.payload as AskUserQuestionPayload | undefined
   if (!payload) return null
 
@@ -31,7 +33,7 @@ export default function AskUserQuestionCard({ message }: Props) {
     const { chosenKey } = payload.resolved
     const chipLabel =
       chosenKey === '__dismissed__'
-        ? '보류'
+        ? t('workspace.chat.askQuestion.dismissed')
         : (payload.options.find((o) => o.key === chosenKey)?.title ?? chosenKey)
     return (
       <div style={{ paddingLeft: 8, margin: '4px 0' }}>

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle, BellRing, ExternalLink } from 'lucide-react'
 import i18next from '../../i18n'
+import { useWorkspace } from '../../store/workspace'
 
 type Lang = 'en' | 'ko'
 
@@ -61,6 +62,11 @@ export default function GeneralSettings() {
 
       {/* Notifications — T-PATCH-083 */}
       <NotificationsSection />
+
+      <div style={divider} />
+
+      {/* App lifecycle prefs — T-PATCH-090 */}
+      <AppSection />
 
       <div style={divider} />
 
@@ -161,7 +167,7 @@ function ClaudeConnection() {
   )
 }
 
-// ── Notifications section (T-PATCH-083) ──────────────────────────────────────
+// ── Notifications section (T-PATCH-083, T-PATCH-089) ─────────────────────────
 
 // Explicit kind→locale-key map (AC-15 — never interpolate hyphenated kind into i18n path).
 const NOTIFY_TYPE_ROWS: Array<{
@@ -191,15 +197,30 @@ const NOTIFY_TYPE_ROWS: Array<{
   },
 ]
 
+// VERIFY: on target macOS before shipping. Ventura+ (System Settings) scheme
+// used as primary — falls back gracefully if the pane is absent on older OS.
+// Monterey (12) and earlier: x-apple.systempreferences:com.apple.preference.notifications
+const MACOS_NOTIF_SETTINGS_URL =
+  'x-apple.systempreferences:com.apple.Notifications-Settings.extension'
+
 function NotificationsSection() {
   const { t } = useTranslation()
   const [notif, setNotif] = useState<NotificationSettingsLocal>(DEFAULT_NOTIF)
+  // T-PATCH-089: test notification state
+  const [testLoading, setTestLoading] = useState(false)
+  const [testResult, setTestResult] = useState<{ shown: boolean; reason?: string } | null>(null)
+  // T-PATCH-089: platform for darwin-only macOS deep link
+  const [isDarwin, setIsDarwin] = useState(false)
 
   useEffect(() => {
     async function load() {
       try {
         const n = await (window as any).api?.getNotifications?.()
         if (n) setNotif(n)
+      } catch { /* IPC unavailable in browser dev mode */ }
+      try {
+        const platform = await (window as any).api?.getPlatform?.()
+        if (platform === 'darwin') setIsDarwin(true)
       } catch { /* IPC unavailable in browser dev mode */ }
     }
     load()
@@ -233,7 +254,39 @@ function NotificationsSection() {
     })
   }
 
+  // T-PATCH-089: fire a test notification bypassing the focus gate.
+  async function handleTest() {
+    setTestLoading(true)
+    setTestResult(null)
+    try {
+      const result = await (window as any).api?.fireTestNotification?.()
+      setTestResult(result ?? { shown: false })
+    } catch {
+      // IPC unavailable in browser dev mode — degrade gracefully.
+      setTestResult({ shown: false })
+    } finally {
+      setTestLoading(false)
+    }
+  }
+
+  async function handleOpenMacosSettings() {
+    try {
+      await (window as any).api?.openExternal?.(MACOS_NOTIF_SETTINGS_URL)
+    } catch { /* IPC unavailable in browser dev mode */ }
+  }
+
   const typesDisabled = !notif.enabled
+  // Test button disabled when master or po-turn-done type toggle is off (AC-4):
+  // a test in that state would silently fail the toggle gate — don't offer it.
+  const testDisabled = !notif.enabled || !notif.types['po-turn-done']
+
+  // Derive inline result label key from IPC result (AC-5).
+  function testResultKey(): string {
+    if (!testResult) return ''
+    if (testResult.shown) return 'settings.notifications.test.shown'
+    if (testResult.reason === 'unsupported') return 'settings.notifications.test.unsupported'
+    return 'settings.notifications.test.blockedToggle'
+  }
 
   return (
     <div>
@@ -259,6 +312,188 @@ function NotificationsSection() {
           />
         ))}
       </div>
+
+      {/* T-PATCH-089: Test button — below per-type rows (AC-4). */}
+      <div style={notifTestRow}>
+        <button
+          style={testDisabled ? notifTestBtnDisabled : notifTestBtn}
+          onClick={testDisabled || testLoading ? undefined : handleTest}
+        >
+          <BellRing size={12} />
+          <span>{t('settings.notifications.test.button')}</span>
+        </button>
+
+        {/* Inline result line — driven by IPC result (AC-5). */}
+        {testResult !== null && (
+          <span style={testResult.shown ? notifTestResultOk : notifTestResultWarn}>
+            {t(testResultKey())}
+          </span>
+        )}
+      </div>
+
+      {/* T-PATCH-089: Persistent macOS guidance hint (AC-6). Always shown. */}
+      <div style={notifMacosHint}>{t('settings.notifications.macosHint')}</div>
+
+      {/* T-PATCH-089: Darwin-only deep link to System Settings ▸ Notifications (AC-7/8). */}
+      {isDarwin && (
+        <button style={notifMacosLinkBtn} onClick={handleOpenMacosSettings}>
+          <ExternalLink size={11} />
+          <span>{t('settings.notifications.openMacosSettings')}</span>
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── App lifecycle section (T-PATCH-090, T-PATCH-091) ─────────────────────────
+
+const ZOOM_MIN = 0.8
+const ZOOM_MAX = 1.5
+const ZOOM_STEP = 0.1
+const ZOOM_DEFAULT = 1.0
+
+function AppSection() {
+  const { t } = useTranslation()
+  // Fallback to 'darwin' in browser dev mode — shows all toggles, handlers no-op gracefully.
+  const [platform, setPlatform] = useState<string>('darwin')
+  const [closeToTray, setCloseToTrayState] = useState(false)
+  const [launchAtLogin, setLaunchAtLoginState] = useState(false)
+
+  // T-PATCH-091 R3: zoom factor local state; seeded from IPC on mount.
+  const [zoomFactor, setZoomFactorState] = useState<number>(ZOOM_DEFAULT)
+
+  // T-PATCH-091 R4: statusBarVisible is owned by the workspace store;
+  // changes propagate immediately to WorkspaceShell via zustand subscription.
+  const statusBarVisible = useWorkspace((s) => s.statusBarVisible)
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const [plat, ctt, lal, zf] = await Promise.all([
+          (window as any).api?.getPlatform?.(),
+          (window as any).api?.getCloseToTray?.(),
+          (window as any).api?.getLaunchAtLogin?.(),
+          // T-PATCH-091 R3: load persisted zoom on mount (AC-9).
+          (window as any).api?.getZoomFactor?.(),
+        ])
+        if (plat) setPlatform(plat)
+        if (typeof ctt === 'boolean') setCloseToTrayState(ctt)
+        if (typeof lal === 'boolean') setLaunchAtLoginState(lal)
+        if (typeof zf === 'number') setZoomFactorState(zf)
+      } catch { /* IPC unavailable in browser dev mode */ }
+    }
+    load()
+  }, [])
+
+  // T-083 functional-setState pattern: derive next from prev, fire IPC in async IIFE.
+  function handleCloseToTray() {
+    setCloseToTrayState((prev) => {
+      const next = !prev
+      ;(async () => {
+        try {
+          await (window as any).api?.setCloseToTray?.(next)
+        } catch { /* IPC unavailable in browser dev mode */ }
+      })()
+      return next
+    })
+  }
+
+  function handleLaunchAtLogin() {
+    setLaunchAtLoginState((prev) => {
+      const next = !prev
+      ;(async () => {
+        try {
+          await (window as any).api?.setLaunchAtLogin?.(next)
+        } catch { /* IPC unavailable in browser dev mode */ }
+      })()
+      return next
+    })
+  }
+
+  // T-PATCH-091 R3: step zoom factor; clamp to [0.8, 1.5], no debounce.
+  // Main-process handler calls applyZoomToAllWindows so effect is immediate.
+  function handleZoomStep(delta: number) {
+    setZoomFactorState((prev) => {
+      const raw = parseFloat((prev + delta).toFixed(2))
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, raw))
+      ;(async () => {
+        try {
+          await (window as any).api?.setZoomFactor?.(next)
+        } catch { /* IPC unavailable in browser dev mode */ }
+      })()
+      return next
+    })
+  }
+
+  // T-PATCH-091 R4: status bar toggle — update zustand store (immediate WorkspaceShell
+  // effect) + persist via IPC. No local mirror needed; store IS the source of truth.
+  function handleStatusBarToggle() {
+    const next = !statusBarVisible
+    useWorkspace.getState().setStatusBarVisible(next)
+    ;(async () => {
+      try {
+        await (window as any).api?.setStatusBarVisible?.(next)
+      } catch { /* IPC unavailable in browser dev mode */ }
+    })()
+  }
+
+  const zoomAtMin = zoomFactor <= ZOOM_MIN
+  const zoomAtMax = zoomFactor >= ZOOM_MAX
+
+  return (
+    <div>
+      <div style={sectionTitle}>{t('settings.app.title')}</div>
+
+      {/* Close-to-tray: mac-only first cut (win.hide + activate). */}
+      {platform === 'darwin' && (
+        <ToggleRow
+          label={t('settings.app.closeToTray')}
+          desc={t('settings.app.closeToTrayDesc')}
+          checked={closeToTray}
+          onToggle={handleCloseToTray}
+        />
+      )}
+
+      {/* Launch at login: shown on all platforms. */}
+      <ToggleRow
+        label={t('settings.app.launchAtLogin')}
+        desc={t('settings.app.launchAtLoginDesc')}
+        checked={launchAtLogin}
+        onToggle={handleLaunchAtLogin}
+      />
+
+      {/* T-PATCH-091 R3: Zoom stepper (AC-8). Custom row — NOT a ToggleRow. */}
+      <div style={zoomRowWrap}>
+        <div style={toggleRowLeft}>
+          <span style={optionLabel}>{t('settings.app.zoom')}</span>
+          <span style={description}>{t('settings.app.zoomDesc')}</span>
+        </div>
+        <div style={zoomStepperWrap}>
+          <button
+            style={zoomAtMin ? zoomBtnDisabled : zoomBtn}
+            onClick={zoomAtMin ? undefined : () => handleZoomStep(-ZOOM_STEP)}
+            aria-label="Decrease zoom"
+          >
+            −
+          </button>
+          <span style={zoomDisplay}>{Math.round(zoomFactor * 100)}%</span>
+          <button
+            style={zoomAtMax ? zoomBtnDisabled : zoomBtn}
+            onClick={zoomAtMax ? undefined : () => handleZoomStep(ZOOM_STEP)}
+            aria-label="Increase zoom"
+          >
+            +
+          </button>
+        </div>
+      </div>
+
+      {/* T-PATCH-091 R4: Status bar visibility toggle (AC-11). */}
+      <ToggleRow
+        label={t('settings.app.statusBar')}
+        desc={t('settings.app.statusBarDesc')}
+        checked={statusBarVisible}
+        onToggle={handleStatusBarToggle}
+      />
     </div>
   )
 }
@@ -440,7 +675,7 @@ const claudeRecheckBtn: React.CSSProperties = {
   transition: 'border-color 0.15s, color 0.15s',
 }
 
-// ── ToggleRow + NotificationsSection styles (T-PATCH-083) ─────────────────────
+// ── ToggleRow + NotificationsSection styles (T-PATCH-083, T-PATCH-089) ────────
 
 const toggleRowWrap: React.CSSProperties = {
   display: 'flex',
@@ -484,4 +719,123 @@ const toggleTypes: React.CSSProperties = {}
 const toggleTypesDisabled: React.CSSProperties = {
   opacity: 0.4,
   pointerEvents: 'none',
+}
+
+// T-PATCH-089: Test button row + result + macOS hint styles.
+const notifTestRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  marginTop: 6,
+  flexWrap: 'wrap',
+}
+
+const notifTestBtnBase: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 5,
+  background: 'transparent',
+  border: '1px solid #3A3A3A',
+  borderRadius: 5,
+  color: '#C0C0C0',
+  cursor: 'pointer',
+  fontSize: 11,
+  fontWeight: 500,
+  padding: '4px 9px',
+  transition: 'border-color 0.15s, color 0.15s',
+}
+
+const notifTestBtn: React.CSSProperties = {
+  ...notifTestBtnBase,
+}
+
+// Reuse opacity:0.4 + pointerEvents:none pattern from AC-13 of T-PATCH-083.
+const notifTestBtnDisabled: React.CSSProperties = {
+  ...notifTestBtnBase,
+  opacity: 0.4,
+  pointerEvents: 'none',
+}
+
+const notifTestResultOk: React.CSSProperties = {
+  fontSize: 10,
+  color: '#6EE7B7',
+  lineHeight: 1.4,
+}
+
+const notifTestResultWarn: React.CSSProperties = {
+  fontSize: 10,
+  color: '#FCD34D',
+  lineHeight: 1.4,
+}
+
+const notifMacosHint: React.CSSProperties = {
+  fontSize: 10,
+  color: '#505050',
+  lineHeight: 1.5,
+  marginTop: 6,
+}
+
+const notifMacosLinkBtn: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  background: 'transparent',
+  border: 'none',
+  color: '#8B5CF6',
+  cursor: 'pointer',
+  fontSize: 10,
+  fontWeight: 500,
+  padding: '2px 0',
+  marginTop: 2,
+}
+
+// ── T-PATCH-091 R3: Zoom stepper styles ─────────────────────────────────────
+
+const zoomRowWrap: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  padding: '6px 0',
+}
+
+const zoomStepperWrap: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  flexShrink: 0,
+}
+
+const zoomBtnBase: React.CSSProperties = {
+  width: 24,
+  height: 24,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: '#1E1E1E',
+  border: '1px solid #2A2A2A',
+  borderRadius: 4,
+  color: '#D0D0D0',
+  cursor: 'pointer',
+  fontSize: 16,
+  lineHeight: 1,
+  fontWeight: 400,
+  flexShrink: 0,
+  transition: 'border-color 0.15s, color 0.15s',
+}
+
+const zoomBtn: React.CSSProperties = { ...zoomBtnBase }
+
+const zoomBtnDisabled: React.CSSProperties = {
+  ...zoomBtnBase,
+  opacity: 0.3,
+  pointerEvents: 'none',
+}
+
+const zoomDisplay: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#E0E0E0',
+  minWidth: 38,
+  textAlign: 'center',
+  fontVariantNumeric: 'tabular-nums',
 }

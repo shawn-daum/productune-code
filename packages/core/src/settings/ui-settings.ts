@@ -37,6 +37,14 @@ export interface UiSettings {
   ui: {
     language: UiLanguage
     notifications: NotificationSettings
+    /** T-PATCH-090 R1: hide window on close instead of quitting (mac only). Default false. */
+    closeToTray: boolean
+    /** T-PATCH-090 R2: launch productune when the user logs in. Default false. */
+    launchAtLogin: boolean
+    /** T-PATCH-091 R3: webContents zoom factor [0.8, 1.5]. Default 1.0. */
+    zoomFactor: number
+    /** T-PATCH-091 R4: show/hide StatusBar (28 px bottom strip). Default true. */
+    statusBarVisible: boolean
   }
   integrations?: IntegrationsSettings
 }
@@ -56,6 +64,10 @@ const DEFAULT_SETTINGS: UiSettings = {
         'po-turn-done': true,
       },
     },
+    closeToTray: false,
+    launchAtLogin: false,
+    zoomFactor: 1.0,
+    statusBarVisible: true,
   },
 }
 
@@ -87,11 +99,24 @@ export function loadSettings(): UiSettings {
     const parsed = JSON.parse(raw)
     // Read-merge: preserve defaults for missing/unknown fields; integrations preserved
     // to prevent data loss when any helper round-trips through load→save (AC-3).
+
+    // T-PATCH-091 R3: clamp zoomFactor to [0.8, 1.5]; corrupt/missing → 1.0.
+    const rawZoom = parsed?.ui?.zoomFactor
+    const zoomFactor =
+      typeof rawZoom === 'number' && rawZoom >= 0.8 && rawZoom <= 1.5 ? rawZoom : 1.0
+
     return {
       version: 1,
       ui: {
         language: parsed?.ui?.language === 'ko' ? 'ko' : 'en',
         notifications: mergeNotifications(parsed?.ui?.notifications),
+        // T-PATCH-090: === true (NOT boolDefault) — default OFF; missing key → false.
+        closeToTray:   parsed?.ui?.closeToTray   === true,
+        launchAtLogin: parsed?.ui?.launchAtLogin === true,
+        // T-PATCH-091 R3: clamped above; corrupt value resets to 1.0.
+        zoomFactor,
+        // T-PATCH-091 R4: boolDefault — missing key → true; explicit false → false.
+        statusBarVisible: boolDefault(parsed?.ui?.statusBarVisible),
       },
       ...(parsed?.integrations !== undefined ? { integrations: parsed.integrations } : {}),
     }
@@ -109,6 +134,10 @@ export function loadSettings(): UiSettings {
             'po-turn-done': true,
           },
         },
+        closeToTray: false,
+        launchAtLogin: false,
+        zoomFactor: 1.0,
+        statusBarVisible: true,
       },
     }
   }
@@ -191,6 +220,82 @@ export function markVercelTokenValidated(): void {
   if (!s.integrations.vercel) s.integrations.vercel = {}
   s.integrations.vercel.validatedAt = new Date().toISOString()
   saveSettings(s)
+}
+
+// ── T-PATCH-090: close-to-tray + launch-at-login helpers ─────────────────────
+
+/**
+ * Returns the closeToTray preference. Default false (must be explicitly opted in).
+ */
+export function getCloseToTray(): boolean {
+  return loadSettings().ui.closeToTray
+}
+
+/**
+ * Persists the closeToTray preference.
+ * Uses the same atomic-tmp-rename pattern as `setUiLanguage`.
+ */
+export function setCloseToTray(enabled: boolean): void {
+  const current = loadSettings()
+  current.ui.closeToTray = enabled
+  saveSettings(current)
+}
+
+/**
+ * Returns the launchAtLogin preference. Default false.
+ */
+export function getLaunchAtLogin(): boolean {
+  return loadSettings().ui.launchAtLogin
+}
+
+/**
+ * Persists the launchAtLogin preference.
+ * Uses the same atomic-tmp-rename pattern as `setUiLanguage`.
+ */
+export function setLaunchAtLogin(enabled: boolean): void {
+  const current = loadSettings()
+  current.ui.launchAtLogin = enabled
+  saveSettings(current)
+}
+
+// ── T-PATCH-091 R3: zoom factor helpers ───────────────────────────────────────
+
+/**
+ * Returns the persisted webContents zoom factor.
+ * Range: [0.8, 1.5]. Default 1.0 (no zoom).
+ */
+export function getZoomFactor(): number {
+  return loadSettings().ui.zoomFactor
+}
+
+/**
+ * Persists the webContents zoom factor.
+ * Clamps to [0.8, 1.5] before writing to guard against callers passing
+ * out-of-range values. Uses the same atomic-tmp-rename pattern.
+ */
+export function setZoomFactor(factor: number): void {
+  const clamped = Math.min(1.5, Math.max(0.8, factor))
+  const current = loadSettings()
+  current.ui.zoomFactor = clamped
+  saveSettings(current)
+}
+
+// ── T-PATCH-091 R4: status bar visibility helpers ─────────────────────────────
+
+/**
+ * Returns whether the StatusBar is visible. Default true.
+ */
+export function getStatusBarVisible(): boolean {
+  return loadSettings().ui.statusBarVisible
+}
+
+/**
+ * Persists the StatusBar visibility preference.
+ */
+export function setStatusBarVisible(visible: boolean): void {
+  const current = loadSettings()
+  current.ui.statusBarVisible = visible
+  saveSettings(current)
 }
 
 export function settingsFileExists(): boolean {

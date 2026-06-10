@@ -16,10 +16,19 @@
  * Gating (AC-1): a notification only fires while the target window is NOT
  * focused. If any productune window is focused, we stay silent — the user is
  * already looking at the in-app surface (QA badge / gate chip).
+ *   Exception (T-PATCH-089): fireNotification accepts opts.bypassFocusGate to
+ *   skip the focus gate for the Test notification path (explicit user intent).
+ *   All other gates (isSupported, toggle settings) still apply in all paths.
  *
  * Click routing (AC-2): clicking a notification shows + focuses the window and
  * sends `notification:navigate` to the renderer, which routes to the relevant
  * surface via the existing `openTab` store action (reused, no new UI).
+ *
+ * Suppress-reason log (T-PATCH-089): each early return emits a single
+ * console.log("[notifications] suppressed kind=<kind> reason=<reason>") so the
+ * dev terminal / packaged-app logs identify which gate fired. The happy path
+ * (notification shown) logs nothing — no noise. The bypass path never logs
+ * 'focused' because the focus gate was intentionally skipped.
  *
  * Platform scope = macOS first. `Notification.isSupported()` short-circuits on
  * platforms without native support so this is a safe no-op elsewhere.
@@ -68,18 +77,35 @@ function pickTargetWindow(): BrowserWindow | null {
 /**
  * Fire a native notification for `spec`, but only while backgrounded.
  * Returns true if a notification was actually shown.
+ *
+ * opts.bypassFocusGate — when true, the isBackgrounded() gate is skipped so
+ * the notification fires even while the window is focused. Used exclusively by
+ * the Test button (T-PATCH-089 R2-i); all real emit sites pass no opts.
  */
-export function fireNotification(spec: NotifySpec): boolean {
-  if (!Notification.isSupported()) return false
+export function fireNotification(spec: NotifySpec, opts?: { bypassFocusGate?: boolean }): boolean {
+  if (!Notification.isSupported()) {
+    console.log(`[notifications] suppressed kind=${spec.kind} reason=unsupported`)
+    return false
+  }
   // AC-1: only when no window is focused.
-  if (!isBackgrounded()) return false
+  // bypassFocusGate skips this gate (test path); real paths always check it.
+  if (!opts?.bypassFocusGate && !isBackgrounded()) {
+    console.log(`[notifications] suppressed kind=${spec.kind} reason=focused`)
+    return false
+  }
 
   // AC-8 (T-PATCH-083): respect user notification toggle settings.
   // master off → no notification fires; per-type off → that kind suppressed.
-  // Runs after isBackgrounded() so the settings I/O only happens when needed.
+  // Runs after the focus gate so settings I/O only happens when needed.
   const notifSettings = getNotificationSettings()
-  if (!notifSettings.enabled) return false
-  if (!notifSettings.types[spec.kind]) return false
+  if (!notifSettings.enabled) {
+    console.log(`[notifications] suppressed kind=${spec.kind} reason=toggle`)
+    return false
+  }
+  if (!notifSettings.types[spec.kind]) {
+    console.log(`[notifications] suppressed kind=${spec.kind} reason=toggle`)
+    return false
+  }
 
   const notification = new Notification({
     title: spec.title,

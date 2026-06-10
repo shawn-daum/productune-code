@@ -123,6 +123,8 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const messages = useWorkspace((s) => s.messages)
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const streaming = useWorkspace((s) => s.streaming)
+  const statusBarVisible = useWorkspace((s) => s.statusBarVisible)
+  const setStatusBarVisible = useWorkspace((s) => s.setStatusBarVisible)
 
   const [activeIcon, setActiveIcon] = useState<ActivityIcon>('project')
   const [drainVisible, setDrainVisible] = useState(true)
@@ -208,6 +210,19 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   }, [project.projectDir, setPoState])
 
   useEffect(() => { if (!streaming) setDrainVisible(true) }, [streaming])
+
+  // T-PATCH-091 R4: seed statusBarVisible from persisted IPC value on mount.
+  // Empty deps [] — runs once per shell mount; ensures the persisted pref is
+  // applied before the first render that reads statusBarVisible from the store.
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const v = await (window as any).api?.getStatusBarVisible?.()
+        if (typeof v === 'boolean') setStatusBarVisible(v)
+      } catch { /* IPC unavailable in browser dev mode */ }
+    })()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const onQuickOpen = () => setQuickOpenVisible((v) => !v)
@@ -303,6 +318,9 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
       "activity sidebar sidebarResize status     chatResize chat"
     `,
     gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
+    // T-PATCH-091 R4: collapse status row to 0 when hidden. StatusBar is wrapped
+    // in overflow:hidden so it clips cleanly at 0 height with no dangling empty cell.
+    gridTemplateRows: statusBarVisible ? 'auto 1fr 28px' : 'auto 1fr 0px',
   }
 
   return (
@@ -331,7 +349,11 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
       </div>
 
       <MainPanel />
-      <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} onOpenRecent={onOpenRecent} />
+      {/* T-PATCH-091 R4: overflow:hidden clips StatusBar to 0 height when status row
+          collapses to 0px — no dangling empty grid cell or visible bar remnant. */}
+      <div style={{ gridArea: 'status', overflow: 'hidden' }}>
+        <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} onOpenRecent={onOpenRecent} />
+      </div>
 
       <div style={chatResizeArea}>
         <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"

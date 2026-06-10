@@ -552,6 +552,42 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:setNotifications', n),
 
+  // ── Test notification + platform (T-PATCH-089) ───────────────────────────────
+  /** Fire a test notification bypassing the focus gate (explicit user intent). */
+  fireTestNotification: (): Promise<{ shown: boolean; reason?: string }> =>
+    ipcRenderer.invoke('notifications:fireTest'),
+
+  /** Returns process.platform from main; used to gate macOS-only UI elements. */
+  getPlatform: (): Promise<string> =>
+    ipcRenderer.invoke('settings:getPlatform'),
+
+  // ── Close-to-tray + launch-at-login (T-PATCH-090) ────────────────────────────
+  getCloseToTray: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:getCloseToTray'),
+
+  setCloseToTray: (enabled: boolean): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setCloseToTray', enabled),
+
+  getLaunchAtLogin: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:getLaunchAtLogin'),
+
+  setLaunchAtLogin: (enabled: boolean): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setLaunchAtLogin', enabled),
+
+  // ── Zoom factor (T-PATCH-091 R3) ─────────────────────────────────────────────
+  getZoomFactor: (): Promise<number> =>
+    ipcRenderer.invoke('settings:getZoomFactor'),
+
+  setZoomFactor: (factor: number): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setZoomFactor', factor),
+
+  // ── Status bar visibility (T-PATCH-091 R4) ───────────────────────────────────
+  getStatusBarVisible: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:getStatusBarVisible'),
+
+  setStatusBarVisible: (visible: boolean): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setStatusBarVisible', visible),
+
   hasLanguagePref: (): Promise<boolean> =>
     ipcRenderer.invoke('settings:hasLanguagePref'),
 

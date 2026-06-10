@@ -307,6 +307,13 @@
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
         "exact": "API limit reached — retry in {{n}}s"
+      },
+      "turn": {
+        "aborted": "Turn aborted per request.",
+        "exitError": "claude exited with an error (code {{code}})."
+      },
+      "askQuestion": {
+        "dismissed": "Deferred"
       }
     },
     "tab": {
@@ -859,7 +866,26 @@
       "phaseGateEntry": "Phase gate",
       "phaseGateEntryDesc": "The PO reached a phase-transition gate awaiting approval.",
       "poTurnDone": "PO turn complete",
-      "poTurnDoneDesc": "The PO finished a turn and is waiting on you."
+      "poTurnDoneDesc": "The PO finished a turn and is waiting on you.",
+      "test": {
+        "button": "Send test notification",
+        "shown": "Sent. If nothing appeared, check macOS Notifications and Focus settings below.",
+        "blockedToggle": "Turn notifications on above to send a test.",
+        "unsupported": "Native notifications aren't supported on this system."
+      },
+      "macosHint": "productune must be allowed in System Settings ▸ Notifications. The first notification it sends is what adds it to that list. macOS Focus / Do Not Disturb can also hold notifications back. In an unsigned dev build the app appears as \"Electron\".",
+      "openMacosSettings": "Open macOS Notification settings"
+    },
+    "app": {
+      "title": "App",
+      "closeToTray": "Keep running in background",
+      "closeToTrayDesc": "Closing the window keeps productune alive. Reopen from the dock.",
+      "launchAtLogin": "Launch at login",
+      "launchAtLoginDesc": "Automatically open productune when you log in.",
+      "zoom": "Zoom",
+      "zoomDesc": "Scale the UI. Takes effect immediately.",
+      "statusBar": "Show status bar",
+      "statusBarDesc": "Bottom bar with project name and session health."
     }
   },
   "skills": {

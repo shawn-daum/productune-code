@@ -26,3 +26,6 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 - Codex 엔진 폐기 — claude code only 결정(2026-06-09, shawn). MY_PO_ENGINE codex/both 옵션 + 온보딩 엔진선택(Step1_Engine/Step2_EngineConnect/types.ts) + checkCodex/codexLogin IPC(preload/onboarding) + i18n codex 키 전부 제거 대상. T-PATCH-077 Claude Code 연결상태가 단일 엔진 전제로 자리잡음 → 미러 불필요. (cleanup 티켓 별도 발행 필요)
 - [near-term] ipc/po.ts activePoChild (T-P4-059) never assigned -> po:restartSession kill path always null-skips; dead code or latent bug. Found during T-PATCH-081. (2026-06-10)
 - [near-term] settings round-trip regression test (load -> mutate one field -> save -> reload -> all fields intact) — T-PATCH-083 중 loadSettings() integrations silent-wipe 버그 발견+수정됨; 재발 방지 테스트 없음. (2026-06-10)
+- [v0.6] non-mac tray icon (Tray instance, icon asset, context menu) — deferred from T-PATCH-090 close-to-tray mac-only first cut. (2026-06-10)
+- [v0.6+] GUI 자동 업데이트 (electron-updater) — 서명·배포 인프라 필요해서 미룸. 당장은 수동 dmg + 버전 불일치 배너로 감. 외부 배포 시점에 재검토. (2026-06-10, src: harness 구조 피드백 결정 보드 #3-GUI)
+- [v0.6] launch-at-login openAsHidden (login 시 창 pre-hidden 시작) — T-PATCH-090 first cut 에서 deferred. (2026-06-10)
