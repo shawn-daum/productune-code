@@ -247,6 +247,7 @@ productune --engine codex           # Codex CLI (hook 미발동 → doctrine-onl
 productune --help                   # 현재 설정 포함 커맨드 레퍼런스
 
 # 유지보수
+productune update                   # git pull --ff-only + install.sh 재실행 + migration 안내
 productune onboard                  # 재설치 (페르소나 재연결 / 설정 변경)
 productune uninstall                # 설치된 모든 artifact 제거
 productune gc                       # productune/* worktree audit (dry-run)

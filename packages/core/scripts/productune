@@ -9,6 +9,7 @@
 #   productune gc -y                        (alias: --auto, --yes) audit, then remove safe ones
 #   productune init                         Scaffold project: .productune/po-state.json, docs/pdt-*/, .gitignore
 #   productune onboard                      Run install.sh — wire agents, hooks, PATH
+#   productune update                       git pull --ff-only + install.sh + migration notice
 #   productune uninstall                    Remove all installed artifacts
 #
 # Claude Code is the only supported PO engine — PreToolUse/PostToolUse hooks

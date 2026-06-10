@@ -49,7 +49,7 @@ From the repo root:
 packages/core/scripts/install.sh
 ```
 
-This script is idempotent — re-run after pulling to refresh agent symlinks, doctrine mirror, and hooks. Doctrine edits go in `packages/core/doctrine/` (SoT); never edit `~/.productune/doctrine/` directly (it gets overwritten on `onboard`).
+This script is idempotent — re-run after pulling to refresh agent symlinks, doctrine mirror, and hooks (`productune update` does pull + re-run in one command). Doctrine edits go in `packages/core/doctrine/` (SoT); never edit `~/.productune/doctrine/` directly (it gets overwritten on `onboard`).
 
 ## Build (TypeScript bits)
 
