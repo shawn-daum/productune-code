@@ -63,7 +63,7 @@ ask user → write answer. Additive (not 5-iter cap).
   "iter": 2, "max_iter": 5 }
 ```
 
-- `prd_path` = English master (overwrite each cycle). `user_prd_path` = user-lang HTML view.
+- `prd_path` = the user-lang master (overwrite each cycle; 2026-06-10 md-single-SoT). `user_prd_path` = optional disposable HTML render for the gate (manifest `kind: prd-view` + `source_hash`), null when the gate reviews the md directly.
 - Derive `version_outcome` from PRD `## Success metrics`; PO mirrors into `po-state.json :: versions[].outcome` at PRD-ready.
 - Sub-fields nullable. PO reads `ambiguity_score` / `confidence` / `unresolved` for gate.
 
@@ -78,14 +78,14 @@ You are not the target user.
    (`version_outcome.{validation_method, observed_result}` + lazy measurement). For critical flows
    (auth / payments / PII / onboarding) set explicit measurement.
 
-## PRD files — author both
+## PRD file — single SoT
 
 | File | Path | Lang | Lifecycle |
 |:--|:--|:--|:--|
-| Master | `docs/prd/PRD.md` | English | Overwrite each cycle |
-| User view | `docs/artifacts/<version>/PRD.html` | User lang | Translated |
+| Master | `docs/prd/PRD.md` | `[ctx].user_lang` | Overwrite each cycle — the GUI renders it directly |
+| (optional) gate render | `docs/artifacts/<version>/PRD.html` | user lang | Disposable; manifest `kind: prd-view` + `source_hash`; never a second source |
 
-PO never opens / edits PRD body.
+PO never opens / edits PRD body. Closed-version snapshots: `docs/prd/versions/<v>.md` (P5, hook-enforced).
 
 ## Auto-ticket (P1 entry)
 
