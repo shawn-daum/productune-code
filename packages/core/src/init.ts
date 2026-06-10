@@ -4,12 +4,29 @@ import path from 'path'
 import os from 'os'
 import { fileURLToPath } from 'url'
 
+export interface SurfaceConfig {
+  /** web | electron | ios | android | node-lib | cli | server */
+  type: string
+  /** Prod build command (shell). */
+  build: string
+  /** Dev build command, only when it differs from `build`. */
+  build_dev?: string
+  /** Smoke command (shell). null = not scripted yet → QA falls back to manual. */
+  smoke: string | null
+  /** playwright | playwright-electron | maestro | script | manual */
+  smoke_driver: string
+}
+
 export interface ProjectConfig {
   slug: string
   created_at: string
   version: string
+  /** Last applied migration id (see packages/core/migrations/). */
+  schema_v?: number
   /** First version id hint for PO — validated against ^v\d+(\.\d+)?$ at creation */
   initial_version?: string
+  /** Per-surface build/smoke commands — schema: doctrine persona/qa/bookshelf/surface-config-schema.md */
+  surfaces?: Record<string, SurfaceConfig>
 }
 
 export interface InitOptions {
@@ -350,7 +367,9 @@ export function initProject(opts: InitOptions): ProjectConfig {
     slug: existing.slug ?? opts.slug,
     created_at: existing.created_at ?? new Date().toISOString(),
     version: '0.4.0',
+    ...(existing.schema_v !== undefined ? { schema_v: existing.schema_v } : {}),
     ...(opts.initialVersionId ? { initial_version: opts.initialVersionId } : {}),
+    ...(existing.surfaces ? { surfaces: existing.surfaces } : {}),
   }
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
