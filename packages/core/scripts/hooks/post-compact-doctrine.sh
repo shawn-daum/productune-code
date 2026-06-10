@@ -34,14 +34,27 @@ COMMON="$HOME/.productune/doctrine/common/habit.md"
 DOCTRINE="$HOME/.productune/doctrine/persona/$PERSONA/habit.md"
 PERSONAL="$HOME/.productune/$PERSONA/habit.md"
 
+# PO is orchestrator-only and does NOT read the common (worker) habit.
+NEED_COMMON=1
+[ "$PERSONA" = "po" ] && NEED_COMMON=0
+
 # If Tier 0 is unexpectedly missing, fall back to a loud pointer (cannot inject).
-if [ ! -f "$COMMON" ] || [ ! -f "$DOCTRINE" ]; then
+if { [ "$NEED_COMMON" = "1" ] && [ ! -f "$COMMON" ]; } || [ ! -f "$DOCTRINE" ]; then
   cat <<EOF
 [productune doctrine — post-compaction, Tier 0 MISSING]
-Expected Tier 0 file(s) absent: $COMMON $DOCTRINE
+Expected Tier 0 file(s) absent (persona: $PERSONA): $COMMON $DOCTRINE
 STOP. Re-run packages/core/scripts/install.sh to restore doctrine. Do not act without doctrine.
 EOF
   exit 0
+fi
+
+COMMON_BLOCK=""
+if [ "$NEED_COMMON" = "1" ]; then
+  COMMON_BLOCK="----- BEGIN Tier 0 common ($COMMON) -----
+$(cat "$COMMON")
+----- END Tier 0 common -----
+
+"
 fi
 
 # Unquoted heredoc so $HOME-expanded absolute paths and the $(cat …) injections
@@ -51,13 +64,9 @@ fi
 cat <<EOF
 [productune doctrine — re-injected after compaction — Tier 0 injected]
 
-Your Tier 0 doctrine is injected in full below. Do NOT re-read these two files; act on the injected text.
+Your Tier 0 doctrine is injected in full below. Do NOT re-read the injected file(s); act on the injected text.
 
------ BEGIN Tier 0 common ($COMMON) -----
-$(cat "$COMMON")
------ END Tier 0 common -----
-
------ BEGIN Tier 0 persona/$PERSONA ($DOCTRINE) -----
+$COMMON_BLOCK----- BEGIN Tier 0 persona/$PERSONA ($DOCTRINE) -----
 $(cat "$DOCTRINE")
 ----- END Tier 0 persona -----
 

@@ -50,11 +50,16 @@ esac
 if [ -n "$PERSONA" ]; then
   PERSONA_TIER0="$HOME/.productune/doctrine/persona/$PERSONA/habit.md"
 
+  # PO is orchestrator-only and does NOT read the common (worker) habit —
+  # common doctrine governs dispatched workers (designer / developer / qa).
+  NEED_COMMON=1
+  [ "$PERSONA" = "po" ] && NEED_COMMON=0
+
   # fail-loud: required Tier0 file(s) absent.
-  if [ ! -f "$COMMON_TIER0" ] || [ ! -f "$PERSONA_TIER0" ]; then
-    MISSING=""
-    [ ! -f "$COMMON_TIER0" ]  && MISSING="$MISSING $COMMON_TIER0"
-    [ ! -f "$PERSONA_TIER0" ] && MISSING="$MISSING $PERSONA_TIER0"
+  MISSING=""
+  [ "$NEED_COMMON" = "1" ] && [ ! -f "$COMMON_TIER0" ] && MISSING="$MISSING $COMMON_TIER0"
+  [ ! -f "$PERSONA_TIER0" ] && MISSING="$MISSING $PERSONA_TIER0"
+  if [ -n "$MISSING" ]; then
     printf '[!] productune doctrine MISSING for agent %s:%s\n' "$AGENT_TYPE" "$MISSING" >&2
     emit_ctx "[productune doctrine — MISSING]
 Your Tier 0 doctrine file(s) are NOT present on this machine:$MISSING
@@ -62,14 +67,19 @@ STOP. Do not proceed. Run packages/core/scripts/install.sh to restore doctrine.
 Do not act without doctrine."
   fi
 
-  emit_ctx "[productune doctrine — $AGENT_TYPE session start — Tier 0 injected]
-Your Tier 0 doctrine is injected in full below. Do NOT re-read these two files; act on the injected text. Bookshelf detail files referenced inside still load on demand via Bash \`cat\` under the \$HOME-expanded base $HOME/.productune/ (the Read tool does NOT expand \`~\`; never guess \`/root\`).
-
------ BEGIN Tier 0 common ($COMMON_TIER0) -----
+  COMMON_BLOCK=""
+  if [ "$NEED_COMMON" = "1" ]; then
+    COMMON_BLOCK="----- BEGIN Tier 0 common ($COMMON_TIER0) -----
 $(cat "$COMMON_TIER0")
 ----- END Tier 0 common -----
 
------ BEGIN Tier 0 persona ($PERSONA_TIER0) -----
+"
+  fi
+
+  emit_ctx "[productune doctrine — $AGENT_TYPE session start — Tier 0 injected]
+Your Tier 0 doctrine is injected in full below. Do NOT re-read the injected file(s); act on the injected text. Bookshelf detail files referenced inside still load on demand via Bash \`cat\` under the \$HOME-expanded base $HOME/.productune/ (the Read tool does NOT expand \`~\`; never guess \`/root\`).
+
+$COMMON_BLOCK----- BEGIN Tier 0 persona ($PERSONA_TIER0) -----
 $(cat "$PERSONA_TIER0")
 ----- END Tier 0 persona -----
 
