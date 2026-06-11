@@ -44,20 +44,38 @@ gate is accepted. A refuse loop keeps the ticket `in-progress` — never reopen 
 ### S1 — design-system proposals (TEXT)
 - Search the existing system (`docs/designer/design-system.md`, prior artifacts). Produce
   **3 proposals** as text (tokens / type / spacing / component direction — no HTML yet).
-- **Diversity is mandatory — anchor on the style library** (T-PATCH-120). Read
-  `bookshelf/style-library/index.md` (index ONLY — never bulk-read the library) and pick
-  **3 divergent anchors from 3 DIFFERENT categories**, biased to the product's domain plus
-  at least one deliberately-distant category. Each proposal names its anchor
-  (`anchor: <slug>.md — <why this mood fits>`) and opens ONLY its own anchor file.
+- **Anchor selection pipeline — run IN ORDER** (T-PATCH-120/122):
+  1. **Mood brief BEFORE opening the index** — derive from the PRD: surface type
+     (dashboard / reading / marketing / tool), audience temperature, 3–5 mood adjectives,
+     existing brand constraints. If fewer than 2 adjectives can be derived, ask the user
+     ONE question; otherwise never stop.
+  2. **Shortlist 6–9 from `bookshelf/style-library/index.md`** (index ONLY — never
+     bulk-read the library): a Fit pool (4–6, matches the brief) + a Stretch pool (2–3,
+     deliberately contradicts ≥1 brief adjective but plausible for the audience).
+  3. **Pick 3 = Fit 2 + Stretch 1** (fixed mix). Sole exception: a brand guide document
+     (logo + palette + font, attached to the PRD) → Fit 3 allowed. Famous-brand cap:
+     at most 1 of the 3 from top-tier defaults (linear / stripe / vercel / claude /
+     notion / airbnb tier). **Divergence rule: ANY two of the 3 anchors must differ on
+     ≥2 of the 4 mood labels** (`light|dark · minimal|rich · playful|serious ·
+     editorial|chrome` — read from the index). Category variety is a soft preference,
+     not a rule.
+  4. **Justify BEFORE opening files** — per anchor write
+     `anchor: <slug>.md — why this mood fits + what the other two don't give`, only then
+     open the 3 anchor files (each proposal reads ONLY its own anchor).
   Anchors are mood/token starting points to ADAPT (palette, type, radius re-derived for
-  the product) — never brand clones. Three proposals that read as the same mood = redo S1.
+  the product) — never brand clones.
 - **Gate**: user accepts 1–3 of them. Refuse → short interview (what's wrong) → back to S1.
+  **Re-entry re-roll**: refused anchors go on a ban list for this version's S1 — pick
+  fresh ones, UNLESS the interview says a direction was right (keep that anchor, fix the
+  execution).
 
 ### S2 — design-system render (HTML)
 - For EACH accepted proposal, build a design-system showcase page:
   `docs/artifacts/<version>/design-system-<n>.html`.
 - **Gate**: user accepts 1–3. Refuse → interview → back to S1 (re-propose).
-- The accepted system is written to `docs/designer/design-system.md` (SoT, master).
+- The accepted system is written to `docs/designer/design-system.md` (SoT, master),
+  including its anchor line (`anchor: <slug>.md, <version>`) — the next major redesign
+  reads this and avoids re-picking the previous anchor (T-PATCH-122).
 - When authoring it, SEED §1.5 (apply Tier0 ux-principles + project deltas) + §1.5.6 self-check (project-surface, cites Tier0 principle ids) — Tier0 does NOT auto-supply §1.5.6.
 
 ### S3 — mockup candidates (HTML)
