@@ -4,7 +4,7 @@ title: "user-requested promotion gate 백엔드 활성화 — origin stamp + res
 version: v0.5
 round: patch
 type: feature
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 estimated_complexity: L2

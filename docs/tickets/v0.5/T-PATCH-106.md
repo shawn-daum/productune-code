@@ -4,7 +4,7 @@ title: "PO chat 하이퍼링크 — 절대경로 / file:// 링크 클릭 시 적
 version: v0.5
 round: patch
 type: fix
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 model: sonnet

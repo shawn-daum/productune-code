@@ -4,7 +4,7 @@ title: "Main-pane 상단 phase 헤더에 버전 명시 + 영역 확대, PO 채�
 version: v0.5
 round: patch
 type: feature
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 estimated_complexity: L2

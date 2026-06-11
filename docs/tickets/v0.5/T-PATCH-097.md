@@ -4,7 +4,7 @@ title: "유저 요청형 promotion gate는 question 스타일 별도 UI로 (#7)"
 version: v0.5
 round: patch
 type: feature
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 estimated_complexity: L2

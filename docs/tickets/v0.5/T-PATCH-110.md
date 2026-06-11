@@ -3,7 +3,7 @@ ticket_id: T-PATCH-110
 version: v0.5
 round: patch
 type: chore
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 model: sonnet

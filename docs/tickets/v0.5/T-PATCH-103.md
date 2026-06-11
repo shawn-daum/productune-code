@@ -4,7 +4,7 @@ title: "Version History 티켓 클릭 시 상세 탭 열기 — 미연결(unwire
 version: v0.5
 round: patch
 type: fix
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 model: sonnet

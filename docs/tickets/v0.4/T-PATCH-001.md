@@ -3,7 +3,7 @@ ticket_id: T-PATCH-001
 version: v0.4
 round: phase3-fixes
 type: doctrine-update
-status: todo
+status: done
 phase: 3
 assignee: pdt-designer
 created_at: 2026-04-30T04:34:00Z

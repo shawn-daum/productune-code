@@ -3,7 +3,7 @@ id: T-PATCH-101
 version: v0.5
 round: patch
 type: fix
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 model: sonnet

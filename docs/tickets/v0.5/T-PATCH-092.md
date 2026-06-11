@@ -4,7 +4,7 @@ title: "Quick Open 빈쿼리(최근 목록)에서 방향키 이동 + Enter 열�
 version: v0.5
 round: patch
 type: fix
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 estimated_complexity: L1

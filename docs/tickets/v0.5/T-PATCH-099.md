@@ -4,7 +4,7 @@ title: "Dispatch Progress 영역 재기획 — dash-rail 제거, 단일 progress
 version: v0.5
 round: patch
 type: feature
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 estimated_complexity: L3

@@ -4,7 +4,7 @@ title: "PO chat 하이퍼링크 — 상대경로 linkify 루트 확장 + env 링
 version: v0.5
 round: patch
 type: feature
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 estimated_complexity: L2

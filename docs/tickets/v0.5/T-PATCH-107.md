@@ -4,7 +4,7 @@ title: "Artifacts 탭 재구조화 — flat / archive / 지난 버전 히스토�
 version: v0.5
 round: patch
 type: feature
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 model: sonnet
