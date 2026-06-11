@@ -4,10 +4,24 @@ P2 runs as an ordered chain of gated steps. Each step produces a named artifact,
 STOPS at a user gate — PO drives the "request to user" and waits. Never run two steps
 without the prior gate cleared. Accept advances; refuse loops back.
 
-## Branch — pick the entry step (PO selects from PRD case)
-- **A — net-new product / no design system yet** → run the full chain S1 → S5.
-- **B — new feature on an existing design system** → skip S1, S2; enter at S3.
-- **C — small UI tweak / single component** → S5 hi-fi only, one gate. Skip S1–S4.
+## Branch — pick the entry step (PO selects: PRD case × version delta)
+
+Two axes decide the branch. The FULL chain (new design system + full hi-fi) is a
+major-version event — do not re-run it on every version (T-PATCH-119).
+
+1. **Version delta** (from `po-state.current_version` vs previous):
+   - **net-new product / no `docs/designer/design-system.md` yet** → A.
+   - **major bump (v1.x → v2.0)** → A allowed (DS rework on the table).
+   - **minor bump (v1.1, v0.6, …) with an existing design system** → B is the DEFAULT:
+     2–3 key screens mocked on the existing DS, no S1/S2. Escalate to A ONLY when the
+     PRD explicitly calls for a brand / design-system overhaul AND the user confirms the
+     escalation at a gate — never silently.
+   - **patch / single-surface change** → C.
+2. **PRD case** (within the delta's ceiling):
+   - **A — net-new product / DS overhaul** → run the full chain S1 → S5.
+   - **B — new feature on an existing design system** → skip S1, S2; enter at S3.
+     S5 hi-fi covers ONLY the 2–3 screens the feature touches — not a full re-mock.
+   - **C — small UI tweak / single component** → S5 hi-fi only, one gate. Skip S1–S4.
 
 ## Tickets — emit BEFORE running the chain (P2 entry, right after branch pick)
 
