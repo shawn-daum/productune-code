@@ -52,14 +52,19 @@ const HL_ACTIVE = 'pdt-json-find-active'
 
 // ── Sticky scroll (T-PATCH-095) ────────────────────────────────────────────────
 // VS Code-style ancestor key-path accumulation. As you scroll into a deep node,
-// its ancestor keys (root ▸ surfaces ▸ gui …) pin cascading at the top; click an
-// entry to jump to that node below the band. The band reflects the ancestor path of
-// the FIRST row visible just below the band (see recomputeSticky) so it tracks the
-// subtree you're actually inside and updates cleanly across sibling boundaries.
-// Capped so deep trees don't eat the viewport — root stays pinned, the middle is
-// elided, the nearest deepest ancestors are kept.
-const MAX_STICKY_DEPTH = 4
-const STICKY_ROW_H = 20
+// its ancestor keys pin at the top as a SINGLE-LINE breadcrumb
+// (root ▸ surfaces ▸ gui ▸ …); click a segment to jump to that node below the band.
+// The band reflects the ancestor path of the FIRST row visible just below the band
+// (see recomputeSticky) so it tracks the subtree you're actually inside and updates
+// cleanly across sibling boundaries. The band is ONE fixed-height row (STICKY_ROW_H)
+// regardless of chain depth (§4.f QA-fix-r4): when the chain is too long to fit one
+// line we elide the MIDDLE with a `…` marker, ALWAYS keeping root (first) + the
+// nearest deepest segments (last) visible. Never wraps, never stacks vertically.
+//
+// MAX_VISIBLE_SEGMENTS = max breadcrumb segments rendered before the middle is
+// collapsed to a single `…`. When segments > cap we show: root ▸ … ▸ last(cap-2).
+const MAX_VISIBLE_SEGMENTS = 4
+const STICKY_ROW_H = 24
 
 interface StickyKey {
   /** ' '-joined path key — matches JsonNode pathKey + data-pathkey attr */
@@ -273,10 +278,12 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
     if (rows.length === 0) { setStickyPath((p) => (p.length ? [] : p)); return }
     // Container-relative geometry (rect delta) — correct regardless of offsetParent.
     const scTop = sc.getBoundingClientRect().top
-    // bandBottom = lower edge of where a FULL band would sit. Fixed at the depth cap
-    // (NOT the current chain length) so the threshold never feeds back on its own
-    // output — the chain we compute can't move the line that computes it.
-    const bandBottom = MAX_STICKY_DEPTH * STICKY_ROW_H
+    // bandBottom = lower edge of the band. The band is now a SINGLE-LINE breadcrumb
+    // (§4.f), so its height is exactly ONE row (STICKY_ROW_H) regardless of chain
+    // depth. This is still a fixed constant (not chain-length-derived), so the
+    // threshold never feeds back on its own output — the chain we compute can't move
+    // the line that computes it.
+    const bandBottom = STICKY_ROW_H
     // firstVisible = the FIRST header row (DOM order) whose top is at/below the band
     // bottom, i.e. the first node still visible just under the band. The viewport top
     // sits inside THIS node's parent subtree, so its ancestor path is the breadcrumb.
@@ -304,19 +311,12 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
     for (let i = 0; i < ancestorSegs.length; i++) {
       chain.push({ pathKey: ancestorSegs.slice(0, i + 1).join(' '), label: ancestorSegs[i]!, depth: i + 1 })
     }
-    // Cap — ALWAYS keep root pinned (user disliked root disappearing). When the chain
-    // exceeds the cap, keep root + the nearest (cap-1) deepest ancestors, eliding the
-    // middle. Root is chain[0]; the deepest live at the tail.
-    let capped: StickyKey[]
-    if (chain.length > MAX_STICKY_DEPTH) {
-      const tail = chain.slice(chain.length - (MAX_STICKY_DEPTH - 1))
-      capped = [chain[0]!, ...tail]
-    } else {
-      capped = chain
-    }
+    // Store the FULL ancestor chain. Middle-elision for the single-line breadcrumb is
+    // a pure RENDER concern (see elideChain) — keeping the whole chain in state means
+    // the band stays one row tall and the render decides how many segments fit.
     setStickyPath((prev) => {
-      if (prev.length === capped.length && prev.every((p, i) => p.pathKey === capped[i]!.pathKey)) return prev
-      return capped
+      if (prev.length === chain.length && prev.every((p, i) => p.pathKey === chain[i]!.pathKey)) return prev
+      return chain
     })
   }, [])
 
@@ -336,16 +336,15 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
     return () => { sc.removeEventListener('scroll', onScroll); cancelAnimationFrame(raf) }
   }, [state, expandOverride, recomputeSticky])
 
-  const jumpToKey = useCallback((k: StickyKey, indexInBand: number) => {
+  const jumpToKey = useCallback((k: StickyKey) => {
     const sc = bodyRef.current
     if (!sc) return
     const sel = `[data-pathkey="${cssEscape(k.pathKey)}"]`
     const el = sc.querySelector<HTMLElement>(sel)
     if (!el) return
-    // Offset by the band rows that stay pinned ABOVE this one so the target lands
-    // just under the band, not hidden behind it (mirrors MarkdownViewer.jumpTo).
-    const bandH = (indexInBand + 1) * STICKY_ROW_H
-    const top = sc.scrollTop + (el.getBoundingClientRect().top - sc.getBoundingClientRect().top) - bandH
+    // Single-line band is exactly one row tall — offset by STICKY_ROW_H so the target
+    // lands just under the band, not hidden behind it (mirrors MarkdownViewer.jumpTo).
+    const top = sc.scrollTop + (el.getBoundingClientRect().top - sc.getBoundingClientRect().top) - STICKY_ROW_H
     sc.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
   }, [])
 
@@ -359,22 +358,31 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
         </span>
       </div>
       <div style={body} ref={bodyRef}>
-        {/* Sticky-scroll key-path band (T-PATCH-095). Direct child of the scroll
-            container (mirrors MarkdownViewer) so the FULL ancestor chain pins as
-            STACKED rows cascading by depth; click a row to jump below the band. */}
+        {/* Sticky-scroll key-path band (T-PATCH-095 §4.f). Direct child of the scroll
+            container (mirrors MarkdownViewer) so the ancestor chain pins as a SINGLE
+            horizontal breadcrumb (root ▸ key ▸ … ▸ current). When the chain is too
+            long, the MIDDLE is elided to a `…` marker keeping root + deepest visible;
+            never wraps, never stacks. Click a segment to jump below the band. */}
         {state.phase === 'ok' && stickyPath.length > 0 && (
           <div style={stickyBand} data-pdt-sticky="1">
-            {stickyPath.map((k, i) => (
-              <button
-                key={k.pathKey || 'root'}
-                style={{ ...stickyRow, paddingLeft: 14 + i * 16 }}
-                onClick={() => jumpToKey(k, i)}
-                title={k.label}
-              >
-                {i > 0 && <span style={stickySep}>▸</span>}
-                <span style={stickyRowText}>{k.label}</span>
-              </button>
-            ))}
+            <div style={stickyCrumbLine}>
+              {elideChain(stickyPath).map((seg, i) => (
+                <span key={seg.kind === 'ellipsis' ? `ellipsis-${i}` : seg.node.pathKey || 'root'} style={stickyCrumbSeg}>
+                  {i > 0 && <span style={stickySep}>▸</span>}
+                  {seg.kind === 'ellipsis' ? (
+                    <span style={stickyEllipsis} aria-hidden>…</span>
+                  ) : (
+                    <button
+                      style={stickyCrumbBtn}
+                      onClick={() => jumpToKey(seg.node)}
+                      title={seg.node.label}
+                    >
+                      {seg.node.label}
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
           </div>
         )}
         {state.phase === 'loading' && (
@@ -425,6 +433,30 @@ function scrollRangeIntoView(range: Range) {
   const sc = range.startContainer
   const el = sc.nodeType === 1 ? (sc as Element) : sc.parentElement
   el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+// A breadcrumb segment to render: either a clickable node or the static `…` elision
+// marker that stands in for the collapsed middle of a too-long chain.
+type CrumbSeg = { kind: 'node'; node: StickyKey } | { kind: 'ellipsis' }
+
+// Collapse the MIDDLE of an ancestor chain so the breadcrumb stays on one line.
+// Rule: if segments ≤ MAX_VISIBLE_SEGMENTS, show them all. Otherwise show
+//   root ▸ … ▸ <last (MAX_VISIBLE_SEGMENTS - 2) segments>
+// → ALWAYS keeps root (chain[0], first) and the current/deepest tail (last) visible;
+// the `…` marker is a single static segment (one line, no wrap). Note this elision is
+// a width-independent safety cap on segment COUNT; CSS truncation (ellipsis on the
+// line) handles the residual horizontal overflow of any individual long key label.
+function elideChain(chain: StickyKey[]): CrumbSeg[] {
+  if (chain.length <= MAX_VISIBLE_SEGMENTS) {
+    return chain.map((node) => ({ kind: 'node', node }))
+  }
+  const tailCount = MAX_VISIBLE_SEGMENTS - 2 // reserve 1 for root + 1 for the `…`
+  const tail = chain.slice(chain.length - tailCount)
+  return [
+    { kind: 'node', node: chain[0]! },
+    { kind: 'ellipsis' },
+    ...tail.map((node) => ({ kind: 'node' as const, node })),
+  ]
 }
 
 // ── Tree node ─────────────────────────────────────────────────────────────────
@@ -613,37 +645,61 @@ const stickyBand: React.CSSProperties = {
   position: 'sticky',
   top: 0,
   zIndex: 20,
+  // Single fixed-height row — the band is one breadcrumb line, never N stacked rows.
+  height: STICKY_ROW_H,
   display: 'flex',
-  flexDirection: 'column',
+  alignItems: 'center',
   background: '#0E0E0E',
   borderBottom: '1px solid #222',
   boxShadow: '0 2px 4px rgba(0,0,0,0.45)',
 }
 
-const stickyRow: React.CSSProperties = {
+// The horizontal breadcrumb line. Never wraps; overflow is clipped (individual long
+// labels truncate inside the line) so a deep/long path can't push the band to a
+// second row or break the layout.
+const stickyCrumbLine: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 5,
-  height: STICKY_ROW_H,
   width: '100%',
+  height: '100%',
+  paddingLeft: 14,
+  paddingRight: 14,
+  overflow: 'hidden',
+  whiteSpace: 'nowrap',
+  fontFamily: MONO,
+  fontSize: 11,
+}
+
+const stickyCrumbSeg: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  minWidth: 0, // allow the button's text-ellipsis to engage under flex
+}
+
+const stickyCrumbBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
+  padding: 0,
   cursor: 'pointer',
   color: '#9CA3AF',
   fontFamily: MONO,
   fontSize: 11,
+  lineHeight: `${STICKY_ROW_H}px`,
   textAlign: 'left',
-  paddingRight: 14,
-  paddingTop: 0,
-  paddingBottom: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  maxWidth: 220,
 }
 
 const stickySep: React.CSSProperties = { color: '#3F3F3F', flexShrink: 0 }
 
-const stickyRowText: React.CSSProperties = {
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+const stickyEllipsis: React.CSSProperties = {
+  color: '#606060',
+  flexShrink: 0,
+  cursor: 'default',
+  userSelect: 'none',
 }
 
 // Long values wrap — keys/chevrons must pin to the FIRST line (top-aligned),

@@ -4,7 +4,7 @@ title: "MD/JSON 뷰어 Sticky Scroll — 조상 heading/key 경로 누적 고정
 version: v0.5
 round: patch
 type: feature
-status: user-verify
+status: review
 assignee: pdt-developer
 estimated_complexity: L3
 model: sonnet
@@ -12,7 +12,7 @@ effort: high
 risk_flags: none
 slug: viewer-sticky-scroll
 qa_status: pass
-qa_loops: 3
+qa_loops: 4
 area_tags: [gui/viewer, gui/markdown, gui/json]
 created_at: 2026-06-10
 ---
@@ -131,6 +131,29 @@ JSON (`ArtifactJsonTab.tsx`):
 - 전 offset `bandTop=0`, 밴드 위 본문 bleed 0(r2 회귀 없음), **root 항상 present**. click-jump 'root' from deep → 상단 복귀 정상. `tsc --noEmit` clean.
 임시 하니스는 작업 후 제거(상시 테스트는 electron smoke 와 별개 browser project — 본 티켓 scope 밖). MD sticky·find(094)·밴드 구조 무변경.
 
+### §4.f QA-feedback round 4 — JSON sticky band: stacked rows → single-line breadcrumb
+
+피드백 (사용자 승인 결정): JSON sticky 밴드를 **STACKED rows → SINGLE-LINE BREADCRUMB** 으로 변경. MD 뷰어는 stacked 유지(무수정). 선택 알고리즘(`recomputeSticky`: firstVisible = band 아래 첫 `[data-pathkey]`, chain = ancestor prefix, root 항상 present)은 §4.e 그대로 보존 — **RENDER + overflow 처리만** 변경.
+
+**breadcrumb render:** 조상 체인을 한 줄 가로로 `root ▸ key ▸ key ▸ … ▸ current` 렌더(separator ▸ = 기존 `stickySep` glyph/스타일 재사용). 밴드는 이제 N stacked rows 가 아니라 **고정 높이 단일 row**(`STICKY_ROW_H`).
+
+**overflow / elision rule:** 체인이 너무 길면 **중간을 `…` 로 생략**, root(첫) + current/deepest(마지막)는 **항상** 표시. 규칙(`elideChain`): segments ≤ `MAX_VISIBLE_SEGMENTS`(=4) 이면 전부; 초과 시 `root ▸ … ▸ <last (cap-2) segments>`. `…` 는 단일 static 세그먼트(클릭 불가). 가로 잔여 overflow 는 line `overflow:hidden`/`whiteSpace:nowrap` + 개별 label `text-overflow:ellipsis`(`maxWidth`)로 truncate — 절대 wrap/2번째 줄 없음. 각 보이는 세그먼트는 `jumpToKey` 로 클릭-점프(`…` 제외).
+
+**bandBottom 변경:** 밴드가 단일 row 이므로 `recomputeSticky` 의 `bandBottom = MAX_STICKY_DEPTH * STICKY_ROW_H` → **`bandBottom = STICKY_ROW_H`**(한 row 높이)로 변경 — detection 이 새 단일-row 밴드 높이와 일치. 여전히 체인 길이 비의존 고정 상수라 피드백 루프 없음(§4.e 불변식 유지). `jumpToKey` 오프셋도 단일-row 밴드 높이(`STICKY_ROW_H`, `indexInBand` 파라미터 제거)로 보정.
+
+**제거된 stacked 전용 요소:** `MAX_STICKY_DEPTH`(=4) stacking cap → 가로 "max visible segments" 상수 `MAX_VISIBLE_SEGMENTS`(=4) 로 대체. per-row `paddingLeft` depth 들여쓰기 제거. `recomputeSticky` 는 이제 FULL 체인을 state 에 저장(cap 없음); 중간 생략은 순수 render 관심사(`elideChain`).
+
+**보존:** opaque background `#0E0E0E`(bleed 없음), `data-pdt-sticky="1"` 표식 + 094 find NodeFilter 제외, 최상단 빈 상태. MD sticky·find(094)·선택 알고리즘 무변경.
+
+**경험적 검증 (스크린샷, round 3 방식 임시 vite+chromium 하니스):** real `ArtifactJsonTab` 를 deep JSON 픽스처(`meta.rubric_refs.{axes_max,total_bands}` sibling + `posts[].eval.categories.quality.sub.deeper.deepest` 중첩)에 stubbed `window.api` 로 mount, scrollTop sweep + 밴드 기하/세그먼트/bleed 측정 + 스크린샷.
+- 전 offset: `rowsTall=1`, `gapAboveBand=0`, `bandHeight=25`(24+1px border) — **밴드 항상 단일 row, 스크롤포트 상단 flush**(2번째 줄/wrap 0건, r2 bleed 회귀 0).
+- offset 0: `root` 만(최상단 최소).
+- s520: `root ▸ posts ▸ 0`(3 seg ≤ cap, 생략 없음, 한 줄).
+- s700: `root ▸ … ▸ eval ▸ categories` — 중간(meta/posts/index) `…` 로 생략, **root 첫 + categories 마지막 항상 표시**(elision 확인, 스크린샷에서 한 줄·opaque).
+- deep: `root ▸ posts`.
+- click-jump: deep(scrollTop 6000)에서 `root` 세그먼트 클릭 → scrollTop ~0(밴드 오프셋 보정) 복귀 정상.
+- console errors 0건. `tsc --noEmit -p tsconfig.json` clean. 임시 하니스 작업 후 제거. Touch: `ArtifactJsonTab.tsx` 단독(+ 본 티켓).
+
 ## §5 QA scope
 
 smoke:
@@ -158,4 +181,6 @@ JSON:
 | 2026-06-10 | pdt-developer | qa-fix-r2: JSON sticky 상단 본문 비침 **실제** root cause 수정 (ArtifactJsonTab.tsx 단독, MD 무수정). QA-r1 의 SOLID bg/zIndex 가설은 틀렸음 — 진짜 원인은 `body` 스크롤 컨테이너의 `padding:'10px 0'`. `position:sticky;top:0` 자식은 스크롤포트 padding-box 상단 기준 고정 → padding-top 10px 가 스크롤포트 상단~밴드 상단 사이 strip 을 만들고 그 틈으로 스크롤 row 가 밴드 위에 비쳤다. fix: `body` padding 제거(밴드 flush 고정, strip 0), 수직 여백을 `treeWrap` `padding:'10px 0'` 로 이동(spacing 보존). **경험적 검증**: real ArtifactJsonTab 를 deep JSON(excalidraw, depth4)에 mount 하는 임시 vite+chromium 하니스로 스크롤 sweep — fix 전 `gapAboveBand=10`+`angle:0` bleed 스크린샷 확인, fix 후 전 offset `gapAboveBand=0`/`bleed=0`/밴드 1→4 누적 정상 확인. 임시 하니스 제거. find(094) NodeFilter/CSS Highlight/nav·expandOverride·MD sticky·밴드 구조 전부 무변경. `tsc --noEmit` clean. status: review 유지, qa_loops 1→2. |
 | 2026-06-11 | pdt-developer | qa-fix-r3: JSON sticky 조상 알고리즘 오류 수정 (ArtifactJsonTab.tsx 단독, MD 무수정). 사용자 재보고 — sibling 진입 시 STALE 깊은 heading 유지(`total_bands` 안인데 `axes_max` 자식 표시)/root 소실/레벨 reorder. root cause: `recomputeSticky` 가 "고정 probe 이하 중 depth 最大 row"를 골라, 화면 위로 지나간 깊은 노드가 실제 들어간 얕은 sibling 을 이김(stale/reorder) + cap 이 체인 앞쪽(root) 을 잘라 root 소실. fix: "밴드 바로 아래 첫 보이는 row 의 조상 경로" 정공법 — `firstVisible` = DOM 순 `(top-scTop)≥bandBottom` 첫 `[data-pathkey]`(지나간 row 자동 제외), 밴드=그 row 의 ancestor prefix(자기 last segment 제외, 레벨 스왑 불가), `bandBottom` 은 `MAX_STICKY_DEPTH*ROW_H` 고정(피드백 루프 없음), cap=**root 항상 고정**+가장 가까운(cap-1) 깊은 조상, 중간 생략. **경험적 검증(스크린샷)**: deep JSON 픽스처(axes_max/total_bands sibling + posts[].eval.categories[])에 real ArtifactJsonTab mount 하는 임시 vite+chromium 하니스로 scrollTop sweep — sibling 경계(500→660) `rubric_refs`→`total_bands` 클린 전환·axes_max stale 0, deep `root▸1▸eval▸categories`(posts 생략·root 유지), 전 offset root present·bleed 0·bandTop 0, click-jump root 정상 확인. 하니스 제거. find(094)/MD/밴드 구조 무변경. `tsc --noEmit` clean. status: review 유지, qa_loops 2→3. |
 | 2026-06-11 | pdt-qa | verify(code-inspection, §4.e r3): JSON sticky 조상 알고리즘 재구현 PASS — `ArtifactJsonTab.tsx recomputeSticky` (L269–320). `bandBottom = MAX_STICKY_DEPTH * STICKY_ROW_H` (L279, 체인 길이 비의존 고정값 — 피드백 루프 없음 ✓). `firstVisible` = DOM 순 `[data-pathkey]` row 중 `(rect.top - scTop) >= bandBottom - 0.5` 인 **첫** row (L286–291); top<bandBottom 인 지나간 row 는 자동 스킵 → stale 깊은 sibling 못 이김 ✓. 밴드 아래 row 없으면 last row anchor (L294–296, 바닥 처리). chain = anchor 의 ancestor PREFIX: `segs.slice(0, len-1)` 로 자기 마지막 segment 제외(L301–302), `chain[0] = {label:'root', depth:0}` 항상 선두(L303), prefix 누적 push(L304–306) → ancestor prefix 라 레벨 스왑/재정렬 불가능 ✓. cap (L311–315): `chain.length > MAX_STICKY_DEPTH` 일 때 `tail = chain.slice(len-(cap-1))` + `capped = [chain[0], ...tail]` → **root(chain[0]) 절대 미탈락**, 중간 생략, "root 날아감" 해소 ✓. 094 find NodeFilter 무회귀: TreeWalker `acceptNode` 가 `closest('[data-pdt-sticky]')` text 를 `FILTER_REJECT` (L206–210), 밴드 `data-pdt-sticky="1"` 표식 intact (L366) → phantom highlight 없음 ✓. MAX_STICKY_DEPTH=4 / STICKY_ROW_H=20 (L61–62). Dev 스크린샷 검증(axes_max→total_bands 전환·root persistence) 기첨부. Central build GREEN 전제. 시각/스크롤 런타임 동작은 user-verify eyeball 잔존. qa_status pass 유지. status → user-verify. |
+| 2026-06-11 | pdt-developer | qa-fix-r4: JSON sticky 밴드 STACKED rows → SINGLE-LINE breadcrumb 변경 (ArtifactJsonTab.tsx 단독, MD 무수정 — stacked 유지). 사용자 승인 결정. §4.e 선택 알고리즘(firstVisible = band 아래 첫 `[data-pathkey]`, chain = ancestor prefix, root 항상 present) 보존 — RENDER + overflow 만 변경. render: 조상 체인을 `root ▸ key ▸ … ▸ current` 한 줄(separator ▸ = 기존 `stickySep` 재사용), 밴드 = 고정 높이 단일 row(`STICKY_ROW_H` 20→24). overflow: `elideChain` — segments ≤ `MAX_VISIBLE_SEGMENTS`(=4) 전부, 초과 시 `root ▸ … ▸ last(cap-2)` 로 **중간 `…` 생략**(root 첫 + deepest 마지막 항상 표시), `…` 는 static(클릭 불가), 나머지 세그먼트는 `jumpToKey` 클릭-점프. line `overflow:hidden`/`whiteSpace:nowrap` + label `text-ellipsis`(maxWidth) 로 wrap 방지. bandBottom: `MAX_STICKY_DEPTH*ROW_H` → **`STICKY_ROW_H`**(단일 row 높이)로 변경 — detection 이 새 밴드 높이와 일치(체인 비의존 고정 상수 유지, 피드백 루프 없음). `jumpToKey` 오프셋도 단일-row(`indexInBand` 파라미터 제거). 제거: `MAX_STICKY_DEPTH` stacking cap → 가로 `MAX_VISIBLE_SEGMENTS` 상수, per-row `paddingLeft` 들여쓰기. `recomputeSticky` 는 FULL 체인 저장(cap 없음, 생략은 render 관심사). 보존: opaque `#0E0E0E`, `data-pdt-sticky="1"` + 094 find NodeFilter 제외, 최상단 빈 상태. **경험적 검증(스크린샷, round3 방식 임시 vite+chromium 하니스)**: deep JSON 픽스처 scrollTop sweep — 전 offset `rowsTall=1`/`gapAboveBand=0`/`bandHeight=25`(단일 row, flush, wrap 0, bleed 0), offset0 `root`만, s520 `root▸posts▸0`(생략없음), s700 `root▸…▸eval▸categories`(중간 elide, root/deepest 유지), deep `root▸posts`, click-jump root from 6000 → ~0 복귀, console errors 0. 하니스 제거. `tsc --noEmit` clean. status: review, qa_loops 3→4. |
+| 2026-06-11 | pdt-qa | verify(code-inspection, §4.f r4): JSON sticky single-line breadcrumb 전환 PASS — `ArtifactJsonTab.tsx`. 선택 알고리즘 보존 확인: `recomputeSticky` firstVisible 루프(`(rect.top-scTop) >= bandBottom-0.5` 첫 row), ancestor prefix(`segs.slice(0,len-1)`), `chain[0]={label:'root'}` 선두 — §4.e 와 동일 ✓. `bandBottom = STICKY_ROW_H`(단일-row 밴드 높이, 체인 비의존 고정 상수 — 피드백 루프 없음) ✓. `elideChain`: ≤cap 전부 / 초과 시 `[chain[0], {ellipsis}, ...tail(cap-2)]` → root 첫 + deepest 마지막 항상 present, 중간 `…` static ✓. render 단일 row: `stickyBand` `height:STICKY_ROW_H`+`flexDirection` column 제거, `stickyCrumbLine` `whiteSpace:nowrap`/`overflow:hidden`(wrap 불가) ✓. 세그먼트 클릭-점프(`jumpToKey(seg.node)`), `…` 는 버튼 아님 ✓. `jumpToKey` 단일-row 오프셋(`indexInBand` 제거) ✓. 094 find 무회귀: `data-pdt-sticky="1"` 표식 + TreeWalker NodeFilter `closest('[data-pdt-sticky]')` REJECT intact ✓. opaque `#0E0E0E`/zIndex20/boxShadow 보존 ✓. MD sticky 무수정 확인. Dev 스크린샷 검증(단일 row·elision·click-jump) 첨부. `tsc --noEmit` clean. qa_status pass 유지. status: review. |
 | 2026-06-10 | pdt-qa | verify(code-inspection): §2 공통/MD/JSON acceptance 전부 코드 충족 확인. 공통 — sticky 스택이 조상 체인을 계단식 누적(MD chain walk-back by level L271-278, JSON path-segment 풀 체인 재구성 L296-300), 클릭 점프(MD `jumpToHeading` L309, JSON `jumpToKey` L325) 둘 다 band 높이만큼 offset 보정 → 대상이 band 바로 아래 위치, depth cap 존재(MD `MAX_STICKY_DEPTH=3`, JSON =4, 둘 다 가장 얕은 조상부터 drop L280/302), 최상단 스크롤 시 체인 비움(MD currentIdx<0 → `[]` L269, JSON hasCurrent false → `[]` L293). MD — `.md-h1/h2/h3` 문서순 수집(MdRenderer 무수정 L247), 섹션 진입/이탈로 스택 갱신, 기존 padding 24/28·maxWidth 780 유지(viewerWrap 무변경). JSON — header row `data-pathkey/-label/-depth`(L468-470) → `root ▸ key ▸ key` breadcrumb 누적, 접힘/펼침·find auto-expand 시 `expandOverride` dep 로 recompute(L323). QA-fix 2건 반영 확인: BUG1 밴드 SOLID `#0E0E0E` + zIndex 20 + boxShadow(본문 비침 제거, L592-601), BUG2 밴드가 scroll 컨테이너 직속 자식 + 풀 multi-depth 체인(단일레벨 아님). 094 find 무회귀: 밴드 `data-pdt-sticky="1"`(L352) + find TreeWalker `NodeFilter` 가 `[data-pdt-sticky]` 내부 text 제외(L203-208) → phantom 매치 없음, expandOverride/CSS Highlight/nav refs 무변경. smoke→pass. status→user-verify (시각/스크롤 산출물 — eyeball 필요). |
