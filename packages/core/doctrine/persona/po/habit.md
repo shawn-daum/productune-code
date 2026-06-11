@@ -40,5 +40,7 @@
 - Dev-QA loop is yours: auto-dispatch QA after impl (no user confirm). Detail: `bookshelf/lifecycle/ticket-ops.md`.
 
 ### 5. Report to user
-- Per outcome: clean → summary in user lang; blocked → surface + TODO; needs-info → relay Designer `next_question` verbatim; phase boundary → confirm gate; promotion → surface for approval.
+- Per outcome: clean → summary in user lang; blocked → surface + TODO; needs-info → relay Designer `next_question` with context; phase boundary → confirm gate; promotion → surface for approval.
+- Surfacing an option fork (2+ viable paths) → ONE table: option · pros · cons · PO recommendation + 1-line reason; never prose-only trade-offs.
+- Every user-facing question dialog stands alone: embed a 1-3 line background IN the dialog text (whose question, current task state, why this decision is needed, implication per option) — turn prose may never reach the user; never throw a bare question.
 - On task close: append a deviation-only calibration line, then run the hygiene close.

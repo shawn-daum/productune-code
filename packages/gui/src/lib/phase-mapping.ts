@@ -14,7 +14,8 @@
  * Renamed from `stage-mapping.ts` (v2 doctrine sub-b).
  */
 
-import type { PoState } from './types'
+import type { PoState, Phase, Ticket } from './types'
+import { normalizeStatus } from './useTicketScan'
 
 export interface PhaseDef {
   key: 'prd' | 'design' | 'build' | 'deploy' | 'close'
@@ -70,4 +71,78 @@ export function getItemState(itemIndex: number, activeIndex: number): PhaseItemS
   if (itemIndex < activeIndex) return 'done'
   if (itemIndex === activeIndex) return 'cur'
   return 'pending'
+}
+
+// ── T-PATCH-096 §4.b: ticket `type` → phase bucket (single source of truth) ──
+//
+// APPROXIMATION, not the doctrine phase axis. There is no reliable per-phase
+// attribution in existing data (see ticket §4.b data-source investigation), so
+// the only parsed + semantically phase-adjacent axis — ticket `type` — is
+// bucketed into the 5 phases for an "approximate" done/total counter.
+//
+// Bucketed on the raw `type` (tolerant): canonical `TaskType` plus on-disk
+// non-canonical types (`feature`, `build`, `bug`, `fix`, `chore`) that appear
+// in frontmatter. `doctrine`/`doctrine-*` and any unmapped/legacy composite are
+// excluded from all buckets (not product-cycle work).
+const TYPE_TO_PHASE: Record<string, Phase> = {
+  // PRD
+  feature: 'PRD',
+  docs: 'PRD',
+  // Design
+  design: 'Design',
+  // Build
+  impl: 'Build',
+  refactor: 'Build',
+  build: 'Build',
+  bug: 'Build',
+  fix: 'Build',
+  chore: 'Build',
+  // Deploy
+  deploy: 'Deploy',
+  // Close
+  qa: 'Close',
+  test: 'Close',
+  close: 'Close',
+}
+
+export interface PhaseCount {
+  done: number
+  total: number
+}
+
+export type PhaseCounts = Record<Phase, PhaseCount>
+
+/**
+ * Buckets tickets (filtered to `version`) by the `TYPE_TO_PHASE` map and returns
+ * per-phase `{ done, total }`.
+ *
+ * Rules (ticket §4.b):
+ *  - scope: only tickets whose `version === version` (current version).
+ *  - `abandoned` tickets are dropped (count toward neither done nor total).
+ *  - bucket on `t.type ?? t.stage`; unmapped/excluded types contribute nowhere.
+ *  - total = bucketed live tickets; done = those whose normalized status === 'done'.
+ */
+export function bucketTicketsByPhase(tickets: Ticket[], version: string | null): PhaseCounts {
+  const counts: PhaseCounts = {
+    PRD: { done: 0, total: 0 },
+    Design: { done: 0, total: 0 },
+    Build: { done: 0, total: 0 },
+    Deploy: { done: 0, total: 0 },
+    Close: { done: 0, total: 0 },
+  }
+  if (!version) return counts
+
+  for (const t of tickets) {
+    if (t.version !== version) continue
+    const status = normalizeStatus(t.status)
+    if (status === 'abandoned') continue
+    const rawType = (t.type ?? t.stage) as string | undefined
+    if (!rawType) continue
+    const phase = TYPE_TO_PHASE[rawType]
+    if (!phase) continue  // doctrine / unmapped / legacy composite → excluded
+    counts[phase].total += 1
+    if (status === 'done') counts[phase].done += 1
+  }
+
+  return counts
 }

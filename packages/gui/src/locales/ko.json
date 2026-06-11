@@ -174,8 +174,11 @@
       "statusAbandoned": "폐기됨",
       "statusWaiting": "{{persona}} 대기 중",
       "unassigned": "담당자 미지정",
-      "railActive": "Active",
-      "railIdle": "대기",
+      "stageDone": "완료됨",
+      "stageCurrent": "작업 중",
+      "stageUpcoming": "예정",
+      "stageBlocked": "막힘",
+      "qaMeta": "qa_status: {{status}} · loops {{loops}}",
       "crumbBack": "Tickets 탭으로",
       "crumbTickets": "Tickets",
       "dispatchProgress": "Dispatch progress",
@@ -236,7 +239,12 @@
       "rejected": "candidate 가 거절되었습니다",
       "rejectCta": "거절",
       "approveCta": "승인",
-      "rejectConfirm": "거절하면 candidate 가 사라집니다 — 거절하시겠습니까?"
+      "rejectConfirm": "거절하면 candidate 가 사라집니다 — 거절하시겠습니까?",
+      "question": {
+        "prompt": "요청하신 promotion 입니다. 적용할까요?",
+        "approveDesc": "{{tier}} 로 promote",
+        "rejectDesc": "promote 하지 않고 요청을 취소"
+      }
     },
     "tickets": {
       "title": "Tickets",
@@ -292,6 +300,8 @@
       "attachFile": "파일 경로 첨부",
       "filesCount": "파일",
       "removeFile": "파일 제거",
+      "removeImage": "이미지 제거",
+      "imageLabel": "이미지",
       "restartSession": "세션 초기화",
       "restartHint": "PO 가 오래 답하지 않거나 너무 느릴 때 사용",
       "restartCompletedToast": "세션이 초기화되었습니다.",
@@ -303,6 +313,11 @@
       "todoSubmit": "제출",
       "toolGroup": "도구 {{count}}개",
       "toolDetailUnavailable": "상세 정보 없음",
+      "toolDetail": {
+        "truncatedMore": "… (+{{count}}줄)",
+        "result": "결과",
+        "error": "오류"
+      },
       "stop": "중단",
       "rateLimit": {
         "estimated": "API 한도 도달 — 약 {{n}}초 후 재시도 가능 (추정)",
@@ -656,7 +671,10 @@
       "loadError": "파일 목록을 불러오지 못했어요.",
       "emptyHeadline": "표시할 산출물이 없습니다",
       "emptyHelper": "docs/artifacts/ 폴더에 산출물이 생기면 여기 나타납니다.",
-      "needsReview": "검토 필요"
+      "needsReview": "검토 필요",
+      "archiveLabel": "archive",
+      "versionHistoryLabel": "지난 버전 히스토리",
+      "versionEmpty": "(산출물 없음)"
     },
     "baseDirty": {
       "title": "저장 안 된 변경이 있어요",
@@ -719,7 +737,8 @@
       },
       "ticketCard": {
         "collapse": "▲ 접기",
-        "autosaveCount": "▼ 자동저장 기록 {{n}}건"
+        "autosaveCount": "▼ 자동저장 기록 {{n}}건",
+        "openDetail": "티켓 상세 열기: {{id}}"
       }
     },
     "qaLoop": {
@@ -979,7 +998,11 @@
       "newProject": "새 프로젝트 만들기",
       "openExisting": "기존 폴더 열기",
       "noRecent": "최근 프로젝트 없음",
-      "recent": "최근 항목"
+      "recent": "최근 항목",
+      "projects": "프로젝트",
+      "phaseBadge": "Phase {{n}}",
+      "folderMissing": "폴더 없음",
+      "removeFromList": "목록에서 제거"
     },
     "install": {
       "title": "이 폴더에서 productune을 시작할까요?",

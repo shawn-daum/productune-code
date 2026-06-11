@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import type { Project, Message } from '../lib/types'
@@ -17,6 +17,7 @@ import QuickOpenPalette from '../components/workspace/QuickOpenPalette'
 import ColumnResizeHandle from '../components/workspace/ColumnResizeHandle'
 import { usePoChat } from '../store/poChat'
 import { useTicketScan } from '../lib/useTicketScan'
+import { bucketTicketsByPhase } from '../lib/phase-mapping'
 import DeployConfirmModal from '../components/workspace/DeployConfirmModal'
 import BaseDirtyModal from '../components/workspace/BaseDirtyModal'
 import QuitGuardToast from '../components/workspace/QuitGuardToast'
@@ -148,6 +149,13 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const { tickets: scannedTickets } = useTicketScan(project.projectDir)
 
   const poStateVersion = useWorkspace((s) => s.poState?.current_version ?? null)
+
+  // T-PATCH-096 §4.b: per-phase (done/total) counts, current-version scoped,
+  // bucketed by ticket type → phase. Passed to PhaseBreadcrumb (presentational).
+  const phaseCounts = useMemo(
+    () => bucketTicketsByPhase(scannedTickets, poStateVersion),
+    [scannedTickets, poStateVersion],
+  )
 
   useAutoSurfaceArtifacts({
     projectDir: project.projectDir,
@@ -340,7 +348,8 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
         <HeaderSearchBar onClick={() => setQuickOpenVisible(true)} />
         <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
           onRetry={handleRetry} onViewLog={handleViewLog} />
-        <PhaseBreadcrumb phase={phase} />
+        {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
+        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} />
         {drainVisible && project && (
           <PendingPromotionDrain projectDir={project.projectDir}
             claudeSessionId={useWorkspace.getState().claudeSessionId}

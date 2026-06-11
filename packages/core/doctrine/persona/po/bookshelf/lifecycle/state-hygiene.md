@@ -25,3 +25,7 @@ Surface only when the condition holds, ask once, leave the field as-is on silenc
 | `versions[].outcome.observed_result` | null + `ended_at` non-null | "Version {id} closed — what happened?" |
 
 `versions[]` cap: retain ≤5; rotate older entries to an `outcome.retrospective_path` ref (out of the state file for size, not purged).
+
+## Harness memory drain
+
+At task close (alongside the calibration line) check the Claude Code auto-memory index (the project's harness `MEMORY.md`): for each accumulated entry, locate its doctrine-tier home, surface it through the promotion gate, then delete the entry from harness memory once placed. Rules live in doctrine tiers — harness memory is an inbox, never a home.

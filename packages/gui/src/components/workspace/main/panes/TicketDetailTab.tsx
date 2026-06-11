@@ -7,7 +7,8 @@
  * Regions (per docs/designer/archive/v0.5/T-003-a7-flow.md §2):
  *   §2.0 Header  — breadcrumb + ticket ID + title + status pill + read-only marker
  *   §2a  KR body — md-* recipes via MdRenderer (## Request (KR) section)
- *   §2b  DispatchProgress — persona rail + derived next-action (informational)
+ *   §2b  DispatchProgress — pipeline lane (po→designer→developer→qa→user, done/
+ *        current/upcoming, derived from frontmatter) + derived next-action
  *
  * Design tokens: v0.4 design-system.md + T-006 Option B persona hues.
  */
@@ -21,6 +22,8 @@ import {
   Activity,
   Info,
   ArrowRight,
+  User,
+  UserCheck,
 } from 'lucide-react'
 import MdRenderer from '../../chat/MdRenderer'
 import { useTranslation } from 'react-i18next'
@@ -40,15 +43,19 @@ interface TicketData {
 
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
 
-// Persona session state from po-state.json persona_sessions (informational)
-type PersonaRailState = 'active' | 'idle' | 'off'
+// Pipeline stage — derived from ticket frontmatter (status/assignee/qa_status),
+// NOT from runtime persona_sessions. The ticket-detail view shows ticket facts,
+// not live session liveness.
+type PipelineStage = 'done' | 'current' | 'upcoming' | 'blocked'
 
-interface PersonaRailEntry {
-  id: 'po' | 'designer' | 'developer' | 'qa'
+interface PipelineNode {
+  // 'user' (idx 4) = the human reviewer stage — NOT a persona; rendered with a
+  // lucide icon in a neutral accent instead of a persona-hued dot (§4.c).
+  id: 'po' | 'designer' | 'developer' | 'qa' | 'user'
   label: string
-  color: string   // CSS hex — T-006 Option B
-  railState: PersonaRailState
-  stateLabel: string
+  color: string   // CSS hex — matches --persona-* tokens (unused for 'user')
+  stage: PipelineStage
+  qaMeta?: string  // attached to qa node only (qa_status · loops N)
 }
 
 // ── Status pill helpers (§8.2 status variant) ────────────────────────────────
@@ -122,51 +129,91 @@ const PERSONA_COLORS: Record<string, string> = {
   qa:         '#34D399',
 }
 
-function buildRail(
+// §4.c: 5-node lane — po → designer → developer → qa → user. The four personas
+// are agent-worked stages; 'user' is the human review stage (rendered distinctly).
+const PIPELINE_ORDER: Array<{ id: PipelineNode['id']; label: string }> = [
+  { id: 'po',         label: 'PO' },
+  { id: 'designer',   label: 'designer' },
+  { id: 'developer',  label: 'developer' },
+  { id: 'qa',         label: 'qa' },
+  { id: 'user',       label: 'user' },
+]
+
+const USER_IDX = 4        // user = idx 4 (human reviewer)
+const QA_IDX = 3          // qa = idx 3
+const DEVELOPER_IDX = 2
+
+// Derive the 5-stage pipeline (po → designer → developer → qa → user) purely
+// from ticket frontmatter. §4.c status→stage mapping (status evaluated BEFORE
+// assignee; supersedes §4.b's single qaCurrent flag):
+//   review      → qa CURRENT, developer done, user upcoming.
+//   user-verify → qa DONE, user CURRENT (qa has handed off to the human reviewer).
+//   done        → all 5 done.  abandoned → all ghosted.  blocked → current node
+//   gets the blocked variant.  Otherwise current = assignee stage. The user node
+//   stays upcoming until qa is done.
+function buildPipeline(
+  status: string | undefined,
   assignee: string | undefined,
-  personaSessions: Record<string, unknown> | null,
+  qaStatus: string | undefined,
+  qaLoops: number | undefined,
   t: (key: string, options?: Record<string, unknown>) => string,
-  viewedTicketId: string,
-  currentTaskTicketId: string | undefined,
-  currentTaskAssignee: string | undefined,
-): PersonaRailEntry[] {
-  const personas: Array<{ id: 'po' | 'designer' | 'developer' | 'qa'; label: string }> = [
-    { id: 'po',         label: 'PO' },
-    { id: 'designer',   label: 'designer' },
-    { id: 'developer',  label: 'developer' },
-    { id: 'qa',         label: 'qa' },
-  ]
+): PipelineNode[] {
+  const assigneePersona = assignee?.replace('pdt-', '')
+  const assigneeIdx = PIPELINE_ORDER.findIndex((p) => p.id === assigneePersona)
 
-  // Active = current_task matches this ticket AND this persona is the assignee
-  const isCurrentTicket = !!viewedTicketId && viewedTicketId === currentTaskTicketId
-  const isActivePersona = (id: string) =>
-    isCurrentTicket && currentTaskAssignee?.replace('pdt-', '') === id
+  // ── Resolve current index + flags from status first, assignee second ──────
+  const allDone = status === 'done'
+  const abandoned = status === 'abandoned'
+  const blocked = status === 'blocked'
+  // §4.c: split §4.b's single qaCurrent into two branches.
+  const reviewQa = status === 'review'        // under QA → qa current, user upcoming
+  const userVerify = status === 'user-verify' // qa done → human reviewer current
 
-  return personas.map(({ id, label }) => {
-    const hasSession = personaSessions
-      ? Object.keys(personaSessions).some((k) => k.includes(id))
-      : false
+  let currentIdx: number
+  if (allDone) {
+    currentIdx = PIPELINE_ORDER.length  // beyond user → every stage done
+  } else if (reviewQa) {
+    currentIdx = QA_IDX                  // qa current, developer done, user upcoming
+  } else if (userVerify) {
+    currentIdx = USER_IDX                // ★ §4.c: user current, qa done
+  } else if (assigneeIdx >= 0) {
+    currentIdx = assigneeIdx             // in-progress / blocked / todo w/ assignee
+  } else if (status === 'in-progress') {
+    currentIdx = DEVELOPER_IDX           // in-progress, assignee unknown → dev fallback
+  } else {
+    currentIdx = 0                       // todo / unassigned → po is current
+  }
 
-    let railState: PersonaRailState
-    let stateLabel: string
+  const showQaMeta = !!qaStatus && qaStatus !== 'n/a'
 
-    if (isActivePersona(id)) {
-      railState = 'active'
-      stateLabel = t('workspace.ticketDetail.railActive')
-    } else if (hasSession) {
-      railState = 'idle'
-      stateLabel = t('workspace.ticketDetail.railIdle')
+  return PIPELINE_ORDER.map(({ id, label }, idx) => {
+    let stage: PipelineStage
+    if (abandoned) {
+      stage = 'upcoming'  // visual ghost handled in the node view via abandoned flag
+    } else if (idx < currentIdx) {
+      stage = 'done'
+    } else if (idx === currentIdx) {
+      stage = blocked ? 'blocked' : 'current'
     } else {
-      railState = 'off'
-      stateLabel = '—'
+      stage = 'upcoming'
+    }
+
+    // qa_status micro-label only when qa node is current/done (folded into the
+    // qa node's label slot). review/user-verify naturally surface it.
+    let qaMeta: string | undefined
+    if (id === 'qa' && showQaMeta && (stage === 'current' || stage === 'done' || stage === 'blocked')) {
+      qaMeta = t('workspace.ticketDetail.qaMeta', {
+        status: qaStatus,
+        loops: qaLoops ?? 0,
+      })
     }
 
     return {
       id,
       label,
       color: PERSONA_COLORS[id] ?? '#505050',
-      railState,
-      stateLabel,
+      stage,
+      qaMeta,
     }
   })
 }
@@ -176,8 +223,10 @@ function buildRail(
 export default function TicketDetailTab({ props: tabProps }: Props) {
   const { t } = useTranslation()
   const ticketId = typeof tabProps?.ticketId === 'string' ? tabProps.ticketId : ''
+  // (version, id) resolution (T-PATCH-111): when present, the read targets the
+  // exact version dir; absent → undefined → legacy first-match read.
+  const tabVersion = typeof tabProps?.version === 'string' ? tabProps.version : undefined
   const project = useWorkspace((s) => s.project)
-  const poState = useWorkspace((s) => s.poState)
 
   const [ticket, setTicket] = useState<TicketData | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
@@ -191,7 +240,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
     setLoadState('loading')
     const api = (window as any).api
     api
-      .ticketsRead(project.projectDir, ticketId)
+      .ticketsRead(project.projectDir, ticketId, tabVersion)
       .then((data: TicketData | null) => {
         if (!data) {
           setLoadState('error')
@@ -201,7 +250,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
         setLoadState('done')
       })
       .catch(() => setLoadState('error'))
-  }, [ticketId, project?.projectDir])
+  }, [ticketId, tabVersion, project?.projectDir])
 
   useEffect(() => {
     load()
@@ -220,18 +269,10 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
   const sColor = statusColor(status)
 
   // ── DispatchProgress data ──────────────────────────────────────────────────
-  // persona_sessions is not typed in PoState; read from raw poState safely
-  const personaSessions = poState
-    ? ((poState as any).persona_sessions as Record<string, unknown> | null | undefined) ?? null
-    : null
-  const rail = buildRail(
-    assignee,
-    personaSessions,
-    t,
-    ticketId,
-    poState?.current_task?.ticket_id,
-    poState?.current_task?.assignee_persona,
-  )
+  // Pipeline stages are derived from ticket frontmatter only (no runtime
+  // persona_sessions / current_task — those are session signals, out of scope
+  // for a ticket-fact view).
+  const pipeline = buildPipeline(status, assignee, qaStatus, qaLoops, t)
   const nextAction = deriveNextAction(status, assignee, qaStatus, t)
 
   // ── Breadcrumb → open Tickets tab ─────────────────────────────────────────
@@ -350,61 +391,23 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                   </span>
                 </div>
 
-                {/* Ticket meta orientation */}
-                <div style={dpMeta}>
-                  {status && (
-                    <span>
-                      <span style={dpKey}>status</span>
-                      <span style={dpVal}>{status}</span>
-                    </span>
-                  )}
-                  {assignee && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <span style={dpKey}>assignee</span>
-                      <span
-                        style={{
-                          width: 7,
-                          height: 7,
-                          borderRadius: '50%',
-                          background: PERSONA_COLORS[assignee.replace('pdt-', '')] ?? '#505050',
-                          display: 'inline-block',
-                          flexShrink: 0,
-                        }}
-                      />
-                      <span style={dpVal}>{assignee}</span>
-                    </span>
-                  )}
-                  {qaStatus && qaStatus !== 'n/a' && (
-                    <span>
-                      <span style={dpKey}>qa_status</span>
-                      <span style={dpVal}>{qaStatus}</span>
-                      {qaLoops !== undefined && (
-                        <span style={{ ...dpVal, marginLeft: 4 }}>(loops: {qaLoops})</span>
-                      )}
-                    </span>
-                  )}
-                </div>
+                {/* Pipeline lane — single non-redundant progress row.
+                    po → designer → developer → qa → user with done/current/upcoming. */}
+                <PipelineLane nodes={pipeline} abandoned={status === 'abandoned'} t={t} />
 
-                {/* Persona rail (§8.6 PersonaPresenceBar pattern) */}
-                <div style={railGrid}>
-                  {rail.map((entry) => (
-                    <PersonaCard key={entry.id} entry={entry} />
-                  ))}
-                </div>
-
-                {/* Next-action (derived, informational, no action button) */}
+                {/* Next-action (derived, informational, no action button).
+                    §4.b #5: space-between — left arrow + Next text, right pill. */}
                 <div style={nextActionRow}>
-                  <span style={{ color: statusColor(status), flexShrink: 0 }}>
-                    <ArrowRight size={15} />
+                  <span style={naLeft}>
+                    <span style={{ color: statusColor(status), flexShrink: 0, display: 'inline-flex' }}>
+                      <ArrowRight size={14} strokeWidth={2} />
+                    </span>
+                    <span style={naNextLabel}>{t('workspace.ticketDetail.nextLabel')}</span>
+                    <span style={naText}>{nextAction}</span>
                   </span>
-                  <span style={naText}>
-                    {t('workspace.ticketDetail.nextLabel')} <strong style={{ color: '#F0F0F0', fontWeight: 600 }}>
-                      {nextAction}
-                    </strong>
-                    {status && (
-                      <span style={naTag}> (status: {status})</span>
-                    )}
-                  </span>
+                  {status && (
+                    <span style={naStatusPill}>status: {status}</span>
+                  )}
                 </div>
               </section>
 
@@ -441,43 +444,180 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
   )
 }
 
-// ── PersonaCard sub-component ─────────────────────────────────────────────────
+// ── PipelineLane sub-component ────────────────────────────────────────────────
+// Horizontal po → designer → developer → qa → user lane. Persona nodes are a dot
+// + name + state label; the user node uses a lucide icon (§4.c). Connectors
+// between nodes reflect the departing node's stage.
 
-function PersonaCard({ entry }: { entry: PersonaRailEntry }) {
-  const { label, color, railState, stateLabel } = entry
-  const isActive = railState === 'active'
-  const isOff = railState === 'off'
+const STATUS_BLOCKED_COLOR = '#E04040'
+
+// state label keys — bound to nodes only for current/blocked (see §4.b #3/#6).
+// done/upcoming stay quiet visually but the keys feed the dot aria-label.
+const STAGE_LABEL_KEY: Record<PipelineStage, string> = {
+  done:     'workspace.ticketDetail.stageDone',
+  current:  'workspace.ticketDetail.stageCurrent',
+  upcoming: 'workspace.ticketDetail.stageUpcoming',
+  blocked:  'workspace.ticketDetail.stageBlocked',
+}
+
+function PipelineLane({
+  nodes,
+  abandoned,
+  t,
+}: {
+  nodes: PipelineNode[]
+  abandoned: boolean
+  t: (key: string, options?: Record<string, unknown>) => string
+}) {
+  return (
+    <div style={laneWrap} role="list" aria-label="pipeline progress">
+      {nodes.map((node, idx) => {
+        const isLast = idx === nodes.length - 1
+        // The connector that LEAVES this node is solid persona-color only when
+        // this node is done (we've moved past it). Otherwise dashed border.
+        // Abandoned → always neutral dashed.
+        const connectorDone = !abandoned && node.stage === 'done'
+        return (
+          <PipelineNodeView
+            key={node.id}
+            node={node}
+            t={t}
+            isLast={isLast}
+            connectorDone={connectorDone}
+            abandoned={abandoned}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+function PipelineNodeView({
+  node,
+  t,
+  isLast,
+  connectorDone,
+  abandoned,
+}: {
+  node: PipelineNode
+  t: (key: string, options?: Record<string, unknown>) => string
+  isLast: boolean
+  connectorDone: boolean
+  abandoned: boolean
+}) {
+  const { id, label, color, stage, qaMeta } = node
+  const isUser = id === 'user'
+  const isDone = stage === 'done'
+  const isCurrent = stage === 'current'
+  const isBlocked = stage === 'blocked'
+  // §4.b #3/#6: state label shown on current/blocked only; done & upcoming quiet.
+  const showStateLabel = isCurrent || isBlocked
+  const ringColor = isBlocked ? STATUS_BLOCKED_COLOR : color
+
+  // §4.b #2: 8px dot. filled persona color for done/current; filled blocked
+  // color for blocked; outline empty circle for upcoming. current/blocked add
+  // a 2px ring (color-mix 40%) — replaces the baseline-skewing underline.
+  let dotStyle: React.CSSProperties
+  if (abandoned) {
+    dotStyle = {
+      ...laneDot,
+      background: 'transparent',
+      border: '1.5px solid var(--text-disabled, #3A3A3A)',
+    }
+  } else if (isDone || isCurrent) {
+    dotStyle = { ...laneDot, background: color, border: `1px solid ${color}` }
+  } else if (isBlocked) {
+    dotStyle = { ...laneDot, background: STATUS_BLOCKED_COLOR, border: `1px solid ${STATUS_BLOCKED_COLOR}` }
+  } else {
+    dotStyle = { ...laneDot, background: 'transparent', border: '1.5px solid var(--border-default, #2A2A2A)' }
+  }
+  if (!abandoned && (isCurrent || isBlocked)) {
+    dotStyle.boxShadow = `0 0 0 2px color-mix(in oklab, ${ringColor} 40%, transparent)`
+  }
+
+  // §4.b #3: persona name — current semibold + emphasis; blocked semibold +
+  // primary; done secondary medium; upcoming faint regular. (Protected literals.)
+  const nameStyle: React.CSSProperties = {
+    ...laneName,
+    color: abandoned
+      ? 'var(--text-disabled, #3A3A3A)'
+      : isCurrent
+        ? 'var(--text-emphasis, #F0F0F0)'
+        : isBlocked
+          ? 'var(--text-primary, #E8E8EA)'
+          : isDone
+            ? 'var(--text-secondary, #C8C8CC)'
+            : 'var(--text-faint, #505050)',
+    fontWeight: isCurrent || isBlocked ? 600 : isDone ? 500 : 400,
+  }
+
+  const stateStyle: React.CSSProperties = {
+    ...laneState,
+    color: isBlocked
+      ? STATUS_BLOCKED_COLOR
+      : 'var(--text-secondary, #A0A0A0)',
+  }
+
+  // qa micro-meta folds into the state-label slot of the qa node.
+  const stateText = showStateLabel ? t(STAGE_LABEL_KEY[stage]) : undefined
+  const ariaState = abandoned ? 'abandoned' : stage
+
+  // §4.c: the user node is a human-reviewer stage — render a lucide icon in a
+  // neutral accent (NOT a --persona-* hue), keeping the same blink convergence.
+  // UserCheck for current/done, User for upcoming/abandoned.
+  let marker: React.ReactNode
+  if (isUser) {
+    // Neutral accent — NOT a --persona-* hue. The project --accent currently
+    // resolves to the po hue (#8B5CF6), so we use the --text-emphasis tone for
+    // the current state to keep the user node visually distinct from personas
+    // (§4.c #2: persona hue must not be reused for the human-reviewer node).
+    const userColor = abandoned
+      ? 'var(--text-disabled, #3A3A3A)'
+      : isCurrent
+        ? 'var(--text-emphasis, #F0F0F0)'
+        : isDone
+          ? 'var(--text-secondary, #C8C8CC)'
+          : 'var(--border-default, #2A2A2A)'
+    const UserIcon = (isCurrent || isDone) && !abandoned ? UserCheck : User
+    marker = (
+      <span
+        style={{ ...laneIcon, color: userColor }}
+        className={isCurrent && !abandoned ? 'pdt-persona-blink' : undefined}
+        aria-label={`${label} ${ariaState}`}
+      >
+        <UserIcon size={14} strokeWidth={2} />
+      </span>
+    )
+  } else {
+    marker = (
+      <span
+        style={dotStyle}
+        className={isCurrent && !abandoned ? 'pdt-persona-blink' : undefined}
+        aria-label={`${label} ${ariaState}`}
+      />
+    )
+  }
 
   return (
-    <div style={{
-      ...personaCard,
-      borderColor: isActive ? '#2A2A2A' : '#1A1A1A',
-    }}>
-      <div style={pTop}>
+    <>
+      <div style={laneNode} role="listitem">
+        {marker}
+        <span style={nameStyle}>{label}</span>
+        {stateText && <span style={stateStyle}>{stateText}</span>}
+        {qaMeta && <span style={qaMicro}>{qaMeta}</span>}
+      </div>
+      {!isLast && (
         <span
           style={{
-            ...pDot,
-            background: isOff ? '#707070' : color,
-            opacity: isOff ? 0.5 : 1,
-            // blink handled via className
+            ...laneConnector,
+            ...(connectorDone
+              ? { borderTop: `1px solid ${color}` }
+              : { borderTop: '1px dashed var(--border-default, #2A2A2A)' }),
           }}
-          className={isActive ? 'pdt-persona-blink' : undefined}
+          aria-hidden="true"
         />
-        <span style={{
-          ...pName,
-          color: isActive ? '#F0F0F0' : isOff ? '#A0A0A0' : '#E8E8EA',
-          fontWeight: isActive ? 600 : 500,
-        }}>
-          {label}
-        </span>
-      </div>
-      <span style={{
-        ...pState,
-        color: isActive ? color : isOff ? '#505050' : '#A0A0A0',
-      }}>
-        {stateLabel}
-      </span>
-    </div>
+      )}
+    </>
   )
 }
 
@@ -683,89 +823,124 @@ const dpRo: React.CSSProperties = {
   letterSpacing: '0.02em',
 }
 
-const dpMeta: React.CSSProperties = {
+// Pipeline lane — single horizontal progress row (po → designer → developer → qa)
+const laneWrap: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
-  gap: 16,
-  flexWrap: 'wrap',
-  fontSize: 12,
-  color: '#A0A0A0',
-  letterSpacing: '0.02em',
-}
-
-const dpKey: React.CSSProperties = {
-  color: '#707070',
-  marginRight: 6,
-}
-
-const dpVal: React.CSSProperties = {
-  color: '#C8C8CC',
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-}
-
-// Persona rail — 4-column grid (§8.6 PersonaPresenceBar)
-const railGrid: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(4, 1fr)',
-  gap: 8,
+  alignItems: 'flex-start',
+  gap: 4,
   paddingTop: 12,
   borderTop: '1px solid #1A1A1A',
 }
 
-const personaCard: React.CSSProperties = {
+const laneNode: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  alignItems: 'flex-start',
-  gap: 4,
-  padding: '8px 10px',
-  borderRadius: 6,
-  background: '#0A0A0A',
-  border: '1px solid #1A1A1A',
-}
-
-const pTop: React.CSSProperties = {
-  display: 'flex',
   alignItems: 'center',
-  gap: 8,
+  gap: 4,
+  flexShrink: 0,
+  minWidth: 64,
 }
 
-const pDot: React.CSSProperties = {
-  width: 9,
-  height: 9,
-  borderRadius: '50%',
+const laneDot: React.CSSProperties = {
+  width: 8,
+  height: 8,
+  borderRadius: 'var(--radius-full, 9999px)',
+  boxSizing: 'border-box',
   flexShrink: 0,
 }
 
-const pName: React.CSSProperties = {
-  fontSize: 14,
-  color: '#E8E8EA',
+// §4.c: user-node marker — lucide icon box. Sits in the same dot-row slot as the
+// 8px persona dots (8px tall, icon overflows visible) so the connector that
+// enters the user node stays aligned to the marker row.
+const laneIcon: React.CSSProperties = {
+  width: 14,
+  height: 8,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
 }
 
-const pState: React.CSSProperties = {
-  fontSize: 12,
+// label recipe
+const laneName: React.CSSProperties = {
+  fontSize: 13,
+  lineHeight: 1.3,
+}
+
+// metadata recipe
+const laneState: React.CSSProperties = {
+  fontSize: 11,
   letterSpacing: '0.02em',
-  paddingLeft: 17,  // 9px dot + 8px gap
 }
 
-// Next-action line (derived, informational — NO action button)
+// qa_status micro-label, attached under qa node only
+const qaMicro: React.CSSProperties = {
+  fontSize: 10,
+  letterSpacing: '0.02em',
+  color: 'var(--text-muted, #707070)',
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  textAlign: 'center',
+}
+
+// connector between nodes — aligned to the dot row (dot vertical center), not
+// the label row, so node height differences never bend the line (§4.b #2).
+// laneWrap aligns children flex-start; dot is 8px → its center is 4px down.
+const laneConnector: React.CSSProperties = {
+  flex: 1,
+  alignSelf: 'flex-start',
+  marginTop: 4,  // align with 8px dot center
+  minWidth: 16,
+}
+
+// Next-action line (derived, informational — NO action button).
+// §4.b #5: space-between — left = arrow + Next + derived text, right = status pill.
 const nextActionRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 8,
+  justifyContent: 'space-between',
+  gap: 12,
   paddingTop: 12,
   borderTop: '1px solid #1A1A1A',
 }
 
-const naText: React.CSSProperties = {
-  fontSize: 14,
-  color: '#E8E8EA',
-  lineHeight: 1.5,
+const naLeft: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  minWidth: 0,
 }
 
-const naTag: React.CSSProperties = {
+// "Next —" metadata recipe, muted
+const naNextLabel: React.CSSProperties = {
+  fontSize: 11,
+  letterSpacing: '0.02em',
+  color: 'var(--text-muted, #707070)',
+  flexShrink: 0,
+}
+
+// derived next-action text — label recipe, secondary, medium
+const naText: React.CSSProperties = {
+  fontSize: 14,
+  color: 'var(--text-secondary, #C8C8CC)',
+  fontWeight: 500,
+  lineHeight: 1.5,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+// neutral status pill (§8.2 neutral variant): subpanel bg, muted, uppercase
+const naStatusPill: React.CSSProperties = {
+  flexShrink: 0,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  fontSize: 12,
-  color: '#A0A0A0',
+  fontSize: 10,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+  color: 'var(--text-muted, #707070)',
+  background: 'var(--surface-subpanel, #1F1F1F)',
+  border: '1px solid #242424',
+  borderRadius: 20,
+  padding: '2px 10px',
 }
 
 // Loading / error shared states

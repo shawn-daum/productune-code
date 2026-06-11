@@ -8,6 +8,12 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke('shell:openExternal', url),
 
+  // T-PATCH-106: open a local absolute path in the OS default app (fallback for
+  // PO-chat absolute links that can't render in-pane). Main expands `~` and
+  // rejects non-absolute paths.
+  openPath: (p: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('shell:openPath', p),
+
   // ── Onboarding ──────────────────────────────────────────────────────────────
   checkEnv: (): Promise<boolean> =>
     ipcRenderer.invoke('onboarding:checkEnv'),
@@ -66,6 +72,25 @@ contextBridge.exposeInMainWorld('api', {
   openFilePicker: (): Promise<string[]> =>
     ipcRenderer.invoke('dialog:openFilePicker'),
 
+  // ── Clipboard image attachment (T-PATCH-098) ─────────────────────────────────
+  // Persist pasted clipboard image bytes under <projectDir>/.productune/attachments/
+  // and return the absolute path. Reuses the existing "attachment = path" flow
+  // (paperclip/openFilePicker) so PO receives the image as a `## Attached files` path.
+  saveAttachmentImage: (args: {
+    projectDir: string
+    bytes: number[]
+    ext?: string
+  }): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('attachments:saveImage', args),
+
+  // T-PATCH-098 §4.c L2: unlink consumed temp-image paths AFTER poSendMessage
+  // resolves (PO has read them). Main applies a temp-root containment guard, so
+  // non-temp (paperclip-picked) originals are never deleted even if passed in.
+  cleanupAttachments: (args: {
+    paths: string[]
+  }): Promise<{ ok: boolean; removed: number }> =>
+    ipcRenderer.invoke('attachments:cleanup', args),
+
   migrateLegacy: (opts: { projectDir: string; slug?: string }): Promise<{ projectDir: string; config: { slug: string; created_at: string; version: string }; migrated: boolean }> =>
     ipcRenderer.invoke('project:migrateLegacy', opts),
 
@@ -75,6 +100,10 @@ contextBridge.exposeInMainWorld('api', {
   // T-PATCH-050: recents API — covers all open methods
   listRecents: (): Promise<Array<{ slug: string; projectDir: string; openedAt: string }>> =>
     ipcRenderer.invoke('recents:list'),
+
+  // T-PATCH-114: batch recents with meta — returns all entries incl. exists:false
+  listRecentsWithMeta: (): Promise<Array<{ slug: string; projectDir: string; openedAt: string; exists: boolean; phase: number | null; version: string | null }>> =>
+    ipcRenderer.invoke('recents:listWithMeta'),
 
   addRecent: (opts: { projectDir: string; slug: string }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('recents:add', opts),
@@ -150,8 +179,9 @@ contextBridge.exposeInMainWorld('api', {
   ticketsRead: (
     projectDir: string,
     ticketId: string,
+    version?: string,
   ): Promise<{ frontmatter: Record<string, unknown>; body: string; krBody: string | null } | null> =>
-    ipcRenderer.invoke('tickets:read', projectDir, ticketId),
+    ipcRenderer.invoke('tickets:read', projectDir, ticketId, version),
 
   /** Subscribe to ticket fs-watch change events (debounced 500ms). */
   onTicketsChanged: (cb: (projectDir: string) => void) => {
@@ -265,13 +295,53 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:onAskUserQuestion', listener)
   },
 
+  // ── Promotion candidate card emit (T-PATCH-100) ────────────────────────────
+  /** Subscribe to PO promotion-candidate emits. Returns an unsubscribe fn.
+   *  Single-subscriber (mirrors poOnAskUserQuestion) — poEvents.register binds once. */
+  poOnPromotionCandidate: (
+    cb: (
+      msgId: string,
+      payload: {
+        candidateSummary: string
+        targetTier: string
+        rationale: string
+        sourceTicketId: string
+        origin?: 'user-requested' | 'auto'
+      },
+    ) => void,
+  ) => {
+    const listener = (_e: Electron.IpcRendererEvent, msgId: string, payload: any) =>
+      cb(msgId, payload)
+    ipcRenderer.removeAllListeners('po:onPromotionCandidate')  // single-subscriber
+    ipcRenderer.on('po:onPromotionCandidate', listener)
+    return () => ipcRenderer.removeListener('po:onPromotionCandidate', listener)
+  },
+
   poOnAnnounce: (
-    cb: (msgId: string, payload: { level: 'system' | 'tool' | 'error'; text: string }) => void,
+    cb: (
+      msgId: string,
+      payload: {
+        level: 'system' | 'tool' | 'error' | 'info'
+        text: string
+        kind?: 'turn-aborted' | 'exit-error'
+        code?: number
+        // T-PATCH-108: per-tool detail — only set for level:'tool'.
+        toolName?: string
+        toolInput?: unknown
+      },
+    ) => void,
   ) => {
     const listener = (
       _e: Electron.IpcRendererEvent,
       msgId: string,
-      payload: { level: 'system' | 'tool' | 'error'; text: string },
+      payload: {
+        level: 'system' | 'tool' | 'error' | 'info'
+        text: string
+        kind?: 'turn-aborted' | 'exit-error'
+        code?: number
+        toolName?: string
+        toolInput?: unknown
+      },
     ) => cb(msgId, payload)
     ipcRenderer.removeAllListeners('po:onAnnounce')  // T-PATCH-039: single-subscriber
     ipcRenderer.on('po:onAnnounce', listener)
@@ -913,9 +983,21 @@ contextBridge.exposeInMainWorld('api', {
   }>> =>
     ipcRenderer.invoke('artifacts:listScoped', projectDir, currentVersion),
 
+  /** List artifacts as a version tree (T-PATCH-107): { current, past[] },
+   *  each version split into flat (root) and archived (manifest ∪ archive/ scan). */
+  artifactsListTree: (
+    projectDir: string,
+    currentVersion: string | null,
+    versionIds: string[],
+  ): Promise<{
+    current: { version: string; flat: any[]; archived: any[] }
+    past: Array<{ version: string; flat: any[]; archived: any[] }>
+  }> =>
+    ipcRenderer.invoke('artifacts:listTree', projectDir, currentVersion, versionIds),
+
   /** Read artifact file content as UTF-8 string.
    *  projectDir is required for the path-traversal guard on the main-process side. */
-  artifactsReadFile: (projectDir: string, absPath: string): Promise<string> =>
+  artifactsReadFile: (projectDir: string, absPath: string): Promise<string | null> =>
     ipcRenderer.invoke('artifacts:readFile', projectDir, absPath),
 
   // ── Explorer content search (T-024) ──────────────────────────────────────────

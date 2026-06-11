@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, shell, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, shell, Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
 import path from 'path'
+import fs from 'fs'
 
 // ── IPC module imports ────────────────────────────────────────────────────────
 import { register as registerOnboarding } from './ipc/onboarding'
@@ -21,6 +22,7 @@ import { register as registerDoctrine }   from './ipc/doctrine'
 import { register as registerHtml }       from './ipc/html'
 import { register as registerBrowserFind } from './ipc/browserFind'
 import { register as registerProjectEnv }  from './ipc/projectEnv'
+import { register as registerAttachments } from './ipc/attachments'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { abortActiveTurn, isPoRunning } from './po-runner'
 import { getCloseToTray, getLaunchAtLogin, setLaunchAtLogin, getZoomFactor } from '@productune/core'
@@ -64,6 +66,27 @@ registerDoctrine()
 registerHtml()
 registerBrowserFind()
 registerProjectEnv()
+registerAttachments()
+
+// ── Brand icon resolution (T-PATCH-109) ───────────────────────────────────────
+// dev/non-packaged Dock + window icon. __dirname = dist-electron/; the buildResources
+// dir lives at packages/gui/build/, i.e. `../build/` from here. Prefer the 1024² PNG
+// master (build/icon.png), fall back to the existing build/icon.icns. fs.existsSync
+// guards mean a missing asset never throws — BrowserWindow just uses the default
+// Electron icon. Packaged .app/.dmg icon is still owned by electron-builder's
+// mac.icon (build/icon.icns); this runtime option is the dev/Dock supplement only.
+function resolveAppIcon(): string | undefined {
+  const candidates = [
+    path.join(__dirname, '../build/icon.png'),
+    path.join(__dirname, '../build/icon.icns'),
+  ]
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return p
+    } catch { /* fs error — skip this candidate, fall through to default icon */ }
+  }
+  return undefined
+}
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
@@ -121,11 +144,15 @@ async function handleQuitRequest(): Promise<void> {
 }
 
 function createWindow(): BrowserWindow {
+  // T-PATCH-109: resolve brand icon if present; omit the key entirely when absent
+  // so Electron keeps its default icon (never throws on a missing asset).
+  const appIcon = resolveAppIcon()
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1024,
     minHeight: 680,
+    ...(appIcon ? { icon: appIcon } : {}),
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       contextIsolation: true,
@@ -345,6 +372,21 @@ function sendToFocusedData(channel: string, data: unknown): void {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(buildAppMenu())
+
+  // T-PATCH-109 §4.b QA-fix: macOS ignores BrowserWindow.icon for the Dock —
+  // the Dock tile must be set explicitly via app.dock.setIcon. resolveAppIcon()
+  // reuses the existsSync guard so a missing asset never throws; createFromPath
+  // returns an empty image on a bad path, so we skip empty results too. Packaged
+  // .app/.dmg Dock icon is still owned by electron-builder's mac.icon — this is the
+  // dev/non-packaged Dock supplement (win/linux keep using BrowserWindow.icon).
+  if (process.platform === 'darwin') {
+    const iconPath = resolveAppIcon()
+    if (iconPath) {
+      const dockImage = nativeImage.createFromPath(iconPath)
+      if (!dockImage.isEmpty()) app.dock?.setIcon(dockImage)
+    }
+  }
+
   startUsageWatch()
   createWindow()
 

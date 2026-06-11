@@ -14,7 +14,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo 'core: no tests configured yet'",
+    "test": "node test/schema-v-guard.mjs && node test/init-parity.mjs",
     "lint": "echo 'core: no lint configured yet'"
   },
   "devDependencies": {

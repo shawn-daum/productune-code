@@ -10,7 +10,7 @@
  * UI: 560×60vh dialog at top:18vh, design-system R4 tokens only.
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search, FileText, TicketCheck, User, Sparkles, LayoutPanelLeft, Server, Package } from 'lucide-react'
 
@@ -329,29 +329,39 @@ function SectionGroup({ category, rows, flatOffset, activeIdx, onMouseEnterRow, 
 }
 
 interface RestingStateProps {
-  items: QuickOpenItem[]
+  recentItems: QuickOpenItem[]
+  activeIdx: number
+  onMouseEnterRow: (idx: number) => void
+  onClickRow: (item: QuickOpenItem) => void
 }
 
-function RestingState({ items }: RestingStateProps) {
+function RestingState({ recentItems, activeIdx, onMouseEnterRow, onClickRow }: RestingStateProps) {
   const { t } = useTranslation()
-  const recentIds = loadRecentIds()
-  const recentItems = recentIds
-    .map((rid) => items.find((it) => it.id === rid))
-    .filter((it): it is QuickOpenItem => it != null)
-    .slice(0, MAX_RECENT)
 
   return (
     <div style={{ padding: '8px 0 4px' }}>
       {recentItems.length > 0 && (
         <div>
-          {recentItems.map((item) => (
-            <div key={item.id} style={restingRowStyle}>
-              <ItemIcon source={item.source} active={false} />
-              <span style={{ flex: 1, fontSize: 12, color: '#C8C8CC', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {item.label}
-              </span>
-            </div>
-          ))}
+          {recentItems.map((item, i) => {
+            const active = i === activeIdx
+            return (
+              <div
+                key={item.id}
+                data-idx={i}
+                role="option"
+                aria-selected={active}
+                style={{ ...restingRowStyle, ...restingRowActiveStyle(active) }}
+                onMouseEnter={() => onMouseEnterRow(i)}
+                onClick={() => onClickRow(item)}
+              >
+                <ItemIcon source={item.source} active={active} />
+                <span style={{ flex: 1, fontSize: 12, color: active ? '#F0F0F0' : '#C8C8CC', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {item.label}
+                </span>
+                {active && <span style={enterHintStyle}>↵</span>}
+              </div>
+            )
+          })}
         </div>
       )}
       <div style={legendStyle}>
@@ -425,7 +435,19 @@ export default function QuickOpenPalette({ items, onClose, onPick }: Props) {
     ? items.filter((i) => i.category === filteredCategory)
     : items
   const groups = query ? groupResults(scopedItems, strippedQuery) : {}
-  const flatRows = flattenRows(groups)
+
+  // Resting (empty-query) state shows the recent list. Build it from the same
+  // source RestingState renders so flatRows[activeIdx] and the rendered row
+  // always point at the same item — enabling arrow-nav + Enter at rest.
+  const recentItems = useMemo(() => {
+    if (query) return []
+    return loadRecentIds()
+      .map((rid) => items.find((it) => it.id === rid))
+      .filter((it): it is QuickOpenItem => it != null)
+      .slice(0, MAX_RECENT)
+  }, [query, items])
+
+  const flatRows = query ? flattenRows(groups) : recentItems
   const hasAny = flatRows.length > 0
 
   const handlePick = useCallback(
@@ -512,7 +534,12 @@ export default function QuickOpenPalette({ items, onClose, onPick }: Props) {
         {/* Results list */}
         <div ref={listRef} style={listStyle} role="listbox">
           {!query ? (
-            <RestingState items={items} />
+            <RestingState
+              recentItems={recentItems}
+              activeIdx={activeIdx}
+              onMouseEnterRow={(idx) => setActiveIdx(idx)}
+              onClickRow={handlePick}
+            />
           ) : !hasAny ? (
             <NoMatchState />
           ) : (
@@ -745,6 +772,18 @@ const restingRowStyle: React.CSSProperties = {
   padding: '4px 16px',
   color: '#C8C8CC',
   fontSize: 12,
+  cursor: 'pointer',
+  boxSizing: 'border-box',
+}
+
+function restingRowActiveStyle(active: boolean): React.CSSProperties {
+  return {
+    background: active ? '#1A1A1A' : 'transparent',
+    borderLeft: active ? '2px solid #8B5CF6' : '2px solid transparent',
+    outline: active ? '2px solid rgba(139,92,246,0.25)' : 'none',
+    outlineOffset: -2,
+    borderRadius: active ? 2 : 0,
+  }
 }
 
 const legendStyle: React.CSSProperties = {

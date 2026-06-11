@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Zap } from 'lucide-react'
+import BrandMark from '../components/BrandMark'
 import i18next from '../i18n'
 import type {
   Engine, UiLang, WizardStep, EngineStatus,
@@ -141,7 +141,7 @@ export default function OnboardingWizard({ onDone }: Props) {
       <div style={card}>
         {/* Header */}
         <div style={header}>
-          <Zap size={20} strokeWidth={2.25} color="#8B5CF6" style={{ marginRight: 10 }} />
+          <BrandMark size={20} style={{ marginRight: 10 }} />
           <span style={{ fontWeight: 700, fontSize: 16 }}>{t('onboarding.title')}</span>
           <div style={stepIndicator}>
             {([0, 1, 2, 3] as const).map(s => (

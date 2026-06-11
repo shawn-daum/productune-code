@@ -7,7 +7,8 @@
 #   productune                              Spawn `claude --agent pdt-po`
 #   productune gc                           (alias: --cleanup) audit productune/* worktrees, dry-run
 #   productune gc -y                        (alias: --auto, --yes) audit, then remove safe ones
-#   productune init                         Scaffold project: .productune/po-state.json, docs/pdt-*/, .gitignore
+#   productune init                         Scaffold project: .productune/config.json, .claude/settings.local.json,
+#                                           docs/po|designer|developer|qa/, .gitignore (union block)
 #   productune onboard                      Run install.sh — wire agents, hooks, PATH
 #   productune update                       git pull --ff-only + install.sh + migration notice
 #   productune uninstall                    Remove all installed artifacts
@@ -158,7 +159,7 @@ case "${1:-}" in
 
   ${B}COMMANDS${R}
     (default)          Start a PO session (claude --agent pdt-po)
-    init               Scaffold project — .productune/, docs/pdt-*/, .gitignore
+    init               Scaffold project — config.json, .claude/settings.local.json, docs/po|designer|developer|qa/, .gitignore
     onboard            Run install — wire agents, hooks, PATH
     update             git pull + reinstall + migration notice (기존 사용자 업데이트)
     uninstall          Remove all installed artifacts
@@ -285,67 +286,28 @@ case "${1:-}" in
 
     say "initializing productune project at $PROJECT_ROOT"
 
-    # 1) .productune/po-state.json skeleton
-    mkdir -p "$PROJECT_ROOT/.productune"
-    STATE="$PROJECT_ROOT/.productune/po-state.json"
-    if [ ! -e "$STATE" ]; then
-      cat > "$STATE" <<'EOF'
-{
-  "schema_version": 1,
-  "current_task": null,
-  "past_tickets": [],
-  "recent_turns": [],
-  "persona_session_meta": {}
-}
-EOF
-      say "created: .productune/po-state.json"
-    else
-      say "kept: .productune/po-state.json (already exists)"
-    fi
+    # Resolve scripts dir + core root for the shared node entry.
+    SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+    DOCTRINE_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
 
-    # 2) docs/pdt-*/ project-tier memory dirs (with .gitkeep so empty dirs are committed)
-    for persona in pdt-designer pdt-developer pdt-qa; do
-      DIR="$PROJECT_ROOT/docs/$persona"
-      if [ ! -d "$DIR" ]; then
-        mkdir -p "$DIR"
-        : > "$DIR/.gitkeep"
-        say "created: docs/$persona/"
-      else
-        say "kept: docs/$persona/ (already exists)"
-      fi
-    done
+    # Guard: node must be available (guaranteed by install.sh preflight in normal
+    # installs, but provide a clear error just in case).
+    command -v node >/dev/null 2>&1 || die "node not found — install Node.js (https://nodejs.org) and retry"
 
-    # 3) .gitignore — productune-managed lock + transient files
-    GITIGNORE="$PROJECT_ROOT/.gitignore"
-    GITIGNORE_BLOCK=$'# productune\n.productune/po.lock\n.productune/logs/\n'
-    if [ -f "$GITIGNORE" ]; then
-      if ! grep -qE '^\.productune/po\.lock$' "$GITIGNORE"; then
-        printf '\n%s' "$GITIGNORE_BLOCK" >> "$GITIGNORE"
-        say "appended productune entries to .gitignore"
-      else
-        say "kept: .gitignore (already has productune entries)"
-      fi
-    else
-      printf '%s' "$GITIGNORE_BLOCK" > "$GITIGNORE"
-      say "created: .gitignore (productune entries)"
-    fi
-
-    # User-global doctrine bootstrap (install/update ~/.productune/ system files).
-    # Skipped when --skip-doctrine is passed (CI / custom doctrine environments).
-    if [ "$SKIP_DOCTRINE" = 1 ]; then
-      warn "doctrine bootstrap skipped (--skip-doctrine)"
-    else
-      SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
-      DOCTRINE_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
-      # shellcheck source=lib/bootstrap-doctrine.sh
-      source "$SCRIPTS_DIR/lib/bootstrap-doctrine.sh"
-      bootstrap_user_global_doctrine "$DOCTRINE_ROOT"
-    fi
+    # Single shared entry — implements config.json, .claude/settings.local.json,
+    # persona skeleton (docs/po|designer|developer|qa/), union .gitignore block,
+    # and user-global doctrine mirror. No po-state.json (lifecycle-owned, AC-5).
+    node "$SCRIPTS_DIR/lib/init-project.mjs" \
+      --slug "$(basename "$PROJECT_ROOT")" \
+      --project-dir "$PROJECT_ROOT" \
+      --core-root "$DOCTRINE_ROOT" \
+      ${SKIP_DOCTRINE:+--skip-doctrine}
 
     echo
     say "ready. Start a session with: productune"
-    say "  • PO state will be written to .productune/po-state.json"
-    say "  • Persona project memory will accumulate in docs/pdt-*/"
+    say "  • Project config: .productune/config.json"
+    say "  • Claude settings: .claude/settings.local.json"
+    say "  • Persona memory: docs/po|designer|developer|qa/"
     exit 0
     ;;
   --cleanup|gc)
@@ -425,6 +387,23 @@ if ! ROOT="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)"; then
 fi
 
 ensure_state "$ROOT"
+
+# AC-7c (T-PATCH-117): lightweight default-mode config guard.
+# If .productune/ exists but config.json is absent, call the shared init entry
+# best-effort — failure is non-fatal (session continues regardless).
+if [ -d "$ROOT/.productune" ] && [ ! -f "$ROOT/.productune/config.json" ]; then
+  _SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+  _CORE_ROOT="$(cd "$_SCRIPTS_DIR/.." && pwd)"
+  if command -v node >/dev/null 2>&1; then
+    node "$_SCRIPTS_DIR/lib/init-project.mjs" \
+      --slug "$(basename "$ROOT")" \
+      --project-dir "$ROOT" \
+      --core-root "$_CORE_ROOT" \
+      --skip-doctrine 2>/dev/null \
+      || warn "config self-heal failed (non-fatal — session continues)"
+  fi
+fi
+
 LOCK="$ROOT/.productune/po.lock"
 
 # 2) Inspect existing lock.

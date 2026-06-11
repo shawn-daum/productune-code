@@ -39,9 +39,13 @@ interface Props {
   previewFindQuery?: string
   previewFindNavRef?: MutableRefObject<((forward: boolean) => void) | null>
   onPreviewFindResult?: (info: { total: number; current: number }) => void
+  // T-PATCH-094: JSON artifact in-tree find bridge
+  jsonFindQuery?: string
+  jsonFindNavRef?: MutableRefObject<((forward: boolean) => void) | null>
+  onJsonFindResult?: (info: { total: number; current: number }) => void
 }
 
-export default function TabContent({ tab, browserFindRef, previewFindQuery, previewFindNavRef, onPreviewFindResult }: Props) {
+export default function TabContent({ tab, browserFindRef, previewFindQuery, previewFindNavRef, onPreviewFindResult, jsonFindQuery, jsonFindNavRef, onJsonFindResult }: Props) {
   switch (tab.type) {
     case 'markdown':       return <MarkdownTab props={tab.props} />
     case 'version-detail': return <VersionDetailTab props={tab.props} />
@@ -62,7 +66,16 @@ export default function TabContent({ tab, browserFindRef, previewFindQuery, prev
     case 'artifact-mermaid':
       return <ArtifactMermaidTab props={tab.props} />
     case 'artifact-json':
-      return <ArtifactJsonTab props={tab.props} />
+      // T-PATCH-094: route the shared FindBar into the JSON tree (key+value find,
+      // auto-expand, CSS Custom Highlight) — same prop contract as 'preview'.
+      return (
+        <ArtifactJsonTab
+          props={tab.props}
+          findQuery={jsonFindQuery}
+          findNavRef={jsonFindNavRef}
+          onFindResult={onJsonFindResult}
+        />
+      )
     case 'ticket-detail':
       return <TicketDetailTab props={tab.props} />
     case 'code-search':

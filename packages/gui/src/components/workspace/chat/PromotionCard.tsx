@@ -41,13 +41,16 @@ export default function PromotionCard({ message }: Props) {
   return <LiveCard message={message} payload={payload} />
 }
 
-// ── Live card ─────────────────────────────────────────────────────────────────
+// ── Shared resolve logic (T-PATCH-097) ─────────────────────────────────────────
+// Single source of the downstream actions (IPC + store patch + system line) so
+// the classic PromotionCard and the question-style PromotionQuestionCard trigger
+// identical effects on approve/reject — only the visual surface differs (AC-5).
 
-type Phase = 'idle' | 'approving' | 'confirming-reject' | 'rejecting'
+export type PromotionPhase = 'idle' | 'approving' | 'confirming-reject' | 'rejecting'
 
-function LiveCard({ message, payload }: { message: Message; payload: PromotionPayload }) {
+export function usePromotionResolve(message: Message, payload: PromotionPayload) {
   const { t } = useTranslation()
-  const [phase, setPhase] = useState<Phase>('idle')
+  const [phase, setPhase] = useState<PromotionPhase>('idle')
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const setMessages = useWorkspace((s) => s.setMessages)
   const project = useWorkspace((s) => s.project)
@@ -112,7 +115,7 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
     }
   }
 
-  const handleApprove = async () => {
+  const approve = async () => {
     if (phase !== 'idle') return
     setPhase('approving')
     await ipcResolve('approved')
@@ -120,21 +123,36 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
     appendSystemLine('approved')
   }
 
-  const handleRejectRequest = () => {
+  const requestReject = () => {
     if (phase !== 'idle') return
     setPhase('confirming-reject')
   }
 
-  const handleRejectConfirm = async () => {
+  const confirmReject = async () => {
     setPhase('rejecting')
     await ipcResolve('rejected')
     resolveInStore('rejected')
     appendSystemLine('rejected')
   }
 
-  const handleRejectCancel = () => {
+  const cancelReject = () => {
     setPhase('idle')
   }
+
+  return { phase, approve, requestReject, confirmReject, cancelReject }
+}
+
+// ── Live card ─────────────────────────────────────────────────────────────────
+
+function LiveCard({ message, payload }: { message: Message; payload: PromotionPayload }) {
+  const { t } = useTranslation()
+  const { phase, approve, requestReject, confirmReject, cancelReject } =
+    usePromotionResolve(message, payload)
+
+  const handleApprove = approve
+  const handleRejectRequest = requestReject
+  const handleRejectConfirm = confirmReject
+  const handleRejectCancel = cancelReject
 
   return (
     <div style={{ paddingLeft: 8, margin: '4px 0' }}>

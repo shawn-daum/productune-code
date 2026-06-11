@@ -169,7 +169,7 @@ function register() {
     return payload.text
   }
 
-  offFns.push(api.poOnAnnounce?.((_msgId: string, payload: { level: string; text: string; kind?: string; code?: number }) => {
+  offFns.push(api.poOnAnnounce?.((_msgId: string, payload: { level: string; text: string; kind?: string; code?: number; toolName?: string; toolInput?: unknown }) => {
     const trace: Message = {
       id: `trace-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       role: 'system',
@@ -177,6 +177,9 @@ function register() {
       text: resolveText(payload),
       // T-PATCH-033: carry level so the renderer can group consecutive `tool` traces.
       traceLevel: payload.level,
+      // T-PATCH-108: carry parsed tool name + raw input for per-tool detail render.
+      toolName: payload.toolName,
+      toolInput: payload.toolInput,
       status: 'done',
       created_at: new Date().toISOString(),
     }
@@ -226,6 +229,51 @@ function register() {
         // Persist now (the onDone prune only walks turnSegIds, which excludes
         // this distinct card id) so the card survives reload — the resolved
         // chip later re-renders from payload.resolved patched by the answer IPC.
+        const proj = useWorkspace.getState().project
+        if (proj) {
+          void api.chatAppendMessage(proj.projectDir, card).catch(() => {})
+        }
+      },
+    ),
+  )
+
+  // ── po:onPromotionCandidate — inline promotion card (T-PATCH-100) ────────
+  // PO emitted a promotion candidate. Append a 'promotion-candidate' Message that
+  // MessageBubble forks to PromotionQuestionCard (origin === 'user-requested') or
+  // the classic PromotionCard (origin 'auto'/absent — 097 branch). Treat it like
+  // a tool-trace boundary (mirrors onAskUserQuestion): seal the active text
+  // segment so the card lands chronologically AFTER preceding prose. Distinct id
+  // `promo-<msgId>` so it never collides with turnSegIds (onDone prune skips it).
+  offFns.push(
+    api.poOnPromotionCandidate?.(
+      (
+        msgId: string,
+        payload: {
+          candidateSummary: string
+          targetTier: string
+          rationale: string
+          sourceTicketId: string
+          origin?: 'user-requested' | 'auto'
+        },
+      ) => {
+        // Unique per candidate: a single turn may emit multiple candidates that
+        // all share `msgId`, so a bare `promo-${msgId}` would collide (dup React
+        // keys + ambiguous resolvePromotion patch). Suffix a short nonce.
+        const card: Message = {
+          id: `promo-${msgId}-${Math.random().toString(36).slice(2, 7)}`,
+          role: 'assistant',
+          kind: 'promotion-candidate',
+          text: '',
+          status: 'done',
+          payload,
+          created_at: new Date().toISOString(),
+        }
+        useWorkspace.setState((s) => ({ messages: [...s.messages, card] }))
+        // Seal so trailing tokens open a fresh segment below the card.
+        sealActiveSegment()
+        // Persist now (onDone prune only walks turnSegIds, excluding this id) so
+        // the card survives reload — resolved card later re-renders from
+        // payload.resolved patched by chat:resolvePromotion.
         const proj = useWorkspace.getState().project
         if (proj) {
           void api.chatAppendMessage(proj.projectDir, card).catch(() => {})

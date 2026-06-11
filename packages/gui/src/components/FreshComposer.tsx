@@ -20,6 +20,11 @@ import { useTranslation } from 'react-i18next'
 import { SendHorizonal } from 'lucide-react'
 import type { Message } from '../lib/types'
 import type { Project } from '../lib/types'
+// T-PATCH-109: brand logo for the first-start screen. Real asset is a
+// user-provided dependency — drop the final file at src/assets/logo.svg
+// (PNG fallback: src/assets/logo.png) to replace the placeholder with NO
+// code change. A missing/broken asset is hidden via onError (no broken glyph).
+import logoUrl from '../assets/logo.png'
 
 interface Props {
   project: Project
@@ -87,6 +92,16 @@ export default function FreshComposer({ project, onConfirm }: Props) {
   return (
     <div style={container}>
       <div style={content}>
+        {/* ── Brand logo (T-PATCH-109) ───────────────────────────────────── */}
+        {/* onError hides the element so a missing/broken asset never shows a
+            broken-image glyph; layout/spacing stay intact when absent. */}
+        <img
+          src={logoUrl}
+          alt="productune"
+          style={logoStyle}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+        />
+
         {/* ── Hero copy ──────────────────────────────────────────────────── */}
         <h1 style={headline}>{t('workspace.freshComposer.headline')}</h1>
         <p style={supporting}>{t('workspace.freshComposer.supporting')}</p>
@@ -174,6 +189,17 @@ const content: React.CSSProperties = {
   width: '100%',
   maxWidth: 680,
   padding: '0 24px',
+}
+
+// T-PATCH-109 (AC-4): centered, dark-bg friendly, no background/border box.
+//   height 40 / width auto / objectFit contain / maxWidth 200 / marginBottom 20.
+const logoStyle: React.CSSProperties = {
+  height: 40,
+  width: 'auto',
+  maxWidth: 200,
+  objectFit: 'contain',
+  display: 'block',
+  marginBottom: 20,
 }
 
 const headline: React.CSSProperties = {

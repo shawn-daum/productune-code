@@ -1,5 +1,12 @@
-export { initProject, bootstrapClaudeSettings, bootstrapUserGlobalDoctrine } from './init'
-export type { ProjectConfig, InitOptions } from './init'
+export {
+  initProject,
+  bootstrapClaudeSettings,
+  bootstrapUserGlobalDoctrine,
+  bootstrapPersonaMemory,
+  latestSchemaV,
+  FALLBACK_LATEST_SCHEMA_V,
+} from './init'
+export type { ProjectConfig, InitOptions, SurfaceConfig } from './init'
 
 export { startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo } from './github'
 export type { DeviceCodeResponse, GitHubCredentials } from './github'

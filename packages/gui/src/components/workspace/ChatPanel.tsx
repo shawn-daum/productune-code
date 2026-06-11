@@ -22,8 +22,6 @@ import { Paperclip, Command, CornerDownLeft, X, Square } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message, AskUserQuestionPayload } from '../../lib/types'
-import { PHASE_NAMES } from '../../lib/types'
-import PhaseBreadcrumb from './PhaseBreadcrumb'
 import PersonaPresenceBar from './PersonaPresenceBar'
 import MessageBubble from './chat/MessageBubble'
 import ToolUseGroup from './chat/ToolUseGroup'
@@ -125,8 +123,14 @@ export default function ChatPanel() {
     if (streaming || !project) return
 
     // Compose body — attached files prefixed as a small block PO/claude can read.
-    const filesBlock = attachedFiles.length > 0
-      ? `## Attached files\n${attachedFiles.map((p) => `- ${p}`).join('\n')}\n\n`
+    // T-PATCH-098 §4.d §5: pasted images get a numbered `#N → path` map so PO can
+    // deref the inline `[Image #N]` tokens left in the prose; paperclip files keep
+    // the plain `- path` form. Text-only block — no PO/runner format change.
+    const imageLines = attachments.map((a) => `- #${a.seq} → ${a.path}`)
+    const otherLines = otherFiles.map((p) => `- ${p}`)
+    const allLines = [...imageLines, ...otherLines]
+    const filesBlock = allLines.length > 0
+      ? `## Attached files\n${allLines.join('\n')}\n\n`
       : ''
     const text = `${filesBlock}${trimmed}`
 
@@ -138,9 +142,22 @@ export default function ChatPanel() {
       status: 'done',
       created_at: new Date().toISOString(),
     }
+    // T-PATCH-098 §4.c: snapshot the attachment paths being sent BEFORE we clear
+    // state, so the post-send L2 cleanup can target exactly these paths.
+    const sentPaths = attachedFiles
+
     appendMessage(userMsg)
     setDraft('')
-    setAttachedFiles([])
+    setOtherFiles([])
+    // T-PATCH-098 §4.c.1.c: send → revoke ALL preview URLs before clearing the
+    // attachments (memory cleanup; independent of the disk-file L2 cleanup below).
+    attachmentsRef.current.forEach((a) => {
+      if (a.previewUrl) URL.revokeObjectURL(a.previewUrl)
+    })
+    setAttachments([])
+    // §4.d §1: send empties draft + attachments → reset the token counter so the
+    // next message starts a fresh `#1` number space.
+    nextImageSeqRef.current = 1
     setAutoScrollLocked(false)
 
     const api = (window as any).api
@@ -157,6 +174,14 @@ export default function ChatPanel() {
         text,
         resume: claudeSessionId,
       })
+      // T-PATCH-098 §4.c.2.c L2: PO has now consumed the `## Attached files`
+      // paths. Hand ALL sent paths to main, which unlinks only those under the
+      // temp `productune/pasted` root (paperclip originals are containment-
+      // skipped). Triggered from the RENDERER (not ipc/po.ts) per T-PATCH-100
+      // ownership. Never deletes before PO read — sequenced after resolve.
+      if (sentPaths.length > 0) {
+        try { await api.cleanupAttachments({ paths: sentPaths }) } catch { /* best-effort */ }
+      }
     } catch (e) {
       setStreaming(false)
       useWorkspace.getState().setInFlightMsgId(null)
@@ -167,8 +192,83 @@ export default function ChatPanel() {
   // has an early-return guard `if (streaming || !project) return` (line ~125 above).
   // So the keyboard path is blocked during streaming — no new code needed here.
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // IME composition — don't capture Enter mid-Korean composition.
+    // IME composition — don't capture Enter (or Backspace) mid-Korean composition.
     if ((e.nativeEvent as any).isComposing) return
+
+    // T-PATCH-098 §4.e §1: atomic token deletion. When Backspace/Delete would cut
+    // into an `[Image #N]` citation, intercept and remove the WHOLE token span at
+    // once (with its single padding space, matching §4.d §4.B), then route the
+    // result through onComposerChange so the existing reconcile drops the chip +
+    // revokes the objectURL. Runs BEFORE the Enter branch.
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      const ta = taRef.current
+      if (ta) {
+        const s = ta.selectionStart
+        const e2 = ta.selectionEnd
+        // Index every complete token span in the current draft. `matchAll` is safe
+        // against the module regex's `g` lastIndex (it iterates a fresh clone).
+        const spans = [...draft.matchAll(IMAGE_TOKEN_RE)].map((m) => ({
+          start: m.index ?? 0,
+          end: (m.index ?? 0) + m[0].length,
+        }))
+
+        // Find the delete range to remove: either the token the caret is
+        // adjacent-to/inside, or the union of the selection with any tokens it
+        // overlaps (snap selection to token boundaries — no partial cut).
+        let from = -1
+        let to = -1
+        if (s === e2) {
+          // Caret only (no selection).
+          for (const sp of spans) {
+            const atBackEdge = e.key === 'Backspace' && s === sp.end
+            const atFrontEdge = e.key === 'Delete' && s === sp.start
+            const midToken = s > sp.start && s < sp.end
+            if (atBackEdge || atFrontEdge || midToken) {
+              from = sp.start
+              to = sp.end
+              break
+            }
+          }
+        } else {
+          // Selection present — if it overlaps any token, expand to cover the
+          // whole token(s) so the citation is never sliced into a half-token.
+          for (const sp of spans) {
+            const overlaps = sp.start < e2 && sp.end > s
+            if (overlaps) {
+              from = from === -1 ? Math.min(s, sp.start) : Math.min(from, sp.start)
+              to = to === -1 ? Math.max(e2, sp.end) : Math.max(to, sp.end)
+            }
+          }
+        }
+
+        if (from !== -1 && to !== -1) {
+          e.preventDefault()
+          // Absorb one adjacent padding space (the pad-left/right added at insert)
+          // so the token's space doesn't survive as an orphan. Prefer the trailing
+          // space, else a leading one — mirroring §4.d §4.B's `\s?[Image #N]\s?`.
+          let cutFrom = from
+          let cutTo = to
+          if (draft[cutTo] === ' ') cutTo += 1
+          else if (cutFrom > 0 && draft[cutFrom - 1] === ' ') cutFrom -= 1
+          const next = (draft.slice(0, cutFrom) + draft.slice(cutTo))
+            .replace(/\s{2,}/g, ' ')
+          // Route through the §4.d change path → chip drop + objectURL revoke +
+          // (when fully empty) counter reset. No duplicate chip/preview handling.
+          onComposerChange(next)
+          // Restore the caret at the deletion point.
+          const caret = cutFrom
+          requestAnimationFrame(() => {
+            const el = taRef.current
+            if (el) {
+              el.focus()
+              el.selectionStart = el.selectionEnd = Math.min(caret, el.value.length)
+            }
+          })
+          return
+        }
+      }
+    }
+
     // Cmd+Enter (or Ctrl+Enter) → submit. Plain Enter → newline (default).
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
@@ -283,29 +383,88 @@ export default function ChatPanel() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [draft])
 
-  const [attachedFiles, setAttachedFiles] = useState<string[]>([])
+  // T-PATCH-098 §4.d: non-image paperclip attachments keep their own list and the
+  // existing file-chip path (no inline token, no ImageRef). Pasted images live in
+  // `attachments` (the inline-citation source of truth) below.
+  const [otherFiles, setOtherFiles] = useState<string[]>([])
   const [filesListOpen, setFilesListOpen] = useState(false)
 
-  // T-PATCH-052: session restart completion effect — toast + divider
+  // T-PATCH-098 §4.d: single source-of-truth for inline-referenced pasted images.
+  // Each ImageRef carries the stable token N (seq), the temp disk path (PO key),
+  // and the object-URL preview (§4.c). `attachedFiles`/`previewUrls` are DERIVED
+  // from this — no duplicate state. Order = paste order = chip display order.
+  const [attachments, setAttachments] = useState<ImageRef[]>([])
+  // §4.d §1: monotonic, never-reused token counter (1-based). A ref because the
+  // value is read/incremented inside async paste handlers, not rendered directly.
+  const nextImageSeqRef = useRef(1)
+
+  // §4.d §2: PO-transport path list = image paths + paperclip files. Images first
+  // so their `#N → path` mapping order matches the chip row.
+  const attachedFiles = useMemo(
+    () => [...attachments.map((a) => a.path), ...otherFiles],
+    [attachments, otherFiles],
+  )
+
+  // T-PATCH-098 §4.c: object-URL thumbnail previews are now carried on each
+  // ImageRef. A ref mirrors the latest attachments so the unmount cleanup revokes
+  // every live URL (no leak), even for URLs created after the last render.
+  const attachmentsRef = useRef<ImageRef[]>([])
+  useEffect(() => { attachmentsRef.current = attachments }, [attachments])
+  useEffect(
+    () => () => {
+      attachmentsRef.current.forEach((a) => {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl)
+      })
+    },
+    [],
+  )
+
+  // T-PATCH-052 / T-PATCH-104 (QA-fix-r2): session restart completion → toast +
+  // divider. Split into TWO effects so the 3s hide timer is NEVER subject to
+  // cleanup when `restartCompleted` changes.
+  //
+  // Earlier fixes removed `messages` from the deps, but the toast still got stuck:
+  // Effect A consumes the signal via setRestartCompleted(false), which flips
+  // `restartCompleted` true→false. Because that var was in the SAME effect's deps,
+  // the dep change re-ran the effect and React fired the previous run's cleanup
+  // `clearTimeout(timer)` FIRST — killing the hide timer mid-flight → toast forever.
+  //
+  // The trigger is `restartCompleted` flipping, not `messages`. So the hide timer
+  // must live in a separate effect that does NOT depend on `restartCompleted`.
+  //
+  // The divider needs the last message id, which DOES change with `messages`. We
+  // mirror that id into a ref every render so Effect A can read it without listing
+  // `messages` as a dependency.
+  const lastMsgIdRef = useRef<string | null>(null)
+  lastMsgIdRef.current = messages.length > 0 ? messages[messages.length - 1].id : null
+
+  // Effect A — signal consumer. On the restart signal: consume it once, record the
+  // divider position (last message id via ref → no `messages` dep), and raise the
+  // toast. NO timer here, so its cleanup never touches the hide timer. (AC-3)
   useEffect(() => {
     if (!restartCompleted) return
-    // Consume the signal
     setRestartCompleted(false)
-    // Record the divider position: after the current last message
-    const lastMsg = messages.length > 0 ? messages[messages.length - 1].id : null
-    setRestartDividerMarkers((prev) => [...prev, lastMsg])
-    // Show toast for 3s (AC-1)
+    setRestartDividerMarkers((prev) => [...prev, lastMsgIdRef.current])
     setRestartToastVisible(true)
-    const timer = setTimeout(() => setRestartToastVisible(false), 3000)
-    return () => clearTimeout(timer)
-  }, [restartCompleted, setRestartCompleted, messages])
+  }, [restartCompleted, setRestartCompleted])
+
+  // Effect B — hide timer. Depends ONLY on `restartToastVisible`. The single thing
+  // that flips `restartToastVisible` false (besides this timer) is the timer itself,
+  // so `restartCompleted` changes no longer disturb the timer → it survives the full
+  // 3s and the toast auto-dismisses, even if messages update meanwhile. (AC-1, AC-2)
+  useEffect(() => {
+    if (!restartToastVisible) return
+    const t = setTimeout(() => setRestartToastVisible(false), 3000)
+    return () => clearTimeout(t)
+  }, [restartToastVisible])
 
   const onAttachFile = async () => {
     try {
       const paths: string[] = await (window as any).api.openFilePicker()
       if (!paths || paths.length === 0) return
-      // dedupe (drag-add same file twice)
-      setAttachedFiles((prev) => {
+      // dedupe (drag-add same file twice). Paperclip files are non-image
+      // attachments → never inline-tokenized (§4.d §2).
+      setOtherFiles((prev) => {
         const set = new Set(prev)
         for (const p of paths) set.add(p)
         return Array.from(set)
@@ -314,8 +473,126 @@ export default function ChatPanel() {
     } catch { /* IPC unavailable — noop */ }
   }
 
-  const removeAttached = (path: string) => {
-    setAttachedFiles((prev) => prev.filter((p) => p !== path))
+  // T-PATCH-098 §4.d §4.B: chip X → strip the matching `[Image #N]` token from the
+  // draft AND drop its ImageRef (revoking the preview URL). draft + attachments are
+  // updated together so the §4.A reconcile is idempotent (no loop). stable numbers
+  // mean no other token text is rewritten.
+  const removeImageRef = (seq: number) => {
+    const re = new RegExp(`\\s?\\[Image #${seq}\\]\\s?`, 'g')
+    setDraft(draft.replace(re, ' ').replace(/\s{2,}/g, ' ').trimStart())
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.seq === seq)
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl)
+      return prev.filter((a) => a.seq !== seq)
+    })
+  }
+
+  // Paperclip (non-image) attachment removal — path-based, no inline token.
+  const removeOtherFile = (path: string) => {
+    setOtherFiles((prev) => prev.filter((p) => p !== path))
+  }
+
+  // T-PATCH-098: clipboard image paste → persist to disk → add to attachedFiles.
+  // Reuses the existing "attachment = path" flow so the image rides the same
+  // `## Attached files` path block to PO (no message/runner format change).
+  // Non-image paste falls through to default textarea text-paste (no regression).
+  const onComposerPaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!project) return
+    const items = Array.from(e.clipboardData?.items ?? [])
+    // §3 out-of-scope: multi-image — take the FIRST image item only.
+    const imageItem = items.find(
+      (it) => it.kind === 'file' && it.type.startsWith('image/'),
+    )
+    if (!imageItem) return // non-image paste → keep default text-paste behavior
+
+    // An image is present: block the default paste (which would do nothing useful
+    // for a binary blob anyway) and route it through the disk-persist IPC.
+    e.preventDefault()
+    const file = imageItem.getAsFile()
+    if (!file) return
+
+    try {
+      const buf = await file.arrayBuffer()
+      const bytes = Array.from(new Uint8Array(buf))
+      // image/png → png, image/jpeg → jpeg, etc. Fallback handled main-side.
+      const ext = imageItem.type.split('/')[1] || 'png'
+      const res = await (window as any).api.saveAttachmentImage({
+        projectDir: project.projectDir,
+        bytes,
+        ext,
+      })
+      if (res?.ok && res.path) {
+        // §4.d §1: pull a stable, never-reused token number for this image.
+        const seq = nextImageSeqRef.current++
+        // T-PATCH-098 §4.c.1.a: build the preview from the SAME pasted blob
+        // (object URL). Created only inside the success branch → no orphan URL
+        // on save failure. Disk path stays the PO-transport channel; the
+        // preview is decoupled from it.
+        const url = URL.createObjectURL(file)
+        setAttachments((prev) => [...prev, { seq, path: res.path, previewUrl: url }])
+
+        // §4.d §3: insert the inline `[Image #N]` citation at the textarea cursor,
+        // whitespace-normalized so the token never glues to adjacent words (which
+        // would break the parse regex). Then move the caret past the token.
+        const ta = taRef.current
+        const s = ta ? ta.selectionStart : draft.length
+        const e2 = ta ? ta.selectionEnd : draft.length
+        const token = `[Image #${seq}]`
+        const before = draft.slice(0, s)
+        const after = draft.slice(e2)
+        const padLeft = before.length > 0 && !/\s$/.test(before) ? ' ' : ''
+        const padRight = after.length === 0 || !/^\s/.test(after) ? ' ' : ''
+        const insert = `${padLeft}${token}${padRight}`
+        const next = before + insert + after
+        setDraft(next)
+        const caret = before.length + insert.length
+        requestAnimationFrame(() => {
+          const el = taRef.current
+          if (el) {
+            el.focus()
+            el.selectionStart = el.selectionEnd = caret
+          }
+        })
+      }
+      // save failure → silently ignored; textarea input is untouched (AC: safe ignore)
+    } catch {
+      /* clipboard/IPC unavailable — noop, textarea stays intact */
+    }
+  }
+
+  // T-PATCH-098 §4.d: pasted images (with inline tokens) render as numbered chips;
+  // paperclip files keep the existing file chip. `attachments` IS the image list.
+  const otherAttachments = otherFiles
+
+  // T-PATCH-098 §4.d §4.A: textarea = source of truth. On every change, parse the
+  // live `[Image #N]` tokens and drop any ImageRef whose seq no longer appears
+  // (token deleted or broken). Resets the counter when draft + attachments are
+  // both empty (fresh `#1` number space). Idempotent — re-runs after removeImageRef
+  // converge to the same result (no loop).
+  const onComposerChange = (rawValue: string) => {
+    // T-PATCH-098 §4.e §2: orphan-fragment sweep (complement / defense line). Any
+    // path that bypasses the keydown intercept (paste accident, IME, abnormal
+    // selection delete, mid-token edit) can leave a half-token literal like
+    // `[Image #1` (open, no close) or `#1]` (close, no open) in the prose. Strip
+    // those remnants here, BEFORE the chip reconcile, so no half-token survives.
+    const value = sweepOrphanTokenFragments(rawValue)
+    setDraft(value)
+    const present = new Set(
+      [...value.matchAll(IMAGE_TOKEN_RE)].map((m) => Number(m[1])),
+    )
+    setAttachments((prev) => {
+      const kept = prev.filter((a) => present.has(a.seq))
+      if (kept.length === prev.length) return prev
+      // revoke preview URLs of dropped refs (memory); temp disk file is left for
+      // the L1 24h purge / post-send L2 cleanup (§4.c) — not unlinked here.
+      for (const a of prev) {
+        if (!present.has(a.seq) && a.previewUrl) URL.revokeObjectURL(a.previewUrl)
+      }
+      return kept
+    })
+    if (value.trim() === '' && attachmentsRef.current.length === 0 && otherFiles.length === 0) {
+      nextImageSeqRef.current = 1
+    }
   }
 
   const [sendHover, setSendHover] = useState(false)
@@ -342,9 +619,6 @@ export default function ChatPanel() {
     return `${ticketId} ${action}`
   }, [poState, t])
 
-  // T-PATCH-053: derive Phase for PhaseBreadcrumb from poState.current_phase
-  const currentPhase = PHASE_NAMES[poState?.current_phase ?? 0] ?? 'PRD'
-
   // T-PATCH-068: questionOverlayNode removed — replaced by in-flow docked panel below (AC-1).
 
   return (
@@ -367,12 +641,10 @@ export default function ChatPanel() {
           </button>
         </div>
 
-        {/* rp-ctx — T-PATCH-053: PhaseBreadcrumb replaces PhaseStrip chip; ctxCaption moved to header */}
-        <div style={ctxRow} className="rp-ctx">
-          <PhaseBreadcrumb phase={currentPhase} />
-        </div>
+        {/* T-PATCH-096 AC-4: redundant rp-ctx PhaseBreadcrumb removed (duplicate of
+            main-pane top header). PersonaPresenceBar now follows the header directly. */}
 
-        {/* rp-persona-bar (T-P4-049) — placed directly under rp-ctx */}
+        {/* rp-persona-bar (T-P4-049) */}
         <PersonaPresenceBar />
 
         {/* rp-todo-chip (T-P4-113) — hidden when openCount === 0 */}
@@ -475,16 +747,36 @@ export default function ChatPanel() {
           {/* rp-usage-bar (T-025, T-PATCH-071) — always 2-row column; horizontal prop removed so
               "resets in …" never truncates regardless of panel width. */}
           <UsageBar />
+
+          {/* T-PATCH-098 §4.d §4/§7: numbered image chips ABOVE the textarea, each
+              labelled with the `#N` matching its inline `[Image #N]` citation. chip
+              X strips the token from the draft (§4.B). flex-wrap row (§4.b). */}
+          {attachments.length > 0 && (
+            <div style={chipRow}>
+              {attachments.map((a) => (
+                <ImageChip
+                  key={a.seq}
+                  seq={a.seq}
+                  path={a.path}
+                  previewUrl={a.previewUrl}
+                  onRemove={() => removeImageRef(a.seq)}
+                />
+              ))}
+            </div>
+          )}
+
           <textarea
             ref={taRef}
             style={textarea}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => onComposerChange(e.target.value)}
             onKeyDown={onKeyDown}
+            onPaste={onComposerPaste}
             placeholder={t('workspace.chat.inputPlaceholder')}
             rows={1}
             disabled={streaming || !project || rateLimited}
           />
+
           <div style={inputRow}>
             <button
               style={{
@@ -502,25 +794,27 @@ export default function ChatPanel() {
               <Paperclip size={14} strokeWidth={2} />
             </button>
 
-            {attachedFiles.length > 0 && (
+            {/* T-PATCH-098: chip counts NON-image attachments only; pasted images
+                surface as thumbnails above. */}
+            {otherAttachments.length > 0 && (
               <div
                 style={fileChipWrap}
                 onMouseEnter={() => setFilesListOpen(true)}
                 onMouseLeave={() => setFilesListOpen(false)}
               >
                 <span style={fileChip}>
-                  {attachedFiles.length === 1
-                    ? basename(attachedFiles[0])
-                    : `${attachedFiles.length} ${t('workspace.chat.filesCount')}`}
+                  {otherAttachments.length === 1
+                    ? basename(otherAttachments[0])
+                    : `${otherAttachments.length} ${t('workspace.chat.filesCount')}`}
                 </span>
                 {filesListOpen && (
                   <div style={fileListPopup}>
-                    {attachedFiles.map((p) => (
+                    {otherAttachments.map((p) => (
                       <div key={p} style={fileListRow}>
                         <span style={fileListPath} title={p}>{p}</span>
                         <button
                           style={fileListRemove}
-                          onClick={() => removeAttached(p)}
+                          onClick={() => removeOtherFile(p)}
                           aria-label={t('workspace.chat.removeFile')}
                         >×</button>
                       </div>
@@ -760,14 +1054,6 @@ const restartTextBtn: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-// T-PATCH-053: ctxRow now holds PhaseBreadcrumb (which owns its own border/bg/padding)
-const ctxRow: React.CSSProperties = {
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'stretch',
-  minHeight: 30,
-}
-
 const msgs: React.CSSProperties = {
   flex: 1,
   overflowY: 'auto',
@@ -865,6 +1151,237 @@ function basename(p: string): string {
   const seg = p.split('/').filter(Boolean)
   const name = seg[seg.length - 1] ?? p
   return name.length > 24 ? `${name.slice(0, 21)}…` : name
+}
+
+// T-PATCH-098 §4.d: inline image citation token. ONE module-level regex drives
+// insertion (literal), parse/reconcile (matchAll), and strip — locale-invariant.
+// Token literal `[Image #N]` matches cmux/Claude-Code so PO/agent recognizes it.
+const IMAGE_TOKEN_RE = /\[Image #(\d+)\]/g
+
+// T-PATCH-098 §4.e §2: strip orphaned half-token fragments while PROTECTING every
+// complete `[Image #N]` token. Strategy: mask out the complete-token spans first,
+// then run the fragment regexes only over the regions OUTSIDE those spans — so a
+// broken `[Image #1` sitting next to an intact `[Image #2]` can never touch #2.
+// Multi-token safe (each complete span is masked independently) and idempotent
+// (once the fragments are gone, a re-run finds nothing → no loop, stable output).
+const IMAGE_TOKEN_OPEN_FRAG_RE = /\[Image #\d*(?!\])/g // `[Image #` / `[Image #1` w/o `]`
+const IMAGE_TOKEN_CLOSE_FRAG_RE = /(?<!\[)Image #\d+\]/g // `Image #1]` remnant with no opening `[`
+function sweepOrphanTokenFragments(text: string): string {
+  if (!text.includes('[Image #') && !/#\d+\]/.test(text)) return text
+  // Mask complete tokens with a same-length sentinel so fragment regexes skip them.
+  const spans = [...text.matchAll(IMAGE_TOKEN_RE)].map((m) => ({
+    start: m.index ?? 0,
+    end: (m.index ?? 0) + m[0].length,
+  }))
+  let masked = ''
+  let cursor = 0
+  for (const sp of spans) {
+    masked += text.slice(cursor, sp.start)
+    masked += ' '.repeat(sp.end - sp.start) // sentinel, never matched below
+    cursor = sp.end
+  }
+  masked += text.slice(cursor)
+
+  // Remove fragments in the masked string, then re-project removals onto the real
+  // text by tracking the same offsets (mask preserves length, so indices align).
+  const remove: Array<{ start: number; end: number }> = []
+  for (const re of [IMAGE_TOKEN_OPEN_FRAG_RE, IMAGE_TOKEN_CLOSE_FRAG_RE]) {
+    for (const m of masked.matchAll(re)) {
+      const start = m.index ?? 0
+      remove.push({ start, end: start + m[0].length })
+    }
+  }
+  if (remove.length === 0) return text
+  remove.sort((a, b) => a.start - b.start)
+  let out = ''
+  let pos = 0
+  for (const r of remove) {
+    if (r.start < pos) continue // overlapping match (shouldn't happen) — skip
+    out += text.slice(pos, r.start)
+    pos = r.end
+  }
+  out += text.slice(pos)
+  // Collapse the whitespace the removed fragment may have orphaned.
+  return out.replace(/\s{2,}/g, ' ')
+}
+
+// T-PATCH-098 §4.d: single source-of-truth for an inline-referenced image.
+// seq = stable token N (never reused/renumbered); path = temp abs path (PO key);
+// previewUrl = object URL for the chip thumbnail (§4.c).
+type ImageRef = {
+  seq: number
+  path: string
+  previewUrl?: string
+}
+
+// T-PATCH-098 §4.b: cmux-style attachment chip — icon-only reference token.
+// No <img>/file:// anywhere, so the renderer can never paint a broken-image
+// glyph. The pill rides above the textarea in a flex-wrap row (chipRow).
+
+// Lucide `Image` glyph as inline SVG (imports region left untouched per scope).
+// 14px tile icon, soft stroke, --text-secondary — matches §4.b tile spec.
+function ImageGlyph(): JSX.Element {
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </svg>
+  )
+}
+
+// chipRow — flex-wrap row of attachment chips between textarea and inputRow.
+const chipRow: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 'var(--space-2)',
+}
+
+const chip: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 'var(--space-1-5)',
+  height: 28,
+  maxWidth: 180,
+  paddingLeft: 'var(--space-1)',
+  paddingRight: 'var(--space-2)',
+  background: 'var(--surface-subpanel)',
+  border: '1px solid var(--border-default)',
+  borderRadius: 'var(--radius-lg)',
+  transition: 'border-color var(--motion-fast) ease',
+  flexShrink: 0,
+}
+
+const chipTile: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 20,
+  height: 20,
+  flexShrink: 0,
+  background: 'var(--surface-base)',
+  borderRadius: 'var(--radius-md)',
+  color: 'var(--text-secondary)',
+  // T-PATCH-098 §4.c.1.b: clip the object-URL <img> to the tile's rounded box.
+  overflow: 'hidden',
+}
+
+// T-PATCH-098 §4.c.1.b: object-URL thumbnail fills the 20×20 tile (cover).
+const chipThumb: React.CSSProperties = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  borderRadius: 'var(--radius-md)',
+  display: 'block',
+}
+
+const chipLabel: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  fontSize: 'var(--text-sm)',
+  fontWeight: 400,
+  color: 'var(--text-secondary)',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+// §4.d §7: `#N` citation prefix — one shade muted vs the label (number = aux info).
+const chipSeq: React.CSSProperties = {
+  color: 'var(--text-muted)',
+}
+
+const chipRemove: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  width: 16,
+  height: 16,
+  flexShrink: 0,
+  padding: 0,
+  border: 'none',
+  borderRadius: '9999px',
+  background: 'transparent',
+  color: 'var(--text-muted)',
+  cursor: 'pointer',
+  transition: 'background var(--motion-fast) ease, color var(--motion-fast) ease',
+}
+
+// ImageChip — single attachment pill. Hover affordances per §4.b/§3:
+// chip border → strong, X bg/color → one step brighter. Raw filename only in
+// the title tooltip; the visible label is the localized "image" token.
+function ImageChip({
+  seq,
+  path,
+  previewUrl,
+  onRemove,
+}: {
+  seq: number
+  path: string
+  previewUrl?: string
+  onRemove: () => void
+}): JSX.Element {
+  const { t } = useTranslation()
+  const [hover, setHover] = useState(false)
+  const [xHover, setXHover] = useState(false)
+  return (
+    <div
+      style={{
+        ...chip,
+        borderColor: hover ? 'var(--border-strong)' : 'var(--border-default)',
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={path}
+    >
+      <span style={chipTile}>
+        {/* T-PATCH-098 §4.c.1.b: real thumbnail from the pasted bytes
+            (object URL) when available; lucide Image glyph fallback when the
+            attachment is path-only (e.g. paperclip-picked, no bytes). No
+            file:// anywhere → broken-glyph structurally impossible. */}
+        {previewUrl ? (
+          <img
+            src={previewUrl}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            style={chipThumb}
+          />
+        ) : (
+          <ImageGlyph />
+        )}
+      </span>
+      {/* §4.d §7: `#N` prefix (muted — number is secondary info) matches the
+          inline [Image #N] token; localized label follows in --text-secondary. */}
+      <span style={chipLabel}>
+        <span style={chipSeq}>#{seq}</span> {t('workspace.chat.imageLabel')}
+      </span>
+      <button
+        style={{
+          ...chipRemove,
+          background: xHover ? 'var(--surface-base)' : 'transparent',
+          color: xHover ? 'var(--text-secondary)' : 'var(--text-muted)',
+        }}
+        onMouseEnter={() => setXHover(true)}
+        onMouseLeave={() => setXHover(false)}
+        onClick={onRemove}
+        aria-label={t('workspace.chat.removeImage')}
+        title={t('workspace.chat.removeImage')}
+      >
+        <X size={12} strokeWidth={3} />
+      </button>
+    </div>
+  )
 }
 
 const fileChipWrap: React.CSSProperties = {

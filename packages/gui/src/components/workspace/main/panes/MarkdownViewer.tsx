@@ -29,6 +29,28 @@ import { AlertOctagon, Loader2, Lock, ChevronRight, Eye, Pencil, Save, X } from 
 import MdRenderer from '../../chat/MdRenderer'
 import ZoomControls, { ZOOM_STEP, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT } from './ZoomControls'
 
+// ── Sticky scroll (T-PATCH-095) ────────────────────────────────────────────────
+// VS Code-style ancestor-heading accumulation. The pinned band reflects the
+// deepest heading whose section the viewport top currently sits in, plus its
+// shallower ancestors (H1>H2>H3) stacked cascading. Capped so deep docs don't
+// eat the viewport; clicking an entry jumps to that heading below the band.
+
+// Max pinned rows. When the ancestor chain is deeper, the shallowest ancestors
+// are dropped (the nearest ancestors — most useful context — are kept).
+const MAX_STICKY_DEPTH = 3
+// Per-row height of one sticky heading entry (px). Drives the jump offset so a
+// clicked / scrolled-to heading lands just under the band, not behind it.
+const STICKY_ROW_H = 22
+
+interface StickyHeading {
+  /** document order index — stable jump key */
+  idx: number
+  level: number // 1 | 2 | 3
+  text: string
+  /** element offsetTop within the scroll container */
+  top: number
+}
+
 // ── Seam types (preserved from DoctrineFileTab; re-exported for the host) ───────
 
 /** Save seam result shape (mirrors doctrineWriteFile's resolved value). */
@@ -210,6 +232,94 @@ export default function MarkdownViewer({
     onDirtyChange?.({ dirty, draft: dirty ? draft : content })
   }, [onDirtyChange, dirty, draft, content])
 
+  // ── Sticky scroll (T-PATCH-095) ─────────────────────────────────────────────
+  // Scroll container = the body div. Headings are read from the rendered DOM
+  // (.md-h1/.md-h2/.md-h3 emitted by MdRenderer) — no MdRenderer change needed.
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  // All headings in document order, with offsetTop relative to the scroll content.
+  const headingsRef = useRef<StickyHeading[]>([])
+  // The ancestor chain currently pinned (deepest section the viewport top is in).
+  const [stickyChain, setStickyChain] = useState<StickyHeading[]>([])
+
+  const collectHeadings = useCallback(() => {
+    const sc = scrollRef.current
+    if (!sc) { headingsRef.current = []; return }
+    const els = sc.querySelectorAll<HTMLElement>('.md-h1, .md-h2, .md-h3')
+    const list: StickyHeading[] = []
+    els.forEach((el, i) => {
+      const level = el.classList.contains('md-h1') ? 1 : el.classList.contains('md-h2') ? 2 : 3
+      list.push({ idx: i, level, text: (el.textContent ?? '').trim(), top: el.offsetTop })
+    })
+    headingsRef.current = list
+  }, [])
+
+  const recomputeSticky = useCallback(() => {
+    const sc = scrollRef.current
+    const list = headingsRef.current
+    if (!sc || list.length === 0) { setStickyChain((c) => (c.length ? [] : c)); return }
+    // Probe line sits just below where the sticky band would end, so the heading
+    // a section belongs to flips to "pinned" exactly as it scrolls under the band.
+    const probe = sc.scrollTop + Math.min(list.length, MAX_STICKY_DEPTH) * STICKY_ROW_H + 1
+    // Last heading whose top is at/above the probe = current section heading.
+    let currentIdx = -1
+    for (let i = 0; i < list.length; i++) {
+      if (list[i]!.top <= probe) currentIdx = i
+      else break
+    }
+    if (currentIdx < 0) { setStickyChain((c) => (c.length ? [] : c)); return }
+    // Walk back from the current heading collecting strictly-shallower ancestors.
+    const chain: StickyHeading[] = [list[currentIdx]!]
+    let needLevel = list[currentIdx]!.level - 1
+    for (let i = currentIdx - 1; i >= 0 && needLevel >= 1; i--) {
+      if (list[i]!.level <= needLevel) {
+        chain.unshift(list[i]!)
+        needLevel = list[i]!.level - 1
+      }
+    }
+    // Cap depth — keep the nearest ancestors (drop shallowest / front of chain).
+    const capped = chain.length > MAX_STICKY_DEPTH ? chain.slice(chain.length - MAX_STICKY_DEPTH) : chain
+    setStickyChain((prev) => {
+      if (prev.length === capped.length && prev.every((p, i) => p.idx === capped[i]!.idx)) return prev
+      return capped
+    })
+  }, [])
+
+  // Re-collect headings whenever the rendered content / zoom changes, then probe.
+  useEffect(() => {
+    if (loadState !== 'done' || editing) { setStickyChain([]); return }
+    // Defer to next frame so MdRenderer's DOM (and zoom font reflow) has committed.
+    const raf = requestAnimationFrame(() => { collectHeadings(); recomputeSticky() })
+    return () => cancelAnimationFrame(raf)
+  }, [loadState, editing, content, zoom, collectHeadings, recomputeSticky])
+
+  // rAF-throttled scroll listener on the body scroll container.
+  useEffect(() => {
+    const sc = scrollRef.current
+    if (!sc || loadState !== 'done' || editing) return
+    let ticking = false
+    const onScroll = () => {
+      if (ticking) return
+      ticking = true
+      requestAnimationFrame(() => { recomputeSticky(); ticking = false })
+    }
+    sc.addEventListener('scroll', onScroll, { passive: true })
+    return () => sc.removeEventListener('scroll', onScroll)
+  }, [loadState, editing, recomputeSticky])
+
+  const jumpToHeading = useCallback((h: StickyHeading) => {
+    const sc = scrollRef.current
+    if (!sc) return
+    // Re-read live offsetTop (zoom / reflow may have moved it since collection).
+    const els = sc.querySelectorAll<HTMLElement>('.md-h1, .md-h2, .md-h3')
+    const el = els[h.idx]
+    const top = el ? el.offsetTop : h.top
+    // Offset by the band height of the ancestors that stay pinned above this one
+    // so the target lands just under the band, not hidden behind it.
+    const aboveCount = Math.max(0, stickyChain.findIndex((s) => s.idx === h.idx))
+    const bandH = (aboveCount + 1) * STICKY_ROW_H
+    sc.scrollTo({ top: Math.max(0, top - bandH), behavior: 'smooth' })
+  }, [stickyChain])
+
   // ── Breadcrumb segments (split relName, fall back to absPath) ───────────────
   const crumbSource = relName || absPath
   const crumbParts = crumbSource ? crumbSource.split('/') : []
@@ -274,7 +384,24 @@ export default function MarkdownViewer({
       </div>
 
       {/* Body */}
-      <div style={body}>
+      <div style={body} ref={scrollRef}>
+        {/* Sticky-scroll heading band (T-PATCH-095). Pins ancestor headings
+            (H1>H2>H3) cascading at the top; click jumps below the band. */}
+        {loadState === 'done' && !editing && stickyChain.length > 0 && (
+          <div style={stickyBand}>
+            {stickyChain.map((h, i) => (
+              <button
+                key={h.idx}
+                style={{ ...stickyRow, paddingLeft: 16 + i * 14 }}
+                onClick={() => jumpToHeading(h)}
+                title={h.text}
+              >
+                <ChevronRight size={10} style={{ color: '#3A3A3A', flexShrink: 0 }} />
+                <span style={stickyRowText}>{h.text}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {loadState === 'loading' && (
           <div style={centerState}>
             <Loader2 size={20} style={{ color: '#505050' }} className="pdt-spin" />
@@ -491,6 +618,42 @@ const viewerWrap: React.CSSProperties = {
   maxWidth: 780,
   lineHeight: 1.65,
   fontSize: 13,
+}
+
+// ── Sticky-scroll band (T-PATCH-095) ────────────────────────────────────────────
+const stickyBand: React.CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 5,
+  display: 'flex',
+  flexDirection: 'column',
+  background: 'rgba(15,15,15,0.96)',
+  backdropFilter: 'blur(2px)',
+  borderBottom: '1px solid #1A1A1A',
+}
+
+const stickyRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 4,
+  height: STICKY_ROW_H,
+  width: '100%',
+  background: 'transparent',
+  border: 'none',
+  cursor: 'pointer',
+  color: '#B0B0B4',
+  fontFamily: 'inherit',
+  fontSize: 11,
+  textAlign: 'left',
+  paddingRight: 16,
+  paddingTop: 0,
+  paddingBottom: 0,
+}
+
+const stickyRowText: React.CSSProperties = {
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 
 const editWrap: React.CSSProperties = {

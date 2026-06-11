@@ -54,6 +54,23 @@ export const cardHeader: React.CSSProperties = {
   flexWrap: 'wrap',
 }
 
+// Clickable id/title region inside the header — opens ticket-detail (T-PATCH-103).
+// Resets native <button> chrome so it reads as inline text but stays keyboard-focusable.
+export const cardHeaderOpen: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  flex: 1,
+  minWidth: 0,
+  background: 'transparent',
+  border: 'none',
+  padding: 0,
+  margin: 0,
+  textAlign: 'left',
+  font: 'inherit',
+  cursor: 'pointer',
+}
+
 export const cardTicketId: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,

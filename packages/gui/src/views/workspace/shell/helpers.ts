@@ -1,12 +1,25 @@
 import type { Pane, LeafPaneNode, Tab, TabType } from '../../../store/workspace'
 import { useWorkspace } from '../../../store/workspace'
-import type { Ticket } from '../../../lib/types'
+import type { Ticket, Message, PromotionPayload } from '../../../lib/types'
 import type { QuickOpenItem } from '../../../components/workspace/QuickOpenPalette'
 import {
   SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH,
   PO_CHAT_MIN_WIDTH, PO_CHAT_MAX_WIDTH,
   ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH, CENTER_MIN_LAYOUT,
 } from './constants'
+
+/**
+ * Canonical ticket-detail tab id, namespaced by (version, id) to avoid
+ * cross-version ticket_id collisions (T-PATCH-111). When `version` is
+ * truthy the id is `ticket-detail:<version>/<id>`; otherwise it falls back
+ * to the legacy `ticket-detail:<id>` so version-less/legacy tickets behave
+ * exactly as before. All three openTab call sites (QuickOpen, Version
+ * History TicketCard, Ticket Dashboard) MUST use this helper so the same
+ * (version, id) dedup-focuses to the same tab regardless of entry point.
+ */
+export function ticketDetailTabId(version: string | null | undefined, id: string): string {
+  return version ? `ticket-detail:${version}/${id}` : `ticket-detail:${id}`
+}
 
 export function readStoredWidth(key: string, defaultWidth: number, min: number, max: number): number {
   try {
@@ -170,6 +183,31 @@ function extToBadge(ext: string): string {
   return 'mmd'
 }
 
+// ── T-PATCH-110: DEV-ONLY promotion card 렌더 확인용 ─────────────────────────────
+// Builds a volatile 'promotion-candidate' Message that mirrors the shape produced by
+// poEvents.ts `poOnPromotionCandidate` (kind/role/status/payload). Used only by the
+// dev QuickOpen commands below so the classic PromotionCard (origin 'auto') and the
+// PromotionQuestionCard (origin 'user-requested') can be rendered on demand without a
+// backend emit. No IPC/persist — see makeSamplePromotionMessage's call site.
+function makeSamplePromotionMessage(origin: 'auto' | 'user-requested'): Message {
+  const payload: PromotionPayload = {
+    candidateSummary: 'QA smoke 실행 전 dev server 준비 상태를 항상 확인한다',
+    targetTier: 'global',
+    sourceTicketId: 'T-PATCH-110',
+    rationale: '여러 프로젝트에서 반복된 패턴 — global habit 으로 승격 검토',
+    origin,
+  }
+  return {
+    id: `dev-promo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    role: 'assistant',
+    kind: 'promotion-candidate',
+    text: '',
+    status: 'done',
+    payload,
+    created_at: new Date().toISOString(),
+  }
+}
+
 /** Build Quick Open palette items from files + tickets + tabs + MCP + artifacts + personas. */
 export function buildQuickOpenItems(
   quickOpenFiles: Array<{ path: string; ext: string }>,
@@ -205,7 +243,9 @@ export function buildQuickOpenItems(
     const isClosed = tk.status === 'done' || tk.status === 'abandoned'
     const sublabel = [tk.version ?? '', tk.status].filter(Boolean).join(' · ')
     items.push({
-      id: `ticket:${tk.ticket_id}`,
+      // Item id namespaced by version so the same ticket_id in two versions
+      // yields distinct React keys (T-PATCH-111). '∅' marks version-less.
+      id: `ticket:${tk.version ?? '∅'}/${tk.ticket_id}`,
       source: 'ticket',
       category: 'tickets',
       label: tk.ticket_id + (tk.title ? ` — ${tk.title}` : ''),
@@ -216,9 +256,9 @@ export function buildQuickOpenItems(
       priority: isClosed ? 40 : 70,
       open: () =>
         openTab(
-          `ticket-detail:${tk.ticket_id}`,
+          ticketDetailTabId(tk.version, tk.ticket_id),
           'ticket-detail',
-          { ticketId: tk.ticket_id },
+          { ticketId: tk.ticket_id, version: tk.version ?? null },
           tk.ticket_id,
         ),
     })
@@ -307,6 +347,33 @@ export function buildQuickOpenItems(
       // (localized persona name) so this coalesces 1:1 with the Team-panel open
       // path and the deduped tab shows one stable name. T-PATCH-035.
       open: () => openTab(`persona-def:${slug}`, 'persona-def', { persona: slug }),
+    })
+  }
+
+  // ── T-PATCH-110: DEV-ONLY promotion card 렌더 확인용. 제거 시 이 블록만 삭제. ──
+  // import.meta.env.DEV 가드 → prod 번들에선 dead-code 로 제거되어 노출 0 (A4).
+  // "Dev:" label prefix 로 dev 빌드 내에서도 명확히 구분. priority 10 → personas(30)
+  // 아래, QuickOpen 하단에 위치(A5). append 만 하고 resolve IPC 는 미연동 — approve/
+  // reject(또는 question) 인터랙션은 외형/분기 확인용이며 실제 commit 은 안 됨(A6).
+  // 휘발성: appendMessage(store) 만 호출, api.chatAppendMessage 안 함 → reload 시 사라짐.
+  if (import.meta.env.DEV) {
+    items.push({
+      id: 'dev:promo-auto',
+      source: 'artifact',
+      category: 'artifacts',
+      label: 'Dev: sample promotion card (auto)',
+      sublabel: 'classic PromotionCard · origin: auto',
+      priority: 10,
+      open: () => useWorkspace.getState().appendMessage(makeSamplePromotionMessage('auto')),
+    })
+    items.push({
+      id: 'dev:promo-user',
+      source: 'artifact',
+      category: 'artifacts',
+      label: 'Dev: sample promotion card (user-requested)',
+      sublabel: 'PromotionQuestionCard · origin: user-requested',
+      priority: 10,
+      open: () => useWorkspace.getState().appendMessage(makeSamplePromotionMessage('user-requested')),
     })
   }
 

@@ -14,6 +14,111 @@ import { useWorkspace } from '../../../store/workspace'
 
 // ── Link routing (re-used from MessageBubble logic) ───────────────────────────
 
+/**
+ * env target test (T-PATCH-093).
+ * True when the file path points at a `.env*` file — basename starts with
+ * ".env" (`.env`, `.env.local`, `.env.production`, …), matching the
+ * projectEnv IPC ENV_FILENAME rule (`/^\.env[a-zA-Z0-9._-]*$/`).
+ * `.productune/config.json` and other non-`.env` paths return false so they
+ * still route to the markdown tab.
+ */
+function isEnvTarget(filePath: string): boolean {
+  const basename = filePath.split('/').pop() ?? filePath
+  return /^\.env[a-zA-Z0-9._-]*$/.test(basename)
+}
+
+// ── Absolute / file:// path routing (T-PATCH-106) ─────────────────────────────
+
+const DOCTRINE_PERSONAS = new Set(['po', 'designer', 'developer', 'qa'])
+
+/**
+ * Normalize a clickable href into a local absolute (or tilde) path string.
+ * - `file://…`  → decoded pathname (URL decode)
+ * - `~/…`       → kept verbatim (doctrine IPC `expandHome` handles ~)
+ * - `/…`        → kept verbatim
+ * Returns null when href is not a path-shaped token.
+ */
+function normalizeAbsPath(href: string): string | null {
+  if (href.startsWith('file://')) {
+    try { return decodeURIComponent(new URL(href).pathname) }
+    catch { return decodeURIComponent(href.replace(/^file:\/\//, '')) }
+  }
+  if (href.startsWith('~/') || href === '~' || href.startsWith('/')) return href
+  return null
+}
+
+/**
+ * Classify a normalized path as a doctrine file and derive its tab args.
+ * Tier-2: `~/.productune/<persona>/…`  or  `<home>/.productune/<persona>/…`
+ * Tier-1: `<projectDir>/docs/<persona>/…`
+ * relName is `habit.md` or `bookshelf/<n>.md` (segments after the persona dir).
+ * Returns null when the path isn't doctrine-shaped (.md + known persona).
+ * Best-effort only — `doctrine:readFile` (`isAllowedDoctrinePath`) re-validates.
+ */
+function classifyDoctrine(
+  absPath: string,
+  projectDir: string | undefined,
+): { tier: 1 | 2; persona: string; relName: string } | null {
+  if (!absPath.endsWith('.md')) return null
+
+  // Tier-2: …/.productune/<persona>/<rel…>
+  const t2 = absPath.match(/\.productune\/(po|designer|developer|qa)\/(.+\.md)$/)
+  if (t2 && DOCTRINE_PERSONAS.has(t2[1]!)) {
+    return { tier: 2, persona: t2[1]!, relName: t2[2]! }
+  }
+
+  // Tier-1: <projectDir>/docs/<persona>/<rel…>
+  if (projectDir) {
+    const sep = projectDir.endsWith('/') ? '' : '/'
+    const prefix = `${projectDir}${sep}docs/`
+    if (absPath.startsWith(prefix)) {
+      const rest = absPath.slice(prefix.length)
+      const m = rest.match(/^(po|designer|developer|qa)\/(.+\.md)$/)
+      if (m && DOCTRINE_PERSONAS.has(m[1]!)) {
+        return { tier: 1, persona: m[1]!, relName: m[2]! }
+      }
+    }
+  }
+  return null
+}
+
+/** Route a normalized absolute/file:// path: doctrine → in-project relative → shell fallback. */
+function routeAbsPath(absPath: string): void {
+  const openTab = useWorkspace.getState().openTab
+  const projectDir = useWorkspace.getState().project?.projectDir
+  const basename = absPath.split('/').pop() ?? absPath
+
+  // (1) doctrine file → doctrine-file tab (canonical PersonaDefTab call shape)
+  const doc = classifyDoctrine(absPath, projectDir)
+  if (doc) {
+    openTab(
+      `doctrine-file:${absPath}`,
+      'doctrine-file',
+      { tier: doc.tier, persona: doc.persona, absPath, relName: doc.relName, editable: false, projectDir },
+      basename,
+    )
+    return
+  }
+
+  // (2) in-project non-doctrine absolute → projectDir-relative → ptn:file viewer
+  if (projectDir) {
+    const sep = projectDir.endsWith('/') ? '' : '/'
+    const prefix = `${projectDir}${sep}`
+    if (absPath.startsWith(prefix)) {
+      routeLink(`ptn:file/${absPath.slice(prefix.length)}`)
+      return
+    }
+  }
+
+  // (3) everything else → OS default app via shell:openPath fallback
+  const api = (window as any).api
+  if (api?.openPath) {
+    void api.openPath(absPath)
+  } else {
+    console.warn('[MdRenderer] no shell:openPath bridge; cannot open', absPath)
+  }
+}
+
 function routeLink(href: string): void {
   const openTab = useWorkspace.getState().openTab
 
@@ -25,8 +130,20 @@ function routeLink(href: string): void {
   if (href.startsWith('ptn:file/')) {
     const filePath = href.slice('ptn:file/'.length)
     const basename = filePath.split('/').pop() ?? filePath
+    // env-target files → dedicated ENV viewer tab (ProjectEnvPane), keyed by
+    // basename. ProjectEnvPane resolves it against projectEnv:read FileGroups.
+    if (isEnvTarget(filePath)) {
+      openTab(`project-env:${basename}`, 'project-env', { filename: basename }, basename)
+      return
+    }
     openTab(`markdown:${filePath}`, 'markdown', { path: filePath }, basename)
     return
+  }
+  // ptn:doctrine/ — linkify-tagged absolute/file:// doctrine token (T-PATCH-106)
+  if (href.startsWith('ptn:doctrine/')) {
+    const raw = href.slice('ptn:doctrine/'.length)
+    const abs = normalizeAbsPath(raw)
+    if (abs) { routeAbsPath(abs); return }
   }
   if (/^https?:\/\//.test(href)) {
     let hostname: string
@@ -36,12 +153,21 @@ function routeLink(href: string): void {
     openTab(`browser:${encodedUrl}`, 'browser', { url: href }, hostname)
     return
   }
+  // Bare absolute / file:// / ~ href (e.g. explicit `[habit.md](file:///…)` md
+  // link that linkify preserved verbatim) — classify & route. (T-PATCH-106)
+  const abs = normalizeAbsPath(href)
+  if (abs) { routeAbsPath(abs); return }
 }
 
 function getLinkColor(href?: string): string {
   if (!href) return '#38BDF8'
   if (href.startsWith('ptn:ticket/')) return '#8B5CF6'
-  if (href.startsWith('ptn:file/'))   return '#38BDF8'
+  if (href.startsWith('ptn:file/')) {
+    // env-target files get an amber tone to distinguish from regular file cyan.
+    return isEnvTarget(href.slice('ptn:file/'.length)) ? '#F59E0B' : '#38BDF8'
+  }
+  // doctrine links (T-PATCH-106) — violet-leaning to read as "persona doctrine".
+  if (href.startsWith('ptn:doctrine/')) return '#A78BFA'
   if (/^https?:\/\//.test(href))      return '#C8C8CC'
   return '#38BDF8'
 }

@@ -99,6 +99,9 @@ export function register(): void {
               projectDir: opts.projectDir,
               text: opts.answerText,
               resume,
+              // T-PATCH-100 §B: a question-answer resume is NOT a fresh user
+              // utterance — any promotion candidate emitted here is auto-surfaced.
+              turnOrigin: 'auto',
             },
             withSessionCapture(event.sender, opts.projectDir),
           )
@@ -139,10 +142,18 @@ export function register(): void {
     },
   )
 
-  // ── T-013 (c) PromotionCard resolve ──────────────────────────────────────────
-  // Stub handler: stores outcome in chat.json's message payload.resolved.
-  // Full trigger (PO instruction emitting promotion-candidate via claude tool-use)
-  // is a follow-up scope (risk_flags: promotion-event-trigger-undefined).
+  // ── T-013 (c) / T-PATCH-100 PromotionCard resolve ────────────────────────────
+  // Persists the user's approve/reject decision onto the promotion-candidate card
+  // in chat.json so the resolved card re-renders idempotently after remount/reload
+  // (AC-4). Mirrors `chat:dismissQuestion`: re-read the card's payload and
+  // merge-patch `resolved` so we never clobber candidateSummary/targetTier/etc.
+  //
+  // BOUNDARY (AC-6, §3): this handler owns ONLY the persistence + display of the
+  // user's decision. It does NOT write any Tier 1/2 long-term doctrine (habit /
+  // bookshelf) — that delta-write on approve is the PO agent's responsibility via
+  // the promotion-process flow (po/bookshelf/promotion-process.md). The renderer's
+  // usePromotionResolve() already appends the trace system line, so this handler
+  // does NOT emit one (avoids a duplicate system line in chat.json).
   ipcMain.handle(
     'chat:resolvePromotion',
     async (
@@ -150,8 +161,15 @@ export function register(): void {
       opts: { projectDir: string; messageId: string; outcome: 'approved' | 'rejected' },
     ): Promise<{ ok: boolean; error?: string }> => {
       try {
-        // Stub: noop until PO promotion-candidate trigger ships.
-        void opts
+        const session = getSession(opts.projectDir)
+        const card = session.messages.find((m) => m.id === opts.messageId)
+        const basePayload =
+          card && card.payload && typeof card.payload === 'object'
+            ? (card.payload as Record<string, unknown>)
+            : {}
+        patchMessage(opts.projectDir, opts.messageId, {
+          payload: { ...basePayload, resolved: { outcome: opts.outcome } },
+        })
         return { ok: true }
       } catch (e: any) {
         return { ok: false, error: e?.message ?? 'unknown' }
@@ -198,6 +216,14 @@ export function register(): void {
             projectDir: opts.projectDir,
             text: opts.text,
             resume,
+            // T-PATCH-100 §B: a direct user message starts a user-requested turn.
+            // Any promotion candidate emitted here → origin 'user-requested' →
+            // renders as the question-style PromotionQuestionCard (097 branch).
+            // If a fresh-cycle re-orient was forced above (decision.cycle), the
+            // turn is still driven by THIS user utterance, so it stays
+            // 'user-requested' (the re-orient is internal session rotation, not a
+            // PO auto-surfacing turn).
+            turnOrigin: 'user-requested',
           },
           withSessionCapture(event.sender, opts.projectDir),
         )
