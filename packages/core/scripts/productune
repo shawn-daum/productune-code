@@ -213,19 +213,7 @@ case "${1:-}" in
     say "install.sh 재실행 (doctrine mirror / hook / agent 갱신)..."
     bash "$REPO/packages/core/scripts/install.sh" || die "install.sh 실패"
 
-    # migration 안내 — 적용 여부는 프로젝트별 (productune 시작 시 PO 가 자동 감지·제안)
-    MIG_DIR="$REPO/packages/core/migrations"
-    if [ -d "$MIG_DIR" ] && ls "$MIG_DIR"/*.md >/dev/null 2>&1; then
-      say "동봉된 migration:"
-      for f in "$MIG_DIR"/*.md; do
-        _id="$(grep -m1 '^id:' "$f" | awk '{print $2}')"
-        _title="$(grep -m1 '^title:' "$f" | sed 's/^title:[[:space:]]*//')"
-        printf '    %04d  %s\n' "${_id:-0}" "${_title:-?}"
-      done
-      say "프로젝트 구조 변경이 필요한 항목은 해당 프로젝트 터미널에서 productune 실행 시"
-      say "PO 가 미적용분을 자동 감지해 적용을 제안합니다 (PO 주도, 사용자 승인 후 적용)."
-    fi
-    say "업데이트 완료. 각 프로젝트에서 productune 을 다시 실행하세요."
+    say "업데이트 완료. 각 프로젝트에서 productune 을 다시 실행하세요 — 미적용 migration 은 PO 가 감지·제안합니다."
     exit 0
     ;;
   uninstall)
