@@ -4,6 +4,7 @@ import { AlertTriangle, Loader2 } from 'lucide-react'
 import type { PoState, Ticket, Status } from '../../lib/types'
 import { useTicketScan, normalizeStatus } from '../../lib/useTicketScan'
 import { useWorkspace } from '../../store/workspace'
+import { ticketDetailTabId } from '../../views/workspace/shell/helpers'
 
 interface Props {
   poState: PoState | null
@@ -163,9 +164,10 @@ function Card({ ticket }: { ticket: Ticket }) {
     <div
       style={card}
       onClick={() => openTab(
-        'ticket-detail:' + ticket.ticket_id,
+        // (version, id)-namespaced tab id via shared helper (T-PATCH-111).
+        ticketDetailTabId(ticket.version, ticket.ticket_id),
         'ticket-detail',
-        { ticketId: ticket.ticket_id },
+        { ticketId: ticket.ticket_id, version: ticket.version ?? null },
         ticket.ticket_id,
       )}
     >

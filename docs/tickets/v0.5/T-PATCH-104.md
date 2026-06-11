@@ -3,7 +3,7 @@ ticket_id: T-PATCH-104
 version: v0.5
 round: patch
 type: fix
-status: review
+status: user-verify
 assignee: pdt-developer
 model: sonnet
 effort: low
@@ -73,6 +73,16 @@ useEffect(() => {
 - 권장: divider 가 읽어야 할 last message id 를 ref(예: `lastMsgIdRef`) 로 잡아 토스트 타이머 effect 가 `messages` 에 의존하지 않게 한다.
 - `setRestartCompleted(false)` 신호 소비는 한 번만 일어나도록 위치 주의 (분리 후 어느 effect 가 소비할지 단일화).
 
+### 4.b QA-fix-r2 note (real root cause)
+
+QA-fix-r1 (단일 effect 에서 `messages` 제거 + `lastMsgIdRef`) 는 **불충분**. 토스트가 여전히 사라지지 않았다.
+
+**진짜 root cause (확정):** 단일 effect 의 dep = `[restartCompleted, setRestartCompleted]` 인데, effect **내부**에서 `setRestartCompleted(false)` 를 호출해 `restartCompleted` 를 true→false 로 뒤집는다. dep 이 바뀌므로 effect 가 **재실행**되고, React 는 그 전에 이전 run 의 cleanup `clearTimeout(timer)` 를 **먼저** 실행 → 3초 hide 타이머를 죽인다 → 토스트 영구 잔존. 트리거는 `messages` 가 아니라 **`restartCompleted` 가 flip 되는 것**이었다.
+
+**Fix (r2):** effect 를 둘로 분리해 hide 타이머가 `restartCompleted` 변경에 의한 cleanup 대상이 되지 않게 한다.
+- **Effect A** (dep `[restartCompleted, setRestartCompleted]`): 신호 소비(`setRestartCompleted(false)`) + divider 기록(`setRestartDividerMarkers((prev) => [...prev, lastMsgIdRef.current])`) + `setRestartToastVisible(true)`. **타이머 없음** → 이 effect 의 cleanup 은 타이머를 건드리지 않는다.
+- **Effect B** (dep `[restartToastVisible]`): `if (!restartToastVisible) return; const t = setTimeout(() => setRestartToastVisible(false), 3000); return () => clearTimeout(t)`. `restartToastVisible` 를 flip 하는 것은 (이 타이머 자신을 빼면) Effect A 의 show 뿐 → `restartCompleted` flip 이 더 이상 타이머를 방해하지 않아 타이머가 3초를 온전히 살아남는다.
+
 ## 5. QA smoke
 
 1. `pnpm --filter @productune/gui tsc --noEmit` — 오류 없음. *(done — central build GREEN: gui tsc 0)*
@@ -83,4 +93,6 @@ useEffect(() => {
 ## 6. Persona Activity
 
 - **pdt-developer** (impl): §4 fix 적용. 단일 effect 를 책임 분리 — `lastMsgIdRef` 로 마지막 메시지 id 를 매 렌더 미러링하고, 토스트 show+3s hide 타이머 effect 의 dep 을 `[restartCompleted, setRestartCompleted]` 로 축소 (`messages` 제거). divider 캡처는 ref 값으로 동일 effect 내에서 수행해 신호 소비를 단일화. Scoped `tsc --noEmit -p tsconfig.json` 통과(EXIT=0). Touch: `ChatPanel.tsx`. status → review.
+- **pdt-developer** (QA-fix-r2): r1 단일-effect 수정이 불충분 — 진짜 root cause 는 `messages` 가 아니라 effect 내 `setRestartCompleted(false)` 가 dep `restartCompleted` 를 flip → effect 재실행 → 이전 run cleanup `clearTimeout` 선행 → hide 타이머 사망. §4.b 대로 effect 2분리: Effect A(dep `[restartCompleted, setRestartCompleted]`, 타이머 없음 — 신호 소비 + divider ref 캡처 + toast show), Effect B(dep `[restartToastVisible]` — 3s hide setTimeout + cleanup clearTimeout). 타이머가 `restartCompleted` flip 의 cleanup 대상에서 분리되어 3초 생존. Scoped `tsc --noEmit -p tsconfig.json` EXIT=0. Touch: `ChatPanel.tsx`. status 유지 → review. 미커밋.
 - **pdt-qa** (verify): Code inspection PASS. `lastMsgIdRef`(356–357행) 매 렌더 `messages[last].id` 미러링. 토스트 effect(362–373행) dep array = `[restartCompleted, setRestartCompleted]` — **`messages` 부재 확인**(§2 root cause 해소). effect 내: `if (!restartCompleted) return` → `setRestartCompleted(false)`(신호 단일 소비) → `setRestartDividerMarkers((prev) => [...prev, lastMsgIdRef.current])`(divider marker ref 캡처, AC-3 ✓) → `setRestartToastVisible(true)` → `setTimeout(…, 3000)` → cleanup `clearTimeout`. messages 가 dep 에서 빠졌으므로 메시지 업데이트 시 effect 재실행·cleanup 안 됨 → hide 타이머 survives(AC-1·AC-2 ✓). `restartCompletedToast` i18n en/ko:307 존재, 토스트 렌더 779–781행. Central build GREEN 전제. AC-1~AC-4 동작 항목은 user-verify eyeball 남김(코드 근거 충족). qa_status smoke→pass.
+- **pdt-qa** (verify-r2, §4.b): Code inspection PASS — round-2 two-effect 구조 확정 (working tree, ChatPanel.tsx L438–460). `lastMsgIdRef`(L438–439) 매 렌더 last message id 미러링. **Effect A**(L444–450) dep `[restartCompleted, setRestartCompleted]`: `if (!restartCompleted) return` → `setRestartCompleted(false)`(신호 단일 소비) → `setRestartDividerMarkers((prev)=>[...prev, lastMsgIdRef.current])`(divider 기록, AC-3 ✓) → `setRestartToastVisible(true)` — **타이머 없음 확인**(이 effect cleanup 이 hide 타이머를 건드리지 않음). **Effect B**(L456–459) dep `[restartToastVisible]`: `if (!restartToastVisible) return; const t = setTimeout(()=>setRestartToastVisible(false), 3000); return ()=>clearTimeout(t)`. 3s hide 타이머가 Effect B 단독 소유 → `restartCompleted` true→false flip 이 Effect A 만 재실행시키고 Effect B 의 cleanup 대상 아님 → 타이머가 3s 생존(AC-1·AC-2 ✓). messages 업데이트도 Effect B dep 아니므로 무영향. r1 단일-effect(setTimeout 이 restartCompleted dep effect 내부) 패턴이 working tree 에서 완전히 사라진 것 확인 — flip→cleanup→clearTimeout 경로 제거됨. Central build GREEN 전제(gui tsc 0). AC-1~AC-4 런타임 동작은 user-verify eyeball 잔존(코드 근거 충족). qa_status pass 유지. status → user-verify.

@@ -175,8 +175,9 @@ contextBridge.exposeInMainWorld('api', {
   ticketsRead: (
     projectDir: string,
     ticketId: string,
+    version?: string,
   ): Promise<{ frontmatter: Record<string, unknown>; body: string; krBody: string | null } | null> =>
-    ipcRenderer.invoke('tickets:read', projectDir, ticketId),
+    ipcRenderer.invoke('tickets:read', projectDir, ticketId, version),
 
   /** Subscribe to ticket fs-watch change events (debounced 500ms). */
   onTicketsChanged: (cb: (projectDir: string) => void) => {

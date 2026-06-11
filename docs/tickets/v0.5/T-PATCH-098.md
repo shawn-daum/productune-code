@@ -4,7 +4,7 @@ title: "Chat 입력창 클립보드 이미지 붙여넣기 — paste→디스크
 version: v0.5
 round: patch
 type: feature
-status: user-verify
+status: review
 assignee: pdt-developer
 estimated_complexity: L3
 model: sonnet
@@ -17,7 +17,7 @@ area_tags: [gui/chat, gui/composer, infra/ipc]
 created_at: 2026-06-10
 ---
 
-| T-PATCH-098 | composer-image-paste | user-verify |
+| T-PATCH-098 | composer-image-paste | review |
 
 > §4.d implemented (cmux-style inline image reference): paste inserts a stable
 > `[Image #N]` token at the textarea cursor; numbered chips above the composer;
@@ -717,6 +717,8 @@ Low. Path-transport reuse means zero PO/runner format change. Main-side containm
 | pdt-qa | T-PATCH-098-verify | 2026-06-10T00:00:00Z | 2026-06-10T00:00:00Z | claude-opus-4-8 | standard |
 | pdt-developer | T-PATCH-098-qa-fix-4d | 2026-06-10T00:00:00Z | 2026-06-10T00:00:00Z | claude-opus-4-8 | high |
 | pdt-qa | T-PATCH-098-verify-4d | 2026-06-10T00:00:00Z | 2026-06-10T00:00:00Z | claude-opus-4-8 | standard |
+| pdt-developer | T-PATCH-098-qa-fix-4e | 2026-06-11T00:00:00Z | 2026-06-11T00:00:00Z | claude-opus-4-8 | standard |
+| pdt-qa | T-PATCH-098-verify-4e | 2026-06-11T00:00:00Z | 2026-06-11T00:00:00Z | claude-opus-4-8 | standard |
 
 ### §4.d verify (pdt-qa · code inspection — 2nd pass)
 
@@ -745,3 +747,212 @@ boxes confirmed in code:
 No live `file://` src or dead `thumb*`/`isImagePath` remain (comment-only matches).
 Result: §4.d = PASS (code). User-facing visual → status `user-verify`; eyeball steps
 already enumerated in the §4.d user-verify section above.
+
+---
+
+### §4.e QA-feedback: atomic token deletion
+
+> qa-fix follow-up. §4.d 의 stable-never-reused 번호/양방향 sync 모델은 **그대로 유지**하고,
+> 그 위에 토큰 삭제 UX 만 보강한다. (98 자체는 양호 — 본 절은 단일 후속 결함 수정.)
+
+> QA(유저) 피드백 (요지): 본문에서 `[Image #N]` 토큰을 지우려고 Backspace 를 누르면 닫는
+> 대괄호 `]` 하나만 지워지고 `[Image #1` 같은 **orphan 텍스트가 composer 에 그대로 남는다**.
+> "[] 사이 내용 다 지워지게" — 즉 토큰을 한 번에 **통째로**(`[Image #N]` 전체 = 양 대괄호 +
+> 사이 내용) 지워달라는 요구.
+
+#### 원인 (현행 §4.d 동작)
+
+토큰은 §4.d §3 의도대로 **plain text citation** 이라 Backspace/Delete 도 textarea 기본
+문자단위 삭제다. `]` 한 글자 삭제 → 본문은 `[Image #1` → `onComposerChange`(~497) 의
+`IMAGE_TOKEN_RE = /\[Image #(\d+)\]/g` 가 더 이상 매치 안 됨 → 해당 `ImageRef` 만 드랍
+(chip 사라짐, previewUrl revoke). **하지만 본문의 깨진 잔여 `[Image #1` 은 strip 되지
+않는다** — change-time 로직은 chip 정합만 맞추고 textarea 텍스트는 손대지 않기 때문.
+결과: chip 은 사라졌는데 prose 엔 half-token 리터럴이 남는 비대칭 상태.
+
+#### 채택: KEYDOWN 인터셉트 = primary, CHANGE-time cleanup = 보완(fallback)
+
+토큰을 §4.d 대로 plain text 로 유지하되, **삭제 경로에서만** atomic 하게 다룬다. 두 레이어:
+
+1. **KEYDOWN 인터셉트 (primary, editor-grade)** — caret 이 토큰에 인접/내부일 때
+   Backspace/Delete 를 가로채 토큰 **전체 span** 을 한 번에 제거.
+2. **CHANGE-time cleanup (보완, 방어선)** — 그래도 본문에 들어온 half-token 잔여물
+   (paste 사고, 마우스 selection 삭제, mid-token 편집 등 keydown 으로 못 잡은 경우)을
+   change 시점에 sweep 한다.
+
+primary 가 정상 키보드 삭제 99% 를 깔끔히 처리하고, cleanup 은 "어떤 경로로든 orphan 이
+살아남지 않는다"는 불변식을 보장하는 안전망이다.
+
+#### 1) KEYDOWN — 토큰 span 검출 + atomic 삭제
+
+기존 `onKeyDown`(~194, 현재 Cmd/Ctrl+Enter 만 처리)에 **Enter 분기보다 먼저** atomic-delete
+분기를 추가한다. IME `isComposing` 가드는 그대로 적용(조합 중 Backspace 는 가로채지 않음).
+
+- **토큰 span 인덱싱**: 현재 `draft` 에서 `IMAGE_TOKEN_RE`(`/\[Image #(\d+)\]/g`)를
+  `matchAll` 로 훑어 각 토큰의 `[start, end)` 구간(`m.index` ~ `m.index + m[0].length`)과
+  `seq`(`Number(m[1])`)를 수집한다. 매 keydown 마다 즉석 계산 — 본문이 곧 source of truth라
+  별도 위치 캐시 불필요(§4.d 모델 유지).
+- **caret 위치 판정** (`s = selectionStart`, `e2 = selectionEnd`):
+  - **선택 구간 없음(`s === e2`, 캐럿만)**:
+    - `key === 'Backspace'` 이고 **`s === token.end`** (캐럿이 토큰 **바로 뒤** = 닫는 `]`
+      직후) → `preventDefault()`, 그 토큰 span `[start,end)` 전체를 삭제.
+    - `key === 'Delete'` 이고 **`s === token.start`** (캐럿이 토큰 **바로 앞** = 여는 `[`
+      직전) → `preventDefault()`, 그 토큰 span 전체 삭제.
+    - **mid-token (`token.start < s < token.end`)**: 방향 무관하게 `preventDefault()` +
+      토큰 span **전체** 삭제. (토큰 내부를 부분 편집해 깨뜨리는 걸 원천 차단 — "사이 내용
+      다 지워지게" 의 직접 충족.)
+    - 어느 토큰 span 과도 인접/내부가 아니면 → **개입 안 함**(기본 textarea 삭제). 일반
+      텍스트 편집은 §4.d 처럼 그대로 동작.
+  - **선택 구간 있음(`s !== e2`)**: 선택 범위가 **어떤 토큰 span 과 겹치면(overlap)**, 삭제
+    범위를 그 토큰(들)의 경계까지 **확장(snap)** 해 부분 절단을 막는다 — 즉 union(선택,
+    겹친 토큰 span 전체)을 한 번에 제거. 토큰과 안 겹치는 순수 텍스트 selection 은 개입 안 함.
+- **span 삭제 = 양옆 공백 1개 흡수**: §4.d §4.B `removeImageRef` 와 **동일 규칙** 재사용 —
+  `\s?[Image #N]\s?` 패턴(또는 span ± 인접 단일 공백)으로 잘라 `\s{2,}→' '` 정규화 +
+  `trimStart`. 토큰 삽입 시 pad-left/right 로 넣은 공백이 고아로 남지 않게.
+- **삭제 후처리 = §4.d 경로 재사용(중복 구현 금지)**: span 제거한 새 문자열을
+  **`onComposerChange(next)` 로 흘려보낸다.** 그러면 §4.d §4.A reconcile 이 그대로 돌며
+  해당 `seq` 의 `ImageRef` 드랍 + `previewUrl` revoke + (draft 전체 빔 시) 카운터 리셋까지
+  자동 수행 — chip 제거·preview revoke 를 §4.e 가 따로 구현하지 않는다. caret 은 삭제된
+  span 의 `start`(공백 정규화 보정분 반영)로 `requestAnimationFrame` 에서 복원.
+
+#### 2) CHANGE-time cleanup (보완 — orphan sweep)
+
+`onComposerChange`(~497) 에서 chip reconcile **직전**에 본문의 half-token 잔여물을 strip.
+keydown 인터셉트를 우회한 모든 경로(붙여넣기 사고, 외부 IME, 비정상 selection 삭제 등)의
+방어선.
+
+- **fragment 검출 규칙** — "닫힘 없는 열림" + "열림 없는 닫힘" 두 형태만 표적:
+  - 여는 쪽 잔여: `\[Image #\d+(?!\])` — `[Image #N` 인데 바로 뒤에 `]` 가 안 오는 것.
+  - 닫는 쪽 잔여: 매칭되지 않은 ` #N]`/`Image #\d+\]` 단편처럼 온전한 `[Image #N]` 의
+    부분만 남은 형태.
+  - **반드시 온전한 토큰을 먼저 보호**: `IMAGE_TOKEN_RE` 로 매치되는 완전 토큰 구간은
+    cleanup 대상에서 제외하고(마스킹/인덱스 제외), 그 **밖에 남은** 단편만 제거한다 →
+    멀쩡한 `[Image #2]` 옆에 깨진 `[Image #1` 이 있어도 #2 는 절대 안 건드림.
+- **multi-token 안전성**: 완전-토큰 보호 후 단편만 지우므로, 같은 본문에 여러 토큰이 있어도
+  서로 간섭 없음. 또 stable-never-reused 번호라 strip 후 남은 토큰의 N 을 **renumber 하지
+  않는다**(§4.d §1 계약 유지 — 텍스트 rewrite 금지, hole 허용).
+- cleanup 으로 본문이 바뀌면 그 정리된 문자열로 `setDraft` → 이어지는 reconcile 이 chip
+  정합을 맞춤(orphan 단편이 사라졌으니 chip 도 정상 드랍됨). **idempotent** — 한 번 정리되면
+  재실행해도 no-op(무한루프 0).
+
+#### 3) chip ↔ 토큰 대칭 (이미 충족, 명시만)
+
+- 토큰 제거(atomic keydown 또는 cleanup) → chip 제거 + previewUrl revoke: §4.d §4.A 경로로
+  자동(위 1·2 가 `onComposerChange` 를 타므로).
+- chip X → 토큰 strip: §4.d §4.B `removeImageRef` 그대로 — 변경 없음.
+- temp disk 파일은 §4.c 규칙대로 즉시 unlink 안 함(미전송분은 L1 24h purge / send 후 L2 가
+  회수). §4.e 는 메모리(objectURL)와 본문 텍스트만 다룬다.
+
+#### 4) Acceptance (§4.e 추가분)
+
+- [x] 캐럿이 `[Image #1]` 바로 뒤에서 **Backspace 1회** → `[Image #1]` 전체 + 인접 공백이
+      한 번에 사라지고, **`[Image #1` 같은 잔여물이 남지 않는다**. chip 도 동시에 사라진다.
+- [x] 캐럿이 토큰 바로 앞에서 **Delete 1회** → 동일하게 토큰 전체 atomic 삭제.
+- [x] 토큰 **중간**에 캐럿을 두고 Backspace/Delete → 부분 절단 없이 토큰 전체 삭제.
+- [x] 토큰을 포함하는 **드래그 selection** 삭제 → 토큰이 잘려 half-token 으로 남지 않는다
+      (경계까지 snap).
+- [x] `[Image #1] [Image #2]` 중 #1 만 지워도 **#2 는 그대로**(번호 renumber 없음, hole 허용).
+- [x] (방어선) 어떤 경로로든 본문에 `[Image #N` / 닫힘 없는 단편이 들어오면 change 시점에
+      strip 되어 composer 에 half-token 리터럴이 끝까지 살아남지 않는다.
+- [x] 토큰과 무관한 일반 텍스트 Backspace/Delete 는 §4.d 와 100% 동일(회귀 0).
+- [x] §4.d 의 stable-never-reused seq / 양방향 sync / PO 전달(`## Attached files` `#N→path`)
+      모델은 변경 없음.
+
+#### 5) Outcome (§4.e qa-fix)
+
+Implemented in `ChatPanel.tsx` only (renderer-only; no electron-main / IPC / i18n
+change). Two layers per §4.e:
+
+- **KEYDOWN intercept (primary)** — `onKeyDown` gains a Backspace/Delete branch
+  ahead of the Enter branch (IME `isComposing` guard kept). Each keydown re-indexes
+  the live draft via `[...draft.matchAll(IMAGE_TOKEN_RE)]` into `[start,end)` spans
+  (no position cache — body stays source of truth). Caret-only: Backspace at
+  `s===span.end` (back edge), Delete at `s===span.start` (front edge), or mid-token
+  (`start<s<end`) → `preventDefault()` + remove the WHOLE span. Selection present:
+  any span overlapping `[s,e2)` expands (snaps) the delete range to the union of
+  selection + token boundaries → no partial cut. Span removal absorbs ONE adjacent
+  padding space (trailing preferred, else leading), collapses `\s{2,}→' '`, then
+  feeds the result to `onComposerChange(next)` — so the existing §4.d reconcile does
+  the chip drop + `previewUrl` revoke + counter reset (no duplicate impl). Caret
+  restored at the cut point via `requestAnimationFrame`.
+- **CHANGE-time sweep (complement / defense line)** — module-level
+  `sweepOrphanTokenFragments` runs in `onComposerChange` BEFORE reconcile. It masks
+  every COMPLETE `[Image #N]` span (via `matchAll`) to equal-length sentinel spaces,
+  then matches fragment regexes ONLY over the masked text (`IMAGE_TOKEN_OPEN_FRAG_RE
+  = /\[Image #\d*(?!\])/g` for `[Image #1` w/o close; `IMAGE_TOKEN_CLOSE_FRAG_RE =
+  /(?<!\[)Image #\d+\]/g` for a `]`-remnant with no opener), re-projects the
+  removals onto the real string (mask preserves length → indices align), and
+  collapses double spaces.
+
+Complete-token protection: the mask step replaces full-token spans with spaces, so
+the fragment regexes structurally cannot see inside or across a valid `[Image #N]`
+— an intact `[Image #2]` beside a broken `[Image #1` is untouched. Multi-token safe
+(each complete span masked independently) and idempotent (after one sweep no
+fragment remains → re-run is a no-op; early `return text` when no `[Image #`/`#N]`
+present → no loop). Stable-never-reused numbering preserved: nothing renumbers
+sibling tokens; holes allowed; §4.d bidirectional sync and the `## Attached files`
+`#N → path` send block are unchanged.
+
+Scoped `pnpm exec tsc --noEmit -p tsconfig.json` → 0 errors in `ChatPanel.tsx`
+(2 pre-existing unrelated errors in `TicketDetailTab.tsx` are out of scope, not
+touched). Runtime caret/keystroke behavior → user-verify.
+
+#### 6) §4.e verify (pdt-qa · code inspection)
+
+Central build GREEN (gui tsc 0, locale 778, protected OK, smoke pass) taken as
+given — build/smoke not re-run. Verified by reading `ChatPanel.tsx` against §4.e.
+
+**§4.e Acceptance — all code-verified:**
+- KEYDOWN intercept runs ahead of the Enter branch with the IME `isComposing`
+  guard kept (`onKeyDown` ChatPanel.tsx:194-277; Backspace/Delete branch :203
+  before the Enter branch :273). Spans re-indexed live via
+  `[...draft.matchAll(IMAGE_TOKEN_RE)]` (:210) — no position cache, body stays
+  source of truth.
+- Caret-only (`s === e2`, :220): Backspace at `s === sp.end` (back edge),
+  Delete at `s === sp.start` (front edge), or mid-token `sp.start < s < sp.end`
+  → `from/to = sp.start/sp.end`, `preventDefault()` + remove WHOLE span
+  (:222-231). Non-adjacent → no intervention (default textarea delete). PASS for
+  Backspace-after / Delete-before / mid-token boxes.
+- Selection (`s !== e2`, :232): any span overlapping `[s,e2)` expands the delete
+  range to the union of selection + token boundaries (:235-241) → no partial cut
+  (selection-snap box). PASS.
+- Span removal absorbs ONE adjacent padding space — trailing preferred
+  (`draft[cutTo] === ' '`), else leading (:251-252) — then `\s{2,}→' '` collapse
+  (:254), mirroring §4.d §4.B. Result routed through `onComposerChange(next)`
+  (:257) so the §4.d reconcile drops the chip + revokes objectURL + (when fully
+  empty) resets the counter — no duplicate chip/preview handling. Caret restored
+  at `cutFrom` via `requestAnimationFrame` (:259-266). PASS.
+- CHANGE-time sweep: `sweepOrphanTokenFragments(rawValue)` runs in
+  `onComposerChange` BEFORE reconcile (:578). Module fn (:1169) early-returns when
+  no `[Image #`/`#N]` present (:1170, idempotent/no-loop). It masks every COMPLETE
+  `[Image #N]` span to equal-length spaces (:1172-1183), runs the fragment regexes
+  `IMAGE_TOKEN_OPEN_FRAG_RE = /\[Image #\d*(?!\])/g` and
+  `IMAGE_TOKEN_CLOSE_FRAG_RE = /(?<!\[)Image #\d+\]/g` ONLY over the masked text
+  (:1188-1193), re-projects removals onto the real string (mask preserves length →
+  indices align, :1196-1203), then collapses double spaces (:1205). Complete tokens
+  protected (mask step), multi-token safe (each span masked independently),
+  idempotent. PASS for defense-line box.
+- `[Image #1] [Image #2]` delete #1 → #2 untouched: stable-never-reused seq, no
+  renumber, holes allowed — §4.d §1 model unchanged (no sibling rewrite in either
+  keydown or sweep path). PASS.
+- Non-token Backspace/Delete = §4.d identical: keydown only intervenes when
+  `from !== -1 && to !== -1` (:244); else falls through to default. PASS (no
+  regression).
+- §4.d model intact — `IMAGE_TOKEN_RE = /\[Image #(\d+)\]/g` (:1159), stable seq
+  `nextImageSeqRef.current++` (:526), bidirectional sync `onComposerChange`
+  reconcile (:580-592) + chip-X `removeImageRef` strip (:480-488), send block
+  `## Attached files` `- #${a.seq} → ${a.path}` (:129). All unchanged. PASS.
+
+i18n: no new keys — `workspace.chat.imageLabel`/`removeImage` present with en/ko
+parity (en.json/ko.json :303-304); `[Image #N]` token literal is en/ko common
+(protected). renderer-only — no electron-main/IPC change for §4.e.
+
+Result: §4.e = PASS (code). Runtime caret/keystroke paint → user-verify.
+
+**§4.e user-verify steps:**
+1. Paste an image into the composer → an `[Image #1]` token appears at the caret + a `#1` chip above.
+2. Place the caret immediately AFTER `]` and press Backspace ONCE → the whole `[Image #1]` (and its padding space) disappears in one stroke; no `[Image #1` remnant survives; the chip vanishes too.
+3. Place the caret immediately BEFORE `[` and press Delete ONCE → same atomic removal.
+4. Put the caret in the MIDDLE of a token and press Backspace/Delete → whole token removed, no half-token.
+5. Drag-select across a token (partially) and delete → selection snaps to the token boundary; no half-token left behind.
+6. Paste two images (`[Image #1]`, `[Image #2]`), delete only #1 → #2 keeps its number (no renumber).
+7. Type ordinary text and Backspace/Delete normally → behaves exactly as before (no regression).

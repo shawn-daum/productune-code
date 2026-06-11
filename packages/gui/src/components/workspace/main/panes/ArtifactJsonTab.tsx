@@ -53,8 +53,11 @@ const HL_ACTIVE = 'pdt-json-find-active'
 // ── Sticky scroll (T-PATCH-095) ────────────────────────────────────────────────
 // VS Code-style ancestor key-path accumulation. As you scroll into a deep node,
 // its ancestor keys (root ▸ surfaces ▸ gui …) pin cascading at the top; click an
-// entry to jump to that node below the band. Capped so deep trees don't eat the
-// viewport — nearest ancestors are kept, shallowest dropped.
+// entry to jump to that node below the band. The band reflects the ancestor path of
+// the FIRST row visible just below the band (see recomputeSticky) so it tracks the
+// subtree you're actually inside and updates cleanly across sibling boundaries.
+// Capped so deep trees don't eat the viewport — root stays pinned, the middle is
+// elided, the nearest deepest ancestors are kept.
 const MAX_STICKY_DEPTH = 4
 const STICKY_ROW_H = 20
 
@@ -269,37 +272,48 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
     const rows = sc.querySelectorAll<HTMLElement>('[data-pathkey]')
     if (rows.length === 0) { setStickyPath((p) => (p.length ? [] : p)); return }
     // Container-relative geometry (rect delta) — correct regardless of offsetParent.
-    // The probe line sits just under where a FULL band would end (fixed at the
-    // depth cap, NOT the current chain length) so detection never feeds back on its
-    // own output — a node's header flips to pinned as it scrolls beneath the band.
     const scTop = sc.getBoundingClientRect().top
-    const probe = MAX_STICKY_DEPTH * STICKY_ROW_H + 1
-    // Deepest header row whose top (relative to the container) is at/above the
-    // probe = the node the viewport top currently sits inside. Higher-in-tree
-    // ancestors have already scrolled past, so they also pass — we keep the
-    // deepest, then reconstruct the FULL chain from its path below.
-    let curPathKey = ''
-    let hasCurrent = false
-    let curDepth = -1
-    rows.forEach((row) => {
+    // bandBottom = lower edge of where a FULL band would sit. Fixed at the depth cap
+    // (NOT the current chain length) so the threshold never feeds back on its own
+    // output — the chain we compute can't move the line that computes it.
+    const bandBottom = MAX_STICKY_DEPTH * STICKY_ROW_H
+    // firstVisible = the FIRST header row (DOM order) whose top is at/below the band
+    // bottom, i.e. the first node still visible just under the band. The viewport top
+    // sits inside THIS node's parent subtree, so its ancestor path is the breadcrumb.
+    // Rows fully scrolled above the band (top < bandBottom) are behind us and skipped
+    // — this is what kills the "stale deep sibling" bug: a scrolled-past axes_max child
+    // no longer qualifies once total_bands' rows are the first ones below the band.
+    let anchorPathKey: string | null = null
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]!
       const top = row.getBoundingClientRect().top - scTop
-      const depth = Number(row.dataset.depth ?? '0')
-      if (top <= probe && depth > curDepth) {
-        curDepth = depth
-        curPathKey = row.dataset.pathkey ?? ''
-        hasCurrent = true
-      }
-    })
-    if (!hasCurrent) { setStickyPath((p) => (p.length ? [] : p)); return }
-    // Build the FULL ancestor chain (root → … → current) from the path segments.
-    // Each segment becomes one stacked sticky row, indented by its depth.
-    const segs = curPathKey.split(' ').filter((s) => s !== '')
-    const chain: StickyKey[] = [{ pathKey: '', label: 'root', depth: 0 }]
-    for (let i = 0; i < segs.length; i++) {
-      chain.push({ pathKey: segs.slice(0, i + 1).join(' '), label: segs[i]!, depth: i + 1 })
+      if (top >= bandBottom - 0.5) { anchorPathKey = row.dataset.pathkey ?? ''; break }
     }
-    // Cap — keep the nearest ancestors (drop shallowest / front of chain).
-    const capped = chain.length > MAX_STICKY_DEPTH ? chain.slice(chain.length - MAX_STICKY_DEPTH) : chain
+    // Nothing below the band (scrolled to the very bottom) — anchor on the LAST row so
+    // the deepest tail context still pins instead of clearing.
+    if (anchorPathKey === null) {
+      anchorPathKey = rows[rows.length - 1]!.dataset.pathkey ?? ''
+    }
+    // Ancestor path of the anchor = root → seg1 → … → parent(anchor). We drop the
+    // anchor's OWN last segment: the anchor row is the first thing visible below the
+    // band, so the band shows the containers you're INSIDE, not the row itself. (A
+    // depth-0 anchor at the very top yields just root.)
+    const segs = anchorPathKey.split(' ').filter((s) => s !== '')
+    const ancestorSegs = segs.slice(0, Math.max(0, segs.length - 1))
+    const chain: StickyKey[] = [{ pathKey: '', label: 'root', depth: 0 }]
+    for (let i = 0; i < ancestorSegs.length; i++) {
+      chain.push({ pathKey: ancestorSegs.slice(0, i + 1).join(' '), label: ancestorSegs[i]!, depth: i + 1 })
+    }
+    // Cap — ALWAYS keep root pinned (user disliked root disappearing). When the chain
+    // exceeds the cap, keep root + the nearest (cap-1) deepest ancestors, eliding the
+    // middle. Root is chain[0]; the deepest live at the tail.
+    let capped: StickyKey[]
+    if (chain.length > MAX_STICKY_DEPTH) {
+      const tail = chain.slice(chain.length - (MAX_STICKY_DEPTH - 1))
+      capped = [chain[0]!, ...tail]
+    } else {
+      capped = chain
+    }
     setStickyPath((prev) => {
       if (prev.length === capped.length && prev.every((p, i) => p.pathKey === capped[i]!.pathKey)) return prev
       return capped

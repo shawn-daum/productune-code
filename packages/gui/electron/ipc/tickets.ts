@@ -129,30 +129,49 @@ export function register(): void {
       _event,
       projectDir: string,
       ticketId: string,
+      version?: string,
     ): Promise<{ frontmatter: Record<string, unknown>; body: string; krBody: string | null } | null> => {
       const ticketsRoot = path.join(projectDir, 'docs', 'tickets')
       if (!fs.existsSync(ticketsRoot)) return null
+      const root = path.resolve(ticketsRoot)
+
+      // Read+parse a candidate file with a path-traversal guard. Returns the
+      // parsed payload, or null when the file is missing/unreadable.
+      const tryRead = (
+        versionDir: string,
+      ): { frontmatter: Record<string, unknown>; body: string; krBody: string | null } | null => {
+        const filePath = path.join(ticketsRoot, versionDir, `${ticketId}.md`)
+        const resolved = path.resolve(filePath)
+        if (!resolved.startsWith(root + path.sep)) {
+          throw new Error('path traversal rejected')
+        }
+        if (!fs.existsSync(filePath)) return null
+        let content: string
+        try { content = fs.readFileSync(filePath, 'utf-8') } catch { return null }
+        const frontmatter = parseFrontmatter(content)
+        const body = stripFrontmatter(content)
+        const krBody = extractKrSection(body)
+        return { frontmatter, body, krBody }
+      }
+
+      // (version, id) resolution (T-PATCH-111): when version is provided, look
+      // up exactly docs/tickets/<version>/<id>.md — never first-match across
+      // versions. Missing file → null (do not silently fall through).
+      if (version) {
+        return tryRead(version)
+      }
+
+      // Legacy fallback (version absent): first-match across all version dirs,
+      // preserving today's backward-compatible behaviour for version-less reads.
       let versionDirs: string[] = []
       try {
         versionDirs = fs.readdirSync(ticketsRoot, { withFileTypes: true })
           .filter((d) => d.isDirectory())
           .map((d) => d.name)
       } catch { return null }
-      // Search all version dirs for <ticketId>.md
       for (const versionDir of versionDirs) {
-        const filePath = path.join(ticketsRoot, versionDir, `${ticketId}.md`)
-        const resolved = path.resolve(filePath)
-        const root = path.resolve(ticketsRoot)
-        if (!resolved.startsWith(root + path.sep)) {
-          throw new Error('path traversal rejected')
-        }
-        if (!fs.existsSync(filePath)) continue
-        let content: string
-        try { content = fs.readFileSync(filePath, 'utf-8') } catch { continue }
-        const frontmatter = parseFrontmatter(content)
-        const body = stripFrontmatter(content)
-        const krBody = extractKrSection(body)
-        return { frontmatter, body, krBody }
+        const hit = tryRead(versionDir)
+        if (hit) return hit
       }
       return null
     },

@@ -192,8 +192,83 @@ export default function ChatPanel() {
   // has an early-return guard `if (streaming || !project) return` (line ~125 above).
   // So the keyboard path is blocked during streaming — no new code needed here.
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // IME composition — don't capture Enter mid-Korean composition.
+    // IME composition — don't capture Enter (or Backspace) mid-Korean composition.
     if ((e.nativeEvent as any).isComposing) return
+
+    // T-PATCH-098 §4.e §1: atomic token deletion. When Backspace/Delete would cut
+    // into an `[Image #N]` citation, intercept and remove the WHOLE token span at
+    // once (with its single padding space, matching §4.d §4.B), then route the
+    // result through onComposerChange so the existing reconcile drops the chip +
+    // revokes the objectURL. Runs BEFORE the Enter branch.
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      const ta = taRef.current
+      if (ta) {
+        const s = ta.selectionStart
+        const e2 = ta.selectionEnd
+        // Index every complete token span in the current draft. `matchAll` is safe
+        // against the module regex's `g` lastIndex (it iterates a fresh clone).
+        const spans = [...draft.matchAll(IMAGE_TOKEN_RE)].map((m) => ({
+          start: m.index ?? 0,
+          end: (m.index ?? 0) + m[0].length,
+        }))
+
+        // Find the delete range to remove: either the token the caret is
+        // adjacent-to/inside, or the union of the selection with any tokens it
+        // overlaps (snap selection to token boundaries — no partial cut).
+        let from = -1
+        let to = -1
+        if (s === e2) {
+          // Caret only (no selection).
+          for (const sp of spans) {
+            const atBackEdge = e.key === 'Backspace' && s === sp.end
+            const atFrontEdge = e.key === 'Delete' && s === sp.start
+            const midToken = s > sp.start && s < sp.end
+            if (atBackEdge || atFrontEdge || midToken) {
+              from = sp.start
+              to = sp.end
+              break
+            }
+          }
+        } else {
+          // Selection present — if it overlaps any token, expand to cover the
+          // whole token(s) so the citation is never sliced into a half-token.
+          for (const sp of spans) {
+            const overlaps = sp.start < e2 && sp.end > s
+            if (overlaps) {
+              from = from === -1 ? Math.min(s, sp.start) : Math.min(from, sp.start)
+              to = to === -1 ? Math.max(e2, sp.end) : Math.max(to, sp.end)
+            }
+          }
+        }
+
+        if (from !== -1 && to !== -1) {
+          e.preventDefault()
+          // Absorb one adjacent padding space (the pad-left/right added at insert)
+          // so the token's space doesn't survive as an orphan. Prefer the trailing
+          // space, else a leading one — mirroring §4.d §4.B's `\s?[Image #N]\s?`.
+          let cutFrom = from
+          let cutTo = to
+          if (draft[cutTo] === ' ') cutTo += 1
+          else if (cutFrom > 0 && draft[cutFrom - 1] === ' ') cutFrom -= 1
+          const next = (draft.slice(0, cutFrom) + draft.slice(cutTo))
+            .replace(/\s{2,}/g, ' ')
+          // Route through the §4.d change path → chip drop + objectURL revoke +
+          // (when fully empty) counter reset. No duplicate chip/preview handling.
+          onComposerChange(next)
+          // Restore the caret at the deletion point.
+          const caret = cutFrom
+          requestAnimationFrame(() => {
+            const el = taRef.current
+            if (el) {
+              el.focus()
+              el.selectionStart = el.selectionEnd = Math.min(caret, el.value.length)
+            }
+          })
+          return
+        }
+      }
+    }
+
     // Cmd+Enter (or Ctrl+Enter) → submit. Plain Enter → newline (default).
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
@@ -344,33 +419,44 @@ export default function ChatPanel() {
     [],
   )
 
-  // T-PATCH-052 / T-PATCH-104: session restart completion → toast + divider.
-  // Split into two responsibilities so the 3s hide timer NEVER depends on
-  // `messages`. Previously a single effect listed `messages` in its deps, so any
-  // message update within the 3s window re-ran the effect; the re-run's cleanup
-  // fired clearTimeout and killed the hide timer → toast stuck forever (T-PATCH-104).
+  // T-PATCH-052 / T-PATCH-104 (QA-fix-r2): session restart completion → toast +
+  // divider. Split into TWO effects so the 3s hide timer is NEVER subject to
+  // cleanup when `restartCompleted` changes.
+  //
+  // Earlier fixes removed `messages` from the deps, but the toast still got stuck:
+  // Effect A consumes the signal via setRestartCompleted(false), which flips
+  // `restartCompleted` true→false. Because that var was in the SAME effect's deps,
+  // the dep change re-ran the effect and React fired the previous run's cleanup
+  // `clearTimeout(timer)` FIRST — killing the hide timer mid-flight → toast forever.
+  //
+  // The trigger is `restartCompleted` flipping, not `messages`. So the hide timer
+  // must live in a separate effect that does NOT depend on `restartCompleted`.
   //
   // The divider needs the last message id, which DOES change with `messages`. We
-  // mirror that id into a ref every render so the toast effect can read it without
-  // listing `messages` as a dependency.
+  // mirror that id into a ref every render so Effect A can read it without listing
+  // `messages` as a dependency.
   const lastMsgIdRef = useRef<string | null>(null)
   lastMsgIdRef.current = messages.length > 0 ? messages[messages.length - 1].id : null
 
-  // Toast + divider effect — depends ONLY on the restart signal. Reading the
-  // last message id via ref keeps `messages` out of the dep array, so the hide
-  // timer survives message updates (AC-2). Signal is consumed here exactly once.
+  // Effect A — signal consumer. On the restart signal: consume it once, record the
+  // divider position (last message id via ref → no `messages` dep), and raise the
+  // toast. NO timer here, so its cleanup never touches the hide timer. (AC-3)
   useEffect(() => {
     if (!restartCompleted) return
-    // Consume the signal
     setRestartCompleted(false)
-    // Record the divider position: after the current last message (read via ref,
-    // so this effect does not re-run on every message update). (AC-3)
     setRestartDividerMarkers((prev) => [...prev, lastMsgIdRef.current])
-    // Show toast for 3s (AC-1)
     setRestartToastVisible(true)
-    const timer = setTimeout(() => setRestartToastVisible(false), 3000)
-    return () => clearTimeout(timer)
   }, [restartCompleted, setRestartCompleted])
+
+  // Effect B — hide timer. Depends ONLY on `restartToastVisible`. The single thing
+  // that flips `restartToastVisible` false (besides this timer) is the timer itself,
+  // so `restartCompleted` changes no longer disturb the timer → it survives the full
+  // 3s and the toast auto-dismisses, even if messages update meanwhile. (AC-1, AC-2)
+  useEffect(() => {
+    if (!restartToastVisible) return
+    const t = setTimeout(() => setRestartToastVisible(false), 3000)
+    return () => clearTimeout(t)
+  }, [restartToastVisible])
 
   const onAttachFile = async () => {
     try {
@@ -483,7 +569,13 @@ export default function ChatPanel() {
   // (token deleted or broken). Resets the counter when draft + attachments are
   // both empty (fresh `#1` number space). Idempotent — re-runs after removeImageRef
   // converge to the same result (no loop).
-  const onComposerChange = (value: string) => {
+  const onComposerChange = (rawValue: string) => {
+    // T-PATCH-098 §4.e §2: orphan-fragment sweep (complement / defense line). Any
+    // path that bypasses the keydown intercept (paste accident, IME, abnormal
+    // selection delete, mid-token edit) can leave a half-token literal like
+    // `[Image #1` (open, no close) or `#1]` (close, no open) in the prose. Strip
+    // those remnants here, BEFORE the chip reconcile, so no half-token survives.
+    const value = sweepOrphanTokenFragments(rawValue)
     setDraft(value)
     const present = new Set(
       [...value.matchAll(IMAGE_TOKEN_RE)].map((m) => Number(m[1])),
@@ -1065,6 +1157,53 @@ function basename(p: string): string {
 // insertion (literal), parse/reconcile (matchAll), and strip — locale-invariant.
 // Token literal `[Image #N]` matches cmux/Claude-Code so PO/agent recognizes it.
 const IMAGE_TOKEN_RE = /\[Image #(\d+)\]/g
+
+// T-PATCH-098 §4.e §2: strip orphaned half-token fragments while PROTECTING every
+// complete `[Image #N]` token. Strategy: mask out the complete-token spans first,
+// then run the fragment regexes only over the regions OUTSIDE those spans — so a
+// broken `[Image #1` sitting next to an intact `[Image #2]` can never touch #2.
+// Multi-token safe (each complete span is masked independently) and idempotent
+// (once the fragments are gone, a re-run finds nothing → no loop, stable output).
+const IMAGE_TOKEN_OPEN_FRAG_RE = /\[Image #\d*(?!\])/g // `[Image #` / `[Image #1` w/o `]`
+const IMAGE_TOKEN_CLOSE_FRAG_RE = /(?<!\[)Image #\d+\]/g // `Image #1]` remnant with no opening `[`
+function sweepOrphanTokenFragments(text: string): string {
+  if (!text.includes('[Image #') && !/#\d+\]/.test(text)) return text
+  // Mask complete tokens with a same-length sentinel so fragment regexes skip them.
+  const spans = [...text.matchAll(IMAGE_TOKEN_RE)].map((m) => ({
+    start: m.index ?? 0,
+    end: (m.index ?? 0) + m[0].length,
+  }))
+  let masked = ''
+  let cursor = 0
+  for (const sp of spans) {
+    masked += text.slice(cursor, sp.start)
+    masked += ' '.repeat(sp.end - sp.start) // sentinel, never matched below
+    cursor = sp.end
+  }
+  masked += text.slice(cursor)
+
+  // Remove fragments in the masked string, then re-project removals onto the real
+  // text by tracking the same offsets (mask preserves length, so indices align).
+  const remove: Array<{ start: number; end: number }> = []
+  for (const re of [IMAGE_TOKEN_OPEN_FRAG_RE, IMAGE_TOKEN_CLOSE_FRAG_RE]) {
+    for (const m of masked.matchAll(re)) {
+      const start = m.index ?? 0
+      remove.push({ start, end: start + m[0].length })
+    }
+  }
+  if (remove.length === 0) return text
+  remove.sort((a, b) => a.start - b.start)
+  let out = ''
+  let pos = 0
+  for (const r of remove) {
+    if (r.start < pos) continue // overlapping match (shouldn't happen) — skip
+    out += text.slice(pos, r.start)
+    pos = r.end
+  }
+  out += text.slice(pos)
+  // Collapse the whitespace the removed fragment may have orphaned.
+  return out.replace(/\s{2,}/g, ' ')
+}
 
 // T-PATCH-098 §4.d: single source-of-truth for an inline-referenced image.
 // seq = stable token N (never reused/renumbered); path = temp abs path (PO key);

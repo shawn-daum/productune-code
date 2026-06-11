@@ -8,6 +8,19 @@ import {
   ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH, CENTER_MIN_LAYOUT,
 } from './constants'
 
+/**
+ * Canonical ticket-detail tab id, namespaced by (version, id) to avoid
+ * cross-version ticket_id collisions (T-PATCH-111). When `version` is
+ * truthy the id is `ticket-detail:<version>/<id>`; otherwise it falls back
+ * to the legacy `ticket-detail:<id>` so version-less/legacy tickets behave
+ * exactly as before. All three openTab call sites (QuickOpen, Version
+ * History TicketCard, Ticket Dashboard) MUST use this helper so the same
+ * (version, id) dedup-focuses to the same tab regardless of entry point.
+ */
+export function ticketDetailTabId(version: string | null | undefined, id: string): string {
+  return version ? `ticket-detail:${version}/${id}` : `ticket-detail:${id}`
+}
+
 export function readStoredWidth(key: string, defaultWidth: number, min: number, max: number): number {
   try {
     const raw = window.localStorage.getItem(key)
@@ -230,7 +243,9 @@ export function buildQuickOpenItems(
     const isClosed = tk.status === 'done' || tk.status === 'abandoned'
     const sublabel = [tk.version ?? '', tk.status].filter(Boolean).join(' · ')
     items.push({
-      id: `ticket:${tk.ticket_id}`,
+      // Item id namespaced by version so the same ticket_id in two versions
+      // yields distinct React keys (T-PATCH-111). '∅' marks version-less.
+      id: `ticket:${tk.version ?? '∅'}/${tk.ticket_id}`,
       source: 'ticket',
       category: 'tickets',
       label: tk.ticket_id + (tk.title ? ` — ${tk.title}` : ''),
@@ -241,9 +256,9 @@ export function buildQuickOpenItems(
       priority: isClosed ? 40 : 70,
       open: () =>
         openTab(
-          `ticket-detail:${tk.ticket_id}`,
+          ticketDetailTabId(tk.version, tk.ticket_id),
           'ticket-detail',
-          { ticketId: tk.ticket_id },
+          { ticketId: tk.ticket_id, version: tk.version ?? null },
           tk.ticket_id,
         ),
     })

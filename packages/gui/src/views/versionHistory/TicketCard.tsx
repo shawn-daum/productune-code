@@ -5,6 +5,7 @@ import { useWorkspace } from '../../store/workspace'
 import type { Ticket } from '../../lib/types'
 import type { CommitLine } from './types'
 import { parsePersonaActivity, commitSummaryLine } from './helpers'
+import { ticketDetailTabId } from '../workspace/shell/helpers'
 import {
   cardWrap, cardHeader, cardHeaderOpen, cardTicketId, cardTitle, cardMeta, metaItem,
   activityList, activityRow, activityPersona, activityResult,
@@ -22,13 +23,16 @@ export default function TicketCard({ ticket, commits }: TicketCardProps) {
   const [expanded, setExpanded] = useState(false)
 
   // Canonical ticket-detail entry — same signature as TicketDashboardView Card
-  // and command palette. Tab id `ticket-detail:<id>` is fixed, so openTab dedups
-  // (re-click focuses the existing tab instead of opening a new one).
+  // and command palette. Tab id is namespaced by (version, id) via the shared
+  // ticketDetailTabId helper (T-PATCH-111), so openTab dedups per (version, id):
+  // re-clicking the same ticket focuses the existing tab, while the same id in a
+  // different version opens a distinct tab. Version-less tickets fall back to
+  // the legacy `ticket-detail:<id>` form.
   const handleOpen = () =>
     openTab(
-      `ticket-detail:${ticket.ticket_id}`,
+      ticketDetailTabId(ticket.version, ticket.ticket_id),
       'ticket-detail',
-      { ticketId: ticket.ticket_id },
+      { ticketId: ticket.ticket_id, version: ticket.version ?? null },
       ticket.ticket_id,
     )
 

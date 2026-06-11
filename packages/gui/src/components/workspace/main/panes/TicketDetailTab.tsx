@@ -223,6 +223,9 @@ function buildPipeline(
 export default function TicketDetailTab({ props: tabProps }: Props) {
   const { t } = useTranslation()
   const ticketId = typeof tabProps?.ticketId === 'string' ? tabProps.ticketId : ''
+  // (version, id) resolution (T-PATCH-111): when present, the read targets the
+  // exact version dir; absent → undefined → legacy first-match read.
+  const tabVersion = typeof tabProps?.version === 'string' ? tabProps.version : undefined
   const project = useWorkspace((s) => s.project)
 
   const [ticket, setTicket] = useState<TicketData | null>(null)
@@ -237,7 +240,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
     setLoadState('loading')
     const api = (window as any).api
     api
-      .ticketsRead(project.projectDir, ticketId)
+      .ticketsRead(project.projectDir, ticketId, tabVersion)
       .then((data: TicketData | null) => {
         if (!data) {
           setLoadState('error')
@@ -247,7 +250,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
         setLoadState('done')
       })
       .catch(() => setLoadState('error'))
-  }, [ticketId, project?.projectDir])
+  }, [ticketId, tabVersion, project?.projectDir])
 
   useEffect(() => {
     load()
