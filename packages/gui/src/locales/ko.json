@@ -187,7 +187,9 @@
       "derivedReadOnly": "파생 · 읽기 전용",
       "nextLabel": "다음 —",
       "showFullSpec": "전체 spec 보기",
-      "hideFullSpec": "전체 spec 숨기기"
+      "hideFullSpec": "전체 spec 숨기기",
+      "artifacts": "산출물",
+      "artifactArchived": "보관됨"
     },
     "versions": {
       "current": "현재",
@@ -738,7 +740,9 @@
       "ticketCard": {
         "collapse": "▲ 접기",
         "autosaveCount": "▼ 자동저장 기록 {{n}}건",
-        "openDetail": "티켓 상세 열기: {{id}}"
+        "openDetail": "티켓 상세 열기: {{id}}",
+        "artifactCount": "📎 {{n}}",
+        "artifactCountTitle": "산출물 {{n}}건"
       }
     },
     "qaLoop": {

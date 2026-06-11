@@ -22,6 +22,7 @@ import {
   Activity,
   Info,
   ArrowRight,
+  Paperclip,
   User,
   UserCheck,
 } from 'lucide-react'
@@ -42,6 +43,15 @@ interface TicketData {
 }
 
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
+
+// Manifest-backed artifact entry (T-PATCH-121) — shape returned by the
+// artifacts:listTree IPC; `meta` mirrors docs/artifacts/<v>/manifest.json.
+interface TicketArtifactEntry {
+  relPath: string
+  absPath: string
+  ext: string
+  meta?: { ticket: string | null; kind: string; status: string }
+}
 
 // Pipeline stage — derived from ticket frontmatter (status/assignee/qa_status),
 // NOT from runtime persona_sessions. The ticket-detail view shows ticket facts,
@@ -231,6 +241,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
   const [ticket, setTicket] = useState<TicketData | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [showFullSpec, setShowFullSpec] = useState(true)
+  const [artifacts, setArtifacts] = useState<TicketArtifactEntry[]>([])
 
   const load = useCallback(() => {
     if (!ticketId || !project?.projectDir) {
@@ -280,6 +291,60 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
   const handleBreadcrumb = useCallback(() => {
     openTab('ticket-review', 'ticket-review', {}, 'Tickets')
   }, [openTab])
+
+  // ── Artifacts linked via manifest `ticket:` (T-PATCH-121) ──────────────────
+  // SoT = docs/artifacts/<v>/manifest.json. Scope to the tab's version when
+  // present (T-PATCH-111), else the frontmatter version; no version → no load.
+  // artifacts:listTree gives both flat and archived entries for one version.
+  // Errors → empty list (section simply absent — no placeholder noise).
+  const artifactVersion = tabVersion ?? version
+
+  useEffect(() => {
+    const projectDir = project?.projectDir
+    if (!projectDir || !ticketId || !artifactVersion) {
+      setArtifacts([])
+      return
+    }
+    let cancelled = false
+    const api = (window as any).api
+    if (!api?.artifactsListTree) return
+    api
+      .artifactsListTree(projectDir, artifactVersion, [])
+      .then((tree: { current?: { flat?: TicketArtifactEntry[]; archived?: TicketArtifactEntry[] } } | null) => {
+        if (cancelled) return
+        const all = [...(tree?.current?.flat ?? []), ...(tree?.current?.archived ?? [])]
+        setArtifacts(all.filter((e) => e.meta?.ticket === ticketId))
+      })
+      .catch(() => {
+        if (!cancelled) setArtifacts([])
+      })
+    return () => { cancelled = true }
+  }, [project?.projectDir, ticketId, artifactVersion])
+
+  // Open an artifact exactly like ArtifactsPane.handleRowClick: ext-routed
+  // preview tab; anything non-previewable falls back to the OS opener.
+  const handleArtifactClick = useCallback(
+    (entry: TicketArtifactEntry) => {
+      const projectDir = project?.projectDir
+      if (!projectDir) return
+      const tabId = `artifact:${entry.relPath}`
+      const title = entry.relPath.split('/').pop() ?? entry.relPath
+
+      if (entry.ext === '.html') {
+        openTab(tabId, 'preview', { path: entry.absPath, projectDir, relPath: entry.relPath }, title)
+      } else if (entry.ext === '.mmd' || entry.ext === '.mermaid') {
+        openTab(tabId, 'artifact-mermaid', { absPath: entry.absPath, relPath: entry.relPath, projectDir }, title)
+      } else if (entry.ext === '.json') {
+        openTab(tabId, 'artifact-json', { absPath: entry.absPath, relPath: entry.relPath, projectDir }, title)
+      } else if (entry.ext === '.md') {
+        openTab(tabId, 'artifact-md', { absPath: entry.absPath, relPath: entry.relPath, projectDir }, title)
+      } else {
+        // Non-previewable extension → hand off to the OS (shell:openPath).
+        void (window as any).api?.openPath?.(entry.absPath)
+      }
+    },
+    [openTab, project?.projectDir],
+  )
 
   // ── KR body: prefer krBody, fallback to full body if no KR section found ──
   const krContent = ticket?.krBody ?? null
@@ -410,6 +475,45 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                   )}
                 </div>
               </section>
+
+              {/* Artifacts (T-PATCH-121) — manifest `ticket:` linked entries.
+                  Empty → render nothing (BDD-3). Archived → greyed + labeled. */}
+              {artifacts.length > 0 && (
+                <section style={artifactsWrap} aria-label="ticket artifacts">
+                  <div style={dpHead}>
+                    <Paperclip size={15} style={{ color: '#707070', flexShrink: 0 }} />
+                    <span style={dpTitle}>{t('workspace.ticketDetail.artifacts')}</span>
+                  </div>
+                  <div style={artifactList}>
+                    {artifacts.map((entry) => {
+                      const archived = entry.meta?.status === 'archived'
+                      const basename = entry.relPath.split('/').pop() ?? entry.relPath
+                      const statusLabel = archived
+                        ? t('workspace.ticketDetail.artifactArchived')
+                        : entry.meta?.status
+                      return (
+                        <button
+                          key={entry.relPath}
+                          type="button"
+                          style={artifactRow(archived)}
+                          onClick={() => handleArtifactClick(entry)}
+                          title={entry.relPath}
+                        >
+                          <span style={artifactName(archived)}>{basename}</span>
+                          {entry.meta?.kind && (
+                            <span style={artifactKind}>{entry.meta.kind}</span>
+                          )}
+                          {statusLabel && (
+                            <span style={artifactStatusPill(entry.meta?.status ?? 'pending')}>
+                              {statusLabel}
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+              )}
 
               {/* Collapsible full spec (§2 spec intent — "Show full spec") */}
               <div style={fullSpecSection}>
@@ -821,6 +925,80 @@ const dpRo: React.CSSProperties = {
   fontSize: 11,
   color: '#707070',
   letterSpacing: '0.02em',
+}
+
+// Artifacts section (T-PATCH-121) — same card chrome as DispatchProgress.
+const artifactsWrap: React.CSSProperties = {
+  marginTop: 16,
+  background: '#1A1A1A',
+  border: '1px solid #1F1F1F',
+  borderRadius: 8,
+  padding: '14px 20px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 10,
+}
+
+const artifactList: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  paddingTop: 10,
+  borderTop: '1px solid #242424',
+}
+
+function artifactRow(archived: boolean): React.CSSProperties {
+  return {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '5px 8px',
+    margin: '0 -8px',
+    background: 'none',
+    border: 'none',
+    borderRadius: 4,
+    cursor: 'pointer',
+    textAlign: 'left',
+    fontFamily: 'inherit',
+    opacity: archived ? 0.55 : 1,
+  }
+}
+
+function artifactName(archived: boolean): React.CSSProperties {
+  return {
+    fontSize: 13,
+    lineHeight: 1.4,
+    color: archived ? 'var(--text-muted, #707070)' : 'var(--text-secondary, #C8C8CC)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+  }
+}
+
+const artifactKind: React.CSSProperties = {
+  fontSize: 10,
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  color: 'var(--text-muted, #707070)',
+  letterSpacing: '0.02em',
+  flexShrink: 0,
+}
+
+// Manifest status hues — pending matches ArtifactsPane's user-gate dot.
+const ARTIFACT_STATUS_COLORS: Record<string, string> = {
+  'pending':  '#D97706',
+  'approved': '#34D399',
+  'archived': '#505050',
+}
+
+function artifactStatusPill(status: string): React.CSSProperties {
+  const c = ARTIFACT_STATUS_COLORS[status] ?? '#505050'
+  return {
+    ...pillBase,
+    flexShrink: 0,
+    background: `color-mix(in oklab, ${c} 12%, transparent)`,
+    color: c,
+  }
 }
 
 // Pipeline lane — single horizontal progress row (po → designer → developer → qa)

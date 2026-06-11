@@ -12,12 +12,23 @@ import {
   expandBtn, commitList, commitRow, commitDate, commitSummary, statusPill,
 } from './styles'
 
+/** Manifest-backed artifact entry (T-PATCH-121) — shape returned by the
+ *  artifacts:listScoped IPC; `meta` mirrors docs/artifacts/<v>/manifest.json. */
+export interface TicketArtifactEntry {
+  relPath: string
+  absPath: string
+  ext: string
+  meta?: { ticket: string | null; kind: string; status: string }
+}
+
 export interface TicketCardProps {
   ticket: Ticket
   commits: CommitLine[]
+  /** Artifacts linked to this ticket via manifest `ticket:` (T-PATCH-121). */
+  artifacts?: TicketArtifactEntry[]
 }
 
-export default function TicketCard({ ticket, commits }: TicketCardProps) {
+export default function TicketCard({ ticket, commits, artifacts }: TicketCardProps) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
   const [expanded, setExpanded] = useState(false)
@@ -51,6 +62,12 @@ export default function TicketCard({ ticket, commits }: TicketCardProps) {
     ? `${Math.round(durationMin / 60 * 10) / 10}h`
     : null
 
+  // Artifact badge count (T-PATCH-121) — archived manifest entries excluded.
+  const artifactCount = useMemo(
+    () => (artifacts ?? []).filter((a) => a.meta?.status !== 'archived').length,
+    [artifacts],
+  )
+
   return (
     <div style={cardWrap}>
       {/* Card header — id/title open the ticket-detail tab (T-PATCH-103) */}
@@ -78,6 +95,15 @@ export default function TicketCard({ ticket, commits }: TicketCardProps) {
         {assignee && <span style={metaItem}>{assignee}</span>}
         {qaStatus && <span style={metaItem}>QA {qaStatus}</span>}
         {durationLabel && <span style={metaItem}>{durationLabel}</span>}
+        {/* Artifact badge (T-PATCH-121) — non-archived manifest entries only */}
+        {artifactCount > 0 && (
+          <span
+            style={metaItem}
+            title={t('workspace.versionHistory.ticketCard.artifactCountTitle', { n: artifactCount })}
+          >
+            {t('workspace.versionHistory.ticketCard.artifactCount', { n: artifactCount })}
+          </span>
+        )}
       </div>
 
       {/* Body: persona activity rows (3 lines max) */}

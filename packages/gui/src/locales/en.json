@@ -187,7 +187,9 @@
       "derivedReadOnly": "Derived · read-only",
       "nextLabel": "Next —",
       "showFullSpec": "Show full spec",
-      "hideFullSpec": "Hide full spec"
+      "hideFullSpec": "Hide full spec",
+      "artifacts": "Artifacts",
+      "artifactArchived": "archived"
     },
     "versions": {
       "current": "Current",
@@ -738,7 +740,9 @@
       "ticketCard": {
         "collapse": "▲ Collapse",
         "autosaveCount": "▼ {{n}} autosaves",
-        "openDetail": "Open ticket detail: {{id}}"
+        "openDetail": "Open ticket detail: {{id}}",
+        "artifactCount": "📎 {{n}}",
+        "artifactCountTitle": "{{n}} artifacts"
       }
     },
     "qaLoop": {
