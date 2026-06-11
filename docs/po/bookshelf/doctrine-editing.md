@@ -12,6 +12,7 @@ Trigger: any `type:doctrine` ticket or doctrine fix touching habit / bookshelf /
 - **caps** — common habit ≤50 · persona habit ≤100 · bookshelf ≤100 · agent pointer ≤30. Over cap → curate down (habit) / graduate or archive (bookshelf).
 - **layering** — a bookshelf on a hot read path (e.g. `routing.md`) splits by ACCESS LOGIC, not topic or cap: lean hot core holds per-action machinery; move turn-open / task-close / problem-only detail to named cold companions (`routing.md` → `calibration.md` → `escalation.md`). Stay slightly over cap when one topic reads all at once; split when parts read at different moments.
 - **mode** — habit = curated rewrite, no source tag. bookshelf = append + `(YYYY-MM-DD) [T-NNN]` source.
+- **language** — doctrine body (every tier, habit + bookshelf) = English only — personas re-read it every session. Applies to new writes; never retro-translate existing entries. User-lang belongs in artifacts (tickets / PRD / DS), not doctrine.
 - **structure** — Tier 0 = `packages/core/doctrine/` (SoT) + `~/.productune/doctrine/` (byte-identical mirror, `install.sh` cp) · Tier 1 = `docs/<persona>/{habit,bookshelf}` · Tier 2 = `~/.productune/<persona>/{habit,bookshelf}` · agent pointers = `packages/core/agents/pdt-<role>.md`.
 
 ## Process
