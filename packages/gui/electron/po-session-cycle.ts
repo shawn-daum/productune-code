@@ -21,6 +21,7 @@
 
 import fs from 'fs'
 import path from 'path'
+import { initProject } from '@productune/core'
 
 // ── Threshold ───────────────────────────────────────────────────────────────
 //
@@ -29,6 +30,26 @@ import path from 'path'
 // only ever the last-resort safety net, never the primary context bound.
 // Tunable; an optional context-size proxy (token/usage aggregation) is OOS.
 export const PO_TURN_CYCLE_THRESHOLD = 20
+
+// ── config guard (AC-7) ───────────────────────────────────────────────────────
+
+/**
+ * Best-effort: ensure .productune/config.json exists before PO session reads/writes
+ * .productune/po-state.json. If config is absent, run initProject to write it.
+ * Non-fatal — failure is logged to stderr but does not block the session.
+ * This prevents "config-less .productune/" from being created by a PO session runner
+ * that writes po-state.json before GUI has had a chance to open the project.
+ */
+function ensureConfig(projectDir: string): void {
+  const configPath = path.join(projectDir, '.productune', 'config.json')
+  if (fs.existsSync(configPath)) return
+  try {
+    const slug = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'project'
+    initProject({ slug, projectDir })
+  } catch (e) {
+    process.stderr.write(`[po-session-cycle] config heal failed for ${projectDir}: ${e}\n`)
+  }
+}
 
 // ── Per-project session tracking ──────────────────────────────────────────────
 
@@ -78,6 +99,8 @@ function readPoStateSlice(projectDir: string): PoStateSlice {
 function ensureTracker(projectDir: string): SessionTracker {
   let t = trackers.get(projectDir)
   if (!t) {
+    // AC-7: guarantee config.json exists before po-state access (best-effort, non-fatal).
+    ensureConfig(projectDir)
     const slice = readPoStateSlice(projectDir)
     t = { turnCount: 0, startPhase: slice.phase, startTaskSlug: slice.taskSlug }
     trackers.set(projectDir, t)

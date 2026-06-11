@@ -53,6 +53,29 @@ fi
 
 # ── productune state ──────────────────────────────────────────────────────────
 STATE="$CWD/.productune/po-state.json"
+
+# Worktree fallback: when cwd lacks .productune/po-state.json, resolve the main
+# checkout root via git-common-dir and read state from there.
+# git rev-parse --git-common-dir outputs either an absolute path (worktree case)
+# or a relative path like ".git" (main checkout). In both cases, dirname of the
+# resolved .git dir is the main repo root.
+# TICKET_ROOT tracks which directory to use for docs/tickets/ counting.
+TICKET_ROOT="$CWD"
+if [ ! -f "$STATE" ]; then
+  _COMMON_DIR="$(git -C "$CWD" rev-parse --git-common-dir 2>/dev/null)" || _COMMON_DIR=""
+  if [ -n "$_COMMON_DIR" ]; then
+    # Resolve to absolute path (handle relative output like ".git")
+    case "$_COMMON_DIR" in
+      /*) _MAIN_ROOT="$(dirname "$_COMMON_DIR")" ;;
+      *)  _MAIN_ROOT="$(cd "$CWD/$_COMMON_DIR/.." 2>/dev/null && pwd)" ;;
+    esac
+    if [ -n "$_MAIN_ROOT" ] && [ -f "$_MAIN_ROOT/.productune/po-state.json" ]; then
+      STATE="$_MAIN_ROOT/.productune/po-state.json"
+      TICKET_ROOT="$_MAIN_ROOT"
+    fi
+  fi
+fi
+
 PRODUCTUNE_PART=""
 PHASE_TOKEN=""   # A4: compact [vX.Y PZ·done/total] token for the branch segment
 PERSONA=""
@@ -66,7 +89,7 @@ if [ -f "$STATE" ]; then
 import json,os,re,sys
 
 state_path=sys.argv[1]
-cwd=sys.argv[2]
+cwd=sys.argv[2]   # ticket root (main repo root when in a worktree)
 
 try:
     with open(state_path) as f:
@@ -143,7 +166,7 @@ if os.path.isdir(ticket_dir):
 print(version + ' | phase ' + str(phase) + ': ' + phase_name_long + ' (' + str(done) + '/' + str(total) + ')')
 # Line 2: A4 compact token
 print('[' + version + ' P' + str(phase) + '·' + str(done) + '/' + str(total) + ']')
-" "$STATE" "$CWD" 2>/dev/null)"
+" "$STATE" "$TICKET_ROOT" 2>/dev/null)"
 
   PRODUCTUNE_PART="$(printf '%s' "$_STATE_OUT" | sed -n '1p')"
   PHASE_TOKEN="$(printf '%s' "$_STATE_OUT" | sed -n '2p')"

@@ -1,4 +1,4 @@
-import { Zap } from 'lucide-react'
+import BrandMark from '../BrandMark'
 
 interface Props {
   title: string
@@ -9,7 +9,7 @@ export default function Titlebar({ title }: Props) {
     <div style={bar}>
       <div style={spacer} />
       <div style={titleBox}>
-        <Zap size={11} strokeWidth={2.25} color="#8B5CF6" />
+        <BrandMark size={11} />
         <span>{title}</span>
       </div>
       <div style={spacer} />

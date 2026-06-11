@@ -998,7 +998,11 @@
       "newProject": "New project",
       "openExisting": "Open existing folder",
       "noRecent": "No recent projects",
-      "recent": "Recent"
+      "recent": "Recent",
+      "projects": "Projects",
+      "phaseBadge": "Phase {{n}}",
+      "folderMissing": "Folder missing",
+      "removeFromList": "Remove from list"
     },
     "install": {
       "title": "Set up productune in this folder?",

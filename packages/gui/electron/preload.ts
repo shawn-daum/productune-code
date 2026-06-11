@@ -101,6 +101,10 @@ contextBridge.exposeInMainWorld('api', {
   listRecents: (): Promise<Array<{ slug: string; projectDir: string; openedAt: string }>> =>
     ipcRenderer.invoke('recents:list'),
 
+  // T-PATCH-114: batch recents with meta — returns all entries incl. exists:false
+  listRecentsWithMeta: (): Promise<Array<{ slug: string; projectDir: string; openedAt: string; exists: boolean; phase: number | null; version: string | null }>> =>
+    ipcRenderer.invoke('recents:listWithMeta'),
+
   addRecent: (opts: { projectDir: string; slug: string }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('recents:add', opts),
 
