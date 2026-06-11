@@ -5,6 +5,7 @@ version: v0.5
 round: patch
 type: fix
 status: review
+phase: 3
 assignee: pdt-developer
 model: sonnet
 effort: medium

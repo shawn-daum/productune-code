@@ -9,6 +9,22 @@ without the prior gate cleared. Accept advances; refuse loops back.
 - **B — new feature on an existing design system** → skip S1, S2; enter at S3.
 - **C — small UI tweak / single component** → S5 hi-fi only, one gate. Skip S1–S4.
 
+## Tickets — emit BEFORE running the chain (P2 entry, right after branch pick)
+
+Running P2 ticketless is a violation — the statusline/GUI progress counts `phase: 2`
+tickets, and zero tickets reads as "Design (0/0)" while the phase moves (T-PATCH-118).
+On P2 entry, emit the design tickets for the steps the chosen branch actually runs
+(`type: design`, `phase: 2`, `status: todo`, per `ticket-schema.md`):
+
+| branch | tickets emitted |
+|:--|:--|
+| A | T1 design system (S1–S2) · T2 mockup + user flow (S3–S4) · T3 hi-fi (S5) |
+| B | T2 (S3–S4) · T3 (S5) |
+| C | T3 (S5) only |
+
+Flip each ticket `todo → in-progress` when its first step starts, `→ done` when its last
+gate is accepted. A refuse loop keeps the ticket `in-progress` — never reopen a done one.
+
 ## Steps
 
 ### S1 — design-system proposals (TEXT)

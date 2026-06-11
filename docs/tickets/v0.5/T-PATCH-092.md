@@ -5,6 +5,7 @@ version: v0.5
 round: patch
 type: fix
 status: user-verify
+phase: 3
 assignee: pdt-developer
 estimated_complexity: L1
 model: sonnet

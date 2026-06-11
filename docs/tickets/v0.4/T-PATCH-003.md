@@ -4,6 +4,7 @@ version: v0.4
 round: phase3-fixes
 type: doctrine-update
 status: todo
+phase: 3
 assignee: pdt-designer
 created_at: 2026-05-04T06:10:00Z
 started_at: null

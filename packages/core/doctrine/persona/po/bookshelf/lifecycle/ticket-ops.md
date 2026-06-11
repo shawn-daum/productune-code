@@ -1,5 +1,15 @@
 # Ticket ops
 
+## Frontmatter at emission — `phase:` is NEVER optional
+
+Every ticket frontmatter MUST carry `phase: <int>` (1–5, unquoted) stamped at emission =
+`po-state.current_phase` at that moment (patch-round tickets included — `round:` does NOT
+substitute for `phase:`). The statusline counter and GUI progress read `phase:` + `status:`
+only; a phase-less ticket is invisible to both, which reads as "phase running with no
+tickets" (T-PATCH-118: 27 v0.5 patch tickets + all 128 v0.4 tickets were emitted without
+it). Lint: `scripts/ci/check-ticket-frontmatter.sh` fails the batch on a missing/non-int
+`phase:` or unknown `status:`.
+
 ## Git — ticket open/close ops
 
 On every ticket open: `git worktree add .productune/worktrees/<ticket-id>/ -b <version>/T-<N>-<slug> v<N>` — never `git checkout` the ticket branch in the main tree (stay resident on `v<N>`; see `bookshelf/git-workflow.md` ## Posture).

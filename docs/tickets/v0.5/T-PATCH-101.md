@@ -4,6 +4,7 @@ version: v0.5
 round: patch
 type: fix
 status: user-verify
+phase: 3
 assignee: pdt-developer
 model: sonnet
 qa_status: pass

@@ -138,7 +138,10 @@ if os.path.isdir(ticket_dir):
         fpath=os.path.join(ticket_dir,fname)
         try:
             with open(fpath,'r',errors='replace') as fh:
-                head=fh.read(600)
+                # 4096 (was 600): real tickets carry frontmatter past 600B
+                # (T-015 = 1363B) — a short read misses the closing --- and
+                # silently drops the ticket from the count (T-PATCH-118).
+                head=fh.read(4096)
         except OSError:
             continue
         # Parse YAML frontmatter (read-first-only, no full parse overhead)
@@ -148,7 +151,8 @@ if os.path.isdir(ticket_dir):
         if end<0:
             continue
         fm=head[3:end]
-        pm=re.search(r'^phase:\s*(\S+)',fm,re.M)
+        # Tolerate quoted ints (phase: "3") — T-PATCH-118.
+        pm=re.search(r'^phase:\s*[\"\\']?(\d+)',fm,re.M)
         sm=re.search(r'^status:\s*(\S+)',fm,re.M)
         if not pm or not sm:
             continue
