@@ -54,8 +54,9 @@ const HL_ACTIVE = 'pdt-json-find-active'
 // VS Code-style ancestor key-path accumulation. As you scroll into a deep node,
 // its ancestor keys pin at the top as a SINGLE-LINE breadcrumb
 // (root ▸ surfaces ▸ gui ▸ …); click a segment to jump to that node below the band.
-// The band reflects the ancestor path of the FIRST row visible just below the band
-// (see recomputeSticky) so it tracks the subtree you're actually inside and updates
+// The band reflects the OPEN-ANCESTOR STACK at the band line — the container header
+// rows that have scrolled at/above the band (see recomputeSticky) — so it tracks the
+// subtree you're actually inside even when leaf values fill the viewport, and updates
 // cleanly across sibling boundaries. The band is ONE fixed-height row (STICKY_ROW_H)
 // regardless of chain depth (§4.f QA-fix-r4): when the chain is too long to fit one
 // line we elide the MIDDLE with a `…` marker, ALWAYS keeping root (first) + the
@@ -267,8 +268,8 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
 
   // ── Sticky scroll (T-PATCH-095) ─────────────────────────────────────────────
   // Reuses bodyRef as the scroll container (shared with find — read-only here).
-  // The deepest object/array header row scrolled under the band defines the
-  // pinned ancestor path. Header rows carry data-pathkey + data-label + data-depth.
+  // The open-ancestor stack of object/array header rows at/above the band line
+  // defines the pinned path. Header rows carry data-pathkey + data-label + data-depth.
   const [stickyPath, setStickyPath] = useState<StickyKey[]>([])
 
   const recomputeSticky = useCallback(() => {
@@ -284,33 +285,36 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
     // threshold never feeds back on its own output — the chain we compute can't move
     // the line that computes it.
     const bandBottom = STICKY_ROW_H
-    // firstVisible = the FIRST header row (DOM order) whose top is at/below the band
-    // bottom, i.e. the first node still visible just under the band. The viewport top
-    // sits inside THIS node's parent subtree, so its ancestor path is the breadcrumb.
-    // Rows fully scrolled above the band (top < bandBottom) are behind us and skipped
-    // — this is what kills the "stale deep sibling" bug: a scrolled-past axes_max child
-    // no longer qualifies once total_bands' rows are the first ones below the band.
-    let anchorPathKey: string | null = null
+    // OPEN-ANCESTOR STACK (§4.g QA-fix-r5) — standard VS Code sticky-scroll.
+    // Only CONTAINER (object/array) header rows carry data-pathkey; leaf value rows
+    // (e.g. assembled_prompt:"…", score:95) do NOT. The old "first header BELOW the
+    // band → ancestor prefix" approach broke when scrolled deep into a leaf-heavy
+    // region: every container header (prompts → 0 → stage1) scrolled ABOVE the
+    // single-row band, so "first header below the band" pointed at the NEXT sibling /
+    // a shallower node, collapsing the crumb to depth 1.
+    //
+    // Correct: walk header rows in DOM order and maintain a stack of the OPEN
+    // ancestors whose header sits at/above the band line. Each row deeper than the
+    // current stack top pushes (deeper containers pinned above stay stacked); a row
+    // at the same/shallower depth pops back to its level before pushing (entering a
+    // sibling pops the deeper ones). The first header BELOW the band stops the walk —
+    // everything after it is visible content, not pinned context.
+    const stack: StickyKey[] = []
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]!
       const top = row.getBoundingClientRect().top - scTop
-      if (top >= bandBottom - 0.5) { anchorPathKey = row.dataset.pathkey ?? ''; break }
+      if (top > bandBottom) break // first header below the band → rest is visible content
+      const depth = Number(row.dataset.depth ?? '0')
+      // The depth-0 root container is represented by the synthetic chain[0] below;
+      // skip its own header row so it isn't duplicated in the crumb.
+      if (depth === 0) continue
+      while (stack.length && stack[stack.length - 1]!.depth >= depth) stack.pop()
+      stack.push({ pathKey: row.dataset.pathkey ?? '', label: row.dataset.label ?? '', depth })
     }
-    // Nothing below the band (scrolled to the very bottom) — anchor on the LAST row so
-    // the deepest tail context still pins instead of clearing.
-    if (anchorPathKey === null) {
-      anchorPathKey = rows[rows.length - 1]!.dataset.pathkey ?? ''
-    }
-    // Ancestor path of the anchor = root → seg1 → … → parent(anchor). We drop the
-    // anchor's OWN last segment: the anchor row is the first thing visible below the
-    // band, so the band shows the containers you're INSIDE, not the row itself. (A
-    // depth-0 anchor at the very top yields just root.)
-    const segs = anchorPathKey.split(' ').filter((s) => s !== '')
-    const ancestorSegs = segs.slice(0, Math.max(0, segs.length - 1))
-    const chain: StickyKey[] = [{ pathKey: '', label: 'root', depth: 0 }]
-    for (let i = 0; i < ancestorSegs.length; i++) {
-      chain.push({ pathKey: ancestorSegs.slice(0, i + 1).join(' '), label: ancestorSegs[i]!, depth: i + 1 })
-    }
+    // The full open-ancestor path at the band line, root always first. Deep headers
+    // above the band stay stacked (each deeper than the last → no pop); scrolling into
+    // a sibling pops the deeper ones. Fixes depth-1 + stale/wrong-sibling at once.
+    const chain: StickyKey[] = [{ pathKey: '', label: 'root', depth: 0 }, ...stack]
     // Store the FULL ancestor chain. Middle-elision for the single-line breadcrumb is
     // a pure RENDER concern (see elideChain) — keeping the whole chain in state means
     // the band stays one row tall and the render decides how many segments fit.
