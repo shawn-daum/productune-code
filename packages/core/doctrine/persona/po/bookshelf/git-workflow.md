@@ -6,6 +6,8 @@ PO owns all git. Personas never run git directly. Exception: Developer may run g
 
 PO/session stays RESIDENT on `v<N>`. NEVER `git checkout <ticket-branch>` in the main working tree — it displaces `v<N>` and collapses the PO-orchestrate / dev-work role split. Ticket work is worktree-isolated; PO merges ticket branches INTO `v<N>` while staying on it.
 
+Never `cd` the session into a worktree — run worktree git ops from the project root scoped via `git -C .productune/worktrees/<id>`. A displaced cwd breaks po-state reads and the statusline and mimics a checkout violation.
+
 ## Branch model
 
 | Branch | Created at | From | Merged to | Deleted at |

@@ -18,3 +18,15 @@ Trigger: any `type:doctrine` ticket or doctrine fix touching habit / bookshelf /
 1. **SSoT-first** — before authoring / adding doctrine, LOCATE any existing authoritative home for the concern: a managed SSoT artifact (e.g. `docs/designer/design-system.md`), an existing bookshelf, or a persona doc — and READ it. Route the change INTO that home. Create a NEW doctrine file ONLY when no home exists. <!-- (2026-06-05) [T-PATCH-DOCTRINE] -->
 2. **Delegate** (hold no Write/Edit): prose / content → designer · hooks / scripts / init → developer. Inject the rules above (P0 + target cap + mode) into the dispatch body.
 3. **Verify + mirror** on return: cap held · actor-voice (no leak category) · mirror SoT `packages/core/doctrine/` → `~/.productune/doctrine/` byte-identical (or confirm assignee did).
+
+## Impact checklist — sweep on every doctrine / layout change
+Not done until each surface is applied or marked n/a:
+- Tier 0 SoT `packages/core/doctrine/` + mirror `~/.productune/doctrine/` (byte-identical)
+- Tier 1 `docs/<persona>/` · Tier 2 `~/.productune/<persona>/` (stale copies of the changed rule)
+- Agent pointers `packages/core/agents/pdt-<role>.md`
+- `packages/core/src/init.ts` — fresh init must embody the new layout (incl. latest `schema_v` stamp)
+- `packages/core/scripts/install.sh` — install / update path
+- `packages/core/migrations/` — existing projects need a migration when layout changes
+- Onboarding (`packages/gui/electron/ipc/onboarding.ts`)
+- GUI layout detection / open-refresh (`packages/gui/electron/ipc/project.ts` `detectProductuneLayout`)
+- Persona memory bootstrap (`bootstrapPersonaMemory`, init.ts)
