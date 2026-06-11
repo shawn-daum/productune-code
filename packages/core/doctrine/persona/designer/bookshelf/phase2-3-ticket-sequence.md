@@ -44,6 +44,13 @@ gate is accepted. A refuse loop keeps the ticket `in-progress` — never reopen 
 ### S1 — design-system proposals (TEXT)
 - Search the existing system (`docs/designer/design-system.md`, prior artifacts). Produce
   **3 proposals** as text (tokens / type / spacing / component direction — no HTML yet).
+- **Diversity is mandatory — anchor on the style library** (T-PATCH-120). Read
+  `bookshelf/style-library/index.md` (index ONLY — never bulk-read the library) and pick
+  **3 divergent anchors from 3 DIFFERENT categories**, biased to the product's domain plus
+  at least one deliberately-distant category. Each proposal names its anchor
+  (`anchor: <slug>.md — <why this mood fits>`) and opens ONLY its own anchor file.
+  Anchors are mood/token starting points to ADAPT (palette, type, radius re-derived for
+  the product) — never brand clones. Three proposals that read as the same mood = redo S1.
 - **Gate**: user accepts 1–3 of them. Refuse → short interview (what's wrong) → back to S1.
 
 ### S2 — design-system render (HTML)
