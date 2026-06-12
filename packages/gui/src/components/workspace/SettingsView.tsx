@@ -16,7 +16,7 @@ type SettingsSubTab = 'general' | 'workflow' | 'mcp' | 'hooks'
 export default function SettingsView() {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
-  const [activeTab, setActiveTab] = useState<SettingsSubTab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsSubTab | null>(null)
 
   const tabs: { id: SettingsSubTab; label: string }[] = [
     { id: 'general',  label: t('settings.tabGeneral') },

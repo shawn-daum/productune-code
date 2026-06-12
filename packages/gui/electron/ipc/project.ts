@@ -323,16 +323,20 @@ export function register(): void {
     const detect = detectProductuneLayout(dir)
     if (detect.kind === 'self-current') {
       // T-PATCH-050: always add to recents on all open paths
-      addToRecents(dir, detect.config?.slug ?? path.basename(dir))
-      return { kind: 'self', dir, config: detect.config }
+      // T-PATCH-125: mirror basename fallback onto the returned config so the
+      // renderer always receives a truthy slug (empty titlebar + Cmd+R → HomeView fix).
+      const cfg = { ...detect.config, slug: detect.config?.slug ?? path.basename(dir) }
+      addToRecents(dir, cfg.slug)
+      return { kind: 'self', dir, config: cfg }
     }
     if (detect.kind === 'self-healable') {
       // Config-less current-layout project — heal then open as self-current.
       // On failure fall back to self-legacy (shows migration dialog, non-fatal).
       const healed = tryHealProject(dir)
       if (healed) {
-        addToRecents(dir, healed.slug ?? path.basename(dir))
-        return { kind: 'self', dir, config: healed, healed: true }
+        const cfg = { ...healed, slug: healed.slug ?? path.basename(dir) }
+        addToRecents(dir, cfg.slug)
+        return { kind: 'self', dir, config: cfg, healed: true }
       }
       return { kind: 'self-legacy', dir, hints: detect.healEvidence ?? [] }
     }
@@ -361,16 +365,20 @@ export function register(): void {
     const detect = detectProductuneLayout(dir)
     if (detect.kind === 'self-current') {
       // T-PATCH-050: always add to recents on all open paths
-      addToRecents(dir, detect.config?.slug ?? path.basename(dir))
-      return { kind: 'self', dir, config: detect.config }
+      // T-PATCH-125: mirror basename fallback onto the returned config so the
+      // renderer always receives a truthy slug (empty titlebar + Cmd+R → HomeView fix).
+      const cfg = { ...detect.config, slug: detect.config?.slug ?? path.basename(dir) }
+      addToRecents(dir, cfg.slug)
+      return { kind: 'self', dir, config: cfg }
     }
     if (detect.kind === 'self-healable') {
       // Config-less current-layout project — heal then open as self-current.
       // On failure fall back to self-legacy (shows migration dialog, non-fatal).
       const healed = tryHealProject(dir)
       if (healed) {
-        addToRecents(dir, healed.slug ?? path.basename(dir))
-        return { kind: 'self', dir, config: healed, healed: true }
+        const cfg = { ...healed, slug: healed.slug ?? path.basename(dir) }
+        addToRecents(dir, cfg.slug)
+        return { kind: 'self', dir, config: cfg, healed: true }
       }
       return { kind: 'self-legacy', dir, hints: detect.healEvidence ?? [] }
     }

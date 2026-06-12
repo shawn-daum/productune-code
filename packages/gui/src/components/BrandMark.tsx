@@ -17,6 +17,7 @@ export default function BrandMark({ size = 16, style: styleProp }: Props) {
     letterSpacing: '-0.05em',
     display: 'inline-flex',
     alignItems: 'center',
+    gap: '0.22em',
     userSelect: 'none',
     flexShrink: 0,
   }
