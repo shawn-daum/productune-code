@@ -104,9 +104,14 @@ function register() {
       status: 'streaming',
       created_at: new Date().toISOString(),
     }
+    // T-PATCH-132: set streaming:true here so every entry point (FreshComposer first
+    // turn AND normal ChatPanel turns) transitions PersonaPresenceBar to the working
+    // state. Idempotent for ChatPanel (handleSubmit already set streaming:true before
+    // onMsgId fires). onDone already sets streaming:false — no leak.
     useWorkspace.setState((s) => ({
       messages: [...s.messages, placeholder],
       inFlightMsgId: msgId,
+      streaming: true,
     }))
     // T-PATCH-036: this first bubble is segment #1 of the turn — active, unsealed.
     segActiveId = msgId

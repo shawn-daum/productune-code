@@ -602,6 +602,10 @@ function handleStreamJsonLine(
             askEmitted = true
             cb.onAskUserQuestion(msgId, payload)
           }
+          // T-PATCH-131: AskUserQuestion is a legitimate user-input wait, not a hang.
+          // Clear the provisional permission-blocked timer so it doesn't fire while
+          // waiting for the user to respond (false positive fix — gap (a)).
+          clearToolUseTimeout(hCtx)
           continue
         }
 
@@ -747,6 +751,21 @@ function handleStreamJsonLine(
         const payload = mapPromotionCandidate(raw, turnOrigin)
         cb.onPromotionCandidate(msgId, payload, { origin: turnOrigin })
       }
+    }
+    return
+  }
+
+  // T-PATCH-131: type === 'user' — tool_result returned.
+  // A tool_result means the tool completed; clear the provisional permission-blocked
+  // timer so it can't fire on a later pause in the same turn (false positive fix — gap (b)).
+  // Minimal: no health state emitted, just clear. Guard against malformed shapes.
+  if (type === 'user') {
+    const content = obj?.message?.content
+    if (
+      Array.isArray(content) &&
+      content.some((item: any) => item?.type === 'tool_result')
+    ) {
+      clearToolUseTimeout(hCtx)
     }
     return
   }
