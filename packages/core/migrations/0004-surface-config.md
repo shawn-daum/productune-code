@@ -19,4 +19,8 @@ QA 3-item gate 의 build·smoke 명령을 레포에서 매번 추론하는 대�
 >    하고 각 surface 의 build·smoke 명령을 레포에서 조사
 > 2. `surface-config-schema.md` 스키마대로 `surfaces` 블록 작성 — smoke 스크립트가
 >    아직 없으면 `smoke: null` (QA 는 manual fallback)
-> 3. 적용 후 `.productune/config.json` 의 `schema_v` 를 4 로 갱신 (jq)
+> 3. 기존 config 에 **MERGE** — 절대 전체 재작성 금지. 기존 top-level 필드
+>    (`slug`·`created_at`·`version` 및 그 외 전부) 는 그대로 보존하고 `surfaces` 블록만
+>    ADD + `schema_v` 만 4 로 갱신한다. 파일 손수 재작성하지 말고 jq 로 in-place 갱신:
+>    `jq '.surfaces = {...} | .schema_v = 4' .productune/config.json > tmp && mv tmp .productune/config.json`
+> 4. 적용 후 `slug` 보존 확인: `jq -e '.slug' .productune/config.json` (없으면 MERGE 실패 — 복구)

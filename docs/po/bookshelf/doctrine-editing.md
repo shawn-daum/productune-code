@@ -27,7 +27,7 @@ Not done until each surface is applied or marked n/a:
 - Agent pointers `packages/core/agents/pdt-<role>.md`
 - `packages/core/src/init.ts` — fresh init must embody the new layout (incl. latest `schema_v` stamp)
 - `packages/core/scripts/install.sh` — install / update path
-- `packages/core/migrations/` — existing projects need a migration when layout changes
+- `packages/core/migrations/` — existing projects need a migration when layout changes. A migration that touches `.productune/config.json` MUST merge in place (`jq` set only the changed keys), NEVER rewrite the whole file — a full rewrite silently drops untouched top-level fields (`slug`/`created_at`/`version`). Verify a load-bearing field survives after apply (e.g. `jq -e '.slug'`). <!-- (2026-06-12) oh-my-eyes slug lost via hand-applied 0004 -->`
 - Onboarding (`packages/gui/electron/ipc/onboarding.ts`)
 - GUI layout detection / open-refresh (`packages/gui/electron/ipc/project.ts` `detectProductuneLayout`)
 - Persona memory bootstrap (`bootstrapPersonaMemory`, init.ts)
