@@ -12,9 +12,21 @@ interface Props {
 }
 
 // blocked=urgent-attention left / abandoned=terminal-archive right / workflow natural middle (T-P4-138)
-const STATUS_ORDER: Status[] = ['blocked', 'todo', 'in-progress', 'review', 'user-verify', 'done', 'abandoned']
-/** Set derived from STATUS_ORDER — single source of truth for known status strings. */
-const KNOWN_STATUS_SET = new Set<string>(STATUS_ORDER)
+// T-PATCH-130: 'review'(QA) 컬럼 제거 → 'in-progress' 버킷으로 접음. 표시 컬럼 6개.
+const STATUS_ORDER: Status[] = ['blocked', 'todo', 'in-progress', 'user-verify', 'done', 'abandoned']
+/**
+ * Set of known (valid) status strings. STATUS_ORDER drives the *display* columns,
+ * but 'review' remains a valid ticket status (types.ts Status 7-status) — it is
+ * folded into a display bucket, NOT treated as unknown. So we add it explicitly
+ * here; otherwise review tickets would be counted as schema-mismatch and mapped
+ * to 'todo' (T-PATCH-130 BDD-3).
+ */
+const KNOWN_STATUS_SET = new Set<string>([...STATUS_ORDER, 'review'])
+/**
+ * Display-bucket remap: a known status that has no dedicated column is folded
+ * into the column listed here. 'review'(QA) → 'in-progress'(진행 중) (T-PATCH-130 BDD-2).
+ */
+const DISPLAY_BUCKET: Partial<Record<Status, Status>> = { review: 'in-progress' }
 
 export default function TicketDashboardView({ poState, versionFilter }: Props) {
   const { t } = useTranslation()
@@ -106,7 +118,10 @@ function groupByStatus(tickets: Ticket[]): GroupByStatusResult {
     // Unknown status → 'todo' fallback. Only count as unknown when status was
     // explicitly set to a non-standard value (not null/undefined).
     if (!known && t.status != null) unknownCount++
-    const k: Status = known ? (raw as Status) : 'todo'
+    // Known status → its column, but fold any display-bucketed status (e.g. 'review' → 'in-progress').
+    // Unknown status → 'todo' fallback.
+    const resolved: Status = known ? (raw as Status) : 'todo'
+    const k: Status = DISPLAY_BUCKET[resolved] ?? resolved
     if (!byStatus[k]) byStatus[k] = []
     byStatus[k].push(t)
   }
@@ -279,7 +294,8 @@ const mismatchMsg: React.CSSProperties = {
 const kanban: React.CSSProperties = {
   flex: 1,
   display: 'grid',
-  gridTemplateColumns: 'repeat(7, minmax(160px, 1fr))',
+  // T-PATCH-130: column count derives from STATUS_ORDER (now 6) — no hardcoded 7.
+  gridTemplateColumns: `repeat(${STATUS_ORDER.length}, minmax(160px, 1fr))`,
   gap: 8,
   padding: 16,
   overflowX: 'auto',
