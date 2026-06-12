@@ -126,7 +126,7 @@ dash grid 를 버리고, 티켓의 4단계 파이프라인을 **한 줄의 수�
 │   done   done    current   upcoming                                │
 │                            └ qa_status: smoke · loops 0            │  ← qa 노드에 종속
 │                                                                    │
-│   → Next  developer 진행 중                          status: in_progress │
+│   → Next  developer 진행 중                          status: in-progress │
 └────────────────────────────────────────────────────────────────────┘
 
 범례:
@@ -311,7 +311,7 @@ done 예시(status: done) — current/upcoming 없음, 라벨 전무:
 `qa_status: smoke` — 시각/렌더 스모크. 자동화는 가능 범위만, 나머지는 수동 1패스.
 
 - [ ] 빈 `persona_sessions` 상태에서 "PO des dev qa 모두 —" 가 더는 안 나온다 (회귀 핵심).
-- [ ] assignee = `pdt-developer`, `status: in_progress` 티켓: 레인이 po·designer=done,
+- [ ] assignee = `pdt-developer`, `status: in-progress` 티켓: 레인이 po·designer=done,
       developer=current(blink), qa=upcoming 으로 렌더.
 - [ ] `status: done` 티켓: 4 노드 전부 done, current/upcoming 없음, next-action 은 "다음 action 없음"류.
 - [ ] qa 단계 current/done 일 때만 qa 노드 하단 `qa_status · loops N` 노출, `n/a` 면 미노출.
