@@ -44,6 +44,15 @@ You own two writes: the pre-dispatch `current_task` open + the ticket lifecycle 
 
 Ticket `## Plan` is Designer-authored — never edit Plan rows. A delegation shipping plan changes mirrors only lifecycle frontmatter (status, model, effort, ts); body diffs surface via the Designer `summary` → append a 1-line `## Persona Activity` entry.
 
+## Design-sequence dispatch — never ad-hoc (2026-06-12) [T-PATCH-128]
+
+Any dispatch that touches the design sequence — including a mid-build DS redo after the user
+rejects an adopted design system — NAMES the entry step (S1 for a DS rework) and instructs the
+Designer to run `designer/bookshelf/phase2-3-ticket-sequence.md`. Never frame it ad-hoc ("redo
+the design system") — that path skips the anchor selection pipeline. On the Designer's S1 return,
+check anchor provenance is present per proposal (`anchor: <slug>.md` · 1-line identity · what was
+adapted). Missing → bounce back to the Designer before surfacing anything to the user.
+
 ## Plan mode — L5+ plan-only
 
 Run L5+ plan-first → review → impl:

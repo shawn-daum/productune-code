@@ -1,9 +1,9 @@
 # UX principles (Tier 0 — generic UX/UI craft)
 
-Portable, project-agnostic UX/UI craft. The single global home for generic design
-principles; auto-applies across every project. Each project's `design-system.md`
-APPLIES these + holds project-specific tokens / recipes / deltas — it does NOT
-re-author them. Apply when designing any flow / mockup / spec.
+Portable, project-agnostic UX/UI craft — the single global home for generic design
+principles; auto-applies across every project. Each project's `design-system.md` APPLIES
+these + holds project-specific tokens / recipes / deltas, not re-authoring them. Apply
+when designing any flow / mockup / spec.
 
 ## 1. Decision load
 
@@ -95,5 +95,10 @@ re-author them. Apply when designing any flow / mockup / spec.
   destructive/irreversible actions, disable invalid submits.
 - **Validate helpfully** — validate at the right time (not keystroke-noisy), mark the
   offending field, say how to fix it. Preserve user input on failure.
-</content>
-</invoke>
+
+## 13. Typography — UI text font
+
+- **Never ship Inter as the UI text font — Pretendard leads instead.** Where a design
+  would name Inter for UI text, derive Pretendard as the SOLE lead (Latin + Hangul, Inter-
+  metric-compatible) — every product, any language; Inter has no Hangul → mismatched
+  system fallback. Not a dual stack; anchor mono/display fonts untouched. (2026-06-12) [T-PATCH-129]

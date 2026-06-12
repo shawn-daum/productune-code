@@ -17,6 +17,10 @@ major-version event — do not re-run it on every version (T-PATCH-119).
      PRD explicitly calls for a brand / design-system overhaul AND the user confirms the
      escalation at a gate — never silently.
    - **patch / single-surface change** → C.
+   - **user rejects an ADOPTED design system at ANY phase (incl. mid-P3 build)** → re-enter
+     the P2 chain at S1 (not ad-hoc). The anchor selection pipeline is mandatory — never
+     hand-invent concepts. The rejected DS's anchor + its 4 mood labels join THIS version's
+     S1 ban-list (extend the existing re-roll ban) so the re-run cannot re-pick them. (2026-06-12) [T-PATCH-128]
 2. **PRD case** (within the delta's ceiling):
    - **A — net-new product / DS overhaul** → run the full chain S1 → S5.
    - **B — new feature on an existing design system** → skip S1, S2; enter at S3.
@@ -64,6 +68,16 @@ gate is accepted. A refuse loop keeps the ticket `in-progress` — never reopen 
      open the 3 anchor files (each proposal reads ONLY its own anchor).
   Anchors are mood/token starting points to ADAPT (palette, type, radius re-derived for
   the product) — never brand clones.
+- **Anchor provenance — surface it at the gate, per proposal** (2026-06-12) [T-PATCH-128]:
+  every proposal you present MUST carry `anchor: <slug>.md` · a 1-line original identity
+  ("what this anchor is") · what you adapted/changed for this product. The internal
+  justification (step 4) is not enough — the user reads the provenance at the gate without
+  having to ask.
+- **If a visual preview accompanies the S1 text** (2026-06-12) [T-PATCH-128]: the fonts named
+  in each proposal MUST actually load (webfont link or local @font-face) — a bare
+  `-apple-system` render is forbidden. Per-proposal type and component-shape differences MUST
+  visibly render, so the proposals don't collapse into "identical except color". Render-verify
+  the preview before surfacing it — an undecidable gate is a failed gate.
 - **Gate**: user accepts 1–3 of them. Refuse → short interview (what's wrong) → back to S1.
   **Re-entry re-roll**: refused anchors go on a ban list for this version's S1 — pick
   fresh ones, UNLESS the interview says a direction was right (keep that anchor, fix the

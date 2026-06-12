@@ -29,3 +29,5 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 - [v0.6] non-mac tray icon (Tray instance, icon asset, context menu) — deferred from T-PATCH-090 close-to-tray mac-only first cut. (2026-06-10)
 - [v0.6+] GUI 자동 업데이트 (electron-updater) — 서명·배포 인프라 필요해서 미룸. 당장은 수동 dmg + 버전 불일치 배너로 감. 외부 배포 시점에 재검토. (2026-06-10, src: harness 구조 피드백 결정 보드 #3-GUI)
 - [v0.6] launch-at-login openAsHidden (login 시 창 pre-hidden 시작) — T-PATCH-090 first cut 에서 deferred. (2026-06-10)
+- (2026-06-12) [T-PATCH-128 follow-up] `persona/designer/bookshelf/phase2-3-ticket-sequence.md` cap breach 118>100 — curation/restructure to reclaim cap = loss-risk op, needs dedicated doctrine ticket + QA grill (was already 104 pre-128).
+- (2026-06-12) [T-PATCH-129 follow-up] `ux-principles.md` 104>100 cap — phase2-3-ticket-sequence.md(118) breach와 묶어 doctrine cap-curation 티켓 1건으로 triage (loss-risk, QA grill).
