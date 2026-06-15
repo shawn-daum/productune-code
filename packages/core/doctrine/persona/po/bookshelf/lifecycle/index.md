@@ -52,3 +52,7 @@ Answering "which phase / what's the close gate": state `current_phase` FIRST, th
 - `lifecycle/p5-close.md` — P5 detail (5a–5d) + retrospective read sources + master archive + outcome measurement.
 - `lifecycle/ticket-ops.md` — git ticket open/close ops + mechanical close rules + Auto QA smoke gate.
 - `lifecycle/state-hygiene.md` — state lazy-prompts + versions cap.
+
+## po-state shape — schema_version 2 (2026-06-15) [T-PATCH-139]
+
+Stamp `schema_version: 2` on every po-state you author, and keep the file slim — hold only `schema_version`, `version`, `phase`, `current_task`, `persona_sessions`, `recent_turns`. NEVER write a `past_tickets` array: closed-ticket history reads only from `docs/tickets/<version>/T-NNN.md`, the single source of truth. Keep this `schema_version` (po-state shape) distinct from `config.json` `schema_v` (migration framework) — never advance one to match the other.

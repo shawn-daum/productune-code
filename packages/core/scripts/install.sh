@@ -103,9 +103,12 @@ merge_claude_settings_hooks() {
   local docguard="$hooks_dir/pre-doctrine-guard.sh"
   local phasegate="$hooks_dir/pre-phase-gate-guard.sh"
   local gateinject="$hooks_dir/prompt-gate-inject.sh"
+  local pomigrate="$hooks_dir/session-start-po-state-migrate.sh"
+  local popreshape="$hooks_dir/pre-po-state-shape-guard.sh"
+  local popostshape="$hooks_dir/post-po-state-shape-guard.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg fmverify "$fmverify" --arg gitposture "$gitposture" --arg sessdoc "$sessdoc" --arg docguard "$docguard" --arg phasegate "$phasegate" --arg gateinject "$gateinject" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg fmverify "$fmverify" --arg gitposture "$gitposture" --arg sessdoc "$sessdoc" --arg docguard "$docguard" --arg phasegate "$phasegate" --arg gateinject "$gateinject" --arg pomigrate "$pomigrate" --arg popreshape "$popreshape" --arg popostshape "$popostshape" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -122,7 +125,10 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
       or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"))
       or (cmd | endswith("/scripts/hooks/pre-phase-gate-guard.sh"))
-      or (cmd | endswith("/scripts/hooks/prompt-gate-inject.sh"));
+      or (cmd | endswith("/scripts/hooks/prompt-gate-inject.sh"))
+      or (cmd | endswith("/scripts/hooks/session-start-po-state-migrate.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-po-state-shape-guard.sh"))
+      or (cmd | endswith("/scripts/hooks/post-po-state-shape-guard.sh"));
     def strip_pdt(arr; dir):
       (arr // []) | map(
         select(((.hooks // []) | map(is_pdt(.command // ""; dir)) | any) | not)
@@ -143,7 +149,9 @@ merge_claude_settings_hooks() {
         {matcher: "Bash",
          hooks: [{type: "command", command: $phasegate}]},
         {matcher: "Write|Edit|Bash",
-         hooks: [{type: "command", command: $fmlint}]}
+         hooks: [{type: "command", command: $fmlint}]},
+        {matcher: "Write|Edit|Bash",
+         hooks: [{type: "command", command: $popreshape}]}
       ])
     | .hooks.PostToolUse = (strip_pdt(.hooks.PostToolUse; $dir) + [
         {matcher: "Write|Edit",
@@ -153,7 +161,9 @@ merge_claude_settings_hooks() {
         {matcher: "Bash",
          hooks: [{type: "command", command: $strip}]},
         {matcher: "Bash",
-         hooks: [{type: "command", command: $fmverify}]}
+         hooks: [{type: "command", command: $fmverify}]},
+        {matcher: "Bash",
+         hooks: [{type: "command", command: $popostshape}]}
       ])
     | .hooks.PostCompact = (strip_pdt(.hooks.PostCompact; $dir) + [{
         hooks: [{type: "command", command: $doc}]
@@ -162,10 +172,12 @@ merge_claude_settings_hooks() {
         matcher: "pdt-developer",
         hooks: [{type: "command", command: $stop}]
       }])
-    | .hooks.SessionStart = (strip_pdt(.hooks.SessionStart; $dir) + [{
-        matcher: "startup|resume",
-        hooks: [{type: "command", command: $sessdoc}]
-      }])
+    | .hooks.SessionStart = (strip_pdt(.hooks.SessionStart; $dir) + [
+        {matcher: "startup|resume",
+         hooks: [{type: "command", command: $sessdoc}]},
+        {matcher: "startup|resume",
+         hooks: [{type: "command", command: $pomigrate}]}
+      ])
     | .hooks.UserPromptSubmit = (strip_pdt(.hooks.UserPromptSubmit; $dir) + [{
         hooks: [{type: "command", command: $gateinject}]
       }])

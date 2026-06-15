@@ -80,3 +80,11 @@ Split multi-area / multi-decision / multi-output directives per sub-area; max 1�
 ## PRD delegation
 
 Fresh idea → delegate the Version 1 PRD directly: `PERSONA=pdt-designer · MODEL=opus · EFFORT=max · COMPLEXITY=L7`. Designer returns `state:"needs-info"` (relay `next_question`) or `state:"ready"` (PRD path + tickets + ambiguity_score + version_outcome). Full mechanics incl 5-iter cap + finalize: `designer/bookshelf/prd-clarity-loop.md`.
+
+## current_task — canonical field set (2026-06-15) [T-PATCH-139]
+
+Keep `current_task` pointer-only. The sanctioned field set is exactly 14 fields: `slug`, `request_summary`, `artifacts`, `type`, `status`, `persona_sessions`, `persona_session_meta`, `calibration_outcome`, `ticket_id`, `title`, `model`, `effort`, `qa_status`, `started_at` — write nothing outside it.
+- Open `slug`, `request_summary`, `artifacts`, `type`, `status` yourself before dispatch.
+- Let the `post-delegate-state-write` hook write `persona_sessions` + `persona_session_meta`; let `post-delegate-state-write` / `pre-delegate-task-check` write `started_at` (set on dispatch open, like `persona_sessions` — never hand-write); let lifecycle write `ticket_id`, `title`, `model`, `effort`, `qa_status`; let calibration write `calibration_outcome` — never hand-write these.
+- `persona_sessions` + `persona_session_meta` + `started_at` live only during the ticket; nulling `current_task` at close (`done | blocked | abandoned`) drops them — never carry them past close.
+- Add NO freeform `note` or scratchpad field. Running notes go in the ticket `## Persona Activity` table or `briefs/<slug>.md`.

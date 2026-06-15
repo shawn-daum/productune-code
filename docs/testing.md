@@ -66,14 +66,14 @@ git add . && git commit -q -m "init"
 ```
 
 **`productune init` 검증:**
-- `.productune/po-state.json` 이 `schema_version: 1`, 빈 `current_task: null` 로 생성
+- `.productune/po-state.json` 은 (PO 가 처음 저작한 뒤) `schema_version: 2`, `current_task: null`, `past_tickets` 없는 slim shape — schema_version 미달이면 session-start hook 이 v2 로 자동 업그레이드
 - `docs/pdt-{designer,developer,qa}/` 디렉토리 + `.gitkeep` 존재
 - `.gitignore` 에 `.productune/po.lock` 과 `.productune/logs/` 항목 포함
 
 이제 페르소나를 한 번에 하나씩 테스트:
 
 ```sh
-# 2.2 — pdt-po (PO): 요청 분해 (PO 가 자체적으로 planning — 구 my-planner 역할)
+# 2.2 — pdt-po (PO): 요청 분해 (PO 가 자체적으로 작업 분해 — 구 my-planner 역할)
 claude --agent pdt-po -p "The README has a typo. Decompose this into tasks (return JSON with tasks array)." --output-format json | jq '.result' -r
 
 # 2.3 — Developer: 실제 fix 수행
@@ -127,7 +127,7 @@ productune                       # claude --agent pdt-po (hooks 발동)
 
 **관찰 포인트:**
 1. PO 가 paraphrase 하거나 그대로 진행 (Stage 1 질문 건너뛸 만큼 명확)
-2. PO 가 자체 decompose 수행 (planner 역할 흡수) — `→ planning N 개 작업` 또는 trivial 이면 `→ delegating to pdt-developer (decompose 생략, single-step)` 진척 마커
+2. PO 가 자체 decompose 수행 (planner 역할 흡수) — `→ decompose N 개 작업` 또는 trivial 이면 `→ delegating to pdt-developer (decompose 생략, single-step)` 진척 마커
 3. Decomposition 결과 task list (대개 2 개 — 오타 fix + sum.js 생성, 둘 다 `pdt-developer` 페르소나, "테스트 안 돌려도" 라서 `pdt-qa` 스킵)
 4. ≤3 task + 위험 플래그 없음 → Gate 1 pause 없이 pdt-developer 로 직진
 5. `→ delegating to pdt-developer...`, `✓ pdt-developer complete`

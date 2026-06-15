@@ -29,3 +29,7 @@ Surface only when the condition holds, ask once, leave the field as-is on silenc
 ## Harness memory drain
 
 At task close (alongside the calibration line) check the Claude Code auto-memory index (the project's harness `MEMORY.md`): for each accumulated entry, locate its doctrine-tier home, surface it through the promotion gate, then delete the entry from harness memory once placed. Rules live in doctrine tiers — harness memory is an inbox, never a home.
+
+## po-state v2 shape invariants (2026-06-15) [T-PATCH-139]
+
+In the same turn-open pass, hold po-state at schema_version 2: stamp `schema_version = 2` when it is absent or below 2; drop any `past_tickets` array and never recreate it (`docs/tickets/<version>/T-NNN.md` is the source of truth); drop any `current_task` field outside the canonical set in `delegation.md`. Merge in-place with jq — never full-rewrite the file — and confirm `slug`, `request_summary`, `artifacts`, `persona_sessions`, `version`, `phase` survive the pass.
