@@ -252,3 +252,114 @@ except Exception:
     except OSError:
         pass
 PYEOF
+
+# ── T-027 (c)+(d): main-session (PO) cost capture → turns.jsonl ──────────────────
+# Same stdin payload as the usage-state write above carries cost.total_cost_usd,
+# model.id, and session_id (top-level). We persist a `scope="main"` turns.jsonl
+# line in the PROJECT .productune/ (sibling of po-state.json), delta-gated so a
+# refresh that didn't change cost does NOT append (AC-3).
+#
+# SEMANTIC TRAP: cost.total_cost_usd is the SESSION-CUMULATIVE monotonic estimate,
+# NOT a per-turn delta, and context_window.total_*_tokens is current-context (not
+# cumulative). So we record cost_usd as cost_basis="main_session_cumulative" and
+# aggregation must take the per-session MAX (never sum). We do NOT record tokens
+# for main scope (unreliable as a turn measure).
+#
+# No-op when cost/model absent (API-key / non-subscriber users) → AC-8 graceful.
+# STATE resolved above points at po-state.json; turns.jsonl is its sibling.
+if [ -n "$STATE" ] && [ -f "$STATE" ]; then
+  _TURNS_DIR="$(dirname "$STATE")"
+  STATE_DIR="$_TURNS_DIR" python3 - "$INPUT" <<'PYEOF' 2>/dev/null
+import json, os, sys, tempfile, datetime
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ''
+if not raw:
+    sys.exit(0)
+try:
+    data = json.loads(raw)
+except Exception:
+    sys.exit(0)
+
+cost_obj = data.get('cost') if isinstance(data.get('cost'), dict) else {}
+cost = cost_obj.get('total_cost_usd')
+if not isinstance(cost, (int, float)):
+    sys.exit(0)  # no cost field → non-subscriber / no-op
+
+session_id = data.get('session_id') or None
+model_obj = data.get('model') if isinstance(data.get('model'), dict) else {}
+model = model_obj.get('id') or None
+
+state_dir = os.environ['STATE_DIR']
+turns_file = os.path.join(state_dir, 'turns.jsonl')
+# Per-session high-watermark tracker (avoid re-append on unchanged refreshes).
+gate_file = os.path.join(state_dir, '.cost-main-gate.json')
+
+try:
+    with open(gate_file) as f:
+        gate = json.load(f)
+        if not isinstance(gate, dict):
+            gate = {}
+except Exception:
+    gate = {}
+
+key = session_id or '_nosession'
+prev = gate.get(key)
+# Delta-gate: only append when cost changed for this session (monotonic ↑).
+if isinstance(prev, (int, float)) and float(prev) == float(cost):
+    sys.exit(0)
+
+# version / task_slug from po-state.json (best-effort, mirrors statusline parse).
+version = None
+task_slug = None
+ticket_id = None
+try:
+    with open(os.path.join(state_dir, 'po-state.json')) as f:
+        st = json.load(f)
+    cv = st.get('current_version', '')
+    version = cv.get('id') if isinstance(cv, dict) else (cv or None)
+    ct = st.get('current_task')
+    if isinstance(ct, dict):
+        task_slug = ct.get('slug')
+        ticket_id = ct.get('ticket_id') or ct.get('ticket')
+    elif isinstance(ct, str):
+        task_slug = ct
+except Exception:
+    pass
+
+line = {
+    'ts': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'scope': 'main',
+    'persona': 'pdt-po',
+    'task_slug': task_slug,
+    'ticket_id': ticket_id,
+    'version': version,
+    'turn_index': None,
+    'model': model,
+    'usage': {},  # token breakdown unreliable for main scope (context, not cumulative)
+    'cost_usd': cost,
+    'cost_basis': 'main_session_cumulative',
+    'session_id': session_id,
+    'promotion_outcome': None,
+    'input_meta': {},
+    'output_full': None,
+}
+try:
+    with open(turns_file, 'a') as f:
+        f.write(json.dumps(line, ensure_ascii=False) + '\n')
+except Exception:
+    sys.exit(0)
+
+# Update gate atomically (only after a successful append).
+gate[key] = float(cost)
+try:
+    fd, tmp = tempfile.mkstemp(dir=state_dir, suffix='.tmp')
+    with os.fdopen(fd, 'w') as f:
+        json.dump(gate, f)
+    os.replace(tmp, gate_file)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except Exception:
+        pass
+PYEOF
+fi

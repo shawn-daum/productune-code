@@ -820,6 +820,7 @@
     "generalTabTitle": "General settings",
     "tabMcp": "MCP Servers",
     "tabHooks": "Hooks",
+    "tabCost": "Token Cost Archive",
     "mcp": {
       "title": "MCP Servers",
       "renameFailed": "Rename failed",
@@ -1006,7 +1007,18 @@
       "projects": "Projects",
       "phaseBadge": "Phase {{n}}",
       "folderMissing": "Folder missing",
-      "removeFromList": "Remove from list"
+      "removeFromList": "Remove from list",
+      "delete": {
+        "menuAria": "Actions for {{slug}}",
+        "menuOpen": "Open project",
+        "menuDelete": "Delete from disk",
+        "title": "Delete \"{{slug}}\"?",
+        "body": "This deletes the entire project folder from your disk. productune tries to move it to the system trash first; if that is unavailable, the folder is permanently deleted.",
+        "irreversible": "This action cannot be undone.",
+        "cancel": "Cancel",
+        "confirm": "Delete from disk",
+        "errorGeneric": "Could not delete the project folder."
+      }
     },
     "install": {
       "title": "Set up productune in this folder?",
@@ -1020,6 +1032,13 @@
       "installHere": "Install in current folder",
       "cancel": "Cancel"
     },
+    "ancestor": {
+      "title": "A productune project already exists in a parent folder.",
+      "prompt": "The folder you opened ({{dir}}) sits {{distance}} level(s) below an existing productune project. Open that project instead, or set up a new one here?",
+      "openAncestor": "Open that project",
+      "installHere": "Install here",
+      "cancel": "Cancel"
+    },
     "migrate": {
       "title": "Legacy productune project detected",
       "description": "This folder looks like an older productune project. Detected: {{hints}}. Migrating will add config.json — your existing data (briefs, po-state, etc.) will be preserved. Continue?",
@@ -1030,5 +1049,24 @@
       "mac": "Press ⌘Q again to quit",
       "win": "Press Ctrl+Q again to quit"
     }
+  },
+  "costArchive": {
+    "title": "Token cost archive",
+    "byVersion": "Version",
+    "byPersona": "Persona",
+    "byModel": "Model",
+    "byPersonaModel": "Persona × Model",
+    "colTurns": "Turns",
+    "colCost": "Cost",
+    "colIn": "In",
+    "colOut": "Out",
+    "colCache": "Cache",
+    "subtotal": "Subtotal",
+    "tokenNaMain": "—",
+    "tokenNaMainNote": "Main session has no token breakdown; cost only.",
+    "total": "Total",
+    "empty": "No cost data captured yet.",
+    "estimateDisclaimer": "Costs are client-side estimates and may not match your provider invoice.",
+    "mainSessionNote": "Main-session rows are deduplicated by session (cumulative cost is counted once)."
   }
 }

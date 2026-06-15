@@ -5,8 +5,10 @@ export {
   bootstrapPersonaMemory,
   latestSchemaV,
   FALLBACK_LATEST_SCHEMA_V,
+  findAncestorProductuneRoot,
+  ANCESTOR_WALK_MAX_DEPTH,
 } from './init'
-export type { ProjectConfig, InitOptions, SurfaceConfig } from './init'
+export type { ProjectConfig, InitOptions, SurfaceConfig, AncestorRootResult } from './init'
 
 export { startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo } from './github'
 export type { DeviceCodeResponse, GitHubCredentials } from './github'

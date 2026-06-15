@@ -4,7 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo } from '@productune/core'
+import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, findAncestorProductuneRoot } from '@productune/core'
 import { writeOnboardingPending } from './onboarding'
 
 const execFileAsync = promisify(execFile)
@@ -65,6 +65,58 @@ export function addToRecents(projectDir: string, slug: string): void {
   if (process.platform === 'darwin') {
     try { app.addRecentDocument(projectDir) } catch { /* non-fatal */ }
   }
+}
+
+/**
+ * T-PATCH-134: remove a single recents entry by projectDir (non-destructive).
+ * Disk is never touched. Missing entry → no-op. Returns the refreshed list.
+ */
+function removeFromRecents(projectDir: string): RecentProjectEntry[] {
+  const next = loadRecents().filter((e) => e.projectDir !== projectDir)
+  saveRecents(next)
+  return next
+}
+
+// ── Destructive delete boundary (T-PATCH-134 §6) ───────────────────────────────
+
+/**
+ * Guard a projectDir before any disk delete is allowed.
+ * Permits delete only when the path is absolute, contains a `.productune/` dir,
+ * and is not an obviously dangerous root (home dir, fs root, productune projects base).
+ * `exists:false` (path already gone) is reported separately so the caller can
+ * still purge the recents entry without erroring (race-safe).
+ */
+function classifyDeleteTarget(projectDir: string): { ok: boolean; alreadyGone?: boolean; error?: string } {
+  if (typeof projectDir !== 'string' || projectDir.length === 0) {
+    return { ok: false, error: 'empty path' }
+  }
+  if (!path.isAbsolute(projectDir)) {
+    return { ok: false, error: 'not an absolute path' }
+  }
+
+  // Normalize + reject dangerous roots regardless of on-disk presence.
+  const strip = (p: string) => path.normalize(p).replace(/[/\\]+$/, '')
+  const normalized = strip(projectDir)
+  const home = strip(os.homedir())
+  const fsRoot = path.parse(normalized).root.replace(/[/\\]+$/, '')
+  const projectsBase = strip(path.join(os.homedir(), 'productune', 'projects'))
+  if (normalized.length === 0 || normalized === home || normalized === fsRoot || normalized === projectsBase) {
+    return { ok: false, error: 'refusing to delete a protected root path' }
+  }
+
+  // Race-safe: if the dir is already gone, allow recents-only cleanup.
+  try {
+    if (!fs.existsSync(normalized)) return { ok: true, alreadyGone: true }
+  } catch {
+    return { ok: true, alreadyGone: true }
+  }
+
+  // Containment marker: must look like a productune project (.productune/ present).
+  if (!fs.existsSync(path.join(normalized, '.productune'))) {
+    return { ok: false, error: 'not a productune project (no .productune/)' }
+  }
+
+  return { ok: true }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -128,6 +180,42 @@ function detectProductuneLayout(dir: string): DetectResult {
 
   if (hints.length > 0) return { kind: 'self-legacy', hints }
   return { kind: 'none' }
+}
+
+/**
+ * T-PATCH-135: build an `ancestor` open-result if a productune root exists in a
+ * PARENT dir of `dir` (start dir excluded — self-* detection already ran). Uses
+ * the shared core SoT walk-up (bounded: fs root / home / depth-16 / fs error).
+ * Reads the ancestor's config.json best-effort for the renderer (slug display).
+ * Returns null when no ancestor root is found.
+ */
+function buildAncestorResult(
+  dir: string,
+): { kind: 'ancestor'; dir: string; ancestorRoot: string; distance: number; config: any } | null {
+  let res
+  try {
+    res = findAncestorProductuneRoot(dir)
+  } catch {
+    return null
+  }
+  if (!res.found || !res.rootDir) return null
+
+  let config: any = { slug: path.basename(res.rootDir) }
+  try {
+    const cfgPath = path.join(res.rootDir, '.productune', 'config.json')
+    if (fs.existsSync(cfgPath)) {
+      const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+      config = { ...parsed, slug: parsed?.slug ?? path.basename(res.rootDir) }
+    }
+  } catch { /* unparseable/missing — keep basename slug */ }
+
+  return {
+    kind: 'ancestor',
+    dir,
+    ancestorRoot: res.rootDir,
+    distance: res.distance ?? 0,
+    config,
+  }
 }
 
 function scanDescendantsForProductune(baseDir: string): { path: string; config: any }[] {
@@ -276,6 +364,59 @@ export function register(): void {
     return { ok: true }
   })
 
+  // T-PATCH-134 (a): remove a recents entry only — non-destructive, no disk touch.
+  // Missing entry is a no-op success. Returns the refreshed list.
+  ipcMain.handle('recents:remove', (_event, { projectDir }: { projectDir: string }): { ok: true; entries: RecentProjectEntry[] } => {
+    const entries = removeFromRecents(projectDir)
+    return { ok: true, entries }
+  })
+
+  // T-PATCH-134 (b): delete the project directory from disk, then purge its recents entry.
+  // Boundary-guarded (absolute + `.productune/` present + non-protected root). Tries the
+  // OS trash first (shell.trashItem) for reversibility, falls back to a hard recursive
+  // rm only when trash is unavailable (reported via `trashed:false`). A dir that is
+  // already gone resolves to recents-only cleanup ({ alreadyGone:true }).
+  ipcMain.handle(
+    'project:delete',
+    async (_event, { projectDir }: { projectDir: string }): Promise<{
+      ok: boolean
+      trashed?: boolean
+      alreadyGone?: boolean
+      error?: string
+    }> => {
+      const guard = classifyDeleteTarget(projectDir)
+      if (!guard.ok) return { ok: false, error: guard.error }
+
+      const normalized = path.normalize(projectDir).replace(/[/\\]+$/, '')
+
+      // Race-safe: nothing on disk → just clean recents.
+      if (guard.alreadyGone) {
+        removeFromRecents(projectDir)
+        removeFromRecents(normalized)
+        return { ok: true, trashed: false, alreadyGone: true }
+      }
+
+      let trashed = false
+      try {
+        await shell.trashItem(normalized)
+        trashed = true
+      } catch {
+        // Trash unavailable (network volume / permissions) → hard delete fallback.
+        try {
+          fs.rmSync(normalized, { recursive: true, force: true })
+          trashed = false
+        } catch (e: any) {
+          return { ok: false, error: e?.message ?? 'delete failed' }
+        }
+      }
+
+      // (b) includes (a): purge recents under both the raw and normalized keys.
+      removeFromRecents(projectDir)
+      removeFromRecents(normalized)
+      return { ok: true, trashed }
+    },
+  )
+
   // T-PATCH-114: batch IPC — returns all entries including missing dirs (exists:false).
   // phase/version from po-state.json; slug from config.json (falls back to entry slug).
   // Never throws — missing/corrupt files yield null fields.
@@ -344,6 +485,12 @@ export function register(): void {
       return { kind: 'self-legacy', dir, hints: detect.hints }
     }
 
+    // T-PATCH-135: not self-* → check PARENT dirs (nearest productune root).
+    // Ancestor takes priority OVER the descendant scan (a closer parent is more
+    // likely the user's intended project than a child further down).
+    const ancestor = buildAncestorResult(dir)
+    if (ancestor) return ancestor
+
     const descendants = scanDescendantsForProductune(dir)
     if (descendants.length > 0) {
       return { kind: 'descendant', dir, descendants }
@@ -385,6 +532,11 @@ export function register(): void {
     if (detect.kind === 'self-legacy') {
       return { kind: 'self-legacy', dir, hints: detect.hints }
     }
+
+    // T-PATCH-135: ancestor walk-up (priority over descendant scan) — parity
+    // with dialog:openFolder so CLI/GUI/Open-Recent all resolve the same root.
+    const ancestor = buildAncestorResult(dir)
+    if (ancestor) return ancestor
 
     const descendants = scanDescendantsForProductune(dir)
     if (descendants.length > 0) {

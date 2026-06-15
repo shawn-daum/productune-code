@@ -34,6 +34,7 @@ export type TabType =
   | 'code-view'
   | 'doctrine-file'
   | 'project-env'
+  | 'cost-archive'
 
 export interface Tab {
   id: string

@@ -20,6 +20,8 @@ __pycache__/
 .productune/po-state.json
 .productune/po.lock
 .productune/logs/
+.productune/turns.jsonl
+.productune/.cost-main-gate.json
 
 # monorepo
 node_modules

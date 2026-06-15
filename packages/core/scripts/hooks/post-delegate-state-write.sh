@@ -180,4 +180,107 @@ else
   rm -f "$TMP"
 fi
 
+# ── T-027 (a)+(b)+(d): subagent token-cost capture → turns.jsonl ────────────────
+# This hook receives its OWN full tool_response stdin copy, independent of
+# post-bash-strip-cost.sh (which only transforms the user-surfaced output). So we
+# capture raw usage HERE, before/regardless of strip — ordering-independent.
+#
+# Authority for model id = response `modelUsage` keys (NOT the --model flag, which
+# is often "default"). usage / total_cost_usd come from the same JSON envelope.
+# Graceful: any missing field → null; no field present → no append (no-op).
+#
+# version / ticket_id / task_slug come from po-state.json (same parsing the
+# statusline reuses). turns.jsonl is a sibling of po-state.json (per-project local).
+TURNS_FILE="$(dirname "$STATE")/turns.jsonl"
+
+# Pull the subagent envelope's cost/usage/modelUsage. STDOUT holds the
+# `claude -p --output-format json` envelope (possibly with stray prefix/suffix).
+# A single python pass emits a ready-to-append JSON line, or nothing on no-data.
+TURN_LINE="$(STATE_PATH="$STATE" PERSONA="$PERSONA" SID="$SID" \
+  python3 - "$STDOUT" <<'PYEOF' 2>/dev/null
+import json, os, re, sys
+
+text = sys.argv[1] if len(sys.argv) > 1 else ''
+m = re.search(r'\{.*\}', text, re.DOTALL)
+if not m:
+    sys.exit(0)
+try:
+    env = json.loads(m.group())
+except Exception:
+    sys.exit(0)
+
+cost = env.get('total_cost_usd')
+usage_raw = env.get('usage') if isinstance(env.get('usage'), dict) else {}
+model_usage = env.get('modelUsage') if isinstance(env.get('modelUsage'), dict) else {}
+
+# Authoritative model id = first modelUsage key (per AC-2). Fallback null.
+model = None
+if model_usage:
+    model = next(iter(model_usage.keys()), None)
+
+# Normalize the four token fields, tolerating absence.
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+usage = {
+    'input_tokens': _int(usage_raw.get('input_tokens')),
+    'output_tokens': _int(usage_raw.get('output_tokens')),
+    'cache_creation_input_tokens': _int(usage_raw.get('cache_creation_input_tokens')),
+    'cache_read_input_tokens': _int(usage_raw.get('cache_read_input_tokens')),
+}
+
+# No usable data at all → no-op (AC-7/AC-8 graceful: non-subscriber / stripped).
+if cost is None and model is None and not any(v is not None for v in usage.values()):
+    sys.exit(0)
+
+# version / ticket_id / task_slug from po-state.json (same fields the statusline reads).
+version = None
+task_slug = None
+ticket_id = None
+try:
+    with open(os.environ['STATE_PATH']) as f:
+        st = json.load(f)
+    cv = st.get('current_version', '')
+    version = cv.get('id') if isinstance(cv, dict) else (cv or None)
+    ct = st.get('current_task')
+    if isinstance(ct, dict):
+        task_slug = ct.get('slug')
+    elif isinstance(ct, str):
+        task_slug = ct
+    # ticket_id: best-effort from current_task dict if present.
+    if isinstance(ct, dict):
+        ticket_id = ct.get('ticket_id') or ct.get('ticket')
+except Exception:
+    pass
+
+import datetime
+line = {
+    'ts': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    'scope': 'subagent',
+    'persona': os.environ.get('PERSONA') or None,
+    'task_slug': task_slug,
+    'ticket_id': ticket_id,
+    'version': version,
+    'turn_index': None,
+    'model': model,
+    'usage': usage,
+    'cost_usd': cost,
+    'cost_basis': 'subagent_total',
+    'session_id': os.environ.get('SID') or None,
+    'promotion_outcome': None,
+    'input_meta': {},
+    'output_full': None,
+}
+sys.stdout.write(json.dumps(line, ensure_ascii=False))
+PYEOF
+)"
+
+if [ -n "$TURN_LINE" ]; then
+  # Atomic single-line append via O_APPEND (printf in one write; lines are short).
+  printf '%s\n' "$TURN_LINE" >> "$TURNS_FILE" 2>/dev/null || true
+fi
+
 exit 0

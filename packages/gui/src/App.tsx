@@ -18,6 +18,8 @@ type OpenPrompt =
   | { kind: 'install'; dir: string }
   | { kind: 'legacy'; dir: string; hints: string[] }
   | { kind: 'descendant'; dir: string; descendants: DescendantEntry[] }
+  // T-PATCH-135: a productune root was found in a PARENT dir of the opened folder.
+  | { kind: 'ancestor'; dir: string; ancestorRoot: string; distance: number; config: { slug: string; [k: string]: any } }
 
 export default function App() {
   const { t } = useTranslation()
@@ -110,6 +112,8 @@ export default function App() {
       setProject({ slug: result.config.slug, projectDir: result.dir })
     } else if (result.kind === 'self-legacy') {
       setOpenPrompt({ kind: 'legacy', dir: result.dir, hints: result.hints })
+    } else if (result.kind === 'ancestor') {
+      setOpenPrompt({ kind: 'ancestor', dir: result.dir, ancestorRoot: result.ancestorRoot, distance: result.distance, config: result.config })
     } else if (result.kind === 'descendant') {
       setOpenPrompt({ kind: 'descendant', dir: result.dir, descendants: result.descendants })
     } else {
@@ -126,6 +130,8 @@ export default function App() {
         setProject({ slug: result.config.slug, projectDir: result.dir })
       } else if (result.kind === 'self-legacy') {
         setOpenPrompt({ kind: 'legacy', dir: result.dir, hints: result.hints })
+      } else if (result.kind === 'ancestor') {
+        setOpenPrompt({ kind: 'ancestor', dir: result.dir, ancestorRoot: result.ancestorRoot, distance: result.distance, config: result.config })
       } else if (result.kind === 'descendant') {
         setOpenPrompt({ kind: 'descendant', dir: result.dir, descendants: result.descendants })
       } else {
@@ -172,6 +178,27 @@ export default function App() {
     // T-PATCH-050: add to recents for descendant open path
     ;(window as any).api.addRecent?.({ projectDir: entry.path, slug: entry.config.slug }).catch(() => {})
     setProject({ slug: entry.config.slug, projectDir: entry.path })
+  }
+
+  // T-PATCH-135: open the productune root found in a parent dir. Re-resolves via
+  // openKnownDir so it opens as self-current (heals config-less roots on the way).
+  async function openAncestorRoot() {
+    if (!openPrompt || openPrompt.kind !== 'ancestor') return
+    const root = openPrompt.ancestorRoot
+    setOpenPrompt(null)
+    try {
+      const result = await (window as any).api.openKnownDir?.(root)
+      if (result?.kind === 'self') {
+        setProject({ slug: result.config.slug, projectDir: result.dir })
+      } else if (result?.kind === 'self-legacy') {
+        setOpenPrompt({ kind: 'legacy', dir: result.dir, hints: result.hints })
+      } else {
+        // Defensive: root vanished/changed between detect and open.
+        setProject({ slug: openPrompt.config.slug, projectDir: root })
+      }
+    } catch (e) {
+      console.error('openAncestorRoot failed', e)
+    }
   }
 
   async function installAtPromptDir() {
@@ -254,6 +281,17 @@ export default function App() {
           dir={openPrompt.dir}
           descendants={openPrompt.descendants}
           onOpen={openDescendant}
+          onInstallHere={installAtPromptDir}
+          onCancel={() => setOpenPrompt(null)}
+        />
+      )}
+
+      {openPrompt?.kind === 'ancestor' && (
+        <AncestorPromptDialog
+          dir={openPrompt.dir}
+          ancestorRoot={openPrompt.ancestorRoot}
+          distance={openPrompt.distance}
+          onOpenAncestor={openAncestorRoot}
           onInstallHere={installAtPromptDir}
           onCancel={() => setOpenPrompt(null)}
         />
@@ -349,6 +387,39 @@ function DescendantPromptDialog({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
           <button style={btnGhost} onClick={onInstallHere}>{t('app.descendant.installHere')}</button>
           <button style={btnSecondary} onClick={onCancel}>{t('app.descendant.cancel')}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// T-PATCH-135: a productune root exists in a PARENT dir of the opened folder.
+// 3-button choice: open that root (default) / install here / cancel.
+function AncestorPromptDialog({
+  dir, ancestorRoot, distance, onOpenAncestor, onInstallHere, onCancel,
+}: {
+  dir: string
+  ancestorRoot: string
+  distance: number
+  onOpenAncestor: () => void
+  onInstallHere: () => void
+  onCancel: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div style={overlay}>
+      <div style={{ ...modalCard, width: 480 }}>
+        <div style={modalTitle}>{t('app.ancestor.title')}</div>
+        <div style={modalPath}>{ancestorRoot}</div>
+        <div style={{ ...modalBody, marginBottom: 16 }}>
+          {t('app.ancestor.prompt', { dir, distance })}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <button style={btnGhost} onClick={onInstallHere}>{t('app.ancestor.installHere')}</button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button style={btnSecondary} onClick={onCancel}>{t('app.ancestor.cancel')}</button>
+            <button style={btnPrimary} onClick={onOpenAncestor}>{t('app.ancestor.openAncestor')}</button>
+          </div>
         </div>
       </div>
     </div>

@@ -165,6 +165,7 @@ case "${1:-}" in
     uninstall          Remove all installed artifacts
     gc                 Audit productune/* worktrees (dry-run)
     gc -y              Remove safe worktrees automatically
+    cost               Token-cost archive — group by version|persona|model|persona-model (--by, --version)
     --help, -h         Show this help
 
   ${B}CURRENT CONFIG${R}  (~/.productune/productune.env)
@@ -178,6 +179,7 @@ case "${1:-}" in
 
   ${B}EXAMPLES${R}
     productune init                   Scaffold a new project (run once per repo)
+    productune init --here            Skip parent-folder check; init in current dir
     productune                        Start PO session
     productune gc -y                  Clean up merged worktrees
     productune onboard                Re-run setup
@@ -231,15 +233,86 @@ case "${1:-}" in
     #   --skip-doctrine   Skip user-global doctrine bootstrap.
     #                     CI / custom doctrine environments escape hatch.
     #                     Project-level scaffold still runs normally.
+    #   --here            T-PATCH-135: skip the ancestor walk-up check and init
+    #                     in $PWD unconditionally (CI / nested-by-design escape
+    #                     hatch). Without it, a productune root found in a parent
+    #                     dir triggers a prompt (TTY) or safe abort (non-TTY).
     SKIP_DOCTRINE=0
+    HERE=0
     for _init_arg in "${@:2}"; do
       case "$_init_arg" in
         --skip-doctrine) SKIP_DOCTRINE=1 ;;
-        *) die "unknown option: $_init_arg (usage: productune init [--skip-doctrine])" ;;
+        --here) HERE=1 ;;
+        *) die "unknown option: $_init_arg (usage: productune init [--skip-doctrine] [--here])" ;;
       esac
     done
 
     PROJECT_ROOT="$(cd "$PWD" && pwd -P)"
+
+    # Resolve scripts dir + core root for the shared node entry (used by both the
+    # T-PATCH-135 ancestor walk-up below and the init-project.mjs call later).
+    SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+    DOCTRINE_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
+
+    # Guard: node must be available (guaranteed by install.sh preflight in normal
+    # installs, but provide a clear error just in case).
+    command -v node >/dev/null 2>&1 || die "node not found — install Node.js (https://nodejs.org) and retry"
+
+    # ── T-PATCH-135: bounded ancestor walk-up ─────────────────────────────────
+    # Before initializing, check whether a productune root already exists in a
+    # PARENT directory (start dir itself is excluded — handled by normal init).
+    # Shares the SoT walk-up algorithm with the GUI via init-project.mjs
+    # --find-ancestor (bounded: fs root / home / depth-16 / fs error → notfound).
+    # `--here` skips the check entirely.
+    if [ "$HERE" = 0 ]; then
+      ANCESTOR_LINE="$(node "$SCRIPTS_DIR/lib/init-project.mjs" --find-ancestor "$PROJECT_ROOT" 2>/dev/null || echo notfound)"
+      if [ "${ANCESTOR_LINE%%$'\t'*}" = "found" ]; then
+        # found\t<rootDir>\t<kind>\t<distance>
+        ANCESTOR_ROOT="$(printf '%s' "$ANCESTOR_LINE" | cut -f2)"
+        ANCESTOR_DIST="$(printf '%s' "$ANCESTOR_LINE" | cut -f4)"
+        if [ -t 0 ] && [ -t 1 ]; then
+          warn "상위 폴더에 이미 productune 프로젝트가 있습니다:"
+          warn "             $ANCESTOR_ROOT  (현재 위치에서 ${ANCESTOR_DIST}단계 위)"
+          printf '\033[1;34m[productune]\033[0m 여기서 무엇을 할까요?\n' >&2
+          printf '             [o] 그 프로젝트를 대신 사용 (cd 안내)   ← 기본\n' >&2
+          printf '             [i] 여기에 그대로 새 프로젝트 init\n' >&2
+          printf '             [c] 취소\n' >&2
+          printf '\033[1;34m[productune]\033[0m 선택 [O/i/c]: ' >&2
+          ANCESTOR_CHOICE=""
+          if [ -r /dev/tty ]; then
+            read -r ANCESTOR_CHOICE < /dev/tty || ANCESTOR_CHOICE=""
+          else
+            read -r ANCESTOR_CHOICE || ANCESTOR_CHOICE=""
+          fi
+          case "$ANCESTOR_CHOICE" in
+            i|I)
+              say "여기에 새 프로젝트를 init 합니다 (중첩 허용)."
+              ;;
+            c|C)
+              say "취소했습니다."
+              exit 0
+              ;;
+            *)
+              # default = open the found root (can't cd a parent shell → guide).
+              say "이미 있는 프로젝트를 사용하려면 해당 루트로 이동 후 다시 실행하세요:"
+              say "  cd \"$ANCESTOR_ROOT\""
+              say "  productune"
+              say "(이 폴더에 그대로 새로 만들려면: productune init --here)"
+              exit 0
+              ;;
+          esac
+        else
+          # Non-TTY safe default: abort + guidance. Prevents accidental nested
+          # project creation in CI. `--here` is the documented escape hatch.
+          warn "상위 폴더에 이미 productune 프로젝트가 있습니다: $ANCESTOR_ROOT (${ANCESTOR_DIST}단계 위)"
+          warn "비대화형 환경이라 자동 중첩 init 을 막았습니다."
+          warn "  • 그 프로젝트 사용:   cd \"$ANCESTOR_ROOT\" && productune"
+          warn "  • 여기에 그대로 init: productune init --here"
+          exit 2
+        fi
+      fi
+    fi
+
     GIT_TOP="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null || true)"
 
     # Git initialization — productune project memory (docs/<persona>/, .productune/)
@@ -273,14 +346,6 @@ case "${1:-}" in
     fi
 
     say "initializing productune project at $PROJECT_ROOT"
-
-    # Resolve scripts dir + core root for the shared node entry.
-    SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
-    DOCTRINE_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
-
-    # Guard: node must be available (guaranteed by install.sh preflight in normal
-    # installs, but provide a clear error just in case).
-    command -v node >/dev/null 2>&1 || die "node not found — install Node.js (https://nodejs.org) and retry"
 
     # Single shared entry — implements config.json, .claude/settings.local.json,
     # persona skeleton (docs/po|designer|developer|qa/), union .gitignore block,
@@ -320,6 +385,240 @@ case "${1:-}" in
     else
       say "${#SAFE_WTS[@]} worktree(s) safe to remove. Run 'productune gc -y' to remove them."
     fi
+    exit 0
+    ;;
+  cost)
+    # T-027 (e) — token-cost archive read path.
+    #   productune cost [--version vX] [--by version|persona|model]
+    # Reads <project>/.productune/turns.jsonl and prints a group-by aggregation.
+    #   - subagent lines (scope!="main"): cost_usd summed directly.
+    #   - main lines (scope="main"): SESSION-CUMULATIVE → per session_id MAX, then
+    #     summed (never raw-summed; would over-count by refresh frequency).
+    shift
+    COST_BY="version"
+    COST_VER=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --by)      COST_BY="${2:-}"; shift 2 ;;
+        --by=*)    COST_BY="${1#--by=}"; shift ;;
+        --version) COST_VER="${2:-}"; shift 2 ;;
+        --version=*) COST_VER="${1#--version=}"; shift ;;
+        *) die "unknown option: $1 (usage: productune cost [--version vX] [--by version|persona|model|persona-model])" ;;
+      esac
+    done
+    case "$COST_BY" in
+      version|persona|model|persona-model) ;;
+      *) die "--by must be one of: version | persona | model | persona-model (got: $COST_BY)" ;;
+    esac
+
+    # Resolve project root (git toplevel preferred; fall back to PWD).
+    COST_ROOT="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+    COST_FILE="$COST_ROOT/.productune/turns.jsonl"
+
+    command -v python3 >/dev/null 2>&1 || die "python3 not found — required for 'productune cost'"
+
+    python3 - "$COST_FILE" "$COST_BY" "$COST_VER" <<'PYEOF'
+import json, sys
+
+path = sys.argv[1]
+by = sys.argv[2]
+ver_filter = sys.argv[3] or None
+
+subagent = {}   # key -> {'turns': int, 'cost': float, 'in': int, 'out': int, 'cache': int}
+# main scope: per group, per session_id we keep the MAX cumulative cost.
+main_sessions = {}  # key -> { session_id: max_cost }
+main_turns = {}     # key -> turn count
+
+def keyfor(rec):
+    # For single-dim views the key is a plain string; for persona-model it is a
+    # (persona, model) tuple. '(none)' fills any missing dimension (graceful).
+    if by == 'version':
+        return rec.get('version') or '(none)'
+    if by == 'persona':
+        return rec.get('persona') or '(none)'
+    if by == 'model':
+        return rec.get('model') or '(none)'
+    if by == 'persona-model':
+        return (rec.get('persona') or '(none)', rec.get('model') or '(none)')
+    return '(none)'
+
+def usage_tokens(rec):
+    # subagent usage{input,output,cache_*} is authoritative for token breakdown.
+    # context_window is NEVER summed (statusline snapshot, not cumulative).
+    u = rec.get('usage')
+    if not isinstance(u, dict):
+        return 0, 0, 0
+    def g(*names):
+        tot = 0
+        for nm in names:
+            v = u.get(nm)
+            if isinstance(v, (int, float)):
+                tot += int(v)
+        return tot
+    tin = g('input', 'input_tokens')
+    tout = g('output', 'output_tokens')
+    tcache = g('cache', 'cache_read', 'cache_creation',
+               'cache_read_input_tokens', 'cache_creation_input_tokens')
+    return tin, tout, tcache
+
+n_lines = 0
+n_bad = 0
+try:
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except Exception:
+                n_bad += 1
+                continue
+            if not isinstance(rec, dict):
+                n_bad += 1
+                continue
+            if ver_filter and (rec.get('version') != ver_filter):
+                continue
+            n_lines += 1
+            cost = rec.get('cost_usd')
+            cost = float(cost) if isinstance(cost, (int, float)) else 0.0
+            k = keyfor(rec)
+            if rec.get('scope') == 'main':
+                sid = rec.get('session_id') or '_nosession'
+                bucket = main_sessions.setdefault(k, {})
+                if cost > bucket.get(sid, 0.0):
+                    bucket[sid] = cost
+                main_turns[k] = main_turns.get(k, 0) + 1
+            else:
+                e = subagent.setdefault(k, {'turns': 0, 'cost': 0.0, 'in': 0, 'out': 0, 'cache': 0})
+                e['turns'] += 1
+                e['cost'] += cost
+                tin, tout, tcache = usage_tokens(rec)
+                e['in'] += tin
+                e['out'] += tout
+                e['cache'] += tcache
+except FileNotFoundError:
+    print("[productune] no turns.jsonl found at %s — empty archive." % path)
+    sys.exit(0)
+except Exception as ex:
+    print("[productune] could not read turns.jsonl: %s" % ex)
+    sys.exit(0)
+
+def fmt_tok(n):
+    if n is None:
+        return '—'
+    if n >= 1000:
+        return "%.1fk" % (n / 1000.0)
+    return str(int(n))
+
+if by == 'persona-model':
+    # ── nested view: persona (primary) × model (secondary) ──────────────────
+    # Each row = one (persona, model) combination. subagent rows carry token
+    # breakdown; main rows show cost only (token cells '—'). main cost = per
+    # session_id MAX then summed (reuse rule, tuple key). context_window never summed.
+    rows = []  # (persona, model, scope, turns, in|None, out|None, cache|None, cost)
+    for (persona, model), e in subagent.items():
+        rows.append((persona, model, 'subagent', e['turns'], e['in'], e['out'], e['cache'], e['cost']))
+    for (persona, model), sessmap in main_sessions.items():
+        cost = sum(sessmap.values())  # per-session max → sum
+        rows.append((persona, model, 'main', main_turns.get((persona, model), 0), None, None, None, cost))
+
+    if not rows:
+        print("[productune] turns.jsonl is empty (0 turns). Nothing to aggregate.")
+        sys.exit(0)
+
+    # persona primary sort (by descending persona subtotal cost), model secondary.
+    persona_cost = {}
+    for r in rows:
+        persona_cost[r[0]] = persona_cost.get(r[0], 0.0) + r[7]
+    rows.sort(key=lambda r: (-persona_cost.get(r[0], 0.0), r[0], -r[7], r[1]))
+
+    subagent_in = sum(e['in'] for e in subagent.values())
+    subagent_out = sum(e['out'] for e in subagent.values())
+    subagent_cache = sum(e['cache'] for e in subagent.values())
+    total_cost = sum(r[7] for r in rows)
+    total_turns = sum(r[3] for r in rows)
+
+    # column widths
+    pw = max([len('persona')] + [len(r[0] + (' (main)' if r[2] == 'main' else '')) for r in rows])
+    mw = max([len('model')] + [len(r[1]) for r in rows])
+    print()
+    print("  %-*s  %-*s  %6s  %8s  %8s  %8s  %12s" %
+          (pw, 'persona', mw, 'model', 'turns', 'in', 'out', 'cache', 'cost_usd'))
+    print("  %s  %s  %s  %s  %s  %s  %s" %
+          ('-' * pw, '-' * mw, '-' * 6, '-' * 8, '-' * 8, '-' * 8, '-' * 12))
+
+    prev_persona = None
+    pi = 0
+    while pi < len(rows):
+        persona = rows[pi][0]
+        # rows for this persona are contiguous after the sort
+        grp = []
+        while pi < len(rows) and rows[pi][0] == persona:
+            grp.append(rows[pi])
+            pi += 1
+        first = True
+        for (p, model, scope, turns, tin, tout, tcache, cost) in grp:
+            plabel = (p + ' (main)') if scope == 'main' else p
+            # only show persona label on first row of group (nested indent after)
+            shown = plabel if first else ''
+            print("  %-*s  %-*s  %6d  %8s  %8s  %8s  %12.4f" %
+                  (pw, shown, mw, model, turns,
+                   fmt_tok(tin), fmt_tok(tout), fmt_tok(tcache), cost))
+            first = False
+        # persona subtotal
+        sub_turns = sum(r[3] for r in grp)
+        sub_cost = sum(r[7] for r in grp)
+        print("  %-*s  %-*s  %6d  %8s  %8s  %8s  %12.4f" %
+              (pw, '  subtotal', mw, '', sub_turns, '', '', '', sub_cost))
+
+    print("  %s  %s  %s  %s  %s  %s  %s" %
+          ('-' * pw, '-' * mw, '-' * 6, '-' * 8, '-' * 8, '-' * 8, '-' * 12))
+    # TOTAL: token cells = subagent-only subtotals (main excluded → over-count guard).
+    print("  %-*s  %-*s  %6d  %8s  %8s  %8s  %12.4f" %
+          (pw, 'TOTAL', mw, '', total_turns,
+           fmt_tok(subagent_in), fmt_tok(subagent_out), fmt_tok(subagent_cache), total_cost))
+    if n_bad:
+        print("\n  (%d malformed line(s) skipped)" % n_bad)
+    print("\n  note: main rows = per-session cumulative cost (max per session, then summed),")
+    print("        token cells '—' (no breakdown). subagent rows = per-turn cost + tokens summed.")
+    print("        TOTAL token cells = subagent-only (main excluded). costs are client-side estimates.")
+    sys.exit(0)
+
+# ── single-dimension view (version | persona | model) — unchanged ──────────────
+# Merge subagent + main into a unified group view. Main rows are tagged.
+rows = []  # (key, scope_label, turns, cost)
+seen = set()
+for k, e in subagent.items():
+    rows.append((k, 'subagent', e['turns'], e['cost']))
+    seen.add(k)
+for k, sessmap in main_sessions.items():
+    cost = sum(sessmap.values())  # per-session max → sum
+    rows.append((k + ' (main)', 'main', main_turns.get(k, 0), cost))
+
+if not rows:
+    print("[productune] turns.jsonl is empty (0 turns). Nothing to aggregate.")
+    sys.exit(0)
+
+rows.sort(key=lambda r: (-r[3], r[0]))
+
+total_cost = sum(r[3] for r in rows)
+total_turns = sum(r[2] for r in rows)
+
+hdr_key = {'version': 'version', 'persona': 'persona', 'model': 'model'}[by]
+kw = max([len(hdr_key)] + [len(r[0]) for r in rows])
+print()
+print("  %-*s  %6s  %12s" % (kw, hdr_key, 'turns', 'cost_usd'))
+print("  %s  %s  %s" % ('-' * kw, '-' * 6, '-' * 12))
+for k, scope, turns, cost in rows:
+    print("  %-*s  %6d  %12.4f" % (kw, k, turns, cost))
+print("  %s  %s  %s" % ('-' * kw, '-' * 6, '-' * 12))
+print("  %-*s  %6d  %12.4f" % (kw, 'TOTAL', total_turns, total_cost))
+if n_bad:
+    print("\n  (%d malformed line(s) skipped)" % n_bad)
+print("\n  note: main rows = per-session cumulative cost (max per session, then summed);")
+print("        subagent rows = per-turn cost summed. costs are client-side estimates.")
+PYEOF
     exit 0
     ;;
 esac

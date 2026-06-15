@@ -90,6 +90,11 @@ function ensureGitignoreEntries(projectDir) {
   const required = [
     '.productune/po.lock',
     '.productune/logs/',
+    // T-027: token-cost archive runtime state. turns.jsonl is append-only and
+    // grows unbounded (rotation is a follow-up); .cost-main-gate.json is the
+    // ephemeral per-session high-watermark dedup tracker. Neither is an artifact.
+    '.productune/turns.jsonl',
+    '.productune/.cost-main-gate.json',
     '.claude/settings.local.json',
   ]
 
@@ -256,9 +261,14 @@ export function bootstrapPersonaMemory(projectDir, initialVersionId) {
   ensureFile(
     path.join(turnsDir, 'README.md'),
     '# turn activity log\n\n' +
-    'Per-task JSONL files (`<task-slug>.jsonl`). One line per persona invocation:\n' +
-    '`{ ts, persona, task_slug, ticket_id, version, turn_index, input_meta, output_full, promotion_outcome }`.\n' +
-    'Written by PO. Raw truth; `.productune/po-state.json` is the summary.\n',
+    'T-027: token-cost capture writes the implemented archive to a single\n' +
+    '`.productune/turns.jsonl` (sibling of po-state.json), gitignored + append-only.\n' +
+    'One line per turn:\n' +
+    '`{ ts, scope, persona, task_slug, ticket_id, version, turn_index, model, usage{in,out,cache}, cost_usd, cost_basis, session_id, ... }`.\n' +
+    '  - scope="subagent": per-turn token+cost (post-delegate-state-write hook).\n' +
+    '  - scope="main": per-statusline-refresh cumulative USD, delta-gated (statusline hook).\n' +
+    'Read it via `productune cost --by version|persona|model` or the GUI CostArchivePanel.\n' +
+    'This `turns/` dir is the legacy per-task-file spec (unimplemented); see turns.jsonl.\n',
   )
 
   ensureFile(
@@ -437,6 +447,133 @@ export function latestSchemaV(coreRoot) {
   return FALLBACK_LATEST_SCHEMA_V
 }
 
+// ── Ancestor walk-up detection (T-PATCH-135) ────────────────────────────────────
+//
+// SINGLE SOURCE OF TRUTH for the bounded ancestor walk-up shared by CLI
+// (bash `productune init` shells out to `node init-project.mjs --find-ancestor …`)
+// and GUI (electron ipc/project.ts findAncestorProductuneRoot reuses the same
+// constants + rules). AC-8 parity: identical stop conditions + nearest-wins rule.
+
+/**
+ * Max ancestor levels to climb before giving up. Defends against pathologically
+ * deep paths / symlink loops. SoT — GUI mirrors this constant.
+ * @type {number}
+ */
+export const ANCESTOR_WALK_MAX_DEPTH = 16
+
+/**
+ * Classify a single directory as a productune root, WITHOUT any writes.
+ * Mirrors the GUI detectProductuneLayout self-* logic but collapses to a
+ * boolean-ish kind for the walk-up (only self-current / self-healable count
+ * as "a project root here"; self-legacy is treated as a root too since the
+ * migration flow can adopt it — consistent with descendant-scan inclusion).
+ *
+ * @param {string} dir
+ * @returns {{ isRoot: boolean, kind?: 'self-current'|'self-healable'|'self-legacy' }}
+ */
+export function classifyProductuneDir(dir) {
+  const productuneDir = path.join(dir, '.productune')
+  let hasDot = false
+  try { hasDot = fs.existsSync(productuneDir) } catch { return { isRoot: false } }
+  if (!hasDot) return { isRoot: false }
+
+  // config.json present + parseable → self-current.
+  try {
+    const configPath = path.join(productuneDir, 'config.json')
+    if (fs.existsSync(configPath)) {
+      JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      return { isRoot: true, kind: 'self-current' }
+    }
+  } catch { /* corrupt config — fall through to evidence probes */ }
+
+  // self-healable evidence: turns/ OR po-state.json(schema_version>=1).
+  try {
+    if (fs.existsSync(path.join(productuneDir, 'turns'))) {
+      return { isRoot: true, kind: 'self-healable' }
+    }
+    const poStatePath = path.join(productuneDir, 'po-state.json')
+    if (fs.existsSync(poStatePath)) {
+      const parsed = JSON.parse(fs.readFileSync(poStatePath, 'utf-8'))
+      if (typeof parsed?.schema_version === 'number' && parsed.schema_version >= 1) {
+        return { isRoot: true, kind: 'self-healable' }
+      }
+    }
+  } catch { /* unparseable — not healable evidence */ }
+
+  // legacy traces: po-state.json / briefs/ / po.lock.
+  try {
+    if (
+      fs.existsSync(path.join(productuneDir, 'po-state.json')) ||
+      fs.existsSync(path.join(productuneDir, 'briefs')) ||
+      fs.existsSync(path.join(productuneDir, 'po.lock'))
+    ) {
+      return { isRoot: true, kind: 'self-legacy' }
+    }
+  } catch { /* perms — treat as not a root */ }
+
+  return { isRoot: false }
+}
+
+/**
+ * Bounded ancestor walk-up. Starts at the PARENT of `startDir` (start dir
+ * itself is EXCLUDED — self-* detection handles that) and climbs toward fs
+ * root, stopping at the FIRST (nearest/innermost) productune root.
+ *
+ * Stop conditions (all bounded — never throws):
+ *   - fs root reached,
+ *   - user home (os.homedir()) reached — home itself IS checked, but we never
+ *     climb above it,
+ *   - ANCESTOR_WALK_MAX_DEPTH levels climbed,
+ *   - any fs/permission/symlink error → return not-found (no throw).
+ *
+ * @param {string} startDir absolute path of the directory the user is acting on
+ * @returns {{ found: boolean, rootDir?: string, kind?: string, distance?: number }}
+ */
+export function findAncestorProductuneRoot(startDir) {
+  let current
+  let home
+  let fsRoot
+  try {
+    current = path.resolve(startDir)
+    home = path.resolve(os.homedir())
+    fsRoot = path.parse(current).root
+  } catch {
+    return { found: false }
+  }
+
+  // Never start the walk above home (we still inspect home itself if it's an
+  // ancestor of startDir, but a startDir outside the home subtree should not
+  // climb past its own fs root either — both guarded by the loop below).
+  let dir = current
+  for (let depth = 1; depth <= ANCESTOR_WALK_MAX_DEPTH; depth++) {
+    let parent
+    try {
+      parent = path.dirname(dir)
+    } catch {
+      return { found: false }
+    }
+    // dirname is a fixpoint at fs root ("/" → "/").
+    if (parent === dir) return { found: false }
+    dir = parent
+
+    let result
+    try {
+      result = classifyProductuneDir(dir)
+    } catch {
+      return { found: false }
+    }
+    if (result.isRoot) {
+      return { found: true, rootDir: dir, kind: result.kind, distance: depth }
+    }
+
+    // home boundary: home itself was just inspected above; do not climb past it.
+    if (dir === home) return { found: false }
+    // fs root inspected → stop.
+    if (dir === fsRoot) return { found: false }
+  }
+  return { found: false }
+}
+
 // ── Project init ──────────────────────────────────────────────────────────────
 
 /**
@@ -532,6 +669,27 @@ export function initProject(opts) {
  */
 function runCli() {
   const args = process.argv.slice(2)
+
+  // ── Ancestor walk-up query mode (T-PATCH-135) ──────────────────────────────
+  // `node init-project.mjs --find-ancestor <startDir>` — used by bash CLI to
+  // share the SoT walk-up algorithm. Prints `found\t<rootDir>\t<kind>\t<distance>`
+  // on a single line and exits 0 when found, prints `notfound` + exits 0 when
+  // not found (never non-zero — bash treats absence as "no ancestor"). Errors in
+  // arg parsing exit 2.
+  if (args[0] === '--find-ancestor') {
+    const startDir = args[1] ?? ''
+    if (!startDir) {
+      process.stderr.write('[init-project] --find-ancestor requires <startDir>\n')
+      process.exit(2)
+    }
+    const r = findAncestorProductuneRoot(startDir)
+    if (r.found) {
+      process.stdout.write(`found\t${r.rootDir}\t${r.kind ?? ''}\t${r.distance ?? ''}\n`)
+    } else {
+      process.stdout.write('notfound\n')
+    }
+    process.exit(0)
+  }
 
   let slug = ''
   let projectDir = ''

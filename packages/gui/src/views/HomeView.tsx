@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Plus, FolderOpen, FolderCode, Clock, FolderX } from 'lucide-react'
+import { Plus, FolderOpen, FolderCode, Clock, FolderX, MoreHorizontal } from 'lucide-react'
 import logoUrl from '../assets/logo.png'
+import { CardActionMenu, type CardActionMenuItem } from '../components/shared/CardActionMenu'
+import ProjectDeleteConfirmModal from '../components/ProjectDeleteConfirmModal'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -49,10 +51,16 @@ function relativeDate(iso: string, t: TFunction): string {
 function ProjectCard({
   entry,
   onOpenRecent,
+  onOpenMenu,
+  menuOpen,
   t,
 }: {
   entry: RecentWithMeta
   onOpenRecent: (projectDir: string, slug: string) => void
+  /** Open the action menu for this card at a viewport coordinate. */
+  onOpenMenu: (entry: RecentWithMeta, anchor: { x: number; y: number }) => void
+  /** Whether this card's menu is currently open (keeps the ⋯ button visible). */
+  menuOpen: boolean
   t: TFunction
 }) {
   const [hovered, setHovered] = useState(false)
@@ -60,6 +68,7 @@ function ProjectCard({
   const hasMeta = entry.version !== null || entry.phase !== null
 
   const cardStyle: React.CSSProperties = {
+    position: 'relative',
     background: '#1A1A1A',
     border: `1px solid ${hovered && !missing ? 'rgba(139,92,246,0.5)' : '#222'}`,
     borderRadius: 8,
@@ -71,13 +80,40 @@ function ProjectCard({
     userSelect: 'none',
   }
 
+  const showMenuBtn = hovered || menuOpen
+
   return (
     <div
       style={cardStyle}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClick={missing ? undefined : () => onOpenRecent(entry.projectDir, entry.slug)}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onOpenMenu(entry, { x: e.clientX, y: e.clientY })
+      }}
     >
+      {/* ⋯ action menu trigger — keyboard accessible, hover/focus visible.
+          stopPropagation so it never bubbles to the card-open click. */}
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-label={t('app.home.delete.menuAria', { slug: entry.slug })}
+        title={t('app.home.delete.menuAria', { slug: entry.slug })}
+        style={menuBtnStyle(showMenuBtn)}
+        onClick={(e) => {
+          e.stopPropagation()
+          const r = e.currentTarget.getBoundingClientRect()
+          onOpenMenu(entry, { x: r.right - 4, y: r.bottom + 4 })
+        }}
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <MoreHorizontal size={15} />
+      </button>
+
       {/* Thumbnail */}
       <div style={thumbStyle}>
         <FolderCode size={28} color="#3A3A3A" />
@@ -126,6 +162,53 @@ function ProjectCard({
 export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: Props) {
   const { t } = useTranslation()
   const [recents, setRecents] = useState<RecentWithMeta[]>([])
+  // T-PATCH-134: single open menu + delete-confirm target.
+  const [menu, setMenu] = useState<{ entry: RecentWithMeta; anchor: { x: number; y: number } } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<RecentWithMeta | null>(null)
+
+  // (a) remove-from-recents-only — non-destructive, no confirm. Optimistic drop,
+  // then reconcile from the IPC's refreshed list.
+  const handleRemoveFromList = (entry: RecentWithMeta) => {
+    setRecents((prev) => prev.filter((e) => e.projectDir !== entry.projectDir))
+    const api = (window as any).api
+    api.removeRecent?.({ projectDir: entry.projectDir }).catch(() => {})
+  }
+
+  // (b) delete-from-disk — invoked by the confirm modal. Drops the card on success.
+  const handleDeleteFromDisk = async (entry: RecentWithMeta) => {
+    const api = (window as any).api
+    const result = await api.deleteProject?.({ projectDir: entry.projectDir })
+    if (result?.ok) {
+      setRecents((prev) => prev.filter((e) => e.projectDir !== entry.projectDir))
+    }
+    return result ?? { ok: false, error: 'delete unavailable' }
+  }
+
+  const buildMenuItems = (entry: RecentWithMeta): CardActionMenuItem[] => {
+    const items: CardActionMenuItem[] = []
+    if (entry.exists) {
+      items.push({
+        key: 'open',
+        label: t('app.home.delete.menuOpen'),
+        onSelect: () => onOpenRecent(entry.projectDir, entry.slug),
+      })
+    }
+    items.push({
+      key: 'remove',
+      label: t('app.home.removeFromList'),
+      onSelect: () => handleRemoveFromList(entry),
+    })
+    if (entry.exists) {
+      items.push({
+        key: 'delete',
+        label: t('app.home.delete.menuDelete'),
+        danger: true,
+        separatorBefore: true,
+        onSelect: () => setDeleteTarget(entry),
+      })
+    }
+    return items
+  }
 
   useEffect(() => {
     const api = (window as any).api
@@ -270,12 +353,33 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
                 key={entry.projectDir}
                 entry={entry}
                 onOpenRecent={onOpenRecent}
+                onOpenMenu={(en, anchor) => setMenu({ entry: en, anchor })}
+                menuOpen={menu?.entry.projectDir === entry.projectDir}
                 t={t}
               />
             ))}
           </div>
         </div>
       </div>
+
+      {/* T-PATCH-134: card action menu (⋯ / right-click) — single instance */}
+      {menu && (
+        <CardActionMenu
+          anchor={menu.anchor}
+          items={buildMenuItems(menu.entry)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
+      {/* T-PATCH-134 (b): disk-delete strong-confirm modal */}
+      {deleteTarget && (
+        <ProjectDeleteConfirmModal
+          slug={deleteTarget.slug}
+          projectDir={deleteTarget.projectDir}
+          onConfirm={() => handleDeleteFromDisk(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   )
 }
@@ -348,6 +452,30 @@ const gridStyle: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
   gap: 12,
+}
+
+function menuBtnStyle(visible: boolean): React.CSSProperties {
+  return {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    zIndex: 2,
+    width: 24,
+    height: 24,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 4,
+    border: 'none',
+    background: 'rgba(20,20,20,0.78)',
+    color: '#C0C0C0',
+    cursor: 'pointer',
+    padding: 0,
+    opacity: visible ? 1 : 0,
+    pointerEvents: visible ? 'auto' : 'none',
+    transition: 'opacity 0.12s',
+    fontFamily: 'inherit',
+  }
 }
 
 const thumbStyle: React.CSSProperties = {

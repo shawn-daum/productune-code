@@ -51,11 +51,13 @@ import {
   bootstrapUserGlobalDoctrine as _bootstrapUserGlobalDoctrine,
   latestSchemaV as _latestSchemaV,
   FALLBACK_LATEST_SCHEMA_V as _FALLBACK_LATEST_SCHEMA_V,
+  findAncestorProductuneRoot as _findAncestorProductuneRoot,
+  ANCESTOR_WALK_MAX_DEPTH as _ANCESTOR_WALK_MAX_DEPTH,
 } from '../scripts/lib/init-project.mjs'
 
 // ── Re-export types ───────────────────────────────────────────────────────────
 
-export type { SurfaceConfig, ProjectConfig, InitOptions } from '../scripts/lib/init-project.mjs'
+export type { SurfaceConfig, ProjectConfig, InitOptions, AncestorRootResult } from '../scripts/lib/init-project.mjs'
 
 // ── Forwarded constants ───────────────────────────────────────────────────────
 
@@ -107,4 +109,20 @@ export function bootstrapUserGlobalDoctrine(): void {
   // bootstrapUserGlobalDoctrine requires a string coreRoot; when _coreRoot is null
   // (data: URL bundle context) fall back to ~/.productune which install.sh populates.
   _bootstrapUserGlobalDoctrine(_coreRoot ?? path.join(os.homedir(), '.productune'))
+}
+
+// ── Ancestor walk-up (T-PATCH-135) ───────────────────────────────────────────
+
+/** Max ancestor levels the walk-up climbs — SoT shared with the CLI. */
+export const ANCESTOR_WALK_MAX_DEPTH: number = _ANCESTOR_WALK_MAX_DEPTH
+
+/**
+ * Bounded ancestor walk-up: nearest productune root above startDir (startDir
+ * excluded). Stops at fs root / home / depth cap / fs error → not found.
+ * Shared SoT with the bash CLI (init-project.mjs --find-ancestor) for AC-8 parity.
+ */
+export function findAncestorProductuneRoot(
+  startDir: string,
+): import('../scripts/lib/init-project.mjs').AncestorRootResult {
+  return _findAncestorProductuneRoot(startDir)
 }

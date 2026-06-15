@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('api', {
   openFolder: (): Promise<
     | { kind: 'self'; dir: string; config: { slug: string; created_at?: string; [k: string]: any } }
     | { kind: 'self-legacy'; dir: string; hints: string[] }
+    | { kind: 'ancestor'; dir: string; ancestorRoot: string; distance: number; config: { slug: string; [k: string]: any } }
     | { kind: 'descendant'; dir: string; descendants: Array<{ path: string; config: { slug: string; [k: string]: any } }> }
     | { kind: 'none'; dir: string }
     | null
@@ -107,6 +108,23 @@ contextBridge.exposeInMainWorld('api', {
 
   addRecent: (opts: { projectDir: string; slug: string }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('recents:add', opts),
+
+  // T-PATCH-134 (a): remove a recents entry only — non-destructive, disk untouched.
+  removeRecent: (opts: { projectDir: string }): Promise<{
+    ok: boolean
+    entries: Array<{ slug: string; projectDir: string; openedAt: string }>
+  }> =>
+    ipcRenderer.invoke('recents:remove', opts),
+
+  // T-PATCH-134 (b): delete the project dir from disk (OS trash first, hard-rm fallback)
+  // then purge its recents entry. Boundary-guarded in main.
+  deleteProject: (opts: { projectDir: string }): Promise<{
+    ok: boolean
+    trashed?: boolean
+    alreadyGone?: boolean
+    error?: string
+  }> =>
+    ipcRenderer.invoke('project:delete', opts),
 
   githubCheckToken: () =>
     ipcRenderer.invoke('github:checkToken'),
@@ -812,6 +830,7 @@ contextBridge.exposeInMainWorld('api', {
   openKnownDir: (dir: string): Promise<
     | { kind: 'self'; dir: string; config: { slug: string; created_at?: string; [k: string]: any } }
     | { kind: 'self-legacy'; dir: string; hints: string[] }
+    | { kind: 'ancestor'; dir: string; ancestorRoot: string; distance: number; config: { slug: string; [k: string]: any } }
     | { kind: 'descendant'; dir: string; descendants: Array<{ path: string; config: { slug: string; [k: string]: any } }> }
     | { kind: 'none'; dir: string }
     | null
@@ -967,6 +986,52 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('productune:usage-update', listener)
     return () => ipcRenderer.removeListener('productune:usage-update', listener)
+  },
+
+  // ── Token-cost archive (T-027) ───────────────────────────────────────────────
+
+  /** Aggregate per-project token cost from .productune/turns.jsonl, grouped by dimension. */
+  costAggregate: (
+    projectDir: string,
+    by: 'version' | 'persona' | 'model',
+  ): Promise<{
+    ok: boolean
+    groups: Array<{ key: string; turns: number; cost_usd: number }>
+    totalTurns: number
+    totalCostUsd: number
+    error?: string
+  }> =>
+    ipcRenderer.invoke('cost:aggregate', projectDir, by),
+
+  /** persona×model nested pivot aggregation (T-028 R2). */
+  costAggregatePivot: (
+    projectDir: string,
+  ): Promise<{
+    ok: boolean
+    rows: Array<{
+      persona: string
+      model: string
+      scope: 'subagent' | 'main'
+      turns: number
+      usage: { in: number; out: number; cache: number } | null
+      cost_usd: number
+    }>
+    subagentUsage: { in: number; out: number; cache: number }
+    totalTurns: number
+    totalCostUsd: number
+    error?: string
+  }> =>
+    ipcRenderer.invoke('cost:aggregatePivot', projectDir),
+
+  /** (Re)arm a per-project fs.watch on turns.jsonl; pushes 'productune:cost-update' on change. */
+  costWatch: (projectDir: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('cost:watch', projectDir),
+
+  /** Subscribe to cost-archive change events (debounced). Returns an unsubscribe fn. */
+  onCostUpdate: (cb: (payload: { projectDir: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('productune:cost-update', listener)
+    return () => ipcRenderer.removeListener('productune:cost-update', listener)
   },
 
   // ── Artifacts viewer (T-014) ─────────────────────────────────────────────────

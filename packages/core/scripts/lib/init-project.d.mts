@@ -58,3 +58,27 @@ export declare function bootstrapPersonaMemory(projectDir: string, initialVersio
  * @param coreRoot - absolute path to packages/core/
  */
 export declare function bootstrapUserGlobalDoctrine(coreRoot: string): void
+
+// ── Ancestor walk-up (T-PATCH-135) ───────────────────────────────────────────
+
+/** Max ancestor levels the walk-up climbs (SoT — GUI mirrors this). */
+export declare const ANCESTOR_WALK_MAX_DEPTH: number
+
+/** Result of the bounded ancestor walk-up. */
+export interface AncestorRootResult {
+  found: boolean
+  rootDir?: string
+  kind?: string
+  distance?: number
+}
+
+/** Classify a single dir as a productune root (no writes). */
+export declare function classifyProductuneDir(
+  dir: string,
+): { isRoot: boolean; kind?: 'self-current' | 'self-healable' | 'self-legacy' }
+
+/**
+ * Bounded ancestor walk-up: nearest productune root above startDir, excluding
+ * startDir itself. Stops at fs root / home boundary / max depth / fs error.
+ */
+export declare function findAncestorProductuneRoot(startDir: string): AncestorRootResult

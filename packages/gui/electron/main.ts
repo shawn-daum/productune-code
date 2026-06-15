@@ -24,6 +24,7 @@ import { register as registerBrowserFind } from './ipc/browserFind'
 import { register as registerProjectEnv }  from './ipc/projectEnv'
 import { register as registerAttachments } from './ipc/attachments'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
+import { register as registerCostArchive, stopCostWatch } from './ipc/costArchive'
 import { abortActiveTurn, isPoRunning } from './po-runner'
 import { getCloseToTray, getLaunchAtLogin, setLaunchAtLogin, getZoomFactor } from '@productune/core'
 
@@ -67,6 +68,7 @@ registerHtml()
 registerBrowserFind()
 registerProjectEnv()
 registerAttachments()
+registerCostArchive()
 
 // ── Brand icon resolution (T-PATCH-109) ───────────────────────────────────────
 // dev/non-packaged Dock + window icon. __dirname = dist-electron/; the buildResources
@@ -419,6 +421,7 @@ app.whenReady().then(() => {
 // handler. stopUsageWatch is therefore called only on a real quit — never on hide.
 app.on('window-all-closed', () => {
   stopUsageWatch()
+  stopCostWatch()
   if (process.platform !== 'darwin') {
     app.quit()
   }

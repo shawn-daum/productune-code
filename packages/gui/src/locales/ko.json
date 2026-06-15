@@ -820,6 +820,7 @@
     "generalTabTitle": "일반 설정",
     "tabMcp": "MCP 서버",
     "tabHooks": "훅",
+    "tabCost": "토큰비용아카이브",
     "mcp": {
       "title": "MCP 서버",
       "renameFailed": "이름 변경 실패",
@@ -1006,7 +1007,18 @@
       "projects": "프로젝트",
       "phaseBadge": "Phase {{n}}",
       "folderMissing": "폴더 없음",
-      "removeFromList": "목록에서 제거"
+      "removeFromList": "목록에서 제거",
+      "delete": {
+        "menuAria": "{{slug}} 작업 메뉴",
+        "menuOpen": "프로젝트 열기",
+        "menuDelete": "디스크에서 삭제",
+        "title": "\"{{slug}}\" 을(를) 삭제할까요?",
+        "body": "디스크에서 프로젝트 폴더 전체가 삭제됩니다. productune은 먼저 시스템 휴지통으로 보내며, 휴지통을 쓸 수 없는 경우 폴더가 영구적으로 삭제됩니다.",
+        "irreversible": "이 작업은 되돌릴 수 없습니다.",
+        "cancel": "취소",
+        "confirm": "디스크에서 삭제",
+        "errorGeneric": "프로젝트 폴더를 삭제하지 못했습니다."
+      }
     },
     "install": {
       "title": "이 폴더에서 productune을 시작할까요?",
@@ -1020,6 +1032,13 @@
       "installHere": "현재 폴더에 새로 설치",
       "cancel": "취소"
     },
+    "ancestor": {
+      "title": "상위 폴더에 이미 productune 프로젝트가 있습니다.",
+      "prompt": "지금 연 폴더({{dir}})는 기존 productune 프로젝트보다 {{distance}}단계 아래에 있습니다. 그 프로젝트를 대신 열까요, 아니면 여기에 새로 설치할까요?",
+      "openAncestor": "그 프로젝트 열기",
+      "installHere": "여기에 설치",
+      "cancel": "취소"
+    },
     "migrate": {
       "title": "옛 productune 프로젝트로 보입니다",
       "description": "이 폴더는 옛 productune 프로젝트로 보입니다. 감지된 항목: {{hints}}. 최신 layout 으로 업데이트하면 기존 작업 내역은 그대로 보존됩니다. 진행할까요?",
@@ -1030,5 +1049,24 @@
       "mac": "⌘Q를 다시 누르면 종료됩니다",
       "win": "Ctrl+Q를 다시 누르면 종료됩니다"
     }
+  },
+  "costArchive": {
+    "title": "토큰 비용 아카이브",
+    "byVersion": "Version",
+    "byPersona": "페르소나",
+    "byModel": "모델",
+    "byPersonaModel": "페르소나×모델",
+    "colTurns": "턴",
+    "colCost": "비용",
+    "colIn": "입력",
+    "colOut": "출력",
+    "colCache": "캐시",
+    "subtotal": "소계",
+    "tokenNaMain": "—",
+    "tokenNaMainNote": "메인 세션은 토큰 분해 미지원, 비용만 집계.",
+    "total": "합계",
+    "empty": "아직 수집된 비용 데이터가 없습니다.",
+    "estimateDisclaimer": "비용은 클라이언트 측 추정치이며 실제 청구액과 다를 수 있습니다.",
+    "mainSessionNote": "메인 세션 행은 세션 단위로 중복 제거됩니다(누적 비용은 한 번만 집계)."
   }
 }

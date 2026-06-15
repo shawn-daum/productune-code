@@ -11,7 +11,7 @@ import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
 
 // T-P4-022 §16.3: 'integrations' placeholder reserved for external-connections sub-tab
-type SettingsSubTab = 'general' | 'workflow' | 'mcp' | 'hooks'
+type SettingsSubTab = 'general' | 'workflow' | 'mcp' | 'hooks' | 'cost'
 
 export default function SettingsView() {
   const { t } = useTranslation()
@@ -23,6 +23,7 @@ export default function SettingsView() {
     { id: 'workflow', label: t('settings.tabWorkflowRules') },
     { id: 'mcp',      label: t('settings.tabMcp') },
     { id: 'hooks',    label: t('settings.tabHooks') },
+    { id: 'cost',     label: t('settings.tabCost') },
   ]
 
   const handleTabClick = (id: SettingsSubTab) => {
@@ -35,6 +36,8 @@ export default function SettingsView() {
       openTab('mcp-servers', 'mcp-servers', undefined, t('settings.tabMcp'))
     } else if (id === 'hooks') {
       openTab('hooks', 'hooks', undefined, t('settings.tabHooks'))
+    } else if (id === 'cost') {
+      openTab('cost-archive', 'cost-archive', undefined, t('settings.tabCost'))
     }
   }
 
