@@ -255,7 +255,8 @@
       "loading": "Loading tickets…",
       "noTickets": "No tickets match the current filter.",
       "noTicketsCta": "Ask PO to start →",
-      "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"). Project status enum may not match productune doctrine.",
+      "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"; unknown values: {{values}}). Project status enum may not match productune doctrine.",
+      "schemaMismatchMore": "{{values}} +{{more}} more",
       "status": {
         "todo": "To Do",
         "in-progress": "In Progress",

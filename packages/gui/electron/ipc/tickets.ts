@@ -32,6 +32,29 @@ interface ScannedTicket {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Strip a YAML inline `#` comment from an UNQUOTED scalar value.
+ *
+ * YAML rule: `#` starts a comment only at line-start or when preceded by
+ * whitespace. We cut at the first ` #` (whitespace + hash), NOT a bare `#`,
+ * so unquoted leading-hash values (e.g. a hex color `#fff`) are preserved.
+ *
+ * Guard: if the raw value begins with a quote (`"` or `'`), it is a QUOTED
+ * scalar — its `#` may be literal content (e.g. `"a # b"`), so we skip the
+ * strip entirely and let the caller's quote-handling branch run unchanged.
+ *
+ * Blast-radius note (T-PATCH-136): this feeds ALL scalar frontmatter fields.
+ * Enum/path/date/identifier fields never legitimately carry ` #`. The only
+ * free-text field is `title`; if a title needs a literal ` #` (e.g. `feat #1`)
+ * it MUST be quoted — same as standard YAML. Truncation of an unquoted
+ * trailing ` #` is intended behaviour, not a regression.
+ */
+function stripInlineComment(raw: string): string {
+  if (raw.startsWith('"') || raw.startsWith("'")) return raw
+  const idx = raw.search(/\s#/)
+  return idx === -1 ? raw : raw.slice(0, idx)
+}
+
 function parseFrontmatter(content: string): Record<string, any> {
   const lines = content.split('\n')
   if (lines[0]?.trim() !== '---') return {}
@@ -41,7 +64,7 @@ function parseFrontmatter(content: string): Record<string, any> {
     const m = lines[i].match(/^([a-zA-Z_][\w-]*):\s*(.*)$/)
     if (!m) continue
     const key = m[1]
-    let val: any = m[2].trim()
+    let val: any = stripInlineComment(m[2].trim()).trim()
     if (val === '') val = null
     else if (val === 'null') val = null
     else if (val === 'true') val = true

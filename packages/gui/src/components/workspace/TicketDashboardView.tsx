@@ -38,7 +38,7 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
     if (!versionFilter) return raw
     return raw.filter((t) => t.version === versionFilter)
   }, [poState, scannedTickets, versionFilter])
-  const { byStatus, unknownCount } = useMemo(() => groupByStatus(allTickets), [allTickets])
+  const { byStatus, unknownCount, unknownValues } = useMemo(() => groupByStatus(allTickets), [allTickets])
 
   return (
     <div style={wrap}>
@@ -47,7 +47,7 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
       </header>
 
       {unknownCount > 0 && (
-        <SchemaMismatchBanner count={unknownCount} />
+        <SchemaMismatchBanner count={unknownCount} values={unknownValues} />
       )}
 
       {loading && allTickets.length === 0 ? (
@@ -107,17 +107,25 @@ interface GroupByStatusResult {
   byStatus: Record<string, Ticket[]>
   /** Number of tickets whose status was not in STATUS_ORDER and was silently mapped to 'todo'. */
   unknownCount: number
+  /** Distinct raw status strings that were unknown (T-PATCH-136 — surfaced in the banner for self-diagnosis). */
+  unknownValues: string[]
 }
 
 function groupByStatus(tickets: Ticket[]): GroupByStatusResult {
   const byStatus: Record<string, Ticket[]> = {}
   let unknownCount = 0
+  const unknownSet = new Set<string>()
   for (const t of tickets) {
     const raw = (t.status as string) ?? 'todo'
     const known = KNOWN_STATUS_SET.has(raw)
     // Unknown status → 'todo' fallback. Only count as unknown when status was
     // explicitly set to a non-standard value (not null/undefined).
-    if (!known && t.status != null) unknownCount++
+    if (!known && t.status != null) {
+      unknownCount++
+      // Collect the distinct offending raw value so the banner can name it
+      // (T-PATCH-136 AC-6). Same null/undefined gate as the count above.
+      unknownSet.add(raw)
+    }
     // Known status → its column, but fold any display-bucketed status (e.g. 'review' → 'in-progress').
     // Unknown status → 'todo' fallback.
     const resolved: Status = known ? (raw as Status) : 'todo'
@@ -125,21 +133,32 @@ function groupByStatus(tickets: Ticket[]): GroupByStatusResult {
     if (!byStatus[k]) byStatus[k] = []
     byStatus[k].push(t)
   }
-  return { byStatus, unknownCount }
+  return { byStatus, unknownCount, unknownValues: [...unknownSet] }
 }
 
 // ── sub-components ─────────────────────────────────────────────────────────────
 
+/** Cap on distinct unknown-status values listed inline before collapsing to "+N more". */
+const UNKNOWN_VALUES_CAP = 3
+
 /** Thin warning banner — shown when ≥1 ticket has an unknown status value. */
-function SchemaMismatchBanner({ count }: { count: number }) {
+function SchemaMismatchBanner({ count, values }: { count: number; values: string[] }) {
   const { t } = useTranslation()
+  // Cap the listed distinct raw values at 3 + "+N more" so the single-line
+  // banner never overflows (T-PATCH-136 AC-6, PO decision). Raw status strings
+  // are NOT translated — they are interpolated as-is, keeping protected tokens intact.
+  const shown = values.slice(0, UNKNOWN_VALUES_CAP)
+  const remainder = values.length - shown.length
+  const valuesLabel = remainder > 0
+    ? t('workspace.tickets.schemaMismatchMore', { values: shown.join(', '), more: remainder })
+    : shown.join(', ')
   return (
     <div style={mismatchBannerWrap} role="status" aria-live="polite">
       <span style={mismatchIconWrap}>
         <AlertTriangle size={12} color="#A08050" />
       </span>
       <span style={mismatchMsg}>
-        {t('workspace.tickets.schemaMismatchBanner', { count })}
+        {t('workspace.tickets.schemaMismatchBanner', { count, values: valuesLabel })}
       </span>
     </div>
   )

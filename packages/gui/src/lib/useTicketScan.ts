@@ -33,6 +33,10 @@ const LEGACY_STATUS_SYNONYMS: Record<string, Status> = {
   'user-pending': 'user-verify',
   cancelled: 'abandoned',
   'design-proposal': 'in-progress',
+  // T-PATCH-136: doctrine `ticket-schema.md` defines `abandoned` = "superseded / dropped".
+  // Real ticket data carries `status: superseded` for never-started/dropped work; fold it
+  // onto the canonical `abandoned` rather than letting it fall through as an unknown status.
+  superseded: 'abandoned',
 }
 
 export function normalizeStatus(raw: Status | string | undefined): Status | undefined {
