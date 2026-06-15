@@ -37,6 +37,11 @@ const LEGACY_STATUS_SYNONYMS: Record<string, Status> = {
   // Real ticket data carries `status: superseded` for never-started/dropped work; fold it
   // onto the canonical `abandoned` rather than letting it fall through as an unknown status.
   superseded: 'abandoned',
+  // T-PATCH-137: snake_case variant of canonical kebab `in-progress` (`ticket-schema.md:14`).
+  in_progress: 'in-progress',
+  // T-PATCH-137: `qa` is a ticket *type*, not a canonical status; "impl done, awaiting QA" is
+  // canonically `review` (`ticket-schema.md:53`), which the board folds onto the in-progress column (T-PATCH-130).
+  qa: 'review',
 }
 
 export function normalizeStatus(raw: Status | string | undefined): Status | undefined {

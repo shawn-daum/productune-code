@@ -97,6 +97,7 @@ merge_claude_settings_hooks() {
   local chunkwarn="$hooks_dir/pre-chunking-warn.sh"
   local strip="$hooks_dir/post-bash-strip-cost.sh"
   local fmlint="$hooks_dir/pre-frontmatter-lint.sh"
+  local fmverify="$hooks_dir/post-ticket-status-verify.sh"
   local gitposture="$hooks_dir/pre-git-posture.sh"
   local sessdoc="$hooks_dir/session-start-doctrine.sh"
   local docguard="$hooks_dir/pre-doctrine-guard.sh"
@@ -104,7 +105,7 @@ merge_claude_settings_hooks() {
   local gateinject="$hooks_dir/prompt-gate-inject.sh"
 
   local tmp; tmp="$(mktemp)" || return 1
-  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg gitposture "$gitposture" --arg sessdoc "$sessdoc" --arg docguard "$docguard" --arg phasegate "$phasegate" --arg gateinject "$gateinject" --arg dir "$hooks_dir/" '
+  if ! jq --arg fmt "$fmt" --arg doc "$doc" --arg stop "$stop" --arg statew "$statew" --arg precheck "$precheck" --arg ctxlang "$ctxlang" --arg chunkwarn "$chunkwarn" --arg strip "$strip" --arg fmlint "$fmlint" --arg fmverify "$fmverify" --arg gitposture "$gitposture" --arg sessdoc "$sessdoc" --arg docguard "$docguard" --arg phasegate "$phasegate" --arg gateinject "$gateinject" --arg dir "$hooks_dir/" '
     def is_pdt(cmd; dir):
       (cmd | startswith(dir))
       or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
@@ -116,6 +117,7 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
       or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
       or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"))
+      or (cmd | endswith("/scripts/hooks/post-ticket-status-verify.sh"))
       or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"))
       or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
       or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"))
@@ -140,7 +142,7 @@ merge_claude_settings_hooks() {
          hooks: [{type: "command", command: $gitposture}]},
         {matcher: "Bash",
          hooks: [{type: "command", command: $phasegate}]},
-        {matcher: "Write|Edit",
+        {matcher: "Write|Edit|Bash",
          hooks: [{type: "command", command: $fmlint}]}
       ])
     | .hooks.PostToolUse = (strip_pdt(.hooks.PostToolUse; $dir) + [
@@ -149,7 +151,9 @@ merge_claude_settings_hooks() {
         {matcher: "Bash",
          hooks: [{type: "command", command: $statew}]},
         {matcher: "Bash",
-         hooks: [{type: "command", command: $strip}]}
+         hooks: [{type: "command", command: $strip}]},
+        {matcher: "Bash",
+         hooks: [{type: "command", command: $fmverify}]}
       ])
     | .hooks.PostCompact = (strip_pdt(.hooks.PostCompact; $dir) + [{
         hooks: [{type: "command", command: $doc}]
@@ -426,6 +430,10 @@ mkdir -p "$HOME/.productune/config"
 if [ -f "$ROOT/config/close-gate.p3.json" ]; then
   cp "$ROOT/config/close-gate.p3.json" "$HOME/.productune/config/close-gate.p3.json"
   say "config mirror 완료: ~/.productune/config/close-gate.p3.json"
+fi
+if [ -f "$ROOT/config/ticket-status-enum.json" ]; then
+  cp "$ROOT/config/ticket-status-enum.json" "$HOME/.productune/config/ticket-status-enum.json"
+  say "config mirror 완료: ~/.productune/config/ticket-status-enum.json"
 fi
 
 # 2c-1c) Mirror migrations — session-start hook 이 프로젝트별 미적용분을 감지해
