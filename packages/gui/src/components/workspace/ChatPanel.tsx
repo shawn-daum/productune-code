@@ -32,6 +32,8 @@ import RateLimitBanner from './chat/RateLimitBanner'
 import UsageBar from './chat/UsageBar'
 import AskUserQuestionCard from './chat/AskUserQuestionCard'
 import { useSessionHealth } from '../../store/sessionHealth'
+import type { PoHealthState, PoHealthDetail } from '../../store/sessionHealth'
+import { personaIdFromAgentType, PERSONA_LABELS } from '../../store/personaPresence'
 import { useComposerAttachments } from '../../hooks/useComposerAttachments'
 import { ImageChip, chipRow } from './chat/ImageChip'
 
@@ -80,6 +82,10 @@ export default function ChatPanel() {
   const healthDetail = useSessionHealth((s) => s.detail)
   const clearHealth = useSessionHealth((s) => s.clearHealth)
   const rateLimited = healthState === 'rate-limited'
+
+  // T-PATCH-163: composer working-indicator data sources (atomic selectors).
+  const streamingSince = useWorkspace((s) => s.streamingSince)
+  const turnCharCount = useWorkspace((s) => s.turnCharCount)
 
   const draft = usePoChat((s) => s.inputDraft)
   const setDraft = usePoChat((s) => s.setDraft)
@@ -525,17 +531,29 @@ export default function ChatPanel() {
             </div>
           )}
 
-          <textarea
-            ref={taRef}
-            style={textarea}
-            value={draft}
-            onChange={(e) => onComposerChange(e.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onComposerPaste}
-            placeholder={t('workspace.chat.inputPlaceholder')}
-            rows={1}
-            disabled={streaming || !project || rateLimited}
-          />
+          {/* T-PATCH-163: while streaming (and NOT rate-limited — D6: RateLimitBanner
+              owns that state), the textarea slot becomes a live working indicator.
+              rateLimited keeps the textarea (disabled) so the banner pairing is intact. */}
+          {streaming && !rateLimited && streamingSince != null ? (
+            <WorkingIndicator
+              sinceMs={streamingSince}
+              charCount={turnCharCount}
+              healthState={healthState}
+              healthDetail={healthDetail}
+            />
+          ) : (
+            <textarea
+              ref={taRef}
+              style={textarea}
+              value={draft}
+              onChange={(e) => onComposerChange(e.target.value)}
+              onKeyDown={onKeyDown}
+              onPaste={onComposerPaste}
+              placeholder={t('workspace.chat.inputPlaceholder')}
+              rows={1}
+              disabled={streaming || !project || rateLimited}
+            />
+          )}
 
           <div style={inputRow}>
             <button
@@ -740,6 +758,76 @@ function groupToolTraces(messages: Message[]): RenderItem[] {
   return items
 }
 
+// ── T-PATCH-163: composer working indicator ─────────────────────────────────
+// Self-contained so its 1s elapsed tick re-renders ONLY this row, never the
+// ChatPanel message list (react-best-practices). Parent passes streamingSince +
+// the per-turn char count; this component owns the timer + cleanup.
+//
+//   [✶ spinner] 동사 · Nm Ns · ↓ ~N.Nk
+//
+// spinner = CSS-only `.pdt-spin` (md-recipes.css) → reduced-motion auto-guarded.
+function WorkingIndicator(props: {
+  sinceMs: number
+  charCount: number
+  healthState: PoHealthState
+  healthDetail: PoHealthDetail
+}) {
+  const { t } = useTranslation()
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  // 1s elapsed tick — re-arm whenever the turn's start stamp changes; clear on
+  // unmount / turn end (the parent stops rendering this component at done).
+  useEffect(() => {
+    setNowMs(Date.now())  // immediate sync (avoids a 1s blank on first paint)
+    const id = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [props.sinceMs])
+
+  const verb = verbForHealth(props.healthState, props.healthDetail, t)
+  const elapsed = formatElapsed(nowMs - props.sinceMs)
+  const tokens = formatApproxTokens(props.charCount)
+
+  return (
+    <div style={workingRow} role="status" aria-live="polite">
+      <span className="pdt-spin" style={spinnerGlyph} aria-hidden="true">✶</span>
+      <span>{verb}</span>
+      <span style={dot} aria-hidden="true">·</span>
+      <span>{elapsed}</span>
+      {tokens && (
+        <>
+          <span style={dot} aria-hidden="true">·</span>
+          <span>{tokens}</span>
+        </>
+      )}
+    </div>
+  )
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const m = Math.floor(s / 60)
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`
+}
+
+function formatApproxTokens(chars: number): string {
+  const tok = Math.round(chars / 4)
+  if (tok <= 0) return ''
+  return tok >= 1000 ? `↓ ~${(tok / 1000).toFixed(1)}k` : `↓ ~${tok}`
+}
+
+function verbForHealth(
+  state: PoHealthState,
+  detail: PoHealthDetail,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  if (state === 'delegating' && detail.persona) {
+    const id = personaIdFromAgentType(detail.persona)
+    if (id) return t('workspace.chat.working.delegating', { persona: PERSONA_LABELS[id] })
+  }
+  if (state === 'compacting') return t('workspace.chat.working.compacting')
+  return t('workspace.chat.working.default')
+}
+
 // ── styles ────────────────────────────────────────────────────────────────────
 
 const wrap: React.CSSProperties = {
@@ -863,6 +951,33 @@ const inputRow: React.CSSProperties = {
   display: 'flex',
   gap: 6,
   alignItems: 'center',
+}
+
+// T-PATCH-163: working-indicator row — same vertical footprint as the textarea
+// (minHeight 36) but border:none/transparent so it never reads as an input box.
+const workingRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  minHeight: 36,
+  padding: '8px 10px',
+  boxSizing: 'border-box',
+  color: '#A0A0A0',
+  fontSize: 12,
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  border: 'none',
+  background: 'transparent',
+}
+
+const spinnerGlyph: React.CSSProperties = {
+  display: 'inline-block',
+  color: '#8B5CF6',
+  fontSize: 13,
+  lineHeight: 1,
+}
+
+const dot: React.CSSProperties = {
+  color: '#505050',
 }
 
 const iconActionBtn: React.CSSProperties = {

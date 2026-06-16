@@ -4,7 +4,7 @@ version: v0.5
 slug: po-text-token-streaming
 title: PO 텍스트 토큰 단위 스트리밍 (타자기 효과) — --include-partial-messages
 type: code
-status: todo
+status: review
 phase: 3
 assignee: pdt-developer
 requires_qa: true

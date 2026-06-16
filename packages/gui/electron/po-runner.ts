@@ -461,6 +461,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // session. `.claude/settings.json` permissions.defaultMode is ignored in print mode → the
     // CLI flag is the correct path. Applies to both first-call and resume paths.
     args.push('--permission-mode', 'bypassPermissions')
+    // T-PATCH-166: token-level (typewriter) streaming. With this flag the CLI
+    // emits `type:'stream_event'` envelopes carrying `content_block_delta` /
+    // `text_delta` per token (parsed in handleStreamJsonLine). Compatible with
+    // headless `--print --output-format stream-json --verbose`; orthogonal to
+    // `--agent` / `--permission-mode`. Applies to both first-call + resume.
+    args.push('--include-partial-messages')
     args.push('--print', '--output-format', 'stream-json', '--verbose', opts.text)
 
     // T-PATCH-149: experimental — exposes SendMessage (PO can continue a subagent by agentId
@@ -598,6 +604,38 @@ function handleStreamJsonLine(
   // 는 항상 false → 필터 no-op → 기존 동작 무변(무해). 실측 확정은 runtime verify 필요.
   const isNested = obj?.parent_tool_use_id != null
 
+  // ── T-PATCH-166: per-token (typewriter) text streaming ─────────────────────
+  // With `--include-partial-messages`, the CLI emits `type:'stream_event'`
+  // envelopes carrying Anthropic raw streaming events. The token-level text
+  // arrives as `event.type === 'content_block_delta'` with a `text_delta`. We
+  // forward each delta via cb.onToken so the renderer accumulates char-by-char
+  // (MessageBubble's streaming ▋ cursor now tracks per token).
+  //
+  // ★Double-append avoidance: the FINAL `type:'assistant'` message repeats the
+  // FULL text. So the `type:'assistant'` handler below NO LONGER calls onToken
+  // for text parts (it only keeps tool_use handling) — text now comes solely
+  // from these deltas.
+  //
+  // ★Nested (T-165 정합): subagent(sidechain) text deltas must not pollute the
+  // PO bubble. We gate with the same `parent_tool_use_id != null → skip` marker
+  // class used for assistant/user. The marker may ride either on the outer
+  // stream_event envelope OR on the inner raw event, so we check both. graceful:
+  // if neither carries it (field absent), isNested stays false → delta flows
+  // (no-op gate). Runtime-verify needed to confirm the sidechain marker shape on
+  // stream_event.
+  if (type === 'stream_event') {
+    const event = obj?.event
+    if (
+      event?.type === 'content_block_delta' &&
+      event?.delta?.type === 'text_delta' &&
+      typeof event?.delta?.text === 'string'
+    ) {
+      const eventNested = isNested || obj?.event?.parent_tool_use_id != null
+      if (!eventNested) cb.onToken(msgId, event.delta.text)
+    }
+    return
+  }
+
   if (type === 'system') {
     if (obj?.subtype === 'init' && typeof obj?.session_id === 'string') {
       capturedSessionId = obj.session_id
@@ -617,8 +655,13 @@ function handleStreamJsonLine(
     // 토큰(subagent 내부 서술)도 onToken 으로 새면 PO 버블 오염이므로 함께 스킵.
     if (isNested) return
     for (const part of content) {
-      if (part?.type === 'text' && typeof part?.text === 'string') {
-        cb.onToken(msgId, part.text)
+      if (part?.type === 'text') {
+        // T-PATCH-166: text now streams via `type:'stream_event'` text_delta
+        // (typewriter). The FINAL assistant message repeats the FULL text, so
+        // calling cb.onToken here would DOUBLE-append. Skip text parts; keep the
+        // tool_use branch (delegating/persona/도구 announce — T-148/165, and the
+        // AskUserQuestion path) intact.
+        continue
       } else if (part?.type === 'tool_use' && typeof part?.name === 'string') {
         // ── T-PATCH-037 Path A: AskUserQuestion tool_use (PO-only) ──────────
         // Normalize Claude's AskUserQuestion input → AskUserQuestionPayload and

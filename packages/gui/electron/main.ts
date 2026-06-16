@@ -12,6 +12,7 @@ import { register as registerMcp }        from './ipc/mcp'
 import { register as registerHooks }      from './ipc/hooks'
 import { register as registerSkills }     from './ipc/skills'
 import { register as registerDeploy }     from './ipc/deploy'
+import { register as registerSurface }    from './ipc/surface'
 import { register as registerSettings }   from './ipc/settings'
 import { register as registerDesign }     from './ipc/design'
 import { register as registerExplorer }   from './ipc/explorer'
@@ -26,6 +27,7 @@ import { register as registerAttachments } from './ipc/attachments'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { register as registerCostArchive, stopCostWatch } from './ipc/costArchive'
 import { abortActiveTurn, isPoRunning } from './po-runner'
+import { killAllSurfaceRuns } from './surface-runner'
 import { getCloseToTray, getLaunchAtLogin, setLaunchAtLogin, getZoomFactor } from '@productune/core'
 
 // T-PATCH-143: dev 모드 앱 메뉴/About/알림 소스 라벨을 "Electron"→"productune"로 통일 (app.name 첫 사용 전 호출, electron-builder.yml productName과 동일 값)
@@ -60,6 +62,7 @@ registerMcp()
 registerHooks()
 registerSkills()
 registerDeploy()
+registerSurface()
 registerSettings()
 registerDesign()
 registerExplorer()
@@ -425,6 +428,8 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   stopUsageWatch()
   stopCostWatch()
+  // T-PATCH-159 D5: SIGTERM any in-flight surface build/smoke runs on quit.
+  killAllSurfaceRuns()
   if (process.platform !== 'darwin') {
     app.quit()
   }

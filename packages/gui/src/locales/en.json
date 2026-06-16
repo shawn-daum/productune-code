@@ -322,6 +322,11 @@
         "error": "Error"
       },
       "stop": "Stop",
+      "working": {
+        "default": "Working",
+        "delegating": "Delegating to {{persona}}",
+        "compacting": "Compacting conversation"
+      },
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
         "exact": "API limit reached — retry in {{n}}s"

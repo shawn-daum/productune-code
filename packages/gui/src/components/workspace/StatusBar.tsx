@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { ChevronDown } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import SessionHealthSegment from './SessionHealthSegment'
+import BuildSegment from './BuildSegment'
 
 interface RecentEntry {
   slug: string
@@ -113,10 +114,8 @@ export default function StatusBar({ onOpenHealthBanner, onOpenRecent }: Props) {
         <SessionHealthSegment onOpenBanner={onOpenHealthBanner} />
       </div>
 
-      {/* Right cluster — future: auto-save / deploy status */}
-      <span style={placeholder}>
-        {t('workspace.statusBar.placeholder')}
-      </span>
+      {/* Right cluster — Build(+Smoke) launcher (T-PATCH-159) */}
+      <BuildSegment />
     </div>
   )
 }
@@ -172,17 +171,6 @@ const sep: React.CSSProperties = {
   color: '#3A3A3A',
   userSelect: 'none',
   flexShrink: 0,
-}
-
-const placeholder: React.CSSProperties = {
-  fontSize: 10,
-  color: '#3A3A3A',
-  userSelect: 'none',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  flexShrink: 0,
-  marginLeft: 8,
 }
 
 const dropdownPanel: React.CSSProperties = {

@@ -32,6 +32,7 @@ import {
   ScrollText,
   KeyRound,
   Coins,
+  Hammer,
   type LucideIcon,
 } from 'lucide-react'
 import type { LeafPaneNode, Pane, Tab, TabType } from '../../../store/workspace'
@@ -76,6 +77,7 @@ const TAB_ICONS: Record<TabType, LucideIcon> = {
   'doctrine-file': BookOpen,
   'project-env': KeyRound,
   'cost-archive': Coins,
+  'build-output': Hammer,
 }
 
 function iconFor(type: TabType): LucideIcon {

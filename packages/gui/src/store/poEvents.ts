@@ -109,10 +109,15 @@ function register() {
     // turn AND normal ChatPanel turns) transitions PersonaPresenceBar to the working
     // state. Idempotent for ChatPanel (handleSubmit already set streaming:true before
     // onMsgId fires). onDone already sets streaming:false — no leak.
+    // T-PATCH-163: stamp streamingSince (idempotent via `?? Date.now()` so the
+    // ChatPanel handleSubmit setStreaming(true) stamp survives) + reset the
+    // per-turn char count to 0 at turn start (WorkingIndicator approx-tokens).
     useWorkspace.setState((s) => ({
       messages: [...s.messages, placeholder],
       inFlightMsgId: msgId,
       streaming: true,
+      streamingSince: s.streamingSince ?? Date.now(),
+      turnCharCount: 0,
     }))
     // T-PATCH-036: this first bubble is segment #1 of the turn — active, unsealed.
     segActiveId = msgId
@@ -149,7 +154,12 @@ function register() {
       segSealed = false
       turnSegIds.push(newId)
       lastChunkBySeg[newId] = chunk  // T-PATCH-039: seed dup-guard for the new seg
-      useWorkspace.setState((s) => ({ messages: [...s.messages, seg] }))
+      // T-PATCH-163: accumulate approx-token chars on the real append (single
+      // setState — folded into this same write so the indicator gets 1 re-render).
+      useWorkspace.setState((s) => ({
+        messages: [...s.messages, seg],
+        turnCharCount: s.turnCharCount + chunk.length,
+      }))
       return
     }
     const activeId = segActiveId
@@ -163,7 +173,9 @@ function register() {
       const updated = { ...s.messages[idx], text: s.messages[idx].text + chunk }
       const next = [...s.messages]
       next[idx] = updated
-      return { messages: next }
+      // T-PATCH-163: accumulate approx-token chars on the real append only — the
+      // dup-guard drop above (early return) is skipped, never double-counts.
+      return { messages: next, turnCharCount: s.turnCharCount + chunk.length }
     })
   }))
 
@@ -318,7 +330,8 @@ function register() {
           next.push(m)
         }
       }
-      return { messages: next, streaming: false, inFlightMsgId: null }
+      // T-PATCH-163: clear streamingSince so the WorkingIndicator unmounts at turn end.
+      return { messages: next, streaming: false, inFlightMsgId: null, streamingSince: null }
     })
     // Reset turn-local segmentation state.
     segActiveId = null

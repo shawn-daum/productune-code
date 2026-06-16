@@ -972,6 +972,47 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  // ── Surface build/smoke (T-PATCH-159) ──────────────────────────────────────
+  // Zero-token: runs config.surfaces.<key>.build|smoke via child_process.spawn.
+  surface: {
+    /** D2: read the project's surfaces config. */
+    list: (args: { projectDir: string }): Promise<{
+      ok: boolean
+      surfaces?: Record<string, { type: string; build: string | null; smoke: string | null; smoke_driver: string }>
+      error?: string
+    }> => ipcRenderer.invoke('surface:list', args),
+
+    /** D3: spawn a surface build/smoke; returns the runId for the output tab. */
+    run: (args: { projectDir: string; surfaceKey: string; kind: 'build' | 'smoke' }): Promise<{
+      ok: boolean
+      runId?: string
+      command?: string
+      error?: string
+    }> => ipcRenderer.invoke('surface:run', args),
+
+    /** D5: SIGTERM a running surface command. */
+    cancel: (args: { runId: string }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('surface:cancel', args),
+
+    onStart: (cb: (ev: { runId: string; surfaceKey: string; kind: 'build' | 'smoke'; command: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
+      ipcRenderer.on('surface:onStart', listener)
+      return () => ipcRenderer.removeListener('surface:onStart', listener)
+    },
+
+    onOutput: (cb: (ev: { runId: string; stream: 'stdout' | 'stderr'; chunk: string }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
+      ipcRenderer.on('surface:onOutput', listener)
+      return () => ipcRenderer.removeListener('surface:onOutput', listener)
+    },
+
+    onDone: (cb: (ev: { runId: string; code: number | null; status: 'pass' | 'fail' | 'cancelled' }) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
+      ipcRenderer.on('surface:onDone', listener)
+      return () => ipcRenderer.removeListener('surface:onDone', listener)
+    },
+  },
+
   // ── Usage bar (T-025) ─────────────────────────────────────────────────────────
   /**
    * Subscribe to near-live Claude usage updates derived from the statusLine hook.

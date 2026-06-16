@@ -322,6 +322,11 @@
         "error": "오류"
       },
       "stop": "중단",
+      "working": {
+        "default": "작업 중",
+        "delegating": "{{persona}}에게 위임 중",
+        "compacting": "대화 정리 중"
+      },
       "rateLimit": {
         "estimated": "API 한도 도달 — 약 {{n}}초 후 재시도 가능 (추정)",
         "exact": "API 한도 도달 — {{n}}초 후 재시도 가능"

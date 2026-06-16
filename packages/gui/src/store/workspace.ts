@@ -35,6 +35,7 @@ export type TabType =
   | 'doctrine-file'
   | 'project-env'
   | 'cost-archive'
+  | 'build-output'
 
 export interface Tab {
   id: string
@@ -93,6 +94,11 @@ interface WorkspaceState {
   messages: Message[]
   claudeSessionId: string | null
   streaming: boolean
+  /** ms epoch — streaming true 전환 시각. false 시 null. WorkingIndicator elapsed 기준 (T-PATCH-163). */
+  streamingSince: number | null
+  /** 현 turn 동안 흐른 누적 텍스트 char 수(근사 토큰 = chars/4). turn 시작 시 0 (T-PATCH-163). */
+  turnCharCount: number
+  addTurnChars: (n: number) => void
 
   // ── In-flight assistant message tracking (T-P4-119 — ref→state uplift) ──
   inFlightMsgId: string | null
@@ -289,6 +295,8 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   messages: [],
   claudeSessionId: null,
   streaming: false,
+  streamingSince: null,
+  turnCharCount: 0,
   inFlightMsgId: null,
   inFlightKind: 'po',
 
@@ -330,6 +338,8 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
           inFlightMsgId: null,
           inFlightKind: 'po',
           streaming: false,
+          streamingSince: null,
+          turnCharCount: 0,
           panes: makeEmptyLeaf(freshId),
           activePaneId: freshId,
           nextPaneSeq: s.nextPaneSeq + 1,
@@ -348,6 +358,8 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
         inFlightMsgId: null,
         inFlightKind: 'po',
         streaming: false,
+        streamingSince: null,
+        turnCharCount: 0,
       })
     }
   },
@@ -392,12 +404,21 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
 
   setClaudeSessionId: (claudeSessionId) => set({ claudeSessionId }),
 
-  setStreaming: (streaming) => set({ streaming }),
+  // T-PATCH-163: stamp streamingSince on the true-transition (idempotent via
+  // `?? Date.now()` so ChatPanel handleSubmit + poEvents onMsgId double-fire keeps
+  // the first stamp); reset turnCharCount + streamingSince on the false-transition.
+  setStreaming: (streaming) => set((s) => ({
+    streaming,
+    streamingSince: streaming ? (s.streamingSince ?? Date.now()) : null,
+    turnCharCount: streaming ? s.turnCharCount : 0,
+  })),
+
+  addTurnChars: (n) => set((s) => ({ turnCharCount: s.turnCharCount + n })),
 
   setInFlightMsgId: (inFlightMsgId) => set({ inFlightMsgId }),
   setInFlightKind: (inFlightKind) => set({ inFlightKind }),
 
-  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false, inFlightMsgId: null, inFlightKind: 'po' }),
+  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false, streamingSince: null, turnCharCount: 0, inFlightMsgId: null, inFlightKind: 'po' }),
 
   // ── pane tree ops ──────────────────────────────────────────────────────────
 
@@ -763,6 +784,7 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'code-view':         return (props?.path as string)?.split('/').pop() ?? 'File'
     case 'doctrine-file':     return (props?.relName as string) ?? (props?.absPath as string)?.split('/').pop() ?? 'Doctrine'
     case 'project-env':       return (props?.filename as string) ?? '.env'
+    case 'build-output':      return `Build: ${(props?.surfaceKey as string) ?? '?'}`
     default:                  return type
   }
 }

@@ -25,6 +25,7 @@ import DoctrineFileTabHost from './panes/DoctrineFileTabHost'
 import HtmlViewer from './panes/HtmlViewer'
 import ProjectEnvPane from './panes/ProjectEnvPane'
 import CostArchiveTab from './panes/CostArchiveTab'
+import BuildOutputTab from './panes/BuildOutputTab'
 
 /**
  * Tab type dispatcher (10 type list per ticket; 11th `version-detail` added
@@ -89,6 +90,8 @@ export default function TabContent({ tab, browserFindRef, previewFindQuery, prev
       return <ProjectEnvPane props={tab.props} />
     case 'cost-archive':
       return <CostArchiveTab props={tab.props} />
+    case 'build-output':
+      return <BuildOutputTab props={tab.props} />
     case 'preview':
       // Local .html/.htm (path + projectDir) → rendered Preview + raw-source
       // Edit/Save; http(s) `url` → BrowserTab/<webview>. (T-PATCH-032)
