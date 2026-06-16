@@ -4,7 +4,7 @@ version: v0.5
 slug: statusbar-usage-bars-and-cleanup
 title: usage bars(5h/7d)를 하단 StatusBar에 가로 배치 + 좌하단 project 버튼 제거
 type: code
-status: todo
+status: review
 phase: 3
 assignee: pdt-designer
 requires_qa: true

@@ -76,6 +76,31 @@ export const PERSONA_COLORS: Record<PersonaId, string> = {
   qa:       '#34D399',  // --qa
 }
 
+// ── Derived selectors (T-PATCH-177) ───────────────────────────────────────────
+// SoT for the tray bridge's persona derivation, exported so the sort/idle logic
+// lives in one place (testable, no drift between store + trayBridge).
+
+/**
+ * Active persona for the tray: the most-recently-updated persona currently in
+ * the `working` state. `done` is intentionally ignored — it's a 2s flash before
+ * auto-idle (T-PATCH-164) and reflecting it would make the tray flicker. Returns
+ * null when no persona is working.
+ */
+export function selectActivePersona(
+  entries: Record<PersonaId, PersonaEntry>,
+): PersonaId | null {
+  const working = Object.values(entries).filter((e) => e.state === 'working')
+  if (working.length === 0) return null
+  // Most-recent-first by updatedAt (ISO strings sort lexicographically by time).
+  working.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+  return working[0].persona
+}
+
+/** True when every persona is idle (none working/done). */
+export function selectAllIdle(entries: Record<PersonaId, PersonaEntry>): boolean {
+  return Object.values(entries).every((e) => e.state === 'idle')
+}
+
 // ── Store ────────────────────────────────────────────────────────────────────
 
 interface PersonaPresenceState {

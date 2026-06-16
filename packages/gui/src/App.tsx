@@ -8,6 +8,7 @@ import EntryGate from './components/EntryGate'
 import Titlebar from './components/workspace/Titlebar'
 import type { Project } from './lib/types'
 import './store/poEvents' // T-P4-119: PO IPC subscriptions registered at module load.
+import { initTrayBridge } from './store/trayBridge' // T-PATCH-177: persona→tray sync.
 
 interface DescendantEntry {
   path: string
@@ -47,6 +48,13 @@ export default function App() {
       else localStorage.removeItem('productune.lastProject')
     } catch { /* localStorage may be unavailable */ }
   }, [project])
+
+  // T-PATCH-177: init the persona→tray bridge once at App mount. Subscribes
+  // personaPresence + workspace.streaming → derived snapshot → window.api.trayUpdate.
+  useEffect(() => {
+    const teardown = initTrayBridge()
+    return teardown
+  }, [])
 
   // (T-P4-091 §A) Stale last-project guard — runs once on mount after lazy init.
   // If lazy init loaded a projectDir from localStorage, verify it still exists on disk.

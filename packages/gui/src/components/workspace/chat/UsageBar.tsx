@@ -48,9 +48,20 @@ interface UsageBarProps {
    * horizontal flex row above the textarea input area.
    */
   horizontal?: boolean
+  /**
+   * T-PATCH-173: bare horizontal cluster for embedding in the bottom StatusBar.
+   * No border/background, compact 60px track, and the verbose "resets in …"
+   * label is suppressed (reset-label policy) so 5h + 7d + BuildSegment all fit
+   * in the 28px status row. 5h/7d sit side-by-side.
+   */
+  statusbar?: boolean
 }
 
-export default function UsageBar({ inline = false, horizontal = false }: UsageBarProps) {
+export default function UsageBar({
+  inline = false,
+  horizontal = false,
+  statusbar = false,
+}: UsageBarProps) {
   const [payload, setPayload] = useState<UsagePayload | null>(null)
 
   useEffect(() => {
@@ -63,15 +74,24 @@ export default function UsageBar({ inline = false, horizontal = false }: UsageBa
   // Render nothing when no data (non-subscriber / fully idle).
   if (!payload || (!payload.five_hour && !payload.seven_day)) return null
 
-  const containerStyle = horizontal ? containerHorizontal : inline ? containerInline : container
+  const containerStyle = statusbar
+    ? containerStatusbar
+    : horizontal
+      ? containerHorizontal
+      : inline
+        ? containerInline
+        : container
 
   return (
     <div style={containerStyle}>
+      {/* T-PATCH-173: leading separator only in statusbar mode (data present) */}
+      {statusbar && <span style={statusbarSep}>·</span>}
       {payload.five_hour && (
         <UsageRow
           icon={<Clock size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />}
           label="5h"
           axis={payload.five_hour}
+          compact={statusbar}
         />
       )}
       {payload.seven_day && (
@@ -79,6 +99,7 @@ export default function UsageBar({ inline = false, horizontal = false }: UsageBa
           icon={<CalendarDays size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />}
           label="7d"
           axis={payload.seven_day}
+          compact={statusbar}
         />
       )}
     </div>
@@ -91,9 +112,15 @@ interface UsageRowProps {
   icon: React.ReactNode
   label: string
   axis: UsageAxis
+  /**
+   * T-PATCH-173: compact (statusbar) mode — narrower track and the inline
+   * "resets in …" label is hidden to fit the 28px row. The reset info is
+   * preserved on the row's `title` (hover tooltip) so nothing is lost.
+   */
+  compact?: boolean
 }
 
-function UsageRow({ icon, label, axis }: UsageRowProps) {
+function UsageRow({ icon, label, axis, compact = false }: UsageRowProps) {
   // Clamp 0..100, then round to an integer (kill float artifacts like
   // "55.00000000000001%"). Math.round (not ceil) so a remaining-% never
   // rounds UP past the actual value.
@@ -108,15 +135,19 @@ function UsageRow({ icon, label, axis }: UsageRowProps) {
     : '#22C55E'              // green-500
 
   return (
-    <div style={rowWrap}>
+    <div
+      style={rowWrap}
+      title={compact && resetLabel ? `${label} ${pct}% — ${resetLabel}` : undefined}
+    >
       {icon}
       <span style={labelStyle}>{label}</span>
       {/* track — fixed width so 5h/7d rows share the same scale (comparable) */}
-      <div style={track}>
+      <div style={compact ? trackCompact : track}>
         <div style={{ ...fill, width: `${pct}%`, background: barColor }} />
       </div>
-      <span style={pctLabel}>{pct}%</span>
-      {resetLabel && <span style={resetStyle}>{resetLabel}</span>}
+      <span style={compact ? pctLabelCompact : pctLabel}>{pct}%</span>
+      {/* compact (statusbar) mode suppresses the verbose reset label to fit 28px */}
+      {!compact && resetLabel && <span style={resetStyle}>{resetLabel}</span>}
     </div>
   )
 }
@@ -203,6 +234,26 @@ const containerHorizontal: React.CSSProperties = {
   flexShrink: 0,
 }
 
+// T-PATCH-173: bare horizontal cluster for the bottom StatusBar — no border /
+// background (StatusBar provides chrome), rows side-by-side, no own padding.
+const containerStatusbar: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'row',
+  gap: 14,
+  alignItems: 'center',
+  flexShrink: 0,
+  minWidth: 0,
+}
+
+// T-PATCH-173: separator matching StatusBar's `sep` tone
+const statusbarSep: React.CSSProperties = {
+  fontSize: 10,
+  color: '#3A3A3A',
+  userSelect: 'none',
+  flexShrink: 0,
+  marginRight: 2,
+}
+
 const rowWrap: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -232,6 +283,12 @@ const track: React.CSSProperties = {
   flexShrink: 0,
 }
 
+// T-PATCH-173: compact track for statusbar embedding (no reset label → narrower)
+const trackCompact: React.CSSProperties = {
+  ...track,
+  width: 60,
+}
+
 const fill: React.CSSProperties = {
   height: '100%',
   borderRadius: 2,
@@ -245,6 +302,12 @@ const pctLabel: React.CSSProperties = {
   flexShrink: 0,
   width: 28,
   textAlign: 'right',
+}
+
+// T-PATCH-173: compact %-label — no right-padding reservation for reset label
+const pctLabelCompact: React.CSSProperties = {
+  ...pctLabel,
+  width: 26,
 }
 
 const resetStyle: React.CSSProperties = {

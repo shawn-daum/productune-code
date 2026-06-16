@@ -37,6 +37,17 @@ files:
       - "**/*"
   - package.json
 
+# T-PATCH-177: ship the menu-bar Tray PNGs. `build/` is buildResources and is NOT
+# in `files`, so it is never bundled into the asar. electron/tray.ts loads these
+# at runtime, so they are copied as an unpacked extraResource to
+# <app>/Contents/Resources/build/tray/ — exactly the process.resourcesPath
+# fallback resolveTrayIcon() probes in packaged builds.
+extraResources:
+  - from: build/tray
+    to: build/tray
+    filter:
+      - "**/*"
+
 mac:
   target:
     - target: dmg

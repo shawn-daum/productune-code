@@ -1164,6 +1164,16 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('projectEnv:write', projectDir, filename, entries, originalRaw),
 
+  // ── Tray state push (T-PATCH-177) ───────────────────────────────────────────
+  /**
+   * Push a derived persona snapshot to the menu-bar Tray (renderer→main,
+   * fire-and-forget). `activePersona` = working persona (most-recent-first) or
+   * null; `waiting` = all idle AND PO turn ended. The personaPresence store is
+   * the SoT; src/store/trayBridge.ts computes + dedupes before calling this.
+   */
+  trayUpdate: (payload: { activePersona: 'po' | 'designer' | 'dev' | 'qa' | null; waiting: boolean }): void =>
+    ipcRenderer.send('tray:setState', payload),
+
   // ── Quit guard IPC (T-PATCH-086) ────────────────────────────────────────────
   /** Subscribe to quit-pending: first ⌘Q pressed — show overlay with progress bar. */
   onQuitPending: (cb: (data: { timeoutMs: number }) => void) =>

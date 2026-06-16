@@ -4,7 +4,7 @@ version: v0.5
 slug: cost-archive-redesign
 title: 토큰 비용 아카이브 재배치 — 탭 제거, persona×모델 단일 + 하단 버전별 + 띄어쓰기
 type: code
-status: todo
+status: review
 phase: 3
 assignee: pdt-designer
 requires_qa: true

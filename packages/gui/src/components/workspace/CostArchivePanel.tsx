@@ -19,8 +19,6 @@ import { useTranslation } from 'react-i18next'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type CostGroupBy = 'version' | 'persona' | 'model' | 'persona-model'
-
 interface CostGroup {
   key: string
   turns: number
@@ -76,13 +74,6 @@ function fmtTok(n: number): string {
   if (safe >= 1000) return `${(safe / 1000).toFixed(1)}k`
   return String(Math.round(safe))
 }
-
-const TABS: Array<{ by: CostGroupBy; labelKey: string }> = [
-  { by: 'version', labelKey: 'costArchive.byVersion' },
-  { by: 'persona', labelKey: 'costArchive.byPersona' },
-  { by: 'model', labelKey: 'costArchive.byModel' },
-  { by: 'persona-model', labelKey: 'costArchive.byPersonaModel' },
-]
 
 type TFn = (key: string) => string
 
@@ -175,31 +166,30 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
 
 export default function CostArchivePanel({ projectDir }: Props) {
   const { t } = useTranslation()
-  const [by, setBy] = useState<CostGroupBy>('version')
   const [result, setResult] = useState<AggregateResult | null>(null)
   const [pivot, setPivot] = useState<PivotResult | null>(null)
 
   const fetchAgg = useCallback(() => {
     const api = (window as any).api
     if (!api || !projectDir) return
-    if (by === 'persona-model') {
-      if (!api.costAggregatePivot) return
+    // Always fetch both sources — persona×model pivot (top) + version groups (bottom).
+    if (api.costAggregatePivot) {
       api
         .costAggregatePivot(projectDir)
         .then((res: PivotResult) => setPivot(res))
         .catch(() =>
           setPivot({ ok: false, rows: [], subagentUsage: { in: 0, out: 0, cache: 0 }, totalTurns: 0, totalCostUsd: 0 }),
         )
-      return
     }
-    if (!api.costAggregate) return
-    api
-      .costAggregate(projectDir, by)
-      .then((res: AggregateResult) => setResult(res))
-      .catch(() => setResult({ ok: false, groups: [], totalTurns: 0, totalCostUsd: 0 }))
-  }, [projectDir, by])
+    if (api.costAggregate) {
+      api
+        .costAggregate(projectDir, 'version')
+        .then((res: AggregateResult) => setResult(res))
+        .catch(() => setResult({ ok: false, groups: [], totalTurns: 0, totalCostUsd: 0 }))
+    }
+  }, [projectDir])
 
-  // Fetch on mount + whenever dimension / project changes.
+  // Fetch on mount + whenever project changes.
   useEffect(() => {
     fetchAgg()
   }, [fetchAgg])
@@ -217,48 +207,32 @@ export default function CostArchivePanel({ projectDir }: Props) {
     return unsub
   }, [projectDir, fetchAgg])
 
-  const isPivot = by === 'persona-model'
   const groups = result?.groups ?? []
   const pivotRows = pivot?.rows ?? []
-  const isEmpty = isPivot
-    ? !pivot || (pivot.ok && pivotRows.length === 0)
-    : !result || (result.ok && groups.length === 0)
+  const pivotEmpty = !pivot || (pivot.ok && pivotRows.length === 0)
+  const versionEmpty = !result || (result.ok && groups.length === 0)
 
   return (
     <div style={panel}>
       <div style={titleRow}>{t('costArchive.title')}</div>
 
-      {/* Group-by tabs */}
-      <div style={tabRow}>
-        {TABS.map((tab) => {
-          const active = tab.by === by
-          return (
-            <button
-              key={tab.by}
-              style={active ? tabBtnActive : tabBtn}
-              onClick={() => setBy(tab.by)}
-              onMouseEnter={(e) => {
-                if (!active) (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
-              }}
-              onMouseLeave={(e) => {
-                if (!active) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
-              }}
-            >
-              {t(tab.labelKey)}
-            </button>
-          )
-        })}
-      </div>
-
-      {isEmpty ? (
+      {/* persona×model pivot (top) */}
+      <div style={sectionLabel}>{t('costArchive.byPersonaModel')}</div>
+      {pivotEmpty ? (
         <div style={emptyHint}>{t('costArchive.empty')}</div>
-      ) : isPivot ? (
+      ) : (
         renderPivot(pivot, pivotRows, t)
+      )}
+
+      {/* version groups (bottom) — same scroll view */}
+      <div style={{ ...sectionLabel, marginTop: 22 }}>{t('costArchive.byVersion')}</div>
+      {versionEmpty ? (
+        <div style={emptyHint}>{t('costArchive.empty')}</div>
       ) : (
         <div style={tableWrap}>
           {/* Header row */}
           <div style={headRow}>
-            <span style={colKeyHead}>{t(`costArchive.${by === 'version' ? 'byVersion' : by === 'persona' ? 'byPersona' : 'byModel'}`)}</span>
+            <span style={colKeyHead}>{t('costArchive.byVersion')}</span>
             <span style={colNumHead}>{t('costArchive.colTurns')}</span>
             <span style={colNumHead}>{t('costArchive.colCost')}</span>
           </div>
@@ -306,30 +280,13 @@ const titleRow: React.CSSProperties = {
   marginBottom: 10,
 }
 
-const tabRow: React.CSSProperties = {
-  display: 'flex',
-  gap: 4,
-  marginBottom: 12,
-}
-
-const tabBtn: React.CSSProperties = {
-  flex: 1,
-  fontSize: 11,
+const sectionLabel: React.CSSProperties = {
+  fontSize: 10,
+  textTransform: 'uppercase',
+  letterSpacing: '0.08em',
+  color: '#505050',
   fontWeight: 600,
-  color: '#A0A0A0',
-  background: 'transparent',
-  border: '1px solid #1E1E1E',
-  borderRadius: 5,
-  padding: '5px 8px',
-  cursor: 'pointer',
-  transition: 'background 0.1s, color 0.1s',
-}
-
-const tabBtnActive: React.CSSProperties = {
-  ...tabBtn,
-  color: '#F0F0F0',
-  background: '#1A1030',
-  border: '1px solid #8B5CF6',
+  marginBottom: 8,
 }
 
 const tableWrap: React.CSSProperties = {
@@ -343,8 +300,8 @@ const tableWrap: React.CSSProperties = {
 const rowBase: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  padding: '6px 10px',
-  gap: 8,
+  padding: '8px 12px',
+  gap: 12,
 }
 
 const headRow: React.CSSProperties = {

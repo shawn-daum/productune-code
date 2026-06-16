@@ -1,6 +1,9 @@
-import { app, BrowserWindow, dialog, shell, Menu, nativeImage, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, dialog, shell, Menu, nativeImage, ipcMain, type MenuItemConstructorOptions } from 'electron'
 import path from 'path'
 import fs from 'fs'
+
+// T-PATCH-177: macOS menu-bar Tray (persona working icon + waiting red-dot badge).
+import { createTray, updateTray, destroyTray, type TrayStatePayload } from './tray'
 
 // ── IPC module imports ────────────────────────────────────────────────────────
 import { register as registerOnboarding } from './ipc/onboarding'
@@ -400,6 +403,21 @@ app.whenReady().then(() => {
   startUsageWatch()
   createWindow()
 
+  // T-PATCH-177: create the menu-bar Tray. getWindow returns the live main
+  // window (mainWindow is reassigned on every createWindow); requestQuit reuses
+  // handleQuitRequest so tray Quit keeps the PO-turn guard + two-tap semantics.
+  createTray({
+    getWindow: () => mainWindow,
+    requestQuit: () => { void handleQuitRequest() },
+  })
+
+  // T-PATCH-177: renderer (personaPresence SoT) pushes a derived snapshot here.
+  // fire-and-forget (send, not invoke). Defensive shape check so a malformed
+  // payload never throws in main.
+  ipcMain.on('tray:setState', (_e, payload: TrayStatePayload) => {
+    if (payload && typeof payload === 'object') updateTray(payload)
+  })
+
   // T-PATCH-090 R1: re-show a window that was hidden by close-to-tray.
   // If no windows exist, create a new one (normal cold-launch path).
   app.on('activate', () => {
@@ -431,6 +449,9 @@ app.on('window-all-closed', () => {
   stopUsageWatch()
   stopCostWatch()
   stopTicketsWatch()
+  // T-PATCH-177: tear down the Tray on real quit (not on close-to-tray hide,
+  // which never fires window-all-closed).
+  destroyTray()
   // T-PATCH-159 D5: SIGTERM any in-flight surface build/smoke runs on quit.
   killAllSurfaceRuns()
   if (process.platform !== 'darwin') {

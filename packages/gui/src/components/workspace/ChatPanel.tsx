@@ -29,7 +29,6 @@ import TodoChip from './chat/TodoChip'
 import TodoListPanel from './chat/TodoListPanel'
 import PendingGateChip from './chat/PendingGateChip'
 import RateLimitBanner from './chat/RateLimitBanner'
-import UsageBar from './chat/UsageBar'
 import AskUserQuestionCard from './chat/AskUserQuestionCard'
 import { useSessionHealth } from '../../store/sessionHealth'
 import type { PoHealthState, PoHealthDetail } from '../../store/sessionHealth'
@@ -510,9 +509,8 @@ export default function ChatPanel() {
         ) : (
         /* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */
         <div style={inputArea}>
-          {/* rp-usage-bar (T-025, T-PATCH-071) — always 2-row column; horizontal prop removed so
-              "resets in …" never truncates regardless of panel width. */}
-          <UsageBar />
+          {/* T-PATCH-173: UsageBar(5h/7d) moved out of the composer into the
+              bottom StatusBar (horizontal inline cluster). */}
 
           {/* T-PATCH-098 §4.d §4/§7: numbered image chips ABOVE the textarea, each
               labelled with the `#N` matching its inline `[Image #N]` citation. chip

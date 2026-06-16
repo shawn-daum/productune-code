@@ -14,6 +14,7 @@ import { ChevronDown } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import SessionHealthSegment from './SessionHealthSegment'
 import BuildSegment from './BuildSegment'
+import UsageBar from './chat/UsageBar'
 
 interface RecentEntry {
   slug: string
@@ -112,6 +113,9 @@ export default function StatusBar({ onOpenHealthBanner, onOpenRecent }: Props) {
         )}
         {project && <span style={sep}>·</span>}
         <SessionHealthSegment onOpenBanner={onOpenHealthBanner} />
+        {/* T-PATCH-173: usage bars(5h/7d) — horizontal inline cluster, bare variant.
+            Self-renders a leading separator only when usage data exists (no dangling ·). */}
+        <UsageBar statusbar />
       </div>
 
       {/* Right cluster — Build(+Smoke) launcher (T-PATCH-159) */}
