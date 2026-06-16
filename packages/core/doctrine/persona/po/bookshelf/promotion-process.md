@@ -4,7 +4,7 @@ Classify each persona-emitted candidate, surface it, write to the resolved (scop
 
 ## Consume
 
-Read `promotion_candidates[]` (top-level JSON array) from every persona envelope. Schema + 7 fields + scope×pattern + refusal string: `common/bookshelf/promotion-candidate-schema.md`. Treat any in-doc `## Promotion Candidates` body as secondary annotation.
+Read `promotion_candidates[]` (top-level JSON array) from every persona envelope. Schema + 10 fields + scope×pattern + refusal string: `common/bookshelf/promotion-candidate-schema.md`. Treat any in-doc `## Promotion Candidates` body as secondary annotation.
 
 Attach PO-managed lifecycle fields during disposition (not persona-emitted): `status` (`pending|approved|dropped|edited`), `decided_at`, `final_target` (set on `edited`).
 

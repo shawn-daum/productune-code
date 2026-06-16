@@ -31,3 +31,4 @@ Not done until each surface is applied or marked n/a:
 - Onboarding (`packages/gui/electron/ipc/onboarding.ts`)
 - GUI layout detection / open-refresh (`packages/gui/electron/ipc/project.ts` `detectProductuneLayout`)
 - Persona memory bootstrap (`bootstrapPersonaMemory`, init.ts)
+- **Data-shape migration → update every GENERATOR, not just existing-data + readers.** A shape change (e.g. po-state `schema_version` 1→2) must enumerate + update ALL producers of new instances — init scaffold (`init-project.mjs`), CLI seed scripts (`scripts/productune` `ensure_state`), and the persona-authoring path (doctrine that drives the write) — else fresh instances are born in the old shape. <!-- (2026-06-16) [T-PATCH-141] -->`
