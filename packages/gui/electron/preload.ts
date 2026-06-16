@@ -201,6 +201,14 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<{ frontmatter: Record<string, unknown>; body: string; krBody: string | null } | null> =>
     ipcRenderer.invoke('tickets:read', projectDir, ticketId, version),
 
+  /**
+   * Ask the main process to fs-watch <projectDir>/docs/tickets (T-PATCH-172).
+   * Idempotent per dir; pairs with the `tickets:changed` push that
+   * onTicketsChanged subscribes to. Safe to call on every hook mount.
+   */
+  watchTickets: (projectDir: string): Promise<void> =>
+    ipcRenderer.invoke('tickets:watch', projectDir),
+
   /** Subscribe to ticket fs-watch change events (debounced 500ms). */
   onTicketsChanged: (cb: (projectDir: string) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, projectDir: string) => cb(projectDir)

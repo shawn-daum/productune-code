@@ -50,6 +50,8 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
   const project = useWorkspace((s) => s.project)
+  // T-PATCH-167: corrupt po-state.json → explicit error, NOT the fresh placeholder.
+  const poStateError = useWorkspace((s) => s.poStateError)
   const { tickets } = useTicketScan(project?.projectDir ?? null)
 
   const currentVersionId = poState?.current_version ?? null
@@ -80,15 +82,23 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
         <span style={secHdrText}>{t('workspace.versionHistory.sidePanel.currentTitle')}</span>
       </div>
 
-      {/* Case 1: no versions → init fallback */}
-      {versions.length === 0 && (
+      {/* Case 0 (T-PATCH-167): po-state parse failure → explicit error, takes
+          precedence over the empty/new placeholder so corruption isn't hidden. */}
+      {poStateError === 'parse' && (
+        <div style={errorRow} role="alert">
+          {t('workspace.versionHistory.sidePanel.currentParseError')}
+        </div>
+      )}
+
+      {/* Case 1: no versions → init fallback (only when NOT a parse error) */}
+      {!poStateError && versions.length === 0 && (
         <div style={fallbackRow} aria-disabled="true">
           {t('workspace.versionHistory.sidePanel.currentFallback')}
         </div>
       )}
 
       {/* Case 2: transient close → next-version fallback */}
-      {versions.length > 0 && isClosed && (
+      {!poStateError && versions.length > 0 && isClosed && (
         <div style={fallbackRow} aria-disabled="true">
           {t('workspace.versionHistory.sidePanel.currentFallbackTransient')}
         </div>
@@ -193,6 +203,23 @@ const fallbackRow: React.CSSProperties = {
   cursor: 'default',
   userSelect: 'none',
   fontStyle: 'italic',
+}
+
+// T-PATCH-167: explicit po-state read/parse error (warning color), distinct
+// from the muted/italic placeholder so corruption reads as a problem.
+const errorRow: React.CSSProperties = {
+  margin: '4px 8px 10px',
+  padding: '8px 10px',
+  fontSize: 10,
+  color: '#FBBF24',
+  background: '#2A1A05',
+  border: '1px solid #92400E',
+  borderLeft: '3px solid #F59E0B',
+  borderRadius: 4,
+  lineHeight: 1.4,
+  cursor: 'default',
+  userSelect: 'none',
+  fontWeight: 600,
 }
 
 function detailCard(isSelected: boolean, isFocused: boolean): React.CSSProperties {

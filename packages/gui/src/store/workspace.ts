@@ -81,6 +81,13 @@ export type DropTarget =
 interface WorkspaceState {
   project: Project | null
   poState: PoState | null
+  /**
+   * T-PATCH-167: non-null when po-state.json exists but failed to read/parse
+   * (corruption). Distinct from `poState === null` (genuinely no po-state yet).
+   * Drives an explicit error state in the version UI instead of the misleading
+   * "v1 대기 중" fresh-project placeholder.
+   */
+  poStateError: 'parse' | null
   phase: Phase
   selectedVersionId: string | null
 
@@ -125,6 +132,8 @@ interface WorkspaceState {
 
   setProject: (p: Project | null) => void
   setPoState: (s: PoState | null) => void
+  /** T-PATCH-167: set/clear the po-state read/parse error state. */
+  setPoStateError: (e: 'parse' | null) => void
   /** Reset panes to a single empty leaf. Used on project switch (T-PATCH-010 #3). */
   resetPanes: () => void
   setSelectedVersionId: (id: string | null) => void
@@ -289,6 +298,7 @@ const INIT_PANE_ID = 'pane-1'
 export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   project: null,
   poState: null,
+  poStateError: null,
   phase: 'PRD',
   selectedVersionId: null,
   persistedProjectDir: null,
@@ -344,6 +354,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
           activePaneId: freshId,
           nextPaneSeq: s.nextPaneSeq + 1,
           poState: null,
+          poStateError: null,
           phase: 'PRD',
           selectedVersionId: null,
           messages: [],
@@ -365,7 +376,14 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   },
 
   setPoState: (poState) => {
-    set({ poState, phase: derivePhase(poState) })
+    // A successful read clears any prior parse-error state (T-PATCH-167).
+    set({ poState, poStateError: null, phase: derivePhase(poState) })
+  },
+
+  setPoStateError: (poStateError) => {
+    // On parse failure we keep the last-good `poState` (if any) but flip the
+    // error flag so the UI surfaces an explicit error instead of a placeholder.
+    set({ poStateError })
   },
 
   resetPanes: () => {

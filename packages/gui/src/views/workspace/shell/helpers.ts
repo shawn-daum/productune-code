@@ -209,12 +209,10 @@ function makeSamplePromotionMessage(origin: 'auto' | 'user-requested'): Message 
   }
 }
 
-/** Build Quick Open palette items from files + tickets + tabs + MCP + artifacts + personas. */
+/** Build Quick Open palette items from files + tickets + artifacts + personas. */
 export function buildQuickOpenItems(
   quickOpenFiles: Array<{ path: string; ext: string }>,
   scannedTickets: Ticket[],
-  openTabs: Tab[],
-  mcpServers: McpServerEntry[],
   artifactEntries: ArtifactEntry[],
   projectDir: string,
   openTab: (tabId: string, type: TabType, meta?: Record<string, unknown>, label?: string) => void,
@@ -265,43 +263,7 @@ export function buildQuickOpenItems(
     })
   }
 
-  // ── Tab items ──
-  for (const tab of openTabs) {
-    items.push({
-      id: `tab:${tab.id}`,
-      source: 'tab',
-      category: 'tabs',
-      label: tab.title,
-      sublabel: tab.type,
-      meta: { typeBadge: 'open' },
-      priority: 65,
-      open: () => {
-        const s = useWorkspace.getState()
-        const ownerPaneId = findPaneOwningTab(s.panes, tab.id)
-        if (ownerPaneId) {
-          s.setActiveTab(ownerPaneId, tab.id)
-        } else {
-          // tab was closed — re-open with its last known type/props
-          openTab(tab.id, tab.type, tab.props, tab.title)
-        }
-      },
-    })
-  }
-
-  // ── MCP server items ──
-  for (const server of mcpServers) {
-    items.push({
-      id: `mcp:${server.name}`,
-      source: 'mcp',
-      category: 'mcp',
-      label: server.name,
-      sublabel: server.connected ? 'connected' : 'disconnected',
-      meta: { connectionDot: server.connected ? 'on' : 'off' },
-      priority: 50,
-      open: () =>
-        openTab('mcp-servers', 'mcp-servers', { serverId: server.name }, 'MCP Servers'),
-    })
-  }
+  // ── Tab / MCP items removed (T-PATCH-174) — tab:/s:/mcp: Cmd+P commands dropped. ──
 
   // ── Artifact items ──
   for (const entry of artifactEntries) {

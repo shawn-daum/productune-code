@@ -25,13 +25,26 @@ interface ApprovePhaseArgs {
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
+  // T-PATCH-167: distinguish parse-failure from missing/new.
+  //  - file missing (ENOENT)  → null  (genuine empty/new → renderer keeps "대기 중" placeholder)
+  //  - read/parse failure      → { ok:false, error:'parse' } (renderer shows explicit error)
+  //  - success                 → parsed po-state object
   ipcMain.handle('state:readPoState', async (_event, projectDir: string) => {
     const statePath = path.join(projectDir, '.productune', 'po-state.json')
+    let raw: string
     try {
-      const raw = fs.readFileSync(statePath, 'utf-8')
+      raw = fs.readFileSync(statePath, 'utf-8')
+    } catch (e: any) {
+      // ENOENT (or any read error) ⇒ treat as "no po-state yet" → null.
+      if (e?.code === 'ENOENT') return null
+      return { ok: false, error: 'parse' as const, detail: e?.message ?? 'read error' }
+    }
+    try {
       return JSON.parse(raw)
-    } catch {
-      return null
+    } catch (e: any) {
+      // File exists but is corrupt/unparseable — surface as explicit error,
+      // NOT null (which would masquerade as a fresh project).
+      return { ok: false, error: 'parse' as const, detail: e?.message ?? 'JSON parse error' }
     }
   })
 

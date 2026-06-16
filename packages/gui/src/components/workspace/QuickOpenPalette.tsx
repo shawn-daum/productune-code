@@ -4,30 +4,29 @@
  * Presentational component: receives `items` and `onPick`/`onClose` from
  * parent (WorkspaceShell). No store import — keeps this unit-testable.
  *
- * Sources: files / tickets / tabs / skills / mcp / artifacts / personas
+ * Sources: files / tickets / artifacts / personas
  * Fuzzy scoring: exact-prefix +200 / substring +120 / subsequence +60 / sublabel +20
- * Layout: grouped sections (tickets → tabs → skills → mcp → artifacts → personas)
+ * Layout: grouped sections (tickets → artifacts → personas)
  * UI: 560×60vh dialog at top:18vh, design-system R4 tokens only.
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, FileText, TicketCheck, User, Sparkles, LayoutPanelLeft, Server, Package } from 'lucide-react'
+import { Search, FileText, TicketCheck, User, Package } from 'lucide-react'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type QuickOpenCategory = 'tickets' | 'tabs' | 'skills' | 'mcp' | 'artifacts' | 'personas'
+export type QuickOpenCategory = 'tickets' | 'artifacts' | 'personas'
 
 export interface QuickOpenItemMeta {
   statusPill?: string
   typeBadge?: string
-  connectionDot?: 'on' | 'off'
   personaDot?: 'po' | 'designer' | 'dev' | 'qa'
 }
 
 export interface QuickOpenItem {
   id: string
-  source: 'file' | 'ticket' | 'persona' | 'skill' | 'tab' | 'mcp' | 'artifact'
+  source: 'file' | 'ticket' | 'persona' | 'artifact'
   category?: QuickOpenCategory
   label: string
   sublabel?: string
@@ -45,32 +44,23 @@ interface Props {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SECTION_ORDER: QuickOpenCategory[] = [
-  'tickets', 'tabs', 'skills', 'mcp', 'artifacts', 'personas',
+  'tickets', 'artifacts', 'personas',
 ]
 
 const SECTION_LABELS: Record<QuickOpenCategory, string> = {
   tickets: 'tickets',
-  tabs: 'tabs',
-  skills: 'skills',
-  mcp: 'MCP',
   artifacts: 'artifacts',
   personas: 'personas',
 }
 
 const PREFIX_MAP: Record<string, QuickOpenCategory> = {
   't:': 'tickets',
-  'tab:': 'tabs',
-  's:': 'skills',
-  'mcp:': 'mcp',
   'a:': 'artifacts',
   'p:': 'personas',
 }
 
 const LEGEND_CHIPS: Array<{ prefix: string; labelKey: string | null; literal?: string }> = [
   { prefix: 't:', labelKey: 'workspace.quickOpen.section.ticket' },
-  { prefix: 'tab:', labelKey: 'workspace.quickOpen.section.tab' },
-  { prefix: 's:', labelKey: 'workspace.quickOpen.section.skill' },
-  { prefix: 'mcp:', labelKey: null, literal: 'MCP' },
   { prefix: 'a:', labelKey: 'workspace.quickOpen.section.artifact' },
   { prefix: 'p:', labelKey: 'workspace.quickOpen.section.persona' },
 ]
@@ -161,7 +151,10 @@ function parseCategoryPrefix(query: string): {
 } {
   for (const [prefix, cat] of Object.entries(PREFIX_MAP)) {
     if (query.startsWith(prefix)) {
-      return { filteredCategory: cat, strippedQuery: query.slice(prefix.length) }
+      // T-PATCH-174: a space right after the prefix (e.g. `p: `) must keep the
+      // command active — strip leading whitespace so it doesn't collapse the
+      // scoped results to "no match" (which read as the command being cancelled).
+      return { filteredCategory: cat, strippedQuery: query.slice(prefix.length).replace(/^\s+/, '') }
     }
   }
   return { filteredCategory: null, strippedQuery: query }
@@ -199,14 +192,11 @@ function ItemIcon({ source, active }: { source: QuickOpenItem['source']; active:
   const color = active ? '#E8E8EA' : '#A0A0A0'
   const size = 16
   switch (source) {
-    case 'file':     return <FileText         size={size} color={color} />
-    case 'ticket':   return <TicketCheck      size={size} color={color} />
-    case 'persona':  return <User             size={size} color={color} />
-    case 'skill':    return <Sparkles         size={size} color={color} />
-    case 'tab':      return <LayoutPanelLeft  size={size} color={color} />
-    case 'mcp':      return <Server           size={size} color={color} />
-    case 'artifact': return <Package          size={size} color={color} />
-    default:         return <FileText         size={size} color={color} />
+    case 'file':     return <FileText    size={size} color={color} />
+    case 'ticket':   return <TicketCheck size={size} color={color} />
+    case 'persona':  return <User        size={size} color={color} />
+    case 'artifact': return <Package     size={size} color={color} />
+    default:         return <FileText    size={size} color={color} />
   }
 }
 
@@ -265,12 +255,6 @@ function ResultRow({ item, isActive, flatIdx, onMouseEnter, onClick }: ResultRow
           })()}
           {item.meta.typeBadge && (
             <span style={typeBadgeStyle}>{item.meta.typeBadge}</span>
-          )}
-          {item.meta.connectionDot && (
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: item.meta.connectionDot === 'on' ? '#34D399' : '#505050',
-            }} title={item.meta.connectionDot === 'on' ? 'connected' : 'disconnected'} />
           )}
           {item.meta.personaDot && (
             <span style={{
@@ -572,7 +556,7 @@ export default function QuickOpenPalette({ items, onClose, onPick }: Props) {
             <span style={{ marginLeft: 4 }}>{t('workspace.quickOpen.hint.open')}</span>
           </span>
           <span style={footLegStyle}>
-            <kbd style={{ ...kbdStyle, fontSize: 9 }}>t: tab: s: mcp: a: p:</kbd>
+            <kbd style={{ ...kbdStyle, fontSize: 9 }}>t: a: p:</kbd>
             <span style={{ marginLeft: 4 }}>{t('workspace.quickOpen.hint.scope')}</span>
           </span>
           <span style={{ flex: 1 }} />

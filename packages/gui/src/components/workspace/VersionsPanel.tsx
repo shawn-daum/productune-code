@@ -18,6 +18,8 @@ export default function VersionsPanel({ poState }: Props) {
   const { t } = useTranslation()
   const openTab = useWorkspace((s) => s.openTab)
   const project = useWorkspace((s) => s.project)
+  // T-PATCH-167: surface po-state corruption explicitly here too.
+  const poStateError = useWorkspace((s) => s.poStateError)
   const { tickets: scannedTickets } = useTicketScan(project?.projectDir ?? null)
   // Highlight any version whose detail tab exists in any pane (T-P4-046:
   // sidebar selection is derived from open tabs rather than a separate slice).
@@ -68,6 +70,11 @@ export default function VersionsPanel({ poState }: Props) {
 
   return (
     <div style={panel}>
+      {poStateError === 'parse' && (
+        <div style={parseErrorBanner} role="alert">
+          {t('workspace.versionHistory.sidePanel.currentParseError')}
+        </div>
+      )}
       <div style={sectionLabel}>{t('workspace.versions.current')}</div>
       {active ? (
         <ActiveVersionCard
@@ -193,6 +200,20 @@ const emptyHint: React.CSSProperties = {
   fontSize: 11,
   color: '#3A3A3A',
   padding: '8px 0',
+}
+
+// T-PATCH-167: explicit corruption banner (warning color).
+const parseErrorBanner: React.CSSProperties = {
+  fontSize: 11,
+  color: '#FBBF24',
+  background: '#2A1A05',
+  border: '1px solid #92400E',
+  borderLeft: '3px solid #F59E0B',
+  borderRadius: 6,
+  padding: '8px 10px',
+  marginBottom: 12,
+  lineHeight: 1.4,
+  fontWeight: 600,
 }
 
 const cardActive: React.CSSProperties = {

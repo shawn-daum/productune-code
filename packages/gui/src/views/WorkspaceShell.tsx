@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
 import type { Project, Message } from '../lib/types'
 import { useWorkspace } from '../store/workspace'
-import type { Tab, Pane } from '../store/workspace'
+import type { Pane } from '../store/workspace'
 import PhaseBreadcrumb from '../components/workspace/PhaseBreadcrumb'
 import LeftSidebar from '../components/workspace/LeftSidebar'
 import MainPanel from '../components/workspace/main/MainPanel'
@@ -26,7 +26,7 @@ import { useKeyboardShortcuts } from './workspace/shell/useKeyboardShortcuts'
 import { useIpcSubscriptions } from './workspace/shell/useIpcSubscriptions'
 import { useAutoSurfaceArtifacts } from './workspace/shell/useAutoSurfaceArtifacts'
 import { grid, breadcrumbArea, sidebarResizeArea, chatResizeArea, artifactToastStyle } from './workspace/shell/styles'
-import { buildQuickOpenItems, collectAllTabs, type McpServerEntry, type ArtifactEntry } from './workspace/shell/helpers'
+import { buildQuickOpenItems, type ArtifactEntry } from './workspace/shell/helpers'
 import {
   ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH,
   SIDEBAR_MIN_WIDTH, CENTER_MIN_LAYOUT, PO_CHAT_MIN_WIDTH,
@@ -114,6 +114,7 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const phase = useWorkspace((s) => s.phase)
   const setProject = useWorkspace((s) => s.setProject)
   const setPoState = useWorkspace((s) => s.setPoState)
+  const setPoStateError = useWorkspace((s) => s.setPoStateError)
   const openTab = useWorkspace((s) => s.openTab)
   const closeTab = useWorkspace((s) => s.closeTab)
   const closePane = useWorkspace((s) => s.closePane)
@@ -132,9 +133,7 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const [quickOpenVisible, setQuickOpenVisible] = useState(false)
   const [quickOpenFiles, setQuickOpenFiles] = useState<Array<{ path: string; ext: string }>>([])
 
-  // ── New index sources (T-015 A6) ──────────────────────────────────────────
-  const [quickOpenTabs, setQuickOpenTabs] = useState<Tab[]>([])
-  const [quickOpenMcp, setQuickOpenMcp] = useState<McpServerEntry[]>([])
+  // ── New index sources (T-015 A6; tab/mcp dropped in T-PATCH-174) ──────────
   const [quickOpenArtifacts, setQuickOpenArtifacts] = useState<ArtifactEntry[]>([])
 
   const restartModalOpen = usePoChat((s) => s.restartModalOpen)
@@ -197,6 +196,14 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   useEffect(() => {
     ;(window as any).api.readPoState(project.projectDir)
       .then((s: unknown) => {
+        // T-PATCH-167: IPC returns { ok:false, error:'parse' } when po-state.json
+        // exists but is corrupt/unparseable. Surface as an explicit error instead
+        // of treating it like a fresh/empty project (which masqueraded as "v1 대기 중").
+        if (s && typeof s === 'object' && (s as any).ok === false && (s as any).error === 'parse') {
+          setPoStateError('parse')
+          pendingSwitchTabRef.current = false
+          return
+        }
         setPoState(s as any)
         // T-PATCH-010 #3: on project switch, open the new project's current-version
         // tab once after poState loads. Clear the flag so repeated setPoState calls
@@ -215,7 +222,7 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
         }
       })
       .catch(() => setPoState(null))
-  }, [project.projectDir, setPoState])
+  }, [project.projectDir, setPoState, setPoStateError])
 
   useEffect(() => { if (!streaming) setDrainVisible(true) }, [streaming])
 
@@ -246,22 +253,6 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
     api.listProjectFiles(project.projectDir)
       .then((files: Array<{ path: string; ext: string }>) => setQuickOpenFiles(files))
       .catch(() => setQuickOpenFiles([]))
-  }, [quickOpenVisible, project.projectDir])
-
-  // Tabs: read synchronously from store pane tree
-  useEffect(() => {
-    if (!quickOpenVisible) { setQuickOpenTabs([]); return }
-    const allTabs = collectAllTabs(useWorkspace.getState().panes)
-    setQuickOpenTabs(allTabs)
-  }, [quickOpenVisible])
-
-  // MCP servers
-  useEffect(() => {
-    if (!quickOpenVisible) { setQuickOpenMcp([]); return }
-    const api = (window as any).api
-    api?.mcpGetServers?.(project.projectDir)
-      .then((servers: McpServerEntry[]) => setQuickOpenMcp(servers))
-      .catch(() => setQuickOpenMcp([]))
   }, [quickOpenVisible, project.projectDir])
 
   // Artifacts
@@ -303,8 +294,6 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const quickOpenItems = buildQuickOpenItems(
     quickOpenFiles,
     scannedTickets,
-    quickOpenTabs,
-    quickOpenMcp,
     quickOpenArtifacts,
     project.projectDir,
     openTab,

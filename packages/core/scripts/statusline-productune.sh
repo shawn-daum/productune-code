@@ -52,15 +52,49 @@ if [ -d "$CWD/.git" ] || git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 # ── productune state ──────────────────────────────────────────────────────────
-STATE="$CWD/.productune/po-state.json"
+# Walk up from CWD looking for a .productune/ marker (po-state.json or config.json).
+# This is what gates the entire productune segment: when NO marker is found in any
+# ancestor, the productune part stays silent so non-productune claude sessions are
+# not polluted with a "productune" badge (T-PATCH-176).
+find_po_state() {
+  local dir="$1"
+  while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+    if [ -f "$dir/.productune/po-state.json" ]; then
+      printf '%s' "$dir/.productune/po-state.json"
+      return 0
+    fi
+    if [ -f "$dir/.productune/config.json" ]; then
+      printf '%s' "$dir/.productune/config.json"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
 
-# Worktree fallback: when cwd lacks .productune/po-state.json, resolve the main
-# checkout root via git-common-dir and read state from there.
+STATE="$(find_po_state "$CWD")" || STATE=""
+
+# Resolve the directory the marker lives under so ticket counting / turns.jsonl
+# anchor to the productune project root, not the (possibly deeper) cwd.
+if [ -n "$STATE" ]; then
+  TICKET_ROOT="$(cd "$(dirname "$STATE")/.." 2>/dev/null && pwd)"
+  [ -z "$TICKET_ROOT" ] && TICKET_ROOT="$CWD"
+  # The state-parsing / turns.jsonl logic below expects STATE to point at
+  # po-state.json specifically. If the walk-up only found config.json, normalise
+  # to the sibling po-state.json path (may not exist — guarded by [ -f ] later).
+  case "$STATE" in
+    */config.json) STATE="$(dirname "$STATE")/po-state.json" ;;
+  esac
+fi
+
+# Worktree fallback: when walk-up found no .productune/po-state.json, resolve the
+# main checkout root via git-common-dir and read state from there.
 # git rev-parse --git-common-dir outputs either an absolute path (worktree case)
 # or a relative path like ".git" (main checkout). In both cases, dirname of the
 # resolved .git dir is the main repo root.
 # TICKET_ROOT tracks which directory to use for docs/tickets/ counting.
-TICKET_ROOT="$CWD"
+# (When walk-up already resolved STATE, TICKET_ROOT is set above — don't clobber.)
+[ -z "$STATE" ] && TICKET_ROOT="$CWD"
 if [ ! -f "$STATE" ]; then
   _COMMON_DIR="$(git -C "$CWD" rev-parse --git-common-dir 2>/dev/null)" || _COMMON_DIR=""
   if [ -n "$_COMMON_DIR" ]; then
@@ -195,11 +229,18 @@ if [ -n "$RIGHT" ]; then
   OUTPUT="${OUTPUT:+$OUTPUT | }$RIGHT"
 fi
 
-if [ -z "$OUTPUT" ]; then
-  printf 'productune'
-else
-  printf '%s' "$OUTPUT"
+# Gate (T-PATCH-176): the whole productune statusline segment is conditional on a
+# .productune/ marker being found via walk-up. In a non-productune directory STATE
+# is empty → emit NOTHING (no "productune" literal, no lone branch badge) so we do
+# not pollute claude sessions in unrelated repos. Conservative per ticket Note.
+if [ -n "$STATE" ] && [ -f "$STATE" ]; then
+  if [ -z "$OUTPUT" ]; then
+    printf 'productune'
+  else
+    printf '%s' "$OUTPUT"
+  fi
 fi
+# else: silent — no productune marker.
 
 # ── Usage state write (T-025) ──────────────────────────────────────────────────
 # Parse rate_limits.{five_hour,seven_day} from the statusLine hook JSON (stdin).

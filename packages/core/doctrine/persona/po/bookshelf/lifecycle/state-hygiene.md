@@ -43,3 +43,9 @@ The DURABLE / cross-session SoT for active-task work-state — progress, decisio
 A v1→v2 migrate shrinking `current_task` (dropping `past_tickets` / non-v2 cruft) is EXPECTED + LOSSLESS — durable work-state is in the brief, not the dropped fields. This "shrink expected / do not restore" applies to the `past_tickets` + v1→v2 stamp ONLY; an active task's scratch is no longer shrunk. Do NOT restore the `.bak` to recover dropped `past_tickets` (re-creates the forbidden array → re-cleaned next session → loop).
 
 Turn-open work-state recovery path = read the brief (+ ticket board) as SoT; the same-session scratch cache, if present, is a convenience only.
+
+### po-state JSON writes = jq atomic merge ONLY [T-PATCH-168]
+
+Every po-state write goes through `jq` (or `python -m json` equiv) atomic merge — read JSON, mutate the parsed structure, write whole valid JSON back. NEVER string-append / `sed` / `heredoc` onto the JSON structure (array/object). One missing comma corrupts the whole file → po-state unparseable → GUI version display breaks (paepyeong repro, T-167). This hardens the existing "merge in-place, never full-rewrite" invariant: the merge engine must be a JSON tool, never raw text.
+
+Active-scratch array growth (`progress.done` etc., the named scratch keys in `delegation.md`) uses structure-safe jq — `jq '.current_task.progress.done += ["…"]'` — never hand-edit the array text. Same rule for any scratch object/array: jq operators only, no raw append. (Pairs with T-167: write-safe here + read-robust GUI = two defensive layers.)

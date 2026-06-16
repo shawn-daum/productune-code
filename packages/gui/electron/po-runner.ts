@@ -26,6 +26,12 @@ import os from 'os'
 import fs from 'fs'
 import type { WebContents } from 'electron'
 import { fireNotification } from './notifications'
+import {
+  appendSubagentTurn,
+  extractSubagentCapture,
+  mergeCapture,
+  type SubagentCostCapture,
+} from './subagent-cost'
 
 /**
  * The chat panel always sends to PO. Other personas are reached via PO
@@ -313,6 +319,15 @@ interface HealthContext {
   lastTokenAt: number | null
   /** T-PATCH-164: 진행 중 위임의 tool_use.id → subagent_type(원본 문자열). per-subagent 완료 매핑용. */
   delegatedByToolUseId: Map<string, string>
+  /**
+   * T-PATCH-170: 진행 중 위임의 parent tool_use.id → 누적 subagent usage/cost
+   * capture. subagent(sidechain) 이벤트(parent_tool_use_id 일치)에서 best-effort
+   * 로 추출·머지하다가, 해당 위임의 tool_result(완료) 도착 시 turns.jsonl 에
+   * scope=subagent 항목으로 flush. usage 가 끝까지 안 잡히면 gate 가 no-op.
+   */
+  subagentCaptureByParentId: Map<string, SubagentCostCapture>
+  /** T-PATCH-170: subagent 비용 기록을 위한 projectDir (turns.jsonl 위치). */
+  projectDir: string
 }
 
 const SILENCE_TIMEOUT_MS  = 15_000   // heuristic compacting
@@ -322,7 +337,7 @@ const SILENCE_TIMEOUT_MS  = 15_000   // heuristic compacting
 // under the new name while staying backward-compatible with the old one.
 const DELEGATE_TOOLS = ['Task', 'Agent']
 
-function makeHealthCtx(msgId: string): HealthContext {
+function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
   return {
     lastToolUse: null,
     lastToolUseAt: null,
@@ -332,6 +347,8 @@ function makeHealthCtx(msgId: string): HealthContext {
     silenceTimeoutHandle: null,
     lastTokenAt: null,
     delegatedByToolUseId: new Map(),
+    subagentCaptureByParentId: new Map(),
+    projectDir,
   }
 }
 
@@ -432,7 +449,7 @@ function handleToolUseHealth(toolName: string, ctx: HealthContext, cb: RunCallba
 
 function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<void> {
   return new Promise((resolve) => {
-    const hCtx = makeHealthCtx(msgId)
+    const hCtx = makeHealthCtx(msgId, opts.projectDir)
     // T-PATCH-100: capture turn origin for any promotion candidate emitted this
     // turn. Conservative default = 'auto' when the caller didn't stamp it.
     const turnOrigin: 'user-requested' | 'auto' = opts.turnOrigin ?? 'auto'
@@ -603,6 +620,27 @@ function handleStreamJsonLine(
   // graceful: parent_tool_use_id 가 실제 sidechain 마커가 아니면(필드 부재) isNested
   // 는 항상 false → 필터 no-op → 기존 동작 무변(무해). 실측 확정은 runtime verify 필요.
   const isNested = obj?.parent_tool_use_id != null
+
+  // ── T-PATCH-170: per-subagent usage/cost capture (gated, best-effort) ──────
+  // The GUI dispatches sub-agents via the Agent tool, so the Bash-matched
+  // post-delegate hook never fires → no scope=subagent turns.jsonl rows. We
+  // recover the cost here: for any nested(sidechain) event we best-effort extract
+  // {cost_usd, model, usage} and merge it into a buffer keyed by the parent Agent
+  // tool_use id (== obj.parent_tool_use_id). On delegation completion the
+  // top-level tool_result (type:'user', handled below) flushes the buffer to a
+  // scope=subagent row keyed by persona. The sub-agent's usage most plausibly
+  // rides on its FINAL assistant sidechain message (message.usage) or a nested
+  // result envelope (total_cost_usd/usage/modelUsage) — extractSubagentCapture
+  // probes both. graceful: if no usable field is ever seen, the flush gate
+  // (hasUsableCapture in appendSubagentTurn) makes it a no-op. Exact stream shape
+  // is runtime-verify (same class as T-165/166); this path is harmless until
+  // usage appears, then lights up with no further change.
+  if (isNested) {
+    const parentId = obj.parent_tool_use_id as string
+    const cap = extractSubagentCapture(obj)
+    const prev = hCtx.subagentCaptureByParentId.get(parentId)
+    hCtx.subagentCaptureByParentId.set(parentId, mergeCapture(prev, cap))
+  }
 
   // ── T-PATCH-166: per-token (typewriter) text streaming ─────────────────────
   // With `--include-partial-messages`, the CLI emits `type:'stream_event'`
@@ -868,6 +906,23 @@ function handleStreamJsonLine(
               at: new Date().toISOString(),
               msgId: hCtx.msgId,
             })
+
+            // ── T-PATCH-170: flush per-subagent cost → turns.jsonl ──────────
+            // The completion tool_result is keyed by the SAME id the sidechain
+            // events carried as parent_tool_use_id, so the accumulated capture is
+            // at subagentCaptureByParentId[tool_use_id]. Some CLI versions also
+            // attach usage/total_cost_usd to the tool_result part or its envelope
+            // → merge those in too before the write. appendSubagentTurn gates on
+            // usable data (no-op when nothing was captured), so this never writes
+            // a garbage row and never throws into the turn.
+            const buffered = hCtx.subagentCaptureByParentId.get(part.tool_use_id)
+            hCtx.subagentCaptureByParentId.delete(part.tool_use_id)
+            const fromResult = mergeCapture(
+              extractSubagentCapture(part),
+              extractSubagentCapture(obj),
+            )
+            const finalCap = mergeCapture(buffered, fromResult)
+            appendSubagentTurn(hCtx.projectDir, agentType, finalCap)
           }
         }
       }

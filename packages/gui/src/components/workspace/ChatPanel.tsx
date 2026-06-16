@@ -531,17 +531,38 @@ export default function ChatPanel() {
             </div>
           )}
 
-          {/* T-PATCH-163: while streaming (and NOT rate-limited — D6: RateLimitBanner
-              owns that state), the textarea slot becomes a live working indicator.
-              rateLimited keeps the textarea (disabled) so the banner pairing is intact. */}
+          {/* T-PATCH-163 / T-PATCH-171 AC-3: while streaming (and NOT rate-limited —
+              D6: RateLimitBanner owns that state), the composer collapses to ONE
+              compact row — WorkingIndicator (flex:1, left) + stop button (right).
+              The 2-row textarea+inputRow layout is the idle path below. rateLimited
+              keeps the textarea (disabled) so the banner pairing is intact. */}
           {streaming && !rateLimited && streamingSince != null ? (
-            <WorkingIndicator
-              sinceMs={streamingSince}
-              charCount={turnCharCount}
-              healthState={healthState}
-              healthDetail={healthDetail}
-            />
+            <div style={workingComposerRow}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <WorkingIndicator
+                  sinceMs={streamingSince}
+                  charCount={turnCharCount}
+                  healthState={healthState}
+                  healthDetail={healthDetail}
+                />
+              </div>
+              {/* T-PATCH-081 AC-1/2: stop button (same red treatment as inputRow). */}
+              <button
+                style={{
+                  ...sendBtn,
+                  background: stopHover ? '#DC2626' : '#EF4444',
+                }}
+                onMouseEnter={() => setStopHover(true)}
+                onMouseLeave={() => setStopHover(false)}
+                onClick={handleAbort}
+                aria-label="Stop generation"
+                title={t('workspace.chat.stop')}
+              >
+                <Square size={14} strokeWidth={2.5} />
+              </button>
+            </div>
           ) : (
+          <>
             <textarea
               ref={taRef}
               style={textarea}
@@ -553,9 +574,11 @@ export default function ChatPanel() {
               rows={1}
               disabled={streaming || !project || rateLimited}
             />
-          )}
 
           <div style={inputRow}>
+            {/* T-PATCH-171 AC-2: paperclip/attach button hidden while streaming —
+                attachment isn't possible mid-turn, so the button itself is absent.
+                (Idle path only; the streaming branch above has no attach button.) */}
             <button
               style={{
                 ...iconActionBtn,
@@ -642,6 +665,8 @@ export default function ChatPanel() {
               </button>
             )}
           </div>
+          </>
+          )}
         </div>
         )} {/* T-PATCH-068: end pendingQuestion ternary — normal composer restored */}
 
@@ -812,7 +837,8 @@ function formatElapsed(ms: number): string {
 function formatApproxTokens(chars: number): string {
   const tok = Math.round(chars / 4)
   if (tok <= 0) return ''
-  return tok >= 1000 ? `↓ ~${(tok / 1000).toFixed(1)}k` : `↓ ~${tok}`
+  // T-PATCH-171 AC-1: append `tok` unit so the figure reads as approx output tokens.
+  return tok >= 1000 ? `↓ ~${(tok / 1000).toFixed(1)}k tok` : `↓ ~${tok} tok`
 }
 
 function verbForHealth(
@@ -967,6 +993,13 @@ const workingRow: React.CSSProperties = {
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   border: 'none',
   background: 'transparent',
+}
+
+// T-PATCH-171 AC-3: compact streaming composer — indicator (flex:1) + stop on one row.
+const workingComposerRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
 }
 
 const spinnerGlyph: React.CSSProperties = {

@@ -105,6 +105,10 @@ export function useTicketScan(projectDir: string | null): {
   useEffect(() => {
     const api = (window as any).api
     if (!api?.onTicketsChanged || !projectDir) return
+    // T-PATCH-172: ask main to fs-watch docs/tickets for this project so a
+    // status edit on disk pushes `tickets:changed` → live re-scan (no tab
+    // switch). Idempotent per dir in main; safe to call on every mount.
+    api.watchTickets?.(projectDir)
     const unsub = api.onTicketsChanged((dir: string) => {
       if (dir !== projectDir) return
       if (debounceRef.current) clearTimeout(debounceRef.current)

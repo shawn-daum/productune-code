@@ -25,6 +25,7 @@ import { register as registerBrowserFind } from './ipc/browserFind'
 import { register as registerProjectEnv }  from './ipc/projectEnv'
 import { register as registerAttachments } from './ipc/attachments'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
+import { register as registerTicketsWatch, stopTicketsWatch } from './ipc/ticketsWatch'
 import { register as registerCostArchive, stopCostWatch } from './ipc/costArchive'
 import { abortActiveTurn, isPoRunning } from './po-runner'
 import { killAllSurfaceRuns } from './surface-runner'
@@ -56,6 +57,7 @@ app.on('open-file', (event, filePath) => {
 registerOnboarding()
 registerProject()
 registerTickets()
+registerTicketsWatch()
 registerState()
 registerPo()
 registerMcp()
@@ -428,6 +430,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   stopUsageWatch()
   stopCostWatch()
+  stopTicketsWatch()
   // T-PATCH-159 D5: SIGTERM any in-flight surface build/smoke runs on quit.
   killAllSurfaceRuns()
   if (process.platform !== 'darwin') {

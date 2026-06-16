@@ -368,8 +368,8 @@
       "placeholder": "Search files, tickets, personas…",
       "empty": "No results",
       "ariaLabel": "Quick Open — ⌘P",
-      "searchHint": "Search — tickets · tabs · skills · MCP · artifacts · personas",
-      "searchedScope": "tickets · tabs · skills · MCP · artifacts · personas",
+      "searchHint": "Search — tickets · artifacts · personas",
+      "searchedScope": "tickets · artifacts · personas",
       "searchedAll": "Searched everything",
       "clearAria": "Clear search",
       "hint": {
@@ -382,8 +382,6 @@
         "file": "Files",
         "ticket": "Tickets",
         "persona": "Personas",
-        "skill": "Skills",
-        "tab": "Tabs",
         "artifact": "Artifacts"
       }
     },
@@ -703,7 +701,8 @@
         "currentTitle": "Current version",
         "closed": "Closed",
         "currentFallback": "v1 (pending) — activated when PRD authoring begins",
-        "currentFallbackTransient": "Awaiting next version — activated when you start a new PRD with PO"
+        "currentFallbackTransient": "Awaiting next version — activated when you start a new PRD with PO",
+        "currentParseError": "Failed to read po-state — file may be corrupt. Check backup (.bak)"
       },
       "title": "Version history",
       "empty": "Select a version",
