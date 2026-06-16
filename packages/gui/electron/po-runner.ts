@@ -75,9 +75,14 @@ export type PoHealthState =
   | 'rate-limited'
   | 'permission-blocked'
   | 'error-other'
+  // T-PATCH-164: per-subagent 완료 신호. presence-only — sessionHealth 표면에는
+  // 노출되지 않음(poEvents 핸들러가 setHealth 보다 먼저 분기·격리).
+  | 'subagent-done'
 
 export interface PoHealthDetail {
   persona?: string
+  /** delegating — sub-agent 작업 요약(Task.description 또는 prompt 앞부분, T-PATCH-148) */
+  task?: string
   resetAt?: string
   /** rate-limited — retry-after seconds extracted from stderr or stream-json envelope */
   retryAfterSec?: number
@@ -294,22 +299,39 @@ interface HealthContext {
   lastToolUse: string | null        // tool name of the most recent tool_use
   lastToolUseAt: number | null      // Date.now() of the most recent tool_use
   lastEmittedState: PoHealthState
+  /**
+   * T-PATCH-148: last delegating persona emitted this turn. The dedupe is
+   * state-only, so a SECOND parallel/sequential 'delegating' for a DIFFERENT
+   * persona in the same turn would otherwise be dropped (and that sub-agent
+   * would never go 'working' in the renderer). Tracking the persona lets the
+   * dedupe stay persona-aware for 'delegating'.
+   */
+  lastDelegatedPersona: string | null
   msgId: string
   /** setTimeout handle for the compacting heuristic (silence timeout) */
   silenceTimeoutHandle: ReturnType<typeof setTimeout> | null
   lastTokenAt: number | null
+  /** T-PATCH-164: 진행 중 위임의 tool_use.id → subagent_type(원본 문자열). per-subagent 완료 매핑용. */
+  delegatedByToolUseId: Map<string, string>
 }
 
 const SILENCE_TIMEOUT_MS  = 15_000   // heuristic compacting
+
+// T-PATCH-158: Claude Code renamed the sub-agent dispatch tool Task→Agent.
+// Match BOTH so delegation detection (→ persona bar designer/dev/qa) fires
+// under the new name while staying backward-compatible with the old one.
+const DELEGATE_TOOLS = ['Task', 'Agent']
 
 function makeHealthCtx(msgId: string): HealthContext {
   return {
     lastToolUse: null,
     lastToolUseAt: null,
     lastEmittedState: 'healthy',
+    lastDelegatedPersona: null,
     msgId,
     silenceTimeoutHandle: null,
     lastTokenAt: null,
+    delegatedByToolUseId: new Map(),
   }
 }
 
@@ -320,8 +342,18 @@ function emitHealth(
   cb: RunCallbacks,
 ): void {
   // Dedupe — only emit when state changes.
-  if (state === ctx.lastEmittedState) return
+  // T-PATCH-148: 'delegating' is persona-aware — a distinct sub-agent persona in
+  // the same turn (parallel/sequential dispatch) re-emits even though the state
+  // string is unchanged, so the renderer can transition each persona to 'working'
+  // (otherwise a second parallel dispatch would be dropped and lose a persona).
+  if (state === ctx.lastEmittedState) {
+    if (state !== 'delegating') return
+    const nextPersona = detail?.persona ?? null
+    if (nextPersona === ctx.lastDelegatedPersona) return
+    // distinct persona → fall through and re-emit
+  }
   ctx.lastEmittedState = state
+  ctx.lastDelegatedPersona = state === 'delegating' ? (detail?.persona ?? null) : null
   cb.onHealth({ state, detail, at: new Date().toISOString(), msgId: ctx.msgId })
 }
 
@@ -383,8 +415,8 @@ function handleToolUseHealth(toolName: string, ctx: HealthContext, cb: RunCallba
   ctx.lastToolUse = toolName
   ctx.lastToolUseAt = Date.now()
 
-  // Task tool → delegating
-  if (toolName === 'Task') {
+  // Task/Agent tool → delegating (T-PATCH-158: detect both names)
+  if (DELEGATE_TOOLS.includes(toolName)) {
     clearSilenceTimeout(ctx)
     emitHealth('delegating', undefined, ctx, cb)
     return
@@ -431,7 +463,10 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     args.push('--permission-mode', 'bypassPermissions')
     args.push('--print', '--output-format', 'stream-json', '--verbose', opts.text)
 
-    const env = { ...process.env, NO_COLOR: '1' }
+    // T-PATCH-149: experimental — exposes SendMessage (PO can continue a subagent by agentId
+    // instead of fresh re-dispatch); also activates auto-resume + TeamCreate/TeamDelete. User
+    // decision 2026-06-16. Sole gate for agent-teams; works in headless `--print`.
+    const env = { ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' }
     const child = spawn('claude', args, {
       env,
       cwd: opts.projectDir,
@@ -544,6 +579,25 @@ function handleStreamJsonLine(
   const type = obj?.type as string | undefined
   if (!type) return
 
+  // ── T-PATCH-165: nested(subagent/sidechain) 이벤트 필터 ────────────────────
+  // 증상: PO 가 dev/designer/qa 를 Agent 로 위임하면, --verbose 스트림에 subagent
+  // 내부 tool_use(Read/Write/Edit/Bash)가 섞여 들어오고 po-runner 가 top-level 과
+  // 구분 없이 전부 announce → PO "도구 N개" 리스트가 subagent 내부 도구로 오염.
+  //
+  // 유력 후보(1순위 검증): 메시지 봉투의 `parent_tool_use_id`. sidechain(subagent)
+  // 이벤트면 부모 Agent 의 tool_use id 로 non-null, top-level 이벤트면 null/부재.
+  // 따라서 `isNested === true` 인 이벤트의 tool_use announce / 텍스트 토큰을 스킵해
+  // PO 자기 도구 + Agent 디스패치 엔트리만 남긴다.
+  //
+  // 중요 — subagent 완료 tool_result 는 top-level(부모) 메시지로 도착하며 그 봉투의
+  // parent_tool_use_id 는 null 이다(부모 Agent tool_use id 를 가리키는 건 part 안의
+  // tool_use_id 이지 봉투 필드가 아님). 즉 isNested=false → T-164 의 subagent-done
+  // emit 은 그대로 통과한다. 스킵 대상은 오직 subagent 의 *내부* tool_use/tool_result.
+  //
+  // graceful: parent_tool_use_id 가 실제 sidechain 마커가 아니면(필드 부재) isNested
+  // 는 항상 false → 필터 no-op → 기존 동작 무변(무해). 실측 확정은 runtime verify 필요.
+  const isNested = obj?.parent_tool_use_id != null
+
   if (type === 'system') {
     if (obj?.subtype === 'init' && typeof obj?.session_id === 'string') {
       capturedSessionId = obj.session_id
@@ -558,6 +612,10 @@ function handleStreamJsonLine(
   if (type === 'assistant') {
     const content = obj?.message?.content
     if (!Array.isArray(content)) return
+    // T-PATCH-165: subagent(sidechain) 내부 assistant 이벤트면 PO bubble 으로 흘리지
+    // 않는다 — PO bubble 은 PO 자기 narration/도구만 보여야 한다. nested 의 텍스트
+    // 토큰(subagent 내부 서술)도 onToken 으로 새면 PO 버블 오염이므로 함께 스킵.
+    if (isNested) return
     for (const part of content) {
       if (part?.type === 'text' && typeof part?.text === 'string') {
         cb.onToken(msgId, part.text)
@@ -587,11 +645,29 @@ function handleStreamJsonLine(
         })
         handleToolUseHealth(part.name, hCtx, cb)
 
-        // Extract subagent_type for delegating detail.
-        if (part.name === 'Task' && typeof part?.input?.subagent_type === 'string') {
-          // Re-emit with persona detail (dedupe guard bypassed by clearing lastEmittedState).
+        // Extract subagent_type + task summary for delegating detail.
+        if (DELEGATE_TOOLS.includes(part.name) && typeof part?.input?.subagent_type === 'string') {
+          // T-PATCH-148 (Q2): sub-agent 작업 요약. Task.description(3-5 단어, 표준
+          // 필드)을 1순위로, 부재 시 prompt 앞 60자 fallback. 최종 절단은 renderer
+          // tooltip 에서.
+          const taskSummary =
+            typeof part.input?.description === 'string' && part.input.description.trim()
+              ? part.input.description.trim()
+              : typeof part.input?.prompt === 'string'
+                ? part.input.prompt.trim().slice(0, 60)
+                : undefined
+          // Re-emit with persona+task detail (dedupe guard bypassed by clearing
+          // lastEmittedState). emitHealth 의 dedupe 가 persona-aware 이므로(아래),
+          // 한 turn 에 여러 persona 를 병렬 디스패치해도 각 persona 의 delegating 이
+          // 개별 도착한다(T-PATCH-148).
           hCtx.lastEmittedState = 'healthy'   // allow re-emit with detail
-          emitHealth('delegating', { persona: part.input.subagent_type }, hCtx, cb)
+          emitHealth('delegating', { persona: part.input.subagent_type, task: taskSummary }, hCtx, cb)
+
+          // T-PATCH-164: per-subagent 완료 매핑 — tool_use.id → subagent_type 적재.
+          // tool_result(type:'user') 도착 시 이 맵으로 역참조해 해당 persona 만 done.
+          if (typeof part.id === 'string') {
+            hCtx.delegatedByToolUseId.set(part.id, part.input.subagent_type)
+          }
         }
       }
     }
@@ -721,9 +797,40 @@ function handleStreamJsonLine(
   }
 
   // T-PATCH-147: the former `type === 'user'` tool_result handler existed only to
-  // clear the provisional permission-blocked timer (T-PATCH-131). With that timer
-  // removed, the handler has no remaining effect, so it is dropped — tool_result
-  // envelopes fall through as unknown/silent.
+  // clear the provisional permission-blocked timer (T-PATCH-131); it was dropped.
+  // T-PATCH-164: re-activated for per-subagent completion. When a delegated
+  // sub-agent finishes, the CLI emits a `type:'user'` message whose content[]
+  // carries a `tool_result` keyed by the original `tool_use_id`. We reverse-map
+  // that id → subagent_type (captured at delegate time, Fix-1b) and emit a
+  // presence-only `subagent-done` so ONLY that persona flips done→idle (AC-2).
+  if (type === 'user') {
+    // T-PATCH-165: subagent 내부 tool_result(예: subagent 가 호출한 Read/Bash 의
+    // 결과)는 nested → 스킵. subagent *완료* tool_result 는 부모(top-level) 메시지로
+    // 도착하므로 isNested=false → 아래 역참조 로직(T-164)이 그대로 동작한다.
+    if (isNested) return
+    const content = obj?.message?.content
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (part?.type === 'tool_result' && typeof part?.tool_use_id === 'string') {
+          const agentType = hCtx.delegatedByToolUseId.get(part.tool_use_id)
+          if (agentType) {
+            hCtx.delegatedByToolUseId.delete(part.tool_use_id)
+            // dedupe 우회: emitHealth()는 state 기반 dedupe라 동일 'subagent-done'
+            // 연속 도착 시 둘째가 드롭됨(병렬 완료에서 치명적). 따라서 emitHealth 를
+            // 거치지 않고 cb.onHealth 를 직접 호출하고 lastEmittedState 는 건드리지
+            // 않는다(delegating/healthy 상태머신과 독립).
+            cb.onHealth({
+              state: 'subagent-done',
+              detail: { persona: agentType },
+              at: new Date().toISOString(),
+              msgId: hCtx.msgId,
+            })
+          }
+        }
+      }
+    }
+    return
+  }
 
   // Unknown envelope — silent.
 }

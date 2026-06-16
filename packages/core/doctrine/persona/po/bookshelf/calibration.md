@@ -1,16 +1,18 @@
 # Calibration — the model/effort feedback loop
 
-Read at turn-open, write at task-close. Cross-project weight, separate from `routing.md`
+Read at turn-open, write at task-close. Per-project weight, separate from `routing.md`
 `recent_turns`.
 
 Data: per-task `.productune/po-state.json :: current_task.calibration_outcome` (drops with
-`current_task = null`); cross-project rolling `$HOME/.productune/po/bookshelf/calibration-log.md`
-(read at turn-open by resolving `$HOME` + `cat` via Bash — never Read the literal `~`/guess home),
-1 line/task.
+`current_task = null`); per-project `docs/po/calibration-log.md` (Tier1, repo-relative — Read
+tool works, no `$HOME`/`~` expand), 1 line/task.
+
+Cross-cutting lessons (model behavior / harness quirk) are NOT calibration entries — promote them
+to doctrine (routing/calibration bookshelf or common), not this log.
 
 ## Read (turn open, mandatory)
 
-Scan last 10–20 entries. Match by 3-tuple `(persona, complexity_class, area_tag)` —
+Scan last ~8 entries (routing bias only). Match by 3-tuple `(persona, complexity_class, area_tag)` —
 persona ∈ `pdt-{designer,developer,qa}`; complexity_class `L1-single`…`L7-net-new`;
 area_tag = task domain (`auth`, `payments`, `refactor-cross-cut`, `prd-r1`, …). 3/3 → high
 weight; 2/3 → moderate; 1/3 → ignore. History needing estimate+1 → start one notch higher.
@@ -46,12 +48,12 @@ Append (mechanical):
 
 ```bash
 LINE="- ($(date -u +%F)) ..."   # fill per format
-printf '%s\n' "$LINE" >> ~/.productune/po/bookshelf/calibration-log.md   # single append, no race
+printf '%s\n' "$LINE" >> docs/po/calibration-log.md   # project Tier1, single append, no race
 ```
 
 ## Archive-rotate (cap 100 lines)
 
-When `calibration-log.md` > 100 lines, at next turn open:
+When the project `docs/po/calibration-log.md` > 100 lines (per-project — rare), at next turn open:
 1. Same-3-tuple duplicates → keep most recent.
 2. Entries > 1 year → move to `## Model/Effort Calibration (archived)`.
 3. Still > 100 → mark oldest `[SUPERSEDED <date>]`.

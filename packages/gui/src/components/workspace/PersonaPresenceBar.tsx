@@ -91,7 +91,7 @@ interface ChipProps {
 
 function PersonaChip({ entry, onDismiss }: ChipProps) {
   const { t } = useTranslation()
-  const { persona, state, artifact } = entry
+  const { persona, state, artifact, task } = entry
   const color = PERSONA_COLORS[persona]
   const label = PERSONA_LABELS[persona]
 
@@ -160,13 +160,18 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
     outline: 'none',
   }
 
-  // Tooltip content
+  // Tooltip content (T-PATCH-148, Q2):
+  //   working → entry.task (작업 요약)
+  //   done    → entry.artifact (승계된 task = 완료 작업 요약)
+  //   idle    → tooltip 안 띄움(아래 hover 가드)
+  // 60자 초과 시 …로 절단(기존 규칙 유지).
+  const truncate = (s: string) => (s.length > 60 ? s.slice(0, 57) + '…' : s)
   const tooltipText =
-    artifact
-      ? artifact.length > 60
-        ? artifact.slice(0, 57) + '…'
-        : artifact
-      : t('workspace.presence.doneNoArtifact')
+    state === 'working'
+      ? (task ? truncate(task) : t('workspace.presence.workingNoTask'))
+      : artifact
+        ? truncate(artifact)
+        : t('workspace.presence.doneNoArtifact')
 
   return (
     <div
@@ -177,7 +182,8 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
       tabIndex={0}
       onMouseEnter={() => {
         hoverRef.current = true
-        if (state === 'done') setTooltipVisible(true)
+        // T-PATCH-148 (Q2): show on done(artifact) AND working(task). idle = no tooltip.
+        if (state === 'done' || (state === 'working' && !!task)) setTooltipVisible(true)
       }}
       onMouseLeave={() => {
         hoverRef.current = false
@@ -194,8 +200,8 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
         {state === 'done' ? ' ✓' : ''}
       </span>
 
-      {/* Done artifact tooltip */}
-      {state === 'done' && tooltipVisible && (
+      {/* Tooltip — done(artifact) or working(task). T-PATCH-148 (Q2). */}
+      {(state === 'done' || (state === 'working' && !!task)) && tooltipVisible && (
         <div style={tooltipStyle} role="tooltip">
           {tooltipText}
         </div>

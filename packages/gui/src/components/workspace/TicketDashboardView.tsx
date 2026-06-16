@@ -136,6 +136,62 @@ function groupByStatus(tickets: Ticket[]): GroupByStatusResult {
   return { byStatus, unknownCount, unknownValues: [...unknownSet] }
 }
 
+// ── sort (T-PATCH-162) ──────────────────────────────────────────────────────────
+
+/**
+ * Natural/numeric-aware ticket_id comparison so T-002 < T-010 (lexical would
+ * order T-010 < T-002). `numeric: true` makes embedded digit runs compare by
+ * value; falls back to lexical for the non-numeric prefix.
+ */
+const TICKET_ID_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
+function compareTicketId(a: Ticket, b: Ticket): number {
+  return TICKET_ID_COLLATOR.compare(a.ticket_id ?? '', b.ticket_id ?? '')
+}
+
+/** desc string compare (ISO timestamps sort correctly lexically); nulls sink to bottom. */
+function compareDateDesc(a?: string | null, b?: string | null): number {
+  if (a === b) return 0
+  if (a == null) return 1
+  if (b == null) return -1
+  return a < b ? 1 : a > b ? -1 : 0
+}
+
+/** desc number compare; undefined sinks to bottom. */
+function compareMtimeDesc(a?: number, b?: number): number {
+  const av = a ?? -Infinity
+  const bv = b ?? -Infinity
+  return bv - av
+}
+
+/**
+ * Per-status comparator (T-PATCH-162):
+ *  - todo        → ticket_id ascending (next-up on top; natural/numeric-aware).
+ *  - done        → completed_at descending (most-recently completed on top).
+ *  - everything else (in-progress incl. folded review / user-verify / blocked /
+ *    abandoned) → file mtime descending = "last touched" on top, falling back to
+ *    started_at desc then ticket_id when mtime is absent.
+ * Comparators are total (ties broken by ticket_id) so Array.sort is effectively
+ * stable for our purposes regardless of engine.
+ */
+function ticketComparator(status: Status): (a: Ticket, b: Ticket) => number {
+  if (status === 'todo') {
+    return compareTicketId
+  }
+  if (status === 'done') {
+    return (a, b) => {
+      const d = compareDateDesc(a.completed_at, b.completed_at)
+      return d !== 0 ? d : compareTicketId(a, b)
+    }
+  }
+  return (a, b) => {
+    const m = compareMtimeDesc(a.mtime, b.mtime)
+    if (m !== 0) return m
+    const s = compareDateDesc(a.started_at, b.started_at)
+    return s !== 0 ? s : compareTicketId(a, b)
+  }
+}
+
 // ── sub-components ─────────────────────────────────────────────────────────────
 
 /** Cap on distinct unknown-status values listed inline before collapsing to "+N more". */
@@ -166,17 +222,23 @@ function SchemaMismatchBanner({ count, values }: { count: number; values: string
 
 function Column({ status, tickets }: { status: Status; tickets: Ticket[] }) {
   const { t } = useTranslation()
+  // T-PATCH-162: status-specific sort, memoised on the (column) status + list
+  // identity. Copy before sorting to avoid mutating the byStatus bucket in place.
+  const sorted = useMemo(
+    () => [...tickets].sort(ticketComparator(status)),
+    [tickets, status],
+  )
   return (
     <div style={column}>
       <div style={columnHeader(status)}>
         <span style={columnLabel}>{t(`workspace.tickets.status.${status}`, { defaultValue: status })}</span>
-        <span style={columnCount}>{tickets.length}</span>
+        <span style={columnCount}>{sorted.length}</span>
       </div>
       <div style={columnBody}>
-        {tickets.length === 0 ? (
+        {sorted.length === 0 ? (
           <div style={columnEmpty}>—</div>
         ) : (
-          tickets.map((t) => <Card key={t.ticket_id} ticket={t} />)
+          sorted.map((t) => <Card key={t.ticket_id} ticket={t} />)
         )}
       </div>
     </div>

@@ -13,6 +13,7 @@
  *                               'user-requested' (T-PATCH-097)
  */
 
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Message, MessageKind, PromotionPayload } from '../../../lib/types'
 import { linkifyText } from '../../../lib/linkifyText'
@@ -35,6 +36,35 @@ const PERSONA_LABEL: Record<string, string> = {
   designer: 'Designer',
   dev:      'Developer',
   qa:       'QA',
+}
+
+// ── Streaming cursor keyframe injection (once per document, T-PATCH-148) ──────
+// The cursor must blink WITHOUT depending on any other component's global
+// keyframe — PersonaPresenceBar may not be mounted on every screen, and T-144
+// removed the old `persona-blink` keyframe this cursor used to borrow. So
+// MessageBubble owns a dedicated, once-guarded keyframe `mb-cursor-blink`.
+// Same once-guard pattern as PersonaPresenceBar.ensureSpriteKeyframe — distinct
+// STYLE_ID. Do NOT remove the <style> on cleanup: it is a global single
+// injection; removing it would break every other mounted streaming bubble.
+const CURSOR_STYLE_ID = 'mb-cursor-keyframes'
+
+function ensureCursorKeyframe() {
+  if (typeof document === 'undefined') return
+  if (document.getElementById(CURSOR_STYLE_ID)) return
+  const style = document.createElement('style')
+  style.id = CURSOR_STYLE_ID
+  // 1s step-end → crisp on/off typing-cursor blink (vs the old 0.8s ease fade).
+  // prefers-reduced-motion: pin opacity, no animation (accessibility).
+  style.textContent = `
+    @keyframes mb-cursor-blink {
+      0%, 49%   { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .mb-cursor { animation: none !important; opacity: 1 !important; }
+    }
+  `
+  document.head.appendChild(style)
 }
 
 interface Props {
@@ -69,6 +99,13 @@ function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'desi
   const label = PERSONA_LABEL[kind] ?? kind
   const time = formatTime(message.created_at)
 
+  // T-PATCH-148 (Q3): inject the cursor blink keyframe once. Global single
+  // injection — no cleanup (once-guard guarantees idempotency; removing it would
+  // break other mounted streaming bubbles).
+  useEffect(() => {
+    ensureCursorKeyframe()
+  }, [])
+
   return (
     <div style={{ ...rowL, borderLeft: `2px solid ${color}` }}>
       <div style={cmHead}>
@@ -79,7 +116,7 @@ function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'desi
         {/* T-P4-114: linkifyText applied before react-markdown */}
         {/* T-013: MdRenderer replaces inline Markdown fn */}
         <MdRenderer text={linkifyText(message.text)} />
-        {message.status === 'streaming' && <span style={cursorStyle}>▋</span>}
+        {message.status === 'streaming' && <span className="mb-cursor" style={cursorStyle}>▋</span>}
       </div>
     </div>
   )
@@ -189,10 +226,13 @@ const traceLine: React.CSSProperties = {
 }
 
 // T-013 / T-006 Option B: streaming cursor = --persona-po violet (was orange #FF6B2B)
+// T-PATCH-148 (Q3): self-owned keyframe `mb-cursor-blink` (was `persona-blink`,
+// removed by T-144). 1s step-end = crisp typing-cursor blink. See
+// ensureCursorKeyframe for the once-guarded injection + reduced-motion guard.
 const cursorStyle: React.CSSProperties = {
   color: '#8B5CF6',
   marginLeft: 2,
-  animation: 'persona-blink 0.8s ease infinite',
+  animation: 'mb-cursor-blink 1s step-end infinite',
 }
 
 // md-* styles moved to MdRenderer.tsx + md-recipes.css (T-013)

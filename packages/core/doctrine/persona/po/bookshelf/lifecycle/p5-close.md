@@ -15,7 +15,7 @@ At 5a/5b/5c read stored memory only; never spawn fresh analysis (for every `~`-p
 1. project notes — `docs/{designer,developer,qa}/bookshelf/*.md`
 2. po-state `recent_turns` — rolling 5
 3. global persona memory — `$HOME/.productune/<persona>/habit.md` arrives hook-injected at the worker's session start (do NOT re-inject via `[ctx]`); the worker cats its own `bookshelf/` on demand
-4. po-memory — `$HOME/.productune/po/habit.md` + `$HOME/.productune/po/bookshelf/calibration-log.md`
+4. po-memory — `$HOME/.productune/po/habit.md` (resolve `$HOME` + `cat`) + project Tier1 `docs/po/calibration-log.md` (repo-relative, Read tool)
 5. approved-promotion archive — `pending_promotions[]` with `status ∈ {approved, edited}` ∧ `decided_at ∈ [version.started_at, version.ended_at]`
 
 ## Outcome measurement

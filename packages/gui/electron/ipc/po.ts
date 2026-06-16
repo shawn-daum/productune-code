@@ -92,12 +92,23 @@ export function register(): void {
 
         // (2) Resume the PO turn with the chosen answer text as input.
         const resume = opts.sessionId ?? capturedPoSessionId
+        // T-PATCH-157: the GUI runs `claude --print`, so the AskUserQuestion
+        // tool_use ends the turn WITHOUT a tool_result (no stdin pipe, no
+        // synthetic result is fed — see po-runner.ts:599). The answer arrives on
+        // a SEPARATE `--resume` turn as a bare user string ("예"). Resuming a
+        // conversation whose last turn ended on an unresolved AskUserQuestion
+        // tool_use with a bare string makes the model frequently fail to bind it
+        // to the pending question and re-ask in text (the reported symptom).
+        // Wrap the resume input so the binding is unambiguous (MODE-1 fix,
+        // ticket Option C). The original chosen label is preserved verbatim on
+        // its own line so the PO still has the exact answer text.
+        const boundText = `[직전 AskUserQuestion에 대한 사용자 선택]\n선택: ${opts.answerText}`
         markPoTurnStart()
         try {
           await runPoTurn(
             {
               projectDir: opts.projectDir,
-              text: opts.answerText,
+              text: boundText,
               resume,
               // T-PATCH-100 §B: a question-answer resume is NOT a fresh user
               // utterance — any promotion candidate emitted here is auto-surfaced.

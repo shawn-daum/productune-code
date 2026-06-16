@@ -176,6 +176,8 @@ export interface Ticket {
   request_summary?: string
   /** Filesystem path of the source ticket md (relative or absolute). */
   path?: string
+  /** File mtime (epoch ms) — "last touched" signal for dashboard sort (T-PATCH-162). */
+  mtime?: number
 }
 
 // `current_task` slice in po-state.json (live ticket being worked).

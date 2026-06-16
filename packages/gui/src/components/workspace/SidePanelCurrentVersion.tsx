@@ -65,7 +65,9 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
   // Ticket stats for current version
   const versionTickets = tickets.filter((tk) => tk.version === currentVersionId)
   const doneCount = versionTickets.filter((tk) => tk.status === 'done').length
-  const totalCount = versionTickets.length
+  // abandoned = terminal-archive; excluded from the denominator (neither total
+  // nor done). Mirrors phase-mapping.ts:138 / statusline. blocked stays counted.
+  const totalCount = versionTickets.filter((tk) => tk.status !== 'abandoned').length
 
   // Elapsed duration
   const elapsed = elapsedLabel(currentVer?.started_at)

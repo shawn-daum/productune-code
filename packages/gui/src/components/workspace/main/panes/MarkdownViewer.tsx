@@ -114,10 +114,6 @@ interface MarkdownViewerProps {
 
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
 
-// Base font-size (px) at zoom = 1.0 — matches md-recipes --text-base (13px).
-// Zoom scales this via CSS font-size so layout reflows (no transform:scale clipping).
-const BASE_FONT_PX = 13
-
 // Advisory line-cap default for persona habit.md / bookshelf files. The 50-line
 // common-habit cap is out of scope (carried as-is from DoctrineFileTab).
 const DEFAULT_LINE_CAP = 100
@@ -449,13 +445,7 @@ export default function MarkdownViewer({
                     {saved && <span style={savedText}>{t('workspace.doctrineFile.saved')}</span>}
                   </div>
                 )}
-                <div
-                  style={
-                    zoomEnabled
-                      ? { ...viewerWrap, fontSize: `${(zoom * BASE_FONT_PX).toFixed(2)}px` }
-                      : viewerWrap
-                  }
-                >
+                <div style={zoomEnabled ? { ...viewerWrap, zoom: zoom } : viewerWrap}>
                   <MdRenderer text={content} />
                 </div>
               </>

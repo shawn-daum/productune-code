@@ -28,6 +28,8 @@ interface ScannedTicket {
   duration_min?: number | null
   request_summary?: string
   path?: string
+  /** File mtime (epoch ms) — "last touched" signal for sort (T-PATCH-162). */
+  mtime?: number
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -224,6 +226,10 @@ export function register(): void {
         const filePath = path.join(dirPath, file)
         let content: string
         try { content = fs.readFileSync(filePath, 'utf-8') } catch { continue }
+        // mtime = "last touched" signal for the non-todo/done sort (T-PATCH-162).
+        // statSync after a successful read; tolerate stat failure (undefined → sort fallback).
+        let mtime: number | undefined
+        try { mtime = fs.statSync(filePath).mtimeMs } catch { mtime = undefined }
         const fm = parseFrontmatter(content)
         const ticket_id = String(fm.ticket_id ?? path.basename(file, '.md'))
         const ticket: ScannedTicket = {
@@ -250,6 +256,7 @@ export function register(): void {
           duration_min: typeof fm.duration_min === 'number' ? fm.duration_min : null,
           request_summary: extractRequestSummary(content),
           path: filePath,
+          mtime,
         }
         // Extract title from first H1 if not in frontmatter
         if (!ticket.title) {

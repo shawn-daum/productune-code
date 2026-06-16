@@ -22,6 +22,8 @@ export type PoHealthState =
 export interface PoHealthDetail {
   /** delegating — sub-agent persona name */
   persona?: string
+  /** delegating — sub-agent 작업 요약(Task.description 또는 prompt 앞부분, T-PATCH-148) */
+  task?: string
   /** rate-limited — ISO reset timestamp (optional) */
   resetAt?: string
   /** rate-limited — retry-after seconds extracted from stderr or stream-json envelope */

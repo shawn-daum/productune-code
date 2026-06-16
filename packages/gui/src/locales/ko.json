@@ -420,7 +420,8 @@
     },
     "presence": {
       "chipAriaLabel": "{{persona}} — {{state}}",
-      "doneNoArtifact": "done"
+      "doneNoArtifact": "done",
+      "workingNoTask": "작업 중…"
     },
     "explorer": {
       "title": "탐색기",

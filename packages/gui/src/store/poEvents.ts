@@ -19,6 +19,7 @@ import { useWorkspace } from './workspace'
 import { useUserTodo } from './useUserTodo'
 import { useQaLoop } from './useQaLoop'
 import { useSessionHealth } from './sessionHealth'
+import { usePersonaPresence, personaIdFromAgentType } from './personaPresence'
 import type { Message, MessageKind } from '../lib/types'
 
 // ── Module-level guards ────────────────────────────────────────────────────────
@@ -380,7 +381,49 @@ function register() {
   // Moved from WorkspaceShell useEffect — no race risk there (WorkspaceShell mounts
   // after workspace entry), but uplift keeps all IPC registrations in one place.
   offFns.push(api.poOnHealth?.((event: any) => {
+    // T-PATCH-164: subagent-done 은 presence 전용 신호 — sessionHealth 표면
+    // (banner/statusbar/PoFab)에 노출되면 안 된다. sessionHealth.setHealth 는
+    // HEALTH_PRIORITY 에 없는 state 를 무해하게 무시하지 못하고(undefined <= n === false)
+    // 오히려 state 를 'subagent-done' 으로 덮어쓰므로, 여기서 setHealth 보다 먼저
+    // 분기해 early-return 으로 격리한다(AC-5).
+    if (event?.state === 'subagent-done') {
+      const personaId = personaIdFromAgentType(event?.detail?.persona ?? '')
+      if (personaId && personaId !== 'po') {
+        const cur = usePersonaPresence.getState().entries[personaId]
+        // working 일 때만 done 으로 — 이미 done/idle 이면 no-op(중복 done 방지).
+        // done 진입 → personaPresence 의 auto-idle 타이머가 2.0s 후 idle 마무리.
+        if (cur.state === 'working') usePersonaPresence.getState().setPersonaState(personaId, 'done')
+      }
+      return  // setHealth 미호출 — banner/statusbar/PoFab 회귀 방지.
+    }
+
+    // SessionHealth 표면(banner/statusbar/PoFab)은 그대로 유지 — 회귀 방지.
     useSessionHealth.getState().setHealth(event)
+
+    // T-PATCH-148 (Q1): sub-agent presence 라이프사이클 구동.
+    //   delegating + detail.persona → 매핑된 sub-agent chip 을 'working' 으로.
+    //   healthy(위임 종료/복귀)        → 그 시점 working 인 모든 sub-agent 를 'done' 으로 전이.
+    // PO chip 은 usePOPresenceDerive(workspace.streaming)가 단독 소유하므로
+    // 여기서는 po 매핑 시 no-op(PO→PO 위임 방어).
+    const presence = usePersonaPresence.getState()
+    if (event?.state === 'delegating' && typeof event?.detail?.persona === 'string') {
+      const personaId = personaIdFromAgentType(event.detail.persona)
+      // 매핑 불가(null) 또는 'po' 는 무시 — PO chip 은 derive 가 단독 소유.
+      if (personaId && personaId !== 'po') {
+        const task = typeof event.detail.task === 'string' ? event.detail.task : undefined
+        presence.setPersonaState(personaId, 'working', { task })
+      }
+    } else if (event?.state === 'healthy') {
+      // 위임 종료/복귀 — turn 단위 1회. working 인 sub-agent(po 제외) 전부를
+      // done 으로 전이(task → artifact 승계). 개별 종료 이벤트가 없는 현 emit
+      // 구조상 의도된 단순화(AC1-3).
+      const { entries } = presence
+      for (const entry of Object.values(entries)) {
+        if (entry.persona !== 'po' && entry.state === 'working') {
+          presence.setPersonaState(entry.persona, 'done')
+        }
+      }
+    }
   }))
   offFns.push(api.poOnSessionRestarted?.(() => {
     useWorkspace.setState({ claudeSessionId: null })

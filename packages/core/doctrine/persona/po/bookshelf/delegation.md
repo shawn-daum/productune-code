@@ -73,6 +73,18 @@ After an impl dispatch, auto-dispatch QA (no user confirm). Full mechanics + cap
 
 Per-ticket fresh, per-turn resume. On ticket close (`done | blocked | abandoned`), run `jq '.current_task.persona_sessions = {}'` before nulling `current_task`. Next ticket's first dispatch is fresh; within-ticket multi-turn uses `--resume "$SID"`.
 
+### Continue a subagent — SendMessage(agentId) first [T-PATCH-150]
+
+Two resume channels, do not mix them:
+- **Main-session resume** = `--resume "$SID"` (above) — re-enters the PO's own conversation, or replays a `claude --print --resume` worker session keyed off `persona_sessions.<persona>`. This is the SID/UUID path.
+- **Subagent continue (keep context)** = **`SendMessage(to: <agentId>)`** — re-prompt a still-live subagent in-place, its context intact. Cheapest (no doctrine re-inject, no file re-read) — prefer it.
+
+Priority when continuing a subagent:
+1. `SendMessage(agentId)` IF the tool is exposed — it appears only when env `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` is set (po-runner sets it — T-PATCH-149). Token-efficient, holds context.
+2. ELSE (tool not exposed / call fails) → fresh re-dispatch + context replay: list the files to read + a 1-line summary of the prior output + lead the body with `FIRST action MUST be Read`. This rebuilds what the lost context held.
+
+One-shot agents (`Explore` / `Plan`) return NO agentId → cannot be continued at all; only `general-purpose` / custom `pdt-*` agents can. For a one-shot, "continue" always means a fresh dispatch.
+
 ## Chunking — per-call size
 
 Split multi-area / multi-decision / multi-output directives per sub-area; max 1–2 artifacts per Designer call.
@@ -81,10 +93,16 @@ Split multi-area / multi-decision / multi-output directives per sub-area; max 1�
 
 Fresh idea → delegate the Version 1 PRD directly: `PERSONA=pdt-designer · MODEL=opus · EFFORT=max · COMPLEXITY=L7`. Designer returns `state:"needs-info"` (relay `next_question`) or `state:"ready"` (PRD path + tickets + ambiguity_score + version_outcome). Full mechanics incl 5-iter cap + finalize: `designer/bookshelf/prd-clarity-loop.md`.
 
-## current_task — canonical field set (2026-06-15) [T-PATCH-139]
+## current_task — canonical 14 = pointer/rest shape (2026-06-15, reconciled 2026-06-16) [T-PATCH-139/154]
 
-Keep `current_task` pointer-only. The sanctioned field set is exactly 14 fields: `slug`, `request_summary`, `artifacts`, `type`, `status`, `persona_sessions`, `persona_session_meta`, `calibration_outcome`, `ticket_id`, `title`, `model`, `effort`, `qa_status`, `started_at` — write nothing outside it.
+The canonical 14 fields are the POINTER set + the at-rest (no active task) shape: `slug`, `request_summary`, `artifacts`, `type`, `status`, `persona_sessions`, `persona_session_meta`, `calibration_outcome`, `ticket_id`, `title`, `model`, `effort`, `qa_status`, `started_at`. At rest `current_task` carries these and nothing else.
 - Open `slug`, `request_summary`, `artifacts`, `type`, `status` yourself before dispatch.
 - Let the `post-delegate-state-write` hook write `persona_sessions` + `persona_session_meta`; let `post-delegate-state-write` / `pre-delegate-task-check` write `started_at` (set on dispatch open, like `persona_sessions` — never hand-write); let lifecycle write `ticket_id`, `title`, `model`, `effort`, `qa_status`; let calibration write `calibration_outcome` — never hand-write these.
 - `persona_sessions` + `persona_session_meta` + `started_at` live only during the ticket; nulling `current_task` at close (`done | blocked | abandoned`) drops them — never carry them past close.
-- Add NO freeform `note` or scratchpad field. Running notes go in the ticket `## Persona Activity` table or `briefs/<slug>.md`.
+- `status` stays the canonical enum (never a synonym); `past_tickets` stays forbidden (`docs/tickets/<version>/T-NNN.md` = SoT) — neither is relaxed by the scratch allowance below.
+
+### Active-task work-state scratch — allowed, ephemeral [T-PATCH-154]
+
+An ACTIVE `current_task` MAY carry extra work-state scratch fields beyond the 14 — `progress`, `decisions`, `next`, `carry`, `plan`. This is a same-session convenience cache, not authoritative. It is NOT freeform: stick to those named scratch keys.
+- The DURABLE / cross-session home for work-state is the brief (`briefs/<slug>.md`) — that is the SoT; po-state scratch is a same-session mirror you may skip reading. Resume reliability comes from the brief, never from scratch.
+- At close `current_task → null`, so scratch vanishes with it — no drift accumulation (unlike `past_tickets`, which is forbidden because it persists). This is why scratch is safe to allow but `past_tickets` is not.

@@ -13,8 +13,11 @@
 #   • schema_version explicitly set to a value < 2
 #   • past_tickets key present in the write
 #   • current_task.status set to a non-canonical value (enum from ticket-status-enum.json)
-#   • unknown current_task sub-field outside the canonical 14-field whitelist (Bash: known
-#     bad names only; Write: full JSON parse)
+#
+# NOTE (T-PATCH-153): an ACTIVE current_task may carry same-session work-state
+# scratch (progress / decisions / next / carry, etc). Non-canonical current_task
+# sub-fields are therefore NO LONGER blocked — scratch writes are allowed. Only
+# the three flags above are guarded.
 #
 # Cardinal rule: OVER-BLOCKING a valid write is a hard outage; under-blocking is
 # recoverable. When in doubt, PASS.
@@ -67,11 +70,6 @@ except Exception:
   [ -n "$_loaded" ] && STATUS_ENUM="$_loaded"
 fi
 
-# ── Canonical current_task field whitelist ────────────────────────────────────
-# 13 from delegation.md + started_at (written by post-delegate-state-write.sh).
-# Must stay in sync with session-start-po-state-migrate.sh and post-po-state-shape-guard.sh.
-CANONICAL_CT_FIELDS="slug request_summary artifacts type status persona_sessions persona_session_meta calibration_outcome ticket_id title model effort qa_status started_at"
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 emit_block_sv() {
   printf '[po-state-shape-guard] schema_version: "%s" — must be 2 (or omit to let migrate hook stamp it).\n' "$1" >&2
@@ -87,12 +85,6 @@ emit_block_status() {
   printf '[po-state-shape-guard] current_task.status: "%s" not in canonical enum.\n' "$1" >&2
   printf '  allowed: %s\n' "$(printf '%s' "$STATUS_ENUM" | tr '|' ' ' | sed 's/  */ | /g')" >&2
   printf '  Fix the value and retry.\n' >&2
-}
-
-emit_block_field() {
-  printf '[po-state-shape-guard] current_task.%s is not a canonical field.\n' "$1" >&2
-  printf '  Allowed: %s\n' "$CANONICAL_CT_FIELDS" >&2
-  printf '  Remove it. Running notes go in ticket ## Persona Activity or briefs/<slug>.md.\n' >&2
 }
 
 is_po_state_path() {
@@ -122,9 +114,6 @@ except Exception:
     # Not valid JSON or multiline issue — try via sys.argv
     sys.exit(0)
 
-allowed = set(['slug','request_summary','artifacts','type','status','persona_sessions',
-               'persona_session_meta','calibration_outcome','ticket_id','title','model',
-               'effort','qa_status','started_at'])
 status_enum = set('$STATUS_ENUM'.split('|'))
 issues = []
 
@@ -140,9 +129,6 @@ if isinstance(ct, dict):
     st = ct.get('status')
     if st and st not in status_enum:
         issues.append(('status', st))
-    for k in ct:
-        if k not in allowed:
-            issues.append(('unknown_field', k))
 
 for kind, val in issues:
     if kind == 'schema_version':
@@ -151,8 +137,6 @@ for kind, val in issues:
         print('past_tickets')
     elif kind == 'status':
         print('status:' + val)
-    elif kind == 'unknown_field':
-        print('field:' + val)
 " 2>/dev/null || true)"
 
   RC=0
@@ -162,7 +146,6 @@ for kind, val in issues:
       sv:*)      emit_block_sv "${line#sv:}";      RC=2 ;;
       past_tickets) emit_block_pt;                  RC=2 ;;
       status:*)  emit_block_status "${line#status:}"; RC=2 ;;
-      field:*)   emit_block_field "${line#field:}"; RC=2 ;;
     esac
   done <<< "$CHECK"
   exit $RC
@@ -178,8 +161,9 @@ if [ "$TOOL_NAME" = "Edit" ]; then
   NEW_STR="$(read_json new_string)"
   [ -z "$NEW_STR" ] && exit 0
 
-  # Conservative: only flag literal non-2 schema_version, past_tickets, known bad fields.
-  # Variable-interpolated values → pass.
+  # Conservative: only flag literal non-2 schema_version, past_tickets, non-enum status.
+  # Variable-interpolated values → pass. Non-canonical current_task scratch fields
+  # are allowed (T-PATCH-153) — not flagged here.
 
   # schema_version check: "schema_version": N where N != 2
   if printf '%s' "$NEW_STR" | grep -qE '"schema_version"[[:space:]]*:[[:space:]]*[0-9]+'; then
@@ -203,12 +187,6 @@ if [ "$TOOL_NAME" = "Edit" ]; then
       emit_block_status "$ST_VAL"
       exit 2
     fi
-  fi
-
-  # Known bad field: "note" — the canonical example of a disallowed scratchpad field
-  if printf '%s' "$NEW_STR" | grep -qE '"note"[[:space:]]*:'; then
-    emit_block_field "note"
-    exit 2
   fi
 
   exit 0
@@ -275,15 +253,7 @@ if [ "$TOOL_NAME" = "Bash" ]; then
     fi
   fi
 
-  # ── Known bad current_task field literal check ───────────────────────────────
-  # Only flag the explicitly disallowed freeform scratchpad field: .current_task.note
-  # (Other unknown fields are caught post-write by post-po-state-shape-guard.sh)
-  if printf '%s' "$CMD" | grep -qE '\.current_task\.note[[:space:]]*='; then
-    if ! printf '%s' "$CMD" | grep -qE '\.current_task\.note[[:space:]]*=[[:space:]]*(\$|`)'; then
-      emit_block_field "note"
-      exit 2
-    fi
-  fi
+  # Non-canonical current_task scratch fields are allowed (T-PATCH-153) — not flagged.
 
   exit 0
 fi

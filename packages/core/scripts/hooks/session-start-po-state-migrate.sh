@@ -3,25 +3,28 @@
 # Idempotently migrates po-state.json with schema_version < 2 to v2 shape:
 #   • stamps schema_version = 2
 #   • drops past_tickets array (docs/tickets/*/T-NNN.md is the SoT)
-#   • renames current_task.stage → type (T-P4-065 compat, if stage present and type absent)
-#   • drops unknown current_task fields outside the canonical 14-field whitelist
-#     (13 from delegation.md + started_at written by post-delegate-state-write.sh)
-#   NOTE: persona_sessions + persona_session_meta are CANONICAL (delegation.md §current_task)
-#         — NOT deleted here; they are preserved and cleared only at ticket close.
+#   NOTE: An ACTIVE current_task may carry same-session work-state scratch
+#         (progress / decisions / next / carry, etc). canonical-14 is the AT-REST
+#         shape (no active task); the durable cross-session SoT is the brief
+#         (briefs/<slug>.md). This hook therefore does NOT strip current_task —
+#         active scratch is preserved; it is cleared only at ticket close when
+#         current_task → null (T-PATCH-153).
+#         persona_sessions + persona_session_meta are CANONICAL (delegation.md
+#         §current_task) and likewise preserved.
 #
 # Safety (AC-5, oh-my-eyes slug lesson):
 #   • writes .bak before any transform
-#   • runs jq merge-only (never full-rewrite: only del/with_entries/field-set)
+#   • runs jq merge-only (never full-rewrite: only del/field-set)
 #   • verifies load-bearing fields slug/request_summary/artifacts/persona_sessions/
 #     version/current_phase survive the transform
 #   • on any failure: aborts and restores the .bak
 #
 # Idempotent: a strict no-op when the file is already shape-clean.
 #   Gate is SHAPE-based, not version-based (T-PATCH-146): needs_cleanup = TRUE when
-#   schema_version < 2, OR past_tickets present, OR current_task (object) holds any
-#   key outside the canonical-14 whitelist, OR current_task holds a 'stage' key.
-#   A v2-stamped-but-dirty file (e.g. v2 + leftover past_tickets / freeform
-#   current_task fields) is therefore re-cleaned; a genuinely clean v2 file is a
+#   schema_version < 2 (or non-numeric / float literal), OR past_tickets present.
+#   current_task contents are NOT gated (active scratch is allowed — T-PATCH-153).
+#   A v2-stamped-but-dirty file (e.g. v2 + leftover past_tickets) is therefore
+#   re-cleaned; a genuinely clean v2 file (no past_tickets, numeric schema 2) is a
 #   strict no-op (no output, no .bak). The jq transform is idempotent on
 #   already-clean fields, so re-running it on partially-dirty v2 is safe.
 #
@@ -54,22 +57,13 @@ STATE="$(find_po_state "$EVENT_CWD" 2>/dev/null || find_po_state "$PWD" 2>/dev/n
 [ -z "$STATE" ] && exit 0
 [ -f "$STATE" ] || exit 0
 
-# ── Canonical current_task whitelist ─────────────────────────────────────────
-# 13 fields from delegation.md §current_task (2026-06-15) [T-PATCH-139]:
-#   slug, request_summary, artifacts, type, status, persona_sessions,
-#   persona_session_meta, calibration_outcome, ticket_id, title, model, effort, qa_status
-# + started_at: written by post-delegate-state-write.sh auto-open block; not in the
-#   canonical 13 but present in every live current_task — kept to prevent false-positive
-#   field drops on real po-states.
-CANONICAL='["slug","request_summary","artifacts","type","status","persona_sessions","persona_session_meta","calibration_outcome","ticket_id","title","model","effort","qa_status","started_at"]'
-
-# ── Shape-based idempotency gate (T-PATCH-146) ───────────────────────────────
+# ── Shape-based idempotency gate (T-PATCH-146, T-PATCH-153) ──────────────────
 # needs_cleanup = TRUE when ANY of:
-#   1. schema_version < 2
+#   1. schema_version < 2 (or non-numeric / float literal)
 #   2. past_tickets present
-#   3. current_task (object) has any key outside the canonical-14 whitelist
-#   4. current_task (object) has a 'stage' key  (safety net; also covered by #3)
-# Genuinely clean v2 → needs_cleanup FALSE → strict no-op (no output, no .bak).
+# current_task contents are NOT gated (active scratch is allowed — T-PATCH-153).
+# Genuinely clean v2 (no past_tickets, numeric schema 2) → needs_cleanup FALSE →
+# strict no-op (no output, no .bak).
 # ISSUE 1 (T-PATCH-146): a non-numeric schema_version (e.g. the string "2") is
 # caught by the `type != "number"` clause below. A FLOAT literal (e.g. 2.0) is
 # invisible to jq — jq treats 2.0 and 2 as the same number, so the gate can't
@@ -82,19 +76,12 @@ if grep -qE '"schema_version"[[:space:]]*:[[:space:]]*-?[0-9]+\.[0-9]+([eE][-+]?
   SV_NONINT_LITERAL=1
 fi
 
-NEEDS_CLEANUP="$(jq -r --argjson allowed "$CANONICAL" --argjson svfloat "$SV_NONINT_LITERAL" '
+NEEDS_CLEANUP="$(jq -r --argjson svfloat "$SV_NONINT_LITERAL" '
   (
     ($svfloat == 1)
     or ((.schema_version | type) != "number")
     or ((.schema_version // 1) < 2)
     or has("past_tickets")
-    or (
-      ((.current_task // null) | type) == "object"
-      and (
-        (.current_task | keys_unsorted | any(. as $k | ($allowed | index($k)) == null))
-        or (.current_task | has("stage"))
-      )
-    )
   ) | if . then "1" else "0" end
 ' "$STATE" 2>/dev/null || echo 1)"
 
@@ -115,22 +102,10 @@ fi
 # file is dirty. The transform is idempotent on already-clean fields, so applying
 # it to a v2-stamped-but-dirty file safely re-cleans only the violating parts.
 TMP="$(mktemp)"
-jq --argjson allowed "$CANONICAL" '
-    # 1. stage → type rename in current_task (T-P4-065 sub-d compat)
-    ( if ((.current_task // {}) | type) == "object"
-          and (.current_task | has("stage"))
-          and ((.current_task | has("type")) | not)
-      then .current_task |= (.type = .stage | del(.stage))
-      else . end )
-    # 2. drop unknown current_task fields outside canonical whitelist
-    | ( if ((.current_task // null) | type) == "object"
-        then .current_task |= with_entries(
-          select(.key as $k | ($allowed | index($k)) != null)
-        )
-        else . end )
-    # 3. drop past_tickets array (ticket md files are the SoT — never duplicate here)
-    | del(.past_tickets)
-    # 4. stamp schema_version = 2
+jq '
+    # 1. drop past_tickets array (ticket md files are the SoT — never duplicate here)
+    del(.past_tickets)
+    # 2. stamp schema_version = 2
     | .schema_version = 2
 ' "$STATE" > "$TMP" 2>/dev/null
 
@@ -196,10 +171,12 @@ fi
 mv "$TMP" "$STATE"
 
 # Emit additionalContext so PO sees the migration at session start
-MSG="[po-state-migrate] v1→v2 migration applied to $(basename "$(dirname "$STATE")")/po-state.json
-  Changes: schema_version=2 stamped; past_tickets dropped; non-canonical current_task fields removed.
-  Backup preserved at: ${BAK}
-  Run state-hygiene turn-open sweep to confirm clean shape."
+MSG="[po-state-migrate] po-state.json normalised to canonical v2 shape ($(basename "$(dirname "$STATE")")/po-state.json)
+  This is EXPECTED, not an error, and LOSSLESS — it is the routine session-start hygiene pass, not a malfunction or a loss of work-state.
+  Dropped: past_tickets (the ticket .md under docs/tickets/*/ is the SoT — never duplicated here). schema_version stamped to 2. current_task is left intact — an active task's same-session work-state scratch (progress / decisions / next / carry) is preserved.
+  The durable cross-session SoT for active-task work-state is the brief (briefs/<slug>.md) — po-state current_task scratch is a same-session convenience cache, cleared at ticket close.
+  ⚠️ Do NOT restore the .bak unless debugging — it re-introduces any dropped past_tickets, which get re-cleaned at the very next session start. The .bak is retained for debug only.
+  Backup (debug-only): ${BAK}"
 
 printf '%s' "$MSG" | jq -Rs '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:.}}'
 exit 0

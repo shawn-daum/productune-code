@@ -30,6 +30,16 @@ Surface only when the condition holds, ask once, leave the field as-is on silenc
 
 At task close (alongside the calibration line) check the Claude Code auto-memory index (the project's harness `MEMORY.md`): for each accumulated entry, locate its doctrine-tier home, surface it through the promotion gate, then delete the entry from harness memory once placed. Rules live in doctrine tiers — harness memory is an inbox, never a home.
 
-## po-state v2 shape invariants (2026-06-15) [T-PATCH-139]
+## po-state v2 shape invariants (2026-06-15, reconciled 2026-06-16) [T-PATCH-139/154]
 
-In the same turn-open pass, hold po-state at schema_version 2: stamp `schema_version = 2` when it is absent or below 2; drop any `past_tickets` array and never recreate it (`docs/tickets/<version>/T-NNN.md` is the source of truth); drop any `current_task` field outside the canonical set in `delegation.md`. Merge in-place with jq — never full-rewrite the file — and confirm `slug`, `request_summary`, `artifacts`, `persona_sessions`, `version`, `phase` survive the pass.
+In the same turn-open pass, hold po-state at schema_version 2: stamp `schema_version = 2` when it is absent or below 2; drop any `past_tickets` array and never recreate it (`docs/tickets/<version>/T-NNN.md` is the source of truth). Merge in-place with jq — never full-rewrite the file — and confirm `slug`, `request_summary`, `artifacts`, `persona_sessions`, `version`, `phase` survive the pass.
+
+The migrate does NOT strip an active `current_task`'s work-state scratch — it only drops `past_tickets` and stamps `schema_version`. Active scratch (`progress`/`decisions`/`next`/`carry`/`plan`, per `delegation.md`) is an allowed ephemeral cache; leave it. The strip discipline is scoped to `past_tickets` (forbidden) and the v1→v2 stamp — not to active scratch.
+
+### Work-state home = brief (po-state scratch is a cache) [T-PATCH-152/154]
+
+The DURABLE / cross-session SoT for active-task work-state — progress, decisions, next, carry-forward, plan notes — is the brief (`briefs/<slug>.md`). po-state `current_task` scratch is permitted as a same-session convenience cache (the named scratch keys in `delegation.md`, NOT arbitrary freeform), but it is NOT authoritative — the brief is.
+
+A v1→v2 migrate shrinking `current_task` (dropping `past_tickets` / non-v2 cruft) is EXPECTED + LOSSLESS — durable work-state is in the brief, not the dropped fields. This "shrink expected / do not restore" applies to the `past_tickets` + v1→v2 stamp ONLY; an active task's scratch is no longer shrunk. Do NOT restore the `.bak` to recover dropped `past_tickets` (re-creates the forbidden array → re-cleaned next session → loop).
+
+Turn-open work-state recovery path = read the brief (+ ticket board) as SoT; the same-session scratch cache, if present, is a convenience only.

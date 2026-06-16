@@ -239,14 +239,15 @@ const chipRowS: React.CSSProperties = {
   transition: 'background 0.12s',
 }
 
-// persona-blink keyframe defined in globals.css — reuse (no new CSS needed)
+// pdt-persona-blink keyframe defined in styles/md-recipes.css:480 — reuse the shared
+// CSS-module keyframe (T-PATCH-149: old `persona-blink` died when T-144 removed globals.css).
 const pulseDotS: React.CSSProperties = {
   width: 6,
   height: 6,
   borderRadius: '50%',
   background: '#FBBF24',                         // --health-warn
   flexShrink: 0,
-  animationName: 'persona-blink',
+  animationName: 'pdt-persona-blink',
   animationDuration: '1.6s',
   animationTimingFunction: 'ease-in-out',
   animationIterationCount: 'infinite',

@@ -2,6 +2,7 @@ import type { Pane, LeafPaneNode, Tab, TabType } from '../../../store/workspace'
 import { useWorkspace } from '../../../store/workspace'
 import type { Ticket, Message, PromotionPayload } from '../../../lib/types'
 import type { QuickOpenItem } from '../../../components/workspace/QuickOpenPalette'
+import { personaIdFromAgentType } from '../../../store/personaPresence'
 import {
   SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH,
   PO_CHAT_MIN_WIDTH, PO_CHAT_MAX_WIDTH,
@@ -331,10 +332,12 @@ export function buildQuickOpenItems(
 
   // ── Persona items ──
   for (const slug of PERSONAS) {
-    // Full id (pdt-developer) → PersonaPresence dot key (dev). PersonaDefTab is
-    // keyed by the full `pdt-*` id, so we pass `persona: slug` (the id) directly.
-    const bare = slug.replace('pdt-', '')
-    const dotKey: 'po' | 'designer' | 'dev' | 'qa' = bare === 'developer' ? 'dev' : (bare as 'po' | 'designer' | 'qa')
+    // Full id (pdt-developer) → PersonaPresence dot key (dev) via the T-148 single
+    // source. PersonaDefTab is keyed by the full `pdt-*` id, so we pass `persona: slug`
+    // (the id) directly. slug ∈ PERSONAS (all known pdt-* ids) so lookup never misses;
+    // guard the null branch only for type-safety.
+    const dotKey = personaIdFromAgentType(slug)
+    if (!dotKey) continue
     items.push({
       id: `persona:${slug}`,
       source: 'persona',

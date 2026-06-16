@@ -162,6 +162,11 @@ if os.path.isdir(ticket_dir):
             continue
         if ticket_phase!=phase:
             continue
+        # abandoned = terminal-archive; excluded from the progress denominator
+        # entirely (counts toward neither total nor done). Mirrors
+        # phase-mapping.ts:138. blocked stays counted (in-progress work).
+        if sm.group(1)=='abandoned':
+            continue
         total+=1
         if sm.group(1)=='done':
             done+=1

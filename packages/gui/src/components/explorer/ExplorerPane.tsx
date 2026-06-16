@@ -11,7 +11,7 @@ import SearchPane from './SearchPane'
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
 const TEXT_EXTS  = new Set([
-  '.json', '.yml', '.yaml', '.txt', '.log',
+  '.yml', '.yaml', '.txt', '.log',
   '.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.sh', '.env',
 ])
 const MD_EXTS    = new Set(['.md', '.mdx'])
@@ -22,6 +22,8 @@ function resolveTabKind(filePath: string): { type: TabType; readonly?: boolean }
   if (MD_EXTS.has(ext))    return { type: 'markdown' }
   if (HTML_EXTS.has(ext))  return { type: 'preview' }
   if (IMAGE_EXTS.has(ext)) return { type: 'image' }
+  // .json → artifacts와 동일한 JSON 트리 뷰어(ArtifactJsonTab). (T-PATCH-160)
+  if (ext === '.json')     return { type: 'artifact-json' }
   if (TEXT_EXTS.has(ext))  return { type: 'code-view', readonly: true }
   // Unknown/extensionless: route to the code viewer and let the IPC's
   // looksBinary guard decide whether to show the no-preview state. (T-PATCH-016)
@@ -84,6 +86,16 @@ export default function ExplorerPane() {
       const fileName = absPath.split('/').pop() ?? absPath
       const { type, readonly } = resolveTabKind(absPath)
       const tabId = `file:${absPath}`
+      // artifact-json (JSON tree viewer) takes a different prop contract than the
+      // path-based viewers: { absPath, relPath, projectDir }, loaded via the
+      // project-scoped artifactsReadFile IPC (same as ArtifactsPane). (T-PATCH-160)
+      if (type === 'artifact-json' && projectDir) {
+        const relPath = absPath.startsWith(projectDir + '/')
+          ? absPath.slice(projectDir.length + 1)
+          : absPath
+        openTab(tabId, type, { absPath, relPath, projectDir }, fileName)
+        return
+      }
       const props: Record<string, unknown> = { path: absPath }
       if (readonly) props.readonly = true
       // code-view reads via the project-dir-scoped search:readFileLines IPC
