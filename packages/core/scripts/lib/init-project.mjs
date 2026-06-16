@@ -215,7 +215,8 @@ const VERSION_ID_RE = /^v\d+(\.\d+)?$/
  * Conditionally written (only on valid initialVersionId):
  *   docs/artifacts/<v>/manifest.json, docs/tickets/<v>/.gitkeep.
  *
- * NOT written (lifecycle-owned): .productune/po-state.json.
+ * Written (absent-only, T-PATCH-141): .productune/po-state.json — canonical empty v2 seed.
+ * init is now the deterministic po-state generator; existing files are never clobbered.
  *
  * @param {string} projectDir
  * @param {string | undefined} [initialVersionId]
@@ -254,6 +255,15 @@ export function bootstrapPersonaMemory(projectDir, initialVersionId) {
     'Read at Phase 1 PRD authoring; appended by Designer at Phase 5 Version close.\n' +
     '`- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>`.\n' +
     'decision-type ∈ `shipped | deferred | dropped | scope-change`.\n\n## Entries\n',
+  )
+
+  // T-PATCH-141: init is now the canonical po-state generator (absent-only, never clobbers).
+  // Canonical empty v2 seed — lifecycle fields (current_phase, versions, etc.) added later
+  // by PO / delegation hooks. recent_turns omitted from seed: active v2 field written lazily
+  // by post-delegate-state-write.sh on first delegation. past_tickets omitted: legacy v1 field.
+  ensureFile(
+    path.join(projectDir, '.productune', 'po-state.json'),
+    JSON.stringify({ schema_version: 2, current_task: null }, null, 2) + '\n',
   )
 
   const turnsDir = path.join(projectDir, '.productune', 'turns')
@@ -605,7 +615,8 @@ export function findAncestorProductuneRoot(startDir) {
  *   C) config absent + stampSchemaV === false → legacy migrate; omit schema_v.
  *   D) config corrupt → fresh treat but omit schema_v (safe side: let migration re-eval).
  *
- * NOT written: .productune/po-state.json (lifecycle-owned — AC-5).
+ * Written (absent-only, via bootstrapPersonaMemory, T-PATCH-141): .productune/po-state.json
+ * with canonical empty v2 shape. Existing files are never clobbered (re-init safe).
  *
  * @param {InitOptions} opts
  * @returns {ProjectConfig}

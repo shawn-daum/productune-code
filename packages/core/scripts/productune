@@ -649,7 +649,10 @@ ensure_state() {
     say "migrated: .codex/po-state.json → .productune/po-state.json"
   fi
   if [ ! -f "$root/.productune/po-state.json" ]; then
-    printf '{"schema_version":1,"current_task":null,"past_tickets":[],"recent_turns":[]}\n' \
+    # T-PATCH-141: canonical v2 seed — past_tickets dropped (legacy v1 field);
+    # recent_turns omit-from-seed only (active v2 field, written lazily by
+    # post-delegate-state-write.sh on first delegation).
+    printf '{"schema_version":2,"current_task":null}\n' \
       > "$root/.productune/po-state.json"
   fi
 }

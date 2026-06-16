@@ -41,6 +41,9 @@ COMMON_TIER0="$HOME/.productune/doctrine/common/habit.md"
 build_migration_block() {
   local d="${1:-}" proj=""
   while [ "$d" != "/" ] && [ -n "$d" ]; do
+    # Intentional divergence: po-state.json only (PO-only migration path).
+    # Fresh-init (config only, no po-state yet) has no migration target → po-state
+    # marker is correct here. The fallback gate below uses config-OR-po-state.
     [ -f "$d/.productune/po-state.json" ] && { proj="$d"; break; }
     d="$(dirname "$d")"
   done
@@ -121,7 +124,8 @@ $(cat "$COMMON_TIER0")
   TIER1_BLOCK=""
   PROJ="$EVENT_CWD"
   while [ -n "$PROJ" ] && [ "$PROJ" != "/" ]; do
-    [ -f "$PROJ/.productune/po-state.json" ] && break
+    # config-OR-po-state: covers fresh-init (config only) + self-healable (po-state only).
+    { [ -f "$PROJ/.productune/config.json" ] || [ -f "$PROJ/.productune/po-state.json" ]; } && break
     PROJ="$(dirname "$PROJ")"
   done
   if [ -n "$PROJ" ] && [ "$PROJ" != "/" ] && [ -f "$PROJ/docs/$PERSONA/habit.md" ]; then
@@ -156,7 +160,22 @@ Act per the doctrine above.$MIGRATION_BLOCK"
 fi
 
 # ── Fallback: no agent_type (resume w/o --agent, source clear/compact, etc.) ──
-# fail-loud if even the common Tier0 is absent.
+# Gate: only inject if we are inside a productune project. Walk up from EVENT_CWD
+# looking for .productune/config.json OR .productune/po-state.json (config-OR-po-state
+# covers fresh-init + self-healable projects). Neither found → not a productune
+# project → inject nothing (exit 0).
+_FALLBACK_PROJ=""
+_WALK="$EVENT_CWD"
+while [ -n "$_WALK" ] && [ "$_WALK" != "/" ]; do
+  if [ -f "$_WALK/.productune/config.json" ] || [ -f "$_WALK/.productune/po-state.json" ]; then
+    _FALLBACK_PROJ="$_WALK"
+    break
+  fi
+  _WALK="$(dirname "$_WALK")"
+done
+[ -z "$_FALLBACK_PROJ" ] && exit 0
+
+# fail-loud if even the common Tier0 is absent (only reached inside a productune project).
 if [ ! -f "$COMMON_TIER0" ]; then
   printf '[!] productune common Tier0 doctrine MISSING: %s\n' "$COMMON_TIER0" >&2
   emit_ctx "[productune doctrine — MISSING]

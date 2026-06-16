@@ -36,3 +36,5 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 - (2026-06-15) [T-027 follow-up] `turns.jsonl` append-only 무한증가 — rotation/size-cap/prune 정책 없음(현재 gitignore로 커밋만 차단). 장기 dogfood 시 파일 비대 → rotation 티켓 별도. (출처: T-027 dev/QA residual risk)
 - (2026-06-15) [T-027 follow-up] GUI CostArchivePanel row-level 검증 미수행 — CLI read-path가 AC-6 authoritative surface로 PASS, 패널 mount+empty-state는 smoke 통과했으나 populated turns.jsonl 대상 group-by 행 출력은 GUI에서 클릭-검증 안 됨. 실사용 turns.jsonl 쌓인 뒤 눈 확인 권장. (출처: T-027 QA residual)
 - (2026-06-15) [T-PATCH-136 follow-up] `packages/gui/electron/ipc/skills.ts` `parseSkillFrontmatter`가 tickets.ts와 동일 regex-only 파서 버그 — 인라인 `#` 주석 미처리 + 무조건 unquote(`replace(/^['"]|['"]$/g,'')`). skill frontmatter도 같은 오파싱 가능. tickets.ts 수정(T-PATCH-136)과 동일 패턴으로 별도 티켓 정합 필요(dev). (출처: T-PATCH-136 dev/QA AC-9 flag)
+
+- [low] onboarding.json GUI/CLI 불일치 — GUI `project:create`(project.ts:307,316)만 `writeOnboardingPending` 호출, CLI `productune init`은 안 씀. EntryGate legacy fallback이 graceful 처리하나 일관성 위해 init이 중립 record 쓸지 검토. (2026-06-16, T-PATCH-141 grill 파생)
