@@ -28,6 +28,9 @@ import { register as registerCostArchive, stopCostWatch } from './ipc/costArchiv
 import { abortActiveTurn, isPoRunning } from './po-runner'
 import { getCloseToTray, getLaunchAtLogin, setLaunchAtLogin, getZoomFactor } from '@productune/core'
 
+// T-PATCH-143: dev 모드 앱 메뉴/About/알림 소스 라벨을 "Electron"→"productune"로 통일 (app.name 첫 사용 전 호출, electron-builder.yml productName과 동일 값)
+app.setName('productune')
+
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
 // macOS may fire `open-file` before app.whenReady / before a window exists.
 // Store the path and flush it once the first window finishes loading.

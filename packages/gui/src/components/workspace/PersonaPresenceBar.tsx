@@ -10,21 +10,41 @@ import {
 } from '../../store/personaPresence'
 import { useWorkspace } from '../../store/workspace'
 
+// ── Sprite assets (Vite content-hash bundle, same pattern as FreshComposer) ───
+// Sprite sheet = 2172×724 = four 543×724 frames laid out horizontally.
+// Approach A: 1 PNG per persona + CSS background-position steps(4) — no JS frame
+// loop, no per-frame state, GPU-compositable.
+import poSprite from '../../assets/personas/po-work-sprite.png'
+import designerSprite from '../../assets/personas/designer-work-sprite.png'
+import devSprite from '../../assets/personas/dev-work-sprite.png'
+import qaSprite from '../../assets/personas/qa-work-sprite.png'
+
+const PERSONA_SPRITE: Record<PersonaId, string> = {
+  po: poSprite,
+  designer: designerSprite,
+  dev: devSprite,
+  qa: qaSprite,
+}
+
 // ── Keyframe injection (once per document) ───────────────────────────────────
 
-const BLINK_STYLE_ID = 'persona-blink-keyframes'
+const SPRITE_STYLE_ID = 'persona-sprite-keyframes'
 
-function ensureBlinkKeyframe() {
-  if (document.getElementById(BLINK_STYLE_ID)) return
+function ensureSpriteKeyframe() {
+  if (document.getElementById(SPRITE_STYLE_ID)) return
   const style = document.createElement('style')
-  style.id = BLINK_STYLE_ID
+  style.id = SPRITE_STYLE_ID
+  // steps(4, jump-none) + background-position 0%→100% with background-size
+  // 400% 100%: lands on exactly 0% / 33.33% / 66.67% / 100% (true frame
+  // boundaries of the 4-up sheet) so the four frames swap in place a→b→c→d.
+  // Plain steps(4) (=jump-end) would land on 0/25/50/75% and slide sideways.
   style.textContent = `
-    @keyframes persona-blink {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.2; }
+    @keyframes persona-sprite {
+      0%   { background-position: 0% 0; }
+      100% { background-position: 100% 0; }
     }
     @media (prefers-reduced-motion: reduce) {
-      @keyframes persona-blink { 0%, 100% { opacity: 1; } }
+      .persona-sprite-anim { animation: none !important; background-position: 0% 0 !important; }
     }
   `
   document.head.appendChild(style)
@@ -97,17 +117,23 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
     return () => document.removeEventListener('click', handleDocClick, true)
   }, [state, handleDocClick])
 
-  // Dot style
-  const dotStyle: React.CSSProperties = {
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
+  // Character sprite cell — 64px tall, 0.75 portrait ratio → 48px wide.
+  // working: 4-frame sprite animation. idle: frame-01 stop, grayscale + dim.
+  // done: frame-01 stop, full color.
+  // background-size/position logic unchanged — only the cell w/h grow so the
+  // sprite scales up proportionally.
+  const isWorking = state === 'working'
+  const characterStyle: React.CSSProperties = {
+    width: 48,
+    height: 64,
     flexShrink: 0,
-    backgroundColor:
-      state === 'idle'   ? '#4a4a4a'   // --txt3
-      : state === 'done' ? '#22C55E'   // --success
-      : color,                          // working = persona color
-    animation: state === 'working' ? 'persona-blink 0.8s ease infinite' : 'none',
+    backgroundImage: `url(${PERSONA_SPRITE[persona]})`,
+    backgroundRepeat: 'no-repeat',
+    backgroundSize: '400% 100%',
+    backgroundPosition: '0% 0',
+    animation: isWorking ? 'persona-sprite 0.6s steps(4, jump-none) infinite' : 'none',
+    filter: state === 'idle' ? 'grayscale(1)' : 'none',
+    opacity: state === 'idle' ? 0.4 : 1,
   }
 
   // Label style
@@ -126,10 +152,11 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
 
   const chipStyle: React.CSSProperties = {
     display: 'flex',
+    flexDirection: 'column',
     alignItems: 'center',
-    gap: 4,
+    gap: 2,
     position: 'relative',
-    cursor: state === 'done' ? 'default' : 'default',
+    cursor: 'default',
     outline: 'none',
   }
 
@@ -157,7 +184,11 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
         setTooltipVisible(false)
       }}
     >
-      <span style={dotStyle} aria-hidden="true" className="persona-dot" />
+      <div
+        style={characterStyle}
+        aria-hidden="true"
+        className={isWorking ? 'persona-character persona-sprite-anim' : 'persona-character'}
+      />
       <span style={labelStyle}>
         {label}
         {state === 'done' ? ' ✓' : ''}
@@ -199,7 +230,7 @@ export default function PersonaPresenceBar() {
   const { entries, dismissDone } = usePersonaPresence()
 
   useEffect(() => {
-    ensureBlinkKeyframe()
+    ensureSpriteKeyframe()
   }, [])
 
   // PO chip working blink — T-P4-093 (workspace.streaming → personaPresence.po)
@@ -214,13 +245,15 @@ export default function PersonaPresenceBar() {
   )
 }
 
+// Bar height = char 64 + chip gap 2 + label line 14 + ~6px top/bottom padding
+// = ≈92px, sized so the vertical char/label stack never clips.
 const barStyle: React.CSSProperties = {
-  height: 24,
+  height: 92,
   flexShrink: 0,
-  padding: '0 10px',
+  padding: '6px 12px',
   display: 'flex',
   alignItems: 'center',
-  gap: 10,
+  gap: 14,
   background: '#161616',
   borderBottom: '1px solid var(--border, #2A2A2A)',
 }

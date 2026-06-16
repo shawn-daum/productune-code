@@ -16,7 +16,14 @@
 #     version/current_phase survive the transform
 #   • on any failure: aborts and restores the .bak
 #
-# Idempotent: second run on a v2 file is a strict no-op (gate: schema_version >= 2).
+# Idempotent: a strict no-op when the file is already shape-clean.
+#   Gate is SHAPE-based, not version-based (T-PATCH-146): needs_cleanup = TRUE when
+#   schema_version < 2, OR past_tickets present, OR current_task (object) holds any
+#   key outside the canonical-14 whitelist, OR current_task holds a 'stage' key.
+#   A v2-stamped-but-dirty file (e.g. v2 + leftover past_tickets / freeform
+#   current_task fields) is therefore re-cleaned; a genuinely clean v2 file is a
+#   strict no-op (no output, no .bak). The jq transform is idempotent on
+#   already-clean fields, so re-running it on partially-dirty v2 is safe.
 #
 # SessionStart CANNOT block a session — this hook only performs file operations.
 # Emits additionalContext when migration runs so PO sees it at session start.
@@ -47,21 +54,6 @@ STATE="$(find_po_state "$EVENT_CWD" 2>/dev/null || find_po_state "$PWD" 2>/dev/n
 [ -z "$STATE" ] && exit 0
 [ -f "$STATE" ] || exit 0
 
-# ── Read current schema_version (default 1 if absent) ────────────────────────
-SCHEMA_V="$(jq -r '.schema_version // 1' "$STATE" 2>/dev/null || echo 1)"
-case "$SCHEMA_V" in (''|*[!0-9]*) SCHEMA_V=1 ;; esac
-
-# Idempotent gate: already v2+ → strict no-op (no output, clean exit)
-[ "$SCHEMA_V" -ge 2 ] && exit 0
-
-# ── Backup (abort if bak write fails) ────────────────────────────────────────
-TS_STAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%s)"
-BAK="${STATE}.bak.${TS_STAMP}"
-if ! cp "$STATE" "$BAK" 2>/dev/null; then
-  printf '[po-state-migrate] ERROR: .bak write failed (%s) — aborting migration\n' "$BAK" >&2
-  exit 0
-fi
-
 # ── Canonical current_task whitelist ─────────────────────────────────────────
 # 13 fields from delegation.md §current_task (2026-06-15) [T-PATCH-139]:
 #   slug, request_summary, artifacts, type, status, persona_sessions,
@@ -71,10 +63,59 @@ fi
 #   field drops on real po-states.
 CANONICAL='["slug","request_summary","artifacts","type","status","persona_sessions","persona_session_meta","calibration_outcome","ticket_id","title","model","effort","qa_status","started_at"]'
 
+# ── Shape-based idempotency gate (T-PATCH-146) ───────────────────────────────
+# needs_cleanup = TRUE when ANY of:
+#   1. schema_version < 2
+#   2. past_tickets present
+#   3. current_task (object) has any key outside the canonical-14 whitelist
+#   4. current_task (object) has a 'stage' key  (safety net; also covered by #3)
+# Genuinely clean v2 → needs_cleanup FALSE → strict no-op (no output, no .bak).
+# ISSUE 1 (T-PATCH-146): a non-numeric schema_version (e.g. the string "2") is
+# caught by the `type != "number"` clause below. A FLOAT literal (e.g. 2.0) is
+# invisible to jq — jq treats 2.0 and 2 as the same number, so the gate can't
+# distinguish them — but it survives in the JSON source text as "2.0", which the
+# sibling shape-guard / downstream tooling may reject. Detect it at the raw-text
+# level (no false-positive on integer literals) and force a re-clean; the jq
+# transform's `.schema_version = 2` re-serialises it to the integer 2.
+SV_NONINT_LITERAL=0
+if grep -qE '"schema_version"[[:space:]]*:[[:space:]]*-?[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?' "$STATE" 2>/dev/null; then
+  SV_NONINT_LITERAL=1
+fi
+
+NEEDS_CLEANUP="$(jq -r --argjson allowed "$CANONICAL" --argjson svfloat "$SV_NONINT_LITERAL" '
+  (
+    ($svfloat == 1)
+    or ((.schema_version | type) != "number")
+    or ((.schema_version // 1) < 2)
+    or has("past_tickets")
+    or (
+      ((.current_task // null) | type) == "object"
+      and (
+        (.current_task | keys_unsorted | any(. as $k | ($allowed | index($k)) == null))
+        or (.current_task | has("stage"))
+      )
+    )
+  ) | if . then "1" else "0" end
+' "$STATE" 2>/dev/null || echo 1)"
+
+# Parse failure or jq error → conservatively treat as needing cleanup (the
+# transform is merge-only + guarded by .bak restore, so a re-clean is safe).
+case "$NEEDS_CLEANUP" in (1) : ;; (0) exit 0 ;; (*) NEEDS_CLEANUP=1 ;; esac
+
+# ── Backup (abort if bak write fails) ────────────────────────────────────────
+TS_STAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%s)"
+BAK="${STATE}.bak.${TS_STAMP}"
+if ! cp "$STATE" "$BAK" 2>/dev/null; then
+  printf '[po-state-migrate] ERROR: .bak write failed (%s) — aborting migration\n' "$BAK" >&2
+  exit 0
+fi
+
 # ── jq migration (in-place merge, never full-rewrite) ────────────────────────
+# No version branch here (T-PATCH-146): the shape gate above already decided this
+# file is dirty. The transform is idempotent on already-clean fields, so applying
+# it to a v2-stamped-but-dirty file safely re-cleans only the violating parts.
 TMP="$(mktemp)"
 jq --argjson allowed "$CANONICAL" '
-  if (.schema_version // 1) >= 2 then . else
     # 1. stage → type rename in current_task (T-P4-065 sub-d compat)
     ( if ((.current_task // {}) | type) == "object"
           and (.current_task | has("stage"))
@@ -91,20 +132,24 @@ jq --argjson allowed "$CANONICAL" '
     | del(.past_tickets)
     # 4. stamp schema_version = 2
     | .schema_version = 2
-  end
 ' "$STATE" > "$TMP" 2>/dev/null
 
 # ── Verify: non-empty + schema_version == 2 ──────────────────────────────────
 if [ ! -s "$TMP" ]; then
   rm -f "$TMP"
-  printf '[po-state-migrate] ERROR: jq produced empty output — aborting, .bak at: %s\n' "$BAK" >&2
+  # File was NOT changed — discard the orphan .bak so it doesn't accumulate every
+  # session start on a malformed/empty/array-root po-state (T-PATCH-146 ISSUE 2).
+  rm -f "$BAK"
+  printf '[po-state-migrate] ERROR: jq produced empty output — aborting (no change made)\n' >&2
   exit 0
 fi
 
 NEW_SV="$(jq -r '.schema_version // 0' "$TMP" 2>/dev/null || echo 0)"
 if [ "$NEW_SV" != "2" ]; then
   rm -f "$TMP"
-  printf '[po-state-migrate] ERROR: output schema_version=%s (expected 2) — aborting, .bak at: %s\n' "$NEW_SV" "$BAK" >&2
+  # File was NOT changed — discard the orphan .bak (T-PATCH-146 ISSUE 2).
+  rm -f "$BAK"
+  printf '[po-state-migrate] ERROR: output schema_version=%s (expected 2) — aborting (no change made)\n' "$NEW_SV" >&2
   exit 0
 fi
 

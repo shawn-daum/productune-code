@@ -295,14 +295,11 @@ interface HealthContext {
   lastToolUseAt: number | null      // Date.now() of the most recent tool_use
   lastEmittedState: PoHealthState
   msgId: string
-  /** setTimeout handle for the permission-blocked timeout heuristic */
-  toolUseTimeoutHandle: ReturnType<typeof setTimeout> | null
   /** setTimeout handle for the compacting heuristic (silence timeout) */
   silenceTimeoutHandle: ReturnType<typeof setTimeout> | null
   lastTokenAt: number | null
 }
 
-const TOOL_USE_TIMEOUT_MS = 30_000   // provisional permission-blocked
 const SILENCE_TIMEOUT_MS  = 15_000   // heuristic compacting
 
 function makeHealthCtx(msgId: string): HealthContext {
@@ -311,7 +308,6 @@ function makeHealthCtx(msgId: string): HealthContext {
     lastToolUseAt: null,
     lastEmittedState: 'healthy',
     msgId,
-    toolUseTimeoutHandle: null,
     silenceTimeoutHandle: null,
     lastTokenAt: null,
   }
@@ -327,13 +323,6 @@ function emitHealth(
   if (state === ctx.lastEmittedState) return
   ctx.lastEmittedState = state
   cb.onHealth({ state, detail, at: new Date().toISOString(), msgId: ctx.msgId })
-}
-
-function clearToolUseTimeout(ctx: HealthContext): void {
-  if (ctx.toolUseTimeoutHandle !== null) {
-    clearTimeout(ctx.toolUseTimeoutHandle)
-    ctx.toolUseTimeoutHandle = null
-  }
 }
 
 function clearSilenceTimeout(ctx: HealthContext): void {
@@ -379,53 +368,32 @@ function handleStderrHealth(line: string, ctx: HealthContext, cb: RunCallbacks):
       if (resetMatch) resetAt = resetMatch[1]
     }
 
-    clearToolUseTimeout(ctx)
     emitHealth('rate-limited', { resetAt, retryAfterSec }, ctx, cb)
     return
   }
 
-  // Permission denied
-  const permissionTools = ['Write', 'Edit', 'Bash']
-  const isPermissionTool = ctx.lastToolUse !== null && permissionTools.includes(ctx.lastToolUse)
-  if (/(permission|denied|deny)/i.test(line) && isPermissionTool) {
-    clearToolUseTimeout(ctx)
-    emitHealth('permission-blocked', { deniedPattern: ctx.lastToolUse ?? undefined }, ctx, cb)
-    return
-  }
+  // T-PATCH-147: stderr-based permission detection removed. Under
+  // bypassPermissions there is no permission prompt/denial, so this path could
+  // only ever fire a false positive. The `permission-blocked` health state is
+  // retained renderer-side but is no longer emitted by the runner.
 }
 
-/** Inspect an assistant content text for permission patterns. */
-function handleTextHealth(text: string, ctx: HealthContext, cb: RunCallbacks): void {
-  if (/^I (need|require) (your )?permission/i.test(text)) {
-    clearToolUseTimeout(ctx)
-    emitHealth('permission-blocked', { deniedPattern: ctx.lastToolUse ?? undefined }, ctx, cb)
-  }
-}
-
-/** Process a tool_use part — record and arm timeouts. */
+/** Process a tool_use part — record tool name + delegating transition. */
 function handleToolUseHealth(toolName: string, ctx: HealthContext, cb: RunCallbacks): void {
   ctx.lastToolUse = toolName
   ctx.lastToolUseAt = Date.now()
 
   // Task tool → delegating
   if (toolName === 'Task') {
-    clearToolUseTimeout(ctx)
     clearSilenceTimeout(ctx)
     emitHealth('delegating', undefined, ctx, cb)
     return
   }
 
-  // Write / Edit / Bash → arm provisional permission-blocked timeout
-  const permissionTools = ['Write', 'Edit', 'Bash']
-  if (permissionTools.includes(toolName)) {
-    clearToolUseTimeout(ctx)
-    ctx.toolUseTimeoutHandle = setTimeout(() => {
-      // 30s without a result → provisional permission-blocked
-      if (ctx.lastEmittedState !== 'permission-blocked') {
-        emitHealth('permission-blocked', { deniedPattern: toolName }, ctx, cb)
-      }
-    }, TOOL_USE_TIMEOUT_MS)
-  }
+  // T-PATCH-147: the provisional 30s Write/Edit/Bash → permission-blocked timer
+  // was removed (always a false positive under bypassPermissions, and prone to
+  // misfire on long Bash/build/stream delays). Silence-timeout handles genuine
+  // no-output hangs separately.
 }
 
 // ── Real spawn ──────────────────────────────────────────────────────────────────
@@ -455,6 +423,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     } else {
       args.push('--agent', PO_AGENT)
     }
+    // T-PATCH-147: default permission mode = bypassPermissions (≡ --dangerously-skip-permissions).
+    // Trusted local runtime (user's own machine + own project); user decision 2026-06-16.
+    // headless `claude --print` has no TTY, so an un-allowed tool would otherwise abort the
+    // session. `.claude/settings.json` permissions.defaultMode is ignored in print mode → the
+    // CLI flag is the correct path. Applies to both first-call and resume paths.
+    args.push('--permission-mode', 'bypassPermissions')
     args.push('--print', '--output-format', 'stream-json', '--verbose', opts.text)
 
     const env = { ...process.env, NO_COLOR: '1' }
@@ -499,7 +473,6 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     })
 
     child.on('error', (err) => {
-      clearToolUseTimeout(hCtx)
       clearSilenceTimeout(hCtx)
       emitHealth('error-other', { errorMessage: err.message }, hCtx, cb)
       cb.onAnnounce(msgId, { level: 'error', text: `spawn failed: ${err.message}` })
@@ -510,7 +483,6 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     child.on('close', (code) => {
       // T-PATCH-081: clear active child ref on close (handles both normal exit and SIGTERM).
       activeChild = null
-      clearToolUseTimeout(hCtx)
       clearSilenceTimeout(hCtx)
 
       if (stdoutBuf.trim()) handleStreamJsonLine(stdoutBuf.trim(), msgId, cb, hCtx, turnOrigin)
@@ -589,23 +561,18 @@ function handleStreamJsonLine(
     for (const part of content) {
       if (part?.type === 'text' && typeof part?.text === 'string') {
         cb.onToken(msgId, part.text)
-        handleTextHealth(part.text, hCtx, cb)
       } else if (part?.type === 'tool_use' && typeof part?.name === 'string') {
         // ── T-PATCH-037 Path A: AskUserQuestion tool_use (PO-only) ──────────
         // Normalize Claude's AskUserQuestion input → AskUserQuestionPayload and
         // emit the card. Skip the generic `→ tool:` announce + health for this
-        // tool so it doesn't (a) leave a stray trace, or (b) arm a permission
-        // timeout. v1 surfaces the FIRST question only (multi-question = OOS).
+        // tool so it doesn't leave a stray trace. v1 surfaces the FIRST question
+        // only (multi-question = OOS).
         if (part.name === 'AskUserQuestion') {
           const payload = normalizeAskUserQuestion(part.input)
           if (payload && !askEmitted) {
             askEmitted = true
             cb.onAskUserQuestion(msgId, payload)
           }
-          // T-PATCH-131: AskUserQuestion is a legitimate user-input wait, not a hang.
-          // Clear the provisional permission-blocked timer so it doesn't fire while
-          // waiting for the user to respond (false positive fix — gap (a)).
-          clearToolUseTimeout(hCtx)
           continue
         }
 
@@ -637,7 +604,6 @@ function handleStreamJsonLine(
     }
     // Error result
     if (obj?.subtype === 'error' || obj?.is_error === true) {
-      clearToolUseTimeout(hCtx)
       const errStr = JSON.stringify(obj?.error ?? '')
       if (/rate_limit_error|429|rate.?limit/i.test(errStr)) {
         let retryAfterSec: number | undefined
@@ -649,8 +615,7 @@ function handleStreamJsonLine(
       }
       return
     }
-    // Normal result — clear tool-use timeout and recover to healthy.
-    clearToolUseTimeout(hCtx)
+    // Normal result — clear silence timeout and recover to healthy.
     clearSilenceTimeout(hCtx)
     emitHealth('healthy', undefined, hCtx, cb)
 
@@ -755,20 +720,10 @@ function handleStreamJsonLine(
     return
   }
 
-  // T-PATCH-131: type === 'user' — tool_result returned.
-  // A tool_result means the tool completed; clear the provisional permission-blocked
-  // timer so it can't fire on a later pause in the same turn (false positive fix — gap (b)).
-  // Minimal: no health state emitted, just clear. Guard against malformed shapes.
-  if (type === 'user') {
-    const content = obj?.message?.content
-    if (
-      Array.isArray(content) &&
-      content.some((item: any) => item?.type === 'tool_result')
-    ) {
-      clearToolUseTimeout(hCtx)
-    }
-    return
-  }
+  // T-PATCH-147: the former `type === 'user'` tool_result handler existed only to
+  // clear the provisional permission-blocked timer (T-PATCH-131). With that timer
+  // removed, the handler has no remaining effect, so it is dropped — tool_result
+  // envelopes fall through as unknown/silent.
 
   // Unknown envelope — silent.
 }
