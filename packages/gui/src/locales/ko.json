@@ -382,7 +382,9 @@
         "file": "파일",
         "ticket": "Tickets",
         "persona": "페르소나",
-        "artifact": "산출물"
+        "artifact": "산출물",
+        "prd": "PRD",
+        "version": "Versions"
       }
     },
     "kbd": {

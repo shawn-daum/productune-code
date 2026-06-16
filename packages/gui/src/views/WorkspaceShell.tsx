@@ -148,6 +148,8 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
   const { tickets: scannedTickets } = useTicketScan(project.projectDir)
 
   const poStateVersion = useWorkspace((s) => s.poState?.current_version ?? null)
+  // T-PATCH-175: full po-state for Quick Open prd-path resolution + version list.
+  const poState = useWorkspace((s) => s.poState)
 
   // T-PATCH-096 §4.b: per-phase (done/total) counts, current-version scoped,
   // bucketed by ticket type → phase. Passed to PhaseBreadcrumb (presentational).
@@ -297,6 +299,7 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
     quickOpenArtifacts,
     project.projectDir,
     openTab,
+    poState,
   )
 
   const dynamicGrid: React.CSSProperties = {

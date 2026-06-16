@@ -12,11 +12,11 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Search, FileText, TicketCheck, User, Package } from 'lucide-react'
+import { Search, FileText, TicketCheck, User, Package, BookText, GitBranch } from 'lucide-react'
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
-export type QuickOpenCategory = 'tickets' | 'artifacts' | 'personas'
+export type QuickOpenCategory = 'tickets' | 'artifacts' | 'personas' | 'prd' | 'versions'
 
 export interface QuickOpenItemMeta {
   statusPill?: string
@@ -26,7 +26,7 @@ export interface QuickOpenItemMeta {
 
 export interface QuickOpenItem {
   id: string
-  source: 'file' | 'ticket' | 'persona' | 'artifact'
+  source: 'file' | 'ticket' | 'persona' | 'artifact' | 'prd' | 'version'
   category?: QuickOpenCategory
   label: string
   sublabel?: string
@@ -43,11 +43,15 @@ interface Props {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
+// T-PATCH-175: prd + versions sections lead the order so the PRD command and the
+// version list surface above the broad ticket/artifact/persona indexes.
 const SECTION_ORDER: QuickOpenCategory[] = [
-  'tickets', 'artifacts', 'personas',
+  'prd', 'versions', 'tickets', 'artifacts', 'personas',
 ]
 
 const SECTION_LABELS: Record<QuickOpenCategory, string> = {
+  prd: 'prd',
+  versions: 'versions',
   tickets: 'tickets',
   artifacts: 'artifacts',
   personas: 'personas',
@@ -57,12 +61,15 @@ const PREFIX_MAP: Record<string, QuickOpenCategory> = {
   't:': 'tickets',
   'a:': 'artifacts',
   'p:': 'personas',
+  // T-PATCH-175: `v:` scopes to the po-state version list.
+  'v:': 'versions',
 }
 
 const LEGEND_CHIPS: Array<{ prefix: string; labelKey: string | null; literal?: string }> = [
   { prefix: 't:', labelKey: 'workspace.quickOpen.section.ticket' },
   { prefix: 'a:', labelKey: 'workspace.quickOpen.section.artifact' },
   { prefix: 'p:', labelKey: 'workspace.quickOpen.section.persona' },
+  { prefix: 'v:', labelKey: 'workspace.quickOpen.section.version' },
 ]
 
 const RECENT_KEY = 'productune:quickopen:recent'
@@ -196,6 +203,8 @@ function ItemIcon({ source, active }: { source: QuickOpenItem['source']; active:
     case 'ticket':   return <TicketCheck size={size} color={color} />
     case 'persona':  return <User        size={size} color={color} />
     case 'artifact': return <Package     size={size} color={color} />
+    case 'prd':      return <BookText    size={size} color={color} />
+    case 'version':  return <GitBranch   size={size} color={color} />
     default:         return <FileText    size={size} color={color} />
   }
 }

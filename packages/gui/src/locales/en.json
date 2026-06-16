@@ -382,7 +382,9 @@
         "file": "Files",
         "ticket": "Tickets",
         "persona": "Personas",
-        "artifact": "Artifacts"
+        "artifact": "Artifacts",
+        "prd": "PRD",
+        "version": "Versions"
       }
     },
     "kbd": {

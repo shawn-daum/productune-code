@@ -1,6 +1,6 @@
 import type { Pane, LeafPaneNode, Tab, TabType } from '../../../store/workspace'
 import { useWorkspace } from '../../../store/workspace'
-import type { Ticket, Message, PromotionPayload } from '../../../lib/types'
+import type { Ticket, Message, PromotionPayload, PoState } from '../../../lib/types'
 import type { QuickOpenItem } from '../../../components/workspace/QuickOpenPalette'
 import { personaIdFromAgentType } from '../../../store/personaPresence'
 import {
@@ -209,15 +209,77 @@ function makeSamplePromotionMessage(origin: 'auto' | 'user-requested'): Message 
   }
 }
 
-/** Build Quick Open palette items from files + tickets + artifacts + personas. */
+/**
+ * Resolve the PRD document path for the Cmd+P `prd` command (T-PATCH-175).
+ * Source precedence: the current version's `prd_anchor` (po-state) → fallback
+ * `docs/prd/PRD.md`. Relative anchors are resolved against `projectDir`; an
+ * already-absolute anchor (leading `/`) is passed through unchanged. The
+ * returned `source` tells the caller which branch fired (for self-check/notes).
+ */
+export function resolvePrdPath(
+  poState: PoState | null,
+  projectDir: string,
+): { path: string; source: 'prd_anchor' | 'fallback' } {
+  const currentVersion = poState?.versions?.find((v) => v.id === poState?.current_version)
+  const anchor = currentVersion?.prd_anchor?.trim()
+  if (anchor) {
+    const path = anchor.startsWith('/') ? anchor : `${projectDir}/${anchor.replace(/^\.?\//, '')}`
+    return { path, source: 'prd_anchor' }
+  }
+  return { path: `${projectDir}/docs/prd/PRD.md`, source: 'fallback' }
+}
+
+/** Build Quick Open palette items from files + tickets + artifacts + personas + prd + versions. */
 export function buildQuickOpenItems(
   quickOpenFiles: Array<{ path: string; ext: string }>,
   scannedTickets: Ticket[],
   artifactEntries: ArtifactEntry[],
   projectDir: string,
   openTab: (tabId: string, type: TabType, meta?: Record<string, unknown>, label?: string) => void,
+  poState: PoState | null,
 ): QuickOpenItem[] {
   const items: QuickOpenItem[] = []
+
+  // ── PRD command (T-PATCH-175) — opens the current-version PRD in the markdown ──
+  // viewer. Single item, high priority, surfaced by typing `prd`. Reuses the same
+  // `markdown:<path>` openTab pattern as file items so it dedup-focuses identically.
+  {
+    const { path: prdPath } = resolvePrdPath(poState, projectDir)
+    const prdName = fileBasename(prdPath)
+    items.push({
+      id: `prd:${prdPath}`,
+      source: 'prd',
+      category: 'prd',
+      label: 'PRD',
+      sublabel: prdName,
+      priority: 90,
+      open: () => openTab(`markdown:${prdPath}`, 'markdown', { path: prdPath }, prdName),
+    })
+  }
+
+  // ── Version items (T-PATCH-175, `v:` prefix) ──
+  // Selecting the current version focuses the current project workspace
+  // (`ticket-review:<cv>` — same tab the project-switch flow opens). A past
+  // version opens its VersionDetailView (`version-detail:<id>`), matching the
+  // VersionsPanel routing so both entry points dedup-focus the same tab.
+  {
+    const currentVersionId = poState?.current_version
+    for (const v of poState?.versions ?? []) {
+      const isCurrent = v.id === currentVersionId
+      items.push({
+        id: `version:${v.id}`,
+        source: 'version',
+        category: 'versions',
+        label: v.id,
+        sublabel: isCurrent ? 'current' : (v.ended_at ? v.ended_at.slice(0, 10) : 'past'),
+        priority: isCurrent ? 85 : 65,
+        open: () =>
+          isCurrent
+            ? openTab(`ticket-review:${v.id}`, 'ticket-review', { versionFilter: v.id }, v.id)
+            : openTab(`version-detail:${v.id}`, 'version-detail', { versionId: v.id }, v.id),
+      })
+    }
+  }
 
   // ── File items (no headline category — stays as 'file' source, non-sectioned) ──
   for (const f of quickOpenFiles) {
