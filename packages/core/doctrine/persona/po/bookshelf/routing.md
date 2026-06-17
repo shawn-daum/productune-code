@@ -35,6 +35,7 @@ This removes the "full ceremony vs violation" dilemma — every condition is ver
 
 - **Step-up +1** (model and/or effort): risk area (auth / payments / PII / migration / DS / public API) · ≥3 artifacts or cross-cutting · intent keywords (architecture / refactor / system-wide / i18n / migration) · `recent_turns` same-persona fail ≥2 · calibration 3-tuple history.
 - **Step-down −1**: trivial single-file / typo · decompose = 1 trivial step.
+- **Hold floor** (intent-keyword match only): when an *intent keyword* (architecture / refactor / system-wide / i18n / migration) was the *only* step-up trigger and the work is faithful execution of a settled plan — opus-authored at floor and clean (no `escalation.md` signal open), or a spec-settled ticket write — stay at floor; the keyword gated authoring, now done. Does NOT apply when a **risk area** (auth / payments / PII / migration / DS / public API) is touched, nor when `recent_turns` fail ≥2 or any escalation signal is live — those step-ups stand. Spec settled → floor; net-new or ambiguous → author at opus. <!-- (2026-06-17) [T-PATCH-194] -->
 - **Recovery on a bad result** → `bookshelf/escalation.md`.
 
 ## Effort follows the model
