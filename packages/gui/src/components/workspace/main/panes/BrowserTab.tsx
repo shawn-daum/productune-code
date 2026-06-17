@@ -199,6 +199,12 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
     if (!wv) return
 
     const onNavigate = (e: any) => {
+      // T-PATCH-189: only reflect MAIN-frame navigations in the URL bar.
+      // `did-navigate-in-page` also fires for sub-frames (iframes) — e.g. Naver's
+      // home embeds shopsquare.naver.com in an iframe whose in-page nav would
+      // otherwise overwrite the bar while the top page is still naver.com.
+      // (`did-navigate` is main-frame only → isMainFrame is undefined there.)
+      if (e?.isMainFrame === false) return
       const navUrl: string = e?.url ?? ''
       if (navUrl && navUrl !== 'about:blank') {
         setInputUrl(navUrl)
@@ -206,6 +212,8 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
       }
     }
     const onFailLoad = (e: any) => {
+      // Sub-frame (iframe) failures must not flag the whole page as failed.
+      if (e?.isMainFrame === false) return
       // errorCode -3 = ERR_ABORTED (user-initiated navigation, not a real failure)
       if (e?.errorCode !== -3) setLoadFailed(true)
     }
