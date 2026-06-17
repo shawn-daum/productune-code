@@ -4,11 +4,11 @@ version: v0.5
 slug: subagent-cost-attribution
 title: 비용 아카이브에 PO만 나옴 — subagent 비용 미기록 (Agent 도구 디스패치 ≠ Bash post-delegate 훅)
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: cost-archive
 risk_flags: [po-runner, cost-logging, needs-stream-spec]

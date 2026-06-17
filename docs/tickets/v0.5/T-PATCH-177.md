@@ -4,11 +4,11 @@ version: v0.5
 slug: tray-persona-asset-and-waiting-badge
 title: 메뉴막대/tray에 실행중 persona 에셋(최근 agent 우선) + PO가 user 입력 대기 시 빨간 badge
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-designer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: tray-persona
 risk_flags: [design-needed, electron-tray]

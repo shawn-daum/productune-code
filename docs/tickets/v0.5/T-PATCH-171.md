@@ -4,11 +4,11 @@ version: v0.5
 slug: working-indicator-tweaks
 title: 작업중 인디케이터 다듬기 — 토큰 단위 표기 + 작업중엔 파일버튼 숨김 + status·stop 한 줄 컴팩트
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: composer-working-indicator
 risk_flags: []

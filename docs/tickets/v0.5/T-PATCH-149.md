@@ -4,11 +4,11 @@ version: v0.5
 slug: agent-teams-env-and-grill-cleanups
 title: po-runner SendMessage env 활성 + grill 파생 cleanup (helpers 매핑 수렴 + PendingGateChip 죽은 애니)
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: po-runner-agent-teams
 risk_flags: [core-runtime, experimental-flag]

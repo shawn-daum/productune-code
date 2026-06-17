@@ -141,7 +141,8 @@
       "teamHint": "Team — personas & skills wired in T-P4-047"
     },
     "statusBar": {
-      "placeholder": "Auto-save / run status / external tools — filled in Slice 6"
+      "placeholder": "Auto-save / run status / external tools — filled in Slice 6",
+      "session": "Session"
     },
     "zoom": {
       "out": "Zoom out",

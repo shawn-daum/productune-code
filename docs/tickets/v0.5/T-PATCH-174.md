@@ -4,11 +4,11 @@ version: v0.5
 slug: cmdp-cleanup-and-space-bug
 title: Cmd+P 정리 — tab:/s:/mcp: 명령 삭제 + p: 뒤 띄어쓰기 시 커맨드 취소 버그
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: command-palette
 risk_flags: []

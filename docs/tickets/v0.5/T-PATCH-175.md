@@ -4,11 +4,11 @@ version: v0.5
 slug: cmdp-prd-and-version-commands
 title: Cmd+P 신규 명령 — PRD 열기 + V:(버전; 현재→프로젝트, 과거→버전히스토리)
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: command-palette
 risk_flags: []

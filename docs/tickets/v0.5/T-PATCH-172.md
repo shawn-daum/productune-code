@@ -4,11 +4,11 @@ version: v0.5
 slug: ticket-board-live-refresh
 title: 티켓 상태 변경이 보드에 즉시 반영 안 됨 (탭 갔다와야 갱신) — live refresh
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: ticket-board-refresh
 risk_flags: []

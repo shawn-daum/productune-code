@@ -32,12 +32,11 @@ import WorkspaceShell from '../views/WorkspaceShell'
 interface Props {
   project: Project
   onBack: () => void
-  onOpenRecent?: (projectDir: string, slug: string) => void
 }
 
 type Gate = 'loading' | 'fresh' | 'workspace'
 
-export default function EntryGate({ project, onBack, onOpenRecent }: Props) {
+export default function EntryGate({ project, onBack }: Props) {
   const [gate, setGate] = useState<Gate>('loading')
 
   useEffect(() => {
@@ -118,7 +117,7 @@ export default function EntryGate({ project, onBack, onOpenRecent }: Props) {
     )
   }
 
-  return <WorkspaceShell project={project} onBack={onBack} onOpenRecent={onOpenRecent} />
+  return <WorkspaceShell project={project} onBack={onBack} />
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────

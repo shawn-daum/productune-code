@@ -4,11 +4,11 @@ version: v0.5
 slug: gui-malformed-postate-robustness
 title: po-state 파싱 실패 시 GUI가 "v1 대기중" 오해 placeholder로 폴백 — 명시 에러+last-good
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: gui-postate-robustness
 risk_flags: []

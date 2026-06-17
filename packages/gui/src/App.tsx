@@ -257,7 +257,7 @@ export default function App() {
         ) : project ? (
           /* T-P4-101: EntryGate reads onboarding.json and routes to
              FreshComposer (pending) or WorkspaceShell (done/legacy). */
-          <EntryGate project={project} onBack={() => setProject(null)} onOpenRecent={openRecent} />
+          <EntryGate project={project} onBack={() => setProject(null)} />
         ) : (
           <HomeView
             onNewProject={() => setShowNewModal(true)}

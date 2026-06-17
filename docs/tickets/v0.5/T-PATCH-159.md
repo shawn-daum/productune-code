@@ -4,11 +4,11 @@ version: v0.5
 slug: gui-build-button
 title: GUI Build(+Smoke) 버튼 — surfaces config 기반 직접 실행 (zero-token)
 type: code
-status: review
+status: done
 phase: 3
 assignee: pdt-designer
 requires_qa: true
-qa_status:
+qa_status: pass
 requires_user_gate: false
 area_tag: gui-build-button
 risk_flags: [design-needed, child-process-exec]

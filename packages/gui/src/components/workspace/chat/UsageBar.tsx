@@ -50,17 +50,24 @@ interface UsageBarProps {
   horizontal?: boolean
   /**
    * T-PATCH-173: bare horizontal cluster for embedding in the bottom StatusBar.
-   * No border/background, compact 60px track, and the verbose "resets in …"
-   * label is suppressed (reset-label policy) so 5h + 7d + BuildSegment all fit
-   * in the 28px status row. 5h/7d sit side-by-side.
+   * No border/background, compact 60px track, 5h/7d side-by-side. The per-axis
+   * "resets in …" label is shown inline (restored — visibility over compactness;
+   * the 34px status row accommodates it).
    */
   statusbar?: boolean
+  /**
+   * T-PATCH-173: optional leading label (e.g. "Session") prefixing the gauge
+   * cluster in statusbar mode so users understand what the bars represent.
+   * Rendered only when usage data is present (no dangling label).
+   */
+  sessionLabel?: string
 }
 
 export default function UsageBar({
   inline = false,
   horizontal = false,
   statusbar = false,
+  sessionLabel,
 }: UsageBarProps) {
   const [payload, setPayload] = useState<UsagePayload | null>(null)
 
@@ -84,8 +91,15 @@ export default function UsageBar({
 
   return (
     <div style={containerStyle}>
-      {/* T-PATCH-173: leading separator only in statusbar mode (data present) */}
+      {/* T-PATCH-173: leading separator + "Session" label only in statusbar mode
+          (data present) so the gauge cluster is self-explanatory. */}
       {statusbar && <span style={statusbarSep}>·</span>}
+      {statusbar && sessionLabel && (
+        <span style={sessionLabelStyle}>
+          <Clock size={10} strokeWidth={2} style={{ color: '#6A6A78', flexShrink: 0 }} />
+          {sessionLabel}
+        </span>
+      )}
       {payload.five_hour && (
         <UsageRow
           icon={<Clock size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />}
@@ -113,9 +127,10 @@ interface UsageRowProps {
   label: string
   axis: UsageAxis
   /**
-   * T-PATCH-173: compact (statusbar) mode — narrower track and the inline
-   * "resets in …" label is hidden to fit the 28px row. The reset info is
-   * preserved on the row's `title` (hover tooltip) so nothing is lost.
+   * T-PATCH-173: compact (statusbar) mode — narrower track. The inline
+   * "resets in …" label is RESTORED (shown next to the %) per user request;
+   * the 34px status row gives it room. Still mirrored on the row `title` for
+   * the full string on hover when truncated.
    */
   compact?: boolean
 }
@@ -137,7 +152,7 @@ function UsageRow({ icon, label, axis, compact = false }: UsageRowProps) {
   return (
     <div
       style={rowWrap}
-      title={compact && resetLabel ? `${label} ${pct}% — ${resetLabel}` : undefined}
+      title={resetLabel ? `${label} ${pct}% — ${resetLabel}` : undefined}
     >
       {icon}
       <span style={labelStyle}>{label}</span>
@@ -146,8 +161,13 @@ function UsageRow({ icon, label, axis, compact = false }: UsageRowProps) {
         <div style={{ ...fill, width: `${pct}%`, background: barColor }} />
       </div>
       <span style={compact ? pctLabelCompact : pctLabel}>{pct}%</span>
-      {/* compact (statusbar) mode suppresses the verbose reset label to fit 28px */}
-      {!compact && resetLabel && <span style={resetStyle}>{resetLabel}</span>}
+      {/* T-PATCH-173: reset label restored in BOTH modes. In compact (statusbar)
+          mode a leading "·" separates % from the reset time → "34% · resets 4h 35m". */}
+      {resetLabel && (
+        <span style={compact ? resetStyleCompact : resetStyle}>
+          {compact ? `· ${resetLabel}` : resetLabel}
+        </span>
+      )}
     </div>
   )
 }
@@ -254,6 +274,21 @@ const statusbarSep: React.CSSProperties = {
   marginRight: 2,
 }
 
+// T-PATCH-173: leading "Session" label (clock icon + text) for statusbar cluster
+const sessionLabelStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontSize: 9,
+  fontWeight: 600,
+  letterSpacing: 0.3,
+  color: '#6A6A78',
+  textTransform: 'uppercase',
+  userSelect: 'none',
+  flexShrink: 0,
+  marginRight: 2,
+}
+
 const rowWrap: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
@@ -319,4 +354,15 @@ const resetStyle: React.CSSProperties = {
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
+}
+
+// T-PATCH-173: compact reset label for the statusbar row — no flex-grow (would
+// push BuildSegment); sits snug after the % with its leading "· " separator.
+const resetStyleCompact: React.CSSProperties = {
+  fontSize: 9,
+  color: '#505060',
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  flexShrink: 0,
+  whiteSpace: 'nowrap',
+  marginLeft: 2,
 }

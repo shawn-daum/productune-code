@@ -141,7 +141,8 @@
       "teamHint": "팀 — 페르소나·스킬은 T-P4-047 에서 연결"
     },
     "statusBar": {
-      "placeholder": "자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐"
+      "placeholder": "자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐",
+      "session": "세션"
     },
     "zoom": {
       "out": "축소",

@@ -43,7 +43,6 @@ const SHELL_MIN_WIDTH =
 interface Props {
   project: Project
   onBack: () => void
-  onOpenRecent?: (projectDir: string, slug: string) => void
 }
 
 // ── HeaderSearchBar ───────────────────────────────────────────────────────────
@@ -109,7 +108,7 @@ function isEmptyPaneTree(root: Pane): boolean {
 
 // ── WorkspaceShell ────────────────────────────────────────────────────────────
 
-export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props) {
+export default function WorkspaceShell({ project, onBack }: Props) {
   const { t } = useTranslation()
   const phase = useWorkspace((s) => s.phase)
   const setProject = useWorkspace((s) => s.setProject)
@@ -320,7 +319,8 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
     gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
     // T-PATCH-091 R4: collapse status row to 0 when hidden. StatusBar is wrapped
     // in overflow:hidden so it clips cleanly at 0 height with no dangling empty cell.
-    gridTemplateRows: statusBarVisible ? 'auto 1fr 28px' : 'auto 1fr 0px',
+    // T-PATCH-173: status row 28→34px to fit the restored inline reset label.
+    gridTemplateRows: statusBarVisible ? 'auto 1fr 34px' : 'auto 1fr 0px',
   }
 
   return (
@@ -353,7 +353,7 @@ export default function WorkspaceShell({ project, onBack, onOpenRecent }: Props)
       {/* T-PATCH-091 R4: overflow:hidden clips StatusBar to 0 height when status row
           collapses to 0px — no dangling empty grid cell or visible bar remnant. */}
       <div style={{ gridArea: 'status', overflow: 'hidden' }}>
-        <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} onOpenRecent={onOpenRecent} />
+        <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
       </div>
 
       <div style={chatResizeArea}>
