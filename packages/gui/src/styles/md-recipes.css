@@ -112,6 +112,17 @@
   margin-bottom: 4px;
 }
 
+/* R3b md-h4 (T-PATCH-182) — base recipe stays COMPACT for chat safety */
+.md-h4 {
+  display: block;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+  color: var(--text-emphasis);
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
 /* ── T-PATCH-181 (D): Notion-like heading rhythm — DOC VIEWER ONLY ──────────
  * SCOPE: these overrides apply ONLY under .md-doc (the MarkdownViewer
  * `viewerWrap` container). Chat bubbles (MessageBubble → MdRenderer) are NOT
@@ -139,10 +150,21 @@
   margin-bottom: var(--space-1);  /* 4px */
 }
 
+/* T-PATCH-182: H4 feature-chunk titles get section breathing above, hug below */
+.md-doc .md-h4 {
+  margin-top: var(--space-4);     /* 16px — generous above for section breathing */
+  margin-bottom: var(--space-1);  /* 4px — hug body */
+}
+.md-doc .md-h4:first-child { margin-top: 0; }
+
 /* Paragraph + list breathing in the doc view (chat keeps its compact gaps). */
 .md-doc .md-body { margin-bottom: var(--space-2); } /* 8px between paragraphs */
 .md-doc .md-ul,
 .md-doc .md-ol { margin: var(--space-2) 0; }        /* 8px around lists */
+
+/* T-PATCH-182: de-densify list item gap 4px→8px — DOC scope only (chat stays 4px) */
+.md-doc .md-ul,
+.md-doc .md-ol { gap: var(--space-2); }             /* 8px between list items */
 
 /* R4 md-body (p) */
 .md-body {

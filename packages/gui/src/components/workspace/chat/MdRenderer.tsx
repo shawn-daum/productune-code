@@ -251,6 +251,7 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
   h1: ({ children }) => <h1 className="md-h1">{children}</h1>,
   h2: ({ children }) => <h2 className="md-h2">{children}</h2>,
   h3: ({ children }) => <h3 className="md-h3">{children}</h3>,
+  h4: ({ children }) => <h4 className="md-h4">{children}</h4>,
 
   // paragraph — inline display to preserve flow inside bubble
   p: ({ children }) => <p className="md-body" style={{ margin: 0 }}>{children}</p>,
