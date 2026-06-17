@@ -53,7 +53,7 @@ export default function EngineStatusRow({ name, status, installUrl, installHint,
       {status && status.installed && !status.authed && (
         <div style={{ paddingLeft: 24, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button style={btnEngineAction} onClick={onLogin}>
-            {t('onboarding.step2.loginTerminal')}
+            {t('onboarding.step2.login.start')}
           </button>
           <button style={{ ...btnRedetect, fontSize: 11, padding: '4px 10px' }} onClick={onRecheck}>
             {t('onboarding.step2.recheck')}

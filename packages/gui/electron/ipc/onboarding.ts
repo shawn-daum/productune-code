@@ -1,8 +1,9 @@
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { execFile, spawn } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { setUiLanguage } from '@productune/core'
 import type { UiLanguage } from '@productune/core'
@@ -24,12 +25,103 @@ interface OnboardingRecord {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Open macOS Terminal with the given shell command. Fire-and-forget. */
-async function openTerminalWith(cmd: string) {
-  await execFileAsync('osascript', [
-    '-e', 'tell application "Terminal" to activate',
-    '-e', `tell application "Terminal" to do script "${cmd.replace(/"/g, '\\"')}"`,
-  ])
+// T-PATCH-199: hidden-spawn browser-OAuth login (osascript→Terminal removed).
+// `claude auth login` / `codex login` are spawned with piped stdio (no TTY, no
+// terminal window). The spawned CLI opens the system browser itself; we parse
+// its stdout to (a) surface the OAuth URL as a "reopen browser" button, and
+// (b) detect the "paste code" fallback prompt. The child lives for the whole
+// browser handshake, so the IPC handler must NOT await it — it returns once the
+// child is spawned, and progress is streamed via webContents.send.
+
+/** The single in-flight login child process (claude or codex). Kept at module
+ *  scope so submitLoginCode / cancelLogin can reach it across IPC calls. */
+let loginChild: ChildProcess | null = null
+
+/** Strip OSC-8 hyperlink escapes (`\x1b]8;;<url>\x07<text>\x1b]8;;\x07`) and any
+ *  other ANSI/OSC control sequences so a clean `https://…` URL can be extracted. */
+function stripAnsi(s: string): string {
+  return s
+    // OSC sequences terminated by BEL (\x07) or ST (\x1b\\)
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // CSI sequences (colors, cursor moves, etc.)
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+}
+
+/** Extract the first https URL from a (de-escaped) chunk, if any. */
+function extractUrl(clean: string): string | null {
+  const m = clean.match(/https?:\/\/[^\s'"<>]+/)
+  return m ? m[0] : null
+}
+
+/** Heuristic: does this output ask the user to paste a code? Generic so it
+ *  matches both claude's "Paste code here if prompted >" and codex variants. */
+function isPasteCodePrompt(clean: string): boolean {
+  return /paste\s+(the\s+)?code|enter\s+(the\s+)?code|authorization\s+code|verification\s+code/i.test(clean)
+}
+
+/** Broadcast an onboarding login event to all renderer windows. */
+function emitLogin(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload)
+  }
+}
+
+/** Spawn a hidden login process (`claude auth login` / `codex login`) and wire
+ *  its stdout/stderr to the renderer via webContents.send. Returns immediately;
+ *  does NOT block on the browser OAuth handshake. */
+function startHiddenLogin(engine: 'claude' | 'codex'): { ok: boolean; error?: string } {
+  // Kill any prior in-flight login before starting a new one.
+  if (loginChild && loginChild.exitCode === null) {
+    try { loginChild.kill() } catch { /* ok */ }
+  }
+  loginChild = null
+
+  const cmd = engine === 'claude' ? 'claude' : 'codex'
+  const args = engine === 'claude' ? ['auth', 'login'] : ['login']
+
+  let child: ChildProcess
+  try {
+    child = spawn(cmd, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      // Inherit the user's PATH so the globally-installed CLI resolves.
+      env: process.env,
+    })
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'spawn failed' }
+  }
+
+  loginChild = child
+  let urlSent = false
+
+  const handleChunk = (raw: Buffer) => {
+    const clean = stripAnsi(raw.toString('utf-8'))
+    if (!urlSent) {
+      const url = extractUrl(clean)
+      if (url) {
+        urlSent = true
+        emitLogin('onboarding:login-url', { engine, url })
+      }
+    }
+    if (isPasteCodePrompt(clean)) {
+      emitLogin('onboarding:login-needs-code', { engine })
+    }
+  }
+
+  child.stdout?.on('data', handleChunk)
+  // codex (and some claude builds) may write the prompt/URL to stderr.
+  child.stderr?.on('data', handleChunk)
+
+  child.on('error', (err) => {
+    emitLogin('onboarding:login-exit', { engine, code: null, error: err?.message })
+    if (loginChild === child) loginChild = null
+  })
+
+  child.on('exit', (code) => {
+    emitLogin('onboarding:login-exit', { engine, code })
+    if (loginChild === child) loginChild = null
+  })
+
+  return { ok: true }
 }
 
 async function prewarmPlaywrightMcp(): Promise<void> {
@@ -100,22 +192,32 @@ export function register(): void {
     return { installed: true, authed: fs.existsSync(authPath) }
   })
 
-  ipcMain.handle('onboarding:claudeLogin', async () => {
+  // T-PATCH-199: hidden-spawn browser-OAuth login. Returns once the child is
+  // spawned (non-blocking); progress streams via onboarding:login-* events.
+  ipcMain.handle('onboarding:claudeLogin', async () => startHiddenLogin('claude'))
+
+  ipcMain.handle('onboarding:codexLogin', async () => startHiddenLogin('codex'))
+
+  // Paste-code fallback: write the user-entered code to the login child's stdin.
+  ipcMain.handle('onboarding:submitLoginCode', async (_event, code: string) => {
+    if (!loginChild || loginChild.exitCode !== null || !loginChild.stdin) {
+      return { ok: false, error: 'no active login process' }
+    }
     try {
-      await openTerminalWith('claude auth login')
+      loginChild.stdin.write(String(code ?? '').trim() + '\n')
       return { ok: true }
     } catch (e: any) {
-      return { ok: false, error: e?.message }
+      return { ok: false, error: e?.message ?? 'stdin write failed' }
     }
   })
 
-  ipcMain.handle('onboarding:codexLogin', async () => {
-    try {
-      await openTerminalWith('codex login')
-      return { ok: true }
-    } catch (e: any) {
-      return { ok: false, error: e?.message }
+  // Cancel an in-flight login (user backs out / closes the card).
+  ipcMain.handle('onboarding:cancelLogin', async () => {
+    if (loginChild && loginChild.exitCode === null) {
+      try { loginChild.kill() } catch { /* ok */ }
     }
+    loginChild = null
+    return { ok: true }
   })
 
   ipcMain.handle('onboarding:clearLocalStorage', async () => {

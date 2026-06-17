@@ -30,11 +30,43 @@ contextBridge.exposeInMainWorld('api', {
   checkCodex: (): Promise<{ installed: boolean; authed: boolean }> =>
     ipcRenderer.invoke('onboarding:checkCodex'),
 
+  // T-PATCH-199: claudeLogin/codexLogin now spawn a HIDDEN child (no terminal,
+  // no osascript). Resolves once the child is spawned — the browser OAuth
+  // handshake is reported via the onboarding:login-* push events below.
   claudeLogin: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:claudeLogin'),
 
   codexLogin: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:codexLogin'),
+
+  /** Paste-code fallback: write the user-entered code to the login child stdin. */
+  submitLoginCode: (code: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('onboarding:submitLoginCode', code),
+
+  /** Cancel an in-flight hidden login (kills the child). */
+  cancelLogin: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('onboarding:cancelLogin'),
+
+  /** OAuth URL detected in the login child's stdout. Returns an unsubscribe fn. */
+  onLoginUrl: (cb: (payload: { engine: 'claude' | 'codex'; url: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('onboarding:login-url', listener)
+    return () => ipcRenderer.removeListener('onboarding:login-url', listener)
+  },
+
+  /** "Paste code" fallback prompt detected. Returns an unsubscribe fn. */
+  onLoginNeedsCode: (cb: (payload: { engine: 'claude' | 'codex' }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('onboarding:login-needs-code', listener)
+    return () => ipcRenderer.removeListener('onboarding:login-needs-code', listener)
+  },
+
+  /** Login child process exited. Returns an unsubscribe fn. */
+  onLoginExit: (cb: (payload: { engine: 'claude' | 'codex'; code: number | null; error?: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('onboarding:login-exit', listener)
+    return () => ipcRenderer.removeListener('onboarding:login-exit', listener)
+  },
 
   clearLocalStorage: (): Promise<{ ok: boolean; removed: string[]; errors: string[] }> =>
     ipcRenderer.invoke('onboarding:clearLocalStorage'),

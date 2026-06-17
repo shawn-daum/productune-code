@@ -36,8 +36,20 @@
       "statusInstalledNoAuth": "installed · not authed",
       "statusNotInstalled": "not installed",
       "installGuide": "Install guide ↗",
-      "loginTerminal": "Login in terminal",
-      "recheck": "Recheck"
+      "recheck": "Recheck",
+      "login": {
+        "start": "Connect",
+        "waiting": "Waiting for browser sign-in…",
+        "waitingHint": "A browser window should have opened. Sign in there, then this screen continues automatically.",
+        "reopenBrowser": "Open browser again",
+        "needsCodeTitle": "Paste your code",
+        "needsCodeHint": "If the browser couldn't finish sign-in, paste the code shown there.",
+        "codePlaceholder": "Paste code here",
+        "submitCode": "Submit",
+        "cancel": "Cancel",
+        "skipNote": "No engine connected yet — you can connect later from Settings.",
+        "skipLater": "Connect later in Settings"
+      }
     },
     "step3": {
       "label": "Step 3 / 4 — Memory backend",

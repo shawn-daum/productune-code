@@ -61,6 +61,17 @@ export default function OnboardingWizard({ onDone }: Props) {
     checkEngineStatus()
   }, [step])
 
+  // T-PATCH-199: when a hidden login child exits (browser OAuth finished or the
+  // user cancelled), re-poll engine status so a successful sign-in flips Next on
+  // without manual re-check. Subscribed at the wizard level so it survives the
+  // inner card re-renders. Returns unsubscribe.
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.onLoginExit) return
+    const off = api.onLoginExit(() => { checkEngineStatus() })
+    return off
+  }, [])
+
   // Trigger completion when entering step 3
   useEffect(() => {
     if (step !== 3) return

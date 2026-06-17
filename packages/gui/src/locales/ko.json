@@ -36,8 +36,20 @@
       "statusInstalledNoAuth": "설치됨 · 미인증",
       "statusNotInstalled": "미설치",
       "installGuide": "설치 가이드 ↗",
-      "loginTerminal": "터미널에서 로그인",
-      "recheck": "재확인"
+      "recheck": "재확인",
+      "login": {
+        "start": "연결하기",
+        "waiting": "브라우저 로그인을 기다리는 중…",
+        "waitingHint": "브라우저 창이 열렸을 거예요. 거기서 로그인하면 이 화면이 자동으로 이어집니다.",
+        "reopenBrowser": "브라우저 다시 열기",
+        "needsCodeTitle": "코드를 붙여넣어 주세요",
+        "needsCodeHint": "브라우저에서 로그인이 끝나지 않았다면, 화면에 표시된 코드를 붙여넣어 주세요.",
+        "codePlaceholder": "여기에 코드 붙여넣기",
+        "submitCode": "제출",
+        "cancel": "취소",
+        "skipNote": "아직 연결된 엔진이 없어요 — 나중에 설정에서 연결할 수 있습니다.",
+        "skipLater": "나중에 설정에서 연결"
+      }
     },
     "step3": {
       "label": "Step 3 / 4 — 기억 저장 방식",

@@ -1,7 +1,13 @@
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { EngineStatus } from './types'
 import EngineStatusRow from './EngineStatusRow'
-import { body, footer, stepLabel, stepIntro, hint, btnSecondary, btnSkip, btnPrimary } from './styles'
+import {
+  body, footer, stepLabel, stepIntro, hint, btnSecondary, btnSkip, btnPrimary,
+  engineRow, btnEngineAction, btnRedetect,
+} from './styles'
+
+type Engine = 'claude' | 'codex'
 
 interface Step2Props {
   needsClaude: boolean
@@ -17,12 +23,67 @@ interface Step2Props {
   onCodexLogin: () => void
 }
 
+interface LoginState {
+  engine: Engine
+  url: string | null
+  needsCode: boolean
+}
+
 export default function Step2_EngineConnect({
   needsClaude, needsCodex, claudeStatus, codexStatus,
   checkingEngine, engineFullyReady,
   onPrev, onNext, onCheckEngine, onClaudeLogin, onCodexLogin,
 }: Step2Props) {
   const { t } = useTranslation()
+
+  // T-PATCH-199: hidden-spawn login progress state. While `login` is set, the
+  // CLI child is mid browser-OAuth handshake; we show the waiting card + (once
+  // the URL arrives) a "reopen browser" button + (on needs-code) a paste card.
+  const [login, setLogin] = useState<LoginState | null>(null)
+  const [codeInput, setCodeInput] = useState('')
+  const loginRef = useRef<LoginState | null>(null)
+  loginRef.current = login
+
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.onLoginUrl) return
+    const offUrl = api.onLoginUrl((p: { engine: Engine; url: string }) => {
+      setLogin((prev) => (prev && prev.engine === p.engine ? { ...prev, url: p.url } : prev))
+    })
+    const offNeedsCode = api.onLoginNeedsCode((p: { engine: Engine }) => {
+      setLogin((prev) => (prev && prev.engine === p.engine ? { ...prev, needsCode: true } : prev))
+    })
+    const offExit = api.onLoginExit(() => {
+      setLogin(null)
+      setCodeInput('')
+    })
+    return () => { offUrl?.(); offNeedsCode?.(); offExit?.() }
+  }, [])
+
+  function beginLogin(engine: Engine) {
+    setCodeInput('')
+    setLogin({ engine, url: null, needsCode: false })
+    if (engine === 'claude') onClaudeLogin()
+    else onCodexLogin()
+  }
+
+  function reopenBrowser() {
+    if (login?.url) (window as any).api?.openExternal(login.url)
+  }
+
+  function submitCode() {
+    const code = codeInput.trim()
+    if (!code) return
+    ;(window as any).api?.submitLoginCode(code)
+    setCodeInput('')
+  }
+
+  function cancelLogin() {
+    ;(window as any).api?.cancelLogin()
+    setLogin(null)
+    setCodeInput('')
+  }
+
   return (
     <>
       <div style={body}>
@@ -35,6 +96,63 @@ export default function Step2_EngineConnect({
 
         {checkingEngine ? (
           <div style={hint}>{t('onboarding.step2.checking')}</div>
+        ) : login ? (
+          <div style={engineRow}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+              {t('onboarding.step2.login.waiting')}
+            </div>
+            <div style={{ fontSize: 12, color: '#909090', lineHeight: 1.5, marginBottom: 10 }}>
+              {t('onboarding.step2.login.waitingHint')}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {login.url && (
+                <button style={btnEngineAction} onClick={reopenBrowser}>
+                  {t('onboarding.step2.login.reopenBrowser')}
+                </button>
+              )}
+              <button
+                style={{ ...btnRedetect, fontSize: 11, padding: '4px 10px' }}
+                onClick={cancelLogin}
+              >
+                {t('onboarding.step2.login.cancel')}
+              </button>
+            </div>
+
+            {login.needsCode && (
+              <div style={{ marginTop: 12, borderTop: '1px solid #2A2A2A', paddingTop: 10 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>
+                  {t('onboarding.step2.login.needsCodeTitle')}
+                </div>
+                <div style={{ fontSize: 11.5, color: '#909090', lineHeight: 1.5, marginBottom: 8 }}>
+                  {t('onboarding.step2.login.needsCodeHint')}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    value={codeInput}
+                    onChange={(e) => setCodeInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submitCode() }}
+                    placeholder={t('onboarding.step2.login.codePlaceholder')}
+                    autoFocus
+                    style={{
+                      flex: 1, background: '#0A0A0A', color: '#F0F0F0',
+                      border: '1px solid #333', borderRadius: 4,
+                      padding: '6px 10px', fontSize: 12,
+                      fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+                    }}
+                  />
+                  <button
+                    style={{ ...btnEngineAction, opacity: codeInput.trim() ? 1 : 0.4 }}
+                    onClick={submitCode}
+                    disabled={!codeInput.trim()}
+                  >
+                    {t('onboarding.step2.login.submitCode')}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
             {needsClaude && (
@@ -43,7 +161,7 @@ export default function Step2_EngineConnect({
                 status={claudeStatus}
                 installUrl="https://docs.anthropic.com/en/docs/claude-code"
                 installHint="npm install -g @anthropic-ai/claude-code"
-                onLogin={onClaudeLogin}
+                onLogin={() => beginLogin('claude')}
                 onRecheck={onCheckEngine}
               />
             )}
@@ -53,31 +171,34 @@ export default function Step2_EngineConnect({
                 status={codexStatus}
                 installUrl="https://github.com/openai/codex"
                 installHint="npm install -g @openai/codex"
-                onLogin={onCodexLogin}
+                onLogin={() => beginLogin('codex')}
                 onRecheck={onCheckEngine}
               />
             )}
+          </div>
+        )}
+
+        {/* AC-6: when not yet connected, make the Skip path explicit + reassuring
+            instead of a dead grey Next + ambiguous Skip. */}
+        {!engineFullyReady && !login && !checkingEngine && (
+          <div style={{ ...hint, marginTop: 12 }}>
+            {t('onboarding.step2.login.skipNote')}
           </div>
         )}
       </div>
       <div style={footer}>
         <button style={btnSecondary} onClick={onPrev}>{t('common.prev')}</button>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {!engineFullyReady && (
-            <button style={btnSkip} onClick={onNext}>{t('common.skip')}</button>
+          {!engineFullyReady ? (
+            // AC-6: Skip promoted to a clear, labelled normal path.
+            <button style={btnSkip} onClick={onNext}>
+              {t('onboarding.step2.login.skipLater')}
+            </button>
+          ) : (
+            <button style={btnPrimary} onClick={onNext}>
+              {t('common.next')}
+            </button>
           )}
-          <button
-            style={{
-              ...btnPrimary,
-              opacity: engineFullyReady ? 1 : 0.4,
-              cursor: engineFullyReady ? 'pointer' : 'not-allowed',
-              pointerEvents: engineFullyReady ? 'auto' : 'none',
-            }}
-            onClick={onNext}
-            disabled={!engineFullyReady}
-          >
-            {t('common.next')}
-          </button>
         </div>
       </div>
     </>
