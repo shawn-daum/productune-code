@@ -36,7 +36,7 @@ On P2 entry, emit the design tickets for the steps the chosen branch actually ru
 
 | branch | tickets emitted |
 |:--|:--|
-| A | T1 design system (S1–S2) · T2 mockup + user flow (S3–S4) · T3 hi-fi (S5) |
+| A | T1 design system + brand assets (S1–S2b) · T2 mockup + user flow (S3–S4) · T3 hi-fi (S5) |
 | B | T2 (S3–S4) · T3 (S5) |
 | C | T3 (S5) only |
 
@@ -91,6 +91,22 @@ gate is accepted. A refuse loop keeps the ticket `in-progress` — never reopen 
   including its anchor line (`anchor: <slug>.md, <version>`) — the next major redesign
   reads this and avoids re-picking the previous anchor (T-PATCH-122).
 - When authoring it, SEED §1.5 (apply Tier0 ux-principles + project deltas) + §1.5.6 self-check (project-surface, cites Tier0 principle ids) — Tier0 does NOT auto-supply §1.5.6.
+
+### S2b — brand assets (Branch A only, after the S2 gate)  (2026-06-17) [T-PATCH-206]
+Once the DS is accepted (palette + type locked), PRODUCE the brand assets the P3 close-gate
+later checks for — derived FROM the accepted DS, never invented separately. This step exists
+because the close-gate verifies these but no step used to make them (gate-without-producer).
+- **Logo** (SVG, light/dark variants if the DS is dual-theme) · **favicon** (`favicon.svg` + `.ico`) ·
+  **`og:image`** (social card from DS color + type). Write to `docs/artifacts/<version>/`
+  (`<ticket-id>-logo.svg`, …), manifest `kind: "asset"`. P3 build places them in `public/`.
+- **Brand-guide input** (the S1 Fit-3 exception): a supplied logo/wordmark is REUSED, never
+  re-drawn — only derive the favicon/og crop from it.
+- **Beyond own ability** (raster hi-res / 3D / photographic / complex illustration): never fake
+  it — emit `external_tool_recommendation` (habit §5) with prompt + `expected_output_path`; the
+  matching P3 close-gate item then stays `blocked` until that asset lands.
+- **Gate**: user accepts the asset set. Refuse → short interview → re-derive.
+Branch B/C skip this — assets already exist; a deliberate logo/brand change is a major-version
+event that re-enters at A.
 
 ### S3 — mockup candidates (HTML)
 - Mock 1–2 key pages, candidates in parallel, collapsed into ONE page:

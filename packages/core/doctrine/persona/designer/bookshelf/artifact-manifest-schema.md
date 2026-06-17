@@ -26,7 +26,7 @@ absent from the manifest = misplaced (lint-flagged).
     {
       "path": "T-004-a9-mockup.html",      // relative to the version dir; archive/<name> for archived
       "ticket": "T-004",                    // source ticket id, null if none
-      "kind": "mockup",                     // prd-view | mockup | wireframe | design-system | spec | doc
+      "kind": "mockup",                     // prd-view | mockup | wireframe | design-system | asset | spec | doc
       "status": "pending",                  // pending | approved | archived
       "lang": "ko",                         // BCP-47 — user-gate deliverables are user_lang
       "source": "docs/prd/PRD.md",          // optional: SoT this file was rendered from

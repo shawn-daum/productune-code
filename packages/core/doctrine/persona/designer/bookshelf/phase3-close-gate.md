@@ -18,6 +18,10 @@ Read `docs/designer/design-system.md` (DS), scan codebase, verify each:
 - [ ] **Meta tags** — `<title>`, `<meta name="description">`, OG tags (`og:title`, `og:description`, `og:image`) in entry HTML.
 - [ ] **App icons / splash** — mobile / Electron / PWA if applicable.
 
+> Producer of the Logo / Favicon / `og:image` / app-icon items = **P2 S2b (brand assets)**
+> (`phase2-3-ticket-sequence.md`). A missing item here means S2b was skipped (wrong branch) or
+> its `external_tool_recommendation` is still unfulfilled — surface it, never silently pass.
+
 ## Execution
 
 1. Read DS for token spec.
