@@ -2,6 +2,8 @@
 
 Run the PRD as a clarity convergence loop, not one-shot. Mandatory at P1.
 
+For how the PRD must read on the page (heading rhythm, bullet/inline-code discipline, tables), apply `bookshelf/prd-markdown-style.md` alongside this loop.
+
 ## Score formula
 
 ```

@@ -90,51 +90,144 @@ First-run wizard (GUI):
 
 ### 핵심 기능
 
-1. **간편한 설치 과정 + 2-level onboarding** — (a) 앱 최초 실행 시 engine / wiki backend / API key 선택 wizard (T-P4-015); (b) 새 프로젝트마다 slug 입력 + GitHub OAuth (선택). terminal 출력은 progress UI 뒤로 숨김. 실패 시 사람이 읽을 수 있는 메시지 + 다음 액션 버튼. 이후 Settings 탭에서 engine / wiki backend 변경 가능.
-2. **GUI 시각화 — PO 채팅 (단일 PO 세션)** — 프로젝트당 하나의 PO 세션만 운영. Right Panel 은 **PO Chat 전용**으로 우측 340px 고정/접힘(FAB 복원)이고, PRD 작성 → 제품 설계 과정은 Project 탭 + Main split-pane tabs 에서 시각화한다. 티켓 정보는 Side Panel 의 Project 탭 Rounds/Tickets sub-items 와 Main 의 `ticket-review` 탭에 status / 담당 페르소나 / model+effort / 위임 trace / 산출물 링크로 표시한다. **세션 저장소**: `<projectDir>/.productune/chat.json` (단일 파일, `messages` + `claude_session_id` + `updated_at`). GUI multi-chatroom 모델은 폐기하며, CLI / non-GUI 환경에서만 multi-session 가능성 보존.
-3. **GUI 시각화 — 디자인 단계 명시화** — PRD 직후 곧장 코드로 가지 않고, **디자인 방향성 결정 stage** 가 별도 노출. 산출물 포맷 = **md + Mermaid.js + Excalidraw** (전부 로컬, 외부 서비스 의존 없음). Claude design skill 이 Mermaid 를 native 로 출력 (시퀀스 / 플로우 / 상태도), Phase 4 GUI 는 Electron/React renderer 안에 Mermaid.js 또는 React Mermaid component 를 번들해 markdown code fence 를 inline 렌더링한다. Excalidraw React 컴포넌트를 Electron renderer 에 임베드해 와이어프레임 그리기, 디자인 시스템은 풍부한 md 렌더링 (color swatch / typography preview) 으로 표현. **Figma 연동은 하지 않음** (토큰 비용 예측 불가). 사용자가 코드 diff 가 아닌 **디자인 산출물** 기반으로 검토 / 의사결정.
+#### 1. 간편한 설치 과정 + 2-level onboarding
 
-   현재/수동 검토 경로는 GitHub Markdown preview 또는 VS Code Markdown preview 로 Mermaid fence 를 확인한다. Phase 4 GUI 정상 보기 경로는 외부 CLI 에 의존하지 않는다. Mermaid viewer 는 zoom/pan, source toggle, source copy, render error fallback(원문 코드 + 오류 메시지)을 제공하고, SVG/PNG export 는 필요해지면 후속 옵션으로 추가한다. `@mermaid-js/mermaid-cli` 는 export/자동 이미지 생성용 선택 도구일 뿐 정상 GUI viewing 필수 의존성이 아니며, 도구/라이브러리 추가 설치가 필요할 때는 사용자 동의를 먼저 받는다.
-4. **메모리 / Wiki 편집기 진입점** — Team 탭 안의 Wiki / Memory 섹션에서 현재 저장된 3-tier 메모리 (session / project `docs/*` / wiki Graphiti) 를 보고, Main 의 `markdown` / review 탭으로 열어 수정·검토 가능. 잘못 학습된 사실 / 오래된 결정 정정은 PO gate 를 거쳐 반영한다. 우측 별도 패널은 만들지 않는다.
-5. **터미널 비의존 dev 환경 — agent 자동화** — `npm run dev`, `supabase start`, `vercel dev` 등 dev 환경이 필요한 시점에 agent 가 자동으로 shell 을 띄우고 health check 후 GUI 에 "준비됨" 만 알림. 사용자는 명령을 외울 필요 없고, 종료 / 재시작도 GUI 버튼. 구현은 **node-pty** — macOS / Linux 의 PTY 와 Windows ConPTY 를 단일 API 로 추상화해 OS 별 분기 코드 최소화.
-6. **터미널 비의존 dev 환경 — 친절한 세팅** — `init` 시 `.env.local` 디폴트 생성 + `.gitignore` 자동 등록. vercel / supabase / github 등 외부 서비스 setup 시 **최신 공식 문서를 실시간 fetch** 해 step-by-step 가이드 제공 (가입 링크부터 토큰 발급, 권한 설정까지). LLM training data 에 의존하지 않음. **Fetch 정책**: TTL 24h + stale-while-revalidate. 오프라인 시 마지막 캐시를 보여주고 "마지막 업데이트: N시간 전" 배너 표시; rate-limit 시 exponential backoff 후 캐시 fallback.
-7. **env 관리 GUI panel — 3-layer + 상태 badge + 코드 스캔 경고** — 환경 3 개 레이어로 정리:
-   - 🖥️ **로컬** ("지금 내 컴퓨터에서 실행할 때" → `.env.local`) — 기본값. `init` 시 자동 생성 + `.gitignore` 자동 등록. plaintext.
-   - 🔍 **미리보기** ("배포 전 테스트할 때" → Vercel preview env) — base "검증용 중간 환경" (내부 `dev`) 활성 시 자동 매핑. Settings 의 `useDevBranch=true` 토글 시 활성. 배포 준비 시 [+ 환경 추가] 로도 추가 가능.
-   - 🚀 **프로덕션** ("실제 사용자가 쓰는 서비스" → Vercel production env) — base "프로덕션 환경" (내부 `main`) 매핑. 항상 보호.
-   - 🛡️ **외부 점검** (선택, 첫 런칭 후 토글) — Settings 의 `useStagingEnv=true` 시 활성. default off.
+설치 출력은 전부 progress UI 뒤로 숨기고, 사용자에게는 단계와 결과만 보인다.
 
-   **base ↔ env 매핑**: 내부 `main` = 🚀 프로덕션, 내부 `dev` (opt-in) = 🔍 미리보기, 내부 `staging` (opt-in, default off, 첫 런칭 후 활용) = 🛡️ 외부 점검. **로컬이 기본** — 사용자는 배포 직전까지 미리보기 / 프로덕션 환경을 만들 필요 없음. UI 구조 = 좌측 환경 selector + 우측 variable table. 변수 상태 badge: ✅ 전체 동기 / ⚠️ prod 없음 (배포 시 해당 기능 비활성 경고) / 🔴 로컬 없음 (현재 실행 불가) / 🔒 secret masking (클릭 시 일시 노출). 변수 추가 시 적용 환경 선택 가능 (로컬만 / 전체). agent 가 코드를 스캔해 `process.env.XXX` 를 매핑 → "이 키 없으면 결제 기능 안 됩니다" 수준의 의미 있는 경고 (T-ENV-06). Phase 4 MVP 에서는 외부 (Vercel) 동기는 배포 명령 시점에만; 양방향 실시간 sync 는 미포함.
-8. **풀 사이클 UI** — process 시작 (PRD 작성) → 끝 (배포 + 마무리) → 다음 사이클 진입. 사용자가 **현재 어느 phase 인지 직관적으로 인지** 가능. 단, 위쪽 독립 5-phase breadcrumb row 는 두지 않고 Phase 정보는 Side Panel **Project 탭 phase strip** 과 Right Panel **PO Chat ctx chip** 에서 노출한다.
-9. **프로젝트 관리 UI** — 앱 실행 시 두 진입점:
-   - (a) **[새 프로젝트 만들기]** → `~/productune/projects/<slug>/` 자동 생성 + `init` 자동 실행. 사용자는 파일시스템 탐색 불필요. **기본 진입점.**
-   - (b) **[기존 폴더 열기]** (고급 사용자) → 폴더 선택 → `.productune/` 없으면 "이 폴더에 productune 시작하기" 버튼 노출 → `project:installAt` 실행 (선택한 폴더에 직접 init).
+- (a) 앱 최초 실행 시 engine / wiki backend / API key 선택 wizard (T-P4-015).
+- (b) 새 프로젝트마다 slug 입력 + GitHub OAuth (선택).
+- terminal 출력은 progress UI 뒤로 숨긴다.
+- 실패 시 사람이 읽을 수 있는 메시지 + 다음 액션 버튼을 보여준다.
+- 이후 Settings 탭에서 engine / wiki backend 를 변경할 수 있다.
 
-   recent projects 리스트로 빠른 재진입.
-10. **Git 추상화 레이어 — 작업 흐름 규칙** — 비-개발자에게 git 개념 노출 X. **Ticket 단위 worktree** + base 보호 + 2단계 게이트 + Settings 토글이 핵심.
+#### 2. GUI 시각화 — PO 채팅 (단일 PO 세션)
 
-    UI 매핑:
-    - **[자동저장 (백그라운드)]** = 현재 작업 (ticket worktree) 안 자동 commit (페르소나 turn 종료 + 상태 변화 트리거; 메시지 = ticket-id + persona summary).
-    - **[배포 준비]** = 작업 worktree push + (toggle 시) 검증용 중간 환경 (내부 `dev`) 매핑.
-    - **[배포하기]** = 프로덕션 환경 (내부 `main`) PR 자동 생성 → squash merge → Vercel deploy. **사용자 명시 클릭만 트리거**, PO 자동 결정 X.
-    - **[버전 히스토리]** = ticket 단위 그룹 + 페르소나 trace inline 카드 UI (커밋 메시지 = 사람이 읽을 수 있는 자연어).
+프로젝트당 하나의 PO 세션만 운영한다. PRD 작성 → 제품 설계 과정은 채팅이 아니라 탭에서 시각화한다.
 
-    **Worktree-per-ticket**: ticket 발행 = `<project>/.productune/worktrees/<ticket-id>/` 자동 생성. 내부 branch 명 = `feature/<ticket-id>/<slug-kebab>` 또는 `fix/<ticket-id>/<slug-kebab>` (risk_flags / stage 자동 분류). 사용자 화면엔 Project 탭 active ticket row + Status bar 의 "작업공간 준비됨" 배지로만 표현, branch/worktree 어휘 노출 X.
+- Right Panel 은 **PO Chat 전용**으로 우측 340px 고정/접힘(FAB 복원)이다.
+- PRD 작성 → 제품 설계 과정은 Project 탭 + Main split-pane tabs 에서 시각화한다.
+- 티켓 정보는 Side Panel 의 Project 탭 Rounds/Tickets sub-items 와 Main 의 `ticket-review` 탭에 status / 담당 페르소나 / model+effort / 위임 trace / 산출물 링크로 표시한다.
+- GUI multi-chatroom 모델은 폐기하며, CLI / non-GUI 환경에서만 multi-session 가능성을 보존한다.
 
-    **Base branch 직접 작업 차단**: 프로덕션 (내부 `main`) 항상 차단. 검증용 중간 환경 (내부 `dev`) 은 Settings 의 `useDevBranch=true` 시 차단. 차단 = (a) GUI 가 base 위 자동저장 거부 + 친절 모달 ("보호된 환경입니다. 작업공간에서 시작해주세요." + [새 작업 시작] CTA), (b) `.git/hooks/pre-push` 자동 설치 (productune init 시).
+**세션 저장소**: `<projectDir>/.productune/chat.json` — 단일 파일이며 `messages` + `claude_session_id` + `updated_at` 를 담는다.
 
-    **Settings — 작업 흐름 규칙 패널**: `<project>/.productune/git-rules.json` (project-tracked) + `~/.productune/git-rules.default.json` (global default). 4 토글 + 2 텍스트:
-    - `useDevBranch` (boolean, default false) — "검증용 중간 환경 사용"
-    - `useStagingEnv` (boolean, default false, 첫 런칭 후 활성) — "외부 점검 환경 사용"
-    - `featureBranchPrefix` (text, default "feature") — "기능 작업 prefix"
-    - `fixBranchPrefix` (text, default "fix") — "수정 작업 prefix"
-    - `protectedBranches` (auto-derived, display only)
-    - `autosaveTriggers` (Phase 5 lock)
+#### 3. GUI 시각화 — 디자인 단계 명시화
 
-    **단순 수정도 ticket 필수**: doctrine §2A' 그대로. ticket-id 없는 자동저장은 거부. trivial (typo/import) 은 현재 worktree 내에서 OK.
+PRD 직후 곧장 코드로 가지 않고, **디자인 방향성 결정 stage** 를 별도로 노출한다. 사용자는 코드 diff 가 아닌 디자인 산출물 기반으로 검토 / 의사결정한다.
 
-    `init` 시 GitHub OAuth 팝업 → private repo 자동 생성 → remote 자동 설정. 사용자는 `git` 명령어 한 번도 보지 않음.
-11. **페르소나 skill set + 적용 여부 시각화** — Side Panel **Team 탭**에서 각 페르소나 (PO / Designer / Developer / QA) 의 보유 skill 목록과 현재 task 에서 실제 invoke 된 skill 을 확인한다. `Matrix ↗` 는 Main 의 `skill-matrix` 탭을 연다. "이번 작업에 사용된 skill: `to-prd`, `pm-product-discovery:interview-script`" 수준의 trace 는 PO Chat inline trace 와 Project 탭 Recent Activity 에서 보조 노출한다.
+- 산출물 포맷 = **md + Mermaid.js + Excalidraw** (전부 로컬, 외부 서비스 의존 없음).
+- Claude design skill 이 Mermaid 를 native 로 출력한다 (시퀀스 / 플로우 / 상태도).
+- Phase 4 GUI 는 Electron/React renderer 안에 Mermaid.js 또는 React Mermaid component 를 번들해 markdown code fence 를 inline 렌더링한다.
+- Excalidraw React 컴포넌트를 Electron renderer 에 임베드해 와이어프레임을 그린다.
+- 디자인 시스템은 풍부한 md 렌더링 (color swatch / typography preview) 으로 표현한다.
+- **Figma 연동은 하지 않는다** (토큰 비용 예측 불가).
+
+**viewing 경로 — 외부 CLI 무의존이 정상 보기**: 현재/수동 검토 경로는 GitHub Markdown preview 또는 VS Code Markdown preview 로 Mermaid fence 를 확인한다. Phase 4 GUI 정상 보기 경로는 외부 CLI 에 의존하지 않는다. Mermaid viewer 는 zoom/pan, source toggle, source copy, render error fallback(원문 코드 + 오류 메시지)을 제공하고, SVG/PNG export 는 필요해지면 후속 옵션으로 추가한다. `@mermaid-js/mermaid-cli` 는 export/자동 이미지 생성용 선택 도구일 뿐 정상 GUI viewing 필수 의존성이 아니며, 도구/라이브러리 추가 설치가 필요할 때는 사용자 동의를 먼저 받는다.
+
+#### 4. 메모리 / Wiki 편집기 진입점
+
+- Team 탭 안의 Wiki / Memory 섹션에서 현재 저장된 3-tier 메모리 (session / project `docs/*` / wiki Graphiti) 를 본다.
+- Main 의 `markdown` / review 탭으로 열어 수정·검토할 수 있다.
+- 잘못 학습된 사실 / 오래된 결정 정정은 PO gate 를 거쳐 반영한다.
+- 우측 별도 패널은 만들지 않는다.
+
+#### 5. 터미널 비의존 dev 환경 — agent 자동화
+
+dev 환경이 필요한 시점에 agent 가 자동으로 shell 을 띄우고, 사용자는 명령을 외울 필요가 없다.
+
+- `npm run dev`, `supabase start`, `vercel dev` 등 dev 환경이 필요한 시점에 agent 가 자동으로 shell 을 띄운다.
+- health check 후 GUI 에 "준비됨" 만 알린다.
+- 종료 / 재시작도 GUI 버튼으로 한다.
+- 구현은 **node-pty** — macOS / Linux 의 PTY 와 Windows ConPTY 를 단일 API 로 추상화해 OS 별 분기 코드를 최소화한다.
+
+#### 6. 터미널 비의존 dev 환경 — 친절한 세팅
+
+외부 서비스 setup 은 LLM training data 가 아닌 최신 공식 문서를 실시간 fetch 해 안내한다.
+
+- `init` 시 `.env.local` 디폴트 생성 + `.gitignore` 자동 등록.
+- vercel / supabase / github 등 외부 서비스 setup 시 **최신 공식 문서를 실시간 fetch** 해 step-by-step 가이드 제공 (가입 링크부터 토큰 발급, 권한 설정까지).
+- LLM training data 에 의존하지 않는다.
+
+**Fetch 정책**: TTL 24h + stale-while-revalidate. 오프라인 시 마지막 캐시를 보여주고 "마지막 업데이트: N시간 전" 배너를 표시한다. rate-limit 시 exponential backoff 후 캐시 fallback.
+
+#### 7. env 관리 GUI panel — 3-layer + 상태 badge + 코드 스캔 경고
+
+환경을 3 개 레이어로 정리한다. **로컬이 기본** — 사용자는 배포 직전까지 미리보기 / 프로덕션 환경을 만들 필요가 없다.
+
+| 레이어 | 의미 | 매핑 | 비고 |
+|:--|:--|:--|:--|
+| 🖥️ 로컬 | "지금 내 컴퓨터에서 실행할 때" | `.env.local` | 기본값. `init` 시 자동 생성 + `.gitignore` 자동 등록. plaintext. |
+| 🔍 미리보기 | "배포 전 테스트할 때" | Vercel preview env / 검증용 중간 환경 (내부 `dev`) 활성 시 자동 매핑 | Settings 의 `useDevBranch=true` 토글 시 활성. **배포 준비 시** [+ 환경 추가] 로도 추가 가능. |
+| 🚀 프로덕션 | "실제 사용자가 쓰는 서비스" | Vercel production env / 내부 `main` | 항상 보호. |
+| 🛡️ 외부 점검 | 선택, 첫 런칭 후 토글 | 내부 `staging` | Settings 의 `useStagingEnv=true` 시 활성. default off. |
+
+**base ↔ env 매핑**: 내부 `main` = 🚀 프로덕션, 내부 `dev` (opt-in) = 🔍 미리보기, 내부 `staging` (opt-in, default off, 첫 런칭 후 활용) = 🛡️ 외부 점검.
+
+**UI 구조**: 좌측 환경 selector + 우측 variable table. 변수 추가 시 적용 환경을 선택할 수 있다 (로컬만 / 전체).
+
+변수 상태 badge:
+
+| Badge | 의미 |
+|:--|:--|
+| ✅ | 전체 동기 |
+| ⚠️ | prod 없음 (배포 시 해당 기능 비활성 경고) |
+| 🔴 | 로컬 없음 (현재 실행 불가) |
+| 🔒 | secret masking (클릭 시 일시 노출) |
+
+**코드 스캔 경고**: agent 가 코드를 스캔해 `process.env.XXX` 를 매핑 → "이 키 없으면 결제 기능 안 됩니다" 수준의 의미 있는 경고를 띄운다 (T-ENV-06). Phase 4 MVP 에서는 외부 (Vercel) 동기를 배포 명령 시점에만 수행하며, 양방향 실시간 sync 는 미포함이다.
+
+#### 8. 풀 사이클 UI
+
+- process 시작 (PRD 작성) → 끝 (배포 + 마무리) → 다음 사이클 진입의 흐름을 보여준다.
+- 사용자가 **현재 어느 phase 인지 직관적으로 인지** 할 수 있다.
+- 위쪽 독립 5-phase breadcrumb row 는 두지 않는다.
+- Phase 정보는 Side Panel **Project 탭 phase strip** 과 Right Panel **PO Chat ctx chip** 에서 노출한다.
+
+#### 9. 프로젝트 관리 UI
+
+앱 실행 시 두 진입점을 제공하고, recent projects 리스트로 빠른 재진입을 지원한다.
+
+- (a) **[새 프로젝트 만들기]** → `~/productune/projects/<slug>/` 자동 생성 + `init` 자동 실행. 사용자는 파일시스템 탐색이 불필요하다. **기본 진입점.**
+- (b) **[기존 폴더 열기]** (고급 사용자) → 폴더 선택 → `.productune/` 없으면 "이 폴더에 productune 시작하기" 버튼 노출 → `project:installAt` 실행 (선택한 폴더에 직접 init).
+
+#### 10. Git 추상화 레이어 — 작업 흐름 규칙
+
+비-개발자에게 git 개념을 노출하지 않는다. **Ticket 단위 worktree** + base 보호 + 2단계 게이트 + Settings 토글이 핵심이다.
+
+UI 매핑:
+
+- **[자동저장 (백그라운드)]** = 현재 작업 (ticket worktree) 안 자동 commit (페르소나 turn 종료 + 상태 변화 트리거; 메시지 = ticket-id + persona summary).
+- **[배포 준비]** = 작업 worktree push + (toggle 시) 검증용 중간 환경 (내부 `dev`) 매핑.
+- **[배포하기]** = 프로덕션 환경 (내부 `main`) PR 자동 생성 → squash merge → Vercel deploy. **사용자 명시 클릭만 트리거**, PO 자동 결정 X.
+- **[버전 히스토리]** = ticket 단위 그룹 + 페르소나 trace inline 카드 UI (커밋 메시지 = 사람이 읽을 수 있는 자연어).
+
+**Worktree-per-ticket**: ticket 발행 = `<project>/.productune/worktrees/<ticket-id>/` 자동 생성. 내부 branch 명 = `feature/<ticket-id>/<slug-kebab>` 또는 `fix/<ticket-id>/<slug-kebab>` (risk_flags / stage 자동 분류). 사용자 화면엔 Project 탭 active ticket row + Status bar 의 "작업공간 준비됨" 배지로만 표현하고, branch/worktree 어휘는 노출하지 않는다.
+
+**Base branch 직접 작업 차단**: 프로덕션 (내부 `main`) 은 항상 차단한다. 검증용 중간 환경 (내부 `dev`) 은 Settings 의 `useDevBranch=true` 시 차단한다. 차단 동작은 두 가지다.
+
+- (a) GUI 가 base 위 자동저장 거부 + 친절 모달 ("보호된 환경입니다. 작업공간에서 시작해주세요." + [새 작업 시작] CTA).
+- (b) `.git/hooks/pre-push` 자동 설치 (productune init 시).
+
+**Settings — 작업 흐름 규칙 패널**: `<project>/.productune/git-rules.json` (project-tracked) + `~/.productune/git-rules.default.json` (global default). 4 토글 + 2 텍스트:
+
+| Key | Type / default | 라벨 |
+|:--|:--|:--|
+| `useDevBranch` | boolean, default false | 검증용 중간 환경 사용 |
+| `useStagingEnv` | boolean, default false, 첫 런칭 후 활성 | 외부 점검 환경 사용 |
+| `featureBranchPrefix` | text, default "feature" | 기능 작업 prefix |
+| `fixBranchPrefix` | text, default "fix" | 수정 작업 prefix |
+| `protectedBranches` | auto-derived, display only | — |
+| `autosaveTriggers` | Phase 5 lock | — |
+
+**단순 수정도 ticket 필수**: doctrine §2A' 그대로. ticket-id 없는 자동저장은 거부하며, trivial (typo/import) 은 현재 worktree 내에서 OK.
+
+`init` 시 GitHub OAuth 팝업 → private repo 자동 생성 → remote 자동 설정. 사용자는 `git` 명령어를 한 번도 보지 않는다.
+
+#### 11. 페르소나 skill set + 적용 여부 시각화
+
+- Side Panel **Team 탭**에서 각 페르소나 (PO / Designer / Developer / QA) 의 보유 skill 목록과 현재 task 에서 실제 invoke 된 skill 을 확인한다.
+- `Matrix ↗` 는 Main 의 `skill-matrix` 탭을 연다.
+- "이번 작업에 사용된 skill: `to-prd`, `pm-product-discovery:interview-script`" 수준의 trace 는 PO Chat inline trace 와 Project 탭 Recent Activity 에서 보조 노출한다.
 
 ### 기술 스택 (Phase 4 GUI)
 
