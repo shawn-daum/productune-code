@@ -11,6 +11,10 @@ Never author persona output — dispatch it.
 - `post-delegate-state-write` hook (`PostToolUse(Bash)`) writes `session_id`, `persona_session_meta.<persona>.last_seen`, `recent_turns` merge, `artifacts` union — never hand-write or duplicate.
 - Shell safety: a double-quoted task string lets the shell interpret backticks / `$()` / `<...>` → parse error, claude never runs (a few eval-error lines, zero src changes). Single-quote the prompt or strip those characters. After dispatch, an empty `git status` diff = failed-dispatch signal — check first.
 
+### Channel choice — Agent tool > portable shell [T-PATCH-204]
+
+Both channels inject habits identically (SessionStart hook keys Tier 0/1/2 off `agent_type`, set either way) → pick by runtime, not correctness. **Default = in-runtime `Agent(subagent_type: pdt-<persona>)`** whenever exposed (po-runner sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`): result auto-returns as tool output + yields `agentId` → cheap `SendMessage` continue (Session lifecycle). The `claude --print --agent` shell form above is FALLBACK only — Agent tool absent: headless / cron / CI / cross-machine / deliberately independent process; SID-resumable but not `SendMessage`-able + re-loads doctrine per call. Shell-out-of-habit while `Agent` is in toolset = wrong default.
+
 ## Dispatch runtime envelope
 
 The worker's habit tiers (0 common+persona / 1 project / 2 personal) are HOOK-INJECTED at its session start — the task body carries ONLY per-dispatch context (`[ctx]` + the task itself). Never paste doctrine, habits, or standing rules into a dispatch: they are already in the worker's context, and duplication wastes tokens + risks drift. Supply per dispatch:
