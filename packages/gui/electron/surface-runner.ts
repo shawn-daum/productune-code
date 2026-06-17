@@ -14,8 +14,10 @@
  * runner, but spawns the surface command instead of the chat CLI.
  */
 
-import { spawn } from 'child_process'
+import { spawn, execFileSync } from 'child_process'
 import type { ChildProcess } from 'child_process'
+import fs from 'fs'
+import path from 'path'
 
 export type SurfaceKind = 'build' | 'smoke'
 
@@ -74,6 +76,70 @@ export function killAllSurfaceRuns(): void {
 /** runIds that received an explicit cancel — used to classify SIGTERM exits. */
 const cancelled = new Set<string>()
 
+/**
+ * T-PATCH-186: resolve the user's *login-shell* PATH, cached for the process.
+ *
+ * When the app is launched from Finder / a packaged .app, Electron inherits
+ * launchd's minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) — missing Homebrew
+ * (`/opt/homebrew/bin`), language version managers (asdf/fvm/nvm shims), and
+ * SDK tool dirs (`~/flutter/bin`, `~/.pub-cache/bin`). So global build tools
+ * like `flutter` / `xcodebuild` / `gradle` / `pod` / `cargo` exit 127 even
+ * though they work in the user's terminal. Asking the login shell for its PATH
+ * (the `fix-path` approach) recovers them. Returns '' on failure or Windows.
+ */
+let loginShellPathCache: string | null = null
+function loginShellPath(): string {
+  if (loginShellPathCache !== null) return loginShellPathCache
+  if (process.platform === 'win32') return (loginShellPathCache = '')
+  try {
+    const shell = process.env.SHELL || '/bin/zsh'
+    // -ilc: interactive+login so both .zprofile (Homebrew) and .zshrc (asdf/fvm)
+    // are sourced. Sentinel-delimit to survive any shell banner noise on stdout.
+    const out = execFileSync(shell, ['-ilc', 'echo -n __PB_PATH__"$PATH"__PB_END__'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    const m = out.match(/__PB_PATH__(.*)__PB_END__/s)
+    return (loginShellPathCache = m ? m[1] : '')
+  } catch {
+    return (loginShellPathCache = '')
+  }
+}
+
+/**
+ * T-PATCH-186: build a PATH that resolves both project-local and global tools.
+ *
+ *   1. Project `node_modules/.bin` dirs (projectDir → root) — JS-local CLIs like
+ *      `next` / `vite` / `tsc`. npm/pnpm prepend these for scripts; our raw
+ *      /bin/sh spawn does not, so a bare `next` exits 127 without this.
+ *   2. The login-shell PATH (see loginShellPath) — global SDK tools.
+ *   3. The inherited process PATH — last, as a floor.
+ *
+ * Deduped, order-preserving (earlier entries win).
+ */
+function pathWithLocalBins(projectDir: string): string {
+  const localBins: string[] = []
+  let dir = path.resolve(projectDir)
+  // Cap the climb defensively (deep monorepos are still < 32 levels).
+  for (let i = 0; i < 32; i++) {
+    const bin = path.join(dir, 'node_modules', '.bin')
+    if (fs.existsSync(bin)) localBins.push(bin)
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+
+  const sep = path.delimiter
+  const merged = [
+    ...localBins,
+    ...loginShellPath().split(sep),
+    ...(process.env.PATH ?? '').split(sep),
+  ].filter(Boolean)
+
+  return [...new Set(merged)].join(sep)
+}
+
 // ── Public API ──────────────────────────────────────────────────────────────────
 
 /**
@@ -96,7 +162,9 @@ export function runSurfaceCommand(
   const child = spawn(opts.command, {
     shell: true,
     cwd: opts.projectDir,
-    env: { ...process.env, FORCE_COLOR: '0' },
+    // T-PATCH-186: prepend project-local node_modules/.bin so commands like
+    // `next build` / `vite build` resolve (raw /bin/sh spawn lacks npm's PATH).
+    env: { ...process.env, FORCE_COLOR: '0', PATH: pathWithLocalBins(opts.projectDir) },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   activeRuns.set(runId, child)

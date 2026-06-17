@@ -8,3 +8,16 @@
 .tab-strip-scroll::-webkit-scrollbar { height: 3px; background: transparent; }
 .tab-strip-scroll::-webkit-scrollbar-track { background: transparent; }
 .tab-strip-scroll::-webkit-scrollbar-thumb { background: #2A2A2A; border-radius: 2px; }
+
+/* ── Keyboard-focus ring (T-PATCH-186) ────────────────────────────────────────
+ * Chromium's default `outline: auto` paints the macOS *system accent* colour,
+ * which renders amber/orange on accent themes — so Tab-focus flashes amber on
+ * any element without a custom focus style. Pin an explicit app-accent ring and
+ * show it for keyboard navigation only (focus-visible); pointer clicks get none. */
+:focus-visible {
+  outline: 2px solid #8B5CF6;
+  outline-offset: 1px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}

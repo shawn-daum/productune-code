@@ -176,6 +176,11 @@ function createWindow(): BrowserWindow {
     },
   })
 
+  // T-PATCH-186: open maximized (fill the current display's work area). This is
+  // the normal maximize — NOT macOS native fullscreen (no separate Space) — so
+  // the 1280×800 above is just the fallback/restore size for un-maximize.
+  win.maximize()
+
   // T-PATCH-091 R3: restore persisted zoom factor.
   // NOTE: View-menu role:zoomIn/zoomOut/resetZoom also call setZoomFactor internally
   // but do NOT persist to settings.json — this is accepted for v0.5 (T-PATCH-091 OOS).
