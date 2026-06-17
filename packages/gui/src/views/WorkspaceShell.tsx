@@ -353,7 +353,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       {/* T-PATCH-091 R4: clip StatusBar to 0 height when the status row collapses
           to 0px — no dangling empty grid cell or visible bar remnant.
           T-PATCH-186: only clip while collapsed. When the bar is visible we need
-          overflow:visible so BuildSegment's upward drop-up (bottom:28, i.e. above
+          overflow:visible so RunSegment's upward drop-up (bottom:28, i.e. above
           this 34px cell) can escape instead of being clipped invisible. */}
       <div style={{ gridArea: 'status', overflow: statusBarVisible ? 'visible' : 'hidden' }}>
         <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />

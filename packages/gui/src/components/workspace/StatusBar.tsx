@@ -2,7 +2,7 @@
  * StatusBar — bottom workspace chrome (T-P4-059 rewrite; T-PATCH-173 cleanup).
  *
  * Left cluster:  SessionHealthSegment  •  "Session" usage gauges (5h / 7d)
- * Right cluster: BuildSegment (T-PATCH-159 Build/Smoke launcher)
+ * Right cluster: RunSegment (T-PATCH-187 ▶ Run launcher)
  *
  * T-PATCH-173 (Fork A): the bottom-left project slug (⌄) button + Recent
  * drop-up was removed entirely — it added no value (project switch lives in
@@ -12,7 +12,7 @@
 
 import { useTranslation } from 'react-i18next'
 import SessionHealthSegment from './SessionHealthSegment'
-import BuildSegment from './BuildSegment'
+import RunSegment from './RunSegment'
 import UsageBar from './chat/UsageBar'
 
 interface Props {
@@ -33,8 +33,8 @@ export default function StatusBar({ onOpenHealthBanner }: Props) {
         <UsageBar statusbar sessionLabel={t('workspace.statusBar.session')} />
       </div>
 
-      {/* Right cluster — Build(+Smoke) launcher (T-PATCH-159) */}
-      <BuildSegment />
+      {/* Right cluster — ▶ Run launcher (T-PATCH-187, was Build/Smoke T-PATCH-159) */}
+      <RunSegment />
     </div>
   )
 }

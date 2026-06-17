@@ -19,7 +19,7 @@ import type { ChildProcess } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 
-export type SurfaceKind = 'build' | 'smoke'
+export type SurfaceKind = 'build' | 'run'
 
 export interface SurfaceRunCallbacks {
   onStart: (info: { runId: string; surfaceKey: string; kind: SurfaceKind; command: string }) => void
@@ -52,11 +52,29 @@ function newRunId(): string {
  * emits `status:'cancelled'` (mirrors the PO turn abort path). Safe no-op
  * when the run is unknown or already gone.
  */
+/**
+ * T-PATCH-187: SIGTERM the whole process GROUP, not just the immediate child.
+ *
+ * Commands run via `shell:true` → the child is `/bin/sh -c "<command>"`, and the
+ * real work (e.g. `next dev`) is a grandchild. Killing only the shell can orphan
+ * the server, leaving its port occupied. We spawn `detached:true` so the child is
+ * its own group leader (pgid === pid); `process.kill(-pid)` then signals the whole
+ * group. Falls back to a direct child kill if the group signal fails.
+ */
+function terminate(child: ChildProcess, signal: NodeJS.Signals = 'SIGTERM'): void {
+  try {
+    if (typeof child.pid === 'number') process.kill(-child.pid, signal)
+    else child.kill(signal)
+  } catch {
+    try { child.kill(signal) } catch { /* already gone */ }
+  }
+}
+
 export function cancelSurfaceRun(runId: string): boolean {
   const child = activeRuns.get(runId)
   if (child && !child.killed) {
     cancelled.add(runId)
-    child.kill('SIGTERM')
+    terminate(child)
     return true
   }
   return false
@@ -68,7 +86,7 @@ export function cancelSurfaceRun(runId: string): boolean {
  */
 export function killAllSurfaceRuns(): void {
   for (const [, child] of activeRuns) {
-    if (!child.killed) child.kill('SIGTERM')
+    if (!child.killed) terminate(child)
   }
   activeRuns.clear()
 }
@@ -152,19 +170,38 @@ function pathWithLocalBins(projectDir: string): string {
  * the renderer never passes a raw command string (D8).
  */
 export function runSurfaceCommand(
-  opts: { projectDir: string; surfaceKey: string; kind: SurfaceKind; command: string },
+  opts: { projectDir: string; surfaceKey: string; kind: SurfaceKind; command: string; extraEnv?: Record<string, string> },
   cb: SurfaceRunCallbacks,
 ): string {
   const runId = newRunId()
 
-  // D3: shell:true (command is a space-separated shell string), cwd=projectDir,
-  // env inherited + FORCE_COLOR:'0' to keep ANSI escapes out of the log panel.
+  // T-PATCH-186/187: build a clean child env.
+  //  - Start from process.env, then DELETE NODE_ENV — Electron runs with
+  //    NODE_ENV='development', and leaking that into a build/run puts e.g. a
+  //    `next build` into a broken "production pipeline + development runtime"
+  //    state that crashes static prerender (/_not-found → "reading 'use' of
+  //    null"). A clean terminal has NODE_ENV unset, so the tool sets its own.
+  //  - Then apply extraEnv (a selected `.env*` file's vars) — so a file that
+  //    intentionally sets NODE_ENV still wins over our delete.
+  //  - FORCE_COLOR:'0' keeps ANSI escapes out of the log panel; PATH is
+  //    augmented to resolve project-local + global tools.
+  const base: NodeJS.ProcessEnv = { ...process.env }
+  delete base.NODE_ENV
+  const childEnv: NodeJS.ProcessEnv = {
+    ...base,
+    ...(opts.extraEnv ?? {}),
+    FORCE_COLOR: '0',
+    PATH: pathWithLocalBins(opts.projectDir),
+  }
+
+  // D3: shell:true (command is a space-separated shell string), cwd=projectDir.
+  // detached:true → child is its own process-group leader so `terminate()` can
+  // SIGTERM the whole group (shell + grandchild server), not just the shell.
   const child = spawn(opts.command, {
     shell: true,
     cwd: opts.projectDir,
-    // T-PATCH-186: prepend project-local node_modules/.bin so commands like
-    // `next build` / `vite build` resolve (raw /bin/sh spawn lacks npm's PATH).
-    env: { ...process.env, FORCE_COLOR: '0', PATH: pathWithLocalBins(opts.projectDir) },
+    env: childEnv,
+    detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   activeRuns.set(runId, child)

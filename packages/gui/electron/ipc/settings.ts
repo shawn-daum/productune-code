@@ -2,6 +2,7 @@ import { app, ipcMain, Notification, BrowserWindow } from 'electron'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
+import { setWebviewAcceptLanguage } from '../locale-session'
 import {
   getUiLanguage,
   setUiLanguage,
@@ -63,6 +64,9 @@ export function register(): void {
   ipcMain.handle('settings:setUiLanguage', (_event, lng: UiLanguage): { ok: boolean; error?: string } => {
     try {
       setUiLanguage(lng)
+      // T-PATCH-187: keep the in-app browser/Preview webview's Accept-Language in
+      // sync so embedded sites follow a live language switch (no restart needed).
+      setWebviewAcceptLanguage(lng)
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }

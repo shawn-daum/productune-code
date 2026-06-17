@@ -27,6 +27,7 @@ import { register as registerHtml }       from './ipc/html'
 import { register as registerBrowserFind } from './ipc/browserFind'
 import { register as registerProjectEnv }  from './ipc/projectEnv'
 import { register as registerAttachments } from './ipc/attachments'
+import { installWebviewAcceptLanguage } from './locale-session'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { register as registerTicketsWatch, stopTicketsWatch } from './ipc/ticketsWatch'
 import { register as registerCostArchive, stopCostWatch } from './ipc/costArchive'
@@ -404,6 +405,10 @@ app.whenReady().then(() => {
       if (!dockImage.isEmpty()) app.dock?.setIcon(dockImage)
     }
   }
+
+  // T-PATCH-187: make the in-app browser/Preview webview request the UI language
+  // so embedded sites (e.g. Kakao OAuth) render in ko, not default en-US.
+  installWebviewAcceptLanguage()
 
   startUsageWatch()
   createWindow()

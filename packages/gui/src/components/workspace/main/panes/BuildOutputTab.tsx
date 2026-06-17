@@ -1,5 +1,6 @@
 /**
- * BuildOutputTab — streaming log view for a surface build/smoke run (T-PATCH-159 D4).
+ * BuildOutputTab — streaming log view for a surface build/run (T-PATCH-159 D4,
+ * extended for Run in T-PATCH-187).
  *
  * Subscribes to api.surface.onOutput/onDone for the run identified by `props.runId`.
  * Append-only monospace log with a 5000-line ring buffer (D7: ref + manual flush,
@@ -9,11 +10,22 @@
  * Status chip is derived from the onDone payload (running until done arrives):
  *   running (spinner) / pass (exit 0) / fail / cancelled.
  * While running, a 취소 button calls api.surface.cancel(runId) → SIGTERM (D5).
+ *
+ * T-PATCH-187 (kind:'run' — long-lived dev servers):
+ *   - When `props.preview` is set, the log is scanned for the first localhost URL
+ *     the server prints (e.g. Next's "Local: http://localhost:3000") and an in-app
+ *     'browser' Preview tab is auto-opened once.
+ *   - On unmount (tab close) the run is SIGTERMed via api.surface.cancel so a
+ *     server never outlives its tab (closing the tab = stopping the server).
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useWorkspace } from '../../../../store/workspace'
 
 const MAX_LINES = 5000
+
+// First http(s) localhost / 127.0.0.1 URL on a line (tolerant of trailing ANSI).
+const LOCAL_URL_RE = /(https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?[^\s\x1b]*)/i
 
 type RunStatus = 'running' | 'pass' | 'fail' | 'cancelled'
 
@@ -24,7 +36,10 @@ interface Props {
 export default function BuildOutputTab({ props }: Props) {
   const runId = props?.runId as string | undefined
   const surfaceKey = (props?.surfaceKey as string) ?? '?'
-  const kind = (props?.kind as 'build' | 'smoke') ?? 'build'
+  const kind = (props?.kind as 'build' | 'run') ?? 'build'
+  const env = props?.env as string | undefined
+  const preview = props?.preview === true
+  const openTab = useWorkspace((s) => s.openTab)
 
   const [status, setStatus] = useState<RunStatus>('running')
   const [exitCode, setExitCode] = useState<number | null>(null)
@@ -34,6 +49,7 @@ export default function BuildOutputTab({ props }: Props) {
   const linesRef = useRef<string[]>([])
   const preRef = useRef<HTMLPreElement>(null)
   const followRef = useRef(true)
+  const previewOpenedRef = useRef(false) // T-PATCH-187: open the Preview tab at most once
 
   const flush = useCallback(() => {
     const pre = preRef.current
@@ -64,6 +80,17 @@ export default function BuildOutputTab({ props }: Props) {
       // Ring-buffer trim: drop oldest lines past the cap.
       if (buf.length > MAX_LINES) buf.splice(0, buf.length - MAX_LINES)
       scheduleFlush()
+
+      // T-PATCH-187: for a run with preview enabled, open an in-app browser
+      // Preview tab the first time the server prints its localhost URL.
+      if (preview && kind === 'run' && !previewOpenedRef.current) {
+        const m = ev.chunk.match(LOCAL_URL_RE)
+        if (m) {
+          previewOpenedRef.current = true
+          const url = m[1]
+          openTab(`browser:run-${surfaceKey}-${env ?? 'default'}`, 'browser', { url }, `Preview: ${surfaceKey}`)
+        }
+      }
     })
 
     const offDone = api.onDone((ev: { runId: string; code: number | null; status: RunStatus }) => {
@@ -75,11 +102,14 @@ export default function BuildOutputTab({ props }: Props) {
 
     return () => {
       // D7: always unsubscribe on cleanup.
+      // NOTE: do NOT SIGTERM the run here — this cleanup also runs on tab-switch
+      // (only the active tab is mounted) and React StrictMode's dev remount.
+      // The SIGTERM-on-close lives in the store's closeTab (real close only).
       offOutput?.()
       offDone?.()
       if (raf) cancelAnimationFrame(raf)
     }
-  }, [runId, flush])
+  }, [runId, flush, preview, kind, env, surfaceKey, openTab])
 
   const handleScroll = useCallback(() => {
     const pre = preRef.current
@@ -101,7 +131,7 @@ export default function BuildOutputTab({ props }: Props) {
     <div style={wrap}>
       <div style={header}>
         <StatusChip status={status} exitCode={exitCode} />
-        <span style={meta}>{surfaceKey} · {kind}</span>
+        <span style={meta}>{surfaceKey} · {kind}{env ? ` · ${env}` : ''}</span>
         <span style={{ flex: 1 }} />
         {status === 'running' && (
           <button style={cancelBtn} onClick={handleCancel}>취소</button>

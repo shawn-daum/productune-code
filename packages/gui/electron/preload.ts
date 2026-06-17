@@ -980,18 +980,24 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
-  // ── Surface build/smoke (T-PATCH-159) ──────────────────────────────────────
-  // Zero-token: runs config.surfaces.<key>.build|smoke via child_process.spawn.
+  // ── Surface build/run (T-PATCH-159 → T-PATCH-187) ───────────────────────────
+  // Zero-token: runs config.surfaces.<key>.build|run via child_process.spawn.
   surface: {
-    /** D2: read the project's surfaces config. */
+    /** D2: read the project's surfaces config (incl. type-aware `run`). */
     list: (args: { projectDir: string }): Promise<{
       ok: boolean
-      surfaces?: Record<string, { type: string; build: string | null; smoke: string | null; smoke_driver: string }>
+      surfaces?: Record<string, {
+        type: string
+        build?: string | null
+        // Normalized in main: command + discovered `.env*` environments.
+        run?: { command: string; preview: boolean; environments: { label: string; file: string }[] }
+      }>
       error?: string
     }> => ipcRenderer.invoke('surface:list', args),
 
-    /** D3: spawn a surface build/smoke; returns the runId for the output tab. */
-    run: (args: { projectDir: string; surfaceKey: string; kind: 'build' | 'smoke' }): Promise<{
+    /** D3: spawn a surface build/run; returns the runId for the output tab.
+     *  `env` selects the run environment when run is env-keyed (web dev/prod). */
+    run: (args: { projectDir: string; surfaceKey: string; kind: 'build' | 'run'; env?: string }): Promise<{
       ok: boolean
       runId?: string
       command?: string
@@ -1002,7 +1008,7 @@ contextBridge.exposeInMainWorld('api', {
     cancel: (args: { runId: string }): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('surface:cancel', args),
 
-    onStart: (cb: (ev: { runId: string; surfaceKey: string; kind: 'build' | 'smoke'; command: string }) => void) => {
+    onStart: (cb: (ev: { runId: string; surfaceKey: string; kind: 'build' | 'run'; command: string }) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
       ipcRenderer.on('surface:onStart', listener)
       return () => ipcRenderer.removeListener('surface:onStart', listener)

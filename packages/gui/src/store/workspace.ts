@@ -517,6 +517,18 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
     // to surface an unsaved-changes confirmation. The guard owner re-issues
     // closeTab once the user confirms discard/save.
     if (!canCloseTab(tabId)) return
+    // T-PATCH-187: closing a run/build output tab stops its process (SIGTERM).
+    // Tied to a REAL close here (not component unmount) — unmount also fires on
+    // tab-switch and React StrictMode's dev remount, which would kill the run
+    // spuriously. No-op if the run already finished.
+    {
+      const leaf = findLeaf(get().panes, paneId)
+      const tab = leaf?.tabs.find((t) => t.id === tabId)
+      const runId = tab?.type === 'build-output' ? (tab.props?.runId as string | undefined) : undefined
+      if (runId) {
+        try { (window as any).api?.surface?.cancel({ runId }) } catch { /* ignore */ }
+      }
+    }
     set((s) => ({
       ...s,
       panes: replaceLeaf(s.panes, paneId, (l) => {
@@ -802,7 +814,13 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'code-view':         return (props?.path as string)?.split('/').pop() ?? 'File'
     case 'doctrine-file':     return (props?.relName as string) ?? (props?.absPath as string)?.split('/').pop() ?? 'Doctrine'
     case 'project-env':       return (props?.filename as string) ?? '.env'
-    case 'build-output':      return `Build: ${(props?.surfaceKey as string) ?? '?'}`
+    case 'build-output': {
+      // T-PATCH-187: shared tab type for both build and run output.
+      const sk = (props?.surfaceKey as string) ?? '?'
+      const env = props?.env as string | undefined
+      if (props?.kind === 'run') return env ? `Run: ${sk} · ${env}` : `Run: ${sk}`
+      return `Build: ${sk}`
+    }
     default:                  return type
   }
 }

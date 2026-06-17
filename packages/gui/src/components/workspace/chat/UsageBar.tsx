@@ -357,7 +357,7 @@ const resetStyle: React.CSSProperties = {
 }
 
 // T-PATCH-173: compact reset label for the statusbar row — no flex-grow (would
-// push BuildSegment); sits snug after the % with its leading "· " separator.
+// push RunSegment); sits snug after the % with its leading "· " separator.
 const resetStyleCompact: React.CSSProperties = {
   fontSize: 9,
   color: '#505060',
