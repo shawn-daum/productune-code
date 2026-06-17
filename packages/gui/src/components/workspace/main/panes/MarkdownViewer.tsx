@@ -522,8 +522,11 @@ export default function MarkdownViewer({
                   className={isLight ? 'md-doc md-light' : 'md-doc'}
                   style={zoomEnabled ? { ...viewerWrap, zoom: zoom } : viewerWrap}
                 >
-                  <MetadataPanel data={fmData} />
-                  <MdRenderer text={previewBody} />
+                  {/* T-PATCH-198: inner reading column — 780px cap, centered */}
+                  <div style={viewerColumn}>
+                    <MetadataPanel data={fmData} />
+                    <MdRenderer text={previewBody} />
+                  </div>
                 </div>
               </>
             )}
@@ -697,11 +700,28 @@ const retryBtn: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
+// T-PATCH-198: viewerWrap fills the full pane width so the paper background
+// (`.md-doc.md-light { background }`) covers the entire scroll area — no dark
+// gutter on wide panes. maxWidth removed; minHeight:100% ensures even short
+// documents paint the paper down to the bottom of the scroll container.
+// Horizontal padding moved to viewerColumn (the inner reading column).
 const viewerWrap: React.CSSProperties = {
-  padding: '24px 28px',
-  maxWidth: 780,
+  paddingTop: 24,
+  paddingBottom: 24,
+  minHeight: '100%',
   lineHeight: 1.65,
   fontSize: 13,
+}
+
+// T-PATCH-198: inner reading column — capped at 780px and centered within the
+// full-width paper surface. Carries the horizontal padding that was formerly on
+// viewerWrap. zoom is applied on viewerWrap (the paper), so this column centers
+// correctly under any zoom level.
+const viewerColumn: React.CSSProperties = {
+  maxWidth: 780,
+  margin: '0 auto',
+  paddingLeft: 28,
+  paddingRight: 28,
 }
 
 // ── Sticky-scroll band (T-PATCH-095) ────────────────────────────────────────────
