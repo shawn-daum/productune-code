@@ -27,6 +27,13 @@ export const headerSubtitle: React.CSSProperties = {
   fontFamily: 'monospace',
 }
 
+// PRD section wrapper — horizontal padding aligns PrdSection with the 16px
+// gutter of sibling rows (headerWrap/cardListWrap). T-PATCH-178.
+export const prdWrap: React.CSSProperties = {
+  flexShrink: 0,
+  padding: '12px 16px 0',
+}
+
 export const cardListWrap: React.CSSProperties = {
   flex: 1,
   overflowY: 'auto',

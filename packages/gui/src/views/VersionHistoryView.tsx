@@ -12,7 +12,7 @@ import TicketCard, { type TicketArtifactEntry } from './versionHistory/TicketCar
 import EmptyState from './versionHistory/EmptyState'
 import FilterToolbar from './versionHistory/FilterToolbar'
 import RichDeployCard, { DeployLoadingSkeleton } from './versionHistory/RichDeployCard'
-import { viewWrap, headerWrap, headerTitle, headerSubtitle, cardListWrap } from './versionHistory/styles'
+import { viewWrap, headerWrap, headerTitle, headerSubtitle, cardListWrap, prdWrap } from './versionHistory/styles'
 
 const EMPTY_ARTIFACT_MAP = new Map<string, TicketArtifactEntry[]>()
 
@@ -75,7 +75,9 @@ export default function VersionHistoryView() {
 
       {/* PRD row — closed version opens its docs/prd/versions/<v>.md snapshot,
           current version opens the live master (same UI as VersionDetailView) */}
-      <PrdSection versionId={selectedVersionId} />
+      <div style={prdWrap}>
+        <PrdSection versionId={selectedVersionId} />
+      </div>
 
       <FilterToolbar filter={filter} dispatch={dispatch} defaultFrom={defaultFrom} defaultTo={defaultTo} />
 
