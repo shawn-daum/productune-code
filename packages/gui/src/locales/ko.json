@@ -418,7 +418,11 @@
       "newTab": "새 탭",
       "splitRight": "오른쪽 분할",
       "splitDown": "아래 분할",
-      "closeTab": "탭 닫기"
+      "closeTab": "탭 닫기",
+      "reopenTab": "마지막으로 닫은 탭 복원",
+      "focusUrl": "URL 바 포커스",
+      "navBackForward": "브라우저 뒤로 / 앞으로",
+      "cycleTab": "탭 순환"
     },
     "sessionHealth": {
       "healthy": {

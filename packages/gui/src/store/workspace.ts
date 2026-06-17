@@ -5,6 +5,28 @@ import type { Project, Phase, PoState, Message, MessageKind } from '../lib/types
 import { PHASE_NAMES } from '../lib/types'
 import { canCloseTab } from './tabCloseGuard'
 
+// ── T-PATCH-196: recently-closed tab descriptor ──────────────────────────────
+// Stored in a LIFO stack (max 10). NOT persisted to sessionStorage — cleared on
+// app reload/quit. Excluded from Zustand persist partialize below.
+//
+// INCLUDE policy (restorable): read-only viewers fully derivable from props
+// (path / id / url); no live process; no unsaved draft.
+//   browser, markdown, ticket-detail, ticket-review, version-detail,
+//   version-history, persona-def, artifact-md, artifact-mermaid,
+//   artifact-json, image, code-view, code-search, cost-archive
+//
+// EXCLUDE policy: live-process tabs (build-output, preview when editing, terminal),
+// singleton settings tabs whose re-open is idempotent by id but would confusingly
+// jump the user to settings unexpectedly (general-settings, workflow-settings,
+// mcp-servers, hooks, skill-matrix, deploy, project-env, env-view),
+// placeholder-only types (design-gate, qa-result), and doctrine-file (editable —
+// can have unsaved draft; the close guard already handles that boundary).
+export interface ClosedTabDescriptor {
+  type: TabType
+  title: string
+  props?: Record<string, unknown>
+}
+
 // ── Pane tree types (T-P4-046) ──────────────────────────────────────────────
 
 export type TabType =
@@ -36,6 +58,42 @@ export type TabType =
   | 'project-env'
   | 'cost-archive'
   | 'build-output'
+
+// ── T-PATCH-196: INCLUDE-policy set ─────────────────────────────────────────
+// Tab types that are safe to push onto the recently-closed stack and restore via
+// ⌘⇧T. Criteria: read-only viewer, all state derivable from props alone (path /
+// id / url), no live process attached, no unsaved draft possible.
+//
+// EXCLUDED by design:
+//   build-output  — live process (SIGTERM'd on close; meaningless to restore)
+//   preview       — HtmlViewer can be in edit mode with unsaved draft
+//   terminal      — live shell / log tail (placeholder; no restoration semantics)
+//   doctrine-file — editable; can carry unsaved draft (close guard handles it)
+//   design-gate   — PlaceholderTab only; no props to restore
+//   qa-result     — PlaceholderTab only; no props to restore
+//   env-view      — PlaceholderTab only; no props to restore
+//   general-settings / workflow-settings / mcp-servers / hooks
+//                 — singleton settings tabs: re-opening them unexpectedly from
+//                   a reopen-tab shortcut is confusing UX; user opens from menu.
+//   skill-matrix  — singleton settings panel; same reasoning.
+//   deploy        — singleton deploy surface; same reasoning.
+//   project-env   — editable key/value editor; can carry unsaved changes.
+//   cost-archive  — singleton report surface; same reasoning as settings tabs.
+export const RESTORABLE_TAB_TYPES: ReadonlySet<TabType> = new Set<TabType>([
+  'browser',
+  'markdown',
+  'ticket-detail',
+  'ticket-review',
+  'version-detail',
+  'version-history',
+  'persona-def',
+  'artifact-md',
+  'artifact-mermaid',
+  'artifact-json',
+  'image',
+  'code-view',
+  'code-search',
+])
 
 export interface Tab {
   id: string
@@ -162,6 +220,13 @@ interface WorkspaceState {
   setDragHint: (hint: DragHint) => void
   setTabDragActive: (active: boolean) => void
   setResizeDragActive: (active: boolean) => void
+  // T-PATCH-196: recently-closed tab LIFO stack (max 10, NOT persisted).
+  // Expanded beyond browser-only: any INCLUDE-policy tab type is pushed on close.
+  recentlyClosedBrowserTabs: ClosedTabDescriptor[]
+  pushClosedTab: (desc: ClosedTabDescriptor) => void
+  popClosedTab: () => ClosedTabDescriptor | null
+  reopenLastClosedTab: () => void
+
   /** In-place rename: swap tab id (and optional title) across all panes.
    *  Matching leaf's activeTabId is also swapped. No-op if not found. */
   updateTabId: (oldId: string, newId: string, newTitle?: string) => void
@@ -320,6 +385,9 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   dragHint: null,
   tabDragActive: false,
   resizeDragActive: false,
+
+  // T-PATCH-196: recently-closed tab LIFO stack (NOT persisted).
+  recentlyClosedBrowserTabs: [],
 
   // T-PATCH-091 R4: seeded from IPC on WorkspaceShell mount; default true.
   statusBarVisible: true,
@@ -535,6 +603,26 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
         try { (window as any).api?.surface?.cancel({ runId }) } catch { /* ignore */ }
       }
     }
+    // T-PATCH-196: snapshot the closed tab onto the recently-closed LIFO stack
+    // for any INCLUDE-policy type (read-only, fully derivable from props, no live
+    // process). Browser tabs are excluded when url is about:blank (new-tab stub).
+    {
+      const leaf = findLeaf(get().panes, paneId)
+      const tab = leaf?.tabs.find((t) => t.id === tabId)
+      if (tab && RESTORABLE_TAB_TYPES.has(tab.type)) {
+        // Browser: skip about:blank stubs (they were opened via ⌘T with no URL yet).
+        if (tab.type === 'browser') {
+          const url = typeof tab.props?.url === 'string' ? tab.props.url : ''
+          if (!url || url === 'about:blank') {
+            // do not push — stub tab has no restorable destination
+          } else {
+            get().pushClosedTab({ type: tab.type, title: tab.title, props: tab.props })
+          }
+        } else {
+          get().pushClosedTab({ type: tab.type, title: tab.title, props: tab.props })
+        }
+      }
+    }
     set((s) => ({
       ...s,
       panes: replaceLeaf(s.panes, paneId, (l) => {
@@ -747,6 +835,47 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   // T-PATCH-091 R4
   setStatusBarVisible: (statusBarVisible) => set({ statusBarVisible }),
 
+  // T-PATCH-196: recently-closed tab LIFO stack actions.
+  pushClosedTab: (desc) => {
+    set((s) => {
+      const next = [desc, ...s.recentlyClosedBrowserTabs].slice(0, 10)
+      return { recentlyClosedBrowserTabs: next }
+    })
+  },
+  popClosedTab: () => {
+    let popped: ClosedTabDescriptor | null = null
+    set((s) => {
+      if (s.recentlyClosedBrowserTabs.length === 0) return s
+      const [first, ...rest] = s.recentlyClosedBrowserTabs
+      popped = first
+      return { recentlyClosedBrowserTabs: rest }
+    })
+    return popped
+  },
+  reopenLastClosedTab: () => {
+    const s = get()
+    if (s.recentlyClosedBrowserTabs.length === 0) return
+    const [desc, ...rest] = s.recentlyClosedBrowserTabs
+    // Pop the stack first, then open the tab via the standard openTab path.
+    // openTab dedupes by id, so using a fresh unique id avoids a conflict if
+    // the same resource is already open in another pane.
+    const tabId = `${desc.type}:reopened-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    // Determine the target pane (active pane if valid leaf, else first leaf).
+    const leafIds = collectLeafIds(s.panes)
+    const targetPaneId = leafIds.includes(s.activePaneId) ? s.activePaneId : leafIds[0]
+    const newTab: Tab = {
+      id: tabId,
+      type: desc.type,
+      title: desc.title || defaultTitle(desc.type, desc.props),
+      props: desc.props,
+    }
+    set((s2) => ({
+      recentlyClosedBrowserTabs: rest,
+      panes: replaceLeaf(s2.panes, targetPaneId, (l) => appendTabToLeaf(l, newTab)),
+      activePaneId: targetPaneId,
+    }))
+  },
+
   updateTabId: (oldId, newId, newTitle) => {
     set((s) => {
       const newPanes = mapLeaves(s.panes, (leaf) => {
@@ -792,6 +921,9 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
     nextPaneSeq: s.nextPaneSeq,
     selectedVersionId: s.selectedVersionId,
     persistedProjectDir: s.persistedProjectDir,
+    // T-PATCH-196: recentlyClosedBrowserTabs (the recently-closed tab stack) is
+    // intentionally EXCLUDED — stack must not survive a ⌘R reload (sessionStorage)
+    // or app restart. Users expect ⌘⇧T history to be session-only.
   }),
 }))
 

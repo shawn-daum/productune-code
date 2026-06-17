@@ -343,6 +343,14 @@ function buildAppMenu(): Menu {
         { label: 'Close Tab',   accelerator: 'CmdOrCtrl+W',  visible: false, click: () => sendToFocused('menu:close-tab')  },
         { label: 'Split Right', accelerator: 'CmdOrCtrl+\\', visible: false, click: () => sendToFocused('menu:split-right') },
         { label: 'Quick Open',  accelerator: 'CmdOrCtrl+P',  visible: false, click: () => sendToFocused('menu:quick-open') },
+        // T-PATCH-196: in-app browser shortcuts — hidden accelerators (visible:false fires
+        // window-wide even when focus is inside the sandboxed webview OOPIF).
+        { label: 'Reopen Tab',    accelerator: 'CmdOrCtrl+Shift+T', visible: false, click: () => sendToFocused('menu:reopen-tab')   },
+        { label: 'Focus URL Bar', accelerator: 'CmdOrCtrl+L',       visible: false, click: () => sendToFocused('menu:focus-url')    },
+        { label: 'Nav Back',      accelerator: 'CmdOrCtrl+[',       visible: false, click: () => sendToFocused('menu:nav-back')     },
+        { label: 'Nav Forward',   accelerator: 'CmdOrCtrl+]',       visible: false, click: () => sendToFocused('menu:nav-forward')  },
+        { label: 'Cycle Tab Next', accelerator: 'Ctrl+Tab',         visible: false, click: () => sendToFocusedData('menu:cycle-tab', { dir: 1 })  },
+        { label: 'Cycle Tab Prev', accelerator: 'Ctrl+Shift+Tab',   visible: false, click: () => sendToFocusedData('menu:cycle-tab', { dir: -1 }) },
         // cmd+1..9 — single channel menu:goto-tab, index in payload
         ...Array.from({ length: 9 }, (_, i): MenuItemConstructorOptions => ({
           label: `Go to Tab ${i + 1}`,

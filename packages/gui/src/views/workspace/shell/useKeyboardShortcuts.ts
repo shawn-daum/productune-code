@@ -69,7 +69,11 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
         splitRight(activePaneId)
         return
       }
-      if (key === 't') {
+      // T-PATCH-196: guard !e.shiftKey so ⌘⇧T (reopen) does NOT also fire
+      // addNewTab here. Without the guard, key='T'.toLowerCase()==='t' matches
+      // both ⌘T and ⌘⇧T, causing a spurious blank tab to open on reopen.
+      // ⌘⇧T reopen is handled exclusively via the menu:reopen-tab IPC path below.
+      if (key === 't' && !e.shiftKey) {
         e.preventDefault()
         const { activePaneId } = useWorkspace.getState()
         addNewTab(activePaneId)
@@ -114,9 +118,37 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
   // OOPIF iframe — the proven mechanism (same path as cmd+F / menu:find).
   // before-input-event path removed; each channel calls the SAME action as the
   // keydown handler above. Editable-focus guard mirrors the keyboard path.
+  //
+  // T-PATCH-196 (STRIKE-2 fix): app-level nav shortcuts (⌘⇧T reopen, ⌃Tab cycle,
+  // ⌘[/⌘] nav) are NOT text-editing keys and MUST fire even when the URL bar
+  // <input> has focus. The old broad isEditable() guard was over-broad — it
+  // treated "URL input is focused" the same as "user is typing text", which is
+  // wrong: a focused input is just the active element; it doesn't mean the
+  // shortcut should be suppressed.
+  //
+  // Guard policy after this fix:
+  //   • Text-editing-sensitive shortcuts (⌘T new tab, ⌘W close, ⌘\ split,
+  //     ⌘P quick-open, ⌘K chord, ⌘1-9 goto-tab): keep isEditable() guard —
+  //     these would interrupt or confuse text editing if fired mid-type.
+  //   • ⌘⇧T reopen: NO guard — pure tab management, harmless during typing.
+  //   • ⌃Tab / ⌃⇧Tab cycle: guard on IME composition ONLY (composingRef).
+  //     The isEditable() guard was added to prevent ⌃Tab from interfering with
+  //     Korean/CJK IME mid-composition (keyCode 229 / isComposing). But a merely-
+  //     focused input is not mid-composition; we track actual composition via
+  //     compositionstart / compositionend events on the window.
   useEffect(() => {
     const api = (window as any).api
     if (!api) return
+
+    // Track active IME composition — only used by onMenuCycleTab guard.
+    // compositionstart fires when the user begins a CJK/Korean syllable;
+    // compositionend fires when they commit or cancel it. We must not cycle
+    // tabs mid-syllable (the ⌃Tab key is part of the IME selection UI then).
+    const composingRef = { current: false }
+    const onCompositionStart = () => { composingRef.current = true }
+    const onCompositionEnd   = () => { composingRef.current = false }
+    window.addEventListener('compositionstart', onCompositionStart)
+    window.addEventListener('compositionend',   onCompositionEnd)
 
     const isEditable = (): boolean => {
       const ae = document.activeElement
@@ -187,6 +219,43 @@ export function useKeyboardShortcuts(params: KeyboardShortcutsParams): void {
       )
     }
 
-    return () => subs.forEach((fn) => fn?.())
+    // T-PATCH-196: ⌘⇧T — reopen last closed browser tab.
+    // NO isEditable() guard: reopen is pure tab management; it must work even
+    // when the URL bar <input> has focus. A user may have just typed a URL,
+    // pressed Enter, then immediately want to reopen a previous tab.
+    if (api.onMenuReopenTab) {
+      subs.push(
+        api.onMenuReopenTab(() => {
+          useWorkspace.getState().reopenLastClosedTab()
+        }),
+      )
+    }
+
+    // T-PATCH-196: ⌃Tab / ⌃⇧Tab — cycle next/prev tab in active pane.
+    // Guard: IME composition ONLY (composingRef). Do NOT guard on isEditable()
+    // — the URL bar being focused is not a reason to suppress tab cycling.
+    // Only suppress when the user is mid-IME-syllable (composingRef.current),
+    // because ⌃Tab is part of the Korean/CJK candidate-selection UI then.
+    if (api.onMenuCycleTab) {
+      subs.push(
+        api.onMenuCycleTab((dir: 1 | -1) => {
+          if (composingRef.current) return
+          const s = useWorkspace.getState()
+          const leaf = findLeafByIdLocal(s.panes, s.activePaneId)
+          if (!leaf || leaf.tabs.length <= 1) return
+          const currentIdx = leaf.activeTabId
+            ? leaf.tabs.findIndex((t) => t.id === leaf.activeTabId)
+            : 0
+          const nextIdx = (currentIdx + dir + leaf.tabs.length) % leaf.tabs.length
+          setActiveTab(s.activePaneId, leaf.tabs[nextIdx].id)
+        }),
+      )
+    }
+
+    return () => {
+      window.removeEventListener('compositionstart', onCompositionStart)
+      window.removeEventListener('compositionend',   onCompositionEnd)
+      subs.forEach((fn) => fn?.())
+    }
   }, [closeTab, closePane, splitRight, addNewTab, setActiveTab])
 }

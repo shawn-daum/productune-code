@@ -418,7 +418,11 @@
       "newTab": "New Tab",
       "splitRight": "Split Right",
       "splitDown": "Split Down",
-      "closeTab": "Close Tab"
+      "closeTab": "Close Tab",
+      "reopenTab": "Reopen Last Closed Tab",
+      "focusUrl": "Focus URL Bar",
+      "navBackForward": "Browser Back / Forward",
+      "cycleTab": "Cycle Tabs"
     },
     "sessionHealth": {
       "healthy": {

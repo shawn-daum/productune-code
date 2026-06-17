@@ -21,6 +21,10 @@ export default function EmptyPane() {
         <KbdRow chord={['⌘', 'T']} label={t('workspace.kbd.newTab')} />
         <KbdRow chord={['⌘', '\\']} label={t('workspace.kbd.splitRight')} />
         <KbdRow chord={['⌘', 'W']} label={t('workspace.kbd.closeTab')} />
+        <KbdRow chord={['⌘', '⇧', 'T']} label={t('workspace.kbd.reopenTab')} />
+        <KbdRow chord={['⌘', 'L']} label={t('workspace.kbd.focusUrl')} />
+        <KbdRow chord={['⌘', '[', '/', ']']} label={t('workspace.kbd.navBackForward')} />
+        <KbdRow chord={['⌃', 'Tab']} label={t('workspace.kbd.cycleTab')} />
       </div>
       <button style={ctaBtn} onClick={handleQuickOpen}>
         {t('workspace.emptyPane.ctaLabel')}

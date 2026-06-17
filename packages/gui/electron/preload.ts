@@ -816,6 +816,33 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('menu:goto-tab', listener)
   },
 
+  // T-PATCH-196: in-app browser keyboard shortcuts — IPC bridges.
+  onMenuReopenTab: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:reopen-tab', listener)
+    return () => ipcRenderer.removeListener('menu:reopen-tab', listener)
+  },
+  onMenuFocusUrl: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:focus-url', listener)
+    return () => ipcRenderer.removeListener('menu:focus-url', listener)
+  },
+  onMenuNavBack: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:nav-back', listener)
+    return () => ipcRenderer.removeListener('menu:nav-back', listener)
+  },
+  onMenuNavForward: (cb: () => void) => {
+    const listener = () => cb()
+    ipcRenderer.on('menu:nav-forward', listener)
+    return () => ipcRenderer.removeListener('menu:nav-forward', listener)
+  },
+  onMenuCycleTab: (cb: (dir: 1 | -1) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, data: { dir: 1 | -1 }) => cb(data?.dir ?? 1)
+    ipcRenderer.on('menu:cycle-tab', listener)
+    return () => ipcRenderer.removeListener('menu:cycle-tab', listener)
+  },
+
   onMenuNewProject: (cb: () => void) => {
     const listener = () => cb()
     ipcRenderer.on('menu:new-project', listener)

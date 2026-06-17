@@ -174,6 +174,7 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
       const key = input.key?.toLowerCase()
       const isAppShortcut =
         key === 't' || key === 'w' || key === '\\' || key === 'f' ||
+        key === '[' || key === ']' ||
         (key >= '1' && key <= '9')
       if (!isAppShortcut) return
       // Re-dispatch as a real KeyboardEvent on window so useKeyboardShortcuts
@@ -203,6 +204,39 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
       const id = requestAnimationFrame(() => urlInputRef.current?.select())
       return () => cancelAnimationFrame(id)
     }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // T-PATCH-196: subscribe to menu accelerator IPC for ⌘L, ⌘[, ⌘].
+  // Subscribed here (where urlInputRef / webviewRef live) so the handler is only
+  // active while this BrowserTab is mounted — natural no-op for non-browser tabs.
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api) return
+    const subs: Array<(() => void) | undefined> = []
+
+    if (api.onMenuFocusUrl) {
+      subs.push(
+        api.onMenuFocusUrl(() => {
+          urlInputRef.current?.select()
+        }),
+      )
+    }
+    if (api.onMenuNavBack) {
+      subs.push(
+        api.onMenuNavBack(() => {
+          webviewRef.current?.goBack()
+        }),
+      )
+    }
+    if (api.onMenuNavForward) {
+      subs.push(
+        api.onMenuNavForward(() => {
+          webviewRef.current?.goForward()
+        }),
+      )
+    }
+
+    return () => subs.forEach((fn) => fn?.())
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Wire webview navigation events to keep URL bar in sync
