@@ -153,6 +153,9 @@
       "session": "Session",
       "runHint": "You can run the app now 🚀 Use ▶ Run (bottom-right) to pick an environment (e.g. local) and launch — a preview tab opens. (Closing the tab stops the server too.)"
     },
+    "runOutput": {
+      "reopenPreview": "Reopen preview"
+    },
     "zoom": {
       "out": "Zoom out",
       "reset": "Reset zoom",

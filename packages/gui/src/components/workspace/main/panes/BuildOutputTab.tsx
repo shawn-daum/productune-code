@@ -20,12 +20,18 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../../../store/workspace'
 
 const MAX_LINES = 5000
 
 // First http(s) localhost / 127.0.0.1 URL on a line (tolerant of trailing ANSI).
 const LOCAL_URL_RE = /(https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)(?::\d+)?[^\s\x1b]*)/i
+
+// T-PATCH-187: detected Preview URL per runId, kept OUTSIDE React so it survives
+// the tab-switch unmount (only the active tab is mounted) — lets the "reopen
+// preview" button reappear after the user returns to a still-running run tab.
+const detectedRunUrls = new Map<string, string>()
 
 type RunStatus = 'running' | 'pass' | 'fail' | 'cancelled'
 
@@ -40,9 +46,17 @@ export default function BuildOutputTab({ props }: Props) {
   const env = props?.env as string | undefined
   const preview = props?.preview === true
   const openTab = useWorkspace((s) => s.openTab)
+  const { t } = useTranslation()
 
   const [status, setStatus] = useState<RunStatus>('running')
   const [exitCode, setExitCode] = useState<number | null>(null)
+  // Recover a previously-detected URL on remount so the reopen button persists.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(() => (runId ? detectedRunUrls.get(runId) ?? null : null))
+
+  const previewTabId = `browser:run-${surfaceKey}-${env ?? 'default'}`
+  const openPreview = useCallback(() => {
+    if (previewUrl) openTab(previewTabId, 'browser', { url: previewUrl }, `Preview: ${surfaceKey}`)
+  }, [previewUrl, previewTabId, surfaceKey, openTab])
 
   // D7: ring buffer in a ref (no re-render per line). The <pre> textContent is
   // updated imperatively + autoscrolled. Bounded to MAX_LINES.
@@ -81,13 +95,16 @@ export default function BuildOutputTab({ props }: Props) {
       if (buf.length > MAX_LINES) buf.splice(0, buf.length - MAX_LINES)
       scheduleFlush()
 
-      // T-PATCH-187: for a run with preview enabled, open an in-app browser
-      // Preview tab the first time the server prints its localhost URL.
+      // T-PATCH-187: for a run with preview enabled, capture the first localhost
+      // URL the server prints, remember it (state + cross-remount map → reopen
+      // button), and auto-open the in-app Preview tab once.
       if (preview && kind === 'run' && !previewOpenedRef.current) {
         const m = ev.chunk.match(LOCAL_URL_RE)
         if (m) {
           previewOpenedRef.current = true
           const url = m[1]
+          if (runId) detectedRunUrls.set(runId, url)
+          setPreviewUrl(url)
           openTab(`browser:run-${surfaceKey}-${env ?? 'default'}`, 'browser', { url }, `Preview: ${surfaceKey}`)
         }
       }
@@ -133,8 +150,13 @@ export default function BuildOutputTab({ props }: Props) {
         <StatusChip status={status} exitCode={exitCode} />
         <span style={meta}>{surfaceKey} · {kind}{env ? ` · ${env}` : ''}</span>
         <span style={{ flex: 1 }} />
+        {/* T-PATCH-187: reopen the Preview tab if the user closed it while the
+            run server is still alive. */}
+        {kind === 'run' && status === 'running' && previewUrl && (
+          <button style={cancelBtn} onClick={openPreview}>{t('workspace.runOutput.reopenPreview')}</button>
+        )}
         {status === 'running' && (
-          <button style={cancelBtn} onClick={handleCancel}>취소</button>
+          <button style={cancelBtn} onClick={handleCancel}>{t('common.cancel')}</button>
         )}
       </div>
       <pre ref={preRef} style={logPane} onScroll={handleScroll} />

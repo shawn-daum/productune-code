@@ -501,8 +501,10 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
 
   addNewTab: (paneId) => {
     set((s) => {
-      const tabId = `new-tab:${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-      const newTab: Tab = { id: tabId, type: 'markdown', title: 'Untitled' }
+      // T-PATCH-187: a new tab opens a blank in-app browser (about:blank + URL bar)
+      // instead of an empty markdown scratch tab — Cmd+T now behaves like a browser.
+      const tabId = `browser:new-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+      const newTab: Tab = { id: tabId, type: 'browser', title: defaultTitle('browser', undefined), props: {} }
       const targetPaneId = collectLeafIds(s.panes).includes(paneId) ? paneId : s.activePaneId
       return {
         ...s,
