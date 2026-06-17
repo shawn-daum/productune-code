@@ -328,6 +328,13 @@ interface HealthContext {
   subagentCaptureByParentId: Map<string, SubagentCostCapture>
   /** T-PATCH-170: subagent 비용 기록을 위한 projectDir (turns.jsonl 위치). */
   projectDir: string
+  /**
+   * T-PATCH-197 (b): set true when the current turn has emitted an
+   * AskUserQuestion tool_use and is now awaiting the user's answer. While
+   * this flag is true, `armSilenceTimeout` is a no-op — the silence is
+   * expected, not a stall. Cleared on turn start and after onDone.
+   */
+  oqPending: boolean
 }
 
 const SILENCE_TIMEOUT_MS  = 15_000   // heuristic compacting
@@ -349,6 +356,7 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
     delegatedByToolUseId: new Map(),
     subagentCaptureByParentId: new Map(),
     projectDir,
+    oqPending: false,   // T-PATCH-197 (b): no OQ in flight at turn start
   }
 }
 
@@ -382,6 +390,12 @@ function clearSilenceTimeout(ctx: HealthContext): void {
 }
 
 function armSilenceTimeout(ctx: HealthContext, cb: RunCallbacks): void {
+  // T-PATCH-197 (b): while a PO turn is awaiting an OQ answer, stdout is
+  // intentionally silent. Do NOT re-arm the compacting heuristic — the silence
+  // is expected, not a stall. Any arm call that arrives during the OQ-pending
+  // window is silently dropped; re-arming resumes normally on the next turn
+  // (oqPending is cleared on turn start and after onDone).
+  if (ctx.oqPending) return
   clearSilenceTimeout(ctx)
   ctx.silenceTimeoutHandle = setTimeout(() => {
     // Only fire if still healthy/delegating (not already in a worse state)
@@ -456,6 +470,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
 
     // T-PATCH-037: reset per-turn AskUserQuestion de-dupe flag.
     askEmitted = false
+    // T-PATCH-197 (b): oqPending is per-HealthContext, initialized false in
+    // makeHealthCtx above. No explicit reset needed here — makeHealthCtx is
+    // called fresh each spawnClaude invocation (hCtx = makeHealthCtx(msgId, ...)).
 
     // Emit healthy at turn start.
     emitHealth('healthy', undefined, hCtx, cb)
@@ -567,8 +584,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       }
       cb.onDone(msgId, { sessionId: capturedSessionId })
       capturedSessionId = undefined
-      askEmitted = false   // T-PATCH-037: clear de-dupe for the next turn
-      wasAborted = false   // T-PATCH-087: reset flag for next turn
+      askEmitted = false        // T-PATCH-037: clear de-dupe for the next turn
+      hCtx.oqPending = false   // T-PATCH-197 (b): clear OQ-pending after done
+      wasAborted = false        // T-PATCH-087: reset flag for next turn
       resolve()
     })
   })
@@ -710,6 +728,13 @@ function handleStreamJsonLine(
           const payload = normalizeAskUserQuestion(part.input)
           if (payload && !askEmitted) {
             askEmitted = true
+            // T-PATCH-197 (b): mark that this turn is now awaiting the user's
+            // OQ answer. armSilenceTimeout will be a no-op while this is true,
+            // preventing a false 'compacting' health event during the wait.
+            // Also disarm any currently armed timer (edge: stdout data arrived
+            // just before the AskUserQuestion part and armed the timeout).
+            hCtx.oqPending = true
+            clearSilenceTimeout(hCtx)
             cb.onAskUserQuestion(msgId, payload)
           }
           continue

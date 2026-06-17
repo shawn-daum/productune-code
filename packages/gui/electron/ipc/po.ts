@@ -102,7 +102,21 @@ export function register(): void {
         // Wrap the resume input so the binding is unambiguous (MODE-1 fix,
         // ticket Option C). The original chosen label is preserved verbatim on
         // its own line so the PO still has the exact answer text.
-        const boundText = `[직전 AskUserQuestion에 대한 사용자 선택]\n선택: ${opts.answerText}`
+        //
+        // T-PATCH-197 (a): sanitize answerText before interpolation. A malformed
+        // option label (control characters, stray newlines, accidental raw-JSON
+        // payload) could corrupt the boundText string that becomes the --resume
+        // message, which in turn could trigger an upstream InputValidationError
+        // when claude re-validates the pending AskUserQuestion tool_use params.
+        // Strip C0/C1 control chars (U+0000–U+001F, U+007F–U+009F), normalize
+        // all whitespace runs to a single space, and trim. Normal single-word /
+        // short-phrase labels (e.g. "A안", "예", "계속") pass through unchanged.
+        const sanitizedAnswerText = opts.answerText
+          // eslint-disable-next-line no-control-regex
+          .replace(/[\x00-\x1F\x7F-\x9F]/g, ' ')  // strip control chars → space
+          .replace(/\s+/g, ' ')                      // collapse whitespace runs
+          .trim()
+        const boundText = `[직전 AskUserQuestion에 대한 사용자 선택]\n선택: ${sanitizedAnswerText}`
         markPoTurnStart()
         try {
           await runPoTurn(
