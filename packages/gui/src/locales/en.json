@@ -146,7 +146,20 @@
       "artifactsHint": "Artifacts — added in a future slice",
       "settingsHint": "Settings — T-P4-024",
       "explorerHint": "Explorer — file tree wired in T-P4-047",
-      "teamHint": "Team — personas & skills wired in T-P4-047"
+      "teamHint": "Team — personas & skills wired in T-P4-047",
+      "refresh": "Refresh"
+    },
+    "backgroundTasks": {
+      "idle": "Idle",
+      "running": "running",
+      "nTasksRunning": "{{count}} tasks running",
+      "error": "error",
+      "done": "done",
+      "stillRunning": "Still running…",
+      "dismiss": "Dismiss",
+      "popupTitle": "Background tasks ({{count}})",
+      "empty": "No background tasks",
+      "recent": "Recent"
     },
     "statusBar": {
       "placeholder": "Auto-save / run status / external tools — filled in Slice 6",
@@ -696,7 +709,8 @@
       "needsReview": "Needs your review",
       "archiveLabel": "archive",
       "versionHistoryLabel": "Version history",
-      "versionEmpty": "(no artifacts)"
+      "versionEmpty": "(no artifacts)",
+      "autoOpenToast": "Opened {{count}} new artifact(s)"
     },
     "baseDirty": {
       "title": "Unsaved changes detected",

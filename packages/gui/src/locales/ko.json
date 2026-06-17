@@ -146,7 +146,20 @@
       "artifactsHint": "산출물 — 추후 슬라이스에서 추가",
       "settingsHint": "설정 — T-P4-024",
       "explorerHint": "탐색 — 파일 트리는 T-P4-047 에서 연결",
-      "teamHint": "팀 — 페르소나·스킬은 T-P4-047 에서 연결"
+      "teamHint": "팀 — 페르소나·스킬은 T-P4-047 에서 연결",
+      "refresh": "새로고침"
+    },
+    "backgroundTasks": {
+      "idle": "대기 중",
+      "running": "실행 중",
+      "nTasksRunning": "작업 {{count}}개 실행 중",
+      "error": "오류",
+      "done": "완료",
+      "stillRunning": "아직 실행 중…",
+      "dismiss": "닫기",
+      "popupTitle": "백그라운드 작업 ({{count}})",
+      "empty": "백그라운드 작업 없음",
+      "recent": "최근"
     },
     "statusBar": {
       "placeholder": "자동저장 / 실행 상태 / 외부 도구 — Slice 6 에서 채워짐",
@@ -696,7 +709,8 @@
       "needsReview": "검토 필요",
       "archiveLabel": "archive",
       "versionHistoryLabel": "지난 버전 히스토리",
-      "versionEmpty": "(산출물 없음)"
+      "versionEmpty": "(산출물 없음)",
+      "autoOpenToast": "새 산출물 {{count}}개를 열었어요"
     },
     "baseDirty": {
       "title": "저장 안 된 변경이 있어요",

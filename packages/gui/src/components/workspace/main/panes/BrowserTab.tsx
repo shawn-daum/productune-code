@@ -56,7 +56,9 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
       ? tabProps.url
       : 'about:blank'
 
-  const [inputUrl, setInputUrl] = useState(initialUrl)
+  // T-PATCH-188: a blank tab loads about:blank but the URL bar shows empty (with
+  // its placeholder) rather than the literal "about:blank".
+  const [inputUrl, setInputUrl] = useState(initialUrl === 'about:blank' ? '' : initialUrl)
   const [loadFailed, setLoadFailed] = useState(false)
   // T-PATCH-057: zoom state — range 0.5–3.0, step 0.1 (AC-3, AC-4)
   const [zoom, setZoom] = useState(ZOOM_DEFAULT)
@@ -289,8 +291,8 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
         <button
           style={navBtn}
           onClick={() => webviewRef.current?.reload()}
-          title={t('workspace.browser.refresh')}
-          aria-label={t('workspace.browser.refresh')}
+          title={t('workspace.browser.reload')}
+          aria-label={t('workspace.browser.reload')}
         >
           <RefreshCw size={13} />
         </button>
@@ -300,7 +302,7 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
           value={inputUrl}
           onChange={(e) => setInputUrl(e.target.value)}
           onKeyDown={handleUrlKeyDown}
-          placeholder={t('workspace.browser.navPlaceholder')}
+          placeholder={t('workspace.browser.addressPlaceholder')}
           spellCheck={false}
           aria-label="URL"
         />
@@ -308,8 +310,8 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
         <button
           style={navBtn}
           onClick={handleOpenExternal}
-          title={t('workspace.browser.openExternal')}
-          aria-label={t('workspace.browser.openExternal')}
+          title={t('workspace.browser.popout')}
+          aria-label={t('workspace.browser.popout')}
         >
           <ExternalLink size={13} />
         </button>

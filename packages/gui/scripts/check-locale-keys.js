@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // check-locale-keys.js
-// Verifies that en.json and ko.json have exactly the same key set.
-// Exits 1 if there are missing or extra keys in either catalog.
+// 1. Verifies that en.json and ko.json have exactly the same key set.
+// 2. (T-PATCH-189) Verifies every static t('…') / i18next.t('…') key used in src
+//    actually exists in the catalog — parity alone misses keys that are USED but
+//    defined in neither file (e.g. a typo'd key renders as the raw key string).
+// Exits 1 on any mismatch or missing-used key.
 
-import { readFileSync } from 'fs'
-import { resolve, dirname } from 'path'
+import { readFileSync, readdirSync, statSync } from 'fs'
+import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const LOCALES = resolve(__dirname, '../src/locales')
+const SRC = resolve(__dirname, '../src')
 
 function flatKeys(obj, prefix = '') {
   const keys = []
@@ -49,6 +53,43 @@ if (missingInEn.length > 0) {
 if (fail) {
   console.error('\nERROR: Locale catalogs have mismatched key sets. Both en.json and ko.json must have identical keys.')
   process.exit(1)
-} else {
-  console.log(`OK: en.json and ko.json have identical key sets (${enKeys.size} keys).`)
 }
+
+// ── (2) used-but-missing static keys ─────────────────────────────────────────
+// Walk src for t('…')/i18next.t('…') string-literal keys (backtick/${} = dynamic,
+// skipped). A used key is OK if it's a leaf in the catalog OR a namespace prefix
+// of one (dynamic base, e.g. t('a.b.' + x) → catches the literal 'a.b.').
+function walk(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name)
+    const st = statSync(p)
+    if (st.isDirectory()) walk(p, out)
+    else if (/\.(ts|tsx)$/.test(name)) out.push(p)
+  }
+  return out
+}
+
+const USE_RE = /(?:\bt|i18next\.t)\(\s*(['"])([^'"]*)\1/g
+const used = new Set()
+for (const file of walk(SRC)) {
+  const txt = readFileSync(file, 'utf-8')
+  let m
+  while ((m = USE_RE.exec(txt))) used.add(m[2])
+}
+
+function keyResolvable(k) {
+  if (enKeys.has(k)) return true
+  const prefix = k.endsWith('.') ? k : `${k}.`
+  for (const ek of enKeys) if (ek.startsWith(prefix)) return true // dynamic namespace base
+  return false
+}
+
+const missingUsed = [...used].filter((k) => k && !keyResolvable(k)).sort()
+if (missingUsed.length > 0) {
+  console.error('FAIL: t() keys used in src but missing from the catalog:')
+  missingUsed.forEach((k) => console.error(`  - ${k}`))
+  console.error('\nERROR: add these keys to en.json AND ko.json (or fix the typo).')
+  process.exit(1)
+}
+
+console.log(`OK: en.json and ko.json have identical key sets (${enKeys.size} keys); all ${used.size} used t() keys resolve.`)
