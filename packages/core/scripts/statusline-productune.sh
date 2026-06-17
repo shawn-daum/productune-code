@@ -308,8 +308,12 @@ PYEOF
 # SEMANTIC TRAP: cost.total_cost_usd is the SESSION-CUMULATIVE monotonic estimate,
 # NOT a per-turn delta, and context_window.total_*_tokens is current-context (not
 # cumulative). So we record cost_usd as cost_basis="main_session_cumulative" and
-# aggregation must take the per-session MAX (never sum). We do NOT record tokens
-# for main scope (unreliable as a turn measure).
+# aggregation must take the per-session MAX (never sum).
+#
+# USAGE (T-PATCH-201): if the payload exposes a genuine per-turn `usage` object
+# (input/output/cache token counts), capture usage{input,output,cache}. If no
+# usable usage is present we record `usage: null` (NOT an empty {}) so downstream
+# can tell "unknown" from "zero" — graceful, no regression for API-key users.
 #
 # No-op when cost/model absent (API-key / non-subscriber users) → AC-8 graceful.
 # STATE resolved above points at po-state.json; turns.jsonl is its sibling.
@@ -334,6 +338,32 @@ if not isinstance(cost, (int, float)):
 session_id = data.get('session_id') or None
 model_obj = data.get('model') if isinstance(data.get('model'), dict) else {}
 model = model_obj.get('id') or None
+
+def _capture_usage(d):
+    # Best-effort per-turn token capture. Prefer an explicit `usage` object;
+    # accept the common token field aliases. Returns {input,output,cache} only
+    # if at least one field is a real number, else None (avoid empty {}).
+    u = d.get('usage')
+    if not isinstance(u, dict):
+        return None
+    def g(*names):
+        tot = 0
+        seen = False
+        for nm in names:
+            v = u.get(nm)
+            if isinstance(v, (int, float)):
+                tot += int(v)
+                seen = True
+        return tot, seen
+    tin, s1 = g('input', 'input_tokens')
+    tout, s2 = g('output', 'output_tokens')
+    tcache, s3 = g('cache', 'cache_read', 'cache_creation',
+                   'cache_read_input_tokens', 'cache_creation_input_tokens')
+    if not (s1 or s2 or s3):
+        return None
+    return {'input': tin, 'output': tout, 'cache': tcache}
+
+usage = _capture_usage(data)
 
 state_dir = os.environ['STATE_DIR']
 turns_file = os.path.join(state_dir, 'turns.jsonl')
@@ -381,7 +411,7 @@ line = {
     'version': version,
     'turn_index': None,
     'model': model,
-    'usage': {},  # token breakdown unreliable for main scope (context, not cumulative)
+    'usage': usage,  # {input,output,cache} when payload exposes it, else null
     'cost_usd': cost,
     'cost_basis': 'main_session_cumulative',
     'session_id': session_id,

@@ -122,6 +122,133 @@ export type PhaseCounts = Record<Phase, PhaseCount>
  *  - bucket on `t.type ?? t.stage`; unmapped/excluded types contribute nowhere.
  *  - total = bucketed live tickets; done = those whose normalized status === 'done'.
  */
+// ── T-PATCH-203: phase-boundary close_gate mapping (boundary-generic) ──────────
+//
+// Renders an interactive gate marker on the PhaseBreadcrumb boundary between two
+// phases. Data-driven: the boundary AFTER `boundaryAfterPhase` (the chevron that
+// precedes the next phase) carries the gate. To add a gate to another boundary,
+// add an entry here — PhaseBreadcrumb renders it automatically (AC-5).
+//
+// `items` lists the close_gate steps expected at that boundary, in display order,
+// with their i18n label/desc keys. The internal `step` key is immutable (matches
+// po-state close_gate[].step and ~/.productune/config/close-gate.p3.json) — only
+// the display label is humanized (AC-3). design_review / prd_check / security_6
+// keep their real domain terms; backlog_triage gets a plain display label.
+
+/** A close_gate item's resolved state, as written to po-state by the gate hooks. */
+export type GateItemStatus = 'done' | 'pending' | 'waived' | 'na'
+
+/** One entry from po-state `close_gate[]` (materialized by prompt-gate-inject.sh). */
+export interface CloseGateItem {
+  step: string
+  status?: GateItemStatus | string
+  waivable?: boolean
+  type?: string
+}
+
+/** Display metadata for a single gate step (i18n keys, immutable internal step key). */
+export interface GateItemDef {
+  /** Internal close_gate step key — immutable, matches po-state + canonical config. */
+  step: string
+  /** i18n key for the human-facing label. */
+  labelKey: string
+  /** i18n key for the 1-line description shown in the popover. */
+  descKey: string
+}
+
+/** A phase boundary that carries a gate. The marker replaces the chevron that
+ *  precedes `boundaryAfterPhase` (i.e. the boundary between it and its predecessor). */
+export interface GateBoundaryDef {
+  /** The phase whose ENTRY is gated — the marker renders on the chevron before it. */
+  boundaryAfterPhase: Phase
+  /** i18n key for the popover heading (conceptual framing of this checkpoint). */
+  titleKey: string
+  /** Gate steps at this boundary, in display order. */
+  items: GateItemDef[]
+}
+
+/**
+ * Boundary → gate mapping. Currently only the Build→Deploy boundary (P3 close_gate)
+ * has a gate, so only the `Deploy` entry exists. Adding another boundary here makes
+ * its marker render with no other code change (AC-5).
+ */
+export const GATE_BOUNDARIES: GateBoundaryDef[] = [
+  {
+    boundaryAfterPhase: 'Deploy',
+    titleKey: 'workspace.gateMarker.deploy.title',
+    items: [
+      { step: 'backlog_triage', labelKey: 'workspace.gateMarker.items.backlog_triage.label', descKey: 'workspace.gateMarker.items.backlog_triage.desc' },
+      { step: 'design_review',  labelKey: 'workspace.gateMarker.items.design_review.label',  descKey: 'workspace.gateMarker.items.design_review.desc' },
+      { step: 'prd_check',      labelKey: 'workspace.gateMarker.items.prd_check.label',      descKey: 'workspace.gateMarker.items.prd_check.desc' },
+      { step: 'security_6',     labelKey: 'workspace.gateMarker.items.security_6.label',     descKey: 'workspace.gateMarker.items.security_6.desc' },
+    ],
+  },
+]
+
+/** Returns the gate boundary def whose marker should render before `phase`, or null. */
+export function getGateBoundary(phase: Phase): GateBoundaryDef | null {
+  return GATE_BOUNDARIES.find((b) => b.boundaryAfterPhase === phase) ?? null
+}
+
+/** A close_gate item is "satisfied" (no longer blocking) when done/waived/na. */
+export function isGateItemSatisfied(status: string | undefined): boolean {
+  return status === 'done' || status === 'waived' || status === 'na'
+}
+
+export interface GateAggregate {
+  /** Satisfied (done/waived/na) item count. */
+  satisfied: number
+  /** Total items at this boundary. */
+  total: number
+  /** True when every item is satisfied → the boundary passes. */
+  passed: boolean
+}
+
+/**
+ * Aggregates a boundary's items against the live close_gate slice from po-state.
+ *
+ * Graceful fallback (AC-6): when `closeGate` is missing/empty/not an array, items
+ * default to `pending` (unknown) but the aggregate is treated as PASSED — the
+ * marker falls back to pass/no-block rather than showing a false N/M block or
+ * crashing. The popover still lists the items with status 'pending'.
+ */
+export function aggregateGate(
+  def: GateBoundaryDef,
+  closeGate: CloseGateItem[] | null | undefined,
+): GateAggregate {
+  const byStep = new Map<string, CloseGateItem>()
+  if (Array.isArray(closeGate)) {
+    for (const it of closeGate) {
+      if (it && typeof it.step === 'string') byStep.set(it.step, it)
+    }
+  }
+  const hasData = byStep.size > 0
+  const total = def.items.length
+  let satisfied = 0
+  for (const item of def.items) {
+    const live = byStep.get(item.step)
+    if (live && isGateItemSatisfied(typeof live.status === 'string' ? live.status : undefined)) {
+      satisfied += 1
+    }
+  }
+  // No live data → pass-fallback (AC-6); otherwise pass only when all satisfied.
+  const passed = !hasData || satisfied === total
+  return { satisfied, total, passed }
+}
+
+/** Resolves the live status of a single gate step (default 'pending' if absent). */
+export function resolveItemStatus(
+  step: string,
+  closeGate: CloseGateItem[] | null | undefined,
+): GateItemStatus {
+  if (Array.isArray(closeGate)) {
+    const live = closeGate.find((it) => it && it.step === step)
+    const s = live && typeof live.status === 'string' ? live.status : undefined
+    if (s === 'done' || s === 'pending' || s === 'waived' || s === 'na') return s
+  }
+  return 'pending'
+}
+
 export function bucketTicketsByPhase(tickets: Ticket[], version: string | null): PhaseCounts {
   const counts: PhaseCounts = {
     PRD: { done: 0, total: 0 },

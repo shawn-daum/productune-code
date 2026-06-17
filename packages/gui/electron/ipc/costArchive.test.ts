@@ -1,0 +1,132 @@
+/**
+ * costArchive aggregation — unit cases for the cumulative-snapshot dedup
+ * (T-PATCH-201).
+ *
+ * NOTE: the GUI package has no configured unit-test framework (only the
+ * Playwright `smoke` spec, and no `test` script). Following the T-PATCH-137
+ * precedent (src/lib/useTicketScan.test.ts), these cases are a self-contained,
+ * framework-free assertion list that `tsc --noEmit` type-checks as part of the
+ * build and that any `tsx` / `node` runner can execute directly. The live gate
+ * is `tsc --noEmit` + `vite build`.
+ *
+ * Verifies the ticket's QA note: 3 cumulative rows / 1 session → counted once
+ * (session max), 2 subagent rows → summed, mixed → exact total =
+ *   Σ(subagent_total) + Σ_session(cumulative session max).
+ */
+
+import { aggregateLines, aggregatePivotLines } from './costArchive'
+
+// Minimal line shapes (the aggregators only read the fields they need).
+type Line = Parameters<typeof aggregateLines>[0][number]
+
+const cum = (session: string, cost: number, extra: Partial<Line> = {}): Line => ({
+  scope: 'main',
+  persona: 'pdt-po',
+  version: 'v0.5',
+  model: 'claude-opus-4-8[1m]',
+  session_id: session,
+  cost_usd: cost,
+  cost_basis: 'main_session_cumulative',
+  usage: {},
+  ...extra,
+})
+
+const sub = (cost: number, extra: Partial<Line> = {}): Line => ({
+  scope: 'subagent',
+  persona: 'pdt-developer',
+  version: 'v0.5',
+  model: 'claude-sonnet',
+  cost_usd: cost,
+  cost_basis: 'subagent_total',
+  usage: { input: 100, output: 50, cache: 10 },
+  ...extra,
+})
+
+interface Case {
+  readonly label: string
+  readonly run: () => { ok: boolean; detail?: string }
+}
+
+const approx = (a: number, b: number): boolean => Math.abs(a - b) < 1e-9
+
+export const COST_ARCHIVE_CASES: readonly Case[] = [
+  {
+    // AC-2: three cumulative rows for ONE session → only the session max counts.
+    label: '3 cumulative rows / 1 session → counted once (max)',
+    run: () => {
+      const r = aggregateLines([cum('s1', 10), cum('s1', 25), cum('s1', 22)], 'version')
+      return { ok: approx(r.totalCostUsd, 25), detail: `total=${r.totalCostUsd}` }
+    },
+  },
+  {
+    // AC-1/AC-2: cumulative across two sessions → sum of per-session maxima.
+    label: '2 sessions → sum of per-session maxima',
+    run: () => {
+      const r = aggregateLines(
+        [cum('s1', 10), cum('s1', 25), cum('s2', 5), cum('s2', 40)],
+        'version',
+      )
+      return { ok: approx(r.totalCostUsd, 65), detail: `total=${r.totalCostUsd}` }
+    },
+  },
+  {
+    label: '2 subagent_total rows → summed',
+    run: () => {
+      const r = aggregateLines([sub(3), sub(7)], 'version')
+      return { ok: approx(r.totalCostUsd, 10), detail: `total=${r.totalCostUsd}` }
+    },
+  },
+  {
+    // AC-1: mixed → Σ(subagent) + Σ_session(cumulative max). Raw sum would be
+    // 10+25+22 + 3+7 = 67; correct dedup = 25 + 10 = 35.
+    label: 'mixed cumulative+subagent → exact (dedup, not raw sum)',
+    run: () => {
+      const r = aggregateLines([cum('s1', 10), cum('s1', 25), cum('s1', 22), sub(3), sub(7)], 'version')
+      return { ok: approx(r.totalCostUsd, 35), detail: `total=${r.totalCostUsd}` }
+    },
+  },
+  {
+    // Legacy fallback: a main line WITHOUT cost_basis must still dedup by scope.
+    label: 'basis-less main lines fall back to scope (dedup)',
+    run: () => {
+      const legacy = (s: string, c: number): Line => ({ scope: 'main', session_id: s, cost_usd: c })
+      const r = aggregateLines([legacy('s1', 10), legacy('s1', 30)], 'version')
+      return { ok: approx(r.totalCostUsd, 30), detail: `total=${r.totalCostUsd}` }
+    },
+  },
+  {
+    // AC-3: pivot main scope row reflects per-session dedup (not raw sum).
+    label: 'pivot: main row deduped per session',
+    run: () => {
+      const r = aggregatePivotLines([cum('s1', 10), cum('s1', 25), sub(7)])
+      const mainRow = r.rows.find((x) => x.scope === 'main')
+      const okMain = !!mainRow && approx(mainRow.cost_usd, 25) && mainRow.usage === null
+      const okTotal = approx(r.totalCostUsd, 32) // 25 (main max) + 7 (subagent)
+      return { ok: okMain && okTotal, detail: `main=${mainRow?.cost_usd} total=${r.totalCostUsd}` }
+    },
+  },
+  {
+    // Pivot subagent token breakdown sums; main excluded from token subtotal.
+    label: 'pivot: subagentUsage sums subagent tokens only',
+    run: () => {
+      const r = aggregatePivotLines([sub(3), sub(7), cum('s1', 100)])
+      const okUsage =
+        r.subagentUsage.in === 200 && r.subagentUsage.out === 100 && r.subagentUsage.cache === 20
+      return { ok: okUsage, detail: JSON.stringify(r.subagentUsage) }
+    },
+  },
+]
+
+export function runCostArchiveCases(): { passed: number; failures: string[] } {
+  const failures: string[] = []
+  for (const c of COST_ARCHIVE_CASES) {
+    let res: { ok: boolean; detail?: string }
+    try {
+      res = c.run()
+    } catch (e) {
+      res = { ok: false, detail: String(e) }
+    }
+    if (!res.ok) failures.push(`${c.label}${res.detail ? `: ${res.detail}` : ''}`)
+  }
+  return { passed: COST_ARCHIVE_CASES.length - failures.length, failures }
+}

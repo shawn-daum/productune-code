@@ -149,6 +149,9 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const poStateVersion = useWorkspace((s) => s.poState?.current_version ?? null)
   // T-PATCH-175: full po-state for Quick Open prd-path resolution + version list.
   const poState = useWorkspace((s) => s.poState)
+  // T-PATCH-203: live close_gate slice → PhaseBreadcrumb boundary gate marker.
+  // Absent (non-P3 / pre-hook) → undefined → marker graceful pass-fallback (AC-6).
+  const closeGate = useWorkspace((s) => s.poState?.close_gate ?? null)
 
   // T-PATCH-096 §4.b: per-phase (done/total) counts, current-version scoped,
   // bucketed by ticket type → phase. Passed to PhaseBreadcrumb (presentational).
@@ -341,7 +344,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
         <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
           onRetry={handleRetry} onViewLog={handleViewLog} />
         {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
-        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} />
+        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} />
         {drainVisible && project && (
           <PendingPromotionDrain projectDir={project.projectDir}
             claudeSessionId={useWorkspace.getState().claudeSessionId}

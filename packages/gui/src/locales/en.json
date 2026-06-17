@@ -93,6 +93,13 @@
       "readOnly": "Read-only",
       "fileLoadError": "Could not load file. Try again shortly."
     },
+    "paneError": {
+      "title": "Something went wrong in this tab",
+      "hint": "Only this tab is affected — your other tabs, panes, and chat are still working. You can reopen the tab or close it.",
+      "reload": "Refresh (remount)",
+      "close": "Close this tab",
+      "scopeNote": "Note: this recovers render errors only. Browser tabs, background tasks, and async actions are handled separately."
+    },
     "doctrineFile": {
       "preview": "Preview",
       "edit": "Edit",
@@ -187,6 +194,37 @@
       "hold": "Hold",
       "toggleAria": "Pending decision {{state}}",
       "pendingLabel": "Pending decision"
+    },
+    "gateMarker": {
+      "blockedAria": "Phase gate blocked — {{satisfied}}/{{total}} checks complete. Click for details.",
+      "passedAria": "Phase gate passed — all checks complete. Click for details.",
+      "status": {
+        "done": "done",
+        "pending": "pending",
+        "waived": "waived",
+        "na": "n/a"
+      },
+      "deploy": {
+        "title": "Pre-deploy checkpoint"
+      },
+      "items": {
+        "backlog_triage": {
+          "label": "Remaining work tidy-up",
+          "desc": "Loose ends triaged — every open item is either resolved or pushed to the backlog."
+        },
+        "design_review": {
+          "label": "design_review",
+          "desc": "Design review signed off. No-waiver — must be resolved, cannot be skipped."
+        },
+        "prd_check": {
+          "label": "prd_check",
+          "desc": "Build matches the PRD scope and acceptance criteria."
+        },
+        "security_6": {
+          "label": "security_6",
+          "desc": "Six-point security pass cleared (secrets, authz, input, deps, logging, surface)."
+        }
+      }
     },
     "ticketDetail": {
       "defaultAssignee": "Assignee",

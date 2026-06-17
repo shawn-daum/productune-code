@@ -348,6 +348,16 @@ export interface PoState {
   past_tickets?: Ticket[]
   versions?: Version[]
   recent_turns?: unknown[]
+  /**
+   * T-PATCH-203: close_gate slice — materialized into po-state by the
+   * prompt-gate-inject / pre-phase-gate-guard hooks from
+   * ~/.productune/config/close-gate.p3.json while the project is in an
+   * enumerable-gate phase (currently P3/Build). Each item: { step, status,
+   * waivable }. Absent outside P3 (or before the hook runs) → GUI treats as
+   * graceful pass-fallback (see aggregateGate). Typed loosely (status is a
+   * string union written by shell hooks) to stay tolerant of unknown values.
+   */
+  close_gate?: Array<{ step: string; status?: string; waivable?: boolean; type?: string }>
   /** Promotion candidates queued for user approval (deferred surface). */
   pending_promotions?: PendingPromotion[]
   updated_at?: string

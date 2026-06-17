@@ -391,9 +391,11 @@ case "${1:-}" in
     # T-027 (e) — token-cost archive read path.
     #   productune cost [--version vX] [--by version|persona|model]
     # Reads <project>/.productune/turns.jsonl and prints a group-by aggregation.
-    #   - subagent lines (scope!="main"): cost_usd summed directly.
-    #   - main lines (scope="main"): SESSION-CUMULATIVE → per session_id MAX, then
-    #     summed (never raw-summed; would over-count by refresh frequency).
+    #   - subagent_total lines: cost_usd is per-turn real cost → summed directly.
+    #   - main_session_cumulative lines: SESSION-CUMULATIVE → per session_id MAX,
+    #     then summed (never raw-summed; would over-count by refresh frequency).
+    #   - cost_basis-less legacy lines fall back to scope (main→cumulative).
+    #   (T-PATCH-201 — must match GUI costArchive.ts.)
     shift
     COST_BY="version"
     COST_VER=""
@@ -442,6 +444,15 @@ def keyfor(rec):
         return (rec.get('persona') or '(none)', rec.get('model') or '(none)')
     return '(none)'
 
+def is_cumulative(rec):
+    # Prefer the explicit cost_basis tag; fall back to scope for legacy lines.
+    cb = rec.get('cost_basis')
+    if cb == 'main_session_cumulative':
+        return True
+    if cb == 'subagent_total':
+        return False
+    return rec.get('scope') == 'main'
+
 def usage_tokens(rec):
     # subagent usage{input,output,cache_*} is authoritative for token breakdown.
     # context_window is NEVER summed (statusline snapshot, not cumulative).
@@ -483,7 +494,7 @@ try:
             cost = rec.get('cost_usd')
             cost = float(cost) if isinstance(cost, (int, float)) else 0.0
             k = keyfor(rec)
-            if rec.get('scope') == 'main':
+            if is_cumulative(rec):
                 sid = rec.get('session_id') or '_nosession'
                 bucket = main_sessions.setdefault(k, {})
                 if cost > bucket.get(sid, 0.0):

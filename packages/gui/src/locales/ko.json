@@ -93,6 +93,13 @@
       "readOnly": "읽기 전용",
       "fileLoadError": "파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
     },
+    "paneError": {
+      "title": "이 탭에 문제가 생겼어요",
+      "hint": "이 탭만 영향을 받았어요 — 다른 탭·패널·챗은 정상 동작 중이에요. 탭을 다시 열거나 닫을 수 있어요.",
+      "reload": "새로고침(재마운트)",
+      "close": "이 탭 닫기",
+      "scopeNote": "참고: 화면 렌더 오류만 복구돼요. 브라우저 탭·백그라운드 작업·비동기 동작은 별도로 처리돼요."
+    },
     "doctrineFile": {
       "preview": "미리보기",
       "edit": "편집",
@@ -187,6 +194,37 @@
       "hold": "보류",
       "toggleAria": "결정 대기 항목 {{state}}",
       "pendingLabel": "결정 대기"
+    },
+    "gateMarker": {
+      "blockedAria": "Phase gate 막힘 — {{satisfied}}/{{total}} 항목 완료. 자세히 보려면 클릭.",
+      "passedAria": "Phase gate 통과 — 모든 항목 완료. 자세히 보려면 클릭.",
+      "status": {
+        "done": "완료",
+        "pending": "대기",
+        "waived": "면제",
+        "na": "해당없음"
+      },
+      "deploy": {
+        "title": "배포 전 점검"
+      },
+      "items": {
+        "backlog_triage": {
+          "label": "남은 작업 정리",
+          "desc": "남은 항목을 정리 — 열린 작업을 모두 처리하거나 backlog 로 넘겼다."
+        },
+        "design_review": {
+          "label": "design_review",
+          "desc": "디자인 리뷰 승인 완료. 면제 불가 — 반드시 해결해야 하며 건너뛸 수 없다."
+        },
+        "prd_check": {
+          "label": "prd_check",
+          "desc": "구현 결과가 PRD 의 범위·인수 기준과 일치한다."
+        },
+        "security_6": {
+          "label": "security_6",
+          "desc": "6항목 보안 점검 통과 (시크릿·권한·입력·의존성·로깅·노출면)."
+        }
+      }
     },
     "ticketDetail": {
       "defaultAssignee": "담당자",

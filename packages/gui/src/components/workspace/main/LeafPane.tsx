@@ -1,10 +1,12 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { LeafPaneNode, PaneZone } from '../../../store/workspace'
 import { useWorkspace } from '../../../store/workspace'
 import TabBar from './TabBar'
 import TabContent from './TabContent'
 import EmptyPane from './EmptyPane'
 import FindBar from './FindBar'
+import ErrorBoundary from '../../ErrorBoundary'
 import type { BrowserFindHandle } from './panes/BrowserTab'
 
 const DRAG_MIME = 'application/x-productune-tab'
@@ -14,8 +16,10 @@ interface Props {
 }
 
 export default function LeafPane({ leaf }: Props) {
+  const { t } = useTranslation()
   const activePaneId = useWorkspace((s) => s.activePaneId)
   const setActivePane = useWorkspace((s) => s.setActivePane)
+  const closeTab = useWorkspace((s) => s.closeTab)
   const moveTab = useWorkspace((s) => s.moveTab)
   const setDragHint = useWorkspace((s) => s.setDragHint)
   const dragHint = useWorkspace((s) => s.dragHint)
@@ -457,18 +461,37 @@ export default function LeafPane({ leaf }: Props) {
           />
         )}
 
+        {/* T-PATCH-205: per-tab render-phase error isolation. `key={activeTab.id}`
+            gives each tab its own boundary instance so one tab's render throw
+            shows fallback ONLY in this slot — sibling tabs, other panes, the
+            chat, and the phase strip stay live. The root ErrorBoundary
+            (main.tsx) remains the last-resort net for anything that slips past.
+            SCOPE: render-phase throws only — webview/browser native crashes,
+            async errors, and event-handler throws are NOT caught here (see
+            ErrorBoundary.tsx + AC-6); BrowserTab owns its own failure overlay. */}
         {activeTab
-          ? <TabContent
+          ? <ErrorBoundary
               key={activeTab.id}
-              tab={activeTab}
-              browserFindRef={isBrowserTab ? browserFindRef : undefined}
-              previewFindQuery={isPreviewTab ? findQuery : undefined}
-              previewFindNavRef={isPreviewTab ? htmlViewerNavRef : undefined}
-              onPreviewFindResult={isPreviewTab ? handlePreviewFindResult : undefined}
-              jsonFindQuery={isJsonTab ? findQuery : undefined}
-              jsonFindNavRef={isJsonTab ? jsonViewerNavRef : undefined}
-              onJsonFindResult={isJsonTab ? handleJsonFindResult : undefined}
-            />
+              fallback={(error, reset) => (
+                <PaneErrorFallback
+                  error={error}
+                  onReload={reset}
+                  onClose={() => closeTab(leaf.paneId, activeTab.id)}
+                  t={t}
+                />
+              )}
+            >
+              <TabContent
+                tab={activeTab}
+                browserFindRef={isBrowserTab ? browserFindRef : undefined}
+                previewFindQuery={isPreviewTab ? findQuery : undefined}
+                previewFindNavRef={isPreviewTab ? htmlViewerNavRef : undefined}
+                onPreviewFindResult={isPreviewTab ? handlePreviewFindResult : undefined}
+                jsonFindQuery={isJsonTab ? findQuery : undefined}
+                jsonFindNavRef={isJsonTab ? jsonViewerNavRef : undefined}
+                onJsonFindResult={isJsonTab ? handleJsonFindResult : undefined}
+              />
+            </ErrorBoundary>
           : <EmptyPane />}
 
         {/* #4c — transparent capture layer over the body while a tab drag is in
@@ -488,6 +511,37 @@ export default function LeafPane({ leaf }: Props) {
         {/* #4b — preview ghost of the resulting split/join layout. */}
         {activeZone && <div style={previewStyle(activeZone)} />}
       </div>
+    </div>
+  )
+}
+
+// ── T-PATCH-205: per-tab error fallback ─────────────────────────────────────────
+// Shown in the failed tab's slot only. "새로고침" calls reset() (boundary error
+// clear + remount key bump) to retry the SAME tab; "이 탭 닫기" closes it.
+// Scope note (AC-6): this catches render-phase throws only — async/webview/
+// event-handler errors are out of scope.
+interface PaneErrorFallbackProps {
+  error: Error
+  onReload: () => void
+  onClose: () => void
+  t: (key: string) => string
+}
+
+function PaneErrorFallback({ error, onReload, onClose, t }: PaneErrorFallbackProps) {
+  return (
+    <div style={paneErrWrap}>
+      <div style={paneErrTitle}>{t('workspace.paneError.title')}</div>
+      <div style={paneErrHint}>{t('workspace.paneError.hint')}</div>
+      <pre style={paneErrMsg}>{error.message}</pre>
+      <div style={paneErrActions}>
+        <button style={paneErrBtnPrimary} onClick={onReload}>
+          {t('workspace.paneError.reload')}
+        </button>
+        <button style={paneErrBtn} onClick={onClose}>
+          {t('workspace.paneError.close')}
+        </button>
+      </div>
+      <div style={paneErrScope}>{t('workspace.paneError.scopeNote')}</div>
     </div>
   )
 }
@@ -521,6 +575,44 @@ const body: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
+}
+
+// ── T-PATCH-205: pane error fallback styles ─────────────────────────────────────
+const paneErrWrap: React.CSSProperties = {
+  flex: 1,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  justifyContent: 'center',
+  gap: 10,
+  padding: '24px 28px',
+  background: '#120A0A',
+  overflow: 'auto',
+}
+const paneErrTitle: React.CSSProperties = {
+  fontSize: 14, color: '#F87171', fontWeight: 600,
+}
+const paneErrHint: React.CSSProperties = {
+  fontSize: 12, color: '#C99', maxWidth: 480, lineHeight: 1.5,
+}
+const paneErrMsg: React.CSSProperties = {
+  fontSize: 11, color: '#F87171', margin: 0, padding: '8px 10px',
+  whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'monospace',
+  background: '#1A0A0A', border: '1px solid #4A1A1A', borderRadius: 6,
+  maxWidth: '100%', maxHeight: 160, overflow: 'auto',
+}
+const paneErrActions: React.CSSProperties = {
+  display: 'flex', gap: 8, marginTop: 4,
+}
+const paneErrBtn: React.CSSProperties = {
+  fontSize: 12, padding: '6px 14px', borderRadius: 6, cursor: 'pointer',
+  background: '#1A1A1A', color: '#CCC', border: '1px solid #333',
+}
+const paneErrBtnPrimary: React.CSSProperties = {
+  ...paneErrBtn, background: '#8B5CF6', color: '#fff', border: '1px solid #8B5CF6',
+}
+const paneErrScope: React.CSSProperties = {
+  fontSize: 10, color: '#777', maxWidth: 480, lineHeight: 1.5, marginTop: 4,
 }
 
 const dragCaptureLayer: React.CSSProperties = {

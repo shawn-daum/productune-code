@@ -16,6 +16,7 @@
  */
 
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface PoChatState {
   inputDraft: string
@@ -30,14 +31,34 @@ interface PoChatState {
   setRestartCompleted: (v: boolean) => void
 }
 
-export const usePoChat = create<PoChatState>((set) => ({
-  inputDraft: '',
-  autoScrollLocked: false,
-  restartModalOpen: false,
-  restartCompleted: false,
+export const usePoChat = create<PoChatState>()(
+  persist(
+    (set) => ({
+      inputDraft: '',
+      autoScrollLocked: false,
+      restartModalOpen: false,
+      restartCompleted: false,
 
-  setDraft: (inputDraft) => set({ inputDraft }),
-  setAutoScrollLocked: (autoScrollLocked) => set({ autoScrollLocked }),
-  setRestartModalOpen: (restartModalOpen) => set({ restartModalOpen }),
-  setRestartCompleted: (restartCompleted) => set({ restartCompleted }),
-}))
+      setDraft: (inputDraft) => set({ inputDraft }),
+      setAutoScrollLocked: (autoScrollLocked) => set({ autoScrollLocked }),
+      setRestartModalOpen: (restartModalOpen) => set({ restartModalOpen }),
+      setRestartCompleted: (restartCompleted) => set({ restartCompleted }),
+    }),
+    {
+      // T-PATCH-205: persist ONLY the unsent input draft so a ⌘R renderer
+      // reload (or crash) doesn't lose what the user was typing. ChatPanel
+      // calls setDraft('') on send, which writes '' through here — so a sent
+      // message clears the persisted draft too (AC-5; send-clear unchanged).
+      //
+      // SENSITIVITY (구현주의 3): an unsent draft now lives in sessionStorage.
+      // Mirroring store/workspace.ts, we use sessionStorage (NOT localStorage):
+      // it survives a ⌘R reload but is wiped when the renderer session ends
+      // (app quit), so the draft is not persisted to disk long-term. Only
+      // `inputDraft` is partialized — the transient UI flags below stay
+      // in-memory and are intentionally NOT persisted.
+      name: 'productune.poChat',
+      storage: createJSONStorage(() => sessionStorage),
+      partialize: (s) => ({ inputDraft: s.inputDraft }),
+    },
+  ),
+)

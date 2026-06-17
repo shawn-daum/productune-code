@@ -5,10 +5,16 @@
  * (one JSON object per line, written by sibling shell-hook work) and aggregates
  * cost by version / persona / model.
  *
- * AGGREGATION (must match the CLI):
- *  - subagent lines (scope !== 'main'): cost_usd is a per-turn value → SUM.
- *  - main lines (scope === 'main'): cost_usd is SESSION-CUMULATIVE + monotonic →
- *    per session_id take MAX cost_usd, then sum the maxima. NEVER sum directly.
+ * AGGREGATION (must match the CLI — T-PATCH-201):
+ *  - cumulative lines (cost_basis === 'main_session_cumulative'): cost_usd is a
+ *    SESSION-CUMULATIVE + monotonic snapshot the statusline re-writes every PO
+ *    turn → per session_id take MAX cost_usd, then sum the maxima. NEVER sum
+ *    directly (that is the ≈$31k over-count the patch fixes).
+ *  - subagent lines (cost_basis === 'subagent_total'): cost_usd is a per-turn
+ *    real cost → SUM directly.
+ *  - basis-less legacy lines fall back to scope: scope==='main' → cumulative,
+ *    else → summable (keeps older archives correct).
+ *  - project total = Σ(subagent_total) + Σ_session(cumulative session max).
  *  - Broken/blank lines are skipped silently; missing/empty file → empty result.
  *
  * IPC:
@@ -89,7 +95,20 @@ interface TurnLine {
   model?: string | null
   session_id?: string
   cost_usd?: number
+  cost_basis?: string
   usage?: TurnUsage
+}
+
+/**
+ * Is this line a session-cumulative snapshot (must be deduped per session, not
+ * summed)? Prefer the explicit cost_basis tag; fall back to scope for legacy
+ * lines that predate the tag. (T-PATCH-201)
+ */
+function isCumulative(line: TurnLine): boolean {
+  if (line.cost_basis === 'main_session_cumulative') return true
+  if (line.cost_basis === 'subagent_total') return false
+  // basis-less legacy line → infer from scope.
+  return line.scope === 'main'
 }
 
 // ── Module state ──────────────────────────────────────────────────────────────
@@ -127,26 +146,14 @@ function groupKeyFor(line: TurnLine, by: CostGroupBy): string {
 }
 
 /**
- * Parse turns.jsonl and aggregate per the rules above.
- * Returns an empty (but ok) result when the file is missing/empty.
+ * Pure aggregation core (T-PATCH-201): operates on already-parsed lines so it
+ * can be unit-tested without the filesystem / Electron. `aggregate` is the thin
+ * disk-reading wrapper around it.
  */
-function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
-  const file = resolveTurnsPath(projectDir)
-  if (!file) {
-    return { ok: false, groups: [], totalTurns: 0, totalCostUsd: 0, error: 'invalid projectDir' }
-  }
-
-  let raw: string
-  try {
-    raw = fs.readFileSync(file, 'utf-8')
-  } catch {
-    // Missing file (ENOENT) or unreadable → empty aggregation, no crash.
-    return { ok: true, groups: [], totalTurns: 0, totalCostUsd: 0 }
-  }
-
-  // Per-group accumulators. For subagent lines we sum cost directly; for main
-  // lines we must take MAX per session_id, so track those separately and fold
-  // the maxima in at the end.
+export function aggregateLines(lines: TurnLine[], by: CostGroupBy): AggregateResult {
+  // Per-group accumulators. For subagent lines we sum cost directly; for
+  // cumulative lines we must take MAX per session_id, so track those
+  // separately and fold the maxima in at the end.
   interface Acc {
     turns: number
     subagentCost: number
@@ -164,16 +171,7 @@ function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
     return acc
   }
 
-  for (const lineRaw of raw.split('\n')) {
-    const trimmed = lineRaw.trim()
-    if (!trimmed) continue // blank line → skip
-
-    let parsed: TurnLine
-    try {
-      parsed = JSON.parse(trimmed)
-    } catch {
-      continue // broken line → skip silently
-    }
+  for (const parsed of lines) {
     if (parsed === null || typeof parsed !== 'object') continue
 
     const key = groupKeyFor(parsed, by)
@@ -184,9 +182,9 @@ function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
       ? parsed.cost_usd
       : 0
 
-    if (parsed.scope === 'main') {
+    if (isCumulative(parsed)) {
       // SESSION-CUMULATIVE — keep the max per session_id (only fold in at end).
-      // A main line with no session_id can't be deduped; bucket it under a
+      // A cumulative line with no session_id can't be deduped; bucket it under a
       // synthetic per-line key so it still counts exactly once.
       const sid = typeof parsed.session_id === 'string' && parsed.session_id
         ? parsed.session_id
@@ -194,7 +192,7 @@ function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
       const prev = acc.mainSessionMax.get(sid)
       if (prev === undefined || cost > prev) acc.mainSessionMax.set(sid, cost)
     } else {
-      // subagent (or any non-main scope) — per-turn, sum directly.
+      // subagent_total (per-turn real cost) — sum directly.
       acc.subagentCost += cost
     }
   }
@@ -216,6 +214,45 @@ function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
   out.sort((a, b) => b.cost_usd - a.cost_usd || a.key.localeCompare(b.key))
 
   return { ok: true, groups: out, totalTurns, totalCostUsd }
+}
+
+/** Parse a turns.jsonl blob into objects; blank/broken lines skipped silently. */
+export function parseTurnsBlob(raw: string): TurnLine[] {
+  const out: TurnLine[] = []
+  for (const lineRaw of raw.split('\n')) {
+    const trimmed = lineRaw.trim()
+    if (!trimmed) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      continue
+    }
+    if (parsed === null || typeof parsed !== 'object') continue
+    out.push(parsed as TurnLine)
+  }
+  return out
+}
+
+/**
+ * Parse turns.jsonl and aggregate per the rules above.
+ * Returns an empty (but ok) result when the file is missing/empty.
+ */
+function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
+  const file = resolveTurnsPath(projectDir)
+  if (!file) {
+    return { ok: false, groups: [], totalTurns: 0, totalCostUsd: 0, error: 'invalid projectDir' }
+  }
+
+  let raw: string
+  try {
+    raw = fs.readFileSync(file, 'utf-8')
+  } catch {
+    // Missing file (ENOENT) or unreadable → empty aggregation, no crash.
+    return { ok: true, groups: [], totalTurns: 0, totalCostUsd: 0 }
+  }
+
+  return aggregateLines(parseTurnsBlob(raw), by)
 }
 
 /**
@@ -240,9 +277,9 @@ function readUsage(u: TurnUsage | undefined): PivotUsage {
 /**
  * persona×model pivot aggregation. Mirrors the CLI `--by persona-model`:
  *  - tuple key (persona, model)
- *  - subagent rows: turns + token breakdown summed, cost summed
- *  - main rows: cost = per session_id MAX → sum, token = null (no breakdown)
- *  - context_window never summed; main never carries token totals.
+ *  - subagent_total rows: turns + token breakdown summed, cost summed
+ *  - cumulative (main) rows: cost = per session_id MAX → sum, token = null
+ *  - context_window never summed; cumulative rows never carry token totals.
  */
 function aggregatePivot(projectDir: string): PivotResult {
   const file = resolveTurnsPath(projectDir)
@@ -260,6 +297,11 @@ function aggregatePivot(projectDir: string): PivotResult {
     return { ok: true, rows: [], subagentUsage: { in: 0, out: 0, cache: 0 }, totalTurns: 0, totalCostUsd: 0 }
   }
 
+  return aggregatePivotLines(parseTurnsBlob(raw))
+}
+
+/** Pure persona×model pivot core (T-PATCH-201) — unit-testable, no filesystem. */
+export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
   interface SubAcc { turns: number; cost: number; usage: PivotUsage }
   interface MainAcc { turns: number; sessionMax: Map<string, number> }
   // tuple key flattened as `${persona} ${model}` to avoid separator clashes.
@@ -272,15 +314,7 @@ function aggregatePivot(projectDir: string): PivotResult {
     return [k.slice(0, i), k.slice(i + 1)]
   }
 
-  for (const lineRaw of raw.split('\n')) {
-    const trimmed = lineRaw.trim()
-    if (!trimmed) continue
-    let parsed: TurnLine
-    try {
-      parsed = JSON.parse(trimmed)
-    } catch {
-      continue
-    }
+  for (const parsed of lines) {
     if (parsed === null || typeof parsed !== 'object') continue
 
     const persona =
@@ -294,7 +328,7 @@ function aggregatePivot(projectDir: string): PivotResult {
         ? parsed.cost_usd
         : 0
 
-    if (parsed.scope === 'main') {
+    if (isCumulative(parsed)) {
       let acc = main.get(key)
       if (!acc) { acc = { turns: 0, sessionMax: new Map() }; main.set(key, acc) }
       acc.turns += 1
