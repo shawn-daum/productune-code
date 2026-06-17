@@ -101,6 +101,10 @@
       "conflict": "File changed on disk since you opened it. Reopen to get the latest, then re-apply your edits.",
       "lineCapTooltip": "{{count}} of {{cap}} recommended lines (advisory — does not block save)"
     },
+    "mdViewer": {
+      "showMore": "Show more ({{count}})",
+      "collapse": "Collapse"
+    },
     "htmlViewer": {
       "preview": "Preview",
       "edit": "Edit",

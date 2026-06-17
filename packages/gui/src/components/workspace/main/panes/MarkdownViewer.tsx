@@ -23,11 +23,13 @@
  * working without edits. The Doctrine* type names are kept this round.
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertOctagon, Loader2, Lock, ChevronRight, Eye, Pencil, Save, X } from 'lucide-react'
 import MdRenderer from '../../chat/MdRenderer'
 import ZoomControls, { ZOOM_STEP, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT } from './ZoomControls'
+import { parseFrontmatter } from './frontmatter'
+import MetadataPanel from './MetadataPanel'
 
 // ── Sticky scroll (T-PATCH-095) ────────────────────────────────────────────────
 // VS Code-style ancestor-heading accumulation. The pinned band reflects the
@@ -325,6 +327,16 @@ export default function MarkdownViewer({
   const lineCount = liveText === '' ? 0 : liveText.split('\n').length
   const overCap = lineCount > lineCap
 
+  // Frontmatter split is PREVIEW-ONLY (T-PATCH-179). The textarea seed, dirty
+  // compare, and onSave all keep `content` (raw, frontmatter intact) — only the
+  // rendered preview gets the stripped body + metadata panel. Parser never
+  // throws and falls back to { data:{}, body: raw } on any miss, so a doc with
+  // no frontmatter renders identically to before.
+  const { data: fmData, body: previewBody } = useMemo(
+    () => parseFrontmatter(content),
+    [content],
+  )
+
   return (
     <div style={wrap}>
       {/* Header bar */}
@@ -445,8 +457,12 @@ export default function MarkdownViewer({
                     {saved && <span style={savedText}>{t('workspace.doctrineFile.saved')}</span>}
                   </div>
                 )}
-                <div style={zoomEnabled ? { ...viewerWrap, zoom: zoom } : viewerWrap}>
-                  <MdRenderer text={content} />
+                <div
+                  className="md-doc"
+                  style={zoomEnabled ? { ...viewerWrap, zoom: zoom } : viewerWrap}
+                >
+                  <MetadataPanel data={fmData} />
+                  <MdRenderer text={previewBody} />
                 </div>
               </>
             )}

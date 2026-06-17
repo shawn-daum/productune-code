@@ -101,6 +101,10 @@
       "conflict": "연 뒤에 디스크에서 파일이 변경됐어요. 다시 열어 최신 내용을 받은 다음 수정사항을 재적용해주세요.",
       "lineCapTooltip": "권장 {{cap}}줄 중 {{count}}줄 (참고용 — 저장을 막지 않아요)"
     },
+    "mdViewer": {
+      "showMore": "더보기 ({{count}})",
+      "collapse": "접기"
+    },
     "htmlViewer": {
       "preview": "미리보기",
       "edit": "편집",

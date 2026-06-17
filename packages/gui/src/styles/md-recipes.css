@@ -112,6 +112,38 @@
   margin-bottom: 4px;
 }
 
+/* ── T-PATCH-181 (D): Notion-like heading rhythm — DOC VIEWER ONLY ──────────
+ * SCOPE: these overrides apply ONLY under .md-doc (the MarkdownViewer
+ * `viewerWrap` container). Chat bubbles (MessageBubble → MdRenderer) are NOT
+ * wrapped in .md-doc, so their heading margins stay on the compact global
+ * R1/R2/R3 values above — zero chat-bubble regression by construction.
+ *
+ * Rhythm = large gap ABOVE a heading (section breathing) + tight gap BELOW
+ * (heading hugs its body). Values are token-derived (var(--space-*) via calc,
+ * no new raw px / hex). space-4 = 16px is the largest token, so larger top
+ * gaps are composed as token multiples.
+ */
+.md-doc .md-h1 {
+  margin-top: calc(var(--space-4) * 2);   /* 32px — big section break */
+  margin-bottom: var(--space-2);          /* 8px — hug body */
+}
+.md-doc .md-h1:first-child { margin-top: 0; }
+
+.md-doc .md-h2 {
+  margin-top: calc(var(--space-4) + var(--space-2)); /* 24px */
+  margin-bottom: var(--space-2);                     /* 8px */
+}
+
+.md-doc .md-h3 {
+  margin-top: var(--space-4);     /* 16px */
+  margin-bottom: var(--space-1);  /* 4px */
+}
+
+/* Paragraph + list breathing in the doc view (chat keeps its compact gaps). */
+.md-doc .md-body { margin-bottom: var(--space-2); } /* 8px between paragraphs */
+.md-doc .md-ul,
+.md-doc .md-ol { margin: var(--space-2) 0; }        /* 8px around lists */
+
 /* R4 md-body (p) */
 .md-body {
   font-size: var(--text-base);
@@ -135,6 +167,10 @@
   background: var(--surface-subpanel);
   padding: var(--space-0-5) var(--space-1);
   border-radius: var(--radius-xs);
+  /* T-PATCH-181 (C): long inline tokens (e.g. `POST /api/evaluate`) wrap
+     instead of pushing the column past its max-width. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* R8 md-code-block (pre wrapper) */
@@ -226,12 +262,20 @@
 
 /* R13 md-table */
 .md-table {
+  /* T-PATCH-181 (C): MdRenderer emits <table> with no wrapper (component logic
+     is frozen), so the table itself becomes the horizontal scroll container —
+     `display:block` makes overflow-x apply, letting wide tables scroll instead
+     of clipping at the 780px column edge. overflow-y stays hidden so the
+     rounded-corner clip (radius-lg) is preserved on the vertical axis. */
+  display: block;
   border-collapse: collapse;
-  width: 100%;
+  max-width: 100%;
+  width: max-content;
   font-size: var(--text-sm);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   margin: 4px 0;
 }
 
