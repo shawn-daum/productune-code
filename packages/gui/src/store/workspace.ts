@@ -165,6 +165,10 @@ interface WorkspaceState {
   /** In-place rename: swap tab id (and optional title) across all panes.
    *  Matching leaf's activeTabId is also swapped. No-op if not found. */
   updateTabId: (oldId: string, newId: string, newTitle?: string) => void
+  /** T-PATCH-192: patch a tab's title and/or persisted props.url in place
+   *  (used by a browser tab to reflect page-title + keep the URL across an app
+   *  reload). No id change. No-op if not found. */
+  setTabMeta: (tabId: string, patch: { title?: string; url?: string }) => void
 }
 
 function derivePhase(poState: PoState | null): Phase {
@@ -753,6 +757,24 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
         )
         const activeTabId = leaf.activeTabId === oldId ? newId : leaf.activeTabId
         return { ...leaf, tabs, activeTabId }
+      })
+      if (newPanes === s.panes) return s
+      return { ...s, panes: newPanes }
+    })
+  },
+
+  setTabMeta: (tabId, patch) => {
+    set((s) => {
+      const newPanes = mapLeaves(s.panes, (leaf) => {
+        if (!leaf.tabs.some((t) => t.id === tabId)) return leaf
+        const tabs = leaf.tabs.map((t) => {
+          if (t.id !== tabId) return t
+          const next = { ...t }
+          if (patch.title !== undefined) next.title = patch.title
+          if (patch.url !== undefined) next.props = { ...(t.props ?? {}), url: patch.url }
+          return next
+        })
+        return { ...leaf, tabs }
       })
       if (newPanes === s.panes) return s
       return { ...s, panes: newPanes }

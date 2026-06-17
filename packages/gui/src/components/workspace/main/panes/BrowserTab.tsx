@@ -70,6 +70,7 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
   const tabDragActive = useWorkspace((s) => s.tabDragActive)
   // T-PATCH-074: suppress webview pointer events during column/pane resize drags
   const resizeDragActive = useWorkspace((s) => s.resizeDragActive)
+  const setTabMeta = useWorkspace((s) => s.setTabMeta)
 
   // T-PATCH-067 R7: id of the underlying webContents (the find target in main).
   // Resolved lazily via webview.getWebContentsId() — available after dom-ready.
@@ -220,7 +221,17 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
       if (navUrl && navUrl !== 'about:blank') {
         setInputUrl(navUrl)
         setLoadFailed(false)
+        // T-PATCH-192: persist the current URL into the tab's props so an app
+        // reload (Cmd+R) restores where the user navigated to, not the blank/
+        // original URL the tab was opened with.
+        setTabMeta(tabId, { url: navUrl })
       }
+    }
+    // T-PATCH-192: reflect the page's document title as the browser tab title,
+    // updating as the user navigates.
+    const onTitle = (e: any) => {
+      const title: string = e?.title ?? ''
+      if (title) setTabMeta(tabId, { title })
     }
     const onFailLoad = (e: any) => {
       // Sub-frame (iframe) failures must not flag the whole page as failed.
@@ -232,16 +243,18 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
 
     wv.addEventListener('did-navigate', onNavigate)
     wv.addEventListener('did-navigate-in-page', onNavigate)
+    wv.addEventListener('page-title-updated', onTitle)
     wv.addEventListener('did-fail-load', onFailLoad)
     wv.addEventListener('did-start-loading', onStartLoad)
 
     return () => {
       wv.removeEventListener('did-navigate', onNavigate)
       wv.removeEventListener('did-navigate-in-page', onNavigate)
+      wv.removeEventListener('page-title-updated', onTitle)
       wv.removeEventListener('did-fail-load', onFailLoad)
       wv.removeEventListener('did-start-loading', onStartLoad)
     }
-  }, [])
+  }, [tabId, setTabMeta])
 
   // T-PATCH-057: zoom handlers — clamp to [0.5, 3.0], step 0.1
   const BROWSER_ZOOM_MIN = 0.5
