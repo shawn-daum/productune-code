@@ -166,6 +166,59 @@
 .md-doc .md-ul,
 .md-doc .md-ol { gap: var(--space-2); }             /* 8px between list items */
 
+/* ── T-PATCH-183: light document surface (md-viewer EARLY-LIGHT) ─────────────
+ * SCOPE GUARD (chat regression = 0 by construction): every light declaration is
+ * nested under `.md-doc.md-light` — BOTH classes on the same element. Only the
+ * MarkdownViewer `viewerWrap` carries `md-doc` (single grep hit), and `md-light`
+ * is appended there only in light state. Chat bubbles (MdRenderer) carry NEITHER
+ * class, so none of these selectors can match chat/shell DOM. NOT on :root, NOT
+ * on `.md-doc` alone, NOT on `.md-light` alone.
+ *
+ * Mechanism: re-declare ONLY the themeable token vars (no new token names). Every
+ * token-based md-* / sx-* recipe (h1/body/code/inline/table/blockquote/list
+ * markers/hr/links/sx-string) auto-flips because it reads these vars. Raw-hex
+ * spots that don't read tokens (sticky band, MetadataPanel) are handled below /
+ * var-ized in their components. Palette = design-system.md §2.10 (WCAG-AA+).
+ */
+.md-doc.md-light {
+  --surface-base:      #F1F0EE; /* code-block bg */
+  --surface-body:      #FAFAF9; /* paper bg */
+  --surface-panel:     #F1F0EE; /* table zebra(even) / metadata card bg */
+  --surface-subpanel:  #ECEBE8; /* inline-code bg / blockquote bg / table th */
+  --border-subtle:     #ECEBE8; /* td top border */
+  --border-default:    #E2E0DC; /* code/table outline / hr */
+  --border-strong:     #CFCCC6; /* th bottom / blockquote bar / hover */
+  --border-muted:      #BDB9B2; /* disabled outline */
+  --text-primary:      #1F1F22; /* body p/li/td — 15.6:1 AAA */
+  --text-emphasis:     #101012; /* h1/strong/th — 17.4:1 AAA */
+  --text-secondary:    #3F3F46; /* h3/code-block/blockquote — 9.4:1 AAA */
+  --text-muted:        #57575E; /* list marker/metadata — 7.1:1 AAA */
+  --text-faint:        #6B6B73; /* comment/placeholder — 5.0:1 AA */
+  --accent:            #7C3AED; /* link/inline accent — 4.9:1 AA */
+  --health-success:    #0E8F63; /* sx-string — 4.6:1 vs light code bg */
+  --health-error:      #C62828; /* error tone — 5.4:1 AA */
+}
+
+/* Paper background on the document surface itself (viewerWrap has no bg inline). */
+.md-doc.md-light {
+  background: var(--surface-body);
+}
+
+/* NOTE: the T-PATCH-095 sticky band is a SIBLING of the .md-doc viewerWrap (it
+ * sits in the scroll body, not inside .md-doc), so it can't be reached by a
+ * `.md-doc.md-light` descendant selector. Its light variant is therefore applied
+ * via inline conditional in MarkdownViewer.tsx (band/row/chevron), which the
+ * ticket explicitly permits ("md-light 상태를 컴포넌트가 알고 inline 분기").
+ */
+
+/* MetadataPanel warn pill — amber has no DS health token, so the warn pair is
+ * the one MetadataPanel color not var-ized. Override its light tone here (the
+ * other tones flip via --health-*/--text-* / color-mix). §2.10 light warn. */
+.md-doc.md-light .md-meta-warn {
+  color: #8A5A00;
+  border-color: #E8DCC0;
+}
+
 /* R4 md-body (p) */
 .md-body {
   font-size: var(--text-base);
@@ -339,6 +392,33 @@
 .sx-string   { color: var(--health-success); } /* #34D399 — single hue accent */
 .sx-number   { color: var(--text-primary); }
 .sx-punct    { color: var(--text-muted); }
+
+/* sx-string light override (T-PATCH-185): the light block re-declares
+ * --health-success to #0E8F63 (also used by other health tones), but that
+ * measures only 3.60:1 on the light code-block bg (#F1F0EE) — below AA. Scope
+ * a darker green to .sx-string under light WITHOUT touching --health-success
+ * (so health/error tones elsewhere keep their values). #0A7A54 = 4.70:1 AA. */
+.md-doc.md-light .sx-string { color: #0A7A54; }
+
+/* ── md-link-* per-type link colors (T-PATCH-185) ─────────────────────────────
+ * MdRenderer emits a per-type class instead of an inline hex. The base values
+ * below are BYTE-IDENTICAL to the former getLinkColor hex, so chat bubbles +
+ * dark documents (which carry neither .md-doc nor .md-light) render exactly as
+ * before — regression 0 by construction. The `.md-doc.md-light` block re-colors
+ * each type for the light paper surface (#FAFAF9) to ≥4.5:1 WCAG-AA; chat DOM
+ * cannot match that compound selector, so chat is unaffected. §2.10. */
+.md-link-internal { color: #38BDF8; } /* default / regular ptn:file — cyan */
+.md-link-ticket   { color: #8B5CF6; } /* ptn:ticket — violet */
+.md-link-env      { color: #F59E0B; } /* env-target ptn:file — amber */
+.md-link-persona  { color: #A78BFA; } /* ptn:doctrine — light violet */
+.md-link-https    { color: #C8C8CC; } /* http(s) — neutral grey */
+
+/* light-mode AA link palette (vs paper #FAFAF9), hue families preserved-darker */
+.md-doc.md-light .md-link-internal { color: #0B66C2; } /* 5.44:1 — cyan→blue */
+.md-doc.md-light .md-link-ticket   { color: #6D28D9; } /* 6.80:1 — violet     */
+.md-doc.md-light .md-link-env      { color: #9A6700; } /* 4.66:1 — amber      */
+.md-doc.md-light .md-link-persona  { color: #6D28D9; } /* 6.80:1 — violet     */
+.md-doc.md-light .md-link-https    { color: #52525B; } /* 7.40:1 — neutral    */
 
 /* ── action-card shared shell (T-013 b/c) ────────────────────────────────── */
 .action-card {

@@ -103,7 +103,11 @@
     },
     "mdViewer": {
       "showMore": "더보기 ({{count}})",
-      "collapse": "접기"
+      "collapse": "접기",
+      "theme": {
+        "toLight": "문서를 라이트로 전환",
+        "toDark": "문서를 다크로 전환"
+      }
     },
     "htmlViewer": {
       "preview": "미리보기",

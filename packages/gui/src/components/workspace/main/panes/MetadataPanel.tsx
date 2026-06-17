@@ -12,9 +12,13 @@
  *   3. 2-col key→value grid for the remaining priority scalars
  *   4. a "show more" toggle revealing all non-priority keys (collapsed default)
  *
- * Tokens only — every hex below comes from md-recipes.css :root (mirrored as px
- * literals to match this file's inline-style convention, same as MarkdownViewer
- * already does for roBadge/lineCapBadge).
+ * Tokens only — colors below are CSS vars (var(--surface-*) / var(--text-*) /
+ * var(--health-*)) rather than px-literal hex. T-PATCH-183 var-ized them so the
+ * card auto-flips under `.md-doc.md-light` (the light palette re-declares the
+ * same vars) with NO dual-maintenance — MetadataPanel always renders inside the
+ * MarkdownViewer `viewerWrap`, which carries `.md-doc`, so the vars resolve to
+ * the dark :root values normally and to the light values when `md-light` is on.
+ * Non-color props (sizes/spacing/radius) stay px literals as before.
  */
 
 import { useMemo, useState } from 'react'
@@ -121,7 +125,7 @@ export default function MetadataPanel({ data }: MetadataPanelProps) {
             )
           })}
           {flags.map((flag, i) => (
-            <span key={`flag-${i}`} style={warnBadge}>
+            <span key={`flag-${i}`} className="md-meta-warn" style={warnBadge}>
               {flag}
             </span>
           ))}
@@ -149,7 +153,7 @@ export default function MetadataPanel({ data }: MetadataPanelProps) {
             <ChevronRight
               size={10}
               style={{
-                color: '#707070',
+                color: 'var(--text-faint)',
                 flexShrink: 0,
                 transform: expanded ? 'rotate(90deg)' : 'none',
                 transition: 'transform 120ms ease',
@@ -176,11 +180,11 @@ function Row({ k, v }: { k: string; v: string }) {
   )
 }
 
-// ── Styles (tokens mirrored as px literals — md-recipes.css :root) ──────────────
+// ── Styles (color props use CSS vars → auto-flip under .md-doc.md-light) ────────
 
 const panel: React.CSSProperties = {
-  background: '#141414', // --surface-panel
-  border: '1px solid #1F1F1F', // --border-default
+  background: 'var(--surface-panel)',
+  border: '1px solid var(--border-default)',
   borderRadius: 6, // --radius-lg
   padding: '12px 16px', // --space-3 / --space-4
   marginBottom: 20,
@@ -192,7 +196,7 @@ const panel: React.CSSProperties = {
 const titleText: React.CSSProperties = {
   fontSize: 15, // --text-md-plus
   fontWeight: 600, // --weight-semibold
-  color: '#F0F0F0', // --text-emphasis
+  color: 'var(--text-emphasis)',
   lineHeight: 1.35,
 }
 
@@ -209,23 +213,36 @@ const badgeBase: React.CSSProperties = {
   alignItems: 'center',
   fontSize: 10, // --text-xs
   padding: '1px 6px',
-  border: '1px solid #1F1F1F', // --border-default
+  border: '1px solid var(--border-default)',
   borderRadius: 20, // --radius-pill
   flexShrink: 0,
   whiteSpace: 'nowrap',
 }
 
+// Tone badges: text = health/text token (auto-flips). Border = a low-alpha tint
+// of that same token via color-mix, so the dark→light flip is automatic without
+// a hand-tuned light border hex (no token exists for the dark tint shades).
 function badgeForTone(tone: Tone): React.CSSProperties {
   if (tone === 'success') {
-    return { ...badgeBase, color: '#34D399', borderColor: '#1C3A30' } // --health-success
+    return {
+      ...badgeBase,
+      color: 'var(--health-success)',
+      borderColor: 'color-mix(in oklab, var(--health-success) 36%, transparent)',
+    }
   }
   if (tone === 'error') {
-    return { ...badgeBase, color: '#EF4444', borderColor: '#3A1C1C' } // --health-error
+    return {
+      ...badgeBase,
+      color: 'var(--health-error)',
+      borderColor: 'color-mix(in oklab, var(--health-error) 36%, transparent)',
+    }
   }
-  return { ...badgeBase, color: '#A0A0A0' } // --text-muted, neutral border
+  return { ...badgeBase, color: 'var(--text-muted)' } // neutral — token border
 }
 
-// Warn pill — same tone as MarkdownViewer's lineCapBadgeOver.
+// Warn pill — amber. No health token for warn, so the warn text/border are kept
+// as a self-contained pair that the light block also overrides via .md-light
+// (the warnBadge className hook below).
 const warnBadge: React.CSSProperties = {
   ...badgeBase,
   color: '#E0A030',
@@ -241,13 +258,13 @@ const grid: React.CSSProperties = {
 }
 
 const keyCell: React.CSSProperties = {
-  color: '#707070', // --text-faint
+  color: 'var(--text-faint)',
   fontFamily: 'ui-monospace, "SF Mono", "Menlo", "Consolas", monospace', // --font-mono
   fontSize: 10, // --text-xs
 }
 
 const valCell: React.CSSProperties = {
-  color: '#C8C8CC', // --text-secondary
+  color: 'var(--text-secondary)',
   fontSize: 12, // --text-sm
   wordBreak: 'break-word',
 }
@@ -262,7 +279,7 @@ const toggleBtn: React.CSSProperties = {
   padding: 0,
   marginTop: 2,
   cursor: 'pointer',
-  color: '#707070', // --text-faint
+  color: 'var(--text-faint)',
   fontFamily: 'inherit',
   fontSize: 10, // --text-xs
 }

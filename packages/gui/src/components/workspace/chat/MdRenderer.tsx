@@ -159,17 +159,32 @@ function routeLink(href: string): void {
   if (abs) { routeAbsPath(abs); return }
 }
 
-function getLinkColor(href?: string): string {
-  if (!href) return '#38BDF8'
-  if (href.startsWith('ptn:ticket/')) return '#8B5CF6'
+/**
+ * Map a link href to a per-type CSS class (T-PATCH-185).
+ *
+ * Replaces the former `getLinkColor` inline-hex helper. The type-selection
+ * logic is preserved 1:1; only the emitted form changed (class vs inline color).
+ * Base color for each class is defined in md-recipes.css so chat + dark-document
+ * links stay BYTE-IDENTICAL to the previous inline hex (regression 0); the
+ * `.md-doc.md-light` scope re-colors them for the light paper surface only.
+ *
+ *   md-link-internal  ← #38BDF8 (default / regular ptn:file / unknown)
+ *   md-link-ticket    ← #8B5CF6 (ptn:ticket)
+ *   md-link-env       ← #F59E0B (env-target ptn:file)
+ *   md-link-persona   ← #A78BFA (ptn:doctrine)
+ *   md-link-https     ← #C8C8CC (http/https)
+ */
+function getLinkClass(href?: string): string {
+  if (!href) return 'md-link-internal'
+  if (href.startsWith('ptn:ticket/')) return 'md-link-ticket'
   if (href.startsWith('ptn:file/')) {
     // env-target files get an amber tone to distinguish from regular file cyan.
-    return isEnvTarget(href.slice('ptn:file/'.length)) ? '#F59E0B' : '#38BDF8'
+    return isEnvTarget(href.slice('ptn:file/'.length)) ? 'md-link-env' : 'md-link-internal'
   }
   // doctrine links (T-PATCH-106) — violet-leaning to read as "persona doctrine".
-  if (href.startsWith('ptn:doctrine/')) return '#A78BFA'
-  if (/^https?:\/\//.test(href))      return '#C8C8CC'
-  return '#38BDF8'
+  if (href.startsWith('ptn:doctrine/')) return 'md-link-persona'
+  if (/^https?:\/\//.test(href))      return 'md-link-https'
+  return 'md-link-internal'
 }
 
 function MdLink({ href, children }: { href?: string; children: ReactNode }) {
@@ -180,7 +195,8 @@ function MdLink({ href, children }: { href?: string; children: ReactNode }) {
   return (
     <a
       href={href}
-      style={{ color: getLinkColor(href), textDecoration: 'underline', cursor: 'pointer' }}
+      className={getLinkClass(href)}
+      style={{ textDecoration: 'underline', cursor: 'pointer' }}
       onClick={handleClick}
     >
       {children}

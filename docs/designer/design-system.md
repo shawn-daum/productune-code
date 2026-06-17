@@ -295,6 +295,70 @@ T-P4-059 SessionHealthBanner 기준. 일반 toast/inline 메시지에도 동일 
 > non-text UI (border/icon) 는 WCAG 1.4.11 의 3:1 만 충족하면 된다. 위 표 기준
 > 모든 status/persona/stage 색이 통과.
 
+### 2.10 md-viewer-scoped early-light (T-PATCH-183)
+
+> **SCOPE 한정** — 이 light 팔레트는 **MarkdownViewer 문서 표면(`.md-doc.md-light`)
+> 에만** 적용되는 조기 도입분이다. 전체 앱 light theme 은 여전히 Phase 5 (§1 #6).
+> toolbar·shell·chat·Mermaid/Image 탭은 dark 유지. 토큰 명은 dark 와 동일 —
+> `.md-doc.md-light` 가 themeable CSS var 만 light 값으로 **재선언**하여 token 기반
+> md recipe 가 자동으로 flip 된다 (raw-hex 지점은 별도 override 필요, 아래 표).
+
+문서 표면 paper 배경 `#FAFAF9` 기준 light 값 + 본문 WCAG-AA 이상:
+
+| token | dark | **light** | role (md doc) | WCAG (vs `#FAFAF9`) |
+|---|---|---|---|---|
+| `--surface-base` | `#0A0A0A` | `#F1F0EE` | code-block 배경 | — (surface) |
+| `--surface-body` | `#0F0F0F` | `#FAFAF9` | 문서 paper 배경 | — (surface) |
+| `--surface-panel` | `#141414` | `#F1F0EE` | table zebra (even row), metadata card 배경 | — |
+| `--surface-subpanel` | `#1A1A1A` | `#ECEBE8` | inline-code 배경, blockquote 배경, table th | — |
+| `--border-subtle` | `#1A1A1A` | `#ECEBE8` | td top border | 3:1 non-text OK |
+| `--border-default` | `#1F1F1F` | `#E2E0DC` | code/table 외곽, hr | 3:1 non-text OK |
+| `--border-strong` | `#2A2A2A` | `#CFCCC6` | th bottom, blockquote bar, hover | 3:1 non-text OK |
+| `--border-muted` | `#3A3A3A` | `#BDB9B2` | disabled 외곽 | — |
+| `--text-primary` | `#E8E8EA` | `#1F1F22` | 본문 p / li / td | 15.6:1 → AAA |
+| `--text-emphasis` | `#F0F0F0` | `#101012` | h1 / strong / th | 17.4:1 → AAA |
+| `--text-secondary` | `#C8C8CC` | `#3F3F46` | h3 / code-block / blockquote | 9.4:1 → AAA |
+| `--text-muted` | `#A0A0A0` | `#57575E` | list marker, metadata | 7.1:1 → AAA |
+| `--text-faint` | `#707070` | `#6B6B73` | comment, placeholder | 5.0:1 → AA |
+| `--accent` | `#8B5CF6` | `#7C3AED` | link / inline accent | 4.9:1 → AA (본문 가능) |
+| `--health-success` | `#34D399` | `#0E8F63` | sx-string (code 문자열) | 4.6:1 → AA (vs code-block `#F1F0EE`) |
+| `--health-error` | `#EF4444` | `#C62828` | error tone | 5.4:1 → AA |
+
+> **sx-* syntax** — code-block 배경이 light(`#F1F0EE`)로 flip 되면 dark용
+> `--health-success #34D399`(string) 가 1.6:1 로 깨진다 → light 에서 `#0E8F63`
+> 로 재선언(4.6:1). `--text-emphasis`(keyword)·`--text-secondary`(default)·
+> `--text-faint`(comment)·`--text-primary`(number)·`--text-muted`(punct) 는 위
+> light 값으로 자동 충족.
+>
+> **paper 톤** — 순백 `#FFFFFF` 대신 약한 warm-grey `#FAFAF9` 를 골라 장문 문서
+> 눈부심 완화 + dark toolbar 와의 경계가 또렷. surface 5등급은 light 에서 **역전**
+> (깊을수록 어두워짐) — code/zebra 가 paper 보다 한 단계 진하게.
+
+#### 2.10.1 본문 하이퍼링크 light 팔레트 (T-PATCH-185)
+
+`MdRenderer` 링크는 inline hex 대신 **타입별 className**(`.md-link-*`)으로 렌더된다.
+base class = 기존 dark hex 그대로 → chat·다크 문서 byte-identical (회귀 0). light 분기는
+`.md-doc.md-light .md-link-*` 만 (chat DOM 미매칭). dark hex 는 색결정 의미(타입 구분)를
+보존하되 light 에서 hue family 를 유지한 채 어둡게 내려 paper `#FAFAF9` 위 **≥4.5:1**.
+
+| class | 트리거 | dark (base, 불변) | **light** | WCAG (vs `#FAFAF9`) |
+|---|---|---|---|---|
+| `.md-link-internal` | default / 일반 `ptn:file` | `#38BDF8` (cyan) | `#0B66C2` | 5.44:1 → AA |
+| `.md-link-ticket` | `ptn:ticket` | `#8B5CF6` (violet) | `#6D28D9` | 6.80:1 → AAA |
+| `.md-link-env` | env-target `ptn:file` | `#F59E0B` (amber) | `#9A6700` | 4.66:1 → AA |
+| `.md-link-persona` | `ptn:doctrine` | `#A78BFA` (violet) | `#6D28D9` | 6.80:1 → AAA |
+| `.md-link-https` | `http(s)://` | `#C8C8CC` (grey) | `#52525B` | 7.40:1 → AAA |
+
+> dark base hex(cyan 2.05 / amber 2.06 / violet `#A78BFA` 2.61 / `#8B5CF6` 4.05 /
+> grey 1.60) 가 paper 위 AA 미달이라 light 만 재선언. base 는 chat·다크용으로 불변.
+
+#### 2.10.2 sx-string light 상향 (T-PATCH-185)
+
+light block 의 `--health-success` 재선언값 `#0E8F63` 은 code-block bg `#F1F0EE` 위
+**3.60:1** 로 AA 미달. `--health-success`(health/error 톤과 공유) 는 그대로 두고
+`.md-doc.md-light .sx-string` 만 **`#0A7A54` (4.70:1 → AA)** 로 어둡게 분기.
+(위 §2.10 표의 `--health-success light=#0E8F63` 는 다른 health 톤용으로 유지.)
+
 ---
 
 ## §3 Spacing scale

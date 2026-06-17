@@ -103,7 +103,11 @@
     },
     "mdViewer": {
       "showMore": "Show more ({{count}})",
-      "collapse": "Collapse"
+      "collapse": "Collapse",
+      "theme": {
+        "toLight": "Switch to light document",
+        "toDark": "Switch to dark document"
+      }
     },
     "htmlViewer": {
       "preview": "Preview",

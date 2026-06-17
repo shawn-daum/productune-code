@@ -25,7 +25,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertOctagon, Loader2, Lock, ChevronRight, Eye, Pencil, Save, X } from 'lucide-react'
+import { AlertOctagon, Loader2, Lock, ChevronRight, Eye, Pencil, Save, X, Moon, Sun } from 'lucide-react'
 import MdRenderer from '../../chat/MdRenderer'
 import ZoomControls, { ZOOM_STEP, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT } from './ZoomControls'
 import { parseFrontmatter } from './frontmatter'
@@ -38,16 +38,19 @@ import MetadataPanel from './MetadataPanel'
 // eat the viewport; clicking an entry jumps to that heading below the band.
 
 // Max pinned rows. When the ancestor chain is deeper, the shallowest ancestors
-// are dropped (the nearest ancestors — most useful context — are kept).
-const MAX_STICKY_DEPTH = 3
+// are dropped (the nearest ancestors — most useful context — are kept). 4 so the
+// full H1>H2>H3>H4 chain (H4 added in T-PATCH-182) can show (T-PATCH-184).
+const MAX_STICKY_DEPTH = 4
 // Per-row height of one sticky heading entry (px). Drives the jump offset so a
-// clicked / scrolled-to heading lands just under the band, not behind it.
+// clicked / scrolled-to heading lands just under the band, not behind it. Rows
+// use min-height (not fixed height) so the per-level scaled type (13px L1) isn't
+// clipped while the band stays compact (T-PATCH-184).
 const STICKY_ROW_H = 22
 
 interface StickyHeading {
   /** document order index — stable jump key */
   idx: number
-  level: number // 1 | 2 | 3
+  level: number // 1 | 2 | 3 | 4
   text: string
   /** element offsetTop within the scroll container */
   top: number
@@ -120,6 +123,31 @@ type LoadState = 'idle' | 'loading' | 'done' | 'error'
 // common-habit cap is out of scope (carried as-is from DoctrineFileTab).
 const DEFAULT_LINE_CAP = 100
 
+// ── Document-surface theme (T-PATCH-183) ────────────────────────────────────────
+// EARLY-LIGHT: only the md DOCUMENT surface (.md-doc viewerWrap) flips light/dark;
+// toolbar / shell / chat / Mermaid·Image tabs stay dark (full-app light = Phase 5).
+// One global persisted key → all md tabs share the theme. Default dark (incl.
+// first run / parse-fail / missing), following App.tsx try/catch localStorage
+// convention so a blocked localStorage degrades silently to dark.
+type MdTheme = 'dark' | 'light'
+const MD_THEME_KEY = 'productune.mdViewer.theme'
+
+function readMdTheme(): MdTheme {
+  try {
+    return localStorage.getItem(MD_THEME_KEY) === 'light' ? 'light' : 'dark'
+  } catch {
+    return 'dark'
+  }
+}
+
+function writeMdTheme(theme: MdTheme): void {
+  try {
+    localStorage.setItem(MD_THEME_KEY, theme)
+  } catch {
+    /* localStorage unavailable — silent fallback, state stays in-memory */
+  }
+}
+
 export default function MarkdownViewer({
   load,
   absPath = '',
@@ -159,6 +187,18 @@ export default function MarkdownViewer({
     [],
   )
   const zoomReset = useCallback(() => setZoom(ZOOM_DEFAULT), [])
+
+  // Document-surface theme (T-PATCH-183). Lazy-init from localStorage (default
+  // dark). Toggling flips state + persists immediately so all md tabs share it.
+  const [theme, setTheme] = useState<MdTheme>(() => readMdTheme())
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next: MdTheme = prev === 'dark' ? 'light' : 'dark'
+      writeMdTheme(next)
+      return next
+    })
+  }, [])
+  const isLight = theme === 'light'
 
   const runLoad = useCallback(() => {
     setLoadState('loading')
@@ -242,10 +282,10 @@ export default function MarkdownViewer({
   const collectHeadings = useCallback(() => {
     const sc = scrollRef.current
     if (!sc) { headingsRef.current = []; return }
-    const els = sc.querySelectorAll<HTMLElement>('.md-h1, .md-h2, .md-h3')
+    const els = sc.querySelectorAll<HTMLElement>('.md-h1, .md-h2, .md-h3, .md-h4')
     const list: StickyHeading[] = []
     els.forEach((el, i) => {
-      const level = el.classList.contains('md-h1') ? 1 : el.classList.contains('md-h2') ? 2 : 3
+      const level = el.classList.contains('md-h1') ? 1 : el.classList.contains('md-h2') ? 2 : el.classList.contains('md-h3') ? 3 : 4
       list.push({ idx: i, level, text: (el.textContent ?? '').trim(), top: el.offsetTop })
     })
     headingsRef.current = list
@@ -308,7 +348,7 @@ export default function MarkdownViewer({
     const sc = scrollRef.current
     if (!sc) return
     // Re-read live offsetTop (zoom / reflow may have moved it since collection).
-    const els = sc.querySelectorAll<HTMLElement>('.md-h1, .md-h2, .md-h3')
+    const els = sc.querySelectorAll<HTMLElement>('.md-h1, .md-h2, .md-h3, .md-h4')
     const el = els[h.idx]
     const top = el ? el.offsetTop : h.top
     // Offset by the band height of the ancestors that stay pinned above this one
@@ -355,6 +395,19 @@ export default function MarkdownViewer({
           {zoomEnabled && (
             <ZoomControls zoom={zoom} onZoomIn={zoomIn} onZoomOut={zoomOut} onReset={zoomReset} />
           )}
+          {/* Document light/dark toggle (T-PATCH-183). Sibling of ZoomControls —
+              ZoomControls itself is untouched. Icon shows the CURRENT theme
+              (Moon=dark, Sun=light); tooltip/aria describe the action. The button
+              chrome stays dark always (toolbar is never light). */}
+          <button
+            style={themeToggleBtn}
+            onClick={toggleTheme}
+            aria-pressed={isLight}
+            aria-label={t(isLight ? 'workspace.mdViewer.theme.toDark' : 'workspace.mdViewer.theme.toLight')}
+            title={t(isLight ? 'workspace.mdViewer.theme.toDark' : 'workspace.mdViewer.theme.toLight')}
+          >
+            {isLight ? <Sun size={12} strokeWidth={1.5} /> : <Moon size={12} strokeWidth={1.5} />}
+          </button>
           {editable ? (
             <>
               {/* Advisory line-cap badge — never disables Save. */}
@@ -396,18 +449,26 @@ export default function MarkdownViewer({
         {/* Sticky-scroll heading band (T-PATCH-095). Pins ancestor headings
             (H1>H2>H3) cascading at the top; click jumps below the band. */}
         {loadState === 'done' && !editing && stickyChain.length > 0 && (
-          <div style={stickyBand}>
-            {stickyChain.map((h, i) => (
-              <button
-                key={h.idx}
-                style={{ ...stickyRow, paddingLeft: 16 + i * 14 }}
-                onClick={() => jumpToHeading(h)}
-                title={h.text}
-              >
-                <ChevronRight size={10} style={{ color: '#3A3A3A', flexShrink: 0 }} />
-                <span style={stickyRowText}>{h.text}</span>
-              </button>
-            ))}
+          // Sticky band is a SIBLING of .md-doc (not a descendant), so its light
+          // variant can't ride the CSS var flip — it's applied inline off `isLight`
+          // (ticket-permitted). Paper-translucent band so it doesn't float dark
+          // over a light doc; per-level row text + chevron use the §2.10 tokens.
+          <div style={isLight ? { ...stickyBand, ...stickyBandLight } : stickyBand}>
+            {stickyChain.map((h, i) => {
+              const lvl = (isLight ? stickyLevelStyleLight[h.level] : stickyLevelStyle[h.level])
+                ?? (isLight ? stickyLevelStyleLight[4]! : stickyLevelStyle[4]!)
+              return (
+                <button
+                  key={h.idx}
+                  style={{ ...stickyRow, ...lvl, paddingLeft: 16 + i * 14 }}
+                  onClick={() => jumpToHeading(h)}
+                  title={h.text}
+                >
+                  <ChevronRight size={10} style={{ color: isLight ? '#CFCCC6' : '#3A3A3A', flexShrink: 0 }} />
+                  <span style={stickyRowText}>{h.text}</span>
+                </button>
+              )
+            })}
           </div>
         )}
         {loadState === 'loading' && (
@@ -458,7 +519,7 @@ export default function MarkdownViewer({
                   </div>
                 )}
                 <div
-                  className="md-doc"
+                  className={isLight ? 'md-doc md-light' : 'md-doc'}
                   style={zoomEnabled ? { ...viewerWrap, zoom: zoom } : viewerWrap}
                 >
                   <MetadataPanel data={fmData} />
@@ -523,6 +584,23 @@ const headerRight: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
+  flexShrink: 0,
+}
+
+// Document theme toggle (T-PATCH-183). Reuses ZoomControls' zoomBtn tone so it
+// sits in the toolbar as a peer — single bordered square. ALWAYS dark: the
+// toolbar never flips light, only the document surface does.
+const themeToggleBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: '#1A1A1A',
+  color: '#A0A0A0',
+  border: '1px solid #1F1F1F',
+  borderRadius: 4,
+  padding: '3px 6px',
+  cursor: 'pointer',
+  lineHeight: 1,
   flexShrink: 0,
 }
 
@@ -638,22 +716,53 @@ const stickyBand: React.CSSProperties = {
   borderBottom: '1px solid #1A1A1A',
 }
 
+// Light variant of the sticky band (T-PATCH-183). Paper-translucent so it reads
+// as light document chrome, not a dark bar over a light doc. Hex = §2.10 light
+// palette (--surface-body paper / --border-default), resolved literally because
+// the band is outside .md-doc so it can't read the CSS var flip.
+const stickyBandLight: React.CSSProperties = {
+  background: 'rgba(250,250,249,0.96)',
+  borderBottom: '1px solid #E2E0DC',
+}
+
 const stickyRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 4,
-  height: STICKY_ROW_H,
+  // min-height (not fixed height) keeps rows compact yet uncropped for the larger
+  // 13px level-1 type; tight vertical padding holds the band slim (T-PATCH-184).
+  minHeight: STICKY_ROW_H,
   width: '100%',
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  color: '#B0B0B4',
   fontFamily: 'inherit',
-  fontSize: 11,
   textAlign: 'left',
   paddingRight: 16,
-  paddingTop: 0,
-  paddingBottom: 0,
+  paddingTop: 2,
+  paddingBottom: 2,
+}
+
+// Per-level scaled-down typography for the sticky breadcrumb rows (T-PATCH-184,
+// option 2). Hierarchy lives in size/weight/color but COMPRESSED vs the original
+// body heading sizes (18/15/14/13). Values are the canonical design-system token
+// hex from md-recipes :root — text-base/sm/xs + text-emphasis/primary/secondary/
+// muted — NOT new hex. Inline React styles can't read CSS vars, so the resolved
+// token hex are used directly.
+const stickyLevelStyle: Record<number, React.CSSProperties> = {
+  1: { fontSize: 13, fontWeight: 600, color: '#F0F0F0' }, // --text-base / --text-emphasis
+  2: { fontSize: 12, fontWeight: 600, color: '#E8E8EA' }, // --text-sm   / --text-primary
+  3: { fontSize: 12, fontWeight: 500, color: '#C8C8CC' }, // --text-sm   / --text-secondary
+  4: { fontSize: 11, fontWeight: 400, color: '#A0A0A0' }, // --text-xs   / --text-muted
+}
+
+// Light counterpart — same size/weight, §2.10 light text tokens for the band
+// text. Used inline because the band sits outside .md-doc (no var flip reach).
+const stickyLevelStyleLight: Record<number, React.CSSProperties> = {
+  1: { fontSize: 13, fontWeight: 600, color: '#101012' }, // --text-emphasis
+  2: { fontSize: 12, fontWeight: 600, color: '#1F1F22' }, // --text-primary
+  3: { fontSize: 12, fontWeight: 500, color: '#3F3F46' }, // --text-secondary
+  4: { fontSize: 11, fontWeight: 400, color: '#57575E' }, // --text-muted
 }
 
 const stickyRowText: React.CSSProperties = {
