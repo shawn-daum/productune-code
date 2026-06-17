@@ -63,6 +63,7 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
   // T-PATCH-057: zoom state — range 0.5–3.0, step 0.1 (AC-3, AC-4)
   const [zoom, setZoom] = useState(ZOOM_DEFAULT)
   const webviewRef = useRef<ElectronWebview | null>(null)
+  const urlInputRef = useRef<HTMLInputElement | null>(null)
   // #4c (T-023): while a tab drag is active, drop pointer events on the webview
   // so the pane's drop-zone overlay receives dragover/drop instead of the
   // webview swallowing them.
@@ -193,6 +194,16 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
     }
   }, [])
 
+  // T-PATCH-191: a blank tab (no initial URL — e.g. Cmd+T) auto-focuses the URL
+  // bar and selects it so the user can type immediately. A tab opened WITH a URL
+  // (e.g. a Run Preview) leaves focus on the page. Runs once on mount.
+  useEffect(() => {
+    if (initialUrl === 'about:blank') {
+      const id = requestAnimationFrame(() => urlInputRef.current?.select())
+      return () => cancelAnimationFrame(id)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Wire webview navigation events to keep URL bar in sync
   useEffect(() => {
     const wv = webviewRef.current
@@ -306,6 +317,7 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
         </button>
 
         <input
+          ref={urlInputRef}
           style={urlInput}
           value={inputUrl}
           onChange={(e) => setInputUrl(e.target.value)}
@@ -345,7 +357,11 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
         <webview
           ref={webviewRef as any}
           src={initialUrl}
-          allowpopups={true}
+          // T-PATCH-191: MUST be the string "true" — React 19 drops a boolean
+          // `true` on this custom element, leaving the webview WITHOUT the
+          // allowpopups attribute → window.open is blocked and the new-tab
+          // window-open handler never fires (clicks appear dead).
+          {...({ allowpopups: 'true' } as any)}
           partition="persist:browser-tab"
           style={(tabDragActive || resizeDragActive) ? { ...webviewEl, pointerEvents: 'none' } : webviewEl}
         />

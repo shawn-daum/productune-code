@@ -82,6 +82,19 @@ registerProjectEnv()
 registerAttachments()
 registerCostArchive()
 
+// T-PATCH-191: in-app browser — window.open / target=_blank on a <webview>
+// (e.g. Naver's home tiles) otherwise spawn a detached popup we don't manage, so
+// clicks appear to do nothing. Deny the popup and route the URL to the renderer,
+// which opens it as a new in-app browser tab (preserves the current page; safe
+// for OAuth popups). Same-tab <a> navigations (e.g. Google) are unaffected.
+app.on('web-contents-created', (_e, contents) => {
+  if (contents.getType() !== 'webview') return
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) mainWindow?.webContents.send('browser:open-url', { url })
+    return { action: 'deny' }
+  })
+})
+
 // ── Brand icon resolution (T-PATCH-109) ───────────────────────────────────────
 // dev/non-packaged Dock + window icon. __dirname = dist-electron/; the buildResources
 // dir lives at packages/gui/build/, i.e. `../build/` from here. Prefer the 1024² PNG

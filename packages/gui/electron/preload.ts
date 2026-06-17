@@ -495,6 +495,14 @@ contextBridge.exposeInMainWorld('api', {
   browserOpened: (payload: { url: string; tabId: string }): void =>
     ipcRenderer.send('browser:opened', payload),
 
+  /** T-PATCH-191: main asks the renderer to open a URL (a webview window.open /
+   *  target=_blank) as a new in-app browser tab. */
+  onBrowserOpenUrl: (cb: (payload: { url: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: { url: string }) => cb(payload)
+    ipcRenderer.on('browser:open-url', listener)
+    return () => ipcRenderer.removeListener('browser:open-url', listener)
+  },
+
   // ── Browser-tab find — MAIN PROCESS path (T-PATCH-067 R7) ────────────────────
   // The renderer <webview> DOM find API is broken on this build (found-in-page
   // never fires; active session blocks new queries). These route find ops to

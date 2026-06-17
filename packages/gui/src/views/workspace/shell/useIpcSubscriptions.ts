@@ -48,6 +48,19 @@ export function useIpcSubscriptions(
   const [artifactToast, setArtifactToast] = useState<string | null>(null)
   const artifactToastTimerRef = useRef<number | null>(null)
 
+  // ── Browser window.open → new in-app browser tab (T-PATCH-191) ────────────
+  useEffect(() => {
+    const api = (window as any).api
+    const off = api?.onBrowserOpenUrl?.(({ url }: { url: string }) => {
+      if (!url) return
+      let host = 'Browser'
+      try { host = new URL(url).hostname || 'Browser' } catch { /* keep default */ }
+      openTab(`browser:${url}`, 'browser', { url }, host)
+    })
+    return () => off?.()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTab])
+
   // ── Deploy modal IPC subscription (T-P4-022 3rd PR) ───────────────────────
   useEffect(() => {
     const api = (window as any).api
