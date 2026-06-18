@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Lock, Check } from 'lucide-react'
-import type { Phase } from '../../lib/types'
+import type { Phase, PendingGate } from '../../lib/types'
 import {
   type PhaseCounts,
   type CloseGateItem,
@@ -10,6 +10,7 @@ import {
   getGateBoundary,
   aggregateGate,
   resolveItemStatus,
+  isGateEngaged,
 } from '../../lib/phase-mapping'
 
 const PHASES: Phase[] = ['PRD', 'Design', 'Build', 'Deploy', 'Close']
@@ -26,9 +27,13 @@ interface Props {
   // T-PATCH-203: live close_gate slice from po-state (materialized by the gate
   // hooks). Drives the boundary gate marker. Absent/empty → graceful pass-fallback.
   closeGate?: CloseGateItem[] | null
+  // T-PATCH-203 follow-up §1: live pending_gate envelope from po-state. Used (with
+  // closeGate) to decide whether a boundary's gate is "engaged" — i.e. show the
+  // marker — vs. dormant (close_gate exists from P3 entry but untouched) → chevron.
+  pendingGate?: PendingGate | null
 }
 
-export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate }: Props) {
+export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate, pendingGate }: Props) {
   return (
     <div style={wrap}>
       {version && (
@@ -42,13 +47,17 @@ export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate
         const count = phaseCounts?.[p]
         // AC-3b: total === 0 → render no counter (no "(0/0)").
         const showCount = !!count && count.total > 0
-        // T-PATCH-203: a boundary gate renders before phase `p` when the mapping
-        // table has an entry for it (AC-5 — data-driven). Otherwise plain chevron.
+        // T-PATCH-203: a boundary gate is defined before phase `p` when the mapping
+        // table has an entry for it (AC-5 — data-driven). T-PATCH-203 follow-up §1:
+        // it only RENDERS as a marker once the gate is "engaged" (pending_gate
+        // points here, or a close_gate item left 'pending'); otherwise — including
+        // the whole P3 build before the close sequence starts — a plain chevron.
         const gateBoundary = i > 0 ? getGateBoundary(p) : null
+        const showGate = !!gateBoundary && isGateEngaged(gateBoundary, closeGate, pendingGate)
         return (
           <span key={p} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
             {i > 0 && (
-              gateBoundary
+              showGate
                 ? <GateMarker boundaryPhase={p} closeGate={closeGate} />
                 : <span style={chevron}>›</span>
             )}
@@ -185,7 +194,13 @@ function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
               return (
                 <div key={item.step} style={popoverItem}>
                   <div style={popoverItemHead}>
-                    <span style={popoverItemLabel}>{t(item.labelKey)}</span>
+                    {/* T-PATCH-203 follow-up §2: localized label + immutable canonical
+                        step key as a small monospace tag (searchability — the key is
+                        what appears in po-state / close-gate config). */}
+                    <span style={popoverItemLabelWrap}>
+                      <span style={popoverItemLabel}>{t(item.labelKey)}</span>
+                      <code style={popoverItemKey}>{item.step}</code>
+                    </span>
                     <StatusBadge status={status} />
                   </div>
                   <div style={popoverItemDesc}>{t(item.descKey)}</div>
@@ -377,10 +392,32 @@ const popoverItemHead: React.CSSProperties = {
   gap: 8,
 }
 
+const popoverItemLabelWrap: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 6,
+  minWidth: 0,
+  flexWrap: 'wrap',
+}
+
 const popoverItemLabel: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 500,
   color: '#D4D4D8',
+}
+
+// T-PATCH-203 follow-up §2: canonical close_gate step key — small, dim, monospace.
+// Subordinate to the localized label; preserves the raw key for searchability.
+const popoverItemKey: React.CSSProperties = {
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontSize: 9.5,
+  color: '#6B6B72',
+  background: '#202024',
+  border: '1px solid #2C2C30',
+  borderRadius: 3,
+  padding: '0 4px',
+  lineHeight: 1.5,
+  whiteSpace: 'nowrap',
 }
 
 const popoverItemDesc: React.CSSProperties = {

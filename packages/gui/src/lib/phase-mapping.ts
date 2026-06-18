@@ -14,7 +14,7 @@
  * Renamed from `stage-mapping.ts` (v2 doctrine sub-b).
  */
 
-import type { PoState, Phase, Ticket } from './types'
+import type { PoState, Phase, Ticket, PendingGate } from './types'
 import { normalizeStatus } from './useTicketScan'
 
 export interface PhaseDef {
@@ -161,6 +161,10 @@ export interface GateItemDef {
 export interface GateBoundaryDef {
   /** The phase whose ENTRY is gated — the marker renders on the chevron before it. */
   boundaryAfterPhase: Phase
+  /** po-state `current_phase` number (1..5) of the gated phase — i.e. the gate's
+   *  `to_phase`. Its predecessor (`toPhaseNum - 1`) is the `from_phase`. Used to
+   *  decide whether a live `pending_gate` envelope points at THIS boundary. */
+  toPhaseNum: number
   /** i18n key for the popover heading (conceptual framing of this checkpoint). */
   titleKey: string
   /** Gate steps at this boundary, in display order. */
@@ -175,6 +179,7 @@ export interface GateBoundaryDef {
 export const GATE_BOUNDARIES: GateBoundaryDef[] = [
   {
     boundaryAfterPhase: 'Deploy',
+    toPhaseNum: 4,  // Build(3) → Deploy(4): the P3 close_gate guards this transition.
     titleKey: 'workspace.gateMarker.deploy.title',
     items: [
       { step: 'backlog_triage', labelKey: 'workspace.gateMarker.items.backlog_triage.label', descKey: 'workspace.gateMarker.items.backlog_triage.desc' },
@@ -234,6 +239,52 @@ export function aggregateGate(
   // No live data → pass-fallback (AC-6); otherwise pass only when all satisfied.
   const passed = !hasData || satisfied === total
   return { satisfied, total, passed }
+}
+
+/**
+ * Whether a boundary's gate is "engaged" — i.e. the project has actually entered
+ * the close/transition sequence for this boundary, so the gate marker should
+ * replace the plain chevron (T-PATCH-203 follow-up §1, "B trigger").
+ *
+ * The P3 `close_gate` is instantiated on P3 ENTRY and lives there for the whole
+ * Build phase — so its mere *existence* is not a trigger (else `0/4` shows the
+ * instant Build opens, implying the user is "behind"). The marker engages only on:
+ *
+ *   (a) a live `pending_gate` envelope pointing at THIS boundary — the PO emitted
+ *       the phase-transition gate (from_phase = toPhaseNum-1, or to_phase =
+ *       toPhaseNum), i.e. it is actively asking to cross this boundary; OR
+ *   (b) any of this boundary's close_gate items has moved off `pending`
+ *       (status !== 'pending') — the close sequence has started/progressed.
+ *
+ * Neither → return false → caller falls back to a plain chevron. When `closeGate`
+ * is absent/empty (graceful AC-6 fallback), only (a) can engage it.
+ */
+export function isGateEngaged(
+  def: GateBoundaryDef,
+  closeGate: CloseGateItem[] | null | undefined,
+  pendingGate: PendingGate | null | undefined,
+): boolean {
+  // (a) pending_gate points at this boundary (match on to_phase, or from_phase
+  //     when to_phase is absent/null e.g. terminal-phase envelopes).
+  if (pendingGate) {
+    if (typeof pendingGate.to_phase === 'number' && pendingGate.to_phase === def.toPhaseNum) return true
+    if (
+      (pendingGate.to_phase == null) &&
+      typeof pendingGate.from_phase === 'number' &&
+      pendingGate.from_phase === def.toPhaseNum - 1
+    ) return true
+  }
+  // (b) any item at this boundary has left 'pending' (close sequence engaged).
+  if (Array.isArray(closeGate)) {
+    const steps = new Set(def.items.map((i) => i.step))
+    for (const it of closeGate) {
+      if (it && typeof it.step === 'string' && steps.has(it.step)) {
+        const s = typeof it.status === 'string' ? it.status : undefined
+        if (s && s !== 'pending') return true
+      }
+    }
+  }
+  return false
 }
 
 /** Resolves the live status of a single gate step (default 'pending' if absent). */

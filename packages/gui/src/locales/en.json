@@ -222,19 +222,19 @@
       "items": {
         "backlog_triage": {
           "label": "Remaining work tidy-up",
-          "desc": "Loose ends triaged — every open item is either resolved or pushed to the backlog."
+          "desc": "Every open item is either resolved or pushed to the backlog."
         },
         "design_review": {
-          "label": "design_review",
-          "desc": "Design review signed off. No-waiver — must be resolved, cannot be skipped."
+          "label": "Design review",
+          "desc": "Designer sign-off on the built screens. No-waiver — must be resolved, cannot be skipped."
         },
         "prd_check": {
-          "label": "prd_check",
+          "label": "PRD check",
           "desc": "Build matches the PRD scope and acceptance criteria."
         },
         "security_6": {
-          "label": "security_6",
-          "desc": "Six-point security pass cleared (secrets, authz, input, deps, logging, surface)."
+          "label": "Security check (6)",
+          "desc": "Six-point security pass: secrets, authz, input, deps, logging, surface."
         }
       }
     },

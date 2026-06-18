@@ -152,6 +152,9 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   // T-PATCH-203: live close_gate slice → PhaseBreadcrumb boundary gate marker.
   // Absent (non-P3 / pre-hook) → undefined → marker graceful pass-fallback (AC-6).
   const closeGate = useWorkspace((s) => s.poState?.close_gate ?? null)
+  // T-PATCH-203 follow-up §1: live pending_gate → "engaged" decision for the gate
+  // marker (only show once the PO is asking to cross the boundary, vs. dormant P3).
+  const pendingGate = useWorkspace((s) => s.poState?.pending_gate ?? null)
 
   // T-PATCH-096 §4.b: per-phase (done/total) counts, current-version scoped,
   // bucketed by ticket type → phase. Passed to PhaseBreadcrumb (presentational).
@@ -344,7 +347,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
         <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
           onRetry={handleRetry} onViewLog={handleViewLog} />
         {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
-        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} />
+        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate} />
         {drainVisible && project && (
           <PendingPromotionDrain projectDir={project.projectDir}
             claudeSessionId={useWorkspace.getState().claudeSessionId}
