@@ -137,7 +137,12 @@ if [[ "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "Edit" ]]; then
   FILE_PATH="$(read_json file_path)"
   FILE_PATH="${FILE_PATH#./}"
   FILE_PATH="${FILE_PATH#/}"
-  [[ "$FILE_PATH" == docs/tickets/*/T-*.md ]] || exit 0
+  # Match BOTH relative (`docs/tickets/...`) and absolute (`Users/.../docs/tickets/...`)
+  # paths. The Write tool ALWAYS passes an absolute path, so the bare
+  # `docs/tickets/*` glob silently missed every Write/Edit and the guard never
+  # fired on the primary write path (T-PATCH-208: pending/backlog drift). The
+  # `*/docs/tickets/*` arm covers absolute paths after the leading `/` strip.
+  [[ "$FILE_PATH" == docs/tickets/*/T-*.md || "$FILE_PATH" == */docs/tickets/*/T-*.md ]] || exit 0
 
   if [[ "$TOOL_NAME" == "Write" ]]; then
     LINT_TEXT="$(read_json content)"

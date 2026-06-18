@@ -8,7 +8,6 @@ status: done
 phase: 3
 assignee: pdt-po
 requires_qa: false
-qa_status: na
 requires_user_gate: false
 area_tag: doctrine-delegation
 estimated_complexity: L2
