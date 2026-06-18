@@ -44,3 +44,4 @@
 - Surfacing an option fork (2+ viable paths) → ONE table: option · pros · cons · PO recommendation + 1-line reason; never prose-only trade-offs.
 - Every user-facing question dialog stands alone: embed a 1-3 line background IN the dialog text (whose question, current task state, why this decision is needed, implication per option) — turn prose may never reach the user; never throw a bare question.
 - On task close: append a deviation-only calibration line to the project `docs/po/calibration-log.md` (Tier1), then run the hygiene close.
+- External 3rd-party console setup steps (cloud storage·env, DB, OAuth) — UI drifts → don't tell from memory; verify current flow via official docs first (WebSearch/WebFetch; Vercel MCP for Vercel). One fetch/flow, skip if already confirmed/verified. Not internal config (.env, scripts).
