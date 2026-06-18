@@ -29,6 +29,45 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs'
+// Single-source price table (T-PATCH-202). Same JSON the python CLI reads — the
+// table lives ONLY in packages/core/config/model-prices.json; vite/esbuild
+// inlines it into the electron bundle at build time (resolveJsonModule), so
+// there is no runtime file read and no asar-packaging concern.
+import modelPrices from '../../../core/config/model-prices.json'
+
+// ── Model → price derivation (T-PATCH-202) ────────────────────────────────────
+// Subagent turns.jsonl rows record usage + model only; cost_usd is DERIVED here
+// (and identically in the python `productune cost` aggregator) so the price table
+// is never duplicated. Unknown model → null (graceful, AC-4).
+
+interface ModelPrice {
+  in_per_mtok: number
+  out_per_mtok: number
+}
+const PRICES: Record<string, ModelPrice> = (modelPrices as { prices: Record<string, ModelPrice> }).prices
+
+/**
+ * Normalize a transcript/CLI model id to a price-table key: strip a trailing
+ * deployment/routing suffix in brackets (e.g. "claude-opus-4-8[1m]" →
+ * "claude-opus-4-8"). The base public id is what the price table keys on.
+ */
+function normalizeModelId(model: string): string {
+  return model.replace(/\[.*\]$/, '')
+}
+
+/**
+ * Derive USD cost from a token breakdown + model id. Cache (read + creation)
+ * tokens are priced at the input rate — a conservative client-side estimate
+ * (turns.jsonl carries no per-tier cache multiplier). Returns null when the
+ * model is unknown to the price table (AC-4 — usage is still recorded upstream).
+ */
+export function deriveCostUsd(usage: PivotUsage, model: string | null | undefined): number | null {
+  if (typeof model !== 'string' || !model) return null
+  const price = PRICES[normalizeModelId(model)]
+  if (!price) return null
+  const inTokens = usage.in + usage.cache
+  return (inTokens * price.in_per_mtok + usage.out * price.out_per_mtok) / 1_000_000
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -111,6 +150,26 @@ function isCumulative(line: TurnLine): boolean {
   return line.scope === 'main'
 }
 
+/**
+ * Cost for one line (T-PATCH-201 + T-PATCH-202).
+ *  - An explicit finite cost_usd is authoritative (cumulative/main snapshots, and
+ *    any subagent row that already carries a cost).
+ *  - Otherwise, for subagent rows, derive from usage × model price. The
+ *    transcript-based hook records usage + model but leaves cost_usd null, so the
+ *    cost is derived here at aggregation time (single price table, no duplication).
+ *  - Anything else (no cost, not derivable) → 0.
+ */
+function costForLine(line: TurnLine): number {
+  if (typeof line.cost_usd === 'number' && Number.isFinite(line.cost_usd)) {
+    return line.cost_usd
+  }
+  if (!isCumulative(line)) {
+    const derived = deriveCostUsd(readUsage(line.usage), line.model)
+    if (derived !== null) return derived
+  }
+  return 0
+}
+
 // ── Module state ──────────────────────────────────────────────────────────────
 
 let watcher: fs.FSWatcher | null = null
@@ -178,9 +237,7 @@ export function aggregateLines(lines: TurnLine[], by: CostGroupBy): AggregateRes
     const acc = ensure(key)
     acc.turns += 1
 
-    const cost = typeof parsed.cost_usd === 'number' && Number.isFinite(parsed.cost_usd)
-      ? parsed.cost_usd
-      : 0
+    const cost = costForLine(parsed)
 
     if (isCumulative(parsed)) {
       // SESSION-CUMULATIVE — keep the max per session_id (only fold in at end).
@@ -323,10 +380,7 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
       typeof parsed.model === 'string' && parsed.model ? parsed.model : '(none)'
     const key = persona + SEP + model
 
-    const cost =
-      typeof parsed.cost_usd === 'number' && Number.isFinite(parsed.cost_usd)
-        ? parsed.cost_usd
-        : 0
+    const cost = costForLine(parsed)
 
     if (isCumulative(parsed)) {
       let acc = main.get(key)

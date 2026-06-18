@@ -14,7 +14,7 @@
  *   Σ(subagent_total) + Σ_session(cumulative session max).
  */
 
-import { aggregateLines, aggregatePivotLines } from './costArchive'
+import { aggregateLines, aggregatePivotLines, deriveCostUsd } from './costArchive'
 
 // Minimal line shapes (the aggregators only read the fields they need).
 type Line = Parameters<typeof aggregateLines>[0][number]
@@ -113,6 +113,89 @@ export const COST_ARCHIVE_CASES: readonly Case[] = [
       const okUsage =
         r.subagentUsage.in === 200 && r.subagentUsage.out === 100 && r.subagentUsage.cache === 20
       return { ok: okUsage, detail: JSON.stringify(r.subagentUsage) }
+    },
+  },
+
+  // ── T-PATCH-202: transcript-based subagent rows (usage+model, cost DERIVED) ──
+  {
+    // deriveCostUsd: known model → (in+cache)*in_rate + out*out_rate, per MTok.
+    // opus-4-8 = $5 in / $25 out. (1M in + 1M cache)*5 + 1M out*25 = 10 + 25 = 35.
+    label: 'deriveCostUsd: known model prices in+cache at input rate, out at output rate',
+    run: () => {
+      const c = deriveCostUsd({ in: 1_000_000, out: 1_000_000, cache: 1_000_000 }, 'claude-opus-4-8')
+      return { ok: c !== null && approx(c, 35), detail: `cost=${c}` }
+    },
+  },
+  {
+    // [1m] / bracketed deployment suffix normalizes to the base public id.
+    label: 'deriveCostUsd: bracketed deployment suffix normalizes to base id',
+    run: () => {
+      const c = deriveCostUsd({ in: 1_000_000, out: 0, cache: 0 }, 'claude-opus-4-8[1m]')
+      return { ok: c !== null && approx(c, 5), detail: `cost=${c}` }
+    },
+  },
+  {
+    // AC-4: unknown model → null (usage still recorded; no crash).
+    label: 'deriveCostUsd: unknown model → null (graceful)',
+    run: () => {
+      const c = deriveCostUsd({ in: 1_000_000, out: 1_000_000, cache: 0 }, 'claude-made-up-9')
+      return { ok: c === null, detail: `cost=${String(c)}` }
+    },
+  },
+  {
+    // AC-2/AC-6: a subagent row with usage+model but NO cost_usd derives its cost
+    // at aggregation time, and the derived total feeds the project total.
+    label: 'aggregate: subagent row w/ usage+model, no cost_usd → derived & summed',
+    run: () => {
+      const tx: Line = {
+        scope: 'subagent',
+        persona: 'pdt-designer',
+        version: 'v0.5',
+        model: 'claude-sonnet-4-6', // $3 in / $15 out
+        session_id: 'sa1',
+        cost_basis: 'subagent_total',
+        usage: { input_tokens: 1_000_000, output_tokens: 1_000_000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+        // cost_usd intentionally absent
+      }
+      const r = aggregateLines([tx], 'persona')
+      // (1M)*3 + (1M)*15 = 3 + 15 = 18
+      const g = r.groups.find((x) => x.key === 'pdt-designer')
+      return { ok: !!g && approx(g.cost_usd, 18) && approx(r.totalCostUsd, 18), detail: `total=${r.totalCostUsd}` }
+    },
+  },
+  {
+    // AC-4 end-to-end: unknown-model subagent row → usage tracked, cost 0, no throw.
+    label: 'aggregate: subagent row w/ unknown model → cost 0, turn still counted',
+    run: () => {
+      const tx: Line = {
+        scope: 'subagent',
+        persona: 'pdt-qa',
+        model: 'claude-made-up-9',
+        session_id: 'sa2',
+        cost_basis: 'subagent_total',
+        usage: { input_tokens: 500_000, output_tokens: 500_000 },
+      }
+      const r = aggregatePivotLines([tx])
+      const row = r.rows.find((x) => x.persona === 'pdt-qa')
+      const okRow = !!row && approx(row.cost_usd, 0) && row.usage?.in === 500_000 && row.usage?.out === 500_000
+      return { ok: okRow && approx(r.totalCostUsd, 0), detail: JSON.stringify(row) }
+    },
+  },
+  {
+    // AC-6 mixed: cumulative (dedup) + derived subagent both fold into the total.
+    // cumulative s1 max = 25; subagent opus-4-8 (1M out only) = 25. total = 50.
+    label: 'aggregate: cumulative dedup + derived subagent → exact mixed total',
+    run: () => {
+      const tx: Line = {
+        scope: 'subagent',
+        persona: 'pdt-developer',
+        model: 'claude-opus-4-8',
+        session_id: 'sa3',
+        cost_basis: 'subagent_total',
+        usage: { output_tokens: 1_000_000 },
+      }
+      const r = aggregateLines([cum('s1', 10), cum('s1', 25), tx], 'version')
+      return { ok: approx(r.totalCostUsd, 50), detail: `total=${r.totalCostUsd}` }
     },
   },
 ]

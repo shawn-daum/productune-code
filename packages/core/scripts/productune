@@ -419,12 +419,42 @@ case "${1:-}" in
 
     command -v python3 >/dev/null 2>&1 || die "python3 not found — required for 'productune cost'"
 
-    python3 - "$COST_FILE" "$COST_BY" "$COST_VER" <<'PYEOF'
-import json, sys
+    # Single-source model price table (T-PATCH-202) — resolved relative to this
+    # script (scripts/productune → ../config/model-prices.json). The same JSON is
+    # inlined into the GUI's costArchive.ts. Subagent rows record usage+model;
+    # cost_usd is derived here at aggregation time so the table lives in one place.
+    COST_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+    COST_PRICES="$COST_SCRIPTS_DIR/../config/model-prices.json"
+
+    python3 - "$COST_FILE" "$COST_BY" "$COST_VER" "$COST_PRICES" <<'PYEOF'
+import json, sys, re
 
 path = sys.argv[1]
 by = sys.argv[2]
 ver_filter = sys.argv[3] or None
+prices_path = sys.argv[4] if len(sys.argv) > 4 else ''
+
+# Model -> {in_per_mtok, out_per_mtok}. Missing/unreadable table → empty (graceful:
+# every model becomes "unknown" → cost_usd stays 0, usage still aggregates).
+prices = {}
+try:
+    with open(prices_path) as pf:
+        prices = (json.load(pf) or {}).get('prices', {}) or {}
+except Exception:
+    prices = {}
+
+def _normalize_model(m):
+    # Strip a trailing deployment/routing suffix in brackets ("claude-opus-4-8[1m]"
+    # → "claude-opus-4-8") so the base public id keys the price table.
+    return re.sub(r'\[.*\]$', '', m) if isinstance(m, str) else m
+
+def derive_cost(model, tin, tout, tcache):
+    # Cache (read + creation) priced at the input rate — conservative client-side
+    # estimate. Unknown model → None (AC-4: usage kept, cost stays 0).
+    p = prices.get(_normalize_model(model))
+    if not p:
+        return None
+    return ((tin + tcache) * p.get('in_per_mtok', 0) + tout * p.get('out_per_mtok', 0)) / 1_000_000.0
 
 subagent = {}   # key -> {'turns': int, 'cost': float, 'in': int, 'out': int, 'cache': int}
 # main scope: per group, per session_id we keep the MAX cumulative cost.
@@ -491,8 +521,9 @@ try:
             if ver_filter and (rec.get('version') != ver_filter):
                 continue
             n_lines += 1
-            cost = rec.get('cost_usd')
-            cost = float(cost) if isinstance(cost, (int, float)) else 0.0
+            raw_cost = rec.get('cost_usd')
+            has_cost = isinstance(raw_cost, (int, float))
+            cost = float(raw_cost) if has_cost else 0.0
             k = keyfor(rec)
             if is_cumulative(rec):
                 sid = rec.get('session_id') or '_nosession'
@@ -503,11 +534,16 @@ try:
             else:
                 e = subagent.setdefault(k, {'turns': 0, 'cost': 0.0, 'in': 0, 'out': 0, 'cache': 0})
                 e['turns'] += 1
-                e['cost'] += cost
                 tin, tout, tcache = usage_tokens(rec)
                 e['in'] += tin
                 e['out'] += tout
                 e['cache'] += tcache
+                # cost_usd: explicit finite value wins; else derive from usage ×
+                # model price (transcript-based hook records usage+model, cost null).
+                if not has_cost:
+                    derived = derive_cost(rec.get('model'), tin, tout, tcache)
+                    cost = derived if derived is not None else 0.0
+                e['cost'] += cost
 except FileNotFoundError:
     print("[productune] no turns.jsonl found at %s — empty archive." % path)
     sys.exit(0)

@@ -1,0 +1,16 @@
+{
+  "_comment": "Model -> USD price per 1,000,000 tokens. SINGLE SOURCE OF TRUTH for subagent cost derivation (T-PATCH-202). Read by BOTH packages/gui/electron/ipc/costArchive.ts (JS, inlined at vite build) and packages/core/scripts/productune (python, read at runtime). Subagent turns.jsonl rows record usage+model only; cost_usd is DERIVED here at aggregation time so the price table never duplicates.",
+  "_source": "claude-api skill (shared/models.md + SKILL.md current-models table), cached 2026-06-04. Update when Anthropic changes pricing; re-check via the claude-api skill, not memory.",
+  "_pricing_model": "cost_usd = (input_tokens + cache_read_input_tokens + cache_creation_input_tokens) * in_per_mtok/1e6 + output_tokens * out_per_mtok/1e6. Cache reads/creation are approximated at the input rate (turns.jsonl does not separate cache read multipliers); this yields a conservative client-side estimate, consistent with the existing 'costs are client-side estimates' note.",
+  "prices": {
+    "claude-fable-5":   { "in_per_mtok": 10.0, "out_per_mtok": 50.0 },
+    "claude-mythos-5":  { "in_per_mtok": 10.0, "out_per_mtok": 50.0 },
+    "claude-opus-4-8":  { "in_per_mtok": 5.0,  "out_per_mtok": 25.0 },
+    "claude-opus-4-7":  { "in_per_mtok": 5.0,  "out_per_mtok": 25.0 },
+    "claude-opus-4-6":  { "in_per_mtok": 5.0,  "out_per_mtok": 25.0 },
+    "claude-opus-4-5":  { "in_per_mtok": 5.0,  "out_per_mtok": 25.0 },
+    "claude-sonnet-4-6": { "in_per_mtok": 3.0,  "out_per_mtok": 15.0 },
+    "claude-sonnet-4-5": { "in_per_mtok": 3.0,  "out_per_mtok": 15.0 },
+    "claude-haiku-4-5": { "in_per_mtok": 1.0,  "out_per_mtok": 5.0 }
+  }
+}
