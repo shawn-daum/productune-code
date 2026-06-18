@@ -4,7 +4,7 @@ version: v0.5
 slug: html-artifact-render-on-open-cli
 title: HTML 아티팩트 — CLI(터미널) 전달 시 코드뷰 말고 렌더로 열리게 (path-reveal .html 특수처리)
 type: feature
-status: todo
+status: user-verify
 phase: 3
 assignee: pdt-developer
 requires_qa: true
@@ -76,3 +76,12 @@ HTML 아티팩트를 결과물로 받으면, 출력된 절대경로를 cmd+클�
   productune이 할 수 있는 "렌더로 도달하는 경로 제공"에 한정.
 - cmux의 file:// 라우팅 동작은 hands-on(cmux 환경) 확인 필요 — cua 하니스 대상 후보.
 - QA: shawn hands-on (cmux에서 .html 아티팩트 cmd+클릭 / file:// 클릭 / open 동작 확인).
+
+## 구현 (2026-06-18) — 옵션 A 채택
+
+`common/habit.md` path-reveal 규칙(a)에 `.html`/`.htm` 절 추가(repo SoT + `~/.productune`
+미러 둘 다): 절대경로 print 직후 `file://<abs-path>` 줄도 출력(rendered view 표기).
+바 경로 = 터미널 파일뷰어(raw 소스), `file://` = 기본 브라우저(렌더). 비침습 — 기존
+path print/Finder reveal 동작 불변. **cmux의 file:// 라우팅(브라우저 vs 자체뷰어)은
+미검증 → user-verify(cmux hands-on / cua). 안 먹으면 옵션 B(.html은 open 으로 브라우저
+렌더)로 후속.** GUI 경로(iframe 렌더)는 무관.
