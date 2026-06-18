@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Lock, Check } from 'lucide-react'
 import type { Phase } from '../../lib/types'
@@ -87,17 +88,28 @@ interface GateMarkerProps {
 function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  // T-PATCH-203 fix: the popover is rendered via a portal to document.body so it
+  // escapes the breadcrumb grid cell's `overflow:hidden` (and the shell grid's
+  // own `overflow:hidden`) — otherwise it is clipped below the strip, behind the
+  // main pane. We anchor it with fixed positioning off the marker's bounding rect.
+  const [rect, setRect] = useState<DOMRect | null>(null)
   const anchorRef = useRef<HTMLDivElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
 
   // getGateBoundary is guaranteed non-null by the caller, but re-resolve so the
   // component is self-contained and the type narrows.
   const def = getGateBoundary(boundaryPhase)
 
-  // Close on outside click / Escape (AC-2 popover lifecycle).
+  // Close on outside click / Escape (AC-2 popover lifecycle). With the portal the
+  // popover lives outside the anchor subtree, so the outside-click test must also
+  // spare clicks that land inside the popover itself.
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
-      if (anchorRef.current && !anchorRef.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (anchorRef.current?.contains(target)) return
+      if (popoverRef.current?.contains(target)) return
+      setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onDown)
@@ -105,6 +117,21 @@ function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
     return () => {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // Keep the fixed-positioned popover glued to the marker while it is open:
+  // recompute the anchor rect on window resize / scroll (capture phase catches
+  // inner scroll containers too). Position is also computed on open via toggle().
+  useEffect(() => {
+    if (!open) return
+    const recompute = () => setRect(anchorRef.current?.getBoundingClientRect() ?? null)
+    recompute()
+    window.addEventListener('resize', recompute)
+    window.addEventListener('scroll', recompute, true)
+    return () => {
+      window.removeEventListener('resize', recompute)
+      window.removeEventListener('scroll', recompute, true)
     }
   }, [open])
 
@@ -117,6 +144,11 @@ function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
     ? t('workspace.gateMarker.blockedAria', { satisfied: agg.satisfied, total: agg.total })
     : t('workspace.gateMarker.passedAria')
 
+  const toggle = () => {
+    if (!open) setRect(anchorRef.current?.getBoundingClientRect() ?? null)
+    setOpen((v) => !v)
+  }
+
   return (
     <div ref={anchorRef} style={markerAnchor}>
       <button
@@ -124,7 +156,7 @@ function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
         aria-label={markerLabel}
         aria-expanded={open}
         title={markerLabel}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         style={blocked ? markerBtnBlocked : markerBtnPassed}
       >
         {blocked ? <Lock size={11} strokeWidth={2.4} /> : <Check size={12} strokeWidth={2.6} />}
@@ -132,8 +164,20 @@ function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
           <span style={markerCount}>{agg.satisfied}/{agg.total}</span>
         )}
       </button>
-      {open && (
-        <div role="dialog" aria-label={t(def.titleKey)} style={popover}>
+      {open && rect && createPortal(
+        <div
+          ref={popoverRef}
+          role="dialog"
+          aria-label={t(def.titleKey)}
+          style={{
+            ...popover,
+            // Anchored just below the marker, horizontally centered on it, then
+            // clamped to the viewport so a marker near the right edge does not push
+            // the popover off-screen.
+            top: rect.bottom + 8,
+            left: clampPopoverLeft(rect.left + rect.width / 2),
+          }}
+        >
           <div style={popoverTitle}>{t(def.titleKey)}</div>
           <div style={popoverList}>
             {def.items.map((item) => {
@@ -149,10 +193,23 @@ function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
               )
             })}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
+}
+
+// Center the 320px popover on `centerX` (viewport coord), then keep an 8px gutter
+// on both edges. translateX(-50%) on the popover style handles the centering; this
+// only clamps the center point so the box stays fully on-screen.
+const POPOVER_WIDTH = 320
+function clampPopoverLeft(centerX: number): number {
+  const half = POPOVER_WIDTH / 2
+  const min = half + 8
+  const max = window.innerWidth - half - 8
+  if (max < min) return window.innerWidth / 2
+  return Math.min(Math.max(centerX, min), max)
 }
 
 function StatusBadge({ status }: { status: GateItemStatus }) {
@@ -277,12 +334,14 @@ const markerCount: React.CSSProperties = {
 }
 
 const popover: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 8px)',
-  left: '50%',
+  // Portaled to document.body → fixed positioning off the marker rect (top/left
+  // injected at render time). translateX(-50%) re-centers the 320px box on the
+  // clamped center point. zIndex sits above modals' backdrop tier so the strip
+  // popover is never occluded by the main pane.
+  position: 'fixed',
   transform: 'translateX(-50%)',
-  zIndex: 50,
-  width: 320,
+  zIndex: 950,
+  width: POPOVER_WIDTH,
   maxWidth: '80vw',
   background: '#1C1C20',
   border: '1px solid #2A2A2A',
