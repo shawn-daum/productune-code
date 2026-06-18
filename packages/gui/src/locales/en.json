@@ -638,7 +638,23 @@
         "specEdit": "Edit",
         "specSave": "Save",
         "specHint": "{{path}} — click Edit to modify the persona spec.",
-        "specSaved": "Saved (applies after AI engine restart)"
+        "specSaved": "Saved (applies after AI engine restart)",
+        "statusWorking": "Working · {{ticket}}",
+        "statusIdle": "Idle",
+        "advancedHeader": "Advanced",
+        "tier1Header": "Project memory",
+        "tier1Sub": "this project only",
+        "tier2Header": "Long-term memory",
+        "tier2Sub": "all projects",
+        "emptyHabit": "No rules learned in this project yet.",
+        "fileLabel": {
+          "habit": "Habits",
+          "calibrationLog": "Routing calibration log",
+          "corrections": "Correction feedback",
+          "projectNotes": "Project notes",
+          "userKnowledgeState": "User understanding state",
+          "doctrineEditing": "Doctrine editing rules"
+        }
       }
     },
     "doctrine": {

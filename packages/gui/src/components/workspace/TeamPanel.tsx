@@ -5,7 +5,9 @@
  *  1. Personas section — plain title "페르소나" + PersonaRow × 4 inline (no collapse toggle)
  *     Each PersonaRow click → persona-def:<key> tab (T-P4-145 Bug 5)
  *  2. Skills nav row — click → skill-matrix main tab (T-P4-098)
- *  3. MCP Servers nav row
+ *
+ * MCP Servers nav row removed (T-PATCH-200): engine plumbing is no longer
+ * surfaced to the planner. Entry point intentionally absent.
  *
  * 위키 메모리 section removed (T-P4-145 Bug 6): memory content absorbed into PersonaDefTab sections.
  * Sidebar = nav only.
@@ -355,10 +357,6 @@ export default function TeamPanel({ poState }: Props) {
     openTab('skill-matrix', 'skill-matrix', {})
   }
 
-  const handleMcpClick = () => {
-    openTab('mcp-servers', 'mcp-servers', {})
-  }
-
   return (
     <div style={panelWrap}>
 
@@ -414,18 +412,8 @@ export default function TeamPanel({ poState }: Props) {
         </button>
       </div>
 
-      {/* ── MCP Servers nav row ── */}
-      <div style={sectionWrap}>
-        <button
-          style={navRowBtn}
-          onClick={handleMcpClick}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-          title={t('workspace.team.section.mcpLink')}
-        >
-          <span style={navRowLabel}>{t('workspace.team.section.mcpServers')}</span>
-        </button>
-      </div>
+      {/* MCP Servers nav row removed (T-PATCH-200): engine plumbing (MCP) is no
+          longer surfaced to the planner — entry point intentionally absent. */}
 
     </div>
   )

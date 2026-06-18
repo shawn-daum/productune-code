@@ -58,6 +58,9 @@ export default function TabContent({ tab, browserFindRef, previewFindQuery, prev
     case 'version-history': return <VersionHistoryTab />
     case 'deploy':            return <DeployTab props={tab.props} />
     case 'general-settings':  return <GeneralSettingsTab props={tab.props} />
+    // unreachable — 의도적 비노출(T-PATCH-200): workflow-settings / mcp-servers /
+    // hooks have no entry point (Settings nav + Team MCP row removed). Dispatch
+    // arms kept so a future re-exposure needs only a nav change.
     case 'workflow-settings': return <WorkflowSettingsTab props={tab.props} />
     case 'mcp-servers':       return <McpServersTab props={tab.props} />
     case 'hooks':             return <HooksTab props={tab.props} />

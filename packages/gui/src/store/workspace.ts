@@ -45,6 +45,10 @@ export type TabType =
   | 'image'
   | 'deploy'
   | 'general-settings'
+  // unreachable — 의도적 비노출(T-PATCH-200): workflow-settings / mcp-servers /
+  // hooks have NO remaining entry point (Settings nav + Team MCP row removed).
+  // Kept in the union (+ dispatcher / defaultTitle / TabBar icon / tab components)
+  // so a future re-exposure is a one-line nav change, not a re-plumbing.
   | 'workflow-settings'
   | 'mcp-servers'
   | 'hooks'

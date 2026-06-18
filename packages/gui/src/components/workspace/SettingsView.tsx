@@ -10,8 +10,11 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
 
-// T-P4-022 §16.3: 'integrations' placeholder reserved for external-connections sub-tab
-type SettingsSubTab = 'general' | 'workflow' | 'mcp' | 'hooks' | 'cost'
+// T-PATCH-200: mcp / hooks / workflow sub-tabs removed — engine plumbing is no
+// longer surfaced to the planner. Only general / cost remain. The underlying
+// workflow-settings / mcp-servers / hooks tab TYPES are now unreachable (see the
+// "unreachable — 의도적 비노출(T-PATCH-200)" note in workspace.ts / TabContent.tsx).
+type SettingsSubTab = 'general' | 'cost'
 
 export default function SettingsView() {
   const { t } = useTranslation()
@@ -20,9 +23,6 @@ export default function SettingsView() {
 
   const tabs: { id: SettingsSubTab; label: string }[] = [
     { id: 'general',  label: t('settings.tabGeneral') },
-    { id: 'workflow', label: t('settings.tabWorkflowRules') },
-    { id: 'mcp',      label: t('settings.tabMcp') },
-    { id: 'hooks',    label: t('settings.tabHooks') },
     { id: 'cost',     label: t('settings.tabCost') },
   ]
 
@@ -30,12 +30,6 @@ export default function SettingsView() {
     setActiveTab(id)
     if (id === 'general') {
       openTab('general-settings', 'general-settings', undefined, t('settings.generalTabTitle'))
-    } else if (id === 'workflow') {
-      openTab('workflow-settings', 'workflow-settings', undefined, t('settings.tabWorkflowRules'))
-    } else if (id === 'mcp') {
-      openTab('mcp-servers', 'mcp-servers', undefined, t('settings.tabMcp'))
-    } else if (id === 'hooks') {
-      openTab('hooks', 'hooks', undefined, t('settings.tabHooks'))
     } else if (id === 'cost') {
       openTab('cost-archive', 'cost-archive', undefined, t('settings.tabCost'))
     }

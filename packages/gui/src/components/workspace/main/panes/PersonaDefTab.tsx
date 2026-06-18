@@ -1,15 +1,17 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PERSONA_COLORS } from '../../../../store/personaPresence'
 import type { PersonaId } from '../../../../store/personaPresence'
 import { useWorkspace } from '../../../../store/workspace'
-import { FileText, ChevronRight as ChevRight } from 'lucide-react'
+import { FileText, ChevronRight as ChevRight, ChevronDown, Lock, Pencil } from 'lucide-react'
 import MarkdownViewer, {
   type DoctrineOnSave,
   type MarkdownLoadResult,
 } from './MarkdownViewer'
 
 // ── Static persona metadata (T-P4-044 dispatch target, Phase 4 preview-only) ─
+// T-PATCH-200: `mcpServers` field removed — engine plumbing (MCP) is no longer
+// surfaced to the planner anywhere (pane / Team / Settings).
 
 type PersonaKey = PersonaId
 
@@ -20,7 +22,17 @@ interface PersonaMeta {
   nameKey: string
   roleKey: string
   permissionMode: string
-  mcpServers?: string[]
+}
+
+// Runtime persona-key → doctrine directory name. The doctrine:listTiers IPC
+// (T-PATCH-019) keys off the *directory* name and only whitelists `developer`
+// (not `dev`); the caller owns the key→dir map. Kept to one line, mirroring the
+// same map in TeamPanel.tsx.
+const PERSONA_DIR: Record<PersonaKey, string> = {
+  po: 'po',
+  designer: 'designer',
+  dev: 'developer',
+  qa: 'qa',
 }
 
 // modelSummary removed (T-PATCH-024): there is no fixed per-persona model —
@@ -32,43 +44,71 @@ const PERSONA_META: Record<string, PersonaMeta> = {
     nameKey: 'workspace.team.persona.po.name',
     roleKey: 'workspace.team.persona.po.role',
     permissionMode: 'acceptEdits',
-    mcpServers: [],
   },
   'pdt-designer': {
     id: 'pdt-designer', key: 'designer', initial: 'D',
     nameKey: 'workspace.team.persona.designer.name',
     roleKey: 'workspace.team.persona.designer.role',
     permissionMode: 'bypassPermissions',
-    mcpServers: ['graphiti'],
   },
   'pdt-developer': {
     id: 'pdt-developer', key: 'dev', initial: 'D',
     nameKey: 'workspace.team.persona.developer.name',
     roleKey: 'workspace.team.persona.developer.role',
     permissionMode: 'bypassPermissions',
-    mcpServers: ['graphiti'],
   },
   'pdt-qa': {
     id: 'pdt-qa', key: 'qa', initial: 'Q',
     nameKey: 'workspace.team.persona.qa.name',
     roleKey: 'workspace.team.persona.qa.role',
     permissionMode: 'bypassPermissions',
-    mcpServers: [],
   },
 }
 
-// ── Long-term memory file config per persona ──────────────────────────────────
+// ── Doctrine tier model (mirrors TeamPanel's shape) ───────────────────────────
 
-// Tier-2 long-term memory (4-tier doctrine model): ~/.productune/<persona>/habit.md.
-// Note the persona key→dir split: the PersonaKey 'dev' maps to the 'developer' dir.
-// `dir` is the doctrine IPC's persona dir-name (PERSONA_DIRS in electron/ipc/doctrine.ts)
-// and `relName` the in-tier path — both feed the `doctrine-file` tab so these rows
-// open in DoctrineFileTab (rendered Preview via MdRenderer + edit), not the raw viewer.
-const LT_MEMORY: Record<string, { path: string; dir: string; relName: string; tabId: string; title: string }[]> = {
-  po:       [{ path: '~/.productune/po/habit.md',        dir: 'po',        relName: 'habit.md', tabId: 'lt-memory-po',        title: 'PO Memory (habit.md)' }],
-  designer: [{ path: '~/.productune/designer/habit.md',  dir: 'designer',  relName: 'habit.md', tabId: 'lt-memory-designer',  title: 'Designer Memory (habit.md)' }],
-  dev:      [{ path: '~/.productune/developer/habit.md', dir: 'developer', relName: 'habit.md', tabId: 'lt-memory-developer', title: 'Developer Memory (habit.md)' }],
-  qa:       [{ path: '~/.productune/qa/habit.md',        dir: 'qa',        relName: 'habit.md', tabId: 'lt-memory-qa',        title: 'QA Memory (habit.md)' }],
+type Tier = 0 | 1 | 2
+
+interface DoctrineFileRow {
+  tier: Tier
+  persona: string
+  role: string
+  absPath: string
+  relName: string
+  editable: boolean
+  exists: boolean
+  mtimeMs: number | null
+  sizeBytes: number | null
+}
+
+interface DoctrineTierGroup {
+  tier: Tier
+  role: string
+  root: string
+  editable: boolean
+  files: DoctrineFileRow[]
+}
+
+interface ListTiersResult {
+  ok: boolean
+  error?: string
+  tiers?: DoctrineTierGroup[]
+}
+
+type TiersState =
+  | { status: 'loading' }
+  | { status: 'error' }
+  | { status: 'done'; tiers: DoctrineTierGroup[] }
+
+// Human label map for file-reference rows (fallback = filename stem). The raw
+// path is NEVER the primary label (AC-2). Keyed by the file basename stem.
+const FILE_LABEL_KEY: Record<string, string> = {
+  'habit': 'workspace.team.personaDef.fileLabel.habit',
+  'calibration-log': 'workspace.team.personaDef.fileLabel.calibrationLog',
+  'corrections': 'workspace.team.personaDef.fileLabel.corrections',
+  'project-notes': 'workspace.team.personaDef.fileLabel.projectNotes',
+  'user-knowledge-state': 'workspace.team.personaDef.fileLabel.userKnowledgeState',
+  'doctrine-editing': 'workspace.team.personaDef.fileLabel.doctrineEditing',
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -81,8 +121,9 @@ export default function PersonaDefTab({ props }: Props) {
   const { t } = useTranslation()
 
   // Store bindings — before any early return (Rules of Hooks)
-  const poState   = useWorkspace((s) => s.poState)
-  const openTabFn = useWorkspace((s) => s.openTab)
+  const poState    = useWorkspace((s) => s.poState)
+  const openTabFn  = useWorkspace((s) => s.openTab)
+  const projectDir = useWorkspace((s) => s.project?.projectDir ?? null)
 
   // personaId derivation: both open paths (search palette + TeamPanel row) now pass
   // the canonical full `pdt-*` id via the `persona` prop. T-PATCH-014 unified this.
@@ -91,11 +132,36 @@ export default function PersonaDefTab({ props }: Props) {
   const sourcePath = (props?.sourcePath as string) ?? `~/.claude/agents/${personaId}.md`
   const meta = PERSONA_META[personaId] ?? null
 
+  // Advanced section is collapsed by default (AC-1): the memory hierarchy takes
+  // the prime position; the 7-line agent spec is tucked away.
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  // ── Doctrine tiers (replaces the hardcoded LT_MEMORY map; T-PATCH-200) ───────
+  // Fetch via doctrineListTiers, which enumerates habit.md + bookshelf/*.md for
+  // each tier (verified: listTiers walks bookshelf via listBookshelf, so
+  // relName arrives as `bookshelf/<name>.md` — no explorer:listDir boost needed).
+  const [tiersState, setTiersState] = useState<TiersState>({ status: 'loading' })
+
+  useEffect(() => {
+    if (!meta) return
+    let alive = true
+    setTiersState({ status: 'loading' })
+    const dir = PERSONA_DIR[meta.key]
+    ;(window as any).api
+      .doctrineListTiers(dir, projectDir ?? '')
+      .then((res: ListTiersResult) => {
+        if (!alive) return
+        if (res?.ok && Array.isArray(res.tiers)) setTiersState({ status: 'done', tiers: res.tiers })
+        else setTiersState({ status: 'error' })
+      })
+      .catch(() => { if (alive) setTiersState({ status: 'error' }) })
+    return () => { alive = false }
+    // Refetch on persona / project switch.
+  }, [meta, projectDir])
+
   // Persona-spec viewer seam (T-PATCH-031): the spec (~/.claude/agents/<id>.md)
-  // now renders through the shared MarkdownViewer primitive (Preview default +
-  // raw Edit toggle + Save), consistent with the doctrine-file viewer. The
-  // persona IPC carries no mtime, so we expose mtimeMs:null — MarkdownViewer's
-  // conflict pre-check is a no-op when the snapshot mtime is null.
+  // renders through the shared MarkdownViewer primitive. The persona IPC carries
+  // no mtime, so we expose mtimeMs:null — the conflict pre-check is a no-op.
   const loadSpec = useCallback((): Promise<MarkdownLoadResult> => {
     const api = (window as any).api
     const read = api.readPersonaSpec?.(personaId)
@@ -129,30 +195,34 @@ export default function PersonaDefTab({ props }: Props) {
 
   const color = PERSONA_COLORS[meta.key]
 
-  // Long-term memory rows for this persona
-  const ltRows = LT_MEMORY[meta.key] ?? []
-
-  // Project memory derived from poState
-  const currentVersion = poState?.current_version ?? '—'
+  // ── Header status chip — absorbs the old "PROJECT MEMORY" runtime values ──────
   const ct = poState?.current_task
-  const activeTask = ct?.assignee_persona === meta.id
-    ? (ct?.ticket_id ?? '—')
-    : '—'
-  const promoCount = (poState?.pending_promotions ?? [])
-    .filter((p) => (p as any).persona === meta.id && p.status === 'pending').length
-  const lastSeen: string =
-    ((poState as any)?.current_task?.persona_session_meta?.[meta.id]?.last_seen as string | undefined)
-      ?.slice(0, 10) ?? '—'
+  const activeTicket = ct?.assignee_persona === meta.id ? (ct?.ticket_id ?? null) : null
+  const isWorking = !!activeTicket
+
+  // Tier groups with tier !== 0 (T0 hidden — read-only clutter). Tier 1 = project
+  // memory, Tier 2 = long-term memory.
+  const tierGroups =
+    tiersState.status === 'done'
+      ? tiersState.tiers.filter((g) => g.tier !== 0).sort((a, b) => a.tier - b.tier)
+      : []
 
   return (
     <div style={wrap}>
-      {/* Header */}
+      {/* ── Header — avatar · name · role + status chip ── */}
       <div style={header}>
         <div style={{ ...avatar, background: color }}>
           {meta.initial}
         </div>
         <div style={headerInfo}>
-          <div style={personaName}>{t(meta.nameKey)}</div>
+          <div style={personaNameRow}>
+            <span style={personaName}>{t(meta.nameKey)}</span>
+            <span style={isWorking ? statusChipActive : statusChipIdle}>
+              {isWorking
+                ? t('workspace.team.personaDef.statusWorking', { ticket: activeTicket })
+                : t('workspace.team.personaDef.statusIdle')}
+            </span>
+          </div>
           <div style={personaRole}>{t(meta.roleKey)}</div>
         </div>
       </div>
@@ -161,86 +231,208 @@ export default function PersonaDefTab({ props }: Props) {
           per-persona model) — show that as an honest hint, not a flat fact. */}
       <div style={modelHint}>{t('workspace.team.personaDef.modelHint')}</div>
 
-      {/* Metadata */}
-      <div style={metaSection}>
-        <div style={metaRow}>
-          <span style={metaLabel}>id</span>
-          <span style={metaValue}>{meta.id}</span>
-        </div>
-        <div style={metaRow}>
-          <span style={metaLabel}>permissionMode</span>
-          <span style={metaValue}>{meta.permissionMode}</span>
-        </div>
-        {meta.mcpServers && meta.mcpServers.length > 0 && (
-          <div style={metaRow}>
-            <span style={metaLabel}>mcpServers</span>
-            <span style={metaValue}>{meta.mcpServers.join(', ')}</span>
+      {/* ── Project memory (Tier 1) ── prime position above Advanced ── */}
+      <MemoryTier
+        tier={1}
+        headerKey="workspace.team.personaDef.tier1Header"
+        subKey="workspace.team.personaDef.tier1Sub"
+        state={tiersState}
+        group={tierGroups.find((g) => g.tier === 1) ?? null}
+        projectDir={projectDir}
+        openTab={openTabFn}
+      />
+
+      {/* ── Long-term memory (Tier 2) ── */}
+      <MemoryTier
+        tier={2}
+        headerKey="workspace.team.personaDef.tier2Header"
+        subKey="workspace.team.personaDef.tier2Sub"
+        state={tiersState}
+        group={tierGroups.find((g) => g.tier === 2) ?? null}
+        projectDir={projectDir}
+        openTab={openTabFn}
+      />
+
+      {/* ── Advanced (collapsed by default) — id / permissionMode / source + spec ── */}
+      <button
+        style={advancedToggle}
+        onClick={() => setAdvancedOpen((v) => !v)}
+        aria-expanded={advancedOpen}
+      >
+        {advancedOpen ? <ChevronDown size={12} color="#707070" /> : <ChevRight size={12} color="#707070" />}
+        <span style={advancedToggleText}>{t('workspace.team.personaDef.advancedHeader')}</span>
+      </button>
+      {advancedOpen && (
+        <>
+          <div style={metaSection}>
+            <div style={metaRow}>
+              <span style={metaLabel}>id</span>
+              <span style={metaValue}>{meta.id}</span>
+            </div>
+            <div style={metaRow}>
+              <span style={metaLabel}>permissionMode</span>
+              <span style={metaValue}>{meta.permissionMode}</span>
+            </div>
+            <div style={metaRow}>
+              <span style={metaLabel}>source</span>
+              <span style={{ ...metaValue, fontFamily: 'monospace', fontSize: 10 }}>{sourcePath}</span>
+            </div>
           </div>
-        )}
-        <div style={metaRow}>
-          <span style={metaLabel}>source</span>
-          <span style={{ ...metaValue, fontFamily: 'monospace', fontSize: 10 }}>{sourcePath}</span>
-        </div>
-      </div>
 
-      {/* Persona spec — editable, rendered via the shared MarkdownViewer
-          primitive (T-PATCH-031): Preview default + raw Edit toggle + Save,
-          consistent with the doctrine-file viewer. */}
-      <div style={specHeaderRow}>
-        <span style={sectionSubHdrInline}>{t('workspace.team.personaDef.specHeader')}</span>
-      </div>
-      <div style={specViewerWrap}>
-        <MarkdownViewer
-          key={personaId}
-          load={loadSpec}
-          absPath={sourcePath}
-          relName={sourcePath}
-          editable={true}
-          onSave={saveSpec}
-          emptyCrumb="persona"
-        />
-      </div>
-      <div style={specHint}>{t('workspace.team.personaDef.specSaved')}</div>
-
-      {/* Long-term memory */}
-      <div style={sectionSubHdr}>LONG-TERM MEMORY</div>
-      {ltRows.length === 0 && <div style={memoryEmpty}>—</div>}
-      {ltRows.map((cfg) => (
-        <button
-          key={cfg.tabId}
-          style={memoryRow}
-          onClick={() => openTabFn(cfg.tabId, 'doctrine-file', { tier: 2, persona: cfg.dir, absPath: cfg.path, relName: cfg.relName, editable: true }, cfg.title)}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-        >
-          <FileText size={13} color="#505050" />
-          <span style={memoryRowPath}>{cfg.path}</span>
-          <ChevRight size={12} color="#505050" style={{ marginLeft: 'auto', flexShrink: 0 }} />
-        </button>
-      ))}
-
-      {/* Project memory */}
-      <div style={sectionSubHdr}>PROJECT MEMORY</div>
-      <div style={metaSection}>
-        <div style={metaRow}>
-          <span style={metaLabel}>current version</span>
-          <span style={metaValue}>{currentVersion}</span>
-        </div>
-        <div style={metaRow}>
-          <span style={metaLabel}>active task</span>
-          <span style={metaValue}>{activeTask}</span>
-        </div>
-        <div style={metaRow}>
-          <span style={metaLabel}>promo pending</span>
-          <span style={metaValue}>{promoCount}</span>
-        </div>
-        <div style={metaRow}>
-          <span style={metaLabel}>last seen</span>
-          <span style={metaValue}>{lastSeen}</span>
-        </div>
-      </div>
+          <div style={specHeaderRow}>
+            <span style={sectionSubHdrInline}>{t('workspace.team.personaDef.specHeader')}</span>
+          </div>
+          <div style={specViewerWrap}>
+            <MarkdownViewer
+              key={personaId}
+              load={loadSpec}
+              absPath={sourcePath}
+              relName={sourcePath}
+              editable={true}
+              onSave={saveSpec}
+              emptyCrumb="persona"
+            />
+          </div>
+          <div style={specHint}>{t('workspace.team.personaDef.specSaved')}</div>
+        </>
+      )}
     </div>
   )
+}
+
+// ── MemoryTier section ────────────────────────────────────────────────────────
+// One doctrine tier (1 or 2). habit.md → inline editable preview (MarkdownViewer);
+// every other file (bookshelf/*.md, etc.) → human-labelled file-reference row
+// that opens a doctrine-file tab (which carries the full save-choice/conflict UX
+// via DoctrineFileTabHost). Empty habit → "no rules learned yet" state.
+
+interface MemoryTierProps {
+  tier: 1 | 2
+  headerKey: string
+  subKey: string
+  state: TiersState
+  group: DoctrineTierGroup | null
+  projectDir: string | null
+  openTab: (id: string, type: any, props?: Record<string, unknown>, title?: string) => void
+}
+
+function MemoryTier({ tier, headerKey, subKey, state, group, projectDir, openTab }: MemoryTierProps) {
+  const { t } = useTranslation()
+
+  const habit = group?.files.find((f) => f.relName === 'habit.md') ?? null
+  const refs = (group?.files ?? []).filter((f) => f.relName !== 'habit.md')
+
+  // habit inline load/save reuse the doctrine IPC directly. Save threads
+  // expectedMtimeMs → the main-process mtime conflict guard returns
+  // { conflict: true } on drift, which MarkdownViewer surfaces as its inline
+  // conflict line (T-PATCH-200 implementation note 2: minimum mtime conflict
+  // toast preserved). editable follows the tier's editable flag (note 3).
+  const habitEditable = !!(habit?.editable ?? group?.editable ?? false)
+
+  const loadHabit = useCallback((): Promise<MarkdownLoadResult> => {
+    const api = (window as any).api
+    if (!habit) return Promise.resolve({ ok: true, content: '', mtimeMs: null })
+    return Promise.resolve(api.doctrineReadFile(habit.absPath, projectDir ?? undefined)).then((res: any) =>
+      res?.ok
+        ? { ok: true, content: res.content ?? '', mtimeMs: res.mtimeMs ?? null }
+        : { ok: false, error: res?.error ?? 'read failed' },
+    )
+    // habit.absPath / projectDir are the only inputs.
+  }, [habit, projectDir])
+
+  const saveHabit = useCallback<DoctrineOnSave>(
+    (_p, content, expectedMtimeMs) => {
+      const api = (window as any).api
+      if (!habit) return Promise.resolve({ ok: false, error: 'no file' })
+      return Promise.resolve(
+        api.doctrineWriteFile(habit.absPath, content, expectedMtimeMs, projectDir ?? undefined),
+      ).then((res: any) =>
+        res?.ok
+          ? { ok: true, mtimeMs: res.mtimeMs }
+          : res?.conflict
+            ? { ok: false, conflict: true }
+            : { ok: false, error: res?.error ?? 'write failed' },
+      )
+    },
+    [habit, projectDir],
+  )
+
+  const openRef = useCallback((f: DoctrineFileRow) => {
+    openTab(
+      `doctrine:${f.absPath}`,
+      'doctrine-file',
+      {
+        tier: f.tier,
+        persona: f.persona,
+        absPath: f.absPath,
+        relName: f.relName,
+        projectDir: projectDir ?? undefined,
+        editable: f.editable,
+      },
+      refLabel(t, f),
+    )
+  }, [openTab, projectDir, t])
+
+  return (
+    <div style={tierSection}>
+      <div style={sectionSubHdr}>
+        <span>{t(headerKey)}</span>
+        <span style={tierSub}>{t(subKey)}</span>
+      </div>
+
+      {state.status === 'loading' && <div style={memoryEmpty}>{t('common.loading')}</div>}
+      {state.status === 'error' && <div style={memoryEmpty}>{t('workspace.doctrine.loadError')}</div>}
+
+      {state.status === 'done' && (
+        <>
+          {/* habit.md — inline editable preview, or empty state */}
+          {habit && habit.exists ? (
+            <div style={habitViewerWrap}>
+              <MarkdownViewer
+                key={habit.absPath}
+                load={loadHabit}
+                absPath={habit.absPath}
+                relName={refLabel(t, habit)}
+                editable={habitEditable}
+                onSave={saveHabit}
+                emptyCrumb="habit"
+              />
+            </div>
+          ) : (
+            <div style={memoryEmpty}>{t('workspace.team.personaDef.emptyHabit')}</div>
+          )}
+
+          {/* file-reference rows — human label, NOT raw path */}
+          {refs.map((f) => (
+            <button
+              key={f.absPath}
+              style={memoryRow}
+              onClick={() => openRef(f)}
+              title={f.absPath}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+            >
+              <FileText size={13} color="#505050" />
+              <span style={memoryRowLabel}>{refLabel(t, f)}</span>
+              {f.editable
+                ? <Pencil size={11} color="#34D399" style={{ flexShrink: 0 }} />
+                : <Lock size={11} color="#707070" style={{ flexShrink: 0 }} />}
+              <ChevRight size={12} color="#505050" style={{ flexShrink: 0 }} />
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+// Human label for a doctrine file row: stem → label-map → localized label, else
+// the filename stem itself (never the raw absolute path as the primary label).
+function refLabel(t: (k: string) => string, f: DoctrineFileRow): string {
+  const base = f.relName.split('/').pop() ?? f.relName
+  const stem = base.replace(/\.md$/i, '')
+  const key = FILE_LABEL_KEY[stem]
+  return key ? t(key) : stem
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -271,7 +463,7 @@ const header: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 12,
-  marginBottom: 20,
+  marginBottom: 16,
   paddingBottom: 16,
   borderBottom: '1px solid #1E1E1E',
 }
@@ -291,12 +483,41 @@ const avatar: React.CSSProperties = {
 
 const headerInfo: React.CSSProperties = {
   flex: 1,
+  minWidth: 0,
+}
+
+const personaNameRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
 }
 
 const personaName: React.CSSProperties = {
   fontSize: 15,
   fontWeight: 600,
   color: '#F0F0F0',
+}
+
+const statusChipActive: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 600,
+  color: '#34D399',
+  background: '#0A2A1A',
+  border: '1px solid #1A3A1A',
+  borderRadius: 20,
+  padding: '1px 8px',
+  whiteSpace: 'nowrap',
+}
+
+const statusChipIdle: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 500,
+  color: '#707070',
+  background: 'transparent',
+  border: '1px solid #1F1F1F',
+  borderRadius: 20,
+  padding: '1px 8px',
+  whiteSpace: 'nowrap',
 }
 
 const personaRole: React.CSSProperties = {
@@ -312,11 +533,38 @@ const modelHint: React.CSSProperties = {
   marginBottom: 16,
 }
 
+const tierSection: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  marginBottom: 14,
+}
+
+const sectionSubHdr: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 8,
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#3A3A3A',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  borderTop: '1px solid #1E1E1E',
+  padding: '10px 0 8px',
+}
+
+const tierSub: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 500,
+  color: '#505050',
+  letterSpacing: 'normal',
+  textTransform: 'none',
+}
+
 const metaSection: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 6,
-  marginBottom: 20,
+  marginBottom: 12,
 }
 
 const metaRow: React.CSSProperties = {
@@ -338,24 +586,32 @@ const metaValue: React.CSSProperties = {
   color: '#C0C0C0',
 }
 
-const sectionSubHdr: React.CSSProperties = {
+const advancedToggle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  width: '100%',
+  background: 'transparent',
+  border: 'none',
+  borderTop: '1px solid #1E1E1E',
+  padding: '10px 0 8px',
+  cursor: 'pointer',
+  textAlign: 'left',
+}
+
+const advancedToggleText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   color: '#3A3A3A',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
-  borderTop: '1px solid #1E1E1E',
-  padding: '10px 0 6px',
-  marginTop: 4,
 }
 
 const specHeaderRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  borderTop: '1px solid #1E1E1E',
-  padding: '10px 0 6px',
-  marginTop: 4,
+  padding: '4px 0 6px',
 }
 
 const sectionSubHdrInline: React.CSSProperties = {
@@ -366,9 +622,8 @@ const sectionSubHdrInline: React.CSSProperties = {
   textTransform: 'uppercase',
 }
 
-// The persona-spec MarkdownViewer is a flex column that fills its own height;
-// give it a bounded, framed box inside the scrolling detail pane so its internal
-// Preview/Edit body scrolls independently rather than stretching the page.
+// Bounded, framed box so the spec viewer's internal Preview/Edit body scrolls
+// independently rather than stretching the page.
 const specViewerWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
@@ -377,6 +632,18 @@ const specViewerWrap: React.CSSProperties = {
   borderRadius: 6,
   overflow: 'hidden',
   marginBottom: 6,
+}
+
+// Inline habit preview — bounded box (shorter than the spec box; habit is the
+// prime content but still scrolls in place rather than stretching the pane).
+const habitViewerWrap: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  height: 300,
+  border: '1px solid #1E1E1E',
+  borderRadius: 6,
+  overflow: 'hidden',
+  marginBottom: 8,
 }
 
 const specHint: React.CSSProperties = {
@@ -390,18 +657,18 @@ const memoryRow: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
-  padding: '5px 0',
+  padding: '6px 4px',
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
   width: '100%',
   textAlign: 'left',
+  borderRadius: 4,
 }
 
-const memoryRowPath: React.CSSProperties = {
-  fontSize: 11,
-  fontFamily: 'monospace',
-  color: '#707070',
+const memoryRowLabel: React.CSSProperties = {
+  fontSize: 12,
+  color: '#C0C0C0',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -410,7 +677,7 @@ const memoryRowPath: React.CSSProperties = {
 
 const memoryEmpty: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
-  padding: '4px 0',
+  color: '#505050',
+  padding: '6px 0',
   fontStyle: 'italic',
 }

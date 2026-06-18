@@ -638,7 +638,23 @@
         "specEdit": "편집",
         "specSave": "저장",
         "specHint": "{{path}} — [편집] 을 눌러 페르소나 spec 을 수정하세요.",
-        "specSaved": "저장됐어요 (AI 엔진 재시작 후 적용)"
+        "specSaved": "저장됐어요 (AI 엔진 재시작 후 적용)",
+        "statusWorking": "작업 중 · {{ticket}}",
+        "statusIdle": "대기",
+        "advancedHeader": "고급",
+        "tier1Header": "프로젝트 기억",
+        "tier1Sub": "이 프로젝트에서만",
+        "tier2Header": "장기 기억",
+        "tier2Sub": "모든 프로젝트",
+        "emptyHabit": "이 프로젝트에서 아직 학습한 규칙 없음",
+        "fileLabel": {
+          "habit": "습관",
+          "calibrationLog": "라우팅 보정 로그",
+          "corrections": "교정 피드백",
+          "projectNotes": "프로젝트 노트",
+          "userKnowledgeState": "사용자 이해 상태",
+          "doctrineEditing": "doctrine 편집 규칙"
+        }
       }
     },
     "doctrine": {
