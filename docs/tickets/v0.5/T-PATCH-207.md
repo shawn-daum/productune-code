@@ -4,11 +4,11 @@ version: v0.5
 slug: html-artifact-render-on-open-cli
 title: HTML 아티팩트 — CLI(터미널) 전달 시 코드뷰 말고 렌더로 열리게 (path-reveal .html 특수처리)
 type: feature
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: skipped
 requires_user_gate: true
 area_tag: artifact-reveal
 risk_flags: >

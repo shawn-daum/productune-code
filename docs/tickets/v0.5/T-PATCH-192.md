@@ -2,14 +2,14 @@
 ticket_id: T-PATCH-192
 version: v0.5
 type: fix
-status: user-verify
+status: done
 phase: 4
 assignee: pdt-developer
 created_at: 2026-06-17T00:00:00Z
 estimated_complexity: L1
 risk_flags: none
 slug: chatpanel-duplicate-message-key
-qa_status: pending
+qa_status: pass
 ---
 
 # T-PATCH-192: ChatPanel 메시지 목록 중복 key 경고
