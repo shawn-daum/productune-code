@@ -115,6 +115,15 @@ interface MarkdownViewerProps {
   lineCap?: number
   /** Breadcrumb fallback label when neither relName nor absPath is present. */
   emptyCrumb?: string
+  /**
+   * Strip HTML comments (`<!-- … -->`) from the rendered preview body (T-PATCH-200
+   * QA2). Opt-in so only the persona-pane habit/memory inline viewers drop the
+   * scaffold/placeholder comments that otherwise render as near-invisible ghost
+   * text. Default false — every other MarkdownViewer use site is unaffected.
+   * Preview-only: the textarea seed / dirty compare / onSave still keep the raw
+   * content (comments intact on save).
+   */
+  stripComments?: boolean
 }
 
 type LoadState = 'idle' | 'loading' | 'done' | 'error'
@@ -158,6 +167,7 @@ export default function MarkdownViewer({
   zoomEnabled = false,
   lineCap = DEFAULT_LINE_CAP,
   emptyCrumb = 'doctrine',
+  stripComments = false,
 }: MarkdownViewerProps) {
   const { t } = useTranslation()
 
@@ -377,6 +387,19 @@ export default function MarkdownViewer({
     [content],
   )
 
+  // Preview-only HTML-comment strip (T-PATCH-200 QA2). Removes `<!-- … -->`
+  // blocks (multiline, non-greedy) so placeholder/scaffold comments don't render
+  // as ghost text; leftover blank lines are collapsed so a section that held
+  // only a comment reads as genuinely empty. Opt-in via `stripComments` — when
+  // off, renderBody === previewBody (identical to pre-QA2 behavior).
+  const renderBody = useMemo(
+    () =>
+      stripComments
+        ? previewBody.replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n')
+        : previewBody,
+    [stripComments, previewBody],
+  )
+
   return (
     <div style={wrap}>
       {/* Header bar */}
@@ -525,7 +548,7 @@ export default function MarkdownViewer({
                   {/* T-PATCH-198: inner reading column — 780px cap, centered */}
                   <div style={viewerColumn}>
                     <MetadataPanel data={fmData} />
-                    <MdRenderer text={previewBody} />
+                    <MdRenderer text={renderBody} />
                   </div>
                 </div>
               </>

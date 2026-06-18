@@ -4,10 +4,10 @@
  * Layout:
  *  1. Personas section — plain title "페르소나" + PersonaRow × 4 inline (no collapse toggle)
  *     Each PersonaRow click → persona-def:<key> tab (T-P4-145 Bug 5)
- *  2. Skills nav row — click → skill-matrix main tab (T-P4-098)
  *
- * MCP Servers nav row removed (T-PATCH-200): engine plumbing is no longer
- * surfaced to the planner. Entry point intentionally absent.
+ * MCP Servers nav row removed (T-PATCH-200) and Skills (skill-matrix) nav row
+ * removed (T-PATCH-200 QA2): engine plumbing is no longer surfaced to the
+ * planner. Both entry points intentionally absent. Sidebar = persona nav only.
  *
  * 위키 메모리 section removed (T-P4-145 Bug 6): memory content absorbed into PersonaDefTab sections.
  * Sidebar = nav only.
@@ -315,14 +315,7 @@ export default function TeamPanel({ poState }: Props) {
     )
   }, [openTab, projectDir])
 
-  // Dynamic skills count
-  const [skillsTotal, setSkillsTotal] = useState<number | null>(null)
-
-  useEffect(() => {
-    ;(window as any).api.listSkills()
-      .then((entries: unknown[]) => setSkillsTotal(entries.length))
-      .catch(() => setSkillsTotal(null))
-  }, [])
+  // Skills-count fetch removed with the Skills nav row (T-PATCH-200 QA2).
 
   // Refresh active dot every 15s
   useEffect(() => {
@@ -351,10 +344,6 @@ export default function TeamPanel({ poState }: Props) {
       'persona-def',
       { persona: def.id },
     )
-  }
-
-  const handleMatrixClick = () => {
-    openTab('skill-matrix', 'skill-matrix', {})
   }
 
   return (
@@ -394,26 +383,11 @@ export default function TeamPanel({ poState }: Props) {
         ))}
       </div>
 
-      {/* ── Skills nav row ── */}
-      <div style={sectionWrap}>
-        <button
-          style={navRowBtn}
-          onClick={handleMatrixClick}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-          title={t('workspace.team.section.skillsLink')}
-        >
-          <span style={navRowLabel}>{t('workspace.team.section.skills')}</span>
-          <span style={navRowBadge}>
-            {skillsTotal !== null
-              ? t('workspace.team.section.skillsCount', { count: skillsTotal })
-              : <span style={{ color: '#3A3A3A' }}>?</span>}
-          </span>
-        </button>
-      </div>
+      {/* Skills nav row removed (T-PATCH-200 QA2): the skill-matrix is engine
+          plumbing, like MCP/hooks/workflow — intentionally NOT surfaced to the
+          planner. The SkillMatrixTab pane still exists but has no entry point.
 
-      {/* MCP Servers nav row removed (T-PATCH-200): engine plumbing (MCP) is no
-          longer surfaced to the planner — entry point intentionally absent. */}
+          MCP Servers nav row removed earlier (T-PATCH-200) for the same reason. */}
 
     </div>
   )
@@ -453,34 +427,8 @@ const secHdrText: React.CSSProperties = {
   flex: 1,
 }
 
-// Nav row button (Skills + MCP)
-const navRowBtn: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  width: '100%',
-  padding: '6px 8px',
-  background: 'transparent',
-  border: 'none',
-  cursor: 'pointer',
-  gap: 5,
-  textAlign: 'left',
-  transition: 'background 0.1s',
-}
-
-const navRowLabel: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 600,
-  color: '#C0C0C0',
-  flex: 1,
-  userSelect: 'none',
-}
-
-const navRowBadge: React.CSSProperties = {
-  fontSize: 9,
-  fontFamily: 'monospace',
-  color: '#505050',
-  flexShrink: 0,
-}
+// navRowBtn / navRowLabel / navRowBadge removed with the Skills nav row
+// (T-PATCH-200 QA2): skill-matrix is no longer surfaced; no nav rows remain.
 
 // Persona row
 

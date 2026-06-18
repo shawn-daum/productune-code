@@ -633,7 +633,6 @@
       },
       "personaDef": {
         "previewNote": "미리보기 전용 — 페르소나 spec 편집은 Phase 5 기능입니다.",
-        "modelHint": "모델·노력은 routing이 task 복잡도(L1–L7)에 따라 결정 — 페르소나별 고정 모델은 없어요.",
         "specHeader": "페르소나 SPEC",
         "specEdit": "편집",
         "specSave": "저장",
@@ -646,6 +645,9 @@
         "tier1Sub": "이 프로젝트에서만",
         "tier2Header": "장기 기억",
         "tier2Sub": "모든 프로젝트",
+        "tierBadge": "Tier {{tier}}",
+        "habitGroup": "습관",
+        "bookshelfGroup": "책장",
         "emptyHabit": "이 프로젝트에서 아직 학습한 규칙 없음",
         "fileLabel": {
           "habit": "습관",

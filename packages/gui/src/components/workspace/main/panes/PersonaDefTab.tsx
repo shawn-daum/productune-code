@@ -35,9 +35,10 @@ const PERSONA_DIR: Record<PersonaKey, string> = {
   qa: 'qa',
 }
 
-// modelSummary removed (T-PATCH-024): there is no fixed per-persona model —
-// routing.md scores task complexity (L1–L7) and picks model × effort per task.
-// The detail view shows that dynamic hint instead (see modelHint below).
+// modelSummary removed (T-PATCH-024) AND the dynamic modelHint line removed
+// (T-PATCH-200 QA2): there is no fixed per-persona model — routing scores task
+// complexity (L1–L7) and picks model × effort per task. Surfacing it here (even
+// as a hint) just implied a per-persona model fact, so the pane shows nothing.
 const PERSONA_META: Record<string, PersonaMeta> = {
   'pdt-po': {
     id: 'pdt-po', key: 'po', initial: 'P',
@@ -227,9 +228,8 @@ export default function PersonaDefTab({ props }: Props) {
         </div>
       </div>
 
-      {/* Model × effort is decided dynamically per task by routing (no fixed
-          per-persona model) — show that as an honest hint, not a flat fact. */}
-      <div style={modelHint}>{t('workspace.team.personaDef.modelHint')}</div>
+      {/* modelHint removed (T-PATCH-200 QA2): no fixed per-persona model exists;
+          model × effort is routing-decided per task, so the pane states nothing. */}
 
       {/* ── Project memory (Tier 1) ── prime position above Advanced ── */}
       <MemoryTier
@@ -374,54 +374,70 @@ function MemoryTier({ tier, headerKey, subKey, state, group, projectDir, openTab
   }, [openTab, projectDir, t])
 
   return (
+    // T-PATCH-200 QA2 (visibility): each tier is a clearly bounded group —
+    // a left rail label column (Tier N + memory-scope) + divider on the right.
+    // The two columns make the Tier1/Tier2 classification unmistakable.
     <div style={tierSection}>
-      <div style={sectionSubHdr}>
-        <span>{t(headerKey)}</span>
-        <span style={tierSub}>{t(subKey)}</span>
+      {/* Left rail — fixed-width tier label column */}
+      <div style={tierRail}>
+        <span style={tierRailNum}>{t('workspace.team.personaDef.tierBadge', { tier })}</span>
+        <span style={tierRailHeader}>{t(headerKey)}</span>
+        <span style={tierRailSub}>{t(subKey)}</span>
       </div>
 
-      {state.status === 'loading' && <div style={memoryEmpty}>{t('common.loading')}</div>}
-      {state.status === 'error' && <div style={memoryEmpty}>{t('workspace.doctrine.loadError')}</div>}
+      {/* Right content column — habit + bookshelf */}
+      <div style={tierContent}>
+        {state.status === 'loading' && <div style={memoryEmpty}>{t('common.loading')}</div>}
+        {state.status === 'error' && <div style={memoryEmpty}>{t('workspace.doctrine.loadError')}</div>}
 
-      {state.status === 'done' && (
-        <>
-          {/* habit.md — inline editable preview, or empty state */}
-          {habit && habit.exists ? (
-            <div style={habitViewerWrap}>
-              <MarkdownViewer
-                key={habit.absPath}
-                load={loadHabit}
-                absPath={habit.absPath}
-                relName={refLabel(t, habit)}
-                editable={habitEditable}
-                onSave={saveHabit}
-                emptyCrumb="habit"
-              />
-            </div>
-          ) : (
-            <div style={memoryEmpty}>{t('workspace.team.personaDef.emptyHabit')}</div>
-          )}
+        {state.status === 'done' && (
+          <>
+            {/* habit (습관) — comes first, labelled, then the inline preview */}
+            <div style={groupSubHdr}>{t('workspace.team.personaDef.habitGroup')}</div>
+            {habit && habit.exists ? (
+              <div style={habitViewerWrap}>
+                <MarkdownViewer
+                  key={habit.absPath}
+                  load={loadHabit}
+                  absPath={habit.absPath}
+                  relName={refLabel(t, habit)}
+                  editable={habitEditable}
+                  onSave={saveHabit}
+                  emptyCrumb="habit"
+                  stripComments
+                />
+              </div>
+            ) : (
+              <div style={memoryEmpty}>{t('workspace.team.personaDef.emptyHabit')}</div>
+            )}
 
-          {/* file-reference rows — human label, NOT raw path */}
-          {refs.map((f) => (
-            <button
-              key={f.absPath}
-              style={memoryRow}
-              onClick={() => openRef(f)}
-              title={f.absPath}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-            >
-              <FileText size={13} color="#505050" />
-              <span style={memoryRowLabel}>{refLabel(t, f)}</span>
-              {f.editable
-                ? <Pencil size={11} color="#34D399" style={{ flexShrink: 0 }} />
-                : <Lock size={11} color="#707070" style={{ flexShrink: 0 }} />}
-              <ChevRight size={12} color="#505050" style={{ flexShrink: 0 }} />
-            </button>
-          ))}
-        </>
-      )}
+            {/* 책장 (bookshelf) — sub-heading groups the file-reference rows so the
+                habit → bookshelf hierarchy is legible (T-PATCH-200 QA2). */}
+            {refs.length > 0 && (
+              <>
+                <div style={bookshelfSubHdr}>{t('workspace.team.personaDef.bookshelfGroup')}</div>
+                {refs.map((f) => (
+                  <button
+                    key={f.absPath}
+                    style={memoryRow}
+                    onClick={() => openRef(f)}
+                    title={f.absPath}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
+                  >
+                    <FileText size={13} color="#505050" />
+                    <span style={memoryRowLabel}>{refLabel(t, f)}</span>
+                    {f.editable
+                      ? <Pencil size={11} color="#34D399" style={{ flexShrink: 0 }} />
+                      : <Lock size={11} color="#707070" style={{ flexShrink: 0 }} />}
+                    <ChevRight size={12} color="#505050" style={{ flexShrink: 0 }} />
+                  </button>
+                ))}
+              </>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
@@ -526,38 +542,74 @@ const personaRole: React.CSSProperties = {
   marginTop: 2,
 }
 
-const modelHint: React.CSSProperties = {
-  fontSize: 11,
-  color: '#707070',
-  lineHeight: 1.5,
-  marginBottom: 16,
-}
-
+// ── Memory tier group (T-PATCH-200 QA2 visibility) ──────────────────────────
+// A tier is a two-column block: a fixed left rail (tier badge + header + scope)
+// and the content column (habit + bookshelf). A strong top border + the rail
+// label make each tier read as a distinct, classified group.
 const tierSection: React.CSSProperties = {
   display: 'flex',
-  flexDirection: 'column',
-  marginBottom: 14,
+  gap: 16,
+  alignItems: 'stretch',
+  borderTop: '1px solid #262626',
+  paddingTop: 14,
+  marginBottom: 18,
 }
 
-const sectionSubHdr: React.CSSProperties = {
+// Left rail — fixed-width label column, divided from the content by a right border.
+const tierRail: React.CSSProperties = {
+  width: 130,
+  flexShrink: 0,
   display: 'flex',
-  alignItems: 'baseline',
-  gap: 8,
-  fontSize: 10,
-  fontWeight: 700,
-  color: '#3A3A3A',
-  letterSpacing: '0.07em',
-  textTransform: 'uppercase',
-  borderTop: '1px solid #1E1E1E',
-  padding: '10px 0 8px',
+  flexDirection: 'column',
+  gap: 3,
+  borderRight: '1px solid #1E1E1E',
+  paddingRight: 14,
 }
 
-const tierSub: React.CSSProperties = {
+const tierRailNum: React.CSSProperties = {
+  fontSize: 9,
+  fontWeight: 700,
+  color: '#34D399',
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+}
+
+const tierRailHeader: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  color: '#E0E0E0',
+  lineHeight: 1.3,
+}
+
+const tierRailSub: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 500,
-  color: '#505050',
-  letterSpacing: 'normal',
-  textTransform: 'none',
+  color: '#606060',
+  lineHeight: 1.4,
+}
+
+const tierContent: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: 'flex',
+  flexDirection: 'column',
+}
+
+// Sub-heading inside a tier that names a group (Habits / Bookshelf).
+const groupSubHdr: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#5A5A5A',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  margin: '2px 0 6px',
+}
+
+// Bookshelf sub-heading — extra top margin separates it from the habit preview
+// above so the habit → bookshelf hierarchy reads cleanly.
+const bookshelfSubHdr: React.CSSProperties = {
+  ...groupSubHdr,
+  marginTop: 6,
 }
 
 const metaSection: React.CSSProperties = {

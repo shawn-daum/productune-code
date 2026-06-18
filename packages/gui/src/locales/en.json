@@ -633,7 +633,6 @@
       },
       "personaDef": {
         "previewNote": "Preview only — editing persona spec is a Phase 5 feature.",
-        "modelHint": "Model and effort are decided by routing per task complexity (L1–L7) — there is no fixed per-persona model.",
         "specHeader": "PERSONA SPEC",
         "specEdit": "Edit",
         "specSave": "Save",
@@ -646,6 +645,9 @@
         "tier1Sub": "this project only",
         "tier2Header": "Long-term memory",
         "tier2Sub": "all projects",
+        "tierBadge": "Tier {{tier}}",
+        "habitGroup": "Habits",
+        "bookshelfGroup": "Bookshelf",
         "emptyHabit": "No rules learned in this project yet.",
         "fileLabel": {
           "habit": "Habits",
