@@ -85,7 +85,10 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
   useEffect(() => {
     if (!absPath || !projectDir) { setState({ phase: 'error', error: 'no source' }); return }
     let cancelled = false
+    // T-PATCH-213: guard deref — .catch traps only promise rejection, not the
+    // synchronous throw when api is undefined (browser-dev-mode).
     const api = (window as any).api
+    if (!api?.artifactsReadFile) { setState({ phase: 'error', error: 'no source' }); return }
     api.artifactsReadFile(projectDir, absPath)
       .then((text: string) => {
         if (cancelled) return

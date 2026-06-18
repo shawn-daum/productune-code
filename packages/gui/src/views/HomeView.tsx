@@ -212,6 +212,10 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
 
   useEffect(() => {
     const api = (window as any).api
+    // T-PATCH-213: browser-dev-mode (no preload bridge) → api undefined. Guard the
+    // property deref so the mount effect is a clean no-op instead of throwing into
+    // the ErrorBoundary on the HomeView boot path.
+    if (!api) return
 
     if (api.listRecentsWithMeta) {
       // T-PATCH-114: preferred path — full meta including exists:false entries
@@ -445,6 +449,10 @@ const gridWrapStyle: React.CSSProperties = {
   flex: 1,
   minHeight: 0,
   overflowY: 'auto',
+  // T-PATCH-214 #4: small top pad so the top card's hover lift (translateY -1px)
+  // + 1px purple border isn't clipped by this scroll container's top edge.
+  // paddingBottom kept for symmetry / bottom-card breathing room.
+  paddingTop: 3,
   paddingBottom: 40,
 }
 

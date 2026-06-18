@@ -59,7 +59,8 @@ export default function App() {
   // (T-P4-091 §A) Stale last-project guard — runs once on mount after lazy init.
   // If lazy init loaded a projectDir from localStorage, verify it still exists on disk.
   // false → clear localStorage + fall back to HomeView (silent recovery).
-  // Catch keeps browser-dev-mode working (window.api absent).
+  // In browser-dev-mode (window.api absent) the property access throws and the
+  // catch below swallows it — current state is kept, no boot crash. (T-PATCH-213)
   useEffect(() => {
     const dir = project?.projectDir
     if (!dir) return
@@ -152,7 +153,7 @@ export default function App() {
 
   // Subscribe to macOS Open Recent item click events (T-P4-111)
   useEffect(() => {
-    const unsub = (window as any).api.onOpenRecentProject?.((dirPath: string) => {
+    const unsub = (window as any).api?.onOpenRecentProject?.((dirPath: string) => {
       handleOpenKnownDir(dirPath)
     })
     return () => unsub?.()
@@ -160,7 +161,7 @@ export default function App() {
 
   // (T-009 flow-a) File → Open Project: bypass home screen, open dialog directly.
   useEffect(() => {
-    const unsub = (window as any).api.onMenuOpenProject?.(() => {
+    const unsub = (window as any).api?.onMenuOpenProject?.(() => {
       handleOpenFolder()
     })
     return () => unsub?.()
@@ -168,7 +169,7 @@ export default function App() {
 
   // (T-009 flow-b) File → New Window: new window always starts at HomeView.
   useEffect(() => {
-    const unsub = (window as any).api.onResetToHome?.(() => {
+    const unsub = (window as any).api?.onResetToHome?.(() => {
       try { localStorage.removeItem('productune.lastProject') } catch { /* unavailable */ }
       setProject(null)
     })

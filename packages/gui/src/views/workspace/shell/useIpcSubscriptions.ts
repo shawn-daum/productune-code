@@ -57,19 +57,19 @@ export function useIpcSubscriptions(
       try { host = new URL(url).hostname || 'Browser' } catch { /* keep default */ }
       openTab(`browser:${url}`, 'browser', { url }, host)
     })
-    return () => off?.()
+    return () => { if (typeof off === 'function') off() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openTab])
 
   // ── Deploy modal IPC subscription (T-P4-022 3rd PR) ───────────────────────
   useEffect(() => {
     const api = (window as any).api
-    const off = api.onDeployModal?.((payload: DeployModalPayload | null) => {
+    const off = api?.onDeployModal?.((payload: DeployModalPayload | null) => {
       if (!payload) return
       setDeployModalPayload(payload)
       setDeployModalOpen(true)
     })
-    return () => off?.()
+    return () => { if (typeof off === 'function') off() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -108,14 +108,14 @@ export function useIpcSubscriptions(
         }, 5000)
       }
     })
-    return () => off?.()
+    return () => { if (typeof off === 'function') off() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openTab, t])
 
   // ── Worktree create result IPC subscription (T-P4-092) ─────────────────────
   useEffect(() => {
     const api = (window as any).api
-    const off = api.worktree?.onCreateResult?.((payload: {
+    const off = api?.worktree?.onCreateResult?.((payload: {
       result: any
       ticketId: string
       slug: string
@@ -160,7 +160,7 @@ export function useIpcSubscriptions(
           appendTrace(t('workspace.worktree.gitErrorTrace'))
       }
     })
-    return () => off?.()
+    return () => { if (typeof off === 'function') off() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t, appendMessage])
 

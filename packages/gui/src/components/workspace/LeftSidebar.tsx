@@ -42,7 +42,12 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
 
   // Mount: load PO session from fs via IPC
   useEffect(() => {
-    ;(window as any).api
+    // T-PATCH-213: browser-dev-mode → api undefined. LeftSidebar mounts on the
+    // WorkspaceShell boot path; guard the deref ( .catch below only traps promise
+    // rejection, not the synchronous throw ) so cold boot is a clean no-op.
+    const api = (window as any).api
+    if (!api?.chatGetSession) return
+    api
       .chatGetSession(project.projectDir)
       .then((s: Session) => {
         setMessages(s.messages)

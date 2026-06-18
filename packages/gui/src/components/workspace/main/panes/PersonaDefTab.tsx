@@ -148,7 +148,10 @@ export default function PersonaDefTab({ props }: Props) {
     let alive = true
     setTiersState({ status: 'loading' })
     const dir = PERSONA_DIR[meta.key]
-    ;(window as any).api
+    // T-PATCH-213: guard deref — .catch traps only promise rejection.
+    const api = (window as any).api
+    if (!api?.doctrineListTiers) { setTiersState({ status: 'error' }); return }
+    api
       .doctrineListTiers(dir, projectDir ?? '')
       .then((res: ListTiersResult) => {
         if (!alive) return
@@ -165,7 +168,8 @@ export default function PersonaDefTab({ props }: Props) {
   // no mtime, so we expose mtimeMs:null — the conflict pre-check is a no-op.
   const loadSpec = useCallback((): Promise<MarkdownLoadResult> => {
     const api = (window as any).api
-    const read = api.readPersonaSpec?.(personaId)
+    if (!api?.readPersonaSpec) return Promise.resolve({ ok: false, error: 'read failed' }) // T-PATCH-213
+    const read = api.readPersonaSpec(personaId)
     if (!read) return Promise.resolve({ ok: false, error: 'read failed' })
     return Promise.resolve(read).then((res: any) =>
       res?.ok
@@ -332,6 +336,7 @@ function MemoryTier({ tier, headerKey, subKey, state, group, projectDir, openTab
   const loadHabit = useCallback((): Promise<MarkdownLoadResult> => {
     const api = (window as any).api
     if (!habit) return Promise.resolve({ ok: true, content: '', mtimeMs: null })
+    if (!api?.doctrineReadFile) return Promise.resolve({ ok: false, error: 'read failed' }) // T-PATCH-213
     return Promise.resolve(api.doctrineReadFile(habit.absPath, projectDir ?? undefined)).then((res: any) =>
       res?.ok
         ? { ok: true, content: res.content ?? '', mtimeMs: res.mtimeMs ?? null }

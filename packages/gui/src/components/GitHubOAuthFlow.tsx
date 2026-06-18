@@ -28,8 +28,8 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
   async function run() {
     const api = (window as any).api
 
-    if (!CLIENT_ID) {
-      // No OAuth App configured — skip silently
+    if (!CLIENT_ID || !api?.githubCheckToken) {
+      // No OAuth App configured / no IPC bridge (browser-dev-mode) — skip silently. T-PATCH-213
       onDone()
       return
     }

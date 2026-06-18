@@ -78,7 +78,10 @@ export default function OnboardingWizard({ onDone }: Props) {
     setCompleting(true)
     setCompleteError('')
     const completeOpts: Record<string, unknown> = { engine, uiLanguage: uiLang }
-    ;(window as any).api.completeOnboarding(completeOpts)
+    // T-PATCH-213: guard deref — .catch traps only promise rejection.
+    const api = (window as any).api
+    if (!api?.completeOnboarding) { setCompleting(false); return }
+    api.completeOnboarding(completeOpts)
       .then((result: { ok: boolean; error?: string }) => {
         if (result.ok) {
           setDone(true)

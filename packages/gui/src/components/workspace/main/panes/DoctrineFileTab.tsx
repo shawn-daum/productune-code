@@ -53,6 +53,7 @@ export default function DoctrineFileTab({ props: tabProps, onDirtyChange }: Prop
   const load = useCallback((): Promise<MarkdownLoadResult> => {
     if (!absPath) return Promise.resolve({ ok: false, error: 'no path' })
     const api = (window as any).api
+    if (!api?.doctrineReadFile) return Promise.resolve({ ok: false, error: 'no source' }) // T-PATCH-213
     return api.doctrineReadFile(absPath, projectDir)
   }, [absPath, projectDir])
 

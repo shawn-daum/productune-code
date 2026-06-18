@@ -84,8 +84,12 @@ export default function SkillMatrixTab({ props }: Props) {
   // Initial fetch on mount
   useEffect(() => {
     let cancelled = false
+    // T-PATCH-213: guard deref — .catch traps only promise rejection, not the
+    // synchronous throw when api is undefined (browser-dev-mode).
+    const api = (window as any).api
+    if (!api?.listSkills) { setLoading(false); return }
     setLoading(true)
-    ;(window as any).api.listSkills().then((entries: SkillEntry[]) => {
+    api.listSkills().then((entries: SkillEntry[]) => {
       if (!cancelled) {
         setSkills(entries)
         setLoading(false)
@@ -102,7 +106,9 @@ export default function SkillMatrixTab({ props }: Props) {
   // Re-fetch on window focus (detect skills dir changes)
   useEffect(() => {
     const refetch = () => {
-      ;(window as any).api.listSkills()
+      const api = (window as any).api
+      if (!api?.listSkills) return
+      api.listSkills()
         .then((entries: SkillEntry[]) => setSkills(entries))
         .catch(() => setSkills([]))
     }

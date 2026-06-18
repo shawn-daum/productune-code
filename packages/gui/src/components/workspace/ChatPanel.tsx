@@ -97,7 +97,11 @@ export default function ChatPanel() {
   // ── Load session on project change ───────────────────────────────────────
   useEffect(() => {
     if (!project) return
+    // T-PATCH-213: browser-dev-mode → api undefined. ChatPanel mounts on the
+    // WorkspaceShell boot path; guard the deref ( .catch below only traps promise
+    // rejection, not the synchronous throw ) so cold boot is a clean no-op.
     const api = (window as any).api
+    if (!api?.chatGetSession) return
     api.chatGetSession(project.projectDir).then((session: any) => {
       const msgs: Message[] = (session?.messages ?? []).map((m: Message) => ({
         ...m,

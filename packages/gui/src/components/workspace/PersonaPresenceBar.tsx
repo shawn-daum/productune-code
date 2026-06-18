@@ -136,16 +136,20 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
     opacity: state === 'idle' ? 0.4 : 1,
   }
 
-  // Label style
-  const labelColor =
-    state === 'idle'   ? '#707070'  // --txt2
-    : state === 'done' ? color
-    : color
-
+  // Label style — T-PATCH-214 #2: persona brand color as the label BACKGROUND
+  // (closes the same-meaning/different-token gap: Team panel uses persona color,
+  // the chat-header presence row was monochrome at idle). Text = --surface-body
+  // #0F0F0F (near-black) on every persona bg clears WCAG AA at this 10px size:
+  // PO 4.53:1 (AA), designer 8.47:1, dev 8.95:1, qa 9.97:1 (all AAA). See DS §2.9.
+  // White text would fail on the bright orange/sky/emerald hues (2.0–2.3:1).
   const labelStyle: React.CSSProperties = {
     fontSize: 10,
     lineHeight: '14px',
-    color: labelColor,
+    color: '#0F0F0F',
+    background: color,
+    borderRadius: 3,
+    padding: '0 5px',
+    fontWeight: 600,
     userSelect: 'none',
     whiteSpace: 'nowrap',
   }

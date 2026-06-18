@@ -48,9 +48,13 @@ export default function SidePanelProjectEnv() {
     async (dir: string) => {
       setLoading(true)
       setError(null)
+      // T-PATCH-213: browser-dev-mode → api undefined; clean no-op (proper
+      // readError microcopy instead of a raw "Cannot read properties…" string).
+      const api = (window as any).api
+      if (!api?.projectEnvRead) { setError(t('workspace.projectEnv.readError')); setLoading(false); return }
       try {
         const result: { files: FileGroup[] } =
-          await (window as any).api.projectEnvRead(dir)
+          await api.projectEnvRead(dir)
         setFiles(result.files ?? [])
       } catch (e: any) {
         setError(e?.message ?? t('workspace.projectEnv.readError'))

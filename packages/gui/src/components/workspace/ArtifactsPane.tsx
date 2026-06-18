@@ -103,7 +103,10 @@ export default function ArtifactsPane({ project, poState }: Props) {
 
   const load = useCallback(() => {
     setLoadState('loading')
+    // T-PATCH-213: guard deref — .catch traps only promise rejection, not the
+    // synchronous throw when api is undefined (browser-dev-mode).
     const api = (window as any).api
+    if (!api?.artifactsListTree) { setLoadState('error'); return }
     // IPC contract: pass current + past ids; main has no po-state.
     const ids = versionIdsKey ? versionIdsKey.split('\n') : []
     api

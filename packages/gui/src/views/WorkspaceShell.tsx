@@ -201,7 +201,12 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   }, [project, setProject])
 
   useEffect(() => {
-    ;(window as any).api.readPoState(project.projectDir)
+    // T-PATCH-213: browser-dev-mode (no preload bridge) → api undefined. Guard the
+    // property deref so the WorkspaceShell boot path is a clean no-op (poState null)
+    // instead of throwing into the ErrorBoundary.
+    const api = (window as any).api
+    if (!api) { setPoState(null); return }
+    api.readPoState(project.projectDir)
       .then((s: unknown) => {
         // T-PATCH-167: IPC returns { ok:false, error:'parse' } when po-state.json
         // exists but is corrupt/unparseable. Surface as an explicit error instead
@@ -273,8 +278,9 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   }, [quickOpenVisible, project.projectDir])
 
   useEffect(() => {
+    // T-PATCH-213: api?.-guard the deref so browser-dev-mode mount is a no-op.
     const api = (window as any).api
-    const offNew = api.onMenuNewProject?.(() => onBack())
+    const offNew = api?.onMenuNewProject?.(() => onBack())
     return () => { offNew?.() }
   }, [onBack])
 

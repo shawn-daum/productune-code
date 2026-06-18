@@ -30,7 +30,11 @@ export default function WorkflowRulesPanel({ projectDir }: Props) {
 
   // Load rules on mount
   useEffect(() => {
-    ;(window as any).api
+    // T-PATCH-213: guard deref — .catch traps only promise rejection, not the
+    // synchronous throw when api is undefined (browser-dev-mode).
+    const api = (window as any).api
+    if (!api?.loadRules) return
+    api
       .loadRules(projectDir)
       .then((r: GitRules) => setRules(r))
       .catch(() => { /* keep defaults */ })

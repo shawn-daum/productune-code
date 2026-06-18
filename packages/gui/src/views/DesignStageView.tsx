@@ -38,8 +38,12 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
 
   // Load artifact list on mount
   useEffect(() => {
+    // T-PATCH-213: browser-dev-mode → api undefined; guard the deref ( .catch
+    // below only traps promise rejection, not the synchronous throw ).
+    const api = (window as any).api
+    if (!api?.designListArtifacts) { setLoadingList(false); return }
     setLoadingList(true)
-    ;(window as any).api.designListArtifacts(projectRoot)
+    api.designListArtifacts(projectRoot)
       .then((list: string[]) => {
         setArtifacts(list)
         if (list.length > 0) setSelectedPath(list[0])
@@ -57,7 +61,9 @@ export default function DesignStageView({ projectRoot, onClose }: Props) {
       return
     }
     setLoadingFile(true)
-    ;(window as any).api.designReadArtifact(projectRoot, selectedPath)
+    const api = (window as any).api
+    if (!api?.designReadArtifact) { setLoadingFile(false); return }
+    api.designReadArtifact(projectRoot, selectedPath)
       .then((text: string) => setContent(text))
       .catch(() => setContent(t('workspace.designStage.readError')))
       .finally(() => setLoadingFile(false))

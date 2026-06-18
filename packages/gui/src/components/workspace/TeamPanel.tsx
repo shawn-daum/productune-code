@@ -177,7 +177,11 @@ function PersonaDoctrineTree({ personaKey, projectDir, onOpenFile }: PersonaDoct
     let alive = true
     setState({ status: 'loading' })
     const dir = PERSONA_DIR[personaKey]
-    ;(window as any).api
+    // T-PATCH-213: guard deref — .catch traps only promise rejection, not the
+    // synchronous throw when api is undefined (browser-dev-mode).
+    const api = (window as any).api
+    if (!api?.doctrineListTiers) { setState({ status: 'error' }); return }
+    api
       .doctrineListTiers(dir, projectDir ?? '')
       .then((res: ListTiersResult) => {
         if (!alive) return

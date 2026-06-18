@@ -579,7 +579,7 @@ const sectionTitle: React.CSSProperties = {
 const description: React.CSSProperties = {
   fontSize: 11,
   color: '#707070',
-  lineHeight: 1.5,
+  lineHeight: 1.6, // T-PATCH-214 #3: --leading-relaxed — multi-line helper microcopy was cramped
 }
 
 const options: React.CSSProperties = {
@@ -771,7 +771,7 @@ const notifTestResultWarn: React.CSSProperties = {
 const notifMacosHint: React.CSSProperties = {
   fontSize: 10,
   color: '#505050',
-  lineHeight: 1.5,
+  lineHeight: 1.6, // T-PATCH-214 #3: --leading-relaxed — multi-line macOS guidance microcopy
   marginTop: 6,
 }
 
