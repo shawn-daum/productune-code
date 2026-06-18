@@ -38,7 +38,7 @@ const sub = (cost: number, extra: Partial<Line> = {}): Line => ({
   model: 'claude-sonnet',
   cost_usd: cost,
   cost_basis: 'subagent_total',
-  usage: { input: 100, output: 50, cache: 10 },
+  usage: { input: 100, output: 50, cache: 10 }, // bare `cache` → display total 10
   ...extra,
 })
 
@@ -118,19 +118,24 @@ export const COST_ARCHIVE_CASES: readonly Case[] = [
 
   // ── T-PATCH-202: transcript-based subagent rows (usage+model, cost DERIVED) ──
   {
-    // deriveCostUsd: known model → (in+cache)*in_rate + out*out_rate, per MTok.
-    // opus-4-8 = $5 in / $25 out. (1M in + 1M cache)*5 + 1M out*25 = 10 + 25 = 35.
-    label: 'deriveCostUsd: known model prices in+cache at input rate, out at output rate',
+    // deriveCostUsd: known model → (in + 0.1*cache_read + 1.25*cache_creation)*in_rate
+    //   + out*out_rate, per MTok (T-PATCH-202 caching multipliers).
+    // opus-4-8 = $5 in / $25 out. cache_read 1M → 0.1*1M, cache_creation 1M → 1.25*1M.
+    // in-tier = 1M + 0.1M + 1.25M = 2.35M. 2.35M*5 + 1M*25 = 11.75 + 25 = 36.75.
+    label: 'deriveCostUsd: cache_read at 0.1x, cache_creation at 1.25x, out at output rate',
     run: () => {
-      const c = deriveCostUsd({ in: 1_000_000, out: 1_000_000, cache: 1_000_000 }, 'claude-opus-4-8')
-      return { ok: c !== null && approx(c, 35), detail: `cost=${c}` }
+      const c = deriveCostUsd(
+        { in: 1_000_000, out: 1_000_000, cache: 2_000_000, cacheRead: 1_000_000, cacheCreation: 1_000_000 },
+        'claude-opus-4-8',
+      )
+      return { ok: c !== null && approx(c, 36.75), detail: `cost=${c}` }
     },
   },
   {
     // [1m] / bracketed deployment suffix normalizes to the base public id.
     label: 'deriveCostUsd: bracketed deployment suffix normalizes to base id',
     run: () => {
-      const c = deriveCostUsd({ in: 1_000_000, out: 0, cache: 0 }, 'claude-opus-4-8[1m]')
+      const c = deriveCostUsd({ in: 1_000_000, out: 0, cache: 0, cacheRead: 0, cacheCreation: 0 }, 'claude-opus-4-8[1m]')
       return { ok: c !== null && approx(c, 5), detail: `cost=${c}` }
     },
   },
@@ -138,7 +143,7 @@ export const COST_ARCHIVE_CASES: readonly Case[] = [
     // AC-4: unknown model → null (usage still recorded; no crash).
     label: 'deriveCostUsd: unknown model → null (graceful)',
     run: () => {
-      const c = deriveCostUsd({ in: 1_000_000, out: 1_000_000, cache: 0 }, 'claude-made-up-9')
+      const c = deriveCostUsd({ in: 1_000_000, out: 1_000_000, cache: 0, cacheRead: 0, cacheCreation: 0 }, 'claude-made-up-9')
       return { ok: c === null, detail: `cost=${String(c)}` }
     },
   },

@@ -448,13 +448,23 @@ def _normalize_model(m):
     # → "claude-opus-4-8") so the base public id keys the price table.
     return re.sub(r'\[.*\]$', '', m) if isinstance(m, str) else m
 
-def derive_cost(model, tin, tout, tcache):
-    # Cache (read + creation) priced at the input rate — conservative client-side
-    # estimate. Unknown model → None (AC-4: usage kept, cost stays 0).
+# Prompt-caching cost multipliers, relative to the base input rate (T-PATCH-202).
+# Source: claude-api skill — cache reads ≈ 0.1× the input price; cache writes
+# (creation) = 1.25× for the 5-minute TTL. turns.jsonl does not distinguish
+# 5-minute vs 1-hour writes, so creation is priced at the 5-minute 1.25×.
+CACHE_READ_MULT = 0.1
+CACHE_CREATION_MULT = 1.25
+
+def derive_cost(model, tin, tout, tcache_read, tcache_creation):
+    # Accurate prompt-caching pricing (T-PATCH-202):
+    #   cost = (input + 0.1*cache_read + 1.25*cache_creation)*in_rate + output*out_rate
+    # cache_read ≈ 0.1×, cache_creation = 1.25× (5-min TTL assumed). Must match
+    # costArchive.ts deriveCostUsd. Unknown model → None (AC-4: usage kept, cost 0).
     p = prices.get(_normalize_model(model))
     if not p:
         return None
-    return ((tin + tcache) * p.get('in_per_mtok', 0) + tout * p.get('out_per_mtok', 0)) / 1_000_000.0
+    in_tok = tin + CACHE_READ_MULT * tcache_read + CACHE_CREATION_MULT * tcache_creation
+    return (in_tok * p.get('in_per_mtok', 0) + tout * p.get('out_per_mtok', 0)) / 1_000_000.0
 
 subagent = {}   # key -> {'turns': int, 'cost': float, 'in': int, 'out': int, 'cache': int}
 # main scope: per group, per session_id we keep the MAX cumulative cost.
@@ -486,9 +496,12 @@ def is_cumulative(rec):
 def usage_tokens(rec):
     # subagent usage{input,output,cache_*} is authoritative for token breakdown.
     # context_window is NEVER summed (statusline snapshot, not cumulative).
+    # Returns (tin, tout, tcache_read, tcache_creation) — cache split by tier so
+    # cost can apply read 0.1× / creation 1.25×. The bare `cache` field carries
+    # no tier → bucket as read (dominant, cheaper tier; conservative for snapshots).
     u = rec.get('usage')
     if not isinstance(u, dict):
-        return 0, 0, 0
+        return 0, 0, 0, 0
     def g(*names):
         tot = 0
         for nm in names:
@@ -498,9 +511,9 @@ def usage_tokens(rec):
         return tot
     tin = g('input', 'input_tokens')
     tout = g('output', 'output_tokens')
-    tcache = g('cache', 'cache_read', 'cache_creation',
-               'cache_read_input_tokens', 'cache_creation_input_tokens')
-    return tin, tout, tcache
+    tcache_read = g('cache', 'cache_read', 'cache_read_input_tokens')
+    tcache_creation = g('cache_creation', 'cache_creation_input_tokens')
+    return tin, tout, tcache_read, tcache_creation
 
 n_lines = 0
 n_bad = 0
@@ -534,14 +547,14 @@ try:
             else:
                 e = subagent.setdefault(k, {'turns': 0, 'cost': 0.0, 'in': 0, 'out': 0, 'cache': 0})
                 e['turns'] += 1
-                tin, tout, tcache = usage_tokens(rec)
+                tin, tout, tcache_read, tcache_creation = usage_tokens(rec)
                 e['in'] += tin
                 e['out'] += tout
-                e['cache'] += tcache
+                e['cache'] += tcache_read + tcache_creation  # display total (read + creation)
                 # cost_usd: explicit finite value wins; else derive from usage ×
                 # model price (transcript-based hook records usage+model, cost null).
                 if not has_cost:
-                    derived = derive_cost(rec.get('model'), tin, tout, tcache)
+                    derived = derive_cost(rec.get('model'), tin, tout, tcache_read, tcache_creation)
                     cost = derived if derived is not None else 0.0
                 e['cost'] += cost
 except FileNotFoundError:

@@ -55,17 +55,31 @@ function normalizeModelId(model: string): string {
   return model.replace(/\[.*\]$/, '')
 }
 
+// Prompt-caching cost multipliers, relative to the base input rate (T-PATCH-202).
+// Source: claude-api skill (prompt-caching economics) — cache reads cost ~0.1×
+// the base input price; cache writes (creation) cost 1.25× for the 5-minute TTL.
+// turns.jsonl does not distinguish 5-minute vs 1-hour writes, so creation is
+// priced at the 5-minute 1.25× (the common/default case).
+const CACHE_READ_MULT = 0.1
+const CACHE_CREATION_MULT = 1.25
+
 /**
- * Derive USD cost from a token breakdown + model id. Cache (read + creation)
- * tokens are priced at the input rate — a conservative client-side estimate
- * (turns.jsonl carries no per-tier cache multiplier). Returns null when the
- * model is unknown to the price table (AC-4 — usage is still recorded upstream).
+ * Derive USD cost from a token breakdown + model id, applying the accurate
+ * Anthropic prompt-caching multipliers (T-PATCH-202):
+ *   cost = (input + 0.1×cache_read + 1.25×cache_creation) × in_rate
+ *        + output × out_rate
+ * Cache reads bill at ~0.1× the input rate; cache writes (creation) at 1.25×
+ * (5-minute TTL assumed — turns.jsonl does not separate 1h writes). `usage.cache`
+ * is the display-only total; cost uses the split cacheRead / cacheCreation fields.
+ * Returns null when the model is unknown to the price table (AC-4 — usage is
+ * still recorded upstream).
  */
 export function deriveCostUsd(usage: PivotUsage, model: string | null | undefined): number | null {
   if (typeof model !== 'string' || !model) return null
   const price = PRICES[normalizeModelId(model)]
   if (!price) return null
-  const inTokens = usage.in + usage.cache
+  const inTokens =
+    usage.in + CACHE_READ_MULT * usage.cacheRead + CACHE_CREATION_MULT * usage.cacheCreation
   return (inTokens * price.in_per_mtok + usage.out * price.out_per_mtok) / 1_000_000
 }
 
@@ -87,11 +101,17 @@ export interface AggregateResult {
   error?: string
 }
 
-/** Token breakdown for a subagent pivot row (main rows carry null). */
+/**
+ * Token breakdown for a subagent pivot row (main rows carry null).
+ * `cache` is the display total (read + creation); `cacheRead` / `cacheCreation`
+ * are the split tiers used for cost derivation (different price multipliers).
+ */
 export interface PivotUsage {
   in: number
   out: number
   cache: number
+  cacheRead: number
+  cacheCreation: number
 }
 
 /** One (persona, model) combination in the persona×model pivot. */
@@ -316,19 +336,23 @@ function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
  * Read subagent token breakdown from a turn line's `usage` object.
  * context_window is intentionally never read (statusline snapshot, not cumulative).
  */
+/** A zeroed PivotUsage (all token tiers at 0). */
+function zeroUsage(): PivotUsage {
+  return { in: 0, out: 0, cache: 0, cacheRead: 0, cacheCreation: 0 }
+}
+
 function readUsage(u: TurnUsage | undefined): PivotUsage {
-  if (!u || typeof u !== 'object') return { in: 0, out: 0, cache: 0 }
+  if (!u || typeof u !== 'object') return zeroUsage()
   const num = (v: unknown): number =>
     typeof v === 'number' && Number.isFinite(v) ? v : 0
   const tin = num(u.input) + num(u.input_tokens)
   const tout = num(u.output) + num(u.output_tokens)
-  const tcache =
-    num(u.cache) +
-    num(u.cache_read) +
-    num(u.cache_creation) +
-    num(u.cache_read_input_tokens) +
-    num(u.cache_creation_input_tokens)
-  return { in: tin, out: tout, cache: tcache }
+  // Split cache tiers for cost (read ≈ 0.1×, creation = 1.25×). The generic
+  // `cache` field carries no tier, so bucket it as read (the dominant, cheaper
+  // tier — the conservative read-heavy assumption for untagged snapshot data).
+  const cacheRead = num(u.cache) + num(u.cache_read) + num(u.cache_read_input_tokens)
+  const cacheCreation = num(u.cache_creation) + num(u.cache_creation_input_tokens)
+  return { in: tin, out: tout, cache: cacheRead + cacheCreation, cacheRead, cacheCreation }
 }
 
 /**
@@ -342,7 +366,7 @@ function aggregatePivot(projectDir: string): PivotResult {
   const file = resolveTurnsPath(projectDir)
   if (!file) {
     return {
-      ok: false, rows: [], subagentUsage: { in: 0, out: 0, cache: 0 },
+      ok: false, rows: [], subagentUsage: zeroUsage(),
       totalTurns: 0, totalCostUsd: 0, error: 'invalid projectDir',
     }
   }
@@ -351,7 +375,7 @@ function aggregatePivot(projectDir: string): PivotResult {
   try {
     raw = fs.readFileSync(file, 'utf-8')
   } catch {
-    return { ok: true, rows: [], subagentUsage: { in: 0, out: 0, cache: 0 }, totalTurns: 0, totalCostUsd: 0 }
+    return { ok: true, rows: [], subagentUsage: zeroUsage(), totalTurns: 0, totalCostUsd: 0 }
   }
 
   return aggregatePivotLines(parseTurnsBlob(raw))
@@ -393,18 +417,20 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
       if (prev === undefined || cost > prev) acc.sessionMax.set(sid, cost)
     } else {
       let acc = sub.get(key)
-      if (!acc) { acc = { turns: 0, cost: 0, usage: { in: 0, out: 0, cache: 0 } }; sub.set(key, acc) }
+      if (!acc) { acc = { turns: 0, cost: 0, usage: zeroUsage() }; sub.set(key, acc) }
       acc.turns += 1
       acc.cost += cost
       const u = readUsage(parsed.usage)
       acc.usage.in += u.in
       acc.usage.out += u.out
       acc.usage.cache += u.cache
+      acc.usage.cacheRead += u.cacheRead
+      acc.usage.cacheCreation += u.cacheCreation
     }
   }
 
   const rows: PivotRow[] = []
-  const subagentUsage: PivotUsage = { in: 0, out: 0, cache: 0 }
+  const subagentUsage: PivotUsage = zeroUsage()
   let totalTurns = 0
   let totalCostUsd = 0
 
@@ -414,6 +440,8 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
     subagentUsage.in += acc.usage.in
     subagentUsage.out += acc.usage.out
     subagentUsage.cache += acc.usage.cache
+    subagentUsage.cacheRead += acc.usage.cacheRead
+    subagentUsage.cacheCreation += acc.usage.cacheCreation
     totalTurns += acc.turns
     totalCostUsd += acc.cost
   }
