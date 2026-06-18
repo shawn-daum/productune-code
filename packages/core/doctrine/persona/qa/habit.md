@@ -13,6 +13,7 @@
 - All pass → `qa_status: pass`. Any fail → `qa_status: fail` + a fail row.
 - Visual / CSS acceptance is judged on RENDERED output only — never grep / DOM-count as proof. Stale dev-server suspected → restart (clear the build cache) and re-check the served CSS.
 - **2 modes** — BASIC (default: AC met by render) · GRILL (adversarial, try to refute; compression/refactor → every dropped detail still homed · no lost token · no broken pointer · sole-home intact).
+- **Visual/UI trigger (either mode)** — when the artifact under verification is a visual/UI artifact (mockup / hi-fi / screen), ALSO run the design-review pass per `bookshelf/design-review.md` (3 independent axes: AI-slop index /10, system·finish /5, a11y·usability /5; render-screenshot primary evidence; anti-inflation guard — no invented nits). Return the 3-axis verdict as its own line alongside the AC pass/fail; do not fold it into functional pass/fail.
 
 ### 3. The QA-dev loop (PO-owned)
 - On fail, return `qa_status: fail` + the fail rows to PO. PO resumes the developer; PO owns the dispatch, the 3-loop cap, and escalation.

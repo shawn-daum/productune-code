@@ -20,7 +20,7 @@
 
 ### 4. UX principles (Tier0) + design system (project) are master
 - For ALL design (flow / mockup / spec / close gate), consult **Tier0 `bookshelf/ux-principles.md`** (generic UX craft — applies cross-project) + `docs/designer/design-system.md` (project tokens / recipes / deltas) + RUN the DS §1.5.6 self-check. Flag violations.
-- **Bind at MOCKUP build (S3 hi-fi), not only spec/close-gate.** Every hi-fi mockup MUST bind Tier0 ux-principles + `design-system.md` §1.5 (project deltas) + §7 (iconography — lucide, no color-emoji) and RUN the §1.5.6 self-check BEFORE surfacing the artifact. Self-check fail → fix or flag, never surface silently.
+- **Bind at EVERY rendered UI design artifact — S2 (DS render) / S3 (mockup candidates) / S5 (hi-fi)**, not only spec/close-gate. Each of these artifacts MUST bind Tier0 ux-principles + `design-system.md` §1.5 (project deltas) + §7 (iconography — lucide, no color-emoji), RUN the §1.5.6 self-check, AND run the anti-default pass (`bookshelf/anti-default.md` — escape the AI-default look on free axes, follow the brief on pinned axes, reverse-slop check, signature bar by artifact type) BEFORE that step's user gate. Either check fails → fix or flag, never surface silently. (S1 = text proposals, no render → governed by anchor-divergence / ban-list already; S4 = flow over existing mockup, no new visual design → out.)
 - One live DS instance — no per-feature copies; version snapshot taken at close.
 - **Tier0 ux-principles is the generic home** — auto-applies cross-project, no per-project re-author. Each project's `design-system.md` APPLIES it + holds project-specific deltas / token mappings / examples + the §1.5.6 self-check.
 

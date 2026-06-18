@@ -17,6 +17,12 @@ Read `docs/designer/design-system.md` (DS), scan codebase, verify each:
 - [ ] **`og:image`** — configured + referenced.
 - [ ] **Meta tags** — `<title>`, `<meta name="description">`, OG tags (`og:title`, `og:description`, `og:image`) in entry HTML.
 - [ ] **App icons / splash** — mobile / Electron / PWA if applicable.
+- [ ] **Aesthetic / anti-default** — score each shipped critical / entry screen with the 3-axis
+  rubric in `qa/bookshelf/design-review.md` (cross-persona read; that rubric is the bands SoT).
+  **Close-FAIL threshold (the gate owns this):** any marketing / landing / entry surface with
+  AI-slop index ≥ 6 = ✗; utility UI judged on restraint — over-signature (a forced loud move on
+  a calm surface) = ✗ too. A11y/usability regression flagged by the rubric = ✗. Below the bar on
+  every scored screen = ✓.
 
 > Producer of the Logo / Favicon / `og:image` / app-icon items = **P2 S2b (brand assets)**
 > (`phase2-3-ticket-sequence.md`). A missing item here means S2b was skipped (wrong branch) or
@@ -29,7 +35,9 @@ Read `docs/designer/design-system.md` (DS), scan codebase, verify each:
    typography utility classes match DS scale; spacing classes match DS tokens.
 3. Check entry HTML (`index.html`, `app/layout.tsx`) for meta + OG + favicon refs.
 4. Check `public/` for asset presence.
-5. Mark each ✓ / N/A / ✗ in ticket `## Outcome`, one line per scope item. Emit summary.
+5. Score the shipped critical / entry screens with the `design-review.md` 3-axis rubric; apply the
+   threshold above (slop index ≥ 6 on a marketing/entry surface, or over-signature on utility = ✗).
+6. Mark each ✓ / N/A / ✗ in ticket `## Outcome`, one line per scope item. Emit summary.
 
 Any ✗ → fix same session (`--resume`) or surface `blocked: true` with item ref.
 
@@ -38,10 +46,11 @@ Any ✗ → fix same session (`--resume`) or surface `blocked: true` with item r
 ```json
 {
   "persona": "pdt-designer", "ticket_id": "T-NNN", "type": "design", "phase": 3,
-  "summary": "Phase 3 close gate — N/9 ✓, M N/A, K ✗",
+  "summary": "Phase 3 close gate — N/10 ✓, M N/A, K ✗",
   "outcome_items": {
     "design_system_consistency": "ok|na|fail",
-    "typography": "ok|na|fail"
+    "typography": "ok|na|fail",
+    "aesthetic_anti_default": "ok|na|fail"
   },
   "ready_for_close": true, "confidence": 0.95,
   "promotion_candidates": [], "unresolved": []
