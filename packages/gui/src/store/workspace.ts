@@ -240,6 +240,39 @@ interface WorkspaceState {
   setTabMeta: (tabId: string, patch: { title?: string; url?: string }) => void
 }
 
+// ── T-PATCH-192: message-id dedup (data-level, single source of truth) ───────
+// Several paths can land the SAME message id in the `messages` array (the React
+// `key` source in ChatPanel), producing the "Encountered two children with the
+// same key" warning + the latent duplicate/dropped-render hazard:
+//   - session restore (`setMessages`) loading a chat.json that already holds two
+//     rows with the same id (the structural root cause — chat.json was historically
+//     append-only with no write-side dedup, so any double-persist accumulated a dup
+//     that survives across reloads);
+//   - the patch-then-`setMessages` flows (AskUserQuestionCard / PromotionCard /
+//     handleDismissQuestion) re-setting an array that already contains a dup.
+//
+// We collapse duplicates at the data level here — NOT by mangling React keys at
+// render time. Last write wins (keeps the most-recently-supplied copy, which for
+// a patched message is the resolved/updated one) while preserving first-seen
+// order so the transcript ordering is stable. `appendMessage` already dedupes by
+// replacing in place; `setMessages` now runs every incoming array through this so
+// a duplicate can never reach the renderer regardless of how it entered the data.
+export function dedupeMessagesById(messages: Message[]): Message[] {
+  const indexById = new Map<string, number>()
+  const out: Message[] = []
+  for (const m of messages) {
+    const existing = indexById.get(m.id)
+    if (existing !== undefined) {
+      out[existing] = m  // last-write-wins, keep original position
+    } else {
+      indexById.set(m.id, out.length)
+      out.push(m)
+    }
+  }
+  // Reference-stable when there were no duplicates (avoids a needless re-render).
+  return out.length === messages.length ? messages : out
+}
+
 function derivePhase(poState: PoState | null): Phase {
   const num = poState?.current_phase
   if (typeof num === 'number' && num in PHASE_NAMES) return PHASE_NAMES[num]
@@ -475,7 +508,10 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
 
   setSelectedVersionId: (selectedVersionId) => set({ selectedVersionId }),
 
-  setMessages: (messages) => set({ messages }),
+  // T-PATCH-192: dedup by id at the data level — session restore + patch-then-set
+  // paths can pass an array that already holds a duplicate id; collapse it here so
+  // the renderer never sees two children with the same React key.
+  setMessages: (messages) => set({ messages: dedupeMessagesById(messages) }),
 
   appendMessage: (message) =>
     set((s) => {

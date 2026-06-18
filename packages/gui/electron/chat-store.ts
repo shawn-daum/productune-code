@@ -86,12 +86,26 @@ export function getSession(projectDir: string): Session {
 /**
  * Append a message to the project's PO session. Lazily creates `.productune/`
  * and `chat.json` on first call.
+ *
+ * T-PATCH-192: dedup by id at the persistence boundary. If a message with the
+ * same id is already stored, REPLACE it in place rather than appending a second
+ * copy. The renderer can call `chatAppendMessage` for an id it already persisted
+ * (e.g. a card re-emitted within a turn, or onDone re-persisting a segment), and
+ * an append-only write would accumulate a duplicate id that survives forever in
+ * chat.json — surfacing on every later session restore as a duplicate React key.
+ * Collapsing here keeps the file free of duplicate ids at the source; the
+ * renderer's `dedupeMessagesById` is the matching read-side guard.
  */
 export function appendMessage(projectDir: string, message: Message): void {
   const session = getSession(projectDir)
+  const idx = session.messages.findIndex((m) => m.id === message.id)
+  const messages =
+    idx === -1
+      ? [...session.messages, message]
+      : session.messages.map((m, i) => (i === idx ? message : m))
   const next: Session = {
     ...session,
-    messages: [...session.messages, message],
+    messages,
     updated_at: new Date().toISOString(),
   }
   atomicWrite(chatJsonPath(projectDir), JSON.stringify(next, null, 2))

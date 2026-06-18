@@ -70,7 +70,9 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
     // main (chat:answerQuestion → runPoTurn), so the card must NOT also fire a
     // second turn — this is a single user echo, not a duplicate dispatch.
     const echoMsg: Message = {
-      id: `u-auq-${Date.now()}`,
+      // T-PATCH-192: include a random suffix (matches every other id factory in
+      // the app) so two echoes within the same millisecond can't collide on id.
+      id: `u-auq-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       role: 'user',
       kind: 'user',
       text: chosenLabel,
