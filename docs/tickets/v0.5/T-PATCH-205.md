@@ -4,11 +4,11 @@ version: v0.5
 slug: pane-error-isolation
 title: Pane 단위 ErrorBoundary 격리 + 탭 복구 fallback (+ 챗 드래프트 persist)
 type: bugfix
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
 requires_user_gate: false
 area_tag: workspace-shell
 risk_flags: >

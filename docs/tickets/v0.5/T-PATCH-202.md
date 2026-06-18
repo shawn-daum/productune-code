@@ -4,11 +4,11 @@ version: v0.5
 slug: cost-archive-per-persona-capture
 title: Cost archive — per-persona 집계 복구 (dispatch --output-format json 전환)
 type: bugfix
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
 requires_user_gate: false
 area_tag: cost-archive
 risk_flags: >
