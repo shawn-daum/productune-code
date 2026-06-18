@@ -927,7 +927,7 @@
     "generalTabTitle": "일반 설정",
     "tabMcp": "MCP 서버",
     "tabHooks": "훅",
-    "tabCost": "토큰비용아카이브",
+    "tabCost": "토큰 비용 아카이브",
     "mcp": {
       "title": "MCP 서버",
       "renameFailed": "이름 변경 실패",
