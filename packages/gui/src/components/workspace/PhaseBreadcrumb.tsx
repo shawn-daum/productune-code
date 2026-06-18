@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
-import { Lock, Check } from 'lucide-react'
+import { ListChecks, Check } from 'lucide-react'
 import type { Phase, PendingGate } from '../../lib/types'
 import {
   type PhaseCounts,
@@ -83,9 +83,13 @@ export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate
 
 // ── GateMarker (T-PATCH-203) ────────────────────────────────────────────────────
 //
-// Replaces the boundary chevron with an interactive close_gate marker:
-//   - blocked (some item unsatisfied) → lock + `N/M` (amber/purple)
-//   - passed  (all done/waived/na, or no live data → fallback) → check (muted)
+// Replaces the boundary chevron with an interactive close_gate marker. It sits
+// AT the phase boundary, so it reads as "<icon> N/M ›" — the trailing chevron is
+// the same boundary glyph the non-gate boundaries use:
+//   - blocked (some item unsatisfied) → checklist icon + `N/M` + `›` (amber/purple)
+//   - passed  (all done/waived/na, or no live data → fallback) → check + `›` (muted)
+// The checklist icon (lucide ListChecks) reads as "inspection / review", NOT
+// "locked" — these are review checkpoints, not access gates.
 // Click toggles a popover anchored to the marker listing each item's label,
 // status and 1-line description.
 
@@ -168,10 +172,17 @@ function GateMarker({ boundaryPhase, closeGate }: GateMarkerProps) {
         onClick={toggle}
         style={blocked ? markerBtnBlocked : markerBtnPassed}
       >
-        {blocked ? <Lock size={11} strokeWidth={2.4} /> : <Check size={12} strokeWidth={2.6} />}
+        {/* T-PATCH-203 redesign: checklist icon ("inspection") replaces the lock
+            ("locked"). Sized ~1em so it stays compact in the horizontal strip. */}
+        {blocked
+          ? <ListChecks size={13} strokeWidth={2} />
+          : <Check size={13} strokeWidth={2.6} />}
         {blocked && (
           <span style={markerCount}>{agg.satisfied}/{agg.total}</span>
         )}
+        {/* Trailing boundary chevron — same glyph the non-gate boundaries use, so
+            the marker reads as "<icon> N/M ›" sitting AT the phase boundary. */}
+        <span style={markerChevron}>›</span>
       </button>
       {open && rect && createPortal(
         <div
@@ -327,7 +338,8 @@ const markerBtnBase: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-// blocked: amber lock + purple-tinted surface (the "wall" between phases).
+// blocked: amber checklist icon + count + purple-tinted surface (the checkpoint
+// at the boundary — "review pending", not "locked").
 const markerBtnBlocked: React.CSSProperties = {
   ...markerBtnBase,
   color: '#FBBF24',          // amber-400
@@ -346,6 +358,18 @@ const markerBtnPassed: React.CSSProperties = {
 const markerCount: React.CSSProperties = {
   fontSize: 11,
   lineHeight: 1,
+}
+
+// Trailing boundary chevron rendered inside the marker button. Same `›` glyph and
+// ~size as the non-gate boundary chevron, but `currentColor`/dimmed so it reads as
+// a subordinate separator on either the amber (blocked) or muted (passed) surface
+// rather than competing with the icon + count.
+const markerChevron: React.CSSProperties = {
+  fontSize: 15,
+  lineHeight: 1,
+  color: 'currentColor',
+  opacity: 0.55,
+  marginLeft: 1,
 }
 
 const popover: React.CSSProperties = {
