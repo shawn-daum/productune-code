@@ -5,7 +5,7 @@ slug: gate-as-state
 title: Close gate as po-state data, not recalled prose
 type: doctrine
 status: done
-qa_status: pass-with-note
+qa_status: pass
 phase: 3
 assignee: pdt-designer
 requires_qa: true

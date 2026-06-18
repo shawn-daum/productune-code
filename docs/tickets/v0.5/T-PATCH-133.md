@@ -7,7 +7,7 @@ status: done
 phase: 3
 assignee: pdt-developer
 estimated_complexity: L5
-qa_status: self-verify
+qa_status: skipped
 model: sonnet
 effort: high
 slug: fresh-composer-attachment-parity

@@ -9,7 +9,7 @@ assignee: pdt-developer
 model: sonnet
 effort: low
 estimated_complexity: L2
-qa_status: self-verify
+qa_status: skipped
 qa_loops: 0
 slug: ticket-board-fold-qa-into-inprogress
 area_tags: [gui]

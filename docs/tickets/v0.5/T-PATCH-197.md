@@ -8,7 +8,7 @@ status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: false
-qa_status: capture-on-next-occurrence
+qa_status: pending
 requires_user_gate: false
 area_tag: po-runner
 risk_flags: >

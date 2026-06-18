@@ -8,7 +8,7 @@ status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: false
-qa_status: shawn-visual
+qa_status: pending
 requires_user_gate: false
 area_tag: gui-layout
 risk_flags: none

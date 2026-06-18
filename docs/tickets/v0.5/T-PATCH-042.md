@@ -5,7 +5,7 @@ slug: close-gate-deterministic-sweep
 title: Deterministic close_gate self-heal in turn-open sweep
 type: doctrine
 status: done
-qa_status: pending-live
+qa_status: pending
 phase: 3
 assignee: pdt-designer
 requires_qa: true

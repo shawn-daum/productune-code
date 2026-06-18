@@ -9,7 +9,7 @@ assignee: pdt-developer
 model: sonnet
 effort: low
 estimated_complexity: L1
-qa_status: self-verify
+qa_status: skipped
 qa_loops: 0
 slug: settings-no-default-highlight
 area_tags: [gui]

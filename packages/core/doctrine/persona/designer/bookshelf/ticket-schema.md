@@ -27,7 +27,7 @@ duration_min: <int>
 ```
 
 ### Lifecycle fields (PO mechanical only)
-`status` transitions · `started_at` / `completed_at` / `duration_min` · `qa_status` / `qa_loops` (impl/refactor only; `qa_status ∈ pending|pass|fail`) · `observed_result` (Phase 5).
+`status` transitions · `started_at` / `completed_at` / `duration_min` · `qa_status` / `qa_loops` (impl/refactor only; `qa_status ∈ pending|pass|fail|skipped`; `skipped` = QA 대상이나 안 함; `requires_qa:false`면 qa_status 생략) · `observed_result` (Phase 5).
 
 ### `version:` regex
 `^v\d+(\.\d+)?(-[\w-]+)?$` — exception: archive ids (`legacy/...`) with `legacy: true`.

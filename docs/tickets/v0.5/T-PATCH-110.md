@@ -9,7 +9,7 @@ assignee: pdt-developer
 model: sonnet
 effort: low
 estimated_complexity: L1
-qa_status: smoke
+qa_status: pass
 qa_loops: 0
 slug: dev-promotion-card-trigger
 area_tags: [gui/dev-tools, gui/promotion]

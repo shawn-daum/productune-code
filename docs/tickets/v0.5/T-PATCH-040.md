@@ -12,7 +12,7 @@ risk_flags:
   - chat-stream-continuity-across-sid-rotation
   - doctrine-mtime-watch-optional-scope
 qa: true
-qa_status: pending-live
+qa_status: pending
 slug: po-session-cycle
 ---
 

@@ -9,7 +9,7 @@ created_at: 2026-06-09T00:00:00Z
 estimated_complexity: L3
 risk_flags: [security]
 slug: project-env-viewer-editor
-qa_status: passed
+qa_status: pass
 requires_qa: true
 requires_user_gate: false
 area_tag: gui-side-panel

@@ -9,7 +9,7 @@ assignee: pdt-developer
 model: sonnet
 effort: medium
 estimated_complexity: L2
-qa_status: self-verify
+qa_status: skipped
 qa_loops: 0
 slug: fresh-composer-first-turn-streaming-state
 area_tags: [gui]

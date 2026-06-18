@@ -1,4 +1,4 @@
 {
   "status": ["todo", "in-progress", "review", "user-verify", "done", "blocked", "abandoned"],
-  "qa_status": ["pending", "pass", "fail"]
+  "qa_status": ["pending", "pass", "fail", "skipped"]
 }

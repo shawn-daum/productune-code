@@ -48,7 +48,7 @@ except Exception:
 # ~/.productune/config/ticket-status-enum.json by install.sh. AC-6: no new
 # hardcoded enum copy — these literals are the fallback ONLY (kept in parity).
 STATUS_ENUM="todo|in-progress|review|user-verify|done|blocked|abandoned"
-QA_STATUS_ENUM="pending|pass|fail"
+QA_STATUS_ENUM="pending|pass|fail|skipped"
 
 ENUM_CONFIG="$HOME/.productune/config/ticket-status-enum.json"
 if [ -f "$ENUM_CONFIG" ]; then
