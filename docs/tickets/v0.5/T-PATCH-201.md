@@ -4,7 +4,7 @@ version: v0.5
 slug: cost-archive-cumulative-fix
 title: Cost archive — 누적 스냅샷 합산 버그(총액 뻥튀기) + main usage 미캡처 수정
 type: bugfix
-status: in-progress
+status: user-verify
 phase: 3
 assignee: pdt-developer
 requires_qa: true

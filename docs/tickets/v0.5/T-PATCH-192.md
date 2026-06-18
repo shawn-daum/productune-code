@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-192
 version: v0.5
 type: fix
-status: backlog
+status: todo
 phase: 4
 assignee: pdt-developer
 created_at: 2026-06-17T00:00:00Z

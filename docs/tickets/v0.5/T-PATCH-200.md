@@ -4,7 +4,7 @@ version: v0.5
 slug: persona-pane-memory-hierarchy
 title: Persona pane — 기억 계층화 재설계 + hook/mcp/workflow-settings 비노출
 type: refactor
-status: in-progress
+status: user-verify
 phase: 3
 assignee: pdt-developer
 requires_qa: true

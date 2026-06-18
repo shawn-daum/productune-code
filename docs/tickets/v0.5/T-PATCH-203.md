@@ -4,7 +4,7 @@ version: v0.5
 slug: phase-boundary-gate-marker
 title: Phase 경계 gate 시각화 — PhaseBreadcrumb 경계에 close_gate 상태 인라인
 type: feature
-status: in-progress
+status: user-verify
 phase: 3
 assignee: pdt-developer
 requires_qa: true
