@@ -4,6 +4,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { withLoginShellPath } from '../surface-runner'
 
 const execFileAsync = promisify(execFile)
 
@@ -168,14 +169,15 @@ function parseCliMcpLine(line: string): CliMcpServer | null {
  * decision) and parse the server list + live connection status. Returns an empty
  * array if the CLI is unavailable / errors — callers fall back to the file tiers.
  *
- * Reuses the same PATH-based `claude` resolution as the other ipc handlers
- * (onboarding.ts / po-runner.ts) — `claude` is expected on PATH.
+ * Reuses the same login-shell PATH resolution as the other CLI spawns
+ * (onboarding.ts / po-runner.ts) via withLoginShellPath — `claude` resolves even
+ * under a Finder/packaged-app launch (launchd's minimal PATH). T-PATCH-216.
  */
 async function listClaudeCliServers(): Promise<CliMcpServer[]> {
   try {
     const { stdout } = await execFileAsync('claude', ['mcp', 'list'], {
       timeout: 15_000,
-      env: { ...process.env, NO_COLOR: '1' },
+      env: withLoginShellPath({ ...process.env, NO_COLOR: '1' }),
       maxBuffer: 1024 * 1024,
     })
     const out: CliMcpServer[] = []

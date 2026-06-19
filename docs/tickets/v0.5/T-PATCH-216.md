@@ -4,16 +4,18 @@ version: v0.5
 slug: engine-exec-login-shell-path
 title: PO 실행/MCP claude spawn — login-shell PATH 미보강(Finder-launch ENOENT) 정합
 type: impl
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
+qa_loops: 1
 requires_user_gate: false
 area_tag: engine-exec
 estimated_complexity: L2
 risk_flags: []
 created_at: 2026-06-19T00:00:00Z
+completed_at: 2026-06-19T00:00:00Z
 ---
 
 # T-PATCH-216: PO 실행/MCP claude spawn — login-shell PATH 정합
@@ -63,3 +65,24 @@ load-bearing. (터미널에서 띄우면 PATH 가 살아있어 안 보이는, de
 
 T-PATCH-199 와 동일하게 cua macOS-VM 하니스로 검증(무결 VM + claude 를
 `~/.local/bin` 설치 + 패키징 앱 Finder-launch). 참고: `docs/qa/bookshelf/cua-vm-harness.md`.
+
+---
+
+## QA sign-off (2026-06-19, cua macOS-VM 실측) — qa_status: pass
+
+구현: `surface-runner.ts` `withLoginShellPath(env)` export(단일 소스) → onboarding
+`loginShellEnv`/checkClaude·Codex + `po-runner.ts:510` + `mcp.ts:176` 4곳이 공유.
+build green(tsc) · smoke PASS(playwright-electron).
+
+- **AC-1 PASS** — `claude --version`이 withLoginShellPath env(login-shell PATH)에서
+  resolve(`2.1.181`). 회귀가드: bare launchd PATH = `command not found`.
+- **AC-2 PASS** — `claude mcp list`(무인증)가 동일 env에서 정상 반환
+  ("No MCP servers configured…"), ENOENT 아님.
+- **AC-4 PASS** — 출하 번들에서 단일 minified 헬퍼(`Et`=withLoginShellPath)를 login·
+  checkClaude·po-runner·mcp 가 공유. bare `env:process.env` 0건 → drift 없음.
+- **AC-3** — login-shell PATH에 claude 있고 launchd PATH엔 없는 정상 유저 baseline이
+  곧 위 테스트 조건 → 실효 확인.
+
+**비실행**: 패키징 앱 in-app 전체 PO 세션 구동(claude authed + 프로젝트 필요)은
+미실행 — claude 해석 메커니즘이 T-PATCH-199 AC-1(라이브 GUI 검증)과 동일 경로라
+저위험. 실사용 시 PO 기동까지 1회 눈확인 권장.

@@ -7,7 +7,7 @@ import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { setUiLanguage } from '@productune/core'
 import type { UiLanguage } from '@productune/core'
-import { loginShellPath } from '../surface-runner'
+import { withLoginShellPath } from '../surface-runner'
 
 const execFileAsync = promisify(execFile)
 
@@ -75,12 +75,7 @@ function emitLogin(channel: string, payload: unknown): void {
  *  failure surface-runner already fixes for build/run spawns (T-PATCH-186).
  *  Earlier entries win; deduped. */
 function loginShellEnv(): NodeJS.ProcessEnv {
-  const sep = path.delimiter
-  const merged = [
-    ...loginShellPath().split(sep),
-    ...(process.env.PATH ?? '').split(sep),
-  ].filter(Boolean)
-  return { ...process.env, PATH: [...new Set(merged)].join(sep) }
+  return withLoginShellPath(process.env)
 }
 
 /** Spawn a hidden login process (`claude auth login` / `codex login`) and wire
