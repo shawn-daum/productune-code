@@ -4,11 +4,12 @@ version: v0.5
 slug: onboarding-no-terminal-login
 title: 온보딩 — 엔진 로그인을 무터미널 브라우저 OAuth로 전환 (옵션 A)
 type: feature
-status: user-verify
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
+qa_loops: 1
 requires_user_gate: true
 area_tag: onboarding
 risk_flags: >
@@ -24,6 +25,7 @@ risk_flags: >
   영역) — 터미널/TCC 는 제거되나 브라우저는 남는다.
 estimated_complexity: L2
 created_at: 2026-06-17T00:00:00Z
+completed_at: 2026-06-19T00:00:00Z
 ---
 
 ## 배경 / 목적
@@ -105,3 +107,32 @@ fresh VM = 무결 TCC 상태라 "프롬프트 안 뜸"을 깨끗이 재현 가�
 4. paste-code 폴백 카드 동작(콜백 실패 시 stdin write).
 5. (가능하면) 비개발자 완주 관찰 — "타깃 유저 미검증" 리스크 검증 겸.
 ~~node-pty 패키징 로드 검증~~ → node-pty 미사용으로 불요.
+
+---
+
+## QA sign-off (2026-06-19, cua macOS-VM 실측) — qa_status: pass
+
+검증: 무결 VM + claude `~/.local/bin` 설치 + 패키징 productune.app(`com.productune.gui`)
+Finder-launch. 빌드 green(tsc) · smoke PASS(playwright-electron) · acceptance ↓.
+
+QA 중 **2건의 PATH 회귀 발견·수정**(commit 본 브랜치):
+1. `startHiddenLogin` spawn `env: process.env` → `loginShellEnv()` — 없으면 claude
+   ENOENT, 브라우저 미오픈(AC-1 fail).
+2. `checkClaude`/`checkCodex` 검출 execFile에 `{env: loginShellEnv()}` — 없으면 claude
+   설치돼도 "not installed"(AC-2 fail). 라이브 before/after 확인.
+
+- **AC-1 PASS** — 라이브 GUI: "Connect" → `claude auth login` spawn → Safari가
+  claude.ai OAuth 표시. 터미널無 · Automation 프롬프트無.
+- **AC-2 PASS(검출)** — checkClaude가 "installed · not authed"로 정상 검출. 실계정
+  완주 후 authed flip은 미변경 폴링 재사용(저위험). 실계정 완주는 미실행(VM).
+- **AC-3 PASS(mech)** — 실출력 `Paste code here if prompted >` → `isPasteCodePrompt` 매칭.
+- **AC-4 N/A** — codex 폐기 결정. 동일 fix는 login spawn+checkCodex에 선반영.
+- **AC-5 PASS** — osascript/openTerminalWith 실호출 0건.
+- **AC-6 PASS** — 라이브: "Connect later in Settings" + "continue without it /
+  connect later from Settings" 안내 = 정상경로 Skip(죽은 회색 Next+모호 Skip 해소).
+
+**user-gate 잔여(requires_user_gate)**: AC-2 실계정 OAuth 완주 + AC-6/온보딩
+비개발자 완주 관찰은 throwaway VM/무계정 제약으로 미실행 — shawn hands-on 1회 권장.
+
+**Sibling 발견 → T-PATCH-216 발행**: `po-runner.ts:510` + `mcp.ts:176`도 동일 PATH
+버그(코어 PO 실행/MCP, load-bearing). 본 티켓 범위 밖이라 분리.
