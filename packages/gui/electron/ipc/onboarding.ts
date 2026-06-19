@@ -7,6 +7,7 @@ import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { setUiLanguage } from '@productune/core'
 import type { UiLanguage } from '@productune/core'
+import { loginShellPath } from '../surface-runner'
 
 const execFileAsync = promisify(execFile)
 
@@ -66,6 +67,22 @@ function emitLogin(channel: string, payload: unknown): void {
   }
 }
 
+/** Build a child env whose PATH includes the user's login-shell PATH, so a
+ *  globally-installed `claude`/`codex` (Homebrew, npm-global, `~/.local/bin`)
+ *  resolves even when the app was launched from Finder. A packaged-app launch
+ *  inherits launchd's minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so a bare
+ *  `claude` spawn would exit ENOENT and the browser would never open — same
+ *  failure surface-runner already fixes for build/run spawns (T-PATCH-186).
+ *  Earlier entries win; deduped. */
+function loginShellEnv(): NodeJS.ProcessEnv {
+  const sep = path.delimiter
+  const merged = [
+    ...loginShellPath().split(sep),
+    ...(process.env.PATH ?? '').split(sep),
+  ].filter(Boolean)
+  return { ...process.env, PATH: [...new Set(merged)].join(sep) }
+}
+
 /** Spawn a hidden login process (`claude auth login` / `codex login`) and wire
  *  its stdout/stderr to the renderer via webContents.send. Returns immediately;
  *  does NOT block on the browser OAuth handshake. */
@@ -83,8 +100,10 @@ function startHiddenLogin(engine: 'claude' | 'codex'): { ok: boolean; error?: st
   try {
     child = spawn(cmd, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      // Inherit the user's PATH so the globally-installed CLI resolves.
-      env: process.env,
+      // T-PATCH-199 fix: augment PATH with the login-shell PATH so the globally
+      // installed CLI resolves under a Finder/packaged-app launch (launchd's
+      // minimal PATH otherwise → ENOENT, browser never opens). See loginShellEnv.
+      env: loginShellEnv(),
     })
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'spawn failed' }
@@ -159,9 +178,15 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 
 export function register(): void {
   ipcMain.handle('onboarding:checkClaude', async () => {
+    // T-PATCH-199: detection must resolve the CLI under the login-shell PATH too
+    // (Finder/packaged-app launch only inherits launchd's minimal PATH, so a
+    // globally-installed `claude` in ~/.local/bin / Homebrew reads as "not
+    // installed" and post-login `authed` is never detected). Mirrors the login
+    // spawn fix (loginShellEnv) and surface-runner (T-PATCH-186).
+    const env = loginShellEnv()
     let installed = false
     try {
-      await execFileAsync('which', ['claude'])
+      await execFileAsync('which', ['claude'], { env })
       installed = true
     } catch { return { installed: false, authed: false } }
 
@@ -171,7 +196,7 @@ export function register(): void {
 
     // Slow path: ask CLI (5 s timeout)
     try {
-      const out = await execFileAsync('claude', ['auth', 'status'], { timeout: 5000 }) as any
+      const out = await execFileAsync('claude', ['auth', 'status'], { timeout: 5000, env }) as any
       const stdout: string = typeof out === 'string' ? out : (out?.stdout ?? '')
       const data = JSON.parse(stdout)
       return { installed: true, authed: data?.loggedIn === true }
@@ -183,7 +208,7 @@ export function register(): void {
   ipcMain.handle('onboarding:checkCodex', async () => {
     let installed = false
     try {
-      await execFileAsync('which', ['codex'])
+      await execFileAsync('which', ['codex'], { env: loginShellEnv() })
       installed = true
     } catch { return { installed: false, authed: false } }
 
