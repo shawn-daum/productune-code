@@ -530,6 +530,39 @@
   align-self: center;
 }
 
+/* T-PATCH-219: free-text answer block — same .opt hierarchy, inline input. */
+.opt-freetext {
+  cursor: text;
+  align-items: center;
+}
+.opt-freetext:hover { background: var(--surface-subpanel); }
+.opt-freetext-body { flex: 1 1 auto; }
+.opt-freetext-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: var(--leading-snug);
+  padding: 0;
+}
+.opt-freetext-input::placeholder { color: var(--text-muted); }
+.opt-freetext-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-1);
+  border-radius: var(--radius-xs);
+}
+.opt-freetext-send:enabled:hover { color: var(--accent); background: var(--surface-panel); }
+.opt-freetext-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* ── pill (neutral + tier variant, §8.2) ─────────────────────────────────── */
 .pill {
   display: inline-flex;

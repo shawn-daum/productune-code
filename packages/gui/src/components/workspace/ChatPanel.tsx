@@ -475,40 +475,10 @@ export default function ChatPanel() {
             <div style={dockBody}>
               <AskUserQuestionCard message={pendingQuestion} />
             </div>
-            <div style={modalInputArea}>
-              <textarea
-                style={modalTextarea}
-                value={modalDraft}
-                onChange={(e) => setModalDraft(e.target.value)}
-                onKeyDown={onModalKeyDown}
-                placeholder={t('workspace.chat.inputPlaceholder')}
-                rows={1}
-                disabled={streaming || !project || rateLimited}
-              />
-              {/* T-PATCH-081 AC-4: modal composer also shows stop while streaming */}
-              {streaming ? (
-                <button
-                  style={{ ...modalSendBtn, background: '#EF4444' }}
-                  onClick={handleAbort}
-                  aria-label="Stop generation"
-                  title={t('workspace.chat.stop')}
-                >
-                  <Square size={14} strokeWidth={2.5} />
-                </button>
-              ) : (
-                <button
-                  style={{
-                    ...modalSendBtn,
-                    opacity: !modalDraft.trim() ? 0.5 : 1,
-                    cursor: !modalDraft.trim() ? 'not-allowed' : 'pointer',
-                  }}
-                  onClick={handleModalSend}
-                  disabled={!modalDraft.trim()}
-                >
-                  {t('workspace.chat.send')}
-                </button>
-              )}
-            </div>
+            {/* T-PATCH-219: free-text input moved INTO the question card as the last
+                option block (AskUserQuestionCard). The separate dock composer (the
+                non-functional-looking "Type a message") is removed — answer by clicking
+                an option or typing in the in-card free-text block. */}
           </div>
         ) : (
         /* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */
