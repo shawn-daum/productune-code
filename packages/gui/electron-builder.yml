@@ -47,6 +47,22 @@ extraResources:
     to: build/tray
     filter:
       - "**/*"
+  # T-PATCH-217: bundle packages/core (doctrine · agents · config · skills) to
+  # <app>/Contents/Resources/core. onboarding.ts resolves coreDir as
+  # `app.getAppPath()/../core` = Resources/app.asar/../core = Resources/core, and
+  # the setup step readdir's core/agents (unguarded). Without this the packaged
+  # app's onboarding fails with ENOENT. Exclude build/dev-only weight.
+  - from: ../core
+    to: core
+    filter:
+      - "**/*"
+      - "!node_modules/**"
+      - "!.turbo/**"
+      - "!dist/**"
+      - "!src/**"
+      - "!test/**"
+      - "!**/.DS_Store"
+      - "!tsconfig.json"
 
 mac:
   target:
