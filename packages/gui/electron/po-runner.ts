@@ -26,6 +26,7 @@ import os from 'os'
 import fs from 'fs'
 import type { WebContents } from 'electron'
 import { fireNotification } from './notifications'
+import { withLoginShellPath } from './surface-runner'
 import {
   appendSubagentTurn,
   extractSubagentCapture,
@@ -506,7 +507,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // T-PATCH-149: experimental — exposes SendMessage (PO can continue a subagent by agentId
     // instead of fresh re-dispatch); also activates auto-resume + TeamCreate/TeamDelete. User
     // decision 2026-06-16. Sole gate for agent-teams; works in headless `--print`.
-    const env = { ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' }
+    // T-PATCH-216: augment PATH with the login-shell PATH so `claude` resolves
+    // under a Finder/packaged-app launch (launchd's minimal PATH → ENOENT otherwise).
+    const env = withLoginShellPath({ ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' })
     const child = spawn('claude', args, {
       env,
       cwd: opts.projectDir,

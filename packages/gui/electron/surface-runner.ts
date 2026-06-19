@@ -126,6 +126,22 @@ export function loginShellPath(): string {
 }
 
 /**
+ * T-PATCH-216: return `env` with its PATH augmented by the login-shell PATH, so
+ * a globally-installed CLI (`claude`/`codex` in ~/.local/bin, Homebrew, npm-global)
+ * resolves even under a Finder/packaged-app launch (launchd's minimal PATH).
+ * Single source shared by every bare-CLI spawn (onboarding login + detection,
+ * po-runner, mcp) so the resolution never drifts. Earlier entries win; deduped.
+ */
+export function withLoginShellPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sep = path.delimiter
+  const merged = [
+    ...loginShellPath().split(sep),
+    ...(env.PATH ?? '').split(sep),
+  ].filter(Boolean)
+  return { ...env, PATH: [...new Set(merged)].join(sep) }
+}
+
+/**
  * T-PATCH-186: build a PATH that resolves both project-local and global tools.
  *
  *   1. Project `node_modules/.bin` dirs (projectDir → root) — JS-local CLIs like
