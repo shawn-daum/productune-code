@@ -4,15 +4,18 @@ version: v0.5
 slug: po-turn-hang-detect-and-compacting-label
 title: PO turn hang 감지/타임아웃 + "Compacting" 라벨 정확화 (침묵≠압축, 이른 트리거)
 type: impl
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
+qa_status: pass
+qa_loops: 1
 requires_user_gate: false
 area_tag: po-chat
 estimated_complexity: L3
 risk_flags: []
 created_at: 2026-06-19T00:00:00Z
+completed_at: 2026-06-19T00:00:00Z
 ---
 
 # T-PATCH-221: PO turn hang 감지 + Compacting 라벨
@@ -52,6 +55,27 @@ cua VM 진단: claude(`--agent pdt-po`)가 **13분째 살아있으나 STAT=S(sle
 ## Out of scope
 
 - hang root-cause(MCP/API) 자체 수정(조사 후 별도 티켓 가능).
+
+## 구현 (2026-06-19)
+
+- `po-runner.ts`: PoHealthState += `'thinking'|'stalled'`. armSilenceTimeout가 침묵 15s →
+  **'thinking'**(healthy일 때만; 'delegating' 다운그레이드 안 함), 추가로 **90s 침묵 →
+  'stalled'** 워치독. stdout 재개 시 thinking/stalled → 'healthy' 복귀(무한잠금 해소).
+  clearSilenceTimeout가 두 타이머 모두 정리. 진짜 compact는 기존 compact_pre 이벤트만.
+- `store/sessionHealth.ts`: 타입 + HEALTH_PRIORITY + severityOf(thinking→info, stalled→warn).
+- `SessionHealthSegment.tsx`: thinking(Loader2 spin)·stalled(Clock) icon/label/hint.
+- `ChatPanel.tsx` verbForHealth: thinking·stalled 라벨.
+- locales en/ko: sessionHealth.thinking/stalled + chat.working.thinking/stalled.
+
+## QA sign-off (2026-06-19) — qa_status: pass (build/smoke), 라이브 timing 확인 권장
+
+- **build green** (tsc + check-locale-keys: en/ko 키 패리티 OK) · **smoke PASS**(부팅 회귀 없음).
+- **AC-1/2/4 (코드)**: 침묵→'thinking'(라벨 "Thinking/생각 중"), 진짜 compact_pre만 'compacting',
+  turn1 첫토큰 지연도 'thinking'으로 정확표기. **AC-3**: 90s 침묵+blocked → 'stalled'
+  ("평소보다 오래 걸려요 — Reset session") + 무한잠금 해소(stdout 재개 시 healthy 복귀).
+- **라이브 timing 관찰 권장(VNC)**: PO turn 침묵 시 인디케이터가 "정리 중"이 아니라
+  "생각 중"으로, 장기 hang 시 "평소보다 오래…"로 뜨는지 1회 눈확인. (cua 입력 한계로
+  자동 timing 캡처는 미실행.)
 
 ## QA 노트
 cua VM: PO turn 중 라벨/타임아웃 거동 관찰. 참고: `docs/qa/bookshelf/cua-vm-harness.md`.

@@ -401,7 +401,9 @@
       "working": {
         "default": "Working",
         "delegating": "Delegating to {{persona}}",
-        "compacting": "Compacting conversation"
+        "compacting": "Compacting conversation",
+        "thinking": "Thinking",
+        "stalled": "Still waiting — may be stuck"
       },
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
@@ -477,6 +479,14 @@
     "sessionHealth": {
       "healthy": {
         "label": "Ready"
+      },
+      "thinking": {
+        "label": "Thinking…",
+        "hint": "The PO is working on the first response — this can take a moment."
+      },
+      "stalled": {
+        "label": "Taking longer than usual…",
+        "hint": "No response yet — it may be stuck. You can Reset session to retry."
       },
       "delegating": {
         "label": "Delegating to {{persona}}…",

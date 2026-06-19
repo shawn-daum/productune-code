@@ -17,6 +17,7 @@ import {
   Hourglass,
   ShieldAlert,
   AlertTriangle,
+  Clock,
 } from 'lucide-react'
 import { useSessionHealth, severityOf, type PoHealthState, type PoHealthDetail } from '../../store/sessionHealth'
 
@@ -59,6 +60,16 @@ function StateIcon({ state }: { state: PoHealthState }) {
   const sz = 11
 
   switch (state) {
+    case 'thinking':
+      return (
+        <Loader2
+          size={sz}
+          color={color}
+          style={{ animation: 'sh-spin 1.2s linear infinite' }}
+        />
+      )
+    case 'stalled':
+      return <Clock size={sz} color={color} />
     case 'delegating':
       return (
         <Loader2
@@ -94,6 +105,10 @@ function StateIcon({ state }: { state: PoHealthState }) {
 
 function buildLabel(state: PoHealthState, detail: PoHealthDetail, t: (k: string, opts?: any) => string): string {
   switch (state) {
+    case 'thinking':
+      return t('workspace.sessionHealth.thinking.label')
+    case 'stalled':
+      return t('workspace.sessionHealth.stalled.label')
     case 'delegating':
       return t('workspace.sessionHealth.delegating.label', { persona: detail.persona ?? '…' })
     case 'compacting':
@@ -111,6 +126,10 @@ function buildLabel(state: PoHealthState, detail: PoHealthDetail, t: (k: string,
 
 function buildHint(state: PoHealthState, detail: PoHealthDetail, t: (k: string, opts?: any) => string): string {
   switch (state) {
+    case 'thinking':
+      return t('workspace.sessionHealth.thinking.hint')
+    case 'stalled':
+      return t('workspace.sessionHealth.stalled.hint')
     case 'delegating':
       return t('workspace.sessionHealth.delegating.hint')
     case 'compacting':
