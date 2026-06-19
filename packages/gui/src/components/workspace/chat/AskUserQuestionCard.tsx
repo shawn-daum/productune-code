@@ -15,7 +15,7 @@
 
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Loader2 } from 'lucide-react'
+import { Check, Loader2, CornerDownLeft } from 'lucide-react'
 import type { Message, AskUserQuestionPayload } from '../../../lib/types'
 import { useWorkspace } from '../../../store/workspace'
 
@@ -50,20 +50,20 @@ export default function AskUserQuestionCard({ message }: Props) {
 function LiveCard({ message, payload }: { message: Message; payload: AskUserQuestionPayload }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  // T-PATCH-219: free-text answer rendered as the last option block.
+  const [freeText, setFreeText] = useState('')
   const appendMessage = useWorkspace((s) => s.appendMessage)
   const setMessages = useWorkspace((s) => s.setMessages)
   const project = useWorkspace((s) => s.project)
   const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
 
-  const handleSelect = async (key: string) => {
+  // T-PATCH-219: shared submit path for both option clicks and free-text answers.
+  const submitAnswer = async (key: string, chosenLabel: string) => {
     if (selectedKey !== null || pending) return
 
     // ≤100ms: immediate visual selection (AC6 Feedback).
     setSelectedKey(key)
     setPending(true)
-
-    const chosen = payload.options.find((o) => o.key === key)
-    const chosenLabel = chosen?.title ?? key
 
     // Optimistic local resolve so the card shows the chip + the chosen answer
     // surfaces as a user bubble immediately. The RESUME itself originates in
@@ -125,6 +125,17 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
     setPending(false)
   }
 
+  const handleSelect = (key: string) => {
+    const chosen = payload.options.find((o) => o.key === key)
+    submitAnswer(key, chosen?.title ?? key)
+  }
+
+  // T-PATCH-219: free-text answer = submit typed text as the answer (no option key).
+  const handleFreeText = () => {
+    const txt = freeText.trim()
+    if (txt) submitAnswer('__custom__', txt)
+  }
+
   const isResolved = selectedKey !== null
 
   return (
@@ -162,6 +173,39 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
               </button>
             )
           })}
+
+          {/* T-PATCH-219: free-text answer as the last option block (same hierarchy).
+              Typing + Enter answers the question directly — no option selection needed. */}
+          <div className={`opt opt-freetext${isResolved ? ' dimmed' : ''}`}>
+            <span className="opt-key">✎</span>
+            <span className="opt-body opt-freetext-body">
+              <input
+                className="opt-freetext-input"
+                value={freeText}
+                onChange={(e) => setFreeText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleFreeText()
+                  }
+                }}
+                placeholder="Choose an answer above, or type your own…"
+                disabled={isResolved}
+                aria-label="Type your own answer"
+              />
+            </span>
+            <span className="opt-check">
+              <button
+                className="opt-freetext-send"
+                onClick={handleFreeText}
+                disabled={isResolved || !freeText.trim()}
+                aria-label="Send answer"
+                title="Send"
+              >
+                <CornerDownLeft size={13} strokeWidth={2} />
+              </button>
+            </span>
+          </div>
         </div>
       </div>
     </div>

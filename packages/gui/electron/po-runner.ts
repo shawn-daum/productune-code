@@ -24,6 +24,7 @@ import type { ChildProcess } from 'child_process'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
+import { app } from 'electron'
 import type { WebContents } from 'electron'
 import { fireNotification } from './notifications'
 import { withLoginShellPath } from './surface-runner'
@@ -279,6 +280,12 @@ export async function runPoTurn(opts: SendOpts, cb: RunCallbacks): Promise<void>
   if (canSpawnClaude()) {
     return spawnClaude(opts, msgId, cb)
   }
+  // T-PATCH-218: in a packaged app, claude genuinely missing is a real user-facing
+  // condition — surface install/login guidance instead of the dev-only echo loop.
+  // dev (!isPackaged) keeps echo mode so the UI stays exercisable without claude.
+  if (app.isPackaged) {
+    return claudeMissingNotice(msgId, cb)
+  }
   return echoFallback(opts, msgId, cb)
 }
 
@@ -289,12 +296,15 @@ function canSpawnClaude(): boolean {
   const envPath = path.join(os.homedir(), '.productune', 'productune.env')
   if (!fs.existsSync(envPath)) return false
 
-  // Cheap PATH lookup — POSIX shells expose `which`; on Windows, skip.
+  // T-PATCH-218: search the SAME login-shell-augmented PATH the actual spawn uses
+  // (withLoginShellPath, see runPoTurn). A Finder/packaged-app launch only inherits
+  // launchd's minimal PATH, so a `claude` in ~/.local/bin / Homebrew was missed here
+  // → false "not detected" → echo mode even with claude installed + authed.
   if (process.platform === 'win32') return false
-  const paths = (process.env.PATH ?? '').split(':')
-  for (const p of paths) {
+  const searchPath = withLoginShellPath(process.env).PATH ?? ''
+  for (const p of searchPath.split(path.delimiter)) {
     try {
-      if (fs.existsSync(path.join(p, 'claude'))) return true
+      if (p && fs.existsSync(path.join(p, 'claude'))) return true
     } catch { /* ignore */ }
   }
   return false
@@ -1016,6 +1026,22 @@ function parseTodoItems(text: string): TodoItemRaw[] {
   }
 
   return []
+}
+
+// ── Claude-missing notice (packaged app) ──────────────────────────────────────
+
+/** T-PATCH-218: packaged app with no claude on the login-shell PATH (or no env
+ *  file) → actionable install/login guidance instead of the dev-only echo loop. */
+function claudeMissingNotice(msgId: string, cb: RunCallbacks): Promise<void> {
+  const hCtx = makeHealthCtx(msgId)
+  emitHealth('healthy', undefined, hCtx, cb)
+  cb.onAnnounce(msgId, {
+    level: 'system',
+    text: 'Claude Code CLI not detected. Install it from https://claude.ai/code, launch it once to log in, then retry — Settings → engine to reconnect.',
+  })
+  cb.onDone(msgId, {})
+  emitHealth('healthy', undefined, hCtx, cb)
+  return Promise.resolve()
 }
 
 // ── Echo fallback (no claude installed / no env) ───────────────────────────────
