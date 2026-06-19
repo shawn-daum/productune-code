@@ -106,7 +106,7 @@ const cancelled = new Set<string>()
  * (the `fix-path` approach) recovers them. Returns '' on failure or Windows.
  */
 let loginShellPathCache: string | null = null
-function loginShellPath(): string {
+export function loginShellPath(): string {
   if (loginShellPathCache !== null) return loginShellPathCache
   if (process.platform === 'win32') return (loginShellPathCache = '')
   try {
