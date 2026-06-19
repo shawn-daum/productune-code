@@ -823,6 +823,8 @@ function verbForHealth(
     if (id) return t('workspace.chat.working.delegating', { persona: PERSONA_LABELS[id] })
   }
   if (state === 'compacting') return t('workspace.chat.working.compacting')
+  if (state === 'thinking') return t('workspace.chat.working.thinking')
+  if (state === 'stalled') return t('workspace.chat.working.stalled')
   return t('workspace.chat.working.default')
 }
 

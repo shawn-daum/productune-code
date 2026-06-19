@@ -78,8 +78,10 @@ export interface AnnouncePayload {
 
 export type PoHealthState =
   | 'healthy'
+  | 'thinking'      // T-PATCH-221: silence heuristic (was mislabeled 'compacting')
   | 'delegating'
-  | 'compacting'
+  | 'compacting'    // only on a real compact_pre / compact===true stream event
+  | 'stalled'       // T-PATCH-221: long silence + no output → likely blocked/hung
   | 'rate-limited'
   | 'permission-blocked'
   | 'error-other'
@@ -325,8 +327,10 @@ interface HealthContext {
    */
   lastDelegatedPersona: string | null
   msgId: string
-  /** setTimeout handle for the compacting heuristic (silence timeout) */
+  /** setTimeout handle for the silence heuristic (→ 'thinking') */
   silenceTimeoutHandle: ReturnType<typeof setTimeout> | null
+  /** T-PATCH-221: longer watchdog — sustained silence → 'stalled' (likely hung) */
+  stallTimeoutHandle: ReturnType<typeof setTimeout> | null
   lastTokenAt: number | null
   /** T-PATCH-164: 진행 중 위임의 tool_use.id → subagent_type(원본 문자열). per-subagent 완료 매핑용. */
   delegatedByToolUseId: Map<string, string>
@@ -348,7 +352,8 @@ interface HealthContext {
   oqPending: boolean
 }
 
-const SILENCE_TIMEOUT_MS  = 15_000   // heuristic compacting
+const SILENCE_TIMEOUT_MS  = 15_000   // silence → 'thinking' (claude producing nothing yet)
+const STALL_TIMEOUT_MS    = 90_000   // T-PATCH-221: sustained silence → 'stalled' (likely hung)
 
 // T-PATCH-158: Claude Code renamed the sub-agent dispatch tool Task→Agent.
 // Match BOTH so delegation detection (→ persona bar designer/dev/qa) fires
@@ -363,6 +368,7 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
     lastDelegatedPersona: null,
     msgId,
     silenceTimeoutHandle: null,
+    stallTimeoutHandle: null,
     lastTokenAt: null,
     delegatedByToolUseId: new Map(),
     subagentCaptureByParentId: new Map(),
@@ -398,6 +404,11 @@ function clearSilenceTimeout(ctx: HealthContext): void {
     clearTimeout(ctx.silenceTimeoutHandle)
     ctx.silenceTimeoutHandle = null
   }
+  // T-PATCH-221: clear the stall watchdog alongside the silence timer.
+  if (ctx.stallTimeoutHandle !== null) {
+    clearTimeout(ctx.stallTimeoutHandle)
+    ctx.stallTimeoutHandle = null
+  }
 }
 
 function armSilenceTimeout(ctx: HealthContext, cb: RunCallbacks): void {
@@ -408,15 +419,24 @@ function armSilenceTimeout(ctx: HealthContext, cb: RunCallbacks): void {
   // (oqPending is cleared on turn start and after onDone).
   if (ctx.oqPending) return
   clearSilenceTimeout(ctx)
+  // T-PATCH-221: silence → 'thinking' (NOT 'compacting'; real compaction is emitted
+  // only on the compact_pre/compact stream event). Don't downgrade 'delegating'.
   ctx.silenceTimeoutHandle = setTimeout(() => {
-    // Only fire if still healthy/delegating (not already in a worse state)
-    if (
-      ctx.lastEmittedState === 'healthy' ||
-      ctx.lastEmittedState === 'delegating'
-    ) {
-      emitHealth('compacting', undefined, ctx, cb)
+    if (ctx.lastEmittedState === 'healthy') {
+      emitHealth('thinking', undefined, ctx, cb)
     }
   }, SILENCE_TIMEOUT_MS)
+  // T-PATCH-221: sustained silence with no output → 'stalled' (likely blocked/hung).
+  // Surfaces a "may be stuck — Reset session" affordance instead of locking forever.
+  ctx.stallTimeoutHandle = setTimeout(() => {
+    if (
+      ctx.lastEmittedState === 'healthy' ||
+      ctx.lastEmittedState === 'thinking' ||
+      ctx.lastEmittedState === 'delegating'
+    ) {
+      emitHealth('stalled', undefined, ctx, cb)
+    }
+  }, STALL_TIMEOUT_MS)
 }
 
 /** Inspect a stderr line for health signals. */
@@ -532,6 +552,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     let stderrBuf = ''
 
     child.stdout?.on('data', (chunk: Buffer) => {
+      // T-PATCH-221: output resumed → clear a prior silence guess (thinking/stalled)
+      // back to healthy so the indicator and input recover (handleStreamJsonLine may
+      // then promote to delegating/etc. based on the actual event).
+      if (hCtx.lastEmittedState === 'thinking' || hCtx.lastEmittedState === 'stalled') {
+        emitHealth('healthy', undefined, hCtx, cb)
+      }
       // Arm/reset silence timeout on any stdout data.
       armSilenceTimeout(hCtx, cb)
       hCtx.lastTokenAt = Date.now()

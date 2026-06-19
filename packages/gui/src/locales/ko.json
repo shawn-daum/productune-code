@@ -401,7 +401,9 @@
       "working": {
         "default": "작업 중",
         "delegating": "{{persona}}에게 위임 중",
-        "compacting": "대화 정리 중"
+        "compacting": "대화 정리 중",
+        "thinking": "생각 중",
+        "stalled": "응답 지연 — 멈췄을 수 있어요"
       },
       "rateLimit": {
         "estimated": "API 한도 도달 — 약 {{n}}초 후 재시도 가능 (추정)",
@@ -477,6 +479,14 @@
     "sessionHealth": {
       "healthy": {
         "label": "준비됨"
+      },
+      "thinking": {
+        "label": "생각 중…",
+        "hint": "PO가 첫 응답을 준비 중이에요 — 잠시 걸릴 수 있어요."
+      },
+      "stalled": {
+        "label": "평소보다 오래 걸려요…",
+        "hint": "아직 응답이 없어요 — 멈췄을 수 있어요. Reset session으로 다시 시도할 수 있어요."
       },
       "delegating": {
         "label": "{{persona}} 위임 중…",

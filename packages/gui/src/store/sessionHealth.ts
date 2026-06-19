@@ -13,8 +13,13 @@ import { create } from 'zustand'
 
 export type PoHealthState =
   | 'healthy'
+  // T-PATCH-221: silence heuristic — claude is producing nothing yet. Was mislabeled
+  // 'compacting'; 'thinking' is accurate (first token of a heavy pdt-po prompt is slow).
+  | 'thinking'
   | 'delegating'
   | 'compacting'
+  // T-PATCH-221: long silence + no output → likely blocked/hung (no timeout before).
+  | 'stalled'
   | 'rate-limited'
   | 'permission-blocked'
   | 'error-other'
@@ -48,11 +53,13 @@ export interface PoHealthEvent {
  */
 export const HEALTH_PRIORITY: Record<PoHealthState, number> = {
   'healthy': 0,
-  'delegating': 1,
-  'compacting': 2,
-  'rate-limited': 3,
-  'error-other': 4,
-  'permission-blocked': 5,
+  'thinking': 1,
+  'delegating': 2,
+  'compacting': 3,
+  'stalled': 4,
+  'rate-limited': 5,
+  'error-other': 6,
+  'permission-blocked': 7,
 }
 
 export type HealthSeverity = 'none' | 'info' | 'warn' | 'error'
@@ -60,8 +67,10 @@ export type HealthSeverity = 'none' | 'info' | 'warn' | 'error'
 export function severityOf(state: PoHealthState): HealthSeverity {
   switch (state) {
     case 'healthy':            return 'none'
+    case 'thinking':
     case 'delegating':
     case 'compacting':         return 'info'
+    case 'stalled':
     case 'rate-limited':       return 'warn'
     case 'permission-blocked':
     case 'error-other':        return 'error'
