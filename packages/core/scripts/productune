@@ -694,6 +694,13 @@ if [ -r "$HOME/.productune/productune.env" ]; then
   set +a
 fi
 
+# T-PATCH-228: enable claude agent-teams (SendMessage / auto-resume / TeamCreate) on the
+# CLI path to match the GUI (po-runner.ts spawn env). Default ON, but preserve an explicit
+# value from productune.env / the environment (AC-4 — a user who set 0 keeps it). This makes
+# delegation work even on a clone whose productune.env predates the install.sh backfill.
+# Keep the value (1) in sync with packages/gui/electron/po-runner.ts.
+export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-1}"
+
 # Banner (terse, one line). Skipped when piping or non-TTY.
 if [ -t 1 ] && [ -z "${PRODUCTUNE_QUIET_BANNER:-}" ]; then
   printf '\033[1;34m[productune]\033[0m engine=claude (hooks fire)\n' >&2

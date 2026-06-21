@@ -557,6 +557,16 @@ if [ ! -e "$PO_ENV_FILE" ] || ! grep -qE '^CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=' "$P
   say "auto-compact threshold defaulted to 70% in $PO_ENV_FILE"
 fi
 
+# 7a) T-PATCH-228: enable claude agent-teams (SendMessage / auto-resume / TeamCreate)
+#    for the CLI path. GUI po-runner.ts sets this in the spawn env; the CLI sources
+#    productune.env with `set -a`, so backfilling it here brings CLI to parity.
+#    Backfill ONLY when absent — a user who explicitly set 0 keeps their value (AC-4).
+#    Keep the value (1) in sync with packages/gui/electron/po-runner.ts.
+if ! grep -qE '^CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=' "$PO_ENV_FILE"; then
+  printf 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\n' >> "$PO_ENV_FILE"
+  say "agent-teams enabled (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1) in $PO_ENV_FILE"
+fi
+
 # 7b) Auto-install Claude Code hooks (idempotent merge into ~/.claude/settings.json)
 # Always re-run: merge function strips old productune hooks by basename so stale
 # absolute paths (clone moved to new device or new directory) are replaced correctly.
