@@ -21,6 +21,8 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 
 ## next-version (v0.x)
 
+- [v0.6] 정합성 감사 + 페르소나 워크스루 + Nemotron persona distill 모듈 — 품질 3차원 중 Coherence/Usability 빈칸을 메우는 독립 적대자. QA에 2개 신규 모드(coherence-audit·persona-walkthrough) + QA를 P2 소환, designer에 distill 파이프라인. 자체 PRD로 P1부터 태울 것(이 backlog 항목≠즉시구현). 롤아웃 R1(정합성 감사 MVP) → R2(distill→워크스루). 브리프: `/Users/x/Documents/dev/ntf-products/prd-master/DESIGN-coherence-persona-module.md`. (2026-06-19, shawn 결정 — v0.6 이월)
+
 ## pre-deploy
 
 ## next-version (v0.x) — codex 폐기

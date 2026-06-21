@@ -4,18 +4,17 @@ version: v0.5
 slug: po-turn-hang-detect-and-compacting-label
 title: PO turn hang 감지/타임아웃 + "Compacting" 라벨 정확화 (침묵≠압축, 이른 트리거)
 type: impl
-status: done
+status: todo
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pass
+qa_status: fail
 qa_loops: 1
 requires_user_gate: false
 area_tag: po-chat
 estimated_complexity: L3
 risk_flags: []
 created_at: 2026-06-19T00:00:00Z
-completed_at: 2026-06-19T00:00:00Z
 ---
 
 # T-PATCH-221: PO turn hang 감지 + Compacting 라벨
@@ -67,15 +66,35 @@ cua VM 진단: claude(`--agent pdt-po`)가 **13분째 살아있으나 STAT=S(sle
 - `ChatPanel.tsx` verbForHealth: thinking·stalled 라벨.
 - locales en/ko: sessionHealth.thinking/stalled + chat.working.thinking/stalled.
 
-## QA sign-off (2026-06-19) — qa_status: pass (build/smoke), 라이브 timing 확인 권장
+## ⚠️ QA FAIL (2026-06-19, cua 라이브) — 1차 구현 실효 0, status todo로 되돌림
 
-- **build green** (tsc + check-locale-keys: en/ko 키 패리티 OK) · **smoke PASS**(부팅 회귀 없음).
-- **AC-1/2/4 (코드)**: 침묵→'thinking'(라벨 "Thinking/생각 중"), 진짜 compact_pre만 'compacting',
-  turn1 첫토큰 지연도 'thinking'으로 정확표기. **AC-3**: 90s 침묵+blocked → 'stalled'
-  ("평소보다 오래 걸려요 — Reset session") + 무한잠금 해소(stdout 재개 시 healthy 복귀).
-- **라이브 timing 관찰 권장(VNC)**: PO turn 침묵 시 인디케이터가 "정리 중"이 아니라
-  "생각 중"으로, 장기 hang 시 "평소보다 오래…"로 뜨는지 1회 눈확인. (cua 입력 한계로
-  자동 timing 캡처는 미실행.)
+1차 구현(thinking/stalled state + 라벨 + 로케일, build green·smoke PASS)이 **라이브에서
+작동 안 함.** cua VM 2 turn 관찰:
+- **AC-1**: "정리 중/Compacting"은 안 뜸(하드페일 회피 ✓) — 그러나 의도한 "생각 중/Thinking"도
+  안 뜨고 침묵 내내 `"✴ Working · <경과>"`(healthy default)에 머묾.
+- **AC-3 FAIL**: turn2가 **~144초 침묵**(90s 임계 한참 초과) 후 스트리밍 시작했는데, 그 동안
+  stall 라벨/"평소보다 오래…"/Reset 안내로 **전환 없음** — 무한 카운트업만.
+
+### Root cause (코드 확정)
+`po-runner.ts`: `armSilenceTimeout`은 `child.stdout.on('data')`(line ~562) **안에서만** 호출
+= "첫 stdout이 와야" 침묵 타이머가 arm됨. 그런데 **토큰-전 순수 침묵**이면 stdout data가
+아예 안 와서 armSilenceTimeout이 한 번도 안 불림 → thinking/stalled 타이머 시작 안 됨.
+(기존 'compacting' 휴리스틱도 동일 결함을 갖고 있었음 — 라벨만 바꾼 1차 fix는 이 arm-타이밍
+버그를 못 고쳐 실효 0.) `WorkingIndicator`는 `verbForHealth(healthState)`를 올바로 쓰므로
+state만 emit되면 라벨은 정상 표시됨 — emit이 안 된 게 문제.
+
+### 재수정 방향 (다음 구현)
+- **spawnClaude 시작 시점**(spawn 직후, `emitHealth('healthy')` 부근)에 `armSilenceTimeout`를
+  1회 호출 → 토큰-전 침묵도 15s→thinking, 90s→stalled로 잡힘. 그 외 thinking/stalled state·
+  로케일·복귀 로직은 이미 구현됨(머지된 `673b57f`)이라 재사용.
+- AC-1 카피: 사양은 "생각 중/Thinking" 리터럴 기대 — 1차 코드도 그 라벨이나 emit 미발생으로
+  미표시였음. arm-타이밍 fix 후 재확인.
+- 재검증: cua에서 토큰-전 장침묵 turn 재현(무거운 PRD 프롬프트) → 15s/90s 전환 관찰.
+
+### QA 인계 메모 (cua 조작)
+- composer 포커스: placeholder 라인(y≈1411) 클릭은 포커스 못 잡음 → **y≈1420(입력박스 하단)** 클릭해야 캐럿 진입.
+- titlebar 포커스는 **(700,86)** (700,48은 Help 메뉴 오발).
+- `osascript`/System Events 호출 금지 — TCC Automation 프롬프트가 포커스 가로챔(Don't Allow로 닫기).
 
 ## QA 노트
 cua VM: PO turn 중 라벨/타임아웃 거동 관찰. 참고: `docs/qa/bookshelf/cua-vm-harness.md`.
