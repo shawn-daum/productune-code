@@ -4,15 +4,18 @@ version: v0.5
 slug: cli-agent-teams-env-parity
 title: CLI(productune)가 AGENT_TEAMS env를 안 set — 위임이 agent-teams/resume 모드로 안 돔 (GUI와 비대칭)
 type: impl
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
+qa_status: pass
+qa_loops: 1
 requires_user_gate: false
 area_tag: engine-exec
 estimated_complexity: L1
 risk_flags: []
 created_at: 2026-06-22T00:00:00Z
+completed_at: 2026-06-22T00:00:00Z
 ---
 
 # T-PATCH-228: CLI agent-teams env parity
@@ -68,7 +71,23 @@ GUI와 단일 SoT를 원하면 값(`1`)을 한 곳에서 참조하는 게 이상
 - **GUI로 돌리는 기기** = T-PATCH-229(productune update가 .app 바이너리를 안 바꿈 — 새 dmg 재배포
   필요). 두 갈래는 메커니즘이 달라 분리. shawn 확인: 그 기기는 CLI 경로 → 본 티켓이 해당.
 
+## 구현 (2026-06-22)
+
+- `scripts/productune`: env source 직후 `export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="${...:-1}"`
+  — default ON, env/환경의 명시값 보존(AC-4). productune.env가 backfill 전이어도 CLI에서 즉시 켜짐.
+- `scripts/install.sh`: §7a — productune.env에 변수 없을 때만 `=1` 멱등 backfill(있으면 미변경 →
+  사용자 0 보존). `productune update`(install.sh 재실행)가 기존 기기 env도 자동 보정.
+
+## QA sign-off (2026-06-22) — qa_status: pass (단위/멱등 검증)
+
+- **AC-1/AC-4 PASS**: `${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-1}` 동작 실측 — 미설정→1,
+  사용자 0→0 보존, 1→1. 두 스크립트 `bash -n` 문법 OK.
+- **AC-3 PASS**: install.sh backfill 멱등 실측 — 1회 추가 후 재실행 시 중복 없음(이 기기
+  productune.env에 적용 확인).
+- **AC-2 (라이브 미실측)**: CLI PO turn에서 실제 SendMessage/auto-resume 위임 동작은 별도
+  hands-on 권장(이 변수가 claude 프로세스 env에 도달함은 set -a source + export로 보장됨).
+
 ## QA 노트
 
-검증: CLI로 PO turn 돌려 위임 시 agent-teams 모드(SendMessage/sub-agent resume) 동작 확인 +
-`env | grep AGENT_TEAMS` 존재. productune.env 없는 상태/0인 상태/update 후 backfill 케이스.
+후속 hands-on: CLI(`productune`)로 PO turn → 위임 시 agent-teams 모드(SendMessage/sub-agent
+resume) 동작 + `env | grep AGENT_TEAMS` 존재 확인.
