@@ -29,7 +29,7 @@
     },
     "step2": {
       "label": "Step 2 / 4 — Engine connection",
-      "intro": "Check that your selected engine is connected.\nYou can continue without it and reconnect in Settings later.",
+      "intro": "Check that Claude Code is installed and authenticated.\nComplete this step to continue.",
       "checking": "Checking engine status...",
       "statusChecking": "Checking…",
       "statusReady": "installed · authed",
@@ -46,9 +46,12 @@
         "needsCodeHint": "If the browser couldn't finish sign-in, paste the code shown there.",
         "codePlaceholder": "Paste code here",
         "submitCode": "Submit",
-        "cancel": "Cancel",
-        "skipNote": "No engine connected yet — you can connect later from Settings.",
-        "skipLater": "Connect later in Settings"
+        "cancel": "Cancel"
+      },
+      "gate": {
+        "checking": "Checking…",
+        "needInstall": "Install Claude Code first — see the guide above",
+        "needLogin": "Sign in with Start login above"
       }
     },
     "step3": {
@@ -511,6 +514,20 @@
         "hint": "The PO process didn't respond as expected.",
         "cta": "Retry",
         "logCta": "View log ↗"
+      },
+      "smoke": {
+        "auth": {
+          "hint": "claude auth expired — re-login required",
+          "cta": "Run: claude auth login"
+        },
+        "notInstalled": {
+          "hint": "claude CLI not found — install required",
+          "cta": "Install at: claude.ai/code"
+        },
+        "incompatible": {
+          "hint": "claude exited unexpectedly — version may be incompatible",
+          "cta": "Retry"
+        }
       }
     },
     "presence": {

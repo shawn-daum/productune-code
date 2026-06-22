@@ -7,9 +7,29 @@
  *   - StatusBar → SessionHealthSegment
  *   - SessionHealthBanner (severity == error only)
  *   - PoFab badge dot
+ *
+ * T-PATCH-231: also stores the health-smoke result pushed via `po:smokeResult`
+ * after a failing turn. The banner surfaces this as an actionable classification
+ * (auth / not-installed / incompatible) so the user can act immediately.
  */
 
 import { create } from 'zustand'
+
+// ── Smoke result (T-PATCH-231) ────────────────────────────────────────────────
+
+/**
+ * Classification received from `po:smokeResult` after a failing PO turn.
+ * Mirror of `SmokeClassification` in po-runner.ts (kept in sync manually).
+ */
+export type SmokeClassification = 'auth' | 'not-installed' | 'incompatible' | 'ok'
+
+export interface SmokeResult {
+  classification: SmokeClassification
+  /** Raw error string from stream-json result.error (auth / incompatible only). */
+  rawError?: string
+}
+
+// ── Health state ─────────────────────────────────────────────────────────────
 
 export type PoHealthState =
   | 'healthy'
@@ -83,6 +103,13 @@ interface SessionHealthStore {
   lastUpdatedAt: string | null
   /** banner dismissed by user (resets on next state change) */
   dismissed: boolean
+  /**
+   * T-PATCH-231: result from the health smoke run after a failing PO turn.
+   * Set by `po:smokeResult` IPC push; cleared on session restart or next healthy turn.
+   * The banner reads this to show an actionable classification instead of the generic
+   * error-other message.
+   */
+  smokeResult: SmokeResult | null
 
   /** Update health — priority cascade applied */
   setHealth: (event: PoHealthEvent) => void
@@ -90,6 +117,10 @@ interface SessionHealthStore {
   clearHealth: () => void
   /** Dismiss the sticky banner (does not change state) */
   dismissBanner: () => void
+  /** T-PATCH-231: store the health smoke classification result */
+  setSmokeResult: (result: SmokeResult) => void
+  /** T-PATCH-231: clear smoke result (e.g. after session restart) */
+  clearSmokeResult: () => void
 }
 
 export const useSessionHealth = create<SessionHealthStore>((set, get) => ({
@@ -97,6 +128,7 @@ export const useSessionHealth = create<SessionHealthStore>((set, get) => ({
   detail: {},
   lastUpdatedAt: null,
   dismissed: false,
+  smokeResult: null,
 
   setHealth: (event) => {
     const current = get().state
@@ -113,7 +145,10 @@ export const useSessionHealth = create<SessionHealthStore>((set, get) => ({
       detail: event.detail ?? {},
       lastUpdatedAt: event.at,
       // Reset dismissed flag whenever state changes (new banner needed).
+      // T-PATCH-231: also clear stale smoke result when health transitions to a
+      // new state — the banner will re-populate once the next smoke completes.
       dismissed: false,
+      smokeResult: event.state === 'healthy' ? null : get().smokeResult,
     })
   },
 
@@ -123,10 +158,19 @@ export const useSessionHealth = create<SessionHealthStore>((set, get) => ({
       detail: {},
       lastUpdatedAt: new Date().toISOString(),
       dismissed: false,
+      smokeResult: null,   // T-PATCH-231: clear on session restart
     })
   },
 
   dismissBanner: () => {
     set({ dismissed: true })
+  },
+
+  setSmokeResult: (result) => {
+    set({ smokeResult: result })
+  },
+
+  clearSmokeResult: () => {
+    set({ smokeResult: null })
   },
 }))

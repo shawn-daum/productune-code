@@ -23,9 +23,8 @@ export default function OnboardingWizard({ onDone }: Props) {
   // Step 1
   const [engine, setEngine] = useState<Engine>('claude')
 
-  // Step 2 — Engine connection
+  // Step 2 — Engine connection (codex폐기: claude only)
   const [claudeStatus, setClaudeStatus] = useState<EngineStatus | null>(null)
-  const [codexStatus, setCodexStatus] = useState<EngineStatus | null>(null)
   const [checkingEngine, setCheckingEngine] = useState(false)
 
   // Step 0 — reset CTA
@@ -72,6 +71,16 @@ export default function OnboardingWizard({ onDone }: Props) {
     return off
   }, [])
 
+  // T-PATCH-220 Q7: focus-recheck — when the user alt-tabs away to install
+  // claude and comes back, re-probe so they don't have to manually hit Recheck.
+  // Only active while on step 2 to avoid spurious probes on other steps.
+  useEffect(() => {
+    if (step !== 2) return
+    function onFocus() { checkEngineStatus() }
+    window.addEventListener('focus', onFocus)
+    return () => { window.removeEventListener('focus', onFocus) }
+  }, [step])
+
   // Trigger completion when entering step 3
   useEffect(() => {
     if (step !== 3) return
@@ -98,16 +107,10 @@ export default function OnboardingWizard({ onDone }: Props) {
   async function checkEngineStatus() {
     setCheckingEngine(true)
     setClaudeStatus(null)
-    setCodexStatus(null)
     try {
-      if (engine === 'claude' || engine === 'both') {
-        const s = await (window as any).api.checkClaude()
-        setClaudeStatus(s)
-      }
-      if (engine === 'codex' || engine === 'both') {
-        const s = await (window as any).api.checkCodex()
-        setCodexStatus(s)
-      }
+      // codex폐기: always claude only
+      const s = await (window as any).api.checkClaude()
+      setClaudeStatus(s)
     } catch { /* silent */ }
     finally { setCheckingEngine(false) }
   }
@@ -131,16 +134,10 @@ export default function OnboardingWizard({ onDone }: Props) {
     await (window as any).api.claudeLogin()
   }
 
-  async function handleCodexLogin() {
-    await (window as any).api.codexLogin()
-  }
-
-  // Engine step 2: is everything ready to proceed?
-  const needsClaude = engine === 'claude' || engine === 'both'
-  const needsCodex = engine === 'codex' || engine === 'both'
-  const claudeReady = !needsClaude || (claudeStatus?.installed && claudeStatus?.authed)
-  const codexReady = !needsCodex || (codexStatus?.installed && codexStatus?.authed)
-  const engineFullyReady = claudeReady && codexReady
+  // Engine step 2: is everything ready to proceed? (codex폐기: always claude)
+  const needsClaude = true
+  const claudeReady = claudeStatus?.installed && claudeStatus?.authed
+  const engineFullyReady = claudeReady
 
   const completionStepKeys = [
     'onboarding.completionSteps.env',
@@ -194,16 +191,13 @@ export default function OnboardingWizard({ onDone }: Props) {
         {step === 2 && (
           <Step2_EngineConnect
             needsClaude={needsClaude}
-            needsCodex={needsCodex}
             claudeStatus={claudeStatus}
-            codexStatus={codexStatus}
             checkingEngine={checkingEngine}
             engineFullyReady={!!engineFullyReady}
             onPrev={() => setStep(1)}
             onNext={() => setStep(3)}
             onCheckEngine={checkEngineStatus}
             onClaudeLogin={handleClaudeLogin}
-            onCodexLogin={handleCodexLogin}
           />
         )}
 

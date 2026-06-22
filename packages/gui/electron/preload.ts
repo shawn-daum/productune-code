@@ -429,6 +429,20 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:onHealth', listener)
   },
 
+  /**
+   * T-PATCH-231: subscribe to health-smoke results pushed after a failing PO turn.
+   * Fired at most once per failing turn; never fired on normal turns (AC-4).
+   * Returns an unsubscribe fn.
+   */
+  poOnSmokeResult: (cb: (result: {
+    classification: 'auth' | 'not-installed' | 'incompatible' | 'ok'
+    rawError?: string
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, result: any) => cb(result)
+    ipcRenderer.on('po:smokeResult', listener)
+    return () => ipcRenderer.removeListener('po:smokeResult', listener)
+  },
+
   // ── Todo items (T-P4-113) ──────────────────────────────────────────────────
   /** Subscribe to todo items pushed by PO (parsed from manual_steps_pending / pending_user_actions). */
   poOnTodoItems: (cb: (items: Array<{

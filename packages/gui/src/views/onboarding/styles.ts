@@ -98,6 +98,11 @@ export const btnPrimary: React.CSSProperties = {
   background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
   padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
 }
+export const btnPrimaryDisabled: React.CSSProperties = {
+  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
+  padding: '8px 16px', fontSize: 13, fontWeight: 600,
+  opacity: 0.35, cursor: 'not-allowed',
+}
 export const btnSecondary: React.CSSProperties = {
   background: '#242424', color: '#F0F0F0', border: '1px solid #333', borderRadius: 4,
   padding: '8px 14px', fontSize: 13, cursor: 'pointer',

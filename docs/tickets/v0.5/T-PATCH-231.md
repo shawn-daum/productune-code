@@ -4,11 +4,11 @@ version: v0.5
 slug: claude-spawn-health-smoke
 title: claude spawn 헬스 스모크 — 시작/첫턴 실패 시 더미 spawn으로 원인 분류(auth 401·미설치·비호환 조기 감지)
 type: impl
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
 requires_user_gate: false
 area_tag: engine-exec
 estimated_complexity: L2
@@ -63,3 +63,11 @@ T-PATCH-230(GUI code-1)의 진짜 원인 = cua VM의 stale keychain 토큰 401(�
 
 cua: 인증 정상→스모크 pass. keychain 토큰 제거/만료 상태→401 분류 + 배너 노출 확인.
 미설치 상태→미설치 분류. (GUI 검증은 cua-vm-harness.md의 keychain 절차 선행.)
+
+## Close (2026-06-22)
+
+dev sonnet 구현 → qa sonnet PASS(0 must-fix). 8파일: `po-runner.ts`(runHealthSmoke 신규 폴백 함수 + SmokeClassification/Result type), `ipc/po.ts`(withSessionCapture onDone가 lastHealthState==='error-other'일 때만 smoke 1회 발화), `preload.ts`, `store/sessionHealth.ts`, `SessionHealthBanner.tsx`(auth/not-installed/incompatible 3분류 actionable copy), `useIpcSubscriptions.ts`, locale en/ko.
+- AC-1~4 전부 PASS. ★AC-3 핵심 — 분류 근거가 exit code 아니라 stream-json `result.is_error`/`result.error`(`/authentication_failed|401/`) 우선, exit code는 봉투 부재 시 fallback, ENOENT는 spawn error로 not-installed.
+- AC-4 — 정상 턴 토큰/지연 0(error-other 아니면 미호출).
+- RISK-1 fix 적용: `ipc/po.ts` smoke then/catch에 `wc.isDestroyed()` 가드(async 완료 전 창 닫힘 'Object destroyed' 방지). build EXIT0(tsc+vite, 906 locale parity).
+- **라이브 hands-on 잔여**: keychain 토큰 제거→401 분류+배너 노출 cua/VNC 확인(헤드리스 불가). 미커밋(commit-on-request).

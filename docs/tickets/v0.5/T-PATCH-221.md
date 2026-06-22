@@ -4,11 +4,11 @@ version: v0.5
 slug: po-turn-hang-detect-and-compacting-label
 title: PO turn hang 감지/타임아웃 + "Compacting" 라벨 정확화 (침묵≠압축, 이른 트리거)
 type: impl
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: fail
+qa_status: skipped
 qa_loops: 1
 requires_user_gate: false
 area_tag: po-chat
@@ -115,3 +115,10 @@ fresh 토큰으로 교체하면 turn 정상** → 그 위에서 T-221 라벨(thi
 
 ## QA 노트
 cua VM: PO turn 중 라벨/타임아웃 거동 관찰. 참고: `docs/qa/bookshelf/cua-vm-harness.md`.
+
+## Close (2026-06-22) — MERGE-WITH-CAVEAT (라이브 미검증)
+
+유저 결정(2026-06-22): cua 자동조작 3회 모두 캡처-타이밍/입력-포커스 한계로 라이브 라벨 검증 실패 → **arm-on-spawn fix를 미검증 머지(caveat)로 진행.**
+- arm-on-spawn 1줄(`spawnClaude` 내 `activeChild = child` 직후 `armSilenceTimeout(hCtx, cb)`)을 working tree에 적용 — branch `verify/T-PATCH-221-clean` commit e3a883e의 fix를 dev가 T-231 인접편집과 한 패스로 반영(po-runner.ts 동시편집 충돌 회피). idempotency 확인됨(`armSilenceTimeout` 첫 줄이 `clearSilenceTimeout` → stdout data 재arm 안전). build EXIT0.
+- thinking/stalled state·로케일·복귀 로직은 기존 머지본(`673b57f`) 재사용. 이번 fix가 토큰-전 순수 침묵에도 타이머 arm되게 해 1차 실효-0 버그(arm이 stdout data 핸들러 안에서만 호출되던 것) 교정.
+- ⚠️ **잔여(미검증)**: 무거운 토큰-전 침묵 turn에서 15s "생각 중" / 90s+ "stalled" **라이브 라벨 전환 관찰**은 안 됨 → human VNC 1회 또는 집중 세션 권장(qa_status: skipped = 라이브 re-verify 의도적 deferral). branch `verify/T-PATCH-221-clean`은 코드가 main tree에 반영됐으므로 정리 가능. 미커밋(commit-on-request).

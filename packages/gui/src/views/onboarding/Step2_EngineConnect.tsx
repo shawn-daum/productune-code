@@ -3,24 +3,22 @@ import { useTranslation } from 'react-i18next'
 import type { EngineStatus } from './types'
 import EngineStatusRow from './EngineStatusRow'
 import {
-  body, footer, stepLabel, stepIntro, hint, btnSecondary, btnSkip, btnPrimary,
+  body, footer, stepLabel, stepIntro, hint, btnSecondary, btnPrimary, btnPrimaryDisabled,
   engineRow, btnEngineAction, btnRedetect,
 } from './styles'
 
-type Engine = 'claude' | 'codex'
+// codex폐기: 온보딩은 claude only — Engine 로컬 타입도 claude만
+type Engine = 'claude'
 
 interface Step2Props {
   needsClaude: boolean
-  needsCodex: boolean
   claudeStatus: EngineStatus | null
-  codexStatus: EngineStatus | null
   checkingEngine: boolean
   engineFullyReady: boolean
   onPrev: () => void
   onNext: () => void
   onCheckEngine: () => void
   onClaudeLogin: () => void
-  onCodexLogin: () => void
 }
 
 interface LoginState {
@@ -30,9 +28,9 @@ interface LoginState {
 }
 
 export default function Step2_EngineConnect({
-  needsClaude, needsCodex, claudeStatus, codexStatus,
+  needsClaude, claudeStatus,
   checkingEngine, engineFullyReady,
-  onPrev, onNext, onCheckEngine, onClaudeLogin, onCodexLogin,
+  onPrev, onNext, onCheckEngine, onClaudeLogin,
 }: Step2Props) {
   const { t } = useTranslation()
 
@@ -63,8 +61,7 @@ export default function Step2_EngineConnect({
   function beginLogin(engine: Engine) {
     setCodeInput('')
     setLogin({ engine, url: null, needsCode: false })
-    if (engine === 'claude') onClaudeLogin()
-    else onCodexLogin()
+    onClaudeLogin()
   }
 
   function reopenBrowser() {
@@ -165,41 +162,34 @@ export default function Step2_EngineConnect({
                 onRecheck={onCheckEngine}
               />
             )}
-            {needsCodex && (
-              <EngineStatusRow
-                name="Codex CLI"
-                status={codexStatus}
-                installUrl="https://github.com/openai/codex"
-                installHint="npm install -g @openai/codex"
-                onLogin={() => beginLogin('codex')}
-                onRecheck={onCheckEngine}
-              />
-            )}
           </div>
         )}
 
-        {/* AC-6: when not yet connected, make the Skip path explicit + reassuring
-            instead of a dead grey Next + ambiguous Skip. */}
+        {/* T-PATCH-220: derive a why-disabled hint from claudeStatus.
+            Only shown when not ready, not in OAuth flow, not still checking. */}
         {!engineFullyReady && !login && !checkingEngine && (
           <div style={{ ...hint, marginTop: 12 }}>
-            {t('onboarding.step2.login.skipNote')}
+            {claudeStatus === null
+              ? t('onboarding.step2.gate.checking')
+              : !claudeStatus.installed
+                ? t('onboarding.step2.gate.needInstall')
+                : t('onboarding.step2.gate.needLogin')}
           </div>
         )}
       </div>
       <div style={footer}>
         <button style={btnSecondary} onClick={onPrev}>{t('common.prev')}</button>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {!engineFullyReady ? (
-            // AC-6: Skip promoted to a clear, labelled normal path.
-            <button style={btnSkip} onClick={onNext}>
-              {t('onboarding.step2.login.skipLater')}
-            </button>
-          ) : (
-            <button style={btnPrimary} onClick={onNext}>
-              {t('common.next')}
-            </button>
-          )}
-        </div>
+        {/* T-PATCH-220 AC-1: single Next, disabled until engineFullyReady.
+            While checking, keep disabled so there's no flash of enabled state. */}
+        <button
+          style={engineFullyReady && !checkingEngine ? btnPrimary : btnPrimaryDisabled}
+          disabled={!engineFullyReady || checkingEngine}
+          onClick={onNext}
+        >
+          {checkingEngine
+            ? t('onboarding.step2.gate.checking')
+            : t('common.next')}
+        </button>
       </div>
     </>
   )

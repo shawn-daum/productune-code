@@ -5,6 +5,7 @@ import type { Message } from '../../../lib/types'
 import type { TabType } from '../../../store/workspace'
 import { artifactOpenType } from './helpers'
 import { ARTIFACT_OPEN_CAP } from './constants'
+import { useSessionHealth } from '../../../store/sessionHealth'
 
 export type DeployModalPayload = {
   tickets: DeployTicketSummary[]
@@ -47,6 +48,24 @@ export function useIpcSubscriptions(
   const [baseDirtyModal, setBaseDirtyModal] = useState<BaseDirtyModalPayload | null>(null)
   const [artifactToast, setArtifactToast] = useState<string | null>(null)
   const artifactToastTimerRef = useRef<number | null>(null)
+
+  // ── T-PATCH-231: health smoke result subscription ─────────────────────────
+  // Subscribes once; pushed from main after a failing PO turn. 'ok' results are
+  // ignored (smoke passed → no actionable message needed).
+  const setSmokeResult = useSessionHealth((s) => s.setSmokeResult)
+  useEffect(() => {
+    const api = (window as any).api
+    const off = api?.poOnSmokeResult?.((result: {
+      classification: 'auth' | 'not-installed' | 'incompatible' | 'ok'
+      rawError?: string
+    }) => {
+      if (result.classification !== 'ok') {
+        setSmokeResult(result)
+      }
+    })
+    return () => { if (typeof off === 'function') off() }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── Browser window.open → new in-app browser tab (T-PATCH-191) ────────────
   useEffect(() => {

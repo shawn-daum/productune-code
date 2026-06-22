@@ -235,6 +235,28 @@ interface RunCallbacks {
   ) => void
 }
 
+// ── Health-smoke result (T-PATCH-231) ────────────────────────────────────────────
+
+/**
+ * Classification emitted by the health smoke when a PO turn fails abnormally.
+ *
+ * - 'auth'        — claude returned `authentication_failed` / 401 in stream-json
+ *                   result.error. Actionable: `claude auth login`.
+ * - 'not-installed' — spawn raised ENOENT (claude not on PATH / not installed).
+ *                   Actionable: install from claude.ai/code.
+ * - 'incompatible' — exit≠0 without a completed result. claude version mismatch
+ *                   or unknown runtime error.
+ * - 'ok'          — smoke passed (trivial prompt ran cleanly). Original PO turn
+ *                   failure was transient or unrelated to claude itself.
+ */
+export type SmokeClassification = 'auth' | 'not-installed' | 'incompatible' | 'ok'
+
+export interface SmokeResult {
+  classification: SmokeClassification
+  /** Raw error string surfaced from result.error (present for auth / incompatible). */
+  rawError?: string
+}
+
 // ── Active child tracking (T-PATCH-081) ──────────────────────────────────────────
 // Single-turn model: only one claude child runs at a time. Module-level ref allows
 // abortActiveTurn() to SIGTERM it from the po:abort IPC handler without threading
@@ -547,6 +569,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     })
     // T-PATCH-081: track active child for po:abort IPC abort path.
     activeChild = child
+
+    // T-PATCH-221 fix: arm the silence/stall timers NOW (at spawn), not only on the
+    // first stdout chunk. A heavy pdt-po turn can stay token-silent for 2m+ before any
+    // stdout arrives; arming only inside child.stdout.on('data') meant pre-token silence
+    // never started the timer → 'thinking'/'stalled' never fired (the 1st-pass bug).
+    armSilenceTimeout(hCtx, cb)
 
     let stdoutBuf = ''
     let stderrBuf = ''
@@ -1433,6 +1461,135 @@ function parseAskUserQuestion(text: string): AskUserQuestionPayload | null {
     } catch { /* ignore */ }
   }
   return null
+}
+
+// ── Health smoke (T-PATCH-231) ────────────────────────────────────────────────────
+
+/**
+ * Run a trivial one-shot claude spawn to diagnose WHY a PO turn failed.
+ *
+ * Called automatically once after a PO turn exits with code≠0 OR `is_error=true`
+ * (AC-1). Uses prod-identical flags / env (AC-3) so the result reflects the real
+ * runtime. Returns a `SmokeResult` classifying the root cause; never throws.
+ *
+ * AC-3 key: the 401 case manifests as a stream-json `result.is_error=true` with
+ * `error` containing `authentication_failed` or `401`. Exit code alone is not
+ * enough — exit 1 + completed is the documented 401 shape. We parse `result`
+ * from stdout, not just the exit code.
+ *
+ * AC-4: this function is only invoked on the fallback path (after a failing
+ * turn). Normal turns never call it → zero overhead on the happy path.
+ */
+export function runHealthSmoke(projectDir: string): Promise<SmokeResult> {
+  return new Promise((resolve) => {
+    // Smoke is skipped when claude is not on PATH — reuse canSpawnClaude() gate.
+    if (!canSpawnClaude()) {
+      resolve({ classification: 'not-installed' })
+      return
+    }
+
+    // Trivial prompt: one word, zero cost, still exercises the full auth path.
+    const smokeArgs = [
+      '--agent', PO_AGENT,
+      '--permission-mode', 'bypassPermissions',
+      '--print', '--output-format', 'stream-json', '--verbose',
+      'ping',
+    ]
+    const env = withLoginShellPath({ ...process.env, NO_COLOR: '1' })
+
+    let child: ChildProcess
+    try {
+      child = spawn('claude', smokeArgs, {
+        env,
+        cwd: projectDir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } catch (err: any) {
+      // spawn() itself threw (ENOENT on some platforms before the error event).
+      const isEnoent = err?.code === 'ENOENT' || /not found|enoent/i.test(err?.message ?? '')
+      resolve({ classification: isEnoent ? 'not-installed' : 'incompatible', rawError: err?.message })
+      return
+    }
+
+    let stdoutBuf = ''
+    let smokeResultObj: any = null
+    let sawError = false
+
+    child.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code
+      const isEnoent = code === 'ENOENT' || /not found|enoent/i.test(err.message)
+      resolve({ classification: isEnoent ? 'not-installed' : 'incompatible', rawError: err.message })
+      sawError = true
+    })
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutBuf += chunk.toString('utf8')
+      let nlIdx
+      // eslint-disable-next-line no-cond-assign
+      while ((nlIdx = stdoutBuf.indexOf('\n')) >= 0) {
+        const line = stdoutBuf.slice(0, nlIdx).trim()
+        stdoutBuf = stdoutBuf.slice(nlIdx + 1)
+        if (!line) continue
+        try {
+          const obj = JSON.parse(line)
+          // Capture the last `type:'result'` envelope — that's where is_error lives.
+          if (obj?.type === 'result') smokeResultObj = obj
+        } catch { /* non-JSON line — ignore */ }
+      }
+    })
+
+    // Drain stderr silently — we classify via stdout stream-json, not stderr.
+    child.stderr?.resume()
+
+    child.on('close', (code) => {
+      if (sawError) return   // already resolved via error event
+
+      // Flush any trailing stdout.
+      if (stdoutBuf.trim()) {
+        try {
+          const obj = JSON.parse(stdoutBuf.trim())
+          if (obj?.type === 'result') smokeResultObj = obj
+        } catch { /* ignore */ }
+      }
+
+      // AC-3: classify via stream-json result.is_error / result.error, NOT exit code.
+      if (smokeResultObj) {
+        const isError = smokeResultObj.is_error === true || smokeResultObj.subtype === 'error'
+        if (!isError) {
+          // result envelope present and not an error → smoke passed.
+          resolve({ classification: 'ok' })
+          return
+        }
+        // Parse the error field for auth signals.
+        const errStr = JSON.stringify(smokeResultObj.error ?? '')
+        if (/authentication_failed|401/i.test(errStr)) {
+          resolve({
+            classification: 'auth',
+            rawError: typeof smokeResultObj.error === 'string'
+              ? smokeResultObj.error
+              : errStr,
+          })
+          return
+        }
+        // Other result-level error (e.g. timeout, model error) → incompatible.
+        resolve({
+          classification: 'incompatible',
+          rawError: typeof smokeResultObj.error === 'string'
+            ? smokeResultObj.error
+            : errStr,
+        })
+        return
+      }
+
+      // No result envelope at all — check exit code as last resort.
+      if (code !== 0 && code !== null) {
+        resolve({ classification: 'incompatible', rawError: `exit code ${code}` })
+      } else {
+        // Exited 0 with no result? Treat as ok (could be an empty --verbose run).
+        resolve({ classification: 'ok' })
+      }
+    })
+  })
 }
 
 // ── Renderer subscription helper (bound by main.ts) ─────────────────────────────

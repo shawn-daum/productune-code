@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import type { WebContents } from 'electron'
 import { getSession, appendMessage, setClaudeSessionId, clearSession, clearClaudeSessionId, patchMessage } from '../chat-store'
 import type { Message } from '../chat-store'
-import { runPoTurn, emitToWebContents, abortActiveTurn } from '../po-runner'
+import { runPoTurn, emitToWebContents, abortActiveTurn, runHealthSmoke } from '../po-runner'
 import { markPoTurnStart, markPoTurnEnd } from '@productune/core'
 import { evaluateCycle, recordTurnDone, resetSessionWindow } from '../po-session-cycle'
 
@@ -17,17 +17,52 @@ let capturedPoSessionId: string | null = null
  * Wrap a RunCallbacks bundle so its onDone also (a) records the session id into
  * the module-scope `capturedPoSessionId` (T-PATCH-037) and (b) increments the
  * per-project PO turn count for the session-cycle threshold (T-PATCH-040).
- * Keeps the renderer-bound emit behavior intact.
+ *
+ * T-PATCH-231: also intercepts onHealth to detect error-other / rate-limited at
+ * turn end, then fires a health smoke after onDone and pushes the result to the
+ * renderer via `po:smokeResult`. Smoke runs at most once per failing turn; it is
+ * skipped when the turn was user-aborted (wasAborted path emits turn-aborted, not
+ * error-other) and when the error is rate-limited (no benefit diagnosing quota with
+ * a smoke — that would just burn tokens). AC-4: zero overhead on normal turns.
  */
 function withSessionCapture(wc: WebContents, projectDir: string) {
   const base = emitToWebContents(wc)
+
+  // T-PATCH-231: track the last health state emitted during this turn so we can
+  // decide after onDone whether to fire a smoke. We only smoke on 'error-other'
+  // (catches both exit≠0 and result.is_error paths). 'rate-limited' is excluded —
+  // a 429 is already diagnosed; smoking it would just consume more quota.
+  let lastHealthState: string = 'healthy'
+
   return {
     ...base,
+    onHealth: (event: Parameters<typeof base.onHealth>[0]) => {
+      lastHealthState = event.state
+      base.onHealth(event)
+    },
     onDone: (msgId: string, info: { sessionId?: string }) => {
       if (info.sessionId) capturedPoSessionId = info.sessionId
       // T-PATCH-040: count completed PO turns toward the fresh-cycle threshold.
       recordTurnDone(projectDir)
       base.onDone(msgId, info)
+
+      // T-PATCH-231: fire health smoke async after turn complete — never blocks onDone.
+      // Only smoke on 'error-other' (AC-1). Skip rate-limited, healthy, etc.
+      if (lastHealthState === 'error-other') {
+        runHealthSmoke(projectDir).then((result) => {
+          // RISK-1 guard: window may have been closed while smoke was running
+          // (async gap between onDone and smoke completion). wc.send on a
+          // destroyed WebContents throws 'Object has been destroyed'.
+          if (wc.isDestroyed()) return
+          wc.send('po:smokeResult', result)
+        }).catch(() => {
+          // smoke itself errored — treat as incompatible, still surface it
+          if (wc.isDestroyed()) return
+          wc.send('po:smokeResult', { classification: 'incompatible' })
+        })
+      }
+      // Reset for next turn.
+      lastHealthState = 'healthy'
     },
   }
 }

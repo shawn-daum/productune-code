@@ -22,17 +22,15 @@ export default function Step1_Engine({ engine, onSelectEngine, onPrev, onNext }:
           ))}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
-          {(['claude', 'codex', 'both'] as Engine[]).map(val => (
-            <OptionCard
-              key={val}
-              selected={engine === val}
-              onClick={() => onSelectEngine(val)}
-              label={t(`onboarding.engines.${val}.label`)}
-              badge={val === 'claude' ? t('onboarding.step1.optionRecommended') : undefined}
-              intro={t(`onboarding.engines.${val}.intro`)}
-              tech={t(`onboarding.engines.${val}.tech`)}
-            />
-          ))}
+          {/* codex폐기: claude only */}
+          <OptionCard
+            selected
+            onClick={() => {}}
+            label={t('onboarding.engines.claude.label')}
+            badge={t('onboarding.step1.optionRecommended')}
+            intro={t('onboarding.engines.claude.intro')}
+            tech={t('onboarding.engines.claude.tech')}
+          />
         </div>
       </div>
       <div style={footer}>

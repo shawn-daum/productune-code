@@ -4,7 +4,8 @@ version: v0.5
 slug: onboarding-require-engine-login
 title: 온보딩 — 엔진(claude) 로그인 완료해야 진행 (Skip-without-login 제거)
 type: design
-status: todo
+status: done
+qa_status: pass
 phase: 3
 assignee: pdt-designer
 requires_qa: true
@@ -45,3 +46,16 @@ shawn 결정(2026-06-19): 온보딩 Step2에서 **claude 설치+로그인까지 
 
 ## QA 노트
 cua VM: claude 미설치/미인증 → 진행 불가, 설치+로그인 → 진행 가능. 참고: `docs/qa/bookshelf/cua-vm-harness.md`.
+
+## Close (2026-06-22)
+
+designer opus plan(user-gated 승인) → dev sonnet impl → qa sonnet PASS(0 must-fix). T-199 AC-6 의도적 뒤집음 — "Connect later" 탈출구 제거 + **유저 승인 scope 확장: codex(폐기) 온보딩에서 제거**.
+- AC-1: Step2 footer = 단일 Next, `disabled={!engineFullyReady || checkingEngine}` + btnPrimaryDisabled(opacity 0.35/not-allowed). skip 변종 0(grep skipLater/skipNote/Connect-later = 0 hits).
+- AC-2: installed&&authed → engineFullyReady → Next 활성 → setStep(3) → completeOnboarding(engine:'claude') 정상.
+- AC-3: EngineStatusRow Install guide+Recheck 유지 + OnboardingWizard focus-recheck 리스너(step===2 guard) — 외부 설치 후 복귀 재감지.
+- AC-4: ★mute-grey 재발 불가 — disabled Next 옆 derived gate.{checking,needInstall,needLogin} 한 줄이 항상 다음 행동 명시. (T-199 AC-6의 진짜 교훈 = "비활성 컨트롤에 설명 0 금지"를 탈출구 없이 충족.)
+- codex 제거: Step1 단일 비인터랙티브 claude 카드, Step2 codex props/row 제거, engineFullyReady가 codex 미참조. dangling 참조 0, completeOnboarding('claude') 정상. types.Engine union + preload codex stub은 무해 dead-code(잔여).
+- build EXIT0(906 locale parity). **라이브 hands-on 잔여**: 실제 미설치→Next 비활성 / 설치+로그인→활성 전환 cua/VNC 확인(헤드리스 불가). 미커밋(commit-on-request).
+
+### Follow-on backlog 후보 (별도 cleanup 티켓)
+codex dead-code 정리: `preload.ts` checkCodex/codexLogin IPC stub, `onboarding.ts` codex 핸들러, `types.ts` Engine union, `styles.ts` btnSkip orphan, OnboardingWizard onSelectEngine dead-wire. (이번 AC 범위 밖, 무해.)

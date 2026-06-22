@@ -16,6 +16,7 @@
 import { useTranslation } from 'react-i18next'
 import { ShieldAlert, AlertTriangle } from 'lucide-react'
 import { useSessionHealth, severityOf } from '../../store/sessionHealth'
+import type { SmokeResult } from '../../store/sessionHealth'
 
 interface Props {
   /** Called when "Restart session" CTA clicked. */
@@ -40,10 +41,37 @@ function ensureBannerAnim(): void {
   document.head.appendChild(style)
 }
 
+// ── Smoke-result copy helpers (T-PATCH-231) ───────────────────────────────────
+
+function smokeMessage(smoke: SmokeResult, t: (k: string) => string): string {
+  switch (smoke.classification) {
+    case 'auth':
+      return t('workspace.sessionHealth.smoke.auth.hint')
+    case 'not-installed':
+      return t('workspace.sessionHealth.smoke.notInstalled.hint')
+    case 'incompatible':
+      return smoke.rawError
+        ? `${t('workspace.sessionHealth.smoke.incompatible.hint')} — ${smoke.rawError}`
+        : t('workspace.sessionHealth.smoke.incompatible.hint')
+    default:
+      return ''
+  }
+}
+
+function smokeCtaLabel(smoke: SmokeResult, t: (k: string) => string): string {
+  switch (smoke.classification) {
+    case 'auth':         return t('workspace.sessionHealth.smoke.auth.cta')
+    case 'not-installed': return t('workspace.sessionHealth.smoke.notInstalled.cta')
+    case 'incompatible': return t('workspace.sessionHealth.smoke.incompatible.cta')
+    default:             return ''
+  }
+}
+
 export default function SessionHealthBanner({ onRestartSession, onRetry, onViewLog }: Props) {
   const { t } = useTranslation()
-  const state      = useSessionHealth((s) => s.state)
-  const dismissed  = useSessionHealth((s) => s.dismissed)
+  const state         = useSessionHealth((s) => s.state)
+  const dismissed     = useSessionHealth((s) => s.dismissed)
+  const smokeResult   = useSessionHealth((s) => s.smokeResult)
   const dismissBanner = useSessionHealth((s) => s.dismissBanner)
 
   ensureBannerAnim()
@@ -53,15 +81,34 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
 
   const isPermission = state === 'permission-blocked'
 
+  // T-PATCH-231: when a smoke result is available and classified (not 'ok'),
+  // override the generic error-other copy with the actionable smoke message.
+  const hasSmokeDetail = smokeResult && smokeResult.classification !== 'ok'
+
   const message = isPermission
     ? t('workspace.sessionHealth.permissionBlocked.hint')
-    : t('workspace.sessionHealth.errorOther.hint')
+    : hasSmokeDetail
+      ? smokeMessage(smokeResult, t)
+      : t('workspace.sessionHealth.errorOther.hint')
 
   const ctaLabel = isPermission
     ? t('workspace.sessionHealth.permissionBlocked.cta')
-    : t('workspace.sessionHealth.errorOther.cta')
+    : hasSmokeDetail
+      ? smokeCtaLabel(smokeResult, t)
+      : t('workspace.sessionHealth.errorOther.cta')
 
   const Icon = isPermission ? ShieldAlert : AlertTriangle
+
+  // For 'auth' smoke: primary CTA opens a terminal (external) rather than restarting.
+  // We reuse onRetry as a generic "action" slot — the WorkspaceShell wires it to
+  // retry the last message; auth/not-installed need external actions so we fall
+  // back to showing the label without a click handler (user reads + acts manually).
+  // The dismiss button is always present so the user can clear the banner.
+  const primaryAction = isPermission
+    ? onRestartSession
+    : hasSmokeDetail && smokeResult.classification === 'incompatible'
+      ? onRetry
+      : undefined   // auth / not-installed: label is the instruction, no in-app action
 
   return (
     <div style={bannerWrap} role="alert" aria-live="assertive">
@@ -72,16 +119,23 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
       <span style={msgText}>{message}</span>
 
       <div style={actions}>
-        {/* Primary CTA */}
-        <button
-          style={primaryCta}
-          onClick={isPermission ? onRestartSession : onRetry}
-        >
-          {ctaLabel}
-        </button>
+        {/* Primary CTA — only render when there is an in-app action */}
+        {ctaLabel && (primaryAction || (!isPermission && !hasSmokeDetail)) && (
+          <button
+            style={primaryCta}
+            onClick={primaryAction ?? onRetry}
+          >
+            {ctaLabel}
+          </button>
+        )}
 
-        {/* Secondary: view log (error-other only) */}
-        {!isPermission && (
+        {/* Instruction-only label for auth / not-installed (no clickable action) */}
+        {hasSmokeDetail && !primaryAction && (smokeResult.classification === 'auth' || smokeResult.classification === 'not-installed') && (
+          <span style={instructionLabel}>{ctaLabel}</span>
+        )}
+
+        {/* Secondary: view log (error-other / no smoke detail only) */}
+        {!isPermission && !hasSmokeDetail && (
           <button style={secondaryCta} onClick={onViewLog}>
             {t('workspace.sessionHealth.errorOther.logCta')}
           </button>
@@ -178,4 +232,21 @@ const dismissBtn: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   fontFamily: 'inherit',
+}
+
+// T-PATCH-231: smoke auth / not-installed instruction text — no button, just a label
+const instructionLabel: React.CSSProperties = {
+  height: 22,
+  padding: '0 10px',
+  background: '#1A3A1A',
+  color: '#86EFAC',
+  border: '1px solid #2A5A2A',
+  borderRadius: 3,
+  fontSize: 10,
+  fontWeight: 600,
+  display: 'inline-flex',
+  alignItems: 'center',
+  whiteSpace: 'nowrap',
+  fontFamily: 'inherit',
+  userSelect: 'all',   // allow copy-paste for terminal commands
 }
