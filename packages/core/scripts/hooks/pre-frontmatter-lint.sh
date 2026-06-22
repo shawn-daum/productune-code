@@ -19,6 +19,18 @@
 #   status/qa_status/version are 100% clean across the 249 v0.5 tickets → safe to
 #   block. type has 187 legacy values (build/bug/patch/…) → warn-only to avoid an
 #   AC-6 false-block outage. Bash channel left as status/qa_status-only.)
+# T-PATCH-234 — 2026-06-22 (Bash channel parity: + version regex BLOCK + type WARN,
+#   mirroring the Write|Edit channel. Same conservative literal-only detection as
+#   the existing Bash status/qa_status arm — shell-expansion around a token → PASS.
+#   Write|Edit channel UNCHANGED. type stays WARN.)
+# T-PATCH-233 — 2026-06-22 (migrated the legacy ticket corpus to the 9 canon and
+#   FLIPPED type WARN→BLOCK on both channels — then REVERTED the flip the same day
+#   (PO+user decision). The migration STANDS; the flip does NOT. Reason: this
+#   guard's `^[[:space:]]*type:` matching is indent-tolerant, so it would
+#   false-block indented BODY `type:` lines (e.g. TS `type === '…'` code examples
+#   in 9 closed tickets) on targeted body edits — uncureable without a
+#   frontmatter-scoped extractor. type remains WARN on both channels until a
+#   follow-up ticket makes the guard frontmatter-scoped.)
 
 set +e
 
@@ -166,14 +178,18 @@ validate_version() {
   return 0
 }
 
-# ── type warn (NON-BLOCKING) ──────────────────────────────────────────────────
-# T-PATCH-224 part D: ticket-schema.md canonicalises 9 types, but 187 of 249
-# existing v0.5 tickets carry LEGACY type values (build / bug / patch / feature /
-# code / fix / chore / feat …). Hard-blocking type would false-block every legit
-# edit to those historical tickets (AC-6 outage). So type drift is SURFACED
-# (stderr, non-blocking) — it nudges new tickets toward the canon without
-# breaking edits to the legacy corpus. (Migrating the 187 legacy types to the
-# canon is a separate cleanup ticket; until then type cannot be a hard gate.)
+# ── type validate (BLOCKING) ──────────────────────────────────────────────────
+# T-PATCH-224 part D: historical tickets carried LEGACY type values (build / bug /
+# patch / feature / code / fix / chore / feat …). Hard-blocking type would
+# false-block edits to those tickets, so type drift is SURFACED (stderr,
+# non-blocking) rather than gated.
+# T-PATCH-233 (2026-06-22): the legacy corpus WAS migrated to the 9 canon and this
+# arm was briefly flipped to BLOCK — but the flip was REVERTED (PO+user decision).
+# Root cause: `extract_val type` matches `^[[:space:]]*type:` (any indent), so
+# INDENTED BODY lines (e.g. TS code `type === '…'` examples in closed tickets)
+# would false-block on targeted body edits, and they can't be neutralized without
+# corrupting the code examples. type stays WARN until the hook is made
+# frontmatter-scoped (carved into a follow-up ticket).
 warn_type() {
   local text="$1" val
   val="$(extract_val type "$text")"
@@ -255,31 +271,109 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
   #   any occurrence of `status: VALUE` or `qa_status: VALUE` in the command
   #
   # We scan for `(qa_)?status:` followed by a plain-literal token and check it.
+  # NOTE (T-PATCH-234): this arm no longer `exit 0`s when there are no status
+  # candidates — it just skips its own loop. Control falls through to the
+  # version/type checks below, which run independently (a command may write a
+  # bad `version:` with no `status:` at all). Shell expansion around a status
+  # token is still treated as ambiguous → status loop skipped (not a block).
   CANDIDATES="$(printf '%s' "$CMD" | grep -oE '(qa_)?status:[[:space:]]*[A-Za-z0-9_-]+' || true)"
-  [ -z "$CANDIDATES" ] && exit 0
-
-  # If the command contains shell expansion right around a status token we play
-  # safe and bail (ambiguous). Detect `status:` immediately followed (after
-  # optional spaces) by $ or backtick.
-  if printf '%s' "$CMD" | grep -qE '(qa_)?status:[[:space:]]*(\$|`)'; then
-    exit 0
+  if [ -n "$CANDIDATES" ] && ! printf '%s' "$CMD" | grep -qE '(qa_)?status:[[:space:]]*(\$|`)'; then
+    while IFS= read -r cand; do
+      [ -z "$cand" ] && continue
+      if printf '%s' "$cand" | grep -qE '^qa_status:'; then
+        key="qa_status"; enum="$QA_STATUS_ENUM"
+      else
+        key="status"; enum="$STATUS_ENUM"
+      fi
+      val="$(printf '%s' "$cand" | sed -E 's/^(qa_)?status:[[:space:]]*//')"
+      if ! printf '%s' "$val" | grep -qE "^(${enum})\$"; then
+        printf '[frontmatter-lint] Bash command would write %s: "%s" (non-canonical) into a ticket file.\n' "$key" "$val" >&2
+        printf '  allowed: %s\n' "$(printf '%s' "$enum" | tr '|' ' ' | sed 's/  */ | /g')" >&2
+        printf '  Use the canonical kebab-case value (e.g. in-progress, not in_progress; status is not qa).\n' >&2
+        exit 2
+      fi
+    done <<< "$CANDIDATES"
   fi
 
-  while IFS= read -r cand; do
-    [ -z "$cand" ] && continue
-    if printf '%s' "$cand" | grep -qE '^qa_status:'; then
-      key="qa_status"; enum="$QA_STATUS_ENUM"
-    else
-      key="status"; enum="$STATUS_ENUM"
+  # ── T-PATCH-234: version regex BLOCK + type WARN (Write/Edit channel parity) ──
+  # Same CONSERVATIVE literal-only philosophy as status/qa_status above: only
+  # inspect PLAIN-LITERAL values; any shell expansion ($/`) around the token →
+  # ambiguous → PASS (PostToolUse verify is the safety net). Cardinal rule:
+  # over-blocking a valid write is a hard outage; when in doubt, PASS.
+
+  # version (BLOCKING) — parity with Write/Edit `validate_version`.
+  #
+  # MF-1 FIX (T-PATCH-234 re-arm): the version candidate char-class must include
+  # `.` and `/` (to accept `v0.5` / `legacy/old`), unlike the status arm's
+  # `[A-Za-z0-9_-]`. That makes a RAW grep over the command poison-prone in sed
+  # substitution syntax — `s/^version:.*/version: v0.5/` extracts the SEARCH-half
+  # token `version:.` (value `.`), and a trailing delimiter is captured as
+  # `version: v0.5/`. Both are sed SYNTAX artifacts, not real frontmatter values.
+  #
+  # Cardinal rule: a value sitting inside sed substitution syntax is AMBIGUOUS
+  # (sed targets arbitrary lines, the token may interact with regex/backrefs) →
+  # PASS (PostToolUse verify is the safety net). So we STRIP whole sed
+  # substitution constructs — `s/.../.../flags` and `s|...|...|flags` — from the
+  # command BEFORE scanning. This removes BOTH poison vectors (search-half +
+  # trailing delimiter) while leaving heredoc/printf/echo BODY candidates — the
+  # forms the true-positive tests rely on — fully intact for inspection.
+  _CMD_SCAN="$(printf '%s' "$CMD" \
+    | sed -E 's#s/[^/]*/[^/]*/[a-zA-Z0-9]*##g' \
+    | sed -E 's#s\|[^|]*\|[^|]*\|[a-zA-Z0-9]*##g')"
+  V_CANDIDATES="$(printf '%s' "$_CMD_SCAN" | grep -oE 'version:[[:space:]]*[A-Za-z0-9_./-]+' || true)"
+  if [ -n "$V_CANDIDATES" ]; then
+    # Bail (ambiguous) if a version token is immediately followed by $/backtick.
+    if ! printf '%s' "$_CMD_SCAN" | grep -qE 'version:[[:space:]]*(\$|`)'; then
+      # legacy exception parity: explicit `legacy: true` literal in the command
+      # text, or a `legacy/...` version value → skip the regex.
+      # legacy: true boundary — on the Bash channel the "text" is the command
+      # STRING, where a frontmatter newline is often the escape `\n` (printf
+      # body), so `true` may be followed by `\`, `"`, `'`, space, or EOL rather
+      # than a real newline. Accept any non-word boundary after `true` (parity
+      # intent with the Write/Edit `([[:space:]]|$)` anchor on real content).
+      _legacy_line=0
+      printf '%s' "$_CMD_SCAN" | grep -qE 'legacy:[[:space:]]*true([^[:alnum:]_]|$)' && _legacy_line=1
+      while IFS= read -r vcand; do
+        [ -z "$vcand" ] && continue
+        vval="$(printf '%s' "$vcand" | sed -E 's/^version:[[:space:]]*//')"
+        [ "$_legacy_line" = "1" ] && continue
+        # legacy exception parity (Write/Edit `validate_version`): a `legacy/...`
+        # version value skips the regex. (The blanket `*/*` skip was removed —
+        # T-PATCH-234 F-1: it false-negatived genuinely-bad slash values like
+        # `v99/x`/`foo/bar` that the Write/Edit channel correctly BLOCKs. The
+        # `_CMD_SCAN` sed-substitution strip already removes the delimiter-residue
+        # poison vectors, so the broad skip was redundant.)
+        case "$vval" in legacy/*) continue ;; esac
+        if ! printf '%s' "$vval" | grep -qE "$VERSION_REGEX"; then
+          printf '[frontmatter-lint] Bash command would write version: "%s" (non-canonical) into a ticket file.\n' "$vval" >&2
+          printf '  required: vN(.N)?(-suffix)?  e.g. v0.5, v1, v2.3-beta  (ticket-schema.md §version)\n' >&2
+          printf '  exception: archive ids with legacy: true, or a legacy/... id.\n' >&2
+          exit 2
+        fi
+      done <<< "$V_CANDIDATES"
     fi
-    val="$(printf '%s' "$cand" | sed -E 's/^(qa_)?status:[[:space:]]*//')"
-    if ! printf '%s' "$val" | grep -qE "^(${enum})\$"; then
-      printf '[frontmatter-lint] Bash command would write %s: "%s" (non-canonical) into a ticket file.\n' "$key" "$val" >&2
-      printf '  allowed: %s\n' "$(printf '%s' "$enum" | tr '|' ' ' | sed 's/  */ | /g')" >&2
-      printf '  Use the canonical kebab-case value (e.g. in-progress, not in_progress; status is not qa).\n' >&2
-      exit 2
+  fi
+
+  # type (NON-BLOCKING WARN) — parity with Write/Edit `warn_type`. T-PATCH-233
+  # briefly flipped this to BLOCK, but the flip was REVERTED (PO+user decision):
+  # `extract_val`-style `^[[:space:]]*type:` matching false-blocks indented body
+  # `type:` lines (TS code examples) on targeted edits. type stays WARN until the
+  # hook is made frontmatter-scoped (follow-up ticket). Surface drift on stderr
+  # without changing the exit code.
+  T_CANDIDATES="$(printf '%s' "$CMD" | grep -oE '(^|[^_[:alnum:]])type:[[:space:]]*[A-Za-z0-9_-]+' | sed -E 's/^[^t]*type:/type:/' || true)"
+  if [ -n "$T_CANDIDATES" ]; then
+    if ! printf '%s' "$CMD" | grep -qE '(^|[^_[:alnum:]])type:[[:space:]]*(\$|`)'; then
+      while IFS= read -r tcand; do
+        [ -z "$tcand" ] && continue
+        tval="$(printf '%s' "$tcand" | sed -E 's/^type:[[:space:]]*//')"
+        if ! printf '%s' "$tval" | grep -qE "^(${TYPE_ENUM})\$"; then
+          printf '[frontmatter-lint] type: "%s" is not a canonical ticket type (non-blocking warning).\n' "$tval" >&2
+          printf '  canonical: %s\n' "$(printf '%s' "$TYPE_ENUM" | tr '|' ' ' | sed 's/  */ | /g')" >&2
+          printf '  (legacy types are grandfathered — new tickets should use a canonical value. SoT: ticket-schema.md §"9 ticket types".)\n' >&2
+        fi
+      done <<< "$T_CANDIDATES"
     fi
-  done <<< "$CANDIDATES"
+  fi
 
   exit 0
 fi

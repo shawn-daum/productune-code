@@ -4,11 +4,11 @@ version: v0.5
 slug: frontmatter-lint-bash-channel-parity
 title: pre-frontmatter-lint Bash 채널 비대칭 해소 — version regex + type warn 추가
 type: impl
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
 requires_user_gate: false
 area_tag: state-integrity
 estimated_complexity: L1
