@@ -61,7 +61,21 @@ uv run python vmctl.py shot                          # out/now.png
 - **cua VM은 켜둔 채 soft_reset만 반복.** `reset.sh`(golden re-clone)는 복구용 — 쓰면
   Apple ID Setup 재트리거 → 위 1클릭 다시. clone/재부팅마다 1클릭 필요(테스트마다 아님).
 - **입력 shift quirk**(`+`→`=`, 일부 대문자): 정확한 문자열은 `run_command`(VM 셸)나
-  클립보드 경유.
+  클립보드 경유. composer 입력칸은 placeholder 라인 클릭으론 포커스가 안 잡힘 →
+  입력박스 하단(예 y≈1420) 클릭 + `pbcopy`→`cmd v`. titlebar 포커스는 좌측(예 700,86;
+  중앙은 메뉴 오발). osascript/System Events 호출 금지(TCC Automation 프롬프트가 포커스 강탈).
+- **★ GUI에서 PO turn 검증 시 claude 인증은 반드시 VM Keychain에 (T-PATCH-230 교훈)**:
+  GUI(Electron, 콘솔세션) 컨텍스트의 claude는 **macOS Keychain**(`Claude Code-credentials`)에서
+  토큰을 읽는다. 호스트 토큰을 `~/.claude/.credentials.json` **파일**로만 복사하면 shell/CLI
+  claude는 되지만 **GUI-claude는 keychain의 stale 토큰을 읽어 401 → "claude exited with an
+  error (code 1)"** 로 매 turn 사망(stderr 0바이트라 silent — 오진 유발). 해결: 호스트
+  `security find-generic-password -s "Claude Code-credentials" -w` 추출 → VM에서
+  `security unlock-keychain -p lume …/login.keychain-db` 후 **기존 stale 항목 delete →
+  fresh add**(`security delete-generic-password -s 'Claude Code-credentials'` →
+  `security add-generic-password -s 'Claude Code-credentials' -a lume -w "<json>"`). 또는
+  VM에서 진짜 `claude auth login` 브라우저 OAuth 1회. OAuth 토큰은 수시간 만료/rotate되니
+  검증 세션마다 재확인. (실제 사용자 머신은 정상 keychain 로그인 상태라 이 문제 없음 —
+  순수 하니스 셋업 한계.)
 - **env fail ≠ product fail**: VM 미부팅/하니스 미준비로 인한 실패는 ENV fail →
   manual fallback + `summary` 기록, product `qa_status: fail` 행 아님(maestro 디바이스
   미준비 선례와 동일, `surface-config-schema.md` "Driver prerequisites").

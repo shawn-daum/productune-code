@@ -91,10 +91,20 @@ state만 emit되면 라벨은 정상 표시됨 — emit이 안 된 게 문제.
   미표시였음. arm-타이밍 fix 후 재확인.
 - 재검증: cua에서 토큰-전 장침묵 turn 재현(무거운 PRD 프롬프트) → 15s/90s 전환 관찰.
 
+### ⚠️ 정정 (2026-06-22) — 2·3차 QA의 "code 1"은 T-221과 무관(keychain 401 아티팩트)
+2·3차 cua QA에서 PO turn이 "claude exited code 1"로 죽어 라벨 검증이 또 막혔는데, 격리
+진단 결과 **cua VM의 stale keychain 토큰으로 인한 claude API 401**(하니스 셋업 한계,
+제품 버그 아님 — `cua-vm-harness.md` GUI=keychain 교훈 + T-PATCH-231 참조)이었음. arm-on-spawn
+fix(branch `fix/T-PATCH-221-arm-on-spawn`, commit ce349e6)나 stdin 가설과 무관. **VM keychain을
+fresh 토큰으로 교체하면 turn 정상** → 그 위에서 T-221 라벨(thinking/stalled)을 비로소 검증 가능.
+- 남은 작업: clean env(keychain 정상)에서 arm-on-spawn 빌드로 무거운 토큰-전 침묵 turn 재현 →
+  15s "생각 중", 90s+ "평소보다 오래…/stalled" 전환 관찰. 통과 시 ce349e6 머지 + status done.
+
 ### QA 인계 메모 (cua 조작)
-- composer 포커스: placeholder 라인(y≈1411) 클릭은 포커스 못 잡음 → **y≈1420(입력박스 하단)** 클릭해야 캐럿 진입.
+- composer 포커스: placeholder 라인(y≈1411) 클릭은 포커스 못 잡음 → **y≈1420(입력박스 하단)** 클릭해야 캐럿 진입(+`pbcopy`/`cmd v`).
 - titlebar 포커스는 **(700,86)** (700,48은 Help 메뉴 오발).
 - `osascript`/System Events 호출 금지 — TCC Automation 프롬프트가 포커스 가로챔(Don't Allow로 닫기).
+- **GUI turn 검증 전 VM Keychain 인증 fresh 확인 필수**(cua-vm-harness.md). 안 그러면 401 code-1로 오진.
 
 ## QA 노트
 cua VM: PO turn 중 라벨/타임아웃 거동 관찰. 참고: `docs/qa/bookshelf/cua-vm-harness.md`.
