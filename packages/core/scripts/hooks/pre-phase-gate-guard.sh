@@ -48,6 +48,48 @@ printf '%s' "$COMMAND" | grep -Eq '\.current_phase[[:space:]]*=[[:space:]]*[^=]'
 # [^=n[:space:]] : `==` 비교와 `= null`(reopen/clear) 은 write 가 아님.
 printf '%s' "$COMMAND" | grep -Eq '\.ended_at[[:space:]]*=[[:space:]]*[^=n[:space:]]' && CLOSE_WRITE=1
 printf '%s' "$COMMAND" | grep -Eq '\.current_version[[:space:]]*=[[:space:]]*[^=n[:space:]]' && VSTART_WRITE=1
+
+# ── G6: setter-only enforcement for top-level current_phase / current_version ──
+# (T-PATCH-224 part B) current_phase + current_version are TRANSITION-ONLY fields
+# (changed only at a phase/version boundary, never per-turn) — shawn's class of
+# bug. A raw top-level jq set is the drift vector. The CANONICAL setter writes are
+# distinguished by their co-write, which a casual raw poke lacks:
+#   • phase transition (lifecycle/index.md §"Phase transition write"):
+#       .current_phase = $N  ALWAYS co-occurs with  .phase_history += [...]
+#   • version start: .current_version = …  ALWAYS mutates .versions (.versions += /
+#     .versions[…] = ) — the only doctrine-sanctioned current_version write.
+# A top-level current_phase=/current_version= write WITHOUT its canonical co-write
+# is blocked → points at the setter. ★current_task.* per-turn scratch is unaffected
+# (those flags only fire on the TOP-LEVEL .current_phase/.current_version paths,
+# never .current_task.*) — AC-4. ★the legit transition carries its co-write and
+# passes — false-block 0 (AC-6).
+PHASE_HISTORY_COWRITE=0
+VERSIONS_COWRITE=0
+printf '%s' "$COMMAND" | grep -Eq '\.phase_history[[:space:]]*(\+?=|\|=)' && PHASE_HISTORY_COWRITE=1
+printf '%s' "$COMMAND" | grep -Eq '\.versions[[:space:]]*(\+?=|\|=)|\.versions\[' && VERSIONS_COWRITE=1
+# ★`= null` is a clear/reopen, NOT a transition set — never a G6 drift target.
+# PHASE_WRITE (line 47) matches `= null` (n != `=`); G6 must exclude it so a
+# legitimate phase clear/reopen passes (parity with the [^=n] CLOSE/VSTART guards).
+PHASE_SET_NULL=0
+VERSION_SET_NULL=0
+printf '%s' "$COMMAND" | grep -Eq '\.current_phase[[:space:]]*=[[:space:]]*null' && PHASE_SET_NULL=1
+printf '%s' "$COMMAND" | grep -Eq '\.current_version[[:space:]]*=[[:space:]]*null' && VERSION_SET_NULL=1
+
+emit_g6_block() {
+  printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$1" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+  exit 0
+}
+
+if [ "$PHASE_WRITE" = "1" ] && [ "$PHASE_SET_NULL" = "0" ] && [ "$PHASE_HISTORY_COWRITE" = "0" ]; then
+  emit_g6_block 'setter-guard G6: raw top-level .current_phase write blocked. current_phase is a transition-only field — set it ONLY via the canonical phase-transition setter, which appends .phase_history in the same jq pass (lifecycle/index.md §"Phase transition write"):
+  jq '"'"'.current_phase = $N | .phase_history += [{"phase":$N,"started_at":$now,"user_approved_at":$now}] | .pending_gate = null | ._phase_schema_v = 3 | .close_gate = []'"'"' ...
+A bare .current_phase= (no .phase_history co-write) is drift — it is how phase silently desyncs. Per-turn work-state goes in current_task.* scratch, never current_phase. (GUI uses the phase:approve IPC.)'
+fi
+
+if [ "$VSTART_WRITE" = "1" ] && [ "$VERSION_SET_NULL" = "0" ] && [ "$VERSIONS_COWRITE" = "0" ]; then
+  emit_g6_block 'setter-guard G6: raw top-level .current_version write blocked. current_version is a transition-only field — set it ONLY via the version-start flow, which mutates .versions in the same pass (a new version is opened, not just the pointer poked). A bare .current_version= (no .versions co-write) is the exact drift class behind the statusline-skip bug (T-PATCH-224). Open the version through the canonical flow (p1-prd.md), or via the GUI. current_task.* per-turn scratch is unaffected.'
+fi
+
 [ "$PHASE_WRITE" = "0" ] && [ "$CLOSE_WRITE" = "0" ] && [ "$VSTART_WRITE" = "0" ] && exit 0
 
 EVENT_CWD="$(printf '%s' "$EVENT_JSON" | python3 -c "

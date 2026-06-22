@@ -94,16 +94,30 @@ fi
 # Must stay in sync with session-start-po-state-migrate.sh and pre-po-state-shape-guard.sh.
 CANONICAL_CT_FIELDS="slug request_summary artifacts type status persona_sessions persona_session_meta calibration_outcome ticket_id title model effort qa_status started_at"
 
+# ── Canonical TOP-LEVEL field whitelist (T-PATCH-224 part C) ──────────────────
+# SoT: lifecycle/state-hygiene.md §"po-state top-level canonical fields". EXACTLY
+# these 13 keys. Any other top-level key (`version` / `version_now` / `ver` / a
+# stale top-level `persona_sessions` / leftover cruft — name-agnostic) is drift.
+# ★persona_sessions is DELIBERATELY EXCLUDED — its canonical home is nested
+#   current_task.persona_sessions; a top-level copy is a stale duplicate (the
+#   session-start migrate drops it once). Flagging it here surfaces the stale dup.
+# ★KEY-PRESENCE ONLY — never value-shape. current_version is dual-shape (string OR
+#   object) and both are tolerated; validating its value would false-block the
+#   object form. This guard only checks WHICH top-level keys exist, never their
+#   values. Surface-only (PostToolUse, non-blocking).
+CANONICAL_TOP_FIELDS="schema_version current_version current_phase current_task versions phase_history pending_gate close_gate recent_turns pending_promotions deferred_candidates tooling_repo _phase_schema_v"
+
 # ── Parse on-disk file and surface violations ─────────────────────────────────
 # Python writes violations to stdout; bash captures and re-routes to stderr so
 # the model sees them. Python parse errors are suppressed (2>/dev/null) to keep
 # the hook quiet on non-JSON targets.
-VIOLATIONS="$(python3 - "$PO_STATE_PATH" "$STATUS_ENUM" "$CANONICAL_CT_FIELDS" 2>/dev/null <<'PYEOF'
+VIOLATIONS="$(python3 - "$PO_STATE_PATH" "$STATUS_ENUM" "$CANONICAL_CT_FIELDS" "$CANONICAL_TOP_FIELDS" 2>/dev/null <<'PYEOF'
 import json, sys
 
 path        = sys.argv[1]
 status_enum = set(sys.argv[2].split('|'))
 ct_allowed  = set(sys.argv[3].split())
+top_allowed = set(sys.argv[4].split())
 
 try:
     with open(path) as f:
@@ -134,6 +148,20 @@ if 'past_tickets' in state:
         f'[po-state-shape-guard] {path}: past_tickets array present — '
         f'remove it. Ticket history lives in docs/tickets/*/T-NNN.md (SoT).'
     )
+
+# 2b. top-level field whitelist (T-PATCH-224 part C) — PRESENCE ONLY, name-agnostic.
+# Any top-level key outside the canonical 13 is drift (a mistyped current_version
+# like `version`/`version_now`, a stale top-level persona_sessions, leftover cruft).
+# NEVER inspects values — only which keys exist. Surface-only (non-blocking).
+if isinstance(state, dict):
+    for k in state:
+        if k not in top_allowed:
+            issues.append(
+                f'[po-state-shape-guard] {path}: top-level "{k}" is not a canonical po-state field — remove it.\n'
+                f'  (mistyped current_version? stale top-level persona_sessions? leftover cruft?)\n'
+                f'  Canonical top-level keys: {" ".join(sorted(top_allowed))}\n'
+                f'  SoT: lifecycle/state-hygiene.md §"po-state top-level canonical fields".'
+            )
 
 # 3. current_task field whitelist + status enum
 ct = state.get('current_task')

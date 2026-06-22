@@ -15,6 +15,10 @@
 #
 # T-P4-136 — 2026-05-19  (initial Write|Edit guard)
 # T-PATCH-138 — 2026-06-15 (anchor relax + inline-# parity + Bash channel + enum SoT)
+# T-PATCH-224 — 2026-06-22 (Write|Edit: + version regex BLOCK + type WARN non-block.
+#   status/qa_status/version are 100% clean across the 249 v0.5 tickets → safe to
+#   block. type has 187 legacy values (build/bug/patch/…) → warn-only to avoid an
+#   AC-6 false-block outage. Bash channel left as status/qa_status-only.)
 
 set +e
 
@@ -49,6 +53,12 @@ except Exception:
 # hardcoded enum copy — these literals are the fallback ONLY (kept in parity).
 STATUS_ENUM="todo|in-progress|review|user-verify|done|blocked|abandoned"
 QA_STATUS_ENUM="pending|pass|fail|skipped"
+# T-PATCH-224 part D: type enum + version regex. SoT = ticket-schema.md
+# (§"9 ticket types" + §"version: regex"). type is NOT in ticket-status-enum.json,
+# so it is hardcoded here against the schema's 9 canonical types.
+TYPE_ENUM="design|impl|refactor|test|qa|deploy|close|docs|doctrine"
+# version regex (ticket-schema.md §version): vN(.N)?(-suffix)? — anchored.
+VERSION_REGEX='^v[0-9]+(\.[0-9]+)?(-[A-Za-z0-9_-]+)?$'
 
 ENUM_CONFIG="$HOME/.productune/config/ticket-status-enum.json"
 if [ -f "$ENUM_CONFIG" ]; then
@@ -116,6 +126,66 @@ emit_block() {
   printf '  Fix the value and retry.\n' >&2
 }
 
+# ── Raw value extractor (shared by version/type — same strip logic as validate_key) ──
+# Echoes the cleaned scalar value for `key` in `text`, or empty if absent.
+extract_val() {
+  local key="$1" text="$2" raw val first
+  printf '%s' "$text" | grep -qE "^[[:space:]]*${key}:" || { printf ''; return 0; }
+  raw="$(printf '%s' "$text" | grep -E "^[[:space:]]*${key}:" | head -1)"
+  val="$(printf '%s' "$raw" | sed -E "s/^[[:space:]]*${key}:[[:space:]]*//")"
+  first="${val:0:1}"
+  if [ "$first" = '"' ]; then
+    val="$(printf '%s' "$val" | sed -E 's/^("[^"]*").*$/\1/; s/^"//; s/"$//')"
+  elif [ "$first" = "'" ]; then
+    val="$(printf '%s' "$val" | sed -E "s/^('[^']*').*\$/\1/; s/^'//; s/'\$//")"
+  else
+    val="$(printf '%s' "$val" | sed -E 's/[[:space:]]+#.*$//')"
+  fi
+  val="$(printf '%s' "$val" | sed -E "s/^[[:space:]]+//; s/[[:space:]]+\$//")"
+  printf '%s' "$val"
+}
+
+# ── version regex validator (BLOCKING) ────────────────────────────────────────
+# ticket-schema.md §version. Exception: archive ids with `legacy: true` (a
+# `legacy:` truthy line present in the same frontmatter text) OR a `legacy/...`
+# version value — these skip the regex. All current v0.5 tickets pass (version: v0.5).
+# Returns 0 = clean/absent/exempt, 2 = violation (sets VIOLATION_VAL).
+validate_version() {
+  local text="$1" val
+  val="$(extract_val version "$text")"
+  [ -z "$val" ] && return 0
+  # legacy exception: explicit `legacy: true` frontmatter line, or a legacy/ id.
+  if printf '%s' "$text" | grep -qE '^[[:space:]]*legacy:[[:space:]]*true([[:space:]]|$)'; then
+    return 0
+  fi
+  case "$val" in legacy/*) return 0 ;; esac
+  if ! printf '%s' "$val" | grep -qE "$VERSION_REGEX"; then
+    VIOLATION_VAL="$val"
+    return 2
+  fi
+  return 0
+}
+
+# ── type warn (NON-BLOCKING) ──────────────────────────────────────────────────
+# T-PATCH-224 part D: ticket-schema.md canonicalises 9 types, but 187 of 249
+# existing v0.5 tickets carry LEGACY type values (build / bug / patch / feature /
+# code / fix / chore / feat …). Hard-blocking type would false-block every legit
+# edit to those historical tickets (AC-6 outage). So type drift is SURFACED
+# (stderr, non-blocking) — it nudges new tickets toward the canon without
+# breaking edits to the legacy corpus. (Migrating the 187 legacy types to the
+# canon is a separate cleanup ticket; until then type cannot be a hard gate.)
+warn_type() {
+  local text="$1" val
+  val="$(extract_val type "$text")"
+  [ -z "$val" ] && return 0
+  if ! printf '%s' "$val" | grep -qE "^(${TYPE_ENUM})\$"; then
+    printf '[frontmatter-lint] type: "%s" is not a canonical ticket type (non-blocking warning).\n' "$val" >&2
+    printf '  canonical: %s\n' "$(printf '%s' "$TYPE_ENUM" | tr '|' ' ' | sed 's/  */ | /g')" >&2
+    printf '  (legacy types are grandfathered — new tickets should use a canonical value. SoT: ticket-schema.md §"9 ticket types".)\n' >&2
+  fi
+  return 0
+}
+
 lint_text() {
   local text="$1"
   [ -z "$text" ] && return 0
@@ -127,6 +197,14 @@ lint_text() {
     emit_block "qa_status" "$VIOLATION_VAL" "$QA_STATUS_ENUM"
     return 2
   fi
+  # T-PATCH-224 part D: version regex (BLOCKING) + type warn (NON-BLOCKING).
+  if ! validate_version "$text"; then
+    printf '[frontmatter-lint] version: "%s" does not match the canonical version pattern.\n' "$VIOLATION_VAL" >&2
+    printf '  required: vN(.N)?(-suffix)?  e.g. v0.5, v1, v2.3-beta  (ticket-schema.md §version)\n' >&2
+    printf '  exception: archive ids with legacy: true, or a legacy/... id.\n' >&2
+    return 2
+  fi
+  warn_type "$text"   # non-blocking surface only — never changes the return code
   return 0
 }
 

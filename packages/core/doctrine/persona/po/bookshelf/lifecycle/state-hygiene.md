@@ -32,7 +32,7 @@ At task close (alongside the calibration line) check the Claude Code auto-memory
 
 ## po-state v2 shape invariants (2026-06-15, reconciled 2026-06-16) [T-PATCH-139/154]
 
-In the same turn-open pass, hold po-state at schema_version 2: stamp `schema_version = 2` when it is absent or below 2; drop any `past_tickets` array and never recreate it (`docs/tickets/<version>/T-NNN.md` is the source of truth). Merge in-place with jq — never full-rewrite the file — and confirm `slug`, `request_summary`, `artifacts`, `persona_sessions`, `version`, `phase` survive the pass.
+In the same turn-open pass, hold po-state at schema_version 2: stamp `schema_version = 2` when it is absent or below 2; drop any `past_tickets` array and never recreate it (`docs/tickets/<version>/T-NNN.md` is the source of truth). Merge in-place with jq — never full-rewrite the file — and confirm `slug`, `request_summary`, `artifacts`, `persona_sessions`, `current_version`, `current_phase` survive the pass.
 
 The migrate does NOT strip an active `current_task`'s work-state scratch — it only drops `past_tickets` and stamps `schema_version`. Active scratch (`progress`/`decisions`/`next`/`carry`/`plan`, per `delegation.md`) is an allowed ephemeral cache; leave it. The strip discipline is scoped to `past_tickets` (forbidden) and the v1→v2 stamp — not to active scratch.
 
@@ -49,3 +49,15 @@ Turn-open work-state recovery path = read the brief (+ ticket board) as SoT; the
 Every po-state write goes through `jq` (or `python -m json` equiv) atomic merge — read JSON, mutate the parsed structure, write whole valid JSON back. NEVER string-append / `sed` / `heredoc` onto the JSON structure (array/object). One missing comma corrupts the whole file → po-state unparseable → GUI version display breaks (paepyeong repro, T-167). This hardens the existing "merge in-place, never full-rewrite" invariant: the merge engine must be a JSON tool, never raw text.
 
 Active-scratch array growth (`progress.done` etc., the named scratch keys in `delegation.md`) uses structure-safe jq — `jq '.current_task.progress.done += ["…"]'` — never hand-edit the array text. Same rule for any scratch object/array: jq operators only, no raw append. (Pairs with T-167: write-safe here + read-robust GUI = two defensive layers.)
+
+### po-state top-level canonical fields [T-PATCH-224]
+
+These are the only allowed top-level keys. Any other top-level key is drift (a mistyped `current_version` such as `version` / `version_now`, a stale duplicate, leftover cruft) — flag it for removal:
+
+`schema_version` `current_version` `current_phase` `current_task` `versions` `phase_history` `pending_gate` `close_gate` `recent_turns` `pending_promotions` `deferred_candidates` `tooling_repo` `_phase_schema_v`
+
+`_phase_schema_v` is an internal phase-schema marker — keep it; it is canonical despite the underscore. List each marker by name (never bless a bare `_*` prefix — a glob re-opens the drift door this whitelist closes).
+
+`persona_sessions` at top level is NOT canonical — the canonical home is nested `current_task.persona_sessions`. A top-level `persona_sessions` is a stale duplicate; the session-start migrate drops it once (same one-shot cleanup as a stray top-level `version`).
+
+The top-level guard checks **key presence only — never value shape — and only surfaces (PostToolUse, non-blocking)**. `current_version` is dual-shape — a plain string (`"v0.5"`) OR an object (`{id, label, current_phase, …}`) — and the statusline tolerates both; validating its value would false-block the object form. `current_task` carries its own canonical field whitelist (`delegation.md` §current_task) — the top-level guard never re-validates its sub-fields. Blocking enforcement (`current_version`/`current_phase` setter-only writes, ticket frontmatter enum/regex) lives in the separate PreToolUse guards, not here.

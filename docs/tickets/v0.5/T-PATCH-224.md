@@ -4,7 +4,8 @@ version: v0.5
 slug: ui-driving-state-strict-schema
 title: UI-구동 state 필드(po-state version/phase · ticket frontmatter) strict 스키마 강제
 type: impl
-status: todo
+status: done
+qa_status: pass
 phase: 3
 assignee: pdt-developer
 requires_qa: true
@@ -119,3 +120,21 @@ write 시도 → block. (d) 정상 lifecycle false-block 없음. 참고: `docs/q
 
 내부 SoT 불일치(`version` vs `current_version`, migrate:145)는 이 버그의 루트 — A를 먼저
 고정하지 않으면 B~D가 엇갈린 SoT 위에 쌓임. A → C/D → B 순 권장.
+
+## Close (2026-06-22) — B/C/D 완료 (A는 선행 머지됨)
+
+designer opus(SoT codify + version-open jq) → qa opus GRILL(BLOCK→fix→CLEAN) → dev opus(B/C/D+migrate) → qa opus GRILL(CLEAN, G6-accepts 실측). 전 AC PASS.
+
+**SoT 고정 (doctrine)**
+- `state-hygiene.md`(51→63) — po-state top-level canonical 13키 명문화(`schema_version current_version current_phase current_task versions phase_history pending_gate close_gate recent_turns pending_promotions deferred_candidates tooling_repo _phase_schema_v`, `_*` glob 금지·명시). 가드=**key-presence-only + surface-only**(current_version dual-shape라 값검증 금지, current_task 자체 whitelist). top-level `persona_sessions`=stale dup(canonical=nested current_task.persona_sessions). prose-lag(version/phase→current_version/current_phase) 수정.
+- `p1-prd.md`(10→20) — canonical **version-open jq** 신설: `.current_version` + `.versions +=`를 한 pass에 co-write(phase-transition 패턴과 동형). B의 G6가 이 flow를 LIVE 통과 실측(rc0), bare current_version write는 block.
+
+**hooks (★이미 LIVE — settings.json이 repo source 직참조, install.sh 재실행 불요)**
+- migrate(`session-start-po-state-migrate.sh`): top-level `del(.persona_sessions)` 1회 cleanup(version drop과 동형) — nested 무손상 실증·멱등. → state-hygiene "migrate drops once" 주장 참(원 grill BLOCK 해소).
+- C(`post-po-state-shape-guard.sh`): top-level 13키 화이트리스트 surface(non-blocking, presence-only). `version_now` 등 이름불문 flag, dict current_version 미flag.
+- B(`pre-phase-gate-guard.sh` G6): current_version/current_phase raw set을 setter co-write(versions / phase_history) 없으면 BLOCK. `=null` 제외. 매 턴 current_task scratch 무영향(AC-4). false-block 매트릭스 green.
+- D(`pre-frontmatter-lint.sh` 확장, 신규훅 X): status/qa_status/version enum·regex BLOCK. **v0.5 티켓 249개 전수 0 block(AC-6).** inline-comment cardinal-sin 회귀 없음.
+
+**deviation (수용)**: D의 `type` enum은 **WARN(non-block)** — 기존 187/249 티켓이 legacy type이라 hard-block 시 AC-6 대량 위반. BLOCK 승격은 legacy-type 마이그레이션 선행(backlog 기록). B false-negative(syntactic co-occurrence 우회)는 accidental-drift 방지 목적상 수용(threat-model 밖). D Bash 채널 version/type 미검사=minor(backlog).
+
+미커밋→커밋(commit-on-request, 이번 user "commit" 지시 범위).

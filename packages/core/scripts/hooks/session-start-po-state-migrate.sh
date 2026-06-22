@@ -9,8 +9,11 @@
 #         (briefs/<slug>.md). This hook therefore does NOT strip current_task —
 #         active scratch is preserved; it is cleared only at ticket close when
 #         current_task → null (T-PATCH-153).
-#         persona_sessions + persona_session_meta are CANONICAL (delegation.md
-#         §current_task) and likewise preserved.
+#         NESTED current_task.persona_sessions + persona_session_meta are CANONICAL
+#         (delegation.md §current_task) and likewise preserved.
+#         T-PATCH-224: a TOP-LEVEL persona_sessions is NOT canonical — it is a stale
+#         duplicate of the nested home and is dropped once here (same one-shot
+#         cleanup as a stray top-level `version`). The nested copy is untouched.
 #
 # Safety (AC-5, oh-my-eyes slug lesson):
 #   • writes .bak before any transform
@@ -85,6 +88,10 @@ NEEDS_CLEANUP="$(jq -r --argjson svfloat "$SV_NONINT_LITERAL" '
     # T-PATCH-224: a stray top-level `version` (mistyped current_version) is dirty
     # even on an otherwise-clean v2 state — trigger cleanup so the transform backfills.
     or has("version")
+    # T-PATCH-224: a stray TOP-LEVEL `persona_sessions` (stale duplicate of the
+    # canonical nested current_task.persona_sessions) is dirty — trigger the
+    # one-shot drop. The nested copy is never gated/touched.
+    or has("persona_sessions")
   ) | if . then "1" else "0" end
 ' "$STATE" 2>/dev/null || echo 1)"
 
@@ -119,6 +126,13 @@ jq '
     | (if (has("version") and (has("current_version") | not))
          then .current_version = .version else . end)
     | del(.version)
+    # 4. T-PATCH-224: drop the stray TOP-LEVEL persona_sessions. The canonical home
+    #    is nested current_task.persona_sessions (delegation.md §current_task); a
+    #    top-level copy is a stale duplicate. ★TOP-LEVEL ONLY — del(.persona_sessions)
+    #    never reaches .current_task.persona_sessions (a distinct path), so the
+    #    survival-checked nested copy (verify step below) is untouched. Mirrors the
+    #    `version` one-shot drop above. Idempotent (no-op when already absent).
+    | del(.persona_sessions)
 ' "$STATE" > "$TMP" 2>/dev/null
 
 # ── Verify: non-empty + schema_version == 2 ──────────────────────────────────
