@@ -82,6 +82,9 @@ NEEDS_CLEANUP="$(jq -r --argjson svfloat "$SV_NONINT_LITERAL" '
     or ((.schema_version | type) != "number")
     or ((.schema_version // 1) < 2)
     or has("past_tickets")
+    # T-PATCH-224: a stray top-level `version` (mistyped current_version) is dirty
+    # even on an otherwise-clean v2 state — trigger cleanup so the transform backfills.
+    or has("version")
   ) | if . then "1" else "0" end
 ' "$STATE" 2>/dev/null || echo 1)"
 
@@ -107,6 +110,15 @@ jq '
     del(.past_tickets)
     # 2. stamp schema_version = 2
     | .schema_version = 2
+    # 3. T-PATCH-224: normalize the mistyped top-level version key. The canonical
+    #    key is `current_version` (statusline / phase-gate / delegate hooks all read
+    #    it); a PO that wrote `version` (or a legacy flat state) leaves current_version
+    #    empty → statusline silently drops the productune segment. Backfill ONLY when
+    #    `version` exists and `current_version` is absent, then drop the stray key.
+    #    Merge-only (no full rewrite); idempotent on already-canonical state.
+    | (if (has("version") and (has("current_version") | not))
+         then .current_version = .version else . end)
+    | del(.version)
 ' "$STATE" > "$TMP" 2>/dev/null
 
 # ── Verify: non-empty + schema_version == 2 ──────────────────────────────────
@@ -142,7 +154,10 @@ except Exception:
     sys.exit(0)  # parse failure → safety pass (jq already validated above)
 
 checks = [
-    ('version',          lambda d: d.get('version')),
+    # T-PATCH-224: canonical key is current_version. Rename-aware — the original's
+    # value may live under the mistyped `version` (backfilled into current_version by
+    # the transform); treat either old key as the source so the rename isn't flagged lost.
+    ('current_version',  lambda d: d.get('current_version') if d.get('current_version') is not None else d.get('version')),
     ('current_phase',    lambda d: d.get('current_phase')),
     ('slug',             lambda d: (d.get('current_task') or {}).get('slug')),
     ('request_summary',  lambda d: (d.get('current_task') or {}).get('request_summary')),
