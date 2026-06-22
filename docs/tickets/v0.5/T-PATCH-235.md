@@ -4,11 +4,11 @@ version: v0.5
 slug: codex-dead-code-cleanup
 title: codex 폐기 dead-code cleanup — preload/onboarding/types/styles/OnboardingWizard 잔여 제거
 type: refactor
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
 requires_user_gate: false
 area_tag: codex-deprecation
 estimated_complexity: L2

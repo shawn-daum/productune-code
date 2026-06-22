@@ -1,14 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { EngineStatus } from './types'
+import type { Engine, EngineStatus } from './types'
 import EngineStatusRow from './EngineStatusRow'
 import {
   body, footer, stepLabel, stepIntro, hint, btnSecondary, btnPrimary, btnPrimaryDisabled,
   engineRow, btnEngineAction, btnRedetect,
 } from './styles'
-
-// codex폐기: 온보딩은 claude only — Engine 로컬 타입도 claude만
-type Engine = 'claude'
 
 interface Step2Props {
   needsClaude: boolean

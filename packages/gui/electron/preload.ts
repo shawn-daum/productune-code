@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('onboarding:checkEnv'),
 
   completeOnboarding: (opts: {
-    engine: 'claude' | 'codex' | 'both'
+    engine: 'claude'
     uiLanguage?: 'en' | 'ko'
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:complete', opts),
@@ -27,17 +27,11 @@ contextBridge.exposeInMainWorld('api', {
   checkClaude: (): Promise<{ installed: boolean; authed: boolean }> =>
     ipcRenderer.invoke('onboarding:checkClaude'),
 
-  checkCodex: (): Promise<{ installed: boolean; authed: boolean }> =>
-    ipcRenderer.invoke('onboarding:checkCodex'),
-
-  // T-PATCH-199: claudeLogin/codexLogin now spawn a HIDDEN child (no terminal,
-  // no osascript). Resolves once the child is spawned — the browser OAuth
-  // handshake is reported via the onboarding:login-* push events below.
+  // T-PATCH-199: claudeLogin spawns a HIDDEN child (no terminal, no osascript).
+  // Resolves once the child is spawned — the browser OAuth handshake is reported
+  // via the onboarding:login-* push events below.
   claudeLogin: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:claudeLogin'),
-
-  codexLogin: (): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('onboarding:codexLogin'),
 
   /** Paste-code fallback: write the user-entered code to the login child stdin. */
   submitLoginCode: (code: string): Promise<{ ok: boolean; error?: string }> =>
@@ -48,21 +42,21 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('onboarding:cancelLogin'),
 
   /** OAuth URL detected in the login child's stdout. Returns an unsubscribe fn. */
-  onLoginUrl: (cb: (payload: { engine: 'claude' | 'codex'; url: string }) => void) => {
+  onLoginUrl: (cb: (payload: { engine: 'claude'; url: string }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('onboarding:login-url', listener)
     return () => ipcRenderer.removeListener('onboarding:login-url', listener)
   },
 
   /** "Paste code" fallback prompt detected. Returns an unsubscribe fn. */
-  onLoginNeedsCode: (cb: (payload: { engine: 'claude' | 'codex' }) => void) => {
+  onLoginNeedsCode: (cb: (payload: { engine: 'claude' }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('onboarding:login-needs-code', listener)
     return () => ipcRenderer.removeListener('onboarding:login-needs-code', listener)
   },
 
   /** Login child process exited. Returns an unsubscribe fn. */
-  onLoginExit: (cb: (payload: { engine: 'claude' | 'codex'; code: number | null; error?: string }) => void) => {
+  onLoginExit: (cb: (payload: { engine: 'claude'; code: number | null; error?: string }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('onboarding:login-exit', listener)
     return () => ipcRenderer.removeListener('onboarding:login-exit', listener)

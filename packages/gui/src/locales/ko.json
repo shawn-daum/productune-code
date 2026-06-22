@@ -77,16 +77,6 @@
         "label": "Claude Code",
         "intro": "Anthropic Claude로 PO 운영 — 가장 안정적",
         "tech": "claude-code CLI · hooks/skills 완전 지원"
-      },
-      "codex": {
-        "label": "Codex",
-        "intro": "OpenAI 기반으로 PO 운영 (실험적)",
-        "tech": "codex CLI · doctrine만 적용 (hooks 미작동)"
-      },
-      "both": {
-        "label": "둘 다",
-        "intro": "Claude를 기본으로, Codex를 보조로",
-        "tech": "primary=claude-code, secondary=codex"
       }
     },
     "completionSteps": {

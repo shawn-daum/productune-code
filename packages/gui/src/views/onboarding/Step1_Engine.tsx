@@ -1,16 +1,13 @@
 import { useTranslation } from 'react-i18next'
-import type { Engine } from './types'
 import OptionCard from './OptionCard'
 import { body, footer, stepLabel, stepIntro, btnSecondary, btnPrimary } from './styles'
 
 interface Step1Props {
-  engine: Engine
-  onSelectEngine: (val: Engine) => void
   onPrev: () => void
   onNext: () => void
 }
 
-export default function Step1_Engine({ engine, onSelectEngine, onPrev, onNext }: Step1Props) {
+export default function Step1_Engine({ onPrev, onNext }: Step1Props) {
   const { t } = useTranslation()
   return (
     <>

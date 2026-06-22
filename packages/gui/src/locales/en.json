@@ -77,16 +77,6 @@
         "label": "Claude Code",
         "intro": "Run PO on Anthropic Claude — most stable",
         "tech": "claude-code CLI · full hooks/skills support"
-      },
-      "codex": {
-        "label": "Codex",
-        "intro": "Run PO on OpenAI Codex (experimental)",
-        "tech": "codex CLI · doctrine only (hooks not supported)"
-      },
-      "both": {
-        "label": "Both",
-        "intro": "Claude as primary, Codex as secondary",
-        "tech": "primary=claude-code, secondary=codex"
       }
     },
     "completionSteps": {

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import BrandMark from '../components/BrandMark'
 import i18next from '../i18n'
 import type {
-  Engine, UiLang, WizardStep, EngineStatus,
+  UiLang, WizardStep, EngineStatus,
 } from './onboarding/types'
 import { wrap, card, header, stepIndicator, stepDot } from './onboarding/styles'
 import Step0_Language from './onboarding/Step0_Language'
@@ -19,9 +19,6 @@ export default function OnboardingWizard({ onDone }: Props) {
 
   // Step 0 — Language
   const [uiLang, setUiLang] = useState<UiLang>('en')
-
-  // Step 1
-  const [engine, setEngine] = useState<Engine>('claude')
 
   // Step 2 — Engine connection (codex폐기: claude only)
   const [claudeStatus, setClaudeStatus] = useState<EngineStatus | null>(null)
@@ -86,7 +83,8 @@ export default function OnboardingWizard({ onDone }: Props) {
     if (step !== 3) return
     setCompleting(true)
     setCompleteError('')
-    const completeOpts: Record<string, unknown> = { engine, uiLanguage: uiLang }
+    // codex폐기 (T-PATCH-235): 엔진은 항상 claude — 리터럴 인라인.
+    const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang }
     // T-PATCH-213: guard deref — .catch traps only promise rejection.
     const api = (window as any).api
     if (!api?.completeOnboarding) { setCompleting(false); return }
@@ -181,8 +179,6 @@ export default function OnboardingWizard({ onDone }: Props) {
 
         {step === 1 && (
           <Step1_Engine
-            engine={engine}
-            onSelectEngine={setEngine}
             onPrev={() => setStep(0)}
             onNext={() => setStep(2)}
           />

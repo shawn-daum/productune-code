@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile)
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface OnboardingCompleteOpts {
-  engine: 'claude' | 'codex' | 'both'
+  engine: 'claude'
   uiLanguage?: UiLanguage
 }
 
@@ -27,15 +27,15 @@ interface OnboardingRecord {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // T-PATCH-199: hidden-spawn browser-OAuth login (osascript→Terminal removed).
-// `claude auth login` / `codex login` are spawned with piped stdio (no TTY, no
-// terminal window). The spawned CLI opens the system browser itself; we parse
-// its stdout to (a) surface the OAuth URL as a "reopen browser" button, and
-// (b) detect the "paste code" fallback prompt. The child lives for the whole
-// browser handshake, so the IPC handler must NOT await it — it returns once the
-// child is spawned, and progress is streamed via webContents.send.
+// `claude auth login` is spawned with piped stdio (no TTY, no terminal window).
+// The spawned CLI opens the system browser itself; we parse its stdout to
+// (a) surface the OAuth URL as a "reopen browser" button, and (b) detect the
+// "paste code" fallback prompt. The child lives for the whole browser handshake,
+// so the IPC handler must NOT await it — it returns once the child is spawned,
+// and progress is streamed via webContents.send.
 
-/** The single in-flight login child process (claude or codex). Kept at module
- *  scope so submitLoginCode / cancelLogin can reach it across IPC calls. */
+/** The single in-flight login child process. Kept at module scope so
+ *  submitLoginCode / cancelLogin can reach it across IPC calls. */
 let loginChild: ChildProcess | null = null
 
 /** Strip OSC-8 hyperlink escapes (`\x1b]8;;<url>\x07<text>\x1b]8;;\x07`) and any
@@ -55,7 +55,7 @@ function extractUrl(clean: string): string | null {
 }
 
 /** Heuristic: does this output ask the user to paste a code? Generic so it
- *  matches both claude's "Paste code here if prompted >" and codex variants. */
+ *  matches claude's "Paste code here if prompted >" variants. */
 function isPasteCodePrompt(clean: string): boolean {
   return /paste\s+(the\s+)?code|enter\s+(the\s+)?code|authorization\s+code|verification\s+code/i.test(clean)
 }
@@ -68,7 +68,7 @@ function emitLogin(channel: string, payload: unknown): void {
 }
 
 /** Build a child env whose PATH includes the user's login-shell PATH, so a
- *  globally-installed `claude`/`codex` (Homebrew, npm-global, `~/.local/bin`)
+ *  globally-installed `claude` (Homebrew, npm-global, `~/.local/bin`)
  *  resolves even when the app was launched from Finder. A packaged-app launch
  *  inherits launchd's minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`), so a bare
  *  `claude` spawn would exit ENOENT and the browser would never open — same
@@ -78,18 +78,18 @@ function loginShellEnv(): NodeJS.ProcessEnv {
   return withLoginShellPath(process.env)
 }
 
-/** Spawn a hidden login process (`claude auth login` / `codex login`) and wire
- *  its stdout/stderr to the renderer via webContents.send. Returns immediately;
- *  does NOT block on the browser OAuth handshake. */
-function startHiddenLogin(engine: 'claude' | 'codex'): { ok: boolean; error?: string } {
+/** Spawn a hidden login process (`claude auth login`) and wire its stdout/stderr
+ *  to the renderer via webContents.send. Returns immediately; does NOT block on
+ *  the browser OAuth handshake. */
+function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
   // Kill any prior in-flight login before starting a new one.
   if (loginChild && loginChild.exitCode === null) {
     try { loginChild.kill() } catch { /* ok */ }
   }
   loginChild = null
 
-  const cmd = engine === 'claude' ? 'claude' : 'codex'
-  const args = engine === 'claude' ? ['auth', 'login'] : ['login']
+  const cmd = 'claude'
+  const args = ['auth', 'login']
 
   let child: ChildProcess
   try {
@@ -122,7 +122,7 @@ function startHiddenLogin(engine: 'claude' | 'codex'): { ok: boolean; error?: st
   }
 
   child.stdout?.on('data', handleChunk)
-  // codex (and some claude builds) may write the prompt/URL to stderr.
+  // Some claude builds write the prompt/URL to stderr.
   child.stderr?.on('data', handleChunk)
 
   child.on('error', (err) => {
@@ -200,23 +200,9 @@ export function register(): void {
     }
   })
 
-  ipcMain.handle('onboarding:checkCodex', async () => {
-    let installed = false
-    try {
-      await execFileAsync('which', ['codex'], { env: loginShellEnv() })
-      installed = true
-    } catch { return { installed: false, authed: false } }
-
-    // Auth file check
-    const authPath = path.join(os.homedir(), '.codex', 'auth.json')
-    return { installed: true, authed: fs.existsSync(authPath) }
-  })
-
   // T-PATCH-199: hidden-spawn browser-OAuth login. Returns once the child is
   // spawned (non-blocking); progress streams via onboarding:login-* events.
   ipcMain.handle('onboarding:claudeLogin', async () => startHiddenLogin('claude'))
-
-  ipcMain.handle('onboarding:codexLogin', async () => startHiddenLogin('codex'))
 
   // Paste-code fallback: write the user-entered code to the login child's stdin.
   ipcMain.handle('onboarding:submitLoginCode', async (_event, code: string) => {
@@ -294,8 +280,7 @@ export function register(): void {
 
       // 1. Write productune.env (mode 0600)
       const envPath = path.join(productuneDir, 'productune.env')
-      const engineVal = opts.engine === 'both' ? 'claude' : opts.engine
-      let envContent = `MY_PO_ENGINE=${engineVal}\n`
+      let envContent = `MY_PO_ENGINE=${opts.engine}\n`
       envContent += `PRODUCTUNE_REPO=${coreDir}\n`
       envContent += `created_at=${new Date().toISOString()}\n`
       fs.writeFileSync(envPath, envContent, { mode: 0o600 })

@@ -107,10 +107,6 @@ export const btnSecondary: React.CSSProperties = {
   background: '#242424', color: '#F0F0F0', border: '1px solid #333', borderRadius: 4,
   padding: '8px 14px', fontSize: 13, cursor: 'pointer',
 }
-export const btnSkip: React.CSSProperties = {
-  background: 'transparent', color: '#606060', border: 'none',
-  fontSize: 12, cursor: 'pointer', padding: '8px 10px',
-}
 export const btnReset: React.CSSProperties = {
   background: 'transparent', color: '#505050', border: 'none',
   fontSize: 11, cursor: 'pointer', padding: '4px 8px',
