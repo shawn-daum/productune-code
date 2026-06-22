@@ -93,6 +93,28 @@ cua/단위 양쪽: (a) `version` 오기 po-state → migrate가 current_version�
 statusline 정상 표시. (b) `version_now` → shape-guard 플래그. (c) 티켓에 `status: planning`
 write 시도 → block. (d) 정상 lifecycle false-block 없음. 참고: `docs/qa/bookshelf/cua-vm-harness.md`.
 
+## 진행 (2026-06-22) — A done, B/C/D 잔여
+
+### ✅ A 구현·검증 완료 (SoT 고정 + 자가치유)
+- `session-start-po-state-migrate.sh`:
+  (1) transform에 `version`→`current_version` backfill 추가(`has version && !has current_version`
+      이면 옮기고 `del(.version)`; 둘 다 있으면 current_version 보존, version만 제거).
+  (2) NEEDS_CLEANUP 게이트에 `has("version")` 추가 — clean-v2에 stray version만 있어도 transform 발동.
+  (3) 생존검증(145) `version`→`current_version` (rename-aware: old.version|old.current_version → new.current_version).
+- 검증: jq 4케이스(backfill/no-op/both-keys/멱등) + **이 repo 실제 po-state**(version+current_version
+  둘 다 라이브!) 실측 — stray version 제거, current_version "v0.5" 보존, 나머지 14키 무손상. bash -n OK.
+- 효과: 다음 세션 시작에 모든 기기에서 version 오기 자가치유(AC-1/AC-2 충족). statusline drift 해소.
+
+### ⬜ B/C/D 잔여 (forward 방지 — 더 위험/큰 작업)
+- **C (top-level unknown-key surface)**: ⚠️ **blocker 발견** — 이 repo po-state top-level 키가 15개
+  (`_phase_schema_v` `deferred_candidates` `pending_gate` `persona_sessions` `phase_history`
+  `tooling_repo` 등)인데 **canonical top-level 목록이 doctrine 어디에도 없음.** 추측 화이트리스트는
+  false-positive 양산 → **C 선행조건 = authoritative top-level canonical 필드 SoT 확립**(doctrine 결정).
+- **B (current_version/phase raw-jq 차단 / setter)**: pre-phase-gate-guard.sh:50에 이미 `.current_version=`
+  write 감지가 있음(phase-gate 용) — 이를 setter-only 강제로 확장 검토. blocking이라 false-block 테스트 필수.
+- **D (ticket frontmatter PreToolUse 가드, enum/version block)**: blocking — 정상 lifecycle false-block 0 검증 필수.
+- 권장: C의 SoT 확립을 먼저(별도 doctrine), 그 위에 B/D blocking 가드. A만으로도 shawn 보고 증상은 해소됨.
+
 ## 메모
 
 내부 SoT 불일치(`version` vs `current_version`, migrate:145)는 이 버그의 루트 — A를 먼저
