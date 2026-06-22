@@ -4,10 +4,11 @@ version: v0.5
 slug: disabled-with-explanation-doctrine-decision
 title: disabled-with-explanation designer 지침 정착 결정 — 채택/기각 후 Tier1 author
 type: doctrine
-status: todo
+status: done
 phase: 3
 assignee: pdt-designer
 requires_qa: false
+qa_status: pass
 requires_user_gate: true
 area_tag: ux-doctrine
 estimated_complexity: L1

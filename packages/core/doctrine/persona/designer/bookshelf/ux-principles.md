@@ -36,6 +36,10 @@ when designing any flow / mockup / spec.
   show empty-state copy while data is still fetching.
 - **Empty states teach** — icon + headline + one-line description + one primary CTA so
   the user knows what they can do here.
+- **Disabled actions teach too** — same teach-the-state rule for a blocked-forward state
+  (cf. §5 no dead ends): a disabled primary action carries an adjacent, behavior-specific
+  one-line reason for WHY it's blocked + WHAT unblocks it — never disabled-and-silent.
+  (2026-06-22) [T-PATCH-236; orig. T-199 AC-6]
 
 ## 5. Escape & exits
 
@@ -92,7 +96,7 @@ when designing any flow / mockup / spec.
 ## 12. Forms, validation & error prevention
 
 - **Prevent errors before they happen** — constrain inputs, sensible defaults, confirm
-  destructive/irreversible actions, disable invalid submits.
+  destructive/irreversible actions, disable invalid submits (cf. §4 disabled actions teach).
 - **Validate helpfully** — validate at the right time (not keystroke-noisy), mark the
   offending field, say how to fix it. Preserve user input on failure.
 
