@@ -3,7 +3,7 @@ ticket_id: T-PATCH-189
 version: v0.5
 slug: i18n-audit-missing-keys-and-blank-url
 title: i18n 점검 — 누락 키 채움 + used-but-missing 빌드게이트 + 빈 브라우저 URL바 정리
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

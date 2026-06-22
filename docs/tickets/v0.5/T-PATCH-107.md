@@ -3,7 +3,7 @@ ticket_id: T-PATCH-107
 title: "Artifacts 탭 재구조화 — flat / archive / 지난 버전 히스토리 토글 트리"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

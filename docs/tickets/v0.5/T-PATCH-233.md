@@ -4,11 +4,11 @@ version: v0.5
 slug: legacy-type-migration
 title: v0.5 티켓 legacy type → 9-canon 마이그레이션 + pre-frontmatter-lint type WARN→BLOCK 승격
 type: refactor
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
 requires_user_gate: false
 area_tag: state-integrity
 estimated_complexity: L3
@@ -71,3 +71,14 @@ legacy 분포(T-PATCH-224 dev 조사):
 
 - T-PATCH-224 D 가드 live(**완료**) — 이 티켓의 BLOCK 승격 타깃.
 - 매핑표 PO 결정 필요(blocking).
+
+## Outcome (2026-06-22, close)
+
+- **AC-1/AC-2 달성**: 매핑 확정(build/code/feature/fix/bug/bugfix/patch/feat/chore-bugfix→impl,
+  design+impl→impl, doctrine-update→doctrine, chore 4건 개별판단) + 전 버전 티켓 196개 type
+  9-canon 마이그레이션 완료. completeness gate clean(잔존 legacy 0). QA GRILL 검증.
+- **AC-3/AC-4/AC-5 이월 → T-PATCH-237**: WARN→BLOCK flip은 독립 GRILL이 extraction-asymmetry
+  잡아 revert(user 결정 안 A). 훅이 `^[[:space:]]*type:`를 본문까지 매치 → 본문 TS 코드
+  (`type === …` 등 14곳/9티켓)가 BLOCK 시 false-block. 코드라 중화 불가 → 근본 fix=frontmatter-scope
+  추출이 선행. T-PATCH-237이 그 위에서 안전 BLOCK까지 담당.
+- 결론: 마이그레이션(비가역 bulk) done · flip은 훅 하드닝 선행 필요로 T-237 분리.

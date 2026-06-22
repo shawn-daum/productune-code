@@ -3,7 +3,7 @@ ticket_id: T-PATCH-162
 version: v0.5
 slug: ticket-sort-per-status
 title: 티켓 정렬 — todo=작업순서↑, done=최근완료↑, 나머지=최근업데이트↑
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

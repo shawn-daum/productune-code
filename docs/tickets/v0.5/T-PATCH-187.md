@@ -3,7 +3,7 @@ ticket_id: T-PATCH-187
 version: v0.5
 slug: build-launcher-to-run-launcher
 title: Build 런처 → ▶ Run 런처 (env 파일 자동발견 + Preview 자동 + 탭닫으면 서버 종료)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

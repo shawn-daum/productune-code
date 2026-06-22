@@ -3,7 +3,7 @@ ticket_id: T-PATCH-145
 version: v0.5
 slug: persona-sprite-stepfix-enlarge
 title: PersonaPresenceBar — 프레임-스텝 버그 수정(steps jump-none) + 영역/캐릭터 확대
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

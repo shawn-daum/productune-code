@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-136
 version: v0.5
 phase: 3
-type: bugfix
+type: impl
 status: done
 assignee: pdt-developer
 estimated_complexity: M

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-196
 version: v0.5
 slug: gui-browser-shortcuts
 title: 인앱 브라우저 — 키보드 단축키 4종 (⌘⇧T / ⌘L / ⌘[] / ⌃Tab)
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

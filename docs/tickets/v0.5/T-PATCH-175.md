@@ -3,7 +3,7 @@ ticket_id: T-PATCH-175
 version: v0.5
 slug: cmdp-prd-and-version-commands
 title: Cmd+P 신규 명령 — PRD 열기 + V:(버전; 현재→프로젝트, 과거→버전히스토리)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

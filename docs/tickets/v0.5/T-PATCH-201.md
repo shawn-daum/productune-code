@@ -3,7 +3,7 @@ ticket_id: T-PATCH-201
 version: v0.5
 slug: cost-archive-cumulative-fix
 title: Cost archive — 누적 스냅샷 합산 버그(총액 뻥튀기) + main usage 미캡처 수정
-type: bugfix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-190
 version: v0.5
 slug: browser-mainframe-only-urlbar
 title: 인앱 브라우저 — 주소창/실패오버레이를 메인프레임만 반영
-type: fix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

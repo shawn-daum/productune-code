@@ -3,7 +3,7 @@ ticket_id: T-PATCH-163
 version: v0.5
 slug: composer-working-indicator
 title: PO 작업 중 composer를 CLI 스타일 라이브 인디케이터로 (spinner+동사+elapsed+~tokens)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-designer

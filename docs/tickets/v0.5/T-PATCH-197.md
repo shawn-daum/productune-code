@@ -3,7 +3,7 @@ ticket_id: T-PATCH-197
 version: v0.5
 slug: oq-resume-invalid-params-hardening
 title: OQ 답변 재개 — answerText 살균 + 침묵 타임아웃 OQ 대기 면제
-type: chore/bugfix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

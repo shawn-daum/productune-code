@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-015
 version: v0.5
 phase: 3
-type: bug
+type: impl
 status: done
 assignee: pdt-developer
 risk_flags: [data-source-incomplete, missing-tiers, account-managed-mcp, plugin-mcp, no-connection-state, ipc-reads-disk-not-runtime]

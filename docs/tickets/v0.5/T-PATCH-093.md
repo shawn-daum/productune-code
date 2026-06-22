@@ -3,7 +3,7 @@ ticket_id: T-PATCH-093
 title: "PO chat 하이퍼링크 — 상대경로 linkify 루트 확장 + env 링크는 env 뷰어로 라우팅"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

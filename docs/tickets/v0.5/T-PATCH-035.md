@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-035
 version: v0.5
 phase: 3
-type: bug
+type: impl
 status: done
 assignee: pdt-developer
 qa: true

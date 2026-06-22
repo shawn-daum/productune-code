@@ -3,7 +3,7 @@ ticket_id: T-PATCH-186
 version: v0.5
 slug: run-launcher-usability-fixes
 title: Build 런처 실사용 픽스 — 드롭업 clip 해제 + PATH 보강 + amber focus + 기본 최대화
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

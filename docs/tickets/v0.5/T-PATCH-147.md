@@ -3,7 +3,7 @@ ticket_id: T-PATCH-147
 version: v0.5
 slug: po-runner-bypass-perm-and-false-banner
 title: po-runner — 기본 권한모드 bypassPermissions + 오탐 'permission-blocked' 30s 타이머 제거
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

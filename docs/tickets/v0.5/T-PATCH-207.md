@@ -3,7 +3,7 @@ ticket_id: T-PATCH-207
 version: v0.5
 slug: html-artifact-render-on-open-cli
 title: HTML 아티팩트 — CLI(터미널) 전달 시 코드뷰 말고 렌더로 열리게 (path-reveal .html 특수처리)
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

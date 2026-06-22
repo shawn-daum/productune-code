@@ -3,7 +3,7 @@ ticket_id: T-PATCH-191
 version: v0.5
 slug: browser-url-focus-and-window-open-newtab
 title: 인앱 브라우저 — 빈 탭 URL바 자동 포커스 + window.open을 새 탭으로
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

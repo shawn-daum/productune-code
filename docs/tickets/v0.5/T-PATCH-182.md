@@ -3,7 +3,7 @@ ticket_id: T-PATCH-182
 version: v0.5
 slug: md-viewer-h4-recipe-and-list-breathing
 title: MD 뷰어 density 해소 — H4 recipe 신설 + 리스트 호흡(노션식 후속)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

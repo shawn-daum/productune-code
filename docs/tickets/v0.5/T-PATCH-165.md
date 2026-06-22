@@ -3,7 +3,7 @@ ticket_id: T-PATCH-165
 version: v0.5
 slug: tool-list-exclude-subagent-tools
 title: 도구 리스트가 subagent 내부 도구(Write/Edit 등)까지 표시 — PO 자기 도구만 (nested 필터)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

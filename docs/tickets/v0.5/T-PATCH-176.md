@@ -3,7 +3,7 @@ ticket_id: T-PATCH-176
 version: v0.5
 slug: statusline-gate-nonproductune
 title: statusline이 비-productune 디렉토리에서도 "productune" 표시 — productune 프로젝트에서만 출력
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

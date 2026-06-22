@@ -3,7 +3,7 @@ ticket_id: T-PATCH-149
 version: v0.5
 slug: agent-teams-env-and-grill-cleanups
 title: po-runner SendMessage env 활성 + grill 파생 cleanup (helpers 매핑 수렴 + PendingGateChip 죽은 애니)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

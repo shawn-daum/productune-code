@@ -1,7 +1,7 @@
 ---
 ticket_id: T-PATCH-192
 version: v0.5
-type: fix
+type: impl
 status: done
 phase: 4
 assignee: pdt-developer

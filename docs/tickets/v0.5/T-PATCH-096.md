@@ -3,7 +3,7 @@ ticket_id: T-PATCH-096
 title: "Main-pane 상단 phase 헤더에 버전 명시 + 영역 확대, PO 채팅 아래 phase 표시줄 삭제 (#8)"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -1,6 +1,6 @@
 ---
 id: T-PATCH-115
-type: patch
+type: impl
 status: done
 phase: 3
 assignee: developer

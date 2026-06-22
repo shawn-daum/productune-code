@@ -3,7 +3,7 @@ ticket_id: T-PATCH-143
 version: v0.5
 slug: app-set-name-productune
 title: app.setName('productune') — 앱 메뉴/About/알림 소스 라벨 "Electron"→"productune"
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

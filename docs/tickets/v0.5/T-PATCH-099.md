@@ -3,7 +3,7 @@ ticket_id: T-PATCH-099
 title: "Dispatch Progress 영역 재기획 — dash-rail 제거, 단일 progress 레인으로 통합"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

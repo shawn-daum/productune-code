@@ -3,7 +3,7 @@ ticket_id: T-PATCH-161
 version: v0.5
 slug: md-viewer-zoom-fix
 title: Markdown viewer 줌 +/- 작동 안 함 (HTML viewer 방식으로 수정)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

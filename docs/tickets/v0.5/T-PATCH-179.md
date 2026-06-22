@@ -3,7 +3,7 @@ ticket_id: T-PATCH-179
 version: v0.5
 slug: md-frontmatter-strip-metadata-card
 title: MD 뷰어 YAML frontmatter strip + metadata 카드 패널 (Option A)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

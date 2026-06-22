@@ -3,7 +3,7 @@ ticket_id: T-PATCH-098
 title: "Chat 입력창 클립보드 이미지 붙여넣기 — paste→디스크 저장→첨부 경로로 PO 전달"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

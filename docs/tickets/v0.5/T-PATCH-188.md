@@ -3,7 +3,7 @@ ticket_id: T-PATCH-188
 version: v0.5
 slug: run-ux-reopen-preview-and-blank-browser
 title: Run UX — Preview 다시 열기 버튼 + Cmd+T 빈 브라우저
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

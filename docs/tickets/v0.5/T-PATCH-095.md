@@ -3,7 +3,7 @@ ticket_id: T-PATCH-095
 title: "MD/JSON 뷰어 Sticky Scroll — 조상 heading/key 경로 누적 고정"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

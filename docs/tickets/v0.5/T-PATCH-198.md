@@ -3,7 +3,7 @@ ticket_id: T-PATCH-198
 version: v0.5
 slug: md-viewer-fill-width-centered-column
 title: 마크다운 뷰어 — 페이퍼 전체 너비 채우기 + 산문 컬럼 780px 중앙 정렬
-type: bugfix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

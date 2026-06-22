@@ -3,7 +3,7 @@ ticket_id: T-PATCH-170
 version: v0.5
 slug: subagent-cost-attribution
 title: 비용 아카이브에 PO만 나옴 — subagent 비용 미기록 (Agent 도구 디스패치 ≠ Bash post-delegate 훅)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

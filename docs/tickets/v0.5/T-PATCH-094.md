@@ -3,7 +3,7 @@ ticket_id: T-PATCH-094
 title: "JSON 뷰어에 검색(Find) 기능 추가 — FindBar UX 일관"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

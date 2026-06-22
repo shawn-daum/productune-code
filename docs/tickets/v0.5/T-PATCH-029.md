@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-029
 version: v0.5
 phase: 3
-type: feature
+type: impl
 status: done
 assignee: pdt-developer
 estimated_complexity: M

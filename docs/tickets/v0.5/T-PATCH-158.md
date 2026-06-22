@@ -3,7 +3,7 @@ ticket_id: T-PATCH-158
 version: v0.5
 slug: po-runner-agent-tool-detect
 title: po-runner 위임 감지 도구명 'Task'→'Task'|'Agent' (persona 활성 안 되던 진짜 root)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-159
 version: v0.5
 slug: gui-build-button
 title: GUI Build(+Smoke) 버튼 — surfaces config 기반 직접 실행 (zero-token)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-designer

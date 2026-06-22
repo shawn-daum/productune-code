@@ -3,7 +3,7 @@ ticket_id: T-PATCH-183
 version: v0.5
 slug: md-viewer-light-dark-toggle
 title: MD 뷰어 문서 표면 light/dark 토글 — ZoomControls 옆 sun/moon 버튼 + .md-doc.md-light 스코프 light 팔레트
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-092
 title: "Quick Open 빈쿼리(최근 목록)에서 방향키 이동 + Enter 열기 동작"
 version: v0.5
 round: patch
-type: fix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-164
 version: v0.5
 slug: subagent-presence-auto-idle
 title: subagent 완료 후 idle 복귀 — done 무한 잔류 제거 (작업 끝나면 회색으로)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-designer

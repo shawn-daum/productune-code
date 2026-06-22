@@ -3,7 +3,7 @@ ticket_id: T-PATCH-103
 title: "Version History 티켓 클릭 시 상세 탭 열기 — 미연결(unwired) 핸들러 배선"
 version: v0.5
 round: patch
-type: fix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

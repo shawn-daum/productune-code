@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-080
 version: v0.5
 phase: 3
-type: build
+type: impl
 status: done
 assignee: pdt-developer
 created_at: 2026-06-10T00:00:00Z

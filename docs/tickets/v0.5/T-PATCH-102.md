@@ -3,7 +3,7 @@ ticket_id: T-PATCH-102
 title: "productune init — doctrine 정합 스캐폴딩 (artifacts/prd/backlog/tickets/briefs 누락 해소, ENOENT 차단)"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-178
 version: v0.5
 slug: version-history-prd-horizontal-margin
 title: 버전히스토리 PRD 영역 좌우 마진 추가 (sibling 정렬)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

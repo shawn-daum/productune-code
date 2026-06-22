@@ -3,7 +3,7 @@ ticket_id: T-PATCH-153
 version: v0.5
 slug: po-state-active-scratch-hooks
 title: po-state 훅 — 활성 current_task scratch 보존 (migrate 미strip + write-guard 허용), past_tickets/schema/status는 유지
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

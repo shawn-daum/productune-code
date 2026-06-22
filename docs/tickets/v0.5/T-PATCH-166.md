@@ -3,7 +3,7 @@ ticket_id: T-PATCH-166
 version: v0.5
 slug: po-text-token-streaming
 title: PO 텍스트 토큰 단위 스트리밍 (타자기 효과) — --include-partial-messages
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

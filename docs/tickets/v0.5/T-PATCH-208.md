@@ -3,7 +3,7 @@ ticket_id: T-PATCH-208
 version: v0.5
 slug: frontmatter-lint-absolute-path-bypass
 title: 티켓 status enum drift 근본원인 — pre-frontmatter-lint 절대경로 우회 버그 수정
-type: bugfix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

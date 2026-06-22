@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-001
 version: v0.4
 round: phase3-fixes
-type: doctrine-update
+type: doctrine
 status: done
 phase: 3
 assignee: pdt-designer
@@ -64,7 +64,7 @@ Phase 3 dogfood 결과 두 가지 즉각 패치가 필요:
 ---
 ticket_id: T-NNN
 round: <round-id>
-type: PRD|test|issue|impl|refactor|qa
+# type: PRD|test|issue|impl|refactor|qa
 status: todo|in-progress|review|done|blocked|abandoned
 assignee: pdt-<persona>
 created_at: 2026-MM-DDTHH:MM:SSZ

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-155
 version: v0.5
 slug: abandoned-excluded-from-progress
 title: 진행률 모수에서 abandoned 제외 (statusline + SidePanel) — 13/14→13/13
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

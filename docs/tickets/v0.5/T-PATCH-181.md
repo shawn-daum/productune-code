@@ -3,7 +3,7 @@ ticket_id: T-PATCH-181
 version: v0.5
 slug: md-viewer-notion-readability-and-codeblock-overflow
 title: MD 뷰어 노션식 가독성 — heading 간격 리듬(D) + 코드블록 overflow 방지(C)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

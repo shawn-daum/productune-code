@@ -3,7 +3,7 @@ ticket_id: T-PATCH-184
 version: v0.5
 slug: sticky-heading-h4-and-scaled-typography
 title: sticky 헤딩 breadcrumb — H4 포함 + 레벨별 스케일다운 타이포(계층 스택)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

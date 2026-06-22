@@ -3,7 +3,7 @@ ticket_id: T-PATCH-174
 version: v0.5
 slug: cmdp-cleanup-and-space-bug
 title: Cmd+P 정리 — tab:/s:/mcp: 명령 삭제 + p: 뒤 띄어쓰기 시 커맨드 취소 버그
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-106
 title: "PO chat 하이퍼링크 — 절대경로 / file:// 링크 클릭 시 적절한 뷰어로 열기"
 version: v0.5
 round: patch
-type: fix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

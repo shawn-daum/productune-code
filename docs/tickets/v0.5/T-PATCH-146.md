@@ -3,7 +3,7 @@ ticket_id: T-PATCH-146
 version: v0.5
 slug: po-state-migrate-shape-gate
 title: po-state migrate 훅 idempotency 게이트 version-기반 → shape-기반 (v2-stamped-but-dirty 누락 차단)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

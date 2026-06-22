@@ -3,7 +3,7 @@ ticket_id: T-PATCH-151
 version: v0.5
 slug: migrate-hook-message-alarm-block
 title: migrate 훅 additionalContext reword — shrink=정상·work-state는 brief·복원 금지 (PO 오진 차단)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

@@ -3,7 +3,7 @@ ticket_id: T-PATCH-160
 version: v0.5
 slug: explorer-json-viewer
 title: 탐색(explorer)에서 연 .json도 JSON viewer로 (artifacts와 동일)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

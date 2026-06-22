@@ -3,7 +3,7 @@ ticket_id: T-PATCH-193
 version: v0.5
 slug: browser-page-title-and-url-persist
 title: 브라우저 탭 — 페이지 타이틀 반영 + Cmd+R 후 URL 보존
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

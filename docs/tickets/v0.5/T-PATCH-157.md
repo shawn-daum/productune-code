@@ -3,7 +3,7 @@ ticket_id: T-PATCH-157
 version: v0.5
 slug: askuserquestion-answer-not-delivered
 title: AskUserQuestion 선택 답변이 PO에 전달 안 됨 → PO가 텍스트로 재질문 (진단-우선)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

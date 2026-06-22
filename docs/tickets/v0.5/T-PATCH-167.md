@@ -3,7 +3,7 @@ ticket_id: T-PATCH-167
 version: v0.5
 slug: gui-malformed-postate-robustness
 title: po-state 파싱 실패 시 GUI가 "v1 대기중" 오해 placeholder로 폴백 — 명시 에러+last-good
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

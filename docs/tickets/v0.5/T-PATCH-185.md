@@ -3,7 +3,7 @@ ticket_id: T-PATCH-185
 version: v0.5
 slug: md-light-link-and-codestring-contrast
 title: 라이트 모드 링크 색 + 코드 string 대비 AA화 (T-183 후속)
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

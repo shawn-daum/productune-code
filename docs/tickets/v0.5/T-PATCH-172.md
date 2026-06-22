@@ -3,7 +3,7 @@ ticket_id: T-PATCH-172
 version: v0.5
 slug: ticket-board-live-refresh
 title: 티켓 상태 변경이 보드에 즉시 반영 안 됨 (탭 갔다와야 갱신) — live refresh
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

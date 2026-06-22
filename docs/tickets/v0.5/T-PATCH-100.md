@@ -3,7 +3,7 @@ ticket_id: T-PATCH-100
 title: "user-requested promotion gate 백엔드 활성화 — origin stamp + resolvePromotion 실구현 (T-PATCH-097 후속)"
 version: v0.5
 round: patch
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

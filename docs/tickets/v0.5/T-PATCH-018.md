@@ -2,7 +2,7 @@
 ticket_id: T-PATCH-018
 version: v0.5
 phase: 3
-type: chore
+type: refactor
 status: done
 assignee: pdt-developer
 estimated_complexity: L3

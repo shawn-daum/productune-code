@@ -3,7 +3,7 @@ ticket_id: T-PATCH-199
 version: v0.5
 slug: onboarding-no-terminal-login
 title: 온보딩 — 엔진 로그인을 무터미널 브라우저 OAuth로 전환 (옵션 A)
-type: feature
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

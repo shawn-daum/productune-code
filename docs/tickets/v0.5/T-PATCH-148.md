@@ -3,7 +3,7 @@ ticket_id: T-PATCH-148
 version: v0.5
 slug: persona-presence-activation-hover-cursor
 title: PersonaPresenceBar sub-agent 활성화 + working hover tooltip + streaming 커서 복구
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

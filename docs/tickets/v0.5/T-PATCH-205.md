@@ -3,7 +3,7 @@ ticket_id: T-PATCH-205
 version: v0.5
 slug: pane-error-isolation
 title: Pane 단위 ErrorBoundary 격리 + 탭 복구 fallback (+ 챗 드래프트 persist)
-type: bugfix
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer

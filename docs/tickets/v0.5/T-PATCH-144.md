@@ -3,7 +3,7 @@ ticket_id: T-PATCH-144
 version: v0.5
 slug: persona-presence-sprite
 title: PersonaPresenceBar dot+label 칩 → persona 캐릭터 스프라이트 애니메이션 교체
-type: code
+type: impl
 status: done
 phase: 3
 assignee: pdt-developer
