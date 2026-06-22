@@ -26,7 +26,12 @@ Read `docs/designer/design-system.md` (DS), scan codebase, verify each:
 
 > Producer of the Logo / Favicon / `og:image` / app-icon items = **P2 S2b (brand assets)**
 > (`phase2-3-ticket-sequence.md`). A missing item here means S2b was skipped (wrong branch) or
-> its `external_tool_recommendation` is still unfulfilled — surface it, never silently pass.
+> its delegation / `external_tool_recommendation` handoff (Codex or ChatGPT/Gemini) is still
+> `blocked` (asset not landed) — surface it, never silently pass. (T-PATCH-226)
+> **Hi-fi mockup (S5) is NOT a close-gate item** — it is a conditional P2 step. An absent hi-fi
+> means S5 was skipped per its criteria, which is valid; never block close on a missing hi-fi.
+> The scope items above (DS / type / color / assets) are verified against the shipped build
+> regardless of whether a hi-fi was produced. (T-PATCH-225)
 
 ## Execution
 
