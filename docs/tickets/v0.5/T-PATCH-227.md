@@ -4,7 +4,8 @@ version: v0.5
 slug: mobile-maestro-smoke-not-wired
 title: ios/android surface가 smoke:null로 굳어 maestro가 안 도는 갭 (기기 간 비일관 + 매번 되물음)
 type: doctrine
-status: todo
+status: done
+qa_status: pass
 phase: 3
 assignee: pdt-po
 requires_qa: true
@@ -88,3 +89,12 @@ doctrine에 넣은 것이고, 실제 프로젝트 config에 maestro 명령/flow�
 cua는 macOS 데스크톱 surface 전용이라 mobile maestro 검증엔 부적합 — 본 티켓 QA는 doctrine
 grill(배선 규칙 정합 · p3 prereq 확장 정합) + 실 mobile 프로젝트 hands-on. 참고:
 `qa/bookshelf/surface-config-schema.md`.
+
+## Close (2026-06-22)
+
+value-independent 구조 doctrine 정착 (designer opus → qa opus GRILL CLEAN → owner should_fix 타이트닝 → 재grill CLEAN). 변경:
+- `surface-config-schema.md`(SoT, 42→59, cap OK) — "maestro wiring (ios/android) — two parts, both required" 신설: maestro smoke = (a) config `surfaces[X].smoke` 명령 + (b) `.maestro/*.yaml` flow 파일 둘 다 있어야 동작, 하나라도 없으면 사실상 null. flow 파일 owner = **`type:test` 티켓의 dev/designer deliverable**(PO는 config 명령+`.maestro/` path string만 author), 위치 = repo-root `.maestro/`, commit 정책 = 커밋(절대 gitignore 안 함, 기기 간 동기화). silent-null 금지 강화(미작성이면 close-gate/summary 명시).
+- `p3-build.md`(SoT, net 0 lines) — P3-open prereq를 디바이스뿐 아니라 maestro 명령+flow 존재까지 확장, 미배선 시 1회 surface(매 turn 되묻기 X).
+- Tier0 미러 양 파일 byte-identical 재동기(cksum 확인).
+
+AC-1~4 전부 SATISFIED (grill verdict). A/B/C 진단 확정(그 flutter 프로젝트 config/`.maestro` 실물)은 **별개 diagnostic** — 본 구조 fix는 값 무관이라 미의존. 미커밋(commit-on-request).
