@@ -98,7 +98,14 @@ state만 emit되면 라벨은 정상 표시됨 — emit이 안 된 게 문제.
 fix(branch `fix/T-PATCH-221-arm-on-spawn`, commit ce349e6)나 stdin 가설과 무관. **VM keychain을
 fresh 토큰으로 교체하면 turn 정상** → 그 위에서 T-221 라벨(thinking/stalled)을 비로소 검증 가능.
 - 남은 작업: clean env(keychain 정상)에서 arm-on-spawn 빌드로 무거운 토큰-전 침묵 turn 재현 →
-  15s "생각 중", 90s+ "평소보다 오래…/stalled" 전환 관찰. 통과 시 ce349e6 머지 + status done.
+  15s "생각 중", 90s+ "평소보다 오래…/stalled" 전환 관찰. 통과 시 arm-on-spawn(branch
+  `verify/T-PATCH-221-clean`) 머지 + status done.
+- **라이브 검증 미완(2026-06-22)**: clean-room(VM 리셋→keychain 인증→온보딩→새 프로젝트 t221test)에서
+  arm-on-spawn 빌드로 turn 시도했으나 (a) 침묵 라벨 라이브 윈도우를 cua 스크린샷 캡처로 계속 놓침,
+  (b) fresh 프로젝트의 바뀐 레이아웃에서 입력 클릭 landing이 불안정해 turn send 신뢰성 확보 실패.
+  cuatest(기존 프로젝트, --resume)에선 clean 빌드+keychain으로 실제 PO 응답 렌더 확인됨(GUI 정상).
+  → **라벨 전환 관찰은 human VNC 1회 또는 별도 집중 세션 권장**(cua 자동조작으로는 캡처-타이밍/
+  입력-포커스 한계). arm-on-spawn 코드 자체는 빌드 green, 머지 보류(미검증).
 
 ### QA 인계 메모 (cua 조작)
 - composer 포커스: placeholder 라인(y≈1411) 클릭은 포커스 못 잡음 → **y≈1420(입력박스 하단)** 클릭해야 캐럿 진입(+`pbcopy`/`cmd v`).
