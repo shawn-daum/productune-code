@@ -4,16 +4,23 @@ version: v0.5
 slug: gui-app-not-updated-by-productune-update
 title: productune update가 GUI 앱(.app) 바이너리를 안 갱신 — GUI측 fix가 다른 기기에 안 감
 type: doctrine
-status: todo
+status: abandoned
 phase: 3
 assignee: pdt-po
-requires_qa: true
+requires_qa: false
 requires_user_gate: true
 area_tag: distribution
 estimated_complexity: L3
 risk_flags: []
 created_at: 2026-06-22T00:00:00Z
 ---
+
+> **ABANDONED (2026-06-22)** — 잘못된 원인 분석에서 파생. 본 티켓은 shawn이 보고한 증상이
+> 아니라 T-PATCH-228 조사 중 "혹시 GUI로 돌리는 기기면?"이라는 가정에서 파생됨. shawn 확인:
+> **dogfood는 전부 CLI, GUI는 안 씀** → 본 티켓이 전제한 "GUI로 PO 돌리는 기기"가 존재하지
+> 않음. 또 GUI 업데이트는 `productune update`에 끼워넣지 않고 **GUI 자체의 별도 업데이트 채널**
+> (앱 내 update 표시 등, 옵션 3 방향)로 갈 계획 → 여기 적은 옵션 1/2는 방향 부적합. 결정은
+> backlog v0.6 "GUI 자체 업데이트 채널"로 이관. (#4의 실제 원인 = T-PATCH-228, 이미 done.)
 
 # T-PATCH-229: GUI 앱이 productune update로 안 갱신됨
 

@@ -4,7 +4,7 @@ version: v0.5
 slug: brand-asset-generation-delegation
 title: Phase2 로고/og 생성 — Codex 위임 / 외부모델 프롬프트 / Claude-직접 분기 (designer 자아 완화)
 type: doctrine
-status: todo
+status: done
 phase: 3
 assignee: pdt-designer
 requires_qa: true
@@ -13,6 +13,9 @@ area_tag: brand-assets
 estimated_complexity: L2
 risk_flags: []
 created_at: 2026-06-19T00:00:00Z
+qa_status: pass
+qa_loops: 1
+completed_at: 2026-06-22T00:00:00Z
 ---
 
 # T-PATCH-226: 로고/og 생성 위임 분기
@@ -82,3 +85,25 @@ S2b의 자산 생성 정책을 **위임-우선 분기**로 전환:
 
 doctrine grill: S2b 위임 분기 정합 · external_tool_recommendation 재사용 정확 · close-gate
 asset-blocked 연동 · backlog 결정 충돌 해소 확인. 참고: `qa/bookshelf/design-review.md`.
+
+## 구현 요약 (2026-06-22)
+
+`designer/bookshelf/phase2-3-ticket-sequence.md` `S2b — brand assets` 위임-우선 분기 전환:
+- 진입 시 "Claude has no image-generation model" 1회 고지 + "production은 delegation-first,
+  Claude-direct는 explicit fallback" 명기 — designer 자동 직접생성 차단 (AC-1).
+- ① Codex 가용 시 로고/og 위임(이미지 생성 스킬, 한도소진/실패 시 ②로 폴백 — Claude-direct로
+  바로 안 감) (AC-2).
+- ② Codex 없음 → ChatGPT(chatgpt.com)/Gemini(gemini.google.com/app) 프롬프트 +
+  `expected_output_path`를 `external_tool_recommendation`(habit §5)로 emit, close-gate item은
+  asset landing까지 `blocked` (AC-3).
+- ③ 유저 거부 → Claude 직접 SVG + "이미지 모델 없음/퀄리티 제한" 고지 (AC-4).
+- ②③를 2-옵션 OQ로(default=핸드오프, fallback=직접). 능력 밖(3D/photographic/complex
+  illustration)은 항상 ② 우선.
+- brand-guide input은 위임 분기 없이 REUSE 유지(변경 없음, out-of-scope 준수).
+- `phase3-close-gate.md` producer 노트: external_tool_recommendation → "delegation /
+  external_tool_recommendation 핸드오프(Codex or ChatGPT/Gemini) blocked" 로 확장 (AC-3 연동).
+- backlog 2026-06-15 "codex 위임안 폐기(이미지 생성 불가)" 항목에 T-PATCH-226 정정 1줄 추가
+  (Codex 이미지생성 가능 확인 → 위임 부활, 폐기 무효) (AC-5).
+
+## Sign-off
+AC-1~5 충족. grill self-check pass (위임 분기·OQ·close-gate blocked 연동·backlog 충돌 해소).
