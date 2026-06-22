@@ -194,51 +194,9 @@ export default function ChatPanel() {
     }
   }
 
-  // T-PATCH-065: modal draft state + send/keydown handlers
-  const [modalDraft, setModalDraft] = useState('')
-
-  const handleModalSend = useCallback(async () => {
-    const trimmed = modalDraft.trim()
-    if (!trimmed || streaming || !project) return
-
-    const userMsg: Message = {
-      id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      role: 'user',
-      kind: 'user',
-      text: trimmed,
-      status: 'done',
-      created_at: new Date().toISOString(),
-    }
-    appendMessage(userMsg)
-    setModalDraft('')
-    setAutoScrollLocked(false)
-
-    const api = (window as any).api
-    try { await api.chatAppendMessage(project.projectDir, userMsg) } catch { /* ignore */ }
-
-    useWorkspace.getState().setInFlightKind('po')
-    setStreaming(true)
-    try {
-      await api.poSendMessage({
-        projectDir: project.projectDir,
-        text: trimmed,
-        resume: claudeSessionId,
-      })
-    } catch {
-      setStreaming(false)
-      useWorkspace.getState().setInFlightMsgId(null)
-    }
-  }, [modalDraft, streaming, project, claudeSessionId, appendMessage, setAutoScrollLocked, setStreaming])
-
-  // T-PATCH-081 AC-6: modal keyboard guard confirmed. Cmd+Enter calls handleModalSend()
-  // which has `if (!trimmed || streaming || !project) return` — blocked during streaming.
-  const onModalKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.nativeEvent as any).isComposing) return
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      handleModalSend()
-    }
-  }
+  // T-PATCH-219/223: dock composer removed — free-text now lives inside
+  // AskUserQuestionCard's option block. The former modalDraft state +
+  // handleModalSend/onModalKeyDown handlers were dead code and are deleted.
 
   // T-PATCH-068/073: X button — no LLM round-trip; synthesise a PO bubble + persist (AC-5~8)
   // T-PATCH-073: also stamps payload.resolved: { chosenKey: '__dismissed__' } so
@@ -426,7 +384,7 @@ export default function ChatPanel() {
         <PendingGateChip />
 
         {/* rp-msgs */}
-        <div style={msgs} ref={msgsRef} onScroll={onScroll} className="rp-msgs">
+        <div style={msgs} ref={msgsRef} onScroll={onScroll} className="rp-msgs pdt-thin-scroll">
           {messages.length === 0 ? (
             <div style={emptyHint}>{t('workspace.chat.emptyHint')}</div>
           ) : (
@@ -472,7 +430,7 @@ export default function ChatPanel() {
                 <X size={16} strokeWidth={2} />
               </button>
             </div>
-            <div style={dockBody}>
+            <div style={dockBody} className="pdt-thin-scroll">
               <AskUserQuestionCard message={pendingQuestion} />
             </div>
             {/* T-PATCH-219: free-text input moved INTO the question card as the last
@@ -1161,40 +1119,6 @@ const modalCloseBtn: React.CSSProperties = {
   height: 28,
   borderRadius: 4,
   padding: 0,
-}
-
-
-const modalInputArea: React.CSSProperties = {
-  borderTop: '1px solid #2A2A2A',
-  padding: '8px 12px',
-  display: 'flex',
-  gap: 8,
-  alignItems: 'flex-end',
-  flexShrink: 0,
-  marginTop: 'auto',
-}
-
-const modalTextarea: React.CSSProperties = {
-  flex: 1,
-  background: 'transparent',
-  border: 'none',
-  outline: 'none',
-  color: '#E5E5E5',
-  fontSize: 13,
-  resize: 'none',
-  lineHeight: 1.5,
-  fontFamily: 'inherit',
-}
-
-const modalSendBtn: React.CSSProperties = {
-  background: '#7C3AED',
-  border: 'none',
-  color: '#fff',
-  cursor: 'pointer',
-  borderRadius: 6,
-  padding: '6px 14px',
-  fontSize: 13,
-  flexShrink: 0,
 }
 
 // T-PATCH-052: session restart toast (AC-1) — bottom-center of the panel, 3s auto-dismiss
