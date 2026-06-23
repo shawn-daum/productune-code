@@ -1,5 +1,5 @@
 ---
-ticket_id: T-PATCH-237
+ticket_id: T-PATCH-238
 version: v0.6
 slug: repo-hygiene-docs-commit-decision
 title: docs/ 내부문서 repo 커밋·공유 재고 결정 — 개인영역/gitignore 분리 여부
@@ -15,7 +15,7 @@ risk_flags: [architecture-decision, loss-risk-on-gitignore, user-gate-required]
 created_at: 2026-06-22T00:00:00Z
 ---
 
-# T-PATCH-237: docs/ 내부문서 repo 커밋 재고 — 결정 우선 티켓
+# T-PATCH-238: docs/ 내부문서 repo 커밋 재고 — 결정 우선 티켓
 
 ## Request
 
