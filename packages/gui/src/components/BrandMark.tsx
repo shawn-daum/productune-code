@@ -4,8 +4,8 @@ interface Props {
 }
 
 /**
- * Brand glyph `{ }` — violet open-brace + mint close-brace.
- * Matches the neon hues in src/assets/logo.png.
+ * Brand glyph `{ }` — brand-purple (--accent #8B5CF6) braces.
+ * Matches the brand violet in src/assets/logo.png.
  * Safe for inline flex rows; vertical alignment handled by lineHeight 1.
  */
 export default function BrandMark({ size = 16, style: styleProp }: Props) {
@@ -25,7 +25,7 @@ export default function BrandMark({ size = 16, style: styleProp }: Props) {
   return (
     <span style={{ ...style, ...styleProp }}>
       <span style={{ color: '#8B5CF6' }}>{`{`}</span>
-      <span style={{ color: '#2DD4BF' }}>{`}`}</span>
+      <span style={{ color: '#8B5CF6' }}>{`}`}</span>
     </span>
   )
 }

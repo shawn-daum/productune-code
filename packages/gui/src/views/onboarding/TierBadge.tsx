@@ -4,7 +4,7 @@ export default function TierBadge({ tier }: { tier: Tier }) {
   const colors: Record<Tier, { bg: string; color: string; label: string }> = {
     S: { bg: '#0D2A1A', color: '#34D399', label: 'Tier S' },
     A: { bg: '#2A2000', color: '#FBBF24', label: 'Tier A' },
-    B: { bg: '#1A1010', color: '#F87171', label: 'Tier B' },
+    B: { bg: '#1A1010', color: '#EF4444', label: 'Tier B' }, /* --health-error */
   }
   const c = colors[tier]
   return (

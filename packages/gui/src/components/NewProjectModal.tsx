@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FolderOpen } from 'lucide-react'
 import GitHubOAuthFlow from './GitHubOAuthFlow'
 import VersionInitStep from './onboarding/VersionInitStep'
 import { isValidVersionId } from '../lib/version-id'
@@ -50,7 +51,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
     <div style={overlay}>
       <div style={modal}>
         <div style={header}>
-          <span style={{ color: '#8B5CF6', fontWeight: 700 }}>⚡</span>
+          <FolderOpen size={16} color="#8B5CF6" strokeWidth={2} />
           <span style={{ marginLeft: 8, fontWeight: 600, fontSize: 15 }}>{t('app.newProject.title')}</span>
         </div>
 

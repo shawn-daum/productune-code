@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import i18next from './i18n'
 import NewProjectModal from './components/NewProjectModal'
@@ -382,8 +383,8 @@ function DescendantPromptDialog({
               style={descendantItem}
               onClick={() => onOpen(entry)}
             >
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#E8E8EA' }}>
-                <span style={{ color: '#8B5CF6', marginRight: 6 }}>⚡</span>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#E8E8EA', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FolderOpen size={14} color="#8B5CF6" strokeWidth={2} />
                 {entry.config.slug}
               </div>
               <div style={{ fontSize: 11, color: '#C8C8CC', fontFamily: 'monospace', marginTop: 2 }}>
@@ -448,7 +449,7 @@ function AncestorPromptDialog({
 const appShell: React.CSSProperties = {
   display: 'flex', flexDirection: 'column',
   width: '100vw', height: '100vh',
-  background: '#0F0F11',
+  background: '#0F0F0F', /* --surface-body */
   overflow: 'hidden',
 }
 const viewport: React.CSSProperties = {
@@ -483,7 +484,7 @@ const btnPrimary: React.CSSProperties = {
   padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
 }
 const btnSecondary: React.CSSProperties = {
-  background: '#242428', color: '#E8E8EA', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4,
+  background: '#1C1C20', color: '#E8E8EA', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4, /* --surface-modal */
   padding: '10px 16px', fontSize: 13, cursor: 'pointer', textAlign: 'left',
 }
 const btnGhost: React.CSSProperties = {
@@ -491,7 +492,7 @@ const btnGhost: React.CSSProperties = {
   padding: '8px 14px', fontSize: 12, cursor: 'pointer',
 }
 const descendantItem: React.CSSProperties = {
-  background: '#161618', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6,
+  background: '#141414', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, /* --surface-panel */
   padding: '10px 12px', cursor: 'pointer', textAlign: 'left',
   transition: 'border-color 0.15s, background 0.15s',
 }

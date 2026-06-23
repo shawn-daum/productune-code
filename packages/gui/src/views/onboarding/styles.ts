@@ -38,7 +38,7 @@ export const stepLabel: React.CSSProperties = {
   letterSpacing: '0.06em', marginBottom: 8,
 }
 export const stepIntro: React.CSSProperties = {
-  fontSize: 12.5, color: '#B0B0B0', lineHeight: 1.55,
+  fontSize: 12.5, color: '#A0A0A0', lineHeight: 1.55, /* --text-muted */
   marginBottom: 12,
 }
 export const hint: React.CSSProperties = { fontSize: 12, color: '#505050', marginTop: 8 }
@@ -69,8 +69,8 @@ export const logArea: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', gap: 1,
 }
 export const btnEngineAction: React.CSSProperties = {
-  background: '#1E1E2E', color: '#818CF8',
-  border: '1px solid #818CF844', borderRadius: 4,
+  background: '#1C1C20', color: '#8B5CF6', /* --surface-modal / --accent */
+  border: '1px solid rgba(139,92,246,0.27)', borderRadius: 4,
   padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
 }
 export const btnDockerInstall: React.CSSProperties = {
