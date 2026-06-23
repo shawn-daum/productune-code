@@ -4,7 +4,7 @@ version: v0.6
 slug: repo-hygiene-docs-commit-decision
 title: docs/ 내부문서 repo 커밋·공유 재고 결정 — 개인영역/gitignore 분리 여부
 type: doctrine
-status: todo
+status: done
 phase: 3
 assignee: pdt-po
 requires_qa: false
@@ -63,3 +63,15 @@ repo에 계속 커밋·공유되는 게 맞는지 재고가 필요하다. 큰 �
 
 - T-PATCH-232(cua Tier2 승격, 완료) — 이 결정의 맥락 제공.
 - GUI IPC tickets read-path(현 코드베이스 확인 선행 필요).
+
+## 결정 (2026-06-23, shawn)
+
+**A — 현행 유지.** docs/ 내부문서(tickets · po-state · persona Tier1 habit·bookshelf · calibration-log) 전부 repo에 계속 커밋.
+
+이유:
+- 프로젝트 단위로는 무엇이 저장되든 크게 문제 없다(shawn) — 분리의 실익이 작음.
+- dogfooding 이력(habit/calibration 진화사)을 이 레포 git history에 남기는 가치 유지.
+- tickets·po-state는 GUI IPC 하드 의존이라 분리 시 read-path 대공사 발생(B/C 비용 대비 효익 낮음).
+- 완전 가역적 — 추후 분리 필요 시 B(persona Tier1만 gitignore)부터 재검토 가능.
+
+backlog 항목(2026-06-22 repo hygiene 재고) → 본 결정으로 해소.

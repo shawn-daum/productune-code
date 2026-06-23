@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
 # Claude Code hook — PreToolUse, matcher: Write|Edit|Bash
-# Validates ticket frontmatter `status:` + `qa_status:` against canonical enums.
-# Blocks (exit 2) on violation; passes (exit 0) on clean or non-ticket paths.
+# Validates ticket frontmatter `status:` + `qa_status:` + `type:` + `version:`
+# against canonical enums/regex. Blocks (exit 2) on violation; passes (exit 0) on
+# clean or non-ticket paths.
+#
+# CANONICAL SCOPE (T-PATCH-237): every field check runs ONLY over the LEADING
+# `---`…`---` frontmatter block — never the whole text. The field anchor stays
+# `^[[:space:]]*type:` (indent-tolerant for indented frontmatter, hook gap①); the
+# frontmatter-SLICE is what bounds it, so indented BODY `type:` code lines are out
+# of scope. (There is NO col-0 `^type:` self-check command in this hook to "fix" —
+# the indent-tolerant anchor + frontmatter-slice is the canonical mechanism.)
 #
 # Channels:
-#   Write/Edit — lint the proposed content/new_string.
-#   Bash       — CONSERVATIVE static detection: block only when a command
-#                UNAMBIGUOUSLY injects a non-canonical `status:`/`qa_status:`
-#                into a docs/tickets/.../T-*.md. Ambiguous (variable-interpolated,
-#                piped, computed) → PASS (PostToolUse verify is the safety net).
+#   Write — slice the proposed content's own line-1 `---`…`---` block; lint it.
+#   Edit  — FM-DIFF GATE: read file_path from disk, apply old→new (UTF-8 python
+#           str.replace), compare the leading-FM slice BEFORE vs AFTER. Body-only
+#           edit (FM unchanged) → PASS without linting (so a closed ticket is
+#           never blocked on legacy FM it doesn't touch). FM changed → lint the
+#           post-edit FM slice → BLOCK on a bad value. Unreadable target /
+#           old_string absent → PASS (cardinal: ambiguous → PASS).
+#   Bash  — CONSERVATIVE static detection: block only when a command
+#           UNAMBIGUOUSLY injects a non-canonical status/qa_status/version/type
+#           into a docs/tickets/.../T-*.md. Ambiguous (variable-interpolated,
+#           piped, computed) → PASS (PostToolUse verify is the safety net for
+#           status/qa_status; type/version have no PostToolUse net, which is WHY
+#           the Bash literal-injection block must be a real BLOCK, not a WARN).
 #
 # Cardinal rule: OVER-BLOCKING a valid write is a hard outage; under-blocking is
 # recoverable. When in doubt, PASS.
@@ -31,6 +47,23 @@
 #   in 9 closed tickets) on targeted body edits — uncureable without a
 #   frontmatter-scoped extractor. type remains WARN on both channels until a
 #   follow-up ticket makes the guard frontmatter-scoped.)
+# T-PATCH-237 — 2026-06-23 (frontmatter-scope extraction + type WARN→BLOCK flip).
+#   CANONICAL CHECK = the LEADING `---`…`---` frontmatter block ONLY, never the
+#   whole text. The `^[[:space:]]*type:` anchor is deliberately KEPT indent-
+#   tolerant (it must still match indented frontmatter — hook gap①); what changed
+#   is the TEXT we feed it: a frontmatter SLICE, not the raw content/snippet.
+#     • Write — slice the first `---`…`---` block anchored at content line 1
+#       (content[0:3]=='---'); lint only that slice; no leading `---` → PASS.
+#     • Edit  — IGNORE the snippet's own `---` (a body markdown `---` rule must
+#       NEVER be read as a frontmatter delimiter). Read the target file_path from
+#       disk, apply old→new, and lint ONLY IF the leading frontmatter actually
+#       CHANGES (FM-diff gate). Body-only edit → PASS (protects the 14 legacy
+#       body code-lines AND closed v0.4 tickets carrying legacy qa_status the
+#       edit doesn't touch — post-impl GRILL fix B). file_path unreadable / new
+#       file mid-creation / old_string absent → PASS (cardinal: ambiguous→PASS).
+#   With the slice in place, type is now a real BLOCK on both channels (Bash arm
+#   keeps the shell-expansion `type: $X` bail → PASS). status/qa_status/version
+#   behaviour is unchanged (they now also run over the slice on Write/Edit).
 
 set +e
 
@@ -58,6 +91,93 @@ try:
 except Exception:
     print('')
 " 2>/dev/null <<< "$EVENT_JSON")"
+
+# ── Frontmatter slicer (T-PATCH-237) ─────────────────────────────────────────
+# Echo ONLY the leading `---`…`---` frontmatter block of the given text. The
+# opening `---` MUST be content line 1 (content[0:3]=='---' after an optional
+# trailing \r); the slice runs up to (and excluding) the next line that is exactly
+# `---`. No leading `---` on line 1 → echoes EMPTY (caller treats empty slice as
+# PASS). A body markdown `---` rule on a later line can therefore never start a
+# slice. CRLF tolerant. Decision (documented): a leading BLANK line before the
+# line-1 `---` means there is NO frontmatter at line 1 → empty slice → PASS
+# (matches YAML: frontmatter must be the very first line).
+slice_frontmatter() {
+  python3 -c '
+import sys
+t = sys.stdin.read()
+lines = t.split("\n")
+def norm(s): return s[:-1] if s.endswith("\r") else s
+if not lines or norm(lines[0]) != "---":
+    sys.exit(0)
+out = ["---"]
+for ln in lines[1:]:
+    if norm(ln) == "---":
+        out.append("---")
+        break
+    out.append(ln)
+sys.stdout.write("\n".join(out))
+' 2>/dev/null
+}
+
+# Read the on-disk leading frontmatter slice of a file (Edit channel). Empty if
+# the file is unreadable/absent or has no line-1 `---` → caller treats as PASS.
+slice_frontmatter_file() {
+  local file="$1"
+  [ -f "$file" ] || { printf ''; return 0; }
+  slice_frontmatter < "$file"
+}
+
+# ── Edit FM-diff gate (T-PATCH-237 / GRILL fix B) ─────────────────────────────
+# An Edit must only be linted if it actually CHANGES the leading frontmatter — a
+# body-only edit to a closed ticket must never block on legacy frontmatter it
+# does not touch (e.g. v0.4 legacy qa_status). Given the on-disk file, old_string
+# and new_string, this echoes one of three tokens on the FIRST line:
+#   PASS_NOOP     — FM unchanged by the edit → caller PASSes without linting.
+#   PASS_AMBIG    — old_string absent / not-applicable → bias to PASS (noted).
+#   LINT          — FM changed → caller lints the post-edit FM SLICE, which is
+#                   emitted on the lines AFTER the token.
+# UTF-8/Korean safe: pure python3 str.replace (NO awk/sed). Mirrors the Edit
+# tool's semantics: replace_all=false → first occurrence only; replace_all=true →
+# all occurrences. An empty old_string is treated as ambiguous → PASS.
+edit_fm_gate() {
+  local file="$1"
+  python3 -c '
+import sys
+file, old, new, replace_all = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+try:
+    with open(file, encoding="utf-8") as f:
+        content = f.read()
+except Exception:
+    print("PASS_AMBIG"); sys.exit(0)
+
+def slice_fm(t):
+    lines = t.split("\n")
+    def norm(s): return s[:-1] if s.endswith("\r") else s
+    if not lines or norm(lines[0]) != "---":
+        return ""
+    out = ["---"]
+    for ln in lines[1:]:
+        if norm(ln) == "---":
+            out.append("---"); break
+        out.append(ln)
+    return "\n".join(out)
+
+if old == "" or old not in content:
+    # absent / not-applicable: cannot reason about the post-edit state → PASS.
+    print("PASS_AMBIG"); sys.exit(0)
+if replace_all == "true":
+    after = content.replace(old, new)
+else:
+    after = content.replace(old, new, 1)
+
+fm_before = slice_fm(content)
+fm_after  = slice_fm(after)
+if fm_before == fm_after:
+    print("PASS_NOOP"); sys.exit(0)
+print("LINT")
+sys.stdout.write(fm_after)
+' "$file" "$2" "$3" "$4" 2>/dev/null
+}
 
 # ── Enum definitions (single-source via config mirror; hardcoded fallback) ────
 # SoT: packages/core/config/ticket-status-enum.json → mirrored to
@@ -178,26 +298,20 @@ validate_version() {
   return 0
 }
 
-# ── type validate (BLOCKING) ──────────────────────────────────────────────────
-# T-PATCH-224 part D: historical tickets carried LEGACY type values (build / bug /
-# patch / feature / code / fix / chore / feat …). Hard-blocking type would
-# false-block edits to those tickets, so type drift is SURFACED (stderr,
-# non-blocking) rather than gated.
-# T-PATCH-233 (2026-06-22): the legacy corpus WAS migrated to the 9 canon and this
-# arm was briefly flipped to BLOCK — but the flip was REVERTED (PO+user decision).
-# Root cause: `extract_val type` matches `^[[:space:]]*type:` (any indent), so
-# INDENTED BODY lines (e.g. TS code `type === '…'` examples in closed tickets)
-# would false-block on targeted body edits, and they can't be neutralized without
-# corrupting the code examples. type stays WARN until the hook is made
-# frontmatter-scoped (carved into a follow-up ticket).
-warn_type() {
+# ── type validate (BLOCKING — T-PATCH-237) ───────────────────────────────────
+# T-PATCH-224/233 history: type was WARN-only because `extract_val type` matched
+# `^[[:space:]]*type:` (any indent), which false-blocked INDENTED BODY code lines
+# (TS `type: 'feature' | 'fix'` examples) when run over the whole text.
+# T-PATCH-237 fixes the ROOT cause — callers now feed a frontmatter SLICE, so the
+# anchor only ever sees real frontmatter lines. With that in place type is a real
+# BLOCK (emit_block, return 2), parity with status/qa_status/version.
+validate_type() {
   local text="$1" val
   val="$(extract_val type "$text")"
   [ -z "$val" ] && return 0
   if ! printf '%s' "$val" | grep -qE "^(${TYPE_ENUM})\$"; then
-    printf '[frontmatter-lint] type: "%s" is not a canonical ticket type (non-blocking warning).\n' "$val" >&2
-    printf '  canonical: %s\n' "$(printf '%s' "$TYPE_ENUM" | tr '|' ' ' | sed 's/  */ | /g')" >&2
-    printf '  (legacy types are grandfathered — new tickets should use a canonical value. SoT: ticket-schema.md §"9 ticket types".)\n' >&2
+    VIOLATION_VAL="$val"
+    return 2
   fi
   return 0
 }
@@ -213,14 +327,17 @@ lint_text() {
     emit_block "qa_status" "$VIOLATION_VAL" "$QA_STATUS_ENUM"
     return 2
   fi
-  # T-PATCH-224 part D: version regex (BLOCKING) + type warn (NON-BLOCKING).
+  # version regex (BLOCKING) + type (BLOCKING — T-PATCH-237, was WARN).
   if ! validate_version "$text"; then
     printf '[frontmatter-lint] version: "%s" does not match the canonical version pattern.\n' "$VIOLATION_VAL" >&2
     printf '  required: vN(.N)?(-suffix)?  e.g. v0.5, v1, v2.3-beta  (ticket-schema.md §version)\n' >&2
     printf '  exception: archive ids with legacy: true, or a legacy/... id.\n' >&2
     return 2
   fi
-  warn_type "$text"   # non-blocking surface only — never changes the return code
+  if ! validate_type "$text"; then
+    emit_block "type" "$VIOLATION_VAL" "$TYPE_ENUM"
+    return 2
+  fi
   return 0
 }
 
@@ -228,7 +345,8 @@ lint_text() {
 # Channel: Write / Edit
 # ════════════════════════════════════════════════════════════════════════════
 if [[ "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "Edit" ]]; then
-  FILE_PATH="$(read_json file_path)"
+  RAW_FILE_PATH="$(read_json file_path)"   # T-PATCH-237: keep verbatim for disk read
+  FILE_PATH="$RAW_FILE_PATH"
   FILE_PATH="${FILE_PATH#./}"
   FILE_PATH="${FILE_PATH#/}"
   # Match BOTH relative (`docs/tickets/...`) and absolute (`Users/.../docs/tickets/...`)
@@ -238,13 +356,48 @@ if [[ "$TOOL_NAME" == "Write" || "$TOOL_NAME" == "Edit" ]]; then
   # `*/docs/tickets/*` arm covers absolute paths after the leading `/` strip.
   [[ "$FILE_PATH" == docs/tickets/*/T-*.md || "$FILE_PATH" == */docs/tickets/*/T-*.md ]] || exit 0
 
+  # T-PATCH-237: lint a FRONTMATTER SLICE, never the raw content/snippet.
   if [[ "$TOOL_NAME" == "Write" ]]; then
-    LINT_TEXT="$(read_json content)"
-  else
-    LINT_TEXT="$(read_json new_string)"
+    # Write — slice the proposed content's own line-1 `---`…`---` block.
+    RAW="$(read_json content)"
+    SLICE="$(printf '%s' "$RAW" | slice_frontmatter)"
+    # Empty slice (no line-1 frontmatter) → PASS.
+    [ -z "$SLICE" ] && exit 0
+    lint_text "$SLICE" || exit 2
+    exit 0
   fi
-  lint_text "$LINT_TEXT" || exit 2
-  exit 0
+
+  # Edit — FM-DIFF GATE (GRILL fix B). The snippet's own `---` is NEVER read as a
+  # delimiter. We compute the on-disk frontmatter BEFORE and AFTER applying the
+  # edit; only if the leading frontmatter actually CHANGES do we lint the result.
+  # A body-only edit (FM unchanged) PASSes WITHOUT validation — so a closed ticket
+  # carrying legacy frontmatter (e.g. v0.4 qa_status) is never blocked on fields
+  # the edit doesn't touch. Editing a frontmatter type/qa_status/version to a bad
+  # value still changes the FM → linted → BLOCK.
+  OLD_STRING="$(read_json old_string)"
+  NEW_STRING="$(read_json new_string)"
+  REPLACE_ALL="$(read_json replace_all)"
+  case "$REPLACE_ALL" in True|true|1) REPLACE_ALL="true" ;; *) REPLACE_ALL="false" ;; esac
+  GATE="$(edit_fm_gate "$RAW_FILE_PATH" "$OLD_STRING" "$NEW_STRING" "$REPLACE_ALL")"
+  TOKEN="$(printf '%s' "$GATE" | head -1)"
+  case "$TOKEN" in
+    PASS_NOOP|PASS_AMBIG|"")
+      # FM unchanged, or old_string absent/unreadable target (cardinal: ambiguous
+      # → PASS). PASS_AMBIG is the noted old_string-not-found / unreadable case.
+      exit 0
+      ;;
+    LINT)
+      # FM changed — lint the POST-EDIT frontmatter slice (everything after the
+      # token line).
+      SLICE="$(printf '%s' "$GATE" | tail -n +2)"
+      [ -z "$SLICE" ] && exit 0
+      lint_text "$SLICE" || exit 2
+      exit 0
+      ;;
+    *)
+      exit 0   # unknown token → cardinal PASS
+      ;;
+  esac
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -354,12 +507,16 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
     fi
   fi
 
-  # type (NON-BLOCKING WARN) — parity with Write/Edit `warn_type`. T-PATCH-233
-  # briefly flipped this to BLOCK, but the flip was REVERTED (PO+user decision):
-  # `extract_val`-style `^[[:space:]]*type:` matching false-blocks indented body
-  # `type:` lines (TS code examples) on targeted edits. type stays WARN until the
-  # hook is made frontmatter-scoped (follow-up ticket). Surface drift on stderr
-  # without changing the exit code.
+  # type (BLOCKING — T-PATCH-237, was WARN) — parity with the Write/Edit
+  # `validate_type` flip. Same CONSERVATIVE literal-only philosophy as the
+  # status/version arms: only inspect PLAIN-LITERAL type values; any shell
+  # expansion (`type: $X` / backtick) around the token → AMBIGUOUS → PASS
+  # (PostToolUse verify is the safety net). The expansion bail is what keeps this
+  # safe: a heredoc/sed writing a literal `type: bogus` BLOCKs, but a computed
+  # `type: $X` passes. Cardinal rule: over-blocking a valid write is a hard
+  # outage. Rationale for promoting to BLOCK: post-ticket-status-verify checks
+  # ONLY status/qa_status (NOT type), so a WARN here leaves bad type values with
+  # no real gate — the Bash channel must be a true BLOCK to match Write/Edit.
   T_CANDIDATES="$(printf '%s' "$CMD" | grep -oE '(^|[^_[:alnum:]])type:[[:space:]]*[A-Za-z0-9_-]+' | sed -E 's/^[^t]*type:/type:/' || true)"
   if [ -n "$T_CANDIDATES" ]; then
     if ! printf '%s' "$CMD" | grep -qE '(^|[^_[:alnum:]])type:[[:space:]]*(\$|`)'; then
@@ -367,9 +524,10 @@ if [[ "$TOOL_NAME" == "Bash" ]]; then
         [ -z "$tcand" ] && continue
         tval="$(printf '%s' "$tcand" | sed -E 's/^type:[[:space:]]*//')"
         if ! printf '%s' "$tval" | grep -qE "^(${TYPE_ENUM})\$"; then
-          printf '[frontmatter-lint] type: "%s" is not a canonical ticket type (non-blocking warning).\n' "$tval" >&2
+          printf '[frontmatter-lint] Bash command would write type: "%s" (non-canonical) into a ticket file.\n' "$tval" >&2
           printf '  canonical: %s\n' "$(printf '%s' "$TYPE_ENUM" | tr '|' ' ' | sed 's/  */ | /g')" >&2
-          printf '  (legacy types are grandfathered — new tickets should use a canonical value. SoT: ticket-schema.md §"9 ticket types".)\n' >&2
+          printf '  Use a canonical ticket type. SoT: ticket-schema.md §"9 ticket types".\n' >&2
+          exit 2
         fi
       done <<< "$T_CANDIDATES"
     fi

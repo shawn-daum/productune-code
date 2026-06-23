@@ -5,6 +5,8 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 
 ## near-term
 
+- (2026-06-23) [artifacts 뷰어, quick-win] GUI artifacts 읽기가 flat 전용(`ipc/artifacts.ts` scanDir `readdirSync`+`isFile`, 재귀 없음, `archive/`만 예외) → 페르소나가 flat 규칙 어기고 하위폴더 생성 시 세션 중 GUI에서 조용히 사라짐(CI lint `find -maxdepth 2`만 나중에 잡음). **C안**: non-archive 하위폴더 1단 재귀 발견 → "기타/중첩(flat 위반)" collapsed 섹션(archive 토글 재사용) + ⚠ 위반 플래그로 표시(평탄화 유도, flat invariant 보존). Designer plan-first. 큰 lifecycle 파트(focus-pinning + archive 케이던스)는 v0.6 항목 참조. (출처: 2026-06-23 shawn dogfood 피드백)
+
 - cmd+K cmd+\ split-down 체인(chord)이 OOPIF iframe 포커스 내부에선 동작 안 함 — 단일 accelerator 불가. iframe 안에서 split-down 필요 시 전용 accel 메뉴아이템 추가 검토. (2026-06-08, src: T-PATCH-066 R4)
 
 - prefers-reduced-motion 미지원 (T-068 question sheet slide-up) — 애니메이션이 inline style 이라 @media reduced-motion CSS 셀렉터가 noop. className 기반 또는 matchMedia JS 게이팅으로 수정 필요(a11y, dev). dead 셀렉터(.question-sheet-slide)도 정리. (2026-06-08, src: T-PATCH-068)
@@ -22,6 +24,10 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 ## next-version (v0.x)
 
 - [v0.6] 정합성 감사 + 페르소나 워크스루 + Nemotron persona distill 모듈 — 품질 3차원 중 Coherence/Usability 빈칸을 메우는 독립 적대자. QA에 2개 신규 모드(coherence-audit·persona-walkthrough) + QA를 P2 소환, designer에 distill 파이프라인. 자체 PRD로 P1부터 태울 것(이 backlog 항목≠즉시구현). 롤아웃 R1(정합성 감사 MVP) → R2(distill→워크스루). 브리프: `/Users/x/Documents/dev/ntf-products/prd-master/DESIGN-coherence-persona-module.md`. (2026-06-19, shawn 결정 — v0.6 이월)
+
+- [v0.6] lazyweb UI/UX 레퍼런스 grounding 실험 — Designer를 lazyweb MCP(실앱 281k 화면/flow/competitive) 레퍼런스로 grounding하면 design.md/anchor 품질이 baseline보다 나은가. 방법론 grill 완료(2 blocking flaw 교정): S1→S2 anchor 블록 단위 측정 · A/A+/B 3-arm(교란 격리) · 가설전용 constructs 루브릭 신규 · 인용strip 블라인딩 · 게이트 임계 사전등록 · Step0 MCP 연결 hard go/no-go(현재 미연결, install.sh 또는 수동 config+token 필요). 브리프 SoT: `briefs/lazyweb-design-grounding.md`(v2). (2026-06-23, shawn 결정 — 생각보다 큰 건이라 v0.6 이월)
+
+- [v0.6] artifacts lifecycle — focus-pinning + archive 케이던스. 현 doctrine은 archive 이동이 P2 게이트 닫을 때만(Designer) → 긴 P3 동안 중간 산출물 쌓여 중요 산출물(DS/mockup)이 focus에서 묻힘. 필요: (a) 뷰어가 "현재 중요"(최신 approved DS·surface별 최신 mockup) 상단 고정 + supersede 강등, (b) P3 중 artifact-tidy 케이던스(티켓 close 시 생산 페르소나가 supersede 변종 archived 마킹 / PO가 체크포인트에 sweep)를 lifecycle doctrine에 명문화. near-term 뷰어 quick-win(C)과 한 Designer plan으로 스코프. (출처: 2026-06-23 shawn dogfood 피드백)
 
 ## pre-deploy
 
@@ -47,5 +53,6 @@ P3 close gate 첫 단계에서 각 항목을 이번 버전 적용 / 다음 버�
 - (2026-06-18) [low, a11y finish] Settings helper text 대비 미달 — `#707070` on `#0F0F0F` = 3.87:1 (AA 4.5:1 미달). T-PATCH-214 #3는 line-height만 변경(색 무관)이라 선재 조건, 티켓 범위 밖. 향후 마감 패스에서 helper text 색 ~`#8A8A8A`로 상향(≥4.5:1). (출처: T-PATCH-214 QA observation)
 - (2026-06-22) [T-PATCH-224 D follow-up] ticket `type` enum hard-block 화 — 현재 D 가드는 type을 **WARN(non-block)**으로만 검사. v0.5 티켓 187/249가 legacy type(build 57·code 43·feature 33·fix 18·bug 15·bugfix 8·patch 7·chore 4·feat 1·chore/bugfix 1)이라 hard-block 시 AC-6 false-block 대량 발생. type을 BLOCK으로 올리려면 **선행: 187 legacy-type 티켓을 9-canon(design|impl|refactor|test|qa|deploy|close|docs|doctrine)으로 마이그레이션** → 그 후 pre-frontmatter-lint type을 BLOCK 전환. (출처: T-PATCH-224 dev/QA, dev 판단 수용)
 - (2026-06-22) [라이브 검증 집중 세션 — 묶음] T-220/231/221 라이브 눈확인을 한 세션에 몰아서. 선행: post-`afd3543` 빌드를 cua VM에 재설치(현 VM 앱=Jun21 stale라 새 동작 안 보임, ENV fail). 그 후 ① T-220 = 미설치 상태서 onboarding Step2 Next 비활성+needInstall 사유 / claude 설치+로그인(OAuth=human 1클릭)→Next 활성, Step1 codex 미노출 ② T-231 = claude 미설치 turn→not-installed 분류배너 / keychain 토큰 삭제 turn→401 "claude auth expired" 배너 ③ T-221 = 무거운 토큰-전 침묵 turn → 15s "생각 중"/90s+ "stalled" 라벨 전환 (transient라 **human VNC** 눈관찰). VM은 현재 keychain 없음·claude 미설치 = pristine 준비됨. **harness 교훈 추가**: Tier2 `~/.productune/qa/bookshelf/cua-vm-harness.md`에 "라이브검증 전 VM 설치빌드가 검증대상 코드와 일치하는지 먼저 확인(불일치=ENV fail, 검증 무효)" 1줄(이번에 검증 한 번 날림) — designer+grill로. (출처: 2026-06-22 qa-cua-live BLOCKED on stale build)
-- (2026-06-22) [repo hygiene 결정 — 별도 세션 필요] `docs/` 내부 문서(tickets · calibration-log · persona Tier1 habit/bookshelf 등)가 repo에 계속 커밋·공유되는 게 맞나 재고. 현 커밋 이유: ① dogfooding 이력(이 레포=productune 발전사) ② GUI가 po-state/tickets를 라이브 read ③ git 복구. 재고 포인트: 이 레포 Tier1은 *productune 자기 작업 시에만* 읽힘(타 프로젝트는 자기 docs/ 사용) → 일부는 개인영역/gitignore가 맞을 수도. 큰 아키텍처 결정이라 전용 세션. (출처: shawn 제기 2026-06-22, T-232 cua-Tier2 논의 파생)
-- (2026-06-22) [→ T-PATCH-237 발행됨] pre-frontmatter-lint 필드추출이 frontmatter/본문 구분 없이 `^[[:space:]]*type:` 매치 → 본문 코드의 `type:`까지 false-block. T-233 flip이 노출, frontmatter-scope 근본fix는 T-PATCH-237로 추적(이 항목 해소).
+- (2026-06-22) [→ RESOLVED 2026-06-23: T-PATCH-238 = A(현행 유지), 가역] [repo hygiene 결정] `docs/` 내부 문서(tickets · calibration-log · persona Tier1 habit/bookshelf 등)가 repo에 계속 커밋·공유되는 게 맞나 재고. 현 커밋 이유: ① dogfooding 이력(이 레포=productune 발전사) ② GUI가 po-state/tickets를 라이브 read ③ git 복구. 재고 포인트: 이 레포 Tier1은 *productune 자기 작업 시에만* 읽힘(타 프로젝트는 자기 docs/ 사용) → 일부는 개인영역/gitignore가 맞을 수도. 큰 아키텍처 결정이라 전용 세션. (출처: shawn 제기 2026-06-22, T-232 cua-Tier2 논의 파생)
+- (2026-06-22) [→ DONE 2026-06-23 T-PATCH-237] pre-frontmatter-lint 필드추출이 frontmatter/본문 구분 없이 `^[[:space:]]*type:` 매치 → 본문 코드의 `type:`까지 false-block. frontmatter-scope 슬라이스 + Edit FM-diff 게이팅 + type BLOCK flip으로 해소(GRILL×2 CLEAN).
+- (2026-06-23) [near-term, T-PATCH-237 잔여] v0.4 티켓 75개가 legacy qa_status(ready×59·passed×8·skip×4·todo×2·smoke×1·static-pass×1) 보유 → **whole-file Write 시 BLOCK**(Write 채널은 제안 FM 전체 검증). 본문 Edit는 FM-diff로 통과하나, 그 파일들의 whole-file 재작성/qa_status 줄 편집은 막힘. v0.4 qa_status를 canon enum으로 마이그(닫힌 티켓이라 우선순위 낮음, T-233式 일괄). (출처: T-237 GRILL out-of-scope 잔여)

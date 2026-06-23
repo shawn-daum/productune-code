@@ -4,11 +4,11 @@ version: v0.5
 slug: frontmatter-scoped-lint-extraction
 title: pre-frontmatter-lint frontmatter-scope 추출 + type WARN→BLOCK flip (T-233 후속)
 type: impl
-status: todo
+status: done
 phase: 3
 assignee: pdt-developer
 requires_qa: true
-qa_status: pending
+qa_status: pass
 requires_user_gate: false
 area_tag: state-integrity
 estimated_complexity: L3
@@ -40,18 +40,37 @@ status/qa_status/version도 동일 한계를 안고 있으나 본문에 그 enum
 ## Acceptance
 
 - **AC-1**: `extract_val`/`validate_*`를 **leading `---`…`---` frontmatter 블록으로
-  스코프 제한**. Write 채널(전체 내용)은 자명. Edit/Bash 채널 snippet엔 `---` 컨텍스트가
-  없으므로 — file_path의 실제 frontmatter를 읽어 판정하거나, snippet이 frontmatter를
-  포함할 때만 검사하는 등 — Edit/Bash에서 본문 type 줄이 절대 false-block 안 되게.
+  스코프 제한**.
+  - **Write**: 전체 content에서 line-1 앵커(`content[0:3]=='---'`)된 첫 `---`…`---`
+    슬라이스만 lint. `---` 블록 없으면 PASS.
+  - **Edit (확정 = 디스크-read + FM-diff 게이팅, B)**: snippet의 `---` 유무로 판정 금지.
+    on-disk frontmatter를 읽되 **Edit가 frontmatter를 실제로 바꿀 때만 검사**:
+    on-disk content에 old→new 치환 적용 → 적용後 FM 슬라이스(`FM_after`)와 적용前
+    FM 슬라이스(`FM_before`) 비교. **같으면(본문 전용 편집) PASS**(frontmatter 무책임),
+    다르면 `FM_after`를 검사(bad → BLOCK). file_path 읽기 실패 → PASS(cardinal).
+    → 본문 편집이 legacy qa_status/type로 false-block 되는 회귀(post-impl GRILL #5)
+    제거하면서 frontmatter 변경은 여전히 게이트.
 - **AC-2**: 14개 본문줄(T-PATCH-233 grill §1: T-P4-020:201/597, T-P4-044:169,
   T-P4-116:130/210, T-P4-046:107, T-P4-023:776, T-P4-119:416, T-P4-112:332/373/938/980,
   T-PATCH-166:37, T-PATCH-086:81)을 Edit해도 rc0(no false-block) — 코드 원형 보존.
-- **AC-3**: 그 위에서 type WARN→BLOCK flip(양 채널). 신규 티켓 bad type → BLOCK,
+  **필수 테스트**: 본문 `---` 수평선 + 다음 줄 `type: feature` 코드를 포함하는 Edit
+  new_string → rc0 (axis-1 trap; 이 케이스가 Edit 규칙의 정오를 가름).
+- **AC-3**: type WARN→BLOCK flip(**양 채널 진짜 BLOCK**). 신규 티켓 bad type → BLOCK,
   9-canon → PASS, status/qa_status/version 무회귀.
-- **AC-4**: 훅 헤더의 completeness 검증 커맨드 예시를 `^[[:space:]]*type:`로 정정
-  (col-0 grep이 hook 추출과 불일치한 게 사각의 원인 — grill MUST-FIX #2).
+  - **Bash (확정 = BLOCK)**: WARN 유지 금지 — PostToolUse verify가 status/qa_status만
+    보고 type은 안 봐서(plan-grill 입증) WARN이면 heredoc/sed로 bad type 우회 가능.
+    기존 Bash 암(L363-376)의 보수적 리터럴 type 감지를 WARN→exit2로 승격
+    (shell-expansion `type: $X` → PASS 안전장치 유지).
+- **AC-4 (재스코프)**: 훅 헤더엔 col-0 `^type:` self-check 커맨드가 **없음**(이미
+  `^[[:space:]]*type:`로 맞음 — plan-grill 정정). 따라서 훅 변경 불요. 대신 frontmatter-
+  scope가 canonical 검사임을 훅 헤더 주석에 1줄 명시 + 이 col-0 오해를 낳은 prose 정정.
+  (no-op으로 falsely-close 금지.)
 - **AC-5**: 독립 QA GRILL(load-bearing 게이트 — false-block/false-negative 양방향 +
-  전 코퍼스 무회귀). dev self-test만으로 close 금지.
+  전 코퍼스 무회귀, CRLF·leading-blank-line·본문 `---`·multi-doc 엣지 포함). dev
+  self-test만으로 close 금지.
+  - **AC-5 핵심(B 회귀 닫힘 입증 필수)**: 전 코퍼스(384) **Edit(본문 no-op)** 회귀 = HEAD
+    대비 0 신규 block(특히 v0.4 legacy qa_status 75개 본문 Edit → rc0). frontmatter를
+    실제 바꾸는 Edit(bad type/qa_status/status/version)는 여전히 BLOCK 입증.
 
 ## 참고
 
