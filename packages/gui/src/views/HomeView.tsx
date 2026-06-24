@@ -286,13 +286,13 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
           <img
             src={logoUrl}
-            alt="productune"
+            alt="Productune"
             style={{ height: 52, width: 'auto', objectFit: 'contain', display: 'block' }}
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
           />
         </div>
         <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 4 }}>
-          productune
+          Productune
         </div>
         <div style={{ fontSize: 12, color: '#505050', marginBottom: 40 }}>product orchestrator</div>
 
@@ -320,13 +320,13 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <img
             src={logoUrl}
-            alt="productune"
+            alt="Productune"
             style={{ height: 40, width: 'auto', objectFit: 'contain', display: 'block' }}
             onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
           />
           <div>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
-              productune
+              Productune
             </div>
             <div style={{ fontSize: 11, color: '#505050', lineHeight: 1.3 }}>product orchestrator</div>
           </div>

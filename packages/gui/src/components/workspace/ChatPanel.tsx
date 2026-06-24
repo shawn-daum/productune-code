@@ -97,6 +97,19 @@ export default function ChatPanel() {
   // ── Load session on project change ───────────────────────────────────────
   useEffect(() => {
     if (!project) return
+    // T-PATCH-256: don't clobber an in-flight first turn. When FreshComposer fires
+    // the very first PO turn it seeds the user message + streaming:true into the
+    // store, THEN reveals the workspace — so this freshly-mounted ChatPanel would
+    // otherwise reload chat.json (which holds only the user message until onDone
+    // persists the reply) and setMessages() would overwrite the streaming assistant
+    // bubble; tokens arriving after the overwrite target a now-missing id and get
+    // dropped, leaving a blank chat. While a turn is in flight the store already
+    // owns the live conversation, so skip the disk reload. (A real A→B switch mid-
+    // stream is unaffected: setProject's isSwitch branch resets streaming:false in
+    // the same atomic update that flips `project`, so by the time this effect re-
+    // runs for B the guard is open and B reloads from disk.)
+    const ws = useWorkspace.getState()
+    if ((ws.streaming || ws.inFlightMsgId) && ws.messages.length > 0) return
     // T-PATCH-213: browser-dev-mode → api undefined. ChatPanel mounts on the
     // WorkspaceShell boot path; guard the deref ( .catch below only traps promise
     // rejection, not the synchronous throw ) so cold boot is a clean no-op.

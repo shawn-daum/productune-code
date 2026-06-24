@@ -71,3 +71,10 @@ dev sonnet 구현 → qa sonnet PASS(0 must-fix). 8파일: `po-runner.ts`(runHea
 - AC-4 — 정상 턴 토큰/지연 0(error-other 아니면 미호출).
 - RISK-1 fix 적용: `ipc/po.ts` smoke then/catch에 `wc.isDestroyed()` 가드(async 완료 전 창 닫힘 'Object destroyed' 방지). build EXIT0(tsc+vite, 906 locale parity).
 - **라이브 hands-on 잔여**: keychain 토큰 제거→401 분류+배너 노출 cua/VNC 확인(헤드리스 불가). 미커밋(commit-on-request).
+
+## Deploy live-verify (2026-06-23, cua-VM + VNC) — not-installed PASS · auth/401 부분(발견)
+
+fresh arm64 dmg 설치본에서:
+- **AC-1/AC-2/AC-3 (not-installed) ✅**: claude 바이너리 숨김(`~/.local/bin/claude` mv) 후 PO turn → spawn 실패 → 헬스 스모크 자동발화 → **"Claude Code CLI not detected. Install it from claude.ai/code … then retry — Settings → engine to reconnect."** actionable 배너 노출. 분류근거 = spawn ENOENT(exit code 아님). silent 사망 아님.
+- **auth/401 분기 ⚠️ 부분 — 발견**: keychain 토큰을 합성 무효토큰으로 손상 후 turn → claude exit 1 → 배너가 **"claude exited unexpectedly — version may be incompatible" (incompatible 분류)** 로 떨어짐(auth 아님). 합성 무효토큰은 깨끗한 stream-json 401 봉투를 만들지 않고(토큰 refresh 실패 경로 추정) exit-code fallback → incompatible. 즉 **일부 인증실패가 auth 아닌 incompatible로 분류될 수 있음** — 헤드라인 시나리오(진짜 만료토큰 API 401)는 진짜 stale 토큰 없인 재현 불가. 스모크 발화 + actionable 배너(AC-1) 자체는 동작. classification matcher가 401 봉투에만 의존 → 인증실패 일부 미커버 가능성 = 후속 검토 후보(진짜 401 발생 시 재검증, 또는 matcher 확장).
+- 검증 후 keychain 토큰 원복(백업→복원, claude --print AUTH_OK 확인) + 바이너리 복원 완료.

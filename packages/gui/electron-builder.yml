@@ -13,7 +13,7 @@
 # Unsigned by design: no `identity`, no notarization, no `afterSign` hook.
 # Teammates open the app once via right-click → Open (see README Gatekeeper note).
 appId: com.productune.gui
-productName: productune
+productName: Productune
 # package.json `version` is 0.0.0 (workspace placeholder, consumed by other tooling
 # so left untouched). extraMetadata overrides only the package.json copied into the
 # asar, giving a real version for the artifact name + CFBundleVersion/ShortVersion.

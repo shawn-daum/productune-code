@@ -26,6 +26,7 @@ import { SendHorizonal, Paperclip, X as XIcon } from 'lucide-react'
 import type { Message } from '../lib/types'
 import type { Project } from '../lib/types'
 import { useComposerAttachments } from '../hooks/useComposerAttachments'
+import { useWorkspace } from '../store/workspace'
 import { ImageChip, chipRow } from './workspace/chat/ImageChip'
 // T-PATCH-109: brand logo for the first-start screen.
 import logoUrl from '../assets/logo.png'
@@ -86,6 +87,30 @@ export default function FreshComposer({ project, onConfirm }: Props) {
       clearAttachments()
 
       // Step 4 — Fire poSendMessage (fire-and-forget; long-running PO turn).
+      // T-PATCH-252: latch streaming:true BEFORE the turn fires + before
+      // WorkspaceShell mounts. ChatPanel.handleSubmit sets this synchronously,
+      // but FreshComposer never did — so on the first-turn entry the PO turn ran
+      // with streaming still false and PersonaPresenceBar's usePOPresenceDerive
+      // saw streaming=false at mount, leaving the PO sprite stuck grey/idle the
+      // whole turn (poEvents onMsgId's streaming:true edge could fire during the
+      // setTimeout gap, before poEvents registered / the bar mounted, and get
+      // missed). Latching here means the bar mounts already-working; onMsgId is
+      // idempotent and onDone still resets streaming:false → idle on completion.
+      // setInFlightKind('po') mirrors ChatPanel so trace/bubble routing matches.
+      //
+      // T-PATCH-256: claim store ownership + seed the user bubble into the store
+      // BEFORE firing the turn. The imminent onConfirm() reveals WorkspaceShell,
+      // which mounts ChatPanel; without this, (a) WorkspaceShell.setProject treats
+      // the reveal as a project "switch" and wipes messages, and (b) ChatPanel's
+      // load effect reloads chat.json (user-msg-only until onDone) and overwrites
+      // the streaming assistant bubble. Setting project first (clears messages),
+      // then appending userMsg, makes the reveal a same-project re-entry that
+      // preserves the live conversation; ChatPanel's in-flight guard skips reload.
+      const ws = useWorkspace.getState()
+      ws.setProject(project)
+      ws.appendMessage(userMsg)
+      ws.setInFlightKind('po')
+      ws.setStreaming(true)
       api.poSendMessage({ projectDir: project.projectDir, text: finalText })
 
       // Step 5 — Yield one event-loop tick so WorkspaceShell mounts before first token.
@@ -118,7 +143,7 @@ export default function FreshComposer({ project, onConfirm }: Props) {
         {/* ── Brand logo (T-PATCH-109) ─────────────────────────────────────── */}
         <img
           src={logoUrl}
-          alt="productune"
+          alt="Productune"
           style={logoStyle}
           onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
         />

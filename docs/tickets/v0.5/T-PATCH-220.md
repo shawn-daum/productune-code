@@ -59,3 +59,12 @@ designer opus plan(user-gated 승인) → dev sonnet impl → qa sonnet PASS(0 m
 
 ### Follow-on backlog 후보 (별도 cleanup 티켓)
 codex dead-code 정리: `preload.ts` checkCodex/codexLogin IPC stub, `onboarding.ts` codex 핸들러, `types.ts` Engine union, `styles.ts` btnSkip orphan, OnboardingWizard onSelectEngine dead-wire. (이번 AC 범위 밖, 무해.)
+
+## Deploy live-verify (2026-06-23, cua-VM clean-install + VNC) — ★ 라이브 hands-on 완료, 전체 PASS
+
+fresh arm64 dmg(asar sha 호스트=VM 일치)로 cua-VM 설치 후 검증:
+- **AC-1 ✅**: claude 미인증 상태 Step2 Next 비활성. needLogin(installed·not authed → Connect/Recheck + "Sign in with Start login above") + needInstall(바이너리 숨김→ ❌not installed + `npm install -g @anthropic-ai/claude-code` + Install guide↗ + "Install Claude Code first") 양 분기 모두 확인.
+- **AC-2 ✅**: claude 설치+로그인(wizard Connect→실 OAuth, VNC 완료)→ ✓installed·authed → Next 활성 → Step3 "Setup complete"(env·PO agent·instructions·memory·Playwright MCP 5/5 ✓) → Get started → HomeView 진입.
+- **AC-3 ✅**: Recheck(needLogin) + Step2 재진입 + focus-recheck 동적 재감지 동작. Install guide 노출 확인.
+- **AC-4 ✅**: codex 카드/props 0(Step1 단일 claude). Skip/Connect-later 탈출구 0. disabled Next 옆 derived-gate 1줄 항상 다음행동 명시.
+- 부수확인: `checkClaude`의 "installed"는 PATH-augmented spawn으로 `~/.local/bin/claude` 정확 감지(셸 `which claude` 실패는 T-218 PATH 이슈, 오판 아님).

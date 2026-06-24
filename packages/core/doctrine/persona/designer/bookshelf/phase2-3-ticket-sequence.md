@@ -141,9 +141,9 @@ S3+S4 already carry the build.
   never blocks the gate.
 
 ## Per-step archive (at EACH gate, immediately)
-On every gate accept, move the candidates NOT chosen at that step into
-`docs/artifacts/<version>/archive/` right then — never defer to P2 close. The adopted artifact
-stays flat in `docs/artifacts/<version>/`. (Branch B/C archive only the steps they run.)
+On every gate accept, adopt the chosen option per `bookshelf/artifact-manifest-schema.md` — promote
+it to flat `docs/artifacts/<version>/` + manifest; the non-adopted candidates stay in
+`docs/artifacts/<version>/archive/` (no keep-vs-discard). (Branch B/C run only their steps.)
 
 ## Refuse loop
 A refuse never advances. Run a short interview (1–2 questions, what's wrong / what's wanted),

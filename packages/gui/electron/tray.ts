@@ -13,8 +13,10 @@
  * Asset model: build-time PNGs under build/tray/ (frame-0 crop of each persona
  * work sprite + a brand-neutral idle icon + a brand+red-dot waiting icon). No
  * runtime compositing (nativeImage has no overlay API) and no animation (macOS
- * HIG discourages it; setImage churn flickers). Icons stay COLOR (not template)
- * so each persona keeps its identity hue.
+ * HIG discourages it; setImage churn flickers). Persona + waiting icons stay
+ * COLOR (not template) so each persona keeps its identity hue and the waiting
+ * red dot survives; the brand-neutral idle `{}` is a TEMPLATE image (T-PATCH-257)
+ * so macOS auto-tints it to the menu-bar foreground (visible on dark + light).
  *
  * Robustness: a missing asset never throws — resolveTrayIcon guards with
  * fs.existsSync and returns null, and updateTray no-ops on a null image (mirrors
@@ -132,8 +134,13 @@ export function createTray(accessors: {
   // returns an empty image; Tray accepts it (shows nothing until first update).
   const idlePath = resolveTrayIcon('tray-idle-22')
   const seed = idlePath ? nativeImage.createFromPath(idlePath) : nativeImage.createEmpty()
-  // Color identity matters — do NOT template (would strip persona hues).
-  seed.setTemplateImage(false)
+  // T-PATCH-257: the idle `{}` mark is brand-neutral (no signal hue to preserve),
+  // and its purple→teal gradient was invisible against the dark macOS menu bar.
+  // Render it as a TEMPLATE image so macOS auto-tints it to the menu-bar
+  // foreground — white on a dark bar, black on a light bar — visible in both
+  // appearances (a fixed-white PNG would vanish on a light menu bar). Persona
+  // working icons stay colored (set below in updateTray) to keep their identity.
+  seed.setTemplateImage(true)
 
   tray = new Tray(seed)
   lastIconKey = 'tray-idle-22'
@@ -159,7 +166,11 @@ export function updateTray(payload: TrayStatePayload): void {
     if (iconPath) {
       const img = nativeImage.createFromPath(iconPath)
       if (!img.isEmpty()) {
-        img.setTemplateImage(false)
+        // T-PATCH-257: idle `{}` → template (auto white/black per menu-bar
+        // appearance). The waiting icon now ships white braces + a colored red
+        // dot, and persona icons carry identity hues, so both stay non-template
+        // (template would strip the red dot / persona color to a flat mask).
+        img.setTemplateImage(key === 'tray-idle-22')
         tray.setImage(img)
         lastIconKey = key
       }

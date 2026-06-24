@@ -472,14 +472,16 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
       })
     } else {
       // Same project (incl. cmd-R rehydrate for the same dir): keep restored panes.
+      // T-PATCH-256: do NOT reset the in-flight turn fields here. They are not
+      // persisted (the sessionStorage partialize excludes them), so a cmd-R
+      // rehydrate already has them at defaults — but the FreshComposer→
+      // WorkspaceShell first-turn reveal hits THIS same-project branch with a PO
+      // turn genuinely streaming, and resetting streaming/inFlightMsgId would drop
+      // the working indicator and desync the live turn. Cross-project streaming
+      // bleed is still handled by the isSwitch branch above.
       set({
         project,
         persistedProjectDir: project?.projectDir ?? null,
-        inFlightMsgId: null,
-        inFlightKind: 'po',
-        streaming: false,
-        streamingSince: null,
-        turnCharCount: 0,
       })
     }
   },
