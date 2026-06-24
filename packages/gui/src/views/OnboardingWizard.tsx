@@ -141,6 +141,7 @@ export default function OnboardingWizard({ onDone }: Props) {
     'onboarding.completionSteps.env',
     'onboarding.completionSteps.agents',
     'onboarding.completionSteps.instructions',
+    'onboarding.completionSteps.hooks',
     'onboarding.completionSteps.memory',
     'onboarding.completionSteps.playwright',
   ] as const

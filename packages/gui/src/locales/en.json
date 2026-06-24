@@ -83,6 +83,7 @@
       "env": "Create env file (~/.productune/productune.env)",
       "agents": "Register PO agent (agents/ → ~/.claude/agents/ symlink)",
       "instructions": "Apply PO instructions (po-instructions.md)",
+      "hooks": "Install enforcement hooks + statusline (~/.claude/settings.json — frontmatter / po-state guards)",
       "memory": "Apply long-term memory (~/.productune/<persona>/habit.md)",
       "playwright": "Prepare Playwright MCP cache (QA smoke gate, npx @playwright/mcp)"
     },

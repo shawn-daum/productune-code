@@ -8,7 +8,9 @@ Data: per-task `.productune/po-state.json :: current_task.calibration_outcome` (
 tool works, no `$HOME`/`~` expand), 1 line/task.
 
 Cross-cutting lessons (model behavior / harness quirk) are NOT calibration entries — promote them
-to doctrine (routing/calibration bookshelf or common), not this log.
+to doctrine (routing/calibration bookshelf or common), not this log. calibration-log = routing-bias
+1-liner ONLY; operational/decision/preference → Tier 1/2 promotion gate (tier map + destination
+rule: `promotion-process.md ## Layer priority` · `../habit.md:46`).
 
 ## Read (turn open, mandatory)
 

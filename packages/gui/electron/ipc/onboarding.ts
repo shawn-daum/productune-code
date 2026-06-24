@@ -266,6 +266,75 @@ export function register(): void {
     return fs.existsSync(envPath)
   })
 
+  // T-PATCH-246: install productune claude hooks + statusLine into
+  // ~/.claude/settings.json from the GUI onboarding path. Ports the idempotent
+  // merge from scripts/install.sh (merge_claude_settings_hooks +
+  // merge_claude_settings_statusline) so a dmg-only user (who never runs
+  // install.sh in a terminal) still gets the deterministic enforcement hooks
+  // (frontmatter-lint, po-state shape guards, doctrine-guard, phase-gate, …) that
+  // gate the GUI-spawned PO's own tool calls. Commands point at the BUNDLED core
+  // (coreDir/scripts/hooks/*.sh), so they resolve under the packaged app.
+  // Idempotent: existing productune entries (by path-prefix OR known basename) are
+  // stripped before re-adding; non-productune user hooks are preserved.
+  function installClaudeHooks(coreDir: string): void {
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+    let settings: any = {}
+    if (fs.existsSync(settingsPath)) {
+      try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) || {} } catch { settings = {} }
+      if (typeof settings !== 'object' || settings === null) settings = {}
+    }
+
+    const hooksDir = path.join(coreDir, 'scripts', 'hooks')
+    const h = (name: string) => path.join(hooksDir, name)
+    const statusline = path.join(coreDir, 'scripts', 'statusline-productune.sh')
+
+    const PDT_BASENAMES = [
+      'post-edit-format.sh', 'post-compact-doctrine.sh', 'stop-verify.sh', 'post-delegate-state-write.sh',
+      'pre-delegate-task-check.sh', 'pre-delegate-ctx-lang.sh', 'pre-chunking-warn.sh', 'post-bash-strip-cost.sh',
+      'pre-frontmatter-lint.sh', 'post-ticket-status-verify.sh', 'pre-git-posture.sh', 'session-start-doctrine.sh',
+      'pre-doctrine-guard.sh', 'pre-phase-gate-guard.sh', 'prompt-gate-inject.sh', 'session-start-po-state-migrate.sh',
+      'pre-po-state-shape-guard.sh', 'post-po-state-shape-guard.sh',
+    ]
+    const dirPrefix = hooksDir.endsWith(path.sep) ? hooksDir : hooksDir + path.sep
+    const isPdt = (cmd: unknown): boolean =>
+      typeof cmd === 'string' && (cmd.startsWith(dirPrefix) || PDT_BASENAMES.some(b => cmd.endsWith('/scripts/hooks/' + b)))
+    const stripPdt = (arr: any): any[] =>
+      (Array.isArray(arr) ? arr : []).filter((entry: any) =>
+        !((Array.isArray(entry?.hooks) ? entry.hooks : []).some((hk: any) => isPdt(hk?.command))))
+    const cmd = (c: string) => ({ type: 'command', command: c })
+
+    const H = (settings.hooks && typeof settings.hooks === 'object') ? settings.hooks : {}
+    H.PreToolUse = [...stripPdt(H.PreToolUse),
+      { matcher: 'Write|Edit|Bash', hooks: [cmd(h('pre-doctrine-guard.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('pre-delegate-task-check.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('pre-delegate-ctx-lang.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('pre-chunking-warn.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('pre-git-posture.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('pre-phase-gate-guard.sh'))] },
+      { matcher: 'Write|Edit|Bash', hooks: [cmd(h('pre-frontmatter-lint.sh'))] },
+      { matcher: 'Write|Edit|Bash', hooks: [cmd(h('pre-po-state-shape-guard.sh'))] },
+    ]
+    H.PostToolUse = [...stripPdt(H.PostToolUse),
+      { matcher: 'Write|Edit', hooks: [cmd(h('post-edit-format.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('post-delegate-state-write.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('post-bash-strip-cost.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('post-ticket-status-verify.sh'))] },
+      { matcher: 'Bash', hooks: [cmd(h('post-po-state-shape-guard.sh'))] },
+    ]
+    H.PostCompact = [...stripPdt(H.PostCompact), { hooks: [cmd(h('post-compact-doctrine.sh'))] }]
+    H.Stop = [...stripPdt(H.Stop), { matcher: 'pdt-developer', hooks: [cmd(h('stop-verify.sh'))] }]
+    H.SessionStart = [...stripPdt(H.SessionStart),
+      { matcher: 'startup|resume', hooks: [cmd(h('session-start-doctrine.sh'))] },
+      { matcher: 'startup|resume', hooks: [cmd(h('session-start-po-state-migrate.sh'))] },
+    ]
+    H.UserPromptSubmit = [...stripPdt(H.UserPromptSubmit), { hooks: [cmd(h('prompt-gate-inject.sh'))] }]
+
+    settings.hooks = H
+    settings.statusLine = { type: 'command', command: statusline }
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+  }
+
   ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpts) => {
     try {
       const home = os.homedir()
@@ -329,6 +398,17 @@ export function register(): void {
       //    first QA invocation isn't slow. Does NOT block onboarding completion
       //    on failure — agent's mcpServers block will retry lazily.
       await prewarmPlaywrightMcp()
+
+      // 5b. (T-PATCH-246) Install productune claude hooks + statusLine into
+      //     ~/.claude/settings.json so the GUI-spawned PO gets the deterministic
+      //     enforcement layer without requiring a terminal install.sh run.
+      //     Best-effort: a settings.json hiccup should not fail onboarding, but
+      //     this is the core enforcement fix so it normally succeeds.
+      try {
+        installClaudeHooks(coreDir)
+      } catch (e: any) {
+        console.error('[onboarding] installClaudeHooks failed (non-fatal):', e?.message)
+      }
 
       // 6. Save UI language selection to settings.json
       if (opts.uiLanguage) {

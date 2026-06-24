@@ -122,3 +122,10 @@ cua VM: PO turn 중 라벨/타임아웃 거동 관찰. 참고: `docs/qa/bookshel
 - arm-on-spawn 1줄(`spawnClaude` 내 `activeChild = child` 직후 `armSilenceTimeout(hCtx, cb)`)을 working tree에 적용 — branch `verify/T-PATCH-221-clean` commit e3a883e의 fix를 dev가 T-231 인접편집과 한 패스로 반영(po-runner.ts 동시편집 충돌 회피). idempotency 확인됨(`armSilenceTimeout` 첫 줄이 `clearSilenceTimeout` → stdout data 재arm 안전). build EXIT0.
 - thinking/stalled state·로케일·복귀 로직은 기존 머지본(`673b57f`) 재사용. 이번 fix가 토큰-전 순수 침묵에도 타이머 arm되게 해 1차 실효-0 버그(arm이 stdout data 핸들러 안에서만 호출되던 것) 교정.
 - ⚠️ **잔여(미검증)**: 무거운 토큰-전 침묵 turn에서 15s "생각 중" / 90s+ "stalled" **라이브 라벨 전환 관찰**은 안 됨 → human VNC 1회 또는 집중 세션 권장(qa_status: skipped = 라이브 re-verify 의도적 deferral). branch `verify/T-PATCH-221-clean`은 코드가 main tree에 반영됐으므로 정리 가능. 미커밋(commit-on-request).
+
+## Deploy live-verify (2026-06-23, cua-VM + VNC) — healthy-path 확인 · 15s/90s 전환 미캡처(caveat 유지)
+
+fresh arm64 dmg + fresh keychain 인증에서 PO turn 다수 관찰:
+- **healthy-path ✅**: 정상 turn 동안 라벨 = `"✴ Working · Ns · ↓ tok"` (스트리밍). **거짓 "Compacting" 미발생**(AC-1 핵심 하드페일 회피 확인). 트레이도 idle 점→작업중 persona 스프라이트 정상 전환.
+- **15s "Thinking" / 90s "stalled" 전환 ⚠️ 미캡처**: 이 티켓이 기록한 캡처난점 실증. 결정적 repro 3종 모두 하니스 제약에 막힘 — (a) 네트워크 블랙홀(`/etc/hosts`/pf) = **sudo 비번 필요**, (b) claude `UserPromptSubmit` sleep 훅 = **`--print`(headless) 모드에서 블록 안 함**, (c) 일반 무거운 turn = claude가 첫 토큰 전 init/MCP stdout("Added user:design…")을 내보내 **침묵 타이머 리셋** → 순수 15s+ 침묵 안 생김. arm-on-spawn 코드는 main tree 반영본 그대로.
+- **결론**: qa_status: skipped(merge-with-caveat) 유지가 타당. 진짜 토큰-전 장침묵/hang이 자연발생할 때 human VNC로 라벨 전환 1회 관찰 권장. 하니스 절차는 `docs/qa/bookshelf/cua-vm-harness.md` §6 참조.

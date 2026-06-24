@@ -23,9 +23,21 @@ Attach PO-managed lifecycle fields during disposition (not persona-emitted): `st
 - (project, habit) + both **global** quadrants = **user-approval surface**.
 - Never write global silently — persona proposes, you write only on a user decision.
 
-## Layer priority
+## Layer priority — tier map (SINGLE SOURCE)
 
-Reader chain (Tier 0 common → Tier 0 persona → Tier 1 project → Tier 2 personal): **last layer wins**. 같은 topic 두 layer 에 있으면 뒤가 override. (Tier 1/2 = Tier 0 overlay — productune doctrine 직접 안 건드리고 진화.)
+**Tier location 정의는 여기가 SoT.** 다른 곳(habit / calibration)은 이 표를 cross-ref, 재정의 금지.
+
+| Tier | 위치 (location) | 무엇 | write |
+|:--|:--|:--|:--|
+| **Tier 0** | `packages/core/doctrine/` | 코어 doctrine — `common/` + persona `habit.md` + **`bookshelf/`** (ux-principles · anti-default · security-6 등 — **bookshelf 는 Tier 0**) | **직접 write 금지** — Designer doctrine-editing flow (user-approved) 로만 |
+| **Tier 1** | 프로젝트 `docs/<persona>/` | project overlay (`docs/po/calibration-log.md` · `docs/designer/design-system.md` 등) | promotion gate (project quadrant) |
+| **Tier 2** | **`~/.productune/<persona>/`** | 개인/글로벌 cross-project (`$HOME/.productune/po/habit.md` 등) | promotion gate (global quadrant) |
+
+혼동 지점 못박기: **bookshelf = Tier 0** (Tier 2 아님), **`~/.productune` = Tier 2** (Tier 0 아님).
+
+Reader chain (Tier 0 common → Tier 0 persona → Tier 1 project → Tier 2 personal): **last layer wins**. 같은 topic 두 layer 에 있으면 뒤가 override 해서 productune doctrine 직접 안 건드리고 진화.
+
+**calibration-log = routing-bias 1-liner ONLY**; operational/infra/product 규칙·결정·preference 는 calibration-log 가 아니라 **Tier 1/2 promotion candidate (+user ASK)** 로 — 라벨 헷갈려도 destination 못 틀리게. 전문: `../habit.md:46` · `calibration.md`.
 
 **Promotion never targets Tier 0.** 4 quadrants 는 Tier 1/2 전용. Tier 0 core doctrine 변경 (all-subagent-read rule 포함) 은 이 gate 가 아니라 Designer doctrine-editing flow (user-approved) 로 route.
 

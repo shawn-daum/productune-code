@@ -175,6 +175,10 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
       or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
       or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"))
       or (cmd | endswith("/scripts/hooks/pre-phase-gate-guard.sh"))
+      or (cmd | endswith("/scripts/hooks/post-ticket-status-verify.sh"))
+      or (cmd | endswith("/scripts/hooks/session-start-po-state-migrate.sh"))
+      or (cmd | endswith("/scripts/hooks/pre-po-state-shape-guard.sh"))
+      or (cmd | endswith("/scripts/hooks/post-po-state-shape-guard.sh"))
       or (cmd | endswith("/scripts/hooks/prompt-gate-inject.sh"));
     def strip_pdt(arr; dir):
       ((arr // []) | map(

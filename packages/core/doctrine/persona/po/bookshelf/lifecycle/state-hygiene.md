@@ -26,6 +26,15 @@ Surface only when the condition holds, ask once, leave the field as-is on silenc
 
 `versions[]` cap: retain ≤5; rotate older entries to an `outcome.retrospective_path` ref (out of the state file for size, not purged).
 
+## backlog ↔ ticket reconcile [T-PATCH-247]
+
+`docs/backlog.md` lines and emitted tickets are manually coupled, so resolved lines go stale (this session: 11 stale + 4 deferred swept). Reconcile mechanically at the lifecycle moments below — never let a resolved line linger:
+
+- **(a1) APPLY → ticketed**: when a backlog item is APPLY'd and a ticket is issued, mark the backlog line in place with `→ T-XXX`. Once triage passes (ticketization confirmed), remove the backlog line — the ticket is now its SoT.
+- **(a2) ticket close → line removal**: on ticket close (`done` or `abandoned`), remove the corresponding backlog line (the one marked `→ T-XXX`). A closed ticket leaves no backlog residue.
+- **(a3) write-whitelist (e) extension**: the PO `docs/backlog.md` write whitelist (`po/habit.md` item (e)) is extended from `append` to **`append + resolved-line removal`** — PO may delete a backlog line once it is reconciled per a1/a2. Removal is scoped to resolved lines only (marked `→ T-XXX` and closed, or triage-confirmed); never bulk-rewrite. (Canonical whitelist string lives in `po/habit.md` (e) — keep the two in lock-step.)
+- **(a4) deferred_candidate promotion**: when a `deferred_candidate` enters a PRD item (promoted from deferred to spec), remove it from po-state `deferred_candidates[]` — the PRD is now its home. Use jq atomic merge (per the po-state write rule above), never raw text.
+
 ## Harness memory drain
 
 At task close (alongside the calibration line) check the Claude Code auto-memory index (the project's harness `MEMORY.md`): for each accumulated entry, locate its doctrine-tier home, surface it through the promotion gate, then delete the entry from harness memory once placed. Rules live in doctrine tiers — harness memory is an inbox, never a home.

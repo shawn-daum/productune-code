@@ -83,6 +83,7 @@
       "env": "환경 설정 파일 생성 (~/.productune/productune.env)",
       "agents": "PO 에이전트 등록 (agents/ → ~/.claude/agents/ 심링크)",
       "instructions": "PO 지침 적용 (po-instructions.md)",
+      "hooks": "강제 훅 + statusline 설치 (~/.claude/settings.json — frontmatter / po-state 가드)",
       "memory": "장기 메모리 적용 (~/.productune/<persona>/habit.md)",
       "playwright": "Playwright MCP 캐시 준비 (QA smoke gate, npx @playwright/mcp)"
     },

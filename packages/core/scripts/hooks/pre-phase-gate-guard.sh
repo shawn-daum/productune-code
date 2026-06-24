@@ -153,6 +153,58 @@ $UNRESOLVED
 
 Resolve each item (run its close ticket → done; waivable items may be waived on explicit user approval; na needs user approval) BEFORE writing current_phase. Sequence SoT: ~/.productune/doctrine/persona/po/bookshelf/lifecycle/p3-build.md. Surface this to the user — do not look for a workaround."
   fi
+
+  # ── G7: design-phase close requires ≥1 ADOPTED design artifact ───────────────
+  # (T-PATCH-249, enforcing artifact-manifest-schema.md "adopt = deterministic
+  # promote".) Adoption must be a real flat+manifest file, not discipline nor a
+  # claude-hosted preview nor an archive/ candidate. Failure this closes: a design
+  # deliverable left only as a hosted preview / only in archive/, never promoted →
+  # the build + user gate read an empty flat dir.
+  #
+  # FIRES ONLY on a P3 design-phase close: the close_gate must contain the
+  # `design_review` step (that step IS the design-phase close per p3-build.md).
+  # Any other phase write (no design_review in gate) is a non-design transition →
+  # no-op (AC-3). The invariant: manifest has ≥1 entry whose path is FLAT (not
+  # archive/), whose file EXISTS on disk (flat-resolved), whose status is adopted
+  # (pending|approved, not archived), and whose kind is a design deliverable.
+  #
+  # FAIL-OPEN at every step: no design_review step, no current_version, no
+  # manifest, or any jq miss → pass silently. Never blocks on absence of data —
+  # only on a manifest that demonstrably has zero adopted design artifacts.
+  HAS_DESIGN_REVIEW="$(jq -r '[(.close_gate // [])[] | select(.step == "design_review")] | length' "$STATE" 2>/dev/null)"
+  if [ "$HAS_DESIGN_REVIEW" = "1" ] || [ "$HAS_DESIGN_REVIEW" -gt 1 ] 2>/dev/null; then
+    CV="$(jq -r '.current_version // ""' "$STATE" 2>/dev/null)"
+    PR="$(dirname "$(dirname "$STATE")")"
+    MANIFEST="$PR/docs/artifacts/$CV/manifest.json"
+    # Design-deliverable kinds (T-PATCH-249 default; see PO/QA flag in ticket).
+    # prd-view = PO's PRD gate, asset/doc = supporting → NOT design deliverables.
+    # A corrupt/unparseable manifest is UNREADABLE data → fail-OPEN (skip G7), not
+    # block. `jq -e .` succeeds only on valid JSON; this distinguishes "manifest
+    # unparseable" (skip, AC-3 "never block on unreadable data") from "manifest
+    # parses to zero adopted design entries" (block — the real enforcement).
+    if [ -n "$CV" ] && [ -f "$MANIFEST" ] && jq -e . "$MANIFEST" >/dev/null 2>&1; then
+      # jq selects candidate flat design-deliverable entries; bash confirms each
+      # is flat-resolved (file exists on disk) — jq cannot stat. ON_DISK>0 = pass.
+      ON_DISK=0
+      while IFS= read -r rp; do
+        [ -z "$rp" ] && continue
+        [ -f "$PR/docs/artifacts/$CV/$rp" ] && ON_DISK=$((ON_DISK + 1))
+      done < <(jq -r '
+        (.entries // [])[]
+        | select((.path // "") | (startswith("archive/") | not))
+        | select((.kind) as $k | ["mockup","wireframe","design-system","spec"] | index($k))
+        | select((.status // "pending") != "archived")
+        | .path' "$MANIFEST" 2>/dev/null)
+      if [ "$ON_DISK" = "0" ]; then
+        emit_block "close-gate G7: design-phase close blocked — ZERO adopted design artifacts in docs/artifacts/$CV/.
+The manifest has no flat-resolved entry of a design-deliverable kind (mockup|wireframe|design-system|spec) with an on-disk file and a non-archived status.
+A design deliverable that exists only as a claude-hosted preview, or only under archive/ (a candidate), is NOT adopted. Per artifact-manifest-schema.md \"adopt = deterministic promote\", the adopting persona MUST, in the same task:
+  1. promote the chosen file  archive/<name>  →  docs/artifacts/$CV/<ticket-id>-<slug>.<ext>  (pull a hosted preview into the repo as a real file first), and
+  2. write its manifest entry (kind + status: pending).
+Adopt at least one design deliverable, then retry the phase transition. Surface this to the user — do not work around the hook."
+      fi
+    fi
+  fi
 fi
 
 # ── G4: version close (ended_at write) requires the PRD snapshot ──────────────

@@ -200,7 +200,10 @@ dark surface 5 등급. 화면이 깊어질수록 한 단계 밝아진다 (modal/
 | token | hex | alias | 용도 |
 |---|---|---|---|
 | `--brand-purple` | `#8B5CF6` | productune 브랜드 | 로고, 주요 CTA |
+| `--brand-mint` | `#2DD4BF` | productune 브랜드 (보조) | 로고/BrandMark 투톤 — 닫는 `}` (열린 `{`=violet) |
 | `--accent` | `#8B5CF6` | = `--brand-purple` = `--persona-po` | primary action, focus ring |
+
+> **brand 투톤 (T-PATCH-243, RESTORED).** 브랜드 글리프 `{ }`는 **violet 여는 `{` + mint 닫는 `}`** 의 의도된 2색 (BrandMark 최초 생성 T-PATCH-112~ 부터). `logo.png` 와 정합. T-PATCH-241 이 close-brace 를 `#8B5CF6` 로 평탄화(="off-palette mint 제거")한 것은 **오판** — mint 는 제거 대상이 아니라 브랜드 보조색이다. 본 토큰 등록으로 mint 는 on-palette 가 되며 (design_review color_palette ✗ 재발 방지), BrandMark 는 이 두 토큰을 사용한다. mint 는 brand 글리프 전용 (status/persona 색과 hue 충돌 없음 — qa emerald `#34D399` 와 구분: mint 는 teal 계열, brand 맥락 한정).
 
 > **alias 정합** — productune 브랜드 퍼플은 PO 페르소나 색과 동일하다 (CLI 의
 > `pdt-po` `color: purple` 정합 — `#8B5CF6` Violet 500). 의도된 정합 (PO 가 사용자
