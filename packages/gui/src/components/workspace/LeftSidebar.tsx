@@ -42,6 +42,19 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
 
   // Mount: load PO session from fs via IPC
   useEffect(() => {
+    // T-PATCH-256: don't clobber an in-flight first turn. LeftSidebar mounts on the
+    // WorkspaceShell boot path alongside ChatPanel and independently reloads
+    // chat.json into the SAME store. On the FreshComposer first-turn reveal the
+    // store already holds the live (streaming) conversation, but chat.json only has
+    // the user message until onDone persists the reply — so this setMessages would
+    // overwrite the streaming assistant placeholder, and tokens arriving after the
+    // overwrite target a now-missing id and get dropped (blank chat + nothing
+    // persisted). Skip the disk reload while a turn is in flight (store owns the
+    // live session). Mirrors the ChatPanel guard. A real A→B switch still reloads:
+    // setProject's isSwitch branch resets streaming:false in the same atomic update
+    // that flips `project`, so by the time this effect re-runs the guard is open.
+    const ws = useWorkspace.getState()
+    if ((ws.streaming || ws.inFlightMsgId) && ws.messages.length > 0) return
     // T-PATCH-213: browser-dev-mode → api undefined. LeftSidebar mounts on the
     // WorkspaceShell boot path; guard the deref ( .catch below only traps promise
     // rejection, not the synchronous throw ) so cold boot is a clean no-op.

@@ -97,8 +97,20 @@ export default function FreshComposer({ project, onConfirm }: Props) {
       // missed). Latching here means the bar mounts already-working; onMsgId is
       // idempotent and onDone still resets streaming:false → idle on completion.
       // setInFlightKind('po') mirrors ChatPanel so trace/bubble routing matches.
-      useWorkspace.getState().setInFlightKind('po')
-      useWorkspace.getState().setStreaming(true)
+      //
+      // T-PATCH-256: claim store ownership + seed the user bubble into the store
+      // BEFORE firing the turn. The imminent onConfirm() reveals WorkspaceShell,
+      // which mounts ChatPanel; without this, (a) WorkspaceShell.setProject treats
+      // the reveal as a project "switch" and wipes messages, and (b) ChatPanel's
+      // load effect reloads chat.json (user-msg-only until onDone) and overwrites
+      // the streaming assistant bubble. Setting project first (clears messages),
+      // then appending userMsg, makes the reveal a same-project re-entry that
+      // preserves the live conversation; ChatPanel's in-flight guard skips reload.
+      const ws = useWorkspace.getState()
+      ws.setProject(project)
+      ws.appendMessage(userMsg)
+      ws.setInFlightKind('po')
+      ws.setStreaming(true)
       api.poSendMessage({ projectDir: project.projectDir, text: finalText })
 
       // Step 5 — Yield one event-loop tick so WorkspaceShell mounts before first token.
