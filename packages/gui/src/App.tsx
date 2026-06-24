@@ -239,7 +239,7 @@ export default function App() {
   if (!envChecked) {
     return (
       <div style={appShell}>
-        <Titlebar title="productune" />
+        <Titlebar title="Productune" />
       </div>
     )
   }
@@ -247,7 +247,7 @@ export default function App() {
   const titleText =
     showOnboarding ? t('app.onboardingTitle')
     : project ? project.slug
-    : 'productune'
+    : 'Productune'
 
   return (
     <div style={appShell}>

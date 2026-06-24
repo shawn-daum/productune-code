@@ -13,7 +13,7 @@
     "dismiss": "닫기"
   },
   "onboarding": {
-    "title": "productune 초기 설정",
+    "title": "Productune 초기 설정",
     "step0": {
       "label": "Step 0 / 4 — Language / 언어",
       "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
@@ -325,7 +325,7 @@
       "loading": "티켓 불러오는 중…",
       "noTickets": "필터에 맞는 티켓 없음.",
       "noTicketsCta": "PO에게 요청하기 →",
-      "schemaMismatchBanner": "스키마 mismatch — 알 수 없는 status 의 ticket {{count}}개를 \"todo\" 로 fallback 함 (알 수 없는 값: {{values}}). 본 project 의 status enum 이 productune doctrine 과 다를 수 있어요.",
+      "schemaMismatchBanner": "스키마 mismatch — 알 수 없는 status 의 ticket {{count}}개를 \"todo\" 로 fallback 함 (알 수 없는 값: {{values}}). 본 project 의 status enum 이 Productune doctrine 과 다를 수 있어요.",
       "schemaMismatchMore": "{{values}} 외 +{{more}}개",
       "status": {
         "todo": "할 일",
@@ -1006,7 +1006,7 @@
     },
     "notifications": {
       "title": "알림",
-      "description": "productune 창이 포커스를 잃은 동안 표시할 데스크탑 알림 유형을 선택하세요.",
+      "description": "Productune 창이 포커스를 잃은 동안 표시할 데스크탑 알림 유형을 선택하세요.",
       "master": "알림 활성화",
       "dispatchDone": "디스패치 완료",
       "dispatchDoneDesc": "배정된 티켓이 QA 루프를 통과했습니다.",
@@ -1022,15 +1022,15 @@
         "blockedToggle": "테스트를 보내려면 위에서 알림을 켜세요.",
         "unsupported": "이 시스템에서는 네이티브 알림이 지원되지 않습니다."
       },
-      "macosHint": "productune은 시스템 설정 ▸ 알림에서 허용되어야 합니다. 처음 알림을 보낼 때 목록에 추가됩니다. macOS 집중 모드 / 방해 금지 설정도 알림을 차단할 수 있습니다. 서명되지 않은 개발 빌드에서는 앱이 \"Electron\"으로 표시됩니다.",
+      "macosHint": "Productune은 시스템 설정 ▸ 알림에서 허용되어야 합니다. 처음 알림을 보낼 때 목록에 추가됩니다. macOS 집중 모드 / 방해 금지 설정도 알림을 차단할 수 있습니다. 서명되지 않은 개발 빌드에서는 앱이 \"Electron\"으로 표시됩니다.",
       "openMacosSettings": "macOS 알림 설정 열기"
     },
     "app": {
       "title": "앱",
       "closeToTray": "백그라운드에서 계속 실행",
-      "closeToTrayDesc": "창을 닫아도 productune이 실행 유지돼요. 독에서 다시 열 수 있어요.",
+      "closeToTrayDesc": "창을 닫아도 Productune이 실행 유지돼요. 독에서 다시 열 수 있어요.",
       "launchAtLogin": "로그인 시 자동 실행",
-      "launchAtLoginDesc": "로그인할 때 productune을 자동으로 열어줘요.",
+      "launchAtLoginDesc": "로그인할 때 Productune을 자동으로 열어줘요.",
       "zoom": "화면 배율",
       "zoomDesc": "UI 크기를 조정해요. 즉시 반영돼요.",
       "statusBar": "상태 표시줄 보기",
@@ -1095,7 +1095,7 @@
     }
   },
   "app": {
-    "onboardingTitle": "productune 초기 설정",
+    "onboardingTitle": "Productune 초기 설정",
     "errorBoundary": {
       "title": "렌더 오류"
     },
@@ -1138,7 +1138,7 @@
         "menuOpen": "프로젝트 열기",
         "menuDelete": "디스크에서 삭제",
         "title": "\"{{slug}}\" 을(를) 삭제할까요?",
-        "body": "디스크에서 프로젝트 폴더 전체가 삭제됩니다. productune은 먼저 시스템 휴지통으로 보내며, 휴지통을 쓸 수 없는 경우 폴더가 영구적으로 삭제됩니다.",
+        "body": "디스크에서 프로젝트 폴더 전체가 삭제됩니다. Productune은 먼저 시스템 휴지통으로 보내며, 휴지통을 쓸 수 없는 경우 폴더가 영구적으로 삭제됩니다.",
         "irreversible": "이 작업은 되돌릴 수 없습니다.",
         "cancel": "취소",
         "confirm": "디스크에서 삭제",
@@ -1146,27 +1146,27 @@
       }
     },
     "install": {
-      "title": "이 폴더에서 productune을 시작할까요?",
-      "description": "이 폴더에는 아직 productune 프로젝트가 설정되지 않았습니다. 지금 설치하면 PRD·디자인·티켓을 이 폴더에서 관리할 수 있습니다.",
+      "title": "이 폴더에서 Productune을 시작할까요?",
+      "description": "이 폴더에는 아직 Productune 프로젝트가 설정되지 않았습니다. 지금 설치하면 PRD·디자인·티켓을 이 폴더에서 관리할 수 있습니다.",
       "confirm": "설치하고 시작",
       "cancel": "취소"
     },
     "descendant": {
-      "title": "선택한 폴더 안에 productune 프로젝트가 있습니다.",
+      "title": "선택한 폴더 안에 Productune 프로젝트가 있습니다.",
       "prompt": "어떤 폴더를 열까요?",
       "installHere": "현재 폴더에 새로 설치",
       "cancel": "취소"
     },
     "ancestor": {
-      "title": "상위 폴더에 이미 productune 프로젝트가 있습니다.",
-      "prompt": "지금 연 폴더({{dir}})는 기존 productune 프로젝트보다 {{distance}}단계 아래에 있습니다. 그 프로젝트를 대신 열까요, 아니면 여기에 새로 설치할까요?",
+      "title": "상위 폴더에 이미 Productune 프로젝트가 있습니다.",
+      "prompt": "지금 연 폴더({{dir}})는 기존 Productune 프로젝트보다 {{distance}}단계 아래에 있습니다. 그 프로젝트를 대신 열까요, 아니면 여기에 새로 설치할까요?",
       "openAncestor": "그 프로젝트 열기",
       "installHere": "여기에 설치",
       "cancel": "취소"
     },
     "migrate": {
-      "title": "옛 productune 프로젝트로 보입니다",
-      "description": "이 폴더는 옛 productune 프로젝트로 보입니다. 감지된 항목: {{hints}}. 최신 layout 으로 업데이트하면 기존 작업 내역은 그대로 보존됩니다. 진행할까요?",
+      "title": "옛 Productune 프로젝트로 보입니다",
+      "description": "이 폴더는 옛 Productune 프로젝트로 보입니다. 감지된 항목: {{hints}}. 최신 layout 으로 업데이트하면 기존 작업 내역은 그대로 보존됩니다. 진행할까요?",
       "confirm": "업데이트",
       "cancel": "취소"
     },

@@ -13,7 +13,7 @@
     "dismiss": "Dismiss"
   },
   "onboarding": {
-    "title": "productune setup",
+    "title": "Productune setup",
     "step0": {
       "label": "Step 0 / 4 — Language / 언어",
       "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
@@ -325,7 +325,7 @@
       "loading": "Loading tickets…",
       "noTickets": "No tickets match the current filter.",
       "noTicketsCta": "Ask PO to start →",
-      "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"; unknown values: {{values}}). Project status enum may not match productune doctrine.",
+      "schemaMismatchBanner": "Schema mismatch — {{count}} ticket(s) have unknown status (shown under \"todo\"; unknown values: {{values}}). Project status enum may not match Productune doctrine.",
       "schemaMismatchMore": "{{values}} +{{more}} more",
       "status": {
         "todo": "To Do",
@@ -1006,7 +1006,7 @@
     },
     "notifications": {
       "title": "Notifications",
-      "description": "Choose which background events show a desktop notification while productune isn't focused.",
+      "description": "Choose which background events show a desktop notification while Productune isn't focused.",
       "master": "Enable notifications",
       "dispatchDone": "Dispatch complete",
       "dispatchDoneDesc": "A dispatched ticket finished its QA loop (pass).",
@@ -1022,15 +1022,15 @@
         "blockedToggle": "Turn notifications on above to send a test.",
         "unsupported": "Native notifications aren't supported on this system."
       },
-      "macosHint": "productune must be allowed in System Settings ▸ Notifications. The first notification it sends is what adds it to that list. macOS Focus / Do Not Disturb can also hold notifications back. In an unsigned dev build the app appears as \"Electron\".",
+      "macosHint": "Productune must be allowed in System Settings ▸ Notifications. The first notification it sends is what adds it to that list. macOS Focus / Do Not Disturb can also hold notifications back. In an unsigned dev build the app appears as \"Electron\".",
       "openMacosSettings": "Open macOS Notification settings"
     },
     "app": {
       "title": "App",
       "closeToTray": "Keep running in background",
-      "closeToTrayDesc": "Closing the window keeps productune alive. Reopen from the dock.",
+      "closeToTrayDesc": "Closing the window keeps Productune alive. Reopen from the dock.",
       "launchAtLogin": "Launch at login",
-      "launchAtLoginDesc": "Automatically open productune when you log in.",
+      "launchAtLoginDesc": "Automatically open Productune when you log in.",
       "zoom": "Zoom",
       "zoomDesc": "Scale the UI. Takes effect immediately.",
       "statusBar": "Show status bar",
@@ -1095,7 +1095,7 @@
     }
   },
   "app": {
-    "onboardingTitle": "productune setup",
+    "onboardingTitle": "Productune setup",
     "errorBoundary": {
       "title": "Render error"
     },
@@ -1138,7 +1138,7 @@
         "menuOpen": "Open project",
         "menuDelete": "Delete from disk",
         "title": "Delete \"{{slug}}\"?",
-        "body": "This deletes the entire project folder from your disk. productune tries to move it to the system trash first; if that is unavailable, the folder is permanently deleted.",
+        "body": "This deletes the entire project folder from your disk. Productune tries to move it to the system trash first; if that is unavailable, the folder is permanently deleted.",
         "irreversible": "This action cannot be undone.",
         "cancel": "Cancel",
         "confirm": "Delete from disk",
@@ -1146,27 +1146,27 @@
       }
     },
     "install": {
-      "title": "Set up productune in this folder?",
-      "description": "This folder does not have a productune project yet. Installing here will let you manage PRDs, design docs, and tickets in this folder.",
+      "title": "Set up Productune in this folder?",
+      "description": "This folder does not have a Productune project yet. Installing here will let you manage PRDs, design docs, and tickets in this folder.",
       "confirm": "Install and open",
       "cancel": "Cancel"
     },
     "descendant": {
-      "title": "Found productune projects inside the selected folder.",
+      "title": "Found Productune projects inside the selected folder.",
       "prompt": "Which folder would you like to open?",
       "installHere": "Install in current folder",
       "cancel": "Cancel"
     },
     "ancestor": {
-      "title": "A productune project already exists in a parent folder.",
-      "prompt": "The folder you opened ({{dir}}) sits {{distance}} level(s) below an existing productune project. Open that project instead, or set up a new one here?",
+      "title": "A Productune project already exists in a parent folder.",
+      "prompt": "The folder you opened ({{dir}}) sits {{distance}} level(s) below an existing Productune project. Open that project instead, or set up a new one here?",
       "openAncestor": "Open that project",
       "installHere": "Install here",
       "cancel": "Cancel"
     },
     "migrate": {
-      "title": "Legacy productune project detected",
-      "description": "This folder looks like an older productune project. Detected: {{hints}}. Migrating will add config.json — your existing data (briefs, po-state, etc.) will be preserved. Continue?",
+      "title": "Legacy Productune project detected",
+      "description": "This folder looks like an older Productune project. Detected: {{hints}}. Migrating will add config.json — your existing data (briefs, po-state, etc.) will be preserved. Continue?",
       "confirm": "Migrate",
       "cancel": "Cancel"
     },
