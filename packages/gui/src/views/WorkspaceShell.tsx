@@ -20,7 +20,6 @@ import { useTicketScan } from '../lib/useTicketScan'
 import { bucketTicketsByPhase } from '../lib/phase-mapping'
 import DeployConfirmModal from '../components/workspace/DeployConfirmModal'
 import BaseDirtyModal from '../components/workspace/BaseDirtyModal'
-import QuitGuardToast from '../components/workspace/QuitGuardToast'
 import { useResizeLayout } from './workspace/shell/useResizeLayout'
 import { useKeyboardShortcuts } from './workspace/shell/useKeyboardShortcuts'
 import { useIpcSubscriptions } from './workspace/shell/useIpcSubscriptions'
@@ -407,9 +406,9 @@ export default function WorkspaceShell({ project, onBack }: Props) {
 
       {artifactToast && <div style={artifactToastStyle}>{artifactToast}</div>}
       </div>
-      {/* T-PATCH-086: quit guard overlay. position:fixed escapes the grid; always
-          in the DOM so the IPC subscription is registered from first render. */}
-      <QuitGuardToast />
+      {/* T-PATCH-254: QuitGuardToast moved to App top level so the guidance
+          toast appears on every screen (HomeView/onboarding/workspace), not
+          just the workspace. Single app-level instance owns the IPC subscription. */}
     </div>
   )
 }

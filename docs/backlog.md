@@ -19,6 +19,7 @@ RESOLVE/DONE 항목은 줄 제거(2026-06-23 reconcile sweep — backlog↔ticke
 
 ## next-version (v0.x)
 
+- [v0.6] (T-PATCH-255 carry from v0.5) PO 턴 tool 실패(특히 macOS TCC Downloads/Desktop/Documents 접근 거부)가 무응답·무안내 silent 종료 → actionable 배너/메시지 노출(실패 사유 + 다음 행동). dev+QA L2. 티켓 본문 SoT = `docs/tickets/v0.5/T-PATCH-255.md`. (2026-06-25 v0.5 P5 close 시 이월 — shawn 결정)
 - [v0.6] 정합성 감사 + 페르소나 워크스루 + Nemotron persona distill 모듈 — 품질 3차원 중 Coherence/Usability 빈칸을 메우는 독립 적대자. QA에 2개 신규 모드(coherence-audit·persona-walkthrough) + QA를 P2 소환, designer에 distill 파이프라인. 자체 PRD로 P1부터 태울 것(이 backlog 항목≠즉시구현). 롤아웃 R1(정합성 감사 MVP) → R2(distill→워크스루). 브리프: `/Users/x/Documents/dev/ntf-products/prd-master/DESIGN-coherence-persona-module.md`. (2026-06-19, shawn 결정 — v0.6 이월)
 
 - [v0.6] lazyweb UI/UX 레퍼런스 grounding 실험 — Designer를 lazyweb MCP(실앱 281k 화면/flow/competitive) 레퍼런스로 grounding하면 design.md/anchor 품질이 baseline보다 나은가. 방법론 grill 완료(2 blocking flaw 교정): S1→S2 anchor 블록 단위 측정 · A/A+/B 3-arm(교란 격리) · 가설전용 constructs 루브릭 신규 · 인용strip 블라인딩 · 게이트 임계 사전등록 · Step0 MCP 연결 hard go/no-go(현재 미연결, install.sh 또는 수동 config+token 필요). 브리프 SoT: `briefs/lazyweb-design-grounding.md`(v2). (2026-06-23, shawn 결정 — 생각보다 큰 건이라 v0.6 이월)

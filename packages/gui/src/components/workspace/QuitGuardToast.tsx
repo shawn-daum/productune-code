@@ -6,8 +6,9 @@
  * shrinks over `timeoutMs` ms; pressing ⌘Q a second time within that window
  * quits the app. Dismisses automatically when the guard window expires.
  *
- * Always rendered in the DOM (hidden by default); one instance mounted in
- * WorkspaceShell below the shell grid.
+ * Always rendered in the DOM (hidden by default); ONE instance mounted at the
+ * App root (T-PATCH-254) — sibling to the onboarding/HomeView/WorkspaceShell
+ * switch — so the guard toast shows on every screen, not just the workspace.
  */
 
 import { useEffect, useRef, useState } from 'react'

@@ -7,6 +7,7 @@ import HomeView from './views/HomeView'
 import OnboardingWizard from './views/OnboardingWizard'
 import EntryGate from './components/EntryGate'
 import Titlebar from './components/workspace/Titlebar'
+import QuitGuardToast from './components/workspace/QuitGuardToast'
 import type { Project } from './lib/types'
 import './store/poEvents' // T-P4-119: PO IPC subscriptions registered at module load.
 import { initTrayBridge } from './store/trayBridge' // T-PATCH-177: persona→tray sync.
@@ -313,6 +314,11 @@ export default function App() {
           onCancel={() => setShowNewModal(false)}
         />
       )}
+
+      {/* T-PATCH-254: single app-level quit-guard toast. position:fixed escapes
+          layout; sits outside the onboarding/HomeView/WorkspaceShell switch so the
+          first-⌘Q guidance shows on every screen. Self-contained IPC subscription. */}
+      <QuitGuardToast />
     </div>
   )
 }
