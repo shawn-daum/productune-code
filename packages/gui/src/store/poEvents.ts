@@ -331,7 +331,8 @@ function register() {
         }
       }
       // T-PATCH-163: clear streamingSince so the WorkingIndicator unmounts at turn end.
-      return { messages: next, streaming: false, inFlightMsgId: null, streamingSince: null }
+      // T-PATCH-262: set awaitingUser=true so trayBridge shows red-dot (PO handed turn to user).
+      return { messages: next, streaming: false, inFlightMsgId: null, streamingSince: null, awaitingUser: true }
     })
     // Reset turn-local segmentation state.
     segActiveId = null

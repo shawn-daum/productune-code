@@ -2,16 +2,20 @@
  * store/trayBridge.ts — renderer→main tray sync (T-PATCH-177).
  *
  * The personaPresence store is the SoT for "which persona is working" and
- * useWorkspace.streaming is the SoT for "is a PO turn in progress". The menu-bar
- * Tray lives in the main process and knows neither, so this thin bridge:
+ * useWorkspace is the SoT for "is a PO turn in progress" and "is user awaited".
+ * The menu-bar Tray lives in the main process and knows neither, so this thin
+ * bridge:
  *   1. subscribes to both stores,
  *   2. computes the derived TrayStatePayload via the personaPresence selectors
  *      (single source of the sort/idle logic — no duplication),
  *   3. dedupes (only push when the payload actually changed), and
  *   4. pushes to main over window.api.trayUpdate.
  *
- * waiting = all personas idle AND streaming === false. streaming false + all
- * idle means it is the user's turn to type (PO turn ended) → red-dot badge.
+ * T-PATCH-262: waiting = awaitingUser (PO onDone fired) AND all personas idle.
+ * Previously used `!streaming && allIdle` which was also true at app start
+ * (initial idle), showing the red dot before any PO turn ran. Using the
+ * awaitingUser flag (set in poEvents onDone, cleared on setStreaming(true) /
+ * resetSession) correctly scopes the red dot to "PO finished, user's turn".
  *
  * initTrayBridge() is called once from App's mount effect and returns a teardown
  * that unsubscribes both stores. Browser dev mode (no window.api) is a no-op.
@@ -27,9 +31,11 @@ interface TrayStatePayload {
 
 function computePayload(): TrayStatePayload {
   const { entries } = usePersonaPresence.getState()
-  const streaming = useWorkspace.getState().streaming
+  const { awaitingUser } = useWorkspace.getState()
   const activePersona = selectActivePersona(entries)
-  const waiting = activePersona === null && selectAllIdle(entries) && !streaming
+  // T-PATCH-262: waiting only when PO has explicitly handed the turn to the user
+  // (awaitingUser=true set by onDone). Guards against idle-at-startup false positive.
+  const waiting = activePersona === null && selectAllIdle(entries) && awaitingUser
   return { activePersona, waiting }
 }
 

@@ -202,7 +202,9 @@ export default function ToolUseGroup({ tools }: Props) {
 
 function ToolRow({ tool }: { tool: Message }) {
   const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
+  // T-PATCH-265: default expanded so tool detail is immediately visible when the
+  // outer group is opened — one click instead of two.
+  const [open, setOpen] = useState(true)
   const name = resolvedToolName(tool)
 
   return (

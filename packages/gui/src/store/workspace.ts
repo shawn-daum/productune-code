@@ -168,6 +168,12 @@ interface WorkspaceState {
   /** 현 turn 동안 흐른 누적 텍스트 char 수(근사 토큰 = chars/4). turn 시작 시 0 (T-PATCH-163). */
   turnCharCount: number
   addTurnChars: (n: number) => void
+  /**
+   * T-PATCH-262: PO가 턴을 완료해 유저에게 넘긴 상태.
+   * onDone 시 true, 유저가 새 메시지를 보내거나(setStreaming true) resetSession 시 false.
+   * trayBridge 가 이 플래그로 빨간점 표시 여부를 결정한다 (idle 초기 상태와 구분).
+   */
+  awaitingUser: boolean
 
   // ── In-flight assistant message tracking (T-P4-119 — ref→state uplift) ──
   inFlightMsgId: string | null
@@ -413,6 +419,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   streaming: false,
   streamingSince: null,
   turnCharCount: 0,
+  awaitingUser: false,  // T-PATCH-262: false until first PO onDone
   inFlightMsgId: null,
   inFlightKind: 'po',
 
@@ -459,6 +466,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
           streaming: false,
           streamingSince: null,
           turnCharCount: 0,
+          awaitingUser: false,  // T-PATCH-262: clear on project switch
           panes: makeEmptyLeaf(freshId),
           activePaneId: freshId,
           nextPaneSeq: s.nextPaneSeq + 1,
@@ -539,10 +547,12 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   // T-PATCH-163: stamp streamingSince on the true-transition (idempotent via
   // `?? Date.now()` so ChatPanel handleSubmit + poEvents onMsgId double-fire keeps
   // the first stamp); reset turnCharCount + streamingSince on the false-transition.
+  // T-PATCH-262: clear awaitingUser when streaming goes true (user has sent message).
   setStreaming: (streaming) => set((s) => ({
     streaming,
     streamingSince: streaming ? (s.streamingSince ?? Date.now()) : null,
     turnCharCount: streaming ? s.turnCharCount : 0,
+    awaitingUser: streaming ? false : s.awaitingUser,
   })),
 
   addTurnChars: (n) => set((s) => ({ turnCharCount: s.turnCharCount + n })),
@@ -550,7 +560,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   setInFlightMsgId: (inFlightMsgId) => set({ inFlightMsgId }),
   setInFlightKind: (inFlightKind) => set({ inFlightKind }),
 
-  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false, streamingSince: null, turnCharCount: 0, inFlightMsgId: null, inFlightKind: 'po' }),
+  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false, streamingSince: null, turnCharCount: 0, awaitingUser: false, inFlightMsgId: null, inFlightKind: 'po' }),
 
   // ── pane tree ops ──────────────────────────────────────────────────────────
 

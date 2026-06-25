@@ -127,14 +127,22 @@ export default function FreshComposer({ project, onConfirm }: Props) {
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.nativeEvent.isComposing) return
-    // T-PATCH-133: atomic token-delete (Backspace/Delete adjacent to [Image #N]).
-    if (handleTokenDeleteKeyDown(e)) return
-    // Cmd+Enter = send. Plain Enter = newline.
+    // T-PATCH-264: Cmd+Enter must submit even when isComposing is true (IME
+    // composition-commit fires on the same keydown that ends composition).
+    const isComposing = e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229
+
+    // Cmd+Enter = send regardless of composition state.
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
       handleSend()
+      return
     }
+
+    // IME composition — don't capture plain Enter (newline) or Backspace mid-composition.
+    if (isComposing) return
+
+    // T-PATCH-133: atomic token-delete (Backspace/Delete adjacent to [Image #N]).
+    if (handleTokenDeleteKeyDown(e)) return
   }
 
   return (

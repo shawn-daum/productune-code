@@ -372,6 +372,18 @@ interface HealthContext {
    * expected, not a stall. Cleared on turn start and after onDone.
    */
   oqPending: boolean
+  /**
+   * T-PATCH-268: set true when at least one assistant text token was forwarded
+   * via cb.onToken this turn. Used with toolErrorInfo to detect the
+   * "tool failed + no assistant reply" silent-fail pattern.
+   */
+  assistantTextEmitted: boolean
+  /**
+   * T-PATCH-268: last tool error detail observed this turn (from type:'user'
+   * tool_result with is_error=true or content text matching permission-denied
+   * patterns). null when no tool error has been seen.
+   */
+  toolErrorInfo: { toolName?: string; errorText: string } | null
 }
 
 const SILENCE_TIMEOUT_MS  = 15_000   // silence → 'thinking' (claude producing nothing yet)
@@ -395,7 +407,9 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
     delegatedByToolUseId: new Map(),
     subagentCaptureByParentId: new Map(),
     projectDir,
-    oqPending: false,   // T-PATCH-197 (b): no OQ in flight at turn start
+    oqPending: false,            // T-PATCH-197 (b): no OQ in flight at turn start
+    assistantTextEmitted: false, // T-PATCH-268: no assistant text yet
+    toolErrorInfo: null,         // T-PATCH-268: no tool error seen yet
   }
 }
 
@@ -512,6 +526,46 @@ function handleToolUseHealth(toolName: string, ctx: HealthContext, cb: RunCallba
   // no-output hangs separately.
 }
 
+// ── T-PATCH-268: TCC / permission-denied silent-fail detector ───────────────────
+
+/**
+ * TCC and permission patterns: macOS TCC sandbox denial, ENOENT, generic
+ * "operation not permitted" / "permission denied" strings that the claude CLI
+ * surfaces as a tool_result error text when the OS refuses file access.
+ */
+const TCC_PATTERNS = [
+  /operation not permitted/i,
+  /permission denied/i,
+  /access denied/i,
+  /tcc|transparency.consent/i,
+  /not allowed to access/i,
+  /you don['']t have permission/i,
+  /EACCES/,
+  /EPERM/,
+]
+
+/**
+ * T-PATCH-268: Build a user-visible actionable message for a silent tool
+ * failure. Returns null if there is nothing to surface (no tool error seen).
+ * TCC-specific failure → special System Settings guidance; other → generic.
+ */
+function buildToolFailureMessage(
+  toolErrorInfo: { toolName?: string; errorText: string } | null,
+): string | null {
+  if (!toolErrorInfo) return null
+  const { toolName, errorText } = toolErrorInfo
+  const isTcc = TCC_PATTERNS.some((p) => p.test(errorText))
+  const toolLabel = toolName ? ` (${toolName})` : ''
+  if (isTcc) {
+    return (
+      `Tool access was denied by macOS${toolLabel}: ${errorText}\n\n` +
+      'To fix: System Settings → Privacy & Security → Files and Folders → ' +
+      'allow Productune access, then retry.'
+    )
+  }
+  return `Tool call failed${toolLabel}: ${errorText}\n\nYou may retry or check the file path.`
+}
+
 // ── Real spawn ──────────────────────────────────────────────────────────────────
 
 function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<void> {
@@ -554,7 +608,10 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // headless `--print --output-format stream-json --verbose`; orthogonal to
     // `--agent` / `--permission-mode`. Applies to both first-call + resume.
     args.push('--include-partial-messages')
-    args.push('--print', '--output-format', 'stream-json', '--verbose', opts.text)
+    // T-PATCH-263: place `--` end-of-options sentinel BEFORE the user text positional
+    // so claude CLI does not interpret a leading `-` or `--` in the message as a flag.
+    // Applies to both first-call and resume paths (args array is built above).
+    args.push('--print', '--output-format', 'stream-json', '--verbose', '--', opts.text)
 
     // T-PATCH-149: experimental — exposes SendMessage (PO can continue a subagent by agentId
     // instead of fresh re-dispatch); also activates auto-resume + TeamCreate/TeamDelete. User
@@ -633,6 +690,31 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
         cb.onAnnounce(msgId, { level: 'error', text: line })
         handleStderrHealth(line, hCtx, cb)
       }
+
+      // T-PATCH-268: detect "tool called + no assistant text + tool error" → surface
+      // actionable message. Fires when:
+      //   1. At least one tool_use was issued this turn (lastToolUseAt set), AND
+      //   2. The PO produced zero assistant text tokens (assistantTextEmitted=false), AND
+      //   3. A tool_result with is_error=true was captured (toolErrorInfo set).
+      // Skipped on user-abort (wasAborted) and already-announced stream errors
+      // (those go through the code≠0 branch below). Fires BEFORE the code branch so
+      // the actionable message precedes any generic "exit-error" announcement.
+      if (
+        !wasAborted &&
+        hCtx.lastToolUseAt !== null &&
+        !hCtx.assistantTextEmitted &&
+        hCtx.toolErrorInfo !== null
+      ) {
+        const actionableMsg = buildToolFailureMessage(hCtx.toolErrorInfo)
+        if (actionableMsg) {
+          emitHealth('permission-blocked', { deniedPattern: hCtx.toolErrorInfo.errorText }, hCtx, cb)
+          cb.onAnnounce(msgId, {
+            level: 'error',
+            text: actionableMsg,
+          })
+        }
+      }
+
       if (code !== 0 && code !== null) {
         if (wasAborted) {
           // User-initiated abort — localized info, not an error.
@@ -754,7 +836,10 @@ function handleStreamJsonLine(
       typeof event?.delta?.text === 'string'
     ) {
       const eventNested = isNested || obj?.event?.parent_tool_use_id != null
-      if (!eventNested) cb.onToken(msgId, event.delta.text)
+      if (!eventNested) {
+        cb.onToken(msgId, event.delta.text)
+        hCtx.assistantTextEmitted = true   // T-PATCH-268: track that the PO produced text
+      }
     }
     return
   }
@@ -985,6 +1070,28 @@ function handleStreamJsonLine(
     if (Array.isArray(content)) {
       for (const part of content) {
         if (part?.type === 'tool_result' && typeof part?.tool_use_id === 'string') {
+          // T-PATCH-268: capture tool errors (is_error=true) for the silent-fail
+          // detector. Extract the error text from the content array or string.
+          // Only capture the FIRST error per turn (last-writer semantics would
+          // obscure the root cause); skip if a higher-priority error already captured.
+          if ((part.is_error === true || part.is_error === 'true') && !hCtx.toolErrorInfo) {
+            let errorText = ''
+            if (Array.isArray(part.content)) {
+              errorText = part.content
+                .filter((c: any) => c?.type === 'text' && typeof c?.text === 'string')
+                .map((c: any) => c.text as string)
+                .join('\n')
+                .trim()
+            } else if (typeof part.content === 'string') {
+              errorText = part.content.trim()
+            }
+            if (!errorText) errorText = 'tool call failed (no details)'
+            // Reverse-lookup the tool name from delegatedByToolUseId (delegates) or
+            // the last tool recorded in hCtx.lastToolUse.
+            const toolName = hCtx.delegatedByToolUseId.get(part.tool_use_id) ?? hCtx.lastToolUse ?? undefined
+            hCtx.toolErrorInfo = { toolName: toolName ?? undefined, errorText }
+          }
+
           const agentType = hCtx.delegatedByToolUseId.get(part.tool_use_id)
           if (agentType) {
             hCtx.delegatedByToolUseId.delete(part.tool_use_id)

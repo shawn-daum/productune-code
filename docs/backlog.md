@@ -51,6 +51,7 @@ RESOLVE/DONE 항목은 줄 제거(2026-06-23 reconcile sweep — backlog↔ticke
 - [APPLY v0.5 → Deploy 후행] 라이브 검증 집중 세션 T-220/231/221 — dmg가 만든 빌드를 cua VM에 설치 후 human VNC 눈확인. ① T-220 onboarding Step2 Next 게이팅+codex 미노출 ② T-231 not-installed/401 분류배너 ③ T-221 15s/90s 침묵 라벨. T-031 persona-spec viewer 높이 + CostArchivePanel row-level 눈확인 잔여 흡수. harness 교훈(VM 설치빌드=검증대상 일치 확인) Tier2 cua-vm-harness.md에 designer+grill. (출처: 2026-06-22 qa-cua-live + 2026-06-23 triage)
 
 ## follow-up (dogfood / 티켓 잔여)
+- [v0.6 verify] code-quick 웨이브(T-262/263/264/265/267/268) **cua-vm/hands-on 런타임 검증** 필요 — 헤드리스 불가 동작: #7 tray 빨간점 사이클(idle/working=off, onDone=on, user reply=off) · #8 리딩 `-` 입력 crash→정상 · #6 Downloads TCC 거부→actionable 노출 · #12 한글 IME Cmd+Enter 1회 전송 · #13 tool 상세 즉시 노출 · #3 smoke 3테스트 실행. QA 정적+build는 pass. (2026-06-25, v0.6 verify 세션 or 차기 dmg)
 - [near-term] (T-PATCH-249 follow-up) design-deliverable kind set를 doctrine SoT로 선언 — `pre-phase-gate-guard.sh` G7이 `{mockup,wireframe,design-system,spec}`를 bash에 하드코딩. `designer/bookshelf/artifact-manifest-schema.md`(현 91/100 — split 주의)에 "design-deliverable kinds" 분류 1줄 선언 + G7이 참조하도록 하면 drift 방지. (QA acceptable-with-followup, 비블로커). (2026-06-24)
 - [near-term] settings round-trip regression test (load -> mutate one field -> save -> reload -> all fields intact) — T-PATCH-083 중 loadSettings() integrations silent-wipe 버그 발견+수정됨; 재발 방지 테스트 없음. (2026-06-23 재검증: 여전히 테스트 부재 OPEN). (2026-06-10)
 - [v0.6] non-mac tray icon (Tray instance, icon asset, context menu) — deferred from T-PATCH-090 close-to-tray mac-only first cut. (2026-06-10)

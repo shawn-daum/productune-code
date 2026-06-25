@@ -193,18 +193,25 @@ export default function ChatPanel() {
   // has an early-return guard `if (streaming || !project) return`.
   // So the keyboard path is blocked during streaming — no new code needed here.
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // IME composition — don't capture Enter (or Backspace) mid-Korean composition.
-    if ((e.nativeEvent as any).isComposing) return
+    // T-PATCH-264: Cmd+Enter must submit even when isComposing is true (IME
+    // composition-commit fires on the same keydown event that ends composition,
+    // so the flag is still set). Only gate the non-submit path (plain Enter =
+    // newline, Backspace/Delete token delete) — let Cmd/Ctrl+Enter fall through.
+    const isComposing = (e.nativeEvent as any).isComposing || e.nativeEvent.keyCode === 229
+
+    // Cmd+Enter (or Ctrl+Enter) → submit regardless of composition state.
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      handleSubmit()
+      return
+    }
+
+    // IME composition — don't capture plain Enter (newline) or Backspace mid-composition.
+    if (isComposing) return
 
     // T-PATCH-098 §4.e §1 / T-PATCH-133: atomic token deletion delegated to hook.
     // Returns true if Backspace/Delete was consumed (token removed + caret restored).
     if (handleTokenDeleteKeyDown(e)) return
-
-    // Cmd+Enter (or Ctrl+Enter) → submit. Plain Enter → newline (default).
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      handleSubmit()
-    }
   }
 
   // T-PATCH-219/223: dock composer removed — free-text now lives inside
