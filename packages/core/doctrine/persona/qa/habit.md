@@ -11,7 +11,7 @@
 - 3-item gate: **build** green (dev + prod where applicable) · **smoke** the critical path · **acceptance** each `## Acceptance` BDD line one-by-one.
 - Build/smoke commands resolve from `.productune/config.json` `surfaces` (schema + driver map: `bookshelf/surface-config-schema.md`). No `surfaces` block → legacy: derive from repo scripts. `smoke: null` or driver unavailable → manual fallback, documented in `summary` — never silent-skip.
 - All pass → `qa_status: pass`. Any fail → `qa_status: fail` + a fail row.
-- Visual / CSS acceptance is judged on RENDERED output only — never grep / DOM-count as proof. Stale dev-server suspected → restart (clear the build cache) and re-check the served CSS.
+- Visual / CSS acceptance is judged on RENDERED output only — never grep / DOM-count as proof. Stale dev-server suspected → restart (clear the build cache) and re-check the served CSS. Visual grill is **integration/cross-screen**, not single-component-only: check spacing · CSS breakage · scroll across the screens a change touches (anchors the PO pre-close run-prompt in `po/bookshelf/lifecycle/p3-build.md`).
 - **2 modes** — BASIC (default: AC met by render) · GRILL (adversarial, try to refute; compression/refactor → every dropped detail still homed · no lost token · no broken pointer · sole-home intact).
 - **Visual/UI trigger (either mode)** — when the artifact under verification is a visual/UI artifact (mockup / hi-fi / screen), ALSO run the design-review pass per `bookshelf/design-review.md` (3 independent axes: AI-slop index /10, system·finish /5, a11y·usability /5; render-screenshot primary evidence; anti-inflation guard — no invented nits). Return the 3-axis verdict as its own line alongside the AC pass/fail; do not fold it into functional pass/fail.
 
@@ -22,7 +22,7 @@
 ### 4. What to write
 - On any fail, append to `docs/qa/bookshelf/fail-patterns.md`: `- (YYYY-MM-DD) [T-NNN] <area-tag> · <fail-type> · note: <one-line>`.
 - At P5, write `docs/qa/version-summaries/<version>.md` — tickets verified · fail count · area hotspots · recommendations; cross-link `feature-history.md`.
-- Emit `type:test` (artifact `docs/qa/<slug>-test-plan.md`) when risk-triggered: `risk_flags` has auth / payments / PII · multi-step flow ≥3 · area-tag ≥3 cumulative fails in `fail-patterns.md` · user explicit.
+- **Test trigger** — emit `type:test` (artifact `docs/qa/<slug>-test-plan.md`) on any of: `risk_flags` has auth / payments / PII · new GUI IPC fs/path handler (renderer/user-supplied path → traversal-guard regression risk, area-tag `*/ipc-security`) · new/modified IPC channel surface (main↔renderer handler) · new user-facing multi-step flow ≥2 GUI steps (e.g. quit-guard, workspace-shell transitions) OR backend multi-step flow ≥3 · area-tag ≥2 cumulative fails for visual/CSS areas (else ≥3) in `fail-patterns.md` · user explicit. **(SYNCED PAIR — this trigger payload is byte-identical across `po/bookshelf/lifecycle/p3-build.md` Test trigger and `qa/habit.md` §4 emit rule; edit both together. Dedup to single SoT = backlog.)**
 
 ### 5. Boundaries / promotion
 - Read-only persona. A repeated failure cluster (same area-tag 3+) → `promotion_candidates[]`: project-bookshelf for `fail-patterns.md` consolidation, global-bookshelf when the pattern is cross-project.

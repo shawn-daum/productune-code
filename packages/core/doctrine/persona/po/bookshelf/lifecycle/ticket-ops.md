@@ -38,3 +38,10 @@ Never let user-facing breakage reach the user.
 - `type:test` / `type:qa` / `type:design` self-verify; `type:deploy` verifies per-step.
 - Data-layer touch (DAL / select / RLS / column grant): build-green + bundle-grep CANNOT catch runtime permission errors — close only after a real page render (route 200 + content) or a direct anon REST probe.
 - Dispatch GRILL (not basic) when change ∈ {doctrine edit · core/load-bearing feature · loss-risk refactor/compression · security/data-layer}; else basic.
+
+## Code-review gate (per-ticket, risk-gated)
+
+Beside the smoke gate, on dev `ready_for_qa` for `impl`/`refactor` tickets, PO runs a per-ticket code-review on the ticket worktree diff via the harness `/code-review` skill (and `/simplify` for quality-only passes) — 3 axes: **correctness · reuse/dedup · simplify**.
+- **Risk-gate** — run the review only when ANY holds (numbers are tunable guidelines, not hard constants): `risk_flags` non-empty · OR ≥ ~6 files changed · OR ≥ ~300 LOC changed in the ticket worktree. Non-risk tickets are NOT per-ticket reviewed — the close-gate cumulative pass (`lifecycle/p3-build.md` ## Close gate) covers them.
+- **Semantics** — a **correctness** finding is BLOCKING: loop back to dev like a QA fail, reusing the same ≤3-retry cap → beyond → `blocked` + surface. **reuse/simplify** findings are ADVISORY: record as actionable rows in `## Persona Activity`, never block.
+- Auto-fix (`--fix` / `/simplify` apply) is propose-only here; auto-apply is deferred (backlog). This is a build-loop event — it does NOT touch the `close_gate` sequence.
