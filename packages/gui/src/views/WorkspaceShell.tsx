@@ -10,6 +10,7 @@ import MainPanel from '../components/workspace/main/MainPanel'
 import StatusBar from '../components/workspace/StatusBar'
 import ActivityBar, { type ActivityIcon } from '../components/workspace/ActivityBar'
 import ChatPanel from '../components/workspace/ChatPanel'
+import WelcomePanel from '../components/workspace/WelcomePanel'
 import SessionHealthBanner from '../components/workspace/SessionHealthBanner'
 import RestartSessionModal from '../components/workspace/RestartSessionModal'
 import PendingPromotionDrain from '../components/workspace/PendingPromotionDrain'
@@ -25,7 +26,7 @@ import { useKeyboardShortcuts } from './workspace/shell/useKeyboardShortcuts'
 import { useIpcSubscriptions } from './workspace/shell/useIpcSubscriptions'
 import { useAutoSurfaceArtifacts } from './workspace/shell/useAutoSurfaceArtifacts'
 import { grid, breadcrumbArea, sidebarResizeArea, chatResizeArea, artifactToastStyle } from './workspace/shell/styles'
-import { buildQuickOpenItems, type ArtifactEntry } from './workspace/shell/helpers'
+import { buildQuickOpenItems, prdCandidatePaths, type ArtifactEntry } from './workspace/shell/helpers'
 import {
   ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH,
   SIDEBAR_MIN_WIDTH, CENTER_MIN_LAYOUT, PO_CHAT_MIN_WIDTH,
@@ -38,6 +39,12 @@ import {
 const SHELL_MIN_WIDTH =
   ACTIVITY_BAR_WIDTH + SIDEBAR_MIN_WIDTH + RESIZE_HANDLE_WIDTH +
   CENTER_MIN_LAYOUT + RESIZE_HANDLE_WIDTH + PO_CHAT_MIN_WIDTH
+
+// T-PATCH-269 #11: chat-only (3-col) minimum — no sidebar/sidebarResize column.
+// = ACTIVITY_BAR_WIDTH(48) + welcome floor(320) + RESIZE_HANDLE_WIDTH(4)
+//   + PO_CHAT_MIN_WIDTH(280) = 652. Below this the wrapper scrolls instead of crushing.
+const SHELL_MIN_WIDTH_CHATONLY =
+  ACTIVITY_BAR_WIDTH + CENTER_MIN_LAYOUT + RESIZE_HANDLE_WIDTH + PO_CHAT_MIN_WIDTH
 
 interface Props {
   project: Project
@@ -173,6 +180,16 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const prevProjectDirRef = useRef<string | null>(null)
   const pendingSwitchTabRef = useRef(false)
 
+  // ── T-PATCH-269 #14: resolved PRD path from the watcher payload (the file that
+  // ACTUALLY exists, resolved in main via the shared candidate set). null = no PRD
+  // yet (= not ready). This is BOTH the auto-nav gate AND the exact path #14 opens,
+  // so the gate and the opened tab can never disagree (FIX-2). Seeded by the one-shot
+  // read + updated by every watcher push. Layout #11 keys off current_version, not this.
+  const [prdPath, setPrdPath] = useState<string | null>(null)
+  // Edge-detect latch so PRD auto-nav fires ONCE per version (when the version is
+  // non-null AND its PRD exists) — never on every watcher tick (no focus-steal).
+  const autoNavDoneForVersionRef = useRef<string | null>(null)
+
   useEffect(() => {
     const prevDir = prevProjectDirRef.current
     prevProjectDirRef.current = project.projectDir
@@ -192,6 +209,10 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     const isSwitch = prevDir !== project.projectDir && !isRehydrateSameProject
     if (isSwitch) {
       pendingSwitchTabRef.current = true
+      // T-PATCH-269 #14: reset the auto-nav latch + prdPath on a real switch so the
+      // new project re-evaluates from scratch (avoids a shared "v1" id suppressing it).
+      autoNavDoneForVersionRef.current = null
+      setPrdPath(null)
       // T-PATCH-013 B2: re-assert the ActivityBar 'project' icon on a real switch,
       // regardless of which icon was active before. Skipped on reload-rehydrate.
       setActiveIcon('project')
@@ -216,6 +237,27 @@ export default function WorkspaceShell({ project, onBack }: Props) {
           return
         }
         setPoState(s as any)
+        // T-PATCH-269 #14: seed prdPath from the one-shot read so a project opened
+        // while ALREADY at a ready version auto-navs on first mount (the watcher only
+        // pushes on CHANGE, so it would otherwise never fire for the initial state).
+        // FIX-2: probe the SAME shared candidate set as main (anchor → PRD.md →
+        // versions/<v>.md) in precedence order and seed the FIRST that exists — so the
+        // seed gate and the opened path agree exactly with the watcher path.
+        const cv0 = (s as any)?.current_version as string | undefined
+        if (cv0) {
+          const candidates = prdCandidatePaths(s as any, project.projectDir)
+          ;(async () => {
+            for (const cand of candidates) {
+              try {
+                const content = await api.artifactsReadFile?.(project.projectDir, cand)
+                if (content != null) { setPrdPath(cand); return }
+              } catch { /* try next candidate */ }
+            }
+            setPrdPath(null)
+          })()
+        } else {
+          setPrdPath(null)
+        }
         // T-PATCH-010 #3: on project switch, open the new project's current-version
         // tab once after poState loads. Clear the flag so repeated setPoState calls
         // (live updates) don't re-open the tab.
@@ -234,6 +276,59 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       })
       .catch(() => setPoState(null))
   }, [project.projectDir, setPoState, setPoStateError])
+
+  // ── T-PATCH-269 #15: live po-state watcher subscription ──────────────────────
+  // Arm the main-process fs.watch on projectDir change; subscribe to the debounced
+  // `state:poStateChanged` push. Pushes are routed through the SAME setPoState path
+  // as the one-shot read above (so phase/version/breadcrumb stay in sync), and the
+  // payload's prdPath (resolved in main via the shared candidate set) feeds the #14
+  // auto-nav. Re-arms on projectDir change; tears down on unmount.
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.watchPoState) return
+    api.watchPoState(project.projectDir)
+    const off = api.onPoStateChanged?.((payload: { projectDir: string; state: unknown; prdReady: boolean; prdPath: string | null }) => {
+      // Guard against a stale push from a prior projectDir (re-arm race).
+      if (payload.projectDir !== project.projectDir) return
+      const s = payload.state
+      if (s && typeof s === 'object' && (s as any).ok === false && (s as any).error === 'parse') {
+        setPoStateError('parse')
+        return
+      }
+      setPoState(s as any)
+      setPrdPath(payload.prdPath)
+    })
+    return () => {
+      if (typeof off === 'function') off()
+      api.unwatchPoState?.()
+    }
+  }, [project.projectDir, setPoState, setPoStateError])
+
+  // ── T-PATCH-269 #14: PRD auto-nav (edge-detected, per-version latch) ──────────
+  // Fires ONCE per version once current_version is non-null AND its PRD exists
+  // (prdPath != null). Enters the version (ticket-review tab) + opens & focuses the
+  // PRD markdown tab. FIX-2: opens the EXACT prdPath that the gate resolved (a file
+  // that actually exists), so the gate and the opened tab can never disagree.
+  // The latch (autoNavDoneForVersionRef) keyed on version id prevents a re-fire on
+  // every watcher tick — so no focus-steal regression. If the user later closes the
+  // PRD tab it is NOT re-opened (latched per version). Coexists with manual nav.
+  // Latch is cleared when version goes null (closed/never-set) so a re-open re-fires.
+  useEffect(() => {
+    const version = poStateVersion
+    if (!version) {
+      autoNavDoneForVersionRef.current = null
+      return
+    }
+    if (!prdPath) return
+    if (autoNavDoneForVersionRef.current === version) return
+    autoNavDoneForVersionRef.current = version
+
+    const prdName = prdPath.split('/').pop() ?? 'PRD.md'
+    // Enter the version (ticket-review tab — same tab the project-switch flow opens),
+    // then open + focus the PRD markdown tab as the visible top result (scene 2).
+    openTab(`ticket-review:${version}`, 'ticket-review', { versionFilter: version }, version)
+    openTab(`markdown:${prdPath}`, 'markdown', { path: prdPath }, prdName)
+  }, [poStateVersion, prdPath, project.projectDir, openTab])
 
   useEffect(() => { if (!streaming) setDrainVisible(true) }, [streaming])
 
@@ -312,27 +407,47 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     poState,
   )
 
-  const dynamicGrid: React.CSSProperties = {
-    ...grid,
-    // T-PATCH-085 QA fix: minWidth = sum of column minimums (856 px).
-    // Forces the grid element to be at least 856 px wide so that:
-    //   (a) shellRef.getBoundingClientRect().width never reports < 856 → clamp
-    //       functions always see enough space to protect sidebar at 200 px floor.
-    //   (b) when the viewport is < 856 px, the grid overflows its scroll-wrapper
-    //       and overflowX:auto on the wrapper shows a horizontal scrollbar instead
-    //       of visually crushing the sidebar column.
-    minWidth: SHELL_MIN_WIDTH,
-    gridTemplateAreas: `
-      "activity sidebar sidebarResize breadcrumb chatResize chat"
-      "activity sidebar sidebarResize center     chatResize chat"
-      "activity sidebar sidebarResize status     chatResize chat"
-    `,
-    gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
-    // T-PATCH-091 R4: collapse status row to 0 when hidden. StatusBar is wrapped
-    // in overflow:hidden so it clips cleanly at 0 height with no dangling empty cell.
-    // T-PATCH-173: status row 28→34px to fit the restored inline reset label.
-    gridTemplateRows: statusBarVisible ? 'auto 1fr 34px' : 'auto 1fr 0px',
-  }
+  // T-PATCH-269 #11: layout mode is derived purely from current_version. No version
+  // yet (PRD interview in progress) → chat-only welcome face; version exists → full
+  // 6-area panel layout. Reversible derived state (no one-way flag): if the version
+  // ever goes away the layout collapses back to chat-only.
+  const layoutMode: 'full' | 'chatonly' = poStateVersion ? 'full' : 'chatonly'
+
+  const dynamicGrid: React.CSSProperties =
+    layoutMode === 'full'
+      ? {
+          ...grid,
+          // T-PATCH-085 QA fix: minWidth = sum of column minimums (856 px).
+          // Forces the grid element to be at least 856 px wide so that:
+          //   (a) shellRef.getBoundingClientRect().width never reports < 856 → clamp
+          //       functions always see enough space to protect sidebar at 200 px floor.
+          //   (b) when the viewport is < 856 px, the grid overflows its scroll-wrapper
+          //       and overflowX:auto on the wrapper shows a horizontal scrollbar instead
+          //       of visually crushing the sidebar column.
+          minWidth: SHELL_MIN_WIDTH,
+          gridTemplateAreas: `
+            "activity sidebar sidebarResize breadcrumb chatResize chat"
+            "activity sidebar sidebarResize center     chatResize chat"
+            "activity sidebar sidebarResize status     chatResize chat"
+          `,
+          gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
+          // T-PATCH-091 R4: collapse status row to 0 when hidden. StatusBar is wrapped
+          // in overflow:hidden so it clips cleanly at 0 height with no dangling empty cell.
+          // T-PATCH-173: status row 28→34px to fit the restored inline reset label.
+          gridTemplateRows: statusBarVisible ? 'auto 1fr 34px' : 'auto 1fr 0px',
+        }
+      : {
+          // T-PATCH-269 #11: chat-only 3-col grid (mockup scene 1). Sidebar +
+          // sidebarResize columns are dropped; the welcome face fills the center and
+          // PO chat keeps its resizable column. MainPanel/Sidebar/StatusBar are NOT
+          // rendered in this mode (their pane/tab state is preserved underneath — they
+          // simply unmount until the layout expands back to full).
+          ...grid,
+          minWidth: SHELL_MIN_WIDTH_CHATONLY,
+          gridTemplateAreas: `"activity welcome chatResize chat"`,
+          gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
+          gridTemplateRows: '1fr',
+        }
 
   return (
     // Scroll wrapper: constrained to viewport width, lets the grid overflow
@@ -340,35 +455,42 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     <div style={shellScrollWrapper}>
       <div ref={shellRef} style={dynamicGrid}>
       <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
-      <LeftSidebar project={project} activeIcon={activeIcon} />
-      <div style={sidebarResizeArea}>
-        <ColumnResizeHandle active={activeResizeHandle === 'sidebar'} ariaLabel="Resize left sidebar"
-          onMouseDown={(event) => startResize('sidebar', event)} />
-      </div>
 
-      <div style={breadcrumbArea}>
-        {/* T-015 A6: always-visible inline header search bar */}
-        <HeaderSearchBar onClick={() => setQuickOpenVisible(true)} />
-        <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
-          onRetry={handleRetry} onViewLog={handleViewLog} />
-        {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
-        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate} />
-        {drainVisible && project && (
-          <PendingPromotionDrain projectDir={project.projectDir}
-            claudeSessionId={useWorkspace.getState().claudeSessionId}
-            onDone={() => setDrainVisible(false)} />
-        )}
-      </div>
+      {layoutMode === 'full' ? (
+        <>
+          <LeftSidebar project={project} activeIcon={activeIcon} />
+          <div style={sidebarResizeArea}>
+            <ColumnResizeHandle active={activeResizeHandle === 'sidebar'} ariaLabel="Resize left sidebar"
+              onMouseDown={(event) => startResize('sidebar', event)} />
+          </div>
 
-      <MainPanel />
-      {/* T-PATCH-091 R4: clip StatusBar to 0 height when the status row collapses
-          to 0px — no dangling empty grid cell or visible bar remnant.
-          T-PATCH-186: only clip while collapsed. When the bar is visible we need
-          overflow:visible so RunSegment's upward drop-up (bottom:28, i.e. above
-          this 34px cell) can escape instead of being clipped invisible. */}
-      <div style={{ gridArea: 'status', overflow: statusBarVisible ? 'visible' : 'hidden' }}>
-        <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
-      </div>
+          <div style={breadcrumbArea}>
+            {/* T-015 A6: always-visible inline header search bar */}
+            <HeaderSearchBar onClick={() => setQuickOpenVisible(true)} />
+            <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
+              onRetry={handleRetry} onViewLog={handleViewLog} />
+            {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
+            <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate} />
+            {drainVisible && project && (
+              <PendingPromotionDrain projectDir={project.projectDir}
+                claudeSessionId={useWorkspace.getState().claudeSessionId}
+                onDone={() => setDrainVisible(false)} />
+            )}
+          </div>
+
+          <MainPanel />
+          {/* T-PATCH-091 R4: clip StatusBar to 0 height when the status row collapses
+              to 0px — no dangling empty grid cell or visible bar remnant.
+              T-PATCH-186: only clip while collapsed. When the bar is visible we need
+              overflow:visible so RunSegment's upward drop-up (bottom:28, i.e. above
+              this 34px cell) can escape instead of being clipped invisible. */}
+          <div style={{ gridArea: 'status', overflow: statusBarVisible ? 'visible' : 'hidden' }}>
+            <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
+          </div>
+        </>
+      ) : (
+        <WelcomePanel />
+      )}
 
       <div style={chatResizeArea}>
         <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"

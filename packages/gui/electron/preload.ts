@@ -171,6 +171,26 @@ contextBridge.exposeInMainWorld('api', {
   readPoState: (projectDir: string): Promise<unknown> =>
     ipcRenderer.invoke('state:readPoState', projectDir),
 
+  // ── po-state live watcher (T-PATCH-269 #15) ─────────────────────────────────
+  /** Arm a single durable fs.watch on <projectDir>/.productune (parent dir, to
+   *  survive atomic-rename writes). Idempotent per projectDir. Pairs with the
+   *  `state:poStateChanged` push that onPoStateChanged subscribes to. */
+  watchPoState: (projectDir: string): Promise<void> =>
+    ipcRenderer.invoke('state:watchPoState', projectDir),
+
+  /** Tear down the active po-state watcher. */
+  unwatchPoState: (): Promise<void> =>
+    ipcRenderer.invoke('state:unwatchPoState'),
+
+  /** Subscribe to debounced po-state change pushes (re-read + parsed). Fires only
+   *  when the {version,phase,prdReady} signal changed. `prdPath` is the absolute
+   *  path of the PRD doc that exists (the one #14 opens) or null. Returns unsubscribe. */
+  onPoStateChanged: (cb: (payload: { projectDir: string; state: unknown; prdReady: boolean; prdPath: string | null }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('state:poStateChanged', listener)
+    return () => ipcRenderer.removeListener('state:poStateChanged', listener)
+  },
+
   /** Approve a pending phase transition gate — writes po-state.json directly (T-P4-115). */
   approvePhase: (args: {
     projectDir: string
@@ -435,6 +455,19 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_e: Electron.IpcRendererEvent, result: any) => cb(result)
     ipcRenderer.on('po:smokeResult', listener)
     return () => ipcRenderer.removeListener('po:smokeResult', listener)
+  },
+
+  // ── Worker output stream (T-PATCH-270 #9) ───────────────────────────────────
+  /**
+   * Subscribe to delegated-worker output tail lines (designer/dev/qa). `persona`
+   * is the raw subagent_type string (renderer maps via personaIdFromAgentType);
+   * `line` is a coalesced, read-only single tail line. PO is never a worker on
+   * this channel. Returns an unsubscribe fn.
+   */
+  poOnWorkerStream: (cb: (payload: { persona: string; line: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: { persona: string; line: string }) => cb(payload)
+    ipcRenderer.on('po:worker-stream', listener)
+    return () => ipcRenderer.removeListener('po:worker-stream', listener)
   },
 
   // ── Todo items (T-P4-113) ──────────────────────────────────────────────────

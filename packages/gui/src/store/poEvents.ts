@@ -351,6 +351,18 @@ function register() {
     }
   }))
 
+  // ── po:worker-stream (T-PATCH-270 #9) ────────────────────────────────────
+  // Delegated-worker output tail lines (designer/dev/qa). Main side already
+  // coalesces deltas into whole lines + skips noise, so this is line-rate, not
+  // token-rate. pushStreamLine maps persona, HARD-EXCLUDES PO, and re-asserts
+  // `working` as a #10 backstop. subagent-done collapses the ring (above).
+  offFns.push(api.poOnWorkerStream?.((payload: { persona: string; line: string }) => {
+    const personaId = personaIdFromAgentType(payload.persona)
+    if (!personaId || personaId === 'po') return
+    if (typeof payload.line !== 'string' || !payload.line.trim()) return
+    usePersonaPresence.getState().pushStreamLine(personaId, payload.line)
+  }))
+
   // ── po:onTodoItems / po:onTodoDismiss (T-P4-113) ─────────────────────────
   offFns.push(api.poOnTodoItems?.((items: any[]) => {
     useUserTodo.getState().pushItems(items)
@@ -407,6 +419,9 @@ function register() {
         // working 일 때만 done 으로 — 이미 done/idle 이면 no-op(중복 done 방지).
         // done 진입 → personaPresence 의 auto-idle 타이머가 2.0s 후 idle 마무리.
         if (cur.state === 'working') usePersonaPresence.getState().setPersonaState(personaId, 'done')
+        // T-PATCH-270 (#9): collapse this worker's live stream slot on completion
+        // (mockup scene 3 callout — done → stream collapse + sprite done flash).
+        usePersonaPresence.getState().clearStreamTail(personaId)
       }
       return  // setHealth 미호출 — banner/statusbar/PoFab 회귀 방지.
     }
@@ -435,6 +450,8 @@ function register() {
       for (const entry of Object.values(entries)) {
         if (entry.persona !== 'po' && entry.state === 'working') {
           presence.setPersonaState(entry.persona, 'done')
+          // T-PATCH-270 (#9): collapse the live stream slot alongside done.
+          presence.clearStreamTail(entry.persona)
         }
       }
     }

@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import {
@@ -22,9 +22,170 @@ interface ApprovePhaseArgs {
   userApprovedAt: string  // ISO timestamp (client-generated)
 }
 
+// ── po-state watcher (T-PATCH-269 #15) ──────────────────────────────────────────
+//
+// GUI needs to react to po-state.json mutations in real time (version created,
+// phase transition, PRD becoming ready) — the one-shot WorkspaceShell readPoState
+// only ran on projectDir change, so mid-session lifecycle changes were invisible.
+//
+// po-state.json is rewritten on EVERY PO turn (recent_turns churn etc.), so a naive
+// re-broadcast would cause a render storm. We re-read+parse on change, derive a
+// small signal { version, phase, prdReady }, and ONLY push when that signal differs
+// from the last pushed one. The full parsed state rides along in the payload so the
+// renderer routes it through the SAME setPoState path as the one-shot read.
+//
+// We watch ONLY the .productune PARENT DIR (not po-state.json directly). A direct
+// file watch goes stale after one atomic-rename write (write temp → rename over),
+// which would force a re-arm on every event → an unbounded FSWatcher/fd leak across
+// the session. The parent-dir watch is a SINGLE durable handle that survives the
+// atomic renames AND equally catches the non-atomic in-place writeFileSync paths
+// (phase:approve), since they also write inside .productune. Debounced ~200ms to
+// collapse the write burst.
+//
+// IPC channel pushed to renderer: 'state:poStateChanged' (payload: PoStateChangePayload)
+
+interface PoStateChangePayload {
+  projectDir: string
+  state: unknown          // parsed po-state (or null when missing) — same shape readPoState returns
+  prdReady: boolean       // PRD doc exists for current_version (#14 auto-nav gate)
+  prdPath: string | null  // ABSOLUTE path of the PRD doc that exists (the one #14 opens) — null when none
+}
+
+let poDirWatcher: fs.FSWatcher | null = null
+let poWatchedProjectDir: string | null = null
+let poDebounceTimer: ReturnType<typeof setTimeout> | null = null
+// Last pushed signal — guards against the render storm (no-op when unchanged).
+let lastSignal: string | null = null
+
+function poStatePath(projectDir: string): string {
+  return path.join(projectDir, '.productune', 'po-state.json')
+}
+
+/** Read + parse po-state.json. null on missing/unreadable/corrupt (watcher path
+ *  is best-effort — a transient mid-write parse failure must not push garbage). */
+function readPoStateSafe(projectDir: string): any {
+  try {
+    return JSON.parse(fs.readFileSync(poStatePath(projectDir), 'utf-8'))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * T-PATCH-269 FIX-2: the SINGLE shared PRD candidate set, in precedence order.
+ * BOTH the main-process prdReady gate AND the path the renderer opens for #14
+ * auto-nav resolve through THIS list, so the gate and the opened tab can never
+ * disagree (the old divergence: gate checked versions/<v>.md but the opener fell
+ * back to a non-existent PRD.md). Mirrors PrdSection: anchor → master → snapshot.
+ */
+export function prdCandidatePaths(projectDir: string, state: any): string[] {
+  const currentVersion: string | undefined = state?.current_version
+  if (!currentVersion) return []
+  const candidates: string[] = []
+  const version = Array.isArray(state?.versions)
+    ? state.versions.find((v: any) => v?.id === currentVersion)
+    : undefined
+  const anchor = typeof version?.prd_anchor === 'string' ? version.prd_anchor.trim() : ''
+  if (anchor) {
+    candidates.push(anchor.startsWith('/') ? anchor : path.join(projectDir, anchor.replace(/^\.?\//, '')))
+  }
+  candidates.push(path.join(projectDir, 'docs', 'prd', 'PRD.md'))
+  candidates.push(path.join(projectDir, 'docs', 'prd', 'versions', `${currentVersion}.md`))
+  return candidates
+}
+
+/** Resolve the FIRST existing PRD candidate, or null when none exist. The path the
+ *  #14 auto-nav opens — guaranteed to point at a file that actually exists. */
+function resolveExistingPrd(projectDir: string, state: any): string | null {
+  for (const p of prdCandidatePaths(projectDir, state)) {
+    try { if (fs.statSync(p).isFile()) return p } catch { /* next */ }
+  }
+  return null
+}
+
+function broadcastPoState(payload: PoStateChangePayload): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('state:poStateChanged', payload)
+  }
+}
+
+function computeSignal(projectDir: string, state: any): { signal: string; prdPath: string | null } {
+  const prdPath = resolveExistingPrd(projectDir, state)
+  // Signal = the trio the GUI actually reacts to (#11 layout, #14 auto-nav). When
+  // unchanged we skip the broadcast entirely — po-state is rewritten every PO turn.
+  const signal = JSON.stringify({
+    v: state?.current_version ?? null,
+    p: state?.current_phase ?? null,
+    r: prdPath !== null,
+  })
+  return { signal, prdPath }
+}
+
+function onPoStateChange(projectDir: string): void {
+  if (poDebounceTimer) clearTimeout(poDebounceTimer)
+  poDebounceTimer = setTimeout(() => {
+    poDebounceTimer = null
+    const state = readPoStateSafe(projectDir)
+    const { signal, prdPath } = computeSignal(projectDir, state)
+    if (signal === lastSignal) return
+    lastSignal = signal
+    broadcastPoState({ projectDir, state, prdReady: prdPath !== null, prdPath })
+  }, 200)
+}
+
+function teardownPoWatch(): void {
+  if (poDebounceTimer) { clearTimeout(poDebounceTimer); poDebounceTimer = null }
+  try { poDirWatcher?.close() } catch { /* ignore */ }
+  poDirWatcher = null
+  poWatchedProjectDir = null
+  lastSignal = null
+}
+
+/** Arm a SINGLE durable watch on <projectDir>/.productune. Idempotent per projectDir. */
+function armPoWatch(projectDir: string): void {
+  if (poWatchedProjectDir === projectDir && poDirWatcher) return
+  teardownPoWatch()
+
+  const dir = path.join(projectDir, '.productune')
+  if (!fs.existsSync(dir)) return  // nothing to watch yet — degrade silently
+
+  poWatchedProjectDir = projectDir
+  // Seed lastSignal from current on-disk state so the first real change pushes
+  // (and an immediate spurious event right after arm doesn't double-push the seed).
+  lastSignal = computeSignal(projectDir, readPoStateSafe(projectDir)).signal
+  try {
+    // Parent-dir watch — survives atomic-rename writes that swap po-state.json's inode.
+    poDirWatcher = fs.watch(dir, { persistent: false }, (_evt, filename) => {
+      if (filename == null || /^po-state\.json/i.test(filename.toString())) {
+        onPoStateChange(projectDir)
+      }
+    })
+    poDirWatcher.on('error', () => {
+      const pd = poWatchedProjectDir
+      teardownPoWatch()
+      if (pd) setTimeout(() => armPoWatch(pd), 5_000)
+    })
+  } catch {
+    teardownPoWatch()
+  }
+}
+
+/** Stop the po-state watcher (called on app quit, mirrors stopTicketsWatch). */
+export function stopPoStateWatch(): void {
+  teardownPoWatch()
+}
+
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
+  // T-PATCH-269 #15: renderer (owns projectDir) arms the watch. Idempotent per dir.
+  ipcMain.handle('state:watchPoState', (_event, projectDir: string): void => {
+    if (typeof projectDir === 'string' && projectDir) armPoWatch(projectDir)
+  })
+  ipcMain.handle('state:unwatchPoState', (): void => {
+    teardownPoWatch()
+  })
+
   // T-PATCH-167: distinguish parse-failure from missing/new.
   //  - file missing (ENOENT)  → null  (genuine empty/new → renderer keeps "대기 중" placeholder)
   //  - read/parse failure      → { ok:false, error:'parse' } (renderer shows explicit error)

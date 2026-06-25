@@ -9,7 +9,7 @@ import { createTray, updateTray, destroyTray, type TrayStatePayload } from './tr
 import { register as registerOnboarding } from './ipc/onboarding'
 import { register as registerProject }    from './ipc/project'
 import { register as registerTickets }    from './ipc/tickets'
-import { register as registerState }      from './ipc/state'
+import { register as registerState, stopPoStateWatch } from './ipc/state'
 import { register as registerPo }         from './ipc/po'
 import { register as registerMcp }        from './ipc/mcp'
 import { register as registerHooks }      from './ipc/hooks'
@@ -480,6 +480,7 @@ app.on('window-all-closed', () => {
   stopUsageWatch()
   stopCostWatch()
   stopTicketsWatch()
+  stopPoStateWatch()
   // T-PATCH-177: tear down the Tray on real quit (not on close-to-tray hide,
   // which never fires window-all-closed).
   destroyTray()

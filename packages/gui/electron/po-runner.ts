@@ -233,6 +233,18 @@ interface RunCallbacks {
     payload: PromotionPayload,
     meta: PromotionCandidateMeta,
   ) => void
+  /**
+   * T-PATCH-270 (#9): a delegated worker (designer/dev/qa) produced a short
+   * read-only output tail line. `persona` is the raw subagent_type string
+   * (e.g. 'pdt-developer'); the renderer maps it via personaIdFromAgentType.
+   * `line` is an already-coalesced, whitespace-collapsed single tail line
+   * (e.g. 'Read design-system.md', 'Write style-b.html'). PO is never a worker
+   * here — these events fire only for NESTED (sidechain) activity, and the
+   * top-level PO turn is not nested, so PO output never reaches this channel.
+   * NOISE-0 on success: emitted for meaningful tool calls + coalesced text
+   * lines only, never per-token.
+   */
+  onWorkerStream: (persona: string, line: string) => void
 }
 
 // ── Health-smoke result (T-PATCH-231) ────────────────────────────────────────────
@@ -384,6 +396,14 @@ interface HealthContext {
    * patterns). null when no tool error has been seen.
    */
   toolErrorInfo: { toolName?: string; errorText: string } | null
+  /**
+   * T-PATCH-270 (#9): coalescing buffer for a worker's nested text deltas,
+   * keyed by parent Agent tool_use id (== parent_tool_use_id of the sidechain
+   * event). Text deltas accumulate here; whole lines are flushed to
+   * onWorkerStream on newline boundaries (or at delegation completion), so the
+   * renderer never sees per-token churn. Cleared per parent on completion.
+   */
+  workerTextBufByParentId: Map<string, string>
 }
 
 const SILENCE_TIMEOUT_MS  = 15_000   // silence → 'thinking' (claude producing nothing yet)
@@ -410,6 +430,7 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
     oqPending: false,            // T-PATCH-197 (b): no OQ in flight at turn start
     assistantTextEmitted: false, // T-PATCH-268: no assistant text yet
     toolErrorInfo: null,         // T-PATCH-268: no tool error seen yet
+    workerTextBufByParentId: new Map(), // T-PATCH-270 (#9): nested text coalescing
   }
 }
 
@@ -564,6 +585,113 @@ function buildToolFailureMessage(
     )
   }
   return `Tool call failed${toolLabel}: ${errorText}\n\nYou may retry or check the file path.`
+}
+
+// ── T-PATCH-270 (#9): worker output tail-line builders ────────────────────────
+
+/** Max chars for a worker tail line before the renderer ellipsizes. We keep the
+ *  main-side cap generous (renderer owns per-line ellipsis); this only guards
+ *  against pathologically long single-token spans. */
+const WORKER_LINE_MAX = 200
+
+/** Collapse whitespace + trim a worker tail line; '' when nothing meaningful. */
+function normalizeWorkerLine(s: string): string {
+  const oneLine = s.replace(/\s+/g, ' ').trim()
+  return oneLine.length > WORKER_LINE_MAX ? oneLine.slice(0, WORKER_LINE_MAX - 1) + '…' : oneLine
+}
+
+/**
+ * Build a short tail line for a worker's nested tool_use (e.g.
+ * "Read design-system.md", "Write style-b.html", "Bash npm run build").
+ * Returns '' when the tool/input carries nothing worth surfacing — NOISE-0:
+ * the caller skips emit on ''. Mirrors the renderer's tool-detail intent but
+ * stays a single compact line (the stream slot is mono, per-line ellipsis).
+ */
+function buildWorkerToolLine(toolName: string, input: unknown): string {
+  const inp = (input && typeof input === 'object') ? (input as Record<string, unknown>) : {}
+  const basename = (p: unknown): string =>
+    typeof p === 'string' && p ? p.split('/').filter(Boolean).pop() ?? p : ''
+  switch (toolName) {
+    case 'Read':
+    case 'Write':
+    case 'Edit':
+    case 'NotebookEdit': {
+      const f = basename(inp.file_path ?? inp.notebook_path ?? inp.path)
+      return f ? `${toolName} ${f}` : toolName
+    }
+    case 'Bash': {
+      const cmd = typeof inp.command === 'string' ? inp.command : ''
+      return cmd ? `Bash ${cmd}` : 'Bash'
+    }
+    case 'Glob':
+    case 'Grep': {
+      const pat = typeof inp.pattern === 'string' ? inp.pattern : ''
+      return pat ? `${toolName} ${pat}` : toolName
+    }
+    case 'Task':
+    case 'Agent': {
+      const sub = typeof inp.subagent_type === 'string' ? inp.subagent_type : ''
+      return sub ? `Agent → ${sub}` : 'Agent'
+    }
+    case 'TodoWrite':
+      // High-frequency, low-signal — drop (NOISE-0).
+      return ''
+    default:
+      return toolName
+  }
+}
+
+/**
+ * Resolve the worker persona for a nested event's parent Agent id and emit a
+ * tail line. `parentId` is the parent Agent tool_use id (== parent_tool_use_id
+ * of the sidechain event), captured at delegate time in delegatedByToolUseId.
+ * Skips when the parent isn't a tracked delegation (e.g. PO's own nested calls
+ * never get here since PO isn't dispatched as a sidechain), or the line is empty.
+ */
+function emitWorkerStream(
+  parentId: string,
+  rawLine: string,
+  hCtx: HealthContext,
+  cb: RunCallbacks,
+): void {
+  const persona = hCtx.delegatedByToolUseId.get(parentId)
+  if (!persona) return            // not a tracked worker delegation — skip
+  const line = normalizeWorkerLine(rawLine)
+  if (!line) return               // NOISE-0: nothing meaningful to surface
+  cb.onWorkerStream(persona, line)
+}
+
+/**
+ * Accumulate a worker text delta and flush any COMPLETE lines (split on '\n').
+ * Partial trailing text stays buffered until the next newline or flushWorkerText.
+ * Coalescing here is what keeps the channel at line granularity, not token.
+ */
+function handleWorkerText(
+  parentId: string,
+  delta: string,
+  hCtx: HealthContext,
+  cb: RunCallbacks,
+): void {
+  const buf = (hCtx.workerTextBufByParentId.get(parentId) ?? '') + delta
+  const nl = buf.lastIndexOf('\n')
+  if (nl < 0) {
+    hCtx.workerTextBufByParentId.set(parentId, buf)
+    return
+  }
+  const complete = buf.slice(0, nl)
+  hCtx.workerTextBufByParentId.set(parentId, buf.slice(nl + 1))
+  for (const rawLine of complete.split('\n')) {
+    emitWorkerStream(parentId, rawLine, hCtx, cb)
+  }
+}
+
+/** Flush any buffered partial worker text as a final line (e.g. before a tool
+ *  line lands, or at delegation completion). Clears the buffer for that parent. */
+function flushWorkerText(parentId: string, hCtx: HealthContext, cb: RunCallbacks): void {
+  const buf = hCtx.workerTextBufByParentId.get(parentId)
+  if (buf == null) return
+  hCtx.workerTextBufByParentId.delete(parentId)
+  if (buf.trim()) emitWorkerStream(parentId, buf, hCtx, cb)
 }
 
 // ── Real spawn ──────────────────────────────────────────────────────────────────
@@ -839,6 +967,16 @@ function handleStreamJsonLine(
       if (!eventNested) {
         cb.onToken(msgId, event.delta.text)
         hCtx.assistantTextEmitted = true   // T-PATCH-268: track that the PO produced text
+      } else {
+        // ── T-PATCH-270 (#9): worker (sidechain) text → coalesced tail lines ──
+        // Buffer deltas per parent Agent id; flush whole lines on '\n' so the
+        // renderer never sees per-token churn (NOISE-0). The persona is resolved
+        // from the same delegatedByToolUseId map used for subagent-done.
+        const parentId =
+          (typeof obj?.parent_tool_use_id === 'string' && obj.parent_tool_use_id) ||
+          (typeof obj?.event?.parent_tool_use_id === 'string' && obj.event.parent_tool_use_id) ||
+          null
+        if (parentId) handleWorkerText(parentId, event.delta.text, hCtx, cb)
       }
     }
     return
@@ -861,7 +999,26 @@ function handleStreamJsonLine(
     // T-PATCH-165: subagent(sidechain) 내부 assistant 이벤트면 PO bubble 으로 흘리지
     // 않는다 — PO bubble 은 PO 자기 narration/도구만 보여야 한다. nested 의 텍스트
     // 토큰(subagent 내부 서술)도 onToken 으로 새면 PO 버블 오염이므로 함께 스킵.
-    if (isNested) return
+    if (isNested) {
+      // ── T-PATCH-270 (#9/#10): worker (sidechain) tool_use → tail line ──────
+      // The PO bubble is unaffected (we still return below). We surface the
+      // worker's tool calls as short read-only tail lines, and — crucially for
+      // #10 — re-assert the persona as `working` on its FIRST nested activity.
+      // Nested activity is ground-truth that this worker is live, more robust
+      // than parsing subagent_type off the parent partial-message tool_use.
+      const parentId = typeof obj?.parent_tool_use_id === 'string' ? obj.parent_tool_use_id : null
+      if (parentId) {
+        // Flush any buffered worker prose first so tool lines land in order.
+        flushWorkerText(parentId, hCtx, cb)
+        for (const part of content) {
+          if (part?.type === 'tool_use' && typeof part?.name === 'string') {
+            const line = buildWorkerToolLine(part.name, part.input)
+            if (line) emitWorkerStream(parentId, line, hCtx, cb)
+          }
+        }
+      }
+      return
+    }
     for (const part of content) {
       if (part?.type === 'text') {
         // T-PATCH-166: text now streams via `type:'stream_event'` text_delta
@@ -1094,6 +1251,9 @@ function handleStreamJsonLine(
 
           const agentType = hCtx.delegatedByToolUseId.get(part.tool_use_id)
           if (agentType) {
+            // T-PATCH-270 (#9): flush any buffered worker prose BEFORE deleting
+            // the delegation mapping (emitWorkerStream resolves persona off it).
+            flushWorkerText(part.tool_use_id, hCtx, cb)
             hCtx.delegatedByToolUseId.delete(part.tool_use_id)
             // dedupe 우회: emitHealth()는 state 기반 dedupe라 동일 'subagent-done'
             // 연속 도착 시 둘째가 드롭됨(병렬 완료에서 치명적). 따라서 emitHealth 를
@@ -1761,6 +1921,8 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     // payload by mapPromotionCandidate; meta is forwarded for symmetry/debug.
     onPromotionCandidate: (msgId, payload) =>
       wc.send('po:onPromotionCandidate', msgId, payload),
+    // T-PATCH-270 (#9): worker output tail line → presence stream slot.
+    onWorkerStream: (persona, line) => wc.send('po:worker-stream', { persona, line }),
     // T-019 §B3: phase-gate-entry — PO emitted a phase-transition gate.
     onPhaseGate: (gate) => {
       const phaseLabel =

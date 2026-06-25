@@ -210,6 +210,27 @@ function makeSamplePromotionMessage(origin: 'auto' | 'user-requested'): Message 
 }
 
 /**
+ * T-PATCH-269 FIX-2: the SHARED PRD candidate set (absolute paths, precedence
+ * order) — the renderer twin of main's `prdCandidatePaths` (electron/ipc/state.ts).
+ * The #14 one-shot seed resolves through THIS list (probe + first-exists) so the
+ * auto-nav gate and the opened path agree: anchor → master PRD.md → versions/<v>.md.
+ * Returns [] when there's no current_version.
+ */
+export function prdCandidatePaths(poState: PoState | null, projectDir: string): string[] {
+  const currentVersionId = poState?.current_version
+  if (!currentVersionId) return []
+  const out: string[] = []
+  const currentVersion = poState?.versions?.find((v) => v.id === currentVersionId)
+  const anchor = currentVersion?.prd_anchor?.trim()
+  if (anchor) {
+    out.push(anchor.startsWith('/') ? anchor : `${projectDir}/${anchor.replace(/^\.?\//, '')}`)
+  }
+  out.push(`${projectDir}/docs/prd/PRD.md`)
+  out.push(`${projectDir}/docs/prd/versions/${currentVersionId}.md`)
+  return out
+}
+
+/**
  * Resolve the PRD document path for the Cmd+P `prd` command (T-PATCH-175).
  * Source precedence: the current version's `prd_anchor` (po-state) → fallback
  * `docs/prd/PRD.md`. Relative anchors are resolved against `projectDir`; an

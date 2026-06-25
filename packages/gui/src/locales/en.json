@@ -524,6 +524,8 @@
     "presence": {
       "chipAriaLabel": "{{persona}} — {{state}}",
       "doneNoArtifact": "done",
+      "readOnly": "read-only",
+      "streamAriaLabel": "{{persona}} live output",
       "workingNoTask": "working…"
     },
     "explorer": {
@@ -884,6 +886,10 @@
       "cta": "Get started",
       "keyHint": "Cmd+Enter to send · Enter = new line",
       "error": "Something went wrong. Please try again."
+    },
+    "welcome": {
+      "headline": "Start by chatting with the PO on the right",
+      "supporting": "No version yet. Once the PO asks a few questions and drafts the PRD, this area expands into your work panels."
     },
     "projectEnv": {
       "sectionTitle": "Project .env",

@@ -101,10 +101,38 @@ export function selectAllIdle(entries: Record<PersonaId, PersonaEntry>): boolean
   return Object.values(entries).every((e) => e.state === 'idle')
 }
 
+/**
+ * T-PATCH-270 (#9): latest-active WORKER (designer/dev/qa), PO HARD-EXCLUDED.
+ * The stream slot follows this — not selectActivePersona, which can return PO
+ * (PO uses `working` too) and would otherwise suppress a live worker's slot
+ * whenever PO updated more recently. Returns null when no worker is working.
+ */
+export function selectActiveWorker(
+  entries: Record<PersonaId, PersonaEntry>,
+): PersonaId | null {
+  const working = Object.values(entries).filter(
+    (e) => e.persona !== 'po' && e.state === 'working',
+  )
+  if (working.length === 0) return null
+  working.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+  return working[0].persona
+}
+
 // ── Store ────────────────────────────────────────────────────────────────────
+
+// ── Worker output stream tail (T-PATCH-270 #9) ────────────────────────────────
+// Bounded ring of the latest worker tail lines per persona. PO is excluded by
+// construction — pushStreamLine is only fed by the po:worker-stream channel,
+// which never carries PO. The ring is small (last N lines) so the read-only
+// mono slot stays cheap and the store never grows unbounded across a long turn.
+
+/** Last N worker tail lines retained per persona (renderer shows the tail). */
+export const STREAM_TAIL_MAX = 6
 
 interface PersonaPresenceState {
   entries: Record<PersonaId, PersonaEntry>
+  /** T-PATCH-270 (#9): per-persona bounded ring of worker output tail lines. */
+  streamTail: Record<PersonaId, string[]>
 
   /** Apply a PersonaStatusEvent (main→renderer IPC payload or direct call). */
   setPersonaState: (
@@ -112,6 +140,18 @@ interface PersonaPresenceState {
     state: PersonaState,
     opts?: SetPersonaStateOpts,
   ) => void
+
+  /**
+   * T-PATCH-270 (#9): append a worker tail line to a persona's ring (capped at
+   * STREAM_TAIL_MAX). PO is HARD-EXCLUDED (no-op) so the PO path (T-PATCH-252)
+   * never streams worker output. Also a hard #10 backstop: if the line arrives
+   * while the persona isn't `working` (e.g. the parent delegating event was
+   * dropped), flip it to `working` — nested worker activity is ground-truth.
+   */
+  pushStreamLine: (persona: PersonaId, line: string) => void
+
+  /** T-PATCH-270 (#9): clear a persona's stream ring (called on done collapse). */
+  clearStreamTail: (persona: PersonaId) => void
 
   /** Reset a persona back to idle (called by done-dismiss logic). */
   dismissDone: (persona: PersonaId) => void
@@ -144,8 +184,13 @@ function makeDefaultEntries(): Record<PersonaId, PersonaEntry> {
   }
 }
 
+function makeEmptyStreamTail(): Record<PersonaId, string[]> {
+  return { po: [], designer: [], dev: [], qa: [] }
+}
+
 export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
   entries: makeDefaultEntries(),
+  streamTail: makeEmptyStreamTail(),
 
   setPersonaState: (persona, state, opts) => {
     set((s) => {
@@ -183,6 +228,38 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
     }
   },
 
+  pushStreamLine: (persona, line) => {
+    // PO HARD-EXCLUDED — the worker-stream channel never carries PO, but guard
+    // defensively so the PO sprite path (T-PATCH-252) can never grow a tail.
+    if (persona === 'po') return
+    const trimmed = line.trim()
+    if (!trimmed) return
+    // #10 backstop: nested worker output is ground-truth that the worker is
+    // live. If the entry isn't `working` (parent delegating event missing, or
+    // already flipped to done by a stray healthy), re-assert working so the
+    // sprite wakes from grey-idle. setPersonaState owns auto-idle timer cleanup,
+    // so we route through it rather than mutating entries inline.
+    const entry = usePersonaPresence.getState().entries[persona]
+    if (entry.state !== 'working') {
+      usePersonaPresence.getState().setPersonaState(persona, 'working', { task: entry.task })
+    }
+    set((s) => {
+      const prev = s.streamTail[persona]
+      // Drop a byte-identical immediate repeat (defense against duplicate IPC).
+      if (prev.length > 0 && prev[prev.length - 1] === trimmed) return s
+      return {
+        streamTail: { ...s.streamTail, [persona]: [...prev, trimmed].slice(-STREAM_TAIL_MAX) },
+      }
+    })
+  },
+
+  clearStreamTail: (persona) => {
+    set((s) => {
+      if (s.streamTail[persona].length === 0) return s
+      return { streamTail: { ...s.streamTail, [persona]: [] } }
+    })
+  },
+
   dismissDone: (persona) => {
     // T-PATCH-164: 수동 dismiss 가 backstop 타이머보다 먼저 와도 leak 없게 cleanup.
     clearAutoIdle(persona)
@@ -194,6 +271,8 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
           ...s.entries,
           [persona]: { ...entry, state: 'idle', artifact: undefined, task: undefined, updatedAt: new Date().toISOString() },
         },
+        // T-PATCH-270 (#9): collapse the stream slot when the worker goes idle.
+        streamTail: { ...s.streamTail, [persona]: [] },
       }
     })
   },
@@ -201,6 +280,6 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
   resetAll: () => {
     // T-PATCH-164: 전체 reset 시 모든 persona 타이머 cleanup.
     for (const persona of PERSONA_ORDER) clearAutoIdle(persona)
-    set({ entries: makeDefaultEntries() })
+    set({ entries: makeDefaultEntries(), streamTail: makeEmptyStreamTail() })
   },
 }))
