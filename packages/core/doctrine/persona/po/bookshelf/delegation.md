@@ -54,8 +54,11 @@ Any dispatch that touches the design sequence — including a mid-build DS redo 
 rejects an adopted design system — NAMES the entry step (S1 for a DS rework) and instructs the
 Designer to run `designer/bookshelf/phase2-3-ticket-sequence.md`. Never frame it ad-hoc ("redo
 the design system") — that path skips the anchor selection pipeline. On the Designer's S1 return,
-check anchor provenance is present per proposal (`anchor: <slug>.md` · 1-line identity · what was
-adapted). Missing → bounce back to the Designer before surfacing anything to the user.
+check provenance is present per proposal: Fit proposals A·B carry `anchor: <slug>.md` · 1-line
+identity · what was adapted; the C proposal is web-search-grounded divergence with NO library
+anchor by design (T-PATCH-260) → it carries web-search provenance (`web-search-C` · what was
+searched/referenced · how it diverged) instead. Missing for the proposal's kind → bounce back to
+the Designer before surfacing anything to the user. (Never bounce C for lacking an `anchor:` line.)
 
 ## Plan mode — L5+ plan-only
 

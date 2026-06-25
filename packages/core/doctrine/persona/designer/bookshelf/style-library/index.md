@@ -6,10 +6,11 @@ the anchor files you pick. Source: https://github.com/VoltAgent/awesome-design-m
 (MIT — see ./LICENSE). Re-vendor manually to update.
 
 Each entry ends with 4 mood labels: `light|dark · minimal|rich · playful|serious ·
-editorial|chrome`. Usage (S1 pipeline, `phase2-3-ticket-sequence.md`, T-PATCH-122):
-mood brief first → shortlist Fit 4–6 + Stretch 2–3 → pick Fit 2 + Stretch 1 where ANY
-two picks differ on ≥2 labels (categories below are a soft preference only) — anchors
-are mood/token starting points to ADAPT to the product, never brand clones.
+editorial|chrome`. Usage (S1 pipeline, `phase2-3-ticket-sequence.md`, T-PATCH-122/260):
+mood brief first → shortlist Fit 4–6 → pick A·B = 2 Fit (the 3rd option, C, is NOT from
+this index — it is web-search-grounded divergence, T-PATCH-260) where ANY two of the 3
+differ on ≥2 labels (categories below are a soft preference only) — anchors are mood/token
+starting points to ADAPT to the product, never brand clones.
 
 ## AI & LLM Platforms
 

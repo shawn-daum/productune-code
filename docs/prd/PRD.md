@@ -1,6 +1,6 @@
 # PRD: productune
 
-**Slug**: productune    **Created**: 2026-04-28    **Status**: v0.5 — Phase 3 Build in-progress
+**Slug**: productune    **Created**: 2026-04-28    **Status**: v0.6 — Phase 1 PRD ready (도그푸딩 완주 준비 + 안정화; v0.5 closed 2026-06-25)
 
 > 자체 PRD. productune 이 만들고자 하는 제품에 대한 정의이자, 동시에 productune 자기 자신의 다음 라운드 목표를 누적 기록하는 곳.
 >
@@ -513,6 +513,174 @@ This is the direct test of the v0.5 thesis ("the planner reaches the goal direct
   5. Round 9 13-AC evidence collected (T-P4-091/092).
 - **Validation method**: observed full-cycle non-dev dogfood — one planner, one real project,
   PRD→Design→Build→Deploy→Close, GUI-only — paired with the 14-item per-AC checklist pass.
+
+## v0.6 — 도그푸딩 완주 준비 + 안정화 (Phase 4 sub-cycle)
+
+> **Slug**: v0-6-prd-authoring · **Status**: PRD ready (clarity loop 수렴, R2+) · **Authored**: 2026-06-25 (pdt-designer) · **Ticket**: T-PATCH-258
+>
+> v0.5 는 비-개발자 GUI 풀사이클을 *가능케 하는* 인프라(4-region IDE 셸 · PDS See layer · 14-item scope · 팀 dmg 배포 · cua clean-install)를 전부 shipped 했으나, **그 사이클을 비-개발자가 실제로 완주하는 것을 관찰하는 행위 자체는 미실시**(`observed_result=null`, v0.4→v0.5 2회 연속 carry). v0.6 은 그 관찰을 **깨끗하게** 실행할 수 있도록 v0.5 도그푸딩이 드러낸 **14개 안정화 갭을 닫고 검증해 빌드를 dogfood-ready 로 만든다.** 실제 완주(Round9 관찰)와 6차 dmg 리빌드는 v0.6 OUT — **v0.7 로 이월**.
+
+### Why
+
+v0.5 도그푸딩은 인프라가 다 깔린 뒤에도 비-개발자가 풀사이클을 시도하면 막힐 14개 마찰을 미리 노출했다. 이 마찰들은 "기능이 없다"가 아니라 **"프로세스/doctrine 가 비-개발자에게 결정을 떠넘기거나(S1 텍스트 3안 구분 불가), 산출물 품질을 떨어뜨리거나(S2b SVG 조기 폴백·한글 프롬프트), 깨진 걸 못 잡거나(빌드 후 시각 사각·테스트 미실행·코드리뷰 부재), 실패/상태를 침묵·오표시로 끝내거나(T-255 TCC silent · #7 tray 상시 빨간점), 정상 입력에 크래시·오작동(#8 leading-dash · #12 한글 Cmd+Enter), 진행/상태/산출물을 못 보거나(#9 워커 라이브 출력 · #10 워커 스프라이트 · #11 빈 패널 · #13 tool-call 토글 · #14 PRD 오토-노출 부재)"** 하는 형태다. 따라서 v0.6 의 What 은 신규 화면이 거의 없고, **doctrine 개정 + code/product 안정화로 완주의 질을 끌어올리는 데** 집중한다. 신규 GUI 항목 다수(#9·#10·#11·#14)는 **"lifecycle/worker-state → GUI view 반응"** 한 클러스터로, 워커 subagent 상태·출력의 GUI 파이프 + PO 라이프사이클→GUI 신호라는 공유 배선 위에 얹힌다. 북극성을 "관찰 실행"이 아니라 **"관찰이 깨끗하게 가능한 dogfood-ready 상태"** 로 잡는 이유는, 실제 관찰 행위(observed full-cycle run)와 그 전제인 6차 dmg 리빌드가 v0.7 로 이월됐기 때문이다 — 관찰 자체의 north-star 는 v0.7 로 계속 carry 한다.
+
+### Who
+
+마스터 Who/Phase-4 와 동일 — *무엇*을 만들지 정의하지만 코드는 짜지 않는 기획자 / 1인 PM. v0.6 은 특히 이 사용자가 **디자인 방향을 고르는 순간(S1)**, **에셋이 만들어지는 순간(S2b)**, **빌드 결과를 눈으로 확인하는 순간(#3)**, **PO 턴이 실패하는 순간(#6)**, **트레이로 차례를 인지하는 순간(#7)**, **`-`/한글로 메시지를 보내는 순간(#8·#12)**, **워커가 일하는 걸 지켜보는 순간(#9·#10)**, **첫 화면과 첫 산출물(PRD)을 마주하는 순간(#11·#14)**, **도구 호출 내용을 확인하는 순간(#13)** 에서 막히거나 잘못된 신호를 받지 않도록 한다.
+
+### How — 14 안정화 갭 (변경 성격 분류)
+
+각 항목을 **doctrine-only**(프로세스 룰 개정 — 코드 0) vs **product/code**(GUI·러너·핸들러 변경 동반) 로 분류한다. 항목별 상세는 What 에서 Intent / In·Out / AC 고도(altitude — 구현 설계는 P2/P3 몫)로 정의한다.
+
+| # | 항목 | 변경 성격 | 주 SoT |
+|:--|:--|:--|:--|
+| S1 | DS 옵션 제시 (렌더 HTML 시안 3개 up-front + C안 발산) | **doctrine-only** | `designer/bookshelf/phase2-3-ticket-sequence.md` S1 |
+| S2b | 에셋 생성 (PNG-우선 + PNG→SVG 루프 · 영어 프롬프트 무조건) | **doctrine-only** | 동 파일 S2b + `designer/habit.md` §5 |
+| 3 | 빌드 run + 눈확인 + 통합 시각 grill (prompted pre-close) + smoke 시각 보강 | **doctrine + product/code** (smoke 보강 = code) | `po/.../lifecycle/p3-build.md` · `qa/habit.md` + smoke 하니스 |
+| 4 | 테스트 러너 배선 + `type:test` 트리거 재조정 | **product/code + doctrine** (러너 배선 = code · 트리거 = doctrine) | `turbo.json`·package test 스크립트 + 트리거 doctrine |
+| 5 | 코드리뷰 게이트 신설 (risk-gated 매-티켓 + close-gate 1회 누적, 하이브리드) | **doctrine-only** (하네스 스킬 호출 — 신규 코드 0) | build-loop + close-gate doctrine |
+| 6 | T-PATCH-255 TCC silent-fail → actionable | **product/code** | po-runner / PO 응답 surface 레이어 |
+| 7 | 트레이 빨간점 → awaiting-user 상태에서만 표시 | **product/code** | `packages/gui/electron/tray.ts` + PO turn-state |
+| 8 | leading-dash 입력이 claude CLI 옵션 오파싱 → 크래시 안전처리 | **product/code** | `packages/gui/electron/po-runner.ts` arg 전달 |
+| 9 | PO chat presence row — active 워커 페르소나 라이브 출력 스트림 | **product/code** (클러스터) | `PersonaPresenceBar.tsx` + 워커 output-stream 배선 (backlog "PO Log Terminal" 공유) |
+| 10 | 워커 스프라이트 working 상태 미반영 (회색-idle 고착) | **product/code** (클러스터) | `PersonaPresenceBar.tsx` + 워커 subagent 상태→presence (cf. T-PATCH-252 PO판) |
+| 11 | 조건부 워크스페이스 레이아웃 (PRD 인터뷰 중 PO 채팅 단독) | **product/code** (클러스터) | WorkspaceShell 레이아웃 + po-state version/PRD 유무 |
+| 12 | 한글 IME Cmd+Enter 두 번 눌러야 전송 | **product/code** (standalone) | PO 채팅 submit 핸들러 isComposing/229 (cf. T-PATCH-196) |
+| 13 | tool-call 최하단 토글 기본 expanded | **product/code** (standalone) | PO 채팅 tool-call 표시 컴포넌트 default state |
+| 14 | PRD-ready/버전 생성 시 메인 패널 PRD 오토-노출 + 버전 자동 진입 | **product/code** (클러스터) | PO 라이프사이클→GUI 메인 패널 네비 신호 배선 |
+
+### What — 14 항목 (Intent · In/Out · AC 고도)
+
+#### S1 — DS 옵션 제시: 렌더 HTML 시안 3개 up-front + C안 창의 발산  *(doctrine-only)*
+- **현재 동작**: S1 은 3안을 **TEXT**(토큰/타입/스페이싱 — HTML 금지)로 주고, 시각 프리뷰는 *동반될 때만* 폰트 실로드·차이 가시화를 요구. 3안 믹스 = Fit 2 + Stretch 1, divergence rule(어느 두 안도 4 mood label 중 ≥2 에서 차이)만 있고 **세 안 모두 기존 doctrine(style-library 인덱스) 앵커**에서 나온다.
+- **문제(도그푸딩)**: 비-개발자는 텍스트 토큰 명세로 3안을 **구분하지 못한다**. divergence 를 지켜도 "색만 다른 같은 안" 체감. Stretch 1 도 인덱스 안쪽이라 진짜 새 방향이 안 나온다.
+- **Intent (해소 확정)**: (a) S1 의 텍스트-컨셉 게이트를 **렌더된 HTML 시안 3개로 완전 대체** — 텍스트로 먼저 좁히지 않고 **3안 전부 up-front 렌더**한다. (b) A·B 안 = 기존 doctrine 앵커(Fit), **C 안 = 매 버전 디자인 웹서치 기반으로 Claude 창의성이 발산한, 진짜로 다른 방향**.
+- **In**: S1 산출물 포맷을 TEXT-only → **렌더 HTML 3안(up-front, 전부)** 으로 개정. 3안 믹스 룰을 **A·B = Fit/doctrine 앵커 · C = 웹서치 grounding 발산(인덱스 우회)** 으로 재정의 + C 안 provenance(무엇을 웹서치·참조해 발산했나) 표기 의무화. 폰트 실로드·컴포넌트형/레이아웃 차이 가시화 요건을 **HTML-always 전제**로 승격. **3x 렌더 비용은 수용 — cost-gate 없음**(텍스트-선좁힘 도입하지 않음).
+- **Out**: S2(DS render HTML)·S3/S4 흐름 불변. C안의 style-library 인덱스 등재는 별도. 시안 생성 병렬/순차·토큰 예산 *세부*는 P2/P3.
+- **AC 고도**: S1 게이트에서 사용자가 **렌더된 3개 HTML 시안**(텍스트 컨셉 단계 없이 바로)을 보고 1–3 안을 고른다 · 세 안이 폰트/컴포넌트 형태/레이아웃에서 **시각적으로 명백히 다르게** 렌더된다(색만 다른 게 아님) · C 안은 doctrine 인덱스 밖 **웹서치 기반 발산**임이 provenance 로 표기된다 · 3안을 항상 up-front 렌더하며 cost-gate 로 줄이지 않는다.
+
+#### S2b — 에셋 생성: PNG-우선 + PNG→SVG 후처리 루프 · 영어 프롬프트 무조건  *(doctrine-only)*
+- **현재 동작**: S2b = 위임-우선 3단(① Codex → ② ChatGPT/Gemini 핸드오프 → ③ 유저 거부 시 Claude 직접 **SVG**). 핸드오프 = `external_tool_recommendation: {tool, why_external, prompt, expected_output_path}` (habit §5).
+- **문제(도그푸딩)**: (a) 폴백 ③ 이 **SVG 직생성으로 너무 빨리 빠진다** — 생성형 PNG 가 품질이 훨씬 좋은데 "유저가 PNG 돌려주면 Claude 가 SVG 로 변환/후처리"하는 루프가 없어 SVG 고집으로 떨어진다. (b) 핸드오프 프롬프트가 user_lang(ko)로 나가면 이미지모델 품질이 떨어진다.
+- **Intent**: (a) **생성형 PNG 우선** — ①/② 핸드오프로 PNG 를 받는 경로를 1급으로 두고, **"유저가 PNG 를 돌려주면 Claude 가 SVG 로 변환/후처리"하는 신규 루프**를 추가해 SVG-직생성(③)으로의 조기 폴백을 막는다. (b) 이미지모델 핸드오프 프롬프트는 **user_lang 무관 무조건 영어**.
+- **In**: S2b 폴백 사다리를 `① Codex → ② 핸드오프(PNG 기대) → ②.5 유저-반납 PNG → Claude SVG 변환/후처리 → ③ 그래도 안 되면 Claude 직접 SVG(최후)` 로 개정. `expected_output_path` 가 PNG 를 기대하도록 + 반납 PNG 의 SVG 변환/후처리 단계(도구/방법 = P3)를 명문화. `external_tool_recommendation.prompt` 는 **항상 영어**라는 룰을 habit §5(SoT)와 S2b(참조) 양쪽에 박는다.
+- **Out**: 로고/파비콘/og:image 에셋 *종류* 불변. Codex 위임 판정·이미지모델 선택 그대로. 자동 PNG→SVG 변환 *구현*(potrace 류 vs Claude 핸드) = P3.
+- **AC 고도**: S2b 가 SVG 직생성으로 빠지기 전 **생성형 PNG 경로를 먼저 시도**한다(폴백 순서 PNG-우선) · 유저가 PNG 를 반납하면 Claude 가 SVG 로 변환/후처리하는 단계가 doctrine 에 존재 · 모든 이미지모델 핸드오프 프롬프트가 user_lang 과 무관하게 **영어**로 출력된다.
+
+#### 3 — 빌드 run + 눈확인 + 통합 시각 grill (prompted pre-close) + smoke 시각 보강  *(doctrine + product/code)*
+- **현재 동작**: 빌드 완료 → close-gate(backlog triage → design review → PRD check → security 6). QA 3-item = build green · smoke critical-path · acceptance. GUI smoke(`tests/smoke.spec.ts`) = **mount + console error 0 만** — 시각 렌더·스크롤·간격·CSS 깨짐 미검증.
+- **문제(도그푸딩)**: smoke 시각 사각으로 CSS 깨짐/간격을 못 잡는다(fail-pattern **T-PATCH-095 5루프**의 구조적 원인). 빌드 완료↔close-gate 사이 "앱 실제 run + 눈확인 + 통합 시각 grill" 단계가 **codify 안 됨**(산발적 hands-on 만).
+- **Intent (해소 확정)**: 빌드 완료 후 close-gate 진입 전, PO 가 사용자에게 **앱 실제 run(dev run) + 눈확인 + 통합 시각 grill 을 강하게 권하는 prompted pre-close 단계**를 신설한다 — **하드 게이트 아님**(통과 못 해도 close 차단하지 않음; 유저가 건너뛸 수 있음). 별개로 **smoke 시각 사각을 보강**(스크린샷/시각 어서션)한다.
+- **In**: (doctrine) p3-build.md 의 close-gate **직전에 prompted "run+eyeball+visual-grill" 단계**를 명문화 — `close_gate` 4-step 시퀀스(backlog→design→prd→security)에 **blocking step 을 추가하지 않는다**; PO 가 권유하고 유저가 skip 가능한 pre-close 프롬프트로 모델링. qa/habit.md 시각 검증 룰 강화. (code) smoke 하니스에 시각 어서션(핵심 화면 스크린샷 캡처/체크) 추가 — v0.5 calibration anchor #3 을 자동화 쪽으로 한 발 당김.
+- **Out**: 픽셀-퍼펙트 비주얼 회귀 인프라 전면 구축 아님(MVP = 핵심 화면 스크린샷 + 눈확인 유도). close_gate 에 새 blocking step 추가 금지(강도 = prompted-but-skippable 확정).
+- **AC 고도**: 빌드 완료 시 PO 가 **앱 실제 run + 눈확인 + 통합 시각 grill 을 강하게 권하는 prompted 단계**가 doctrine 에 존재하고 실행된다 · 이 단계는 **close 를 차단하지 않으며 유저가 skip 할 수 있다**(blocking close_gate step 추가 없음) · smoke 가 mount+console 을 넘어 **핵심 화면의 시각 렌더를 캡처/검증**한다.
+
+#### 4 — 테스트 러너 배선 + `type:test` 트리거 재조정  *(product/code + doctrine)*
+- **현재 동작(검증됨)**: `turbo run test` → `packages/core` 의 `node test/schema-v-guard.mjs && node test/init-parity.mjs` **2개 .mjs 만 실행**. 저장소의 `.test.ts`/`.spec.ts` 6개(core: `schema-v-guard.test.ts`, `lint/vocabulary.test.ts` · gui: `smoke.spec.ts`, `ipc/costArchive.test.ts`, `useTicketScan.test.ts`, `dedupeMessagesById.test.ts`)는 **vitest/jest 가 의존성에 없고** `packages/gui` 에 `test` 스크립트조차 없어 **실행되지 않는다**. `type:test` 트리거는 리스크-게이트(auth/payments/PII · ≥3-step · area-tag ≥3 fail · 유저 명시)라 GUI 엔 거의 미발화.
+- **문제(도그푸딩)**: 작성된 테스트가 러너 미배선으로 죽어 있고, 트리거가 GUI 에 거의 안 걸려 테스트가 실질적으로 작동 안 함.
+- **Intent**: (a) `.test.ts`/`.spec.ts` 가 실제 실행되도록 **러너 배선**(vitest 도입 + per-package `test` 스크립트 + turbo 연결) 확인·수정. (b) `type:test` **트리거 재조정**으로 GUI 영역에도 합리적으로 발화.
+- **In**: (code) core/gui 에 vitest(또는 동급) 배선 — 6개 기존 테스트가 `turbo test` 로 green/red 를 실제로 낸다. (doctrine) `type:test` 트리거 조건 재조정(예: GUI IPC fs 핸들러 신규 = traversal 가드 회귀 위험 → area-tag `*/ipc-security` 누적분 연동).
+- **Out**: 새 테스트 *대량 작성* 아님(기존 6개 살리는 게 1차). 커버리지 목표·CI 게이팅 강도는 후속. 트리거 임계 정밀값은 doctrine P2 에서 확정.
+- **AC 고도**: `turbo test`(또는 동급)가 기존 `.test.ts`/`.spec.ts` 6개를 **실제로 실행**해 통과/실패를 보고한다(silent 미실행 해소) · `type:test` 트리거가 재조정되어 GUI 위험 영역에서도 발화 가능 · 배선/트리거 변경이 turbo 설정·doctrine 에 반영된다.
+
+#### 5 — 코드리뷰 게이트 신설 (하이브리드)  *(doctrine-only)*
+- **현재 동작**: `type:refactor` + GRILL(loss-risk refactor) 은 있으나 **diff 를 correctness/재사용/단순화 관점으로 훑는 코드리뷰 패스가 없다**. QA = build/smoke/acceptance/디자인리뷰지 **코드 품질이 아니다**. 하네스에 `/code-review`·`/simplify` 스킬 존재.
+- **문제(도그푸딩)**: 구현 diff 의 버그/중복/과복잡이 게이트 없이 통과 — 비-개발자는 코드 품질을 직접 검수 못 해 더 위험.
+- **Intent (해소 확정)**: **하이브리드** — (a) 위험 티켓(risk_flags / 큰 diff)은 **per-ticket 코드리뷰**, 추가로 (b) close-gate 에서 **누적-diff 코드리뷰 1회**. 둘 다 하네스 `/code-review`·`/simplify` 활용.
+- **In**: (doctrine) build-loop 에 risk-gated per-ticket 코드리뷰 + close-gate 에 cumulative-diff 코드리뷰 1회를 정의. correctness·재사용·단순화 3축 산출물 포맷 + `/code-review`·`/simplify` 호출 방식 명문화. risk-gate 판정 기준(risk_flags/diff 규모 임계)을 명시.
+- **Out**: 신규 코드 0(하네스 스킬 호출 = doctrine 룰). 자동 픽스(`--fix`/`/simplify` 자동 적용 vs 제안만)는 P2 에서 확정. 모든 비-위험 티켓 per-ticket 리뷰는 아님(그건 close-gate 누적분이 커버).
+- **AC 고도**: 위험 티켓(risk_flags/큰 diff)이 **per-ticket correctness/재사용/단순화 코드리뷰**를 거친다 · close-gate 에서 **누적-diff 코드리뷰 1회**가 실행된다 · 리뷰 결과가 actionable 형태로 기록되고 하네스 `/code-review`·`/simplify` 활용 방식이 doctrine 에 명시된다.
+
+#### 6 — T-PATCH-255: PO 턴 tool 실패 silent → actionable  *(product/code · v0.5 carry)*
+- **현재 동작**: PO 턴의 tool 실패 — 특히 macOS TCC(Downloads/Desktop/Documents) 거부 — 가 **응답 텍스트 없이 silent 종료**("도구 1개" + 대기, 유저 무안내). 5차 dmg cua 재현 확정(Allow → 정상, Don't Allow → 응답 없이 즉시 종료).
+- **문제**: 비-개발자는 왜 멈췄는지 모르고 다음 행동을 알 수 없다(북극성 = 터미널-0 정합 직접 위협).
+- **Intent**: tool 실패 시 **actionable 배너/메시지**(실패 사유 + 다음 행동) 노출.
+- **In**: po-runner/PO 응답 surface 레이어가 tool 실패(특히 TCC 권한 거부)를 감지해 평이한 말로 사유 + 조치(예: "시스템 설정 → 개인정보 보호에서 접근 허용")를 보여준다. dev+QA L2 (티켓 본문 SoT = `docs/tickets/v0.5/T-PATCH-255.md`).
+- **Out**: TCC 권한을 코드로 부여(불가) · 모든 tool 실패 분류 망라(1차 = TCC 권한 거부 + 일반 silent 종료 안내). real-OS 검증이라 cua-vm 하니스 필요(playwright 사각).
+- **AC 고도**: PO 턴 중 tool 실패(TCC 권한 거부 포함) 시 사용자가 **무엇이 왜 실패했고 다음에 뭘 해야 하는지** 읽을 메시지를 본다(silent 종료 해소) · cua-vm 에서 거부 시나리오로 검증된다.
+
+#### 7 — 트레이 빨간점: awaiting-user 상태에서만 표시  *(product/code)*
+- **현재 동작**: 메뉴바 트레이 아이콘이 **빨간점을 상시 노출**한다. `tray.ts` 는 idle/working/waiting 아이콘을 갖고 waiting 아이콘이 red dot 을 carry(`payload.waiting` → "awaiting your input")하나, 실제로는 awaiting 외 상태에서도 빨간점이 떠 신호가 무의미해졌다.
+- **문제(도그푸딩)**: 빨간점이 항상 떠 있으면 "내 차례"를 알리는 신호로 못 쓴다 — 비-개발자가 PO 가 자기에게 턴을 넘겼는지 트레이만 보고 판단할 수 없다.
+- **Intent**: 빨간점을 **PO 가 턴을 사용자에게 넘긴 상태(awaiting-user)에서만** 표시 — idle/working 중에는 clear.
+- **In**: `tray.ts` 의 badge(red dot) 표시를 **PO turn-state 에 정확히 게이팅** — awaiting-user 일 때만 waiting 아이콘(red dot), idle/working 시 dot 없는 아이콘. dev L2.
+- **Out**: 트레이 아이콘 아트워크 재디자인 아님(상태↔아이콘 매핑 정정만). persona working 스프라이트 로직 불변.
+- **AC 고도**: 트레이 빨간점이 **PO 가 턴을 사용자에게 넘긴(awaiting-user) 상태에서만** 표시된다 · idle/working 상태에서는 빨간점이 **clear** 된다 · 상태 전환 시 dot 표시가 PO turn-state 와 일치한다.
+
+#### 8 — leading-dash 입력 크래시 안전처리  *(product/code)*
+- **현재 동작(검증됨)**: po-runner(`po-runner.ts`)가 사용자 텍스트를 claude CLI 의 **마지막 positional arg 로 그대로 push**(`args.push('--print', '--output-format', 'stream-json', '--verbose', opts.text)`) — `--` end-of-options 구분자/escaping/stdin 없음. 메시지가 `-`/`--` 로 시작하면 claude CLI 가 옵션으로 오파싱 → `error: unknown option '- ...'` + exit code 1 → **턴 크래시**.
+- **문제(도그푸딩)**: 사용자가 `-` 로 시작하는 정상 메시지(리스트 작성 등)를 보내면 PO 턴이 통째로 죽는다.
+- **Intent**: leading-dash(및 옵션처럼 보이는) 입력을 **안전 처리** — CLI 오파싱 방지.
+- **In**: po-runner 의 arg 전달을 `--`(end-of-options) 구분자 추가 / stdin 전달 / escaping 중 적절한 방식으로 수정해 사용자 텍스트가 항상 데이터로 전달되게. dev L1–L2.
+- **Out**: 입력 sanitization 전면 재설계 아님(leading-dash/option-looking 케이스 안전처리에 집중). 별 backlog 의 "Invalid tool parameters"(AskUserQuestion resume race)와는 별개 이슈.
+- **AC 고도**: `-`/`--` 로 시작하는 사용자 메시지가 claude CLI 에 **데이터로 전달**되어 `unknown option` 크래시(exit 1) 없이 정상 처리된다 · 옵션처럼 보이는 입력도 턴을 죽이지 않는다.
+
+#### 9 — PO chat presence row: 워커 페르소나 라이브 출력 스트림  *(product/code)*
+- **현재 동작**: PO Chat 하단 페르소나 presence row(`PersonaPresenceBar.tsx` + `store/personaPresence.ts`)는 PO/Designer/Developer/QA 4 스프라이트 + idle/working/done 상태만 표시. 그 영역이 세로로 클 때 **스프라이트 우측에 빈 공간이 많다.** po-runner 는 subagent(워커) 이벤트를 이미 인지하나(`subagent-done` presence 신호 · `subagentCaptureByParentId`), 워커의 라이브 출력은 PO 스트림 오염 방지를 위해 **필터링되어 GUI 로 흐르지 않는다**(po-runner.ts nested-event 필터).
+- **문제(도그푸딩)**: 워커가 작업 중일 때 빈 공간만 있고 "지금 무엇을 하는지" 라이브 가시성이 없다 — 비-개발자가 진행 상황을 못 본다.
+- **Intent**: 현재 active 한 **워커 페르소나(Designer/Developer/QA — PO 는 제외)** 의 라이브 터미널/출력 내용을 그 스프라이트 **우측(빈 공간)에 스트리밍** — 공간을 채우고 + 작동 중인 페르소나가 뭘 하는지 라이브로 보여준다.
+- **In**: presence row 의 active 워커 스프라이트 우측에 해당 워커의 라이브 출력 스트림 영역 추가. PO 는 제외(워커만). **인프라 의존**: 워커 subagent 의 출력 스트림을 캡처해 GUI 로 파이프하는 배선이 필요 — 이는 backlog 의 **"PO Log Terminal 탭 미구현"**(2026-06-16; 워커/PO output-stream 배선 = po-runner 가 세션 트랜스크립트를 surface 하는 레이어)과 **동일 precondition**. 그 스트림 배선이 있으면 **재사용**하고, 없으면 #9 가 그 배선을 먼저 깐다(또는 backlog 항목과 한 dev plan 으로 스코프). dev L2–L3.
+- **Out**: 인터랙티브 shell(node-pty) 아님(read-only 라이브 출력 표시). PO 자신의 출력 스트림 표시 아님(PO 응답은 채팅 본문이 이미 담당). 전체 PO Log Terminal 탭 *완성*은 별개(이건 presence-row 슬롯의 워커 스트림에 한정).
+- **AC 고도**: active 워커(Designer/Developer/QA)의 **라이브 출력이 그 스프라이트 우측 빈 공간에 스트리밍**된다 · PO 는 이 스트림 대상에서 제외된다 · 워커 종료 시 스트림이 적절히 정리(idle 복귀)된다 · 워커 output-stream 배선이 존재하면 재사용하고 의존성을 명시한다(backlog "PO Log Terminal 탭" 항목과 공유 precondition).
+
+> **클러스터 — "lifecycle / worker-state → GUI view 반응"** (#9 · #10 · #11 · #14): 이 4건은 같은 두 precondition 을 공유한다 — (i) **워커 subagent 의 상태/출력**(active 여부 + 라이브 텍스트)이 GUI 로 파이프되는 배선(#9 출력 · #10 상태), (ii) **PO 라이프사이클 이벤트**(version-open · PRD-ready 등)가 GUI 메인 패널을 구동하는 신호 배선(#11 조건부 레이아웃 · #14 PRD 오토-네비). **하나의 P2 design + 하나의 dev plan** 으로 묶는 것을 권장하고, 공유 배선을 먼저 깐 뒤 4개 표면을 얹는다. (#12 · #13 은 이 클러스터와 무관한 standalone input/display 마이너 픽스 — 디자인 산출물 없이 **P3-direct**.)
+
+#### 10 — 워커 페르소나 스프라이트 활성화 (working 상태 미반영)  *(product/code · 클러스터)*
+- **현재 동작**: presence row 의 워커 스프라이트(Designer/Developer/QA)가 해당 페르소나의 subagent 가 작업 중인데도 **회색-idle 에 머문다** — `state==='working'` 일 때만 sprite 애니메이션이 돌지만 워커 working 상태가 presence 로 안 흘러온다. v0.5 에서 **PO 스프라이트**의 동일 버그(streaming desync)는 T-PATCH-252 로 수정됨 — #10 은 그 **워커판**.
+- **문제(도그푸딩)**: 워커가 일하는 동안 스프라이트가 죽어 있어 "누가 작동 중인지" 안 보인다(스크린샷 보고).
+- **Intent**: active 워커 스프라이트가 작업 중 **working 상태로 활성화**(애니메이션)되게 — T-PATCH-252 의 PO 수정을 워커로 확장.
+- **In**: 워커 subagent active 상태를 presence store 로 구동 — `subagent-done`/위임 시작 이벤트를 워커 chip state(`working`↔`idle`)에 매핑. **#9 와 동일 precondition**(워커 subagent 상태→GUI 배선) 공유. dev L2.
+- **Out**: 스프라이트 아트워크 변경 아님(상태 구동만). PO 스프라이트는 이미 T-PATCH-252 에서 처리됨.
+- **AC 고도**: 워커(Designer/Developer/QA) subagent 가 작업 중일 때 그 스프라이트가 **working 으로 활성화**된다 · 종료 시 idle 로 복귀한다 · PO 스프라이트 동작(T-PATCH-252)에 회귀가 없다.
+
+#### 11 — 조건부 워크스페이스 레이아웃 (PRD 인터뷰 중 PO 채팅 단독)  *(product/code · 클러스터)*
+- **현재 동작**: PO 가 PRD 인터뷰 루프를 도는 동안 po-state 에 `current_version`/PRD 파일이 아직 없어 다른 패널(Versions/Tickets/PRD/Artifacts)이 **빈 화면**으로 노출된다.
+- **문제(도그푸딩)**: 비-개발자가 처음 마주치는 화면이 빈 패널 투성이라 혼란(스크린샷 보고).
+- **Intent**: 렌더할 콘텐츠가 생기기 전(버전 생성 + PRD 파일 존재)까지는 **PO 채팅 UI 만 단독 표시**, 콘텐츠가 생기면 **전체 패널 레이아웃으로 확장**.
+- **In**: po-state 의 `current_version` + PRD 파일 유무를 GUI 가 읽어 레이아웃을 조건부 전환(채팅-only → 풀 레이아웃). **PO 라이프사이클→GUI 신호 배선**(version-open) 공유 — #14 와 같은 precondition. dev L2–L3.
+- **Out**: 패널 콘텐츠 *자체* 재설계 아님(렌더 게이팅만). 전환 애니메이션 정교화는 P2/P3.
+- **AC 고도**: 버전/PRD 가 없는 동안 GUI 가 **PO 채팅만** 표시한다 · 버전 생성 + PRD 파일이 생기면 **전체 패널 레이아웃으로 확장**된다 · 전환이 PO 라이프사이클(version-open)과 동기된다.
+
+#### 12 — 한글 IME Cmd+Enter 두 번 눌러야 전송  *(product/code · standalone, P3-direct)*
+- **현재 동작(검증됨)**: PO 채팅 입력의 IME 조합 중 **첫 Cmd+Enter 가 IME 조합 확정에 먹혀** submit 핸들러로 안 가, 두 번째에야 전송된다. `isComposing`/keyCode 229 가 submit 경로에서 미처리(코드베이스에 `isComposing` 가드는 `FreshComposer.tsx:130`·`ChatPanel.tsx:197` 등에 존재하나 Cmd+Enter submit 경로는 이 케이스를 못 잡음; cf. T-PATCH-196 isComposing 패턴).
+- **문제(도그푸딩)**: 한글 사용자가 메시지를 보낼 때마다 Cmd+Enter 를 두 번 쳐야 함.
+- **Intent**: 한글 조합 중 Enter/Cmd+Enter 전송 핸들링 정합 — 첫 입력에 정상 전송.
+- **In**: submit 핸들러가 `isComposing`/keyCode 229 를 T-PATCH-196 패턴대로 처리(조합 확정과 submit 을 구분). dev L1–L2. **standalone — 디자인 산출물 없음, P3-direct.**
+- **Out**: 입력기 전반 재설계 아님(Cmd+Enter submit 경로 한정).
+- **AC 고도**: 한글 조합 중 **첫 Cmd+Enter 로 메시지가 전송**된다(두 번 안 눌러도 됨) · 조합 확정과 전송이 혼동되지 않는다.
+
+#### 13 — tool-call 표시 최하단 토글 기본 expanded  *(product/code · standalone, P3-direct)*
+- **현재 동작**: PO 채팅 tool-call 표시의 **최하단(innermost) 토글**(도구 상세 = path/limit/args)이 **접혀(collapsed)** 있어, 도구를 펼쳐도 내용을 보려면 한 번 더 펼쳐야 한다.
+- **문제(도그푸딩)**: 도구를 열면 바로 내용이 안 보여 클릭이 한 번 더 든다(스크린샷 보고).
+- **Intent**: 최하단 토글을 **기본 open(expanded)** 으로 — 도구를 열면 전체 내용이 바로 노출.
+- **In**: tool-call 상세 토글의 default state 를 expanded 로. dev L1. **standalone — 디자인 산출물 없음, P3-direct.**
+- **Out**: tool-call 표시 레이아웃 재설계 아님(default open 여부만).
+- **AC 고도**: tool-call 을 열면 최하단 상세(path/limit/args)가 **기본으로 펼쳐져** 추가 클릭 없이 보인다.
+
+#### 14 — PRD-ready / 버전 생성 시 메인 패널 자동 PRD 노출 + 버전 자동 진입  *(product/code · 클러스터)*
+- **현재 동작**: PRD 완성(P1 ready)/버전 생성 시 GUI 메인 패널이 **자동으로 PRD 를 안 띄우고 버전 진입도 자동 안 됨** → 유저가 수동으로 Version Detail/PRD 섹션을 클릭해야 한다. 근본: **PO(백엔드)가 GUI 메인 패널 뷰를 직접 못 연다**.
+- **문제(도그푸딩)**: 첫 산출물(PRD)이 생겨도 비-개발자가 어디를 눌러야 할지 몰라 못 본다.
+- **Intent**: PO 라이프사이클 이벤트(version-open · PRD-ready 등)가 **GUI 메인 패널을 자동 네비게이트**(PRD 오토-오픈/포커스 + 버전 자동 진입).
+- **In**: **PO 라이프사이클→GUI 신호 배선** 신설 — version-open/PRD-ready 이벤트 → 메인 패널이 PRD 탭을 자동 오픈/포커스 + 해당 버전으로 진입. **#11 과 동일 precondition**(PO lifecycle→GUI 신호). dev L2–L3.
+- **Out**: 모든 라이프사이클 이벤트의 자동 네비 망라 아님(1차 = version-open / PRD-ready). 사용자 수동 네비 경로 제거 아님(자동 + 수동 공존).
+- **AC 고도**: PRD-ready/버전 생성 시 메인 패널이 **자동으로 PRD 를 띄우고 해당 버전으로 진입**한다(수동 클릭 불요) · PO 라이프사이클 이벤트가 GUI 메인 패널 네비게이션을 구동하는 배선이 존재한다.
+
+> **스코프 경계(ticket Acceptance §4)**: **doctrine/process 갭 + 코드 안정화** = v0.6 (14 items). **doctrine-only** = S1 · S2b · #5 + #3/#4 의 트리거·룰 부분. **product/code** = #3 smoke 시각 보강 · #4 러너 배선 · #6 T-255 · #7 tray · #8 leading-dash · #9 presence-row 워커 스트림 · #10 워커 스프라이트 활성화 · #11 조건부 레이아웃 · #12 IME Cmd+Enter · #13 tool-call 토글 default · #14 PRD 오토-네비. **6차 dmg 리빌드(T-254/256/257 미반영분)** 와 **풀 도그푸드-런(Round9 비-개발자 관찰)** 은 **v0.6 OUT → v0.7 이월** — 본 PRD 는 14개 갭의 Why/What/AC 와 version_outcome 만 확정한다.
+
+### Success metrics → version_outcome
+
+- **North star** (reframed): v0.5 가 깐 풀사이클이 비-개발자에게 **깨끗하게 완주 가능한 dogfood-ready 상태가 되는 것** — 14개 안정화 갭이 닫히고 각 AC 가 검증되어, 다음 버전의 실제 관찰을 막을 마찰이 제거된 상태. (실제 *관찰된* 비-개발자 풀사이클 완주 = v0.7 north-star 로 계속 carry — v0.6 에서는 측정하지 않는다.)
+- **Input metrics** (모두 v0.6 내 측정 가능):
+  1. 14개 갭이 각자의 AC 를 충족(doctrine 개정 land + product/code 변경 동작).
+  2. S1 게이트가 **렌더 HTML 3안 up-front** 로 동작하고 세 안이 시각적으로 명백히 다르다(텍스트 3안 구분-불가 해소).
+  3. S2b 가 SVG 직생성 전 **PNG-우선 경로**를 타고, 핸드오프 프롬프트가 **무조건 영어**다.
+  4. smoke 가 **핵심 화면 시각 렌더를 캡처/검증**하고, 빌드 후 **prompted run+eyeball+visual-grill 단계**가 doctrine 에 존재한다(T-PATCH-095 류 시각 사각 보강).
+  5. `turbo test` 가 기존 `.test.ts`/`.spec.ts` 6개를 **실제로 실행**한다(미실행 → 실행 전환).
+  6. 코드리뷰가 **risk-gated per-ticket + close-gate 누적 1회** 하이브리드로 실행된다.
+  7. PO 턴 tool 실패 시 **silent 종료 없이 actionable 메시지**(T-255), 트레이 빨간점이 **awaiting-user 에서만**(#7), `-` 시작 입력이 **크래시 없이 처리**(#8) — 셋 다 검증.
+  8. **lifecycle/worker-state→GUI 클러스터**(#9·#10·#11·#14)가 공유 배선 위에서 동작: 워커 라이브 출력이 presence row 에 스트리밍(#9, PO 제외) · 워커 스프라이트가 작업 중 **working 활성화**(#10) · PRD 인터뷰 중 **PO 채팅 단독 → 콘텐츠 생기면 풀 레이아웃**(#11) · PRD-ready/버전 생성 시 메인 패널이 **PRD 오토-노출 + 버전 자동 진입**(#14).
+  9. 한글 조합 중 **첫 Cmd+Enter 로 전송**(#12) · tool-call 최하단 토글이 **기본 expanded**(#13) — 둘 다 검증.
+- **Validation method**: 항목별 AC 체크리스트 패스 — doctrine 개정은 land + cross-ref 정합, code 변경은 build+smoke+해당 surface 검증으로. real-OS/TCC(#6) · 트레이(#7) · leading-dash(#8) · 한글 IME(#12)는 **cua-vm 하니스**(playwright 사각)로, 시각(#3) · 클러스터 GUI(#9·#10·#11·#14) · tool-call 토글(#13)은 **스크린샷 하니스 + 사람 눈확인**으로 검증. (실제 풀사이클 관찰은 v0.7 로 이월되어 본 버전 validation 에 포함하지 않는다.)
 
 ## OSS reference
 
