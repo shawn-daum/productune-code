@@ -218,3 +218,16 @@ export function runCostArchiveCases(): { passed: number; failures: string[] } {
   }
   return { passed: COST_ARCHIVE_CASES.length - failures.length, failures }
 }
+
+// ── vitest driver ─────────────────────────────────────────────────────────────
+// Runs the exported cases under vitest so they appear in `turbo run test` output.
+
+import { test, expect } from 'vitest'
+
+test('costArchive: all aggregation + derivation cases pass', () => {
+  const { passed, failures } = runCostArchiveCases()
+  if (failures.length > 0) {
+    throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
+  }
+  expect(passed).toBe(COST_ARCHIVE_CASES.length)
+})

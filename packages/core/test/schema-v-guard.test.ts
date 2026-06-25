@@ -12,13 +12,14 @@
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { FALLBACK_LATEST_SCHEMA_V } from '../../src/init'
+import { test } from 'vitest'
+import { FALLBACK_LATEST_SCHEMA_V } from '../src/init'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
 // ── Derive max id from migrations directory ───────────────────────────────────
 
-const migrationsDir = path.resolve(__dirname, '../../migrations')
+const migrationsDir = path.resolve(__dirname, '../migrations')
 
 function deriveMaxId(): number {
   if (!fs.existsSync(migrationsDir)) {
@@ -39,24 +40,7 @@ function deriveMaxId(): number {
   return max
 }
 
-// ── Guard check ───────────────────────────────────────────────────────────────
-
-let passed = 0
-let failed = 0
-
-function test(name: string, fn: () => void): void {
-  try {
-    fn()
-    console.log(`  PASS  ${name}`)
-    passed++
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error(`  FAIL  ${name}: ${msg}`)
-    failed++
-  }
-}
-
-console.log('\nschema-v-guard.test.ts — FALLBACK_LATEST_SCHEMA_V guard\n')
+// ── Guard checks (vitest) ─────────────────────────────────────────────────────
 
 test('FALLBACK_LATEST_SCHEMA_V matches actual max migration id', () => {
   const actualMax = deriveMaxId()
@@ -70,7 +54,7 @@ test('FALLBACK_LATEST_SCHEMA_V matches actual max migration id', () => {
 
 test('latestSchemaV() derive returns same value as actual max migration id', async () => {
   // Dynamic import to exercise the live derive path
-  const { latestSchemaV } = await import('../../src/init')
+  const { latestSchemaV } = await import('../src/init')
   const derived = latestSchemaV()
   const actualMax = deriveMaxId()
   if (derived !== actualMax) {
@@ -79,8 +63,3 @@ test('latestSchemaV() derive returns same value as actual max migration id', asy
     )
   }
 })
-
-// ── Summary ───────────────────────────────────────────────────────────────────
-
-console.log(`\n${passed} passed, ${failed} failed\n`)
-if (failed > 0) process.exit(1)

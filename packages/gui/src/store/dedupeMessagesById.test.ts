@@ -94,3 +94,16 @@ export function runDedupeCases(): { passed: number; failures: string[] } {
   }
   return { passed: DEDUPE_CASES.length - failures.length, failures }
 }
+
+// ── vitest driver ─────────────────────────────────────────────────────────────
+// Runs the exported cases under vitest so they appear in `turbo run test` output.
+
+import { test, expect } from 'vitest'
+
+test('dedupeMessagesById: all dedup invariant cases pass', () => {
+  const { passed, failures } = runDedupeCases()
+  if (failures.length > 0) {
+    throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
+  }
+  expect(passed).toBe(DEDUPE_CASES.length)
+})

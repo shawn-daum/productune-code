@@ -10,55 +10,10 @@
  *  - clean strings return empty array
  */
 
+import { test, expect } from 'vitest'
 import { lintVocabulary, type VocabIssue } from '../../src/lint/vocabulary'
 
-// ── Minimal test runner ────────────────────────────────────────────────────────
-
-let passed = 0
-let failed = 0
-
-function test(name: string, fn: () => void): void {
-  try {
-    fn()
-    console.log(`  PASS  ${name}`)
-    passed++
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error(`  FAIL  ${name}: ${msg}`)
-    failed++
-  }
-}
-
-function expect<T>(actual: T) {
-  return {
-    toBe(expected: T) {
-      if (actual !== expected) {
-        throw new Error(`Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
-      }
-    },
-    toEqual(expected: T) {
-      const a = JSON.stringify(actual)
-      const b = JSON.stringify(expected)
-      if (a !== b) {
-        throw new Error(`Expected ${b}, got ${a}`)
-      }
-    },
-    toHaveLength(n: number) {
-      if (!Array.isArray(actual)) throw new Error('Not an array')
-      if ((actual as unknown[]).length !== n) {
-        throw new Error(`Expected length ${n}, got ${(actual as unknown[]).length}: ${JSON.stringify(actual)}`)
-      }
-    },
-    toBeGreaterThan(n: number) {
-      if (typeof actual !== 'number') throw new Error('Not a number')
-      if (actual <= n) throw new Error(`Expected > ${n}, got ${actual}`)
-    },
-  }
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
-
-console.log('\nvocabulary.test.ts — lintVocabulary\n')
 
 test('clean string returns empty array', () => {
   const issues = lintVocabulary('작업을 완료했습니다.')
@@ -121,7 +76,3 @@ test('case-insensitive matching', () => {
   expect(issues1.length).toBeGreaterThan(0)
 })
 
-// ── Summary ───────────────────────────────────────────────────────────────────
-
-console.log(`\n${passed} passed, ${failed} failed\n`)
-if (failed > 0) process.exit(1)

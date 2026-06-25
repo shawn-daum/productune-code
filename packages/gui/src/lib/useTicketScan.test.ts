@@ -48,3 +48,16 @@ export function runNormalizeStatusCases(): { passed: number; failures: string[] 
   }
   return { passed: NORMALIZE_STATUS_CASES.length - failures.length, failures }
 }
+
+// ── vitest driver ─────────────────────────────────────────────────────────────
+// Runs the exported cases under vitest so they appear in `turbo run test` output.
+
+import { test, expect } from 'vitest'
+
+test('normalizeStatus: all synonym + pass-through cases pass', () => {
+  const { passed, failures } = runNormalizeStatusCases()
+  if (failures.length > 0) {
+    throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
+  }
+  expect(passed).toBe(NORMALIZE_STATUS_CASES.length)
+})

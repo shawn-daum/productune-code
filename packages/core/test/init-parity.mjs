@@ -88,7 +88,8 @@ function normalize(relPath, content) {
     // with a stable placeholder. Match the leading path component segments
     // that look like absolute paths ending before /** or at end of string.
     // Pattern: sequences of /.../ up to the first /** occurrence.
-    return content.replace(/\/(tmp|var|private\/var)[^\n"*]*/g, 'NORMALIZED_PROJECT_DIR')
+    // Match /tmp/..., /var/..., /private/tmp/..., /private/var/...
+    return content.replace(/\/(private\/)?(tmp|var)[^\n"*]*/g, 'NORMALIZED_PROJECT_DIR')
   }
   return content
 }

@@ -8,8 +8,8 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "outputs": [".turbo/junit.xml"],
-      "cache": true
+      "outputs": [],
+      "cache": false
     },
     "lint": {
       "dependsOn": [],
