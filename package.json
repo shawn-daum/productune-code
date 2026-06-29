@@ -6,6 +6,7 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "pnpm --filter @productune/gui dev",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint"
