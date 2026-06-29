@@ -404,6 +404,13 @@ interface HealthContext {
    * renderer never sees per-token churn. Cleared per parent on completion.
    */
   workerTextBufByParentId: Map<string, string>
+  /**
+   * T-PATCH-271 (#17): rolling tail of the most recent stderr lines (most-recent
+   * last, capped at STDERR_TAIL_MAX). On an abnormal exit (code≠0) the close
+   * handler classifies this tail to surface WHY claude died (usage/session limit,
+   * auth, rate-limit) instead of a raw "exited with code N".
+   */
+  stderrTail: string[]
 }
 
 const SILENCE_TIMEOUT_MS  = 15_000   // silence → 'thinking' (claude producing nothing yet)
@@ -431,8 +438,13 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
     assistantTextEmitted: false, // T-PATCH-268: no assistant text yet
     toolErrorInfo: null,         // T-PATCH-268: no tool error seen yet
     workerTextBufByParentId: new Map(), // T-PATCH-270 (#9): nested text coalescing
+    stderrTail: [],              // T-PATCH-271 (#17): rolling stderr tail for exit classification
   }
 }
+
+// T-PATCH-271 (#17): how many trailing stderr lines to retain for exit-code
+// classification. Small bounded window — only the tail carries the failure cause.
+const STDERR_TAIL_MAX = 20
 
 function emitHealth(
   state: PoHealthState,
@@ -496,29 +508,39 @@ function armSilenceTimeout(ctx: HealthContext, cb: RunCallbacks): void {
   }, STALL_TIMEOUT_MS)
 }
 
+/**
+ * T-PATCH-271 (#17): extract a rate-limit reset deadline from a stderr line.
+ * Shared by the stream-time classifier (handleStderrHealth) and the exit-code
+ * classifier (classifyExitError) so both surface the same countdown to the
+ * renderer's RateLimitBanner. Priority: retry-after secs > x-ratelimit-reset
+ * ISO > "resets at" ISO.
+ */
+function extractRateLimitReset(text: string): { resetAt?: string; retryAfterSec?: number } {
+  let resetAt: string | undefined
+  let retryAfterSec: number | undefined
+
+  // Priority 1: retry-after: <seconds>
+  const retryAfterMatch = text.match(/retry-after:\s*(\d+)/i)
+  if (retryAfterMatch) retryAfterSec = parseInt(retryAfterMatch[1], 10)
+
+  // Priority 2: x-ratelimit-reset-requests: <ISO>
+  const xResetMatch = text.match(/x-ratelimit-reset-requests:\s*([0-9T:+\-Z.]+)/i)
+  if (xResetMatch) resetAt = xResetMatch[1]
+
+  // Priority 3: resets? at <ISO>
+  if (!resetAt) {
+    const resetMatch = text.match(/resets?\s+at\s+([0-9:T+\-Z.]+)/i)
+    if (resetMatch) resetAt = resetMatch[1]
+  }
+
+  return { resetAt, retryAfterSec }
+}
+
 /** Inspect a stderr line for health signals. */
 function handleStderrHealth(line: string, ctx: HealthContext, cb: RunCallbacks): void {
   // Rate limit — checked before permission so 429 takes priority in stderr
   if (/rate.?limit/i.test(line) || /quota/i.test(line)) {
-    let resetAt: string | undefined
-    let retryAfterSec: number | undefined
-
-    // Priority 1: retry-after: <seconds>
-    const retryAfterMatch = line.match(/retry-after:\s*(\d+)/i)
-    if (retryAfterMatch) retryAfterSec = parseInt(retryAfterMatch[1], 10)
-
-    // Priority 2: x-ratelimit-reset-requests: <ISO>
-    if (!resetAt) {
-      const xResetMatch = line.match(/x-ratelimit-reset-requests:\s*([0-9T:+\-Z.]+)/i)
-      if (xResetMatch) resetAt = xResetMatch[1]
-    }
-
-    // Priority 3: resets? at <ISO>
-    if (!resetAt) {
-      const resetMatch = line.match(/resets?\s+at\s+([0-9:T+\-Z.]+)/i)
-      if (resetMatch) resetAt = resetMatch[1]
-    }
-
+    const { resetAt, retryAfterSec } = extractRateLimitReset(line)
     emitHealth('rate-limited', { resetAt, retryAfterSec }, ctx, cb)
     return
   }
@@ -585,6 +607,79 @@ function buildToolFailureMessage(
     )
   }
   return `Tool call failed${toolLabel}: ${errorText}\n\nYou may retry or check the file path.`
+}
+
+// ── T-PATCH-271 (#17): claude exit-code error classification ──────────────────
+
+/**
+ * Classification of an abnormal claude exit, derived from the stderr tail.
+ * Maps to an existing PoHealthState (no new renderer state introduced):
+ *   - 'usage-limit' → rate-limited (renders the RateLimitBanner countdown; the
+ *     usage/session cap IS a time-bounded limit, so the countdown banner is the
+ *     closest existing surface — 'capped'/'auth-required' are QA-loop statuses,
+ *     NOT PoHealthState values, so they cannot be passed to emitHealth).
+ *   - 'rate-limit'  → rate-limited (429 / explicit rate limit).
+ *   - 'auth'        → error-other (SessionHealthBanner error variant).
+ */
+type ExitErrorKind = 'usage-limit' | 'rate-limit' | 'auth' | null
+
+/**
+ * Tunable pattern → kind table. Order matters: the FIRST matching row wins, so
+ * the more specific / higher-priority patterns are listed first. Add new rows
+ * here to extend classification without touching the close-handler logic.
+ */
+const EXIT_ERROR_PATTERNS: Array<{ kind: Exclude<ExitErrorKind, null>; re: RegExp }> = [
+  // Usage / session / plan caps (Claude subscription limits).
+  { kind: 'usage-limit', re: /usage limit/i },
+  { kind: 'usage-limit', re: /session limit/i },
+  { kind: 'usage-limit', re: /5-?hour/i },
+  { kind: 'usage-limit', re: /limit reached/i },
+  { kind: 'usage-limit', re: /you['’]?ve reached/i },
+  { kind: 'usage-limit', re: /reached your .*limit/i },
+  // Rate limit / HTTP 429 (transient throttling).
+  { kind: 'rate-limit', re: /rate.?limit/i },
+  { kind: 'rate-limit', re: /\b429\b/ },
+  { kind: 'rate-limit', re: /\bquota\b/i },
+  // Auth / login.
+  { kind: 'auth', re: /unauthorized/i },
+  { kind: 'auth', re: /not logged in/i },
+  { kind: 'auth', re: /\blog ?in\b/i },
+  { kind: 'auth', re: /authentication/i },
+  { kind: 'auth', re: /\bauth\b/i },
+  { kind: 'auth', re: /401\b/ },
+]
+
+/** Classify the stderr tail into an ExitErrorKind (null when no row matches). */
+function classifyExitError(tail: string): ExitErrorKind {
+  for (const { kind, re } of EXIT_ERROR_PATTERNS) {
+    if (re.test(tail)) return kind
+  }
+  return null
+}
+
+/**
+ * Build a plain-language Korean actionable message for a classified exit error.
+ * `resetHint` is an already-formatted reset/retry phrase (or '' when unknown).
+ */
+function buildExitErrorMessage(kind: Exclude<ExitErrorKind, null>, resetHint: string): string {
+  switch (kind) {
+    case 'usage-limit':
+      return (
+        'Claude 사용량 한도에 도달해 작업이 중단되었습니다.' +
+        (resetHint ? ` ${resetHint}` : ' 잠시 후 다시 시도해 주세요.') +
+        ' (한도가 풀리면 같은 메시지를 다시 보내면 됩니다.)'
+      )
+    case 'rate-limit':
+      return (
+        '요청이 너무 잦아 Claude가 일시적으로 제한했습니다.' +
+        (resetHint ? ` ${resetHint}` : ' 잠시 후 다시 시도해 주세요.')
+      )
+    case 'auth':
+      return (
+        'Claude 로그인이 만료되었거나 인증되지 않아 작업이 중단되었습니다. ' +
+        '터미널에서 `claude` 로그인을 다시 한 뒤 메시지를 다시 보내 주세요.'
+      )
+  }
 }
 
 // ── T-PATCH-270 (#9): worker output tail-line builders ────────────────────────
@@ -793,6 +888,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
         const line = stderrBuf.slice(0, nlIdx).trim()
         stderrBuf = stderrBuf.slice(nlIdx + 1)
         if (line) {
+          // T-PATCH-271: retain a bounded tail for exit-code classification.
+          hCtx.stderrTail.push(line)
+          if (hCtx.stderrTail.length > STDERR_TAIL_MAX) hCtx.stderrTail.shift()
           cb.onAnnounce(msgId, { level: 'error', text: line })
           handleStderrHealth(line, hCtx, cb)
         }
@@ -815,6 +913,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       if (stdoutBuf.trim()) handleStreamJsonLine(stdoutBuf.trim(), msgId, cb, hCtx, turnOrigin)
       if (stderrBuf.trim()) {
         const line = stderrBuf.trim()
+        // T-PATCH-271: include the final (un-newline-terminated) stderr line in the tail.
+        hCtx.stderrTail.push(line)
+        if (hCtx.stderrTail.length > STDERR_TAIL_MAX) hCtx.stderrTail.shift()
         cb.onAnnounce(msgId, { level: 'error', text: line })
         handleStderrHealth(line, hCtx, cb)
       }
@@ -848,11 +949,36 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
           // User-initiated abort — localized info, not an error.
           cb.onAnnounce(msgId, { level: 'info', kind: 'turn-aborted', text: '' })
         } else {
-          // Real crash — renderer localizes via kind; text kept as English fallback.
-          cb.onAnnounce(msgId, { level: 'error', kind: 'exit-error', code: code ?? undefined, text: `claude exited with code ${code}` })
-          // Only set error-other if no other state was set.
-          if (hCtx.lastEmittedState === 'healthy') {
-            emitHealth('error-other', { errorMessage: `exit code ${code}` }, hCtx, cb)
+          // T-PATCH-271 (#17): classify the stderr tail BEFORE the generic exit-error
+          // announce. A usage/session limit, rate-limit, or auth failure exits the CLI
+          // with code≠0 but the stderr tail explains why — surface an actionable health
+          // STATE + ko message instead of a raw "code N". No match → unchanged fallback.
+          const tail = hCtx.stderrTail.join('\n')
+          const kind = classifyExitError(tail)
+          if (kind === 'usage-limit' || kind === 'rate-limit') {
+            const { resetAt, retryAfterSec } = extractRateLimitReset(tail)
+            const resetHint =
+              retryAfterSec != null
+                ? `약 ${Math.ceil(retryAfterSec / 60)}분 후 다시 시도할 수 있습니다.`
+                : resetAt
+                  ? `${resetAt}에 한도가 초기화됩니다.`
+                  : ''
+            // 'capped'/'auth-required' are NOT PoHealthState values (QA-loop statuses
+            // only), so we map usage/session caps to 'rate-limited' — its RateLimitBanner
+            // countdown is the closest existing usage surface (T-231 health-state reuse).
+            emitHealth('rate-limited', { resetAt, retryAfterSec, errorMessage: tail.slice(0, 200) }, hCtx, cb)
+            cb.onAnnounce(msgId, { level: 'error', text: buildExitErrorMessage(kind, resetHint) })
+          } else if (kind === 'auth') {
+            // auth → error-other (SessionHealthBanner error variant) + actionable ko.
+            emitHealth('error-other', { errorMessage: tail.slice(0, 200) }, hCtx, cb)
+            cb.onAnnounce(msgId, { level: 'error', text: buildExitErrorMessage(kind, '') })
+          } else {
+            // Unclassified real crash — renderer localizes via kind; text kept as English fallback.
+            cb.onAnnounce(msgId, { level: 'error', kind: 'exit-error', code: code ?? undefined, text: `claude exited with code ${code}` })
+            // Only set error-other if no other state was set.
+            if (hCtx.lastEmittedState === 'healthy') {
+              emitHealth('error-other', { errorMessage: `exit code ${code}` }, hCtx, cb)
+            }
           }
         }
       } else {
