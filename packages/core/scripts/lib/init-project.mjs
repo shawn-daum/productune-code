@@ -307,6 +307,96 @@ export function bootstrapPersonaMemory(projectDir, initialVersionId) {
   }
 }
 
+// ── Trust auto-accept (~/.claude.json) ───────────────────────────────────────
+//
+// T-PATCH-274 #19a: Claude Code shows a one-time "trust this folder?" dialog the
+// first time a project dir is opened. Until accepted, permissions / hooks /
+// doctrine injection do NOT fully apply, so a freshly-init'd project on a new
+// machine comes up untrusted and pdt-po loses its doctrine. We pre-accept trust
+// for the project dir by setting
+//   ~/.claude.json :: projects[realpath(absProjectDir)].hasTrustDialogAccepted = true
+// mirroring the atomic read/write patterns in packages/gui/electron/ipc/mcp.ts
+// (readClaudeJson `et()` reader / writeClaudeJson `an()` writer). The key is
+// realpath-normalized like resolveLocalMcpServers/mcp.ts so it matches the cwd
+// Claude Code launches in (symlink / case / trailing-sep safe).
+
+/**
+ * Read ~/.claude.json. Never throws — returns {} on missing/corrupt.
+ * Mirrors mcp.ts readClaudeJson (`et()`).
+ * @returns {Record<string, any>}
+ */
+function readClaudeJsonSafe() {
+  const p = path.join(os.homedir(), '.claude.json')
+  try { return JSON.parse(fs.readFileSync(p, 'utf-8')) }
+  catch { return {} }
+}
+
+/**
+ * Atomic write to ~/.claude.json — tmp + renameSync, mode 0600.
+ * Mirrors mcp.ts writeClaudeJson (`an()`). CAUTION: this is Claude Code's own
+ * state file — only ever call after readClaudeJsonSafe() so all other keys are
+ * preserved (read-modify-write).
+ * @param {Record<string, any>} data
+ */
+function writeClaudeJsonAtomic(data) {
+  const p = path.join(os.homedir(), '.claude.json')
+  const tmp = p + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, p)
+}
+
+/**
+ * Idempotently set projects[realpath(absProjectDir)].hasTrustDialogAccepted=true
+ * in ~/.claude.json so the project opens trusted (permissions + hooks + doctrine
+ * apply on first launch). Preserves ALL other keys + any existing per-project
+ * fields. Makes a one-time ~/.claude.json.bak.<ts> backup if none exists yet.
+ * Never throws — trust auto-accept is best-effort and must never block init/launch.
+ *
+ * @param {string} projectDir
+ */
+export function setTrustAccepted(projectDir) {
+  try {
+    const absProjectDir = path.resolve(projectDir)
+    // realpath-normalize the key (symlink/case/trailing-sep) like mcp.ts does so
+    // it matches the exact cwd Claude Code keys projects[] by. Fall back to the
+    // plain absolute path if realpath fails (dir not yet on disk, perms, etc.).
+    let key = absProjectDir
+    try { key = fs.realpathSync(absProjectDir) } catch { /* keep absProjectDir */ }
+
+    const claudeJsonPath = path.join(os.homedir(), '.claude.json')
+
+    // One-time backup before the first mutation (only when the file exists and no
+    // backup has been made yet). Idempotent: skip if any *.bak.* sibling exists.
+    if (fs.existsSync(claudeJsonPath)) {
+      let hasBackup = false
+      try {
+        const dir = path.dirname(claudeJsonPath)
+        hasBackup = fs.readdirSync(dir).some(n => n.startsWith('.claude.json.bak.'))
+      } catch { /* readdir failed — fall through, attempt a backup */ }
+      if (!hasBackup) {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-')
+        try { fs.copyFileSync(claudeJsonPath, `${claudeJsonPath}.bak.${ts}`) }
+        catch { /* backup best-effort */ }
+      }
+    }
+
+    const data = readClaudeJsonSafe()
+    if (!data.projects || typeof data.projects !== 'object') data.projects = {}
+    const existing =
+      (data.projects[key] && typeof data.projects[key] === 'object')
+        ? data.projects[key]
+        : {}
+
+    // Idempotent: no-op write avoidance when already accepted + key present.
+    if (existing.hasTrustDialogAccepted === true) return
+
+    data.projects[key] = { ...existing, hasTrustDialogAccepted: true }
+    writeClaudeJsonAtomic(data)
+  } catch {
+    // Never throw — trust auto-accept is best-effort.
+  }
+}
+
 // ── User-global doctrine bootstrap ───────────────────────────────────────────
 
 /**
@@ -668,6 +758,10 @@ export function initProject(opts) {
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
   bootstrapPersonaMemory(opts.projectDir, config.initial_version)
   bootstrapClaudeSettings(opts.projectDir)
+  // T-PATCH-274 #19a: pre-accept Claude Code's trust dialog for this project dir
+  // so permissions + hooks + doctrine apply on first launch (new-machine case).
+  // Best-effort (never throws) — must not block init.
+  setTrustAccepted(opts.projectDir)
   if (!opts.skipDoctrine) bootstrapUserGlobalDoctrine(coreRoot)
   return config
 }
@@ -687,6 +781,19 @@ function runCli() {
   // on a single line and exits 0 when found, prints `notfound` + exits 0 when
   // not found (never non-zero — bash treats absence as "no ancestor"). Errors in
   // arg parsing exit 2.
+  // ── Trust-accept-only mode (T-PATCH-274 #19a launch self-heal) ─────────────
+  // `node init-project.mjs --trust-accept <projectDir>` — sets the trust flag in
+  // ~/.claude.json for an already-init'd project on each launch so it self-heals
+  // on a new machine without re-running full init. Idempotent, never throws,
+  // always exits 0 (must never block launch).
+  if (args[0] === '--trust-accept') {
+    const dir = args[1] ?? ''
+    if (dir) {
+      try { setTrustAccepted(dir) } catch { /* best-effort */ }
+    }
+    process.exit(0)
+  }
+
   if (args[0] === '--find-ancestor') {
     const startDir = args[1] ?? ''
     if (!startDir) {

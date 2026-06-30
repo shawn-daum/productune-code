@@ -97,10 +97,12 @@ if [ -n "$PERSONA" ]; then
   NEED_COMMON=1
   [ "$PERSONA" = "po" ] && NEED_COMMON=0
 
-  # fail-loud: required Tier0 file(s) absent.
+  # fail-loud: required Tier0 file(s) absent OR empty (zero-byte). An empty
+  # habit.md (e.g. a truncated mirror) is as broken as a missing one — doctrine
+  # would inject blank — so `[ ! -s ]` fails loud alongside `[ ! -f ]`. (#19c)
   MISSING=""
-  [ "$NEED_COMMON" = "1" ] && [ ! -f "$COMMON_TIER0" ] && MISSING="$MISSING $COMMON_TIER0"
-  [ ! -f "$PERSONA_TIER0" ] && MISSING="$MISSING $PERSONA_TIER0"
+  [ "$NEED_COMMON" = "1" ] && { [ ! -f "$COMMON_TIER0" ] || [ ! -s "$COMMON_TIER0" ]; } && MISSING="$MISSING $COMMON_TIER0"
+  { [ ! -f "$PERSONA_TIER0" ] || [ ! -s "$PERSONA_TIER0" ]; } && MISSING="$MISSING $PERSONA_TIER0"
   if [ -n "$MISSING" ]; then
     printf '[!] productune doctrine MISSING for agent %s:%s\n' "$AGENT_TYPE" "$MISSING" >&2
     emit_ctx "[productune doctrine — MISSING]
@@ -175,8 +177,9 @@ while [ -n "$_WALK" ] && [ "$_WALK" != "/" ]; do
 done
 [ -z "$_FALLBACK_PROJ" ] && exit 0
 
-# fail-loud if even the common Tier0 is absent (only reached inside a productune project).
-if [ ! -f "$COMMON_TIER0" ]; then
+# fail-loud if even the common Tier0 is absent OR empty (zero-byte) — an empty
+# habit.md would inject blank doctrine (#19c). Only reached inside a productune project.
+if [ ! -f "$COMMON_TIER0" ] || [ ! -s "$COMMON_TIER0" ]; then
   printf '[!] productune common Tier0 doctrine MISSING: %s\n' "$COMMON_TIER0" >&2
   emit_ctx "[productune doctrine — MISSING]
 The common Tier 0 doctrine file is NOT present on this machine: $COMMON_TIER0

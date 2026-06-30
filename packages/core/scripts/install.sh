@@ -82,6 +82,12 @@ verify_agents_recognized() {
 #   - command ending with one of the known productune hook basenames
 #     (catches hooks left behind by a previous install from a different clone path).
 # Re-running install replaces them rather than duplicating.
+#
+# EXCEPTION (T-PATCH-274 #20-B1): session-start-doctrine.sh is matched ONLY by the
+# path-scoped startswith($dir) branch — its basename is SHARED with the lite
+# install, so a basename fallback here would cross-clobber lite's SessionStart
+# doctrine hook on a full re-install (and vice-versa). Path-scoping lets both
+# coexist in the global SessionStart array. All OTHER basenames are full-exclusive.
 merge_claude_settings_hooks() {
   local settings="$HOME/.claude/settings.json"
   mkdir -p "$HOME/.claude"
@@ -122,7 +128,6 @@ merge_claude_settings_hooks() {
       or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"))
       or (cmd | endswith("/scripts/hooks/post-ticket-status-verify.sh"))
       or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"))
-      or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
       or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"))
       or (cmd | endswith("/scripts/hooks/pre-phase-gate-guard.sh"))
       or (cmd | endswith("/scripts/hooks/prompt-gate-inject.sh"))
