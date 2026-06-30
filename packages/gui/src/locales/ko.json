@@ -887,10 +887,6 @@
       "keyHint": "Cmd+Enter로 전송 · Enter = 줄바꿈",
       "error": "잠시 문제가 생겼어요. 다시 시도해주세요."
     },
-    "welcome": {
-      "headline": "오른쪽 PO와 대화하며 시작해요",
-      "supporting": "아직 만들 버전이 없어요. PO가 몇 가지를 물어 PRD 초안을 잡으면, 이 화면이 작업 패널로 펼쳐집니다."
-    },
     "projectEnv": {
       "sectionTitle": "프로젝트 .env",
       "loading": "불러오는 중…",

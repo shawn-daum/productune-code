@@ -10,7 +10,6 @@ import MainPanel from '../components/workspace/main/MainPanel'
 import StatusBar from '../components/workspace/StatusBar'
 import ActivityBar, { type ActivityIcon } from '../components/workspace/ActivityBar'
 import ChatPanel from '../components/workspace/ChatPanel'
-import WelcomePanel from '../components/workspace/WelcomePanel'
 import SessionHealthBanner from '../components/workspace/SessionHealthBanner'
 import RestartSessionModal from '../components/workspace/RestartSessionModal'
 import PendingPromotionDrain from '../components/workspace/PendingPromotionDrain'
@@ -40,11 +39,15 @@ const SHELL_MIN_WIDTH =
   ACTIVITY_BAR_WIDTH + SIDEBAR_MIN_WIDTH + RESIZE_HANDLE_WIDTH +
   CENTER_MIN_LAYOUT + RESIZE_HANDLE_WIDTH + PO_CHAT_MIN_WIDTH
 
-// T-PATCH-269 #11: chat-only (3-col) minimum — no sidebar/sidebarResize column.
-// = ACTIVITY_BAR_WIDTH(48) + welcome floor(320) + RESIZE_HANDLE_WIDTH(4)
-//   + PO_CHAT_MIN_WIDTH(280) = 652. Below this the wrapper scrolls instead of crushing.
-const SHELL_MIN_WIDTH_CHATONLY =
-  ACTIVITY_BAR_WIDTH + CENTER_MIN_LAYOUT + RESIZE_HANDLE_WIDTH + PO_CHAT_MIN_WIDTH
+// T-PATCH-272 (#18): chat-only is a SINGLE PO chat column — no ActivityBar / sidebar /
+// welcome columns. Minimum = the PO chat min width; below it the scroll-wrapper scrolls
+// instead of crushing the chat.
+const SHELL_MIN_WIDTH_CHATONLY = PO_CHAT_MIN_WIDTH
+
+// T-272 adjust: chat-only reading width — the chat is centered to this max instead of
+// stretching the full window on a wide screen. 760px matches the house reading-width
+// used by TicketDetailTab (MarkdownViewer uses 780) — comfortable for chat prose.
+const CHATONLY_CHAT_MAX_WIDTH = 760
 
 interface Props {
   project: Project
@@ -408,9 +411,9 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   )
 
   // T-PATCH-269 #11: layout mode is derived purely from current_version. No version
-  // yet (PRD interview in progress) → chat-only welcome face; version exists → full
-  // 6-area panel layout. Reversible derived state (no one-way flag): if the version
-  // ever goes away the layout collapses back to chat-only.
+  // yet (PRD interview in progress) → chat-only; version exists → full 6-area panel
+  // layout. Reversible derived state (no one-way flag): if the version ever goes away
+  // the layout collapses back to chat-only.
   const layoutMode: 'full' | 'chatonly' = poStateVersion ? 'full' : 'chatonly'
 
   const dynamicGrid: React.CSSProperties =
@@ -437,15 +440,22 @@ export default function WorkspaceShell({ project, onBack }: Props) {
           gridTemplateRows: statusBarVisible ? 'auto 1fr 34px' : 'auto 1fr 0px',
         }
       : {
-          // T-PATCH-269 #11: chat-only 3-col grid (mockup scene 1). Sidebar +
-          // sidebarResize columns are dropped; the welcome face fills the center and
-          // PO chat keeps its resizable column. MainPanel/Sidebar/StatusBar are NOT
-          // rendered in this mode (their pane/tab state is preserved underneath — they
-          // simply unmount until the layout expands back to full).
+          // T-PATCH-272 (#18): chat-only = PURE PO chat. The first-run start screen is
+          // ONLY the PO chat — no ActivityBar column, no WelcomePanel intro, no chat
+          // resize handle. ActivityBar / Sidebar / MainPanel / StatusBar / WelcomePanel
+          // are NOT rendered in this mode (pane/tab tree preserved in store; remounts on
+          // expand to full).
+          //
+          // T-272 adjust: the chat is NOT full-bleed on a wide window — it's a CENTERED
+          // reading-width column (CHATONLY_CHAT_MAX_WIDTH). A single bounded grid track
+          // + justifyContent:'center' centers it; the grid's dark background (#0F0F0F,
+          // from ...grid) fills the gutters on either side. On narrow windows the
+          // minmax(0, …) floor lets the column shrink to fit (no overflow).
           ...grid,
           minWidth: SHELL_MIN_WIDTH_CHATONLY,
-          gridTemplateAreas: `"activity welcome chatResize chat"`,
-          gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
+          gridTemplateAreas: `"chat"`,
+          gridTemplateColumns: `minmax(0, ${CHATONLY_CHAT_MAX_WIDTH}px)`,
+          justifyContent: 'center',
           gridTemplateRows: '1fr',
         }
 
@@ -454,10 +464,10 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     // horizontally at very small windows (<856 px) → scrollbar instead of crush.
     <div style={shellScrollWrapper}>
       <div ref={shellRef} style={dynamicGrid}>
-      <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
-
+      {/* T-PATCH-272 (#18): ActivityBar is full-layout only — chat-only is pure PO chat. */}
       {layoutMode === 'full' ? (
         <>
+          <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
           <LeftSidebar project={project} activeIcon={activeIcon} />
           <div style={sidebarResizeArea}>
             <ColumnResizeHandle active={activeResizeHandle === 'sidebar'} ariaLabel="Resize left sidebar"
@@ -487,15 +497,19 @@ export default function WorkspaceShell({ project, onBack }: Props) {
           <div style={{ gridArea: 'status', overflow: statusBarVisible ? 'visible' : 'hidden' }}>
             <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
           </div>
+          {/* Chat resize handle: full-layout only. In chat-only the chat is full-width
+              with no neighbouring column to resize against. */}
+          <div style={chatResizeArea}>
+            <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"
+              onMouseDown={(event) => startResize('chat', event)} />
+          </div>
         </>
       ) : (
-        <WelcomePanel />
+        // T-PATCH-272 (#18): chat-only = pure PO chat. No ActivityBar / WelcomePanel /
+        // resize handle — ChatPanel below fills the single 'chat' grid column.
+        null
       )}
 
-      <div style={chatResizeArea}>
-        <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"
-          onMouseDown={(event) => startResize('chat', event)} />
-      </div>
       <ChatPanel />
 
       {restartModalOpen && <RestartSessionModal onClose={() => setRestartModalOpen(false)} />}
