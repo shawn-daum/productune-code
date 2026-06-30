@@ -706,6 +706,119 @@ if [ -t 1 ] && [ -z "${PRODUCTUNE_QUIET_BANNER:-}" ]; then
   printf '\033[1;34m[productune]\033[0m engine=claude (hooks fire)\n' >&2
 fi
 
+# ── T-PATCH-273 AC-2: auto-update on launch (HARD guards — must never block or break launch) ──
+# Opt-out: PRODUCTUNE_NO_AUTOUPDATE=1 skips entirely.
+# Throttle: at most once per day via ~/.productune/.last-autoupdate timestamp.
+# Guards: clean tree, branch tracks upstream, behind, ff-only possible.
+# On any failure/skip: 1-line notice, continue with current version.
+if [ -z "${PRODUCTUNE_NO_AUTOUPDATE:-}" ]; then
+  _AU_SKIP=0
+  _AU_SKIP_REASON=""
+
+  # Throttle: skip if last check was within the last 86400 seconds (1 day).
+  _AU_STAMP="$HOME/.productune/.last-autoupdate"
+  _AU_NOW="$(date +%s 2>/dev/null || echo 0)"
+  if [ -f "$_AU_STAMP" ]; then
+    _AU_LAST="$(cat "$_AU_STAMP" 2>/dev/null || echo 0)"
+    _AU_ELAPSED=$(( _AU_NOW - _AU_LAST ))
+    if [ "$_AU_ELAPSED" -lt 86400 ]; then
+      _AU_SKIP=1
+      _AU_SKIP_REASON="throttled"
+    fi
+  fi
+
+  if [ "$_AU_SKIP" = 0 ]; then
+    # Resolve productune repo path (mirrors update) case logic).
+    _AU_REPO=""
+    if [ -r "$HOME/.productune/productune.env" ]; then
+      _AU_REPO="$(grep -E '^PRODUCTUNE_REPO=' "$HOME/.productune/productune.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\n' || true)"
+    fi
+    if [ -z "$_AU_REPO" ] || [ ! -d "$_AU_REPO/.git" ]; then
+      _AU_SELF="$(realpath "$0" 2>/dev/null || echo "$0")"
+      _AU_REPO="$(cd "$(dirname "$_AU_SELF")/../../.." 2>/dev/null && pwd || true)"
+    fi
+
+    if [ -z "$_AU_REPO" ] || [ ! -d "$_AU_REPO/.git" ]; then
+      _AU_SKIP=1; _AU_SKIP_REASON="repo not found"
+    fi
+  fi
+
+  if [ "$_AU_SKIP" = 0 ]; then
+    # Guard: working tree must be clean (no staged or unstaged tracked changes).
+    if ! git -C "$_AU_REPO" diff --quiet 2>/dev/null \
+    || ! git -C "$_AU_REPO" diff --cached --quiet 2>/dev/null; then
+      _AU_SKIP=1; _AU_SKIP_REASON="dirty working tree"
+    fi
+  fi
+
+  if [ "$_AU_SKIP" = 0 ]; then
+    # Guard: current branch must track an upstream (not detached HEAD).
+    _AU_BRANCH="$(git -C "$_AU_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+    if [ -z "$_AU_BRANCH" ] || [ "$_AU_BRANCH" = "HEAD" ]; then
+      _AU_SKIP=1; _AU_SKIP_REASON="detached HEAD"
+    else
+      _AU_UPSTREAM="$(git -C "$_AU_REPO" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || echo "")"
+      if [ -z "$_AU_UPSTREAM" ]; then
+        _AU_SKIP=1; _AU_SKIP_REASON="no upstream tracking branch"
+      fi
+    fi
+  fi
+
+  if [ "$_AU_SKIP" = 0 ]; then
+    # Fetch to get current upstream state (non-fatal on failure).
+    git -C "$_AU_REPO" fetch --quiet 2>/dev/null || { _AU_SKIP=1; _AU_SKIP_REASON="offline / fetch failed"; }
+  fi
+
+  if [ "$_AU_SKIP" = 0 ]; then
+    # Guard: branch must be behind upstream (otherwise nothing to update).
+    _AU_BEHIND="$(git -C "$_AU_REPO" rev-list --count HEAD.."$_AU_UPSTREAM" 2>/dev/null || echo 0)"
+    if [ "$_AU_BEHIND" = "0" ]; then
+      _AU_SKIP=1; _AU_SKIP_REASON="already up to date"
+    fi
+  fi
+
+  if [ "$_AU_SKIP" = 0 ]; then
+    # Guard: ff-only must be possible (no diverged/non-ff situation).
+    # Also guards dev branch (e.g. v0.6) where origin/main is non-ff vs local.
+    if ! git -C "$_AU_REPO" merge-base --is-ancestor HEAD "$_AU_UPSTREAM" 2>/dev/null; then
+      _AU_SKIP=1; _AU_SKIP_REASON="non-ff (diverged from upstream — dev branch?)"
+    fi
+  fi
+
+  if [ "$_AU_SKIP" = 0 ]; then
+    # All guards passed — run the update path (mirrors update) case).
+    say "auto-update: pulling $_AU_BEHIND new commit(s) from $_AU_UPSTREAM..."
+    # Update the timestamp first — even if pull fails we don't want to retry every launch.
+    printf '%s\n' "$_AU_NOW" > "$_AU_STAMP" 2>/dev/null || true
+    if git -C "$_AU_REPO" pull --ff-only --quiet 2>/dev/null \
+    && bash "$_AU_REPO/packages/core/scripts/install.sh" >/dev/null 2>&1; then
+      _AU_NEW_SHA="$(git -C "$_AU_REPO" rev-parse --short HEAD 2>/dev/null || echo "?")"
+      say "auto-update: updated to $_AU_NEW_SHA — restart productune to use the new version"
+    else
+      warn "auto-update: pull or install failed (non-fatal — continuing with current version)"
+    fi
+  else
+    # Skip notice: silent for normal/expected conditions; warn for actionable ones.
+    # Stamp is NOT updated on condition-based skips (dirty, offline, non-ff) so the
+    # next launch retries when conditions improve. Stamp IS written on "already up to
+    # date" (first time, no stamp yet) to avoid redundant fetches every launch.
+    case "$_AU_SKIP_REASON" in
+      throttled|"already up to date"|"no upstream tracking branch"|"repo not found")
+        # silent — normal operating conditions
+        ;;
+      *)
+        # Dirty tree, detached HEAD, offline, non-ff: worth a 1-line notice.
+        warn "auto-update skipped: $_AU_SKIP_REASON (continuing with current version)"
+        ;;
+    esac
+    # First-time "already up to date" — write stamp so we don't fetch on every launch.
+    if [ "$_AU_SKIP_REASON" = "already up to date" ] && [ ! -f "$_AU_STAMP" ]; then
+      printf '%s\n' "$_AU_NOW" > "$_AU_STAMP" 2>/dev/null || true
+    fi
+  fi
+fi
+# ── end T-PATCH-273 AC-2 ──
+
 ensure_state() {
   # $1 = project root. Migrates legacy .codex/po-state.json (pre-rename) →
   # .productune/po-state.json if found, then seeds a minimal skeleton if absent.
@@ -745,21 +858,30 @@ fi
 
 ensure_state "$ROOT"
 
-# AC-7c (T-PATCH-117): lightweight default-mode config guard.
-# If .productune/ exists but config.json is absent, call the shared init entry
-# best-effort — failure is non-fatal (session continues regardless).
-if [ -d "$ROOT/.productune" ] && [ ! -f "$ROOT/.productune/config.json" ]; then
+# ── T-PATCH-273 AC-1: auto-init — scaffold project if .productune/config.json absent ──
+# Mirrors the lite launcher pattern: `if [ ! -d "$PROJ/.productune-lite" ]`.
+# Signal: config.json absent (ensure_state always creates the dir, so dir-check alone
+# would never fire). Idempotent — init-project.mjs preserves existing files.
+# Non-fatal: any failure is warned and the session continues.
+# Subsumes the old AC-7c (T-PATCH-117) config-self-heal guard (same trigger, same node
+# entry, now with a visible say + full doctrine skip for safety).
+if [ ! -f "$ROOT/.productune/config.json" ]; then
   _SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
   _CORE_ROOT="$(cd "$_SCRIPTS_DIR/.." && pwd)"
+  say "auto-init: no config.json found — scaffolding project in $ROOT"
   if command -v node >/dev/null 2>&1; then
     node "$_SCRIPTS_DIR/lib/init-project.mjs" \
       --slug "$(basename "$ROOT")" \
       --project-dir "$ROOT" \
       --core-root "$_CORE_ROOT" \
       --skip-doctrine 2>/dev/null \
-      || warn "config self-heal failed (non-fatal — session continues)"
+      && say "auto-init: project scaffolded — continuing to PO session" \
+      || warn "auto-init: scaffold failed (non-fatal — session continues)"
+  else
+    warn "auto-init: node not found — skipping scaffold (non-fatal — session continues)"
   fi
 fi
+# ── end T-PATCH-273 AC-1 ──
 
 LOCK="$ROOT/.productune/po.lock"
 
