@@ -262,6 +262,25 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('tickets:changed', listener)
   },
 
+  // ── Docs md fs-watch (T-PATCH-280) ──────────────────────────────────────────
+  /**
+   * Ask the main process to fs-watch <projectDir>/docs (recursive). Idempotent
+   * per dir; pairs with the `docs:changed` push that onDocsChanged subscribes to.
+   * Lets an open markdown tab (PRD, doctrine doc) re-read its file when it changes
+   * on disk — no app restart / remount. Safe to call on every viewer mount.
+   */
+  watchDocs: (projectDir: string): Promise<void> =>
+    ipcRenderer.invoke('docs:watch', projectDir),
+
+  /** Subscribe to docs fs-watch change events (debounced 300ms). `absPath` is the
+   *  absolute path of the changed .md file (or null when the platform gives no
+   *  filename — reload conservatively). Returns an unsubscribe fn. */
+  onDocsChanged: (cb: (payload: { projectDir: string; absPath: string | null }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: { projectDir: string; absPath: string | null }) => cb(payload)
+    ipcRenderer.on('docs:changed', listener)
+    return () => ipcRenderer.removeListener('docs:changed', listener)
+  },
+
   // ── Design artifacts ────────────────────────────────────────────────────────
   designListArtifacts: (projectRoot: string): Promise<string[]> =>
     ipcRenderer.invoke('design:listArtifacts', projectRoot),
@@ -464,10 +483,27 @@ contextBridge.exposeInMainWorld('api', {
    * `line` is a coalesced, read-only single tail line. PO is never a worker on
    * this channel. Returns an unsubscribe fn.
    */
-  poOnWorkerStream: (cb: (payload: { persona: string; line: string }) => void) => {
-    const listener = (_e: Electron.IpcRendererEvent, payload: { persona: string; line: string }) => cb(payload)
+  poOnWorkerStream: (cb: (payload: { persona: string; line: string; kind?: 'prose' | 'tool' }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: { persona: string; line: string; kind?: 'prose' | 'tool' }) => cb(payload)
     ipcRenderer.on('po:worker-stream', listener)
     return () => ipcRenderer.removeListener('po:worker-stream', listener)
+  },
+
+  /**
+   * T-PATCH-281 (AC-7): subscribe to worker cost/duration meta. `usage` is the
+   * agent-teams task usage (token/tool-use/duration — may be partial/absent),
+   * `startedAt`/`completedAt` are wall-clock ms. Read-only display data; the
+   * turns.jsonl cost path is unaffected. Returns an unsubscribe fn.
+   */
+  poOnWorkerMeta: (cb: (payload: {
+    persona: string
+    usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
+    startedAt?: number
+    completedAt?: number
+  }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('po:worker-meta', listener)
+    return () => ipcRenderer.removeListener('po:worker-meta', listener)
   },
 
   // ── Todo items (T-P4-113) ──────────────────────────────────────────────────

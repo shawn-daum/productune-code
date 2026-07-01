@@ -34,13 +34,22 @@ interface ApprovePhaseArgs {
 // from the last pushed one. The full parsed state rides along in the payload so the
 // renderer routes it through the SAME setPoState path as the one-shot read.
 //
-// We watch ONLY the .productune PARENT DIR (not po-state.json directly). A direct
-// file watch goes stale after one atomic-rename write (write temp → rename over),
-// which would force a re-arm on every event → an unbounded FSWatcher/fd leak across
-// the session. The parent-dir watch is a SINGLE durable handle that survives the
-// atomic renames AND equally catches the non-atomic in-place writeFileSync paths
-// (phase:approve), since they also write inside .productune. Debounced ~200ms to
-// collapse the write burst.
+// We watch the .productune PARENT DIR (not po-state.json directly). A direct file
+// watch goes stale after one atomic-rename write (write temp → rename over), which
+// would force a re-arm on every event → an unbounded FSWatcher/fd leak across the
+// session. The parent-dir watch is a durable handle that survives the atomic renames
+// AND equally catches the non-atomic in-place writeFileSync paths (phase:approve),
+// since they also write inside .productune. Debounced ~200ms to collapse the burst.
+//
+// T-PATCH-275 (#14 fix): we ALSO watch docs/prd/. ROOT CAUSE of the missed PRD
+// auto-open: the PRD doc (docs/prd/PRD.md or versions/<v>.md) is written OUTSIDE
+// .productune, in a SEPARATE step after the version is created in po-state. So the
+// po-state write fired the watcher while PRD.md did not yet exist (prdReady=false →
+// no auto-nav), and the later PRD.md creation was invisible to a .productune-only
+// watch → prdReady never flipped true → the MainPanel never auto-opened the PRD.
+// Watching docs/prd/ re-emits the signal when the PRD file lands, so prdReady flips
+// true and the renderer's #14 auto-nav fires. Both watchers feed the same debounce +
+// same signal-dedup, so this adds no render storm.
 //
 // IPC channel pushed to renderer: 'state:poStateChanged' (payload: PoStateChangePayload)
 
@@ -52,6 +61,7 @@ interface PoStateChangePayload {
 }
 
 let poDirWatcher: fs.FSWatcher | null = null
+let prdDirWatcher: fs.FSWatcher | null = null   // T-275 #14 fix: docs/prd/ watch
 let poWatchedProjectDir: string | null = null
 let poDebounceTimer: ReturnType<typeof setTimeout> | null = null
 // Last pushed signal — guards against the render storm (no-op when unchanged).
@@ -121,10 +131,32 @@ function computeSignal(projectDir: string, state: any): { signal: string; prdPat
   return { signal, prdPath }
 }
 
+/** T-275 #14 fix: arm the docs/prd/ recursive watch if present and not yet armed.
+ *  Idempotent; safe to call lazily from the debounce (covers a docs/prd dir created
+ *  AFTER the watcher was first armed on a fresh project). */
+function armPrdDirWatch(projectDir: string): void {
+  if (prdDirWatcher) return
+  try {
+    const prdDir = path.join(projectDir, 'docs', 'prd')
+    if (!fs.existsSync(prdDir)) return
+    prdDirWatcher = fs.watch(prdDir, { persistent: false, recursive: true }, () => {
+      onPoStateChange(projectDir)
+    })
+    prdDirWatcher.on('error', () => {
+      try { prdDirWatcher?.close() } catch { /* ignore */ }
+      prdDirWatcher = null
+    })
+  } catch {
+    prdDirWatcher = null
+  }
+}
+
 function onPoStateChange(projectDir: string): void {
   if (poDebounceTimer) clearTimeout(poDebounceTimer)
   poDebounceTimer = setTimeout(() => {
     poDebounceTimer = null
+    // Lazily arm the PRD-dir watch in case docs/prd was created after arm time.
+    armPrdDirWatch(projectDir)
     const state = readPoStateSafe(projectDir)
     const { signal, prdPath } = computeSignal(projectDir, state)
     if (signal === lastSignal) return
@@ -136,7 +168,9 @@ function onPoStateChange(projectDir: string): void {
 function teardownPoWatch(): void {
   if (poDebounceTimer) { clearTimeout(poDebounceTimer); poDebounceTimer = null }
   try { poDirWatcher?.close() } catch { /* ignore */ }
+  try { prdDirWatcher?.close() } catch { /* ignore */ }
   poDirWatcher = null
+  prdDirWatcher = null
   poWatchedProjectDir = null
   lastSignal = null
 }
@@ -168,6 +202,13 @@ function armPoWatch(projectDir: string): void {
   } catch {
     teardownPoWatch()
   }
+
+  // T-PATCH-275 (#14 fix): also watch docs/prd/ so a PRD doc written AFTER the version
+  // (a separate step, outside .productune) re-emits the signal → prdReady flips true →
+  // the renderer auto-opens the PRD. Lazily re-armed from the debounce if docs/prd is
+  // created later (fresh project). A PRD write that doesn't change {v,p,r} is deduped
+  // away by computeSignal, so no extra renders.
+  armPrdDirWatch(projectDir)
 }
 
 /** Stop the po-state watcher (called on app quit, mirrors stopTicketsWatch). */

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Search } from 'lucide-react'
-import type { Project, Message } from '../lib/types'
+import type { Project, Message, Phase } from '../lib/types'
 import { useWorkspace } from '../store/workspace'
 import type { Pane } from '../store/workspace'
 import PhaseBreadcrumb from '../components/workspace/PhaseBreadcrumb'
@@ -25,7 +25,7 @@ import { useKeyboardShortcuts } from './workspace/shell/useKeyboardShortcuts'
 import { useIpcSubscriptions } from './workspace/shell/useIpcSubscriptions'
 import { useAutoSurfaceArtifacts } from './workspace/shell/useAutoSurfaceArtifacts'
 import { grid, breadcrumbArea, sidebarResizeArea, chatResizeArea, artifactToastStyle } from './workspace/shell/styles'
-import { buildQuickOpenItems, prdCandidatePaths, type ArtifactEntry } from './workspace/shell/helpers'
+import { buildQuickOpenItems, prdCandidatePaths, resolvePrdPath, type ArtifactEntry } from './workspace/shell/helpers'
 import {
   ACTIVITY_BAR_WIDTH, RESIZE_HANDLE_WIDTH,
   SIDEBAR_MIN_WIDTH, CENTER_MIN_LAYOUT, PO_CHAT_MIN_WIDTH,
@@ -38,16 +38,6 @@ import {
 const SHELL_MIN_WIDTH =
   ACTIVITY_BAR_WIDTH + SIDEBAR_MIN_WIDTH + RESIZE_HANDLE_WIDTH +
   CENTER_MIN_LAYOUT + RESIZE_HANDLE_WIDTH + PO_CHAT_MIN_WIDTH
-
-// T-PATCH-272 (#18): chat-only is a SINGLE PO chat column — no ActivityBar / sidebar /
-// welcome columns. Minimum = the PO chat min width; below it the scroll-wrapper scrolls
-// instead of crushing the chat.
-const SHELL_MIN_WIDTH_CHATONLY = PO_CHAT_MIN_WIDTH
-
-// T-272 adjust: chat-only reading width — the chat is centered to this max instead of
-// stretching the full window on a wide screen. 760px matches the house reading-width
-// used by TicketDetailTab (MarkdownViewer uses 780) — comfortable for chat prose.
-const CHATONLY_CHAT_MAX_WIDTH = 760
 
 interface Props {
   project: Project
@@ -290,6 +280,11 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     const api = (window as any).api
     if (!api?.watchPoState) return
     api.watchPoState(project.projectDir)
+    // T-PATCH-280: arm the docs/ fs-watch alongside the po-state watch (idempotent
+    // per projectDir, main-side). The 'docs:changed' push it produces is consumed
+    // by each open MarkdownViewer so an open doc tab auto-reloads on disk change
+    // (no app restart). Tears down with the project's window-all-closed (stopDocsWatch).
+    api.watchDocs?.(project.projectDir)
     const off = api.onPoStateChanged?.((payload: { projectDir: string; state: unknown; prdReady: boolean; prdPath: string | null }) => {
       // Guard against a stale push from a prior projectDir (re-arm race).
       if (payload.projectDir !== project.projectDir) return
@@ -398,6 +393,22 @@ export default function WorkspaceShell({ project, onBack }: Props) {
       persona: 'pdt-po', resume: useWorkspace.getState().claudeSessionId })
   }
 
+  // ── T-PATCH-276 (#22): clickable phase pills → open the phase's doc in a main tab.
+  // PRD is the minimum mapping: open the resolved PRD markdown tab (reusing the SAME
+  // openTab('markdown:…') path as the #14 auto-nav). Prefer the watcher-resolved
+  // prdPath (a file known to exist); fall back to the best-guess resolver so the
+  // click still works before the watcher has populated prdPath. Other phases have no
+  // single canonical doc yet → not in clickablePhases (render as plain pills).
+  const clickablePhases = useMemo<ReadonlySet<Phase>>(() => new Set<Phase>(['PRD']), [])
+
+  const handlePhaseClick = (p: Phase) => {
+    if (p !== 'PRD') return
+    const resolved = prdPath ?? resolvePrdPath(useWorkspace.getState().poState, project.projectDir).path
+    if (!resolved) return
+    const prdName = resolved.split('/').pop() ?? 'PRD.md'
+    openTab(`markdown:${resolved}`, 'markdown', { path: resolved }, prdName)
+  }
+
   const handleViewLog = () =>
     openTab('terminal:po-log', 'terminal', { logPath: `${project.projectDir}/.productune/logs/po-session.log` }, 'PO Log')
 
@@ -410,105 +421,73 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     poState,
   )
 
-  // T-PATCH-269 #11: layout mode is derived purely from current_version. No version
-  // yet (PRD interview in progress) → chat-only; version exists → full 6-area panel
-  // layout. Reversible derived state (no one-way flag): if the version ever goes away
-  // the layout collapses back to chat-only.
-  const layoutMode: 'full' | 'chatonly' = poStateVersion ? 'full' : 'chatonly'
-
-  const dynamicGrid: React.CSSProperties =
-    layoutMode === 'full'
-      ? {
-          ...grid,
-          // T-PATCH-085 QA fix: minWidth = sum of column minimums (856 px).
-          // Forces the grid element to be at least 856 px wide so that:
-          //   (a) shellRef.getBoundingClientRect().width never reports < 856 → clamp
-          //       functions always see enough space to protect sidebar at 200 px floor.
-          //   (b) when the viewport is < 856 px, the grid overflows its scroll-wrapper
-          //       and overflowX:auto on the wrapper shows a horizontal scrollbar instead
-          //       of visually crushing the sidebar column.
-          minWidth: SHELL_MIN_WIDTH,
-          gridTemplateAreas: `
-            "activity sidebar sidebarResize breadcrumb chatResize chat"
-            "activity sidebar sidebarResize center     chatResize chat"
-            "activity sidebar sidebarResize status     chatResize chat"
-          `,
-          gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
-          // T-PATCH-091 R4: collapse status row to 0 when hidden. StatusBar is wrapped
-          // in overflow:hidden so it clips cleanly at 0 height with no dangling empty cell.
-          // T-PATCH-173: status row 28→34px to fit the restored inline reset label.
-          gridTemplateRows: statusBarVisible ? 'auto 1fr 34px' : 'auto 1fr 0px',
-        }
-      : {
-          // T-PATCH-272 (#18): chat-only = PURE PO chat. The first-run start screen is
-          // ONLY the PO chat — no ActivityBar column, no WelcomePanel intro, no chat
-          // resize handle. ActivityBar / Sidebar / MainPanel / StatusBar / WelcomePanel
-          // are NOT rendered in this mode (pane/tab tree preserved in store; remounts on
-          // expand to full).
-          //
-          // T-272 adjust: the chat is NOT full-bleed on a wide window — it's a CENTERED
-          // reading-width column (CHATONLY_CHAT_MAX_WIDTH). A single bounded grid track
-          // + justifyContent:'center' centers it; the grid's dark background (#0F0F0F,
-          // from ...grid) fills the gutters on either side. On narrow windows the
-          // minmax(0, …) floor lets the column shrink to fit (no overflow).
-          ...grid,
-          minWidth: SHELL_MIN_WIDTH_CHATONLY,
-          gridTemplateAreas: `"chat"`,
-          gridTemplateColumns: `minmax(0, ${CHATONLY_CHAT_MAX_WIDTH}px)`,
-          justifyContent: 'center',
-          gridTemplateRows: '1fr',
-        }
+  // T-PATCH-275 (#18 correction): the shell is ALWAYS the full 4-region layout — no
+  // chat-only collapse. The empty-state (no version yet) is handled INSIDE MainPanel
+  // (it renders WelcomePanel), so the ActivityBar/Sidebar/StatusBar/chat all stay put
+  // and the layout never restructures on version create — only MainPanel's content
+  // swaps WelcomePanel ↔ pane tree.
+  const dynamicGrid: React.CSSProperties = {
+    ...grid,
+    // T-PATCH-085 QA fix: minWidth = sum of column minimums (856 px).
+    // Forces the grid element to be at least 856 px wide so that:
+    //   (a) shellRef.getBoundingClientRect().width never reports < 856 → clamp
+    //       functions always see enough space to protect sidebar at 200 px floor.
+    //   (b) when the viewport is < 856 px, the grid overflows its scroll-wrapper
+    //       and overflowX:auto on the wrapper shows a horizontal scrollbar instead
+    //       of visually crushing the sidebar column.
+    minWidth: SHELL_MIN_WIDTH,
+    gridTemplateAreas: `
+      "activity sidebar sidebarResize breadcrumb chatResize chat"
+      "activity sidebar sidebarResize center     chatResize chat"
+      "activity sidebar sidebarResize status     chatResize chat"
+    `,
+    gridTemplateColumns: `${ACTIVITY_BAR_WIDTH}px ${sidebarWidth}px ${RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${RESIZE_HANDLE_WIDTH}px ${poChatWidth}px`,
+    // T-PATCH-091 R4: collapse status row to 0 when hidden. StatusBar is wrapped
+    // in overflow:hidden so it clips cleanly at 0 height with no dangling empty cell.
+    // T-PATCH-173: status row 28→34px to fit the restored inline reset label.
+    gridTemplateRows: statusBarVisible ? 'auto 1fr 34px' : 'auto 1fr 0px',
+  }
 
   return (
     // Scroll wrapper: constrained to viewport width, lets the grid overflow
     // horizontally at very small windows (<856 px) → scrollbar instead of crush.
     <div style={shellScrollWrapper}>
       <div ref={shellRef} style={dynamicGrid}>
-      {/* T-PATCH-272 (#18): ActivityBar is full-layout only — chat-only is pure PO chat. */}
-      {layoutMode === 'full' ? (
-        <>
-          <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
-          <LeftSidebar project={project} activeIcon={activeIcon} />
-          <div style={sidebarResizeArea}>
-            <ColumnResizeHandle active={activeResizeHandle === 'sidebar'} ariaLabel="Resize left sidebar"
-              onMouseDown={(event) => startResize('sidebar', event)} />
-          </div>
+      <ActivityBar active={activeIcon} onSelect={onSelectActivity} />
+      <LeftSidebar project={project} activeIcon={activeIcon} />
+      <div style={sidebarResizeArea}>
+        <ColumnResizeHandle active={activeResizeHandle === 'sidebar'} ariaLabel="Resize left sidebar"
+          onMouseDown={(event) => startResize('sidebar', event)} />
+      </div>
 
-          <div style={breadcrumbArea}>
-            {/* T-015 A6: always-visible inline header search bar */}
-            <HeaderSearchBar onClick={() => setQuickOpenVisible(true)} />
-            <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
-              onRetry={handleRetry} onViewLog={handleViewLog} />
-            {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
-            <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate} />
-            {drainVisible && project && (
-              <PendingPromotionDrain projectDir={project.projectDir}
-                claudeSessionId={useWorkspace.getState().claudeSessionId}
-                onDone={() => setDrainVisible(false)} />
-            )}
-          </div>
+      <div style={breadcrumbArea}>
+        {/* T-015 A6: always-visible inline header search bar */}
+        <HeaderSearchBar onClick={() => setQuickOpenVisible(true)} />
+        <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
+          onRetry={handleRetry} onViewLog={handleViewLog} />
+        {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
+        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate}
+          onPhaseClick={handlePhaseClick} clickablePhases={clickablePhases} />
+        {drainVisible && project && (
+          <PendingPromotionDrain projectDir={project.projectDir}
+            claudeSessionId={useWorkspace.getState().claudeSessionId}
+            onDone={() => setDrainVisible(false)} />
+        )}
+      </div>
 
-          <MainPanel />
-          {/* T-PATCH-091 R4: clip StatusBar to 0 height when the status row collapses
-              to 0px — no dangling empty grid cell or visible bar remnant.
-              T-PATCH-186: only clip while collapsed. When the bar is visible we need
-              overflow:visible so RunSegment's upward drop-up (bottom:28, i.e. above
-              this 34px cell) can escape instead of being clipped invisible. */}
-          <div style={{ gridArea: 'status', overflow: statusBarVisible ? 'visible' : 'hidden' }}>
-            <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
-          </div>
-          {/* Chat resize handle: full-layout only. In chat-only the chat is full-width
-              with no neighbouring column to resize against. */}
-          <div style={chatResizeArea}>
-            <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"
-              onMouseDown={(event) => startResize('chat', event)} />
-          </div>
-        </>
-      ) : (
-        // T-PATCH-272 (#18): chat-only = pure PO chat. No ActivityBar / WelcomePanel /
-        // resize handle — ChatPanel below fills the single 'chat' grid column.
-        null
-      )}
+      <MainPanel />
+      {/* T-PATCH-091 R4: clip StatusBar to 0 height when the status row collapses
+          to 0px — no dangling empty grid cell or visible bar remnant.
+          T-PATCH-186: only clip while collapsed. When the bar is visible we need
+          overflow:visible so RunSegment's upward drop-up (bottom:28, i.e. above
+          this 34px cell) can escape instead of being clipped invisible. */}
+      <div style={{ gridArea: 'status', overflow: statusBarVisible ? 'visible' : 'hidden' }}>
+        <StatusBar onOpenHealthBanner={() => setRestartModalOpen(true)} />
+      </div>
+      <div style={chatResizeArea}>
+        <ColumnResizeHandle active={activeResizeHandle === 'chat'} ariaLabel="Resize PO chat"
+          onMouseDown={(event) => startResize('chat', event)} />
+      </div>
 
       <ChatPanel />
 

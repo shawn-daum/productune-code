@@ -1,4 +1,5 @@
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { useRef, useState, useEffect, useCallback, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import {
   usePersonaPresence,
@@ -6,8 +7,11 @@ import {
   PERSONA_ORDER,
   PERSONA_LABELS,
   PERSONA_COLORS,
+  STREAM_TAIL_MAX,
   type PersonaId,
   type PersonaEntry,
+  type StreamLine,
+  type WorkerResult,
 } from '../../store/personaPresence'
 import { useWorkspace } from '../../store/workspace'
 
@@ -235,24 +239,86 @@ const tooltipStyle: React.CSSProperties = {
   pointerEvents: 'none',
 }
 
-// ── Worker live-stream slot (T-PATCH-270 #9) ──────────────────────────────────
-// Read-only mono tail of the active worker's output. Renders only when a worker
-// (designer/dev/qa — PO HARD-EXCLUDED via selectActiveWorker, which the store
-// feeds; PO presence is driven separately by usePOPresenceDerive) is working
-// AND has tail lines. Per-line ellipsis, no horizontal scroll. The two layouts
-// (inline-right fixed-height / stacked full-width) are chosen by the parent via
-// the `layout` prop (ResizeObserver on the bar container).
+// ── Cost/duration meta formatting (T-PATCH-281 AC-7) ──────────────────────────
+// Compact, silent-on-missing. tokens: "12.3k tok" (or raw when <1000). duration:
+// "3.2s" / "1m 04s". Missing usage → the field is dropped entirely (no 0/garbage).
+
+function formatTokens(total?: number): string | null {
+  if (typeof total !== 'number' || total <= 0) return null
+  if (total >= 1000) return `${(total / 1000).toFixed(1)}k tok`
+  return `${total} tok`
+}
+
+function formatDuration(startedAt?: number, completedAt?: number, durationMs?: number): string | null {
+  let ms: number | null = null
+  if (typeof durationMs === 'number' && durationMs > 0) ms = durationMs
+  else if (typeof startedAt === 'number' && typeof completedAt === 'number' && completedAt > startedAt) {
+    ms = completedAt - startedAt
+  }
+  if (ms == null || ms <= 0) return null
+  const sec = ms / 1000
+  if (sec < 60) return `${sec.toFixed(1)}s`
+  const m = Math.floor(sec / 60)
+  const s = Math.round(sec % 60)
+  return `${m}m ${s.toString().padStart(2, '0')}s`
+}
+
+// ── Worker live-stream slot (T-PATCH-270 #9 · redesigned T-PATCH-281) ──────────
+// Fixed-height, internally-scrolling (auto-follow) read-only panel showing the
+// active worker's output — prose primary (sans/muted), tool subordinate (mono/
+// faint). Header shows the persona (label+color+live dot when running) and a
+// right-aligned cost/duration meta (AC-7 — the freed space from the removed
+// READ-ONLY badge, AC-4). Click the body → expanded overlay (AC-2). When the
+// worker finishes, the frozen `result` keeps the panel readable until next turn
+// (AC-6). PO is HARD-EXCLUDED upstream (selectActiveWorker / worker-stream never
+// carries PO).
+
+interface StreamLineViewProps {
+  line: StreamLine
+}
+function StreamLineView({ line }: StreamLineViewProps) {
+  return (
+    <div style={line.kind === 'prose' ? streamProseLineStyle : streamToolLineStyle}>
+      {line.text}
+    </div>
+  )
+}
+
+interface MetaBadgesProps {
+  tokens: string | null
+  duration: string | null
+}
+function MetaBadges({ tokens, duration }: MetaBadgesProps) {
+  if (!tokens && !duration) return null
+  return (
+    <span style={metaWrapStyle}>
+      {duration && <span style={metaBadgeStyle}>{duration}</span>}
+      {tokens && <span style={metaBadgeStyle}>{tokens}</span>}
+    </span>
+  )
+}
 
 interface StreamSlotProps {
   persona: PersonaId
-  lines: string[]
+  lines: StreamLine[]
+  live: boolean            // worker currently working (live dot + blink) vs. frozen result
+  tokens: string | null
+  duration: string | null
   layout: 'inline' | 'stacked'
+  onExpand: () => void
 }
 
-function WorkerStreamSlot({ persona, lines, layout }: StreamSlotProps) {
+function WorkerStreamSlot({ persona, lines, live, tokens, duration, layout, onExpand }: StreamSlotProps) {
   const { t } = useTranslation()
   const color = PERSONA_COLORS[persona]
   const label = PERSONA_LABELS[persona]
+  const bodyRef = useRef<HTMLDivElement>(null)
+
+  // AC-1 auto-follow: keep the newest line at the bottom in view as lines land.
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines.length])
 
   const slotStyle: React.CSSProperties = {
     minWidth: 0,
@@ -262,6 +328,8 @@ function WorkerStreamSlot({ persona, lines, layout }: StreamSlotProps) {
     border: '1px solid var(--border, #2A2A2A)',
     borderRadius: 8,
     overflow: 'hidden',
+    // AC-1: FIXED height in both layouts so the slot never grows/squishes the
+    // chip row — the body scrolls internally instead.
     ...(layout === 'inline'
       ? { flex: 1, alignSelf: 'stretch' }
       : { width: '100%', height: 76 }),
@@ -275,18 +343,112 @@ function WorkerStreamSlot({ persona, lines, layout }: StreamSlotProps) {
       aria-label={t('workspace.presence.streamAriaLabel', { persona: label })}
     >
       <div style={streamHdrStyle}>
-        <span style={{ ...streamLiveStyle, background: color }} aria-hidden="true" />
-        <span style={{ ...streamWhoStyle, color }}>{label} · live</span>
-        <span style={streamRoStyle}>{t('workspace.presence.readOnly')}</span>
+        <span
+          style={{ ...streamDotStyle, background: color, ...(live ? {} : { animation: 'none' }) }}
+          aria-hidden="true"
+        />
+        <span style={{ ...streamWhoStyle, color }}>
+          {label}{live ? ' · live' : ''}
+        </span>
+        {/* AC-4: READ-ONLY badge removed; AC-7: cost/duration in the freed space. */}
+        <MetaBadges tokens={tokens} duration={duration} />
       </div>
-      <div style={streamBodyStyle} className="pdt-thin-scroll">
+      {/* AC-2: click body → expand overlay. Non-interactive text (text-select only)
+          conveys read-only (AC-4) — the expand click is on the container, cursor
+          stays default so it doesn't read as an editable field. */}
+      <div
+        ref={bodyRef}
+        style={streamBodyStyle}
+        className="pdt-thin-scroll"
+        onClick={onExpand}
+        title={t('workspace.presence.expandHint')}
+      >
         {lines.map((ln, i) => (
-          <div key={i} style={streamLineStyle}>
-            {ln}
-          </div>
+          <StreamLineView key={i} line={ln} />
         ))}
       </div>
     </div>
+  )
+}
+
+// ── Expanded overlay (T-PATCH-281 AC-2) ───────────────────────────────────────
+// Portal + backdrop modal showing the full retained buffer, large. Esc / backdrop
+// / × close. Live: re-renders as new lines arrive (parent passes fresh `lines`).
+
+interface ExpandOverlayProps {
+  persona: PersonaId
+  lines: StreamLine[]
+  live: boolean
+  tokens: string | null
+  duration: string | null
+  onClose: () => void
+}
+function ExpandOverlay({ persona, lines, live, tokens, duration, onClose }: ExpandOverlayProps) {
+  const { t } = useTranslation()
+  const color = PERSONA_COLORS[persona]
+  const label = PERSONA_LABELS[persona]
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // Esc close + focus the panel for a11y (AC-8).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); onClose() }
+    }
+    document.addEventListener('keydown', onKey, true)
+    panelRef.current?.focus()
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [onClose])
+
+  // Auto-follow while expanded (live updates, AC-2).
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [lines.length])
+
+  return createPortal(
+    <div
+      style={overlayBackdropStyle}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        ref={panelRef}
+        style={overlayPanelStyle}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('workspace.presence.streamAriaLabel', { persona: label })}
+        tabIndex={-1}
+      >
+        <div style={overlayHdrStyle}>
+          <span
+            style={{ ...streamDotStyle, background: color, ...(live ? {} : { animation: 'none' }) }}
+            aria-hidden="true"
+          />
+          <span style={{ ...streamWhoStyle, color, fontSize: 13 }}>
+            {label}{live ? ' · live' : ''}
+          </span>
+          <MetaBadges tokens={tokens} duration={duration} />
+          <button
+            style={overlayCloseStyle}
+            onClick={onClose}
+            aria-label={t('common.close')}
+            title={t('common.close')}
+          >
+            ×
+          </button>
+        </div>
+        <div ref={bodyRef} style={overlayBodyStyle} className="pdt-thin-scroll" role="log" aria-live="polite">
+          {lines.length === 0 ? (
+            <div style={streamToolLineStyle}>{t('workspace.presence.workingNoTask')}</div>
+          ) : (
+            lines.map((ln, i) => <StreamLineView key={i} line={ln} />)
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -299,7 +461,7 @@ const streamHdrStyle: React.CSSProperties = {
   background: 'var(--surface-panel, #161616)',
   flexShrink: 0,
 }
-const streamLiveStyle: React.CSSProperties = {
+const streamDotStyle: React.CSSProperties = {
   width: 6,
   height: 6,
   borderRadius: '50%',
@@ -312,18 +474,20 @@ const streamWhoStyle: React.CSSProperties = {
   letterSpacing: '0.04em',
   whiteSpace: 'nowrap',
 }
-const streamRoStyle: React.CSSProperties = {
+// AC-7: cost/duration meta badges (replaces the removed READ-ONLY badge, AC-4).
+const metaWrapStyle: React.CSSProperties = {
   marginLeft: 'auto',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  flexShrink: 0,
+}
+const metaBadgeStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   fontSize: 9,
-  letterSpacing: '0.06em',
-  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
   color: 'var(--txt-faint, #6a6a6a)',
-  border: '1px solid var(--border, #2A2A2A)',
-  borderRadius: 3,
-  padding: '0 4px',
   whiteSpace: 'nowrap',
-  flexShrink: 0,
 }
 const streamBodyStyle: React.CSSProperties = {
   flex: 1,
@@ -331,18 +495,88 @@ const streamBodyStyle: React.CSSProperties = {
   overflowY: 'auto',
   overflowX: 'hidden',
   padding: '5px 9px',
-  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   fontSize: 11.5,
   lineHeight: 1.55,
-  color: 'var(--txt-muted, #9a9a9a)',
   display: 'flex',
   flexDirection: 'column',
   justifyContent: 'flex-end',
+  cursor: 'pointer',       // click → expand (AC-2)
 }
-const streamLineStyle: React.CSSProperties = {
+// AC-5: PROSE lines — sans, muted, primary (readable natural language).
+const streamProseLineStyle: React.CSSProperties = {
+  color: 'var(--txt-muted, #9a9a9a)',
+  whiteSpace: 'normal',
+  overflowWrap: 'anywhere',
+}
+// AC-5: TOOL lines — mono, faint, subordinate (compact trace).
+const streamToolLineStyle: React.CSSProperties = {
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  fontSize: 10.5,
+  color: 'var(--txt-faint, #6a6a6a)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+}
+
+// Expand overlay styles (AC-2).
+const overlayBackdropStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(0,0,0,0.55)',
+  zIndex: 1000,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 24,
+}
+const overlayPanelStyle: React.CSSProperties = {
+  width: 'min(720px, 92vw)',
+  height: 'min(560px, 80vh)',
+  display: 'flex',
+  flexDirection: 'column',
+  background: 'var(--surface-base, #1a1a1a)',
+  border: '1px solid var(--border, #2A2A2A)',
+  borderRadius: 10,
+  overflow: 'hidden',
+  boxShadow: '0 12px 48px rgba(0,0,0,.6)',
+  outline: 'none',
+}
+const overlayHdrStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: '8px 12px',
+  borderBottom: '1px solid var(--border, #2A2A2A)',
+  background: 'var(--surface-panel, #161616)',
+  flexShrink: 0,
+}
+const overlayCloseStyle: React.CSSProperties = {
+  marginLeft: 8,
+  width: 22,
+  height: 22,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: 18,
+  lineHeight: 1,
+  color: 'var(--txt-muted, #9a9a9a)',
+  background: 'transparent',
+  border: '1px solid var(--border, #2A2A2A)',
+  borderRadius: 5,
+  cursor: 'pointer',
+  flexShrink: 0,
+}
+const overlayBodyStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  overflowX: 'hidden',
+  padding: '10px 14px',
+  fontSize: 13,
+  lineHeight: 1.6,
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
 }
 
 // ── Bar component ─────────────────────────────────────────────────────────────
@@ -354,9 +588,10 @@ const streamLineStyle: React.CSSProperties = {
 const STREAM_INLINE_BP = 380
 
 function PersonaPresenceBar() {
-  const { entries, dismissDone, streamTail } = usePersonaPresence()
+  const { entries, dismissDone, streamTail, workerResult, workerMeta } = usePersonaPresence()
   const barRef = useRef<HTMLDivElement>(null)
   const [layout, setLayout] = useState<'inline' | 'stacked'>('inline')
+  const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
     ensureSpriteKeyframe()
@@ -378,28 +613,105 @@ function PersonaPresenceBar() {
     return () => ro.disconnect()
   }, [])
 
-  // T-PATCH-270 (#9): latest-active-1 worker (PO HARD-EXCLUDED via
-  // selectActiveWorker). Render the slot only when that worker is working AND
-  // has tail lines. PO working concurrently never suppresses a live worker slot.
-  const activeWorker = selectActiveWorker(entries)
-  const activeLines = activeWorker ? streamTail[activeWorker] : []
-  const showStream = !!activeWorker && activeLines.length > 0
+  // ── Slot source resolution (T-PATCH-281) ────────────────────────────────────
+  // LIVE takes precedence: the latest-active worker (PO HARD-EXCLUDED) with live
+  // tail lines. Otherwise fall back to a FROZEN result held past the sprite's
+  // auto-idle (AC-6) — the most-recently-completed worker that still has a result.
+  const liveWorker = selectActiveWorker(entries)
+  const liveLines = liveWorker ? streamTail[liveWorker] : []
+  const hasLive = !!liveWorker && liveLines.length > 0
+
+  // Frozen fallback: pick the persona whose held result completed most recently.
+  let resultWorker: PersonaId | null = null
+  if (!hasLive) {
+    let bestAt = -1
+    for (const p of PERSONA_ORDER) {
+      if (p === 'po') continue
+      const r = workerResult[p]
+      if (r && (r.completedAt ?? 0) > bestAt) { bestAt = r.completedAt ?? 0; resultWorker = p }
+    }
+  }
+
+  const slotWorker = hasLive ? liveWorker : resultWorker
+  const isLiveSlot = hasLive
+  const frozen: WorkerResult | null = !hasLive && resultWorker ? workerResult[resultWorker] : null
+  // Full retained buffer (for expand); collapsed slot slices the short tail.
+  const fullLines: StreamLine[] = isLiveSlot ? liveLines : (frozen?.lines ?? [])
+  const tailLines = fullLines.slice(-STREAM_TAIL_MAX)
+
+  // Cost/duration: live meta while running, frozen snapshot after.
+  const meta = slotWorker ? (isLiveSlot ? workerMeta[slotWorker] : {
+    usage: frozen?.usage, startedAt: frozen?.startedAt, completedAt: frozen?.completedAt,
+  }) : {}
+  const tokens = formatTokens(meta.usage?.total_tokens)
+  const duration = formatDuration(meta.startedAt, meta.completedAt, meta.usage?.duration_ms)
+
+  const showStream = !!slotWorker && fullLines.length > 0
+
+  // Close the expand overlay if the slot disappears (next-turn clear).
+  useEffect(() => {
+    if (!showStream && expanded) setExpanded(false)
+  }, [showStream, expanded])
+
+  const inline = layout === 'inline'
 
   return (
     <div
       ref={barRef}
-      style={layout === 'inline' || !showStream ? barStyle : barStackedStyle}
+      style={inline || !showStream ? barStyle : barStackedStyle}
       className="rp-persona-bar"
       aria-label="Persona presence"
     >
-      {/* Chip row — its own flex row so the slot can sit beside (inline) or below (stacked). */}
-      <div style={showStream && layout === 'inline' ? chipRowInlineStyle : chipRowStyle}>
-        {PERSONA_ORDER.map((id) => (
-          <PersonaChip key={id} entry={entries[id]} onDismiss={dismissDone} />
-        ))}
+      {/* Chip row. AC-3 anchor: in inline layout the slot is rendered immediately
+          AFTER the active worker's chip, so it reads as belonging to that persona
+          (not floating between two chips). In stacked layout the slot drops below
+          the whole row (header label+color carries the ownership, AC-3 fallback). */}
+      <div style={showStream && inline ? chipRowInlineStyle : chipRowStyle}>
+        {PERSONA_ORDER.map((id) => {
+          const carriesSlot = showStream && inline && slotWorker === id
+          return (
+            <span key={id} style={carriesSlot ? chipCellGrowStyle : chipCellStyle}>
+              <PersonaChip entry={entries[id]} onDismiss={dismissDone} />
+              {carriesSlot && slotWorker && (
+                <div style={anchoredSlotStyle}>
+                  <WorkerStreamSlot
+                    persona={slotWorker}
+                    lines={tailLines}
+                    live={isLiveSlot}
+                    tokens={tokens}
+                    duration={duration}
+                    layout="inline"
+                    onExpand={() => setExpanded(true)}
+                  />
+                </div>
+              )}
+            </span>
+          )
+        })}
       </div>
-      {showStream && activeWorker && (
-        <WorkerStreamSlot persona={activeWorker} lines={activeLines} layout={layout} />
+
+      {/* Stacked fallback: full-width slot below the chip row. */}
+      {showStream && !inline && slotWorker && (
+        <WorkerStreamSlot
+          persona={slotWorker}
+          lines={tailLines}
+          live={isLiveSlot}
+          tokens={tokens}
+          duration={duration}
+          layout="stacked"
+          onExpand={() => setExpanded(true)}
+        />
+      )}
+
+      {expanded && slotWorker && (
+        <ExpandOverlay
+          persona={slotWorker}
+          lines={fullLines}
+          live={isLiveSlot}
+          tokens={tokens}
+          duration={duration}
+          onClose={() => setExpanded(false)}
+        />
       )}
     </div>
   )
@@ -456,8 +768,34 @@ const chipRowStyle: React.CSSProperties = {
   gap: 14,
 }
 
-// Inline layout: the chip row sits left, fixed-width, beside the stretching slot.
+// Inline layout: the chip row takes the full bar width so the anchored slot (which
+// lives inside a chip cell) can stretch to the right of its persona's chip.
 const chipRowInlineStyle: React.CSSProperties = {
   ...chipRowStyle,
-  flexShrink: 0,
+  flex: 1,
+  minWidth: 0,
+}
+
+// A chip cell — the chip plus (for the active worker) its anchored slot to the
+// right. Plain cells are content-width; the cell carrying the slot grows to fill
+// the remaining bar width so the panel is usably wide (chipCellGrowStyle).
+const chipCellStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  minWidth: 0,
+}
+const chipCellGrowStyle: React.CSSProperties = {
+  ...chipCellStyle,
+  flex: 1,
+  alignSelf: 'stretch',
+}
+
+// The anchored inline slot wrapper — stretches to consume the bar's free width so
+// the panel is usably wide while staying to the right of its persona's chip (AC-3).
+const anchoredSlotStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  alignSelf: 'stretch',
+  display: 'flex',
 }

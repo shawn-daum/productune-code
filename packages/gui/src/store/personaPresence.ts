@@ -120,19 +120,61 @@ export function selectActiveWorker(
 
 // ── Store ────────────────────────────────────────────────────────────────────
 
-// ── Worker output stream tail (T-PATCH-270 #9) ────────────────────────────────
-// Bounded ring of the latest worker tail lines per persona. PO is excluded by
+// ── Worker output stream tail (T-PATCH-270 #9 · T-PATCH-281) ──────────────────
+// Bounded ring of the latest worker output lines per persona. PO is excluded by
 // construction — pushStreamLine is only fed by the po:worker-stream channel,
-// which never carries PO. The ring is small (last N lines) so the read-only
-// mono slot stays cheap and the store never grows unbounded across a long turn.
+// which never carries PO.
+//
+// T-PATCH-281 (#4/AC-5): each ring entry is a StreamLine {text, kind} so the
+// renderer can style worker PROSE (natural language, primary) apart from TOOL
+// lines (compact tool traces, subordinate) and fall back to tool-only when no
+// prose flowed.
 
-/** Last N worker tail lines retained per persona (renderer shows the tail). */
+export type StreamLineKind = 'prose' | 'tool'
+
+export interface StreamLine {
+  text: string
+  kind: StreamLineKind
+}
+
+/**
+ * T-PATCH-281 (AC-7/AC-6): frozen result of a completed worker delegation. Split
+ * from the LIVE streamTail so it survives the sprite's 2s done→idle auto-collapse
+ * and persists until the next turn (§Persist-reconcile). `lines` is a snapshot of
+ * the tail at freeze time; `summary` is the worker's final headline (promoted
+ * prose); `usage`/`startedAt`/`completedAt` drive the cost+duration display.
+ */
+export interface WorkerResult {
+  lines: StreamLine[]
+  usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
+  startedAt?: number
+  completedAt?: number
+}
+
+/** T-PATCH-281 (AC-7): live per-worker meta (usage/duration), refreshed while
+ *  running (task_progress) and finalized at completion. */
+export interface WorkerMeta {
+  usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
+  startedAt?: number
+  completedAt?: number
+}
+
+/** Lines the COLLAPSED slot shows (short tail). The expanded overlay shows up to
+ *  STREAM_LOG_MAX. We keep a single ring at STREAM_LOG_MAX and the collapsed slot
+ *  slices the last STREAM_TAIL_MAX at render — no dual ring. */
 export const STREAM_TAIL_MAX = 6
+/** T-PATCH-281 (AC-2): longer retained buffer for the expand overlay. */
+export const STREAM_LOG_MAX = 200
 
 interface PersonaPresenceState {
   entries: Record<PersonaId, PersonaEntry>
-  /** T-PATCH-270 (#9): per-persona bounded ring of worker output tail lines. */
-  streamTail: Record<PersonaId, string[]>
+  /** T-PATCH-270 (#9) · T-PATCH-281: per-persona ring of {text,kind} lines (live). */
+  streamTail: Record<PersonaId, StreamLine[]>
+  /** T-PATCH-281 (AC-6): frozen result per worker, persists past the 2s auto-idle
+   *  until the next turn clears it. null when no completed result is held. */
+  workerResult: Record<PersonaId, WorkerResult | null>
+  /** T-PATCH-281 (AC-7): live cost/duration meta per worker. */
+  workerMeta: Record<PersonaId, WorkerMeta>
 
   /** Apply a PersonaStatusEvent (main→renderer IPC payload or direct call). */
   setPersonaState: (
@@ -142,15 +184,34 @@ interface PersonaPresenceState {
   ) => void
 
   /**
-   * T-PATCH-270 (#9): append a worker tail line to a persona's ring (capped at
-   * STREAM_TAIL_MAX). PO is HARD-EXCLUDED (no-op) so the PO path (T-PATCH-252)
+   * T-PATCH-270 (#9): append a worker line to a persona's ring (capped at
+   * STREAM_LOG_MAX). PO is HARD-EXCLUDED (no-op) so the PO path (T-PATCH-252)
    * never streams worker output. Also a hard #10 backstop: if the line arrives
    * while the persona isn't `working` (e.g. the parent delegating event was
    * dropped), flip it to `working` — nested worker activity is ground-truth.
+   * T-PATCH-281: `kind` tags prose vs tool (default 'tool' for back-compat).
    */
-  pushStreamLine: (persona: PersonaId, line: string) => void
+  pushStreamLine: (persona: PersonaId, line: string, kind?: StreamLineKind) => void
 
-  /** T-PATCH-270 (#9): clear a persona's stream ring (called on done collapse). */
+  /** T-PATCH-281 (AC-7): merge live worker meta (usage/startedAt/completedAt). */
+  setWorkerMeta: (persona: PersonaId, meta: WorkerMeta) => void
+
+  /**
+   * T-PATCH-281 (AC-6): freeze the persona's current live tail + meta into
+   * workerResult so it survives the sprite auto-idle collapse. Called at
+   * subagent-done BEFORE clearStreamTail. No-op for PO / empty tail.
+   */
+  freezeWorkerResult: (persona: PersonaId) => void
+
+  /**
+   * T-PATCH-281 (AC-6): clear ALL held worker results (+ any live tails/meta) —
+   * the "next turn" trigger. Called on user chat send / a worker entering `working`
+   * / session restart.
+   */
+  clearWorkerResults: () => void
+
+  /** T-PATCH-270 (#9): clear a persona's LIVE stream ring (called on done collapse).
+   *  Does NOT touch workerResult (that's the persisted copy). */
   clearStreamTail: (persona: PersonaId) => void
 
   /** Reset a persona back to idle (called by done-dismiss logic). */
@@ -184,15 +245,31 @@ function makeDefaultEntries(): Record<PersonaId, PersonaEntry> {
   }
 }
 
-function makeEmptyStreamTail(): Record<PersonaId, string[]> {
+function makeEmptyStreamTail(): Record<PersonaId, StreamLine[]> {
   return { po: [], designer: [], dev: [], qa: [] }
+}
+
+function makeEmptyWorkerResult(): Record<PersonaId, WorkerResult | null> {
+  return { po: null, designer: null, dev: null, qa: null }
+}
+
+function makeEmptyWorkerMeta(): Record<PersonaId, WorkerMeta> {
+  return { po: {}, designer: {}, dev: {}, qa: {} }
 }
 
 export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
   entries: makeDefaultEntries(),
   streamTail: makeEmptyStreamTail(),
+  workerResult: makeEmptyWorkerResult(),
+  workerMeta: makeEmptyWorkerMeta(),
 
   setPersonaState: (persona, state, opts) => {
+    // T-PATCH-281 (AC-6 next-turn trigger): a WORKER freshly entering `working`
+    // (was not already working) means a new task started → clear any held results
+    // from the previous turn. Read prev state before the set so we only clear on a
+    // genuine idle/done→working transition (not a working→working task refresh).
+    const prevState = usePersonaPresence.getState().entries[persona].state
+    const freshWorkerStart = persona !== 'po' && state === 'working' && prevState !== 'working'
     set((s) => {
       const prev = s.entries[persona]
       // working: opts.task 를 entry.task 에 저장(tooltip 노출용).
@@ -208,9 +285,17 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
         task: state === 'working' ? opts?.task : undefined,
         updatedAt: new Date().toISOString(),
       }
-      return {
+      const patch: Partial<PersonaPresenceState> = {
         entries: { ...s.entries, [persona]: next },
       }
+      if (freshWorkerStart) {
+        // Clear ALL held results (+ any stale live tails/meta) — the previous
+        // turn's panels give way to this new task (§Persist-reconcile).
+        patch.workerResult = makeEmptyWorkerResult()
+        patch.workerMeta = makeEmptyWorkerMeta()
+        patch.streamTail = makeEmptyStreamTail()
+      }
+      return patch
     })
     // T-PATCH-164: done → idle 자동 복귀 타이머 관리.
     // 모든 전이에서 먼저 해당 persona 의 기존 타이머를 cleanup(상태 충돌/중첩 방지),
@@ -228,7 +313,7 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
     }
   },
 
-  pushStreamLine: (persona, line) => {
+  pushStreamLine: (persona, line, kind = 'tool') => {
     // PO HARD-EXCLUDED — the worker-stream channel never carries PO, but guard
     // defensively so the PO sprite path (T-PATCH-252) can never grow a tail.
     if (persona === 'po') return
@@ -237,23 +322,72 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
     // #10 backstop: nested worker output is ground-truth that the worker is
     // live. If the entry isn't `working` (parent delegating event missing, or
     // already flipped to done by a stray healthy), re-assert working so the
-    // sprite wakes from grey-idle. setPersonaState owns auto-idle timer cleanup,
-    // so we route through it rather than mutating entries inline.
+    // sprite wakes from grey-idle. setPersonaState owns auto-idle timer cleanup
+    // AND the fresh-working result clear, so we route through it.
     const entry = usePersonaPresence.getState().entries[persona]
     if (entry.state !== 'working') {
       usePersonaPresence.getState().setPersonaState(persona, 'working', { task: entry.task })
     }
     set((s) => {
       const prev = s.streamTail[persona]
-      // Drop a byte-identical immediate repeat (defense against duplicate IPC).
-      if (prev.length > 0 && prev[prev.length - 1] === trimmed) return s
+      // Drop a byte-identical immediate repeat (defense against duplicate IPC) —
+      // compare text only (kind never changes for the same text).
+      if (prev.length > 0 && prev[prev.length - 1].text === trimmed) return s
+      const nextLine: StreamLine = { text: trimmed, kind }
       return {
-        streamTail: { ...s.streamTail, [persona]: [...prev, trimmed].slice(-STREAM_TAIL_MAX) },
+        streamTail: { ...s.streamTail, [persona]: [...prev, nextLine].slice(-STREAM_LOG_MAX) },
+      }
+    })
+  },
+
+  setWorkerMeta: (persona, meta) => {
+    if (persona === 'po') return
+    set((s) => {
+      const prev = s.workerMeta[persona]
+      const merged: WorkerMeta = {
+        // usage: last-writer wins (task_progress refresh / completion final).
+        usage: meta.usage ?? prev.usage,
+        // startedAt: sticky (set once at task_started, don't overwrite with undefined).
+        startedAt: meta.startedAt ?? prev.startedAt,
+        completedAt: meta.completedAt ?? prev.completedAt,
+      }
+      return { workerMeta: { ...s.workerMeta, [persona]: merged } }
+    })
+  },
+
+  freezeWorkerResult: (persona) => {
+    if (persona === 'po') return
+    set((s) => {
+      const lines = s.streamTail[persona]
+      const meta = s.workerMeta[persona]
+      // Nothing to persist if the worker produced no lines AND no meta.
+      if (lines.length === 0 && !meta.usage && meta.startedAt == null) return s
+      const result: WorkerResult = {
+        lines: lines.slice(-STREAM_LOG_MAX),
+        usage: meta.usage,
+        startedAt: meta.startedAt,
+        completedAt: meta.completedAt ?? Date.now(),
+      }
+      return { workerResult: { ...s.workerResult, [persona]: result } }
+    })
+  },
+
+  clearWorkerResults: () => {
+    set((s) => {
+      // No-op fast path — nothing held.
+      const anyResult = PERSONA_ORDER.some((p) => s.workerResult[p] != null)
+      const anyTail = PERSONA_ORDER.some((p) => s.streamTail[p].length > 0)
+      if (!anyResult && !anyTail) return s
+      return {
+        workerResult: makeEmptyWorkerResult(),
+        workerMeta: makeEmptyWorkerMeta(),
+        streamTail: makeEmptyStreamTail(),
       }
     })
   },
 
   clearStreamTail: (persona) => {
+    // Live ring only — workerResult (the persisted freeze) is untouched (AC-6).
     set((s) => {
       if (s.streamTail[persona].length === 0) return s
       return { streamTail: { ...s.streamTail, [persona]: [] } }
@@ -271,7 +405,9 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
           ...s.entries,
           [persona]: { ...entry, state: 'idle', artifact: undefined, task: undefined, updatedAt: new Date().toISOString() },
         },
-        // T-PATCH-270 (#9): collapse the stream slot when the worker goes idle.
+        // T-PATCH-270 (#9): collapse the LIVE stream slot when the worker goes idle.
+        // T-PATCH-281 (AC-6): workerResult is NOT cleared here — the frozen result
+        // panel survives the sprite going grey until the next turn.
         streamTail: { ...s.streamTail, [persona]: [] },
       }
     })
@@ -280,6 +416,11 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
   resetAll: () => {
     // T-PATCH-164: 전체 reset 시 모든 persona 타이머 cleanup.
     for (const persona of PERSONA_ORDER) clearAutoIdle(persona)
-    set({ entries: makeDefaultEntries(), streamTail: makeEmptyStreamTail() })
+    set({
+      entries: makeDefaultEntries(),
+      streamTail: makeEmptyStreamTail(),
+      workerResult: makeEmptyWorkerResult(),
+      workerMeta: makeEmptyWorkerMeta(),
+    })
   },
 }))

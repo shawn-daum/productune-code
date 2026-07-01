@@ -96,6 +96,14 @@ function register() {
 
   // ── po:onMsgId — placeholder bubble 생성 ─────────────────────────────────
   offFns.push(api.poOnMsgId?.((msgId: string) => {
+    // T-PATCH-281 (AC-6 next-turn trigger (i)): a new PO turn starting clears any
+    // worker result panels held from the previous turn. The worker completion +
+    // freeze happen WITHIN a single PO turn's stream (dispatch→task_notification→
+    // PO reaction all in one runPoTurn), so this onMsgId — which fires at the START
+    // of the NEXT turn (user chat / answerQuestion resume / fresh-cycle) — is the
+    // correct clear point, never mid-turn. The other AC-6 trigger (a worker entering
+    // `working`) is handled in personaPresence.setPersonaState.
+    usePersonaPresence.getState().clearWorkerResults()
     const kind: MessageKind = useWorkspace.getState().inFlightKind ?? 'po'
     const placeholder: Message = {
       id: msgId,
@@ -356,11 +364,31 @@ function register() {
   // coalesces deltas into whole lines + skips noise, so this is line-rate, not
   // token-rate. pushStreamLine maps persona, HARD-EXCLUDES PO, and re-asserts
   // `working` as a #10 backstop. subagent-done collapses the ring (above).
-  offFns.push(api.poOnWorkerStream?.((payload: { persona: string; line: string }) => {
+  offFns.push(api.poOnWorkerStream?.((payload: { persona: string; line: string; kind?: 'prose' | 'tool' }) => {
     const personaId = personaIdFromAgentType(payload.persona)
     if (!personaId || personaId === 'po') return
     if (typeof payload.line !== 'string' || !payload.line.trim()) return
-    usePersonaPresence.getState().pushStreamLine(personaId, payload.line)
+    // T-PATCH-281 (#4): forward the prose/tool kind so the renderer can style it.
+    usePersonaPresence.getState().pushStreamLine(personaId, payload.line, payload.kind ?? 'tool')
+  }))
+
+  // ── po:worker-meta (T-PATCH-281 AC-7) ────────────────────────────────────
+  // Read-only worker cost/duration meta (usage + started/completed ms). Merged
+  // into personaPresence.workerMeta; the result panel reads it for the token +
+  // duration display. Missing usage → the renderer silently drops that line.
+  offFns.push(api.poOnWorkerMeta?.((payload: {
+    persona: string
+    usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
+    startedAt?: number
+    completedAt?: number
+  }) => {
+    const personaId = personaIdFromAgentType(payload.persona)
+    if (!personaId || personaId === 'po') return
+    usePersonaPresence.getState().setWorkerMeta(personaId, {
+      usage: payload.usage,
+      startedAt: payload.startedAt,
+      completedAt: payload.completedAt,
+    })
   }))
 
   // ── po:onTodoItems / po:onTodoDismiss (T-P4-113) ─────────────────────────
@@ -415,13 +443,18 @@ function register() {
     if (event?.state === 'subagent-done') {
       const personaId = personaIdFromAgentType(event?.detail?.persona ?? '')
       if (personaId && personaId !== 'po') {
-        const cur = usePersonaPresence.getState().entries[personaId]
+        const presence = usePersonaPresence.getState()
+        // T-PATCH-281 (AC-6/§Persist-reconcile): FREEZE the live tail + meta into
+        // workerResult BEFORE clearing the live ring, so the result panel survives
+        // the sprite's 2s done→idle auto-collapse and persists until the next turn.
+        presence.freezeWorkerResult(personaId)
+        const cur = presence.entries[personaId]
         // working 일 때만 done 으로 — 이미 done/idle 이면 no-op(중복 done 방지).
         // done 진입 → personaPresence 의 auto-idle 타이머가 2.0s 후 idle 마무리.
-        if (cur.state === 'working') usePersonaPresence.getState().setPersonaState(personaId, 'done')
-        // T-PATCH-270 (#9): collapse this worker's live stream slot on completion
-        // (mockup scene 3 callout — done → stream collapse + sprite done flash).
-        usePersonaPresence.getState().clearStreamTail(personaId)
+        if (cur.state === 'working') presence.setPersonaState(personaId, 'done')
+        // T-PATCH-270 (#9): collapse this worker's LIVE stream ring on completion.
+        // The frozen workerResult (above) is what keeps the panel alive (AC-6).
+        presence.clearStreamTail(personaId)
       }
       return  // setHealth 미호출 — banner/statusbar/PoFab 회귀 방지.
     }
@@ -431,9 +464,22 @@ function register() {
 
     // T-PATCH-148 (Q1): sub-agent presence 라이프사이클 구동.
     //   delegating + detail.persona → 매핑된 sub-agent chip 을 'working' 으로.
-    //   healthy(위임 종료/복귀)        → 그 시점 working 인 모든 sub-agent 를 'done' 으로 전이.
     // PO chip 은 usePOPresenceDerive(workspace.streaming)가 단독 소유하므로
     // 여기서는 po 매핑 시 no-op(PO→PO 위임 방어).
+    //
+    // T-PATCH-279: the old `healthy → flip ALL working workers to done` branch was
+    // REMOVED. Under agent-teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1) the Agent
+    // dispatch is ASYNC — the parent PO turn ends (emits `healthy`) WHILE the
+    // delegated worker is still running in the background. Mass-flipping workers to
+    // done on the parent's `healthy` therefore killed the worker sprite mid-work
+    // (the worker would finish many seconds/minutes later via a separate
+    // task_notification, with NO matching delegating event). Completion is now
+    // driven SOLELY by the per-worker `subagent-done` signal (handled above), which
+    // the runner keys off the real agent-teams task_notification(status:completed)
+    // — so each worker flips done→idle at its OWN true completion, independent of
+    // the parent turn and independent of parallel siblings (AC-1/2/3). The legacy
+    // blocking path also fires subagent-done at its tool_result, so dropping the
+    // mass-flip is regression-safe there too (AC-4).
     const presence = usePersonaPresence.getState()
     if (event?.state === 'delegating' && typeof event?.detail?.persona === 'string') {
       const personaId = personaIdFromAgentType(event.detail.persona)
@@ -442,23 +488,20 @@ function register() {
         const task = typeof event.detail.task === 'string' ? event.detail.task : undefined
         presence.setPersonaState(personaId, 'working', { task })
       }
-    } else if (event?.state === 'healthy') {
-      // 위임 종료/복귀 — turn 단위 1회. working 인 sub-agent(po 제외) 전부를
-      // done 으로 전이(task → artifact 승계). 개별 종료 이벤트가 없는 현 emit
-      // 구조상 의도된 단순화(AC1-3).
-      const { entries } = presence
-      for (const entry of Object.values(entries)) {
-        if (entry.persona !== 'po' && entry.state === 'working') {
-          presence.setPersonaState(entry.persona, 'done')
-          // T-PATCH-270 (#9): collapse the live stream slot alongside done.
-          presence.clearStreamTail(entry.persona)
-        }
-      }
     }
   }))
   offFns.push(api.poOnSessionRestarted?.(() => {
     useWorkspace.setState({ claudeSessionId: null })
     useSessionHealth.getState().clearHealth()
+    // T-PATCH-279 (QA follow-up): safety net for the "no terminal task signal ever"
+    // case (session abort / PO turn crash / worker process gone before any
+    // task_notification or task_updated). After removing the parent-turn `healthy`
+    // sweep, a worker sprite stuck in `working` has no other in-session rescue —
+    // auto-idle is done-only, and dismissDone no-ops on `working`. A session restart
+    // is a hard reset point (claudeSessionId + health are already cleared here), so
+    // reset persona presence too: workers drop to idle and stream tails collapse.
+    // PO is re-derived from `streaming` on the next turn (usePOPresenceDerive).
+    usePersonaPresence.getState().resetAll()
   }))
 
   // ── po:onTicketFocus (T-P4-114 §B) ───────────────────────────────────────

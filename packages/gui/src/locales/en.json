@@ -526,7 +526,8 @@
       "doneNoArtifact": "done",
       "readOnly": "read-only",
       "streamAriaLabel": "{{persona}} live output",
-      "workingNoTask": "working…"
+      "workingNoTask": "working…",
+      "expandHint": "Click to expand"
     },
     "explorer": {
       "title": "Explorer",
@@ -886,6 +887,10 @@
       "cta": "Get started",
       "keyHint": "Cmd+Enter to send · Enter = new line",
       "error": "Something went wrong. Please try again."
+    },
+    "welcome": {
+      "headline": "Start by chatting with the PO on the right",
+      "supporting": "No version yet. Once the PO asks a few questions and drafts the PRD, it opens here automatically."
     },
     "projectEnv": {
       "sectionTitle": "Project .env",

@@ -30,6 +30,7 @@ import { register as registerAttachments } from './ipc/attachments'
 import { installWebviewAcceptLanguage } from './locale-session'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { register as registerTicketsWatch, stopTicketsWatch } from './ipc/ticketsWatch'
+import { register as registerDocsWatch, stopDocsWatch } from './ipc/docsWatch'
 import { register as registerCostArchive, stopCostWatch } from './ipc/costArchive'
 import { abortActiveTurn, isPoRunning } from './po-runner'
 import { killAllSurfaceRuns } from './surface-runner'
@@ -62,6 +63,7 @@ registerOnboarding()
 registerProject()
 registerTickets()
 registerTicketsWatch()
+registerDocsWatch()
 registerState()
 registerPo()
 registerMcp()
@@ -480,6 +482,7 @@ app.on('window-all-closed', () => {
   stopUsageWatch()
   stopCostWatch()
   stopTicketsWatch()
+  stopDocsWatch()
   stopPoStateWatch()
   // T-PATCH-177: tear down the Tray on real quit (not on close-to-tray hide,
   // which never fires window-all-closed).

@@ -243,8 +243,27 @@ interface RunCallbacks {
    * top-level PO turn is not nested, so PO output never reaches this channel.
    * NOISE-0 on success: emitted for meaningful tool calls + coalesced text
    * lines only, never per-token.
+   *
+   * T-PATCH-281 (#4/AC-5): `kind` distinguishes the two sources this channel
+   * carries — 'prose' (worker natural-language output, coalesced by
+   * handleWorkerText) vs 'tool' (a compact tool-call line from
+   * buildWorkerToolLine). The renderer shows prose primary (sans/muted) and tool
+   * subordinate (mono/faint), and falls back to tool lines when no prose flowed.
    */
-  onWorkerStream: (persona: string, line: string) => void
+  onWorkerStream: (persona: string, line: string, kind: 'prose' | 'tool') => void
+  /**
+   * T-PATCH-281 (AC-7): read-only cost/duration metadata for a worker, forwarded
+   * to presence ALONGSIDE the existing turns.jsonl cost path (subagent-cost.ts is
+   * untouched). `usage` is the agent-teams task usage (total_tokens / tool_uses /
+   * duration_ms — best-effort, may be partial or absent). `startedAt` is the
+   * task_started wall-clock ms; `completedAt` the terminal ms. Any field may be
+   * omitted (missing usage → the renderer silently drops the token line, AC-7).
+   * Fires on task_progress (live usage refresh) and at completion (final).
+   */
+  onWorkerMeta: (
+    persona: string,
+    meta: { usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }; startedAt?: number; completedAt?: number },
+  ) => void
 }
 
 // ── Health-smoke result (T-PATCH-231) ────────────────────────────────────────────
@@ -369,6 +388,19 @@ interface HealthContext {
   /** T-PATCH-164: 진행 중 위임의 tool_use.id → subagent_type(원본 문자열). per-subagent 완료 매핑용. */
   delegatedByToolUseId: Map<string, string>
   /**
+   * T-PATCH-279 (QA follow-up): agent-teams task_id → original Agent tool_use_id.
+   * Bound at task_started. task_updated carries ONLY task_id (no tool_use_id), so
+   * its terminal patch.status ('killed') is reconciled back to a delegation through
+   * this map. Cleared alongside delegatedByToolUseId on close.
+   */
+  toolUseIdByTaskId: Map<string, string>
+  /**
+   * T-PATCH-281 (AC-7): tool_use_id → task_started wall-clock ms. Drives the
+   * worker duration (startedAt→completedAt) forwarded to presence via onWorkerMeta.
+   * Cleared alongside delegatedByToolUseId on close.
+   */
+  startedAtByToolUseId: Map<string, number>
+  /**
    * T-PATCH-170: 진행 중 위임의 parent tool_use.id → 누적 subagent usage/cost
    * capture. subagent(sidechain) 이벤트(parent_tool_use_id 일치)에서 best-effort
    * 로 추출·머지하다가, 해당 위임의 tool_result(완료) 도착 시 turns.jsonl 에
@@ -432,6 +464,8 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
     stallTimeoutHandle: null,
     lastTokenAt: null,
     delegatedByToolUseId: new Map(),
+    toolUseIdByTaskId: new Map(),   // T-PATCH-279 (QA follow-up): task_id → tool_use_id
+    startedAtByToolUseId: new Map(), // T-PATCH-281 (AC-7): tool_use_id → started ms
     subagentCaptureByParentId: new Map(),
     projectDir,
     oqPending: false,            // T-PATCH-197 (b): no OQ in flight at turn start
@@ -746,6 +780,7 @@ function buildWorkerToolLine(toolName: string, input: unknown): string {
 function emitWorkerStream(
   parentId: string,
   rawLine: string,
+  kind: 'prose' | 'tool',
   hCtx: HealthContext,
   cb: RunCallbacks,
 ): void {
@@ -753,13 +788,14 @@ function emitWorkerStream(
   if (!persona) return            // not a tracked worker delegation — skip
   const line = normalizeWorkerLine(rawLine)
   if (!line) return               // NOISE-0: nothing meaningful to surface
-  cb.onWorkerStream(persona, line)
+  cb.onWorkerStream(persona, line, kind)  // T-PATCH-281 (#4): tag prose vs tool
 }
 
 /**
  * Accumulate a worker text delta and flush any COMPLETE lines (split on '\n').
  * Partial trailing text stays buffered until the next newline or flushWorkerText.
  * Coalescing here is what keeps the channel at line granularity, not token.
+ * All output here is worker PROSE (T-PATCH-281 #4 — natural-language, not a tool call).
  */
 function handleWorkerText(
   parentId: string,
@@ -776,17 +812,224 @@ function handleWorkerText(
   const complete = buf.slice(0, nl)
   hCtx.workerTextBufByParentId.set(parentId, buf.slice(nl + 1))
   for (const rawLine of complete.split('\n')) {
-    emitWorkerStream(parentId, rawLine, hCtx, cb)
+    emitWorkerStream(parentId, rawLine, 'prose', hCtx, cb)
   }
 }
 
-/** Flush any buffered partial worker text as a final line (e.g. before a tool
+/** Flush any buffered partial worker text as a final PROSE line (e.g. before a tool
  *  line lands, or at delegation completion). Clears the buffer for that parent. */
 function flushWorkerText(parentId: string, hCtx: HealthContext, cb: RunCallbacks): void {
   const buf = hCtx.workerTextBufByParentId.get(parentId)
   if (buf == null) return
   hCtx.workerTextBufByParentId.delete(parentId)
-  if (buf.trim()) emitWorkerStream(parentId, buf, hCtx, cb)
+  if (buf.trim()) emitWorkerStream(parentId, buf, 'prose', hCtx, cb)
+}
+
+// ── T-PATCH-279: agent-teams async dispatch reconciliation ────────────────────
+//
+// ROOT CAUSE: the GUI spawns PO with CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+// (spawnClaude env, below). Under agent-teams the Agent tool is ASYNC: the
+// dispatch's `tool_result` (type:'user') returns IMMEDIATELY with a spawn-ack
+// ("Async agent launched successfully.\nagentId: …"), NOT the subagent's
+// completion. The subagent keeps running in the background and reports its REAL
+// completion later via a SEPARATE stream-json envelope:
+//
+//   { type:'system', subtype:'task_notification',
+//     task_id, tool_use_id, status:'completed', summary, usage }
+//
+// where `tool_use_id` is the ORIGINAL Agent dispatch id (the one captured in
+// delegatedByToolUseId). (Live-confirmed via a raw stream-json probe + an
+// existing agent-teams transcript, 2026-06-30.) The old presence model assumed
+// blocking dispatch (tool_result == completion), so it fired subagent-done off
+// the spawn-ack ~2s after dispatch → the worker sprite flickered then went idle
+// while still running.
+//
+// FIX: (a) recognize the spawn-ack and do NOT treat it as completion (no
+// subagent-done, keep the delegation mapping alive so nested worker output keeps
+// the sprite working — #10 backstop is ground-truth); (b) drive subagent-done off
+// the real task_notification(status:completed) signal. The two paths share
+// completeDelegation() so cost-flush + presence + buffer cleanup stay identical.
+
+/**
+ * The Agent tool's async spawn-ack `tool_result` text under agent-teams. Matching
+ * EITHER substring (case-insensitive) marks a tool_result as a spawn-ack, not a
+ * real subagent completion — so the per-subagent done logic is skipped for it.
+ */
+function isAsyncSpawnAck(content: unknown): boolean {
+  let text = ''
+  if (typeof content === 'string') {
+    text = content
+  } else if (Array.isArray(content)) {
+    text = content
+      .filter((c: any) => c?.type === 'text' && typeof c?.text === 'string')
+      .map((c: any) => c.text as string)
+      .join('\n')
+  }
+  if (!text) return false
+  return /async agent launched successfully/i.test(text) || /agent is working in the background/i.test(text)
+}
+
+/**
+ * T-PATCH-279 / T-PATCH-164 + T-PATCH-170: finalize ONE delegated subagent.
+ * Called from the REAL completion signal (system/task_notification under
+ * agent-teams; legacy blocking tool_result otherwise). Idempotent per id — a
+ * second notification for the same id (agent-teams may re-notify a resumed task)
+ * is a no-op because the mapping is deleted on first completion.
+ *
+ *   1. flush any buffered worker prose for this delegation,
+ *   2. emit a presence-only `subagent-done` for the persona (dedupe-bypassed —
+ *      see the cb.onHealth note: emitHealth's state-dedupe would drop a second
+ *      parallel completion),
+ *   3. flush accumulated subagent usage/cost to turns.jsonl (gated; no-op when
+ *      nothing usable was captured),
+ *   4. drop both per-id maps so the worker-stream backstop stops resolving it.
+ *
+ * `extraCap` lets a completion envelope (e.g. task_notification.usage) contribute
+ * cost data alongside whatever the nested sidechain events accumulated.
+ */
+function completeDelegation(
+  toolUseId: string,
+  agentType: string,
+  hCtx: HealthContext,
+  cb: RunCallbacks,
+  extraCap?: SubagentCostCapture,
+): void {
+  if (!hCtx.delegatedByToolUseId.has(toolUseId)) return  // already closed — idempotent
+  // Flush any buffered worker prose BEFORE deleting the mapping (emitWorkerStream
+  // resolves persona off delegatedByToolUseId).
+  flushWorkerText(toolUseId, hCtx, cb)
+  clearDelegationMaps(toolUseId, hCtx)
+
+  // dedupe 우회: emitHealth()는 state 기반 dedupe라 동일 'subagent-done' 연속
+  // 도착 시 둘째가 드롭됨(병렬 완료에서 치명적). 따라서 emitHealth 를 거치지 않고
+  // cb.onHealth 를 직접 호출하고 lastEmittedState 는 건드리지 않는다.
+  cb.onHealth({
+    state: 'subagent-done',
+    detail: { persona: agentType },
+    at: new Date().toISOString(),
+    msgId: hCtx.msgId,
+  })
+
+  // T-PATCH-170: flush per-subagent cost → turns.jsonl. The capture buffer is
+  // keyed by the parent Agent tool_use id (== nested events' parent_tool_use_id ==
+  // this toolUseId). Merge in any cost carried on the completion envelope itself.
+  const buffered = hCtx.subagentCaptureByParentId.get(toolUseId)
+  hCtx.subagentCaptureByParentId.delete(toolUseId)
+  const finalCap = mergeCapture(buffered, extraCap ?? {})
+  appendSubagentTurn(hCtx.projectDir, agentType, finalCap)
+}
+
+/**
+ * T-PATCH-279 (QA follow-up): close a delegation that ended in a NON-SUCCESS
+ * terminal state (task_notification status:'stopped', task_updated patch.status:
+ * 'killed' — worker interrupted / aborted / process-killed). Identical to
+ * completeDelegation EXCEPT it does NOT write a turns.jsonl cost row — a killed/
+ * stopped worker has no meaningful final usage to attribute. Idempotent. Without
+ * this the sprite would hang in `working` forever (the parent-turn `healthy` sweep
+ * that used to backstop it was removed in the main T-279 fix).
+ */
+function cancelDelegation(
+  toolUseId: string,
+  agentType: string,
+  hCtx: HealthContext,
+  cb: RunCallbacks,
+): void {
+  if (!hCtx.delegatedByToolUseId.has(toolUseId)) return  // already closed — idempotent
+  flushWorkerText(toolUseId, hCtx, cb)
+  clearDelegationMaps(toolUseId, hCtx)
+  // Drop any accumulated cost capture without flushing it (non-success → no row).
+  hCtx.subagentCaptureByParentId.delete(toolUseId)
+  // subagent-done flips the sprite done→idle (presence-only; same flash + auto-idle
+  // as a clean finish — the renderer doesn't distinguish success from cancel here).
+  cb.onHealth({
+    state: 'subagent-done',
+    detail: { persona: agentType },
+    at: new Date().toISOString(),
+    msgId: hCtx.msgId,
+  })
+}
+
+/** Remove every per-delegation map entry for a tool_use_id (presence + cost +
+ *  the task_id↔tool_use_id reconcile entry + start-ms). Shared by both close paths. */
+function clearDelegationMaps(toolUseId: string, hCtx: HealthContext): void {
+  hCtx.delegatedByToolUseId.delete(toolUseId)
+  hCtx.workerTextBufByParentId.delete(toolUseId)
+  hCtx.startedAtByToolUseId.delete(toolUseId)  // T-PATCH-281 (AC-7)
+  // The task_id→tool_use_id map is small (one per dispatch this turn); clear the
+  // reverse entry so task_updated{killed} after a notification{stopped} is a no-op.
+  for (const [taskId, tid] of hCtx.toolUseIdByTaskId) {
+    if (tid === toolUseId) hCtx.toolUseIdByTaskId.delete(taskId)
+  }
+}
+
+// ── T-PATCH-281 (AC-7): worker cost/duration meta forwarding ──────────────────
+
+/**
+ * Extract the agent-teams task `usage` block from a system task envelope
+ * (task_progress / task_notification). Shape confirmed from raw sessions:
+ *   usage: { total_tokens, tool_uses, duration_ms }
+ * Returns undefined when absent or carries no usable number (AC-7: missing → the
+ * renderer silently drops the token line). This is DISTINCT from
+ * extractSubagentCapture (which feeds the turns.jsonl cost path) — here we only
+ * forward a lightweight read-only display block to presence.
+ */
+function extractTaskUsage(obj: any): { total_tokens?: number; tool_uses?: number; duration_ms?: number } | undefined {
+  const u = obj?.usage
+  if (!u || typeof u !== 'object') return undefined
+  const out: { total_tokens?: number; tool_uses?: number; duration_ms?: number } = {}
+  if (typeof u.total_tokens === 'number') out.total_tokens = u.total_tokens
+  if (typeof u.tool_uses === 'number') out.tool_uses = u.tool_uses
+  if (typeof u.duration_ms === 'number') out.duration_ms = u.duration_ms
+  return (out.total_tokens != null || out.tool_uses != null || out.duration_ms != null) ? out : undefined
+}
+
+/**
+ * At a delegation's terminal event, forward final worker meta to presence:
+ *   - final `usage` (if the envelope carries it),
+ *   - `startedAt` (recalled from the start-ms map) + `completedAt` (now) → duration,
+ *   - the worker's final `summary` (task_notification only) promoted to a PROSE
+ *     stream line so it becomes the result panel's done-headline (AC-5/AC-6).
+ * Called BEFORE complete/cancelDelegation (which delete the start-ms + persona maps).
+ */
+function forwardWorkerCompletionMeta(
+  toolUseId: string,
+  agentType: string,
+  obj: any,
+  hCtx: HealthContext,
+  cb: RunCallbacks,
+): void {
+  const startedAt = hCtx.startedAtByToolUseId.get(toolUseId)
+  const usage = extractTaskUsage(obj)
+  cb.onWorkerMeta(agentType, { usage, startedAt, completedAt: Date.now() })
+  // Promote the worker's final summary to a done-headline prose line so the
+  // persisted result panel leads with a human sentence, not a tool trace.
+  const summary = typeof obj?.summary === 'string' ? obj.summary.trim() : ''
+  if (summary) emitWorkerStream(toolUseId, summary, 'prose', hCtx, cb)
+}
+
+/**
+ * Terminal agent-teams task statuses (live-confirmed vocab, 2026-06-30):
+ *   'completed' — worker finished its turn and stopped (success; includes a worker
+ *                 that ran a failing command and reported back).
+ *   'stopped'   — task_notification status when the worker was interrupted/aborted.
+ *   'killed'    — task_updated patch.status when the worker process was killed.
+ *   'failed' / 'cancelled' / 'error' — defensively included (not observed in the
+ *                 probes but plausible terminal vocab; treated as non-success close).
+ * Anything else (e.g. a future 'running'/'paused') is non-terminal → keep working.
+ */
+const TERMINAL_TASK_STATUSES = new Set<string>([
+  'completed',
+  'stopped',
+  'killed',
+  'failed',
+  'cancelled',
+  'canceled',
+  'error',
+  'aborted',
+])
+
+function isTerminalTaskStatus(status: string): boolean {
+  return TERMINAL_TASK_STATUSES.has(status.toLowerCase())
 }
 
 // ── Real spawn ──────────────────────────────────────────────────────────────────
@@ -1116,6 +1359,111 @@ function handleStreamJsonLine(
     if (obj?.subtype === 'compact_pre' || obj?.compact === true) {
       emitHealth('compacting', undefined, hCtx, cb)
     }
+
+    // ── T-PATCH-279: agent-teams task lifecycle ───────────────────────────────
+    // Under CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS the async Agent dispatch reports
+    // its lifecycle via `type:'system'` envelopes keyed by the original Agent
+    // `tool_use_id`. Live-confirmed shapes (raw stream-json probe, 2026-06-30):
+    //   task_started      {task_id, tool_use_id, description, subagent_type, prompt}
+    //   task_progress     {task_id, tool_use_id, description, subagent_type, usage, last_tool_name}
+    //   task_updated      {task_id, patch:{status}}            (no tool_use_id)
+    //   task_notification {task_id, tool_use_id, status, summary, usage}
+    //
+    // task_started → register the worker as 'delegating' (working) and bind the
+    // tool_use_id → subagent_type mapping. This is more robust than parsing
+    // subagent_type off the partial-message Agent tool_use, and it fires for sure
+    // at real dispatch.
+    //
+    // T-PATCH-279 (QA follow-up): a worker leaves `working` ONLY via this lifecycle
+    // (the parent-turn `healthy` sweep was removed), so EVERY terminal outcome must
+    // close it out — not just success — else the sprite spins forever. Live-confirmed
+    // terminal vocab from raw agent-teams sessions (2026-06-30):
+    //   task_notification.status:    'completed' (normal — incl. a worker that ran a
+    //                                 failing command and reported back), 'stopped'
+    //                                 (worker interrupted / parent aborted mid-run).
+    //   task_updated.patch.status:   'completed' (normal), 'killed' (process killed).
+    // On abort, BOTH a notification{stopped} and an update{killed} arrive — either
+    // closes the worker (completeDelegation is idempotent: the second is a no-op once
+    // the mapping is deleted). Non-success terminals route through cancelDelegation
+    // (subagent-done + cleanup, NO cost flush — a killed/stopped worker has no
+    // meaningful final usage to attribute).
+    if (obj?.subtype === 'task_started' || obj?.subtype === 'task_progress') {
+      const toolUseId = typeof obj?.tool_use_id === 'string' ? obj.tool_use_id : null
+      const subagentType = typeof obj?.subagent_type === 'string' ? obj.subagent_type : null
+      if (toolUseId && subagentType) {
+        // Bind the mapping (idempotent) so nested worker output + the eventual
+        // completion notification both resolve the persona.
+        hCtx.delegatedByToolUseId.set(toolUseId, subagentType)
+        // Bind task_id → tool_use_id so a terminal task_updated (which carries only
+        // task_id) can reconcile back to this delegation (QA follow-up).
+        const taskId = typeof obj?.task_id === 'string' ? obj.task_id : null
+        if (taskId) hCtx.toolUseIdByTaskId.set(taskId, toolUseId)
+        // T-PATCH-281 (AC-7): record the task start ms + forward a startedAt meta
+        // so presence can show the worker's live duration.
+        if (obj?.subtype === 'task_started' && !hCtx.startedAtByToolUseId.has(toolUseId)) {
+          const startedAt = Date.now()
+          hCtx.startedAtByToolUseId.set(toolUseId, startedAt)
+          cb.onWorkerMeta(subagentType, { startedAt })
+        }
+        // T-PATCH-281 (AC-7): task_progress carries a live `usage` refresh — forward it.
+        const progressUsage = extractTaskUsage(obj)
+        if (progressUsage) cb.onWorkerMeta(subagentType, { usage: progressUsage })
+        // Re-assert 'delegating' for this persona → renderer flips it to working.
+        // persona-aware dedupe (emitHealth) lets parallel dispatches each arrive.
+        const taskSummary = typeof obj?.description === 'string' && obj.description.trim()
+          ? obj.description.trim()
+          : undefined
+        emitHealth('delegating', { persona: subagentType, task: taskSummary }, hCtx, cb)
+      }
+      return
+    }
+    if (obj?.subtype === 'task_notification') {
+      const toolUseId = typeof obj?.tool_use_id === 'string' ? obj.tool_use_id : null
+      const status = typeof obj?.status === 'string' ? obj.status : ''
+      if (toolUseId && isTerminalTaskStatus(status)) {
+        const agentType = hCtx.delegatedByToolUseId.get(toolUseId)
+        if (agentType) {
+          // T-PATCH-281 (AC-6/AC-7): forward final meta (usage + duration) + the
+          // worker's final summary as a done-headline prose line BEFORE closing the
+          // delegation (completeDelegation deletes startedAtByToolUseId). Fires for
+          // BOTH success and non-success terminals — the result panel persists either way.
+          forwardWorkerCompletionMeta(toolUseId, agentType, obj, hCtx, cb)
+          if (status === 'completed') {
+            // Success — flush per-subagent cost (task_notification.usage carries the
+            // worker's final token/cost data) to turns.jsonl.
+            completeDelegation(toolUseId, agentType, hCtx, cb, extractSubagentCapture(obj))
+          } else {
+            // stopped / aborted / cancelled — close the sprite WITHOUT a cost row.
+            cancelDelegation(toolUseId, agentType, hCtx, cb)
+          }
+        }
+      }
+      return
+    }
+    if (obj?.subtype === 'task_updated') {
+      // task_updated carries no tool_use_id — it's keyed by task_id only. But its
+      // terminal patch.status ('killed') is the canonical signal that a worker process
+      // is gone, and it can arrive when no terminating task_notification did. Reconcile
+      // by task_id (tracked at task_started) so the worker doesn't hang in `working`.
+      const taskId = typeof obj?.task_id === 'string' ? obj.task_id : null
+      const status = typeof obj?.patch?.status === 'string' ? obj.patch.status : ''
+      if (taskId && isTerminalTaskStatus(status)) {
+        const toolUseId = hCtx.toolUseIdByTaskId.get(taskId)
+        const agentType = toolUseId ? hCtx.delegatedByToolUseId.get(toolUseId) : undefined
+        if (toolUseId && agentType) {
+          // T-PATCH-281 (AC-7): forward final duration meta (task_updated has no
+          // usage/summary — pass the envelope anyway; extractTaskUsage returns
+          // undefined and only completedAt/duration are set).
+          forwardWorkerCompletionMeta(toolUseId, agentType, obj, hCtx, cb)
+          if (status === 'completed') {
+            completeDelegation(toolUseId, agentType, hCtx, cb)
+          } else {
+            cancelDelegation(toolUseId, agentType, hCtx, cb)
+          }
+        }
+      }
+      return
+    }
     return
   }
 
@@ -1139,7 +1487,7 @@ function handleStreamJsonLine(
         for (const part of content) {
           if (part?.type === 'tool_use' && typeof part?.name === 'string') {
             const line = buildWorkerToolLine(part.name, part.input)
-            if (line) emitWorkerStream(parentId, line, hCtx, cb)
+            if (line) emitWorkerStream(parentId, line, 'tool', hCtx, cb)
           }
         }
       }
@@ -1377,37 +1725,27 @@ function handleStreamJsonLine(
 
           const agentType = hCtx.delegatedByToolUseId.get(part.tool_use_id)
           if (agentType) {
-            // T-PATCH-270 (#9): flush any buffered worker prose BEFORE deleting
-            // the delegation mapping (emitWorkerStream resolves persona off it).
-            flushWorkerText(part.tool_use_id, hCtx, cb)
-            hCtx.delegatedByToolUseId.delete(part.tool_use_id)
-            // dedupe 우회: emitHealth()는 state 기반 dedupe라 동일 'subagent-done'
-            // 연속 도착 시 둘째가 드롭됨(병렬 완료에서 치명적). 따라서 emitHealth 를
-            // 거치지 않고 cb.onHealth 를 직접 호출하고 lastEmittedState 는 건드리지
-            // 않는다(delegating/healthy 상태머신과 독립).
-            cb.onHealth({
-              state: 'subagent-done',
-              detail: { persona: agentType },
-              at: new Date().toISOString(),
-              msgId: hCtx.msgId,
-            })
-
-            // ── T-PATCH-170: flush per-subagent cost → turns.jsonl ──────────
-            // The completion tool_result is keyed by the SAME id the sidechain
-            // events carried as parent_tool_use_id, so the accumulated capture is
-            // at subagentCaptureByParentId[tool_use_id]. Some CLI versions also
-            // attach usage/total_cost_usd to the tool_result part or its envelope
-            // → merge those in too before the write. appendSubagentTurn gates on
-            // usable data (no-op when nothing was captured), so this never writes
-            // a garbage row and never throws into the turn.
-            const buffered = hCtx.subagentCaptureByParentId.get(part.tool_use_id)
-            hCtx.subagentCaptureByParentId.delete(part.tool_use_id)
-            const fromResult = mergeCapture(
-              extractSubagentCapture(part),
-              extractSubagentCapture(obj),
-            )
-            const finalCap = mergeCapture(buffered, fromResult)
-            appendSubagentTurn(hCtx.projectDir, agentType, finalCap)
+            // ── T-PATCH-279: async spawn-ack guard ──────────────────────────
+            // Under agent-teams the Agent dispatch's tool_result returns IMMEDIATELY
+            // with a spawn-ack ("Async agent launched successfully…"), NOT the
+            // subagent's completion. Firing subagent-done here would flicker the
+            // worker sprite to done ~2s after dispatch while it's still running in
+            // the background. SKIP done for the spawn-ack: keep the delegation
+            // mapping alive so nested worker output (po:worker-stream #10 backstop)
+            // keeps the sprite working; the REAL completion arrives later as a
+            // system/task_notification(status:completed) handled above.
+            if (isAsyncSpawnAck(part.content)) {
+              // no-op: leave mapping intact, do not flush/complete.
+            } else {
+              // Legacy BLOCKING path (non-agent-teams CLIs / synchronous dispatch):
+              // the completion tool_result IS the real completion. Some CLI versions
+              // attach usage/total_cost_usd to the tool_result part or its envelope.
+              const fromResult = mergeCapture(
+                extractSubagentCapture(part),
+                extractSubagentCapture(obj),
+              )
+              completeDelegation(part.tool_use_id, agentType, hCtx, cb, fromResult)
+            }
           }
         }
       }
@@ -2048,7 +2386,10 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     onPromotionCandidate: (msgId, payload) =>
       wc.send('po:onPromotionCandidate', msgId, payload),
     // T-PATCH-270 (#9): worker output tail line → presence stream slot.
-    onWorkerStream: (persona, line) => wc.send('po:worker-stream', { persona, line }),
+    // T-PATCH-281 (#4): carry the prose/tool `kind` so the renderer can style them.
+    onWorkerStream: (persona, line, kind) => wc.send('po:worker-stream', { persona, line, kind }),
+    // T-PATCH-281 (AC-7): worker cost/duration meta → presence (read-only display).
+    onWorkerMeta: (persona, meta) => wc.send('po:worker-meta', { persona, ...meta }),
     // T-019 §B3: phase-gate-entry — PO emitted a phase-transition gate.
     onPhaseGate: (gate) => {
       const phaseLabel =

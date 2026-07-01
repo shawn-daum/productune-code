@@ -31,9 +31,17 @@ interface Props {
   // closeGate) to decide whether a boundary's gate is "engaged" — i.e. show the
   // marker — vs. dormant (close_gate exists from P3 entry but untouched) → chevron.
   pendingGate?: PendingGate | null
+  // T-PATCH-276 (#22): click a phase pill → open its document in a main tab. Fired
+  // only for phases that have a mapped destination (see clickablePhases). Absent →
+  // pills are non-interactive (legacy behavior).
+  onPhaseClick?: (phase: Phase) => void
+  // T-PATCH-276: the subset of phases that resolve to an openable destination. A
+  // phase not in this set renders as a plain (non-clickable) pill. PRD is the
+  // minimum; others are added as their destinations get wired.
+  clickablePhases?: ReadonlySet<Phase>
 }
 
-export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate, pendingGate }: Props) {
+export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate, pendingGate, onPhaseClick, clickablePhases }: Props) {
   return (
     <div style={wrap}>
       {version && (
@@ -61,19 +69,41 @@ export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate
                 ? <GateMarker boundaryPhase={p} closeGate={closeGate} />
                 : <span style={chevron}>›</span>
             )}
-            <span style={p === phase ? activeNode : inactiveNode}>
-              {p}
-              {showCount && (
+            {(() => {
+              // T-PATCH-276 (#22): render a clickable button when this phase has a
+              // mapped destination; otherwise the original non-interactive span.
+              // Active-phase highlight (activeNode) is preserved in both forms.
+              const isActive = p === phase
+              const baseStyle = isActive ? activeNode : inactiveNode
+              const clickable = !!onPhaseClick && (clickablePhases?.has(p) ?? false)
+              const countEl = showCount && (
                 // T-PATCH-096 §4.b AC-4b: muted, subordinate, tabular-nums,
                 // opacity 0.7 + tooltip — honestly marks the count as approximate.
-                <span
-                  style={counterNode}
-                  title="approximate — by ticket type, current version"
-                >
+                <span style={counterNode} title="approximate — by ticket type, current version">
                   ({count.done}/{count.total})
                 </span>
-              )}
-            </span>
+              )
+              if (clickable) {
+                return (
+                  <button
+                    type="button"
+                    style={{ ...baseStyle, ...phaseButtonReset, cursor: 'pointer' }}
+                    onClick={() => onPhaseClick!(p)}
+                    title={`Open ${p}`}
+                    aria-label={`Open ${p}`}
+                  >
+                    {p}
+                    {countEl}
+                  </button>
+                )
+              }
+              return (
+                <span style={baseStyle}>
+                  {p}
+                  {countEl}
+                </span>
+              )
+            })()}
           </span>
         )
       })}
@@ -269,6 +299,16 @@ const baseNode: React.CSSProperties = {
   borderRadius: 4,
   cursor: 'default',
   whiteSpace: 'nowrap',
+}
+
+// T-PATCH-276 (#22): neutralize default <button> chrome so a clickable phase pill
+// looks identical to the span form (only the cursor + hover affordance differ).
+const phaseButtonReset: React.CSSProperties = {
+  border: 'none',
+  font: 'inherit',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
 }
 
 const activeNode: React.CSSProperties = {

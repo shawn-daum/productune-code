@@ -1,21 +1,35 @@
 import { useWorkspace } from '../../../store/workspace'
+import type { Pane } from '../../../store/workspace'
 import PaneNode from './PaneNode'
+import WelcomePanel from '../WelcomePanel'
 
 /**
  * Root of the workspace main area (T-P4-046). Renders the recursive pane tree.
  *
+ * T-PATCH-275 (#18 correction): the shell is ALWAYS the full 4-region layout
+ * (no chat-only collapse). When there's no current_version yet (PRD interview in
+ * progress) AND no tab is open, the MainPanel shows the WelcomePanel intro instead
+ * of an empty pane — pointing the user at the PO chat on the right. Once a version
+ * exists (or any tab is opened — e.g. #14 PRD auto-open), the pane tree renders.
+ *
  * Phase transition is chat-driven (T-P4-139): no gate banner is rendered here.
- * PhaseTransitionGate component file retained; phase:approve IPC retained as
- * legacy fallback. `pending_gate` in po-state.json is deprecated — field
- * preserved for schema compatibility only.
  */
+function isEmptyPaneTree(root: Pane): boolean {
+  if (root.type === 'leaf') return root.tabs.length === 0
+  return isEmptyPaneTree(root.children[0]) && isEmptyPaneTree(root.children[1])
+}
+
 export default function MainPanel() {
   const panes = useWorkspace((s) => s.panes)
+  const currentVersion = useWorkspace((s) => s.poState?.current_version ?? null)
+
+  // Empty-state intro: no version AND nothing open in the pane tree.
+  const showWelcome = currentVersion == null && isEmptyPaneTree(panes)
 
   return (
     <div style={wrap}>
       <div style={paneTreeWrap}>
-        <PaneNode pane={panes} path={[]} />
+        {showWelcome ? <WelcomePanel /> : <PaneNode pane={panes} path={[]} />}
       </div>
     </div>
   )

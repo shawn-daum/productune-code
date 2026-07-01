@@ -210,26 +210,77 @@ export default function MarkdownViewer({
   }, [])
   const isLight = theme === 'light'
 
-  const runLoad = useCallback(() => {
-    setLoadState('loading')
+  // `silent` (T-PATCH-280): a disk-change REFRESH, not the initial mount load.
+  //   - does NOT flip to the full-pane 'loading' spinner (the doc stays visible
+  //     while we re-read in place — no flash);
+  //   - on a read failure OR an EMPTY result, KEEPS the last-good content instead
+  //     of blanking the pane or showing the error banner (AC-3: a partial/in-
+  //     progress write must not destroy what the user is reading). The next
+  //     successful change event reconciles to the final content.
+  // The initial mount load (silent=false) keeps the original loading/error UX.
+  const runLoadRef = useRef<(silent?: boolean) => void>(() => {})
+  const runLoad = useCallback((silent = false) => {
+    if (!silent) setLoadState('loading')
     load()
       .then((res) => {
         if (res?.ok) {
-          setContent(res.content ?? '')
+          // AC-3: on a silent refresh, ignore an empty body (likely a mid-write
+          // truncation) — keep the prior content rather than blanking the view.
+          const next = res.content ?? ''
+          if (silent && next === '' && content !== '') {
+            return
+          }
+          setContent(next)
           snapshotMtimeRef.current = res.mtimeMs ?? null
           setLoadState('done')
-        } else {
+        } else if (!silent) {
           setLoadState('error')
         }
+        // silent && !ok → keep last-good content + current loadState (AC-3).
       })
       .catch(() => {
-        setLoadState('error')
+        if (!silent) setLoadState('error')
+        // silent failure → keep last-good content (AC-3).
       })
-  }, [load])
+  }, [load, content])
+  // Keep a stable ref to the latest runLoad so the disk-watch effect can call it
+  // WITHOUT re-subscribing every time `content` changes (which would re-arm the
+  // IPC listener on every keystroke/refresh). The watch effect depends only on
+  // absPath + projectDir.
+  runLoadRef.current = runLoad
 
   useEffect(() => {
     runLoad()
-  }, [runLoad])
+    // Initial mount load only — disk-change refreshes flow through the watch
+    // effect below. Re-runs when the injected `load` identity changes (absPath /
+    // source swap), matching the pre-T-280 behavior.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load])
+
+  // ── Disk-change auto-refresh (T-PATCH-280) ──────────────────────────────────
+  // Arm a docs/ fs-watch and re-`load()` THIS viewer's file when it changes on
+  // disk — so an open PRD/doc tab reflects a fresh author pass without an app
+  // restart (AC-1). The push carries the changed file's absPath; we reload only
+  // when it matches our own absPath (AC-2 — no spurious reload of other tabs).
+  // A null absPath in the push (platform gave no filename) → conservative reload.
+  // Inline-body viewers (no absPath) never match → never auto-refresh, correct
+  // (their content has no backing file). Editing is paused: while the user is in
+  // the editor (`editing`) a disk reload would clobber their draft, so we skip.
+  useEffect(() => {
+    const api = (window as any).api
+    if (!api?.onDocsChanged || !absPath) return
+    // The docs/ watcher is armed project-scoped by WorkspaceShell (watchDocs); here
+    // we only SUBSCRIBE to its push and reload when our own file changed.
+    const off = api.onDocsChanged((payload: { projectDir: string; absPath: string | null }) => {
+      if (editing) return // don't clobber an in-progress edit draft
+      const changed = payload?.absPath
+      // Match our file exactly; a null changed path → reload conservatively.
+      if (changed == null || changed === absPath) {
+        runLoadRef.current(true /* silent refresh */)
+      }
+    })
+    return () => { try { off?.() } catch { /* ignore */ } }
+  }, [absPath, editing])
 
   const enterEdit = useCallback(() => {
     setDraft(content)
@@ -505,7 +556,7 @@ export default function MarkdownViewer({
             <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
             <div>
               <div style={errorText}>{t('workspace.common.fileLoadError')}</div>
-              <button style={retryBtn} onClick={runLoad}>
+              <button style={retryBtn} onClick={() => runLoad()}>
                 {t('common.retry')}
               </button>
             </div>
