@@ -308,6 +308,7 @@ full의 교훈: cap을 자백("~137/100 breach")만 하고 방치 → doctor가 
 4. **계층 검증** — ① VM smoke (lite 방식 무인 dogfood) → ② 기존 full 프로젝트 시나리오 재현 1개 → ③ 실프로젝트 1개 v1 병행 운영.
 5. **마이그레이션 도구** (`prdt migrate`) — full: po-state v2→prdt shape, tickets 이식, calibration-log→learning 페이지, tier1 bookshelf→위키. lite: memory.md 4섹션→위키 페이지 분해. **옵트인** (flip이 기존 프로젝트를 강제 전환하지 않음).
 6. **flip** — install이 prdt-* 설치 + pdt-*/pdtl-* 폐기 안내. old full은 그 시점까지 치명 버그 외 freeze(단, GUI는 main에서 계속 → merge로 유입).
+   *(2026-07-03 개정: 사용자 결정으로 GUI 어댑터 **전에** flip 실행 — GUI는 어댑터(A1~A8)까지 조회 전용 감수, legacy 프로젝트는 lazy migrate. 유의점·절차 = `docs/prdt-v1-flip.md`, 도구 = `prdt-flip.sh`.)*
 
 ### Dogfood 교정 프로토콜
 
