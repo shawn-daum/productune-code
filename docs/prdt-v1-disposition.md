@@ -116,7 +116,7 @@
 | PO owns git / worker는 자기 scope만 | **habit 재작성** | PO habit(§2 "lifecycle 판단 · 큐레이션 · git · 대화") + developer habit에 scope 1줄 |
 | commit 규칙 (ticket 단위 commit·메시지 규약·`git add .` 금지) | **contract 승격** | contracts.md commit 규약 — Conventional Commits(§5b)로 형식 교체(`[T-N]` prefix → `feat:/fix:` + ticket 참조) |
 | ticket마다 worktree 격리 / posture(v<N> 상주) | **폐기** | §4: worktree는 트리거 3개에서만, Agent 네이티브 옵션 사용. "EVERY ticket worktree" 정책과 worktree 생성/gc 수칙 소멸 |
-| 브랜치 모델 (v<N> ← ticket branch, PR 정책, tag) | **리뷰 질문 Q2** | 설계 문서가 v1의 git 브랜치 전략을 규정하지 않음. 후보: (a) 버전 브랜치 유지+티켓 브랜치 폐지, (b) trunk 단일+Conventional Commits만. 결정 후 contracts 또는 PO habit에 |
+| 브랜치 모델 (v<N> ← ticket branch, PR 정책, tag) | **contract 승격**(trunk 원칙) + **폐기**(브랜치/PR 제도) | **Q2 확정(2026-07-02, 설계 §5c)**: 기본 trunk + `git tag v<N>`, 격리는 worktree 트리거 3개에서만 판단. PR ceremony 폐기 — 실사용이 리뷰 없는 승인 클릭이었음 |
 
 ### 2.6 `promotion-process.md` (97줄)
 
@@ -148,7 +148,7 @@
 | PRD 경로 고정 (docs/prd/PRD.md 단일 SoT) | **contract 승격** | contracts.md 고정 경로 맵 — lite PRD 경로 사건(§0 교훈)의 처방: 항상 주입층에 |
 | PRD authoring ticket 즉시 emit | **habit 재작성** | PO habit — "산출물이면 ticket"(§1.5) 원칙의 적용 |
 | version-open jq (current_version+versions 동시 write) | **폐기** | po-state 4필드 — versions 배열 없음. 버전 전환은 stage/version 필드 갱신(PO 판단) + `retro--v<N>` 위키 |
-| P1 진입 시 git branch 생성 | **리뷰 질문 Q2** | 브랜치 전략과 함께 결정 |
+| P1 진입 시 git branch 생성 | **폐기** | Q2 확정: trunk 기본(§5c) — 버전 브랜치 없음 |
 | PRD snapshot guard | **폐기** | 스냅샷 제도 폐지 (hook#14 사유와 동일) |
 
 ### 2.9 `lifecycle/p3-build.md` (14줄, 밀도 높음)
@@ -204,7 +204,7 @@
 | Data-layer touch는 실제 렌더/probe로만 close | **playbook 이동** | qa `smoke`/`live-verify` 본문 — QA 지식 |
 | GRILL vs basic 선택 기준 | **playbook 이동** | qa `grill` frontmatter `when` — §5 스키마 예시가 정확히 이 규칙("PO 쪽에 존재하던 QA의 GRILL 선택 로직" §0 진단의 처방) |
 | Code-review gate (risk-gated, correctness=blocking) | **playbook 이동** | developer `code-review`(fresh-eyes, §5b) — risk-gate 판단 포함 |
-| git ticket open/close ops (worktree add/merge --no-ff) | **폐기** | 2.5 worktree 정책 폐기와 동일 (Q2 브랜치 전략에 종속) |
+| git ticket open/close ops (worktree add/merge --no-ff) | **폐기** | Q2 확정: trunk 기본(§5c) — 티켓 브랜치/worktree 제도 폐기, 격리는 §4 트리거 판단 |
 
 ### 2.14 `habit.md` (50줄) — 참고 (bookshelf 아님, 전수 범위 밖이지만 유실 방지 기록)
 
@@ -249,6 +249,6 @@
 | # | 질문 | PO 추천 |
 |---|---|---|
 | **Q1** | ~~처분 분류에 보조 표기 추가~~ → **(a) 승인 확정** (2026-07-02, 설계 §12.1 개정 완료) | — |
-| **Q2** | v1 git 브랜치 전략: (a) 버전 브랜치(`v<N>`) 유지 + 티켓 브랜치/worktree 폐지, (b) trunk 단일 + Conventional Commits만. 설계 문서 미규정 — §13에 따라 문서 개정 필요 | (a) 추천 — 버전 단위 롤백·PR 리뷰 지점 유지, 티켓 단위 격리만 제거 |
+| **Q2** | ~~git 브랜치 전략~~ → **(c) 확정** (2026-07-02): 기본 trunk + tag, 격리는 worktree 트리거 판단. 설계 §5c 신설 | — |
 | **Q3** | Outcome measurement(north_star/lazy protocol) 처분: (a) 폐기, (b) retro playbook 선택 항목으로 축소 이식 | (a) 추천 — YAGNI. retro--vN 자유 서술로 충분, 필요해지면 문서 개정 |
 | **Q4** | `docs/backlog.md` 제도: (a) 폐기 — 위키 decision 페이지 + 다음 버전 이월이 대체, (b) 유지 | (a) 추천 — 이번 조사에서 backlog↔ticket 수동 결합의 stale 병리(T-PATCH-247, 11건)가 자백됨 |

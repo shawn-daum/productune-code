@@ -176,6 +176,12 @@ persona별 초기 구성:
 
 TDD는 doctrine(철학)에 두고, playbook에서는 "로직/회귀 위험 영역 test-first, UI 글루는 판단"으로 실용화.
 
+### 5c. Git 운용 — trunk + 판단 격리 (2026-07-02 확정, 처분표 Q2)
+
+- **기본 = trunk**: 모든 커밋은 main에 Conventional Commits로 직행. 버전 경계는 Retro에서 `git tag v<N>` + `retro--v<N>` 위키가 표현. full의 버전 브랜치·티켓 브랜치·P5 PR ceremony는 폐지 — 실사용에서 PR은 리뷰 없는 승인 클릭이었고(cross 계정 마찰만 유발), 사용자 승인 지점은 Ship 진입 readiness ritual이 대체.
+- **격리는 제도가 아니라 판단**: worktree 트리거 3개(§4)에 해당할 때만 브랜치+worktree — 채택 시 merge 후 브랜치 삭제, 폐기 시 통째 drop. 새 개념 추가 없음(§4 트리거의 연장).
+- commit 규약·trunk 원칙은 contracts.md에 명문화.
+
 ---
 
 ## 6. Ticket-lite
