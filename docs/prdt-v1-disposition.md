@@ -248,7 +248,7 @@
 
 | # | 질문 | PO 추천 |
 |---|---|---|
-| **Q1** | 처분 분류에 보조 표기 `habit 재작성`·`CLI/wiki 이관`을 추가했다(설계 5분류의 목적지 세분화). 이대로 승인? | 승인 추천 — 5분류만으로는 habit행 규칙이 갈 곳이 없어 "폐기"로 오기록될 위험 |
+| **Q1** | ~~처분 분류에 보조 표기 추가~~ → **(a) 승인 확정** (2026-07-02, 설계 §12.1 개정 완료) | — |
 | **Q2** | v1 git 브랜치 전략: (a) 버전 브랜치(`v<N>`) 유지 + 티켓 브랜치/worktree 폐지, (b) trunk 단일 + Conventional Commits만. 설계 문서 미규정 — §13에 따라 문서 개정 필요 | (a) 추천 — 버전 단위 롤백·PR 리뷰 지점 유지, 티켓 단위 격리만 제거 |
 | **Q3** | Outcome measurement(north_star/lazy protocol) 처분: (a) 폐기, (b) retro playbook 선택 항목으로 축소 이식 | (a) 추천 — YAGNI. retro--vN 자유 서술로 충분, 필요해지면 문서 개정 |
 | **Q4** | `docs/backlog.md` 제도: (a) 폐기 — 위키 decision 페이지 + 다음 버전 이월이 대체, (b) 유지 | (a) 추천 — 이번 조사에서 backlog↔ticket 수동 결합의 stale 병리(T-PATCH-247, 11건)가 자백됨 |

@@ -275,7 +275,7 @@ full의 교훈: cap을 자백("~137/100 breach")만 하고 방치 → doctor가 
 
 **전략 = 재구성 + 자산 이식** (in-place 수술 아님): productune repo의 v1 브랜치에서 새 트리를 새 경로·새 이름으로 작성. 기존 full/lite는 flip까지 무수정. main(GUI 작업 진행 중)을 주기 merge — 새 경로라 충돌 최소. 롤백 = flip 되돌리기.
 
-1. **처분표 (disposition table)** — hook 18개 + PO bookshelf 규칙 각각: `contract 승격 / playbook 이동 / hook 유지(3) / doctor 흡수 / 폐기(사유)`. 유실을 "실수"가 아닌 "결정"으로.
+1. **처분표 (disposition table)** — hook 18개 + PO bookshelf 규칙 각각: `contract 승격 / playbook 이동 / hook 유지(3) / doctor 흡수 / 폐기(사유)`. 유실을 "실수"가 아닌 "결정"으로. 목적지 세분화 보조 표기 `habit 재작성`(신설 habit에 판단 원칙으로 잔류) · `CLI/wiki 이관`(기능이 CLI/위키 구조로 대체 — 유실 아님) 허용 (2026-07-02 사용자 승인).
 2. **GUI↔discipline 결합 감사** — GUI가 `pdt-po` 에이전트명·po-state 스키마·ticket 경로를 하드코딩한 지점 목록화 (flip 시 어댑터 수정 범위 확정). v1 작업 초반 1회.
 3. **코어 구축** — 트리·contracts·doctrine.md·habit들·playbook 이식·prdt CLI(init/wiki/doctor)·hook 3종·statusline.
 4. **계층 검증** — ① VM smoke (lite 방식 무인 dogfood) → ② 기존 full 프로젝트 시나리오 재현 1개 → ③ 실프로젝트 1개 v1 병행 운영.
