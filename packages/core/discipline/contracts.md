@@ -28,7 +28,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 | Wiki | `docs/wiki/` — `index.md` and playbook `_index.md` menus are CLI-generated; never hand-edit |
 | Project state | `.prdt/po-state.json` · `.prdt/config.json` (slug + surfaces) · `.prdt/index.db` (derived, rebuildable) |
 
-- `po-state.json` = `{schema_version, stage, version, current_task}`; `current_task` = `null` | `{ticket_id, slug, assignee}`.
+- `po-state.json` = `{schema_version, stage, version, current_task}`; `current_task` = `null` | `{ticket_id, slug, assignee}` — `assignee` is the short persona name (`designer|developer|qa|po`), never an agent id (it surfaces in the statusline).
 - po-state writes are jq atomic merges (write temp → `mv`); never sed / string-append onto JSON.
 - git is the version history — no `PRD-v1.md`, no `design-v2.md`, no snapshot copies.
 
