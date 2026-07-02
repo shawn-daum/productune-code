@@ -87,7 +87,11 @@ docs/
 ```
 ~/.prdt/
 ├── discipline/                    # Tier 0 미러 (install.sh, 1-way)
-└── overrides/<persona>.md         # 사용자 커스터마이징 overlay (§8)
+├── overrides/<persona>.md         # 사용자 커스터마이징 overlay (§8)
+└── prdt.env                       # 엔진 설정 (2026-07-02 확정, GUI 감사 열린 항목 ①):
+                                   #   productune.env 미니멀 계승 — PRDT_REPO · created_at ·
+                                   #   install 플래그 · CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS.
+                                   #   graphiti/WIKI_BACKEND/MY_PO_ENGINE 폐기 (§7 FTS5 · §13 codex Out)
 ```
 
 ---
@@ -121,6 +125,7 @@ stage는 잠금장치가 아니라 **자세 포인터** — 역행은 금지도 
 - PO는 **intent만** 전달: `[ctx] {slug, goal, change_meta:{files, user_facing, risk_flags, stage}, acceptance, wiki_refs, user_lang, prd_path}`. **절차 지시 금지.**
 - worker는 **절차 지시가 와도 playbook 선택은 스스로** 한다 (양방향 방어 — PO의 옛 버릇 회귀 대비).
 - return envelope: `persona · task · summary · confidence` + 조건부 `blocked · refused · needs_info/next_question · unresolved[] · files_written[] · memory_notes[] · playbooks_run[]{name, why} · escalate_to{model, effort, playbooks, why}`.
+- QA live/smoke 조건부 필드 (2026-07-02 확정, GUI 감사 열린 항목 ②): `browser_url · verify_url · verify_description · auth_required{service, instruction, type}` — full QA envelope에서 필드명 그대로 계승 (GUI 브라우저 자동 열기·사용자 확인 안내·인증 안내가 의존; 파서 무수정).
 
 ### 메뉴판 사전 매칭 + escalate (routing)
 
@@ -254,7 +259,8 @@ docs/wiki/
 **hook (전부 기계적, 판단 개입 없음):**
 1. session-start discipline 주입 (doctrine.md + contracts + habit + overrides + 메뉴판)
 2. post-compact 재주입 (긴 세션에서 규율 증발은 판단으로 못 막음)
-3. post-dispatch state 기록 (session_id 등 — statusline에서 부수효과 분리 이관, §10)
+3. post-dispatch state 기록 (session_id 등 — statusline에서 부수효과 분리 이관, §10).
+   turns.jsonl은 현행 스키마 유지 (2026-07-02 확정, GUI 감사 열린 항목 ③): 2-scope(main/subagent)·필드명·cost_basis 의미론 동일, 위치만 `.prdt/`. cost_usd는 payload 보고값 우선, 없으면 **usage × API 가격표 추정** (모델별 input/output/cache-read 0.1×/cache-write 1.25× — `cost_source: reported|estimated` 부가 필드로 구분). flip 전 GUI CostArchive 필드 대조는 체크리스트(A7) 유지.
 
 **`prdt doctor` (non-blocking lint, Retro/boundary ritual + 수동 실행):**
 - ticket: enum 위반 · 고아 ticket · artifact 있는데 참조 ticket 없음 · blocked 장기화 · backlog 장기 방치 · deps 이상(없는 id·dropped 의존·순환)

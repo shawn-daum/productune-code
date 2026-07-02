@@ -119,9 +119,9 @@ GUI의 `PoState` 타입(`src/lib/types.ts:339-365`, 13+키) vs v1 po-state **4�
 | A7 | UsageBar 데이터 소스 교체 (usage-state.json 소멸) | T2 | usageWatch·UsageBar |
 | A8 | 제도 소멸 UI 숨김: gate(chip/marker/approve IPC)·promotion drain·versions 배열 뷰·PRD 스냅샷 뷰·manifest pane(→디렉토리 fallback)·mechanical-write IPC | T3 | 다수 (표 3·5·6·9) |
 
-**열린 항목 (코어 구축 §12.3에서 확정 필요):**
-1. `productune.env`(엔진 설정)의 v1 대응 — `.prdt` 쪽 동등물 미규정.
-2. QA envelope의 `browser_url`·`verify_url`·`auth_required` — GUI 기능(브라우저 자동 열기·인증 안내)이 유용하므로 contracts return envelope에 계승할지.
-3. turns.jsonl의 v1 스키마 — hook#3 재작성 시 GUI CostArchive 필드와 대조.
+**열린 항목 (2026-07-02 전건 확정 — 설계 SoT §2/§4/§9에 개정 반영):**
+1. ~~`productune.env`의 v1 대응~~ → **확정**: `~/.prdt/prdt.env` 미니멀 계승 (PRDT_REPO·created_at·install 플래그·AGENT_TEAMS; graphiti/MY_PO_ENGINE 폐기). GUI po-runner는 경로만 교체.
+2. ~~QA envelope 필드 계승~~ → **확정**: `browser_url`·`verify_url`·`verify_description`·`auth_required` contracts return envelope 조건부 계승, 필드명 그대로 (GUI 파서 무수정).
+3. ~~turns.jsonl v1 스키마~~ → **확정**: 현행 스키마 유지 + 기록 주체 statusline→hook#3 이관. cost_usd는 보고값 우선·usage×가격표 추정 fallback (`cost_source` 부가 필드). main scope의 GUI CostArchive/UsageBar 필드 대조는 A7에서 flip 전 1회.
 
 **최다 결합 파일 Top 5** (어댑터 PR 리뷰 중심): `electron/po-runner.ts` · `src/lib/types.ts` · `electron/ipc/onboarding.ts` · `src/lib/phase-mapping.ts` · `electron/ipc/tickets.ts`.
