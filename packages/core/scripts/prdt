@@ -1,0 +1,547 @@
+#!/usr/bin/env python3
+"""prdt — productune v1 CLI.
+
+Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history · menus · migrate
+Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §9 doctor, §10 CLI, §11 caps).
+md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
+"""
+import argparse, json, os, re, sqlite3, sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+STAGES = ("define", "build", "ship", "retro", "idle")
+TICKET_TYPES = ("design", "impl", "qa", "ops")
+TICKET_STATUS = ("open", "done", "dropped")
+WIKI_TYPES = ("decision", "fact", "learning", "feature", "retro")
+PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
+# §11 token-budget caps (physical lines; playbook cap counts body after frontmatter)
+CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 60, "worker_habit": 40,
+        "playbook_body": 80, "menu": 15}
+BLOCKED_STALE_DAYS = 14
+BACKLOG_STALE_DAYS = 30
+INBOX_PILE_LINES = 15
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def find_project_root(start=None):
+    """Walk up from cwd to the directory holding .prdt/."""
+    d = Path(start or os.getcwd()).resolve()
+    for p in [d, *d.parents]:
+        if (p / ".prdt").is_dir():
+            return p
+    return None
+
+
+def discipline_root():
+    """Installed mirror first, repo checkout (script sibling) as dev fallback."""
+    env = os.environ.get("PRDT_DISCIPLINE")
+    if env and Path(env).is_dir():
+        return Path(env)
+    home = Path.home() / ".prdt" / "discipline"
+    if home.is_dir():
+        return home
+    repo = Path(__file__).resolve().parent.parent / "discipline"
+    return repo if repo.is_dir() else None
+
+
+def parse_frontmatter(path):
+    """Minimal YAML-subset frontmatter parser: scalars, [a, b] lists, quoted strings."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return {}, ""
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---", 4)
+    if end < 0:
+        return {}, text
+    fm, body = {}, text[end + 4:].lstrip("\n")
+    for line in text[4:end].splitlines():
+        m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", line)
+        if not m:
+            continue
+        k, v = m.group(1), m.group(2).strip()
+        if v.startswith("[") and v.endswith("]"):
+            fm[k] = [x.strip().strip("'\"") for x in v[1:-1].split(",") if x.strip()]
+        else:
+            fm[k] = v.strip("'\"")
+    return fm, body
+
+
+def body_line_count(path):
+    _, body = parse_frontmatter(path)
+    return len(body.rstrip("\n").splitlines()) if body.strip() else 0
+
+
+def read_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def days_since(iso):
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days
+    except ValueError:
+        return None
+
+
+# ── index.db ──────────────────────────────────────────────────────────────────
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS tickets (
+  id TEXT PRIMARY KEY, slug TEXT, type TEXT CHECK(type IN ('design','impl','qa','ops')),
+  status TEXT CHECK(status IN ('open','done','dropped')), assignee TEXT, feature TEXT,
+  deps TEXT, created TEXT, closed TEXT, version TEXT, path TEXT);
+CREATE TABLE IF NOT EXISTS wiki_pages (
+  name TEXT PRIMARY KEY, title TEXT, type TEXT, status TEXT, version TEXT,
+  links TEXT, path TEXT);
+"""
+
+
+def open_db(root, rebuild=False):
+    dbp = root / ".prdt" / "index.db"
+    if rebuild and dbp.exists():
+        dbp.unlink()
+    con = sqlite3.connect(dbp)
+    con.executescript(SCHEMA)
+    try:
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='trigram')")
+    except sqlite3.OperationalError:
+        con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='unicode61')")
+    return con
+
+
+def scan_tickets(root):
+    """Yield (dict, path, problems[]) per ticket md. Enum violations reported, row still listed."""
+    tdir = root / "docs" / "tickets"
+    if not tdir.is_dir():
+        return
+    for p in sorted(tdir.rglob("T-*.md")):
+        fm, _ = parse_frontmatter(p)
+        version = p.parent.name
+        row = {"id": fm.get("id") or p.stem, "slug": fm.get("slug"), "type": fm.get("type"),
+               "status": fm.get("status"), "assignee": fm.get("assignee"),
+               "feature": fm.get("feature"), "deps": fm.get("deps") or [],
+               "created": fm.get("created"), "closed": fm.get("closed"),
+               "version": version, "path": str(p.relative_to(root))}
+        problems = []
+        if row["type"] not in TICKET_TYPES:
+            problems.append(f"type '{row['type']}' not in {'/'.join(TICKET_TYPES)}")
+        if row["status"] not in TICKET_STATUS:
+            problems.append(f"status '{row['status']}' not in {'/'.join(TICKET_STATUS)}")
+        if row["id"] != p.stem:
+            problems.append(f"frontmatter id {row['id']} != filename {p.stem}")
+        yield row, p, problems
+
+
+def reindex_tickets(root, con):
+    con.execute("DELETE FROM tickets")
+    violations = []
+    for row, p, problems in scan_tickets(root) or []:
+        violations += [f"{row['path']}: {x}" for x in problems]
+        try:
+            con.execute("INSERT OR REPLACE INTO tickets VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                        (row["id"], row["slug"], row["type"], row["status"], row["assignee"],
+                         row["feature"], json.dumps(row["deps"]), row["created"], row["closed"],
+                         row["version"], row["path"]))
+        except sqlite3.IntegrityError as e:
+            violations.append(f"{row['path']}: CHECK reject ({e})")
+    con.commit()
+    return violations
+
+
+WIKILINK = re.compile(r"\[\[([^\]|#]+)")
+
+
+def scan_wiki(root):
+    wdir = root / "docs" / "wiki"
+    if not wdir.is_dir():
+        return []
+    pages = []
+    for p in sorted(wdir.glob("*.md")):
+        if p.name in ("index.md", "inbox.md", "log.md"):
+            continue
+        fm, body = parse_frontmatter(p)
+        links = set(fm.get("links") or []) | set(WIKILINK.findall(body))
+        pages.append({"name": p.stem, "title": fm.get("title") or p.stem,
+                      "type": fm.get("type") or p.stem.split("--")[0],
+                      "status": fm.get("status") or "live",
+                      "version": fm.get("version"), "links": sorted(links),
+                      "path": str(p.relative_to(root)), "body": body})
+    return pages
+
+
+def reindex_wiki(root, con):
+    pages = scan_wiki(root)
+    con.execute("DELETE FROM wiki_pages")
+    con.execute("DELETE FROM wiki_fts")
+    for pg in pages:
+        con.execute("INSERT OR REPLACE INTO wiki_pages VALUES (?,?,?,?,?,?,?)",
+                    (pg["name"], pg["title"], pg["type"], pg["status"], pg["version"],
+                     json.dumps(pg["links"]), pg["path"]))
+        con.execute("INSERT INTO wiki_fts VALUES (?,?,?)", (pg["name"], pg["title"], pg["body"]))
+    con.commit()
+    # derived index.md — 1 line per page (§11), CLI-owned, never hand-edited
+    idx = root / "docs" / "wiki" / "index.md"
+    lines = ["# Wiki index (generated by `prdt wiki reindex` — do not hand-edit)", ""]
+    for pg in pages:
+        mark = " ⚠superseded" if pg["status"] == "superseded" else ""
+        ver = f" · {pg['version']}" if pg["version"] else ""
+        lines.append(f"- [[{pg['name']}]] {pg['type']}{ver}{mark} — {pg['title']}")
+    idx.parent.mkdir(parents=True, exist_ok=True)
+    idx.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return pages
+
+
+# ── menus (playbook 메뉴판) ────────────────────────────────────────────────────
+
+def menu_content(persona_dir):
+    rows = []
+    for p in sorted((persona_dir / "playbooks").glob("*.md")):
+        if p.name == "_index.md":
+            continue
+        fm, _ = parse_frontmatter(p)
+        rows.append((fm.get("name") or p.stem, fm.get("when", ""),
+                     fm.get("model_floor", ""), fm.get("effort", "")))
+    lines = [f"<!-- generated by `prdt menus` from playbook frontmatter — do not hand-edit -->",
+             "| playbook | when | floor |", "|---|---|---|"]
+    lines += [f"| {n} | {w} | {m}/{e} |" for n, w, m, e in rows]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_menus(_args):
+    droot = discipline_root()
+    if not droot:
+        sys.exit("prdt menus: no discipline root found")
+    for persona in ("po", "designer", "developer", "qa"):
+        pdir = droot / persona
+        if (pdir / "playbooks").is_dir():
+            (pdir / "playbooks" / "_index.md").write_text(menu_content(pdir), encoding="utf-8")
+            print(f"wrote {persona}/playbooks/_index.md")
+
+
+# ── init ──────────────────────────────────────────────────────────────────────
+
+def init_project(root, slug=None, version="v1", stage="define", interactive=True):
+    """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
+    root = Path(root).resolve()
+    prdt = root / ".prdt"
+    if (prdt / "po-state.json").exists():
+        return {"status": "exists", "root": str(root)}
+    slug = slug or root.name
+    if interactive and sys.stdin.isatty():
+        slug = input(f"project slug [{slug}]: ").strip() or slug
+        version = input(f"first version [{version}]: ").strip() or version
+        stage_in = input(f"stage [{stage}]: ").strip() or stage
+        stage = stage_in if stage_in in STAGES else stage
+    prdt.mkdir(exist_ok=True)
+    (prdt / "config.json").write_text(json.dumps(
+        {"slug": slug, "created_at": now_iso(), "surfaces": {}}, indent=2) + "\n", encoding="utf-8")
+    (prdt / "po-state.json").write_text(json.dumps(
+        {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
+        indent=2) + "\n", encoding="utf-8")
+    for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
+        (root / d).mkdir(parents=True, exist_ok=True)
+    for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
+                    ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
+        fp = root / "docs" / "wiki" / f
+        if not fp.exists():
+            fp.write_text(head, encoding="utf-8")
+    con = open_db(root, rebuild=True)
+    reindex_tickets(root, con)
+    reindex_wiki(root, con)
+    return {"status": "created", "root": str(root), "slug": slug,
+            "version": version, "stage": stage}
+
+
+def cmd_init(args):
+    res = init_project(os.getcwd(), slug=args.slug, version=args.version,
+                       interactive=not (args.yes or args.json))
+    if args.json:
+        print(json.dumps(res))
+    elif res["status"] == "exists":
+        print(f"already initialized: {res['root']}/.prdt")
+    else:
+        print(f"initialized {res['slug']} · {res['version']} · {res['stage']} at {res['root']}/.prdt")
+
+
+# ── wiki ──────────────────────────────────────────────────────────────────────
+
+def require_root():
+    root = find_project_root()
+    if not root:
+        sys.exit("no .prdt/ found — run `prdt init` at the project root first")
+    return root
+
+
+def cmd_wiki(args):
+    root = require_root()
+    if args.action == "reindex":
+        con = open_db(root, rebuild=True)
+        v = reindex_tickets(root, con)
+        pages = reindex_wiki(root, con)
+        print(f"reindexed: {len(pages)} wiki pages, tickets ok" +
+              (f", {len(v)} ticket violations (see `prdt doctor`)" if v else ""))
+    elif args.action == "search":
+        if not args.query:
+            sys.exit("usage: prdt wiki search <query>")
+        q = " ".join(args.query)
+        con = open_db(root)
+        rows = []
+        if all(len(t) >= 3 for t in q.split()):
+            try:
+                rows = con.execute(
+                    "SELECT name, title, snippet(wiki_fts, 2, '[', ']', '…', 12) FROM wiki_fts "
+                    "WHERE wiki_fts MATCH ? ORDER BY rank LIMIT 10", (q,)).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+        if not rows:  # short-token (trigram <3 chars) or no-hit fallback: LIKE scan
+            like = f"%{q}%"
+            rows = [(n, t, b[:80].replace("\n", " ")) for n, t, b in con.execute(
+                "SELECT name, title, body FROM wiki_fts WHERE body LIKE ? OR title LIKE ? OR name LIKE ? LIMIT 10",
+                (like, like, like))]
+        for name, title, snip in rows:
+            print(f"{name} — {title}\n    {snip}")
+        if not rows:
+            print("(no hits)")
+    elif args.action == "lint":
+        warns = wiki_lint(root)
+        for w in warns:
+            print(f"⚠ {w}")
+        print("wiki lint: clean" if not warns else f"wiki lint: {len(warns)} warning(s)")
+
+
+def wiki_lint(root):
+    pages = scan_wiki(root)
+    warns = []
+    names = {p["name"] for p in pages}
+    inbound = set()
+    for pg in pages:
+        for l in pg["links"]:
+            inbound.add(l)
+            if l not in names:
+                warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not exist")
+    by_name = {p["name"]: p for p in pages}
+    for pg in pages:
+        if pg["status"] == "live" and pg["name"] not in inbound and not pg["links"]:
+            warns.append(f"wiki: orphan page {pg['name']} (no links in or out)")
+        for l in pg["links"]:
+            tgt = by_name.get(l)
+            if tgt and tgt["status"] == "superseded" and pg["status"] == "live":
+                warns.append(f"wiki: live page {pg['name']} references superseded [[{l}]]")
+    inbox = root / "docs" / "wiki" / "inbox.md"
+    if inbox.exists():
+        n = sum(1 for l in inbox.read_text(encoding="utf-8").splitlines()
+                if l.strip().startswith("-"))
+        if n >= INBOX_PILE_LINES:
+            warns.append(f"wiki: inbox has {n} uncurated lines (≥{INBOX_PILE_LINES}) — run curate-wiki")
+    idx = root / "docs" / "wiki" / "index.md"
+    if pages and not idx.exists():
+        warns.append("wiki: index.md missing — run `prdt wiki reindex`")
+    return warns
+
+
+# ── tickets / history ─────────────────────────────────────────────────────────
+
+def cmd_tickets(args):
+    root = require_root()
+    con = open_db(root, rebuild=True)
+    reindex_tickets(root, con)
+    q, params = "SELECT id, slug, type, status, assignee, version, deps FROM tickets", []
+    conds = []
+    if args.backlog:
+        conds.append("version = 'backlog'")
+    if args.version:
+        conds.append("version = ?"); params.append(args.version)
+    if args.feature:
+        conds.append("feature = ?"); params.append(args.feature)
+    if args.status:
+        conds.append("status = ?"); params.append(args.status)
+    if conds:
+        q += " WHERE " + " AND ".join(conds)
+    rows = con.execute(q + " ORDER BY id", params).fetchall()
+    if args.ready:  # open + all deps done/absent
+        done = {r[0] for r in con.execute("SELECT id FROM tickets WHERE status='done'")}
+        all_ids = {r[0] for r in con.execute("SELECT id FROM tickets")}
+        rows = [r for r in rows if r[3] == "open" and
+                all(d in done or d not in all_ids for d in json.loads(r[6] or "[]"))]
+    for r in rows:
+        deps = json.loads(r[6] or "[]")
+        dep_s = f" deps={','.join(deps)}" if deps else ""
+        print(f"{r[0]} [{r[3]:>7}] {r[2]:<6} {r[5]:<8} {r[1] or ''} → {r[4] or '-'}{dep_s}")
+    if not rows:
+        print("(no tickets)")
+
+
+def cmd_history(_args):
+    root = require_root()
+    con = open_db(root, rebuild=True)
+    reindex_tickets(root, con)
+    rows = con.execute(
+        "SELECT version, COUNT(*), SUM(status='done'), SUM(status='open'), SUM(status='dropped') "
+        "FROM tickets GROUP BY version ORDER BY version").fetchall()
+    for v, total, done, opn, dropped in rows:
+        retro = root / "docs" / "wiki" / f"retro--{v}.md"
+        print(f"{v:<10} {total} tickets · {done or 0} done · {opn or 0} open · {dropped or 0} dropped"
+              + (f" · retro--{v}" if retro.exists() else ""))
+    if not rows:
+        print("(no history)")
+
+
+# ── doctor ────────────────────────────────────────────────────────────────────
+
+def cmd_doctor(_args):
+    root = require_root()
+    warns = []
+
+    # state
+    st = read_json(root / ".prdt" / "po-state.json")
+    if st is None:
+        warns.append("state: .prdt/po-state.json missing or invalid JSON")
+    else:
+        extra = set(st) - PO_STATE_KEYS
+        missing = PO_STATE_KEYS - set(st)
+        if extra:
+            warns.append(f"state: unexpected keys {sorted(extra)} (shape is 4 fields)")
+        if missing:
+            warns.append(f"state: missing keys {sorted(missing)}")
+        if st.get("stage") not in STAGES:
+            warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
+        ct = st.get("current_task")
+        if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee"} >= set(ct)):
+            warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
+
+    # tickets
+    con = open_db(root, rebuild=True)
+    warns += [f"ticket: {v}" for v in reindex_tickets(root, con)]
+    reindex_wiki(root, con)
+    tickets = {r["id"]: r for r, _, _ in (scan_tickets(root) or [])}
+    ids = set(tickets)
+    for t in tickets.values():
+        for d in t["deps"]:
+            if d not in ids:
+                warns.append(f"ticket: {t['id']} deps on missing {d}")
+            elif tickets[d]["status"] == "dropped":
+                warns.append(f"ticket: {t['id']} deps on dropped {d}")
+        if t["status"] == "open":
+            age = days_since(t["created"]) if t["created"] else None
+            body = (root / t["path"]).read_text(encoding="utf-8").lower()
+            if "blocked" in body and age is not None and age > BLOCKED_STALE_DAYS:
+                warns.append(f"ticket: {t['id']} open+blocked for {age}d")
+            if t["version"] == "backlog" and age is not None and age > BACKLOG_STALE_DAYS:
+                warns.append(f"ticket: backlog {t['id']} untouched {age}d")
+    # deps cycle
+    def cycles():
+        seen, stack = set(), set()
+        def dfs(i):
+            if i in stack:
+                return True
+            if i in seen or i not in tickets:
+                return False
+            seen.add(i); stack.add(i)
+            hit = any(dfs(d) for d in tickets[i]["deps"])
+            stack.discard(i)
+            return hit
+        return [i for i in tickets if dfs(i)]
+    cyc = cycles()
+    if cyc:
+        warns.append(f"ticket: dependency cycle involving {cyc[0]}")
+    # artifact without referencing ticket
+    art = root / "docs" / "artifacts"
+    if art.is_dir():
+        all_bodies = " ".join((root / t["path"]).read_text(encoding="utf-8") for t in tickets.values()) if tickets else ""
+        for a in art.iterdir():
+            if a.is_file() and not a.name.startswith(".") and a.name not in all_bodies:
+                warns.append(f"ticket: artifact {a.name} has no referencing ticket")
+
+    # wiki
+    warns += wiki_lint(root)
+
+    # discipline caps + menu drift
+    droot = discipline_root()
+    if droot:
+        for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
+            if cand.exists():
+                if len(cand.read_text(encoding="utf-8").splitlines()) > CAPS["doctrine.md"]:
+                    warns.append(f"discipline: doctrine.md exceeds {CAPS['doctrine.md']} lines")
+                break
+        c = droot / "contracts.md"
+        if c.exists() and len(c.read_text(encoding="utf-8").splitlines()) > CAPS["contracts.md"]:
+            warns.append(f"discipline: contracts.md exceeds {CAPS['contracts.md']} lines")
+        for persona in ("po", "designer", "developer", "qa"):
+            h = droot / persona / "habit.md"
+            cap = CAPS["po_habit"] if persona == "po" else CAPS["worker_habit"]
+            if h.exists() and len(h.read_text(encoding="utf-8").splitlines()) > cap:
+                warns.append(f"discipline: {persona}/habit.md exceeds {cap} lines")
+            pdir = droot / persona / "playbooks"
+            if pdir.is_dir():
+                for p in pdir.glob("*.md"):
+                    if p.name == "_index.md":
+                        if len(p.read_text(encoding="utf-8").splitlines()) > CAPS["menu"]:
+                            warns.append(f"discipline: {persona} menu exceeds {CAPS['menu']} lines")
+                        continue
+                    if body_line_count(p) > CAPS["playbook_body"]:
+                        warns.append(f"discipline: {persona}/playbooks/{p.name} body exceeds {CAPS['playbook_body']} lines")
+                idx = pdir / "_index.md"
+                if not idx.exists():
+                    warns.append(f"discipline: {persona} menu missing — run `prdt menus`")
+                elif idx.read_text(encoding="utf-8") != menu_content(droot / persona):
+                    warns.append(f"discipline: {persona} menu stale vs frontmatter — run `prdt menus`")
+    else:
+        warns.append("discipline: no discipline root found (~/.prdt/discipline or repo)")
+
+    for w in warns:
+        print(f"⚠ {w}")
+    print(("doctor: clean" if not warns else f"doctor: {len(warns)} warning(s)") + " (non-blocking)")
+
+
+def cmd_migrate(_args):
+    sys.exit("prdt migrate: not implemented yet — §12.5 (opt-in migration) lands after core verification")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
+    sub = ap.add_subparsers(dest="cmd")
+    p = sub.add_parser("init", help="interactive 3-item project init (slug · version · stage)")
+    p.add_argument("--slug"); p.add_argument("--version", default="v1")
+    p.add_argument("--yes", action="store_true", help="accept defaults, no prompts")
+    p.add_argument("--json", action="store_true", help="machine mode (GUI shares this module)")
+    p.set_defaults(fn=cmd_init)
+    p = sub.add_parser("doctor", help="non-blocking lint: state · tickets · wiki · discipline caps")
+    p.set_defaults(fn=cmd_doctor)
+    p = sub.add_parser("wiki", help="search | reindex | lint")
+    p.add_argument("action", choices=["search", "reindex", "lint"])
+    p.add_argument("query", nargs="*")
+    p.set_defaults(fn=cmd_wiki)
+    p = sub.add_parser("tickets", help="list tickets (--version --feature --status --ready --backlog)")
+    p.add_argument("--version"); p.add_argument("--feature"); p.add_argument("--status", choices=TICKET_STATUS)
+    p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
+    p.set_defaults(fn=cmd_tickets)
+    p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
+    p.set_defaults(fn=cmd_history)
+    p = sub.add_parser("menus", help="regenerate playbook _index.md menus from frontmatter")
+    p.set_defaults(fn=cmd_menus)
+    p = sub.add_parser("migrate", help="opt-in migration from full/lite (§12.5 — stub)")
+    p.set_defaults(fn=cmd_migrate)
+    args = ap.parse_args()
+    if not args.cmd:
+        root = find_project_root()
+        if root is None:
+            # §10: first run = init before the PO ever runs
+            cmd_init(argparse.Namespace(slug=None, version="v1", yes=False, json=False))
+        else:
+            ap.print_help()
+        return
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()
