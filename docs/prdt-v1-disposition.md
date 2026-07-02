@@ -157,7 +157,7 @@
 |---|---|---|
 | Env readiness (ios/android maestro 배선 검사) | **playbook 이동** | qa `smoke` playbook — surfaces{}는 config.json에 이식(§2). "P3-open 1회만 질문" 판단 포함 |
 | Test trigger (**SYNCED PAIR** — po/qa 양쪽 byte-identical) | **playbook 이동** | qa `smoke`/`grill`의 `when` frontmatter로 **단일 SoT화**. §0이 이 SYNCED PAIR를 병리로 자백 — PO 쪽 사본은 폐기, QA 쪽만 남기고 playbook화 |
-| Deferred decisions → docs/backlog.md | **CLI/wiki 이관 + 리뷰 질문 Q4** | v1 설계에 backlog.md 없음. 대체물: 위키 `decision--*`(보류 결정) + 다음 버전 스코프 이월(§3). backlog 파일 제도 폐기 확정 여부 확인 필요 |
+| Deferred decisions → docs/backlog.md | **contract 승격**(ticket 규칙으로 통합) | **Q4 확정(2026-07-02, 설계 §6)**: backlog 파일 폐기 → backlog = version 없는 ticket(`tickets/backlog/`·미래 버전 디렉토리). 이번 버전 내 보류 결정 = 현재 버전 open 티켓+서사, 결정 기록 = 위키 decision |
 | Pre-close run-prompt (사용자 눈 확인 권고, skippable) | **playbook 이동** | qa `live-verify` + PO `readiness-dispatch` playbook의 권고 항목 |
 | close gate 4-step (backlog_triage→design_review→prd_check→security_6) | **playbook 이동** | PO `readiness-dispatch` — §3 Ship 진입 ritual(DS conformance + surface-conditional security)로 재구성. no-waiver/waivable 기계 구분 폐기, N/A skip은 판단+위키 log |
 | 누적 code-review (버전 diff 전체, 3축) | **playbook 이동** | developer `code-review`(§5 표 명시) — readiness-dispatch가 호출 |
@@ -188,7 +188,7 @@
 | Turn-open sweep (recent_turns trim·stale 정리·gate self-heal) | **폐기** | po-state 4필드로 sweep 대상 자체가 소멸. gate self-heal은 gate 폐지로 무의미 |
 | State lazy-prompts (stale 조건 질문 3종) | **doctor 흡수** | §6/§9 명시: "blocked 장기화·전이 이상은 doctor가 경고" — 같은 계열로 흡수 |
 | versions cap ≤5 rotate | **폐기** | versions 배열 없음 |
-| backlog↔ticket reconcile a1–a4 | **폐기** (Q4 종속) | backlog 제도 폐기 시 무의미. ticket 3값 enum + doctor 고아 검사가 잔여 기능 흡수 |
+| backlog↔ticket reconcile a1–a4 | **폐기** | Q4 확정: backlog가 ticket으로 통합(§6)돼 동기화할 두 번째 장부 자체가 소멸 — stale 병리의 구조적 제거 |
 | Harness memory drain (Claude 자체 메모리 → doctrine) | **playbook 이동** | PO `curate-wiki`의 선택 항목 — §8: root 메모리는 "자동 보너스"로만, 의존 안 함. drain 개념은 위키 inbox로 방향만 교체 |
 | po-state write는 jq atomic merge만 (raw append 금지) | **contract 승격** | contracts.md 1줄 — 파일 부패 방지는 shape이 바뀌어도 유효한 규칙 |
 | top-level canonical 13필드 whitelist | **폐기** | 새 4필드 스키마가 대체, 검사는 doctor |
@@ -251,4 +251,4 @@
 | **Q1** | ~~처분 분류에 보조 표기 추가~~ → **(a) 승인 확정** (2026-07-02, 설계 §12.1 개정 완료) | — |
 | **Q2** | ~~git 브랜치 전략~~ → **(c) 확정** (2026-07-02): 기본 trunk + tag, 격리는 worktree 트리거 판단. 설계 §5c 신설 | — |
 | **Q3** | ~~Outcome measurement~~ → **(b)+ 확정** (2026-07-02): north star는 Define의 스코프 입력으로 강화 이식. 설계 §5d 신설 | — |
-| **Q4** | `docs/backlog.md` 제도: (a) 폐기 — 위키 decision 페이지 + 다음 버전 이월이 대체, (b) 유지 | (a) 추천 — 이번 조사에서 backlog↔ticket 수동 결합의 stale 병리(T-PATCH-247, 11건)가 자백됨 |
+| **Q4** | ~~backlog.md 제도~~ → **(c) 확정** (2026-07-02): backlog = version 없는 ticket + 전역 id + `deps` 선택 필드. 설계 §6 개정 | — |

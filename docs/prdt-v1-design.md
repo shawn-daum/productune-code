@@ -195,11 +195,17 @@ north star는 회고용 기록이 아니라 **Define 시점에 제품 스코프�
 
 ## 6. Ticket-lite
 
-- 경로 `docs/tickets/<version>/T-NNN.md`. **md = SoT** (git 이력·worker 접근성·무도구 생존성), **SQLite = 파생 인덱스** (`.prdt/index.db` tickets 테이블).
-- frontmatter (7±1): `id · slug · type(design|impl|qa|ops) · status(open|done|dropped) · assignee · feature? · created/closed`. **frontmatter는 PO만 쓴다** (worker는 body만).
+- 경로 `docs/tickets/<version>/T-NNN.md`. **md = SoT** (git 이력·worker 접근성·무도구 생존성), **SQLite = 파생 인덱스** (`.prdt/index.db` tickets 테이블). 티켓 번호는 **전역 카운터** — 디렉토리 간 이동에도 id 불변 (2026-07-02).
+- frontmatter (7±1): `id · slug · type(design|impl|qa|ops) · status(open|done|dropped) · assignee · feature? · deps?[] · created/closed`. **frontmatter는 PO만 쓴다** (worker는 body만). `deps`는 dispatch 순서의 판단 재료 + 조회 인덱스(`prdt tickets --ready`)일 뿐 — 기계 강제 없음 (2026-07-02, 처분표 Q4).
 - body 3섹션: `## Request` / `## Acceptance` / `## Outcome`. 진행 노트도 body가 겸함 → **briefs/ 폐지**.
-- status는 3값 enum. blocked·review는 상태가 아니라 open인 채로 적는 서사. **인덱싱 시 CHECK 제약이 enum을 기계 검증** — lint hook 불요.
-- `blocked` 장기화·전이 이상은 doctor가 경고.
+- status는 3값 enum. blocked·review는 상태가 아니라 open인 채로 적는 서사. **이번 버전 안에 풀어야 할 보류 결정도 open + "결정 대기" 서사다** (backlog 아님). **인덱싱 시 CHECK 제약이 enum을 기계 검증** — lint hook 불요.
+- `blocked` 장기화·전이 이상·backlog 장기 방치·`deps` 이상(없는 id 참조·dropped 의존·순환)은 doctor가 경고.
+
+### Backlog = version 없는 ticket (2026-07-02 확정, 처분표 Q4)
+
+- `docs/tickets/backlog/T-NNN.md` — 버전 디렉토리 자리에 `backlog`(미정) 또는 미래 버전(`v1.5/` = 로드맵). 스키마·룰은 일반 티켓과 동일, status는 `open` 대기.
+- **승격 = `git mv`로 현재 버전 디렉토리 이동** (전역 id라 불변). full `backlog.md`의 이중 장부 stale 병리(T-PATCH-247)를 동기화 규칙이 아니라 구조로 제거 — 전환이 "복사+삭제"가 아니라 한 객체의 이동. 포기 = `dropped`.
+- 역할 분리: **작업거리 = backlog 티켓 · 지식/교훈 = inbox→위키 · 결정 기록/번복 = decision 페이지**. Retro/Define 진입 시 `prdt tickets --backlog` 1회 훑기(full backlog_triage의 대체).
 
 ### 히스토리 3층
 
@@ -251,7 +257,7 @@ docs/wiki/
 3. post-dispatch state 기록 (session_id 등 — statusline에서 부수효과 분리 이관, §10)
 
 **`prdt doctor` (non-blocking lint, Retro/boundary ritual + 수동 실행):**
-- ticket: enum 위반 · 고아 ticket · artifact 있는데 참조 ticket 없음 · blocked 장기화
+- ticket: enum 위반 · 고아 ticket · artifact 있는데 참조 ticket 없음 · blocked 장기화 · backlog 장기 방치 · deps 이상(없는 id·dropped 의존·순환)
 - wiki: orphan 페이지 · superseded 참조 · inbox 적체 · index 불일치
 - discipline: 파일 cap 초과(§11) · 메뉴판↔frontmatter 불일치
 - state: po-state shape · stage 값
