@@ -182,6 +182,15 @@ TDD는 doctrine(철학)에 두고, playbook에서는 "로직/회귀 위험 영�
 - **격리는 제도가 아니라 판단**: worktree 트리거 3개(§4)에 해당할 때만 브랜치+worktree — 채택 시 merge 후 브랜치 삭제, 폐기 시 통째 drop. 새 개념 추가 없음(§4 트리거의 연장).
 - commit 규약·trunk 원칙은 contracts.md에 명문화.
 
+### 5d. Outcome — north star 계보 (2026-07-02 확정, 처분표 Q3)
+
+north star는 회고용 기록이 아니라 **Define 시점에 제품 스코프를 바꾸는 입력**이다 — 측정 수단이 제품 기능을 요구하는 경우가 대부분이므로(예: north star가 재방문율이면 analytics 도입이 PRD 요구사항이 됨).
+
+- **Define**: designer `prd-clarity`가 PRD에서 `north_star · input_metrics · validation_method`를 도출하고, **측정 수단이 제품 기능을 요구하면 PRD 스코프에 포함**시킨다. 정성적 목표면 확인 방법(사용자 관찰 등)을 명시.
+- **Retro**: `retro--v<N>.md`에 outcome 섹션 기록 — 관측값 또는 "미관측 + 사유"(빈 null 금지, full의 침묵 null 폐지).
+- **다음 Define 진입**: 직전 retro에 미관측 성과가 있으면 PO가 1회 확인 (full의 "never remind" lazy protocol을 "경계에서 1회"로 교체 — open-gate ritual 원리).
+- 데이터 홈은 PRD + 위키(po-state 스키마 없음). full의 `versions[].outcome` 구조는 이식하지 않는다.
+
 ---
 
 ## 6. Ticket-lite

@@ -178,7 +178,7 @@
 | 5a–5d 절차 (feature-history/fail-patterns/회고/drain) | **playbook 이동** | PO `retro` + `curate-wiki` playbook으로 재구성(§3 Retro stage). 산출물 채널 교체: feature-history→`feature--*.md` · fail-patterns/version-summary→`learning--*.md` · retrospectives→`retro--v<N>.md` |
 | Master archive (PRD/DS snapshot) + PRD prune | **폐기** | 단일 living PRD/DS(§2). 버전 시점 기록은 git 이력 + retro 위키가 담당. "master는 항상 현재 그림" 원칙만 living 문서 규칙으로 자연 계승 |
 | Retrospective read sources 5종 | **playbook 이동** | `retro` playbook 본문 — 원천을 위키 채널로 교체 |
-| Outcome measurement (north_star/input_metrics/lazy protocol) | **리뷰 질문 Q3** | v1 설계에 부재. 후보: (a) 폐기 — retro--vN 자유 서술로 충분(YAGNI), (b) retro playbook의 선택 항목으로 축소 이식. 스코프 결정 필요(§13: 추가는 문서 개정으로만) |
+| Outcome measurement (north_star/input_metrics/lazy protocol) | **playbook 이동** (구조 폐기, 계보 강화) | **Q3 확정(2026-07-02, 설계 §5d)**: north star는 Define의 제품 스코프 입력(측정 수단 → PRD 요구사항). prd-clarity가 도출, retro--vN에 관측 기록, 다음 Define 진입 시 1회 확인. versions[].outcome 스키마·"never remind" lazy protocol은 폐기 |
 | P5 promotion drain | **폐기** | promotion 제도 폐지(2.6) |
 
 ### 2.12 `lifecycle/state-hygiene.md` (72줄)
@@ -250,5 +250,5 @@
 |---|---|---|
 | **Q1** | ~~처분 분류에 보조 표기 추가~~ → **(a) 승인 확정** (2026-07-02, 설계 §12.1 개정 완료) | — |
 | **Q2** | ~~git 브랜치 전략~~ → **(c) 확정** (2026-07-02): 기본 trunk + tag, 격리는 worktree 트리거 판단. 설계 §5c 신설 | — |
-| **Q3** | Outcome measurement(north_star/lazy protocol) 처분: (a) 폐기, (b) retro playbook 선택 항목으로 축소 이식 | (a) 추천 — YAGNI. retro--vN 자유 서술로 충분, 필요해지면 문서 개정 |
+| **Q3** | ~~Outcome measurement~~ → **(b)+ 확정** (2026-07-02): north star는 Define의 스코프 입력으로 강화 이식. 설계 §5d 신설 | — |
 | **Q4** | `docs/backlog.md` 제도: (a) 폐기 — 위키 decision 페이지 + 다음 버전 이월이 대체, (b) 유지 | (a) 추천 — 이번 조사에서 backlog↔ticket 수동 결합의 stale 병리(T-PATCH-247, 11건)가 자백됨 |
