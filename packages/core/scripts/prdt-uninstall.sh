@@ -19,6 +19,7 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
     (if .hooks then
        .hooks.SessionStart = strip("SessionStart") |
        .hooks.SubagentStart = strip("SubagentStart") |
+       .hooks.SubagentStop = strip("SubagentStop") |
        .hooks.PostToolUse = strip("PostToolUse")
      else . end) |
     (if (.statusLine.command // "") == $sl then del(.statusLine) else . end)

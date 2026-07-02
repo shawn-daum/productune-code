@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# prdt — Claude Code PostToolUse hook, matcher: Agent (v1 hook #3).
+# prdt — Claude Code state-recording hook (v1 hook #3). Registered TWICE:
+#   PostToolUse (matcher: Agent)      — dispatch time: sessions.json + main line
+#                                       (+ subagent line if the sync response carries usage)
+#   SubagentStop (matcher: ^prdt-)    — completion time: subagent line summed from
+#                                       agent_transcript_path (2026-07-02: background
+#                                       dispatch responses carry NO usage — launch metadata only)
+# Dedupe: .prdt/.subagent-gate.json marks agent_ids whose subagent line is already written.
 #
 # Mechanical state recording after a persona dispatch (§9 #3) — the side effects
 # that full productune hid inside the statusline (v1 statusline is display-only, §10):
@@ -25,11 +31,15 @@ try:
 except Exception:
     sys.exit(0)
 
+event = ev.get("hook_event_name") or "PostToolUse"
 tool = ev.get("tool_name") or ""
 tin = ev.get("tool_input") or {}
-if tool != "Agent":
+if event == "SubagentStop":
+    sub = str(ev.get("agent_type") or "")
+elif tool == "Agent":
+    sub = str(tin.get("subagent_type") or "")
+else:
     sys.exit(0)
-sub = str(tin.get("subagent_type") or "")
 if not sub.startswith("prdt-"):
     sys.exit(0)
 persona = sub[len("prdt-"):]
@@ -68,7 +78,7 @@ try:
         sess = {}
 except Exception:
     sess = {}
-agent_id = resp_obj.get("agentId") or resp_obj.get("agent_id")
+agent_id = ev.get("agent_id") or resp_obj.get("agentId") or resp_obj.get("agent_id")
 if not agent_id:
     m = re.search(r'"agent[_]?[iI]d"\s*:\s*"([^"]+)"', resp_text)
     agent_id = m.group(1) if m else None
@@ -165,36 +175,23 @@ def usage_from(obj):
 
 
 turns = os.path.join(state_dir, "turns.jsonl")
+gate_sub_path = os.path.join(state_dir, ".subagent-gate.json")
 
-# b1) scope=subagent — per-dispatch record (mirrors full's subagent writer fields)
-cost = resp_obj.get("total_cost_usd")
-if cost is None and isinstance(resp_obj.get("cost"), dict):
-    cost = resp_obj["cost"].get("total_cost_usd")
-sub_model = (resp_obj.get("model") or {}).get("id") if isinstance(resp_obj.get("model"), dict) else resp_obj.get("model")
-cost_source = "reported" if isinstance(cost, (int, float)) else None
-if cost_source is None:
-    u4 = usage4_from(resp_obj)
-    if u4 and sub_model:
-        cost = estimate_cost({sub_model: u4})
-        cost_source = "estimated" if cost is not None else None
-line = {"ts": now, "scope": "subagent", "persona": persona,
-        "session_id": resp_obj.get("session_id") or agent_id,
-        "model": sub_model,
-        "cost_usd": cost if isinstance(cost, (int, float)) else None,
-        "cost_source": cost_source,
-        "cost_basis": "subagent_total", "usage": usage_from(resp_obj),
-        "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
-with open(turns, "a") as f:
-    f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
-# b2) scope=main — transcript-cumulative token sum, delta-gated per session
-tpath = ev.get("transcript_path")
-sid = ev.get("session_id") or "_nosession"
-if tpath and os.path.isfile(tpath):
-    per_model = {}  # model → 4-bucket sums, for pricing
-    seen = False
+def load_json_map(path):
     try:
-        with open(tpath) as f:
+        with open(path) as f:
+            g = json.load(f)
+        return g if isinstance(g, dict) else {}
+    except Exception:
+        return {}
+
+
+def sum_transcript(path):
+    """Sum per-model 4-bucket usage over a transcript JSONL. → (per_model, seen)"""
+    per_model, seen = {}, False
+    try:
+        with open(path) as f:
             for raw in f:
                 try:
                     msg = json.loads(raw)
@@ -210,14 +207,76 @@ if tpath and os.path.isfile(tpath):
                     for k in acc:
                         acc[k] += u4[k]
     except Exception:
-        seen = False
+        return {}, False
+    return per_model, seen
+
+
+def three_bucket(per_model):
+    tot = {"input": 0, "output": 0, "cache": 0}
+    for u in per_model.values():
+        tot["input"] += u["input"]
+        tot["output"] += u["output"]
+        tot["cache"] += u["cache_read"] + u["cache_creation"]
+    return tot
+
+
+# ── SubagentStop: completion-time subagent line (usage summed from its transcript) ──
+if event == "SubagentStop":
+    gate = load_json_map(gate_sub_path)
+    if agent_id and gate.get(agent_id):
+        sys.exit(0)  # sync dispatch already recorded this agent at PostToolUse time
+    atp = ev.get("agent_transcript_path")
+    per_model, seen = sum_transcript(atp) if atp and os.path.isfile(atp) else ({}, False)
+    cost = estimate_cost(per_model) if seen else None
+    line = {"ts": now, "scope": "subagent", "persona": persona,
+            "session_id": agent_id,
+            "model": max(per_model, key=lambda m: sum(per_model[m].values())) if per_model else None,
+            "cost_usd": cost, "cost_source": "estimated" if cost is not None else None,
+            "cost_basis": "subagent_total", "usage": three_bucket(per_model) if seen else None,
+            "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
+    with open(turns, "a") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    if agent_id:
+        gate[agent_id] = True
+        atomic_write(gate_sub_path, gate)
+    sys.exit(0)
+
+# b1) scope=subagent — dispatch-time record, ONLY when the (sync) response carries
+#     usage/cost; background launches carry none — SubagentStop covers them.
+cost = resp_obj.get("total_cost_usd")
+if cost is None and isinstance(resp_obj.get("cost"), dict):
+    cost = resp_obj["cost"].get("total_cost_usd")
+sub_model = (resp_obj.get("model") or {}).get("id") if isinstance(resp_obj.get("model"), dict) else resp_obj.get("model")
+cost_source = "reported" if isinstance(cost, (int, float)) else None
+if cost_source is None:
+    u4 = usage4_from(resp_obj)
+    if u4 and sub_model:
+        cost = estimate_cost({sub_model: u4})
+        cost_source = "estimated" if cost is not None else None
+sub_usage = usage_from(resp_obj)
+if sub_usage or isinstance(cost, (int, float)):
+    line = {"ts": now, "scope": "subagent", "persona": persona,
+            "session_id": resp_obj.get("session_id") or agent_id,
+            "model": sub_model,
+            "cost_usd": cost if isinstance(cost, (int, float)) else None,
+            "cost_source": cost_source,
+            "cost_basis": "subagent_total", "usage": sub_usage,
+            "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
+    with open(turns, "a") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    if agent_id:
+        gate = load_json_map(gate_sub_path)
+        gate[agent_id] = True
+        atomic_write(gate_sub_path, gate)
+
+# b2) scope=main — transcript-cumulative token sum, delta-gated per session
+tpath = ev.get("transcript_path")
+sid = ev.get("session_id") or "_nosession"
+if tpath and os.path.isfile(tpath):
+    per_model, seen = sum_transcript(tpath)
     if seen:
         # recorded usage keeps the legacy 3-bucket shape (cache = read + creation)
-        tot = {"input": 0, "output": 0, "cache": 0}
-        for u in per_model.values():
-            tot["input"] += u["input"]
-            tot["output"] += u["output"]
-            tot["cache"] += u["cache_read"] + u["cache_creation"]
+        tot = three_bucket(per_model)
         main_cost = estimate_cost(per_model)
         gate_path = os.path.join(state_dir, ".cost-main-gate.json")
         try:
