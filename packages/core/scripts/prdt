@@ -48,7 +48,7 @@ def discipline_root():
 
 
 def parse_frontmatter(path):
-    """Minimal YAML-subset frontmatter parser: scalars, [a, b] lists, quoted strings."""
+    """Minimal YAML-subset frontmatter parser: scalars, [a, b] + block lists, quoted strings."""
     try:
         text = Path(path).read_text(encoding="utf-8")
     except OSError:
@@ -59,15 +59,29 @@ def parse_frontmatter(path):
     if end < 0:
         return {}, text
     fm, body = {}, text[end + 4:].lstrip("\n")
-    for line in text[4:end].splitlines():
-        m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", line)
+    lines = text[4:end].splitlines()
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", lines[i])
         if not m:
+            i += 1
             continue
         k, v = m.group(1), m.group(2).strip()
         if v.startswith("[") and v.endswith("]"):
             fm[k] = [x.strip().strip("'\"") for x in v[1:-1].split(",") if x.strip()]
+        elif v == "":
+            items, j = [], i + 1
+            while j < len(lines) and re.match(r"^\s+-\s+", lines[j]):
+                items.append(re.sub(r"^\s+-\s+", "", lines[j]).strip().strip("'\""))
+                j += 1
+            if items:
+                fm[k] = items
+                i = j - 1
+            else:
+                fm[k] = ""
         else:
             fm[k] = v.strip("'\"")
+        i += 1
     return fm, body
 
 
@@ -503,8 +517,198 @@ def cmd_doctor(_args):
     print(("doctor: clean" if not warns else f"doctor: {len(warns)} warning(s)") + " (non-blocking)")
 
 
-def cmd_migrate(_args):
-    sys.exit("prdt migrate: not implemented yet — §12.5 (opt-in migration) lands after core verification")
+# ── migrate (§12.5 — opt-in full/lite → prdt) ─────────────────────────────────
+
+PHASE2STAGE = {1: "define", 2: "build", 3: "build", 4: "ship", 5: "retro"}
+FULL_STATUS_MAP = {"todo": "open", "in-progress": "open", "review": "open",
+                   "user-verify": "open", "blocked": "open",
+                   "done": "done", "abandoned": "dropped", "dropped": "dropped"}
+FULL_TYPE_MAP = {"design": "design", "docs": "design", "impl": "impl", "refactor": "impl",
+                 "patch": "impl", "chore": "impl", "spike": "impl",
+                 "test": "qa", "qa": "qa", "deploy": "ops", "ops": "ops"}
+TICKET_KEYS = ("id", "slug", "type", "status", "assignee", "feature", "deps", "created", "closed")
+
+
+def fm_serialize(fm):
+    out = ["---"]
+    for k, v in fm.items():
+        if v is None or v == "" or v == []:
+            continue
+        out.append(f"{k}: [{', '.join(v)}]" if isinstance(v, list) else f"{k}: {v}")
+    out.append("---")
+    return "\n".join(out) + "\n"
+
+
+def date_only(v):
+    m = re.match(r"(\d{4}-\d{2}-\d{2})", str(v or ""))
+    return m.group(1) if m else None
+
+
+def migrate_ticket(p, dry):
+    fm, body = parse_frontmatter(p)
+    if not fm.get("ticket_id") and not fm.get("id"):
+        return None
+    new = {
+        "id": fm.get("ticket_id") or fm.get("id") or p.stem,
+        "slug": fm.get("slug") or p.stem.lower(),
+        "type": FULL_TYPE_MAP.get(str(fm.get("type", "")).lower(), "impl"),
+        "status": FULL_STATUS_MAP.get(str(fm.get("status", "")).lower(), "open"),
+        "assignee": re.sub(r"^pdtl?-", "", str(fm.get("assignee") or "")) or None,
+        "feature": fm.get("area_tag") or fm.get("feature") or None,
+        "deps": fm.get("deps") if isinstance(fm.get("deps"), list) else None,
+        "created": date_only(fm.get("created_at") or fm.get("created")),
+        "closed": date_only(fm.get("completed_at") or fm.get("closed")),
+    }
+    dropped = {k: v for k, v in fm.items()
+               if k not in ("ticket_id", "slug", "type", "status", "assignee", "area_tag",
+                            "deps", "created_at", "completed_at", "created", "closed", "id", "feature")
+               and v not in ("", [], None)}
+    note = ""
+    if dropped:
+        pairs = " ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in dropped.items())
+        note = f"<!-- migrated from full frontmatter: {pairs} -->\n\n"
+    if not dry:
+        p.write_text(fm_serialize(new) + "\n" + note + body, encoding="utf-8")
+    return new["status"]
+
+
+def write_wiki_page(root, name, type_, title, body, version, dry):
+    p = root / "docs" / "wiki" / f"{name}.md"
+    if p.exists():
+        return False
+    fm = {"title": title, "type": type_, "status": "live", "version": version or ""}
+    if not dry:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+    return True
+
+
+def page_title(path, fallback):
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return fallback
+
+
+def cmd_migrate(args):
+    root = Path(args.path or os.getcwd()).resolve()
+    dry = args.dry_run
+    full_state = root / ".productune" / "po-state.json"
+    lite_state = root / ".productune-lite" / "po-state.json"
+    kind = "full" if full_state.is_file() else "lite" if lite_state.is_file() else None
+    if not kind:
+        sys.exit("prdt migrate: no .productune/ or .productune-lite/ state here — nothing to migrate")
+    if (root / ".prdt" / "po-state.json").exists() and not args.force:
+        sys.exit("prdt migrate: .prdt/ already exists — pass --force to overwrite its state")
+    old = read_json(full_state if kind == "full" else lite_state) or {}
+    old_cfg = read_json(root / (".productune" if kind == "full" else ".productune-lite") / "config.json") or {}
+    report = [f"kind: {kind} project"]
+
+    # 1. state mapping
+    if kind == "full":
+        stage = PHASE2STAGE.get(old.get("current_phase"), "build")
+        cv = old.get("current_version")
+        version = (cv.get("id") if isinstance(cv, dict) else cv) or "v1"
+    else:
+        stage = old.get("stage") if old.get("stage") in STAGES else "define"
+        version = old.get("version") or "v1"
+    if old.get("current_task"):
+        report.append("current_task: 이식 불가 스크래치 → null 리셋 (진행 중이던 작업은 다음 턴에 재개 지시)")
+
+    # 2. tickets (full only)
+    n_tickets, status_counts = 0, {}
+    tdir = root / "docs" / "tickets"
+    if kind == "full" and tdir.is_dir():
+        for p in sorted(tdir.rglob("T-*.md")):
+            s = migrate_ticket(p, dry)
+            if s:
+                n_tickets += 1
+                status_counts[s] = status_counts.get(s, 0) + 1
+        report.append(f"tickets: {n_tickets}개 v1 스키마 변환 {status_counts} (유실 필드는 본문 주석 보존)")
+
+    # 3. wiki pages
+    n_pages = 0
+    def page(src, name, type_):
+        nonlocal n_pages
+        if src.is_file() and write_wiki_page(root, name, type_, page_title(src, src.stem),
+                                             src.read_text(encoding="utf-8"), version, dry):
+            n_pages += 1
+    if kind == "full":
+        page(root / "docs" / "po" / "calibration-log.md", "learning--migrated-calibration-log", "learning")
+        for persona in ("designer", "developer", "qa"):
+            bdir = root / "docs" / persona / "bookshelf"
+            if bdir.is_dir():
+                for src in sorted(bdir.glob("*.md")):
+                    t = "decision" if "decision" in src.stem else "learning"
+                    page(src, f"{t}--migrated-{persona}-{src.stem}", t)
+        page(root / "docs" / "designer" / "feature-history.md", "fact--migrated-feature-history", "fact")
+        rdir = root / "docs" / "retrospectives"
+        if rdir.is_dir():
+            for src in sorted(rdir.glob("*.md")):
+                page(src, f"retro--{src.stem}", "retro")
+        if (root / "docs" / "backlog.md").is_file():
+            report.append("backlog.md: 자동 변환 안 함 — Define/Retro 진입 시 PO가 수동 triage (Q4 구조)")
+    else:
+        mem = root / "docs" / "memory.md"
+        if mem.is_file():
+            sections, cur = {}, None
+            for line in mem.read_text(encoding="utf-8").splitlines():
+                if line.startswith("## "):
+                    cur = line[3:].strip().lower()
+                    sections[cur] = []
+                elif cur:
+                    sections[cur].append(line)
+            sec_map = {"decisions": ("decision--migrated-memory-decisions", "decision"),
+                       "preferences": ("fact--migrated-user-preferences", "fact"),
+                       "project facts": ("fact--migrated-project-facts", "fact"),
+                       "learnings": ("learning--migrated-memory-learnings", "learning")}
+            for sec, lines in sections.items():
+                body = "\n".join(lines).strip()
+                if not body:
+                    continue
+                name, t = sec_map.get(sec, (f"fact--migrated-memory-{re.sub(r'[^a-z0-9]+', '-', sec)}", "fact"))
+                if write_wiki_page(root, name, t, f"memory.md — {sec}", body, version, dry):
+                    n_pages += 1
+    report.append(f"wiki: {n_pages}페이지 생성 (원본 문서는 legacy로 잔존 — 큐레이션은 다음 Retro)")
+
+    # 4. old marker 제거 (구 hook 비발동) + 5. .prdt 생성
+    marker = root / (".productune" if kind == "full" else ".productune-lite")
+    if not dry:
+        backup = root / (marker.name + ".migrated")
+        if backup.exists():
+            import shutil
+            shutil.rmtree(str(backup))
+        marker.rename(backup)
+        report.append(f"{marker.name}/ → {backup.name}/ (구 마커 제거 — legacy hook 비발동)")
+        prdt = root / ".prdt"
+        prdt.mkdir(exist_ok=True)
+        slug = old_cfg.get("slug") or old_cfg.get("project_name") or root.name
+        cfg = {"slug": slug, "created_at": now_iso(), "surfaces": old_cfg.get("surfaces") or {},
+               "migrated_from": kind, "migrated_at": now_iso()}
+        (prdt / "config.json").write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        (prdt / "po-state.json").write_text(json.dumps(
+            {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
+            indent=2) + "\n", encoding="utf-8")
+        for d in ("docs/prd", "docs/tickets", "docs/artifacts", "docs/wiki"):
+            (root / d).mkdir(parents=True, exist_ok=True)
+        for f, head in (("inbox.md", "# Wiki inbox — 1-line memory_notes appends; curated at stage boundaries\n"),
+                        ("log.md", "# Wiki log — append-only ritual/ingest/lint records\n")):
+            fp = root / "docs" / "wiki" / f
+            if not fp.exists():
+                fp.write_text(head, encoding="utf-8")
+        with open(root / "docs" / "wiki" / "log.md", "a", encoding="utf-8") as f:
+            f.write(f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
+        con = open_db(root, rebuild=True)
+        v = reindex_tickets(root, con)
+        reindex_wiki(root, con)
+        if v:
+            report.append(f"⚠ reindex: 티켓 위반 {len(v)}건 잔존 — `prdt doctor` 확인")
+    prefix = "[dry-run] " if dry else ""
+    print(f"{prefix}migrate 완료 → stage={stage} · version={version}")
+    for r in report:
+        print(f"  · {r}")
+    if not dry:
+        print("  · 다음: prdt doctor 로 검증, PRD 경로(docs/prd/PRD.md) 확인")
 
 
 def main():
@@ -529,7 +733,10 @@ def main():
     p.set_defaults(fn=cmd_history)
     p = sub.add_parser("menus", help="regenerate playbook _index.md menus from frontmatter")
     p.set_defaults(fn=cmd_menus)
-    p = sub.add_parser("migrate", help="opt-in migration from full/lite (§12.5 — stub)")
+    p = sub.add_parser("migrate", help="opt-in migration from full/lite (§12.5): state·tickets·wiki")
+    p.add_argument("path", nargs="?", help="project root (default: cwd)")
+    p.add_argument("--dry-run", action="store_true", help="report the plan, write nothing")
+    p.add_argument("--force", action="store_true", help="overwrite existing .prdt state")
     p.set_defaults(fn=cmd_migrate)
     args = ap.parse_args()
     if not args.cmd:
