@@ -116,7 +116,7 @@ GUI의 `PoState` 타입(`src/lib/types.ts:339-365`, 13+키) vs v1 po-state **4�
 | A4 | stage 4종 표시 매핑 (phase 1..5 코드는 legacy 분기 격리) | T2 | phase-mapping·types |
 | A5 | envelope 필드 수용 (`files_written`) + QA envelope 방어화 | T2 | po-runner |
 | A6 | prdt 온보딩 경로 (hook 3종 + statusline-prdt) | T2 | onboarding.ts |
-| A7 | UsageBar 데이터 소스 교체 (usage-state.json 소멸) | T2 | usageWatch·UsageBar |
+| A7 | UsageBar 데이터 소스 교체 (usage-state.json 소멸) + **cost_source 뱃지**: turns.jsonl 행이 `cost_source:"estimated"`면 비용 표시에 "추정" 뱃지 (usage×가격표 환산값 ≠ 실청구액) — `"reported"`/부재는 무표기 | T2 | usageWatch·UsageBar·CostArchivePanel |
 | A8 | 제도 소멸 UI 숨김: gate(chip/marker/approve IPC)·promotion drain·versions 배열 뷰·PRD 스냅샷 뷰·manifest pane(→디렉토리 fallback)·mechanical-write IPC | T3 | 다수 (표 3·5·6·9) |
 
 **열린 항목 (2026-07-02 전건 확정 — 설계 SoT §2/§4/§9에 개정 반영):**

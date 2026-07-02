@@ -260,7 +260,7 @@ docs/wiki/
 1. session-start discipline 주입 (doctrine.md + contracts + habit + overrides + 메뉴판)
 2. post-compact 재주입 (긴 세션에서 규율 증발은 판단으로 못 막음)
 3. post-dispatch state 기록 (session_id 등 — statusline에서 부수효과 분리 이관, §10).
-   turns.jsonl은 현행 스키마 유지 (2026-07-02 확정, GUI 감사 열린 항목 ③): 2-scope(main/subagent)·필드명·cost_basis 의미론 동일, 위치만 `.prdt/`. cost_usd는 payload 보고값 우선, 없으면 **usage × API 가격표 추정** (모델별 input/output/cache-read 0.1×/cache-write 1.25× — `cost_source: reported|estimated` 부가 필드로 구분). flip 전 GUI CostArchive 필드 대조는 체크리스트(A7) 유지.
+   turns.jsonl은 현행 스키마 유지 (2026-07-02 확정, GUI 감사 열린 항목 ③): 2-scope(main/subagent)·필드명·cost_basis 의미론 동일, 위치만 `.prdt/`. cost_usd는 payload 보고값 우선, 없으면 **usage × API 가격표 추정** (모델별 input/output/cache-read 0.1×/cache-write 1.25× — `cost_source: reported|estimated` 부가 필드로 구분). GUI는 `estimated` 행의 비용 표시에 "추정" 뱃지를 단다 (환산 추정치 ≠ 실청구액 — 어댑터 A7). flip 전 CostArchive 필드 대조도 A7 유지.
 
 **`prdt doctor` (non-blocking lint, Retro/boundary ritual + 수동 실행):**
 - ticket: enum 위반 · 고아 ticket · artifact 있는데 참조 ticket 없음 · blocked 장기화 · backlog 장기 방치 · deps 이상(없는 id·dropped 의존·순환)
