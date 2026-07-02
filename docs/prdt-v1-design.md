@@ -257,7 +257,7 @@ docs/wiki/
 ## 9. 강제 장치 — hook 3 + doctor
 
 **hook (전부 기계적, 판단 개입 없음):**
-1. session-start discipline 주입 (doctrine.md + contracts + habit + overrides + 메뉴판)
+1. session-start discipline 주입 (doctrine.md + contracts + habit + overrides + 메뉴판) — 같은 스크립트를 **SessionStart(`--agent` 프로세스 경로) + SubagentStart(Agent tool 서브에이전트 경로, matcher `^prdt-`) 이중 등록** (2026-07-02 dogfood 실측: SessionStart는 sidechain에 발화하지 않음). agents/prdt-*.md의 self-load가 양 경로의 fallback.
 2. post-compact 재주입 (긴 세션에서 규율 증발은 판단으로 못 막음)
 3. post-dispatch state 기록 (session_id 등 — statusline에서 부수효과 분리 이관, §10).
    turns.jsonl은 현행 스키마 유지 (2026-07-02 확정, GUI 감사 열린 항목 ③): 2-scope(main/subagent)·필드명·cost_basis 의미론 동일, 위치만 `.prdt/`. cost_usd는 payload 보고값 우선, 없으면 **usage × API 가격표 추정** (모델별 input/output/cache-read 0.1×/cache-write 1.25× — `cost_source: reported|estimated` 부가 필드로 구분). GUI는 `estimated` 행의 비용 표시에 "추정" 뱃지를 단다 (환산 추정치 ≠ 실청구액 — 어댑터 A7). flip 전 CostArchive 필드 대조도 A7 유지.

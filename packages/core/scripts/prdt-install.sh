@@ -75,6 +75,10 @@ jq --arg h "$PRDT_HOME/hooks/" '
     {matcher: "compact",
      hooks: [{type: "command", command: ($h + "prdt-post-compact.sh")}]}
   ]) |
+  .hooks.SubagentStart = (strip("SubagentStart") + [
+    {matcher: "^prdt-",
+     hooks: [{type: "command", command: ($h + "prdt-session-start.sh")}]}
+  ]) |
   .hooks.PostToolUse = (strip("PostToolUse") + [
     {matcher: "Agent",
      hooks: [{type: "command", command: ($h + "prdt-post-dispatch.sh")}]}

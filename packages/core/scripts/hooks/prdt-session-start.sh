@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# prdt — Claude Code SessionStart hook (v1 hook #1; matcher: startup|resume|clear)
+# prdt — Claude Code discipline-injection hook (v1 hook #1). Registered TWICE:
+#   SessionStart (matcher: startup|resume|clear)  — `claude --agent prdt-*` process path
+#   SubagentStart (matcher: ^prdt-)               — Agent-tool subagent path (2026-07-02:
+#     dogfood E1/E3 실측 — SessionStart는 sidechain에 발화하지 않음; SubagentStart가 공식 주입 채널)
+# agents/prdt-*.md self-load is the belt-and-suspenders fallback for both.
 #
 # Injects the discipline set (§9): doctrine.md + contracts.md + <persona> habit
 # + ~/.prdt/overrides/<persona>.md (last-wins overlay, §8) + playbook menu(s).
@@ -13,10 +17,12 @@
 set +e
 
 EVENT_JSON="$(cat 2>/dev/null || true)"
-AGENT_TYPE=""; EVENT_CWD=""
+AGENT_TYPE=""; EVENT_CWD=""; EVENT_NAME="SessionStart"
 if [ -n "$EVENT_JSON" ] && command -v jq >/dev/null 2>&1; then
   AGENT_TYPE="$(printf '%s' "$EVENT_JSON" | jq -r '.agent_type // ""' 2>/dev/null)"
   EVENT_CWD="$(printf '%s' "$EVENT_JSON" | jq -r '.cwd // ""' 2>/dev/null)"
+  EN="$(printf '%s' "$EVENT_JSON" | jq -r '.hook_event_name // ""' 2>/dev/null)"
+  [ -n "$EN" ] && EVENT_NAME="$EN"
 fi
 
 PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
@@ -25,7 +31,7 @@ DOCTRINE="$PRDT_HOME/doctrine.md"
 CONTRACTS="$DISC/contracts.md"
 
 emit_ctx() {
-  printf '%s' "$1" | jq -Rs '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:.}}'
+  printf '%s' "$1" | jq -Rs --arg ev "$EVENT_NAME" '{hookSpecificOutput:{hookEventName:$ev,additionalContext:.}}'
   exit 0
 }
 
