@@ -2,7 +2,7 @@
 # prdt statusline — PURE DISPLAY (§10). No writes, no side effects; the state/cost
 # recording that full's statusline smuggled in lives in hooks/prdt-post-dispatch.sh.
 #
-# Format: <slug> · <stage> <done>/<open+done> · T-NNN <task>→<persona> · <branch>
+# Format: <slug> · <version> <stage> <done>/<open+done> · T-NNN <task>→<persona> · <branch>
 # Missing pieces degrade silently (init is deterministic, so slug/stage exist from 0s).
 
 set +e
@@ -57,7 +57,8 @@ if os.path.isdir(tdir):
         elif s == "open":
             opened += 1
 total = done + opened
-parts.append(f"{stage} {done}/{total}" if total else stage)
+seg = f"{version} {stage}" if version and version != slug else stage
+parts.append(f"{seg} {done}/{total}" if total else seg)
 
 ct = st.get("current_task")
 if isinstance(ct, dict) and (ct.get("ticket_id") or ct.get("slug")):
