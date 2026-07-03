@@ -709,6 +709,12 @@ def cmd_migrate(args):
         print(f"  · {r}")
     if not dry:
         print("  · 다음: prdt doctor 로 검증, PRD 경로(docs/prd/PRD.md) 확인")
+        n_open = status_counts.get("open", 0)
+        print(f"""
+재개하려면:  claude --agent prdt-po
+추천 첫 마디: "방금 {kind} productune에서 prdt로 마이그레이션한 프로젝트야{f' (오픈 티켓 {n_open}개)' if n_open else ''}.
+              오픈 티켓과 PRD 훑고 상황 브리핑 + 다음 진행을 제안해줘."
+              (직전에 하던 작업을 기억하면 한 줄 덧붙이면 더 빠름 — 모르면 PO가 이력에서 찾음)""")
 
 
 def main():
