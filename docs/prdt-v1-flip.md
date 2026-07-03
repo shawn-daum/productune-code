@@ -13,7 +13,7 @@
 - **UsageBar 정지**: `usage-state.json`은 구 statusline의 부수효과 산출물 — statusline 교체와 함께 생성 중단 (A7에서 turns.jsonl 기반으로 대체 예정). 비용 기록 자체는 `.prdt/turns.jsonl`에 계속 쌓임.
 
 ### 2. Build 페이즈에 엮인 full 프로젝트들 — lazy migrate 원칙
-flip은 **프로젝트 상태를 일절 건드리지 않는다**. 각 프로젝트는 "다음에 굴릴 때" `prdt migrate` 1회:
+flip은 **프로젝트 상태를 일절 건드리지 않는다**. 각 프로젝트는 "다음에 굴릴 때" 그냥 `prdt` — legacy를 감지하면 마이그레이션을 제안(Y)하고 이어서 PO가 열린다 (명시 실행은 `prdt migrate [--dry-run]`):
 
 | 프로젝트 | 상태 | 처방 |
 |---|---|---|

@@ -395,12 +395,34 @@ def cmd_tickets(args):
         print("(no tickets)")
 
 
+def legacy_kind(d):
+    d = Path(d)
+    if (d / ".productune" / "po-state.json").is_file():
+        return "full"
+    if (d / ".productune-lite" / "po-state.json").is_file():
+        return "lite"
+    return None
+
+
 def cmd_po(args):
     """Launch the PO conversation (thin exec over Claude Code)."""
     root = find_project_root()
     if root is None:
-        print("아직 prdt 프로젝트가 아니에요 — 먼저 init을 진행합니다.\n")
-        init_project(os.getcwd())
+        kind = legacy_kind(os.getcwd())
+        if kind:
+            print(f"구 productune({kind}) 프로젝트네요 — prdt로 마이그레이션이 필요해요.")
+            print("(상태·티켓·위키를 이식하고, 구 마커는 *.migrated로 백업 개명합니다)")
+            try:
+                ans = input("지금 마이그레이션할까요? [Y/n] ").strip()
+            except EOFError:
+                ans = "n"
+            if ans.lower().startswith("n"):
+                sys.exit("중단했어요 — 준비되면 `prdt migrate --dry-run`으로 미리 본 뒤 `prdt`를 다시 실행하세요.")
+            cmd_migrate(argparse.Namespace(path=os.getcwd(), dry_run=False, force=False))
+            print()
+        else:
+            print("아직 prdt 프로젝트가 아니에요 — 먼저 init을 진행합니다.\n")
+            init_project(os.getcwd())
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
         os.execvp("claude", cmd)
