@@ -27,10 +27,13 @@ def now_iso():
 
 
 def find_project_root(start=None):
-    """Walk up from cwd to the directory holding .prdt/."""
+    """Walk up from cwd to the PROJECT holding .prdt/po-state.json.
+    Marker = state FILE, not the bare dir — ~/.prdt(도구 홈, po-state 없음)이
+    walk-up에 오매치되던 버그의 처방 (VM dogfood 2026-07-03; 구 hook의
+    ~/.productune 오매치와 동일 병리)."""
     d = Path(start or os.getcwd()).resolve()
     for p in [d, *d.parents]:
-        if (p / ".prdt").is_dir():
+        if (p / ".prdt" / "po-state.json").is_file():
             return p
     return None
 
