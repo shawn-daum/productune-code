@@ -555,7 +555,7 @@ def migrate_ticket(p, dry):
         "status": FULL_STATUS_MAP.get(str(fm.get("status", "")).lower(), "open"),
         "assignee": re.sub(r"^pdtl?-", "", str(fm.get("assignee") or "")) or None,
         "feature": fm.get("area_tag") or fm.get("feature") or None,
-        "deps": fm.get("deps") if isinstance(fm.get("deps"), list) else None,
+        "deps": next((fm[k] for k in ("deps", "depends_on") if isinstance(fm.get(k), list) and fm[k]), None),
         "created": date_only(fm.get("created_at") or fm.get("created")),
         "closed": date_only(fm.get("completed_at") or fm.get("closed")),
     }
