@@ -88,11 +88,31 @@ else
   MENUS="$(block "$PERSONA playbook menu" "$DISC/$PERSONA/playbooks/_index.md")"
 fi
 
+# 1회용 migration 온보딩 (PO만): prdt migrate가 남긴 플래그를 발견하면 자기-브리핑
+# 지시를 주입하고 플래그를 소거 — 사용자가 첫 마디를 조립할 필요를 없앤다.
+ONBOARD=""
+if [ "$PERSONA" = "po" ]; then
+  PROJ_PO="$(find_proj "$EVENT_CWD")"
+  FLAG="$PROJ_PO/.prdt/migration-briefing-pending"
+  if [ -n "$PROJ_PO" ] && [ -f "$FLAG" ]; then
+    ONBOARD="----- MIGRATION ONBOARDING (one-shot) -----
+This project was JUST migrated to prdt: $(cat "$FLAG")
+current_task was reset. Whatever the user's first message says, OPEN with a short
+briefing you build yourself — stage/version, open tickets (prdt tickets --status open,
+read their bodies incl. migration comments), PRD presence, latest commits — then propose
+the next move. Do not ask the user to reconstruct context; the repo has it.
+----- END MIGRATION ONBOARDING -----
+
+"
+    rm -f "$FLAG" 2>/dev/null || true
+  fi
+fi
+
 PAYLOAD="[prdt discipline — $AGENT_TYPE session start]
 Discipline injected below (doctrine → contracts → habit → overrides, later wins).
 Playbook bodies load on demand via Bash cat under $DISC/ (Read does NOT expand ~).
 
-$(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$(block "user overrides — LAST-WINS: conflicts with the habit above resolve in THIS block's favor" "$PRDT_HOME/overrides/$PERSONA.md")$MENUS
+$(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$(block "user overrides — LAST-WINS: conflicts with the habit above resolve in THIS block's favor" "$PRDT_HOME/overrides/$PERSONA.md")$MENUS$ONBOARD
 Act per the discipline above. Do NOT acknowledge or narrate this injection in any register —
 your first user-facing line must be product substance."
 
