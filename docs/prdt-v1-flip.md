@@ -30,8 +30,12 @@ flip은 **프로젝트 상태를 일절 건드리지 않는다**. 각 프로젝�
 - main 브랜치의 구 full 코드는 계속 freeze(치명 버그 예외만, 예: 2026-07-02 frontmatter-lint 스코프 fix). GUI 개발은 main에서 계속 → v1으로 주기 merge.
 - v1 브랜치의 legacy 트리 삭제·이름 정리(`prdt-install.sh`→`install.sh` 등)는 **어댑터 작업 때 함께** — 지금 지우면 main과의 merge 마찰만 커진다.
 
-### 4. 기기별 재적용
-- flip은 `~/.claude` 설정 단위. 다른 기기는 `git pull`(productune v0.6/main — lint fix 포함) 후 v1 체크아웃에서 `prdt-flip.sh` 실행.
+### 4. 기기별 재적용 — 자동 핸드오프 (2026-07-03 구현)
+- 구 productune의 **런치 auto-update**가 main의 핸드오프 스텁을 전 기기에 배포한다. 각 기기에서
+  `productune` 실행 → "prdt로 전환할까요? [Y/n]" → **Y**: v1 fetch → 영구 worktree(`~/.prdt/repo`,
+  origin/v1 추적) → `prdt-flip.sh`(백업→단계 검증→**실패 시 자동 롤백**+대안 안내) → 완료 안내.
+- **n**: 플래그 기록 후 다시 묻지 않음 (재제안: `rm ~/.productune/.prdt-handoff-declined`).
+- 전환 후 갱신은 `prdt update`(worktree pull + 재설치). 수동 경로도 유효: v1 체크아웃에서 `prdt-flip.sh`.
 
 ### 5. 잔존물은 의도적으로 남긴다
 - `~/.productune/`(구 미러·productune.env), 각 프로젝트의 `.productune/`(마이그레이션 전까지), `docs/backlog.md` 등 legacy 문서 — 비파괴 원칙. GUI legacy 조회가 일부를 참조한다.
