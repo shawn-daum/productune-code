@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-287",
-    "slug": "adapter-a4-stage-mapping",
+    "ticket_id": "T-288",
+    "slug": "adapter-a5-envelope-fields",
     "assignee": "developer"
   }
 }
