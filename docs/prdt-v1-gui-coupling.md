@@ -124,4 +124,6 @@ GUI의 `PoState` 타입(`src/lib/types.ts:339-365`, 13+키) vs v1 po-state **4�
 2. ~~QA envelope 필드 계승~~ → **확정**: `browser_url`·`verify_url`·`verify_description`·`auth_required` contracts return envelope 조건부 계승, 필드명 그대로 (GUI 파서 무수정).
 3. ~~turns.jsonl v1 스키마~~ → **확정**: 현행 스키마 유지 + 기록 주체 statusline→hook#3 이관. cost_usd는 보고값 우선·usage×가격표 추정 fallback (`cost_source` 부가 필드). main scope의 GUI CostArchive/UsageBar 필드 대조는 A7에서 flip 전 1회.
 
+**어댑터 시 확인 항목 (2026-07-03 추가)**: PO의 AskUserQuestion(선택지 질문)을 GUI가 stream-json에서 받아 자체 UI로 띄울 때, CLI의 60초 무응답 타임아웃과 독립적으로 **GUI가 응답 대기를 소유**하는지 검증할 것 — PO habit은 타임아웃 시 잠정 진행 금지(텍스트 질문+대기)로 방어하지만, GUI 질문 카드가 조용히 만료되면 UX가 깨진다.
+
 **최다 결합 파일 Top 5** (어댑터 PR 리뷰 중심): `electron/po-runner.ts` · `src/lib/types.ts` · `electron/ipc/onboarding.ts` · `src/lib/phase-mapping.ts` · `electron/ipc/tickets.ts`.
