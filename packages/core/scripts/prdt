@@ -519,6 +519,15 @@ def cmd_doctor(_args):
                 warns.append(f"ticket: {t['id']} open+blocked for {age}d")
             if t["version"] == "backlog" and age is not None and age > BACKLOG_STALE_DAYS:
                 warns.append(f"ticket: backlog {t['id']} untouched {age}d")
+    # stage-completion signal: current version's tickets exhausted → next-stage entry worth a look
+    if st:
+        stage, version = st.get("stage"), st.get("version")
+        next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
+        if next_stage and version:
+            ver_tickets = [t for t in tickets.values() if t["version"] == version]
+            if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
+                warns.append(f"stage: {version} has no open tickets at stage={stage} — "
+                             f"consider {next_stage} entry")
     # deps cycle
     def cycles():
         seen, stack = set(), set()

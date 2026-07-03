@@ -7,3 +7,4 @@
 - ADR 후보(A1 fix): project-kind 감지 로직이 gui(electron/project-paths.ts)와 core(src/state/project-kind.ts) 2곳에 중복 — core→gui import 불가한 레이어 경계 탓. A2~A8 중 세 번째 위치가 필요해지면 공유 패키지 추출 검토.
 - QA find(A1 재검증): 생성되는 아티팩트(셸 스크립트·템플릿) 안의 경로 리터럴은 grep에 한 단계 늦게 잡힌다 — 이후 어댑터 QA는 생성물 템플릿까지 훑을 것. 실례: hooks.ts pre-push 스크립트가 `.productune/git-rules.json` 하드코딩.
 - env find(core dist): 수정 후 core dist는 상대 import(./project-kind) extensionless 패턴이라 bare Node ESM 직접 로드 불가 — GUI는 vite 번들 소비라 결함 아님. 재현/검증 시 esbuild 번들로 실행할 것.
+- prdt doctor stage-completion 판정: '해당 version 티켓 1개 이상 존재 AND open 0' 조건 — 티켓 없는 신규 version은 침묵(오탐 방지). tickets의 version 필드는 docs/tickets/<dir> 디렉토리명 그대로라 po-state.version과 문자열 정확 일치 필요.

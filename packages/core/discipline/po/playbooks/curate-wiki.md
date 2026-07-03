@@ -11,9 +11,9 @@ Turn-close appends to `docs/wiki/inbox.md` are raw and cheap. Curation is where 
 
 ## Loop (per inbox line)
 1. **Classify**: decision / stable fact / routing-quality lesson / feature narrative / noise.
-2. **Find its home**: search existing pages (`prdt wiki search`) before creating. Merge outcomes:
+2. **Find its home**: search existing pages (`prdt wiki search`) before creating — partial match is weak across Korean/English spelling drift, so a miss on a term with a known other-language form → retry ONCE with that form before concluding "new". (2026-07-03) [T-301] Merge outcomes:
    - **refine** — the fact sharpens an existing page → edit that page in place.
-   - **new** — genuinely new topic → `decision--*.md` · `fact--*.md` · `learning--*.md` · `feature--<slug>.md`, frontmatter `title · type · status: live · version · links[]`, body uses `[[wikilink]]`s.
+   - **new** — genuinely new topic → `decision--*.md` · `fact--*.md` · `learning--*.md` · `feature--<slug>.md`, frontmatter `title · type · status: live · version · links[]`, body uses `[[wikilink]]`s. Write `title` and load-bearing terms bilingually — e.g. `배포 게이트 (deploy gate)` — so search hits from either language; apply the same when refining a monolingual title. (2026-07-03) [T-301]
    - **supersede** — contradicts a LIVE decision the user has reversed → old page `status: superseded` + link forward. A reversal the user hasn't confirmed → don't write; surface it.
    - **conflict** — contradicts a live page and no reversal happened → flag to the user, never silently pick a side.
    - **noise** — already in git/code/PRD, or one-session trivia → drop.
