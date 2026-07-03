@@ -2,5 +2,6 @@
 | playbook | when | floor |
 |---|---|---|
 | curate-wiki | stage boundary (mainly Retro entry) · inbox visibly piled up · doctor flags inbox backlog | opus/medium |
+| discipline-edit | any discipline change — doctrine/contracts/habit/playbook edit · codifying a dogfood lesson · new rule request | opus/medium |
 | readiness-dispatch | Ship entry (build believed complete, before deploy) | opus/medium |
 | retro | Retro entry (version shipped or wrapped) · user asks to close out a version | opus/medium |
