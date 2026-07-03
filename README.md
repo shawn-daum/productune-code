@@ -85,6 +85,7 @@ packages/gui/               # Electron GUI — prdt 어댑터(A1~A8) 진행 예�
 | [`docs/prdt-v1-design.md`](docs/prdt-v1-design.md) | 설계 SoT (원칙·lifecycle·계약·위키·hook·cap) |
 | [`docs/prdt-v1-disposition.md`](docs/prdt-v1-disposition.md) | 구 hook 18개 + PO 규칙 전수 처분표 (유실은 결정) |
 | [`docs/prdt-v1-gui-coupling.md`](docs/prdt-v1-gui-coupling.md) | GUI 결합 감사 + 어댑터 작업 목록 A1~A8 |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | **전환 매뉴얼 (동료용)** — 기기 전환·프로젝트 이관·트러블슈팅 |
 | [`docs/prdt-v1-flip.md`](docs/prdt-v1-flip.md) | flip 체크리스트·유의점·롤백 |
 
 구 full productune(5-phase) 문서와 코드는 main 브랜치에 있다 — GUI 개발은 main에서 계속되고,
