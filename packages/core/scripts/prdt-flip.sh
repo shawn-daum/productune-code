@@ -59,6 +59,29 @@ rm -f "$CLAUDE_DIR"/agents/pdt-designer.md* "$CLAUDE_DIR"/agents/pdt-developer.m
       "$CLAUDE_DIR"/agents/pdtl-designer.md* "$CLAUDE_DIR"/agents/pdtl-developer.md* \
       "$CLAUDE_DIR"/agents/pdtl-po.md* "$CLAUDE_DIR"/agents/pdtl-qa.md*
 
+# ── 3.5 legacy CLI 폐기 안내 shim ──────────────────────────────────────────────
+# 구 명령(productune/my-po/productune-lite)은 PATH의 구 repo scripts 디렉토리에서
+# 살아있다(freeze 원칙상 그 파일들은 안 지움). ~/.local/bin이 보통 그보다 앞서므로
+# 같은 이름의 shim으로 가려서, 실행 시 반쯤 깨지는 대신 전환 안내를 출력한다.
+say "3.5) legacy CLI shim (폐기 안내)"
+mkdir -p "$HOME/.local/bin"
+for cmd in productune my-po productune-lite; do
+  rm -f "$HOME/.local/bin/$cmd"
+  cat > "$HOME/.local/bin/$cmd" <<'SHIM'
+#!/usr/bin/env bash
+echo "⏹  이 명령은 은퇴했습니다 — productune v1(prdt)로 대체됐어요."
+echo "   새 프로젝트 시작:      prdt   (그리고 claude --agent prdt-po)"
+echo "   기존 프로젝트 전환:    prdt migrate   (옵트인, --dry-run 지원)"
+echo "   유의점/롤백:           productune repo v1 브랜치 docs/prdt-v1-flip.md"
+exit 1
+SHIM
+  chmod +x "$HOME/.local/bin/$cmd"
+done
+for cmd in productune my-po productune-lite; do
+  R="$(command -v "$cmd" || true)"
+  [ "$R" = "$HOME/.local/bin/$cmd" ] || say "   ⚠ '$cmd'이 shim보다 앞선 경로($R)에 있음 — 셸 rc의 구 PATH 항목 제거 필요"
+done
+
 # ── 4. verify ──────────────────────────────────────────────────────────────────
 say "4) 검증"
 python3 - "$SETTINGS" "$CLAUDE_DIR" <<'PYEOF'
