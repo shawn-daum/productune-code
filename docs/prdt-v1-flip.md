@@ -36,6 +36,7 @@ flip은 **프로젝트 상태를 일절 건드리지 않는다**. 각 프로젝�
   origin/v1 추적) → `prdt-flip.sh`(백업→단계 검증→**실패 시 자동 롤백**+대안 안내) → 완료 안내.
 - **n**: 플래그 기록 후 다시 묻지 않음 (재제안: `rm ~/.productune/.prdt-handoff-declined`).
 - 전환 후 갱신은 `prdt update`(worktree pull + 재설치). 수동 경로도 유효: v1 체크아웃에서 `prdt-flip.sh`.
+- **GUI 앱 번들 설치 기기 주의** (cua VM 검증에서 발견): `PRODUCTUNE_REPO=/Applications/productune.app/...`인 기기는 git repo가 없어 **auto-update 채널이 없고 핸드오프 스텁이 도달하지 않는다** (스텁이 와도 fetch 불가 → 안전하게 건너뜀). 이런 기기는 새 기기 경로로: `git clone <repo> && git checkout v1` → `prdt-flip.sh` (flip이 앱이 등록한 hook/agent를 걷어냄 — cua VM에서 18개→5개 검증).
 
 ### 5. 잔존물은 의도적으로 남긴다
 - `~/.productune/`(구 미러·productune.env), 각 프로젝트의 `.productune/`(마이그레이션 전까지), `docs/backlog.md` 등 legacy 문서 — 비파괴 원칙. GUI legacy 조회가 일부를 참조한다.
