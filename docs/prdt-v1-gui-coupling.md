@@ -127,3 +127,42 @@ GUI의 `PoState` 타입(`src/lib/types.ts:339-365`, 13+키) vs v1 po-state **4�
 **어댑터 시 확인 항목 (2026-07-03 추가)**: PO의 AskUserQuestion(선택지 질문)을 GUI가 stream-json에서 받아 자체 UI로 띄울 때, CLI의 60초 무응답 타임아웃과 독립적으로 **GUI가 응답 대기를 소유**하는지 검증할 것 — PO habit은 타임아웃 시 잠정 진행 금지(텍스트 질문+대기)로 방어하지만, GUI 질문 카드가 조용히 만료되면 UX가 깨진다.
 
 **최다 결합 파일 Top 5** (어댑터 PR 리뷰 중심): `electron/po-runner.ts` · `src/lib/types.ts` · `electron/ipc/onboarding.ts` · `src/lib/phase-mapping.ts` · `electron/ipc/tickets.ts`.
+
+---
+
+## 재검증 로그 — 2026-07-03 (main/v0.6 워킹트리 기준)
+
+**대상**: `/Users/x/Documents/dev/ntf-products/productune`, branch `v0.6`, 미커밋 워킹트리 변경 포함.
+**방법**: `git rev-parse HEAD` vs `00342cb`(감사 기준 커밋) 비교 → **HEAD == 00342cb** (v0.6에 그 이후 커밋 없음). 즉 감사 기준과의 유일한 차이는 **미커밋 워킹트리 diff**(`git diff -- packages/gui`, 10파일·+1079/-297)뿐. 이 diff를 표의 각 결합 지점과 전수 대조.
+
+**결론: 구조적 delta 없음 (no delta).** 변경 10파일 전부 T-PATCH-284(컴포저 큐잉·PO 활동 라인)·T-PATCH-286(GUI 세션 model/effort 오버라이드+표시) 기능 추가이며, persona id 정의·envelope 파싱 필드·gate/promotion/versions 스키마·ticket status·phase/stage 모델·docs 경로·온보딩 훅 목록 — 표 1~9의 어떤 제도도 신설/변경/폐지되지 않았다. 변경 파일: `po-runner.ts`·`preload.ts`·`package.json`·`ChatPanel.tsx`·`PersonaPresenceBar.tsx`·`en.json`·`ko.json`·`personaPresence.ts`·`poEvents.ts`·`workspace.ts`. 나머지 GUI 파일(표 1~9에 인용된 `settings.ts`·`doctrine.ts`·`onboarding.ts`·`types.ts`·`tickets.ts`·`phase-mapping.ts`·`usageWatch.ts`·`subagent-cost.ts`·`project.ts`·`artifacts.ts`·`mechanical-write.ts` 등)는 00342cb 대비 **완전 동일** — 표의 라인 참조가 그대로 유효.
+
+### 1. 라인 참조 갱신 (내용 불변, `po-runner.ts` 상단 삽입으로 인한 하방 이동만)
+
+| 결합 지점 | 감사 원본 라인 | 재검증 현재 라인 | 상태 |
+|---|---|---|---|
+| `PO_AGENT='pdt-po'` 정의 | :43 | :43 | 불변 (삽입 지점보다 앞) |
+| spawn args `--agent PO_AGENT` | :1061 | :1155(resume) / :1157(non-resume) | 이동, 값 불변 |
+| health-smoke spawn `--agent PO_AGENT` (§1 미인용 기존 3번째 사용처) | (미인용) | :2347 | 참고 — 기존부터 존재, 감사 누락이었을 뿐 신규 아님 |
+| QA envelope 판별 (`persona==='pdt-qa'`) | :1988 | `parseQaEnvelope` 함수 정의 :2104, 판별 조건 :2111, 호출부 :1729 | 이동, 로직 불변 |
+| `changed_files[]` 파싱 | :1941 | `parseArtifactFiles` 정의 :2067, `obj.changed_files` 체크 :2073-2074, 호출부 :1725 | 이동, 필드명 불변 (`files_written[]`로의 T2 매핑 필요성도 불변) |
+| `parsePendingGate` 함수 정의 | :2009 | :2132 (호출부 :1781) | 이동, 제도 폐지 판단(T3) 불변 |
+| `parsePromotionCandidates` + 7필드 스키마 | :2037-2074 | :2160 (호출부 :1802) | 이동, 제도 폐지 판단(T3) 불변 |
+| ticket dispatch 감지 (`tickets[]`→emit / `delegation.ticket_id`→dispatch) | :1914 | :2042(emit) / :2050(dispatch) | 이동, 로직 불변 |
+| `src/store/personaPresence.ts` subagent_type→PersonaId 맵 | :44-47 | :44-47 | **완전 불변** (파일 내 변경분은 그보다 뒤쪽 `WorkerMeta`/`WorkerResult` 타입 — §2 참고) |
+| `en.json` `workspace.gateMarker.items.*` | :217-232 | :204~ (gateMarker 블록 시작 204) | 미세 이동, 워킹트리 diff의 삽입 지점(라인 409·527)보다 앞이라 사실상 영향 없음 |
+
+### 2. 신규 발견 — A1 스코프 부속 항목 (신규 어댑터 등급 아님)
+
+- **`electron/po-runner.ts:71`** `readGuiModelConfig()` 신설(T-PATCH-286) — `<projectDir>/.productune/config.json`의 **신규 키** `gui_model`/`gui_effort`를 읽어 GUI 세션 spawn(`--model`/`--effort`)과 PO 활동 라인 표시에 사용. `.productune` 리터럴의 **신규 사용처**이지만 파일은 이미 §2에서 집계된 14개 산재 파일 목록(`po-runner.ts` 포함, 재검증 시 카운트 재확인 = 14, baseline과 동일) 안에 있어 **파일 카운트는 불변**. 조치: 별도 등급 불요 — **A1(중앙 경로 상수 도입)의 스윕 대상에 이 신규 read-site 1건 추가**만 하면 됨. 등급 T1 부속.
+- **prdt 세션 model/effort 오버라이드 기능 자체**(T-PATCH-286, GUI spawn을 opus/high로 고정)는 pdt/prdt 네이밍이나 4-stage/gate/ticket 제도와 **무관** — persona 라우팅·envelope 스키마 어느 것도 건드리지 않음. 감사 대상 결합이 아님 (참고 기록용).
+- **컴포저 큐잉 + PO 활동 라인**(T-PATCH-284, `ChatPanel.tsx`/`workspace.ts`)도 순수 UI/UX 기능으로 discipline 결합 없음.
+
+### 3. A1~A8 영향 요약
+
+| # | 영향 |
+|---|---|
+| A1 | 스윕 대상 read-site 1건 추가(`po-runner.ts:71`, `.productune/config.json` gui_model/gui_effort) — 파일 목록 자체는 불변(14) |
+| A2~A8 | **영향 없음** — 표 1~9의 모든 등급·조치·대표 지점이 재검증 후에도 그대로 유효. 라인 참조만 위 §1 표로 교체 |
+
+**재확인**: flip 직전 재검증 필요성(문서 상단 경고)은 이번 재검증으로 **1회 소진**되지 않음 — 이번 재검증은 A1~A8 착수 전 1회용이며, flip 직전에는 그 시점의 main 최신 상태로 별도 재확인이 여전히 필요하다(특히 `po-runner.ts`처럼 라인 이동이 잦은 파일).

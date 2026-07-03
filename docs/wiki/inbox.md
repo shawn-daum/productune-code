@@ -1,1 +1,9 @@
 # Wiki inbox — 1-line memory_notes appends; curated at stage boundaries
+- ADR(A1/T-284): GUI project-kind은 projectDir 디스크 감지(`.prdt/` 존재→prdt, else legacy) — electron/project-paths.ts가 A2~A8이 확장할 단일 분기점. IPC로 kind 스레딩 대신 디스크 감지 채택(모든 경로 fn이 이미 projectDir 수신, legacy 해석 byte-identical 유지). prdt 프로젝트엔 heal 분기 없음(heal의 initProject가 잘못된 .productune/ 생성 위험).
+- A1 스코프 경계: PROJECT-dir 경로만 분기. 홈디렉토리 ~/.productune 리터럴(productune.env·recents·doctrine tier·usage-state)은 A6/A7 설치 레벨 관심사로 보류.
+- env find: GUI 유닛 테스트가 node/vitest에서 electron/ipc/project.ts import 가능 — electron은 vitest.setup.ts 스텁, @productune/core 클린 로드 → Electron 기동 없이 내부 헬퍼 유닛테스트 가능.
+- A1 이월(dev unresolved): WorkspaceShell.tsx:413 'View PO Log'가 legacy 로그 경로 하드코딩(표시 전용, prdt에선 빈 로그) — renderer로 project-kind 스레딩 필요, A4/A8에 편입 권장. @productune/core의 .productune 하드코딩(ancestor walk-up·heal)은 GUI 밖 별도 관심사.
+- QA find(A1): electron 호출부만 치환해도 위임받는 `@productune/core` 내부 project-dir 리터럴이 남는다 — A2~A8 검증 시 터치 파일 목록이 아니라 호출 그래프(특히 @productune/core)를 따라갈 것. 실례: pending-promotions.ts statePath()가 유령 `.productune/po-state.json` 생성(매 턴 자동 발화), rules.ts·worktree.ts 동일 패턴(사용자 트리거).
+- ADR 후보(A1 fix): project-kind 감지 로직이 gui(electron/project-paths.ts)와 core(src/state/project-kind.ts) 2곳에 중복 — core→gui import 불가한 레이어 경계 탓. A2~A8 중 세 번째 위치가 필요해지면 공유 패키지 추출 검토.
+- QA find(A1 재검증): 생성되는 아티팩트(셸 스크립트·템플릿) 안의 경로 리터럴은 grep에 한 단계 늦게 잡힌다 — 이후 어댑터 QA는 생성물 템플릿까지 훑을 것. 실례: hooks.ts pre-push 스크립트가 `.productune/git-rules.json` 하드코딩.
+- env find(core dist): 수정 후 core dist는 상대 import(./project-kind) extensionless 패턴이라 bare Node ESM 직접 로드 불가 — GUI는 vite 번들 소비라 결함 아님. 재현/검증 시 esbuild 번들로 실행할 것.
