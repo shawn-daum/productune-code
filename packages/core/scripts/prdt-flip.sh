@@ -77,7 +77,7 @@ jq --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" '
     .value |= (map(.hooks = ((.hooks // []) | map(select(is_legacy | not))))
                | map(select((.hooks | length) > 0)))
   ) | with_entries(select((.value | length) > 0))) |
-  .statusLine = {type: "command", command: $sl}
+  .statusLine = {type: "command", command: ("\"" + $sl + "\"")}
 ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
 
 # ── 3. retire legacy agents ────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ legacy = [c for c in cmds if "/productune/packages" in c or "productune-lite" in
 prdt = [c for c in cmds if "/.prdt/" in c]
 assert not legacy, f"legacy hook 잔존: {legacy}"
 sl = s.get("statusLine",{}).get("command","")
-assert sl.endswith("statusline-prdt.sh"), f"statusline 미교체: {sl}"
+assert sl.rstrip(chr(34)).endswith("statusline-prdt.sh"), f"statusline 미교체: {sl}"
 agents = sorted(f for f in os.listdir(os.path.join(sys.argv[2], "agents")) if f.endswith(".md"))
 legacy_agents = [a for a in agents if a.startswith(("pdt-","pdtl-"))]
 assert not legacy_agents, f"legacy agent 잔존: {legacy_agents}"

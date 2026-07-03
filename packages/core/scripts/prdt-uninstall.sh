@@ -14,7 +14,7 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
   TMP="$(mktemp)"
   jq --arg h "$PRDT_HOME/hooks/" --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" '
     def strip(ev): (.hooks[ev] // []) | map(
-      .hooks = ((.hooks // []) | map(select((.command // "") | startswith($h) | not)))
+      .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
     ) | map(select((.hooks | length) > 0));
     (if .hooks then
        .hooks.SessionStart = strip("SessionStart") |
@@ -22,7 +22,7 @@ if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
        .hooks.SubagentStop = strip("SubagentStop") |
        .hooks.PostToolUse = strip("PostToolUse")
      else . end) |
-    (if (.statusLine.command // "") == $sl then del(.statusLine) else . end)
+    (if ((.statusLine.command // "") | (. == $sl or . == ("\"" + $sl + "\""))) then del(.statusLine) else . end)
   ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
 fi
 

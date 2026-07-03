@@ -66,26 +66,26 @@ SETTINGS="$CLAUDE_DIR/settings.json"
 TMP="$(mktemp)"
 jq --arg h "$PRDT_HOME/hooks/" '
   def strip(ev): (.hooks[ev] // []) | map(
-    .hooks = ((.hooks // []) | map(select((.command // "") | startswith($h) | not)))
+    .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
   ) | map(select((.hooks | length) > 0));
   .hooks = (.hooks // {}) |
   .hooks.SessionStart = (strip("SessionStart") + [
     {matcher: "startup|resume|clear",
-     hooks: [{type: "command", command: ($h + "prdt-session-start.sh")}]},
+     hooks: [{type: "command", command: ("\"" + $h + "prdt-session-start.sh" + "\"")}]},
     {matcher: "compact",
-     hooks: [{type: "command", command: ($h + "prdt-post-compact.sh")}]}
+     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-compact.sh" + "\"")}]}
   ]) |
   .hooks.SubagentStart = (strip("SubagentStart") + [
     {matcher: "^prdt-",
-     hooks: [{type: "command", command: ($h + "prdt-session-start.sh")}]}
+     hooks: [{type: "command", command: ("\"" + $h + "prdt-session-start.sh" + "\"")}]}
   ]) |
   .hooks.SubagentStop = (strip("SubagentStop") + [
     {matcher: "^prdt-",
-     hooks: [{type: "command", command: ($h + "prdt-post-dispatch.sh")}]}
+     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
   ]) |
   .hooks.PostToolUse = (strip("PostToolUse") + [
     {matcher: "Agent",
-     hooks: [{type: "command", command: ($h + "prdt-post-dispatch.sh")}]}
+     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
   ])
 ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
 
@@ -100,7 +100,7 @@ if [ "${1:-}" = "--statusline" ]; then
   say "6) Registering statusline"
   TMP="$(mktemp)"
   jq --arg cmd "$PRDT_HOME/bin/statusline-prdt.sh" \
-     '.statusLine = {type: "command", command: $cmd}' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+     '.statusLine = {type: "command", command: ("\"" + $cmd + "\"")}' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
   python3 - "$ENV_FILE" <<'PYEOF'
 import sys
 path = sys.argv[1]
