@@ -92,7 +92,7 @@ PAYLOAD="[prdt discipline — $AGENT_TYPE session start]
 Discipline injected below (doctrine → contracts → habit → overrides, later wins).
 Playbook bodies load on demand via Bash cat under $DISC/ (Read does NOT expand ~).
 
-$(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$(block "user overrides" "$PRDT_HOME/overrides/$PERSONA.md")$MENUS
+$(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$(block "user overrides — LAST-WINS: conflicts with the habit above resolve in THIS block's favor" "$PRDT_HOME/overrides/$PERSONA.md")$MENUS
 Act per the discipline above. Do NOT acknowledge or narrate this injection in any register —
 your first user-facing line must be product substance."
 
