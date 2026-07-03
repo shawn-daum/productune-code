@@ -31,6 +31,9 @@ flip은 **프로젝트 상태를 일절 건드리지 않는다**. 각 프로젝�
 - v1 브랜치의 legacy 트리 삭제·이름 정리(`prdt-install.sh`→`install.sh` 등)는 **어댑터 작업 때 함께** — 지금 지우면 main과의 merge 마찰만 커진다.
 
 ### 4. 기기별 재적용 — 자동 핸드오프 (2026-07-03 구현)
+> **⏸ 스텁 임시 회수 중 (2026-07-03 저녁, 사용자 결정)**: 팀 전파 시점 통제를 위해 origin main·v0.6에서
+> 핸드오프 스텁을 revert(fb589a5·0dfe0ed). 회수 동안 다른 기기는 수동 경로: `git checkout v1 && git pull`
+> → `prdt-flip.sh`. 재배포 = revert 2건을 되돌려 push.
 - 구 productune의 **런치 auto-update**가 main의 핸드오프 스텁을 전 기기에 배포한다. 각 기기에서
   `productune` 실행 → "prdt로 전환할까요? [Y/n]" → **Y**: v1 fetch → 영구 worktree(`~/.prdt/repo`,
   origin/v1 추적) → `prdt-flip.sh`(백업→단계 검증→**실패 시 자동 롤백**+대안 안내) → 완료 안내.
