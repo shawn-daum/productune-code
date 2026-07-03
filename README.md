@@ -40,7 +40,8 @@ flip 유의점(빌드 중이던 legacy 프로젝트 처리 등): [`docs/prdt-v1-
 
 ```bash
 prdt                        # 프로젝트 루트에서 첫 실행 = 3항목 init (slug·version·stage)
-claude --agent prdt-po      # PO와 대화 시작 — "OOO 만들고 싶어" 한 문장이면 됨
+prdt po                     # PO와 대화 시작 — "OOO 만들고 싶어" 한 문장이면 됨
+                            #   (= claude --agent prdt-po 의 shortcut; 미init이면 init부터)
 ```
 
 ```bash
