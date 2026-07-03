@@ -30,17 +30,41 @@ TS="$(date +%s)"
 BK="$PRDT_HOME/flip-backup-$TS"
 mkdir -p "$BK"
 cp "$SETTINGS" "$BK/settings.json"
-if ls "$CLAUDE_DIR"/agents/pdt-*.md "$CLAUDE_DIR"/agents/pdtl-*.md >/dev/null 2>&1; then
-  (cd "$CLAUDE_DIR/agents" && tar -cf "$BK/legacy-agents.tar" pdt-*.md* pdtl-*.md* 2>/dev/null || true)
+LEGACY_AGENTS="$(cd "$CLAUDE_DIR/agents" 2>/dev/null && ls pdt-*.md* pdtl-*.md* 2>/dev/null || true)"
+if [ -n "$LEGACY_AGENTS" ]; then
+  # shellcheck disable=SC2086 — agent 파일명엔 공백 없음
+  (cd "$CLAUDE_DIR/agents" && tar -cf "$BK/legacy-agents.tar" $LEGACY_AGENTS)
 fi
 say "0) 백업: $BK"
 
+# ── 실패 시 자동 롤백 (백업 생성 이후의 모든 단계에 적용) ────────────────────
+on_err() {
+  code=$?
+  say ""
+  say "✖ flip 실패 (단계: ${STEP:-?}, exit=$code) — 자동 롤백합니다"
+  cp "$BK/settings.json" "$SETTINGS" 2>/dev/null || true
+  if [ -f "$BK/legacy-agents.tar" ]; then
+    tar -xf "$BK/legacy-agents.tar" -C "$CLAUDE_DIR/agents" 2>/dev/null || true
+  fi
+  say "  롤백 완료 — 기존 productune 환경은 그대로 사용 가능합니다."
+  say "  대안: ① 그대로 재시도  ② 수동 절차: docs/prdt-v1-flip.md  ③ 원인 공유 후 지원 요청"
+  say "  (백업 보존: $BK — 'prdt-flip.sh --rollback $BK' 로 언제든 수동 원복)"
+  exit "$code"
+}
+trap on_err ERR
+fail_at() {
+  if [ "${PRDT_FLIP_FAIL_AT:-}" = "$1" ]; then
+    say "   (테스트 주입: $1 실패)"
+    return 1
+  fi
+}
+
 # ── 1. ensure prdt is installed (mirror + hooks + agents) ─────────────────────
-say "1) prdt 설치/갱신"
+STEP="install"; say "1) prdt 설치/갱신"; fail_at install
 "$ROOT/scripts/prdt-install.sh" >/dev/null
 
 # ── 2. strip legacy full/lite hooks + swap statusline ─────────────────────────
-say "2) legacy hook 제거 + statusline 교체"
+STEP="hooks"; say "2) legacy hook 제거 + statusline 교체"; fail_at hooks
 TMP="$(mktemp)"
 jq --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" '
   def is_legacy: (.command // "")
@@ -53,7 +77,7 @@ jq --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" '
 ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
 
 # ── 3. retire legacy agents ────────────────────────────────────────────────────
-say "3) legacy agent 제거 (pdt-*/pdtl-*)"
+STEP="agents"; say "3) legacy agent 제거 (pdt-*/pdtl-*)"; fail_at agents
 rm -f "$CLAUDE_DIR"/agents/pdt-designer.md* "$CLAUDE_DIR"/agents/pdt-developer.md* \
       "$CLAUDE_DIR"/agents/pdt-po.md* "$CLAUDE_DIR"/agents/pdt-qa.md* \
       "$CLAUDE_DIR"/agents/pdtl-designer.md* "$CLAUDE_DIR"/agents/pdtl-developer.md* \
@@ -63,7 +87,7 @@ rm -f "$CLAUDE_DIR"/agents/pdt-designer.md* "$CLAUDE_DIR"/agents/pdt-developer.m
 # 구 명령(productune/my-po/productune-lite)은 PATH의 구 repo scripts 디렉토리에서
 # 살아있다(freeze 원칙상 그 파일들은 안 지움). ~/.local/bin이 보통 그보다 앞서므로
 # 같은 이름의 shim으로 가려서, 실행 시 반쯤 깨지는 대신 전환 안내를 출력한다.
-say "3.5) legacy CLI shim (폐기 안내)"
+STEP="shim"; say "3.5) legacy CLI shim (폐기 안내)"; fail_at shim
 mkdir -p "$HOME/.local/bin"
 for cmd in productune my-po productune-lite; do
   rm -f "$HOME/.local/bin/$cmd"
@@ -83,7 +107,7 @@ for cmd in productune my-po productune-lite; do
 done
 
 # ── 4. verify ──────────────────────────────────────────────────────────────────
-say "4) 검증"
+STEP="verify"; say "4) 검증"; fail_at verify
 python3 - "$SETTINGS" "$CLAUDE_DIR" <<'PYEOF'
 import json, os, sys
 s = json.load(open(sys.argv[1]))

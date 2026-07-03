@@ -401,11 +401,40 @@ def cmd_po(args):
     if root is None:
         print("아직 prdt 프로젝트가 아니에요 — 먼저 init을 진행합니다.\n")
         init_project(os.getcwd())
-    cmd = ["claude", "--agent", "prdt-po"] + (args.rest or [])
+    cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
         os.execvp("claude", cmd)
     except FileNotFoundError:
         sys.exit("prdt po: `claude` CLI를 찾을 수 없어요 — Claude Code 설치/PATH 확인")
+
+
+def cmd_update(_args):
+    """구 productune update 계승: repo pull --ff-only → prdt-install.sh 재실행."""
+    import subprocess
+    repo = None
+    env = Path.home() / ".prdt" / "prdt.env"
+    if env.is_file():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRDT_REPO="):
+                repo = line.split("=", 1)[1].strip()
+    if not repo or not Path(repo).is_dir():
+        sys.exit("prdt update: PRDT_REPO를 찾을 수 없어요 — ~/.prdt/prdt.env 확인 (재설치: prdt-install.sh)")
+
+    def git(*a):
+        return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
+
+    dirty = [l for l in git("status", "--porcelain").stdout.splitlines() if l and not l.startswith("??")]
+    if dirty:
+        sys.exit(f"prdt update: repo에 커밋 안 된 변경이 있어 중단 — 정리 후 재시도: git -C {repo} status")
+    old = git("rev-parse", "--short", "HEAD").stdout.strip()
+    p = git("pull", "--ff-only")
+    if p.returncode:
+        tail = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"]
+        sys.exit(f"prdt update: pull 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
+    new = git("rev-parse", "--short", "HEAD").stdout.strip()
+    if subprocess.run(["bash", str(Path(repo) / "scripts" / "prdt-install.sh")]).returncode:
+        sys.exit("prdt update: install 실패 — 위 출력 확인")
+    print(f"업데이트 완료: {old} → {new}" if old != new else f"이미 최신({old}) — 미러/메뉴판만 갱신했어요")
 
 
 def cmd_history(_args):
@@ -753,6 +782,8 @@ def main():
     p = sub.add_parser("po", help="PO 대화 시작 (= claude --agent prdt-po; 미init 프로젝트면 init부터)")
     p.add_argument("rest", nargs=argparse.REMAINDER, help="claude에 그대로 전달할 추가 인자")
     p.set_defaults(fn=cmd_po)
+    p = sub.add_parser("update", help="prdt 업데이트: repo pull --ff-only + 재설치 (구 productune update 계승)")
+    p.set_defaults(fn=cmd_update)
     p = sub.add_parser("menus", help="regenerate playbook _index.md menus from frontmatter")
     p.set_defaults(fn=cmd_menus)
     p = sub.add_parser("migrate", help="opt-in migration from full/lite (§12.5): state·tickets·wiki")
@@ -762,12 +793,8 @@ def main():
     p.set_defaults(fn=cmd_migrate)
     args = ap.parse_args()
     if not args.cmd:
-        root = find_project_root()
-        if root is None:
-            # §10: first run = init before the PO ever runs
-            cmd_init(argparse.Namespace(slug=None, version="v1", yes=False, json=False))
-        else:
-            ap.print_help()
+        # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
+        cmd_po(argparse.Namespace(rest=[]))
         return
     args.fn(args)
 
