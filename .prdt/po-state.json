@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-286",
-    "slug": "adapter-a3-ticket-status",
+    "ticket_id": "T-287",
+    "slug": "adapter-a4-stage-mapping",
     "assignee": "developer"
   }
 }
