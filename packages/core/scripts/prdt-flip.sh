@@ -28,7 +28,8 @@ fi
 # ── 0. backup ──────────────────────────────────────────────────────────────────
 TS="$(date +%s)"
 BK="$PRDT_HOME/flip-backup-$TS"
-mkdir -p "$BK"
+mkdir -p "$BK" "$CLAUDE_DIR/agents"
+[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"   # 완전 새 기기 방어
 cp "$SETTINGS" "$BK/settings.json"
 LEGACY_AGENTS="$(cd "$CLAUDE_DIR/agents" 2>/dev/null && ls pdt-*.md* pdtl-*.md* 2>/dev/null || true)"
 if [ -n "$LEGACY_AGENTS" ]; then
