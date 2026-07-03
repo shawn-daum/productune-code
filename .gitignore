@@ -30,3 +30,6 @@ node_modules/
 dist/
 packages/*/dist/
 packages/*/dist-electron/
+
+# prdt derived index (rebuildable — design §2)
+.prdt/index.db
