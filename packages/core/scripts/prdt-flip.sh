@@ -47,6 +47,9 @@ on_err() {
   if [ -f "$BK/legacy-agents.tar" ]; then
     tar -xf "$BK/legacy-agents.tar" -C "$CLAUDE_DIR/agents" 2>/dev/null || true
   fi
+  if [ -f "$BK/legacy-home.tar.gz" ]; then
+    tar -xzf "$BK/legacy-home.tar.gz" -C "$HOME" 2>/dev/null || true
+  fi
   say "  롤백 완료 — 기존 productune 환경은 그대로 사용 가능합니다."
   say "  대안: ① 그대로 재시도  ② 수동 절차: docs/prdt-v1-flip.md  ③ 원인 공유 후 지원 요청"
   say "  (백업 보존: $BK — 'prdt-flip.sh --rollback $BK' 로 언제든 수동 원복)"
@@ -106,6 +109,31 @@ for cmd in productune my-po productune-lite; do
   R="$(command -v "$cmd" || true)"
   [ "$R" = "$HOME/.local/bin/$cmd" ] || say "   ⚠ '$cmd'이 shim보다 앞선 경로($R)에 있음 — 셸 rc의 구 PATH 항목 제거 필요"
 done
+
+# ── 3.7 legacy 홈 정리 (~/.productune, ~/.productune-lite) ─────────────────────
+# post-flip에 살아있는 것은 productune.env(GUI legacy 조회 참조)·GUI 앱 상태
+# (settings/recents.json)·핸드오프 거절 플래그뿐. 나머지(doctrine 미러, Tier2 개인
+# habit, state/usage/스탬프류)는 tar로 통째 백업 후 제거 — 롤백 시 그대로 복원.
+STEP="tidy"; say "3.7) legacy 홈 정리 (백업 후)"; fail_at tidy
+LEGACY_DIRS=""
+[ -d "$HOME/.productune" ] && LEGACY_DIRS=".productune"
+[ -d "$HOME/.productune-lite" ] && LEGACY_DIRS="$LEGACY_DIRS .productune-lite"
+if [ -n "$LEGACY_DIRS" ]; then
+  # shellcheck disable=SC2086
+  tar -czf "$BK/legacy-home.tar.gz" -C "$HOME" $LEGACY_DIRS
+  if [ -d "$HOME/.productune" ]; then
+    KEEP='productune.env|settings.json|recents.json|.prdt-handoff-declined'
+    for f in "$HOME/.productune"/* "$HOME/.productune"/.[!.]*; do
+      [ -e "$f" ] || continue
+      printf '%s' "$(basename "$f")" | grep -qE "^($KEEP)$" || rm -rf "$f"
+    done
+  fi
+  rm -rf "$HOME/.productune-lite"
+  # 개인 습관(옛 Tier2)은 백업에 보존 — 살릴 내용은 ~/.prdt/overrides/<persona>.md 로 직접 이관
+  say "   정리 완료 (전체 백업: $BK/legacy-home.tar.gz — 개인 습관 이관은 ~/.prdt/overrides/)"
+else
+  say "   legacy 홈 없음 — 건너뜀"
+fi
 
 # ── 4. verify ──────────────────────────────────────────────────────────────────
 STEP="verify"; say "4) 검증"; fail_at verify
