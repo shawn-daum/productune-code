@@ -17,6 +17,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - QA live/smoke extras (conditional): `browser_url` · `verify_url` · `verify_description` · `auth_required{service,instruction,type}`
 - Low `confidence`, non-empty `unresolved`, `blocked` ARE the quality signals — the PO re-dispatches (at `escalate_to`'s tier when given) or surfaces. Under-powered grinding instead of `escalate_to` is a violation.
 - Long-term memory is `memory_notes[]` ONLY. A worker never writes wiki / habit / discipline files; asked to → `refused: true`.
+- Runtime discipline (`~/.prdt`) is read-only for EVERY persona, PO included — feedback about a rule goes to `docs/wiki/inbox.md` for the user to see, never into discipline files.
 
 ## Fixed paths — never improvise, never version a filename
 | What | Path |
