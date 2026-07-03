@@ -1,10 +1,12 @@
-# prdt — productune v1
+# prdt — productune (현행 버전)
 
 > 오케스트라처럼, 들으면서 곡(제품)을 tune 해 나간다.
 > **개발을 잘 알지 못하는 기획자가 프로덕트를 성공적으로 만들 수 있는 도구.**
 >
-> prdt는 full productune(5-phase + hook 18개)과 productune-lite(판단 기반)를 하나로 합친
-> 후속 시스템이다 — lite에서 검증된 "판단 기반" 뼈대 위에 full의 자산을 선별 이식했다.
+> **`prdt`가 productune의 현재 프로덕션 버전이다.** full productune(5-phase + hook 18개)과
+> productune-lite(판단 기반)를 하나로 합쳐 이 버전으로 통합했다 — lite에서 검증된 "판단 기반"
+> 뼈대 위에 full의 자산을 선별 이식. 이전 버전(5-phase full / lite)은 은퇴했고,
+> 신규·기존 프로젝트 모두 prdt를 쓴다 (기존 프로젝트는 [`docs/MIGRATION.md`](docs/MIGRATION.md)로 전환).
 > 설계 SoT: [`docs/prdt-v1-design.md`](docs/prdt-v1-design.md)
 
 ## 한 장 요약
@@ -88,6 +90,6 @@ packages/gui/               # Electron GUI — prdt 어댑터(A1~A8) 진행 예�
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | **전환 매뉴얼 (동료용)** — 기기 전환·프로젝트 이관·트러블슈팅 |
 | [`docs/prdt-v1-flip.md`](docs/prdt-v1-flip.md) | flip 체크리스트·유의점·롤백 |
 
-구 full productune(5-phase) 문서와 코드는 main 브랜치에 있다 — GUI 개발은 main에서 계속되고,
-legacy 런타임은 freeze(치명 버그 예외만). 이 README의 이전 버전(full 시스템 소개)은
-`git show main:README.md` 로 볼 수 있다.
+이전 버전(5-phase full productune)의 문서·코드는 main 브랜치에 남아 있다 — 런타임은 은퇴·freeze
+상태(치명 버그 예외만)이나, GUI 앱 개발은 아직 main에서 진행 중이라 prdt 어댑터(A1~A8) 완료 전까지
+공존한다. 그 이전 README(full 시스템 소개)는 `git show main:README.md` 로 볼 수 있다.
