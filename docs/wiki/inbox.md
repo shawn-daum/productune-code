@@ -15,3 +15,10 @@
 - A6 drift(정보성): GUI prdt 온보딩은 statusline 자동 등록, CLI는 --statusline opt-in + PRDT_STATUSLINE_INSTALLED 플래그 — GUI는 ~/.prdt 파일 read-only 스탠스라 플래그 미갱신. 코스메틱.
 - ADR 후보(A7): prdt UsageBar 대체 지표 = 프로젝트 누적 비용(turns.jsonl 전체 합, 세션 스코프 아님) — rate-limit % 제도는 v1에서 소멸. 세션 단위 원하면 claudeSessionId 필터 후속 필요 (Designer/PO 결정 대기).
 - 감사 갭(A7 발견): costArchive.ts resolveTurnsPath의 .productune 하드코딩이 A1 스윕 목록(~15파일)과 T-283 재감사 양쪽에서 누락 — A7에서 수정 완료. 교훈: 감사 파일 카운트는 grep 스윕 재실행으로 검증해야지 목록 대조만으론 부족.
+- ADR seed(A8): GUI는 current_version+versions[]를 전방위로 읽는데 prdt po-state는 flat version 문자열 — A8은 제도 UI만 숨기고 필드 브리지 안 함. store 레벨 version→current_version 정규화(PRD 자동내비·버전 스코프 탭·아티팩트 스코핑 복원)가 flip-blocker 후보 → T-306 발행.
+- env find(A8): 대상 repo에서 npx tsc는 디코이 바이너리 — pnpm run build 또는 pnpm exec tsc -p tsconfig.json 사용(단일 패스로 src+electron 타입체크).
+- A8 잔여(무해): PhaseTransitionGate는 렌더 사이트 없는 dead component. 전환기 픽스처(productune-v1)의 구버전 manifest.json들이 디렉토리 리스팅에 .json 행으로 노출 — 정직한 리스팅, 실제 prdt 프로젝트엔 없음.
+- QA find(A8): legacy po-state 필드(current_version·phase_history·current_phase) 키잉 스윕은 dispatch change_meta 파일 목록이 아니라 전체 repo grep으로 — MainPanel/WelcomePanel이 8파일 밖에서 current_version을 독립적으로 읽어 누락됐음.
+- 패턴(A8 근본원인): `poState?.current_version == null` 류 empty/fresh 판정은 prdt에서 항상 false-positive(필드 자체가 없음) — 발견 2건(EntryGate phase_history·MainPanel 웰컴) 수정됨. T-306 착지 시 이 predicate 형태 전수 스윕할 것.
+- A8 스윕 결과(무수정 graceful 소비처): PRD 자동내비 이중 비활성(renderer helpers + electron state 감시자 둘 다 current_version 키잉 — T-306), TicketDashboard version 태그 미표기, HomeView 카드 phase/version null, subagent-cost 버전 그룹핑 미동작 등 — 전부 T-306 브리지에서 복원 대상.
+- 관찰 대상(pre-existing, A8 무관): lastProject 자동 마운트 직후 프로젝트 전환 시 직전 프로젝트의 비동기 PRD 자동-오픈이 전환된 pane tree에 탭을 밀어 넣는 레이스 — 사람 속도에선 드묾, fail 아님, 후속 관찰.
