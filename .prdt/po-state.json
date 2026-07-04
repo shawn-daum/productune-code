@@ -2,9 +2,5 @@
   "schema_version": 1,
   "stage": "build",
   "version": "v1.1",
-  "current_task": {
-    "ticket_id": "T-305",
-    "slug": "prdt-onboarding-trigger",
-    "assignee": "developer"
-  }
+  "current_task": null
 }

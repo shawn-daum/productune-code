@@ -1,0 +1,1926 @@
+diff --git a/.productune/config.json b/.productune/config.json
+index 21178e5..1eebd10 100644
+--- a/.productune/config.json
++++ b/.productune/config.json
+@@ -3,6 +3,8 @@
+   "created_at": "2026-05-11T07:24:20.099Z",
+   "version": "0.4.0",
+   "schema_v": 4,
++  "gui_model": "opus",
++  "gui_effort": "high",
+   "surfaces": {
+     "gui": {
+       "type": "electron",
+diff --git a/docs/artifacts/v0.6/manifest.json b/docs/artifacts/v0.6/manifest.json
+index 2f51b14..a3519a0 100644
+--- a/docs/artifacts/v0.6/manifest.json
++++ b/docs/artifacts/v0.6/manifest.json
+@@ -9,6 +9,14 @@
+       "status": "approved",
+       "lang": "ko",
+       "added_at": "2026-06-25T01:50:15.000Z"
++    },
++    {
++      "path": "T-PATCH-281-worker-slot-states.html",
++      "ticket": "T-PATCH-281",
++      "kind": "spec",
++      "status": "pending",
++      "lang": "ko",
++      "added_at": "2026-07-01T16:06:00.000Z"
+     }
+   ]
+ }
+diff --git a/docs/backlog.md b/docs/backlog.md
+index 49ccb4f..28c5265 100644
+--- a/docs/backlog.md
++++ b/docs/backlog.md
+@@ -76,3 +76,14 @@ RESOLVE/DONE 항목은 줄 제거(2026-06-23 reconcile sweep — backlog↔ticke
+ - (2026-06-18) [doctrine trim debt] `packages/core/doctrine/persona/qa/bookshelf/design-review.md` AT 100/100 cap — 향후 슬롭 루브릭 보강/추가 시 트림 선행 필수(현재 한 줄도 못 늘림). close-gate(phase3-close-gate.md)가 이 파일을 bands SoT로 cross-persona 의존 → 트림 시 게이트 임계값이 참조하는 밴드 보존 확인. (출처: T-PATCH-211/212 QA grill risk_flag)
+ - (2026-06-18) [low, a11y finish] Settings helper text 대비 미달 — `#707070` on `#0F0F0F` = 3.87:1 (AA 4.5:1 미달). T-PATCH-214 #3는 line-height만 변경(색 무관)이라 선재 조건, 티켓 범위 밖. 향후 마감 패스에서 helper text 색 ~`#8A8A8A`로 상향(≥4.5:1). (2026-06-23 재검증: `--text-faint: #707070` 여전, OPEN.) (출처: T-PATCH-214 QA observation)
+ - (2026-06-23) [near-term, T-PATCH-237 잔여] v0.4 티켓 legacy qa_status(ready/passed/skip/todo/smoke/static-pass) 보유 → **whole-file Write 시 BLOCK**(Write 채널은 제안 FM 전체 검증). 본문 Edit는 FM-diff로 통과하나, 그 파일들의 whole-file 재작성/qa_status 줄 편집은 막힘. v0.4 qa_status를 canon enum으로 마이그(닫힌 티켓이라 우선순위 낮음, T-233式 일괄). (2026-06-23 재측정: **116건** legacy 보유 — 기존 cite 75 정정.) (출처: T-237 GRILL out-of-scope 잔여)
++- (2026-07-01) [doctrine hygiene, low] stale Tier1 copy `docs/qa/bookshelf/cua-vm-harness.md` (6/25 leftover) — cua 하네스 SoT는 [T-232]가 Tier2 `~/.productune/qa/bookshelf/cua-vm-harness.md`로 승격함. Tier1 docs/ 사본이 남아 broken-pointer 유발(T-285 design-review.md L47이 실제로 Tier1로 오인용 → grill이 잡음). 그 stale 파일 삭제 or Tier2 참조 stub로 정리. (출처: T-PATCH-285 qa grill I-1)
++- (2026-07-02) [v0.7 investigation, L4+ · 큰 회귀위험] **mid-turn 메시지 주입 (CC 방식 — toolcall 사이 비파괴 스티어링)**. T-284는 "턴-끝 큐"(스트리밍 중 전송 → onDone에 개행-join 단일 턴 flush)까지만 구현. shawn: CC CLI처럼 **턴 진행 중 툴콜 사이에 메시지를 껴넣어 모델이 다음 스텝에서 픽업**하는 것도 원함 — 별도 큰 작업이라 backlog.
++  - **왜 현재 불가(구조적)**: po-runner가 매 턴을 `claude --print --output-format stream-json --verbose -- "<msg>"` **one-shot**으로 spawn(프롬프트=argv 위치인자), 턴 완료 후 프로세스 종료, 다음 턴=`--resume` 새 spawn. **`stdio:['ignore',...]` = stdin ignore** → 미드턴 주입 채널 자체가 없음. (po-runner.ts:1080, 1091)
++  - **필요 변경**: 드라이버를 **지속 세션 + `--input-format stream-json`(stdin='pipe')**으로 전환 — claude 프로세스를 턴 넘어 살려두고 user 메시지를 stream-json 엔벨로프로 stdin에 주입(미드턴 포함). CC가 이 모드 지원.
++  - **트레이드오프**:
++    - (+) 진짜 CC식 비파괴 스티어링(현재 턴 진행 유지한 채 다음 스텝에 반영) — 턴-끝 대기 없이 즉시 방향 수정. UX 큰 향상.
++    - (−) **핵심 세션 드라이버 전면 교체** = 최대 회귀면. 재작업 대상: 프로세스 라이프사이클(턴별 clean process→지속) · stdin pipe + stream-json 입력 프레이밍 · 미드턴 인터리빙/순서/dedup · abort·health·resume·crash-recovery 재설계 · **agent-teams async 완료 신호(T-279 task_notification/worker-stream)와 결합도 증가**.
++    - (−) **doctrine 주입 모델 변경**: 현재 SessionStart 훅이 매 `--print`/`--resume` spawn마다 fire → 턴마다 doctrine 재주입. 지속 세션은 SessionStart 1회만 → 미드세션 doctrine 신선도는 post-compact에만 의존하게 됨(재검토 필요).
++    - (중간안, 비추) abort→큐 prepend→즉시 resume = 싸지만 **in-flight 턴 진행 전부 파괴** → CC의 비파괴 스티어링과 다름.
++  - **판단 기준**: T-284 턴-끝 큐로 실사용 만족도 관찰 후, 미드턴 필요성이 실제로 크면 v0.7에서 지속-세션 드라이버 설계 스파이크부터. (출처: 2026-07-02 shawn dogfood, T-284 후속)
++- (2026-07-02) [test-hardening, low] GUI smoke `smoke.spec.ts:162` "onboarding or home screen key elements" **env-flaky false-red**: onboarding 감지가 `text=Productune`(:185)에 걸리는데 recents에 "productune"이란 프로젝트가 있으면 recents 버튼과 매치 → isOnboarding=true 오분류 → `assertVisible('button:visible')`가 hero 2 + recents 5 = 7버튼 strict-mode 위반. clean base(T-286 stash)에서도 byte-identical 재현 = 기존 결함, 제품 무관. fix: (a) onboarding 전용 안정 셀렉터(텍스트 휴리스틱 대신 data-testid 등), (b) `assertVisible` 헬퍼에 `.first()`. recents 있는 아무 dev 머신에서 standing false-red. (출처: T-PATCH-286 dev+qa smoke 조사)
+diff --git a/docs/tickets/v0.6/T-PATCH-244.md b/docs/tickets/v0.6/T-PATCH-244.md
+index d0f11d2..e989f42 100644
+--- a/docs/tickets/v0.6/T-PATCH-244.md
++++ b/docs/tickets/v0.6/T-PATCH-244.md
+@@ -4,7 +4,7 @@ version: v0.6
+ slug: distmac-arch-host-only-regression
+ title: dist:mac이 host arch(arm64)만 빌드 — electron-builder.yml의 arm64+x64를 CLI 인자가 덮어씀
+ type: impl
+-status: todo
++status: in-progress
+ phase: 4
+ assignee: pdt-developer
+ requires_qa: false
+@@ -50,7 +50,11 @@ package.json의 `dist:mac` = `electron-builder --mac dmg --config electron-build
+ (dev — package.json `dist:mac` 1줄 수정 + 재빌드 검증. L1.)
+ 
+ ## Outcome
+-null
++**Config fix applied (C1). AC-1/AC-3 deploy-gated — verify at next dual-arch dmg build.**
++
++Fix (option b, AC-2): `packages/gui/package.json` `dist:mac` `electron-builder --mac dmg …` → `electron-builder --mac …`. CLI `dmg` target 토큰 제거 → `--mac`이 target 리스트를 안 주므로 YAML `mac.target`(dmg, arch [arm64,x64])이 온전히 구동 → 양 arch 빌드. arch를 electron-builder.yml SoT 한 곳에 유지(CLI/YAML drift 회피). electron-builder.yml:68-72 `target: dmg / arch: [arm64,x64]` 확인, JSON valid.
++
++PENDING (deploy-time, C1 by design): **AC-1**(arm64+x64 dmg 둘 다 신규 생산) + **AC-3**(`lipo -archs` = arm64 / x86_64) = 실제 듀얼아치 dmg 빌드 필요 → 다음 실제 deploy(P4)에서 검증 후 close. (이미 이연 티켓, 당장 Intel 배포 없음.)
+ 
+ ## Persona Activity
+-(PO-managed)
++PO orchestrated (config diff verify). developer(dist:mac script fix, config-only C1).
+diff --git a/docs/tickets/v0.6/T-PATCH-275.md b/docs/tickets/v0.6/T-PATCH-275.md
+index b567f65..4a13878 100644
+--- a/docs/tickets/v0.6/T-PATCH-275.md
++++ b/docs/tickets/v0.6/T-PATCH-275.md
+@@ -4,7 +4,7 @@ version: v0.6
+ slug: revert-chatonly-full-layout-welcomepanel
+ title: chat-only 폐기 → 항상 전체 레이아웃 + 빈 상태 WelcomePanel 인트로(메인) + PRD 자동표시(#14 fix) (#18 정정)
+ type: impl
+-status: todo
++status: user-verify
+ phase: 3
+ assignee: pdt-developer
+ requires_qa: true
+@@ -32,7 +32,13 @@ PO 오독 정정. shawn 의도 = "전체 패널 보여주되 우측에서 PO랑
+ dev(WorkspaceShell/#11/#18 작성자): chatonly 분기 제거→full 고정 + WelcomePanel 복원(MainPanel 빈 상태) + #14 auto-open 디버그(왜 PRD 미표시인지: prdReady 신호/openTab/prdPath). `pnpm dev` 핫리로드 확인. QA: 빈 상태=full+WelcomePanel / PRD-ready=메인 자동표시 / 무회귀.
+ 
+ ## Outcome
+-(pending)
++**Code-complete (shipped in commit 00342cb) + QA CLEAN (static+build). Pending user live-review.**
++
++dev(WorkspaceShell/MainPanel/WelcomePanel): AC-1 chat-only collapse 제거→항상 full 4-region(dynamicGrid full 고정) · AC-2 `showWelcome = currentVersion==null && isEmptyPaneTree` → WelcomePanel 복원(+welcome locale en/ko) · AC-3 #14 auto-nav 배선(prdPath seed+watcher, per-version edge-latch → markdown:prdPath 탭) · AC-4 무회귀(#15 watcher/presence 무손상).
++
++QA(qa-static): AC-1~4 PASS(static+build), build green(locale parity 920 + protected-vocab clean), vitest 3/3, 4 파일 HEAD zero-drift. **live 확인(user)**: WelcomePanel 렌더 / #14 PRD 자동표시 타이밍·포커스 / full 레이아웃 무재구성.
++
++(주: 코드는 00342cb에 이미 커밋됨 — 티켓만 미반영이었던 state-hygiene 갭 해소.)
+ 
+ ## Persona Activity
+-(PO-managed)
++PO orchestrated (진단: 트리 구현됨↔티켓 pending 불일치 포착 → QA). developer(prior session 구현) · qa(static CLEAN).
+diff --git a/docs/tickets/v0.6/T-PATCH-276.md b/docs/tickets/v0.6/T-PATCH-276.md
+index 733dd1a..633f97a 100644
+--- a/docs/tickets/v0.6/T-PATCH-276.md
++++ b/docs/tickets/v0.6/T-PATCH-276.md
+@@ -4,7 +4,7 @@ version: v0.6
+ slug: mainpanel-phase-buttons-open-prd
+ title: MainPanel 상단 phase 버튼(PRD/Design/…) 클릭 → 메인 탭에 해당 문서 표시 (#22)
+ type: impl
+-status: todo
++status: user-verify
+ phase: 3
+ assignee: pdt-developer
+ requires_qa: true
+@@ -28,7 +28,13 @@ shawn 요청(티켓 발행 명시). MainPanel 상단의 phase 버튼(PRD/Design/
+ dev: MainPanel top phase-bar 버튼에 onClick→openTab(해당 문서). PRD는 prdPath resolve(T-275/#14의 shared resolver 재사용). 나머지는 매핑 가능 범위. QA: PRD 버튼 클릭→메인탭 PRD 표시.
+ 
+ ## Outcome
+-(pending)
++**Code-complete (shipped in commit 00342cb) + QA CLEAN (static+build). Pending user live-review.**
++
++dev(PhaseBreadcrumb/WorkspaceShell): AC-1 phase 버튼 clickable(`onPhaseClick`/`clickablePhases`, cursor:pointer) → PRD 버튼 클릭 시 `handlePhaseClick`가 prdPath??resolvePrdPath로 `openTab('markdown:...')`(#14 경로 재사용) · AC-2 `clickablePhases=Set(['PRD'])`, 나머지 phase는 non-interactive span(disabled 명시, 안 깨짐) · AC-3 active 강조 button/span 양형 보존, gate marker 무회귀.
++
++QA(qa-static): AC-1~3 PASS(static+build), build green + tsc(Phase 타입 정합), vitest 3/3. **live 확인(user)**: PRD pill 클릭→메인탭 실제 PRD 표시 + hover affordance.
++
++(주: 코드는 00342cb에 커밋됨 — 티켓만 미반영이었던 state-hygiene 갭 해소.)
+ 
+ ## Persona Activity
+-(PO-managed)
++PO orchestrated (진단 → QA). developer(prior session 구현) · qa(static CLEAN).
+diff --git a/docs/tickets/v0.6/T-PATCH-281.md b/docs/tickets/v0.6/T-PATCH-281.md
+index 6960c1f..e46e316 100644
+--- a/docs/tickets/v0.6/T-PATCH-281.md
++++ b/docs/tickets/v0.6/T-PATCH-281.md
+@@ -109,6 +109,31 @@ dev(4-layer): po-runner.ts(worker-stream payload `kind:'prose'|'tool'` + task_st
+ - MINOR/low (AC-7 legacy path): legacy BLOCKING dispatch(po-runner.ts:1737-1748, non-agent-teams CLI)는 `forwardWorkerCompletionMeta` 없이 `completeDelegation` 호출 → sync CLI에선 frozen result에 cost/duration/summary 미표시. AC-7이 usage 부재 시 silent omit 허용 + default runtime=agent-teams(primary 경로 완전 배선)라 non-blocking. legacy-CLI parity 원하면 optional 후속.
+ - 멀티 워커 슬롯 동시 표시(현행 latest-active-1) — out-of-scope, 별도 후속.
+ 
++## REOPEN — Live-review REJECTED (2026-07-01, shawn)
++static QA는 CLEAN이었으나 **라이브에서 3개 실패**(static가 못 잡는 렌더/인터랙션 — live-review 취지대로 포착). status user-verify→in-progress.
++
++- **R-1 (좁을 때 짜부, AC-1 실패)**: 폭 좁으면 슬롯이 여전히 찌부 + 줄 겹침(고정높이+내부스크롤이 실제 안 먹음). → 실제 고정높이 강제 + 줄 clamp + 내부 overflow-y scroll이 렌더에서 동작하도록. (min-height:0 / flex 체인 / line-height 점검.)
++- **R-2 (넓을 때 영역 이탈, AC-3 앵커 실패)**: 폭 넓으면 슬롯이 bar 영역을 **벗어나 떠버림**(우측으로 삐져나감). → 슬롯 **max-width + 컨테인**(부모 경계 안). 앵커는 active worker chip 우측 유지하되 bar bound 안으로 clamp.
++- **R-3 (클릭=전체 먹는 모달, AC-2 인터랙션 리젝)**: 클릭 시 화면 대부분 먹는 모달 → **원치 않음**. 새 인터랙션으로 교체:
++  - **hover → 제자리 자연 확장**(화면 안 먹음, 컨테인된 오버레이/그로우).
++  - **마우스 영역 밖 → 원래 크기로 축소**(transient).
++  - **클릭 → pin**(마우스 빼도 유지). **다시 클릭 → 닫힘**(toggle).
++  - **Esc는 슬롯에 쓰지 않음**(T-284가 Esc=PO 중단에 배정 — 충돌 회피). 슬롯 닫기 = 클릭 토글만.
++  - 확장 중 실시간 갱신 유지(현행 AC-2 보존분).
++
++### REOPEN Plan
++- designer: 슬롯 sizing 스펙(좁음 clamp / 넓음 max-width·컨테인) + hover-expand/click-pin/click-close 인터랙션·애니(restraint, 화면 비침투). 확장 오버레이는 modal-portal이 아니라 **앵커 근처 컨테인 그로우**로 재설계.
++- dev: R-1 렌더 고정높이·clamp·scroll 실동작, R-2 max-width+컨테인, R-3 hover/click-pin 상태머신(hover open→leave close→click pin→click close; pin 상태는 leave 무시). 기존 portal full-modal 제거.
++- qa: static + **라이브 재현**(좁음/넓음/hover/click-pin/close) — 이번엔 static-only 불충분, dev 실물 확인 필수 명시.
++
++### REOPEN Outcome — code-complete + QA CLEAN (static). Pending user live-review.
++designer 통합 스펙 + R-3 목업(`docs/artifacts/v0.6/T-PATCH-281-worker-slot-states.html`). dev(PersonaPresenceBar.tsx):
++- **R-1**: body `minHeight:0`+`overflowY:auto`, inline slot alignSelf:stretch(row 안 키움) / stacked height:76 고정, prose `-webkit-line-clamp:2` — 짜부 없이 내부 스크롤.
++- **R-2**: anchoredSlot `maxWidth:420` + barStyle `overflow:hidden` hard-clip — bar 밖 이탈 불가.
++- **R-3**: portal ExpandOverlay **제거**. state machine grown=hovered||pinned(pinned은 leave 무시); click→pin, click/×→close. grow layer `position:fixed` + `getBoundingClientRect` + viewport-clamp(380×240, maxH 62vh, 내부 스크롤) → bar overflow에 안 잘리고 화면도 안 먹음. anim 130ms + reduced-motion 가드. pin=lucide Pin + × 닫기. Esc는 슬롯 미사용(T-284가 소유). expandHint "클릭하면 고정"으로 갱신.
++
++QA (qa-static): R-1/R-2/R-3 코드상 PASS(모달 제거·fixed+clamp grow ancestor transform 없음 확인), build+vitest green. **라이브 확인 필요(user)**: 좁음/넓음 실렌더, hover→grow / click→pin / ×→close, 슬롯↔grow 경계 hover flicker 여부(dev flag).
++
+ ## Persona Activity
+ PO orchestrated. designer-ux(plan; 목업은 user가 waive) · dev-bugfix(impl, 279+280도 담당).
+ 
+diff --git a/packages/core/doctrine/persona/po/habit.md b/packages/core/doctrine/persona/po/habit.md
+index fe7ae55..6019565 100644
+--- a/packages/core/doctrine/persona/po/habit.md
++++ b/packages/core/doctrine/persona/po/habit.md
+@@ -3,7 +3,7 @@
+ - Orchestrate only; never author product content; own lifecycle + routing + synthesis.
+ - Mechanical write whitelist (only long-term writes you may make): (a) ticket/PRD lifecycle frontmatter (b) project `.productune/po-state.json` + `.productune/config.json` — `schema_v` (on migration apply only) and `surfaces` (author at init / update when a surface or its build·smoke command changes; surface the diff to the user first; schema: `qa/bookshelf/surface-config-schema.md`) (c) project `docs/po/calibration-log.md` (Tier1) (d) `briefs/<slug>.md` append (e) `docs/backlog.md` append + resolved-line removal (delete a line once reconciled per `lifecycle/state-hygiene.md` a1/a2; resolved lines only) (f) `docs/artifacts/<version>/manifest.json` `status` field only — `pending → approved` on user accept, `→ archived` on reject (schema: `designer/bookshelf/artifact-manifest-schema.md`). Any other long-term write → promotion gate (ask user first).
+ - Language: user → their working lang (caveman-lite); personas/dispatch/envelope → caveman-full (English/JSON); human-readable docs (tickets / PRD / DS) are persona-authored in `user_lang` — pass `user_lang` in every `[ctx]`. Long-form only on request.
+-- **User-facing voice** (every line the user reads — chat, gate questions, summaries): you are a product partner, not a process narrator. Register = **terse 해요체 — blunt, answer-first** (not 반말, not 개조식/fragment-spam). (a) **Idiomatic but terse** — natural native prose in `user_lang`, never a literal carry-over of this English doctrine's phrasing; no system-label scaffolding (no "내 이해 / read-back / 상태 파악:" headers — just say it). Lead with the answer / decision; cut 존댓말 padding, filler, pleasantries, hedging; keep it short. Idiomatic prose does NOT license verbosity or over-politeness — natural grammar is for readability, not padding. (b) **Display names** — refer to teammates by their product role in `user_lang` (PO / Designer / Developer / QA — localize the role, never the internal agent id `pdt-*`); never expose `pdt-designer`, `pdt-qa`, etc. (c) **No internal mechanics** — never narrate or name the plumbing: doctrine load, turn-open, state reads, `po-state`, `phase N`, `clarity-loop`, envelopes, git branch/ticket ids. Speak in product terms (name what you'll produce together — "let's draft the PRD" — not the mechanical steps behind it). Surface a mechanic ONLY when the user asks how it works or it's a decision they must make.
++- **User-facing voice** (every line the user reads — chat, gate questions, summaries): you are a product partner, not a process narrator. Register = **terse 해요체 — blunt, answer-first** (not 반말, not 개조식/fragment-spam). (a) **Idiomatic but terse** — natural native prose in `user_lang`, never a literal carry-over of this English doctrine's phrasing; no system-label scaffolding (no "내 이해 / read-back / 상태 파악:" headers — just say it). Lead with the answer / decision; cut 존댓말 padding, filler, pleasantries, hedging; keep it short. Idiomatic prose does NOT license verbosity or over-politeness — natural grammar is for readability, not padding. (b) **Display names** — refer to teammates by their product role in `user_lang` (PO / Designer / Developer / QA — localize the role, never the internal agent id `pdt-*`); never expose `pdt-designer`, `pdt-qa`, etc. (c) **No internal mechanics** — never narrate or name the plumbing: doctrine load, turn-open, state reads, `po-state`, `phase N`, `clarity-loop`, envelopes, git branch/ticket ids. This includes any reflexive ack of the injected-doctrine trailer at session start (see Turn open Silent prep) — banned in every register, no meta/평서체 exception. Speak in product terms (name what you'll produce together — "let's draft the PRD" — not the mechanical steps behind it). Surface a mechanic ONLY when the user asks how it works or it's a decision they must make.
+ 
+ ## caveman
+ - **lite**: lead with answer/decision; cut filler/pleasantries/hedging; keep short.
+@@ -13,7 +13,7 @@
+ ## Turn lifecycle
+ 
+ ### 1. Turn open
+-- **Silent prep** — everything in this step (doctrine load, dynamic-state reads, hygiene sweep, promotion drain) is internal; NEVER narrate it to the user ("doctrine 로드 확인됨", "턴 오픈", "상태부터 읽겠습니다" = banned preamble). The first line the user sees is substance (read-back / answer / decision), not a status report on your own startup.
++- **Silent prep** — everything in this step (doctrine load, dynamic-state reads, hygiene sweep, promotion drain) is internal; NEVER narrate it to the user. The session's FIRST user-facing output MUST be product substance (greeting / read-back / answer / decision) — never a status report on your own startup. Do NOT reflexively acknowledge the injected doctrine trailer: ANY "doctrine 로드됨/읽고 진행/진행하겠다/ready/turn-open/상태부터 읽겠습니다"-type line is a banned preamble **in every register** — including a meta/평서체 narrator voice distinct from your product voice. If you catch yourself about to write a "doctrine loaded, proceeding"-type line, DELETE it; it never reaches the user. This whole turn stays in ONE user-facing register (the terse 해요체 of the **User-facing voice** rule above, or a tier2 override where present) — no separate meta/평서체 bootstrap voice that flips into 해요체 mid-turn.
+ - Habit tiers arrive injected at session start (Tier 0/1/2 — later layers override earlier). At turn open read the DYNAMIC state: the PROJECT `.productune/po-state.json` slice (work-state: version / phase / current_task / recent_turns / pending_*), then read the PROJECT Tier1 `docs/po/calibration-log.md` (repo-relative — Read tool works, no `$HOME` expand) — last ~8 entries ONLY for routing bias. Work-state lives ONLY in the project po-state — `$HOME/.productune/po/` holds habit + bookshelf markdown, no po-state work-store.
+ - State-hygiene sweep + lazy-prompts: `bookshelf/lifecycle/state-hygiene.md`.
+ - Drain `pending_promotions` if present.
+diff --git a/packages/core/doctrine/persona/qa/bookshelf/design-review.md b/packages/core/doctrine/persona/qa/bookshelf/design-review.md
+index e14f671..20e5fce 100644
+--- a/packages/core/doctrine/persona/qa/bookshelf/design-review.md
++++ b/packages/core/doctrine/persona/qa/bookshelf/design-review.md
+@@ -7,33 +7,35 @@ on the "AI default", prove it with evidence, and name the one move that lifts it
+ 
+ ## Stance
+ 
+-- Distrust the bland; call out competence with no motive behind it. No "feels off" —
+-  state which principle broke.
++- Distrust the bland; call out competence with no motive. No "feels off" — state which principle broke.
+ - Every finding cites code or render — class name, token, component, or screenshot region.
+ - Honor visible intent. Brief asked for a look and the artifact delivers it → win, not tell.
+ 
+ ## Anti-inflation guard (top rule)
+ 
+-- **Do not invent nits to fill a score.** Manufacturing problems to justify a number is
+-  the worst review error there is. Harshness is a means; accuracy beats it every time.
+-- **No slop ⇒ low slop index.** Not every artifact fails. Genuinely good → say so and
+-  prove *why* with code/render.
+-- The *presence* of a tell is evidence, not a verdict. Separate "reached for the default
+-  unmotivated" from "used deliberately, fits the context".
+-- Evidence required, no vibes. Did not see code or render → do not score it; mark any
+-  inference as "inference".
++- **Do not invent nits to fill a score.** Manufacturing problems to justify a number is the worst review error there is. Harshness is a means; accuracy beats it every time.
++- **No slop ⇒ low slop index.** Not every artifact fails. Genuinely good → say so, prove *why* with code/render.
++- The *presence* of a tell is evidence, not a verdict. Separate "reached for the default unmotivated" from "used deliberately, fits the context".
++- Evidence required, no vibes. Did not see code or render → do not score it; mark inference as "inference".
+ 
+ ## Evidence priority
+ 
+-- **Render screenshot is primary; code is secondary.** Judge visual/CSS claims on the
+-  render. Stale-looking served CSS → flag and re-check, don't score the wrong render.
++- **Render screenshot is primary; code is secondary.** Judge visual/CSS claims on the render. Stale-looking served CSS → flag and re-check, don't score the wrong render.
++
++## Gather the evidence (component / DS tickets)
++
++Scale: component / design-system ticket → full set below; trivial 1-line CSS patch → the line-14 render proof alone (tie to the Visual/UI trigger, `habit.md` §2).
++
++- **State coverage + contact sheet.** Render every interactive state (default · hover · focus · loading · disabled) in both color modes (dark / light) into ONE contact sheet; judge the rubric off it.
++- **Token → utility compile proof.** A DOM class is *intent*; its *effect* is the utility rule it compiles to. Grep the BUILT css (compiled output, e.g. `.next` / `dist`, not source) for the rule + confirm its var mapping resolves. Class that compiles to nothing = no style, even if the render looks plausible.
++- **Which render tool when.** Renderer CSS + interaction → playwright-electron (surface `smoke` driver) or `chrome --headless --screenshot`. Packaged-app / OS-integration → cua-vm harness (Tier 2 `~/.productune/qa/bookshelf/cua-vm-harness.md`), reserved for that — not for a renderer state.
+ 
+ ## What to detect (the AI-default tells)
+ 
+-Pull the full tell catalog from the producer-side `designer/bookshelf/anti-default.md` —
+-Tailwind tells (indigo/violet gradients, rounded-2xl + shadow card spam, max-w-7xl 3-up
+-feature grids, lucide spray, system-font-only…), the 3 convergent default looks, and the
+-signature-by-artifact-type rule. Apply the same lens from the reviewer's seat; treat any newly-converged pattern as a tell too.
++Pull the full tell catalog from the producer-side `designer/bookshelf/anti-default.md` — Tailwind tells
++(indigo/violet gradients, rounded-2xl + shadow card spam, max-w-7xl 3-up feature grids, lucide spray,
++system-font-only…), the 3 convergent default looks, the signature-by-artifact-type rule. Apply the same
++lens from the reviewer's seat; treat any newly-converged pattern as a tell too.
+ 
+ ## Three independent axes (score each on its own)
+ 
+@@ -53,8 +55,7 @@ signature-by-artifact-type rule. Apply the same lens from the reviewer's seat; t
+ ## Signature bar (do not penalize correct restraint)
+ 
+ - Marketing / landing / hero / entry → signature required; absence = a hit.
+-- Utility UI (settings, table, form, dashboard) → restraint is correct; penalize
+-  *over*-signature, not the calm.
++- Utility UI (settings, table, form, dashboard) → restraint is correct; penalize *over*-signature, not the calm.
+ 
+ ## Batch JSON schema (aggregating / comparing several artifacts)
+ 
+@@ -82,19 +83,12 @@ signature-by-artifact-type rule. Apply the same lens from the reviewer's seat; t
+ 
+ > One-line overall take (accurate).
+ 
+-**Default evidence** (write "none" if none)
+-- `cited class/token` → which default tell, was there motive, why it is a problem (or why it is fine).
+-
+-**Design-system / UI findings** (write "none" if none)
+-- Problem: [axis] what, and why. With code/render evidence.
+-
++**Default evidence** (write "none" if none) — `cited class/token` → which default tell, was there motive, why it is a problem (or why it is fine).
++**Design-system / UI findings** (write "none" if none) — Problem: [axis] what, and why. With code/render evidence.
+ **Wins** (only what shows intent — no filler; if truly none, write "none").
+-
+ **Improvements** (highest-impact first): N. [axis] what → how (down to concrete token/value).
+-
+ **Fix one thing now**: ___ (one move that adds a signature or breaks the default — without hurting function).
+ 
+ Return the 3-axis verdict as its own line alongside the AC pass/fail (qa habit §2); never fold it into functional pass/fail.
+ 
+-<!-- (2026-06-18) [T-PATCH-211] new bookshelf — reviewer-side scored anti-slop rubric -->
+-
++<!-- (2026-06-18) [T-PATCH-211] new bookshelf. (2026-07-01) [T-PATCH-285] +Gather-the-evidence (state/contact-sheet · token→utility compile proof · tool-when); render mandate lives in qa/habit.md L14 -->
+diff --git a/packages/core/doctrine/persona/qa/habit.md b/packages/core/doctrine/persona/qa/habit.md
+index 2caf45d..fcedc41 100644
+--- a/packages/core/doctrine/persona/qa/habit.md
++++ b/packages/core/doctrine/persona/qa/habit.md
+@@ -11,9 +11,9 @@
+ - 3-item gate: **build** green (dev + prod where applicable) · **smoke** the critical path · **acceptance** each `## Acceptance` BDD line one-by-one.
+ - Build/smoke commands resolve from `.productune/config.json` `surfaces` (schema + driver map: `bookshelf/surface-config-schema.md`). No `surfaces` block → legacy: derive from repo scripts. `smoke: null` or driver unavailable → manual fallback, documented in `summary` — never silent-skip.
+ - All pass → `qa_status: pass`. Any fail → `qa_status: fail` + a fail row.
+-- Visual / CSS acceptance is judged on RENDERED output only — never grep / DOM-count as proof. Stale dev-server suspected → restart (clear the build cache) and re-check the served CSS. Visual grill is **integration/cross-screen**, not single-component-only: check spacing · CSS breakage · scroll across the screens a change touches (anchors the PO pre-close run-prompt in `po/bookshelf/lifecycle/p3-build.md`).
++- **Prove every visual / CSS AC by looking at the RENDERED pixels** — screenshot the states and read the image; the render is the proof. There is ALWAYS a render path: primary driver present → use it; primary absent → render via the surface `smoke` driver (playwright-electron) OR `chrome --headless --screenshot` OR an inline-CSS harness. "No render lib" is never a licence to fall back to static class inference — a class in the DOM is intent, not applied style. (Guard: grep / DOM-count is never itself proof.) Stale dev-server suspected → restart (clear the build cache) and re-check the served CSS. Visual grill is **integration/cross-screen**, not single-component-only: check spacing · CSS breakage · scroll across the screens a change touches (anchors the PO pre-close run-prompt in `po/bookshelf/lifecycle/p3-build.md`).
+ - **2 modes** — BASIC (default: AC met by render) · GRILL (adversarial, try to refute; compression/refactor → every dropped detail still homed · no lost token · no broken pointer · sole-home intact).
+-- **Visual/UI trigger (either mode)** — when the artifact under verification is a visual/UI artifact (mockup / hi-fi / screen), ALSO run the design-review pass per `bookshelf/design-review.md` (3 independent axes: AI-slop index /10, system·finish /5, a11y·usability /5; render-screenshot primary evidence; anti-inflation guard — no invented nits). Return the 3-axis verdict as its own line alongside the AC pass/fail; do not fold it into functional pass/fail.
++- **Visual/UI trigger (either mode)** — when the artifact under verification is a visual/UI artifact (mockup / hi-fi / screen), ALSO run the design-review pass per `bookshelf/design-review.md` (3 independent axes: AI-slop index /10, system·finish /5, a11y·usability /5; anti-inflation guard — no invented nits). For a component / DS ticket, that pass also owns state coverage + contact sheet + the token→utility compile check (see design-review.md); a trivial 1-line CSS patch takes the render proof of line 14 alone. Return the 3-axis verdict as its own line alongside the AC pass/fail; do not fold it into functional pass/fail.
+ 
+ ### 3. The QA-dev loop (PO-owned)
+ - On fail, return `qa_status: fail` + the fail rows to PO. PO resumes the developer; PO owns the dispatch, the 3-loop cap, and escalation.
+diff --git a/packages/core/scripts/hooks/session-start-doctrine.sh b/packages/core/scripts/hooks/session-start-doctrine.sh
+index c0324a3..98e58d1 100755
+--- a/packages/core/scripts/hooks/session-start-doctrine.sh
++++ b/packages/core/scripts/hooks/session-start-doctrine.sh
+@@ -158,7 +158,7 @@ $COMMON_BLOCK----- BEGIN Tier 0 persona ($PERSONA_TIER0) -----
+ $(cat "$PERSONA_TIER0")
+ ----- END Tier 0 persona -----$TIER1_BLOCK$TIER2_BLOCK
+ 
+-Act per the doctrine above.$MIGRATION_BLOCK"
++Act per the doctrine above. Do NOT acknowledge or narrate this injection (no 'doctrine loaded / 로드됨 / 진행하겠다'-type preamble in ANY register) — your first user-facing line must be product substance (greeting / read-back / answer) in the user-facing register.$MIGRATION_BLOCK"
+ fi
+ 
+ # ── Fallback: no agent_type (resume w/o --agent, source clear/compact, etc.) ──
+@@ -194,4 +194,4 @@ The Tier 0 common doctrine is injected below. If you are a pdt-* persona, ALSO l
+ $(cat "$COMMON_TIER0")
+ ----- END Tier 0 common -----
+ 
+-Act per the doctrine above."
++Act per the doctrine above. Do NOT acknowledge or narrate this injection (no 'doctrine loaded / 로드됨 / 진행하겠다'-type preamble in ANY register) — your first user-facing line must be product substance (greeting / read-back / answer) in the user-facing register."
+diff --git a/packages/gui/package.json b/packages/gui/package.json
+index c20eb85..b7b4527 100644
+--- a/packages/gui/package.json
++++ b/packages/gui/package.json
+@@ -12,7 +12,7 @@
+     "check-ticket-version": "node scripts/check-ticket-version.mjs",
+     "test": "vitest run",
+     "smoke": "vite build && ln -sfn dist renderer && playwright test",
+-    "dist:mac": "pnpm run build && electron-builder --mac dmg --config electron-builder.yml"
++    "dist:mac": "pnpm run build && electron-builder --mac --config electron-builder.yml"
+   },
+   "dependencies": {
+     "@productune/core": "workspace:*",
+diff --git a/packages/gui/src/components/workspace/ChatPanel.tsx b/packages/gui/src/components/workspace/ChatPanel.tsx
+index 6e0a57d..a8dc601 100644
+--- a/packages/gui/src/components/workspace/ChatPanel.tsx
++++ b/packages/gui/src/components/workspace/ChatPanel.tsx
+@@ -22,7 +22,7 @@ import { Paperclip, Command, CornerDownLeft, X, Square } from 'lucide-react'
+ import { useWorkspace } from '../../store/workspace'
+ import { usePoChat } from '../../store/poChat'
+ import type { Message, AskUserQuestionPayload } from '../../lib/types'
+-import PersonaPresenceBar from './PersonaPresenceBar'
++import PersonaPresenceBar, { streamProseLineStyle, streamToolLineStyle, formatModel } from './PersonaPresenceBar'
+ import MessageBubble from './chat/MessageBubble'
+ import ToolUseGroup from './chat/ToolUseGroup'
+ import TodoChip from './chat/TodoChip'
+@@ -58,6 +58,24 @@ export default function ChatPanel() {
+     [messages, restartDividerMarkers],
+   )
+ 
++  // T-PATCH-284 (AC-1/D): the live PO activity line shows while streaming AND the
++  // turn has no prose in flight — i.e. the newest assistant (po) segment is empty
++  // (a tool-only / pre-first-token turn). The moment a segment carries text, prose
++  // wins (that bubble renders) and this hides. `activityCreatedAt` = that empty
++  // segment's timestamp so the line's head time matches where the bubble would be.
++  const { showActivityLine, activityCreatedAt } = useMemo(() => {
++    let lastAssistant: Message | undefined
++    for (let i = messages.length - 1; i >= 0; i--) {
++      const m = messages[i]
++      if (m.role === 'assistant' && (m.kind === 'po' || m.kind == null)) { lastAssistant = m; break }
++    }
++    const noProse = !!lastAssistant && lastAssistant.text.length === 0
++    return {
++      showActivityLine: noProse,
++      activityCreatedAt: lastAssistant?.created_at ?? new Date().toISOString(),
++    }
++  }, [messages])
++
+   // T-PATCH-065: dismissed question id — hides modal without resolving
+   const [dismissedQuestionId, setDismissedQuestionId] = useState<string | null>(null)
+ 
+@@ -86,6 +104,11 @@ export default function ChatPanel() {
+   const streamingSince = useWorkspace((s) => s.streamingSince)
+   const turnCharCount = useWorkspace((s) => s.turnCharCount)
+ 
++  // T-PATCH-284: composer queue (atomic selectors).
++  const queuedMessages = useWorkspace((s) => s.queuedMessages)
++  const enqueueMessage = useWorkspace((s) => s.enqueueMessage)
++  const removeQueuedMessage = useWorkspace((s) => s.removeQueuedMessage)
++
+   const draft = usePoChat((s) => s.inputDraft)
+   const setDraft = usePoChat((s) => s.setDraft)
+   const autoScrollLocked = usePoChat((s) => s.autoScrollLocked)
+@@ -94,6 +117,26 @@ export default function ChatPanel() {
+   const msgsRef = useRef<HTMLDivElement>(null)
+   const taRef = useRef<HTMLTextAreaElement>(null)
+ 
++  // T-PATCH-133: attachment logic extracted to shared hook (BDD-5 behavior-preserving).
++  // Aliases: images→attachments, removeImage→removeImageRef, removeFile→removeOtherFile
++  // keep the existing render code untouched.
++  // T-PATCH-284: hoisted above sendText/handleSubmit — those close over
++  // cleanupSentFiles / buildAttachedFilesBlock, so the hook must resolve first.
++  const {
++    images: attachments,
++    otherFiles,
++    attachedFiles,
++    onComposerPaste,
++    onAttachFile,
++    removeImage: removeImageRef,
++    removeFile: removeOtherFile,
++    onComposerChange,
++    handleTokenDeleteKeyDown,
++    buildAttachedFilesBlock,
++    clearAttachments,
++    cleanupSentFiles,
++  } = useComposerAttachments(draft, setDraft, taRef, project?.projectDir ?? null)
++
+   // ── Load session on project change ───────────────────────────────────────
+   useEffect(() => {
+     if (!project) return
+@@ -141,14 +184,11 @@ export default function ChatPanel() {
+   }
+ 
+   // ── Submit ──────────────────────────────────────────────────────────────
+-  const handleSubmit = async () => {
+-    const trimmed = draft.trim()
+-    if (!trimmed && attachedFiles.length === 0) return
+-    if (streaming || !project) return
+-
+-    // T-PATCH-133: block built via shared hook (format: `- #N -> path` / `- path`).
+-    const text = buildAttachedFilesBlock(trimmed)
+-
++  // T-PATCH-284 (AC-3): core send of a fully-built text as one PO turn. Used by
++  // the idle submit path AND the onDone queue flush (which passes the joined
++  // queue). Appends the user bubble, persists it, and spawns the runner.
++  const sendText = useCallback(async (text: string, sentPaths: string[] = []) => {
++    if (!project) return
+     const userMsg: Message = {
+       id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+       role: 'user',
+@@ -157,15 +197,7 @@ export default function ChatPanel() {
+       status: 'done',
+       created_at: new Date().toISOString(),
+     }
+-    // T-PATCH-098 §4.c: snapshot the attachment paths BEFORE clearing state so
+-    // the post-send L2 cleanup can target exactly the sent paths.
+-    const sentPaths = attachedFiles
+-
+     appendMessage(userMsg)
+-    setDraft('')
+-    // T-PATCH-133: clearAttachments revokes all preview URLs + resets
+-    // images / otherFiles state + resets monotonic seq counter.
+-    clearAttachments()
+     setAutoScrollLocked(false)
+ 
+     const api = (window as any).api
+@@ -178,17 +210,75 @@ export default function ChatPanel() {
+       await api.poSendMessage({
+         projectDir: project.projectDir,
+         text,
+-        resume: claudeSessionId,
++        resume: useWorkspace.getState().claudeSessionId,
+       })
+       // T-PATCH-098 §4.c.2.c L2 / T-PATCH-133: PO has consumed the paths.
+-      // cleanupSentFiles sequences after resolve — never deletes before PO read.
+-      await cleanupSentFiles(sentPaths)
++      if (sentPaths.length > 0) await cleanupSentFiles(sentPaths)
+     } catch (e) {
+       setStreaming(false)
+       useWorkspace.getState().setInFlightMsgId(null)
+     }
++  }, [project, appendMessage, setAutoScrollLocked, setStreaming, cleanupSentFiles])
++
++  const handleSubmit = async () => {
++    const trimmed = draft.trim()
++    if (!trimmed && attachedFiles.length === 0) return
++    if (!project) return
++
++    // T-PATCH-133: block built via shared hook (format: `- #N -> path` / `- path`).
++    const text = buildAttachedFilesBlock(trimmed)
++
++    // T-PATCH-284 (AC-3): while streaming, the send does NOT hit the runner — it
++    // is queued (stackable) and flushed as ONE turn at the current turn's onDone.
++    // (Attachments mid-turn are out of scope — the attach button is hidden while
++    // streaming; a queued item is plain text.)
++    if (streaming) {
++      enqueueMessage(text)
++      setDraft('')
++      setAutoScrollLocked(false)
++      return
++    }
++
++    // T-PATCH-098 §4.c: snapshot the attachment paths BEFORE clearing state so
++    // the post-send L2 cleanup can target exactly the sent paths.
++    const sentPaths = attachedFiles
++    setDraft('')
++    // T-PATCH-133: clearAttachments revokes all preview URLs + resets
++    // images / otherFiles state + resets monotonic seq counter.
++    clearAttachments()
++    await sendText(text, sentPaths)
+   }
+ 
++  // T-PATCH-284 (AC-3): flush the queue on the streaming true→false transition,
++  // but ONLY on a NATURAL turn end (onDone) — not on an abort. Newline-join all
++  // queued items into a SINGLE turn (PO reads them as one message). Guarded by a
++  // ref so a re-render mid-flush can't double-send.
++  //   - onDone  → streaming false, abortedRef stays false → FLUSH.
++  //   - abort   → handleAbort sets abortedRef before setStreaming(false) → queue
++  //               KEPT (per spec "abort=유지"); the ref is cleared here.
++  //   - restart → resetSession clears the queue upstream → nothing to flush.
++  const prevStreamingRef = useRef(streaming)
++  const flushingRef = useRef(false)
++  const abortedRef = useRef(false)
++  useEffect(() => {
++    const was = prevStreamingRef.current
++    prevStreamingRef.current = streaming
++    if (was && !streaming) {
++      if (abortedRef.current) {
++        abortedRef.current = false  // consume — keep the queue for the user
++        return
++      }
++      if (flushingRef.current) return
++      const queue = useWorkspace.getState().queuedMessages
++      if (queue.length > 0 && project) {
++        flushingRef.current = true
++        const joined = queue.join('\n')
++        useWorkspace.getState().clearQueue()
++        void sendText(joined).finally(() => { flushingRef.current = false })
++      }
++    }
++  }, [streaming, project, sendText])
++
+   // T-PATCH-081 AC-5: keyboard guard confirmed. Cmd+Enter calls handleSubmit() which
+   // has an early-return guard `if (streaming || !project) return`.
+   // So the keyboard path is blocked during streaming — no new code needed here.
+@@ -199,7 +289,21 @@ export default function ChatPanel() {
+     // newline, Backspace/Delete token delete) — let Cmd/Ctrl+Enter fall through.
+     const isComposing = (e.nativeEvent as any).isComposing || e.nativeEvent.keyCode === 229
+ 
+-    // Cmd+Enter (or Ctrl+Enter) → submit regardless of composition state.
++    // T-PATCH-284 (AC-2): Esc while streaming = abort the PO turn (composer stays
++    // focused during streaming now — this is the primary abort shortcut). Gated on
++    // isComposing so Esc that cancels an in-progress IME composition is not stolen
++    // (composition-cancel takes priority — the runner isn't aborted mid-compose).
++    if (e.key === 'Escape' && !isComposing) {
++      if (streaming) {
++        e.preventDefault()
++        handleAbort()
++      }
++      return
++    }
++
++    // Cmd+Enter (or Ctrl+Enter) → submit (idle) or enqueue (streaming) — both via
++    // handleSubmit — regardless of composition state (IME commit fires on the same
++    // keydown, so the flag is still set; only the non-submit path gates on it).
+     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+       e.preventDefault()
+       handleSubmit()
+@@ -267,6 +371,9 @@ export default function ChatPanel() {
+     const api = (window as any).api
+     // Fire-and-forget; silence any IPC or API errors so UI always unlocks.
+     try { api.abortPoTurn?.().catch?.(() => {}) } catch { /* noop */ }
++    // T-PATCH-284 (AC-3): mark this streaming→false as an ABORT so the queue-flush
++    // effect keeps the queued messages (spec: abort=유지) instead of auto-sending.
++    abortedRef.current = true
+     // Immediate UI unlock regardless of main-process child.on('close') timing.
+     setStreaming(false)
+   }, [setStreaming])
+@@ -281,24 +388,6 @@ export default function ChatPanel() {
+ 
+   const [filesListOpen, setFilesListOpen] = useState(false)
+ 
+-  // T-PATCH-133: attachment logic extracted to shared hook (BDD-5 behavior-preserving).
+-  // Aliases: images→attachments, removeImage→removeImageRef, removeFile→removeOtherFile
+-  // keep the existing render code untouched.
+-  const {
+-    images: attachments,
+-    otherFiles,
+-    attachedFiles,
+-    onComposerPaste,
+-    onAttachFile,
+-    removeImage: removeImageRef,
+-    removeFile: removeOtherFile,
+-    onComposerChange,
+-    handleTokenDeleteKeyDown,
+-    buildAttachedFilesBlock,
+-    clearAttachments,
+-    cleanupSentFiles,
+-  } = useComposerAttachments(draft, setDraft, taRef, project?.projectDir ?? null)
+-
+   // T-PATCH-052 / T-PATCH-104 (QA-fix-r2): session restart completion → toast +
+   // divider. Split into TWO effects so the 3s hide timer is NEVER subject to
+   // cleanup when `restartCompleted` changes.
+@@ -422,12 +511,31 @@ export default function ChatPanel() {
+                 // T-PATCH-062: suppress unresolved pendingQuestion from list (AC-2); resolved still shows (AC-3)
+                 item.message.kind === 'ask-user-question' &&
+                 !(item.message.payload as any)?.resolved &&
+-                pendingQuestion?.id === item.message.id ? null : (
++                pendingQuestion?.id === item.message.id ? null :
++                // T-PATCH-284 (AC-1/D): an EMPTY assistant segment (the streaming
++                // placeholder, or a sealed empty segment on a tool-only turn) carries
++                // no prose — suppress it; the live activity line (trailing, below)
++                // covers "PO is working" so the bubble slot is never a bare cursor.
++                (item.message.role === 'assistant' &&
++                 (item.message.kind === 'po' || item.message.kind == null) &&
++                 item.message.text.length === 0) ? null : (
+                   <MessageBubble key={item.message.id} message={item.message} />
+                 )
+               ),
+             )
+           )}
++          {/* T-PATCH-284 (AC-1/D): live PO activity line — shown while streaming
++              and the turn has produced no prose yet (prose wins: a non-empty
++              assistant segment renders as its own bubble above and this hides). */}
++          {streaming && showActivityLine && streamingSince != null && (
++            <PoActivityLine
++              createdAt={activityCreatedAt}
++              sinceMs={streamingSince}
++              charCount={turnCharCount}
++              healthState={healthState}
++              healthDetail={healthDetail}
++            />
++          )}
+         </div>
+ 
+         {/* rp-rate-limit-banner (T-012) — visible only when rate-limited */}
+@@ -481,37 +589,36 @@ export default function ChatPanel() {
+             </div>
+           )}
+ 
+-          {/* T-PATCH-163 / T-PATCH-171 AC-3: while streaming (and NOT rate-limited —
+-              D6: RateLimitBanner owns that state), the composer collapses to ONE
+-              compact row — WorkingIndicator (flex:1, left) + stop button (right).
+-              The 2-row textarea+inputRow layout is the idle path below. rateLimited
+-              keeps the textarea (disabled) so the banner pairing is intact. */}
+-          {streaming && !rateLimited && streamingSince != null ? (
+-            <div style={workingComposerRow}>
+-              <div style={{ flex: 1, minWidth: 0 }}>
+-                <WorkingIndicator
+-                  sinceMs={streamingSince}
+-                  charCount={turnCharCount}
+-                  healthState={healthState}
+-                  healthDetail={healthDetail}
+-                />
++          {/* T-PATCH-284 (AC-3): queued messages — chips stacked ABOVE the textarea
++              while streaming. Each is individually cancelable; the whole stack is
++              sent as ONE turn at the current turn's onDone (newline-joined). The
++              "sends as one message" cue frames the group. */}
++          {queuedMessages.length > 0 && (
++            <div style={queueWrap} role="list" aria-label={t('workspace.chat.queueHint')}>
++              <div style={queueHint}>{t('workspace.chat.queueHint')}</div>
++              <div style={queueStack}>
++                {queuedMessages.map((q, i) => (
++                  <div key={i} style={queueChip} role="listitem">
++                    <span style={queueDash} aria-hidden="true">{i + 1}</span>
++                    <span style={queueText} title={q}>{q}</span>
++                    <button
++                      style={queueRemoveBtn}
++                      onClick={() => removeQueuedMessage(i)}
++                      aria-label={t('workspace.chat.queueRemove')}
++                      title={t('workspace.chat.queueRemove')}
++                    >
++                      <X size={13} strokeWidth={2.5} />
++                    </button>
++                  </div>
++                ))}
+               </div>
+-              {/* T-PATCH-081 AC-1/2: stop button (same red treatment as inputRow). */}
+-              <button
+-                style={{
+-                  ...sendBtn,
+-                  background: stopHover ? '#DC2626' : '#EF4444',
+-                }}
+-                onMouseEnter={() => setStopHover(true)}
+-                onMouseLeave={() => setStopHover(false)}
+-                onClick={handleAbort}
+-                aria-label="Stop generation"
+-                title={t('workspace.chat.stop')}
+-              >
+-                <Square size={14} strokeWidth={2.5} />
+-              </button>
+             </div>
+-          ) : (
++          )}
++
++          {/* T-PATCH-284 (AC-2): the textarea stays LIVE during streaming (was
++              collapsed to a WorkingIndicator row pre-284) so the user can queue
++              follow-ups; the activity line + meta moved into the message area (D).
++              Disabled only when there is no project or rate-limited. */}
+           <>
+             <textarea
+               ref={taRef}
+@@ -520,15 +627,15 @@ export default function ChatPanel() {
+               onChange={(e) => onComposerChange(e.target.value)}
+               onKeyDown={onKeyDown}
+               onPaste={onComposerPaste}
+-              placeholder={t('workspace.chat.inputPlaceholder')}
++              placeholder={t(streaming ? 'workspace.chat.queuePlaceholder' : 'workspace.chat.inputPlaceholder')}
+               rows={1}
+-              disabled={streaming || !project || rateLimited}
++              disabled={!project || rateLimited}
+             />
+ 
+           <div style={inputRow}>
+-            {/* T-PATCH-171 AC-2: paperclip/attach button hidden while streaming —
+-                attachment isn't possible mid-turn, so the button itself is absent.
+-                (Idle path only; the streaming branch above has no attach button.) */}
++            {/* T-PATCH-171 AC-2 / T-284: paperclip/attach hidden while streaming —
++                attachment mid-turn isn't possible (a queued item is plain text). */}
++            {!streaming && (
+             <button
+               style={{
+                 ...iconActionBtn,
+@@ -540,10 +647,11 @@ export default function ChatPanel() {
+               onClick={onAttachFile}
+               aria-label={t('workspace.chat.attachFile')}
+               title={t('workspace.chat.attachFile')}
+-              disabled={streaming || !project || rateLimited}
++              disabled={!project || rateLimited}
+             >
+               <Paperclip size={14} strokeWidth={2} />
+             </button>
++            )}
+ 
+             {/* T-PATCH-098: chip counts NON-image attachments only; pasted images
+                 surface as thumbnails above. */}
+@@ -576,7 +684,8 @@ export default function ChatPanel() {
+             )}
+ 
+             <div style={{ flex: 1 }} />
+-            {/* T-PATCH-081 AC-1/2: stop button replaces send while streaming; AC-2: not in DOM when idle */}
++            {/* T-PATCH-081 AC-1/2 / T-284 AC-2: stop button replaces send while
++                streaming; Esc is the keyboard equivalent (title/aria say so). */}
+             {streaming ? (
+               <button
+                 style={{
+@@ -586,8 +695,8 @@ export default function ChatPanel() {
+                 onMouseEnter={() => setStopHover(true)}
+                 onMouseLeave={() => setStopHover(false)}
+                 onClick={handleAbort}
+-                aria-label="Stop generation"
+-                title={t('workspace.chat.stop')}
++                aria-label={t('workspace.chat.stopEsc')}
++                title={t('workspace.chat.stopEsc')}
+               >
+                 <Square size={14} strokeWidth={2.5} />
+               </button>
+@@ -616,7 +725,6 @@ export default function ChatPanel() {
+             )}
+           </div>
+           </>
+-          )}
+         </div>
+         )} {/* T-PATCH-068: end pendingQuestion ternary — normal composer restored */}
+ 
+@@ -733,51 +841,151 @@ function groupToolTraces(messages: Message[]): RenderItem[] {
+   return items
+ }
+ 
+-// ── T-PATCH-163: composer working indicator ─────────────────────────────────
+-// Self-contained so its 1s elapsed tick re-renders ONLY this row, never the
+-// ChatPanel message list (react-best-practices). Parent passes streamingSince +
+-// the per-turn char count; this component owns the timer + cleanup.
+-//
+-//   [✶ spinner] 동사 · Nm Ns · ↓ ~N.Nk
+-//
+-// spinner = CSS-only `.pdt-spin` (md-recipes.css) → reduced-motion auto-guarded.
+-function WorkingIndicator(props: {
++// ── T-PATCH-284 (AC-1/D): PO live activity line ───────────────────────────────
++// Renders inside the streaming PO bubble when it has no prose yet — the newest PO
++// tool_use humanized (shared prose/tool line recipe) + a meta row (duration +
++// approx token). Self-contained 1s tick (react-best-practices: re-renders only
++// this row). Prose wins upstream (ChatPanel swaps to MessageBubble once text > 0).
++
++/** Humanize a PO tool_use into a friendly one-liner. basename for file paths,
++ *  first token / 40-char head for commands. Miss → raw toolName (never blank). */
++function humanizePoTool(
++  toolName: string,
++  input: unknown,
++  t: (key: string, opts?: Record<string, unknown>) => string,
++): string {
++  const inp = (input && typeof input === 'object') ? (input as Record<string, unknown>) : {}
++  const base = (p: unknown): string =>
++    typeof p === 'string' && p ? (p.split('/').filter(Boolean).pop() ?? p) : ''
++  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
++  switch (toolName) {
++    case 'Read':
++      return t('workspace.chat.activity.read', { file: base(inp.file_path ?? inp.notebook_path ?? inp.path) })
++    case 'Edit':
++    case 'NotebookEdit':
++      return t('workspace.chat.activity.edit', { file: base(inp.file_path ?? inp.notebook_path ?? inp.path) })
++    case 'Write':
++      return t('workspace.chat.activity.write', { file: base(inp.file_path ?? inp.path) })
++    case 'Bash': {
++      const cmd = str(inp.command).trim()
++      const head = cmd.slice(0, 40)
++      return t('workspace.chat.activity.bash', { cmd: head })
++    }
++    case 'Grep':
++    case 'Glob':
++      return t('workspace.chat.activity.grep', { pat: str(inp.pattern) })
++    case 'Task':
++    case 'Agent': {
++      const sub = str(inp.subagent_type)
++      const id = personaIdFromAgentType(sub)
++      return t('workspace.chat.activity.task', { persona: id ? PERSONA_LABELS[id] : (sub || toolName) })
++    }
++    case 'Skill':
++      return t('workspace.chat.activity.skill', { name: str(inp.skill ?? inp.name ?? inp.command) })
++    case 'WebFetch':
++    case 'WebSearch':
++      return t('workspace.chat.activity.web', { q: str(inp.query ?? inp.url ?? inp.prompt) })
++    default:
++      return toolName
++  }
++}
++
++function PoActivityLine(props: {
++  createdAt: string
+   sinceMs: number
+   charCount: number
+   healthState: PoHealthState
+   healthDetail: PoHealthDetail
+ }) {
+   const { t } = useTranslation()
++  const latestPoTool = useWorkspace((s) => s.latestPoTool)
++  const poMeta = useWorkspace((s) => s.poMeta)   // T-PATCH-286 (AC-2/AC-3)
+   const [nowMs, setNowMs] = useState(() => Date.now())
+ 
+-  // 1s elapsed tick — re-arm whenever the turn's start stamp changes; clear on
+-  // unmount / turn end (the parent stops rendering this component at done).
++  // 1s tick — re-arm on turn start; parent stops rendering this at prose/done.
+   useEffect(() => {
+-    setNowMs(Date.now())  // immediate sync (avoids a 1s blank on first paint)
++    setNowMs(Date.now())
+     const id = setInterval(() => setNowMs(Date.now()), 1000)
+     return () => clearInterval(id)
+   }, [props.sinceMs])
+ 
+-  const verb = verbForHealth(props.healthState, props.healthDetail, t)
++  // T-PATCH-286 (AC-4): inject the CSS-only cycling-dots keyframe once.
++  useEffect(() => { ensureWorkingDotsKeyframe() }, [])
++
++  const color = '#8B5CF6'  // PO violet (matches PersonaBubble border-left / poBadge)
++  const time = formatBubbleTime(props.createdAt)
+   const elapsed = formatElapsed(nowMs - props.sinceMs)
+-  const tokens = formatApproxTokens(props.charCount)
++  // T-PATCH-286 (AC-2/AC-3): canonical meta order = model · effort · duration · token.
++  // model/effort from the GUI knob (poMeta, populated at turn start); each silent-omits
++  // when absent. token: REAL turn-end usage (poMeta.usageTokens) WINS over the
++  // char-approx proxy — real reads as `12.3k tok`, approx as `↓ ~3.2k tok`. Never "0 tok".
++  const model = formatModel(poMeta.model)
++  const effort = poMeta.effort || null
++  const tokens = poMeta.usageTokens && poMeta.usageTokens > 0
++    ? formatRealTokens(poMeta.usageTokens)
++    : formatApproxTokens(props.charCount)
++
++  // Activity line: humanized latest tool, else the health verb (delegating /
++  // thinking / …) so the bubble is NEVER empty (spec: 빈 말풍선 금지).
++  const activity = latestPoTool
++    ? humanizePoTool(latestPoTool.toolName, latestPoTool.input, t)
++    : verbForHealth(props.healthState, props.healthDetail, t)
++  // A humanized tool line reads as a tool trace (mono/faint); the health-verb
++  // fallback is prose-register (sans/muted). Shared recipe from PersonaPresenceBar.
++  const lineStyle = latestPoTool ? streamToolLineStyle : streamProseLineStyle
++  // T-PATCH-286 (AC-4): CSS-only cycling dots ONLY on the working.default verb
++  // fallback — no tool line AND the health state resolves to "작업 중"/"Working"
++  // (NOT delegating/compacting/thinking/stalled, which carry their own specific
++  // copy — cycling dots on "stalled" would falsely imply progress). A humanized
++  // tool line takes over → no dots. reduced-motion → static (keyframe guard).
++  const isDefaultVerb = !latestPoTool
++    && !['delegating', 'compacting', 'thinking', 'stalled'].includes(props.healthState)
++  const verbClass = isDefaultVerb ? 'pdt-working-dots' : undefined
+ 
+   return (
+-    <div style={workingRow} role="status" aria-live="polite">
+-      <span className="pdt-spin" style={spinnerGlyph} aria-hidden="true">✶</span>
+-      <span>{verb}</span>
+-      <span style={dot} aria-hidden="true">·</span>
+-      <span>{elapsed}</span>
+-      {tokens && (
+-        <>
+-          <span style={dot} aria-hidden="true">·</span>
+-          <span>{tokens}</span>
+-        </>
+-      )}
++    <div style={{ ...activityRow, borderLeft: `2px solid ${color}` }} role="status" aria-live="polite">
++      <div style={cmHeadLocal}>
++        <span style={{ ...cmNameLocal, color }}>{PERSONA_LABELS.po}</span>
++        <span style={cmTimeLocal}>· {time}</span>
++      </div>
++      <div style={activityBubble}>
++        <div style={lineStyle} className={verbClass}>{activity}</div>
++        <div style={activityMeta}>
++          {/* Canonical order: model · effort · duration · token — each dot-separated,
++              each field only rendered when present (silent-omit, no "—"/"0 tok"). */}
++          {model && (
++            <>
++              <span>{model}</span>
++              <span style={activityMetaDot} aria-hidden="true">·</span>
++            </>
++          )}
++          {effort && (
++            <>
++              <span>{effort}</span>
++              <span style={activityMetaDot} aria-hidden="true">·</span>
++            </>
++          )}
++          <span>{elapsed}</span>
++          {tokens && (
++            <>
++              <span style={activityMetaDot} aria-hidden="true">·</span>
++              <span>{tokens}</span>
++            </>
++          )}
++        </div>
++      </div>
+     </div>
+   )
+ }
+ 
++function formatBubbleTime(iso: string): string {
++  try {
++    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
++  } catch {
++    return ''
++  }
++}
++
+ function formatElapsed(ms: number): string {
+   const s = Math.max(0, Math.floor(ms / 1000))
+   const m = Math.floor(s / 60)
+@@ -791,6 +999,50 @@ function formatApproxTokens(chars: number): string {
+   return tok >= 1000 ? `↓ ~${(tok / 1000).toFixed(1)}k tok` : `↓ ~${tok} tok`
+ }
+ 
++// T-PATCH-286 (AC-3): REAL turn-end token total (from result.usage). No `↓ ~`
++// proxy marker — this is the confirmed count, not an output-char approximation.
++// Silent-omit at 0 (guarded by the caller). Mirrors PersonaPresenceBar.formatTokens.
++function formatRealTokens(total: number): string {
++  if (total <= 0) return ''
++  return total >= 1000 ? `${(total / 1000).toFixed(1)}k tok` : `${total} tok`
++}
++
++// ── T-PATCH-286 (AC-4): CSS-only cycling-dots keyframe ────────────────────────
++// Injected once (mirrors PersonaPresenceBar.ensureStreamKeyframe). The dots are a
++// ::after generated-content animation stepping ""→"."→".."→"..." — CSS-only so the
++// existing 1s row tick isn't needed to drive them (no JS interval / per-frame state).
++// A11Y: ::after generated content is NOT in the a11y tree, so the row's
++// role=status aria-live=polite reads the STABLE verb ("작업 중") once — no 400ms
++// aria-live spam. This is WHY css-content is used over a JS-appended text node.
++// reduced-motion guard MIRRORS the persona-stream-blink guard → static verb.
++const WORKING_DOTS_STYLE_ID = 'pdt-working-dots-keyframes'
++function ensureWorkingDotsKeyframe() {
++  if (typeof document === 'undefined') return
++  if (document.getElementById(WORKING_DOTS_STYLE_ID)) return
++  const style = document.createElement('style')
++  style.id = WORKING_DOTS_STYLE_ID
++  style.textContent = `
++    @keyframes pdt-working-dots {
++      0%, 100% { content: ""; }
++      25%      { content: "."; }
++      50%      { content: ".."; }
++      75%      { content: "..."; }
++    }
++    /* Reserve the widest ("...") width so the flat steps don't reflow siblings. */
++    .pdt-working-dots::after {
++      content: "";
++      display: inline-block;
++      width: 1.4em;
++      text-align: left;
++      animation: pdt-working-dots 1.6s steps(1, end) infinite;
++    }
++    @media (prefers-reduced-motion: reduce) {
++      .pdt-working-dots::after { content: "" !important; animation: none !important; }
++    }
++  `
++  document.head.appendChild(style)
++}
++
+ function verbForHealth(
+   state: PoHealthState,
+   detail: PoHealthDetail,
+@@ -931,38 +1183,101 @@ const inputRow: React.CSSProperties = {
+   alignItems: 'center',
+ }
+ 
+-// T-PATCH-163: working-indicator row — same vertical footprint as the textarea
+-// (minHeight 36) but border:none/transparent so it never reads as an input box.
+-const workingRow: React.CSSProperties = {
++// ── T-PATCH-284 (AC-1/D): PO activity line (in the streaming bubble slot) ─────
++// Mirrors PersonaBubble's frame (border-left violet, name+time head, bubble body)
++// so the activity line reads as the PO's in-progress bubble — not a separate UI.
++const activityRow: React.CSSProperties = {
++  paddingLeft: 8,
++  margin: '4px 0',
++  display: 'flex',
++  flexDirection: 'column',
++  gap: 2,
++  alignItems: 'flex-start',
++}
++const cmHeadLocal: React.CSSProperties = {
++  fontSize: 10,
++  display: 'flex',
++  gap: 4,
++  alignItems: 'baseline',
++}
++const cmNameLocal: React.CSSProperties = { fontWeight: 600 }
++const cmTimeLocal: React.CSSProperties = { color: '#707070' }
++const activityBubble: React.CSSProperties = {
++  padding: '7px 10px',
++  borderRadius: '0 5px 5px 5px',
++  background: '#1A1A1A',
++  maxWidth: '95%',
++  display: 'flex',
++  flexDirection: 'column',
++  gap: 4,
++}
++// meta row: duration · token — mono, --txt-muted (contrast fix pattern, 6.9:1).
++const activityMeta: React.CSSProperties = {
+   display: 'flex',
+   alignItems: 'center',
+-  gap: 6,
+-  minHeight: 36,
+-  padding: '8px 10px',
+-  boxSizing: 'border-box',
+-  color: '#A0A0A0',
+-  fontSize: 12,
++  gap: 5,
+   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+-  border: 'none',
+-  background: 'transparent',
++  fontSize: 9.5,
++  color: '#A0A0A0',
+ }
++const activityMetaDot: React.CSSProperties = { color: '#505050' }
+ 
+-// T-PATCH-171 AC-3: compact streaming composer — indicator (flex:1) + stop on one row.
+-const workingComposerRow: React.CSSProperties = {
++// ── T-PATCH-284 (AC-3): composer queue chips ──────────────────────────────────
++const queueWrap: React.CSSProperties = {
++  display: 'flex',
++  flexDirection: 'column',
++  gap: 3,
++}
++const queueHint: React.CSSProperties = {
++  fontSize: 10,
++  color: '#707070',
++  paddingLeft: 2,
++}
++// tight vertical stack + a left rail → the chips read as ONE outgoing group.
++const queueStack: React.CSSProperties = {
++  display: 'flex',
++  flexDirection: 'column',
++  gap: 2,
++  borderLeft: '2px solid #707070',
++  paddingLeft: 6,
++}
++const queueChip: React.CSSProperties = {
+   display: 'flex',
+   alignItems: 'center',
+   gap: 6,
++  background: '#1a1a1a',
++  border: '1px solid #2A2A2A',
++  borderRadius: 4,
++  padding: '3px 6px',
++  fontSize: 11,
+ }
+-
+-const spinnerGlyph: React.CSSProperties = {
+-  display: 'inline-block',
+-  color: '#8B5CF6',
+-  fontSize: 13,
+-  lineHeight: 1,
++const queueDash: React.CSSProperties = {
++  color: '#707070',
++  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
++  fontSize: 10,
++  flexShrink: 0,
+ }
+-
+-const dot: React.CSSProperties = {
+-  color: '#505050',
++const queueText: React.CSSProperties = {
++  flex: 1,
++  minWidth: 0,
++  color: '#A0A0A0',
++  overflow: 'hidden',
++  textOverflow: 'ellipsis',
++  whiteSpace: 'nowrap',
++}
++const queueRemoveBtn: React.CSSProperties = {
++  width: 20,
++  height: 20,
++  display: 'inline-flex',
++  alignItems: 'center',
++  justifyContent: 'center',
++  border: 'none',
++  background: 'transparent',
++  color: '#A0A0A0',
++  cursor: 'pointer',
++  borderRadius: 3,
++  flexShrink: 0,
++  padding: 0,
+ }
+ 
+ const iconActionBtn: React.CSSProperties = {
+diff --git a/packages/gui/src/components/workspace/PersonaPresenceBar.tsx b/packages/gui/src/components/workspace/PersonaPresenceBar.tsx
+index 92c4cc6..fc9677b 100644
+--- a/packages/gui/src/components/workspace/PersonaPresenceBar.tsx
++++ b/packages/gui/src/components/workspace/PersonaPresenceBar.tsx
+@@ -1,6 +1,6 @@
+ import { useRef, useState, useEffect, useCallback, useLayoutEffect } from 'react'
+-import { createPortal } from 'react-dom'
+ import { useTranslation } from 'react-i18next'
++import { Pin, X } from 'lucide-react'
+ import {
+   usePersonaPresence,
+   selectActiveWorker,
+@@ -249,6 +249,29 @@ function formatTokens(total?: number): string | null {
+   return `${total} tok`
+ }
+ 
++/**
++ * T-PATCH-286 (AC-2): normalize a raw model id/alias to a short display word.
++ * Shared SoT — both the worker slot header (this file) and the PO activity meta
++ * (ChatPanel) call this so the two surfaces can never drift.
++ *   - lowercase, then match the first known family word (opus|sonnet|haiku|fable):
++ *       'claude-opus-4-8[1m]' → 'opus'; 'claude-sonnet-4-6' → 'sonnet'; 'fable' → 'fable'.
++ *   - miss → first dash-segment after a leading 'claude-', capped ~10 chars.
++ *   - total miss (unparseable) → null → the caller silently OMITS (never prints a
++ *     raw 30-char id). '[1m]' / date tails are always dropped by the family match /
++ *     the segment cap.
++ */
++export function formatModel(raw?: string): string | null {
++  if (typeof raw !== 'string') return null
++  const s = raw.trim().toLowerCase()
++  if (!s) return null
++  const fam = ['opus', 'sonnet', 'haiku', 'fable'].find((w) => s.includes(w))
++  if (fam) return fam
++  const afterClaude = s.startsWith('claude-') ? s.slice('claude-'.length) : s
++  const seg = afterClaude.split('-')[0]?.replace(/\[.*$/, '').trim()
++  if (!seg) return null
++  return seg.slice(0, 10)
++}
++
+ function formatDuration(startedAt?: number, completedAt?: number, durationMs?: number): string | null {
+   let ms: number | null = null
+   if (typeof durationMs === 'number' && durationMs > 0) ms = durationMs
+@@ -263,35 +286,65 @@ function formatDuration(startedAt?: number, completedAt?: number, durationMs?: n
+   return `${m}m ${s.toString().padStart(2, '0')}s`
+ }
+ 
+-// ── Worker live-stream slot (T-PATCH-270 #9 · redesigned T-PATCH-281) ──────────
++// ── Worker live-stream slot (T-PATCH-270 #9 · redesigned T-PATCH-281 REOPEN) ───
+ // Fixed-height, internally-scrolling (auto-follow) read-only panel showing the
+ // active worker's output — prose primary (sans/muted), tool subordinate (mono/
+ // faint). Header shows the persona (label+color+live dot when running) and a
+ // right-aligned cost/duration meta (AC-7 — the freed space from the removed
+-// READ-ONLY badge, AC-4). Click the body → expanded overlay (AC-2). When the
+-// worker finishes, the frozen `result` keeps the panel readable until next turn
+-// (AC-6). PO is HARD-EXCLUDED upstream (selectActiveWorker / worker-stream never
+-// carries PO).
+-
+-interface StreamLineViewProps {
++// READ-ONLY badge, AC-4). Hover → contained grow (transient); click → pin (R-3,
++// replaces the rejected screen-eating modal). When the worker finishes, the
++// frozen `result` keeps the panel readable until next turn (AC-6). PO is
++// HARD-EXCLUDED upstream (selectActiveWorker / worker-stream never carries PO).
++
++// ── Shared line-rendering module (T-281 slot body + T-284 activity line) ──────
++// The prose/tool line recipe is reused by BOTH the worker slot body (this file)
++// and the PO activity line (ChatPanel T-284) — extracted here as the single SoT
++// so the two surfaces can never drift. Consumers: StreamLineView (below) +
++// ChatPanel imports streamProseLineStyle / streamToolLineStyle directly.
++//
++//   prose line — sans, --txt-muted, wraps, PRIMARY. In the COLLAPSED slot it is
++//                clamped to 2 lines (R-1) so a long prose line can't push the
++//                fixed-height slot's siblings; `clamp` off in the grown/activity
++//                view where the full text should read.
++//   tool  line — mono, 10.5, --txt-faint, 1-line ellipsis, SUBORDINATE.
++export interface StreamLineViewProps {
+   line: StreamLine
+-}
+-function StreamLineView({ line }: StreamLineViewProps) {
+-  return (
+-    <div style={line.kind === 'prose' ? streamProseLineStyle : streamToolLineStyle}>
+-      {line.text}
+-    </div>
+-  )
++  /** R-1: clamp a prose line to 2 lines (collapsed slot). Off → full prose. */
++  clamp?: boolean
++}
++export function StreamLineView({ line, clamp }: StreamLineViewProps) {
++  if (line.kind === 'prose') {
++    return (
++      <div style={clamp ? streamProseLineClampStyle : streamProseLineStyle}>
++        {line.text}
++      </div>
++    )
++  }
++  return <div style={streamToolLineStyle}>{line.text}</div>
+ }
+ 
+ interface MetaBadgesProps {
+   tokens: string | null
+   duration: string | null
+-}
+-function MetaBadges({ tokens, duration }: MetaBadgesProps) {
+-  if (!tokens && !duration) return null
++  /** T-PATCH-286 (AC-2): normalized model word (formatModel) — null → omit. */
++  model?: string | null
++  /** T-PATCH-286 (AC-2): literal lowercase effort (high/medium/low) — null → omit. */
++  effort?: string | null
++  /** T-PATCH-286 (AC-2): 'stacked' (narrow) drops the model to save width. */
++  layout?: 'inline' | 'stacked'
++}
++// T-PATCH-286 (AC-2): canonical L→R order = model · effort · duration · token.
++// Each field silent-omits when absent (no '0 tok' / '—' / empty). Width = PURE
++// OMIT (no JS measure): the narrow 'stacked' slot drops model (priority-4, first
++// to go) via the existing layout flag; the row otherwise relies on overflow:hidden
++// + short fields. Same mono/--txt-muted run as duration/token — no badge chrome.
++function MetaBadges({ tokens, duration, model, effort, layout = 'inline' }: MetaBadgesProps) {
++  const showModel = layout === 'inline' ? model : null
++  if (!tokens && !duration && !showModel && !effort) return null
+   return (
+     <span style={metaWrapStyle}>
++      {showModel && <span style={metaBadgeStyle}>{showModel}</span>}
++      {effort && <span style={metaBadgeStyle}>{effort}</span>}
+       {duration && <span style={metaBadgeStyle}>{duration}</span>}
+       {tokens && <span style={metaBadgeStyle}>{tokens}</span>}
+     </span>
+@@ -300,47 +353,116 @@ function MetaBadges({ tokens, duration }: MetaBadgesProps) {
+ 
+ interface StreamSlotProps {
+   persona: PersonaId
+-  lines: StreamLine[]
++  /** short tail (STREAM_TAIL_MAX) — collapsed slot, clamped. */
++  tailLines: StreamLine[]
++  /** full retained buffer (STREAM_LOG_MAX) — the grown view. */
++  fullLines: StreamLine[]
+   live: boolean            // worker currently working (live dot + blink) vs. frozen result
+   tokens: string | null
+   duration: string | null
++  /** T-PATCH-286 (AC-2): normalized model word (formatModel) / literal effort. */
++  model: string | null
++  effort: string | null
+   layout: 'inline' | 'stacked'
+-  onExpand: () => void
+ }
+ 
+-function WorkerStreamSlot({ persona, lines, live, tokens, duration, layout, onExpand }: StreamSlotProps) {
++// ── Worker slot — collapsed + hover-grow/click-pin (T-281 REOPEN R-3) ─────────
++// REPLACES the old portal full-modal (rejected: "screen-eating"). The slot owns
++// its own state machine — no parent expand flag:
++//   collapsed --hover→ grown(transient) --leave→ collapsed
++//   grown --click→ pinned  --leave→ pinned (leave IGNORED)  --click/×→ collapsed
++// The grown layer is a CONTAINED panel (≤380×240, max-h 62vh, internal scroll)
++// anchored near the slot via getBoundingClientRect + position:fixed — fixed (not
++// absolute) so the bar's overflow:hidden (R-2) can't clip it, clamped into the
++// viewport so it never escapes the screen. Esc is NOT used (T-284 owns Esc=PO
++// abort); close = click toggle or the pinned ×. Live updates keep flowing while
++// grown (parent re-renders with fresh lines).
++function WorkerStreamSlot({ persona, tailLines, fullLines, live, tokens, duration, model, effort, layout }: StreamSlotProps) {
+   const { t } = useTranslation()
+   const color = PERSONA_COLORS[persona]
+   const label = PERSONA_LABELS[persona]
++
+   const bodyRef = useRef<HTMLDivElement>(null)
++  const grownBodyRef = useRef<HTMLDivElement>(null)
++  const slotRef = useRef<HTMLDivElement>(null)
++
++  const [hovered, setHovered] = useState(false)
++  const [pinned, setPinned] = useState(false)
++  const [growRect, setGrowRect] = useState<{ top: number; left: number } | null>(null)
++
++  const grown = hovered || pinned
++
++  // Anchor the grow layer near the slot's top-left, clamped into the viewport so
++  // the contained panel is fully visible and never off-screen (R-3 contain).
++  const measureAnchor = useCallback(() => {
++    const el = slotRef.current
++    if (!el) return
++    const r = el.getBoundingClientRect()
++    const margin = 8
++    const maxH = Math.min(GROW_HEIGHT, window.innerHeight * 0.62)
++    let left = r.left
++    let top = r.top
++    // clamp right/bottom edges inside the viewport
++    if (left + GROW_WIDTH > window.innerWidth - margin) left = window.innerWidth - GROW_WIDTH - margin
++    if (top + maxH > window.innerHeight - margin) top = window.innerHeight - maxH - margin
++    setGrowRect({ top: Math.max(margin, top), left: Math.max(margin, left) })
++  }, [])
++
++  // Re-measure when the grow opens (and on scroll/resize while open) so the
++  // fixed panel tracks the anchor.
++  useLayoutEffect(() => {
++    if (!grown) { setGrowRect(null); return }
++    measureAnchor()
++    window.addEventListener('resize', measureAnchor)
++    window.addEventListener('scroll', measureAnchor, true)
++    return () => {
++      window.removeEventListener('resize', measureAnchor)
++      window.removeEventListener('scroll', measureAnchor, true)
++    }
++  }, [grown, measureAnchor])
+ 
+-  // AC-1 auto-follow: keep the newest line at the bottom in view as lines land.
++  // AC-1 auto-follow: newest line stays at the bottom as lines land (collapsed).
+   useLayoutEffect(() => {
+     const el = bodyRef.current
+     if (el) el.scrollTop = el.scrollHeight
+-  }, [lines.length])
++  }, [tailLines.length])
++
++  // Auto-follow while grown (live updates keep flowing, R-3 "grow 중 실시간 갱신").
++  useLayoutEffect(() => {
++    if (!grown) return
++    const el = grownBodyRef.current
++    if (el) el.scrollTop = el.scrollHeight
++  }, [fullLines.length, grown])
+ 
+   const slotStyle: React.CSSProperties = {
+-    minWidth: 0,
++    ...(layout === 'inline'
++      // AC-1/R-2: fill the anchored cell (flex:1 up to the cell's max-width 420);
++      // alignSelf:stretch → the bar's fixed 92px height, min-height:0 lets the
++      // body scroll instead of inflating.
++      ? { flex: 1, alignSelf: 'stretch', minWidth: 0, minHeight: 0 }
++      // stacked (narrow): fixed 76px height — the body scrolls internally (R-1).
++      : { width: '100%', height: 76 }),
+     display: 'flex',
+     flexDirection: 'column',
+     background: 'var(--surface-base, #1a1a1a)',
+     border: '1px solid var(--border, #2A2A2A)',
+     borderRadius: 8,
+     overflow: 'hidden',
+-    // AC-1: FIXED height in both layouts so the slot never grows/squishes the
+-    // chip row — the body scrolls internally instead.
+-    ...(layout === 'inline'
+-      ? { flex: 1, alignSelf: 'stretch' }
+-      : { width: '100%', height: 76 }),
++    position: 'relative',
+   }
+ 
++  const toggle = () => setPinned((p) => !p)
++
+   return (
+     <div
++      ref={slotRef}
+       style={slotStyle}
+       role="log"
+       aria-live="polite"
+       aria-label={t('workspace.presence.streamAriaLabel', { persona: label })}
++      onMouseEnter={() => setHovered(true)}
++      // R-3: pinned ignores mouse-leave (stays open until click/×).
++      onMouseLeave={() => setHovered(false)}
+     >
+       <div style={streamHdrStyle}>
+         <span
+@@ -350,105 +472,126 @@ function WorkerStreamSlot({ persona, lines, live, tokens, duration, layout, onEx
+         <span style={{ ...streamWhoStyle, color }}>
+           {label}{live ? ' · live' : ''}
+         </span>
+-        {/* AC-4: READ-ONLY badge removed; AC-7: cost/duration in the freed space. */}
+-        <MetaBadges tokens={tokens} duration={duration} />
++        {/* AC-4: READ-ONLY badge removed; AC-7: cost/duration in the freed space.
++            T-286 (AC-2): model·effort prepended; stacked layout drops model. */}
++        <MetaBadges tokens={tokens} duration={duration} model={model} effort={effort} layout={layout} />
+       </div>
+-      {/* AC-2: click body → expand overlay. Non-interactive text (text-select only)
+-          conveys read-only (AC-4) — the expand click is on the container, cursor
+-          stays default so it doesn't read as an editable field. */}
++      {/* Collapsed body — R-1 per-line clamp so a long line can't squish the slot.
++          Click toggles pin (R-3). Non-interactive text conveys read-only (AC-4). */}
+       <div
+         ref={bodyRef}
+         style={streamBodyStyle}
+         className="pdt-thin-scroll"
+-        onClick={onExpand}
++        onClick={toggle}
+         title={t('workspace.presence.expandHint')}
+       >
+-        {lines.map((ln, i) => (
+-          <StreamLineView key={i} line={ln} />
++        {tailLines.map((ln, i) => (
++          <StreamLineView key={i} line={ln} clamp />
+         ))}
+       </div>
++
++      {/* R-3 grow layer — contained fixed panel near the anchor (NOT a portal
++          full-modal). Transient on hover, pinned on click. */}
++      {grown && growRect && (
++        <WorkerGrowLayer
++          persona={persona}
++          lines={fullLines}
++          live={live}
++          tokens={tokens}
++          duration={duration}
++          model={model}
++          effort={effort}
++          pinned={pinned}
++          rect={growRect}
++          bodyRef={grownBodyRef}
++          onClose={() => setPinned(false)}
++          onMouseEnter={() => setHovered(true)}
++          onMouseLeave={() => setHovered(false)}
++        />
++      )}
+     </div>
+   )
+ }
+ 
+-// ── Expanded overlay (T-PATCH-281 AC-2) ───────────────────────────────────────
+-// Portal + backdrop modal showing the full retained buffer, large. Esc / backdrop
+-// / × close. Live: re-renders as new lines arrive (parent passes fresh `lines`).
+-
+-interface ExpandOverlayProps {
++// ── Grow layer (T-281 REOPEN R-3) — contained, anchored, NOT screen-eating ────
++interface GrowLayerProps {
+   persona: PersonaId
+   lines: StreamLine[]
+   live: boolean
+   tokens: string | null
+   duration: string | null
++  model: string | null    // T-PATCH-286 (AC-2)
++  effort: string | null
++  pinned: boolean
++  rect: { top: number; left: number }
++  bodyRef: React.RefObject<HTMLDivElement>
+   onClose: () => void
++  onMouseEnter: () => void
++  onMouseLeave: () => void
+ }
+-function ExpandOverlay({ persona, lines, live, tokens, duration, onClose }: ExpandOverlayProps) {
++function WorkerGrowLayer({
++  persona, lines, live, tokens, duration, model, effort, pinned, rect, bodyRef, onClose, onMouseEnter, onMouseLeave,
++}: GrowLayerProps) {
+   const { t } = useTranslation()
+   const color = PERSONA_COLORS[persona]
+   const label = PERSONA_LABELS[persona]
+-  const bodyRef = useRef<HTMLDivElement>(null)
+-  const panelRef = useRef<HTMLDivElement>(null)
+ 
+-  // Esc close + focus the panel for a11y (AC-8).
+-  useEffect(() => {
+-    const onKey = (e: KeyboardEvent) => {
+-      if (e.key === 'Escape') { e.stopPropagation(); onClose() }
+-    }
+-    document.addEventListener('keydown', onKey, true)
+-    panelRef.current?.focus()
+-    return () => document.removeEventListener('keydown', onKey, true)
+-  }, [onClose])
+-
+-  // Auto-follow while expanded (live updates, AC-2).
+-  useLayoutEffect(() => {
+-    const el = bodyRef.current
+-    if (el) el.scrollTop = el.scrollHeight
+-  }, [lines.length])
+-
+-  return createPortal(
++  return (
+     <div
+-      style={overlayBackdropStyle}
+-      onClick={onClose}
+-      role="presentation"
++      className="pdt-worker-grow"
++      style={{
++        ...growLayerStyle,
++        top: rect.top,
++        left: rect.left,
++        // pinned: border one step brighter + not transient (leave ignored).
++        border: `1px solid ${pinned ? 'var(--border-muted, #3a3a3a)' : 'var(--border, #2A2A2A)'}`,
++      }}
++      role={pinned ? 'dialog' : 'log'}
++      aria-live="polite"
++      aria-label={
++        pinned
++          ? `${t('workspace.presence.streamAriaLabel', { persona: label })} — ${t('workspace.presence.pinAria')}`
++          : t('workspace.presence.streamAriaLabel', { persona: label })
++      }
++      onMouseEnter={onMouseEnter}
++      onMouseLeave={onMouseLeave}
+     >
+-      <div
+-        ref={panelRef}
+-        style={overlayPanelStyle}
+-        onClick={(e) => e.stopPropagation()}
+-        role="dialog"
+-        aria-modal="true"
+-        aria-label={t('workspace.presence.streamAriaLabel', { persona: label })}
+-        tabIndex={-1}
+-      >
+-        <div style={overlayHdrStyle}>
+-          <span
+-            style={{ ...streamDotStyle, background: color, ...(live ? {} : { animation: 'none' }) }}
+-            aria-hidden="true"
+-          />
+-          <span style={{ ...streamWhoStyle, color, fontSize: 13 }}>
+-            {label}{live ? ' · live' : ''}
+-          </span>
+-          <MetaBadges tokens={tokens} duration={duration} />
+-          <button
+-            style={overlayCloseStyle}
+-            onClick={onClose}
+-            aria-label={t('common.close')}
+-            title={t('common.close')}
+-          >
+-            ×
+-          </button>
+-        </div>
+-        <div ref={bodyRef} style={overlayBodyStyle} className="pdt-thin-scroll" role="log" aria-live="polite">
+-          {lines.length === 0 ? (
+-            <div style={streamToolLineStyle}>{t('workspace.presence.workingNoTask')}</div>
+-          ) : (
+-            lines.map((ln, i) => <StreamLineView key={i} line={ln} />)
+-          )}
+-        </div>
++      <div style={growHdrStyle}>
++        <span
++          style={{ ...streamDotStyle, background: color, ...(live ? {} : { animation: 'none' }) }}
++          aria-hidden="true"
++        />
++        <span style={{ ...streamWhoStyle, color, fontSize: 12 }}>
++          {label}{live ? ' · live' : ''}
++        </span>
++        {/* Grow panel is wide → inline layout (model shown), T-286 (AC-2). */}
++        <MetaBadges tokens={tokens} duration={duration} model={model} effort={effort} layout="inline" />
++        {/* Pinned only: pin badge + explicit × close (ux §5 no dead end). */}
++        {pinned && (
++          <>
++            <span style={pinBadgeStyle}>
++              <Pin size={9} strokeWidth={2.5} aria-hidden="true" />
++              {t('workspace.presence.pinned')}
++            </span>
++            <button
++              style={growCloseStyle}
++              onClick={(e) => { e.stopPropagation(); onClose() }}
++              aria-label={t('common.close')}
++              title={t('common.close')}
++            >
++              <X size={13} strokeWidth={2.5} />
++            </button>
++          </>
++        )}
++      </div>
++      <div ref={bodyRef} style={growBodyStyle} className="pdt-thin-scroll">
++        {lines.length === 0 ? (
++          <div style={streamToolLineStyle}>{t('workspace.presence.workingNoTask')}</div>
++        ) : (
++          lines.map((ln, i) => <StreamLineView key={i} line={ln} />)
++        )}
+       </div>
+-    </div>,
+-    document.body,
++    </div>
+   )
+ }
+ 
+@@ -482,13 +625,20 @@ const metaWrapStyle: React.CSSProperties = {
+   gap: 6,
+   flexShrink: 0,
+ }
++// CONTRAST FIX (T-281 reopen): meta color was --txt-faint (#707070) = 3.35:1 on
++// --surface-panel → body-text 4.5:1 FAIL. Bumped to --txt-muted (#A0A0A0, 6.9:1
++// PASS). faint is reserved for the SUBORDINATE tool line only (streamToolLineStyle).
+ const metaBadgeStyle: React.CSSProperties = {
+   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+   fontSize: 9,
+   letterSpacing: '0.04em',
+-  color: 'var(--txt-faint, #6a6a6a)',
++  color: 'var(--txt-muted, #A0A0A0)',
+   whiteSpace: 'nowrap',
+ }
++// R-1: min-height:0 is LOAD-BEARING — without it the flex body grows to content
++// height, defeating overflow-y and squishing the fixed-height slot (the reopen's
++// narrow-squish cause). With it, the body scrolls internally and the slot keeps
++// its fixed height.
+ const streamBodyStyle: React.CSSProperties = {
+   flex: 1,
+   minHeight: 0,
+@@ -496,84 +646,109 @@ const streamBodyStyle: React.CSSProperties = {
+   overflowX: 'hidden',
+   padding: '5px 9px',
+   fontSize: 11.5,
+-  lineHeight: 1.55,
++  lineHeight: 1.5,
+   display: 'flex',
+   flexDirection: 'column',
+   justifyContent: 'flex-end',
+-  cursor: 'pointer',       // click → expand (AC-2)
++  cursor: 'pointer',       // click → pin (R-3)
+ }
+ // AC-5: PROSE lines — sans, muted, primary (readable natural language).
+-const streamProseLineStyle: React.CSSProperties = {
+-  color: 'var(--txt-muted, #9a9a9a)',
++// Exported: reused by ChatPanel's PO activity line (T-284) — single SoT.
++export const streamProseLineStyle: React.CSSProperties = {
++  color: 'var(--txt-muted, #A0A0A0)',
+   whiteSpace: 'normal',
+   overflowWrap: 'anywhere',
++  lineHeight: 1.5,
++}
++// R-1: collapsed-slot prose — clamped to 2 lines so a long line can't inflate
++// the fixed-height slot / overlap siblings (the reopen's narrow-squish cause).
++const streamProseLineClampStyle: React.CSSProperties = {
++  ...streamProseLineStyle,
++  display: '-webkit-box',
++  WebkitLineClamp: 2,
++  WebkitBoxOrient: 'vertical',
++  overflow: 'hidden',
+ }
+-// AC-5: TOOL lines — mono, faint, subordinate (compact trace).
+-const streamToolLineStyle: React.CSSProperties = {
++// AC-5: TOOL lines — mono, faint, subordinate (compact trace, 1-line ellipsis).
++// Exported: reused by ChatPanel's PO activity line (T-284) — single SoT.
++export const streamToolLineStyle: React.CSSProperties = {
+   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+   fontSize: 10.5,
+-  color: 'var(--txt-faint, #6a6a6a)',
++  color: 'var(--txt-faint, #707070)',
+   whiteSpace: 'nowrap',
+   overflow: 'hidden',
+   textOverflow: 'ellipsis',
++  lineHeight: 1.5,
+ }
+ 
+-// Expand overlay styles (AC-2).
+-const overlayBackdropStyle: React.CSSProperties = {
++// ── Grow-layer styles (T-281 REOPEN R-3) — contained, anchored, NOT full-modal ──
++// Caps per spec: ~380×240, max-h 62vh, internal scroll. position:fixed so the
++// bar's overflow:hidden (R-2) can't clip it; anchored + viewport-clamped by
++// measureAnchor so it stays fully on-screen (never screen-eating).
++const GROW_WIDTH = 380
++const GROW_HEIGHT = 240
++
++const growLayerStyle: React.CSSProperties = {
+   position: 'fixed',
+-  inset: 0,
+-  background: 'rgba(0,0,0,0.55)',
+-  zIndex: 1000,
+-  display: 'flex',
+-  alignItems: 'center',
+-  justifyContent: 'center',
+-  padding: 24,
+-}
+-const overlayPanelStyle: React.CSSProperties = {
+-  width: 'min(720px, 92vw)',
+-  height: 'min(560px, 80vh)',
++  width: GROW_WIDTH,
++  height: GROW_HEIGHT,
++  maxHeight: '62vh',
+   display: 'flex',
+   flexDirection: 'column',
+   background: 'var(--surface-base, #1a1a1a)',
+-  border: '1px solid var(--border, #2A2A2A)',
+-  borderRadius: 10,
++  borderRadius: 8,
+   overflow: 'hidden',
+-  boxShadow: '0 12px 48px rgba(0,0,0,.6)',
+-  outline: 'none',
++  boxShadow: '0 8px 28px rgba(0,0,0,.5)',
++  zIndex: 900,
++  // transform-origin toward the anchor (top-left); anim class drives the tween.
++  transformOrigin: 'top left',
+ }
+-const overlayHdrStyle: React.CSSProperties = {
++const growHdrStyle: React.CSSProperties = {
+   display: 'flex',
+   alignItems: 'center',
+-  gap: 8,
+-  padding: '8px 12px',
++  gap: 7,
++  padding: '6px 10px',
+   borderBottom: '1px solid var(--border, #2A2A2A)',
+   background: 'var(--surface-panel, #161616)',
+   flexShrink: 0,
+ }
+-const overlayCloseStyle: React.CSSProperties = {
++// pinned marker — pin badge (lucide Pin, no emoji per spec).
++const pinBadgeStyle: React.CSSProperties = {
+   marginLeft: 8,
+-  width: 22,
+-  height: 22,
+-  display: 'flex',
++  display: 'inline-flex',
++  alignItems: 'center',
++  gap: 4,
++  fontSize: 9,
++  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
++  color: 'var(--txt-muted, #A0A0A0)',
++  border: '1px solid var(--border, #2A2A2A)',
++  borderRadius: 3,
++  padding: '1px 5px',
++  flexShrink: 0,
++}
++const growCloseStyle: React.CSSProperties = {
++  marginLeft: 6,
++  width: 20,
++  height: 20,
++  display: 'inline-flex',
+   alignItems: 'center',
+   justifyContent: 'center',
+-  fontSize: 18,
+-  lineHeight: 1,
+-  color: 'var(--txt-muted, #9a9a9a)',
++  color: 'var(--txt-muted, #A0A0A0)',
+   background: 'transparent',
+   border: '1px solid var(--border, #2A2A2A)',
+-  borderRadius: 5,
++  borderRadius: 4,
+   cursor: 'pointer',
+   flexShrink: 0,
++  padding: 0,
+ }
+-const overlayBodyStyle: React.CSSProperties = {
++const growBodyStyle: React.CSSProperties = {
+   flex: 1,
+   minHeight: 0,
+   overflowY: 'auto',
+   overflowX: 'hidden',
+-  padding: '10px 14px',
+-  fontSize: 13,
+-  lineHeight: 1.6,
++  padding: '8px 12px',
++  fontSize: 12.5,
++  lineHeight: 1.55,
+   display: 'flex',
+   flexDirection: 'column',
+   gap: 2,
+@@ -589,9 +764,10 @@ const STREAM_INLINE_BP = 380
+ 
+ function PersonaPresenceBar() {
+   const { entries, dismissDone, streamTail, workerResult, workerMeta } = usePersonaPresence()
++  // T-PATCH-286 (AC-2): PO model/effort — workers inherit it (no per-agent override).
++  const poMeta = useWorkspace((s) => s.poMeta)
+   const barRef = useRef<HTMLDivElement>(null)
+   const [layout, setLayout] = useState<'inline' | 'stacked'>('inline')
+-  const [expanded, setExpanded] = useState(false)
+ 
+   useEffect(() => {
+     ensureSpriteKeyframe()
+@@ -635,7 +811,7 @@ function PersonaPresenceBar() {
+   const slotWorker = hasLive ? liveWorker : resultWorker
+   const isLiveSlot = hasLive
+   const frozen: WorkerResult | null = !hasLive && resultWorker ? workerResult[resultWorker] : null
+-  // Full retained buffer (for expand); collapsed slot slices the short tail.
++  // Full retained buffer (grow view); the collapsed slot slices the short tail.
+   const fullLines: StreamLine[] = isLiveSlot ? liveLines : (frozen?.lines ?? [])
+   const tailLines = fullLines.slice(-STREAM_TAIL_MAX)
+ 
+@@ -646,12 +822,17 @@ function PersonaPresenceBar() {
+   const tokens = formatTokens(meta.usage?.total_tokens)
+   const duration = formatDuration(meta.startedAt, meta.completedAt, meta.usage?.duration_ms)
+ 
+-  const showStream = !!slotWorker && fullLines.length > 0
++  // T-PATCH-286 (AC-2): worker model/effort. The backend doesn't stamp these on the
++  // agent-teams task usage, but workers INHERIT the PO's GUI session model/effort
++  // (no per-agent model frontmatter) → source from workspace.poMeta as ground truth,
++  // preferring a frozen snapshot's own value if one was ever captured. formatModel
++  // normalizes (opus/sonnet/…); miss → null → silent-omit.
++  const workerMetaModel = (isLiveSlot ? workerMeta[slotWorker as PersonaId]?.model : frozen?.model)
++  const workerMetaEffort = (isLiveSlot ? workerMeta[slotWorker as PersonaId]?.effort : frozen?.effort)
++  const model = slotWorker ? formatModel(workerMetaModel ?? poMeta.model) : null
++  const effort = slotWorker ? (workerMetaEffort ?? poMeta.effort ?? null) : null
+ 
+-  // Close the expand overlay if the slot disappears (next-turn clear).
+-  useEffect(() => {
+-    if (!showStream && expanded) setExpanded(false)
+-  }, [showStream, expanded])
++  const showStream = !!slotWorker && fullLines.length > 0
+ 
+   const inline = layout === 'inline'
+ 
+@@ -676,12 +857,14 @@ function PersonaPresenceBar() {
+                 <div style={anchoredSlotStyle}>
+                   <WorkerStreamSlot
+                     persona={slotWorker}
+-                    lines={tailLines}
++                    tailLines={tailLines}
++                    fullLines={fullLines}
+                     live={isLiveSlot}
+                     tokens={tokens}
+                     duration={duration}
++                    model={model}
++                    effort={effort}
+                     layout="inline"
+-                    onExpand={() => setExpanded(true)}
+                   />
+                 </div>
+               )}
+@@ -694,23 +877,14 @@ function PersonaPresenceBar() {
+       {showStream && !inline && slotWorker && (
+         <WorkerStreamSlot
+           persona={slotWorker}
+-          lines={tailLines}
++          tailLines={tailLines}
++          fullLines={fullLines}
+           live={isLiveSlot}
+           tokens={tokens}
+           duration={duration}
++          model={model}
++          effort={effort}
+           layout="stacked"
+-          onExpand={() => setExpanded(true)}
+-        />
+-      )}
+-
+-      {expanded && slotWorker && (
+-        <ExpandOverlay
+-          persona={slotWorker}
+-          lines={fullLines}
+-          live={isLiveSlot}
+-          tokens={tokens}
+-          duration={duration}
+-          onClose={() => setExpanded(false)}
+         />
+       )}
+     </div>
+@@ -730,8 +904,15 @@ function ensureStreamKeyframe() {
+       from { opacity: 0.35; }
+       to   { opacity: 1; }
+     }
++    /* R-3 grow open — scale/opacity from the anchor corner, 130ms ease-out. */
++    @keyframes pdt-worker-grow-in {
++      from { opacity: 0; transform: scale(0.94); }
++      to   { opacity: 1; transform: scale(1); }
++    }
++    .pdt-worker-grow { animation: pdt-worker-grow-in 130ms ease-out; }
+     @media (prefers-reduced-motion: reduce) {
+       [style*="persona-stream-blink"] { animation: none !important; opacity: 1 !important; }
++      .pdt-worker-grow { animation: none !important; }
+     }
+   `
+   document.head.appendChild(style)
+@@ -751,6 +932,10 @@ const barStyle: React.CSSProperties = {
+   gap: 14,
+   background: '#161616',
+   borderBottom: '1px solid var(--border, #2A2A2A)',
++  // R-2: hard clip — the collapsed slot can never escape the bar bounds (the
++  // reopen's wide-overflow cause). The R-3 grow layer is position:fixed so it is
++  // NOT clipped by this (it renders outside the bar's box, viewport-clamped).
++  overflow: 'hidden',
+ }
+ 
+ // Stacked (narrow): row expands vertically, slot full-width below the chip row.
+@@ -791,11 +976,14 @@ const chipCellGrowStyle: React.CSSProperties = {
+   alignSelf: 'stretch',
+ }
+ 
+-// The anchored inline slot wrapper — stretches to consume the bar's free width so
+-// the panel is usably wide while staying to the right of its persona's chip (AC-3).
++// The anchored inline slot wrapper — grows to fill the bar's free width but
++// STOPS at max-width 420 (R-2) so a wide bar can't blow the slot out past a
++// readable width; the remaining width falls to the next chip. Stays to the right
++// of its persona's chip (AC-3).
+ const anchoredSlotStyle: React.CSSProperties = {
+   flex: 1,
+   minWidth: 0,
++  maxWidth: 420,
+   alignSelf: 'stretch',
+   display: 'flex',
+ }
+diff --git a/packages/gui/src/store/poEvents.ts b/packages/gui/src/store/poEvents.ts
+index e26dae2..eaf66ab 100644
+--- a/packages/gui/src/store/poEvents.ts
++++ b/packages/gui/src/store/poEvents.ts
+@@ -104,6 +104,13 @@ function register() {
+     // correct clear point, never mid-turn. The other AC-6 trigger (a worker entering
+     // `working`) is handled in personaPresence.setPersonaState.
+     usePersonaPresence.getState().clearWorkerResults()
++    // T-PATCH-284 (AC-1): fresh turn → drop last turn's PO activity line so the
++    // new streaming bubble doesn't flash a stale tool line before its first token.
++    useWorkspace.getState().setLatestPoTool(null)
++    // T-PATCH-286 (AC-2/AC-3): reset PO meta at turn start so last turn's usage/cost
++    // doesn't linger; spawnClaude re-emits {model,effort} immediately (before any
++    // token) and the result envelope fills usage/cost. Echo mode → stays {} → silent-omit.
++    useWorkspace.setState({ poMeta: {} })
+     const kind: MessageKind = useWorkspace.getState().inFlightKind ?? 'po'
+     const placeholder: Message = {
+       id: msgId,
+@@ -219,7 +226,15 @@ function register() {
+     // onDone so no orphan renders (AC4).
+     // T-PATCH-038: seal also flips the sealed segment's status off 'streaming'
+     // so its cursor disappears the moment the tool trace lands.
+-    if (payload.level === 'tool') sealActiveSegment()
++    if (payload.level === 'tool') {
++      sealActiveSegment()
++      // T-PATCH-284 (AC-1): record the PO's own tool_use so the activity line can
++      // humanize it when the current segment has no prose. onAnnounce level:'tool'
++      // is PO's OWN tool (worker nested tools route via po:worker-stream, not here).
++      if (payload.toolName) {
++        useWorkspace.getState().setLatestPoTool({ toolName: payload.toolName, input: payload.toolInput })
++      }
++    }
+   }))
+ 
+   // ── po:onAskUserQuestion — inline option card (T-PATCH-037) ──────────────
+@@ -391,6 +406,26 @@ function register() {
+     })
+   }))
+ 
++  // ── po:po-meta (T-PATCH-286 AC-2/AC-3) ────────────────────────────────────
++  // PO main-turn meta. Fires at turn start with { model, effort } (from the GUI
++  // config knob) and at the result envelope with real { usage, total_cost_usd }.
++  // Merged into workspace.poMeta; PoActivityLine renders model·effort·duration·
++  // token. Real usage wins over the char-approx; absent fields silently omitted.
++  offFns.push(api.poOnPoMeta?.((payload: {
++    model?: string
++    effort?: string
++    usage?: { total_tokens?: number; input_tokens?: number; output_tokens?: number }
++    total_cost_usd?: number
++  }) => {
++    const patch: { model?: string; effort?: string; usageTokens?: number; costUsd?: number } = {}
++    if (typeof payload.model === 'string' && payload.model) patch.model = payload.model
++    if (typeof payload.effort === 'string' && payload.effort) patch.effort = payload.effort
++    const tok = payload.usage?.total_tokens
++    if (typeof tok === 'number' && tok > 0) patch.usageTokens = tok
++    if (typeof payload.total_cost_usd === 'number') patch.costUsd = payload.total_cost_usd
++    useWorkspace.getState().setPoMeta(patch)
++  }))
++
+   // ── po:onTodoItems / po:onTodoDismiss (T-P4-113) ─────────────────────────
+   offFns.push(api.poOnTodoItems?.((items: any[]) => {
+     useUserTodo.getState().pushItems(items)
+@@ -493,6 +528,12 @@ function register() {
+   offFns.push(api.poOnSessionRestarted?.(() => {
+     useWorkspace.setState({ claudeSessionId: null })
+     useSessionHealth.getState().clearHealth()
++    // T-PATCH-284 (AC-3 "restart=clear", QA I-1): a session restart is the real
++    // restart path (resetSession() is dead-code with no callers) — clear the composer
++    // message queue here so a queue present at restart does NOT survive to flush stale
++    // messages at the next onDone. abort=keeps is handled separately (abortedRef in
++    // ChatPanel) and is intentionally untouched.
++    useWorkspace.getState().clearQueue()
+     // T-PATCH-279 (QA follow-up): safety net for the "no terminal task signal ever"
+     // case (session abort / PO turn crash / worker process gone before any
+     // task_notification or task_updated). After removing the parent-turn `healthy`
