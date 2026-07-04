@@ -10,3 +10,6 @@
 - prdt doctor stage-completion 판정: '해당 version 티켓 1개 이상 존재 AND open 0' 조건 — 티켓 없는 신규 version은 침묵(오탐 방지). tickets의 version 필드는 docs/tickets/<dir> 디렉토리명 그대로라 po-state.version과 문자열 정확 일치 필요.
 - env find(A4): renderer의 prdt 판별은 IPC 신설 불요 — state:readPoState 페이로드에 isPrdtPoState(typeof stage==='string')만으로 충분. A1 ProjectKind는 electron-main 전용, renderer에 안 닿음.
 - A4 stage 색상(define/build/ship/retro)은 design token 없이 developer judgment call(legacy phase 색 반사) — prdt 네이티브 rework 때 Designer sign-off 필요.
+- A6 find: prdt hook 3종+statusline-prdt.sh는 legacy repo 번들(packages/core)에 없음(v1 repo 전용) — GUI 쪽 prdt hook 등록은 반드시 prdt-install.sh가 만든 ~/.prdt 미러를 가리켜야 함(번들 coreDir 금지, 신규 설치에서 존재하지 않는 스크립트 등록 위험).
+- A6 find: po-runner는 productune.env 내용을 파싱하지 않음(존재 게이트만, AGENT_TEAMS는 spawn env 하드코딩) — prdt.env 미니멀 계승에 GUI 필드 매핑 0건.
+- A6 drift(정보성): GUI prdt 온보딩은 statusline 자동 등록, CLI는 --statusline opt-in + PRDT_STATUSLINE_INSTALLED 플래그 — GUI는 ~/.prdt 파일 read-only 스탠스라 플래그 미갱신. 코스메틱.
