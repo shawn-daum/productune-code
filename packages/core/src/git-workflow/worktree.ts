@@ -4,6 +4,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readGitRules } from './rules'
 import { buildBranchName, resolveBranchConflict } from './branchNamer'
+import { stateDir, STATE_DIR_NAME, detectProjectKind } from '../state/project-kind'
 
 const execFileAsync = promisify(execFile)
 
@@ -25,7 +26,7 @@ export interface CreateWorktreeArgs {
 }
 
 function worktreeDir(projectDir: string, ticketId: string): string {
-  return path.join(projectDir, '.productune', 'worktrees', ticketId)
+  return path.join(stateDir(projectDir), 'worktrees', ticketId)
 }
 
 async function isBaseDirty(projectDir: string): Promise<boolean> {
@@ -50,7 +51,7 @@ async function fetchBase(projectDir: string, baseBranch: string): Promise<void> 
 
 async function ensureGitignoreEntry(projectDir: string): Promise<void> {
   const gitignorePath = path.join(projectDir, '.gitignore')
-  const entry = '.productune/worktrees/'
+  const entry = `${STATE_DIR_NAME[detectProjectKind(projectDir)]}/worktrees/`
   try {
     if (fs.existsSync(gitignorePath)) {
       const content = fs.readFileSync(gitignorePath, 'utf-8')
@@ -115,8 +116,8 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
 
   const branchName = await resolveBranchConflict(projectDir, baseName)
 
-  // ensure .productune/worktrees/ exists
-  fs.mkdirSync(path.join(projectDir, '.productune', 'worktrees'), { recursive: true })
+  // ensure <state-dir>/worktrees/ exists
+  fs.mkdirSync(path.join(stateDir(projectDir), 'worktrees'), { recursive: true })
 
   await ensureGitignoreEntry(projectDir)
 

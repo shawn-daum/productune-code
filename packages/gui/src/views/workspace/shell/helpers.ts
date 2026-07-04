@@ -3,6 +3,7 @@ import { useWorkspace } from '../../../store/workspace'
 import type { Ticket, Message, PromotionPayload, PoState } from '../../../lib/types'
 import type { QuickOpenItem } from '../../../components/workspace/QuickOpenPalette'
 import { personaIdFromAgentType } from '../../../store/personaPresence'
+import { isPrdtPoState } from '../../../lib/phase-mapping'
 import {
   SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH,
   PO_CHAT_MIN_WIDTH, PO_CHAT_MAX_WIDTH,
@@ -217,6 +218,9 @@ function makeSamplePromotionMessage(origin: 'auto' | 'user-requested'): Message 
  * Returns [] when there's no current_version.
  */
 export function prdCandidatePaths(poState: PoState | null, projectDir: string): string[] {
+  // T-306: prdt keeps ONE living PRD at docs/prd/PRD.md — no prd_anchor, no
+  // per-version snapshots (docs/prd/versions/ does not exist). Single candidate.
+  if (isPrdtPoState(poState)) return [`${projectDir}/docs/prd/PRD.md`]
   const currentVersionId = poState?.current_version
   if (!currentVersionId) return []
   const out: string[] = []

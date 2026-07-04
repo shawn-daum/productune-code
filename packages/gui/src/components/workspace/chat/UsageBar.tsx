@@ -1,27 +1,36 @@
 /**
  * UsageBar — near-live Claude session / weekly usage display (T-025).
  *
- * Renders a compact two-row indicator below the chat input showing:
- *   - 5-hour session usage:   % fill progress bar + "resets in Xh Ym"
- *   - 7-day weekly usage:     % fill progress bar + "resets in Xd Xh"
- *
+ * LEGACY projects: renders a compact two-row indicator below the chat input
+ * showing 5-hour session usage and 7-day weekly usage (% fill + "resets in").
  * Data source: ~/.productune/usage-state.json written by the statusLine hook.
  * Updates via IPC channel `productune:usage-update` (main → renderer).
  *
+ * PRDT projects (adapter A7, T-290): usage-state.json does not exist — v1's
+ * statusline is display-only (no side-effect file, see docs/prdt-v1-design.md
+ * §10) — so the 5h/7d rate-limit metric has no prdt source. The replacement
+ * near-live metric this slot can show is project cost, sourced from
+ * `<projectDir>/.prdt/turns.jsonl` via the same `cost:aggregate`/`cost:watch`
+ * IPC CostArchivePanel uses (project-kind branch decided by `isPrdtPoState`,
+ * matching the adapter A4 store-level discriminator precedent). A cost whose
+ * contributing turns.jsonl line(s) carry `cost_source:"estimated"` shows the
+ * `estimatedBadge` pill — `"reported"`/absent → no badge.
+ *
  * Caveats:
- *   - Data is only available for claude.ai / firstParty subscribers. The
- *     component renders nothing when no data is present (free-tier / API-key
- *     users are unaffected — chat layout unchanged).
- *   - Updates occur only when Claude Code refreshes its statusline (active
- *     session). Fully idle sessions will show the last known state.
+ *   - Legacy data is only available for claude.ai / firstParty subscribers.
+ *   - Both branches render nothing when no data is present (chat layout
+ *     unchanged either way).
  *   - `resets_at` may be a unix epoch number (from statusline hook) or an ISO
- *     string. Both are handled.
+ *     string. Both are handled (legacy branch only).
  *
  * Design: design-system tokens, lucide-react only, no amber color.
  */
 
-import { useEffect, useRef, useState } from 'react'
-import { Clock, CalendarDays } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { Clock, CalendarDays, DollarSign } from 'lucide-react'
+import { useWorkspace } from '../../../store/workspace'
+import { isPrdtPoState } from '../../../lib/phase-mapping'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -33,6 +42,56 @@ interface UsageAxis {
 interface UsagePayload {
   five_hour?: UsageAxis
   seven_day?: UsageAxis
+}
+
+/** Subset of the main-process AggregateResult (electron/ipc/costArchive.ts) this component needs. */
+interface CostAggregateLite {
+  ok: boolean
+  totalTurns: number
+  totalCostUsd: number
+  hasEstimated: boolean
+}
+
+function fmtCost(n: number): string {
+  const safe = Number.isFinite(n) ? n : 0
+  return `$${safe.toFixed(4)}`
+}
+
+/**
+ * Fetch + watch a project's total cost from turns.jsonl (prdt branch only).
+ * Mirrors CostArchivePanel's fetchAgg/costWatch/onCostUpdate pattern exactly,
+ * scoped to the 'version' dimension since only the grand total is displayed.
+ */
+function usePrdtCost(projectDir: string | undefined, active: boolean): CostAggregateLite | null {
+  const [cost, setCost] = useState<CostAggregateLite | null>(null)
+
+  const fetchCost = useCallback(() => {
+    const api = (window as any).api
+    if (!api?.costAggregate || !projectDir) return
+    api
+      .costAggregate(projectDir, 'version')
+      .then((res: CostAggregateLite) => setCost(res))
+      .catch(() => setCost(null))
+  }, [projectDir])
+
+  useEffect(() => {
+    if (!active) return
+    fetchCost()
+  }, [active, fetchCost])
+
+  useEffect(() => {
+    if (!active) return
+    const api = (window as any).api
+    if (!api || !projectDir) return
+    api.costWatch?.(projectDir)
+    if (!api.onCostUpdate) return
+    const unsub = api.onCostUpdate((payload: { projectDir: string }) => {
+      if (payload?.projectDir === projectDir) fetchCost()
+    })
+    return unsub
+  }, [active, projectDir, fetchCost])
+
+  return cost
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -61,6 +120,12 @@ interface UsageBarProps {
    * Rendered only when usage data is present (no dangling label).
    */
   sessionLabel?: string
+  /**
+   * T-290 (adapter A7): current project's directory — only consumed on the
+   * prdt branch (turns.jsonl lives at `<projectDir>/.prdt/turns.jsonl`).
+   * Legacy branch ignores it (usage-state.json is a global, non-project file).
+   */
+  projectDir?: string
 }
 
 export default function UsageBar({
@@ -68,18 +133,22 @@ export default function UsageBar({
   horizontal = false,
   statusbar = false,
   sessionLabel,
+  projectDir,
 }: UsageBarProps) {
+  const { t } = useTranslation()
   const [payload, setPayload] = useState<UsagePayload | null>(null)
+  const poState = useWorkspace((s) => s.poState)
+  const isPrdt = isPrdtPoState(poState)
 
   useEffect(() => {
+    if (isPrdt) return // prdt has no usage-state.json source — see usePrdtCost below
     const api = (window as any).api
     if (!api?.onUsageUpdate) return
     const unsub = api.onUsageUpdate((p: UsagePayload) => setPayload(p))
     return unsub
-  }, [])
+  }, [isPrdt])
 
-  // Render nothing when no data (non-subscriber / fully idle).
-  if (!payload || (!payload.five_hour && !payload.seven_day)) return null
+  const cost = usePrdtCost(projectDir, isPrdt)
 
   const containerStyle = statusbar
     ? containerStatusbar
@@ -88,6 +157,32 @@ export default function UsageBar({
       : inline
         ? containerInline
         : container
+
+  if (isPrdt) {
+    // Render nothing until a real (non-empty) aggregate arrives — same
+    // "no data → invisible" contract as the legacy branch.
+    if (!cost || !cost.ok || cost.totalTurns === 0) return null
+
+    return (
+      <div style={containerStyle}>
+        {statusbar && <span style={statusbarSep}>·</span>}
+        {statusbar && sessionLabel && (
+          <span style={sessionLabelStyle}>
+            <DollarSign size={10} strokeWidth={2} style={{ color: '#6A6A78', flexShrink: 0 }} />
+            {sessionLabel}
+          </span>
+        )}
+        <div style={rowWrap} title={cost.hasEstimated ? t('costArchive.estimateDisclaimer') : undefined}>
+          <DollarSign size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />
+          <span style={costValueStyle}>{fmtCost(cost.totalCostUsd)}</span>
+          {cost.hasEstimated && <span style={costEstBadge}>{t('costArchive.estimatedBadge')}</span>}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Legacy branch (unchanged) — 5h/7d rate-limit gauges from usage-state.json.
+  if (!payload || (!payload.five_hour && !payload.seven_day)) return null
 
   return (
     <div style={containerStyle}>
@@ -365,4 +460,27 @@ const resetStyleCompact: React.CSSProperties = {
   flexShrink: 0,
   whiteSpace: 'nowrap',
   marginLeft: 2,
+}
+
+// ── prdt cost display (T-290 / adapter A7) ──────────────────────────────────
+
+const costValueStyle: React.CSSProperties = {
+  fontSize: 9,
+  color: '#C0C0C0',
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  flexShrink: 0,
+}
+
+// Mirrors CostArchivePanel's estBadge — same muted pill, not a warning color.
+const costEstBadge: React.CSSProperties = {
+  display: 'inline-block',
+  marginLeft: 4,
+  padding: '1px 4px',
+  fontSize: 8,
+  fontWeight: 700,
+  letterSpacing: '0.03em',
+  textTransform: 'uppercase',
+  color: '#8A8A9A',
+  background: '#1E1E28',
+  borderRadius: 3,
 }

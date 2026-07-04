@@ -2,6 +2,7 @@ import { useWorkspace } from '../../../store/workspace'
 import type { Pane } from '../../../store/workspace'
 import PaneNode from './PaneNode'
 import WelcomePanel from '../WelcomePanel'
+import { isPrdtPoState, getActiveStageIndex } from '../../../lib/phase-mapping'
 
 /**
  * Root of the workspace main area (T-P4-046). Renders the recursive pane tree.
@@ -21,15 +22,30 @@ function isEmptyPaneTree(root: Pane): boolean {
 
 export default function MainPanel() {
   const panes = useWorkspace((s) => s.panes)
-  const currentVersion = useWorkspace((s) => s.poState?.current_version ?? null)
+  const poState = useWorkspace((s) => s.poState)
+
+  // T-291 (adapter A8, QA fix): a prdt po-state NEVER has current_version — it has
+  // the flat `version`. Keying only on current_version made the welcome show for
+  // every prdt project with no open tab (even mid-version), with the legacy 5-phase
+  // step row. Branch on the existing discriminator: prdt gates on `version` and
+  // renders the 4-stage variant; legacy is unchanged.
+  const isPrdt = isPrdtPoState(poState)
+  const version = isPrdt ? (poState?.version ?? null) : (poState?.current_version ?? null)
 
   // Empty-state intro: no version AND nothing open in the pane tree.
-  const showWelcome = currentVersion == null && isEmptyPaneTree(panes)
+  const showWelcome = version == null && isEmptyPaneTree(panes)
 
   return (
     <div style={wrap}>
       <div style={paneTreeWrap}>
-        {showWelcome ? <WelcomePanel /> : <PaneNode pane={panes} path={[]} />}
+        {showWelcome ? (
+          <WelcomePanel
+            variant={isPrdt ? 'prdt' : 'legacy'}
+            activeIndex={isPrdt ? getActiveStageIndex(poState) : 0}
+          />
+        ) : (
+          <PaneNode pane={panes} path={[]} />
+        )}
       </div>
     </div>
   )

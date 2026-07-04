@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
+import { isPrdtPoState } from '../../lib/phase-mapping'
 
 const PRD_MASTER_REL = 'docs/prd/PRD.md'
 
@@ -30,6 +31,10 @@ export default function PrdSection({ versionId }: Props) {
   const project = useWorkspace((s) => s.project)
   const openTab = useWorkspace((s) => s.openTab)
   const currentVersion = useWorkspace((s) => s.poState?.current_version)
+  // T-291 (adapter A8): prdt abolished the per-version PRD snapshot
+  // (docs/prd/versions/<v>.md) — PRD.md is the single living SoT. So prdt always
+  // resolves the master, never probing a snapshot path that cannot exist.
+  const isPrdt = useWorkspace((s) => isPrdtPoState(s.poState))
   const projectDir = project?.projectDir ?? ''
 
   // undefined = checking, null = not found
@@ -41,7 +46,7 @@ export default function PrdSection({ versionId }: Props) {
     const api = (window as any).api
     // OPEN (current version, or no versionId) reads the live master PRD.md;
     // CLOSED versions read the immutable docs/prd/versions/<v>.md snapshot.
-    const isOpen = !versionId || versionId === currentVersion
+    const isOpen = isPrdt || !versionId || versionId === currentVersion
     const relPath = isOpen ? PRD_MASTER_REL : `docs/prd/versions/${versionId}.md`
     const absPath = `${projectDir}/${relPath}`
     // Handler returns null on a missing file (no ENOENT throw) → treat as not-found.
@@ -52,7 +57,7 @@ export default function PrdSection({ versionId }: Props) {
       })
       .catch(() => { if (!cancelled) setPrd(null) })
     return () => { cancelled = true }
-  }, [projectDir, versionId, currentVersion])
+  }, [projectDir, versionId, currentVersion, isPrdt])
 
   const openPrd = useCallback(() => {
     if (!prd || !projectDir) return

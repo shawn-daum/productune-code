@@ -22,6 +22,7 @@
 import fs from 'fs'
 import path from 'path'
 import { initProject } from '@productune/core'
+import { configPath, poStatePath } from './project-paths'
 
 // ── Threshold ───────────────────────────────────────────────────────────────
 //
@@ -41,8 +42,7 @@ export const PO_TURN_CYCLE_THRESHOLD = 20
  * that writes po-state.json before GUI has had a chance to open the project.
  */
 function ensureConfig(projectDir: string): void {
-  const configPath = path.join(projectDir, '.productune', 'config.json')
-  if (fs.existsSync(configPath)) return
+  if (fs.existsSync(configPath(projectDir))) return
   try {
     const slug = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'project'
     initProject({ slug, projectDir })
@@ -56,8 +56,11 @@ function ensureConfig(projectDir: string): void {
 interface SessionTracker {
   /** PO turns completed in the CURRENT (post-cycle) session window. */
   turnCount: number
-  /** po-state snapshot captured at session start — used to detect safe boundaries. */
-  startPhase: number | null
+  /** po-state snapshot captured at session start — used to detect safe boundaries.
+   *  Legacy: numeric current_phase. prdt (T-306): the flat `stage` string —
+   *  a stage transition (define→build→ship→retro) is the same class of
+   *  always-safe boundary as a legacy phase change. Compared for inequality only. */
+  startPhase: number | string | null
   startTaskSlug: string | null
 }
 
@@ -67,7 +70,8 @@ const trackers = new Map<string, SessionTracker>()
 // ── po-state read (minimal slice) ──────────────────────────────────────────────
 
 interface PoStateSlice {
-  phase: number | null
+  /** Legacy numeric current_phase, or (T-306) the prdt flat `stage` string. */
+  phase: number | string | null
   /** current_task.slug, or null when current_task is null/absent (ticket closed). */
   taskSlug: string | null
 }
@@ -78,11 +82,15 @@ interface PoStateSlice {
  * logic degrades to a safe no-cycle.
  */
 function readPoStateSlice(projectDir: string): PoStateSlice {
-  const statePath = path.join(projectDir, '.productune', 'po-state.json')
+  const statePath = poStatePath(projectDir)
   try {
     const raw = fs.readFileSync(statePath, 'utf-8')
     const obj = JSON.parse(raw) as Record<string, unknown>
-    const phase = typeof obj.current_phase === 'number' ? obj.current_phase : null
+    // Legacy: numeric current_phase. prdt (T-306): flat `stage` string — a
+    // legacy po-state never carries `stage`, so the coalesce is prdt-only.
+    const phase = typeof obj.current_phase === 'number' ? obj.current_phase
+      : typeof obj.stage === 'string' ? obj.stage
+      : null
     const ct = obj.current_task
     // Doctrine (state-hygiene): on ticket close PO nulls current_task. So a
     // non-null→null transition (or a slug change) signals a ticket boundary.

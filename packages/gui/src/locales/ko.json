@@ -279,7 +279,8 @@
       "startedToday": "오늘 시작",
       "daysSince": "{{n}}일째",
       "startedLabel": "시작",
-      "ticketsLabel": "Tickets"
+      "ticketsLabel": "Tickets",
+      "prdtSingleHint": "단일 버전 ({{version}}). 지난 버전은 docs/wiki/retro--v*.md 에 있습니다."
     },
     "versionDetail": {
       "notFound": "Version `{{id}}` 을 po-state에서 찾을 수 없음.",
@@ -470,6 +471,13 @@
       "navBackForward": "브라우저 뒤로 / 앞으로",
       "cycleTab": "탭 순환"
     },
+    "prdtHooks": {
+      "hint": "이 기기에는 prdt discipline hook이 아직 설치되어 있지 않아요.",
+      "mirrorAbsent": "prdt discipline hook을 설치할 수 없어요 — 이 기기에서 prdt-install.sh를 먼저 실행하세요.",
+      "cta": "지금 설치",
+      "installing": "설치 중…",
+      "failed": "설치 실패: {{error}}"
+    },
     "sessionHealth": {
       "healthy": {
         "label": "준비됨"
@@ -592,6 +600,12 @@
         "deploy": "Deploy — 릴리즈 준비·배포",
         "close": "Close — 회고·다음 라운드"
       }
+    },
+    "stage": {
+      "define": "Define",
+      "build": "Build",
+      "ship": "Ship",
+      "retro": "Retro"
     },
     "team": {
       "title": "팀",
@@ -1199,6 +1213,7 @@
     "total": "합계",
     "empty": "아직 수집된 비용 데이터가 없습니다.",
     "estimateDisclaimer": "비용은 클라이언트 측 추정치이며 실제 청구액과 다를 수 있습니다.",
-    "mainSessionNote": "메인 세션 행은 세션 단위로 중복 제거됩니다(누적 비용은 한 번만 집계)."
+    "mainSessionNote": "메인 세션 행은 세션 단위로 중복 제거됩니다(누적 비용은 한 번만 집계).",
+    "estimatedBadge": "추정"
   }
 }

@@ -1,14 +1,22 @@
 /**
  * CostArchivePanel — read-only token-cost archive view (T-027, GUI slice).
  *
- * Reads per-project token cost from <projectDir>/.productune/turns.jsonl via the
- * main-process `cost:aggregate` IPC and renders a grouped table (by version /
- * persona / model). Subscribes to `productune:cost-update` (onCostUpdate) to
- * re-fetch when the sibling shell hooks append new turns.
+ * Reads per-project token cost from turns.jsonl (dual-mode path — `.prdt/` for
+ * prdt projects, legacy `.productune/` otherwise — resolved in main via
+ * project-paths.ts, adapter A1) through the main-process `cost:aggregate` IPC,
+ * and renders a grouped table (by version / persona / model). Subscribes to
+ * `productune:cost-update` (onCostUpdate) to re-fetch when the sibling shell
+ * hooks append new turns.
  *
  * Costs are client-side estimates — see the disclaimer line. Aggregation lives
  * in main (matches the CLI): subagent lines sum per-turn; main lines are
  * session-cumulative (max per session_id, then summed).
+ *
+ * T-290 (adapter A7): prdt turns.jsonl rows may carry `cost_source`. A row/group
+ * whose contributing lines include any `cost_source:"estimated"` shows the
+ * `estimatedBadge` pill next to its cost value ("estimated" ≠ real invoice,
+ * distinct from the always-on disclaimer footer below). `"reported"` / absent →
+ * no badge.
  *
  * Design: matches VersionsPanel / TeamPanel tone (dark, muted labels, monospace
  * numerics). No new design language introduced.
@@ -23,6 +31,7 @@ interface CostGroup {
   key: string
   turns: number
   cost_usd: number
+  hasEstimated: boolean
 }
 
 interface AggregateResult {
@@ -30,6 +39,7 @@ interface AggregateResult {
   groups: CostGroup[]
   totalTurns: number
   totalCostUsd: number
+  hasEstimated: boolean
   error?: string
 }
 
@@ -46,6 +56,7 @@ interface PivotRow {
   turns: number
   usage: PivotUsage | null
   cost_usd: number
+  hasEstimated: boolean
 }
 
 interface PivotResult {
@@ -54,6 +65,7 @@ interface PivotResult {
   subagentUsage: PivotUsage
   totalTurns: number
   totalCostUsd: number
+  hasEstimated: boolean
   error?: string
 }
 
@@ -67,6 +79,12 @@ function fmtCost(n: number): string {
   // 4 decimals, $ prefix. Guard non-finite (defensive).
   const safe = Number.isFinite(n) ? n : 0
   return `$${safe.toFixed(4)}`
+}
+
+/** T-290 (A7): "estimated" pill — shown only when the cost is estimate-tainted. */
+function EstBadge({ show, t }: { show: boolean; t: TFn }) {
+  if (!show) return null
+  return <span style={estBadge}>{t('costArchive.estimatedBadge')}</span>
 }
 
 function fmtTok(n: number): string {
@@ -117,6 +135,7 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
         const persona = grp[0].persona
         const subTurns = grp.reduce((a, r) => a + r.turns, 0)
         const subCost = grp.reduce((a, r) => a + r.cost_usd, 0)
+        const subEstimated = grp.some((r) => r.hasEstimated)
         return (
           <div key={persona}>
             {grp.map((r, i) => {
@@ -130,7 +149,7 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
                   <span style={pColTok} title={isMain ? mainNote : undefined}>{r.usage ? fmtTok(r.usage.in) : dash}</span>
                   <span style={pColTok} title={isMain ? mainNote : undefined}>{r.usage ? fmtTok(r.usage.out) : dash}</span>
                   <span style={pColTok} title={isMain ? mainNote : undefined}>{r.usage ? fmtTok(r.usage.cache) : dash}</span>
-                  <span style={pColCost}>{fmtCost(r.cost_usd)}</span>
+                  <span style={pColCost}>{fmtCost(r.cost_usd)}<EstBadge show={r.hasEstimated} t={t} /></span>
                 </div>
               )
             })}
@@ -142,7 +161,7 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
               <span style={pColTokSub} />
               <span style={pColTokSub} />
               <span style={pColTokSub} />
-              <span style={pColCostSub}>{fmtCost(subCost)}</span>
+              <span style={pColCostSub}>{fmtCost(subCost)}<EstBadge show={subEstimated} t={t} /></span>
             </div>
           </div>
         )
@@ -156,7 +175,7 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
         <span style={pColTokTotal}>{pivot ? fmtTok(pivot.subagentUsage.in) : 0}</span>
         <span style={pColTokTotal}>{pivot ? fmtTok(pivot.subagentUsage.out) : 0}</span>
         <span style={pColTokTotal}>{pivot ? fmtTok(pivot.subagentUsage.cache) : 0}</span>
-        <span style={pColCostTotal}>{fmtCost(pivot?.totalCostUsd ?? 0)}</span>
+        <span style={pColCostTotal}>{fmtCost(pivot?.totalCostUsd ?? 0)}<EstBadge show={!!pivot?.hasEstimated} t={t} /></span>
       </div>
     </div>
   )
@@ -178,14 +197,14 @@ export default function CostArchivePanel({ projectDir }: Props) {
         .costAggregatePivot(projectDir)
         .then((res: PivotResult) => setPivot(res))
         .catch(() =>
-          setPivot({ ok: false, rows: [], subagentUsage: { in: 0, out: 0, cache: 0 }, totalTurns: 0, totalCostUsd: 0 }),
+          setPivot({ ok: false, rows: [], subagentUsage: { in: 0, out: 0, cache: 0 }, totalTurns: 0, totalCostUsd: 0, hasEstimated: false }),
         )
     }
     if (api.costAggregate) {
       api
         .costAggregate(projectDir, 'version')
         .then((res: AggregateResult) => setResult(res))
-        .catch(() => setResult({ ok: false, groups: [], totalTurns: 0, totalCostUsd: 0 }))
+        .catch(() => setResult({ ok: false, groups: [], totalTurns: 0, totalCostUsd: 0, hasEstimated: false }))
     }
   }, [projectDir])
 
@@ -241,7 +260,7 @@ export default function CostArchivePanel({ projectDir }: Props) {
             <div key={g.key} style={bodyRow}>
               <span style={colKey} title={g.key}>{g.key}</span>
               <span style={colNum}>{g.turns}</span>
-              <span style={colNum}>{fmtCost(g.cost_usd)}</span>
+              <span style={colNum}>{fmtCost(g.cost_usd)}<EstBadge show={g.hasEstimated} t={t} /></span>
             </div>
           ))}
 
@@ -249,7 +268,7 @@ export default function CostArchivePanel({ projectDir }: Props) {
           <div style={totalRow}>
             <span style={colKeyTotal}>{t('costArchive.total')}</span>
             <span style={colNumTotal}>{result?.totalTurns ?? 0}</span>
-            <span style={colNumTotal}>{fmtCost(result?.totalCostUsd ?? 0)}</span>
+            <span style={colNumTotal}>{fmtCost(result?.totalCostUsd ?? 0)}<EstBadge show={!!result?.hasEstimated} t={t} /></span>
           </div>
         </div>
       )}
@@ -332,7 +351,10 @@ const colKeyHead: React.CSSProperties = {
 }
 
 const colNumHead: React.CSSProperties = {
-  width: 72,
+  // T-290 (A7): widened 72→100 to fit the estimatedBadge pill next to the cost
+  // value without wrapping (also used by the Turns column — harmless extra
+  // right-padding there).
+  width: 100,
   flexShrink: 0,
   textAlign: 'right',
   fontSize: 10,
@@ -353,7 +375,7 @@ const colKey: React.CSSProperties = {
 }
 
 const colNum: React.CSSProperties = {
-  width: 72,
+  width: 100,
   flexShrink: 0,
   textAlign: 'right',
   fontSize: 11,
@@ -387,6 +409,24 @@ const disclaimer: React.CSSProperties = {
   marginTop: 8,
 }
 
+// T-290 (A7): "estimated" pill next to a cost value whose contributing
+// line(s) carry cost_source:"estimated" (usage×price-table conversion, not
+// the real invoice). Muted (not a warning color) — distinct from, not
+// duplicating, the always-on disclaimer footer.
+const estBadge: React.CSSProperties = {
+  display: 'inline-block',
+  marginLeft: 4,
+  padding: '1px 4px',
+  fontSize: 8,
+  fontWeight: 700,
+  letterSpacing: '0.03em',
+  textTransform: 'uppercase',
+  color: '#8A8A9A',
+  background: '#1E1E28',
+  borderRadius: 3,
+  verticalAlign: 'middle',
+}
+
 // ── Pivot (persona×model) columns ───────────────────────────────────────────────
 // Wider main-pane host (T-028 R1 relocation) gives room for 7 columns. persona/
 // model flex; turns/in/out/cache fixed; cost wider for $0.0000.
@@ -414,7 +454,7 @@ const pColTokHead: React.CSSProperties = {
 
 const pColCostHead: React.CSSProperties = {
   ...colNumHead,
-  width: 80,
+  width: 112, // T-290 (A7): wider than the base 100 — pivot cost cells wrap $0.0000 + badge
 }
 
 const pColPersona: React.CSSProperties = {
@@ -435,7 +475,7 @@ const pColTok: React.CSSProperties = {
 
 const pColCost: React.CSSProperties = {
   ...colNum,
-  width: 80,
+  width: 112, // T-290 (A7): matches pColCostHead — room for $0.0000 + estimatedBadge
 }
 
 const pColPersonaSub: React.CSSProperties = {

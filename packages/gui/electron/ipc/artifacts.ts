@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { detectProjectKind } from '../project-paths'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -175,6 +176,45 @@ function buildVersionArtifacts(
   return { version, flat, archived }
 }
 
+// ── prdt (v1) artifacts — adapter A8 (T-291) ────────────────────────────────────
+//
+// prdt abolished the per-version manifest.json + version-subdirectory tree
+// (docs/artifacts/<v>/…). Its artifacts live under docs/artifacts/ with no
+// registry, so there is nothing to key a manifest scan on. Fall back to a plain
+// recursive directory listing of docs/artifacts/ (mirrors design.ts's walk):
+// every allowed-ext file becomes a flat entry, no manifest meta, no archive split.
+function walkArtifactsDir(dir: string, projectDir: string, out: ArtifactEntry[], depth: number): void {
+  if (depth > 6) return // guard against pathological nesting / symlink loops
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return
+  }
+  const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name))
+  for (const e of sorted) {
+    const full = path.join(dir, e.name)
+    if (e.isDirectory()) {
+      walkArtifactsDir(full, projectDir, out, depth + 1)
+    } else if (e.isFile()) {
+      // manifest.json is the legacy registry, not an artifact (QA fix — mirrors
+      // scanDir's exclusion; transitional prdt trees may still carry leftovers).
+      if (e.name === 'manifest.json') continue
+      const ext = path.extname(e.name).toLowerCase()
+      if (!ALLOWED_EXTS.has(ext)) continue
+      out.push({ relPath: path.relative(projectDir, full), absPath: full, ext, scopeGroup: 'artifacts' })
+    }
+  }
+}
+
+/** prdt-mode ArtifactTree: a single flat directory listing of docs/artifacts/. */
+function buildPrdtArtifactTree(projectDir: string): ArtifactTree {
+  const artifactsBase = path.join(projectDir, 'docs', 'artifacts')
+  const flat: ArtifactEntry[] = []
+  if (fs.existsSync(artifactsBase)) walkArtifactsDir(artifactsBase, projectDir, flat, 0)
+  return { current: { version: '', flat, archived: [] }, past: [] }
+}
+
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
@@ -187,6 +227,17 @@ export function register(): void {
       if (!projectDir) return []
 
       const result: ArtifactEntry[] = []
+
+      // T-306: prdt artifacts live FLAT at docs/artifacts/<slug>.<ext> — no
+      // version subdirs, so the version-scoped scan below would target a
+      // nonexistent docs/artifacts/<version>/ dir (the renderer now passes the
+      // bridged flat version). Recursive flat walk instead, mirroring the
+      // listTree prdt branch (T-291).
+      if (detectProjectKind(projectDir) === 'prdt') {
+        const prdtBase = path.join(projectDir, 'docs', 'artifacts')
+        if (fs.existsSync(prdtBase)) walkArtifactsDir(prdtBase, projectDir, result, 0)
+        return result
+      }
 
       // docs/artifacts/<currentVersion>/ — or all subdirs if null
       const artifactsBase = path.join(projectDir, 'docs', 'artifacts')
@@ -235,6 +286,12 @@ export function register(): void {
 
       if (!projectDir) {
         return { current: empty(currentVersion ?? ''), past: [] }
+      }
+
+      // T-291 (adapter A8): prdt projects have no manifest / version-subdir tree —
+      // fall back to a plain recursive directory listing of docs/artifacts/.
+      if (detectProjectKind(projectDir) === 'prdt') {
+        return buildPrdtArtifactTree(projectDir)
       }
 
       const current = currentVersion

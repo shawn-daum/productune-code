@@ -11,13 +11,14 @@ import StatusBar from '../components/workspace/StatusBar'
 import ActivityBar, { type ActivityIcon } from '../components/workspace/ActivityBar'
 import ChatPanel from '../components/workspace/ChatPanel'
 import SessionHealthBanner from '../components/workspace/SessionHealthBanner'
+import PrdtHookInstallBanner from '../components/workspace/PrdtHookInstallBanner'
 import RestartSessionModal from '../components/workspace/RestartSessionModal'
 import PendingPromotionDrain from '../components/workspace/PendingPromotionDrain'
 import QuickOpenPalette from '../components/workspace/QuickOpenPalette'
 import ColumnResizeHandle from '../components/workspace/ColumnResizeHandle'
 import { usePoChat } from '../store/poChat'
 import { useTicketScan } from '../lib/useTicketScan'
-import { bucketTicketsByPhase } from '../lib/phase-mapping'
+import { bucketTicketsByPhase, isPrdtPoState, getActiveStageIndex, bridgePrdtVersion, STAGE_DEFS } from '../lib/phase-mapping'
 import DeployConfirmModal from '../components/workspace/DeployConfirmModal'
 import BaseDirtyModal from '../components/workspace/BaseDirtyModal'
 import { useResizeLayout } from './workspace/shell/useResizeLayout'
@@ -148,6 +149,13 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   const poStateVersion = useWorkspace((s) => s.poState?.current_version ?? null)
   // T-PATCH-175: full po-state for Quick Open prd-path resolution + version list.
   const poState = useWorkspace((s) => s.poState)
+  // T-291 (adapter A8): prdt project → render the 4-stage breadcrumb + suppress the
+  // legacy 5-phase institutions (gate marker, phase counters, promotion drain). A
+  // legacy po-state has current_phase (never stage), so isPrdt is false and every
+  // branch below falls through to the untouched legacy path.
+  const isPrdt = isPrdtPoState(poState)
+  // prdt uses a flat `version` string; legacy uses `current_version`.
+  const displayVersion = isPrdt ? (poState?.version ?? null) : poStateVersion
   // T-PATCH-203: live close_gate slice → PhaseBreadcrumb boundary gate marker.
   // Absent (non-P3 / pre-hook) → undefined → marker graceful pass-fallback (AC-6).
   const closeGate = useWorkspace((s) => s.poState?.close_gate ?? null)
@@ -230,15 +238,19 @@ export default function WorkspaceShell({ project, onBack }: Props) {
           return
         }
         setPoState(s as any)
+        // T-306: read version-keyed fields off the BRIDGED shape (prdt flat
+        // `version` mirrored into `current_version`) — the same view the store now
+        // holds after setPoState. Legacy states pass through by reference.
+        const bridged = bridgePrdtVersion(s as any)
         // T-PATCH-269 #14: seed prdPath from the one-shot read so a project opened
         // while ALREADY at a ready version auto-navs on first mount (the watcher only
         // pushes on CHANGE, so it would otherwise never fire for the initial state).
         // FIX-2: probe the SAME shared candidate set as main (anchor → PRD.md →
         // versions/<v>.md) in precedence order and seed the FIRST that exists — so the
         // seed gate and the opened path agree exactly with the watcher path.
-        const cv0 = (s as any)?.current_version as string | undefined
+        const cv0 = bridged?.current_version
         if (cv0) {
-          const candidates = prdCandidatePaths(s as any, project.projectDir)
+          const candidates = prdCandidatePaths(bridged, project.projectDir)
           ;(async () => {
             for (const cand of candidates) {
               try {
@@ -256,7 +268,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
         // (live updates) don't re-open the tab.
         if (pendingSwitchTabRef.current) {
           pendingSwitchTabRef.current = false
-          const cv = (s as any)?.current_version as string | undefined
+          const cv = bridged?.current_version
           if (cv) {
             useWorkspace.getState().openTab(
               `ticket-review:${cv}`,
@@ -409,6 +421,11 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     openTab(`markdown:${resolved}`, 'markdown', { path: resolved }, prdName)
   }
 
+  // T-304: legacy-only path — `.productune/logs/po-session.log` has no prdt
+  // equivalent (.prdt/ carries turns.jsonl + po-state.json, no human-readable
+  // session log). isPrdt gates the caller (SessionHealthBanner's onViewLog
+  // prop below) so this never opens for a prdt project; kept legacy-only and
+  // byte-identical here rather than branching on a path that can't resolve.
   const handleViewLog = () =>
     openTab('terminal:po-log', 'terminal', { logPath: `${project.projectDir}/.productune/logs/po-session.log` }, 'PO Log')
 
@@ -464,11 +481,25 @@ export default function WorkspaceShell({ project, onBack }: Props) {
         {/* T-015 A6: always-visible inline header search bar */}
         <HeaderSearchBar onClick={() => setQuickOpenVisible(true)} />
         <SessionHealthBanner onRestartSession={() => setRestartModalOpen(true)}
-          onRetry={handleRetry} onViewLog={handleViewLog} />
-        {/* T-PATCH-096: prepend version label before the phase breadcrumb */}
-        <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate}
-          onPhaseClick={handlePhaseClick} clickablePhases={clickablePhases} />
-        {drainVisible && project && (
+          onRetry={handleRetry} onViewLog={isPrdt ? undefined : handleViewLog} />
+        {/* T-305: prdt-hook install nudge — A6's installPrdtHooks had no call
+            site until now. prdt projects only; no-ops to null once installed
+            or dismissed for the session. */}
+        {isPrdt && <PrdtHookInstallBanner projectDir={project.projectDir} />}
+        {/* T-PATCH-096: prepend version label before the phase breadcrumb.
+            T-291 (adapter A8): prdt → 4-stage strip (no gate marker / counters /
+            clickable pills); legacy → the untouched 5-phase breadcrumb. */}
+        {isPrdt ? (
+          <PhaseBreadcrumb phase={phase} version={displayVersion}
+            stages={STAGE_DEFS} activeStageIndex={getActiveStageIndex(poState)} />
+        ) : (
+          <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate}
+            onPhaseClick={handlePhaseClick} clickablePhases={clickablePhases} />
+        )}
+        {/* T-291 (adapter A8): promotion drain (+ its mechanical-write IPC) is a
+            legacy institution — prdt promotes via wiki, so it never mounts here
+            (no drain/mechanical-write IPC fired). */}
+        {!isPrdt && drainVisible && project && (
           <PendingPromotionDrain projectDir={project.projectDir}
             claudeSessionId={useWorkspace.getState().claudeSessionId}
             onDone={() => setDrainVisible(false)} />

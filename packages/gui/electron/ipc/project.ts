@@ -6,6 +6,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, findAncestorProductuneRoot } from '@productune/core'
 import { writeOnboardingPending } from './onboarding'
+import { STATE_DIR_NAME, configPath, poStatePath } from '../project-paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -33,6 +34,9 @@ export interface RecentWithMeta {
   exists: boolean
   phase: number | null
   version: string | null
+  /** T-306: prdt flat lifecycle stage (define/build/ship/retro) — null for legacy
+   *  projects (which carry the numeric `phase` instead; the two never co-occur). */
+  stage: string | null
 }
 
 // ── Recents helpers (T-PATCH-050) ─────────────────────────────────────────────
@@ -111,9 +115,12 @@ function classifyDeleteTarget(projectDir: string): { ok: boolean; alreadyGone?: 
     return { ok: true, alreadyGone: true }
   }
 
-  // Containment marker: must look like a productune project (.productune/ present).
-  if (!fs.existsSync(path.join(normalized, '.productune'))) {
-    return { ok: false, error: 'not a productune project (no .productune/)' }
+  // Containment marker: must look like a productune/prdt project (state dir present).
+  if (
+    !fs.existsSync(path.join(normalized, STATE_DIR_NAME.prdt)) &&
+    !fs.existsSync(path.join(normalized, STATE_DIR_NAME.productune))
+  ) {
+    return { ok: false, error: 'not a productune project (no .prdt/ or .productune/)' }
   }
 
   return { ok: true }
@@ -122,14 +129,37 @@ function classifyDeleteTarget(projectDir: string): { ok: boolean; alreadyGone?: 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Detect whether a directory contains a productune project (current or legacy layout).
+ * Detect whether a directory contains a productune/prdt project.
  *
- * - 'self-current': .productune/config.json exists and is parseable.
+ * A `.prdt/` directory (v1 / prdt layout) is checked FIRST and always resolves to
+ * 'self-current' — prdt state is current-layout by definition, has no legacy/heal
+ * path, and the briefs/·po.lock markers do NOT apply to it. Otherwise the legacy
+ * `.productune/` layout is classified exactly as before:
+ *
+ * - 'self-current': .prdt/config.json OR .productune/config.json exists & parses.
+ *                   (prdt without a parseable config still resolves self-current,
+ *                    basename slug — heal is skipped since initProject writes a
+ *                    legacy .productune/ dir, wrong for a prdt project.)
  * - 'self-legacy':  .productune/ exists with po-state.json/briefs/po.lock/turns/ but no config.json.
- * - 'none':         No productune layout detected.
+ * - 'none':         No productune/prdt layout detected.
  */
-function detectProductuneLayout(dir: string): DetectResult {
-  const productuneDir = path.join(dir, '.productune')
+export function detectProductuneLayout(dir: string): DetectResult {
+  // prdt (v1) layout — `.prdt/` present. Current-layout only; no heal, no legacy hints.
+  const prdtDir = path.join(dir, STATE_DIR_NAME.prdt)
+  if (fs.existsSync(prdtDir)) {
+    const prdtConfigPath = path.join(prdtDir, 'config.json')
+    if (fs.existsSync(prdtConfigPath)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(prdtConfigPath, 'utf-8'))
+        return { kind: 'self-current', config }
+      } catch {
+        // Corrupt config — fall through to a basename-slug self-current.
+      }
+    }
+    return { kind: 'self-current', config: { slug: path.basename(dir) } }
+  }
+
+  const productuneDir = path.join(dir, STATE_DIR_NAME.productune)
   if (!fs.existsSync(productuneDir)) return { kind: 'none' }
 
   const configPath = path.join(productuneDir, 'config.json')
@@ -202,7 +232,7 @@ function buildAncestorResult(
 
   let config: any = { slug: path.basename(res.rootDir) }
   try {
-    const cfgPath = path.join(res.rootDir, '.productune', 'config.json')
+    const cfgPath = configPath(res.rootDir)
     if (fs.existsSync(cfgPath)) {
       const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
       config = { ...parsed, slug: parsed?.slug ?? path.basename(res.rootDir) }
@@ -326,7 +356,7 @@ export function register(): void {
       if (!projectDir) return false
       return (
         fs.existsSync(projectDir) &&
-        fs.existsSync(path.join(projectDir, '.productune', 'config.json'))
+        fs.existsSync(configPath(projectDir))
       )
     } catch {
       return false
@@ -340,11 +370,12 @@ export function register(): void {
       .filter(e => e.isDirectory())
     const projects: Array<{ slug: string; mode: string; created_at: string; path: string }> = []
     for (const entry of entries) {
-      const configPath = path.join(baseDir, entry.name, '.productune', 'config.json')
-      if (!fs.existsSync(configPath)) continue
+      const entryDir = path.join(baseDir, entry.name)
+      const cfgPath = configPath(entryDir)
+      if (!fs.existsSync(cfgPath)) continue
       try {
-        const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-        projects.push({ ...cfg, path: path.join(baseDir, entry.name) })
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+        projects.push({ ...cfg, path: entryDir })
       } catch {}
     }
     return projects
@@ -425,26 +456,33 @@ export function register(): void {
       let exists = false
       let phase: number | null = null
       let version: string | null = null
+      let stage: string | null = null
       let slug = e.slug
       try {
-        const configPath = path.join(e.projectDir, '.productune', 'config.json')
-        exists = fs.existsSync(configPath)
+        const cfgPath = configPath(e.projectDir)
+        exists = fs.existsSync(cfgPath)
         if (exists) {
           try {
-            const cfg = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+            const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
             slug = typeof cfg.slug === 'string' ? cfg.slug : e.slug
           } catch { /* keep entry slug */ }
           try {
-            const poStatePath = path.join(e.projectDir, '.productune', 'po-state.json')
-            if (fs.existsSync(poStatePath)) {
-              const st = JSON.parse(fs.readFileSync(poStatePath, 'utf-8'))
+            const statePath = poStatePath(e.projectDir)
+            if (fs.existsSync(statePath)) {
+              const st = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
               phase = typeof st.current_phase === 'number' ? st.current_phase : null
-              version = typeof st.current_version === 'string' ? st.current_version : null
+              // T-306: prdt carries flat `version`/`stage` instead of
+              // current_version/current_phase — coalesce so prdt cards show
+              // their meta row. Legacy po-state never has the flat fields.
+              version = typeof st.current_version === 'string' ? st.current_version
+                : typeof st.version === 'string' && typeof st.stage === 'string' ? st.version
+                : null
+              stage = typeof st.stage === 'string' ? st.stage : null
             }
-          } catch { /* phase/version stay null */ }
+          } catch { /* phase/version/stage stay null */ }
         }
       } catch { /* exists stays false */ }
-      return { slug, projectDir: e.projectDir, openedAt: e.openedAt, exists, phase, version }
+      return { slug, projectDir: e.projectDir, openedAt: e.openedAt, exists, phase, version, stage }
     })
   })
 

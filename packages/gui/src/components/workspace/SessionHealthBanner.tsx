@@ -134,8 +134,11 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
           <span style={instructionLabel}>{ctaLabel}</span>
         )}
 
-        {/* Secondary: view log (error-other / no smoke detail only) */}
-        {!isPermission && !hasSmokeDetail && (
+        {/* Secondary: view log (error-other / no smoke detail only).
+            T-304: onViewLog is omitted entirely for a prdt project (no
+            po-session.log equivalent under .prdt/) — hide the CTA rather
+            than wire it to a path that can never resolve. */}
+        {!isPermission && !hasSmokeDetail && onViewLog && (
           <button style={secondaryCta} onClick={onViewLog}>
             {t('workspace.sessionHealth.errorOther.logCta')}
           </button>

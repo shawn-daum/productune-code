@@ -5,6 +5,15 @@
  * statusline refresh. Only available for claude.ai / firstParty subscribers.
  * When the file is absent or malformed, no event is emitted (no crash).
  *
+ * LEGACY-ONLY (adapter A7, T-290): this global (home-dir, not per-project)
+ * rate-limit side-effect file is a legacy-statusline artifact — v1's
+ * statusline is display-only (docs/prdt-v1-design.md §10), so it never exists
+ * for prdt projects and this module is intentionally left untouched for them.
+ * The renderer (`src/components/workspace/chat/UsageBar.tsx`) branches on
+ * `isPrdtPoState` and, for prdt projects, sources its near-live metric (cost,
+ * not rate-limit %) from `<projectDir>/.prdt/turns.jsonl` via the existing
+ * `cost:aggregate`/`cost:watch` IPC in `./costArchive.ts` instead of this file.
+ *
  * IPC channel pushed to renderer: 'productune:usage-update'
  * Payload: UsagePayload — see type below.
  */

@@ -32,8 +32,8 @@
  * usage shape is confirmed live, then it lights up with no further code change.
  */
 
-import path from 'path'
 import fs from 'fs'
+import { poStatePath, stateDir, turnsJsonlPath } from './project-paths'
 
 /** Normalized usage block — same key names ipc/costArchive.ts's readUsage reads. */
 export interface SubagentUsage {
@@ -153,7 +153,7 @@ function readStateContext(projectDir: string): {
 } {
   const out = { version: null as string | null, task_slug: null as string | null, ticket_id: null as string | null }
   try {
-    const statePath = path.join(projectDir, '.productune', 'po-state.json')
+    const statePath = poStatePath(projectDir)
     const st = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as Record<string, unknown>
     const cv = st.current_version
     out.version =
@@ -162,6 +162,12 @@ function readStateContext(projectDir: string): {
         : typeof cv === 'string' && cv
           ? cv
           : null
+    // T-306: prdt po-state carries the flat `version` string instead of
+    // current_version (discriminated by the flat `stage` field, which a legacy
+    // po-state never has) — so prdt cost rows get version-grouped too.
+    if (out.version === null && typeof st.stage === 'string' && typeof st.version === 'string' && st.version) {
+      out.version = st.version
+    }
     const ct = st.current_task
     if (ct && typeof ct === 'object') {
       const ctObj = ct as Record<string, unknown>
@@ -225,9 +231,8 @@ export function appendSubagentTurn(
   }
 
   try {
-    const dir = path.join(projectDir, '.productune')
-    fs.mkdirSync(dir, { recursive: true })
-    fs.appendFileSync(path.join(dir, 'turns.jsonl'), JSON.stringify(line) + '\n')
+    fs.mkdirSync(stateDir(projectDir), { recursive: true })
+    fs.appendFileSync(turnsJsonlPath(projectDir), JSON.stringify(line) + '\n')
     return true
   } catch {
     return false

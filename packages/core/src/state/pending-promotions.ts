@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { stateDir } from './project-kind'
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 //
@@ -41,7 +42,7 @@ export interface PendingPromotion {
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 function statePath(projectDir: string): string {
-  return path.join(projectDir, '.productune', 'po-state.json')
+  return path.join(stateDir(projectDir), 'po-state.json')
 }
 
 function readState(statePath: string): Record<string, unknown> {

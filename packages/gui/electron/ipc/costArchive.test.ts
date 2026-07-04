@@ -203,6 +203,79 @@ export const COST_ARCHIVE_CASES: readonly Case[] = [
       return { ok: approx(r.totalCostUsd, 50), detail: `total=${r.totalCostUsd}` }
     },
   },
+
+  // ── T-290 (adapter A7): cost_source "estimated" badge signal ────────────────
+  {
+    // A group containing ANY cost_source:'estimated' line is flagged, even
+    // when mixed with reported/absent-source lines (conservative — the total
+    // is no longer 100% real-invoice once any component is an estimate).
+    label: 'aggregate: group hasEstimated true when any line is cost_source estimated',
+    run: () => {
+      const r = aggregateLines(
+        [sub(3, { cost_source: 'estimated' }), sub(7, { cost_source: 'reported' })],
+        'version',
+      )
+      const g = r.groups.find((x) => x.key === 'v0.5')
+      return { ok: !!g && g.hasEstimated === true && r.hasEstimated === true, detail: JSON.stringify(g) }
+    },
+  },
+  {
+    // reported / absent cost_source → no badge (matches the ticket's
+    // "'reported' or absent → no badge" acceptance line).
+    label: 'aggregate: group hasEstimated false when all lines reported/absent',
+    run: () => {
+      const r = aggregateLines(
+        [sub(3, { cost_source: 'reported' }), sub(7, {})],
+        'version',
+      )
+      const g = r.groups.find((x) => x.key === 'v0.5')
+      return { ok: !!g && g.hasEstimated === false && r.hasEstimated === false, detail: JSON.stringify(g) }
+    },
+  },
+  {
+    label: 'pivot: row hasEstimated mirrors the group rule (subagent + main scope)',
+    run: () => {
+      const r = aggregatePivotLines([
+        sub(3, { cost_source: 'estimated' }),
+        cum('s1', 10, { cost_source: 'reported' }),
+        cum('s1', 25, {}),
+      ])
+      const subRow = r.rows.find((x) => x.scope === 'subagent')
+      const mainRow = r.rows.find((x) => x.scope === 'main')
+      const ok =
+        !!subRow && subRow.hasEstimated === true &&
+        !!mainRow && mainRow.hasEstimated === false &&
+        r.hasEstimated === true
+      return { ok, detail: JSON.stringify({ subRow, mainRow, total: r.hasEstimated }) }
+    },
+  },
+  {
+    // Real v1 turns.jsonl line shape (field check vs the schema confirmed for
+    // this ticket): usage carries bare input/output/cache (no _tokens suffix,
+    // no cache_read/cache_creation split) and a top-level cost_source. Confirms
+    // the existing readUsage()/costForLine() paths already handle it as-is —
+    // no field-name mapping needed for the v1 schema.
+    label: 'v1 schema: real turns.jsonl shape aggregates cost_usd + usage.cache correctly',
+    run: () => {
+      const v1Line: Line = {
+        scope: 'subagent',
+        persona: 'qa',
+        session_id: 'a4d02d67846f55395',
+        model: 'claude-sonnet-5',
+        cost_usd: 1.884124,
+        cost_source: 'estimated',
+        cost_basis: 'subagent_total',
+        usage: { input: 35750, output: 18665, cache: 2491553 },
+        version: 'v1.1',
+      } as Line
+      const r = aggregatePivotLines([v1Line])
+      const row = r.rows[0]
+      const ok =
+        !!row && approx(row.cost_usd, 1.884124) && row.hasEstimated === true &&
+        row.usage?.in === 35750 && row.usage?.out === 18665 && row.usage?.cache === 2491553
+      return { ok, detail: JSON.stringify(row) }
+    },
+  },
 ]
 
 export function runCostArchiveCases(): { passed: number; failures: string[] } {

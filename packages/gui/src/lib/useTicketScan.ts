@@ -42,6 +42,12 @@ const LEGACY_STATUS_SYNONYMS: Record<string, Status> = {
   // T-PATCH-137: `qa` is a ticket *type*, not a canonical status; "impl done, awaiting QA" is
   // canonically `review` (`ticket-schema.md:53`), which the board folds onto the in-progress column (T-PATCH-130).
   qa: 'review',
+  // T-286 (prdt v1 adapter A3): prdt v1's 3-value ticket status vocab (`open|done|dropped`,
+  // `docs/prdt-v1-gui-coupling.md` §4) is unknown to this table. `done` already matches the
+  // canonical value; only `open` and `dropped` need mapping — coexist with legacy vocab, no
+  // replacement.
+  open: 'in-progress',
+  dropped: 'abandoned',
 }
 
 export function normalizeStatus(raw: Status | string | undefined): Status | undefined {

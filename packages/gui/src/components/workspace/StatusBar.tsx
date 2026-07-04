@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import SessionHealthSegment from './SessionHealthSegment'
 import RunSegment from './RunSegment'
 import UsageBar from './chat/UsageBar'
+import { useWorkspace } from '../../store/workspace'
 
 interface Props {
   onOpenHealthBanner?: () => void
@@ -21,6 +22,9 @@ interface Props {
 
 export default function StatusBar({ onOpenHealthBanner }: Props) {
   const { t } = useTranslation()
+  // T-290 (adapter A7): threaded through so UsageBar can source cost from
+  // turns.jsonl for prdt projects (usage-state.json is legacy-only).
+  const projectDir = useWorkspace((s) => s.project?.projectDir)
 
   return (
     <div style={wrap}>
@@ -30,7 +34,7 @@ export default function StatusBar({ onOpenHealthBanner }: Props) {
         {/* T-PATCH-173: usage gauges(5h/7d) — horizontal inline cluster, statusbar
             variant. Self-renders a leading "Session" label + separator only when
             usage data exists (no dangling label / ·). */}
-        <UsageBar statusbar sessionLabel={t('workspace.statusBar.session')} />
+        <UsageBar statusbar sessionLabel={t('workspace.statusBar.session')} projectDir={projectDir} />
       </div>
 
       {/* Right cluster — ▶ Run launcher (T-PATCH-187, was Build/Smoke T-PATCH-159) */}

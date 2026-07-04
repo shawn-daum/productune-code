@@ -14,7 +14,7 @@
  * Renamed from `stage-mapping.ts` (v2 doctrine sub-b).
  */
 
-import type { PoState, Phase, Ticket, PendingGate } from './types'
+import type { PoState, Phase, Stage, Ticket, PendingGate } from './types'
 import { normalizeStatus } from './useTicketScan'
 
 export interface PhaseDef {
@@ -71,6 +71,75 @@ export function getItemState(itemIndex: number, activeIndex: number): PhaseItemS
   if (itemIndex < activeIndex) return 'done'
   if (itemIndex === activeIndex) return 'cur'
   return 'pending'
+}
+
+// ── prdt (v1) stage display — adapter A4 (T-287) ────────────────────────────
+//
+// prdt po-state uses a FLAT `stage` string (define/build/ship/retro) instead
+// of the legacy 1..5 `current_phase` numeric model above. This is a distinct
+// axis, not a renumbering of the 5 phases, and is kept fully isolated from
+// PHASE_DEFS / getActivePhaseIndex / getActivePhaseDef (legacy branch,
+// untouched above) — a legacy project's phase-strip rendering never changes.
+//
+// Colors echo the nearest legacy phase analog (no dedicated design.md token
+// exists yet for prdt stages — flag for design review if/when the GUI gets a
+// native prdt rework; see prdt-v1-gui-coupling.md §6).
+export interface StageDef {
+  key: Stage
+  /** i18n key for the human-facing label (`workspace.stage.<key>`). */
+  labelKey: string
+  /** Stage color hex. */
+  color: string
+}
+
+export const STAGE_DEFS: StageDef[] = [
+  { key: 'define', labelKey: 'workspace.stage.define', color: '#FB923C' },  // orange-400 — echoes PRD
+  { key: 'build',  labelKey: 'workspace.stage.build',  color: '#38BDF8' },  // sky-400 — echoes Build
+  { key: 'ship',   labelKey: 'workspace.stage.ship',   color: '#FB923C' },  // orange-400 — echoes Deploy
+  { key: 'retro',  labelKey: 'workspace.stage.retro',  color: '#34D399' },  // emerald-400 — echoes Close
+]
+
+/**
+ * True when `poState` is a prdt (v1) po-state — i.e. it carries the flat
+ * `stage` string. Legacy po-state never has this field (it has `current_phase`
+ * instead), so presence of `stage` is a safe, IPC-payload-only discriminator —
+ * no filesystem probing needed at the renderer/store level.
+ */
+export function isPrdtPoState(poState: PoState | null): boolean {
+  return typeof poState?.stage === 'string'
+}
+
+/**
+ * T-306: bridge the prdt flat `version` string into `current_version` so the
+ * GUI's version-keyed consumers (PRD auto-nav, ticket-review auto-open,
+ * artifact scoping, dashboards) light up for prdt projects without per-site
+ * branches. Applied at the SINGLE store ingress (useWorkspace.setPoState), so
+ * every renderer read of `poState.current_version` sees the bridged value.
+ *
+ * Copy-on-write: a prdt state gets a shallow copy with `current_version`
+ * mirrored from `version`; a legacy state (or null, or a prdt state without a
+ * version) is returned by reference, untouched — legacy behavior stays
+ * byte-identical. `versions[]` is NOT synthesized: array-driven institutions
+ * (VersionsPanel, past-version cards, snapshot paths) stay suppressed via
+ * isPrdtPoState, which keys on `stage` and is unaffected by this bridge.
+ */
+export function bridgePrdtVersion(poState: PoState | null): PoState | null {
+  if (!poState || !isPrdtPoState(poState)) return poState
+  if (poState.current_version != null) return poState
+  if (typeof poState.version !== 'string' || poState.version.length === 0) return poState
+  return { ...poState, current_version: poState.version }
+}
+
+/** Returns the active stage index (0-3) from `stage`. Default 0 ('define') on
+ *  missing/unrecognized value — mirrors getActivePhaseIndex's fallback shape. */
+export function getActiveStageIndex(poState: PoState | null): number {
+  const idx = STAGE_DEFS.findIndex((d) => d.key === poState?.stage)
+  return idx >= 0 ? idx : 0
+}
+
+/** Returns the StageDef for the currently active stage. */
+export function getActiveStageDef(poState: PoState | null): StageDef {
+  return STAGE_DEFS[getActiveStageIndex(poState)]
 }
 
 // ── T-PATCH-096 §4.b: ticket `type` → phase bucket (single source of truth) ──

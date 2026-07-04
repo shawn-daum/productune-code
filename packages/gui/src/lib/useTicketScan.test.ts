@@ -31,6 +31,9 @@ export const NORMALIZE_STATUS_CASES: readonly Case[] = [
   { label: 'cancelled → abandoned', input: 'cancelled', expected: 'abandoned' },
   { label: 'design-proposal → in-progress', input: 'design-proposal', expected: 'in-progress' },
   { label: 'superseded → abandoned', input: 'superseded', expected: 'abandoned' },
+  // T-286 (prdt v1 adapter A3) — prdt v1's 3-value status vocab (open|done|dropped).
+  { label: 'open → in-progress', input: 'open', expected: 'in-progress' },
+  { label: 'dropped → abandoned', input: 'dropped', expected: 'abandoned' },
   // AC-3 — canonical values pass through; nullish stays undefined.
   { label: 'in-progress pass-through', input: 'in-progress', expected: 'in-progress' },
   { label: 'review pass-through', input: 'review', expected: 'review' },

@@ -13,6 +13,7 @@ import SidePanelPastVersions from './SidePanelPastVersions'
 import SidePanelArtifacts from './SidePanelArtifacts'
 import SidePanelProjectEnv from './SidePanelProjectEnv'
 import ArtifactsPane from './ArtifactsPane'
+import { isPrdtPoState } from '../../lib/phase-mapping'
 
 interface Props {
   project: Project
@@ -74,7 +75,13 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
 
   // Rename guard: when current_version id changes (PO rename), swap
   // selectedVersionId + in-place tab id swap — no close+reopen (T-P4-097 §E).
+  // T-306: legacy-only. prdt has no version-rename concept — its (bridged)
+  // current_version moves only on a retro version bump (v1.0 → v1.1), which is a
+  // version CYCLE: the old tab must stay put and auto-nav opens the new version's
+  // tab. Swapping the id here would relabel the old board onto the new version
+  // with a stale versionFilter, so the guard is skipped for prdt.
   useEffect(() => {
+    if (isPrdtPoState(poState)) return
     const cv = poState?.current_version
     const versions = poState?.versions ?? []
     const prev = prevCurrentVersionRef.current
@@ -116,6 +123,11 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
 
   const isFocused = activeIcon === 'project'
 
+  // T-291 (adapter A8): prdt has a single flat `version` (no versions[] array), so
+  // the multi-version institution UI (current/past cards, VersionsPanel array view)
+  // is suppressed for prdt projects. The breadcrumb still shows the version.
+  const isPrdt = isPrdtPoState(poState)
+
   // T-PATCH-010 #8: hide past-versions section when there are no past versions.
   // A version is "past" if it is not the current active version, OR if it is the
   // current version but has been transient-closed.
@@ -152,19 +164,23 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
       {/* Body — branch by activeIcon */}
       {activeIcon === 'project' && (
         <div style={projectBody}>
-          {/* Versions section — 2 sp-section split (T-P4-097) */}
-          <SidePanelCurrentVersion
-            poState={poState}
-            selectedVersionId={selectedVersionId}
-            isFocused={isFocused}
-            // T-PATCH-013 B1: current-version card click must ONLY set selection;
-            // it must NOT go through handleVersionClick (which opens version-history
-            // and dispatches version-select). The card opens its own ticket-review tab.
-            onSelect={(id) => setSelectedVersionId(id)}
-          />
+          {/* Versions section — 2 sp-section split (T-P4-097).
+              T-291 (adapter A8): the current/past version cards read versions[] +
+              current_version, which a prdt po-state lacks — suppressed for prdt. */}
+          {!isPrdt && (
+            <SidePanelCurrentVersion
+              poState={poState}
+              selectedVersionId={selectedVersionId}
+              isFocused={isFocused}
+              // T-PATCH-013 B1: current-version card click must ONLY set selection;
+              // it must NOT go through handleVersionClick (which opens version-history
+              // and dispatches version-select). The card opens its own ticket-review tab.
+              onSelect={(id) => setSelectedVersionId(id)}
+            />
+          )}
           {/* T-PATCH-076: project .env viewer/editor — directly below current-version card */}
           <SidePanelProjectEnv />
-          {hasPastVersions && (
+          {!isPrdt && hasPastVersions && (
             <SidePanelPastVersions
               poState={poState}
               selectedVersionId={selectedVersionId}
@@ -181,7 +197,20 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
       {activeIcon === 'team' && (
         <TeamPanel poState={poState} />
       )}
-      {activeIcon === 'versions' && <VersionsPanel poState={poState} />}
+      {activeIcon === 'versions' && (
+        // T-291 (adapter A8): VersionsPanel renders the versions[] array (active +
+        // past cards). prdt has no array — show a single-version hint instead of
+        // the empty array UI.
+        isPrdt ? (
+          <div style={panelPlaceholder}>
+            <span style={panelPlaceholderText}>
+              {t('workspace.versions.prdtSingleHint', { version: poState?.version ?? '—' })}
+            </span>
+          </div>
+        ) : (
+          <VersionsPanel poState={poState} />
+        )
+      )}
       {activeIcon === 'tickets' && (
         <div style={panelPlaceholder}>
           <span style={panelPlaceholderText}>{t('workspace.sidebar.ticketsHint')}</span>

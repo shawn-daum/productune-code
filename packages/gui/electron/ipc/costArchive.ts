@@ -1,9 +1,11 @@
 /**
  * costArchive — token-cost archive read-path (T-027, GUI slice).
  *
- * Reads a per-project append-only `<projectDir>/.productune/turns.jsonl`
- * (one JSON object per line, written by sibling shell-hook work) and aggregates
- * cost by version / persona / model.
+ * Reads a per-project append-only `turns.jsonl` — path resolved via
+ * project-paths.ts's `turnsJsonlPath` (adapter A1 dual-mode: `.prdt/turns.jsonl`
+ * for prdt projects, `.productune/turns.jsonl` for legacy — same file, same
+ * aggregation, only the parent directory differs) — and aggregates cost by
+ * version / persona / model.
  *
  * AGGREGATION (must match the CLI — T-PATCH-201):
  *  - cumulative lines (cost_basis === 'main_session_cumulative'): cost_usd is a
@@ -17,6 +19,14 @@
  *  - project total = Σ(subagent_total) + Σ_session(cumulative session max).
  *  - Broken/blank lines are skipped silently; missing/empty file → empty result.
  *
+ * COST_SOURCE BADGE (adapter A7, T-290): prdt's turns.jsonl rows may carry a
+ * `cost_source` field — `"estimated"` (usage × price-table conversion, not the
+ * real invoice) vs `"reported"` (CLI-reported real cost) vs absent (legacy —
+ * treated as reported/no-badge, matching the existing estimateDisclaimer
+ * footer). A group/row/result is flagged `hasEstimated: true` when ANY
+ * contributing line has `cost_source === 'estimated'`, so the renderer can
+ * show a "estimated" badge distinct from the always-on disclaimer text.
+ *
  * IPC:
  *  - invoke  'cost:aggregate' (projectDir, by) → AggregateResult
  *  - invoke  'cost:watch'     (projectDir)     → { ok } — (re)arm a per-project
@@ -29,6 +39,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { turnsJsonlPath } from '../project-paths'
 // Single-source price table (T-PATCH-202). Same JSON the python CLI reads — the
 // table lives ONLY in packages/core/config/model-prices.json; vite/esbuild
 // inlines it into the electron bundle at build time (resolveJsonModule), so
@@ -91,6 +102,8 @@ export interface CostGroup {
   key: string
   turns: number
   cost_usd: number
+  /** True when any line folded into this group has cost_source === 'estimated'. */
+  hasEstimated: boolean
 }
 
 export interface AggregateResult {
@@ -98,6 +111,8 @@ export interface AggregateResult {
   groups: CostGroup[]
   totalTurns: number
   totalCostUsd: number
+  /** True when any group has hasEstimated (convenience for a single overall badge). */
+  hasEstimated: boolean
   error?: string
 }
 
@@ -123,6 +138,8 @@ export interface PivotRow {
   /** subagent → token breakdown; main → null (no breakdown, cost only). */
   usage: PivotUsage | null
   cost_usd: number
+  /** True when any line folded into this row has cost_source === 'estimated'. */
+  hasEstimated: boolean
 }
 
 export interface PivotResult {
@@ -132,6 +149,8 @@ export interface PivotResult {
   subagentUsage: PivotUsage
   totalTurns: number
   totalCostUsd: number
+  /** True when any row has hasEstimated (convenience for a single overall badge). */
+  hasEstimated: boolean
   error?: string
 }
 
@@ -155,7 +174,14 @@ interface TurnLine {
   session_id?: string
   cost_usd?: number
   cost_basis?: string
+  /** prdt (v1) field — "estimated" (usage×price-table) | "reported" | absent (legacy). */
+  cost_source?: string | null
   usage?: TurnUsage
+}
+
+/** True when a line's cost is a client-side estimate, not the real invoice. */
+function isEstimated(line: TurnLine): boolean {
+  return line.cost_source === 'estimated'
 }
 
 /**
@@ -201,17 +227,18 @@ let debounceTimer: ReturnType<typeof setTimeout> | null = null
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Resolve the turns.jsonl path inside projectDir/.productune, rejecting any
- * traversal that would escape that directory.
+ * Resolve the turns.jsonl path for projectDir via project-paths.ts's dual-mode
+ * resolver (adapter A1) — `.prdt/turns.jsonl` for prdt projects, legacy
+ * `.productune/turns.jsonl` otherwise. Kind is re-detected per call (cheap
+ * existsSync), matching every other project-paths call site.
  */
 function resolveTurnsPath(projectDir: string): string | null {
   if (!projectDir) return null
-  const base = path.resolve(projectDir, '.productune')
-  const file = path.resolve(base, 'turns.jsonl')
-  // Containment guard — the resolved file must live directly under
-  // projectDir/.productune (reject any traversal that escapes the base).
-  if (file !== path.join(base, 'turns.jsonl')) return null
-  return file
+  try {
+    return turnsJsonlPath(projectDir)
+  } catch {
+    return null
+  }
 }
 
 /** Pick the group key for a line under the requested dimension. */
@@ -238,13 +265,14 @@ export function aggregateLines(lines: TurnLine[], by: CostGroupBy): AggregateRes
     subagentCost: number
     // session_id → max cumulative cost_usd seen on a main line for this group
     mainSessionMax: Map<string, number>
+    hasEstimated: boolean
   }
   const groups = new Map<string, Acc>()
 
   const ensure = (key: string): Acc => {
     let acc = groups.get(key)
     if (!acc) {
-      acc = { turns: 0, subagentCost: 0, mainSessionMax: new Map() }
+      acc = { turns: 0, subagentCost: 0, mainSessionMax: new Map(), hasEstimated: false }
       groups.set(key, acc)
     }
     return acc
@@ -256,6 +284,7 @@ export function aggregateLines(lines: TurnLine[], by: CostGroupBy): AggregateRes
     const key = groupKeyFor(parsed, by)
     const acc = ensure(key)
     acc.turns += 1
+    if (isEstimated(parsed)) acc.hasEstimated = true
 
     const cost = costForLine(parsed)
 
@@ -277,20 +306,22 @@ export function aggregateLines(lines: TurnLine[], by: CostGroupBy): AggregateRes
   const out: CostGroup[] = []
   let totalTurns = 0
   let totalCostUsd = 0
+  let hasEstimated = false
 
   for (const [key, acc] of groups) {
     let mainCost = 0
     for (const v of acc.mainSessionMax.values()) mainCost += v
     const cost = acc.subagentCost + mainCost
-    out.push({ key, turns: acc.turns, cost_usd: cost })
+    out.push({ key, turns: acc.turns, cost_usd: cost, hasEstimated: acc.hasEstimated })
     totalTurns += acc.turns
     totalCostUsd += cost
+    if (acc.hasEstimated) hasEstimated = true
   }
 
   // Stable, useful ordering: highest cost first, then key.
   out.sort((a, b) => b.cost_usd - a.cost_usd || a.key.localeCompare(b.key))
 
-  return { ok: true, groups: out, totalTurns, totalCostUsd }
+  return { ok: true, groups: out, totalTurns, totalCostUsd, hasEstimated }
 }
 
 /** Parse a turns.jsonl blob into objects; blank/broken lines skipped silently. */
@@ -318,7 +349,7 @@ export function parseTurnsBlob(raw: string): TurnLine[] {
 function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
   const file = resolveTurnsPath(projectDir)
   if (!file) {
-    return { ok: false, groups: [], totalTurns: 0, totalCostUsd: 0, error: 'invalid projectDir' }
+    return { ok: false, groups: [], totalTurns: 0, totalCostUsd: 0, hasEstimated: false, error: 'invalid projectDir' }
   }
 
   let raw: string
@@ -326,7 +357,7 @@ function aggregate(projectDir: string, by: CostGroupBy): AggregateResult {
     raw = fs.readFileSync(file, 'utf-8')
   } catch {
     // Missing file (ENOENT) or unreadable → empty aggregation, no crash.
-    return { ok: true, groups: [], totalTurns: 0, totalCostUsd: 0 }
+    return { ok: true, groups: [], totalTurns: 0, totalCostUsd: 0, hasEstimated: false }
   }
 
   return aggregateLines(parseTurnsBlob(raw), by)
@@ -367,7 +398,7 @@ function aggregatePivot(projectDir: string): PivotResult {
   if (!file) {
     return {
       ok: false, rows: [], subagentUsage: zeroUsage(),
-      totalTurns: 0, totalCostUsd: 0, error: 'invalid projectDir',
+      totalTurns: 0, totalCostUsd: 0, hasEstimated: false, error: 'invalid projectDir',
     }
   }
 
@@ -375,7 +406,7 @@ function aggregatePivot(projectDir: string): PivotResult {
   try {
     raw = fs.readFileSync(file, 'utf-8')
   } catch {
-    return { ok: true, rows: [], subagentUsage: zeroUsage(), totalTurns: 0, totalCostUsd: 0 }
+    return { ok: true, rows: [], subagentUsage: zeroUsage(), totalTurns: 0, totalCostUsd: 0, hasEstimated: false }
   }
 
   return aggregatePivotLines(parseTurnsBlob(raw))
@@ -383,8 +414,8 @@ function aggregatePivot(projectDir: string): PivotResult {
 
 /** Pure persona×model pivot core (T-PATCH-201) — unit-testable, no filesystem. */
 export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
-  interface SubAcc { turns: number; cost: number; usage: PivotUsage }
-  interface MainAcc { turns: number; sessionMax: Map<string, number> }
+  interface SubAcc { turns: number; cost: number; usage: PivotUsage; hasEstimated: boolean }
+  interface MainAcc { turns: number; sessionMax: Map<string, number>; hasEstimated: boolean }
   // tuple key flattened as `${persona} ${model}` to avoid separator clashes.
   const sub = new Map<string, SubAcc>()
   const main = new Map<string, MainAcc>()
@@ -405,11 +436,13 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
     const key = persona + SEP + model
 
     const cost = costForLine(parsed)
+    const estimated = isEstimated(parsed)
 
     if (isCumulative(parsed)) {
       let acc = main.get(key)
-      if (!acc) { acc = { turns: 0, sessionMax: new Map() }; main.set(key, acc) }
+      if (!acc) { acc = { turns: 0, sessionMax: new Map(), hasEstimated: false }; main.set(key, acc) }
       acc.turns += 1
+      if (estimated) acc.hasEstimated = true
       const sid = typeof parsed.session_id === 'string' && parsed.session_id
         ? parsed.session_id
         : `__no_session__${acc.sessionMax.size}`
@@ -417,8 +450,9 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
       if (prev === undefined || cost > prev) acc.sessionMax.set(sid, cost)
     } else {
       let acc = sub.get(key)
-      if (!acc) { acc = { turns: 0, cost: 0, usage: zeroUsage() }; sub.set(key, acc) }
+      if (!acc) { acc = { turns: 0, cost: 0, usage: zeroUsage(), hasEstimated: false }; sub.set(key, acc) }
       acc.turns += 1
+      if (estimated) acc.hasEstimated = true
       acc.cost += cost
       const u = readUsage(parsed.usage)
       acc.usage.in += u.in
@@ -433,10 +467,11 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
   const subagentUsage: PivotUsage = zeroUsage()
   let totalTurns = 0
   let totalCostUsd = 0
+  let hasEstimated = false
 
   for (const [key, acc] of sub) {
     const [persona, model] = split(key)
-    rows.push({ persona, model, scope: 'subagent', turns: acc.turns, usage: { ...acc.usage }, cost_usd: acc.cost })
+    rows.push({ persona, model, scope: 'subagent', turns: acc.turns, usage: { ...acc.usage }, cost_usd: acc.cost, hasEstimated: acc.hasEstimated })
     subagentUsage.in += acc.usage.in
     subagentUsage.out += acc.usage.out
     subagentUsage.cache += acc.usage.cache
@@ -444,14 +479,16 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
     subagentUsage.cacheCreation += acc.usage.cacheCreation
     totalTurns += acc.turns
     totalCostUsd += acc.cost
+    if (acc.hasEstimated) hasEstimated = true
   }
   for (const [key, acc] of main) {
     const [persona, model] = split(key)
     let cost = 0
     for (const v of acc.sessionMax.values()) cost += v
-    rows.push({ persona, model, scope: 'main', turns: acc.turns, usage: null, cost_usd: cost })
+    rows.push({ persona, model, scope: 'main', turns: acc.turns, usage: null, cost_usd: cost, hasEstimated: acc.hasEstimated })
     totalTurns += acc.turns
     totalCostUsd += cost
+    if (acc.hasEstimated) hasEstimated = true
   }
 
   // persona primary (by descending persona-subtotal cost), then model secondary.
@@ -464,7 +501,7 @@ export function aggregatePivotLines(lines: TurnLine[]): PivotResult {
     a.model.localeCompare(b.model),
   )
 
-  return { ok: true, rows, subagentUsage, totalTurns, totalCostUsd }
+  return { ok: true, rows, subagentUsage, totalTurns, totalCostUsd, hasEstimated }
 }
 
 function broadcast(projectDir: string): void {

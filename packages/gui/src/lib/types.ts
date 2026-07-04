@@ -20,6 +20,14 @@ export const PHASE_NAMES: Record<number, Phase> = {
   5: 'Close',
 }
 
+// ── prdt (v1) stage — adapter A4 (T-287) ──────────────────────────────────────
+// prdt po-state uses a FLAT 4-value lifecycle string instead of the legacy 1..5
+// `current_phase` numeric model above. This is a separate, mutually-exclusive
+// axis (a prdt po-state has `stage`, never `current_phase`, and vice versa) —
+// see `PoState.stage` below and `isPrdtPoState` in phase-mapping.ts. Legacy
+// `Phase`/`PHASE_NAMES` are untouched and keep driving legacy-project rendering.
+export type Stage = 'define' | 'build' | 'ship' | 'retro'
+
 // Layer B — ticket type (`type` field on each ticket md frontmatter).
 // Renamed from `Stage` (v2 doctrine, sub-d).
 // Canonical 9 types — SoT: persona/designer/bookshelf/ticket-schema.md.
@@ -192,6 +200,13 @@ export interface CurrentTask {
   qa_status?: QaStatus
   qa_loops?: number
   assignee_persona?: string
+  /**
+   * prdt (v1) short persona name (`po|designer|developer|qa`) — adapter A4.
+   * The prdt `current_task` shape is `{ticket_id, slug, assignee}`; `assignee`
+   * is distinct from the legacy `assignee_persona` field name above (kept
+   * separate rather than aliased, since the two schemas never co-occur).
+   */
+  assignee?: string
   started_at?: string
   ended_at?: string | null
   request_summary?: string
@@ -343,6 +358,26 @@ export interface PoState {
   current_phase?: number  // 1..5; resolves to Phase via PHASE_NAMES
   phase_history?: PhaseTransition[]
   pending_gate?: PendingGate | null
+  /**
+   * prdt (v1) lifecycle field — adapter A4 (T-287). Present ONLY on a prdt
+   * po-state (4-field schema: `{schema_version, stage, version, current_task}`);
+   * absent on every legacy po-state. `isPrdtPoState()` in phase-mapping.ts uses
+   * this field's presence as the project-kind discriminator at the store level.
+   */
+  stage?: Stage
+  /**
+   * prdt (v1) flat version field — adapter A8 (T-291). prdt po-state carries a
+   * single `version` string (e.g. "v1.1") instead of the legacy `current_version`
+   * + `versions[]` array. Present only on a prdt po-state (alongside `stage`);
+   * legacy po-state uses `current_version`.
+   *
+   * T-306: at the renderer store ingress (useWorkspace.setPoState) this value is
+   * BRIDGED into `current_version` via `bridgePrdtVersion` (phase-mapping.ts), so
+   * version-keyed consumers (PRD auto-nav, ticket-review auto-open, artifact
+   * scoping, dashboards) work unmodified for prdt. `versions[]` is never
+   * synthesized — array-driven institutions stay suppressed via isPrdtPoState.
+   */
+  version?: string
   current_task?: CurrentTask
   /** @deprecated v1 only — readers ignore in v2; GUI uses `useTicketScan` instead. */
   past_tickets?: Ticket[]

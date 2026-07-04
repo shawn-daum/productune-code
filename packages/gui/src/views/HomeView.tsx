@@ -15,6 +15,9 @@ interface RecentWithMeta {
   exists: boolean
   phase: number | null
   version: string | null
+  /** T-306: prdt flat stage (define/build/ship/retro) — null for legacy projects.
+   *  Optional: tolerates a stale main process that predates the field. */
+  stage?: string | null
 }
 
 // Fallback shape when listRecentsWithMeta is unavailable (legacy preload)
@@ -65,7 +68,7 @@ function ProjectCard({
 }) {
   const [hovered, setHovered] = useState(false)
   const missing = !entry.exists
-  const hasMeta = entry.version !== null || entry.phase !== null
+  const hasMeta = entry.version !== null || entry.phase !== null || entry.stage != null
 
   const cardStyle: React.CSSProperties = {
     position: 'relative',
@@ -124,7 +127,7 @@ function ProjectCard({
         {/* Slug */}
         <div style={slugStyle}>{entry.slug}</div>
 
-        {/* Meta row: version chip + phase badge */}
+        {/* Meta row: version chip + phase badge (legacy) / stage badge (prdt, T-306) */}
         {hasMeta && (
           <div style={metaRowStyle}>
             {entry.version !== null && (
@@ -133,6 +136,13 @@ function ProjectCard({
             {entry.phase !== null && (
               <span style={phaseBadgeStyle}>
                 {t('app.home.phaseBadge', { n: entry.phase })}
+              </span>
+            )}
+            {entry.phase === null && entry.stage != null && (
+              <span style={phaseBadgeStyle}>
+                {/* reuse the workspace stage labels (Define/Build/Ship/Retro);
+                    raw value as fallback for an unknown stage string */}
+                {t(`workspace.stage.${entry.stage}`, entry.stage)}
               </span>
             )}
           </div>

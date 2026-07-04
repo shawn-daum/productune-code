@@ -40,11 +40,20 @@ export interface SetPersonaStateOpts {
 // helpers.ts 의 persona-id 매핑은 이 함수로 수렴 완료(T-PATCH-149).
 // store/workspace.ts:726, store/useBackgroundTasks.ts:138 은 출력 도메인이 달라
 // (PersonaId 가 아닌 다른 타입을 내므로) 수렴 대상 아님 — 의도적으로 별도 유지.
+//
+// T-285 (adapter A2): `prdt-*` id 추가 등록 — 치환 아닌 legacy(pdt-*)와의 공존.
+// prdt 프로젝트에서 PO가 emit하는 subagent_type은 `prdt-po`/`prdt-designer`/
+// `prdt-developer`/`prdt-qa`이며, 이 맵이 renderer 단일 SoT이므로 양쪽을 함께
+// 등록한다. legacy pdt-* 항목은 무수정.
 const AGENT_TYPE_TO_PERSONA: Record<string, PersonaId> = {
   'pdt-po':        'po',
   'pdt-designer':  'designer',
   'pdt-developer': 'dev',
   'pdt-qa':        'qa',
+  'prdt-po':        'po',
+  'prdt-designer':  'designer',
+  'prdt-developer': 'dev',
+  'prdt-qa':        'qa',
 }
 
 /**

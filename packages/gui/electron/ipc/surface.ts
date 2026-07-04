@@ -20,6 +20,7 @@ import {
   cancelSurfaceRun,
   type SurfaceKind,
 } from '../surface-runner'
+import { configPath } from '../project-paths'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,10 +56,10 @@ interface SurfaceOut { type: string; build?: string | null; run?: RunInfo }
 
 /** D8: read .productune/config.json; returns null when absent/corrupt. */
 function readConfig(projectDir: string): { surfaces?: Record<string, SurfaceConfig> } | null {
-  const configPath = path.join(projectDir, '.productune', 'config.json')
-  if (!fs.existsSync(configPath)) return null
+  const cfgPath = configPath(projectDir)
+  if (!fs.existsSync(cfgPath)) return null
   try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+    return JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
   } catch {
     return null
   }
@@ -69,7 +70,7 @@ function isProductuneProject(projectDir: unknown): projectDir is string {
   return (
     typeof projectDir === 'string' &&
     projectDir.length > 0 &&
-    fs.existsSync(path.join(projectDir, '.productune', 'config.json'))
+    fs.existsSync(configPath(projectDir))
   )
 }
 

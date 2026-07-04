@@ -45,9 +45,16 @@ function syncLoginItem(enabled: boolean): void {
 import { fireNotification } from '../notifications'
 
 // ── Persona-spec edit (v0.5 B1 / T-017) ──────────────────────────────────────
-// Persona agent specs live at ~/.claude/agents/<id>.md. Only the 4 known
+// Persona agent specs live at ~/.claude/agents/<id>.md. Only the known
 // productune personas are addressable — guards against arbitrary path writes.
-const PERSONA_SPEC_IDS = new Set(['pdt-po', 'pdt-designer', 'pdt-developer', 'pdt-qa'])
+//
+// T-285 (adapter A2): `prdt-*` ids registered alongside legacy `pdt-*` —
+// coexistence, not a replacement, so a prdt project's Persona Tier Editor can
+// address its own agent spec files too.
+const PERSONA_SPEC_IDS = new Set([
+  'pdt-po', 'pdt-designer', 'pdt-developer', 'pdt-qa',
+  'prdt-po', 'prdt-designer', 'prdt-developer', 'prdt-qa',
+])
 
 function personaSpecPath(personaId: string): string | null {
   if (!PERSONA_SPEC_IDS.has(personaId)) return null

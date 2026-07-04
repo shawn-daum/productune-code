@@ -11,6 +11,7 @@
 
 import fs from 'fs'
 import path from 'path'
+import { chatJsonPath } from './project-paths'
 
 // ── Types (mirrored from src/lib/types.ts — no cross-boundary import in main) ──
 
@@ -47,12 +48,6 @@ export interface Session {
   messages: Message[]
   claude_session_id?: string
   updated_at: string
-}
-
-// ── Path helpers ───────────────────────────────────────────────────────────────
-
-function chatJsonPath(projectDir: string): string {
-  return path.join(projectDir, '.productune', 'chat.json')
 }
 
 // ── Atomic write (tmp + rename) ────────────────────────────────────────────────

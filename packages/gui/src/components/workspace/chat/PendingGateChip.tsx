@@ -15,6 +15,7 @@ import { ChevronDown, X, AlertCircle, Send, CheckCircle2 } from 'lucide-react'
 import { useWorkspace } from '../../../store/workspace'
 import { PHASE_NAMES } from '../../../lib/types'
 import type { Message } from '../../../lib/types'
+import { isPrdtPoState } from '../../../lib/phase-mapping'
 
 export default function PendingGateChip() {
   const { t }           = useTranslation()
@@ -40,6 +41,11 @@ export default function PendingGateChip() {
 
   // If pending_gate clears externally (PO cleared it), close popover
   useEffect(() => { if (!gate) setOpen(false) }, [gate])
+
+  // T-291 (adapter A8): the phase-gate institution is gone in v1 — a prdt po-state
+  // never carries pending_gate, so this is inert by data absence, but the explicit
+  // guard makes "no gate UI on prdt" provable and future-proof against field leaks.
+  if (isPrdtPoState(poState)) return null
 
   if (!gate) return null   // count = 0 → zero height, no render
 

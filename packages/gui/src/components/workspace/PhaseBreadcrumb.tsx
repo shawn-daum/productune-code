@@ -7,6 +7,7 @@ import {
   type PhaseCounts,
   type CloseGateItem,
   type GateItemStatus,
+  type StageDef,
   getGateBoundary,
   aggregateGate,
   resolveItemStatus,
@@ -39,9 +40,46 @@ interface Props {
   // phase not in this set renders as a plain (non-clickable) pill. PRD is the
   // minimum; others are added as their destinations get wired.
   clickablePhases?: ReadonlySet<Phase>
+  // T-291 (adapter A8): prdt stage-mode. When present, the breadcrumb renders the
+  // 4-stage prdt strip (define/build/ship/retro, name+color from STAGE_DEFS) with
+  // the active stage highlighted, and NONE of the legacy 5-phase institutions —
+  // no gate marker, no per-phase counters, no clickable phase pills. A legacy
+  // project never passes these props, so its rendering (below) is untouched.
+  stages?: StageDef[]
+  // Active stage index into `stages` (0..3). Ignored unless `stages` is present.
+  activeStageIndex?: number
 }
 
-export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate, pendingGate, onPhaseClick, clickablePhases }: Props) {
+export default function PhaseBreadcrumb({ phase, version, phaseCounts, closeGate, pendingGate, onPhaseClick, clickablePhases, stages, activeStageIndex }: Props) {
+  const { t } = useTranslation()
+
+  // ── prdt stage-mode (T-291 adapter A8) ──────────────────────────────────────
+  // Institution-gone: gate marker / phase counters / clickable pills do not exist
+  // in v1, so this branch renders a clean 4-stage strip and nothing else.
+  if (stages && stages.length > 0) {
+    const activeIdx = activeStageIndex ?? 0
+    return (
+      <div style={wrap}>
+        {version && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+            <span style={versionNode}>{version}</span>
+          </span>
+        )}
+        {stages.map((s, i) => {
+          const isActive = i === activeIdx
+          return (
+            <span key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+              {i > 0 && <span style={chevron}>›</span>}
+              <span style={isActive ? stageActiveNode(s.color) : inactiveNode}>
+                {t(s.labelKey)}
+              </span>
+            </span>
+          )
+        })}
+      </div>
+    )
+  }
+
   return (
     <div style={wrap}>
       {version && (
@@ -322,6 +360,19 @@ const inactiveNode: React.CSSProperties = {
   ...baseNode,
   color: '#707070',
   background: 'transparent',
+}
+
+// T-291 (adapter A8): active prdt-stage pill. Paints the stage's own color
+// (STAGE_DEFS.color) as text + a low-alpha tinted surface, so each stage reads
+// with its distinct hue (define/build/ship/retro) rather than the fixed legacy
+// phase-active purple. Color is applied at render time from the StageDef.
+function stageActiveNode(color: string): React.CSSProperties {
+  return {
+    ...baseNode,
+    color,
+    background: `${color}1A`, // ~10% alpha tint of the stage color
+    fontWeight: 600,
+  }
 }
 
 // T-PATCH-096 AC-3: version is a secondary hierarchy — muted/neutral so it does

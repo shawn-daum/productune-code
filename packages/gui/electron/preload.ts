@@ -74,6 +74,17 @@ contextBridge.exposeInMainWorld('api', {
   onboardingSetDone: (projectDir: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:setDone', projectDir),
 
+  // ── prdt hook install status/trigger (T-305) ────────────────────────────────
+  /** Read whether THIS machine has the prdt discipline hooks registered, and
+   *  whether the ~/.prdt hook mirror exists at all (prdt-install.sh ever ran). */
+  checkPrdtHooks: (): Promise<{ mirrorPresent: boolean; installed: boolean }> =>
+    ipcRenderer.invoke('onboarding:checkPrdtHooks'),
+
+  /** Install the prdt hooks for a prdt-kind projectDir the user has open. Only
+   *  called on explicit user confirmation — never automatically on project open. */
+  installPrdtHooksAt: (projectDir: string): Promise<{ ok: boolean; installed: boolean; error?: string }> =>
+    ipcRenderer.invoke('onboarding:installPrdtHooksAt', projectDir),
+
   initProject: (opts: { slug: string; projectDir: string }) =>
     ipcRenderer.invoke('init:project', opts),
 
@@ -129,7 +140,8 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('recents:list'),
 
   // T-PATCH-114: batch recents with meta — returns all entries incl. exists:false
-  listRecentsWithMeta: (): Promise<Array<{ slug: string; projectDir: string; openedAt: string; exists: boolean; phase: number | null; version: string | null }>> =>
+  // T-306: + `stage` (prdt flat lifecycle; null for legacy projects)
+  listRecentsWithMeta: (): Promise<Array<{ slug: string; projectDir: string; openedAt: string; exists: boolean; phase: number | null; version: string | null; stage: string | null }>> =>
     ipcRenderer.invoke('recents:listWithMeta'),
 
   addRecent: (opts: { projectDir: string; slug: string }): Promise<{ ok: boolean }> =>
@@ -1189,15 +1201,17 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── Token-cost archive (T-027) ───────────────────────────────────────────────
 
-  /** Aggregate per-project token cost from .productune/turns.jsonl, grouped by dimension. */
+  /** Aggregate per-project token cost from turns.jsonl (dual-mode path — .prdt/ or .productune/), grouped by dimension. */
   costAggregate: (
     projectDir: string,
     by: 'version' | 'persona' | 'model',
   ): Promise<{
     ok: boolean
-    groups: Array<{ key: string; turns: number; cost_usd: number }>
+    groups: Array<{ key: string; turns: number; cost_usd: number; hasEstimated: boolean }>
     totalTurns: number
     totalCostUsd: number
+    /** T-290 (A7): true when any group has cost_source:'estimated' — usage×price-table conversion, not the real invoice. */
+    hasEstimated: boolean
     error?: string
   }> =>
     ipcRenderer.invoke('cost:aggregate', projectDir, by),
@@ -1214,10 +1228,13 @@ contextBridge.exposeInMainWorld('api', {
       turns: number
       usage: { in: number; out: number; cache: number } | null
       cost_usd: number
+      hasEstimated: boolean
     }>
     subagentUsage: { in: number; out: number; cache: number }
     totalTurns: number
     totalCostUsd: number
+    /** T-290 (A7): true when any row has cost_source:'estimated'. */
+    hasEstimated: boolean
     error?: string
   }> =>
     ipcRenderer.invoke('cost:aggregatePivot', projectDir),

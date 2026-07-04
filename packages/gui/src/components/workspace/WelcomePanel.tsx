@@ -10,11 +10,23 @@
  * #14 PRD auto-open) — the pane/tab state is untouched underneath.
  */
 import { useTranslation } from 'react-i18next'
+import { STAGE_DEFS } from '../../lib/phase-mapping'
 
 const STAGES = ['PRD', 'Design', 'Build', 'Deploy', 'Close'] as const
 
-export default function WelcomePanel() {
+interface Props {
+  // T-291 (adapter A8, QA fix): prdt projects show the 4-stage prdt lifecycle
+  // (define/build/ship/retro, labels from STAGE_DEFS i18n keys) instead of the
+  // legacy 5-phase row. Absent → legacy row, byte-identical to before.
+  variant?: 'legacy' | 'prdt'
+  // Active step index (into whichever row renders). Default 0.
+  activeIndex?: number
+}
+
+export default function WelcomePanel({ variant = 'legacy', activeIndex = 0 }: Props) {
   const { t } = useTranslation()
+  const labels: readonly string[] =
+    variant === 'prdt' ? STAGE_DEFS.map((d) => t(d.labelKey)) : STAGES
   return (
     <main style={wrap}>
       <div style={glyph}>
@@ -25,8 +37,8 @@ export default function WelcomePanel() {
       <h3 style={headline}>{t('workspace.welcome.headline')}</h3>
       <p style={supporting}>{t('workspace.welcome.supporting')}</p>
       <div style={steps}>
-        {STAGES.map((s, i) => (
-          <span key={s} style={i === 0 ? stepOn : step}>{s}</span>
+        {labels.map((s, i) => (
+          <span key={s} style={i === activeIndex ? stepOn : step}>{s}</span>
         ))}
       </div>
     </main>

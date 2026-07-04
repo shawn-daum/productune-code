@@ -11,6 +11,7 @@ import {
 } from '@productune/core'
 import type { PendingPromotion } from '@productune/core'
 import { mechanicalWrite } from '../mechanical-write'
+import { poStatePath, stateDir } from '../project-paths'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,10 +68,6 @@ let poDebounceTimer: ReturnType<typeof setTimeout> | null = null
 // Last pushed signal — guards against the render storm (no-op when unchanged).
 let lastSignal: string | null = null
 
-function poStatePath(projectDir: string): string {
-  return path.join(projectDir, '.productune', 'po-state.json')
-}
-
 /** Read + parse po-state.json. null on missing/unreadable/corrupt (watcher path
  *  is best-effort — a transient mid-write parse failure must not push garbage). */
 function readPoStateSafe(projectDir: string): any {
@@ -89,6 +86,10 @@ function readPoStateSafe(projectDir: string): any {
  * back to a non-existent PRD.md). Mirrors PrdSection: anchor → master → snapshot.
  */
 export function prdCandidatePaths(projectDir: string, state: any): string[] {
+  // T-306: prdt (flat `stage` string discriminator) keeps ONE living PRD at
+  // docs/prd/PRD.md — no prd_anchor, no per-version snapshots. Single candidate,
+  // mirroring the renderer twin (views/workspace/shell/helpers.ts).
+  if (typeof state?.stage === 'string') return [path.join(projectDir, 'docs', 'prd', 'PRD.md')]
   const currentVersion: string | undefined = state?.current_version
   if (!currentVersion) return []
   const candidates: string[] = []
@@ -123,9 +124,13 @@ function computeSignal(projectDir: string, state: any): { signal: string; prdPat
   const prdPath = resolveExistingPrd(projectDir, state)
   // Signal = the trio the GUI actually reacts to (#11 layout, #14 auto-nav). When
   // unchanged we skip the broadcast entirely — po-state is rewritten every PO turn.
+  // T-306: coalesce the prdt flat fields (`version` / `stage`) into the signal —
+  // a legacy po-state never carries them, so legacy signals are byte-identical.
+  // Without this a prdt version bump or stage change would dedup away (v/p both
+  // permanently null) and the renderer would never see the transition.
   const signal = JSON.stringify({
-    v: state?.current_version ?? null,
-    p: state?.current_phase ?? null,
+    v: state?.current_version ?? state?.version ?? null,
+    p: state?.current_phase ?? state?.stage ?? null,
     r: prdPath !== null,
   })
   return { signal, prdPath }
@@ -180,7 +185,7 @@ function armPoWatch(projectDir: string): void {
   if (poWatchedProjectDir === projectDir && poDirWatcher) return
   teardownPoWatch()
 
-  const dir = path.join(projectDir, '.productune')
+  const dir = stateDir(projectDir)
   if (!fs.existsSync(dir)) return  // nothing to watch yet — degrade silently
 
   poWatchedProjectDir = projectDir
@@ -232,7 +237,7 @@ export function register(): void {
   //  - read/parse failure      → { ok:false, error:'parse' } (renderer shows explicit error)
   //  - success                 → parsed po-state object
   ipcMain.handle('state:readPoState', async (_event, projectDir: string) => {
-    const statePath = path.join(projectDir, '.productune', 'po-state.json')
+    const statePath = poStatePath(projectDir)
     let raw: string
     try {
       raw = fs.readFileSync(statePath, 'utf-8')
@@ -254,7 +259,7 @@ export function register(): void {
   // Direct mechanical write to po-state.json on user [승인 →] click.
   // Updates current_phase, appends phase_history entry, clears pending_gate.
   ipcMain.handle('phase:approve', (_event, args: ApprovePhaseArgs): { ok: boolean; error?: string } => {
-    const statePath = path.join(args.projectDir, '.productune', 'po-state.json')
+    const statePath = poStatePath(args.projectDir)
     try {
       const raw = fs.readFileSync(statePath, 'utf-8')
       const state = JSON.parse(raw)

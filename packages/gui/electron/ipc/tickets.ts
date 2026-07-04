@@ -232,9 +232,19 @@ export function register(): void {
         try { mtime = fs.statSync(filePath).mtimeMs } catch { mtime = undefined }
         const fm = parseFrontmatter(content)
         const ticket_id = String(fm.ticket_id ?? path.basename(file, '.md'))
+        // T-286 (prdt v1 adapter A3): prdt v1 tickets carry no `version` frontmatter key —
+        // they're placed under `docs/tickets/<version>/` by directory instead
+        // (`docs/prdt-v1-gui-coupling.md` §4). The scan loop already treats every immediate
+        // subdirectory as a "version dir" for traversal; `backlog/` is the one directory name
+        // that is NOT a version and must not be displayed/sorted as one. Special-case it to a
+        // literal `backlog` label instead of falling through to `null` → "Unassigned" (which
+        // would lose the distinction) or being treated as a real version. Other version-less
+        // dirs (e.g. `v1.1/`) keep today's `null` fallback — unchanged, legacy behaviour intact.
+        const version =
+          (fm.version && String(fm.version).trim()) || (versionDir === 'backlog' ? 'backlog' : null)
         const ticket: ScannedTicket = {
           ticket_id,
-          version: (fm.version && String(fm.version).trim()) || null,
+          version,
           slug: fm.slug,
           title: fm.title,
           type: fm.type,

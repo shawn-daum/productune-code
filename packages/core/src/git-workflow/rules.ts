@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { stateDir } from '../state/project-kind'
 
 export interface GitRules {
   useDevBranch: boolean
@@ -38,7 +39,7 @@ const GLOBAL_DEFAULT_PATH = path.join(os.homedir(), '.productune', 'git-rules.de
 const cache = new Map<string, GitRules>()
 
 function projectRulesPath(projectDir: string): string {
-  return path.join(projectDir, '.productune', 'git-rules.json')
+  return path.join(stateDir(projectDir), 'git-rules.json')
 }
 
 /**

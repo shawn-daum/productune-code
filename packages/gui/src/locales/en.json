@@ -279,7 +279,8 @@
       "startedToday": "Started today",
       "daysSince": "Day {{n}}",
       "startedLabel": "Started",
-      "ticketsLabel": "Tickets"
+      "ticketsLabel": "Tickets",
+      "prdtSingleHint": "Single version ({{version}}). Past versions live in docs/wiki/retro--v*.md."
     },
     "versionDetail": {
       "notFound": "Version `{{id}}` not found in po-state.",
@@ -470,6 +471,13 @@
       "navBackForward": "Browser Back / Forward",
       "cycleTab": "Cycle Tabs"
     },
+    "prdtHooks": {
+      "hint": "prdt discipline hooks aren't installed on this machine yet.",
+      "mirrorAbsent": "Can't install prdt discipline hooks yet — run prdt-install.sh on this machine first.",
+      "cta": "Install now",
+      "installing": "Installing…",
+      "failed": "Install failed: {{error}}"
+    },
     "sessionHealth": {
       "healthy": {
         "label": "Ready"
@@ -592,6 +600,12 @@
         "deploy": "Deploy — Release preparation & ship",
         "close": "Close — Retrospective & next round"
       }
+    },
+    "stage": {
+      "define": "Define",
+      "build": "Build",
+      "ship": "Ship",
+      "retro": "Retro"
     },
     "team": {
       "title": "Team",
@@ -1199,6 +1213,7 @@
     "total": "Total",
     "empty": "No cost data captured yet.",
     "estimateDisclaimer": "Costs are client-side estimates and may not match your provider invoice.",
-    "mainSessionNote": "Main-session rows are deduplicated by session (cumulative cost is counted once)."
+    "mainSessionNote": "Main-session rows are deduplicated by session (cumulative cost is counted once).",
+    "estimatedBadge": "est."
   }
 }

@@ -4,6 +4,7 @@ import i18next from '../i18n'
 import type { Project, Phase, PoState, Message, MessageKind } from '../lib/types'
 import { PHASE_NAMES } from '../lib/types'
 import { canCloseTab } from './tabCloseGuard'
+import { type StageDef, isPrdtPoState, getActiveStageDef, bridgePrdtVersion } from '../lib/phase-mapping'
 
 // ── T-PATCH-196: recently-closed tab descriptor ──────────────────────────────
 // Stored in a LIFO stack (max 10). NOT persisted to sessionStorage — cleared on
@@ -151,6 +152,14 @@ interface WorkspaceState {
    */
   poStateError: 'parse' | null
   phase: Phase
+  /**
+   * T-287 (adapter A4): prdt (v1) stage display def — non-null ONLY when
+   * `poState` is a prdt po-state (flat `stage` string, no `current_phase`).
+   * Purely additive: `phase` above keeps driving legacy 5-phase rendering
+   * exactly as before, so legacy consumers (PhaseBreadcrumb et al.) never see
+   * a behavior change. Stage-aware UI (v1.1+) reads this field instead.
+   */
+  stageDisplay: StageDef | null
   selectedVersionId: string | null
 
   // T-PATCH-013 B3: project-scope marker persisted alongside the pane tree in
@@ -293,6 +302,12 @@ function derivePhase(poState: PoState | null): Phase {
   return 'PRD'
 }
 
+/** T-287 (adapter A4): non-null only for a prdt po-state (see `isPrdtPoState`). */
+function deriveStageDisplay(poState: PoState | null): StageDef | null {
+  if (!isPrdtPoState(poState)) return null
+  return getActiveStageDef(poState)
+}
+
 function makeEmptyLeaf(paneId: string): LeafPaneNode {
   return { type: 'leaf', paneId, tabs: [], activeTabId: null }
 }
@@ -412,6 +427,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   poState: null,
   poStateError: null,
   phase: 'PRD',
+  stageDisplay: null,
   selectedVersionId: null,
   persistedProjectDir: null,
   messages: [],
@@ -473,6 +489,7 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
           poState: null,
           poStateError: null,
           phase: 'PRD',
+          stageDisplay: null,
           selectedVersionId: null,
           messages: [],
           claudeSessionId: null,
@@ -494,9 +511,13 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
     }
   },
 
-  setPoState: (poState) => {
+  setPoState: (rawPoState) => {
+    // T-306: single ingress bridge — a prdt state's flat `version` is mirrored
+    // into `current_version` here (copy-on-write; legacy states pass through by
+    // reference) so every version-keyed consumer downstream works unmodified.
+    const poState = bridgePrdtVersion(rawPoState)
     // A successful read clears any prior parse-error state (T-PATCH-167).
-    set({ poState, poStateError: null, phase: derivePhase(poState) })
+    set({ poState, poStateError: null, phase: derivePhase(poState), stageDisplay: deriveStageDisplay(poState) })
   },
 
   setPoStateError: (poStateError) => {

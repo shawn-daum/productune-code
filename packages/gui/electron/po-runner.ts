@@ -34,13 +34,25 @@ import {
   mergeCapture,
   type SubagentCostCapture,
 } from './subagent-cost'
+import { detectProjectKind } from './project-paths'
 
 /**
  * The chat panel always sends to PO. Other personas are reached via PO
  * dispatch (Task tool delegation), surfaced to the renderer via
  * `PersonaPresenceBar` events. (v2 sub-c: persona selector removed.)
+ *
+ * T-285 (adapter A2): two persona-id namespaces coexist — legacy productune
+ * projects spawn `pdt-po`, prdt projects (`.prdt/` marker, detectProjectKind)
+ * spawn `prdt-po`. This is additive registration, not a replacement: legacy
+ * projects are byte-for-byte unaffected.
  */
-const PO_AGENT = 'pdt-po' as const
+const PDT_PO_AGENT = 'pdt-po' as const
+const PRDT_PO_AGENT = 'prdt-po' as const
+
+/** Resolve the `--agent` id to spawn for a given project directory (T-285). */
+function poAgentFor(projectDir: string): string {
+  return detectProjectKind(projectDir) === 'prdt' ? PRDT_PO_AGENT : PDT_PO_AGENT
+}
 
 export interface SendOpts {
   /** User message text. */
@@ -332,7 +344,7 @@ export async function runPoTurn(opts: SendOpts, cb: RunCallbacks): Promise<void>
   cb.onMsgId(msgId)
 
   // Decide spawn vs. echo.
-  if (canSpawnClaude()) {
+  if (canSpawnClaude(opts.projectDir)) {
     return spawnClaude(opts, msgId, cb)
   }
   // T-PATCH-218: in a packaged app, claude genuinely missing is a real user-facing
@@ -346,10 +358,25 @@ export async function runPoTurn(opts: SendOpts, cb: RunCallbacks): Promise<void>
 
 // ── claude detection ────────────────────────────────────────────────────────────
 
-function canSpawnClaude(): boolean {
+/**
+ * T-289 (adapter A6): the onboarding-done env-file gate is dual-mode, mirroring
+ * poAgentFor's project-kind branch above — a prdt project (`.prdt/` marker, A1
+ * detectProjectKind) gates on `~/.prdt/prdt.env` (written by prdt-install.sh, T-289
+ * ctx §"미니멀 계승"), a legacy project keeps gating on `~/.productune/productune.env`
+ * exactly as before. Only the env file's PRESENCE is checked (never parsed) — same
+ * as the pre-existing legacy check — so no prdt.env field mapping is needed here.
+ * Exported (with an injectable `homeDir`) so tests can assert the branch against
+ * fixture dirs without reading the developer's real HOME.
+ */
+export function poEnvGatePath(projectDir: string, homeDir: string = os.homedir()): string {
+  return detectProjectKind(projectDir) === 'prdt'
+    ? path.join(homeDir, '.prdt', 'prdt.env')
+    : path.join(homeDir, '.productune', 'productune.env')
+}
+
+function canSpawnClaude(projectDir: string): boolean {
   // Two preconditions: env file present, claude on PATH.
-  const envPath = path.join(os.homedir(), '.productune', 'productune.env')
-  if (!fs.existsSync(envPath)) return false
+  if (!fs.existsSync(poEnvGatePath(projectDir))) return false
 
   // T-PATCH-218: search the SAME login-shell-augmented PATH the actual spawn uses
   // (withLoginShellPath, see runPoTurn). A Finder/packaged-app launch only inherits
@@ -1050,7 +1077,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // Emit healthy at turn start.
     emitHealth('healthy', undefined, hCtx, cb)
 
-    // Build args — first call uses `--agent pdt-po`, resume uses `--resume`.
+    // Build args — first call uses `--agent pdt-po`/`prdt-po` (T-285: resolved per
+    // project kind), resume uses `--resume`.
+    const poAgent = poAgentFor(opts.projectDir)
     const args: string[] = []
     if (opts.resume) {
       // T-PATCH-043 (AC1): re-pass `--agent` on resume turns too. `--resume`
@@ -1058,9 +1087,9 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
       // populate `agent_type` in the SessionStart hook input — so doctrine
       // would be lost on every resume turn (most GUI turns). Live-confirmed
       // that `--resume` + `--agent` coexist safely.
-      args.push('--resume', opts.resume, '--agent', PO_AGENT)
+      args.push('--resume', opts.resume, '--agent', poAgent)
     } else {
-      args.push('--agent', PO_AGENT)
+      args.push('--agent', poAgent)
     }
     // T-PATCH-147: default permission mode = bypassPermissions (≡ --dangerously-skip-permissions).
     // Trusted local runtime (user's own machine + own project); user decision 2026-06-16.
@@ -1938,17 +1967,25 @@ function parseTicketFocusItems(text: string): TicketFocusItem[] {
 // ── Artifact open parser (T-P4-114 §A) ───────────────────────────────────────
 
 /**
- * Extract changed_files[] from PO result text.
- * Returns an empty array when the key is absent or unparseable.
+ * Extract the files touched this turn from PO result text.
+ *
+ * T-288 (adapter A5): the prdt v1 return envelope names this field
+ * `files_written[]`; the legacy GUI parser only recognized `changed_files[]`.
+ * Same semantics either way, so both names are accepted here — neither
+ * replaces the other, and a candidate carrying just one still resolves. If a
+ * single JSON candidate somehow carries both, their entries are merged.
+ * Returns an empty array when neither key is present or unparseable.
  */
-function parseArtifactFiles(text: string): string[] {
+export function parseArtifactFiles(text: string): string[] {
   for (const candidate of extractJsonCandidates(text)) {
     try {
       const parsed: unknown = JSON.parse(candidate)
       if (!parsed || typeof parsed !== 'object') continue
       const obj = parsed as Record<string, unknown>
-      if (Array.isArray(obj.changed_files)) {
-        return obj.changed_files.filter((f): f is string => typeof f === 'string')
+      if (Array.isArray(obj.changed_files) || Array.isArray(obj.files_written)) {
+        const legacy = Array.isArray(obj.changed_files) ? obj.changed_files : []
+        const v1 = Array.isArray(obj.files_written) ? obj.files_written : []
+        return [...legacy, ...v1].filter((f): f is string => typeof f === 'string')
       }
     } catch { /* ignore */ }
   }
@@ -1957,7 +1994,7 @@ function parseArtifactFiles(text: string): string[] {
 
 // ── QA envelope parser (T-P4-116) ─────────────────────────────────────────────
 
-interface QaEnvelope {
+export interface QaEnvelope {
   persona?: string
   ticket_id?: string
   qa_status?: 'pass' | 'fail' | 'running'
@@ -1975,10 +2012,22 @@ interface QaEnvelope {
 
 /**
  * QA persona 결과 텍스트에서 QA envelope 추출.
- * 판별 조건: persona === 'pdt-qa' OR qa_status 키 존재 OR browser_url 키 존재.
+ * 판별 조건: persona === 'pdt-qa' | 'prdt-qa' OR qa_status 키 존재 OR browser_url 키 존재.
  * 없으면 null 반환 (noop).
+ *
+ * T-285 (adapter A2): `prdt-qa` 추가 — v1 envelope은 qa_status 없는 일반형
+ * (summary·confidence·blocked)일 수 있으므로 persona 값 자체로도 판별 가능해야
+ * prdt-qa 결과가 이 파서를 통과한다. 필드 존재는 계속 optional 취급(방어적).
+ *
+ * T-288 (adapter A5): confirmed via round-trip test (po-runner.envelope.test.ts)
+ * that a qa_status-less envelope (persona==='prdt-qa' only) still resolves here
+ * without throwing, and every downstream branch below (browser_url / qa_status /
+ * auth_required checks) already no-ops safely on the missing keys — no parser
+ * change needed. `browser_url`/`verify_url`/`verify_description`/`auth_required`
+ * are the confirmed contracts field names, carried over byte-identical from the
+ * legacy shape, so this parser is intentionally unmodified for them.
  */
-function parseQaEnvelope(text: string): QaEnvelope | null {
+export function parseQaEnvelope(text: string): QaEnvelope | null {
   for (const candidate of extractJsonCandidates(text)) {
     try {
       const parsed: unknown = JSON.parse(candidate)
@@ -1986,6 +2035,7 @@ function parseQaEnvelope(text: string): QaEnvelope | null {
       const obj = parsed as Record<string, unknown>
       if (
         obj.persona === 'pdt-qa' ||
+        obj.persona === 'prdt-qa' ||
         obj.qa_status !== undefined ||
         obj.browser_url !== undefined
       ) {
@@ -2214,14 +2264,15 @@ function parseAskUserQuestion(text: string): AskUserQuestionPayload | null {
 export function runHealthSmoke(projectDir: string): Promise<SmokeResult> {
   return new Promise((resolve) => {
     // Smoke is skipped when claude is not on PATH — reuse canSpawnClaude() gate.
-    if (!canSpawnClaude()) {
+    if (!canSpawnClaude(projectDir)) {
       resolve({ classification: 'not-installed' })
       return
     }
 
     // Trivial prompt: one word, zero cost, still exercises the full auth path.
+    // T-285: agent id resolved per project kind, same as the real spawn path.
     const smokeArgs = [
-      '--agent', PO_AGENT,
+      '--agent', poAgentFor(projectDir),
       '--permission-mode', 'bypassPermissions',
       '--print', '--output-format', 'stream-json', '--verbose',
       'ping',
