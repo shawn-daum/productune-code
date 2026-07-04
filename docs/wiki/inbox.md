@@ -13,3 +13,5 @@
 - A6 find: prdt hook 3종+statusline-prdt.sh는 legacy repo 번들(packages/core)에 없음(v1 repo 전용) — GUI 쪽 prdt hook 등록은 반드시 prdt-install.sh가 만든 ~/.prdt 미러를 가리켜야 함(번들 coreDir 금지, 신규 설치에서 존재하지 않는 스크립트 등록 위험).
 - A6 find: po-runner는 productune.env 내용을 파싱하지 않음(존재 게이트만, AGENT_TEAMS는 spawn env 하드코딩) — prdt.env 미니멀 계승에 GUI 필드 매핑 0건.
 - A6 drift(정보성): GUI prdt 온보딩은 statusline 자동 등록, CLI는 --statusline opt-in + PRDT_STATUSLINE_INSTALLED 플래그 — GUI는 ~/.prdt 파일 read-only 스탠스라 플래그 미갱신. 코스메틱.
+- ADR 후보(A7): prdt UsageBar 대체 지표 = 프로젝트 누적 비용(turns.jsonl 전체 합, 세션 스코프 아님) — rate-limit % 제도는 v1에서 소멸. 세션 단위 원하면 claudeSessionId 필터 후속 필요 (Designer/PO 결정 대기).
+- 감사 갭(A7 발견): costArchive.ts resolveTurnsPath의 .productune 하드코딩이 A1 스윕 목록(~15파일)과 T-283 재감사 양쪽에서 누락 — A7에서 수정 완료. 교훈: 감사 파일 카운트는 grep 스윕 재실행으로 검증해야지 목록 대조만으론 부족.

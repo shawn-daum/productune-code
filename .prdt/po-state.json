@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-288",
-    "slug": "adapter-a5-envelope-fields",
+    "ticket_id": "T-290",
+    "slug": "adapter-a7-usagebar-source",
     "assignee": "developer"
   }
 }
