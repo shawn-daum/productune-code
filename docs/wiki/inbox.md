@@ -22,3 +22,7 @@
 - 패턴(A8 근본원인): `poState?.current_version == null` 류 empty/fresh 판정은 prdt에서 항상 false-positive(필드 자체가 없음) — 발견 2건(EntryGate phase_history·MainPanel 웰컴) 수정됨. T-306 착지 시 이 predicate 형태 전수 스윕할 것.
 - A8 스윕 결과(무수정 graceful 소비처): PRD 자동내비 이중 비활성(renderer helpers + electron state 감시자 둘 다 current_version 키잉 — T-306), TicketDashboard version 태그 미표기, HomeView 카드 phase/version null, subagent-cost 버전 그룹핑 미동작 등 — 전부 T-306 브리지에서 복원 대상.
 - 관찰 대상(pre-existing, A8 무관): lastProject 자동 마운트 직후 프로젝트 전환 시 직전 프로젝트의 비동기 PRD 자동-오픈이 전환된 pane tree에 탭을 밀어 넣는 레이스 — 사람 속도에선 드묾, fail 아님, 후속 관찰.
+- ADR(T-306): prdt version 브리지는 store-ingress 정규화(bridgePrdtVersion, copy-on-write) — 소비처별 분기 대신 단일 초크포인트로 renderer 전체 점등. versions[]는 절대 합성 안 함(제도 억제 유지). electron main은 디스크 직독이라 5개 사이트 개별 수정.
+- 주의(T-306): prdt retro 버전 범프가 legacy rename-guard엔 'version rename'으로 보임 — guard는 legacy-only로 게이트함. 향후 current_version 전이 소비처 추가 시 동일 함정.
+- env find(T-306/QA 공용): playwright-electron으로 임의 프로젝트 대상 GUI 검증 — localStorage 'productune.lastProject' 세팅+reload(끝나면 복원). 네이티브 다이얼로그 우회 패턴.
+- 잔여(무해): QuickOpen 'v:' 항목은 versions[] 전용이라 prdt 미표기(graceful). flipped repo의 artifacts flat walk가 legacy v0.x 디렉토리 포함(정직·noisy). smoke 'visual layout' 테스트는 워크스페이스 resume 화면 미인식 — test-infra 갭.

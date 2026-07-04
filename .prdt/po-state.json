@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-291",
-    "slug": "adapter-a8-t3-hide",
+    "ticket_id": "T-306",
+    "slug": "prdt-version-field-bridge",
     "assignee": "developer"
   }
 }
