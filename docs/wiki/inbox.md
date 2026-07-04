@@ -27,3 +27,4 @@
 - env find(T-306/QA 공용): playwright-electron으로 임의 프로젝트 대상 GUI 검증 — localStorage 'productune.lastProject' 세팅+reload(끝나면 복원). 네이티브 다이얼로그 우회 패턴.
 - 잔여(무해): QuickOpen 'v:' 항목은 versions[] 전용이라 prdt 미표기(graceful). flipped repo의 artifacts flat walk가 legacy v0.x 디렉토리 포함(정직·noisy). smoke 'visual layout' 테스트는 워크스페이스 resume 화면 미인식 — test-infra 갭.
 - QA find(T-292): AskUserQuestion raw tool + CLI 내부 타임아웃 조합은 'silent PO 종료' 결함군(T-PATCH-157/197/268)의 미커버 변종 — toolErrorInfo(is_error 패턴) 감지망은 non-error 침묵 종료(타임아웃 fallback)를 못 잡는다. 이 계열 재발 시 우선 의심 지점.
+- 승격 후보(T-298): core 모듈의 .productune 하드코딩 결함 계열 재발(T-284 pending-promotions → T-298 hooks 생성 템플릿) — 신규 core 모듈은 stateDir()/project-kind.ts 경유 강제하는 lint rule 또는 code-review 체크 항목 검토.

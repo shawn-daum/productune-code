@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-304",
-    "slug": "renderer-project-kind-polog",
+    "ticket_id": "T-298",
+    "slug": "prepush-hook-rules-path",
     "assignee": "developer"
   }
 }
