@@ -28,3 +28,5 @@
 - 잔여(무해): QuickOpen 'v:' 항목은 versions[] 전용이라 prdt 미표기(graceful). flipped repo의 artifacts flat walk가 legacy v0.x 디렉토리 포함(정직·noisy). smoke 'visual layout' 테스트는 워크스페이스 resume 화면 미인식 — test-infra 갭.
 - QA find(T-292): AskUserQuestion raw tool + CLI 내부 타임아웃 조합은 'silent PO 종료' 결함군(T-PATCH-157/197/268)의 미커버 변종 — toolErrorInfo(is_error 패턴) 감지망은 non-error 침묵 종료(타임아웃 fallback)를 못 잡는다. 이 계열 재발 시 우선 의심 지점.
 - 승격 후보(T-298): core 모듈의 .productune 하드코딩 결함 계열 재발(T-284 pending-promotions → T-298 hooks 생성 템플릿) — 신규 core 모듈은 stateDir()/project-kind.ts 경유 강제하는 lint rule 또는 code-review 체크 항목 검토.
+- ADR(T-305): hook-install 배너의 renderer 판별도 isPrdtPoState 재사용(신규 IPC 없음) — A2~A8 단일 감지 경로 컨벤션 유지. dismiss는 세션 단위 in-memory zustand(과설계 회피, 티켓 지시).
+- env find(T-305): _electron.launch에서 HOME 오버라이드는 main 프로세스 파일 읽기만 격리 — Electron userData/localStorage는 HOME 비종속이라 dev 프로필 공유 오염. 향후 라이브 검증은 --user-data-dir 오버라이드 사용.

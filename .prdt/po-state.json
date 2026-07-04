@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-298",
-    "slug": "prepush-hook-rules-path",
+    "ticket_id": "T-305",
+    "slug": "prdt-onboarding-trigger",
     "assignee": "developer"
   }
 }
