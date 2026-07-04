@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-306",
-    "slug": "prdt-version-field-bridge",
-    "assignee": "developer"
+    "ticket_id": "T-292",
+    "slug": "gui-askuserquestion-wait",
+    "assignee": "qa"
   }
 }

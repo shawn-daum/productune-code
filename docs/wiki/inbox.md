@@ -26,3 +26,4 @@
 - 주의(T-306): prdt retro 버전 범프가 legacy rename-guard엔 'version rename'으로 보임 — guard는 legacy-only로 게이트함. 향후 current_version 전이 소비처 추가 시 동일 함정.
 - env find(T-306/QA 공용): playwright-electron으로 임의 프로젝트 대상 GUI 검증 — localStorage 'productune.lastProject' 세팅+reload(끝나면 복원). 네이티브 다이얼로그 우회 패턴.
 - 잔여(무해): QuickOpen 'v:' 항목은 versions[] 전용이라 prdt 미표기(graceful). flipped repo의 artifacts flat walk가 legacy v0.x 디렉토리 포함(정직·noisy). smoke 'visual layout' 테스트는 워크스페이스 resume 화면 미인식 — test-infra 갭.
+- QA find(T-292): AskUserQuestion raw tool + CLI 내부 타임아웃 조합은 'silent PO 종료' 결함군(T-PATCH-157/197/268)의 미커버 변종 — toolErrorInfo(is_error 패턴) 감지망은 non-error 침묵 종료(타임아웃 fallback)를 못 잡는다. 이 계열 재발 시 우선 의심 지점.
