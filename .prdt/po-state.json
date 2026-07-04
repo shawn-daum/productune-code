@@ -2,5 +2,9 @@
   "schema_version": 1,
   "stage": "build",
   "version": "v1.1",
-  "current_task": null
+  "current_task": {
+    "ticket_id": "T-308",
+    "slug": "port-v06-adapter-delta",
+    "assignee": "developer"
+  }
 }

@@ -30,3 +30,6 @@
 - 승격 후보(T-298): core 모듈의 .productune 하드코딩 결함 계열 재발(T-284 pending-promotions → T-298 hooks 생성 템플릿) — 신규 core 모듈은 stateDir()/project-kind.ts 경유 강제하는 lint rule 또는 code-review 체크 항목 검토.
 - ADR(T-305): hook-install 배너의 renderer 판별도 isPrdtPoState 재사용(신규 IPC 없음) — A2~A8 단일 감지 경로 컨벤션 유지. dismiss는 세션 단위 in-memory zustand(과설계 회피, 티켓 지시).
 - env find(T-305): _electron.launch에서 HOME 오버라이드는 main 프로세스 파일 읽기만 격리 — Electron userData/localStorage는 HOME 비종속이라 dev 프로필 공유 오염. 향후 라이브 검증은 --user-data-dir 오버라이드 사용.
+- 방법(T-308): 타깃 서브트리==merge-base인 분기 간 커밋 범위 포팅은 순차 cherry-pick보다 `git checkout <tip> -- <파일셋>`(파일별 누적 결과) + 오염 절제 + tsc/vitest로 잔여 참조 탐지가 깨끗.
+- QA 교훈(T-308): T-PATCH 오염은 2층위(커밋된 것 + 워킹트리 diff) — 참고 patch만 grep하면 커밋층을 놓친다. 포팅 QA는 `git show <base-HEAD>:<file> | grep <symbol>` 교차 확인 필수.
+- 기록(T-308): v1의 T-298/T-305 선행 close 커밋은 문서만이었고 코드는 v0.6에만 있었음 — T-308로 코드 착지 완료.
