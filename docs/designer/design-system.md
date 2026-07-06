@@ -250,6 +250,26 @@ PRD/Design/Build 는 코드에서 확정. QA/Deploy/Operate 는
 | `--stage-deploy` | TBD | Deploy | 동상 |
 | `--stage-operate` | TBD | Operate | 동상 |
 
+### 2.6.1 prdt stage taxonomy (v1 adapter — distinct axis)
+
+> prdt (v1) 의 po-state 는 §2.6 의 6-stage(legacy 5-phase 파생) 축과 **완전히
+> 별개의 축**을 쓴다 — flat `stage` enum 4 단계 (`define`/`build`/`ship`/`retro`,
+> `packages/gui/src/lib/phase-mapping.ts` `STAGE_DEFS`, adapter A4·T-287). legacy
+> `PHASE_DEFS`/`getActivePhaseIndex` 등은 이 축과 완전히 격리되어 그대로 유지된다.
+> 코드·문서 정합(T-313 Ship-entry DS conformance) 완료로 본 절 신설.
+
+| prdt stage | hex | 비고 |
+|---|---|---|
+| `define` | `#FB923C` | Orange 400 — designer 페르소나/`--stage-prd` 와 동일 hex (PRD 단계 echo) |
+| `build` | `#38BDF8` | Sky 400 — `--stage-build`·dev 페르소나와 동일 hex |
+| `ship` | `#F472B6` | Pink 400 — `--stage-design` 재사용. **T-313**: 이전 `#FB923C` 는 `define` 과 동일 hex라 §2.5 hue-분리 원칙 위반 → 신규 hex 발행 대신 기존 stage 토큰(`--stage-design`) 재사용으로 재배정 |
+| `retro` | `#34D399` | Emerald 400 — qa 페르소나/legacy Close 단계와 동일 hex (완결 echo) |
+
+> **hue-분리 유지** — 4 stage 가 서로 다른 hue (orange/sky/pink/emerald)로
+> `define`↔`ship` 충돌(T-313 이전 둘 다 `#FB923C`)이 해소된 상태. 전용 CSS custom
+> property 는 아직 미발행 (hex inline — `phase-mapping.ts` 헤더 주석 참조);
+> 마이그레이션 시 `--prdt-stage-define/build/ship/retro` 4개 토큰 승격 권장.
+
 ### 2.7 Status (ticket lifecycle)
 
 TicketDashboardView column header 기준.
@@ -592,6 +612,33 @@ uppercase, `pill` typography recipe, `--radius-pill`, padding `--space-1` × `--
 > ChatPanel 의 `rp-ctx` chip = stage variant. PersonaPresenceBar dot = persona variant
 > (단 dot 은 chip 아닌 `--radius-full` 6px 원).
 
+> **Dense-row 변형 (T-313, `EstimatedBadge`)** — 기본 padding `--space-1` ×
+> `--space-2-5` (4×10) 는 16px 높이 statusbar row / inline cost-table 셀 같은
+> dense 호스트에서 overflow 된다. 승인된 변형: padding `0` × `--space-2` (0×8,
+> line-height 가 높이를 대신 유지) — **neutral variant 전용, dense 호스트에서만**
+> 사용. 일반 pill 은 기본 padding 유지.
+
+#### 8.2.1 Removable chip — queue item (T-309, `ChatPanel` `queueChip`)
+
+§8.2 의 pill(uppercase·`--radius-pill`) 계열과 다른 **chip 서브패턴**: 스트리밍 중
+대기 메시지를 스택으로 보여주고 개별 취소 가능함을 표현하는 non-pill list-item
+칩. 순수 pill 이 아니므로 §8.2 표에 variant 로 넣지 않고 별항으로 문서화한다.
+
+| 항목 | 값 | token 대응 |
+|---|---|---|
+| 스택 rail (`queueStack`) | `border-left: 2px solid #707070`, `padding-left: 6px` | `--text-muted` |
+| chip bg | `#1A1A1A` | `--surface-subpanel` |
+| chip border | `1px solid #2A2A2A` | `--border-strong` |
+| chip radius | `4px` | `--radius-md` (pill 아님 — list-item 이므로 의도적으로 §8.2 와 다름) |
+| chip padding | `3px 6px` | off-grid legacy (§3.1 미정렬 — `--space-1`×`--space-1-5` 정렬 후보) |
+| index label | `#707070`, mono, 10px | `--text-muted` + `--font-mono` |
+| 본문 텍스트 | `#A0A0A0`, 11px, ellipsis | `--text-muted` 근사 (`--text-xs-plus`) |
+| remove 버튼 | 20×20 아이콘 버튼, lucide `X` 13px stroke 2.5 | `--icon-sm`(14px) 근접값 — 13px 는 legacy |
+
+> **§1.5.5 Escape 정합의 의도된 예외** — 큐 칩의 X 는 즉시 완전 삭제이며 FAB 등
+> 복원 경로가 없다. 일반 dismiss(=배너/모달)의 "dismiss ≠ delete" 원칙과 달리, 큐
+> 항목은 전송 전 임시 상태라 복원 불필요 — 별도 예외로 명시한다.
+
 ### 8.3 Tab
 
 세로 (left rail) / 가로 둘 다 동일 token. active `--text-emphasis` + 하단 2px
@@ -605,6 +652,14 @@ color = `--health-*`. body = `body-dense` recipe.
 
 > **§1.5.5 Escape 정합** — banner 는 우측 상단 dismiss X (`--icon-sm`,
 > `--text-muted`) 의무. dismiss 후 복원 경로 (FAB 또는 menu) 필수.
+
+> **Neutral/info 변형 borderBottom (T-313, `PrdtHookInstallBanner`)** — bg
+> `--surface-subpanel` 를 쓰는 neutral/info severity banner 는 borderBottom
+> `1px solid --border-default`(`#1F1F1F`) 를 추가한다 (배경이 neutral 이므로 tint
+> 없는 중립 경계선이 맞다 — 이전의 teal-tinted bespoke 값을 대체). severity-tinted
+> banner(`SessionHealthBanner` 의 error/warn 등, 자체 톤의 어두운 tint bg+border)는
+> 본 규칙 대상이 아니며 자기 톤의 border 를 유지한다 — 본 규칙은 neutral bg 변형
+> 전용.
 
 ### 8.5 Modal / Dialog (T-P4-058)
 
@@ -706,6 +761,7 @@ modal 패턴 위에 stage from→to 표시. stage 색은 `--stage-*` token,
 | 페르소나 | `PO`, `designer`, `developer`, `qa` |
 | Phase | `Phase 1`, `Phase 2`, `Phase 3`, `Phase 4`, `Phase 5` |
 | Stage | `PRD`, `Design`, `Build`, `QA`, `Deploy`, `Operate` |
+| prdt Stage (v1, §2.6.1) | `define`, `build`, `ship`, `retro` |
 | Status | `todo`, `in-progress`, `review`, `done`, `blocked`, `abandoned` |
 | Schema field | `slug`, `round`, `prd_path`, `tickets`, `ambiguity_score`, `confidence` 등 |
 | Product name | `productune`, `pdt-*` (persona slug) |
@@ -791,10 +847,14 @@ modal 패턴 위에 stage from→to 표시. stage 색은 `--stage-*` token,
 - `WorkspaceShell` — font-family stack 출처
 - `StageStrip` — stage color 출처
 - `PersonaPresenceBar` — persona color, blink animation 출처
-- `ChatPanel` — message border (persona), `rp-ctx` chip (stage) 출처. **restart
-  button feedback 부재** — §1.5.4 위반 dogfood 사례 (별도 ticket 으로 fix).
+- `ChatPanel` — message border (persona), `rp-ctx` chip (stage), `queueChip`
+  (T-309, §8.2.1 removable queue chip) 출처. **restart button feedback 부재** —
+  §1.5.4 위반 dogfood 사례 (별도 ticket 으로 fix).
 - `TicketDashboardView` — status color 출처
 - `SessionHealthBanner` (T-P4-059) — health color, banner 패턴 출처
+- `PrdtHookInstallBanner` (T-305/T-313) — §8.4 neutral/info banner 변형 출처
+- `EstimatedBadge` (T-290/T-313) — §8.2 pill dense-row 변형 출처
+- `phase-mapping.ts` `STAGE_DEFS` (T-287/T-313) — §2.6.1 prdt stage taxonomy 출처
 - `Modal` (T-P4-058) — `--surface-modal` 출처
 - `Empty pane` (T-P4-046) — §1.5.3 Predictability empty state reference
 - `lucide-react@1.14.0` — 아이콘 라이브러리 (commit `a505e74`)

@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-313",
-    "slug": "readiness-ds-fixes",
-    "assignee": "developer"
+    "ticket_id": "T-314",
+    "slug": "ds-doc-prdt-taxonomy",
+    "assignee": "designer"
   }
 }
