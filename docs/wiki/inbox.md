@@ -46,3 +46,5 @@
 - ADR(T-309): packages/gui vitest는 zustand를 전역 mock — store-소유 로직 단위 커버는 exported 순수 함수 추출(dedupeMessagesById 선례)로만 가능, useWorkspace.getState() 경유 불가.
 - env find(T-309): playwright-electron에서 claude 스폰 없이 PO 스트리밍 턴 모사 가능 — po:sendMessage 등 ipcMain 핸들러 no-op 스텁 + webContents.send로 po:onMsgId/onAnnounce/onDone 주입. 'open-recent-project' IPC로 네이티브 다이얼로그 없이 픽스처 전환.
 - pre-existing(T-309 발견): tests/smoke.spec.ts 3번 케이스 button:visible strict-mode 위반(HomeView recents 다중 버튼) — test-infra 갭 목록에 추가.
+- DECISION(Designer, 2026-07-06): prdt 4-stage 색상 sign-off 조건부 승인 — ship #FB923C→#F472B6(--stage-design 재사용) 교체 조건. define/build/retro 3색은 기존 토큰 정합. 근거: define/ship 동일 hex는 §2.5 T-006 hue-분리 원칙 위반.
+- DS GAP(T-314행): design-system.md에 prdt stage taxonomy 절 없음 + §10.1 보호어 4단어 미등재(코드는 이미 정합, 문서 후행). '제거 가능한 큐 칩' 패턴도 §8.2 미등재 — 신규 recipe 후보.
