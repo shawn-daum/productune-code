@@ -95,7 +95,12 @@ export interface StageDef {
 export const STAGE_DEFS: StageDef[] = [
   { key: 'define', labelKey: 'workspace.stage.define', color: '#FB923C' },  // orange-400 — echoes PRD
   { key: 'build',  labelKey: 'workspace.stage.build',  color: '#38BDF8' },  // sky-400 — echoes Build
-  { key: 'ship',   labelKey: 'workspace.stage.ship',   color: '#FB923C' },  // orange-400 — echoes Deploy
+  // T-313 (Ship-entry DS conformance): was '#FB923C', same hex as 'define' —
+  // violated design-system §2.5 hue-separation (no reused/new hex; reuse an
+  // existing stage token). Reassigned to --stage-design '#F472B6' (pink-400,
+  // design-system.md §2.6) — no dedicated token for prdt ship yet, so the
+  // nearest unused-in-this-set stage token is reused rather than inventing one.
+  { key: 'ship',   labelKey: 'workspace.stage.ship',   color: '#F472B6' },  // pink-400 — --stage-design (reused, no new hex)
   { key: 'retro',  labelKey: 'workspace.stage.retro',  color: '#34D399' },  // emerald-400 — echoes Close
 ]
 

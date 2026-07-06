@@ -31,6 +31,7 @@ import { useTranslation } from 'react-i18next'
 import { Clock, CalendarDays, DollarSign } from 'lucide-react'
 import { useWorkspace } from '../../../store/workspace'
 import { isPrdtPoState } from '../../../lib/phase-mapping'
+import EstimatedBadge from '../../shared/EstimatedBadge'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -175,7 +176,7 @@ export default function UsageBar({
         <div style={rowWrap} title={cost.hasEstimated ? t('costArchive.estimateDisclaimer') : undefined}>
           <DollarSign size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />
           <span style={costValueStyle}>{fmtCost(cost.totalCostUsd)}</span>
-          {cost.hasEstimated && <span style={costEstBadge}>{t('costArchive.estimatedBadge')}</span>}
+          <EstimatedBadge show={cost.hasEstimated} />
         </div>
       </div>
     )
@@ -471,16 +472,5 @@ const costValueStyle: React.CSSProperties = {
   flexShrink: 0,
 }
 
-// Mirrors CostArchivePanel's estBadge — same muted pill, not a warning color.
-const costEstBadge: React.CSSProperties = {
-  display: 'inline-block',
-  marginLeft: 4,
-  padding: '1px 4px',
-  fontSize: 8,
-  fontWeight: 700,
-  letterSpacing: '0.03em',
-  textTransform: 'uppercase',
-  color: '#8A8A9A',
-  background: '#1E1E28',
-  borderRadius: 3,
-}
+// T-313: the local costEstBadge duplicate moved to the shared, design-system
+// §8.2-conformant `<EstimatedBadge>` (components/shared/EstimatedBadge).

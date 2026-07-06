@@ -1063,7 +1063,8 @@
       "effortLabel": "Effort",
       "inherit": "Default (inherit)",
       "saveSuccess": "Applies to the next PO turn",
-      "saveError": "Failed to save settings."
+      "saveError": "Failed to save settings.",
+      "retry": "Retry"
     }
   },
   "skills": {

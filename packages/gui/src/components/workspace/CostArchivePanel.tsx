@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import EstimatedBadge from '../shared/EstimatedBadge'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,11 +82,9 @@ function fmtCost(n: number): string {
   return `$${safe.toFixed(4)}`
 }
 
-/** T-290 (A7): "estimated" pill — shown only when the cost is estimate-tainted. */
-function EstBadge({ show, t }: { show: boolean; t: TFn }) {
-  if (!show) return null
-  return <span style={estBadge}>{t('costArchive.estimatedBadge')}</span>
-}
+// T-313: the local EstBadge/estBadge duplicate moved to the shared, design-
+// system §8.2-conformant `<EstimatedBadge>` (components/shared/EstimatedBadge)
+// — also used by UsageBar's prdt cost display.
 
 function fmtTok(n: number): string {
   const safe = Number.isFinite(n) ? n : 0
@@ -149,7 +148,7 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
                   <span style={pColTok} title={isMain ? mainNote : undefined}>{r.usage ? fmtTok(r.usage.in) : dash}</span>
                   <span style={pColTok} title={isMain ? mainNote : undefined}>{r.usage ? fmtTok(r.usage.out) : dash}</span>
                   <span style={pColTok} title={isMain ? mainNote : undefined}>{r.usage ? fmtTok(r.usage.cache) : dash}</span>
-                  <span style={pColCost}>{fmtCost(r.cost_usd)}<EstBadge show={r.hasEstimated} t={t} /></span>
+                  <span style={pColCost}>{fmtCost(r.cost_usd)}<EstimatedBadge show={r.hasEstimated} /></span>
                 </div>
               )
             })}
@@ -161,7 +160,7 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
               <span style={pColTokSub} />
               <span style={pColTokSub} />
               <span style={pColTokSub} />
-              <span style={pColCostSub}>{fmtCost(subCost)}<EstBadge show={subEstimated} t={t} /></span>
+              <span style={pColCostSub}>{fmtCost(subCost)}<EstimatedBadge show={subEstimated} /></span>
             </div>
           </div>
         )
@@ -175,7 +174,7 @@ function renderPivot(pivot: PivotResult | null, rows: PivotRow[], t: TFn) {
         <span style={pColTokTotal}>{pivot ? fmtTok(pivot.subagentUsage.in) : 0}</span>
         <span style={pColTokTotal}>{pivot ? fmtTok(pivot.subagentUsage.out) : 0}</span>
         <span style={pColTokTotal}>{pivot ? fmtTok(pivot.subagentUsage.cache) : 0}</span>
-        <span style={pColCostTotal}>{fmtCost(pivot?.totalCostUsd ?? 0)}<EstBadge show={!!pivot?.hasEstimated} t={t} /></span>
+        <span style={pColCostTotal}>{fmtCost(pivot?.totalCostUsd ?? 0)}<EstimatedBadge show={!!pivot?.hasEstimated} /></span>
       </div>
     </div>
   )
@@ -260,7 +259,7 @@ export default function CostArchivePanel({ projectDir }: Props) {
             <div key={g.key} style={bodyRow}>
               <span style={colKey} title={g.key}>{g.key}</span>
               <span style={colNum}>{g.turns}</span>
-              <span style={colNum}>{fmtCost(g.cost_usd)}<EstBadge show={g.hasEstimated} t={t} /></span>
+              <span style={colNum}>{fmtCost(g.cost_usd)}<EstimatedBadge show={g.hasEstimated} /></span>
             </div>
           ))}
 
@@ -268,7 +267,7 @@ export default function CostArchivePanel({ projectDir }: Props) {
           <div style={totalRow}>
             <span style={colKeyTotal}>{t('costArchive.total')}</span>
             <span style={colNumTotal}>{result?.totalTurns ?? 0}</span>
-            <span style={colNumTotal}>{fmtCost(result?.totalCostUsd ?? 0)}<EstBadge show={!!result?.hasEstimated} t={t} /></span>
+            <span style={colNumTotal}>{fmtCost(result?.totalCostUsd ?? 0)}<EstimatedBadge show={!!result?.hasEstimated} /></span>
           </div>
         </div>
       )}
@@ -407,24 +406,6 @@ const disclaimer: React.CSSProperties = {
   fontStyle: 'italic',
   lineHeight: 1.4,
   marginTop: 8,
-}
-
-// T-290 (A7): "estimated" pill next to a cost value whose contributing
-// line(s) carry cost_source:"estimated" (usage×price-table conversion, not
-// the real invoice). Muted (not a warning color) — distinct from, not
-// duplicating, the always-on disclaimer footer.
-const estBadge: React.CSSProperties = {
-  display: 'inline-block',
-  marginLeft: 4,
-  padding: '1px 4px',
-  fontSize: 8,
-  fontWeight: 700,
-  letterSpacing: '0.03em',
-  textTransform: 'uppercase',
-  color: '#8A8A9A',
-  background: '#1E1E28',
-  borderRadius: 3,
-  verticalAlign: 'middle',
 }
 
 // ── Pivot (persona×model) columns ───────────────────────────────────────────────

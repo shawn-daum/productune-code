@@ -99,6 +99,12 @@ export default function PrdtHookInstallBanner({ projectDir }: Props) {
 
 // ── Styles (mirrors SessionHealthBanner's info-severity variant) ──────────────
 
+// T-313 (Ship-entry DS conformance §8.4 Banner): bg is --surface-subpanel
+// (`#1A1A1A`, design-system.md §1) — was a bespoke teal-tinted `#14232A`.
+// Left bar is 4px (was 3px), color unchanged (`--health-info` `#38BDF8`,
+// same hex as `--persona-dev` — intentional per §2.8, context separation).
+// borderBottom follows suit onto the neutral `--border-default` (`#1F1F1F`)
+// since the old teal bottom border only existed to match the old teal bg.
 const bannerWrap: React.CSSProperties = {
   height: 36,
   flexShrink: 0,
@@ -106,9 +112,9 @@ const bannerWrap: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '0 16px',
-  background: '#14232A',
-  borderLeft: '3px solid #38BDF8',
-  borderBottom: '1px solid #1A2A32',
+  background: '#1A1A1A',
+  borderLeft: '4px solid #38BDF8',
+  borderBottom: '1px solid #1F1F1F',
   overflow: 'hidden',
 }
 

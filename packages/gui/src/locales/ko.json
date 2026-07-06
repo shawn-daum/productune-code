@@ -1063,7 +1063,8 @@
       "effortLabel": "Effort",
       "inherit": "Default (상속)",
       "saveSuccess": "다음 PO 턴부터 적용돼요",
-      "saveError": "설정 저장에 실패했어요."
+      "saveError": "설정 저장에 실패했어요.",
+      "retry": "다시 시도"
     }
   },
   "skills": {

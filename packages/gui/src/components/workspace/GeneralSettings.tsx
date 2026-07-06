@@ -107,6 +107,8 @@ function PoSessionSection({ projectDir }: { projectDir: string }) {
   const [cfg, setCfg] = useState<PoSessionConfig>({ supported: false, model: null, effort: null })
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // T-313: last attempted write, so the retry CTA can replay it verbatim on failure.
+  const lastAttemptRef = useRef<{ model: string | null; effort: string | null } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -125,6 +127,7 @@ function PoSessionSection({ projectDir }: { projectDir: string }) {
       successTimerRef.current = null
     }
     setSaveStatus('idle')
+    lastAttemptRef.current = next
     try {
       const result: { ok: boolean } = await (window as any).api.setPoSessionOverride(projectDir, next)
       if (!result.ok) throw new Error('save failed')
@@ -133,6 +136,12 @@ function PoSessionSection({ projectDir }: { projectDir: string }) {
     } catch {
       setSaveStatus('error')
     }
+  }
+
+  // T-313: replays the last attempted write — design-system §1.5.4 "실패 =
+  // --health-error + 대안 CTA (재시도 / 로그 보기 / 취소)".
+  function handleRetry() {
+    if (lastAttemptRef.current) persist(lastAttemptRef.current)
   }
 
   function handleModelChange(value: string) {
@@ -187,7 +196,12 @@ function PoSessionSection({ projectDir }: { projectDir: string }) {
         <div style={{ ...notifTestResultOk, marginTop: 4 }}>{t('settings.poSession.saveSuccess')}</div>
       )}
       {saveStatus === 'error' && (
-        <div style={{ ...notifTestResultWarn, marginTop: 4 }}>{t('settings.poSession.saveError')}</div>
+        <div style={poSessionErrorRow}>
+          <span style={notifTestResultError}>{t('settings.poSession.saveError')}</span>
+          <button style={poSessionRetryBtn} onClick={handleRetry}>
+            {t('settings.poSession.retry')}
+          </button>
+        </div>
       )}
     </div>
   )
@@ -881,6 +895,36 @@ const notifTestResultWarn: React.CSSProperties = {
   fontSize: 10,
   color: '#FCD34D',
   lineHeight: 1.4,
+}
+
+// T-313: PoSessionSection save failure — design-system §2.8 --health-error
+// (`#EF4444`), distinct from the amber `notifTestResultWarn` above (that one
+// is a soft "blocked toggle" notice, not a write failure).
+const notifTestResultError: React.CSSProperties = {
+  fontSize: 10,
+  color: '#EF4444',
+  lineHeight: 1.4,
+}
+
+const poSessionErrorRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  marginTop: 4,
+}
+
+// T-313: retry CTA (design-system §1.5.4 실패 대안 CTA) — mirrors
+// notifTestBtnBase's small bordered-button shape, recolored to --health-error.
+const poSessionRetryBtn: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid #EF4444',
+  borderRadius: 5,
+  color: '#EF4444',
+  cursor: 'pointer',
+  fontSize: 10,
+  fontWeight: 500,
+  padding: '2px 8px',
+  fontFamily: 'inherit',
 }
 
 const notifMacosHint: React.CSSProperties = {
