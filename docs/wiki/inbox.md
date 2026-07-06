@@ -33,3 +33,9 @@
 - 방법(T-308): 타깃 서브트리==merge-base인 분기 간 커밋 범위 포팅은 순차 cherry-pick보다 `git checkout <tip> -- <파일셋>`(파일별 누적 결과) + 오염 절제 + tsc/vitest로 잔여 참조 탐지가 깨끗.
 - QA 교훈(T-308): T-PATCH 오염은 2층위(커밋된 것 + 워킹트리 diff) — 참고 patch만 grep하면 커밋층을 놓친다. 포팅 QA는 `git show <base-HEAD>:<file> | grep <symbol>` 교차 확인 필수.
 - 기록(T-308): v1의 T-298/T-305 선행 close 커밋은 문서만이었고 코드는 v0.6에만 있었음 — T-308로 코드 착지 완료.
+- ADR(T-311): GUI legacy dual-mode → 조회 전용. installClaudeHooks는 prdt-only(legacy/undefined=no-op), installLegacyHooks+PDT_BASENAMES 삭제, 잔존 프로비저닝은 provisionUserGlobals(env-only)로 추출 — 실제 core 경로 기준 테스트 가능해짐(fake CORE_DIR 맹점 해소).
+- env find(T-311): prdt-install.sh는 완전 비대화형(jq+python3만) — CI 스모크에 스텁 불요. legacy install.sh는 claude/npm 스텁 필요했음.
+- env find(T-311): core/po/po-instructions.md는 이미 repo에 없어 legacy 복사 스텝은 원래 no-op였음. GUI의 prdt-*.md 심링크도 중복(prdt-install.sh가 cp) — 제거 무영향.
+- QA 교훈(T-311): 실동작을 no-op으로 강등할 때 그 동작을 '완료'로 표시하는 인접 UI 카피(진행 스텝·완료 배지)를 함께 감사하지 않으면 거짓 확인 회귀 — '동작 제거' 티켓 acceptance에 'UI 텍스트 스윕' 명시 포함할 것.
+- 패턴(T-311 fix): OnboardingWizard 완료 리스트는 ipc/onboarding.ts 핸들러 스텝의 수동 미러 — 기계적 링크 없어 조용히 desync. 재발 시 onboarding:complete IPC가 수행 스텝 키를 반환하고 renderer가 그걸 렌더(SoT=핸들러)로 전환 검토.
+- locale 고아(pre-T-311): onboarding.step3.*('Memory backend') 키는 어떤 코드도 안 씀 — locale-cleanup 스윕 후보.
