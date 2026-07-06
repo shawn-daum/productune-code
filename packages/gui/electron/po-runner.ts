@@ -35,6 +35,7 @@ import {
   type SubagentCostCapture,
 } from './subagent-cost'
 import { detectProjectKind } from './project-paths'
+import { getPoSessionOverride, type PoSessionOverride } from './po-session-config'
 
 /**
  * The chat panel always sends to PO. Other personas are reached via PO
@@ -1059,6 +1060,55 @@ function isTerminalTaskStatus(status: string): boolean {
   return TERMINAL_TASK_STATUSES.has(status.toLowerCase())
 }
 
+// ── Claude argv builder (T-310: GUI model/effort override) ──────────────────────
+
+/**
+ * Build the claude CLI argv for a PO turn. Pure (no I/O) — the caller resolves
+ * `override` via getPoSessionOverride so this stays unit-testable without fs.
+ * Extracted 1:1 from the pre-T-310 inline spawnClaude body; behavior is
+ * byte-identical when `override` is `{}` (no config keys set / legacy project).
+ */
+export function buildClaudeArgs(
+  opts: Pick<SendOpts, 'resume' | 'text'>,
+  poAgent: string,
+  override: PoSessionOverride,
+): string[] {
+  const args: string[] = []
+  if (opts.resume) {
+    // T-PATCH-043 (AC1): re-pass `--agent` on resume turns too. `--resume`
+    // alone does NOT restore the agent system prompt (hardened pointer) nor
+    // populate `agent_type` in the SessionStart hook input — so doctrine
+    // would be lost on every resume turn (most GUI turns). Live-confirmed
+    // that `--resume` + `--agent` coexist safely.
+    args.push('--resume', opts.resume, '--agent', poAgent)
+  } else {
+    args.push('--agent', poAgent)
+  }
+  // T-310: GUI model/effort override (.prdt/config.json gui_model/gui_effort,
+  // prdt projects only). Unset → CLI's own default, identical to pre-T-310
+  // behavior. Applies to both first-call and resume paths (real CLI flags,
+  // live-confirmed via `claude --help`).
+  if (override.model) args.push('--model', override.model)
+  if (override.effort) args.push('--effort', override.effort)
+  // T-PATCH-147: default permission mode = bypassPermissions (≡ --dangerously-skip-permissions).
+  // Trusted local runtime (user's own machine + own project); user decision 2026-06-16.
+  // headless `claude --print` has no TTY, so an un-allowed tool would otherwise abort the
+  // session. `.claude/settings.json` permissions.defaultMode is ignored in print mode → the
+  // CLI flag is the correct path. Applies to both first-call and resume paths.
+  args.push('--permission-mode', 'bypassPermissions')
+  // T-PATCH-166: token-level (typewriter) streaming. With this flag the CLI
+  // emits `type:'stream_event'` envelopes carrying `content_block_delta` /
+  // `text_delta` per token (parsed in handleStreamJsonLine). Compatible with
+  // headless `--print --output-format stream-json --verbose`; orthogonal to
+  // `--agent` / `--permission-mode`. Applies to both first-call + resume.
+  args.push('--include-partial-messages')
+  // T-PATCH-263: place `--` end-of-options sentinel BEFORE the user text positional
+  // so claude CLI does not interpret a leading `-` or `--` in the message as a flag.
+  // Applies to both first-call and resume paths (args array is built above).
+  args.push('--print', '--output-format', 'stream-json', '--verbose', '--', opts.text)
+  return args
+}
+
 // ── Real spawn ──────────────────────────────────────────────────────────────────
 
 function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<void> {
@@ -1078,35 +1128,11 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     emitHealth('healthy', undefined, hCtx, cb)
 
     // Build args — first call uses `--agent pdt-po`/`prdt-po` (T-285: resolved per
-    // project kind), resume uses `--resume`.
+    // project kind), resume uses `--resume`. T-310: model/effort override folded in
+    // via buildClaudeArgs (pure — unit-tested directly in po-runner.args.test.ts).
     const poAgent = poAgentFor(opts.projectDir)
-    const args: string[] = []
-    if (opts.resume) {
-      // T-PATCH-043 (AC1): re-pass `--agent` on resume turns too. `--resume`
-      // alone does NOT restore the agent system prompt (hardened pointer) nor
-      // populate `agent_type` in the SessionStart hook input — so doctrine
-      // would be lost on every resume turn (most GUI turns). Live-confirmed
-      // that `--resume` + `--agent` coexist safely.
-      args.push('--resume', opts.resume, '--agent', poAgent)
-    } else {
-      args.push('--agent', poAgent)
-    }
-    // T-PATCH-147: default permission mode = bypassPermissions (≡ --dangerously-skip-permissions).
-    // Trusted local runtime (user's own machine + own project); user decision 2026-06-16.
-    // headless `claude --print` has no TTY, so an un-allowed tool would otherwise abort the
-    // session. `.claude/settings.json` permissions.defaultMode is ignored in print mode → the
-    // CLI flag is the correct path. Applies to both first-call and resume paths.
-    args.push('--permission-mode', 'bypassPermissions')
-    // T-PATCH-166: token-level (typewriter) streaming. With this flag the CLI
-    // emits `type:'stream_event'` envelopes carrying `content_block_delta` /
-    // `text_delta` per token (parsed in handleStreamJsonLine). Compatible with
-    // headless `--print --output-format stream-json --verbose`; orthogonal to
-    // `--agent` / `--permission-mode`. Applies to both first-call + resume.
-    args.push('--include-partial-messages')
-    // T-PATCH-263: place `--` end-of-options sentinel BEFORE the user text positional
-    // so claude CLI does not interpret a leading `-` or `--` in the message as a flag.
-    // Applies to both first-call and resume paths (args array is built above).
-    args.push('--print', '--output-format', 'stream-json', '--verbose', '--', opts.text)
+    const override = getPoSessionOverride(opts.projectDir)
+    const args = buildClaudeArgs(opts, poAgent, override)
 
     // T-PATCH-149: experimental — exposes SendMessage (PO can continue a subagent by agentId
     // instead of fresh re-dispatch); also activates auto-resume + TeamCreate/TeamDelete. User

@@ -1055,6 +1055,15 @@
       "zoomDesc": "UI 크기를 조정해요. 즉시 반영돼요.",
       "statusBar": "상태 표시줄 보기",
       "statusBarDesc": "프로젝트 이름과 세션 상태를 보여주는 하단 바예요."
+    },
+    "poSession": {
+      "title": "PO 세션",
+      "description": "이 프로젝트의 PO 세션에 사용할 model/effort를 오버라이드해요. Default로 두면 CLI 자체 설정을 따라요.",
+      "modelLabel": "Model",
+      "effortLabel": "Effort",
+      "inherit": "Default (상속)",
+      "saveSuccess": "다음 PO 턴부터 적용돼요",
+      "saveError": "설정 저장에 실패했어요."
     }
   },
   "skills": {

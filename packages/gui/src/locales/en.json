@@ -1055,6 +1055,15 @@
       "zoomDesc": "Scale the UI. Takes effect immediately.",
       "statusBar": "Show status bar",
       "statusBarDesc": "Bottom bar with project name and session health."
+    },
+    "poSession": {
+      "title": "PO Session",
+      "description": "Override the model/effort used for this project's PO session. Leave on Default to inherit the CLI's own setting.",
+      "modelLabel": "Model",
+      "effortLabel": "Effort",
+      "inherit": "Default (inherit)",
+      "saveSuccess": "Applies to the next PO turn",
+      "saveError": "Failed to save settings."
     }
   },
   "skills": {

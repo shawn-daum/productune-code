@@ -4,6 +4,11 @@ import os from 'os'
 import fs from 'fs'
 import { setWebviewAcceptLanguage } from '../locale-session'
 import {
+  getPoSessionConfig,
+  setPoSessionOverride,
+  type PoSessionConfig,
+} from '../po-session-config'
+import {
   getUiLanguage,
   setUiLanguage,
   settingsFileExists,
@@ -227,6 +232,25 @@ export function register(): void {
       return { ok: false, error: e?.message ?? 'unknown error' }
     }
   })
+
+  // ── PO session model/effort override IPC (T-310) ─────────────────────────────
+  // prdt projects only (posession config's own detectProjectKind gate) — a legacy
+  // `.productune` project always resolves { supported:false } and a set() call
+  // there is refused (no write to the legacy path).
+  ipcMain.handle('posession:getConfig', (_event, projectDir: string): PoSessionConfig => {
+    return getPoSessionConfig(projectDir)
+  })
+
+  ipcMain.handle(
+    'posession:setOverride',
+    (
+      _event,
+      projectDir: string,
+      next: { model?: string | null; effort?: string | null },
+    ): { ok: boolean; error?: string } => {
+      return setPoSessionOverride(projectDir, next ?? {})
+    },
+  )
 
   // ── Persona-spec read/write (v0.5 B1 / T-017) ────────────────────────────────
   ipcMain.handle(

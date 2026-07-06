@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, CheckCircle2, XCircle, BellRing, ExternalLink } from 'lucide-react'
 import i18next from '../../i18n'
@@ -30,6 +30,7 @@ const DEFAULT_NOTIF: NotificationSettingsLocal = {
 export default function GeneralSettings() {
   const { t, i18n } = useTranslation()
   const currentLang = i18n.language as Lang
+  const project = useWorkspace((s) => s.project)
 
   async function handleLangChange(lng: Lang) {
     await i18next.changeLanguage(lng)
@@ -73,7 +74,121 @@ export default function GeneralSettings() {
       {/* Claude Code connection — T-PATCH-077 */}
       <ClaudeConnection />
 
+      {/* PO session model/effort override (T-310) — prdt projects only; the
+          section self-hides for a legacy project or when no project is open. */}
+      {project?.projectDir && (
+        <>
+          <div style={divider} />
+          <PoSessionSection projectDir={project.projectDir} />
+        </>
+      )}
+
       <div style={noteText}>{t('settings.language.immediateNote')}</div>
+    </div>
+  )
+}
+
+// ── PO session model/effort override (T-310) ─────────────────────────────────
+
+// Mirrors packages/gui/electron/po-session-config.ts's allowlists — kept in
+// lockstep by hand (main/renderer are separate bundles; the enum is too small
+// to justify a shared runtime module across the electron/web boundary).
+const PO_SESSION_MODEL_OPTIONS = ['opus', 'sonnet', 'fable'] as const
+const PO_SESSION_EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
+interface PoSessionConfig {
+  supported: boolean
+  model: string | null
+  effort: string | null
+}
+
+function PoSessionSection({ projectDir }: { projectDir: string }) {
+  const { t } = useTranslation()
+  const [cfg, setCfg] = useState<PoSessionConfig>({ supported: false, model: null, effort: null })
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const result = await (window as any).api?.getPoSessionConfig?.(projectDir)
+        if (!cancelled && result) setCfg(result)
+      } catch { /* IPC unavailable in browser dev mode */ }
+    })()
+    return () => { cancelled = true }
+  }, [projectDir])
+
+  async function persist(next: { model: string | null; effort: string | null }) {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current)
+      successTimerRef.current = null
+    }
+    setSaveStatus('idle')
+    try {
+      const result: { ok: boolean } = await (window as any).api.setPoSessionOverride(projectDir, next)
+      if (!result.ok) throw new Error('save failed')
+      setSaveStatus('success')
+      successTimerRef.current = setTimeout(() => setSaveStatus('idle'), 1500)
+    } catch {
+      setSaveStatus('error')
+    }
+  }
+
+  function handleModelChange(value: string) {
+    const model = value === '' ? null : value
+    setCfg((prev) => ({ ...prev, model }))
+    persist({ model, effort: cfg.effort })
+  }
+
+  function handleEffortChange(value: string) {
+    const effort = value === '' ? null : value
+    setCfg((prev) => ({ ...prev, effort }))
+    persist({ model: cfg.model, effort })
+  }
+
+  // Legacy (`.productune`) project or no project open — section is a no-op.
+  if (!cfg.supported) return null
+
+  return (
+    <div>
+      <div style={sectionTitle}>{t('settings.poSession.title')}</div>
+      <div style={description}>{t('settings.poSession.description')}</div>
+
+      <div style={poSessionRow}>
+        <div style={fieldLabelSm}>{t('settings.poSession.modelLabel')}</div>
+        <select
+          style={selectInput}
+          value={cfg.model ?? ''}
+          onChange={(e) => handleModelChange(e.target.value)}
+        >
+          <option value="">{t('settings.poSession.inherit')}</option>
+          {PO_SESSION_MODEL_OPTIONS.map((m) => (
+            <option key={m} value={m}>{m}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={poSessionRow}>
+        <div style={fieldLabelSm}>{t('settings.poSession.effortLabel')}</div>
+        <select
+          style={selectInput}
+          value={cfg.effort ?? ''}
+          onChange={(e) => handleEffortChange(e.target.value)}
+        >
+          <option value="">{t('settings.poSession.inherit')}</option>
+          {PO_SESSION_EFFORT_OPTIONS.map((ef) => (
+            <option key={ef} value={ef}>{ef}</option>
+          ))}
+        </select>
+      </div>
+
+      {saveStatus === 'success' && (
+        <div style={{ ...notifTestResultOk, marginTop: 4 }}>{t('settings.poSession.saveSuccess')}</div>
+      )}
+      {saveStatus === 'error' && (
+        <div style={{ ...notifTestResultWarn, marginTop: 4 }}>{t('settings.poSession.saveError')}</div>
+      )}
     </div>
   )
 }
@@ -838,4 +953,33 @@ const zoomDisplay: React.CSSProperties = {
   minWidth: 38,
   textAlign: 'center',
   fontVariantNumeric: 'tabular-nums',
+}
+
+// ── PO session model/effort override styles (T-310) ──────────────────────────
+
+const poSessionRow: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 8,
+  padding: '6px 0',
+}
+
+const fieldLabelSm: React.CSSProperties = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: '#D0D0D0',
+}
+
+const selectInput: React.CSSProperties = {
+  background: '#1A1A1A',
+  border: '1px solid #2A2A2A',
+  borderRadius: 5,
+  color: '#E0E0E0',
+  fontSize: 12,
+  fontFamily: 'monospace',
+  padding: '4px 8px',
+  outline: 'none',
+  cursor: 'pointer',
+  minWidth: 140,
 }

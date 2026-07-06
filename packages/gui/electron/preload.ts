@@ -826,6 +826,18 @@ contextBridge.exposeInMainWorld('api', {
   saveRules: (projectDir: string, rules: import('@productune/core').GitRules): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:saveRules', projectDir, rules),
 
+  // ── PO session model/effort override (T-310) ─────────────────────────────────
+  getPoSessionConfig: (
+    projectDir: string,
+  ): Promise<{ supported: boolean; model: string | null; effort: string | null }> =>
+    ipcRenderer.invoke('posession:getConfig', projectDir),
+
+  setPoSessionOverride: (
+    projectDir: string,
+    next: { model?: string | null; effort?: string | null },
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('posession:setOverride', projectDir, next),
+
   // ── Persona-spec read/write (v0.5 B1 / T-017) ────────────────────────────────
   readPersonaSpec: (personaId: string): Promise<{ ok: boolean; content?: string; exists?: boolean; error?: string }> =>
     ipcRenderer.invoke('persona:readSpec', personaId),
