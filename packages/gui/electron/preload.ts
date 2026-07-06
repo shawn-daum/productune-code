@@ -76,7 +76,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── prdt hook install status/trigger (T-305) ────────────────────────────────
   /** Read whether THIS machine has the prdt discipline hooks registered, and
-   *  whether the ~/.prdt hook mirror exists at all (prdt-install.sh ever ran). */
+   *  whether the ~/.prdt hook mirror exists at all (install.sh ever ran). */
   checkPrdtHooks: (): Promise<{ mirrorPresent: boolean; installed: boolean }> =>
     ipcRenderer.invoke('onboarding:checkPrdtHooks'),
 

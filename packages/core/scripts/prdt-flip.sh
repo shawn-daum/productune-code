@@ -65,7 +65,7 @@ fail_at() {
 
 # ── 1. ensure prdt is installed (mirror + hooks + agents) ─────────────────────
 STEP="install"; say "1) prdt 설치/갱신"; fail_at install
-"$ROOT/scripts/prdt-install.sh" >/dev/null
+"$ROOT/scripts/install.sh" >/dev/null
 
 # ── 2. strip legacy full/lite hooks + swap statusline ─────────────────────────
 STEP="hooks"; say "2) legacy hook 제거 + statusline 교체"; fail_at hooks

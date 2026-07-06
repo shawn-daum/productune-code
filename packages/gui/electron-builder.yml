@@ -53,7 +53,7 @@ extraResources:
   # `core/po/po-instructions.md`, and read `core/scripts/hooks/*.sh` for the 18
   # legacy enforcement hooks. That flow was downgraded to read-only in T-311 —
   # nothing under Resources/core is read at runtime anymore (prdt onboarding uses
-  # the ~/.prdt mirror written by prdt-install.sh, not the app bundle; the only
+  # the ~/.prdt mirror written by install.sh (packages/core/scripts), not the app bundle; the only
   # residual `coreDir` use is the vestigial PRODUCTUNE_REPO string in
   # productune.env, which is never stat'd). @productune/core is still bundled as a
   # normal workspace dependency inside the asar — this only drops the raw source

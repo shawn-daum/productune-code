@@ -1,262 +1,50 @@
 #!/usr/bin/env bash
+# prdt v1 uninstall — reverse of install.sh.
+# Keeps ~/.prdt/overrides/ (user content) unless --purge is passed.
 set -euo pipefail
 
-# uninstall.sh — remove all productune artifacts installed by install.sh
-#
-# Removes:
-#   - ~/.claude/agents/*.md  symlinks pointing to this repo
-#   - ~/.productune/productune.env
-#   - ~/.productune/po-instructions.md  (legacy; and .bak.* siblings)
-#   - ~/.productune/*-memory.md         (legacy)
-#   - ~/.productune/sections/           (legacy)
-#   - ~/.productune/doctrine/           (new doctrine tree)
-#   - ~/.productune/po/                 (new PO persona dir)
-#   - ~/.productune/designer/           (new designer persona dir)
-#   - ~/.productune/developer/          (new developer persona dir)
-#   - ~/.productune/qa/                 (new qa persona dir)
-#   - ~/.codex/config.toml              (restores latest .bak if present)
-#   - PATH entry / symlink              (auto, based on PRODUCTUNE_PATH_METHOD in productune.env)
+PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+say() { printf '%s\n' "$*"; }
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-say()  { printf '\033[1;34m[uninstall]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[uninstall]\033[0m %s\n' "$*" >&2; }
-ok()   { printf '\033[1;32m[uninstall]\033[0m %s\n' "$*"; }
-
-confirm() {
-  # confirm <prompt> — returns 0 (yes) or 1 (no/non-interactive)
-  local PROMPT="$1"
-  if [ -t 0 ] && [ -t 1 ]; then
-    printf '\033[1;33m[uninstall]\033[0m %s [y/N] ' "$PROMPT"
-    local REPLY=""
-    read -r REPLY || REPLY=""
-    case "$REPLY" in y|Y|yes|YES) return 0 ;; esac
-  fi
-  return 1
-}
-
-REMOVED=0
-SKIPPED=0
-
-# ── 0. Read PATH method from productune.env BEFORE it's deleted ───────────────
-PATH_METHOD=""
-PATH_RC=""
-ENV_FILE="$HOME/.productune/productune.env"
-if [ -f "$ENV_FILE" ]; then
-  PATH_METHOD="$(grep -E '^PRODUCTUNE_PATH_METHOD=' "$ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || true)"
-  PATH_RC="$(grep -E '^PRODUCTUNE_PATH_RC=' "$ENV_FILE" | tail -1 | cut -d= -f2 | tr -d '\n' || true)"
-fi
-
-# ── 1. Agent symlinks ─────────────────────────────────────────────────────────
-say "1) Scanning ~/.claude/agents/ for symlinks pointing to this repo..."
-AGENT_DIR="$HOME/.claude/agents"
-if [ -d "$AGENT_DIR" ]; then
-  while IFS= read -r LINK; do
-    TARGET="$(readlink "$LINK" 2>/dev/null || true)"
-    if [[ "$TARGET" == "$ROOT"* ]]; then
-      rm -f "$LINK"
-      say "  removed: $LINK → $TARGET"
-      REMOVED=$((REMOVED+1))
-    fi
-  done < <(find "$AGENT_DIR" -maxdepth 1 -type l 2>/dev/null)
-  # Also sweep dangling symlinks whose original targets were in this repo path
-  while IFS= read -r LINK; do
-    TARGET="$(readlink "$LINK" 2>/dev/null || true)"
-    if [[ "$TARGET" == "$ROOT"* ]]; then
-      rm -f "$LINK"
-      say "  removed dangling: $LINK"
-      REMOVED=$((REMOVED+1))
-    fi
-  done < <(find "$AGENT_DIR" -maxdepth 1 -type l ! -exec test -e {} \; -print 2>/dev/null)
-  if [ "$REMOVED" = 0 ]; then
-    say "  no productune agent symlinks found"
-  fi
-else
-  say "  ~/.claude/agents/ does not exist — nothing to remove"
-fi
-
-# ── 2. productune.env ─────────────────────────────────────────────────────────
-say "2) Removing ~/.productune/productune.env..."
-if [ -f "$HOME/.productune/productune.env" ]; then
-  rm -f "$HOME/.productune/productune.env"
-  say "  removed: ~/.productune/productune.env"
-  REMOVED=$((REMOVED+1))
-else
-  say "  not found — already clean"
-fi
-
-# ── 3. Legacy doctrine files + new doctrine tree ─────────────────────────────
-# Covers both pre-redesign (po-instructions.md / sections/) and post-redesign
-# (doctrine/ / po/ / designer/ / developer/ / qa/) to ensure clean removal on
-# any vintage of install.
-say "3) Removing ~/.productune doctrine artifacts (old + new)..."
-
-# Legacy: po-instructions.md + .bak siblings
-for F in "$HOME/.productune/po-instructions.md" "$HOME"/.productune/po-instructions.md.bak.* "$HOME"/.codex/po-instructions.md.bak.*; do
-  if [ -f "$F" ]; then
-    rm -f "$F"
-    say "  removed: $F"
-    REMOVED=$((REMOVED+1))
-  fi
-done
-
-# Legacy: *-memory.md files
-for F in "$HOME"/.productune/*-memory.md; do
-  if [ -f "$F" ]; then
-    rm -f "$F"
-    say "  removed: $F"
-    REMOVED=$((REMOVED+1))
-  fi
-done
-
-# Legacy: sections/ tree
-if [ -d "$HOME/.productune/sections" ]; then
-  rm -rf "$HOME/.productune/sections"
-  say "  removed: ~/.productune/sections/"
-  REMOVED=$((REMOVED+1))
-fi
-
-# New doctrine tree: doctrine/, po/, designer/, developer/, qa/
-for DIR in doctrine po designer developer qa; do
-  if [ -d "$HOME/.productune/$DIR" ]; then
-    rm -rf "$HOME/.productune/$DIR"
-    say "  removed: ~/.productune/$DIR/"
-    REMOVED=$((REMOVED+1))
-  fi
-done
-
-# ── 4. config.toml — restore latest .bak if available ────────────────────────
-say "4) Restoring ~/.codex/config.toml from backup..."
-LATEST_BAK=$(ls -1t "$HOME"/.codex/config.toml.bak.* 2>/dev/null | head -1 || true)
-if [ -n "$LATEST_BAK" ]; then
-  cp "$LATEST_BAK" "$HOME/.codex/config.toml"
-  say "  restored: $LATEST_BAK → ~/.codex/config.toml"
-  # Clean up all .bak files
-  rm -f "$HOME"/.codex/config.toml.bak.*
-  say "  cleaned up .bak files"
-  REMOVED=$((REMOVED+1))
-else
-  say "  no backup found — leaving config.toml as-is"
-  warn "  if config.toml was originally empty or Codex-default, consider deleting it manually."
-fi
-
-# ── 5. ~/.productune/po/bookshelf/calibration-log.md — opt-in ────────────────
-# New doctrine: calibration log lives at ~/.productune/po/bookshelf/calibration-log.md
-# (removed with po/ dir in step 3). Legacy po-memory.md also removed in step 3.
-# This step is now a no-op kept for structural clarity.
-say "5) PO calibration log: handled in step 3 (po/ dir removal)."
-say "  nothing further to do."
-
-# Try to remove ~/.productune/ if empty
-if [ -d "$HOME/.productune" ] && [ -z "$(ls -A "$HOME/.productune" 2>/dev/null)" ]; then
-  rmdir "$HOME/.productune" 2>/dev/null && say "  removed empty: ~/.productune/"
-fi
-
-# ── 6b. ~/.claude/settings.json — strip productune hooks + statusLine ────────
-say "6b) Removing productune hooks + statusLine from ~/.claude/settings.json..."
-SETTINGS="$HOME/.claude/settings.json"
+# 1. hooks + statusline out of settings.json
+SETTINGS="$CLAUDE_DIR/settings.json"
 if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
-  HOOKS_DIR="$ROOT/scripts/hooks/"
-  STATUSLINE="$ROOT/scripts/statusline-productune.sh"
+  say "1) Removing prdt hooks/statusline from $SETTINGS"
   TMP="$(mktemp)"
-  jq --arg dir "$HOOKS_DIR" --arg sl "$STATUSLINE" '
-    def is_pdt(cmd; dir):
-      (cmd | startswith(dir))
-      or (cmd | endswith("/scripts/hooks/post-edit-format.sh"))
-      or (cmd | endswith("/scripts/hooks/post-compact-doctrine.sh"))
-      or (cmd | endswith("/scripts/hooks/stop-verify.sh"))
-      or (cmd | endswith("/scripts/hooks/post-delegate-state-write.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-delegate-task-check.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-delegate-ctx-lang.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-chunking-warn.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-git-posture.sh"))
-      or (cmd | endswith("/scripts/hooks/post-bash-strip-cost.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-frontmatter-lint.sh"))
-      or (cmd | endswith("/scripts/hooks/session-start-doctrine.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-doctrine-guard.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-phase-gate-guard.sh"))
-      or (cmd | endswith("/scripts/hooks/post-ticket-status-verify.sh"))
-      or (cmd | endswith("/scripts/hooks/session-start-po-state-migrate.sh"))
-      or (cmd | endswith("/scripts/hooks/pre-po-state-shape-guard.sh"))
-      or (cmd | endswith("/scripts/hooks/post-po-state-shape-guard.sh"))
-      or (cmd | endswith("/scripts/hooks/prompt-gate-inject.sh"));
-    def strip_pdt(arr; dir):
-      ((arr // []) | map(
-        select(((.hooks // []) | map(.command // "" | is_pdt(.; dir)) | any) | not)
-      ));
-    .hooks //= {}
-    | .hooks.PreToolUse  = strip_pdt(.hooks.PreToolUse;  $dir)
-    | .hooks.PostToolUse = strip_pdt(.hooks.PostToolUse; $dir)
-    | .hooks.PostCompact = strip_pdt(.hooks.PostCompact; $dir)
-    | .hooks.Stop        = strip_pdt(.hooks.Stop;        $dir)
-    | .hooks.SessionStart = strip_pdt(.hooks.SessionStart; $dir)
-    | .hooks.UserPromptSubmit = strip_pdt(.hooks.UserPromptSubmit; $dir)
-    | (if (.statusLine // {} | .command // "") == $sl then del(.statusLine) else . end)
-    | with_entries(select(.key != "hooks" or (.value | to_entries | map(select(.value | length > 0)) | length > 0)))
+  jq --arg h "$PRDT_HOME/hooks/" --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" '
+    def strip(ev): (.hooks[ev] // []) | map(
+      .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
+    ) | map(select((.hooks | length) > 0));
+    (if .hooks then
+       .hooks.SessionStart = strip("SessionStart") |
+       .hooks.SubagentStart = strip("SubagentStart") |
+       .hooks.SubagentStop = strip("SubagentStop") |
+       .hooks.PostToolUse = strip("PostToolUse")
+     else . end) |
+    (if ((.statusLine.command // "") | (. == $sl or . == ("\"" + $sl + "\""))) then del(.statusLine) else . end)
   ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
-  say "  cleaned: hooks + statusLine entries pointing to $ROOT removed"
-  REMOVED=$((REMOVED+1))
-else
-  say "  no settings.json or jq missing — skipped"
 fi
 
-# ── 7. PATH entry / symlink ───────────────────────────────────────────────────
-say "7) PATH 등록 제거 (method: ${PATH_METHOD:-unknown})..."
-case "$PATH_METHOD" in
-  rc)
-    RC_FILE="${PATH_RC:-$HOME/.zshrc}"
-    if [ -f "$RC_FILE" ] && grep -qF "$ROOT/scripts" "$RC_FILE" 2>/dev/null; then
-      # Remove the "# productune" comment line + the export PATH line
-      sed -i.bak -e "/^# productune$/d" -e "\|$ROOT/scripts|d" "$RC_FILE" && rm -f "$RC_FILE.bak"
-      say "  제거 완료: $RC_FILE 에서 productune PATH 항목 삭제"
-      REMOVED=$((REMOVED+1))
-    else
-      say "  $RC_FILE 에서 productune PATH 항목을 찾지 못했습니다 — 이미 없거나 수동 추가된 것"
-    fi
-    ;;
-  local_bin)
-    if [ -L "$HOME/.local/bin/productune" ]; then
-      rm -f "$HOME/.local/bin/productune"
-      say "  제거 완료: ~/.local/bin/productune"
-      REMOVED=$((REMOVED+1))
-    else
-      say "  ~/.local/bin/productune 없음 — 이미 제거됨"
-    fi
-    ;;
-  usr_local_bin)
-    if [ -L "/usr/local/bin/productune" ]; then
-      if sudo rm -f /usr/local/bin/productune 2>/dev/null; then
-        say "  제거 완료: /usr/local/bin/productune"
-        REMOVED=$((REMOVED+1))
-      else
-        warn "  sudo 실패. 수동으로 실행하세요: sudo rm -f /usr/local/bin/productune"
-        SKIPPED=$((SKIPPED+1))
-      fi
-    else
-      say "  /usr/local/bin/productune 없음 — 이미 제거됨"
-    fi
-    ;;
-  none|"")
-    # Fallback: scan common locations
-    FOUND_ANY=0
-    [ -L "$HOME/.local/bin/productune" ] && rm -f "$HOME/.local/bin/productune" \
-      && say "  제거 완료: ~/.local/bin/productune" && REMOVED=$((REMOVED+1)) && FOUND_ANY=1
-    [ -L "/usr/local/bin/productune" ] && sudo rm -f /usr/local/bin/productune 2>/dev/null \
-      && say "  제거 완료: /usr/local/bin/productune" && REMOVED=$((REMOVED+1)) && FOUND_ANY=1
-    for RC in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
-      if [ -f "$RC" ] && grep -qF "$ROOT/scripts" "$RC" 2>/dev/null; then
-        sed -i.bak -e "/^# productune$/d" -e "\|$ROOT/scripts|d" "$RC" && rm -f "$RC.bak"
-        say "  제거 완료: $RC 에서 productune PATH 항목 삭제"
-        REMOVED=$((REMOVED+1)); FOUND_ANY=1
-      fi
-    done
-    [ "$FOUND_ANY" = 0 ] && say "  PATH 등록 흔적 없음 — 이미 없거나 onboard 시 등록하지 않은 것"
-    ;;
-esac
+# 2. agents
+say "2) Removing prdt-* agents"
+rm -f "$CLAUDE_DIR"/agents/prdt-po.md "$CLAUDE_DIR"/agents/prdt-designer.md \
+      "$CLAUDE_DIR"/agents/prdt-developer.md "$CLAUDE_DIR"/agents/prdt-qa.md
 
-# ── Summary ───────────────────────────────────────────────────────────────────
-echo
-ok "Uninstall complete. Removed: $REMOVED item(s), Kept: $SKIPPED item(s)."
-echo
-say "완전히 제거하려면 repo 디렉터리도 삭제하세요:"
-say "  rm -rf $ROOT"
+# 3. PATH symlink (only if it points at our bin)
+if [ -L "$HOME/.local/bin/prdt" ]; then
+  case "$(readlink "$HOME/.local/bin/prdt")" in
+    "$PRDT_HOME"/*) rm -f "$HOME/.local/bin/prdt"; say "3) Removed ~/.local/bin/prdt" ;;
+  esac
+fi
+
+# 4. home dir
+if [ "${1:-}" = "--purge" ]; then
+  say "4) Purging $PRDT_HOME (including overrides/)"
+  rm -rf "$PRDT_HOME"
+else
+  say "4) Removing $PRDT_HOME mirror (keeping overrides/ + prdt.env; --purge removes all)"
+  rm -rf "$PRDT_HOME/discipline" "$PRDT_HOME/hooks" "$PRDT_HOME/bin" "$PRDT_HOME/doctrine.md"
+fi
+
+say "prdt uninstall done."

@@ -7,15 +7,15 @@
  *   1. prdt project → EXACTLY the 3 prdt hooks (prdt-session-start /
  *      prdt-post-compact / prdt-post-dispatch) + statusline-prdt.sh are
  *      registered, pointing at the ~/.prdt mirror with the same matchers and
- *      quoted-command form prdt-install.sh §4/§6 writes; no legacy pdt hook
+ *      quoted-command form install.sh §4/§6 writes; no legacy pdt hook
  *      leaks in.
  *   2. legacy project (and the projectDir-less default) → NO-OP: T-311 downgraded
  *      legacy dual-mode to read-only, so the GUI no longer installs the 18-hook
  *      legacy set. settings.json is not written at all for a legacy/omitted path.
  *   3. prdt install is idempotent (re-run → no change), CLI-parity idempotent
- *      (a settings.json already written by prdt-install.sh stays identical),
+ *      (a settings.json already written by install.sh stays identical),
  *      and preserves unrelated user hooks AND coexisting legacy pdt entries.
- *   4. ~/.prdt/hooks mirror absent (prdt-install.sh never ran) → skip, never
+ *   4. ~/.prdt/hooks mirror absent (install.sh never ran) → skip, never
  *      register hook commands that point at nonexistent scripts.
  *
  * Mirrors the framework-free case-list + vitest driver idiom of
@@ -79,7 +79,7 @@ function allCommands(settings: any): string[] {
   return out
 }
 
-/** The exact hooks block prdt-install.sh §4 produces for a given prdt home. */
+/** The exact hooks block install.sh §4 produces for a given prdt home. */
 function cliHooksBlock(home: string): any {
   const h = (b: string) => ({ type: 'command', command: `"${path.join(home, '.prdt', 'hooks', b)}"` })
   return {
@@ -110,12 +110,12 @@ export const A6_CASES: readonly Case[] = [
       for (const b of PRDT_HOOKS) {
         if (!cmds.some(c => c.includes(b))) return fail(`missing hook ${b}`)
       }
-      // Registration shape mirrors prdt-install.sh §4 exactly.
+      // Registration shape mirrors install.sh §4 exactly.
       const want = cliHooksBlock(home)
       if (JSON.stringify(s.hooks) !== JSON.stringify(want)) {
-        return fail(`hooks block deviates from prdt-install.sh shape: ${JSON.stringify(s.hooks)}`)
+        return fail(`hooks block deviates from install.sh shape: ${JSON.stringify(s.hooks)}`)
       }
-      // Statusline = quoted ~/.prdt/bin/statusline-prdt.sh (prdt-install.sh §6 shape).
+      // Statusline = quoted ~/.prdt/bin/statusline-prdt.sh (install.sh §6 shape).
       const wantSl = `"${path.join(home, '.prdt', 'bin', 'statusline-prdt.sh')}"`
       if (s.statusLine?.command !== wantSl) return fail(`statusLine=${s.statusLine?.command}`)
       return ok
@@ -167,11 +167,11 @@ export const A6_CASES: readonly Case[] = [
     },
   },
   {
-    label: 'CLI parity — settings already written by prdt-install.sh stay identical',
+    label: 'CLI parity — settings already written by install.sh stay identical',
     run: () => {
       const home = makeHome()
       const proj = makeProject('.prdt')
-      // Seed settings.json exactly as prdt-install.sh --statusline leaves it.
+      // Seed settings.json exactly as install.sh --statusline leaves it.
       fs.mkdirSync(path.dirname(settingsPath(home)), { recursive: true })
       const cliWritten = {
         hooks: cliHooksBlock(home),
@@ -213,7 +213,7 @@ export const A6_CASES: readonly Case[] = [
   {
     label: '~/.prdt/hooks mirror absent → skip (no broken hook registration)',
     run: () => {
-      const home = makeHome(false) // no mirror — prdt-install.sh never ran
+      const home = makeHome(false) // no mirror — install.sh never ran
       const proj = makeProject('.prdt')
       installClaudeHooks(proj, home)
       if (fs.existsSync(settingsPath(home))) return fail('settings.json written despite missing mirror')

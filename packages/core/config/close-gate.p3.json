@@ -1,6 +1,0 @@
-[
-  { "step": "backlog_triage", "status": "pending", "waivable": false },
-  { "step": "design_review", "type": "design", "status": "pending", "waivable": false },
-  { "step": "prd_check", "type": "design", "status": "pending", "waivable": true },
-  { "step": "security_6", "type": "qa", "status": "pending", "waivable": true }
-]

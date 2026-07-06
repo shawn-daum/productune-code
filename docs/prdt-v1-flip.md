@@ -28,7 +28,7 @@ flip은 **프로젝트 상태를 일절 건드리지 않는다**. 각 프로젝�
 
 ### 3. 구 코드 freeze는 유지, repo 대청소는 flip과 분리
 - main 브랜치의 구 full 코드는 계속 freeze(치명 버그 예외만, 예: 2026-07-02 frontmatter-lint 스코프 fix). GUI 개발은 main에서 계속 → v1으로 주기 merge.
-- v1 브랜치의 legacy 트리 삭제·이름 정리(`prdt-install.sh`→`install.sh` 등)는 **어댑터 작업 때 함께** — 지금 지우면 main과의 merge 마찰만 커진다.
+- v1 브랜치의 legacy 트리 삭제·이름 정리(`prdt-install.sh`→`install.sh` 등)는 **어댑터 작업 때 함께** — 지금 지우면 main과의 merge 마찰만 커진다. (2026-07-06 T-293에서 실행 완료 — installer 정식 이름은 `install.sh`)
 
 ### 4. 기기별 재적용 — 자동 핸드오프 (2026-07-03 구현)
 > **⏸ 스텁 임시 회수 중 (2026-07-03 저녁, 사용자 결정)**: 팀 전파 시점 통제를 위해 origin main·v0.6에서
@@ -53,7 +53,7 @@ flip은 **프로젝트 상태를 일절 건드리지 않는다**. 각 프로젝�
 2. settings.json에서 구 full hook 17개 + lite hook 1개 제거 (prdt hook 5이벤트는 유지/보장)
 3. statusline → `statusline-prdt.sh` 교체 (순수 표시 전용)
 4. `~/.claude/agents/`에서 `pdt-*.md`·`pdtl-*.md`(+.bak) 제거 — `prdt-*` 4종만 잔존
-5. prdt-install.sh 재실행(미러·메뉴판 최신화) + 검증 리포트
+5. install.sh 재실행(미러·메뉴판 최신화; T-293 전 이름 prdt-install.sh) + 검증 리포트
 
 ## flip 후 즉시 할 일
 - [ ] productune repo: GUI WIP 커밋 → `prdt migrate` (첫 실전 인수)

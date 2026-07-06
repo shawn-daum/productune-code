@@ -1,2 +1,0 @@
-5a: fill `outcome.observed_result` (or null lazy) · append `feature-history.md` (`- (YYYY-MM-DD) <version> · <area-tag> · <decision-type> · note: <one-line>`) · propose backlog
-5c: write `docs/retrospectives/<version>.md`.

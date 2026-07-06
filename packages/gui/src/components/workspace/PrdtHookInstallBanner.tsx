@@ -7,8 +7,8 @@
  * already has the 3 prdt discipline hooks registered (`onboarding:checkPrdtHooks`).
  * Renders nothing once installed, or once dismissed for this session. Otherwise:
  *   - mirror present  → "install now" CTA → `onboarding:installPrdtHooksAt(projectDir)`
- *     (the SAME installClaudeHooks prdt branch prdt-install.sh's CLI path uses).
- *   - mirror absent   → honest "can't install yet, run prdt-install.sh first" notice,
+ *     (the SAME installClaudeHooks prdt branch install.sh's CLI path uses).
+ *   - mirror absent   → honest "can't install yet, run install.sh first" notice,
  *     no CTA (A6's own warn-skip behavior — never writes settings that point at a
  *     nonexistent mirror).
  *

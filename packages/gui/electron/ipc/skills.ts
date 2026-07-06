@@ -103,14 +103,14 @@ function inferPersonasFromPath(filePath: string): SkillPersona[] {
 /**
  * Path substrings that mark a skill as domain-irrelevant for this project.
  *
- * Mirrors PRODUCTUNE_IRRELEVANT_CATEGORIES in setup-skills.sh plus the
+ * Mirrors PRODUCTUNE_IRRELEVANT_CATEGORIES from the retired legacy
+ * setup-skills.sh (removed in T-293; this list is now the SoT) plus the
  * mattpocock categories whose inferPersonasFromPath explicitly returns []:
  *   - phuryn/pm-data-analytics  — analytics tooling, domain-irrelevant
  *   - phuryn/pm-marketing-growth — marketing/growth, domain-irrelevant
  *   - mattpocock/skills/deprecated — deliberately retired skills
  *   - mattpocock/skills/personal   — personal/non-project skills
  *
- * Keep in sync with PRODUCTUNE_IRRELEVANT_CATEGORIES in setup-skills.sh.
  */
 const SKIP_LIST = [
   'phuryn/pm-data-analytics',

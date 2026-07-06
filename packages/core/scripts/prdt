@@ -434,7 +434,7 @@ def cmd_po(args):
 
 
 def cmd_update(_args):
-    """구 productune update 계승: repo pull --ff-only → prdt-install.sh 재실행."""
+    """구 productune update 계승: repo pull --ff-only → install.sh 재실행."""
     import subprocess
     repo = None
     env = Path.home() / ".prdt" / "prdt.env"
@@ -443,7 +443,7 @@ def cmd_update(_args):
             if line.startswith("PRDT_REPO="):
                 repo = line.split("=", 1)[1].strip()
     if not repo or not Path(repo).is_dir():
-        sys.exit("prdt update: PRDT_REPO를 찾을 수 없어요 — ~/.prdt/prdt.env 확인 (재설치: prdt-install.sh)")
+        sys.exit("prdt update: PRDT_REPO를 찾을 수 없어요 — ~/.prdt/prdt.env 확인 (재설치: packages/core/scripts/install.sh)")
 
     def git(*a):
         return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True)
@@ -457,7 +457,7 @@ def cmd_update(_args):
         tail = (p.stderr or p.stdout).strip().splitlines()[-1:] or ["?"]
         sys.exit(f"prdt update: pull 실패({tail[0]}) — repo에서 수동 해결 후 재시도")
     new = git("rev-parse", "--short", "HEAD").stdout.strip()
-    if subprocess.run(["bash", str(Path(repo) / "scripts" / "prdt-install.sh")]).returncode:
+    if subprocess.run(["bash", str(Path(repo) / "scripts" / "install.sh")]).returncode:
         sys.exit("prdt update: install 실패 — 위 출력 확인")
     print(f"업데이트 완료: {old} → {new}" if old != new else f"이미 최신({old}) — 미러/메뉴판만 갱신했어요")
 

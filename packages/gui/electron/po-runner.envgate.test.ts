@@ -3,7 +3,7 @@
  *
  * canSpawnClaude's onboarding-done precondition is the presence of an env file;
  * the file it checks now branches on project kind (A1 detectProjectKind):
- *   - prdt project (`.prdt/` marker)    → ~/.prdt/prdt.env  (prdt-install.sh SoT)
+ *   - prdt project (`.prdt/` marker)    → ~/.prdt/prdt.env  (install.sh SoT)
  *   - legacy `.productune/` project     → ~/.productune/productune.env (unchanged)
  *   - fresh/unknown dir                 → legacy default (unchanged)
  *

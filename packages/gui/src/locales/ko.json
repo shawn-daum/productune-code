@@ -54,17 +54,6 @@
         "needLogin": "위 Start login 버튼으로 로그인해 주세요"
       }
     },
-    "step3": {
-      "label": "Step 3 / 4 — 기억 저장 방식",
-      "intro": "PO와 프로덕트 팀원의 기억을 담당하는 방식을 선택해주세요.",
-      "detectingHw": "하드웨어 감지 중...",
-      "optionRecommended": "권장",
-      "dockerNotDetected": "Docker Desktop이 감지되지 않았습니다. Graphiti 사용에 필요합니다.",
-      "brewInstall": "Homebrew로 자동 설치",
-      "installing": "설치 중… 취소하려면 앱을 재시작하세요.",
-      "openDocker": "Docker Desktop 실행하기",
-      "redetect": "재감지"
-    },
     "step4": {
       "applying": "설정 적용 중…",
       "done": "설정 완료",
@@ -470,7 +459,7 @@
     },
     "prdtHooks": {
       "hint": "이 기기에는 prdt discipline hook이 아직 설치되어 있지 않아요.",
-      "mirrorAbsent": "prdt discipline hook을 설치할 수 없어요 — 이 기기에서 prdt-install.sh를 먼저 실행하세요.",
+      "mirrorAbsent": "prdt discipline hook을 설치할 수 없어요 — 이 기기에서 prdt install.sh(packages/core/scripts)를 먼저 실행하세요.",
       "cta": "지금 설치",
       "installing": "설치 중…",
       "failed": "설치 실패: {{error}}"
@@ -975,7 +964,7 @@
       "sourcePlugin": "플러그인",
       "readOnlyHint": "계정/플러그인이 관리하는 서버라 여기서 수정할 수 없어요.",
       "emptyTitle": "연결된 MCP 서버가 없어요.",
-      "emptyDesc": "install.sh 로 서버를 추가할 수 있어요.",
+      "emptyDesc": "`claude mcp add` 로 서버를 추가할 수 있어요.",
       "footerHint": "MCP 서버는 AI 엔진이 런타임에 사용하는 외부 도구예요.",
       "addBtn": "서버 추가",
       "addBtnTooltip": "Phase 5 에서 지원 예정이에요.",
@@ -1006,7 +995,7 @@
       "emptyHint": "~/.claude/settings.json 에 hooks 설정이 없어요.",
       "noMatcher": "—",
       "editHint": "수정: ~/.claude/settings.json 직접 편집 후 재시작",
-      "addHint": "추가: install.sh 통해 등록",
+      "addHint": "추가: ~/.claude/settings.json에 직접 등록 (prdt hook은 install.sh가 등록)",
       "docsLink": "설치 안내 보기",
       "copyBtn": "복사",
       "footerHint": "훅은 ~/.claude/settings.json 의 hooks 블록에서 관리돼요."

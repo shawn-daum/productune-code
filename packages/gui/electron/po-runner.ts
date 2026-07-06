@@ -361,7 +361,7 @@ export async function runPoTurn(opts: SendOpts, cb: RunCallbacks): Promise<void>
 /**
  * T-289 (adapter A6): the onboarding-done env-file gate is dual-mode, mirroring
  * poAgentFor's project-kind branch above — a prdt project (`.prdt/` marker, A1
- * detectProjectKind) gates on `~/.prdt/prdt.env` (written by prdt-install.sh, T-289
+ * detectProjectKind) gates on `~/.prdt/prdt.env` (written by install.sh, T-289
  * ctx §"미니멀 계승"), a legacy project keeps gating on `~/.productune/productune.env`
  * exactly as before. Only the env file's PRESENCE is checked (never parsed) — same
  * as the pre-existing legacy check — so no prdt.env field mapping is needed here.

@@ -54,17 +54,6 @@
         "needLogin": "Sign in with Start login above"
       }
     },
-    "step3": {
-      "label": "Step 3 / 4 — Memory backend",
-      "intro": "Choose how PO and product team members store memory.",
-      "detectingHw": "Detecting hardware...",
-      "optionRecommended": "recommended",
-      "dockerNotDetected": "Docker Desktop not detected. Required for Graphiti.",
-      "brewInstall": "Auto-install via Homebrew",
-      "installing": "Installing… Restart the app to cancel.",
-      "openDocker": "Open Docker Desktop",
-      "redetect": "Redetect"
-    },
     "step4": {
       "applying": "Applying settings…",
       "done": "Setup complete",
@@ -470,7 +459,7 @@
     },
     "prdtHooks": {
       "hint": "prdt discipline hooks aren't installed on this machine yet.",
-      "mirrorAbsent": "Can't install prdt discipline hooks yet — run prdt-install.sh on this machine first.",
+      "mirrorAbsent": "Can't install prdt discipline hooks yet — run prdt's install.sh (packages/core/scripts) on this machine first.",
       "cta": "Install now",
       "installing": "Installing…",
       "failed": "Install failed: {{error}}"
@@ -975,7 +964,7 @@
       "sourcePlugin": "plugin",
       "readOnlyHint": "Managed by your account / a plugin — not editable here.",
       "emptyTitle": "No MCP servers configured.",
-      "emptyDesc": "Add servers via install.sh.",
+      "emptyDesc": "Add servers via `claude mcp add`.",
       "footerHint": "MCP servers are external tools used by the AI engine.",
       "addBtn": "Add server",
       "addBtnTooltip": "Adding new servers is supported in Phase 5.",
@@ -1006,7 +995,7 @@
       "emptyHint": "No hooks configured in ~/.claude/settings.json.",
       "noMatcher": "—",
       "editHint": "Edit ~/.claude/settings.json and restart",
-      "addHint": "Add via install.sh",
+      "addHint": "Add hooks in ~/.claude/settings.json (prdt hooks are registered by install.sh)",
       "docsLink": "View install guide",
       "copyBtn": "Copy",
       "footerHint": "Hooks are managed in ~/.claude/settings.json"

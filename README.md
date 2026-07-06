@@ -31,7 +31,7 @@ lifecycle:  Define → Build → Ship → Retro → idle   (gate 없음 — PO �
 
 ```bash
 # v1 브랜치에서
-packages/core/scripts/prdt-install.sh          # prdt 설치 (구 시스템과 공존, 옵트인)
+packages/core/scripts/install.sh               # prdt 설치 (idempotent)
 packages/core/scripts/prdt-flip.sh             # 이 기기를 prdt 기본으로 전환 (구 pdt/pdtl 은퇴)
 packages/core/scripts/prdt-flip.sh --rollback <backup-dir>   # 원복
 ```

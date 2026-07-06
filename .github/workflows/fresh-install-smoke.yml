@@ -1,20 +1,12 @@
-# T-021 (v0.5 C1) — fresh-install CI smoke. T-311: retargeted off legacy install.sh.
-#
-# Catches install regressions before they reach a teammate. T-311 downgraded the
-# legacy GUI dual-mode to read-only, so the two checks that hard-depended on the
-# legacy `packages/core/scripts/install.sh` were retired:
-#   - old (a) run-install-smoke.sh (non-interactive install.sh) → replaced by the
-#     go-forward prdt-install.sh smoke below.
-#   - old (c) check-env-key-parity.mjs (install.sh <-> init-project.mjs engine-key
-#     parity) → retired: with install.sh gone there is a single seeder left, so
-#     there is no cross-writer parity to police. The check script is left in
-#     scripts/ci/ for T-293 to remove alongside the legacy tree.
+# T-021 (v0.5 C1) — fresh-install CI smoke. T-311: retargeted off the legacy
+# installer; T-293: legacy tree removed, prdt installer renamed to its canonical
+# `packages/core/scripts/install.sh`, and check (d) (dispatch-cost-strip) retired
+# with the legacy post-bash-strip-cost hook it drove.
 #
 # Current checks (all in an isolated $HOME where relevant):
-#   (a) prdt-install.sh smoke   — non-interactive prdt install wires mirror hooks,
+#   (a) install.sh smoke        — non-interactive prdt install wires mirror hooks,
 #                                 prdt-* agents, and settings.json registration
 #   (b) check-symlink-targets.sh — block absolute-path symlink targets (generic)
-#   (d) check-dispatch-cost-strip.sh — dispatch-cost-strip behavior intact
 #
 # Out of scope: full e2e GUI CI.
 
@@ -48,13 +40,13 @@ jobs:
       - name: Ensure jq + python3 present
         # jq + python3 are preinstalled on ubuntu-latest; assert them so a runner
         # image change surfaces loudly instead of silently skewing the checks.
-        # prdt-install.sh (check a) requires both; check (d) uses jq.
+        # install.sh (check a) requires both.
         run: |
           jq --version
           python3 --version
 
       - name: Make CI check scripts executable
-        run: chmod +x scripts/ci/*.sh scripts/ci/*.mjs
+        run: chmod +x scripts/ci/*.sh
 
       # ── (b) absolute-path symlink target lint ──────────────────────────────
       # Run first: it is the cheapest static check and pins the first of the two
@@ -64,17 +56,17 @@ jobs:
         run: bash scripts/ci/check-symlink-targets.sh
 
       # ── (a) non-interactive prdt install in an isolated $HOME ──────────────
-      # T-311: replaces the legacy install.sh smoke. prdt-install.sh is
-      # non-interactive by design (no claude/auth preflight; needs only jq +
-      # python3), so no stubs are required. Runs it in a throwaway $HOME, then
-      # asserts the go-forward install invariants: the 3 discipline hooks mirror
-      # to ~/.prdt/hooks, the prdt-* persona agents install into ~/.claude/agents,
-      # and ~/.claude/settings.json is valid JSON registering all 3 hooks.
+      # install.sh is non-interactive by design (no claude/auth preflight; needs
+      # only jq + python3), so no stubs are required. Runs it in a throwaway
+      # $HOME, then asserts the go-forward install invariants: the 3 discipline
+      # hooks mirror to ~/.prdt/hooks, the prdt-* persona agents install into
+      # ~/.claude/agents, and ~/.claude/settings.json is valid JSON registering
+      # all 3 hooks.
       - name: (a) Non-interactive prdt-install smoke (isolated HOME)
         run: |
           set -euo pipefail
           SMOKE_HOME="$(mktemp -d "${RUNNER_TEMP:-/tmp}/prdt-install-smoke.XXXXXX")"
-          HOME="$SMOKE_HOME" bash packages/core/scripts/prdt-install.sh < /dev/null
+          HOME="$SMOKE_HOME" bash packages/core/scripts/install.sh < /dev/null
 
           fail=0
           bad() { printf 'FAIL: %s\n' "$*" >&2; fail=1; }
@@ -102,10 +94,3 @@ jobs:
             exit 1
           fi
           printf '[prdt-install-smoke] OK — non-interactive prdt install passed.\n'
-
-      # ── (d) dispatch-cost-strip behavior ───────────────────────────────────
-      # A post-install PO session pipes each dispatch result through the
-      # post-bash-strip-cost hook. A real authed PO session is unavailable on a
-      # clean runner, so this drives the same hook with representative fixtures.
-      - name: (d) Dispatch-cost-strip behavior
-        run: bash scripts/ci/check-dispatch-cost-strip.sh

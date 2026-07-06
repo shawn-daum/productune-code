@@ -15,12 +15,11 @@
  *   - NO `po-instructions.md` is copied into `~/.productune`.
  *   - NO `~/.claude/settings.json` is written (no 18-hook legacy set).
  *
- * REAL_CORE is the repo's `packages/core`, which (during the pdt-* coexistence
- * window) still ships `agents/pdt-*.md`, so the "zero agents symlinked" assertion
- * is a LIVE regression guard: a reintroduced `readdir(coreDir/agents)+symlink`
- * loop would find those real specs and the test would catch it. Intentionally NOT
- * gated on those artifacts existing — once T-293 removes the legacy tree, the flow
- * is structurally unable to install them and this test stays green.
+ * REAL_CORE is the repo's `packages/core`. T-293 removed the legacy tree
+ * (`agents/pdt-*.md` etc.), so a reintroduced `readdir(coreDir/agents)+symlink`
+ * loop would now find the prdt-*.md specs — the "zero agents symlinked"
+ * assertion still catches that regression. Intentionally NOT gated on any
+ * legacy artifact existing.
  */
 
 import path from 'path'

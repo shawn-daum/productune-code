@@ -179,12 +179,12 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // (T-289 adapter A6) for prdt-kind projects, and is a NO-OP for legacy/undefined
 // projects. Legacy projects keep working for file/ticket/po-state VIEWING; only
 // the machine-provisioning wiring is cut. prdt install stays the single
-// go-forward path: prdt-install.sh (mirror + agents + hooks) plus the T-305
+// go-forward path: install.sh (mirror + agents + hooks) plus the T-305
 // on-demand banner. `homeDir` is injectable (defaults to os.homedir()) so tests
 // can exercise the prdt branch against a throwaway fixture HOME instead of the
 // developer's real ~/.claude / ~/.prdt.
 
-/** The 3 prdt discipline hooks (packages/core/scripts/prdt-install.sh §4, SoT). */
+/** The 3 prdt discipline hooks (packages/core/scripts/install.sh §4, SoT). */
 const PRDT_HOOK_BASENAMES = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh'] as const
 
 function readSettings(settingsPath: string): any {
@@ -199,7 +199,7 @@ function readSettings(settingsPath: string): any {
 
 /**
  * prdt branch (T-289): install exactly the 3 discipline hooks + statusline-prdt.sh,
- * producing the SAME settings.json registration prdt-install.sh §4/§6 writes —
+ * producing the SAME settings.json registration install.sh §4/§6 writes —
  * same `~/.prdt` mirror paths, same matchers, same quoted-command form — so GUI
  * and CLI installs can never diverge or double-register: either one re-run strips
  * its own entries (basename match ⊇ the CLI's path-prefix strip) and re-adds
@@ -207,25 +207,25 @@ function readSettings(settingsPath: string): any {
  * are stripped/replaced.
  *
  * Commands point at the `~/.prdt/hooks/` MIRROR, not the bundled coreDir: the prdt
- * hook scripts are mirrored home by prdt-install.sh (v1 repo prdt-install.sh
+ * hook scripts are mirrored home by install.sh (v1 repo install.sh
  * 24-25행, the SoT for this shape) and the legacy GUI bundle does not carry them.
  * If the mirror is absent (prdt never installed on this machine), registration is
  * SKIPPED with a warn instead of writing hook entries that point at nonexistent
  * scripts — a prdt project can't spawn its PO without `~/.prdt/prdt.env` anyway
- * (po-runner canSpawnClaude), so prdt-install.sh runs first either way.
+ * (po-runner canSpawnClaude), so install.sh runs first either way.
  */
 function installPrdtHooks(settingsPath: string, homeDir: string): void {
   const prdtHome = path.join(homeDir, '.prdt')
   const hooksDir = path.join(prdtHome, 'hooks')
   const missing = PRDT_HOOK_BASENAMES.filter(b => !fs.existsSync(path.join(hooksDir, b)))
   if (missing.length > 0) {
-    console.warn(`[onboarding] prdt hook mirror incomplete (${missing.join(', ')} not in ${hooksDir}) — run prdt-install.sh first; skipping hook registration`)
+    console.warn(`[onboarding] prdt hook mirror incomplete (${missing.join(', ')} not in ${hooksDir}) — run install.sh first; skipping hook registration`)
     return
   }
 
   const settings = readSettings(settingsPath)
 
-  // Quoted (mirrors prdt-install.sh's jq concat) so the registered command
+  // Quoted (mirrors install.sh's jq concat) so the registered command
   // resolves as ONE shell arg even if the home path ever contains spaces.
   const h = (name: string) => `"${path.join(hooksDir, name)}"`
   const statusline = `"${path.join(prdtHome, 'bin', 'statusline-prdt.sh')}"`
@@ -279,7 +279,7 @@ export function installClaudeHooks(projectDir?: string, homeDir: string = os.hom
 // runs before a project is picked, so it always takes the legacy branch. T-305
 // gives the renderer a way to (a) read whether THIS machine already has the
 // prdt hooks registered, distinguishing "not installed" from "can't be
-// installed yet" (mirror missing → prdt-install.sh never ran here), and
+// installed yet" (mirror missing → install.sh never ran here), and
 // (b) trigger the same installPrdtHooks the CLI installer uses, scoped to a
 // projectDir the user has explicitly opened. No settings.json write happens
 // without an explicit renderer call — never on project open by itself.
@@ -305,7 +305,7 @@ function hasPrdtHooksRegistered(settingsPath: string): boolean {
 }
 
 export interface PrdtHooksStatus {
-  /** ~/.prdt/hooks/{3 hooks} all present — prdt-install.sh has run on this machine. */
+  /** ~/.prdt/hooks/{3 hooks} all present — install.sh has run on this machine. */
   mirrorPresent: boolean
   /** settings.json already carries all 3 prdt hook commands. */
   installed: boolean
@@ -341,7 +341,7 @@ export function installPrdtHooksForProject(
  * T-311: legacy dual-mode was downgraded to read-only. The wizard no longer
  * symlinks pdt-* / prdt-* agents into ~/.claude/agents, copies po-instructions.md
  * into ~/.productune, or installs the 18 legacy enforcement hooks — prdt
- * provisioning is prdt-install.sh's job (agents + hooks + mirror), plus the T-305
+ * provisioning is install.sh's job (agents + hooks + mirror), plus the T-305
  * banner for per-project hook opt-in. `homeDir` is test-only (defaults to
  * os.homedir()). The productune.env body is byte-identical to the pre-T-311 seed
  * so the legacy po-runner env gate (canSpawnClaude → productune.env presence) is
@@ -464,7 +464,7 @@ export function register(): void {
       //    App.tsx's checkEnv() gates the wizard on. T-311: legacy dual-mode was
       //    downgraded to read-only, so the wizard NO LONGER symlinks pdt-* / prdt-*
       //    agents, copies po-instructions.md, or installs the 18 legacy enforcement
-      //    hooks. prdt provisioning is prdt-install.sh's job (+ the T-305 banner).
+      //    hooks. prdt provisioning is install.sh's job (+ the T-305 banner).
       provisionUserGlobals(coreDir)
 
       // 2. Pre-warm Playwright MCP cache (used by QA's auto smoke gate).

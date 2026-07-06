@@ -72,7 +72,7 @@ if [ -n "$MISSING" ]; then
   printf '[!] prdt discipline MISSING for %s:%s\n' "$AGENT_TYPE" "$MISSING" >&2
   emit_ctx "[prdt discipline — MISSING]
 Required discipline file(s) absent on this machine:$MISSING
-STOP. Run prdt-install.sh to restore the ~/.prdt mirror. Do not act without discipline."
+STOP. Run install.sh (packages/core/scripts) to restore the ~/.prdt mirror. Do not act without discipline."
 fi
 
 block() { # $1 label, $2 path — emits a delimited block when the file exists
