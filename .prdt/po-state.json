@@ -3,8 +3,8 @@
   "stage": "build",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-293",
-    "slug": "legacy-tree-cleanup",
+    "ticket_id": "T-312",
+    "slug": "statusline-format-polish",
     "assignee": "developer"
   }
 }
