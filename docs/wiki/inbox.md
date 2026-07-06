@@ -39,3 +39,7 @@
 - QA 교훈(T-311): 실동작을 no-op으로 강등할 때 그 동작을 '완료'로 표시하는 인접 UI 카피(진행 스텝·완료 배지)를 함께 감사하지 않으면 거짓 확인 회귀 — '동작 제거' 티켓 acceptance에 'UI 텍스트 스윕' 명시 포함할 것.
 - 패턴(T-311 fix): OnboardingWizard 완료 리스트는 ipc/onboarding.ts 핸들러 스텝의 수동 미러 — 기계적 링크 없어 조용히 desync. 재발 시 onboarding:complete IPC가 수행 스텝 키를 반환하고 renderer가 그걸 렌더(SoT=핸들러)로 전환 검토.
 - locale 고아(pre-T-311): onboarding.step3.*('Memory backend') 키는 어떤 코드도 안 씀 — locale-cleanup 스윕 후보.
+- env footgun(T-293): 소스 파일 내 NUL 바이트가 있으면 grep이 바이너리로 분류해 조용히 스킵 — costArchive.ts의 살아있는 import를 두 번 숨김. 삭제 게이트용 전수 스윕은 반드시 grep -a 또는 file 검사 선행.
+- env find(T-293): install.sh settings.json 머지는 set-idempotent(바이트 아님) — prdt 엔트리 strip→재append라 재실행 시 배열 순서 재배열(중복/유실 없음). CI 바이트 diff 금지, 이벤트별 훅 SET 비교.
+- 후속 후보(T-293): ① costArchive.ts NUL 2바이트 제거(1줄 위생) ② 가격표 이원화(model-prices.json vs prdt-post-dispatch.sh 내장) 통합 ③ prdt-install.sh forwarder는 전 기기 prdt update 1회 후 제거 ④ prdt 스킬팩 배포 스토리 미정(skills/ 삭제로 배포원 소멸, 기존 기기 미러 잔존) ⑤ fresh-install-smoke는 main 트리거라 v1 push엔 안 돎.
+- 후속 tidy(T-293 QA): subagent-cost.ts 헤더 주석이 삭제된 구 아키텍처(statusline-productune·post-delegate-state-write)를 현재형 서술 — 주석 전용, 정리 후보.
