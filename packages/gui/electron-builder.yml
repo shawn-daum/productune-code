@@ -47,22 +47,17 @@ extraResources:
     to: build/tray
     filter:
       - "**/*"
-  # T-PATCH-217: bundle packages/core (doctrine · agents · config · skills) to
-  # <app>/Contents/Resources/core. onboarding.ts resolves coreDir as
-  # `app.getAppPath()/../core` = Resources/app.asar/../core = Resources/core, and
-  # the setup step readdir's core/agents (unguarded). Without this the packaged
-  # app's onboarding fails with ENOENT. Exclude build/dev-only weight.
-  - from: ../core
-    to: core
-    filter:
-      - "**/*"
-      - "!node_modules/**"
-      - "!.turbo/**"
-      - "!dist/**"
-      - "!src/**"
-      - "!test/**"
-      - "!**/.DS_Store"
-      - "!tsconfig.json"
+  # T-311: the `../core` → Resources/core extraResource (T-PATCH-217) is GONE.
+  # Its sole runtime consumer was the legacy GUI onboarding, which readdir'd
+  # `app.getAppPath()/../core/agents` to symlink pdt-* specs, copied
+  # `core/po/po-instructions.md`, and read `core/scripts/hooks/*.sh` for the 18
+  # legacy enforcement hooks. That flow was downgraded to read-only in T-311 —
+  # nothing under Resources/core is read at runtime anymore (prdt onboarding uses
+  # the ~/.prdt mirror written by prdt-install.sh, not the app bundle; the only
+  # residual `coreDir` use is the vestigial PRODUCTUNE_REPO string in
+  # productune.env, which is never stat'd). @productune/core is still bundled as a
+  # normal workspace dependency inside the asar — this only drops the raw source
+  # tree copy. NOTE: verify on a packaged .dmg (dist:mac) — this loop can't build one.
 
 mac:
   target:

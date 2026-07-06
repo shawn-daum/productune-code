@@ -1,15 +1,20 @@
-# T-021 (v0.5 C1) — fresh-install CI smoke.
+# T-021 (v0.5 C1) — fresh-install CI smoke. T-311: retargeted off legacy install.sh.
 #
-# Catches install regressions before they reach a teammate. Runs four checks in
-# an isolated $HOME (PRD §C1, docs/prd/productune.md lines 425-434):
+# Catches install regressions before they reach a teammate. T-311 downgraded the
+# legacy GUI dual-mode to read-only, so the two checks that hard-depended on the
+# legacy `packages/core/scripts/install.sh` were retired:
+#   - old (a) run-install-smoke.sh (non-interactive install.sh) → replaced by the
+#     go-forward prdt-install.sh smoke below.
+#   - old (c) check-env-key-parity.mjs (install.sh <-> init-project.mjs engine-key
+#     parity) → retired: with install.sh gone there is a single seeder left, so
+#     there is no cross-writer parity to police. The check script is left in
+#     scripts/ci/ for T-293 to remove alongside the legacy tree.
 #
-#   (a) install.sh < /dev/null               — non-interactive install passes
-#   (b) check-symlink-targets.sh             — block absolute-path symlink targets
-#   (c) check-env-key-parity.mjs             — install.sh <-> bootstrap-doctrine env-key parity
-#   (d) check-dispatch-cost-strip.sh         — dispatch-cost-strip behavior intact
-#
-# CI fails on any of: non-interactive install break, absolute-path symlink
-# target, env-key drift, or broken dispatch-cost-strip. Passes a clean install.
+# Current checks (all in an isolated $HOME where relevant):
+#   (a) prdt-install.sh smoke   — non-interactive prdt install wires mirror hooks,
+#                                 prdt-* agents, and settings.json registration
+#   (b) check-symlink-targets.sh — block absolute-path symlink targets (generic)
+#   (d) check-dispatch-cost-strip.sh — dispatch-cost-strip behavior intact
 #
 # Out of scope: full e2e GUI CI.
 
@@ -40,10 +45,13 @@ jobs:
         with:
           node-version: 20
 
-      - name: Ensure jq present
-        # jq is preinstalled on ubuntu-latest; assert it so a runner image change
-        # surfaces loudly instead of silently skewing checks (a)/(d).
-        run: jq --version
+      - name: Ensure jq + python3 present
+        # jq + python3 are preinstalled on ubuntu-latest; assert them so a runner
+        # image change surfaces loudly instead of silently skewing the checks.
+        # prdt-install.sh (check a) requires both; check (d) uses jq.
+        run: |
+          jq --version
+          python3 --version
 
       - name: Make CI check scripts executable
         run: chmod +x scripts/ci/*.sh scripts/ci/*.mjs
@@ -55,18 +63,45 @@ jobs:
       - name: (b) Lint symlink targets
         run: bash scripts/ci/check-symlink-targets.sh
 
-      # ── (c) env-file key parity ────────────────────────────────────────────
-      # Second real bug: install.sh and bootstrap-doctrine.sh both seed
-      # ~/.productune/productune.env and must agree on the engine key.
-      - name: (c) Env-key parity (install.sh <-> bootstrap-doctrine)
-        run: node scripts/ci/check-env-key-parity.mjs
+      # ── (a) non-interactive prdt install in an isolated $HOME ──────────────
+      # T-311: replaces the legacy install.sh smoke. prdt-install.sh is
+      # non-interactive by design (no claude/auth preflight; needs only jq +
+      # python3), so no stubs are required. Runs it in a throwaway $HOME, then
+      # asserts the go-forward install invariants: the 3 discipline hooks mirror
+      # to ~/.prdt/hooks, the prdt-* persona agents install into ~/.claude/agents,
+      # and ~/.claude/settings.json is valid JSON registering all 3 hooks.
+      - name: (a) Non-interactive prdt-install smoke (isolated HOME)
+        run: |
+          set -euo pipefail
+          SMOKE_HOME="$(mktemp -d "${RUNNER_TEMP:-/tmp}/prdt-install-smoke.XXXXXX")"
+          HOME="$SMOKE_HOME" bash packages/core/scripts/prdt-install.sh < /dev/null
 
-      # ── (a) non-interactive install in an isolated $HOME ───────────────────
-      # The harness creates a throwaway $HOME, stubs claude/npm so the install
-      # body runs past the auth preflight, runs install.sh < /dev/null, then
-      # asserts fresh-install invariants (agent symlinks, env seed, hooks).
-      - name: (a) Non-interactive install smoke (isolated HOME)
-        run: bash scripts/ci/run-install-smoke.sh
+          fail=0
+          bad() { printf 'FAIL: %s\n' "$*" >&2; fail=1; }
+
+          for h in prdt-session-start.sh prdt-post-compact.sh prdt-post-dispatch.sh; do
+            [ -f "$SMOKE_HOME/.prdt/hooks/$h" ] || bad "discipline hook not mirrored: $h"
+          done
+          for a in prdt-po prdt-designer prdt-developer prdt-qa; do
+            [ -f "$SMOKE_HOME/.claude/agents/$a.md" ] || bad "persona agent not installed: $a.md"
+          done
+          settings="$SMOKE_HOME/.claude/settings.json"
+          if ! jq -e . "$settings" >/dev/null 2>&1; then
+            bad "settings.json is not valid JSON"
+          else
+            for h in prdt-session-start.sh prdt-post-compact.sh prdt-post-dispatch.sh; do
+              jq -e --arg h "$h" '[.. | strings | select(endswith($h + "\""))] | length > 0' "$settings" >/dev/null \
+                || bad "settings.json missing $h registration"
+            done
+          fi
+          [ -f "$SMOKE_HOME/.prdt/prdt.env" ] || bad "prdt.env not seeded"
+
+          rm -rf "$SMOKE_HOME"
+          if [ "$fail" -ne 0 ]; then
+            printf '\n[prdt-install-smoke] FAIL — prdt install invariant(s) violated.\n' >&2
+            exit 1
+          fi
+          printf '[prdt-install-smoke] OK — non-interactive prdt install passed.\n'
 
       # ── (d) dispatch-cost-strip behavior ───────────────────────────────────
       # A post-install PO session pipes each dispatch result through the

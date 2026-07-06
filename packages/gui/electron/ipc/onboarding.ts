@@ -171,35 +171,18 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
   fs.writeFileSync(onboardingPath, JSON.stringify(record, null, 2), 'utf-8')
 }
 
-// ── Claude hooks install (T-PATCH-246 legacy / T-289 adapter A6 prdt) ──────────
+// ── Claude hooks install (prdt-only; legacy downgraded to read-only, T-311) ────
 //
-// T-PATCH-246: install productune claude hooks + statusLine into
-// ~/.claude/settings.json from the GUI onboarding path. Ports the idempotent
-// merge from scripts/install.sh (merge_claude_settings_hooks +
-// merge_claude_settings_statusline) so a dmg-only user (who never runs
-// install.sh in a terminal) still gets the deterministic enforcement hooks
-// (frontmatter-lint, po-state shape guards, doctrine-guard, phase-gate, …) that
-// gate the GUI-spawned PO's own tool calls. Commands point at the BUNDLED core
-// (coreDir/scripts/hooks/*.sh), so they resolve under the packaged app.
-// Idempotent: existing productune entries (by path-prefix OR known basename) are
-// stripped before re-adding; non-productune user hooks are preserved.
-//
-// T-289 (adapter A6): a SECOND, coexisting branch installs the prdt hook 3종
-// (prdt-session-start / prdt-post-compact / prdt-post-dispatch) + statusline-prdt.sh
-// instead, for prdt-kind projects (T-284 project-paths.ts detectProjectKind).
-// The legacy branch above is byte-for-byte unchanged — installClaudeHooks defaults
-// to it whenever no projectDir is passed (the current onboarding:complete IPC has
-// no project context yet, so its call site is untouched). `homeDir` is injectable
-// (defaults to os.homedir()) purely so tests can exercise both branches against a
-// throwaway fixture HOME instead of the developer's real ~/.claude / ~/.prdt.
-
-const PDT_BASENAMES = [
-  'post-edit-format.sh', 'post-compact-doctrine.sh', 'stop-verify.sh', 'post-delegate-state-write.sh',
-  'pre-delegate-task-check.sh', 'pre-delegate-ctx-lang.sh', 'pre-chunking-warn.sh', 'post-bash-strip-cost.sh',
-  'pre-frontmatter-lint.sh', 'post-ticket-status-verify.sh', 'pre-git-posture.sh', 'session-start-doctrine.sh',
-  'pre-doctrine-guard.sh', 'pre-phase-gate-guard.sh', 'prompt-gate-inject.sh', 'session-start-po-state-migrate.sh',
-  'pre-po-state-shape-guard.sh', 'post-po-state-shape-guard.sh',
-] as const
+// T-311: GUI legacy dual-mode was downgraded to read-only. The legacy hook set
+// (T-PATCH-246's 18 pdt-* enforcement hooks + statusline-productune) is no longer
+// installed from the GUI — installClaudeHooks now installs ONLY the prdt hook 3종
+// (T-289 adapter A6) for prdt-kind projects, and is a NO-OP for legacy/undefined
+// projects. Legacy projects keep working for file/ticket/po-state VIEWING; only
+// the machine-provisioning wiring is cut. prdt install stays the single
+// go-forward path: prdt-install.sh (mirror + agents + hooks) plus the T-305
+// on-demand banner. `homeDir` is injectable (defaults to os.homedir()) so tests
+// can exercise the prdt branch against a throwaway fixture HOME instead of the
+// developer's real ~/.claude / ~/.prdt.
 
 /** The 3 prdt discipline hooks (packages/core/scripts/prdt-install.sh §4, SoT). */
 const PRDT_HOOK_BASENAMES = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh'] as const
@@ -212,52 +195,6 @@ function readSettings(settingsPath: string): any {
     if (typeof settings !== 'object' || settings === null) settings = {}
   }
   return settings
-}
-
-function installLegacyHooks(coreDir: string, settingsPath: string): void {
-  const settings = readSettings(settingsPath)
-
-  const hooksDir = path.join(coreDir, 'scripts', 'hooks')
-  const h = (name: string) => path.join(hooksDir, name)
-  const statusline = path.join(coreDir, 'scripts', 'statusline-productune.sh')
-
-  const dirPrefix = hooksDir.endsWith(path.sep) ? hooksDir : hooksDir + path.sep
-  const isPdt = (cmd: unknown): boolean =>
-    typeof cmd === 'string' && (cmd.startsWith(dirPrefix) || PDT_BASENAMES.some(b => cmd.endsWith('/scripts/hooks/' + b)))
-  const stripPdt = (arr: any): any[] =>
-    (Array.isArray(arr) ? arr : []).filter((entry: any) =>
-      !((Array.isArray(entry?.hooks) ? entry.hooks : []).some((hk: any) => isPdt(hk?.command))))
-  const cmd = (c: string) => ({ type: 'command', command: c })
-
-  const H = (settings.hooks && typeof settings.hooks === 'object') ? settings.hooks : {}
-  H.PreToolUse = [...stripPdt(H.PreToolUse),
-    { matcher: 'Write|Edit|Bash', hooks: [cmd(h('pre-doctrine-guard.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('pre-delegate-task-check.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('pre-delegate-ctx-lang.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('pre-chunking-warn.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('pre-git-posture.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('pre-phase-gate-guard.sh'))] },
-    { matcher: 'Write|Edit|Bash', hooks: [cmd(h('pre-frontmatter-lint.sh'))] },
-    { matcher: 'Write|Edit|Bash', hooks: [cmd(h('pre-po-state-shape-guard.sh'))] },
-  ]
-  H.PostToolUse = [...stripPdt(H.PostToolUse),
-    { matcher: 'Write|Edit', hooks: [cmd(h('post-edit-format.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('post-delegate-state-write.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('post-bash-strip-cost.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('post-ticket-status-verify.sh'))] },
-    { matcher: 'Bash', hooks: [cmd(h('post-po-state-shape-guard.sh'))] },
-  ]
-  H.PostCompact = [...stripPdt(H.PostCompact), { hooks: [cmd(h('post-compact-doctrine.sh'))] }]
-  H.Stop = [...stripPdt(H.Stop), { matcher: 'pdt-developer', hooks: [cmd(h('stop-verify.sh'))] }]
-  H.SessionStart = [...stripPdt(H.SessionStart),
-    { matcher: 'startup|resume', hooks: [cmd(h('session-start-doctrine.sh'))] },
-    { matcher: 'startup|resume', hooks: [cmd(h('session-start-po-state-migrate.sh'))] },
-  ]
-  H.UserPromptSubmit = [...stripPdt(H.UserPromptSubmit), { hooks: [cmd(h('prompt-gate-inject.sh'))] }]
-
-  settings.hooks = H
-  settings.statusLine = { type: 'command', command: statusline }
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
 }
 
 /**
@@ -321,18 +258,18 @@ function installPrdtHooks(settingsPath: string, homeDir: string): void {
 }
 
 /**
- * Install claude hooks + statusLine for the current onboarding path. `projectDir`
- * is optional and, when given, decides the branch via A1's detectProjectKind
- * (never re-implemented ad hoc here) — 'prdt' → installPrdtHooks, else →
- * installLegacyHooks. Omitted `projectDir` (the current onboarding:complete IPC
- * call site — no project is selected yet at that point) defaults to legacy, so
- * existing behavior is byte-for-byte unchanged. `homeDir` is test-only.
+ * Install claude hooks for the current onboarding path. `projectDir`, when given,
+ * decides the branch via A1's detectProjectKind (never re-implemented ad hoc
+ * here): 'prdt' → installPrdtHooks. Any other kind — legacy `.productune`, or an
+ * omitted `projectDir` — is a NO-OP: T-311 downgraded legacy dual-mode to
+ * read-only, so the GUI no longer installs the legacy enforcement hooks. `homeDir`
+ * is test-only.
  */
-export function installClaudeHooks(coreDir: string, projectDir?: string, homeDir: string = os.homedir()): void {
-  const settingsPath = path.join(homeDir, '.claude', 'settings.json')
+export function installClaudeHooks(projectDir?: string, homeDir: string = os.homedir()): void {
   const kind: ProjectKind = projectDir ? detectProjectKind(projectDir) : 'productune'
-  if (kind === 'prdt') installPrdtHooks(settingsPath, homeDir)
-  else installLegacyHooks(coreDir, settingsPath)
+  if (kind !== 'prdt') return
+  const settingsPath = path.join(homeDir, '.claude', 'settings.json')
+  installPrdtHooks(settingsPath, homeDir)
 }
 
 // ── prdt hook install status / on-demand install (T-305) ──────────────────────
@@ -385,15 +322,40 @@ export function checkPrdtHooksStatus(homeDir: string = os.homedir()): PrdtHooksS
 /**
  * Install the prdt hooks for `projectDir` (must be a prdt-kind project — callers
  * check `checkPrdtHooksStatus().mirrorPresent` first; a missing mirror silently
- * no-ops here too, via installPrdtHooks's own warn-skip). `homeDir` is test-only.
+ * no-ops here too, via installPrdtHooks's own warn-skip; a legacy projectDir is a
+ * no-op via installClaudeHooks's read-only downgrade). `homeDir` is test-only.
  */
 export function installPrdtHooksForProject(
-  coreDir: string,
   projectDir: string,
   homeDir: string = os.homedir(),
 ): { ok: boolean; installed: boolean } {
-  installClaudeHooks(coreDir, projectDir, homeDir)
+  installClaudeHooks(projectDir, homeDir)
   return { ok: true, installed: checkPrdtHooksStatus(homeDir).installed }
+}
+
+/**
+ * Seed the user-global onboarding marker: `~/.productune/productune.env`. This is
+ * the ONLY machine-level artifact the GUI onboarding wizard writes now — App.tsx's
+ * checkEnv() gates the wizard on this file's presence.
+ *
+ * T-311: legacy dual-mode was downgraded to read-only. The wizard no longer
+ * symlinks pdt-* / prdt-* agents into ~/.claude/agents, copies po-instructions.md
+ * into ~/.productune, or installs the 18 legacy enforcement hooks — prdt
+ * provisioning is prdt-install.sh's job (agents + hooks + mirror), plus the T-305
+ * banner for per-project hook opt-in. `homeDir` is test-only (defaults to
+ * os.homedir()). The productune.env body is byte-identical to the pre-T-311 seed
+ * so the legacy po-runner env gate (canSpawnClaude → productune.env presence) is
+ * unaffected.
+ */
+export function provisionUserGlobals(coreDir: string, homeDir: string = os.homedir()): void {
+  const productuneDir = path.join(homeDir, '.productune')
+  fs.mkdirSync(productuneDir, { recursive: true })
+
+  const envPath = path.join(productuneDir, 'productune.env')
+  let envContent = `MY_PO_ENGINE=claude\n`
+  envContent += `PRODUCTUNE_REPO=${coreDir}\n`
+  envContent += `created_at=${new Date().toISOString()}\n`
+  fs.writeFileSync(envPath, envContent, { mode: 0o600 })
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
@@ -495,86 +457,23 @@ export function register(): void {
 
   ipcMain.handle('onboarding:complete', async (_event, opts: OnboardingCompleteOpts) => {
     try {
-      const home = os.homedir()
-      const productuneDir = path.join(home, '.productune')
-      const claudeAgentsDir = path.join(home, '.claude', 'agents')
-
       // Resolve packages/core/ from packages/gui/ (app.getAppPath())
       const coreDir = path.join(app.getAppPath(), '..', 'core')
 
-      fs.mkdirSync(productuneDir, { recursive: true })
-      fs.mkdirSync(claudeAgentsDir, { recursive: true })
+      // 1. Seed ~/.productune/productune.env — the GUI onboarding-complete marker
+      //    App.tsx's checkEnv() gates the wizard on. T-311: legacy dual-mode was
+      //    downgraded to read-only, so the wizard NO LONGER symlinks pdt-* / prdt-*
+      //    agents, copies po-instructions.md, or installs the 18 legacy enforcement
+      //    hooks. prdt provisioning is prdt-install.sh's job (+ the T-305 banner).
+      provisionUserGlobals(coreDir)
 
-      // 1. Write productune.env (mode 0600)
-      const envPath = path.join(productuneDir, 'productune.env')
-      let envContent = `MY_PO_ENGINE=${opts.engine}\n`
-      envContent += `PRODUCTUNE_REPO=${coreDir}\n`
-      envContent += `created_at=${new Date().toISOString()}\n`
-      fs.writeFileSync(envPath, envContent, { mode: 0o600 })
-
-      // 2. Symlink agents/*.md → ~/.claude/agents/
-      //
-      // T-285 (adapter A2): this loop lists `agents/*.md` by directory, not by a
-      // hardcoded `pdt-*` name list — so `agents/prdt-{po,designer,developer,qa}.md`
-      // (added alongside the legacy `pdt-*.md` specs, coexistence not replacement)
-      // are picked up automatically. No special-casing needed here; keep new
-      // persona spec files name-agnostic to preserve this.
-      const variantDir = path.join(coreDir, 'agents', 'variants', 'keeper')
-      const baseAgentsDir = path.join(coreDir, 'agents')
-
-      // Base agents (pdt-po.md / prdt-po.md don't have variants)
-      const baseFiles = fs.readdirSync(baseAgentsDir).filter(f => f.endsWith('.md') && !fs.statSync(path.join(baseAgentsDir, f)).isDirectory())
-      for (const file of baseFiles) {
-        const src = path.join(baseAgentsDir, file)
-        const dest = path.join(claudeAgentsDir, file)
-        try { fs.unlinkSync(dest) } catch { /* ok if not exists */ }
-        fs.symlinkSync(src, dest)
-      }
-
-      // Apply variant overrides (pdt-designer.md, pdt-developer.md, pdt-qa.md)
-      if (fs.existsSync(variantDir)) {
-        const variantFiles = fs.readdirSync(variantDir).filter(f => f.endsWith('.md'))
-        for (const file of variantFiles) {
-          const src = path.join(variantDir, file)
-          const dest = path.join(claudeAgentsDir, file)
-          try { fs.unlinkSync(dest) } catch { /* ok */ }
-          fs.symlinkSync(src, dest)
-        }
-      }
-
-      // pdt-wiki-keeper was abolished in the doctrine redesign (T-017). Clean up
-      // any stale symlink left by a pre-redesign install so the persona no longer
-      // surfaces in ~/.claude/agents/.
-      try { fs.unlinkSync(path.join(claudeAgentsDir, 'pdt-wiki-keeper.md')) } catch { /* ok if absent */ }
-
-      // 3. Copy po-instructions.md → ~/.productune/
-      const poSrc = path.join(coreDir, 'po', 'po-instructions.md')
-      if (fs.existsSync(poSrc)) {
-        fs.copyFileSync(poSrc, path.join(productuneDir, 'po-instructions.md'))
-      }
-
-      // 4. Tier-2 long-term memory (~/.productune/<persona>/habit.md) is installed by
-      //    the doctrine install path, not GUI-seeded. The legacy po-memory.md seed was
-      //    retired in the 4-tier redesign (T-PATCH-009 #11) — do not re-create it here.
-
-      // 5. Pre-warm Playwright MCP cache (used by QA's auto smoke gate).
+      // 2. Pre-warm Playwright MCP cache (used by QA's auto smoke gate).
       //    Best-effort: triggers `npx` to download @playwright/mcp now so the
       //    first QA invocation isn't slow. Does NOT block onboarding completion
       //    on failure — agent's mcpServers block will retry lazily.
       await prewarmPlaywrightMcp()
 
-      // 5b. (T-PATCH-246) Install productune claude hooks + statusLine into
-      //     ~/.claude/settings.json so the GUI-spawned PO gets the deterministic
-      //     enforcement layer without requiring a terminal install.sh run.
-      //     Best-effort: a settings.json hiccup should not fail onboarding, but
-      //     this is the core enforcement fix so it normally succeeds.
-      try {
-        installClaudeHooks(coreDir)
-      } catch (e: any) {
-        console.error('[onboarding] installClaudeHooks failed (non-fatal):', e?.message)
-      }
-
-      // 6. Save UI language selection to settings.json
+      // 3. Save UI language selection to settings.json
       if (opts.uiLanguage) {
         setUiLanguage(opts.uiLanguage)
       }
@@ -600,8 +499,7 @@ export function register(): void {
 
   ipcMain.handle('onboarding:installPrdtHooksAt', (_event, projectDir: string): { ok: boolean; installed: boolean; error?: string } => {
     try {
-      const coreDir = path.join(app.getAppPath(), '..', 'core')
-      return installPrdtHooksForProject(coreDir, projectDir)
+      return installPrdtHooksForProject(projectDir)
     } catch (e: any) {
       return { ok: false, installed: false, error: e?.message ?? 'unknown error' }
     }

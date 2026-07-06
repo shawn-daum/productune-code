@@ -19,7 +19,8 @@
  *   6. installPrdtHooksForProject with the mirror absent silently no-ops (A6's own
  *      warn-skip) — returns ok:true/installed:false, never writes settings.json.
  *   7. installPrdtHooksForProject called against a LEGACY (.productune) projectDir
- *      takes the legacy branch — no prdt hooks leak in.
+ *      is a NO-OP (T-311 read-only downgrade) — settings.json is never written and
+ *      no prdt hooks leak in.
  *
  * Mirrors the framework-free case-list + vitest driver idiom of onboarding.hooks.test.ts.
  */
@@ -38,7 +39,6 @@ const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
 const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh']
-const CORE_DIR = '/bundle/core' // fake bundled coreDir — only the legacy branch composes paths from it
 
 function makeHome(withMirror: boolean): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t305-home-'))
@@ -127,7 +127,7 @@ export const CASES: readonly Case[] = [
       const proj = makeProject('.prdt')
       const before = checkPrdtHooksStatus(home)
       if (before.installed !== false) return fail('precondition: already installed')
-      const result = installPrdtHooksForProject(CORE_DIR, proj, home)
+      const result = installPrdtHooksForProject(proj, home)
       if (result.ok !== true || result.installed !== true) return fail(`result=${JSON.stringify(result)}`)
       const after = checkPrdtHooksStatus(home)
       if (after.installed !== true) return fail('checkPrdtHooksStatus did not reflect the install')
@@ -139,23 +139,22 @@ export const CASES: readonly Case[] = [
     run: () => {
       const home = makeHome(false)
       const proj = makeProject('.prdt')
-      const result = installPrdtHooksForProject(CORE_DIR, proj, home)
+      const result = installPrdtHooksForProject(proj, home)
       if (result.ok !== true || result.installed !== false) return fail(`result=${JSON.stringify(result)}`)
       if (fs.existsSync(settingsPath(home))) return fail('settings.json written despite missing mirror')
       return ok
     },
   },
   {
-    label: 'installPrdtHooksForProject against a legacy (.productune) projectDir takes the legacy branch — no prdt leak',
+    label: 'installPrdtHooksForProject against a legacy (.productune) projectDir is a NO-OP (read-only) — no settings.json, no prdt leak',
     run: () => {
       const home = makeHome(true)
       const proj = makeProject('.productune')
-      const result = installPrdtHooksForProject(CORE_DIR, proj, home)
-      if (result.ok !== true) return fail(`result=${JSON.stringify(result)}`)
-      // Legacy branch wrote legacy hooks (pointing at CORE_DIR), not the prdt set.
+      const result = installPrdtHooksForProject(proj, home)
+      if (result.ok !== true || result.installed !== false) return fail(`result=${JSON.stringify(result)}`)
       const status = checkPrdtHooksStatus(home)
       if (status.installed !== false) return fail('prdt hooks registered for a legacy project')
-      if (!fs.existsSync(settingsPath(home))) return fail('legacy branch did not write settings.json')
+      if (fs.existsSync(settingsPath(home))) return fail('legacy projectDir wrote settings.json (should be read-only no-op)')
       return ok
     },
   },

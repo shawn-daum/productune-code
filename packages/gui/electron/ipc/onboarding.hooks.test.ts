@@ -1,5 +1,5 @@
 /**
- * installClaudeHooks — dual-mode hook install (T-289 / adapter A6).
+ * installClaudeHooks — prdt-only hook install (T-289 A6; legacy → read-only, T-311).
  *
  * Proves the acceptance at the settings-merge layer, entirely against fixture
  * dirs (mkdtemp HOME + project dirs) — the developer's real ~/.claude / ~/.prdt
@@ -9,8 +9,9 @@
  *      registered, pointing at the ~/.prdt mirror with the same matchers and
  *      quoted-command form prdt-install.sh §4/§6 writes; no legacy pdt hook
  *      leaks in.
- *   2. legacy project (and the projectDir-less default) → the T-PATCH-246
- *      18-hook set + statusline-productune.sh, byte-identical to before.
+ *   2. legacy project (and the projectDir-less default) → NO-OP: T-311 downgraded
+ *      legacy dual-mode to read-only, so the GUI no longer installs the 18-hook
+ *      legacy set. settings.json is not written at all for a legacy/omitted path.
  *   3. prdt install is idempotent (re-run → no change), CLI-parity idempotent
  *      (a settings.json already written by prdt-install.sh stays identical),
  *      and preserves unrelated user hooks AND coexisting legacy pdt entries.
@@ -57,8 +58,6 @@ function makeProject(stateDirName: string): string {
   return root
 }
 
-const CORE_DIR = '/bundle/core' // fake bundled coreDir — legacy branch path composition only
-
 function settingsPath(home: string): string {
   return path.join(home, '.claude', 'settings.json')
 }
@@ -100,7 +99,7 @@ export const A6_CASES: readonly Case[] = [
     run: () => {
       const home = makeHome()
       const proj = makeProject('.prdt')
-      installClaudeHooks(CORE_DIR, proj, home)
+      installClaudeHooks(proj, home)
       const s = readSettings(home)
 
       const cmds = allCommands(s)
@@ -123,34 +122,34 @@ export const A6_CASES: readonly Case[] = [
     },
   },
   {
-    label: 'legacy project → T-PATCH-246 hook set + statusline-productune.sh (unchanged)',
+    label: 'legacy project → NO-OP (read-only downgrade): settings.json not written, no hooks',
     run: () => {
       const home = makeHome()
       const proj = makeProject('.productune')
-      installClaudeHooks(CORE_DIR, proj, home)
-      const s = readSettings(home)
-      const cmds = allCommands(s)
-      // Representative legacy hooks present, pointing at the bundled coreDir; no prdt leak.
-      for (const b of ['pre-doctrine-guard.sh', 'session-start-doctrine.sh', 'prompt-gate-inject.sh', 'stop-verify.sh']) {
-        if (!cmds.some(c => c === path.join(CORE_DIR, 'scripts', 'hooks', b))) return fail(`missing legacy hook ${b}`)
-      }
-      if (cmds.some(c => PRDT_HOOKS.some(b => c.includes(b)))) return fail('prdt hook leaked into legacy install')
-      if (s.statusLine?.command !== path.join(CORE_DIR, 'scripts', 'statusline-productune.sh')) {
-        return fail(`statusLine=${s.statusLine?.command}`)
-      }
+      installClaudeHooks(proj, home)
+      if (fs.existsSync(settingsPath(home))) return fail('settings.json written for a legacy project (should be read-only)')
       return ok
     },
   },
   {
-    label: 'projectDir omitted (current onboarding:complete call site) → legacy branch',
+    label: 'projectDir omitted (current onboarding:complete call site) → NO-OP',
     run: () => {
       const home = makeHome()
-      installClaudeHooks(CORE_DIR, undefined, home)
-      const s = readSettings(home)
-      if (s.statusLine?.command !== path.join(CORE_DIR, 'scripts', 'statusline-productune.sh')) {
-        return fail(`statusLine=${s.statusLine?.command}`)
-      }
-      if (allCommands(s).some(c => PRDT_HOOKS.some(b => c.includes(b)))) return fail('prdt hooks on default branch')
+      installClaudeHooks(undefined, home)
+      if (fs.existsSync(settingsPath(home))) return fail('settings.json written for the projectDir-less default (should be read-only)')
+      return ok
+    },
+  },
+  {
+    label: 'legacy no-op preserves a pre-existing settings.json untouched',
+    run: () => {
+      const home = makeHome()
+      const proj = makeProject('.productune')
+      fs.mkdirSync(path.dirname(settingsPath(home)), { recursive: true })
+      const preexisting = JSON.stringify({ hooks: { SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: '/Users/me/custom-hook.sh' }] }] }, otherSetting: true }, null, 2)
+      fs.writeFileSync(settingsPath(home), preexisting)
+      installClaudeHooks(proj, home)
+      if (fs.readFileSync(settingsPath(home), 'utf8') !== preexisting) return fail('legacy no-op mutated an existing settings.json')
       return ok
     },
   },
@@ -159,9 +158,9 @@ export const A6_CASES: readonly Case[] = [
     run: () => {
       const home = makeHome()
       const proj = makeProject('.prdt')
-      installClaudeHooks(CORE_DIR, proj, home)
+      installClaudeHooks(proj, home)
       const once = fs.readFileSync(settingsPath(home), 'utf8')
-      installClaudeHooks(CORE_DIR, proj, home)
+      installClaudeHooks(proj, home)
       const twice = fs.readFileSync(settingsPath(home), 'utf8')
       if (once !== twice) return fail('second run changed settings.json')
       return ok
@@ -179,7 +178,7 @@ export const A6_CASES: readonly Case[] = [
         statusLine: { type: 'command', command: `"${path.join(home, '.prdt', 'bin', 'statusline-prdt.sh')}"` },
       }
       fs.writeFileSync(settingsPath(home), JSON.stringify(cliWritten, null, 2))
-      installClaudeHooks(CORE_DIR, proj, home)
+      installClaudeHooks(proj, home)
       const after = readSettings(home)
       if (JSON.stringify(after) !== JSON.stringify(cliWritten)) {
         return fail(`GUI run altered CLI-written settings: ${JSON.stringify(after)}`)
@@ -202,7 +201,7 @@ export const A6_CASES: readonly Case[] = [
         },
         otherSetting: true,
       }))
-      installClaudeHooks(CORE_DIR, proj, home)
+      installClaudeHooks(proj, home)
       const s = readSettings(home)
       const cmds = allCommands(s)
       if (!cmds.includes('/Users/me/custom-hook.sh')) return fail('user hook dropped')
@@ -216,7 +215,7 @@ export const A6_CASES: readonly Case[] = [
     run: () => {
       const home = makeHome(false) // no mirror — prdt-install.sh never ran
       const proj = makeProject('.prdt')
-      installClaudeHooks(CORE_DIR, proj, home)
+      installClaudeHooks(proj, home)
       if (fs.existsSync(settingsPath(home))) return fail('settings.json written despite missing mirror')
       return ok
     },

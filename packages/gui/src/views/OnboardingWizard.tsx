@@ -137,13 +137,15 @@ export default function OnboardingWizard({ onDone }: Props) {
   const claudeReady = claudeStatus?.installed && claudeStatus?.authed
   const engineFullyReady = claudeReady
 
+  // T-311: legacy dual-mode downgraded to read-only — onboarding:complete now only
+  // seeds productune.env, pre-warms the Playwright MCP cache, and saves the UI
+  // language. The retired steps (agents symlink / po-instructions / enforcement
+  // hooks / memory) must NOT be listed: a green check for a no-op is a false
+  // confirmation. Keep this list in sync with the ipc/onboarding.ts handler.
   const completionStepKeys = [
     'onboarding.completionSteps.env',
-    'onboarding.completionSteps.agents',
-    'onboarding.completionSteps.instructions',
-    'onboarding.completionSteps.hooks',
-    'onboarding.completionSteps.memory',
     'onboarding.completionSteps.playwright',
+    'onboarding.completionSteps.language',
   ] as const
 
   return (
