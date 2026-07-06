@@ -198,6 +198,20 @@ function readSettings(settingsPath: string): any {
 }
 
 /**
+ * C5 (T-316): atomic settings.json write — tmp + rename-swap, matching
+ * mcp.ts writeClaudeSettings. Claude Code reads ~/.claude/settings.json on
+ * startup and on a watch-based reread; a plain writeFileSync leaves a
+ * partial-write window that a concurrent read can catch mid-flush. rename(2) is
+ * atomic on the same POSIX filesystem, so there is no torn-read window.
+ */
+function writeSettingsAtomic(settingsPath: string, settings: any): void {
+  const tmp = settingsPath + '.tmp'
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+  fs.writeFileSync(tmp, JSON.stringify(settings, null, 2))
+  fs.renameSync(tmp, settingsPath)
+}
+
+/**
  * prdt branch (T-289): install exactly the 3 discipline hooks + statusline-prdt.sh,
  * producing the SAME settings.json registration install.sh §4/§6 writes —
  * same `~/.prdt` mirror paths, same matchers, same quoted-command form — so GUI
@@ -254,7 +268,7 @@ function installPrdtHooks(settingsPath: string, homeDir: string): void {
 
   settings.hooks = H
   settings.statusLine = { type: 'command', command: statusline }
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+  writeSettingsAtomic(settingsPath, settings)  // C5 (T-316): tmp+rename, no torn-read window
 }
 
 /**

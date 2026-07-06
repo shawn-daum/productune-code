@@ -19,6 +19,7 @@ import { CheckCircle2, AlertOctagon, X } from 'lucide-react'
 import type { Tab } from '../../../../store/workspace'
 import { registerTabCloseGuard } from '../../../../store/tabCloseGuard'
 import { useWorkspace } from '../../../../store/workspace'
+import { isPrdtPoState } from '../../../../lib/phase-mapping'
 import DoctrineFileTab, { type DoctrineDirtyState, type DoctrineOnSave } from './DoctrineFileTab'
 import DoctrineSaveChoiceModal, { type SaveChoice } from '../../DoctrineSaveChoiceModal'
 import GenericDirtyModal from '../../GenericDirtyModal'
@@ -63,6 +64,14 @@ export default function DoctrineFileTabHost({ tab }: Props) {
   const projectDir = typeof tabProps.projectDir === 'string' ? tabProps.projectDir : undefined
 
   const closeTabAction = useWorkspace((s) => s.closeTab)
+  // T-316 C6: the PO-review path enqueues a promotion candidate into
+  // .prdt/po-state.json's pending_promotions[]. For a prdt project that violates
+  // the 4-key po-state contract ({schema_version, stage, version, current_task}) —
+  // the promotion institution no longer exists under prdt (feedback goes to
+  // docs/wiki/inbox.md). So block the review path entirely for prdt: the choice
+  // modal hides the "request review" option, leaving only direct write. Legacy
+  // (.productune) projects keep the review path unchanged.
+  const isPrdt = useWorkspace((s) => isPrdtPoState(s.poState))
 
   // Latest dirty report from the editor (AC-4).
   const dirtyRef = useRef<DoctrineDirtyState>({ dirty: false, draft: '' })
@@ -126,6 +135,10 @@ export default function DoctrineFileTabHost({ tab }: Props) {
     async (content: string): Promise<{ ok: boolean; error?: string }> => {
       const api = (window as any).api
       if (!projectDir) return { ok: false, error: 'no project' }
+      // T-316 C6: prdt has no promotion institution — never write pending_promotions[]
+      // into a prdt po-state (contract violation). The choice modal already hides the
+      // review option for prdt; this is the defense-in-depth backstop.
+      if (isPrdt) return { ok: false, error: 'promotion disabled (prdt)' }
       try {
         // Read current on-disk content for the diff summary (best-effort).
         let onDisk = ''
@@ -157,7 +170,7 @@ export default function DoctrineFileTabHost({ tab }: Props) {
         return { ok: false, error: e?.message ?? 'enqueue failed' }
       }
     },
-    [absPath, projectDir, persona, tier, relName],
+    [absPath, projectDir, persona, tier, relName, isPrdt],
   )
 
   // ── Stale-snapshot conflict check shared by both paths (AC-6) ────────────────
@@ -335,7 +348,7 @@ export default function DoctrineFileTabHost({ tab }: Props) {
       {choiceOpen && (
         <DoctrineSaveChoiceModal
           busy={choiceBusy}
-          showReview={!!projectDir}
+          showReview={!!projectDir && !isPrdt}
           onCancel={handleChoiceCancel}
           onChoose={handleChoose}
         />

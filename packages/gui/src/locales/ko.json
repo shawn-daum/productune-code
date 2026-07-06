@@ -353,6 +353,8 @@
       "you": "나",
       "messageCount": "메시지 {{count}}",
       "emptyHint": "PO 와 대화를 시작하세요.",
+      "legacyReadOnlyTitle": "조회 전용 (legacy 프로젝트)",
+      "legacyReadOnlyBody": "legacy .productune 프로젝트예요. PO 채팅은 더 이상 실행할 수 없어요 — 대화를 시작하려면 prdt 로 마이그레이션하세요. 파일·티켓·히스토리는 그대로 열람할 수 있어요.",
       "messagesPlaceholder": "메시지 표시 — Slice 3 에서 채워짐",
       "inputPlaceholder": "메시지 입력…",
       "queuePlaceholder": "이어서 입력 — PO 턴이 끝나면 전송돼요…",

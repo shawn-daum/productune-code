@@ -211,6 +211,17 @@ export const A6_CASES: readonly Case[] = [
     },
   },
   {
+    label: 'C5: atomic write leaves no settings.json.tmp artifact behind',
+    run: () => {
+      const home = makeHome()
+      const proj = makeProject('.prdt')
+      installClaudeHooks(proj, home)
+      if (fs.existsSync(settingsPath(home) + '.tmp')) return fail('leftover settings.json.tmp after atomic write')
+      if (!fs.existsSync(settingsPath(home))) return fail('settings.json not written')
+      return ok
+    },
+  },
+  {
     label: '~/.prdt/hooks mirror absent → skip (no broken hook registration)',
     run: () => {
       const home = makeHome(false) // no mirror — install.sh never ran

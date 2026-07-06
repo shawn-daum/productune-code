@@ -33,6 +33,7 @@ import AskUserQuestionCard from './chat/AskUserQuestionCard'
 import { useSessionHealth } from '../../store/sessionHealth'
 import type { PoHealthState, PoHealthDetail } from '../../store/sessionHealth'
 import { personaIdFromAgentType, PERSONA_LABELS } from '../../store/personaPresence'
+import { isPrdtPoState } from '../../lib/phase-mapping'
 import { useComposerAttachments } from '../../hooks/useComposerAttachments'
 import { ImageChip, chipRow } from './chat/ImageChip'
 
@@ -43,6 +44,14 @@ export default function ChatPanel() {
   const messages = useWorkspace((s) => s.messages)
   const poState = useWorkspace((s) => s.poState)
   const streaming = useWorkspace((s) => s.streaming)
+
+  // T-316 C3b: a legacy `.productune` project is view-only (T-311) — its PO chat
+  // agent (pdt-po) was deleted, so a send would fail with a raw ungraceful spawn
+  // error. Detect legacy from the loaded po-state (prdt states carry `stage`; a
+  // legacy state carries `current_phase` instead → isPrdtPoState false). A null
+  // po-state (fresh / not yet loaded) is NOT treated as legacy, so a brand-new
+  // prdt project's composer is never disabled.
+  const isLegacyReadOnly = !!poState && !isPrdtPoState(poState)
 
   // T-PATCH-052: session restart state — declare before renderItems useMemo
   const restartCompleted = usePoChat((s) => s.restartCompleted)
@@ -258,7 +267,10 @@ export default function ChatPanel() {
   //   - onDone  → streaming false, abortedRef stays false → FLUSH.
   //   - abort   → handleAbort (below) sets abortedRef before setStreaming(false);
   //               this effect just consumes (resets) the flag and keeps the queue.
-  //   - restart → resetSession clears the queue upstream → nothing to flush.
+  //   - restart → the po:sessionRestarted handler (store/poEvents) empties
+  //               queuedMessages upstream (C2) → the guard below sees an empty
+  //               queue → nothing to flush. (It does NOT call resetSession, which
+  //               would also wipe the preserved conversation.)
   const prevStreamingRef = useRef(streaming)
   const flushingRef = useRef(false)
   const abortedRef = useRef(false)
@@ -546,6 +558,14 @@ export default function ChatPanel() {
                 non-functional-looking "Type a message") is removed — answer by clicking
                 an option or typing in the in-card free-text block. */}
           </div>
+        ) : isLegacyReadOnly ? (
+          /* T-316 C3b: legacy project is view-only — replace the composer with a
+             read-only notice instead of leaving a live composer whose send would
+             spawn-fail (pdt-po deleted, T-311). */
+          <div style={legacyNotice} role="status">
+            <div style={legacyNoticeTitle}>{t('workspace.chat.legacyReadOnlyTitle')}</div>
+            <div style={legacyNoticeBody}>{t('workspace.chat.legacyReadOnlyBody')}</div>
+          </div>
         ) : (
         /* rp-input — textarea (auto-grow) + paperclip + send (Cmd+Enter) */
         <div style={inputArea}>
@@ -608,7 +628,15 @@ export default function ChatPanel() {
               value={draft}
               onChange={(e) => onComposerChange(e.target.value)}
               onKeyDown={onKeyDown}
-              onPaste={onComposerPaste}
+              // T-316 C4: gate the image-capture paste handler while streaming. A
+              // queued item is always plain text (the attach button is hidden while
+              // streaming, and handleSubmit enqueues text only), so an image pasted
+              // mid-turn would save a temp file + push attachment state that the
+              // queued send never consumes → temp-file + state leak. Dropping the
+              // custom handler lets image paste fall through to the browser default
+              // (a no-op for the textarea) — no attachment created. Text paste is
+              // unaffected either way (onComposerPaste already no-ops on non-image).
+              onPaste={streaming ? undefined : onComposerPaste}
               placeholder={t(streaming ? 'workspace.chat.queuePlaceholder' : 'workspace.chat.inputPlaceholder')}
               rows={1}
               disabled={!project || rateLimited}
@@ -1045,6 +1073,29 @@ const inputArea: React.CSSProperties = {
   flexDirection: 'column',
   gap: 6,
   background: '#121212',
+}
+
+// T-316 C3b: legacy view-only notice in place of the composer.
+const legacyNotice: React.CSSProperties = {
+  flexShrink: 0,
+  borderTop: '1px solid #2A2A2A',
+  padding: '12px 14px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+  background: '#121212',
+}
+
+const legacyNoticeTitle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  color: '#A0A0A0',
+}
+
+const legacyNoticeBody: React.CSSProperties = {
+  fontSize: 11,
+  color: '#707070',
+  lineHeight: 1.5,
 }
 
 const textarea: React.CSSProperties = {

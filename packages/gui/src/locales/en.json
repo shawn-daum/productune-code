@@ -353,6 +353,8 @@
       "you": "You",
       "messageCount": "{{count}} messages",
       "emptyHint": "Start a conversation with PO.",
+      "legacyReadOnlyTitle": "View-only (legacy project)",
+      "legacyReadOnlyBody": "This is a legacy .productune project. Its PO chat can no longer run — migrate the project to prdt to start conversations. Files, tickets, and history stay fully viewable.",
       "messagesPlaceholder": "Messages — filled in Slice 3",
       "inputPlaceholder": "Type a message…",
       "queuePlaceholder": "Type a follow-up — it'll send once PO finishes…",

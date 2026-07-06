@@ -61,15 +61,35 @@ mkdir -p "$CLAUDE_DIR/agents"
 cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
 
 # 4. hooks merge into ~/.claude/settings.json (idempotent: prdt entries replaced, others preserved)
-say "4) Registering hook 3종 in $CLAUDE_DIR/settings.json"
+#    Also sweeps out the deleted legacy pdt-* hook set (T-316 C3a): a machine that
+#    previously ran the pre-T-293 installer still carries settings.json entries whose
+#    commands point at packages/core/scripts/hooks/<basename>.sh scripts that no longer
+#    exist — every session then fails those with command-not-found. We strip them by the
+#    repo-distributed path SUFFIX only, so other apps' and users' own hooks are untouched.
+say "4) Registering hook 3종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
 SETTINGS="$CLAUDE_DIR/settings.json"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 TMP="$(mktemp)"
 jq --arg h "$PRDT_HOME/hooks/" '
+  # C3a: legacy pdt-* hook basenames this repo distributed (deleted in T-293/T-311).
+  (["post-edit-format.sh","post-compact-doctrine.sh","stop-verify.sh",
+    "post-delegate-state-write.sh","pre-delegate-task-check.sh","pre-delegate-ctx-lang.sh",
+    "pre-chunking-warn.sh","post-bash-strip-cost.sh","pre-frontmatter-lint.sh",
+    "post-ticket-status-verify.sh","pre-git-posture.sh","session-start-doctrine.sh",
+    "pre-doctrine-guard.sh","pre-phase-gate-guard.sh","prompt-gate-inject.sh",
+    "session-start-po-state-migrate.sh","pre-po-state-shape-guard.sh",
+    "post-po-state-shape-guard.sh"]) as $legacy |
+  def isLegacy(cmd): (cmd) as $c | any($legacy[]; . as $b | $c | endswith("/scripts/hooks/" + $b));
+  def stripLegacy(arr): (arr // []) | map(
+    .hooks = ((.hooks // []) | map(select(isLegacy(.command // "") | not)))
+  ) | map(select((.hooks | length) > 0));
   def strip(ev): (.hooks[ev] // []) | map(
     .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
   ) | map(select((.hooks | length) > 0));
   .hooks = (.hooks // {}) |
+  # sweep legacy pdt-* out of EVERY event array (incl. PreToolUse/PostCompact/Stop/
+  # UserPromptSubmit that prdt never re-adds), then drop any now-empty event key.
+  .hooks = (.hooks | with_entries(.value = stripLegacy(.value)) | with_entries(select((.value | length) > 0))) |
   .hooks.SessionStart = (strip("SessionStart") + [
     {matcher: "startup|resume|clear",
      hooks: [{type: "command", command: ("\"" + $h + "prdt-session-start.sh" + "\"")}]},
@@ -87,7 +107,14 @@ jq --arg h "$PRDT_HOME/hooks/" '
   .hooks.PostToolUse = (strip("PostToolUse") + [
     {matcher: "Agent",
      hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
-  ])
+  ]) |
+  # C3a: drop the legacy statusline (deleted statusline-productune.sh). The prdt
+  # statusline (§6, opt-in) is a different basename and is never matched here; a
+  # user custom statusLine is preserved (only the repo-distributed suffix matches).
+  (if ((.statusLine.command // "")
+        | (endswith("/scripts/statusline-productune.sh")
+           or endswith("/scripts/statusline-productune.sh\"")))
+   then del(.statusLine) else . end)
 ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
 
 # 5. PATH symlink

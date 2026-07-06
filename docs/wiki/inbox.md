@@ -6,3 +6,5 @@
 - jq footgun(T-316): 함수 인자 cmd는 현재 '.'에 재평가되는 closure — any(gen; cond) 안에선 generator 원소에 바인딩됨. generator 진입 전 `(cmd) as $c |`로 강제 평가. 디버그 1사이클 소모.
 - env find(T-316): core vitest에서 실제 셸 스크립트 e2e 구동 가능 — execFileSync('bash',[install.sh]) + 샌드박스 HOME/PRDT_HOME/CLAUDE_DIR(스크립트가 3개 env 존중). jq 로직 중복 없는 최고 충실도 회귀. test.skipIf(!hasJq()) 가드.
 - 참조(T-316): legacy 배포 아티팩트 식별 = /scripts/hooks/<basename>.sh 경로 접미(18종+statusline-productune.sh) — 타 앱/사용자 훅 안전. 정본 목록은 install.sh @475f30b~1.
+- QA env find(T-316): contextBridge로 freeze된 window.api는 monkeypatch 스파이 불가 — Electron 라이브 IPC 검증은 관찰 가능한 부작용(DOM/파일) 기반으로 설계.
+- QA 규율(T-316): PO 채팅 실구동 라이브 테스트에 실 워크트리 projectDir 사용 금지 — 실 .prdt/chat.json에 턴이 기록돼 다음 실행에서 거짓 실패(실발생·정정). 항상 mkdtemp 1회성 fixture.

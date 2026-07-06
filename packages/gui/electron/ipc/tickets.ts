@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { detectProjectKind } from '../project-paths'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface ScannedTicket {
+export interface ScannedTicket {
   ticket_id: string
   version: string | null
   slug?: string
@@ -144,6 +145,98 @@ function extractKrSection(body: string): string | null {
   return out.join('\n').replace(/^\n+/, '').replace(/\n+$/, '') || null
 }
 
+// ── Scan (pure, testable) ───────────────────────────────────────────────────────
+
+/**
+ * Scan every `docs/tickets/<version>/T-*.md` under `projectDir` into a flat
+ * ScannedTicket[]. Extracted from the `tickets:scan` IPC handler so the version
+ * resolution (C1, T-316) is directly unit-testable against fixture dirs.
+ */
+export function scanTickets(projectDir: string): ScannedTicket[] {
+  const ticketsRoot = path.join(projectDir, 'docs', 'tickets')
+  if (!fs.existsSync(ticketsRoot)) return []
+  const out: ScannedTicket[] = []
+  // C1 (T-316): prdt project-kind resolves version-less tickets by directory name.
+  const kind = detectProjectKind(projectDir)
+  let versionDirs: string[] = []
+  try {
+    versionDirs = fs.readdirSync(ticketsRoot, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+  } catch { return [] }
+
+  for (const versionDir of versionDirs) {
+    const dirPath = path.join(ticketsRoot, versionDir)
+    let files: string[] = []
+    try {
+      // Case-insensitive: ticket filenames may carry lowercase suffixes
+      // (e.g. T-P4-048-em.md). The earlier [A-Z0-9-] class silently dropped
+      // any such file → tickets vanished from the GUI.
+      files = fs.readdirSync(dirPath).filter((f) => /^T-[A-Za-z0-9-]+\.md$/.test(f))
+    } catch { continue }
+    for (const file of files) {
+      const filePath = path.join(dirPath, file)
+      let content: string
+      try { content = fs.readFileSync(filePath, 'utf-8') } catch { continue }
+      // mtime = "last touched" signal for the non-todo/done sort (T-PATCH-162).
+      // statSync after a successful read; tolerate stat failure (undefined → sort fallback).
+      let mtime: number | undefined
+      try { mtime = fs.statSync(filePath).mtimeMs } catch { mtime = undefined }
+      const fm = parseFrontmatter(content)
+      const ticket_id = String(fm.ticket_id ?? path.basename(file, '.md'))
+      // T-286 (prdt v1 adapter A3): prdt v1 tickets carry no `version` frontmatter key —
+      // they're placed under `docs/tickets/<version>/` by directory instead
+      // (`docs/prdt-v1-gui-coupling.md` §4). The scan loop already treats every immediate
+      // subdirectory as a "version dir" for traversal; `backlog/` is the one directory name
+      // that is NOT a version and must not be displayed/sorted as one. Special-case it to a
+      // literal `backlog` label instead of falling through to `null` → "Unassigned".
+      //
+      // C1 (T-316): for a PRDT project the directory name IS the version (matches
+      // po-state's flat `version`, e.g. `v1.1`), so a version-less prdt ticket must
+      // resolve to its `versionDir` — otherwise it lands at `null` and the auto-opened
+      // version-filtered board (TicketDashboardView filters `t.version === versionFilter`)
+      // shows an empty board. Legacy (`.productune`) projects keep today's `null` fallback
+      // for non-backlog version-less dirs — byte-for-byte unchanged.
+      const version =
+        (fm.version && String(fm.version).trim()) ||
+        (versionDir === 'backlog' ? 'backlog' : kind === 'prdt' ? versionDir : null)
+      const ticket: ScannedTicket = {
+        ticket_id,
+        version,
+        slug: fm.slug,
+        title: fm.title,
+        type: fm.type,
+        stage: fm.stage,
+        status: fm.status,
+        qa_status: fm.qa_status,
+        qa_loops: typeof fm.qa_loops === 'number' ? fm.qa_loops : undefined,
+        assignee: fm.assignee,
+        estimated_complexity: fm.estimated_complexity,
+        risk_flags: fm.risk_flags,
+        requires_user_gate: typeof fm.requires_user_gate === 'boolean' ? fm.requires_user_gate : undefined,
+        branch: fm.branch ?? undefined,
+        worktree_path: fm.worktree_path ?? undefined,
+        success_metric: fm.success_metric ?? null,
+        validation_method: fm.validation_method ?? null,
+        observed_result: fm.observed_result ?? null,
+        started_at: fm.started_at ?? null,
+        completed_at: fm.completed_at ?? null,
+        duration_min: typeof fm.duration_min === 'number' ? fm.duration_min : null,
+        request_summary: extractRequestSummary(content),
+        path: filePath,
+        mtime,
+      }
+      // Extract title from first H1 if not in frontmatter
+      if (!ticket.title) {
+        const h1 = content.match(/^#\s+(.+)$/m)
+        if (h1) ticket.title = h1[1].replace(/^T-[A-Z]+-\d+:?\s*/, '').trim()
+      }
+      out.push(ticket)
+    }
+  }
+  return out
+}
+
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
@@ -202,80 +295,7 @@ export function register(): void {
     },
   )
 
-  ipcMain.handle('tickets:scan', async (_event, projectDir: string): Promise<ScannedTicket[]> => {
-    const ticketsRoot = path.join(projectDir, 'docs', 'tickets')
-    if (!fs.existsSync(ticketsRoot)) return []
-    const out: ScannedTicket[] = []
-    let versionDirs: string[] = []
-    try {
-      versionDirs = fs.readdirSync(ticketsRoot, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .map((d) => d.name)
-    } catch { return [] }
-
-    for (const versionDir of versionDirs) {
-      const dirPath = path.join(ticketsRoot, versionDir)
-      let files: string[] = []
-      try {
-        // Case-insensitive: ticket filenames may carry lowercase suffixes
-        // (e.g. T-P4-048-em.md). The earlier [A-Z0-9-] class silently dropped
-        // any such file → tickets vanished from the GUI.
-        files = fs.readdirSync(dirPath).filter((f) => /^T-[A-Za-z0-9-]+\.md$/.test(f))
-      } catch { continue }
-      for (const file of files) {
-        const filePath = path.join(dirPath, file)
-        let content: string
-        try { content = fs.readFileSync(filePath, 'utf-8') } catch { continue }
-        // mtime = "last touched" signal for the non-todo/done sort (T-PATCH-162).
-        // statSync after a successful read; tolerate stat failure (undefined → sort fallback).
-        let mtime: number | undefined
-        try { mtime = fs.statSync(filePath).mtimeMs } catch { mtime = undefined }
-        const fm = parseFrontmatter(content)
-        const ticket_id = String(fm.ticket_id ?? path.basename(file, '.md'))
-        // T-286 (prdt v1 adapter A3): prdt v1 tickets carry no `version` frontmatter key —
-        // they're placed under `docs/tickets/<version>/` by directory instead
-        // (`docs/prdt-v1-gui-coupling.md` §4). The scan loop already treats every immediate
-        // subdirectory as a "version dir" for traversal; `backlog/` is the one directory name
-        // that is NOT a version and must not be displayed/sorted as one. Special-case it to a
-        // literal `backlog` label instead of falling through to `null` → "Unassigned" (which
-        // would lose the distinction) or being treated as a real version. Other version-less
-        // dirs (e.g. `v1.1/`) keep today's `null` fallback — unchanged, legacy behaviour intact.
-        const version =
-          (fm.version && String(fm.version).trim()) || (versionDir === 'backlog' ? 'backlog' : null)
-        const ticket: ScannedTicket = {
-          ticket_id,
-          version,
-          slug: fm.slug,
-          title: fm.title,
-          type: fm.type,
-          stage: fm.stage,
-          status: fm.status,
-          qa_status: fm.qa_status,
-          qa_loops: typeof fm.qa_loops === 'number' ? fm.qa_loops : undefined,
-          assignee: fm.assignee,
-          estimated_complexity: fm.estimated_complexity,
-          risk_flags: fm.risk_flags,
-          requires_user_gate: typeof fm.requires_user_gate === 'boolean' ? fm.requires_user_gate : undefined,
-          branch: fm.branch ?? undefined,
-          worktree_path: fm.worktree_path ?? undefined,
-          success_metric: fm.success_metric ?? null,
-          validation_method: fm.validation_method ?? null,
-          observed_result: fm.observed_result ?? null,
-          started_at: fm.started_at ?? null,
-          completed_at: fm.completed_at ?? null,
-          duration_min: typeof fm.duration_min === 'number' ? fm.duration_min : null,
-          request_summary: extractRequestSummary(content),
-          path: filePath,
-          mtime,
-        }
-        // Extract title from first H1 if not in frontmatter
-        if (!ticket.title) {
-          const h1 = content.match(/^#\s+(.+)$/m)
-          if (h1) ticket.title = h1[1].replace(/^T-[A-Z]+-\d+:?\s*/, '').trim()
-        }
-        out.push(ticket)
-      }
-    }
-    return out
-  })
+  ipcMain.handle('tickets:scan', async (_event, projectDir: string): Promise<ScannedTicket[]> =>
+    scanTickets(projectDir),
+  )
 }

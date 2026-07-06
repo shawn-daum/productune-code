@@ -503,7 +503,17 @@ function register() {
     }
   }))
   offFns.push(api.poOnSessionRestarted?.(() => {
-    useWorkspace.setState({ claudeSessionId: null })
+    // C2 (T-316): clear the composer queue on restart. The restart aborts the
+    // in-flight turn, so `streaming` transitions true→false — but restart is NOT
+    // an abort (abortedRef, ChatPanel), so the flush effect would otherwise treat
+    // it as a NATURAL turn end and auto-fire the queued text as the FIRST message
+    // of the freshly re-oriented session. Emptying the queue here (before the
+    // abort's onDone reaches the renderer — po:sessionRestarted is sent first) is
+    // the upstream clear the flush effect's guard (`queue.length === 0 → return`)
+    // relies on. We intentionally do NOT call resetSession(): that would also wipe
+    // `messages`, but a manual restart PRESERVES the visible conversation (T-PATCH-052
+    // divider + toast). Only the unsent queue is dropped.
+    useWorkspace.setState({ claudeSessionId: null, queuedMessages: [] })
     useSessionHealth.getState().clearHealth()
     // T-PATCH-279 (QA follow-up): safety net for the "no terminal task signal ever"
     // case (session abort / PO turn crash / worker process gone before any
