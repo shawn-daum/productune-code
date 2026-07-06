@@ -43,3 +43,6 @@
 - env find(T-293): install.sh settings.json 머지는 set-idempotent(바이트 아님) — prdt 엔트리 strip→재append라 재실행 시 배열 순서 재배열(중복/유실 없음). CI 바이트 diff 금지, 이벤트별 훅 SET 비교.
 - 후속 후보(T-293): ① costArchive.ts NUL 2바이트 제거(1줄 위생) ② 가격표 이원화(model-prices.json vs prdt-post-dispatch.sh 내장) 통합 ③ prdt-install.sh forwarder는 전 기기 prdt update 1회 후 제거 ④ prdt 스킬팩 배포 스토리 미정(skills/ 삭제로 배포원 소멸, 기존 기기 미러 잔존) ⑤ fresh-install-smoke는 main 트리거라 v1 push엔 안 돎.
 - 후속 tidy(T-293 QA): subagent-cost.ts 헤더 주석이 삭제된 구 아키텍처(statusline-productune·post-delegate-state-write)를 현재형 서술 — 주석 전용, 정리 후보.
+- ADR(T-309): packages/gui vitest는 zustand를 전역 mock — store-소유 로직 단위 커버는 exported 순수 함수 추출(dedupeMessagesById 선례)로만 가능, useWorkspace.getState() 경유 불가.
+- env find(T-309): playwright-electron에서 claude 스폰 없이 PO 스트리밍 턴 모사 가능 — po:sendMessage 등 ipcMain 핸들러 no-op 스텁 + webContents.send로 po:onMsgId/onAnnounce/onDone 주입. 'open-recent-project' IPC로 네이티브 다이얼로그 없이 픽스처 전환.
+- pre-existing(T-309 발견): tests/smoke.spec.ts 3번 케이스 button:visible strict-mode 위반(HomeView recents 다중 버튼) — test-infra 갭 목록에 추가.

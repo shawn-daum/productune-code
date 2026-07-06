@@ -355,6 +355,9 @@
       "emptyHint": "Start a conversation with PO.",
       "messagesPlaceholder": "Messages — filled in Slice 3",
       "inputPlaceholder": "Type a message…",
+      "queuePlaceholder": "Type a follow-up — it'll send once PO finishes…",
+      "queueHint": "Sends as one message when PO finishes",
+      "queueRemove": "Remove from queue",
       "send": "Send",
       "sendShortcut": "Send with ⌘+Enter",
       "attachFile": "Attach file path",
@@ -385,6 +388,16 @@
         "compacting": "Compacting conversation",
         "thinking": "Thinking",
         "stalled": "Still waiting — may be stuck"
+      },
+      "activity": {
+        "read": "Reading {{file}}",
+        "edit": "Editing {{file}}",
+        "write": "Writing {{file}}",
+        "bash": "Running {{cmd}}",
+        "grep": "Searching {{pat}}",
+        "task": "Delegating to {{persona}}",
+        "skill": "Running skill {{name}}",
+        "web": "Looking up {{q}}"
       },
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",

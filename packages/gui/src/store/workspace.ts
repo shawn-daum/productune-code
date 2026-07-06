@@ -190,6 +190,26 @@ interface WorkspaceState {
   setInFlightMsgId: (id: string | null) => void
   setInFlightKind: (kind: MessageKind) => void
 
+  // ── T-309: composer queue ────────────────────────────────────────────────
+  /** User input typed while a PO turn is streaming. FIFO; flushed as ONE
+   *  newline-joined turn at the current turn's natural onDone (not on abort —
+   *  ChatPanel keeps the queue then so the user's typing isn't silently sent
+   *  against a turn they just cancelled). Cleared on project switch / session
+   *  restart. Not persisted (sessionStorage partialize excludes it, like
+   *  inFlightMsgId) — a queued-but-unsent draft doesn't survive a reload. */
+  queuedMessages: string[]
+  enqueueMessage: (text: string) => void
+  removeQueuedMessage: (index: number) => void
+  clearQueue: () => void
+
+  // ── T-309: live PO activity line ─────────────────────────────────────────
+  /** Most recent tool_use the CURRENT top-level PO turn emitted (never a
+   *  delegated worker's — that has its own presence lane via
+   *  poOnWorkerStream/personaPresence). null before the first tool of a turn
+   *  and between turns; drives ChatPanel's "what is PO doing right now" line. */
+  latestPoTool: { toolName: string; input: unknown } | null
+  setLatestPoTool: (tool: { toolName: string; input: unknown } | null) => void
+
   // ── Pane tree slice (T-P4-046) ─────────────────────────
   panes: Pane
   activePaneId: string
@@ -286,6 +306,26 @@ export function dedupeMessagesById(messages: Message[]): Message[] {
   }
   // Reference-stable when there were no duplicates (avoids a needless re-render).
   return out.length === messages.length ? messages : out
+}
+
+// ── T-309: composer queue — pure helpers ─────────────────────────────────────
+// Extracted (mirrors dedupeMessagesById above) so the queue/order/flush
+// invariants are unit-testable directly, since the GUI's vitest setup stubs
+// the whole `zustand` module (vitest.setup.ts) — a real store instance never
+// exists under test, only its pure logic can be exercised. The store actions
+// below are thin wrappers that call these.
+export function enqueueText(queue: string[], text: string): string[] {
+  return [...queue, text]
+}
+
+export function removeQueuedAt(queue: string[], index: number): string[] {
+  return queue.filter((_, i) => i !== index)
+}
+
+/** Newline-join in FIFO order — the queue is sent as ONE turn (PO reads it as
+ *  a single message) at the current turn's onDone. */
+export function joinQueueForFlush(queue: string[]): string {
+  return queue.join('\n')
 }
 
 function derivePhase(poState: PoState | null): Phase {
@@ -438,6 +478,8 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   awaitingUser: false,  // T-PATCH-262: false until first PO onDone
   inFlightMsgId: null,
   inFlightKind: 'po',
+  queuedMessages: [],
+  latestPoTool: null,
 
   panes: makeEmptyLeaf(INIT_PANE_ID),
   activePaneId: INIT_PANE_ID,
@@ -483,6 +525,8 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
           streamingSince: null,
           turnCharCount: 0,
           awaitingUser: false,  // T-PATCH-262: clear on project switch
+          queuedMessages: [],   // T-309: don't bleed a queued draft into the new project
+          latestPoTool: null,
           panes: makeEmptyLeaf(freshId),
           activePaneId: freshId,
           nextPaneSeq: s.nextPaneSeq + 1,
@@ -581,7 +625,14 @@ export const useWorkspace = create<WorkspaceState>()(persist((set, get) => ({
   setInFlightMsgId: (inFlightMsgId) => set({ inFlightMsgId }),
   setInFlightKind: (inFlightKind) => set({ inFlightKind }),
 
-  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false, streamingSince: null, turnCharCount: 0, awaitingUser: false, inFlightMsgId: null, inFlightKind: 'po' }),
+  // T-309: queue actions — thin wrappers over the pure helpers above.
+  enqueueMessage: (text) => set((s) => ({ queuedMessages: enqueueText(s.queuedMessages, text) })),
+  removeQueuedMessage: (index) => set((s) => ({ queuedMessages: removeQueuedAt(s.queuedMessages, index) })),
+  clearQueue: () => set({ queuedMessages: [] }),
+
+  setLatestPoTool: (latestPoTool) => set({ latestPoTool }),
+
+  resetSession: () => set({ messages: [], claudeSessionId: null, streaming: false, streamingSince: null, turnCharCount: 0, awaitingUser: false, inFlightMsgId: null, inFlightKind: 'po', queuedMessages: [], latestPoTool: null }),
 
   // ── pane tree ops ──────────────────────────────────────────────────────────
 

@@ -355,6 +355,9 @@
       "emptyHint": "PO 와 대화를 시작하세요.",
       "messagesPlaceholder": "메시지 표시 — Slice 3 에서 채워짐",
       "inputPlaceholder": "메시지 입력…",
+      "queuePlaceholder": "이어서 입력 — PO 턴이 끝나면 전송돼요…",
+      "queueHint": "PO 턴이 끝나면 하나의 메시지로 전송돼요",
+      "queueRemove": "대기열에서 제거",
       "send": "전송",
       "sendShortcut": "⌘+Enter 로 전송",
       "attachFile": "파일 경로 첨부",
@@ -385,6 +388,16 @@
         "compacting": "대화 정리 중",
         "thinking": "생각 중",
         "stalled": "응답 지연 — 멈췄을 수 있어요"
+      },
+      "activity": {
+        "read": "{{file}} 읽는 중",
+        "edit": "{{file}} 수정 중",
+        "write": "{{file}} 작성 중",
+        "bash": "{{cmd}} 실행 중",
+        "grep": "{{pat}} 검색 중",
+        "task": "{{persona}}에게 위임 중",
+        "skill": "{{name}} 스킬 실행 중",
+        "web": "{{q}} 조회 중"
       },
       "rateLimit": {
         "estimated": "API 한도 도달 — 약 {{n}}초 후 재시도 가능 (추정)",

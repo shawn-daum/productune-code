@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import { Paperclip, Command, CornerDownLeft, X, Square } from 'lucide-react'
-import { useWorkspace } from '../../store/workspace'
+import { useWorkspace, joinQueueForFlush } from '../../store/workspace'
 import { usePoChat } from '../../store/poChat'
 import type { Message, AskUserQuestionPayload } from '../../lib/types'
 import PersonaPresenceBar from './PersonaPresenceBar'
@@ -42,7 +42,6 @@ export default function ChatPanel() {
   const project = useWorkspace((s) => s.project)
   const messages = useWorkspace((s) => s.messages)
   const poState = useWorkspace((s) => s.poState)
-  const claudeSessionId = useWorkspace((s) => s.claudeSessionId)
   const streaming = useWorkspace((s) => s.streaming)
 
   // T-PATCH-052: session restart state — declare before renderItems useMemo
@@ -57,6 +56,19 @@ export default function ChatPanel() {
     () => injectDividers(groupToolTraces(messages), restartDividerMarkers),
     [messages, restartDividerMarkers],
   )
+
+  // T-309: the live PO activity line shows while streaming AND the turn has no
+  // prose in flight — i.e. the newest assistant (po) segment is empty (a
+  // tool-only / pre-first-token turn). The moment a segment carries text, prose
+  // wins (that bubble renders) and this hides.
+  const showActivityLine = useMemo(() => {
+    let lastAssistant: Message | undefined
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'assistant' && (m.kind === 'po' || m.kind == null)) { lastAssistant = m; break }
+    }
+    return !!lastAssistant && lastAssistant.text.length === 0
+  }, [messages])
 
   // T-PATCH-065: dismissed question id — hides modal without resolving
   const [dismissedQuestionId, setDismissedQuestionId] = useState<string | null>(null)
@@ -85,6 +97,13 @@ export default function ChatPanel() {
   // T-PATCH-163: composer working-indicator data sources (atomic selectors).
   const streamingSince = useWorkspace((s) => s.streamingSince)
   const turnCharCount = useWorkspace((s) => s.turnCharCount)
+  // T-309: PO activity line — latest streamed tool_use (atomic selector).
+  const latestPoTool = useWorkspace((s) => s.latestPoTool)
+
+  // T-309: composer queue (atomic selectors).
+  const queuedMessages = useWorkspace((s) => s.queuedMessages)
+  const enqueueMessage = useWorkspace((s) => s.enqueueMessage)
+  const removeQueuedMessage = useWorkspace((s) => s.removeQueuedMessage)
 
   const draft = usePoChat((s) => s.inputDraft)
   const setDraft = usePoChat((s) => s.setDraft)
@@ -93,6 +112,26 @@ export default function ChatPanel() {
 
   const msgsRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+
+  // T-PATCH-133: attachment logic extracted to shared hook (BDD-5 behavior-preserving).
+  // Aliases: images→attachments, removeImage→removeImageRef, removeFile→removeOtherFile
+  // keep the existing render code untouched.
+  // T-309: hoisted above sendText/handleSubmit — those close over
+  // cleanupSentFiles / buildAttachedFilesBlock, so the hook must resolve first.
+  const {
+    images: attachments,
+    otherFiles,
+    attachedFiles,
+    onComposerPaste,
+    onAttachFile,
+    removeImage: removeImageRef,
+    removeFile: removeOtherFile,
+    onComposerChange,
+    handleTokenDeleteKeyDown,
+    buildAttachedFilesBlock,
+    clearAttachments,
+    cleanupSentFiles,
+  } = useComposerAttachments(draft, setDraft, taRef, project?.projectDir ?? null)
 
   // ── Load session on project change ───────────────────────────────────────
   useEffect(() => {
@@ -141,14 +180,11 @@ export default function ChatPanel() {
   }
 
   // ── Submit ──────────────────────────────────────────────────────────────
-  const handleSubmit = async () => {
-    const trimmed = draft.trim()
-    if (!trimmed && attachedFiles.length === 0) return
-    if (streaming || !project) return
-
-    // T-PATCH-133: block built via shared hook (format: `- #N -> path` / `- path`).
-    const text = buildAttachedFilesBlock(trimmed)
-
+  // T-309: core send of a fully-built text as one PO turn. Used by the idle
+  // submit path AND the queue-flush effect below (passes the joined queue).
+  // Appends the user bubble, persists it, and spawns the runner.
+  const sendText = useCallback(async (text: string, sentPaths: string[] = []) => {
+    if (!project) return
     const userMsg: Message = {
       id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       role: 'user',
@@ -157,15 +193,7 @@ export default function ChatPanel() {
       status: 'done',
       created_at: new Date().toISOString(),
     }
-    // T-PATCH-098 §4.c: snapshot the attachment paths BEFORE clearing state so
-    // the post-send L2 cleanup can target exactly the sent paths.
-    const sentPaths = attachedFiles
-
     appendMessage(userMsg)
-    setDraft('')
-    // T-PATCH-133: clearAttachments revokes all preview URLs + resets
-    // images / otherFiles state + resets monotonic seq counter.
-    clearAttachments()
     setAutoScrollLocked(false)
 
     const api = (window as any).api
@@ -178,20 +206,82 @@ export default function ChatPanel() {
       await api.poSendMessage({
         projectDir: project.projectDir,
         text,
-        resume: claudeSessionId,
+        // T-309: read fresh from the store rather than closing over the `claudeSessionId`
+        // prop — a queue-flush send can fire well after this callback was created.
+        resume: useWorkspace.getState().claudeSessionId,
       })
       // T-PATCH-098 §4.c.2.c L2 / T-PATCH-133: PO has consumed the paths.
       // cleanupSentFiles sequences after resolve — never deletes before PO read.
-      await cleanupSentFiles(sentPaths)
+      if (sentPaths.length > 0) await cleanupSentFiles(sentPaths)
     } catch (e) {
       setStreaming(false)
       useWorkspace.getState().setInFlightMsgId(null)
     }
+  }, [project, appendMessage, setAutoScrollLocked, setStreaming, cleanupSentFiles])
+
+  const handleSubmit = async () => {
+    const trimmed = draft.trim()
+    if (!trimmed && attachedFiles.length === 0) return
+    if (!project) return
+
+    // T-PATCH-133: block built via shared hook (format: `- #N -> path` / `- path`).
+    const text = buildAttachedFilesBlock(trimmed)
+
+    // T-309: while a PO turn is streaming, sending does NOT hit the runner — the
+    // text is queued (stackable, individually removable) and flushed as ONE turn
+    // at the current turn's onDone. Attachments mid-turn are out of scope (the
+    // attach button is hidden while streaming — see the composer render below),
+    // so a queued item is always plain text.
+    if (streaming) {
+      enqueueMessage(text)
+      setDraft('')
+      setAutoScrollLocked(false)
+      return
+    }
+
+    // T-PATCH-098 §4.c: snapshot the attachment paths BEFORE clearing state so
+    // the post-send L2 cleanup can target exactly the sent paths.
+    const sentPaths = attachedFiles
+    setDraft('')
+    // T-PATCH-133: clearAttachments revokes all preview URLs + resets
+    // images / otherFiles state + resets monotonic seq counter.
+    clearAttachments()
+    await sendText(text, sentPaths)
   }
 
-  // T-PATCH-081 AC-5: keyboard guard confirmed. Cmd+Enter calls handleSubmit() which
-  // has an early-return guard `if (streaming || !project) return`.
-  // So the keyboard path is blocked during streaming — no new code needed here.
+  // T-309: flush the queue on the streaming true→false transition, but ONLY on a
+  // NATURAL turn end (onDone) — not on an abort (spec: an abort keeps the queue
+  // so the user's typing isn't silently sent against a turn they just cancelled).
+  // Newline-joins all queued items into a SINGLE turn (PO reads them as one
+  // message, in the order they were typed — joinQueueForFlush). flushingRef
+  // guards a re-render mid-flush from double-sending.
+  //   - onDone  → streaming false, abortedRef stays false → FLUSH.
+  //   - abort   → handleAbort (below) sets abortedRef before setStreaming(false);
+  //               this effect just consumes (resets) the flag and keeps the queue.
+  //   - restart → resetSession clears the queue upstream → nothing to flush.
+  const prevStreamingRef = useRef(streaming)
+  const flushingRef = useRef(false)
+  const abortedRef = useRef(false)
+  useEffect(() => {
+    const was = prevStreamingRef.current
+    prevStreamingRef.current = streaming
+    if (!(was && !streaming)) return
+    if (abortedRef.current) {
+      abortedRef.current = false  // consume — keep the queue for the user
+      return
+    }
+    if (flushingRef.current) return
+    const queue = useWorkspace.getState().queuedMessages
+    if (queue.length === 0 || !project) return
+    flushingRef.current = true
+    const joined = joinQueueForFlush(queue)
+    useWorkspace.getState().clearQueue()
+    void sendText(joined).finally(() => { flushingRef.current = false })
+  }, [streaming, project, sendText])
+
+  // T-PATCH-081 AC-5: keyboard guard confirmed. Cmd+Enter calls handleSubmit(),
+  // which now branches on `streaming` internally (send when idle, enqueue while
+  // streaming — T-309) — never blocked, so follow-ups can be queued by keyboard too.
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // T-PATCH-264: Cmd+Enter must submit even when isComposing is true (IME
     // composition-commit fires on the same keydown event that ends composition,
@@ -267,6 +357,10 @@ export default function ChatPanel() {
     const api = (window as any).api
     // Fire-and-forget; silence any IPC or API errors so UI always unlocks.
     try { api.abortPoTurn?.().catch?.(() => {}) } catch { /* noop */ }
+    // T-309: mark this streaming→false as an ABORT so the queue-flush effect
+    // above keeps the queued messages (spec: abort keeps the queue) instead of
+    // auto-sending them as a follow-up turn.
+    abortedRef.current = true
     // Immediate UI unlock regardless of main-process child.on('close') timing.
     setStreaming(false)
   }, [setStreaming])
@@ -280,24 +374,6 @@ export default function ChatPanel() {
   }, [draft])
 
   const [filesListOpen, setFilesListOpen] = useState(false)
-
-  // T-PATCH-133: attachment logic extracted to shared hook (BDD-5 behavior-preserving).
-  // Aliases: images→attachments, removeImage→removeImageRef, removeFile→removeOtherFile
-  // keep the existing render code untouched.
-  const {
-    images: attachments,
-    otherFiles,
-    attachedFiles,
-    onComposerPaste,
-    onAttachFile,
-    removeImage: removeImageRef,
-    removeFile: removeOtherFile,
-    onComposerChange,
-    handleTokenDeleteKeyDown,
-    buildAttachedFilesBlock,
-    clearAttachments,
-    cleanupSentFiles,
-  } = useComposerAttachments(draft, setDraft, taRef, project?.projectDir ?? null)
 
   // T-PATCH-052 / T-PATCH-104 (QA-fix-r2): session restart completion → toast +
   // divider. Split into TWO effects so the 3s hide timer is NEVER subject to
@@ -428,6 +504,18 @@ export default function ChatPanel() {
               ),
             )
           )}
+          {/* T-309: live PO activity line — shown while streaming and the turn
+              has produced no prose yet (prose wins: a non-empty assistant
+              segment renders as its own bubble above and this hides). */}
+          {streaming && showActivityLine && streamingSince != null && (
+            <PoActivityLine
+              sinceMs={streamingSince}
+              charCount={turnCharCount}
+              healthState={healthState}
+              healthDetail={healthDetail}
+              latestTool={latestPoTool}
+            />
+          )}
         </div>
 
         {/* rp-rate-limit-banner (T-012) — visible only when rate-limited */}
@@ -481,37 +569,38 @@ export default function ChatPanel() {
             </div>
           )}
 
-          {/* T-PATCH-163 / T-PATCH-171 AC-3: while streaming (and NOT rate-limited —
-              D6: RateLimitBanner owns that state), the composer collapses to ONE
-              compact row — WorkingIndicator (flex:1, left) + stop button (right).
-              The 2-row textarea+inputRow layout is the idle path below. rateLimited
-              keeps the textarea (disabled) so the banner pairing is intact. */}
-          {streaming && !rateLimited && streamingSince != null ? (
-            <div style={workingComposerRow}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <WorkingIndicator
-                  sinceMs={streamingSince}
-                  charCount={turnCharCount}
-                  healthState={healthState}
-                  healthDetail={healthDetail}
-                />
+          {/* T-309: queued messages — chips stacked ABOVE the textarea while
+              streaming. Each is individually cancelable; the whole stack is sent
+              as ONE turn at the current turn's onDone (newline-joined, in order).
+              The left-rail hint frames the group as "sends as one message". */}
+          {queuedMessages.length > 0 && (
+            <div style={queueWrap} role="list" aria-label={t('workspace.chat.queueHint')}>
+              <div style={queueHint}>{t('workspace.chat.queueHint')}</div>
+              <div style={queueStack}>
+                {queuedMessages.map((q, i) => (
+                  <div key={i} style={queueChip} role="listitem">
+                    <span style={queueDash} aria-hidden="true">{i + 1}</span>
+                    <span style={queueText} title={q}>{q}</span>
+                    <button
+                      style={queueRemoveBtn}
+                      onClick={() => removeQueuedMessage(i)}
+                      aria-label={t('workspace.chat.queueRemove')}
+                      title={t('workspace.chat.queueRemove')}
+                    >
+                      <X size={13} strokeWidth={2.5} />
+                    </button>
+                  </div>
+                ))}
               </div>
-              {/* T-PATCH-081 AC-1/2: stop button (same red treatment as inputRow). */}
-              <button
-                style={{
-                  ...sendBtn,
-                  background: stopHover ? '#DC2626' : '#EF4444',
-                }}
-                onMouseEnter={() => setStopHover(true)}
-                onMouseLeave={() => setStopHover(false)}
-                onClick={handleAbort}
-                aria-label="Stop generation"
-                title={t('workspace.chat.stop')}
-              >
-                <Square size={14} strokeWidth={2.5} />
-              </button>
             </div>
-          ) : (
+          )}
+
+          {/* T-309: the textarea stays LIVE during streaming (was previously
+              collapsed to a WorkingIndicator+stop row) so the user can type and
+              queue follow-ups; the activity indicator moved into the message
+              area (PoActivityLine, rendered above in rp-msgs). Disabled only
+              when there is no project or rate-limited — never on `streaming`
+              alone, since that would block queueing. */}
           <>
             <textarea
               ref={taRef}
@@ -520,15 +609,15 @@ export default function ChatPanel() {
               onChange={(e) => onComposerChange(e.target.value)}
               onKeyDown={onKeyDown}
               onPaste={onComposerPaste}
-              placeholder={t('workspace.chat.inputPlaceholder')}
+              placeholder={t(streaming ? 'workspace.chat.queuePlaceholder' : 'workspace.chat.inputPlaceholder')}
               rows={1}
-              disabled={streaming || !project || rateLimited}
+              disabled={!project || rateLimited}
             />
 
           <div style={inputRow}>
-            {/* T-PATCH-171 AC-2: paperclip/attach button hidden while streaming —
-                attachment isn't possible mid-turn, so the button itself is absent.
-                (Idle path only; the streaming branch above has no attach button.) */}
+            {/* T-PATCH-171 AC-2 / T-309: paperclip/attach hidden while streaming —
+                attachment mid-turn isn't possible (a queued item is plain text). */}
+            {!streaming && (
             <button
               style={{
                 ...iconActionBtn,
@@ -540,10 +629,11 @@ export default function ChatPanel() {
               onClick={onAttachFile}
               aria-label={t('workspace.chat.attachFile')}
               title={t('workspace.chat.attachFile')}
-              disabled={streaming || !project || rateLimited}
+              disabled={!project || rateLimited}
             >
               <Paperclip size={14} strokeWidth={2} />
             </button>
+            )}
 
             {/* T-PATCH-098: chip counts NON-image attachments only; pasted images
                 surface as thumbnails above. */}
@@ -616,7 +706,6 @@ export default function ChatPanel() {
             )}
           </div>
           </>
-          )}
         </div>
         )} {/* T-PATCH-068: end pendingQuestion ternary — normal composer restored */}
 
@@ -733,19 +822,25 @@ function groupToolTraces(messages: Message[]): RenderItem[] {
   return items
 }
 
-// ── T-PATCH-163: composer working indicator ─────────────────────────────────
-// Self-contained so its 1s elapsed tick re-renders ONLY this row, never the
-// ChatPanel message list (react-best-practices). Parent passes streamingSince +
-// the per-turn char count; this component owns the timer + cleanup.
+// ── T-309 (was T-PATCH-163 WorkingIndicator, relocated + extended) ──────────
+// PO live activity line. Self-contained so its 1s elapsed tick re-renders ONLY
+// this row, never the ChatPanel message list (react-best-practices). Parent
+// passes streamingSince + the per-turn char count + the latest streamed
+// tool_use (if any); this component owns the timer + cleanup.
 //
-//   [✶ spinner] 동사 · Nm Ns · ↓ ~N.Nk
+//   [✶ spinner] <humanized tool | 동사> · Nm Ns · ↓ ~N.Nk
 //
 // spinner = CSS-only `.pdt-spin` (md-recipes.css) → reduced-motion auto-guarded.
-function WorkingIndicator(props: {
+// `latestTool` wins over the generic health verb once a tool has streamed this
+// turn (Read/Edit/Bash/… — see humanizePoTool below); falls back to
+// verbForHealth (delegating/compacting/thinking/stalled/default) beforehand —
+// the row is never blank.
+function PoActivityLine(props: {
   sinceMs: number
   charCount: number
   healthState: PoHealthState
   healthDetail: PoHealthDetail
+  latestTool: { toolName: string; input: unknown } | null
 }) {
   const { t } = useTranslation()
   const [nowMs, setNowMs] = useState(() => Date.now())
@@ -758,14 +853,16 @@ function WorkingIndicator(props: {
     return () => clearInterval(id)
   }, [props.sinceMs])
 
-  const verb = verbForHealth(props.healthState, props.healthDetail, t)
+  const activity = props.latestTool
+    ? humanizePoTool(props.latestTool.toolName, props.latestTool.input, t)
+    : verbForHealth(props.healthState, props.healthDetail, t)
   const elapsed = formatElapsed(nowMs - props.sinceMs)
   const tokens = formatApproxTokens(props.charCount)
 
   return (
     <div style={workingRow} role="status" aria-live="polite">
       <span className="pdt-spin" style={spinnerGlyph} aria-hidden="true">✶</span>
-      <span>{verb}</span>
+      <span>{activity}</span>
       <span style={dot} aria-hidden="true">·</span>
       <span>{elapsed}</span>
       {tokens && (
@@ -776,6 +873,49 @@ function WorkingIndicator(props: {
       )}
     </div>
   )
+}
+
+// T-309: humanize a PO tool_use into a friendly activity-line one-liner.
+// basename for file paths, first-40-chars for commands. Unknown tool → the raw
+// tool name (never blank).
+function humanizePoTool(
+  toolName: string,
+  input: unknown,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  const inp = (input && typeof input === 'object') ? (input as Record<string, unknown>) : {}
+  const base = (p: unknown): string =>
+    typeof p === 'string' && p ? (p.split('/').filter(Boolean).pop() ?? p) : ''
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  switch (toolName) {
+    case 'Read':
+      return t('workspace.chat.activity.read', { file: base(inp.file_path ?? inp.notebook_path ?? inp.path) })
+    case 'Edit':
+    case 'NotebookEdit':
+      return t('workspace.chat.activity.edit', { file: base(inp.file_path ?? inp.notebook_path ?? inp.path) })
+    case 'Write':
+      return t('workspace.chat.activity.write', { file: base(inp.file_path ?? inp.path) })
+    case 'Bash': {
+      const cmd = str(inp.command).trim()
+      return t('workspace.chat.activity.bash', { cmd: cmd.slice(0, 40) })
+    }
+    case 'Grep':
+    case 'Glob':
+      return t('workspace.chat.activity.grep', { pat: str(inp.pattern) })
+    case 'Task':
+    case 'Agent': {
+      const sub = str(inp.subagent_type)
+      const id = personaIdFromAgentType(sub)
+      return t('workspace.chat.activity.task', { persona: id ? PERSONA_LABELS[id] : (sub || toolName) })
+    }
+    case 'Skill':
+      return t('workspace.chat.activity.skill', { name: str(inp.skill ?? inp.name ?? inp.command) })
+    case 'WebFetch':
+    case 'WebSearch':
+      return t('workspace.chat.activity.web', { q: str(inp.query ?? inp.url ?? inp.prompt) })
+    default:
+      return toolName
+  }
 }
 
 function formatElapsed(ms: number): string {
@@ -947,13 +1087,6 @@ const workingRow: React.CSSProperties = {
   background: 'transparent',
 }
 
-// T-PATCH-171 AC-3: compact streaming composer — indicator (flex:1) + stop on one row.
-const workingComposerRow: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-}
-
 const spinnerGlyph: React.CSSProperties = {
   display: 'inline-block',
   color: '#8B5CF6',
@@ -963,6 +1096,64 @@ const spinnerGlyph: React.CSSProperties = {
 
 const dot: React.CSSProperties = {
   color: '#505050',
+}
+
+// ── T-309: composer queue chips ──────────────────────────────────────────────
+const queueWrap: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 3,
+}
+const queueHint: React.CSSProperties = {
+  fontSize: 10,
+  color: '#707070',
+  paddingLeft: 2,
+}
+// tight vertical stack + a left rail → the chips read as ONE outgoing group.
+const queueStack: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 2,
+  borderLeft: '2px solid #707070',
+  paddingLeft: 6,
+}
+const queueChip: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  background: '#1a1a1a',
+  border: '1px solid #2A2A2A',
+  borderRadius: 4,
+  padding: '3px 6px',
+  fontSize: 11,
+}
+const queueDash: React.CSSProperties = {
+  color: '#707070',
+  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+  fontSize: 10,
+  flexShrink: 0,
+}
+const queueText: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  color: '#A0A0A0',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+const queueRemoveBtn: React.CSSProperties = {
+  width: 20,
+  height: 20,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: 'none',
+  background: 'transparent',
+  color: '#A0A0A0',
+  cursor: 'pointer',
+  borderRadius: 3,
+  flexShrink: 0,
+  padding: 0,
 }
 
 const iconActionBtn: React.CSSProperties = {

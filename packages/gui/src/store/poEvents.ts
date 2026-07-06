@@ -126,6 +126,8 @@ function register() {
       streaming: true,
       streamingSince: s.streamingSince ?? Date.now(),
       turnCharCount: 0,
+      // T-309: fresh turn → no tool has streamed yet (drives the PO activity line).
+      latestPoTool: null,
     }))
     // T-PATCH-036: this first bubble is segment #1 of the turn — active, unsealed.
     segActiveId = msgId
@@ -219,7 +221,16 @@ function register() {
     // onDone so no orphan renders (AC4).
     // T-PATCH-038: seal also flips the sealed segment's status off 'streaming'
     // so its cursor disappears the moment the tool trace lands.
-    if (payload.level === 'tool') sealActiveSegment()
+    if (payload.level === 'tool') {
+      sealActiveSegment()
+      // T-309: track the latest PO tool_use for the live activity line. This is
+      // the top-level PO's own tool (po-runner.ts:~1558) — a delegated worker's
+      // tool activity flows through the separate poOnWorkerStream channel below
+      // and never lands here, so this never shows a sub-agent's tool as PO's own.
+      if (payload.toolName) {
+        useWorkspace.getState().setLatestPoTool({ toolName: payload.toolName, input: payload.toolInput })
+      }
+    }
   }))
 
   // ── po:onAskUserQuestion — inline option card (T-PATCH-037) ──────────────
@@ -340,7 +351,8 @@ function register() {
       }
       // T-PATCH-163: clear streamingSince so the WorkingIndicator unmounts at turn end.
       // T-PATCH-262: set awaitingUser=true so trayBridge shows red-dot (PO handed turn to user).
-      return { messages: next, streaming: false, inFlightMsgId: null, streamingSince: null, awaitingUser: true }
+      // T-309: clear latestPoTool — the activity line has nothing to show between turns.
+      return { messages: next, streaming: false, inFlightMsgId: null, streamingSince: null, awaitingUser: true, latestPoTool: null }
     })
     // Reset turn-local segmentation state.
     segActiveId = null
