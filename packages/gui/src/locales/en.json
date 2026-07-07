@@ -75,8 +75,12 @@
     },
     "versionInit": {
       "label": "Initial Version ID",
-      "intro": "Set the first version id for this project. Use v1 or v0.1 format.",
-      "hint": "Version id format: v1 or v0.1"
+      "intro": "Choose how you want to start this project.",
+      "optionV01Label": "v0.1 — Validate",
+      "optionV01Desc": "Start by validating an idea. Whether or when to ship isn't decided yet — build first, and figure out direction as you go.",
+      "optionV1Label": "v1 — Ship",
+      "optionV1Desc": "Aim to ship. You have a solid idea and a launch plan, so you're building the complete product from day one.",
+      "recommended": "Recommended"
     }
   },
   "workspace": {

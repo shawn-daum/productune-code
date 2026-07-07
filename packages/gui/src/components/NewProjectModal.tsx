@@ -17,7 +17,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
   // step 1 = slug, 1.5 = version id, 2 = github oauth
   const [step, setStep] = useState<1 | 1.5 | 2>(1)
   const [slug, setSlug] = useState('')
-  const [versionId, setVersionId] = useState('v1')
+  const [versionId, setVersionId] = useState('v0.1')
   const [error, setError] = useState('')
   const [creating, setCreating] = useState(false)
   const [createdDir, setCreatedDir] = useState('')

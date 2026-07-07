@@ -1,12 +1,13 @@
 /**
- * VersionInitStep — T-P4-095
- * Reusable version id input step with inline regex validation.
+ * VersionInitStep — T-P4-095 (guided choice: init-version-guided-choice)
+ * Guided v0.1 / v1 selector for the first version id, each with a plain-language
+ * description so non-technical users can pick without knowing version syntax.
  *
  * Usage: embed in NewProjectModal (step 1.5) or any future version-create UI.
  */
 
 import { useTranslation } from 'react-i18next'
-import { isValidVersionId } from '../../lib/version-id'
+import OptionCard from '../../views/onboarding/OptionCard'
 
 interface Props {
   value: string
@@ -18,8 +19,6 @@ interface Props {
 
 export default function VersionInitStep({ value, onChange, onNext, onPrev, stepLabel }: Props) {
   const { t } = useTranslation()
-  const valid = isValidVersionId(value)
-  const hint = t('onboarding.versionInit.hint')
 
   return (
     <>
@@ -28,21 +27,23 @@ export default function VersionInitStep({ value, onChange, onNext, onPrev, stepL
           {stepLabel ?? t('onboarding.versionInit.label')}
         </div>
         <div style={intro}>{t('onboarding.versionInit.intro')}</div>
-        <input
-          style={{ ...inputStyle, borderColor: value && !valid ? '#EF4444' : '#333' }}
-          placeholder="v1"
-          value={value}
-          autoFocus
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && valid) onNext() }}
-          spellCheck={false}
-        />
-        {value && !valid && (
-          <div style={errorStyle}>{hint}</div>
-        )}
-        {!value && (
-          <div style={hintStyle}>{hint}</div>
-        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <OptionCard
+            selected={value === 'v0.1'}
+            onClick={() => onChange('v0.1')}
+            label={t('onboarding.versionInit.optionV01Label')}
+            badge={t('onboarding.versionInit.recommended')}
+            intro={t('onboarding.versionInit.optionV01Desc')}
+            tech=""
+          />
+          <OptionCard
+            selected={value === 'v1'}
+            onClick={() => onChange('v1')}
+            label={t('onboarding.versionInit.optionV1Label')}
+            intro={t('onboarding.versionInit.optionV1Desc')}
+            tech=""
+          />
+        </div>
       </div>
       <div style={footer}>
         {onPrev ? (
@@ -50,16 +51,7 @@ export default function VersionInitStep({ value, onChange, onNext, onPrev, stepL
         ) : (
           <div />
         )}
-        <button
-          style={{
-            ...btnPrimary,
-            opacity: valid ? 1 : 0.4,
-            cursor: valid ? 'pointer' : 'not-allowed',
-            pointerEvents: valid ? 'auto' : 'none',
-          }}
-          onClick={onNext}
-          disabled={!valid}
-        >
+        <button style={btnPrimary} onClick={onNext}>
           {t('common.next')}
         </button>
       </div>
@@ -74,7 +66,6 @@ const body: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 8,
-  minHeight: 140,
 }
 
 const footer: React.CSSProperties = {
@@ -97,30 +88,6 @@ const intro: React.CSSProperties = {
   color: '#B0B0B0',
   lineHeight: 1.55,
   marginBottom: 4,
-}
-
-const inputStyle: React.CSSProperties = {
-  background: '#0F0F0F',
-  border: '1px solid #333',
-  borderRadius: 4,
-  color: '#F0F0F0',
-  fontSize: 15,
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-  fontWeight: 600,
-  padding: '8px 10px',
-  outline: 'none',
-  width: '100%',
-  boxSizing: 'border-box',
-}
-
-const hintStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: '#505050',
-}
-
-const errorStyle: React.CSSProperties = {
-  fontSize: 11,
-  color: '#EF4444',
 }
 
 const btnPrimary: React.CSSProperties = {

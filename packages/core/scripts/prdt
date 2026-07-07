@@ -247,7 +247,7 @@ def cmd_menus(_args):
 
 # ── init ──────────────────────────────────────────────────────────────────────
 
-def init_project(root, slug=None, version="v1", stage="define", interactive=True):
+def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
     prdt = root / ".prdt"
@@ -256,7 +256,9 @@ def init_project(root, slug=None, version="v1", stage="define", interactive=True
     slug = slug or root.name
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
-        version = input(f"first version [{version}]: ").strip() or version
+        print("first version — v0.1: validating an idea, build first, ship date TBD (default)")
+        print("                v1:   shipping a solid idea with a launch plan")
+        version = input(f"first version (v0.1 / v1, or type your own) [{version}]: ").strip() or version
         stage_in = input(f"stage [{stage}]: ").strip() or stage
         stage = stage_in if stage_in in STAGES else stage
     prdt.mkdir(exist_ok=True)
@@ -799,7 +801,9 @@ def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
     sub = ap.add_subparsers(dest="cmd")
     p = sub.add_parser("init", help="interactive 3-item project init (slug · version · stage)")
-    p.add_argument("--slug"); p.add_argument("--version", default="v1")
+    p.add_argument("--slug")
+    p.add_argument("--version", default="v0.1",
+                    help="v0.1 (validate an idea, default) or v1 (ship-ready); any vN[.N] id accepted")
     p.add_argument("--yes", action="store_true", help="accept defaults, no prompts")
     p.add_argument("--json", action="store_true", help="machine mode (GUI shares this module)")
     p.set_defaults(fn=cmd_init)

@@ -19,3 +19,6 @@
 - [T-321] pdt-* 완전 은퇴(T-293/T-311); T-285 dual-namespace obsolete — poAgentFor는 상수 prdt-po로 collapse.
 - [T-321] 유보(PO): tryHealProject(config 없는 기존 .productune heal on open)는 여전히 레거시 initProject 호출 → 기존 부분-레거시 dir에 .productune/config.json 쓸 수 있음. heal-of-existing(신규 생성 아님), heal 후 prdt-po 스폰+마이그레이션 버튼 노출되므로 crash 없음 → 현행 유지, Retro에서 migrate-prompt 대체 검토.
 - [T-321] 설치된 ~/.prdt/bin/prdt가 작업트리보다 낡음(아직 po 서브커맨드 존재) — GUI가 델리게이트하는 실제 CLI가 수정 전 상태. 배포/설치 단계에서 install.sh 재실행 또는 prdt update 필요.
+- [T-322] ADR: 버전 선택 UI(VersionInitStep)는 기존 views/onboarding/OptionCard.tsx 재사용(label+intro+badge) — components/*가 views/onboarding/* 공유조각 import하는 선례 있음.
+- [T-322] CLI init 프롬프트 카피는 영어 유지(기존 prdt 프롬프트 관례 "project slug [...]:" 등과 일관, GUI ko/en과 같은 2선택지·의미). PO가 CLI 현지화 원하면 후속.
+- [T-322] 비차단 후속: electron/ipc/project.ts:71 createPrdtProject의 readPrdtConfig fallback 리터럴이 아직 "v1" — runPrdtCli 동기라 항상 방금 쓴 po-state.json으로 덮어써지는 dead code(무해)지만 v0.1 기본 플립과 불일치. 다음 tidy에서 정리.
