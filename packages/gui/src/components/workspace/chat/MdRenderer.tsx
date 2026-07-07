@@ -295,7 +295,28 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
 
   // lists
   ul: ({ children }) => <ul className="md-ul">{children}</ul>,
-  ol: ({ children }) => <ol className="md-ol">{children}</ol>,
+  // `start` (T-325): react-markdown only supplies `start` when the
+  // source list didn't begin at 1 (mdast-util-to-hast omits it for start=1).
+  // Passing it through as the native attribute AND seeding the CSS counter
+  // (--md-ol-start, read by counter-reset in md-recipes.css) keeps numbering
+  // continuous when a table/other block splits one ordered list into two
+  // <ol> elements — the 2nd one's native start (e.g. 3) resumes counting
+  // instead of the CSS counter-reset always restarting at 1.
+  //
+  // --md-ol-start is set on EVERY <ol> (0 when no explicit start), never left
+  // to the css `var(…, 0)` fallback: custom properties INHERIT, so a nested/
+  // sibling <ol> without its own start would otherwise inherit the parent's
+  // seed and mis-number from N instead of 1. An explicit 0 shadows any
+  // inherited value, so nested lists always restart at 1. (QA regression)
+  ol: ({ children, start }) => (
+    <ol
+      className="md-ol"
+      start={start}
+      style={{ '--md-ol-start': typeof start === 'number' ? start - 1 : 0 } as React.CSSProperties}
+    >
+      {children}
+    </ol>
+  ),
   li: ({ children }) => <li>{children}</li>,
 
   // table

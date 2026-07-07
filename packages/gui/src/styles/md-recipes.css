@@ -295,13 +295,21 @@
 }
 
 /* R11 md-ol */
+/* T-325: counter-reset seeds from --md-ol-start (set inline by
+ * MdRenderer.tsx from the mdast/native `start` attribute) so a list split
+ * across a table/other block into a 2nd <ol start=N> resumes numbering at N
+ * instead of always resetting to 1. MdRenderer sets --md-ol-start on EVERY
+ * <ol> (0 when no explicit start) so the inheriting custom property is always
+ * shadowed — nested/sibling lists restart at 1 rather than inheriting a
+ * parent's seed. The `, 0` fallback is defense-in-depth for any <ol> not
+ * emitted through MdRenderer. */
 .md-ol {
   padding-left: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   list-style: none;
-  counter-reset: md-ol;
+  counter-reset: md-ol var(--md-ol-start, 0);
   margin: 4px 0;
 }
 .md-ol > li {

@@ -23,3 +23,8 @@
 - [T-322] CLI init 프롬프트 카피는 영어 유지(기존 prdt 프롬프트 관례 "project slug [...]:" 등과 일관, GUI ko/en과 같은 2선택지·의미). PO가 CLI 현지화 원하면 후속.
 - [T-322] 비차단 후속: electron/ipc/project.ts:71 createPrdtProject의 readPrdtConfig fallback 리터럴이 아직 "v1" — runPrdtCli 동기라 항상 방금 쓴 po-state.json으로 덮어써지는 dead code(무해)지만 v0.1 기본 플립과 불일치. 다음 tidy에서 정리.
 - [T-324] learning: 한 목적(T-308 hasPrdtWorkTrace — chat.json 빈 resumed 프로젝트 감지)으로 넣은 휴리스틱이, 무관한 후속 변경(T-321 새프로젝트 생성→prdt init)이 그 휴리스틱의 신호 필드(po-state.version)를 채우기 시작하며 조용히 틀려짐. 로컬 green이 놓친 이유 = "갓 생성된" prdt po-state로 hasPrdtWorkTrace를 밟는 테스트가 없었음(기존 커버리지는 version 존재=resumed로 암묵 가정). 가드: 필드 "존재"에 키한 휴리스틱은 "존재하지만 진행이 아니라 생성으로 채워진" 케이스 테스트 필요.
+- [T-325] remark-rehype(mdast-util-to-hast)는 ordered-list start!=1일 때만 hast start 속성 emit — react-markdown 커스텀 ol이 start를 안 읽으면 CSS 카운터가 항상 1 리셋(표/블록으로 끊긴 목록에서 특히 눈에 띔). CSS 카운터 마커는 counter-reset을 start 기반 var로 시드해야 native 연속성 유지.
+- [T-325] footgun(fact--gui-testing-env 후보): 이 monorepo는 pnpm이라 unified/remark-*/playwright-core가 packages/gui/node_modules에 안 뜨고 root node_modules/.pnpm/<pkg>@<ver>/node_modules/<pkg>에만 존재 — 임시 검증 스크립트 직접 import 시 그 절대경로 사용.
+- [T-325] learning: CSS custom property를 counter-reset seed로 쓰면 DOM 상속됨 — 중첩/형제 구조로 누수. 공유 recipe 클래스(.md-ol)의 var 패턴은 매 중첩 경계에서 명시 리셋 필요. acceptance 저자는 "이 var가 같은 태그의 중첩/형제로 새는가"를 물어야 함.
+- [T-325] fix technique: CSS var로 카운터 seed 시 자식마다 값이 달라야 하면 매 요소에 명시 세팅해 상속값을 shadow(자체 start 없으면 0). var(…, fallback)의 fallback은 "미설정"일 때만 먹고 상속값 있으면 안 걸림.
+- [T-325] 커버리지 갭(후속): MdRenderer ol/CSS-counter 번호 로직에 vitest 자동테스트 없음 — T-325 본픽스+중첩 회귀 두 번 다 수동/harness 렌더 필요했음. 중첩/형제 <ol>의 --md-ol-start 단언하는 작은 vitest 스냅샷 추가하면 이 부류 회귀를 QA 전에 잡음. (doctrine #3 regression-prone 지점)
