@@ -135,6 +135,32 @@ export function bridgePrdtVersion(poState: PoState | null): PoState | null {
   return { ...poState, current_version: poState.version }
 }
 
+/**
+ * T-291 (adapter A8) / regression fix (first-po-request-screen-missing-after-create):
+ * work-trace signal for a prdt po-state — used by EntryGate to decide whether a
+ * project with onboarding.status === 'pending' already has PO turns underway
+ * (→ resume straight into WorkspaceShell) vs is genuinely brand new (→ show
+ * FreshComposer, the "type your first request" 1-input screen).
+ *
+ * Deliberately does NOT check `version`: `prdt init` (packages/core/scripts/prdt
+ * `init_project`) stamps `po-state.json.version` unconditionally at project
+ * creation, before any PO turn ever runs — so a non-empty `version` is true for
+ * EVERY prdt project, brand-new or not. An earlier revision treated non-empty
+ * `version` as a work-trace signal, which made EVERY freshly created prdt
+ * project skip FreshComposer and jump straight to WorkspaceShell (the "first
+ * request screen never appears" regression). The two remaining signals —
+ * an assigned `current_task`, or a `stage` that has moved past the initial
+ * 'define' default — only become true once the PO has actually acted, so they
+ * stay safe.
+ */
+export function hasPrdtWorkTrace(poState: PoState | null): boolean {
+  if (!isPrdtPoState(poState)) return false
+  return (
+    poState?.current_task != null ||
+    (typeof poState?.stage === 'string' && poState.stage !== 'define')
+  )
+}
+
 /** Returns the active stage index (0-3) from `stage`. Default 0 ('define') on
  *  missing/unrecognized value — mirrors getActivePhaseIndex's fallback shape. */
 export function getActiveStageIndex(poState: PoState | null): number {

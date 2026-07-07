@@ -21,6 +21,7 @@ import {
   getActivePhaseIndex,
   getActivePhaseDef,
   bridgePrdtVersion,
+  hasPrdtWorkTrace,
   STAGE_DEFS,
 } from './phase-mapping'
 import type { PoState } from './types'
@@ -109,6 +110,49 @@ export const BRIDGE_CASES: readonly BridgeCase[] = [
   { label: 'prdt with existing current_version untouched', poState: { stage: 'build', version: 'v1.1', current_version: 'keep' }, expectedCv: 'keep', expectSameRef: true },
 ]
 
+// ── hasPrdtWorkTrace — regression guard (first-po-request-screen-missing-after-create) ──
+//
+// `prdt init` stamps `version` unconditionally at creation (before any PO turn),
+// so a brand-new prdt project must NOT be flagged as "has work" merely because
+// `version` is non-empty — that bug made EntryGate skip FreshComposer (the
+// "first request" 1-input screen) for every freshly created project.
+
+interface WorkTraceCase {
+  readonly label: string
+  readonly poState: PoState | null
+  readonly expected: boolean
+}
+
+export const WORK_TRACE_CASES: readonly WorkTraceCase[] = [
+  {
+    label: 'brand-new prdt state (default stage=define, version stamped, no current_task) → NOT a work trace',
+    poState: { schema_version: 1, stage: 'define', version: 'v0.1' },
+    expected: false,
+  },
+  {
+    label: 'brand-new prdt state with a v1 version stamped → still NOT a work trace',
+    poState: { schema_version: 1, stage: 'define', version: 'v1' },
+    expected: false,
+  },
+  {
+    label: 'stage advanced past define → work trace',
+    poState: { schema_version: 1, stage: 'build', version: 'v0.1' },
+    expected: true,
+  },
+  {
+    label: 'current_task assigned → work trace',
+    poState: { schema_version: 1, stage: 'define', version: 'v0.1', current_task: { ticket_id: 'T-1', slug: 'x', assignee: 'developer' } },
+    expected: true,
+  },
+  {
+    label: 'legacy shape (no stage) → never a prdt work trace',
+    poState: { schema_version: 2, current_phase: 3, current_version: 'v0.6' },
+    expected: false,
+  },
+  { label: 'null poState → false', poState: null, expected: false },
+  { label: 'empty object → false', poState: {}, expected: false },
+]
+
 export function runPhaseMappingCases(): { passed: number; failures: string[] } {
   const failures: string[] = []
   let total = 0
@@ -153,6 +197,12 @@ export function runPhaseMappingCases(): { passed: number; failures: string[] } {
     }
   }
 
+  for (const c of WORK_TRACE_CASES) {
+    total += 1
+    const actual = hasPrdtWorkTrace(c.poState)
+    if (actual !== c.expected) failures.push(`hasPrdtWorkTrace[${c.label}]: expected ${c.expected}, got ${actual}`)
+  }
+
   // STAGE_DEFS carries exactly the 4 prdt stages, each with a name + color
   // ("its own display definition" — the ticket's core acceptance bullet).
   total += 1
@@ -175,6 +225,6 @@ test('phase-mapping: prdt stage + legacy phase cases all pass', () => {
   if (failures.length > 0) {
     throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
   }
-  const totalCases = KIND_CASES.length + STAGE_CASES.length + LEGACY_PHASE_CASES.length + BRIDGE_CASES.length + 1
+  const totalCases = KIND_CASES.length + STAGE_CASES.length + LEGACY_PHASE_CASES.length + BRIDGE_CASES.length + WORK_TRACE_CASES.length + 1
   expect(passed).toBe(totalCases)
 })

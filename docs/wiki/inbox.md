@@ -22,3 +22,4 @@
 - [T-322] ADR: 버전 선택 UI(VersionInitStep)는 기존 views/onboarding/OptionCard.tsx 재사용(label+intro+badge) — components/*가 views/onboarding/* 공유조각 import하는 선례 있음.
 - [T-322] CLI init 프롬프트 카피는 영어 유지(기존 prdt 프롬프트 관례 "project slug [...]:" 등과 일관, GUI ko/en과 같은 2선택지·의미). PO가 CLI 현지화 원하면 후속.
 - [T-322] 비차단 후속: electron/ipc/project.ts:71 createPrdtProject의 readPrdtConfig fallback 리터럴이 아직 "v1" — runPrdtCli 동기라 항상 방금 쓴 po-state.json으로 덮어써지는 dead code(무해)지만 v0.1 기본 플립과 불일치. 다음 tidy에서 정리.
+- [T-324] learning: 한 목적(T-308 hasPrdtWorkTrace — chat.json 빈 resumed 프로젝트 감지)으로 넣은 휴리스틱이, 무관한 후속 변경(T-321 새프로젝트 생성→prdt init)이 그 휴리스틱의 신호 필드(po-state.version)를 채우기 시작하며 조용히 틀려짐. 로컬 green이 놓친 이유 = "갓 생성된" prdt po-state로 hasPrdtWorkTrace를 밟는 테스트가 없었음(기존 커버리지는 version 존재=resumed로 암묵 가정). 가드: 필드 "존재"에 키한 휴리스틱은 "존재하지만 진행이 아니라 생성으로 채워진" 케이스 테스트 필요.

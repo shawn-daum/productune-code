@@ -28,26 +28,7 @@ import { useEffect, useState } from 'react'
 import type { Project } from '../lib/types'
 import FreshComposer from './FreshComposer'
 import WorkspaceShell from '../views/WorkspaceShell'
-import { isPrdtPoState } from '../lib/phase-mapping'
-
-/**
- * T-291 (adapter A8): work-trace signal for a prdt po-state.
- *
- * The legacy trace test keys on `phase_history.length` — but a prdt po-state has
- * no phase_history (it uses a flat `stage` + `version`). So a resumed prdt project
- * whose chat.json is empty/missing would misroute to FreshComposer. A prdt project
- * has "done work" once it carries a version, an assigned task, or has advanced past
- * the initial 'define' stage — any of those means: resume into the full workspace.
- */
-function hasPrdtWorkTrace(poState: unknown): boolean {
-  const s = poState as { stage?: string; version?: string; current_task?: unknown } | null
-  if (!isPrdtPoState(s as any)) return false
-  return (
-    (typeof s?.version === 'string' && s.version.length > 0) ||
-    s?.current_task != null ||
-    (typeof s?.stage === 'string' && s.stage !== 'define')
-  )
-}
+import { hasPrdtWorkTrace } from '../lib/phase-mapping'
 
 interface Props {
   project: Project
