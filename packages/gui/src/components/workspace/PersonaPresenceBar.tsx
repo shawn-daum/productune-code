@@ -363,9 +363,18 @@ function WorkerStreamSlot({ persona, lines, live, tokens, duration, layout, onEx
         onClick={onExpand}
         title={t('workspace.presence.expandHint')}
       >
-        {lines.map((ln, i) => (
-          <StreamLineView key={i} line={ln} />
-        ))}
+        {/* Inner wrapper w/ margin-top:auto bottom-anchors the newest line without
+            justify-content:flex-end — the flex-end + overflow-y:auto combo has a
+            Chromium quirk where overflow escapes above the scroll origin and
+            wheel-up can't reach it. margin-top:auto pins the stack to the bottom
+            when short and collapses to 0 (normal top-scrollable overflow) when the
+            content exceeds the fixed slot height. flexShrink:0 keeps the wrapper
+            (and its lines) at natural height so lines never squish/overlap. */}
+        <div style={streamBodyInnerStyle}>
+          {lines.map((ln, i) => (
+            <StreamLineView key={i} line={ln} />
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -499,14 +508,31 @@ const streamBodyStyle: React.CSSProperties = {
   lineHeight: 1.55,
   display: 'flex',
   flexDirection: 'column',
-  justifyContent: 'flex-end',
+  // NO justify-content:flex-end — that + overflow-y:auto triggers the Chromium
+  // flex bug where overflow escapes above the scroll origin (wheel-up dead). The
+  // inner wrapper's margin-top:auto does the bottom-anchoring instead.
   cursor: 'pointer',       // click → expand (AC-2)
 }
+// Bottom-anchor wrapper: margin-top:auto pushes the line stack to the bottom when
+// it's shorter than the slot, and collapses to 0 (leaving normal top-anchored,
+// fully-scrollable overflow) once the lines exceed the fixed slot height.
+// flexShrink:0 stops the flex parent from compressing the wrapper — the squish
+// that made lines overlap when the buffer overflowed.
+const streamBodyInnerStyle: React.CSSProperties = {
+  marginTop: 'auto',
+  flexShrink: 0,
+}
 // AC-5: PROSE lines — sans, muted, primary (readable natural language).
+// flexShrink:0 + explicit line-height/min-height guarantee each line keeps its
+// natural height (no squish/overlap) whether rendered in the slot's block wrapper
+// or the overlay's flex column.
 const streamProseLineStyle: React.CSSProperties = {
   color: 'var(--txt-muted, #9a9a9a)',
   whiteSpace: 'normal',
   overflowWrap: 'anywhere',
+  flexShrink: 0,
+  lineHeight: 1.55,
+  minHeight: '1.55em',
 }
 // AC-5: TOOL lines — mono, faint, subordinate (compact trace).
 const streamToolLineStyle: React.CSSProperties = {
@@ -516,6 +542,9 @@ const streamToolLineStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
+  flexShrink: 0,
+  lineHeight: 1.55,
+  minHeight: '1.55em',
 }
 
 // Expand overlay styles (AC-2).
@@ -741,13 +770,25 @@ function ensureStreamKeyframe() {
 // = ≈92px, sized so the vertical char/label stack never clips. When the stream
 // slot sits inline (wide), the bar keeps this fixed height and the slot stretches
 // to it. When stacked (narrow), the bar grows vertically (barStackedStyle).
+//
+// alignItems: 'stretch' (not 'center') is load-bearing — the chip row below is
+// the ONLY direct child of this fixed-height container, and the WorkerStreamSlot
+// chain relies on `flex: 1` / `alignSelf: 'stretch'` all the way down to size
+// itself. That chain only becomes a real height constraint when every ancestor
+// in it has a DEFINITE height. With 'center', the row sizes to its own content
+// instead of stretching to fill the 92px box, so the definite-height chain never
+// starts — the stream slot's body then grows to fit however many lines it holds
+// instead of clipping + internally scrolling, and the box visibly overflows the
+// bar above/below (repro'd: slot grew to ~138px instead of clipping at ~92px).
+// 'stretch' gives the chip row (and everything under it) a real height to size
+// against, which is what makes overflow: hidden / overflow-y: auto actually work.
 const barStyle: React.CSSProperties = {
   height: 92,
   flexShrink: 0,
   padding: '6px 12px',
   display: 'flex',
   flexDirection: 'row',
-  alignItems: 'center',
+  alignItems: 'stretch',
   gap: 14,
   background: '#161616',
   borderBottom: '1px solid var(--border, #2A2A2A)',
