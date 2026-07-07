@@ -44,10 +44,16 @@ export interface RecentWithMeta {
 const RECENTS_MAX = 50  // T-PATCH-114: raised from 10
 const RECENTS_PATH = path.join(os.homedir(), '.productune', 'recents.json')
 
-function loadRecents(): RecentProjectEntry[] {
+/** `homeDir` is test-only (defaults to `os.homedir()`) — mirrors the onboarding.ts DI idiom. */
+function recentsPathFor(homeDir: string): string {
+  return path.join(homeDir, '.productune', 'recents.json')
+}
+
+function loadRecents(homeDir: string = os.homedir()): RecentProjectEntry[] {
+  const recentsPath = recentsPathFor(homeDir)
   try {
-    if (!fs.existsSync(RECENTS_PATH)) return []
-    return JSON.parse(fs.readFileSync(RECENTS_PATH, 'utf-8')) as RecentProjectEntry[]
+    if (!fs.existsSync(recentsPath)) return []
+    return JSON.parse(fs.readFileSync(recentsPath, 'utf-8')) as RecentProjectEntry[]
   } catch {
     return []
   }
@@ -292,6 +298,48 @@ function tryHealProject(dir: string): any | null {
   }
 }
 
+/**
+ * T-321: pure list+meta builder backing the `recents:listWithMeta` IPC handler.
+ * Extracted (Tidy First — no behavior change) so the exists/version/stage
+ * resolution can be unit-tested against a fixture `homeDir` instead of the
+ * real `~/.productune/recents.json` (`homeDir` mirrors the onboarding.ts DI
+ * idiom, defaults to `os.homedir()`).
+ */
+export function buildRecentsWithMeta(homeDir: string = os.homedir()): RecentWithMeta[] {
+  return loadRecents(homeDir).map((e) => {
+    let exists = false
+    let phase: number | null = null
+    let version: string | null = null
+    let stage: string | null = null
+    let slug = e.slug
+    try {
+      const cfgPath = configPath(e.projectDir)
+      exists = fs.existsSync(cfgPath)
+      if (exists) {
+        try {
+          const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+          slug = typeof cfg.slug === 'string' ? cfg.slug : e.slug
+        } catch { /* keep entry slug */ }
+        try {
+          const statePath = poStatePath(e.projectDir)
+          if (fs.existsSync(statePath)) {
+            const st = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
+            phase = typeof st.current_phase === 'number' ? st.current_phase : null
+            // T-306: prdt carries flat `version`/`stage` instead of
+            // current_version/current_phase — coalesce so prdt cards show
+            // their meta row. Legacy po-state never has the flat fields.
+            version = typeof st.current_version === 'string' ? st.current_version
+              : typeof st.version === 'string' && typeof st.stage === 'string' ? st.version
+              : null
+            stage = typeof st.stage === 'string' ? st.stage : null
+          }
+        } catch { /* phase/version/stage stay null */ }
+      }
+    } catch { /* exists stays false */ }
+    return { slug, projectDir: e.projectDir, openedAt: e.openedAt, exists, phase, version, stage }
+  })
+}
+
 // ── Register ──────────────────────────────────────────────────────────────────
 
 export function register(): void {
@@ -451,40 +499,7 @@ export function register(): void {
   // T-PATCH-114: batch IPC — returns all entries including missing dirs (exists:false).
   // phase/version from po-state.json; slug from config.json (falls back to entry slug).
   // Never throws — missing/corrupt files yield null fields.
-  ipcMain.handle('recents:listWithMeta', (): RecentWithMeta[] => {
-    return loadRecents().map((e) => {
-      let exists = false
-      let phase: number | null = null
-      let version: string | null = null
-      let stage: string | null = null
-      let slug = e.slug
-      try {
-        const cfgPath = configPath(e.projectDir)
-        exists = fs.existsSync(cfgPath)
-        if (exists) {
-          try {
-            const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
-            slug = typeof cfg.slug === 'string' ? cfg.slug : e.slug
-          } catch { /* keep entry slug */ }
-          try {
-            const statePath = poStatePath(e.projectDir)
-            if (fs.existsSync(statePath)) {
-              const st = JSON.parse(fs.readFileSync(statePath, 'utf-8'))
-              phase = typeof st.current_phase === 'number' ? st.current_phase : null
-              // T-306: prdt carries flat `version`/`stage` instead of
-              // current_version/current_phase — coalesce so prdt cards show
-              // their meta row. Legacy po-state never has the flat fields.
-              version = typeof st.current_version === 'string' ? st.current_version
-                : typeof st.version === 'string' && typeof st.stage === 'string' ? st.version
-                : null
-              stage = typeof st.stage === 'string' ? st.stage : null
-            }
-          } catch { /* phase/version/stage stay null */ }
-        }
-      } catch { /* exists stays false */ }
-      return { slug, projectDir: e.projectDir, openedAt: e.openedAt, exists, phase, version, stage }
-    })
-  })
+  ipcMain.handle('recents:listWithMeta', (): RecentWithMeta[] => buildRecentsWithMeta())
 
   ipcMain.handle('dialog:openFilePicker', async () => {
     const result = await dialog.showOpenDialog({

@@ -8,3 +8,6 @@
 - 참조(T-316): legacy 배포 아티팩트 식별 = /scripts/hooks/<basename>.sh 경로 접미(18종+statusline-productune.sh) — 타 앱/사용자 훅 안전. 정본 목록은 install.sh @475f30b~1.
 - QA env find(T-316): contextBridge로 freeze된 window.api는 monkeypatch 스파이 불가 — Electron 라이브 IPC 검증은 관찰 가능한 부작용(DOM/파일) 기반으로 설계.
 - QA 규율(T-316): PO 채팅 실구동 라이브 테스트에 실 워크트리 projectDir 사용 금지 — 실 .prdt/chat.json에 턴이 기록돼 다음 실행에서 거짓 실패(실발생·정정). 항상 mkdtemp 1회성 fixture.
+- [T-320] Ship-entry pattern: PO/dev sometimes claim doctrine#4 proof via ad-hoc node repro instead of a committed regression test — behavior can be correct today yet leave zero guard against future regression. Habit reminder: "proof of behavior" for logic-bearing IPC handlers means a landed test, not a one-off repro.
+- [T-320] ADR: recents:listWithMeta 핸들러 바디를 export function buildRecentsWithMeta(homeDir=os.homedir())로 추출해 실제 ~/.productune/recents.json 안 건드리고 테스트하는 seam으로 씀 — onboarding.ts의 homeDir DI idiom 재사용. home-dependent 로직 테스트 시 같은 idiom 재사용 권장.
+- [T-320] QA 디스패치 힌트의 "register()+ipcMain.handle mock-capture 패턴이 project.test.ts에 이미 있다"는 부정확 — 실제론 detectProductuneLayout을 직접 import해 호출하는 case-list+vitest-driver idiom(costArchive.test.ts와 동일).
