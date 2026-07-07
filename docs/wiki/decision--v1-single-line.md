@@ -7,6 +7,12 @@ links: ["retro--v1.0"]
 ---
 # v1 단일 개발 라인 — v0.6/main은 참고 후 폐기
 
+> **2026-07-07 갱신 (사용자 결정, B안).** 아래의 "원격 main/v0.6은 freeze 유지" 조항을 **supersede**한다. v1을 정본 trunk로 승격:
+> - 로컬/원격 브랜치 rename: 구 `main` → `v0.6`(레거시 보존), `v1` → `main`.
+> - 원격 반영: `origin/v0.6` = 레거시(fb589a5) 보존, `origin/main` force-update = v1 라인(49059ba), 구 `origin/v1` 삭제. GitHub 기본 브랜치 = `main`(이름 유지, 내용이 v1으로 교체).
+> - 이후 **`main`이 유일 개발 라인 = trunk** (doctrine "trunk = main"과 정렬). `v0.6`는 조회 전용 레거시 브랜치.
+> - `…/productune` 워크트리는 rename으로 `v0.6` 체크아웃이 됨 — 이제 레거시 참고용.
+
 2026-07-04 사용자 결정. flip 문서 §3의 "GUI 개발은 main에서 계속 → v1으로 주기 merge"를 **supersede**한다.
 
 - **v1 브랜치가 유일한 개발 라인.** GUI 포함 모든 신규 작업은 v1에서.
