@@ -2,13 +2,83 @@ import { app, ipcMain, dialog, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFile } from 'child_process'
+import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, findAncestorProductuneRoot } from '@productune/core'
 import { writeOnboardingPending } from './onboarding'
 import { STATE_DIR_NAME, configPath, poStatePath } from '../project-paths'
 
 const execFileAsync = promisify(execFile)
+
+// ── T-319/T-321: prdt CLI delegation (single init/migrate SoT) ─────────────────
+//
+// Every GUI project *creation* route and the legacy *migration* route delegate to
+// the one prdt CLI SoT installed at `~/.prdt/bin/prdt` (install.sh) — never to the
+// legacy `.productune`-writing initProject (doctrine #2: reuse the one init SoT).
+// A missing/failing prdt CLI throws a clear Error the IPC caller surfaces; there is
+// NO silent fallback to `.productune` — no GUI path creates a new legacy project.
+const PRDT_BIN = path.join(os.homedir(), '.prdt', 'bin', 'prdt')
+
+/** Run `prdt <args>` (cwd = projectDir). Throws a clear Error when the CLI is
+ *  absent or exits non-zero. Returns stdout. */
+function runPrdtCli(args: string[], cwd: string): string {
+  if (!fs.existsSync(PRDT_BIN)) {
+    throw new Error(
+      `prdt CLI not found at ${PRDT_BIN} — run the prdt installer (scripts/install.sh) before creating or migrating a project.`,
+    )
+  }
+  try {
+    return execFileSync(PRDT_BIN, args, { cwd, encoding: 'utf-8' })
+  } catch (e: any) {
+    const detail = String(e?.stderr || e?.stdout || e?.message || e).trim()
+    throw new Error(`prdt ${args[0]} failed: ${detail}`)
+  }
+}
+
+/** Config-shaped result the renderers read (mirrors the pre-T-319 initProject
+ *  return: `slug` / `created_at` / `version`), read back from the freshly written
+ *  `.prdt/` state so it reflects on-disk truth. Exported for unit testing the
+ *  create/migrate return-shape contract against a fixture dir (T-319). */
+export function readPrdtConfig(
+  projectDir: string,
+  fallbackSlug: string,
+  fallbackVersion = 'v1',
+): { slug: string; created_at: string; version: string } {
+  let slug = fallbackSlug
+  let created_at = new Date().toISOString()
+  let version = fallbackVersion
+  try {
+    const cfg = JSON.parse(fs.readFileSync(configPath(projectDir), 'utf-8'))
+    if (typeof cfg.slug === 'string') slug = cfg.slug
+    if (typeof cfg.created_at === 'string') created_at = cfg.created_at
+  } catch { /* keep fallbacks */ }
+  try {
+    const st = JSON.parse(fs.readFileSync(poStatePath(projectDir), 'utf-8'))
+    if (typeof st.version === 'string') version = st.version
+  } catch { /* keep fallback */ }
+  return { slug, created_at, version }
+}
+
+/** T-319 (decision A): create a `.prdt` project via `prdt init --json` (cwd=dir). */
+function createPrdtProject(
+  projectDir: string,
+  slug: string,
+  initialVersionId?: string,
+): { slug: string; created_at: string; version: string } {
+  const args = ['init', '--json', '--slug', slug]
+  if (initialVersionId) args.push('--version', initialVersionId)
+  runPrdtCli(args, projectDir)
+  return readPrdtConfig(projectDir, slug, initialVersionId ?? 'v1')
+}
+
+/** T-321: convert a legacy `.productune` project to `.prdt` via `prdt migrate`
+ *  (the single migration SoT — renames `.productune/`→`.productune.migrated/` and
+ *  writes `.prdt/`). Delegates by absolute path; no in-process re-implementation. */
+function migratePrdtProject(projectDir: string): { slug: string; created_at: string; version: string } {
+  runPrdtCli(['migrate', projectDir], projectDir)
+  const fallbackSlug = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'project'
+  return readPrdtConfig(projectDir, fallbackSlug)
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -366,7 +436,8 @@ export function register(): void {
   })
 
   ipcMain.handle('init:project', (_event, opts: { slug: string; projectDir: string }) => {
-    return initProject(opts)
+    // T-319: creates a `.prdt` project via the prdt CLI SoT (never legacy .productune).
+    return createPrdtProject(opts.projectDir, opts.slug)
   })
 
   ipcMain.handle('project:create', (_event, { slug, initialVersionId }: { slug: string; initialVersionId?: string }) => {
@@ -380,7 +451,8 @@ export function register(): void {
     }
     fs.mkdirSync(projectDir, { recursive: true })
 
-    const config = initProject({ slug, projectDir, initialVersionId })
+    // T-319: new projects are born `.prdt` via the prdt CLI SoT (never .productune).
+    const config = createPrdtProject(projectDir, slug, initialVersionId)
     // Decision B (T-P4-101): write onboarding pending immediately after init success.
     try { writeOnboardingPending(projectDir, 'gui-create') } catch { /* non-fatal */ }
     addToRecents(projectDir, slug)
@@ -389,7 +461,8 @@ export function register(): void {
 
   ipcMain.handle('project:installAt', (_event, { projectDir }: { projectDir: string }) => {
     const slug = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'project'
-    const config = initProject({ slug, projectDir })
+    // T-319: install-here also creates a `.prdt` project (never legacy .productune).
+    const config = createPrdtProject(projectDir, slug)
     // Decision B (T-P4-101): write onboarding pending after install success.
     try { writeOnboardingPending(projectDir, 'install-at') } catch { /* non-fatal */ }
     addToRecents(projectDir, slug)
@@ -599,12 +672,13 @@ export function register(): void {
     return { kind: 'none', dir }
   })
 
-  ipcMain.handle('project:migrateLegacy', (_event, { projectDir, slug }: { projectDir: string; slug?: string }) => {
-    const derivedSlug = (slug ?? path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '')) || 'project'
-    // stampSchemaV:false — real legacy projects must have backfill migrations run;
-    // stamping latest here would cause migration runner to skip all pending migrations.
-    const config = initProject({ slug: derivedSlug, projectDir, stampSchemaV: false })
-    addToRecents(projectDir, derivedSlug)
+  ipcMain.handle('project:migrateLegacy', (_event, { projectDir }: { projectDir: string; slug?: string }) => {
+    // T-321: convert legacy `.productune` → `.prdt` via the prdt migrate SoT (which
+    // renames the old marker to `.productune.migrated/`). Throws a clear Error on
+    // failure — no silent fallback, no in-process re-implementation. After success
+    // detectProjectKind resolves `prdt`, so the very next PO turn spawns prdt-po.
+    const config = migratePrdtProject(projectDir)
+    addToRecents(projectDir, config.slug)
     return { projectDir, config, migrated: true }
   })
 

@@ -815,9 +815,7 @@ def main():
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
-    p = sub.add_parser("po", help="PO 대화 시작 (= claude --agent prdt-po; 미init 프로젝트면 init부터)")
-    p.add_argument("rest", nargs=argparse.REMAINDER, help="claude에 그대로 전달할 추가 인자")
-    p.set_defaults(fn=cmd_po)
+    # T-319: `po` 서브커맨드 제거 — bare `prdt`가 유일한 PO 진입(init-if-needed→PO).
     p = sub.add_parser("update", help="prdt 업데이트: repo pull --ff-only + 재설치 (구 productune update 계승)")
     p.set_defaults(fn=cmd_update)
     p = sub.add_parser("menus", help="regenerate playbook _index.md menus from frontmatter")

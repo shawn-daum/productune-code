@@ -402,7 +402,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     if (!lastUser) return
     const api = (window as any).api
     api.poSendMessage?.({ projectDir: project.projectDir, text: lastUser.text,
-      persona: 'pdt-po', resume: useWorkspace.getState().claudeSessionId })
+      persona: 'prdt-po', resume: useWorkspace.getState().claudeSessionId })
   }
 
   // ── T-PATCH-276 (#22): clickable phase pills → open the phase's doc in a main tab.

@@ -254,7 +254,7 @@ export function register(): void {
         //     visible conversation stays continuous, AC4),
         //   - clear the module-scope captured id,
         //   - force THIS turn's resume to null so it spawns `claude --agent
-        //     pdt-po` fresh → re-reads doctrine + re-orients from po-state (AC3/AC5),
+        //     prdt-po` fresh → re-reads doctrine + re-orients from po-state (AC3/AC5),
         //   - reset the session window so counting restarts here,
         //   - notify the renderer to null its in-memory session id (does NOT
         //     touch messages) so subsequent turns resume the NEW session.

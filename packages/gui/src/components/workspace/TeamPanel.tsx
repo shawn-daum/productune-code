@@ -39,7 +39,8 @@ const PERSONA_DIR: Record<PersonaKey, string> = {
 
 interface PersonaDef {
   key: PersonaKey
-  id: 'pdt-po' | 'pdt-designer' | 'pdt-developer' | 'pdt-qa'
+  // T-319: prdt-* agent id (== ~/.claude/agents/<id>.md the persona-def tab opens).
+  id: 'prdt-po' | 'prdt-designer' | 'prdt-developer' | 'prdt-qa'
   initial: string
   nameKey: string
   roleKey: string
@@ -49,10 +50,10 @@ interface PersonaDef {
 // effort dynamically per task complexity (L1–L7); there is no fixed per-persona
 // model, so the old flat row label was doctrinally false.
 const PERSONAS: PersonaDef[] = [
-  { key: 'po',       id: 'pdt-po',        initial: 'P', nameKey: 'workspace.team.persona.po.name',       roleKey: 'workspace.team.persona.po.role'       },
-  { key: 'designer', id: 'pdt-designer',   initial: 'D', nameKey: 'workspace.team.persona.designer.name',  roleKey: 'workspace.team.persona.designer.role'  },
-  { key: 'dev',      id: 'pdt-developer',  initial: 'D', nameKey: 'workspace.team.persona.developer.name', roleKey: 'workspace.team.persona.developer.role' },
-  { key: 'qa',       id: 'pdt-qa',         initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.persona.qa.role'        },
+  { key: 'po',       id: 'prdt-po',        initial: 'P', nameKey: 'workspace.team.persona.po.name',       roleKey: 'workspace.team.persona.po.role'       },
+  { key: 'designer', id: 'prdt-designer',   initial: 'D', nameKey: 'workspace.team.persona.designer.name',  roleKey: 'workspace.team.persona.designer.role'  },
+  { key: 'dev',      id: 'prdt-developer',  initial: 'D', nameKey: 'workspace.team.persona.developer.name', roleKey: 'workspace.team.persona.developer.role' },
+  { key: 'qa',       id: 'prdt-qa',         initial: 'Q', nameKey: 'workspace.team.persona.qa.name',        roleKey: 'workspace.team.persona.qa.role'        },
 ]
 
 // ── Persona row ───────────────────────────────────────────────────────────────

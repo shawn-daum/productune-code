@@ -166,9 +166,10 @@ export interface ArtifactEntry {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const FILE_EXT_WHITELIST = new Set(['.md', '.json', '.html', '.txt'])
-// Canonical 4 productune persona ids (single source for the palette).
+// Canonical 4 prdt persona ids (single source for the palette). T-319: prdt-*
+// (pdt-* agents were retired in T-293/T-311; specs live at ~/.claude/agents/prdt-*.md).
 // `pdt-wiki-keeper` was abolished in the doctrine redesign (T-017) — do not add it back.
-const PERSONAS = ['pdt-po', 'pdt-designer', 'pdt-developer', 'pdt-qa'] as const
+const PERSONAS = ['prdt-po', 'prdt-designer', 'prdt-developer', 'prdt-qa'] as const
 
 // Ext → TabType for artifacts
 function extToTabType(ext: string): TabType {
@@ -381,9 +382,9 @@ export function buildQuickOpenItems(
 
   // ── Persona items ──
   for (const slug of PERSONAS) {
-    // Full id (pdt-developer) → PersonaPresence dot key (dev) via the T-148 single
-    // source. PersonaDefTab is keyed by the full `pdt-*` id, so we pass `persona: slug`
-    // (the id) directly. slug ∈ PERSONAS (all known pdt-* ids) so lookup never misses;
+    // Full id (prdt-developer) → PersonaPresence dot key (dev) via the T-148 single
+    // source. PersonaDefTab is keyed by the full `prdt-*` id, so we pass `persona: slug`
+    // (the id) directly. slug ∈ PERSONAS (all known prdt-* ids) so lookup never misses;
     // guard the null branch only for type-safety.
     const dotKey = personaIdFromAgentType(slug)
     if (!dotKey) continue

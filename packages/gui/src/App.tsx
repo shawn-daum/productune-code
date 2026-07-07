@@ -42,6 +42,9 @@ export default function App() {
   })
   const [showNewModal, setShowNewModal] = useState(false)
   const [openPrompt, setOpenPrompt] = useState<OpenPrompt | null>(null)
+  // T-321: legacy→prdt migration progress/error, surfaced in LegacyMigrateDialog.
+  const [migrateBusy, setMigrateBusy] = useState(false)
+  const [migrateError, setMigrateError] = useState<string | null>(null)
 
   // Persist last opened project across Cmd+R reload.
   useEffect(() => {
@@ -227,12 +230,20 @@ export default function App() {
   async function migrateLegacyDir() {
     if (!openPrompt || openPrompt.kind !== 'legacy') return
     const dir = openPrompt.dir
-    setOpenPrompt(null)
+    // Keep the dialog open while migrating so a failure can be shown in place
+    // (T-321: clear error surface — never silently swallow).
+    setMigrateError(null)
+    setMigrateBusy(true)
     try {
       const result = await (window as any).api.migrateLegacy({ projectDir: dir })
+      setMigrateBusy(false)
+      setOpenPrompt(null)
+      // detectProjectKind now resolves `prdt` on disk → EntryGate re-reads state
+      // and the next PO turn spawns prdt-po, no app restart needed.
       setProject({ slug: result.config.slug, projectDir: dir })
     } catch (e: any) {
-      console.error('migrateLegacy failed', e)
+      setMigrateBusy(false)
+      setMigrateError(e?.message ?? String(e))
     }
   }
 
@@ -282,8 +293,10 @@ export default function App() {
         <LegacyMigrateDialog
           dir={openPrompt.dir}
           hints={openPrompt.hints}
+          busy={migrateBusy}
+          error={migrateError}
           onConfirm={migrateLegacyDir}
-          onCancel={() => setOpenPrompt(null)}
+          onCancel={() => { setMigrateError(null); setOpenPrompt(null) }}
         />
       )}
 
@@ -342,7 +355,7 @@ function InstallPromptDialog({ dir, onConfirm, onCancel }: { dir: string; onConf
   )
 }
 
-function LegacyMigrateDialog({ dir, hints, onConfirm, onCancel }: { dir: string; hints: string[]; onConfirm: () => void; onCancel: () => void }) {
+function LegacyMigrateDialog({ dir, hints, busy, error, onConfirm, onCancel }: { dir: string; hints: string[]; busy?: boolean; error?: string | null; onConfirm: () => void; onCancel: () => void }) {
   const { t } = useTranslation()
   return (
     <div style={overlay}>
@@ -352,13 +365,30 @@ function LegacyMigrateDialog({ dir, hints, onConfirm, onCancel }: { dir: string;
         <div style={modalBody}>
           {t('app.migrate.description', { hints: hints.join(', ') })}
         </div>
+        {error && (
+          <div style={migrateErrorBox}>{t('app.migrate.error', { message: error })}</div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button style={btnSecondary} onClick={onCancel}>{t('app.migrate.cancel')}</button>
-          <button style={btnPrimary} onClick={onConfirm}>{t('app.migrate.confirm')}</button>
+          <button style={btnSecondary} onClick={onCancel} disabled={busy}>{t('app.migrate.cancel')}</button>
+          <button style={btnPrimary} onClick={onConfirm} disabled={busy}>
+            {busy ? t('app.migrate.migrating') : t('app.migrate.confirm')}
+          </button>
         </div>
       </div>
     </div>
   )
+}
+
+const migrateErrorBox: React.CSSProperties = {
+  marginBottom: 12,
+  padding: '8px 10px',
+  borderRadius: 4,
+  background: '#2A1215',
+  color: '#F87171',
+  fontSize: 12,
+  lineHeight: 1.5,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
 }
 
 function DescendantPromptDialog({

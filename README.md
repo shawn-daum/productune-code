@@ -43,7 +43,6 @@ flip 유의점(빌드 중이던 legacy 프로젝트 처리 등): [`docs/prdt-v1-
 ```bash
 prdt                        # PO와 대화 시작 — "OOO 만들고 싶어" 한 문장이면 됨
                             #   (미init 프로젝트면 3항목 init: slug·version·stage → 곧바로 PO 진입)
-prdt po                     # 위와 동일 (= claude --agent prdt-po). po 뒤 인자는 claude로 그대로 전달
 ```
 
 ```bash

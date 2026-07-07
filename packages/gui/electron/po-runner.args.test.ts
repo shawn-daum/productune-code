@@ -101,13 +101,13 @@ export const BUILD_CLAUDE_ARGS_CASES: readonly Case[] = [
     },
   },
   {
-    label: 'legacy poAgent (pdt-po) + override → override still applies (agent-id-agnostic)',
+    label: 'arbitrary poAgent id + override → id passed through verbatim (agent-id-agnostic)',
     run: () => {
       const override: PoSessionOverride = { model: 'fable' }
       return eq(
-        buildClaudeArgs({ resume: null, text: 't' }, 'pdt-po', override),
+        buildClaudeArgs({ resume: null, text: 't' }, 'prdt-po', override),
         [
-          '--agent', 'pdt-po',
+          '--agent', 'prdt-po',
           '--model', 'fable',
           '--permission-mode', 'bypassPermissions',
           '--include-partial-messages',

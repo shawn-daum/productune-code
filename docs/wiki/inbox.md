@@ -11,3 +11,11 @@
 - [T-320] Ship-entry pattern: PO/dev sometimes claim doctrine#4 proof via ad-hoc node repro instead of a committed regression test — behavior can be correct today yet leave zero guard against future regression. Habit reminder: "proof of behavior" for logic-bearing IPC handlers means a landed test, not a one-off repro.
 - [T-320] ADR: recents:listWithMeta 핸들러 바디를 export function buildRecentsWithMeta(homeDir=os.homedir())로 추출해 실제 ~/.productune/recents.json 안 건드리고 테스트하는 seam으로 씀 — onboarding.ts의 homeDir DI idiom 재사용. home-dependent 로직 테스트 시 같은 idiom 재사용 권장.
 - [T-320] QA 디스패치 힌트의 "register()+ipcMain.handle mock-capture 패턴이 project.test.ts에 이미 있다"는 부정확 — 실제론 detectProductuneLayout을 직접 import해 호출하는 case-list+vitest-driver idiom(costArchive.test.ts와 동일).
+- [T-321] ADR seed: pdt-* 에이전트 완전 은퇴(T-293/T-311) — T-285 additive dual-registration 모델 obsolete. 런타임 스폰/resolve는 prdt-* 단일로 collapse. poAgentFor의 pdt-po fallback은 dead-and-crashing이었음.
+- [T-321] Env: prdt CLI는 ~/.prdt/bin/prdt 고정 절대경로(install.sh)에 설치 — global PATH 아닐 수 있으니 절대경로로 호출(which prdt 금지).
+- [T-321] Gap: prdt script 주석은 "GUI onboarding shares this via prdt init --json"라 하는데 project:create가 이를 안 물려서 레거시 .productune-writing initProject를 호출 — 이게 .productune 탄생 근본원인.
+- [T-321] ADR: 모든 GUI 프로젝트 생성 경로(project:create/installAt/init:project)가 단일 init SoT ~/.prdt/bin/prdt init --json (cwd=projectDir)로 위임. migrateLegacy는 prdt migrate로 위임. 레거시 .productune-writing initProject는 생성/마이그레이션에 더는 안 씀 — GUI가 새 .productune을 낳지 않음. prdt CLI 부재 시 Error throw(조용한 fallback 없음).
+- [T-321] Root cause(blameless): 로컬 green이 crash를 놓친 이유 = 테스트가 prdt-po를 직접 써서 create→spawn 체인을 end-to-end로 안 밟음. .productune-birth는 project:create가 (문서화된 prdt init --json 계약 대신) 레거시 mjs initProject를 호출해서 숨었음.
+- [T-321] pdt-* 완전 은퇴(T-293/T-311); T-285 dual-namespace obsolete — poAgentFor는 상수 prdt-po로 collapse.
+- [T-321] 유보(PO): tryHealProject(config 없는 기존 .productune heal on open)는 여전히 레거시 initProject 호출 → 기존 부분-레거시 dir에 .productune/config.json 쓸 수 있음. heal-of-existing(신규 생성 아님), heal 후 prdt-po 스폰+마이그레이션 버튼 노출되므로 crash 없음 → 현행 유지, Retro에서 migrate-prompt 대체 검토.
+- [T-321] 설치된 ~/.prdt/bin/prdt가 작업트리보다 낡음(아직 po 서브커맨드 존재) — GUI가 델리게이트하는 실제 CLI가 수정 전 상태. 배포/설치 단계에서 install.sh 재실행 또는 prdt update 필요.

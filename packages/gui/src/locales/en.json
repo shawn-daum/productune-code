@@ -1198,8 +1198,10 @@
     },
     "migrate": {
       "title": "Legacy Productune project detected",
-      "description": "This folder looks like an older Productune project. Detected: {{hints}}. Migrating will add config.json — your existing data (briefs, po-state, etc.) will be preserved. Continue?",
+      "description": "This folder looks like an older Productune project. Detected: {{hints}}. Migrating updates it to the latest .prdt layout — your existing work is preserved. Continue?",
       "confirm": "Migrate",
+      "migrating": "Migrating…",
+      "error": "Migration failed: {{message}}",
       "cancel": "Cancel"
     },
     "quitGuard": {

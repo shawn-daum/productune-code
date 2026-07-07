@@ -5,7 +5,7 @@
  * edits (the resumed session keeps its old system prompt — the "caveman" bug) and
  * (b) bloats context until compaction shaves spec tokens. The fix is to
  * periodically start a FRESH session (drop the resume id → next turn spawns
- * `claude --agent pdt-po`, re-reading doctrine + re-orienting from po-state).
+ * `claude --agent prdt-po`, re-reading doctrine + re-orienting from po-state).
  *
  * po-state is the work-state SoT, so the session is ephemeral — rotating it loses
  * no continuity. The chat.json messages are preserved (only the session id

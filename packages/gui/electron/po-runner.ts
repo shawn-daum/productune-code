@@ -42,17 +42,17 @@ import { getPoSessionOverride, type PoSessionOverride } from './po-session-confi
  * dispatch (Task tool delegation), surfaced to the renderer via
  * `PersonaPresenceBar` events. (v2 sub-c: persona selector removed.)
  *
- * T-285 (adapter A2): two persona-id namespaces coexist — legacy productune
- * projects spawn `pdt-po`, prdt projects (`.prdt/` marker, detectProjectKind)
- * spawn `prdt-po`. This is additive registration, not a replacement: legacy
- * projects are byte-for-byte unaffected.
+ * T-319: the PO agent is always `prdt-po`. The T-285 dual namespace (legacy
+ * `pdt-po` vs prdt `prdt-po`) is retired — pdt-* agents were deleted in
+ * T-293/T-311, so only prdt-* agents are installed. A `.productune` project is
+ * read-only now, but if one is opened it still spawns the one agent that exists
+ * (prdt-po) instead of crashing on the deleted `pdt-po` (`--agent pdt-po not found`).
  */
-const PDT_PO_AGENT = 'pdt-po' as const
 const PRDT_PO_AGENT = 'prdt-po' as const
 
-/** Resolve the `--agent` id to spawn for a given project directory (T-285). */
-function poAgentFor(projectDir: string): string {
-  return detectProjectKind(projectDir) === 'prdt' ? PRDT_PO_AGENT : PDT_PO_AGENT
+/** The `--agent` id to spawn for a PO turn — always prdt-po (see PRDT_PO_AGENT). */
+function poAgentFor(): string {
+  return PRDT_PO_AGENT
 }
 
 export interface SendOpts {
@@ -360,9 +360,9 @@ export async function runPoTurn(opts: SendOpts, cb: RunCallbacks): Promise<void>
 // ── claude detection ────────────────────────────────────────────────────────────
 
 /**
- * T-289 (adapter A6): the onboarding-done env-file gate is dual-mode, mirroring
- * poAgentFor's project-kind branch above — a prdt project (`.prdt/` marker, A1
- * detectProjectKind) gates on `~/.prdt/prdt.env` (written by install.sh, T-289
+ * T-289 (adapter A6): the onboarding-done env-file gate is dual-mode on project
+ * kind (A1 detectProjectKind) — a prdt project (`.prdt/` marker) gates on
+ * `~/.prdt/prdt.env` (written by install.sh, T-289
  * ctx §"미니멀 계승"), a legacy project keeps gating on `~/.productune/productune.env`
  * exactly as before. Only the env file's PRESENCE is checked (never parsed) — same
  * as the pre-existing legacy check — so no prdt.env field mapping is needed here.
@@ -1127,10 +1127,10 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // Emit healthy at turn start.
     emitHealth('healthy', undefined, hCtx, cb)
 
-    // Build args — first call uses `--agent pdt-po`/`prdt-po` (T-285: resolved per
-    // project kind), resume uses `--resume`. T-310: model/effort override folded in
-    // via buildClaudeArgs (pure — unit-tested directly in po-runner.args.test.ts).
-    const poAgent = poAgentFor(opts.projectDir)
+    // Build args — first call uses `--agent prdt-po` (T-319: always prdt-po),
+    // resume uses `--resume`. T-310: model/effort override folded in via
+    // buildClaudeArgs (pure — unit-tested directly in po-runner.args.test.ts).
+    const poAgent = poAgentFor()
     const override = getPoSessionOverride(opts.projectDir)
     const args = buildClaudeArgs(opts, poAgent, override)
 
@@ -2296,9 +2296,9 @@ export function runHealthSmoke(projectDir: string): Promise<SmokeResult> {
     }
 
     // Trivial prompt: one word, zero cost, still exercises the full auth path.
-    // T-285: agent id resolved per project kind, same as the real spawn path.
+    // T-319: always prdt-po, same as the real spawn path.
     const smokeArgs = [
-      '--agent', poAgentFor(projectDir),
+      '--agent', poAgentFor(),
       '--permission-mode', 'bypassPermissions',
       '--print', '--output-format', 'stream-json', '--verbose',
       'ping',

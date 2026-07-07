@@ -1198,8 +1198,10 @@
     },
     "migrate": {
       "title": "옛 Productune 프로젝트로 보입니다",
-      "description": "이 폴더는 옛 Productune 프로젝트로 보입니다. 감지된 항목: {{hints}}. 최신 layout 으로 업데이트하면 기존 작업 내역은 그대로 보존됩니다. 진행할까요?",
+      "description": "이 폴더는 옛 Productune 프로젝트로 보입니다. 감지된 항목: {{hints}}. 최신 .prdt layout 으로 업데이트하면 기존 작업 내역은 그대로 보존됩니다. 진행할까요?",
       "confirm": "업데이트",
+      "migrating": "업데이트 중…",
+      "error": "마이그레이션 실패: {{message}}",
       "cancel": "취소"
     },
     "quitGuard": {

@@ -162,7 +162,7 @@ export function clearSession(projectDir: string): void {
  *
  * Used by the PO session fresh-cycle: when a session crosses its turn threshold
  * at a safe boundary (ticket close / phase change), we rotate the claude session
- * id so the next turn spawns fresh (`claude --agent pdt-po`, re-reading doctrine
+ * id so the next turn spawns fresh (`claude --agent prdt-po`, re-reading doctrine
  * + re-orienting from po-state) — WITHOUT cutting the visible chat stream. The
  * displayed conversation must stay continuous (AC4), so unlike `clearSession`
  * this keeps `messages` intact and only removes `claude_session_id`.

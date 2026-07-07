@@ -39,27 +39,29 @@ const PERSONA_DIR: Record<PersonaKey, string> = {
 // (T-PATCH-200 QA2): there is no fixed per-persona model — routing scores task
 // complexity (L1–L7) and picks model × effort per task. Surfacing it here (even
 // as a hint) just implied a per-persona model fact, so the pane shows nothing.
+// T-319: keyed by the prdt-* agent id (== the ~/.claude/agents/<id>.md spec file
+// this pane reads/writes). pdt-* agents were retired in T-293/T-311.
 const PERSONA_META: Record<string, PersonaMeta> = {
-  'pdt-po': {
-    id: 'pdt-po', key: 'po', initial: 'P',
+  'prdt-po': {
+    id: 'prdt-po', key: 'po', initial: 'P',
     nameKey: 'workspace.team.persona.po.name',
     roleKey: 'workspace.team.persona.po.role',
     permissionMode: 'acceptEdits',
   },
-  'pdt-designer': {
-    id: 'pdt-designer', key: 'designer', initial: 'D',
+  'prdt-designer': {
+    id: 'prdt-designer', key: 'designer', initial: 'D',
     nameKey: 'workspace.team.persona.designer.name',
     roleKey: 'workspace.team.persona.designer.role',
     permissionMode: 'bypassPermissions',
   },
-  'pdt-developer': {
-    id: 'pdt-developer', key: 'dev', initial: 'D',
+  'prdt-developer': {
+    id: 'prdt-developer', key: 'dev', initial: 'D',
     nameKey: 'workspace.team.persona.developer.name',
     roleKey: 'workspace.team.persona.developer.role',
     permissionMode: 'bypassPermissions',
   },
-  'pdt-qa': {
-    id: 'pdt-qa', key: 'qa', initial: 'Q',
+  'prdt-qa': {
+    id: 'prdt-qa', key: 'qa', initial: 'Q',
     nameKey: 'workspace.team.persona.qa.name',
     roleKey: 'workspace.team.persona.qa.role',
     permissionMode: 'bypassPermissions',

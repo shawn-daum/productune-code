@@ -13,7 +13,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { detectProductuneLayout, buildRecentsWithMeta } from './project'
+import { detectProductuneLayout, buildRecentsWithMeta, readPrdtConfig } from './project'
 
 interface Case {
   readonly label: string
@@ -189,6 +189,56 @@ export function runMigratedRecentsCases(): { passed: number; failures: string[] 
   return { passed: MIGRATED_RECENTS_CASES.length - failures.length, failures }
 }
 
+// ── readPrdtConfig — create/migrate return-shape contract (T-319) ─────────────
+//
+// After `prdt init`/`prdt migrate` writes `.prdt/`, the IPC handlers read the
+// config shape the renderer consumes (`result.config.slug` etc.) back off disk.
+// This locks that read-back: slug/created_at come from config.json, version from
+// po-state.json, with graceful fallbacks when a field/file is absent (so a create
+// never returns a broken shape and the renderer's setProject({slug}) always works).
+
+export const READ_PRDT_CONFIG_CASES: readonly Case[] = [
+  {
+    label: 'full .prdt state → slug/created_at from config.json, version from po-state.json',
+    run: () => {
+      const d = makeProject('.prdt', {
+        'config.json': JSON.stringify({ slug: 'born-prdt', created_at: '2026-07-07T00:00:00Z' }),
+        'po-state.json': JSON.stringify({ schema_version: 1, stage: 'define', version: 'v3', current_task: null }),
+      })
+      const c = readPrdtConfig(d, 'fallback-slug')
+      if (c.slug !== 'born-prdt') return fail(`slug=${JSON.stringify(c.slug)}`)
+      if (c.created_at !== '2026-07-07T00:00:00Z') return fail(`created_at=${JSON.stringify(c.created_at)}`)
+      if (c.version !== 'v3') return fail(`version=${JSON.stringify(c.version)}`)
+      return ok
+    },
+  },
+  {
+    label: 'absent .prdt files → graceful fallbacks (fallbackSlug, synthesized created_at, fallbackVersion)',
+    run: () => {
+      const d = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-readcfg-'))
+      const c = readPrdtConfig(d, 'fallback-slug', 'v9')
+      if (c.slug !== 'fallback-slug') return fail(`slug=${JSON.stringify(c.slug)}`)
+      if (c.version !== 'v9') return fail(`version=${JSON.stringify(c.version)}`)
+      if (typeof c.created_at !== 'string' || c.created_at.length === 0) return fail(`created_at=${JSON.stringify(c.created_at)}`)
+      return ok
+    },
+  },
+]
+
+export function runReadPrdtConfigCases(): { passed: number; failures: string[] } {
+  const failures: string[] = []
+  for (const c of READ_PRDT_CONFIG_CASES) {
+    let res: { ok: boolean; detail?: string }
+    try {
+      res = c.run()
+    } catch (e) {
+      res = { ok: false, detail: String(e) }
+    }
+    if (!res.ok) failures.push(`${c.label}${res.detail ? `: ${res.detail}` : ''}`)
+  }
+  return { passed: READ_PRDT_CONFIG_CASES.length - failures.length, failures }
+}
+
 // ── vitest driver ─────────────────────────────────────────────────────────────
 
 import { test, expect } from 'vitest'
@@ -207,4 +257,12 @@ test('recents:listWithMeta: migrated .prdt project resolves exists:true (with le
     throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
   }
   expect(passed).toBe(MIGRATED_RECENTS_CASES.length)
+})
+
+test('T-319: readPrdtConfig maps .prdt state → renderer config shape (with fallbacks)', () => {
+  const { passed, failures } = runReadPrdtConfigCases()
+  if (failures.length > 0) {
+    throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
+  }
+  expect(passed).toBe(READ_PRDT_CONFIG_CASES.length)
 })
