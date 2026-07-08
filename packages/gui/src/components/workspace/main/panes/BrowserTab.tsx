@@ -12,6 +12,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../../../store/workspace'
 import ZoomControls, { ZOOM_DEFAULT, ZOOM_STEP } from './ZoomControls'
+import { normalizeBrowserUrl } from './browserUrl'
 
 // T-PATCH-046: FindHandle — exposed to LeafPane via forwardRef / useImperativeHandle
 export interface BrowserFindHandle {
@@ -316,10 +317,9 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
   const navigate = useCallback((target: string) => {
     const wv = webviewRef.current
     if (!wv) return
-    const normalized =
-      target.startsWith('http://') || target.startsWith('https://')
-        ? target
-        : `https://${target}`
+    // T-328: any already-qualified scheme (file://, http://, https://, …)
+    // loads as-is; only a bare, scheme-less input gets https:// prepended.
+    const normalized = normalizeBrowserUrl(target)
     setInputUrl(normalized)
     setLoadFailed(false)
     wv.loadURL(normalized)

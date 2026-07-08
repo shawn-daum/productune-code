@@ -105,10 +105,17 @@ export function findLeafByIdLocal(root: Pane, paneId: string): LeafPaneNode | nu
 /**
  * Decide whether a changed file should auto-open and which tab type to use.
  * Returns null to skip (src/**, scripts/**, lock files).
+ *
+ * T-328: `docs/artifacts/*.html` (Designer's rendered design artifacts, e.g.
+ * `docs/artifacts/<slug>-ds.html`) now resolves to 'html' so the po:artifact-open
+ * handler (useIpcSubscriptions) can auto-open them — mirroring how markdown
+ * PRD/ticket/QA docs already auto-open. Same 'browser' + file:// routing
+ * QuickOpen already uses for artifact-panel .html entries (extToTabType below).
  */
-export function artifactOpenType(filePath: string): 'markdown' | 'qa-result' | null {
+export function artifactOpenType(filePath: string): 'markdown' | 'qa-result' | 'html' | null {
   if (/^docs\/(design|tickets|qa)\/.*\.md$/.test(filePath)) return 'markdown'
   if (/\.(spec|test)\.ts$/.test(filePath)) return 'qa-result'
+  if (/^docs\/artifacts\/.*\.html$/.test(filePath)) return 'html'
   return null
 }
 

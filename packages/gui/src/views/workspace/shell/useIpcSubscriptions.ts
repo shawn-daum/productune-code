@@ -42,6 +42,7 @@ export function useIpcSubscriptions(
   openTab: (tabId: string, type: TabType, meta?: Record<string, unknown>, label?: string) => void,
   appendMessage: (msg: Message) => void,
   t: TFunction,
+  projectDir: string,
 ): IpcSubscriptionsResult {
   const [deployModalOpen, setDeployModalOpen] = useState(false)
   const [deployModalPayload, setDeployModalPayload] = useState<DeployModalPayload | null>(null)
@@ -109,6 +110,12 @@ export function useIpcSubscriptions(
         const name = file.split('/').pop() ?? file
         if (type === 'markdown') {
           openTab(`markdown:${file}`, 'markdown', { path: file }, name)
+        } else if (type === 'html') {
+          // T-328: design HTML artifact → BrowserTab via file://, same
+          // 'browser' + file:// routing QuickOpen already uses for
+          // docs/artifacts/*.html entries (helpers.ts extToTabType).
+          const url = `file://${projectDir}/${file}`
+          openTab(`browser:${url}`, 'browser', { url }, name)
         } else {
           openTab(`qa-result:${file}`, 'qa-result', { path: file }, name)
         }
@@ -129,7 +136,7 @@ export function useIpcSubscriptions(
     })
     return () => { if (typeof off === 'function') off() }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openTab, t])
+  }, [openTab, t, projectDir])
 
   // ── Worktree create result IPC subscription (T-P4-092) ─────────────────────
   useEffect(() => {

@@ -142,7 +142,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   useKeyboardShortcuts({ closeTab, closePane, splitRight, splitDown, addNewTab, setActiveTab })
   const { deployModalOpen, deployModalPayload, baseDirtyModal, artifactToast,
     setDeployModalOpen, setDeployModalPayload, setBaseDirtyModal } =
-    useIpcSubscriptions(openTab, appendMessage, t)
+    useIpcSubscriptions(openTab, appendMessage, t, project.projectDir)
 
   const { tickets: scannedTickets } = useTicketScan(project.projectDir)
 
