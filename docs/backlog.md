@@ -17,7 +17,6 @@ RESOLVE/DONE 항목은 줄 제거(2026-06-23 reconcile sweep — backlog↔ticke
 - close_gate GUI write-path parity — GUI `phase:approve` IPC(`packages/gui/electron/ipc/state.ts`)가 phase 전환을 TS로 직접 write라 `close_gate` instantiate를 우회함. (2026-06-23 재검증: deterministic 자가치유 hook은 이제 라이브 = 부분 backstop이나, GUI IPC write-path 자체는 hook(PreToolUse) 비경유라 parity 미해결). GUI close_gate 렌더링 ticket과 함께 정합(developer). (출처: T-PATCH-041 designer plan F2, 2026-06-05)
 - [near-term] "Invalid tool parameters" 간헐 발생 — OQ(AskUserQuestion) 답변 직후 `claude --resume` 재개 시. CC 코어 InputValidationError(productune 미발생, dist만 매칭). 유력원인: resume 시 코어가 대기중 AskUserQuestion tool_use 재검증 throw(업스트림). productune-side 방어: (a) `electron/ipc/po.ts:105` answerText 미정화 → control-char sanitize, (b) `po-runner.ts:384` silence-timeout(15s)가 OQ대기중 발화→resume race 조율. 근본확정엔 발생시 transcript/캡처 필요. (출처: Explore 진단, 2026-06-17, shawn 보고)
 
-## next-version (v0.x)
 
 - [v0.6] (T-PATCH-255 carry from v0.5) PO 턴 tool 실패(특히 macOS TCC Downloads/Desktop/Documents 접근 거부)가 무응답·무안내 silent 종료 → actionable 배너/메시지 노출(실패 사유 + 다음 행동). dev+QA L2. 티켓 본문 SoT = `docs/tickets/v0.5/T-PATCH-255.md`. (2026-06-25 v0.5 P5 close 시 이월 — shawn 결정)
 
