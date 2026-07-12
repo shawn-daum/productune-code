@@ -86,8 +86,10 @@ test.skipIf(!hasJq())('install.sh strips deleted legacy pdt-* hooks + legacy sta
   for (const b of LEGACY_BASENAMES) {
     expect(cmds.some((c) => c.includes(b)), `legacy hook ${b} should be stripped`).toBe(false)
   }
-  // 2. Legacy statusline stripped (no --statusline → key removed, not replaced).
+  // 2. Legacy statusline stripped, then the prdt statusline registers in its place
+  //    (T-330: default-on when nothing was registered — no --statusline needed).
   expect(JSON.stringify(s.statusLine ?? '')).not.toContain('statusline-productune.sh')
+  expect(s.statusLine?.command).toContain('statusline-prdt.sh')
 
   // 3. Other apps' / users' own hooks are preserved.
   expect(cmds).toContain('/Users/me/otherapp/hooks/my-guard.sh')

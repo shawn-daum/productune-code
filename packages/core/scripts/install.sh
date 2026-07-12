@@ -2,11 +2,22 @@
 # prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + hook 3종.
 # (Canonical name since T-293: was prdt-install.sh during pdt-* coexistence;
 #  a thin prdt-install.sh forwarder remains for older installed `prdt update` copies.)
-# Statusline is NOT auto-registered (would clobber the user's current one) —
-# pass --statusline to opt in.
+# Statusline (T-330): default-on when nothing is registered yet (fresh install, or
+# after legacy-statusline cleanup) — a fresh install without --statusline used to
+# leave the user with no statusline at all. Any EXISTING statusLine (ours or a
+# custom one) is left untouched to avoid clobbering it; pass --statusline to force
+# re-registration, or --no-statusline to opt out on a fresh install.
 #
-# Usage: install.sh [--statusline]
+# Usage: install.sh [--statusline|--no-statusline]
 set -euo pipefail
+
+STATUSLINE_MODE="auto"
+for arg in "$@"; do
+  case "$arg" in
+    --statusline) STATUSLINE_MODE="on" ;;
+    --no-statusline) STATUSLINE_MODE="off" ;;
+  esac
+done
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # packages/core
 PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
@@ -109,8 +120,8 @@ jq --arg h "$PRDT_HOME/hooks/" '
      hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
   ]) |
   # C3a: drop the legacy statusline (deleted statusline-productune.sh). The prdt
-  # statusline (§6, opt-in) is a different basename and is never matched here; a
-  # user custom statusLine is preserved (only the repo-distributed suffix matches).
+  # statusline (§6, default-on) is a different basename and is never matched here;
+  # a user custom statusLine is preserved (only the repo-distributed suffix matches).
   (if ((.statusLine.command // "")
         | (endswith("/scripts/statusline-productune.sh")
            or endswith("/scripts/statusline-productune.sh\"")))
@@ -123,8 +134,23 @@ if [ -d "$HOME/.local/bin" ] || mkdir -p "$HOME/.local/bin" 2>/dev/null; then
   say "5) Symlinked ~/.local/bin/prdt (ensure ~/.local/bin is on PATH)"
 fi
 
-# 6. statusline — opt-in only
-if [ "${1:-}" = "--statusline" ]; then
+# 6. statusline — default-on, but never clobber an existing statusLine (ours or a
+#    custom one); --statusline forces re-registration, --no-statusline opts out.
+CURRENT_STATUSLINE="$(jq -r '.statusLine.command // empty' "$SETTINGS")"
+REGISTER_STATUSLINE=false
+case "$STATUSLINE_MODE" in
+  off) say "6) Statusline NOT registered (--no-statusline)" ;;
+  on) REGISTER_STATUSLINE=true ;;
+  *)
+    if [ -z "$CURRENT_STATUSLINE" ]; then
+      REGISTER_STATUSLINE=true
+    else
+      say "6) Statusline NOT registered (existing statusLine preserved) — force with: install.sh --statusline"
+    fi
+    ;;
+esac
+
+if [ "$REGISTER_STATUSLINE" = true ]; then
   say "6) Registering statusline"
   TMP="$(mktemp)"
   jq --arg cmd "$PRDT_HOME/bin/statusline-prdt.sh" \
@@ -135,8 +161,6 @@ path = sys.argv[1]
 s = open(path).read().replace("PRDT_STATUSLINE_INSTALLED=false", "PRDT_STATUSLINE_INSTALLED=true")
 open(path, "w").write(s)
 PYEOF
-else
-  say "6) Statusline NOT registered (current one preserved) — opt in: install.sh --statusline"
 fi
 
 say "prdt install done."

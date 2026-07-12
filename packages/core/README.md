@@ -35,7 +35,7 @@ packages/core/
 From the repo root:
 
 ```sh
-packages/core/scripts/install.sh            # add --statusline to opt in
+packages/core/scripts/install.sh            # statusline registers by default; add --no-statusline to opt out
 ```
 
 Idempotent — re-run after pulling to refresh the mirror, agents, and hook registration (`prdt update` does pull + re-run in one command). Discipline edits go in `packages/core/discipline/` (SoT); never edit `~/.prdt/discipline/` directly (overwritten on install).
