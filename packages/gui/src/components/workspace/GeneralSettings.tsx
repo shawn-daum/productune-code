@@ -105,7 +105,9 @@ interface PoSessionConfig {
 
 function PoSessionSection({ projectDir }: { projectDir: string }) {
   const { t } = useTranslation()
-  // T-338: real ids observed live this app run — versioned option labels.
+  // T-338/T-342: real ids observed live this app run (or across restarts, once
+  // persisted) — versioned option labels; falls back to the bundled default
+  // when unobserved (poModelOptionLabel), never a bare/versionless alias.
   const observedByAlias = usePoModel((s) => s.observedByAlias)
   const [cfg, setCfg] = useState<PoSessionConfig>({ supported: false, model: null, effort: null })
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
@@ -175,9 +177,10 @@ function PoSessionSection({ projectDir }: { projectDir: string }) {
           onChange={(e) => handleModelChange(e.target.value)}
         >
           <option value="">{t('settings.poSession.inherit')}</option>
-          {/* T-338: wide surface — "Claude Sonnet 5"-style full name (versioned
-              only via a live-observed id; a bare lowercase alias must never
-              reach the user, AC-1). */}
+          {/* T-338/T-342: wide surface — "Claude Sonnet 5"-style full name,
+              always versioned (bundled default, overridden by a live
+              observation once one streams by); a bare lowercase alias must
+              never reach the user, AC-1). */}
           {PO_SESSION_MODEL_OPTIONS.map((m) => (
             <option key={m} value={m}>{poModelOptionLabel(m as PoModel, observedByAlias)}</option>
           ))}

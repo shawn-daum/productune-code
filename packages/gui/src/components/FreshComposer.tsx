@@ -266,9 +266,9 @@ export default function FreshComposer({ project, onConfirm }: Props) {
                     disabled={sending}
                     aria-label={t('workspace.poModel.label')}
                   >
-                    {/* T-338: wide surface → "Claude Sonnet 5"-style full name,
-                        versioned only through an id observed live this app run
-                        (observedByAlias); unobserved → "Claude Sonnet". */}
+                    {/* T-338/T-342: wide surface → "Claude Sonnet 5"-style full
+                        name, always versioned — an id observed live this app
+                        run (observedByAlias) wins, else the bundled default. */}
                     {PO_MODEL_OPTIONS.map((m) => (
                       <option key={m} value={m}>{poModelOptionLabel(m, observedByAlias)}</option>
                     ))}

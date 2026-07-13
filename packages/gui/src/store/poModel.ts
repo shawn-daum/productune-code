@@ -25,8 +25,8 @@
  * "claude-opus-4-5-20251101") — po-runner forwards it over `po:model-id`
  * (poEvents.ts) into `realModelId` below, best-effort and per-session (cleared
  * on restart, since a new session's real id is unknown until its first line).
- * `poModelLabel()` prefers it; when absent, it falls back to the capitalized
- * alias — never an invented version.
+ * `poModelLabel()` prefers it; when absent, it falls back to BUNDLED_DEFAULT_ID
+ * (T-342 below) — never the bare alias.
  *
  * T-338 — label format v2:
  *   - narrow surfaces (sprite chips, send badge): `formatModelLabel` → "Sonnet 5"
@@ -35,17 +35,50 @@
  *   - real ids carry a trailing YYYYMMDD build stamp (probe-confirmed:
  *     `claude-haiku-4-5-20251001`) which is stripped — it is not a version.
  *   - alias option lists resolve through `observedByAlias` (real ids seen live
- *     this app run) via `poModelOptionLabel` so they can honestly show a
- *     version; an unobserved alias degrades to "Claude Opus".
+ *     this app run) via `poModelOptionLabel`; an unobserved alias degraded to
+ *     "Claude Opus" (superseded by T-342 below — now degrades to the bundled
+ *     default instead).
+ *
+ * T-342 — user rejected T-338's observed-only honesty tradeoff: an unobserved
+ * option showing versionless "Claude Sonnet" read as broken, not honest. Policy
+ * flips to "always show a version":
+ *   - `BUNDLED_DEFAULT_ID` ships a build-time alias→real-id guess (from the
+ *     newest id per family known at build time — currently sourced from
+ *     packages/core/config/model-prices.json's newest sonnet/opus entries and
+ *     this app's own running id for fable/sonnet-5). `poModelOptionLabel` /
+ *     `poModelLabel` fall back to it instead of the bare alias.
+ *   - `observedByAlias` still WINS when populated (live fact > bundled guess).
+ *   - `observedByAlias` is now localStorage-persisted (zustand persist,
+ *     machine-level key, not project-scoped — see store below) so a single
+ *     real-id observation self-corrects a stale bundled default permanently,
+ *     surviving app restarts. This is the drift safety net for (1): the
+ *     bundled guess can go stale, but one live observation fixes the label for
+ *     good on this machine.
  */
 
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 export const PO_MODEL_OPTIONS = ['opus', 'sonnet', 'fable'] as const
 export type PoModel = (typeof PO_MODEL_OPTIONS)[number]
 
 /** GUI's declared default PO model — what unset (inherit) resolves to for display. */
 export const DEFAULT_PO_MODEL: PoModel = 'opus'
+
+/**
+ * T-342: build-time bundled default real-id per alias — used ONLY as a
+ * fallback when no live observation exists yet for that alias. A best-effort
+ * snapshot, not a live lookup; it WILL go stale over time, which is fine — a
+ * single live observation (`observedByAlias`) always overrides it and, once
+ * persisted, corrects the label permanently on this machine (see file header).
+ * Never leave an alias unmapped here: the whole point of T-342 is that every
+ * option shows a version from first run, with no "unversioned" fallback left.
+ */
+export const BUNDLED_DEFAULT_ID: Record<PoModel, string> = {
+  opus: 'claude-opus-4-8',
+  sonnet: 'claude-sonnet-5',
+  fable: 'claude-fable-5',
+}
 
 interface PoModelState {
   /** Configured `gui_model` (null = unset/inherit). Resolve with DEFAULT_PO_MODEL for display. */
@@ -69,8 +102,10 @@ interface PoModelState {
    * FreshComposer option lists use: an observed id is a fact about what this
    * machine's CLI runs for that family — never an invented version. Survives
    * session restarts and project switches (machine-level fact, not
-   * session-level state); an alias never observed stays absent → graceful
-   * "Claude Opus" form.
+   * session-level state — T-342: also localStorage-persisted, see the
+   * `persist()` wrapper below, so it survives full app restarts too); an
+   * alias never observed stays absent here and callers fall back to
+   * BUNDLED_DEFAULT_ID (T-342) instead of a bare/versionless alias.
    */
   observedByAlias: Partial<Record<PoModel, string>>
   /**
@@ -91,7 +126,9 @@ interface PoModelState {
   recordObservedId: (id: string) => void
 }
 
-export const usePoModel = create<PoModelState>((set, get) => ({
+export const usePoModel = create<PoModelState>()(
+  persist(
+    (set, get) => ({
   model: null,
   supported: false,
   realModelId: null,
@@ -131,7 +168,21 @@ export const usePoModel = create<PoModelState>((set, get) => ({
       set((s) => ({ observedByAlias: { ...s.observedByAlias, [family]: id } }))
     }
   },
-}))
+    }),
+    {
+      // T-342: machine-level key (no projectDir scoping — an observed alias→id
+      // fact is true for every project this CLI install runs, per the T-338
+      // docstring above). Only `observedByAlias` is persisted: `model` /
+      // `supported` come from `.prdt/config.json` per project (load()),
+      // `realModelId` / `loadedProjectDir` are session-scoped and must NOT
+      // survive a restart (T-335's "unknown until the session's own first
+      // line" guarantee) — persisting them would reintroduce a stale-id bug.
+      name: 'pdt:po-model-observed',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({ observedByAlias: state.observedByAlias }),
+    },
+  ),
+)
 
 /** Resolve the display model (never null) — unset falls back to the GUI default. */
 export function resolvePoModel(model: PoModel | null): PoModel {
@@ -207,16 +258,17 @@ export function formatModelLabelWide(idOrAlias: string): string {
 }
 
 /**
- * T-338: wide option-list label for an ALIAS, resolved through the observed
- * alias→id map when possible: observed → "Claude Opus 4.8" (versioned, honest
- * — the id actually streamed by), unobserved → "Claude Opus" (graceful, no
- * invented version).
+ * T-338/T-342: wide option-list label for an ALIAS, resolved through the
+ * observed alias→id map first (a live fact, always wins), falling back to the
+ * bundled build-time default (T-342: always show a version, even unobserved)
+ * instead of the bare alias — "Claude Opus 4.8" either way, never the
+ * versionless "Claude Opus" T-338 shipped.
  */
 export function poModelOptionLabel(
   alias: PoModel,
   observedByAlias: Partial<Record<PoModel, string>>,
 ): string {
-  return formatModelLabelWide(observedByAlias[alias] ?? alias)
+  return formatModelLabelWide(observedByAlias[alias] ?? BUNDLED_DEFAULT_ID[alias])
 }
 
 function titleCase(s: string): string {
@@ -226,11 +278,11 @@ function titleCase(s: string): string {
 /**
  * The PO's display label (SHORT form — chip/badge): prefers the live-captured
  * real model id (formatModelLabel'd, e.g. "Opus 4.8"); falls back to the
- * capitalized configured alias ("Opus") when no real id has been captured yet
- * for this session (pre-first-line, or a project where the stream subscription
- * never fires) — graceful, per T-335's "don't invent a version" requirement.
+ * BUNDLED_DEFAULT_ID for the configured alias (T-342: "Opus 4.8", not the
+ * bare "Opus") when no real id has been captured yet for this session
+ * (pre-first-line, or a project where the stream subscription never fires).
  */
 export function poModelLabel(state: { model: PoModel | null; realModelId: string | null }): string {
   if (state.realModelId) return formatModelLabel(state.realModelId)
-  return formatModelLabel(resolvePoModel(state.model))
+  return formatModelLabel(BUNDLED_DEFAULT_ID[resolvePoModel(state.model)])
 }

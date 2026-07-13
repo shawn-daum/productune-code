@@ -81,11 +81,10 @@ export default function PoModelSwitchModal({ projectDir, onClose }: Props) {
                 disabled={busy}
               >
                 <span style={{ ...radioDot, ...(active ? radioDotActive : null) }} aria-hidden="true" />
-                {/* T-338: wide surface → "Claude Sonnet 5"-style full name.
-                    Versioned only when the alias resolves through an id
-                    observed live this app run (observedByAlias) — an
-                    unobserved alias degrades to "Claude Sonnet" (never an
-                    invented version). */}
+                {/* T-338/T-342: wide surface → "Claude Sonnet 5"-style full
+                    name, always versioned — an id observed live this app run
+                    (observedByAlias) wins, else the bundled build-time
+                    default (never a bare/versionless alias). */}
                 <span style={optionLabel}>{poModelOptionLabel(m, observedByAlias)}</span>
                 {m === current && <span style={currentBadge}>{t('workspace.poModel.currentBadge')}</span>}
               </button>

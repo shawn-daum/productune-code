@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   resolvePoModel,
   DEFAULT_PO_MODEL,
+  BUNDLED_DEFAULT_ID,
   formatModelLabel,
   formatModelLabelWide,
   poModelLabel,
@@ -105,12 +106,20 @@ describe('poModelLabel (T-335)', () => {
     expect(poModelLabel({ model: 'sonnet', realModelId: 'claude-opus-4-8' })).toBe('Opus 4.8')
   })
 
-  it('falls back to the capitalized alias when no real id has been captured yet', () => {
-    expect(poModelLabel({ model: 'sonnet', realModelId: null })).toBe('Sonnet')
+  it('falls back to the BUNDLED_DEFAULT_ID for the alias when no real id has been captured yet (T-342)', () => {
+    expect(poModelLabel({ model: 'sonnet', realModelId: null })).toBe('Sonnet 5')
   })
 
-  it('falls back to the capitalized GUI default when both model and realModelId are unset', () => {
-    expect(poModelLabel({ model: null, realModelId: null })).toBe('Opus')
+  it('falls back to the BUNDLED_DEFAULT_ID for the GUI default when both model and realModelId are unset (T-342)', () => {
+    expect(poModelLabel({ model: null, realModelId: null })).toBe('Opus 4.8')
+  })
+})
+
+describe('BUNDLED_DEFAULT_ID (T-342)', () => {
+  it('maps every PO model option to a versioned real id — no alias left unmapped', () => {
+    expect(BUNDLED_DEFAULT_ID.opus).toBe('claude-opus-4-8')
+    expect(BUNDLED_DEFAULT_ID.sonnet).toBe('claude-sonnet-5')
+    expect(BUNDLED_DEFAULT_ID.fable).toBe('claude-fable-5')
   })
 })
 
@@ -140,11 +149,21 @@ describe('observed alias→id map + poModelOptionLabel (T-338)', () => {
     expect(Object.keys(usePoModel.getState().observedByAlias)).toEqual(['sonnet'])
   })
 
-  it('poModelOptionLabel resolves an observed alias to a versioned wide name, else graceful', () => {
+  it('poModelOptionLabel resolves an observed alias to a versioned wide name, else the bundled default (T-342)', () => {
     usePoModel.getState().recordObservedId('claude-opus-4-8')
     const observed = usePoModel.getState().observedByAlias
     expect(poModelOptionLabel('opus', observed)).toBe('Claude Opus 4.8')
-    expect(poModelOptionLabel('sonnet', observed)).toBe('Claude Sonnet') // unresolved → no invented version
+    // sonnet was never observed here — T-342: falls back to BUNDLED_DEFAULT_ID
+    // ("Claude Sonnet 5"), never the versionless "Claude Sonnet" T-338 shipped.
+    expect(poModelOptionLabel('sonnet', observed)).toBe('Claude Sonnet 5')
+  })
+
+  it('poModelOptionLabel prefers an observation over the bundled default when both exist (T-342)', () => {
+    // BUNDLED_DEFAULT_ID.opus is 'claude-opus-4-8' — observe a DIFFERENT real
+    // id for the same alias and confirm the live fact wins over the guess.
+    usePoModel.getState().recordObservedId('claude-opus-4-9')
+    const observed = usePoModel.getState().observedByAlias
+    expect(poModelOptionLabel('opus', observed)).toBe('Claude Opus 4.9')
   })
 })
 
