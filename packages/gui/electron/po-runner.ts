@@ -30,6 +30,7 @@ import { fireNotification } from './notifications'
 import { withLoginShellPath } from './surface-runner'
 import {
   appendSubagentTurn,
+  extractPoModel,
   extractSubagentCapture,
   mergeCapture,
   type SubagentCostCapture,
@@ -277,6 +278,15 @@ interface RunCallbacks {
     persona: string,
     meta: { usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }; startedAt?: number; completedAt?: number; model?: string },
   ) => void
+  /**
+   * T-335: the PO's OWN running model id, captured best-effort off the
+   * top-level (non-nested) assistant stream (`message.model` — extractPoModel).
+   * Fires per top-level assistant line that carries the field (most don't);
+   * the renderer (store/poModel.ts) only needs the first arrival per session
+   * to upgrade the sprite/badge label from the alias ("Opus") to the real
+   * versioned id ("Opus 4.8"). Never fires for a sidechain/subagent line.
+   */
+  onPoModel: (model: string) => void
 }
 
 // ── Health-smoke result (T-PATCH-231) ────────────────────────────────────────────
@@ -1556,6 +1566,13 @@ function handleStreamJsonLine(
       }
       return
     }
+
+    // T-335: PO's own running model id, best-effort off this top-level
+    // assistant line (extractPoModel already re-checks !isNested defensively).
+    // Most lines don't carry the field — only forward when one does.
+    const poModelId = extractPoModel(obj, isNested)
+    if (poModelId) cb.onPoModel(poModelId)
+
     for (const part of content) {
       if (part?.type === 'text') {
         // T-PATCH-166: text now streams via `type:'stream_event'` text_delta
@@ -2475,6 +2492,8 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     onWorkerStream: (persona, line, kind) => wc.send('po:worker-stream', { persona, line, kind }),
     // T-PATCH-281 (AC-7): worker cost/duration meta → presence (read-only display).
     onWorkerMeta: (persona, meta) => wc.send('po:worker-meta', { persona, ...meta }),
+    // T-335: PO's own running model id → presence (sprite/badge label upgrade).
+    onPoModel: (model) => wc.send('po:model-id', { model }),
     // T-019 §B3: phase-gate-entry — PO emitted a phase-transition gate.
     onPhaseGate: (gate) => {
       const phaseLabel =

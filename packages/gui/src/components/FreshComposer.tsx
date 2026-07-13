@@ -27,7 +27,7 @@ import type { Message } from '../lib/types'
 import type { Project } from '../lib/types'
 import { useComposerAttachments } from '../hooks/useComposerAttachments'
 import { useWorkspace } from '../store/workspace'
-import { usePoModel, PO_MODEL_OPTIONS, DEFAULT_PO_MODEL, type PoModel } from '../store/poModel'
+import { usePoModel, PO_MODEL_OPTIONS, DEFAULT_PO_MODEL, formatModelLabel, type PoModel } from '../store/poModel'
 import { ImageChip, chipRow } from './workspace/chat/ImageChip'
 // T-PATCH-109: brand logo for the first-start screen.
 import logoUrl from '../assets/logo.png'
@@ -264,8 +264,10 @@ export default function FreshComposer({ project, onConfirm }: Props) {
                     disabled={sending}
                     aria-label={t('workspace.poModel.label')}
                   >
+                    {/* T-335: alias-only surface (no session yet, no real id) —
+                        render just the capitalized family, never an invented version. */}
                     {PO_MODEL_OPTIONS.map((m) => (
-                      <option key={m} value={m}>{m}</option>
+                      <option key={m} value={m}>{formatModelLabel(m)}</option>
                     ))}
                   </select>
                 </label>

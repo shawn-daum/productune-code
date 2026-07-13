@@ -519,6 +519,17 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('po:worker-meta', listener)
   },
 
+  /**
+   * T-335: subscribe to the PO's own running model id, forwarded best-effort
+   * from the top-level assistant stream (extractPoModel in po-runner). Fires
+   * per turn line that carries the field — most don't. Returns an unsubscribe fn.
+   */
+  poOnPoModel: (cb: (payload: { model: string }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('po:model-id', listener)
+    return () => ipcRenderer.removeListener('po:model-id', listener)
+  },
+
   // ── Todo items (T-P4-113) ──────────────────────────────────────────────────
   /** Subscribe to todo items pushed by PO (parsed from manual_steps_pending / pending_user_actions). */
   poOnTodoItems: (cb: (items: Array<{

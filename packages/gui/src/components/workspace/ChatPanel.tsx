@@ -33,7 +33,7 @@ import AskUserQuestionCard from './chat/AskUserQuestionCard'
 import { useSessionHealth } from '../../store/sessionHealth'
 import type { PoHealthState, PoHealthDetail } from '../../store/sessionHealth'
 import { personaIdFromAgentType, PERSONA_LABELS } from '../../store/personaPresence'
-import { usePoModel, resolvePoModel } from '../../store/poModel'
+import { usePoModel, poModelLabel } from '../../store/poModel'
 import { isPrdtPoState } from '../../lib/phase-mapping'
 import { useComposerAttachments } from '../../hooks/useComposerAttachments'
 import { ImageChip, chipRow } from './chat/ImageChip'
@@ -49,7 +49,12 @@ export default function ChatPanel() {
 
   // T-334: current PO model, shown to the left of the send button (display-only —
   // switching happens on the PO sprite in PersonaPresenceBar).
-  const poModel = resolvePoModel(usePoModel((s) => s.model))
+  // T-335: human-readable label — prefers the live-captured real model id
+  // ("Opus 4.8"), falls back to the capitalized alias ("Opus") pre-first-token.
+  const poModel = poModelLabel({
+    model: usePoModel((s) => s.model),
+    realModelId: usePoModel((s) => s.realModelId),
+  })
   const poModelSupported = usePoModel((s) => s.supported)
   const loadPoModel = usePoModel((s) => s.load)
   useEffect(() => {

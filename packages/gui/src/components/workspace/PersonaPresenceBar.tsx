@@ -14,7 +14,7 @@ import {
   type WorkerResult,
 } from '../../store/personaPresence'
 import { useWorkspace } from '../../store/workspace'
-import { usePoModel, resolvePoModel } from '../../store/poModel'
+import { usePoModel, poModelLabel, formatModelLabel } from '../../store/poModel'
 import PoModelSwitchModal from './PoModelSwitchModal'
 
 // ── Sprite assets (Vite content-hash bundle, same pattern as FreshComposer) ───
@@ -678,8 +678,11 @@ function PersonaPresenceBar() {
   const projectDir = useWorkspace((s) => s.project?.projectDir ?? null)
   const poModelRaw = usePoModel((s) => s.model)
   const poModelSupported = usePoModel((s) => s.supported)
+  const poRealModelId = usePoModel((s) => s.realModelId)
   const loadPoModel = usePoModel((s) => s.load)
-  const poModel = resolvePoModel(poModelRaw)
+  // T-335: human-readable label — prefers the live-captured real model id
+  // ("Opus 4.8"), falls back to the capitalized alias ("Opus") pre-first-token.
+  const poModel = poModelLabel({ model: poModelRaw, realModelId: poRealModelId })
   const [switcherOpen, setSwitcherOpen] = useState(false)
 
   useEffect(() => {
@@ -775,7 +778,10 @@ function PersonaPresenceBar() {
                 modelLabel={
                   id === 'po'
                     ? (poModelSupported ? poModel : undefined)
-                    : workerMeta[id].model
+                    // T-335: workerMeta[id].model is the raw captured id (e.g.
+                    // "claude-opus-4-8") — humanize it the same way as the PO
+                    // label. Still silent (undefined) when not yet captured.
+                    : (workerMeta[id].model ? formatModelLabel(workerMeta[id].model) : undefined)
                 }
                 onModelClick={id === 'po' && poModelSupported ? () => setSwitcherOpen(true) : undefined}
               />

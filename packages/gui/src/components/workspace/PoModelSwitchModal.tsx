@@ -16,7 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
 import { useSessionHealth } from '../../store/sessionHealth'
 import { usePoChat } from '../../store/poChat'
-import { usePoModel, resolvePoModel, PO_MODEL_OPTIONS, type PoModel } from '../../store/poModel'
+import { usePoModel, resolvePoModel, formatModelLabel, PO_MODEL_OPTIONS, type PoModel } from '../../store/poModel'
 
 interface Props {
   projectDir: string
@@ -78,7 +78,9 @@ export default function PoModelSwitchModal({ projectDir, onClose }: Props) {
                 disabled={busy}
               >
                 <span style={{ ...radioDot, ...(active ? radioDotActive : null) }} aria-hidden="true" />
-                <span style={optionLabel}>{m}</span>
+                {/* T-335: alias-only option list (no session per candidate model
+                    exists yet) — capitalized family, never an invented version. */}
+                <span style={optionLabel}>{formatModelLabel(m)}</span>
                 {m === current && <span style={currentBadge}>{t('workspace.poModel.currentBadge')}</span>}
               </button>
             )

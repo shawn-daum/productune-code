@@ -20,6 +20,7 @@ import { useUserTodo } from './useUserTodo'
 import { useQaLoop } from './useQaLoop'
 import { useSessionHealth } from './sessionHealth'
 import { usePersonaPresence, personaIdFromAgentType } from './personaPresence'
+import { usePoModel } from './poModel'
 import type { Message, MessageKind } from '../lib/types'
 
 // ── Module-level guards ────────────────────────────────────────────────────────
@@ -405,6 +406,17 @@ function register() {
     })
   }))
 
+  // ── po:model-id (T-335) ──────────────────────────────────────────────────
+  // The PO's own running model id, forwarded best-effort off the top-level
+  // assistant stream (po-runner's extractPoModel). Upgrades the PO sprite/badge
+  // label from the alias ("Opus") to the real versioned id ("Opus 4.8") once
+  // the first line of a session carries it. Silently ignored if malformed.
+  offFns.push(api.poOnPoModel?.((payload: { model: string }) => {
+    if (typeof payload?.model === 'string' && payload.model) {
+      usePoModel.getState().setRealModelId(payload.model)
+    }
+  }))
+
   // ── po:onTodoItems / po:onTodoDismiss (T-P4-113) ─────────────────────────
   offFns.push(api.poOnTodoItems?.((items: any[]) => {
     useUserTodo.getState().pushItems(items)
@@ -526,6 +538,11 @@ function register() {
     // reset persona presence too: workers drop to idle and stream tails collapse.
     // PO is re-derived from `streaming` on the next turn (usePOPresenceDerive).
     usePersonaPresence.getState().resetAll()
+    // T-335: the new session's real model id is unknown until its own first
+    // assistant line — clear the prior session's captured id so the PO label
+    // falls back to the (possibly just-changed) alias instead of showing a
+    // stale version number from before the restart.
+    usePoModel.getState().setRealModelId(null)
   }))
 
   // ── po:onTicketFocus (T-P4-114 §B) ───────────────────────────────────────

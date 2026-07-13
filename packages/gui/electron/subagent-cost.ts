@@ -111,6 +111,24 @@ export function extractSubagentCapture(obj: any): SubagentCostCapture {
   return cap
 }
 
+/**
+ * T-335: extract the PO's OWN running model id from a top-level (non-nested)
+ * assistant envelope — e.g. `claude-opus-4-8`, `claude-sonnet-5`. Mirrors
+ * extractSubagentCapture's model probe (`message.model` first, then top-level
+ * `model`) but gated to the PO's own turn: sidechain/subagent envelopes carry
+ * their OWN model on the same fields, so a caller MUST pass `isNested` (the
+ * same `obj.parent_tool_use_id != null` check po-runner already computes per
+ * line) to keep worker models out of the PO's label. Returns null when nested,
+ * or when the field isn't present on this line (best-effort — most lines carry
+ * no model at all; the caller only needs to act on the ones that do).
+ */
+export function extractPoModel(obj: any, isNested: boolean): string | null {
+  if (isNested) return null
+  if (typeof obj?.message?.model === 'string' && obj.message.model) return obj.message.model
+  if (typeof obj?.model === 'string' && obj.model) return obj.model
+  return null
+}
+
 /** Merge two captures, preferring non-null fields from `next` (later events). */
 export function mergeCapture(
   base: SubagentCostCapture | undefined,
