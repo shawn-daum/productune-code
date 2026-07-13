@@ -2,9 +2,5 @@
   "schema_version": 1,
   "stage": "ship",
   "version": "v1.1",
-  "current_task": {
-    "ticket_id": "T-340",
-    "slug": "po-session-open-narration-regression",
-    "assignee": "developer"
-  }
+  "current_task": null
 }
