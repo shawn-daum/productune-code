@@ -14,6 +14,8 @@ import {
   type WorkerResult,
 } from '../../store/personaPresence'
 import { useWorkspace } from '../../store/workspace'
+import { usePoModel, resolvePoModel } from '../../store/poModel'
+import PoModelSwitchModal from './PoModelSwitchModal'
 
 // ── Sprite assets (Vite content-hash bundle, same pattern as FreshComposer) ───
 // Sprite sheet = 2172×724 = four 543×724 frames laid out horizontally.
@@ -92,9 +94,15 @@ function usePOPresenceDerive() {
 interface ChipProps {
   entry: PersonaEntry
   onDismiss: (persona: PersonaId) => void
+  /** T-334: model shown beneath the sprite. undefined → no label (worker w/o
+   *  a captured model). Always present for PO (resolved to the GUI default). */
+  modelLabel?: string
+  /** T-334: PO-only — clicking the model label opens the switcher. Absent for
+   *  workers (their model label is display-only). */
+  onModelClick?: () => void
 }
 
-function PersonaChip({ entry, onDismiss }: ChipProps) {
+function PersonaChip({ entry, onDismiss, modelLabel, onModelClick }: ChipProps) {
   const { t } = useTranslation()
   const { persona, state, artifact, task } = entry
   const color = PERSONA_COLORS[persona]
@@ -209,6 +217,24 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
         {state === 'done' ? ' ✓' : ''}
       </span>
 
+      {/* T-334: model sub-label beneath the sprite. PO = clickable switcher
+          (requirement #2/#3); workers = display-only (silent when unknown). */}
+      {modelLabel && (
+        onModelClick ? (
+          <button
+            type="button"
+            style={modelBtnStyle}
+            onClick={(e) => { e.stopPropagation(); onModelClick() }}
+            title={t('workspace.poModel.spriteHint')}
+            aria-label={t('workspace.poModel.spriteAria', { model: modelLabel })}
+          >
+            {modelLabel}
+          </button>
+        ) : (
+          <span style={modelTextStyle}>{modelLabel}</span>
+        )
+      )}
+
       {/* Tooltip — done(artifact) or working(task). T-PATCH-148 (Q2). */}
       {(state === 'done' || (state === 'working' && !!task)) && tooltipVisible && (
         <div style={tooltipStyle} role="tooltip">
@@ -217,6 +243,32 @@ function PersonaChip({ entry, onDismiss }: ChipProps) {
       )}
     </div>
   )
+}
+
+// T-334: model sub-label beneath the sprite label. Compact mono, muted.
+const modelTextStyle: React.CSSProperties = {
+  fontSize: 9,
+  lineHeight: '12px',
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  color: 'var(--txt-faint, #6a6a6a)',
+  whiteSpace: 'nowrap',
+  userSelect: 'none',
+  maxWidth: 64,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+}
+// PO's model label — clickable (opens the switcher). Underlined affordance so it
+// reads as interactive vs. the display-only worker labels.
+const modelBtnStyle: React.CSSProperties = {
+  ...modelTextStyle,
+  background: 'transparent',
+  border: 'none',
+  padding: 0,
+  cursor: 'pointer',
+  color: 'var(--txt-muted, #9a9a9a)',
+  textDecoration: 'underline',
+  textDecorationColor: '#404040',
+  textUnderlineOffset: 2,
 }
 
 const tooltipStyle: React.CSSProperties = {
@@ -622,10 +674,23 @@ function PersonaPresenceBar() {
   const [layout, setLayout] = useState<'inline' | 'stacked'>('inline')
   const [expanded, setExpanded] = useState(false)
 
+  // T-334: current PO model (shared store) + the PO-only switcher modal.
+  const projectDir = useWorkspace((s) => s.project?.projectDir ?? null)
+  const poModelRaw = usePoModel((s) => s.model)
+  const poModelSupported = usePoModel((s) => s.supported)
+  const loadPoModel = usePoModel((s) => s.load)
+  const poModel = resolvePoModel(poModelRaw)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
+
   useEffect(() => {
     ensureSpriteKeyframe()
     ensureStreamKeyframe()
   }, [])
+
+  // Load the PO model when the project resolves (and refresh if it changes).
+  useEffect(() => {
+    if (projectDir) loadPoModel(projectDir)
+  }, [projectDir, loadPoModel])
 
   // PO chip working blink — T-P4-093 (workspace.streaming → personaPresence.po)
   usePOPresenceDerive()
@@ -700,7 +765,20 @@ function PersonaPresenceBar() {
           const carriesSlot = showStream && inline && slotWorker === id
           return (
             <span key={id} style={carriesSlot ? chipCellGrowStyle : chipCellStyle}>
-              <PersonaChip entry={entries[id]} onDismiss={dismissDone} />
+              <PersonaChip
+                entry={entries[id]}
+                onDismiss={dismissDone}
+                // T-334: PO shows the resolved session model (clickable switcher)
+                // — prdt projects only, where the override is supported. Workers
+                // show their captured running model (display-only, silent when
+                // unknown).
+                modelLabel={
+                  id === 'po'
+                    ? (poModelSupported ? poModel : undefined)
+                    : workerMeta[id].model
+                }
+                onModelClick={id === 'po' && poModelSupported ? () => setSwitcherOpen(true) : undefined}
+              />
               {carriesSlot && slotWorker && (
                 <div style={anchoredSlotStyle}>
                   <WorkerStreamSlot
@@ -741,6 +819,11 @@ function PersonaPresenceBar() {
           duration={duration}
           onClose={() => setExpanded(false)}
         />
+      )}
+
+      {/* T-334: PO model switcher (restarts the session on confirm). */}
+      {switcherOpen && projectDir && (
+        <PoModelSwitchModal projectDir={projectDir} onClose={() => setSwitcherOpen(false)} />
       )}
     </div>
   )
@@ -783,7 +866,11 @@ function ensureStreamKeyframe() {
 // 'stretch' gives the chip row (and everything under it) a real height to size
 // against, which is what makes overflow: hidden / overflow-y: auto actually work.
 const barStyle: React.CSSProperties = {
-  height: 92,
+  // T-334: +14px over the original 92 for the model sub-label line (fontSize 9
+  // /lineHeight 12 + 2 gap) beneath each sprite label — keeps the vertical
+  // char/label/model stack from clipping. The inline stream slot stretches to
+  // this height via the alignSelf:stretch chain (a bit taller, no layout break).
+  height: 106,
   flexShrink: 0,
   padding: '6px 12px',
   display: 'flex',

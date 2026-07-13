@@ -20,13 +20,14 @@
  *  → draft + chips preserved, inline error, retry enabled.
  */
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SendHorizonal, Paperclip, X as XIcon } from 'lucide-react'
 import type { Message } from '../lib/types'
 import type { Project } from '../lib/types'
 import { useComposerAttachments } from '../hooks/useComposerAttachments'
 import { useWorkspace } from '../store/workspace'
+import { usePoModel, PO_MODEL_OPTIONS, DEFAULT_PO_MODEL, type PoModel } from '../store/poModel'
 import { ImageChip, chipRow } from './workspace/chat/ImageChip'
 // T-PATCH-109: brand logo for the first-start screen.
 import logoUrl from '../assets/logo.png'
@@ -43,6 +44,25 @@ export default function FreshComposer({ project, onConfirm }: Props) {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+
+  // T-334: PO model choice — defaults to opus, so the first session launches with
+  // an explicit model instead of silently inheriting the CLI default. Only shown
+  // for projects that support the override (prdt). Seeded from any existing
+  // config value (respects a model the user already set in Settings).
+  const [model, setModel] = useState<PoModel>(DEFAULT_PO_MODEL)
+  const [modelSupported, setModelSupported] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const cfg = await (window as any).api?.getPoSessionConfig?.(project.projectDir)
+        if (cancelled || !cfg) return
+        setModelSupported(!!cfg.supported)
+        if ((PO_MODEL_OPTIONS as readonly string[]).includes(cfg.model)) setModel(cfg.model)
+      } catch { /* IPC unavailable in browser dev mode */ }
+    })()
+    return () => { cancelled = true }
+  }, [project.projectDir])
 
   // T-PATCH-133: shared attachment hook — image paste + file picker + chip logic.
   const {
@@ -85,6 +105,18 @@ export default function FreshComposer({ project, onConfirm }: Props) {
       // Step 3 — Clear draft + chips (UI only; RESOLUTION-1: no cleanupSentFiles here).
       setDraft('')
       clearAttachments()
+
+      // T-334 — Persist the chosen PO model BEFORE firing the turn, so the spawn
+      // (po-runner reads gui_model from disk at turn start) launches with it, not
+      // the CLI default. Awaited so the write lands before poSendMessage. Best-
+      // effort: only for prdt projects; a persist failure must not block the send
+      // (the session simply falls back to inherit).
+      if (modelSupported) {
+        try {
+          await api.setPoSessionOverride(project.projectDir, { model })
+          usePoModel.getState().setModel(model)
+        } catch { /* non-fatal — proceed with the send */ }
+      }
 
       // Step 4 — Fire poSendMessage (fire-and-forget; long-running PO turn).
       // T-PATCH-252: latch streaming:true BEFORE the turn fires + before
@@ -221,6 +253,23 @@ export default function FreshComposer({ project, onConfirm }: Props) {
               >
                 <Paperclip size={15} />
               </button>
+              {/* T-334: PO model choice (default opus). prdt projects only. */}
+              {modelSupported && (
+                <label style={modelPickerWrap}>
+                  <span style={modelPickerLabel}>{t('workspace.poModel.label')}</span>
+                  <select
+                    style={modelPickerSelect}
+                    value={model}
+                    onChange={(e) => setModel(e.target.value as PoModel)}
+                    disabled={sending}
+                    aria-label={t('workspace.poModel.label')}
+                  >
+                    {PO_MODEL_OPTIONS.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <span style={keyHint}>{t('workspace.freshComposer.keyHint')}</span>
             </div>
             <button
@@ -372,6 +421,29 @@ const paperclipBtn: React.CSSProperties = {
 const keyHint: React.CSSProperties = {
   fontSize: 12,
   color: '#505050',
+}
+
+// T-334: PO model picker (FreshComposer footer).
+const modelPickerWrap: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+}
+
+const modelPickerLabel: React.CSSProperties = {
+  fontSize: 12,
+  color: '#707070',
+}
+
+const modelPickerSelect: React.CSSProperties = {
+  background: '#141414',
+  color: '#C8C8CC',
+  border: '1px solid #2A2A2A',
+  borderRadius: 5,
+  fontSize: 12,
+  padding: '2px 6px',
+  fontFamily: 'inherit',
+  cursor: 'pointer',
 }
 
 const fileChipRow: React.CSSProperties = {

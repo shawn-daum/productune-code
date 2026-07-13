@@ -161,11 +161,14 @@ export interface WorkerResult {
 }
 
 /** T-PATCH-281 (AC-7): live per-worker meta (usage/duration), refreshed while
- *  running (task_progress) and finalized at completion. */
+ *  running (task_progress) and finalized at completion.
+ *  T-334: `model` — the worker's running model, captured best-effort from the
+ *  sidechain stream (silent-on-missing, same posture as usage/duration). */
 export interface WorkerMeta {
   usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
   startedAt?: number
   completedAt?: number
+  model?: string
 }
 
 /** Lines the COLLAPSED slot shows (short tail). The expanded overlay shows up to
@@ -359,6 +362,8 @@ export const usePersonaPresence = create<PersonaPresenceState>((set) => ({
         // startedAt: sticky (set once at task_started, don't overwrite with undefined).
         startedAt: meta.startedAt ?? prev.startedAt,
         completedAt: meta.completedAt ?? prev.completedAt,
+        // model: sticky (captured best-effort from the sidechain; T-334).
+        model: meta.model ?? prev.model,
       }
       return { workerMeta: { ...s.workerMeta, [persona]: merged } }
     })

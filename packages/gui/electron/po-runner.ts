@@ -275,7 +275,7 @@ interface RunCallbacks {
    */
   onWorkerMeta: (
     persona: string,
-    meta: { usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }; startedAt?: number; completedAt?: number },
+    meta: { usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }; startedAt?: number; completedAt?: number; model?: string },
   ) => void
 }
 
@@ -1359,6 +1359,14 @@ function handleStreamJsonLine(
     const cap = extractSubagentCapture(obj)
     const prev = hCtx.subagentCaptureByParentId.get(parentId)
     hCtx.subagentCaptureByParentId.set(parentId, mergeCapture(prev, cap))
+    // T-334: forward the worker's running model to presence (live sprite label).
+    // Best-effort + silent-on-missing (same posture as usage/duration, AC-7):
+    // cap.model rides the sidechain assistant message (message.model / modelUsage).
+    // Resolve the persona from the delegation mapping bound at task_started.
+    if (cap.model) {
+      const subagentType = hCtx.delegatedByToolUseId.get(parentId)
+      if (subagentType) cb.onWorkerMeta(subagentType, { model: cap.model })
+    }
   }
 
   // ── T-PATCH-166: per-token (typewriter) text streaming ─────────────────────

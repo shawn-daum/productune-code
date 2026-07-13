@@ -512,6 +512,7 @@ contextBridge.exposeInMainWorld('api', {
     usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
     startedAt?: number
     completedAt?: number
+    model?: string
   }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('po:worker-meta', listener)

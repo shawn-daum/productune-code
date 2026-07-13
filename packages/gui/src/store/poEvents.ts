@@ -393,6 +393,7 @@ function register() {
     usage?: { total_tokens?: number; tool_uses?: number; duration_ms?: number }
     startedAt?: number
     completedAt?: number
+    model?: string
   }) => {
     const personaId = personaIdFromAgentType(payload.persona)
     if (!personaId || personaId === 'po') return
@@ -400,6 +401,7 @@ function register() {
       usage: payload.usage,
       startedAt: payload.startedAt,
       completedAt: payload.completedAt,
+      model: payload.model,  // T-334: worker running model → sprite label
     })
   }))
 

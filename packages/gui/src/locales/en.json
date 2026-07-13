@@ -340,6 +340,18 @@
       "restartNow": "Restart now",
       "openSettings": "Open settings"
     },
+    "poModel": {
+      "label": "PO model",
+      "spriteHint": "Click to change the PO model",
+      "spriteAria": "PO model: {{model}} — click to change",
+      "switchTitle": "Change PO model",
+      "switchNotice": "Switching the model starts a new PO session. Your chat history is preserved on disk.",
+      "switchConfirm": "Switch & restart",
+      "switchError": "Couldn't switch the model. Please try again.",
+      "currentBadge": "Current",
+      "sendAdjacentTitle": "Current PO model",
+      "sendAdjacentAria": "Current PO model: {{model}}"
+    },
     "image": {
       "noPath": "No path provided."
     },

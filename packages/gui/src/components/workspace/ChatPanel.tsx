@@ -33,6 +33,7 @@ import AskUserQuestionCard from './chat/AskUserQuestionCard'
 import { useSessionHealth } from '../../store/sessionHealth'
 import type { PoHealthState, PoHealthDetail } from '../../store/sessionHealth'
 import { personaIdFromAgentType, PERSONA_LABELS } from '../../store/personaPresence'
+import { usePoModel, resolvePoModel } from '../../store/poModel'
 import { isPrdtPoState } from '../../lib/phase-mapping'
 import { useComposerAttachments } from '../../hooks/useComposerAttachments'
 import { ImageChip, chipRow } from './chat/ImageChip'
@@ -44,6 +45,15 @@ export default function ChatPanel() {
   const messages = useWorkspace((s) => s.messages)
   const poState = useWorkspace((s) => s.poState)
   const streaming = useWorkspace((s) => s.streaming)
+
+  // T-334: current PO model, shown to the left of the send button (display-only —
+  // switching happens on the PO sprite in PersonaPresenceBar).
+  const poModel = resolvePoModel(usePoModel((s) => s.model))
+  const poModelSupported = usePoModel((s) => s.supported)
+  const loadPoModel = usePoModel((s) => s.load)
+  useEffect(() => {
+    if (project?.projectDir) loadPoModel(project.projectDir)
+  }, [project?.projectDir, loadPoModel])
 
   // T-316 C3b: a legacy `.productune` project is view-only (T-311) — its PO chat
   // agent (pdt-po) was deleted, so a send would fail with a raw ungraceful spawn
@@ -694,6 +704,17 @@ export default function ChatPanel() {
             )}
 
             <div style={{ flex: 1 }} />
+            {/* T-334: current PO model, left of the send button (display-only;
+                prdt projects only, where the override applies). */}
+            {poModelSupported && (
+              <span
+                style={poModelBadge}
+                title={t('workspace.poModel.sendAdjacentTitle')}
+                aria-label={t('workspace.poModel.sendAdjacentAria', { model: poModel })}
+              >
+                {poModel}
+              </span>
+            )}
             {/* T-PATCH-081 AC-1/2: stop button replaces send while streaming; AC-2: not in DOM when idle */}
             {streaming ? (
               <button
@@ -1247,6 +1268,18 @@ const kbdHint: React.CSSProperties = {
   borderRadius: 3,
   padding: '2px 4px',
   marginLeft: 2,
+}
+
+// T-334: current PO model badge, left of the send button. Muted mono so it reads
+// as passive status, not another action.
+const poModelBadge: React.CSSProperties = {
+  fontSize: 10,
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  color: 'var(--txt-faint, #6a6a6a)',
+  whiteSpace: 'nowrap',
+  userSelect: 'none',
+  marginRight: 8,
+  flexShrink: 0,
 }
 
 function basename(p: string): string {
