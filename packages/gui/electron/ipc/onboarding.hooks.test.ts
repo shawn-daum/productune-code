@@ -4,8 +4,8 @@
  * Proves the acceptance at the settings-merge layer, entirely against fixture
  * dirs (mkdtemp HOME + project dirs) — the developer's real ~/.claude / ~/.prdt
  * are NEVER touched:
- *   1. prdt project → EXACTLY the 3 prdt hooks (prdt-session-start /
- *      prdt-post-compact / prdt-post-dispatch) + statusline-prdt.sh are
+ *   1. prdt project → EXACTLY the 4 prdt hooks (prdt-session-start /
+ *      prdt-post-compact / prdt-post-dispatch / prdt-user-prompt) + statusline-prdt.sh are
  *      registered, pointing at the ~/.prdt mirror with the same matchers and
  *      quoted-command form install.sh §4/§6 writes; no legacy pdt hook
  *      leaks in.
@@ -35,7 +35,7 @@ interface Case {
 const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
-const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh']
+const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh']
 
 /** Throwaway HOME fixture. `withMirror` seeds ~/.prdt/hooks/* + bin/statusline. */
 function makeHome(withMirror = true): string {
@@ -90,12 +90,13 @@ function cliHooksBlock(home: string): any {
     SubagentStart: [{ matcher: '^prdt-', hooks: [h('prdt-session-start.sh')] }],
     SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
     PostToolUse: [{ matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] }],
+    UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
   }
 }
 
 export const A6_CASES: readonly Case[] = [
   {
-    label: 'prdt project → exactly the 3 prdt hooks (mirror paths) + statusline-prdt.sh',
+    label: 'prdt project → exactly the 4 prdt hooks (mirror paths) + statusline-prdt.sh',
     run: () => {
       const home = makeHome()
       const proj = makeProject('.prdt')

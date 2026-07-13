@@ -3,8 +3,8 @@
   "stage": "ship",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-336",
-    "slug": "po-skips-stage-write-and-rituals-on-deploy",
-    "assignee": "developer"
+    "ticket_id": "T-338",
+    "slug": "gui-model-label-format-v2",
+    "assignee": "qa"
   }
 }

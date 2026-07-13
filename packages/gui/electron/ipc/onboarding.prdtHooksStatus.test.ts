@@ -38,7 +38,7 @@ interface Case {
 const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
-const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh']
+const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh']
 
 function makeHome(withMirror: boolean): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t305-home-'))
@@ -96,12 +96,12 @@ export const CASES: readonly Case[] = [
         },
       }))
       const status = checkPrdtHooksStatus(home)
-      if (status.installed !== false) return fail(`installed=${status.installed} (only 1/3 hooks present)`)
+      if (status.installed !== false) return fail(`installed=${status.installed} (only 1/4 hooks present)`)
       return ok
     },
   },
   {
-    label: 'mirror present, settings.json already has all 3 prdt hooks → installed:true',
+    label: 'mirror present, settings.json already has all 4 prdt hooks → installed:true',
     run: () => {
       const home = makeHome(true)
       const h = (b: string) => ({ type: 'command', command: `"${path.join(home, '.prdt', 'hooks', b)}"` })
@@ -113,6 +113,7 @@ export const CASES: readonly Case[] = [
             { matcher: 'compact', hooks: [h('prdt-post-compact.sh')] },
           ],
           SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
+          UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
         },
       }))
       const status = checkPrdtHooksStatus(home)

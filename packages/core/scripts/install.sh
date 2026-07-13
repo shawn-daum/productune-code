@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + hook 3종.
+# prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + hook 4종.
 # (Canonical name since T-293: was prdt-install.sh during pdt-* coexistence;
 #  a thin prdt-install.sh forwarder remains for older installed `prdt update` copies.)
 # Statusline (T-330): default-on when nothing is registered yet (fresh install, or
@@ -34,7 +34,8 @@ rm -rf "$PRDT_HOME/discipline"
 cp -R "$ROOT/discipline" "$PRDT_HOME/discipline"
 cp "$ROOT/doctrine.md" "$PRDT_HOME/doctrine.md"
 cp "$ROOT/scripts/hooks/prdt-session-start.sh" "$ROOT/scripts/hooks/prdt-post-compact.sh" \
-   "$ROOT/scripts/hooks/prdt-post-dispatch.sh" "$PRDT_HOME/hooks/"
+   "$ROOT/scripts/hooks/prdt-post-dispatch.sh" "$ROOT/scripts/hooks/prdt-user-prompt.sh" \
+   "$PRDT_HOME/hooks/"
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
 chmod +x "$PRDT_HOME/hooks/"*.sh "$PRDT_HOME/bin/prdt" "$PRDT_HOME/bin/statusline-prdt.sh"
@@ -77,7 +78,7 @@ cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
 #    commands point at packages/core/scripts/hooks/<basename>.sh scripts that no longer
 #    exist — every session then fails those with command-not-found. We strip them by the
 #    repo-distributed path SUFFIX only, so other apps' and users' own hooks are untouched.
-say "4) Registering hook 3종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
+say "4) Registering hook 4종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
 SETTINGS="$CLAUDE_DIR/settings.json"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 TMP="$(mktemp)"
@@ -98,8 +99,8 @@ jq --arg h "$PRDT_HOME/hooks/" '
     .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
   ) | map(select((.hooks | length) > 0));
   .hooks = (.hooks // {}) |
-  # sweep legacy pdt-* out of EVERY event array (incl. PreToolUse/PostCompact/Stop/
-  # UserPromptSubmit that prdt never re-adds), then drop any now-empty event key.
+  # sweep legacy pdt-* out of EVERY event array (incl. PreToolUse/PostCompact/Stop
+  # that prdt never re-adds), then drop any now-empty event key.
   .hooks = (.hooks | with_entries(.value = stripLegacy(.value)) | with_entries(select((.value | length) > 0))) |
   .hooks.SessionStart = (strip("SessionStart") + [
     {matcher: "startup|resume|clear",
@@ -118,6 +119,11 @@ jq --arg h "$PRDT_HOME/hooks/" '
   .hooks.PostToolUse = (strip("PostToolUse") + [
     {matcher: "Agent",
      hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
+  ]) |
+  # T-336 stage guard: deterministic per-prompt po-state line + deploy tripwire
+  # (UserPromptSubmit takes no matcher).
+  .hooks.UserPromptSubmit = (strip("UserPromptSubmit") + [
+    {hooks: [{type: "command", command: ("\"" + $h + "prdt-user-prompt.sh" + "\"")}]}
   ]) |
   # C3a: drop the legacy statusline (deleted statusline-productune.sh). The prdt
   # statusline (§6, default-on) is a different basename and is never matched here;

@@ -16,11 +16,11 @@ packages/core/
 ├── migrations/             # project schema migrations (schema-v-guard derives latest id)
 ├── scripts/
 │   ├── prdt                # CLI entrypoint (init · migrate · doctor · menus · update …)
-│   ├── install.sh          # mirror discipline → ~/.prdt, agents + hook 3종 등록 (idempotent)
+│   ├── install.sh          # mirror discipline → ~/.prdt, agents + hook 4종 등록 (idempotent)
 │   ├── uninstall.sh        # reverse of install.sh
 │   ├── prdt-flip.sh        # machine flip: retire legacy pdt-*/pdtl-* (transitional, --rollback)
 │   ├── statusline-prdt.sh  # display-only statusline
-│   ├── hooks/              # prdt-session-start · prdt-post-compact · prdt-post-dispatch
+│   ├── hooks/              # prdt-session-start · prdt-post-compact · prdt-post-dispatch · prdt-user-prompt
 │   └── lib/init-project.mjs  # shared project-init implementation (CLI + GUI initProject)
 ├── src/                    # TS layer for the GUI (@productune/core exports)
 └── test/                   # vitest + schema-v-guard gate

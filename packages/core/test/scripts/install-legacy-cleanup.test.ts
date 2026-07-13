@@ -95,10 +95,12 @@ test.skipIf(!hasJq())('install.sh strips deleted legacy pdt-* hooks + legacy sta
   expect(cmds).toContain('/Users/me/otherapp/hooks/my-guard.sh')
   expect(cmds).toContain('/Users/me/mysession.sh')
 
-  // 4. The 3 prdt hooks are registered (idempotent go-forward path).
-  for (const b of ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh']) {
+  // 4. The 4 prdt hooks are registered (idempotent go-forward path).
+  for (const b of ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh']) {
     expect(cmds.some((c) => c.includes(b)), `prdt hook ${b} should be registered`).toBe(true)
   }
+  // 4b. T-336 stage guard sits on UserPromptSubmit specifically.
+  expect(JSON.stringify(s.hooks?.UserPromptSubmit ?? [])).toContain('prdt-user-prompt.sh')
 
   // 5. Unrelated settings untouched.
   expect(s.permissions?.allow).toEqual(['Bash(ls *)'])

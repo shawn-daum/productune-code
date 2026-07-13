@@ -42,3 +42,11 @@
 - (T-334 dev) Worker running-model is recoverable in the renderer via `extractSubagentCapture().model` forwarded on the existing `po:worker-meta` channel (persona resolved by `delegatedByToolUseId.get(parent_tool_use_id)`) — same runtime-verify class as T-165/166/170: harmless until `model` appears in the sidechain stream, then lights up with no further change.
 - (T-334 dev) Renderer `usePoModel` intentionally resolves `gui_model ?? 'opus'` for display only; po-runner spawn semantics (null = inherit, byte-identical to pre-T-310) were deliberately left unchanged to protect resume flows.
 - (T-333 dev) packages/core/discipline 는 install.sh 로 ~/.prdt 에 sync 되는 원본 — contracts.md 수정분이 실제 세션에 반영되려면 install.sh 재실행 필요할 수 있음
+- (T-336 dev) T-336 wider finding: hanta PO ran the ENTIRE v1 build with 0 tickets (empty tickets dir, ticket_id null on every turns.jsonl line, dispatches happened anyway) and 0 inbox appends — migration seeding '0 tickets' seems to have normalized ticketless flow; contracts violation and it permanently blinds the stage-exhaustion signal. Separate ticket candidate.
+- (T-336 dev) T-336 fix requires install.sh re-run on each machine (incl. the hanta machine) — ~/.prdt mirror + settings.json UserPromptSubmit registration are not live until then.
+- (T-336 dev) hanta po-state still says stage=build/current_task=null though v1 is deployed; its interrupted Retro (user asked 07-13 01:10, then interrupt) never completed — hanta's PO should correct stage and finish Retro.
+- (T-336 dev) New hook is advisory-only (additionalContext), fires for any session in a prdt project dir; one-line cost per prompt, silent no-op elsewhere — soft stages preserved per doctrine #5.
+- (T-338 dev) GUI 스트림 실측(2026-07-13 프로브): system init 봉투가 top-level model id(날짜 스탬프 포함, 예 claude-haiku-4-5-20251001)를 턴 시작마다 실음 — 세션 모델 캡처는 assistant 라인보다 init이 우선 포인트
+- (T-338 dev) electron main/preload는 Vite HMR 미적용 — main 프로세스 변경 검증은 반드시 앱 재실행 후
+- (T-336 dev) Korean tokens in prompt-matching hooks must be phrase-level: no \b in Korean, so bare nouns over-fire on compounds (라이브러리→라이브, 머지소트→머지); pair the noun with intent-bearing suffixes/objects instead.
+- (T-336 dev) 출시/릴리즈/릴리스 remain bare tokens (not QA-flagged; deploy intent strong) — if '릴리즈 노트' -style false positives surface later, apply the same phrase narrowing.

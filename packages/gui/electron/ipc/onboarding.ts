@@ -184,8 +184,8 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // can exercise the prdt branch against a throwaway fixture HOME instead of the
 // developer's real ~/.claude / ~/.prdt.
 
-/** The 3 prdt discipline hooks (packages/core/scripts/install.sh §4, SoT). */
-const PRDT_HOOK_BASENAMES = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh'] as const
+/** The 4 prdt discipline hooks (packages/core/scripts/install.sh §4, SoT). */
+const PRDT_HOOK_BASENAMES = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh'] as const
 
 function readSettings(settingsPath: string): any {
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
@@ -212,7 +212,7 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
 }
 
 /**
- * prdt branch (T-289): install exactly the 3 discipline hooks + statusline-prdt.sh,
+ * prdt branch (T-289): install exactly the 4 discipline hooks + statusline-prdt.sh,
  * producing the SAME settings.json registration install.sh §4/§6 writes —
  * same `~/.prdt` mirror paths, same matchers, same quoted-command form — so GUI
  * and CLI installs can never diverge or double-register: either one re-run strips
@@ -264,6 +264,10 @@ function installPrdtHooks(settingsPath: string, homeDir: string): void {
   ]
   H.PostToolUse = [...stripPrdt(H.PostToolUse),
     { matcher: 'Agent', hooks: [cmd(h('prdt-post-dispatch.sh'))] },
+  ]
+  // T-336 stage guard — per-prompt po-state line + deploy tripwire (no matcher).
+  H.UserPromptSubmit = [...stripPrdt(H.UserPromptSubmit),
+    { hooks: [cmd(h('prdt-user-prompt.sh'))] },
   ]
 
   settings.hooks = H
