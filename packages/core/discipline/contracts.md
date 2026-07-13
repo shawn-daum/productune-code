@@ -55,3 +55,4 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 ## Language
 - User-facing prose (PRD, ticket `## Request`, artifacts, chat) → `[ctx].user_lang`.
 - Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, `## Acceptance`) → English.
+- Tool-call `description` fields (e.g. Bash) the GUI surfaces as an activity label → `user_lang` too — an English one-liner defaulted out of habit reads as raw noise once rendered next to Korean chat (T-333).

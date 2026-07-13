@@ -3,8 +3,8 @@
   "stage": "ship",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-333",
-    "slug": "gui-humanize-tool-activity-labels",
+    "ticket_id": "T-335",
+    "slug": "gui-model-label-with-version",
     "assignee": "developer"
   }
 }

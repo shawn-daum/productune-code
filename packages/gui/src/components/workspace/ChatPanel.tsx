@@ -37,6 +37,7 @@ import { usePoModel, resolvePoModel } from '../../store/poModel'
 import { isPrdtPoState } from '../../lib/phase-mapping'
 import { useComposerAttachments } from '../../hooks/useComposerAttachments'
 import { ImageChip, chipRow } from './chat/ImageChip'
+import { descriptionUsable, bashFallbackBucket, rawBashCommand } from './chat/bashActivity'
 
 
 export default function ChatPanel() {
@@ -891,7 +892,7 @@ function PoActivityLine(props: {
   healthDetail: PoHealthDetail
   latestTool: { toolName: string; input: unknown } | null
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [nowMs, setNowMs] = useState(() => Date.now())
 
   // 1s elapsed tick — re-arm whenever the turn's start stamp changes; clear on
@@ -903,15 +904,22 @@ function PoActivityLine(props: {
   }, [props.sinceMs])
 
   const activity = props.latestTool
-    ? humanizePoTool(props.latestTool.toolName, props.latestTool.input, t)
+    ? humanizePoTool(props.latestTool.toolName, props.latestTool.input, t, i18n.language)
     : verbForHealth(props.healthState, props.healthDetail, t)
   const elapsed = formatElapsed(nowMs - props.sinceMs)
   const tokens = formatApproxTokens(props.charCount)
+  // T-333: raw command stays reachable via hover — the label above is always
+  // humanized (description or fallback), never raw shell text, but a developer
+  // debugging a stuck turn can still see exactly what ran.
+  const rawTitle =
+    props.latestTool?.toolName === 'Bash'
+      ? rawBashCommand(props.latestTool.input) || undefined
+      : undefined
 
   return (
     <div style={workingRow} role="status" aria-live="polite">
       <span className="pdt-spin" style={spinnerGlyph} aria-hidden="true">✶</span>
-      <span>{activity}</span>
+      <span title={rawTitle}>{activity}</span>
       <span style={dot} aria-hidden="true">·</span>
       <span>{elapsed}</span>
       {tokens && (
@@ -927,10 +935,17 @@ function PoActivityLine(props: {
 // T-309: humanize a PO tool_use into a friendly activity-line one-liner.
 // basename for file paths, first-40-chars for commands. Unknown tool → the raw
 // tool name (never blank).
+//
+// T-333: Bash used to show the raw shell command ("echo ...; cat .prdt/po-st…
+// 실행 중") — unreadable for a non-developer planner. Now delegates to
+// ./chat/bashActivity.ts: prefer the tool call's own `description` field (when
+// usable in the UI's language), else a command-pattern fallback bucket
+// (cat/grep/git/…), else generic — never raw shell text.
 function humanizePoTool(
   toolName: string,
   input: unknown,
   t: (key: string, opts?: Record<string, unknown>) => string,
+  uiLang?: string,
 ): string {
   const inp = (input && typeof input === 'object') ? (input as Record<string, unknown>) : {}
   const base = (p: unknown): string =>
@@ -945,8 +960,12 @@ function humanizePoTool(
     case 'Write':
       return t('workspace.chat.activity.write', { file: base(inp.file_path ?? inp.path) })
     case 'Bash': {
-      const cmd = str(inp.command).trim()
-      return t('workspace.chat.activity.bash', { cmd: cmd.slice(0, 40) })
+      const desc = str(inp.description).trim()
+      if (desc && descriptionUsable(desc, uiLang)) {
+        return t('workspace.chat.activity.bashDesc', { desc })
+      }
+      const bucket = bashFallbackBucket(str(inp.command).trim())
+      return t(`workspace.chat.activity.bashFallback.${bucket}`)
     }
     case 'Grep':
     case 'Glob':
@@ -966,6 +985,7 @@ function humanizePoTool(
       return toolName
   }
 }
+
 
 function formatElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
