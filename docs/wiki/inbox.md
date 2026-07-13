@@ -50,3 +50,4 @@
 - (T-338 dev) electron main/preload는 Vite HMR 미적용 — main 프로세스 변경 검증은 반드시 앱 재실행 후
 - (T-336 dev) Korean tokens in prompt-matching hooks must be phrase-level: no \b in Korean, so bare nouns over-fire on compounds (라이브러리→라이브, 머지소트→머지); pair the noun with intent-bearing suffixes/objects instead.
 - (T-336 dev) 출시/릴리즈/릴리스 remain bare tokens (not QA-flagged; deploy intent strong) — if '릴리즈 노트' -style false positives surface later, apply the same phrase narrowing.
+- (T-338 qa) GUI live-session QA pattern that works well: fresh `pnpm build` (rebuilds electron main+preload, not just renderer) + brand-new `_electron.launch()` (never HMR) + scratch `.prdt` project dir + `--user-data-dir` isolation + seed `localStorage.productune.lastProject` + `page.reload()` (per docs/wiki/fact--gui-testing-env.md) avoids touching the real user's profile/recents.json entirely. Send requires Cmd+Enter (Meta+Enter in Playwright), not plain Enter. Useful for future GUI PO-session QA passes.

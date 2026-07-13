@@ -1428,6 +1428,16 @@ function handleStreamJsonLine(
     if (obj?.subtype === 'init' && typeof obj?.session_id === 'string') {
       capturedSessionId = obj.session_id
     }
+    // T-338: the init envelope carries the session's RESOLVED model id at the
+    // top level (probe-confirmed 2026-07-13: {type:'system', subtype:'init',
+    // model:'claude-haiku-4-5-20251001', …}). This fires at the START of every
+    // turn (fresh AND resume) — earlier and more reliable than waiting for an
+    // assistant line — so the sprite/badge label upgrades to the versioned
+    // form immediately. isNested-gated: a sidechain worker's init must never
+    // relabel the PO.
+    if (!isNested && obj?.subtype === 'init' && typeof obj?.model === 'string' && obj.model) {
+      cb.onPoModel(obj.model)
+    }
     // Compacting pre-signal (OQ: may or may not arrive — best-effort).
     if (obj?.subtype === 'compact_pre' || obj?.compact === true) {
       emitHealth('compacting', undefined, hCtx, cb)

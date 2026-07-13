@@ -404,11 +404,16 @@ function register() {
       completedAt: payload.completedAt,
       model: payload.model,  // T-334: worker running model → sprite label
     })
+    // T-338: a worker's real id is also an honest observation of what this
+    // machine's CLI runs for that alias family — feed the alias→id map so the
+    // switcher/FreshComposer option lists can show a versioned name.
+    if (payload.model) usePoModel.getState().recordObservedId(payload.model)
   }))
 
-  // ── po:model-id (T-335) ──────────────────────────────────────────────────
+  // ── po:model-id (T-335/T-338) ────────────────────────────────────────────
   // The PO's own running model id, forwarded best-effort off the top-level
-  // assistant stream (po-runner's extractPoModel). Upgrades the PO sprite/badge
+  // stream (system init `model` — fires at every turn start, T-338 — plus
+  // assistant `message.model`, extractPoModel). Upgrades the PO sprite/badge
   // label from the alias ("Opus") to the real versioned id ("Opus 4.8") once
   // the first line of a session carries it. Silently ignored if malformed.
   offFns.push(api.poOnPoModel?.((payload: { model: string }) => {

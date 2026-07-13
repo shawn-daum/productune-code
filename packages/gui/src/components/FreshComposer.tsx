@@ -27,7 +27,7 @@ import type { Message } from '../lib/types'
 import type { Project } from '../lib/types'
 import { useComposerAttachments } from '../hooks/useComposerAttachments'
 import { useWorkspace } from '../store/workspace'
-import { usePoModel, PO_MODEL_OPTIONS, DEFAULT_PO_MODEL, formatModelLabel, type PoModel } from '../store/poModel'
+import { usePoModel, PO_MODEL_OPTIONS, DEFAULT_PO_MODEL, poModelOptionLabel, type PoModel } from '../store/poModel'
 import { ImageChip, chipRow } from './workspace/chat/ImageChip'
 // T-PATCH-109: brand logo for the first-start screen.
 import logoUrl from '../assets/logo.png'
@@ -51,6 +51,8 @@ export default function FreshComposer({ project, onConfirm }: Props) {
   // config value (respects a model the user already set in Settings).
   const [model, setModel] = useState<PoModel>(DEFAULT_PO_MODEL)
   const [modelSupported, setModelSupported] = useState(false)
+  // T-338: real ids observed live this app run — versioned option labels.
+  const observedByAlias = usePoModel((s) => s.observedByAlias)
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -264,10 +266,11 @@ export default function FreshComposer({ project, onConfirm }: Props) {
                     disabled={sending}
                     aria-label={t('workspace.poModel.label')}
                   >
-                    {/* T-335: alias-only surface (no session yet, no real id) —
-                        render just the capitalized family, never an invented version. */}
+                    {/* T-338: wide surface → "Claude Sonnet 5"-style full name,
+                        versioned only through an id observed live this app run
+                        (observedByAlias); unobserved → "Claude Sonnet". */}
                     {PO_MODEL_OPTIONS.map((m) => (
-                      <option key={m} value={m}>{formatModelLabel(m)}</option>
+                      <option key={m} value={m}>{poModelOptionLabel(m, observedByAlias)}</option>
                     ))}
                   </select>
                 </label>

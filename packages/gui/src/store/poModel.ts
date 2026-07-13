@@ -20,13 +20,23 @@
  * T-335 — human-readable labels with a version number:
  * `gui_model`/PO_MODEL_OPTIONS are ALIASES ("opus"/"sonnet"/"fable") — the CLI
  * arg, not a specific dot-version, so alone they can never carry a version
- * number. The session stream's top-level assistant message DOES carry the real
- * running id (e.g. "claude-opus-4-8") — po-runner's extractPoModel forwards it
- * over `po:model-id` (poEvents.ts) into `realModelId` below, best-effort and
- * per-session (cleared on restart, since a new session's real id is unknown
- * until its first assistant line arrives). `poModelLabel()` prefers it; when
- * absent (pre-first-token, or a legacy/non-prdt project that never subscribes),
- * it falls back to the capitalized alias — never an invented version.
+ * number. The session stream's top-level lines (system init `model`, assistant
+ * `message.model`) DO carry the real running id (e.g.
+ * "claude-opus-4-5-20251101") — po-runner forwards it over `po:model-id`
+ * (poEvents.ts) into `realModelId` below, best-effort and per-session (cleared
+ * on restart, since a new session's real id is unknown until its first line).
+ * `poModelLabel()` prefers it; when absent, it falls back to the capitalized
+ * alias — never an invented version.
+ *
+ * T-338 — label format v2:
+ *   - narrow surfaces (sprite chips, send badge): `formatModelLabel` → "Sonnet 5"
+ *   - wide surfaces (switcher modal, FreshComposer/Settings selectors):
+ *     `formatModelLabelWide` → "Claude Sonnet 5"
+ *   - real ids carry a trailing YYYYMMDD build stamp (probe-confirmed:
+ *     `claude-haiku-4-5-20251001`) which is stripped — it is not a version.
+ *   - alias option lists resolve through `observedByAlias` (real ids seen live
+ *     this app run) via `poModelOptionLabel` so they can honestly show a
+ *     version; an unobserved alias degrades to "Claude Opus".
  */
 
 import { create } from 'zustand'
@@ -45,29 +55,57 @@ interface PoModelState {
   /**
    * T-335: the PO's real running model id for the CURRENT session (e.g.
    * "claude-opus-4-8"), captured from the stream via po:model-id. null before
-   * the first assistant line of a session arrives, and reset to null on every
-   * session restart (setRealModelId(null)) — a fresh session's id is unknown
-   * until its own first line, so a stale prior id must not linger.
+   * the session's first model-bearing line (system init / assistant) arrives,
+   * and reset to null on every session restart (setRealModelId(null)) — a
+   * fresh session's id is unknown until its own first line, so a stale prior
+   * id must not linger.
    */
   realModelId: string | null
+  /**
+   * T-338: alias → last OBSERVED real id (e.g. opus → "claude-opus-4-8").
+   * Populated whenever a real id streams by (PO's own via setRealModelId,
+   * workers' via recordObservedId) whose parsed family IS one of the alias
+   * options. This is the honest alias→version resolution the switcher /
+   * FreshComposer option lists use: an observed id is a fact about what this
+   * machine's CLI runs for that family — never an invented version. Survives
+   * session restarts and project switches (machine-level fact, not
+   * session-level state); an alias never observed stays absent → graceful
+   * "Claude Opus" form.
+   */
+  observedByAlias: Partial<Record<PoModel, string>>
+  /**
+   * T-338: which projectDir the store last loaded for. load() only clears
+   * realModelId when this CHANGES — a same-project re-load (ChatPanel /
+   * PersonaPresenceBar remount, e.g. after a tab/view switch) must NOT wipe
+   * the live session's captured id. Unconditional clearing here was the
+   * renderer-side path that dropped the version mid-session (T-338 bug #2).
+   */
+  loadedProjectDir: string | null
   /** (Re)load from `.prdt/config.json` via IPC. No-op in browser/dev (no window.api). */
   load: (projectDir: string) => Promise<void>
   /** Optimistic local set after a persist (switcher / FreshComposer). */
   setModel: (model: PoModel | null) => void
   /** T-335: record (or clear, on restart) the live-captured real model id. */
   setRealModelId: (id: string | null) => void
+  /** T-338: record an observed real id (worker stream etc.) into observedByAlias only. */
+  recordObservedId: (id: string) => void
 }
 
-export const usePoModel = create<PoModelState>((set) => ({
+export const usePoModel = create<PoModelState>((set, get) => ({
   model: null,
   supported: false,
   realModelId: null,
+  observedByAlias: {},
+  loadedProjectDir: null,
   load: async (projectDir: string) => {
-    // T-335: a project switch means a different (or not-yet-started) session —
-    // the previous project's captured real model id must not bleed into this
-    // one's label. PersonaPresenceBar/ChatPanel both call load() on projectDir
-    // change, so this is the single choke point for that reset.
-    set({ realModelId: null })
+    // T-335/T-338: a PROJECT SWITCH means a different (or not-yet-started)
+    // session — the previous project's captured real model id must not bleed
+    // into this one's label. A same-project re-load (component remount) keeps
+    // it: the session is still live and its id is still true. observedByAlias
+    // is machine-level (what this CLI resolves an alias to) and survives both.
+    if (get().loadedProjectDir !== projectDir) {
+      set({ realModelId: null, loadedProjectDir: projectDir })
+    }
     try {
       const cfg = await (window as any).api?.getPoSessionConfig?.(projectDir)
       if (cfg) {
@@ -82,7 +120,17 @@ export const usePoModel = create<PoModelState>((set) => ({
     }
   },
   setModel: (model) => set({ model }),
-  setRealModelId: (id) => set({ realModelId: id }),
+  setRealModelId: (id) => {
+    set({ realModelId: id })
+    // A live-captured PO id is also an observation for its alias family.
+    if (id) get().recordObservedId(id)
+  },
+  recordObservedId: (id) => {
+    const family = parseModelId(id)?.family.toLowerCase()
+    if (family && (PO_MODEL_OPTIONS as readonly string[]).includes(family)) {
+      set((s) => ({ observedByAlias: { ...s.observedByAlias, [family]: id } }))
+    }
+  },
 }))
 
 /** Resolve the display model (never null) — unset falls back to the GUI default. */
@@ -90,37 +138,85 @@ export function resolvePoModel(model: PoModel | null): PoModel {
   return model ?? DEFAULT_PO_MODEL
 }
 
-// ── T-335: human-readable labels ─────────────────────────────────────────────
+// ── T-335/T-338: human-readable labels ───────────────────────────────────────
 
 /**
- * Human-readable model label from a real model id or a bare alias.
+ * Parse a real model id into { family, version }. Handles (probe-confirmed
+ * shapes, 2026-07-13):
+ *   - family-first:  claude-opus-4-8, claude-sonnet-5,
+ *                    claude-haiku-4-5-20251001 (trailing YYYYMMDD build stamp)
+ *   - legacy version-first: claude-3-5-sonnet-20241022
+ * A trailing all-digit segment of 6+ digits is a date/build stamp, not a
+ * version — dropped. `version` may be '' (id carried only a date stamp).
+ * Returns null for anything else (bare aliases, garbage) — callers decide the
+ * fallback; no version is ever invented.
+ */
+function parseModelId(id: string): { family: string; version: string } | null {
+  const cleaned = id.replace(/\[.*\]$/, '').trim()
+  // family-first: claude-<family>(-<digits>)+
+  let m = /^claude-([a-z]+)((?:-\d+)+)$/i.exec(cleaned)
+  if (m) return { family: m[1], version: joinVersionSegments(m[2]) }
+  // legacy version-first: claude-<digits>(-<digits>)*-<family>[-<datestamp>]
+  m = /^claude-((?:\d+-)+)([a-z]+)(?:-\d{6,})?$/i.exec(cleaned)
+  if (m) return { family: m[2], version: joinVersionSegments(m[1]) }
+  return null
+}
+
+/** '-4-5-20251001' → '4.5' (date-stamp segments of 6+ digits dropped). */
+function joinVersionSegments(segs: string): string {
+  const parts = segs.split('-').filter(Boolean)
+  while (parts.length > 0 && /^\d{6,}$/.test(parts[parts.length - 1])) parts.pop()
+  return parts.join('.')
+}
+
+/**
+ * SHORT human-readable model label (narrow surfaces: sprite chips, send-button
+ * badge) from a real model id or a bare alias.
  *
- * Real ids on the session/sidechain stream look like `claude-<family>-<v>` or
- * `claude-<family>-<v1>-<v2>` (e.g. `claude-sonnet-5`, `claude-opus-4-8`),
- * optionally with a bracketed deployment suffix (`claude-opus-4-8[1m]` — the
- * same suffix electron/ipc/costArchive.ts's normalizeModelId strips for price
- * lookups). Family → Title Case; the numeric segments after the family join
- * with '.' (['4','8'] → '4.8', ['5'] → '5') — "Opus 4.8", "Sonnet 5".
- *
- * A bare alias (PO_MODEL_OPTIONS: "opus"/"sonnet"/"fable" — all the FreshComposer
- * selector, the switcher's option list, and a pre-first-token PO label ever
- * have) carries no knowable version — this renders just the capitalized family,
- * never an invented number ("Opus", not "Opus 4.8").
- *
- * Anything else unparseable (an unrecognized shape) renders as-is (trimmed)
- * rather than guessing — the label must never be blank/broken (T-335 AC).
+ *   - real id  → "Family V[.v]"  ("Opus 4.8", "Sonnet 5"; date stamp stripped)
+ *   - alias    → capitalized family only ("Opus") — no knowable version, never
+ *     an invented number
+ *   - unparseable → rendered as-is (trimmed): the label must never be
+ *     blank/broken (T-335 AC), and guessing would be dishonest.
  */
 export function formatModelLabel(idOrAlias: string): string {
   const cleaned = idOrAlias.replace(/\[.*\]$/, '').trim()
   if (!cleaned) return idOrAlias
-  const m = /^claude-([a-z]+)((?:-\d+)+)$/i.exec(cleaned)
-  if (m) {
-    const family = titleCase(m[1])
-    const version = m[2].split('-').filter(Boolean).join('.')
-    return version ? `${family} ${version}` : family
+  const parsed = parseModelId(cleaned)
+  if (parsed) {
+    const family = titleCase(parsed.family)
+    return parsed.version ? `${family} ${parsed.version}` : family
   }
   if (/^[a-z]+$/i.test(cleaned)) return titleCase(cleaned)
   return cleaned
+}
+
+/**
+ * WIDE human-readable model label (wide surfaces: switcher modal options,
+ * FreshComposer / Settings selectors) — "Claude " + the short form, but ONLY
+ * when the value honestly parses (real id or bare alias). An unparseable raw
+ * value renders as-is — never "Claude <garbage>".
+ */
+export function formatModelLabelWide(idOrAlias: string): string {
+  const cleaned = idOrAlias.replace(/\[.*\]$/, '').trim()
+  if (!cleaned) return idOrAlias
+  if (parseModelId(cleaned) || /^[a-z]+$/i.test(cleaned)) {
+    return `Claude ${formatModelLabel(cleaned)}`
+  }
+  return cleaned
+}
+
+/**
+ * T-338: wide option-list label for an ALIAS, resolved through the observed
+ * alias→id map when possible: observed → "Claude Opus 4.8" (versioned, honest
+ * — the id actually streamed by), unobserved → "Claude Opus" (graceful, no
+ * invented version).
+ */
+export function poModelOptionLabel(
+  alias: PoModel,
+  observedByAlias: Partial<Record<PoModel, string>>,
+): string {
+  return formatModelLabelWide(observedByAlias[alias] ?? alias)
 }
 
 function titleCase(s: string): string {
@@ -128,11 +224,11 @@ function titleCase(s: string): string {
 }
 
 /**
- * The PO's display label: prefers the live-captured real model id
- * (formatModelLabel'd, e.g. "Opus 4.8"); falls back to the capitalized
- * configured alias ("Opus") when no real id has been captured yet for this
- * session (pre-first-token, or a project where the stream subscription never
- * fires) — graceful, per T-335's "don't invent a version" requirement.
+ * The PO's display label (SHORT form — chip/badge): prefers the live-captured
+ * real model id (formatModelLabel'd, e.g. "Opus 4.8"); falls back to the
+ * capitalized configured alias ("Opus") when no real id has been captured yet
+ * for this session (pre-first-line, or a project where the stream subscription
+ * never fires) — graceful, per T-335's "don't invent a version" requirement.
  */
 export function poModelLabel(state: { model: PoModel | null; realModelId: string | null }): string {
   if (state.realModelId) return formatModelLabel(state.realModelId)

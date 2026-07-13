@@ -16,7 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../store/workspace'
 import { useSessionHealth } from '../../store/sessionHealth'
 import { usePoChat } from '../../store/poChat'
-import { usePoModel, resolvePoModel, formatModelLabel, PO_MODEL_OPTIONS, type PoModel } from '../../store/poModel'
+import { usePoModel, resolvePoModel, poModelOptionLabel, PO_MODEL_OPTIONS, type PoModel } from '../../store/poModel'
 
 interface Props {
   projectDir: string
@@ -27,6 +27,9 @@ export default function PoModelSwitchModal({ projectDir, onClose }: Props) {
   const { t } = useTranslation()
   const current = resolvePoModel(usePoModel((s) => s.model))
   const setModel = usePoModel((s) => s.setModel)
+  // T-338: real ids observed live this app run (PO + workers) — lets the
+  // option list show an honest versioned name for an alias.
+  const observedByAlias = usePoModel((s) => s.observedByAlias)
   const setClaudeSessionId = useWorkspace((s) => s.setClaudeSessionId)
   const clearHealth = useSessionHealth((s) => s.clearHealth)
   const setRestartCompleted = usePoChat((s) => s.setRestartCompleted)
@@ -78,9 +81,12 @@ export default function PoModelSwitchModal({ projectDir, onClose }: Props) {
                 disabled={busy}
               >
                 <span style={{ ...radioDot, ...(active ? radioDotActive : null) }} aria-hidden="true" />
-                {/* T-335: alias-only option list (no session per candidate model
-                    exists yet) — capitalized family, never an invented version. */}
-                <span style={optionLabel}>{formatModelLabel(m)}</span>
+                {/* T-338: wide surface → "Claude Sonnet 5"-style full name.
+                    Versioned only when the alias resolves through an id
+                    observed live this app run (observedByAlias) — an
+                    unobserved alias degrades to "Claude Sonnet" (never an
+                    invented version). */}
+                <span style={optionLabel}>{poModelOptionLabel(m, observedByAlias)}</span>
                 {m === current && <span style={currentBadge}>{t('workspace.poModel.currentBadge')}</span>}
               </button>
             )

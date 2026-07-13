@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Loader2, CheckCircle2, XCircle, BellRing, ExternalLink } from 'lucide-react'
 import i18next from '../../i18n'
 import { useWorkspace } from '../../store/workspace'
+import { usePoModel, poModelOptionLabel, type PoModel } from '../../store/poModel'
 
 type Lang = 'en' | 'ko'
 
@@ -104,6 +105,8 @@ interface PoSessionConfig {
 
 function PoSessionSection({ projectDir }: { projectDir: string }) {
   const { t } = useTranslation()
+  // T-338: real ids observed live this app run — versioned option labels.
+  const observedByAlias = usePoModel((s) => s.observedByAlias)
   const [cfg, setCfg] = useState<PoSessionConfig>({ supported: false, model: null, effort: null })
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -172,8 +175,11 @@ function PoSessionSection({ projectDir }: { projectDir: string }) {
           onChange={(e) => handleModelChange(e.target.value)}
         >
           <option value="">{t('settings.poSession.inherit')}</option>
+          {/* T-338: wide surface — "Claude Sonnet 5"-style full name (versioned
+              only via a live-observed id; a bare lowercase alias must never
+              reach the user, AC-1). */}
           {PO_SESSION_MODEL_OPTIONS.map((m) => (
-            <option key={m} value={m}>{m}</option>
+            <option key={m} value={m}>{poModelOptionLabel(m as PoModel, observedByAlias)}</option>
           ))}
         </select>
       </div>
