@@ -274,7 +274,7 @@ full hook 18개의 나머지는 처분표(§12)에서 contract 승격 / playbook
 
 ## 10. CLI · 온보딩 · statusline
 
-- `prdt` 첫 실행 = **3항목 인터랙티브 init을 PO 실행 전에 완료**: slug 확인(기본값 폴더명) → 첫 버전 v1 → stage=define. GUI 온보딩과 같은 순서, **같은 init 모듈 공유**.
+- `prdt` 첫 실행 = **2항목 인터랙티브 init을 PO 실행 전에 완료**: slug 확인(기본값 폴더명) → 첫 버전 v1 (stage는 자동으로 `define`). GUI 온보딩과 같은 순서, **같은 init 모듈 공유**.
   (full의 결함: version이 P1까지 미설정 → statusline이 `if not version: exit` → 침묵. init이 결정론적으로 끝나므로 prdt는 0초부터 표시.)
 - statusline 포맷: `<slug> · <version> <stage> <done>/<open+done> · T-NNN <task>→<persona> · <branch>`
   - 추가: slug, 진행 task+담당 persona (full은 주석에만 있고 코드는 dead variable). version 세그먼트는 2026-07-03 dogfood에서 스펙 누락 발견·추가 (진행도가 현재 버전 기준인데 버전이 안 보였음; version==slug이면 중복 생략)

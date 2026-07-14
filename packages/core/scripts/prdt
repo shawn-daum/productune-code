@@ -259,8 +259,6 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
         print("first version — v0.1: validating an idea, build first, ship date TBD (default)")
         print("                v1:   shipping a solid idea with a launch plan")
         version = input(f"first version (v0.1 / v1, or type your own) [{version}]: ").strip() or version
-        stage_in = input(f"stage [{stage}]: ").strip() or stage
-        stage = stage_in if stage_in in STAGES else stage
     prdt.mkdir(exist_ok=True)
     (prdt / "config.json").write_text(json.dumps(
         {"slug": slug, "created_at": now_iso(), "surfaces": {}}, indent=2) + "\n", encoding="utf-8")
@@ -800,7 +798,7 @@ def cmd_migrate(args):
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
     sub = ap.add_subparsers(dest="cmd")
-    p = sub.add_parser("init", help="interactive 3-item project init (slug · version · stage)")
+    p = sub.add_parser("init", help="interactive 2-item project init (slug · version); stage defaults to define")
     p.add_argument("--slug")
     p.add_argument("--version", default="v0.1",
                     help="v0.1 (validate an idea, default) or v1 (ship-ready); any vN[.N] id accepted")
