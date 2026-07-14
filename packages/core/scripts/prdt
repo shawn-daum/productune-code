@@ -250,7 +250,10 @@ def cmd_menus(_args):
 def select_choice(options, header):
     """Arrow-key select via gum/fzf when installed (T-332). options: [(label, value), ...].
     Returns the matching value, or None if neither tool is present/usable — caller must
-    fall back to its own text input() in that case so both paths collect the same value."""
+    fall back to its own text input() in that case so both paths collect the same value.
+    Capture stdout ONLY: both tools print the selection on stdout but DRAW the menu on
+    stderr (gum) / the tty — piping stderr too renders an invisible "blind menu" that
+    still eats keystrokes (real-terminal bug found post-ship)."""
     labels = [label for label, _ in options]
 
     def resolve(raw):
@@ -260,14 +263,14 @@ def select_choice(options, header):
     if shutil.which("gum"):
         try:
             proc = subprocess.run(["gum", "choose", "--header", header, *labels],
-                                  capture_output=True, text=True)
+                                  stdout=subprocess.PIPE, text=True)
         except OSError:
             return None
         return resolve(proc.stdout) if proc.returncode == 0 else None
     if shutil.which("fzf"):
         try:
             proc = subprocess.run(["fzf", "--prompt", f"{header}> ", "--reverse"],
-                                  input="\n".join(labels), capture_output=True, text=True)
+                                  input="\n".join(labels), stdout=subprocess.PIPE, text=True)
         except OSError:
             return None
         return resolve(proc.stdout) if proc.returncode == 0 else None
