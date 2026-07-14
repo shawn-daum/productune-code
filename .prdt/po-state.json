@@ -2,5 +2,9 @@
   "schema_version": 1,
   "stage": "ship",
   "version": "v1.1",
-  "current_task": null
+  "current_task": {
+    "ticket_id": "T-345",
+    "slug": "gui-auto-surface-multi-design-artifacts",
+    "assignee": "developer"
+  }
 }
