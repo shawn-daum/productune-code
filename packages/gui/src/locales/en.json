@@ -869,7 +869,8 @@
         "closed": "Closed",
         "currentFallback": "v1 (pending) — activated when PRD authoring begins",
         "currentFallbackTransient": "Awaiting next version — activated when you start a new PRD with PO",
-        "currentParseError": "Failed to read po-state — file may be corrupt. Check backup (.bak)"
+        "currentParseError": "Failed to read po-state — file may be corrupt. Check backup (.bak)",
+        "currentPrdtMissing": "No project data yet — po-state.json may be missing or unreadable"
       },
       "title": "Version history",
       "empty": "Select a version",

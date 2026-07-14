@@ -9,6 +9,7 @@ import SettingsView from './SettingsView'
 import TeamPanel from './TeamPanel'
 import ExplorerPane from '../explorer/ExplorerPane'
 import SidePanelCurrentVersion from './SidePanelCurrentVersion'
+import SidePanelPrdtProjectCard from './SidePanelPrdtProjectCard'
 import SidePanelPastVersions from './SidePanelPastVersions'
 import SidePanelArtifacts from './SidePanelArtifacts'
 import SidePanelProjectEnv from './SidePanelProjectEnv'
@@ -165,9 +166,13 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
       {activeIcon === 'project' && (
         <div style={projectBody}>
           {/* Versions section — 2 sp-section split (T-P4-097).
-              T-291 (adapter A8): the current/past version cards read versions[] +
-              current_version, which a prdt po-state lacks — suppressed for prdt. */}
-          {!isPrdt && (
+              T-291 (adapter A8): the legacy current/past version cards read
+              versions[] + current_version, which a prdt po-state lacks, so
+              SidePanelCurrentVersion is legacy-only. T-347: that suppression
+              previously left prdt projects with NO project card at all (blank
+              area above .ENV) — SidePanelPrdtProjectCard fills the prdt branch
+              with the flat slug/version/stage shape, incl. graceful fallbacks. */}
+          {!isPrdt ? (
             <SidePanelCurrentVersion
               poState={poState}
               selectedVersionId={selectedVersionId}
@@ -175,6 +180,13 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
               // T-PATCH-013 B1: current-version card click must ONLY set selection;
               // it must NOT go through handleVersionClick (which opens version-history
               // and dispatches version-select). The card opens its own ticket-review tab.
+              onSelect={(id) => setSelectedVersionId(id)}
+            />
+          ) : (
+            <SidePanelPrdtProjectCard
+              poState={poState}
+              selectedVersionId={selectedVersionId}
+              isFocused={isFocused}
               onSelect={(id) => setSelectedVersionId(id)}
             />
           )}

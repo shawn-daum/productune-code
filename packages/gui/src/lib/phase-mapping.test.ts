@@ -22,6 +22,7 @@ import {
   getActivePhaseDef,
   bridgePrdtVersion,
   hasPrdtWorkTrace,
+  resolvePrdtProjectCard,
   STAGE_DEFS,
 } from './phase-mapping'
 import type { PoState } from './types'
@@ -153,6 +154,79 @@ export const WORK_TRACE_CASES: readonly WorkTraceCase[] = [
   { label: 'empty object → false', poState: {}, expected: false },
 ]
 
+// ── resolvePrdtProjectCard (T-347) — project-card fallback-vs-render decision ──
+//
+// Regression: LeftSidebar previously suppressed SidePanelCurrentVersion for
+// EVERY prdt project (`!isPrdt`) with no replacement — a prdt project's
+// 프로젝트 tab showed only the .ENV section, never a card, even when po-state
+// had perfectly good slug/version data. This pins `hasCoreData` (the signal
+// SidePanelPrdtProjectCard uses to pick "render the card" vs "render a
+// graceful notice") against the real on-disk shapes seen in enneagram-mentor
+// (legacy `~/productune/projects/<slug>` layout) and hanta/paepyeong
+// (prdt-standard `<project>/.prdt` layout) — both are plain prdt po-state
+// (`{schema_version, stage, version, current_task}`), so the trigger is the
+// po-state SHAPE (isPrdtPoState), not the directory layout.
+
+interface ProjectCardCase {
+  readonly label: string
+  readonly poState: PoState | null
+  readonly projectSlug: string | null
+  readonly expectedSlug: string | null
+  readonly expectedVersionId: string | null
+  readonly expectedHasCoreData: boolean
+}
+
+export const PROJECT_CARD_CASES: readonly ProjectCardCase[] = [
+  {
+    label: 'enneagram-mentor-shaped prdt state (legacy ~/productune/projects layout) + resolved Project.slug → card renders',
+    poState: { schema_version: 1, stage: 'build', version: 'v0.1', current_task: { ticket_id: 'T-001', slug: 'design-direction-3up', assignee: 'designer' } },
+    projectSlug: 'enneagram-mentor',
+    expectedSlug: 'enneagram-mentor',
+    expectedVersionId: 'v0.1',
+    expectedHasCoreData: true,
+  },
+  {
+    label: 'hanta/paepyeong-shaped prdt state (prdt-standard <project>/.prdt layout, no current_task) → card renders',
+    poState: { schema_version: 1, stage: 'idle' as any, version: 'v1', current_task: null as any },
+    projectSlug: 'hanta',
+    expectedSlug: 'hanta',
+    expectedVersionId: 'v1',
+    expectedHasCoreData: true,
+  },
+  {
+    label: 'po-state.project_slug present → takes precedence over Project.slug',
+    poState: { schema_version: 1, stage: 'build', version: 'v1', project_slug: 'from-po-state' } as any,
+    projectSlug: 'from-project',
+    expectedSlug: 'from-po-state',
+    expectedVersionId: 'v1',
+    expectedHasCoreData: true,
+  },
+  {
+    label: 'po-state present but no version field, Project.slug resolved → fallback slug only, still renders (never blank)',
+    poState: { schema_version: 1, stage: 'define' },
+    projectSlug: 'brand-new-project',
+    expectedSlug: 'brand-new-project',
+    expectedVersionId: null,
+    expectedHasCoreData: true,
+  },
+  {
+    label: 'poState null (unreadable/missing po-state.json) + no resolved Project.slug → NO core data → caller must show fallback notice',
+    poState: null,
+    projectSlug: null,
+    expectedSlug: null,
+    expectedVersionId: null,
+    expectedHasCoreData: false,
+  },
+  {
+    label: 'poState empty object (unparsable-but-non-null) + no Project.slug → NO core data',
+    poState: {},
+    projectSlug: null,
+    expectedSlug: null,
+    expectedVersionId: null,
+    expectedHasCoreData: false,
+  },
+]
+
 export function runPhaseMappingCases(): { passed: number; failures: string[] } {
   const failures: string[] = []
   let total = 0
@@ -203,6 +277,17 @@ export function runPhaseMappingCases(): { passed: number; failures: string[] } {
     if (actual !== c.expected) failures.push(`hasPrdtWorkTrace[${c.label}]: expected ${c.expected}, got ${actual}`)
   }
 
+  for (const c of PROJECT_CARD_CASES) {
+    total += 1
+    const out = resolvePrdtProjectCard(c.poState, c.projectSlug)
+    if (out.slug !== c.expectedSlug || out.versionId !== c.expectedVersionId || out.hasCoreData !== c.expectedHasCoreData) {
+      failures.push(
+        `resolvePrdtProjectCard[${c.label}]: expected slug=${c.expectedSlug}/versionId=${c.expectedVersionId}/hasCoreData=${c.expectedHasCoreData}, ` +
+        `got slug=${out.slug}/versionId=${out.versionId}/hasCoreData=${out.hasCoreData}`,
+      )
+    }
+  }
+
   // STAGE_DEFS carries exactly the 4 prdt stages, each with a name + color
   // ("its own display definition" — the ticket's core acceptance bullet).
   total += 1
@@ -225,6 +310,6 @@ test('phase-mapping: prdt stage + legacy phase cases all pass', () => {
   if (failures.length > 0) {
     throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
   }
-  const totalCases = KIND_CASES.length + STAGE_CASES.length + LEGACY_PHASE_CASES.length + BRIDGE_CASES.length + WORK_TRACE_CASES.length + 1
+  const totalCases = KIND_CASES.length + STAGE_CASES.length + LEGACY_PHASE_CASES.length + BRIDGE_CASES.length + WORK_TRACE_CASES.length + PROJECT_CARD_CASES.length + 1
   expect(passed).toBe(totalCases)
 })

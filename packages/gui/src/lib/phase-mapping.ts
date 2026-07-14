@@ -173,6 +173,45 @@ export function getActiveStageDef(poState: PoState | null): StageDef {
   return STAGE_DEFS[getActiveStageIndex(poState)]
 }
 
+/** Display data resolved for the prdt project card (T-347). */
+export interface PrdtProjectCardData {
+  slug: string | null
+  versionId: string | null
+  stageDef: StageDef
+  /** False → po-state has neither a slug nor a version to show (missing/
+   *  unparsable po-state, e.g. a brand-new or corrupt project) — the caller
+   *  must render a graceful fallback notice instead of the card, never blank. */
+  hasCoreData: boolean
+}
+
+/**
+ * T-347: prdt po-state has no `versions[]` array (adapter A8), so
+ * SidePanelCurrentVersion's legacy multi-version card can't drive a prdt
+ * project's card. This derives the prdt-shaped equivalent — slug / version /
+ * stage — from po-state plus the Project the app already resolved on open
+ * (`projectSlug`, always present regardless of legacy vs prdt-standard
+ * layout), so `slug` is effectively never blank even when po-state itself
+ * carries no `project_slug`.
+ *
+ * Self-contained w.r.t. the T-306 version bridge: runs `bridgePrdtVersion`
+ * internally so `versionId` resolves whether the caller passes the raw
+ * on-disk po-state (flat `version`) or the store's already-bridged one
+ * (`current_version`) — no coupling to the store's ingress-time bridge.
+ *
+ * Pure (no rendering) so the fallback-vs-card decision (`hasCoreData`) is
+ * unit-testable without a DOM renderer.
+ */
+export function resolvePrdtProjectCard(
+  rawPoState: PoState | null,
+  projectSlug: string | null,
+): PrdtProjectCardData {
+  const poState = bridgePrdtVersion(rawPoState)
+  const slug = poState?.project_slug ?? projectSlug ?? null
+  const versionId = poState?.current_version ?? null
+  const stageDef = getActiveStageDef(poState)
+  return { slug, versionId, stageDef, hasCoreData: !!slug || !!versionId }
+}
+
 // ── T-PATCH-096 §4.b: ticket `type` → phase bucket (single source of truth) ──
 //
 // APPROXIMATION, not the doctrine phase axis. There is no reliable per-phase
