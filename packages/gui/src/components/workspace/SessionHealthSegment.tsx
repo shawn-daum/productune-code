@@ -20,6 +20,7 @@ import {
   Clock,
 } from 'lucide-react'
 import { useSessionHealth, severityOf, type PoHealthState, type PoHealthDetail } from '../../store/sessionHealth'
+import { personaIdFromAgentType, PERSONA_LABELS } from '../../store/personaPresence'
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 
@@ -103,6 +104,15 @@ function StateIcon({ state }: { state: PoHealthState }) {
   }
 }
 
+// T-355: raw agent id (e.g. "prdt-developer") → product role label ("Developer").
+// Mirrors ChatPanel's verbForHealth mapping — the same contracts rule (never
+// surface an agent id to the user) applied to the status bar's delegating chip.
+export function personaLabel(raw: string | undefined): string {
+  if (!raw) return '…'
+  const id = personaIdFromAgentType(raw)
+  return id ? PERSONA_LABELS[id] : raw
+}
+
 function buildLabel(state: PoHealthState, detail: PoHealthDetail, t: (k: string, opts?: any) => string): string {
   switch (state) {
     case 'thinking':
@@ -110,7 +120,15 @@ function buildLabel(state: PoHealthState, detail: PoHealthDetail, t: (k: string,
     case 'stalled':
       return t('workspace.sessionHealth.stalled.label')
     case 'delegating':
-      return t('workspace.sessionHealth.delegating.label', { persona: detail.persona ?? '…' })
+      // T-355: detail.persona is the raw dispatch agent id (e.g. "prdt-developer")
+      // — never show that to the user. Map it through the same persona-id →
+      // product-role-label lookup ChatPanel's verbForHealth already uses so the
+      // status bar reads "Developer" like every other user-facing surface. Falls
+      // back to the raw string only for an unmapped id (defensive, should not
+      // happen) and to '…' while no persona has arrived yet.
+      return t('workspace.sessionHealth.delegating.label', {
+        persona: personaLabel(detail.persona),
+      })
     case 'compacting':
       return t('workspace.sessionHealth.compacting.label')
     case 'rate-limited':
@@ -214,7 +232,17 @@ const segmentWrap: React.CSSProperties = {
   padding: '0 6px',
   cursor: 'default',
   userSelect: 'none',
-  flexShrink: 0,
+  // T-355: shrinkable (was flexShrink:0) — this segment now shows for the common
+  // 'delegating'/'thinking' states (not just rare error states as originally
+  // designed), so it permanently competes with UsageBar for the StatusBar's left
+  // cluster width. Both are flexShrink:0 would push whichever renders second
+  // (UsageBar) past the window edge — reported as "usage display disappeared".
+  // UsageBar stays flexShrink:0 (protected, always fully visible); this segment
+  // absorbs the squeeze and truncates its label (segLabel already has
+  // overflow/ellipsis) instead of evicting the usage gauges.
+  flexShrink: 1,
+  minWidth: 0,
+  overflow: 'hidden',
 }
 
 const dot: React.CSSProperties = {

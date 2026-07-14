@@ -138,7 +138,21 @@ export const useSessionHealth = create<SessionHealthStore>((set, get) => ({
       event.state !== 'healthy' &&
       HEALTH_PRIORITY[event.state] <= HEALTH_PRIORITY[current]
     ) {
-      return
+      // T-355: 'delegating' is persona-aware, mirroring po-runner.ts's emitHealth
+      // dedupe. The runner may send TWO 'delegating' events for the same dispatch
+      // — a generic detail-less ping (handleToolUseHealth) immediately followed by
+      // the real one carrying detail.persona — both at the SAME priority, so the
+      // plain priority check above would reject the second (no "advance") and the
+      // status bar would get stuck showing the placeholder ("… 위임 중") instead of
+      // the worker's name. Let a same-priority 'delegating' event through when it
+      // carries a persona the store doesn't already have — this is a genuine
+      // content update, not a redundant repeat.
+      const isDelegatingPersonaUpdate =
+        event.state === 'delegating' &&
+        current === 'delegating' &&
+        typeof event.detail?.persona === 'string' &&
+        event.detail.persona !== get().detail.persona
+      if (!isDelegatingPersonaUpdate) return
     }
     set({
       state: event.state,

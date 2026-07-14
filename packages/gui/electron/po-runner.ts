@@ -501,7 +501,7 @@ const STALL_TIMEOUT_MS    = 90_000   // T-PATCH-221: sustained silence → 'stal
 // under the new name while staying backward-compatible with the old one.
 const DELEGATE_TOOLS = ['Task', 'Agent']
 
-function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
+export function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
   return {
     lastToolUse: null,
     lastToolUseAt: null,
@@ -529,7 +529,7 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
 // classification. Small bounded window — only the tail carries the failure cause.
 const STDERR_TAIL_MAX = 20
 
-function emitHealth(
+export function emitHealth(
   state: PoHealthState,
   detail: PoHealthDetail | undefined,
   ctx: HealthContext,
@@ -547,7 +547,17 @@ function emitHealth(
     // distinct persona → fall through and re-emit
   }
   ctx.lastEmittedState = state
-  ctx.lastDelegatedPersona = state === 'delegating' ? (detail?.persona ?? null) : null
+  // T-355: a detail-LESS 'delegating' ping (handleToolUseHealth's generic
+  // pre-check, fired before the persona-specific re-emit right below it — or a
+  // stray re-assert from a lifecycle envelope that doesn't carry subagent_type)
+  // must NOT blank out an already-known persona. Overwriting it to null here
+  // let a LATER, unrelated detail-less ping for the same still-running dispatch
+  // silently pass the dedupe check again (null === null) and re-clobber the
+  // renderer with a persona-less event — the bug behind the status bar showing
+  // a delegating chip with no (or the wrong) worker name. `?? ctx.lastDelegatedPersona`
+  // keeps the last REAL persona sticky across detail-less pings; it's still
+  // replaced the moment a genuinely different persona's detail arrives.
+  ctx.lastDelegatedPersona = state === 'delegating' ? (detail?.persona ?? ctx.lastDelegatedPersona) : null
   cb.onHealth({ state, detail, at: new Date().toISOString(), msgId: ctx.msgId })
 }
 
