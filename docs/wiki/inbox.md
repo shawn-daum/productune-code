@@ -61,3 +61,7 @@
 - (T-345 qa) T-345: linkifyText/MdRenderer 검증이 문자열(마크다운 텍스트) 레벨 unit test + 코드리뷰에만 머물러, 실제 렌더된 DOM의 href가 react-markdown v9 defaultUrlTransform에 의해 ptn: 커스텀 스킴이 빈 문자열로 sanitize되는 것을 못 잡았다 — 링크 클릭 가능성 acceptance는 실제 클릭 E2E 없이는 검증 불가능한 클래스의 버그다.
 - (T-345 qa) QA 검증 중 uncommitted 파일에 임시 변형을 가한 뒤 git checkout으로 '원복'하면 개발자의 미커밋 diff까지 통째로 날아간다(T-345 재검증에서 실제 발생, 세션 내 캡처해둔 diff로 즉시 복원) — dirty tree 위 검증에서 파일 변형이 필요하면 사전에 git stash create/파일 백업으로 복원점을 만들고 시작할 것.
 - (T-347 qa) GUI live-verify footgun: a synthetic scratch prdt project needs BOTH .prdt/config.json + .prdt/onboarding.json{status:'done'} to reach WorkspaceShell/LeftSidebar — otherwise EntryGate (src/components/EntryGate.tsx) routes to FreshComposer regardless of po-state content, since it gates on onboarding status + hasPrdtWorkTrace, not on LeftSidebar's own isPrdt logic. Relevant to any future prdt-qa live-verify of packages/gui sidebar/project-tab behavior.
+- (T-348 designer) designer 판단: 프로젝트 탭 아티팩트 섹션 = 현재 버전 전용(과거 버전 아티팩트는 히스토리 탭 각 엔트리로 이관) — 같은 데이터를 두 곳에서 브라우징하지 않기 위한 결정, T-348 acceptance엔 명시 안 됐던 designer 재량
+- (T-348 designer) designer 판단: 히스토리 상세 섹션 순서를 'Outcome 최상단'으로 — doctrine #7(user outcome over output) 적용, ticket 문구엔 순서 지정 없었음
+- (T-348 designer) designer 판단: '닫힘' SoT = git tag 존재만(ticket-status나 retro-file 존재는 보조 신호) — retro 작성과 태깅이 순서가 있는 별개 스텝이라는 걸 discipline/po/playbooks/retro.md에서 확인 후 결정
+- (T-348 designer) VersionDetailView(legacy 과거버전 상세)는 스코프 밖으로 유지 — T-348 지시가 '현재 버전 탭'만 명시했고 legacy는 카드+티켓판이 이미 한 화면이라 prdt식 분리를 강제할 이유가 없다고 판단(spec §3.2)
