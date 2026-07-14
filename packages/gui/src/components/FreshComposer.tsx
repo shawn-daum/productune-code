@@ -44,13 +44,14 @@ export default function FreshComposer({ project, onConfirm }: Props) {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
-  // T-344: same fix as ChatPanel — Cmd+Enter mid-Hangul-composition sends the
-  // full committed text fine, but the browser's composition buffer for this
-  // DOM node survives `setDraft('')` (native overlay, not reachable via React's
-  // controlled `value`), so the IME replays the still-composing glyph into the
-  // now-"empty" box a moment later. Bumping this key remounts the textarea
-  // (fresh DOM node, no composition session) — the only reliable cross-browser
-  // way to discard it, since there's no JS API to cancel a live composition.
+  // T-344/T-354: same fix as ChatPanel — Cmd+Enter mid-Hangul-composition sends
+  // the full text fine, but the composition session survives `setDraft('')`
+  // and the IME replays the still-composing glyph into the "empty" box.
+  // T-354: the T-344 remount (key bump) alone regressed on the REAL macOS
+  // Korean IME, whose OS-side session outlives the DOM node — `blur()` before
+  // clearing (see handleSend) makes Chromium commit-and-end that session; the
+  // remount then discards the browser-side leftovers. The textarea is disabled
+  // while `sending`, so nothing can be replayed into it post-send.
   const [composerKey, setComposerKey] = useState(0)
 
   // T-334: PO model choice — defaults to opus, so the first session launches with
@@ -99,6 +100,11 @@ export default function FreshComposer({ project, onConfirm }: Props) {
     const api = (window as any).api
     // Step 1 — Build the final text (prepends ## Attached files block if present).
     const finalText = buildAttachedFilesBlock(draft.trim())
+
+    // T-354: end the OS-level IME composition session BEFORE any clearing —
+    // `finalText` above already captured the full text, so the blur-commit's
+    // glyph landing in the old node is irrelevant (remounted at Step 3).
+    taRef.current?.blur()
 
     try {
       // Step 2 — Persist user message to disk.

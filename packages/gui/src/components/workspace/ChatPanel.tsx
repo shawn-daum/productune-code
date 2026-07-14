@@ -246,20 +246,31 @@ export default function ChatPanel() {
 
   // T-344: Cmd+Enter mid-Hangul-composition sends the full committed text fine
   // (isComposing reads stale-true on the same keydown that actually ends the
-  // composition — see T-PATCH-264 below), but the browser's own composition
-  // buffer for the textarea DOM node isn't torn down by our `setDraft('')` —
-  // it's a native overlay React's controlled `value` can't reach mid-session —
-  // so the IME replays the still-composing glyph into the now-"empty" box a
-  // moment later. Remounting the textarea (bump `composerKey`) after every
-  // clear guarantees a fresh DOM node with no composition session, which is
-  // the only cross-browser-reliable way to discard it (there's no JS API to
-  // cancel an in-flight composition). Harmless no-op for non-IME sends.
+  // composition — see T-PATCH-264 below), but the composition session isn't
+  // torn down by our `setDraft('')`, so the still-composing glyph gets
+  // replayed into the now-"empty" box a moment later. Remounting the textarea
+  // (bump `composerKey`) after every clear discards the BROWSER-side session.
+  // T-354: the remount alone regressed on the real macOS Korean IME — the OS
+  // input method keeps its own composition state independent of the DOM node
+  // and re-inserts the pending glyph into the refocused fresh textarea
+  // (repro: real 2-set-Korean key-code events, not CDP simulation). Fix:
+  // `blur()` FIRST — losing first-responder is the signal that makes Chromium
+  // ask the OS IME to commit-and-end its session, so nothing is left to
+  // replay — then clear + remount, then refocus a macrotask later (past the
+  // IME teardown; see the effect below).
   const [composerKey, setComposerKey] = useState(0)
 
   const handleSubmit = async () => {
     const trimmed = draft.trim()
     if (!trimmed && attachedFiles.length === 0) return
     if (!project) return
+
+    // T-354: end the OS-level IME composition session BEFORE clearing. The
+    // blur-commit may land the pending glyph in the OLD node's value —
+    // irrelevant: `trimmed` above already captured the full text (React
+    // mirrors composing text into `draft` on every change) and the node is
+    // remounted below. Harmless no-op for non-IME input.
+    taRef.current?.blur()
 
     // T-PATCH-133: block built via shared hook (format: `- #N -> path` / `- path`).
     const text = buildAttachedFilesBlock(trimmed)
@@ -291,10 +302,15 @@ export default function ChatPanel() {
   // T-344: the key bump above remounts the textarea (fresh DOM node), which
   // drops focus — restore it so typing a follow-up doesn't require re-clicking.
   // Guard skips the very first render (composerKey start value, no remount yet).
+  // T-354: refocus is DEFERRED one macrotask. React 18 flushes this effect
+  // synchronously inside the discrete keydown dispatch — a same-event refocus
+  // hands the OS IME (whose session teardown from the blur above may still be
+  // settling) a fresh first-responder to replay the pending glyph into.
   const composerKeyMounted = useRef(false)
   useEffect(() => {
     if (!composerKeyMounted.current) { composerKeyMounted.current = true; return }
-    taRef.current?.focus()
+    const id = window.setTimeout(() => taRef.current?.focus(), 0)
+    return () => window.clearTimeout(id)
   }, [composerKey])
 
   // T-309: flush the queue on the streaming true→false transition, but ONLY on a
