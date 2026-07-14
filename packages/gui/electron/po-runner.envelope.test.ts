@@ -86,6 +86,62 @@ export const ENVELOPE_CASES: readonly Case[] = [
     },
   },
 
+  // ── T-345: prose fallback (no structured files_written[] envelope) ─────────
+  // Dogfooding gap: the PO delegated to Designer, who wrote 3 mockups, and the
+  // PO's own turn-closing text just narrated `file:///…` paths in prose (no
+  // JSON envelope at all) — the old envelope-only parser returned [].
+  {
+    label: 'plain-text file:// list (no JSON envelope) → all 3 paths resolved (T-345)',
+    run: () => {
+      const text = [
+        '디자인 방향 3안을 준비했습니다:',
+        '- A안: file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-a.html',
+        '- B안: file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-b.html',
+        '- C안: file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-c.html',
+        '검토 후 알려주세요.',
+      ].join('\n')
+      const files = parseArtifactFiles(text)
+      return {
+        ok: sameArray(files, [
+          'docs/artifacts/enneagram-mentor-ds-a.html',
+          'docs/artifacts/enneagram-mentor-ds-b.html',
+          'docs/artifacts/enneagram-mentor-ds-c.html',
+        ]),
+        detail: JSON.stringify(files),
+      }
+    },
+  },
+  {
+    label: 'bare relative docs/artifacts/*.html mention (no file:// scheme) also resolves (T-345)',
+    run: () => {
+      const text = '산출물: docs/artifacts/foo.html 확인해주세요.'
+      const files = parseArtifactFiles(text)
+      return { ok: sameArray(files, ['docs/artifacts/foo.html']), detail: JSON.stringify(files) }
+    },
+  },
+  {
+    label: 'duplicate mention across envelope + prose is deduped, envelope order wins (T-345)',
+    run: () => {
+      const envelope = JSON.stringify({
+        persona: 'prdt-po',
+        summary: 'mixed',
+        confidence: 'high',
+        files_written: ['docs/artifacts/foo.html'],
+      })
+      const text = `${envelope}\n참고로 file:///abs/path/docs/artifacts/foo.html 도 같은 파일입니다.`
+      const files = parseArtifactFiles(text)
+      return { ok: sameArray(files, ['docs/artifacts/foo.html']), detail: JSON.stringify(files) }
+    },
+  },
+  {
+    label: 'mention of a file OUTSIDE docs/artifacts/ is not swept in as an artifact (T-345)',
+    run: () => {
+      const text = '수정한 파일: file:///Users/dev/proj/packages/gui/src/App.tsx'
+      const files = parseArtifactFiles(text)
+      return { ok: sameArray(files, []), detail: JSON.stringify(files) }
+    },
+  },
+
   // ── QA envelope defense (T-288 §2) ──────────────────────────────────────────
   {
     label: 'qa_status-less prdt-qa envelope recognized via persona, no throw',

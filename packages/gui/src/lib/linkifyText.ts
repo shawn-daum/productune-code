@@ -12,6 +12,8 @@
  *   ~/.productune/…/f.md  → [f.md](ptn:doctrine/~/.productune/…/f.md) (T-PATCH-106)
  *   /…/.productune/…/f.md → [f.md](ptn:doctrine//…/.productune/…)     (T-PATCH-106)
  *   file:///…/f.md        → [f.md](ptn:doctrine/file:///…/f.md)       (T-PATCH-106)
+ *   file:///…/docs/artifacts/f.html → [f.html](ptn:doctrine/file:///…/f.html) (T-345, any ext, not just doctrine .md)
+ *   docs/artifacts/f.html  → [f.html](ptn:file/docs/artifacts/f.html)  (T-345, bare relative mention)
  *   https://hostname      → [hostname](https://hostname)            (#C8C8CC)
  *
  * Skips:
@@ -38,31 +40,43 @@ const CODE_BLOCK_RE = /(```[\s\S]*?```|`[^`\n]+`)/g
  *        a. rooted:  ./?  (docs|packages|src|.productune)/…/.ext
  *        b. root-level whitelist: config.json | package.json | tsconfig.json
  *        c. env file: ./?  .env[*]  (optionally under .productune/)
+ *        d. docs/artifacts/*.html design mockup (T-345, any root-level ext
+ *           whitelist member EXCEPT html would already be caught by (a); html
+ *           is scoped narrowly to docs/artifacts/ only — NOT packages/src/
+ *           .productune — since that's the one convention the rest of the
+ *           app (helpers.ts artifactOpenType, electron/ipc/artifacts.ts
+ *           ALLOWED_EXTS) already uses for "this .html is a viewable design
+ *           artifact")
  *
  * URL precedence (alt-1) is FIRST so any URL is consumed whole at its start
  * offset before the file branch can see path tokens (e.g. `src/`) inside it.
  * `[^\s<>"]+` greedily eats the entire URL path, so a `src/x.ts` substring of
  * an https URL is never re-matched as a standalone file link. ✓
  *
- *   5. Absolute doctrine path                         → ptn:doctrine/   (T-PATCH-106)
- *        file://…/.productune/…  |  ~/.productune/…  |  /…/.productune/…
+ *   5. Absolute file:// / doctrine path               → ptn:doctrine/   (T-PATCH-106, widened T-345)
+ *        file://<any path>                    (T-345 — any file:// URI, any ext, not just doctrine .md;
+ *                                               covers docs/artifacts/*.html design mockups written by a
+ *                                               delegated worker and merely narrated by the PO in prose)
+ *        ~/.productune/…  |  /…/.productune/…  (bare, non-scheme absolute paths stay doctrine-scoped only —
+ *                                               widening THIS branch to arbitrary bare absolute paths would
+ *                                               false-positive on any unrelated /usr/... mention in prose)
  *
  * Capture groups (positional — consumed by _linkifySegment):
  *   1 bareUrl  2 existingLink  3 ticketId  4 filePath  5 absDoctrine
  * Root tokens / extensions inside group 4/5 are NON-capturing to keep indices
  * stable.
  *
- * Alt-5 (absolute doctrine) intentionally trails the URL (alt-1) and existing
- * markdown-link (alt-2) branches so a `~/.productune/...`/`file://...` token
- * embedded inside an http(s) URL or an existing `[text](href)` is consumed by
- * those first — no false re-match. The leading-`/` absolute form is NOT caught
- * by the bare URL branch (no scheme), so it is matched here only when it carries
- * a `.productune/` doctrine signal. `file://` is anchored at token start; the
- * default `(?<![\w/.\-])` guard does not apply to alt-5 (absolute prefixes are
- * explicit), so a `/Users/.../.productune/...` absolute path is recognized.
+ * Alt-5 (absolute doctrine / file://) intentionally trails the URL (alt-1) and
+ * existing markdown-link (alt-2) branches so a `~/.productune/...`/`file://...`
+ * token embedded inside an http(s) URL or an existing `[text](href)` is
+ * consumed by those first — no false re-match. The leading-`/` absolute form
+ * (no scheme) is NOT caught by the bare URL branch, so it is matched here only
+ * when it carries a `.productune/` doctrine signal — same reasoning as above.
+ * `file://` itself is anchored at token start and, being an explicit scheme,
+ * is trusted broadly (no doctrine-signal requirement).
  */
 const LINK_RE =
-  /(https?:\/\/[^\s<>"]+)|(\[[^\]]*\]\([^)]*\))|(T-P4-\d+)|((?<![\w/.\-])\.?\/?(?:(?:docs|packages|src|\.productune)\/[\w/.\-]+\.(?:md|tsx|ts|sh|json)|\.productune\/\.env[a-zA-Z0-9._-]*|\.env[a-zA-Z0-9._-]*|(?:config|package|tsconfig)\.json))|((?:file:\/\/)?(?:~|\/[\w.\-]+)(?:\/[\w.\-]+)*\/\.productune\/(?:po|designer|developer|qa)\/[\w/.\-]+\.md)/g
+  /(https?:\/\/[^\s<>"]+)|(\[[^\]]*\]\([^)]*\))|(T-P4-\d+)|((?<![\w/.\-])\.?\/?(?:(?:docs|packages|src|\.productune)\/[\w/.\-]+\.(?:md|tsx|ts|sh|json)|docs\/artifacts\/[\w/.\-]+\.html|\.productune\/\.env[a-zA-Z0-9._-]*|\.env[a-zA-Z0-9._-]*|(?:config|package|tsconfig)\.json))|(file:\/\/[^\s<>")\]]+|(?:~|\/[\w.\-]+)(?:\/[\w.\-]+)*\/\.productune\/(?:po|designer|developer|qa)\/[\w/.\-]+\.md)/g
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -116,16 +130,22 @@ function _linkifySegment(text: string): string {
         return `[${basename}](ptn:file/${normalized})`
       }
 
-      // Priority 5 — absolute / file:// doctrine path (T-PATCH-106)
+      // Priority 5 — absolute / file:// doctrine path (T-PATCH-106, widened T-345)
       // The raw absolute token is carried verbatim after the ptn:doctrine/ tag;
       // routeLink (MdRenderer) decodes/normalizes & classifies tier/persona.
       // basename = last path segment, with any file:// prefix decoded first.
+      // T-345: the widened `file://…` alt-5 branch has no extension/dir anchor
+      // at its END (unlike the old .productune/…md-anchored form), so a
+      // trailing sentence-punctuation or list-separator char (`.`, `,` when
+      // several paths are narrated in one line) can get swept into the match —
+      // strip it, mirroring the bareUrl branch below.
       if (absDoctrine !== undefined) {
-        const decoded = absDoctrine.startsWith('file://')
-          ? (() => { try { return decodeURIComponent(new URL(absDoctrine).pathname) } catch { return absDoctrine } })()
-          : absDoctrine
+        const cleaned = absDoctrine.replace(/[.,;!?)'"\]]+$/, '')
+        const decoded = cleaned.startsWith('file://')
+          ? (() => { try { return decodeURIComponent(new URL(cleaned).pathname) } catch { return cleaned } })()
+          : cleaned
         const basename = decoded.split('/').pop() ?? decoded
-        return `[${basename}](ptn:doctrine/${absDoctrine})`
+        return `[${basename}](ptn:doctrine/${cleaned})`
       }
 
       // Priority 1 — bare URL

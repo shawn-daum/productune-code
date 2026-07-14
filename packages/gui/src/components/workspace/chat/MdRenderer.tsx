@@ -11,6 +11,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ReactNode } from 'react'
 import { useWorkspace } from '../../../store/workspace'
+import { mdUrlTransform } from './mdUrlTransform'
 
 // ── Link routing (re-used from MessageBubble logic) ───────────────────────────
 
@@ -82,7 +83,16 @@ function classifyDoctrine(
   return null
 }
 
-/** Route a normalized absolute/file:// path: doctrine → in-project relative → shell fallback. */
+/**
+ * True when a path (any casing) ends in `.html` — used to route design-mockup
+ * artifacts to a live browser preview instead of the plain-text markdown
+ * viewer (T-345). Pure/dependency-free so it stays trivially testable.
+ */
+function isHtmlPath(p: string): boolean {
+  return p.toLowerCase().endsWith('.html')
+}
+
+/** Route a normalized absolute/file:// path: doctrine → html artifact → in-project relative → shell fallback. */
 function routeAbsPath(absPath: string): void {
   const openTab = useWorkspace.getState().openTab
   const projectDir = useWorkspace.getState().project?.projectDir
@@ -97,6 +107,18 @@ function routeAbsPath(absPath: string): void {
       { tier: doc.tier, persona: doc.persona, absPath, relName: doc.relName, editable: false, projectDir },
       basename,
     )
+    return
+  }
+
+  // (1.5) design-mockup HTML artifact → browser preview tab via file:// (T-345).
+  // Mirrors the 'browser' tabType routing T-328 already uses for
+  // docs/artifacts/*.html elsewhere (QuickOpen extToTabType, po:artifact-open
+  // useIpcSubscriptions handler) — without this, a `file:///…/x.html` link
+  // clicked from chat fell through to branch (2) below and opened the raw
+  // HTML source in the plain-text markdown viewer instead of a live preview.
+  if (isHtmlPath(absPath)) {
+    const url = `file://${absPath}`
+    openTab(`browser:${url}`, 'browser', { url }, basename)
     return
   }
 
@@ -134,6 +156,15 @@ function routeLink(href: string): void {
     // basename. ProjectEnvPane resolves it against projectEnv:read FileGroups.
     if (isEnvTarget(filePath)) {
       openTab(`project-env:${basename}`, 'project-env', { filename: basename }, basename)
+      return
+    }
+    // design-mockup HTML artifact (bare relative mention, e.g.
+    // `docs/artifacts/foo.html`) → browser preview tab, same reasoning as
+    // routeAbsPath's (1.5) branch above (T-345).
+    if (isHtmlPath(filePath)) {
+      const projectDir = useWorkspace.getState().project?.projectDir
+      const url = projectDir ? `file://${projectDir}/${filePath}` : `file://${filePath}`
+      openTab(`browser:${url}`, 'browser', { url }, basename)
       return
     }
     openTab(`markdown:${filePath}`, 'markdown', { path: filePath }, basename)
@@ -340,9 +371,16 @@ interface MdRendererProps {
 export default function MdRenderer({ text }: MdRendererProps) {
   return (
     <div style={{ display: 'inline' }}>
+      {/* urlTransform (T-345 QA rework): WITHOUT this, react-markdown 9.x's
+          defaultUrlTransform whitelist rewrites every ptn:/file: href to ""
+          and MdLink's `if (href)` guard silently no-ops the click — every
+          internal routing link in chat was dead. mdUrlTransform passes
+          ptn:/file: through and delegates all other schemes to the default
+          (javascript:/data: stay sanitized). */}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={mdComponents}
+        urlTransform={mdUrlTransform}
       >
         {text}
       </ReactMarkdown>

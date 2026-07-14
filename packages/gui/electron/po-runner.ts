@@ -2038,6 +2038,18 @@ function parseTicketFocusItems(text: string): TicketFocusItem[] {
  * Returns an empty array when neither key is present or unparseable.
  */
 export function parseArtifactFiles(text: string): string[] {
+  const envelopeFiles = parseArtifactFilesFromEnvelope(text)
+  const proseFiles = parseArtifactMentions(text)
+  if (proseFiles.length === 0) return envelopeFiles
+  const merged = [...envelopeFiles]
+  for (const f of proseFiles) {
+    if (!merged.includes(f)) merged.push(f)
+  }
+  return merged
+}
+
+/** Original T-P4-114 §A behavior — unchanged. See parseArtifactFiles doc above. */
+function parseArtifactFilesFromEnvelope(text: string): string[] {
   for (const candidate of extractJsonCandidates(text)) {
     try {
       const parsed: unknown = JSON.parse(candidate)
@@ -2051,6 +2063,31 @@ export function parseArtifactFiles(text: string): string[] {
     } catch { /* ignore */ }
   }
   return []
+}
+
+/**
+ * T-345 fallback — bare `docs/artifacts/*.html` mentions OUTSIDE a structured
+ * envelope (relative repo paths, or `file://` absolute paths whose tail is a
+ * repo-relative docs/artifacts/*.html path). Diagnosed dogfooding gap: a
+ * delegated worker (e.g. Designer) writes design-mockup HTML mid-turn and the
+ * PO narrates the `file:///…` paths in prose instead of echoing them into its
+ * own turn-closing files_written[] envelope, so the envelope-only parser above
+ * (unchanged) returns []. Scoped to docs/artifacts/*.html specifically (same
+ * convention as helpers.ts artifactOpenType / electron/ipc/artifacts.ts) —
+ * mentions of other file types/dirs are intentionally NOT swept in.
+ */
+function parseArtifactMentions(text: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const re = /docs\/artifacts\/[\w.-]+(?:\/[\w.-]+)*\.html/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (!seen.has(m[0])) {
+      seen.add(m[0])
+      out.push(m[0])
+    }
+  }
+  return out
 }
 
 // ── QA envelope parser (T-P4-116) ─────────────────────────────────────────────
