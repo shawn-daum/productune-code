@@ -378,6 +378,8 @@
       "queueRemove": "대기열에서 제거",
       "send": "전송",
       "sendShortcut": "⌘+Enter 로 전송",
+      "queueAdd": "대기열 추가",
+      "queueAddShortcut": "⌘+Enter 로 대기열에 추가",
       "attachFile": "파일 경로 첨부",
       "filesCount": "파일",
       "removeFile": "파일 제거",

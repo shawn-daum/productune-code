@@ -2,9 +2,5 @@
   "schema_version": 1,
   "stage": "ship",
   "version": "v1.1",
-  "current_task": {
-    "ticket_id": "T-343",
-    "slug": "gui-queue-send-button-missing-while-running",
-    "assignee": "developer"
-  }
+  "current_task": null
 }

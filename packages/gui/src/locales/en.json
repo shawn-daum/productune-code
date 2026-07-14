@@ -378,6 +378,8 @@
       "queueRemove": "Remove from queue",
       "send": "Send",
       "sendShortcut": "Send with ⌘+Enter",
+      "queueAdd": "Queue",
+      "queueAddShortcut": "Queue with ⌘+Enter",
       "attachFile": "Attach file path",
       "filesCount": "files",
       "removeFile": "Remove file",

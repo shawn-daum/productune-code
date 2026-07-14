@@ -244,6 +244,18 @@ export default function ChatPanel() {
     }
   }, [project, appendMessage, setAutoScrollLocked, setStreaming, cleanupSentFiles])
 
+  // T-344: Cmd+Enter mid-Hangul-composition sends the full committed text fine
+  // (isComposing reads stale-true on the same keydown that actually ends the
+  // composition — see T-PATCH-264 below), but the browser's own composition
+  // buffer for the textarea DOM node isn't torn down by our `setDraft('')` —
+  // it's a native overlay React's controlled `value` can't reach mid-session —
+  // so the IME replays the still-composing glyph into the now-"empty" box a
+  // moment later. Remounting the textarea (bump `composerKey`) after every
+  // clear guarantees a fresh DOM node with no composition session, which is
+  // the only cross-browser-reliable way to discard it (there's no JS API to
+  // cancel an in-flight composition). Harmless no-op for non-IME sends.
+  const [composerKey, setComposerKey] = useState(0)
+
   const handleSubmit = async () => {
     const trimmed = draft.trim()
     if (!trimmed && attachedFiles.length === 0) return
@@ -260,6 +272,7 @@ export default function ChatPanel() {
     if (streaming) {
       enqueueMessage(text)
       setDraft('')
+      setComposerKey((k) => k + 1)   // T-344: discard any lingering IME composition
       setAutoScrollLocked(false)
       return
     }
@@ -268,11 +281,21 @@ export default function ChatPanel() {
     // the post-send L2 cleanup can target exactly the sent paths.
     const sentPaths = attachedFiles
     setDraft('')
+    setComposerKey((k) => k + 1)   // T-344: discard any lingering IME composition
     // T-PATCH-133: clearAttachments revokes all preview URLs + resets
     // images / otherFiles state + resets monotonic seq counter.
     clearAttachments()
     await sendText(text, sentPaths)
   }
+
+  // T-344: the key bump above remounts the textarea (fresh DOM node), which
+  // drops focus — restore it so typing a follow-up doesn't require re-clicking.
+  // Guard skips the very first render (composerKey start value, no remount yet).
+  const composerKeyMounted = useRef(false)
+  useEffect(() => {
+    if (!composerKeyMounted.current) { composerKeyMounted.current = true; return }
+    taRef.current?.focus()
+  }, [composerKey])
 
   // T-309: flush the queue on the streaming true→false transition, but ONLY on a
   // NATURAL turn end (onDone) — not on an abort (spec: an abort keeps the queue
@@ -447,6 +470,7 @@ export default function ChatPanel() {
   const otherAttachments = otherFiles
 
   const [sendHover, setSendHover] = useState(false)
+  const [queueAddHover, setQueueAddHover] = useState(false)
   const [stopHover, setStopHover] = useState(false)
   const [attachHover, setAttachHover] = useState(false)
   const [restartTipPos, setRestartTipPos] = useState<{ top: number; left: number } | null>(null)
@@ -639,6 +663,7 @@ export default function ChatPanel() {
               alone, since that would block queueing. */}
           <>
             <textarea
+              key={composerKey}
               ref={taRef}
               style={textarea}
               value={draft}
@@ -721,21 +746,47 @@ export default function ChatPanel() {
                 {poModel}
               </span>
             )}
-            {/* T-PATCH-081 AC-1/2: stop button replaces send while streaming; AC-2: not in DOM when idle */}
+            {/* T-343: while streaming, a queue-add button now coexists with stop —
+                T-PATCH-081 originally replaced send outright with stop, which left
+                Cmd+Enter as the only (invisible) way to queue a follow-up even
+                though the placeholder above promises queueing. Clicking this button
+                takes the same path as Cmd+Enter (handleSubmit branches to
+                enqueueMessage while streaming — see above); it never sends early. */}
             {streaming ? (
-              <button
-                style={{
-                  ...sendBtn,
-                  background: stopHover ? '#DC2626' : '#EF4444',
-                }}
-                onMouseEnter={() => setStopHover(true)}
-                onMouseLeave={() => setStopHover(false)}
-                onClick={handleAbort}
-                aria-label="Stop generation"
-                title={t('workspace.chat.stop')}
-              >
-                <Square size={14} strokeWidth={2.5} />
-              </button>
+              <>
+                <button
+                  style={{
+                    ...sendBtn,
+                    opacity: !draft.trim() ? 0.5 : 1,
+                    background: queueAddHover && draft.trim() ? '#9D74F8' : '#8B5CF6',
+                  }}
+                  onMouseEnter={() => setQueueAddHover(true)}
+                  onMouseLeave={() => setQueueAddHover(false)}
+                  onClick={handleSubmit}
+                  disabled={!draft.trim() || !project}
+                  title={t('workspace.chat.queueAddShortcut')}
+                  aria-label={`${t('workspace.chat.queueAdd')} (${t('workspace.chat.sendShortcut')})`}
+                >
+                  <span>{t('workspace.chat.queueAdd')}</span>
+                  <span style={kbdHint} aria-hidden="true">
+                    <Command size={11} strokeWidth={2.5} />
+                    <CornerDownLeft size={11} strokeWidth={2.5} />
+                  </span>
+                </button>
+                <button
+                  style={{
+                    ...sendBtn,
+                    background: stopHover ? '#DC2626' : '#EF4444',
+                  }}
+                  onMouseEnter={() => setStopHover(true)}
+                  onMouseLeave={() => setStopHover(false)}
+                  onClick={handleAbort}
+                  aria-label="Stop generation"
+                  title={t('workspace.chat.stop')}
+                >
+                  <Square size={14} strokeWidth={2.5} />
+                </button>
+              </>
             ) : (
               <button
                 style={{

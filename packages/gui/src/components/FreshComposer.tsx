@@ -44,6 +44,14 @@ export default function FreshComposer({ project, onConfirm }: Props) {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  // T-344: same fix as ChatPanel — Cmd+Enter mid-Hangul-composition sends the
+  // full committed text fine, but the browser's composition buffer for this
+  // DOM node survives `setDraft('')` (native overlay, not reachable via React's
+  // controlled `value`), so the IME replays the still-composing glyph into the
+  // now-"empty" box a moment later. Bumping this key remounts the textarea
+  // (fresh DOM node, no composition session) — the only reliable cross-browser
+  // way to discard it, since there's no JS API to cancel a live composition.
+  const [composerKey, setComposerKey] = useState(0)
 
   // T-334: PO model choice — defaults to opus, so the first session launches with
   // an explicit model instead of silently inheriting the CLI default. Only shown
@@ -106,6 +114,7 @@ export default function FreshComposer({ project, onConfirm }: Props) {
 
       // Step 3 — Clear draft + chips (UI only; RESOLUTION-1: no cleanupSentFiles here).
       setDraft('')
+      setComposerKey((k) => k + 1)   // T-344: discard any lingering IME composition
       clearAttachments()
 
       // T-334 — Persist the chosen PO model BEFORE firing the turn, so the spawn
@@ -212,6 +221,7 @@ export default function FreshComposer({ project, onConfirm }: Props) {
           )}
 
           <textarea
+            key={composerKey}
             ref={taRef}
             autoFocus
             value={draft}
