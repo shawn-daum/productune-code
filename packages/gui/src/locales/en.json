@@ -433,7 +433,8 @@
       },
       "rateLimit": {
         "estimated": "API limit reached — retry in ~{{n}}s (estimated)",
-        "exact": "API limit reached — retry in {{n}}s"
+        "exact": "API limit reached — retry in {{n}}s",
+        "limitReached": "Usage limit reached — resets {{time}}. Retrying before then won't help."
       },
       "turn": {
         "aborted": "Turn aborted per request.",

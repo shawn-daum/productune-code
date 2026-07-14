@@ -2,8 +2,19 @@
  * RateLimitBanner — rate-limit countdown banner (T-012).
  *
  * Renders between rp-msgs and rp-input when sessionHealth.state === 'rate-limited'.
- * Counts down from the deadline derived from retryAfterSec > resetAt > 60s fallback.
- * Calls onExpired() when countdown reaches 0 — clearHealth() + setStreaming(false).
+ * Three modes (T-352 adds the third):
+ *   - 'exact'    — retryAfterSec, or an ISO resetAt that Date.parse resolves —
+ *                  ticks down to a real deadline. Calls onExpired() at 0
+ *                  (clearHealth() + setStreaming(false)).
+ *   - 'estimate' — neither is present — ticks down from a guessed 60s.
+ *   - 'static'   — resetAt is a human clock time claude's own session/usage-limit
+ *                  message uses ("1:10pm (Asia/Seoul)") that can't be reliably
+ *                  converted to an epoch (no tz math without a tz db) — shows the
+ *                  time as-is with NO ticking countdown, since a fake countdown
+ *                  against a made-up deadline would be actively misleading. The
+ *                  user retries manually once the limit has actually reset
+ *                  (composer stays disabled via the rate-limited health state
+ *                  until then — see ChatPanel's `rateLimited` guard).
  *
  * Design tokens: SessionHealthBanner warn variant
  *   bg = --surface-subpanel #1A1A1A
@@ -22,25 +33,28 @@ interface RateLimitBannerProps {
   onExpired: () => void
 }
 
+type BannerMode =
+  | { kind: 'exact' | 'estimate'; deadline: number }
+  | { kind: 'static'; displayTime: string }
+
 export default function RateLimitBanner({ detail, onExpired }: RateLimitBannerProps) {
   const { t } = useTranslation()
-  // deadline 은 마운트 시 1회 계산 (ref — re-render 마다 재계산 X)
-  const deadlineRef = useRef<number>(calcDeadline(detail))
-
-  // isEstimate: retryAfterSec 없고 resetAt 없을 때 true
-  const isEstimate = detail.retryAfterSec == null && !detail.resetAt
+  // mode 는 마운트 시 1회 계산 (ref — re-render 마다 재계산 X)
+  const modeRef = useRef<BannerMode>(classifyBannerMode(detail))
+  const mode = modeRef.current
 
   const [remaining, setRemaining] = useState<number>(() =>
-    Math.max(0, Math.ceil((deadlineRef.current - Date.now()) / 1_000)),
+    mode.kind === 'static' ? 0 : Math.max(0, Math.ceil((mode.deadline - Date.now()) / 1_000)),
   )
 
   useEffect(() => {
+    if (mode.kind === 'static') return   // no epoch to count down to — static display only
     if (remaining === 0) {
       onExpired()
       return
     }
     const id = setInterval(() => {
-      const next = Math.max(0, Math.ceil((deadlineRef.current - Date.now()) / 1_000))
+      const next = Math.max(0, Math.ceil((mode.deadline - Date.now()) / 1_000))
       setRemaining(next)
       if (next === 0) {
         clearInterval(id)
@@ -52,9 +66,12 @@ export default function RateLimitBanner({ detail, onExpired }: RateLimitBannerPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const text = isEstimate
-    ? t('workspace.chat.rateLimit.estimated', { n: remaining })
-    : t('workspace.chat.rateLimit.exact', { n: remaining })
+  const text =
+    mode.kind === 'static'
+      ? t('workspace.chat.rateLimit.limitReached', { time: mode.displayTime })
+      : mode.kind === 'estimate'
+        ? t('workspace.chat.rateLimit.estimated', { n: remaining })
+        : t('workspace.chat.rateLimit.exact', { n: remaining })
 
   return (
     <div style={banner}>
@@ -66,15 +83,18 @@ export default function RateLimitBanner({ detail, onExpired }: RateLimitBannerPr
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-function calcDeadline(detail: PoHealthDetail): number {
+function classifyBannerMode(detail: PoHealthDetail): BannerMode {
   if (detail.retryAfterSec != null && detail.retryAfterSec > 0) {
-    return Date.now() + detail.retryAfterSec * 1_000
+    return { kind: 'exact', deadline: Date.now() + detail.retryAfterSec * 1_000 }
   }
   if (detail.resetAt) {
     const parsed = Date.parse(detail.resetAt)
-    if (!isNaN(parsed)) return parsed
+    if (!isNaN(parsed)) return { kind: 'exact', deadline: parsed }
+    // T-352: resetAt didn't parse — a human clock time ("1:10pm (Asia/Seoul)"),
+    // not ISO. Static display, no fake countdown (see file header).
+    return { kind: 'static', displayTime: detail.resetAt }
   }
-  return Date.now() + 60_000
+  return { kind: 'estimate', deadline: Date.now() + 60_000 }
 }
 
 // ── styles ─────────────────────────────────────────────────────────────────────

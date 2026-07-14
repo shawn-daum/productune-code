@@ -481,6 +481,16 @@ interface HealthContext {
    * auth, rate-limit) instead of a raw "exited with code N".
    */
   stderrTail: string[]
+  /**
+   * T-352: classification captured from a `type:'result', is_error:true` stream
+   * envelope (a claude session/usage-limit hit reported via stdout JSON, NOT
+   * stderr — the original T-PATCH-271 stderr-tail classifier never sees this
+   * shape). Set by the `result` handler; consumed by the close handler so the
+   * final chat announce + health state stay consistent with what was already
+   * classified here, instead of re-classifying an unrelated/empty stderr tail
+   * and falling back to the generic "exited with code N" message.
+   */
+  resultErrorClassified: { kind: Exclude<ExitErrorKind, null>; resetAt?: string; retryAfterSec?: number } | null
 }
 
 const SILENCE_TIMEOUT_MS  = 15_000   // silence → 'thinking' (claude producing nothing yet)
@@ -511,6 +521,7 @@ function makeHealthCtx(msgId: string, projectDir = ''): HealthContext {
     toolErrorInfo: null,         // T-PATCH-268: no tool error seen yet
     workerTextBufByParentId: new Map(), // T-PATCH-270 (#9): nested text coalescing
     stderrTail: [],              // T-PATCH-271 (#17): rolling stderr tail for exit classification
+    resultErrorClassified: null, // T-352: no stdout-JSON result error classified yet
   }
 }
 
@@ -587,7 +598,7 @@ function armSilenceTimeout(ctx: HealthContext, cb: RunCallbacks): void {
  * renderer's RateLimitBanner. Priority: retry-after secs > x-ratelimit-reset
  * ISO > "resets at" ISO.
  */
-function extractRateLimitReset(text: string): { resetAt?: string; retryAfterSec?: number } {
+export function extractRateLimitReset(text: string): { resetAt?: string; retryAfterSec?: number } {
   let resetAt: string | undefined
   let retryAfterSec: number | undefined
 
@@ -600,9 +611,34 @@ function extractRateLimitReset(text: string): { resetAt?: string; retryAfterSec?
   if (xResetMatch) resetAt = xResetMatch[1]
 
   // Priority 3: resets? at <ISO>
+  // T-352: the character class ([0-9:T+\-Z.]) also matches the leading digits of
+  // a HUMAN clock time ("3:45pm" → greedy-matches "3:45", stopping right before
+  // the non-ISO "pm" letters) — accepting that partial match would silently drop
+  // the am/pm marker. Only accept it when it actually looks like ISO (a 'T' time
+  // separator, or a full YYYY-MM-DD date prefix); otherwise leave resetAt unset so
+  // Priority 4 below re-parses the FULL human time (with am/pm + tz) instead.
   if (!resetAt) {
     const resetMatch = text.match(/resets?\s+at\s+([0-9:T+\-Z.]+)/i)
-    if (resetMatch) resetAt = resetMatch[1]
+    if (resetMatch && (/t/i.test(resetMatch[1]) || /^\d{4}-\d{2}-\d{2}/.test(resetMatch[1]))) {
+      resetAt = resetMatch[1]
+    }
+  }
+
+  // T-352: Priority 4 — human clock time, the shape claude's own session/usage-limit
+  // message actually uses ("You've hit your session limit · resets 1:10pm (Asia/
+  // Seoul)"): no "at", a 12h clock (optionally with am/pm) instead of ISO, and an
+  // optional trailing "(Timezone)". We do NOT attempt to convert this to an epoch —
+  // there's no reliable tz math without a full tz database, and the ticket's own
+  // instruction is to keep the timezone text AS-IS (display-only). Requires either
+  // "H:MM" or an am/pm marker so we don't false-match an unrelated bare number
+  // (e.g. "resets after 5 requests").
+  if (!resetAt) {
+    const humanMatch = text.match(
+      /resets?\s+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)(?:\s*\(([^)]+)\))?/i,
+    )
+    if (humanMatch && /:\d{2}|am|pm/i.test(humanMatch[1])) {
+      resetAt = humanMatch[2] ? `${humanMatch[1]} (${humanMatch[2]})` : humanMatch[1]
+    }
   }
 
   return { resetAt, retryAfterSec }
@@ -693,7 +729,7 @@ function buildToolFailureMessage(
  *   - 'rate-limit'  → rate-limited (429 / explicit rate limit).
  *   - 'auth'        → error-other (SessionHealthBanner error variant).
  */
-type ExitErrorKind = 'usage-limit' | 'rate-limit' | 'auth' | null
+export type ExitErrorKind = 'usage-limit' | 'rate-limit' | 'auth' | null
 
 /**
  * Tunable pattern → kind table. Order matters: the FIRST matching row wins, so
@@ -722,7 +758,7 @@ const EXIT_ERROR_PATTERNS: Array<{ kind: Exclude<ExitErrorKind, null>; re: RegEx
 ]
 
 /** Classify the stderr tail into an ExitErrorKind (null when no row matches). */
-function classifyExitError(tail: string): ExitErrorKind {
+export function classifyExitError(tail: string): ExitErrorKind {
   for (const { kind, re } of EXIT_ERROR_PATTERNS) {
     if (re.test(tail)) return kind
   }
@@ -730,10 +766,23 @@ function classifyExitError(tail: string): ExitErrorKind {
 }
 
 /**
+ * T-352: format a reset/retry phrase from extractRateLimitReset's output — shared
+ * by every call site that builds a usage/rate-limit announce (the result-envelope
+ * path and the stderr-tail exit-code path) so the copy stays identical regardless
+ * of which source classified the error. '' when neither is known (generic fallback
+ * inside buildExitErrorMessage takes over).
+ */
+export function buildResetHint(resetAt: string | undefined, retryAfterSec: number | undefined): string {
+  if (retryAfterSec != null) return `약 ${Math.ceil(retryAfterSec / 60)}분 후 다시 시도할 수 있습니다.`
+  if (resetAt) return `${resetAt}에 한도가 초기화됩니다.`
+  return ''
+}
+
+/**
  * Build a plain-language Korean actionable message for a classified exit error.
  * `resetHint` is an already-formatted reset/retry phrase (or '' when unknown).
  */
-function buildExitErrorMessage(kind: Exclude<ExitErrorKind, null>, resetHint: string): string {
+export function buildExitErrorMessage(kind: Exclude<ExitErrorKind, null>, resetHint: string): string {
   switch (kind) {
     case 'usage-limit':
       return (
@@ -1252,41 +1301,45 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
         }
       }
 
-      if (code !== 0 && code !== null) {
-        if (wasAborted) {
-          // User-initiated abort — localized info, not an error.
-          cb.onAnnounce(msgId, { level: 'info', kind: 'turn-aborted', text: '' })
+      if (wasAborted) {
+        // User-initiated abort — localized info, not an error.
+        cb.onAnnounce(msgId, { level: 'info', kind: 'turn-aborted', text: '' })
+      } else if (hCtx.resultErrorClassified) {
+        // T-352: the CLI already reported WHY via a stdout `result` JSON envelope
+        // this turn (result.error), classified + health-emitted there — regardless
+        // of the final exit code (a session/usage-limit result can still exit 0).
+        // Build the actionable announce from that stored classification instead of
+        // re-classifying an unrelated/empty stderr tail (which would otherwise
+        // fall through to the generic "exited with code N" message below), and
+        // skip the code===0 "recover to healthy" path so it doesn't clobber the
+        // rate-limited/error-other state right back.
+        const { kind, resetAt, retryAfterSec } = hCtx.resultErrorClassified
+        cb.onAnnounce(msgId, { level: 'error', text: buildExitErrorMessage(kind, buildResetHint(resetAt, retryAfterSec)) })
+        // Health state was already emitted by the result handler — nothing more to do.
+      } else if (code !== 0 && code !== null) {
+        // T-PATCH-271 (#17): classify the stderr tail BEFORE the generic exit-error
+        // announce. A usage/session limit, rate-limit, or auth failure exits the CLI
+        // with code≠0 but the stderr tail explains why — surface an actionable health
+        // STATE + ko message instead of a raw "code N". No match → unchanged fallback.
+        const tail = hCtx.stderrTail.join('\n')
+        const kind = classifyExitError(tail)
+        if (kind === 'usage-limit' || kind === 'rate-limit') {
+          const { resetAt, retryAfterSec } = extractRateLimitReset(tail)
+          // 'capped'/'auth-required' are NOT PoHealthState values (QA-loop statuses
+          // only), so we map usage/session caps to 'rate-limited' — its RateLimitBanner
+          // countdown is the closest existing usage surface (T-231 health-state reuse).
+          emitHealth('rate-limited', { resetAt, retryAfterSec, errorMessage: tail.slice(0, 200) }, hCtx, cb)
+          cb.onAnnounce(msgId, { level: 'error', text: buildExitErrorMessage(kind, buildResetHint(resetAt, retryAfterSec)) })
+        } else if (kind === 'auth') {
+          // auth → error-other (SessionHealthBanner error variant) + actionable ko.
+          emitHealth('error-other', { errorMessage: tail.slice(0, 200) }, hCtx, cb)
+          cb.onAnnounce(msgId, { level: 'error', text: buildExitErrorMessage(kind, '') })
         } else {
-          // T-PATCH-271 (#17): classify the stderr tail BEFORE the generic exit-error
-          // announce. A usage/session limit, rate-limit, or auth failure exits the CLI
-          // with code≠0 but the stderr tail explains why — surface an actionable health
-          // STATE + ko message instead of a raw "code N". No match → unchanged fallback.
-          const tail = hCtx.stderrTail.join('\n')
-          const kind = classifyExitError(tail)
-          if (kind === 'usage-limit' || kind === 'rate-limit') {
-            const { resetAt, retryAfterSec } = extractRateLimitReset(tail)
-            const resetHint =
-              retryAfterSec != null
-                ? `약 ${Math.ceil(retryAfterSec / 60)}분 후 다시 시도할 수 있습니다.`
-                : resetAt
-                  ? `${resetAt}에 한도가 초기화됩니다.`
-                  : ''
-            // 'capped'/'auth-required' are NOT PoHealthState values (QA-loop statuses
-            // only), so we map usage/session caps to 'rate-limited' — its RateLimitBanner
-            // countdown is the closest existing usage surface (T-231 health-state reuse).
-            emitHealth('rate-limited', { resetAt, retryAfterSec, errorMessage: tail.slice(0, 200) }, hCtx, cb)
-            cb.onAnnounce(msgId, { level: 'error', text: buildExitErrorMessage(kind, resetHint) })
-          } else if (kind === 'auth') {
-            // auth → error-other (SessionHealthBanner error variant) + actionable ko.
-            emitHealth('error-other', { errorMessage: tail.slice(0, 200) }, hCtx, cb)
-            cb.onAnnounce(msgId, { level: 'error', text: buildExitErrorMessage(kind, '') })
-          } else {
-            // Unclassified real crash — renderer localizes via kind; text kept as English fallback.
-            cb.onAnnounce(msgId, { level: 'error', kind: 'exit-error', code: code ?? undefined, text: `claude exited with code ${code}` })
-            // Only set error-other if no other state was set.
-            if (hCtx.lastEmittedState === 'healthy') {
-              emitHealth('error-other', { errorMessage: `exit code ${code}` }, hCtx, cb)
-            }
+          // Unclassified real crash — renderer localizes via kind; text kept as English fallback.
+          cb.onAnnounce(msgId, { level: 'error', kind: 'exit-error', code: code ?? undefined, text: `claude exited with code ${code}` })
+          // Only set error-other if no other state was set.
+          if (hCtx.lastEmittedState === 'healthy') {
+            emitHealth('error-other', { errorMessage: `exit code ${code}` }, hCtx, cb)
           }
         }
       } else {
@@ -1659,12 +1712,24 @@ function handleStreamJsonLine(
     }
     // Error result
     if (obj?.subtype === 'error' || obj?.is_error === true) {
-      const errStr = JSON.stringify(obj?.error ?? '')
-      if (/rate_limit_error|429|rate.?limit/i.test(errStr)) {
-        let retryAfterSec: number | undefined
-        let resetAt: string | undefined
-        if (typeof obj?.retry_after === 'number') retryAfterSec = obj.retry_after
-        emitHealth('rate-limited', { retryAfterSec, resetAt }, hCtx, cb)
+      // T-352: a claude session/usage-limit hit is reported via THIS stdout JSON
+      // envelope (result.error, e.g. "You've hit your session limit · resets
+      // 1:10pm (Asia/Seoul)"), not stderr — the T-PATCH-271 exit-code classifier
+      // only inspects the stderr tail, so this shape reached it as an unclassified
+      // crash → generic "exited with code N" + error-other (the reported bug).
+      // Reuse the SAME classifyExitError/extractRateLimitReset used by the
+      // exit-code path so both sources land on identical classification + copy.
+      const errStr = typeof obj?.error === 'string' ? obj.error : JSON.stringify(obj?.error ?? '')
+      const kind = classifyExitError(errStr)
+      if (kind === 'usage-limit' || kind === 'rate-limit') {
+        const extracted = extractRateLimitReset(errStr)
+        const retryAfterSec = typeof obj?.retry_after === 'number' ? obj.retry_after : extracted.retryAfterSec
+        const resetAt = extracted.resetAt
+        hCtx.resultErrorClassified = { kind, resetAt, retryAfterSec }
+        emitHealth('rate-limited', { retryAfterSec, resetAt, errorMessage: errStr.slice(0, 200) }, hCtx, cb)
+      } else if (kind === 'auth') {
+        hCtx.resultErrorClassified = { kind }
+        emitHealth('error-other', { errorMessage: errStr.slice(0, 200) }, hCtx, cb)
       } else {
         emitHealth('error-other', { errorMessage: obj?.error ?? 'result error' }, hCtx, cb)
       }
