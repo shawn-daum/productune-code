@@ -306,6 +306,22 @@ export function register(): void {
     },
   )
 
+  // Channel: artifacts:listVersion (T-349)
+  // Args:    projectDir: string, version: string
+  // Returns: VersionArtifacts — flat + archived for docs/artifacts/<version>/.
+  // Unlike listTree's prdt branch (which ignores versions and walks flat), this
+  // scans the NAMED version subdirectory regardless of project kind, so the
+  // project-history detail can show a specific closed version's artifacts. A
+  // missing/absent dir → { flat: [], archived: [] } (never throws).
+  ipcMain.handle(
+    'artifacts:listVersion',
+    (_event, projectDir: string, version: string): VersionArtifacts => {
+      if (!projectDir || !version) return { version: version ?? '', flat: [], archived: [] }
+      const artifactsBase = path.join(projectDir, 'docs', 'artifacts')
+      return buildVersionArtifacts(artifactsBase, projectDir, version)
+    },
+  )
+
   // Channel: artifacts:readFile
   // Args:    projectDir: string, absPath: string
   // Returns: string (UTF-8 content), or null when the file does not exist

@@ -27,6 +27,7 @@ import { register as registerHtml }       from './ipc/html'
 import { register as registerBrowserFind } from './ipc/browserFind'
 import { register as registerProjectEnv }  from './ipc/projectEnv'
 import { register as registerAttachments } from './ipc/attachments'
+import { register as registerGit }         from './ipc/git'
 import { installWebviewAcceptLanguage } from './locale-session'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { register as registerTicketsWatch, stopTicketsWatch } from './ipc/ticketsWatch'
@@ -83,6 +84,7 @@ registerBrowserFind()
 registerProjectEnv()
 registerAttachments()
 registerCostArchive()
+registerGit()
 
 // T-PATCH-191: in-app browser — window.open / target=_blank on a <webview>
 // (e.g. Naver's home tiles) otherwise spawn a detached popup we don't manage, so

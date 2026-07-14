@@ -613,9 +613,26 @@
     "activityBar": {
       "project": "Project",
       "artifacts": "Artifacts",
+      "history": "History",
       "team": "Team",
       "explorer": "Explorer",
       "settings": "Settings"
+    },
+    "history": {
+      "tabTitle": "Project History",
+      "inProgressBanner": "In progress: {{version}} — view in Project tab",
+      "emptyHeadline": "No history yet",
+      "emptyHelper": "Your first version is in progress — it lands here once a version closes.",
+      "emptyCta": "View Project tab",
+      "noTickets": "This version was tracked commit-by-commit, without tickets.",
+      "noTicketsShort": "no tickets",
+      "ticketCount": "{{count}} tickets",
+      "noRetro": "No retrospective",
+      "outcomeHeading": "Outcome",
+      "openBoard": "Open ticket board",
+      "openRetro": "Open full retrospective",
+      "gitTagLoadError": "Couldn't compute version history",
+      "openTicketsAnomaly": "{{count}} unfinished tickets remain in a closed version"
     },
     "phaseStrip": {
       "sectionLabel": "Phase",

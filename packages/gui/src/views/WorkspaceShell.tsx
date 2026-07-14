@@ -361,6 +361,18 @@ export default function WorkspaceShell({ project, onBack }: Props) {
     return () => window.removeEventListener('productune:quick-open', onQuickOpen)
   }, [])
 
+  // T-349: in-sidebar navigation to a different activity (History tab's
+  // in-progress banner / empty-state CTA → jump to the Project tab). activeIcon
+  // is local state, so components below dispatch this event to reach the setter.
+  useEffect(() => {
+    const onActivitySelect = (e: Event) => {
+      const icon = (e as CustomEvent).detail?.icon as ActivityIcon | undefined
+      if (icon) setActiveIcon(icon)
+    }
+    window.addEventListener('activity:select', onActivitySelect)
+    return () => window.removeEventListener('activity:select', onActivitySelect)
+  }, [])
+
   // File list
   useEffect(() => {
     if (!quickOpenVisible) { setQuickOpenFiles([]); return }

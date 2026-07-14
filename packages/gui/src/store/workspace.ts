@@ -34,6 +34,7 @@ export type TabType =
   | 'markdown'
   | 'version-detail'
   | 'version-history'
+  | 'history-detail'
   | 'ticket-review'
   | 'design-gate'
   | 'qa-result'
@@ -91,6 +92,7 @@ export const RESTORABLE_TAB_TYPES: ReadonlySet<TabType> = new Set<TabType>([
   'ticket-review',
   'version-detail',
   'version-history',
+  'history-detail',
   'persona-def',
   'artifact-md',
   'artifact-mermaid',
@@ -1081,6 +1083,7 @@ function defaultTitle(type: TabType, props?: Record<string, unknown>): string {
     case 'browser':        return 'Browser'
     case 'image':          return (props?.path as string)?.split('/').pop() ?? 'Image'
     case 'version-history': return (props?.versionId as string) ?? i18next.t('workspace.versionHistory.title')
+    case 'history-detail':  return (props?.versionId as string) ?? i18next.t('workspace.history.tabTitle')
     case 'deploy':            return i18next.t('workspace.deploy.tabTitle')
     case 'general-settings':  return i18next.t('settings.generalTabTitle')
     case 'workflow-settings': return i18next.t('settings.tabWorkflowRules')

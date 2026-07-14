@@ -13,7 +13,8 @@ import SidePanelPrdtProjectCard from './SidePanelPrdtProjectCard'
 import SidePanelPastVersions from './SidePanelPastVersions'
 import SidePanelArtifacts from './SidePanelArtifacts'
 import SidePanelProjectEnv from './SidePanelProjectEnv'
-import ArtifactsPane from './ArtifactsPane'
+import PrdSection from './PrdSection'
+import HistoryPane from './HistoryPane'
 import { isPrdtPoState } from '../../lib/phase-mapping'
 
 interface Props {
@@ -39,7 +40,7 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
     settings:  t('workspace.activityBar.settings'),
     versions:  t('workspace.sidebar.tabs.versions'),
     tickets:   t('workspace.sidebar.tabs.tickets'),
-    artifacts: t('workspace.sidebar.tabs.artifacts'),
+    history:   t('workspace.history.tabTitle'),
   }
 
   // Mount: load PO session from fs via IPC
@@ -142,13 +143,14 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
     })
   })()
 
-  // Header action slot: RefreshCw for artifacts tab
-  const headerAction = activeIcon === 'artifacts' ? (
+  // Header action slot: RefreshCw for history tab (T-349) — git-tag/ticket scans
+  // don't watch the filesystem, so a manual reload is needed.
+  const headerAction = activeIcon === 'history' ? (
     <button
       style={headerActionBtn}
       title={t('workspace.sidebar.refresh')}
       aria-label={t('workspace.sidebar.refresh')}
-      onClick={() => window.dispatchEvent(new CustomEvent('artifacts:reload'))}
+      onClick={() => window.dispatchEvent(new CustomEvent('history:reload'))}
     >
       <RefreshCw size={13} strokeWidth={2} />
     </button>
@@ -190,8 +192,14 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
               onSelect={(id) => setSelectedVersionId(id)}
             />
           )}
-          {/* T-PATCH-076: project .env viewer/editor — directly below current-version card */}
-          <SidePanelProjectEnv />
+          {/* T-349 §1.2 order: card → PRD → artifacts → (legacy past) → .ENV.
+              "신원(카드) → 의도(PRD) → 결과물(아티팩트) → 설정(.ENV)" reading flow. */}
+          {/* 2. PRD — compact sidebar variant (moved here from the version tab §3) */}
+          <PrdSection compact />
+          {/* 3. Artifacts — current version, disk-backed (absorbed the old
+                 artifacts tab + session list, §1.4-3) */}
+          <SidePanelArtifacts />
+          {/* 4. (legacy only) past versions — position only; prdt stays hidden */}
           {!isPrdt && hasPastVersions && (
             <SidePanelPastVersions
               poState={poState}
@@ -199,8 +207,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
               onSelect={(id) => handleVersionClick(id)}
             />
           )}
-          {/* T-P4-112: Artifact auto-display — session artifacts from dev/designer */}
-          <SidePanelArtifacts />
+          {/* 5. .ENV — plumbing, lowest reference frequency → bottom (§1.3) */}
+          <SidePanelProjectEnv />
         </div>
       )}
       {activeIcon === 'explorer' && (
@@ -228,8 +236,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
           <span style={panelPlaceholderText}>{t('workspace.sidebar.ticketsHint')}</span>
         </div>
       )}
-      {activeIcon === 'artifacts' && (
-        <ArtifactsPane project={project} poState={poState} />
+      {activeIcon === 'history' && (
+        <HistoryPane project={project} poState={poState} />
       )}
       {activeIcon === 'settings' && (
         <SettingsView />

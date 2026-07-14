@@ -613,9 +613,26 @@
     "activityBar": {
       "project": "프로젝트",
       "artifacts": "Artifacts",
+      "history": "히스토리",
       "team": "팀",
       "explorer": "탐색",
       "settings": "설정"
+    },
+    "history": {
+      "tabTitle": "프로젝트 히스토리",
+      "inProgressBanner": "진행 중: {{version}} — 프로젝트 탭에서 보기",
+      "emptyHeadline": "아직 히스토리가 없어요",
+      "emptyHelper": "첫 버전이 진행 중이에요 — 버전이 닫히면 여기 기록됩니다",
+      "emptyCta": "프로젝트 탭 보기",
+      "noTickets": "티켓 없이 커밋 단위로 진행된 버전입니다",
+      "noTicketsShort": "티켓 없음",
+      "ticketCount": "티켓 {{count}}건",
+      "noRetro": "회고 없음",
+      "outcomeHeading": "Outcome",
+      "openBoard": "티켓 보드 열기",
+      "openRetro": "회고 전체 보기",
+      "gitTagLoadError": "버전 히스토리를 계산할 수 없습니다",
+      "openTicketsAnomaly": "닫힌 버전에 미완료 티켓 {{count}}건 남음"
     },
     "phaseStrip": {
       "sectionLabel": "Phase",

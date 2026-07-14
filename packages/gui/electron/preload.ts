@@ -1300,10 +1300,27 @@ contextBridge.exposeInMainWorld('api', {
   }> =>
     ipcRenderer.invoke('artifacts:listTree', projectDir, currentVersion, versionIds),
 
+  /** List flat + archived artifacts for a single named version dir (T-349).
+   *  Scans docs/artifacts/<version>/ regardless of project kind. Missing dir → empty. */
+  artifactsListVersion: (
+    projectDir: string,
+    version: string,
+  ): Promise<{ version: string; flat: any[]; archived: any[] }> =>
+    ipcRenderer.invoke('artifacts:listVersion', projectDir, version),
+
   /** Read artifact file content as UTF-8 string.
    *  projectDir is required for the path-traversal guard on the main-process side. */
   artifactsReadFile: (projectDir: string, absPath: string): Promise<string | null> =>
     ipcRenderer.invoke('artifacts:readFile', projectDir, absPath),
+
+  // ── Local git (read-only) — T-349 ────────────────────────────────────────────
+
+  /** List local git tags (name + commit date "YYYY-MM-DD"), newest first.
+   *  Read-only; safe on tag-less repos and non-git dirs (both → []). */
+  gitListTags: (
+    projectDir: string,
+  ): Promise<Array<{ name: string; date: string }>> =>
+    ipcRenderer.invoke('git:listTags', projectDir),
 
   // ── Explorer content search (T-024) ──────────────────────────────────────────
 

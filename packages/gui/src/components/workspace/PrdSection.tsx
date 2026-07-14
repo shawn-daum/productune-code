@@ -24,9 +24,12 @@ const PRD_MASTER_REL = 'docs/prd/PRD.md'
 
 interface Props {
   versionId?: string
+  /** T-349: sidebar variant — sp-sec chrome (10px uppercase label) instead of
+   *  the main-pane h3. Used by the Project tab's PRD section. */
+  compact?: boolean
 }
 
-export default function PrdSection({ versionId }: Props) {
+export default function PrdSection({ versionId, compact }: Props) {
   const { t } = useTranslation()
   const project = useWorkspace((s) => s.project)
   const openTab = useWorkspace((s) => s.openTab)
@@ -69,29 +72,48 @@ export default function PrdSection({ versionId }: Props) {
     )
   }, [prd, projectDir, openTab])
 
+  const row =
+    prd === undefined ? null : prd === null ? (
+      <div style={compact ? prdNoneCompact : prdNonePlaceholder}>
+        {t('workspace.versionDetail.prdNone')}
+      </div>
+    ) : (
+      <button
+        style={compact ? { ...prdRowStyle, margin: '2px 8px 6px', width: 'auto' } : prdRowStyle}
+        onClick={openPrd}
+        onMouseEnter={(e) => {
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#2A2A2A'
+          ;(e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
+        }}
+        onMouseLeave={(e) => {
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#1A1A1A'
+          ;(e.currentTarget as HTMLButtonElement).style.background = '#141414'
+        }}
+      >
+        <FileText size={12} style={{ color: '#505050', flexShrink: 0 }} />
+        <span style={prdRowLabel}>{prd.relPath}</span>
+        <span style={prdRowArrow}>↗</span>
+      </button>
+    )
+
+  // Compact = Project-tab sidebar section: sp-sec chrome (10px uppercase label),
+  // section always present (never null) matching the card/.ENV "never disappears"
+  // convention (T-347 graceful-fallback).
+  if (compact) {
+    return (
+      <div style={compactWrap}>
+        <div style={compactHdr}>
+          <span style={compactHdrText}>{t('workspace.versionDetail.sectionPrd')}</span>
+        </div>
+        {row}
+      </div>
+    )
+  }
+
   return (
     <section style={section}>
       <h3 style={sectionTitle}>{t('workspace.versionDetail.sectionPrd')}</h3>
-      {prd === undefined ? null : prd === null ? (
-        <div style={prdNonePlaceholder}>{t('workspace.versionDetail.prdNone')}</div>
-      ) : (
-        <button
-          style={prdRowStyle}
-          onClick={openPrd}
-          onMouseEnter={(e) => {
-            ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#2A2A2A'
-            ;(e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
-          }}
-          onMouseLeave={(e) => {
-            ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#1A1A1A'
-            ;(e.currentTarget as HTMLButtonElement).style.background = '#141414'
-          }}
-        >
-          <FileText size={12} style={{ color: '#505050', flexShrink: 0 }} />
-          <span style={prdRowLabel}>{prd.relPath}</span>
-          <span style={prdRowArrow}>↗</span>
-        </button>
-      )}
+      {row}
     </section>
   )
 }
@@ -145,4 +167,35 @@ const prdRowArrow: React.CSSProperties = {
   fontSize: 11,
   color: '#505050',
   flexShrink: 0,
+}
+
+// ── Compact (sidebar) variant — matches SidePanelProjectEnv / SidePanelArtifacts chrome
+const compactWrap: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  borderBottom: '1px solid #1E1E1E',
+}
+
+const compactHdr: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  padding: '5px 8px 3px',
+  gap: 4,
+}
+
+const compactHdrText: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: '#4a4a4a',
+  letterSpacing: '0.07em',
+  textTransform: 'uppercase',
+  flex: 1,
+  userSelect: 'none',
+}
+
+const prdNoneCompact: React.CSSProperties = {
+  fontSize: 10,
+  color: '#3A3A3A',
+  fontStyle: 'italic',
+  padding: '2px 10px 8px',
 }

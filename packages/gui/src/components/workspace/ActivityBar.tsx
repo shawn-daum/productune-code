@@ -1,9 +1,14 @@
 import { useTranslation } from 'react-i18next'
 import type { LucideIcon } from 'lucide-react'
-import { FolderOpen, LayoutDashboard, Users, Layers, KanbanSquare, Settings, Package } from 'lucide-react'
+import { FolderOpen, LayoutDashboard, Users, Layers, KanbanSquare, Settings, History } from 'lucide-react'
 
-/** Primary activity icons — Project / Artifacts / Team / Explorer / Settings */
-export type ActivityIcon = 'explorer' | 'project' | 'team' | 'settings' | 'versions' | 'tickets' | 'artifacts'
+/** Primary activity icons — Project / History / Team / Explorer / Settings.
+ *  T-349: the 2nd slot was 'artifacts' (Package). Artifacts moved INTO the
+ *  Project tab; the freed slot now hosts the project-history timeline. The type
+ *  value was renamed 'artifacts' → 'history' (activeIcon is component state, not
+ *  persisted, so no stored id migration is needed). 'versions'/'tickets' remain
+ *  in the union as never-rendered legacy values. */
+export type ActivityIcon = 'explorer' | 'project' | 'team' | 'settings' | 'versions' | 'tickets' | 'history'
 
 interface Props {
   active: ActivityIcon
@@ -18,7 +23,7 @@ interface IconDef {
 
 const ICONS: IconDef[] = [
   { id: 'project',   Icon: LayoutDashboard,  titleKey: 'workspace.activityBar.project'   },
-  { id: 'artifacts', Icon: Package,          titleKey: 'workspace.activityBar.artifacts' },
+  { id: 'history',   Icon: History,          titleKey: 'workspace.activityBar.history'   },
   { id: 'team',      Icon: Users,            titleKey: 'workspace.activityBar.team'      },
   { id: 'explorer',  Icon: FolderOpen,       titleKey: 'workspace.activityBar.explorer'  },
   { id: 'settings',  Icon: Settings,         titleKey: 'workspace.activityBar.settings'  },

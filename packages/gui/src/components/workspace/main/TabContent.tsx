@@ -9,6 +9,7 @@ import SkillMatrixTab from './panes/SkillMatrixTab'
 import PersonaDefTab from './panes/PersonaDefTab'
 import ImageTab from './panes/ImageTab'
 import VersionHistoryTab from './panes/VersionHistoryTab'
+import HistoryDetailTab from './panes/HistoryDetailTab'
 import DeployTab from './panes/DeployTab'
 import GeneralSettingsTab from './panes/GeneralSettingsTab'
 import WorkflowSettingsTab from './panes/WorkflowSettingsTab'
@@ -56,6 +57,7 @@ export default function TabContent({ tab, browserFindRef, previewFindQuery, prev
     case 'skill-matrix':   return <SkillMatrixTab props={tab.props} />
     case 'image':         return <ImageTab props={tab.props} />
     case 'version-history': return <VersionHistoryTab />
+    case 'history-detail':  return <HistoryDetailTab props={tab.props} />
     case 'deploy':            return <DeployTab props={tab.props} />
     case 'general-settings':  return <GeneralSettingsTab props={tab.props} />
     // unreachable — 의도적 비노출(T-PATCH-200): workflow-settings / mcp-servers /
