@@ -3,8 +3,8 @@
   "stage": "ship",
   "version": "v1.1",
   "current_task": {
-    "ticket_id": "T-351",
-    "slug": "gui-env-rename-order-artifacts-toggle",
+    "ticket_id": "T-332",
+    "slug": "install-prompts-arrow-key-selection",
     "assignee": "developer"
   }
 }

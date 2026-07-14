@@ -956,7 +956,7 @@
       "supporting": "아직 만들 버전이 없어요. PO가 몇 가지를 물어 PRD 초안을 잡으면, 이 화면에 PRD가 자동으로 펼쳐집니다."
     },
     "projectEnv": {
-      "sectionTitle": "프로젝트 .env",
+      "sectionTitle": "환경변수",
       "loading": "불러오는 중…",
       "readError": ".env 읽기 실패",
       "writeError": ".env 쓰기 실패",

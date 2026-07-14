@@ -192,14 +192,18 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
               onSelect={(id) => setSelectedVersionId(id)}
             />
           )}
-          {/* T-349 §1.2 order: card → PRD → artifacts → (legacy past) → .ENV.
-              "신원(카드) → 의도(PRD) → 결과물(아티팩트) → 설정(.ENV)" reading flow. */}
+          {/* T-351 order: card → PRD → 환경변수(env) → 산출물(artifacts) →
+              (legacy past). Supersedes T-349 §1.2's card→PRD→artifacts→.ENV —
+              env now reads just after intent (PRD), artifacts (frequently
+              revisited results) sit closest to the bottom scroll area. */}
           {/* 2. PRD — compact sidebar variant (moved here from the version tab §3) */}
           <PrdSection compact />
-          {/* 3. Artifacts — current version, disk-backed (absorbed the old
-                 artifacts tab + session list, §1.4-3) */}
+          {/* 3. Environment variables — plumbing, but now above artifacts (T-351) */}
+          <SidePanelProjectEnv />
+          {/* 4. Artifacts — current version, disk-backed (absorbed the old
+                 artifacts tab + session list, §1.4-3); defaults expanded (T-351) */}
           <SidePanelArtifacts />
-          {/* 4. (legacy only) past versions — position only; prdt stays hidden */}
+          {/* 5. (legacy only) past versions — position only; prdt stays hidden */}
           {!isPrdt && hasPastVersions && (
             <SidePanelPastVersions
               poState={poState}
@@ -207,8 +211,6 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
               onSelect={(id) => handleVersionClick(id)}
             />
           )}
-          {/* 5. .ENV — plumbing, lowest reference frequency → bottom (§1.3) */}
-          <SidePanelProjectEnv />
         </div>
       )}
       {activeIcon === 'explorer' && (

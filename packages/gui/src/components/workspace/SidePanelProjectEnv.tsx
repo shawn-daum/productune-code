@@ -1,8 +1,9 @@
 /**
- * SidePanelProjectEnv — T-PATCH-076 r2 (restructured).
+ * SidePanelProjectEnv — T-PATCH-076 r2 (restructured); section title + position
+ * updated T-351 ("환경변수" / "Environment Variables", now above artifacts).
  *
- * Renders the PROJECT .ENV section in the left side panel as a clickable list
- * of .env* FILENAMES only — no inline key/value rows.
+ * Renders the environment-variables section in the left side panel as a
+ * clickable list of .env* FILENAMES only — no inline key/value rows.
  * Clicking a filename opens it in the main pane as a `project-env:<filename>` tab
  * (same deduplication pattern as version-prd).
  *

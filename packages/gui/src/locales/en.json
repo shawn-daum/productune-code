@@ -956,7 +956,7 @@
       "supporting": "No version yet. Once the PO asks a few questions and drafts the PRD, it opens here automatically."
     },
     "projectEnv": {
-      "sectionTitle": "Project .env",
+      "sectionTitle": "Environment Variables",
       "loading": "Loading…",
       "readError": "Failed to read .env",
       "writeError": "Failed to write .env",

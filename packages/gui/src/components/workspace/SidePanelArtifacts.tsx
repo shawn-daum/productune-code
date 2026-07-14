@@ -16,6 +16,10 @@
  * Data: artifacts:listTree(projectDir, currentVersion, []) → tree.current.
  * Session-opened files (useArtifacts store) render dim (opacity 0.45) as an
  * overlay on the matching disk rows.
+ *
+ * T-351: section now sits below the env section (was above) and defaults
+ * expanded (was collapsed); the collapse/expand chevron moved from leading
+ * the title to trailing it (right-aligned in the header row).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -70,7 +74,9 @@ export default function SidePanelArtifacts() {
 
   const [flat, setFlat] = useState<ArtifactEntry[]>([])
   const [archived, setArchived] = useState<ArtifactEntry[]>([])
-  const [expanded, setExpanded] = useState(false)
+  // T-351: section now defaults open (was collapsed) — artifacts are a
+  // frequently-checked result, not plumbing.
+  const [expanded, setExpanded] = useState(true)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [openAllHover, setOpenAllHover] = useState(false)
 
@@ -130,7 +136,10 @@ export default function SidePanelArtifacts() {
 
   return (
     <div style={sectionWrap}>
-      {/* Collapsible header — count = current version's on-disk file total */}
+      {/* Collapsible header — count = current version's on-disk file total.
+          T-351: toggle chevron moved to the right of the title text (was
+          leading); title no longer flex-stretches so the badge + chevron sit
+          right after it, with a spacer pushing the chevron to the row edge. */}
       <div
         style={secHdr}
         onClick={() => setExpanded((v) => !v)}
@@ -139,13 +148,14 @@ export default function SidePanelArtifacts() {
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setExpanded((v) => !v) }}
         aria-expanded={expanded}
       >
-        <span style={{ color: '#3A3A3A', display: 'flex', alignItems: 'center' }}>
-          {expanded ? <ChevronDown size={10} strokeWidth={2.5} /> : <ChevronRight size={10} strokeWidth={2.5} />}
-        </span>
         <span style={secHdrText}>{t('workspace.artifacts.sectionLabel', 'Artifacts')}</span>
         {totalCount > 0 ? (
           <span style={{ ...countBadge, background: badgeColor }}>{totalCount}</span>
         ) : null}
+        <span style={{ flex: 1 }} />
+        <span style={{ color: '#3A3A3A', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+          {expanded ? <ChevronDown size={10} strokeWidth={2.5} /> : <ChevronRight size={10} strokeWidth={2.5} />}
+        </span>
       </div>
 
       {expanded && (
@@ -292,7 +302,6 @@ const secHdrText: React.CSSProperties = {
   color: '#4a4a4a',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
-  flex: 1,
 }
 
 const countBadge: React.CSSProperties = {
