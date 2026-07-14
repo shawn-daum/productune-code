@@ -5,7 +5,7 @@ Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history 
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, json, os, re, sqlite3, sys
+import argparse, json, os, re, shutil, sqlite3, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -247,6 +247,49 @@ def cmd_menus(_args):
 
 # ── init ──────────────────────────────────────────────────────────────────────
 
+def select_choice(options, header):
+    """Arrow-key select via gum/fzf when installed (T-332). options: [(label, value), ...].
+    Returns the matching value, or None if neither tool is present/usable — caller must
+    fall back to its own text input() in that case so both paths collect the same value."""
+    labels = [label for label, _ in options]
+
+    def resolve(raw):
+        sel = (raw or "").strip()
+        return next((v for l, v in options if l == sel), None)
+
+    if shutil.which("gum"):
+        try:
+            proc = subprocess.run(["gum", "choose", "--header", header, *labels],
+                                  capture_output=True, text=True)
+        except OSError:
+            return None
+        return resolve(proc.stdout) if proc.returncode == 0 else None
+    if shutil.which("fzf"):
+        try:
+            proc = subprocess.run(["fzf", "--prompt", f"{header}> ", "--reverse"],
+                                  input="\n".join(labels), capture_output=True, text=True)
+        except OSError:
+            return None
+        return resolve(proc.stdout) if proc.returncode == 0 else None
+    return None
+
+
+def prompt_version(default):
+    """Interactive first-version prompt (v0.1/v1/custom) — arrow-key select via gum/fzf
+    when available, text input() fallback otherwise (T-332)."""
+    print("first version — v0.1: validating an idea, build first, ship date TBD (default)")
+    print("                v1:   shipping a solid idea with a launch plan")
+    options = [
+        ("v0.1 — validate an idea (default)", "v0.1"),
+        ("v1 — ship a solid idea with a launch plan", "v1"),
+        ("other — type a version manually", "__other__"),
+    ]
+    chosen = select_choice(options, "first version")
+    if chosen is None or chosen == "__other__":
+        return input(f"first version (v0.1 / v1, or type your own) [{default}]: ").strip() or default
+    return chosen
+
+
 def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
@@ -256,9 +299,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     slug = slug or root.name
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
-        print("first version — v0.1: validating an idea, build first, ship date TBD (default)")
-        print("                v1:   shipping a solid idea with a launch plan")
-        version = input(f"first version (v0.1 / v1, or type your own) [{version}]: ").strip() or version
+        version = prompt_version(version)
     prdt.mkdir(exist_ok=True)
     (prdt / "config.json").write_text(json.dumps(
         {"slug": slug, "created_at": now_iso(), "surfaces": {}}, indent=2) + "\n", encoding="utf-8")
