@@ -2,9 +2,5 @@
   "schema_version": 1,
   "stage": "ship",
   "version": "v1.1",
-  "current_task": {
-    "ticket_id": "T-354",
-    "slug": "gui-ime-residue-real-macos-ime",
-    "assignee": "developer"
-  }
+  "current_task": null
 }
