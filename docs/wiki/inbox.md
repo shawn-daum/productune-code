@@ -65,3 +65,4 @@
 - (T-348 designer) designer 판단: 히스토리 상세 섹션 순서를 'Outcome 최상단'으로 — doctrine #7(user outcome over output) 적용, ticket 문구엔 순서 지정 없었음
 - (T-348 designer) designer 판단: '닫힘' SoT = git tag 존재만(ticket-status나 retro-file 존재는 보조 신호) — retro 작성과 태깅이 순서가 있는 별개 스텝이라는 걸 discipline/po/playbooks/retro.md에서 확인 후 결정
 - (T-348 designer) VersionDetailView(legacy 과거버전 상세)는 스코프 밖으로 유지 — T-348 지시가 '현재 버전 탭'만 명시했고 legacy는 카드+티켓판이 이미 한 화면이라 prdt식 분리를 강제할 이유가 없다고 판단(spec §3.2)
+- (T-350 dev) `tsc --noEmit` shows one pre-existing error unrelated to this task: SidePanelArtifacts.tsx:267 'pendingDot' undefined — that file is currently mid-edit under the concurrent T-349 (tabs/sidebar/MainPane) work, not touched here; flagging so it isn't mistaken for a T-350 regression.

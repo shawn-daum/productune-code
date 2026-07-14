@@ -17,10 +17,12 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Message, MessageKind, PromotionPayload } from '../../../lib/types'
 import { linkifyText } from '../../../lib/linkifyText'
+import { parseAttachedFilesBlock } from '../../../lib/attachedFilesBlock'
 import MdRenderer from './MdRenderer'
 import AskUserQuestionCard from './AskUserQuestionCard'
 import PromotionCard from './PromotionCard'
 import PromotionQuestionCard from './PromotionQuestionCard'
+import { ImageChip, FileChip, chipRow } from './ImageChip'
 
 // T-006 Option B — PO = violet #8B5CF6 (was orange #FF6B2B)
 // designer moved to orange #FB923C (no longer violet)
@@ -124,9 +126,18 @@ function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'desi
 
 // ── User bubble (right-aligned) — linkify NOT applied (XSS 방어) ──────────────
 
+/**
+ * T-350: attachments render as chips at the BOTTOM of the bubble instead of the
+ * raw `## Attached files` markdown block. The block stays in `message.text`
+ * unchanged (model-facing content — PO still receives the paths); this is a
+ * pure render-time transform via parseAttachedFilesBlock, so it applies
+ * identically to existing history messages (no data migration needed).
+ */
 function UserBubble({ message }: { message: Message }) {
   const { t } = useTranslation()
   const time = formatTime(message.created_at)
+  const parsed = parseAttachedFilesBlock(message.text)
+
   return (
     <div style={rowR}>
       <div style={cmHead}>
@@ -134,7 +145,21 @@ function UserBubble({ message }: { message: Message }) {
         <span style={cmNameUser}>{t('workspace.chat.you')}</span>
       </div>
       <div style={{ ...cmBubble, ...userBubble }}>
-        <MdRenderer text={message.text} />
+        {parsed ? (
+          <>
+            {parsed.body && <MdRenderer text={parsed.body} />}
+            <div style={{ ...chipRow, marginTop: parsed.body ? 6 : 0 }}>
+              {parsed.images.map((img) => (
+                <ImageChip key={`img-${img.seq}`} seq={img.seq} path={img.path} />
+              ))}
+              {parsed.files.map((path) => (
+                <FileChip key={path} path={path} />
+              ))}
+            </div>
+          </>
+        ) : (
+          <MdRenderer text={message.text} />
+        )}
       </div>
     </div>
   )

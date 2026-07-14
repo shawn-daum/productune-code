@@ -4,15 +4,21 @@
  * Originally inlined in ChatPanel (T-PATCH-098). Extracted here so FreshComposer
  * can reuse the same presentation without duplicating code (A-plan extraction).
  *
+ * T-350: `onRemove` is now optional on ImageChip, and a sibling `FileChip` was
+ * added — both used read-only (no `onRemove`) by MessageBubble's sent-message
+ * bubble to render the `## Attached files` block as chips instead of raw
+ * markdown, matching the composer's own chip styling.
+ *
  * Exports:
- *   ImageChip    — the pill component (default-named export)
+ *   ImageChip    — the pill component for pasted images (default-named export)
+ *   FileChip     — sibling pill for paperclip (non-image) file attachments
  *   ImageGlyph   — standalone Lucide Image SVG glyph (14 px)
  *   chipRow      — CSSProperties for the flex-wrap chip row above the textarea
  */
 
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X } from 'lucide-react'
+import { X, File as FileGlyph } from 'lucide-react'
 
 // ── ImageGlyph ────────────────────────────────────────────────────────────────
 
@@ -47,6 +53,9 @@ export function ImageGlyph(): JSX.Element {
  * chip border → strong, X bg / colour → one step brighter.
  * Raw filename only in the title tooltip; visible label = localised "image" token.
  * Reuses existing `workspace.chat.*` i18n keys (T-PATCH-133 RESOLUTION-2 — no new keys).
+ *
+ * T-350: `onRemove` is optional — omit it for a read-only chip (sent-message
+ * bubble history), which hides the X button entirely.
  */
 export function ImageChip({
   seq,
@@ -57,7 +66,7 @@ export function ImageChip({
   seq: number
   path: string
   previewUrl?: string
-  onRemove: () => void
+  onRemove?: () => void
 }): JSX.Element {
   const { t } = useTranslation()
   const [hover,  setHover]  = useState(false)
@@ -93,20 +102,76 @@ export function ImageChip({
         <span style={chipSeq}>#{seq}</span>{' '}
         {t('workspace.chat.imageLabel')}
       </span>
-      <button
-        style={{
-          ...chipRemove,
-          background: xHover ? 'var(--surface-base)' : 'transparent',
-          color:      xHover ? 'var(--text-secondary)' : 'var(--text-muted)',
-        }}
-        onMouseEnter={() => setXHover(true)}
-        onMouseLeave={() => setXHover(false)}
-        onClick={onRemove}
-        aria-label={t('workspace.chat.removeImage')}
-        title={t('workspace.chat.removeImage')}
-      >
-        <X size={12} strokeWidth={3} />
-      </button>
+      {onRemove && (
+        <button
+          style={{
+            ...chipRemove,
+            background: xHover ? 'var(--surface-base)' : 'transparent',
+            color:      xHover ? 'var(--text-secondary)' : 'var(--text-muted)',
+          }}
+          onMouseEnter={() => setXHover(true)}
+          onMouseLeave={() => setXHover(false)}
+          onClick={onRemove}
+          aria-label={t('workspace.chat.removeImage')}
+          title={t('workspace.chat.removeImage')}
+        >
+          <X size={12} strokeWidth={3} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── FileChip ──────────────────────────────────────────────────────────────────
+
+/**
+ * Sibling pill for paperclip (non-image) file attachments — same shape as
+ * ImageChip so the two render consistently side by side (T-350: sent-message
+ * bubble shows both kinds in one bottom chip row). Label = basename(path),
+ * full path in the title tooltip. `onRemove` optional (read-only when absent).
+ */
+export function FileChip({
+  path,
+  onRemove,
+}: {
+  path: string
+  onRemove?: () => void
+}): JSX.Element {
+  const { t } = useTranslation()
+  const [hover,  setHover]  = useState(false)
+  const [xHover, setXHover] = useState(false)
+  const name = path.split('/').filter(Boolean).pop() ?? path
+
+  return (
+    <div
+      style={{
+        ...chip,
+        borderColor: hover ? 'var(--border-strong)' : 'var(--border-default)',
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={path}
+    >
+      <span style={chipTile}>
+        <FileGlyph size={14} strokeWidth={1.75} aria-hidden="true" />
+      </span>
+      <span style={chipLabel}>{name}</span>
+      {onRemove && (
+        <button
+          style={{
+            ...chipRemove,
+            background: xHover ? 'var(--surface-base)' : 'transparent',
+            color:      xHover ? 'var(--text-secondary)' : 'var(--text-muted)',
+          }}
+          onMouseEnter={() => setXHover(true)}
+          onMouseLeave={() => setXHover(false)}
+          onClick={onRemove}
+          aria-label={t('workspace.chat.removeFile', { name })}
+          title={t('workspace.chat.removeFile')}
+        >
+          <X size={12} strokeWidth={3} />
+        </button>
+      )}
     </div>
   )
 }
