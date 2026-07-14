@@ -142,6 +142,42 @@ export const ENVELOPE_CASES: readonly Case[] = [
     },
   },
 
+  // ── T-346: backtick-wrapped mentions (real-world shape T-345 missed) ───────
+  // Bug report screenshot: the PO's actual message wraps each path in
+  // backticks — `file:///…` inline code, not bare prose. The regex has no
+  // word-boundary/backtick anchor at either end, so the substring is found
+  // regardless of the surrounding backticks; this locks that in as intended
+  // behavior rather than an accident, per the T-346 acceptance bullet.
+  {
+    label: 'backtick-wrapped file:// bullet list (exact reported shape) resolves all 3 paths (T-346)',
+    run: () => {
+      const text = [
+        '디자인 방향 3안을 준비했습니다:',
+        '- A안: `file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-a.html`',
+        '- B안: `file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-b.html`',
+        '- C안: `file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-c.html`',
+        '검토 후 알려주세요.',
+      ].join('\n')
+      const files = parseArtifactFiles(text)
+      return {
+        ok: sameArray(files, [
+          'docs/artifacts/enneagram-mentor-ds-a.html',
+          'docs/artifacts/enneagram-mentor-ds-b.html',
+          'docs/artifacts/enneagram-mentor-ds-c.html',
+        ]),
+        detail: JSON.stringify(files),
+      }
+    },
+  },
+  {
+    label: 'backtick-wrapped bare relative docs/artifacts/*.html mention also resolves (T-346)',
+    run: () => {
+      const text = '산출물: `docs/artifacts/foo.html` 확인해주세요.'
+      const files = parseArtifactFiles(text)
+      return { ok: sameArray(files, ['docs/artifacts/foo.html']), detail: JSON.stringify(files) }
+    },
+  },
+
   // ── QA envelope defense (T-288 §2) ──────────────────────────────────────────
   {
     label: 'qa_status-less prdt-qa envelope recognized via persona, no throw',

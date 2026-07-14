@@ -13,7 +13,7 @@
  * helpers.artifactOpenType.test.ts / browserUrl.test.ts (T-328).
  */
 
-import { linkifyText } from './linkifyText'
+import { linkifyText, matchSingleLinkTarget } from './linkifyText'
 
 interface Case {
   readonly label: string
@@ -82,4 +82,49 @@ test('linkifyText: file:// + docs/artifacts/*.html clickability (T-345), no regr
     throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
   }
   expect(passed).toBe(CASES.length)
+})
+
+// ── matchSingleLinkTarget (T-346) ──────────────────────────────────────────────
+// Powers MdRenderer's inline `code` component: a backtick-wrapped span whose
+// ENTIRE trimmed content is one linkify-eligible token renders clickable.
+// linkifyText itself still skips code spans (correct prose semantics) — this
+// is the separate render-time path the bug report needed.
+
+test('matchSingleLinkTarget: bare file:// URI in a code span resolves to the doctrine route (T-346)', () => {
+  const target = matchSingleLinkTarget(
+    'file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-a.html',
+  )
+  expect(target).toEqual({
+    label: 'enneagram-mentor-ds-a.html',
+    href: 'ptn:doctrine/file:///Users/dev/proj/docs/artifacts/enneagram-mentor-ds-a.html',
+  })
+})
+
+test('matchSingleLinkTarget: bare relative docs/artifacts/*.html in a code span resolves (T-346)', () => {
+  const target = matchSingleLinkTarget('docs/artifacts/foo.html')
+  expect(target).toEqual({ label: 'foo.html', href: 'ptn:file/docs/artifacts/foo.html' })
+})
+
+test('matchSingleLinkTarget: ticket ID in a code span resolves (T-346, same scope as prose linkify)', () => {
+  expect(matchSingleLinkTarget('T-P4-114')).toEqual({
+    label: 'T-P4-114',
+    href: 'ptn:ticket/T-P4-114',
+  })
+})
+
+test('matchSingleLinkTarget: surrounding whitespace is trimmed before matching (T-346)', () => {
+  const target = matchSingleLinkTarget('  docs/artifacts/foo.html  ')
+  expect(target).toEqual({ label: 'foo.html', href: 'ptn:file/docs/artifacts/foo.html' })
+})
+
+test('matchSingleLinkTarget: ordinary code snippet is NOT linkified — no false positive (T-346)', () => {
+  expect(matchSingleLinkTarget('const url = "https://x"')).toBeNull()
+  expect(matchSingleLinkTarget('npm install')).toBeNull()
+  expect(matchSingleLinkTarget('foo.bar()')).toBeNull()
+})
+
+test('matchSingleLinkTarget: a path that is only PART of the span is NOT linkified (whole-span only, T-346)', () => {
+  // Guards the "no false positive" acceptance bullet the other direction:
+  // trailing prose glued into the same code span must not smuggle a link in.
+  expect(matchSingleLinkTarget('see docs/artifacts/foo.html for details')).toBeNull()
 })

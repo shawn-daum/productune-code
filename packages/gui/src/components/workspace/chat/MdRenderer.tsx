@@ -12,6 +12,7 @@ import remarkGfm from 'remark-gfm'
 import type { ReactNode } from 'react'
 import { useWorkspace } from '../../../store/workspace'
 import { mdUrlTransform } from './mdUrlTransform'
+import { matchSingleLinkTarget } from '../../../lib/linkifyText'
 
 // ── Link routing (re-used from MessageBubble logic) ───────────────────────────
 
@@ -320,6 +321,29 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
     const isBlock = !!className
     if (isBlock) {
       return <code className={className ?? ''}>{applySyntaxHighlight(children)}</code>
+    }
+    // T-346: an inline code span whose ENTIRE content is one linkify-eligible
+    // token (file:// URI, docs/artifacts/*.html, ticket ID, doctrine path…)
+    // renders clickable, reusing the same ptn: routing as prose links (T-345).
+    // Real PO/worker messages routinely wrap paths in backticks — linkifyText
+    // correctly leaves code spans untouched (markdown semantics), so without
+    // this those paths stayed dead text even across a restart. Whole-span
+    // match only (matchSingleLinkTarget), so an ordinary snippet like
+    // `const url = "https://x"` is untouched — no false-positive linkification.
+    const target = typeof children === 'string' ? matchSingleLinkTarget(children) : null
+    if (target) {
+      return (
+        <code
+          className={`md-code-inline ${getLinkClass(target.href)}`}
+          style={{ textDecoration: 'underline', cursor: 'pointer' }}
+          onClick={(e) => {
+            e.preventDefault()
+            routeLink(target.href)
+          }}
+        >
+          {children}
+        </code>
+      )
     }
     return <code className="md-code-inline">{children}</code>
   },

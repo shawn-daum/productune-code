@@ -16,10 +16,18 @@
  *   docs/artifacts/f.html  → [f.html](ptn:file/docs/artifacts/f.html)  (T-345, bare relative mention)
  *   https://hostname      → [hostname](https://hostname)            (#C8C8CC)
  *
- * Skips:
+ * Skips (this preprocessor, `linkifyText`, never rewrites these):
  *   - Fenced code blocks  ``` … ```
  *   - Inline backtick code  `…`
  *   - Existing markdown links  [text](href)  — preserved as-is
+ *
+ * T-346: a code span being skipped here is correct for markdown semantics,
+ * but real PO/worker messages routinely wrap a path in backticks, so
+ * MdRenderer's inline `code` component separately calls the exported
+ * `matchSingleLinkTarget(content)` below to render THAT span clickable
+ * (same alternation/scope, whole-span match only — see its doc comment).
+ * That is render-time, not a preprocessing step, so it's kept out of the
+ * skip list above.
  *
  * No npm dependencies — pure string preprocessor for react-markdown.
  */
@@ -78,6 +86,17 @@ const CODE_BLOCK_RE = /(```[\s\S]*?```|`[^`\n]+`)/g
 const LINK_RE =
   /(https?:\/\/[^\s<>"]+)|(\[[^\]]*\]\([^)]*\))|(T-P4-\d+)|((?<![\w/.\-])\.?\/?(?:(?:docs|packages|src|\.productune)\/[\w/.\-]+\.(?:md|tsx|ts|sh|json)|docs\/artifacts\/[\w/.\-]+\.html|\.productune\/\.env[a-zA-Z0-9._-]*|\.env[a-zA-Z0-9._-]*|(?:config|package|tsconfig)\.json))|(file:\/\/[^\s<>")\]]+|(?:~|\/[\w.\-]+)(?:\/[\w.\-]+)*\/\.productune\/(?:po|designer|developer|qa)\/[\w/.\-]+\.md)/g
 
+/**
+ * Anchored (`^…$`) variant of LINK_RE for whole-string matching (T-346).
+ * Reused by `matchSingleLinkTarget` to test whether an inline code-span's
+ * ENTIRE trimmed content is one linkify-eligible token, as opposed to
+ * `_linkifySegment`'s free-floating-substring scan over prose. Same
+ * alternation ⇒ same scope/priority as prose linkify, so a backtick-wrapped
+ * path routes identically to its plain-prose equivalent — no separate
+ * false-positive surface to maintain.
+ */
+const LINK_RE_ANCHORED = new RegExp(`^(?:${LINK_RE.source})$`)
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -102,6 +121,84 @@ export function linkifyText(text: string): string {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+interface ResolvedLink {
+  /** Display label — basename / hostname / ticket id (no brackets). */
+  label: string
+  href: string
+}
+
+/**
+ * Resolve one already-captured LINK_RE alternation to a `{ label, href }`
+ * pair. Shared by `_linkifySegment` (prose, builds `[label](href)` markdown)
+ * and `matchSingleLinkTarget` (T-346, whole-string code-span test) so the
+ * two call sites can never drift on what counts as a link or what href it
+ * produces — priority/precedence logic lives here exactly once.
+ *
+ * `existingLink` (alt-2, an already-formed `[text](href)` markdown link) has
+ * no href/label to resolve — callers handle it themselves before reaching
+ * here (prose: pass through verbatim; code-span: alt-2 can't occur since
+ * `[...]()`  syntax inside a backtick span is inert markdown, so
+ * `matchSingleLinkTarget` never expects it either).
+ */
+function _resolveMatch(groups: {
+  bareUrl: string | undefined
+  ticketId: string | undefined
+  filePath: string | undefined
+  absDoctrine: string | undefined
+}): ResolvedLink | null {
+  const { bareUrl, ticketId, filePath, absDoctrine } = groups
+
+  // Priority 3 — ticket ID
+  if (ticketId !== undefined) {
+    return { label: ticketId, href: `ptn:ticket/${ticketId}` }
+  }
+
+  // Priority 4 — relative file path
+  if (filePath !== undefined) {
+    // Normalize leading "./" away so the ptn:file/ href is canonical.
+    const normalized = filePath.replace(/^\.\//, '')
+    const basename = normalized.split('/').pop() ?? normalized
+    return { label: basename, href: `ptn:file/${normalized}` }
+  }
+
+  // Priority 5 — absolute / file:// doctrine path (T-PATCH-106, widened T-345)
+  // The raw absolute token is carried verbatim after the ptn:doctrine/ tag;
+  // routeLink (MdRenderer) decodes/normalizes & classifies tier/persona.
+  // basename = last path segment, with any file:// prefix decoded first.
+  // T-345: the widened `file://…` alt-5 branch has no extension/dir anchor
+  // at its END (unlike the old .productune/…md-anchored form), so a
+  // trailing sentence-punctuation or list-separator char (`.`, `,` when
+  // several paths are narrated in one line) can get swept into the match —
+  // strip it, mirroring the bareUrl branch below.
+  if (absDoctrine !== undefined) {
+    const cleaned = absDoctrine.replace(/[.,;!?)'"\]]+$/, '')
+    const decoded = cleaned.startsWith('file://')
+      ? (() => { try { return decodeURIComponent(new URL(cleaned).pathname) } catch { return cleaned } })()
+      : cleaned
+    const basename = decoded.split('/').pop() ?? decoded
+    return { label: basename, href: `ptn:doctrine/${cleaned}` }
+  }
+
+  // Priority 1 — bare URL
+  if (bareUrl !== undefined) {
+    let hostname: string
+    try {
+      hostname = new URL(bareUrl).hostname
+    } catch {
+      hostname = bareUrl.replace(/^https?:\/\//, '').split('/')[0] ?? bareUrl
+    }
+    // Strip trailing punctuation that may have been captured
+    const cleanUrl = bareUrl.replace(/[.,;!?)'"\]]+$/, '')
+    const cleanHostname =
+      cleanUrl !== bareUrl
+        ? (() => { try { return new URL(cleanUrl).hostname } catch { return hostname } })()
+        : hostname
+    return { label: cleanHostname, href: cleanUrl }
+  }
+
+  return null
+}
+
 function _linkifySegment(text: string): string {
   LINK_RE.lastIndex = 0
   return text.replace(
@@ -117,56 +214,35 @@ function _linkifySegment(text: string): string {
       // Priority 2 — existing link: keep verbatim
       if (existingLink !== undefined) return existingLink
 
-      // Priority 3 — ticket ID
-      if (ticketId !== undefined) {
-        return `[${ticketId}](ptn:ticket/${ticketId})`
-      }
-
-      // Priority 4 — relative file path
-      if (filePath !== undefined) {
-        // Normalize leading "./" away so the ptn:file/ href is canonical.
-        const normalized = filePath.replace(/^\.\//, '')
-        const basename = normalized.split('/').pop() ?? normalized
-        return `[${basename}](ptn:file/${normalized})`
-      }
-
-      // Priority 5 — absolute / file:// doctrine path (T-PATCH-106, widened T-345)
-      // The raw absolute token is carried verbatim after the ptn:doctrine/ tag;
-      // routeLink (MdRenderer) decodes/normalizes & classifies tier/persona.
-      // basename = last path segment, with any file:// prefix decoded first.
-      // T-345: the widened `file://…` alt-5 branch has no extension/dir anchor
-      // at its END (unlike the old .productune/…md-anchored form), so a
-      // trailing sentence-punctuation or list-separator char (`.`, `,` when
-      // several paths are narrated in one line) can get swept into the match —
-      // strip it, mirroring the bareUrl branch below.
-      if (absDoctrine !== undefined) {
-        const cleaned = absDoctrine.replace(/[.,;!?)'"\]]+$/, '')
-        const decoded = cleaned.startsWith('file://')
-          ? (() => { try { return decodeURIComponent(new URL(cleaned).pathname) } catch { return cleaned } })()
-          : cleaned
-        const basename = decoded.split('/').pop() ?? decoded
-        return `[${basename}](ptn:doctrine/${cleaned})`
-      }
-
-      // Priority 1 — bare URL
-      if (bareUrl !== undefined) {
-        let hostname: string
-        try {
-          hostname = new URL(bareUrl).hostname
-        } catch {
-          hostname =
-            bareUrl.replace(/^https?:\/\//, '').split('/')[0] ?? bareUrl
-        }
-        // Strip trailing punctuation that may have been captured
-        const cleanUrl = bareUrl.replace(/[.,;!?)'"\]]+$/, '')
-        const cleanHostname =
-          cleanUrl !== bareUrl
-            ? (() => { try { return new URL(cleanUrl).hostname } catch { return hostname } })()
-            : hostname
-        return `[${cleanHostname}](${cleanUrl})`
-      }
-
-      return match
+      const resolved = _resolveMatch({ bareUrl, ticketId, filePath, absDoctrine })
+      return resolved ? `[${resolved.label}](${resolved.href})` : match
     },
   )
+}
+
+/**
+ * T-346 — test whether `raw` (an inline code-span's text content, backticks
+ * already stripped by the markdown parser) is, in its entirety once trimmed,
+ * ONE linkify-eligible token (file:// URI, docs/artifacts/*.html path, ticket
+ * ID, doctrine path, or bare URL — same alternation/scope as prose linkify).
+ *
+ * Deliberately whole-string only (anchored `^…$`), not a substring scan: a
+ * code span like `` `const url = "https://x"` `` must stay inert — only a
+ * span whose ENTIRE content is the path/URI (the real-world shape from the
+ * T-346 bug report: a bullet list of bare backtick-wrapped `file:///…`
+ * mentions) becomes clickable. This is what keeps ordinary code snippets
+ * (acceptance criterion 4) from false-positiving.
+ *
+ * Returns null for anything else, including an inert `[text](href)` markdown
+ * sequence typed literally inside a code span (alt-2 has no href/label of
+ * its own to resolve — see `_resolveMatch` doc).
+ */
+export function matchSingleLinkTarget(raw: string): ResolvedLink | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  const m = LINK_RE_ANCHORED.exec(trimmed)
+  if (!m) return null
+  const [, bareUrl, existingLink, ticketId, filePath, absDoctrine] = m
+  if (existingLink !== undefined) return null
+  return _resolveMatch({ bareUrl, ticketId, filePath, absDoctrine })
 }
