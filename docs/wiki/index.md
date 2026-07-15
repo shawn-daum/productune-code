@@ -3,6 +3,7 @@
 - [[decision--v1-single-line]] decision · v1.1 — v1 단일 개발 라인 (v1 single dev line)
 - [[fact--discipline-editing]] fact · v1.1 — discipline 수정 룰 (discipline editing)
 - [[fact--gui-testing-env]] fact · v1.1 — GUI 검증 환경 (GUI testing env) — 패턴·footgun
+- [[fact--qa-cua-vm]] fact · v1.1 — QA CUA VM — 격리 검증 환경 (isolation via cua VM)
 - [[feature--gui-adapter]] feature · v1.1 — GUI 어댑터 (gui-adapter) — prdt dual-mode 아키텍처
 - [[learning--sweep-discipline]] learning · v1.1 — 스윕 규율 (sweep discipline) — 어댑터 시리즈 교훈
 - [[retro--v1.0]] retro · v1.0 — Retro v1.0 — prdt 코어

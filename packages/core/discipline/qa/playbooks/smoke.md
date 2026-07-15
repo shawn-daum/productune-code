@@ -17,6 +17,7 @@ Three checks, in order. Report what you ran, not what you assume.
 - Run `surfaces[X].smoke`. Driver map: web → playwright · electron → playwright-electron (scripted launch, not a browser MCP) · ios/android → maestro.
 - Mobile smoke needs BOTH the config command AND an in-repo `.maestro/*.yaml` flow; either missing = effectively `smoke: null`.
 - `smoke: null` / driver unavailable / missing device → manual fallback, documented in `summary` — never a silent skip, never a product `fail` for an env gap.
+- Electron smoke that drives window focus, System Events synthetic keys, or IME/input-source switching runs inside the isolated cua VM on this machine, never on the host (`fact--qa-cua-vm`); everything else in this playbook stays local.
 
 ## 3. Acceptance
 - Walk each acceptance line one by one, verbatim. No paraphrase, no batch-judgment.

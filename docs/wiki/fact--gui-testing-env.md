@@ -3,9 +3,15 @@ title: GUI 검증 환경 (GUI testing env) — 패턴·footgun
 type: fact
 status: live
 version: v1.1
-links: ["feature--gui-adapter"]
+links: ["feature--gui-adapter", "fact--qa-cua-vm"]
 ---
 # GUI 검증 환경 — 재사용 패턴과 footgun
+
+## 포커스/IME/합성키 검증은 VM으로
+창 포커스 탈취·System Events 합성 키 이벤트·IME 입력소스 전환이 관여하는 검증은 호스트에서
+돌리지 말 것 — 실사용자 세션으로 키/포커스가 샐 수 있다(T-354 실측). 이 클래스는
+[[fact--qa-cua-vm]]의 격리 VM에서 구동. 그 외(headless·IPC 직접 주입·unit test)는 아래 로컬
+패턴 그대로 유효.
 
 ## playwright-electron 라이브 검증 패턴
 - 임의 프로젝트 대상: localStorage `productune.lastProject` 시드 + reload (끝나면 복원). 네이티브 다이얼로그 우회는 `open-recent-project` IPC(webContents.send).
