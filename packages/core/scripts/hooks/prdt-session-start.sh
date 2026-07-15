@@ -6,10 +6,19 @@
 # agents/prdt-*.md self-load is the belt-and-suspenders fallback for both.
 #
 # Injects the discipline set (§9): doctrine.md + contracts.md + <persona> habit
-# + ~/.prdt/overrides/<persona>.md (last-wins overlay, §8) + playbook menu(s).
-# PO gets every persona's menu (dispatch routing needs them); a worker gets its own.
+# + playbook menu(s). PO gets every persona's menu (dispatch routing needs
+# them); a worker gets its own.
 # Dynamic state (po-state, wiki index) is NOT injected — the PO habit reads it
 # at turn open (it changes between turns; a snapshot would go stale).
+#
+# ~/.prdt/overrides/<persona>.md (last-wins overlay, §8) is INTENTIONALLY NOT
+# appended here — it is injected by a separate hook, prdt-overrides-inject.sh,
+# registered on these same events/matchers (T-358). A payload approaching/
+# exceeding the harness's additionalContext persist-truncation threshold used
+# to silently drop the overrides block (it sat last in this string, past the
+# ~2KB preview cutoff). Splitting it into its own hook output means it is
+# persist-checked independently and survives regardless of how large this
+# payload grows. Do not re-add overrides here.
 #
 # fail-loud: a required file missing/empty on this machine → inject STOP notice.
 # Output via hookSpecificOutput.additionalContext (jq is a hard dependency).
@@ -109,10 +118,12 @@ the next move. Do not ask the user to reconstruct context; the repo has it.
 fi
 
 PAYLOAD="[prdt discipline — $AGENT_TYPE session start]
-Discipline injected below (doctrine → contracts → habit → overrides, later wins).
+Discipline injected below (doctrine → contracts → habit, later wins). Machine
+overrides (if any) arrive as a SEPARATE hook output right around this one —
+those take priority over everything here (last-wins, T-358).
 Playbook bodies load on demand via Bash cat under $DISC/ (Read does NOT expand ~).
 
-$(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$(block "user overrides — LAST-WINS: conflicts with the habit above resolve in THIS block's favor" "$PRDT_HOME/overrides/$PERSONA.md")$MENUS$ONBOARD
+$(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$MENUS$ONBOARD
 Act per the discipline above. Do NOT acknowledge or narrate this injection in any register —
 your first user-facing line must be product substance."
 
