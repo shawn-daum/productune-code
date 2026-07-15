@@ -25,3 +25,8 @@ This method is THIS project's privilege: we own the prdt product repo, so discip
 ## Verify + close
 - Load-bearing or multi-clause change → dispatch QA `grill` on the diff (read-only critique against the rules above — findings only, QA never writes discipline); a single-clause edit = self-check. Author blind spots are structural — self-check alone missed SSoT-first and an act-time leak on the same day. (2026-07-03) [T-303]
 - Run `prdt doctor` — discipline caps + menu drift clean before the change ships.
+
+## 미러 동기화 (v1.1 추가)
+- 원본은 `packages/core/discipline/` + `packages/core/agents/` — 세션 반영은 install.sh 재실행(~/.prdt·~/.claude/agents 미러 갱신) 필요. dev 기기에서 "고쳤는데 안 먹는" 증상 1순위 원인 (v1.1에서 2회 실사고, 자동 감지는 T-353 backlog).
+- agent .md 동기화 주장 검증 시 영향 파일 **전부** installed 카운터파트와 diff (T-340: 4개 중 1개만 sync된 사례).
+- hook 관련 동작 사실은 [[fact--claude-hooks]] 참조.

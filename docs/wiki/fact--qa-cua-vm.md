@@ -87,3 +87,6 @@ frontmost 프로세스가 하네스가 기대하는 앱이 아니면 즉시 thro
 ## 아카이브 참조 (읽기 전용, 그대로 유효)
 `_archive/productune/docs/qa/bookshelf/cua-vm-harness.md` — dmg 전송, `claude` CLI PATH 함정,
 keychain 401/잠금 해제, VNC, TCC 우회 등 세부 오퍼레이션 노트.
+
+## 운영 caveat (추가)
+- VM `~/.cua-server/server.log`는 무회전 무한증가(6GB+ 관측 — 부팅마다 pip 업그레이드 출력 누적) — 주기적 truncate 또는 start_server.sh에 회전 추가 필요 (작은 ops 후보).

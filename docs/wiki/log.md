@@ -6,3 +6,4 @@
 (2026-07-06) curated 49 inbox lines → 3 new pages (feature--gui-adapter · fact--gui-testing-env · learning--sweep-discipline) + backlog T-315; dropped lines already recorded in ticket outcomes/tickets. Promotion candidate parked: core stateDir() lint/review-check (재발 2회) — retro에서 discipline-edit 검토.
 (2026-07-06) readiness v1.1 진행 중: security N/A (로컬 도구 — 민감 표면인 settings.json 쓰기는 T-305/311에서 동의 게이트 실측 완료).
 (2026-07-06) readiness v1.1: review ✓(6 findings→T-316 patched+QA) · ds ✓(T-313 fix+T-314 doc) · security N/A(로컬 도구, 동의 게이트 기실측) · run-prompt+prd sweep 사용자 대기.
+- (2026-07-15) Retro v1.1: curated 86 inbox lines → 5 new + 3 updated pages · retro--v1.1.md · doctor 155 warnings consciously accepted (legacy enum=T-296 처방) · T-294 closed(observed) · tag v1.1
