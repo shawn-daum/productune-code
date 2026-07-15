@@ -2,9 +2,5 @@
   "schema_version": 1,
   "stage": "ship",
   "version": "v1.1",
-  "current_task": {
-    "ticket_id": "T-357",
-    "slug": "qa-isolation-via-cua-vm",
-    "assignee": "developer"
-  }
+  "current_task": null
 }
