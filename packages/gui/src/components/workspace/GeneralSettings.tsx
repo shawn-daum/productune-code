@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Loader2, CheckCircle2, XCircle, BellRing, ExternalLink } from 'lucide-react'
 import i18next from '../../i18n'
 import { useWorkspace } from '../../store/workspace'
+import MetaBackupSection from './MetaBackupSection'
+import MetaMigrateSection from './MetaMigrateSection'
 import { usePoModel, poModelOptionLabel, type PoModel } from '../../store/poModel'
 
 type Lang = 'en' | 'ko'
@@ -81,6 +83,13 @@ export default function GeneralSettings() {
         <>
           <div style={divider} />
           <PoSessionSection projectDir={project.projectDir} />
+          {/* Meta (work history) backup remote (T-367) — self-hides when the
+              project has no meta split. Registration only, never pushes. */}
+          <div style={divider} />
+          <MetaBackupSection projectDir={project.projectDir} />
+          {/* Meta-split migration (T-366) — self-hides unless the project is a
+              mixed repo; two-step in-app confirm before the untrack commit. */}
+          <MetaMigrateSection projectDir={project.projectDir} />
         </>
       )}
 

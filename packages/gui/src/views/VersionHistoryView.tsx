@@ -12,6 +12,7 @@ import TicketCard, { type TicketArtifactEntry } from './versionHistory/TicketCar
 import EmptyState from './versionHistory/EmptyState'
 import FilterToolbar from './versionHistory/FilterToolbar'
 import RichDeployCard, { DeployLoadingSkeleton } from './versionHistory/RichDeployCard'
+import MetaTrackCard from './versionHistory/MetaTrackCard'
 import { viewWrap, headerWrap, headerTitle, headerSubtitle, cardListWrap, prdWrap } from './versionHistory/styles'
 
 const EMPTY_ARTIFACT_MAP = new Map<string, TicketArtifactEntry[]>()
@@ -22,7 +23,7 @@ export default function VersionHistoryView() {
   const {
     selectedVersionId, versionLabel, subtitle,
     filter, dispatch, defaultFrom, defaultTo,
-    allCards, deployLoading,
+    allCards, deployLoading, metaCommits, metaByTicket,
   } = useVersionHistory()
 
   // ── Ticket → artifacts map (T-PATCH-121) ───────────────────────────────────
@@ -91,13 +92,15 @@ export default function VersionHistoryView() {
             <TicketCard
               key={item.key}
               ticket={item.ticket}
-              commits={[]}
+              commits={metaByTicket.get(item.ticket.ticket_id) ?? []}
               artifacts={artifactsByTicket.get(item.ticket.ticket_id)}
             />
           ) : (
             <RichDeployCard key={item.key} deploy={item.deploy} />
           ),
         )}
+        {/* Meta track (T-367) — full meta commit timeline, identical to `prdt meta log` */}
+        <MetaTrackCard commits={metaCommits} />
       </div>
     </div>
   )

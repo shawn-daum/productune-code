@@ -4,8 +4,8 @@ import type { Ticket } from '../../lib/types'
 import { useWorkspace } from '../../store/workspace'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { filterReducer, loadPersonaFilter } from './filterReducer'
-import { ticketDateKey, toDateStr, dateInRange, personaMatchesFilter } from './helpers'
-import type { FilterState, FilterAction, FetchedDeployEvent, CardItem } from './types'
+import { ticketDateKey, toDateStr, dateInRange, personaMatchesFilter, groupCommitsByTicket } from './helpers'
+import type { FilterState, FilterAction, FetchedDeployEvent, CardItem, CommitLine } from './types'
 
 export interface VersionHistoryData {
   selectedVersionId: string | null
@@ -17,6 +17,10 @@ export interface VersionHistoryData {
   defaultTo: string
   allCards: CardItem[]
   deployLoading: boolean
+  /** Meta commit timeline within the active date filter (T-367; newest-first). */
+  metaCommits: CommitLine[]
+  /** Meta commits grouped by ticket-id subject prefix — TicketCard commit track. */
+  metaByTicket: Map<string, CommitLine[]>
 }
 
 export function useVersionHistory(): VersionHistoryData {
@@ -84,6 +88,30 @@ export function useVersionHistory(): VersionHistoryData {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVersionId, isUnassigned])
 
+  // ── Meta commit timeline (T-367) — same core API as `prdt meta log` ─────────
+  // Fetched via meta:log (scanMetaHistory). Projects without the meta split
+  // resolve to [] — every meta UI element then simply stays absent (no error
+  // surface, mirroring the beat's silent no-op contract).
+  const [metaCommitsRaw, setMetaCommitsRaw] = useState<CommitLine[]>([])
+  useEffect(() => {
+    const projectDir = project?.projectDir
+    if (!projectDir) { setMetaCommitsRaw([]); return }
+    let cancelled = false
+    const api = (window as any).api
+    if (!api?.metaLog) return
+    api.metaLog(projectDir, 500)
+      .then((entries: CommitLine[]) => { if (!cancelled) setMetaCommitsRaw(entries ?? []) })
+      .catch(() => { if (!cancelled) setMetaCommitsRaw([]) })
+    return () => { cancelled = true }
+  // refetch on version switch — cheap git log; keeps the track fresh
+  }, [project?.projectDir, selectedVersionId])
+
+  const metaByTicket = useMemo(() => groupCommitsByTicket(metaCommitsRaw), [metaCommitsRaw])
+  const metaCommits = useMemo(
+    () => metaCommitsRaw.filter((c) => dateInRange(c.authorDate, filter.dateFrom, filter.dateTo)),
+    [metaCommitsRaw, filter.dateFrom, filter.dateTo],
+  )
+
   const durationLabel = useMemo(() => {
     if (!version?.started_at) return null
     const start = new Date(version.started_at)
@@ -110,5 +138,5 @@ export function useVersionHistory(): VersionHistoryData {
     ].sort((a, b) => b.date.localeCompare(a.date))
   }, [versionTickets, filter, deployEvents])
 
-  return { selectedVersionId, versionLabel, subtitle, filter, dispatch, defaultFrom, defaultTo, allCards, deployLoading }
+  return { selectedVersionId, versionLabel, subtitle, filter, dispatch, defaultFrom, defaultTo, allCards, deployLoading, metaCommits, metaByTicket }
 }

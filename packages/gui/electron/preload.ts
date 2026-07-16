@@ -1322,6 +1322,58 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<Array<{ name: string; date: string }>> =>
     ipcRenderer.invoke('git:listTags', projectDir),
 
+  // ── Meta repo (T-367, PRD §v1.2) — same core API as `prdt meta` ─────────────
+
+  /** Meta commit timeline (newest-first). [] when the meta split is not applied. */
+  metaLog: (
+    projectDir: string,
+    limit?: number,
+  ): Promise<Array<{ sha: string; subject: string; authorDate: string }>> =>
+    ipcRenderer.invoke('meta:log', projectDir, limit),
+
+  /** Configured meta backup remotes; exists=false → meta split not applied. */
+  metaListRemotes: (
+    projectDir: string,
+  ): Promise<{ exists: boolean; remotes: Array<{ name: string; url: string }> }> =>
+    ipcRenderer.invoke('meta:listRemotes', projectDir),
+
+  /** Add/update an opt-in backup remote on the meta repo. NEVER pushes. */
+  metaAddRemote: (
+    projectDir: string,
+    name: string,
+    url: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('meta:addRemote', projectDir, name, url),
+
+  // ── Meta-split migration (T-366) — read-only plan + confirmed run ───────────
+
+  /** Migration eligibility + untrack preview (read-only, safe at render time). */
+  metaMigratePlan: (
+    projectDir: string,
+  ): Promise<{
+    status: 'eligible' | 'no-git' | 'already-split' | 'staged-changes'
+    trackedMetaFiles: string[]
+    allowlist: string[]
+    resuming: boolean
+  }> => ipcRenderer.invoke('meta:migratePlan', projectDir),
+
+  /**
+   * Execute the migration. Call ONLY after the user confirmed the plan in-app
+   * (meta-migrate.ts auto/confirm boundary). rm --cached only — never pushes,
+   * never rewrites history.
+   */
+  metaMigrateRun: (
+    projectDir: string,
+  ): Promise<{
+    ok: boolean
+    refusal?: string
+    untrackedCount: number
+    verified: boolean
+    codeTrackedMetaCount: number
+    metaTrackedCount: number
+    error?: string
+  }> => ipcRenderer.invoke('meta:migrateRun', projectDir),
+
   // ── Explorer content search (T-024) ──────────────────────────────────────────
 
   /** Full-text content search across project files (fixed ignore rules, perf-capped). */

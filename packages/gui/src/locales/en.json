@@ -633,6 +633,10 @@
       "openBoard": "Open ticket board",
       "openRetro": "Open full retrospective",
       "gitTagLoadError": "Couldn't compute version history",
+      "metaTrack": {
+        "title": "Work history",
+        "count": "{{n}} records"
+      },
       "openTicketsAnomaly": "{{count}} unfinished tickets remain in a closed version"
     },
     "phaseStrip": {
@@ -857,7 +861,6 @@
     },
     "artifacts": {
       "sectionLabel": "Artifacts",
-      "openAll": "+ open all ({{count}})",
       "empty": "No artifacts in this session",
       "loadError": "Could not load file list.",
       "emptyHeadline": "No artifacts to show",
@@ -935,6 +938,11 @@
         "openDetail": "Open ticket detail: {{id}}",
         "artifactCount": "📎 {{n}}",
         "artifactCountTitle": "{{n}} artifacts"
+      },
+      "metaTrack": {
+        "title": "Work history",
+        "count": "▼ {{n}} records",
+        "collapse": "▲ Collapse"
       }
     },
     "qaLoop": {
@@ -1000,6 +1008,31 @@
       "saveError": "Failed to save settings.",
       "retry": "Retry",
       "prefixPlaceholder": "e.g. feature"
+    },
+    "metaBackup": {
+      "label": "Work history backup (optional)",
+      "description": "Register a remote to back up your work history (ticket & document timeline). Registering never sends anything automatically — backups are always run manually.",
+      "namePlaceholder": "name (e.g. backup)",
+      "urlPlaceholder": "repository URL",
+      "addButton": "Register",
+      "addSuccess": "Backup remote registered. Nothing is pushed automatically.",
+      "addError": "Failed to register the backup remote.",
+      "currentLabel": "Registered backup remotes"
+    },
+    "metaMigrate": {
+      "label": "Separate work history",
+      "description": "This project keeps its work history (tickets & documents) mixed into the code repository. Separating leaves only code in the code repository, while your work history is managed automatically in its own space inside the project.",
+      "startButton": "Start separation",
+      "resumeButton": "Resume separation",
+      "planUntrack": "The code repository will stop following {{count}} work-history file(s) — the files themselves stay in place.",
+      "planCommit": "This adds one change record to the code repository; it reaches your online repository the next time you publish.",
+      "planNoRewrite": "Past history is never rewritten — everything recorded so far is preserved as-is.",
+      "confirmButton": "Proceed",
+      "cancelButton": "Cancel",
+      "running": "Separating…",
+      "done": "Work history separated — {{metaCount}} file(s) moved to dedicated management.",
+      "stagedBlocked": "There are pending code changes, so separation can't run right now. Finish the changes in progress, then try again.",
+      "failed": "Failed to separate the work history."
     },
     "language": {
       "title": "UI 언어 / Interface language",

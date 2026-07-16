@@ -633,6 +633,10 @@
       "openBoard": "티켓 보드 열기",
       "openRetro": "회고 전체 보기",
       "gitTagLoadError": "버전 히스토리를 계산할 수 없습니다",
+      "metaTrack": {
+        "title": "작업 기록",
+        "count": "{{n}}건"
+      },
       "openTicketsAnomaly": "닫힌 버전에 미완료 티켓 {{count}}건 남음"
     },
     "phaseStrip": {
@@ -857,7 +861,6 @@
     },
     "artifacts": {
       "sectionLabel": "산출물",
-      "openAll": "+ 전체 열기 ({{count}})",
       "empty": "이 세션에 산출물이 없습니다",
       "loadError": "파일 목록을 불러오지 못했어요.",
       "emptyHeadline": "표시할 산출물이 없습니다",
@@ -935,6 +938,11 @@
         "openDetail": "티켓 상세 열기: {{id}}",
         "artifactCount": "📎 {{n}}",
         "artifactCountTitle": "산출물 {{n}}건"
+      },
+      "metaTrack": {
+        "title": "작업 기록",
+        "count": "▼ 기록 {{n}}건",
+        "collapse": "▲ 접기"
       }
     },
     "qaLoop": {
@@ -1000,6 +1008,31 @@
       "saveError": "설정 저장에 실패했습니다.",
       "retry": "다시 시도",
       "prefixPlaceholder": "예: feature"
+    },
+    "metaBackup": {
+      "label": "작업 기록 백업 (선택)",
+      "description": "작업 기록(티켓·문서 히스토리)을 백업할 원격 저장소를 등록해요. 등록만 할 뿐, 자동으로 보내지는 않아요 — 백업 실행은 항상 직접 해요.",
+      "namePlaceholder": "이름 (예: backup)",
+      "urlPlaceholder": "저장소 주소",
+      "addButton": "등록",
+      "addSuccess": "백업 저장소가 등록됐어요. 자동 전송은 하지 않아요.",
+      "addError": "백업 저장소 등록에 실패했어요.",
+      "currentLabel": "등록된 백업 저장소"
+    },
+    "metaMigrate": {
+      "label": "작업 기록 분리",
+      "description": "이 프로젝트는 코드 저장소에 작업 기록(티켓·문서)이 섞여 있어요. 분리하면 코드 저장소에는 코드만 남고, 작업 기록은 프로젝트 안의 별도 공간에서 자동 관리돼요.",
+      "startButton": "작업 기록 분리 시작",
+      "resumeButton": "작업 기록 분리 이어서 진행",
+      "planUntrack": "코드 저장소가 작업 기록 파일 {{count}}개를 더 이상 따라가지 않게 해요 — 파일 자체는 그대로 남아요.",
+      "planCommit": "이 변경은 코드 저장소에 변경 기록 1건으로 남고, 다음에 온라인 저장소로 올릴 때 반영돼요.",
+      "planNoRewrite": "과거 이력은 다시 쓰지 않아요 — 지금까지의 기록은 전부 그대로 보존돼요.",
+      "confirmButton": "진행",
+      "cancelButton": "취소",
+      "running": "분리하는 중…",
+      "done": "작업 기록 분리가 끝났어요 — 파일 {{metaCount}}개가 별도 관리로 옮겨졌어요.",
+      "stagedBlocked": "반영 대기 중인 코드 변경이 있어 지금은 분리할 수 없어요. 진행 중인 변경을 먼저 마무리한 뒤 다시 시도하세요.",
+      "failed": "작업 기록 분리에 실패했어요."
     },
     "language": {
       "title": "UI 언어 / Interface language",

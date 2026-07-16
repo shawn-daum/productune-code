@@ -45,6 +45,25 @@ export function commitSummaryLine(subject: string): string {
   return n.summary || subject
 }
 
+/**
+ * Group meta commit lines by the ticket id in the subject prefix (T-367).
+ * Mirrors @productune/core groupByTicket (inlined for the same Vite/node-builtin
+ * reason as naturalizeCommit above): subjects without a `T-…` prefix — e.g. the
+ * fallback "메타 자동 저장" beat commits — group under the '' key. Order within
+ * a group preserves the input (newest-first from meta:log).
+ */
+export function groupCommitsByTicket(commits: CommitLine[]): Map<string, CommitLine[]> {
+  const map = new Map<string, CommitLine[]>()
+  for (const c of commits) {
+    const m = /^(T-[A-Z0-9-]+)\s+/.exec(c.subject)
+    const key = m ? m[1] : ''
+    const list = map.get(key)
+    if (list) list.push(c)
+    else map.set(key, [c])
+  }
+  return map
+}
+
 export function toDateStr(iso: string | null | undefined): string {
   if (!iso) return ''
   try { return new Date(iso).toISOString().slice(0, 10) } catch { return '' }

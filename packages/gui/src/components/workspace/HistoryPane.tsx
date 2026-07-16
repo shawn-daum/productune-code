@@ -19,6 +19,7 @@ import { useWorkspace, paneTreeUtil } from '../../store/workspace'
 import { useTicketScan } from '../../lib/useTicketScan'
 import { isPrdtPoState } from '../../lib/phase-mapping'
 import { VERSION_RE, countTicketStatuses } from '../../lib/historyData'
+import MetaTrackSection from './MetaTrackSection'
 
 interface Props {
   project: Project
@@ -163,6 +164,10 @@ export default function HistoryPane({ project, poState }: Props) {
           })}
         </div>
       )}
+
+      {/* Meta commit timeline (T-367) — same core API as `prdt meta log`;
+          self-hides when the project has no meta split. */}
+      <MetaTrackSection projectDir={project.projectDir} />
     </div>
   )
 }
