@@ -40,7 +40,7 @@ function out(obj: unknown, code = 0): never {
 async function main(): Promise<void> {
   const [cmd, projectDir, ...rest] = process.argv.slice(2)
   if (!cmd || !projectDir) {
-    out({ ok: false, error: 'usage: meta-cli <tick|log|remote-list|remote-add> <projectDir> [...]' }, 1)
+    out({ ok: false, error: 'usage: meta-cli <tick|log|remote-list|remote-add|migrate-plan|migrate-run> <projectDir> [...]' }, 1)
   }
 
   switch (cmd) {

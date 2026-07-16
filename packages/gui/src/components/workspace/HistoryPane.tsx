@@ -166,8 +166,10 @@ export default function HistoryPane({ project, poState }: Props) {
       )}
 
       {/* Meta commit timeline (T-367) — same core API as `prdt meta log`;
-          self-hides when the project has no meta split. */}
-      <MetaTrackSection projectDir={project.projectDir} />
+          self-hides when the project has no meta split. prdt projects only
+          (T-370 C1): the meta track is a prdt institution — a legacy project
+          must not surface (or invite) any meta-split state. */}
+      {isPrdtPoState(poState) && <MetaTrackSection projectDir={project.projectDir} />}
     </div>
   )
 }

@@ -195,6 +195,56 @@ test('run: crash-resume — meta.git already exists but code still tracks meta �
   expect(git(['ls-files', '--', 'docs/prd'])).toBe('')
 })
 
+test('run: commit failure → index rolled back clean, plan stays eligible, re-run completes (T-370 C2)', async () => {
+  // deterministic commit failure: a failing pre-commit hook on the CODE repo
+  const hookPath = path.join(projectDir, '.git', 'hooks', 'pre-commit')
+  fs.mkdirSync(path.dirname(hookPath), { recursive: true })
+  fs.writeFileSync(hookPath, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+
+  const res = await runMetaMigration(projectDir)
+  expect(res.ok).toBe(false)
+  expect(res.error).toContain('tracking-removal commit failed')
+
+  // the module's own header contract: no half-staged state leaks to a user
+  // who never touches git — the index must be clean of migration residue
+  expect(git(['diff', '--cached', '--name-only'])).toBe('')
+  // …and the meta files are back in the code index (untrack rolled back)
+  expect(git(['ls-files', '--', 'docs/prd'])).toContain('docs/prd/PRD.md')
+
+  // re-entry: the plan must NOT misread the residue as already-split
+  const plan = await planMetaMigration(projectDir)
+  expect(plan.status).toBe('eligible')
+  expect(plan.resuming).toBe(true)
+
+  // unblock and resume to completion
+  fs.rmSync(hookPath)
+  const second = await runMetaMigration(projectDir)
+  expect(second.ok).toBe(true)
+  expect(second.verified).toBe(true)
+  expect(second.untrackCommitSha).toBeTruthy()
+  expect(git(['ls-files', '--', 'docs/prd'])).toBe('')
+})
+
+test('run: meta files all deleted from work-tree → successful untrack reports ok, not a mismatch (T-370 C5)', async () => {
+  // meta exists only in git history/index — the work-tree copies are gone
+  fs.rmSync(path.join(projectDir, '.prdt'), { recursive: true, force: true })
+  fs.rmSync(path.join(projectDir, 'docs'), { recursive: true, force: true })
+
+  const plan = await planMetaMigration(projectDir)
+  expect(plan.status).toBe('eligible') // the code index still tracks meta
+
+  const res = await runMetaMigration(projectDir)
+  // nothing to snapshot (meta repo stays empty) is CONSISTENT here — the
+  // untrack itself succeeded and must not be reported as a verification
+  // mismatch
+  expect(res.ok).toBe(true)
+  expect(res.verified).toBe(true)
+  expect(res.metaTrackedCount).toBe(0)
+  expect(res.error).toBeUndefined()
+  expect(res.untrackCommitSha).toBeTruthy()
+  expect(git(['ls-files', '--', 'docs', '.prdt'])).toBe('')
+})
+
 test('run: refusals return without touching the repo', async () => {
   fs.writeFileSync(path.join(projectDir, 'packages', 'staged.ts'), 'export const s = 1\n')
   git(['add', 'packages/staged.ts'])

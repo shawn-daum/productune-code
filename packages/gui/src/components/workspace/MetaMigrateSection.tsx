@@ -32,6 +32,15 @@ interface MigrateResult {
   error?: string
 }
 
+// T-370 C4: run-time refusals arrive as raw core tokens ('staged-changes' …) —
+// map them to user-language copy instead of leaking them into the banner.
+// 'staged-changes' reuses the plan-time banner copy (same meaning, same fix).
+const REFUSAL_KEYS: Record<string, string> = {
+  'staged-changes': 'settings.metaMigrate.stagedBlocked',
+  'already-split': 'settings.metaMigrate.refusalAlreadySplit',
+  'no-git': 'settings.metaMigrate.refusalNoGit',
+}
+
 export default function MetaMigrateSection({ projectDir }: { projectDir: string }) {
   const { t } = useTranslation()
 
@@ -136,7 +145,10 @@ export default function MetaMigrateSection({ projectDir }: { projectDir: string 
 
       {result && !result.ok && (
         <div style={errorBanner}>
-          {result.error || result.refusal || t('settings.metaMigrate.failed')}
+          {result.error ||
+            (result.refusal && REFUSAL_KEYS[result.refusal]
+              ? t(REFUSAL_KEYS[result.refusal])
+              : t('settings.metaMigrate.failed'))}
         </div>
       )}
     </div>

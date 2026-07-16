@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Loader2, CheckCircle2, XCircle, BellRing, ExternalLink } from 'lucide-react'
 import i18next from '../../i18n'
 import { useWorkspace } from '../../store/workspace'
+import { isPrdtPoState } from '../../lib/phase-mapping'
 import MetaBackupSection from './MetaBackupSection'
 import MetaMigrateSection from './MetaMigrateSection'
 import { usePoModel, poModelOptionLabel, type PoModel } from '../../store/poModel'
@@ -34,6 +35,10 @@ export default function GeneralSettings() {
   const { t, i18n } = useTranslation()
   const currentLang = i18n.language as Lang
   const project = useWorkspace((s) => s.project)
+  // T-370 C1: meta sections are prdt-only — on a legacy (.productune) project
+  // the migration would split meta into a repo the hook beat (hardcoded to
+  // `.prdt/meta.git`) never commits to, so work records land nowhere.
+  const isPrdt = useWorkspace((s) => isPrdtPoState(s.poState))
 
   async function handleLangChange(lng: Lang) {
     await i18next.changeLanguage(lng)
@@ -83,13 +88,22 @@ export default function GeneralSettings() {
         <>
           <div style={divider} />
           <PoSessionSection projectDir={project.projectDir} />
-          {/* Meta (work history) backup remote (T-367) — self-hides when the
-              project has no meta split. Registration only, never pushes. */}
-          <div style={divider} />
-          <MetaBackupSection projectDir={project.projectDir} />
-          {/* Meta-split migration (T-366) — self-hides unless the project is a
-              mixed repo; two-step in-app confirm before the untrack commit. */}
-          <MetaMigrateSection projectDir={project.projectDir} />
+          {/* Meta sections — prdt projects ONLY (T-370 C1): a legacy project
+              must never reach the meta split (data-protection failure path,
+              see isPrdt above). */}
+          {isPrdt && (
+            <>
+              {/* Meta (work history) backup remote (T-367) — self-hides when
+                  the project has no meta split. Registration only, never
+                  pushes. */}
+              <div style={divider} />
+              <MetaBackupSection projectDir={project.projectDir} />
+              {/* Meta-split migration (T-366) — self-hides unless the project
+                  is a mixed repo; two-step in-app confirm before the untrack
+                  commit. */}
+              <MetaMigrateSection projectDir={project.projectDir} />
+            </>
+          )}
         </>
       )}
 

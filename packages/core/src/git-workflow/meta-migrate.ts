@@ -71,7 +71,11 @@ export interface MetaMigrationResult {
   untrackCommitSha?: string
   /** Files removed from the code repo's index. */
   untrackedCount: number
-  /** ④ — code ls-files meta-free AND meta ls-files ⊆ allowlist AND non-empty. */
+  /**
+   * ④ — code ls-files meta-free AND meta ls-files ⊆ allowlist AND (non-empty
+   * OR no meta files exist in the work-tree — T-370 C5: an empty snapshot is
+   * consistent when the meta lives only in git history).
+   */
   verified: boolean
   codeTrackedMetaCount: number
   metaTrackedCount: number
@@ -218,6 +222,22 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
 
   // ③ code repo: stage the managed block + drop meta from the index.
   //    rm --cached only — work-tree contents and history stay untouched.
+  //
+  // T-370 C2: on ANY failure past this point, roll our own staging back.
+  // Everything staged here is ours (the plan refused pre-staged user changes),
+  // so a scoped `git reset` restores the pre-run index. Without it a failed
+  // commit leaks a half-staged untrack (mass deletions swept into the user's
+  // next commit — the exact leak the module header forbids) AND
+  // planMetaMigration misreads the residue as `already-split`, so a re-run
+  // could never create the untrack commit.
+  const unstageMigration = async (): Promise<void> => {
+    try {
+      await codeGit(projectDir, ['reset', '-q', '--', '.gitignore', ...plan.allowlist])
+    } catch {
+      /* best-effort — the original error below still surfaces */
+    }
+  }
+
   try {
     if (fs.existsSync(path.join(projectDir, '.gitignore'))) {
       await codeGit(projectDir, ['add', '--', '.gitignore'])
@@ -228,6 +248,7 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
       ])
     }
   } catch (err) {
+    await unstageMigration()
     return fail({
       error: `tracking removal failed: ${err instanceof Error ? err.message : String(err)}`,
     })
@@ -242,6 +263,7 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
       await codeGit(projectDir, ['commit', '-m', MIGRATION_UNTRACK_MESSAGE])
       untrackCommitSha = (await codeGit(projectDir, ['rev-parse', 'HEAD'])).trim()
     } catch (err) {
+      await unstageMigration()
       return fail({
         error: `tracking-removal commit failed: ${err instanceof Error ? err.message : String(err)}`,
       })
@@ -252,6 +274,7 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
   let codeTrackedMetaCount = -1
   let metaTrackedCount = -1
   let metaOutsideAllowlist = 0
+  let metaUntrackedInWorkTree = 0
   try {
     codeTrackedMetaCount = (await codeTrackedMetaFiles(projectDir, plan.allowlist)).length
     const metaFiles = (await metaGit(projectDir, ['ls-files', '-z'])).split('\0').filter(Boolean)
@@ -259,6 +282,23 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
     const inAllowlist = (f: string) =>
       plan.allowlist.some((e) => f === e || f.startsWith(e.replace(/\/+$/, '') + '/'))
     metaOutsideAllowlist = metaFiles.filter((f) => !inAllowlist(f)).length
+
+    // T-370 C5: `meta tracks > 0` is only a valid expectation when meta files
+    // actually exist in the work-tree. A mixed repo whose tracked meta was all
+    // deleted on disk (meta lives only in git history) migrates with an empty
+    // snapshot — the untrack still succeeded and must not be reported as a
+    // mismatch. Same exclude handling as commitMeta's staging (info/exclude
+    // keeps derived artifacts out of "meta present" too).
+    if (metaTrackedCount === 0 && plan.allowlist.length > 0) {
+      const othersArgs = ['ls-files', '-z', '--others']
+      const excludeFile = path.join(metaGitDir(projectDir), 'info', 'exclude')
+      if (fs.existsSync(excludeFile)) othersArgs.push('--exclude-from', excludeFile)
+      metaUntrackedInWorkTree = (
+        await metaGit(projectDir, [...othersArgs, '--', ...plan.allowlist])
+      )
+        .split('\0')
+        .filter(Boolean).length
+    }
   } catch (err) {
     return fail({
       snapshotSha,
@@ -269,7 +309,24 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
   }
 
   const verified =
-    codeTrackedMetaCount === 0 && metaTrackedCount > 0 && metaOutsideAllowlist === 0
+    codeTrackedMetaCount === 0 &&
+    metaOutsideAllowlist === 0 &&
+    (metaTrackedCount > 0 || metaUntrackedInWorkTree === 0)
+
+  // T-370 C5: message mirrors the judgment — name only the condition(s) that
+  // actually failed instead of one blanket mismatch line.
+  const problems: string[] = []
+  if (codeTrackedMetaCount !== 0) {
+    problems.push(`code still tracks ${codeTrackedMetaCount} meta file(s)`)
+  }
+  if (metaOutsideAllowlist > 0) {
+    problems.push(`meta tracks ${metaOutsideAllowlist} file(s) outside the allowlist`)
+  }
+  if (metaTrackedCount === 0 && metaUntrackedInWorkTree > 0) {
+    problems.push(
+      `meta repo tracks nothing despite ${metaUntrackedInWorkTree} meta file(s) in the work-tree`,
+    )
+  }
 
   return {
     ok: verified,
@@ -279,9 +336,6 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
     verified,
     codeTrackedMetaCount,
     metaTrackedCount,
-    error: verified
-      ? undefined
-      : `verification mismatch: code still tracks ${codeTrackedMetaCount} meta file(s), ` +
-        `meta tracks ${metaTrackedCount} (outside allowlist: ${metaOutsideAllowlist})`,
+    error: verified ? undefined : `verification mismatch: ${problems.join('; ')}`,
   }
 }

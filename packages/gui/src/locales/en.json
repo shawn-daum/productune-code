@@ -1032,6 +1032,8 @@
       "running": "Separating…",
       "done": "Work history separated — {{metaCount}} file(s) moved to dedicated management.",
       "stagedBlocked": "There are pending code changes, so separation can't run right now. Finish the changes in progress, then try again.",
+      "refusalAlreadySplit": "This project's work history is already separated — nothing left to do.",
+      "refusalNoGit": "This project has no code repository, so there is nothing to separate.",
       "failed": "Failed to separate the work history."
     },
     "language": {
