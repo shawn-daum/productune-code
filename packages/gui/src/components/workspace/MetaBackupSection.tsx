@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Loader2 } from 'lucide-react'
 
 interface MetaRemoteRow {
   name: string
@@ -27,6 +28,7 @@ export default function MetaBackupSection({ projectDir }: { projectDir: string }
   const [url, setUrl] = useState('')
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [error, setError] = useState('')
+  const [adding, setAdding] = useState(false)
 
   const refresh = useCallback(() => {
     const api = (window as any).api
@@ -44,9 +46,10 @@ export default function MetaBackupSection({ projectDir }: { projectDir: string }
   const handleAdd = useCallback(async () => {
     const nm = name.trim()
     const u = url.trim()
-    if (!nm || !u) return
+    if (!nm || !u || adding) return
     setStatus('idle')
     setError('')
+    setAdding(true)
     try {
       const res: { ok: boolean; error?: string } = await (window as any).api.metaAddRemote(projectDir, nm, u)
       if (!res.ok) throw new Error(res.error ?? 'unknown error')
@@ -57,8 +60,10 @@ export default function MetaBackupSection({ projectDir }: { projectDir: string }
     } catch (e: any) {
       setError(e?.message ?? '')
       setStatus('error')
+    } finally {
+      setAdding(false)
     }
-  }, [projectDir, name, url, refresh])
+  }, [projectDir, name, url, refresh, adding])
 
   // No meta split → whole section absent (nothing to configure).
   if (!exists) return null
@@ -96,11 +101,12 @@ export default function MetaBackupSection({ projectDir }: { projectDir: string }
           spellCheck={false}
         />
         <button
-          style={{ ...addBtn, opacity: !name.trim() || !url.trim() ? 0.4 : 1 }}
+          style={{ ...addBtn, opacity: !name.trim() || !url.trim() || adding ? 0.4 : 1 }}
           onClick={handleAdd}
-          disabled={!name.trim() || !url.trim()}
+          disabled={!name.trim() || !url.trim() || adding}
           type="button"
         >
+          {adding && <Loader2 size={12} className="pdt-spin" style={{ flexShrink: 0 }} />}
           {t('settings.metaBackup.addButton')}
         </button>
       </div>
@@ -155,11 +161,13 @@ const remoteRow: React.CSSProperties = {
   minWidth: 0,
 }
 
+// §8.2 neutral chip — surface-subpanel bg + border-strong + text-secondary.
 const nameChip: React.CSSProperties = {
   fontSize: 11,
-  fontFamily: 'monospace',
-  background: '#1F3A5F',
-  color: '#7BB3E0',
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  background: '#1A1A1A',
+  border: '1px solid #2A2A2A',
+  color: '#C8C8CC',
   borderRadius: 4,
   padding: '2px 6px',
   flexShrink: 0,
@@ -167,7 +175,7 @@ const nameChip: React.CSSProperties = {
 
 const urlText: React.CSSProperties = {
   fontSize: 11,
-  fontFamily: 'monospace',
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   color: '#A0A0A0',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -186,12 +194,15 @@ const textInput: React.CSSProperties = {
   borderRadius: 4,
   color: '#E0E0E0',
   fontSize: 12,
-  fontFamily: 'monospace',
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   padding: '4px 8px',
   outline: 'none',
 }
 
 const addBtn: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
   fontSize: 11,
   color: '#8B5CF6',
   background: 'transparent',
@@ -213,7 +224,8 @@ const successBanner: React.CSSProperties = {
 
 const errorBanner: React.CSSProperties = {
   fontSize: 11,
-  color: '#F87171',
+  color: '#EF4444', // §2.8 --health-error
+
   background: '#2A1010',
   border: '1px solid #4A1A1A',
   borderRadius: 4,

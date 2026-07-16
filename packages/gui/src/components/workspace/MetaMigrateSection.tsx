@@ -110,17 +110,8 @@ export default function MetaMigrateSection({ projectDir }: { projectDir: string 
           </div>
           <div style={confirmLine}>{t('settings.metaMigrate.planCommit')}</div>
           <div style={confirmLine}>{t('settings.metaMigrate.planNoRewrite')}</div>
+          {/* §1.5.3 — [Cancel] left / [Confirm] right */}
           <div style={confirmActions}>
-            <button
-              style={{ ...primaryBtn, opacity: running ? 0.5 : 1 }}
-              type="button"
-              disabled={running}
-              onClick={handleRun}
-            >
-              {running
-                ? t('settings.metaMigrate.running')
-                : t('settings.metaMigrate.confirmButton')}
-            </button>
             <button
               style={cancelBtn}
               type="button"
@@ -128,6 +119,16 @@ export default function MetaMigrateSection({ projectDir }: { projectDir: string 
               onClick={() => setConfirming(false)}
             >
               {t('settings.metaMigrate.cancelButton')}
+            </button>
+            <button
+              style={{ ...primaryBtn, opacity: running ? 0.4 : 1 }}
+              type="button"
+              disabled={running}
+              onClick={handleRun}
+            >
+              {running
+                ? t('settings.metaMigrate.running')
+                : t('settings.metaMigrate.confirmButton')}
             </button>
           </div>
         </div>
@@ -226,7 +227,8 @@ const warnBanner: React.CSSProperties = {
 
 const errorBanner: React.CSSProperties = {
   fontSize: 11,
-  color: '#F87171',
+  color: '#EF4444', // §2.8 --health-error
+
   background: '#2A1010',
   border: '1px solid #4A1A1A',
   borderRadius: 4,

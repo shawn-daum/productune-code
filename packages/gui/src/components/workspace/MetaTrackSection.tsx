@@ -30,6 +30,7 @@ export default function MetaTrackSection({ projectDir }: { projectDir: string })
   const { t } = useTranslation()
   const [commits, setCommits] = useState<CommitLine[]>([])
   const [expanded, setExpanded] = useState(false)
+  const [hovered, setHovered] = useState(false)
 
   const load = useCallback(() => {
     const api = (window as any).api
@@ -54,15 +55,17 @@ export default function MetaTrackSection({ projectDir }: { projectDir: string })
   return (
     <div style={sectionWrap}>
       <button
-        style={headerBtn}
+        style={{ ...headerBtn, background: hovered ? '#1A1A1A' : 'transparent' }}
         onClick={() => setExpanded((v) => !v)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         aria-expanded={expanded}
         type="button"
         data-testid="meta-track-toggle"
       >
         {expanded
-          ? <ChevronDown size={12} strokeWidth={2} style={{ flexShrink: 0 }} />
-          : <ChevronRight size={12} strokeWidth={2} style={{ flexShrink: 0 }} />}
+          ? <ChevronDown size={12} strokeWidth={3} style={{ flexShrink: 0 }} />
+          : <ChevronRight size={12} strokeWidth={3} style={{ flexShrink: 0 }} />}
         <span style={headerLabel}>{t('workspace.history.metaTrack.title')}</span>
         <span style={headerCount}>{t('workspace.history.metaTrack.count', { n: commits.length })}</span>
       </button>
@@ -83,7 +86,7 @@ export default function MetaTrackSection({ projectDir }: { projectDir: string })
 // ── Styles — sidebar-density, matches HistoryPane look ───────────────────────
 
 const sectionWrap: React.CSSProperties = {
-  borderTop: '1px solid #222',
+  borderTop: '1px solid #1F1F1F', // --border-default
   marginTop: 8,
   padding: '4px 4px 8px',
   flexShrink: 0,
@@ -110,7 +113,7 @@ const headerLabel: React.CSSProperties = {
 
 const headerCount: React.CSSProperties = {
   fontSize: 10,
-  color: '#606060',
+  color: '#A0A0A0', // --text-muted (was #606060, AA-large 미달)
   marginLeft: 'auto',
 }
 
@@ -133,8 +136,8 @@ const commitRow: React.CSSProperties = {
 
 const commitDate: React.CSSProperties = {
   fontSize: 10,
-  fontFamily: 'monospace',
-  color: '#606060',
+  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+  color: '#707070', // --text-faint (was #606060, AA-large 미달)
   flexShrink: 0,
 }
 
