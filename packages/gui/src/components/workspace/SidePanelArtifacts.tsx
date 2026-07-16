@@ -58,8 +58,6 @@ function iconFor(ext: string) {
   return <FileText size={12} strokeWidth={2} />
 }
 
-const AUTO_OPEN_LIMIT = 3
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function SidePanelArtifacts() {
@@ -78,7 +76,6 @@ export default function SidePanelArtifacts() {
   // frequently-checked result, not plumbing.
   const [expanded, setExpanded] = useState(true)
   const [archiveOpen, setArchiveOpen] = useState(false)
-  const [openAllHover, setOpenAllHover] = useState(false)
 
   const load = useCallback(() => {
     const api = (window as any).api
@@ -131,7 +128,6 @@ export default function SidePanelArtifacts() {
     [openTab, projectDir, markOpened],
   )
 
-  const hasOverflow = flat.length > AUTO_OPEN_LIMIT
   const badgeColor = totalCount > 0 ? 'var(--health-warn, #F59E0B)' : 'transparent'
 
   return (
@@ -204,21 +200,6 @@ export default function SidePanelArtifacts() {
                     />
                   ))}
                 </>
-              )}
-
-              {/* "open all" — only when > 3 flat files (parity with old behaviour) */}
-              {hasOverflow && (
-                <div
-                  style={{ ...openAllRow, color: openAllHover ? '#F59E0B' : '#606060' }}
-                  onMouseEnter={() => setOpenAllHover(true)}
-                  onMouseLeave={() => setOpenAllHover(false)}
-                  onClick={() => flat.forEach(handleOpen)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') flat.forEach(handleOpen) }}
-                >
-                  {t('workspace.artifacts.openAll', '+ open all ({{count}})', { count: flat.length })}
-                </div>
               )}
             </>
           )}
@@ -333,14 +314,6 @@ const archiveCount: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   color: '#505050',
-}
-
-const openAllRow: React.CSSProperties = {
-  padding: '4px 8px 2px 20px',
-  fontSize: 10,
-  cursor: 'pointer',
-  fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  transition: 'color 0.12s ease',
 }
 
 const emptyBody: React.CSSProperties = {
