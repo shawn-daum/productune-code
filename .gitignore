@@ -33,3 +33,26 @@ packages/*/dist-electron/
 
 # prdt derived index (rebuildable — design §2)
 .prdt/index.db
+# >>> prdt meta (managed) >>>
+# generated from the prdt meta allowlist — edits inside this block are overwritten
+/.prdt
+/.productune
+/briefs
+/docs/prd
+/docs/tickets
+/docs/wiki
+/docs/designer
+/docs/developer
+/docs/po
+/docs/qa
+/docs/artifacts
+/docs/retrospectives
+/docs/archive
+/docs/MIGRATION.md
+/docs/backlog.md
+/docs/prdt-v1-design.md
+/docs/prdt-v1-disposition.md
+/docs/prdt-v1-flip.md
+/docs/prdt-v1-gui-coupling.md
+/docs/testing.md
+# <<< prdt meta (managed) <<<
