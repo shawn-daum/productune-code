@@ -129,6 +129,23 @@ function truncate(s: string, maxLen: number): string {
   return s.slice(0, maxLen - 1) + '…'
 }
 
+/**
+ * Build the canonical autosave commit subject:
+ *   `T-NNN [changeReason: before→after] summary`
+ *
+ * Shared with the meta-git autosave (T-364) so meta commits carry the same
+ * naturalize-parseable format (naturalizeCommit / groupByTicket rely on it).
+ */
+export function buildAutosaveMessage(
+  ticketId: string,
+  changeReason: AutosaveChangeReason,
+  before: string,
+  after: string,
+  summary: string,
+): string {
+  return `${ticketId} [${changeReason}: ${before}→${after}] ${summary}`
+}
+
 function worktreePathFromFrontmatter(projectDir: string, fm: Record<string, any>): string | null {
   const wtp = fm.worktree_path
   if (!wtp || typeof wtp !== 'string') return null
@@ -291,7 +308,7 @@ export async function triggerAutosave(
   }
 
   const summary = buildSummary(content, fm)
-  const message = `${ticketId} [${changeReason}: ${before}→${after}] ${summary}`
+  const message = buildAutosaveMessage(ticketId, changeReason, before, after, summary)
 
   const attempt = async (): Promise<string> => {
     return gitCommit(worktreePath, ticketFilePath, message)

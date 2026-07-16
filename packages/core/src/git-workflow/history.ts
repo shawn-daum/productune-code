@@ -59,6 +59,16 @@ export async function scanGitHistory(
     return []
   }
 
+  return parseLogOutput(stdout)
+}
+
+/**
+ * Parse `git log --format=%H|%s|%ai` stdout into HistoryEntry records.
+ *
+ * Shared by scanGitHistory (code repo) and meta-git's scanMetaHistory (T-364),
+ * so both surfaces read the identical `%H|%s|%ai` shape.
+ */
+export function parseLogOutput(stdout: string): HistoryEntry[] {
   const entries: HistoryEntry[] = []
   for (const raw of stdout.split('\n')) {
     const line = raw.trim()
@@ -66,7 +76,7 @@ export async function scanGitHistory(
     const firstPipe = line.indexOf('|')
     const secondPipe = line.indexOf('|', firstPipe + 1)
     if (firstPipe < 0 || secondPipe < 0) {
-      console.warn('[history] scanGitHistory: unexpected log line —', line)
+      console.warn('[history] parseLogOutput: unexpected log line —', line)
       continue
     }
     const sha = line.slice(0, firstPipe).trim()
@@ -75,7 +85,6 @@ export async function scanGitHistory(
     if (!sha) continue
     entries.push({ sha, subject, authorDate })
   }
-
   return entries
 }
 
