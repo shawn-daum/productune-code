@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history · menus · migrate
+Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history · meta (log|remote|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
@@ -293,19 +293,187 @@ def prompt_version(default):
     return chosen
 
 
+# ── meta split (T-365 · PRD §v1.2 경계 결정 1·3) ──────────────────────────────
+# Two git repos, one working tree: the CODE repo (`.git`) tracks everything
+# except the meta allowlist; the META repo (`.prdt/meta.git`) tracks ONLY it.
+# Parity SoT: packages/core/src/git-workflow/meta-git.ts (allowlist / exclude)
+# + gitignore-managed-block.ts (markers / block rendering). A vitest parity
+# guard (gitignore-managed-block.test.ts) pins these literals byte-identical —
+# a fresh `prdt init` block and a TS-side resync must produce the same bytes.
+
+META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/prd", "docs/tickets",
+                          "docs/wiki", "docs/designer", "docs/developer", "docs/po",
+                          "docs/qa", "docs/artifacts", "docs/retrospectives", "docs/archive"]
+META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
+                        ".cost-*.json", ".subagent-gate.json"]
+MANAGED_BLOCK_START = "# >>> prdt meta (managed) >>>"
+MANAGED_BLOCK_END = "# <<< prdt meta (managed) <<<"
+MANAGED_BLOCK_COMMENT = "# generated from the prdt meta allowlist — edits inside this block are overwritten"
+
+
+def meta_git_dir(root):
+    return Path(root) / ".prdt" / "meta.git"
+
+
+def _scrubbed_git_env():
+    """No GIT_* inheritance — inside a code-repo hook, GIT_INDEX_FILE etc. would
+    redirect meta git at the CODE repo's index (meta-git.ts T-364 QA-HIGH)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _git(args, cwd):
+    return subprocess.run(["git", *args], cwd=str(cwd), env=_scrubbed_git_env(),
+                          capture_output=True, text=True, timeout=10)
+
+
+def _meta_git(root, args):
+    return _git(["--git-dir", str(meta_git_dir(root)), "--work-tree", str(root), *args], root)
+
+
+def read_meta_allowlist(root):
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    lst = (cfg.get("meta") or {}).get("allowlist") if isinstance(cfg.get("meta"), dict) else None
+    if isinstance(lst, list) and all(isinstance(x, str) for x in lst):
+        return lst
+    return list(META_ALLOWLIST_DEFAULT)
+
+
+def render_managed_block(allowlist):
+    """Marker-wrapped block, root-anchored patterns, no trailing newline —
+    byte-identical to gitignore-managed-block.ts renderManagedBlock."""
+    pats = []
+    for e in allowlist:
+        s = e.strip()
+        if s.startswith("./"):
+            s = s[2:]
+        s = s.lstrip("/").rstrip("/")
+        if s and "/" + s not in pats:
+            pats.append("/" + s)
+    return "\n".join([MANAGED_BLOCK_START, MANAGED_BLOCK_COMMENT, *pats, MANAGED_BLOCK_END])
+
+
+def sync_gitignore_managed_block(root):
+    """Idempotently inject/refresh the managed block in the code repo's
+    .gitignore. prdt owns ONLY the inside of the markers; user lines are never
+    touched. Malformed markers (one missing / reversed) → safe no-op."""
+    fp = Path(root) / ".gitignore"
+    block = render_managed_block(read_meta_allowlist(root))
+    current = fp.read_text(encoding="utf-8") if fp.exists() else None
+    if not current:
+        nxt = block + "\n"
+    else:
+        lines = current.split("\n")
+        start = next((i for i, l in enumerate(lines) if l.strip() == MANAGED_BLOCK_START), -1)
+        end = next((i for i, l in enumerate(lines) if l.strip() == MANAGED_BLOCK_END), -1)
+        if start == -1 and end == -1:
+            nxt = current + ("" if current.endswith("\n") else "\n") + block + "\n"
+        elif start == -1 or end == -1 or end < start:
+            return False  # malformed — never risk touching user lines
+        else:
+            nxt = "\n".join([*lines[:start], block, *lines[end + 1:]])
+            if not nxt.endswith("\n"):
+                nxt += "\n"
+    if nxt == current:
+        return False
+    tmp = Path(str(fp) + ".tmp")
+    tmp.write_text(nxt, encoding="utf-8")
+    os.replace(tmp, fp)
+    return True
+
+
+def _meta_stage_and_commit(root, message):
+    """Allowlist-scoped stage + one commit. Staging is immune to the code
+    repo's .gitignore (which ignores every meta path via the managed block):
+    tracked changes via `ls-files --modified --deleted`, new files via
+    `ls-files --others --exclude-from=<meta info/exclude>`, then `add -f`."""
+    root = Path(root)
+    allow = [e for e in read_meta_allowlist(root) if (root / e).exists()]
+    if not allow:
+        return
+
+    def ls_z(flags):
+        r = _meta_git(root, ["ls-files", "-z", *flags, "--", *allow])
+        return [p for p in r.stdout.split("\0") if p] if r.returncode == 0 else []
+
+    excl = meta_git_dir(root) / "info" / "exclude"
+    others = ["--others"] + (["--exclude-from", str(excl)] if excl.exists() else [])
+    files = list(dict.fromkeys(ls_z(["--modified", "--deleted"]) + ls_z(others)))
+    if not files:
+        return
+    if _meta_git(root, ["add", "-f", "--", *files]).returncode != 0:
+        return
+    if _meta_git(root, ["diff", "--cached", "--quiet"]).returncode == 0:
+        return  # diff-empty
+    _meta_git(root, ["commit", "-m", message, "--allow-empty-message"])
+
+
+def init_meta_split(root):
+    """Fresh-init meta split: code `.git` + `.prdt/meta.git` + managed
+    .gitignore block + initial snapshot — zero user git interaction (§10).
+    Returns None on success, an error string on failure (init never hard-fails
+    on git trouble; the scaffold must still land)."""
+    root = Path(root)
+    try:
+        if not (root / ".git").exists():
+            r = _git(["init", "-q"], root)
+            if r.returncode != 0:
+                return (r.stderr or "git init failed").strip()
+        gd = meta_git_dir(root)
+        if not (gd / "HEAD").exists():
+            gd.parent.mkdir(parents=True, exist_ok=True)
+            r = _git(["init", "--bare", "-q", str(gd)], root)
+            if r.returncode != 0:
+                return (r.stderr or "meta git init failed").strip()
+        # Idempotent repo-local config — mirrors meta-git.ts initMetaRepo
+        # (identity; gpgsign/hooksPath neutralize the user's global gitconfig).
+        for k, v in (("core.bare", "false"), ("core.worktree", str(root)),
+                     ("user.name", "prdt"), ("user.email", "prdt@localhost"),
+                     ("commit.gpgsign", "false"), ("core.hooksPath", str(gd / "hooks"))):
+            _git(["--git-dir", str(gd), "config", k, v], root)
+        (gd / "info").mkdir(exist_ok=True)
+        (gd / "info" / "exclude").write_text("\n".join(META_EXCLUDE_DEFAULT) + "\n", encoding="utf-8")
+        sync_gitignore_managed_block(root)
+        _meta_stage_and_commit(root, "initial meta snapshot (prdt init)")
+        return None
+    except Exception as e:  # git absent / perms — degrade, never block init
+        return str(e)
+
+
 def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
     prdt = root / ".prdt"
     if (prdt / "po-state.json").exists():
+        # Already initialized. If this project has the meta split, refresh the
+        # managed block (idempotent) so an allowlist edit propagates (T-365);
+        # an unsplit existing project is the migration path's job (T-366).
+        if (meta_git_dir(root) / "HEAD").exists():
+            try:
+                sync_gitignore_managed_block(root)
+            except OSError:
+                pass
         return {"status": "exists", "root": str(root)}
     slug = slug or root.name
     if interactive and sys.stdin.isatty():
         slug = input(f"project slug [{slug}]: ").strip() or slug
         version = prompt_version(version)
     prdt.mkdir(exist_ok=True)
-    (prdt / "config.json").write_text(json.dumps(
-        {"slug": slug, "created_at": now_iso(), "surfaces": {}}, indent=2) + "\n", encoding="utf-8")
+    # Field-preserving config write (T-365): a partial project may already
+    # carry config.json (e.g. meta.allowlist) — merge, never rebuild from
+    # scratch (same contract as meta-git.ts writeMetaAllowlist).
+    cfg = read_json(prdt / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    cfg["slug"] = cfg.get("slug") or slug
+    cfg["created_at"] = cfg.get("created_at") or now_iso()
+    cfg["surfaces"] = cfg.get("surfaces") if isinstance(cfg.get("surfaces"), dict) else {}
+    meta = cfg.get("meta") if isinstance(cfg.get("meta"), dict) else {}
+    if not (isinstance(meta.get("allowlist"), list)
+            and all(isinstance(x, str) for x in meta.get("allowlist"))):
+        meta["allowlist"] = list(META_ALLOWLIST_DEFAULT)
+    cfg["meta"] = meta
+    tmp = Path(str(prdt / "config.json") + ".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, prdt / "config.json")
     (prdt / "po-state.json").write_text(json.dumps(
         {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
         indent=2) + "\n", encoding="utf-8")
@@ -319,8 +487,11 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     con = open_db(root, rebuild=True)
     reindex_tickets(root, con)
     reindex_wiki(root, con)
+    # Meta split last — the snapshot commit captures the whole fresh scaffold.
+    meta_err = init_meta_split(root)
     return {"status": "created", "root": str(root), "slug": slug,
-            "version": version, "stage": stage}
+            "version": version, "stage": stage,
+            "meta_git": "ok" if meta_err is None else f"skipped: {meta_err}"}
 
 
 def cmd_init(args):
@@ -519,6 +690,133 @@ def cmd_history(_args):
               + (f" · retro--{v}" if retro.exists() else ""))
     if not rows:
         print("(no history)")
+
+
+# ── meta (T-367 · PRD §v1.2 CLI·GUI parity) ──────────────────────────────────
+# History read / remote backup go through the CORE API only — the CLI owns no
+# git logic here. Bridge: node <PRDT_REPO>/packages/core/dist/bin/meta-cli.cjs
+# (same scanMetaHistory / addMetaRemote the GUI's electron main imports), one
+# JSON object per call. `prdt meta log` and the GUI Version History meta track
+# therefore render the identical timeline by construction.
+
+def _meta_bridge():
+    """(node, bridge_path) or an error string when the bridge is unusable."""
+    repo = None
+    env = Path.home() / ".prdt" / "prdt.env"
+    if env.is_file():
+        for line in env.read_text(encoding="utf-8").splitlines():
+            if line.startswith("PRDT_REPO="):
+                repo = line.split("=", 1)[1].strip()
+    if not repo or not Path(repo).is_dir():
+        return "PRDT_REPO를 찾을 수 없어요 — ~/.prdt/prdt.env 확인 (재설치: packages/core/scripts/install.sh)"
+    node = shutil.which("node")
+    if not node:
+        return "node가 필요해요 — meta 명령은 core API(meta-cli 브리지)를 호출해요"
+    # PRDT_REPO = <repo>/packages/core (install.sh's $ROOT)
+    bridge = Path(repo) / "dist" / "bin" / "meta-cli.cjs"
+    if not bridge.is_file():
+        return f"core 브리지가 빌드돼 있지 않아요 — cd {repo} && pnpm build"
+    return (node, str(bridge))
+
+
+def _meta_call(root, *bridge_args):
+    pair = _meta_bridge()
+    if isinstance(pair, str):
+        sys.exit(f"prdt meta: {pair}")
+    node, bridge = pair
+    try:
+        p = subprocess.run([node, bridge, bridge_args[0], str(root), *bridge_args[1:]],
+                           capture_output=True, text=True, timeout=30)
+        return json.loads(p.stdout)
+    except Exception as e:
+        sys.exit(f"prdt meta: 브리지 호출 실패 — {e}")
+
+
+def cmd_meta(args):
+    root = require_root()
+    if args.action == "split":
+        cmd_meta_split(root, args)
+    elif args.action == "log":
+        res = _meta_call(root, "log", str(max(1, args.limit)))
+        if not res.get("exists"):
+            print("메타 분리가 아직 적용되지 않은 프로젝트예요 (.prdt/meta.git 없음)")
+            return
+        entries = res.get("entries") or []
+        if not entries:
+            print("(no meta history)")
+            return
+        for e in entries:
+            date = str(e.get("authorDate") or "")[:10]
+            print(f"{date}  {str(e.get('sha') or '')[:7]}  {e.get('subject') or ''}")
+    elif args.action == "remote":
+        rest = args.rest or []
+        if rest[:1] == ["add"]:
+            if len(rest) != 3:
+                sys.exit("usage: prdt meta remote add <name> <url>")
+            _, name, url = rest
+            res = _meta_call(root, "remote-add", name, url)
+            if not res.get("ok"):
+                sys.exit(f"prdt meta: remote 설정 실패 — {res.get('error') or '?'}")
+            print(f"메타 백업 원격 '{name}' 설정 완료 (자동 push 없음 — 백업은 항상 수동).")
+            print(f"수동 백업: git --git-dir .prdt/meta.git push {name} --all")
+        elif not rest:
+            res = _meta_call(root, "remote-list")
+            if not res.get("exists"):
+                print("메타 분리가 아직 적용되지 않은 프로젝트예요 (.prdt/meta.git 없음)")
+                return
+            remotes = res.get("remotes") or []
+            if not remotes:
+                print("(no meta remotes) — 추가: prdt meta remote add <name> <url>")
+                return
+            for r in remotes:
+                print(f"{r.get('name')}\t{r.get('url')}")
+            print("(자동 push 없음 — 수동 백업: git --git-dir .prdt/meta.git push <name> --all)")
+        else:
+            sys.exit("usage: prdt meta remote [add <name> <url>]")
+
+
+def cmd_meta_split(root, args):
+    """T-366 existing-project migration (PRD 경계 결정 4) — plan → CONFIRM → run.
+
+    git 로직은 전부 core(meta-migrate.ts) — 이 CLI는 계획을 보여주고 사용자
+    확인을 받은 뒤 실행만 시킨다. 확인 경계 근거는 meta-migrate.ts 모듈 헤더:
+    추적 제거 커밋은 파괴가 아니지만 origin에 반영될 코드 repo 변경이므로,
+    명시적 사용자 확인(y/N 또는 --yes) 뒤에만 실행. push는 어디서도 안 한다."""
+    plan = _meta_call(root, "migrate-plan")
+    status = plan.get("status")
+    if status == "already-split":
+        print("이미 분리된 프로젝트예요 — 할 일이 없습니다 (no-op).")
+        print("메타 히스토리 확인: prdt meta log")
+        return
+    if status == "no-git":
+        sys.exit("prdt meta split: git repo(.git)가 없는 프로젝트는 지원하지 않아요 (PRD v1.2 Non-goals)")
+    if status == "staged-changes":
+        sys.exit("prdt meta split: 코드 repo에 staged 변경이 있어요 — 마이그레이션 커밋에 "
+                 "휩쓸리지 않도록 먼저 커밋하거나 unstage 한 뒤 다시 실행하세요 (git status 확인)")
+    if status != "eligible":
+        sys.exit(f"prdt meta split: 실행 불가 — {plan.get('error') or status}")
+
+    n = len(plan.get("trackedMetaFiles") or [])
+    resuming = plan.get("resuming")
+    print("메타 분리 마이그레이션 계획" + (" (중단됐던 마이그레이션 재개)" if resuming else ""))
+    print(f"  · 코드 repo 추적 제거 대상: 메타 파일 {n}개 (git rm --cached — 파일 자체는 그대로)")
+    print("  · 메타 스냅샷을 .prdt/meta.git 에 최초 커밋 + .gitignore 관리 블록 주입")
+    print("  · 코드 repo에 '추적 제거' 커밋 1건 생성 — 다음 push 때 origin에 반영됩니다")
+    print("  · 히스토리 rewrite·force-push 없음 (과거 커밋의 메타는 그대로 남음 — PRD 경계 결정 4(a))")
+    if not args.yes:
+        try:
+            ans = input("진행할까요? [y/N] ").strip()
+        except EOFError:
+            ans = "n"
+        if not ans.lower().startswith("y"):
+            sys.exit("중단했어요 — 준비되면 다시 실행하세요.")
+    res = _meta_call(root, "migrate-run")
+    if not res.get("ok"):
+        detail = res.get("error") or res.get("refusal") or "?"
+        sys.exit(f"prdt meta split: 실패 — {detail}")
+    print(f"완료 — 코드 repo 잔여 메타 {res.get('codeTrackedMetaCount')}건 · "
+          f"메타 repo 추적 {res.get('metaTrackedCount')}건 (양쪽 git ls-files 검증 통과)")
+    print("확인: prdt meta log · 되돌리기 전 백업이 필요하면: prdt meta remote add <name> <url>")
 
 
 # ── doctor ────────────────────────────────────────────────────────────────────
@@ -861,6 +1159,12 @@ def main():
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
+    p = sub.add_parser("meta", help="meta git (v1.2): log · remote [add <name> <url>] · split — core API 브리지 호출")
+    p.add_argument("action", choices=("log", "remote", "split"))
+    p.add_argument("rest", nargs="*", help="remote: [add <name> <url>]")
+    p.add_argument("--limit", type=int, default=20, help="log: max commits (default 20)")
+    p.add_argument("--yes", action="store_true", help="split: 확인 프롬프트 생략 (T-366)")
+    p.set_defaults(fn=cmd_meta)
     # T-319: `po` 서브커맨드 제거 — bare `prdt`가 유일한 PO 진입(init-if-needed→PO).
     p = sub.add_parser("update", help="prdt 업데이트: repo pull --ff-only + 재설치 (구 productune update 계승)")
     p.set_defaults(fn=cmd_update)

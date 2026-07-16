@@ -119,7 +119,8 @@ function extractPersonaActivitySummary(content: string): string | null {
 function buildSummary(content: string, fm: Record<string, any>): string {
   const fromActivity = extractPersonaActivitySummary(content)
   if (fromActivity && fromActivity.trim()) return truncate(fromActivity, 80)
-  const title = String(fm.ticket_id ?? '').trim()
+  // `ticket_id` is the v0.4 frontmatter field; prdt v1 tickets carry `id` (T-367).
+  const title = String(fm.ticket_id ?? fm.id ?? '').trim()
   if (title) return truncate(title, 80)
   return 'autosave trigger'
 }
@@ -184,14 +185,53 @@ export interface DetectChangeResult {
   isInit: boolean
 }
 
-export function detectChange(projectDir: string, ticketId: string, content: string): DetectChangeResult {
-  const fm = parseFrontmatter(content)
-  const current: TicketSnapshot = {
+/** Build the snapshot record for a ticket from its parsed frontmatter. */
+function snapshotFromFrontmatter(fm: Record<string, any>): TicketSnapshot {
+  return {
     status: fm.status ?? null,
     qa_status: fm.qa_status ?? null,
     qa_loops: typeof fm.qa_loops === 'number' ? fm.qa_loops : null,
     lastCheckedAt: new Date().toISOString(),
   }
+}
+
+/**
+ * Compare two ticket snapshots and return the first lifecycle transition
+ * (status → qa_status → qa_loops precedence), or null when nothing changed.
+ * Single comparison SoT shared by detectChange and the batch scan (T-367) —
+ * the meta autosave must see exactly the signals the code autosave sees.
+ */
+function compareSnapshots(
+  prev: TicketSnapshot,
+  current: TicketSnapshot,
+): { changeReason: AutosaveChangeReason; before: string; after: string } | null {
+  if (String(prev.status ?? '') !== String(current.status ?? '')) {
+    return {
+      changeReason: 'status-change',
+      before: String(prev.status ?? ''),
+      after: String(current.status ?? ''),
+    }
+  }
+  if (String(prev.qa_status ?? '') !== String(current.qa_status ?? '')) {
+    return {
+      changeReason: 'qa-status-change',
+      before: String(prev.qa_status ?? ''),
+      after: String(current.qa_status ?? ''),
+    }
+  }
+  if (String(prev.qa_loops ?? '') !== String(current.qa_loops ?? '')) {
+    return {
+      changeReason: 'qa-loops-change',
+      before: String(prev.qa_loops ?? ''),
+      after: String(current.qa_loops ?? ''),
+    }
+  }
+  return null
+}
+
+export function detectChange(projectDir: string, ticketId: string, content: string): DetectChangeResult {
+  const fm = parseFrontmatter(content)
+  const current = snapshotFromFrontmatter(fm)
 
   const snapshot = loadSnapshot(projectDir)
   const prev = snapshot.tickets[ticketId]
@@ -200,41 +240,71 @@ export function detectChange(projectDir: string, ticketId: string, content: stri
     return { changed: false, snapshot, current, isInit: true }
   }
 
-  if (String(prev.status ?? '') !== String(current.status ?? '')) {
-    return {
-      changed: true,
-      changeReason: 'status-change',
-      before: String(prev.status ?? ''),
-      after: String(current.status ?? ''),
-      snapshot,
-      current,
-      isInit: false,
-    }
-  }
-  if (String(prev.qa_status ?? '') !== String(current.qa_status ?? '')) {
-    return {
-      changed: true,
-      changeReason: 'qa-status-change',
-      before: String(prev.qa_status ?? ''),
-      after: String(current.qa_status ?? ''),
-      snapshot,
-      current,
-      isInit: false,
-    }
-  }
-  if (String(prev.qa_loops ?? '') !== String(current.qa_loops ?? '')) {
-    return {
-      changed: true,
-      changeReason: 'qa-loops-change',
-      before: String(prev.qa_loops ?? ''),
-      after: String(current.qa_loops ?? ''),
-      snapshot,
-      current,
-      isInit: false,
-    }
+  const change = compareSnapshots(prev, current)
+  if (change) {
+    return { changed: true, ...change, snapshot, current, isInit: false }
   }
 
   return { changed: false, snapshot, current, isInit: false }
+}
+
+// ── Batch transition scan (T-367 meta autosave beat) ─────────────────────────
+
+/** One detected ticket lifecycle transition since the last beat. */
+export interface TicketTransition {
+  ticketId: string
+  changeReason: AutosaveChangeReason
+  before: string
+  after: string
+  /** Human-readable one-liner (persona activity → ticket id fallback). */
+  summary: string
+}
+
+export interface BatchTransitionScan {
+  transitions: TicketTransition[]
+  /**
+   * Persist the advanced snapshot (marks every reported transition as
+   * consumed). Deliberately separate from detection so a caller whose commit
+   * FAILED can leave the snapshot untouched — the transition label is then
+   * re-detected and re-used on the next beat instead of being lost.
+   */
+  persist: () => void
+}
+
+/**
+ * Detect lifecycle transitions across many tickets with ONE snapshot
+ * load/save (detectChange re-reads the snapshot file per call — too heavy for
+ * a per-beat scan over every ticket).
+ *
+ * Semantics match detectChange exactly (same compareSnapshots): a ticket seen
+ * for the first time is a baseline, not a transition. Calling `persist`
+ * advances every scanned ticket's snapshot, so a transition is reported
+ * exactly once per beat stream. The store is the same per-project snapshot
+ * file the §10 code autosave uses — per PRD 경계 결정 2 the meta autosave
+ * REUSES the code autosave's lifecycle signals rather than keeping a parallel
+ * trigger state.
+ */
+export function detectTicketTransitionsBatch(
+  projectDir: string,
+  tickets: Array<{ ticketId: string; content: string }>,
+): BatchTransitionScan {
+  const snapshot = loadSnapshot(projectDir)
+  const transitions: TicketTransition[] = []
+
+  for (const { ticketId, content } of tickets) {
+    const fm = parseFrontmatter(content)
+    const current = snapshotFromFrontmatter(fm)
+    const prev = snapshot.tickets[ticketId]
+    snapshot.tickets[ticketId] = current
+
+    if (!prev) continue // first sight — baseline only
+    const change = compareSnapshots(prev, current)
+    if (change) {
+      transitions.push({ ticketId, ...change, summary: buildSummary(content, fm) })
+    }
+  }
+
+  return { transitions, persist: () => saveSnapshot(projectDir, snapshot) }
 }
 
 async function hasDiff(worktreePath: string, ticketFilePath: string): Promise<boolean> {

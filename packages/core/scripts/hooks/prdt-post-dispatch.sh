@@ -16,6 +16,8 @@
 #      cost_usd absent from the payload → ESTIMATED from usage × API price table
 #      (2026-07-02 확정, 열린 항목 ③): cache read = 0.1×input, cache write(5m) = 1.25×input.
 #      cost_source marks "reported" vs "estimated" (additive field; GUI-safe).
+#   c) meta autosave beat (T-367, PRD v1.2) — fire-and-forget metaAutosaveTick
+#      via the core meta-cli bridge, only when .prdt/meta.git exists.
 # Silent no-op on anything that isn't a prdt-* Agent dispatch.
 
 set +e
@@ -23,7 +25,7 @@ EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
-import json, os, re, sys
+import json, os, re, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 try:
@@ -56,6 +58,38 @@ if not root:
     sys.exit(0)
 state_dir = os.path.join(root, ".prdt")
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+# ── meta autosave beat (T-367) ────────────────────────────────────────────────
+# The persona-turn beat this hook already fires on (PostToolUse:Agent +
+# SubagentStop) doubles as the META repo's autosave beat — PRD v1.2 경계 결정 2
+# reuses the §10 lifecycle signals, no new trigger system. CLI terminal
+# sessions and GUI-spawned sessions both run through this SAME hook, so this
+# single call site is what makes meta commits fire identically from either
+# surface (parity by construction). All git logic stays in core: we spawn the
+# meta-cli bridge (metaAutosaveTick) fire-and-forget — never blocks the turn,
+# never prints. Silent no-op when the project has no meta split (meta.git
+# absent — checked FIRST, before any spawn), or node / the built core bridge
+# is unavailable on this machine.
+try:
+    if os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
+        prdt_repo = None
+        _envf = os.path.expanduser("~/.prdt/prdt.env")
+        if os.path.isfile(_envf):
+            for _line in open(_envf, encoding="utf-8").read().splitlines():
+                if _line.startswith("PRDT_REPO="):
+                    prdt_repo = _line.split("=", 1)[1].strip()
+                    break
+        _node = shutil.which("node")
+        # PRDT_REPO = <repo>/packages/core (install.sh's $ROOT)
+        _bridge = os.path.join(prdt_repo or "", "dist", "bin", "meta-cli.cjs")
+        if prdt_repo and _node and os.path.isfile(_bridge):
+            subprocess.Popen(
+                [_node, _bridge, "tick", root],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+except Exception:
+    pass
 
 resp = ev.get("tool_response")
 resp_obj = resp if isinstance(resp, dict) else {}

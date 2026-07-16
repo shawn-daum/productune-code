@@ -70,6 +70,7 @@ export {
 export {
   triggerAutosave,
   detectChange,
+  detectTicketTransitionsBatch,
   processTicketFileChange,
   getSnapshot,
   setSnapshot,
@@ -82,6 +83,8 @@ export type {
   AutosaveSkipResult,
   AutosaveResult,
   DetectChangeResult,
+  TicketTransition,
+  BatchTransitionScan,
 } from './git-workflow/autosave'
 
 export {
@@ -146,6 +149,13 @@ export {
   DEFAULT_META_ALLOWLIST,
   DEFAULT_META_EXCLUDE,
 } from './git-workflow/meta-git'
+export {
+  MANAGED_BLOCK_START,
+  MANAGED_BLOCK_END,
+  renderManagedBlock,
+  syncGitignoreManagedBlock,
+} from './git-workflow/gitignore-managed-block'
+export type { GitignoreSyncResult } from './git-workflow/gitignore-managed-block'
 export type {
   MetaInitResult,
   MetaCommitResult,
@@ -153,6 +163,23 @@ export type {
   MetaRemote,
   MetaRemoteResult,
 } from './git-workflow/meta-git'
+export {
+  metaAutosaveTick,
+  buildTickMessage,
+  META_BEAT_FALLBACK_SUBJECT,
+} from './git-workflow/meta-autosave'
+export type { MetaAutosaveTickResult } from './git-workflow/meta-autosave'
+export {
+  planMetaMigration,
+  runMetaMigration,
+  MIGRATION_SNAPSHOT_MESSAGE,
+  MIGRATION_UNTRACK_MESSAGE,
+} from './git-workflow/meta-migrate'
+export type {
+  MetaMigrationPlan,
+  MetaMigrationResult,
+  MetaMigrationRefusal,
+} from './git-workflow/meta-migrate'
 
 export {
   fetchVercelDeploys,

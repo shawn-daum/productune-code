@@ -15,12 +15,13 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && esbuild src/bin/meta-cli.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/bin/meta-cli.cjs --log-level=warning",
     "test": "vitest run && node test/schema-v-guard.mjs",
     "lint": "echo 'core: no lint configured yet'"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.8.3",
     "vitest": "^4.1.9"
   }

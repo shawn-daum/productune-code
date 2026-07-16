@@ -745,17 +745,24 @@ export function initProject(opts) {
         ? { schema_v: latestSchemaV(coreRoot) }
         : {}
 
+  // T-365: field-preserving merge — re-init must never drop fields it doesn't
+  // own (e.g. `meta.allowlist`, the meta-split boundary written by
+  // meta-git.ts writeMetaAllowlist). Spread existing first, then overlay only
+  // owned keys; the from-scratch rebuild here silently lost meta config.
   /** @type {ProjectConfig} */
   const config = {
+    ...existing,
     slug: existing.slug ?? opts.slug,
     created_at: existing.created_at ?? new Date().toISOString(),
     version: '0.4.0',
     ...schemaVEntry,
     ...(opts.initialVersionId ? { initial_version: opts.initialVersionId } : {}),
-    ...(existing.surfaces ? { surfaces: existing.surfaces } : {}),
   }
 
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
+  // Atomic write (tmp + rename) — same contract as writeMetaAllowlist.
+  const configTmp = configPath + '.tmp'
+  fs.writeFileSync(configTmp, JSON.stringify(config, null, 2))
+  fs.renameSync(configTmp, configPath)
   bootstrapPersonaMemory(opts.projectDir, config.initial_version)
   bootstrapClaudeSettings(opts.projectDir)
   // T-PATCH-274 #19a: pre-accept Claude Code's trust dialog for this project dir

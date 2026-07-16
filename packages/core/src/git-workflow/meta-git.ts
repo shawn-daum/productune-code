@@ -24,6 +24,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { stateDir } from '../state/project-kind'
 import { parseLogOutput, type HistoryEntry } from './history'
+import { syncGitignoreManagedBlock } from './gitignore-managed-block'
 
 const execFileAsync = promisify(execFile)
 
@@ -258,11 +259,46 @@ function existingAllowlistPaths(projectDir: string, allowlist: string[]): string
 }
 
 /**
+ * Files to stage for one meta commit: allowlist-scoped adds, edits, deletions.
+ *
+ * Staging must be immune to the CODE repo's `.gitignore` (T-365): its managed
+ * block ignores every meta path, and the meta repo shares the work-tree — so a
+ * plain `git add -A -- <allowlist>` refuses the whole allowlist ("paths are
+ * ignored by one of your .gitignore files", exit 1). Instead:
+ *  - tracked changes (`ls-files --modified --deleted`) — ignore rules never
+ *    apply to tracked files;
+ *  - new files (`ls-files --others --exclude-from=<meta info/exclude>`) —
+ *    honoring ONLY the meta repo's own derived-artifact excludes, never the
+ *    code repo's `.gitignore`.
+ * The combined set is then staged with `add -f` (deleted paths stage the
+ * removal). `-z` keeps non-ASCII paths unquoted.
+ */
+async function collectStageableFiles(
+  projectDir: string,
+  paths: string[],
+): Promise<string[]> {
+  const listZ = async (flags: string[]): Promise<string[]> => {
+    const { stdout } = await metaGit(projectDir, ['ls-files', '-z', ...flags, '--', ...paths])
+    return stdout.split('\0').filter(Boolean)
+  }
+
+  const tracked = await listZ(['--modified', '--deleted'])
+
+  const excludeFile = path.join(metaGitDir(projectDir), 'info', 'exclude')
+  const othersFlags = ['--others']
+  if (fs.existsSync(excludeFile)) othersFlags.push('--exclude-from', excludeFile)
+  const others = await listZ(othersFlags)
+
+  return [...new Set([...tracked, ...others])]
+}
+
+/**
  * Stage the allowlist and commit one logical meta change.
  *
- * - Stages ONLY the allowlist (`git add -A -- <allowlist>`) — code files can
- *   never enter the meta repo.
- * - `-A` over existing allowlisted dirs captures adds, edits, and deletions.
+ * - Stages ONLY the allowlist (via collectStageableFiles) — code files can
+ *   never enter the meta repo, and the code repo's `.gitignore` managed block
+ *   can never block meta staging.
+ * - Captures adds, edits, and deletions over existing allowlisted dirs.
  * - Empty staged diff → skip (`diff-empty`), matching the §10 autosave contract.
  * - `message` should be built via buildAutosaveMessage so history stays
  *   naturalize-parseable.
@@ -275,13 +311,28 @@ export async function commitMeta(
     return { committed: false, skipReason: 'meta-repo-missing' }
   }
 
-  const paths = existingAllowlistPaths(projectDir, readMetaAllowlist(projectDir))
+  const allowlist = readMetaAllowlist(projectDir)
+
+  // T-365 (경계 결정 3): the meta turn beat doubles as the `.gitignore`
+  // managed-block resync beat — an allowlist edit in config.json propagates to
+  // the code repo's ignore block on the next logical meta change. Best-effort:
+  // a sync failure must never block the meta commit.
+  try {
+    syncGitignoreManagedBlock(projectDir, allowlist)
+  } catch {
+    /* best-effort */
+  }
+
+  const paths = existingAllowlistPaths(projectDir, allowlist)
   if (paths.length === 0) {
     return { committed: false, skipReason: 'nothing-allowlisted' }
   }
 
   try {
-    await metaGit(projectDir, ['add', '-A', '--', ...paths])
+    const files = await collectStageableFiles(projectDir, paths)
+    if (files.length > 0) {
+      await metaGit(projectDir, ['add', '-f', '--', ...files])
+    }
   } catch (err) {
     return {
       committed: false,
