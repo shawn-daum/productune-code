@@ -15,6 +15,10 @@
  *   log          <projectDir> [limit]        — meta commit timeline (scanMetaHistory)
  *   remote-list  <projectDir>                — configured backup remotes
  *   remote-add   <projectDir> <name> <url>   — add/update a backup remote (NEVER pushes)
+ *   push         <projectDir> [name]         — EXPLICIT push of the meta branch to a backup
+ *                                              remote (name defaults to "backup"; never --force)
+ *   bootstrap    <projectDir> <url> [name]   — T-374: second-machine restore of meta.git from a
+ *                                              backup remote (name defaults to "backup")
  *   migrate-plan <projectDir>                — T-366 migration eligibility + untrack preview (read-only)
  *   migrate-run  <projectDir>                — execute the CONFIRMED migration (caller owns the
  *                                              user prompt — see meta-migrate.ts auto/confirm boundary)
@@ -29,6 +33,8 @@ import {
   scanMetaHistory,
   addMetaRemote,
   listMetaRemotes,
+  pushMetaRemote,
+  bootstrapMetaRepo,
 } from '../git-workflow/meta-git'
 import { planMetaMigration, runMetaMigration } from '../git-workflow/meta-migrate'
 
@@ -40,7 +46,7 @@ function out(obj: unknown, code = 0): never {
 async function main(): Promise<void> {
   const [cmd, projectDir, ...rest] = process.argv.slice(2)
   if (!cmd || !projectDir) {
-    out({ ok: false, error: 'usage: meta-cli <tick|log|remote-list|remote-add|migrate-plan|migrate-run> <projectDir> [...]' }, 1)
+    out({ ok: false, error: 'usage: meta-cli <tick|log|remote-list|remote-add|push|bootstrap|migrate-plan|migrate-run> <projectDir> [...]' }, 1)
   }
 
   switch (cmd) {
@@ -69,6 +75,21 @@ async function main(): Promise<void> {
       }
       const res = await addMetaRemote(projectDir, name, url)
       out({ ok: res.ok, error: res.error })
+      break
+    }
+    case 'push': {
+      const name = rest[0] || 'backup'
+      const res = await pushMetaRemote(projectDir, name)
+      out(res, res.ok ? 0 : 1)
+      break
+    }
+    case 'bootstrap': {
+      const [url, name] = rest
+      if (!url) {
+        out({ ok: false, error: 'usage: meta-cli bootstrap <projectDir> <url> [name]' }, 1)
+      }
+      const res = await bootstrapMetaRepo(projectDir, url, name || 'backup')
+      out(res, res.ok ? 0 : 1)
       break
     }
     case 'migrate-plan': {

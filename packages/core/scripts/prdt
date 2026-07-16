@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history · meta (log|remote|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
@@ -732,7 +732,30 @@ def _meta_call(root, *bridge_args):
         sys.exit(f"prdt meta: 브리지 호출 실패 — {e}")
 
 
+def git_toplevel(start=None):
+    """The code repo's top-level dir (`git rev-parse --show-toplevel`), or None.
+    bootstrap runs on a machine where `.prdt/` does not exist yet — it cannot use
+    require_root (which keys off .prdt/po-state.json), so it keys off the git repo."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                           cwd=str(start or os.getcwd()), capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            return Path(r.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
 def cmd_meta(args):
+    if args.action == "bootstrap":
+        # T-374 ②: 타기기 부트스트랩 — .prdt가 아직 없는 상태에서 실행되므로
+        # require_root(=.prdt/po-state.json 탐색) 대신 코드 repo 루트를 쓴다.
+        root = git_toplevel()
+        if not root:
+            sys.exit("prdt meta bootstrap: git repo가 아니에요 — split 코드 repo를 "
+                     "clone/pull 한 위치(또는 그 하위)에서 실행하세요.")
+        cmd_meta_bootstrap(root, args)
+        return
     root = require_root()
     if args.action == "split":
         cmd_meta_split(root, args)
@@ -758,7 +781,7 @@ def cmd_meta(args):
             if not res.get("ok"):
                 sys.exit(f"prdt meta: remote 설정 실패 — {res.get('error') or '?'}")
             print(f"메타 백업 원격 '{name}' 설정 완료 (자동 push 없음 — 백업은 항상 수동).")
-            print(f"수동 백업: git --git-dir .prdt/meta.git push {name} --all")
+            print(f"백업 push: prdt meta push {name}")
         elif not rest:
             res = _meta_call(root, "remote-list")
             if not res.get("exists"):
@@ -770,9 +793,20 @@ def cmd_meta(args):
                 return
             for r in remotes:
                 print(f"{r.get('name')}\t{r.get('url')}")
-            print("(자동 push 없음 — 수동 백업: git --git-dir .prdt/meta.git push <name> --all)")
+            print("(자동 push 없음 — 백업하려면: prdt meta push [<name>])")
         else:
             sys.exit("usage: prdt meta remote [add <name> <url>]")
+    elif args.action == "push":
+        # T-374 ①: 명시적 사용자 호출 push — beat/hook 자동 경로에는 절대 없음.
+        rest = args.rest or []
+        if len(rest) > 1:
+            sys.exit("usage: prdt meta push [<name>]  (기본 원격 이름: backup)")
+        name = rest[0] if rest else "backup"
+        res = _meta_call(root, "push", name)
+        if not res.get("ok"):
+            sys.exit(f"prdt meta push: 실패 — {res.get('error') or '?'}")
+        print(f"메타 백업 push 완료 — '{name}' 원격에 '{res.get('branch')}' 브랜치 반영 (force 없음).")
+        print("타기기에서 이어받기: prdt meta bootstrap <이 원격 url> [<name>]")
 
 
 def cmd_meta_split(root, args):
@@ -816,7 +850,51 @@ def cmd_meta_split(root, args):
         sys.exit(f"prdt meta split: 실패 — {detail}")
     print(f"완료 — 코드 repo 잔여 메타 {res.get('codeTrackedMetaCount')}건 · "
           f"메타 repo 추적 {res.get('metaTrackedCount')}건 (양쪽 git ls-files 검증 통과)")
-    print("확인: prdt meta log · 되돌리기 전 백업이 필요하면: prdt meta remote add <name> <url>")
+    print("확인: prdt meta log · 타기기 백업: prdt meta remote add <name> <url> → prdt meta push <name>")
+
+
+def cmd_meta_bootstrap(root, args):
+    """T-374 ② 타기기 부트스트랩 — 주 기기가 push한 backup 원격 히스토리로 meta.git을
+    복원하고, split pull로 삭제된 메타 파일을 워킹트리에 체크아웃한다.
+
+    git 로직은 전부 core(meta-git.ts bootstrapMetaRepo) — 이 CLI는 인자를 넘기고
+    결과를 안내만 한다. pull을 아직 안 한 기기(로컬 메타 파일 존재)에서도 안전:
+    원격 히스토리와 다른 로컬 파일은 덮어쓰지 않고 충돌로 보고한다. force 없음."""
+    rest = args.rest or []
+    if not (1 <= len(rest) <= 2):
+        sys.exit("usage: prdt meta bootstrap <backup-url> [<name>]  (기본 원격 이름: backup)")
+    url = rest[0]
+    name = rest[1] if len(rest) == 2 else "backup"
+    res = _meta_call(root, "bootstrap", url, name)
+    refusal = res.get("refusal")
+    if refusal == "meta-repo-exists":
+        sys.exit("prdt meta bootstrap: 이 기기엔 이미 meta.git이 있어요 — 부트스트랩은 로컬 메타 "
+                 "히스토리를 덮어쓰지 않습니다. 원격을 이어붙이려면 prdt meta remote add "
+                 "<name> <url> 후 수동 pull 하세요.")
+    if refusal == "no-git":
+        sys.exit("prdt meta bootstrap: git repo(.git)가 없는 위치예요 — split 코드 repo에서 실행하세요.")
+    if refusal in ("fetch-failed", "no-remote-history"):
+        sys.exit(f"prdt meta bootstrap: 백업 원격에서 히스토리를 가져오지 못했어요 "
+                 f"({refusal}) — url 확인 후 다시 시도하세요. {res.get('error') or ''}".rstrip())
+    if not res.get("ok"):
+        # meta.git은 복원됐지만 로컬 파일이 원격 히스토리와 충돌 — 덮어쓰지 않고 안내.
+        conflicts = res.get("conflicts") or []
+        sd = res.get("stateDir") or ".prdt"
+        print(f"주의 — meta.git은 backup 원격 히스토리로 복원했지만, 워킹트리의 메타 파일 "
+              f"{len(conflicts)}개가 원격과 달라서 그대로 뒀어요 (덮어쓰지 않음):")
+        for f in conflicts[:20]:
+            print(f"    {f}")
+        if len(conflicts) > 20:
+            print(f"    … 외 {len(conflicts) - 20}개")
+        print("  해소 방법:")
+        print(f"   · 원격 버전을 취하려면: git --git-dir {sd}/meta.git checkout -- <path>")
+        print("   · 로컬 버전을 유지하려면: 그대로 두고 다음 beat에서 메타로 커밋됩니다")
+        print(f"   상태 확인: git --git-dir {sd}/meta.git status")
+        sys.exit(1)
+    print(f"메타 부트스트랩 완료 — backup 원격 '{name}'의 '{res.get('branch')}' 히스토리로 "
+          f"meta.git 복원 (추적 {res.get('metaTrackedCount')}건 · "
+          f"워킹트리 복원 {res.get('restoredCount')}건).")
+    print("확인: prdt meta log")
 
 
 # ── doctor ────────────────────────────────────────────────────────────────────
@@ -1159,9 +1237,9 @@ def main():
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
-    p = sub.add_parser("meta", help="meta git (v1.2): log · remote [add <name> <url>] · split — core API 브리지 호출")
-    p.add_argument("action", choices=("log", "remote", "split"))
-    p.add_argument("rest", nargs="*", help="remote: [add <name> <url>]")
+    p = sub.add_parser("meta", help="meta git (v1.2): log · remote [add <name> <url>] · push · bootstrap · split — core API 브리지 호출")
+    p.add_argument("action", choices=("log", "remote", "push", "bootstrap", "split"))
+    p.add_argument("rest", nargs="*", help="remote: [add <name> <url>] · push: [name] · bootstrap: <url> [name]")
     p.add_argument("--limit", type=int, default=20, help="log: max commits (default 20)")
     p.add_argument("--yes", action="store_true", help="split: 확인 프롬프트 생략 (T-366)")
     p.set_defaults(fn=cmd_meta)

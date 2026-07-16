@@ -19,10 +19,11 @@
  */
 
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { stateDir } from '../state/project-kind'
+import { stateDir, STATE_DIR_NAME, type ProjectKind } from '../state/project-kind'
 import { parseLogOutput, type HistoryEntry } from './history'
 import { syncGitignoreManagedBlock } from './gitignore-managed-block'
 
@@ -444,5 +445,349 @@ export async function listMetaRemotes(projectDir: string): Promise<MetaRemote[]>
     return [...seen].map(([name, url]) => ({ name, url }))
   } catch {
     return []
+  }
+}
+
+// ── Push (explicit user-invoked backup; never automatic, never force) ─────────
+
+export interface MetaPushResult {
+  ok: boolean
+  /** The remote's default branch that carried the push (present on success). */
+  branch?: string
+  error?: string
+}
+
+/**
+ * Push the meta repo's local branches to a configured backup remote (T-374 ①).
+ *
+ * This is the EXPLICIT counterpart to addMetaRemote: `remote add` only records
+ * the url, and no beat / hook / autosave path ever pushes (PRD §v1.2 Non-goal:
+ * no automatic push). A push happens ONLY when the user runs this command, so
+ * the backup remote is the durable history a second machine bootstraps from
+ * (bootstrapMetaRepo). Never `--force` — a fast-forward push preserves the
+ * remote's history; a rejected non-ff surfaces as an error for the user to
+ * resolve, never a silent overwrite.
+ */
+export async function pushMetaRemote(
+  projectDir: string,
+  name: string,
+): Promise<MetaPushResult> {
+  if (!metaRepoExists(projectDir)) {
+    return { ok: false, error: 'meta repo not initialized' }
+  }
+  const remotes = await listMetaRemotes(projectDir)
+  if (!remotes.some((r) => r.name === name)) {
+    return {
+      ok: false,
+      error: `meta remote '${name}' not configured — add it first: prdt meta remote add ${name} <url>`,
+    }
+  }
+
+  // Verify there is actually a commit to push. `symbolic-ref` resolves the
+  // branch name even on an UNBORN HEAD (a freshly-init'd repo), so it cannot
+  // stand in for "has commits" — rev-parse --verify HEAD does.
+  try {
+    await metaGit(projectDir, ['rev-parse', '--verify', '--quiet', 'HEAD'])
+  } catch {
+    return { ok: false, error: 'meta repo has no commits to push yet' }
+  }
+  let branch: string | undefined
+  try {
+    branch = (await metaGit(projectDir, ['symbolic-ref', '--short', 'HEAD'])).stdout.trim()
+  } catch {
+    /* detached HEAD — no branch to push */
+  }
+  if (!branch) {
+    return { ok: false, error: 'meta repo is in a detached HEAD state — no branch to push' }
+  }
+
+  try {
+    // Push the current branch, setting upstream so a later `prdt meta log`/pull
+    // knows its remote. No --force, no --mirror: a non-ff push is rejected by
+    // git and returned as an error rather than overwriting the backup.
+    await metaGit(projectDir, ['push', '--set-upstream', name, branch])
+    return { ok: true, branch }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+// ── Bootstrap (second machine: restore meta.git from a backup remote) ─────────
+
+export type MetaBootstrapRefusal =
+  | 'no-git'
+  | 'meta-repo-exists'
+  | 'fetch-failed'
+  | 'no-remote-history'
+
+export interface MetaBootstrapResult {
+  ok: boolean
+  refusal?: MetaBootstrapRefusal
+  /** The branch adopted from the backup remote's HEAD. */
+  branch?: string
+  /**
+   * The state-dir name the meta repo was bootstrapped under (`.prdt` or the
+   * legacy `.productune`) — derived from the backup's own paths. Surfaces so a
+   * caller can point conflict-resolution guidance at the right git-dir.
+   */
+  stateDir?: string
+  /** Meta repo HEAD after bootstrap. */
+  headSha?: string
+  /** Files checked out into the work-tree because they were missing (post-pull). */
+  restoredCount: number
+  /**
+   * Work-tree meta files that DIFFER from the backup history — left UNTOUCHED
+   * (never overwritten). Non-empty ⇒ the user must reconcile manually; `ok` is
+   * false so a surface can warn instead of claiming a clean bootstrap.
+   */
+  conflicts: string[]
+  /** Files the bootstrapped meta repo now tracks. */
+  metaTrackedCount: number
+  error?: string
+}
+
+/** Code repo exists? (`.git` dir or file). Local copy — meta-migrate has its own. */
+function bootstrapCodeRepoExists(projectDir: string): boolean {
+  try {
+    return fs.existsSync(path.join(projectDir, '.git'))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Peek the backup remote's tree to decide which state-dir kind (`.prdt` vs
+ * legacy `.productune`) the project uses — and double as the connectivity probe.
+ *
+ * Why this is load-bearing: `stateDir()` is a heuristic (`.prdt` present wins,
+ * else legacy default). On a fresh second machine that has pulled the split,
+ * NEITHER state dir exists, so `stateDir()` would default to `.productune` and
+ * the meta git-dir would be created there — then the first restored
+ * `.prdt/config.json` would flip `detectProjectKind` to `.prdt` mid-operation
+ * and every subsequent meta git call would target the wrong (non-existent)
+ * git-dir. Pinning the kind from the backup's own paths BEFORE init removes that
+ * race and puts meta.git in the same state dir the restored files live under.
+ *
+ * Shallow (`--depth 1`) — we only need the tree's top-level path prefixes.
+ * Throws on an unreachable / empty remote (the caller maps it to fetch-failed).
+ */
+async function peekRemoteStateKind(url: string): Promise<ProjectKind> {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-meta-peek-'))
+  const env = scrubbedGitEnv()
+  try {
+    await execFileAsync('git', ['init', '--bare', '-q', tmp], { timeout: 10_000, env })
+    let branch = 'HEAD'
+    try {
+      const { stdout } = await execFileAsync('git', ['ls-remote', '--symref', url, 'HEAD'], {
+        timeout: 15_000,
+        env,
+      })
+      const m = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/m.exec(stdout)
+      if (m) branch = m[1]
+    } catch {
+      /* fall back to fetching HEAD directly */
+    }
+    await execFileAsync('git', ['--git-dir', tmp, 'fetch', '--depth', '1', url, branch], {
+      timeout: 30_000,
+      env,
+    })
+    const { stdout } = await execFileAsync(
+      'git',
+      ['--git-dir', tmp, 'ls-tree', '-r', '--name-only', 'FETCH_HEAD'],
+      { timeout: 15_000, env, maxBuffer: 16 * 1024 * 1024 },
+    )
+    const paths = stdout.split('\n')
+    const legacyPrefix = STATE_DIR_NAME.productune + '/'
+    const prdtPrefix = STATE_DIR_NAME.prdt + '/'
+    // Legacy only when the backup carries `.productune/*` and no `.prdt/*`;
+    // everything else (incl. an ambiguous/empty meta) resolves to the forward
+    // standard `.prdt`.
+    if (paths.some((p) => p.startsWith(legacyPrefix)) && !paths.some((p) => p.startsWith(prdtPrefix))) {
+      return 'productune'
+    }
+    return 'prdt'
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Bootstrap a meta repo on a SECOND machine from a backup remote (T-374 ②).
+ *
+ * The failure mode this heals: machine A ran the split (meta rm'd from code
+ * tracking) and pushed meta.git to a backup remote. When machine B pulls the
+ * split commit, git DELETES the now-untracked meta files from its work-tree and
+ * B has no meta.git — the meta would be lost. This restores B to a working
+ * split state whose history comes from the backup remote:
+ *   ① init `.prdt/meta.git` with full T-364/365/366 hardening (initMetaRepo:
+ *      repo-local identity, commit.gpgsign=false, hooksPath pinned, info/exclude;
+ *      all meta git calls run through scrubbedGitEnv)
+ *   ② add the backup remote + fetch its history
+ *   ③ adopt the remote's default branch as local HEAD; read-tree its tree
+ *   ④ restore ONLY work-tree files that are missing (the pull-deleted ones)
+ *
+ * Safety for the not-yet-pulled machine (meta files still on disk): a work-tree
+ * file that differs from the backup history is a CONFLICT — it is left
+ * untouched and reported in `conflicts[]`, never overwritten (no --force, no
+ * reset --hard). meta.git is still created (that is non-destructive — a new
+ * git-dir), so the user can reconcile with plain git afterwards.
+ *
+ * Refuses (touching nothing) when: no code repo (`no-git`); a meta repo already
+ * exists locally (`meta-repo-exists` — bootstrap never clobbers local history;
+ * use `prdt meta remote add` + a manual pull instead); the remote is
+ * unreachable / empty (`fetch-failed` / `no-remote-history` — the freshly
+ * created git-dir is rolled back so a corrected re-run is clean).
+ */
+export async function bootstrapMetaRepo(
+  projectDir: string,
+  url: string,
+  name = 'backup',
+): Promise<MetaBootstrapResult> {
+  const base: MetaBootstrapResult = {
+    ok: false,
+    restoredCount: 0,
+    conflicts: [],
+    metaTrackedCount: 0,
+  }
+
+  if (!bootstrapCodeRepoExists(projectDir)) return { ...base, refusal: 'no-git' }
+  if (metaRepoExists(projectDir)) return { ...base, refusal: 'meta-repo-exists' }
+
+  // Pin the state-dir kind from the backup BEFORE touching the filesystem, so
+  // metaGitDir() is stable for the whole operation (see peekRemoteStateKind).
+  // This is also the connectivity probe — an unreachable remote fails here.
+  let kind: ProjectKind
+  try {
+    kind = await peekRemoteStateKind(url)
+  } catch (err) {
+    return {
+      ...base,
+      refusal: 'fetch-failed',
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+  const stateDirName = STATE_DIR_NAME[kind]
+  fs.mkdirSync(path.join(projectDir, stateDirName), { recursive: true })
+
+  const gitDir = metaGitDir(projectDir)
+  const rollback = () => {
+    try {
+      fs.rmSync(gitDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  // ① init with full hardening (identity, gpgsign, hooksPath, info/exclude).
+  const init = await initMetaRepo(projectDir)
+  if (!init.initialized) {
+    rollback()
+    return { ...base, error: `meta repo init failed: ${init.error}` }
+  }
+
+  // ② add remote + fetch history.
+  const add = await addMetaRemote(projectDir, name, url)
+  if (!add.ok) {
+    rollback()
+    return { ...base, error: `remote add failed: ${add.error}` }
+  }
+  try {
+    await metaGit(projectDir, ['fetch', name])
+  } catch (err) {
+    rollback()
+    return {
+      ...base,
+      refusal: 'fetch-failed',
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+
+  // ③ resolve the remote's default branch and adopt it locally.
+  let branch: string | undefined
+  try {
+    await metaGit(projectDir, ['remote', 'set-head', name, '-a'])
+    const sym = (await metaGit(projectDir, ['symbolic-ref', `refs/remotes/${name}/HEAD`])).stdout.trim()
+    const m = new RegExp(`^refs/remotes/${name}/(.+)$`).exec(sym)
+    if (m) branch = m[1]
+  } catch {
+    /* fall through to enumeration */
+  }
+  if (!branch) {
+    try {
+      const { stdout } = await metaGit(projectDir, [
+        'for-each-ref', '--format=%(refname:short)', `refs/remotes/${name}`,
+      ])
+      const candidates = stdout
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .filter((r) => r !== `${name}/HEAD`)
+      if (candidates.length > 0) branch = candidates[0].replace(new RegExp(`^${name}/`), '')
+    } catch {
+      /* none */
+    }
+  }
+  if (!branch) {
+    rollback()
+    return { ...base, refusal: 'no-remote-history' }
+  }
+
+  let headSha: string
+  try {
+    headSha = (await metaGit(projectDir, ['rev-parse', `refs/remotes/${name}/${branch}`])).stdout.trim()
+    await metaGit(projectDir, ['update-ref', `refs/heads/${branch}`, headSha])
+    await metaGit(projectDir, ['symbolic-ref', 'HEAD', `refs/heads/${branch}`])
+    await metaGit(projectDir, ['branch', `--set-upstream-to=${name}/${branch}`, branch])
+    // Load the index from the fetched tree WITHOUT writing the work-tree, so we
+    // can classify each path (missing vs present-and-equal vs conflict) before
+    // touching any file.
+    await metaGit(projectDir, ['read-tree', 'HEAD'])
+  } catch (err) {
+    rollback()
+    return { ...base, error: `adopt-branch failed: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  // ④ classify and restore ONLY the missing files; never overwrite differences.
+  try {
+    const splitZ = (s: string) => s.split('\0').filter(Boolean)
+    const deleted = splitZ((await metaGit(projectDir, ['ls-files', '--deleted', '-z'])).stdout)
+    // worktree-vs-index diff = deleted ∪ present-but-differing.
+    const diffed = splitZ((await metaGit(projectDir, ['diff', '--name-only', '-z'])).stdout)
+    const deletedSet = new Set(deleted)
+    const conflicts = diffed.filter((f) => !deletedSet.has(f))
+
+    if (deleted.length > 0) {
+      // Restore from the index; these paths are absent on disk so nothing is
+      // overwritten. `checkout -- <path>` recreates each from the index.
+      await metaGit(projectDir, ['checkout', '--', ...deleted])
+    }
+
+    const metaTracked = splitZ((await metaGit(projectDir, ['ls-files', '-z'])).stdout)
+
+    return {
+      ok: conflicts.length === 0,
+      branch,
+      stateDir: stateDirName,
+      headSha,
+      restoredCount: deleted.length,
+      conflicts,
+      metaTrackedCount: metaTracked.length,
+      error:
+        conflicts.length === 0
+          ? undefined
+          : `meta.git bootstrapped, but ${conflicts.length} work-tree file(s) differ from the backup ` +
+            `history and were left untouched — reconcile before relying on the split ` +
+            `(git --git-dir .prdt/meta.git status)`,
+    }
+  } catch (err) {
+    // meta.git is set up; report the failure but do NOT roll it back — history
+    // is already safely local.
+    return {
+      ...base,
+      branch,
+      stateDir: stateDirName,
+      headSha,
+      error: `work-tree restore failed: ${err instanceof Error ? err.message : String(err)}`,
+    }
   }
 }

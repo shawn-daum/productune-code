@@ -23,10 +23,13 @@ import {
   scanMetaHistory,
   addMetaRemote,
   listMetaRemotes,
+  pushMetaRemote,
+  bootstrapMetaRepo,
   readMetaAllowlist,
   writeMetaAllowlist,
   DEFAULT_META_ALLOWLIST,
 } from '../../src/git-workflow/meta-git'
+import { runMetaMigration } from '../../src/git-workflow/meta-migrate'
 import { naturalizeCommit } from '../../src/history/naturalize'
 import { buildAutosaveMessage } from '../../src/git-workflow/autosave'
 
@@ -223,6 +226,159 @@ test('addMetaRemote records a remote without pushing; re-add updates url', async
   // no push happened — no remote-tracking refs exist
   const refs = git(['--git-dir', metaGitDir(projectDir), 'for-each-ref', 'refs/remotes'])
   expect(refs).toBe('')
+})
+
+// ── push (explicit backup) ────────────────────────────────────────────────────
+
+/** A bare git repo usable as a backup/origin remote. Cleaned up per-test. */
+const bareRepos: string[] = []
+function makeBareRemote(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-bare-'))
+  execFileSync('git', ['init', '--bare', '-q', dir])
+  bareRepos.push(dir)
+  return dir
+}
+afterEach(() => {
+  for (const d of bareRepos.splice(0)) fs.rmSync(d, { recursive: true, force: true })
+})
+
+test('pushMetaRemote refuses when the remote is not configured', async () => {
+  await initMetaRepo(projectDir)
+  await commitMeta(projectDir, 'T-374 [manual: →] snapshot')
+  const res = await pushMetaRemote(projectDir, 'backup')
+  expect(res.ok).toBe(false)
+  expect(res.error).toMatch(/not configured/)
+})
+
+test('pushMetaRemote refuses when there are no commits yet', async () => {
+  await initMetaRepo(projectDir)
+  await addMetaRemote(projectDir, 'backup', makeBareRemote())
+  const res = await pushMetaRemote(projectDir, 'backup')
+  expect(res.ok).toBe(false)
+  expect(res.error).toMatch(/no commits/)
+})
+
+test('pushMetaRemote sends the meta branch to the backup; no --force', async () => {
+  const backup = makeBareRemote()
+  await initMetaRepo(projectDir)
+  await commitMeta(projectDir, 'T-374 [manual: →] snapshot')
+  await addMetaRemote(projectDir, 'backup', backup)
+
+  const res = await pushMetaRemote(projectDir, 'backup')
+  expect(res.ok).toBe(true)
+  expect(res.branch).toBeTruthy()
+
+  // the backup now carries the meta history
+  const remoteHead = git(['--git-dir', backup, 'rev-parse', `refs/heads/${res.branch}`])
+  const localHead = git(['--git-dir', metaGitDir(projectDir), 'rev-parse', 'HEAD'])
+  expect(remoteHead).toBe(localHead)
+})
+
+// ── bootstrap (second machine) ──────────────────────────────────────────────────
+
+test('two-machine cycle: A splits + pushes → B (split-pulled, meta gone) bootstraps from backup', async () => {
+  const backup = makeBareRemote()
+  const origin = makeBareRemote()
+  const A = projectDir
+
+  // Machine A: mixed repo — track the meta files in the CODE repo, then push.
+  git(['add', '.prdt/config.json', 'docs/prd/PRD.md'], A)
+  git(['commit', '-qm', 'meta tracked'], A)
+  const branch = git(['symbolic-ref', '--short', 'HEAD'], A)
+  git(['remote', 'add', 'origin', origin], A)
+  git(['push', '-q', 'origin', branch], A)
+
+  // A runs the split migration (meta rm --cached from code, meta.git created).
+  const mig = await runMetaMigration(A)
+  expect(mig.ok).toBe(true)
+  git(['push', '-q', 'origin', branch], A) // publish the untrack commit
+
+  // A backs the meta history up to the shared backup remote (explicit push).
+  expect((await addMetaRemote(A, 'backup', backup)).ok).toBe(true)
+  expect((await pushMetaRemote(A, 'backup')).ok).toBe(true)
+
+  // Machine B: clone the already-split CODE repo — the meta files are untracked
+  // there, so B's work-tree never receives them (exactly the pull-deletes-meta
+  // end state) and B has no meta.git.
+  const B = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-B-'))
+  bareRepos.push(B) // reuse cleanup list
+  git(['clone', '-q', origin, B])
+  expect(fs.existsSync(path.join(B, 'docs', 'prd', 'PRD.md'))).toBe(false)
+  expect(metaRepoExists(B)).toBe(false)
+
+  // B bootstraps from the backup remote.
+  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+  expect(boot.ok).toBe(true)
+  expect(boot.conflicts).toEqual([])
+  expect(boot.restoredCount).toBeGreaterThan(0)
+
+  // meta files are restored into B's work-tree with the backed-up content
+  expect(fs.existsSync(path.join(B, 'docs', 'prd', 'PRD.md'))).toBe(true)
+  expect(fs.readFileSync(path.join(B, 'docs', 'prd', 'PRD.md'), 'utf-8')).toBe('# PRD\n')
+
+  // B's meta.git history matches the backup, and tracks only meta
+  expect(boot.headSha).toBe(git(['--git-dir', backup, 'rev-parse', `refs/heads/${boot.branch}`]))
+  const bTracked = git(['--git-dir', metaGitDir(B), 'ls-files'], B).split('\n')
+  expect(bTracked).toContain('docs/prd/PRD.md')
+  expect(bTracked.some((f) => f.startsWith('.prdt/meta.git'))).toBe(false)
+
+  // hardening carried over (T-364/365/366): repo-local identity + neutralized globals
+  const cfg = git(['--git-dir', metaGitDir(B), 'config', '--list'])
+  expect(cfg).toMatch(/user\.name=prdt/)
+  expect(cfg).toMatch(/commit\.gpgsign=false/)
+  expect(cfg).toMatch(/core\.worktree=/)
+
+  fs.rmSync(B, { recursive: true, force: true })
+})
+
+test('bootstrap refuses to clobber an existing local meta.git', async () => {
+  const backup = makeBareRemote()
+  await initMetaRepo(projectDir)
+  const res = await bootstrapMetaRepo(projectDir, backup, 'backup')
+  expect(res.ok).toBe(false)
+  expect(res.refusal).toBe('meta-repo-exists')
+})
+
+test('bootstrap rolls back and refuses on an unreachable backup remote', async () => {
+  const bogus = path.join(os.tmpdir(), 'core-meta-nope-' + crypto.randomUUID())
+  const res = await bootstrapMetaRepo(projectDir, bogus, 'backup')
+  expect(res.ok).toBe(false)
+  expect(res.refusal).toBe('fetch-failed')
+  // the freshly-created git-dir is rolled back so a corrected re-run is clean
+  expect(metaRepoExists(projectDir)).toBe(false)
+})
+
+test('bootstrap on a not-yet-pulled machine leaves a differing local file UNTOUCHED', async () => {
+  // Build a backup carrying PRD.md = "# PRD\n" (from a donor project A).
+  const backup = makeBareRemote()
+  const A = projectDir
+  await initMetaRepo(A)
+  await commitMeta(A, 'T-374 [manual: →] snapshot')
+  await addMetaRemote(A, 'backup', backup)
+  await pushMetaRemote(A, 'backup')
+
+  // Machine B: a separate project that has NOT pulled the split — a local meta
+  // file exists on disk and DIFFERS from the backup history.
+  const B = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-B2-'))
+  bareRepos.push(B)
+  execFileSync('git', ['init', '-q', B])
+  fs.mkdirSync(path.join(B, 'docs', 'prd'), { recursive: true })
+  const localBody = '# PRD — LOCAL UNPULLED EDIT\n'
+  fs.writeFileSync(path.join(B, 'docs', 'prd', 'PRD.md'), localBody)
+  fs.mkdirSync(path.join(B, '.prdt'), { recursive: true })
+  fs.writeFileSync(path.join(B, '.prdt', 'config.json'), JSON.stringify({ slug: 'proj' }))
+
+  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+
+  // meta.git IS created (non-destructive), but the differing file is a conflict
+  expect(metaRepoExists(B)).toBe(true)
+  expect(boot.ok).toBe(false)
+  expect(boot.conflicts).toContain('docs/prd/PRD.md')
+  expect(boot.error).toMatch(/differ/)
+  // the local file was NOT overwritten
+  expect(fs.readFileSync(path.join(B, 'docs', 'prd', 'PRD.md'), 'utf-8')).toBe(localBody)
+
+  fs.rmSync(B, { recursive: true, force: true })
 })
 
 // ── allowlist config ──────────────────────────────────────────────────────────
