@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "stage": "idle",
-  "version": "v1.1",
+  "stage": "build",
+  "version": "v1.2",
   "current_task": null
 }

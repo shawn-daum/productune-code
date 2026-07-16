@@ -1,6 +1,6 @@
 # PRD: productune
 
-**Slug**: productune    **Created**: 2026-04-28    **Status**: v0.6 — Phase 1 PRD ready (도그푸딩 완주 준비 + 안정화; v0.5 closed 2026-06-25)
+**Slug**: productune    **Created**: 2026-04-28    **Status**: v1.2 — 실행 코드/메타 분리 PRD ready (경계 4결정 전부 확정; v1.1 closed 2026-07-16)
 
 > 자체 PRD. productune 이 만들고자 하는 제품에 대한 정의이자, 동시에 productune 자기 자신의 다음 라운드 목표를 누적 기록하는 곳.
 >
@@ -681,6 +681,145 @@ v0.5 도그푸딩은 인프라가 다 깔린 뒤에도 비-개발자가 풀사�
   8. **lifecycle/worker-state→GUI 클러스터**(#9·#10·#11·#14)가 공유 배선 위에서 동작: 워커 라이브 출력이 presence row 에 스트리밍(#9, PO 제외) · 워커 스프라이트가 작업 중 **working 활성화**(#10) · PRD 인터뷰 중 **PO 채팅 단독 → 콘텐츠 생기면 풀 레이아웃**(#11) · PRD-ready/버전 생성 시 메인 패널이 **PRD 오토-노출 + 버전 자동 진입**(#14).
   9. 한글 조합 중 **첫 Cmd+Enter 로 전송**(#12) · tool-call 최하단 토글이 **기본 expanded**(#13) — 둘 다 검증.
 - **Validation method**: 항목별 AC 체크리스트 패스 — doctrine 개정은 land + cross-ref 정합, code 변경은 build+smoke+해당 surface 검증으로. real-OS/TCC(#6) · 트레이(#7) · leading-dash(#8) · 한글 IME(#12)는 **cua-vm 하니스**(playwright 사각)로, 시각(#3) · 클러스터 GUI(#9·#10·#11·#14) · tool-call 토글(#13)은 **스크린샷 하니스 + 사람 눈확인**으로 검증. (실제 풀사이클 관찰은 v0.7 로 이월되어 본 버전 validation 에 포함하지 않는다.)
+
+## v1.2 — 실행 코드 / 코드 메타 분리 (메타 전용 로컬 git)
+
+> **Slug**: meta-code-split-local-git · **Status**: PRD ready (경계 4문 전부 결정 확정, A≈0.04) · **Authored**: 2026-07-16 (prdt-designer) · **Tickets**: T-361 (feature) · T-362 (productune dogfood, depends T-361)
+>
+> v1.2 는 단일 트랙이다 — prdt 가 관리하는 프로젝트에서 **실행 코드**와 **코드 메타**(PRD·티켓·wiki·retro·상태)를 분리해, GitHub(origin)에는 실제 돌아가는 코드만 올라가고 메타는 **메타 전용 로컬 git** 으로 prdt 가 자동 관리하게 만든다. shawn 확정 결정(2026-07-16): ① origin = 코드만 · ② 메타 = 로컬 메타 git, prdt 자동 커밋, 히스토리 보존, 원격 백업은 옵션 · ③ CLI·GUI 동일 동작 · ④ 신규 프로젝트 기본 적용 + 기존 프로젝트 마이그레이션 경로.
+
+### Why — 문제
+
+prdt 관리 프로젝트는 한 working tree 에 실행 코드와 코드 메타가 섞여 **전부 origin 에 push** 된다.
+
+- productune 자체가 tracked 1086 중 메타(`docs/` 604 + `.prdt/`·`.productune/`·`briefs/`)가 코드(`packages/` 461)보다 많다.
+- 코드 repo 를 공유·공개하는 순간 내부 티켓·retro·PRD·의사결정이 그대로 노출된다.
+- 코드 diff 리뷰에 메타 노이즈(티켓 상태 변경, PRD 갱신)가 섞여 신호를 흐린다.
+- 히스토리는 보존해야 한다 — doctrine #6("markdown is the source of truth")상 메타 변경 이력은 버려질 수 없는 자산이다.
+
+### Who — 대상
+
+마스터 Who 와 동일 — 코드를 직접 짜지 않는 기획자 / 1인 PM. 이 사용자는 git 개념을 노출받지 않으므로(§10 Git 추상화), 코드/메타 분리는 **prdt 가 전부 처리**하고 사용자에게는 "코드 repo 에 메타가 안 섞인다"는 결과만 보여야 한다. 1차 dogfood 사용자는 productune 자신(T-362).
+
+### 핵심 개념 — 두 개의 git, 하나의 working tree
+
+메타 파일은 **경로가 바뀌지 않는다**(contract fixed paths — `docs/prd/PRD.md` 등은 그 자리 유지). 대신 같은 working tree 위에 두 개의 git 이 공존한다.
+
+| | 코드 repo | 메타 repo |
+|:--|:--|:--|
+| git-dir | `.git/` (기존) | `.prdt/meta.git/`(별도 git-dir, work-tree = 프로젝트 루트) |
+| 추적 대상 | 메타 allowlist 를 **제외한** 전부 | 메타 allowlist **만** |
+| origin | GitHub(기존 코드 remote) | 없음(로컬). 원격은 opt-in |
+| 커밋 주체 | 기존 §10 autosave(ticket worktree) | prdt 메타 autosave(신규) |
+| `git status` 노출 | 메타 변경 **안 보임**(.gitignore) | 메타 변경만 보임 |
+
+코드 repo 의 `.gitignore` 가 메타 allowlist 를 제외하므로 메타 변경은 코드 `git status`·커밋·diff 에 나타나지 않는다. 메타 repo 는 그 반대 — allowlist 만 추적하고 자기 git-dir(`.prdt/meta.git/`)은 추적하지 않는다.
+
+### 경계 결정 1 — 메타 / 코드 boundary (allowlist 방식) *(결정 확정)*
+
+메타는 **명시적 allowlist** 로 정의한다. prdt 가 저작하는 경로만 메타이고, 그 외 전부(사용자가 만든 것 포함)는 코드다 — top-level `docs/` 를 통째로 메타로 삼지 않는다(일반 프로젝트의 `docs/` 는 제품 문서일 수 있으므로).
+
+| 귀속 | 경로 |
+|:--|:--|
+| **메타** | `.prdt/`(단, 파생물 `index.db`·`turns.jsonl`·`sessions.json`·게이트 캐시는 양쪽 모두 gitignore) · `.productune/`(legacy) · `briefs/` · `docs/prd/` · `docs/tickets/` · `docs/wiki/` · `docs/designer/` · `docs/developer/` · `docs/po/` · `docs/qa/` · `docs/artifacts/` · `docs/retrospectives/` · `docs/archive/` |
+| **코드** | `packages/` · `scripts/` · `.github/` · `README.md` · `DEPLOY.md` · `package.json` · `pnpm-*.yaml` · `turbo.json` · 그리고 allowlist 밖의 사용자 저작 `docs/` 파일 |
+
+- `README.md`·`DEPLOY.md` 는 코드 repo 를 clone 한 사람이 제품을 빌드/배포하기 위한 문서이므로 **코드**다.
+- allowlist 는 `.prdt/config.json` 에 저장돼 프로젝트별로 add/remove 가능하다 — productune 은 `docs/` 전 파일이 메타이므로 loose `docs/*.md`(`backlog.md`·`testing.md`·`MIGRATION.md`·`prdt-v1-*.md`)를 allowlist 에 추가한다.
+- `.prdt/meta.git/` 자신은 코드·메타 양쪽 모두 gitignore(git-dir 은 어느 repo 도 추적하지 않는다).
+
+### 경계 결정 2 — 메타 auto-commit 시점 / 단위 *(결정 확정)*
+
+메타 커밋은 기존 §10 autosave 가 이미 계산하는 라이프사이클 신호를 **재사용**한다 — 새 트리거 체계를 만들지 않는다.
+
+- **시점**: 페르소나 turn 종료 + 상태 전이(ticket status / qa status·loops 변경, stage 전환, PRD·wiki·design 산출물 write). 기존 `AutosaveChangeReason`(`status-change`·`qa-status-change`·`qa-loops-change`·`manual`)과 동일 beat.
+- **단위**: 논리적 변경 1건 = 커밋 1건. 메시지 = 사람이 읽는 자연어(ticket-id + 페르소나 summary), 기존 `naturalize` 재사용.
+- **diff 없으면 skip** — 기존 autosave 의 `diff-empty` skip 그대로.
+
+### 경계 결정 3 — 코드 repo `.gitignore` 관리 주체 *(결정 확정)*
+
+prdt 가 코드 repo `.gitignore` 안에 **marker 로 구분된 관리 블록**을 주입·유지한다.
+
+- 블록은 `# >>> prdt meta (managed) >>>` … `# <<< prdt meta (managed) <<<` 마커로 감싸고, 그 안에 메타 allowlist 를 기록한다.
+- prdt 는 마커 안쪽만 재작성하고 사용자가 손으로 쓴 나머지 `.gitignore` 라인은 절대 건드리지 않는다.
+- allowlist 가 바뀌면(config 편집) 다음 turn 에 블록을 idempotent 하게 재동기화한다.
+- init 시 자동 주입 — 사용자는 `.gitignore` 를 손대지 않는다.
+
+### 경계 결정 4 — 기존 origin 에 push 된 메타 처리 *(결정 확정)*
+
+두 갈래가 있고, 기본 정책은 안전한 쪽으로 확정하되 실제 파괴적 실행은 명시적 opt-in 으로 잠근다.
+
+| 방식 | 효과 | 대가 | v1.2 정책 |
+|:--|:--|:--|:--|
+| (a) 추적 제거 only (`git rm --cached`) | 이후 커밋·status 에서 메타 사라짐 | **과거 히스토리엔 메타가 남음**(옛 커밋 `git log` 로 열람 가능) | **기본값** |
+| (b) 히스토리 rewrite(filter-repo/BFG + force-push) | origin 전 히스토리에서 메타 완전 제거 | 파괴적 · force-push 필요 · 기존 clone 깨짐 | **명시적 opt-in 만**, 자동 실행 금지 |
+
+- **기본 = (a) 추적 제거 only.** (b)는 contract("사용자 명시 지시 없이 force-push·파괴적 git 금지")상 자동화할 수 없으므로 default 가 될 수 없다.
+- 마이그레이션 절차(공통): ① `.prdt/meta.git/` 초기화 → ② 현재 메타 파일을 메타 repo 로 최초 커밋(이관 시점 스냅샷 = 최소 보존; 코드 repo 히스토리에서 메타 히스토리 import 는 후속 옵션) → ③ 코드 repo 에서 `git rm --cached` 로 추적 제거 + `.gitignore` 관리 블록 주입 → ④ 검증(`git ls-files` 양쪽).
+- **productune(T-362) 실행 = (a) 추적 제거 only 확정** (shawn, 2026-07-16). 히스토리 rewrite 안 함 — 기존 공개 origin 과거 메타 노출은 감수한다(곧 새 org 로 이관되므로).
+
+#### 새 org 이관 패턴 — prdt 관리 repo 마이그레이션 표준 *(결정 확정)*
+
+shawn 은 모든 prdt 관리 repo 를 새 private org(다른 계정)로 이관할 예정이며, 이 패턴이 **표준 마이그레이션 경로**가 된다.
+
+1. 코드/메타 분리 적용 — 추적 제거(a) + `.prdt/meta.git` 구성 + `.gitignore` 관리 블록.
+2. 분리 완료 상태로 기존 origin 에 **최종 1회 push**.
+3. origin remote 를 **새 private org 의 새 repo 로 이전** — 이 시점부터 새 repo 에는 코드만 올라간다(메타는 처음부터 미추적).
+4. 기존 공개 repo 의 과거 메타 히스토리는 그대로 남지만, 곧 폐기·비활성될 예정이라 노출을 감수한다.
+
+이 패턴에서 히스토리 rewrite 가 불필요한 이유: 과거 메타가 남은 **옛 repo 는 버려지고**, 이관 대상 **새 repo 는 첫 커밋부터 메타가 없다**. rewrite 의 파괴적 비용 없이 "새 origin 에 메타 0" 목표를 달성한다.
+
+### CLI · GUI parity *(결정 확정)*
+
+메타 git 로직은 전부 `packages/core`(git-workflow)에 두고 CLI·GUI 가 같은 모듈을 호출한다 — 구성상 parity 가 보장된다.
+
+- 메타 커밋 생성 = core autosave 확장 → 두 surface 공유.
+- 메타 히스토리 열람 = GUI Version History 에 메타 트랙 추가 + CLI 명령(예: `prdt meta log`).
+- 원격 백업(opt-in) 설정 = core 의 메타 remote add API → 양쪽 노출.
+
+### What — 범위 (in / out)
+
+#### 신규 프로젝트 (init 기본 적용)
+- **In**: init 시 코드 repo `.git` + 메타 repo `.prdt/meta.git` 를 함께 구성 · `.gitignore` 관리 블록 주입 · 메타 allowlist config 기록.
+- **Out**: init 이전 이미 존재하던 프로젝트의 자동 감지(그건 마이그레이션 경로).
+
+#### 기존 프로젝트 마이그레이션
+- **In**: `prdt` 마이그레이션 명령 / GUI 버튼 — 스냅샷 이관 + 추적 제거(a) + `.gitignore` 주입 + 검증. productune 자신을 dogfood(T-362).
+- **Out**: 자동 히스토리 rewrite(명시적 opt-in 만) · git 이 없는 프로젝트 · 이미 분리된 프로젝트 재실행.
+
+#### 메타 원격 백업 (opt-in)
+- **In**: 사용자가 원할 때 메타 repo 에 remote 를 붙일 수 있는 최소 경로(설정 API + 수동 push).
+- **Out**: 자동 push·양방향 sync·다중 사용자 메타 병합·충돌 해소 UI(모두 이후 버전).
+
+### Non-goals (v1.2)
+
+- 메타 원격 자동 sync / 다중 사용자 메타 협업 / 충돌 해소 (원격은 opt-in 수동만).
+- 이미 push 된 origin 의 자동 히스토리 rewrite (명시적·수동·opt-in — 절대 자동 아님).
+- 메타 암호화 / 접근 제어.
+- git 이 없는 프로젝트 지원.
+- top-level `docs/` 전체를 무조건 메타로 삼는 것(allowlist 방식으로 대체).
+
+### Risk & assumptions
+
+- **두 repo 가 한 work-tree 를 공유** → 잘못된 repo 에 `git add` 될 혼동 위험. 완화: prdt 가 양쪽 커밋을 전담 · 코드 `.gitignore` 가 메타 제외 · 사용자는 git 을 직접 만지지 않음(§10).
+- **추적 제거 only 는 과거 origin 히스토리에 메타를 남긴다** → 이미 push 된 프로젝트(productune)엔 잔여 노출 위험. 이것이 경계 결정 4 의 productune 실행 결정을 needs_info 로 남긴 이유.
+- **`.gitignore` 관리 블록이 사용자 편집과 충돌** → marker 구분 영역으로 격리, 마커 밖은 불가침.
+- **메타 git-dir 을 프로젝트 안(`.prdt/meta.git`)에 두면** 폴더 이동 시 히스토리가 함께 따라오는 이점이 있으나, 코드 repo 재-clone 시엔 딸려오지 않는다(메타는 로컬 자산이라는 전제 — 원격 백업 opt-in 이 이 gap 을 메운다).
+- **가정**: 메타 히스토리 "보존"의 최소 합격선은 이관 시점 스냅샷 + 이후 전체 이력. 코드 repo 과거 커밋에서 메타 히스토리를 메타 repo 로 import 하는 것은 nice-to-have(후속).
+
+### Success metrics → version_outcome
+
+- **North star**: prdt 관리 프로젝트의 origin `git ls-files` 가 **메타 0건**을 반환하면서, 전체 메타 이력이 별도 메타 git 에서 열람 가능한 상태 — productune 자신(T-362)을 이 방식으로 마이그레이션하고 CLI·GUI 둘 다 정상 동작함으로 증명.
+- **Input metrics** (모두 v1.2 내 측정 가능):
+  1. 신규 init 결과 코드 repo tracked set 에 메타 allowlist 경로가 **0건**, 메타 repo 에는 메타가 채워져 있다(`git ls-files` 양쪽).
+  2. 메타 변경(티켓 편집·PRD write) 1건이 메타 git 에 커밋 1건을 만들고 코드 `git status` 에는 **나타나지 않는다**.
+  3. productune 마이그레이션 후 origin `git ls-files` 메타 0건(코드 461 계열만) · 메타 git 이 604+ 메타를 이력과 함께 보유.
+  4. CLI·GUI 둘 다에서 메타 커밋 생성·메타 히스토리 열람·마이그레이션 후 정상 동작(parity check).
+- **Validation method**: 자동 `git ls-files` 어서션(코드·메타 양쪽) + 메타 git `log` 이력 확인 + productune 대상 CLI·GUI 각각의 dogfood 패스(T-362).
+
+### Open Questions (v1.2)
+
+- 없음 — 경계 4문 모두 결정 확정(2026-07-16). 경계 결정 4 는 (a) 추적 제거 only + 새 org 이관 패턴으로 종결.
 
 ## OSS reference
 

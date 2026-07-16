@@ -1,1 +1,44 @@
 # Wiki inbox — 1-line memory_notes appends; curated at stage boundaries
+- (2026-07-15, designer) v1.2 north star carried from retro--v1.1 Unobserved: a CLEAN non-dev GUI-only full cycle (PRD→Close) observed under the FIXED stage-guard discipline (T-336) — hanta v1.1 completion disqualified (ran with the lifecycle-skip bug). Natural observation target during v1.2 dogfooding, carried per PO Define-entry confirmation, not re-asked.
+- (2026-07-15, designer→po) PRD.md structure drift: status line stale at v0.6, H2 version sections end at v0.6 (no v0.7~v1.1), docs/prd/versions/ only v0.4/v0.5 snapshots — v1.2 follows the ## H2 pattern; backfill 여부는 별도 판단.
+- (2026-07-15, qa) GUI smoke Test 3 (onboarding/home key elements) pre-existing 실패 — locator("button:visible") strict-mode 위반(5 buttons), 프로젝트 픽커에 기존 항목 다수인 dev 환경에서 선택자 모호. T-360 무관, main에서도 동일 재현. smoke 선택자 견고화 후보.
+- (2026-07-16, designer) v1.2 decision (shawn): T-359 Anchor DS adoption scope = (a) full-GUI-surface one-pass token swap — no phased core-surface-first rollout. v1.2 acceptance set against this bar; rejected alternative (b) phased expansion.
+- v1.2 결정(shawn 2026-07-16): 메타/코드 경계 = 명시적 allowlist(prdt 저작 경로만 메타; docs/ 통째 아님). README·DEPLOY.md=코드. allowlist는 .prdt/config.json에 프로젝트별 저장.
+- v1.2 설계: two-git/one-worktree — 코드 .git + 메타 .prdt/meta.git(별도 git-dir, work-tree=루트). 메타 파일 경로 불변(contract fixed paths). 코드 .gitignore가 메타 제외, 메타 repo는 allowlist만 추적.
+- v1.2 결정: 메타 auto-commit은 기존 §10 autosave 라이프사이클 신호 재사용(turn종료+상태전이), 새 트리거 안 만듦. .gitignore는 prdt가 marker 구분 관리블록 주입.
+- v1.2 결정: 이미 push된 메타 처리 default=추적제거 only(a). 히스토리 rewrite(b)는 force-push→contract상 명시 opt-in만, 자동화 금지.
+- v1.2 결정(shawn 2026-07-16): 기존 push된 메타 = 추적 제거만(rewrite 없음). 모든 repo 새 private org로 이관 예정 — ship 시 기존 origin 최종 1회 push 후 새 org repo로 origin 이전. 타 prdt repo migration 표준 패턴.
+- v1.2 결정(shawn 2026-07-16): 이미 push된 메타는 추적제거 only(rewrite 안 함). 표준 마이그레이션 = 분리 적용→기존 origin 최종 1회 push→새 private org 새 repo로 origin 이전. 새 repo는 첫 커밋부터 메타0이므로 rewrite 파괴비용 회피. 옛 공개 repo 과거 메타 노출은 감수(곧 폐기). 이 패턴이 모든 prdt 관리 repo 표준.
+- v1.2 결정(shawn 2026-07-16): 팀 cross-repo git 룰 승인 — 팀 모드 = dev 상주 + main 배포 전용(dev→main merge = 배포), 솔로 모드 = trunk 유지. 팀 공유용 단독 문서 T-363.
+- T-363: 팀 git 규칙 문서는 습관이 아닌 구조로 사고 차단하는 프레임(main 직접 push 금지 = branch protection)으로 작성 — 메타 파일은 branch 안 태우고 상주 branch 직행 규칙을 선택 반영함
+- ADR(T-364): meta repo = `git init --bare <stateDir>/meta.git` + repo-local `core.bare=false` + `core.worktree=<projectRoot>`; all ops via `git --git-dir=<gitDir> --work-tree=<projectRoot>`. Two distinct git-dirs give free isolation — a meta commit never writes the code repo's index/history.
+- ADR(T-364): derived/gate artifacts (index.db, turns.jsonl, sessions.json, .cost-*.json, .subagent-gate.json, meta.git/) excluded via the meta repo's `info/exclude` (per-repo, untracked) rather than a committed .gitignore — keeps the work-tree free of a meta-side .gitignore. DEFAULT_META_EXCLUDE in meta-git.ts.
+- T-365 (init) MUST preserve `meta.allowlist` when it rewrites config.json — init-project.mjs currently reconstructs config from scratch (only slug/created_at/surfaces preserved, ~line 750) and would DROP the meta block on a re-init. writeMetaAllowlist does an atomic field-preserving merge; init must do the same.
+- meta-git.ts sets a repo-local commit identity (prdt/prdt@localhost) at init so meta commits are attributable and tests are hermetic without a global git identity.
+- risk-touch(T-364): git-plumbing. Verified against real temp git repos (not mocks). No push/force-push/rewrite anywhere — remote is add-only per PRD Non-goals.
+- QA(T-364): two-git 패턴 표준 주의 — 자식 git 프로세스에 GIT_INDEX_FILE 등 GIT_* env가 상속되면 --git-dir/--work-tree 플래그를 이겨 코드 repo index를 오염시킴(실증). env 스크럽 필수.
+- QA(T-364): 전역 gitconfig(commit.gpgsign, core.hooksPath)가 메타 repo 커밋에 적용됨 — init 시 repo-local로 gpgsign off·hooksPath 고정 필요, 아니면 해당 사용자군 메타 히스토리가 조용히 안 쌓임.
+- PO(T-364 QA 관찰): commitMeta를 autosave 라이프사이클에 실제 거는 wiring은 아직 어느 티켓에도 없음 → T-367 스코프에 편입.
+- Blameless(T-364): a subprocess git for repo B silently inherits repo A's GIT_* redirection env (GIT_INDEX_FILE has no CLI-flag override). Local green missed it because the unit tests ran outside any git-hook context where GIT_INDEX_FILE is set. Fix = strip all GIT_* from the child env. Sibling check: autosave.ts/history.ts git calls operate on the SAME code repo family, so inheriting GIT_* there is correct — no sibling defect.
+- Blameless(T-364): meta commits are subject to the user's global gitconfig by default; commit.gpgsign=true fails a synthetic-identity commit and core.hooksPath runs user husky hooks. Fix = repo-local overrides in init (which git resolves as local-wins-over-global). Local green missed it because CI/dev had neither global setting.
+- Regression test technique(T-364): env-leak tested via withEnv setting GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE at code repo; gpgsign/hooksPath tested via HOME+XDG_CONFIG_HOME override (NOT GIT_CONFIG_GLOBAL, which the scrub removes) so the fake global config is actually read and the test proves repo-local override wins rather than global being bypassed.
+- QA(T-364 재검): PASS — revert 검증으로 회귀 테스트 실효성까지 확인. 잔여 관찰: GIT_SSH_COMMAND 등도 스크럽되나 메타 repo는 네트워크 작업 없어 무해.
+- two-git 한 worktree 지뢰(T-365): 코드 .gitignore가 메타 경로를 ignore하면 메타 repo의 일반 git add가 allowlist를 통째로 거부한다 — 메타 staging은 반드시 ls-files(--modified/--deleted + --others --exclude-from=meta info/exclude) → add -f 방식이어야 함 (commitMeta·python 스냅샷 둘 다 이 방식으로 고정, 회귀 테스트 있음)
+- T-365: 기설치 ~/.prdt/bin/prdt는 install.sh 재실행 전까지 meta split이 없는 구버전 — 배포/dogfood(T-362) 전에 재설치 필요
+- T-365: gitignore 블록 parity는 정규식 스크레이프가 아니라 python 렌더러 실행 결과를 TS 렌더러와 바이트 비교하는 테스트로 고정 (둘 중 하나 드리프트 시 즉시 fail)
+- ADR(T-367): meta autosave beat call site = prdt-post-dispatch hook ONLY (PostToolUse:Agent + SubagentStop). GUI persona sessions run through the same claude CLI, so one hook = both surfaces; a GUI-side ticketsWatch trigger was deliberately NOT added (would create a second trigger path and break parity).
+- ADR(T-367): core dist is extensionless ESM (tsc, moduleResolution bundler) → NOT node-runnable directly. Non-TS surfaces (python CLI, bash hook) reach core via esbuild-bundled self-contained dist/bin/meta-cli.cjs (`pnpm --filter @productune/core build`). esbuild added as core devDep.
+- Footgun(T-367): PRDT_REPO in ~/.prdt/prdt.env = <repo>/packages/core (install.sh $ROOT), NOT the repo root — bridge path is $PRDT_REPO/dist/bin/meta-cli.cjs.
+- T-367 semantics: transition snapshot consumption is tied to commit outcome — manager-error leaves the snapshot unpersisted so the transition label is re-detected next beat; diff-empty consumes (content already at HEAD). meta-repo-missing exits BEFORE touching snapshots so pending transitions survive until T-366 migration initializes meta.git.
+- Fixed(T-367): autosave buildSummary fallback only read v0.4 `ticket_id:` frontmatter — prdt v1 tickets use `id:`, so every meta commit would have said 'autosave trigger'. Now ticket_id ?? id.
+- Flaky 종결(T-367): meta-autosave 'ONE labeled meta commit' 16회 재실행 비재현 — 원인 추정: T-365가 같은 worktree에서 meta-git.ts 편집 중이던 시점의 1회성. HOME은 이미 per-test 격리.
+- QA(T-365+367 통합): T-365 PASS(E2E 34체크). 메타 beat는 code autosave와 snapshot store 공유 + fire-and-forget Popen — 동시 beat race는 index.lock 실패 시 snapshot 미소비로 자기치유되는 설계.
+- QA(T-367 FAIL 패턴): 컴포넌트·IPC·유닛테스트 전부 green인데 mount 지점이 죽어 있으면 suite로는 절대 안 잡힘 — dead-UI는 live 렌더 smoke로만 검출됨 (MetaTrackCard는 legacy 전용 탭에만, remote 폼 탭은 openTab 호출처 0개).
+- QA(T-367): 메타 staging 파일 개별 나열(add -f -- <files>) — 수천 파일 스케일에서 argv 한계 이론상 존재, 현 스케일 무시 가능.
+- QA FAIL 패턴 확정(T-367): 컴포넌트·IPC·유닛 green이어도 mount 지점이 dead UI면 acceptance 불성립. prdt GUI의 죽은 mount 목록 — version-history 탭(T-291 A8로 prdt에서 억제), workflow-settings/mcp-servers/hooks 탭(T-PATCH-200 비노출, openTab 호출처 0). 새 UI는 HistoryPane→history-detail(T-349)와 SettingsView→general-settings/cost-archive만이 실 도달 경로.
+- Electron live 검증 레시피(재사용 가치): fake HOME에 ~/.productune/{productune.env, settings.json(ui.language), recents.json} 시드 → onboarding 게이트 통과 → playwright _electron.launch(env.HOME 오버라이드)로 HomeView recents 클릭 → workspace 도달. EntryGate는 prdt trace(stage!=define 또는 current_task)를 요구.
+- T-367 GUI 마운트 확정: 메타 타임라인 = HistoryPane 하단 MetaTrackSection(접힘 기본, naturalize 요약) + legacy용 VersionHistoryView MetaTrackCard 유지. backup remote = GeneralSettings 내 MetaBackupSection(메타 split 없으면 self-hide, PoSessionSection 패턴).
+- (2026-07-16) T-366: 마이그레이션 확인 경계 확정 — 추적 제거 커밋은 '명시적 사용자 액션+계획 확인' 뒤 자동 커밋(§10 추상화), push·rewrite는 어떤 자동 경로에도 없음; staged-changes 거부로 사용자 staged 작업 휩쓸림 방지 (근거: meta-migrate.ts 헤더)
+- QA(T-366): PASS 32체크 — 히스토리 보존 증명(옛 커밋 메타 잔존), crash-resume 2단계 실측, GIT_* 스크럽이 meta-migrate에도 복제 확인. 기록용: 마이그레이션의 git add -- .gitignore가 사용자의 미staged .gitignore 편집을 함께 커밋할 수 있음(범위 1파일, 위험 미미).
+- QA(T-366 관찰): prdt meta split은 require_root(po-state.json) 선행 — .prdt 없는 순수 repo는 prdt init부터 안내. 실사용 순서와 일치.
+- v1.2 impl 4장(T-364~367) 전부 QA PASS (2026-07-16) — merge 가능 판정.
