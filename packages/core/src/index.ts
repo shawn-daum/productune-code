@@ -73,6 +73,7 @@ export {
   processTicketFileChange,
   getSnapshot,
   setSnapshot,
+  buildAutosaveMessage,
 } from './git-workflow/autosave'
 export type {
   AutosaveChangeReason,
@@ -128,8 +129,30 @@ export type { NaturalizedCommit, TicketFrontmatter } from './history/naturalize'
 export {
   scanGitHistory,
   groupByTicket,
+  parseLogOutput,
 } from './git-workflow/history'
 export type { HistoryEntry } from './git-workflow/history'
+
+export {
+  metaGitDir,
+  metaRepoExists,
+  initMetaRepo,
+  commitMeta,
+  scanMetaHistory,
+  addMetaRemote,
+  listMetaRemotes,
+  readMetaAllowlist,
+  writeMetaAllowlist,
+  DEFAULT_META_ALLOWLIST,
+  DEFAULT_META_EXCLUDE,
+} from './git-workflow/meta-git'
+export type {
+  MetaInitResult,
+  MetaCommitResult,
+  MetaCommitSkipReason,
+  MetaRemote,
+  MetaRemoteResult,
+} from './git-workflow/meta-git'
 
 export {
   fetchVercelDeploys,

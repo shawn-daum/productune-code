@@ -1,0 +1,365 @@
+/**
+ * meta-git.ts — meta-only local git core module (T-364, PRD §v1.2).
+ *
+ * Two git repos share one working tree. The CODE repo (`.git`) tracks
+ * everything except the meta allowlist; the META repo lives in a separate
+ * git-dir (`<stateDir>/meta.git`) with the project root as its work-tree and
+ * tracks ONLY the allowlist (PRD 경계 결정 1). Because the two repos have
+ * distinct git-dirs, a meta commit never touches the code repo's index or
+ * history, and an allowlist-scoped `git add` never stages code files.
+ *
+ * This module is the shared core primitive for CLI · GUI parity — init,
+ * allowlist-scoped auto-commit (reusing the §10 autosave lifecycle signals),
+ * history read, and opt-in remote add. It never pushes (backup is manual /
+ * opt-in per PRD Non-goals) and performs no destructive git.
+ *
+ * Out of scope here (downstream tickets): the code repo `.gitignore` managed
+ * block (T-365), existing-project migration (T-366), and CLI/GUI surfaces
+ * (T-367) — all consume the API exposed here.
+ */
+
+import fs from 'fs'
+import path from 'path'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
+import { stateDir } from '../state/project-kind'
+import { parseLogOutput, type HistoryEntry } from './history'
+
+const execFileAsync = promisify(execFile)
+
+// ── Defaults ────────────────────────────────────────────────────────────────
+
+/**
+ * Default meta allowlist — the paths prdt authors (PRD 경계 결정 1).
+ * Everything else (incl. user-authored files) is code. Stored per-project in
+ * `<stateDir>/config.json` under `meta.allowlist`; editable via
+ * writeMetaAllowlist so a project can add loose meta files.
+ */
+export const DEFAULT_META_ALLOWLIST: string[] = [
+  '.prdt',
+  '.productune',
+  'briefs',
+  'docs/prd',
+  'docs/tickets',
+  'docs/wiki',
+  'docs/designer',
+  'docs/developer',
+  'docs/po',
+  'docs/qa',
+  'docs/artifacts',
+  'docs/retrospectives',
+  'docs/archive',
+]
+
+/**
+ * Derived/gate artifacts that must never enter the meta repo even though they
+ * live under an allowlisted dir (PRD: index.db · turns.jsonl · sessions.json ·
+ * gate caches are gitignored on both sides; the meta git-dir ignores itself).
+ * Written to the meta repo's `info/exclude` at init (gitignore syntax, matched
+ * by basename anywhere in the tree).
+ */
+export const DEFAULT_META_EXCLUDE: string[] = [
+  'meta.git/',
+  'index.db',
+  'turns.jsonl',
+  'sessions.json',
+  '.cost-*.json',
+  '.subagent-gate.json',
+]
+
+const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
+
+// ── Paths ─────────────────────────────────────────────────────────────────────
+
+/** Absolute path to the meta repo git-dir (`<stateDir>/meta.git`). */
+export function metaGitDir(projectDir: string): string {
+  return path.join(stateDir(projectDir), 'meta.git')
+}
+
+/** True if the meta repo has been initialized. */
+export function metaRepoExists(projectDir: string): boolean {
+  try {
+    return fs.existsSync(path.join(metaGitDir(projectDir), 'HEAD'))
+  } catch {
+    return false
+  }
+}
+
+// ── git invocation ──────────────────────────────────────────────────────────
+
+/** Run a git command scoped to the meta repo (git-dir + work-tree). */
+async function metaGit(
+  projectDir: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> {
+  const gitDir = metaGitDir(projectDir)
+  return execFileAsync(
+    'git',
+    ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
+    { cwd: projectDir, timeout: 10_000 },
+  )
+}
+
+// ── Allowlist config (persisted in <stateDir>/config.json) ────────────────────
+
+function configPath(projectDir: string): string {
+  return path.join(stateDir(projectDir), 'config.json')
+}
+
+function readConfig(projectDir: string): Record<string, any> {
+  try {
+    const raw = fs.readFileSync(configPath(projectDir), 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') return parsed
+  } catch {
+    // missing / corrupt → empty
+  }
+  return {}
+}
+
+/**
+ * The project's meta allowlist. Reads `meta.allowlist` from config.json,
+ * falling back to DEFAULT_META_ALLOWLIST when unset.
+ */
+export function readMetaAllowlist(projectDir: string): string[] {
+  const cfg = readConfig(projectDir)
+  const list = cfg?.meta?.allowlist
+  if (Array.isArray(list) && list.every((e) => typeof e === 'string')) {
+    return list
+  }
+  return [...DEFAULT_META_ALLOWLIST]
+}
+
+/**
+ * Persist the meta allowlist into config.json (atomic tmp+rename), preserving
+ * all other config fields (slug, created_at, surfaces, …).
+ */
+export function writeMetaAllowlist(projectDir: string, allowlist: string[]): void {
+  const cfg = readConfig(projectDir)
+  const meta = (cfg.meta && typeof cfg.meta === 'object') ? cfg.meta : {}
+  cfg.meta = { ...meta, allowlist }
+
+  const fp = configPath(projectDir)
+  fs.mkdirSync(path.dirname(fp), { recursive: true })
+  const tmp = fp + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, fp)
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+export interface MetaInitResult {
+  /** True if init ran; false only on error. */
+  initialized: boolean
+  gitDir: string
+  /** True when the repo already existed (init is a no-op refresh of config/exclude). */
+  alreadyExisted: boolean
+  error?: string
+}
+
+/**
+ * Initialize the meta repo at `<stateDir>/meta.git` with the project root as
+ * its work-tree. Idempotent: re-running on an existing repo refreshes the
+ * repo-local config (identity, worktree) and the info/exclude list without
+ * touching history. Never adds a remote and never commits.
+ */
+export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> {
+  const gitDir = metaGitDir(projectDir)
+  const alreadyExisted = metaRepoExists(projectDir)
+
+  try {
+    if (!alreadyExisted) {
+      fs.mkdirSync(path.dirname(gitDir), { recursive: true })
+      await execFileAsync('git', ['init', '--bare', gitDir], { timeout: 10_000 })
+    }
+
+    // Two-git/one-worktree config — non-bare with an explicit work-tree so all
+    // meta commands operate on the project root. Idempotent.
+    const setConfig = async (key: string, value: string) =>
+      execFileAsync('git', ['--git-dir', gitDir, 'config', key, value], { timeout: 10_000 })
+    await setConfig('core.bare', 'false')
+    await setConfig('core.worktree', projectDir)
+    await setConfig('user.name', META_GIT_IDENTITY.name)
+    await setConfig('user.email', META_GIT_IDENTITY.email)
+
+    // Derived/gate artifacts excluded from tracking even under allowlisted dirs.
+    const excludePath = path.join(gitDir, 'info', 'exclude')
+    fs.mkdirSync(path.dirname(excludePath), { recursive: true })
+    fs.writeFileSync(excludePath, DEFAULT_META_EXCLUDE.join('\n') + '\n')
+
+    return { initialized: true, gitDir, alreadyExisted }
+  } catch (err) {
+    return {
+      initialized: false,
+      gitDir,
+      alreadyExisted,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+// ── Commit ────────────────────────────────────────────────────────────────────
+
+export type MetaCommitSkipReason =
+  | 'diff-empty'
+  | 'meta-repo-missing'
+  | 'nothing-allowlisted'
+  | 'manager-error'
+
+export interface MetaCommitResult {
+  committed: boolean
+  /** Present when committed. */
+  sha?: string
+  skipReason?: MetaCommitSkipReason
+  detail?: string
+}
+
+/** Allowlist entries that currently exist on disk (git add rejects unmatched pathspecs). */
+function existingAllowlistPaths(projectDir: string, allowlist: string[]): string[] {
+  return allowlist.filter((entry) => {
+    try {
+      return fs.existsSync(path.join(projectDir, entry))
+    } catch {
+      return false
+    }
+  })
+}
+
+/**
+ * Stage the allowlist and commit one logical meta change.
+ *
+ * - Stages ONLY the allowlist (`git add -A -- <allowlist>`) — code files can
+ *   never enter the meta repo.
+ * - `-A` over existing allowlisted dirs captures adds, edits, and deletions.
+ * - Empty staged diff → skip (`diff-empty`), matching the §10 autosave contract.
+ * - `message` should be built via buildAutosaveMessage so history stays
+ *   naturalize-parseable.
+ */
+export async function commitMeta(
+  projectDir: string,
+  message: string,
+): Promise<MetaCommitResult> {
+  if (!metaRepoExists(projectDir)) {
+    return { committed: false, skipReason: 'meta-repo-missing' }
+  }
+
+  const paths = existingAllowlistPaths(projectDir, readMetaAllowlist(projectDir))
+  if (paths.length === 0) {
+    return { committed: false, skipReason: 'nothing-allowlisted' }
+  }
+
+  try {
+    await metaGit(projectDir, ['add', '-A', '--', ...paths])
+  } catch (err) {
+    return {
+      committed: false,
+      skipReason: 'manager-error',
+      detail: err instanceof Error ? err.message : String(err),
+    }
+  }
+
+  // Empty staged diff → nothing to commit (diff-empty skip).
+  try {
+    await metaGit(projectDir, ['diff', '--cached', '--quiet'])
+    // exit 0 → no staged changes
+    return { committed: false, skipReason: 'diff-empty' }
+  } catch {
+    // non-zero exit → staged changes present, proceed to commit
+  }
+
+  try {
+    await metaGit(projectDir, ['commit', '-m', message, '--allow-empty-message'])
+    const { stdout } = await metaGit(projectDir, ['rev-parse', 'HEAD'])
+    return { committed: true, sha: stdout.trim() }
+  } catch (err) {
+    return {
+      committed: false,
+      skipReason: 'manager-error',
+      detail: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+// ── History read ────────────────────────────────────────────────────────────
+
+/**
+ * Read the meta commit timeline (newest-first). Reuses parseLogOutput so the
+ * shape matches scanGitHistory; groupByTicket applies unchanged. Graceful
+ * fallback to [] on a missing repo or git error.
+ */
+export async function scanMetaHistory(
+  projectDir: string,
+  opts: { since?: Date; limit?: number } = {},
+): Promise<HistoryEntry[]> {
+  if (!metaRepoExists(projectDir)) return []
+
+  const args = ['log', '--format=%H|%s|%ai']
+  if (opts.since) args.push(`--after=${opts.since.toISOString()}`)
+  args.push('-n', String(opts.limit ?? 200))
+
+  try {
+    const { stdout } = await metaGit(projectDir, args)
+    return parseLogOutput(stdout)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // Non-fatal — repo may have no commits yet (`log` errors on empty HEAD).
+    console.warn('[meta-git] scanMetaHistory: git log failed —', msg)
+    return []
+  }
+}
+
+// ── Remote (opt-in backup; add only, never push) ──────────────────────────────
+
+export interface MetaRemote {
+  name: string
+  url: string
+}
+
+export interface MetaRemoteResult {
+  ok: boolean
+  error?: string
+}
+
+/**
+ * Add (or update) a backup remote on the meta repo. Opt-in only — this never
+ * pushes; the user pushes manually (PRD: no auto-push, no bidirectional sync).
+ */
+export async function addMetaRemote(
+  projectDir: string,
+  name: string,
+  url: string,
+): Promise<MetaRemoteResult> {
+  if (!metaRepoExists(projectDir)) {
+    return { ok: false, error: 'meta repo not initialized' }
+  }
+  try {
+    const existing = await listMetaRemotes(projectDir)
+    if (existing.some((r) => r.name === name)) {
+      await metaGit(projectDir, ['remote', 'set-url', name, url])
+    } else {
+      await metaGit(projectDir, ['remote', 'add', name, url])
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** List configured meta remotes. */
+export async function listMetaRemotes(projectDir: string): Promise<MetaRemote[]> {
+  if (!metaRepoExists(projectDir)) return []
+  try {
+    const { stdout } = await metaGit(projectDir, ['remote', '-v'])
+    const seen = new Map<string, string>()
+    for (const raw of stdout.split('\n')) {
+      const line = raw.trim()
+      if (!line) continue
+      // Format: "<name>\t<url> (fetch|push)"
+      const m = /^(\S+)\s+(\S+)\s+\((?:fetch|push)\)$/.exec(line)
+      if (m) seen.set(m[1], m[2])
+    }
+    return [...seen].map(([name, url]) => ({ name, url }))
+  } catch {
+    return []
+  }
+}
