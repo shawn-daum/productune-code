@@ -12,6 +12,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+import crypto from 'crypto'
 import { execFileSync } from 'child_process'
 import { test, expect, beforeEach, afterEach } from 'vitest'
 import {
@@ -33,6 +34,27 @@ let projectDir: string
 
 function git(args: string[], cwd = projectDir): string {
   return execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim()
+}
+
+function fileSha(fp: string): string {
+  return crypto.createHash('sha256').update(fs.readFileSync(fp)).digest('hex')
+}
+
+/** Set env keys for the duration of `fn`, restoring prior values after. */
+async function withEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
+  const saved: Record<string, string | undefined> = {}
+  for (const [k, v] of Object.entries(vars)) {
+    saved[k] = process.env[k]
+    process.env[k] = v
+  }
+  try {
+    await fn()
+  } finally {
+    for (const k of Object.keys(vars)) {
+      if (saved[k] === undefined) delete process.env[k]
+      else process.env[k] = saved[k]
+    }
+  }
 }
 
 /** A prdt project = a code git repo with an initial code commit. */
@@ -229,4 +251,69 @@ test('a custom allowlist entry is respected by commit', async () => {
 
   const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
   expect(tracked).toContain('docs/looseNote.md')
+})
+
+// ── env isolation (QA-HIGH regression) ────────────────────────────────────────
+
+test('leaked GIT_* env (hook context) never corrupts the code repo', async () => {
+  await initMetaRepo(projectDir)
+  await commitMeta(projectDir, 'T-364 [manual: →] base')
+
+  const codeIndex = path.join(projectDir, '.git', 'index')
+  const idxBefore = fileSha(codeIndex)
+  const metaHeadBefore = git(['--git-dir', metaGitDir(projectDir), 'rev-parse', 'HEAD'])
+
+  fs.writeFileSync(path.join(projectDir, 'docs', 'prd', 'PRD.md'), '# env-poisoned edit\n')
+
+  // Simulate running inside a code-repo git hook / lint-staged: GIT_* point at
+  // the CODE repo. metaGit must scrub these or it stages into .git/index.
+  let res: any
+  await withEnv(
+    {
+      GIT_DIR: path.join(projectDir, '.git'),
+      GIT_WORK_TREE: projectDir,
+      GIT_INDEX_FILE: codeIndex,
+    },
+    async () => {
+      res = await commitMeta(projectDir, 'T-364 [status-change: →] under leaked env')
+    },
+  )
+
+  expect(res.committed).toBe(true) // meta commit lands
+  expect(fileSha(codeIndex)).toBe(idxBefore) // code index byte-identical
+  expect(git(['diff', '--cached', '--name-only'])).toBe('') // nothing staged in code repo
+  expect(git(['--git-dir', metaGitDir(projectDir), 'rev-parse', 'HEAD'])).not.toBe(metaHeadBefore)
+})
+
+// ── global gitconfig neutralization (QA-MED regression) ───────────────────────
+
+test('global gpgsign/hooksPath neither break nor hijack meta commits', async () => {
+  // A fake user "global" config with signing + a custom hooks dir.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-home-'))
+  const hookDir = path.join(home, 'hooks')
+  fs.mkdirSync(hookDir, { recursive: true })
+  const marker = path.join(home, 'hook-ran.marker')
+  fs.writeFileSync(path.join(hookDir, 'pre-commit'), `#!/bin/sh\ntouch "${marker}"\nexit 0\n`, { mode: 0o755 })
+  fs.writeFileSync(
+    path.join(home, '.gitconfig'),
+    `[commit]\n\tgpgsign = true\n[core]\n\thooksPath = ${hookDir}\n`,
+  )
+
+  let res: any
+  let markerRan = true
+  // HOME (+ empty XDG) make git read only our fake global config. HOME is NOT a
+  // GIT_* var, so scrubbedGitEnv preserves it — this proves the repo-local
+  // overrides (written by initMetaRepo) win over global, not that global is
+  // bypassed.
+  await withEnv({ HOME: home, XDG_CONFIG_HOME: path.join(home, '.config') }, async () => {
+    await initMetaRepo(projectDir) // writes repo-local commit.gpgsign=false + core.hooksPath
+    fs.writeFileSync(path.join(projectDir, 'docs', 'prd', 'PRD.md'), '# gpg\n')
+    res = await commitMeta(projectDir, 'T-364 [manual: →] under global gpgsign')
+    markerRan = fs.existsSync(marker)
+  })
+
+  fs.rmSync(home, { recursive: true, force: true })
+
+  expect(res.committed).toBe(true) // gpgsign=true did not silently break the commit
+  expect(markerRan).toBe(false) // user's global hook did NOT run on the meta commit
 })

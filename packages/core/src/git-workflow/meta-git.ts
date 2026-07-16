@@ -87,6 +87,28 @@ export function metaRepoExists(projectDir: string): boolean {
 
 // ── git invocation ──────────────────────────────────────────────────────────
 
+/**
+ * Env with every `GIT_*` variable stripped (T-364 QA-HIGH).
+ *
+ * A meta git subprocess must NOT inherit an ambient git operation's
+ * redirection env. Inside a git hook / lint-staged run the parent sets
+ * GIT_INDEX_FILE / GIT_DIR / GIT_WORK_TREE / GIT_OBJECT_DIRECTORY /
+ * GIT_COMMON_DIR pointing at the CODE repo. The `--git-dir`/`--work-tree`
+ * flags override GIT_DIR/GIT_WORK_TREE, but NOT GIT_INDEX_FILE or the object
+ * dirs — so meta's `git add` would stage into the code repo's index against
+ * meta's odb, corrupting the code index and failing the meta commit. Scrubbing
+ * all GIT_* is the robust guarantee (the meta repo needs none of them — it
+ * carries its own repo-local identity and config).
+ */
+function scrubbedGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k.startsWith('GIT_')) continue
+    env[k] = v
+  }
+  return env
+}
+
 /** Run a git command scoped to the meta repo (git-dir + work-tree). */
 async function metaGit(
   projectDir: string,
@@ -96,7 +118,7 @@ async function metaGit(
   return execFileAsync(
     'git',
     ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: 10_000 },
+    { cwd: projectDir, timeout: 10_000, env: scrubbedGitEnv() },
   )
 }
 
@@ -168,19 +190,29 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
   const alreadyExisted = metaRepoExists(projectDir)
 
   try {
+    const env = scrubbedGitEnv()
     if (!alreadyExisted) {
       fs.mkdirSync(path.dirname(gitDir), { recursive: true })
-      await execFileAsync('git', ['init', '--bare', gitDir], { timeout: 10_000 })
+      await execFileAsync('git', ['init', '--bare', gitDir], { timeout: 10_000, env })
     }
 
     // Two-git/one-worktree config — non-bare with an explicit work-tree so all
-    // meta commands operate on the project root. Idempotent.
+    // meta commands operate on the project root. Idempotent (re-run repropagates
+    // to an existing repo).
     const setConfig = async (key: string, value: string) =>
-      execFileAsync('git', ['--git-dir', gitDir, 'config', key, value], { timeout: 10_000 })
+      execFileAsync('git', ['--git-dir', gitDir, 'config', key, value], { timeout: 10_000, env })
     await setConfig('core.bare', 'false')
     await setConfig('core.worktree', projectDir)
     await setConfig('user.name', META_GIT_IDENTITY.name)
     await setConfig('user.email', META_GIT_IDENTITY.email)
+    // Neutralize a user's global git config on the meta repo (T-364 QA-MED):
+    //  - commit.gpgsign=true would make every meta auto-commit fail silently
+    //    (signing a synthetic identity is meaningless anyway).
+    //  - a global core.hooksPath (husky/lint-staged) would run the user's code
+    //    hooks on every meta commit. Pin it to the meta repo's own empty hooks
+    //    dir so local wins over global.
+    await setConfig('commit.gpgsign', 'false')
+    await setConfig('core.hooksPath', path.join(gitDir, 'hooks'))
 
     // Derived/gate artifacts excluded from tracking even under allowlisted dirs.
     const excludePath = path.join(gitDir, 'info', 'exclude')
