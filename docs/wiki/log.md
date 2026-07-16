@@ -7,3 +7,4 @@
 (2026-07-06) readiness v1.1 진행 중: security N/A (로컬 도구 — 민감 표면인 settings.json 쓰기는 T-305/311에서 동의 게이트 실측 완료).
 (2026-07-06) readiness v1.1: review ✓(6 findings→T-316 patched+QA) · ds ✓(T-313 fix+T-314 doc) · security N/A(로컬 도구, 동의 게이트 기실측) · run-prompt+prd sweep 사용자 대기.
 - (2026-07-15) Retro v1.1: curated 86 inbox lines → 5 new + 3 updated pages · retro--v1.1.md · doctor 155 warnings consciously accepted (legacy enum=T-296 처방) · T-294 closed(observed) · tag v1.1
+- 2026-07-16 readiness v1.2: review ✓(C1·C2 must-fix → T-370 패치·QA PASS) · ds ✓(위반 7건 → T-368 패치) · security N/A-skip(판단: injection·파괴적 git·env 오염은 QA grill 3라운드 커버, auth/PII/자동 push surface 없음) · prd ✓(잔여 = T-362 dogfood, ship 작업 자체)

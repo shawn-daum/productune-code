@@ -598,6 +598,14 @@ disabled: opacity 0.4, cursor not-allowed.
 > **§1.5.4 Feedback 정합** — 모든 button 은 `:active` pressed state + async action
 > 시 inline `Loader2` (§9.2 `pdt-spin`) 의무. action 직후 무반응 = §1.5.4 위반.
 
+> **`outline-accent` 변형 (T-367 conformance 관찰 등재)** — transparent bg +
+> `1px solid --accent` border + `--accent` text, radius `--radius-md`, dense
+> padding `3px 10px` (legacy off-grid — `--space-1`×`--space-2-5` 정렬 후보),
+> `--text-xs-plus`(11px). 기존 선례: `VersionsPanel`(L232) · `LeafPane` ·
+> `MetaBackupSection`/`MetaMigrateSection`(T-367). 용도 = **dense settings/panel
+> 안의 보조 CTA** — 본문형 primary(accent bg) 를 쓰기엔 무게가 과한 자리.
+> hover/disabled 규칙은 §8.1 공통 (disabled opacity 0.4 + not-allowed).
+
 ### 8.2 Pill / Chip
 
 uppercase, `pill` typography recipe, `--radius-pill`, padding `--space-1` × `--space-2-5`.

@@ -42,3 +42,11 @@
 - QA(T-366): PASS 32체크 — 히스토리 보존 증명(옛 커밋 메타 잔존), crash-resume 2단계 실측, GIT_* 스크럽이 meta-migrate에도 복제 확인. 기록용: 마이그레이션의 git add -- .gitignore가 사용자의 미staged .gitignore 편집을 함께 커밋할 수 있음(범위 1파일, 위험 미미).
 - QA(T-366 관찰): prdt meta split은 require_root(po-state.json) 선행 — .prdt 없는 순수 repo는 prdt init부터 안내. 실사용 순서와 일치.
 - v1.2 impl 4장(T-364~367) 전부 QA PASS (2026-07-16) — merge 가능 판정.
+- Designer(readiness): outline-accent 버튼 변형을 DS §8.1에 정식 등재 (T-367 conformance에서 갭 확인, 선례: VersionsPanel/LeafPane/Meta 2종) — dense settings/panel 보조 CTA 용도
+- Designer(readiness): MetaBackupSection nameChip 색은 dead UI(WorkflowRulesPanel, T-PATCH-200 이후 미도달)에서 복사된 off-palette — dead UI가 스타일 복사 원본으로 재유입되는 패턴 관찰
+- 경로 drift(PO 확인 필요): contracts 고정 경로 docs/design.md가 repo에 부재 — 실제 DS SoT는 docs/designer/design-system.md. 계약과 현실 중 하나로 정렬 필요.
+- T-368: §8.1 outline-accent dense 버튼에 in-flight Loader2 붙일 때 display:inline-flex+gap:4 추가가 필요했음 — 같은 변형 쓰는 VersionsPanel/LeafPane 버튼도 async action 달리면 동일 처리 필요
+- T-368 관찰: GeneralSettings 공통 룩의 #E0E0E0이 DS text 토큰(#E8E8EA)과 미세 불일치 — T-369 토큰 drift 백로그 범주.
+- GUI 섹션 게이트 회귀 테스트 패턴(T-370): renderToStaticMarkup + 자식을 sentinel로 vi.mock (자식의 IPC self-hide가 게이트 부재를 가리는 것 방지) — effects 미실행이라 first-paint 게이트 검증에 정확히 부합, jsdom 불필요
+- gui vitest 전역 zustand stub은 curried create()() 스토어(poModel)를 깨뜨림 — 컴포넌트 테스트에서는 스토어 모듈 자체를 vi.mock할 것
+- QA(T-370): PASS — C1은 적대 fixture(legacy에 meta.git+eligible 심기)로 게이트만이 차단 원인임을 실 렌더 증명. IPC 핸들러 수준 legacy 거부는 defense-in-depth 후보 → T-371 B7.
