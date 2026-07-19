@@ -149,13 +149,6 @@ export {
   DEFAULT_META_ALLOWLIST,
   DEFAULT_META_EXCLUDE,
 } from './git-workflow/meta-git'
-export {
-  MANAGED_BLOCK_START,
-  MANAGED_BLOCK_END,
-  renderManagedBlock,
-  syncGitignoreManagedBlock,
-} from './git-workflow/gitignore-managed-block'
-export type { GitignoreSyncResult } from './git-workflow/gitignore-managed-block'
 export type {
   MetaInitResult,
   MetaCommitResult,

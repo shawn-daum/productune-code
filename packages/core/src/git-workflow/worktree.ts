@@ -4,9 +4,25 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readGitRules } from './rules'
 import { buildBranchName, resolveBranchConflict } from './branchNamer'
-import { stateDir, STATE_DIR_NAME, detectProjectKind } from '../state/project-kind'
+import { stateDir, STATE_DIR_NAME, detectProjectKind, codeRoot, isPhysicallySplit } from '../state/project-kind'
 
 const execFileAsync = promisify(execFile)
+
+// T-377 (PRD §v1.3 설계 결정 4): every git op here operates on the CODE repo, so
+// it anchors at codeRoot (`<projectRoot>/<code.dir>` once physically split, else
+// projectRoot in legacy layout — byte-for-byte unchanged). Confusing this with
+// the meta projectRoot means `fatal: not a git repository` in a split project
+// (the code `.git` no longer sits at projectRoot).
+//
+// T-378 — worktree LOCATION decision: worktree checkouts stay at
+// `<stateDir>/worktrees/<ticketId>` in BOTH layouts. In a split project this is
+// the meta area, OUTSIDE the code tree (`code/`), so a code checkout there can
+// never pollute `code/` nor surface in the code repo's `git status`; the meta repo
+// ignores it via `worktrees/` in DEFAULT_META_EXCLUDE. Moving the location into the
+// code tree was rejected (it would re-introduce the exact code↔meta coupling v1.3
+// removes). ensureGitignoreEntry is therefore gated to LEGACY only: when split, the
+// worktree is outside `code/` so no code `.gitignore` entry is needed, and the file
+// it used to touch (projectRoot `.gitignore`) is meta-side and ineffective there.
 
 export type WorktreeErrorReason =
   | 'base-dirty'
@@ -31,7 +47,7 @@ function worktreeDir(projectDir: string, ticketId: string): string {
 
 async function isBaseDirty(projectDir: string): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: projectDir })
+    const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: codeRoot(projectDir) })
     return stdout.trim().length > 0
   } catch {
     return false
@@ -41,7 +57,7 @@ async function isBaseDirty(projectDir: string): Promise<boolean> {
 async function fetchBase(projectDir: string, baseBranch: string): Promise<void> {
   try {
     await execFileAsync('git', ['fetch', 'origin', baseBranch], {
-      cwd: projectDir,
+      cwd: codeRoot(projectDir),
       timeout: 15_000,
     })
   } catch {
@@ -50,6 +66,10 @@ async function fetchBase(projectDir: string, baseBranch: string): Promise<void> 
 }
 
 async function ensureGitignoreEntry(projectDir: string): Promise<void> {
+  // Split layout: the worktree checkout lives at `<stateDir>/worktrees/` — outside
+  // the code tree — so there is nothing for a code `.gitignore` to hide, and the
+  // projectRoot `.gitignore` this used to touch is meta-side. No-op (T-378).
+  if (isPhysicallySplit(projectDir)) return
   const gitignorePath = path.join(projectDir, '.gitignore')
   const entry = `${STATE_DIR_NAME[detectProjectKind(projectDir)]}/worktrees/`
   try {
@@ -114,9 +134,9 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
     prefixes: { feature: rules.featureBranchPrefix, fix: rules.fixBranchPrefix },
   })
 
-  const branchName = await resolveBranchConflict(projectDir, baseName)
+  const branchName = await resolveBranchConflict(codeRoot(projectDir), baseName)
 
-  // ensure <state-dir>/worktrees/ exists
+  // ensure <state-dir>/worktrees/ exists (LOCATION — meta area; T-378 revisits)
   fs.mkdirSync(path.join(stateDir(projectDir), 'worktrees'), { recursive: true })
 
   await ensureGitignoreEntry(projectDir)
@@ -125,7 +145,7 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
     await execFileAsync(
       'git',
       ['worktree', 'add', '-b', branchName, wtPath, baseBranch],
-      { cwd: projectDir },
+      { cwd: codeRoot(projectDir) },
     )
   } catch (e: any) {
     return { ok: false, reason: 'git-error', detail: e?.message ?? 'git worktree add failed' }
@@ -148,7 +168,7 @@ export async function stashAndCreate(args: CreateWorktreeArgs): Promise<Worktree
 
   // stash -u: include untracked files (designer recommendation OQ-T092-1 b)
   try {
-    await execFileAsync('git', ['stash', '-u'], { cwd: projectDir })
+    await execFileAsync('git', ['stash', '-u'], { cwd: codeRoot(projectDir) })
   } catch (e: any) {
     return { ok: false, reason: 'git-error', detail: `stash failed: ${e?.message ?? 'git stash -u failed'}` }
   }
@@ -158,7 +178,7 @@ export async function stashAndCreate(args: CreateWorktreeArgs): Promise<Worktree
   if (!result.ok) {
     // Atomic guarantee: pop stash if worktree creation failed
     try {
-      await execFileAsync('git', ['stash', 'pop'], { cwd: projectDir })
+      await execFileAsync('git', ['stash', 'pop'], { cwd: codeRoot(projectDir) })
     } catch {
       // best-effort restore; non-fatal
     }
@@ -180,8 +200,8 @@ export async function commitAndCreate(
   const commitMsg = args.message ?? `chore(base): save before ${ticketId} ${slug}`
 
   try {
-    await execFileAsync('git', ['add', '-A'], { cwd: projectDir })
-    await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: projectDir })
+    await execFileAsync('git', ['add', '-A'], { cwd: codeRoot(projectDir) })
+    await execFileAsync('git', ['commit', '-m', commitMsg], { cwd: codeRoot(projectDir) })
   } catch (e: any) {
     return { ok: false, reason: 'git-error', detail: `commit failed: ${e?.message ?? 'git commit failed'}` }
   }

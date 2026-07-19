@@ -48,3 +48,65 @@ export function detectProjectKind(projectDir: string): ProjectKind {
 export function stateDir(projectDir: string): string {
   return path.join(projectDir, STATE_DIR_NAME[detectProjectKind(projectDir)])
 }
+
+// ── Code root resolution (PRD §v1.3 설계 결정 4) ────────────────────────────────
+//
+// v1.2 assumed one root: projectRoot == codeRoot == metaRoot. v1.3 introduces a
+// PHYSICAL split — code lives under `<projectRoot>/<code.dir>` while meta
+// (`docs/`·`.prdt/`·`briefs/`) stays at the project root (the meta git work-tree
+// is unchanged, so meta path STRINGS like `docs/prd/PRD.md` are stable). This is
+// the SINGLE resolution point every surface shares (CLI · hook · GUI):
+//   - projectRoot / metaRoot = where `.prdt/` (or legacy `.productune/`) lives.
+//   - codeRoot = `<projectRoot>/<config.code.dir>`, or projectRoot itself when
+//     `code.dir` is absent (LEGACY layout — a repo not yet physically split
+//     keeps working unchanged, the hard back-compat requirement).
+//
+// THE CONTRACT (T-377 replicates this in gui/electron/project-paths.ts and the
+// python `scripts/prdt` — keep the three in lockstep):
+//   1. code.dir is read from `<stateDir>/config.json` at `code.dir` (a string).
+//   2. Missing / empty / unreadable config → null → codeRoot falls back to
+//      projectRoot (legacy). Never throws.
+//   3. Meta git ops (git-dir under `<stateDir>/meta.git`, work-tree = projectRoot)
+//      anchor at projectRoot. CODE git ops (`.git`, worktree add, hooks) anchor
+//      at codeRoot. Confusing the two commits to the wrong repo — the whole
+//      reason this lives in one function.
+
+/** Default code sub-directory name for a fresh physical split (PRD §v1.3). */
+export const CODE_DIR_DEFAULT = 'code'
+
+/**
+ * The configured code sub-directory (`config.code.dir`), or null when absent —
+ * null == legacy layout (code root IS the project root). Best-effort: a missing
+ * or corrupt config resolves to null (never throws).
+ */
+export function codeDirName(projectDir: string): string | null {
+  try {
+    const raw = fs.readFileSync(path.join(stateDir(projectDir), 'config.json'), 'utf-8')
+    const cfg = JSON.parse(raw)
+    const dir = cfg?.code?.dir
+    if (typeof dir === 'string' && dir.trim()) return dir.trim()
+  } catch {
+    /* missing / corrupt / no code.dir → legacy */
+  }
+  return null
+}
+
+/**
+ * Absolute code repo root. `<projectRoot>/<code.dir>` when physically split,
+ * else the project root itself (legacy fallback). This is the anchor for ALL
+ * code git operations.
+ */
+export function codeRoot(projectDir: string): string {
+  const dir = codeDirName(projectDir)
+  return dir ? path.join(projectDir, dir) : projectDir
+}
+
+/**
+ * True when the project is physically split (code.dir configured). Drives the
+ * meta-staging strategy: when split, the code `.gitignore` no longer sits at the
+ * project root, so meta commits use a plain `git add` instead of the legacy
+ * ignore-immune staging (PRD §v1.3 설계 결정 4).
+ */
+export function isPhysicallySplit(projectDir: string): boolean {
+  return codeDirName(projectDir) !== null
+}

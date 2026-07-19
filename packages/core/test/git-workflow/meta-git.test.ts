@@ -143,6 +143,58 @@ test('meta commit never touches the code repo history or index', async () => {
   expect(git(['ls-files'])).toBe(codeTrackedBefore) // still just packages/app.ts
 })
 
+// ── v1.3 physical split: plain-add staging (설계 결정 4) ───────────────────────
+
+/**
+ * Turn `projectDir` into a physically-split project: write `code.dir` into the
+ * config and move the code repo under `<projectDir>/code/`. The meta work-tree
+ * stays at the project root (meta path strings unchanged).
+ */
+function makeSplit(root: string): void {
+  const cfgPath = path.join(root, '.prdt', 'config.json')
+  const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+  cfg.code = { dir: 'code' }
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg))
+  const codeRoot = path.join(root, 'code')
+  fs.mkdirSync(codeRoot, { recursive: true })
+  fs.renameSync(path.join(root, 'packages'), path.join(codeRoot, 'packages'))
+  fs.renameSync(path.join(root, '.git'), path.join(codeRoot, '.git'))
+}
+
+test('split: init writes the code dir into the meta info/exclude', async () => {
+  makeSplit(projectDir)
+  await initMetaRepo(projectDir)
+  const exclude = fs.readFileSync(
+    path.join(metaGitDir(projectDir), 'info', 'exclude'),
+    'utf-8',
+  )
+  expect(exclude.split('\n')).toContain('code/')
+})
+
+test('split: commitMeta uses a plain add and stays meta-only even with a code .gitignore', async () => {
+  makeSplit(projectDir)
+  // A code-side .gitignore that WOULD ignore meta paths under the legacy shared
+  // work-tree — but now lives under code/, so it must not affect meta staging.
+  fs.writeFileSync(path.join(projectDir, 'code', '.gitignore'), '/docs\n/.prdt\n')
+
+  await initMetaRepo(projectDir)
+  const res = await commitMeta(projectDir, 'T-376 [manual: →] snapshot')
+  expect(res.committed).toBe(true)
+
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).toContain('.prdt/config.json')
+  expect(tracked).toContain('docs/prd/PRD.md')
+  // the code tree never enters the meta repo, and derived artifacts stay out
+  expect(tracked.some((f) => f.startsWith('code/'))).toBe(false)
+  expect(tracked).not.toContain('.prdt/index.db')
+
+  // the meta git status must not surface the code tree (info/exclude code/)
+  const status = git([
+    '--git-dir', metaGitDir(projectDir), '--work-tree', projectDir, 'status', '--porcelain',
+  ])
+  expect(status.split('\n').some((l) => l.includes('code/'))).toBe(false)
+})
+
 // ── commit lifecycle ────────────────────────────────────────────────────────────
 
 test('one logical change = one commit', async () => {
@@ -327,6 +379,45 @@ test('two-machine cycle: A splits + pushes → B (split-pulled, meta gone) boots
   expect(cfg).toMatch(/user\.name=prdt/)
   expect(cfg).toMatch(/commit\.gpgsign=false/)
   expect(cfg).toMatch(/core\.worktree=/)
+
+  fs.rmSync(B, { recursive: true, force: true })
+})
+
+test('T-378 re-anchor: code cloned into code/ (no .prdt yet) → meta.git at projectRoot, never code/', async () => {
+  const backup = makeBareRemote()
+  const origin = makeBareRemote()
+  const A = projectDir
+
+  // A: track meta, publish, split, publish, back the meta history up.
+  git(['add', '.prdt/config.json', 'docs/prd/PRD.md'], A)
+  git(['commit', '-qm', 'meta tracked'], A)
+  const branch = git(['symbolic-ref', '--short', 'HEAD'], A)
+  git(['remote', 'add', 'origin', origin], A)
+  git(['push', '-q', 'origin', branch], A)
+  expect((await runMetaMigration(A)).ok).toBe(true)
+  git(['push', '-q', 'origin', branch], A)
+  await addMetaRemote(A, 'backup', backup)
+  await pushMetaRemote(A, 'backup')
+
+  // Machine B: fresh — projectRoot has NO .prdt and is NOT itself a git repo.
+  // The code repo is cloned into the conventional `<projectRoot>/code` (§타기기).
+  const B = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-B3-'))
+  bareRepos.push(B)
+  git(['clone', '-q', origin, path.join(B, 'code')])
+  expect(fs.existsSync(path.join(B, '.git'))).toBe(false) // projectRoot is not the code repo
+  expect(metaRepoExists(B)).toBe(false)
+
+  // bootstrap is invoked with projectRoot (the python CLI re-anchors to it). The
+  // chicken-egg fix lets bootstrapCodeRepoExists find the code/ clone even though
+  // config.code.dir has not been restored yet.
+  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+  expect(boot.ok).toBe(true)
+
+  // meta.git landed at projectRoot/.prdt — NEVER under code/.prdt.
+  expect(fs.existsSync(path.join(B, '.prdt', 'meta.git', 'HEAD'))).toBe(true)
+  expect(fs.existsSync(path.join(B, 'code', '.prdt'))).toBe(false)
+  // meta files restored to projectRoot (restore semantics unchanged).
+  expect(fs.existsSync(path.join(B, 'docs', 'prd', 'PRD.md'))).toBe(true)
 
   fs.rmSync(B, { recursive: true, force: true })
 })

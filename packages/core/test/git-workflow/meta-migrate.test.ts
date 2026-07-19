@@ -4,7 +4,8 @@
  *
  * Logic-bearing guarantees under test (doctrine #3, test-first):
  *  - a mixed repo migrates to: code `git ls-files` meta-free · meta repo
- *    tracking exactly the allowlist · managed .gitignore block present;
+ *    tracking exactly the allowlist · the code `.gitignore` is NOT touched
+ *    (the managed block was retired in PRD §v1.3 설계 결정 2);
  *  - NO history rewrite: the code repo's pre-migration commits are untouched
  *    (old commits still contain meta) and no force-push/destructive git runs;
  *  - refusals: already-split re-run · no code git · staged changes (they would
@@ -22,7 +23,6 @@ import {
   runMetaMigration,
 } from '../../src/git-workflow/meta-migrate'
 import { metaRepoExists, metaGitDir, initMetaRepo } from '../../src/git-workflow/meta-git'
-import { MANAGED_BLOCK_START } from '../../src/git-workflow/gitignore-managed-block'
 
 let projectDir: string
 
@@ -138,10 +138,11 @@ test('run: mixed repo → code ls-files meta-free, meta repo tracks exactly the 
   // derived artifacts stay out of the meta repo (info/exclude)
   expect(metaFiles).not.toContain('.prdt/index.db')
 
-  // ③ managed block injected, user line untouched
+  // ③ code `.gitignore` untouched: user line intact, NO managed block injected
+  // (PRD §v1.3 설계 결정 2 — the block was retired)
   const gitignore = fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')
-  expect(gitignore).toContain('node_modules/')
-  expect(gitignore).toContain(MANAGED_BLOCK_START)
+  expect(gitignore).toBe('node_modules/\n')
+  expect(gitignore).not.toContain('>>> prdt meta')
 
   // NO history rewrite: exactly one new commit on top; old commits still hold meta
   const after = git(['rev-list', '--count', 'HEAD'])

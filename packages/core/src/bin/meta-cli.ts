@@ -22,6 +22,8 @@
  *   migrate-plan <projectDir>                — T-366 migration eligibility + untrack preview (read-only)
  *   migrate-run  <projectDir>                — execute the CONFIRMED migration (caller owns the
  *                                              user prompt — see meta-migrate.ts auto/confirm boundary)
+ *   relocate-plan <projectDir> [codeDir]     — T-378 2nd migration: physical re-layout preview (read-only)
+ *   relocate-run  <projectDir> [codeDir]     — execute the CONFIRMED physical migration (atomic; never pushes)
  *
  * Exit code: 0 on any handled result (including graceful skips); 1 only on
  * usage errors or unexpected throws — callers on the beat path ignore both.
@@ -36,7 +38,12 @@ import {
   pushMetaRemote,
   bootstrapMetaRepo,
 } from '../git-workflow/meta-git'
-import { planMetaMigration, runMetaMigration } from '../git-workflow/meta-migrate'
+import {
+  planMetaMigration,
+  runMetaMigration,
+  planPhysicalMigration,
+  runPhysicalMigration,
+} from '../git-workflow/meta-migrate'
 
 function out(obj: unknown, code = 0): never {
   process.stdout.write(JSON.stringify(obj) + '\n')
@@ -46,7 +53,7 @@ function out(obj: unknown, code = 0): never {
 async function main(): Promise<void> {
   const [cmd, projectDir, ...rest] = process.argv.slice(2)
   if (!cmd || !projectDir) {
-    out({ ok: false, error: 'usage: meta-cli <tick|log|remote-list|remote-add|push|bootstrap|migrate-plan|migrate-run> <projectDir> [...]' }, 1)
+    out({ ok: false, error: 'usage: meta-cli <tick|log|remote-list|remote-add|push|bootstrap|migrate-plan|migrate-run|relocate-plan|relocate-run> <projectDir> [...]' }, 1)
   }
 
   switch (cmd) {
@@ -101,6 +108,19 @@ async function main(): Promise<void> {
       // Confirmation is the CALLER's contract (CLI y/N prompt · GUI dialog) —
       // this command executes immediately. rm --cached only; never pushes.
       const res = await runMetaMigration(projectDir)
+      out(res)
+      break
+    }
+    case 'relocate-plan': {
+      // T-378 2nd migration: preview the physical re-layout (read-only).
+      const plan = planPhysicalMigration(projectDir, rest[0] || undefined)
+      out({ ok: true, ...plan })
+      break
+    }
+    case 'relocate-run': {
+      // T-378: execute the CONFIRMED physical migration (caller owns the prompt).
+      // Atomic move (rollback on failure); never pushes, never rewrites history.
+      const res = await runPhysicalMigration(projectDir, rest[0] || undefined)
       out(res)
       break
     }

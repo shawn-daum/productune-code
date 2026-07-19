@@ -6,7 +6,7 @@ import { execFile, execFileSync } from 'child_process'
 import { promisify } from 'util'
 import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, findAncestorProductuneRoot } from '@productune/core'
 import { writeOnboardingPending } from './onboarding'
-import { STATE_DIR_NAME, configPath, poStatePath } from '../project-paths'
+import { STATE_DIR_NAME, configPath, poStatePath, codeRoot } from '../project-paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -699,9 +699,13 @@ export function register(): void {
   })
 
   ipcMain.handle('github:setupRemote', async (_event, { projectDir, cloneUrl }: { projectDir: string; cloneUrl: string }) => {
+    // T-377 (PRD §v1.3 설계 결정 4): the GitHub remote is the CODE repo's — anchor
+    // `git init` + `remote add origin` at codeRoot (`<projectDir>/<code.dir>`),
+    // never the meta projectRoot. Legacy layout: codeRoot == projectDir (unchanged).
+    const cwd = codeRoot(projectDir)
     try {
-      await execFileAsync('git', ['init'], { cwd: projectDir })
-      await execFileAsync('git', ['remote', 'add', 'origin', cloneUrl], { cwd: projectDir })
+      await execFileAsync('git', ['init'], { cwd })
+      await execFileAsync('git', ['remote', 'add', 'origin', cloneUrl], { cwd })
       return { ok: true }
     } catch (e: any) {
       return { ok: false, error: e.message }

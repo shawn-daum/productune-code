@@ -46,7 +46,11 @@ if not sub.startswith("prdt-"):
     sys.exit(0)
 persona = sub[len("prdt-"):]
 
-# project root: walk up from event cwd
+# project root = meta root: walk up from event cwd until `.prdt/po-state.json`.
+# Under the v1.3 physical split (PRD §v1.3 설계 결정 4) the session cwd may be the
+# CODE root (`<projectRoot>/<code.dir>`); this same up-walk then resolves the
+# parent projectRoot, where `.prdt/` (and meta.git) live. Legacy layout finds it
+# at depth 0. All meta ops below anchor at this projectRoot.
 d = ev.get("cwd") or os.getcwd()
 root = None
 while d and d != "/":

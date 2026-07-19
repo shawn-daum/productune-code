@@ -27,10 +27,17 @@ def now_iso():
 
 
 def find_project_root(start=None):
-    """Walk up from cwd to the PROJECT holding .prdt/po-state.json.
-    Marker = state FILE, not the bare dir — ~/.prdt(도구 홈, po-state 없음)이
-    walk-up에 오매치되던 버그의 처방 (VM dogfood 2026-07-03; 구 hook의
-    ~/.productune 오매치와 동일 병리)."""
+    """Walk up from cwd to the PROJECT holding .prdt/po-state.json = projectRoot
+    (= meta root). Marker = state FILE, not the bare dir — ~/.prdt(도구 홈,
+    po-state 없음)이 walk-up에 오매치되던 버그의 처방 (VM dogfood 2026-07-03; 구
+    hook의 ~/.productune 오매치와 동일 병리).
+
+    v1.3 physical split (PRD §v1.3 설계 결정 4): the cwd may be the CODE root
+    (`<projectRoot>/<code.dir>`) — this same up-walk then lands on the parent
+    projectRoot where `.prdt/` lives (legacy layout finds it at depth 0). This is
+    the CLI half of the 3-way parity with core's up-walk and the bash hooks
+    (prdt-session-start.sh / prdt-post-dispatch.sh); codeRoot is derived from
+    projectRoot via code_root()."""
     d = Path(start or os.getcwd()).resolve()
     for p in [d, *d.parents]:
         if (p / ".prdt" / "po-state.json").is_file():
@@ -293,22 +300,54 @@ def prompt_version(default):
     return chosen
 
 
-# ── meta split (T-365 · PRD §v1.2 경계 결정 1·3) ──────────────────────────────
-# Two git repos, one working tree: the CODE repo (`.git`) tracks everything
-# except the meta allowlist; the META repo (`.prdt/meta.git`) tracks ONLY it.
-# Parity SoT: packages/core/src/git-workflow/meta-git.ts (allowlist / exclude)
-# + gitignore-managed-block.ts (markers / block rendering). A vitest parity
-# guard (gitignore-managed-block.test.ts) pins these literals byte-identical —
-# a fresh `prdt init` block and a TS-side resync must produce the same bytes.
+# ── meta split (T-365 · PRD §v1.2 경계 결정 1·3 · v1.3 설계 결정 2·3·4) ──────────
+# Two git repos, one project tree. The CODE repo (`.git`, at codeRoot) tracks
+# everything under codeRoot; the META repo (`.prdt/meta.git`, work-tree =
+# projectRoot) tracks ONLY the meta allowlist. v1.3 physically splits the two:
+# code work-tree = `<projectRoot>/<code.dir>`, meta work-tree = projectRoot
+# (unchanged). PRD §v1.3 설계 결정 2 retired the code `.gitignore` managed block —
+# meta is physically absent from codeRoot when split (§3: meta `info/exclude`
+# lists `<code.dir>/`), and legacy staging is ignore-immune, so prdt no longer
+# manages the code `.gitignore` at all (doctrine #2 — one less owned surface).
+# Parity SoT: packages/core/src/git-workflow/meta-git.ts (allowlist / exclude /
+# stageAllowlist) + state/project-kind.ts (codeRoot / codeDirName /
+# isPhysicallySplit "THE CONTRACT"). The three implementations (core TS · this
+# CLI · GUI project-paths.ts) MUST resolve projectRoot/codeRoot identically (T-377).
 
 META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/prd", "docs/tickets",
                           "docs/wiki", "docs/designer", "docs/developer", "docs/po",
                           "docs/qa", "docs/artifacts", "docs/retrospectives", "docs/archive"]
 META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
-                        ".cost-*.json", ".subagent-gate.json"]
-MANAGED_BLOCK_START = "# >>> prdt meta (managed) >>>"
-MANAGED_BLOCK_END = "# <<< prdt meta (managed) <<<"
-MANAGED_BLOCK_COMMENT = "# generated from the prdt meta allowlist — edits inside this block are overwritten"
+                        ".cost-*.json", ".subagent-gate.json", "worktrees/"]
+
+# ── code root resolution (PRD §v1.3 설계 결정 4 — mirrors core project-kind.ts) ──
+# code.dir absent → codeRoot IS projectRoot (legacy fallback). Best-effort: a
+# missing / corrupt config, or a non-string / empty code.dir, all resolve to
+# legacy (never raises). Kept byte-compatible with core's codeDirName/codeRoot/
+# isPhysicallySplit and GUI project-paths.ts.
+CODE_DIR_DEFAULT = "code"
+
+
+def code_dir_name(root):
+    """config.code.dir (a non-empty str) or None — None == legacy layout."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    if isinstance(cfg, dict) and isinstance(cfg.get("code"), dict):
+        d = cfg["code"].get("dir")
+        if isinstance(d, str) and d.strip():
+            return d.strip()
+    return None
+
+
+def code_root(root):
+    """Absolute code repo root: `<projectRoot>/<code.dir>` when split, else the
+    project root itself (legacy). Anchor for ALL code git ops."""
+    d = code_dir_name(root)
+    return Path(root) / d if d else Path(root)
+
+
+def is_physically_split(root):
+    """True when config carries a code.dir (physical split); drives meta staging."""
+    return code_dir_name(root) is not None
 
 
 def meta_git_dir(root):
@@ -338,84 +377,58 @@ def read_meta_allowlist(root):
     return list(META_ALLOWLIST_DEFAULT)
 
 
-def render_managed_block(allowlist):
-    """Marker-wrapped block, root-anchored patterns, no trailing newline —
-    byte-identical to gitignore-managed-block.ts renderManagedBlock."""
-    pats = []
-    for e in allowlist:
-        s = e.strip()
-        if s.startswith("./"):
-            s = s[2:]
-        s = s.lstrip("/").rstrip("/")
-        if s and "/" + s not in pats:
-            pats.append("/" + s)
-    return "\n".join([MANAGED_BLOCK_START, MANAGED_BLOCK_COMMENT, *pats, MANAGED_BLOCK_END])
-
-
-def sync_gitignore_managed_block(root):
-    """Idempotently inject/refresh the managed block in the code repo's
-    .gitignore. prdt owns ONLY the inside of the markers; user lines are never
-    touched. Malformed markers (one missing / reversed) → safe no-op."""
-    fp = Path(root) / ".gitignore"
-    block = render_managed_block(read_meta_allowlist(root))
-    current = fp.read_text(encoding="utf-8") if fp.exists() else None
-    if not current:
-        nxt = block + "\n"
-    else:
-        lines = current.split("\n")
-        start = next((i for i, l in enumerate(lines) if l.strip() == MANAGED_BLOCK_START), -1)
-        end = next((i for i, l in enumerate(lines) if l.strip() == MANAGED_BLOCK_END), -1)
-        if start == -1 and end == -1:
-            nxt = current + ("" if current.endswith("\n") else "\n") + block + "\n"
-        elif start == -1 or end == -1 or end < start:
-            return False  # malformed — never risk touching user lines
-        else:
-            nxt = "\n".join([*lines[:start], block, *lines[end + 1:]])
-            if not nxt.endswith("\n"):
-                nxt += "\n"
-    if nxt == current:
-        return False
-    tmp = Path(str(fp) + ".tmp")
-    tmp.write_text(nxt, encoding="utf-8")
-    os.replace(tmp, fp)
-    return True
-
-
 def _meta_stage_and_commit(root, message):
-    """Allowlist-scoped stage + one commit. Staging is immune to the code
-    repo's .gitignore (which ignores every meta path via the managed block):
-    tracked changes via `ls-files --modified --deleted`, new files via
-    `ls-files --others --exclude-from=<meta info/exclude>`, then `add -f`."""
+    """Allowlist-scoped stage + one commit. Layout-conditional, mirroring core's
+    stageAllowlist (meta-git.ts, PRD §v1.3 설계 결정 4):
+     - PHYSICALLY SPLIT: the code `.gitignore` no longer sits at projectRoot, so a
+       plain `add -A -- <allowlist>` stages adds/edits/deletes while honoring only
+       the meta repo's own info/exclude (derived artifacts + `<code.dir>/`).
+     - LEGACY (shared work-tree): ignore-immune staging so a code-side `.gitignore`
+       cannot refuse the allowlist — tracked changes via `ls-files --modified
+       --deleted`, new files via `ls-files --others --exclude-from=<meta exclude>`,
+       then `add -f`."""
     root = Path(root)
     allow = [e for e in read_meta_allowlist(root) if (root / e).exists()]
     if not allow:
         return
 
-    def ls_z(flags):
-        r = _meta_git(root, ["ls-files", "-z", *flags, "--", *allow])
-        return [p for p in r.stdout.split("\0") if p] if r.returncode == 0 else []
+    if is_physically_split(root):
+        if _meta_git(root, ["add", "-A", "--", *allow]).returncode != 0:
+            return
+    else:
+        def ls_z(flags):
+            r = _meta_git(root, ["ls-files", "-z", *flags, "--", *allow])
+            return [p for p in r.stdout.split("\0") if p] if r.returncode == 0 else []
 
-    excl = meta_git_dir(root) / "info" / "exclude"
-    others = ["--others"] + (["--exclude-from", str(excl)] if excl.exists() else [])
-    files = list(dict.fromkeys(ls_z(["--modified", "--deleted"]) + ls_z(others)))
-    if not files:
-        return
-    if _meta_git(root, ["add", "-f", "--", *files]).returncode != 0:
-        return
+        excl = meta_git_dir(root) / "info" / "exclude"
+        others = ["--others"] + (["--exclude-from", str(excl)] if excl.exists() else [])
+        files = list(dict.fromkeys(ls_z(["--modified", "--deleted"]) + ls_z(others)))
+        if not files:
+            return
+        if _meta_git(root, ["add", "-f", "--", *files]).returncode != 0:
+            return
     if _meta_git(root, ["diff", "--cached", "--quiet"]).returncode == 0:
         return  # diff-empty
     _meta_git(root, ["commit", "-m", message, "--allow-empty-message"])
 
 
 def init_meta_split(root):
-    """Fresh-init meta split: code `.git` + `.prdt/meta.git` + managed
-    .gitignore block + initial snapshot — zero user git interaction (§10).
-    Returns None on success, an error string on failure (init never hard-fails
-    on git trouble; the scaffold must still land)."""
+    """Fresh-init meta split: code `.git` (at codeRoot) + `.prdt/meta.git`
+    (work-tree = projectRoot) + initial snapshot — zero user git interaction
+    (§10). No code `.gitignore` managed block (PRD §v1.3 설계 결정 2). Returns
+    None on success, an error string on failure (init never hard-fails on git
+    trouble; the scaffold must still land).
+
+    NB (T-377 scope): the fresh-init PHYSICAL layout — actually creating
+    `<code.dir>/` and moving code into it — is T-378. Here codeRoot resolves via
+    config; with no code.dir yet (fresh legacy default) codeRoot == projectRoot,
+    so `git init` lands at the root exactly as before. The codeRoot/split-aware
+    anchoring is in place for when T-378 records code.dir at init time."""
     root = Path(root)
     try:
-        if not (root / ".git").exists():
-            r = _git(["init", "-q"], root)
+        cr = code_root(root)  # projectRoot in legacy (fresh) init; codeRoot once split
+        if not (cr / ".git").exists():
+            r = _git(["init", "-q"], cr)
             if r.returncode != 0:
                 return (r.stderr or "git init failed").strip()
         gd = meta_git_dir(root)
@@ -424,15 +437,19 @@ def init_meta_split(root):
             r = _git(["init", "--bare", "-q", str(gd)], root)
             if r.returncode != 0:
                 return (r.stderr or "meta git init failed").strip()
-        # Idempotent repo-local config — mirrors meta-git.ts initMetaRepo
-        # (identity; gpgsign/hooksPath neutralize the user's global gitconfig).
+        # Idempotent repo-local config — mirrors meta-git.ts initMetaRepo (identity;
+        # gpgsign/hooksPath neutralize the user's global gitconfig). core.worktree
+        # is projectRoot (meta work-tree — unchanged by the split, §1).
         for k, v in (("core.bare", "false"), ("core.worktree", str(root)),
                      ("user.name", "prdt"), ("user.email", "prdt@localhost"),
                      ("commit.gpgsign", "false"), ("core.hooksPath", str(gd / "hooks"))):
             _git(["--git-dir", str(gd), "config", k, v], root)
         (gd / "info").mkdir(exist_ok=True)
-        (gd / "info" / "exclude").write_text("\n".join(META_EXCLUDE_DEFAULT) + "\n", encoding="utf-8")
-        sync_gitignore_managed_block(root)
+        # Derived/gate excludes + the physical code dir (`<code.dir>/`) when split,
+        # so the code tree never shows in meta `git status` (PRD §v1.3 설계 결정 3).
+        cd = code_dir_name(root)
+        excl = list(META_EXCLUDE_DEFAULT) + ([cd.rstrip("/") + "/"] if cd else [])
+        (gd / "info" / "exclude").write_text("\n".join(excl) + "\n", encoding="utf-8")
         _meta_stage_and_commit(root, "initial meta snapshot (prdt init)")
         return None
     except Exception as e:  # git absent / perms — degrade, never block init
@@ -444,14 +461,8 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     root = Path(root).resolve()
     prdt = root / ".prdt"
     if (prdt / "po-state.json").exists():
-        # Already initialized. If this project has the meta split, refresh the
-        # managed block (idempotent) so an allowlist edit propagates (T-365);
-        # an unsplit existing project is the migration path's job (T-366).
-        if (meta_git_dir(root) / "HEAD").exists():
-            try:
-                sync_gitignore_managed_block(root)
-            except OSError:
-                pass
+        # Already initialized — no-op. The code `.gitignore` managed block was
+        # retired (PRD §v1.3 설계 결정 2, T-377), so there is nothing to resync here.
         return {"status": "exists", "root": str(root)}
     slug = slug or root.name
     if interactive and sys.stdin.isatty():
@@ -471,6 +482,18 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
             and all(isinstance(x, str) for x in meta.get("allowlist"))):
         meta["allowlist"] = list(META_ALLOWLIST_DEFAULT)
     cfg["meta"] = meta
+    # v1.3 PHYSICAL layout (PRD §신규 init 레이아웃): a fresh project puts code under
+    # `<root>/<code.dir>/` (git init lands there via init_meta_split's code_root()).
+    # If the user brought their OWN repo at projectRoot (`.git` present), stay LEGACY
+    # — physicalizing an existing repo is the explicit `prdt meta relocate` path, never
+    # a silent init side effect (Non-goal: 물리 분리 강제 소급 없음). A partial project
+    # that already declares code.dir keeps it.
+    code_cfg = cfg.get("code") if isinstance(cfg.get("code"), dict) else None
+    if code_cfg and isinstance(code_cfg.get("dir"), str) and code_cfg["dir"].strip():
+        (root / code_cfg["dir"].strip()).mkdir(parents=True, exist_ok=True)
+    elif not (root / ".git").exists():
+        cfg["code"] = {"dir": CODE_DIR_DEFAULT}
+        (root / CODE_DIR_DEFAULT).mkdir(parents=True, exist_ok=True)
     tmp = Path(str(prdt / "config.json") + ".tmp")
     tmp.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, prdt / "config.json")
@@ -746,19 +769,51 @@ def git_toplevel(start=None):
     return None
 
 
+def resolve_bootstrap_root(args):
+    """projectRoot (= meta root) for `prdt meta bootstrap` — RE-ANCHOR (T-378,
+    PRD §v1.3 T-374 정합). A fresh machine has no `.prdt/`, so we can't use
+    find_project_root; we derive projectRoot from the code clone:
+
+      1. explicit `--project-root <dir>` always wins.
+      2. run from inside the code clone: `git_toplevel()` returns the code root.
+         Under the split-clone convention the code was cloned into
+         `<projectRoot>/code`, so projectRoot = its PARENT — NOT the code root
+         itself, else meta.git would land wrongly at `code/.prdt/meta.git`. A
+         standalone clone (dir name != `code`) is legacy: projectRoot = code root.
+      3. run from projectRoot itself with the clone beside it (`<cwd>/code/.git`):
+         projectRoot = cwd.
+
+    Returns a Path or None (caller emits the usage error)."""
+    explicit = getattr(args, "project_root", None)
+    if explicit:
+        return Path(explicit).resolve()
+    ct = git_toplevel()
+    if ct is not None:
+        return ct.parent if ct.name == CODE_DIR_DEFAULT else ct
+    cwd = Path(os.getcwd()).resolve()
+    if (cwd / CODE_DIR_DEFAULT / ".git").exists():
+        return cwd
+    return None
+
+
 def cmd_meta(args):
     if args.action == "bootstrap":
-        # T-374 ②: 타기기 부트스트랩 — .prdt가 아직 없는 상태에서 실행되므로
-        # require_root(=.prdt/po-state.json 탐색) 대신 코드 repo 루트를 쓴다.
-        root = git_toplevel()
+        # T-374 ② / T-378 재앵커: 타기기 부트스트랩 — .prdt가 아직 없으므로
+        # require_root 대신 코드 클론에서 projectRoot(메타 루트)를 역산한다.
+        # code/로 클론된 경우 projectRoot = code top-level의 부모 (meta.git이
+        # code/.prdt/meta.git에 잘못 생기지 않도록).
+        root = resolve_bootstrap_root(args)
         if not root:
-            sys.exit("prdt meta bootstrap: git repo가 아니에요 — split 코드 repo를 "
-                     "clone/pull 한 위치(또는 그 하위)에서 실행하세요.")
+            sys.exit("prdt meta bootstrap: 코드 repo를 찾지 못했어요 — split 코드 repo를 "
+                     "clone 한 code/ 안(또는 그 부모 projectRoot)에서 실행하거나 "
+                     "--project-root <dir> 로 지정하세요.")
         cmd_meta_bootstrap(root, args)
         return
     root = require_root()
     if args.action == "split":
         cmd_meta_split(root, args)
+    elif args.action == "relocate":
+        cmd_meta_relocate(root, args)
     elif args.action == "log":
         res = _meta_call(root, "log", str(max(1, args.limit)))
         if not res.get("exists"):
@@ -834,7 +889,7 @@ def cmd_meta_split(root, args):
     resuming = plan.get("resuming")
     print("메타 분리 마이그레이션 계획" + (" (중단됐던 마이그레이션 재개)" if resuming else ""))
     print(f"  · 코드 repo 추적 제거 대상: 메타 파일 {n}개 (git rm --cached — 파일 자체는 그대로)")
-    print("  · 메타 스냅샷을 .prdt/meta.git 에 최초 커밋 + .gitignore 관리 블록 주입")
+    print("  · 메타 스냅샷을 .prdt/meta.git 에 최초 커밋 (코드 .gitignore 관리 블록 없음 — PRD v1.3 설계 결정 2)")
     print("  · 코드 repo에 '추적 제거' 커밋 1건 생성 — 다음 push 때 origin에 반영됩니다")
     print("  · 히스토리 rewrite·force-push 없음 (과거 커밋의 메타는 그대로 남음 — PRD 경계 결정 4(a))")
     if not args.yes:
@@ -851,6 +906,72 @@ def cmd_meta_split(root, args):
     print(f"완료 — 코드 repo 잔여 메타 {res.get('codeTrackedMetaCount')}건 · "
           f"메타 repo 추적 {res.get('metaTrackedCount')}건 (양쪽 git ls-files 검증 통과)")
     print("확인: prdt meta log · 타기기 백업: prdt meta remote add <name> <url> → prdt meta push <name>")
+
+
+def cmd_meta_relocate(root, args):
+    """T-378 2차 마이그레이션 (PRD §v1.3 §기존 분리 완료 repo 7개) — 논리 분리된
+    repo를 물리 분리로 재배치. plan → CONFIRM → run.
+
+    git 로직은 전부 core(meta-migrate.ts runPhysicalMigration) — 이 CLI는 계획을
+    보여주고 확인을 받은 뒤 실행만 시킨다. 코드 `.git` + 코드 파일이 함께 `code/`로
+    내려가므로 히스토리·추적 경로는 불변(rename 커밋 없음). push·history rewrite 없음."""
+    plan = _meta_call(root, "relocate-plan")
+    status = plan.get("status")
+    code_dir = plan.get("codeDir") or "code"
+    if status == "already-migrated":
+        print(f"이미 물리 분리된 프로젝트예요 — 할 일이 없습니다 (코드가 {code_dir}/ 안, no-op).")
+        return
+    if status == "no-git":
+        sys.exit("prdt meta relocate: 코드 repo(.git)가 없어요 — split 코드 repo에서 실행하세요.")
+    if status == "meta-repo-missing":
+        sys.exit("prdt meta relocate: 아직 논리 분리(.prdt/meta.git)가 안 된 프로젝트예요 — "
+                 "먼저 prdt meta split 을 실행하세요.")
+    if status == "unknown-git-shape":
+        sys.exit("prdt meta relocate: 알 수 없는 .git 형태예요 (정상 디렉터리도 linked "
+                 "worktree도 아님 — submodule 등) — 안전을 위해 중단했어요.")
+    if status == "code-dir-occupied":
+        sys.exit(f"prdt meta relocate: '{code_dir}/'가 이미 있고 비어있지 않아요 — 다른 위치로 "
+                 "치우거나 --project-root 상황을 확인한 뒤 다시 실행하세요.")
+    if status == "stranded-suspected":
+        warn = (plan.get("warnings") or ["이전 마이그레이션 롤백이 불완전했을 수 있어요."])[0]
+        sys.exit(f"prdt meta relocate: 좌초 의심 — {warn}")
+    if status != "eligible":
+        sys.exit(f"prdt meta relocate: 실행 불가 — {plan.get('error') or status}")
+
+    entries = plan.get("entriesToMove") or []
+    shape = plan.get("gitShape")
+    print("물리 분리(2차 마이그레이션) 계획")
+    print(f"  · 코드 {len(entries)}개 최상위 항목 + 코드 .git 을 '{code_dir}/' 아래로 이동")
+    print(f"  · .git 형태: {shape}" + (" (linked worktree — gitdir 포인터 재연결)"
+                                       if shape == "linked-worktree" else ""))
+    print("  · 코드 히스토리·추적 경로 불변 (rename 커밋 없음) · push·history rewrite 없음")
+    print("  · 코드 .gitignore 관리 블록 제거 · 메타 info/exclude 에 code/ 추가 · code.dir 기록")
+    if not args.yes:
+        try:
+            ans = input("진행할까요? [y/N] ").strip()
+        except EOFError:
+            ans = "n"
+        if not ans.lower().startswith("y"):
+            sys.exit("중단했어요 — 준비되면 다시 실행하세요.")
+    res = _meta_call(root, "relocate-run")
+    if not res.get("ok"):
+        stranded = res.get("strandedEntries") or []
+        if stranded:
+            # 복합 실패: 이동 실패 + 롤백 undo 실패로 반쪽 상태가 남음 — 절대 성공처럼
+            # 감추지 않고, 좌초 항목(원경로→현위치)을 그대로 노출한다 (T-378 QA).
+            print("prdt meta relocate: 실패 — 이동 실패 + 롤백도 불완전 (PARTIAL, 수동 복구 필요)")
+            print(f"  좌초 항목 {len(stranded)}개 (원경로 → 현위치):")
+            for s in stranded:
+                print(f"    {s}")
+            print(f"  원인: {res.get('error') or '?'}")
+            print(f"  복구: 위 항목을 원경로로 되돌린 뒤 '{code_dir}/'를 정리하고 다시 실행하세요.")
+            sys.exit(1)
+        detail = res.get("error") or res.get("refusal") or "?"
+        sys.exit(f"prdt meta relocate: 실패 — {detail}")
+    print(f"완료 — 코드 {res.get('movedCount')}개 항목을 '{code_dir}/'로 이동, 양쪽 검증 통과.")
+    for w in (res.get("warnings") or []):
+        print(f"  주의: {w}")
+    print(f"확인: cd {code_dir} && git ls-files | head · prdt meta log · git status (메타는 code/ 미노출)")
 
 
 def cmd_meta_bootstrap(root, args):
@@ -1237,9 +1358,10 @@ def main():
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
-    p = sub.add_parser("meta", help="meta git (v1.2): log · remote [add <name> <url>] · push · bootstrap · split — core API 브리지 호출")
-    p.add_argument("action", choices=("log", "remote", "push", "bootstrap", "split"))
+    p = sub.add_parser("meta", help="meta git: log · remote [add <name> <url>] · push · bootstrap · split · relocate — core API 브리지 호출")
+    p.add_argument("action", choices=("log", "remote", "push", "bootstrap", "split", "relocate"))
     p.add_argument("rest", nargs="*", help="remote: [add <name> <url>] · push: [name] · bootstrap: <url> [name]")
+    p.add_argument("--project-root", help="bootstrap: projectRoot(메타 루트) 명시 (T-378 재앵커 override)")
     p.add_argument("--limit", type=int, default=20, help="log: max commits (default 20)")
     p.add_argument("--yes", action="store_true", help="split: 확인 프롬프트 생략 (T-366)")
     p.set_defaults(fn=cmd_meta)

@@ -35,7 +35,7 @@ import {
   mergeCapture,
   type SubagentCostCapture,
 } from './subagent-cost'
-import { detectProjectKind } from './project-paths'
+import { detectProjectKind, codeRoot } from './project-paths'
 import { getPoSessionOverride, type PoSessionOverride } from './po-session-config'
 
 /**
@@ -1209,9 +1209,17 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // T-PATCH-216: augment PATH with the login-shell PATH so `claude` resolves
     // under a Finder/packaged-app launch (launchd's minimal PATH → ENOENT otherwise).
     const env = withLoginShellPath({ ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' })
+    // T-377 (PRD §v1.3 설계 결정 4): spawn the PO turn in the CODE root, not the
+    // meta projectDir. Once physically split the code lives under
+    // `<projectDir>/<code.dir>`, so the claude session (and the code git ops its
+    // dispatched workers run) must anchor there; the session-start / post-dispatch
+    // hooks then up-walk to the parent projectRoot for `.prdt/` + meta commits.
+    // Legacy layout: codeRoot == projectDir, so this is byte-for-byte unchanged.
+    // NB: makeHealthCtx / getPoSessionOverride / poEnvGatePath above all keep
+    // opts.projectDir (the META anchor — turns.jsonl, config, session override).
     const child = spawn('claude', args, {
       env,
-      cwd: opts.projectDir,
+      cwd: codeRoot(opts.projectDir),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     // T-PATCH-081: track active child for po:abort IPC abort path.
@@ -2456,7 +2464,8 @@ export function runHealthSmoke(projectDir: string): Promise<SmokeResult> {
     try {
       child = spawn('claude', smokeArgs, {
         env,
-        cwd: projectDir,
+        // T-377: anchor the smoke in codeRoot, same as the real spawn path above.
+        cwd: codeRoot(projectDir),
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } catch (err: any) {

@@ -1,88 +1,122 @@
 /**
- * hooks.test.ts — T-298 A1 QA-LOW regression (same-pattern defect as T-284).
+ * hooks.test.ts — pre-push hook rules resolution across layouts (T-298 → T-376).
  *
- * `installPrePushHook`'s generated pre-push shell script hardcoded the
- * `.productune/git-rules.json` path literal in its body. In a prdt
- * (`.prdt`-only) project the installed hook would look for git-rules.json in
- * the wrong directory and silently fall back to the hard-coded default
- * (`protectedBranches: ["main"]`) instead of the project's actual rules.
+ * The generated pre-push script must find the project's git-rules.json
+ * regardless of the code work-tree location:
+ *  - LEGACY: codeRoot == projectRoot, rules at `<root>/.prdt/git-rules.json`.
+ *  - v1.3 PHYSICAL SPLIT: codeRoot == `<root>/code`, git runs the hook with
+ *    cwd = codeRoot, and the rules live one level UP. A hard-coded relative
+ *    `.prdt/…` would miss them and silently fall back to the default protected
+ *    list (the T-298 / T-284 defect class). The script UP-WALKS from `$PWD`.
  *
- * Fix: the generated script body must reference the project-kind-correct
- * rules path (`.prdt/git-rules.json` vs legacy `.productune/git-rules.json`),
- * using core's own `state/project-kind.ts` detection. Legacy projects must
- * get a byte-identical script to before.
+ * Verified behaviorally: run the generated hook from the code work-tree cwd,
+ * feed it a push ref, and assert it blocks a protected branch / allows others.
  */
 
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
+import { execFileSync } from 'child_process'
 import { test, expect } from 'vitest'
 import { installPrePushHook } from '../../src/git-workflow/hooks'
 
-function makeProject(subdirs: string[]): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-hooks-'))
-  for (const s of subdirs) fs.mkdirSync(path.join(root, s), { recursive: true })
-  return root
+function mkroot(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'core-hooks-'))
 }
 
-function readHook(projectDir: string): string {
-  return fs.readFileSync(path.join(projectDir, '.git', 'hooks', 'pre-push'), 'utf-8')
+function writeRules(dir: string, stateDirName: string, protectedBranches: string[]): void {
+  const sd = path.join(dir, stateDirName)
+  fs.mkdirSync(sd, { recursive: true })
+  fs.writeFileSync(path.join(sd, 'git-rules.json'), JSON.stringify({ protectedBranches }))
 }
 
-test('prdt project (.prdt only): generated pre-push script reads .prdt/git-rules.json', async () => {
-  const d = makeProject(['.prdt', '.git'])
+function writeConfig(root: string, cfg: unknown): void {
+  fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+  fs.writeFileSync(path.join(root, '.prdt', 'config.json'), JSON.stringify(cfg))
+}
 
-  await installPrePushHook(d)
+/**
+ * Run the installed pre-push hook from `cwd`, pushing `branch`.
+ * Returns the exit code (1 = blocked as protected, 0 = allowed).
+ */
+function runHook(hookScript: string, cwd: string, branch: string): number {
+  try {
+    execFileSync('sh', [hookScript], {
+      cwd,
+      input: `refs/heads/${branch} aaaa refs/heads/${branch} bbbb\n`,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    return 0
+  } catch (e: any) {
+    return typeof e.status === 'number' ? e.status : -1
+  }
+}
 
-  const script = readHook(d)
-  expect(script).toContain('.prdt/git-rules.json')
-  expect(script).not.toContain('.productune/git-rules.json')
+// ── legacy layout (codeRoot == projectRoot) ───────────────────────────────────
+
+test('legacy .prdt: hook up-walks to .prdt/git-rules.json and blocks a protected branch', async () => {
+  const root = mkroot()
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true })
+  writeRules(root, '.prdt', ['main', 'release'])
+
+  await installPrePushHook(root)
+  const hook = path.join(root, '.git', 'hooks', 'pre-push')
+  expect(fs.existsSync(hook)).toBe(true)
+
+  expect(runHook(hook, root, 'main')).toBe(1) // protected → blocked
+  expect(runHook(hook, root, 'release')).toBe(1)
+  expect(runHook(hook, root, 'feature/x')).toBe(0) // unprotected → allowed
 })
 
-test('legacy project (.productune only): generated pre-push script still reads .productune/git-rules.json (unchanged)', async () => {
-  const d = makeProject(['.productune', '.git'])
+test('legacy .productune: hook still honors .productune/git-rules.json', async () => {
+  const root = mkroot()
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true })
+  writeRules(root, '.productune', ['main'])
 
-  await installPrePushHook(d)
+  await installPrePushHook(root)
+  const hook = path.join(root, '.git', 'hooks', 'pre-push')
 
-  const script = readHook(d)
-  expect(script).toContain('.productune/git-rules.json')
-  expect(script).not.toContain('.prdt/git-rules.json')
+  expect(runHook(hook, root, 'main')).toBe(1)
+  expect(runHook(hook, root, 'dev')).toBe(0)
 })
 
-test('legacy project script body is byte-identical to the pre-existing hard-coded template', async () => {
-  const d = makeProject(['.productune', '.git'])
+test('no rules file anywhere → default protected list (main) still enforced', async () => {
+  const root = mkroot()
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true })
 
-  await installPrePushHook(d)
+  await installPrePushHook(root)
+  const hook = path.join(root, '.git', 'hooks', 'pre-push')
 
-  const script = readHook(d)
-  expect(script).toBe(`#!/bin/sh
-# productune managed pre-push hook
-# Edit .productune/git-rules.json to change the protected list.
-# Auto-generated by T-P4-020. Do not edit manually.
+  expect(runHook(hook, root, 'main')).toBe(1) // default fallback
+  expect(runHook(hook, root, 'feature/x')).toBe(0)
+})
 
-PROTECTED_BRANCHES="$(cat .productune/git-rules.json 2>/dev/null \\
-  | sed -n 's/.*"protectedBranches"[[:space:]]*:[[:space:]]*\\[\\([^]]*\\)\\].*/\\1/p' \\
-  | tr -d '" ' | tr ',' '\\n')"
+// ── v1.3 physical split (codeRoot == <root>/code) ─────────────────────────────
 
-if [ -z "$PROTECTED_BRANCHES" ]; then
-  PROTECTED_BRANCHES="main"
-fi
+test('split: hook installs into codeRoot/.git/hooks, not the project root', async () => {
+  const root = mkroot()
+  writeConfig(root, { slug: 'proj', code: { dir: 'code' } })
+  fs.mkdirSync(path.join(root, 'code', '.git'), { recursive: true })
+  writeRules(root, '.prdt', ['main'])
 
-while read local_ref local_sha remote_ref remote_sha; do
-  branch="\${remote_ref#refs/heads/}"
-  for protected in $PROTECTED_BRANCHES; do
-    if [ "$branch" = "$protected" ]; then
-      echo ""
-      echo "  이 작업 줄기는 직접 보낼 수 없어요."
-      echo "  배포 준비 단계를 거쳐 보내주세요."
-      echo ""
-      echo "  (대상 = $protected)"
-      echo ""
-      exit 1
-    fi
-  done
-done
+  await installPrePushHook(root)
 
-exit 0
-`)
+  expect(fs.existsSync(path.join(root, 'code', '.git', 'hooks', 'pre-push'))).toBe(true)
+  expect(fs.existsSync(path.join(root, '.git', 'hooks', 'pre-push'))).toBe(false)
+})
+
+test('split: hook up-walks from codeRoot cwd to the parent .prdt/git-rules.json', async () => {
+  const root = mkroot()
+  writeConfig(root, { slug: 'proj', code: { dir: 'code' } })
+  const codeRoot = path.join(root, 'code')
+  fs.mkdirSync(path.join(codeRoot, '.git'), { recursive: true })
+  writeRules(root, '.prdt', ['main', 'production'])
+
+  await installPrePushHook(root)
+  const hook = path.join(codeRoot, '.git', 'hooks', 'pre-push')
+
+  // git runs the hook with cwd = codeRoot; rules live one level up.
+  expect(runHook(hook, codeRoot, 'main')).toBe(1)
+  expect(runHook(hook, codeRoot, 'production')).toBe(1)
+  expect(runHook(hook, codeRoot, 'feature/y')).toBe(0)
 })

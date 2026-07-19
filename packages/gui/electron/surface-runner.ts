@@ -18,6 +18,7 @@ import { spawn, execFileSync } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import fs from 'fs'
 import path from 'path'
+import { codeRoot } from './project-paths'
 
 export type SurfaceKind = 'build' | 'run'
 
@@ -201,21 +202,29 @@ export function runSurfaceCommand(
   //    intentionally sets NODE_ENV still wins over our delete.
   //  - FORCE_COLOR:'0' keeps ANSI escapes out of the log panel; PATH is
   //    augmented to resolve project-local + global tools.
+  // T-377 (PRD §v1.3 설계 결정 4): terminal/dev/build surfaces run in the CODE
+  // root — once physically split the package.json / node_modules / build tooling
+  // live under `<projectDir>/<code.dir>`, so both the spawn cwd AND the
+  // project-local `.bin` resolution anchor there. `opts.projectDir` stays the META
+  // anchor (the IPC layer reads surface config + `.env*` from it); only the exec
+  // context moves. Legacy layout: execRoot == projectDir (byte-for-byte unchanged).
+  const execRoot = codeRoot(opts.projectDir)
+
   const base: NodeJS.ProcessEnv = { ...process.env }
   delete base.NODE_ENV
   const childEnv: NodeJS.ProcessEnv = {
     ...base,
     ...(opts.extraEnv ?? {}),
     FORCE_COLOR: '0',
-    PATH: pathWithLocalBins(opts.projectDir),
+    PATH: pathWithLocalBins(execRoot),
   }
 
-  // D3: shell:true (command is a space-separated shell string), cwd=projectDir.
+  // D3: shell:true (command is a space-separated shell string), cwd=execRoot.
   // detached:true → child is its own process-group leader so `terminate()` can
   // SIGTERM the whole group (shell + grandchild server), not just the shell.
   const child = spawn(opts.command, {
     shell: true,
-    cwd: opts.projectDir,
+    cwd: execRoot,
     env: childEnv,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],

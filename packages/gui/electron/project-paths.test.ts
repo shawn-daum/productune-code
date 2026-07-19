@@ -25,6 +25,10 @@ import {
   chatJsonPath,
   onboardingPath,
   turnsJsonlPath,
+  codeDirName,
+  codeRoot,
+  isPhysicallySplit,
+  CODE_DIR_DEFAULT,
 } from './project-paths'
 
 interface Case {
@@ -36,6 +40,13 @@ interface Case {
 function makeProject(subdirs: string[]): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-paths-'))
   for (const s of subdirs) fs.mkdirSync(path.join(root, s), { recursive: true })
+  return root
+}
+
+/** Make a temp project seeded with a state dir + config.json. */
+function withConfig(stateDirName: string, cfg: unknown): string {
+  const root = makeProject([stateDirName])
+  fs.writeFileSync(path.join(root, stateDirName, 'config.json'), JSON.stringify(cfg))
   return root
 }
 
@@ -103,6 +114,77 @@ export const PROJECT_PATHS_CASES: readonly Case[] = [
       const r2 = eq(poStatePath(d), path.join(d, '.productune', 'po-state.json'))
       if (!r2.ok) return r2
       return eq(configPath(d), path.join(d, '.productune', 'config.json'))
+    },
+  },
+
+  // ── Code root resolution (PRD §v1.3 설계 결정 4, T-377) ──────────────────────
+  // Byte-identical case list to core's project-kind.test.ts so the two + python
+  // stay behaviorally in lockstep (3-way parity acceptance).
+  {
+    label: 'legacy: no state dir → codeRoot == projectRoot, not split',
+    run: () => {
+      const d = makeProject([])
+      const r1 = eq(codeDirName(d), null)
+      if (!r1.ok) return r1
+      const r2 = eq(codeRoot(d), d)
+      if (!r2.ok) return r2
+      return eq(isPhysicallySplit(d), false)
+    },
+  },
+  {
+    label: 'legacy: config present but no code.dir → codeRoot == projectRoot',
+    run: () => {
+      const d = withConfig('.prdt', { slug: 'proj', meta: { allowlist: ['.prdt'] } })
+      const r1 = eq(codeDirName(d), null)
+      if (!r1.ok) return r1
+      const r2 = eq(codeRoot(d), d)
+      if (!r2.ok) return r2
+      return eq(isPhysicallySplit(d), false)
+    },
+  },
+  {
+    label: 'split: code.dir present → codeRoot = <projectRoot>/<code.dir>',
+    run: () => {
+      const d = withConfig('.prdt', { slug: 'proj', code: { dir: CODE_DIR_DEFAULT } })
+      const r1 = eq(codeDirName(d), 'code')
+      if (!r1.ok) return r1
+      const r2 = eq(codeRoot(d), path.join(d, 'code'))
+      if (!r2.ok) return r2
+      return eq(isPhysicallySplit(d), true)
+    },
+  },
+  {
+    label: 'split: a custom code.dir name is honored',
+    run: () => {
+      const d = withConfig('.prdt', { code: { dir: 'app' } })
+      return eq(codeRoot(d), path.join(d, 'app'))
+    },
+  },
+  {
+    label: 'code.dir read from the detected state dir (.productune legacy kind)',
+    run: () => {
+      const d = withConfig('.productune', { code: { dir: 'code' } })
+      const r1 = eq(codeDirName(d), 'code')
+      if (!r1.ok) return r1
+      return eq(codeRoot(d), path.join(d, 'code'))
+    },
+  },
+  {
+    label: 'corrupt config → legacy fallback, never throws',
+    run: () => {
+      const d = makeProject(['.prdt'])
+      fs.writeFileSync(path.join(d, '.prdt', 'config.json'), '{ not json')
+      const r1 = eq(codeDirName(d), null)
+      if (!r1.ok) return r1
+      return eq(codeRoot(d), d)
+    },
+  },
+  {
+    label: 'empty / non-string code.dir is ignored (treated as legacy)',
+    run: () => {
+      const r1 = eq(codeDirName(withConfig('.prdt', { code: { dir: '' } })), null)
+      if (!r1.ok) return r1
+      return eq(codeDirName(withConfig('.prdt', { code: { dir: 42 } })), null)
     },
   },
 ]

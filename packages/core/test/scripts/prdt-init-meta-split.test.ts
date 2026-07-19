@@ -2,13 +2,14 @@
  * prdt-init-meta-split.test.ts — T-365 fresh-init meta split, black-box over
  * the REAL `prdt` CLI (`prdt init --json`, the one init SoT CLI+GUI share).
  *
- * Acceptance (docs/tickets/v1.2/T-365.md):
- *  - Fresh init produces the code `.git` + the meta `.prdt/meta.git`, the
- *    injected managed `.gitignore` block, and the allowlist config — with
- *    zero user git interaction.
- *  - Managed block rewrite is idempotent and never touches lines outside the
- *    markers.
- *  - Derived files and the meta git-dir are ignored by BOTH repos.
+ * Acceptance (docs/tickets/v1.2/T-365.md, revised for PRD §v1.3 설계 결정 2 / T-377):
+ *  - Fresh init produces the code `.git` + the meta `.prdt/meta.git` + the
+ *    initial meta snapshot + the allowlist config — with zero user git interaction.
+ *  - prdt no longer manages the code `.gitignore` at ALL (the managed block was
+ *    retired, PRD §v1.3 설계 결정 2): fresh init injects no block, and a
+ *    pre-existing user `.gitignore` is left byte-for-byte untouched.
+ *  - The meta repo holds the scaffold; derived artifacts are ignored by the META
+ *    repo (its `info/exclude`); the code repo tracks zero meta.
  */
 
 import path from 'path'
@@ -16,12 +17,13 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
-import {
-  MANAGED_BLOCK_START,
-  MANAGED_BLOCK_END,
-  renderManagedBlock,
-} from '../../src/git-workflow/gitignore-managed-block'
 import { DEFAULT_META_ALLOWLIST } from '../../src/git-workflow/meta-git'
+
+// The `.gitignore` managed block was retired in PRD §v1.3 설계 결정 2 (TS side:
+// T-376, python side: T-377). These markers are kept ONLY for negative assertions
+// — proving no managed block is ever injected anymore.
+const MANAGED_BLOCK_START = '# >>> prdt meta (managed) >>>'
+const MANAGED_BLOCK_END = '# <<< prdt meta (managed) <<<'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -48,16 +50,6 @@ function git(args: string[], cwd = projectDir): string {
   return execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim()
 }
 
-/** exit 0 from `git check-ignore -q` = the path IS ignored. */
-function codeIgnores(p: string): boolean {
-  try {
-    execFileSync('git', ['check-ignore', '-q', p], { cwd: projectDir })
-    return true
-  } catch {
-    return false
-  }
-}
-
 function metaGitArgs(): string[] {
   return ['--git-dir', path.join(projectDir, '.prdt', 'meta.git'), '--work-tree', projectDir]
 }
@@ -80,37 +72,49 @@ afterEach(() => {
   fs.rmSync(path.dirname(projectDir), { recursive: true, force: true })
 })
 
-describe.skipIf(!PYTHON3)('prdt init — meta split (T-365)', () => {
-  test('fresh init produces both repos + managed block + allowlist config, no interaction', () => {
+describe.skipIf(!PYTHON3)('prdt init — meta split (T-365 / T-377)', () => {
+  test('fresh init produces the PHYSICAL layout + allowlist config, no interaction, no managed block', () => {
     const res = runInit()
     expect(res.status).toBe('created')
     expect(res.meta_git).toBe('ok')
 
-    // both repos
-    expect(fs.existsSync(path.join(projectDir, '.git', 'HEAD'))).toBe(true)
+    // PHYSICAL layout (PRD §v1.3 §신규 init 레이아웃, T-378): code `.git` lives under
+    // `<root>/code/`, NOT at projectRoot; meta `.prdt/meta.git` stays at projectRoot.
+    expect(fs.existsSync(path.join(projectDir, 'code', '.git', 'HEAD'))).toBe(true)
+    expect(fs.existsSync(path.join(projectDir, '.git'))).toBe(false)
     expect(fs.existsSync(path.join(projectDir, '.prdt', 'meta.git', 'HEAD'))).toBe(true)
 
-    // allowlist config
+    // allowlist config + recorded code.dir
     const cfg = JSON.parse(fs.readFileSync(path.join(projectDir, '.prdt', 'config.json'), 'utf-8'))
     expect(cfg.meta.allowlist).toEqual(DEFAULT_META_ALLOWLIST)
     expect(cfg.slug).toBe('proj')
+    expect(cfg.code.dir).toBe('code')
 
-    // managed block — byte-identical to the TS renderer (resync produces no diff)
-    const gitignore = fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')
-    expect(gitignore).toBe(renderManagedBlock(DEFAULT_META_ALLOWLIST) + '\n')
+    // §v1.3 설계 결정 2: prdt injects NO code `.gitignore` (fresh code/ had none →
+    // none is created; the managed block is gone entirely).
+    expect(fs.existsSync(path.join(projectDir, 'code', '.gitignore'))).toBe(false)
+    expect(fs.existsSync(path.join(projectDir, '.gitignore'))).toBe(false)
+
+    // meta info/exclude keeps the code tree out of meta `git status` (설계 결정 3)
+    const exclude = fs.readFileSync(path.join(projectDir, '.prdt', 'meta.git', 'info', 'exclude'), 'utf-8')
+    expect(exclude).toContain('code/')
 
     // meta repo config mirrors initMetaRepo (identity + global-config neutralizers)
     expect(git([...metaGitArgs(), 'config', 'user.email'])).toBe('prdt@localhost')
     expect(git([...metaGitArgs(), 'config', 'commit.gpgsign'])).toBe('false')
   })
 
-  test('input metric 1: code repo tracks zero meta; meta repo holds the scaffold', () => {
+  test('input metric 1: code work-tree = codeRoot, tracks zero meta; meta repo holds the scaffold', () => {
     runInit()
+    const codeDir = path.join(projectDir, 'code')
 
-    // code repo: nothing staged/tracked, and status shows no meta noise
-    expect(git(['ls-files'])).toBe('')
-    const status = git(['status', '--porcelain']).split('\n').filter(Boolean)
-    expect(status).toEqual(['?? .gitignore']) // the only visible code-repo file
+    // code repo lives at codeRoot and tracks nothing (meta lives in the meta repo).
+    expect(git(['rev-parse', '--show-toplevel'], codeDir)).toBe(fs.realpathSync(codeDir))
+    expect(git(['ls-files'], codeDir)).toBe('')
+
+    // meta `git status` is clean of the code tree (info/exclude code/).
+    const metaStatus = git([...metaGitArgs(), 'status', '--porcelain'])
+    expect(metaStatus).not.toMatch(/(^|\n)..\s*code\//)
 
     // meta repo: initial snapshot commit holds the scaffold
     const tracked = git([...metaGitArgs(), 'ls-files']).split('\n')
@@ -121,20 +125,20 @@ describe.skipIf(!PYTHON3)('prdt init — meta split (T-365)', () => {
     expect(git([...metaGitArgs(), 'log', '--format=%s'])).toBe('initial meta snapshot (prdt init)')
   })
 
-  test('derived files and the meta git-dir are ignored by BOTH repos', () => {
+  test('derived files and the meta git-dir are ignored by the META repo', () => {
     runInit()
     fs.writeFileSync(path.join(projectDir, '.prdt', 'turns.jsonl'), '{}\n')
 
+    // The code repo no longer ignores meta paths (no managed block, §v1.3 설계 결정 2);
+    // the META repo's info/exclude keeps its derived artifacts + own git-dir out.
     for (const p of ['.prdt/meta.git/HEAD', '.prdt/index.db', '.prdt/turns.jsonl']) {
-      expect(codeIgnores(p), `code repo must ignore ${p}`).toBe(true)
       expect(metaIgnores(p), `meta repo must ignore ${p}`).toBe(true)
     }
-    // sanity: real files are NOT blanket-ignored
-    expect(codeIgnores('src/app.ts')).toBe(false)
+    // sanity: real meta files are NOT blanket-ignored by the meta repo
     expect(metaIgnores('.prdt/config.json')).toBe(false)
   })
 
-  test('pre-existing user .gitignore and code .git are preserved; re-init is idempotent', () => {
+  test('pre-existing user .gitignore and code .git are preserved untouched (no block appended)', () => {
     // user project: own git history + own .gitignore
     git(['init', '-q'])
     git(['config', 'user.email', 'u@test'])
@@ -152,31 +156,16 @@ describe.skipIf(!PYTHON3)('prdt init — meta split (T-365)', () => {
     // code repo untouched (no re-init, no commit made by prdt)
     expect(git(['rev-parse', 'HEAD'])).toBe(headBefore)
 
-    // user lines intact, block appended after them
+    // user `.gitignore` byte-for-byte untouched — prdt injects no managed block.
     const gitignore = fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')
-    expect(gitignore.startsWith('node_modules/\ndist/\n')).toBe(true)
-    expect(gitignore).toContain(MANAGED_BLOCK_START)
-    expect(gitignore.trimEnd().endsWith(MANAGED_BLOCK_END)).toBe(true)
+    expect(gitignore).toBe('node_modules/\ndist/\n')
+    expect(gitignore).not.toContain(MANAGED_BLOCK_START)
+    expect(gitignore).not.toContain(MANAGED_BLOCK_END)
 
-    // re-init: exists + byte-identical .gitignore (idempotent, single block)
+    // re-init: exists + `.gitignore` still byte-identical (idempotent no-op).
     const again = runInit()
     expect(again.status).toBe('exists')
-    const after = fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')
-    expect(after).toBe(gitignore)
-    expect(after.split(MANAGED_BLOCK_START).length).toBe(2)
-  })
-
-  test('allowlist edit in config.json propagates to the block on the next init touch', () => {
-    runInit()
-    const cfgPath = path.join(projectDir, '.prdt', 'config.json')
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
-    cfg.meta.allowlist = [...cfg.meta.allowlist, 'docs/backlog.md']
-    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
-
-    const res = runInit() // already-initialized touch → idempotent resync
-    expect(res.status).toBe('exists')
-    const gitignore = fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')
-    expect(gitignore.split('\n')).toContain('/docs/backlog.md')
+    expect(fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')).toBe(gitignore)
   })
 
   test('field-preserving config merge: partial config.json survives init (regression)', () => {

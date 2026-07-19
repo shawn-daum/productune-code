@@ -20,6 +20,7 @@
 import { ipcMain } from 'electron'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { codeRoot } from '../project-paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -66,9 +67,14 @@ export function parseTagLines(stdout: string): GitTag[] {
 export async function listTags(projectDir: string): Promise<GitTag[]> {
   if (!projectDir) return []
   try {
+    // T-377 (PRD §v1.3 설계 결정 4): version tags live on the CODE repo — anchor at
+    // codeRoot (`<projectDir>/<code.dir>` once split, else projectDir in legacy).
+    // Reading tags at the meta projectDir in a split project hits no `.git` and
+    // silently returns [] (the catch below), leaving HistoryPane's version list
+    // permanently empty.
     const { stdout } = await execFileAsync(
       'git',
-      ['-C', projectDir, 'for-each-ref', `--format=${FORMAT}`, 'refs/tags'],
+      ['-C', codeRoot(projectDir), 'for-each-ref', `--format=${FORMAT}`, 'refs/tags'],
       { maxBuffer: 4 * 1024 * 1024 },
     )
     return parseTagLines(stdout)

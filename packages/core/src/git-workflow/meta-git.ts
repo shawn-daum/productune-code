@@ -1,21 +1,23 @@
 /**
  * meta-git.ts — meta-only local git core module (T-364, PRD §v1.2).
  *
- * Two git repos share one working tree. The CODE repo (`.git`) tracks
- * everything except the meta allowlist; the META repo lives in a separate
- * git-dir (`<stateDir>/meta.git`) with the project root as its work-tree and
- * tracks ONLY the allowlist (PRD 경계 결정 1). Because the two repos have
- * distinct git-dirs, a meta commit never touches the code repo's index or
- * history, and an allowlist-scoped `git add` never stages code files.
+ * The META repo lives in a separate git-dir (`<stateDir>/meta.git`) with the
+ * PROJECT ROOT as its work-tree and tracks ONLY the allowlist (PRD 경계 결정 1);
+ * the CODE repo (`.git`, at codeRoot — projectRoot in legacy layout, or
+ * `<projectRoot>/<code.dir>` once physically split, PRD §v1.3) tracks everything
+ * else. Meta git ops here always anchor at projectRoot; code detection anchors
+ * at codeRoot (resolved via state/project-kind).
+ *
+ * v1.3 physical split (설계 결정 2): the code `.gitignore` managed block is GONE
+ * — once code lives under `code/`, the meta work-tree no longer contains a code
+ * `.gitignore` that ignores meta paths, so meta commits stage with a plain
+ * `git add`. In LEGACY layout (not yet split) the code `.gitignore` still sits
+ * at the project root, so meta staging stays ignore-immune (collectStageableFiles).
  *
  * This module is the shared core primitive for CLI · GUI parity — init,
  * allowlist-scoped auto-commit (reusing the §10 autosave lifecycle signals),
  * history read, and opt-in remote add. It never pushes (backup is manual /
  * opt-in per PRD Non-goals) and performs no destructive git.
- *
- * Out of scope here (downstream tickets): the code repo `.gitignore` managed
- * block (T-365), existing-project migration (T-366), and CLI/GUI surfaces
- * (T-367) — all consume the API exposed here.
  */
 
 import fs from 'fs'
@@ -23,9 +25,16 @@ import os from 'os'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { stateDir, STATE_DIR_NAME, type ProjectKind } from '../state/project-kind'
+import {
+  stateDir,
+  STATE_DIR_NAME,
+  codeRoot,
+  codeDirName,
+  isPhysicallySplit,
+  CODE_DIR_DEFAULT,
+  type ProjectKind,
+} from '../state/project-kind'
 import { parseLogOutput, type HistoryEntry } from './history'
-import { syncGitignoreManagedBlock } from './gitignore-managed-block'
 
 const execFileAsync = promisify(execFile)
 
@@ -58,7 +67,9 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
  * live under an allowlisted dir (PRD: index.db · turns.jsonl · sessions.json ·
  * gate caches are gitignored on both sides; the meta git-dir ignores itself).
  * Written to the meta repo's `info/exclude` at init (gitignore syntax, matched
- * by basename anywhere in the tree).
+ * by basename anywhere in the tree). The physical code dir (`<code.dir>/`) is
+ * appended per-project at init when the project is split (PRD §v1.3 설계 결정 3)
+ * so the code tree never shows up in the meta `git status`.
  */
 export const DEFAULT_META_EXCLUDE: string[] = [
   'meta.git/',
@@ -67,6 +78,11 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   'sessions.json',
   '.cost-*.json',
   '.subagent-gate.json',
+  // Code worktree checkouts live under `<stateDir>/worktrees/` (meta area, outside
+  // the code tree — T-378 decision). They are code checkouts, never meta history,
+  // so the meta repo must not track them (matches at any depth; the only
+  // `worktrees/` dir under an allowlisted path is the state dir's).
+  'worktrees/',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
@@ -216,10 +232,16 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
     await setConfig('commit.gpgsign', 'false')
     await setConfig('core.hooksPath', path.join(gitDir, 'hooks'))
 
-    // Derived/gate artifacts excluded from tracking even under allowlisted dirs.
+    // Derived/gate artifacts excluded from tracking even under allowlisted dirs,
+    // plus the physical code dir (`<code.dir>/`) when split so the code tree stays
+    // out of the meta `git status` (PRD §v1.3 설계 결정 3).
     const excludePath = path.join(gitDir, 'info', 'exclude')
     fs.mkdirSync(path.dirname(excludePath), { recursive: true })
-    fs.writeFileSync(excludePath, DEFAULT_META_EXCLUDE.join('\n') + '\n')
+    const cd = codeDirName(projectDir)
+    const excludeLines = cd
+      ? [...DEFAULT_META_EXCLUDE, cd.replace(/\/+$/, '') + '/']
+      : DEFAULT_META_EXCLUDE
+    fs.writeFileSync(excludePath, excludeLines.join('\n') + '\n')
 
     return { initialized: true, gitDir, alreadyExisted }
   } catch (err) {
@@ -260,12 +282,12 @@ function existingAllowlistPaths(projectDir: string, allowlist: string[]): string
 }
 
 /**
- * Files to stage for one meta commit: allowlist-scoped adds, edits, deletions.
- *
- * Staging must be immune to the CODE repo's `.gitignore` (T-365): its managed
- * block ignores every meta path, and the meta repo shares the work-tree — so a
- * plain `git add -A -- <allowlist>` refuses the whole allowlist ("paths are
- * ignored by one of your .gitignore files", exit 1). Instead:
+ * LEGACY-layout staging (not yet physically split): the code repo shares the
+ * meta work-tree and its `.gitignore` still sits at the project root. A prdt
+ * meta allowlist that a legacy code `.gitignore` ignores (e.g. a pre-v1.3
+ * managed block, or a user rule) would make a plain `git add -A -- <allowlist>`
+ * refuse the whole allowlist ("paths are ignored by one of your .gitignore
+ * files", exit 1). So we stage ignore-immune:
  *  - tracked changes (`ls-files --modified --deleted`) — ignore rules never
  *    apply to tracked files;
  *  - new files (`ls-files --others --exclude-from=<meta info/exclude>`) —
@@ -273,6 +295,10 @@ function existingAllowlistPaths(projectDir: string, allowlist: string[]): string
  *    code repo's `.gitignore`.
  * The combined set is then staged with `add -f` (deleted paths stage the
  * removal). `-z` keeps non-ASCII paths unquoted.
+ *
+ * Once physically split (isPhysicallySplit) the code `.gitignore` no longer
+ * lives at the project root, so commitMeta uses a plain `git add -A` instead
+ * (PRD §v1.3 설계 결정 4) — see stageAllowlist.
  */
 async function collectStageableFiles(
   projectDir: string,
@@ -294,11 +320,32 @@ async function collectStageableFiles(
 }
 
 /**
+ * Stage the allowlist for one meta commit. Two strategies, keyed on layout:
+ *  - PHYSICALLY SPLIT (PRD §v1.3): the code `.gitignore` no longer sits at the
+ *    project root, so a plain `git add -A -- <allowlist>` correctly stages
+ *    adds/edits/deletions while honoring the meta repo's own info/exclude
+ *    (derived artifacts + `<code.dir>/`). No ignore-immune dance needed.
+ *  - LEGACY (shared work-tree): ignore-immune staging (collectStageableFiles +
+ *    `add -f`) so a code-side `.gitignore` cannot refuse the allowlist.
+ * Either way code files never enter the meta repo — the allowlist never names
+ * the code dir, and the two repos have distinct git-dirs.
+ */
+async function stageAllowlist(projectDir: string, paths: string[]): Promise<void> {
+  if (isPhysicallySplit(projectDir)) {
+    await metaGit(projectDir, ['add', '-A', '--', ...paths])
+    return
+  }
+  const files = await collectStageableFiles(projectDir, paths)
+  if (files.length > 0) {
+    await metaGit(projectDir, ['add', '-f', '--', ...files])
+  }
+}
+
+/**
  * Stage the allowlist and commit one logical meta change.
  *
- * - Stages ONLY the allowlist (via collectStageableFiles) — code files can
- *   never enter the meta repo, and the code repo's `.gitignore` managed block
- *   can never block meta staging.
+ * - Stages ONLY the allowlist (via stageAllowlist) — code files can never enter
+ *   the meta repo.
  * - Captures adds, edits, and deletions over existing allowlisted dirs.
  * - Empty staged diff → skip (`diff-empty`), matching the §10 autosave contract.
  * - `message` should be built via buildAutosaveMessage so history stays
@@ -314,26 +361,13 @@ export async function commitMeta(
 
   const allowlist = readMetaAllowlist(projectDir)
 
-  // T-365 (경계 결정 3): the meta turn beat doubles as the `.gitignore`
-  // managed-block resync beat — an allowlist edit in config.json propagates to
-  // the code repo's ignore block on the next logical meta change. Best-effort:
-  // a sync failure must never block the meta commit.
-  try {
-    syncGitignoreManagedBlock(projectDir, allowlist)
-  } catch {
-    /* best-effort */
-  }
-
   const paths = existingAllowlistPaths(projectDir, allowlist)
   if (paths.length === 0) {
     return { committed: false, skipReason: 'nothing-allowlisted' }
   }
 
   try {
-    const files = await collectStageableFiles(projectDir, paths)
-    if (files.length > 0) {
-      await metaGit(projectDir, ['add', '-f', '--', ...files])
-    }
+    await stageAllowlist(projectDir, paths)
   } catch (err) {
     return {
       committed: false,
@@ -546,10 +580,28 @@ export interface MetaBootstrapResult {
   error?: string
 }
 
-/** Code repo exists? (`.git` dir or file). Local copy — meta-migrate has its own. */
+/**
+ * Code repo exists at codeRoot? (`.git` dir or file). codeRoot resolves to the
+ * project root in legacy layout, or `<projectRoot>/<code.dir>` once split (PRD
+ * §v1.3). Local copy — meta-migrate has its own.
+ *
+ * NB (T-377 follow-up): on a FRESH second machine the meta backup — which
+ * carries `.prdt/config.json` and thus `code.dir` — has not been restored yet,
+ * so codeRoot falls back to projectRoot here. A split-layout bootstrap that
+ * runs from inside `code/` must re-anchor to the parent (projectRoot) before
+ * calling in; the python bootstrap owns that re-anchoring (PRD §v1.3 T-374 정합).
+ */
 function bootstrapCodeRepoExists(projectDir: string): boolean {
   try {
-    return fs.existsSync(path.join(projectDir, '.git'))
+    // Config-driven codeRoot — present in legacy layout or once the backup's
+    // config.json (carrying code.dir) has been restored.
+    if (fs.existsSync(path.join(codeRoot(projectDir), '.git'))) return true
+    // Chicken-egg (T-378): on a FRESH second machine `.prdt/config.json` is not
+    // restored yet, so codeDirName()→null and codeRoot() collapses to projectRoot,
+    // missing a code repo cloned into the conventional `<projectRoot>/code`. Accept
+    // that layout too so a split-clone bootstrap isn't mis-refused as `no-git`.
+    if (fs.existsSync(path.join(projectDir, CODE_DIR_DEFAULT, '.git'))) return true
+    return false
   } catch {
     return false
   }

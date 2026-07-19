@@ -44,6 +44,10 @@ emit_ctx() {
   exit 0
 }
 
+# Resolve the projectRoot (= meta root) by up-walking to `.prdt/po-state.json`.
+# v1.3 physical split (PRD §v1.3 설계 결정 4): the session cwd may be the CODE root
+# (`<projectRoot>/<code.dir>`) — this up-walk then lands on the parent projectRoot
+# where `.prdt/` lives. Legacy layout finds it at depth 0.
 find_proj() {
   local d="$1"
   while [ -n "$d" ] && [ "$d" != "/" ]; do
