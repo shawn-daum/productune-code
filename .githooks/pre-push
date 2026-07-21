@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# NTF branch policy: block direct push to main (production).
+# Promote via dev -> main PR (self-merge) on GitHub.
+# Emergency bypass: ALLOW_MAIN_PUSH=1 git push ...
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    if [ "${ALLOW_MAIN_PUSH:-}" = "1" ]; then
+      echo "pre-push: ALLOW_MAIN_PUSH set - permitting main push." >&2
+    else
+      echo "pre-push: BLOCKED direct push to main (NTF branch policy)." >&2
+      echo "  main = production. Promote via dev -> main PR (self-merge) on GitHub." >&2
+      echo "  Emergency bypass: ALLOW_MAIN_PUSH=1 git push ..." >&2
+      exit 1
+    fi
+  fi
+done
+exit 0
