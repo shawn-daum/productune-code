@@ -87,6 +87,15 @@ export const DEFAULT_META_EXCLUDE: string[] = [
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
 
+/**
+ * Timeout for meta git calls that hit the NETWORK (fetch / push / remote
+ * set-head). The default 10s is fine for the local index/commit ops that
+ * dominate this module, but a fetch of a large backup or a push over a slow
+ * line easily exceeds it — a fixed 10s there produces spurious SIGTERM
+ * failures (T-386 C7; peekRemoteStateKind already uses 30s asymmetrically).
+ */
+const NETWORK_TIMEOUT_MS = 120_000
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 /** Absolute path to the meta repo git-dir (`<stateDir>/meta.git`). */
@@ -127,16 +136,22 @@ function scrubbedGitEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-/** Run a git command scoped to the meta repo (git-dir + work-tree). */
+/**
+ * Run a git command scoped to the meta repo (git-dir + work-tree). Local ops
+ * use the default 10s timeout; network ops (fetch/push/set-head) MUST pass
+ * `{ timeout: NETWORK_TIMEOUT_MS }` so a slow line isn't killed mid-transfer
+ * (T-386 C7).
+ */
 async function metaGit(
   projectDir: string,
   args: string[],
+  opts: { timeout?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const gitDir = metaGitDir(projectDir)
   return execFileAsync(
     'git',
     ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: 10_000, env: scrubbedGitEnv() },
+    { cwd: projectDir, timeout: opts.timeout ?? 10_000, env: scrubbedGitEnv() },
   )
 }
 
@@ -184,6 +199,42 @@ export function writeMetaAllowlist(projectDir: string, allowlist: string[]): voi
   const tmp = fp + '.tmp'
   fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, fp)
+}
+
+// ── info/exclude propagation ──────────────────────────────────────────────────
+
+/**
+ * The desired meta `info/exclude` contents for this project: the derived/gate
+ * artifacts (DEFAULT_META_EXCLUDE) plus the physical code dir (`<code.dir>/`)
+ * when the project is split, so the code tree never surfaces in meta status.
+ */
+function desiredMetaExclude(projectDir: string): string {
+  const cd = codeDirName(projectDir)
+  const lines = cd ? [...DEFAULT_META_EXCLUDE, cd.replace(/\/+$/, '') + '/'] : DEFAULT_META_EXCLUDE
+  return lines.join('\n') + '\n'
+}
+
+/**
+ * Bring the meta repo's `info/exclude` up to the current desired set
+ * (idempotent — writes ONLY when the on-disk contents differ). This is the
+ * propagation path for EXISTING meta repos: `initMetaRepo` runs it at init, and
+ * `commitMeta` runs it before staging, so a repo created before a new exclude
+ * entry landed (e.g. `worktrees/` — T-386 C4) or before its `code.dir` was
+ * recorded (T-386 C3) self-heals on the next meta write instead of tracking a
+ * code checkout into meta history. The file is prdt-managed wholesale for the
+ * meta git-dir (a user's own exclude lines would be overwritten — acknowledged
+ * as a low-severity trade vs. the leak this prevents; see T-385 backlog note).
+ */
+function ensureMetaExclude(projectDir: string): void {
+  const excludePath = path.join(metaGitDir(projectDir), 'info', 'exclude')
+  const desired = desiredMetaExclude(projectDir)
+  try {
+    if (fs.readFileSync(excludePath, 'utf-8') === desired) return
+  } catch {
+    /* missing / unreadable → (re)write below */
+  }
+  fs.mkdirSync(path.dirname(excludePath), { recursive: true })
+  fs.writeFileSync(excludePath, desired)
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -234,14 +285,9 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
 
     // Derived/gate artifacts excluded from tracking even under allowlisted dirs,
     // plus the physical code dir (`<code.dir>/`) when split so the code tree stays
-    // out of the meta `git status` (PRD §v1.3 설계 결정 3).
-    const excludePath = path.join(gitDir, 'info', 'exclude')
-    fs.mkdirSync(path.dirname(excludePath), { recursive: true })
-    const cd = codeDirName(projectDir)
-    const excludeLines = cd
-      ? [...DEFAULT_META_EXCLUDE, cd.replace(/\/+$/, '') + '/']
-      : DEFAULT_META_EXCLUDE
-    fs.writeFileSync(excludePath, excludeLines.join('\n') + '\n')
+    // out of the meta `git status` (PRD §v1.3 설계 결정 3). Idempotent (re-run
+    // refreshes an existing repo — the T-386 C3/C4 propagation path).
+    ensureMetaExclude(projectDir)
 
     return { initialized: true, gitDir, alreadyExisted }
   } catch (err) {
@@ -358,6 +404,12 @@ export async function commitMeta(
   if (!metaRepoExists(projectDir)) {
     return { committed: false, skipReason: 'meta-repo-missing' }
   }
+
+  // Self-heal info/exclude before staging so an EXISTING meta repo (created
+  // before a new exclude entry or before its code.dir was recorded) never
+  // stages a code worktree checkout into meta history (T-386 C3/C4). Cheap:
+  // rewrites only when the on-disk set differs.
+  ensureMetaExclude(projectDir)
 
   const allowlist = readMetaAllowlist(projectDir)
 
@@ -539,7 +591,7 @@ export async function pushMetaRemote(
     // Push the current branch, setting upstream so a later `prdt meta log`/pull
     // knows its remote. No --force, no --mirror: a non-ff push is rejected by
     // git and returned as an error rather than overwriting the backup.
-    await metaGit(projectDir, ['push', '--set-upstream', name, branch])
+    await metaGit(projectDir, ['push', '--set-upstream', name, branch], { timeout: NETWORK_TIMEOUT_MS })
     return { ok: true, branch }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -744,7 +796,7 @@ export async function bootstrapMetaRepo(
     return { ...base, error: `remote add failed: ${add.error}` }
   }
   try {
-    await metaGit(projectDir, ['fetch', name])
+    await metaGit(projectDir, ['fetch', name], { timeout: NETWORK_TIMEOUT_MS })
   } catch (err) {
     rollback()
     return {
@@ -757,7 +809,7 @@ export async function bootstrapMetaRepo(
   // ③ resolve the remote's default branch and adopt it locally.
   let branch: string | undefined
   try {
-    await metaGit(projectDir, ['remote', 'set-head', name, '-a'])
+    await metaGit(projectDir, ['remote', 'set-head', name, '-a'], { timeout: NETWORK_TIMEOUT_MS })
     const sym = (await metaGit(projectDir, ['symbolic-ref', `refs/remotes/${name}/HEAD`])).stdout.trim()
     const m = new RegExp(`^refs/remotes/${name}/(.+)$`).exec(sym)
     if (m) branch = m[1]
@@ -813,6 +865,12 @@ export async function bootstrapMetaRepo(
       // overwritten. `checkout -- <path>` recreates each from the index.
       await metaGit(projectDir, ['checkout', '--', ...deleted])
     }
+
+    // T-386 C3: init ① ran BEFORE the backup was restored, so `.prdt/config.json`
+    // (and thus `code.dir`) did not yet exist — info/exclude was written without
+    // the `<code.dir>/` line and machine B's meta status would show the code tree.
+    // Now that the config is on disk, refresh the exclude (idempotent init re-run).
+    await initMetaRepo(projectDir)
 
     const metaTracked = splitZ((await metaGit(projectDir, ['ls-files', '-z'])).stdout)
 
