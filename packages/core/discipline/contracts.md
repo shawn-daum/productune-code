@@ -45,12 +45,14 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 ## Definition of Done
 - Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. Done-claims without runnable proof violate doctrine #4.
 
-## Git — trunk + Conventional Commits
-- Default: every commit lands on main. Version boundary = `git tag v<N>` + wiki `retro--v<N>.md` — no version branches, no PR ceremony.
+## Git — canonical branch model (T-381) + Conventional Commits
+- Solo model, one canonical — no version branches, no dual rules. `dev` is the residence: daily work (code + docs) commits here. `main` is the deploy branch, reached ONLY by promoting `dev → main` (a plain merge — meta-split repos carry no `docs/` in the code tree, so nothing is filtered). Version boundary = an **immutable `v<N>` tag** fixed at close (never a long-lived `v1`/`v1.1` branch) + wiki `retro--v<N>.md`.
+- **Hard rules**: `main` direct push is blocked (pre-push hook); `dev` residence. **Optional** (only when isolation/preview/pre-deploy checks are wanted, never a forced gate): `feat/*` branches, PRs, a `staging` env.
+- **Remote default branch = `main`, always** (GitHub repo setting). Vercel auto-binds the default branch to production — if `dev` becomes the default, every residence push deploys to prod. Set it at repo creation (`gh repo edit --default-branch main`); with `main` default, `dev` pushes land as previews, which is the intended mapping.
 - Message: `feat:|fix:|refactor:|docs:|chore:|test: <what>`, plus `(T-NNN)` when a ticket applies. Refactor commits stay separate from behavior commits (Tidy First).
 - Stage explicitly — never `git add .` / `git add -A`.
-- Isolation (branch + worktree, Agent-native option) only on three triggers: ① parallel devs on an overlapping area ② experimental / throwaway refactor ③ a second PO instance on the same project. Adopt = merge then delete branch; abandon = drop whole.
-- No push / PR / force-push / destructive git without explicit user instruction.
+- Isolation (branch + worktree, Agent-native option) only on three triggers: ① parallel devs on an overlapping area ② experimental / throwaway refactor ③ a second PO instance on the same project. Cut from `dev`; adopt = merge back then delete branch; abandon = drop whole.
+- No push / promote-to-main / PR / force-push / tag push / destructive git without explicit user instruction. Promotion and `v*` tagging create local refs only; they ship on the confirm-gated deploy.
 
 ## Language
 - User-facing prose (PRD, ticket `## Request`, artifacts, chat) → `[ctx].user_lang`.
