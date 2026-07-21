@@ -257,3 +257,29 @@ test('run: refusals return without touching the repo', async () => {
   expect(git(['rev-parse', 'HEAD'])).toBe(head)
   expect(metaRepoExists(projectDir)).toBe(false)
 })
+
+// ── T-385 C1: logical split must ignore meta in the CODE repo ──────────────────
+
+test('C1: after logical split the code repo IGNORES meta — status clean, add -A never re-adds', async () => {
+  const res = await runMetaMigration(projectDir)
+  expect(res.ok).toBe(true)
+
+  // ① the code repo status is CLEAN — the (now-untracked) meta paths are ignored,
+  // not dangling untracked (else worktree.ts isBaseDirty / promote.ts isDirty
+  // would perma-refuse).
+  expect(git(['status', '--porcelain'])).toBe('')
+
+  // ② a `git add -A` must NOT re-stage any meta path (the leak: split undone,
+  // meta pushed to origin on the next push).
+  git(['add', '-A'])
+  const staged = git(['diff', '--cached', '--name-only'])
+  expect(staged).not.toMatch(/(^|\n)\.prdt\//)
+  expect(staged).not.toMatch(/(^|\n)docs\//)
+
+  // the ignore lives in the LOCAL .git/info/exclude, never the committed
+  // .gitignore (the user's own line is left byte-for-byte untouched).
+  expect(fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')).toBe('node_modules/\n')
+  const exclude = fs.readFileSync(path.join(projectDir, '.git', 'info', 'exclude'), 'utf-8')
+  expect(exclude).toContain('/.prdt')
+  expect(exclude).toContain('/docs/prd')
+})
