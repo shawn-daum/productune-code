@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { readGitRules } from './rules'
+import { readGitRules, baseBranch } from './rules'
 import { buildBranchName, resolveBranchConflict } from './branchNamer'
 import { stateDir, STATE_DIR_NAME, detectProjectKind, codeRoot, isPhysicallySplit } from '../state/project-kind'
 
@@ -49,6 +49,17 @@ async function isBaseDirty(projectDir: string): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: codeRoot(projectDir) })
     return stdout.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
+async function localBranchExists(projectDir: string, branch: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
+      cwd: codeRoot(projectDir),
+    })
+    return true
   } catch {
     return false
   }
@@ -117,7 +128,15 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
   }
 
   const rules = readGitRules(projectDir).merged
-  const baseBranch = rules.protectedBranches[0] ?? 'main'
+  // T-381: isolate feat/* from the residence (dev) so it carries the latest daily
+  // work; falls back to main when residence is off. (Was protectedBranches[0],
+  // which is now always 'main' — decoupled from the base-branch choice.) When the
+  // preferred residence branch doesn't exist yet (dev not established), fall back
+  // to main so an isolation worktree still works on a fresh repo.
+  const preferredBase = baseBranch(rules)
+  const base = (await localBranchExists(projectDir, preferredBase))
+    ? preferredBase
+    : 'main'
 
   // OQ-T020-2: base dirty → return error so renderer can show modal
   if (await isBaseDirty(projectDir)) {
@@ -125,7 +144,7 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
   }
 
   // OQ-T020-4: pre-emptive fetch
-  await fetchBase(projectDir, baseBranch)
+  await fetchBase(projectDir, base)
 
   const baseName = buildBranchName({
     ticketId,
@@ -144,7 +163,7 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
   try {
     await execFileAsync(
       'git',
-      ['worktree', 'add', '-b', branchName, wtPath, baseBranch],
+      ['worktree', 'add', '-b', branchName, wtPath, base],
       { cwd: codeRoot(projectDir) },
     )
   } catch (e: any) {

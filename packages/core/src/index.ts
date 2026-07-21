@@ -40,6 +40,7 @@ export {
   saveRules,
   getDefault,
   getProtectedBranches,
+  baseBranch,
   readGitRules,
   writeGitRules,
   resetGitRules,
@@ -66,6 +67,26 @@ export {
   installPrePushHook,
   isPrePushHookInstalled,
 } from './git-workflow/hooks'
+
+export {
+  ensureDevBranch,
+  promoteDevToMain,
+  tagVersion,
+  versionToTag,
+  isOnResidence,
+  DEV_BRANCH,
+  MAIN_BRANCH,
+} from './git-workflow/promote'
+export type {
+  EnsureDevResult,
+  EnsureDevReason,
+  PromoteResult,
+  PromoteReason,
+  PromoteOptions,
+  TagResult,
+  TagReason,
+  TagVersionOptions,
+} from './git-workflow/promote'
 
 export {
   triggerAutosave,
