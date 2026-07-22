@@ -1354,14 +1354,97 @@ def page_title(path, fallback):
     return fallback
 
 
+# ── CLAUDE.md 오염 제거 (T-396) ────────────────────────────────────────────────
+# prdt 프로젝트의 PO 세션은 Claude Code라 루트/상위 CLAUDE.md를 walk-up으로 읽어
+# discipline(identity/behavior)과 섞인다("더 강한 단언"은 CLAUDE.md와 그냥
+# concatenate돼 무의미 — 공식 문서 확인). 유일한 해결은 물리 이관: 루트 CLAUDE.md를
+# wiki(살아있는 사실, 기본) 또는 archive(죽은 내용)로 옮기고 루트에서 제거한다.
+# 이관본 title은 "claude.md"로 쓰지 않고 이관물임을 드러낸다(shawn). 전역
+# ~/.claude/CLAUDE.md는 사용자 개인 파일 → 건드리지 않는다.
+CLAUDE_MIGRATED_NAME = "fact--migrated-from-claude-md"
+CLAUDE_MIGRATED_TITLE = "CLAUDE.md에서 이관된 프로젝트 노트"
+
+
+def migrate_claude_md(root, dry, assume_yes, to_archive, version):
+    """루트 CLAUDE.md를 wiki(기본) 또는 archive로 이관하고 루트에서 제거한다.
+    confirm-gated: dry-run도 --yes도 아니면 tty에서 확인을 받고, 비대화형이면
+    이동하지 않는다(silent 이동 금지). 반환: 결과 dict (없으면 None)."""
+    root = Path(root)
+    src = root / "CLAUDE.md"
+    if not src.is_file():
+        return None
+    content = src.read_text(encoding="utf-8")
+    dest_kind = "archive" if to_archive else "wiki"
+    dest_rel = ("docs/archive/migrated-from-claude-md.md" if dest_kind == "archive"
+                else f"docs/wiki/{CLAUDE_MIGRATED_NAME}.md")
+    print(f"  · CLAUDE.md 이관 계획: CLAUDE.md → {dest_rel} ({dest_kind}), 원본은 루트에서 제거")
+    if dry:
+        return {"src": "CLAUDE.md", "dest": dest_rel, "moved": False, "dry": True}
+
+    # confirm gate — invasive move는 무조건 확인 (Acceptance: silent 이동 금지)
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            print("  · [보류] 비대화형 세션 — CLAUDE.md 이동은 확인이 필요합니다. "
+                  "`prdt migrate --yes`로 실행하세요.")
+            return {"src": "CLAUDE.md", "dest": dest_rel, "moved": False, "needs_confirm": True}
+        ans = input(f"    CLAUDE.md를 {dest_rel}로 옮기고 루트에서 지울까요? [y/N]: ").strip().lower()
+        if ans not in ("y", "yes"):
+            print("  · [취소] CLAUDE.md를 그대로 둡니다.")
+            return {"src": "CLAUDE.md", "dest": dest_rel, "moved": False, "declined": True}
+
+    header = (f"> 이 문서는 프로젝트 루트 `CLAUDE.md`에서 이관되었습니다 "
+              f"(prdt migrate · {now_iso()[:10]} · T-396).\n"
+              f"> 원본은 PO 세션(Claude Code)의 CLAUDE.md walk-up 오염을 없애려 "
+              f"루트에서 제거되었습니다.\n\n")
+    body = header + content
+
+    if dest_kind == "wiki":
+        name = CLAUDE_MIGRATED_NAME
+        if (root / "docs" / "wiki" / f"{name}.md").exists():
+            name = f"{CLAUDE_MIGRATED_NAME}-{now_iso()[:10]}"
+        write_wiki_page(root, name, "fact", CLAUDE_MIGRATED_TITLE, body, version, dry=False)
+        dest_rel = f"docs/wiki/{name}.md"
+    else:
+        adir = root / "docs" / "archive"
+        adir.mkdir(parents=True, exist_ok=True)
+        dst = adir / "migrated-from-claude-md.md"
+        if dst.exists():
+            dst = adir / f"migrated-from-claude-md-{now_iso()[:10]}.md"
+        fm = {"title": CLAUDE_MIGRATED_TITLE, "status": "archived",
+              "migrated_from": "CLAUDE.md"}
+        dst.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+        dest_rel = str(dst.relative_to(root))
+
+    src.unlink()
+    return {"src": "CLAUDE.md", "dest": dest_rel, "moved": True}
+
+
 def cmd_migrate(args):
     root = Path(args.path or os.getcwd()).resolve()
     dry = args.dry_run
+    assume_yes = getattr(args, "yes", False)
+    to_archive = getattr(args, "archive", False)
     full_state = root / ".productune" / "po-state.json"
     lite_state = root / ".productune-lite" / "po-state.json"
     kind = "full" if full_state.is_file() else "lite" if lite_state.is_file() else None
+    claude = root / "CLAUDE.md"
+
+    # 레거시 full/lite 상태가 없으면 → CLAUDE.md-only 이관 경로 (이미 prdt인 프로젝트의
+    # 오염 제거; hanta 등). 이관할 것도 없으면 종료.
     if not kind:
-        sys.exit("prdt migrate: no .productune/ or .productune-lite/ state here — nothing to migrate")
+        if not claude.is_file():
+            sys.exit("prdt migrate: 이관할 게 없어요 — 레거시 full/lite 상태도, 루트 CLAUDE.md도 없습니다.")
+        st = read_json(root / ".prdt" / "po-state.json") or {}
+        version = st.get("version") or ""
+        print(("[dry-run] " if dry else "") + "migrate: 루트 CLAUDE.md 이관 (PO walk-up 오염 제거)")
+        res = migrate_claude_md(root, dry, assume_yes, to_archive, version)
+        if res and res.get("moved"):
+            con = open_db(root, rebuild=True)
+            reindex_wiki(root, con)
+            print(f"  · 완료 — {res['dest']} 생성 · 루트 CLAUDE.md 제거. "
+                  "PO 세션이 더는 이 파일을 walk-up으로 읽지 않습니다.")
+        return
+
     if (root / ".prdt" / "po-state.json").exists() and not args.force:
         sys.exit("prdt migrate: .prdt/ already exists — pass --force to overwrite its state")
     old = read_json(full_state if kind == "full" else lite_state) or {}
@@ -1434,6 +1517,14 @@ def cmd_migrate(args):
                 if write_wiki_page(root, name, t, f"memory.md — {sec}", body, version, dry):
                     n_pages += 1
     report.append(f"wiki: {n_pages}페이지 생성 (원본 문서는 legacy로 잔존 — 큐레이션은 다음 Retro)")
+
+    # 3.5 루트 CLAUDE.md 오염 제거 (T-396) — full/lite 이관 시에도 같이 정리
+    if claude.is_file():
+        cres = migrate_claude_md(root, dry, assume_yes, to_archive, version)
+        if cres and cres.get("moved"):
+            report.append(f"CLAUDE.md → {cres['dest']} 이관 후 루트 제거 (PO walk-up 오염 제거)")
+        elif cres and (cres.get("declined") or cres.get("needs_confirm")):
+            report.append("CLAUDE.md: 이관 보류 (확인 필요/취소) — 루트에 잔존")
 
     # 4. old marker 제거 (구 hook 비발동) + 5. .prdt 생성
     marker = root / (".productune" if kind == "full" else ".productune-lite")
@@ -1517,10 +1608,12 @@ def main():
     p.set_defaults(fn=cmd_update)
     p = sub.add_parser("menus", help="regenerate playbook _index.md menus from frontmatter")
     p.set_defaults(fn=cmd_menus)
-    p = sub.add_parser("migrate", help="opt-in migration from full/lite (§12.5): state·tickets·wiki")
+    p = sub.add_parser("migrate", help="opt-in migration from full/lite (§12.5): state·tickets·wiki · 루트 CLAUDE.md 이관(T-396)")
     p.add_argument("path", nargs="?", help="project root (default: cwd)")
     p.add_argument("--dry-run", action="store_true", help="report the plan, write nothing")
     p.add_argument("--force", action="store_true", help="overwrite existing .prdt state")
+    p.add_argument("--yes", action="store_true", help="확인 프롬프트 없이 CLAUDE.md 이동 실행 (비대화형)")
+    p.add_argument("--archive", action="store_true", help="CLAUDE.md를 wiki 대신 docs/archive로 이관 (죽은 내용)")
     p.set_defaults(fn=cmd_migrate)
     args = ap.parse_args()
     maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
