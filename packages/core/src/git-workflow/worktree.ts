@@ -4,6 +4,7 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readGitRules, baseBranch } from './rules'
 import { buildBranchName, resolveBranchConflict } from './branchNamer'
+import { branchExists } from './git-helpers'
 import { stateDir, STATE_DIR_NAME, detectProjectKind, codeRoot, isPhysicallySplit } from '../state/project-kind'
 
 const execFileAsync = promisify(execFile)
@@ -49,17 +50,6 @@ async function isBaseDirty(projectDir: string): Promise<boolean> {
   try {
     const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: codeRoot(projectDir) })
     return stdout.trim().length > 0
-  } catch {
-    return false
-  }
-}
-
-async function localBranchExists(projectDir: string, branch: string): Promise<boolean> {
-  try {
-    await execFileAsync('git', ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
-      cwd: codeRoot(projectDir),
-    })
-    return true
   } catch {
     return false
   }
@@ -134,7 +124,7 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
   // preferred residence branch doesn't exist yet (dev not established), fall back
   // to main so an isolation worktree still works on a fresh repo.
   const preferredBase = baseBranch(rules)
-  const base = (await localBranchExists(projectDir, preferredBase))
+  const base = (await branchExists(projectDir, preferredBase))
     ? preferredBase
     : 'main'
 

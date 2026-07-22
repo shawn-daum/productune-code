@@ -102,3 +102,18 @@ test('empty / non-string code.dir is ignored (treated as legacy)', () => {
   expect(codeDirName(withConfig('.prdt', { code: { dir: '' } }))).toBeNull()
   expect(codeDirName(withConfig('.prdt', { code: { dir: 42 } }))).toBeNull()
 })
+
+test('project-escaping code.dir (`..` / absolute) is rejected → legacy fallback (T-387)', () => {
+  // A polluted config must never anchor code ops outside projectDir.
+  const up = withConfig('.prdt', { code: { dir: '../evil' } })
+  expect(codeDirName(up)).toBeNull()
+  expect(codeRoot(up)).toBe(up)
+  expect(isPhysicallySplit(up)).toBe(false)
+
+  expect(codeDirName(withConfig('.prdt', { code: { dir: '..' } }))).toBeNull()
+  expect(codeDirName(withConfig('.prdt', { code: { dir: 'a/../../b' } }))).toBeNull()
+  expect(codeDirName(withConfig('.prdt', { code: { dir: '/abs/path' } }))).toBeNull()
+
+  // A legitimate nested code dir (no escape) is still honored.
+  expect(codeDirName(withConfig('.prdt', { code: { dir: 'packages/app' } }))).toBe('packages/app')
+})
