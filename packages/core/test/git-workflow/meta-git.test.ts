@@ -564,3 +564,59 @@ test('global gpgsign/hooksPath neither break nor hijack meta commits', async () 
   expect(res.committed).toBe(true) // gpgsign=true did not silently break the commit
   expect(markerRan).toBe(false) // user's global hook did NOT run on the meta commit
 })
+
+// ── T-386 C3/C4: info/exclude propagation ─────────────────────────────────────
+
+test('C4: commitMeta self-heals a stale info/exclude and never tracks a worktree checkout', async () => {
+  await initMetaRepo(projectDir)
+  // Simulate a meta repo created BEFORE `worktrees/` joined DEFAULT_META_EXCLUDE.
+  const excludePath = path.join(metaGitDir(projectDir), 'info', 'exclude')
+  fs.writeFileSync(excludePath, 'meta.git/\nindex.db\n') // stale — no worktrees/
+  // A code worktree checkout lands under <stateDir>/worktrees/ (the meta area).
+  fs.mkdirSync(path.join(projectDir, '.prdt', 'worktrees', 'T-1'), { recursive: true })
+  fs.writeFileSync(path.join(projectDir, '.prdt', 'worktrees', 'T-1', 'code.ts'), 'export const w = 1\n')
+
+  const res = await commitMeta(projectDir, 'T-386 [manual: →] snapshot')
+  expect(res.committed).toBe(true)
+
+  // the exclude was refreshed to the current desired set — the worktrees entry is
+  // now anchored to the state dir (`.prdt/worktrees/`), not a bare basename (T-387
+  // item 3) …
+  expect(fs.readFileSync(excludePath, 'utf-8').split('\n')).toContain('.prdt/worktrees/')
+  // … so the worktree checkout never entered meta history.
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked.some((f) => f.includes('worktrees/'))).toBe(false)
+})
+
+test('C3: bootstrap restores config THEN refreshes info/exclude with <code.dir>/', async () => {
+  const backup = makeBareRemote()
+  const A = projectDir
+  // A is a physically-split project — its config.json (a meta file, so it rides
+  // in the backup) carries code.dir. A's own on-disk layout is irrelevant here;
+  // we only exercise the restore-then-exclude ordering on machine B.
+  fs.writeFileSync(
+    path.join(A, '.prdt', 'config.json'),
+    JSON.stringify({ slug: 'proj', code: { dir: 'code' } }),
+  )
+  await initMetaRepo(A)
+  await commitMeta(A, 'T-386 [manual: →] snapshot')
+  await addMetaRemote(A, 'backup', backup)
+  await pushMetaRemote(A, 'backup')
+
+  // Machine B: fresh split clone — code cloned into code/, projectRoot has no .prdt
+  // and the config (with code.dir) is not yet on disk when bootstrap's init ① runs.
+  const B = fs.mkdtempSync(path.join(os.tmpdir(), 'core-meta-B-c3-'))
+  bareRepos.push(B)
+  execFileSync('git', ['init', '-q', path.join(B, 'code')])
+
+  const boot = await bootstrapMetaRepo(B, backup, 'backup')
+  expect(boot.ok).toBe(true)
+  // config.json was restored, carrying code.dir …
+  expect(fs.existsSync(path.join(B, '.prdt', 'config.json'))).toBe(true)
+  // … and info/exclude was refreshed AFTER the restore so `code/` is present
+  // (before the C3 fix init ① ran with no config → the line was missing forever).
+  const exclude = fs.readFileSync(path.join(metaGitDir(B), 'info', 'exclude'), 'utf-8')
+  expect(exclude.split('\n')).toContain('code/')
+
+  fs.rmSync(B, { recursive: true, force: true })
+})

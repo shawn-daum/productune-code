@@ -1,9 +1,11 @@
 # Style library — index  (vendored from VoltAgent/awesome-design-md, MIT)  [T-PATCH-120]
 
-74 brand design-system anchors (Google Stitch spec: mood prose + color/typo tokens +
-component styles + guardrails). Each file ≈30KB — read THIS index only, then open just
-the anchor files you pick. Source: https://github.com/VoltAgent/awesome-design-md
-(MIT — see ./LICENSE). Re-vendor manually to update.
+75 entries: 74 vendored brand design-system anchors (Google Stitch spec: mood prose +
+color/typo tokens + component styles + guardrails) + 1 production-fidelity anchor
+(Daum Anchor DS, T-392 — see its own category below, NOT part of the vendored 74). Each
+file ≈30KB — read THIS index only, then open just the anchor files you pick. Vendored
+source: https://github.com/VoltAgent/awesome-design-md (MIT — see ./LICENSE). Re-vendor
+manually to update.
 
 Each entry ends with 4 mood labels: `light|dark · minimal|rich · playful|serious ·
 editorial|chrome`. Usage (S1 pipeline, `phase2-3-ticket-sequence.md`, T-PATCH-122/260):
@@ -11,6 +13,11 @@ mood brief first → shortlist Fit 4–6 → pick A·B = 2 Fit (the 3rd option, 
 this index — it is web-search-grounded divergence, T-PATCH-260) where ANY two of the 3
 differ on ≥2 labels (categories below are a soft preference only) — anchors are mood/token
 starting points to ADAPT to the product, never brand clones.
+
+**Exception — Production Design Systems category below**: those entries are real,
+currently-shipping design systems (not reverse-engineered brand mood), and are meant as a
+**fidelity target to reproduce**, not a mood/token starting point to adapt. See the entry's
+own "Anchor Type" section before treating it like the 74 above.
 
 ## AI & LLM Platforms
 
@@ -115,3 +122,7 @@ starting points to ADAPT to the product, never brand clones.
 
 - **Dell (1996)** (`dell-1996.md`) — Catalog-era enterprise web. Literal black page frame, flat color-block "ribbon cards", chunky Helvetica-Black titles over Times Roman body, and hand-cut GIF stickers (NEW! bursts, award seals, beveled product photos). · `light·rich·playful·editorial`
 - **Nintendo.com (2001)** (`nintendo-2001.md`) — Y2K "console chrome" web. Brushed-periwinkle beveled metal panels, a halftone-dotted carbon nav glowing amber, outlined Arial-Black box-art wordmarks over circuit-board hero fields, and a pixel Mario welcome bubble. · `light·rich·playful·chrome`
+
+## Production Design Systems · Fidelity Anchors (NOT mood/adapt — reproduce target)
+
+- **Daum Anchor DS** (`daum-anchor.md`) — axz's live design system for the Daum content/search/news/community platform, distilled from the real DESIGN.md + Button.md + tokens.json spec (not a reverse-engineered brand page). Neutral Gray/Black/White base, Blue reserved for Primary actions, Red reserved for breaking/live Accent, five domain-identity colors (Sports/Entertainment/Cafe Story/Interests/Community), Pretendard type, required Light/Dark parity. Only Button is fully token-bound in v0.1 — Layout/Grid/Breakpoint/semantic Spacing·Radius/most component bindings are open Known Gaps, flagged in-entry. Exposed as a ds-3up Fit candidate for daum-family projects (shawn, 2026-07-22, option E) · `light·minimal·serious·chrome`

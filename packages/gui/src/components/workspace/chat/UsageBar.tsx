@@ -31,6 +31,8 @@ import { useTranslation } from 'react-i18next'
 import { Clock, CalendarDays, DollarSign } from 'lucide-react'
 import { useWorkspace } from '../../../store/workspace'
 import { isPrdtPoState } from '../../../lib/phase-mapping'
+import { fmtCost } from '../../../lib/costFormat'
+import { useCostWatch } from '../../../hooks/useCostWatch'
 import EstimatedBadge from '../../shared/EstimatedBadge'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -53,14 +55,9 @@ interface CostAggregateLite {
   hasEstimated: boolean
 }
 
-function fmtCost(n: number): string {
-  const safe = Number.isFinite(n) ? n : 0
-  return `$${safe.toFixed(4)}`
-}
-
 /**
  * Fetch + watch a project's total cost from turns.jsonl (prdt branch only).
- * Mirrors CostArchivePanel's fetchAgg/costWatch/onCostUpdate pattern exactly,
+ * Mirrors CostArchivePanel's fetch/watch pattern (shared via useCostWatch),
  * scoped to the 'version' dimension since only the grand total is displayed.
  */
 function usePrdtCost(projectDir: string | undefined, active: boolean): CostAggregateLite | null {
@@ -80,17 +77,7 @@ function usePrdtCost(projectDir: string | undefined, active: boolean): CostAggre
     fetchCost()
   }, [active, fetchCost])
 
-  useEffect(() => {
-    if (!active) return
-    const api = (window as any).api
-    if (!api || !projectDir) return
-    api.costWatch?.(projectDir)
-    if (!api.onCostUpdate) return
-    const unsub = api.onCostUpdate((payload: { projectDir: string }) => {
-      if (payload?.projectDir === projectDir) fetchCost()
-    })
-    return unsub
-  }, [active, projectDir, fetchCost])
+  useCostWatch(projectDir, fetchCost, active)
 
   return cost
 }

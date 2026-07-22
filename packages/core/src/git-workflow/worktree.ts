@@ -2,8 +2,9 @@ import fs from 'fs'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { readGitRules } from './rules'
+import { readGitRules, baseBranch } from './rules'
 import { buildBranchName, resolveBranchConflict } from './branchNamer'
+import { branchExists } from './git-helpers'
 import { stateDir, STATE_DIR_NAME, detectProjectKind, codeRoot, isPhysicallySplit } from '../state/project-kind'
 
 const execFileAsync = promisify(execFile)
@@ -18,7 +19,8 @@ const execFileAsync = promisify(execFile)
 // `<stateDir>/worktrees/<ticketId>` in BOTH layouts. In a split project this is
 // the meta area, OUTSIDE the code tree (`code/`), so a code checkout there can
 // never pollute `code/` nor surface in the code repo's `git status`; the meta repo
-// ignores it via `worktrees/` in DEFAULT_META_EXCLUDE. Moving the location into the
+// ignores it via the anchored `<stateDir>/worktrees/` line in its info/exclude
+// (desiredMetaExclude — T-387 item 3). Moving the location into the
 // code tree was rejected (it would re-introduce the exact code↔meta coupling v1.3
 // removes). ensureGitignoreEntry is therefore gated to LEGACY only: when split, the
 // worktree is outside `code/` so no code `.gitignore` entry is needed, and the file
@@ -117,7 +119,15 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
   }
 
   const rules = readGitRules(projectDir).merged
-  const baseBranch = rules.protectedBranches[0] ?? 'main'
+  // T-381: isolate feat/* from the residence (dev) so it carries the latest daily
+  // work; falls back to main when residence is off. (Was protectedBranches[0],
+  // which is now always 'main' — decoupled from the base-branch choice.) When the
+  // preferred residence branch doesn't exist yet (dev not established), fall back
+  // to main so an isolation worktree still works on a fresh repo.
+  const preferredBase = baseBranch(rules)
+  const base = (await branchExists(projectDir, preferredBase))
+    ? preferredBase
+    : 'main'
 
   // OQ-T020-2: base dirty → return error so renderer can show modal
   if (await isBaseDirty(projectDir)) {
@@ -125,7 +135,7 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
   }
 
   // OQ-T020-4: pre-emptive fetch
-  await fetchBase(projectDir, baseBranch)
+  await fetchBase(projectDir, base)
 
   const baseName = buildBranchName({
     ticketId,
@@ -144,7 +154,7 @@ export async function createWorktree(args: CreateWorktreeArgs): Promise<Worktree
   try {
     await execFileAsync(
       'git',
-      ['worktree', 'add', '-b', branchName, wtPath, baseBranch],
+      ['worktree', 'add', '-b', branchName, wtPath, base],
       { cwd: codeRoot(projectDir) },
     )
   } catch (e: any) {

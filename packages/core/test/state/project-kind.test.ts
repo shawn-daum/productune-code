@@ -1,8 +1,9 @@
 /**
  * project-kind.test.ts — detection contract for core's project-kind resolver
- * (T-284 QA-HIGH fix). Mirrors the case list in
- * packages/gui/electron/project-paths.test.ts so the two independent
- * implementations stay behaviorally identical.
+ * (T-284 QA-HIGH fix). Case list mirrors
+ * packages/gui/electron/project-paths.test.ts — which now re-exports this
+ * module (T-317 #1) rather than re-implementing it, but keeps its own case
+ * list as a regression guard on the re-export wiring itself.
  */
 
 import path from 'path'
@@ -100,4 +101,19 @@ test('corrupt config → legacy fallback, never throws', () => {
 test('empty / non-string code.dir is ignored (treated as legacy)', () => {
   expect(codeDirName(withConfig('.prdt', { code: { dir: '' } }))).toBeNull()
   expect(codeDirName(withConfig('.prdt', { code: { dir: 42 } }))).toBeNull()
+})
+
+test('project-escaping code.dir (`..` / absolute) is rejected → legacy fallback (T-387)', () => {
+  // A polluted config must never anchor code ops outside projectDir.
+  const up = withConfig('.prdt', { code: { dir: '../evil' } })
+  expect(codeDirName(up)).toBeNull()
+  expect(codeRoot(up)).toBe(up)
+  expect(isPhysicallySplit(up)).toBe(false)
+
+  expect(codeDirName(withConfig('.prdt', { code: { dir: '..' } }))).toBeNull()
+  expect(codeDirName(withConfig('.prdt', { code: { dir: 'a/../../b' } }))).toBeNull()
+  expect(codeDirName(withConfig('.prdt', { code: { dir: '/abs/path' } }))).toBeNull()
+
+  // A legitimate nested code dir (no escape) is still honored.
+  expect(codeDirName(withConfig('.prdt', { code: { dir: 'packages/app' } }))).toBe('packages/app')
 })

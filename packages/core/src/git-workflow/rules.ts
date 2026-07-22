@@ -4,11 +4,21 @@ import os from 'os'
 import { stateDir } from '../state/project-kind'
 
 export interface GitRules {
+  /**
+   * T-381 canonical: `dev` is the RESIDENCE branch (daily work commits here) and
+   * this is a hard rule, so it defaults ON. `dev` is fully pushable — it is NOT
+   * in `protectedBranches`. (Pre-T-381 this flag meant "dev is a blocked
+   * validation env"; that role is retired — see protectedBranches.)
+   */
   useDevBranch: boolean
   useStagingEnv: boolean
   featureBranchPrefix: string
   fixBranchPrefix: string
-  /** Derived field — branches that must not be overwritten. Computed from useDevBranch. */
+  /**
+   * Derived field — the branches the pre-push hook blocks from direct push.
+   * T-381 hard rule: `main` only. `dev` (residence) and `staging` (optional
+   * pre-deploy env) are pushable, so they never appear here.
+   */
   protectedBranches: string[]
   /**
    * Per-trigger autosave config (v0.5 B1 / T-017). Controls which ticket-md
@@ -16,6 +26,15 @@ export interface GitRules {
    */
   autosaveTriggers: AutosaveTriggers
 }
+
+/**
+ * The branches the pre-push hook blocks from direct push. T-381 hard rule:
+ * `main` only — `dev` (residence) and `staging` (optional pre-deploy env) are
+ * pushable. This is the single source of truth for the protected set, baked into
+ * DEFAULT_RULES, enforced by mergeWithDefaults, and returned by
+ * getProtectedBranches (the generated hook hard-codes the same `main`).
+ */
+export const PROTECTED_BRANCHES: readonly string[] = ['main']
 
 const DEFAULT_AUTOSAVE_TRIGGERS: AutosaveTriggers = {
   onStatusChange: true,
@@ -25,11 +44,13 @@ const DEFAULT_AUTOSAVE_TRIGGERS: AutosaveTriggers = {
 }
 
 const DEFAULT_RULES: GitRules = {
-  useDevBranch: false,
+  // T-381: dev residence is canonical (hard rule) → default ON.
+  useDevBranch: true,
   useStagingEnv: false,
   featureBranchPrefix: 'feature',
   fixBranchPrefix: 'fix',
-  protectedBranches: ['main'],
+  // Hard rule: main is the only direct-push-blocked branch.
+  protectedBranches: [...PROTECTED_BRANCHES],
   autosaveTriggers: { ...DEFAULT_AUTOSAVE_TRIGGERS },
 }
 
@@ -112,14 +133,25 @@ export function getDefault(): GitRules {
 }
 
 /**
- * Derive protected environment names from rules.
- * Not persisted — computed on demand.
+ * The branches the pre-push hook blocks from direct push.
+ *
+ * T-381 hard rule: `main` only. `dev` is the residence branch — daily work is
+ * pushed there, so it must NEVER be blocked (verified in T-381: main push → exit
+ * 1, dev push → exit 0). `staging`, when used, is an optional pre-deploy env and
+ * is likewise pushable. So this is `['main']` regardless of the other toggles.
  */
-export function getProtectedBranches(rules: GitRules): string[] {
-  if (rules.useDevBranch) {
-    return ['main', 'dev']
-  }
-  return ['main']
+export function getProtectedBranches(_rules: GitRules): string[] {
+  return [...PROTECTED_BRANCHES]
+}
+
+/**
+ * The base branch to cut an optional isolation (feat/*) worktree from.
+ *
+ * T-381: feat/* isolates from the RESIDENCE (`dev`) so it carries the latest
+ * daily work; without residence there is no dev, so it cuts from `main`.
+ */
+export function baseBranch(rules: GitRules): string {
+  return rules.useDevBranch ? 'dev' : 'main'
 }
 
 // ── Extended API aliases (T-P4-023/T-P4-024 compat) ──────────────────────────
@@ -209,7 +241,9 @@ function mergeWithDefaults(parsed: Partial<GitRules>): GitRules {
     fixBranchPrefix: typeof parsed.fixBranchPrefix === 'string' && parsed.fixBranchPrefix.trim()
       ? parsed.fixBranchPrefix.trim()
       : DEFAULT_RULES.fixBranchPrefix,
-    protectedBranches: useDevBranch ? ['main', 'dev'] : ['main'],
+    // T-381 hard rule: main is the only direct-push-blocked branch (dev is the
+    // pushable residence). Any stale ['main','dev'] in a saved file is corrected.
+    protectedBranches: [...PROTECTED_BRANCHES],
     autosaveTriggers: mergeAutosaveTriggers(parsed.autosaveTriggers),
   }
 }

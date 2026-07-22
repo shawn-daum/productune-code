@@ -109,7 +109,7 @@ async function makeLinkedWorktreeSplit(): Promise<{ root: string; common: string
 describe.skipIf(!GIT)('physical migration — plan', () => {
   test('logically-split normal repo → eligible, moving only code entries', async () => {
     const root = await makeNormalSplit()
-    const plan = planPhysicalMigration(root)
+    const plan = await planPhysicalMigration(root)
     expect(plan.status).toBe('eligible')
     expect(plan.gitShape).toBe('normal')
     expect(plan.codeDir).toBe('code')
@@ -130,13 +130,13 @@ describe.skipIf(!GIT)('physical migration — plan', () => {
     git(['config', 'user.name', 'c'], root)
     seedCodeFiles(root)
     fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
-    expect(planPhysicalMigration(root).status).toBe('meta-repo-missing')
+    expect((await planPhysicalMigration(root)).status).toBe('meta-repo-missing')
   })
 
-  test('no .git → no-git', () => {
+  test('no .git → no-git', async () => {
     const root = mkTmp('phys-nogit-')
     fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
-    expect(planPhysicalMigration(root).status).toBe('no-git')
+    expect((await planPhysicalMigration(root)).status).toBe('no-git')
   })
 
   test('unknown .git shape (submodule-like gitfile) → unknown-git-shape', async () => {
@@ -144,7 +144,7 @@ describe.skipIf(!GIT)('physical migration — plan', () => {
     fs.rmSync(path.join(root, '.git'), { recursive: true, force: true })
     // a gitfile pointing at a non-worktree gitdir = submodule/other → not handled
     fs.writeFileSync(path.join(root, '.git'), 'gitdir: /somewhere/.git/modules/x\n')
-    expect(planPhysicalMigration(root).status).toBe('unknown-git-shape')
+    expect((await planPhysicalMigration(root)).status).toBe('unknown-git-shape')
   })
 })
 
@@ -209,7 +209,7 @@ describe.skipIf(!GIT)('physical migration — run (normal .git)', () => {
     expect(second.noop).toBe(true)
     expect(second.movedCount).toBe(0)
     // plan agrees
-    expect(planPhysicalMigration(root).status).toBe('already-migrated')
+    expect((await planPhysicalMigration(root)).status).toBe('already-migrated')
   })
 
   test('interrupted move rolls back to the pre-run layout (no half-state)', async () => {
@@ -282,9 +282,42 @@ describe.skipIf(!GIT)('physical migration — rollback honesty (T-378 QA regress
     const cfg = JSON.parse(fs.readFileSync(path.join(root, '.prdt', 'config.json'), 'utf-8'))
     expect(cfg.code).toBeUndefined() // no code.dir recorded
 
-    const plan = planPhysicalMigration(root)
+    const plan = await planPhysicalMigration(root)
     expect(plan.status).toBe('stranded-suspected')
     expect(plan.warnings.join(' ')).toMatch(/rollback was incomplete/i)
+  })
+})
+
+// ── T-385 C2: code-tracked files under a metaTop dir would be stranded ─────────
+describe.skipIf(!GIT)('physical migration — C2 stranded code files under a meta dir', () => {
+  test('plan refuses when the code repo tracks a docs file outside the allowlist', async () => {
+    const root = await makeNormalSplit()
+    // The code repo additionally tracks a file under `docs/` (a metaTop dir that
+    // STAYS at projectRoot) that is NOT in the meta allowlist — relocating would
+    // strand it at the root and lose it on the next `git add -A`.
+    fs.mkdirSync(path.join(root, 'docs'), { recursive: true })
+    fs.writeFileSync(path.join(root, 'docs', 'legacy.md'), '# a code-owned doc\n')
+    // -f: the fixture's code .gitignore ignores docs/, but a real stranded file
+    // was tracked before that rule (git keeps tracking it) — force-add models it.
+    git(['add', '-f', 'docs/legacy.md'], root)
+    git(['commit', '-qm', 'code tracks a docs file'], root)
+
+    const plan = await planPhysicalMigration(root)
+    expect(plan.status).toBe('code-tracked-under-meta')
+    expect(plan.warnings.join('\n')).toContain('docs/legacy.md')
+
+    // run refuses and moves nothing.
+    const res = await runPhysicalMigration(root)
+    expect(res.ok).toBe(false)
+    expect(res.refusal).toBe('code-tracked-under-meta')
+    expect(fs.existsSync(path.join(root, 'code', '.git'))).toBe(false)
+    expect(fs.existsSync(path.join(root, '.git'))).toBe(true) // untouched at root
+  })
+
+  test('plan stays eligible when docs holds only meta files (none code-tracked)', async () => {
+    const root = await makeNormalSplit()
+    const plan = await planPhysicalMigration(root)
+    expect(plan.status).toBe('eligible')
   })
 })
 

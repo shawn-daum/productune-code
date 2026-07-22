@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
+import { sectionWrap, sectionTitle, description, successBanner, errorBanner } from './metaSectionStyles'
 
 interface MetaRemoteRow {
   name: string
@@ -121,26 +122,8 @@ export default function MetaBackupSection({ projectDir }: { projectDir: string }
   )
 }
 
-// ── Styles — mirrors GeneralSettings section look ─────────────────────────────
-
-const sectionWrap: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 8,
-}
-
-const sectionTitle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 700,
-  color: '#E0E0E0',
-  lineHeight: 1.4,
-}
-
-const description: React.CSSProperties = {
-  fontSize: 11,
-  color: '#707070',
-  lineHeight: 1.6,
-}
+// ── Styles — section chrome (sectionWrap/Title/description/banners) shared via
+//    metaSectionStyles (T-371 B2); the rest are backup-specific. ──────────────
 
 const remoteList: React.CSSProperties = {
   display: 'flex',
@@ -211,23 +194,4 @@ const addBtn: React.CSSProperties = {
   padding: '3px 10px',
   cursor: 'pointer',
   flexShrink: 0,
-}
-
-const successBanner: React.CSSProperties = {
-  fontSize: 11,
-  color: '#34D399',
-  background: '#0D2A1E',
-  border: '1px solid #164F35',
-  borderRadius: 4,
-  padding: '6px 10px',
-}
-
-const errorBanner: React.CSSProperties = {
-  fontSize: 11,
-  color: '#EF4444', // §2.8 --health-error
-
-  background: '#2A1010',
-  border: '1px solid #4A1A1A',
-  borderRadius: 4,
-  padding: '6px 10px',
 }
