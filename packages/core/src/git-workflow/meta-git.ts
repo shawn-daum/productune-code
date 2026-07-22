@@ -28,6 +28,7 @@ import { promisify } from 'util'
 import {
   stateDir,
   STATE_DIR_NAME,
+  detectProjectKind,
   codeRoot,
   codeDirName,
   isPhysicallySplit,
@@ -78,11 +79,6 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   'sessions.json',
   '.cost-*.json',
   '.subagent-gate.json',
-  // Code worktree checkouts live under `<stateDir>/worktrees/` (meta area, outside
-  // the code tree — T-378 decision). They are code checkouts, never meta history,
-  // so the meta repo must not track them (matches at any depth; the only
-  // `worktrees/` dir under an allowlisted path is the state dir's).
-  'worktrees/',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
@@ -232,8 +228,18 @@ export function writeMetaAllowlist(projectDir: string, allowlist: string[]): voi
  * when the project is split, so the code tree never surfaces in meta status.
  */
 function desiredMetaExclude(projectDir: string): string {
+  const lines = [...DEFAULT_META_EXCLUDE]
+  // Code worktree checkouts live under `<stateDir>/worktrees/` (meta area, outside
+  // the code tree — T-378 decision). They are code checkouts, never meta history,
+  // so the meta repo must not track them. Anchored to the state dir (e.g.
+  // `.prdt/worktrees/`) rather than a bare `worktrees/` basename so an incidental
+  // `worktrees/` dir elsewhere under the doc tree is never silently excluded
+  // (T-387 item 3). Mirrors worktree.ts's own residence string.
+  lines.push(STATE_DIR_NAME[detectProjectKind(projectDir)] + '/worktrees/')
+  // The physical code dir (`<code.dir>/`) when split, so the code tree stays out
+  // of meta status.
   const cd = codeDirName(projectDir)
-  const lines = cd ? [...DEFAULT_META_EXCLUDE, cd.replace(/\/+$/, '') + '/'] : DEFAULT_META_EXCLUDE
+  if (cd) lines.push(cd.replace(/\/+$/, '') + '/')
   return lines.join('\n') + '\n'
 }
 

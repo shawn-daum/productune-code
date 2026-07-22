@@ -579,8 +579,10 @@ test('C4: commitMeta self-heals a stale info/exclude and never tracks a worktree
   const res = await commitMeta(projectDir, 'T-386 [manual: →] snapshot')
   expect(res.committed).toBe(true)
 
-  // the exclude was refreshed to the current desired set …
-  expect(fs.readFileSync(excludePath, 'utf-8').split('\n')).toContain('worktrees/')
+  // the exclude was refreshed to the current desired set — the worktrees entry is
+  // now anchored to the state dir (`.prdt/worktrees/`), not a bare basename (T-387
+  // item 3) …
+  expect(fs.readFileSync(excludePath, 'utf-8').split('\n')).toContain('.prdt/worktrees/')
   // … so the worktree checkout never entered meta history.
   const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
   expect(tracked.some((f) => f.includes('worktrees/'))).toBe(false)
