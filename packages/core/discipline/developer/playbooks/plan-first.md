@@ -2,7 +2,7 @@
 name: plan-first
 persona: developer
 when: "cross-cutting or architectural change · risk_flags present · many files · genuinely open solution shape"
-model_floor: opus
+model_floor: fable
 effort: high
 ---
 # Plan first — think before touching code

@@ -15,7 +15,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) · `confidence`(0..1)
 - Conditional: `blocked` · `refused` · `needs_info` + `next_question`(≤200, exactly one question) · `unresolved[]` · `files_written[]` · `memory_notes[]` · `playbooks_run[]{name,why}` · `escalate_to{model,effort,playbooks,why}`
 - QA live/smoke extras (conditional): `browser_url` · `verify_url` · `verify_description` · `auth_required{service,instruction,type}`
-- Low `confidence`, non-empty `unresolved`, `blocked` ARE the quality signals — the PO re-dispatches (at `escalate_to`'s tier when given) or surfaces. Under-powered grinding instead of `escalate_to` is a violation.
+- Low `confidence`, non-empty `unresolved`, `blocked` ARE the quality signals — the PO re-dispatches (at `escalate_to`'s tier when given — except `model:"fable"` from a fable-excluded playbook, which the PO overrides to opus at the requested effort; the exclusion list lives in PO habit, T-391) or surfaces. Under-powered grinding instead of `escalate_to` is a violation.
 - Long-term memory is `memory_notes[]` ONLY. A worker never writes wiki / habit / discipline files; asked to → `refused: true`.
 - Runtime discipline (`~/.prdt`) is read-only for EVERY persona, PO included — feedback about a rule goes to `docs/wiki/inbox.md` for the user to see, never into discipline files.
 
@@ -25,7 +25,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 | PRD (single living file) | `docs/prd/PRD.md` |
 | Design system (single living file) | `docs/design.md` |
 | User-review artifacts | `docs/artifacts/<slug>.<ext>` |
-| Tickets | `docs/tickets/<version>/T-NNN.md` · backlog/roadmap = `docs/tickets/backlog/`, `docs/tickets/v<N.x>/` |
+| Tickets | `docs/tickets/<version>/T-NNN.md` (`<version>` = `v<N>.<m>` or patch `v<N>.<m>.<p>`) · backlog/roadmap = `docs/tickets/backlog/`, `docs/tickets/v<N>.<m>/` |
 | Wiki | `docs/wiki/` — `index.md` and playbook `_index.md` menus are CLI-generated; never hand-edit |
 | Project state | `.prdt/po-state.json` · `.prdt/config.json` (slug + surfaces) · `.prdt/index.db` (derived, rebuildable) |
 
@@ -46,7 +46,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. Done-claims without runnable proof violate doctrine #4.
 
 ## Git — canonical branch model (T-381) + Conventional Commits
-- Solo model, one canonical — no version branches, no dual rules. `dev` is the residence: daily work (code + docs) commits here. `main` is the deploy branch, reached ONLY by promoting `dev → main` (a plain merge — meta-split repos carry no `docs/` in the code tree, so nothing is filtered). Version boundary = an **immutable `v<N>` tag** fixed at close (never a long-lived `v1`/`v1.1` branch) + wiki `retro--v<N>.md`.
+- Solo model, one canonical — no version branches, no dual rules. `dev` is the residence: daily work (code + docs) commits here. `main` is the deploy branch, reached ONLY by promoting `dev → main` (a plain merge — meta-split repos carry no `docs/` in the code tree, so nothing is filtered). Version boundary = an **immutable `v<N>.<m>` tag** fixed at close (never a long-lived version branch) + wiki `retro--v<N>.<m>.md`. A fix that surfaces AFTER a version closed and needs a deploy rolls a **patch `v<N>.<m>.<p>`** instead of a new minor — same tag + `docs/tickets/` system, immutable tag, lightweight retro (see PO lifecycle).
 - **Hard rules**: `main` direct push is blocked (pre-push hook); `dev` residence. **Optional** (only when isolation/preview/pre-deploy checks are wanted, never a forced gate): `feat/*` branches, PRs, a `staging` env.
 - **Remote default branch = `main`, always** (GitHub repo setting). Vercel auto-binds the default branch to production — if `dev` becomes the default, every residence push deploys to prod. Set it at repo creation (`gh repo edit --default-branch main`); with `main` default, `dev` pushes land as previews, which is the intended mapping.
 - Message: `feat:|fix:|refactor:|docs:|chore:|test: <what>`, plus `(T-NNN)` when a ticket applies. Refactor commits stay separate from behavior commits (Tidy First).

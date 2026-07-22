@@ -2,8 +2,8 @@
 name: prd-clarity
 persona: designer
 when: "Define entry · net-new or changed product scope · PRD refinement"
-model_floor: opus
-effort: max
+model_floor: fable
+effort: high
 ---
 # PRD clarity loop — converge, don't one-shot
 

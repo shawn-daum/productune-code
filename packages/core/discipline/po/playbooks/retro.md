@@ -14,11 +14,12 @@ Retro is a real stage, not a ceremony. Rituals here produce wiki log lines, not 
 2. **Inbox curation** — run the `curate-wiki` playbook to empty `docs/wiki/inbox.md`.
 3. **Wiki lint** — `prdt wiki lint` + fix what it flags: orphan pages (link or fold them), superseded pages still referenced, contradiction flags left standing.
 4. **Split bloated files** — `prdt doctor` cap warnings (habit / playbook / contracts overruns): split or trim now; deferring bloat is how caps die.
-5. **Write `docs/wiki/retro--v<N>.md`** — what shipped · what worked · what to change, PLUS the **outcome section**: north star + input metrics **observed value, or "unobserved + why"** — an empty outcome is a violation, silence is not an option. Update touched `feature--<slug>.md` pages' version notes.
+5. **Write `docs/wiki/retro--v<N>.<m>.md`** — what shipped · what worked · what to change, PLUS the **outcome section**: north star + input metrics **observed value, or "unobserved + why"** — an empty outcome is a violation, silence is not an option. Update touched `feature--<slug>.md` pages' version notes.
 6. **Escalation deviations** this version (workers returned `escalate_to`, or you routed badly) → one `learning--` line each: change_meta shape → tier that actually worked.
 7. **Doctor** — `prdt doctor` clean (or each warning consciously accepted, noted in the retro).
-8. **Close** — `git tag v<N>` · log line in `wiki/log.md` · stage → `idle` (no next scope) or next version's `define` (scope exists). Unobserved outcomes carry forward: next Define entry asks the user ONCE.
+8. **Close** — `git tag v<N>.<m>` · log line in `wiki/log.md` · stage → `idle` (no next scope) or next version's `define` (scope exists). Unobserved outcomes carry forward: next Define entry asks the user ONCE.
 
 ## Rules
 - You write the retro page yourself — it's curation of what happened, not product content.
 - Don't manufacture a next version at Retro's end; idle is a valid resting state.
+- A **post-close patch** (`v<N>.<m>.<p>`, rolled from `idle`) does NOT run this full sequence — it closes with one `wiki/log.md` line + an immutable `v<N>.<m>.<p>` tag, no `retro--` page. See PO habit lifecycle.
