@@ -334,7 +334,15 @@ def code_dir_name(root):
     if isinstance(cfg, dict) and isinstance(cfg.get("code"), dict):
         d = cfg["code"].get("dir")
         if isinstance(d, str) and d.strip():
-            return d.strip()
+            t = d.strip()
+            # Guard against a polluted config anchoring code ops OUTSIDE projectRoot
+            # (T-387 parity with core project-kind.ts codeDirName): an absolute path
+            # or a `..` segment would let config.json escape the project root — e.g.
+            # a corrupt code.dir restored via `prdt meta bootstrap`. Treat either as
+            # legacy (None) so code_root safely falls back to projectRoot.
+            if os.path.isabs(t) or ".." in re.split(r"[/\\]+", t):
+                return None
+            return t
     return None
 
 
@@ -743,16 +751,11 @@ def _write_update_state(state):
         pass
 
 
-def releases_pending(code_root):
-    """(version, section_text) of the NEWEST `## ` section in <codeRoot>/docs/
-    RELEASES.md, or (None, None). T-394 contract: section boundary ^## , version =
-    first token after '## '. Preamble above the first `## ` is ignored; a missing
-    file/section yields (None, None) so the caller skips silently."""
-    rel = Path(code_root) / "docs" / "RELEASES.md"
-    try:
-        lines = rel.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None, None
+def _parse_releases(text):
+    """(version, section_text) of the NEWEST `## ` section in a RELEASES.md body,
+    or (None, None). T-394 contract: section boundary ^## , version = first token
+    after '## '. Preamble above the first `## ` is ignored."""
+    lines = text.splitlines()
     start = next((i for i, l in enumerate(lines) if l.startswith("## ")), None)
     if start is None:
         return None, None
@@ -761,6 +764,36 @@ def releases_pending(code_root):
         return None, None
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     return tok[0], "\n".join(lines[start:end]).rstrip("\n")
+
+
+def releases_pending(code_root, timeout=2):
+    """(version, section_text) of the newest release section on the REMOTE
+    (origin/<current-branch>) docs/RELEASES.md, or (None, None).
+
+    T-393: on an out-of-date install the LOCAL RELEASES.md carries NO pending
+    version section — the new section lives only on the remote. Reading the local
+    file therefore made the interstitial show the *installed* version and, worse,
+    `skip <version>` muted the installed version forever (no recovery without a
+    manual `prdt update`). So we read the remote copy: a timeout(2s)-guarded
+    `git fetch origin <branch>` then `git show origin/<branch>:docs/RELEASES.md`,
+    parsed by the same T-394 contract. Any failure (offline / timeout / no remote /
+    file absent on remote / detached HEAD) → (None, None) so the caller degrades to
+    silence (one-command, no prompt), exactly as the old local-read did on a miss."""
+    def g(*a, t=timeout):
+        return subprocess.run(["git", "-C", str(code_root), *a],
+                              capture_output=True, text=True, timeout=t)
+    try:
+        branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if not branch or branch == "HEAD":       # no branch / detached → can't map a remote ref
+            return None, None
+        if g("fetch", "origin", branch).returncode != 0:   # offline / no remote → degrade
+            return None, None
+        s = g("show", f"origin/{branch}:docs/RELEASES.md")
+        if s.returncode != 0:                    # file absent on remote / bad ref → degrade
+            return None, None
+    except (subprocess.TimeoutExpired, OSError):
+        return None, None
+    return _parse_releases(s.stdout)
 
 
 def remote_ahead(code_root, timeout=2):
@@ -821,13 +854,13 @@ def maybe_prompt_update(cmd):
     # consume today's slot up front so the post-update re-exec can't loop
     state["last_check"] = today
     _write_update_state(state)
-    version, note = releases_pending(code_root)
-    if not version:                                     # no RELEASES section → skip (T-394)
+    ahead = remote_ahead(code_root)                     # cheap ls-remote gate (network, 2s)
+    if not ahead:                                       # None (degrade/offline) or False (up to date)
         return
-    if version == state.get("skip_version"):            # user muted this version
+    version, note = releases_pending(code_root)         # REMOTE RELEASES via fetch+show (T-393)
+    if not version:                                     # no section / fetch failed → silent degrade
         return
-    ahead = remote_ahead(code_root)
-    if not ahead:                                       # None (degrade) or False (up to date)
+    if version == state.get("skip_version"):            # user muted THIS remote version
         return
     _render_release_box(version, note)
     choice = select_choice([
@@ -1467,6 +1500,13 @@ def cmd_migrate(args):
         if not claude.is_file():
             # no-op 재실행(이관할 게 없음)은 실패가 아님 → exit 0 (T-396).
             print("prdt migrate: 이관할 게 없습니다 — 레거시 full/lite 상태도, 루트 CLAUDE.md도 없어요. (no-op)")
+            return
+        # CLAUDE.md-only 이관은 **prdt 프로젝트 전제** — `.prdt/po-state.json`이 없으면
+        # 여기는 非-prdt 디렉토리(포트폴리오 루트 등)이고 그 CLAUDE.md는 정당한 파일이다.
+        # 가드 없이 진행하면 그 CLAUDE.md를 이관·삭제해 버린다(T-396) → 명확 메시지 + no-op(exit 0).
+        if not (root / ".prdt" / "po-state.json").is_file():
+            print("prdt migrate: prdt 프로젝트가 아닙니다 (.prdt/po-state.json 없음) — "
+                  "루트 CLAUDE.md를 건드리지 않고 종료합니다. (no-op)")
             return
         st = read_json(root / ".prdt" / "po-state.json") or {}
         version = st.get("version") or ""
