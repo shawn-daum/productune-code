@@ -93,9 +93,18 @@ export function useVersionHistory(): VersionHistoryData {
   // resolve to [] — every meta UI element then simply stays absent (no error
   // surface, mirroring the beat's silent no-op contract).
   const [metaCommitsRaw, setMetaCommitsRaw] = useState<CommitLine[]>([])
+  const lastMetaProjectRef = useRef<string | null>(null)
   useEffect(() => {
     const projectDir = project?.projectDir
-    if (!projectDir) { setMetaCommitsRaw([]); return }
+    // T-371 B5: drop the previous project's commits when the project changes, so
+    // a new (or meta-less) project never shows the old project's residue while /
+    // if its own fetch resolves. Guarded on the project (not the version) so a
+    // same-project version switch just refetches without blanking the track.
+    if (lastMetaProjectRef.current !== (projectDir ?? null)) {
+      lastMetaProjectRef.current = projectDir ?? null
+      setMetaCommitsRaw([])
+    }
+    if (!projectDir) return
     let cancelled = false
     const api = (window as any).api
     if (!api?.metaLog) return

@@ -96,6 +96,26 @@ const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
  */
 const NETWORK_TIMEOUT_MS = 120_000
 
+/**
+ * Timeout for the one staging `git add` of a beat/first-snapshot (T-371 B3).
+ * The default 10s is ample for an incremental beat, but the FIRST snapshot of a
+ * large repo (thousands of files under docs/tickets) can walk long enough to be
+ * spuriously SIGTERM'd at 10s — this is not a network op, just a big local index
+ * write, so it gets its own generous ceiling. Normal-size repos never approach
+ * it (staging completes in ms), so observable behavior is unchanged.
+ */
+const STAGE_TIMEOUT_MS = 120_000
+
+/**
+ * Max explicit path arguments per `git add -f` invocation (T-371 B3). The
+ * legacy ignore-immune path enumerates every stageable file and passes them as
+ * argv; a first snapshot of thousands of files would blow the OS ARG_MAX limit
+ * ("Argument list too long") in one call. Staging in chunks builds the SAME
+ * index as one call (git add accumulates), so a normal repo (< one chunk) is
+ * byte-for-byte the single call it always was.
+ */
+const STAGE_CHUNK = 500
+
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
 /** Absolute path to the meta repo git-dir (`<stateDir>/meta.git`). */
@@ -127,7 +147,7 @@ export function metaRepoExists(projectDir: string): boolean {
  * all GIT_* is the robust guarantee (the meta repo needs none of them — it
  * carries its own repo-local identity and config).
  */
-function scrubbedGitEnv(): NodeJS.ProcessEnv {
+export function scrubbedGitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (k.startsWith('GIT_')) continue
@@ -140,18 +160,21 @@ function scrubbedGitEnv(): NodeJS.ProcessEnv {
  * Run a git command scoped to the meta repo (git-dir + work-tree). Local ops
  * use the default 10s timeout; network ops (fetch/push/set-head) MUST pass
  * `{ timeout: NETWORK_TIMEOUT_MS }` so a slow line isn't killed mid-transfer
- * (T-386 C7).
+ * (T-386 C7). `maxBuffer` defaults to Node's execFile default (1 MB); callers
+ * that read large `ls-files`/`ls-tree` output pass their own (T-371 B1: the
+ * single meta-repo git runner — meta-migrate.ts wraps this instead of keeping a
+ * byte-identical copy).
  */
-async function metaGit(
+export async function metaGit(
   projectDir: string,
   args: string[],
-  opts: { timeout?: number } = {},
+  opts: { timeout?: number; maxBuffer?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const gitDir = metaGitDir(projectDir)
   return execFileAsync(
     'git',
     ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: opts.timeout ?? 10_000, env: scrubbedGitEnv() },
+    { cwd: projectDir, timeout: opts.timeout ?? 10_000, maxBuffer: opts.maxBuffer, env: scrubbedGitEnv() },
   )
 }
 
@@ -378,12 +401,19 @@ async function collectStageableFiles(
  */
 async function stageAllowlist(projectDir: string, paths: string[]): Promise<void> {
   if (isPhysicallySplit(projectDir)) {
-    await metaGit(projectDir, ['add', '-A', '--', ...paths])
+    // `paths` is the allowlist top-levels (~13 entries) — no ARG_MAX risk — but
+    // git walks them into thousands of files on a first snapshot, so give the
+    // add the staging timeout (T-371 B3).
+    await metaGit(projectDir, ['add', '-A', '--', ...paths], { timeout: STAGE_TIMEOUT_MS })
     return
   }
   const files = await collectStageableFiles(projectDir, paths)
-  if (files.length > 0) {
-    await metaGit(projectDir, ['add', '-f', '--', ...files])
+  // Chunk the enumerated file argv so a first snapshot of thousands of files
+  // stays under ARG_MAX; each chunk adds into the same index (T-371 B3).
+  for (let i = 0; i < files.length; i += STAGE_CHUNK) {
+    await metaGit(projectDir, ['add', '-f', '--', ...files.slice(i, i + STAGE_CHUNK)], {
+      timeout: STAGE_TIMEOUT_MS,
+    })
   }
 }
 
