@@ -41,6 +41,8 @@ import {
   metaGitDir,
   metaRepoExists,
   readMetaAllowlist,
+  scrubbedGitEnv,
+  metaGit as metaGitRun,
 } from './meta-git'
 
 const execFileAsync = promisify(execFile)
@@ -84,40 +86,30 @@ export interface MetaMigrationResult {
 }
 
 /**
- * Env with every GIT_* variable stripped — same guarantee as meta-git.ts's
- * scrubbedGitEnv (T-364 QA-HIGH: ambient GIT_INDEX_FILE etc. inside a hook
- * would redirect our git calls at the wrong index). Local copy: that helper is
- * deliberately private and meta-git.ts is under concurrent edit (T-367).
- */
-function scrubbedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {}
-  for (const [k, v] of Object.entries(process.env)) {
-    if (!k.startsWith('GIT_')) env[k] = v
-  }
-  return env
-}
-
-/**
  * Run git against the CODE repo. Anchored at codeRoot (`<projectRoot>/<code.dir>`
  * once physically split, or the project root in legacy layout — PRD §v1.3 설계
  * 결정 4). Meta ops (metaGit below) stay anchored at the project root.
+ * scrubbedGitEnv (T-364 QA-HIGH): ambient GIT_INDEX_FILE etc. inside a hook
+ * would redirect our git calls at the wrong index — shared with meta-git.ts
+ * (T-371 B1: the parallel-development copy is gone).
  */
 async function codeGit(projectDir: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', codeRoot(projectDir), ...args], {
     timeout: 30_000,
-    env: scrubbedEnv(),
+    env: scrubbedGitEnv(),
     maxBuffer: 16 * 1024 * 1024,
   })
   return stdout
 }
 
-/** Run git against the META repo (separate git-dir, project root work-tree). */
+/** Run git against the META repo (separate git-dir, project root work-tree).
+ * Thin wrapper over the shared meta-git runner (T-371 B1) fixing this module's
+ * 30s / 16 MB profile and returning stdout only. */
 async function metaGit(projectDir: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync(
-    'git',
-    ['--git-dir', metaGitDir(projectDir), '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: 30_000, env: scrubbedEnv(), maxBuffer: 16 * 1024 * 1024 },
-  )
+  const { stdout } = await metaGitRun(projectDir, args, {
+    timeout: 30_000,
+    maxBuffer: 16 * 1024 * 1024,
+  })
   return stdout
 }
 
@@ -490,7 +482,7 @@ const MANAGED_BLOCK_END = '# <<< prdt meta (managed) <<<'
 async function gitAt(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
     timeout: 30_000,
-    env: scrubbedEnv(),
+    env: scrubbedGitEnv(),
     maxBuffer: 16 * 1024 * 1024,
   })
   return stdout
@@ -825,13 +817,7 @@ export async function runPhysicalMigration(
     const codeFiles = (await gitAt(codeDirPath, ['ls-files', '-z'])).split('\0').filter(Boolean)
     const configHasCodeDir = codeDirName(projectDir) === codeDir
     // meta must not see the code tree.
-    const metaShowsCode = (
-      await execFileAsync(
-        'git',
-        ['--git-dir', metaGitDir(projectDir), '--work-tree', projectDir, 'status', '--porcelain', '-z'],
-        { cwd: projectDir, timeout: 30_000, env: scrubbedEnv(), maxBuffer: 16 * 1024 * 1024 },
-      )
-    ).stdout
+    const metaShowsCode = (await metaGit(projectDir, ['status', '--porcelain', '-z']))
       .split('\0')
       .filter(Boolean)
       .some((entry) => entry.slice(3).startsWith(codeDir + '/'))
