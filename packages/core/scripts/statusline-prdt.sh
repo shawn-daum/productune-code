@@ -43,15 +43,20 @@ stage = st.get("stage") or "?"
 version = st.get("version") or ""
 parts = [slug]
 
-# ticket type → prdt stage. ops / unmapped types are excluded from the stage
-# bucket but still counted in the version-wide total.
+# ticket type → prdt stage. Keyed on the REAL ticket-type enum (design/impl/qa/ops
+# — TICKET_TYPES in scripts/prdt); idiomatic aliases follow so free-form/legacy
+# frontmatter still buckets. Prior map keyed on types that never ship (feature/
+# deploy/…) and sent qa→retro + left ops unmapped, so the `ship` bucket was always
+# empty (T-403 LOW). ops→ship fixes that. Unmapped types fall to the version total.
 TYPE_TO_STAGE = {
-    "feature": "define", "docs": "define", "design": "define",
-    "prd": "define", "spec": "define",
-    "impl": "build", "build": "build", "refactor": "build",
-    "bug": "build", "fix": "build", "chore": "build",
+    # canonical enum
+    "design": "define", "impl": "build", "qa": "build", "ops": "ship",
+    # tolerated aliases
+    "docs": "define", "prd": "define", "spec": "define", "feature": "define",
+    "build": "build", "refactor": "build", "bug": "build", "fix": "build",
+    "chore": "build", "test": "build",
     "deploy": "ship", "release": "ship",
-    "qa": "retro", "test": "retro", "retro": "retro", "close": "retro",
+    "retro": "retro", "close": "retro",
 }
 
 # ticket progress for the current version dir:
