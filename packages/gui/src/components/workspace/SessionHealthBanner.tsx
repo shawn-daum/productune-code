@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next'
 import { ShieldAlert, AlertTriangle } from 'lucide-react'
 import { useSessionHealth, severityOf } from '../../store/sessionHealth'
 import type { SmokeResult } from '../../store/sessionHealth'
+import Banner from '../shared/Banner'
 
 interface Props {
   /** Called when "Restart session" CTA clicked. */
@@ -25,20 +26,6 @@ interface Props {
   onRetry?: () => void
   /** Called when "View log" CTA clicked. */
   onViewLog?: () => void
-}
-
-let bannerAnimInjected = false
-function ensureBannerAnim(): void {
-  if (bannerAnimInjected) return
-  bannerAnimInjected = true
-  const style = document.createElement('style')
-  style.textContent = `
-    @keyframes sh-slide-down {
-      from { transform: translateY(-36px); opacity: 0; }
-      to   { transform: translateY(0);     opacity: 1; }
-    }
-  `
-  document.head.appendChild(style)
 }
 
 // ── Smoke-result copy helpers (T-PATCH-231) ───────────────────────────────────
@@ -73,8 +60,6 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
   const dismissed     = useSessionHealth((s) => s.dismissed)
   const smokeResult   = useSessionHealth((s) => s.smokeResult)
   const dismissBanner = useSessionHealth((s) => s.dismissBanner)
-
-  ensureBannerAnim()
 
   const severity = severityOf(state)
   if (severity !== 'error' || dismissed) return null
@@ -111,90 +96,49 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
       : undefined   // auth / not-installed: label is the instruction, no in-app action
 
   return (
-    <div style={bannerWrap} role="alert" aria-live="assertive">
-      <span style={iconWrap}>
-        <Icon size={14} color="#EF4444" />
-      </span>
-
-      <span style={msgText}>{message}</span>
-
-      <div style={actions}>
-        {/* Primary CTA — only render when there is an in-app action */}
-        {ctaLabel && (primaryAction || (!isPermission && !hasSmokeDetail)) && (
-          <button
-            style={primaryCta}
-            onClick={primaryAction ?? onRetry}
-          >
-            {ctaLabel}
-          </button>
-        )}
-
-        {/* Instruction-only label for auth / not-installed (no clickable action) */}
-        {hasSmokeDetail && !primaryAction && (smokeResult.classification === 'auth' || smokeResult.classification === 'not-installed') && (
-          <span style={instructionLabel}>{ctaLabel}</span>
-        )}
-
-        {/* Secondary: view log (error-other / no smoke detail only).
-            T-304: onViewLog is omitted entirely for a prdt project (no
-            po-session.log equivalent under .prdt/) — hide the CTA rather
-            than wire it to a path that can never resolve. */}
-        {!isPermission && !hasSmokeDetail && onViewLog && (
-          <button style={secondaryCta} onClick={onViewLog}>
-            {t('workspace.sessionHealth.errorOther.logCta')}
-          </button>
-        )}
-
-        {/* Dismiss */}
+    <Banner
+      role="alert"
+      ariaLive="assertive"
+      icon={<Icon size={14} color="#EF4444" />}
+      message={message}
+      onDismiss={dismissBanner}
+      dismissLabel={t('common.dismiss')}
+      background="#2A1414"
+      borderLeftColor="#EF4444"
+      borderBottomColor="#3A1818"
+      animate
+    >
+      {/* Primary CTA — only render when there is an in-app action */}
+      {ctaLabel && (primaryAction || (!isPermission && !hasSmokeDetail)) && (
         <button
-          style={dismissBtn}
-          onClick={dismissBanner}
-          aria-label={t('common.dismiss')}
-          title={t('common.dismiss')}
+          style={primaryCta}
+          onClick={primaryAction ?? onRetry}
         >
-          ×
+          {ctaLabel}
         </button>
-      </div>
-    </div>
+      )}
+
+      {/* Instruction-only label for auth / not-installed (no clickable action) */}
+      {hasSmokeDetail && !primaryAction && (smokeResult.classification === 'auth' || smokeResult.classification === 'not-installed') && (
+        <span style={instructionLabel}>{ctaLabel}</span>
+      )}
+
+      {/* Secondary: view log (error-other / no smoke detail only).
+          T-304: onViewLog is omitted entirely for a prdt project (no
+          po-session.log equivalent under .prdt/) — hide the CTA rather
+          than wire it to a path that can never resolve. */}
+      {!isPermission && !hasSmokeDetail && onViewLog && (
+        <button style={secondaryCta} onClick={onViewLog}>
+          {t('workspace.sessionHealth.errorOther.logCta')}
+        </button>
+      )}
+    </Banner>
   )
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
-const bannerWrap: React.CSSProperties = {
-  height: 36,
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  padding: '0 16px',
-  background: '#2A1414',
-  borderLeft: '3px solid #EF4444',
-  borderBottom: '1px solid #3A1818',
-  animation: 'sh-slide-down 120ms ease-out',
-  overflow: 'hidden',
-}
-
-const iconWrap: React.CSSProperties = {
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'center',
-}
-
-const msgText: React.CSSProperties = {
-  fontSize: 11,
-  color: '#E8E8EA',
-  flex: 1,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
-const actions: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  flexShrink: 0,
-}
+// ── Styles (T-317 #5: shared shell moved to components/shared/Banner — bg/
+// border colors + the slide-down animation are passed as props above; only
+// the action-button styles below are call-site-specific) ────────────────────
 
 const primaryCta: React.CSSProperties = {
   height: 22,
@@ -218,22 +162,6 @@ const secondaryCta: React.CSSProperties = {
   borderRadius: 3,
   fontSize: 10,
   cursor: 'pointer',
-  fontFamily: 'inherit',
-}
-
-const dismissBtn: React.CSSProperties = {
-  width: 20,
-  height: 20,
-  background: 'transparent',
-  border: 'none',
-  color: '#707070',
-  fontSize: 14,
-  cursor: 'pointer',
-  borderRadius: 3,
-  padding: 0,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
   fontFamily: 'inherit',
 }
 
