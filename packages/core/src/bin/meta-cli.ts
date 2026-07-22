@@ -113,7 +113,7 @@ async function main(): Promise<void> {
     }
     case 'relocate-plan': {
       // T-378 2nd migration: preview the physical re-layout (read-only).
-      const plan = planPhysicalMigration(projectDir, rest[0] || undefined)
+      const plan = await planPhysicalMigration(projectDir, rest[0] || undefined)
       out({ ok: true, ...plan })
       break
     }

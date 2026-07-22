@@ -34,6 +34,7 @@
 
 import fs from 'fs'
 import { poStatePath, stateDir, turnsJsonlPath } from './project-paths'
+import { resolveVersion } from './po-state-fields'
 
 /** Normalized usage block — same key names ipc/costArchive.ts's readUsage reads. */
 export interface SubagentUsage {
@@ -173,19 +174,10 @@ function readStateContext(projectDir: string): {
   try {
     const statePath = poStatePath(projectDir)
     const st = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as Record<string, unknown>
-    const cv = st.current_version
-    out.version =
-      cv && typeof cv === 'object'
-        ? (typeof (cv as any).id === 'string' ? (cv as any).id : null)
-        : typeof cv === 'string' && cv
-          ? cv
-          : null
     // T-306: prdt po-state carries the flat `version` string instead of
     // current_version (discriminated by the flat `stage` field, which a legacy
     // po-state never has) — so prdt cost rows get version-grouped too.
-    if (out.version === null && typeof st.stage === 'string' && typeof st.version === 'string' && st.version) {
-      out.version = st.version
-    }
+    out.version = resolveVersion(st)
     const ct = st.current_task
     if (ct && typeof ct === 'object') {
       const ctObj = ct as Record<string, unknown>

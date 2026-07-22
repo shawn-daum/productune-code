@@ -40,6 +40,7 @@ export {
   saveRules,
   getDefault,
   getProtectedBranches,
+  baseBranch,
   readGitRules,
   writeGitRules,
   resetGitRules,
@@ -66,6 +67,26 @@ export {
   installPrePushHook,
   isPrePushHookInstalled,
 } from './git-workflow/hooks'
+
+export {
+  ensureDevBranch,
+  promoteDevToMain,
+  tagVersion,
+  versionToTag,
+  isOnResidence,
+  DEV_BRANCH,
+  MAIN_BRANCH,
+} from './git-workflow/promote'
+export type {
+  EnsureDevResult,
+  EnsureDevReason,
+  PromoteResult,
+  PromoteReason,
+  PromoteOptions,
+  TagResult,
+  TagReason,
+  TagVersionOptions,
+} from './git-workflow/promote'
 
 export {
   triggerAutosave,
@@ -224,3 +245,22 @@ export {
   assertNotPoTurn,
   assertUserInitiated,
 } from './lint/po-deploy-guard'
+
+// ── T-317 code-review #1 ────────────────────────────────────────────────────
+// project-kind detection (STATE_DIR_NAME / detectProjectKind / stateDir /
+// codeDirName / codeRoot / isPhysicallySplit) is now core's ONE copy — the
+// GUI's own `electron/project-paths.ts` re-exports these instead of keeping a
+// second, independently-maintained implementation (the reverse-import
+// concern the module doc once flagged doesn't apply: gui already depends on
+// @productune/core).
+
+export {
+  STATE_DIR_NAME,
+  detectProjectKind,
+  stateDir,
+  CODE_DIR_DEFAULT,
+  codeDirName,
+  codeRoot,
+  isPhysicallySplit,
+} from './state/project-kind'
+export type { ProjectKind } from './state/project-kind'

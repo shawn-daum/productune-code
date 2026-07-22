@@ -28,6 +28,7 @@ import { promisify } from 'util'
 import {
   stateDir,
   STATE_DIR_NAME,
+  detectProjectKind,
   codeRoot,
   codeDirName,
   isPhysicallySplit,
@@ -78,14 +79,38 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   'sessions.json',
   '.cost-*.json',
   '.subagent-gate.json',
-  // Code worktree checkouts live under `<stateDir>/worktrees/` (meta area, outside
-  // the code tree — T-378 decision). They are code checkouts, never meta history,
-  // so the meta repo must not track them (matches at any depth; the only
-  // `worktrees/` dir under an allowlisted path is the state dir's).
-  'worktrees/',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
+
+/**
+ * Timeout for meta git calls that hit the NETWORK (fetch / push / remote
+ * set-head). The default 10s is fine for the local index/commit ops that
+ * dominate this module, but a fetch of a large backup or a push over a slow
+ * line easily exceeds it — a fixed 10s there produces spurious SIGTERM
+ * failures (T-386 C7; peekRemoteStateKind already uses 30s asymmetrically).
+ */
+const NETWORK_TIMEOUT_MS = 120_000
+
+/**
+ * Timeout for the one staging `git add` of a beat/first-snapshot (T-371 B3).
+ * The default 10s is ample for an incremental beat, but the FIRST snapshot of a
+ * large repo (thousands of files under docs/tickets) can walk long enough to be
+ * spuriously SIGTERM'd at 10s — this is not a network op, just a big local index
+ * write, so it gets its own generous ceiling. Normal-size repos never approach
+ * it (staging completes in ms), so observable behavior is unchanged.
+ */
+const STAGE_TIMEOUT_MS = 120_000
+
+/**
+ * Max explicit path arguments per `git add -f` invocation (T-371 B3). The
+ * legacy ignore-immune path enumerates every stageable file and passes them as
+ * argv; a first snapshot of thousands of files would blow the OS ARG_MAX limit
+ * ("Argument list too long") in one call. Staging in chunks builds the SAME
+ * index as one call (git add accumulates), so a normal repo (< one chunk) is
+ * byte-for-byte the single call it always was.
+ */
+const STAGE_CHUNK = 500
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -118,7 +143,7 @@ export function metaRepoExists(projectDir: string): boolean {
  * all GIT_* is the robust guarantee (the meta repo needs none of them — it
  * carries its own repo-local identity and config).
  */
-function scrubbedGitEnv(): NodeJS.ProcessEnv {
+export function scrubbedGitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (k.startsWith('GIT_')) continue
@@ -127,16 +152,25 @@ function scrubbedGitEnv(): NodeJS.ProcessEnv {
   return env
 }
 
-/** Run a git command scoped to the meta repo (git-dir + work-tree). */
-async function metaGit(
+/**
+ * Run a git command scoped to the meta repo (git-dir + work-tree). Local ops
+ * use the default 10s timeout; network ops (fetch/push/set-head) MUST pass
+ * `{ timeout: NETWORK_TIMEOUT_MS }` so a slow line isn't killed mid-transfer
+ * (T-386 C7). `maxBuffer` defaults to Node's execFile default (1 MB); callers
+ * that read large `ls-files`/`ls-tree` output pass their own (T-371 B1: the
+ * single meta-repo git runner — meta-migrate.ts wraps this instead of keeping a
+ * byte-identical copy).
+ */
+export async function metaGit(
   projectDir: string,
   args: string[],
+  opts: { timeout?: number; maxBuffer?: number } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const gitDir = metaGitDir(projectDir)
   return execFileAsync(
     'git',
     ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: 10_000, env: scrubbedGitEnv() },
+    { cwd: projectDir, timeout: opts.timeout ?? 10_000, maxBuffer: opts.maxBuffer, env: scrubbedGitEnv() },
   )
 }
 
@@ -184,6 +218,52 @@ export function writeMetaAllowlist(projectDir: string, allowlist: string[]): voi
   const tmp = fp + '.tmp'
   fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, fp)
+}
+
+// ── info/exclude propagation ──────────────────────────────────────────────────
+
+/**
+ * The desired meta `info/exclude` contents for this project: the derived/gate
+ * artifacts (DEFAULT_META_EXCLUDE) plus the physical code dir (`<code.dir>/`)
+ * when the project is split, so the code tree never surfaces in meta status.
+ */
+function desiredMetaExclude(projectDir: string): string {
+  const lines = [...DEFAULT_META_EXCLUDE]
+  // Code worktree checkouts live under `<stateDir>/worktrees/` (meta area, outside
+  // the code tree — T-378 decision). They are code checkouts, never meta history,
+  // so the meta repo must not track them. Anchored to the state dir (e.g.
+  // `.prdt/worktrees/`) rather than a bare `worktrees/` basename so an incidental
+  // `worktrees/` dir elsewhere under the doc tree is never silently excluded
+  // (T-387 item 3). Mirrors worktree.ts's own residence string.
+  lines.push(STATE_DIR_NAME[detectProjectKind(projectDir)] + '/worktrees/')
+  // The physical code dir (`<code.dir>/`) when split, so the code tree stays out
+  // of meta status.
+  const cd = codeDirName(projectDir)
+  if (cd) lines.push(cd.replace(/\/+$/, '') + '/')
+  return lines.join('\n') + '\n'
+}
+
+/**
+ * Bring the meta repo's `info/exclude` up to the current desired set
+ * (idempotent — writes ONLY when the on-disk contents differ). This is the
+ * propagation path for EXISTING meta repos: `initMetaRepo` runs it at init, and
+ * `commitMeta` runs it before staging, so a repo created before a new exclude
+ * entry landed (e.g. `worktrees/` — T-386 C4) or before its `code.dir` was
+ * recorded (T-386 C3) self-heals on the next meta write instead of tracking a
+ * code checkout into meta history. The file is prdt-managed wholesale for the
+ * meta git-dir (a user's own exclude lines would be overwritten — acknowledged
+ * as a low-severity trade vs. the leak this prevents; see T-385 backlog note).
+ */
+function ensureMetaExclude(projectDir: string): void {
+  const excludePath = path.join(metaGitDir(projectDir), 'info', 'exclude')
+  const desired = desiredMetaExclude(projectDir)
+  try {
+    if (fs.readFileSync(excludePath, 'utf-8') === desired) return
+  } catch {
+    /* missing / unreadable → (re)write below */
+  }
+  fs.mkdirSync(path.dirname(excludePath), { recursive: true })
+  fs.writeFileSync(excludePath, desired)
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -234,14 +314,9 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
 
     // Derived/gate artifacts excluded from tracking even under allowlisted dirs,
     // plus the physical code dir (`<code.dir>/`) when split so the code tree stays
-    // out of the meta `git status` (PRD §v1.3 설계 결정 3).
-    const excludePath = path.join(gitDir, 'info', 'exclude')
-    fs.mkdirSync(path.dirname(excludePath), { recursive: true })
-    const cd = codeDirName(projectDir)
-    const excludeLines = cd
-      ? [...DEFAULT_META_EXCLUDE, cd.replace(/\/+$/, '') + '/']
-      : DEFAULT_META_EXCLUDE
-    fs.writeFileSync(excludePath, excludeLines.join('\n') + '\n')
+    // out of the meta `git status` (PRD §v1.3 설계 결정 3). Idempotent (re-run
+    // refreshes an existing repo — the T-386 C3/C4 propagation path).
+    ensureMetaExclude(projectDir)
 
     return { initialized: true, gitDir, alreadyExisted }
   } catch (err) {
@@ -332,12 +407,19 @@ async function collectStageableFiles(
  */
 async function stageAllowlist(projectDir: string, paths: string[]): Promise<void> {
   if (isPhysicallySplit(projectDir)) {
-    await metaGit(projectDir, ['add', '-A', '--', ...paths])
+    // `paths` is the allowlist top-levels (~13 entries) — no ARG_MAX risk — but
+    // git walks them into thousands of files on a first snapshot, so give the
+    // add the staging timeout (T-371 B3).
+    await metaGit(projectDir, ['add', '-A', '--', ...paths], { timeout: STAGE_TIMEOUT_MS })
     return
   }
   const files = await collectStageableFiles(projectDir, paths)
-  if (files.length > 0) {
-    await metaGit(projectDir, ['add', '-f', '--', ...files])
+  // Chunk the enumerated file argv so a first snapshot of thousands of files
+  // stays under ARG_MAX; each chunk adds into the same index (T-371 B3).
+  for (let i = 0; i < files.length; i += STAGE_CHUNK) {
+    await metaGit(projectDir, ['add', '-f', '--', ...files.slice(i, i + STAGE_CHUNK)], {
+      timeout: STAGE_TIMEOUT_MS,
+    })
   }
 }
 
@@ -358,6 +440,12 @@ export async function commitMeta(
   if (!metaRepoExists(projectDir)) {
     return { committed: false, skipReason: 'meta-repo-missing' }
   }
+
+  // Self-heal info/exclude before staging so an EXISTING meta repo (created
+  // before a new exclude entry or before its code.dir was recorded) never
+  // stages a code worktree checkout into meta history (T-386 C3/C4). Cheap:
+  // rewrites only when the on-disk set differs.
+  ensureMetaExclude(projectDir)
 
   const allowlist = readMetaAllowlist(projectDir)
 
@@ -539,7 +627,7 @@ export async function pushMetaRemote(
     // Push the current branch, setting upstream so a later `prdt meta log`/pull
     // knows its remote. No --force, no --mirror: a non-ff push is rejected by
     // git and returned as an error rather than overwriting the backup.
-    await metaGit(projectDir, ['push', '--set-upstream', name, branch])
+    await metaGit(projectDir, ['push', '--set-upstream', name, branch], { timeout: NETWORK_TIMEOUT_MS })
     return { ok: true, branch }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -744,7 +832,7 @@ export async function bootstrapMetaRepo(
     return { ...base, error: `remote add failed: ${add.error}` }
   }
   try {
-    await metaGit(projectDir, ['fetch', name])
+    await metaGit(projectDir, ['fetch', name], { timeout: NETWORK_TIMEOUT_MS })
   } catch (err) {
     rollback()
     return {
@@ -757,7 +845,7 @@ export async function bootstrapMetaRepo(
   // ③ resolve the remote's default branch and adopt it locally.
   let branch: string | undefined
   try {
-    await metaGit(projectDir, ['remote', 'set-head', name, '-a'])
+    await metaGit(projectDir, ['remote', 'set-head', name, '-a'], { timeout: NETWORK_TIMEOUT_MS })
     const sym = (await metaGit(projectDir, ['symbolic-ref', `refs/remotes/${name}/HEAD`])).stdout.trim()
     const m = new RegExp(`^refs/remotes/${name}/(.+)$`).exec(sym)
     if (m) branch = m[1]
@@ -813,6 +901,12 @@ export async function bootstrapMetaRepo(
       // overwritten. `checkout -- <path>` recreates each from the index.
       await metaGit(projectDir, ['checkout', '--', ...deleted])
     }
+
+    // T-386 C3: init ① ran BEFORE the backup was restored, so `.prdt/config.json`
+    // (and thus `code.dir`) did not yet exist — info/exclude was written without
+    // the `<code.dir>/` line and machine B's meta status would show the code tree.
+    // Now that the config is on disk, refresh the exclude (idempotent init re-run).
+    await initMetaRepo(projectDir)
 
     const metaTracked = splitZ((await metaGit(projectDir, ['ls-files', '-z'])).stdout)
 

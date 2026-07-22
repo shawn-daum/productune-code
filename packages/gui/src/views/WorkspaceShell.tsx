@@ -154,8 +154,10 @@ export default function WorkspaceShell({ project, onBack }: Props) {
   // legacy po-state has current_phase (never stage), so isPrdt is false and every
   // branch below falls through to the untouched legacy path.
   const isPrdt = isPrdtPoState(poState)
-  // prdt uses a flat `version` string; legacy uses `current_version`.
-  const displayVersion = isPrdt ? (poState?.version ?? null) : poStateVersion
+  // T-317 #7: no isPrdt branch needed here — the store's T-306 bridge
+  // (bridgePrdtVersion, applied at setPoState ingress) already mirrors a
+  // prdt state's flat `version` into `current_version`, so poStateVersion
+  // above is already the right value for both legacy and prdt states.
   // T-PATCH-203: live close_gate slice → PhaseBreadcrumb boundary gate marker.
   // Absent (non-P3 / pre-hook) → undefined → marker graceful pass-fallback (AC-6).
   const closeGate = useWorkspace((s) => s.poState?.close_gate ?? null)
@@ -502,7 +504,7 @@ export default function WorkspaceShell({ project, onBack }: Props) {
             T-291 (adapter A8): prdt → 4-stage strip (no gate marker / counters /
             clickable pills); legacy → the untouched 5-phase breadcrumb. */}
         {isPrdt ? (
-          <PhaseBreadcrumb phase={phase} version={displayVersion}
+          <PhaseBreadcrumb phase={phase} version={poStateVersion}
             stages={STAGE_DEFS} activeStageIndex={getActiveStageIndex(poState)} />
         ) : (
           <PhaseBreadcrumb phase={phase} version={poStateVersion} phaseCounts={phaseCounts} closeGate={closeGate} pendingGate={pendingGate}

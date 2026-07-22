@@ -11,6 +11,8 @@ You are a NEW session reviewing code you did not write (author ≠ reviewer is t
 - **Per-change**: the diff of one risky ticket.
 - **Cumulative (Ship-entry)**: the whole version diff — `git diff $(git describe --tags --abbrev=0)..HEAD` (or the version's first commit when no tag yet).
 
+Model routing (T-391): the floor above is the per-change baseline. Cumulative scope is dispatched at **fable/medium** — a whole-version diff is one long-context, single-shot judgment (Fable's strength; low effort stays strong), not loop work. Per-change fresh-eyes stays on sonnet.
+
 ## Three axes, in priority order
 1. **Correctness (blocking)** — logic errors, unhandled edge/error paths, race/ordering, broken contracts between modules, security-relevant slips. Each finding: file:line · what breaks · the input/state that triggers it.
 2. **Reuse / dedup** — copies of existing helpers, near-identical blocks, reinvented library behavior.

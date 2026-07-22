@@ -6,7 +6,7 @@ import { useWorkspace } from '../../store/workspace'
 import { isPrdtPoState } from '../../lib/phase-mapping'
 import MetaBackupSection from './MetaBackupSection'
 import MetaMigrateSection from './MetaMigrateSection'
-import { usePoModel, poModelOptionLabel, type PoModel } from '../../store/poModel'
+import { usePoModel, poModelOptionLabel, type PoModel, PO_MODEL_OPTIONS } from '../../store/poModel'
 
 type Lang = 'en' | 'ko'
 
@@ -114,10 +114,12 @@ export default function GeneralSettings() {
 
 // ── PO session model/effort override (T-310) ─────────────────────────────────
 
-// Mirrors packages/gui/electron/po-session-config.ts's allowlists — kept in
-// lockstep by hand (main/renderer are separate bundles; the enum is too small
-// to justify a shared runtime module across the electron/web boundary).
-const PO_SESSION_MODEL_OPTIONS = ['opus', 'sonnet', 'fable'] as const
+// Model list: same alias set as store/poModel.ts's PO_MODEL_OPTIONS (same
+// renderer bundle — imported above, T-317 #4 dedup) rather than a second
+// local copy. Effort has no renderer-side twin to share against; it still
+// mirrors packages/gui/electron/po-session-config.ts's allowlist by hand
+// (main/renderer are separate bundles — the enum is too small to justify a
+// shared module across that boundary, per the T-310 note).
 const PO_SESSION_EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 interface PoSessionConfig {
@@ -204,7 +206,7 @@ function PoSessionSection({ projectDir }: { projectDir: string }) {
               always versioned (bundled default, overridden by a live
               observation once one streams by); a bare lowercase alias must
               never reach the user, AC-1). */}
-          {PO_SESSION_MODEL_OPTIONS.map((m) => (
+          {PO_MODEL_OPTIONS.map((m) => (
             <option key={m} value={m}>{poModelOptionLabel(m as PoModel, observedByAlias)}</option>
           ))}
         </select>

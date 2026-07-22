@@ -41,6 +41,8 @@ import {
   metaGitDir,
   metaRepoExists,
   readMetaAllowlist,
+  scrubbedGitEnv,
+  metaGit as metaGitRun,
 } from './meta-git'
 
 const execFileAsync = promisify(execFile)
@@ -84,40 +86,30 @@ export interface MetaMigrationResult {
 }
 
 /**
- * Env with every GIT_* variable stripped — same guarantee as meta-git.ts's
- * scrubbedGitEnv (T-364 QA-HIGH: ambient GIT_INDEX_FILE etc. inside a hook
- * would redirect our git calls at the wrong index). Local copy: that helper is
- * deliberately private and meta-git.ts is under concurrent edit (T-367).
- */
-function scrubbedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {}
-  for (const [k, v] of Object.entries(process.env)) {
-    if (!k.startsWith('GIT_')) env[k] = v
-  }
-  return env
-}
-
-/**
  * Run git against the CODE repo. Anchored at codeRoot (`<projectRoot>/<code.dir>`
  * once physically split, or the project root in legacy layout — PRD §v1.3 설계
  * 결정 4). Meta ops (metaGit below) stay anchored at the project root.
+ * scrubbedGitEnv (T-364 QA-HIGH): ambient GIT_INDEX_FILE etc. inside a hook
+ * would redirect our git calls at the wrong index — shared with meta-git.ts
+ * (T-371 B1: the parallel-development copy is gone).
  */
 async function codeGit(projectDir: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', codeRoot(projectDir), ...args], {
     timeout: 30_000,
-    env: scrubbedEnv(),
+    env: scrubbedGitEnv(),
     maxBuffer: 16 * 1024 * 1024,
   })
   return stdout
 }
 
-/** Run git against the META repo (separate git-dir, project root work-tree). */
+/** Run git against the META repo (separate git-dir, project root work-tree).
+ * Thin wrapper over the shared meta-git runner (T-371 B1) fixing this module's
+ * 30s / 16 MB profile and returning stdout only. */
 async function metaGit(projectDir: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync(
-    'git',
-    ['--git-dir', metaGitDir(projectDir), '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: 30_000, env: scrubbedEnv(), maxBuffer: 16 * 1024 * 1024 },
-  )
+  const { stdout } = await metaGitRun(projectDir, args, {
+    timeout: 30_000,
+    maxBuffer: 16 * 1024 * 1024,
+  })
   return stdout
 }
 
@@ -148,6 +140,63 @@ async function hasStagedChanges(projectDir: string): Promise<boolean> {
     if (entry.length >= 2 && entry[0] !== ' ' && entry[0] !== '?') return true
   }
   return false
+}
+
+/** Remove a `# >>> prdt meta (managed) >>>` … `<<<` block from arbitrary
+ * text, leaving every other line untouched. (String-level twin of
+ * removeManagedBlock, which operates on a file.) */
+function stripManagedBlock(content: string): string {
+  const startIdx = content.indexOf(MANAGED_BLOCK_START)
+  if (startIdx < 0) return content
+  const endMarker = content.indexOf(MANAGED_BLOCK_END, startIdx)
+  if (endMarker < 0) return content
+  const eol = content.indexOf('\n', endMarker)
+  const before = content.slice(0, startIdx)
+  const after = eol < 0 ? '' : content.slice(eol + 1)
+  return before + after
+}
+
+/**
+ * After the LOGICAL split (code + meta share ONE work-tree) the meta paths are
+ * untracked in the code repo but NOT ignored — the retired `.gitignore` managed
+ * block (PRD §v1.3 설계 결정 2) had been the only thing hiding them. Left
+ * un-ignored they (①) read as untracked in `git status`, so worktree.ts
+ * isBaseDirty / promote.ts isDirty perma-refuse, and (② worst) a `git add -A`
+ * sweeps the whole meta area back into the code repo — undoing the split and
+ * leaking meta to origin on the next push (T-385 C1).
+ *
+ * Fix: write the allowlist into the code repo's LOCAL `.git/info/exclude` — NOT
+ * the committed `.gitignore` (touching that would sweep unrelated user edits
+ * into the untrack commit, the exact reason the managed block was retired).
+ * Local exclude is honored by `git status` and `git add` identically, so it
+ * closes all three failure modes without touching tracked files or history.
+ * Managed-block-wrapped so a re-run replaces cleanly and user-authored exclude
+ * lines survive. Best-effort — a failure here doesn't fail the migration.
+ */
+async function excludeMetaFromCode(projectDir: string, allowlist: string[]): Promise<void> {
+  if (allowlist.length === 0) return
+  let excludePath: string
+  try {
+    const raw = (await codeGit(projectDir, ['rev-parse', '--git-path', 'info/exclude'])).trim()
+    excludePath = path.isAbsolute(raw) ? raw : path.join(codeRoot(projectDir), raw)
+  } catch {
+    excludePath = path.join(codeRoot(projectDir), '.git', 'info', 'exclude')
+  }
+  // Anchor each meta path at the code repo root; a trailing-slash-free pattern
+  // matches the dir (and all its contents) or a same-named file.
+  const entries = allowlist.map((e) => '/' + e.replace(/^[/\\]+/, '').replace(/[/\\]+$/, ''))
+  const block = [MANAGED_BLOCK_START, ...entries, MANAGED_BLOCK_END].join('\n')
+
+  let existing = ''
+  try {
+    existing = fs.readFileSync(excludePath, 'utf-8')
+  } catch {
+    /* absent → fresh file */
+  }
+  const cleaned = stripManagedBlock(existing)
+  const prefix = cleaned.trim() ? cleaned.replace(/\n*$/, '') + '\n' : ''
+  fs.mkdirSync(path.dirname(excludePath), { recursive: true })
+  fs.writeFileSync(excludePath, prefix + block + '\n')
 }
 
 /**
@@ -274,6 +323,15 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
     }
   }
 
+  // T-385 C1: now that the meta paths are untracked, ignore them in the CODE
+  // repo (local info/exclude) so they don't read as dirty and can't be re-added
+  // by a later `git add -A`. Best-effort — non-fatal; ④ still reports the split.
+  try {
+    await excludeMetaFromCode(projectDir, plan.allowlist)
+  } catch {
+    /* best-effort */
+  }
+
   // ④ verify both sides
   let codeTrackedMetaCount = -1
   let metaTrackedCount = -1
@@ -379,6 +437,9 @@ export type PhysicalMigrationRefusal =
   // A prior run's rollback was incomplete: `code/.git` is stranded at the target
   // while projectRoot has no `.git` and config records no split (T-378 QA).
   | 'stranded-suspected'
+  // The code repo tracks file(s) under a metaTop dir but outside the allowlist —
+  // relocating would strand them at the root (lost on the next `add -A`) (T-385 C2).
+  | 'code-tracked-under-meta'
 
 export type CodeGitShape = 'normal' | 'linked-worktree' | 'none' | 'unknown'
 
@@ -421,7 +482,7 @@ const MANAGED_BLOCK_END = '# <<< prdt meta (managed) <<<'
 async function gitAt(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
     timeout: 30_000,
-    env: scrubbedEnv(),
+    env: scrubbedGitEnv(),
     maxBuffer: 16 * 1024 * 1024,
   })
   return stdout
@@ -484,10 +545,10 @@ function isEmptyDir(p: string): boolean {
  * Inspect a logically-split project and classify it for the physical migration.
  * Read-only. `codeDir` defaults to `code` (the confirmed folder name, PRD §v1.3).
  */
-export function planPhysicalMigration(
+export async function planPhysicalMigration(
   projectDir: string,
   codeDir: string = CODE_DIR_DEFAULT,
-): PhysicalMigrationPlan {
+): Promise<PhysicalMigrationPlan> {
   const base: PhysicalMigrationPlan = {
     status: 'eligible',
     codeDir,
@@ -537,10 +598,43 @@ export function planPhysicalMigration(
     return { ...base, status: 'code-dir-occupied' }
   }
 
-  const metaTop = metaTopLevels(readMetaAllowlist(projectDir))
+  const allowlist = readMetaAllowlist(projectDir)
+  const metaTop = metaTopLevels(allowlist)
   const entriesToMove = fs
     .readdirSync(projectDir)
     .filter((e) => e !== codeDir && !metaTop.has(e))
+
+  // T-385 C2: metaTop dirs STAY at projectRoot. Any file the CODE repo still
+  // tracks under a metaTop dir but OUTSIDE the allowlist is a code file that
+  // relocating would strand at the root (the code work-tree descends into
+  // `code/`, so the file reads as DELETED and the next `git add -A` commits a
+  // real removal — while the old verify, checking only config + meta status,
+  // reported success). Detect and refuse rather than lose data silently.
+  const inAllowlist = (f: string) =>
+    allowlist.some((e) => f === e || f.startsWith(e.replace(/\/+$/, '') + '/'))
+  let stranded: string[] = []
+  try {
+    const codeTracked = (await gitAt(projectDir, ['ls-files', '-z'])).split('\0').filter(Boolean)
+    stranded = codeTracked.filter((f) => {
+      const seg = f.replace(/^[/\\]+/, '').split(/[/\\]/)[0]
+      return metaTop.has(seg) && !inAllowlist(f)
+    })
+  } catch {
+    /* unreadable code repo — the eligible path's git ops surface it downstream */
+  }
+  if (stranded.length > 0) {
+    const shown = stranded.slice(0, 20).join(', ') + (stranded.length > 20 ? ', …' : '')
+    return {
+      ...base,
+      status: 'code-tracked-under-meta',
+      entriesToMove,
+      warnings: [
+        `${stranded.length} code-tracked file(s) live under a meta dir that stays at the ` +
+          `project root and would be stranded (lost on the next \`git add -A\`): ${shown}. ` +
+          `Move them into '${codeDir}/' or add them to the meta allowlist before relocating.`,
+      ],
+    }
+  }
 
   return { ...base, entriesToMove }
 }
@@ -607,7 +701,7 @@ export async function runPhysicalMigration(
     ...partial,
   })
 
-  const plan = planPhysicalMigration(projectDir, codeDir)
+  const plan = await planPhysicalMigration(projectDir, codeDir)
   if (plan.status === 'already-migrated') {
     return { ok: true, noop: true, codeDir, gitShape: plan.gitShape, movedCount: 0, verified: true, warnings: [] }
   }
@@ -723,13 +817,7 @@ export async function runPhysicalMigration(
     const codeFiles = (await gitAt(codeDirPath, ['ls-files', '-z'])).split('\0').filter(Boolean)
     const configHasCodeDir = codeDirName(projectDir) === codeDir
     // meta must not see the code tree.
-    const metaShowsCode = (
-      await execFileAsync(
-        'git',
-        ['--git-dir', metaGitDir(projectDir), '--work-tree', projectDir, 'status', '--porcelain', '-z'],
-        { cwd: projectDir, timeout: 30_000, env: scrubbedEnv(), maxBuffer: 16 * 1024 * 1024 },
-      )
-    ).stdout
+    const metaShowsCode = (await metaGit(projectDir, ['status', '--porcelain', '-z']))
       .split('\0')
       .filter(Boolean)
       .some((entry) => entry.slice(3).startsWith(codeDir + '/'))
@@ -741,11 +829,31 @@ export async function runPhysicalMigration(
       warnings.push(`nested .prdt inside code tree (${nested.length} path(s)) — up-walk may be ambiguous`)
     }
 
-    verified = configHasCodeDir && !metaShowsCode
+    // T-385 C2 belt-and-suspenders: plan refuses a stranding layout, but never
+    // report a lossy state as success. A stranded code file (left at projectRoot
+    // under a metaTop dir while the work-tree descended into code/) shows in the
+    // code repo as DELETED. Count only deletions UNDER a metaTop dir so the
+    // legitimate managed-block `.gitignore` retirement (a root-level edit) is not
+    // mistaken for stranding.
+    const metaTop = metaTopLevels(readMetaAllowlist(projectDir))
+    const codeDeletions = (await gitAt(codeDirPath, ['status', '--porcelain', '-z']))
+      .split('\0')
+      .filter(Boolean)
+      .filter((e) => {
+        if (!(e[0] === 'D' || e[1] === 'D')) return false
+        const p = e.slice(3)
+        const seg = p.replace(/^[/\\]+/, '').split(/[/\\]/)[0]
+        return metaTop.has(seg)
+      })
+
+    verified = configHasCodeDir && !metaShowsCode && codeDeletions.length === 0
     if (!verified) {
       const problems: string[] = []
       if (!configHasCodeDir) problems.push('code.dir not recorded')
       if (metaShowsCode) problems.push(`meta status still shows ${codeDir}/`)
+      if (codeDeletions.length > 0) {
+        problems.push(`${codeDeletions.length} code file(s) stranded outside ${codeDir}/ (shown as deleted)`)
+      }
       error = `verification mismatch: ${problems.join('; ')}`
     }
   } catch (err) {

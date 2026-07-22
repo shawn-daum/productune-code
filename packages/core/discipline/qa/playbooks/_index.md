@@ -2,7 +2,7 @@
 | playbook | when | floor |
 |---|---|---|
 | ds-conformance | visual/UI artifact under verification (mockup · hi-fi · screen) · Ship-entry DS review when the PO routes it to QA | sonnet/medium |
-| grill | risk_flags present · refactor · load-bearing or cross-cutting change · user asked for adversarial check | sonnet/medium |
+| grill | risk_flags present · refactor · load-bearing or cross-cutting change · user asked for adversarial check | fable/medium |
 | live-verify | after any deploy/redeploy (ops ticket) · Ship patch-loop re-verify | sonnet/low |
-| security-pass | Ship-entry readiness (PO dispatch) · risk_flags has auth/payments/PII · new external surface | sonnet/medium |
+| security-pass | Ship-entry readiness (PO dispatch) · risk_flags has auth/payments/PII · new external surface | opus/medium |
 | smoke | default verification · impl return with user_facing/risky change_meta · dev↔QA loop | haiku/low |

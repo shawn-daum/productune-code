@@ -2,10 +2,12 @@
 name: grill
 persona: qa
 when: "risk_flags present · refactor · load-bearing or cross-cutting change · user asked for adversarial check"
-model_floor: sonnet
+model_floor: fable
 effort: medium
 ---
 # Grill — adversarial verification
+
+Model routing (T-391): the fable floor applies to the **first grill** of a change (risk_flags · load-bearing · discipline-edit triggers) — a deep single-shot adversarial judgment, Fable's home turf (an integrated grill catching "unreachable path"-class findings is the evidence type). Re-grills inside the dev↔QA loop and delta verifications are repeat passes → dispatch at **sonnet/medium** (loop work never rides fable). The fable plan gate applies as usual — no confirmed Max x20 / Team Premium plan → resolves to opus/medium.
 
 Run smoke first (build · smoke · acceptance). Then switch stance: your job is to BREAK it, not confirm it. A grill that only re-walks acceptance is a smoke with a scarier name.
 

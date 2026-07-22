@@ -4,5 +4,5 @@
 | bugfix | defect with a repro or QA fail row · live-verify caught bug (Ship patch loop) | sonnet/medium |
 | code-review | risky change landed (fresh-eyes, author≠reviewer) · Ship-entry cumulative review over the version diff | sonnet/high |
 | implement | any implementation dispatch (default) | sonnet/medium |
-| plan-first | cross-cutting or architectural change · risk_flags present · many files · genuinely open solution shape | opus/high |
+| plan-first | cross-cutting or architectural change · risk_flags present · many files · genuinely open solution shape | fable/high |
 | refactor | structure-only change · tidy-first split · extraction/dedup/rename across files | sonnet/medium |

@@ -12,7 +12,7 @@ export default function WorkflowRulesPanel({ projectDir }: Props) {
   const { t } = useTranslation()
 
   const [rules, setRules] = useState<GitRules>({
-    useDevBranch: false,
+    useDevBranch: true,
     useStagingEnv: false,
     featureBranchPrefix: 'feature',
     fixBranchPrefix: 'fix',
@@ -40,8 +40,10 @@ export default function WorkflowRulesPanel({ projectDir }: Props) {
       .catch(() => { /* keep defaults */ })
   }, [projectDir])
 
-  // Derived: protected environment list
-  const protectedEnvs = rules.useDevBranch ? ['main', 'dev'] : ['main']
+  // Derived: protected environment list. Under T-381 dev is a pushable
+  // residence, never protected — core getProtectedBranches is always ['main']
+  // regardless of useDevBranch, so this display mirrors that.
+  const protectedEnvs = ['main']
 
   const persistRules = useCallback(async (next: GitRules) => {
     if (successTimerRef.current) {
