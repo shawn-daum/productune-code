@@ -12,6 +12,25 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.4 — CLI update flow, glossary, release notes + debt cleanup (2026-07-22)
+
+### Added
+- **`prdt` 실행 시 인터랙티브 업데이트 프롬프트** — 원격에 새 버전이 있으면 하루 한 번 update / skip / skip-this-version 3지선다 + 릴리스 노트 미리보기. 비대화형·오프라인은 조용히 통과. (T-393)
+- **`prdt migrate`가 루트 `CLAUDE.md`를 wiki(또는 `--archive`)로 이관** — prdt 프로젝트가 상위 CLAUDE.md 정체성에 오염되지 않도록, 원본은 보존하며 walk-up 경로에서 제거. (T-396)
+- **wiki `term` 타입 (개념 사전)** — 서비스 내부 개념을 canonical 정의로 `prdt wiki`에서 관리·검색·상호링크. (T-395)
+- **`docs/RELEASES.md` 규약** — 버전별 사용자향 릴리스 노트, `v*` 태그 끊는 변경에 함께 작성. (T-394)
+
+### Changed
+- **statusline** — stage별 티켓 카운트 + version total 분리 표기, 긴 task slug 16자 cap. (T-403)
+- **모델 라우팅** — prd-clarity·plan-first를 Fable tier로, Ship-entry 누적 code-review는 fable/medium(티켓 단위 fresh-eyes는 sonnet 유지), security-pass는 opus 고정. (T-391)
+- **post-close 패치 라이프사이클** — 닫힌 버전의 사후 패치는 불변 `v<N>.<m>.<p>` 태그 + 경량 retro. (T-390)
+- 내부 리팩터 — cost/banner/po-state 공유 헬퍼 추출, meta-split·git-workflow 중복 제거. (T-317/T-371/T-387)
+
+### Fixed
+- **`prdt migrate` 데이터 유실 방지** — 같은 날 이름 충돌 시 CLAUDE.md 삭제 전 wiki 기록 성공 확인 + 유니크 접미사. (T-396)
+- **update-on-run 원격 파싱** — 대기 버전 노트를 원격 RELEASES에서 읽어 올바른 버전 표시 + skip 영구 음소거 버그 해소. (T-403)
+- **`code.dir` 검증** — 오염된 값(절대경로·`..`)이 프로젝트 밖을 anchor하지 못하게 (TS + Python 포트 동기). (T-387/T-403)
+
 ## v1.3 — physical meta/code split + NTF git-workflow (2026-07-21)
 
 ### Added
