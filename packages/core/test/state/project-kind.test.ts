@@ -1,8 +1,9 @@
 /**
  * project-kind.test.ts — detection contract for core's project-kind resolver
- * (T-284 QA-HIGH fix). Mirrors the case list in
- * packages/gui/electron/project-paths.test.ts so the two independent
- * implementations stay behaviorally identical.
+ * (T-284 QA-HIGH fix). Case list mirrors
+ * packages/gui/electron/project-paths.test.ts — which now re-exports this
+ * module (T-317 #1) rather than re-implementing it, but keeps its own case
+ * list as a regression guard on the re-export wiring itself.
  */
 
 import path from 'path'

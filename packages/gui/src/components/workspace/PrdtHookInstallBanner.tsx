@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ShieldCheck } from 'lucide-react'
 import { usePrdtHookInstall } from '../../store/prdtHookInstall'
+import Banner from '../shared/Banner'
 
 interface Props {
   projectDir: string
@@ -75,29 +76,32 @@ export default function PrdtHookInstallBanner({ projectDir }: Props) {
         : t('workspace.prdtHooks.hint')
 
   return (
-    <div style={bannerWrap} role="status">
-      <span style={iconWrap}>
-        <ShieldCheck size={14} color="#38BDF8" />
-      </span>
-      <span style={msgText}>{message}</span>
-      <div style={actions}>
-        {(status.phase === 'needs-install' || status.phase === 'failed') && (
-          <button style={primaryCta} onClick={handleInstall}>
-            {t('workspace.prdtHooks.cta')}
-          </button>
-        )}
-        {status.phase === 'installing' && (
-          <span style={instructionLabel}>{t('workspace.prdtHooks.installing')}</span>
-        )}
-        <button style={dismissBtn} onClick={dismiss} aria-label={t('common.dismiss')} title={t('common.dismiss')}>
-          ×
+    <Banner
+      role="status"
+      icon={<ShieldCheck size={14} color="#38BDF8" />}
+      message={message}
+      onDismiss={dismiss}
+      dismissLabel={t('common.dismiss')}
+      background="#1A1A1A"
+      borderLeftColor="#38BDF8"
+      borderLeftWidth={4}
+      borderBottomColor="#1F1F1F"
+    >
+      {(status.phase === 'needs-install' || status.phase === 'failed') && (
+        <button style={primaryCta} onClick={handleInstall}>
+          {t('workspace.prdtHooks.cta')}
         </button>
-      </div>
-    </div>
+      )}
+      {status.phase === 'installing' && (
+        <span style={instructionLabel}>{t('workspace.prdtHooks.installing')}</span>
+      )}
+    </Banner>
   )
 }
 
-// ── Styles (mirrors SessionHealthBanner's info-severity variant) ──────────────
+// ── Styles (T-317 #5: shared shell moved to components/shared/Banner —
+// bg/border colors passed as props above; only the action-button styles below
+// are call-site-specific) ────────────────────────────────────────────────────
 
 // T-313 (Ship-entry DS conformance §8.4 Banner): bg is --surface-subpanel
 // (`#1A1A1A`, design-system.md §1) — was a bespoke teal-tinted `#14232A`.
@@ -105,40 +109,6 @@ export default function PrdtHookInstallBanner({ projectDir }: Props) {
 // same hex as `--persona-dev` — intentional per §2.8, context separation).
 // borderBottom follows suit onto the neutral `--border-default` (`#1F1F1F`)
 // since the old teal bottom border only existed to match the old teal bg.
-const bannerWrap: React.CSSProperties = {
-  height: 36,
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  padding: '0 16px',
-  background: '#1A1A1A',
-  borderLeft: '4px solid #38BDF8',
-  borderBottom: '1px solid #1F1F1F',
-  overflow: 'hidden',
-}
-
-const iconWrap: React.CSSProperties = {
-  flexShrink: 0,
-  display: 'flex',
-  alignItems: 'center',
-}
-
-const msgText: React.CSSProperties = {
-  fontSize: 11,
-  color: '#E8E8EA',
-  flex: 1,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
-const actions: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 6,
-  flexShrink: 0,
-}
 
 const primaryCta: React.CSSProperties = {
   height: 22,
@@ -164,21 +134,5 @@ const instructionLabel: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   whiteSpace: 'nowrap',
-  fontFamily: 'inherit',
-}
-
-const dismissBtn: React.CSSProperties = {
-  width: 20,
-  height: 20,
-  background: 'transparent',
-  border: 'none',
-  color: '#707070',
-  fontSize: 14,
-  cursor: 'pointer',
-  borderRadius: 3,
-  padding: 0,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
   fontFamily: 'inherit',
 }

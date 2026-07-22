@@ -12,6 +12,7 @@ import {
 import type { PendingPromotion } from '@productune/core'
 import { mechanicalWrite } from '../mechanical-write'
 import { poStatePath, stateDir } from '../project-paths'
+import { resolveVersion, resolveStage } from '../po-state-fields'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -129,8 +130,8 @@ function computeSignal(projectDir: string, state: any): { signal: string; prdPat
   // Without this a prdt version bump or stage change would dedup away (v/p both
   // permanently null) and the renderer would never see the transition.
   const signal = JSON.stringify({
-    v: state?.current_version ?? state?.version ?? null,
-    p: state?.current_phase ?? state?.stage ?? null,
+    v: resolveVersion(state),
+    p: state?.current_phase ?? resolveStage(state),
     r: prdPath !== null,
   })
   return { signal, prdPath }

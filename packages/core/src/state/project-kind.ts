@@ -2,21 +2,20 @@
  * project-kind.ts — core-side SoT for a project's on-disk state-directory kind
  * (T-284 QA-HIGH fix).
  *
- * `packages/gui/electron/project-paths.ts` (adapter A1) introduced dual-mode
- * detection (`.prdt` vs legacy `.productune`) for the GUI's own direct file
- * access. But three `@productune/core` modules — `state/pending-promotions.ts`,
- * `git-workflow/rules.ts`, `git-workflow/worktree.ts` — hardcode the legacy
- * `.productune` directory internally and are unreachable from the GUI layer's
+ * Originally added because three `@productune/core` modules —
+ * `state/pending-promotions.ts`, `git-workflow/rules.ts`,
+ * `git-workflow/worktree.ts` — hardcode the legacy `.productune` directory
+ * internally and are unreachable from the GUI layer's own (then-separate)
  * detection (core cannot import from gui: that would invert the package
- * dependency). Left as-is, every one of A1's prdt-aware call sites that
- * delegates to these core functions (e.g. state.ts's promotion handlers) still
- * writes into a shadow `.productune/` tree inside a `.prdt` project.
+ * dependency).
  *
- * This module is core's OWN copy of the same detection contract (kept in
- * lockstep with project-paths.ts's semantics: `.prdt` present wins; missing/
- * fs-error/only-`.productune` all fall back to the legacy default so existing
- * `.productune` projects are byte-for-byte unaffected). It is intentionally
- * package-local — core must not depend on gui.
+ * T-317 code-review #1: this is now the ONLY implementation — `@productune/gui`
+ * (which already depends on `@productune/core`; the dependency only inverts
+ * the other direction) re-exports these from `electron/project-paths.ts`
+ * instead of keeping its own byte-for-byte copy. Package-local semantics
+ * unchanged: `.prdt` present wins; missing/fs-error/only-`.productune` all
+ * fall back to the legacy default so existing `.productune` projects are
+ * byte-for-byte unaffected.
  */
 
 import fs from 'fs'
@@ -61,8 +60,10 @@ export function stateDir(projectDir: string): string {
 //     `code.dir` is absent (LEGACY layout — a repo not yet physically split
 //     keeps working unchanged, the hard back-compat requirement).
 //
-// THE CONTRACT (T-377 replicates this in gui/electron/project-paths.ts and the
-// python `scripts/prdt` — keep the three in lockstep):
+// THE CONTRACT (T-317 #1: gui/electron/project-paths.ts now re-exports this
+// module rather than replicating it — only the python `scripts/prdt` still
+// needs its own port, a separate language that can't import this file
+// directly; keep that one in lockstep by hand):
 //   1. code.dir is read from `<stateDir>/config.json` at `code.dir` (a string).
 //   2. Missing / empty / unreadable config → null → codeRoot falls back to
 //      projectRoot (legacy). Never throws.

@@ -7,6 +7,7 @@ import { promisify } from 'util'
 import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, findAncestorProductuneRoot } from '@productune/core'
 import { writeOnboardingPending } from './onboarding'
 import { STATE_DIR_NAME, configPath, poStatePath, codeRoot } from '../project-paths'
+import { resolveVersion, resolveStage } from '../po-state-fields'
 
 const execFileAsync = promisify(execFile)
 
@@ -398,10 +399,8 @@ export function buildRecentsWithMeta(homeDir: string = os.homedir()): RecentWith
             // T-306: prdt carries flat `version`/`stage` instead of
             // current_version/current_phase — coalesce so prdt cards show
             // their meta row. Legacy po-state never has the flat fields.
-            version = typeof st.current_version === 'string' ? st.current_version
-              : typeof st.version === 'string' && typeof st.stage === 'string' ? st.version
-              : null
-            stage = typeof st.stage === 'string' ? st.stage : null
+            version = resolveVersion(st)
+            stage = resolveStage(st)
           }
         } catch { /* phase/version/stage stay null */ }
       }

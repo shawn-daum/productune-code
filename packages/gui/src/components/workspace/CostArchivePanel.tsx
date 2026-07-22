@@ -24,6 +24,8 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { fmtCost } from '../../lib/costFormat'
+import { useCostWatch } from '../../hooks/useCostWatch'
 import EstimatedBadge from '../shared/EstimatedBadge'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -76,11 +78,8 @@ interface Props {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtCost(n: number): string {
-  // 4 decimals, $ prefix. Guard non-finite (defensive).
-  const safe = Number.isFinite(n) ? n : 0
-  return `$${safe.toFixed(4)}`
-}
+// T-317: the local fmtCost duplicate (also in UsageBar.tsx) moved to the
+// shared `lib/costFormat.ts`.
 
 // T-313: the local EstBadge/estBadge duplicate moved to the shared, design-
 // system §8.2-conformant `<EstimatedBadge>` (components/shared/EstimatedBadge)
@@ -213,17 +212,7 @@ export default function CostArchivePanel({ projectDir }: Props) {
   }, [fetchAgg])
 
   // Arm the watch for this project + re-fetch on push (debounced in main).
-  useEffect(() => {
-    const api = (window as any).api
-    if (!api || !projectDir) return
-    api.costWatch?.(projectDir)
-    if (!api.onCostUpdate) return
-    const unsub = api.onCostUpdate((payload: { projectDir: string }) => {
-      // Only react to our own project's updates.
-      if (payload?.projectDir === projectDir) fetchAgg()
-    })
-    return unsub
-  }, [projectDir, fetchAgg])
+  useCostWatch(projectDir, fetchAgg)
 
   const groups = result?.groups ?? []
   const pivotRows = pivot?.rows ?? []
