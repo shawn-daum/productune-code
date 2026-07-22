@@ -12,7 +12,7 @@ from pathlib import Path
 STAGES = ("define", "build", "ship", "retro", "idle")
 TICKET_TYPES = ("design", "impl", "qa", "ops")
 TICKET_STATUS = ("open", "done", "dropped")
-WIKI_TYPES = ("decision", "fact", "learning", "feature", "retro")
+WIKI_TYPES = ("decision", "fact", "learning", "feature", "retro", "term")
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter)
 CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 60, "worker_habit": 40,
