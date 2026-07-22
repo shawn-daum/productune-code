@@ -85,7 +85,16 @@ export function codeDirName(projectDir: string): string | null {
     const raw = fs.readFileSync(path.join(stateDir(projectDir), 'config.json'), 'utf-8')
     const cfg = JSON.parse(raw)
     const dir = cfg?.code?.dir
-    if (typeof dir === 'string' && dir.trim()) return dir.trim()
+    if (typeof dir === 'string' && dir.trim()) {
+      const trimmed = dir.trim()
+      // Guard against a polluted config anchoring code ops OUTSIDE projectDir
+      // (T-387 / T-385 edge): an absolute path or a `..` segment would let
+      // config.json escape the project root. Treat either as legacy (null)
+      // rather than honor it — codeRoot then safely falls back to projectRoot.
+      if (path.isAbsolute(trimmed)) return null
+      if (trimmed.split(/[/\\]+/).includes('..')) return null
+      return trimmed
+    }
   } catch {
     /* missing / corrupt / no code.dir → legacy */
   }

@@ -26,40 +26,14 @@
  * only when the user deploys.
  */
 
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { readGitRules } from './rules'
-import { codeRoot } from '../state/project-kind'
-
-const execFileAsync = promisify(execFile)
+import { codeGit as git, branchExists, currentBranch, errMessage } from './git-helpers'
 
 export const DEV_BRANCH = 'dev'
 export const MAIN_BRANCH = 'main'
 
-// ── Shared git helpers (anchored at codeRoot) ───────────────────────────────────
-
-async function git(projectDir: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', args, { cwd: codeRoot(projectDir), timeout: 30_000 })
-  return stdout.trim()
-}
-
-async function branchExists(projectDir: string, branch: string): Promise<boolean> {
-  try {
-    await git(projectDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function currentBranch(projectDir: string): Promise<string | null> {
-  try {
-    const name = await git(projectDir, ['rev-parse', '--abbrev-ref', 'HEAD'])
-    return name === 'HEAD' ? null : name
-  } catch {
-    return null
-  }
-}
+// git / branchExists / currentBranch / errMessage are the shared codeRoot-anchored
+// primitives (git-helpers.ts, T-387) — this module only adds its own isDirty gate.
 
 async function isDirty(projectDir: string): Promise<boolean> {
   try {
@@ -68,21 +42,6 @@ async function isDirty(projectDir: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-/**
- * Flatten a child_process error into a single searchable string. git writes
- * conflict / failure detail to stdout+stderr, NOT into Error.message (which is
- * just "Command failed: git …"), so both must be folded in.
- */
-function errMessage(e: unknown): string {
-  if (e && typeof e === 'object') {
-    const anyErr = e as { message?: string; stdout?: unknown; stderr?: unknown }
-    const parts = [anyErr.message, anyErr.stdout, anyErr.stderr]
-      .filter((p): p is string => typeof p === 'string' && p.length > 0)
-    if (parts.length) return parts.join('\n')
-  }
-  return e instanceof Error ? e.message : String(e)
 }
 
 // ── ensureDevBranch — establish the residence branch ────────────────────────────
@@ -278,8 +237,8 @@ export async function tagVersion(
   }
 
   try {
-    const existing = await execFileAsync('git', ['tag', '--list', tag], { cwd: codeRoot(projectDir) })
-    if (existing.stdout.trim() === tag) {
+    const existing = await git(projectDir, ['tag', '--list', tag])
+    if (existing === tag) {
       return { ok: false, reason: 'exists', detail: `Tag ${tag} already exists — release tags are immutable.`, tag }
     }
 
