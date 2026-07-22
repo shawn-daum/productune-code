@@ -19,7 +19,8 @@ const execFileAsync = promisify(execFile)
 // `<stateDir>/worktrees/<ticketId>` in BOTH layouts. In a split project this is
 // the meta area, OUTSIDE the code tree (`code/`), so a code checkout there can
 // never pollute `code/` nor surface in the code repo's `git status`; the meta repo
-// ignores it via `worktrees/` in DEFAULT_META_EXCLUDE. Moving the location into the
+// ignores it via the anchored `<stateDir>/worktrees/` line in its info/exclude
+// (desiredMetaExclude — T-387 item 3). Moving the location into the
 // code tree was rejected (it would re-introduce the exact code↔meta coupling v1.3
 // removes). ensureGitignoreEntry is therefore gated to LEGACY only: when split, the
 // worktree is outside `code/` so no code `.gitignore` entry is needed, and the file
