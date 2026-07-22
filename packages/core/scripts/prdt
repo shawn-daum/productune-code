@@ -700,6 +700,153 @@ def cmd_update(_args):
     print(f"업데이트 완료: {old} → {new}" if old != new else f"이미 최신({old}) — 미러/메뉴판만 갱신했어요")
 
 
+# ── update-on-run (T-393 · 1일 1회 interactive update nudge) ──────────────────
+# Fires BEFORE any subcommand (main): once-a-day it compares the installed code
+# clone's local HEAD to `origin/<branch>` and, when the remote is ahead, shows a
+# release-note interstitial + a 3-way gum/fzf choose. EVERY failure path degrades
+# to silence — the original command always runs. Non-blocking by construction
+# (doctrine #5). Design SoT: docs/tickets/v1.4/T-393.md (Design decisions / UX flow).
+#   · state: ~/.prdt/update-state.json = {last_check(UTC date), skip_version}.
+#   · pending version + RN box come from <codeRoot>/docs/RELEASES.md (T-394 parse
+#     contract: section = ^## , version = first token after '## ' = git tag verbatim).
+#   · update now → cmd_update (pull --ff-only + install.sh) → os.execv re-runs the
+#     ORIGINAL invocation on the freshly-copied code (the PATH `prdt` is a COPY that
+#     install.sh refreshes, so re-exec is what loads the new code — this process is stale).
+
+def prdt_repo_dir():
+    """PRDT_REPO (=<clone>/packages/core) from ~/.prdt/prdt.env, or None."""
+    env = Path.home() / ".prdt" / "prdt.env"
+    if env.is_file():
+        try:
+            for line in env.read_text(encoding="utf-8").splitlines():
+                if line.startswith("PRDT_REPO="):
+                    p = line.split("=", 1)[1].strip()
+                    if p and Path(p).is_dir():
+                        return Path(p)
+        except OSError:
+            pass
+    return None
+
+
+def _update_state_path():
+    return Path.home() / ".prdt" / "update-state.json"
+
+
+def _write_update_state(state):
+    try:
+        p = _update_state_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(str(p) + ".tmp")
+        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError:
+        pass
+
+
+def releases_pending(code_root):
+    """(version, section_text) of the NEWEST `## ` section in <codeRoot>/docs/
+    RELEASES.md, or (None, None). T-394 contract: section boundary ^## , version =
+    first token after '## '. Preamble above the first `## ` is ignored; a missing
+    file/section yields (None, None) so the caller skips silently."""
+    rel = Path(code_root) / "docs" / "RELEASES.md"
+    try:
+        lines = rel.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None, None
+    start = next((i for i, l in enumerate(lines) if l.startswith("## ")), None)
+    if start is None:
+        return None, None
+    tok = lines[start][3:].split()
+    if not tok:
+        return None, None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return tok[0], "\n".join(lines[start:end]).rstrip("\n")
+
+
+def remote_ahead(code_root, timeout=2):
+    """True when `origin/<current-branch>` HEAD differs from local HEAD. None on any
+    failure (dirty git, offline, 2s timeout, no remote) → caller degrades to silence.
+    Detection only compares SHAs; it does not assert direction (a fast-forward pull
+    is what cmd_update does), matching the 구 productune update contract."""
+    def g(*a, t=timeout):
+        return subprocess.run(["git", "-C", str(code_root), *a],
+                              capture_output=True, text=True, timeout=t)
+    try:
+        branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        local = g("rev-parse", "HEAD").stdout.strip()
+        if not branch or not local:
+            return None
+        r = g("ls-remote", "origin", branch)
+        if r.returncode != 0 or not r.stdout.strip():
+            return None
+        remote = r.stdout.split()[0].strip()
+        return remote != local
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _render_release_box(version, note):
+    # Rules-only frame (no right border) — sidesteps CJK double-width misalignment
+    # that a boxed layout would get wrong; the release note prints verbatim inside.
+    rule = "─" * 64
+    print(f"\n{rule}")
+    print(f"  prdt 업데이트 가능 — {version}  (`prdt update` 로도 언제든 갱신)")
+    print(rule)
+    for line in (note or "").splitlines():
+        print(f"  {line}")
+    print(f"{rule}\n")
+
+
+def maybe_prompt_update(cmd):
+    """T-393 entry — called from main() before dispatch. Silent on every degrade
+    path (non-tty / CI / gum·fzf 부재 / offline / timeout / broken install)."""
+    if cmd == "update":                                 # never self-check the updater
+        return
+    # fast degrade: no interactive prompt is possible in these environments
+    if os.environ.get("CI") or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+    if not (shutil.which("gum") or shutil.which("fzf")):
+        return
+    # throttle — at most one check per UTC calendar day
+    today = now_iso()[:10]
+    state = read_json(_update_state_path()) or {}
+    if state.get("last_check") == today:
+        return
+    repo = prdt_repo_dir()
+    if repo is None:
+        return
+    code_root = git_toplevel(repo)                      # <clone>/packages/core → <clone> (T-394 anchor)
+    if code_root is None:
+        return
+    # consume today's slot up front so the post-update re-exec can't loop
+    state["last_check"] = today
+    _write_update_state(state)
+    version, note = releases_pending(code_root)
+    if not version:                                     # no RELEASES section → skip (T-394)
+        return
+    if version == state.get("skip_version"):            # user muted this version
+        return
+    ahead = remote_ahead(code_root)
+    if not ahead:                                       # None (degrade) or False (up to date)
+        return
+    _render_release_box(version, note)
+    choice = select_choice([
+        (f"update now — 업데이트하고 원래 명령 이어서 실행", "update"),
+        ("skip — 이번만 건너뛰기 (내일 다시 물음)", "skip"),
+        (f"skip {version} — 이 버전은 다시 묻지 않기", "skip_version"),
+    ], f"업데이트 가능: {version}")
+    if choice == "update":
+        cmd_update(None)                                # pull --ff-only + install.sh (may sys.exit on failure)
+        try:                                            # re-exec original invocation on the freshly-copied code
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+        except OSError:
+            return                                      # exec failed → fall through on stale code
+    elif choice == "skip_version":
+        state["skip_version"] = version
+        _write_update_state(state)
+    # "skip" or cancelled (None) → fall through to the original command
+
+
 def cmd_history(_args):
     root = require_root()
     con = open_db(root, rebuild=True)
@@ -1376,6 +1523,7 @@ def main():
     p.add_argument("--force", action="store_true", help="overwrite existing .prdt state")
     p.set_defaults(fn=cmd_migrate)
     args = ap.parse_args()
+    maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
         cmd_po(argparse.Namespace(rest=[]))
