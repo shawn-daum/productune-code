@@ -5,4 +5,4 @@
 | ds-3up | no design system yet · DS overhaul (approved reversal) · user rejected the adopted DS | opus/high |
 | ds-conformance | Ship-entry readiness DS check when the PO routes it to the Designer (producer-side conformance) | sonnet/medium |
 | hifi | user-facing screens after a DS direction is settled · new visual pattern or complex interaction to convey | sonnet/high |
-| prd-clarity | Define entry · net-new or changed product scope · PRD refinement | opus/max |
+| prd-clarity | Define entry · net-new or changed product scope · PRD refinement | fable/high |

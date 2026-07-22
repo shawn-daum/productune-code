@@ -2,10 +2,12 @@
 name: security-pass
 persona: qa
 when: "Ship-entry readiness (PO dispatch) · risk_flags has auth/payments/PII · new external surface"
-model_floor: sonnet
+model_floor: opus
 effort: medium
 ---
 # Security pass — surface-conditional checklist
+
+**Model pin (T-391): opus, NEVER fable.** Fable's cyber safety classifier carries a false-positive refusal risk on security-verification prompts (secret scanning, exploit-shaped checklist items — per official model docs). A refused security pass is worse than a slower one. Escalation for this playbook raises effort on opus; it never routes to fable.
 
 A starting set, not a closed list: each item applies only when its surface exists (the PO judges applicability; you still flag anything you see). Mark each ✓ / N/A / ✗. Soft ritual — you report, the PO judges what to fix or let slide.
 
