@@ -1347,6 +1347,21 @@ def write_wiki_page(root, name, type_, title, body, version, dry):
     return True
 
 
+def unique_dest(directory, stem, suffix=".md"):
+    """directory/stem.md — 이미 있으면 stem-2.md, stem-3.md … 첫 미존재 경로를 반환.
+    절대 덮어쓰지도 skip하지도 않는다 (T-396 collision-safe). directory는 아직
+    없어도 됨 (Path 산술만 사용)."""
+    p = directory / f"{stem}{suffix}"
+    if not p.exists():
+        return p
+    n = 2
+    while True:
+        p = directory / f"{stem}-{n}{suffix}"
+        if not p.exists():
+            return p
+        n += 1
+
+
 def page_title(path, fallback):
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("# "):
@@ -1373,10 +1388,23 @@ def migrate_claude_md(root, dry, assume_yes, to_archive, version):
     src = root / "CLAUDE.md"
     if not src.is_file():
         return None
-    content = src.read_text(encoding="utf-8")
+    # 바이너리/비-UTF8 CLAUDE.md → raw traceback 대신 친절 메시지 + 비파괴 종료 (T-396).
+    # 이 시점엔 아무것도 안 지웠으므로 유실 위험 없음.
+    try:
+        content = src.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, ValueError):
+        print("  · [보류] CLAUDE.md가 UTF-8 텍스트가 아닙니다(바이너리?) — 안전하게 이관할 수 "
+              "없어 원본을 그대로 두고 종료합니다.")
+        return {"src": "CLAUDE.md", "dest": None, "moved": False, "error": "not-utf8"}
+
     dest_kind = "archive" if to_archive else "wiki"
-    dest_rel = ("docs/archive/migrated-from-claude-md.md" if dest_kind == "archive"
-                else f"docs/wiki/{CLAUDE_MIGRATED_NAME}.md")
+    # 실제 기록될 목적지를 collision-safe하게 미리 확정 → 계획 프린트가 실제 경로와 일치하고,
+    # 기존 이관 산출물을 절대 덮어쓰지 않는다 (base 있으면 -2, -3 … 유니크 접미사).
+    if dest_kind == "wiki":
+        dst = unique_dest(root / "docs" / "wiki", CLAUDE_MIGRATED_NAME)
+    else:
+        dst = unique_dest(root / "docs" / "archive", "migrated-from-claude-md")
+    dest_rel = str(dst.relative_to(root))
     print(f"  · CLAUDE.md 이관 계획: CLAUDE.md → {dest_rel} ({dest_kind}), 원본은 루트에서 제거")
     if dry:
         return {"src": "CLAUDE.md", "dest": dest_rel, "moved": False, "dry": True}
@@ -1398,22 +1426,26 @@ def migrate_claude_md(root, dry, assume_yes, to_archive, version):
               f"루트에서 제거되었습니다.\n\n")
     body = header + content
 
-    if dest_kind == "wiki":
-        name = CLAUDE_MIGRATED_NAME
-        if (root / "docs" / "wiki" / f"{name}.md").exists():
-            name = f"{CLAUDE_MIGRATED_NAME}-{now_iso()[:10]}"
-        write_wiki_page(root, name, "fact", CLAUDE_MIGRATED_TITLE, body, version, dry=False)
-        dest_rel = f"docs/wiki/{name}.md"
-    else:
-        adir = root / "docs" / "archive"
-        adir.mkdir(parents=True, exist_ok=True)
-        dst = adir / "migrated-from-claude-md.md"
-        if dst.exists():
-            dst = adir / f"migrated-from-claude-md-{now_iso()[:10]}.md"
-        fm = {"title": CLAUDE_MIGRATED_TITLE, "status": "archived",
-              "migrated_from": "CLAUDE.md"}
-        dst.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
-        dest_rel = str(dst.relative_to(root))
+    # 기록 → 성공을 확인한 뒤에만 원본 unlink. 실패/미기록이면 원본 보존 + 에러 보고 (T-396).
+    wrote = False
+    try:
+        if dest_kind == "wiki":
+            # dst는 유니크 보장 → write_wiki_page는 반드시 기록(True) 해야 함
+            wrote = write_wiki_page(root, dst.stem, "fact", CLAUDE_MIGRATED_TITLE,
+                                    body, version, dry=False) and dst.is_file()
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            fm = {"title": CLAUDE_MIGRATED_TITLE, "status": "archived",
+                  "migrated_from": "CLAUDE.md"}
+            dst.write_text(fm_serialize(fm) + "\n" + body.strip() + "\n", encoding="utf-8")
+            wrote = dst.is_file()
+    except OSError as e:
+        print(f"  · [실패] 이관본 기록 실패({e}) — 원본 CLAUDE.md를 보존합니다.")
+        return {"src": "CLAUDE.md", "dest": dest_rel, "moved": False, "error": str(e)}
+
+    if not wrote:
+        print("  · [실패] 이관본이 기록되지 않았습니다 — 원본 CLAUDE.md를 보존합니다.")
+        return {"src": "CLAUDE.md", "dest": dest_rel, "moved": False, "error": "write-skipped"}
 
     src.unlink()
     return {"src": "CLAUDE.md", "dest": dest_rel, "moved": True}
@@ -1433,7 +1465,9 @@ def cmd_migrate(args):
     # 오염 제거; hanta 등). 이관할 것도 없으면 종료.
     if not kind:
         if not claude.is_file():
-            sys.exit("prdt migrate: 이관할 게 없어요 — 레거시 full/lite 상태도, 루트 CLAUDE.md도 없습니다.")
+            # no-op 재실행(이관할 게 없음)은 실패가 아님 → exit 0 (T-396).
+            print("prdt migrate: 이관할 게 없습니다 — 레거시 full/lite 상태도, 루트 CLAUDE.md도 없어요. (no-op)")
+            return
         st = read_json(root / ".prdt" / "po-state.json") or {}
         version = st.get("version") or ""
         print(("[dry-run] " if dry else "") + "migrate: 루트 CLAUDE.md 이관 (PO walk-up 오염 제거)")
