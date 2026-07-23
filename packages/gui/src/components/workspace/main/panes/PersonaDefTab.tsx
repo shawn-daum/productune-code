@@ -265,7 +265,7 @@ export default function PersonaDefTab({ props }: Props) {
         onClick={() => setAdvancedOpen((v) => !v)}
         aria-expanded={advancedOpen}
       >
-        {advancedOpen ? <ChevronDown size={12} color="#707070" /> : <ChevRight size={12} color="#707070" />}
+        {advancedOpen ? <ChevronDown size={12} style={{ color: 'var(--text-quaternary)' }} /> : <ChevRight size={12} style={{ color: 'var(--text-quaternary)' }} />}
         <span style={advancedToggleText}>{t('workspace.team.personaDef.advancedHeader')}</span>
       </button>
       {advancedOpen && (
@@ -429,15 +429,15 @@ function MemoryTier({ tier, headerKey, subKey, state, group, projectDir, openTab
                     style={memoryRow}
                     onClick={() => openRef(f)}
                     title={f.absPath}
-                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)' }}
                     onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
                   >
-                    <FileText size={13} color="#505050" />
+                    <FileText size={13} style={{ color: 'var(--text-disabled)' }} />
                     <span style={memoryRowLabel}>{refLabel(t, f)}</span>
                     {f.editable
-                      ? <Pencil size={11} color="#34D399" style={{ flexShrink: 0 }} />
-                      : <Lock size={11} color="#707070" style={{ flexShrink: 0 }} />}
-                    <ChevRight size={12} color="#505050" style={{ flexShrink: 0 }} />
+                      ? <Pencil size={11} style={{ color: 'var(--health-success)', flexShrink: 0 }} />
+                      : <Lock size={11} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />}
+                    <ChevRight size={12} style={{ color: 'var(--text-disabled)', flexShrink: 0 }} />
                   </button>
                 ))}
               </>
@@ -464,7 +464,7 @@ const wrap: React.CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   padding: 20,
   overflowY: 'auto',
 }
@@ -478,7 +478,7 @@ const errorWrap: React.CSSProperties = {
 
 const errorText: React.CSSProperties = {
   fontSize: 12,
-  color: '#E04040',
+  color: 'var(--status-blocked)',
   fontFamily: 'monospace',
 }
 
@@ -488,7 +488,7 @@ const header: React.CSSProperties = {
   gap: 12,
   marginBottom: 16,
   paddingBottom: 16,
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const avatar: React.CSSProperties = {
@@ -500,7 +500,7 @@ const avatar: React.CSSProperties = {
   justifyContent: 'center',
   fontSize: 14,
   fontWeight: 700,
-  color: '#fff',
+  color: 'var(--text-primary)',
   flexShrink: 0,
 }
 
@@ -518,15 +518,15 @@ const personaNameRow: React.CSSProperties = {
 const personaName: React.CSSProperties = {
   fontSize: 15,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const statusChipActive: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: '#34D399',
-  background: '#0A2A1A',
-  border: '1px solid #1A3A1A',
+  color: 'var(--health-success)',
+  background: 'var(--health-success-subtle)',
+  border: '1px solid var(--health-success)',
   borderRadius: 20,
   padding: '1px 8px',
   whiteSpace: 'nowrap',
@@ -535,9 +535,9 @@ const statusChipActive: React.CSSProperties = {
 const statusChipIdle: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 500,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   background: 'transparent',
-  border: '1px solid #1F1F1F',
+  border: '1px solid var(--border-section)',
   borderRadius: 20,
   padding: '1px 8px',
   whiteSpace: 'nowrap',
@@ -545,7 +545,7 @@ const statusChipIdle: React.CSSProperties = {
 
 const personaRole: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   marginTop: 2,
 }
 
@@ -557,7 +557,7 @@ const tierSection: React.CSSProperties = {
   display: 'flex',
   gap: 16,
   alignItems: 'stretch',
-  borderTop: '1px solid #262626',
+  borderTop: '1px solid var(--border-inline)',
   paddingTop: 14,
   marginBottom: 18,
 }
@@ -569,14 +569,14 @@ const tierRail: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 3,
-  borderRight: '1px solid #1E1E1E',
+  borderRight: '1px solid var(--border-section)',
   paddingRight: 14,
 }
 
 const tierRailNum: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
-  color: '#34D399',
+  color: 'var(--health-success)',
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
 }
@@ -584,14 +584,14 @@ const tierRailNum: React.CSSProperties = {
 const tierRailHeader: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.3,
 }
 
 const tierRailSub: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 500,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   lineHeight: 1.4,
 }
 
@@ -606,7 +606,7 @@ const tierContent: React.CSSProperties = {
 const groupSubHdr: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#5A5A5A',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   margin: '2px 0 6px',
@@ -635,14 +635,14 @@ const metaRow: React.CSSProperties = {
 const metaLabel: React.CSSProperties = {
   fontSize: 10,
   fontFamily: 'monospace',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   width: 120,
   flexShrink: 0,
 }
 
 const metaValue: React.CSSProperties = {
   fontSize: 11,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
 }
 
 const advancedToggle: React.CSSProperties = {
@@ -652,7 +652,7 @@ const advancedToggle: React.CSSProperties = {
   width: '100%',
   background: 'transparent',
   border: 'none',
-  borderTop: '1px solid #1E1E1E',
+  borderTop: '1px solid var(--border-section)',
   padding: '10px 0 8px',
   cursor: 'pointer',
   textAlign: 'left',
@@ -661,7 +661,7 @@ const advancedToggle: React.CSSProperties = {
 const advancedToggleText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
 }
@@ -676,7 +676,7 @@ const specHeaderRow: React.CSSProperties = {
 const sectionSubHdrInline: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
 }
@@ -687,7 +687,7 @@ const specViewerWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   height: 360,
-  border: '1px solid #1E1E1E',
+  border: '1px solid var(--border-section)',
   borderRadius: 6,
   overflow: 'hidden',
   marginBottom: 6,
@@ -699,7 +699,7 @@ const habitViewerWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   height: 300,
-  border: '1px solid #1E1E1E',
+  border: '1px solid var(--border-section)',
   borderRadius: 6,
   overflow: 'hidden',
   marginBottom: 8,
@@ -707,7 +707,7 @@ const habitViewerWrap: React.CSSProperties = {
 
 const specHint: React.CSSProperties = {
   fontSize: 11,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   fontStyle: 'italic',
   padding: '2px 0',
 }
@@ -727,7 +727,7 @@ const memoryRow: React.CSSProperties = {
 
 const memoryRowLabel: React.CSSProperties = {
   fontSize: 12,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -736,7 +736,7 @@ const memoryRowLabel: React.CSSProperties = {
 
 const memoryEmpty: React.CSSProperties = {
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   padding: '6px 0',
   fontStyle: 'italic',
 }

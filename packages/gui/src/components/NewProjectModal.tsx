@@ -51,7 +51,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
     <div style={overlay}>
       <div style={modal}>
         <div style={header}>
-          <FolderOpen size={16} color="#8B5CF6" strokeWidth={2} />
+          <FolderOpen size={16} style={{ color: 'var(--accent)' }} strokeWidth={2} />
           <span style={{ marginLeft: 8, fontWeight: 600, fontSize: 15 }}>{t('app.newProject.title')}</span>
         </div>
 
@@ -59,7 +59,7 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
           <div style={body}>
             <label style={label}>{t('app.newProject.nameLabel')}</label>
             <input
-              style={{ ...input, borderColor: error ? '#EF4444' : '#333' }}
+              style={{ ...input, borderColor: error ? 'var(--health-error)' : 'var(--text-ghost)' }}
               placeholder="my-saas"
               value={slug}
               autoFocus
@@ -108,28 +108,28 @@ const overlay: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
 }
 const modal: React.CSSProperties = {
-  background: '#1A1A1A', borderRadius: 12, border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)', borderRadius: 12, border: '1px solid var(--border-inline)',
   width: 420, boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
 }
 const header: React.CSSProperties = {
-  padding: '16px 20px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center',
+  padding: '16px 20px', borderBottom: '1px solid var(--border-section)', display: 'flex', alignItems: 'center',
 }
 const body: React.CSSProperties = { padding: '20px 20px 8px', display: 'flex', flexDirection: 'column', gap: 8 }
 const footer: React.CSSProperties = {
   padding: '12px 20px 16px', display: 'flex', justifyContent: 'flex-end', gap: 8,
 }
-const label: React.CSSProperties = { fontSize: 12, color: '#A0A0A0', marginBottom: 2 }
+const label: React.CSSProperties = { fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 2 }
 const input: React.CSSProperties = {
-  background: '#0F0F0F', border: '1px solid #333', borderRadius: 4,
-  color: '#F0F0F0', fontSize: 14, padding: '8px 10px', outline: 'none', fontFamily: 'inherit',
+  background: 'var(--bg-surface-base)', border: '1px solid var(--border-inline)', borderRadius: 4,
+  color: 'var(--text-primary)', fontSize: 14, padding: '8px 10px', outline: 'none', fontFamily: 'inherit',
 }
-const hint: React.CSSProperties = { fontSize: 11, color: '#505050' }
-const errStyle: React.CSSProperties = { fontSize: 12, color: '#EF4444' }
+const hint: React.CSSProperties = { fontSize: 11, color: 'var(--text-disabled)' }
+const errStyle: React.CSSProperties = { fontSize: 12, color: 'var(--health-error)' }
 const btnPrimary: React.CSSProperties = {
-  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
+  background: 'var(--accent)', color: 'var(--text-static-white)', border: 'none', borderRadius: 4,
   padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
 }
 const btnSecondary: React.CSSProperties = {
-  background: '#242424', color: '#F0F0F0', border: '1px solid #333', borderRadius: 4,
+  background: 'var(--bg-surface-onlayer)', color: 'var(--text-primary)', border: '1px solid var(--border-inline)', borderRadius: 4,
   padding: '8px 14px', fontSize: 13, cursor: 'pointer',
 }

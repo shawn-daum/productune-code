@@ -55,7 +55,7 @@ const wrap: React.CSSProperties = {
   gridArea: 'center',
   display: 'flex',
   flexDirection: 'column',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   overflow: 'hidden',
   minWidth: 0,
   minHeight: 0,

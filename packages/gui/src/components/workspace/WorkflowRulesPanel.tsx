@@ -200,7 +200,7 @@ function ToggleRow({ label, value, onToggle }: { label: string; value: boolean; 
       aria-pressed={value}
     >
       <span style={fieldLabel}>{label}</span>
-      <div style={{ ...toggleTrack, background: value ? '#8B5CF6' : '#2A2A2A' }}>
+      <div style={{ ...toggleTrack, background: value ? 'var(--accent)' : 'var(--bg-surface-onlayer)' }}>
         <div style={{ ...toggleThumb, transform: value ? 'translateX(14px)' : 'translateX(0)' }} />
       </div>
     </div>
@@ -243,13 +243,13 @@ const wrap: React.CSSProperties = {
 const sectionTitle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.4,
   marginBottom: 4,
 }
 
 const divider: React.CSSProperties = {
-  borderTop: '1px solid #222',
+  borderTop: '1px solid var(--border-section)',
   margin: '2px 0',
 }
 
@@ -279,7 +279,7 @@ const toggleThumb: React.CSSProperties = {
   width: 12,
   height: 12,
   borderRadius: 9999,
-  background: '#FFFFFF',
+  background: 'var(--bg-interaction-neutral)',
   transition: 'transform 0.15s',
 }
 
@@ -291,15 +291,15 @@ const fieldRow: React.CSSProperties = {
 
 const fieldLabel: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   lineHeight: 1.4,
 }
 
 const textInput: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 12,
   fontFamily: 'monospace',
   padding: '4px 8px',
@@ -315,8 +315,8 @@ const chipsRow: React.CSSProperties = {
 const envChip: React.CSSProperties = {
   fontSize: 11,
   fontFamily: 'monospace',
-  background: '#1F3A5F',
-  color: '#7BB3E0',
+  background: 'var(--health-info-subtle)',
+  color: 'var(--text-info)',
   borderRadius: 4,
   padding: '2px 6px',
 }
@@ -332,9 +332,9 @@ const lockedRow: React.CSSProperties = {
 
 const phase5Chip: React.CSSProperties = {
   fontSize: 10,
-  color: '#808080',
-  background: '#222',
-  border: '1px solid #333',
+  color: 'var(--text-quaternary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '2px 6px',
   flexShrink: 0,
@@ -343,9 +343,9 @@ const phase5Chip: React.CSSProperties = {
 
 const successBanner: React.CSSProperties = {
   fontSize: 11,
-  color: '#34D399',
-  background: '#0D2A1E',
-  border: '1px solid #164F35',
+  color: 'var(--health-success)',
+  background: 'var(--health-success-subtle)',
+  border: '1px solid var(--health-success)',
   borderRadius: 4,
   padding: '6px 10px',
   marginTop: 4,
@@ -356,9 +356,9 @@ const errorBanner: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   fontSize: 11,
-  color: '#F87171',
-  background: '#2A1010',
-  border: '1px solid #4A1A1A',
+  color: 'var(--health-error)',
+  background: 'var(--health-error-subtle)',
+  border: '1px solid var(--health-error)',
   borderRadius: 4,
   padding: '6px 10px',
   marginTop: 4,
@@ -370,9 +370,9 @@ const errorText: React.CSSProperties = {
 
 const retryBtn: React.CSSProperties = {
   fontSize: 11,
-  color: '#F87171',
+  color: 'var(--health-error)',
   background: 'transparent',
-  border: '1px solid #F87171',
+  border: '1px solid var(--health-error)',
   borderRadius: 4,
   padding: '2px 8px',
   cursor: 'pointer',

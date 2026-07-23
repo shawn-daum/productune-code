@@ -129,15 +129,15 @@ function ActiveVersionCard({ version, phaseNum, ticketsDone, selected, onClick }
       style={selected ? cardActiveSelected : cardActive}
       onClick={onClick}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = '#8B5CF6'
+        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent)'
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLDivElement).style.borderColor = '#8B5CF633'
+        (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--accent)'
       }}
     >
       <div style={cardIdRow}>
         <span style={cardId}>{version.id}</span>
-        <ChevronRight size={12} color="#8B5CF666" style={chevronStyle} />
+        <ChevronRight size={12} style={{ ...chevronStyle, color: 'var(--accent)' }} />
       </div>
       <div style={cardLine}>
         {t('workspace.versions.phaseLabel')}
@@ -191,24 +191,24 @@ const sectionLabel: React.CSSProperties = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontWeight: 600,
   marginBottom: 8,
 }
 
 const emptyHint: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   padding: '8px 0',
 }
 
 // T-PATCH-167: explicit corruption banner (warning color).
 const parseErrorBanner: React.CSSProperties = {
   fontSize: 11,
-  color: '#FBBF24',
-  background: '#2A1A05',
-  border: '1px solid #92400E',
-  borderLeft: '3px solid #F59E0B',
+  color: 'var(--health-warn)',
+  background: 'var(--health-warn-subtle)',
+  border: '1px solid var(--health-warn)',
+  borderLeft: '3px solid var(--health-warn)',
   borderRadius: 6,
   padding: '8px 10px',
   marginBottom: 12,
@@ -217,8 +217,8 @@ const parseErrorBanner: React.CSSProperties = {
 }
 
 const cardActive: React.CSSProperties = {
-  background: '#1A1030',
-  border: '1px solid #8B5CF633',
+  background: 'var(--accent-subtle)',
+  border: '1px solid var(--accent)',
   borderRadius: 6,
   padding: '12px 14px',
   marginBottom: 6,
@@ -228,8 +228,8 @@ const cardActive: React.CSSProperties = {
 
 const cardActiveSelected: React.CSSProperties = {
   ...{
-    background: '#1A1030',
-    border: '1px solid #8B5CF6',
+    background: 'var(--accent-subtle)',
+    border: '1px solid var(--accent)',
     borderRadius: 6,
     padding: '10px 12px',
     marginBottom: 6,
@@ -238,8 +238,8 @@ const cardActiveSelected: React.CSSProperties = {
 }
 
 const cardPast: React.CSSProperties = {
-  background: '#0F0F0F',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-base)',
+  border: '1px solid var(--border-item)',
   borderRadius: 6,
   padding: '8px 12px',
   marginBottom: 6,
@@ -248,8 +248,8 @@ const cardPast: React.CSSProperties = {
 }
 
 const cardPastSelected: React.CSSProperties = {
-  background: '#161616',
-  border: '1px solid #505050',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-hover)',
   borderRadius: 6,
   padding: '8px 12px',
   marginBottom: 6,
@@ -271,38 +271,38 @@ const chevronStyle: React.CSSProperties = {
 const cardId: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   marginBottom: 4,
 }
 
 const cardIdMuted: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   marginBottom: 4,
 }
 
 const cardLine: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   lineHeight: 1.5,
 }
 
 const cardLineValue: React.CSSProperties = {
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   fontWeight: 600,
   marginLeft: 4,
 }
 
 const cardLineMuted: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   lineHeight: 1.5,
 }
 
 const cardLink: React.CSSProperties = {
   fontSize: 11,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   marginTop: 4,
   cursor: 'pointer',
   userSelect: 'none',
@@ -311,9 +311,9 @@ const cardLink: React.CSSProperties = {
 const capFooter: React.CSSProperties = {
   marginTop: 12,
   paddingTop: 10,
-  borderTop: '1px dashed #1A1A1A',
+  borderTop: '1px dashed var(--border-item)',
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontStyle: 'italic',
   lineHeight: 1.4,
 }
@@ -323,7 +323,7 @@ const unassignedLabel: React.CSSProperties = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  color: 'var(--text-muted, #3A3A3A)',
+  color: 'var(--text-muted)',
   fontWeight: 600,
 }
 
@@ -331,9 +331,9 @@ const unassignedBadge: React.CSSProperties = {
   marginLeft: 6,
   fontSize: 9,
   fontFamily: 'monospace',
-  color: 'var(--text-muted, #3A3A3A)',
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-muted)',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '0 4px',
 }

@@ -178,8 +178,8 @@ const overlay: React.CSSProperties = {
 }
 
 const modal: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   padding: '24px 28px',
   width: 440,
@@ -194,20 +194,20 @@ const titleStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 15,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const bodyStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   lineHeight: 1.55,
 }
 
 const errorStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 11,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   lineHeight: 1.4,
 }
 
@@ -222,8 +222,8 @@ const actions: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   height: 30,
   padding: '0 16px',
-  background: '#8B5CF6',
-  color: '#0F0F0F',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,
@@ -239,8 +239,8 @@ const btnSecondary: React.CSSProperties = {
   height: 30,
   padding: '0 14px',
   background: 'transparent',
-  color: '#C0C0C0',
-  border: '1px solid #3A3A3A',
+  color: 'var(--text-secondary)',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
   fontSize: 12,
   cursor: 'pointer',
@@ -254,7 +254,7 @@ const btnGhost: React.CSSProperties = {
   height: 30,
   padding: '0 12px',
   background: 'transparent',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,

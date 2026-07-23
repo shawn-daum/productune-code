@@ -350,7 +350,7 @@ const container: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }
 
 const content: React.CSSProperties = {
@@ -374,7 +374,7 @@ const logoStyle: React.CSSProperties = {
 const headline: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 600,
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
   textAlign: 'center',
   marginBottom: 10,
   lineHeight: 1.4,
@@ -383,7 +383,7 @@ const headline: React.CSSProperties = {
 const supporting: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 400,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   textAlign: 'center',
   marginBottom: 24,
   lineHeight: 1.6,
@@ -391,8 +391,8 @@ const supporting: React.CSSProperties = {
 
 const composerBox: React.CSSProperties = {
   width: '100%',
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 10,
   padding: '14px 16px 10px',
   display: 'flex',
@@ -406,7 +406,7 @@ const textarea: React.CSSProperties = {
   border: 'none',
   outline: 'none',
   resize: 'none',
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
   fontSize: 14,
   lineHeight: 1.6,
   fontFamily: 'inherit',
@@ -434,14 +434,14 @@ const paperclipBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   borderRadius: 6,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   cursor: 'pointer',
   transition: 'color 0.15s, background 0.15s',
 }
 
 const keyHint: React.CSSProperties = {
   fontSize: 12,
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 // T-334: PO model picker (FreshComposer footer).
@@ -453,13 +453,13 @@ const modelPickerWrap: React.CSSProperties = {
 
 const modelPickerLabel: React.CSSProperties = {
   fontSize: 12,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
 }
 
 const modelPickerSelect: React.CSSProperties = {
-  background: '#141414',
-  color: '#C8C8CC',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  color: 'var(--text-secondary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 5,
   fontSize: 12,
   padding: '2px 6px',
@@ -480,9 +480,9 @@ const fileChipStyle: React.CSSProperties = {
   height: 24,
   padding: '0 6px',
   borderRadius: 4,
-  background: '#1E1E1E',
-  border: '1px solid #2A2A2A',
-  color: '#C8C8CC',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
+  color: 'var(--text-secondary)',
   fontSize: 11,
   fontFamily: 'monospace',
   maxWidth: 200,
@@ -506,7 +506,7 @@ const fileChipRemove: React.CSSProperties = {
   border: 'none',
   borderRadius: '50%',
   background: 'transparent',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   cursor: 'pointer',
   flexShrink: 0,
 }
@@ -515,8 +515,8 @@ const ctaBase: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 0,
-  background: '#8B5CF6',
-  color: '#fff',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 6,
   padding: '7px 14px',
@@ -548,5 +548,5 @@ const errorRow: React.CSSProperties = {
 
 const errorText: React.CSSProperties = {
   fontSize: 13,
-  color: '#F87171',
+  color: 'var(--health-error)',
 }

@@ -82,7 +82,7 @@ const outerWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  background: '#0e0e0e',
+  background: 'var(--bg-surface-base)',
 }
 
 const headerBar: React.CSSProperties = {
@@ -91,8 +91,8 @@ const headerBar: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 8,
   padding: '7px 16px',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
   minHeight: 32,
 }
@@ -105,12 +105,12 @@ const breadcrumbRow: React.CSSProperties = {
   overflow: 'hidden',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   minWidth: 0,
 }
 
 const crumbLast: React.CSSProperties = {
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -148,5 +148,5 @@ const imgStyle: React.CSSProperties = {
 
 const muted: React.CSSProperties = {
   fontSize: 13,
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }

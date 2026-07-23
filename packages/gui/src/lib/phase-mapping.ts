@@ -26,11 +26,11 @@ export interface PhaseDef {
 }
 
 export const PHASE_DEFS: PhaseDef[] = [
-  { key: 'prd',     label: 'PRD',     color: '#FB923C' },  // designer alias (T-006 Option B)
-  { key: 'design',  label: 'Design',  color: '#F472B6' },  // pink-400
-  { key: 'build',   label: 'Build',   color: '#38BDF8' },  // dev alias
-  { key: 'deploy',  label: 'Deploy',  color: '#FB923C' },  // orange-400
-  { key: 'close',   label: 'Close',   color: '#34D399' },  // emerald-400 (success / qa alias)
+  { key: 'prd',     label: 'PRD',     color: 'var(--persona-designer)' },  // designer alias (T-006 Option B)
+  { key: 'design',  label: 'Design',  color: 'var(--stage-design)' },  // pink-400
+  { key: 'build',   label: 'Build',   color: 'var(--text-info)' },  // dev alias
+  { key: 'deploy',  label: 'Deploy',  color: 'var(--persona-designer)' },  // orange-400
+  { key: 'close',   label: 'Close',   color: 'var(--health-success)' },  // emerald-400 (success / qa alias)
 ]
 
 /**
@@ -93,15 +93,15 @@ export interface StageDef {
 }
 
 export const STAGE_DEFS: StageDef[] = [
-  { key: 'define', labelKey: 'workspace.stage.define', color: '#FB923C' },  // orange-400 — echoes PRD
-  { key: 'build',  labelKey: 'workspace.stage.build',  color: '#38BDF8' },  // sky-400 — echoes Build
+  { key: 'define', labelKey: 'workspace.stage.define', color: 'var(--persona-designer)' },  // orange-400 — echoes PRD
+  { key: 'build',  labelKey: 'workspace.stage.build',  color: 'var(--text-info)' },  // sky-400 — echoes Build
   // T-313 (Ship-entry DS conformance): was '#FB923C', same hex as 'define' —
   // violated design-system §2.5 hue-separation (no reused/new hex; reuse an
   // existing stage token). Reassigned to --stage-design '#F472B6' (pink-400,
   // design-system.md §2.6) — no dedicated token for prdt ship yet, so the
   // nearest unused-in-this-set stage token is reused rather than inventing one.
-  { key: 'ship',   labelKey: 'workspace.stage.ship',   color: '#F472B6' },  // pink-400 — --stage-design (reused, no new hex)
-  { key: 'retro',  labelKey: 'workspace.stage.retro',  color: '#34D399' },  // emerald-400 — echoes Close
+  { key: 'ship',   labelKey: 'workspace.stage.ship',   color: 'var(--stage-design)' },  // pink-400 — --stage-design (reused, no new hex)
+  { key: 'retro',  labelKey: 'workspace.stage.retro',  color: 'var(--health-success)' },  // emerald-400 — echoes Close
 ]
 
 /**

@@ -156,8 +156,8 @@ export default function HistoryDetailView({ versionId, closedDate }: Props) {
         ) : (
           <>
             <div style={ticketSummary}>
-              <span style={tkStat}><b style={{ color: '#34D399' }}>{counts.done}</b> done</span>
-              <span style={tkStat}><b style={{ color: '#505050' }}>{counts.dropped}</b> dropped</span>
+              <span style={tkStat}><b style={{ color: 'var(--health-success)' }}>{counts.done}</b> done</span>
+              <span style={tkStat}><b style={{ color: 'var(--text-disabled)' }}>{counts.dropped}</b> dropped</span>
               {counts.open > 0 && (
                 <span style={anomaly}>
                   <AlertTriangle size={12} />
@@ -178,7 +178,7 @@ export default function HistoryDetailView({ versionId, closedDate }: Props) {
           <div style={artTree}>
             {artifacts.flat.map((e) => (
               <button key={e.relPath} style={artRow} onClick={() => openArtifact(e)} type="button" title={e.relPath}>
-                <span style={{ color: '#707070', display: 'flex', flexShrink: 0 }}>{artifactIcon(e.ext)}</span>
+                <span style={{ color: 'var(--text-quaternary)', display: 'flex', flexShrink: 0 }}>{artifactIcon(e.ext)}</span>
                 <span style={artName}>{basename(e.relPath)}</span>
               </button>
             ))}
@@ -197,7 +197,7 @@ export default function HistoryDetailView({ versionId, closedDate }: Props) {
                 </div>
                 {archiveOpen && artifacts.archived.map((e) => (
                   <button key={e.relPath} style={{ ...artRow, paddingLeft: 32 }} onClick={() => openArtifact(e)} type="button" title={e.relPath}>
-                    <span style={{ color: '#707070', display: 'flex', flexShrink: 0 }}>{artifactIcon(e.ext)}</span>
+                    <span style={{ color: 'var(--text-quaternary)', display: 'flex', flexShrink: 0 }}>{artifactIcon(e.ext)}</span>
                     <span style={artName}>{basename(e.relPath)}</span>
                   </button>
                 ))}
@@ -239,10 +239,10 @@ function LinkRow({ label, onClick, mono = true }: { label: string; onClick: () =
       style={linkRow}
       onClick={onClick}
       type="button"
-      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#2A2A2A'; (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#1F1F1F'; (e.currentTarget as HTMLButtonElement).style.background = '#141414' }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--text-ghost)'; (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)' }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--text-ghost)'; (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-on)' }}
     >
-      <FileText size={13} style={{ color: '#505050', flexShrink: 0 }} />
+      <FileText size={13} style={{ color: 'var(--text-disabled)', flexShrink: 0 }} />
       <span style={mono ? linkLabelMono : linkLabel}>{label}</span>
       <span style={linkArrow}>↗</span>
     </button>
@@ -251,63 +251,63 @@ function LinkRow({ label, onClick, mono = true }: { label: string; onClick: () =
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const wrap: React.CSSProperties = { flex: 1, background: '#0F0F0F', overflow: 'auto', padding: '24px 30px 40px' }
+const wrap: React.CSSProperties = { flex: 1, background: 'var(--bg-surface-base)', overflow: 'auto', padding: '24px 30px 40px' }
 
 const header: React.CSSProperties = {
   display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 22, paddingBottom: 14,
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
 }
-const vidLarge: React.CSSProperties = { fontSize: 22, fontWeight: 700, color: '#F0F0F0' }
+const vidLarge: React.CSSProperties = { fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }
 const closedBadge: React.CSSProperties = {
-  fontSize: 10, fontWeight: 700, color: '#34D399', background: 'rgba(52,211,153,0.14)',
+  fontSize: 10, fontWeight: 700, color: 'var(--health-success)', background: 'rgba(52,211,153,0.14)',
   borderRadius: 4, padding: '2px 8px', textTransform: 'uppercase', letterSpacing: '0.05em',
 }
-const dateText: React.CSSProperties = { fontSize: 12, color: '#707070', fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }
+const dateText: React.CSSProperties = { fontSize: 12, color: 'var(--text-quaternary)', fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace' }
 
 const section: React.CSSProperties = { marginBottom: 26 }
 const sectionTitle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 10px',
-  fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#505050',
+  fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-disabled)',
 }
 
 const outcomeCard: React.CSSProperties = {
-  background: '#141414', border: '1px solid #1F1F1F', borderLeft: '3px solid #34D399',
+  background: 'var(--bg-surface-on)', border: '1px solid var(--border-section)', borderLeft: '3px solid var(--health-success)',
   borderRadius: 6, padding: '16px 18px',
 }
 const outcomeText: React.CSSProperties = {
-  fontSize: 13, color: '#C8C8CC', lineHeight: 1.6, whiteSpace: 'pre-wrap',
+  fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap',
   fontFamily: 'inherit', margin: 0,
 }
-const outcomePending: React.CSSProperties = { fontSize: 13, color: '#505050', fontStyle: 'italic' }
+const outcomePending: React.CSSProperties = { fontSize: 13, color: 'var(--text-disabled)', fontStyle: 'italic' }
 
-const quietNote: React.CSSProperties = { fontSize: 12, color: '#505050', fontStyle: 'italic', paddingLeft: 2 }
+const quietNote: React.CSSProperties = { fontSize: 12, color: 'var(--text-disabled)', fontStyle: 'italic', paddingLeft: 2 }
 
 const linkRow: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#141414',
-  border: '1px solid #1F1F1F', borderRadius: 4, fontSize: 12, maxWidth: 520, cursor: 'pointer',
+  display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-section)', borderRadius: 4, fontSize: 12, maxWidth: 520, cursor: 'pointer',
   textAlign: 'left', width: '100%', fontFamily: 'inherit', transition: 'border-color 0.1s, background 0.1s',
 }
 const linkLabelMono: React.CSSProperties = {
-  color: '#A0A0A0', fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 11,
+  color: 'var(--text-tertiary)', fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', fontSize: 11,
   flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
 }
-const linkLabel: React.CSSProperties = { color: '#C8C8CC', fontSize: 12, flex: 1 }
-const linkArrow: React.CSSProperties = { fontSize: 11, color: '#505050', flexShrink: 0 }
+const linkLabel: React.CSSProperties = { color: 'var(--text-secondary)', fontSize: 12, flex: 1 }
+const linkArrow: React.CSSProperties = { fontSize: 11, color: 'var(--text-disabled)', flexShrink: 0 }
 
 const ticketSummary: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10, flexWrap: 'wrap' }
-const tkStat: React.CSSProperties = { fontSize: 12, color: '#707070', display: 'flex', alignItems: 'baseline', gap: 5 }
+const tkStat: React.CSSProperties = { fontSize: 12, color: 'var(--text-quaternary)', display: 'flex', alignItems: 'baseline', gap: 5 }
 const anomaly: React.CSSProperties = {
-  display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#FBBF24',
+  display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--health-warn)',
   background: 'rgba(251,191,36,0.12)', borderRadius: 4, padding: '3px 8px',
 }
 
 const artTree: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 1 }
 const artRow: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', fontSize: 12, color: '#C8C8CC',
+  display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', fontSize: 12, color: 'var(--text-secondary)',
   background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
   fontFamily: 'inherit',
 }
 const artName: React.CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const artArchiveHdr: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#707070', padding: '5px 10px', cursor: 'pointer', userSelect: 'none',
+  display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-quaternary)', padding: '5px 10px', cursor: 'pointer', userSelect: 'none',
 }

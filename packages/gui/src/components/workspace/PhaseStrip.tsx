@@ -125,7 +125,7 @@ const itemGroup: React.CSSProperties = {
 
 const separatorStyle: React.CSSProperties = {
   fontSize: 9,
-  color: '#333',
+  color: 'var(--text-ghost)',
   padding: '0 1px',
   flexShrink: 0,
 }
@@ -133,8 +133,8 @@ const separatorStyle: React.CSSProperties = {
 function dotStyle(state: PhaseItemState, color: string): React.CSSProperties {
   const dotColor =
     state === 'cur'     ? color :
-    state === 'done'    ? '#555555' :
-    '#404040'  // pending
+    state === 'done'    ? 'var(--text-disabled)' :
+    'var(--text-ghost)'  // pending
 
   return {
     width: 5,
@@ -164,21 +164,21 @@ function itemStyle(state: PhaseItemState, color: string): React.CSSProperties {
   if (state === 'cur') {
     return {
       ...base,
-      color: '#e8e8e8',
-      background: '#1f2a3a',
+      color: 'var(--text-primary)',
+      background: 'var(--health-info-subtle)',
       fontWeight: 600,
     }
   }
   if (state === 'done') {
     return {
       ...base,
-      color: '#555555',
+      color: 'var(--text-disabled)',
     }
   }
   // pending
   return {
     ...base,
-    color: '#4a4a4a',
+    color: 'var(--text-disabled)',
   }
 }
 
@@ -190,7 +190,7 @@ const chipBase: React.CSSProperties = {
   borderRadius: 3,
   fontSize: 10,
   fontWeight: 600,
-  background: '#1f2a3a',
+  background: 'var(--health-info-subtle)',
   letterSpacing: 0.4,
   flexShrink: 0,
   cursor: 'default',

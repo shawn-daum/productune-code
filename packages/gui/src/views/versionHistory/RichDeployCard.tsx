@@ -27,11 +27,11 @@ export default function RichDeployCard({ deploy }: RichDeployCardProps) {
   }, [deploy.createdAt, deploy.readyAt, t])
 
   return (
-    <div style={{ ...cardWrap, borderLeft: '2px solid #22C55E40' }}>
+    <div style={{ ...cardWrap, borderLeft: '2px solid var(--health-success)' }}>
       <div style={cardHeader}>
         <span style={deployPill}>{t('workspace.versionHistory.deploy.pill')}</span>
         <span style={cardTitle}>{deploy.createdAt.slice(0, 10)}</span>
-        <span style={{ ...deployPill, background: deploy.state === 'READY' ? '#0A2A0A' : '#1A0808', color: deploy.state === 'READY' ? '#22C55E' : '#E04040' }}>
+        <span style={{ ...deployPill, background: deploy.state === 'READY' ? 'var(--health-success-subtle)' : 'var(--health-error-subtle)', color: deploy.state === 'READY' ? 'var(--health-success)' : 'var(--status-blocked)' }}>
           {deploy.state}
         </span>
         {durationLabel && <span style={metaItem}>{t('workspace.versionHistory.deploy.took', { dur: durationLabel })}</span>}
@@ -40,7 +40,7 @@ export default function RichDeployCard({ deploy }: RichDeployCardProps) {
       {deploy.includedTickets.length > 0 && (
         <div style={cardMeta}>
           {deploy.includedTickets.map((tid) => (
-            <span key={tid} style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: '#8B5CF6', flexShrink: 0 }}>{tid}</span>
+            <span key={tid} style={{ fontSize: 11, fontWeight: 700, fontFamily: 'monospace', color: 'var(--accent)', flexShrink: 0 }}>{tid}</span>
           ))}
         </div>
       )}
@@ -62,7 +62,7 @@ export default function RichDeployCard({ deploy }: RichDeployCardProps) {
       {expanded && (
         <div style={commitList}>
           <div style={commitRow}>
-            <span style={{ color: '#C0C0C0', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{deploy.url}</span>
+            <span style={{ color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{deploy.url}</span>
           </div>
         </div>
       )}
@@ -73,7 +73,7 @@ export default function RichDeployCard({ deploy }: RichDeployCardProps) {
 export function DeployLoadingSkeleton() {
   const { t } = useTranslation()
   return (
-    <div style={{ ...cardWrap, borderLeft: '2px solid #22C55E20', opacity: 0.5 }}>
+    <div style={{ ...cardWrap, borderLeft: '2px solid var(--health-success)', opacity: 0.5 }}>
       <div style={cardHeader}>
         <span style={deployPill}>{t('workspace.versionHistory.deploy.loading')}</span>
       </div>

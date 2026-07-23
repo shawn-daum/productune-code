@@ -100,8 +100,8 @@ const overlay: React.CSSProperties = {
 }
 
 const modal: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   padding: '24px 28px',
   width: 420,
@@ -116,13 +116,13 @@ const title: React.CSSProperties = {
   margin: 0,
   fontSize: 15,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const body: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   lineHeight: 1.55,
 }
 
@@ -133,13 +133,13 @@ const settingsLinkRow: React.CSSProperties = {
 const btnSettingsLink: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 11,
   cursor: 'pointer',
   fontFamily: 'inherit',
   padding: 0,
   textDecoration: 'underline',
-  textDecorationColor: '#404040',
+  textDecorationColor: 'var(--text-ghost)',
 }
 
 const actions: React.CSSProperties = {
@@ -152,8 +152,8 @@ const actions: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   height: 30,
   padding: '0 16px',
-  background: '#EF4444',
-  color: '#fff',
+  background: 'var(--health-error)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,
@@ -166,7 +166,7 @@ const btnGhost: React.CSSProperties = {
   height: 30,
   padding: '0 12px',
   background: 'transparent',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,

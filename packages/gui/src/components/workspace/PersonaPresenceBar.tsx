@@ -158,7 +158,7 @@ function PersonaChip({ entry, onDismiss, modelLabel, onModelClick }: ChipProps) 
   const labelStyle: React.CSSProperties = {
     fontSize: 10,
     lineHeight: '14px',
-    color: '#0F0F0F',
+    color: 'var(--text-ghost)',
     background: color,
     borderRadius: 3,
     padding: '0 5px',
@@ -250,7 +250,7 @@ const modelTextStyle: React.CSSProperties = {
   fontSize: 9,
   lineHeight: '12px',
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  color: 'var(--txt-faint, #6a6a6a)',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
   userSelect: 'none',
   maxWidth: 64,
@@ -265,9 +265,9 @@ const modelBtnStyle: React.CSSProperties = {
   border: 'none',
   padding: 0,
   cursor: 'pointer',
-  color: 'var(--txt-muted, #9a9a9a)',
+  color: 'var(--text-tertiary)',
   textDecoration: 'underline',
-  textDecorationColor: '#404040',
+  textDecorationColor: 'var(--text-ghost)',
   textUnderlineOffset: 2,
 }
 
@@ -276,11 +276,11 @@ const tooltipStyle: React.CSSProperties = {
   bottom: 'calc(100% + 4px)',
   left: '50%',
   transform: 'translateX(-50%)',
-  background: '#1e1e1e',
-  border: '1px solid #3a3a3a',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
   fontSize: 10,
-  color: 'var(--txt, #F0F0F0)',
+  color: 'var(--text-primary)',
   padding: '3px 7px',
   boxShadow: '0 4px 12px rgba(0,0,0,.5)',
   whiteSpace: 'nowrap',
@@ -376,8 +376,8 @@ function WorkerStreamSlot({ persona, lines, live, tokens, duration, layout, onEx
     minWidth: 0,
     display: 'flex',
     flexDirection: 'column',
-    background: 'var(--surface-base, #1a1a1a)',
-    border: '1px solid var(--border, #2A2A2A)',
+    background: 'var(--surface-base)',
+    border: '1px solid var(--border-inline)',
     borderRadius: 8,
     overflow: 'hidden',
     // AC-1: FIXED height in both layouts so the slot never grows/squishes the
@@ -518,8 +518,8 @@ const streamHdrStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 7,
   padding: '3px 9px',
-  borderBottom: '1px solid var(--border, #2A2A2A)',
-  background: 'var(--surface-panel, #161616)',
+  borderBottom: '1px solid var(--border-inline)',
+  background: 'var(--surface-panel)',
   flexShrink: 0,
 }
 const streamDotStyle: React.CSSProperties = {
@@ -547,7 +547,7 @@ const metaBadgeStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   fontSize: 9,
   letterSpacing: '0.04em',
-  color: 'var(--txt-faint, #6a6a6a)',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
 }
 const streamBodyStyle: React.CSSProperties = {
@@ -579,7 +579,7 @@ const streamBodyInnerStyle: React.CSSProperties = {
 // natural height (no squish/overlap) whether rendered in the slot's block wrapper
 // or the overlay's flex column.
 const streamProseLineStyle: React.CSSProperties = {
-  color: 'var(--txt-muted, #9a9a9a)',
+  color: 'var(--text-tertiary)',
   whiteSpace: 'normal',
   overflowWrap: 'anywhere',
   flexShrink: 0,
@@ -590,7 +590,7 @@ const streamProseLineStyle: React.CSSProperties = {
 const streamToolLineStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   fontSize: 10.5,
-  color: 'var(--txt-faint, #6a6a6a)',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -615,8 +615,8 @@ const overlayPanelStyle: React.CSSProperties = {
   height: 'min(560px, 80vh)',
   display: 'flex',
   flexDirection: 'column',
-  background: 'var(--surface-base, #1a1a1a)',
-  border: '1px solid var(--border, #2A2A2A)',
+  background: 'var(--surface-base)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 10,
   overflow: 'hidden',
   boxShadow: '0 12px 48px rgba(0,0,0,.6)',
@@ -627,8 +627,8 @@ const overlayHdrStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '8px 12px',
-  borderBottom: '1px solid var(--border, #2A2A2A)',
-  background: 'var(--surface-panel, #161616)',
+  borderBottom: '1px solid var(--border-inline)',
+  background: 'var(--surface-panel)',
   flexShrink: 0,
 }
 const overlayCloseStyle: React.CSSProperties = {
@@ -640,9 +640,9 @@ const overlayCloseStyle: React.CSSProperties = {
   justifyContent: 'center',
   fontSize: 18,
   lineHeight: 1,
-  color: 'var(--txt-muted, #9a9a9a)',
+  color: 'var(--text-tertiary)',
   background: 'transparent',
-  border: '1px solid var(--border, #2A2A2A)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 5,
   cursor: 'pointer',
   flexShrink: 0,
@@ -883,8 +883,8 @@ const barStyle: React.CSSProperties = {
   flexDirection: 'row',
   alignItems: 'stretch',
   gap: 14,
-  background: '#161616',
-  borderBottom: '1px solid var(--border, #2A2A2A)',
+  background: 'var(--bg-surface-on)',
+  borderBottom: '1px solid var(--border-inline)',
 }
 
 // Stacked (narrow): row expands vertically, slot full-width below the chip row.

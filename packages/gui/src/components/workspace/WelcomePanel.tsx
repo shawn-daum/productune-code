@@ -30,9 +30,9 @@ export default function WelcomePanel({ variant = 'legacy', activeIndex = 0 }: Pr
   return (
     <main style={wrap}>
       <div style={glyph}>
-        <span style={{ color: '#A78BFA' }}>{'{'}</span>
+        <span style={{ color: 'var(--accent)' }}>{'{'}</span>
         <span>&nbsp;</span>
-        <span style={{ color: '#5EEAD4' }}>{'}'}</span>
+        <span style={{ color: 'var(--brand-mint)' }}>{'}'}</span>
       </div>
       <h3 style={headline}>{t('workspace.welcome.headline')}</h3>
       <p style={supporting}>{t('workspace.welcome.supporting')}</p>
@@ -51,7 +51,7 @@ const wrap: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
   minHeight: 0,
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
@@ -74,13 +74,13 @@ const headline: React.CSSProperties = {
   margin: 0,
   fontSize: 18,
   fontWeight: 600,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
 }
 
 const supporting: React.CSSProperties = {
   margin: 0,
   fontSize: 14,
-  color: '#808086',
+  color: 'var(--text-quaternary)',
   maxWidth: '42ch',
   lineHeight: 1.6,
 }
@@ -94,14 +94,14 @@ const steps: React.CSSProperties = {
 const step: React.CSSProperties = {
   fontSize: 11,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  color: '#505057',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-disabled)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '3px 9px',
 }
 
 const stepOn: React.CSSProperties = {
   ...step,
-  color: '#A78BFA',
+  color: 'var(--accent)',
   borderColor: 'rgba(167, 139, 250, 0.5)',
 }

@@ -65,13 +65,13 @@ export default class ErrorBoundary extends Component<Props, State> {
 }
 
 const errWrap: React.CSSProperties = {
-  background: '#1A0A0A', border: '1px solid #4A1A1A', borderRadius: 6,
+  background: 'var(--health-error-subtle)', border: '1px solid var(--health-error)', borderRadius: 6,
   padding: '12px 16px', margin: '8px 0',
 }
 const errTitle: React.CSSProperties = {
-  fontSize: 12, color: '#F87171', fontWeight: 600, marginBottom: 6,
+  fontSize: 12, color: 'var(--health-error)', fontWeight: 600, marginBottom: 6,
 }
 const errMsg: React.CSSProperties = {
-  fontSize: 11, color: '#F87171', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+  fontSize: 11, color: 'var(--health-error)', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
   fontFamily: 'monospace',
 }

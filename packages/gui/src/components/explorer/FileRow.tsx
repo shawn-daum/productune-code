@@ -17,17 +17,17 @@ interface Props {
 function fileIcon(name: string) {
   const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
   if (ext === '.md' || ext === '.mdx' || ext === '.txt' || ext === '.log') {
-    return <FileText size={14} strokeWidth={1.75} color="#8ab4f8" />
+    return <FileText size={14} strokeWidth={1.75} style={{ color: 'var(--text-info)' }} />
   }
   if (ext === '.html' || ext === '.htm' || ext === '.ts' || ext === '.tsx' ||
       ext === '.js' || ext === '.jsx' || ext === '.css' || ext === '.json' ||
       ext === '.yml' || ext === '.yaml') {
-    return <FileCode size={14} strokeWidth={1.75} color="#8ab4f8" />
+    return <FileCode size={14} strokeWidth={1.75} style={{ color: 'var(--text-info)' }} />
   }
   if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'].includes(ext)) {
-    return <FileImage size={14} strokeWidth={1.75} color="#8ab4f8" />
+    return <FileImage size={14} strokeWidth={1.75} style={{ color: 'var(--text-info)' }} />
   }
-  return <File size={14} strokeWidth={1.75} color="#606060" />
+  return <File size={14} strokeWidth={1.75} style={{ color: 'var(--text-quaternary)' }} />
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -119,7 +119,7 @@ function rowStyle(depth: number, hovered: boolean): React.CSSProperties {
     paddingLeft: 4 + depth * 16,
     paddingRight: 8,
     cursor: 'pointer',
-    background: hovered ? '#1a1a1a' : 'transparent',
+    background: hovered ? 'var(--bg-surface-onlayer)' : 'transparent',
     userSelect: 'none',
     gap: 2,
     outline: 'none',
@@ -142,7 +142,7 @@ const iconWrap: React.CSSProperties = {
 
 const labelStyle: React.CSSProperties = {
   fontSize: 13,
-  color: '#C8C8C8',
+  color: 'var(--text-secondary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',

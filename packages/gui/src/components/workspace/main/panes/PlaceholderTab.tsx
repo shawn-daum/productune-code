@@ -42,7 +42,7 @@ const wrap: React.CSSProperties = {
   justifyContent: 'center',
   gap: 12,
   padding: 24,
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 const icon: React.CSSProperties = {
@@ -50,7 +50,7 @@ const icon: React.CSSProperties = {
   fontFamily: 'monospace',
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
 }
 
 const body: React.CSSProperties = {

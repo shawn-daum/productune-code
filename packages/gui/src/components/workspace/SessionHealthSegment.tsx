@@ -24,16 +24,16 @@ import { personaIdFromAgentType, PERSONA_LABELS } from '../../store/personaPrese
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 
-const HEALTH_INFO  = '#38BDF8'
-const HEALTH_WARN  = '#FBBF24'
-const HEALTH_ERROR = '#EF4444'
+const HEALTH_INFO  = 'var(--text-info)'
+const HEALTH_WARN  = 'var(--health-warn)'
+const HEALTH_ERROR = 'var(--health-error)'
 
 function stateColor(state: PoHealthState): string {
   const sev = severityOf(state)
   if (sev === 'info')  return HEALTH_INFO
   if (sev === 'warn')  return HEALTH_WARN
   if (sev === 'error') return HEALTH_ERROR
-  return '#22C55E'   // healthy — not shown normally
+  return 'var(--health-success)'   // healthy — not shown normally
 }
 
 // ── Animations (injected once into <head>) ────────────────────────────────────
@@ -263,7 +263,7 @@ const segLabel: React.CSSProperties = {
 const ctaBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#38BDF8',
+  color: 'var(--text-info)',
   fontSize: 10,
   cursor: 'pointer',
   padding: '0 2px',

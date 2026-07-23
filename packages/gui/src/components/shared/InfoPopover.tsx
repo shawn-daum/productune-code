@@ -110,8 +110,8 @@ export function InfoPopover({ text, threshold = 50, ariaLabel }: InfoPopoverProp
             width: POPOVER_WIDTH,
             maxHeight: POPOVER_MAX_HEIGHT,
             overflowY: 'auto',
-            background: '#1E1E1E',
-            border: '1px solid #333333',
+            background: 'var(--bg-surface-onlayer)',
+            border: '1px solid var(--border-inline)',
             borderRadius: 6,
             padding: '10px 12px',
             zIndex: 9999,
@@ -136,8 +136,8 @@ function btnStyle(active: boolean): React.CSSProperties {
     height: 18,
     borderRadius: 3,
     border: 'none',
-    background: active ? '#0A1828' : 'transparent',
-    color: active ? '#38BDF8' : '#404040',
+    background: active ? 'var(--health-info-subtle)' : 'transparent',
+    color: active ? 'var(--text-info)' : 'var(--text-ghost)',
     cursor: 'pointer',
     padding: 0,
     verticalAlign: 'middle',
@@ -147,6 +147,6 @@ function btnStyle(active: boolean): React.CSSProperties {
 
 const popoverText: React.CSSProperties = {
   fontSize: 11,
-  color: '#B0B0B0',
+  color: 'var(--text-tertiary)',
   lineHeight: '1.55',
 }

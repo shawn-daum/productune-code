@@ -126,8 +126,8 @@ const errorWrap: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  background: '#2A0808',
-  color: '#E04040',
+  background: 'var(--health-error-subtle)',
+  color: 'var(--status-blocked)',
   fontSize: 13,
   fontFamily: 'monospace',
 }

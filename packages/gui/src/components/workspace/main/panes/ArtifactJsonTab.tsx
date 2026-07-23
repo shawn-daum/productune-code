@@ -393,18 +393,18 @@ export default function ArtifactJsonTab({ props: tabProps, findQuery, findNavRef
           </div>
         )}
         {state.phase === 'loading' && (
-          <div style={center}><Loader2 size={18} style={{ color: '#505050' }} className="pdt-spin" /></div>
+          <div style={center}><Loader2 size={18} style={{ color: 'var(--text-disabled)' }} className="pdt-spin" /></div>
         )}
         {state.phase === 'error' && (
           <div style={errorBanner}>
-            <AlertOctagon size={13} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
+            <AlertOctagon size={13} style={{ color: 'var(--health-error)', flexShrink: 0, marginTop: 1 }} />
             <span>{state.error}</span>
           </div>
         )}
         {state.phase === 'invalid' && (
           <>
             <div style={errorBanner}>
-              <AlertOctagon size={13} style={{ color: '#D97706', flexShrink: 0, marginTop: 1 }} />
+              <AlertOctagon size={13} style={{ color: 'var(--health-warn)', flexShrink: 0, marginTop: 1 }} />
               <span>invalid JSON — raw text below ({state.error})</span>
             </div>
             <pre style={rawPre}>{state.raw}</pre>
@@ -561,7 +561,7 @@ const wrap: React.CSSProperties = {
   flexDirection: 'column',
   height: '100%',
   overflow: 'hidden',
-  background: '#0E0E0E',
+  background: 'var(--bg-surface-base)',
 }
 
 const header: React.CSSProperties = {
@@ -569,14 +569,14 @@ const header: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '8px 14px',
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
   flexShrink: 0,
 }
 
 const crumb: React.CSSProperties = {
   fontFamily: MONO,
   fontSize: 11,
-  color: '#808080',
+  color: 'var(--text-quaternary)',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -588,7 +588,7 @@ const lockBadge: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 10,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   flexShrink: 0,
 }
 
@@ -614,23 +614,23 @@ const errorBanner: React.CSSProperties = {
   gap: 8,
   margin: '4px 14px 10px',
   padding: '8px 10px',
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const rawPre: React.CSSProperties = {
   margin: '0 14px',
   padding: 10,
-  background: '#141414',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-item)',
   borderRadius: 4,
   fontFamily: MONO,
   fontSize: 11,
   lineHeight: 1.5,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
 }
@@ -656,8 +656,8 @@ const stickyBand: React.CSSProperties = {
   height: STICKY_ROW_H,
   display: 'flex',
   alignItems: 'center',
-  background: '#0E0E0E',
-  borderBottom: '1px solid #222',
+  background: 'var(--bg-surface-base)',
+  borderBottom: '1px solid var(--border-section)',
   boxShadow: '0 2px 4px rgba(0,0,0,0.45)',
 }
 
@@ -689,7 +689,7 @@ const stickyCrumbBtn: React.CSSProperties = {
   border: 'none',
   padding: 0,
   cursor: 'pointer',
-  color: '#9CA3AF',
+  color: 'var(--text-tertiary)',
   fontFamily: MONO,
   fontSize: 11,
   lineHeight: `${STICKY_ROW_H}px`,
@@ -700,10 +700,10 @@ const stickyCrumbBtn: React.CSSProperties = {
   maxWidth: 220,
 }
 
-const stickySep: React.CSSProperties = { color: '#3F3F3F', flexShrink: 0 }
+const stickySep: React.CSSProperties = { color: 'var(--text-ghost)', flexShrink: 0 }
 
 const stickyEllipsis: React.CSSProperties = {
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   flexShrink: 0,
   cursor: 'default',
   userSelect: 'none',
@@ -723,7 +723,7 @@ const chevron: React.CSSProperties = {
   alignItems: 'center',
   width: 14,
   flexShrink: 0,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   paddingTop: 4, // optical first-line alignment (line-height 1.65 × 11.5px)
 }
 
@@ -735,14 +735,14 @@ const chevronSpacer: React.CSSProperties = {
 
 // Key color cycles by depth — hierarchy cue. Hues avoid the value colors
 // (string green / number amber / keyword violet).
-const KEY_COLORS = ['#9CA3AF', '#7EA8CF', '#CF9E9E', '#8FBFB4']
+const KEY_COLORS = ['var(--text-tertiary)', '#7EA8CF', '#CF9E9E', '#8FBFB4']
 const keyStyle = (depth: number): React.CSSProperties => ({
   color: KEY_COLORS[depth % KEY_COLORS.length],
   flexShrink: 0,
   whiteSpace: 'nowrap',
 })
-const punct: React.CSSProperties = { color: '#505050' }
-const collapsedHint: React.CSSProperties = { color: '#3F3F3F', fontStyle: 'italic' }
+const punct: React.CSSProperties = { color: 'var(--text-disabled)' }
+const collapsedHint: React.CSSProperties = { color: 'var(--text-ghost)', fontStyle: 'italic' }
 const strVal: React.CSSProperties = { color: '#7FB07F', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
 const numVal: React.CSSProperties = { color: '#C9A26D' }
 const kwVal: React.CSSProperties = { color: '#8B7EC8' }

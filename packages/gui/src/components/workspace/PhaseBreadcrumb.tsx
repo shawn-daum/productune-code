@@ -325,8 +325,8 @@ const wrap: React.CSSProperties = {
   // T-PATCH-096 AC-2: wider/taller header — larger horizontal+vertical padding.
   padding: '10px 28px',
   minHeight: 48,
-  background: '#151515',
-  borderBottom: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  borderBottom: '1px solid var(--border-inline)',
   userSelect: 'none',
 }
 
@@ -351,14 +351,14 @@ const phaseButtonReset: React.CSSProperties = {
 
 const activeNode: React.CSSProperties = {
   ...baseNode,
-  background: '#1A1030',
-  color: '#8B5CF6',
+  background: 'var(--accent-subtle)',
+  color: 'var(--accent)',
   fontWeight: 600,
 }
 
 const inactiveNode: React.CSSProperties = {
   ...baseNode,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   background: 'transparent',
 }
 
@@ -379,14 +379,14 @@ function stageActiveNode(color: string): React.CSSProperties {
 // not compete with the phase active purple (#8B5CF6).
 const versionNode: React.CSSProperties = {
   ...baseNode,
-  color: '#9A9AA0',
-  background: '#1E1E1E',
-  border: '1px solid #2F2F2F',
+  color: 'var(--text-tertiary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   fontWeight: 600,
 }
 
 const chevron: React.CSSProperties = {
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontSize: 16,
   margin: '0 3px',
   lineHeight: 1,
@@ -399,7 +399,7 @@ const counterNode: React.CSSProperties = {
   marginLeft: 4,
   fontSize: 10,
   fontWeight: 400,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontVariantNumeric: 'tabular-nums',
   opacity: 0.7,
   whiteSpace: 'nowrap',
@@ -433,17 +433,17 @@ const markerBtnBase: React.CSSProperties = {
 // at the boundary — "review pending", not "locked").
 const markerBtnBlocked: React.CSSProperties = {
   ...markerBtnBase,
-  color: '#FBBF24',          // amber-400
-  background: '#241A33',     // purple-tinted surface
-  border: '1px solid #4C2F6B',
+  color: 'var(--health-warn)',          // amber-400
+  background: 'var(--accent-subtle)',     // purple-tinted surface
+  border: '1px solid var(--accent)',
 }
 
 // passed: muted check, low-contrast — no longer a focal point.
 const markerBtnPassed: React.CSSProperties = {
   ...markerBtnBase,
-  color: '#6B7280',          // muted gray
+  color: 'var(--text-quaternary)',          // muted gray
   background: 'transparent',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
 }
 
 const markerCount: React.CSSProperties = {
@@ -473,8 +473,8 @@ const popover: React.CSSProperties = {
   zIndex: 950,
   width: POPOVER_WIDTH,
   maxWidth: '80vw',
-  background: '#1C1C20',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-layer-popup)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 6,
   boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
   padding: '12px 14px',
@@ -484,7 +484,7 @@ const popover: React.CSSProperties = {
 const popoverTitle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#E5E5E5',
+  color: 'var(--text-primary)',
   marginBottom: 10,
 }
 
@@ -518,7 +518,7 @@ const popoverItemLabelWrap: React.CSSProperties = {
 const popoverItemLabel: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 500,
-  color: '#D4D4D8',
+  color: 'var(--text-secondary)',
 }
 
 // T-PATCH-203 follow-up §2: canonical close_gate step key — small, dim, monospace.
@@ -526,9 +526,9 @@ const popoverItemLabel: React.CSSProperties = {
 const popoverItemKey: React.CSSProperties = {
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   fontSize: 9.5,
-  color: '#6B6B72',
-  background: '#202024',
-  border: '1px solid #2C2C30',
+  color: 'var(--text-quaternary)',
+  background: 'var(--bg-layer-popup)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '0 4px',
   lineHeight: 1.5,
@@ -538,7 +538,7 @@ const popoverItemKey: React.CSSProperties = {
 const popoverItemDesc: React.CSSProperties = {
   fontSize: 11,
   lineHeight: 1.4,
-  color: '#8A8A90',
+  color: 'var(--text-tertiary)',
 }
 
 const statusBadgeBase: React.CSSProperties = {
@@ -552,8 +552,8 @@ const statusBadgeBase: React.CSSProperties = {
 }
 
 const STATUS_BADGE_STYLE: Record<GateItemStatus, React.CSSProperties> = {
-  done:    { ...statusBadgeBase, color: '#34D399', background: '#11271F' },  // emerald
-  pending: { ...statusBadgeBase, color: '#FBBF24', background: '#241A33' },  // amber
-  waived:  { ...statusBadgeBase, color: '#A0A0A8', background: '#26262B' },  // muted
-  na:      { ...statusBadgeBase, color: '#707078', background: '#1F1F23' },  // dimmest
+  done:    { ...statusBadgeBase, color: 'var(--health-success)', background: 'var(--health-success-subtle)' },  // emerald
+  pending: { ...statusBadgeBase, color: 'var(--health-warn)', background: 'var(--accent-subtle)' },  // amber
+  waived:  { ...statusBadgeBase, color: 'var(--text-tertiary)', background: 'var(--bg-layer-popup)' },  // muted
+  na:      { ...statusBadgeBase, color: 'var(--text-quaternary)', background: 'var(--bg-layer-popup)' },  // dimmest
 }

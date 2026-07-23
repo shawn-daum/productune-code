@@ -45,14 +45,14 @@ export default function ActivityBar({ active, onSelect }: Props) {
             onClick={() => onSelect(id)}
             onMouseEnter={(e) => {
               if (!isActive) {
-                ;(e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
-                ;(e.currentTarget as HTMLButtonElement).style.color = '#E0E0E0'
+                ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
+                ;(e.currentTarget as HTMLButtonElement).style.color = 'var(--text-primary)'
               }
             }}
             onMouseLeave={(e) => {
               if (!isActive) {
                 ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
-                ;(e.currentTarget as HTMLButtonElement).style.color = '#707070'
+                ;(e.currentTarget as HTMLButtonElement).style.color = 'var(--text-quaternary)'
               }
             }}
           >
@@ -69,8 +69,8 @@ export default function ActivityBar({ active, onSelect }: Props) {
 const wrap: React.CSSProperties = {
   gridArea: 'activity',
   width: 48,
-  background: '#0A0A0A',
-  borderRight: '1px solid #1A1A1A',
+  background: 'var(--bg-base)',
+  borderRight: '1px solid var(--border-item)',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
@@ -81,7 +81,7 @@ const wrap: React.CSSProperties = {
 
 function btnStyle(isActive: boolean): React.CSSProperties {
   return {
-    background: isActive ? '#FFFFFF' : 'transparent',
+    background: isActive ? 'var(--bg-interaction-neutral)' : 'transparent',
     border: 'none',
     borderRadius: 8,
     width: 36,
@@ -90,7 +90,7 @@ function btnStyle(isActive: boolean): React.CSSProperties {
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
-    color: isActive ? '#0A0A0A' : '#707070',
+    color: isActive ? 'var(--text-ghost)' : 'var(--text-quaternary)',
     padding: 0,
     transition: 'color 0.12s, background 0.12s',
     flexShrink: 0,

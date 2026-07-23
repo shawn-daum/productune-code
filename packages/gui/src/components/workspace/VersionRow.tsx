@@ -33,9 +33,9 @@ export const pillLatest: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#8B5CF6',
-  background: '#120A2A',
-  border: '1px solid #8B5CF650',
+  color: 'var(--accent)',
+  background: 'var(--accent-subtle)',
+  border: '1px solid var(--accent)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -46,9 +46,9 @@ export const pillPast: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
   fontFamily: 'monospace',
-  color: '#FB923C',
-  background: '#261008',
-  border: '1px solid #FB923C40',
+  color: 'var(--persona-designer)',
+  background: 'var(--health-warn-subtle)',
+  border: '1px solid var(--persona-designer)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -59,9 +59,9 @@ export const pillUnassigned: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
   fontFamily: 'monospace',
-  color: '#707070',
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-quaternary)',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -78,9 +78,9 @@ export function rowStyle(isSelected: boolean): React.CSSProperties {
     height: 26,
     padding: '0 8px',
     gap: 6,
-    background: isSelected ? '#120A2A' : 'transparent',
+    background: isSelected ? 'var(--accent-subtle)' : 'transparent',
     border: 'none',
-    borderLeft: isSelected ? '2px solid #8B5CF6' : '2px solid transparent',
+    borderLeft: isSelected ? '2px solid var(--accent)' : '2px solid transparent',
     cursor: 'pointer',
     textAlign: 'left',
     transition: 'background 0.1s',
@@ -113,10 +113,10 @@ export default function VersionRow({
       style={rowStyle(isSelected)}
       onClick={onClick}
       onMouseEnter={(e) => {
-        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
+        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
       }}
       onMouseLeave={(e) => {
-        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = isSelected ? '#120A2A' : 'transparent'
+        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = isSelected ? 'var(--accent-subtle)' : 'transparent'
       }}
       aria-current={isSelected ? 'true' : undefined}
     >
@@ -148,7 +148,7 @@ const flexGap: React.CSSProperties = {
 const dateText: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   whiteSpace: 'nowrap',
   flexShrink: 0,
 }
@@ -165,8 +165,8 @@ const closeBadgeStyle: React.CSSProperties = {
   borderRadius: 3,
   fontSize: 10,
   fontWeight: 600,
-  background: '#1A1A1A',
-  color: '#808080',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
   flexShrink: 0,
   cursor: 'default',

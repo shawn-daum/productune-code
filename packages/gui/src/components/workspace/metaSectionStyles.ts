@@ -15,31 +15,31 @@ const sectionWrap: React.CSSProperties = {
 const sectionTitle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.4,
 }
 
 const description: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   lineHeight: 1.6,
 }
 
 const successBanner: React.CSSProperties = {
   fontSize: 11,
-  color: '#34D399',
-  background: '#0D2A1E',
-  border: '1px solid #164F35',
+  color: 'var(--health-success)',
+  background: 'var(--health-success-subtle)',
+  border: '1px solid var(--health-success)',
   borderRadius: 4,
   padding: '6px 10px',
 }
 
 const errorBanner: React.CSSProperties = {
   fontSize: 11,
-  color: '#EF4444', // §2.8 --health-error
+  color: 'var(--health-error)', // §2.8 --health-error
 
-  background: '#2A1010',
-  border: '1px solid #4A1A1A',
+  background: 'var(--health-error-subtle)',
+  border: '1px solid var(--health-error)',
   borderRadius: 4,
   padding: '6px 10px',
 }

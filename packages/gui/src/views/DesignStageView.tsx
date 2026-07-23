@@ -172,8 +172,8 @@ const rootWrap: React.CSSProperties = {
   display: 'flex',
   width: '100vw',
   height: '100vh',
-  background: '#0A0A0A',
-  color: '#F0F0F0',
+  background: 'var(--bg-base)',
+  color: 'var(--text-primary)',
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   overflow: 'hidden',
 }
@@ -181,8 +181,8 @@ const rootWrap: React.CSSProperties = {
 const sidebar: React.CSSProperties = {
   width: 240,
   minWidth: 240,
-  background: '#111',
-  borderRight: '1px solid #222',
+  background: 'var(--bg-surface-base)',
+  borderRight: '1px solid var(--border-section)',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -190,14 +190,14 @@ const sidebar: React.CSSProperties = {
 
 const sidebarHeader: React.CSSProperties = {
   padding: '16px 14px 12px',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
   flexShrink: 0,
 }
 
 const sidebarTitle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  color: '#808080',
+  color: 'var(--text-quaternary)',
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
 }
@@ -210,14 +210,14 @@ const fileTree: React.CSSProperties = {
 
 const treeHint: React.CSSProperties = {
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   padding: '12px 14px',
   lineHeight: 1.5,
 }
 
 const dirLabel: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   padding: '8px 14px 4px',
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
@@ -229,10 +229,10 @@ function fileItem(active: boolean): React.CSSProperties {
     display: 'block',
     width: '100%',
     textAlign: 'left',
-    background: active ? '#1E1E1E' : 'transparent',
+    background: active ? 'var(--bg-surface-onlayer)' : 'transparent',
     border: 'none',
-    borderLeft: active ? '2px solid #8B5CF6' : '2px solid transparent',
-    color: active ? '#F0F0F0' : '#A0A0A0',
+    borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+    color: active ? 'var(--text-primary)' : 'var(--text-tertiary)',
     fontSize: 12,
     padding: '5px 12px 5px 12px',
     cursor: 'pointer',
@@ -248,7 +248,7 @@ const mainArea: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  background: '#0A0A0A',
+  background: 'var(--bg-base)',
 }
 
 const topBar: React.CSSProperties = {
@@ -256,15 +256,15 @@ const topBar: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   padding: '10px 20px',
-  borderBottom: '1px solid #1E1E1E',
-  background: '#111',
+  borderBottom: '1px solid var(--border-section)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
   minHeight: 44,
 }
 
 const topBarPath: React.CSSProperties = {
   fontSize: 12,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontFamily: 'monospace',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -272,9 +272,9 @@ const topBarPath: React.CSSProperties = {
 }
 
 const closeBtn: React.CSSProperties = {
-  background: '#1A1A1A',
-  color: '#A0A0A0',
-  border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '4px 12px',
   fontSize: 12,
@@ -289,7 +289,7 @@ const markdownArea: React.CSSProperties = {
 }
 
 const hintText: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 13,
   marginTop: 40,
   textAlign: 'center',
@@ -300,22 +300,22 @@ const markdownBody: React.CSSProperties = {
   margin: '0 auto',
   lineHeight: 1.7,
   fontSize: 14,
-  color: '#D0D0D0',
+  color: 'var(--text-secondary)',
 }
 
 const inlineCode: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '1px 5px',
   fontSize: '0.88em',
   fontFamily: 'monospace',
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
 }
 
 const preBlock: React.CSSProperties = {
-  background: '#111',
-  border: '1px solid #222',
+  background: 'var(--bg-surface-base)',
+  border: '1px solid var(--border-section)',
   borderRadius: 6,
   padding: '14px 16px',
   overflowX: 'auto',

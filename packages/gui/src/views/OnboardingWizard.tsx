@@ -161,7 +161,7 @@ export default function OnboardingWizard({ onDone }: Props) {
                 key={s}
                 style={{
                   ...stepDot,
-                  background: s === step ? '#8B5CF6' : s < step ? '#8B5CF655' : '#333',
+                  background: s === step ? 'var(--accent)' : s < step ? 'var(--accent-subtle)' : 'var(--bg-surface-onlayer)',
                   width: s === step ? 24 : 8,
                 }}
               />

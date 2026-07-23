@@ -72,8 +72,8 @@ function ProjectCard({
 
   const cardStyle: React.CSSProperties = {
     position: 'relative',
-    background: '#1A1A1A',
-    border: `1px solid ${hovered && !missing ? 'rgba(139,92,246,0.5)' : '#222'}`,
+    background: 'var(--bg-surface-onlayer)',
+    border: `1px solid ${hovered && !missing ? 'rgba(139,92,246,0.5)' : 'var(--border-section)'}`,
     borderRadius: 8,
     overflow: 'hidden',
     cursor: missing ? 'default' : 'pointer',
@@ -119,7 +119,7 @@ function ProjectCard({
 
       {/* Thumbnail */}
       <div style={thumbStyle}>
-        <FolderCode size={28} color="#3A3A3A" />
+        <FolderCode size={28} style={{ color: 'var(--text-ghost)' }} />
       </div>
 
       {/* Body */}
@@ -152,12 +152,12 @@ function ProjectCard({
         <div style={footerStyle}>
           {missing ? (
             <>
-              <FolderX size={11} color="#806060" style={{ flexShrink: 0 }} />
+              <FolderX size={11} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
               <span>{t('app.home.folderMissing')}</span>
             </>
           ) : (
             <>
-              <Clock size={11} color="#505050" style={{ flexShrink: 0 }} />
+              <Clock size={11} style={{ color: 'var(--text-disabled)', flexShrink: 0 }} />
               <span>{relativeDate(entry.openedAt, t)}</span>
             </>
           )}
@@ -304,7 +304,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
         <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 4 }}>
           Productune
         </div>
-        <div style={{ fontSize: 12, color: '#505050', marginBottom: 40 }}>product orchestrator</div>
+        <div style={{ fontSize: 12, color: 'var(--text-disabled)', marginBottom: 40 }}>product orchestrator</div>
 
         <div style={btnGroupVertical}>
           <button style={btnPrimary} onClick={onNewProject}>
@@ -317,7 +317,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
           </button>
         </div>
 
-        <div style={{ marginTop: 40, color: '#505050', fontSize: 13 }}>{t('app.home.noRecent')}</div>
+        <div style={{ marginTop: 40, color: 'var(--text-disabled)', fontSize: 13 }}>{t('app.home.noRecent')}</div>
       </div>
     )
   }
@@ -338,7 +338,7 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.02em', lineHeight: 1.2 }}>
               Productune
             </div>
-            <div style={{ fontSize: 11, color: '#505050', lineHeight: 1.3 }}>product orchestrator</div>
+            <div style={{ fontSize: 11, color: 'var(--text-disabled)', lineHeight: 1.3 }}>product orchestrator</div>
           </div>
         </div>
       </div>
@@ -401,13 +401,13 @@ export default function HomeView({ onNewProject, onOpenFolder, onOpenRecent }: P
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const BASE: React.CSSProperties = {
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   flex: 1,
   minHeight: 0,
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   userSelect: 'none',
   overflow: 'hidden',
@@ -449,7 +449,7 @@ const sectionStyle: React.CSSProperties = {
 
 const sectionLabelStyle: React.CSSProperties = {
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
   marginBottom: 12,
@@ -486,7 +486,7 @@ function menuBtnStyle(visible: boolean): React.CSSProperties {
     borderRadius: 4,
     border: 'none',
     background: 'rgba(20,20,20,0.78)',
-    color: '#C0C0C0',
+    color: 'var(--text-secondary)',
     cursor: 'pointer',
     padding: 0,
     opacity: visible ? 1 : 0,
@@ -498,7 +498,7 @@ function menuBtnStyle(visible: boolean): React.CSSProperties {
 
 const thumbStyle: React.CSSProperties = {
   height: 92,
-  background: '#161616',
+  background: 'var(--bg-surface-on)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -511,7 +511,7 @@ const cardBodyStyle: React.CSSProperties = {
 const slugStyle: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
@@ -527,16 +527,16 @@ const metaRowStyle: React.CSSProperties = {
 
 const versionChipStyle: React.CSSProperties = {
   fontSize: 10,
-  color: '#B8B8B8',
-  background: '#242424',
-  border: '1px solid #333',
+  color: 'var(--text-secondary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '1px 6px',
 }
 
 const phaseBadgeStyle: React.CSSProperties = {
   fontSize: 10,
-  color: '#A78BFA',
+  color: 'var(--accent)',
   background: 'rgba(139,92,246,0.12)',
   borderRadius: 4,
   padding: '1px 6px',
@@ -545,7 +545,7 @@ const phaseBadgeStyle: React.CSSProperties = {
 const footerStyle: React.CSSProperties = {
   marginTop: 8,
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   display: 'flex',
   alignItems: 'center',
   gap: 4,
@@ -559,8 +559,8 @@ const btnGroupVertical: React.CSSProperties = {
 }
 
 const btnPrimary: React.CSSProperties = {
-  background: '#8B5CF6',
-  color: '#fff',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   padding: '10px 16px',
@@ -574,9 +574,9 @@ const btnPrimary: React.CSSProperties = {
 }
 
 const btnSecondary: React.CSSProperties = {
-  background: '#242424',
-  color: '#F0F0F0',
-  border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-primary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '10px 16px',
   fontSize: 13,

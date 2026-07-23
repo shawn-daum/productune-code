@@ -127,8 +127,8 @@ const barStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   padding: '4px 6px',
-  background: '#252526',
-  border: '1px solid #454545',
+  background: 'var(--bg-layer-popup)',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
   boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
   flexShrink: 0,
@@ -140,9 +140,9 @@ function inputWrap(noResults: boolean): React.CSSProperties {
     minWidth: 0,
     display: 'flex',
     alignItems: 'center',
-    border: `1px solid ${noResults ? '#7F1D1D' : '#333'}`,
+    border: `1px solid ${noResults ? 'var(--health-error)' : 'var(--border-inline)'}`,
     borderRadius: 4,
-    background: noResults ? '#1F0A0A' : '#111',
+    background: noResults ? 'var(--health-error-subtle)' : 'var(--bg-surface-base)',
     padding: '0 6px',
     gap: 4,
     height: 26,
@@ -155,7 +155,7 @@ const inputStyle: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   outline: 'none',
-  color: '#E5E5E5',
+  color: 'var(--text-primary)',
   fontSize: 12,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   padding: 0,
@@ -164,7 +164,7 @@ const inputStyle: React.CSSProperties = {
 function matchCountStyle(noResults: boolean): React.CSSProperties {
   return {
     fontSize: 11,
-    color: noResults ? '#EF4444' : '#707070',
+    color: noResults ? 'var(--health-error)' : 'var(--text-quaternary)',
     whiteSpace: 'nowrap',
     flexShrink: 0,
   }
@@ -173,7 +173,7 @@ function matchCountStyle(noResults: boolean): React.CSSProperties {
 const iconBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',
@@ -188,7 +188,7 @@ const iconBtn: React.CSSProperties = {
 const closeBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',

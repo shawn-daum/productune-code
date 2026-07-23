@@ -60,13 +60,13 @@ function LanguageOption({
     <div
       style={{
         ...optionCard,
-        borderColor: selected ? '#8B5CF6' : '#2A2A2A',
-        background: selected ? '#160F28' : '#161616',
+        borderColor: selected ? 'var(--accent)' : 'var(--text-ghost)',
+        background: selected ? 'var(--accent-subtle)' : 'var(--bg-surface-on)',
       }}
       onClick={() => onSelect(value)}
     >
       <div style={optionTop}>
-        <div style={{ ...radio, background: selected ? '#8B5CF6' : 'transparent' }} />
+        <div style={{ ...radio, background: selected ? 'var(--accent)' : 'transparent' }} />
         <span style={optionLabel}>{label}</span>
       </div>
       <div style={optionDesc}>{desc}</div>
@@ -88,13 +88,13 @@ const wrap: React.CSSProperties = {
 const sectionTitle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.4,
 }
 
 const description: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   lineHeight: 1.5,
 }
 
@@ -105,7 +105,7 @@ const options: React.CSSProperties = {
 }
 
 const optionCard: React.CSSProperties = {
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   padding: '10px 12px',
   cursor: 'pointer',
@@ -123,7 +123,7 @@ const radio: React.CSSProperties = {
   width: 14,
   height: 14,
   borderRadius: 9999,
-  border: '2px solid #8B5CF6',
+  border: '2px solid var(--accent)',
   flexShrink: 0,
   transition: 'background 0.15s',
 }
@@ -131,19 +131,19 @@ const radio: React.CSSProperties = {
 const optionLabel: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const optionDesc: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   paddingLeft: 22,
   lineHeight: 1.4,
 }
 
 const noteText: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   lineHeight: 1.5,
   marginTop: 4,
 }
