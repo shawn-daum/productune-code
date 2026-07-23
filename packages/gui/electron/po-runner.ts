@@ -36,6 +36,7 @@ import {
   type SubagentCostCapture,
 } from './subagent-cost'
 import { detectProjectKind, codeRoot } from './project-paths'
+import { setTrustAccepted } from '@productune/core'
 import { getPoSessionOverride, type PoSessionOverride } from './po-session-config'
 
 /**
@@ -1217,9 +1218,19 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // Legacy layout: codeRoot == projectDir, so this is byte-for-byte unchanged.
     // NB: makeHealthCtx / getPoSessionOverride / poEnvGatePath above all keep
     // opts.projectDir (the META anchor — turns.jsonl, config, session override).
+    const spawnCwd = codeRoot(opts.projectDir)
+    // T-408: pre-accept Claude Code's per-dir trust for the EXACT spawn cwd.
+    // Measured (2026-07-23, Claude Code 2.1.218): `--permission-mode
+    // bypassPermissions` (this spawn's mode) silently suppresses global
+    // SessionStart hook injection when the cwd is untrusted — the PO loses its
+    // discipline and can fall into roleplay. Trust does NOT inherit from a
+    // trusted parent dir, so healing projectDir alone would not cover codeRoot.
+    // Idempotent + best-effort (never throws); heals opened-on-a-new-machine
+    // projects that `prdt init` never touched.
+    setTrustAccepted(spawnCwd)
     const child = spawn('claude', args, {
       env,
-      cwd: codeRoot(opts.projectDir),
+      cwd: spawnCwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     // T-PATCH-081: track active child for po:abort IPC abort path.
