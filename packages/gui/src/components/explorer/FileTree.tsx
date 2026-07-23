@@ -72,7 +72,7 @@ export default function FileTree({ rootDir, showHidden, onOpenFile, onRevealInOS
   if (rootEntry.error) {
     return (
       <div style={muteRow}>
-        <span style={{ ...muteText, color: '#c04040' }}>{t('workspace.explorer.readError')}</span>
+        <span style={{ ...muteText, color: 'var(--status-blocked)' }}>{t('workspace.explorer.readError')}</span>
         <button
           style={retryBtn}
           onClick={() => {
@@ -186,7 +186,7 @@ function DirChildren({
                   )}
                   {childEntry?.error && (
                     <div style={{ paddingLeft: 16 * (depth + 1) + 8 }}>
-                      <span style={{ ...muteText, color: '#c04040' }}>
+                      <span style={{ ...muteText, color: 'var(--status-blocked)' }}>
                         {t('workspace.explorer.readError')}
                       </span>
                     </div>
@@ -254,15 +254,15 @@ const muteRow: React.CSSProperties = {
 
 const muteText: React.CSSProperties = {
   fontSize: 12,
-  color: '#404040',
+  color: 'var(--text-ghost)',
   userSelect: 'none',
   fontStyle: 'italic',
 }
 
 const retryBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #333',
-  color: '#707070',
+  border: '1px solid var(--border-inline)',
+  color: 'var(--text-quaternary)',
   borderRadius: 4,
   padding: '2px 8px',
   fontSize: 11,

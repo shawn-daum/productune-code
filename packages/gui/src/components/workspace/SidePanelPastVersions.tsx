@@ -108,7 +108,7 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
               onClick={() => onSelect('__unassigned__')}
               onMouseEnter={(e) => {
                 if (selectedVersionId !== '__unassigned__')
-                  (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
+                  (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
               }}
               onMouseLeave={(e) => {
                 if (selectedVersionId !== '__unassigned__')
@@ -131,7 +131,7 @@ export default function SidePanelPastVersions({ poState, selectedVersionId, onSe
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const secHdrStatic: React.CSSProperties = {
@@ -145,7 +145,7 @@ const secHdrStatic: React.CSSProperties = {
 const secHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   userSelect: 'none',
@@ -159,7 +159,7 @@ const secHdrRight: React.CSSProperties = {
 const headerCountText: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   whiteSpace: 'nowrap',
 }
 
@@ -172,13 +172,13 @@ const countText: React.CSSProperties = {
   flex: 1,
   fontSize: 10,
   fontFamily: 'monospace',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
 }
 
 const emptyState: React.CSSProperties = {
   padding: '8px 12px',
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   lineHeight: 1.4,
 }

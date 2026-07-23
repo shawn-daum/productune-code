@@ -76,7 +76,7 @@ export default function CodeSearchTab({ props }: Props) {
         {loading ? (
           <p style={hint}>{t('common.loading')}</p>
         ) : error ? (
-          <pre style={{ ...pre, color: '#E04040' }}>{error}</pre>
+          <pre style={{ ...pre, color: 'var(--status-blocked)' }}>{error}</pre>
         ) : lines ? (
           <div style={code}>
             {lines.map((ln, i) => {
@@ -138,14 +138,14 @@ const toolbar: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 12,
   padding: '6px 14px',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
 }
 
 const crumb: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -154,7 +154,7 @@ const crumb: React.CSSProperties = {
 
 const lineBadge: React.CSSProperties = {
   fontSize: 10,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   fontFamily: 'monospace',
   flexShrink: 0,
   fontWeight: 600,
@@ -163,7 +163,7 @@ const lineBadge: React.CSSProperties = {
 const view: React.CSSProperties = {
   flex: 1,
   overflow: 'auto',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   padding: '8px 0',
 }
 
@@ -181,31 +181,31 @@ const row: React.CSSProperties = {
 
 const hitRow: React.CSSProperties = {
   ...row,
-  background: 'color-mix(in oklab, #8B5CF6 14%, transparent)',
-  boxShadow: 'inset 2px 0 0 #8B5CF6',
+  background: 'color-mix(in oklab, var(--accent) 14%, transparent)',
+  boxShadow: 'inset 2px 0 0 var(--accent)',
 }
 
 const gutter: React.CSSProperties = {
   width: 44,
   textAlign: 'right',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   userSelect: 'none',
   flexShrink: 0,
 }
 
 const hitGutter: React.CSSProperties = {
   ...gutter,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
 }
 
 const codeText: React.CSSProperties = {
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   whiteSpace: 'pre',
 }
 
 const mark: React.CSSProperties = {
-  background: 'color-mix(in oklab, #8B5CF6 55%, transparent)',
-  color: '#F0F0F0',
+  background: 'color-mix(in oklab, var(--accent) 55%, transparent)',
+  color: 'var(--text-primary)',
   borderRadius: 2,
   padding: '0 1px',
 }
@@ -222,6 +222,6 @@ const hint: React.CSSProperties = {
   margin: 0,
   padding: '16px 20px',
   fontSize: 12,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontStyle: 'italic',
 }

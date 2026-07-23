@@ -71,13 +71,13 @@ interface PipelineNode {
 // ── Status pill helpers (§8.2 status variant) ────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
-  'todo':         '#505050',
-  'in-progress':  '#8B5CF6',
-  'review':       '#E0B040',
-  'user-verify':  '#38BDF8',
-  'done':         '#34D399',
-  'blocked':      '#E04040',
-  'abandoned':    '#3A3A3A',
+  'todo':         'var(--text-disabled)',
+  'in-progress':  'var(--accent)',
+  'review':       'var(--status-review)',
+  'user-verify':  'var(--text-info)',
+  'done':         'var(--health-success)',
+  'blocked':      'var(--status-blocked)',
+  'abandoned':    'var(--text-ghost)',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -91,7 +91,7 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 function statusColor(status: string | undefined): string {
-  return STATUS_COLORS[status ?? ''] ?? '#505050'
+  return STATUS_COLORS[status ?? ''] ?? 'var(--text-disabled)'
 }
 
 // ── Next-action derivation (docs/designer/archive/v0.5/T-003-a7-flow.md §2b) ──
@@ -133,10 +133,10 @@ function deriveNextAction(
 
 // T-006 Option B hex values
 const PERSONA_COLORS: Record<string, string> = {
-  po:         '#8B5CF6',
-  designer:   '#FB923C',
-  developer:  '#38BDF8',
-  qa:         '#34D399',
+  po:         'var(--accent)',
+  designer:   'var(--persona-designer)',
+  developer:  'var(--text-info)',
+  qa:         'var(--health-success)',
 }
 
 // §4.c: 5-node lane — po → designer → developer → qa → user. The four personas
@@ -221,7 +221,7 @@ function buildPipeline(
     return {
       id,
       label,
-      color: PERSONA_COLORS[id] ?? '#505050',
+      color: PERSONA_COLORS[id] ?? 'var(--text-disabled)',
       stage,
       qaMeta,
     }
@@ -357,7 +357,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
       {/* ── Breadcrumb (§2.0 — §1.5.5 Escape) ─────────────────────────────── */}
       <div style={breadcrumbBar}>
         <button style={crumbBack} onClick={handleBreadcrumb} title={t('workspace.ticketDetail.crumbBack')}>
-          <ChevronLeft size={14} style={{ color: '#A0A0A0', flexShrink: 0 }} />
+          <ChevronLeft size={14} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
           <span>{t('workspace.ticketDetail.crumbTickets')}</span>
         </button>
         <span style={crumbSep}>/</span>
@@ -371,14 +371,14 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
           {/* Loading */}
           {loadState === 'loading' && (
             <div style={centerState}>
-              <Loader2 size={20} style={{ color: '#505050' }} className="pdt-spin" />
+              <Loader2 size={20} style={{ color: 'var(--text-disabled)' }} className="pdt-spin" />
             </div>
           )}
 
           {/* Error */}
           {loadState === 'error' && (
             <div style={errorBanner}>
-              <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
+              <AlertOctagon size={14} style={{ color: 'var(--health-error)', flexShrink: 0, marginTop: 1 }} />
               <div>
                 <div style={errorText}>
                   {t('workspace.ticketDetail.loadError')}
@@ -410,18 +410,18 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                 <div style={dhMetaRow}>
                   {slug && (
                     <span>
-                      <span style={{ color: '#707070' }}>slug</span>{' '}
+                      <span style={{ color: 'var(--text-quaternary)' }}>slug</span>{' '}
                       <code style={monoCode}>{slug}</code>
                     </span>
                   )}
-                  {slug && (version || phase) && <span style={{ color: '#505050' }}>·</span>}
+                  {slug && (version || phase) && <span style={{ color: 'var(--text-disabled)' }}>·</span>}
                   {(version || phase) && (
-                    <span style={{ color: '#A0A0A0' }}>
+                    <span style={{ color: 'var(--text-tertiary)' }}>
                       {phase ? `Phase ${phase}` : ''}{phase && version ? ' · ' : ''}{version ?? ''}
                     </span>
                   )}
                   {(slug || version || phase) && (
-                    <span style={{ color: '#505050' }}>·</span>
+                    <span style={{ color: 'var(--text-disabled)' }}>·</span>
                   )}
                   <span style={roMarker}>
                     <Lock size={12} style={{ flexShrink: 0 }} />
@@ -437,8 +437,8 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                 </div>
               ) : (
                 <div style={noKrHint}>
-                  <Info size={13} style={{ color: '#505050', flexShrink: 0 }} />
-                  <span style={{ color: '#707070', fontSize: 12 }}>
+                  <Info size={13} style={{ color: 'var(--text-disabled)', flexShrink: 0 }} />
+                  <span style={{ color: 'var(--text-quaternary)', fontSize: 12 }}>
                     {t('workspace.ticketDetail.noKrBody')}
                   </span>
                 </div>
@@ -448,7 +448,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
               <section style={dispatchWrap} aria-label="dispatch progress">
                 {/* Section header */}
                 <div style={dpHead}>
-                  <Activity size={15} style={{ color: '#707070', flexShrink: 0 }} />
+                  <Activity size={15} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
                   <span style={dpTitle}>{t('workspace.ticketDetail.dispatchProgress')}</span>
                   <span style={dpRo}>
                     <Info size={11} style={{ flexShrink: 0 }} />
@@ -481,7 +481,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
               {artifacts.length > 0 && (
                 <section style={artifactsWrap} aria-label="ticket artifacts">
                   <div style={dpHead}>
-                    <Paperclip size={15} style={{ color: '#707070', flexShrink: 0 }} />
+                    <Paperclip size={15} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
                     <span style={dpTitle}>{t('workspace.ticketDetail.artifacts')}</span>
                   </div>
                   <div style={artifactList}>
@@ -525,7 +525,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
                   <ArrowRight
                     size={13}
                     style={{
-                      color: '#707070',
+                      color: 'var(--text-quaternary)',
                       flexShrink: 0,
                       transform: showFullSpec ? 'rotate(90deg)' : 'none',
                       transition: '120ms',
@@ -553,7 +553,7 @@ export default function TicketDetailTab({ props: tabProps }: Props) {
 // + name + state label; the user node uses a lucide icon (§4.c). Connectors
 // between nodes reflect the departing node's stage.
 
-const STATUS_BLOCKED_COLOR = '#E04040'
+const STATUS_BLOCKED_COLOR = 'var(--status-blocked)'
 
 // state label keys — bound to nodes only for current/blocked (see §4.b #3/#6).
 // done/upcoming stay quiet visually but the keys feed the dot aria-label.
@@ -626,14 +626,14 @@ function PipelineNodeView({
     dotStyle = {
       ...laneDot,
       background: 'transparent',
-      border: '1.5px solid var(--text-disabled, #3A3A3A)',
+      border: '1.5px solid var(--text-disabled)',
     }
   } else if (isDone || isCurrent) {
     dotStyle = { ...laneDot, background: color, border: `1px solid ${color}` }
   } else if (isBlocked) {
     dotStyle = { ...laneDot, background: STATUS_BLOCKED_COLOR, border: `1px solid ${STATUS_BLOCKED_COLOR}` }
   } else {
-    dotStyle = { ...laneDot, background: 'transparent', border: '1.5px solid var(--border-default, #2A2A2A)' }
+    dotStyle = { ...laneDot, background: 'transparent', border: '1.5px solid var(--border-default)' }
   }
   if (!abandoned && (isCurrent || isBlocked)) {
     dotStyle.boxShadow = `0 0 0 2px color-mix(in oklab, ${ringColor} 40%, transparent)`
@@ -644,14 +644,14 @@ function PipelineNodeView({
   const nameStyle: React.CSSProperties = {
     ...laneName,
     color: abandoned
-      ? 'var(--text-disabled, #3A3A3A)'
+      ? 'var(--text-disabled)'
       : isCurrent
-        ? 'var(--text-emphasis, #F0F0F0)'
+        ? 'var(--text-emphasis)'
         : isBlocked
-          ? 'var(--text-primary, #E8E8EA)'
+          ? 'var(--text-primary)'
           : isDone
-            ? 'var(--text-secondary, #C8C8CC)'
-            : 'var(--text-faint, #505050)',
+            ? 'var(--text-secondary)'
+            : 'var(--text-faint)',
     fontWeight: isCurrent || isBlocked ? 600 : isDone ? 500 : 400,
   }
 
@@ -659,7 +659,7 @@ function PipelineNodeView({
     ...laneState,
     color: isBlocked
       ? STATUS_BLOCKED_COLOR
-      : 'var(--text-secondary, #A0A0A0)',
+      : 'var(--text-secondary)',
   }
 
   // qa micro-meta folds into the state-label slot of the qa node.
@@ -676,12 +676,12 @@ function PipelineNodeView({
     // the current state to keep the user node visually distinct from personas
     // (§4.c #2: persona hue must not be reused for the human-reviewer node).
     const userColor = abandoned
-      ? 'var(--text-disabled, #3A3A3A)'
+      ? 'var(--text-disabled)'
       : isCurrent
-        ? 'var(--text-emphasis, #F0F0F0)'
+        ? 'var(--text-emphasis)'
         : isDone
-          ? 'var(--text-secondary, #C8C8CC)'
-          : 'var(--border-default, #2A2A2A)'
+          ? 'var(--text-secondary)'
+          : 'var(--border-default)'
     const UserIcon = (isCurrent || isDone) && !abandoned ? UserCheck : User
     marker = (
       <span
@@ -716,7 +716,7 @@ function PipelineNodeView({
             ...laneConnector,
             ...(connectorDone
               ? { borderTop: `1px solid ${color}` }
-              : { borderTop: '1px dashed var(--border-default, #2A2A2A)' }),
+              : { borderTop: '1px dashed var(--border-default)' }),
           }}
           aria-hidden="true"
         />
@@ -732,7 +732,7 @@ const wrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  background: '#141414',
+  background: 'var(--bg-surface-on)',
 }
 
 // §2.0 breadcrumb (§1.5.5 Escape back path)
@@ -742,10 +742,10 @@ const breadcrumbBar: React.CSSProperties = {
   gap: 6,
   padding: '7px 20px',
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   letterSpacing: '0.02em',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
 }
 
@@ -753,7 +753,7 @@ const crumbBack: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 2,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   background: 'none',
   border: 'none',
@@ -764,10 +764,10 @@ const crumbBack: React.CSSProperties = {
   letterSpacing: '0.02em',
 }
 
-const crumbSep: React.CSSProperties = { color: '#505050' }
+const crumbSep: React.CSSProperties = { color: 'var(--text-disabled)' }
 
 const crumbCur: React.CSSProperties = {
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 }
 
@@ -788,7 +788,7 @@ const dhWrap: React.CSSProperties = {
   flexDirection: 'column',
   gap: 8,
   paddingBottom: 16,
-  borderBottom: '1px solid #1F1F1F',
+  borderBottom: '1px solid var(--border-section)',
   marginBottom: 20,
 }
 
@@ -804,7 +804,7 @@ const dhTitle: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 600,
   lineHeight: 1.3,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 // §8.2 status pill
@@ -826,15 +826,15 @@ const dhMetaRow: React.CSSProperties = {
   gap: 12,
   flexWrap: 'wrap',
   fontSize: 12,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   letterSpacing: '0.02em',
 }
 
 const monoCode: React.CSSProperties = {
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   fontSize: 12,
-  color: '#C8C8CC',
-  background: '#1A1A1A',
+  color: 'var(--text-secondary)',
+  background: 'var(--bg-surface-onlayer)',
   padding: '1px 4px',
   borderRadius: 3,
 }
@@ -844,7 +844,7 @@ const roMarker: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 5,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 12,
 }
 
@@ -858,8 +858,8 @@ const noKrHint: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '10px 12px',
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 6,
   marginTop: 4,
   marginBottom: 8,
@@ -868,7 +868,7 @@ const noKrHint: React.CSSProperties = {
 // Collapsible full spec
 const fullSpecSection: React.CSSProperties = {
   marginTop: 20,
-  borderTop: '1px solid #1A1A1A',
+  borderTop: '1px solid var(--border-item)',
   paddingTop: 12,
 }
 
@@ -877,9 +877,9 @@ const fullSpecToggle: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   background: 'none',
-  border: '1px solid #1F1F1F',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontSize: 12,
   padding: '3px 10px',
   cursor: 'pointer',
@@ -890,14 +890,14 @@ const fullSpecToggle: React.CSSProperties = {
 const fullSpecBody: React.CSSProperties = {
   marginTop: 16,
   paddingTop: 12,
-  borderTop: '1px solid #1A1A1A',
+  borderTop: '1px solid var(--border-item)',
 }
 
 // §2b DispatchProgress
 const dispatchWrap: React.CSSProperties = {
   marginTop: 24,
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 8,
   padding: '16px 20px',
   display: 'flex',
@@ -914,7 +914,7 @@ const dpHead: React.CSSProperties = {
 const dpTitle: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const dpRo: React.CSSProperties = {
@@ -923,15 +923,15 @@ const dpRo: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   letterSpacing: '0.02em',
 }
 
 // Artifacts section (T-PATCH-121) — same card chrome as DispatchProgress.
 const artifactsWrap: React.CSSProperties = {
   marginTop: 16,
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 8,
   padding: '14px 20px',
   display: 'flex',
@@ -944,7 +944,7 @@ const artifactList: React.CSSProperties = {
   flexDirection: 'column',
   gap: 2,
   paddingTop: 10,
-  borderTop: '1px solid #242424',
+  borderTop: '1px solid var(--border-section)',
 }
 
 function artifactRow(archived: boolean): React.CSSProperties {
@@ -968,7 +968,7 @@ function artifactName(archived: boolean): React.CSSProperties {
   return {
     fontSize: 13,
     lineHeight: 1.4,
-    color: archived ? 'var(--text-muted, #707070)' : 'var(--text-secondary, #C8C8CC)',
+    color: archived ? 'var(--text-muted)' : 'var(--text-secondary)',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
@@ -979,20 +979,20 @@ function artifactName(archived: boolean): React.CSSProperties {
 const artifactKind: React.CSSProperties = {
   fontSize: 10,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  color: 'var(--text-muted, #707070)',
+  color: 'var(--text-muted)',
   letterSpacing: '0.02em',
   flexShrink: 0,
 }
 
 // Manifest status hues — pending matches ArtifactsPane's user-gate dot.
 const ARTIFACT_STATUS_COLORS: Record<string, string> = {
-  'pending':  '#D97706',
-  'approved': '#34D399',
-  'archived': '#505050',
+  'pending':  'var(--health-warn)',
+  'approved': 'var(--health-success)',
+  'archived': 'var(--text-disabled)',
 }
 
 function artifactStatusPill(status: string): React.CSSProperties {
-  const c = ARTIFACT_STATUS_COLORS[status] ?? '#505050'
+  const c = ARTIFACT_STATUS_COLORS[status] ?? 'var(--text-disabled)'
   return {
     ...pillBase,
     flexShrink: 0,
@@ -1007,7 +1007,7 @@ const laneWrap: React.CSSProperties = {
   alignItems: 'flex-start',
   gap: 4,
   paddingTop: 12,
-  borderTop: '1px solid #1A1A1A',
+  borderTop: '1px solid var(--border-item)',
 }
 
 const laneNode: React.CSSProperties = {
@@ -1055,7 +1055,7 @@ const laneState: React.CSSProperties = {
 const qaMicro: React.CSSProperties = {
   fontSize: 10,
   letterSpacing: '0.02em',
-  color: 'var(--text-muted, #707070)',
+  color: 'var(--text-muted)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   textAlign: 'center',
 }
@@ -1078,7 +1078,7 @@ const nextActionRow: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 12,
   paddingTop: 12,
-  borderTop: '1px solid #1A1A1A',
+  borderTop: '1px solid var(--border-item)',
 }
 
 const naLeft: React.CSSProperties = {
@@ -1092,14 +1092,14 @@ const naLeft: React.CSSProperties = {
 const naNextLabel: React.CSSProperties = {
   fontSize: 11,
   letterSpacing: '0.02em',
-  color: 'var(--text-muted, #707070)',
+  color: 'var(--text-muted)',
   flexShrink: 0,
 }
 
 // derived next-action text — label recipe, secondary, medium
 const naText: React.CSSProperties = {
   fontSize: 14,
-  color: 'var(--text-secondary, #C8C8CC)',
+  color: 'var(--text-secondary)',
   fontWeight: 500,
   lineHeight: 1.5,
   overflow: 'hidden',
@@ -1114,9 +1114,9 @@ const naStatusPill: React.CSSProperties = {
   fontSize: 10,
   letterSpacing: '0.06em',
   textTransform: 'uppercase',
-  color: 'var(--text-muted, #707070)',
-  background: 'var(--surface-subpanel, #1F1F1F)',
-  border: '1px solid #242424',
+  color: 'var(--text-muted)',
+  background: 'var(--surface-subpanel)',
+  border: '1px solid var(--border-section)',
   borderRadius: 20,
   padding: '2px 10px',
 }
@@ -1133,8 +1133,8 @@ const errorBanner: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
   gap: 8,
-  background: '#1A1A1A',
-  borderLeft: '4px solid #EF4444',
+  background: 'var(--bg-surface-onlayer)',
+  borderLeft: '4px solid var(--health-error)',
   borderRadius: 4,
   padding: '10px 12px',
   margin: '24px 0',
@@ -1142,7 +1142,7 @@ const errorBanner: React.CSSProperties = {
 
 const errorText: React.CSSProperties = {
   fontSize: 13,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   lineHeight: 1.5,
 }
 
@@ -1152,9 +1152,9 @@ const retryBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   fontSize: 11,
-  color: '#E8E8EA',
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '3px 8px',
   cursor: 'pointer',

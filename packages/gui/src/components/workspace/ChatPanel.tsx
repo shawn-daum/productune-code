@@ -706,8 +706,8 @@ export default function ChatPanel() {
             <button
               style={{
                 ...iconActionBtn,
-                background: attachHover ? '#2A2A2A' : 'transparent',
-                color: attachHover ? '#F0F0F0' : '#A0A0A0',
+                background: attachHover ? 'var(--bg-surface-onlayer)' : 'transparent',
+                color: attachHover ? 'var(--text-primary)' : 'var(--text-tertiary)',
               }}
               onMouseEnter={() => setAttachHover(true)}
               onMouseLeave={() => setAttachHover(false)}
@@ -774,7 +774,7 @@ export default function ChatPanel() {
                   style={{
                     ...sendBtn,
                     opacity: !draft.trim() ? 0.5 : 1,
-                    background: queueAddHover && draft.trim() ? '#9D74F8' : '#8B5CF6',
+                    background: queueAddHover && draft.trim() ? 'var(--accent)' : 'var(--accent)',
                   }}
                   onMouseEnter={() => setQueueAddHover(true)}
                   onMouseLeave={() => setQueueAddHover(false)}
@@ -792,7 +792,7 @@ export default function ChatPanel() {
                 <button
                   style={{
                     ...sendBtn,
-                    background: stopHover ? '#DC2626' : '#EF4444',
+                    background: stopHover ? 'var(--health-error)' : 'var(--health-error)',
                   }}
                   onMouseEnter={() => setStopHover(true)}
                   onMouseLeave={() => setStopHover(false)}
@@ -809,7 +809,7 @@ export default function ChatPanel() {
                   ...sendBtn,
                   opacity: !draft.trim() || rateLimited ? 0.5 : 1,
                   // T-013 / T-006 Option B: send button = --persona-po violet
-                  background: sendHover && !(!draft.trim() || rateLimited) ? '#9D74F8' : '#8B5CF6',
+                  background: sendHover && !(!draft.trim() || rateLimited) ? 'var(--accent)' : 'var(--accent)',
                 }}
                 onMouseEnter={() => setSendHover(true)}
                 onMouseLeave={() => setSendHover(false)}
@@ -846,9 +846,9 @@ export default function ChatPanel() {
             top: restartTipPos.top,
             left: restartTipPos.left,
             transform: 'translateX(-100%)',
-            background: '#1E1E1E',
-            border: '1px solid #2A2A2A',
-            color: '#E0E0E0',
+            background: 'var(--bg-surface-onlayer)',
+            border: '1px solid var(--border-inline)',
+            color: 'var(--text-primary)',
             padding: '4px 9px',
             borderRadius: 4,
             fontSize: 11,
@@ -1092,8 +1092,8 @@ function verbForHealth(
 const wrap: React.CSSProperties = {
   gridArea: 'chat',
   width: '100%',
-  background: '#141414',
-  borderLeft: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  borderLeft: '1px solid var(--border-inline)',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -1105,7 +1105,7 @@ const wrap: React.CSSProperties = {
 const header: React.CSSProperties = {
   height: 35,
   flexShrink: 0,
-  borderBottom: '1px solid #2A2A2A',
+  borderBottom: '1px solid var(--border-inline)',
   display: 'flex',
   alignItems: 'center',
   gap: 8,
@@ -1117,8 +1117,8 @@ const poBadge: React.CSSProperties = {
   width: 20,
   height: 20,
   borderRadius: 4,
-  background: '#8B5CF6',
-  color: '#0F0F0F',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   fontSize: 11,
   fontWeight: 700,
   display: 'flex',
@@ -1130,14 +1130,14 @@ const poBadge: React.CSSProperties = {
 const headerTitle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   flex: 1,
 }
 
 // T-PATCH-053: status badge in title row (replaces ctxCaptionStyle in ctxRow)
 const statusBadge: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   flexShrink: 0,
   maxWidth: 120,
@@ -1150,8 +1150,8 @@ const statusBadge: React.CSSProperties = {
 const restartTextBtn: React.CSSProperties = {
   height: 22,
   background: 'transparent',
-  border: '1px solid #2A2A2A',
-  color: '#707070',
+  border: '1px solid var(--border-inline)',
+  color: 'var(--text-quaternary)',
   fontSize: 10,
   cursor: 'pointer',
   borderRadius: 4,
@@ -1172,7 +1172,7 @@ const msgs: React.CSSProperties = {
 
 const emptyHint: React.CSSProperties = {
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   textAlign: 'center',
   marginTop: 24,
   padding: '0 16px',
@@ -1180,34 +1180,34 @@ const emptyHint: React.CSSProperties = {
 
 const inputArea: React.CSSProperties = {
   flexShrink: 0,
-  borderTop: '1px solid #2A2A2A',
+  borderTop: '1px solid var(--border-inline)',
   padding: 8,
   display: 'flex',
   flexDirection: 'column',
   gap: 6,
-  background: '#121212',
+  background: 'var(--bg-surface-on)',
 }
 
 // T-316 C3b: legacy view-only notice in place of the composer.
 const legacyNotice: React.CSSProperties = {
   flexShrink: 0,
-  borderTop: '1px solid #2A2A2A',
+  borderTop: '1px solid var(--border-inline)',
   padding: '12px 14px',
   display: 'flex',
   flexDirection: 'column',
   gap: 4,
-  background: '#121212',
+  background: 'var(--bg-surface-on)',
 }
 
 const legacyNoticeTitle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const legacyNoticeBody: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   lineHeight: 1.5,
 }
 
@@ -1215,10 +1215,10 @@ const textarea: React.CSSProperties = {
   width: '100%',
   minHeight: 36,
   maxHeight: 200,
-  background: '#1E1E1E',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 6,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   fontSize: 12,
   padding: '8px 10px',
   outline: 'none',
@@ -1244,7 +1244,7 @@ const workingRow: React.CSSProperties = {
   minHeight: 36,
   padding: '8px 10px',
   boxSizing: 'border-box',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontSize: 12,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   border: 'none',
@@ -1253,13 +1253,13 @@ const workingRow: React.CSSProperties = {
 
 const spinnerGlyph: React.CSSProperties = {
   display: 'inline-block',
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   fontSize: 13,
   lineHeight: 1,
 }
 
 const dot: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 // ── T-309: composer queue chips ──────────────────────────────────────────────
@@ -1270,7 +1270,7 @@ const queueWrap: React.CSSProperties = {
 }
 const queueHint: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   paddingLeft: 2,
 }
 // tight vertical stack + a left rail → the chips read as ONE outgoing group.
@@ -1278,21 +1278,21 @@ const queueStack: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 2,
-  borderLeft: '2px solid #707070',
+  borderLeft: '2px solid var(--border-hover)',
   paddingLeft: 6,
 }
 const queueChip: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 6,
-  background: '#1a1a1a',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '3px 6px',
   fontSize: 11,
 }
 const queueDash: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   fontSize: 10,
   flexShrink: 0,
@@ -1300,7 +1300,7 @@ const queueDash: React.CSSProperties = {
 const queueText: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
@@ -1313,7 +1313,7 @@ const queueRemoveBtn: React.CSSProperties = {
   justifyContent: 'center',
   border: 'none',
   background: 'transparent',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   borderRadius: 3,
   flexShrink: 0,
@@ -1338,10 +1338,10 @@ const iconActionBtn: React.CSSProperties = {
 const sendBtn: React.CSSProperties = {
   height: 28,
   padding: '0 12px',
-  background: '#8B5CF6',
+  background: 'var(--accent)',
   border: 'none',
   borderRadius: 6,
-  color: '#FFFFFF',
+  color: 'var(--text-static-white)',
   fontSize: 11,
   fontWeight: 600,
   cursor: 'pointer',
@@ -1367,7 +1367,7 @@ const kbdHint: React.CSSProperties = {
 const poModelBadge: React.CSSProperties = {
   fontSize: 10,
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  color: 'var(--txt-faint, #6a6a6a)',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
   userSelect: 'none',
   marginRight: 8,
@@ -1398,9 +1398,9 @@ const fileChip: React.CSSProperties = {
   height: 24,
   padding: '0 8px',
   borderRadius: 4,
-  background: '#1E1E1E',
-  border: '1px solid #2A2A2A',
-  color: '#C8C8CC',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
+  color: 'var(--text-secondary)',
   fontSize: 11,
   fontFamily: 'monospace',
   maxWidth: 180,
@@ -1418,7 +1418,7 @@ const fileListPopup: React.CSSProperties = {
   maxWidth: 360,
   maxHeight: 200,
   overflowY: 'auto',
-  background: '#1C1C20',
+  background: 'var(--bg-layer-popup)',
   border: '1px solid rgba(255,255,255,0.10)',
   borderRadius: 6,
   padding: 4,
@@ -1434,7 +1434,7 @@ const fileListRow: React.CSSProperties = {
   borderRadius: 4,
   fontSize: 11,
   fontFamily: 'monospace',
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
 }
 
 const fileListPath: React.CSSProperties = {
@@ -1449,7 +1449,7 @@ const fileListRemove: React.CSSProperties = {
   height: 18,
   border: 'none',
   background: 'transparent',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   fontSize: 14,
   lineHeight: 1,
@@ -1464,8 +1464,8 @@ const questionDock: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  borderTop: '1px solid #2A2A2A',  // same as inputArea border
-  background: '#121212',
+  borderTop: '1px solid var(--border-inline)',  // same as inputArea border
+  background: 'var(--bg-surface-on)',
 }
 
 // T-PATCH-068: dock header — label left + X right (AC-4)
@@ -1475,14 +1475,14 @@ const dockHeader: React.CSSProperties = {
   alignItems: 'center',
   padding: '8px 12px',
   flexShrink: 0,
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 // T-PATCH-068: "질문" label in dock header
 const dockLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 // T-PATCH-068: scrollable body inside dock — holds AskUserQuestionCard (AC-4)
@@ -1497,7 +1497,7 @@ const dockBody: React.CSSProperties = {
 const modalCloseBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',
@@ -1514,9 +1514,9 @@ const restartToast: React.CSSProperties = {
   bottom: 60,
   left: '50%',
   transform: 'translateX(-50%)',
-  background: '#1A2A1A',
-  border: '1px solid #2A3A2A',
-  color: '#34D399',
+  background: 'var(--health-success-subtle)',
+  border: '1px solid var(--health-success)',
+  color: 'var(--health-success)',
   fontSize: 11,
   padding: '6px 14px',
   borderRadius: 6,
@@ -1538,12 +1538,12 @@ const sessionDivider: React.CSSProperties = {
 const sessionDividerLine: React.CSSProperties = {
   flex: 1,
   height: 1,
-  background: '#2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
 }
 
 const sessionDividerLabel: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   whiteSpace: 'nowrap',
   flexShrink: 0,

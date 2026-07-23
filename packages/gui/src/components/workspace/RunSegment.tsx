@@ -232,7 +232,7 @@ const runBtn: React.CSSProperties = {
   padding: '0 4px',
   cursor: 'pointer',
   fontSize: 10,
-  color: '#7A7A7A',
+  color: 'var(--text-quaternary)',
   userSelect: 'none',
   whiteSpace: 'nowrap',
   borderRadius: 3,
@@ -243,8 +243,8 @@ const dropUpPanel: React.CSSProperties = {
   position: 'absolute',
   bottom: 28,
   right: 0,
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 6,
   minWidth: 200,
   zIndex: 9999,
@@ -261,7 +261,7 @@ const row: React.CSSProperties = {
 
 const rowKey: React.CSSProperties = {
   fontSize: 11,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   fontFamily: 'monospace',
   flex: 1,
   minWidth: 48,
@@ -269,8 +269,8 @@ const rowKey: React.CSSProperties = {
 
 const rowAction: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #3A3A3A',
-  color: '#C8C8CC',
+  border: '1px solid var(--border-hover)',
+  color: 'var(--text-secondary)',
   fontSize: 10,
   padding: '2px 8px',
   borderRadius: 4,

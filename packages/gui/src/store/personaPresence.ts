@@ -79,10 +79,10 @@ export const PERSONA_LABELS: Record<PersonaId, string> = {
 // injected inline here as fallback until global token sheet lands).
 
 export const PERSONA_COLORS: Record<PersonaId, string> = {
-  po:       '#8B5CF6',  // --po  (brand violet, T-006 Option B)
-  designer: '#FB923C',  // --designer (orange-400, T-006 Option B)
-  dev:      '#38BDF8',  // --dev (sky-400)
-  qa:       '#34D399',  // --qa
+  po:       'var(--accent)',  // --po  (brand violet, T-006 Option B)
+  designer: 'var(--persona-designer)',  // --designer (orange-400, T-006 Option B)
+  dev:      'var(--health-info)',  // --dev (sky-400)
+  qa:       'var(--health-success)',  // --qa
 }
 
 // ── Derived selectors (T-PATCH-177) ───────────────────────────────────────────

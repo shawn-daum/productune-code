@@ -83,7 +83,7 @@ function VersionRow({
       style={rowStyle(isSelected)}
       onClick={onClick}
       onMouseEnter={(e) => {
-        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
+        if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
       }}
       onMouseLeave={(e) => {
         if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
@@ -201,7 +201,7 @@ export default function SidePanelVersionList({ poState }: Props) {
               onClick={() => handleRowClick('__unassigned__')}
               onMouseEnter={(e) => {
                 if (selectedVersionId !== '__unassigned__')
-                  (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
+                  (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
               }}
               onMouseLeave={(e) => {
                 if (selectedVersionId !== '__unassigned__')
@@ -224,7 +224,7 @@ export default function SidePanelVersionList({ poState }: Props) {
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const secHdrStatic: React.CSSProperties = {
@@ -238,7 +238,7 @@ const secHdrStatic: React.CSSProperties = {
 const secHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   userSelect: 'none',
@@ -252,7 +252,7 @@ const secHdrRight: React.CSSProperties = {
 const headerCountText: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   whiteSpace: 'nowrap',
 }
 
@@ -269,9 +269,9 @@ function rowStyle(isSelected: boolean): React.CSSProperties {
     height: 26,
     padding: '0 8px',
     gap: 6,
-    background: isSelected ? '#1A1030' : 'transparent',
+    background: isSelected ? 'var(--accent-subtle)' : 'transparent',
     border: 'none',
-    borderLeft: isSelected ? '2px solid #8B5CF6' : '2px solid transparent',
+    borderLeft: isSelected ? '2px solid var(--accent)' : '2px solid transparent',
     cursor: 'pointer',
     textAlign: 'left',
     transition: 'background 0.1s',
@@ -282,9 +282,9 @@ const pillLatest: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#8B5CF6',
-  background: '#1A1030',
-  border: '1px solid #8B5CF650',
+  color: 'var(--accent)',
+  background: 'var(--accent-subtle)',
+  border: '1px solid var(--accent)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -295,9 +295,9 @@ const pillPast: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
   fontFamily: 'monospace',
-  color: '#FB923C',
-  background: '#261008',
-  border: '1px solid #FB923C40',
+  color: 'var(--persona-designer)',
+  background: 'var(--health-warn-subtle)',
+  border: '1px solid var(--persona-designer)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -308,7 +308,7 @@ const countText: React.CSSProperties = {
   flex: 1,
   fontSize: 10,
   fontFamily: 'monospace',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -317,7 +317,7 @@ const countText: React.CSSProperties = {
 const dateText: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   whiteSpace: 'nowrap',
   flexShrink: 0,
 }
@@ -325,7 +325,7 @@ const dateText: React.CSSProperties = {
 const emptyState: React.CSSProperties = {
   padding: '8px 12px',
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   lineHeight: 1.4,
 }
 
@@ -334,9 +334,9 @@ const pillUnassigned: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
   fontFamily: 'monospace',
-  color: '#707070',
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-quaternary)',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',

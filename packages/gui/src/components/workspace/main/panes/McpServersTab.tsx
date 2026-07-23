@@ -116,7 +116,7 @@ export default function McpServersTab(_: Props) {
                   <span
                     style={{
                       ...connDot,
-                      background: server.connected ? '#4ADE80' : '#505050',
+                      background: server.connected ? 'var(--health-success)' : 'var(--bg-interaction-neutral)',
                     }}
                     aria-label={
                       server.connected
@@ -178,7 +178,7 @@ const wrap: React.CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  background: 'var(--bg-base, #0F0F0F)',
+  background: 'var(--bg-base)',
   overflowY: 'auto',
   padding: '20px 24px',
   gap: 8,
@@ -188,7 +188,7 @@ const headingStyle: React.CSSProperties = {
   margin: '0 0 12px',
   fontSize: 14,
   fontWeight: 600,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
 }
 
 const listWrap: React.CSSProperties = {
@@ -202,7 +202,7 @@ const rowBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   borderRadius: 4,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   cursor: 'pointer',
   display: 'flex',
   fontFamily: 'inherit',
@@ -237,7 +237,7 @@ const connDot: React.CSSProperties = {
 }
 
 const lockIcon: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   flexShrink: 0,
 }
 
@@ -251,8 +251,8 @@ const serverNameStyle: React.CSSProperties = {
 const tierPill: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#404040',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-ghost)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 2,
   padding: '0 3px',
   flexShrink: 0,
@@ -265,7 +265,7 @@ const centeredHint: React.CSSProperties = {
 
 const mutedText: React.CSSProperties = {
   fontSize: 12,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
 }
 
 const emptyWrap: React.CSSProperties = {
@@ -277,29 +277,29 @@ const emptyWrap: React.CSSProperties = {
 }
 
 const emptyIcon: React.CSSProperties = {
-  color: '#404040',
+  color: 'var(--text-ghost)',
   fontSize: 24,
 }
 
 const emptyTitle: React.CSSProperties = {
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   fontSize: 13,
   fontWeight: 500,
 }
 
 const emptyDesc: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 12,
 }
 
 const divider: React.CSSProperties = {
-  background: '#2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
   height: 1,
   margin: '8px 0',
 }
 
 const footerHint: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 11,
   lineHeight: 1.5,
 }
@@ -313,9 +313,9 @@ const addBtnWrap: React.CSSProperties = {
 
 const addBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #3A3A3A',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 12,

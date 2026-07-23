@@ -77,11 +77,11 @@ const ERROR_I18N_KEY: Record<string, string> = {
 // ── State badge ───────────────────────────────────────────────────────────────
 
 const STATE_COLOR: Record<string, string> = {
-  QUEUED:   '#B0B000',
-  BUILDING: '#2563EB',
-  READY:    '#16A34A',
-  ERROR:    '#EF4444',
-  CANCELED: '#707070',
+  QUEUED:   'var(--health-warn)',
+  BUILDING: 'var(--health-info)',
+  READY:    'var(--health-success)',
+  ERROR:    'var(--health-error)',
+  CANCELED: 'var(--text-quaternary)',
 }
 
 function StateBadge({ state }: { state: DeploymentState | 'unknown' }) {
@@ -94,7 +94,7 @@ function StateBadge({ state }: { state: DeploymentState | 'unknown' }) {
     CANCELED: 'Canceled',
     unknown:  '—',
   }[state] ?? state
-  const color = STATE_COLOR[state] ?? '#707070'
+  const color = STATE_COLOR[state] ?? 'var(--text-quaternary)'
   return (
     <span style={{ ...badge, borderColor: color, color }}>
       {label}
@@ -471,7 +471,7 @@ export default function DeployTab({ props }: Props) {
           </button>
 
           {state === 'ERROR' && (
-            <button style={{ ...ctaBtn, background: '#7F1D1D' }} onClick={() => {}}>
+            <button style={{ ...ctaBtn, background: 'var(--health-error)' }} onClick={() => {}}>
               {t('workspace.deploy.retryCta')}
             </button>
           )}
@@ -493,8 +493,8 @@ const wrap: React.CSSProperties = {
   gap: 0,
   overflow: 'auto',
   padding: '16px 20px',
-  background: '#111',
-  color: '#D0D0D0',
+  background: 'var(--bg-surface-base)',
+  color: 'var(--text-secondary)',
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
 }
 
@@ -503,7 +503,7 @@ const section: React.CSSProperties = {
   flexDirection: 'column',
   gap: 8,
   paddingBottom: 16,
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
   marginBottom: 16,
 }
 
@@ -518,7 +518,7 @@ const sectionLabel: React.CSSProperties = {
   fontWeight: 600,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  color: '#606060',
+  color: 'var(--text-quaternary)',
 }
 
 const badge: React.CSSProperties = {
@@ -533,7 +533,7 @@ const badge: React.CSSProperties = {
 
 const urlLink: React.CSSProperties = {
   fontSize: 11,
-  color: '#4B8EF5',
+  color: 'var(--health-info)',
   textDecoration: 'none',
   wordBreak: 'break-all',
 }
@@ -541,7 +541,7 @@ const urlLink: React.CSSProperties = {
 const emptyNote: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 const ticketList: React.CSSProperties = {
@@ -561,19 +561,19 @@ const ticketItem: React.CSSProperties = {
 
 const ticketIdStyle: React.CSSProperties = {
   fontSize: 10,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   flexShrink: 0,
 }
 
 const ticketTitleStyle: React.CSSProperties = {
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const logsToggleBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #2A2A2A',
-  color: '#707070',
+  border: '1px solid var(--border-inline)',
+  color: 'var(--text-quaternary)',
   fontSize: 11,
   borderRadius: 3,
   padding: '3px 8px',
@@ -583,8 +583,8 @@ const logsToggleBtn: React.CSSProperties = {
 }
 
 const logsBox: React.CSSProperties = {
-  background: '#0A0A0A',
-  border: '1px solid #1E1E1E',
+  background: 'var(--bg-base)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '8px 10px',
   maxHeight: 300,
@@ -596,13 +596,13 @@ const logsBox: React.CSSProperties = {
 
 const logsEmpty: React.CSSProperties = {
   fontSize: 11,
-  color: '#404040',
+  color: 'var(--text-ghost)',
   fontFamily: 'monospace',
 }
 
 const logLine: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontFamily: 'monospace',
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-all',
@@ -618,8 +618,8 @@ const footer: React.CSSProperties = {
 const ctaBtn: React.CSSProperties = {
   height: 28,
   padding: '0 14px',
-  background: '#1D4ED8',
-  color: '#fff',
+  background: 'var(--health-info)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,
@@ -632,7 +632,7 @@ const cancelBtn: React.CSSProperties = {
   height: 28,
   padding: '0 12px',
   background: 'transparent',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,
@@ -643,13 +643,13 @@ const cancelBtn: React.CSSProperties = {
 const progressNote: React.CSSProperties = {
   margin: 0,
   fontSize: 11,
-  color: '#A0C0FF',
+  color: 'var(--text-info)',
   fontStyle: 'italic',
 }
 
 const errorBox: React.CSSProperties = {
-  background: '#1A0A0A',
-  border: '1px solid #3A1818',
+  background: 'var(--health-error-subtle)',
+  border: '1px solid var(--health-error)',
   borderRadius: 4,
   padding: '10px 12px',
   display: 'flex',
@@ -660,7 +660,7 @@ const errorBox: React.CSSProperties = {
 const errorText: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#F87171',
+  color: 'var(--health-error)',
   lineHeight: 1.5,
 }
 
@@ -673,8 +673,8 @@ const errorBtn: React.CSSProperties = {
   height: 24,
   padding: '0 10px',
   background: 'transparent',
-  color: '#F87171',
-  border: '1px solid #3A1818',
+  color: 'var(--health-error)',
+  border: '1px solid var(--health-error)',
   borderRadius: 3,
   fontSize: 11,
   cursor: 'pointer',
@@ -685,7 +685,7 @@ const errorBtnGhost: React.CSSProperties = {
   height: 24,
   padding: '0 10px',
   background: 'transparent',
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   border: 'none',
   borderRadius: 3,
   fontSize: 11,

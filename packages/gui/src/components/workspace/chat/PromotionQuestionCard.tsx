@@ -98,10 +98,10 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
     <div style={{ paddingLeft: 8, margin: '4px 0' }}>
       <div className="action-card">
         {/* Question prompt + the promotion's core context (no info loss — AC-4) */}
-        <div style={{ fontSize: 13, color: '#E8E8EA', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5 }}>
           {t('workspace.promotion.question.prompt')}
         </div>
-        <div style={{ fontSize: 13, color: '#E8E8EA', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5 }}>
           {payload.candidateSummary}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -111,7 +111,7 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
           </span>
           <span className="pill">{payload.sourceTicketId}</span>
         </div>
-        <div style={{ fontSize: 12, color: '#A0A0A0', lineHeight: 1.4 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
           {payload.rationale}
         </div>
 
@@ -139,9 +139,9 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
                 </span>
                 <span className="opt-check">
                   {showSpinner && (
-                    <Loader2 size={12} className="pdt-spin" style={{ color: '#8B5CF6' }} />
+                    <Loader2 size={12} className="pdt-spin" style={{ color: 'var(--accent)' }} />
                   )}
-                  {showCheck && <Check size={12} style={{ color: '#34D399' }} />}
+                  {showCheck && <Check size={12} style={{ color: 'var(--health-success)' }} />}
                 </span>
               </button>
             )
@@ -152,12 +152,12 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
         {confirming && (
           <div
             style={{
-              background: '#141414',
-              border: '1px solid #2A2A2A',
+              background: 'var(--bg-surface-on)',
+              border: '1px solid var(--border-inline)',
               borderRadius: 4,
               padding: '10px 12px',
               fontSize: 12,
-              color: '#C8C8CC',
+              color: 'var(--text-secondary)',
               display: 'flex',
               flexDirection: 'column',
               gap: 10,
@@ -175,7 +175,7 @@ function LiveCard({ message, payload }: { message: Message; payload: PromotionPa
               <button
                 className="btn btn-primary"
                 onClick={confirmReject}
-                style={{ fontSize: 12, padding: '6px 12px', background: '#EF4444' }}
+                style={{ fontSize: 12, padding: '6px 12px', background: 'var(--health-error)' }}
               >
                 {t('workspace.promotion.rejectCta')}
               </button>

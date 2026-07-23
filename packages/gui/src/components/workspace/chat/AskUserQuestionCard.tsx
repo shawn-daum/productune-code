@@ -141,7 +141,7 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
   return (
     <div style={{ paddingLeft: 8, margin: '4px 0' }}>
       <div className="action-card">
-        <div style={{ fontSize: 13, color: '#E8E8EA', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5 }}>
           {payload.question}
         </div>
         <div className="opt-stack">
@@ -164,10 +164,10 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
                 </span>
                 <span className="opt-check">
                   {isSelected && pending && (
-                    <Loader2 size={12} className="pdt-spin" style={{ color: '#8B5CF6' }} />
+                    <Loader2 size={12} className="pdt-spin" style={{ color: 'var(--accent)' }} />
                   )}
                   {isSelected && !pending && (
-                    <Check size={12} style={{ color: '#34D399' }} />
+                    <Check size={12} style={{ color: 'var(--health-success)' }} />
                   )}
                 </span>
               </button>
@@ -217,7 +217,7 @@ function LiveCard({ message, payload }: { message: Message; payload: AskUserQues
 function ResolvedChip({ label }: { label: string }) {
   return (
     <span className="resolved-chip">
-      <Check size={12} style={{ color: '#34D399' }} strokeWidth={3} />
+      <Check size={12} style={{ color: 'var(--health-success)' }} strokeWidth={3} />
       {label}
     </span>
   )

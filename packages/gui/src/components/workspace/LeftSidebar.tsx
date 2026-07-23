@@ -252,8 +252,8 @@ export default function LeftSidebar({ project, activeIcon }: Props) {
 
 const wrap: React.CSSProperties = {
   gridArea: 'sidebar',
-  background: '#141414',
-  borderRight: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  borderRight: '1px solid var(--border-inline)',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -266,14 +266,14 @@ const header: React.CSSProperties = {
   gap: 8,
   padding: '0 14px',
   height: 44,
-  borderBottom: '1px solid #2A2A2A',
+  borderBottom: '1px solid var(--border-inline)',
   flexShrink: 0,
 }
 
 const tabTitle: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 700,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
 }
@@ -294,7 +294,7 @@ const headerActionBtn: React.CSSProperties = {
   background: 'none',
   border: 'none',
   borderRadius: 4,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'pointer',
   padding: 0,
 }
@@ -308,7 +308,7 @@ const panelPlaceholder: React.CSSProperties = {
 
 const panelPlaceholderText: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   userSelect: 'none',
   textAlign: 'center',
   padding: '0 12px',

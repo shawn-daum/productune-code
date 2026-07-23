@@ -562,9 +562,9 @@ function wrap(isActive: boolean): React.CSSProperties {
     flex: 1,
     minWidth: 150,
     minHeight: 100,
-    background: '#0F0F0F',
-    border: `1px solid ${isActive ? '#8B5CF666' : '#1A1A1A'}`,
-    boxShadow: isActive ? '0 0 0 1px #8B5CF633 inset' : 'none',
+    background: 'var(--bg-surface-base)',
+    border: `1px solid ${isActive ? 'var(--accent)' : 'var(--border-item)'}`,
+    boxShadow: isActive ? '0 0 0 1px var(--accent) inset' : 'none',
     overflow: 'hidden',
   }
 }
@@ -586,19 +586,19 @@ const paneErrWrap: React.CSSProperties = {
   justifyContent: 'center',
   gap: 10,
   padding: '24px 28px',
-  background: '#120A0A',
+  background: 'var(--health-error-subtle)',
   overflow: 'auto',
 }
 const paneErrTitle: React.CSSProperties = {
-  fontSize: 14, color: '#F87171', fontWeight: 600,
+  fontSize: 14, color: 'var(--health-error)', fontWeight: 600,
 }
 const paneErrHint: React.CSSProperties = {
-  fontSize: 12, color: '#C99', maxWidth: 480, lineHeight: 1.5,
+  fontSize: 12, color: 'var(--text-tertiary)', maxWidth: 480, lineHeight: 1.5,
 }
 const paneErrMsg: React.CSSProperties = {
-  fontSize: 11, color: '#F87171', margin: 0, padding: '8px 10px',
+  fontSize: 11, color: 'var(--health-error)', margin: 0, padding: '8px 10px',
   whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontFamily: 'monospace',
-  background: '#1A0A0A', border: '1px solid #4A1A1A', borderRadius: 6,
+  background: 'var(--health-error-subtle)', border: '1px solid var(--health-error)', borderRadius: 6,
   maxWidth: '100%', maxHeight: 160, overflow: 'auto',
 }
 const paneErrActions: React.CSSProperties = {
@@ -606,13 +606,13 @@ const paneErrActions: React.CSSProperties = {
 }
 const paneErrBtn: React.CSSProperties = {
   fontSize: 12, padding: '6px 14px', borderRadius: 6, cursor: 'pointer',
-  background: '#1A1A1A', color: '#CCC', border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)', color: 'var(--text-secondary)', border: '1px solid var(--border-inline)',
 }
 const paneErrBtnPrimary: React.CSSProperties = {
-  ...paneErrBtn, background: '#8B5CF6', color: '#fff', border: '1px solid #8B5CF6',
+  ...paneErrBtn, background: 'var(--accent)', color: 'var(--text-static-white)', border: '1px solid var(--accent)',
 }
 const paneErrScope: React.CSSProperties = {
-  fontSize: 10, color: '#777', maxWidth: 480, lineHeight: 1.5, marginTop: 4,
+  fontSize: 10, color: 'var(--text-quaternary)', maxWidth: 480, lineHeight: 1.5, marginTop: 4,
 }
 
 const dragCaptureLayer: React.CSSProperties = {
@@ -628,15 +628,15 @@ function previewStyle(zone: PaneZone): React.CSSProperties {
   const isCenter = zone === 'center'
   const base: React.CSSProperties = {
     position: 'absolute',
-    background: isCenter ? 'rgba(56,189,248,0.12)' : '#8B5CF61f',
-    border: `1.5px solid ${isCenter ? 'rgba(56,189,248,0.55)' : '#8B5CF68c'}`,
+    background: isCenter ? 'rgba(56,189,248,0.12)' : 'var(--accent-subtle)',
+    border: `1.5px solid ${isCenter ? 'rgba(56,189,248,0.55)' : 'var(--accent)'}`,
     borderRadius: 4,
     pointerEvents: 'none',
     transition: 'all 0.12s cubic-bezier(0.2,0,0,1)',
     zIndex: 6,
     boxShadow: isCenter
       ? 'inset 0 0 0 1px rgba(56,189,248,0.3)'
-      : 'inset 0 0 0 1px #8B5CF633, 0 8px 24px rgba(139,92,246,0.18)',
+      : 'inset 0 0 0 1px var(--accent), 0 8px 24px rgba(139,92,246,0.18)',
   }
   return { ...base, ...zoneRect(zone) }
 }

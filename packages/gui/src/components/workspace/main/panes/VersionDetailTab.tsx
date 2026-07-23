@@ -24,6 +24,6 @@ const empty: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 13,
 }

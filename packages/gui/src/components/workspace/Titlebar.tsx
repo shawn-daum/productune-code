@@ -22,8 +22,8 @@ const bar: React.CSSProperties = {
   alignItems: 'center',
   flexShrink: 0,
   height: 38,
-  background: '#0A0A0A',
-  borderBottom: '1px solid #1F1F1F',
+  background: 'var(--bg-base)',
+  borderBottom: '1px solid var(--border-section)',
   WebkitAppRegion: 'drag',
   userSelect: 'none',
 } as React.CSSProperties
@@ -40,12 +40,12 @@ const titleBox: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   fontSize: 12,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontWeight: 600,
   letterSpacing: '0.02em',
 }
 
 const accent: React.CSSProperties = {
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   fontSize: 11,
 }

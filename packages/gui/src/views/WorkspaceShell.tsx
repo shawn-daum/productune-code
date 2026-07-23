@@ -65,7 +65,7 @@ function HeaderSearchBar({ onClick }: HeaderSearchBarProps) {
       style={headerSearchBarStyle}
     >
       <Search size={14} color="currentColor" style={{ flexShrink: 0 }} />
-      <span style={{ flex: 1, fontSize: 12, color: '#707070' }}>
+      <span style={{ flex: 1, fontSize: 12, color: 'var(--text-quaternary)' }}>
         {t('workspace.quickOpen.searchHint')}
       </span>
       <kbd style={headerKbdStyle}>⌘P</kbd>
@@ -79,23 +79,23 @@ const headerSearchBarStyle: React.CSSProperties = {
   gap: 8,
   maxWidth: 420,
   margin: '4px auto',
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '6px 10px',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'text',
 }
 
 const headerKbdStyle: React.CSSProperties = {
   fontFamily: 'ui-monospace, monospace',
   fontSize: 10,
-  color: '#A0A0A0',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 2,
   padding: '1px 4px',
   lineHeight: 1.5,
-  background: '#141414',
+  background: 'var(--bg-surface-on)',
 }
 
 // T-PATCH-013 B3: a "fresh" workspace = single empty leaf, no tabs anywhere.
@@ -583,5 +583,5 @@ const shellScrollWrapper: React.CSSProperties = {
   display: 'flex',
   overflowX: 'auto',
   overflowY: 'hidden',
-  background: '#0F0F0F', // match grid background so scrollbar gutter is themed
+  background: 'var(--bg-surface-base)', // match grid background so scrollbar gutter is themed
 }

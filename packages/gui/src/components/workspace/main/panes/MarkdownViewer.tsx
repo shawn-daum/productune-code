@@ -458,7 +458,7 @@ export default function MarkdownViewer({
         <div style={breadcrumbRow}>
           {crumbParts.map((part, idx) => (
             <span key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              {idx > 0 && <ChevronRight size={10} style={{ color: '#3A3A3A', flexShrink: 0 }} />}
+              {idx > 0 && <ChevronRight size={10} style={{ color: 'var(--text-ghost)', flexShrink: 0 }} />}
               <span style={idx === crumbParts.length - 1 ? crumbLast : crumbSeg}>{part}</span>
             </span>
           ))}
@@ -493,17 +493,17 @@ export default function MarkdownViewer({
               </span>
               {!editing ? (
                 <button style={actionBtn} onClick={enterEdit} disabled={loadState !== 'done'}>
-                  <Pencil size={11} color="#909090" />
+                  <Pencil size={11} style={{ color: 'var(--text-tertiary)' }} />
                   <span>{t('workspace.doctrineFile.edit')}</span>
                 </button>
               ) : (
                 <div style={btnGroup}>
                   <button style={actionBtn} onClick={handleSave} disabled={saving}>
-                    <Save size={11} color="#34D399" />
+                    <Save size={11} style={{ color: 'var(--health-success)' }} />
                     <span>{saving ? t('common.loading') : t('workspace.doctrineFile.save')}</span>
                   </button>
                   <button style={actionBtn} onClick={cancelEdit} disabled={saving}>
-                    <X size={11} color="#909090" />
+                    <X size={11} style={{ color: 'var(--text-tertiary)' }} />
                     <span>{t('common.cancel')}</span>
                   </button>
                 </div>
@@ -538,7 +538,7 @@ export default function MarkdownViewer({
                   onClick={() => jumpToHeading(h)}
                   title={h.text}
                 >
-                  <ChevronRight size={10} style={{ color: isLight ? '#CFCCC6' : '#3A3A3A', flexShrink: 0 }} />
+                  <ChevronRight size={10} style={{ color: isLight ? 'var(--text-secondary)' : 'var(--text-ghost)', flexShrink: 0 }} />
                   <span style={stickyRowText}>{h.text}</span>
                 </button>
               )
@@ -547,13 +547,13 @@ export default function MarkdownViewer({
         )}
         {loadState === 'loading' && (
           <div style={centerState}>
-            <Loader2 size={20} style={{ color: '#505050' }} className="pdt-spin" />
+            <Loader2 size={20} style={{ color: 'var(--text-disabled)' }} className="pdt-spin" />
           </div>
         )}
 
         {loadState === 'error' && (
           <div style={errorBanner}>
-            <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
+            <AlertOctagon size={14} style={{ color: 'var(--health-error)', flexShrink: 0, marginTop: 1 }} />
             <div>
               <div style={errorText}>{t('workspace.common.fileLoadError')}</div>
               <button style={retryBtn} onClick={() => runLoad()}>
@@ -587,7 +587,7 @@ export default function MarkdownViewer({
                 {/* Read-only state hint for editable files (Preview mode) */}
                 {editable && (
                   <div style={modeHint}>
-                    <Eye size={11} color="#505050" />
+                    <Eye size={11} style={{ color: 'var(--text-disabled)' }} />
                     <span>{t('workspace.doctrineFile.preview')}</span>
                     {saved && <span style={savedText}>{t('workspace.doctrineFile.saved')}</span>}
                   </div>
@@ -618,7 +618,7 @@ const wrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }
 
 const headerBar: React.CSSProperties = {
@@ -627,8 +627,8 @@ const headerBar: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 8,
   padding: '7px 16px',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
   minHeight: 32,
 }
@@ -641,17 +641,17 @@ const breadcrumbRow: React.CSSProperties = {
   overflow: 'hidden',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   minWidth: 0,
 }
 
 const crumbSeg: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   whiteSpace: 'nowrap',
 }
 
 const crumbLast: React.CSSProperties = {
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -671,9 +671,9 @@ const themeToggleBtn: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  background: '#1A1A1A',
-  color: '#A0A0A0',
-  border: '1px solid #1F1F1F',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '3px 6px',
   cursor: 'pointer',
@@ -686,9 +686,9 @@ const roBadge: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   padding: '1px 6px',
-  border: '1px solid #1F1F1F',
+  border: '1px solid var(--border-section)',
   borderRadius: 20,
   flexShrink: 0,
   whiteSpace: 'nowrap',
@@ -697,9 +697,9 @@ const roBadge: React.CSSProperties = {
 const lineCapBadge: React.CSSProperties = {
   fontSize: 10,
   fontFamily: 'monospace',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   padding: '1px 6px',
-  border: '1px solid #1F1F1F',
+  border: '1px solid var(--border-section)',
   borderRadius: 20,
   flexShrink: 0,
   whiteSpace: 'nowrap',
@@ -707,8 +707,8 @@ const lineCapBadge: React.CSSProperties = {
 
 const lineCapBadgeOver: React.CSSProperties = {
   ...lineCapBadge,
-  color: '#E0A030',
-  borderColor: '#3A2E12',
+  color: 'var(--status-review)',
+  borderColor: 'var(--health-warn)',
 }
 
 const btnGroup: React.CSSProperties = {
@@ -721,9 +721,9 @@ const actionBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   background: 'transparent',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 10,
@@ -746,8 +746,8 @@ const errorBanner: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
   gap: 8,
-  background: '#1A1A1A',
-  borderLeft: '4px solid #EF4444',
+  background: 'var(--bg-surface-onlayer)',
+  borderLeft: '4px solid var(--health-error)',
   borderRadius: 4,
   padding: '10px 12px',
   margin: 24,
@@ -755,7 +755,7 @@ const errorBanner: React.CSSProperties = {
 
 const errorText: React.CSSProperties = {
   fontSize: 13,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   lineHeight: 1.5,
 }
 
@@ -765,9 +765,9 @@ const retryBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   fontSize: 11,
-  color: '#E8E8EA',
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '3px 8px',
   cursor: 'pointer',
@@ -807,7 +807,7 @@ const stickyBand: React.CSSProperties = {
   flexDirection: 'column',
   background: 'rgba(15,15,15,0.96)',
   backdropFilter: 'blur(2px)',
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 // Light variant of the sticky band (T-PATCH-183). Paper-translucent so it reads
@@ -816,7 +816,7 @@ const stickyBand: React.CSSProperties = {
 // the band is outside .md-doc so it can't read the CSS var flip.
 const stickyBandLight: React.CSSProperties = {
   background: 'rgba(250,250,249,0.96)',
-  borderBottom: '1px solid #E2E0DC',
+  borderBottom: '1px solid var(--border-hover)',
 }
 
 const stickyRow: React.CSSProperties = {
@@ -875,10 +875,10 @@ const editWrap: React.CSSProperties = {
 }
 
 const textarea: React.CSSProperties = {
-  background: '#0A0A0A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-base)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontFamily: 'monospace',
   fontSize: 12,
   lineHeight: 1.5,
@@ -897,11 +897,11 @@ const modeHint: React.CSSProperties = {
   gap: 6,
   padding: '6px 16px 0',
   fontSize: 10,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
 }
 
 const savedText: React.CSSProperties = {
-  color: '#34D399',
+  color: 'var(--health-success)',
   marginLeft: 4,
 }
 
@@ -910,11 +910,11 @@ const conflictText: React.CSSProperties = {
   alignItems: 'flex-start',
   gap: 6,
   fontSize: 11,
-  color: '#E0A030',
+  color: 'var(--status-review)',
   lineHeight: 1.5,
 }
 
 const errorInline: React.CSSProperties = {
   fontSize: 11,
-  color: '#E04040',
+  color: 'var(--status-blocked)',
 }

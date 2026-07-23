@@ -444,25 +444,25 @@ function LocalHtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFind
                 aria-label={t('workspace.htmlViewer.reload')}
                 disabled={loadState === 'loading'}
               >
-                <RefreshCw size={11} color="#909090" />
+                <RefreshCw size={11} style={{ color: 'var(--text-tertiary)' }} />
               </button>
               <button
                 style={actionBtn}
                 onClick={enterEdit}
                 disabled={loadState !== 'done'}
               >
-                <Pencil size={11} color="#909090" />
+                <Pencil size={11} style={{ color: 'var(--text-tertiary)' }} />
                 <span>{t('workspace.htmlViewer.edit')}</span>
               </button>
             </>
           ) : (
             <div style={btnGroup}>
               <button style={actionBtn} onClick={handleSave} disabled={saving}>
-                <Save size={11} color="#34D399" />
+                <Save size={11} style={{ color: 'var(--health-success)' }} />
                 <span>{saving ? t('common.loading') : t('workspace.htmlViewer.save')}</span>
               </button>
               <button style={actionBtn} onClick={cancelEdit} disabled={saving}>
-                <X size={11} color="#909090" />
+                <X size={11} style={{ color: 'var(--text-tertiary)' }} />
                 <span>{t('common.cancel')}</span>
               </button>
             </div>
@@ -474,13 +474,13 @@ function LocalHtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFind
       <div style={body}>
         {loadState === 'loading' && (
           <div style={centerState}>
-            <Loader2 size={20} style={{ color: '#505050' }} className="pdt-spin" />
+            <Loader2 size={20} style={{ color: 'var(--text-disabled)' }} className="pdt-spin" />
           </div>
         )}
 
         {loadState === 'error' && (
           <div style={errorBanner}>
-            <AlertOctagon size={14} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
+            <AlertOctagon size={14} style={{ color: 'var(--health-error)', flexShrink: 0, marginTop: 1 }} />
             <div>
               <div style={errorText}>{t('workspace.htmlViewer.loadError')}</div>
               <button style={retryBtn} onClick={runLoad}>
@@ -495,7 +495,7 @@ function LocalHtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFind
             {editing ? (
               <div style={editWrap}>
                 <div style={modeHint}>
-                  <Pencil size={11} color="#505050" />
+                  <Pencil size={11} style={{ color: 'var(--text-disabled)' }} />
                   <span>{t('workspace.htmlViewer.editHint')}</span>
                 </div>
                 <textarea
@@ -518,7 +518,7 @@ function LocalHtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFind
             ) : (
               <div style={previewWrap}>
                 <div style={modeHint}>
-                  <Eye size={11} color="#505050" />
+                  <Eye size={11} style={{ color: 'var(--text-disabled)' }} />
                   <span>{t('workspace.htmlViewer.preview')}</span>
                 </div>
                 {/* T-PATCH-066: allow-scripts enables the iframe-focus bridge (D1). */}
@@ -587,7 +587,7 @@ const wrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   position: 'relative',
 }
 
@@ -597,15 +597,15 @@ const headerBar: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 8,
   padding: '7px 16px',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
   minHeight: 32,
 }
 
 const crumb: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -631,9 +631,9 @@ const actionBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   background: 'transparent',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 10,
@@ -659,8 +659,8 @@ const errorBanner: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
   gap: 8,
-  background: '#1A1A1A',
-  borderLeft: '4px solid #EF4444',
+  background: 'var(--bg-surface-onlayer)',
+  borderLeft: '4px solid var(--health-error)',
   borderRadius: 4,
   padding: '10px 12px',
   margin: 24,
@@ -668,7 +668,7 @@ const errorBanner: React.CSSProperties = {
 
 const errorText: React.CSSProperties = {
   fontSize: 13,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   lineHeight: 1.5,
 }
 
@@ -678,9 +678,9 @@ const retryBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   fontSize: 11,
-  color: '#E8E8EA',
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '3px 8px',
   cursor: 'pointer',
@@ -697,7 +697,7 @@ const previewWrap: React.CSSProperties = {
 const iframeEl: React.CSSProperties = {
   flex: 1,
   border: 'none',
-  background: '#FFFFFF',
+  background: 'var(--bg-interaction-neutral)',
   minHeight: 0,
   width: '100%',
 }
@@ -713,10 +713,10 @@ const editWrap: React.CSSProperties = {
 }
 
 const textarea: React.CSSProperties = {
-  background: '#0A0A0A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-base)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontFamily: 'monospace',
   fontSize: 12,
   lineHeight: 1.5,
@@ -735,7 +735,7 @@ const modeHint: React.CSSProperties = {
   gap: 6,
   padding: '6px 16px',
   fontSize: 10,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   flexShrink: 0,
 }
 
@@ -744,16 +744,16 @@ const conflictRow: React.CSSProperties = {
   alignItems: 'flex-start',
   gap: 6,
   fontSize: 11,
-  color: '#E0A030',
+  color: 'var(--status-review)',
   lineHeight: 1.5,
 }
 
 const conflictBtn: React.CSSProperties = {
   flexShrink: 0,
   background: 'transparent',
-  border: '1px solid #3A2E12',
+  border: '1px solid var(--health-warn)',
   borderRadius: 4,
-  color: '#E0A030',
+  color: 'var(--status-review)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 10,
@@ -778,9 +778,9 @@ function toastStyle(ok: boolean): React.CSSProperties {
     gap: 6,
     padding: '6px 8px 6px 12px',
     fontSize: 11,
-    color: ok ? '#34D399' : '#E04040',
-    background: ok ? '#0A2A1A' : '#2A0808',
-    border: `1px solid ${ok ? '#1A3A1A' : '#3A1A1A'}`,
+    color: ok ? 'var(--health-success)' : 'var(--status-blocked)',
+    background: ok ? 'var(--health-success-subtle)' : 'var(--health-error-subtle)',
+    border: `1px solid ${ok ? 'var(--health-success)' : 'var(--health-error)'}`,
     borderRadius: 4,
     boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
   }

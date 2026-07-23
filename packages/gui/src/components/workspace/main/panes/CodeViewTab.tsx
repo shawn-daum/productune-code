@@ -110,7 +110,7 @@ export default function CodeTextViewer({ props }: Props) {
             <div style={noPreviewHint}>{t('workspace.codeView.binaryNoPreview')}</div>
           </div>
         ) : error ? (
-          <pre style={{ ...pre, color: '#E04040' }}>{error}</pre>
+          <pre style={{ ...pre, color: 'var(--status-blocked)' }}>{error}</pre>
         ) : lines ? (
           <>
             <div style={{ ...code, fontSize: bodyFontSize }}>
@@ -146,8 +146,8 @@ const toolbar: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 12,
   padding: '6px 14px',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
 }
 
@@ -160,7 +160,7 @@ const toolbarRight: React.CSSProperties = {
 
 const crumb: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -172,7 +172,7 @@ const roBadge: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 10,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   fontFamily: 'monospace',
   flexShrink: 0,
   fontWeight: 600,
@@ -181,7 +181,7 @@ const roBadge: React.CSSProperties = {
 const view: React.CSSProperties = {
   flex: 1,
   overflow: 'auto',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   padding: '8px 0',
 }
 
@@ -200,13 +200,13 @@ const row: React.CSSProperties = {
 const gutter: React.CSSProperties = {
   width: '3em',
   textAlign: 'right',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   userSelect: 'none',
   flexShrink: 0,
 }
 
 const codeText: React.CSSProperties = {
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   whiteSpace: 'pre',
 }
 
@@ -222,7 +222,7 @@ const hint: React.CSSProperties = {
   margin: 0,
   padding: '16px 20px',
   fontSize: 12,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontStyle: 'italic',
 }
 
@@ -230,9 +230,9 @@ const truncHint: React.CSSProperties = {
   margin: 0,
   padding: '10px 20px',
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
-  borderTop: '1px solid #1A1A1A',
+  borderTop: '1px solid var(--border-item)',
 }
 
 // ── No-preview (binary) state — folds in the deleted BinaryTab (T-PATCH-030) ───
@@ -245,24 +245,24 @@ const noPreview: React.CSSProperties = {
   justifyContent: 'center',
   gap: 8,
   padding: 24,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   minHeight: 160,
 }
 
 const noPreviewIcon: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
   marginBottom: 8,
 }
 
 const noPreviewName: React.CSSProperties = {
   fontSize: 14,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
 }
 
 const noPreviewHint: React.CSSProperties = {
   fontSize: 12,
-  color: '#404040',
+  color: 'var(--text-ghost)',
   textAlign: 'center',
   maxWidth: 320,
 }

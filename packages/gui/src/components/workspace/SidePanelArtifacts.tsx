@@ -128,7 +128,7 @@ export default function SidePanelArtifacts() {
     [openTab, projectDir, markOpened],
   )
 
-  const badgeColor = totalCount > 0 ? 'var(--health-warn, #F59E0B)' : 'transparent'
+  const badgeColor = totalCount > 0 ? 'var(--health-warn)' : 'transparent'
 
   return (
     <div style={sectionWrap}>
@@ -149,7 +149,7 @@ export default function SidePanelArtifacts() {
           <span style={{ ...countBadge, background: badgeColor }}>{totalCount}</span>
         ) : null}
         <span style={{ flex: 1 }} />
-        <span style={{ color: '#3A3A3A', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+        <span style={{ color: 'var(--text-ghost)', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
           {expanded ? <ChevronDown size={10} strokeWidth={2.5} /> : <ChevronRight size={10} strokeWidth={2.5} />}
         </span>
       </div>
@@ -184,7 +184,7 @@ export default function SidePanelArtifacts() {
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setArchiveOpen((v) => !v) }}
                     aria-expanded={archiveOpen}
                   >
-                    <span style={{ color: '#3A3A3A', display: 'flex' }}>
+                    <span style={{ color: 'var(--text-ghost)', display: 'flex' }}>
                       {archiveOpen ? <ChevronDown size={10} strokeWidth={2.5} /> : <ChevronRight size={10} strokeWidth={2.5} />}
                     </span>
                     <span>{t('workspace.artifacts.archiveLabel')}</span>
@@ -229,7 +229,7 @@ function ArtifactRow({ entry, dim, indent, onOpen }: RowProps) {
         padding: indent ? '3px 8px 3px 34px' : '3px 8px 3px 20px',
         cursor: 'pointer',
         opacity: dim ? 0.45 : 1,
-        background: hovered ? '#1A1A1A' : 'transparent',
+        background: hovered ? 'var(--bg-surface-onlayer)' : 'transparent',
         transition: 'background 0.1s ease',
         borderRadius: 3,
       }}
@@ -241,12 +241,12 @@ function ArtifactRow({ entry, dim, indent, onOpen }: RowProps) {
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpen(entry) }}
     >
-      <span style={{ color: '#606060', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+      <span style={{ color: 'var(--text-quaternary)', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
         {iconFor(entry.ext)}
       </span>
       <span style={{
         fontSize: 11,
-        color: hovered ? '#D0D0D0' : '#A0A0A0',
+        color: hovered ? 'var(--text-secondary)' : 'var(--text-tertiary)',
         overflow: 'hidden',
         textOverflow: 'ellipsis',
         whiteSpace: 'nowrap',
@@ -265,7 +265,7 @@ function ArtifactRow({ entry, dim, indent, onOpen }: RowProps) {
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const secHdr: React.CSSProperties = {
@@ -280,7 +280,7 @@ const secHdr: React.CSSProperties = {
 const secHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
 }
@@ -288,7 +288,7 @@ const secHdrText: React.CSSProperties = {
 const countBadge: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
-  color: '#0F0F0F',
+  color: 'var(--text-ghost)',
   borderRadius: 3,
   padding: '1px 4px',
   lineHeight: 1.4,
@@ -303,7 +303,7 @@ const archiveToggle: React.CSSProperties = {
   padding: '4px 8px 4px 20px',
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   cursor: 'pointer',
@@ -313,7 +313,7 @@ const archiveToggle: React.CSSProperties = {
 const archiveCount: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 const emptyBody: React.CSSProperties = {
@@ -322,13 +322,13 @@ const emptyBody: React.CSSProperties = {
 
 const emptyHeadline: React.CSSProperties = {
   fontSize: 10,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontStyle: 'italic',
 }
 
 const emptyHelper: React.CSSProperties = {
   fontSize: 9,
-  color: '#2A2A2A',
+  color: 'var(--text-ghost)',
   marginTop: 3,
   lineHeight: 1.4,
 }
@@ -337,7 +337,7 @@ const pendingDot: React.CSSProperties = {
   width: 6,
   height: 6,
   borderRadius: '50%',
-  background: '#D97706',
+  background: 'var(--health-warn)',
   flexShrink: 0,
   marginLeft: 4,
 }

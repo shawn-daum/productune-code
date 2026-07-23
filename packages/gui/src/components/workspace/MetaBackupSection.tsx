@@ -133,7 +133,7 @@ const remoteList: React.CSSProperties = {
 
 const listLabel: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   lineHeight: 1.4,
 }
 
@@ -148,9 +148,9 @@ const remoteRow: React.CSSProperties = {
 const nameChip: React.CSSProperties = {
   fontSize: 11,
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
-  color: '#C8C8CC',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
+  color: 'var(--text-secondary)',
   borderRadius: 4,
   padding: '2px 6px',
   flexShrink: 0,
@@ -159,7 +159,7 @@ const nameChip: React.CSSProperties = {
 const urlText: React.CSSProperties = {
   fontSize: 11,
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
@@ -172,10 +172,10 @@ const inputRow: React.CSSProperties = {
 }
 
 const textInput: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 12,
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
   padding: '4px 8px',
@@ -187,9 +187,9 @@ const addBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 11,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   background: 'transparent',
-  border: '1px solid #8B5CF6',
+  border: '1px solid var(--accent)',
   borderRadius: 4,
   padding: '3px 10px',
   cursor: 'pointer',

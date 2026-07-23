@@ -124,9 +124,9 @@ function TooltipButton({ label, children, style, ...rest }: TooltipButtonProps) 
               top: pos.top,
               left: pos.left,
               transform: 'translate(-50%, -100%)',
-              background: '#1E1E1E',
-              border: '1px solid #2A2A2A',
-              color: '#E0E0E0',
+              background: 'var(--bg-surface-onlayer)',
+              border: '1px solid var(--border-inline)',
+              color: 'var(--text-primary)',
               padding: '3px 8px',
               borderRadius: 4,
               fontSize: 11,
@@ -334,8 +334,8 @@ export default function TabBar({ leaf, isActivePane }: Props) {
                 {tab.needsReview && (
                   <Circle
                     size={6}
-                    fill="var(--health-warn, #F59E0B)"
-                    color="var(--health-warn, #F59E0B)"
+                    fill="var(--health-warn)"
+                    color="var(--health-warn)"
                     aria-label={t('workspace.artifacts.needsReview')}
                     style={{ flexShrink: 0 }}
                   />
@@ -442,8 +442,8 @@ function bar(isActivePane: boolean): React.CSSProperties {
     display: 'flex',
     alignItems: 'stretch',
     height: 32,
-    background: '#0A0A0A',
-    borderBottom: `1px solid ${isActivePane ? '#8B5CF633' : '#1A1A1A'}`,
+    background: 'var(--bg-base)',
+    borderBottom: `1px solid ${isActivePane ? 'var(--accent)' : 'var(--border-item)'}`,
     flexShrink: 0,
     position: 'relative',
   }
@@ -454,7 +454,7 @@ function emptyBar(isActivePane: boolean): React.CSSProperties {
     ...bar(isActivePane),
     alignItems: 'center',
     paddingLeft: 12,
-    color: '#3A3A3A',
+    color: 'var(--text-ghost)',
   }
 }
 
@@ -502,11 +502,11 @@ function tabBtn(isActive: boolean): React.CSSProperties {
     width: '100%',
     height: '100%',
     padding: '0 10px',
-    background: isActive ? '#0F0F0F' : 'transparent',
+    background: isActive ? 'var(--bg-surface-base)' : 'transparent',
     border: 'none',
-    borderRight: '1px solid #1A1A1A',
-    borderTop: isActive ? '2px solid #8B5CF6' : '2px solid transparent',
-    color: isActive ? '#F0F0F0' : '#A0A0A0',
+    borderRight: '1px solid var(--border-item)',
+    borderTop: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+    color: isActive ? 'var(--text-primary)' : 'var(--text-tertiary)',
     fontSize: 12,
     fontFamily: 'inherit',
     cursor: 'pointer',
@@ -535,7 +535,7 @@ const closeBtn: React.CSSProperties = {
   width: 16,
   height: 16,
   borderRadius: 3,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 14,
   lineHeight: 1,
   cursor: 'pointer',
@@ -548,7 +548,7 @@ const tabInsertLineBase: React.CSSProperties = {
   top: 0,
   bottom: 0,
   width: 2,
-  background: '#8B5CF6',
+  background: 'var(--accent)',
   zIndex: 2,
   pointerEvents: 'none',
 }
@@ -562,7 +562,7 @@ function barEnd(hot: boolean, scroll: boolean): React.CSSProperties {
     // absorbs slack so tabs sit flush-left when there are only a few.
     flex: scroll ? '0 0 8px' : '1 1 auto',
     minWidth: scroll ? 8 : 24,
-    background: hot ? '#1A1208' : 'transparent',
+    background: hot ? 'var(--health-warn-subtle)' : 'transparent',
     transition: 'background 0.08s',
   }
 }
@@ -584,7 +584,7 @@ const splitBtn: React.CSSProperties = {
   height: 24,
   border: 'none',
   background: 'transparent',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   borderRadius: 4,
   cursor: 'pointer',
   padding: 0,

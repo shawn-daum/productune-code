@@ -426,7 +426,7 @@ const wrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   minHeight: 0,
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }
 
 const navBar: React.CSSProperties = {
@@ -435,8 +435,8 @@ const navBar: React.CSSProperties = {
   gap: 2,
   height: 32,
   padding: '0 6px',
-  background: '#1A1A1A',
-  borderBottom: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  borderBottom: '1px solid var(--border-inline)',
   flexShrink: 0,
 }
 
@@ -449,7 +449,7 @@ const navBtn: React.CSSProperties = {
   background: 'none',
   border: 'none',
   borderRadius: 4,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   flexShrink: 0,
   padding: 0,
@@ -458,10 +458,10 @@ const navBtn: React.CSSProperties = {
 const urlInput: React.CSSProperties = {
   flex: 1,
   height: 22,
-  background: '#0F0F0F',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-base)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E5E5E5',
+  color: 'var(--text-primary)',
   fontSize: 11,
   padding: '0 8px',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
@@ -479,7 +479,7 @@ const contentWrap: React.CSSProperties = {
 const webviewEl: React.CSSProperties = {
   flex: 1,
   border: 'none',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   minHeight: 0,
   display: 'flex',
 }
@@ -490,11 +490,11 @@ const errorOverlay: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  background: '#1A1A1A',
+  background: 'var(--bg-surface-onlayer)',
   zIndex: 1,
 }
 
 const errorText: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 13,
 }

@@ -27,8 +27,8 @@ export default function BrandMark({ size = 16, style: styleProp }: Props) {
 
   return (
     <span style={{ ...style, ...styleProp }}>
-      <span style={{ color: '#8B5CF6' }}>{`{`}</span>
-      <span style={{ color: '#2DD4BF' }}>{`}`}</span>
+      <span style={{ color: 'var(--accent)' }}>{`{`}</span>
+      <span style={{ color: 'var(--brand-mint)' }}>{`}`}</span>
     </span>
   )
 }

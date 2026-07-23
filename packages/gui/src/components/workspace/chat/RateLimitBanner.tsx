@@ -75,7 +75,7 @@ export default function RateLimitBanner({ detail, onExpired }: RateLimitBannerPr
 
   return (
     <div style={banner}>
-      <Clock size={14} strokeWidth={2} style={{ color: '#FBBF24', flexShrink: 0 }} />
+      <Clock size={14} strokeWidth={2} style={{ color: 'var(--health-warn)', flexShrink: 0 }} />
       <span style={bannerText}>{text}</span>
     </div>
   )
@@ -106,15 +106,15 @@ const banner: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '0 12px',
-  background: '#1A1A1A',
-  borderLeft: '4px solid #FBBF24',
-  borderTop: '1px solid #2A2A2A',
-  borderBottom: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  borderLeft: '4px solid var(--health-warn)',
+  borderTop: '1px solid var(--border-inline)',
+  borderBottom: '1px solid var(--border-inline)',
 }
 
 const bannerText: React.CSSProperties = {
   fontSize: 11,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.3,
   whiteSpace: 'nowrap',
   overflow: 'hidden',

@@ -51,9 +51,9 @@ const banner: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 16,
   padding: '12px 20px',
-  background: '#160F28',
-  borderBottom: '1px solid #8B5CF666',
-  borderTop: '2px solid #8B5CF6',
+  background: 'var(--accent-subtle)',
+  borderBottom: '1px solid var(--accent)',
+  borderTop: '2px solid var(--accent)',
 }
 
 const left: React.CSSProperties = {
@@ -67,8 +67,8 @@ const left: React.CSSProperties = {
 const badge: React.CSSProperties = {
   flexShrink: 0,
   padding: '4px 10px',
-  background: '#8B5CF6',
-  color: '#0A0A0A',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   borderRadius: 4,
   fontSize: 10,
   fontWeight: 700,
@@ -90,25 +90,25 @@ const transitionLine: React.CSSProperties = {
   gap: 8,
   fontSize: 13,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const phaseFrom: React.CSSProperties = {
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const phaseTo: React.CSSProperties = {
-  color: '#8B5CF6',
+  color: 'var(--accent)',
 }
 
 const arrow: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 14,
 }
 
 const summaryLine: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
@@ -116,7 +116,7 @@ const summaryLine: React.CSSProperties = {
 
 const promptLine: React.CSSProperties = {
   fontSize: 12,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontStyle: 'italic',
 }
 
@@ -129,8 +129,8 @@ const actions: React.CSSProperties = {
 
 const modifyBtn: React.CSSProperties = {
   background: 'transparent',
-  color: '#A0A0A0',
-  border: '1px solid #3A3A3A',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
   padding: '6px 12px',
   fontSize: 12,
@@ -139,8 +139,8 @@ const modifyBtn: React.CSSProperties = {
 }
 
 const approveBtn: React.CSSProperties = {
-  background: '#8B5CF6',
-  color: '#0A0A0A',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   padding: '6px 16px',

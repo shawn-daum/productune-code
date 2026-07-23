@@ -87,7 +87,7 @@ function PersonaRow({ def, isActive, expanded, onClick, onToggle }: PersonaRowPr
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
       title={`${def.id} — click to open definition`}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = '#1A1A1A' }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface-onlayer)' }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = 'transparent' }}
     >
       {/* Expand/collapse chevron — toggles the tier tree only (AC-1, AC-9) */}
@@ -100,7 +100,7 @@ function PersonaRow({ def, isActive, expanded, onClick, onToggle }: PersonaRowPr
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onToggle() } }}
         title={expanded ? 'Collapse tiers' : 'Expand tiers'}
       >
-        <Chevron size={13} strokeWidth={2} color="#707070" />
+        <Chevron size={13} strokeWidth={2} style={{ color: 'var(--text-quaternary)' }} />
       </span>
 
       {/* Avatar */}
@@ -213,8 +213,8 @@ function PersonaDoctrineTree({ personaKey, projectDir, onOpenFile }: PersonaDoct
           <div style={tierHeader}>
             <span style={tierHeaderText}>{t(TIER_LABEL_KEY[group.tier])}</span>
             {group.editable
-              ? <Pencil size={11} strokeWidth={2} color="#34D399" />
-              : <Lock size={11} strokeWidth={2} color="#707070" />}
+              ? <Pencil size={11} strokeWidth={2} style={{ color: 'var(--health-success)' }} />
+              : <Lock size={11} strokeWidth={2} style={{ color: 'var(--text-quaternary)' }} />}
           </div>
           <TierFiles group={group} onOpenFile={onOpenFile} />
         </div>
@@ -264,7 +264,7 @@ function FileRowBtn({ file, indented, onOpenFile }: { file: DoctrineFileRow; ind
       style={indented ? fileRowBtnIndented : fileRowBtn}
       onClick={() => onOpenFile(file)}
       title={file.absPath}
-      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A' }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)' }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
     >
       <span style={fileRowText}>{basename}</span>
@@ -410,7 +410,7 @@ const panelWrap: React.CSSProperties = {
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 // Plain (non-clickable) section title for Personas
@@ -425,7 +425,7 @@ const plainSecHdr: React.CSSProperties = {
 const secHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   userSelect: 'none',
@@ -461,7 +461,7 @@ const avatarStyle: React.CSSProperties = {
   justifyContent: 'center',
   fontSize: 11,
   fontWeight: 700,
-  color: '#fff',
+  color: 'var(--text-primary)',
   flexShrink: 0,
 }
 
@@ -472,8 +472,8 @@ const activeDot: React.CSSProperties = {
   width: 6,
   height: 6,
   borderRadius: '50%',
-  background: '#22C55E',
-  border: '1px solid #141414',
+  background: 'var(--health-success)',
+  border: '1px solid var(--border-item)',
 }
 
 const personaInfo: React.CSSProperties = {
@@ -485,7 +485,7 @@ const personaInfo: React.CSSProperties = {
 
 const personaName: React.CSSProperties = {
   fontSize: 12,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   lineHeight: 1.2,
   whiteSpace: 'nowrap',
   overflow: 'hidden',
@@ -494,7 +494,7 @@ const personaName: React.CSSProperties = {
 
 const personaRole: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   lineHeight: 1.2,
   whiteSpace: 'nowrap',
   overflow: 'hidden',
@@ -517,8 +517,8 @@ const chevronHit: React.CSSProperties = {
 // than the panel bg (#141414) with subtle inset padding + rounded corners and a
 // hairline border, so the expanded area reads as a contained region (T-PATCH-023).
 const drawerBox: React.CSSProperties = {
-  background: '#0D0D0D',
-  border: '1px solid #1E1E1E',
+  background: 'var(--bg-base)',
+  border: '1px solid var(--border-section)',
   borderRadius: 6,
   margin: '2px 8px 6px',
   padding: '2px 0',
@@ -527,7 +527,7 @@ const drawerBox: React.CSSProperties = {
 // Hairline rule separating each tier group from the previous one inside the
 // drawer box (T-PATCH-023). Matches the existing #1E1E1E divider tone.
 const tierGroupDivided: React.CSSProperties = {
-  borderTop: '1px solid #1E1E1E',
+  borderTop: '1px solid var(--border-section)',
   marginTop: 2,
   paddingTop: 2,
 }
@@ -549,7 +549,7 @@ const tierHeader: React.CSSProperties = {
 const tierHeaderText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   letterSpacing: '0.04em',
   textTransform: 'uppercase',
   userSelect: 'none',
@@ -558,7 +558,7 @@ const tierHeaderText: React.CSSProperties = {
 
 const bookshelfLabel: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   padding: '2px 8px 1px 36px',
   userSelect: 'none',
 }
@@ -582,7 +582,7 @@ const fileRowBtnIndented: React.CSSProperties = {
 
 const fileRowText: React.CSSProperties = {
   fontSize: 11,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -591,7 +591,7 @@ const fileRowText: React.CSSProperties = {
 // Muted nav text per AC-6/AC-8 (#606060, 11px).
 const mutedRow: React.CSSProperties = {
   fontSize: 11,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   padding: '3px 8px 3px 28px',
   userSelect: 'none',
 }

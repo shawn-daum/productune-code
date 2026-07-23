@@ -76,7 +76,7 @@ export default function HooksTab(_: Props) {
               <button
                 style={{
                   ...rowBtn,
-                  background: expandedIdx === idx ? '#1A1A1A' : 'transparent',
+                  background: expandedIdx === idx ? 'var(--bg-surface-onlayer)' : 'transparent',
                 }}
                 onClick={() => toggleRow(idx)}
               >
@@ -134,7 +134,7 @@ export default function HooksTab(_: Props) {
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const wrap: React.CSSProperties = {
-  background: 'var(--bg-base, #0F0F0F)',
+  background: 'var(--bg-base)',
   display: 'flex',
   flex: 1,
   flexDirection: 'column',
@@ -144,7 +144,7 @@ const wrap: React.CSSProperties = {
 }
 
 const headingStyle: React.CSSProperties = {
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 14,
   fontWeight: 600,
   margin: '0 0 12px',
@@ -161,7 +161,7 @@ const rowBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   borderRadius: 4,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   cursor: 'pointer',
   display: 'flex',
   fontFamily: 'inherit',
@@ -174,10 +174,10 @@ const rowBtn: React.CSSProperties = {
 }
 
 const chipStyle: React.CSSProperties = {
-  background: '#1F2937',
-  border: '1px solid #374151',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
-  color: '#9CA3AF',
+  color: 'var(--text-tertiary)',
   fontSize: 11,
   fontWeight: 500,
   minWidth: 100,
@@ -187,26 +187,26 @@ const chipStyle: React.CSSProperties = {
 }
 
 const matcherStyle: React.CSSProperties = {
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   fontFamily: 'monospace',
   fontSize: 12,
   minWidth: 100,
 }
 
 const cmdBaenameStyle: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   flex: 1,
   fontSize: 11,
 }
 
 const chevronStyle: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 10,
 }
 
 const accordionDetail: React.CSSProperties = {
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   display: 'flex',
   flexDirection: 'column',
@@ -223,7 +223,7 @@ const cmdFullRow: React.CSSProperties = {
 }
 
 const cmdFullText: React.CSSProperties = {
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   flex: 1,
   fontFamily: 'monospace',
   fontSize: 11,
@@ -232,9 +232,9 @@ const cmdFullText: React.CSSProperties = {
 
 const copyBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #3A3A3A',
+  border: '1px solid var(--border-hover)',
   borderRadius: 3,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'pointer',
   flexShrink: 0,
   fontFamily: 'inherit',
@@ -243,7 +243,7 @@ const copyBtn: React.CSSProperties = {
 }
 
 const guideText: React.CSSProperties = {
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   fontSize: 11,
   lineHeight: 1.5,
   margin: 0,
@@ -252,7 +252,7 @@ const guideText: React.CSSProperties = {
 const docsLinkBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#4A90E2',
+  color: 'var(--health-info)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 11,
@@ -261,19 +261,19 @@ const docsLinkBtn: React.CSSProperties = {
 }
 
 const mutedHint: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 12,
   padding: '12px 0',
 }
 
 const divider: React.CSSProperties = {
-  background: '#2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
   height: 1,
   margin: '8px 0',
 }
 
 const footerHint: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 11,
   lineHeight: 1.5,
 }

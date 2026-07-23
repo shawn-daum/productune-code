@@ -127,8 +127,8 @@ const overlay: React.CSSProperties = {
 }
 
 const modal: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   padding: '24px 28px',
   width: 380,
@@ -143,7 +143,7 @@ const title: React.CSSProperties = {
   margin: 0,
   fontSize: 15,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const optionList: React.CSSProperties = {
@@ -157,8 +157,8 @@ const optionRow: React.CSSProperties = {
   alignItems: 'center',
   gap: 10,
   padding: '9px 12px',
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 6,
   cursor: 'pointer',
   fontFamily: 'inherit',
@@ -167,36 +167,36 @@ const optionRow: React.CSSProperties = {
 }
 
 const optionRowActive: React.CSSProperties = {
-  borderColor: '#8B5CF6',
-  background: '#1E1830',
+  borderColor: 'var(--accent)',
+  background: 'var(--accent-subtle)',
 }
 
 const radioDot: React.CSSProperties = {
   width: 12,
   height: 12,
   borderRadius: '50%',
-  border: '2px solid #505050',
+  border: '2px solid var(--border-hover)',
   flexShrink: 0,
   boxSizing: 'border-box',
 }
 
 const radioDotActive: React.CSSProperties = {
-  borderColor: '#8B5CF6',
-  background: '#8B5CF6',
-  boxShadow: 'inset 0 0 0 2px #1E1830',
+  borderColor: 'var(--accent)',
+  background: 'var(--accent)',
+  boxShadow: 'inset 0 0 0 2px var(--accent-subtle)',
 }
 
 const optionLabel: React.CSSProperties = {
   fontSize: 13,
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
   fontWeight: 500,
   flex: 1,
 }
 
 const currentBadge: React.CSSProperties = {
   fontSize: 10,
-  color: '#9a9a9a',
-  border: '1px solid #333',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '1px 6px',
 }
@@ -204,14 +204,14 @@ const currentBadge: React.CSSProperties = {
 const notice: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   lineHeight: 1.55,
 }
 
 const errorText: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#F87171',
+  color: 'var(--health-error)',
 }
 
 const actions: React.CSSProperties = {
@@ -224,8 +224,8 @@ const actions: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   height: 30,
   padding: '0 16px',
-  background: '#8B5CF6',
-  color: '#fff',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,
@@ -237,7 +237,7 @@ const btnGhost: React.CSSProperties = {
   height: 30,
   padding: '0 12px',
   background: 'transparent',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,

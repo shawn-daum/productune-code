@@ -85,7 +85,7 @@ function EnvRow({
           autoComplete="off"
           style={{
             ...keyInput,
-            borderColor: hasError ? '#EF4444' : (keyFocus ? '#3A3A3A' : '#222'),
+            borderColor: hasError ? 'var(--health-error)' : (keyFocus ? 'var(--text-ghost)' : 'var(--text-ghost)'),
           }}
           onFocus={() => setKeyFocus(true)}
           onBlur={() => setKeyFocus(false)}
@@ -104,7 +104,7 @@ function EnvRow({
           autoComplete="new-password"
           style={{
             ...valInput,
-            borderColor: valFocus ? '#3A3A3A' : '#222',
+            borderColor: valFocus ? 'var(--text-ghost)' : 'var(--text-ghost)',
           }}
           onFocus={() => setValFocus(true)}
           onBlur={() => setValFocus(false)}
@@ -395,7 +395,7 @@ export default function ProjectEnvPane({ props: tabProps }: Props) {
       {/* Header bar — mirrors VersionPrdPane */}
       <div style={headerBar}>
         <div style={breadcrumb}>
-          <KeyRound size={13} style={{ color: '#707070', flexShrink: 0 }} />
+          <KeyRound size={13} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
           <span style={crumbText}>{filename || '.env'}</span>
         </div>
         <div style={secBadge}>
@@ -407,11 +407,11 @@ export default function ProjectEnvPane({ props: tabProps }: Props) {
       <div style={scrollBody}>
         {loadState === 'loading' ? (
           <div style={centerState}>
-            <Loader2 size={18} style={{ color: '#505050' }} className="pdt-spin" />
+            <Loader2 size={18} style={{ color: 'var(--text-disabled)' }} className="pdt-spin" />
           </div>
         ) : loadState === 'error' ? (
           <div style={errorBanner}>
-            <AlertCircle size={13} style={{ color: '#EF4444', flexShrink: 0, marginTop: 1 }} />
+            <AlertCircle size={13} style={{ color: 'var(--health-error)', flexShrink: 0, marginTop: 1 }} />
             <span style={errorText}>{t('workspace.projectEnv.readError')}</span>
             <button style={retryBtn} onClick={load}>{t('common.retry')}</button>
           </div>
@@ -439,7 +439,7 @@ const wrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }
 
 const headerBar: React.CSSProperties = {
@@ -448,8 +448,8 @@ const headerBar: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: 8,
   padding: '7px 16px',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
   minHeight: 32,
 }
@@ -465,7 +465,7 @@ const breadcrumb: React.CSSProperties = {
 }
 
 const crumbText: React.CSSProperties = {
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -476,9 +476,9 @@ const secBadge: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   padding: '1px 6px',
-  border: '1px solid #1F1F1F',
+  border: '1px solid var(--border-section)',
   borderRadius: 20,
   flexShrink: 0,
   whiteSpace: 'nowrap',
@@ -501,8 +501,8 @@ const errorBanner: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
-  background: '#141414',
-  borderLeft: '3px solid #EF4444',
+  background: 'var(--bg-surface-on)',
+  borderLeft: '3px solid var(--health-error)',
   borderRadius: 4,
   padding: '10px 14px',
   maxWidth: 520,
@@ -510,7 +510,7 @@ const errorBanner: React.CSSProperties = {
 
 const errorText: React.CSSProperties = {
   fontSize: 12,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   flex: 1,
 }
 
@@ -519,9 +519,9 @@ const retryBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 11,
-  color: '#E8E8EA',
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '2px 8px',
   cursor: 'pointer',
@@ -531,12 +531,12 @@ const retryBtn: React.CSSProperties = {
 
 const notFoundBanner: React.CSSProperties = {
   padding: '10px 14px',
-  background: '#141414',
-  border: '1px solid #1F1F1F',
-  borderLeft: '3px solid #505050',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-section)',
+  borderLeft: '3px solid var(--border-hover)',
   borderRadius: 4,
   fontSize: 12,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   maxWidth: 520,
 }
 
@@ -554,13 +554,13 @@ const errorBannerInline: React.CSSProperties = {
   gap: 6,
   padding: '7px 0 10px',
   fontSize: 11,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   lineHeight: 1.4,
 }
 
 const emptyEntries: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontStyle: 'italic',
   padding: '4px 0 12px',
 }
@@ -577,10 +577,10 @@ const rowWrap: React.CSSProperties = {
 const keyInput: React.CSSProperties = {
   flex: '0 0 240px',
   minWidth: 0,
-  background: '#1A1A1A',
-  border: '1px solid #222',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 3,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontSize: 11,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   padding: '4px 6px',
@@ -591,10 +591,10 @@ const keyInput: React.CSSProperties = {
 const valInput: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  background: '#1A1A1A',
-  border: '1px solid #222',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 3,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 11,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   padding: '4px 6px',
@@ -611,7 +611,7 @@ const iconBtn: React.CSSProperties = {
   background: 'none',
   border: 'none',
   borderRadius: 3,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   cursor: 'pointer',
   padding: 0,
   flexShrink: 0,
@@ -619,7 +619,7 @@ const iconBtn: React.CSSProperties = {
 
 const rowError: React.CSSProperties = {
   fontSize: 10,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   paddingBottom: 4,
   paddingLeft: 248,
   lineHeight: 1.3,
@@ -637,9 +637,9 @@ const addBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   background: 'none',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 11,
   cursor: 'pointer',
   padding: '4px 8px',
@@ -650,10 +650,10 @@ const saveBtn: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 4,
-  background: '#1A1030',
-  border: '1px solid #8B5CF650',
+  background: 'var(--accent-subtle)',
+  border: '1px solid var(--accent)',
   borderRadius: 3,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   fontSize: 11,
   cursor: 'pointer',
   padding: '4px 8px',
