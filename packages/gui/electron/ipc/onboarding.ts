@@ -5,8 +5,8 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { setUiLanguage } from '@productune/core'
-import type { UiLanguage } from '@productune/core'
+import { setUiLanguage, setAudienceMode } from '@productune/core'
+import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath } from '../surface-runner'
 import { onboardingPath as projectOnboardingPath, detectProjectKind } from '../project-paths'
 import type { ProjectKind } from '../project-paths'
@@ -18,6 +18,8 @@ const execFileAsync = promisify(execFile)
 interface OnboardingCompleteOpts {
   engine: 'claude'
   uiLanguage?: UiLanguage
+  /** T-326: per-user PO conversational register, chosen at onboarding. */
+  audienceMode?: AudienceMode
 }
 
 interface OnboardingRecord {
@@ -494,6 +496,12 @@ export function register(): void {
       // 3. Save UI language selection to settings.json
       if (opts.uiLanguage) {
         setUiLanguage(opts.uiLanguage)
+      }
+
+      // 4. Save audience mode (T-326) — per-USER, to ~/.prdt/audience-mode,
+      //    where the prdt-audience-inject.sh hook reads it at PO session start.
+      if (opts.audienceMode === 'planner' || opts.audienceMode === 'developer') {
+        setAudienceMode(opts.audienceMode)
       }
 
       return { ok: true }

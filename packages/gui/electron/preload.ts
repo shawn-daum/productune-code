@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('api', {
   completeOnboarding: (opts: {
     engine: 'claude'
     uiLanguage?: 'en' | 'ko'
+    audienceMode?: 'planner' | 'developer'
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:complete', opts),
 
@@ -779,6 +780,14 @@ contextBridge.exposeInMainWorld('api', {
 
   setUiLanguage: (lng: 'en' | 'ko'): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:setUiLanguage', lng),
+
+  // T-326: per-user PO conversational register (planner | developer) —
+  // persisted at ~/.prdt/audience-mode for the prdt-audience-inject.sh hook.
+  getAudienceMode: (): Promise<'planner' | 'developer'> =>
+    ipcRenderer.invoke('settings:getAudienceMode'),
+
+  setAudienceMode: (mode: 'planner' | 'developer'): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setAudienceMode', mode),
 
   // ── Notification toggles (T-PATCH-083) ───────────────────────────────────────
   getNotifications: (): Promise<import('@productune/core').NotificationSettings> =>

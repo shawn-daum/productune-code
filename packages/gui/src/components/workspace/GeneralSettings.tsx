@@ -69,6 +69,11 @@ export default function GeneralSettings() {
 
       <div style={divider} />
 
+      {/* PO conversational register — T-326 */}
+      <AudienceSection />
+
+      <div style={divider} />
+
       {/* Notifications — T-PATCH-083 */}
       <NotificationsSection />
 
@@ -689,6 +694,57 @@ function ToggleRow({
         />
       </div>
     </div>
+  )
+}
+
+// ── Audience mode (T-326) ─────────────────────────────────────────────────────
+// Per-USER register of the PO's conversational output. Persisted as one token
+// at ~/.prdt/audience-mode (via IPC → core settings/audience-mode.ts), where
+// the prdt-audience-inject.sh SessionStart hook reads it. Two separate paths
+// by design: the strings in THIS section are i18n (fixed UI copy); the PO's
+// prose register is the hook-injection path — never i18n.
+type AudienceModeLocal = 'planner' | 'developer'
+
+function AudienceSection() {
+  const { t } = useTranslation()
+  const [mode, setMode] = useState<AudienceModeLocal>('planner')
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const m = await (window as any).api.getAudienceMode()
+        if (m === 'planner' || m === 'developer') setMode(m)
+      } catch { /* IPC unavailable in browser dev mode — keep default (planner) */ }
+    })()
+  }, [])
+
+  async function handleSelect(next: AudienceModeLocal) {
+    setMode(next)
+    try {
+      await (window as any).api.setAudienceMode(next)
+    } catch { /* IPC unavailable in browser dev mode */ }
+  }
+
+  return (
+    <>
+      <div style={sectionTitle}>{t('settings.audience.title')}</div>
+      <div style={description}>{t('settings.audience.description')}</div>
+      <div style={options}>
+        <RadioOption
+          selected={mode === 'planner'}
+          label={t('settings.audience.optionPlanner')}
+          desc={t('settings.audience.optionPlannerDesc')}
+          onSelect={() => handleSelect('planner')}
+        />
+        <RadioOption
+          selected={mode === 'developer'}
+          label={t('settings.audience.optionDeveloper')}
+          desc={t('settings.audience.optionDeveloperDesc')}
+          onSelect={() => handleSelect('developer')}
+        />
+      </div>
+      <div style={noteText}>{t('settings.audience.nextSessionNote')}</div>
+    </>
   )
 }
 
