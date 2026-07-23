@@ -1,5 +1,6 @@
 export {
   initProject,
+  setTrustAccepted,
   bootstrapClaudeSettings,
   bootstrapUserGlobalDoctrine,
   bootstrapPersonaMemory,

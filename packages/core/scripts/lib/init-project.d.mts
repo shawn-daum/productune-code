@@ -50,6 +50,11 @@ export declare function initProject(opts: InitOptions): ProjectConfig
 /** Write/repair .claude/settings.local.json + union gitignore entries. */
 export declare function bootstrapClaudeSettings(projectDir: string): void
 
+/** T-PATCH-274 #19a / T-408: idempotently pre-accept Claude Code's per-dir trust
+ *  (`projects[realpath(projectDir)].hasTrustDialogAccepted=true` in ~/.claude.json).
+ *  Best-effort — never throws. */
+export declare function setTrustAccepted(projectDir: string): void
+
 /** Scaffold persona memory skeleton (idempotent, no-overwrite). */
 export declare function bootstrapPersonaMemory(projectDir: string, initialVersionId?: string): void
 
