@@ -20,7 +20,7 @@ Pull from the producer's `designer/style-library/anti-default.md` — Tailwind t
 ## Three independent axes
 - **AI-slop index** /10, higher = worse. Bands: 0–2 almost no tells + clear signature (or tidy restraint on utility UI) · 3–5 tells present but largely deliberate · 6–8 many + unmotivated · 9–10 the default itself. Give a one-line band reason; a score contradicting its band is invalid.
 - **System & finish** /5 — token system vs magic numbers; same-meaning→same-token; hierarchy; spacing rhythm, type pairing, alignment.
-- **A11y & usability** /5 — contrast, focus ring, touch targets, affordance, responsive, empty/error states.
+- **A11y & usability** /5 — contrast, focus ring, touch targets, affordance, empty/error states, and multi-width legibility. This axis owns the scored legibility judgment: render across the width set the product's surface implies (habit's width-set rule) and JUDGE the rendered text at each — character-level wrap, vertically-split labels (short nav/button labels included, not only prose), meaning-dropping truncation, or overlap each cost the score. Element existence alone never earns this axis. (2026-07-23) [T-411]
 
 ## Signature bar
 - Marketing / landing / entry → signature required; absence is a hit.
