@@ -4,11 +4,11 @@
  * Proves the acceptance at the settings-merge layer, entirely against fixture
  * dirs (mkdtemp HOME + project dirs) — the developer's real ~/.claude / ~/.prdt
  * are NEVER touched:
- *   1. prdt project → EXACTLY the 4 prdt hooks (prdt-session-start /
- *      prdt-post-compact / prdt-post-dispatch / prdt-user-prompt) + statusline-prdt.sh are
- *      registered, pointing at the ~/.prdt mirror with the same matchers and
- *      quoted-command form install.sh §4/§6 writes; no legacy pdt hook
- *      leaks in.
+ *   1. prdt project → EXACTLY the 6 prdt hooks (prdt-session-start /
+ *      prdt-post-compact / prdt-post-dispatch / prdt-user-prompt / prdt-audience-inject /
+ *      prdt-overrides-inject) + statusline-prdt.sh are registered, pointing at the
+ *      ~/.prdt mirror with the same matchers and quoted-command form install.sh
+ *      §4/§6 writes; no legacy pdt hook leaks in.
  *   2. legacy project (and the projectDir-less default) → NO-OP: T-311 downgraded
  *      legacy dual-mode to read-only, so the GUI no longer installs the 18-hook
  *      legacy set. settings.json is not written at all for a legacy/omitted path.
@@ -35,7 +35,7 @@ interface Case {
 const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
-const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh']
+const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh', 'prdt-audience-inject.sh', 'prdt-overrides-inject.sh']
 
 /** Throwaway HOME fixture. `withMirror` seeds ~/.prdt/hooks/* + bin/statusline. */
 function makeHome(withMirror = true): string {
@@ -79,15 +79,19 @@ function allCommands(settings: any): string[] {
   return out
 }
 
-/** The exact hooks block install.sh §4 produces for a given prdt home. */
+/** The exact hooks block install.sh §4 produces for a given prdt home.
+ *  T-413: SessionStart(startup|resume|clear) + SubagentStart(^prdt-) each carry
+ *  session-start, then audience-inject, then overrides-inject (order load-bearing:
+ *  overrides last so machine overrides stay last-wins). */
 function cliHooksBlock(home: string): any {
   const h = (b: string) => ({ type: 'command', command: `"${path.join(home, '.prdt', 'hooks', b)}"` })
+  const injectTrio = [h('prdt-session-start.sh'), h('prdt-audience-inject.sh'), h('prdt-overrides-inject.sh')]
   return {
     SessionStart: [
-      { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh')] },
+      { matcher: 'startup|resume|clear', hooks: injectTrio },
       { matcher: 'compact', hooks: [h('prdt-post-compact.sh')] },
     ],
-    SubagentStart: [{ matcher: '^prdt-', hooks: [h('prdt-session-start.sh')] }],
+    SubagentStart: [{ matcher: '^prdt-', hooks: injectTrio }],
     SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
     PostToolUse: [{ matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] }],
     UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
@@ -96,7 +100,7 @@ function cliHooksBlock(home: string): any {
 
 export const A6_CASES: readonly Case[] = [
   {
-    label: 'prdt project → exactly the 4 prdt hooks (mirror paths) + statusline-prdt.sh',
+    label: 'prdt project → exactly the 6 prdt hooks (mirror paths) + statusline-prdt.sh',
     run: () => {
       const home = makeHome()
       const proj = makeProject('.prdt')
@@ -208,6 +212,54 @@ export const A6_CASES: readonly Case[] = [
       if (!cmds.includes('/Users/me/custom-hook.sh')) return fail('user hook dropped')
       if (!cmds.some(c => c.includes('session-start-doctrine.sh'))) return fail('coexisting legacy pdt hook dropped')
       if (s.otherSetting !== true) return fail('unrelated setting dropped')
+      return ok
+    },
+  },
+  {
+    label: 'T-413: re-install over a complete install preserves audience + overrides (no destructive whole-entry strip)',
+    run: () => {
+      const home = makeHome()
+      const proj = makeProject('.prdt')
+      // First install → complete 6-hook set, with audience+overrides sharing
+      // session-start's SessionStart(startup|resume|clear) entry.
+      installClaudeHooks(proj, home)
+      // Re-run (repair / second onboarding). A per-ENTRY strip would match
+      // session-start's basename, drop the WHOLE combined entry, and (pre-T-413)
+      // re-add session-start alone — silently wiping audience + overrides.
+      installClaudeHooks(proj, home)
+      const s = readSettings(home)
+      const cmds = allCommands(s)
+      for (const b of ['prdt-audience-inject.sh', 'prdt-overrides-inject.sh']) {
+        if (!cmds.some(c => c.includes(b))) return fail(`${b} wiped by re-install (destructive strip)`)
+      }
+      // And no duplication crept in on the shared entry.
+      if (JSON.stringify(s.hooks) !== JSON.stringify(cliHooksBlock(home))) {
+        return fail(`re-install deviates from install.sh shape: ${JSON.stringify(s.hooks)}`)
+      }
+      return ok
+    },
+  },
+  {
+    label: 'T-413: a user hook co-located in a prdt entry survives (per-hook strip, not per-entry)',
+    run: () => {
+      const home = makeHome()
+      const proj = makeProject('.prdt')
+      fs.mkdirSync(path.dirname(settingsPath(home)), { recursive: true })
+      // A user hook sharing the SAME entry object as a prdt hook — a per-entry
+      // strip would collateral-drop it; a per-hook strip keeps it.
+      fs.writeFileSync(settingsPath(home), JSON.stringify({
+        hooks: {
+          SessionStart: [
+            { matcher: 'startup|resume|clear', hooks: [
+              { type: 'command', command: `"${path.join(home, '.prdt', 'hooks', 'prdt-session-start.sh')}"` },
+              { type: 'command', command: '/Users/me/co-located-hook.sh' },
+            ] },
+          ],
+        },
+      }))
+      installClaudeHooks(proj, home)
+      const cmds = allCommands(readSettings(home))
+      if (!cmds.includes('/Users/me/co-located-hook.sh')) return fail('co-located user hook dropped by per-entry strip')
       return ok
     },
   },
