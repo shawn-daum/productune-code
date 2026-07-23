@@ -46,6 +46,10 @@
  * this value by the theme controller (src/styles/theme.ts) — which reads THIS
  * token and never holds a brand hex of its own. Editing --brand-accent (3 lines,
  * grep "SWAP POINT") is the entire violet→blue change. */
+/* initial-value is the @property REGISTRATION FALLBACK only — it is NEVER painted,
+ * because :root (and the theme blocks) always declare --brand-accent, which wins over
+ * the initial-value. It is therefore NOT a SWAP POINT: leaving it at the violet hex has
+ * zero visual effect after a blue swap. (Kept violet for readability of the default.) */
 @property --brand-accent { syntax: '<color>'; inherits: true; initial-value: #8B5CF6; }
 
 :root {
@@ -189,7 +193,7 @@
   --font-mono: ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
 
   /* ══ LEGACY ALIASES — old consumer var names → Anchor roles ══════════════
-   * Existing var(--surface-*/--text-*/--border-*) consumers (index.css scroll,
+   * Existing var(--surface-* / --text-* / --border-*) consumers (index.css scroll,
    * md-recipes.css) keep resolving. md-viewer re-declares these under .md-light
    * scope (§2.10) so its scoped light palette still wins locally. */
   --surface-base:     var(--bg-base);
@@ -353,10 +357,14 @@
   --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.04);
 }
 
-/* Explicit dark toggle re-asserts the dark set even under a light OS pref. */
+/* Explicit dark toggle re-asserts the dark set even under a light OS pref.
+ * NOTE: `--brand-accent` is intentionally NOT redeclared here — dark inherits it
+ * from the `:root` SWAP POINT below. Redeclaring it here (with the dark brand hex)
+ * used to WIN over :root in dark mode (initTheme always applies .theme-dark), so a
+ * SWAP-POINT-only edit left dark stuck on the old hue. Keeping the brand hex in
+ * exactly the 3 SWAP POINT lines (:root · @media light · .theme-light) is what makes
+ * the single-value violet↔blue flip work in BOTH modes. Do NOT add --brand-accent here. */
 :root.theme-dark {
-  --brand-accent: #8B5CF6;   /* dark brand hue (mirrors :root default) */
-
   --bg-base:            #161718;
   --bg-surface-base:    #202122;
   --bg-surface-on:      #303233;

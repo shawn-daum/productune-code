@@ -166,6 +166,34 @@
 .md-doc .md-ul,
 .md-doc .md-ol { gap: var(--space-2); }             /* 8px between list items */
 
+/* ── T-359: dark document island (base .md-doc = the viewer's DEFAULT dark mode) ──
+ * SELF-CONTAINED dark palette so the md viewer is a readable dark island regardless
+ * of the APP theme. Without this, the aliases leak the app palette; and because the
+ * legacy `--surface-*` aliases are var()-derived (unregistered), Chromium does NOT
+ * re-resolve them on a `.theme-light` swap (same mechanism the @property banner in
+ * tokens.css documents), so surfaces stayed stuck DARK while `--text-*` flipped DARK
+ * → dark-on-dark, unreadable callouts/tables in an app-light window (QA B). Concrete
+ * dark values + an OPAQUE dark paper bg dodge both the leak and the stuck-alias bug.
+ * SCOPE: only the MarkdownViewer `viewerWrap` carries `.md-doc` (chat/shell carry
+ * neither class), so chat regression = 0 — same guard as the .md-doc.md-light block.
+ * `.md-doc.md-light` (higher specificity) still wins in the viewer's light mode. */
+.md-doc {
+  --surface-base:      #161718; /* code-block bg */
+  --surface-body:      #202122; /* paper bg */
+  --surface-panel:     #303233; /* table zebra(even) / metadata card bg */
+  --surface-subpanel:  #44474B; /* inline-code bg / blockquote bg / table th */
+  --border-subtle:     rgba(255, 255, 255, 0.04); /* td top border */
+  --border-default:    rgba(255, 255, 255, 0.08); /* code/table outline / hr */
+  --border-strong:     rgba(255, 255, 255, 0.16); /* th bottom / blockquote bar */
+  --border-muted:      rgba(255, 255, 255, 0.32); /* disabled outline */
+  --text-primary:      #FFFFFF; /* body p/li/td */
+  --text-emphasis:     #FFFFFF; /* h1/strong/th */
+  --text-secondary:    rgba(255, 255, 255, 0.88); /* h3/code-block/blockquote */
+  --text-muted:        rgba(255, 255, 255, 0.72); /* list marker/metadata */
+  --text-faint:        rgba(255, 255, 255, 0.64); /* comment/placeholder */
+  background: var(--surface-body); /* opaque dark paper — no app-surface bleed-through */
+}
+
 /* ── T-PATCH-183: light document surface (md-viewer EARLY-LIGHT) ─────────────
  * SCOPE GUARD (chat regression = 0 by construction): every light declaration is
  * nested under `.md-doc.md-light` — BOTH classes on the same element. Only the
@@ -213,7 +241,7 @@
 
 /* MetadataPanel warn pill — amber has no DS health token, so the warn pair is
  * the one MetadataPanel color not var-ized. Override its light tone here (the
- * other tones flip via --health-*/--text-* / color-mix). §2.10 light warn. */
+ * other tones flip via --health-* / --text-* / color-mix). §2.10 light warn. */
 .md-doc.md-light .md-meta-warn {
   color: #8A5A00;
   border-color: #E8DCC0;
