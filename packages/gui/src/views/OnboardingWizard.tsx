@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next'
 import BrandMark from '../components/BrandMark'
 import i18next from '../i18n'
 import type {
-  UiLang, WizardStep, EngineStatus,
+  UiLang, WizardStep, EngineStatus, AudienceMode,
 } from './onboarding/types'
 import { wrap, card, header, stepIndicator, stepDot } from './onboarding/styles'
 import Step0_Language from './onboarding/Step0_Language'
+import Step0_5_Audience from './onboarding/Step0_5_Audience'
 import Step1_Engine from './onboarding/Step1_Engine'
 import Step2_EngineConnect from './onboarding/Step2_EngineConnect'
 import Step4_Complete from './onboarding/Step4_Complete'
@@ -19,6 +20,10 @@ export default function OnboardingWizard({ onDone }: Props) {
 
   // Step 0 — Language
   const [uiLang, setUiLang] = useState<UiLang>('en')
+
+  // Step 1 — Audience mode (T-326). Default = planner (PRD v1.5): the north-star
+  // participant is a non-developer planner; developers opt in explicitly.
+  const [audienceMode, setAudienceMode] = useState<AudienceMode>('planner')
 
   // Step 2 — Engine connection (codex폐기: claude only)
   const [claudeStatus, setClaudeStatus] = useState<EngineStatus | null>(null)
@@ -51,9 +56,9 @@ export default function OnboardingWizard({ onDone }: Props) {
     detectLocale()
   }, [])
 
-  // Check engine status when entering step 2
+  // Check engine status when entering the engine-connect step
   useEffect(() => {
-    if (step !== 2) return
+    if (step !== 3) return
     checkEngineStatus()
   }, [step])
 
@@ -70,21 +75,22 @@ export default function OnboardingWizard({ onDone }: Props) {
 
   // T-PATCH-220 Q7: focus-recheck — when the user alt-tabs away to install
   // claude and comes back, re-probe so they don't have to manually hit Recheck.
-  // Only active while on step 2 to avoid spurious probes on other steps.
+  // Only active while on the engine-connect step to avoid spurious probes.
   useEffect(() => {
-    if (step !== 2) return
+    if (step !== 3) return
     function onFocus() { checkEngineStatus() }
     window.addEventListener('focus', onFocus)
     return () => { window.removeEventListener('focus', onFocus) }
   }, [step])
 
-  // Trigger completion when entering step 3
+  // Trigger completion when entering the final step
   useEffect(() => {
-    if (step !== 3) return
+    if (step !== 4) return
     setCompleting(true)
     setCompleteError('')
     // codex폐기 (T-PATCH-235): 엔진은 항상 claude — 리터럴 인라인.
-    const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang }
+    // T-326: audienceMode rides along — persisted per-user (~/.prdt/audience-mode).
+    const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang, audienceMode }
     // T-PATCH-213: guard deref — .catch traps only promise rejection.
     const api = (window as any).api
     if (!api?.completeOnboarding) { setCompleting(false); return }
@@ -146,6 +152,7 @@ export default function OnboardingWizard({ onDone }: Props) {
     'onboarding.completionSteps.env',
     'onboarding.completionSteps.playwright',
     'onboarding.completionSteps.language',
+    'onboarding.completionSteps.audience',
   ] as const
 
   return (
@@ -156,7 +163,7 @@ export default function OnboardingWizard({ onDone }: Props) {
           <BrandMark size={20} style={{ marginRight: 10 }} />
           <span style={{ fontWeight: 700, fontSize: 16 }}>{t('onboarding.title')}</span>
           <div style={stepIndicator}>
-            {([0, 1, 2, 3] as const).map(s => (
+            {([0, 1, 2, 3, 4] as const).map(s => (
               <div
                 key={s}
                 style={{
@@ -181,37 +188,46 @@ export default function OnboardingWizard({ onDone }: Props) {
         )}
 
         {step === 1 && (
-          <Step1_Engine
+          <Step0_5_Audience
+            audienceMode={audienceMode}
+            onSelect={setAudienceMode}
             onPrev={() => setStep(0)}
             onNext={() => setStep(2)}
           />
         )}
 
         {step === 2 && (
+          <Step1_Engine
+            onPrev={() => setStep(1)}
+            onNext={() => setStep(3)}
+          />
+        )}
+
+        {step === 3 && (
           <Step2_EngineConnect
             needsClaude={needsClaude}
             claudeStatus={claudeStatus}
             checkingEngine={checkingEngine}
             engineFullyReady={!!engineFullyReady}
-            onPrev={() => setStep(1)}
-            onNext={() => setStep(3)}
+            onPrev={() => setStep(2)}
+            onNext={() => setStep(4)}
             onCheckEngine={checkEngineStatus}
             onClaudeLogin={handleClaudeLogin}
           />
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <Step4_Complete
             completing={completing}
             done={done}
             completeError={completeError}
             completionStepKeys={completionStepKeys}
-            onPrev={() => setStep(2)}
+            onPrev={() => setStep(3)}
             onDone={onDone}
             onRetry={() => {
               setCompleteError('')
               setDone(false)
-              setStep(3)
+              setStep(4)
             }}
           />
         )}

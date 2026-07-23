@@ -11,6 +11,8 @@ import {
 import {
   getUiLanguage,
   setUiLanguage,
+  getAudienceMode,
+  setAudienceMode,
   settingsFileExists,
   loadRules,
   saveRules,
@@ -27,7 +29,7 @@ import {
   getStatusBarVisible,
   setStatusBarVisible,
 } from '@productune/core'
-import type { UiLanguage, GitRules, NotificationSettings } from '@productune/core'
+import type { UiLanguage, AudienceMode, GitRules, NotificationSettings } from '@productune/core'
 
 // ── T-PATCH-091 R3: apply zoom factor to every open window ───────────────────
 // Module-private. Called by the setZoomFactor handler after persisting the value
@@ -87,6 +89,27 @@ export function register(): void {
 
   ipcMain.handle('settings:hasLanguagePref', (): boolean => {
     return settingsFileExists()
+  })
+
+  // ── Audience mode IPC (T-326) ────────────────────────────────────────────────
+  // Per-USER register of the PO's conversational output — persisted as one
+  // token at ~/.prdt/audience-mode (core settings/audience-mode.ts), where the
+  // prdt-audience-inject.sh SessionStart hook reads it. This is the PROSE
+  // injection path; fixed UI strings stay on the i18n path (src/locales).
+  ipcMain.handle('settings:getAudienceMode', (): AudienceMode => {
+    return getAudienceMode()
+  })
+
+  ipcMain.handle('settings:setAudienceMode', (_event, mode: AudienceMode): { ok: boolean; error?: string } => {
+    try {
+      if (mode !== 'planner' && mode !== 'developer') {
+        return { ok: false, error: `unknown audience mode: ${String(mode)}` }
+      }
+      setAudienceMode(mode)
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'unknown error' }
+    }
   })
 
   ipcMain.handle('settings:getOsLocale', (): string => {

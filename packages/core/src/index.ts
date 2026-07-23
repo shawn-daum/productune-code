@@ -37,6 +37,13 @@ export {
 export type { UiLanguage, UiSettings, IntegrationsSettings, NotificationSettings } from './settings/ui-settings'
 
 export {
+  getAudienceMode,
+  setAudienceMode,
+  DEFAULT_AUDIENCE_MODE,
+} from './settings/audience-mode'
+export type { AudienceMode } from './settings/audience-mode'
+
+export {
   loadRules,
   saveRules,
   getDefault,
