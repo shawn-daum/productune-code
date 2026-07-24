@@ -275,6 +275,22 @@ export const A6_CASES: readonly Case[] = [
     },
   },
   {
+    label: 'T-414: a pre-existing custom statusLine survives installClaudeHooks (no unconditional clobber)',
+    run: () => {
+      const home = makeHome()
+      const proj = makeProject('.prdt')
+      fs.mkdirSync(path.dirname(settingsPath(home)), { recursive: true })
+      const customStatusLine = { type: 'command', command: '/Users/me/my-custom-statusline.sh' }
+      fs.writeFileSync(settingsPath(home), JSON.stringify({ statusLine: customStatusLine }))
+      installClaudeHooks(proj, home)
+      const s = readSettings(home)
+      if (JSON.stringify(s.statusLine) !== JSON.stringify(customStatusLine)) {
+        return fail(`custom statusLine clobbered: ${JSON.stringify(s.statusLine)}`)
+      }
+      return ok
+    },
+  },
+  {
     label: '~/.prdt/hooks mirror absent → skip (no broken hook registration)',
     run: () => {
       const home = makeHome(false) // no mirror — install.sh never ran
