@@ -1,30 +1,30 @@
 /**
- * settings.audienceHook.test.ts — T-420.
+ * settings.planTierHook.test.ts — T-423.
  *
- * v1.5 review #8: on a version-skewed machine (GUI newer than the ~/.prdt
- * mirror — install.sh hasn't re-run since T-326/T-413 added the audience
- * hook), Settings' audience toggle still writes ~/.prdt/audience-mode and
- * claims "applies next session" — but prdt-audience-inject.sh is never
- * actually registered, so the setting is silently inert. This pins
- * checkAudienceHookRegistered (electron/ipc/settings.ts), the read-only
- * detector the Settings audience section uses to decide whether to show the
- * "prdt update required" hint instead of the routine next-session note.
+ * Same version-skew concern as T-420's audience check (settings.audienceHook.
+ * test.ts), applied to the plan-tier hook: on a machine where install.sh
+ * hasn't re-run since T-423 added prdt-plan-tier-inject.sh, Settings' plan-tier
+ * choice still writes ~/.prdt/plan-tier and claims "applies next session" —
+ * but the hook is never actually registered, so the PO never sees the stored
+ * value and falls back to asking every session again, the exact friction T-423
+ * exists to remove. This pins checkPlanTierHookRegistered (electron/ipc/
+ * settings.ts), the read-only detector the Settings plan-tier section uses to
+ * decide whether to show the "prdt update required" hint.
  *
  * Deliberately narrower than onboarding.ts's checkPrdtHooksStatus (which
  * requires ALL 7 prdt hooks): a missing UNRELATED hook (e.g. overrides-inject)
- * must not make the audience section lie about the audience hook specifically.
+ * must not make the plan-tier section lie about the plan-tier hook specifically.
  *
- * Framework-free case-list + vitest driver, matching the established idiom
- * in onboarding.prdtHooksStatus.test.ts / onboarding.hooks.test.ts. All cases
- * run against mkdtemp fixture homes — the developer's real ~/.claude is
- * NEVER touched.
+ * Framework-free case-list + vitest driver, matching settings.audienceHook.
+ * test.ts. All cases run against mkdtemp fixture homes — the developer's real
+ * ~/.claude is NEVER touched.
  */
 
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { test, expect } from 'vitest'
-import { checkAudienceHookRegistered } from './settings'
+import { checkPlanTierHookRegistered } from './settings'
 
 interface Case {
   readonly label: string
@@ -35,7 +35,7 @@ const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
 function makeHome(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t420-home-'))
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t423-home-'))
 }
 
 function settingsPath(home: string): string {
@@ -56,7 +56,7 @@ export const CASES: readonly Case[] = [
     label: 'no ~/.claude/settings.json at all → not registered',
     run: () => {
       const home = makeHome()
-      if (checkAudienceHookRegistered(home) !== false) return fail('expected false')
+      if (checkPlanTierHookRegistered(home) !== false) return fail('expected false')
       return ok
     },
   },
@@ -66,7 +66,7 @@ export const CASES: readonly Case[] = [
       const home = makeHome()
       fs.mkdirSync(path.dirname(settingsPath(home)), { recursive: true })
       fs.writeFileSync(settingsPath(home), JSON.stringify({}))
-      if (checkAudienceHookRegistered(home) !== false) return fail('expected false')
+      if (checkPlanTierHookRegistered(home) !== false) return fail('expected false')
       return ok
     },
   },
@@ -78,7 +78,7 @@ export const CASES: readonly Case[] = [
       fs.writeFileSync(settingsPath(home), '{ not valid json')
       let result: boolean
       try {
-        result = checkAudienceHookRegistered(home)
+        result = checkPlanTierHookRegistered(home)
       } catch (e) {
         return fail(`threw: ${String(e)}`)
       }
@@ -87,23 +87,7 @@ export const CASES: readonly Case[] = [
     },
   },
   {
-    label: 'version-skew case (T-420 core defect): other prdt hooks registered, audience-inject absent → false',
-    run: () => {
-      const home = makeHome()
-      writeSettings(home, {
-        SessionStart: [
-          { matcher: 'startup|resume|clear', hooks: [hookEntry(home, 'prdt-session-start.sh')] },
-          { matcher: 'compact', hooks: [hookEntry(home, 'prdt-post-compact.sh')] },
-        ],
-        SubagentStop: [{ matcher: '^prdt-', hooks: [hookEntry(home, 'prdt-post-dispatch.sh')] }],
-        UserPromptSubmit: [{ hooks: [hookEntry(home, 'prdt-user-prompt.sh')] }],
-      })
-      if (checkAudienceHookRegistered(home) !== false) return fail('expected false — audience-inject not in this settings.json')
-      return ok
-    },
-  },
-  {
-    label: 'audience-inject registered alongside session-start (real install.sh shape) → true',
+    label: 'version-skew case: other prdt hooks registered, plan-tier-inject absent → false',
     run: () => {
       const home = makeHome()
       writeSettings(home, {
@@ -116,25 +100,53 @@ export const CASES: readonly Case[] = [
               hookEntry(home, 'prdt-overrides-inject.sh'),
             ],
           },
+          { matcher: 'compact', hooks: [hookEntry(home, 'prdt-post-compact.sh')] },
         ],
+        SubagentStop: [{ matcher: '^prdt-', hooks: [hookEntry(home, 'prdt-post-dispatch.sh')] }],
+        UserPromptSubmit: [{ hooks: [hookEntry(home, 'prdt-user-prompt.sh')] }],
       })
-      if (checkAudienceHookRegistered(home) !== true) return fail('expected true')
+      if (checkPlanTierHookRegistered(home) !== false) {
+        return fail('expected false — plan-tier-inject not in this settings.json')
+      }
       return ok
     },
   },
   {
-    label: 'unrelated hook (e.g. overrides-inject) missing but audience-inject present → still true (narrower than the all-6 aggregate check)',
+    label: 'plan-tier-inject registered alongside session-start (real install.sh shape) → true',
     run: () => {
       const home = makeHome()
       writeSettings(home, {
         SessionStart: [
           {
             matcher: 'startup|resume|clear',
-            hooks: [hookEntry(home, 'prdt-session-start.sh'), hookEntry(home, 'prdt-audience-inject.sh')],
+            hooks: [
+              hookEntry(home, 'prdt-session-start.sh'),
+              hookEntry(home, 'prdt-audience-inject.sh'),
+              hookEntry(home, 'prdt-plan-tier-inject.sh'),
+              hookEntry(home, 'prdt-overrides-inject.sh'),
+            ],
           },
         ],
       })
-      if (checkAudienceHookRegistered(home) !== true) return fail('expected true — audience-inject alone is present')
+      if (checkPlanTierHookRegistered(home) !== true) return fail('expected true')
+      return ok
+    },
+  },
+  {
+    label: 'unrelated hook (e.g. overrides-inject) missing but plan-tier-inject present → still true (narrower than the all-7 aggregate check)',
+    run: () => {
+      const home = makeHome()
+      writeSettings(home, {
+        SessionStart: [
+          {
+            matcher: 'startup|resume|clear',
+            hooks: [hookEntry(home, 'prdt-session-start.sh'), hookEntry(home, 'prdt-plan-tier-inject.sh')],
+          },
+        ],
+      })
+      if (checkPlanTierHookRegistered(home) !== true) {
+        return fail('expected true — plan-tier-inject alone is present')
+      }
       return ok
     },
   },
@@ -146,7 +158,7 @@ export const CASES: readonly Case[] = [
       fs.writeFileSync(settingsPath(home), JSON.stringify({ hooks: { SessionStart: 'not-an-array' } }))
       let result: boolean
       try {
-        result = checkAudienceHookRegistered(home)
+        result = checkPlanTierHookRegistered(home)
       } catch (e) {
         return fail(`threw: ${String(e)}`)
       }
@@ -156,7 +168,7 @@ export const CASES: readonly Case[] = [
   },
 ]
 
-test('T-420: checkAudienceHookRegistered cases pass', () => {
+test('T-423: checkPlanTierHookRegistered cases pass', () => {
   const failures: string[] = []
   for (const c of CASES) {
     let res: { ok: boolean; detail?: string }

@@ -189,7 +189,7 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // T-311: GUI legacy dual-mode was downgraded to read-only. The legacy hook set
 // (T-PATCH-246's 18 pdt-* enforcement hooks + statusline-productune) is no longer
 // installed from the GUI — installClaudeHooks now installs ONLY the prdt hook set
-// (T-289 adapter A6; the full 6종 roster since T-413) for prdt-kind projects, and
+// (T-289 adapter A6; the full 8종 roster since T-409/T-413/T-423) for prdt-kind projects, and
 // is a NO-OP for legacy/undefined
 // projects. Legacy projects keep working for file/ticket/po-state VIEWING; only
 // the machine-provisioning wiring is cut. prdt install stays the single
@@ -215,7 +215,7 @@ interface HookManifest {
 const HOOK_MANIFEST = hookManifestJson as unknown as HookManifest
 
 /**
- * The 6 prdt discipline hook basenames install.sh §4 registers, imported from
+ * The 8 prdt discipline hook basenames install.sh §4 registers, imported from
  * the SAME hook-manifest.json (T-414) install.sh's jq --slurpfile reduces over —
  * this is no longer a hand-synced literal. The parity test in
  * onboarding.rosterParity.test.ts actually RUNS install.sh and installPrdtHooks
@@ -253,7 +253,7 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
 }
 
 /**
- * prdt branch (T-289): install exactly the 6 discipline hooks + statusline-prdt.sh,
+ * prdt branch (T-289): install exactly the 8 discipline hooks + statusline-prdt.sh,
  * producing the SAME settings.json registration install.sh §4/§6 writes —
  * same `~/.prdt` mirror paths, same matchers, same quoted-command form — so GUI
  * and CLI installs can never diverge or double-register: either one re-run strips
@@ -389,9 +389,9 @@ function hasPrdtHooksRegistered(settingsPath: string): boolean {
 }
 
 export interface PrdtHooksStatus {
-  /** All 6 prdt hooks present under ~/.prdt/hooks — install.sh has run on this machine. */
+  /** All 7 prdt hooks present under ~/.prdt/hooks — install.sh has run on this machine. */
   mirrorPresent: boolean
-  /** settings.json already carries all 6 prdt hook commands (the COMPLETE set —
+  /** settings.json already carries all 7 prdt hook commands (the COMPLETE set —
    *  can't read true while audience/overrides are silently absent, T-413). */
   installed: boolean
 }

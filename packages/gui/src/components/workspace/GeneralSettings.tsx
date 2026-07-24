@@ -74,6 +74,11 @@ export default function GeneralSettings() {
 
       <div style={divider} />
 
+      {/* Fable plan-gate tier — T-423 */}
+      <PlanTierSection />
+
+      <div style={divider} />
+
       {/* Notifications — T-PATCH-083 */}
       <NotificationsSection />
 
@@ -759,6 +764,74 @@ function AudienceSection() {
         <div style={hookHintNote} role="status">{t('settings.audience.hookNotRegisteredHint')}</div>
       ) : (
         <div style={noteText}>{t('settings.audience.nextSessionNote')}</div>
+      )}
+    </>
+  )
+}
+
+// ── Plan tier (T-423) ──────────────────────────────────────────────────────────
+// Per-USER Claude plan tier feeding the PO's fable model gate (T-391). Persisted
+// as one token at ~/.prdt/plan-tier (via IPC → core settings/plan-tier.ts),
+// where the prdt-plan-tier-inject.sh SessionStart hook reads it so the PO asks
+// once, ever, instead of every session. A plan change (upgrade/downgrade) is
+// the user's own responsibility to update here — no automatic detection.
+type PlanTierLocal = 'max-x20' | 'team-premium' | 'other'
+
+function PlanTierSection() {
+  const { t } = useTranslation()
+  const [tier, setTier] = useState<PlanTierLocal>('other')
+  // null = not yet checked (or IPC unavailable, e.g. browser dev mode) — stay
+  // silent rather than flash a false warning; only `false` renders the hint.
+  const [hookRegistered, setHookRegistered] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const v = await (window as any).api.getPlanTier()
+        if (v === 'max-x20' || v === 'team-premium' || v === 'other') setTier(v)
+      } catch { /* IPC unavailable in browser dev mode — keep default (other) */ }
+      try {
+        const registered = await (window as any).api?.checkPlanTierHookRegistered?.()
+        if (typeof registered === 'boolean') setHookRegistered(registered)
+      } catch { /* IPC unavailable in browser dev mode — stay silent (null) */ }
+    })()
+  }, [])
+
+  async function handleSelect(next: PlanTierLocal) {
+    setTier(next)
+    try {
+      await (window as any).api.setPlanTier(next)
+    } catch { /* IPC unavailable in browser dev mode */ }
+  }
+
+  return (
+    <>
+      <div style={sectionTitle}>{t('settings.planTier.title')}</div>
+      <div style={description}>{t('settings.planTier.description')}</div>
+      <div style={options}>
+        <RadioOption
+          selected={tier === 'max-x20'}
+          label={t('settings.planTier.optionMaxX20')}
+          desc={t('settings.planTier.optionMaxX20Desc')}
+          onSelect={() => handleSelect('max-x20')}
+        />
+        <RadioOption
+          selected={tier === 'team-premium'}
+          label={t('settings.planTier.optionTeamPremium')}
+          desc={t('settings.planTier.optionTeamPremiumDesc')}
+          onSelect={() => handleSelect('team-premium')}
+        />
+        <RadioOption
+          selected={tier === 'other'}
+          label={t('settings.planTier.optionOther')}
+          desc={t('settings.planTier.optionOtherDesc')}
+          onSelect={() => handleSelect('other')}
+        />
+      </div>
+      {hookRegistered === false ? (
+        <div style={hookHintNote} role="status">{t('settings.planTier.hookNotRegisteredHint')}</div>
+      ) : (
+        <div style={noteText}>{t('settings.planTier.nextSessionNote')}</div>
       )}
     </>
   )

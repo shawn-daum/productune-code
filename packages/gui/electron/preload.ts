@@ -796,6 +796,20 @@ contextBridge.exposeInMainWorld('api', {
   checkAudienceHookRegistered: (): Promise<boolean> =>
     ipcRenderer.invoke('settings:checkAudienceHookRegistered'),
 
+  // T-423: per-user Claude plan tier feeding the PO's fable model gate —
+  // persisted at ~/.prdt/plan-tier for the prdt-plan-tier-inject.sh hook.
+  getPlanTier: (): Promise<'max-x20' | 'team-premium' | 'other'> =>
+    ipcRenderer.invoke('settings:getPlanTier'),
+
+  setPlanTier: (tier: 'max-x20' | 'team-premium' | 'other'): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setPlanTier', tier),
+
+  /** Whether THIS machine's ~/.claude/settings.json already registers the
+   *  plan-tier-inject hook. false → the choice above silently won't reach the
+   *  PO until `prdt update` re-runs install.sh (version-skew). Read-only. */
+  checkPlanTierHookRegistered: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:checkPlanTierHookRegistered'),
+
   // ── Notification toggles (T-PATCH-083) ───────────────────────────────────────
   getNotifications: (): Promise<import('@productune/core').NotificationSettings> =>
     ipcRenderer.invoke('settings:getNotifications'),
