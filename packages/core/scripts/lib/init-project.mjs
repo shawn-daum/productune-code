@@ -365,6 +365,17 @@ export function setTrustAccepted(projectDir) {
 
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
 
+    // T-418: NEVER clobber a corrupt ~/.claude.json. readClaudeJsonSafe() collapses
+    // both "absent" and "present-but-unparseable" to {}, so a plain read-merge-write
+    // after a parse failure would overwrite Claude Code's entire state (oauth account,
+    // project history) with a fresh {projects:{…}}. Abort on a present-but-corrupt
+    // file; the absent (create fresh) and valid (merge) paths are unaffected. Runs
+    // BEFORE the backup so a corrupt file produces ZERO side effects.
+    if (fs.existsSync(claudeJsonPath)) {
+      try { JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8')) }
+      catch { return }
+    }
+
     // One-time backup before the first mutation (only when the file exists and no
     // backup has been made yet). Idempotent: skip if any *.bak.* sibling exists.
     if (fs.existsSync(claudeJsonPath)) {
