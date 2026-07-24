@@ -708,6 +708,10 @@ type AudienceModeLocal = 'planner' | 'developer'
 function AudienceSection() {
   const { t } = useTranslation()
   const [mode, setMode] = useState<AudienceModeLocal>('planner')
+  // T-420: null = not yet checked (or IPC unavailable, e.g. browser dev mode) —
+  // stay silent rather than flash a false warning; only `false` (checked and
+  // confirmed unregistered) renders the hint.
+  const [hookRegistered, setHookRegistered] = useState<boolean | null>(null)
 
   useEffect(() => {
     ;(async () => {
@@ -715,6 +719,10 @@ function AudienceSection() {
         const m = await (window as any).api.getAudienceMode()
         if (m === 'planner' || m === 'developer') setMode(m)
       } catch { /* IPC unavailable in browser dev mode — keep default (planner) */ }
+      try {
+        const registered = await (window as any).api?.checkAudienceHookRegistered?.()
+        if (typeof registered === 'boolean') setHookRegistered(registered)
+      } catch { /* IPC unavailable in browser dev mode — stay silent (null) */ }
     })()
   }, [])
 
@@ -743,7 +751,15 @@ function AudienceSection() {
           onSelect={() => handleSelect('developer')}
         />
       </div>
-      <div style={noteText}>{t('settings.audience.nextSessionNote')}</div>
+      {/* T-420: hook-not-registered hint — replaces the (misleading) "applies
+          next session" note when this machine's ~/.claude/settings.json doesn't
+          actually carry the audience-inject hook yet, so the toggle above would
+          otherwise silently no-op until `prdt update`. */}
+      {hookRegistered === false ? (
+        <div style={hookHintNote} role="status">{t('settings.audience.hookNotRegisteredHint')}</div>
+      ) : (
+        <div style={noteText}>{t('settings.audience.nextSessionNote')}</div>
+      )}
     </>
   )
 }
@@ -853,6 +869,16 @@ const optionDesc: React.CSSProperties = {
 const noteText: React.CSSProperties = {
   fontSize: 10,
   color: 'var(--text-disabled)',
+  lineHeight: 1.5,
+  marginTop: 4,
+}
+
+// T-420: audience hook-not-registered hint — same shape as noteText but
+// --health-warn (matches notifTestResultWarn's "soft advisory, not a hard
+// error" register) so it reads as distinct from the routine nextSessionNote.
+const hookHintNote: React.CSSProperties = {
+  fontSize: 10,
+  color: 'var(--health-warn)',
   lineHeight: 1.5,
   marginTop: 4,
 }
