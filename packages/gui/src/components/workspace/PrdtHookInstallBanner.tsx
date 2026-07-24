@@ -78,14 +78,14 @@ export default function PrdtHookInstallBanner({ projectDir }: Props) {
   return (
     <Banner
       role="status"
-      icon={<ShieldCheck size={14} color="#38BDF8" />}
+      icon={<ShieldCheck size={14} style={{ color: 'var(--text-info)' }} />}
       message={message}
       onDismiss={dismiss}
       dismissLabel={t('common.dismiss')}
-      background="#1A1A1A"
-      borderLeftColor="#38BDF8"
+      background="var(--bg-surface-onlayer)"
+      borderLeftColor="var(--text-info)"
       borderLeftWidth={4}
-      borderBottomColor="#1F1F1F"
+      borderBottomColor="var(--text-ghost)"
     >
       {(status.phase === 'needs-install' || status.phase === 'failed') && (
         <button style={primaryCta} onClick={handleInstall}>
@@ -113,8 +113,8 @@ export default function PrdtHookInstallBanner({ projectDir }: Props) {
 const primaryCta: React.CSSProperties = {
   height: 22,
   padding: '0 10px',
-  background: '#38BDF8',
-  color: '#0A1520',
+  background: 'var(--health-info)',
+  color: 'var(--health-info-subtle)',
   border: 'none',
   borderRadius: 3,
   fontSize: 10,
@@ -127,8 +127,8 @@ const instructionLabel: React.CSSProperties = {
   height: 22,
   padding: '0 10px',
   background: 'transparent',
-  color: '#A0A0A0',
-  border: '1px solid #2A3A42',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--health-info)',
   borderRadius: 3,
   fontSize: 10,
   display: 'inline-flex',

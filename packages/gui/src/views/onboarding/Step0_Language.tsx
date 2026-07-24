@@ -40,7 +40,7 @@ export default function Step0_Language({ uiLang, resetFeedback, onSelectLang, on
       </div>
       <div style={footer}>
         {resetFeedback ? (
-          <span style={{ fontSize: 11, color: '#34D399' }}>
+          <span style={{ fontSize: 11, color: 'var(--health-success)' }}>
             {t('onboarding.step0.resetToast')}
           </span>
         ) : (

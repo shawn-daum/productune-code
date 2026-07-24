@@ -5,8 +5,8 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { setUiLanguage } from '@productune/core'
-import type { UiLanguage } from '@productune/core'
+import { setUiLanguage, setAudienceMode } from '@productune/core'
+import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath } from '../surface-runner'
 import { onboardingPath as projectOnboardingPath, detectProjectKind } from '../project-paths'
 import type { ProjectKind } from '../project-paths'
@@ -18,6 +18,8 @@ const execFileAsync = promisify(execFile)
 interface OnboardingCompleteOpts {
   engine: 'claude'
   uiLanguage?: UiLanguage
+  /** T-326: per-user PO conversational register, chosen at onboarding. */
+  audienceMode?: AudienceMode
 }
 
 interface OnboardingRecord {
@@ -175,8 +177,9 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 //
 // T-311: GUI legacy dual-mode was downgraded to read-only. The legacy hook set
 // (T-PATCH-246's 18 pdt-* enforcement hooks + statusline-productune) is no longer
-// installed from the GUI — installClaudeHooks now installs ONLY the prdt hook 3종
-// (T-289 adapter A6) for prdt-kind projects, and is a NO-OP for legacy/undefined
+// installed from the GUI — installClaudeHooks now installs ONLY the prdt hook set
+// (T-289 adapter A6; the full 6종 roster since T-413) for prdt-kind projects, and
+// is a NO-OP for legacy/undefined
 // projects. Legacy projects keep working for file/ticket/po-state VIEWING; only
 // the machine-provisioning wiring is cut. prdt install stays the single
 // go-forward path: install.sh (mirror + agents + hooks) plus the T-305
@@ -184,8 +187,23 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // can exercise the prdt branch against a throwaway fixture HOME instead of the
 // developer's real ~/.claude / ~/.prdt.
 
-/** The 4 prdt discipline hooks (packages/core/scripts/install.sh §4, SoT). */
-const PRDT_HOOK_BASENAMES = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh'] as const
+/**
+ * The 6 prdt discipline hook basenames install.sh §4 registers (its jq block is
+ * the SoT). MUST equal the roster install.sh registers — the parity test in
+ * onboarding.rosterParity.test.ts parses install.sh's registration commands and
+ * fails loudly if this list drifts. audience-inject (T-326) and overrides-inject
+ * (T-358) were the two missing from the pre-T-413 GUI list; their omission left a
+ * GUI-only user (the north-star persona) without audience-mode or machine
+ * overrides ever reaching their PO.
+ */
+export const PRDT_HOOK_BASENAMES = [
+  'prdt-session-start.sh',
+  'prdt-post-compact.sh',
+  'prdt-post-dispatch.sh',
+  'prdt-user-prompt.sh',
+  'prdt-audience-inject.sh',
+  'prdt-overrides-inject.sh',
+] as const
 
 function readSettings(settingsPath: string): any {
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
@@ -212,7 +230,7 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
 }
 
 /**
- * prdt branch (T-289): install exactly the 4 discipline hooks + statusline-prdt.sh,
+ * prdt branch (T-289): install exactly the 6 discipline hooks + statusline-prdt.sh,
  * producing the SAME settings.json registration install.sh §4/§6 writes —
  * same `~/.prdt` mirror paths, same matchers, same quoted-command form — so GUI
  * and CLI installs can never diverge or double-register: either one re-run strips
@@ -220,9 +238,17 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
  * identical values. Coexists with legacy pdt-* entries — only prdt-basename hooks
  * are stripped/replaced.
  *
+ * T-413: audience-inject + overrides-inject ride the SAME matcher as session-start
+ * on SessionStart(startup|resume|clear) AND SubagentStart(^prdt-), each as its OWN
+ * command entry (never merged into another hook's additionalContext string) —
+ * audience BEFORE overrides so machine overrides stay last-wins over the
+ * audience-mode register block, matching install.sh §4 (T-326/T-358). The strip is
+ * per-hook (not per-entry), so a re-install/repair over a complete CLI install
+ * preserves the full set instead of wiping audience/overrides.
+ *
  * Commands point at the `~/.prdt/hooks/` MIRROR, not the bundled coreDir: the prdt
- * hook scripts are mirrored home by install.sh (v1 repo install.sh
- * 24-25행, the SoT for this shape) and the legacy GUI bundle does not carry them.
+ * hook scripts are mirrored home by install.sh (§1 cp block, the SoT for this
+ * shape) and the legacy GUI bundle does not carry them.
  * If the mirror is absent (prdt never installed on this machine), registration is
  * SKIPPED with a warn instead of writing hook entries that point at nonexistent
  * scripts — a prdt project can't spawn its PO without `~/.prdt/prdt.env` anyway
@@ -247,17 +273,34 @@ function installPrdtHooks(settingsPath: string, homeDir: string): void {
 
   const isPrdtHook = (c: unknown): boolean =>
     typeof c === 'string' && PRDT_HOOK_BASENAMES.some(b => c.includes(b))
+  // Per-hook strip (mirrors install.sh §4's `strip`): drop only the prdt hook
+  // COMMANDS from each entry, then drop any entry left empty — never the whole
+  // entry on a single-hook match. A per-entry strip would (a) wipe audience +
+  // overrides when re-run over a complete install (they share session-start's
+  // entry) and (b) collateral-drop a user hook co-located in a prdt entry.
   const stripPrdt = (arr: any): any[] =>
-    (Array.isArray(arr) ? arr : []).filter((entry: any) =>
-      !((Array.isArray(entry?.hooks) ? entry.hooks : []).some((hk: any) => isPrdtHook(hk?.command))))
+    (Array.isArray(arr) ? arr : [])
+      .map((entry: any) => ({
+        ...entry,
+        hooks: (Array.isArray(entry?.hooks) ? entry.hooks : []).filter((hk: any) => !isPrdtHook(hk?.command)),
+      }))
+      .filter((entry: any) => Array.isArray(entry.hooks) && entry.hooks.length > 0)
 
   const H = (settings.hooks && typeof settings.hooks === 'object') ? settings.hooks : {}
   H.SessionStart = [...stripPrdt(H.SessionStart),
-    { matcher: 'startup|resume|clear', hooks: [cmd(h('prdt-session-start.sh'))] },
+    { matcher: 'startup|resume|clear', hooks: [
+      cmd(h('prdt-session-start.sh')),
+      cmd(h('prdt-audience-inject.sh')),
+      cmd(h('prdt-overrides-inject.sh')),
+    ] },
     { matcher: 'compact', hooks: [cmd(h('prdt-post-compact.sh'))] },
   ]
   H.SubagentStart = [...stripPrdt(H.SubagentStart),
-    { matcher: '^prdt-', hooks: [cmd(h('prdt-session-start.sh'))] },
+    { matcher: '^prdt-', hooks: [
+      cmd(h('prdt-session-start.sh')),
+      cmd(h('prdt-audience-inject.sh')),
+      cmd(h('prdt-overrides-inject.sh')),
+    ] },
   ]
   H.SubagentStop = [...stripPrdt(H.SubagentStop),
     { matcher: '^prdt-', hooks: [cmd(h('prdt-post-dispatch.sh'))] },
@@ -323,9 +366,10 @@ function hasPrdtHooksRegistered(settingsPath: string): boolean {
 }
 
 export interface PrdtHooksStatus {
-  /** ~/.prdt/hooks/{3 hooks} all present — install.sh has run on this machine. */
+  /** All 6 prdt hooks present under ~/.prdt/hooks — install.sh has run on this machine. */
   mirrorPresent: boolean
-  /** settings.json already carries all 3 prdt hook commands. */
+  /** settings.json already carries all 6 prdt hook commands (the COMPLETE set —
+   *  can't read true while audience/overrides are silently absent, T-413). */
   installed: boolean
 }
 
@@ -494,6 +538,12 @@ export function register(): void {
       // 3. Save UI language selection to settings.json
       if (opts.uiLanguage) {
         setUiLanguage(opts.uiLanguage)
+      }
+
+      // 4. Save audience mode (T-326) — per-USER, to ~/.prdt/audience-mode,
+      //    where the prdt-audience-inject.sh hook reads it at PO session start.
+      if (opts.audienceMode === 'planner' || opts.audienceMode === 'developer') {
+        setAudienceMode(opts.audienceMode)
       }
 
       return { ok: true }

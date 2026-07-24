@@ -1,0 +1,433 @@
+/*
+ * tokens.css — Anchor Design System token layer (T-359)
+ * ============================================================================
+ * Authoritative spec: docs/design.md §0 (Anchor DS adoption).
+ * Source atomic values: _refs/design/english/tokens.json (semantic.dark/light).
+ *
+ * This is the SINGLE color source of truth for the productune GUI. Every
+ * product style consumes these CSS custom properties — NO inline HEX, NO
+ * primitive-token direct references in the color layer (design.md §0.2/§7).
+ * radius/spacing atomics ARE direct-referenced (Anchor pattern, §0.4).
+ *
+ * Light/Dark: dark is the :root default (productune is dark-first, §1 #6).
+ *   - `@media (prefers-color-scheme: light)` supplies the light value set.
+ *   - `.theme-light` / `.theme-dark` on <html> let an in-app toggle WIN over
+ *     the OS preference (§0.7). Class beats media by source order + specificity.
+ * Token names mirror Anchor semantic roles as kebab-case (§0.7); dot-path and
+ * camelCase are forbidden.
+ * ============================================================================ */
+
+/* ┌────────────────────────────────────────────────────────────────────────┐
+ * │ ★★★  ACCENT — THE SINGLE SWAPPABLE BRAND TOKEN  (design.md §0.2.1)  ★★★ │
+ * │                                                                          │
+ * │ productune accent = violet (#8B5CF6 dark / #7C3AED light). CONFIRMED by  │
+ * │ shawn 2026-07-23 (A/B, Anchor blue rejected).                            │
+ * │                                                                          │
+ * │ >>> TO FLIP violet → Anchor blue: set every `--brand-accent` to #1E84FF <<<│
+ * │     (grep "SWAP POINT" — 3 lines: :root dark, @media light, .theme-light).│
+ * │ Everything accent-tinted (--accent, -hover, -subtle, --border-focus, PO   │
+ * │ persona, in-progress status, active tab, links) is propagated from        │
+ * │ --brand-accent by src/styles/theme.ts (which reads this token and holds NO │
+ * │ brand hex). NO other edit needed anywhere. Impl AC: one isolated token.   │
+ * └──────────────────────────────────────────────────────────────────────────┘ */
+
+/* Register the brand primitive as a typed <color>. REQUIRED: without @property,
+ * an unregistered custom property's var() substitution is NOT re-resolved when a
+ * higher-specificity rule (.theme-light) overrides --brand-accent on the same
+ * element, so downstream tokens (--accent, --border-focus, --persona-po …) would
+ * stay stuck on the dark value under a theme swap (verified in Electron/Chromium).
+ * Registering as <color> gives correct computed-value substitution so the whole
+ * chain flips. (Computed reads then return rgb() form — same color.) */
+/* Registered as a typed <color> so the primitive itself flips reliably per theme
+ * block (registered leaves re-resolve; a plain custom prop would not). This is
+ * THE swap token. Chromium does NOT re-resolve `var(--brand-accent)` in derived
+ * custom properties on a theme change (verified), so the accent-derived tokens
+ * below carry dark defaults for first paint and are propagated CONCRETELY from
+ * this value by the theme controller (src/styles/theme.ts) — which reads THIS
+ * token and never holds a brand hex of its own. Editing --brand-accent (3 lines,
+ * grep "SWAP POINT") is the entire violet→blue change. */
+/* initial-value is the @property REGISTRATION FALLBACK only — it is NEVER painted,
+ * because :root (and the theme blocks) always declare --brand-accent, which wins over
+ * the initial-value. It is therefore NOT a SWAP POINT: leaving it at the violet hex has
+ * zero visual effect after a blue swap. (Kept violet for readability of the default.) */
+@property --brand-accent { syntax: '<color>'; inherits: true; initial-value: #8B5CF6; }
+
+:root {
+  /* ── ACCENT — THE SINGLE SWAP POINT (see banner above) ──────────────────────
+   * `--brand-accent` is the ONE brand-hue primitive. Everything accent-tinted
+   * (--accent, hover, subtle, focus ring, PO persona, in-progress status …)
+   * chains to it — nothing else in the codebase holds a brand hex. Its dark
+   * value lives here; its light value is overridden in exactly one place per
+   * theme mechanism (the @media block + .theme-light). To flip violet→blue,
+   * set every `--brand-accent` to #1E84FF (3 lines, all marked "SWAP POINT").
+   * --accent / -hover / -subtle / -contrast are declared ONCE (here) and derive
+   * from --brand-accent, so they need no per-theme redeclaration. */
+  --brand-accent: #8B5CF6;                                        /* ← SWAP POINT (dark). violet → #1E84FF for Anchor blue */
+  --accent: var(--brand-accent);                                  /* Anchor interaction.primary role */
+  --accent-hover: color-mix(in srgb, var(--brand-accent) 84%, #000);  /* derived darker fill for hover */
+  --accent-contrast: #FFFFFF;                                     /* text/icon ON accent — text.static.white.primary */
+  --accent-subtle: color-mix(in srgb, var(--brand-accent) 15%, transparent);  /* accent tint bg (pill/chip/highlight) */
+
+  /* ── Surface (background depth) — Anchor background.* (§0.2 Surface) ── */
+  --bg-base:            #161718;                      /* background.base */
+  --bg-surface-base:    #202122;                      /* background.surface.base — app body */
+  --bg-surface-on:      #303233;                      /* background.surface.on — panels */
+  --bg-surface-onlayer: #44474B;                      /* background.surface.onlayer — sub-panels */
+  --bg-layer-popup:     #303233;                      /* background.layer.popup — modal/dialog (+ --shadow-high) */
+  --bg-layer-sheet:     #202122;                      /* background.layer.sheet */
+  --bg-layer-snackbar:  #5B5F65;                      /* background.layer.snackbar / toast */
+  --bg-state-hover:     rgba(255, 255, 255, 0.04);    /* background.state.hover overlay */
+  --bg-interaction-neutral: #74797F;                  /* background.interaction.neutral — secondary btn */
+  --bg-interaction-subtle:  #303233;                  /* background.interaction.subtle */
+  --bg-overlay:         rgba(0, 0, 0, 0.48);          /* background.layer.overlay — modal scrim */
+
+  /* ── Text — Anchor text.* (§0.2 Text; a11y auto-resolves per mode) ── */
+  --text-primary:     #FFFFFF;                        /* text.primary */
+  --text-secondary:   rgba(255, 255, 255, 0.88);      /* text.secondary */
+  --text-tertiary:    rgba(255, 255, 255, 0.72);      /* text.tertiary (was --text-muted) */
+  --text-quaternary:  rgba(255, 255, 255, 0.64);      /* text.quaternary (was --text-faint — a11y gap gone) */
+  --text-disabled:    rgba(255, 255, 255, 0.32);      /* text.disabled */
+  --text-ghost:       rgba(255, 255, 255, 0.16);      /* productune-own non-text ghost (Anchor icon.subtlest) */
+  --text-inverse:     #000000;                        /* text.inverse — on light fills */
+  --text-static-white: #FFFFFF;                       /* text.static.white.primary — on dark/accent fills, mode-invariant */
+
+  /* ── Border — Anchor border.* (§0.2 Border) ── */
+  --border-item:    rgba(255, 255, 255, 0.04);        /* border.divider.item */
+  --border-section: rgba(255, 255, 255, 0.08);        /* border.divider.section */
+  --border-inline:  rgba(255, 255, 255, 0.16);        /* border.divider.inline / border.button.outline */
+  --border-hover:   rgba(255, 255, 255, 0.32);        /* border.input.hover */
+  --border-input:   rgba(255, 255, 255, 0.10);        /* border.input.default */
+  --border-focus:   var(--accent);                    /* border.focus — re-pointed to violet (§0.2.1) */
+
+  /* ── Icon — Anchor icon.* (§0.2 Border/Icon) ── */
+  --icon-primary:    #FFFFFF;                          /* icon.primary */
+  --icon-secondary:  rgba(255, 255, 255, 0.88);        /* icon.secondary */
+  --icon-tertiary:   rgba(255, 255, 255, 0.64);        /* icon.tertiary */
+  --icon-subtle:     rgba(255, 255, 255, 0.32);        /* icon.subtle */
+  --icon-subtlest:   rgba(255, 255, 255, 0.16);        /* icon.subtlest */
+
+  /* ── Info / Link — semantic (not brand); Anchor allows Blue here (§0.2.1) ── */
+  --text-info: #38BDF8;         /* info/link tone — aligned to --health-info (productune) */
+  --text-link: #38BDF8;
+
+  /* ══ productune-own semantic — NOT Anchor (§2.5–2.8). Preserved identity,
+   *    Anchor light/dark MECHANISM adopted; light values published here per §0.6.
+   *    (dark = confirmed spec hex; light = AA-safe darkening, §2.10 starting point). ══ */
+
+  /* Persona (§2.5) */
+  --persona-po:       var(--accent);   /* PO owns violet — alias to accent (§2.4) */
+  --persona-designer: #FB923C;         /* Orange 400 */
+  --persona-dev:      #38BDF8;          /* Sky 400 */
+  --persona-qa:       #34D399;          /* Emerald 400 */
+
+  /* prdt stage (§2.6.1) */
+  --prdt-stage-define: #FB923C;
+  --prdt-stage-build:  #38BDF8;
+  --prdt-stage-ship:   #F472B6;
+  --prdt-stage-retro:  #34D399;
+
+  /* legacy stage (§2.6) */
+  --stage-prd:    #FB923C;
+  --stage-design: #F472B6;
+  --stage-build:  #38BDF8;
+
+  /* Status (§2.7) */
+  --status-todo:        #909090;
+  --status-in-progress: var(--accent);
+  --status-review:      #E0B040;
+  --status-done:        #60B860;
+  --status-blocked:     #E04040;
+  --status-abandoned:   #6A6A6A;
+
+  /* Health / Feedback (§2.8) */
+  --health-info:    #38BDF8;
+  --health-success: #34D399;
+  --health-warn:    #FBBF24;
+  --health-error:   #EF4444;
+
+  /* Subtle tints (banner/inline bg) — derived via color-mix so they track the
+   * themed base value automatically (no per-mode redeclaration needed). */
+  --health-info-subtle:    color-mix(in srgb, var(--health-info) 16%, transparent);
+  --health-success-subtle: color-mix(in srgb, var(--health-success) 16%, transparent);
+  --health-warn-subtle:    color-mix(in srgb, var(--health-warn) 16%, transparent);
+  --health-error-subtle:   color-mix(in srgb, var(--health-error) 16%, transparent);
+  --persona-po-subtle:       color-mix(in srgb, var(--persona-po) 16%, transparent);
+  --persona-designer-subtle: color-mix(in srgb, var(--persona-designer) 16%, transparent);
+  --persona-dev-subtle:      color-mix(in srgb, var(--persona-dev) 16%, transparent);
+  --persona-qa-subtle:       color-mix(in srgb, var(--persona-qa) 16%, transparent);
+
+  /* Brand tone pair (§2.4) — BrandMark two-tone glyph */
+  --brand-purple: var(--accent);
+  --brand-mint:   #2DD4BF;
+
+  /* ── Elevation (shadow) — Anchor semantic.dark.Shadow (§0.4) ── */
+  --shadow-high:   0 2px 16px 0 rgba(0, 0, 0, 0.32);
+  --shadow-medium: 0 1px 10px 0 rgba(0, 0, 0, 0.16);
+  --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.08);
+
+  /* ── Radius — Anchor atomic.Radius (§0.4, atomic direct-ref allowed) ── */
+  --radius-4:   4px;
+  --radius-8:   8px;
+  --radius-12:  12px;
+  --radius-16:  16px;
+  --radius-24:  24px;
+  --radius-100: 100px;
+
+  /* ── Spacing — Anchor atomic.Spacing (§0.4) + productune-own 48 (§0.4 note) ── */
+  --space-2:  2px;
+  --space-4:  4px;
+  --space-6:  6px;
+  --space-8:  8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-18: 18px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;   /* productune-own extension (activity bar / modal outer) */
+
+  /* ── Typography — Pretendard family (§0.3) ── */
+  --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
+
+  /* ══ LEGACY ALIASES — old consumer var names → Anchor roles ══════════════
+   * Existing var(--surface-* / --text-* / --border-*) consumers (index.css scroll,
+   * md-recipes.css) keep resolving. md-viewer re-declares these under .md-light
+   * scope (§2.10) so its scoped light palette still wins locally. */
+  --surface-base:     var(--bg-base);
+  --surface-body:     var(--bg-surface-base);
+  --surface-panel:    var(--bg-surface-on);
+  --surface-subpanel: var(--bg-surface-onlayer);
+  --surface-modal:    var(--bg-layer-popup);
+  --text-muted:       var(--text-tertiary);
+  --text-faint:       var(--text-quaternary);
+  --text-emphasis:    var(--text-primary);
+  --border-subtle:    var(--border-item);
+  --border-default:   var(--border-section);
+  --border-strong:    var(--border-inline);
+  --border-muted:     var(--border-hover);
+}
+
+/* ============================================================================
+ * LIGHT value set — Anchor semantic.light.* + productune-own published light.
+ * Applied when the OS asks for light AND no explicit .theme-dark override.
+ * ============================================================================ */
+@media (prefers-color-scheme: light) {
+  :root:not(.theme-dark) {
+    --brand-accent: #7C3AED;   /* ← SWAP POINT (light). violet → #1E84FF for Anchor blue */
+
+    --bg-base:            #F4F5F7;
+    --bg-surface-base:    #FFFFFF;
+    --bg-surface-on:      #F4F5F7;
+    --bg-surface-onlayer: #FFFFFF;
+    --bg-layer-popup:     #FFFFFF;
+    --bg-layer-sheet:     #F4F5F7;
+    --bg-layer-snackbar:  #303233;
+    --bg-state-hover:     rgba(0, 0, 0, 0.04);
+    --bg-interaction-neutral: #E4E6E8;
+    --bg-interaction-subtle:  #F4F5F7;
+    --bg-overlay:         rgba(0, 0, 0, 0.48);
+
+    --text-primary:    #000000;
+    --text-secondary:  rgba(0, 0, 0, 0.88);
+    --text-tertiary:   rgba(0, 0, 0, 0.72);
+    --text-quaternary: rgba(0, 0, 0, 0.64);
+    --text-disabled:   rgba(0, 0, 0, 0.32);
+    --text-ghost:      rgba(0, 0, 0, 0.16);
+    --text-inverse:    #FFFFFF;
+    --text-static-white: #FFFFFF;
+
+    --border-item:    rgba(0, 0, 0, 0.04);
+    --border-section: rgba(0, 0, 0, 0.08);
+    --border-inline:  rgba(0, 0, 0, 0.16);
+    --border-hover:   rgba(0, 0, 0, 0.32);
+    --border-input:   rgba(0, 0, 0, 0.10);
+
+    --icon-primary:   #000000;
+    --icon-secondary: rgba(0, 0, 0, 0.88);
+    --icon-tertiary:  rgba(0, 0, 0, 0.64);
+    --icon-subtle:    rgba(0, 0, 0, 0.32);
+    --icon-subtlest:  rgba(0, 0, 0, 0.16);
+
+    --text-info: #0B66C2;
+    --text-link: #0B66C2;
+
+    --persona-designer: #C2410C;
+    --persona-dev:      #0B66C2;
+    --persona-qa:       #0E8F63;
+
+    --prdt-stage-define: #C2410C;
+    --prdt-stage-build:  #0B66C2;
+    --prdt-stage-ship:   #BE185D;
+    --prdt-stage-retro:  #0E8F63;
+
+    --stage-prd:    #C2410C;
+    --stage-design: #BE185D;
+    --stage-build:  #0B66C2;
+
+    --status-todo:        #6B7280;
+    --status-review:      #B45309;
+    --status-done:        #16A34A;
+    --status-blocked:     #DC2626;
+    --status-abandoned:   #9CA3AF;
+
+    --health-info:    #0B66C2;
+    --health-success: #0E8F63;
+    --health-warn:    #B45309;
+    --health-error:   #C62828;
+
+    --brand-mint: #0E8F63;
+
+    --shadow-high:   0 2px 16px 0 rgba(0, 0, 0, 0.16);
+    --shadow-medium: 0 1px 10px 0 rgba(0, 0, 0, 0.08);
+    --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.04);
+  }
+}
+
+/* Explicit in-app toggle → .theme-light wins over OS preference (§0.7). */
+:root.theme-light {
+  --brand-accent: #7C3AED;   /* ← SWAP POINT (light). violet → #1E84FF for Anchor blue */
+
+  --bg-base:            #F4F5F7;
+  --bg-surface-base:    #FFFFFF;
+  --bg-surface-on:      #F4F5F7;
+  --bg-surface-onlayer: #FFFFFF;
+  --bg-layer-popup:     #FFFFFF;
+  --bg-layer-sheet:     #F4F5F7;
+  --bg-layer-snackbar:  #303233;
+  --bg-state-hover:     rgba(0, 0, 0, 0.04);
+  --bg-interaction-neutral: #E4E6E8;
+  --bg-interaction-subtle:  #F4F5F7;
+  --bg-overlay:         rgba(0, 0, 0, 0.48);
+
+  --text-primary:    #000000;
+  --text-secondary:  rgba(0, 0, 0, 0.88);
+  --text-tertiary:   rgba(0, 0, 0, 0.72);
+  --text-quaternary: rgba(0, 0, 0, 0.64);
+  --text-disabled:   rgba(0, 0, 0, 0.32);
+  --text-ghost:      rgba(0, 0, 0, 0.16);
+  --text-inverse:    #FFFFFF;
+  --text-static-white: #FFFFFF;
+
+  --border-item:    rgba(0, 0, 0, 0.04);
+  --border-section: rgba(0, 0, 0, 0.08);
+  --border-inline:  rgba(0, 0, 0, 0.16);
+  --border-hover:   rgba(0, 0, 0, 0.32);
+  --border-input:   rgba(0, 0, 0, 0.10);
+
+  --icon-primary:   #000000;
+  --icon-secondary: rgba(0, 0, 0, 0.88);
+  --icon-tertiary:  rgba(0, 0, 0, 0.64);
+  --icon-subtle:    rgba(0, 0, 0, 0.32);
+  --icon-subtlest:  rgba(0, 0, 0, 0.16);
+
+  --text-info: #0B66C2;
+  --text-link: #0B66C2;
+
+  --persona-designer: #C2410C;
+  --persona-dev:      #0B66C2;
+  --persona-qa:       #0E8F63;
+
+  --prdt-stage-define: #C2410C;
+  --prdt-stage-build:  #0B66C2;
+  --prdt-stage-ship:   #BE185D;
+  --prdt-stage-retro:  #0E8F63;
+
+  --stage-prd:    #C2410C;
+  --stage-design: #BE185D;
+  --stage-build:  #0B66C2;
+
+  --status-todo:        #6B7280;
+  --status-review:      #B45309;
+  --status-done:        #16A34A;
+  --status-blocked:     #DC2626;
+  --status-abandoned:   #9CA3AF;
+
+  --health-info:    #0B66C2;
+  --health-success: #0E8F63;
+  --health-warn:    #B45309;
+  --health-error:   #C62828;
+
+  --brand-mint: #0E8F63;
+
+  --shadow-high:   0 2px 16px 0 rgba(0, 0, 0, 0.16);
+  --shadow-medium: 0 1px 10px 0 rgba(0, 0, 0, 0.08);
+  --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.04);
+}
+
+/* Explicit dark toggle re-asserts the dark set even under a light OS pref.
+ * NOTE: `--brand-accent` is intentionally NOT redeclared here — dark inherits it
+ * from the `:root` SWAP POINT below. Redeclaring it here (with the dark brand hex)
+ * used to WIN over :root in dark mode (initTheme always applies .theme-dark), so a
+ * SWAP-POINT-only edit left dark stuck on the old hue. Keeping the brand hex in
+ * exactly the 3 SWAP POINT lines (:root · @media light · .theme-light) is what makes
+ * the single-value violet↔blue flip work in BOTH modes. Do NOT add --brand-accent here. */
+:root.theme-dark {
+  --bg-base:            #161718;
+  --bg-surface-base:    #202122;
+  --bg-surface-on:      #303233;
+  --bg-surface-onlayer: #44474B;
+  --bg-layer-popup:     #303233;
+  --bg-layer-sheet:     #202122;
+  --bg-layer-snackbar:  #5B5F65;
+  --bg-state-hover:     rgba(255, 255, 255, 0.04);
+  --bg-interaction-neutral: #74797F;
+  --bg-interaction-subtle:  #303233;
+  --bg-overlay:         rgba(0, 0, 0, 0.48);
+
+  --text-primary:    #FFFFFF;
+  --text-secondary:  rgba(255, 255, 255, 0.88);
+  --text-tertiary:   rgba(255, 255, 255, 0.72);
+  --text-quaternary: rgba(255, 255, 255, 0.64);
+  --text-disabled:   rgba(255, 255, 255, 0.32);
+  --text-ghost:      rgba(255, 255, 255, 0.16);
+  --text-inverse:    #000000;
+  --text-static-white: #FFFFFF;
+
+  --border-item:    rgba(255, 255, 255, 0.04);
+  --border-section: rgba(255, 255, 255, 0.08);
+  --border-inline:  rgba(255, 255, 255, 0.16);
+  --border-hover:   rgba(255, 255, 255, 0.32);
+  --border-input:   rgba(255, 255, 255, 0.10);
+
+  --icon-primary:   #FFFFFF;
+  --icon-secondary: rgba(255, 255, 255, 0.88);
+  --icon-tertiary:  rgba(255, 255, 255, 0.64);
+  --icon-subtle:    rgba(255, 255, 255, 0.32);
+  --icon-subtlest:  rgba(255, 255, 255, 0.16);
+
+  --text-info: #38BDF8;
+  --text-link: #38BDF8;
+
+  --persona-designer: #FB923C;
+  --persona-dev:      #38BDF8;
+  --persona-qa:       #34D399;
+
+  --prdt-stage-define: #FB923C;
+  --prdt-stage-build:  #38BDF8;
+  --prdt-stage-ship:   #F472B6;
+  --prdt-stage-retro:  #34D399;
+
+  --stage-prd:    #FB923C;
+  --stage-design: #F472B6;
+  --stage-build:  #38BDF8;
+
+  --status-todo:        #909090;
+  --status-review:      #E0B040;
+  --status-done:        #60B860;
+  --status-blocked:     #E04040;
+  --status-abandoned:   #6A6A6A;
+
+  --health-info:    #38BDF8;
+  --health-success: #34D399;
+  --health-warn:    #FBBF24;
+  --health-error:   #EF4444;
+
+  --brand-mint: #2DD4BF;
+
+  --shadow-high:   0 2px 16px 0 rgba(0, 0, 0, 0.32);
+  --shadow-medium: 0 1px 10px 0 rgba(0, 0, 0, 0.16);
+  --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.08);
+}

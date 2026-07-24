@@ -77,10 +77,10 @@ export default function SidePanelPrdtProjectCard({ poState, selectedVersionId, i
             openTab(`ticket-review:${versionId}`, 'ticket-review', { versionFilter: versionId }, versionId)
           }}
           onMouseEnter={(e) => {
-            if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = '#181818'
+            if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface-on)'
           }}
           onMouseLeave={(e) => {
-            (e.currentTarget as HTMLDivElement).style.background = isSelected ? '#1A1030' : '#141414'
+            (e.currentTarget as HTMLDivElement).style.background = isSelected ? 'var(--accent-subtle)' : 'var(--bg-surface-on)'
           }}
           onKeyDown={(e) => {
             if ((e.key === 'Enter' || e.key === ' ') && versionId) {
@@ -119,7 +119,7 @@ export default function SidePanelPrdtProjectCard({ poState, selectedVersionId, i
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const secHdrStatic: React.CSSProperties = {
@@ -133,7 +133,7 @@ const secHdrStatic: React.CSSProperties = {
 const secHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   userSelect: 'none',
@@ -143,7 +143,7 @@ const secHdrText: React.CSSProperties = {
 const fallbackRow: React.CSSProperties = {
   padding: '6px 10px',
   fontSize: 10,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   lineHeight: 1.4,
   cursor: 'default',
   userSelect: 'none',
@@ -154,10 +154,10 @@ const errorRow: React.CSSProperties = {
   margin: '4px 8px 10px',
   padding: '8px 10px',
   fontSize: 10,
-  color: '#FBBF24',
-  background: '#2A1A05',
-  border: '1px solid #92400E',
-  borderLeft: '3px solid #F59E0B',
+  color: 'var(--health-warn)',
+  background: 'var(--health-warn-subtle)',
+  border: '1px solid var(--health-warn)',
+  borderLeft: '3px solid var(--health-warn)',
   borderRadius: 4,
   lineHeight: 1.4,
   cursor: 'default',
@@ -166,15 +166,15 @@ const errorRow: React.CSSProperties = {
 }
 
 function detailCard(isSelected: boolean, isFocused: boolean): React.CSSProperties {
-  const borderColor = isSelected ? (isFocused ? '#8B5CF6' : '#8B5CF633') : '#2A2A2A'
+  const borderColor = isSelected ? (isFocused ? 'var(--accent)' : 'var(--accent)') : 'var(--text-ghost)'
   return {
     margin: '4px 8px 10px',
     padding: '10px 12px',
     display: 'flex',
     flexDirection: 'column',
     gap: 7,
-    background: isSelected ? '#1A1030' : '#141414',
-    border: '1px solid #222222',
+    background: isSelected ? 'var(--accent-subtle)' : 'var(--bg-surface-on)',
+    border: '1px solid var(--border-section)',
     borderLeft: `3px solid ${borderColor}`,
     borderRadius: 4,
     cursor: 'pointer',
@@ -194,9 +194,9 @@ const slugPill: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#F0F0F0',
-  background: '#1E1E1E',
-  border: '1px solid #333333',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '2px 6px',
   whiteSpace: 'nowrap',
@@ -208,9 +208,9 @@ const versionPill: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#8B5CF6',
-  background: '#1A1030',
-  border: '1px solid #8B5CF650',
+  color: 'var(--accent)',
+  background: 'var(--accent-subtle)',
+  border: '1px solid var(--accent)',
   borderRadius: 3,
   padding: '2px 6px',
   whiteSpace: 'nowrap',
@@ -222,8 +222,10 @@ function stageBadge(color: string): React.CSSProperties {
     fontSize: 9,
     fontWeight: 600,
     color,
-    background: '#0000',
-    border: `1px solid ${color}30`,
+    background: 'var(--bg-base)',
+    // T-417 #2: `color` is a var(--…) string post-reskin; `${color}30` was invalid
+    // CSS (border dropped). color-mix() is valid for var()/hex. 0x30≈19%.
+    border: `1px solid color-mix(in srgb, ${color} 19%, transparent)`,
     borderRadius: 3,
     padding: '1px 5px',
     whiteSpace: 'nowrap',
@@ -234,7 +236,7 @@ function stageBadge(color: string): React.CSSProperties {
 
 const metaKey: React.CSSProperties = {
   fontSize: 9,
-  color: '#4A4A4A',
+  color: 'var(--text-disabled)',
   fontFamily: 'monospace',
   flexShrink: 0,
   minWidth: 24,
@@ -242,7 +244,7 @@ const metaKey: React.CSSProperties = {
 
 const metaVal: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   flex: 1,
   overflow: 'hidden',

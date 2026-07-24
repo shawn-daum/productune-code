@@ -112,7 +112,7 @@ export default function HistoryPane({ project, poState }: Props) {
     return (
       <div style={errorWrap}>
         <div style={errorBanner}>
-          <AlertTriangle size={13} style={{ color: '#FBBF24', flexShrink: 0, marginTop: 1 }} />
+          <AlertTriangle size={13} style={{ color: 'var(--health-warn)', flexShrink: 0, marginTop: 1 }} />
           <div>
             <div style={errorText}>{t('workspace.history.gitTagLoadError')}</div>
             <button style={retryBtn} onClick={load}>
@@ -139,7 +139,7 @@ export default function HistoryPane({ project, poState }: Props) {
       {/* Empty — no closed versions yet (first version in progress). §2.5 */}
       {loadState === 'done' && closed.length === 0 ? (
         <div style={emptyPane}>
-          <History size={32} style={{ color: '#505050', marginBottom: 12 }} strokeWidth={1.5} />
+          <History size={32} style={{ color: 'var(--text-disabled)', marginBottom: 12 }} strokeWidth={1.5} />
           <div style={emptyHeadline}>{t('workspace.history.emptyHeadline')}</div>
           <div style={emptyHelper}>{t('workspace.history.emptyHelper')}</div>
           <button style={emptyCta} onClick={goProject} type="button">
@@ -230,8 +230,8 @@ const banner: React.CSSProperties = {
   margin: '8px 8px 4px',
   padding: '8px 10px',
   fontSize: 11,
-  color: '#707070',
-  border: '1px dashed #2A2A2A',
+  color: 'var(--text-quaternary)',
+  border: '1px dashed var(--border-inline)',
   borderRadius: 4,
   background: 'transparent',
   cursor: 'pointer',
@@ -247,7 +247,7 @@ const bannerLabel: React.CSSProperties = {
 }
 
 const bannerGo: React.CSSProperties = {
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   fontSize: 11,
   flexShrink: 0,
 }
@@ -264,9 +264,9 @@ function rowStyle(selected: boolean, hovered: boolean): React.CSSProperties {
     gap: 2,
     padding: '8px 12px',
     paddingLeft: selected ? 10 : 12,
-    borderBottom: '1px solid #1A1A1A',
-    borderLeft: selected ? '2px solid #8B5CF6' : '2px solid transparent',
-    background: selected ? '#120A2A' : hovered ? '#1A1A1A' : 'transparent',
+    borderBottom: '1px solid var(--border-item)',
+    borderLeft: selected ? '2px solid var(--accent)' : '2px solid transparent',
+    background: selected ? 'var(--accent-subtle)' : hovered ? 'var(--bg-surface-onlayer)' : 'transparent',
     cursor: 'pointer',
     textAlign: 'left',
     width: '100%',
@@ -284,9 +284,9 @@ const vidPill: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  color: '#F0F0F0',
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
   padding: '1px 6px',
 }
@@ -294,8 +294,8 @@ const vidPill: React.CSSProperties = {
 const closedPill: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
-  color: '#34D399',
-  border: '1px solid #34D39959',
+  color: 'var(--health-success)',
+  border: '1px solid var(--health-success)',
   borderRadius: 3,
   padding: '1px 5px',
   textTransform: 'uppercase',
@@ -304,7 +304,7 @@ const closedPill: React.CSSProperties = {
 
 const rowSub: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   paddingLeft: 2,
 }
@@ -322,22 +322,22 @@ const emptyPane: React.CSSProperties = {
 const emptyHeadline: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   marginBottom: 6,
 }
 
 const emptyHelper: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   lineHeight: 1.4,
   marginBottom: 16,
 }
 
 const emptyCta: React.CSSProperties = {
   fontSize: 12,
-  color: '#E8E8EA',
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 6,
   padding: '7px 16px',
   cursor: 'pointer',
@@ -352,15 +352,15 @@ const errorBanner: React.CSSProperties = {
   display: 'flex',
   alignItems: 'flex-start',
   gap: 8,
-  background: '#1A1A1A',
-  borderLeft: '4px solid #FBBF24',
+  background: 'var(--bg-surface-onlayer)',
+  borderLeft: '4px solid var(--health-warn)',
   borderRadius: 4,
   padding: '10px 12px',
 }
 
 const errorText: React.CSSProperties = {
   fontSize: 12,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   lineHeight: 1.5,
 }
 
@@ -370,9 +370,9 @@ const retryBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   fontSize: 11,
-  color: '#E8E8EA',
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-primary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '3px 8px',
   cursor: 'pointer',

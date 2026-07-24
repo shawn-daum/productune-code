@@ -141,7 +141,7 @@ export default function SidePanelProjectEnv() {
               aria-label={t('workspace.projectEnv.openFile', { filename: fg.filename })}
               onClick={() => handleOpenFile(fg.filename)}
               onMouseEnter={(e) => {
-                ;(e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
+                ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
               }}
               onMouseLeave={(e) => {
                 ;(e.currentTarget as HTMLButtonElement).style.background = 'transparent'
@@ -165,7 +165,7 @@ export default function SidePanelProjectEnv() {
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const secHdrBtn: React.CSSProperties = {
@@ -183,7 +183,7 @@ const secHdrBtn: React.CSSProperties = {
 const secHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   userSelect: 'none',
@@ -192,8 +192,8 @@ const secHdrText: React.CSSProperties = {
 
 const countBadge: React.CSSProperties = {
   fontSize: 9,
-  color: '#606060',
-  background: '#1E1E1E',
+  color: 'var(--text-quaternary)',
+  background: 'var(--bg-surface-onlayer)',
   borderRadius: 3,
   padding: '1px 4px',
   flexShrink: 0,
@@ -202,7 +202,7 @@ const countBadge: React.CSSProperties = {
 const fallbackRow: React.CSSProperties = {
   padding: '6px 10px',
   fontSize: 10,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   lineHeight: 1.4,
   cursor: 'default',
   userSelect: 'none',
@@ -215,7 +215,7 @@ const errorRow: React.CSSProperties = {
   gap: 5,
   padding: '5px 10px',
   fontSize: 10,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   lineHeight: 1.4,
 }
 
@@ -225,13 +225,13 @@ const emptyState: React.CSSProperties = {
 
 const emptyText: React.CSSProperties = {
   fontSize: 10,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontStyle: 'italic',
 }
 
 const emptyHint: React.CSSProperties = {
   fontSize: 9,
-  color: '#2A2A2A',
+  color: 'var(--text-ghost)',
   marginTop: 3,
   lineHeight: 1.4,
 }
@@ -251,7 +251,7 @@ const fileRow: React.CSSProperties = {
 }
 
 const fileIcon: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
   flexShrink: 0,
 }
 
@@ -259,7 +259,7 @@ const fileNameText: React.CSSProperties = {
   flex: 1,
   fontSize: 10,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   letterSpacing: '0.03em',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -269,8 +269,8 @@ const fileNameText: React.CSSProperties = {
 
 const fileKeyCount: React.CSSProperties = {
   fontSize: 9,
-  color: '#505050',
-  background: '#1A1A1A',
+  color: 'var(--text-disabled)',
+  background: 'var(--bg-surface-onlayer)',
   borderRadius: 3,
   padding: '0px 3px',
   flexShrink: 0,

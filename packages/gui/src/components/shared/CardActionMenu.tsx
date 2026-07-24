@@ -117,8 +117,8 @@ export function CardActionMenu({ anchor, items, onClose }: Props) {
 const menuStyle: React.CSSProperties = {
   position: 'fixed',
   width: MENU_WIDTH,
-  background: '#1E1E1E',
-  border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 6,
   padding: 4,
   zIndex: 10001,
@@ -133,8 +133,8 @@ function itemStyle(activeRow: boolean, danger?: boolean): React.CSSProperties {
   return {
     width: '100%',
     textAlign: 'left',
-    background: activeRow ? (danger ? 'rgba(239,68,68,0.14)' : '#2A2A2A') : 'transparent',
-    color: danger ? '#F87171' : '#E0E0E0',
+    background: activeRow ? (danger ? 'rgba(239,68,68,0.14)' : 'var(--bg-surface-onlayer)') : 'transparent',
+    color: danger ? 'var(--health-error)' : 'var(--text-primary)',
     border: 'none',
     borderRadius: 4,
     padding: '7px 10px',
@@ -148,6 +148,6 @@ function itemStyle(activeRow: boolean, danger?: boolean): React.CSSProperties {
 
 const separatorStyle: React.CSSProperties = {
   height: 1,
-  background: '#2E2E2E',
+  background: 'var(--bg-surface-onlayer)',
   margin: '4px 2px',
 }

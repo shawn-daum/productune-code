@@ -25,7 +25,10 @@ async function assertVisible(
   label: string,
   { minW = 4, minH = 4 }: { minW?: number; minH?: number } = {},
 ) {
-  const el = page.locator(selector)
+  // `.first()` avoids a strict-mode violation when the selector (e.g.
+  // 'button:visible') resolves to multiple elements — we only assert that at
+  // least one matching element is visible and has a real box.
+  const el = page.locator(selector).first()
   await expect(el, `${label}: element not found`).toBeVisible({ timeout: 5_000 })
   const box = await el.boundingBox()
   expect(box, `${label}: no bounding box (element off-screen or display:none)`).not.toBeNull()

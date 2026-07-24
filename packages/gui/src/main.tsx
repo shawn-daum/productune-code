@@ -2,10 +2,16 @@ import { StrictMode, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import 'pretendard/dist/web/variable/pretendardvariable.css'
+import './styles/tokens.css'
 import './styles/index.css'
 import './styles/md-recipes.css'
 import './i18n'
+import { initTheme } from './styles/theme'
 import App from './App'
+
+// Apply the light/dark theme class + fan the accent out from --brand-accent
+// (see styles/theme.ts) before first paint, so tokens resolve correctly.
+initTheme()
 
 // ── Diagnostic error boundary (T-P4-119 white-screen debug) ──────────────────
 // Catches render-phase throws that would otherwise unmount the tree silently.
@@ -32,7 +38,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
     if (error) {
       return (
         <div style={{
-          background: '#0F0F0F', color: '#F87171', padding: 24,
+          background: 'var(--bg-surface-base)', color: 'var(--health-error)', padding: 24,
           fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
           fontSize: 12, minHeight: '100vh', whiteSpace: 'pre-wrap',
           wordBreak: 'break-all', overflowY: 'auto',
@@ -42,7 +48,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
           </strong>
           {String(error)}
           {info ? `\n\nComponent stack:${info}` : ''}
-          <div style={{ marginTop: 16, color: '#A0A0A0', fontSize: 11 }}>
+          <div style={{ marginTop: 16, color: 'var(--text-tertiary)', fontSize: 11 }}>
             Open DevTools (Cmd+Opt+I → Console) for the full stack trace.
           </div>
         </div>

@@ -15,20 +15,30 @@
   "onboarding": {
     "title": "Productune 초기 설정",
     "step0": {
-      "label": "Step 0 / 4 — Language / 언어",
+      "label": "Step 0 / 5 — Language / 언어",
       "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
       "optionEn": "English",
       "optionKo": "한글",
       "resetCta": "초기화하고 다시 시작",
       "resetToast": "로컬 스토리지를 초기화했습니다. 다시 시작합니다…"
     },
+    "step0_5": {
+      "label": "Step 1 / 5 — 대화 방식",
+      "description": "제품 팀이 어떤 방식으로 설명하면 편하신가요?\n설정에서 언제든 바꿀 수 있어요.",
+      "optionPlanner": "기획자 모드",
+      "optionPlannerDesc": "쉬운 말로, 결론부터 설명해요. 기술 용어는 물어볼 때만 나와요.",
+      "optionDeveloper": "개발자 모드",
+      "optionDeveloperDesc": "기술 용어를 그대로 써요 — 터미널·개발 용어가 익숙한 분께 맞아요.",
+      "recommended": "추천",
+      "changeLaterNote": "설명 방식만 달라져요 — 만들어지는 결과물은 동일해요."
+    },
     "step1": {
-      "label": "Step 1 / 4 — AI 엔진 선택",
+      "label": "Step 2 / 5 — AI 엔진 선택",
       "intro": "프로덕트 팀원은 모두 Claude Code로 고정입니다.\nPO로 사용할 AI 엔진을 선택해주세요.",
       "optionRecommended": "권장"
     },
     "step2": {
-      "label": "Step 2 / 4 — 엔진 연결 확인",
+      "label": "Step 3 / 5 — 엔진 연결 확인",
       "intro": "Claude Code 설치 및 로그인 완료 여부를 확인합니다.\n이 단계를 완료해야 진행할 수 있어요.",
       "checking": "엔진 상태 확인 중...",
       "statusChecking": "확인 중…",
@@ -71,7 +81,8 @@
     "completionSteps": {
       "env": "환경 설정 파일 생성 (~/.productune/productune.env)",
       "playwright": "Playwright MCP 캐시 준비 (QA smoke gate, npx @playwright/mcp)",
-      "language": "UI 언어 설정 저장"
+      "language": "UI 언어 설정 저장",
+      "audience": "대화 방식 저장"
     },
     "versionInit": {
       "label": "첫 번째 Version ID",
@@ -1046,6 +1057,15 @@
       "optionEnDesc": "Standard interface language.",
       "optionKo": "한글",
       "optionKoDesc": "한국어 인터페이스."
+    },
+    "audience": {
+      "title": "대화 방식 / Communication style",
+      "description": "제품 팀의 PO가 채팅에서 설명하는 방식이에요. 화면의 고정 문구는 위의 UI 언어를 따르고, 이 설정은 PO의 말 자체를 바꿔요.",
+      "optionPlanner": "기획자 모드",
+      "optionPlannerDesc": "쉬운 말로, 결론부터, 자세한 건 물어볼 때. (기본값)",
+      "optionDeveloper": "개발자 모드",
+      "optionDeveloperDesc": "기술 용어를 그대로 — 지금까지의 방식이에요.",
+      "nextSessionNote": "다음 대화 세션부터 적용돼요. / Applies from the next conversation session."
     },
     "tabGeneral": "일반",
     "generalTabTitle": "일반 설정",

@@ -15,20 +15,30 @@
   "onboarding": {
     "title": "Productune setup",
     "step0": {
-      "label": "Step 0 / 4 — Language / 언어",
+      "label": "Step 0 / 5 — Language / 언어",
       "description": "Choose your interface language. / GUI 화면 언어를 선택해주세요.",
       "optionEn": "English",
       "optionKo": "한글",
       "resetCta": "Reset & start over",
       "resetToast": "Local storage cleared. Reloading…"
     },
+    "step0_5": {
+      "label": "Step 1 / 5 — Communication style / 대화 방식",
+      "description": "How should your product team explain things to you?\nYou can change this anytime in Settings.",
+      "optionPlanner": "Planner mode",
+      "optionPlannerDesc": "Plain language, conclusion first. Technical terms only when you ask for them.",
+      "optionDeveloper": "Developer mode",
+      "optionDeveloperDesc": "Technical vocabulary as-is — you are comfortable with terminal and dev terms.",
+      "recommended": "recommended",
+      "changeLaterNote": "This only changes how things are explained — never what gets built."
+    },
     "step1": {
-      "label": "Step 1 / 4 — AI engine",
+      "label": "Step 2 / 5 — AI engine",
       "intro": "All product team members use Claude Code.\nChoose the AI engine for PO.",
       "optionRecommended": "recommended"
     },
     "step2": {
-      "label": "Step 2 / 4 — Engine connection",
+      "label": "Step 3 / 5 — Engine connection",
       "intro": "Check that Claude Code is installed and authenticated.\nComplete this step to continue.",
       "checking": "Checking engine status...",
       "statusChecking": "Checking…",
@@ -71,7 +81,8 @@
     "completionSteps": {
       "env": "Create env file (~/.productune/productune.env)",
       "playwright": "Prepare Playwright MCP cache (QA smoke gate, npx @playwright/mcp)",
-      "language": "Save UI language preference"
+      "language": "Save UI language preference",
+      "audience": "Communication style saved"
     },
     "versionInit": {
       "label": "Initial Version ID",
@@ -1046,6 +1057,15 @@
       "optionEnDesc": "Standard interface language.",
       "optionKo": "한글",
       "optionKoDesc": "한국어 인터페이스."
+    },
+    "audience": {
+      "title": "대화 방식 / Communication style",
+      "description": "How the product team's PO explains things in chat. Fixed UI labels follow the interface language above; this setting shapes the PO's own words.",
+      "optionPlanner": "Planner mode",
+      "optionPlannerDesc": "Plain language, conclusion first, details on request. (default)",
+      "optionDeveloper": "Developer mode",
+      "optionDeveloperDesc": "Technical vocabulary as-is — the current expert register.",
+      "nextSessionNote": "Applies from the next conversation session. / 다음 대화 세션부터 적용돼요."
     },
     "tabGeneral": "General",
     "generalTabTitle": "General settings",

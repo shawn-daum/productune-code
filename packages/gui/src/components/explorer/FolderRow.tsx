@@ -54,13 +54,13 @@ export default function FolderRow({ node, depth, isOpen, onToggle, onRevealInOS,
       >
         <span style={chevronWrap}>
           {isOpen
-            ? <ChevronDown size={12} strokeWidth={2} color="#505050" />
-            : <ChevronRight size={12} strokeWidth={2} color="#505050" />}
+            ? <ChevronDown size={12} strokeWidth={2} style={{ color: 'var(--text-disabled)' }} />
+            : <ChevronRight size={12} strokeWidth={2} style={{ color: 'var(--text-disabled)' }} />}
         </span>
         <span style={iconWrap}>
           {isOpen
-            ? <FolderOpen size={14} strokeWidth={1.75} color="#d4a754" />
-            : <Folder size={14} strokeWidth={1.75} color="#d4a754" />}
+            ? <FolderOpen size={14} strokeWidth={1.75} style={{ color: 'var(--health-warn)' }} />
+            : <Folder size={14} strokeWidth={1.75} style={{ color: 'var(--health-warn)' }} />}
         </span>
         <span style={labelStyle}>{node.name}</span>
       </div>
@@ -105,7 +105,7 @@ function rowStyle(depth: number, hovered: boolean): React.CSSProperties {
     paddingLeft: 4 + depth * 16,
     paddingRight: 8,
     cursor: 'pointer',
-    background: hovered ? '#1a1a1a' : 'transparent',
+    background: hovered ? 'var(--bg-surface-onlayer)' : 'transparent',
     userSelect: 'none',
     gap: 2,
     outline: 'none',
@@ -128,7 +128,7 @@ const iconWrap: React.CSSProperties = {
 
 const labelStyle: React.CSSProperties = {
   fontSize: 13,
-  color: '#C8C8C8',
+  color: 'var(--text-secondary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',

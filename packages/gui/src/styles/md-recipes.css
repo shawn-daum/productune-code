@@ -5,30 +5,22 @@
  * Single source imported once from main.tsx.
  */
 
-/* ── DS token variables ──────────────────────────────────────────────────── */
+/* ── md-only render tokens ──────────────────────────────────────────────────
+ * T-417 #1: the color / surface / border / text / persona / health names that
+ * USED to be declared in this :root were byte-duplicates of tokens.css legacy
+ * aliases. Because md-recipes.css imports AFTER tokens.css at equal (:root)
+ * specificity, they GLOBALLY shadowed the theme-tracking aliases with fixed dark
+ * hex — so in light mode every consumer (chat md + PersonaPresenceBar /
+ * MetadataPanel / TicketDetailTab / ImageChip / VersionsPanel /
+ * BackgroundTaskSegment) rendered dark-on-dark. Removed: the app palette now
+ * flows from tokens.css (theme-aware), while the md VIEWER keeps its
+ * self-contained island palette via the concrete .md-doc / .md-doc.md-light
+ * blocks below. Only md-OWN names (absent from tokens.css) live here.
+ * --font-mono was also a tokens.css dup → removed (tokens.css owns it).
+ * Spacing uses the md-only --md-space-* step scale (T-417 #6: the old --md-space-2 /
+ * --md-space-4 names collided with tokens.css's Anchor atomic px spacing). */
 :root {
-  --surface-base:      #0A0A0A;
-  --surface-body:      #0F0F0F;
-  --surface-panel:     #141414;
-  --surface-subpanel:  #1A1A1A;
-  --border-subtle:     #1A1A1A;
-  --border-default:    #1F1F1F;
-  --border-strong:     #2A2A2A;
-  --border-muted:      #3A3A3A;
-  --text-primary:      #E8E8EA;
-  --text-emphasis:     #F0F0F0;
-  --text-secondary:    #C8C8CC;
-  --text-muted:        #A0A0A0;
-  --text-faint:        #707070;
-  --accent:            #8B5CF6;
-  --persona-po:        #8B5CF6;
-  --persona-designer:  #FB923C;
-  --persona-dev:       #38BDF8;
-  --persona-qa:        #34D399;
-  --health-success:    #34D399;
-  --health-error:      #EF4444;
   --font-sans:         -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --font-mono:         ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
   --text-xs:           10px;
   --text-sm:           12px;
   --text-base:         13px;
@@ -43,13 +35,13 @@
   --leading-normal:    1.5;
   --tracking-wide:     0.02em;
   --tracking-widest:   0.06em;
-  --space-0-5:         2px;
-  --space-1:           4px;
-  --space-1-5:         6px;
-  --space-2:           8px;
-  --space-2-5:         10px;
-  --space-3:           12px;
-  --space-4:           16px;
+  --md-space-0-5:         2px;
+  --md-space-1:           4px;
+  --md-space-1-5:         6px;
+  --md-space-2:           8px;
+  --md-space-2-5:         10px;
+  --md-space-3:           12px;
+  --md-space-4:           16px;
   --radius-xs:         2px;
   --radius-md:         4px;
   --radius-lg:         6px;
@@ -130,41 +122,69 @@
  * R1/R2/R3 values above — zero chat-bubble regression by construction.
  *
  * Rhythm = large gap ABOVE a heading (section breathing) + tight gap BELOW
- * (heading hugs its body). Values are token-derived (var(--space-*) via calc,
+ * (heading hugs its body). Values are token-derived (var(--md-space-*) via calc,
  * no new raw px / hex). space-4 = 16px is the largest token, so larger top
  * gaps are composed as token multiples.
  */
 .md-doc .md-h1 {
-  margin-top: calc(var(--space-4) * 2);   /* 32px — big section break */
-  margin-bottom: var(--space-2);          /* 8px — hug body */
+  margin-top: calc(var(--md-space-4) * 2);   /* 32px — big section break */
+  margin-bottom: var(--md-space-2);          /* 8px — hug body */
 }
 .md-doc .md-h1:first-child { margin-top: 0; }
 
 .md-doc .md-h2 {
-  margin-top: calc(var(--space-4) + var(--space-2)); /* 24px */
-  margin-bottom: var(--space-2);                     /* 8px */
+  margin-top: calc(var(--md-space-4) + var(--md-space-2)); /* 24px */
+  margin-bottom: var(--md-space-2);                     /* 8px */
 }
 
 .md-doc .md-h3 {
-  margin-top: var(--space-4);     /* 16px */
-  margin-bottom: var(--space-1);  /* 4px */
+  margin-top: var(--md-space-4);     /* 16px */
+  margin-bottom: var(--md-space-1);  /* 4px */
 }
 
 /* T-PATCH-182: H4 feature-chunk titles get section breathing above, hug below */
 .md-doc .md-h4 {
-  margin-top: var(--space-4);     /* 16px — generous above for section breathing */
-  margin-bottom: var(--space-1);  /* 4px — hug body */
+  margin-top: var(--md-space-4);     /* 16px — generous above for section breathing */
+  margin-bottom: var(--md-space-1);  /* 4px — hug body */
 }
 .md-doc .md-h4:first-child { margin-top: 0; }
 
 /* Paragraph + list breathing in the doc view (chat keeps its compact gaps). */
-.md-doc .md-body { margin-bottom: var(--space-2); } /* 8px between paragraphs */
+.md-doc .md-body { margin-bottom: var(--md-space-2); } /* 8px between paragraphs */
 .md-doc .md-ul,
-.md-doc .md-ol { margin: var(--space-2) 0; }        /* 8px around lists */
+.md-doc .md-ol { margin: var(--md-space-2) 0; }        /* 8px around lists */
 
 /* T-PATCH-182: de-densify list item gap 4px→8px — DOC scope only (chat stays 4px) */
 .md-doc .md-ul,
-.md-doc .md-ol { gap: var(--space-2); }             /* 8px between list items */
+.md-doc .md-ol { gap: var(--md-space-2); }             /* 8px between list items */
+
+/* ── T-359: dark document island (base .md-doc = the viewer's DEFAULT dark mode) ──
+ * SELF-CONTAINED dark palette so the md viewer is a readable dark island regardless
+ * of the APP theme. Without this, the aliases leak the app palette; and because the
+ * legacy `--surface-*` aliases are var()-derived (unregistered), Chromium does NOT
+ * re-resolve them on a `.theme-light` swap (same mechanism the @property banner in
+ * tokens.css documents), so surfaces stayed stuck DARK while `--text-*` flipped DARK
+ * → dark-on-dark, unreadable callouts/tables in an app-light window (QA B). Concrete
+ * dark values + an OPAQUE dark paper bg dodge both the leak and the stuck-alias bug.
+ * SCOPE: only the MarkdownViewer `viewerWrap` carries `.md-doc` (chat/shell carry
+ * neither class), so chat regression = 0 — same guard as the .md-doc.md-light block.
+ * `.md-doc.md-light` (higher specificity) still wins in the viewer's light mode. */
+.md-doc {
+  --surface-base:      #161718; /* code-block bg */
+  --surface-body:      #202122; /* paper bg */
+  --surface-panel:     #303233; /* table zebra(even) / metadata card bg */
+  --surface-subpanel:  #44474B; /* inline-code bg / blockquote bg / table th */
+  --border-subtle:     rgba(255, 255, 255, 0.04); /* td top border */
+  --border-default:    rgba(255, 255, 255, 0.08); /* code/table outline / hr */
+  --border-strong:     rgba(255, 255, 255, 0.16); /* th bottom / blockquote bar */
+  --border-muted:      rgba(255, 255, 255, 0.32); /* disabled outline */
+  --text-primary:      #FFFFFF; /* body p/li/td */
+  --text-emphasis:     #FFFFFF; /* h1/strong/th */
+  --text-secondary:    rgba(255, 255, 255, 0.88); /* h3/code-block/blockquote */
+  --text-muted:        rgba(255, 255, 255, 0.72); /* list marker/metadata */
+  --text-faint:        rgba(255, 255, 255, 0.64); /* comment/placeholder */
+  background: var(--surface-body); /* opaque dark paper — no app-surface bleed-through */
+}
 
 /* ── T-PATCH-183: light document surface (md-viewer EARLY-LIGHT) ─────────────
  * SCOPE GUARD (chat regression = 0 by construction): every light declaration is
@@ -213,7 +233,7 @@
 
 /* MetadataPanel warn pill — amber has no DS health token, so the warn pair is
  * the one MetadataPanel color not var-ized. Override its light tone here (the
- * other tones flip via --health-*/--text-* / color-mix). §2.10 light warn. */
+ * other tones flip via --health-* / --text-* / color-mix). §2.10 light warn. */
 .md-doc.md-light .md-meta-warn {
   color: #8A5A00;
   border-color: #E8DCC0;
@@ -240,7 +260,7 @@
   font-size: var(--text-sm);
   color: var(--text-primary);
   background: var(--surface-subpanel);
-  padding: var(--space-0-5) var(--space-1);
+  padding: var(--md-space-0-5) var(--md-space-1);
   border-radius: var(--radius-xs);
   /* T-PATCH-181 (C): long inline tokens (e.g. `POST /api/evaluate`) wrap
      instead of pushing the column past its max-width. */
@@ -257,7 +277,7 @@
   background: var(--surface-base);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  padding: var(--space-3);
+  padding: var(--md-space-3);
   overflow-x: auto;
   margin: 4px 0;
 }
@@ -272,10 +292,10 @@
 
 /* R10 md-ul */
 .md-ul {
-  padding-left: var(--space-4);
+  padding-left: var(--md-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--md-space-1);
   list-style: none;
   margin: 4px 0;
 }
@@ -288,8 +308,8 @@
 .md-ul > li::before {
   content: "\2022"; /* • glyph */
   position: absolute;
-  left: calc(-1 * var(--space-4));
-  width: var(--space-4);
+  left: calc(-1 * var(--md-space-4));
+  width: var(--md-space-4);
   text-align: center;
   color: var(--text-muted);
 }
@@ -304,10 +324,10 @@
  * parent's seed. The `, 0` fallback is defense-in-depth for any <ol> not
  * emitted through MdRenderer. */
 .md-ol {
-  padding-left: var(--space-4);
+  padding-left: var(--md-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--md-space-1);
   list-style: none;
   counter-reset: md-ol var(--md-ol-start, 0);
   margin: 4px 0;
@@ -322,10 +342,10 @@
 .md-ol > li::before {
   content: counter(md-ol) ".";
   position: absolute;
-  left: calc(-1 * var(--space-4));
-  width: var(--space-4);
+  left: calc(-1 * var(--md-space-4));
+  width: var(--md-space-4);
   text-align: right;
-  padding-right: var(--space-1);
+  padding-right: var(--md-space-1);
   font-family: var(--font-mono);
   color: var(--text-muted);
   font-size: var(--text-sm);
@@ -338,7 +358,7 @@
   color: var(--text-secondary);
   font-size: var(--text-base);
   line-height: var(--leading-snug);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--md-space-2) var(--md-space-3);
   border-radius: var(--radius-md);
   margin: 4px 0;
 }
@@ -368,14 +388,14 @@
   color: var(--text-emphasis);
   font-weight: var(--weight-semibold);
   text-align: left;
-  padding: var(--space-1-5) var(--space-3);
+  padding: var(--md-space-1-5) var(--md-space-3);
   border-bottom: 1px solid var(--border-strong);
 }
 
 /* R15 md-table-td */
 .md-table-td {
   color: var(--text-primary);
-  padding: var(--space-1-5) var(--space-3);
+  padding: var(--md-space-1-5) var(--md-space-3);
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -388,7 +408,7 @@
 .md-hr {
   border: none;
   border-top: 1px solid var(--border-default);
-  margin: var(--space-3) 0;
+  margin: var(--md-space-3) 0;
 }
 
 /* ── sx-* syntax highlight subset (monochrome + single hue on strings) ──── */
@@ -416,7 +436,7 @@
  * each type for the light paper surface (#FAFAF9) to ≥4.5:1 WCAG-AA; chat DOM
  * cannot match that compound selector, so chat is unaffected. §2.10. */
 .md-link-internal { color: #38BDF8; } /* default / regular ptn:file — cyan */
-.md-link-ticket   { color: #8B5CF6; } /* ptn:ticket — violet */
+.md-link-ticket   { color: var(--accent); } /* ptn:ticket — violet (brand accent, T-417 #3) */
 .md-link-env      { color: #F59E0B; } /* env-target ptn:file — amber */
 .md-link-persona  { color: #A78BFA; } /* ptn:doctrine — light violet */
 .md-link-https    { color: #C8C8CC; } /* http(s) — neutral grey */
@@ -433,10 +453,10 @@
   background: var(--surface-subpanel);
   border-radius: var(--radius-lg);
   border-left: 3px solid var(--persona-po);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--md-space-3) var(--md-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--md-space-3);
 }
 
 /* resolved promotion states */
@@ -447,12 +467,12 @@
 .resolved-chip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--md-space-1);
   background: var(--surface-subpanel);
   color: var(--text-secondary);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-pill);
-  padding: var(--space-1) var(--space-2-5);
+  padding: var(--md-space-1) var(--md-space-2-5);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-widest);
@@ -463,17 +483,17 @@
 .opt-stack {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--md-space-2);
 }
 
 .opt {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-2-5);
+  gap: var(--md-space-2-5);
   background: var(--surface-subpanel);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  padding: var(--space-2-5) var(--space-3);
+  padding: var(--md-space-2-5) var(--md-space-3);
   cursor: pointer;
   transition:
     background var(--motion-fast) var(--easing-standard),
@@ -508,7 +528,7 @@
   color: var(--text-muted);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xs);
-  padding: var(--space-0-5) var(--space-1);
+  padding: var(--md-space-0-5) var(--md-space-1);
   line-height: 1.4;
   margin-top: 1px;
 }
@@ -516,7 +536,7 @@
 .opt-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-0-5);
+  gap: var(--md-space-0-5);
 }
 
 .opt-title {
@@ -565,7 +585,7 @@
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: var(--space-1);
+  padding: var(--md-space-1);
   border-radius: var(--radius-xs);
 }
 .opt-freetext-send:enabled:hover { color: var(--accent); background: var(--surface-panel); }
@@ -575,12 +595,12 @@
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--md-space-1);
   background: var(--surface-subpanel);
   color: var(--text-secondary);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-pill);
-  padding: var(--space-1) var(--space-2-5);
+  padding: var(--md-space-1) var(--md-space-2-5);
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-widest);
@@ -598,7 +618,7 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--md-space-2);
 }
 
 .btn {
@@ -606,12 +626,12 @@
   font-size: var(--text-md);
   font-weight: var(--weight-medium);
   border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-4);
+  padding: var(--md-space-2) var(--md-space-4);
   cursor: pointer;
   border: 1px solid transparent;
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1-5);
+  gap: var(--md-space-1-5);
   transition: background var(--motion-fast) var(--easing-standard);
 }
 .btn:focus-visible {
@@ -637,7 +657,7 @@
 .resolved-label {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1-5);
+  gap: var(--md-space-1-5);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
 }
@@ -648,7 +668,7 @@
 .sys-line {
   display: flex;
   align-items: center;
-  gap: var(--space-1-5);
+  gap: var(--md-space-1-5);
   justify-content: center;
   font-size: var(--text-sm);
   color: var(--text-muted);

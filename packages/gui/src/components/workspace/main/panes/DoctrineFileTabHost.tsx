@@ -424,9 +424,9 @@ function toastStyle(ok: boolean): React.CSSProperties {
     gap: 6,
     padding: '6px 8px 6px 12px',
     fontSize: 11,
-    color: ok ? '#34D399' : '#E04040',
-    background: ok ? '#0A2A1A' : '#2A0808',
-    border: `1px solid ${ok ? '#1A3A1A' : '#3A1A1A'}`,
+    color: ok ? 'var(--health-success)' : 'var(--status-blocked)',
+    background: ok ? 'var(--health-success-subtle)' : 'var(--health-error-subtle)',
+    border: `1px solid ${ok ? 'var(--health-success)' : 'var(--health-error)'}`,
     borderRadius: 4,
     boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
   }

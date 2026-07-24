@@ -69,6 +69,11 @@ export default function GeneralSettings() {
 
       <div style={divider} />
 
+      {/* PO conversational register — T-326 */}
+      <AudienceSection />
+
+      <div style={divider} />
+
       {/* Notifications — T-PATCH-083 */}
       <NotificationsSection />
 
@@ -276,9 +281,9 @@ function ClaudeConnection() {
   }
 
   const iconColor =
-    status === 'connected' ? '#4ADE80' :
-    status === 'checking'  ? '#606060' :
-    '#EF4444'
+    status === 'connected' ? 'var(--health-success)' :
+    status === 'checking'  ? 'var(--text-quaternary)' :
+    'var(--health-error)'
 
   const StatusIcon =
     status === 'checking'  ? <Loader2 size={13} color={iconColor} className="pdt-spin" /> :
@@ -310,7 +315,7 @@ function ClaudeConnection() {
               : t('settings.claudeConnection.authHint')}
           </div>
           {installed && (
-            <div style={{ ...description, color: '#505050', marginTop: 4 }}>
+            <div style={{ ...description, color: 'var(--text-disabled)', marginTop: 4 }}>
               {t('settings.claudeConnection.terminalNote')}
             </div>
           )}
@@ -680,7 +685,7 @@ function ToggleRow({
         <span style={optionLabel}>{label}</span>
         {desc != null ? <span style={description}>{desc}</span> : null}
       </div>
-      <div style={{ ...toggleTrack, background: checked ? '#8B5CF6' : '#2A2A2A' }}>
+      <div style={{ ...toggleTrack, background: checked ? 'var(--accent)' : 'var(--bg-surface-onlayer)' }}>
         <div
           style={{
             ...toggleKnob,
@@ -689,6 +694,57 @@ function ToggleRow({
         />
       </div>
     </div>
+  )
+}
+
+// ── Audience mode (T-326) ─────────────────────────────────────────────────────
+// Per-USER register of the PO's conversational output. Persisted as one token
+// at ~/.prdt/audience-mode (via IPC → core settings/audience-mode.ts), where
+// the prdt-audience-inject.sh SessionStart hook reads it. Two separate paths
+// by design: the strings in THIS section are i18n (fixed UI copy); the PO's
+// prose register is the hook-injection path — never i18n.
+type AudienceModeLocal = 'planner' | 'developer'
+
+function AudienceSection() {
+  const { t } = useTranslation()
+  const [mode, setMode] = useState<AudienceModeLocal>('planner')
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const m = await (window as any).api.getAudienceMode()
+        if (m === 'planner' || m === 'developer') setMode(m)
+      } catch { /* IPC unavailable in browser dev mode — keep default (planner) */ }
+    })()
+  }, [])
+
+  async function handleSelect(next: AudienceModeLocal) {
+    setMode(next)
+    try {
+      await (window as any).api.setAudienceMode(next)
+    } catch { /* IPC unavailable in browser dev mode */ }
+  }
+
+  return (
+    <>
+      <div style={sectionTitle}>{t('settings.audience.title')}</div>
+      <div style={description}>{t('settings.audience.description')}</div>
+      <div style={options}>
+        <RadioOption
+          selected={mode === 'planner'}
+          label={t('settings.audience.optionPlanner')}
+          desc={t('settings.audience.optionPlannerDesc')}
+          onSelect={() => handleSelect('planner')}
+        />
+        <RadioOption
+          selected={mode === 'developer'}
+          label={t('settings.audience.optionDeveloper')}
+          desc={t('settings.audience.optionDeveloperDesc')}
+          onSelect={() => handleSelect('developer')}
+        />
+      </div>
+      <div style={noteText}>{t('settings.audience.nextSessionNote')}</div>
+    </>
   )
 }
 
@@ -707,13 +763,13 @@ function RadioOption({
     <div
       style={{
         ...optionCard,
-        borderColor: selected ? '#8B5CF6' : '#2A2A2A',
-        background: selected ? '#160F28' : '#161616',
+        borderColor: selected ? 'var(--accent)' : 'var(--text-ghost)',
+        background: selected ? 'var(--accent-subtle)' : 'var(--bg-surface-on)',
       }}
       onClick={onSelect}
     >
       <div style={optionTop}>
-        <div style={{ ...radio, background: selected ? '#8B5CF6' : 'transparent' }} />
+        <div style={{ ...radio, background: selected ? 'var(--accent)' : 'transparent' }} />
         <span style={optionLabel}>{label}</span>
       </div>
       <div style={optionDesc}>{desc}</div>
@@ -735,13 +791,13 @@ const wrap: React.CSSProperties = {
 const sectionTitle: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 700,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.4,
 }
 
 const description: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   lineHeight: 1.6, // T-PATCH-214 #3: --leading-relaxed — multi-line helper microcopy was cramped
 }
 
@@ -753,12 +809,12 @@ const options: React.CSSProperties = {
 
 const divider: React.CSSProperties = {
   height: 1,
-  background: '#222',
+  background: 'var(--bg-surface-onlayer)',
   margin: '4px 0',
 }
 
 const optionCard: React.CSSProperties = {
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   padding: '10px 12px',
   cursor: 'pointer',
@@ -776,7 +832,7 @@ const radio: React.CSSProperties = {
   width: 14,
   height: 14,
   borderRadius: 9999,
-  border: '2px solid #8B5CF6',
+  border: '2px solid var(--accent)',
   flexShrink: 0,
   transition: 'background 0.15s',
 }
@@ -784,19 +840,19 @@ const radio: React.CSSProperties = {
 const optionLabel: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const optionDesc: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   paddingLeft: 22,
   lineHeight: 1.4,
 }
 
 const noteText: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   lineHeight: 1.5,
   marginTop: 4,
 }
@@ -815,10 +871,10 @@ const claudeActions: React.CSSProperties = {
 }
 
 const claudeConnectBtn: React.CSSProperties = {
-  background: '#8B5CF6',
+  background: 'var(--accent)',
   border: 'none',
   borderRadius: 5,
-  color: '#FFFFFF',
+  color: 'var(--text-static-white)',
   cursor: 'pointer',
   fontSize: 11,
   fontWeight: 600,
@@ -828,9 +884,9 @@ const claudeConnectBtn: React.CSSProperties = {
 
 const claudeRecheckBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 5,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   cursor: 'pointer',
   fontSize: 11,
   fontWeight: 500,
@@ -869,7 +925,7 @@ const toggleKnob: React.CSSProperties = {
   width: 14,
   height: 14,
   borderRadius: '50%',
-  background: '#F0F0F0',
+  background: 'var(--bg-interaction-neutral)',
   position: 'absolute',
   top: 2,
   transition: 'transform 0.15s',
@@ -898,9 +954,9 @@ const notifTestBtnBase: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   background: 'transparent',
-  border: '1px solid #3A3A3A',
+  border: '1px solid var(--border-hover)',
   borderRadius: 5,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   cursor: 'pointer',
   fontSize: 11,
   fontWeight: 500,
@@ -921,13 +977,13 @@ const notifTestBtnDisabled: React.CSSProperties = {
 
 const notifTestResultOk: React.CSSProperties = {
   fontSize: 10,
-  color: '#6EE7B7',
+  color: 'var(--health-success)',
   lineHeight: 1.4,
 }
 
 const notifTestResultWarn: React.CSSProperties = {
   fontSize: 10,
-  color: '#FCD34D',
+  color: 'var(--health-warn)',
   lineHeight: 1.4,
 }
 
@@ -936,7 +992,7 @@ const notifTestResultWarn: React.CSSProperties = {
 // is a soft "blocked toggle" notice, not a write failure).
 const notifTestResultError: React.CSSProperties = {
   fontSize: 10,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   lineHeight: 1.4,
 }
 
@@ -951,9 +1007,9 @@ const poSessionErrorRow: React.CSSProperties = {
 // notifTestBtnBase's small bordered-button shape, recolored to --health-error.
 const poSessionRetryBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #EF4444',
+  border: '1px solid var(--health-error)',
   borderRadius: 5,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   cursor: 'pointer',
   fontSize: 10,
   fontWeight: 500,
@@ -963,7 +1019,7 @@ const poSessionRetryBtn: React.CSSProperties = {
 
 const notifMacosHint: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   lineHeight: 1.6, // T-PATCH-214 #3: --leading-relaxed — multi-line macOS guidance microcopy
   marginTop: 6,
 }
@@ -974,7 +1030,7 @@ const notifMacosLinkBtn: React.CSSProperties = {
   gap: 4,
   background: 'transparent',
   border: 'none',
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   cursor: 'pointer',
   fontSize: 10,
   fontWeight: 500,
@@ -1004,10 +1060,10 @@ const zoomBtnBase: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  background: '#1E1E1E',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#D0D0D0',
+  color: 'var(--text-secondary)',
   cursor: 'pointer',
   fontSize: 16,
   lineHeight: 1,
@@ -1027,7 +1083,7 @@ const zoomBtnDisabled: React.CSSProperties = {
 const zoomDisplay: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   minWidth: 38,
   textAlign: 'center',
   fontVariantNumeric: 'tabular-nums',
@@ -1046,14 +1102,14 @@ const poSessionRow: React.CSSProperties = {
 const fieldLabelSm: React.CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
-  color: '#D0D0D0',
+  color: 'var(--text-secondary)',
 }
 
 const selectInput: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 5,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 12,
   fontFamily: 'monospace',
   padding: '4px 8px',

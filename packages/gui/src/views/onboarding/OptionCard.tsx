@@ -14,25 +14,25 @@ export default function OptionCard({ selected, onClick, label, badge, intro, tec
     <div
       style={{
         ...optionCard,
-        borderColor: selected ? '#8B5CF6' : '#2A2A2A',
-        background: selected ? '#160F28' : '#161616',
+        borderColor: selected ? 'var(--accent)' : 'var(--text-ghost)',
+        background: selected ? 'var(--accent-subtle)' : 'var(--bg-surface-on)',
       }}
       onClick={onClick}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ ...radio, background: selected ? '#8B5CF6' : 'transparent' }} />
-        <span style={{ fontWeight: 600, fontSize: 13, color: '#F0F0F0' }}>{label}</span>
+        <div style={{ ...radio, background: selected ? 'var(--accent)' : 'transparent' }} />
+        <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{label}</span>
         {badge && (
           <span style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 9999,
-            background: '#120A2A', color: '#8B5CF6', border: '1px solid #8B5CF655',
+            background: 'var(--accent-subtle)', color: 'var(--accent)', border: '1px solid var(--accent)',
           }}>
             {badge}
           </span>
         )}
       </div>
-      <div style={{ fontSize: 12.5, color: '#A0A0A0', marginTop: 5, paddingLeft: 24, lineHeight: 1.45 }}>{intro}</div>
-      {tech && <div style={{ fontSize: 11, color: '#606060', marginTop: 2, paddingLeft: 24, lineHeight: 1.45 }}>{tech}</div>}
+      <div style={{ fontSize: 12.5, color: 'var(--text-tertiary)', marginTop: 5, paddingLeft: 24, lineHeight: 1.45 }}>{intro}</div>
+      {tech && <div style={{ fontSize: 11, color: 'var(--text-quaternary)', marginTop: 2, paddingLeft: 24, lineHeight: 1.45 }}>{tech}</div>}
     </div>
   )
 }

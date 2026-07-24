@@ -32,9 +32,9 @@ const LAYER_ICON: Record<SkillLayer, React.ReactNode> = {
 }
 
 const LAYER_COLORS: Record<SkillLayer, string> = {
-  explicit: '#38BDF8',
-  auto:     '#A3E635',
-  unused:   '#404040',
+  explicit: 'var(--text-info)',
+  auto:     'var(--health-success)',
+  unused:   'var(--text-ghost)',
 }
 
 function SkillLayerChip({ layer, tooltip }: { layer: SkillLayer; tooltip: string }) {
@@ -50,8 +50,11 @@ function SkillLayerChip({ layer, tooltip }: { layer: SkillLayer; tooltip: string
         fontFamily: 'monospace',
         padding: '1px 5px',
         borderRadius: 3,
-        border: `1px solid ${color}44`,
-        background: `${color}14`,
+        // T-417 #2: `color` is a var(--…) string post-reskin; `${color}44` / `${color}14`
+        // were invalid CSS (border+tint dropped). color-mix() is valid for var()/hex.
+        // 0x44≈27%, 0x14≈8%.
+        border: `1px solid color-mix(in srgb, ${color} 27%, transparent)`,
+        background: `color-mix(in srgb, ${color} 8%, transparent)`,
         color,
         flexShrink: 0,
         cursor: 'default',
@@ -264,7 +267,7 @@ const wrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   minHeight: 0,
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }
 
 const toolbar: React.CSSProperties = {
@@ -272,16 +275,16 @@ const toolbar: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '8px 12px',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
   flexShrink: 0,
   flexWrap: 'wrap',
 }
 
 const searchInput: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 12,
   padding: '3px 8px',
   outline: 'none',
@@ -305,9 +308,10 @@ function personaChipStyle(active: boolean, color: string): React.CSSProperties {
     fontFamily: 'monospace',
     padding: '2px 7px',
     borderRadius: 10,
-    border: `1px solid ${active ? color : '#2A2A2A'}`,
-    background: active ? `${color}22` : 'transparent',
-    color: active ? color : '#707070',
+    border: `1px solid ${active ? color : 'var(--text-ghost)'}`,
+    // T-417 #2: `${color}22` was invalid CSS post-reskin (tint dropped). 0x22≈13%.
+    background: active ? `color-mix(in srgb, ${color} 13%, transparent)` : 'transparent',
+    color: active ? color : 'var(--text-quaternary)',
     cursor: 'pointer',
     userSelect: 'none',
   }
@@ -315,7 +319,7 @@ function personaChipStyle(active: boolean, color: string): React.CSSProperties {
 
 const personaCountBadge: React.CSSProperties = {
   fontSize: 9,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   marginLeft: 2,
   fontFamily: 'monospace',
 }
@@ -325,9 +329,9 @@ function assignedChipStyle(active: boolean): React.CSSProperties {
     fontSize: 10,
     padding: '2px 7px',
     borderRadius: 10,
-    border: `1px solid ${active ? '#38BDF8' : '#2A2A2A'}`,
-    background: active ? '#0A1828' : 'transparent',
-    color: active ? '#38BDF8' : '#707070',
+    border: `1px solid ${active ? 'var(--health-info)' : 'var(--border-inline)'}`,
+    background: active ? 'var(--health-info-subtle)' : 'transparent',
+    color: active ? 'var(--text-info)' : 'var(--text-quaternary)',
     cursor: 'pointer',
     userSelect: 'none',
     fontFamily: 'inherit',
@@ -349,7 +353,7 @@ const table: React.CSSProperties = {
 const headerRow: React.CSSProperties = {
   position: 'sticky',
   top: 0,
-  background: '#141414',
+  background: 'var(--bg-surface-on)',
   zIndex: 1,
 }
 
@@ -358,10 +362,10 @@ const thSkill: React.CSSProperties = {
   padding: '6px 12px',
   fontSize: 10,
   fontWeight: 600,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const thLayer: React.CSSProperties = {
@@ -370,10 +374,10 @@ const thLayer: React.CSSProperties = {
   padding: '6px 8px',
   fontSize: 10,
   fontWeight: 600,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
   whiteSpace: 'nowrap',
 }
 
@@ -383,9 +387,9 @@ const thPersona: React.CSSProperties = {
   padding: '6px 4px',
   fontSize: 10,
   fontWeight: 600,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const personaDot: React.CSSProperties = {
@@ -397,12 +401,12 @@ const personaDot: React.CSSProperties = {
 }
 
 const tr: React.CSSProperties = {
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const trFocus: React.CSSProperties = {
-  background: '#1f3a5f',
-  borderBottom: '1px solid #1A1A1A',
+  background: 'var(--health-info-subtle)',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const tdSkill: React.CSSProperties = {
@@ -411,7 +415,7 @@ const tdSkill: React.CSSProperties = {
 }
 
 const loadingPane: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 12,
   padding: '24px 16px',
 }
@@ -422,19 +426,19 @@ const emptyPane: React.CSSProperties = {
 
 const emptyPrimary: React.CSSProperties = {
   fontSize: 12,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   marginBottom: 4,
 }
 
 const emptySecondary: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
 }
 
 const skillIdStyle: React.CSSProperties = {
   fontFamily: 'monospace',
   fontSize: 11,
-  color: '#D0D0D0',
+  color: 'var(--text-secondary)',
   marginRight: 6,
 }
 
@@ -454,17 +458,17 @@ const tdCheck: React.CSSProperties = {
 
 const addSkillCell: React.CSSProperties = {
   padding: '10px 12px',
-  borderTop: '1px solid #1E1E1E',
+  borderTop: '1px solid var(--border-section)',
 }
 
 const addSkillDisabled: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontFamily: 'monospace',
 }
 
 const addSkillPhase5: React.CSSProperties = {
   fontSize: 10,
-  color: '#2A2A2A',
+  color: 'var(--text-ghost)',
 }
 

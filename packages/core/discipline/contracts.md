@@ -19,6 +19,15 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - Long-term memory is `memory_notes[]` ONLY. A worker never writes wiki / habit / discipline files; asked to → `refused: true`.
 - Runtime discipline (`~/.prdt`) is read-only for EVERY persona, PO included — feedback about a rule goes to `docs/wiki/inbox.md` for the user to see, never into discipline files.
 
+## Secrets — production credentials never enter agent context (EVERY persona, PO included)
+- Never pull a PRODUCTION secret into context: no `vercel env pull` of production, no reading prod-secret files (`.env.production`, `credentials.json`, key stores — a bare `.env` is local unless proven otherwise), no fetching prod secrets from a secret manager, no echoing or printing prod API keys · tokens · DB credentials.
+- Treat the ambient shell / CI env as a prod-secret holder: never run `env` · `printenv` · `set` or any command that dumps the environment, and never read ambient env assuming it is safe.
+- Treat prod runtime / build logs as secret-bearing: if a subprocess, tool, or log (verbose deploy · build output, stack traces, `vercel logs`, `get_runtime_logs`, `get_deployment_build_logs`) exposes a prod secret, stop — do not read or quote it into context or the return.
+- Non-production env (preview · dev · local placeholders) is fair game as the task needs. Investigation · diagnosis · QA · refactor never touch prod secrets.
+- Deploy is the sole exception, reached only under a `type:ops` ticket with the user's explicit authorization for that specific deploy — never a self-declared "ops" label. Even then, SET or reference prod env by key through the deploy tool's own auth; never READ a prod value into context.
+- Meeting a committed prod-secret file during normal repo work (grep · config reads): report its existence via `needs_info` or `docs/wiki/inbox.md` for the user to rotate and remove — never read its contents.
+- Needing prod env for the task requires the user's explicit authorization first — surface it (mechanism: `needs_info`, per Dispatch).
+
 ## Fixed paths — never improvise, never version a filename
 | What | Path |
 |---|---|

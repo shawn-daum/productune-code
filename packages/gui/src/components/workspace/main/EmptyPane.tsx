@@ -61,8 +61,8 @@ const logo: React.CSSProperties = {
   width: 28,
   height: 28,
   borderRadius: 6,
-  background: '#8B5CF6',
-  color: '#0A0A0A',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   fontSize: 18,
   fontWeight: 800,
   display: 'flex',
@@ -74,7 +74,7 @@ const logo: React.CSSProperties = {
 
 const title: React.CSSProperties = {
   fontSize: 13,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   textAlign: 'center',
 }
 
@@ -90,7 +90,7 @@ const row: React.CSSProperties = {
   alignItems: 'center',
   gap: 12,
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
 }
 
 const chordWrap: React.CSSProperties = {
@@ -107,24 +107,24 @@ const kbd: React.CSSProperties = {
   minWidth: 18,
   height: 18,
   padding: '0 4px',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
-  background: '#141414',
-  color: '#707070',
+  background: 'var(--bg-surface-on)',
+  color: 'var(--text-quaternary)',
   fontSize: 10,
   fontFamily: 'monospace',
 }
 
 const rowLabel: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 const ctaBtn: React.CSSProperties = {
   marginTop: 8,
   height: 28,
   padding: '0 16px',
-  background: '#8B5CF6',
-  color: '#0F0F0F',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 11,

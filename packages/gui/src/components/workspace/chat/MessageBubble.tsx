@@ -27,10 +27,10 @@ import { ImageChip, FileChip, chipRow } from './ImageChip'
 // T-006 Option B — PO = violet #8B5CF6 (was orange #FF6B2B)
 // designer moved to orange #FB923C (no longer violet)
 const PERSONA_COLOR: Record<string, string> = {
-  po:       '#8B5CF6',
-  designer: '#FB923C',
-  dev:      '#38BDF8',
-  qa:       '#34D399',
+  po:       'var(--accent)',
+  designer: 'var(--persona-designer)',
+  dev:      'var(--text-info)',
+  qa:       'var(--health-success)',
 }
 
 const PERSONA_LABEL: Record<string, string> = {
@@ -97,7 +97,7 @@ export default function MessageBubble({ message }: Props) {
 // ── Persona bubble (po / designer / dev / qa) ────────────────────────────────
 
 function PersonaBubble({ message, kind }: { message: Message; kind: 'po' | 'designer' | 'dev' | 'qa' }) {
-  const color = PERSONA_COLOR[kind] ?? '#8B5CF6'
+  const color = PERSONA_COLOR[kind] ?? 'var(--accent)'
   const label = PERSONA_LABEL[kind] ?? kind
   const time = formatTime(message.created_at)
 
@@ -218,18 +218,18 @@ const cmName: React.CSSProperties = {
 
 const cmNameUser: React.CSSProperties = {
   fontWeight: 600,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const cmTime: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
 }
 
 const cmBubble: React.CSSProperties = {
   padding: '7px 10px',
   borderRadius: '0 5px 5px 5px',
-  background: '#1A1A1A',
-  color: '#E5E5E5',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-primary)',
   fontSize: 12,
   lineHeight: 1.45,
   maxWidth: '95%',
@@ -237,14 +237,14 @@ const cmBubble: React.CSSProperties = {
 }
 
 const userBubble: React.CSSProperties = {
-  background: '#1E1E1E',
+  background: 'var(--bg-surface-onlayer)',
   borderRadius: '5px 0 5px 5px',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
 }
 
 const traceLine: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   padding: '2px 4px',
   margin: '2px 0',
@@ -255,7 +255,7 @@ const traceLine: React.CSSProperties = {
 // removed by T-144). 1s step-end = crisp typing-cursor blink. See
 // ensureCursorKeyframe for the once-guarded injection + reduced-motion guard.
 const cursorStyle: React.CSSProperties = {
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   marginLeft: 2,
   animation: 'mb-cursor-blink 1s step-end infinite',
 }

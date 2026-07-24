@@ -52,7 +52,7 @@ export default function ContextMenu({ x, y, items, onClose }: Props) {
           style={itemStyle(!!item.disabled)}
           onClick={item.onClick}
           onMouseEnter={(e) => {
-            if (!item.disabled) (e.currentTarget as HTMLButtonElement).style.background = '#2a2a2a'
+            if (!item.disabled) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
           }}
           onMouseLeave={(e) => {
             (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
@@ -73,8 +73,8 @@ function menuStyle(x: number, y: number): React.CSSProperties {
     top: y,
     left: x,
     zIndex: 9999,
-    background: '#1c1c1c',
-    border: '1px solid #333',
+    background: 'var(--bg-surface-onlayer)',
+    border: '1px solid var(--border-inline)',
     borderRadius: 6,
     boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
     padding: '4px 0',
@@ -91,7 +91,7 @@ function itemStyle(disabled: boolean): React.CSSProperties {
     textAlign: 'left',
     padding: '5px 14px',
     fontSize: 13,
-    color: disabled ? '#404040' : '#C8C8C8',
+    color: disabled ? 'var(--text-ghost)' : 'var(--text-secondary)',
     cursor: disabled ? 'not-allowed' : 'pointer',
   }
 }

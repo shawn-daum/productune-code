@@ -101,7 +101,7 @@ const iconWrap: React.CSSProperties = {
 
 const msgText: React.CSSProperties = {
   fontSize: 11,
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -120,7 +120,7 @@ const dismissBtn: React.CSSProperties = {
   height: 20,
   background: 'transparent',
   border: 'none',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 14,
   cursor: 'pointer',
   borderRadius: 3,

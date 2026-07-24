@@ -19,12 +19,12 @@ export default function Step4_Complete({ completing, done, completeError, comple
       <div style={{ ...body, alignItems: 'center', textAlign: 'center', paddingTop: 32, paddingBottom: 32 }}>
         {completing && (
           <>
-            <Loader2 size={32} className="pdt-spin" color="#A0A0A0" style={{ marginBottom: 16 }} />
-            <div style={{ fontSize: 14, color: '#A0A0A0' }}>{t('onboarding.step4.applying')}</div>
+            <Loader2 size={32} className="pdt-spin" style={{ color: 'var(--text-tertiary)', marginBottom: 16 }} />
+            <div style={{ fontSize: 14, color: 'var(--text-tertiary)' }}>{t('onboarding.step4.applying')}</div>
             <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', width: '100%' }}>
               {completionStepKeys.map(key => (
-                <div key={key} style={{ fontSize: 12, color: '#505050', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ color: '#505050' }}>◌</span>
+                <div key={key} style={{ fontSize: 12, color: 'var(--text-disabled)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: 'var(--text-disabled)' }}>◌</span>
                   {t(key)}
                 </div>
               ))}
@@ -34,11 +34,11 @@ export default function Step4_Complete({ completing, done, completeError, comple
 
         {!completing && done && (
           <>
-            <CheckCircle2 size={48} color="#34D399" strokeWidth={1.75} style={{ marginBottom: 12 }} />
+            <CheckCircle2 size={48} strokeWidth={1.75} style={{ color: 'var(--health-success)', marginBottom: 12 }} />
             <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{t('onboarding.step4.done')}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, textAlign: 'left', width: '100%', marginBottom: 24 }}>
               {completionStepKeys.map(key => (
-                <div key={key} style={{ fontSize: 12, color: '#34D399', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div key={key} style={{ fontSize: 12, color: 'var(--health-success)', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Check size={12} strokeWidth={3} />
                   {t(key)}
                 </div>
@@ -52,9 +52,9 @@ export default function Step4_Complete({ completing, done, completeError, comple
 
         {!completing && !done && completeError && (
           <>
-            <XCircle size={32} color="#EF4444" strokeWidth={1.75} style={{ marginBottom: 12 }} />
+            <XCircle size={32} strokeWidth={1.75} style={{ color: 'var(--health-error)', marginBottom: 12 }} />
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>{t('onboarding.step4.failed')}</div>
-            <div style={{ fontSize: 12, color: '#EF4444', marginBottom: 24, wordBreak: 'break-all' }}>
+            <div style={{ fontSize: 12, color: 'var(--health-error)', marginBottom: 24, wordBreak: 'break-all' }}>
               {completeError}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>

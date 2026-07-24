@@ -253,8 +253,8 @@ export default function PendingPromotionDrain({ projectDir, claudeSessionId, onD
 
 const container: React.CSSProperties = {
   margin: '8px 0',
-  background: '#0F0F0F',
-  border: '1px solid #2A1808',
+  background: 'var(--bg-surface-base)',
+  border: '1px solid var(--health-warn)',
   borderRadius: 6,
   overflow: 'hidden',
 }
@@ -264,22 +264,22 @@ const headerRow: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '6px 12px',
-  background: '#1A0F06',
-  borderBottom: '1px solid #2A1808',
+  background: 'var(--health-warn-subtle)',
+  borderBottom: '1px solid var(--health-warn)',
 }
 
 const headerLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
 }
 
 const headerCount: React.CSSProperties = {
   fontSize: 10,
-  color: '#A04020',
-  background: '#2A1808',
+  color: 'var(--health-error)',
+  background: 'var(--health-warn)',
   padding: '1px 6px',
   borderRadius: 10,
 }
@@ -289,7 +289,7 @@ const card: React.CSSProperties = {
   alignItems: 'flex-start',
   gap: 8,
   padding: '10px 12px',
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const cardBody: React.CSSProperties = {
@@ -309,7 +309,7 @@ const cardMeta: React.CSSProperties = {
 const indexBadge: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   minWidth: 16,
   textAlign: 'center',
   marginTop: 2,
@@ -318,8 +318,8 @@ const indexBadge: React.CSSProperties = {
 const personaTag: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: '#8B5CF6',
-  background: '#120A2A',
+  color: 'var(--accent)',
+  background: 'var(--accent-subtle)',
   padding: '1px 6px',
   borderRadius: 3,
   fontFamily: 'monospace',
@@ -327,8 +327,8 @@ const personaTag: React.CSSProperties = {
 
 const tierTag: React.CSSProperties = {
   fontSize: 10,
-  color: '#A0A0A0',
-  background: '#1A1A1A',
+  color: 'var(--text-tertiary)',
+  background: 'var(--bg-surface-onlayer)',
   padding: '1px 6px',
   borderRadius: 3,
   fontFamily: 'monospace',
@@ -336,7 +336,7 @@ const tierTag: React.CSSProperties = {
 
 const targetText: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -346,14 +346,14 @@ const targetText: React.CSSProperties = {
 
 const deltaText: React.CSSProperties = {
   fontSize: 12,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.5,
   wordBreak: 'break-word',
 }
 
 const rationaleText: React.CSSProperties = {
   fontSize: 11,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   fontStyle: 'italic',
 }
 
@@ -376,10 +376,10 @@ const editActions: React.CSSProperties = {
 }
 
 const editArea: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #3A3A3A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 12,
   padding: '6px 8px',
   resize: 'vertical',
@@ -399,20 +399,20 @@ const btnBase: React.CSSProperties = {
 
 const btnSave: React.CSSProperties = {
   ...btnBase,
-  background: '#8B5CF6',
-  color: '#FFFFFF',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
 }
 
 const btnEdit: React.CSSProperties = {
   ...btnBase,
-  background: '#2A2A2A',
-  color: '#C0C0C0',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-secondary)',
 }
 
 const btnSkip: React.CSSProperties = {
   ...btnBase,
-  background: '#1A1A1A',
-  color: '#707070',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-quaternary)',
 }
 
 const bulkRow: React.CSSProperties = {
@@ -420,22 +420,22 @@ const bulkRow: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '8px 12px',
-  background: '#141414',
-  borderTop: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-on)',
+  borderTop: '1px solid var(--border-item)',
 }
 
 const bulkLabel: React.CSSProperties = {
   fontSize: 11,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   flexShrink: 0,
 }
 
 const bulkInput_: React.CSSProperties = {
   flex: 1,
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 12,
   padding: '3px 8px',
   outline: 'none',
@@ -449,9 +449,9 @@ function toastStyle(ok: boolean): React.CSSProperties {
     alignItems: 'center',
     padding: '6px 8px 6px 12px',
     fontSize: 11,
-    color: ok ? '#34D399' : '#E04040',
-    background: ok ? '#0A2A1A' : '#2A0808',
-    borderTop: `1px solid ${ok ? '#1A3A1A' : '#3A1A1A'}`,
+    color: ok ? 'var(--health-success)' : 'var(--status-blocked)',
+    background: ok ? 'var(--health-success-subtle)' : 'var(--health-error-subtle)',
+    borderTop: `1px solid ${ok ? 'var(--health-success)' : 'var(--health-error)'}`,
   }
 }
 

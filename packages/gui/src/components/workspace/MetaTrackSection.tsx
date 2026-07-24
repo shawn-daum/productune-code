@@ -55,7 +55,7 @@ export default function MetaTrackSection({ projectDir }: { projectDir: string })
   return (
     <div style={sectionWrap}>
       <button
-        style={{ ...headerBtn, background: hovered ? '#1A1A1A' : 'transparent' }}
+        style={{ ...headerBtn, background: hovered ? 'var(--bg-surface-onlayer)' : 'transparent' }}
         onClick={() => setExpanded((v) => !v)}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -86,7 +86,7 @@ export default function MetaTrackSection({ projectDir }: { projectDir: string })
 // ── Styles — sidebar-density, matches HistoryPane look ───────────────────────
 
 const sectionWrap: React.CSSProperties = {
-  borderTop: '1px solid #1F1F1F', // --border-default
+  borderTop: '1px solid var(--border-section)', // --border-default
   marginTop: 8,
   padding: '4px 4px 8px',
   flexShrink: 0,
@@ -101,19 +101,19 @@ const headerBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   textAlign: 'left',
 }
 
 const headerLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const headerCount: React.CSSProperties = {
   fontSize: 10,
-  color: '#A0A0A0', // --text-muted (was #606060, AA-large 미달)
+  color: 'var(--text-tertiary)', // --text-muted (was var(--text-quaternary), AA-large 미달)
   marginLeft: 'auto',
 }
 
@@ -137,13 +137,13 @@ const commitRow: React.CSSProperties = {
 const commitDate: React.CSSProperties = {
   fontSize: 10,
   fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-  color: '#707070', // --text-faint (was #606060, AA-large 미달)
+  color: 'var(--text-quaternary)', // --text-faint (was var(--text-quaternary), AA-large 미달)
   flexShrink: 0,
 }
 
 const commitSummary: React.CSSProperties = {
   fontSize: 11,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',

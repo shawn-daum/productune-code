@@ -20,12 +20,12 @@ export default function EngineStatusRow({ name, status, installUrl, installHint,
     <div style={engineRow}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         {isReady
-          ? <Check size={15} color="#34D399" strokeWidth={3} />
+          ? <Check size={15} style={{ color: 'var(--health-success)' }} strokeWidth={3} />
           : status?.installed
-            ? <AlertTriangle size={15} color="#FBBF24" strokeWidth={2} />
-            : <X size={15} color="#EF4444" strokeWidth={3} />}
+            ? <AlertTriangle size={15} style={{ color: 'var(--health-warn)' }} strokeWidth={2} />
+            : <X size={15} style={{ color: 'var(--health-error)' }} strokeWidth={3} />}
         <span style={{ fontWeight: 600, fontSize: 13 }}>{name}</span>
-        <span style={{ fontSize: 11, color: '#505050', marginLeft: 'auto' }}>
+        <span style={{ fontSize: 11, color: 'var(--text-disabled)', marginLeft: 'auto' }}>
           {status === null
             ? t('onboarding.step2.statusChecking')
             : isReady
@@ -38,7 +38,7 @@ export default function EngineStatusRow({ name, status, installUrl, installHint,
 
       {status && !status.installed && (
         <div style={{ paddingLeft: 24 }}>
-          <div style={{ fontSize: 11, color: '#505050', fontFamily: 'monospace', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-disabled)', fontFamily: 'monospace', marginBottom: 6 }}>
             {installHint}
           </div>
           <button

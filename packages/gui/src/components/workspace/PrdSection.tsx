@@ -82,15 +82,15 @@ export default function PrdSection({ versionId, compact }: Props) {
         style={compact ? { ...prdRowStyle, margin: '2px 8px 6px', width: 'auto' } : prdRowStyle}
         onClick={openPrd}
         onMouseEnter={(e) => {
-          ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#2A2A2A'
-          ;(e.currentTarget as HTMLButtonElement).style.background = '#1A1A1A'
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--text-ghost)'
+          ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-onlayer)'
         }}
         onMouseLeave={(e) => {
-          ;(e.currentTarget as HTMLButtonElement).style.borderColor = '#1A1A1A'
-          ;(e.currentTarget as HTMLButtonElement).style.background = '#141414'
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--text-ghost)'
+          ;(e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-surface-on)'
         }}
       >
-        <FileText size={12} style={{ color: '#505050', flexShrink: 0 }} />
+        <FileText size={12} style={{ color: 'var(--text-disabled)', flexShrink: 0 }} />
         <span style={prdRowLabel}>{prd.relPath}</span>
         <span style={prdRowArrow}>↗</span>
       </button>
@@ -128,12 +128,12 @@ const sectionTitle: React.CSSProperties = {
   margin: '0 0 12px',
   fontSize: 18,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const prdNonePlaceholder: React.CSSProperties = {
   fontSize: 12,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   marginLeft: 8,
 }
 
@@ -142,8 +142,8 @@ const prdRowStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '7px 10px',
-  background: '#141414',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-item)',
   borderRadius: 4,
   fontSize: 12,
   cursor: 'pointer',
@@ -154,7 +154,7 @@ const prdRowStyle: React.CSSProperties = {
 }
 
 const prdRowLabel: React.CSSProperties = {
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   fontSize: 11,
   flex: 1,
@@ -165,7 +165,7 @@ const prdRowLabel: React.CSSProperties = {
 
 const prdRowArrow: React.CSSProperties = {
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   flexShrink: 0,
 }
 
@@ -173,7 +173,7 @@ const prdRowArrow: React.CSSProperties = {
 const compactWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const compactHdr: React.CSSProperties = {
@@ -186,7 +186,7 @@ const compactHdr: React.CSSProperties = {
 const compactHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   flex: 1,
@@ -195,7 +195,7 @@ const compactHdrText: React.CSSProperties = {
 
 const prdNoneCompact: React.CSSProperties = {
   fontSize: 10,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontStyle: 'italic',
   padding: '2px 10px 8px',
 }

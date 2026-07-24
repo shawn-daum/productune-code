@@ -71,7 +71,7 @@ export default function ProjectDeleteConfirmModal({ slug, projectDir, onConfirm,
     >
       <div style={modal} onClick={(e) => e.stopPropagation()}>
         <div style={titleRow}>
-          <AlertTriangle size={16} color="#F87171" style={{ flexShrink: 0 }} />
+          <AlertTriangle size={16} style={{ color: 'var(--health-error)', flexShrink: 0 }} />
           <h2 style={titleStyle} id="pdcm-title">{t('app.home.delete.title', { slug })}</h2>
         </div>
 
@@ -123,8 +123,8 @@ const overlay: React.CSSProperties = {
 }
 
 const modal: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   padding: '24px 28px',
   width: 460,
@@ -146,22 +146,22 @@ const titleStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 15,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const bodyStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   lineHeight: 1.55,
 }
 
 const pathBox: React.CSSProperties = {
   fontSize: 11,
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  color: '#B8B8B8',
-  background: '#121212',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-secondary)',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '8px 10px',
   wordBreak: 'break-all',
@@ -170,7 +170,7 @@ const pathBox: React.CSSProperties = {
 const warningStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#F87171',
+  color: 'var(--health-error)',
   fontWeight: 600,
   lineHeight: 1.5,
 }
@@ -178,7 +178,7 @@ const warningStyle: React.CSSProperties = {
 const errorStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 11,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   lineHeight: 1.4,
 }
 
@@ -192,8 +192,8 @@ const actions: React.CSSProperties = {
 const btnDanger: React.CSSProperties = {
   height: 30,
   padding: '0 16px',
-  background: '#DC2626',
-  color: '#fff',
+  background: 'var(--health-error)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,
@@ -208,9 +208,9 @@ const btnDanger: React.CSSProperties = {
 const btnGhost: React.CSSProperties = {
   height: 30,
   padding: '0 12px',
-  background: '#242424',
-  color: '#E0E0E0',
-  border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-primary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   fontSize: 12,
   cursor: 'pointer',

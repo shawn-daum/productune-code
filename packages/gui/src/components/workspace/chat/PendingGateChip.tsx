@@ -135,7 +135,7 @@ export default function PendingGateChip() {
 
             {/* head */}
             <div style={popHeadS}>
-              <AlertCircle size={11} strokeWidth={2} color="#FBBF24" />
+              <AlertCircle size={11} strokeWidth={2} style={{ color: 'var(--health-warn)' }} />
               <span style={popTitleS}>{t('workspace.gate.title')}</span>
               <button style={closeXS} onClick={() => setOpen(false)} aria-label={t('common.close')}>
                 <X size={12} strokeWidth={2} />
@@ -146,9 +146,9 @@ export default function PendingGateChip() {
             <div style={popBodyS}>
               {/* phase pills */}
               <div style={pillRowS}>
-                <span style={makePill('#38BDF8', 'rgba(56,189,248,0.12)')}>{fromName}</span>
+                <span style={makePill('var(--health-info)', 'rgba(56,189,248,0.12)')}>{fromName}</span>
                 <span style={pillArrowS}>→</span>
-                <span style={makePill('#34D399', 'rgba(52,211,153,0.12)')}>{toName}</span>
+                <span style={makePill('var(--health-success)', 'rgba(52,211,153,0.12)')}>{toName}</span>
               </div>
 
               {/* gate prompt */}
@@ -221,8 +221,7 @@ export default function PendingGateChip() {
         <ChevronDown
           size={11}
           strokeWidth={2}
-          color="#A0A0A0"
-          style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.12s' }}
+          style={{ color: 'var(--text-tertiary)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.12s' }}
         />
       </div>
       {popover}
@@ -235,7 +234,7 @@ export default function PendingGateChip() {
 const chipRowS: React.CSSProperties = {
   flexShrink: 0,
   padding: '5px 10px',
-  borderBottom: '1px solid #1F1F1F',           // --border-default
+  borderBottom: '1px solid var(--border-section)',           // --border-default
   background: 'rgba(251,191,36,0.07)',           // --health-warn 7% alpha
   display: 'flex',
   alignItems: 'center',
@@ -251,7 +250,7 @@ const pulseDotS: React.CSSProperties = {
   width: 6,
   height: 6,
   borderRadius: '50%',
-  background: '#FBBF24',                         // --health-warn
+  background: 'var(--health-warn)',                         // --health-warn
   flexShrink: 0,
   animationName: 'pdt-persona-blink',
   animationDuration: '1.6s',
@@ -263,7 +262,7 @@ const pulseDotS: React.CSSProperties = {
 const chipLabelS: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: '#FBBF24',                              // --health-warn
+  color: 'var(--health-warn)',                              // --health-warn
   flex: 1,
 }
 
@@ -271,8 +270,8 @@ const chipCountS: React.CSSProperties = {
   minWidth: 14,
   height: 14,
   borderRadius: 7,
-  background: '#FBBF24',
-  color: '#000',
+  background: 'var(--health-warn)',
+  color: 'var(--text-inverse)',
   fontSize: 9,
   fontWeight: 700,
   display: 'inline-flex',
@@ -294,7 +293,7 @@ const backdropS: React.CSSProperties = {
 const popoverS: React.CSSProperties = {
   position: 'fixed',
   width: 284,
-  background: '#1C1C20',                         // --surface-modal
+  background: 'var(--bg-layer-popup)',                         // --surface-modal
   border: '1px solid rgba(251,191,36,0.4)',
   borderRadius: 7,
   boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
@@ -307,7 +306,7 @@ const arrowS: React.CSSProperties = {
   right: -5,
   width: 9,
   height: 9,
-  background: '#1C1C20',
+  background: 'var(--bg-layer-popup)',
   borderRight: '1px solid rgba(251,191,36,0.4)',
   borderTop: '1px solid rgba(251,191,36,0.4)',
   transform: 'rotate(45deg)',
@@ -315,7 +314,7 @@ const arrowS: React.CSSProperties = {
 
 const popHeadS: React.CSSProperties = {
   padding: '8px 10px 7px',
-  borderBottom: '1px solid #1A1A1A',             // --border-subtle
+  borderBottom: '1px solid var(--border-item)',             // --border-subtle
   display: 'flex',
   alignItems: 'center',
   gap: 5,
@@ -324,7 +323,7 @@ const popHeadS: React.CSSProperties = {
 const popTitleS: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#FBBF24',
+  color: 'var(--health-warn)',
   flex: 1,
   textTransform: 'uppercase',
   letterSpacing: '0.07em',
@@ -334,7 +333,7 @@ const closeXS: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  color: '#A0A0A0',                              // --text-muted
+  color: 'var(--text-tertiary)',                              // --text-muted
   padding: 0,
   display: 'flex',
   alignItems: 'center',
@@ -365,18 +364,18 @@ function makePill(color: string, bg: string): React.CSSProperties {
   }
 }
 
-const pillArrowS: React.CSSProperties = { fontSize: 9, color: '#A0A0A0' }
+const pillArrowS: React.CSSProperties = { fontSize: 9, color: 'var(--text-tertiary)' }
 
 const gateQS: React.CSSProperties = {
   fontSize: 11,
-  color: '#E8E8EA',                              // --text-primary
+  color: 'var(--text-primary)',                              // --text-primary
   lineHeight: 1.6,
   marginBottom: 6,
 }
 
 const gateMetaS: React.CSSProperties = {
   fontSize: 10,
-  color: '#A0A0A0',                              // --text-muted
+  color: 'var(--text-tertiary)',                              // --text-muted
   marginBottom: 8,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -392,12 +391,12 @@ const ansRowS: React.CSSProperties = {
 
 const ansInputS: React.CSSProperties = {
   flex: 1,
-  background: '#1A1A1A',                         // --surface-subpanel
-  border: '1px solid #2A2A2A',                   // --border-strong
+  background: 'var(--bg-surface-onlayer)',                         // --surface-subpanel
+  border: '1px solid var(--border-inline)',                   // --border-strong
   borderRadius: 5,
   padding: '5px 7px',
   fontSize: 11,
-  color: '#F0F0F0',                              // --text-emphasis
+  color: 'var(--text-primary)',                              // --text-emphasis
   outline: 'none',
   fontFamily: 'inherit',
   resize: 'none',
@@ -408,10 +407,10 @@ const ansInputS: React.CSSProperties = {
 const sendBtnS: React.CSSProperties = {
   height: 28,
   padding: '0 9px',
-  background: '#8B5CF6',                         // --accent
+  background: 'var(--accent)',                         // --accent
   border: 'none',
   borderRadius: 5,
-  color: '#0F0F0F',
+  color: 'var(--text-static-white)',
   fontSize: 10,
   fontWeight: 600,
   cursor: 'pointer',
@@ -428,7 +427,7 @@ const approveBtnS: React.CSSProperties = {
   flex: 1,
   background: 'rgba(52,211,153,0.1)',
   border: '1px solid rgba(52,211,153,0.25)',
-  color: '#34D399',                              // --status-done
+  color: 'var(--health-success)',                              // --status-done
   borderRadius: 5,
   padding: '5px 0',
   fontSize: 10,
@@ -445,7 +444,7 @@ const holdBtnS: React.CSSProperties = {
   // Ghost — §1.5.1: 3번째 CTA는 ghost/text link으로 강등
   background: 'transparent',
   border: 'none',
-  color: '#A0A0A0',                              // --text-muted
+  color: 'var(--text-tertiary)',                              // --text-muted
   borderRadius: 5,
   padding: '5px 10px',
   fontSize: 10,

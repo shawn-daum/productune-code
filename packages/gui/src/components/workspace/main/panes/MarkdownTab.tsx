@@ -123,14 +123,14 @@ const toolbar: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   padding: '8px 14px',
-  borderBottom: '1px solid #1A1A1A',
-  background: '#0F0F0F',
+  borderBottom: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
 }
 
 const crumb: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -142,9 +142,9 @@ const roBadge: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   padding: '1px 6px',
-  border: '1px solid #1F1F1F',
+  border: '1px solid var(--border-section)',
   borderRadius: 20,
   flexShrink: 0,
   whiteSpace: 'nowrap',
@@ -154,12 +154,12 @@ const view: React.CSSProperties = {
   flex: 1,
   padding: '16px 20px',
   overflow: 'auto',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }
 
 const hint: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontStyle: 'italic',
 }

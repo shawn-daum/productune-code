@@ -123,11 +123,11 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
           }}
           onMouseEnter={(e) => {
             if (!isSelected)
-              (e.currentTarget as HTMLDivElement).style.background = '#181818'
+              (e.currentTarget as HTMLDivElement).style.background = 'var(--bg-surface-on)'
           }}
           onMouseLeave={(e) => {
             (e.currentTarget as HTMLDivElement).style.background =
-              isSelected ? '#1A1030' : '#141414'
+              isSelected ? 'var(--accent-subtle)' : 'var(--bg-surface-on)'
           }}
           onKeyDown={(e) => {
             if ((e.key === 'Enter' || e.key === ' ') && currentVersionId) {
@@ -174,7 +174,7 @@ export default function SidePanelCurrentVersion({ poState, selectedVersionId, is
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const secHdrStatic: React.CSSProperties = {
@@ -188,7 +188,7 @@ const secHdrStatic: React.CSSProperties = {
 const secHdrText: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
-  color: '#4a4a4a',
+  color: 'var(--text-disabled)',
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   userSelect: 'none',
@@ -198,7 +198,7 @@ const secHdrText: React.CSSProperties = {
 const fallbackRow: React.CSSProperties = {
   padding: '6px 10px',
   fontSize: 10,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   lineHeight: 1.4,
   cursor: 'default',
   userSelect: 'none',
@@ -211,10 +211,10 @@ const errorRow: React.CSSProperties = {
   margin: '4px 8px 10px',
   padding: '8px 10px',
   fontSize: 10,
-  color: '#FBBF24',
-  background: '#2A1A05',
-  border: '1px solid #92400E',
-  borderLeft: '3px solid #F59E0B',
+  color: 'var(--health-warn)',
+  background: 'var(--health-warn-subtle)',
+  border: '1px solid var(--health-warn)',
+  borderLeft: '3px solid var(--health-warn)',
   borderRadius: 4,
   lineHeight: 1.4,
   cursor: 'default',
@@ -224,16 +224,16 @@ const errorRow: React.CSSProperties = {
 
 function detailCard(isSelected: boolean, isFocused: boolean): React.CSSProperties {
   const borderColor = isSelected
-    ? (isFocused ? '#8B5CF6' : '#8B5CF633')
-    : '#2A2A2A'
+    ? (isFocused ? 'var(--accent)' : 'var(--accent)')
+    : 'var(--text-ghost)'
   return {
     margin: '4px 8px 10px',
     padding: '10px 12px',
     display: 'flex',
     flexDirection: 'column',
     gap: 7,
-    background: isSelected ? '#1A1030' : '#141414',
-    border: '1px solid #222222',
+    background: isSelected ? 'var(--accent-subtle)' : 'var(--bg-surface-on)',
+    border: '1px solid var(--border-section)',
     borderLeft: `3px solid ${borderColor}`,
     borderRadius: 4,
     cursor: 'pointer',
@@ -253,9 +253,9 @@ const versionPill: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#8B5CF6',
-  background: '#1A1030',
-  border: '1px solid #8B5CF650',
+  color: 'var(--accent)',
+  background: 'var(--accent-subtle)',
+  border: '1px solid var(--accent)',
   borderRadius: 3,
   padding: '2px 6px',
   whiteSpace: 'nowrap',
@@ -265,9 +265,9 @@ const versionPill: React.CSSProperties = {
 const phaseBadge: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
-  color: '#38BDF8',
-  background: '#071523',
-  border: '1px solid #38BDF830',
+  color: 'var(--text-info)',
+  background: 'var(--health-info-subtle)',
+  border: '1px solid var(--health-info)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -277,7 +277,7 @@ const phaseBadge: React.CSSProperties = {
 
 const metaKey: React.CSSProperties = {
   fontSize: 9,
-  color: '#4A4A4A',
+  color: 'var(--text-disabled)',
   fontFamily: 'monospace',
   flexShrink: 0,
   minWidth: 24,
@@ -285,7 +285,7 @@ const metaKey: React.CSSProperties = {
 
 const metaVal: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   flex: 1,
   overflow: 'hidden',
