@@ -43,8 +43,8 @@ export default function TodoChip() {
 
 const chipRow: React.CSSProperties = {
   flexShrink: 0,
-  borderBottom: '1px solid #1f1f1f',
-  background: '#0E0E0E',
+  borderBottom: '1px solid var(--border-section)',
+  background: 'var(--bg-surface-base)',
   padding: '0 12px',
   display: 'flex',
   alignItems: 'center',
@@ -58,7 +58,7 @@ const chipBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  color: '#B0B0B0',
+  color: 'var(--text-tertiary)',
   padding: '3px 0',
   fontSize: 11,
   borderRadius: 4,
@@ -67,15 +67,15 @@ const chipBtn: React.CSSProperties = {
 const chipLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 500,
-  color: '#B0B0B0',
+  color: 'var(--text-tertiary)',
 }
 
 const badge: React.CSSProperties = {
   minWidth: 16,
   height: 16,
   borderRadius: 8,
-  background: '#8B5CF6',
-  color: '#0F0F0F',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   fontSize: 10,
   fontWeight: 700,
   display: 'inline-flex',

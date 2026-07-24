@@ -16,6 +16,6 @@ const wrap: React.CSSProperties = {
   flex: 1,
   display: 'flex',
   flexDirection: 'column',
-  background: 'var(--bg-base, #0F0F0F)',
+  background: 'var(--bg-base)',
   overflowY: 'auto',
 }

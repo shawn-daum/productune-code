@@ -47,8 +47,8 @@ export default function StatusBar({ onOpenHealthBanner }: Props) {
 
 const wrap: React.CSSProperties = {
   gridArea: 'status',
-  background: '#111111',
-  borderTop: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-base)',
+  borderTop: '1px solid var(--border-inline)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',

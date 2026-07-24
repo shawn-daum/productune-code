@@ -323,11 +323,11 @@ export default function McpServerModal({ server, projectDir, isNew = false, onCl
 
 function showToast(message: string, type: 'success' | 'error' | 'info') {
   const bg =
-    type === 'success' ? '#166534' : type === 'error' ? '#7F1D1D' : '#1A2A3A'
+    type === 'success' ? 'var(--health-success)' : type === 'error' ? 'var(--health-error)' : 'var(--health-info-subtle)'
   const fg =
-    type === 'success' ? '#BBF7D0' : type === 'error' ? '#FECACA' : '#BAE6FD'
+    type === 'success' ? 'var(--health-success)' : type === 'error' ? 'var(--health-error)' : 'var(--health-info)'
   const border =
-    type === 'success' ? '#16a34a' : type === 'error' ? '#ef4444' : '#0ea5e9'
+    type === 'success' ? 'var(--health-success)' : type === 'error' ? 'var(--health-error)' : 'var(--health-info)'
 
   const el = document.createElement('div')
   el.textContent = message
@@ -365,8 +365,8 @@ const overlay: React.CSSProperties = {
 }
 
 const modal: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
   display: 'flex',
@@ -380,7 +380,7 @@ const modal: React.CSSProperties = {
 }
 
 const titleStyle: React.CSSProperties = {
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   fontSize: 15,
   fontWeight: 600,
   margin: 0,
@@ -393,16 +393,16 @@ const fieldGroup: React.CSSProperties = {
 }
 
 const labelStyle: React.CSSProperties = {
-  color: '#909090',
+  color: 'var(--text-tertiary)',
   fontSize: 11,
   fontWeight: 500,
 }
 
 const baseInput: React.CSSProperties = {
-  background: '#0F0F0F',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-base)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontFamily: 'inherit',
   fontSize: 12,
   outline: 'none',
@@ -413,7 +413,7 @@ const inputStyle: React.CSSProperties = { ...baseInput }
 
 const inputReadOnly: React.CSSProperties = {
   ...baseInput,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'default',
 }
 
@@ -423,8 +423,8 @@ const selectStyle: React.CSSProperties = {
 }
 
 const envBox: React.CSSProperties = {
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   display: 'flex',
   flexDirection: 'column',
@@ -441,7 +441,7 @@ const envRowWrap: React.CSSProperties = {
 const envRemoveBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   cursor: 'pointer',
   flexShrink: 0,
   fontFamily: 'inherit',
@@ -452,7 +452,7 @@ const envRemoveBtn: React.CSSProperties = {
 const addEnvRowBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 11,
@@ -468,9 +468,9 @@ const testRow: React.CSSProperties = {
 
 const testBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #3A3A3A',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 12,
@@ -478,17 +478,17 @@ const testBtn: React.CSSProperties = {
 }
 
 const testOkText: React.CSSProperties = {
-  color: '#4ADE80',
+  color: 'var(--health-success)',
   fontSize: 12,
 }
 
 const testErrText: React.CSSProperties = {
-  color: '#EF4444',
+  color: 'var(--health-error)',
   fontSize: 12,
 }
 
 const restartNotice: React.CSSProperties = {
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   fontSize: 11,
   lineHeight: 1.4,
 }
@@ -500,10 +500,10 @@ const footerActions: React.CSSProperties = {
 }
 
 const btnPrimary: React.CSSProperties = {
-  background: '#1D4ED8',
+  background: 'var(--health-info)',
   border: 'none',
   borderRadius: 4,
-  color: '#fff',
+  color: 'var(--text-static-white)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 12,
@@ -514,9 +514,9 @@ const btnPrimary: React.CSSProperties = {
 
 const btnSecondary: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #3A3A3A',
+  border: '1px solid var(--border-hover)',
   borderRadius: 4,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   cursor: 'pointer',
   fontFamily: 'inherit',
   fontSize: 12,

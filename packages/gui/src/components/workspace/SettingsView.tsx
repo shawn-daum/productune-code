@@ -72,7 +72,7 @@ const tabList: React.CSSProperties = {
   flexDirection: 'column',
   gap: 1,
   padding: '6px 8px',
-  borderBottom: '1px solid #2A2A2A',
+  borderBottom: '1px solid var(--border-inline)',
   flexShrink: 0,
 }
 
@@ -80,7 +80,7 @@ const tabBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   borderRadius: 4,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'pointer',
   fontSize: 12,
   fontWeight: 500,
@@ -91,7 +91,7 @@ const tabBtn: React.CSSProperties = {
 }
 
 const tabBtnActive: React.CSSProperties = {
-  background: '#1E2A3A',
-  color: '#E0E0E0',
+  background: 'var(--health-info-subtle)',
+  color: 'var(--text-primary)',
   fontWeight: 700,
 }

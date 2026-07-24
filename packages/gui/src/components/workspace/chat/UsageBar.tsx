@@ -156,12 +156,12 @@ export default function UsageBar({
         {statusbar && <span style={statusbarSep}>·</span>}
         {statusbar && sessionLabel && (
           <span style={sessionLabelStyle}>
-            <DollarSign size={10} strokeWidth={2} style={{ color: '#6A6A78', flexShrink: 0 }} />
+            <DollarSign size={10} strokeWidth={2} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
             {sessionLabel}
           </span>
         )}
         <div style={rowWrap} title={cost.hasEstimated ? t('costArchive.estimateDisclaimer') : undefined}>
-          <DollarSign size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />
+          <DollarSign size={10} strokeWidth={2} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
           <span style={costValueStyle}>{fmtCost(cost.totalCostUsd)}</span>
           <EstimatedBadge show={cost.hasEstimated} />
         </div>
@@ -179,13 +179,13 @@ export default function UsageBar({
       {statusbar && <span style={statusbarSep}>·</span>}
       {statusbar && sessionLabel && (
         <span style={sessionLabelStyle}>
-          <Clock size={10} strokeWidth={2} style={{ color: '#6A6A78', flexShrink: 0 }} />
+          <Clock size={10} strokeWidth={2} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
           {sessionLabel}
         </span>
       )}
       {payload.five_hour && (
         <UsageRow
-          icon={<Clock size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />}
+          icon={<Clock size={10} strokeWidth={2} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
           label="5h"
           axis={payload.five_hour}
           compact={statusbar}
@@ -193,7 +193,7 @@ export default function UsageBar({
       )}
       {payload.seven_day && (
         <UsageRow
-          icon={<CalendarDays size={10} strokeWidth={2} style={{ color: '#8B8B9E', flexShrink: 0 }} />}
+          icon={<CalendarDays size={10} strokeWidth={2} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />}
           label="7d"
           axis={payload.seven_day}
           compact={statusbar}
@@ -228,9 +228,9 @@ function UsageRow({ icon, label, axis, compact = false }: UsageRowProps) {
   // Color: green below 70%, yellow-green 70-89%, red 90%+.
   // No amber (#FBBF24) per ticket spec.
   const barColor =
-    pct >= 90 ? '#EF4444'  // --health-error red
-    : pct >= 70 ? '#84CC16'  // lime-500
-    : '#22C55E'              // green-500
+    pct >= 90 ? 'var(--health-error)'  // --health-error red
+    : pct >= 70 ? 'var(--health-success)'  // lime-500
+    : 'var(--health-success)'              // green-500
 
   return (
     <div
@@ -312,8 +312,8 @@ const container: React.CSSProperties = {
   flexDirection: 'column',
   gap: 3,
   padding: '4px 12px',
-  borderTop: '1px solid #1C1C1C',
-  background: '#0F0F0F',
+  borderTop: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
 }
 
 // T-PATCH-051: inline variant — no border-top/background; embedded in input row
@@ -332,8 +332,8 @@ const containerHorizontal: React.CSSProperties = {
   gap: 16,
   padding: '4px 12px',
   alignItems: 'center',
-  borderTop: '1px solid #1C1C1C',
-  background: '#0F0F0F',
+  borderTop: '1px solid var(--border-item)',
+  background: 'var(--bg-surface-base)',
   flexShrink: 0,
 }
 
@@ -351,7 +351,7 @@ const containerStatusbar: React.CSSProperties = {
 // T-PATCH-173: separator matching StatusBar's `sep` tone
 const statusbarSep: React.CSSProperties = {
   fontSize: 10,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   userSelect: 'none',
   flexShrink: 0,
   marginRight: 2,
@@ -365,7 +365,7 @@ const sessionLabelStyle: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
   letterSpacing: 0.3,
-  color: '#6A6A78',
+  color: 'var(--text-quaternary)',
   textTransform: 'uppercase',
   userSelect: 'none',
   flexShrink: 0,
@@ -383,7 +383,7 @@ const rowWrap: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 600,
-  color: '#606070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   flexShrink: 0,
   width: 16,
@@ -395,7 +395,7 @@ const track: React.CSSProperties = {
   // the 5h vs 7d fills are visually comparable regardless of reset-label text.
   width: 120,
   height: 4,
-  background: '#252530',
+  background: 'var(--bg-layer-popup)',
   borderRadius: 2,
   overflow: 'hidden',
   flexShrink: 0,
@@ -415,7 +415,7 @@ const fill: React.CSSProperties = {
 
 const pctLabel: React.CSSProperties = {
   fontSize: 9,
-  color: '#606070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   flexShrink: 0,
   width: 28,
@@ -430,7 +430,7 @@ const pctLabelCompact: React.CSSProperties = {
 
 const resetStyle: React.CSSProperties = {
   fontSize: 9,
-  color: '#505060',
+  color: 'var(--text-disabled)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   flex: 1,
   minWidth: 0,
@@ -443,7 +443,7 @@ const resetStyle: React.CSSProperties = {
 // push RunSegment); sits snug after the % with its leading "· " separator.
 const resetStyleCompact: React.CSSProperties = {
   fontSize: 9,
-  color: '#505060',
+  color: 'var(--text-disabled)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   flexShrink: 0,
   whiteSpace: 'nowrap',
@@ -454,7 +454,7 @@ const resetStyleCompact: React.CSSProperties = {
 
 const costValueStyle: React.CSSProperties = {
   fontSize: 9,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   flexShrink: 0,
 }

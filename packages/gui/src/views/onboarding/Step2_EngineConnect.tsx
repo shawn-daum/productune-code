@@ -95,7 +95,7 @@ export default function Step2_EngineConnect({
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
               {t('onboarding.step2.login.waiting')}
             </div>
-            <div style={{ fontSize: 12, color: '#909090', lineHeight: 1.5, marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.5, marginBottom: 10 }}>
               {t('onboarding.step2.login.waitingHint')}
             </div>
 
@@ -114,11 +114,11 @@ export default function Step2_EngineConnect({
             </div>
 
             {login.needsCode && (
-              <div style={{ marginTop: 12, borderTop: '1px solid #2A2A2A', paddingTop: 10 }}>
+              <div style={{ marginTop: 12, borderTop: '1px solid var(--border-inline)', paddingTop: 10 }}>
                 <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>
                   {t('onboarding.step2.login.needsCodeTitle')}
                 </div>
-                <div style={{ fontSize: 11.5, color: '#909090', lineHeight: 1.5, marginBottom: 8 }}>
+                <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)', lineHeight: 1.5, marginBottom: 8 }}>
                   {t('onboarding.step2.login.needsCodeHint')}
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -130,8 +130,8 @@ export default function Step2_EngineConnect({
                     placeholder={t('onboarding.step2.login.codePlaceholder')}
                     autoFocus
                     style={{
-                      flex: 1, background: '#0A0A0A', color: '#F0F0F0',
-                      border: '1px solid #333', borderRadius: 4,
+                      flex: 1, background: 'var(--bg-base)', color: 'var(--text-primary)',
+                      border: '1px solid var(--border-inline)', borderRadius: 4,
                       padding: '6px 10px', fontSize: 12,
                       fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
                     }}

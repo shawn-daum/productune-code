@@ -5,25 +5,25 @@ export const viewWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }
 
 export const headerWrap: React.CSSProperties = {
   flexShrink: 0,
   padding: '14px 16px 10px',
-  borderBottom: '1px solid #1E1E1E',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 export const headerTitle: React.CSSProperties = {
   fontSize: 15,
   fontWeight: 700,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   marginBottom: 4,
 }
 
 export const headerSubtitle: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
 }
 
@@ -44,9 +44,9 @@ export const cardListWrap: React.CSSProperties = {
 }
 
 export const cardWrap: React.CSSProperties = {
-  background: '#141414',
-  border: '1px solid #1F1F1F',
-  borderLeft: '2px solid #8B5CF630',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-section)',
+  borderLeft: '2px solid var(--accent)',
   borderRadius: 6,
   padding: '10px 12px',
   display: 'flex',
@@ -82,14 +82,14 @@ export const cardTicketId: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   flexShrink: 0,
 }
 
 export const cardTitle: React.CSSProperties = {
   flex: 1,
   fontSize: 12,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontWeight: 500,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -106,16 +106,16 @@ export const cardMeta: React.CSSProperties = {
 export const metaItem: React.CSSProperties = {
   fontSize: 9,
   fontFamily: 'monospace',
-  color: '#606060',
+  color: 'var(--text-quaternary)',
 }
 
 export const deployPill: React.CSSProperties = {
   fontSize: 9,
   fontWeight: 700,
   fontFamily: 'monospace',
-  color: '#22C55E',
-  background: '#0A2A0A',
-  border: '1px solid #22C55E30',
+  color: 'var(--health-success)',
+  background: 'var(--health-success-subtle)',
+  border: '1px solid var(--health-success)',
   borderRadius: 3,
   padding: '1px 5px',
   whiteSpace: 'nowrap',
@@ -137,7 +137,7 @@ export const activityRow: React.CSSProperties = {
 }
 
 export const activityPersona: React.CSSProperties = {
-  color: '#FB923C',
+  color: 'var(--persona-designer)',
   fontFamily: 'monospace',
   flexShrink: 0,
   minWidth: 90,
@@ -147,7 +147,7 @@ export const activityPersona: React.CSSProperties = {
 }
 
 export const activityResult: React.CSSProperties = {
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -160,7 +160,7 @@ export const expandBtn: React.CSSProperties = {
   border: 'none',
   cursor: 'pointer',
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   textAlign: 'left',
   padding: '2px 0',
   marginTop: 2,
@@ -172,7 +172,7 @@ export const commitList: React.CSSProperties = {
   gap: 2,
   marginTop: 4,
   padding: '6px 8px',
-  background: '#0A0A0A',
+  background: 'var(--bg-base)',
   borderRadius: 4,
 }
 
@@ -184,14 +184,14 @@ export const commitRow: React.CSSProperties = {
 }
 
 export const commitDate: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontFamily: 'monospace',
   flexShrink: 0,
   whiteSpace: 'nowrap',
 }
 
 export const commitSummary: React.CSSProperties = {
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -205,30 +205,30 @@ export const emptyWrap: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   gap: 12,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   padding: '40px 20px',
 }
 
 export const emptyIcon: React.CSSProperties = {
   fontSize: 32,
-  color: '#2A2A2A',
+  color: 'var(--text-ghost)',
 }
 
 export const emptyText: React.CSSProperties = {
   fontSize: 13,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   textAlign: 'center',
   lineHeight: 1.5,
 }
 
 export function statusPill(status: StatusKey): React.CSSProperties {
   const palette: Record<string, { fg: string; bg: string }> = {
-    'todo':        { fg: '#707070', bg: '#1A1A1A' },
-    'in-progress': { fg: '#60A8E0', bg: '#0A1828' },
-    'review':      { fg: '#E0B040', bg: '#2A2008' },
-    'done':        { fg: '#34D399', bg: '#0A2A1A' },
-    'blocked':     { fg: '#E04040', bg: '#2A0808' },
-    'abandoned':   { fg: '#505050', bg: '#141414' },
+    'todo':        { fg: 'var(--text-quaternary)', bg: 'var(--bg-surface-onlayer)' },
+    'in-progress': { fg: 'var(--health-info)', bg: 'var(--health-info-subtle)' },
+    'review':      { fg: 'var(--status-review)', bg: 'var(--health-warn-subtle)' },
+    'done':        { fg: 'var(--health-success)', bg: 'var(--health-success-subtle)' },
+    'blocked':     { fg: 'var(--status-blocked)', bg: 'var(--health-error-subtle)' },
+    'abandoned':   { fg: 'var(--text-disabled)', bg: 'var(--bg-surface-on)' },
   }
   const p = palette[status] ?? palette['todo']
   return {
@@ -252,7 +252,7 @@ export const filterBar: React.CSSProperties = {
   alignItems: 'center',
   gap: 12,
   padding: '6px 16px',
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
   flexWrap: 'wrap',
 }
 
@@ -263,12 +263,17 @@ export const filterGroup: React.CSSProperties = {
 }
 
 export function personaChipBtn(active: boolean, color: string): React.CSSProperties {
+  // T-417 #2: `color` is a var(--…) string post-reskin, so the old `color + '80'`
+  // alpha-suffix produced invalid CSS ('var(--persona-po)80') and the whole
+  // border/background declaration was dropped. color-mix() is valid for both
+  // var() and hex color inputs. 0x80≈50%, 0x18≈9%.
+  const activeBorder = `color-mix(in srgb, ${color} 50%, transparent)`
   return {
     padding: '2px 8px',
     borderRadius: 3,
-    border: `1px solid ${active ? color + '80' : '#2A2A2A'}`,
-    background: active ? color + '18' : 'transparent',
-    color: active ? color : '#505050',
+    border: `1px solid ${active ? activeBorder : 'var(--text-ghost)'}`,
+    background: active ? `color-mix(in srgb, ${color} 9%, transparent)` : 'transparent',
+    color: active ? color : 'var(--text-disabled)',
     fontSize: 10,
     fontFamily: 'monospace',
     fontWeight: active ? 700 : 400,
@@ -280,16 +285,16 @@ export function personaChipBtn(active: boolean, color: string): React.CSSPropert
 
 export const dateLabel: React.CSSProperties = {
   fontSize: 9,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontFamily: 'monospace',
   flexShrink: 0,
 }
 
 export const dateInput: React.CSSProperties = {
-  background: '#141414',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   fontSize: 10,
   fontFamily: 'monospace',
   padding: '2px 4px',
@@ -298,9 +303,9 @@ export const dateInput: React.CSSProperties = {
 
 export const resetBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 3,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 9,
   fontFamily: 'monospace',
   padding: '2px 6px',

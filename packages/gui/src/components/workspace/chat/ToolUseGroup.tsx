@@ -271,18 +271,18 @@ const headerBtn: React.CSSProperties = {
   cursor: 'pointer',
   padding: '2px 4px',
   fontSize: 10,
-  color: '#A0A0A0', // --text-muted
+  color: 'var(--text-tertiary)', // --text-muted
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 }
 
 const chevron: React.CSSProperties = {
   flexShrink: 0,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
 }
 
 const wrenchIcon: React.CSSProperties = {
   flexShrink: 0,
-  color: '#A0A0A0', // --text-muted (decorative)
+  color: 'var(--text-tertiary)', // --text-muted (decorative)
 }
 
 const headerLabel: React.CSSProperties = {
@@ -292,7 +292,7 @@ const headerLabel: React.CSSProperties = {
 const listStyle: React.CSSProperties = {
   marginLeft: 10,
   paddingLeft: 8,
-  borderLeft: '1px solid #2A2A2A',
+  borderLeft: '1px solid var(--border-inline)',
 }
 
 const rowWrap: React.CSSProperties = {
@@ -309,14 +309,14 @@ const rowBtn: React.CSSProperties = {
   cursor: 'pointer',
   padding: '1px 4px',
   fontSize: 10,
-  color: '#909090',
+  color: 'var(--text-tertiary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   textAlign: 'left',
 }
 
 const rowChevron: React.CSSProperties = {
   flexShrink: 0,
-  color: '#606060',
+  color: 'var(--text-quaternary)',
 }
 
 const rowName: React.CSSProperties = {
@@ -331,7 +331,7 @@ const rowDetail: React.CSSProperties = {
   marginLeft: 22,
   padding: '2px 4px',
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-all',
@@ -342,7 +342,7 @@ const rowDetailFallback: React.CSSProperties = {
   marginLeft: 22,
   padding: '2px 4px',
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontStyle: 'italic',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 }

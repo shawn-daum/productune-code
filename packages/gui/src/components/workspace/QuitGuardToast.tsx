@@ -98,7 +98,7 @@ export default function QuitGuardToast() {
   return (
     <div style={overlayStyle}>
       <div style={innerStyle}>
-        <LogOut size={14} style={{ flexShrink: 0, color: '#E5E5E5' }} />
+        <LogOut size={14} style={{ flexShrink: 0, color: 'var(--text-primary)' }} />
         <span style={labelStyle}>{label}</span>
       </div>
       {/* Progress bar: shrinks from full-width to 0 over timeoutMs ms */}
@@ -108,7 +108,7 @@ export default function QuitGuardToast() {
           style={{
             height: '100%',
             width: '100%',
-            backgroundColor: '#EF4444',
+            backgroundColor: 'var(--health-error)',
             borderRadius: 'inherit',
             animation: `${ANIMATION_NAME} ${timeoutMs}ms linear forwards`,
           }}
@@ -126,8 +126,8 @@ const overlayStyle: React.CSSProperties = {
   left: '50%',
   transform: 'translateX(-50%)',
   zIndex: 9999,
-  background: '#1A1A1A',
-  border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   overflow: 'hidden',
   // min-width keeps the toast readable; not interactive (pointer-events:none
@@ -145,13 +145,13 @@ const innerStyle: React.CSSProperties = {
 
 const labelStyle: React.CSSProperties = {
   fontSize: 13,
-  color: '#E5E5E5',
+  color: 'var(--text-primary)',
   userSelect: 'none',
 }
 
 const progressTrackStyle: React.CSSProperties = {
   height: 3,
-  background: '#2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
   // Rounded bottom so it matches the pill border-radius of the container.
   borderRadius: '0 0 8px 8px',
 }

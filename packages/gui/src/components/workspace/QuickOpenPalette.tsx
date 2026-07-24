@@ -196,7 +196,7 @@ function flattenRows(groups: GroupedResults): QuickOpenItem[] {
 // ── Icon helper ───────────────────────────────────────────────────────────────
 
 function ItemIcon({ source, active }: { source: QuickOpenItem['source']; active: boolean }) {
-  const color = active ? '#E8E8EA' : '#A0A0A0'
+  const color = active ? 'var(--text-primary)' : 'var(--text-tertiary)'
   const size = 16
   switch (source) {
     case 'file':     return <FileText    size={size} color={color} />
@@ -212,19 +212,19 @@ function ItemIcon({ source, active }: { source: QuickOpenItem['source']; active:
 // ── Status pill color map ─────────────────────────────────────────────────────
 
 const STATUS_PILL_STYLE: Record<string, React.CSSProperties> = {
-  todo:       { background: 'rgba(80,80,80,0.18)',   color: '#A0A0A0' },
-  'in-progress': { background: 'rgba(139,92,246,0.14)', color: '#8B5CF6' },
-  review:     { background: 'rgba(224,176,64,0.14)', color: '#E0B040' },
-  done:       { background: 'rgba(52,211,153,0.14)',  color: '#34D399' },
-  blocked:    { background: 'rgba(224,64,64,0.14)',  color: '#E04040' },
-  abandoned:  { background: 'rgba(58,58,58,0.18)',   color: '#505050' },
+  todo:       { background: 'rgba(80,80,80,0.18)',   color: 'var(--text-tertiary)' },
+  'in-progress': { background: 'var(--accent-subtle)', color: 'var(--accent)' },
+  review:     { background: 'rgba(224,176,64,0.14)', color: 'var(--status-review)' },
+  done:       { background: 'rgba(52,211,153,0.14)',  color: 'var(--health-success)' },
+  blocked:    { background: 'rgba(224,64,64,0.14)',  color: 'var(--status-blocked)' },
+  abandoned:  { background: 'rgba(58,58,58,0.18)',   color: 'var(--text-disabled)' },
 }
 
 const PERSONA_DOT_COLOR: Record<string, string> = {
-  po:       '#8B5CF6',
-  designer: '#FB923C',
-  dev:      '#38BDF8',
-  qa:       '#34D399',
+  po:       'var(--accent)',
+  designer: 'var(--persona-designer)',
+  dev:      'var(--text-info)',
+  qa:       'var(--health-success)',
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -268,7 +268,7 @@ function ResultRow({ item, isActive, flatIdx, onMouseEnter, onClick }: ResultRow
           {item.meta.personaDot && (
             <span style={{
               width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-              background: PERSONA_DOT_COLOR[item.meta.personaDot] ?? '#707070',
+              background: PERSONA_DOT_COLOR[item.meta.personaDot] ?? 'var(--text-quaternary)',
             }} />
           )}
           {isActive && (
@@ -348,7 +348,7 @@ function RestingState({ recentItems, activeIdx, onMouseEnterRow, onClickRow }: R
                 onClick={() => onClickRow(item)}
               >
                 <ItemIcon source={item.source} active={active} />
-                <span style={{ flex: 1, fontSize: 12, color: active ? '#F0F0F0' : '#C8C8CC', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ flex: 1, fontSize: 12, color: active ? 'var(--text-primary)' : 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {item.label}
                 </span>
                 {active && <span style={enterHintStyle}>↵</span>}
@@ -360,8 +360,8 @@ function RestingState({ recentItems, activeIdx, onMouseEnterRow, onClickRow }: R
       <div style={legendStyle}>
         {LEGEND_CHIPS.map((chip) => (
           <span key={chip.prefix} style={legendChipStyle}>
-            <code style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10, color: '#707070' }}>{chip.prefix}</code>
-            <span style={{ fontSize: 11, color: '#A0A0A0' }}>{chip.labelKey ? t(chip.labelKey) : chip.literal}</span>
+            <code style={{ fontFamily: 'ui-monospace, monospace', fontSize: 10, color: 'var(--text-quaternary)' }}>{chip.prefix}</code>
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{chip.labelKey ? t(chip.labelKey) : chip.literal}</span>
           </span>
         ))}
       </div>
@@ -373,12 +373,12 @@ function NoMatchState() {
   const { t } = useTranslation()
   return (
     <div style={noMatchContainerStyle}>
-      <Search size={28} color="#707070" strokeWidth={1.5} />
-      <div style={{ fontSize: 14, color: '#C8C8CC', fontWeight: 500 }}>{t('workspace.quickOpen.empty')}</div>
-      <div style={{ fontSize: 12, color: '#A0A0A0', lineHeight: 1.4, textAlign: 'center' }}>
+      <Search size={28} style={{ color: 'var(--text-quaternary)' }} strokeWidth={1.5} />
+      <div style={{ fontSize: 14, color: 'var(--text-secondary)', fontWeight: 500 }}>{t('workspace.quickOpen.empty')}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.4, textAlign: 'center' }}>
         {t('workspace.quickOpen.searchedScope')}<br />{t('workspace.quickOpen.searchedAll')}
       </div>
-      <div style={{ fontSize: 11, color: '#707070', marginTop: 4 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-quaternary)', marginTop: 4 }}>
         <kbd style={kbdStyle}>Esc</kbd> {t('workspace.quickOpen.hint.close')}
       </div>
     </div>
@@ -498,7 +498,7 @@ export default function QuickOpenPalette({ items, onClose, onPick }: Props) {
       <div style={dialogStyle} onKeyDown={handleKeyDown}>
         {/* Input row */}
         <div style={inputRowStyle}>
-          <Search size={16} color="#707070" style={{ flexShrink: 0 }} />
+          <Search size={16} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
           <input
             ref={inputRef}
             style={inputStyle}
@@ -599,8 +599,8 @@ const dialogStyle: React.CSSProperties = {
   maxWidth: '90vw',
   maxHeight: '60vh',
   borderRadius: 8,           // --radius-xl
-  background: '#1C1C20',    // --surface-modal
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-layer-popup)',    // --surface-modal
+  border: '1px solid var(--border-inline)',
   boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
   display: 'flex',
   flexDirection: 'column',
@@ -624,7 +624,7 @@ const inputStyle: React.CSSProperties = {
   border: 'none',
   outline: 'none',
   fontSize: 15,
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
   fontFamily: 'inherit',
 }
 
@@ -632,7 +632,7 @@ const clearBtnStyle: React.CSSProperties = {
   background: 'none',
   border: 'none',
   cursor: 'pointer',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontSize: 12,
   padding: '2px 4px',
   lineHeight: 1,
@@ -640,7 +640,7 @@ const clearBtnStyle: React.CSSProperties = {
 
 const dividerStyle: React.CSSProperties = {
   height: 1,
-  background: '#1F1F1F',
+  background: 'var(--bg-surface-onlayer)',
   flexShrink: 0,
 }
 
@@ -660,7 +660,7 @@ const sectionHeaderStyle: React.CSSProperties = {
 
 const sectionLabelStyle: React.CSSProperties = {
   fontSize: 10,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   letterSpacing: '0.06em',
   textTransform: 'uppercase',
   fontWeight: 600,
@@ -668,7 +668,7 @@ const sectionLabelStyle: React.CSSProperties = {
 
 const sectionCountStyle: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, monospace',
 }
 
@@ -676,7 +676,7 @@ const sectionPrefixStyle: React.CSSProperties = {
   marginLeft: 'auto',
   fontFamily: 'ui-monospace, monospace',
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
 }
 
 function rowStyle(active: boolean): React.CSSProperties {
@@ -687,9 +687,9 @@ function rowStyle(active: boolean): React.CSSProperties {
     alignItems: 'center',
     gap: 10,
     cursor: 'pointer',
-    background: active ? '#1A1A1A' : 'transparent',
-    borderLeft: active ? '2px solid #8B5CF6' : '2px solid transparent',
-    outline: active ? '2px solid rgba(139,92,246,0.25)' : 'none',
+    background: active ? 'var(--bg-surface-onlayer)' : 'transparent',
+    borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+    outline: active ? '2px solid color-mix(in srgb, var(--accent) 25%, transparent)' : 'none',
     outlineOffset: -2,
     borderRadius: active ? 2 : 0,
     boxSizing: 'border-box',
@@ -707,7 +707,7 @@ const rowMainStyle: React.CSSProperties = {
 function labelStyle(active: boolean): React.CSSProperties {
   return {
     fontSize: 13,
-    color: active ? '#F0F0F0' : '#E8E8EA',
+    color: active ? 'var(--text-primary)' : 'var(--text-primary)',
     fontWeight: active ? 500 : 400,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -717,7 +717,7 @@ function labelStyle(active: boolean): React.CSSProperties {
 
 const sublabelStyle: React.CSSProperties = {
   fontSize: 12,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
@@ -746,13 +746,13 @@ const pillBase: React.CSSProperties = {
 
 const typeBadgeStyle: React.CSSProperties = {
   ...pillBase,
-  background: '#1A1A1A',
-  color: '#C8C8CC',
-  border: '1px solid #1F1F1F',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-secondary)',
+  border: '1px solid var(--border-section)',
 }
 
 const enterHintStyle: React.CSSProperties = {
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   fontFamily: 'ui-monospace, monospace',
   fontSize: 11,
 }
@@ -763,7 +763,7 @@ const restingRowStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '4px 16px',
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   fontSize: 12,
   cursor: 'pointer',
   boxSizing: 'border-box',
@@ -771,9 +771,9 @@ const restingRowStyle: React.CSSProperties = {
 
 function restingRowActiveStyle(active: boolean): React.CSSProperties {
   return {
-    background: active ? '#1A1A1A' : 'transparent',
-    borderLeft: active ? '2px solid #8B5CF6' : '2px solid transparent',
-    outline: active ? '2px solid rgba(139,92,246,0.25)' : 'none',
+    background: active ? 'var(--bg-surface-onlayer)' : 'transparent',
+    borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
+    outline: active ? '2px solid color-mix(in srgb, var(--accent) 25%, transparent)' : 'none',
     outlineOffset: -2,
     borderRadius: active ? 2 : 0,
   }
@@ -782,7 +782,7 @@ function restingRowActiveStyle(active: boolean): React.CSSProperties {
 const legendStyle: React.CSSProperties = {
   marginTop: 8,
   paddingTop: 8,
-  borderTop: '1px solid #1A1A1A',
+  borderTop: '1px solid var(--border-item)',
   display: 'flex',
   flexWrap: 'wrap',
   gap: 6,
@@ -794,9 +794,9 @@ const legendChipStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 4,
   fontSize: 11,
-  color: '#A0A0A0',
-  background: '#1A1A1A',
-  border: '1px solid #1F1F1F',
+  color: 'var(--text-tertiary)',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-section)',
   borderRadius: 20,
   padding: '1px 8px',
 }
@@ -819,10 +819,10 @@ const footerStyle: React.CSSProperties = {
   gap: 12,
   padding: '0 16px',
   flexShrink: 0,
-  borderTop: '1px solid #1F1F1F',
-  background: '#1C1C20',
+  borderTop: '1px solid var(--border-section)',
+  background: 'var(--bg-layer-popup)',
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const footLegStyle: React.CSSProperties = {
@@ -833,10 +833,10 @@ const footLegStyle: React.CSSProperties = {
 const kbdStyle: React.CSSProperties = {
   fontFamily: 'ui-monospace, monospace',
   fontSize: 10,
-  color: '#A0A0A0',
-  border: '1px solid #2A2A2A',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 2,
   padding: '1px 4px',
   lineHeight: 1.5,
-  background: '#141414',
+  background: 'var(--bg-surface-on)',
 }

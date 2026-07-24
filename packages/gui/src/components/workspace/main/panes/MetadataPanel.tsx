@@ -245,8 +245,8 @@ function badgeForTone(tone: Tone): React.CSSProperties {
 // (the warnBadge className hook below).
 const warnBadge: React.CSSProperties = {
   ...badgeBase,
-  color: '#E0A030',
-  borderColor: '#3A2E12',
+  color: 'var(--status-review)',
+  borderColor: 'var(--health-warn)',
 }
 
 const grid: React.CSSProperties = {

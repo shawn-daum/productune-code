@@ -282,7 +282,7 @@ const titleRow: React.CSSProperties = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontWeight: 600,
   marginBottom: 10,
 }
@@ -291,7 +291,7 @@ const sectionLabel: React.CSSProperties = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontWeight: 600,
   marginBottom: 8,
 }
@@ -299,7 +299,7 @@ const sectionLabel: React.CSSProperties = {
 const tableWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  border: '1px solid #1A1A1A',
+  border: '1px solid var(--border-item)',
   borderRadius: 6,
   overflow: 'hidden',
 }
@@ -313,19 +313,19 @@ const rowBase: React.CSSProperties = {
 
 const headRow: React.CSSProperties = {
   ...rowBase,
-  background: '#0F0F0F',
-  borderBottom: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-base)',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const bodyRow: React.CSSProperties = {
   ...rowBase,
-  borderBottom: '1px solid #141414',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const totalRow: React.CSSProperties = {
   ...rowBase,
-  background: '#0F0F0F',
-  borderTop: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-base)',
+  borderTop: '1px solid var(--border-item)',
 }
 
 const colKeyHead: React.CSSProperties = {
@@ -334,7 +334,7 @@ const colKeyHead: React.CSSProperties = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   fontWeight: 700,
 }
 
@@ -348,7 +348,7 @@ const colNumHead: React.CSSProperties = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
-  color: '#606060',
+  color: 'var(--text-quaternary)',
   fontWeight: 700,
 }
 
@@ -356,7 +356,7 @@ const colKey: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
   fontSize: 12,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -368,30 +368,30 @@ const colNum: React.CSSProperties = {
   textAlign: 'right',
   fontSize: 11,
   fontFamily: 'monospace',
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
 }
 
 const colKeyTotal: React.CSSProperties = {
   ...colKey,
   fontWeight: 700,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const colNumTotal: React.CSSProperties = {
   ...colNum,
   fontWeight: 700,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const emptyHint: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   padding: '8px 0',
 }
 
 const disclaimer: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontStyle: 'italic',
   lineHeight: 1.4,
   marginTop: 8,
@@ -403,8 +403,8 @@ const disclaimer: React.CSSProperties = {
 
 const subtotalRow: React.CSSProperties = {
   ...rowBase,
-  background: '#0C0C0C',
-  borderBottom: '1px solid #141414',
+  background: 'var(--bg-base)',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const pColPersonaHead: React.CSSProperties = {
@@ -435,7 +435,7 @@ const pColPersona: React.CSSProperties = {
 const pColModel: React.CSSProperties = {
   ...colKey,
   flex: 1.2,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
 }
 
 const pColTok: React.CSSProperties = {
@@ -453,35 +453,35 @@ const pColPersonaSub: React.CSSProperties = {
   fontSize: 10,
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontWeight: 700,
 }
 
 const pColTokSub: React.CSSProperties = {
   ...pColTok,
-  color: '#909090',
+  color: 'var(--text-tertiary)',
 }
 
 const pColCostSub: React.CSSProperties = {
   ...pColCost,
   fontWeight: 700,
-  color: '#D0D0D0',
+  color: 'var(--text-secondary)',
 }
 
 const pColPersonaTotal: React.CSSProperties = {
   ...pColPersona,
   fontWeight: 700,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
 }
 
 const pColTokTotal: React.CSSProperties = {
   ...pColTok,
   fontWeight: 700,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const pColCostTotal: React.CSSProperties = {
   ...pColCost,
   fontWeight: 700,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }

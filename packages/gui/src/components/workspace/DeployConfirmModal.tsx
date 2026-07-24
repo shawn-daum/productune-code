@@ -172,7 +172,7 @@ export default function DeployConfirmModal({
             </li>
           ))}
           {tickets.length > 5 && (
-            <li style={{ ...ticketItem, color: '#505050' }}>
+            <li style={{ ...ticketItem, color: 'var(--text-disabled)' }}>
               ... +{tickets.length - 5}
             </li>
           )}
@@ -221,8 +221,8 @@ const overlay: React.CSSProperties = {
 }
 
 const modal: React.CSSProperties = {
-  background: '#1A1A1A',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 8,
   padding: '24px 28px',
   width: 460,
@@ -237,13 +237,13 @@ const titleStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 15,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const bodyStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 12,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   lineHeight: 1.55,
 }
 
@@ -257,20 +257,20 @@ const ticketList: React.CSSProperties = {
 
 const ticketItem: React.CSSProperties = {
   fontSize: 12,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   display: 'flex',
   gap: 6,
   alignItems: 'baseline',
 }
 
 const ticketTitle_: React.CSSProperties = {
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
 }
 
 const errorStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 11,
-  color: '#EF4444',
+  color: 'var(--health-error)',
   lineHeight: 1.4,
 }
 
@@ -284,8 +284,8 @@ const actions: React.CSSProperties = {
 const btnPrimary: React.CSSProperties = {
   height: 30,
   padding: '0 16px',
-  background: '#2563EB',
-  color: '#fff',
+  background: 'var(--health-info)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,
@@ -301,7 +301,7 @@ const btnGhost: React.CSSProperties = {
   height: 30,
   padding: '0 12px',
   background: 'transparent',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   border: 'none',
   borderRadius: 4,
   fontSize: 12,

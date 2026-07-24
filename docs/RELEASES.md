@@ -12,6 +12,22 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.5 — Anchor DS reskin, audience-mode, security guards (2026-07-24)
+
+### Added
+- **audience-mode (planner / developer)** — PO 대화 어투를 사용자에 맞춤: `planner`(기본, 평이한 어휘·결론 우선·점진적 상세) / `developer`(현행). per-user 저장(`~/.prdt/audience-mode`), 온보딩 + Settings에서 선택. (T-326)
+
+### Changed
+- **GUI Anchor Design System 리스킨** — 전 GUI를 Anchor semantic 토큰으로 전환, Light/Dark 자동 스왑, Pretendard. accent는 단일 토큰 스왑(브랜드 violet 유지). (T-359)
+- **QA discipline** — 반응형·텍스트 컴포넌트에 멀티폭 시각 가독 판정 의무화(존재 assertion만으로 pass 금지), 폭세트는 PRD 타깃표면에서 도출. (T-411)
+- **보안 가드** — 워커/서브에이전트가 프로덕션 시크릿을 컨텍스트로 pull 금지(ambient env·로그 ingestion 포함), deploy는 명시 승인 하에 키참조만. (T-412)
+
+### Fixed
+- **trust auto-accept를 v1 prdt 라인에 이식** — 비개발자 fresh 머신 첫 세션에서 PO가 roleplay 없이 정상 동작. (T-408)
+- **GUI 배너 훅 등록 parity** — audience·overrides 훅이 GUI-only 사용자에게도 등록·적용(이전엔 4/6종만 등록되고 재설치 시 de-register). (T-413)
+- **리스킨 라이트 모드/활성 상태 회귀** — md-recipes 전역 토큰 그림자로 라이트서 다크 패널·안 보이는 텍스트, 알파-suffix invalid CSS로 활성 칩 테두리 소실 정정. (T-417)
+- **trust-accept 손상 파일 보호** — 손상된 `~/.claude.json` 조우 시 재작성 중단(상태 유실 방지). (T-418)
+
 ## v1.4 — CLI update flow, glossary, release notes + debt cleanup (2026-07-22)
 
 ### Added

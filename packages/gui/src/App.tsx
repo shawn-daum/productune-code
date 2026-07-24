@@ -383,8 +383,8 @@ const migrateErrorBox: React.CSSProperties = {
   marginBottom: 12,
   padding: '8px 10px',
   borderRadius: 4,
-  background: '#2A1215',
-  color: '#F87171',
+  background: 'var(--health-error-subtle)',
+  color: 'var(--health-error)',
   fontSize: 12,
   lineHeight: 1.5,
   whiteSpace: 'pre-wrap',
@@ -419,11 +419,11 @@ function DescendantPromptDialog({
               style={descendantItem}
               onClick={() => onOpen(entry)}
             >
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#E8E8EA', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <FolderOpen size={14} color="#8B5CF6" strokeWidth={2} />
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FolderOpen size={14} style={{ color: 'var(--accent)' }} strokeWidth={2} />
                 {entry.config.slug}
               </div>
-              <div style={{ fontSize: 11, color: '#C8C8CC', fontFamily: 'monospace', marginTop: 2 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'monospace', marginTop: 2 }}>
                 {entry.path}
               </div>
             </button>
@@ -485,7 +485,7 @@ function AncestorPromptDialog({
 const appShell: React.CSSProperties = {
   display: 'flex', flexDirection: 'column',
   width: '100vw', height: '100vh',
-  background: '#0F0F0F', /* --surface-body */
+  background: 'var(--bg-surface-base)', /* --surface-body */
   overflow: 'hidden',
 }
 const viewport: React.CSSProperties = {
@@ -499,7 +499,7 @@ const overlay: React.CSSProperties = {
 }
 // Updated modal card — design system aligned, WCAG AA+
 const modalCard: React.CSSProperties = {
-  background: '#1C1C20',
+  background: 'var(--bg-layer-popup)',
   borderRadius: 12,
   border: '1px solid rgba(255,255,255,0.10)',
   padding: '24px 28px',
@@ -507,28 +507,28 @@ const modalCard: React.CSSProperties = {
   boxShadow: '0 10px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06)',
 }
 const modalTitle: React.CSSProperties = {
-  fontWeight: 600, fontSize: 15, color: '#E8E8EA', marginBottom: 8,
+  fontWeight: 600, fontSize: 15, color: 'var(--text-primary)', marginBottom: 8,
 }
 const modalPath: React.CSSProperties = {
-  fontSize: 12, color: '#C8C8CC', fontFamily: 'monospace', marginBottom: 16,
+  fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'monospace', marginBottom: 16,
 }
 const modalBody: React.CSSProperties = {
-  fontSize: 14, color: '#E8E8EA', lineHeight: 1.55, marginBottom: 20,
+  fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.55, marginBottom: 20,
 }
 const btnPrimary: React.CSSProperties = {
-  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
+  background: 'var(--accent)', color: 'var(--text-static-white)', border: 'none', borderRadius: 4,
   padding: '10px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
 }
 const btnSecondary: React.CSSProperties = {
-  background: '#1C1C20', color: '#E8E8EA', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4, /* --surface-modal */
+  background: 'var(--bg-layer-popup)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 4, /* --surface-modal */
   padding: '10px 16px', fontSize: 13, cursor: 'pointer', textAlign: 'left',
 }
 const btnGhost: React.CSSProperties = {
-  background: 'transparent', color: '#C8C8CC', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 4,
+  background: 'transparent', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.10)', borderRadius: 4,
   padding: '8px 14px', fontSize: 12, cursor: 'pointer',
 }
 const descendantItem: React.CSSProperties = {
-  background: '#141414', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, /* --surface-panel */
+  background: 'var(--bg-surface-on)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, /* --surface-panel */
   padding: '10px 12px', cursor: 'pointer', textAlign: 'left',
   transition: 'border-color 0.15s, background 0.15s',
 }

@@ -182,17 +182,17 @@ export function FileChip({
 export const chipRow: React.CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',
-  gap: 'var(--space-2)',
+  gap: 'var(--md-space-2)',
 }
 
 const chip: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 'var(--space-1-5)',
+  gap: 'var(--md-space-1-5)',
   height: 28,
   maxWidth: 180,
-  paddingLeft: 'var(--space-1)',
-  paddingRight: 'var(--space-2)',
+  paddingLeft: 'var(--md-space-1)',
+  paddingRight: 'var(--md-space-2)',
   background: 'var(--surface-subpanel)',
   border: '1px solid var(--border-default)',
   borderRadius: 'var(--radius-lg)',

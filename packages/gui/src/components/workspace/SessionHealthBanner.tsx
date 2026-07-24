@@ -99,13 +99,13 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
     <Banner
       role="alert"
       ariaLive="assertive"
-      icon={<Icon size={14} color="#EF4444" />}
+      icon={<Icon size={14} style={{ color: 'var(--health-error)' }} />}
       message={message}
       onDismiss={dismissBanner}
       dismissLabel={t('common.dismiss')}
-      background="#2A1414"
-      borderLeftColor="#EF4444"
-      borderBottomColor="#3A1818"
+      background="var(--health-error-subtle)"
+      borderLeftColor="var(--health-error)"
+      borderBottomColor="var(--health-error)"
       animate
     >
       {/* Primary CTA — only render when there is an in-app action */}
@@ -143,8 +143,8 @@ export default function SessionHealthBanner({ onRestartSession, onRetry, onViewL
 const primaryCta: React.CSSProperties = {
   height: 22,
   padding: '0 10px',
-  background: '#EF4444',
-  color: '#fff',
+  background: 'var(--health-error)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 3,
   fontSize: 10,
@@ -157,8 +157,8 @@ const secondaryCta: React.CSSProperties = {
   height: 22,
   padding: '0 8px',
   background: 'transparent',
-  color: '#A0A0A0',
-  border: '1px solid #3A3A3A',
+  color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-hover)',
   borderRadius: 3,
   fontSize: 10,
   cursor: 'pointer',
@@ -169,9 +169,9 @@ const secondaryCta: React.CSSProperties = {
 const instructionLabel: React.CSSProperties = {
   height: 22,
   padding: '0 10px',
-  background: '#1A3A1A',
-  color: '#86EFAC',
-  border: '1px solid #2A5A2A',
+  background: 'var(--health-success)',
+  color: 'var(--health-success)',
+  border: '1px solid var(--health-success)',
   borderRadius: 3,
   fontSize: 10,
   fontWeight: 600,

@@ -1,20 +1,20 @@
 export const wrap: React.CSSProperties = {
   flex: 1, minHeight: 0,
-  background: '#0A0A0A',
+  background: 'var(--bg-base)',
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   userSelect: 'none',
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 export const card: React.CSSProperties = {
-  background: '#141414', border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)', border: '1px solid var(--border-inline)',
   borderRadius: 14, width: 460,
   boxShadow: '0 24px 64px rgba(0,0,0,0.7)',
   overflow: 'hidden',
 }
 export const header: React.CSSProperties = {
   padding: '16px 20px 12px',
-  borderBottom: '1px solid #222',
+  borderBottom: '1px solid var(--border-section)',
   display: 'flex', alignItems: 'center',
 }
 export const stepIndicator: React.CSSProperties = {
@@ -34,14 +34,14 @@ export const footer: React.CSSProperties = {
   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
 }
 export const stepLabel: React.CSSProperties = {
-  fontSize: 11, color: '#505050', textTransform: 'uppercase',
+  fontSize: 11, color: 'var(--text-disabled)', textTransform: 'uppercase',
   letterSpacing: '0.06em', marginBottom: 8,
 }
 export const stepIntro: React.CSSProperties = {
-  fontSize: 12.5, color: '#A0A0A0', lineHeight: 1.55, /* --text-muted */
+  fontSize: 12.5, color: 'var(--text-tertiary)', lineHeight: 1.55, /* --text-muted */
   marginBottom: 12,
 }
-export const hint: React.CSSProperties = { fontSize: 12, color: '#505050', marginTop: 8 }
+export const hint: React.CSSProperties = { fontSize: 12, color: 'var(--text-disabled)', marginTop: 8 }
 export const hwBadgeRow: React.CSSProperties = {
   display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4,
 }
@@ -51,17 +51,17 @@ export const hwSpinner: React.CSSProperties = {
   minHeight: 160, gap: 4,
 }
 export const engineRow: React.CSSProperties = {
-  background: '#161616', border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)', border: '1px solid var(--border-inline)',
   borderRadius: 8, padding: '10px 12px',
 }
 export const dockerBox: React.CSSProperties = {
   marginTop: 8, padding: '10px 12px',
-  background: '#1A1208', border: '1px solid #FBBF2444',
+  background: 'var(--health-warn-subtle)', border: '1px solid var(--health-warn)',
   borderRadius: 6,
 }
 export const logArea: React.CSSProperties = {
   marginTop: 8,
-  background: '#0A0A0A', border: '1px solid #222', borderRadius: 4,
+  background: 'var(--bg-base)', border: '1px solid var(--border-section)', borderRadius: 4,
   padding: '8px 10px',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
   fontSize: 11, lineHeight: 1.6,
@@ -69,51 +69,51 @@ export const logArea: React.CSSProperties = {
   display: 'flex', flexDirection: 'column', gap: 1,
 }
 export const btnEngineAction: React.CSSProperties = {
-  background: '#1C1C20', color: '#8B5CF6', /* --surface-modal / --accent */
-  border: '1px solid rgba(139,92,246,0.27)', borderRadius: 4,
+  background: 'var(--bg-layer-popup)', color: 'var(--accent)', /* --surface-modal / --accent */
+  border: '1px solid color-mix(in srgb, var(--accent) 27%, transparent)', borderRadius: 4,
   padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
 }
 export const btnDockerInstall: React.CSSProperties = {
-  background: '#2A1E00', color: '#FBBF24',
-  border: '1px solid #FBBF2466', borderRadius: 4,
+  background: 'var(--health-warn-subtle)', color: 'var(--health-warn)',
+  border: '1px solid var(--health-warn)', borderRadius: 4,
   padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
 }
 export const btnRedetect: React.CSSProperties = {
-  background: '#1A1A1A', color: '#A0A0A0',
-  border: '1px solid #333', borderRadius: 4,
+  background: 'var(--bg-surface-onlayer)', color: 'var(--text-tertiary)',
+  border: '1px solid var(--border-inline)', borderRadius: 4,
   padding: '6px 12px', fontSize: 12, cursor: 'pointer',
   transition: 'opacity 0.15s',
 }
 export const optionCard: React.CSSProperties = {
-  border: '1px solid #2A2A2A', borderRadius: 8,
+  border: '1px solid var(--border-inline)', borderRadius: 8,
   padding: '10px 12px', cursor: 'pointer',
   transition: 'border-color 0.15s, background 0.15s',
 }
 export const radio: React.CSSProperties = {
   width: 14, height: 14, borderRadius: 9999,
-  border: '2px solid #8B5CF6', flexShrink: 0,
+  border: '2px solid var(--accent)', flexShrink: 0,
   transition: 'background 0.15s',
 }
 export const btnPrimary: React.CSSProperties = {
-  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
+  background: 'var(--accent)', color: 'var(--text-static-white)', border: 'none', borderRadius: 4,
   padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
 }
 export const btnPrimaryDisabled: React.CSSProperties = {
-  background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: 4,
+  background: 'var(--accent)', color: 'var(--text-static-white)', border: 'none', borderRadius: 4,
   padding: '8px 16px', fontSize: 13, fontWeight: 600,
   opacity: 0.35, cursor: 'not-allowed',
 }
 export const btnSecondary: React.CSSProperties = {
-  background: '#242424', color: '#F0F0F0', border: '1px solid #333', borderRadius: 4,
+  background: 'var(--bg-surface-onlayer)', color: 'var(--text-primary)', border: '1px solid var(--border-inline)', borderRadius: 4,
   padding: '8px 14px', fontSize: 13, cursor: 'pointer',
 }
 export const btnReset: React.CSSProperties = {
-  background: 'transparent', color: '#505050', border: 'none',
+  background: 'transparent', color: 'var(--text-disabled)', border: 'none',
   fontSize: 11, cursor: 'pointer', padding: '4px 8px',
   display: 'flex', alignItems: 'center',
 }
 export const tierBBox: React.CSSProperties = {
   marginTop: 8, padding: '10px 12px',
-  background: '#1A1200', border: '1px solid #FBBF2444',
+  background: 'var(--health-warn-subtle)', border: '1px solid var(--health-warn)',
   borderRadius: 6,
 }

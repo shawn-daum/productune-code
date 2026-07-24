@@ -182,13 +182,13 @@ const headerWrap: React.CSSProperties = {
   padding: '0 8px 0 12px',
   height: 32,
   flexShrink: 0,
-  borderBottom: '1px solid #1e1e1e',
+  borderBottom: '1px solid var(--border-section)',
 }
 
 const headerTitle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
   overflow: 'hidden',
@@ -208,7 +208,7 @@ const headerActions: React.CSSProperties = {
 const iconBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   cursor: 'pointer',
   display: 'flex',
   alignItems: 'center',
@@ -238,7 +238,7 @@ const emptyWrap: React.CSSProperties = {
 
 const emptyText: React.CSSProperties = {
   fontSize: 12,
-  color: '#404040',
+  color: 'var(--text-ghost)',
   textAlign: 'center',
   userSelect: 'none',
 }

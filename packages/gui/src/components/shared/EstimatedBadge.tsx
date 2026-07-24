@@ -38,8 +38,8 @@ const badge: React.CSSProperties = {
   letterSpacing: '0.06em',   // --tracking-widest
   lineHeight: 1.4,
   textTransform: 'uppercase',
-  color: '#C8C8CC',          // --text-secondary (§8.2 neutral variant)
-  background: '#1A1A1A',     // --surface-subpanel (§8.2 neutral variant)
+  color: 'var(--text-secondary)',          // --text-secondary (§8.2 neutral variant)
+  background: 'var(--bg-surface-onlayer)',     // --surface-subpanel (§8.2 neutral variant)
   borderRadius: 20,          // --radius-pill
   verticalAlign: 'middle',
   whiteSpace: 'nowrap',

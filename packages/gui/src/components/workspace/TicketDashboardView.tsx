@@ -53,7 +53,7 @@ export default function TicketDashboardView({ poState, versionFilter }: Props) {
       {loading && allTickets.length === 0 ? (
         /* §1.5.4: pending state — Loader2 spinner (T-P4-069 fix C-2) */
         <div style={loadingWrap} role="status" aria-label={t('workspace.tickets.loading')}>
-          <Loader2 size={20} color="#505050" className="pdt-spin" />
+          <Loader2 size={20} style={{ color: 'var(--text-disabled)' }} className="pdt-spin" />
         </div>
       ) : allTickets.length === 0 ? (
         /* §1.5.3: empty state — distinct from loading (T-P4-069 fix C-2) */
@@ -211,7 +211,7 @@ function SchemaMismatchBanner({ count, values }: { count: number; values: string
   return (
     <div style={mismatchBannerWrap} role="status" aria-live="polite">
       <span style={mismatchIconWrap}>
-        <AlertTriangle size={12} color="#A08050" />
+        <AlertTriangle size={12} style={{ color: 'var(--health-warn)' }} />
       </span>
       <span style={mismatchMsg}>
         {t('workspace.tickets.schemaMismatchBanner', { count, values: valuesLabel })}
@@ -292,7 +292,7 @@ function Card({ ticket }: { ticket: Ticket }) {
 
 const wrap: React.CSSProperties = {
   flex: 1,
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -303,7 +303,7 @@ const header: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   padding: '16px 24px',
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
   flexShrink: 0,
 }
 
@@ -311,7 +311,7 @@ const title: React.CSSProperties = {
   margin: 0,
   fontSize: 18,
   fontWeight: 600,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const loadingWrap: React.CSSProperties = {
@@ -328,15 +328,15 @@ const empty: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'center',
   gap: 12,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   fontSize: 13,
 }
 
 const noTicketsCta: React.CSSProperties = {
   height: 28,
   padding: '0 14px',
-  background: '#8B5CF6',
-  color: '#0F0F0F',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   fontSize: 11,
@@ -352,9 +352,9 @@ const mismatchBannerWrap: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '0 16px',
-  background: '#161610',
-  borderLeft: '3px solid #706030',
-  borderBottom: '1px solid #262410',
+  background: 'var(--health-warn-subtle)',
+  borderLeft: '3px solid var(--health-warn)',
+  borderBottom: '1px solid var(--health-warn)',
 }
 
 const mismatchIconWrap: React.CSSProperties = {
@@ -365,7 +365,7 @@ const mismatchIconWrap: React.CSSProperties = {
 
 const mismatchMsg: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A080',
+  color: 'var(--health-warn)',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -386,8 +386,8 @@ const kanban: React.CSSProperties = {
 const column: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  background: '#0A0A0A',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-base)',
+  border: '1px solid var(--border-item)',
   borderRadius: 6,
   overflow: 'hidden',
   minWidth: 180,
@@ -395,22 +395,22 @@ const column: React.CSSProperties = {
 
 function columnHeader(status: Status): React.CSSProperties {
   const colors: Record<Status, string> = {
-    'todo':         '#505050',
-    'in-progress':  '#38BDF8',
-    'review':       '#F59E0B',
-    'user-verify':  '#FB923C',
-    'done':         '#34D399',
-    'blocked':      '#EF4444',
-    'abandoned':    '#3A3A3A',
+    'todo':         'var(--text-disabled)',
+    'in-progress':  'var(--text-info)',
+    'review':       'var(--health-warn)',
+    'user-verify':  'var(--persona-designer)',
+    'done':         'var(--health-success)',
+    'blocked':      'var(--health-error)',
+    'abandoned':    'var(--text-ghost)',
   }
-  const c = colors[status] ?? '#505050'
+  const c = colors[status] ?? 'var(--text-disabled)'
   return {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: '8px 12px',
     borderBottom: `2px solid ${c}`,
-    background: '#0F0F0F',
+    background: 'var(--bg-surface-base)',
     flexShrink: 0,
   }
 }
@@ -418,14 +418,14 @@ function columnHeader(status: Status): React.CSSProperties {
 const columnLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
 }
 
 const columnCount: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
 }
 
@@ -441,14 +441,14 @@ const columnBody: React.CSSProperties = {
 
 const columnEmpty: React.CSSProperties = {
   fontSize: 11,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   textAlign: 'center',
   padding: '12px 0',
 }
 
 const card: React.CSSProperties = {
-  background: '#141414',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-item)',
   borderRadius: 4,
   padding: '8px 10px',
   display: 'flex',
@@ -471,7 +471,7 @@ const cardTopRow: React.CSSProperties = {
 
 const cardId: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
 }
 
@@ -479,7 +479,7 @@ const cardId: React.CSSProperties = {
 
 const cardTitle: React.CSSProperties = {
   fontSize: 12,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   lineHeight: 1.4,
   wordBreak: 'break-word',    // A: line-clamp 제거 → title 전체 노출. 긴 단어 줄바꿈 유지.
 }
@@ -494,11 +494,11 @@ const cardBottomRow: React.CSSProperties = {
 // C: typeChip removed — replaced by assigneeChip
 
 const ASSIGNEE_COLORS: Record<string, { fg: string; bg: string; label: string }> = {
-  'pdt-po':        { fg: '#8B5CF6', bg: '#120A2A', label: 'PO' },
-  'pdt-designer':  { fg: '#FB923C', bg: '#261008', label: 'Des' },
-  'pdt-developer': { fg: '#38BDF8', bg: '#0A1828', label: 'Dev' },
-  'pdt-qa':        { fg: '#34D399', bg: '#0A2A1A', label: 'QA' },
-  'user':          { fg: '#707070', bg: '#1A1A1A', label: 'User' },
+  'pdt-po':        { fg: 'var(--accent)', bg: 'var(--accent-subtle)', label: 'PO' },
+  'pdt-designer':  { fg: 'var(--persona-designer)', bg: 'var(--health-warn-subtle)', label: 'Des' },
+  'pdt-developer': { fg: 'var(--text-info)', bg: 'var(--health-info-subtle)', label: 'Dev' },
+  'pdt-qa':        { fg: 'var(--health-success)', bg: 'var(--health-success-subtle)', label: 'QA' },
+  'user':          { fg: 'var(--text-quaternary)', bg: 'var(--bg-surface-onlayer)', label: 'User' },
 }
 
 function assigneeLabel(assignee: string): string {
@@ -506,7 +506,7 @@ function assigneeLabel(assignee: string): string {
 }
 
 function assigneeChip(assignee: string): React.CSSProperties {
-  const c = ASSIGNEE_COLORS[assignee] ?? { fg: '#707070', bg: '#1A1A1A' }
+  const c = ASSIGNEE_COLORS[assignee] ?? { fg: 'var(--text-quaternary)', bg: 'var(--bg-surface-onlayer)' }
   return {
     fontSize: 9,
     color: c.fg,
@@ -519,7 +519,7 @@ function assigneeChip(assignee: string): React.CSSProperties {
 }
 
 function qaChip(qa: 'pass' | 'fail' | 'pending'): React.CSSProperties {
-  const c = qa === 'pass' ? { fg: '#34D399', bg: '#0A2A1A' } : qa === 'fail' ? { fg: '#E04040', bg: '#2A0808' } : { fg: '#707070', bg: '#1A1A1A' }
+  const c = qa === 'pass' ? { fg: 'var(--health-success)', bg: 'var(--health-success-subtle)' } : qa === 'fail' ? { fg: 'var(--status-blocked)', bg: 'var(--health-error-subtle)' } : { fg: 'var(--text-quaternary)', bg: 'var(--bg-surface-onlayer)' }
   return {
     fontSize: 9,
     color: c.fg,
@@ -533,8 +533,8 @@ function qaChip(qa: 'pass' | 'fail' | 'pending'): React.CSSProperties {
 
 const loopChip: React.CSSProperties = {
   fontSize: 9,
-  color: '#E04040',
-  background: '#2A0808',
+  color: 'var(--status-blocked)',
+  background: 'var(--health-error-subtle)',
   padding: '1px 6px',
   borderRadius: 2,
   fontWeight: 600,

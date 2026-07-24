@@ -280,7 +280,7 @@ function TicketRow({ ticket }: { ticket: Ticket }) {
 
 const wrap: React.CSSProperties = {
   flex: 1,
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   overflow: 'auto',
   padding: '20px 28px',
 }
@@ -291,25 +291,25 @@ const header: React.CSSProperties = {
   gap: 16,
   marginBottom: 24,
   paddingBottom: 12,
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const versionId_: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 700,
-  color: '#F0F0F0',
+  color: 'var(--text-primary)',
 }
 
 const meta: React.CSSProperties = {
   fontSize: 12,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
 }
 
 const activeBadge: React.CSSProperties = {
   marginLeft: 12,
   padding: '2px 8px',
-  background: '#8B5CF622',
-  color: '#8B5CF6',
+  background: 'var(--accent-subtle)',
+  color: 'var(--accent)',
   borderRadius: 4,
   fontSize: 10,
   fontWeight: 600,
@@ -327,7 +327,7 @@ const sectionTitle: React.CSSProperties = {
   fontWeight: 600,
   textTransform: 'uppercase',
   letterSpacing: '0.08em',
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 const timelineWrap: React.CSSProperties = {
@@ -348,36 +348,36 @@ function timelineNode(isCurrent: boolean, isPast: boolean): React.CSSProperties 
     gap: 8,
     padding: '6px 12px',
     borderRadius: 6,
-    background: isCurrent ? '#1A1228' : isPast ? '#161616' : '#0F0F0F',
-    border: `1px solid ${isCurrent ? '#8B5CF6' : isPast ? '#3A3A3A' : '#1A1A1A'}`,
+    background: isCurrent ? 'var(--accent-subtle)' : isPast ? 'var(--bg-surface-on)' : 'var(--bg-surface-base)',
+    border: `1px solid ${isCurrent ? 'var(--accent)' : isPast ? 'var(--border-hover)' : 'var(--border-item)'}`,
   }
 }
 
 const timelineNum: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   width: 18,
   textAlign: 'center',
 }
 
 const timelineLabel: React.CSSProperties = {
   fontSize: 13,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
 }
 
 function timelineLine(isPast: boolean): React.CSSProperties {
   return {
     flex: 1,
     height: 1,
-    background: isPast ? '#3A3A3A' : '#1A1A1A',
+    background: isPast ? 'var(--bg-interaction-neutral)' : 'var(--bg-surface-onlayer)',
     margin: '0 4px',
   }
 }
 
 const outcomeCard: React.CSSProperties = {
-  background: '#141414',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-item)',
   borderRadius: 6,
   padding: '14px 16px',
   display: 'flex',
@@ -394,22 +394,22 @@ const outcomeRow: React.CSSProperties = {
 
 const outcomeKey: React.CSSProperties = {
   width: 110,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   textTransform: 'lowercase',
   flexShrink: 0,
 }
 
 const outcomeVal: React.CSSProperties = {
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
 }
 
 const outcomeValMuted: React.CSSProperties = {
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontStyle: 'italic',
 }
 
 const outcomeLink: React.CSSProperties = {
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   cursor: 'pointer',
 }
 
@@ -427,14 +427,14 @@ const typeHeader: React.CSSProperties = {
 const typeLabel: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
 }
 
 const typeCount: React.CSSProperties = {
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
 }
 
 const ticketList: React.CSSProperties = {
@@ -449,14 +449,14 @@ const ticketRow: React.CSSProperties = {
   alignItems: 'center',
   gap: 10,
   padding: '6px 10px',
-  background: '#141414',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-item)',
   borderRadius: 4,
   fontSize: 12,
 }
 
 const ticketId: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   fontSize: 11,
   flexShrink: 0,
@@ -464,7 +464,7 @@ const ticketId: React.CSSProperties = {
 }
 
 const ticketTitle: React.CSSProperties = {
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   flex: 1,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -473,13 +473,13 @@ const ticketTitle: React.CSSProperties = {
 
 function statusBadge(status: Status): React.CSSProperties {
   const colors: Record<Status, { fg: string; bg: string }> = {
-    'todo':         { fg: '#707070', bg: '#1A1A1A' },
-    'in-progress':  { fg: '#38BDF8', bg: '#082028' },
-    'review':       { fg: '#F59E0B', bg: '#2A2008' },
-    'user-verify':  { fg: '#FB923C', bg: '#261008' },
-    'done':         { fg: '#34D399', bg: '#0A2A1A' },
-    'blocked':      { fg: '#EF4444', bg: '#2A0808' },
-    'abandoned':    { fg: '#505050', bg: '#1A1A1A' },
+    'todo':         { fg: 'var(--text-quaternary)', bg: 'var(--bg-surface-onlayer)' },
+    'in-progress':  { fg: 'var(--text-info)', bg: 'var(--health-info-subtle)' },
+    'review':       { fg: 'var(--health-warn)', bg: 'var(--health-warn-subtle)' },
+    'user-verify':  { fg: 'var(--persona-designer)', bg: 'var(--health-warn-subtle)' },
+    'done':         { fg: 'var(--health-success)', bg: 'var(--health-success-subtle)' },
+    'blocked':      { fg: 'var(--health-error)', bg: 'var(--health-error-subtle)' },
+    'abandoned':    { fg: 'var(--text-disabled)', bg: 'var(--bg-surface-onlayer)' },
   }
   const c = colors[status] ?? colors['todo']
   return {
@@ -495,7 +495,7 @@ function statusBadge(status: Status): React.CSSProperties {
 }
 
 function qaBadge(qa: 'pass' | 'fail' | 'pending'): React.CSSProperties {
-  const c = qa === 'pass' ? { fg: '#34D399', bg: '#0A2A1A' } : qa === 'fail' ? { fg: '#E04040', bg: '#2A0808' } : { fg: '#707070', bg: '#1A1A1A' }
+  const c = qa === 'pass' ? { fg: 'var(--health-success)', bg: 'var(--health-success-subtle)' } : qa === 'fail' ? { fg: 'var(--status-blocked)', bg: 'var(--health-error-subtle)' } : { fg: 'var(--text-quaternary)', bg: 'var(--bg-surface-onlayer)' }
   return {
     fontSize: 10,
     color: c.fg,
@@ -509,17 +509,17 @@ function qaBadge(qa: 'pass' | 'fail' | 'pending'): React.CSSProperties {
 
 const empty: React.CSSProperties = {
   flex: 1,
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 13,
 }
 
 const emptyHint: React.CSSProperties = {
   fontSize: 12,
-  color: '#3A3A3A',
+  color: 'var(--text-ghost)',
   marginLeft: 8,
 }
 
@@ -535,8 +535,8 @@ const promoRow: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '5px 10px',
-  background: '#141414',
-  border: '1px solid #1A1A1A',
+  background: 'var(--bg-surface-on)',
+  border: '1px solid var(--border-item)',
   borderRadius: 4,
   fontSize: 11,
   flexWrap: 'wrap',
@@ -545,8 +545,8 @@ const promoRow: React.CSSProperties = {
 const personaBadge: React.CSSProperties = {
   fontSize: 10,
   fontWeight: 600,
-  color: '#8B5CF6',
-  background: '#120A2A',
+  color: 'var(--accent)',
+  background: 'var(--accent-subtle)',
   padding: '1px 5px',
   borderRadius: 3,
   fontFamily: 'monospace',
@@ -555,8 +555,8 @@ const personaBadge: React.CSSProperties = {
 
 const tierBadge: React.CSSProperties = {
   fontSize: 10,
-  color: '#A0A0A0',
-  background: '#1A1A1A',
+  color: 'var(--text-tertiary)',
+  background: 'var(--bg-surface-onlayer)',
   padding: '1px 5px',
   borderRadius: 3,
   fontFamily: 'monospace',
@@ -565,7 +565,7 @@ const tierBadge: React.CSSProperties = {
 
 const promoTarget: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
   flexShrink: 0,
   maxWidth: 160,
@@ -576,7 +576,7 @@ const promoTarget: React.CSSProperties = {
 
 const promoDelta: React.CSSProperties = {
   flex: 1,
-  color: '#C0C0C0',
+  color: 'var(--text-secondary)',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
@@ -584,7 +584,7 @@ const promoDelta: React.CSSProperties = {
 
 const promoDate: React.CSSProperties = {
   fontSize: 10,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontFamily: 'monospace',
   flexShrink: 0,
 }

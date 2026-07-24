@@ -154,15 +154,15 @@ const panelStyle: React.CSSProperties = {
   flexShrink: 0,
   maxHeight: 200,
   overflowY: 'auto',
-  background: '#161616',
-  borderBottom: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-on)',
+  borderBottom: '1px solid var(--border-inline)',
   padding: '4px 0',
 }
 
 const emptyCaption: React.CSSProperties = {
   display: 'block',
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   textAlign: 'center',
   padding: '8px 12px',
 }
@@ -172,13 +172,13 @@ const rowStyle: React.CSSProperties = {
   flexDirection: 'column',
   padding: '5px 12px',
   gap: 2,
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
   transition: 'opacity 0.15s ease',
 }
 
 const idCaption: React.CSSProperties = {
   fontSize: 10,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
 }
 
@@ -192,7 +192,7 @@ const checkBtn: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   cursor: 'pointer',
-  color: '#909090',
+  color: 'var(--text-tertiary)',
   padding: 0,
   display: 'inline-flex',
   alignItems: 'center',
@@ -211,7 +211,7 @@ const contentCol: React.CSSProperties = {
 function descStyle(isDone: boolean): React.CSSProperties {
   return {
     fontSize: 12,
-    color: '#D0D0D0',
+    color: 'var(--text-secondary)',
     lineHeight: 1.4,
     textDecoration: isDone ? 'line-through' : 'none',
   }
@@ -226,7 +226,7 @@ const linkBtn: React.CSSProperties = {
   alignItems: 'center',
   gap: 3,
   textAlign: 'left',
-  color: '#D0D0D0',
+  color: 'var(--text-secondary)',
 }
 
 const inputRowStyle: React.CSSProperties = {
@@ -238,10 +238,10 @@ const inputRowStyle: React.CSSProperties = {
 const textInput: React.CSSProperties = {
   flex: 1,
   height: 24,
-  background: '#1E1E1E',
-  border: '1px solid #2A2A2A',
+  background: 'var(--bg-surface-onlayer)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
-  color: '#E0E0E0',
+  color: 'var(--text-primary)',
   fontSize: 11,
   padding: '0 7px',
   outline: 'none',
@@ -251,10 +251,10 @@ const textInput: React.CSSProperties = {
 const submitBtn: React.CSSProperties = {
   height: 24,
   padding: '0 10px',
-  background: '#8B5CF6',
+  background: 'var(--accent)',
   border: 'none',
   borderRadius: 4,
-  color: '#0F0F0F',
+  color: 'var(--text-static-white)',
   fontSize: 10,
   fontWeight: 600,
   cursor: 'pointer',

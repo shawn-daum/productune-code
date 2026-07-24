@@ -77,7 +77,7 @@ const footer: React.CSSProperties = {
 
 const stepLabelStyle: React.CSSProperties = {
   fontSize: 11,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   textTransform: 'uppercase',
   letterSpacing: '0.06em',
   marginBottom: 4,
@@ -85,14 +85,14 @@ const stepLabelStyle: React.CSSProperties = {
 
 const intro: React.CSSProperties = {
   fontSize: 12.5,
-  color: '#B0B0B0',
+  color: 'var(--text-tertiary)',
   lineHeight: 1.55,
   marginBottom: 4,
 }
 
 const btnPrimary: React.CSSProperties = {
-  background: '#8B5CF6',
-  color: '#fff',
+  background: 'var(--accent)',
+  color: 'var(--text-static-white)',
   border: 'none',
   borderRadius: 4,
   padding: '8px 16px',
@@ -102,9 +102,9 @@ const btnPrimary: React.CSSProperties = {
 }
 
 const btnSecondary: React.CSSProperties = {
-  background: '#242424',
-  color: '#F0F0F0',
-  border: '1px solid #333',
+  background: 'var(--bg-surface-onlayer)',
+  color: 'var(--text-primary)',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '8px 14px',
   fontSize: 13,

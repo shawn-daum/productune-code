@@ -46,6 +46,7 @@ const _coreRoot = _deriveCoreRoot()
 
 import {
   initProject as _initProject,
+  setTrustAccepted as _setTrustAccepted,
   bootstrapClaudeSettings as _bootstrapClaudeSettings,
   bootstrapPersonaMemory as _bootstrapPersonaMemory,
   bootstrapUserGlobalDoctrine as _bootstrapUserGlobalDoctrine,
@@ -90,6 +91,17 @@ export function initProject(opts: import('../scripts/lib/init-project.mjs').Init
  */
 export function bootstrapClaudeSettings(projectDir: string): void {
   _bootstrapClaudeSettings(projectDir)
+}
+
+/**
+ * T-408: idempotently pre-accept Claude Code's per-dir trust
+ * (`projects[realpath(dir)].hasTrustDialogAccepted=true` in ~/.claude.json).
+ * Trust is keyed by the EXACT realpath'd cwd (no parent inheritance — measured
+ * 2026-07-23 on Claude Code 2.1.218), so callers must pass the dir a session
+ * actually spawns in. Best-effort — never throws.
+ */
+export function setTrustAccepted(dir: string): void {
+  _setTrustAccepted(dir)
 }
 
 /**

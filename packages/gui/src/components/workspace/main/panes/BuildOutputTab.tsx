@@ -181,11 +181,11 @@ function StatusChip({ status, exitCode }: { status: RunStatus; exitCode: number 
 
 function chipMeta(status: RunStatus, exitCode: number | null): { color: string; label: string } {
   switch (status) {
-    case 'running':   return { color: '#38BDF8', label: 'running' }
-    case 'pass':      return { color: '#22C55E', label: 'pass (exit 0)' }
-    case 'cancelled': return { color: '#FBBF24', label: 'cancelled' }
+    case 'running':   return { color: 'var(--text-info)', label: 'running' }
+    case 'pass':      return { color: 'var(--health-success)', label: 'pass (exit 0)' }
+    case 'cancelled': return { color: 'var(--health-warn)', label: 'cancelled' }
     case 'fail':
-    default:          return { color: '#EF4444', label: `fail (exit ${exitCode ?? '?'})` }
+    default:          return { color: 'var(--health-error)', label: `fail (exit ${exitCode ?? '?'})` }
   }
 }
 
@@ -205,7 +205,7 @@ const wrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   minHeight: 0,
-  background: '#0E0E0E',
+  background: 'var(--bg-surface-base)',
 }
 
 const header: React.CSSProperties = {
@@ -213,7 +213,7 @@ const header: React.CSSProperties = {
   alignItems: 'center',
   gap: 8,
   padding: '6px 10px',
-  borderBottom: '1px solid #2A2A2A',
+  borderBottom: '1px solid var(--border-inline)',
   flexShrink: 0,
 }
 
@@ -233,21 +233,21 @@ const spinner: React.CSSProperties = {
   height: 9,
   borderRadius: '50%',
   border: '1.5px solid transparent',
-  borderTopColor: '#38BDF8',
+  borderTopColor: 'var(--text-info)',
   animation: 'bo-spin 0.8s linear infinite',
   display: 'inline-block',
 }
 
 const meta: React.CSSProperties = {
   fontSize: 11,
-  color: '#7A7A7A',
+  color: 'var(--text-quaternary)',
   fontFamily: 'monospace',
 }
 
 const cancelBtn: React.CSSProperties = {
   background: 'transparent',
-  border: '1px solid #3A3A3A',
-  color: '#C8C8CC',
+  border: '1px solid var(--border-hover)',
+  color: 'var(--text-secondary)',
   fontSize: 11,
   padding: '2px 10px',
   borderRadius: 4,
@@ -262,7 +262,7 @@ const logPane: React.CSSProperties = {
   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
   fontSize: 12,
   lineHeight: 1.5,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-word',
   minHeight: 0,
@@ -270,6 +270,6 @@ const logPane: React.CSSProperties = {
 
 const emptyMsg: React.CSSProperties = {
   padding: 24,
-  color: '#505050',
+  color: 'var(--text-disabled)',
   fontSize: 13,
 }

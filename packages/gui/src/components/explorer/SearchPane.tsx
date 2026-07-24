@@ -11,24 +11,24 @@ import { useWorkspace } from '../../store/workspace'
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const DEBOUNCE_MS = 240
-const ACCENT = '#8B5CF6'
+const ACCENT = 'var(--accent)'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fileIcon(name: string) {
   const ext = name.slice(name.lastIndexOf('.')).toLowerCase()
   if (ext === '.md' || ext === '.mdx' || ext === '.txt' || ext === '.log') {
-    return <FileText size={13} strokeWidth={1.75} color="#8ab4f8" />
+    return <FileText size={13} strokeWidth={1.75} style={{ color: 'var(--text-info)' }} />
   }
   if (ext === '.html' || ext === '.htm' || ext === '.ts' || ext === '.tsx' ||
       ext === '.js' || ext === '.jsx' || ext === '.css' || ext === '.json' ||
       ext === '.yml' || ext === '.yaml') {
-    return <FileCode size={13} strokeWidth={1.75} color="#8ab4f8" />
+    return <FileCode size={13} strokeWidth={1.75} style={{ color: 'var(--text-info)' }} />
   }
   if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'].includes(ext)) {
-    return <FileImage size={13} strokeWidth={1.75} color="#8ab4f8" />
+    return <FileImage size={13} strokeWidth={1.75} style={{ color: 'var(--text-info)' }} />
   }
-  return <File size={13} strokeWidth={1.75} color="#606060" />
+  return <File size={13} strokeWidth={1.75} style={{ color: 'var(--text-quaternary)' }} />
 }
 
 /** Split a match line into segments around the highlight ranges. */
@@ -156,8 +156,8 @@ export default function SearchPane({ projectDir }: Props) {
         title={t('workspace.search.sectionTitle')}
       >
         {open
-          ? <ChevronDown size={12} strokeWidth={2.5} color="#707070" />
-          : <ChevronRight size={12} strokeWidth={2.5} color="#707070" />}
+          ? <ChevronDown size={12} strokeWidth={2.5} style={{ color: 'var(--text-quaternary)' }} />
+          : <ChevronRight size={12} strokeWidth={2.5} style={{ color: 'var(--text-quaternary)' }} />}
         <span style={sectionLabel}>{t('workspace.search.sectionTitle')}</span>
         {result && result.totalMatches > 0 && (
           <span style={sectionCount}>{result.totalMatches}</span>
@@ -169,7 +169,7 @@ export default function SearchPane({ projectDir }: Props) {
           {/* Search controls */}
           <div style={searchZone}>
             <div style={searchField}>
-              <Search size={13} strokeWidth={2} color="#707070" style={{ flexShrink: 0 }} />
+              <Search size={13} strokeWidth={2} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
               <input
                 style={input}
                 type="text"
@@ -203,7 +203,7 @@ export default function SearchPane({ projectDir }: Props) {
             </div>
 
             <div style={ignoreHint}>
-              <Info size={11} strokeWidth={1.75} color="#707070" style={{ flexShrink: 0 }} />
+              <Info size={11} strokeWidth={1.75} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
               {t('workspace.search.ignoreHint')}
             </div>
           </div>
@@ -226,8 +226,8 @@ export default function SearchPane({ projectDir }: Props) {
                   aria-label={t('workspace.search.collapseAll')}
                 >
                   {allCollapsed
-                    ? <ChevronRight size={13} strokeWidth={2} color="#707070" />
-                    : <ChevronDown size={13} strokeWidth={2} color="#707070" />}
+                    ? <ChevronRight size={13} strokeWidth={2} style={{ color: 'var(--text-quaternary)' }} />
+                    : <ChevronDown size={13} strokeWidth={2} style={{ color: 'var(--text-quaternary)' }} />}
                 </button>
               </div>
               <div style={resultsList}>
@@ -241,8 +241,8 @@ export default function SearchPane({ projectDir }: Props) {
                         title={group.relPath}
                       >
                         {isCollapsed
-                          ? <ChevronRight size={12} strokeWidth={2.5} color="#707070" style={{ flexShrink: 0 }} />
-                          : <ChevronDown size={12} strokeWidth={2.5} color="#707070" style={{ flexShrink: 0 }} />}
+                          ? <ChevronRight size={12} strokeWidth={2.5} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />
+                          : <ChevronDown size={12} strokeWidth={2.5} style={{ color: 'var(--text-quaternary)', flexShrink: 0 }} />}
                         <span style={{ flexShrink: 0, display: 'flex' }}>{fileIcon(group.name)}</span>
                         <span style={fname}>{group.name}</span>
                         <span style={fpath}>{group.dir}</span>
@@ -277,14 +277,14 @@ export default function SearchPane({ projectDir }: Props) {
 
           {status === 'searching' && (
             <div style={statePane} aria-live="polite">
-              <Loader2 size={18} strokeWidth={2} color="#38BDF8" className="pdt-spin" />
+              <Loader2 size={18} strokeWidth={2} style={{ color: 'var(--text-info)' }} className="pdt-spin" />
               <p style={stateText}>{t('workspace.search.searching')}</p>
             </div>
           )}
 
           {status === 'noresult' && (
             <div style={statePane}>
-              <Search size={28} strokeWidth={1.5} color="#707070" />
+              <Search size={28} strokeWidth={1.5} style={{ color: 'var(--text-quaternary)' }} />
               <h3 style={stateTitle}>{t('workspace.search.noResultTitle')}</h3>
               <p style={stateText}>{t('workspace.search.noResultBody', { query: query.trim() })}</p>
               <p style={stateHint}>{t('workspace.search.noResultTip')}</p>
@@ -293,7 +293,7 @@ export default function SearchPane({ projectDir }: Props) {
 
           {status === 'error' && (
             <div style={statePane}>
-              <Info size={28} strokeWidth={1.5} color="#E04040" />
+              <Info size={28} strokeWidth={1.5} style={{ color: 'var(--status-blocked)' }} />
               <h3 style={stateTitle}>{t('workspace.search.errorTitle')}</h3>
               <p style={stateText}>{errorMsg ?? t('workspace.search.errorBody')}</p>
             </div>
@@ -334,7 +334,7 @@ function OptToggle({
 const sectionWrap: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  borderBottom: '1px solid #1A1A1A',
+  borderBottom: '1px solid var(--border-item)',
   flex: '0 1 auto',
   minHeight: 0,
 }
@@ -345,7 +345,7 @@ const sectionHead: React.CSSProperties = {
   gap: 4,
   height: 24,
   padding: '0 8px',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   cursor: 'pointer',
   userSelect: 'none',
   flexShrink: 0,
@@ -362,8 +362,8 @@ const sectionCount: React.CSSProperties = {
   marginLeft: 'auto',
   fontSize: 10,
   fontWeight: 600,
-  color: '#A0A0A0',
-  background: '#1A1A1A',
+  color: 'var(--text-tertiary)',
+  background: 'var(--bg-surface-onlayer)',
   borderRadius: 20,
   padding: '0 6px',
   lineHeight: '16px',
@@ -381,8 +381,8 @@ const searchField: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 6,
-  background: '#0F0F0F',
-  border: '1px solid #1F1F1F',
+  background: 'var(--bg-surface-base)',
+  border: '1px solid var(--border-section)',
   borderRadius: 4,
   padding: '5px 8px',
 }
@@ -392,7 +392,7 @@ const input: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
   outline: 'none',
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
   fontFamily: 'inherit',
   fontSize: 13,
   minWidth: 0,
@@ -413,7 +413,7 @@ const optBase: React.CSSProperties = {
   justifyContent: 'center',
   borderRadius: 2,
   cursor: 'pointer',
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 10,
   fontWeight: 700,
   fontFamily: 'monospace',
@@ -422,13 +422,13 @@ const optBase: React.CSSProperties = {
 }
 
 const optHover: React.CSSProperties = {
-  color: '#C8C8CC',
-  background: '#1A1A1A',
+  color: 'var(--text-secondary)',
+  background: 'var(--bg-surface-onlayer)',
 }
 
 const optOn: React.CSSProperties = {
-  color: '#F0F0F0',
-  background: 'color-mix(in oklab, #8B5CF6 18%, transparent)',
+  color: 'var(--text-primary)',
+  background: 'color-mix(in oklab, var(--accent) 18%, transparent)',
   borderColor: ACCENT,
 }
 
@@ -436,7 +436,7 @@ const ignoreHint: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 4,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 10,
   paddingLeft: 2,
 }
@@ -446,15 +446,15 @@ const summaryBar: React.CSSProperties = {
   alignItems: 'center',
   gap: 6,
   padding: '6px 12px',
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   fontSize: 12,
-  borderTop: '1px solid #1A1A1A',
-  borderBottom: '1px solid #1A1A1A',
+  borderTop: '1px solid var(--border-item)',
+  borderBottom: '1px solid var(--border-item)',
   flexShrink: 0,
 }
 
 const truncatedNote: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
 }
 
 const collapseAllBtn: React.CSSProperties = {
@@ -480,7 +480,7 @@ const resultsList: React.CSSProperties = {
 }
 
 const fileGroup: React.CSSProperties = {
-  borderBottom: '1px solid #161616',
+  borderBottom: '1px solid var(--border-item)',
 }
 
 const fileRow: React.CSSProperties = {
@@ -494,7 +494,7 @@ const fileRow: React.CSSProperties = {
 }
 
 const fname: React.CSSProperties = {
-  color: '#E8E8EA',
+  color: 'var(--text-primary)',
   fontSize: 13,
   fontWeight: 500,
   whiteSpace: 'nowrap',
@@ -502,7 +502,7 @@ const fname: React.CSSProperties = {
 }
 
 const fpath: React.CSSProperties = {
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   fontSize: 12,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -515,8 +515,8 @@ const fbadge: React.CSSProperties = {
   flexShrink: 0,
   fontSize: 10,
   fontWeight: 600,
-  color: '#A0A0A0',
-  background: '#1A1A1A',
+  color: 'var(--text-tertiary)',
+  background: 'var(--bg-surface-onlayer)',
   borderRadius: 9999,
   minWidth: 18,
   textAlign: 'center',
@@ -537,20 +537,20 @@ const matchLine: React.CSSProperties = {
 
 const matchLineActive: React.CSSProperties = {
   ...matchLine,
-  background: 'color-mix(in oklab, #8B5CF6 12%, transparent)',
+  background: 'color-mix(in oklab, var(--accent) 12%, transparent)',
 }
 
 const lineNo: React.CSSProperties = {
   flexShrink: 0,
   width: 42,
   textAlign: 'right',
-  color: '#505050',
+  color: 'var(--text-disabled)',
   paddingRight: 4,
   userSelect: 'none',
 }
 
 const matchCode: React.CSSProperties = {
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   whiteSpace: 'pre',
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -559,8 +559,8 @@ const matchCode: React.CSSProperties = {
 }
 
 const markStyle: React.CSSProperties = {
-  background: 'color-mix(in oklab, #8B5CF6 30%, transparent)',
-  color: '#F0F0F0',
+  background: 'color-mix(in oklab, var(--accent) 30%, transparent)',
+  color: 'var(--text-primary)',
   borderRadius: 2,
   padding: '0 1px',
   fontWeight: 600,
@@ -579,13 +579,13 @@ const statePane: React.CSSProperties = {
 const stateTitle: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
-  color: '#C8C8CC',
+  color: 'var(--text-secondary)',
   margin: 0,
 }
 
 const stateText: React.CSSProperties = {
   fontSize: 12,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   maxWidth: 240,
   lineHeight: 1.4,
   margin: 0,
@@ -593,6 +593,6 @@ const stateText: React.CSSProperties = {
 
 const stateHint: React.CSSProperties = {
   fontSize: 11,
-  color: '#707070',
+  color: 'var(--text-quaternary)',
   margin: 0,
 }

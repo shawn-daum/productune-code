@@ -129,5 +129,5 @@ export default function EntryGate({ project, onBack }: Props) {
 const loadingShell: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
-  background: '#0F0F0F',
+  background: 'var(--bg-surface-base)',
 }

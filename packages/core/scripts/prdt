@@ -358,6 +358,76 @@ def is_physically_split(root):
     return code_dir_name(root) is not None
 
 
+# ── Trust auto-accept (~/.claude.json) ────────────────────────────────────────
+#
+# T-408 (v0.6 #19a parity — lost in the prdt flip): Claude Code gates a
+# session's hooks/permissions on a per-dir
+# `projects[<realpath cwd>].hasTrustDialogAccepted` flag in ~/.claude.json.
+# Empirical re-test (2026-07-23, Claude Code 2.1.218): plain headless `-p`
+# fires global SessionStart hooks even untrusted, BUT
+# `--permission-mode bypassPermissions` — the GUI po-runner's exact spawn mode
+# — silently SUPPRESSES the injection in an untrusted cwd (PO loses doctrine →
+# roleplay), and interactive `claude` (bare `prdt`) shows the raw trust dialog.
+# Trust is keyed by the EXACT realpath'd cwd: a trusted projectRoot does NOT
+# cover `<root>/code` (measured), so BOTH projectRoot and codeRoot get entries.
+# Python parity port of init-project.mjs setTrustAccepted (the legacy
+# .productune SoT) — same key derivation, one-time backup, read-merge +
+# atomic 0600 write, never raises.
+
+def set_trust_accepted(d):
+    """Idempotently set projects[realpath(d)].hasTrustDialogAccepted=true in
+    ~/.claude.json. Best-effort — must never raise or block init/launch."""
+    try:
+        key = str(Path(d).resolve())  # realpath-normalized like mcp.ts / init-project.mjs
+        cj = Path.home() / ".claude.json"
+        # T-418: NEVER clobber a corrupt ~/.claude.json. read_json() returns None on a
+        # parse failure and we'd fall back to {} then overwrite Claude Code's entire
+        # state (oauth account, project history). Abort on a present-but-unparseable
+        # file; absent (create fresh) and valid (merge) are unaffected. Runs BEFORE the
+        # backup so a corrupt file produces ZERO side effects.
+        if cj.exists():
+            try:
+                json.loads(cj.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                return
+        if cj.exists():
+            try:
+                has_bak = any(n.name.startswith(".claude.json.bak.")
+                              for n in cj.parent.iterdir())
+            except OSError:
+                has_bak = False
+            if not has_bak:
+                ts = datetime.now(timezone.utc).isoformat().replace(":", "-").replace(".", "-")
+                try:
+                    shutil.copyfile(cj, f"{cj}.bak.{ts}")
+                except OSError:
+                    pass  # backup best-effort
+        data = read_json(cj)
+        data = data if isinstance(data, dict) else {}
+        projs = data.get("projects")
+        if not isinstance(projs, dict):
+            projs = {}
+            data["projects"] = projs
+        entry = projs.get(key) if isinstance(projs.get(key), dict) else {}
+        if entry.get("hasTrustDialogAccepted") is True:
+            return  # idempotent no-op
+        projs[key] = {**entry, "hasTrustDialogAccepted": True}
+        tmp = Path(str(cj) + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2))
+        os.replace(tmp, cj)
+    except Exception:
+        pass  # never block init/launch on trust bookkeeping
+
+
+def trust_accept_project(root):
+    """Trust projectRoot AND codeRoot (deduped) — the GUI po-runner spawns the
+    PO at codeRoot and exact-cwd keying means parent trust does not inherit."""
+    for p in {str(Path(root)), str(code_root(root))}:
+        set_trust_accepted(p)
+
+
 def meta_git_dir(root):
     return Path(root) / ".prdt" / "meta.git"
 
@@ -518,6 +588,10 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     con = open_db(root, rebuild=True)
     reindex_tickets(root, con)
     reindex_wiki(root, con)
+    # T-408: pre-accept Claude Code's trust dialog for projectRoot + codeRoot so
+    # hooks/discipline apply on the very first session (config.json is written
+    # above, so code_root resolves the split layout). Best-effort, never blocks.
+    trust_accept_project(root)
     # Meta split last — the snapshot commit captures the whole fresh scaffold.
     meta_err = init_meta_split(root)
     return {"status": "created", "root": str(root), "slug": slug,
@@ -672,6 +746,10 @@ def cmd_po(args):
         else:
             print("아직 prdt 프로젝트가 아니에요 — 먼저 init을 진행합니다.\n")
             init_project(os.getcwd())
+    # T-408 launch self-heal (old-launcher parity): an already-init'd project on
+    # a NEW machine has no ~/.claude.json trust entry — init never re-runs, so
+    # heal here on every launch. Idempotent, best-effort, never blocks exec.
+    trust_accept_project(root or find_project_root() or Path(os.getcwd()))
     cmd = ["claude", "--agent", "prdt-po"] + (getattr(args, "rest", None) or [])
     try:
         os.execvp("claude", cmd)

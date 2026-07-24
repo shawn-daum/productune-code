@@ -161,9 +161,9 @@ export default function MetaMigrateSection({ projectDir }: { projectDir: string 
 
 const primaryBtn: React.CSSProperties = {
   fontSize: 11,
-  color: '#8B5CF6',
+  color: 'var(--accent)',
   background: 'transparent',
-  border: '1px solid #8B5CF6',
+  border: '1px solid var(--accent)',
   borderRadius: 4,
   padding: '3px 10px',
   cursor: 'pointer',
@@ -172,9 +172,9 @@ const primaryBtn: React.CSSProperties = {
 
 const cancelBtn: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   background: 'transparent',
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 4,
   padding: '3px 10px',
   cursor: 'pointer',
@@ -184,15 +184,15 @@ const confirmBox: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   gap: 4,
-  border: '1px solid #2A2A2A',
+  border: '1px solid var(--border-inline)',
   borderRadius: 6,
   padding: '8px 10px',
-  background: '#161616',
+  background: 'var(--bg-surface-on)',
 }
 
 const confirmLine: React.CSSProperties = {
   fontSize: 11,
-  color: '#A0A0A0',
+  color: 'var(--text-tertiary)',
   lineHeight: 1.6,
 }
 
@@ -204,9 +204,9 @@ const confirmActions: React.CSSProperties = {
 
 const warnBanner: React.CSSProperties = {
   fontSize: 11,
-  color: '#FCD34D',
-  background: '#2A2210',
-  border: '1px solid #4A3A1A',
+  color: 'var(--health-warn)',
+  background: 'var(--health-warn-subtle)',
+  border: '1px solid var(--health-warn)',
   borderRadius: 4,
   padding: '6px 10px',
 }

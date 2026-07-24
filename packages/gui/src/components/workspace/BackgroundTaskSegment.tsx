@@ -26,13 +26,13 @@ import { PERSONA_COLORS, type PersonaId } from '../../store/personaPresence'
 
 const FADE_DELAY_MS = 5_000   // 5s focus-aware countdown before moving to Recent
 const FADE_OUT_MS   = 200     // CSS fade-out duration
-const BORDER_SUBTLE = '#1E1E1E'
-const BORDER_STRONG = '#2A2A2A'
-const SURFACE_MODAL = '#1C1C20'
-const TEXT_SECONDARY = 'var(--text-secondary, #A0A0A0)'
-const TEXT_MUTED     = 'var(--text-muted, #5A5A5A)'
-const TEXT_EMPHASIS  = '#F0F0F0'
-const HEALTH_ERROR   = '#EF4444'
+const BORDER_SUBTLE = 'var(--border-section)'
+const BORDER_STRONG = 'var(--border-inline)'
+const SURFACE_MODAL = 'var(--bg-layer-popup)'
+const TEXT_SECONDARY = 'var(--text-secondary)'
+const TEXT_MUTED     = 'var(--text-muted)'
+const TEXT_EMPHASIS  = 'var(--border-hover)'
+const HEALTH_ERROR   = 'var(--health-error)'
 
 // ── Keyframe injection ────────────────────────────────────────────────────────
 
@@ -64,7 +64,7 @@ function ensureKeyframes(): void {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function personaColor(persona: BackgroundTaskPersona): string {
-  if (persona === 'unknown') return '#888888'
+  if (persona === 'unknown') return 'var(--bg-interaction-neutral)'
   return PERSONA_COLORS[persona as PersonaId]
 }
 
@@ -214,7 +214,7 @@ function TaskRow({ task, fading = false, onDismiss, now, t, qaLoopEntry }: RowPr
     alignItems: 'flex-start',
     gap: 8,
     padding: '6px 12px',
-    background: hovered ? '#1A1A1A' : 'transparent',
+    background: hovered ? 'var(--bg-surface-onlayer)' : 'transparent',
     cursor: 'default',
     animation: fading
       ? `bg-task-fadeout ${FADE_OUT_MS}ms ease forwards`
@@ -255,7 +255,7 @@ function TaskRow({ task, fading = false, onDismiss, now, t, qaLoopEntry }: RowPr
           {/* QA attempt badge — shown for running QA tasks with loop tracking */}
           {task.persona === 'qa' && qaLoopEntry && task.status === 'running' && (
             <span style={{
-              color: qaLoopEntry.attempt >= qaLoopEntry.maxAttempts ? HEALTH_ERROR : 'var(--health-warn, #F59E0B)',
+              color: qaLoopEntry.attempt >= qaLoopEntry.maxAttempts ? HEALTH_ERROR : 'var(--health-warn)',
               marginRight: 4,
               fontWeight: 600,
             }}>
