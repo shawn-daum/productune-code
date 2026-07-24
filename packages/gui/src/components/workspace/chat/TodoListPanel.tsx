@@ -94,8 +94,12 @@ export default function TodoListPanel() {
                       style={linkBtn}
                       onClick={() => handleLinkClick(todo)}
                     >
-                      <span style={descStyle(isDone)}>{todo.description}</span>
+                      {/* T-410: leading (not trailing) — this is a borderless/transparent
+                          ("Solid" per Button.md's variant split, since it carries no
+                          border.button.outline) button, and Button.md's valid-combination
+                          table disallows trailing icons outside Outline. */}
                       <ChevronRight size={11} strokeWidth={2} style={{ flexShrink: 0 }} />
+                      <span style={descStyle(isDone)}>{todo.description}</span>
                     </button>
                   ) : (
                     <span style={descStyle(isDone)}>{todo.description}</span>
