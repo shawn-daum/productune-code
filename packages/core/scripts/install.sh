@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + hook 6종.
+# prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + hook 8종.
 # (Canonical name since T-293: was prdt-install.sh during pdt-* coexistence;
 #  a thin prdt-install.sh forwarder remains for older installed `prdt update` copies.)
 # Statusline (T-330): default-on when nothing is registered yet (fresh install, or
@@ -36,6 +36,7 @@ cp "$ROOT/doctrine.md" "$PRDT_HOME/doctrine.md"
 cp "$ROOT/scripts/hooks/prdt-session-start.sh" "$ROOT/scripts/hooks/prdt-post-compact.sh" \
    "$ROOT/scripts/hooks/prdt-post-dispatch.sh" "$ROOT/scripts/hooks/prdt-user-prompt.sh" \
    "$ROOT/scripts/hooks/prdt-overrides-inject.sh" "$ROOT/scripts/hooks/prdt-audience-inject.sh" \
+   "$ROOT/scripts/hooks/prdt-plan-tier-inject.sh" "$ROOT/scripts/hooks/prdt-auto-open.sh" \
    "$PRDT_HOME/hooks/"
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
@@ -83,7 +84,7 @@ cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
 #    here — it's derived from scripts/hook-manifest.json (the SoT onboarding.ts's
 #    installPrdtHooks reduces over too), via jq --slurpfile. Edit the manifest, not this
 #    reduce, to change the roster.
-say "4) Registering hook 6종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
+say "4) Registering hook 8종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
 SETTINGS="$CLAUDE_DIR/settings.json"
 MANIFEST="$ROOT/scripts/hook-manifest.json"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
@@ -108,12 +109,13 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   # sweep legacy pdt-* out of EVERY event array (incl. PreToolUse/PostCompact/Stop
   # that prdt never re-adds), then drop any now-empty event key.
   .hooks = (.hooks | with_entries(.value = stripLegacy(.value)) | with_entries(select((.value | length) > 0))) |
-  # T-358/T-326: prdt-overrides-inject.sh and prdt-audience-inject.sh ride the SAME
-  # matcher as prdt-session-start.sh on both SessionStart and SubagentStart, each as
-  # its OWN hook command entry (never merged into another additionalContext string),
-  # audience BEFORE overrides so machine overrides stay last-wins over the
-  # audience-mode register block. That order lives in the manifest per-event
-  # hooks array -- this reduce just replays it.
+  # T-358/T-326/T-423: prdt-overrides-inject.sh, prdt-audience-inject.sh and
+  # prdt-plan-tier-inject.sh ride the SAME matcher as prdt-session-start.sh on
+  # both SessionStart and SubagentStart, each as its OWN hook command entry
+  # (never merged into another additionalContext string), audience + plan-tier
+  # BEFORE overrides so machine overrides stay last-wins over either register
+  # block. That order lives in the manifest per-event hooks array -- this
+  # reduce just replays it.
   ($manifest[0].registrations) as $regs |
   ($regs | map(.event) | unique) as $events |
   reduce $events[] as $ev (.;

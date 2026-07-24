@@ -1209,7 +1209,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // decision 2026-06-16. Sole gate for agent-teams; works in headless `--print`.
     // T-PATCH-216: augment PATH with the login-shell PATH so `claude` resolves
     // under a Finder/packaged-app launch (launchd's minimal PATH → ENOENT otherwise).
-    const env = withLoginShellPath({ ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' })
+    // T-409: PRDT_GUI_SESSION marks this spawn as GUI-driven so prdt-auto-open.sh
+    // (CLI-only feature) skips it — the GUI already auto-surfaces artifacts
+    // in-app (T-PATCH-269/275); native Finder/Preview windows popping behind
+    // the Electron window on the SAME Write events would be pure noise. Hook
+    // subprocesses inherit this env var since they're children of this spawn.
+    const env = withLoginShellPath({ ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', PRDT_GUI_SESSION: '1' })
     // T-377 (PRD §v1.3 설계 결정 4): spawn the PO turn in the CODE root, not the
     // meta projectDir. Once physically split the code lives under
     // `<projectDir>/<code.dir>`, so the claude session (and the code git ops its

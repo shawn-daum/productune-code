@@ -11,7 +11,7 @@
  * "prdt update required" hint instead of the routine next-session note.
  *
  * Deliberately narrower than onboarding.ts's checkPrdtHooksStatus (which
- * requires ALL 6 prdt hooks): a missing UNRELATED hook (e.g. overrides-inject)
+ * requires ALL 7 prdt hooks): a missing UNRELATED hook (e.g. overrides-inject)
  * must not make the audience section lie about the audience hook specifically.
  *
  * Framework-free case-list + vitest driver, matching the established idiom

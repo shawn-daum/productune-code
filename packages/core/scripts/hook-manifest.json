@@ -6,13 +6,15 @@
     "prdt-post-dispatch.sh",
     "prdt-user-prompt.sh",
     "prdt-audience-inject.sh",
-    "prdt-overrides-inject.sh"
+    "prdt-plan-tier-inject.sh",
+    "prdt-overrides-inject.sh",
+    "prdt-auto-open.sh"
   ],
   "registrations": [
     {
       "event": "SessionStart",
       "matcher": "startup|resume|clear",
-      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-overrides-inject.sh"]
+      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-plan-tier-inject.sh", "prdt-overrides-inject.sh"]
     },
     {
       "event": "SessionStart",
@@ -22,7 +24,7 @@
     {
       "event": "SubagentStart",
       "matcher": "^prdt-",
-      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-overrides-inject.sh"]
+      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-plan-tier-inject.sh", "prdt-overrides-inject.sh"]
     },
     {
       "event": "SubagentStop",
@@ -33,6 +35,11 @@
       "event": "PostToolUse",
       "matcher": "Agent",
       "hooks": ["prdt-post-dispatch.sh"]
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Write",
+      "hooks": ["prdt-auto-open.sh"]
     },
     {
       "event": "UserPromptSubmit",

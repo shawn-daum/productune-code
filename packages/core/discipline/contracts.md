@@ -18,6 +18,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - Low `confidence`, non-empty `unresolved`, `blocked` ARE the quality signals — the PO re-dispatches (at `escalate_to`'s tier when given — except `model:"fable"` from a fable-excluded playbook, which the PO overrides to opus at the requested effort; the exclusion list lives in PO habit, T-391) or surfaces. Under-powered grinding instead of `escalate_to` is a violation.
 - Long-term memory is `memory_notes[]` ONLY. A worker never writes wiki / habit / discipline files; asked to → `refused: true`.
 - Runtime discipline (`~/.prdt`) is read-only for EVERY persona, PO included — feedback about a rule goes to `docs/wiki/inbox.md` for the user to see, never into discipline files.
+- Carve-out (T-423): `~/.prdt/plan-tier` is PO-writable (bare single-token persist per habit) — the sole exception to the read-only rule above; any future `~/.prdt` write path must land its own carve-out line here in the same diff.
 
 ## Secrets — production credentials never enter agent context (EVERY persona, PO included)
 - Never pull a PRODUCTION secret into context: no `vercel env pull` of production, no reading prod-secret files (`.env.production`, `credentials.json`, key stores — a bare `.env` is local unless proven otherwise), no fetching prod secrets from a secret manager, no echoing or printing prod API keys · tokens · DB credentials.

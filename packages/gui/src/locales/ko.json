@@ -1068,6 +1068,18 @@
       "nextSessionNote": "다음 대화 세션부터 적용돼요. / Applies from the next conversation session.",
       "hookNotRegisteredHint": "이 기기에는 아직 반영되지 않아요 — 적용하려면 prdt update가 필요해요. / Not active on this machine yet — run `prdt update` for it to take effect."
     },
+    "planTier": {
+      "title": "Claude 요금제",
+      "description": "요금제는 자동으로 감지할 수 없어서, PO가 한 번만 물어보고 이 기기에 답을 기억해요 — 다시 묻지 않아요. 요금제가 바뀌면 여기서 직접 바꿔주세요.",
+      "optionMaxX20": "Max x20",
+      "optionMaxX20Desc": "Fable 모델 등급이 설계대로 적용돼요.",
+      "optionTeamPremium": "Team Premium",
+      "optionTeamPremiumDesc": "Fable 모델 등급이 설계대로 적용돼요.",
+      "optionOther": "그 외 / 잘 모름",
+      "optionOtherDesc": "Fable 등급은 대신 같은 effort의 Opus로 처리돼요.",
+      "nextSessionNote": "다음 대화 세션부터 적용돼요. / Applies from the next conversation session.",
+      "hookNotRegisteredHint": "이 기기에는 아직 반영되지 않아요 — 적용하려면 prdt update가 필요해요. / Not active on this machine yet — run `prdt update` for it to take effect."
+    },
     "tabGeneral": "일반",
     "generalTabTitle": "일반 설정",
     "tabMcp": "MCP 서버",
