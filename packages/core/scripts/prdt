@@ -380,6 +380,16 @@ def set_trust_accepted(d):
     try:
         key = str(Path(d).resolve())  # realpath-normalized like mcp.ts / init-project.mjs
         cj = Path.home() / ".claude.json"
+        # T-418: NEVER clobber a corrupt ~/.claude.json. read_json() returns None on a
+        # parse failure and we'd fall back to {} then overwrite Claude Code's entire
+        # state (oauth account, project history). Abort on a present-but-unparseable
+        # file; absent (create fresh) and valid (merge) are unaffected. Runs BEFORE the
+        # backup so a corrupt file produces ZERO side effects.
+        if cj.exists():
+            try:
+                json.loads(cj.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                return
         if cj.exists():
             try:
                 has_bak = any(n.name.startswith(".claude.json.bak.")

@@ -103,13 +103,19 @@ describe('prdt init — trust auto-accept (T-408)', () => {
     expect(data.projects[trustKey(projectDir)]).toEqual({ allowedTools: ['Read'], hasTrustDialogAccepted: true })
   })
 
-  test('corrupt ~/.claude.json never blocks init (best-effort, exit 0)', () => {
-    fs.writeFileSync(claudeJsonPath(), '{not json')
+  test('corrupt ~/.claude.json is left untouched, never clobbered (T-418)', () => {
+    // Regression: set_trust_accepted used to read corrupt→{} then rewrite the whole
+    // file, wiping Claude Code state (oauth/projects). It must now ABORT the write.
+    const corrupt = '{not json'
+    fs.writeFileSync(claudeJsonPath(), corrupt)
     const res = runInit()
+    // Best-effort: trust bookkeeping still never blocks init.
     expect(res.status).toBe('created')
-    // Trust write degrades to a fresh valid file.
-    const data = readClaudeJson()
-    expect(data.projects[trustKey(projectDir)]?.hasTrustDialogAccepted).toBe(true)
+    // The corrupt file is byte-for-byte untouched — no rewrite, no partial merge.
+    expect(fs.readFileSync(claudeJsonPath(), 'utf-8')).toBe(corrupt)
+    // Zero side effects: not even a backup is taken on the corrupt path.
+    const baks = fs.readdirSync(fakeHome).filter((n) => n.startsWith('.claude.json.bak.'))
+    expect(baks.length).toBe(0)
   })
 
   test('one-time backup of a pre-existing ~/.claude.json before first mutation', () => {
