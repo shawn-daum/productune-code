@@ -1022,7 +1022,7 @@ const laneNode: React.CSSProperties = {
 const laneDot: React.CSSProperties = {
   width: 8,
   height: 8,
-  borderRadius: 'var(--radius-full, 9999px)',
+  borderRadius: 'var(--radius-100)', // T-417 #7: --radius-full was undefined; --radius-100 (Anchor round) circles an 8px dot
   boxSizing: 'border-box',
   flexShrink: 0,
 }

@@ -636,7 +636,7 @@ function previewStyle(zone: PaneZone): React.CSSProperties {
     zIndex: 6,
     boxShadow: isCenter
       ? 'inset 0 0 0 1px rgba(56,189,248,0.3)'
-      : 'inset 0 0 0 1px var(--accent), 0 8px 24px rgba(139,92,246,0.18)',
+      : 'inset 0 0 0 1px var(--accent), 0 8px 24px color-mix(in srgb, var(--accent) 18%, transparent)',
   }
   return { ...base, ...zoneRect(zone) }
 }

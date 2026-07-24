@@ -223,7 +223,9 @@ function stageBadge(color: string): React.CSSProperties {
     fontWeight: 600,
     color,
     background: 'var(--bg-base)',
-    border: `1px solid ${color}30`,
+    // T-417 #2: `color` is a var(--…) string post-reskin; `${color}30` was invalid
+    // CSS (border dropped). color-mix() is valid for var()/hex. 0x30≈19%.
+    border: `1px solid color-mix(in srgb, ${color} 19%, transparent)`,
     borderRadius: 3,
     padding: '1px 5px',
     whiteSpace: 'nowrap',

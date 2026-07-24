@@ -213,7 +213,7 @@ function ItemIcon({ source, active }: { source: QuickOpenItem['source']; active:
 
 const STATUS_PILL_STYLE: Record<string, React.CSSProperties> = {
   todo:       { background: 'rgba(80,80,80,0.18)',   color: 'var(--text-tertiary)' },
-  'in-progress': { background: 'rgba(139,92,246,0.14)', color: 'var(--accent)' },
+  'in-progress': { background: 'var(--accent-subtle)', color: 'var(--accent)' },
   review:     { background: 'rgba(224,176,64,0.14)', color: 'var(--status-review)' },
   done:       { background: 'rgba(52,211,153,0.14)',  color: 'var(--health-success)' },
   blocked:    { background: 'rgba(224,64,64,0.14)',  color: 'var(--status-blocked)' },
@@ -689,7 +689,7 @@ function rowStyle(active: boolean): React.CSSProperties {
     cursor: 'pointer',
     background: active ? 'var(--bg-surface-onlayer)' : 'transparent',
     borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-    outline: active ? '2px solid rgba(139,92,246,0.25)' : 'none',
+    outline: active ? '2px solid color-mix(in srgb, var(--accent) 25%, transparent)' : 'none',
     outlineOffset: -2,
     borderRadius: active ? 2 : 0,
     boxSizing: 'border-box',
@@ -773,7 +773,7 @@ function restingRowActiveStyle(active: boolean): React.CSSProperties {
   return {
     background: active ? 'var(--bg-surface-onlayer)' : 'transparent',
     borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
-    outline: active ? '2px solid rgba(139,92,246,0.25)' : 'none',
+    outline: active ? '2px solid color-mix(in srgb, var(--accent) 25%, transparent)' : 'none',
     outlineOffset: -2,
     borderRadius: active ? 2 : 0,
   }
