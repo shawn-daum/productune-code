@@ -10,6 +10,17 @@ import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath } from '../surface-runner'
 import { onboardingPath as projectOnboardingPath, detectProjectKind } from '../project-paths'
 import type { ProjectKind } from '../project-paths'
+// T-414: the prdt hook roster (basenames + event/matcher/order) is no longer
+// hand-written here — it's imported from the SAME JSON manifest install.sh §4
+// derives its jq registration from (packages/core/scripts/hook-manifest.json).
+// This is a static ES module import (resolveJsonModule), so Vite/esbuild inline
+// its contents into dist-electron/main.js at BUILD time — no runtime fs read of
+// packages/core/ happens, which matters because T-311 dropped the `../core`
+// extraResource from the packaged app (nothing under Resources/core is read at
+// runtime anymore). A relative cross-package import mirrors the established
+// pattern in onboarding.rosterParity.test.ts (which reads install.sh the same
+// relative-path way, from the same directory).
+import hookManifestJson from '../../../core/scripts/hook-manifest.json'
 
 const execFileAsync = promisify(execFile)
 
@@ -187,23 +198,35 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // can exercise the prdt branch against a throwaway fixture HOME instead of the
 // developer's real ~/.claude / ~/.prdt.
 
+/** One {event, matcher?, hooks[]} entry of the hook-manifest.json `registrations`
+ *  array — see that file's `$comment` for the full contract. `hooks` are
+ *  basenames; `matcher` is absent for matcher-less events (UserPromptSubmit). */
+interface HookRegistration {
+  event: string
+  matcher?: string
+  hooks: readonly string[]
+}
+
+interface HookManifest {
+  basenames: readonly string[]
+  registrations: readonly HookRegistration[]
+}
+
+const HOOK_MANIFEST = hookManifestJson as unknown as HookManifest
+
 /**
- * The 6 prdt discipline hook basenames install.sh §4 registers (its jq block is
- * the SoT). MUST equal the roster install.sh registers — the parity test in
- * onboarding.rosterParity.test.ts parses install.sh's registration commands and
- * fails loudly if this list drifts. audience-inject (T-326) and overrides-inject
- * (T-358) were the two missing from the pre-T-413 GUI list; their omission left a
- * GUI-only user (the north-star persona) without audience-mode or machine
- * overrides ever reaching their PO.
+ * The 6 prdt discipline hook basenames install.sh §4 registers, imported from
+ * the SAME hook-manifest.json (T-414) install.sh's jq --slurpfile reduces over —
+ * this is no longer a hand-synced literal. The parity test in
+ * onboarding.rosterParity.test.ts actually RUNS install.sh and installPrdtHooks
+ * against the same fixture home and diffs the resulting settings.json.hooks, so
+ * an event/matcher/order drift between the two derivations fails loudly even
+ * though both now read the identical manifest. audience-inject (T-326) and
+ * overrides-inject (T-358) were the two missing from the pre-T-413 GUI list;
+ * their omission left a GUI-only user (the north-star persona) without
+ * audience-mode or machine overrides ever reaching their PO.
  */
-export const PRDT_HOOK_BASENAMES = [
-  'prdt-session-start.sh',
-  'prdt-post-compact.sh',
-  'prdt-post-dispatch.sh',
-  'prdt-user-prompt.sh',
-  'prdt-audience-inject.sh',
-  'prdt-overrides-inject.sh',
-] as const
+export const PRDT_HOOK_BASENAMES = HOOK_MANIFEST.basenames
 
 function readSettings(settingsPath: string): any {
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
@@ -286,35 +309,35 @@ function installPrdtHooks(settingsPath: string, homeDir: string): void {
       }))
       .filter((entry: any) => Array.isArray(entry.hooks) && entry.hooks.length > 0)
 
+  // T-414: the per-event entry list below used to be 5 hand-written assignments
+  // (one per event) that had to be kept byte-for-byte in sync with install.sh
+  // §4's jq block by hand — the exact drift class T-413 caught. Both now reduce
+  // over the SAME hook-manifest.json `registrations` array, in order, so an
+  // event/matcher/hook-order change only has to be made once.
   const H = (settings.hooks && typeof settings.hooks === 'object') ? settings.hooks : {}
-  H.SessionStart = [...stripPrdt(H.SessionStart),
-    { matcher: 'startup|resume|clear', hooks: [
-      cmd(h('prdt-session-start.sh')),
-      cmd(h('prdt-audience-inject.sh')),
-      cmd(h('prdt-overrides-inject.sh')),
-    ] },
-    { matcher: 'compact', hooks: [cmd(h('prdt-post-compact.sh'))] },
-  ]
-  H.SubagentStart = [...stripPrdt(H.SubagentStart),
-    { matcher: '^prdt-', hooks: [
-      cmd(h('prdt-session-start.sh')),
-      cmd(h('prdt-audience-inject.sh')),
-      cmd(h('prdt-overrides-inject.sh')),
-    ] },
-  ]
-  H.SubagentStop = [...stripPrdt(H.SubagentStop),
-    { matcher: '^prdt-', hooks: [cmd(h('prdt-post-dispatch.sh'))] },
-  ]
-  H.PostToolUse = [...stripPrdt(H.PostToolUse),
-    { matcher: 'Agent', hooks: [cmd(h('prdt-post-dispatch.sh'))] },
-  ]
-  // T-336 stage guard — per-prompt po-state line + deploy tripwire (no matcher).
-  H.UserPromptSubmit = [...stripPrdt(H.UserPromptSubmit),
-    { hooks: [cmd(h('prdt-user-prompt.sh'))] },
-  ]
+  const events = [...new Set(HOOK_MANIFEST.registrations.map((r) => r.event))]
+  for (const ev of events) {
+    const entries = HOOK_MANIFEST.registrations
+      .filter((r) => r.event === ev)
+      .map((r) => ({
+        ...(r.matcher !== undefined ? { matcher: r.matcher } : {}),
+        hooks: r.hooks.map((b) => cmd(h(b))),
+      }))
+    H[ev] = [...stripPrdt(H[ev]), ...entries]
+  }
 
   settings.hooks = H
-  settings.statusLine = { type: 'command', command: statusline }
+  // T-414: preserve an existing statusLine instead of unconditionally clobbering
+  // it (T-413 QA finding). install.sh §6 is the same "auto" default: it only
+  // registers the prdt statusline when NOTHING is currently set, and never
+  // stomps a pre-existing one (ours or a custom one) without --statusline. The
+  // GUI call sites (onboarding wizard, T-305 on-demand banner) have no
+  // equivalent --statusline force flag, so they only ever get the "auto" half of
+  // install.sh's behavior — a user who set a custom statusLine, then later opens
+  // a prdt project in the GUI, no longer has it silently replaced.
+  if (!settings.statusLine) {
+    settings.statusLine = { type: 'command', command: statusline }
+  }
   writeSettingsAtomic(settingsPath, settings)  // C5 (T-316): tmp+rename, no torn-read window
 }
 

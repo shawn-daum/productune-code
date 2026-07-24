@@ -79,11 +79,16 @@ cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
 #    commands point at packages/core/scripts/hooks/<basename>.sh scripts that no longer
 #    exist — every session then fails those with command-not-found. We strip them by the
 #    repo-distributed path SUFFIX only, so other apps' and users' own hooks are untouched.
+#    T-414: the roster/event/matcher/order this step registers is no longer hand-written
+#    here — it's derived from scripts/hook-manifest.json (the SoT onboarding.ts's
+#    installPrdtHooks reduces over too), via jq --slurpfile. Edit the manifest, not this
+#    reduce, to change the roster.
 say "4) Registering hook 6종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
 SETTINGS="$CLAUDE_DIR/settings.json"
+MANIFEST="$ROOT/scripts/hook-manifest.json"
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 TMP="$(mktemp)"
-jq --arg h "$PRDT_HOME/hooks/" '
+jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   # C3a: legacy pdt-* hook basenames this repo distributed (deleted in T-293/T-311).
   (["post-edit-format.sh","post-compact-doctrine.sh","stop-verify.sh",
     "post-delegate-state-write.sh","pre-delegate-task-check.sh","pre-delegate-ctx-lang.sh",
@@ -103,40 +108,20 @@ jq --arg h "$PRDT_HOME/hooks/" '
   # sweep legacy pdt-* out of EVERY event array (incl. PreToolUse/PostCompact/Stop
   # that prdt never re-adds), then drop any now-empty event key.
   .hooks = (.hooks | with_entries(.value = stripLegacy(.value)) | with_entries(select((.value | length) > 0))) |
-  # T-358: prdt-overrides-inject.sh rides the SAME matcher as prdt-session-start.sh
-  # on both events, but as its OWN hook command entry -- never merged into the
-  # other additionalContext string -- so a large main payload persist/
-  # truncation event can never carry the (small) overrides output down with it.
-  # T-326: prdt-audience-inject.sh rides the same matcher too (same T-358
-  # small-payload rationale), BEFORE overrides so machine overrides stay
-  # last-wins over the audience-mode register block.
-  .hooks.SessionStart = (strip("SessionStart") + [
-    {matcher: "startup|resume|clear",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-session-start.sh" + "\"")},
-             {type: "command", command: ("\"" + $h + "prdt-audience-inject.sh" + "\"")},
-             {type: "command", command: ("\"" + $h + "prdt-overrides-inject.sh" + "\"")}]},
-    {matcher: "compact",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-compact.sh" + "\"")}]}
-  ]) |
-  .hooks.SubagentStart = (strip("SubagentStart") + [
-    {matcher: "^prdt-",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-session-start.sh" + "\"")},
-             {type: "command", command: ("\"" + $h + "prdt-audience-inject.sh" + "\"")},
-             {type: "command", command: ("\"" + $h + "prdt-overrides-inject.sh" + "\"")}]}
-  ]) |
-  .hooks.SubagentStop = (strip("SubagentStop") + [
-    {matcher: "^prdt-",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
-  ]) |
-  .hooks.PostToolUse = (strip("PostToolUse") + [
-    {matcher: "Agent",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
-  ]) |
-  # T-336 stage guard: deterministic per-prompt po-state line + deploy tripwire
-  # (UserPromptSubmit takes no matcher).
-  .hooks.UserPromptSubmit = (strip("UserPromptSubmit") + [
-    {hooks: [{type: "command", command: ("\"" + $h + "prdt-user-prompt.sh" + "\"")}]}
-  ]) |
+  # T-358/T-326: prdt-overrides-inject.sh and prdt-audience-inject.sh ride the SAME
+  # matcher as prdt-session-start.sh on both SessionStart and SubagentStart, each as
+  # its OWN hook command entry (never merged into another additionalContext string),
+  # audience BEFORE overrides so machine overrides stay last-wins over the
+  # audience-mode register block. That order lives in the manifest per-event
+  # hooks array -- this reduce just replays it.
+  ($manifest[0].registrations) as $regs |
+  ($regs | map(.event) | unique) as $events |
+  reduce $events[] as $ev (.;
+    .hooks[$ev] = (strip($ev) + ($regs | map(select(.event == $ev)) | map(
+      (if .matcher == null then {} else {matcher: .matcher} end)
+      + {hooks: (.hooks | map({type: "command", command: ("\"" + $h + . + "\"")}))}
+    )))
+  ) |
   # C3a: drop the legacy statusline (deleted statusline-productune.sh). The prdt
   # statusline (§6, default-on) is a different basename and is never matched here;
   # a user custom statusLine is preserved (only the repo-distributed suffix matches).

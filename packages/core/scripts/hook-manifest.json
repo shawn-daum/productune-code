@@ -1,0 +1,42 @@
+{
+  "$comment": "T-414: single machine-readable SoT for the prdt hook roster. install.sh §4 (jq --slurpfile) and packages/gui/electron/ipc/onboarding.ts (installPrdtHooks) both derive their ~/.claude/settings.json `hooks` registration from THIS file — neither hand-writes the event/matcher/order shape anymore. Edit here, not in either derived site. `basenames` is the flat roster (order = install.sh §1 mirror-copy order); `registrations` is the ordered list of {event, matcher?, hooks[]} entries each derivation reduces over, in registration order. `hooks[]` entries are basenames from ~/.prdt/hooks/ — install.sh prefixes `$PRDT_HOME/hooks/`, onboarding.ts prefixes the equivalent `<homeDir>/.prdt/hooks/`, both quoting the final command string.",
+  "basenames": [
+    "prdt-session-start.sh",
+    "prdt-post-compact.sh",
+    "prdt-post-dispatch.sh",
+    "prdt-user-prompt.sh",
+    "prdt-audience-inject.sh",
+    "prdt-overrides-inject.sh"
+  ],
+  "registrations": [
+    {
+      "event": "SessionStart",
+      "matcher": "startup|resume|clear",
+      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-overrides-inject.sh"]
+    },
+    {
+      "event": "SessionStart",
+      "matcher": "compact",
+      "hooks": ["prdt-post-compact.sh"]
+    },
+    {
+      "event": "SubagentStart",
+      "matcher": "^prdt-",
+      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-overrides-inject.sh"]
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": "^prdt-",
+      "hooks": ["prdt-post-dispatch.sh"]
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Agent",
+      "hooks": ["prdt-post-dispatch.sh"]
+    },
+    {
+      "event": "UserPromptSubmit",
+      "hooks": ["prdt-user-prompt.sh"]
+    }
+  ]
+}
