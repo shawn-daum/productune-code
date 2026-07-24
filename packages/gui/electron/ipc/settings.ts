@@ -30,6 +30,13 @@ import {
   setStatusBarVisible,
 } from '@productune/core'
 import type { UiLanguage, AudienceMode, GitRules, NotificationSettings } from '@productune/core'
+// T-420: read-only reference to the hook roster SoT (T-414) to name the
+// audience-inject hook basename, NOT to fs-read the file at runtime — same
+// static ES module import as onboarding.ts's HOOK_MANIFEST (see that file's
+// comment): Vite/esbuild inlines this JSON into dist-electron/main.js at BUILD
+// time, so the packaged app (no Resources/core since T-311) never needs the
+// file on disk. Do not edit hook-manifest.json from here — it derives.
+import hookManifestJson from '../../../core/scripts/hook-manifest.json'
 
 // ── T-PATCH-091 R3: apply zoom factor to every open window ───────────────────
 // Module-private. Called by the setZoomFactor handler after persisting the value
@@ -66,6 +73,44 @@ const PERSONA_SPEC_IDS = new Set([
 function personaSpecPath(personaId: string): string | null {
   if (!PERSONA_SPEC_IDS.has(personaId)) return null
   return path.join(os.homedir(), '.claude', 'agents', `${personaId}.md`)
+}
+
+// ── Audience hook registration check (T-420) ─────────────────────────────────
+// v1.5 review #8: on a version-skewed machine (GUI newer than the ~/.prdt
+// mirror — e.g. install.sh hasn't been re-run since T-326/T-413 added the
+// audience hook), Settings' audience toggle still writes ~/.prdt/audience-mode
+// and shows "applies next session" — but prdt-audience-inject.sh never runs,
+// so the setting is silently inert. Detection: is the audience-inject hook's
+// basename (from the SAME hook-manifest.json SoT onboarding.ts derives from)
+// actually present as a registered command in ~/.claude/settings.json? This is
+// intentionally narrower than onboarding.ts's checkPrdtHooksStatus (which
+// requires ALL 6 prdt hooks) — a missing UNRELATED hook (e.g. overrides-inject)
+// must not make this section lie about the audience hook specifically.
+interface HookManifestShape {
+  basenames: readonly string[]
+}
+const HOOK_MANIFEST = hookManifestJson as unknown as HookManifestShape
+const AUDIENCE_HOOK_BASENAME =
+  HOOK_MANIFEST.basenames.find((b) => b.includes('audience')) ?? 'prdt-audience-inject.sh'
+
+/** Read-only, never writes. `homeDir` is test-only (defaults to os.homedir()). */
+export function checkAudienceHookRegistered(homeDir: string = os.homedir()): boolean {
+  const settingsPath = path.join(homeDir, '.claude', 'settings.json')
+  if (!fs.existsSync(settingsPath)) return false
+  let settings: any
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+  } catch {
+    return false
+  }
+  for (const entries of Object.values((settings?.hooks ?? {}) as Record<string, any>)) {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      for (const hook of Array.isArray(entry?.hooks) ? entry.hooks : []) {
+        if (typeof hook?.command === 'string' && hook.command.includes(AUDIENCE_HOOK_BASENAME)) return true
+      }
+    }
+  }
+  return false
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
@@ -110,6 +155,13 @@ export function register(): void {
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }
     }
+  })
+
+  // T-420: lets the Settings audience section warn when the toggle it just
+  // saved won't take effect until `prdt update` re-runs install.sh on this
+  // machine (version-skew — see checkAudienceHookRegistered's comment above).
+  ipcMain.handle('settings:checkAudienceHookRegistered', (): boolean => {
+    return checkAudienceHookRegistered()
   })
 
   ipcMain.handle('settings:getOsLocale', (): string => {

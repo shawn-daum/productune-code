@@ -789,6 +789,13 @@ contextBridge.exposeInMainWorld('api', {
   setAudienceMode: (mode: 'planner' | 'developer'): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:setAudienceMode', mode),
 
+  /** T-420: whether THIS machine's ~/.claude/settings.json already registers
+   *  the audience-inject hook. false → the toggle above silently won't take
+   *  effect until `prdt update` re-runs install.sh (version-skew: GUI newer
+   *  than the ~/.prdt mirror). Read-only. */
+  checkAudienceHookRegistered: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:checkAudienceHookRegistered'),
+
   // ── Notification toggles (T-PATCH-083) ───────────────────────────────────────
   getNotifications: (): Promise<import('@productune/core').NotificationSettings> =>
     ipcRenderer.invoke('settings:getNotifications'),
