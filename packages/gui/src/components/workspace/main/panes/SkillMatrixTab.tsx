@@ -50,8 +50,11 @@ function SkillLayerChip({ layer, tooltip }: { layer: SkillLayer; tooltip: string
         fontFamily: 'monospace',
         padding: '1px 5px',
         borderRadius: 3,
-        border: `1px solid ${color}44`,
-        background: `${color}14`,
+        // T-417 #2: `color` is a var(--…) string post-reskin; `${color}44` / `${color}14`
+        // were invalid CSS (border+tint dropped). color-mix() is valid for var()/hex.
+        // 0x44≈27%, 0x14≈8%.
+        border: `1px solid color-mix(in srgb, ${color} 27%, transparent)`,
+        background: `color-mix(in srgb, ${color} 8%, transparent)`,
         color,
         flexShrink: 0,
         cursor: 'default',
@@ -306,7 +309,8 @@ function personaChipStyle(active: boolean, color: string): React.CSSProperties {
     padding: '2px 7px',
     borderRadius: 10,
     border: `1px solid ${active ? color : 'var(--text-ghost)'}`,
-    background: active ? `${color}22` : 'transparent',
+    // T-417 #2: `${color}22` was invalid CSS post-reskin (tint dropped). 0x22≈13%.
+    background: active ? `color-mix(in srgb, ${color} 13%, transparent)` : 'transparent',
     color: active ? color : 'var(--text-quaternary)',
     cursor: 'pointer',
     userSelect: 'none',

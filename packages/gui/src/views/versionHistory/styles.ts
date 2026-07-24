@@ -263,11 +263,16 @@ export const filterGroup: React.CSSProperties = {
 }
 
 export function personaChipBtn(active: boolean, color: string): React.CSSProperties {
+  // T-417 #2: `color` is a var(--…) string post-reskin, so the old `color + '80'`
+  // alpha-suffix produced invalid CSS ('var(--persona-po)80') and the whole
+  // border/background declaration was dropped. color-mix() is valid for both
+  // var() and hex color inputs. 0x80≈50%, 0x18≈9%.
+  const activeBorder = `color-mix(in srgb, ${color} 50%, transparent)`
   return {
     padding: '2px 8px',
     borderRadius: 3,
-    border: `1px solid ${active ? color + '80' : 'var(--text-ghost)'}`,
-    background: active ? color + '18' : 'transparent',
+    border: `1px solid ${active ? activeBorder : 'var(--text-ghost)'}`,
+    background: active ? `color-mix(in srgb, ${color} 9%, transparent)` : 'transparent',
     color: active ? color : 'var(--text-disabled)',
     fontSize: 10,
     fontFamily: 'monospace',

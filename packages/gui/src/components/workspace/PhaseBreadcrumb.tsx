@@ -370,7 +370,9 @@ function stageActiveNode(color: string): React.CSSProperties {
   return {
     ...baseNode,
     color,
-    background: `${color}1A`, // ~10% alpha tint of the stage color
+    // T-417 #2: `color` is a var(--…) string post-reskin, so `${color}1A` produced
+    // invalid CSS and the tint was dropped. color-mix() is valid for var()/hex. 0x1A≈10%.
+    background: `color-mix(in srgb, ${color} 10%, transparent)`,
     fontWeight: 600,
   }
 }

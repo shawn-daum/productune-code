@@ -70,7 +70,7 @@ export const logArea: React.CSSProperties = {
 }
 export const btnEngineAction: React.CSSProperties = {
   background: 'var(--bg-layer-popup)', color: 'var(--accent)', /* --surface-modal / --accent */
-  border: '1px solid rgba(139,92,246,0.27)', borderRadius: 4,
+  border: '1px solid color-mix(in srgb, var(--accent) 27%, transparent)', borderRadius: 4,
   padding: '5px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer',
 }
 export const btnDockerInstall: React.CSSProperties = {

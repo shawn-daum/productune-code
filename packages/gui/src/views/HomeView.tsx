@@ -73,7 +73,7 @@ function ProjectCard({
   const cardStyle: React.CSSProperties = {
     position: 'relative',
     background: 'var(--bg-surface-onlayer)',
-    border: `1px solid ${hovered && !missing ? 'rgba(139,92,246,0.5)' : 'var(--border-section)'}`,
+    border: `1px solid ${hovered && !missing ? 'color-mix(in srgb, var(--accent) 50%, transparent)' : 'var(--border-section)'}`,
     borderRadius: 8,
     overflow: 'hidden',
     cursor: missing ? 'default' : 'pointer',
@@ -537,7 +537,7 @@ const versionChipStyle: React.CSSProperties = {
 const phaseBadgeStyle: React.CSSProperties = {
   fontSize: 10,
   color: 'var(--accent)',
-  background: 'rgba(139,92,246,0.12)',
+  background: 'var(--accent-subtle)',
   borderRadius: 4,
   padding: '1px 6px',
 }
