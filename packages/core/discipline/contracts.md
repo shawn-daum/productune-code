@@ -14,7 +14,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 ## Return envelope — single JSON object, first stdout char `{`
 - Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) · `confidence`(0..1)
 - Conditional: `blocked` · `refused` · `needs_info` + `next_question`(≤200, exactly one question) · `unresolved[]` · `files_written[]` · `memory_notes[]` · `playbooks_run[]{name,why}` · `escalate_to{model,effort,playbooks,why}`
-- QA live/smoke extras (conditional): `browser_url` · `verify_url` · `verify_description` · `auth_required{service,instruction,type}`
+- QA live/smoke extras (conditional): `browser_url` · `verify_url` · `verify_description` · `auth_required{service,instruction,type}` · `variant_matrix[]{variant,verdict}` — the last returned whenever the verified change renders conditional variants (T-424)
 - Low `confidence`, non-empty `unresolved`, `blocked` ARE the quality signals — the PO re-dispatches (at `escalate_to`'s tier when given — except `model:"fable"` from a fable-excluded playbook, which the PO overrides to opus at the requested effort; the exclusion list lives in PO habit, T-391) or surfaces. Under-powered grinding instead of `escalate_to` is a violation.
 - Long-term memory is `memory_notes[]` ONLY. A worker never writes wiki / habit / discipline files; asked to → `refused: true`.
 - Runtime discipline (`~/.prdt`) is read-only for EVERY persona, PO included — feedback about a rule goes to `docs/wiki/inbox.md` for the user to see, never into discipline files.

@@ -11,8 +11,8 @@ A local green build proves nothing about production. Verify the REAL environment
 
 ## Checks
 1. **Reachability** — the live URL / binary / endpoint responds; no build-time placeholder, no default page.
-2. **Env wiring** — env vars present and effective (a missing key usually fails silently); health endpoint if one exists.
-3. **Critical path on live** — walk the product's one core flow end-to-end on the deployed instance, rendered-pixels rule included. Auth round-trip if the product has auth.
+2. **Env wiring** — env vars present and effective per layer (a missing key usually fails silently); health endpoint if one exists.
+3. **Critical path on live** — walk the product's one core flow end-to-end on the deployed instance, driving its full functional chain (generation/data/API layers), not just the render — renders OK ≠ works OK. Auth round-trip if the product has auth.
 4. **Delta focus on re-verify** — in a patch loop, re-walk the failed rows first, then a quick core-flow pass.
 
 ## Rules
