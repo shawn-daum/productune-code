@@ -107,13 +107,47 @@ if isinstance(ct, dict) and (ct.get("ticket_id") or ct.get("slug")):
     seg = " ".join(x for x in (tid, tslug) if x)
     parts.append(f"{seg}→{who}" if who else seg)
 
-try:
-    br = subprocess.run(["git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD"],
-                        capture_output=True, text=True, timeout=2).stdout.strip()
-    if br:
-        parts.append(f"branch: {br}")
-except Exception:
-    pass
+# branch (T-426): meta/code split projects (PRD §v1.3) carry no `.git` at
+# root — the code repo lives at `<root>/<config.code.dir>` (default "code").
+# Mirrors project-kind.ts codeDirName/codeRoot (THE CONTRACT) so this stays in
+# lockstep with the CLI/GUI resolution; kept local since this is a pure bash+
+# python display script with no import path into that TS module.
+CODE_DIR_DEFAULT = "code"
+
+
+def code_dir_name():
+    """config.code.dir (a non-empty str, not escaping root) or None."""
+    try:
+        cfg = json.load(open(os.path.join(root, ".prdt", "config.json")))
+    except Exception:
+        return None
+    if isinstance(cfg, dict) and isinstance(cfg.get("code"), dict):
+        d = cfg["code"].get("dir")
+        if isinstance(d, str) and d.strip():
+            t = d.strip()
+            if os.path.isabs(t) or ".." in re.split(r"[/\\]+", t):
+                return None
+            return t
+    return None
+
+
+def git_branch(path):
+    try:
+        r = subprocess.run(["git", "-C", path, "rev-parse", "--abbrev-ref", "HEAD"],
+                            capture_output=True, text=True, timeout=2)
+        b = r.stdout.strip()
+        return b if r.returncode == 0 and b else None
+    except Exception:
+        return None
+
+
+# Root repo wins (non-split projects, unchanged); else the configured/default
+# code repo; else the segment is silently absent (pure-display degrade rule).
+br = git_branch(root)
+if br is None:
+    br = git_branch(os.path.join(root, code_dir_name() or CODE_DIR_DEFAULT))
+if br:
+    parts.append(f"branch: {br}")
 
 print(" | ".join(parts))
 PYEOF
