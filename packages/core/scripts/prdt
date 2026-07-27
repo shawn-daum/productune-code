@@ -1474,6 +1474,13 @@ def cmd_doctor(_args):
             if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
                 warns.append(f"stage: {version} has no open tickets at stage={stage} — "
                              f"consider {next_stage} entry")
+        # build-entry signal (T-430): stage=build but the version's ticket dir has
+        # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
+        if stage == "build" and version:
+            ver_tickets = [t for t in tickets.values() if t["version"] == version]
+            if not any(t["status"] in ("open", "done") for t in ver_tickets):
+                warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
+                             f"consider build-entry scope slicing")
     # deps cycle
     def cycles():
         seen, stack = set(), set()
