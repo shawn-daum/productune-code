@@ -314,9 +314,14 @@ def prompt_version(default):
 # isPhysicallySplit "THE CONTRACT"). The three implementations (core TS · this
 # CLI · GUI project-paths.ts) MUST resolve projectRoot/codeRoot identically (T-377).
 
-META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/prd", "docs/tickets",
-                          "docs/wiki", "docs/designer", "docs/developer", "docs/po",
-                          "docs/qa", "docs/artifacts", "docs/retrospectives", "docs/archive"]
+# Byte-parity with core's DEFAULT_META_ALLOWLIST (meta-git.ts) — see its
+# T-427 audit comment for the include/exclude rationale per contracts.md's
+# Fixed paths table (docs/design.md IN; docs/DEPLOY.md, docs/testing.md etc.
+# project-local, NOT contracts-fixed, so left out of the shared default).
+META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md", "docs/prd",
+                          "docs/tickets", "docs/wiki", "docs/designer", "docs/developer",
+                          "docs/po", "docs/qa", "docs/artifacts", "docs/retrospectives",
+                          "docs/archive"]
 META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
                         ".cost-*.json", ".subagent-gate.json", "worktrees/"]
 
@@ -448,11 +453,153 @@ def _meta_git(root, args):
 
 
 def read_meta_allowlist(root):
+    """Mirrors core's readMetaAllowlist (meta-git.ts), incl. its T-427 self-heal:
+    a persisted allowlist (copied into config.json at init time) is unioned
+    with the CURRENT defaults on every read — add-only, so a project's own
+    custom entries are never dropped, but a default added later (e.g.
+    docs/design.md) reaches projects initialized before it existed too."""
     cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
     lst = (cfg.get("meta") or {}).get("allowlist") if isinstance(cfg.get("meta"), dict) else None
     if isinstance(lst, list) and all(isinstance(x, str) for x in lst):
-        return lst
+        merged = list(META_ALLOWLIST_DEFAULT)
+        for e in lst:
+            if e not in merged:
+                merged.append(e)
+        return merged
     return list(META_ALLOWLIST_DEFAULT)
+
+
+# ── meta doctor checks (T-428 · T-427 재발방지: 침묵 드리프트 신호화) ─────────
+# Two silent-drift classes observed in T-427: ① backup remote lag with zero
+# surface anywhere (100 commits unpushed, nobody told); ② a meta-shaped file
+# outside the effective allowlist silently uncaptured (docs/design.md lost 56
+# lines). Both get a `prdt doctor` warning — non-blocking, never a gate.
+
+META_BACKUP_LAG_COMMITS = 50
+META_BACKUP_LAG_DAYS = 14
+
+
+def meta_backup_lag_warnings(root):
+    """Item 1: unpushed commit count + last-push age past a sane threshold.
+    Backup push is always manual (T-374 ①), so SOME lag is normal — the point
+    is that it's never fully silent. No remote configured is surfaced too (one
+    line, not silence): that bare state is exactly what let T-427 happen.
+    Offline-only (no fetch): age is read off the local remote-tracking ref's
+    tip commit date, the best available proxy for "how stale is the backup"
+    without a network call in a non-blocking lint."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    if not (gd / "HEAD").exists():
+        return []  # no meta split — nothing to back up
+    r = _meta_git(root, ["remote"])
+    remotes = [x for x in r.stdout.splitlines() if x.strip()] if r.returncode == 0 else []
+    if not remotes:
+        return ["meta: no backup remote configured — `prdt meta remote add <name> <url>`"]
+    br = _meta_git(root, ["symbolic-ref", "--short", "HEAD"])
+    branch = br.stdout.strip() if br.returncode == 0 else None
+    if not branch:
+        return []
+    warns = []
+    for name in remotes:
+        ref = f"refs/remotes/{name}/{branch}"
+        if _meta_git(root, ["rev-parse", "--verify", "--quiet", ref]).returncode != 0:
+            warns.append(f"meta: backup remote '{name}' never pushed — `prdt meta push {name}`")
+            continue
+        cnt = _meta_git(root, ["rev-list", "--count", f"{ref}..HEAD"])
+        count = int(cnt.stdout.strip()) if cnt.returncode == 0 and cnt.stdout.strip().isdigit() else 0
+        dt = _meta_git(root, ["log", "-1", "--format=%cI", ref])
+        age = days_since(dt.stdout.strip()) if dt.returncode == 0 and dt.stdout.strip() else None
+        if count > META_BACKUP_LAG_COMMITS or (age is not None and age > META_BACKUP_LAG_DAYS):
+            warns.append(f"meta: backup remote '{name}' lag — {count} unpushed commit(s), "
+                         f"last push ~{age if age is not None else '?'}d ago "
+                         f"(`prdt meta push {name}`)")
+    return warns
+
+
+def meta_drift_warnings(root):
+    """Item 2: a meta-shaped file/dir directly under an allowlist HOME
+    (`.prdt`, `.productune`, `briefs`, `docs`) that has an uncommitted change
+    but is NOT covered by the effective allowlist — the generalized
+    docs/design.md failure class (T-427: silently uncaptured, 56 lines lost
+    before it entered the fixed default). Reads meta git's OWN raw status
+    (unscoped by the allowlist, unlike `_meta_stage_and_commit`'s staging
+    pathspec) — its `info/exclude` already keeps derived artifacts and the
+    code dir out, so what's left is real working-tree signal."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    if not (gd / "HEAD").exists():
+        return []
+    homes = [h for h in (".prdt", ".productune", "briefs", "docs") if (root / h).exists()]
+    if not homes:
+        return []
+    # -z: NUL-separated, paths NEVER C-quoted — unlike the default porcelain
+    # format, which double-quotes any path containing a space or non-ASCII
+    # byte (T-428 QA fail: that quoting broke covered()'s prefix match against
+    # the allowlist's plain unquoted entries — both false-warning an
+    # allowlisted 회고노트.md-style file, and making the advertised
+    # config.json fix path unreachable for a genuinely-outside file with such
+    # a name, since quoted never equals unquoted). Rename/copy records carry
+    # an extra NUL-terminated ORIG_PATH token with no "XY " prefix — skip it,
+    # only the current PATH (the first token) matters here.
+    r = _meta_git(root, ["status", "--porcelain", "-z", "--untracked-files=all", "--", *homes])
+    if r.returncode != 0:
+        return []
+    allow = read_meta_allowlist(root)
+
+    def covered(p):
+        return any(p == e or p.startswith(e.rstrip("/") + "/") for e in allow)
+
+    warns, seen = [], set()
+    tokens = r.stdout.split("\0")
+    i = 0
+    while i < len(tokens):
+        entry = tokens[i]
+        i += 1
+        if not entry or len(entry) < 4:
+            continue
+        xy, path = entry[:2], entry[3:]
+        if "R" in xy or "C" in xy:
+            i += 1  # consume the trailing ORIG_PATH token, unused here
+        if path in seen or covered(path):
+            continue
+        seen.add(path)
+        warns.append(f"meta: {path} has uncommitted changes but sits outside the "
+                     f"effective meta allowlist — decide fixed vs excluded "
+                     f"(config.json meta.allowlist), it won't auto-back-up as-is")
+    return warns
+
+
+def _ts_default_allowlist():
+    """core's DEFAULT_META_ALLOWLIST (meta-git.ts) — dev-repo-only (an installed
+    ~/.prdt mirror carries no TS source; this quietly returns None there, same
+    degrade-never-raise posture as the rest of the doctor)."""
+    ts = Path(__file__).resolve().parent.parent / "src" / "git-workflow" / "meta-git.ts"
+    if not ts.is_file():
+        return None
+    try:
+        text = ts.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"DEFAULT_META_ALLOWLIST\s*:\s*string\[\]\s*=\s*\[(.*?)\]", text, re.S)
+    if not m:
+        return None
+    return [x.strip().strip("'\",") for x in m.group(1).splitlines() if x.strip().strip("'\",")]
+
+
+def meta_allowlist_parity_warning():
+    """Item 3: lints the CLI's default allowlist against core's DEFAULT_META_ALLOWLIST
+    — the two hand-authored copies of the SAME T-427-audited fixed-path set
+    (docs/design.md IN; docs/DEPLOY.md/testing.md/MIGRATION.md/backlog.md OUT,
+    per contracts.md's Fixed paths table — not re-decided here, only parity-checked).
+    A silent edit to one side without the other is exactly how a future T-427
+    class bug would reappear."""
+    ts_allow = _ts_default_allowlist()
+    if ts_allow is None or set(ts_allow) == set(META_ALLOWLIST_DEFAULT):
+        return None
+    only_py = sorted(set(META_ALLOWLIST_DEFAULT) - set(ts_allow))
+    only_ts = sorted(set(ts_allow) - set(META_ALLOWLIST_DEFAULT))
+    return (f"meta: allowlist default drift vs core meta-git.ts — "
+            f"python-only {only_py}, ts-only {only_ts}")
 
 
 def _meta_stage_and_commit(root, message):
@@ -1350,6 +1497,13 @@ def cmd_doctor(_args):
         for a in art.iterdir():
             if a.is_file() and not a.name.startswith(".") and a.name not in all_bodies:
                 warns.append(f"ticket: artifact {a.name} has no referencing ticket")
+
+    # meta backup lag + drift + fixed-path parity (T-428)
+    warns += meta_backup_lag_warnings(root)
+    warns += meta_drift_warnings(root)
+    parity = meta_allowlist_parity_warning()
+    if parity:
+        warns.append(parity)
 
     # wiki
     warns += wiki_lint(root)
