@@ -500,6 +500,56 @@ test('a custom allowlist entry is respected by commit', async () => {
   expect(tracked).toContain('docs/looseNote.md')
 })
 
+// ── docs/design.md allowlist coverage (T-427) ─────────────────────────────────
+
+test('DEFAULT_META_ALLOWLIST covers docs/design.md (contracts Fixed paths)', () => {
+  expect(DEFAULT_META_ALLOWLIST).toContain('docs/design.md')
+})
+
+test('acceptance 2: a fresh project auto-commits a docs/design.md change to meta history', async () => {
+  fs.writeFileSync(path.join(projectDir, 'docs', 'design.md'), '# Design\n')
+
+  await initMetaRepo(projectDir)
+  const res = await commitMeta(projectDir, 'T-427 [manual: →] design.md snapshot')
+
+  expect(res.committed).toBe(true)
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).toContain('docs/design.md')
+})
+
+test('acceptance 3: an EXISTING project (stale copied allowlist, no docs/design.md) still picks it up, without losing a user-added entry', async () => {
+  // Simulate a project initialized BEFORE docs/design.md landed in
+  // DEFAULT_META_ALLOWLIST: config.json carries a frozen copy of the OLD
+  // default list, plus a project-added custom entry.
+  const staleOldDefault = [
+    '.prdt', '.productune', 'briefs', 'docs/prd', 'docs/tickets', 'docs/wiki',
+    'docs/designer', 'docs/developer', 'docs/po', 'docs/qa', 'docs/artifacts',
+    'docs/retrospectives', 'docs/archive',
+  ]
+  writeMetaAllowlist(projectDir, [...staleOldDefault, 'docs/looseNote.md'])
+  fs.writeFileSync(path.join(projectDir, 'docs', 'looseNote.md'), 'note\n')
+  fs.writeFileSync(path.join(projectDir, 'docs', 'design.md'), '# Design\n')
+
+  // readMetaAllowlist self-heals: the missing default is added back in, the
+  // project's own custom entry is preserved — never clobbered.
+  const merged = readMetaAllowlist(projectDir)
+  expect(merged).toContain('docs/design.md')
+  expect(merged).toContain('docs/looseNote.md')
+
+  await initMetaRepo(projectDir)
+  const res = await commitMeta(projectDir, 'T-427 [manual: →] existing-project snapshot')
+
+  expect(res.committed).toBe(true)
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).toContain('docs/design.md') // the fix
+  expect(tracked).toContain('docs/looseNote.md') // not clobbered
+
+  // the persisted config.json itself is untouched by the self-heal (read-only) —
+  // it still carries exactly what writeMetaAllowlist wrote, sans docs/design.md.
+  const cfg = JSON.parse(fs.readFileSync(path.join(projectDir, '.prdt', 'config.json'), 'utf-8'))
+  expect(cfg.meta.allowlist).toEqual([...staleOldDefault, 'docs/looseNote.md'])
+})
+
 // ── env isolation (QA-HIGH regression) ────────────────────────────────────────
 
 test('leaked GIT_* env (hook context) never corrupts the code repo', async () => {
