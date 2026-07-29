@@ -2,10 +2,11 @@ import { app, ipcMain, dialog, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { execFile, execFileSync } from 'child_process'
+import { execFile, execFileSync, spawn } from 'child_process'
 import { promisify } from 'util'
 import { initProject, startDeviceFlow, pollDeviceFlow, loadCredentials, createPrivateRepo, findAncestorProductuneRoot } from '@productune/core'
 import { writeOnboardingPending } from './onboarding'
+import { ensurePrdtProvisioned, resolveDefaultPaths } from '../prdt-bootstrap'
 import { STATE_DIR_NAME, configPath, poStatePath, codeRoot } from '../project-paths'
 import { resolveVersion, resolveStage } from '../po-state-fields'
 
@@ -20,14 +21,38 @@ const execFileAsync = promisify(execFile)
 // NO silent fallback to `.productune` — no GUI path creates a new legacy project.
 const PRDT_BIN = path.join(os.homedir(), '.prdt', 'bin', 'prdt')
 
-/** Run `prdt <args>` (cwd = projectDir). Throws a clear Error when the CLI is
- *  absent or exits non-zero. Returns stdout. */
-function runPrdtCli(args: string[], cwd: string): string {
-  if (!fs.existsSync(PRDT_BIN)) {
+// T-431: a missing prdt CLI is no longer a "go run install.sh" dead end — the
+// installer payload is bundled in the app, so we bootstrap in-process and only
+// throw when that ALSO failed, with a GUI-actionable message (never a shell
+// instruction; NewProjectModal renders the message on the create form).
+let cltInstallRequested = false
+function ensurePrdtCliAvailable(): void {
+  if (fs.existsSync(PRDT_BIN)) return
+  const res = ensurePrdtProvisioned(resolveDefaultPaths(app))
+  if (fs.existsSync(PRDT_BIN)) return
+  if (res.code === 'missing-python3') {
+    // Trigger Apple's GUI installer for the Command Line Tools once per app run
+    // (python3 is what the prdt CLI itself runs on) — zero terminal involved.
+    if (!cltInstallRequested && process.platform === 'darwin') {
+      cltInstallRequested = true
+      try {
+        spawn('/usr/bin/xcode-select', ['--install'], { detached: true, stdio: 'ignore' }).unref()
+      } catch { /* dialog is best-effort; the retry message below still stands */ }
+    }
     throw new Error(
-      `prdt CLI not found at ${PRDT_BIN} — run the prdt installer (scripts/install.sh) before creating or migrating a project.`,
+      'macOS 개발자 도구(python3)가 필요해요 — 방금 뜬 Apple 설치 창에서 "설치"를 누르고, 완료된 뒤 다시 시도해 주세요.',
     )
   }
+  throw new Error(
+    `프로젝트 실행 환경을 자동으로 준비하지 못했어요 (${res.error ?? res.reason}) — 앱을 재시작한 뒤 다시 시도해 주세요.`,
+  )
+}
+
+/** Run `prdt <args>` (cwd = projectDir). Bootstraps the prdt runtime from the
+ *  bundled payload when absent (T-431); throws a clear Error when that fails or
+ *  the CLI exits non-zero. Returns stdout. */
+function runPrdtCli(args: string[], cwd: string): string {
+  ensurePrdtCliAvailable()
   try {
     return execFileSync(PRDT_BIN, args, { cwd, encoding: 'utf-8' })
   } catch (e: any) {

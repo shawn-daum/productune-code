@@ -277,7 +277,7 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
  * scripts — a prdt project can't spawn its PO without `~/.prdt/prdt.env` anyway
  * (po-runner canSpawnClaude), so install.sh runs first either way.
  */
-function installPrdtHooks(settingsPath: string, homeDir: string): void {
+export function installPrdtHooks(settingsPath: string, homeDir: string): void {
   const prdtHome = path.join(homeDir, '.prdt')
   const hooksDir = path.join(prdtHome, 'hooks')
   const missing = PRDT_HOOK_BASENAMES.filter(b => !fs.existsSync(path.join(hooksDir, b)))
