@@ -37,6 +37,7 @@ import { register as registerDocsWatch, stopDocsWatch } from './ipc/docsWatch'
 import { register as registerCostArchive, stopCostWatch } from './ipc/costArchive'
 import { abortActiveTurn, isPoRunning } from './po-runner'
 import { killAllSurfaceRuns } from './surface-runner'
+import { ensurePrdtProvisioned, resolveDefaultPaths } from './prdt-bootstrap'
 import { getCloseToTray, getLaunchAtLogin, setLaunchAtLogin, getZoomFactor } from '@productune/core'
 
 // T-PATCH-143: dev 모드 앱 메뉴/About/알림 소스 라벨을 "Electron"→"productune"로 통일 (app.name 첫 사용 전 호출, electron-builder.yml productName과 동일 값)
@@ -441,6 +442,23 @@ app.whenReady().then(() => {
 
   startUsageWatch()
   createWindow()
+
+  // T-431: first-launch prdt bootstrap — a participant machine (no ~/.prdt at
+  // all) is provisioned from the bundled installer payload so project-create
+  // works with zero terminal use. Idempotent: an app-managed ~/.prdt is only
+  // refreshed on app-version change; a repo-managed ~/.prdt (no gui marker) is
+  // never touched. Deferred a tick so first paint is never blocked; a failure
+  // here is non-fatal — project.ts retries lazily at create time and surfaces
+  // the actionable error in the GUI.
+  setTimeout(() => {
+    try {
+      const res = ensurePrdtProvisioned(resolveDefaultPaths(app))
+      if (!res.ok) console.warn(`[prdt-bootstrap] ${res.reason}: ${res.error ?? ''}`)
+      else if (res.performed) console.log('[prdt-bootstrap] provisioned ~/.prdt from bundled payload')
+    } catch (e) {
+      console.warn('[prdt-bootstrap] unexpected failure', e)
+    }
+  }, 0)
 
   // T-PATCH-177: create the menu-bar Tray. getWindow returns the live main
   // window (mainWindow is reassigned on every createWindow); requestQuit reuses

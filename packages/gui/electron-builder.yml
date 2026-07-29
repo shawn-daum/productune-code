@@ -47,6 +47,27 @@ extraResources:
     to: build/tray
     filter:
       - "**/*"
+  # T-431: the prdt INSTALLER PAYLOAD — everything install.sh §1/§3 mirrors home,
+  # bundled unpacked (never in the asar: bin/prdt must be spawnable and the hook
+  # .sh files are copied byte-for-byte to ~/.prdt) so a participant machine with
+  # no ~/.prdt is provisioned by the app itself on first launch
+  # (electron/prdt-bootstrap.ts reads this at <Resources>/prdt-core). This is a
+  # DIFFERENT contract from the removed T-PATCH-217 `../core` copy (which shipped
+  # the raw source tree for legacy onboarding to read at runtime): prdt-core is
+  # a copy SOURCE only — nothing reads it after bootstrap, and hooks/settings
+  # keep pointing at the ~/.prdt mirror per the A1 install-level boundary
+  # (never at the app bundle).
+  - from: ../core
+    to: prdt-core
+    filter:
+      - "doctrine.md"
+      - "discipline/**"
+      - "agents/prdt-*.md"
+      - "scripts/prdt"
+      - "scripts/statusline-prdt.sh"
+      - "scripts/hook-manifest.json"
+      - "scripts/install.sh"
+      - "scripts/hooks/prdt-*.sh"
   # T-311: the `../core` → Resources/core extraResource (T-PATCH-217) is GONE.
   # Its sole runtime consumer was the legacy GUI onboarding, which readdir'd
   # `app.getAppPath()/../core/agents` to symlink pdt-* specs, copied
