@@ -1,23 +1,46 @@
 import path from 'path'
-import { test, expect, _electron as electron } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { GUI_ROOT, cleanupHome, launchApp, sandboxHome } from './harness'
 
 // T-359 regression: launch the real Electron app and drive the theme controller
 // (window.productuneTheme.setTheme) between dark and light. Guards that BOTH modes
 // render, the surface/text/accent tokens flip, and the single --brand-accent swap
 // token fans out to the actual painted button. Screenshots land in test-results/.
-const GUI_ROOT = path.resolve(__dirname, '..')
+//
+// T-442 F1/F6: both tests now boot into a throwaway sandbox home. They used to
+// run against the developer's REAL home, which meant the screen under test was
+// whatever that machine's state produced — see the T-359 test below for what
+// that hid.
+
+/**
+ * The wizard's primary CTA, in either locale.
+ *
+ * T-442 F-B: this used to be `/^(Next|다음)\b/`. JavaScript's `\b` is a
+ * boundary between `[A-Za-z0-9_]` and anything else, so after a Hangul
+ * syllable there is no boundary to find and the Korean branch could NEVER
+ * match — '다음' → false, '다음 단계' → false (QA-measured). It was dead code
+ * today only because `src/i18n.ts` hardcodes `lng: 'en'` and `sandboxHome()`
+ * seeds nothing; the first spec to seed
+ * `~/.productune/settings.json {ui:{language:'ko'}}` — the pattern
+ * `fact--gui-testing-env` documents — would have failed on the locator and
+ * been read as a product defect.
+ *
+ * The `\b` is kept for the ASCII branch, where it does the intended job of
+ * rejecting 'Nextcloud'; the Hangul branch needs no separator rule because
+ * '다음' is not a prefix of an unrelated label in this UI.
+ */
+const CTA_LABEL_RE = /^(?:Next\b|다음)/u
 
 type Snap = {
   brandAccent: string; accent: string; paintedBtnBg: string
+  ctaLabel: string; ghostBtnBg: string; buttonCount: number
   bgSurfaceBase: string; textPrimary: string; borderFocus: string
   personaPo: string; statusInProgress: string; fontFamily: string
 }
 
 test('T-359: token layer + accent flip render in BOTH dark and light', async () => {
-  const app = await electron.launch({
-    args: [path.join(GUI_ROOT, 'dist-electron', 'main.js')],
-    cwd: GUI_ROOT,
-  })
+  const home = sandboxHome('theme-t359')
+  const app = await launchApp({ home })
   try {
     const win = await app.firstWindow()
     await win.waitForLoadState('domcontentloaded')
@@ -31,14 +54,36 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
       }, mode)
       await win.waitForTimeout(250)
       await win.screenshot({ path: path.join(GUI_ROOT, 'test-results', `t359-${mode}.png`) })
-      return win.evaluate(() => {
+      // The matcher crosses into the page context, so it travels as a source
+      // string — a RegExp cannot be serialised through evaluate(). Passing
+      // CTA_LABEL_RE.source keeps one definition for both sides.
+      return win.evaluate((ctaSource: string) => {
+        const ctaRe = new RegExp(ctaSource, 'u')
         void document.documentElement.offsetHeight
-        const btn = document.querySelector('button') as HTMLElement | null
+        // T-442 F6 — this used to be `document.querySelector('button')`, i.e.
+        // whatever button happened to come FIRST in the DOM. That is only the
+        // accent-painted CTA on some screens, and which screen the app lands on
+        // depends entirely on the HOME it boots against. It passed because it
+        // ran against the developer's real home; the moment the spec was
+        // sandboxed it read the wizard's `btnReset` ghost button
+        // (background: transparent → rgba(0,0,0,0)) and failed.
+        //
+        // The product is fine. Select the button the design system actually
+        // paints with var(--accent) — the wizard footer's primary CTA — and
+        // keep the ghost button's paint alongside it, so a locator that ever
+        // drifts back onto the wrong element fails loudly instead of silently
+        // asserting something vacuous.
+        const buttons = Array.from(document.querySelectorAll('button')) as HTMLElement[]
+        const cta = buttons.find((b) => ctaRe.test((b.textContent ?? '').trim())) ?? null
+        const ghost = buttons.find((b) => /Reset|초기화/.test((b.textContent ?? '').trim())) ?? null
         const cs = getComputedStyle(document.documentElement)
         return {
           brandAccent: cs.getPropertyValue('--brand-accent').trim(),
           accent: cs.getPropertyValue('--accent').trim(),
-          paintedBtnBg: btn ? getComputedStyle(btn).backgroundColor : '',
+          paintedBtnBg: cta ? getComputedStyle(cta).backgroundColor : '',
+          ctaLabel: cta ? (cta.textContent ?? '').trim() : '',
+          ghostBtnBg: ghost ? getComputedStyle(ghost).backgroundColor : '',
+          buttonCount: buttons.length,
           bgSurfaceBase: cs.getPropertyValue('--bg-surface-base').trim(),
           textPrimary: cs.getPropertyValue('--text-primary').trim(),
           borderFocus: cs.getPropertyValue('--border-focus').trim(),
@@ -46,7 +91,7 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
           statusInProgress: cs.getPropertyValue('--status-in-progress').trim(),
           fontFamily: cs.getPropertyValue('--font-family').trim(),
         }
-      })
+      }, CTA_LABEL_RE.source)
     }
 
     const dark = await snap('dark')
@@ -58,6 +103,19 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
 
     // Pretendard family active (§0.3).
     expect(dark.fontFamily.toLowerCase()).toContain('pretendard')
+
+    // The CTA the accent assertions below hang on was actually found, and is a
+    // genuinely painted element — without this the `toBe` could pass vacuously
+    // on two empty strings if the locator ever stopped matching.
+    for (const s of [dark, light]) {
+      expect(s.buttonCount, 'no buttons rendered — wrong screen?').toBeGreaterThan(1)
+      expect(s.ctaLabel, 'primary CTA not found on screen').toMatch(CTA_LABEL_RE)
+      expect(s.paintedBtnBg, 'primary CTA is unpainted').not.toBe('rgba(0, 0, 0, 0)')
+    }
+    // …and the ghost button next to it is genuinely transparent. This is the
+    // element the pre-T-442 selector was reading; asserting it here documents
+    // that the old failure was a bad selector, not a broken token.
+    expect(dark.ghostBtnBg, 'the reset button is a ghost by design').toBe('rgba(0, 0, 0, 0)')
 
     // Single-swap fan-out: accent + focus + persona-po + in-progress all track the
     // brand primitive, in BOTH modes, down to the painted button.
@@ -76,6 +134,7 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
     expect(dark.textPrimary).not.toBe(light.textPrimary)                   // text flipped
   } finally {
     await app.close()
+    cleanupHome(home)
   }
 })
 
@@ -89,10 +148,8 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
 // / color --text-primary, and a panel painted --surface-panel/--text-emphasis)
 // computes LIGHT surface + DARK text in light mode — not just a :root variable read.
 test('T-417: legacy-alias surfaces render LIGHT (real element, not just :root)', async () => {
-  const app = await electron.launch({
-    args: [path.join(GUI_ROOT, 'dist-electron', 'main.js')],
-    cwd: GUI_ROOT,
-  })
+  const home = sandboxHome('theme-t417')
+  const app = await launchApp({ home })
   try {
     const win = await app.firstWindow()
     await win.waitForLoadState('domcontentloaded')
@@ -185,5 +242,6 @@ test('T-417: legacy-alias surfaces render LIGHT (real element, not just :root)',
     expect(lum(dark.inlineCodeColor), 'dark inline-code text must be light').toBeGreaterThan(0.6)
   } finally {
     await app.close()
+    cleanupHome(home)
   }
 })

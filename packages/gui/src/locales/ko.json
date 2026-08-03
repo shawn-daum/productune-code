@@ -45,6 +45,16 @@
       "statusReady": "설치됨 · 인증됨",
       "statusInstalledNoAuth": "설치됨 · 미인증",
       "statusNotInstalled": "미설치",
+      "install": {
+        "button": "Claude Code 설치",
+        "desc": "앱이 직접 설치해 드려요 — 따로 준비할 것이 없어요.",
+        "phaseDownload": "설치 준비 중…",
+        "phaseInstall": "설치하는 중… 1~2분 정도 걸릴 수 있어요.",
+        "phaseVerify": "설치 결과를 확인하는 중…",
+        "errNetwork": "다운로드 서버에 연결할 수 없어요. 인터넷 연결을 확인하고 다시 시도해 주세요.",
+        "errVerify": "내려받은 파일을 검증하지 못해 설치하지 않았어요. 다시 시도해 주세요.",
+        "errFailed": "설치가 끝까지 진행되지 않았어요. 다시 시도해 주세요."
+      },
       "installGuide": "설치 가이드 ↗",
       "recheck": "재확인",
       "login": {
@@ -56,12 +66,13 @@
         "needsCodeHint": "브라우저에서 로그인이 끝나지 않았다면, 화면에 표시된 코드를 붙여넣어 주세요.",
         "codePlaceholder": "여기에 코드 붙여넣기",
         "submitCode": "제출",
-        "cancel": "취소"
+        "cancel": "취소",
+        "startFailed": "브라우저 로그인을 시작하지 못했어요. 연결하기 버튼으로 다시 시도해 주세요."
       },
       "gate": {
         "checking": "확인 중…",
-        "needInstall": "위 설치 가이드를 참고해 Claude Code를 먼저 설치해 주세요",
-        "needLogin": "위 Start login 버튼으로 로그인해 주세요"
+        "needInstall": "위 설치 버튼으로 Claude Code를 설치해 주세요",
+        "needLogin": "위 '연결하기' 버튼으로 로그인해 주세요"
       }
     },
     "step4": {
@@ -80,9 +91,10 @@
     },
     "completionSteps": {
       "env": "환경 설정 파일 생성 (~/.productune/productune.env)",
-      "playwright": "Playwright MCP 캐시 준비 (QA smoke gate, npx @playwright/mcp)",
+      "playwright": "QA 스모크 테스트 캐시 준비",
       "language": "UI 언어 설정 저장",
-      "audience": "대화 방식 저장"
+      "audience": "대화 방식 저장",
+      "playwrightDeferred": "지금은 마치지 못했어요 — 처음 사용할 때 자동으로 다시 준비돼요"
     },
     "versionInit": {
       "label": "첫 번째 Version ID",
@@ -181,7 +193,8 @@
       "runHint": "이제 앱을 띄워볼 수 있어요 🚀 우측 하단 ▶ Run 에서 환경(예: local)을 골라 실행하면 미리보기 탭이 열립니다. (탭을 닫으면 서버도 함께 종료돼요.)"
     },
     "runOutput": {
-      "reopenPreview": "웹 다시 열기"
+      "reopenPreview": "웹 다시 열기",
+      "toolchainUnavailable": "이 컴퓨터에 제품을 빌드·실행할 준비가 아직 되어 있지 않아요. 이 앱을 최신 버전으로 다시 설치하면 대부분 해결돼요."
     },
     "zoom": {
       "out": "축소",
@@ -1254,7 +1267,8 @@
       "title": "새 프로젝트 만들기",
       "nameLabel": "프로젝트 이름 (slug)",
       "slugHint": "영소문자, 숫자, 하이픈만 사용 가능합니다.",
-      "firstVersionLabel": "첫 번째 Version ID"
+      "firstVersionLabel": "첫 번째 Version ID",
+      "creating": "만드는 중…"
     },
     "github": {
       "oauthFailed": "OAuth 실패",

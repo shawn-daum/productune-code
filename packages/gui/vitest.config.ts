@@ -16,8 +16,12 @@ export default defineConfig({
     exclude: ['tests/**', 'node_modules/**'],
     environment: 'node',
     globals: false,
-    // Setup file: install module mocks before each test file is loaded.
-    setupFiles: ['./vitest.setup.ts'],
+    // Setup files, in order:
+    //   1. T-442 HOME sandbox — must run FIRST, before any test module (and so
+    //      before module-level constants like ipc/project.ts RECENTS_PATH and
+    //      ipc/usageWatch.ts USAGE_FILE) resolves os.homedir().
+    //   2. module mocks.
+    setupFiles: ['../../scripts/vitest-home-sandbox.ts', './vitest.setup.ts'],
     // Resolve aliases matching vite.config (needed if test files use @ aliases).
     alias: {
       '@': path.resolve(__dirname, 'src'),

@@ -13,7 +13,7 @@
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { detectProductuneLayout, buildRecentsWithMeta, readPrdtConfig } from './project'
+import { detectProductuneLayout, buildRecentsWithMeta, readPrdtConfig, createNewProjectDir } from './project'
 
 interface Case {
   readonly label: string
@@ -265,4 +265,48 @@ test('T-319: readPrdtConfig maps .prdt state → renderer config shape (with fal
     throw new Error(`${failures.length} failure(s):\n  ${failures.join('\n  ')}`)
   }
   expect(passed).toBe(READ_PRDT_CONFIG_CASES.length)
+})
+
+// QA ghost-dir regression (T-431 follow-up): a failed project:create used to
+// leave the pre-made empty project dir behind, so a retry with the SAME slug
+// landed on `<slug>-2` instead of reclaiming `<slug>`.
+test('T-431 QA: createNewProjectDir cleans up the dir it created on init failure — retry reclaims the same slug', () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-ghost-dir-'))
+  try {
+    const slug = 'my-saas'
+    const failingCreate = () => { throw new Error('prdt init failed (simulated)') }
+
+    expect(() => createNewProjectDir(baseDir, slug, undefined, failingCreate)).toThrow('prdt init failed')
+    // the empty dir this call made must NOT survive the throw
+    expect(fs.existsSync(path.join(baseDir, slug))).toBe(false)
+    expect(fs.readdirSync(baseDir)).toEqual([])
+
+    // retry with the same slug — must land on the ORIGINAL name, not `-2`
+    const okCreate = (_dir: string, s: string) => ({ slug: s, created_at: '2026-07-30T00:00:00Z', version: 'v1' })
+    const result = createNewProjectDir(baseDir, slug, undefined, okCreate)
+    expect(result.projectDir).toBe(path.join(baseDir, slug))
+    expect(fs.existsSync(result.projectDir)).toBe(true)
+  } finally {
+    fs.rmSync(baseDir, { recursive: true, force: true })
+  }
+})
+
+test('T-431 QA: createNewProjectDir failure never removes a PRE-EXISTING dir with a colliding name (only the dir it created)', () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-ghost-dir-collision-'))
+  try {
+    const slug = 'my-saas'
+    // Pre-existing unrelated dir already occupies the plain slug name.
+    fs.mkdirSync(path.join(baseDir, slug), { recursive: true })
+    fs.writeFileSync(path.join(baseDir, slug, 'sentinel.txt'), 'pre-existing, not ours\n')
+
+    const failingCreate = () => { throw new Error('prdt init failed (simulated)') }
+    expect(() => createNewProjectDir(baseDir, slug, undefined, failingCreate)).toThrow('prdt init failed')
+
+    // the pre-existing dir survives untouched...
+    expect(fs.readFileSync(path.join(baseDir, slug, 'sentinel.txt'), 'utf-8')).toBe('pre-existing, not ours\n')
+    // ...and the `-2` dir THIS call created is cleaned up
+    expect(fs.existsSync(path.join(baseDir, `${slug}-2`))).toBe(false)
+  } finally {
+    fs.rmSync(baseDir, { recursive: true, force: true })
+  }
 })

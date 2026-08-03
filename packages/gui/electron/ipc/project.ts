@@ -97,6 +97,48 @@ function createPrdtProject(
   return readPrdtConfig(projectDir, slug, initialVersionId ?? 'v1')
 }
 
+/**
+ * QA ghost-dir regression (T-431 follow-up): `project:create` pre-creates an
+ * empty project directory (to claim the collision-free `<slug>` / `<slug>-N`
+ * name) BEFORE running the prdt CLI. If provisioning/init then throws, that
+ * empty dir was previously left behind — a retry then sees `<slug>` as taken
+ * and lands on `<slug>-2`, burning the participant's chosen name for a create
+ * that never actually happened. On throw, remove ONLY the directory THIS call
+ * created (never a pre-existing dir — collisions still land on `-2`, `-3`, ...
+ * as before), then rethrow so the caller still surfaces the failure.
+ *
+ * `createFn` is test-only DI (mirrors the `homeDir` idiom elsewhere in this
+ * file) — swaps out the real prdt-CLI delegation so the cleanup path can be
+ * exercised without a real `~/.prdt/bin/prdt`.
+ */
+export function createNewProjectDir(
+  baseDir: string,
+  slug: string,
+  initialVersionId?: string,
+  createFn: (
+    projectDir: string,
+    slug: string,
+    initialVersionId?: string,
+  ) => { slug: string; created_at: string; version: string } = createPrdtProject,
+): { projectDir: string; config: { slug: string; created_at: string; version: string } } {
+  fs.mkdirSync(baseDir, { recursive: true })
+
+  let projectDir = path.join(baseDir, slug)
+  let suffix = 2
+  while (fs.existsSync(projectDir)) {
+    projectDir = path.join(baseDir, `${slug}-${suffix++}`)
+  }
+  fs.mkdirSync(projectDir, { recursive: true })
+
+  try {
+    const config = createFn(projectDir, slug, initialVersionId)
+    return { projectDir, config }
+  } catch (e) {
+    try { fs.rmSync(projectDir, { recursive: true, force: true }) } catch { /* best-effort cleanup */ }
+    throw e
+  }
+}
+
 /** T-321: convert a legacy `.productune` project to `.prdt` via `prdt migrate`
  *  (the single migration SoT — renames `.productune/`→`.productune.migrated/` and
  *  writes `.prdt/`). Delegates by absolute path; no in-process re-implementation. */
@@ -466,17 +508,10 @@ export function register(): void {
 
   ipcMain.handle('project:create', (_event, { slug, initialVersionId }: { slug: string; initialVersionId?: string }) => {
     const baseDir = path.join(os.homedir(), 'productune', 'projects')
-    fs.mkdirSync(baseDir, { recursive: true })
-
-    let projectDir = path.join(baseDir, slug)
-    let suffix = 2
-    while (fs.existsSync(projectDir)) {
-      projectDir = path.join(baseDir, `${slug}-${suffix++}`)
-    }
-    fs.mkdirSync(projectDir, { recursive: true })
-
     // T-319: new projects are born `.prdt` via the prdt CLI SoT (never .productune).
-    const config = createPrdtProject(projectDir, slug, initialVersionId)
+    // Throws (and cleans up the just-made empty dir) on prdt-CLI failure — see
+    // createNewProjectDir's ghost-dir doc comment.
+    const { projectDir, config } = createNewProjectDir(baseDir, slug, initialVersionId)
     // Decision B (T-P4-101): write onboarding pending immediately after init success.
     try { writeOnboardingPending(projectDir, 'gui-create') } catch { /* non-fatal */ }
     addToRecents(projectDir, slug)

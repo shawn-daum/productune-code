@@ -18,8 +18,10 @@ import path from 'path'
 import {
   runSurfaceCommand,
   cancelSurfaceRun,
+  withLoginShellPath,
   type SurfaceKind,
 } from '../surface-runner'
+import { hasNodeOnPath } from '../toolchain'
 import { configPath } from '../project-paths'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -229,7 +231,18 @@ export function register(): void {
           onStart: (info) => { if (!wc.isDestroyed()) wc.send('surface:onStart', info) },
           onOutput: (info) => { if (!wc.isDestroyed()) wc.send('surface:onOutput', info) },
           onDone: (info) => {
-            if (!wc.isDestroyed()) wc.send('surface:onDone', info)
+            if (!wc.isDestroyed()) {
+              // T-440: when a run FAILS and no JS runtime is resolvable on the
+              // very PATH the child had (user toolchain OR the app-provided
+              // one — toolchainBinDir rides last on withLoginShellPath), tag
+              // the done event so the renderer can show an ACTIONABLE state
+              // instead of a bare exit code. The hint is a structured token;
+              // the localized text lives in the renderer (no shell command,
+              // package manager or script path ever reaches the user).
+              const toolchainMissing =
+                info.status === 'fail' && !hasNodeOnPath(withLoginShellPath(process.env).PATH ?? '')
+              wc.send('surface:onDone', toolchainMissing ? { ...info, hint: 'toolchain-unavailable' } : info)
+            }
             // D6 (build-done OS notification) deferred — see ticket notes.
           },
         },

@@ -15,9 +15,21 @@ interface Props {
   onNext: () => void
   onPrev?: () => void
   stepLabel?: string
+  /**
+   * T-439 (QA HIGH): message from a failed `onNext`. This step OWNS the Next
+   * that triggers project creation, so it must own the failure surface too —
+   * NewProjectModal used to render its error only inside its step-1 block while
+   * the create ran at step 1.5, leaving setError with no render site at all and
+   * the participant looking at a button that "did nothing".
+   */
+  error?: string
+  /** Disables Next and labels it, so a multi-second create isn't silent either. */
+  busy?: boolean
+  /** Label for the Next button while `busy` (defaults to `common.loading`). */
+  busyLabel?: string
 }
 
-export default function VersionInitStep({ value, onChange, onNext, onPrev, stepLabel }: Props) {
+export default function VersionInitStep({ value, onChange, onNext, onPrev, stepLabel, error, busy, busyLabel }: Props) {
   const { t } = useTranslation()
 
   return (
@@ -44,15 +56,20 @@ export default function VersionInitStep({ value, onChange, onNext, onPrev, stepL
             tech=""
           />
         </div>
+        {error && <div data-testid="version-init-error" style={errStyle}>{error}</div>}
       </div>
       <div style={footer}>
         {onPrev ? (
-          <button style={btnSecondary} onClick={onPrev}>{t('common.prev')}</button>
+          <button style={btnSecondary} onClick={onPrev} disabled={busy}>{t('common.prev')}</button>
         ) : (
           <div />
         )}
-        <button style={btnPrimary} onClick={onNext}>
-          {t('common.next')}
+        <button
+          style={busy ? { ...btnPrimary, opacity: 0.5, cursor: 'default' } : btnPrimary}
+          onClick={onNext}
+          disabled={busy}
+        >
+          {busy ? (busyLabel ?? t('common.loading')) : t('common.next')}
         </button>
       </div>
     </>
@@ -99,6 +116,13 @@ const btnPrimary: React.CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
   cursor: 'pointer',
+}
+
+const errStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--health-error)',
+  lineHeight: 1.5,
+  marginTop: 4,
 }
 
 const btnSecondary: React.CSSProperties = {
