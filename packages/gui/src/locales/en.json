@@ -45,6 +45,16 @@
       "statusReady": "installed · authed",
       "statusInstalledNoAuth": "installed · not authed",
       "statusNotInstalled": "not installed",
+      "install": {
+        "button": "Install Claude Code",
+        "desc": "The app installs it for you — nothing else to set up.",
+        "phaseDownload": "Getting the installer ready…",
+        "phaseInstall": "Installing… this can take a minute or two.",
+        "phaseVerify": "Verifying the installation…",
+        "errNetwork": "Couldn't reach the download server. Check your internet connection and try again.",
+        "errVerify": "The downloaded files couldn't be verified, so nothing was installed. Please try again.",
+        "errFailed": "The installation didn't finish. Please try again."
+      },
       "installGuide": "Install guide ↗",
       "recheck": "Recheck",
       "login": {
@@ -56,12 +66,13 @@
         "needsCodeHint": "If the browser couldn't finish sign-in, paste the code shown there.",
         "codePlaceholder": "Paste code here",
         "submitCode": "Submit",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "startFailed": "Couldn't start the browser sign-in. Please press Connect to try again."
       },
       "gate": {
         "checking": "Checking…",
-        "needInstall": "Install Claude Code first — see the guide above",
-        "needLogin": "Sign in with Start login above"
+        "needInstall": "Install Claude Code with the button above",
+        "needLogin": "Sign in with the Connect button above"
       }
     },
     "step4": {
@@ -80,9 +91,10 @@
     },
     "completionSteps": {
       "env": "Create env file (~/.productune/productune.env)",
-      "playwright": "Prepare Playwright MCP cache (QA smoke gate, npx @playwright/mcp)",
+      "playwright": "Prepare the QA smoke-test cache",
       "language": "Save UI language preference",
-      "audience": "Communication style saved"
+      "audience": "Communication style saved",
+      "playwrightDeferred": "couldn't finish now — it will be prepared automatically on first use"
     },
     "versionInit": {
       "label": "Initial Version ID",
@@ -181,7 +193,8 @@
       "runHint": "You can run the app now 🚀 Use ▶ Run (bottom-right) to pick an environment (e.g. local) and launch — a preview tab opens. (Closing the tab stops the server too.)"
     },
     "runOutput": {
-      "reopenPreview": "Reopen preview"
+      "reopenPreview": "Reopen preview",
+      "toolchainUnavailable": "This computer isn't set up to build and run the product yet. Reinstalling the latest version of this app usually fixes it."
     },
     "zoom": {
       "out": "Zoom out",
@@ -1254,7 +1267,8 @@
       "title": "New project",
       "nameLabel": "Project name (slug)",
       "slugHint": "Lowercase letters, digits, and hyphens only.",
-      "firstVersionLabel": "First Version ID"
+      "firstVersionLabel": "First Version ID",
+      "creating": "Creating…"
     },
     "github": {
       "oauthFailed": "OAuth failed",

@@ -20,6 +20,21 @@ productName: Productune
 extraMetadata:
   version: 0.5.0
 
+# T-440: stages Resources/toolchain/npm with a dereferencing copy — see the
+# extraResources note below for why this cannot be an extraResources entry.
+afterPack: scripts/after-pack-toolchain.cjs
+
+# T-442: pin the fuse state EXPLICITLY. The participant toolchain (toolchain.ts)
+# is the app binary under ELECTRON_RUN_AS_NODE — with runAsNode disabled that
+# env var is INERT and a toolchain spawn boots a full GUI instance instead of
+# node (the 2026-07-30 runaway class; main.ts's launch guard now makes such an
+# instance exit immediately, but the fuse must still never be flipped off by a
+# future hardening template). resetAdHocDarwinSignature keeps the unsigned
+# (adhoc-signed) arm64 binary launchable after the fuse write.
+electronFuses:
+  runAsNode: true
+  resetAdHocDarwinSignature: true
+
 directories:
   output: release
   buildResources: build
@@ -68,6 +83,15 @@ extraResources:
       - "scripts/hook-manifest.json"
       - "scripts/install.sh"
       - "scripts/hooks/prdt-*.sh"
+  # T-440: the JS TOOLCHAIN PAYLOAD (Resources/toolchain/npm — the pure-JS `npm`
+  # package, executed under the app's own Electron-as-Node runtime; see
+  # electron/toolchain.ts) is NOT an extraResources entry: electron-builder's
+  # file matcher structurally drops `node_modules` dirs from extraResources
+  # copies (verified on a real `--mac dir` build, even with an explicit
+  # `node_modules/**` include — payload came out 932K instead of ~16M, missing
+  # npm's bundled deps). It is staged by the afterPack hook at the top of this
+  # file with a dereferencing fs.cpSync instead, which also resolves the pnpm
+  # store symlink.
   # T-311: the `../core` → Resources/core extraResource (T-PATCH-217) is GONE.
   # Its sole runtime consumer was the legacy GUI onboarding, which readdir'd
   # `app.getAppPath()/../core/agents` to symlink pdt-* specs, copied

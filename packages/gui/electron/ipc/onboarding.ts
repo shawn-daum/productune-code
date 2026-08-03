@@ -7,7 +7,11 @@ import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { setUiLanguage, setAudienceMode } from '@productune/core'
 import type { UiLanguage, AudienceMode } from '@productune/core'
-import { withLoginShellPath } from '../surface-runner'
+import { withLoginShellPath, resetLoginShellPathCache } from '../surface-runner'
+import { installClaudeCli, resolveClaudeCli } from '../claude-installer'
+import type { InstallResult } from '../claude-installer'
+import { prewarmPlaywrightMcp } from '../prewarm'
+import type { PrewarmState } from '../prewarm'
 import { onboardingPath as projectOnboardingPath, detectProjectKind } from '../project-paths'
 import type { ProjectKind } from '../project-paths'
 // T-414: the prdt hook roster (basenames + event/matcher/order) is no longer
@@ -93,18 +97,35 @@ function loginShellEnv(): NodeJS.ProcessEnv {
   return withLoginShellPath(process.env)
 }
 
+/** T-439: bounded wait for the auth URL. Both the URL and the paste-code
+ *  detection are stdout string-matching — when the CLI's output format drifts
+ *  and neither is ever recognized, the renderer used to spin forever. If
+ *  nothing recognizable arrives within this window, the child is killed and a
+ *  login-exit with error 'auth-url-timeout' is emitted so the renderer can
+ *  offer a retry instead of an indefinite spinner. */
+export const LOGIN_URL_WAIT_MS = 30_000
+
+/** Test-only injection points for startHiddenLogin (fake CLI + captured emit). */
+export interface HiddenLoginOpts {
+  cmd?: string
+  args?: string[]
+  urlWaitMs?: number
+  emit?: (channel: string, payload: unknown) => void
+}
+
 /** Spawn a hidden login process (`claude auth login`) and wire its stdout/stderr
  *  to the renderer via webContents.send. Returns immediately; does NOT block on
- *  the browser OAuth handshake. */
-function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
+ *  the browser OAuth handshake. Exported for the loginTimeout test. */
+export function startHiddenLogin(engine: 'claude', opts: HiddenLoginOpts = {}): { ok: boolean; error?: string } {
+  const emit = opts.emit ?? emitLogin
   // Kill any prior in-flight login before starting a new one.
   if (loginChild && loginChild.exitCode === null) {
     try { loginChild.kill() } catch { /* ok */ }
   }
   loginChild = null
 
-  const cmd = 'claude'
-  const args = ['auth', 'login']
+  const cmd = opts.cmd ?? 'claude'
+  const args = opts.args ?? ['auth', 'login']
 
   let child: ChildProcess
   try {
@@ -121,6 +142,18 @@ function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
 
   loginChild = child
   let urlSent = false
+  let exitEmitted = false
+
+  // T-439: arm the bounded URL wait. Disarmed on ANY recognized progress (URL
+  // or paste-code prompt) and on exit. On fire: kill + single timeout exit —
+  // the kill's own 'exit' event must not double-emit (exitEmitted guard).
+  const urlTimer = setTimeout(() => {
+    if (exitEmitted || child.exitCode !== null) return
+    exitEmitted = true
+    try { child.kill() } catch { /* ok */ }
+    emit('onboarding:login-exit', { engine, code: null, error: 'auth-url-timeout' })
+    if (loginChild === child) loginChild = null
+  }, opts.urlWaitMs ?? LOGIN_URL_WAIT_MS)
 
   const handleChunk = (raw: Buffer) => {
     const clean = stripAnsi(raw.toString('utf-8'))
@@ -128,11 +161,13 @@ function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
       const url = extractUrl(clean)
       if (url) {
         urlSent = true
-        emitLogin('onboarding:login-url', { engine, url })
+        clearTimeout(urlTimer)
+        emit('onboarding:login-url', { engine, url })
       }
     }
     if (isPasteCodePrompt(clean)) {
-      emitLogin('onboarding:login-needs-code', { engine })
+      clearTimeout(urlTimer)
+      emit('onboarding:login-needs-code', { engine })
     }
   }
 
@@ -141,38 +176,32 @@ function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
   child.stderr?.on('data', handleChunk)
 
   child.on('error', (err) => {
-    emitLogin('onboarding:login-exit', { engine, code: null, error: err?.message })
+    clearTimeout(urlTimer)
+    if (!exitEmitted) {
+      exitEmitted = true
+      emit('onboarding:login-exit', { engine, code: null, error: err?.message })
+    }
     if (loginChild === child) loginChild = null
   })
 
   child.on('exit', (code) => {
-    emitLogin('onboarding:login-exit', { engine, code })
+    clearTimeout(urlTimer)
+    if (!exitEmitted) {
+      exitEmitted = true
+      emit('onboarding:login-exit', { engine, code })
+    }
     if (loginChild === child) loginChild = null
   })
 
   return { ok: true }
 }
 
-async function prewarmPlaywrightMcp(): Promise<void> {
-  return new Promise((resolve) => {
-    const child = spawn('npx', ['-y', '@playwright/mcp@latest', '--help'], {
-      stdio: 'ignore',
-      shell: true,
-    })
-    const timeout = setTimeout(() => {
-      try { child.kill() } catch { /* ok */ }
-      resolve()  // best-effort; don't fail onboarding
-    }, 60_000)
-    child.on('exit', () => {
-      clearTimeout(timeout)
-      resolve()
-    })
-    child.on('error', () => {
-      clearTimeout(timeout)
-      resolve()
-    })
-  })
-}
+// T-440: the Playwright-MCP prewarm moved to ../prewarm.ts. The old inline
+// version spawned a bare `npx` with the inherited launchd PATH and resolved
+// void on EVERY outcome — on a participant Mac with no JS toolchain it failed
+// instantly and silently (T-439 unresolved). The new one runs under the
+// toolchain-augmented login-shell PATH and reports ready|failed|timeout,
+// which onboarding:complete forwards to the renderer.
 
 export function writeOnboardingPending(projectDir: string, source: OnboardingRecord['source']): void {
   const onboardingPath = projectOnboardingPath(projectDir)
@@ -447,17 +476,22 @@ export function provisionUserGlobals(coreDir: string, homeDir: string = os.homed
 
 export function register(): void {
   ipcMain.handle('onboarding:checkClaude', async () => {
-    // T-PATCH-199: detection must resolve the CLI under the login-shell PATH too
-    // (Finder/packaged-app launch only inherits launchd's minimal PATH, so a
-    // globally-installed `claude` in ~/.local/bin / Homebrew reads as "not
-    // installed" and post-login `authed` is never detected). Mirrors the login
-    // spawn fix (loginShellEnv) and surface-runner (T-PATCH-186).
+    // T-PATCH-199: detection must resolve the CLI under the login-shell PATH
+    // (a Finder/packaged-app launch only inherits launchd's minimal PATH).
+    //
+    // T-439 QA BLOCKER: the login-shell PATH is NOT ENOUGH. The official native
+    // installer we run from step 3 writes `~/.local/bin/claude` and no shell
+    // integration whatsoever, and a fresh Mac has no `~/.local/bin` on PATH —
+    // so `which claude` kept answering "no" for an install this very app had
+    // just performed and code-signature-verified, and the participant was
+    // trapped re-clicking Install forever. resolveClaudeCli therefore falls
+    // back to confirming the native launcher by ABSOLUTE PATH, which cannot go
+    // stale with the shell environment. The resolved absolute path is then what
+    // we exec for `auth status`, so the auth probe cannot disagree with the
+    // install verdict either.
     const env = loginShellEnv()
-    let installed = false
-    try {
-      await execFileAsync('which', ['claude'], { env })
-      installed = true
-    } catch { return { installed: false, authed: false } }
+    const cli = await resolveClaudeCli()
+    if (!cli) return { installed: false, authed: false }
 
     // Fast path: credentials file
     const credPath = path.join(os.homedir(), '.claude', 'credentials.json')
@@ -465,7 +499,7 @@ export function register(): void {
 
     // Slow path: ask CLI (5 s timeout)
     try {
-      const out = await execFileAsync('claude', ['auth', 'status'], { timeout: 5000, env }) as any
+      const out = await execFileAsync(cli, ['auth', 'status'], { timeout: 5000, env }) as any
       const stdout: string = typeof out === 'string' ? out : (out?.stdout ?? '')
       const data = JSON.parse(stdout)
       return { installed: true, authed: data?.loggedIn === true }
@@ -476,7 +510,39 @@ export function register(): void {
 
   // T-PATCH-199: hidden-spawn browser-OAuth login. Returns once the child is
   // spawned (non-blocking); progress streams via onboarding:login-* events.
-  ipcMain.handle('onboarding:claudeLogin', async () => startHiddenLogin('claude'))
+  // T-439: spawn the ABSOLUTE path resolveClaudeCli found. A bare `claude`
+  // would ENOENT on a fresh Mac whose profile never exported ~/.local/bin, so
+  // the browser never opened and the row sat in "installed, not logged in".
+  ipcMain.handle('onboarding:claudeLogin', async () => {
+    const cli = await resolveClaudeCli()
+    return startHiddenLogin('claude', cli ? { cmd: cli } : {})
+  })
+
+  // T-439: in-app engine CLI install via the official native installer
+  // (claude-installer.ts — no node/npm prerequisite, zero terminal). Progress
+  // phases stream as onboarding:install-progress; the handler resolves with
+  // the final InstallResult. A second invoke while one is running joins the
+  // in-flight install instead of starting another.
+  let installInFlight: Promise<InstallResult> | null = null
+  ipcMain.handle('onboarding:installClaude', async (): Promise<InstallResult> => {
+    if (installInFlight) return installInFlight
+    installInFlight = installClaudeCli({
+      onProgress: (phase) => emitLogin('onboarding:install-progress', { phase }),
+    })
+    try {
+      return await installInFlight
+    } finally {
+      installInFlight = null
+      // T-439 (QA fail row 2): loginShellPath() is memoized for the whole app
+      // run and was already warmed on entry to step 3 — i.e. with the
+      // PRE-install PATH. Drop it so the very next detection re-asks the shell
+      // instead of replaying a snapshot taken before the install existed.
+      // Detection does not DEPEND on this (resolveClaudeCli confirms the
+      // launcher by absolute path); this is what lets an install that DID write
+      // shell integration be seen without restarting the app.
+      resetLoginShellPathCache()
+    }
+  })
 
   // Paste-code fallback: write the user-entered code to the login child's stdin.
   ipcMain.handle('onboarding:submitLoginCode', async (_event, code: string) => {
@@ -555,8 +621,13 @@ export function register(): void {
       // 2. Pre-warm Playwright MCP cache (used by QA's auto smoke gate).
       //    Best-effort: triggers `npx` to download @playwright/mcp now so the
       //    first QA invocation isn't slow. Does NOT block onboarding completion
-      //    on failure — agent's mcpServers block will retry lazily.
-      await prewarmPlaywrightMcp()
+      //    on failure — agent's mcpServers block will retry lazily. T-440: no
+      //    longer SILENT though — the state travels to the renderer, and a
+      //    non-ready state is logged with its output tail.
+      const prewarm = await prewarmPlaywrightMcp()
+      if (prewarm.state !== 'ready') {
+        console.warn(`[onboarding] playwright-mcp prewarm ${prewarm.state}: ${prewarm.detail ?? ''}`)
+      }
 
       // 3. Save UI language selection to settings.json
       if (opts.uiLanguage) {
@@ -569,7 +640,7 @@ export function register(): void {
         setAudienceMode(opts.audienceMode)
       }
 
-      return { ok: true }
+      return { ok: true, prewarm: prewarm.state satisfies PrewarmState }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }
     }

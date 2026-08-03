@@ -21,13 +21,18 @@
  * is python3 for `prdt menus` (and for the prdt CLI itself at project-create),
  * which is preflighted WITHOUT triggering Apple's CLT install dialog.
  *
- * Provenance policy (decideBootstrap):
- *   - ~/.prdt/bin/prdt missing            → provision  (participant first launch)
- *   - mirror incomplete                   → provision  (repair a broken install)
- *   - gui marker present + app version ≠  → provision  (refresh after app update)
- *   - complete mirror, NO gui marker      → skip       (repo-managed install —
- *       install.sh / `prdt update` own that machine; the bundled payload must
- *       never downgrade a newer repo mirror, e.g. on a developer's machine)
+ * Provenance policy (decideBootstrap) — checked IN THIS ORDER; the foreign-
+ * install guard (marker absence) is decisive BEFORE mirror completeness is even
+ * looked at, so an incomplete repo-managed mirror is never mistaken for ours:
+ *   1. ~/.prdt/bin/prdt missing            → provision  (participant first launch —
+ *        nothing to protect; there is no foreign install to hijack)
+ *   2. no gui marker (any mirror state)    → skip       (repo-managed install —
+ *       install.sh / `prdt update` own that machine, EVEN IF its mirror is
+ *       incomplete, e.g. an older repo checkout predating a new hook file; the
+ *       bundled payload must never touch a mirror it didn't plant the marker for)
+ *   3. gui marker present, mirror incomplete → provision (repair OUR broken install)
+ *   4. gui marker present, app version ≠     → provision (refresh after app update)
+ *   5. gui marker present, app version =     → skip      (current)
  *
  * The marker (~/.prdt/gui-bootstrap.json) is written ONLY by this module, so a
  * repo-managed ~/.prdt is never reclassified as app-managed.
@@ -37,6 +42,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { execFileSync } from 'child_process'
+import { appPackageRoot } from './app-root'
 import { installPrdtHooks } from './ipc/onboarding'
 import hookManifestJson from '../../core/scripts/hook-manifest.json'
 
@@ -81,9 +87,14 @@ export function resolveDefaultPaths(app: {
   getAppPath: () => string
   getVersion: () => string
 }): BootstrapPaths {
+  // T-442 F2: the dev hop is relative to the PACKAGE ROOT, not to
+  // `app.getAppPath()` — those differ whenever Electron is handed a main script
+  // rather than a directory (`electron dist-electron/main.js`), which is how
+  // every Playwright spec boots. The old form produced `<gui>/core`, so
+  // provisioning silently no-op'd for the entire suite. See app-root.ts.
   const payloadRoot = app.isPackaged
     ? path.join(process.resourcesPath, 'prdt-core')
-    : path.join(app.getAppPath(), '..', 'core')
+    : path.join(appPackageRoot(app.getAppPath()), '..', 'core')
   return { payloadRoot, homeDir: os.homedir(), appVersion: app.getVersion() }
 }
 
@@ -138,13 +149,20 @@ function mirrorComplete(homeDir: string): boolean {
 export function decideBootstrap(paths: BootstrapPaths): BootstrapDecision {
   const binPrdt = path.join(paths.homeDir, '.prdt', 'bin', 'prdt')
   if (!fs.existsSync(binPrdt)) return { action: 'provision', reason: 'missing-bin' }
-  if (!mirrorComplete(paths.homeDir)) return { action: 'provision', reason: 'incomplete-mirror' }
 
+  // QA V4b regression: the foreign-install guard MUST be decided before the
+  // mirror-completeness check. A repo-managed ~/.prdt (install.sh/`prdt update`
+  // own it) never carries our marker — an older repo install can legitimately be
+  // missing a hook file (e.g. a hook added to hook-manifest.json after that repo
+  // checkout), and that incompleteness is NOT ours to repair. Only a mirror WE
+  // planted the marker for is ours to repair when incomplete.
   let marker: { app_version?: string } | null = null
   try {
     marker = JSON.parse(fs.readFileSync(guiMarkerPath(paths.homeDir), 'utf-8'))
   } catch { marker = null }
   if (!marker) return { action: 'skip', reason: 'foreign-install' }
+
+  if (!mirrorComplete(paths.homeDir)) return { action: 'provision', reason: 'incomplete-mirror' }
   if (marker.app_version !== paths.appVersion) return { action: 'provision', reason: 'gui-stale' }
   return { action: 'skip', reason: 'current' }
 }

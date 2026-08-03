@@ -18,11 +18,13 @@ contextBridge.exposeInMainWorld('api', {
   checkEnv: (): Promise<boolean> =>
     ipcRenderer.invoke('onboarding:checkEnv'),
 
+  // T-440: `prewarm` reports the Playwright-MCP cache prewarm outcome — it was
+  // previously a silent best-effort; now the wizard can render a state for it.
   completeOnboarding: (opts: {
     engine: 'claude'
     uiLanguage?: 'en' | 'ko'
     audienceMode?: 'planner' | 'developer'
-  }): Promise<{ ok: boolean; error?: string }> =>
+  }): Promise<{ ok: boolean; error?: string; prewarm?: 'ready' | 'failed' | 'timeout' }> =>
     ipcRenderer.invoke('onboarding:complete', opts),
 
   checkClaude: (): Promise<{ installed: boolean; authed: boolean }> =>
@@ -33,6 +35,26 @@ contextBridge.exposeInMainWorld('api', {
   // via the onboarding:login-* push events below.
   claudeLogin: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:claudeLogin'),
+
+  // T-439: in-app engine CLI install via the official native installer — no
+  // node/npm prerequisite, zero terminal. Resolves with the final result;
+  // progress phases stream via onInstallProgress below.
+  installClaude: (): Promise<{
+    ok: boolean
+    performed: boolean
+    alreadyInstalled?: boolean
+    version?: string
+    code?: 'unsupported-platform' | 'network' | 'script-invalid' | 'install-failed' | 'binary-verify-failed'
+    error?: string
+  }> =>
+    ipcRenderer.invoke('onboarding:installClaude'),
+
+  /** Install progress phase (download → install → verify). Returns an unsubscribe fn. */
+  onInstallProgress: (cb: (payload: { phase: 'download' | 'install' | 'verify' }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('onboarding:install-progress', listener)
+    return () => ipcRenderer.removeListener('onboarding:install-progress', listener)
+  },
 
   /** Paste-code fallback: write the user-entered code to the login child stdin. */
   submitLoginCode: (code: string): Promise<{ ok: boolean; error?: string }> =>
@@ -1230,7 +1252,10 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('surface:onOutput', listener)
     },
 
-    onDone: (cb: (ev: { runId: string; code: number | null; status: 'pass' | 'fail' | 'cancelled' }) => void) => {
+    // T-440: `hint:'toolchain-unavailable'` rides along when the run failed AND
+    // no JS runtime was resolvable on the child PATH — the renderer maps it to
+    // a localized, actionable line (never a raw shell/npm/script string).
+    onDone: (cb: (ev: { runId: string; code: number | null; status: 'pass' | 'fail' | 'cancelled'; hint?: 'toolchain-unavailable' }) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
       ipcRenderer.on('surface:onDone', listener)
       return () => ipcRenderer.removeListener('surface:onDone', listener)

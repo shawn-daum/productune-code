@@ -36,6 +36,9 @@ export default function OnboardingWizard({ onDone }: Props) {
   const [completing, setCompleting] = useState(false)
   const [completeError, setCompleteError] = useState('')
   const [done, setDone] = useState(false)
+  // T-440: Playwright-MCP prewarm outcome from onboarding:complete — 'ready'
+  // renders green like the other steps; failed/timeout renders as deferred.
+  const [prewarmState, setPrewarmState] = useState<'ready' | 'failed' | 'timeout' | null>(null)
 
   // Step 0: detect OS locale to pre-select language default
   useEffect(() => {
@@ -95,8 +98,11 @@ export default function OnboardingWizard({ onDone }: Props) {
     const api = (window as any).api
     if (!api?.completeOnboarding) { setCompleting(false); return }
     api.completeOnboarding(completeOpts)
-      .then((result: { ok: boolean; error?: string }) => {
+      .then((result: { ok: boolean; error?: string; prewarm?: 'ready' | 'failed' | 'timeout' }) => {
         if (result.ok) {
+          // T-440: the QA smoke-cache prewarm reports a state now (was silent).
+          // Non-ready never blocks completion — Step4 renders it as deferred.
+          setPrewarmState(result.prewarm ?? null)
           setDone(true)
         } else {
           setCompleteError(result.error ?? t('onboarding.step4.unknownError'))
@@ -222,6 +228,7 @@ export default function OnboardingWizard({ onDone }: Props) {
             done={done}
             completeError={completeError}
             completionStepKeys={completionStepKeys}
+            prewarmState={prewarmState}
             onPrev={() => setStep(3)}
             onDone={onDone}
             onRetry={() => {

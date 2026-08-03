@@ -83,10 +83,35 @@ test('T-431: gui marker at OLDER app version → provision gui-stale (app-update
   expect(decideBootstrap(paths())).toEqual({ action: 'provision', reason: 'gui-stale' })
 })
 
-test('T-431: bin/prdt present but a manifest hook missing → provision incomplete-mirror', () => {
+test('T-431: bin/prdt present, gui marker present, but a manifest hook missing → provision incomplete-mirror (OUR mirror, ours to repair)', () => {
   seedCompleteMirror(home)
+  fs.writeFileSync(guiMarkerPath(home), JSON.stringify({ app_version: APP_V }))
   fs.rmSync(path.join(home, '.prdt', 'hooks', hookManifest.basenames[0]))
   expect(decideBootstrap(paths())).toEqual({ action: 'provision', reason: 'incomplete-mirror' })
+})
+
+// QA V4b regression (T-431 follow-up): decideBootstrap used to check
+// mirrorComplete BEFORE the foreign-install guard, so an older repo-managed
+// install missing one hook file got silently hijacked — provisioned over AND
+// stamped with a gui-bootstrap.json marker, even though install.sh/`prdt
+// update` (not the GUI) own that machine. Absence of the marker must be
+// decisive regardless of mirror completeness.
+test('T-431 QA V4b: bin/prdt present, NO gui marker, mirror INCOMPLETE (older repo install missing a hook) → skip foreign-install, sentinel survives, no marker planted', () => {
+  seedCompleteMirror(home)
+  const sentinelPath = path.join(home, '.prdt', 'doctrine.md')
+  const sentinel = '# doctrine (older repo checkout, pre-dates a new hook)\n'
+  fs.writeFileSync(sentinelPath, sentinel)
+  fs.rmSync(path.join(home, '.prdt', 'hooks', hookManifest.basenames[0])) // incomplete mirror
+  // no marker written — this is a foreign (repo-managed) install
+
+  expect(decideBootstrap(paths())).toEqual({ action: 'skip', reason: 'foreign-install' })
+
+  const res = ensurePrdtProvisioned(paths())
+  expect(res.performed).toBe(false)
+  expect(res.ok).toBe(true)
+  expect(fs.readFileSync(sentinelPath, 'utf-8')).toBe(sentinel) // untouched
+  expect(fs.existsSync(guiMarkerPath(home))).toBe(false)        // no marker planted
+  expect(fs.existsSync(path.join(home, '.prdt', 'hooks', hookManifest.basenames[0]))).toBe(false) // still missing — not repaired
 })
 
 // ── runBootstrap end-to-end on a fresh HOME ───────────────────────────────────
