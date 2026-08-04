@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHand
 import { ChevronLeft, ChevronRight, RefreshCw, ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useWorkspace } from '../../../../store/workspace'
+import { routeThenOpen } from '../../../../lib/routeUrl'
 import ZoomControls, { ZOOM_DEFAULT, ZOOM_STEP } from './ZoomControls'
 import { normalizeBrowserUrl } from './browserUrl'
 
@@ -61,6 +62,12 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
   // its placeholder) rather than the literal "about:blank".
   const [inputUrl, setInputUrl] = useState(initialUrl === 'about:blank' ? '' : initialUrl)
   const [loadFailed, setLoadFailed] = useState(false)
+  // T-434: the page the webview is ACTUALLY showing, tracked separately from the
+  // address input. `inputUrl` is an editable text field — it holds whatever the
+  // user has half-typed — so handing it to the escape hatch could open a
+  // different page than the one they are stuck on. The escape hatch has to be
+  // right on the first click: it is the recovery path for a routing misjudgment.
+  const [currentUrl, setCurrentUrl] = useState(initialUrl === 'about:blank' ? '' : initialUrl)
   // T-PATCH-057: zoom state — range 0.5–3.0, step 0.1 (AC-3, AC-4)
   const [zoom, setZoom] = useState(ZOOM_DEFAULT)
   const webviewRef = useRef<ElectronWebview | null>(null)
@@ -255,6 +262,7 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
       const navUrl: string = e?.url ?? ''
       if (navUrl && navUrl !== 'about:blank') {
         setInputUrl(navUrl)
+        setCurrentUrl(navUrl)   // T-434: escape-hatch source of truth
         setLoadFailed(false)
         // T-PATCH-192: persist the current URL into the tab's props so an app
         // reload (Cmd+R) restores where the user navigated to, not the blank/
@@ -320,18 +328,27 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
     // T-328: any already-qualified scheme (file://, http://, https://, …)
     // loads as-is; only a bare, scheme-less input gets https:// prepended.
     const normalized = normalizeBrowserUrl(target)
-    setInputUrl(normalized)
-    setLoadFailed(false)
-    wv.loadURL(normalized)
+    // T-434: the URL bar is the one navigation main's will-navigate guard cannot
+    // see — `webview.loadURL` is a programmatic navigation and does not emit
+    // will-navigate. So a participant typing `github.com/login` here would land
+    // on a passkey prompt this webview cannot serve. Route it the same way.
+    void routeThenOpen(normalized, undefined, () => {
+      setInputUrl(normalized)
+      setCurrentUrl(normalized)
+      setLoadFailed(false)
+      wv.loadURL(normalized)
+    })
   }, [])
 
   const handleUrlKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') navigate(inputUrl)
   }
 
+  // Tier ③ — the standing escape hatch. UNCONDITIONAL: it never consults the
+  // router, because it exists for the case where the router was wrong.
   const handleOpenExternal = () => {
     const api = (window as any).api
-    api?.openExternal?.(inputUrl)
+    api?.openExternal?.(currentUrl || inputUrl)
   }
 
   return (
@@ -374,8 +391,12 @@ const BrowserTab = forwardRef<BrowserFindHandle | null, Props>(function BrowserT
           aria-label="URL"
         />
 
+        {/* T-434 tier ③ — the standing escape hatch. `data-escape-hatch` is the
+            marker the pane-coverage test asserts on, so "every internal pane
+            that can host a URL has one" is checked, not claimed. */}
         <button
           style={navBtn}
+          data-escape-hatch="system-browser"
           onClick={handleOpenExternal}
           title={t('workspace.browser.popout')}
           aria-label={t('workspace.browser.popout')}

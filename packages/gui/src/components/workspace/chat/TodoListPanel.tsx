@@ -15,6 +15,7 @@
 import { useState } from 'react'
 import { Square, CheckSquare, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { routeThenOpen } from '../../../lib/routeUrl'
 import {
   useUserTodo,
   selectVisibleTodos,
@@ -52,10 +53,23 @@ export default function TodoListPanel() {
   }
 
   const handleLinkClick = (todo: UserTodo) => {
-    if (todo.href) {
-      // Open file path as markdown tab; href can be a file path or tab id.
-      openTab(todo.href, 'markdown', {}, todo.description)
+    if (!todo.href) return
+    // T-434: poEvents' user-verify todo carries an http(s) URL in `href`
+    // (store/poEvents.ts), and this handler was dropping it into a MARKDOWN tab —
+    // a pane that cannot host a URL at all, so a verify link (never mind a login)
+    // rendered as nothing. URLs now go through main's router; file paths / tab ids
+    // keep the original markdown-tab behavior.
+    if (/^https?:\/\//i.test(todo.href)) {
+      const url = todo.href
+      void routeThenOpen(url, undefined, () => {
+        let hostname = 'Browser'
+        try { hostname = new URL(url).hostname || hostname } catch { /* keep default */ }
+        openTab(`browser:${url}`, 'browser', { url }, hostname)
+      })
+      return
     }
+    // Open file path as markdown tab; href can be a file path or tab id.
+    openTab(todo.href, 'markdown', {}, todo.description)
   }
 
   return (

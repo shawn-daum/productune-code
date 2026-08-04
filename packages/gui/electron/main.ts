@@ -30,6 +30,8 @@ import { register as registerAttachments } from './ipc/attachments'
 import { register as registerGit }         from './ipc/git'
 import { register as registerMeta }        from './ipc/meta'
 import { register as registerMetaMigrate } from './ipc/metaMigrate'
+import { register as registerUrlRoute } from './ipc/urlRoute'
+import { attachWebviewNavigationGuards } from './webview-nav-guard'
 import { installWebviewAcceptLanguage } from './locale-session'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { register as registerTicketsWatch, stopTicketsWatch } from './ipc/ticketsWatch'
@@ -125,17 +127,18 @@ registerCostArchive()
 registerGit()
 registerMeta()
 registerMetaMigrate()
+registerUrlRoute()
 
-// T-PATCH-191: in-app browser — window.open / target=_blank on a <webview>
-// (e.g. Naver's home tiles) otherwise spawn a detached popup we don't manage, so
-// clicks appear to do nothing. Deny the popup and route the URL to the renderer,
-// which opens it as a new in-app browser tab (preserves the current page; safe
-// for OAuth popups). Same-tab <a> navigations (e.g. Google) are unaffected.
+// ── <webview> navigation routing (T-434, was T-PATCH-191) ─────────────────────
+// Popup + same-tab + redirect interception, so an auth flow reaches the system
+// default browser instead of dead-ending in the embedded view (R-34). The logic
+// and its full rationale live in ./webview-nav-guard so they are unit testable —
+// this file's module scope boots Electron and cannot be imported by a test.
 app.on('web-contents-created', (_e, contents) => {
   if (contents.getType() !== 'webview') return
-  contents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) mainWindow?.webContents.send('browser:open-url', { url })
-    return { action: 'deny' }
+  attachWebviewNavigationGuards(contents, {
+    openExternal: (url) => { void shell.openExternal(url) },
+    openInternalPane: (url) => { mainWindow?.webContents.send('browser:open-url', { url }) },
   })
 })
 

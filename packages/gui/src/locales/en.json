@@ -146,7 +146,8 @@
       "writeError": "Save failed: {{error}}",
       "conflict": "File changed on disk since you opened it. Reload to get the latest, then re-apply your edits.",
       "reloadFromDisk": "Reload from disk",
-      "loadError": "Could not load file. Try again shortly."
+      "loadError": "Could not load file. Try again shortly.",
+      "openInBrowser": "Open in default browser"
     },
     "mermaid": {
       "renderError": "Mermaid render error",
@@ -875,7 +876,7 @@
       "back": "Back",
       "forward": "Forward",
       "reload": "Reload",
-      "popout": "Open in browser",
+      "popout": "Open in default browser",
       "addressPlaceholder": "Enter URL…",
       "addressLabel": "Address bar",
       "iframeTitle": "Browser",

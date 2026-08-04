@@ -15,6 +15,7 @@
  */
 
 import i18next from '../i18n'
+import { routeThenOpen } from '../lib/routeUrl'
 import { useWorkspace } from './workspace'
 import { useUserTodo } from './useUserTodo'
 import { useQaLoop } from './useQaLoop'
@@ -431,20 +432,31 @@ function register() {
   }))
 
   // ── onBrowserOpen / onUserVerify / onQaLoopUpdate (T-P4-116) ─────────────
+  // T-434: an agent-pushed URL goes through main's router (`url:route`) instead
+  // of straight into a pane. Main opens the system default browser itself when
+  // the URL is auth-bearing — flagged by the producer (`authIntent`, i.e. the
+  // envelope also carried `auth_required`) or caught by the IdP net — and we
+  // create the pane only when it says internal. An embedded view cannot serve a
+  // passkey or OS password autofill, so a login pinned in a pane is a dead end.
   offFns.push(api.onBrowserOpen?.((payload: {
-    url: string; ticketId: string; purpose: 'qa-smoke' | 'user-verify'
+    url: string; ticketId: string; purpose: 'qa-smoke' | 'user-verify'; authIntent?: boolean
   }) => {
     const tabId = `browser:${payload.ticketId}:${payload.purpose}`
-    useWorkspace.getState().openTab(tabId, 'browser', { url: payload.url }, 'Browser')
+    void routeThenOpen(payload.url, payload.authIntent, () => {
+      useWorkspace.getState().openTab(tabId, 'browser', { url: payload.url }, 'Browser')
+    })
   }))
 
   offFns.push(api.onUserVerify?.((payload: {
-    url?: string; description: string; ticketId: string
+    url?: string; description: string; ticketId: string; authIntent?: boolean
   }) => {
     if (payload.url) {
-      useWorkspace.getState().openTab(
-        `user-verify:${payload.ticketId}`, 'browser', { url: payload.url }, i18next.t('workspace.userVerify.tabTitle'),
-      )
+      const verifyUrl = payload.url
+      void routeThenOpen(verifyUrl, payload.authIntent, () => {
+        useWorkspace.getState().openTab(
+          `user-verify:${payload.ticketId}`, 'browser', { url: verifyUrl }, i18next.t('workspace.userVerify.tabTitle'),
+        )
+      })
     }
     useUserTodo.getState().pushItems([{
       id: `verify-${payload.ticketId}`,

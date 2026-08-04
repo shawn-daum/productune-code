@@ -14,6 +14,17 @@ contextBridge.exposeInMainWorld('api', {
   openPath: (p: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('shell:openPath', p),
 
+  // T-434: ask main WHERE a URL should open (system browser vs internal pane) —
+  // the renderer never decides. Main performs the system-browser half itself and
+  // returns the decision; the caller creates a pane only on 'internal-pane'.
+  // Pass `authIntent: true` when the producer of the URL knows a login is in the
+  // way (tier ①). NOT for the escape-hatch control — that uses openExternal.
+  routeUrl: (req: { url: string; authIntent?: boolean }): Promise<{
+    target: 'system-browser' | 'internal-pane'
+    reason: string
+    matched?: string
+  }> => ipcRenderer.invoke('url:route', req),
+
   // ── Onboarding ──────────────────────────────────────────────────────────────
   checkEnv: (): Promise<boolean> =>
     ipcRenderer.invoke('onboarding:checkEnv'),
@@ -593,22 +604,28 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── QA loop IPC (T-P4-116) ────────────────────────────────────────────────────
 
-  /** QA envelope browser_url 감지 시 emit — browser tab auto-open trigger. */
+  /**
+   * QA envelope browser_url 감지 시 emit — browser tab auto-open trigger.
+   * T-434: `authIntent` = the same envelope carried `auth_required`, so this URL
+   * needs the system browser rather than an internal pane (routing tier ①).
+   */
   onBrowserOpen: (cb: (payload: {
     url: string
     ticketId: string
     purpose: 'qa-smoke' | 'user-verify'
+    authIntent?: boolean
   }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('po:browser-open', listener)
     return () => ipcRenderer.removeListener('po:browser-open', listener)
   },
 
-  /** QA pass + verify_url 감지 시 emit — user-verify flow trigger. */
+  /** QA pass + verify_url 감지 시 emit — user-verify flow trigger. (T-434 authIntent) */
   onUserVerify: (cb: (payload: {
     url?: string
     description: string
     ticketId: string
+    authIntent?: boolean
   }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('po:user-verify', listener)
