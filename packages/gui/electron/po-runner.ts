@@ -208,17 +208,25 @@ interface RunCallbacks {
   onTicketFocus: (ticketId: string, reason: 'emit' | 'dispatch') => void
   /** T-P4-114 §A: changed_files[] detected in PO envelope. */
   onArtifactOpen: (files: string[]) => void
-  /** T-P4-116: QA envelope browser_url 감지 → browser tab auto-open. */
+  /**
+   * T-P4-116: QA envelope browser_url 감지 → browser tab auto-open.
+   * T-434: `authIntent` is routing tier ① — the envelope also carried
+   * `auth_required`, i.e. the worker stated that a login stands in the way of
+   * this URL. The renderer asks main to route it instead of opening a pane
+   * blindly (an embedded view cannot complete a login at all).
+   */
   onBrowserOpen: (
     url: string,
     ticketId: string,
     purpose: 'qa-smoke' | 'user-verify',
+    authIntent?: boolean,
   ) => void
-  /** T-P4-116: QA pass + verify_url 감지 → user-verify flow. */
+  /** T-P4-116: QA pass + verify_url 감지 → user-verify flow. (T-434: authIntent) */
   onUserVerify: (
     url: string | undefined,
     description: string,
     ticketId: string,
+    authIntent?: boolean,
   ) => void
   /** T-P4-116: QA loop 상태 변화 감지 → BackgroundTaskSegment badge 갱신. */
   onQaLoopUpdate: (entry: {
@@ -1797,9 +1805,16 @@ function handleStreamJsonLine(
         const ticketId =
           typeof qaEnv.ticket_id === 'string' ? qaEnv.ticket_id : ''
 
+        // T-434 tier ①: `auth_required` in the SAME envelope is the worker
+        // saying, in its own words, that finishing this needs the user to log
+        // in. That makes its browser_url / verify_url auth-bearing, so they are
+        // flagged for the router (→ system default browser, where the user's
+        // passkeys and passwords already are).
+        const envAuthIntent = !!(qaEnv.auth_required && typeof qaEnv.auth_required === 'object')
+
         // browser_url 있으면 browser-open
         if (typeof qaEnv.browser_url === 'string' && qaEnv.browser_url) {
-          cb.onBrowserOpen(qaEnv.browser_url, ticketId, 'qa-smoke')
+          cb.onBrowserOpen(qaEnv.browser_url, ticketId, 'qa-smoke', envAuthIntent)
         }
 
         // qa_status === 'pass' → user-verify
@@ -1810,6 +1825,7 @@ function handleStreamJsonLine(
               ? qaEnv.verify_description
               : '구현 결과 확인',
             ticketId,
+            envAuthIntent,
           )
         }
 
@@ -2600,8 +2616,10 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     onTicketFocus: (ticketId, reason)       => wc.send('po:ticket-focus', { ticketId, reason }),
     onArtifactOpen:(files)                  => wc.send('po:artifact-open', { files }),
     // T-P4-116: QA loop IPC
-    onBrowserOpen: (url, ticketId, purpose) => wc.send('po:browser-open', { url, ticketId, purpose }),
-    onUserVerify:  (url, description, ticketId) => wc.send('po:user-verify', { url, description, ticketId }),
+    // T-434: authIntent rides along so the renderer can route through main
+    // (`url:route`) rather than opening an internal pane unconditionally.
+    onBrowserOpen: (url, ticketId, purpose, authIntent) => wc.send('po:browser-open', { url, ticketId, purpose, authIntent }),
+    onUserVerify:  (url, description, ticketId, authIntent) => wc.send('po:user-verify', { url, description, ticketId, authIntent }),
     onQaLoopUpdate:(entry) => {
       wc.send('po:qa-loop-update', entry)
       // ── T-019 §B3: OS notifications on QA-loop terminal states ──────────────

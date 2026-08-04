@@ -13,6 +13,7 @@ import type { ReactNode } from 'react'
 import { useWorkspace } from '../../../store/workspace'
 import { mdUrlTransform } from './mdUrlTransform'
 import { matchSingleLinkTarget } from '../../../lib/linkifyText'
+import { routeThenOpen } from '../../../lib/routeUrl'
 
 // ── Link routing (re-used from MessageBubble logic) ───────────────────────────
 
@@ -182,7 +183,13 @@ function routeLink(href: string): void {
     try { hostname = new URL(href).hostname }
     catch { hostname = href.replace(/^https?:\/\//, '').split('/')[0] ?? href }
     const encodedUrl = encodeURIComponent(href)
-    openTab(`browser:${encodedUrl}`, 'browser', { url: href }, hostname)
+    // T-434: a chat/markdown link is UNFLAGGED by definition — nobody declared
+    // its intent — so this is where tier ② earns its keep. An agent that pastes
+    // "log in at https://github.com/login" would otherwise open a passkey prompt
+    // the embedded webview cannot serve. Main decides; the pane is the default.
+    void routeThenOpen(href, undefined, () => {
+      openTab(`browser:${encodedUrl}`, 'browser', { url: href }, hostname)
+    })
     return
   }
   // Bare absolute / file:// / ~ href (e.g. explicit `[habit.md](file:///…)` md

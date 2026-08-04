@@ -146,7 +146,8 @@
       "writeError": "저장 실패: {{error}}",
       "conflict": "연 뒤에 디스크에서 파일이 변경됐어요. 다시 불러와 최신 내용을 받은 다음 수정사항을 재적용해주세요.",
       "reloadFromDisk": "디스크에서 다시 불러오기",
-      "loadError": "파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요."
+      "loadError": "파일을 불러오지 못했어요. 잠시 후 다시 시도해주세요.",
+      "openInBrowser": "기본 브라우저에서 열기"
     },
     "mermaid": {
       "renderError": "Mermaid 렌더 오류",
@@ -875,7 +876,7 @@
       "back": "뒤로",
       "forward": "앞으로",
       "reload": "새로고침",
-      "popout": "브라우저에서 열기",
+      "popout": "기본 브라우저에서 열기",
       "addressPlaceholder": "URL 입력…",
       "addressLabel": "주소창",
       "iframeTitle": "브라우저",
