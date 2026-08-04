@@ -1,291 +1,166 @@
 /**
- * isolation-enforcer.ts — T-442 F-A. The isolation rule as a RUNTIME chokepoint.
+ * isolation-enforcer.ts — T-442 F-A / T-450. Typed surface over the rules.
  *
- * WHY THIS FILE EXISTS
+ * The rules themselves moved to `isolation-rules.cjs`. This file is a thin typed
+ * re-export; there is deliberately no second copy of the logic.
  *
- * The first attempt at "a spec added next month cannot make this mistake again"
- * was a static scan in `isolation.guard.spec.ts`. It enumerated
- * `readdirSync(tests/)` filtered to `.spec.ts`. Playwright's default
- * `testMatch` is `**​/*.@(spec|test).?(c|m)[jt]s?(x)` — RECURSIVE, and it also
- * matches `.test.ts`. So the scan covered a strict subset of what Playwright
- * actually runs, and QA walked straight through the gap with three bypasses,
- * each of which booted the app against the REAL userData and mutated 28 files
- * under `~/Library/Application Support/productune`:
+ * WHY THE MOVE (T-450)
  *
- *   tests/sub/evil-subdir.spec.ts   — subdirectory  (scan was not recursive)
- *   tests/evil-suffix.test.ts       — `.test.ts`    (scan matched one suffix)
- *   tests/evil-viahelper.spec.ts    — the spec is clean; the banned call lives
- *                                     in tests/evil-helper.ts, a non-spec file
- *                                     the scan never opened at all.
+ * T-442's comment here asserted: "Node's module cache is per-process, so
+ * `@playwright/test` resolved from a spec, from a helper, … is the SAME object."
+ * The premise is wrong. A module cache is **per-realm**, and a realm is not a
+ * process. QA R3 demonstrated the difference by booting the real app from inside
+ * a `worker_threads` worker — a fresh realm with a fresh module cache, where none
+ * of the patches existed — which wrote `SingletonLock`, `SingletonSocket` and
+ * `SingletonCookie` into the real userData while Playwright reported PASSED.
  *
- * The lesson is not "widen the glob". A scan is a text search over a file set
- * someone has to keep correct, and the third bypass shows the file set is not
- * even the right unit — indirection defeats it by construction. Fixing only the
- * glob would leave dynamic `require('@playwright/test')`, a helper imported from
- * `src/`, and `child_process.spawn(electronBinary)` all still open.
+ * Two consequences, and they point in different directions:
  *
- * So the enforcement moved to the one place every shape has to pass through:
- * the function itself.
+ *  1. Prevention had to become realm-aware. Rules that can be carried into a new
+ *     realm must be loadable by a bare `node --require`, i.e. plain CJS on disk —
+ *     hence `isolation-rules.cjs`, carried into new realms by
+ *     `isolation-realm-bootstrap.cjs`.
  *
- * `playwright.config.ts` is evaluated in the runner AND independently in every
- * worker process, before any spec module loads. Node's module cache is
- * per-process, so `@playwright/test` resolved from a spec, from a helper, from
- * a `.test.ts`, from three directories down, or from a dynamic `require()` at
- * call time is the SAME object. Wrapping `_electron.launch` there covers all of
- * them at once, and covers shapes nobody has thought of yet — which is the
- * actual acceptance condition.
+ *  2. Prevention stopped being the floor. Three rounds of adding chokepoints
+ *     produced three rounds of new escapes, because "every way to reach the
+ *     launcher" is not an enumerable set. The floor is now DETECTION:
+ *     `real-home-tripwire.ts`, registered as a Playwright REPORTER so it
+ *     fingerprints the real home around every test in the run. If the real home
+ *     changes during a run, the run goes red — whatever shape did it, in whatever
+ *     realm, through an API nobody has thought of yet. Everything in
+ *     `isolation-rules.cjs` is a layer on top of that, valuable because it fails
+ *     early and names the rule, not because it is complete.
  *
- * WHAT IS ENFORCED (value-based, no exemptions — not even for the harness)
+ * ── the two boundary claims T-442 got wrong, corrected ──────────────────────
  *
- *   1. The effective `HOME` for the child must be outside the real home.
- *      Moves ~/.productune, ~/.prdt, ~/.claude, ~/productune.
- *   2. `--user-data-dir=` must be present and outside the real home.
- *      HOME does NOT move Electron's userData: Chromium reads
- *      `app.getPath('appData')` from the OS account, not the environment. This
- *      is the surface QA mutated, and it carries the self-destructive edge —
- *      the single-instance lock is filesystem-scoped to userData, so an
- *      unsandboxed test launch can kill or steal focus from the user's own
- *      running Productune.
- *   3. The same two rules for `child_process` launches of the app binary, which
- *      never touch `_electron` at all.
+ * ① "A test file loaded as TRUE ESM would get Node's own frozen
+ *    `node:child_process` namespace, which cannot be monkey-patched" — and
+ *    therefore the `package.json` `type` pin protects rule 3 from an ESM flip.
  *
- * There is deliberately no allowlist and no "trusted caller" stack check. The
- * property that matters is the VALUE of the two redirections, not who supplied
- * them; a stack check would only add a way to be wrong. `tests/harness.ts` is
- * still the sanctioned launcher — but it is sanctioned because it passes these
- * checks, not because it is named here. Its calls go through this wrapper like
- * everyone else's, so if the harness ever regresses, the suite goes red too.
+ *    Both halves are false, measured. Node builds a builtin's ESM namespace from
+ *    that builtin's CJS exports at FIRST IMPORT, so a `.mjs` importing
+ *    `node:child_process` AFTER the patch sees the PATCHED functions — QA
+ *    measured BLOCKED in a genuine `.spec.mjs`. The pin was guarding a risk that
+ *    does not exist.
  *
- * KNOWN BOUNDARY — stated rather than hidden (see isolation.guard.spec.ts,
- * which pins it as an executable test):
- *   • A test file loaded as TRUE ESM would get Node's own frozen
- *     `node:child_process` namespace, which cannot be monkey-patched. Playwright
- *     transpiles this package to CJS (`package.json` has no `"type": "module"`,
- *     and `__dirname` is in use across tests/), so every collected file shares
- *     the patched module object today. Flipping the package to ESM would
- *     silently drop rule 3 — the guard spec asserts the CJS assumption so that
- *     flip cannot happen quietly.
- *   • A spec that spawns a *renamed copy* of the app binary from a path with no
- *     Electron/Productune marker is not recognised by rule 3. Rules 1+2 at the
- *     `_electron` level and the product-side launch guard (`app.exit(97)`) still
- *     apply; the fingerprint check in the guard spec is the net for the rest.
+ *    What the pin actually protects is this package's own CJS assumptions:
+ *    `__dirname` across `tests/`, `require()` in the guard spec, and
+ *    `require('./isolation-rules.cjs')` here. Flipping to ESM breaks those
+ *    loudly, not silently, which is why the assertion is worth keeping — for a
+ *    different reason than the one that was written down.
+ *
+ *    The REAL ESM risk is ORDERING, and the old assertion could not see it: a
+ *    module that imports `node:child_process` BEFORE `installIsolationEnforcer()`
+ *    runs snapshots the namespace from the then-unpatched exports, and later
+ *    patching the CJS object does not update that frozen namespace. So the
+ *    invariant to hold is "the enforcer installs before anything captures a
+ *    child_process binding", not "the package is CJS".
+ *    `isolation.guard.spec.ts` now proves both halves as executable subprocess
+ *    experiments instead of asserting a belief.
+ *
+ *    T-450 R2 / S14 — the same capture-before-install ordering defeats the rules
+ *    in EVERY NEW REALM, not only in ESM. A `worker_threads` worker, a `fork()`,
+ *    a spawned node child and `vm.createContext` each get a fresh module cache,
+ *    so each one re-runs the ordering question from scratch: whatever it imports
+ *    before the bootstrap `--require` completes is captured unpatched. That is
+ *    why every realm-entry path here injects the bootstrap through `execArgv` or
+ *    `NODE_OPTIONS` — both of which run BEFORE the realm's entry module — rather
+ *    than by calling `installIsolationEnforcer()` from inside the new realm,
+ *    which would always be too late for anything the entry module imported. The
+ *    same reasoning is why `vitest.config.ts` uses `execArgv` and not a
+ *    `setupFiles` entry: a setup file runs after vitest's own runtime has already
+ *    imported `node:child_process`.
+ *
+ * ② "A spec that spawns a renamed copy of the app binary … is not recognised by
+ *    rule 3. Rules 1+2 at the `_electron` level still apply."
+ *
+ *    False on the `child_process` path. `looksLikeAppLaunch` gating meant that
+ *    when the shape was not recognised, `assertContained` was never CALLED — so
+ *    rule 1 (HOME) was skipped too, not just rule 2. Nothing at the `_electron`
+ *    level applies to a call that never touches `_electron`.
+ *
+ *    Corrected by separating the two: the HOME rules are refused for EVERY child,
+ *    app-shaped or not, while the userData rule stays shape-gated because it only
+ *    means anything for an actual Electron launch.
+ *
+ *    T-450 R2 corrected this correction TWICE more, because the first pass fixed
+ *    half of each half:
+ *
+ *      • only ONE of the two HOME rules had been hoisted out of the shape gate.
+ *        The "explicit env with no HOME" rule stayed behind it, so `env: {}` was
+ *        handed to an unrecognised child, which then resolved `os.homedir()` from
+ *        the OS ACCOUNT and got the real home (S7). Both halves are now in
+ *        `assertHomeSafe`, ahead of every gate.
+ *      • the shape gate itself was name-based, so a RENAMED COPY of the app binary
+ *        skipped rule 2 AND the window rule (S5) — the 2026-07-30 ancestor
+ *        incident's exact shape, and the hole under the argument that per-test
+ *        `@window` precision could be left to the runtime rule. The gate now also
+ *        fires on the mere PRESENCE of `--user-data-dir` and on file identity
+ *        (realpath match, byte-size match) against the known Electron binaries, so
+ *        the binary's NAME is no longer what decides.
+ *
+ *    Residual, still honest: a renamed copy that is neither size-identical to a
+ *    known Electron binary nor passed `--user-data-dir` is not recognised. Its
+ *    userData writes are what the tripwire fingerprints.
  */
 
-import os from 'os'
-import path from 'path'
+/* eslint-disable @typescript-eslint/no-var-requires */
 
-/** Marker so a failure is unmistakably this rule and not a product error. */
-export const ISOLATION_TAG = 'T-442 ISOLATION VIOLATION'
+export interface IsolationRules {
+  ISOLATION_TAG: string
+  WINDOW_TAG: string
+  IsolationViolation: new (what: string, detail: string) => Error
+  WindowRuleViolation: new (how: string) => Error
+  realHome(): string
+  protectedRealPaths(): string[]
+  insideRealHome(p: string | undefined | null): boolean
+  resolveRealPath(p: string): string
+  containmentKey(p: string, followLinks?: boolean): string
+  pathContains(ancestor: string, p: string | undefined | null): boolean
+  assertNotForbiddenHome(candidate: string | undefined, forbidden: string | undefined, label: string): void
+  FS_CASE_INSENSITIVE: boolean
+  looksLikeAppLaunch(file: string, args: readonly unknown[]): boolean
+  looksLikeNodeChild(file: string): boolean
+  readUserDataDirs(args: readonly unknown[]): string[]
+  windowsAllowed(): boolean
+  installIsolationEnforcer(): void
+  __enterLaunchScopeForTest<T>(fn: () => T): T
+  BOOTSTRAP: string
+}
 
-const INSTALLED = Symbol.for('productune.t442.isolationEnforcer')
-const USER_DATA_FLAG = '--user-data-dir='
+const rules = require('./isolation-rules.cjs') as IsolationRules
 
+export const ISOLATION_TAG = rules.ISOLATION_TAG
+export const WINDOW_TAG = rules.WINDOW_TAG
+export const BOOTSTRAP = rules.BOOTSTRAP
+export const IsolationViolation = rules.IsolationViolation
+export const WindowRuleViolation = rules.WindowRuleViolation
+export const FS_CASE_INSENSITIVE = rules.FS_CASE_INSENSITIVE
+
+export const realHome = (): string => rules.realHome()
+export const protectedRealPaths = (): string[] => rules.protectedRealPaths()
+export const insideRealHome = (p: string | undefined | null): boolean => rules.insideRealHome(p)
+export const resolveRealPath = (p: string): string => rules.resolveRealPath(p)
+/** THE containment normalisation helper. Every layer uses this one — see below. */
+export const containmentKey = (p: string, followLinks?: boolean): string =>
+  rules.containmentKey(p, followLinks)
+export const pathContains = (ancestor: string, p: string | undefined | null): boolean =>
+  rules.pathContains(ancestor, p)
 /**
- * The developer's REAL home. `playwright.config.ts` records it in the
- * environment before it repoints `HOME`, so `os.homedir()` is only the fallback
- * for the (unused) case where this module loads first.
+ * The refusal guard for fixtures that deliberately mutate "the real home".
+ *
+ * Exported here for the guard spec's own assertions; the FIXTURES require the
+ * `.cjs` directly, because they run in realms with no TypeScript transform.
  */
-export function realHome(): string {
-  return process.env.PRODUCTUNE_REAL_HOME || os.homedir()
-}
-
-/** Real-home paths that must never be written by a test, in any layer. */
-export function protectedRealPaths(): string[] {
-  const h = realHome()
-  return [
-    path.join(h, '.productune'),
-    path.join(h, '.prdt'),
-    path.join(h, '.claude'),
-    path.join(h, 'productune'),
-    path.join(h, 'Library', 'Application Support', 'productune'),
-  ]
-}
-
-/** True when `p` is the real home or anything under it. */
-export function insideRealHome(p: string | undefined | null): boolean {
-  if (!p) return false
-  const r = path.resolve(p)
-  const h = realHome()
-  return r === h || r.startsWith(h + path.sep)
-}
-
-export class IsolationViolation extends Error {
-  constructor(what: string, detail: string) {
-    super(
-      `${ISOLATION_TAG}: ${what}\n` +
-        `${detail}\n` +
-        `Real home: ${realHome()}\n` +
-        `Boot the app with launchApp() from tests/harness.ts, which applies BOTH\n` +
-        `redirections (HOME and --user-data-dir) with no opt-out. HOME alone is not\n` +
-        `enough — Electron's userData ignores it, and an unsandboxed userData also\n` +
-        `takes the single-instance lock away from the user's real running app.`,
-    )
-    this.name = 'IsolationViolation'
-  }
-}
-
-type Envish = Record<string, string | number | boolean | undefined>
-
-/** The env the child will actually see: an explicit `env` REPLACES process.env. */
-function effectiveEnv(optEnv: Envish | undefined): Envish {
-  return optEnv ?? (process.env as Envish)
-}
-
-function readUserDataDir(args: readonly unknown[]): string | undefined {
-  for (const a of args) {
-    const s = String(a)
-    if (s.startsWith(USER_DATA_FLAG)) return s.slice(USER_DATA_FLAG.length)
-  }
-  return undefined
-}
-
-/** Rule 1 + rule 2, shared by the `_electron` and `child_process` paths. */
-function assertContained(opts: {
-  how: string
-  env: Envish
-  args: readonly unknown[]
-  /** Skip the userData rule: an `ELECTRON_RUN_AS_NODE` child has no userData. */
-  nodeMode?: boolean
-}): void {
-  const home = opts.env.HOME === undefined ? undefined : String(opts.env.HOME)
-  if (!home) {
-    throw new IsolationViolation(
-      `${opts.how} with no HOME in its environment.`,
-      `A child with no HOME resolves os.homedir() from the OS account — the real home.`,
-    )
-  }
-  if (insideRealHome(home)) {
-    throw new IsolationViolation(
-      `${opts.how} with HOME inside the real home.`,
-      `HOME=${home}\nThis rewrites ~/.productune/toolchain, ~/.prdt and ~/.claude for real.`,
-    )
-  }
-
-  if (opts.nodeMode) return
-
-  const udd = readUserDataDir(opts.args)
-  if (udd === undefined) {
-    throw new IsolationViolation(
-      `${opts.how} without --user-data-dir.`,
-      `HOME was sandboxed (${home}) but Electron's userData does NOT follow HOME:\n` +
-        `Chromium takes app.getPath('appData') from the OS account. This launch would\n` +
-        `write the REAL ${path.join(realHome(), 'Library', 'Application Support', 'productune')}\n` +
-        `(Local Storage/leveldb, Session Storage, DevToolsActivePort, DIPS, blob_storage)\n` +
-        `and contend for the real app's single-instance lock.`,
-    )
-  }
-  if (!udd || insideRealHome(udd)) {
-    throw new IsolationViolation(
-      `${opts.how} with --user-data-dir inside the real home.`,
-      `--user-data-dir=${udd || '<empty>'}`,
-    )
-  }
-}
-
-// ── rule 3 target detection ─────────────────────────────────────────────────
-//
-// Narrow on purpose: tests spawn plenty of innocent processes (git, node,
-// prdt), and a guard that fires on those would be turned off within a week.
-
-const APP_SHAPES: RegExp[] = [
-  /dist-electron[/\\]main\.js/i, // this app's main entry, dev layout
-  /[/\\]Electron\.app[/\\]Contents[/\\]MacOS[/\\]/i, // the devDependency binary
-  /[/\\]Productune\.app[/\\]Contents[/\\]MacOS[/\\]/i, // a packaged build
-  /[/\\]dist-electron[/\\]/i,
-]
-
-function looksLikeAppLaunch(file: string, args: readonly unknown[]): boolean {
-  const base = path.basename(file)
-  if (/^electron(\.exe)?$/i.test(base) || base === 'Productune') return true
-  const joined = [file, ...args.map(String)].join(' ')
-  return APP_SHAPES.some((re) => re.test(joined))
-}
-
-/**
- * Re-entrancy depth. `_electron.launch` spawns the Electron binary through
- * child_process itself; that spawn was already validated at the launch level,
- * so re-checking it would only risk a false positive on Playwright's internals.
- */
-let launchDepth = 0
-
-export function installIsolationEnforcer(): void {
-  const g = globalThis as Record<symbol, unknown>
-  if (g[INSTALLED]) return
-  g[INSTALLED] = true
-
-  // ── _electron.launch ──────────────────────────────────────────────────────
-  // Patched as an OWN property on the exported singleton, so every importer —
-  // static, dynamic, from any directory, under any filename — gets the wrapper.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const pw = require('@playwright/test') as { _electron: { launch: (o?: unknown) => Promise<unknown> } }
-  const originalLaunch = pw._electron.launch.bind(pw._electron)
-
-  pw._electron.launch = function guardedLaunch(options?: unknown): Promise<unknown> {
-    const o = (options ?? {}) as { args?: unknown[]; env?: Envish }
-    const args = Array.isArray(o.args) ? o.args : []
-    assertContained({
-      how: '_electron.launch()',
-      env: effectiveEnv(o.env),
-      args,
-    })
-    launchDepth += 1
-    return Promise.resolve(originalLaunch(options)).finally(() => {
-      launchDepth -= 1
-    })
-  }
-
-  // ── child_process ─────────────────────────────────────────────────────────
-  // `_electron` is not the only way to boot the app. The T-440 live-proof driver
-  // spawns the app binary directly, and so could any future spec.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const cp = require('child_process') as Record<string, (...a: unknown[]) => unknown>
-
-  const wrapFileApi = (name: string): void => {
-    const original = cp[name]
-    if (typeof original !== 'function') return
-    cp[name] = function guarded(this: unknown, ...callArgs: unknown[]): unknown {
-      if (launchDepth === 0) {
-        const file = String(callArgs[0] ?? '')
-        const args = Array.isArray(callArgs[1]) ? (callArgs[1] as unknown[]) : []
-        const opts = (Array.isArray(callArgs[1]) ? callArgs[2] : callArgs[1]) as
-          | { env?: Envish }
-          | undefined
-        if (looksLikeAppLaunch(file, args)) {
-          const env = effectiveEnv(opts?.env)
-          assertContained({
-            how: `child_process.${name}() of the app binary`,
-            env,
-            args,
-            nodeMode: String(env.ELECTRON_RUN_AS_NODE ?? '') === '1',
-          })
-        }
-      }
-      return original.apply(this, callArgs)
-    }
-  }
-
-  for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) wrapFileApi(name)
-
-  const wrapShellApi = (name: string): void => {
-    const original = cp[name]
-    if (typeof original !== 'function') return
-    cp[name] = function guarded(this: unknown, ...callArgs: unknown[]): unknown {
-      if (launchDepth === 0) {
-        const command = String(callArgs[0] ?? '')
-        if (looksLikeAppLaunch(command, [])) {
-          // A shell string has no argv array; scan the whole command for the flag.
-          const env = effectiveEnv((callArgs[1] as { env?: Envish } | undefined)?.env)
-          assertContained({
-            how: `child_process.${name}() of the app binary`,
-            env,
-            args: command.split(/\s+/),
-            nodeMode: String(env.ELECTRON_RUN_AS_NODE ?? '') === '1',
-          })
-        }
-      }
-      return original.apply(this, callArgs)
-    }
-  }
-
-  for (const name of ['exec', 'execSync']) wrapShellApi(name)
-}
+export const assertNotForbiddenHome = (
+  candidate: string | undefined,
+  forbidden: string | undefined,
+  label: string,
+): void => rules.assertNotForbiddenHome(candidate, forbidden, label)
+export const looksLikeAppLaunch = (file: string, args: readonly unknown[]): boolean =>
+  rules.looksLikeAppLaunch(file, args)
+export const looksLikeNodeChild = (file: string): boolean => rules.looksLikeNodeChild(file)
+export const readUserDataDirs = (args: readonly unknown[]): string[] => rules.readUserDataDirs(args)
+export const windowsAllowed = (): boolean => rules.windowsAllowed()
+export const installIsolationEnforcer = (): void => rules.installIsolationEnforcer()
+export const __enterLaunchScopeForTest = <T,>(fn: () => T): T => rules.__enterLaunchScopeForTest(fn)

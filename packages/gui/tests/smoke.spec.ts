@@ -47,7 +47,7 @@ async function assertVisible(
 
 // ── tests ──────────────────────────────────────────────────────────────────────
 
-test('smoke: window opens, renderer mounts, zero console errors', async () => {
+test('smoke @window: window opens, renderer mounts, zero console errors', async () => {
   const home = sandboxHome('smoke-console')
   const electronApp = await launchApp({ home })
 
@@ -75,7 +75,7 @@ test('smoke: window opens, renderer mounts, zero console errors', async () => {
   }
 })
 
-test('smoke: visual layout — app shell non-collapsed, titlebar + content area visible', async () => {
+test('smoke @window: visual layout — app shell non-collapsed, titlebar + content area visible', async () => {
   // T-PATCH-267: visual render assertions.
   // The test captures a screenshot (CI artifact) and asserts key layout invariants
   // without a pixel-diff baseline:
@@ -169,7 +169,7 @@ test('smoke: visual layout — app shell non-collapsed, titlebar + content area 
   }
 })
 
-test('smoke: visual layout — onboarding or home screen key elements present', async () => {
+test('smoke @window: visual layout — onboarding or home screen key elements present', async () => {
   // T-PATCH-267: screen-specific element presence check.
   // Identifies which top-level screen the app landed on and verifies its
   // signature elements are non-collapsed. This is the layer that catches

@@ -106,7 +106,7 @@ function rowSaysNotInstalled(text: string): boolean {
 
 // ── 1. BLOCKER: the app must see an install performed on an untouched profile ──
 
-test('T-439 BLOCKER: engine row advances after install on a shell-profile-untouched HOME', async () => {
+test('T-439 BLOCKER @window: engine row advances after install on a shell-profile-untouched HOME', async () => {
   const home = freshHome('detect')
   const app = await launch(home)
 
@@ -169,7 +169,7 @@ test('T-439 BLOCKER: engine row advances after install on a shell-profile-untouc
 
 // ── 2. HIGH: a failed project:create must be visible where it happens ─────────
 
-test('T-439 HIGH: a real project:create failure renders on the version step', async () => {
+test('T-439 HIGH @window: a real project:create failure renders on the version step', async () => {
   const home = freshHome('create')
   // Onboarding-complete markers so the app opens on the home view (App.tsx
   // gates the wizard on productune.env AND a persisted language pref).

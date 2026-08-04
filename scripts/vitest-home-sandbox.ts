@@ -35,6 +35,31 @@
  * OS account, not the environment) — but GUI unit tests already stub
  * `app.getPath` and never boot Electron, and the Playwright specs handle
  * userData explicitly via `--user-data-dir` in packages/gui/tests/harness.ts.
+ *
+ * ── T-450 / S2: THIS RUNNER HAD NO FLOOR AT ALL ─────────────────────────────
+ *
+ * Repointing HOME is PREVENTION, and prevention was established three rounds ago
+ * not to be the floor. QA measured what that meant here: `pnpm test` runs vitest
+ * (233 + 297 tests), and vitest had neither the isolation rules nor the tripwire.
+ * A vitest test that DELETED the real home reported "2 passed", exit 0 — on the
+ * one runner whose history of writing the developer's real home is documented in
+ * the comment above.
+ *
+ * Three additions, and they are deliberately in three different places, because
+ * each one has to happen at a different moment:
+ *
+ *   PREVENTION  `test.execArgv: ['--require', <bootstrap>]` in each package's
+ *               vitest.config.ts. NOT a setup file: a setup file runs after
+ *               vitest's own runtime has already imported `node:child_process`,
+ *               and a named ESM binding captured before the patch stays unpatched
+ *               (measured — see boundary ① in
+ *               packages/gui/tests/isolation-enforcer.ts). `execArgv` runs at
+ *               worker STARTUP, before any of that.
+ *   BASELINE    `armTripwire()` at each vitest.config.ts MODULE SCOPE — earlier
+ *               than globalSetup, so a globalSetup mutation is observed (S3).
+ *   VERDICT     `scripts/vitest-real-home-verdict.ts`, wired as `globalSetup`;
+ *               its teardown sets `process.exitCode = 1`. See that file for the
+ *               four candidate mechanisms and which three fail silently.
  */
 
 import fs from 'fs'
@@ -122,3 +147,9 @@ process.env.HOME = sandbox
 process.on('exit', () => {
   try { fs.rmSync(sandbox, { recursive: true, force: true }) } catch { /* the sweep gets it next run */ }
 })
+
+// The run's VERDICT is not here. It is in `scripts/vitest-real-home-verdict.ts`,
+// wired as `globalSetup` in both packages: a run-level guarantee needs exactly one
+// final fingerprint, and this file runs once per test FILE (87 of them across the
+// two packages) — measured at 8 concurrent walks = 12s of wall time, which also
+// started tripping vitest's 10s default hook timeout.

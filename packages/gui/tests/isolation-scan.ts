@@ -62,7 +62,8 @@ const SKIP_DIRS = new Set(['node_modules', 'test-results', 'playwright-report', 
  */
 export const SCAN_EXEMPT: ReadonlySet<string> = new Set([
   'harness.ts', // the one sanctioned launcher
-  'isolation-enforcer.ts', // patches the banned function, so it must name it
+  'isolation-enforcer.ts', // typed surface over the rules, so it names them
+  'isolation-rules.cjs', // T-450: the rules themselves — they ARE the patterns
   'isolation-scan.ts', // this file: the patterns are the search
   'isolation.guard.spec.ts', // asserts on all of the above
 ])

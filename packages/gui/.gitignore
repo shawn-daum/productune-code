@@ -7,3 +7,13 @@ renderer
 # playwright
 test-results/
 playwright-report/
+
+# T-450: nested-suite scratch dirs used by tests/isolation.guard.spec.ts to prove
+# the real-home tripwire. They must live inside this package so the nested spec can
+# resolve @playwright/test, and they are removed in a `finally` — this entry only
+# keeps an interrupted run from dirtying the tree.
+.t450-nested-*/
+
+# T-450: scratch vitest project used by scripts/verify-isolation-bypass-matrix.sh
+# PART 3 to prove the floor on the OTHER runner. Removed by the script's trap.
+.t450-verify-vitest/
