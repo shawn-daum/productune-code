@@ -1,27 +1,38 @@
 /**
- * isolation.guard.spec.ts — T-442 F1 / F-A. The isolation rule, verified.
+ * isolation.guard.spec.ts — T-442 F1 / F-A / T-450. The isolation rule, verified.
  *
- * The acceptance condition is not "the specs that exist today were fixed". It
- * is "a spec added next month cannot make this mistake again". Round 2 claimed
- * that and was wrong: the rule was a static scan over
- * `readdirSync(tests/).filter(f => f.endsWith('.spec.ts'))`, and the only shape
- * it could catch was the single shape its author had used as a negative
- * control. QA wrote three bypasses and all three passed the scan while
- * mutating 28 files in the REAL `~/Library/Application Support/productune`.
+ * The acceptance condition is not "the specs that exist today were fixed". It is
+ * "a spec added next month cannot make this mistake again". Three rounds claimed
+ * that and three rounds were wrong, each in the same way: the proof enumerated
+ * the shapes its author had thought of, and QA arrived with a new one.
  *
- * A single negative control proves nothing. This file therefore checks the rule
- * against a MATRIX of bypass shapes — the three QA executed plus more — and
- * each row is an assertion, not a comment.
+ *   R2  the rule was a static scan over `readdirSync(tests/)` filtered to
+ *       `.spec.ts`. QA bypassed it three ways — a subdirectory, a `.test.ts`, and
+ *       a non-spec helper — and all three mutated the REAL userData.
+ *   R3  the rule became a runtime chokepoint, justified by "Node's module cache
+ *       is per-process". It is per-REALM. QA booted the app from a
+ *       `worker_threads` worker, wrote SingletonLock/SingletonSocket/
+ *       SingletonCookie into the real userData, and Playwright reported PASSED.
  *
- * Layers under test:
+ * T-450 therefore inverts what the guarantee rests on. Prevention is still here
+ * and still worth having — it fails early and names the rule — but the FLOOR is
+ * detection: `real-home-tripwire-reporter.ts` fingerprints the real home around
+ * every test in the run, so a mutation turns the run red no matter which spec,
+ * realm or API produced it. Layers under test:
+ *
  *   L1  playwright.config.ts repoints HOME for the runner and every worker.
  *   L2  tests/harness.ts is the sanctioned launcher (both redirections).
- *   L3  tests/isolation-enforcer.ts wraps `_electron.launch` and app-shaped
- *       `child_process` calls in every worker. THE HARD GATE.
+ *   L3  tests/isolation-rules.cjs — prevention, now realm-aware: carried into
+ *       workers, forks and spawned node children by isolation-realm-bootstrap.cjs.
  *   L4  tests/isolation-scan.ts, recursive over every code file under testDir,
- *       cross-checked against Playwright's own `--list` collection.
- *   L5  a real-home fingerprint taken around the whole matrix: whatever the
- *       above miss, a mutation of the real home still turns the suite red.
+ *       cross-checked against Playwright's own `--list` output.
+ *   L5  THE FLOOR — the suite-global tripwire. Proven here by running a nested
+ *       suite against a DECOY real home, mutating it, and observing the nested run
+ *       go red where the same run with the tripwire disabled stays green.
+ *
+ * Every test in this file is host-safe: nothing opens a window unless it carries
+ * `@window` in its title, and the config grep-inverts those unless
+ * PRODUCTUNE_ALLOW_WINDOWS=1 (see docs/wiki/fact--qa-cua-vm.md).
  */
 
 import cp from 'child_process'
@@ -29,7 +40,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { test, expect, _electron } from '@playwright/test'
-import pwConfig, { TEST_DIR } from '../playwright.config'
+import pwConfig, { ALLOW_WINDOWS, TEST_DIR, WINDOW_TAG_PATTERN } from '../playwright.config'
 import {
   DEFAULT_SANDBOX_HOME,
   MAIN,
@@ -40,7 +51,21 @@ import {
   launchApp,
   sandboxHome,
 } from './harness'
-import { ISOLATION_TAG, insideRealHome } from './isolation-enforcer'
+import {
+  BOOTSTRAP,
+  FS_CASE_INSENSITIVE,
+  ISOLATION_TAG,
+  assertNotForbiddenHome,
+  WINDOW_TAG,
+  __enterLaunchScopeForTest,
+  insideRealHome,
+  looksLikeAppLaunch,
+  looksLikeNodeChild,
+  pathContains,
+  readUserDataDirs,
+  resolveRealPath,
+  windowsAllowed,
+} from './isolation-enforcer'
 import {
   CODE_FILE_RE,
   PLAYWRIGHT_TEST_FILE_RE,
@@ -50,12 +75,41 @@ import {
   listCollectableTestFiles,
   scanForUnsanctionedLaunch,
 } from './isolation-scan'
+import {
+  diffSnapshots,
+  snapshotRealHome,
+  tripwireExclusions,
+  tripwireSurfaces,
+  verifyTripwire,
+} from './real-home-tripwire'
 
 const TESTS_DIR = __dirname
 const GUI_ROOT = path.resolve(__dirname, '..')
 
 /** Real userData — the surface HOME cannot move and the round-2 bypasses hit. */
 const REAL_USER_DATA = path.join(REAL_HOME, 'Library', 'Application Support', 'productune')
+
+/**
+ * An app-SHAPED path that does not exist.
+ *
+ * Adversarial rows need a target the rules recognise as the app. Using the real
+ * binary would mean that a row which FAILS to be blocked opens a real window on
+ * the host — the exact thing this machine forbids. Pointing at a non-existent
+ * executable inside a real `Electron.app/Contents/MacOS/` keeps the shape (so
+ * `looksLikeAppLaunch` fires) while making an escape harmless: the spawn fails
+ * with ENOENT instead of rendering. Every "must be blocked" row that could
+ * otherwise reach a launcher uses this.
+ */
+const APP_SHAPED_MISSING = path.join(
+  GUI_ROOT,
+  'node_modules',
+  'electron',
+  'dist',
+  'Electron.app',
+  'Contents',
+  'MacOS',
+  'NoSuchBinary',
+)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // L4 — the static scan, over the set Playwright actually collects
@@ -72,6 +126,7 @@ test('T-442 F-A: the scan root is the configured testDir, not a hardcoded path',
   expect([...SCAN_EXEMPT].sort()).toEqual([
     'harness.ts',
     'isolation-enforcer.ts',
+    'isolation-rules.cjs',
     'isolation-scan.ts',
     'isolation.guard.spec.ts',
   ])
@@ -88,6 +143,11 @@ test('T-442 F-A: the scan covers everything Playwright collects (asked, not assu
   const res = cp.spawnSync(process.execPath, [cli, 'test', '--list', '--reporter=json'], {
     cwd: GUI_ROOT,
     encoding: 'utf-8',
+    // PRODUCTUNE_ISOLATION_LIST=1 doubles as the config's collect-everything
+    // switch, so the listing is not filtered by `grepInvert` — a filtered listing
+    // would make this cross-check silently vacuous for exactly the specs most
+    // likely to launch something. It grants no window permission (the guard
+    // refuses to let a child do that), and `--list` executes nothing anyway.
     env: { ...process.env, PRODUCTUNE_ISOLATION_LIST: '1' },
     timeout: 120_000,
     maxBuffer: 32 * 1024 * 1024,
@@ -136,6 +196,12 @@ test('T-442 F-A: the scan covers everything Playwright collects (asked, not assu
 
   // Our local mirror of Playwright's default testMatch agrees with the runner.
   expect(listCollectableTestFiles(TESTS_DIR).sort()).toEqual([...collected].sort())
+
+  // T-450: the `.cjs` rules file is CODE and must be inside the scanned set —
+  // it is exempt from the PATTERNS, not from being read. An exemption that also
+  // hid the file would be a hole.
+  expect(scanned.has('isolation-rules.cjs'), 'the rules file must be scanned, merely pattern-exempt').toBe(true)
+  expect(scanned.has('isolation-realm-bootstrap.cjs'), 'the realm bootstrap must be scanned').toBe(true)
 })
 
 test('T-442 F-A: the scan catches every bypass shape (matrix, not one control)', () => {
@@ -187,6 +253,10 @@ test('T-442 F-A: the scan catches every bypass shape (matrix, not one control)',
     expect(CODE_FILE_RE.test('notes.md')).toBe(false)
     expect(PLAYWRIGHT_TEST_FILE_RE.test('evil-suffix.test.ts')).toBe(true)
     expect(PLAYWRIGHT_TEST_FILE_RE.test('evil-helper.ts')).toBe(false)
+    // T-450: `.cjs` is code and must be walked, or the realm bootstrap and the
+    // rules file would be invisible to the scan entirely.
+    expect(CODE_FILE_RE.test('isolation-rules.cjs')).toBe(true)
+    expect(PLAYWRIGHT_TEST_FILE_RE.test('isolation-rules.cjs')).toBe(false)
 
     // ── KNOWN BOUNDARY, asserted rather than hidden ─────────────────────────
     //
@@ -197,11 +267,11 @@ test('T-442 F-A: the scan catches every bypass shape (matrix, not one control)',
     // see it — measured, not assumed. Asserting the miss keeps the limitation
     // honest and makes it a visible change if the scan is ever widened.
     //
-    // This shape is still blocked, by the runtime enforcer: the matrix row
+    // This shape is still blocked, by the runtime rules: the matrix row
     // 'child_process.spawn of the Electron binary…' below is the same shape,
     // and scripts/verify-isolation-bypass-matrix.sh runs it as a real collected
-    // spec and shows the suite go red. That is exactly why L3 is the gate and
-    // L4 is only the early, readable warning.
+    // spec and shows the suite go red. That is exactly why L3 is prevention and
+    // L4 is only the early, readable warning — and why L5 is the floor.
     const boundary = path.join(root, 'assembled.spec.ts')
     fs.writeFileSync(
       boundary,
@@ -239,11 +309,1060 @@ test('T-442 F1: no file under testDir launches Electron outside the harness', ()
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// L3 — the runtime chokepoint. THE fix for F-A.
+// L5 — THE FLOOR. The suite-global tripwire.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test('T-442 F-A: the enforcer rejects every unsandboxed launch shape, and the real home is untouched', async () => {
-  const before = fingerprintRealHome()
+test('T-450: the tripwire covers the product write surfaces, and userData is one of them', () => {
+  const surfaces = tripwireSurfaces()
+  expect(surfaces.sort()).toEqual(
+    [
+      path.join(REAL_HOME, '.productune'),
+      path.join(REAL_HOME, '.prdt'),
+      path.join(REAL_HOME, 'productune'),
+      path.join(REAL_HOME, 'Library', 'Application Support', 'productune'),
+      // T-450 R2 / S10 — the THIRD root, added because QA refuted the premise that
+      // HOME and userData were the only two. Cocoa derives these from the app's
+      // BUNDLE IDENTIFIER, which neither `HOME` nor `--user-data-dir` moves.
+      path.join(REAL_HOME, 'Library', 'Preferences', 'com.productune.gui.plist'),
+      path.join(REAL_HOME, 'Library', 'Preferences', 'com.github.Electron.plist'),
+      path.join(REAL_HOME, 'Library', 'Caches', 'electron'),
+    ].sort(),
+  )
+
+  // Both bundle identifiers, on purpose: a packaged build is `com.productune.gui`,
+  // but the DEV layout runs inside `Electron.app` and is `com.github.Electron` —
+  // and the 2026-07-30 incident that started all of this was a dev-layout launch,
+  // so covering only the packaged id would miss the shape with history.
+  expect(
+    surfaces.filter((s) => s.includes('Library/Preferences')).length,
+    'both the packaged and the dev-layout bundle identifier must be covered',
+  ).toBe(2)
+
+  // T-450 R2 / S11 — the other refuted premise. `~/.productune` stays covered, but
+  // this one leaf is excluded: measured over 300s during a LIVE agent session (the
+  // only condition under which this suite runs), 4 of the 45 entries under
+  // `~/.productune` changed and all 4 were this subtree. R1's "zero churn" figure
+  // came from an IDLE measurement, which was the wrong test.
+  expect(tripwireExclusions()).toEqual([
+    path.join(REAL_HOME, '.productune', 'state', 'autosave-snapshots'),
+  ])
+  expect(
+    snapshotRealHome().detail.some((l) => l.includes('autosave-snapshots')),
+    'the excluded subtree must not appear in the fingerprint at all',
+  ).toBe(false)
+  // …and the exclusion must be a LEAF, not the whole surface, or the S11 fix would
+  // have thrown away the detection this ticket exists for.
+  expect(
+    tripwireExclusions().every((x) => x.startsWith(path.join(REAL_HOME, '.productune') + path.sep)),
+    'an exclusion must be a subtree of a covered surface, never a surface',
+  ).toBe(true)
+
+  // The acceptance names userData specifically: it is the third real-home surface,
+  // HOME cannot move it, and it carries the single-instance-lock edge.
+  expect(surfaces, 'Electron userData must be covered — HOME alone cannot move it').toContain(REAL_USER_DATA)
+
+  // `~/.claude` is deliberately NOT a tripwire surface but IS still refused by
+  // prevention. Asserting both halves keeps the asymmetry a decision rather than
+  // an oversight: prevention false positives cost nothing, detection false
+  // positives get the tripwire deleted, and the agent harness rewrites ~/.claude
+  // continuously (measured: 16 changed entries in 60s with no suite running).
+  const claude = path.join(REAL_HOME, '.claude')
+  expect(surfaces, '~/.claude must NOT be a tripwire surface — it churns constantly').not.toContain(claude)
+  expect(PROTECTED_REAL_PATHS, '~/.claude must still be refused by prevention').toContain(claude)
+
+  // A snapshot must be non-vacuous, or every comparison below passes for free.
+  const snap = snapshotRealHome()
+  const total = Object.values(snap.perSurface).reduce((n, s) => n + s.count, 0)
+  expect(total, 'the fingerprint saw nothing — it would never detect anything either').toBeGreaterThan(10)
+  expect(snap.realHome).toBe(REAL_HOME)
+
+  // Taking a snapshot must not itself create anything (it walks with lstat and
+  // existsSync only). Two consecutive snapshots of an idle real home agree.
+  expect(diffSnapshots(snap, snapshotRealHome()), 'the fingerprint perturbed the home it measures').toEqual([])
+})
+
+/**
+ * Run a NESTED Playwright suite against a DECOY real home.
+ *
+ * This is how the tripwire is proven without touching the developer's actual
+ * home. `PRODUCTUNE_REAL_HOME` is what the rules and the tripwire treat as "the
+ * real home", so pointing it at a throwaway directory makes the whole mechanism
+ * observable end-to-end: a fixture mutates the decoy, and the nested run's exit
+ * code is the answer. Nothing in the nested suite launches anything, so no window
+ * opens and the host run rule holds.
+ */
+interface NestedOpts {
+  specSource: string
+  tripwire: boolean
+  /**
+   * Body of a `globalSetup` module for the nested config. The S3 fixture: a
+   * globalSetup mutation must be INSIDE the observed window, which is only true
+   * because the baseline is armed at config module scope.
+   */
+  globalSetupSource?: string
+  /** Extra CLI args — the S4 fixture passes `--reporter=line`. */
+  extraArgs?: string[]
+  /** Omit the globalTeardown from the nested config (to prove it is the floor). */
+  omitTeardown?: boolean
+}
+
+function runNestedSuite(opts: NestedOpts): {
+  code: number | null
+  output: string
+  decoyHome: string
+  cleanup: () => void
+} {
+  // Two roots, for two reasons that pull in opposite directions.
+  //
+  // CODE goes inside this package. The nested spec does
+  // `require('@playwright/test')`, and CJS resolution walks up from the FILE, so a
+  // spec under /var/folders never reaches `<gui>/node_modules` and the nested run
+  // dies with "Cannot find module '@playwright/test'". A dot-prefixed directory
+  // keeps it invisible to everything that matters: `listCodeFiles` skips dot
+  // directories so the scan does not walk it, and `testDir` is ./tests so the
+  // outer run never collects it.
+  //
+  // HOMES go in os.tmpdir(). The repo lives inside the developer's real home, so a
+  // sandbox HOME placed next to the code would be a path inside the real home —
+  // and rule 4 correctly refuses to hand any child such a HOME. (It did exactly
+  // that when both were colocated here, which is the rule working, not a nuisance.)
+  // Sweep anything a previously interrupted run left behind, so these cannot
+  // accumulate in the package directory.
+  for (const entry of fs.readdirSync(GUI_ROOT)) {
+    if (entry.startsWith('.t450-nested-')) fs.rmSync(path.join(GUI_ROOT, entry), { recursive: true, force: true })
+  }
+  const codeRoot = fs.mkdtempSync(path.join(GUI_ROOT, '.t450-nested-'))
+  const homeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-tripwire-'))
+  const cleanup = (): void => {
+    for (const d of [codeRoot, homeRoot]) fs.rmSync(d, { recursive: true, force: true })
+  }
+  const decoyHome = path.join(homeRoot, 'decoy-real-home')
+  const nestedHome = path.join(homeRoot, 'nested-sandbox-home')
+  const specDir = path.join(codeRoot, 'specs')
+  for (const d of [specDir, nestedHome, path.join(decoyHome, '.productune'), path.join(decoyHome, '.prdt')]) {
+    fs.mkdirSync(d, { recursive: true })
+  }
+  // Seed the decoy so the baseline is a real, non-empty fingerprint.
+  fs.writeFileSync(path.join(decoyHome, '.productune', 'settings.json'), JSON.stringify({ seeded: true }))
+  fs.writeFileSync(path.join(decoyHome, '.prdt', 'doctrine.md'), '# seed\n')
+
+  fs.writeFileSync(path.join(specDir, 'nested.spec.js'), opts.specSource)
+  const reporter = path.join(TESTS_DIR, 'real-home-tripwire-reporter.ts')
+  const teardown = path.join(TESTS_DIR, 'real-home-tripwire-teardown.ts')
+  const tripwireCjs = path.join(TESTS_DIR, 'real-home-tripwire.cjs')
+  if (opts.globalSetupSource) {
+    fs.writeFileSync(path.join(codeRoot, 'global-setup.js'), opts.globalSetupSource)
+  }
+  // The nested config MIRRORS the real one, because that is what is under test:
+  // arm at module scope, adjudicate in globalTeardown, attribute in the reporter.
+  // A nested config that only registered the reporter would have proven the R1
+  // design, which is exactly the design QA broke.
+  fs.writeFileSync(
+    path.join(codeRoot, 'playwright.config.js'),
+    `process.env.HOME = ${JSON.stringify(nestedHome)}\n` +
+      `require(${JSON.stringify(tripwireCjs)}).armTripwire('nested config module scope')\n` +
+      `module.exports = {\n` +
+      `  testDir: ${JSON.stringify(specDir)},\n` +
+      `  timeout: 30000,\n  workers: 1,\n` +
+      (opts.globalSetupSource
+        ? `  globalSetup: ${JSON.stringify(path.join(codeRoot, 'global-setup.js'))},\n`
+        : '') +
+      (opts.omitTeardown ? '' : `  globalTeardown: ${JSON.stringify(teardown)},\n`) +
+      `  reporter: [['list'], [${JSON.stringify(reporter)}]],\n` +
+      `}\n`,
+  )
+
+  const res = cp.spawnSync(
+    process.execPath,
+    [
+      require.resolve('@playwright/test/cli'),
+      'test',
+      '--config',
+      path.join(codeRoot, 'playwright.config.js'),
+      ...(opts.extraArgs ?? []),
+    ],
+    {
+      cwd: GUI_ROOT,
+      encoding: 'utf-8',
+      timeout: 120_000,
+      maxBuffer: 32 * 1024 * 1024,
+      env: {
+        ...process.env,
+        PRODUCTUNE_REAL_HOME: decoyHome,
+        // Told separately, so the fixture can refuse if the decoy is ever the
+        // developer's actual home. See MUTATING_SPEC.
+        T450_FORBIDDEN_HOME: REAL_HOME,
+        T450_RULES: path.join(TESTS_DIR, 'isolation-rules.cjs'),
+        HOME: nestedHome,
+        PRODUCTUNE_TRIPWIRE: opts.tripwire ? 'on' : 'off',
+        PRODUCTUNE_ISOLATION_LIST: '1', // keep the nested run from re-listing
+        // The nested run has a DIFFERENT real home (the decoy), so it must arm its
+        // own baseline. Inheriting the parent's run id made every nested run
+        // compare the decoy against the developer's real home and report the whole
+        // tree as drifted. `armTripwire` also refuses an inherited baseline whose
+        // realHome disagrees, so this is belt and braces — deliberately, because a
+        // fixture that silently reuses the wrong baseline proves nothing.
+        PRODUCTUNE_TRIPWIRE_RUN: '',
+      },
+    },
+  )
+  // The decoy must have been honoured. If propagation ever clobbers it again, the
+  // nested run targeted the developer's home and that must fail HERE, loudly,
+  // rather than being noticed later in a diff.
+  expect(
+    res.stdout.includes('REFUSING to run'),
+    'the nested run was pointed at the real home — bootstrap propagation regressed',
+  ).toBe(false)
+  // A nested run that could not even start is not evidence of anything, and it
+  // must not be mistaken for "the tripwire did not fire".
+  expect(
+    `${res.stdout}${res.stderr}`,
+    'the nested run failed to load its own dependencies, so it proves nothing',
+  ).not.toContain("Cannot find module '@playwright/test'")
+  return { code: res.status, output: `${res.stdout}\n${res.stderr}`, decoyHome, cleanup }
+}
+
+/**
+ * The refusal guard every mutating fixture in this repo must use, as source.
+ *
+ * T-450 R2 / S9. R1 hand-rolled this check inside each fixture as
+ * `decoy === forbidden || decoy.startsWith(forbidden + path.sep)` — a purely
+ * LEXICAL comparison. QA's finding is the sharpest one of the round: the SAME DIFF
+ * that fixed lexical containment in `insideRealHome` reproduced the identical
+ * defect in the brand-new guard, so `T450_FORBIDDEN_HOME` could be walked past
+ * with a case variant or a symlink. The fixture that exists to mutate "the real
+ * home" was the one place with the weakest idea of what the real home is.
+ *
+ * It now calls `assertNotForbiddenHome()` from `isolation-rules.cjs` — the same
+ * normalisation every other layer uses. Reached by absolute path through a bare
+ * `require`, because the fixture runs in a realm with no TypeScript transform.
+ */
+const REFUSAL_GUARD = `
+  const decoy = process.env.PRODUCTUNE_REAL_HOME
+  const forbidden = process.env.T450_FORBIDDEN_HOME
+  require(process.env.T450_RULES).assertNotForbiddenHome(decoy, forbidden, 'T-450 fixture')
+`
+
+/**
+ * A nested spec that writes the decoy real home. No launch, no window.
+ *
+ * The refusal guard is not decoration. The first version of this fixture trusted
+ * `PRODUCTUNE_REAL_HOME` to be the decoy, the parent's own bootstrap propagation
+ * overwrote that variable with the developer's ACTUAL home, and this fixture then
+ * rewrote the real `~/.productune/settings.json`. The propagation bug is fixed in
+ * `isolation-rules.cjs`, but a fixture whose entire purpose is to mutate "the real
+ * home" must not depend on one variable being right — so it is told, separately,
+ * which home it must never touch, and it refuses rather than writes.
+ */
+const MUTATING_SPEC = `
+const fs = require('fs')
+const path = require('path')
+const { test, expect } = require('@playwright/test')
+
+test('a perfectly ordinary-looking passing test', () => {
+${REFUSAL_GUARD}
+  // No launch. No Electron. Just a write to the real home — which is what an
+  // escaped launch amounts to, and which prevention has nothing to say about.
+  fs.writeFileSync(path.join(decoy, '.productune', 'settings.json'), JSON.stringify({ mutatedByATest: true, at: Date.now() }))
+  fs.writeFileSync(path.join(decoy, '.productune', 'SingletonLock'), 'x')
+  expect(1 + 1).toBe(2)
+})
+`
+
+/**
+ * S3 — a `globalSetup` that mutates the decoy real home.
+ *
+ * This is the shape that was COMPLETELY invisible in R1: `globalSetup` runs before
+ * the reporter's `onBegin`, so the reporter's baseline already included the damage
+ * and the run reported exit 0, "real home unchanged", with the home actually gone.
+ * It is observable now only because the baseline is armed at config MODULE SCOPE,
+ * which is earlier still.
+ */
+const MUTATING_GLOBAL_SETUP = `
+const fs = require('fs')
+const path = require('path')
+module.exports = async () => {
+${REFUSAL_GUARD}
+  fs.writeFileSync(path.join(decoy, '.productune', 'settings.json'), JSON.stringify({ mutatedByGlobalSetup: Date.now() }))
+  fs.rmSync(path.join(decoy, '.prdt', 'doctrine.md'), { force: true })
+}
+`
+
+const CLEAN_SPEC = `
+const { test, expect } = require('@playwright/test')
+test('a test that touches nothing', () => { expect(1 + 1).toBe(2) })
+`
+
+test('T-450 THE FLOOR: mutating the real home turns the run red, where today it stays green', () => {
+  test.setTimeout(300_000)
+
+  // This test deliberately mutates "a real home". Fingerprint the DEVELOPER's real
+  // home around the whole thing so that if the decoy indirection ever fails, this
+  // test says so itself instead of leaving it to the run-level tripwire.
+  const guardBefore = snapshotRealHome()
+
+  const nested: Array<{ cleanup: () => void }> = []
+  try {
+  // 1. CONTROL — the tripwire must not fire on a run that touches nothing. If
+  //    this is red, everything below is meaningless because the tripwire would
+  //    just be failing all runs.
+  const clean = runNestedSuite({ specSource: CLEAN_SPEC, tripwire: true })
+  nested.push(clean)
+  expect(clean.code, `a clean nested run must stay green.\n${clean.output}`).toBe(0)
+  expect(clean.output).toContain('real home unchanged across the run')
+
+  // 2. TODAY'S BEHAVIOUR — the same mutating spec with the tripwire disabled.
+  //    This is the defect this ticket exists for, reproduced as a fixture: the
+  //    test PASSES, the run is GREEN, and the real home has been rewritten.
+  const before = runNestedSuite({ specSource: MUTATING_SPEC, tripwire: false })
+  nested.push(before)
+  expect(
+    before.code,
+    `without the tripwire the mutating run is expected to be GREEN — that is the bug.\n${before.output}`,
+  ).toBe(0)
+  expect(before.output).toContain('1 passed')
+  expect(
+    fs.existsSync(path.join(before.decoyHome, '.productune', 'SingletonLock')),
+    'the mutation must really have happened, or this is not a proof of anything',
+  ).toBe(true)
+
+  // 3. WITH THE TRIPWIRE — same spec, same mutation, run goes RED.
+  const after = runNestedSuite({ specSource: MUTATING_SPEC, tripwire: true })
+  nested.push(after)
+  expect(after.code, `the tripwire must fail the run.\n${after.output}`).not.toBe(0)
+  expect(after.output).toContain('REAL HOME MUTATED DURING THIS RUN')
+  expect(after.output, 'the tripwire must name the test it can attribute the change to').toContain(
+    'a perfectly ordinary-looking passing test',
+  )
+  expect(after.output, 'the drifted surface must be named').toContain('.productune')
+  // The individual test still passed — which is the entire point. The run is red
+  // because of what the suite DID, not because of what any assertion said.
+  expect(after.output, 'the test itself passes; the RUN is what fails').toContain('1 passed')
+
+  // The proof must not have cost anything. All three nested runs mutated only the
+  // decoy; the developer's own home is byte-identical.
+  expect(
+    diffSnapshots(guardBefore, snapshotRealHome()),
+    'proving the tripwire must not mutate the developer\'s real home — the decoy leaked',
+  ).toEqual([])
+
+  console.log(
+    `T-450 tripwire proof\n` +
+      `  clean run              exit ${clean.code} (green, nothing touched)\n` +
+      `  mutating, tripwire off exit ${before.code} (GREEN WHILE MUTATING — the bug)\n` +
+      `  mutating, tripwire on  exit ${after.code} (RED — the fix)\n` +
+      `  developer's real home  unchanged`,
+  )
+  } finally {
+    for (const n of nested) n.cleanup()
+  }
+})
+
+test('T-450 S3: a globalSetup mutation is inside the observed window', () => {
+  // THE R1 ESCAPE, as a fixture. `globalSetup` runs AFTER the config is evaluated
+  // but BEFORE the reporter's `onBegin`, so a reporter-armed baseline already
+  // contained the damage: QA measured exit 0 and "real home unchanged" while the
+  // decoy home had actually been rewritten.
+  //
+  // It is observable now for one reason only — the baseline is armed at config
+  // MODULE SCOPE, which is earlier than globalSetup. This test is what stops that
+  // ordering from being quietly changed back.
+  test.setTimeout(300_000)
+  const guardBefore = snapshotRealHome()
+  const run = runNestedSuite({
+    specSource: CLEAN_SPEC,
+    tripwire: true,
+    globalSetupSource: MUTATING_GLOBAL_SETUP,
+  })
+  try {
+    expect(run.code, `S3: a globalSetup mutation must fail the run.\n${run.output}`).not.toBe(0)
+    expect(run.output, 'S3: the mutation must be reported, not merely counted').toContain(
+      'REAL HOME MUTATED DURING THIS RUN',
+    )
+    // The TEST passed — the run is red because of what globalSetup did, which is
+    // the whole point and the reason `onBegin` could not see it.
+    expect(run.output, 'S3: the test itself passes; the RUN is what fails').toContain('1 passed')
+    // Both directions of the mutation are visible: a write AND a deletion.
+    expect(run.output, 'S3: the removed file must show as removed').toMatch(/-\s*\d+ entries|- .*doctrine\.md/)
+    console.log(
+      'T-450 S3 (globalSetup, before any test)\n' +
+        `  run exit ${run.code} (RED)\n` +
+        '  baseline is armed at config module scope, which precedes globalSetup',
+    )
+  } finally {
+    run.cleanup()
+  }
+  expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the S3 fixture leaked out of the decoy').toEqual([])
+})
+
+test('T-450 S4: --reporter=line cannot remove the floor', () => {
+  // R1's floor WAS the reporter, and `--reporter` REPLACES the config's reporter
+  // array — so this everyday flag removed the whole guarantee with no warning at
+  // all. The tell was already in R1's own code: `PRODUCTUNE_TRIPWIRE=off` announces
+  // itself loudly, so a mechanism that could be switched off more quietly than the
+  // documented off-switch was never a floor.
+  //
+  // Two runs, and BOTH halves matter. With `--reporter=line` the run must still be
+  // red (the verdict is in globalTeardown, which no CLI flag overrides). With the
+  // globalTeardown deliberately omitted, the run must go GREEN — which is what
+  // proves the teardown is load-bearing rather than decorative.
+  test.setTimeout(300_000)
+  const guardBefore = snapshotRealHome()
+  const runs: Array<{ cleanup: () => void }> = []
+  try {
+    const flagged = runNestedSuite({
+      specSource: MUTATING_SPEC,
+      tripwire: true,
+      extraArgs: ['--reporter=line'],
+    })
+    runs.push(flagged)
+    expect(
+      flagged.code,
+      `S4: --reporter=line must NOT disarm the floor.\n${flagged.output}`,
+    ).not.toBe(0)
+    expect(flagged.output).toContain('REAL HOME MUTATED DURING THIS RUN')
+    expect(flagged.output, 'S4: the attribution reporter is genuinely gone').not.toContain(
+      'mutation event(s) attributed',
+    )
+
+    // NEGATIVE CONTROL: without the globalTeardown, the same run is green. If this
+    // is ever red, the assertion above has stopped proving what it claims.
+    const noFloor = runNestedSuite({ specSource: MUTATING_SPEC, tripwire: true, omitTeardown: true, extraArgs: ['--reporter=line'] })
+    runs.push(noFloor)
+    expect(
+      noFloor.code,
+      `S4 control: with no globalTeardown AND no reporter there is nothing left to fail the run, ` +
+        `so this must be GREEN. If it is red, the test above is not measuring the teardown.\n${noFloor.output}`,
+    ).toBe(0)
+
+    console.log(
+      'T-450 S4 (--reporter=line)\n' +
+        `  mutating + --reporter=line, teardown present exit ${flagged.code} (RED — floor held)\n` +
+        `  mutating + --reporter=line, teardown removed exit ${noFloor.code} (GREEN — the control)`,
+    )
+  } finally {
+    for (const r of runs) r.cleanup()
+  }
+  expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the S4 fixture leaked out of the decoy').toEqual([])
+})
+
+test('T-450: a disabled or broken tripwire cannot be mistaken for a passing one', () => {
+  test.setTimeout(120_000)
+  const off = runNestedSuite({ specSource: CLEAN_SPEC, tripwire: false })
+  try {
+    // The banner now comes from `armTripwire` at config module scope — earlier than
+    // any reporter, and therefore printed even by a run whose reporter was replaced.
+    expect(off.output, 'a disabled tripwire must announce itself loudly').toContain('tripwire is DISABLED')
+    expect(off.output).toContain('proves NOTHING about the real home')
+  } finally {
+    off.cleanup()
+  }
+})
+
+test('T-450: an unarmed tripwire fails the run instead of reading as clean', () => {
+  // The failure mode that would silently undo everything: a config that forgets
+  // `armTripwire()`. The verdict must not interpret "no baseline" as "no drift".
+  test.setTimeout(120_000)
+  const before = snapshotRealHome()
+  const savedRun = process.env.PRODUCTUNE_TRIPWIRE_RUN
+  try {
+    delete process.env.PRODUCTUNE_TRIPWIRE_RUN
+    const result = verifyTripwire({ consume: false })
+    expect(result.ok, 'an unarmed tripwire must NOT report clean').toBe(false)
+    expect(result.report).toContain('TRIPWIRE WAS NEVER ARMED')
+  } finally {
+    if (savedRun === undefined) delete process.env.PRODUCTUNE_TRIPWIRE_RUN
+    else process.env.PRODUCTUNE_TRIPWIRE_RUN = savedRun
+  }
+  // …and the armed run we are actually inside of reports clean, so the check above
+  // is not just "verifyTripwire always fails".
+  expect(verifyTripwire({ consume: false }).ok, 'this run IS armed and clean').toBe(true)
+  expect(diffSnapshots(before, snapshotRealHome())).toEqual([])
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L3 — prevention. The five QA-demonstrated escapes, individually.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface Row {
+  name: string
+  run: () => Promise<unknown>
+  expect: RegExp
+}
+
+async function assertBlocked(row: Row): Promise<string> {
+  let message = ''
+  try {
+    const out = await row.run()
+    await closeQuietly(out)
+    message = 'NOT BLOCKED — this shape reached the real launcher'
+  } catch (e) {
+    message = e instanceof Error ? e.message : String(e)
+  }
+  expect(message, `[${row.name}] must be blocked`).toContain(ISOLATION_TAG)
+  expect(message, `[${row.name}] blocked for the wrong reason`).toMatch(row.expect)
+  return `  blocked: ${row.name}`
+}
+
+test('T-450 QA escapes 1+2 (LEXICAL): a symlink to the real home no longer launders it', async () => {
+  const before = snapshotRealHome()
+  const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-symlink-'))
+  const homeLink = path.join(linkRoot, 'home-link')
+  const uddLink = path.join(linkRoot, 'udd-link')
+  fs.symlinkSync(REAL_HOME, homeLink)
+  fs.symlinkSync(REAL_USER_DATA, uddLink)
+  const okUdd = `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'productune-udd-'))}`
+
+  try {
+    // The predicate itself was the defect: `path.resolve` is purely lexical, so a
+    // symlink resolved "outside" the real home and compared clean. Pin the
+    // predicate directly, then pin the launcher that depends on it.
+    expect(path.resolve(uddLink).startsWith(REAL_HOME), 'lexically the symlink looks innocent').toBe(false)
+    expect(resolveRealPath(uddLink), 'realpath must see through it').toBe(resolveRealPath(REAL_USER_DATA))
+    expect(insideRealHome(uddLink), 'ESCAPE 1: a symlinked --user-data-dir must be refused').toBe(true)
+    expect(insideRealHome(homeLink), 'ESCAPE 2: a symlinked HOME must be refused').toBe(true)
+    // …and a genuinely outside path must still be accepted, or this is just a
+    // predicate that says yes to everything.
+    expect(insideRealHome(linkRoot), 'a real temp dir must NOT count as inside the real home').toBe(false)
+
+    const results = [
+      await assertBlocked({
+        name: 'ESCAPE 1 — --user-data-dir is a symlink to the real userData',
+        run: () =>
+          _electron.launch({
+            args: [MAIN, `--user-data-dir=${uddLink}`],
+            env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+          }),
+        expect: /--user-data-dir inside the real home/,
+      }),
+      await assertBlocked({
+        name: 'ESCAPE 2 — HOME is a symlink to the real home',
+        run: () =>
+          _electron.launch({ args: [MAIN, okUdd], env: { ...process.env, HOME: homeLink } as Record<string, string> }),
+        expect: /HOME inside the real home/,
+      }),
+      // The same laundering one level deeper: a subdirectory of the symlink.
+      await assertBlocked({
+        name: 'ESCAPE 1b — a path UNDER the symlink (not the symlink itself)',
+        run: () =>
+          _electron.launch({
+            args: [MAIN, `--user-data-dir=${path.join(homeLink, 'Library', 'Application Support', 'productune')}`],
+            env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+          }),
+        expect: /--user-data-dir inside the real home/,
+      }),
+      // A --user-data-dir that does not exist yet is the NORMAL case, and it is
+      // why `fs.realpathSync` alone could not be used: it throws ENOENT. Pin
+      // that the longest-existing-ancestor resolution still catches it.
+      await assertBlocked({
+        name: 'ESCAPE 1c — a NOT-YET-EXISTING path under the symlink',
+        run: () =>
+          _electron.launch({
+            args: [MAIN, `--user-data-dir=${path.join(uddLink, 'does', 'not', 'exist', 'yet')}`],
+            env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+          }),
+        expect: /--user-data-dir inside the real home/,
+      }),
+    ]
+    console.log(`T-450 QA escapes 1+2 (symlink laundering)\n${results.join('\n')}`)
+  } finally {
+    fs.rmSync(linkRoot, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(before, snapshotRealHome()), 'the symlink rows mutated the real home').toEqual([])
+})
+
+test('T-450 S1 (CASE): a case variant of the real home no longer launders it', async () => {
+  // ── THE REPEATED META-DEFECT, as one executable fixture ─────────────────────
+  //
+  // Four rounds in a row the containment predicate was fixed for ONE shape of
+  // non-canonical path and left open for the rest. R3: purely lexical, so a
+  // SYMLINK walked through. R4: `realpath` added — and nothing else, so CASE
+  // walked through. macOS is case-insensitive by default but `realpath` does NOT
+  // canonicalise case, so `/users/<u>` survives every resolution step unchanged
+  // while naming the very same directory.
+  //
+  // Re-measured here with QA's own evidence (`stat().ino` + `st.dev`), because the
+  // fix is gated on that measurement rather than on `platform === 'darwin'`.
+  const before = snapshotRealHome()
+  const lowerHome = REAL_HOME.replace(/^\/Users\//, '/users/')
+  expect(lowerHome, 'this machine is not under /Users — rewrite this fixture').not.toBe(REAL_HOME)
+
+  const a = fs.statSync(REAL_HOME)
+  const b = fs.statSync(lowerHome)
+  expect(a.ino === b.ino && a.dev === b.dev, 'S1: the case variant must be the SAME directory').toBe(true)
+  // The two facts that together made this an escape.
+  expect(path.resolve(lowerHome).startsWith(REAL_HOME), 'lexically the case variant looks innocent').toBe(false)
+  expect(resolveRealPath(lowerHome), 'realpath does NOT canonicalise case — this is the mechanism').toBe(lowerHome)
+  // …and the predicate sees through it anyway.
+  expect(insideRealHome(lowerHome), 'S1: a case-variant HOME must be refused').toBe(true)
+  expect(
+    insideRealHome(path.join(lowerHome, 'Library', 'Application Support', 'productune')),
+    'S1: a case-variant userData must be refused',
+  ).toBe(true)
+  // Mixed case at a LATER segment too, or this would only be "the /Users prefix".
+  expect(
+    insideRealHome(path.join(REAL_HOME, 'library', 'APPLICATION SUPPORT', 'productune')),
+    'S1: case folding must apply to every segment, not just the first',
+  ).toBe(true)
+  // And it is still a predicate that says NO to something: a genuinely outside path.
+  expect(insideRealHome(os.tmpdir()), 'a temp dir must NOT count as inside the real home').toBe(false)
+
+  // ONE HELPER, EVERY LAYER. The specific thing QA caught was that the test-only
+  // `T450_FORBIDDEN_HOME` guard, written in the same diff, had the old lexical
+  // defect. All three layers are asserted against the same input here.
+  expect(FS_CASE_INSENSITIVE, 'the case measurement must have succeeded on this machine').toBe(true)
+  expect(pathContains(REAL_HOME, lowerHome), 'layer: the shared predicate').toBe(true)
+  expect(() => assertOutsideRealHome(lowerHome, 'harness layer'), 'layer: the harness').toThrow(/REAL home/)
+  expect(
+    () => assertNotForbiddenHome(lowerHome, REAL_HOME, 'fixture layer'),
+    'layer: the test-only fixture guard (S9) — the one that had the defect again',
+  ).toThrow(/REFUSING to run/)
+  // A symlink must ALSO still be refused by that same fixture guard: S9 is "the
+  // guard is lexical", so both non-canonical forms have to be checked, not one.
+  const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-s9-'))
+  const homeLink = path.join(linkRoot, 'home-link')
+  fs.symlinkSync(REAL_HOME, homeLink)
+  try {
+    expect(
+      () => assertNotForbiddenHome(homeLink, REAL_HOME, 'fixture layer'),
+      'S9: a symlinked decoy must be refused by the fixture guard too',
+    ).toThrow(/REFUSING to run/)
+    // …and a genuine decoy is still allowed, or the guard refuses everything and
+    // the tripwire proof above would be vacuous.
+    expect(() => assertNotForbiddenHome(linkRoot, REAL_HOME, 'fixture layer')).not.toThrow()
+  } finally {
+    fs.rmSync(linkRoot, { recursive: true, force: true })
+  }
+
+  // Finally the launcher, through the case variant — the incident's exact mechanism.
+  const msg = await assertBlocked({
+    name: 'S1 — --user-data-dir at the real userData, spelled in lower case',
+    run: () =>
+      _electron.launch({
+        args: [MAIN, `--user-data-dir=${path.join(lowerHome, 'Library', 'Application Support', 'productune')}`],
+        env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+      }),
+    expect: /--user-data-dir inside the real home/,
+  })
+  const homeMsg = await assertBlocked({
+    name: 'S1b — HOME spelled in lower case',
+    run: () =>
+      _electron.launch({
+        args: [MAIN, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'productune-udd-'))}`],
+        env: { ...process.env, HOME: lowerHome } as Record<string, string>,
+      }),
+    expect: /HOME inside the real home/,
+  })
+  console.log(`T-450 S1 (case-insensitive laundering)\n${msg}\n${homeMsg}`)
+  expect(diffSnapshots(before, snapshotRealHome()), 'the S1 rows mutated the real home').toEqual([])
+})
+
+test('T-450 S12: an in-place edit deeper than the old depth limit is visible', () => {
+  // The old walk stopped at depth 4, so an IN-PLACE edit below that changed the
+  // file's size and mtime with no line in the fingerprint covering it. Depth was
+  // the wrong knob — it had been chosen for cost, so the bound is now cost (an
+  // entry budget) and the walk is unbounded.
+  //
+  // Proven against a DECOY real home, so the developer's machine pays nothing.
+  const guardBefore = snapshotRealHome()
+  const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-depth-'))
+  const saved = process.env.PRODUCTUNE_REAL_HOME
+  try {
+    // 7 levels below the surface root — comfortably past the old limit of 4.
+    const deep = path.join(decoy, '.productune', 'a', 'b', 'c', 'd', 'e', 'f')
+    fs.mkdirSync(deep, { recursive: true })
+    const target = path.join(deep, 'deep-file.json')
+    fs.writeFileSync(target, JSON.stringify({ v: 1 }))
+
+    // `realHome()` is frozen per realm, so the tripwire cannot simply be repointed
+    // in-process. Ask a child, which is also how a real nested run does it.
+    const probe = (): string =>
+      cp
+        .execFileSync(
+          process.execPath,
+          [
+            '-e',
+            `const m = require(${JSON.stringify(path.join(TESTS_DIR, 'real-home-tripwire.cjs'))});` +
+              `const s = m.snapshotRealHome();` +
+              `process.stdout.write(JSON.stringify(s.perSurface[${JSON.stringify(path.join(decoy, '.productune'))}]))`,
+          ],
+          {
+            encoding: 'utf-8',
+            timeout: 60_000,
+            env: { ...process.env, PRODUCTUNE_REAL_HOME: decoy, HOME: DEFAULT_SANDBOX_HOME },
+          },
+        )
+        .trim()
+
+    const first = JSON.parse(probe()) as { count: number; hash: string }
+    expect(first.count, 'the deep tree must be walked at all').toBeGreaterThan(7)
+
+    // AN IN-PLACE EDIT: same path, different content. Nothing is added or removed,
+    // so only size/mtime can reveal it — and only if the walk reached that depth.
+    fs.writeFileSync(target, JSON.stringify({ v: 2, padded: 'x'.repeat(64) }))
+    const second = JSON.parse(probe()) as { count: number; hash: string }
+
+    expect(second.count, 'no entry was added or removed — this is purely in-place').toBe(first.count)
+    expect(
+      second.hash,
+      'S12: an in-place edit 7 levels deep must change the fingerprint. Under the old ' +
+        'WALK_DEPTH=4 these hashes were identical and the edit was invisible.',
+    ).not.toBe(first.hash)
+    console.log(
+      'T-450 S12 (walk depth)\n' +
+        `  in-place edit at depth 7, entries unchanged (${first.count}), hash changed: yes\n` +
+        '  the bound is now an entry budget, and exhausting it FAILS rather than truncating',
+    )
+  } finally {
+    if (saved === undefined) delete process.env.PRODUCTUNE_REAL_HOME
+    else process.env.PRODUCTUNE_REAL_HOME = saved
+    fs.rmSync(decoy, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the S12 fixture leaked out of the decoy').toEqual([])
+})
+
+test('T-450 S13: detached children are refused, so a child cannot outlive the run by option', () => {
+  // RE-EVALUATED at QA's prompting. R1 folded this, reasoning that a process-group
+  // reap is racy because a child can escape its group. QA's counter is correct: it
+  // is only racy against a child that detaches or `setsid`s ITSELF, and `detached:
+  // true` is the ordinary way to do that. Refusing the option removes the ordinary
+  // way, which is worth doing even though it does not close the class.
+  //
+  // Why this matters at all: a child that outlives the run lands its writes AFTER
+  // the final fingerprint, where NOTHING can see them. It is the one shape that
+  // defeats detection as well as prevention (see N5 below).
+  for (const attempt of [
+    () => cp.spawn('/bin/sleep', ['30'], { detached: true }),
+    () => cp.spawnSync('/bin/sleep', ['1'], { detached: true }),
+    () => (cp.exec as unknown as (c: string, o: unknown) => unknown)('sleep 30', { detached: true }),
+  ]) {
+    let message = ''
+    try {
+      attempt()
+      message = 'NOT BLOCKED'
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e)
+    }
+    expect(message, 'S13: detached:true must be refused').toContain(ISOLATION_TAG)
+    expect(message).toMatch(/detached: true/)
+  }
+  // …and a non-detached child is untouched, or every innocent spawn breaks.
+  expect(() => cp.spawnSync('/bin/echo', ['ok'], { detached: false })).not.toThrow()
+  console.log(
+    'T-450 S13 (detached children)\n' +
+      '  refused: spawn / spawnSync / exec with detached:true\n' +
+      '  NOT closed: a child that calls setsid() itself — see the N5 boundary\n' +
+      '  ALSO adopted: the next run WARNS about drift since the last run (see armTripwire)',
+  )
+})
+
+test('T-450 QA escape 3 (RACE): the launch suppression is async-scoped, not process-wide', async () => {
+  // T-442 suppressed the child_process check while a launch was in flight using a
+  // PROCESS-WIDE counter, so rule 3 was globally off for the duration of ANY
+  // launch. QA isolated it exactly: D0=BLOCKED → D1=NOT-BLOCKED → D2=BLOCKED.
+  //
+  // Reproducing that with a real in-flight launch needs a real window, which the
+  // host may not open — so the SCOPING property is asserted directly here, and
+  // the VM leg reproduces the race against a genuine launch.
+  const attempt = (): string => {
+    try {
+      cp.spawnSync(APP_SHAPED_MISSING, [], {
+        env: { ...process.env, HOME: REAL_HOME } as NodeJS.ProcessEnv,
+      })
+      return 'NOT BLOCKED'
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  // D0 — no launch scope: blocked, as always.
+  expect(attempt(), 'D0 must be blocked').toContain(ISOLATION_TAG)
+
+  // D1 — INSIDE a launch scope: suppressed, by design. This is the one case the
+  // suppression exists for (Playwright's own spawn of the binary it just validated).
+  expect(__enterLaunchScopeForTest(() => attempt()), 'inside the launch scope, suppression applies').toBe(
+    'NOT BLOCKED',
+  )
+  // …and still suppressed further down the scope's own async chain, which is what
+  // makes it usable for a real launch rather than only for a synchronous call.
+  const onChain = await __enterLaunchScopeForTest(async () => {
+    await Promise.resolve()
+    return attempt()
+  })
+  expect(onChain, 'the scope must survive an await on its own chain').toBe('NOT BLOCKED')
+
+  // THE FIX — a callback rooted OUTSIDE the scope, firing while the scope's async
+  // body is still pending, must STILL be blocked. Under the old process-wide
+  // counter this window was exactly when rule 3 was off, so this returned NOT
+  // BLOCKED: the suppression was scoped to TIME, and it needed to be scoped to the
+  // launch's own causal chain.
+  let offChain = ''
+  const rootedOutside = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      offChain = attempt()
+      resolve()
+    }, 0)
+  })
+  await __enterLaunchScopeForTest(async () => {
+    // The timer above fires while this async body is still pending, i.e. while a
+    // launch would have been "in flight" under the old counter.
+    await rootedOutside
+  })
+  expect(
+    offChain,
+    'ESCAPE 3: a spawn on an unrelated async chain must STILL be blocked while a launch is in flight',
+  ).toContain(ISOLATION_TAG)
+
+  // D2 — after the scope closes, blocked again.
+  expect(attempt(), 'D2 must be blocked').toContain(ISOLATION_TAG)
+  console.log(
+    'T-450 QA escape 3 (launch-scope race)\n' +
+      '  blocked: D0 (no launch in flight)\n' +
+      '  suppressed: D1 (inside the launch’s own async chain, by design)\n' +
+      '  blocked: unrelated async chain while a launch is in flight (the fix)\n' +
+      '  blocked: D2 (after the launch completes)',
+  )
+})
+
+test('T-450 QA escape 4 (PER-REALM): a worker_threads realm gets the rules carried into it', async () => {
+  const before = snapshotRealHome()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-worker-'))
+  const workerFile = path.join(dir, 'escape-worker.cjs')
+  // The realm the R3 escape used. `@playwright/test` is resolved through the
+  // package root because the worker script itself lives outside it.
+  fs.writeFileSync(
+    workerFile,
+    `const { parentPort } = require('worker_threads')
+const installed = !!globalThis[Symbol.for('productune.t442.isolationEnforcer')]
+if (!installed) {
+  // Report and STOP. Attempting the launch in an unguarded realm is exactly what
+  // wrote the real userData in R3, and it would open a window here.
+  parentPort.postMessage({ installed: false })
+} else {
+  const pw = require(require.resolve('@playwright/test', { paths: [${JSON.stringify(GUI_ROOT)}] }))
+  const results = {}
+  // The guard throws SYNCHRONOUSLY (containment is checked before any promise is
+  // created), so a bare .then/.catch would not see it — the throw would escape as
+  // a worker error instead. Both paths are handled.
+  try {
+    pw._electron.launch({ args: [${JSON.stringify(MAIN)}] }).then(
+      () => { results.electron = 'NOT BLOCKED'; finish() },
+      (e) => { results.electron = e.message; finish() },
+    )
+  } catch (e) { results.electron = e.message; finish() }
+  function finish() {
+    try {
+      require('child_process').spawnSync(${JSON.stringify(APP_SHAPED_MISSING)}, [], {
+        env: { ...process.env, HOME: ${JSON.stringify(REAL_HOME)} },
+      })
+      results.childProcess = 'NOT BLOCKED'
+    } catch (e) { results.childProcess = e.message }
+    parentPort.postMessage({ installed: true, results })
+  }
+}
+`,
+  )
+
+  try {
+    const { Worker } = require('worker_threads') as typeof import('worker_threads')
+    const msg = await new Promise<{ installed: boolean; results?: Record<string, string> }>((resolve, reject) => {
+      const w = new Worker(workerFile)
+      w.once('message', (m) => {
+        void w.terminate()
+        resolve(m)
+      })
+      w.once('error', reject)
+    })
+
+    expect(
+      msg.installed,
+      'ESCAPE 4: the worker realm has NO isolation rules. This is the R3 escape — a ' +
+        'launch from here writes the real userData while Playwright reports PASSED.',
+    ).toBe(true)
+    expect(msg.results?.electron, 'ESCAPE 4: the launcher must be guarded inside the worker realm').toContain(
+      ISOLATION_TAG,
+    )
+    expect(msg.results?.childProcess, 'ESCAPE 4: child_process must be guarded inside the worker realm').toContain(
+      ISOLATION_TAG,
+    )
+    console.log(
+      'T-450 QA escape 4 (worker_threads realm)\n' +
+        '  rules present in the new realm: yes (via execArgv --require)\n' +
+        '  blocked: _electron.launch inside the worker\n' +
+        '  blocked: child_process.spawnSync inside the worker\n' +
+        '  NOTE prevention here closes the SHAPE; the tripwire is what closes the CLASS.',
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(before, snapshotRealHome()), 'the worker rows mutated the real home').toEqual([])
+})
+
+test('T-450 QA escape 5 (GRANDCHILD): a spawned node child inherits the rules', () => {
+  const before = snapshotRealHome()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-grandchild-'))
+  const grandchild = path.join(dir, 'grandchild.cjs')
+  const middle = path.join(dir, 'middle.cjs')
+
+  // The grandchild tries the app launch. The outer spawn's argv is NOT app-shaped
+  // (it is `node middle.cjs`), which is precisely why T-442's rule 3 never fired.
+  fs.writeFileSync(
+    grandchild,
+    `const installed = !!globalThis[Symbol.for('productune.t442.isolationEnforcer')]
+let blocked = 'NOT ATTEMPTED'
+if (installed) {
+  try {
+    require('child_process').spawnSync(${JSON.stringify(APP_SHAPED_MISSING)}, [], {
+      env: { ...process.env, HOME: ${JSON.stringify(REAL_HOME)} },
+    })
+    blocked = 'NOT BLOCKED'
+  } catch (e) { blocked = e.message }
+}
+console.log(JSON.stringify({ depth: process.env.__T450_DEPTH, installed, blocked }))
+`,
+  )
+  fs.writeFileSync(
+    middle,
+    `const cp = require('child_process')
+const installed = !!globalThis[Symbol.for('productune.t442.isolationEnforcer')]
+console.log(JSON.stringify({ depth: 'child', installed }))
+// A GREAT-grandchild, spawned by a realm that itself only got the rules by
+// inheritance. NODE_OPTIONS propagates on its own, which is what makes depth
+// unbounded rather than "one level deep".
+const r = cp.spawnSync(process.execPath, [${JSON.stringify(grandchild)}], {
+  encoding: 'utf-8',
+  env: { ...process.env, __T450_DEPTH: 'grandchild' },
+})
+process.stdout.write(r.stdout)
+process.stderr.write(r.stderr)
+`,
+  )
+
+  try {
+    const res = cp.spawnSync(process.execPath, [middle], {
+      cwd: GUI_ROOT,
+      encoding: 'utf-8',
+      timeout: 60_000,
+      env: { ...process.env, __T450_DEPTH: 'child' },
+    })
+    const lines = res.stdout
+      .split('\n')
+      .filter((l) => l.trim().startsWith('{'))
+      .map((l) => JSON.parse(l) as { depth: string; installed: boolean; blocked?: string })
+    const child = lines.find((l) => l.depth === 'child')
+    const grand = lines.find((l) => l.depth === 'grandchild')
+
+    expect(child, `no report from the child.\n${res.stdout}\n${res.stderr}`).toBeTruthy()
+    expect(child?.installed, 'ESCAPE 5: the spawned node child had no rules').toBe(true)
+    expect(grand, `no report from the grandchild.\n${res.stdout}\n${res.stderr}`).toBeTruthy()
+    expect(
+      grand?.installed,
+      'ESCAPE 5: the GRANDchild had no rules — propagation stopped after one level',
+    ).toBe(true)
+    expect(grand?.blocked, 'ESCAPE 5: the grandchild must be blocked from launching the app').toContain(
+      ISOLATION_TAG,
+    )
+    console.log(
+      'T-450 QA escape 5 (grandchild node realm)\n' +
+        '  rules present in child:      yes (NODE_OPTIONS --require injected by the guard)\n' +
+        '  rules present in grandchild: yes (Node propagates NODE_OPTIONS on its own)\n' +
+        '  blocked: app launch from the grandchild\n' +
+        '  NOTE this closes NODE realms. A non-node grandchild is a stated boundary below.',
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(before, snapshotRealHome()), 'the grandchild rows mutated the real home').toEqual([])
+})
+
+test('T-450 S8: every spelling of a node grandchild gets the rules', () => {
+  // R1 claimed the grandchild case was closed. QA listed four spellings that walk
+  // past it, all of them defeating the same thing — a NAME-based `looksLikeNodeChild`
+  // gate on whether to inject the bootstrap:
+  //
+  //   `env node`      the argv[0] is `env`, not `node`
+  //   `sh -c node`    the argv[0] is `sh`, and the shell APIs injected nothing
+  //   `execSync`      a shell API, so it never reached the injection at all
+  //   `nodejs`        a symlink under a different name
+  //
+  // Widening the name list would have been the S1 mistake again. The gate is GONE:
+  // `NODE_OPTIONS` now goes to EVERY child, because a non-node child ignores it and
+  // a shell hands it on. Each spelling below is executed and asked whether the
+  // realm it produced has the rules.
+  const before = snapshotRealHome()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-s8-'))
+  const probe = path.join(dir, 'probe.cjs')
+  fs.writeFileSync(
+    probe,
+    `console.log(JSON.stringify({ installed: !!globalThis[Symbol.for('productune.t442.isolationEnforcer')] }))\n`,
+  )
+  // A symlink to node under a different name, which is QA's `nodejs` case.
+  const nodeAlias = path.join(dir, 'nodejs')
+  fs.symlinkSync(process.execPath, nodeAlias)
+
+  const parse = (out: string): boolean => {
+    const line = out.split('\n').find((l) => l.trim().startsWith('{'))
+    expect(line, `no probe report in output:\n${out}`).toBeTruthy()
+    return (JSON.parse(line as string) as { installed: boolean }).installed
+  }
+  const q = (s: string): string => JSON.stringify(s)
+
+  try {
+    const results: Record<string, boolean> = {
+      'env node (argv[0] is `env`)': parse(
+        cp.execFileSync('/usr/bin/env', ['node', probe], { encoding: 'utf-8', timeout: 60_000 }),
+      ),
+      'sh -c node (argv[0] is `sh`)': parse(
+        cp.execFileSync('/bin/sh', ['-c', `${q(process.execPath)} ${q(probe)}`], {
+          encoding: 'utf-8',
+          timeout: 60_000,
+        }),
+      ),
+      'execSync (a shell API — injected nothing at all)': parse(
+        cp.execSync(`${q(process.execPath)} ${q(probe)}`, { encoding: 'utf-8', timeout: 60_000 }),
+      ),
+      'exec (async shell API)': parse(
+        cp.execFileSync('/bin/sh', ['-c', `${q(nodeAlias)} ${q(probe)}`], {
+          encoding: 'utf-8',
+          timeout: 60_000,
+        }),
+      ),
+      'a symlink named `nodejs`': parse(
+        cp.execFileSync(nodeAlias, [probe], { encoding: 'utf-8', timeout: 60_000 }),
+      ),
+      // The depth case R1 did close, kept so a regression there is visible too.
+      'sh -c sh -c node (two shells deep)': parse(
+        cp.execFileSync('/bin/sh', ['-c', `/bin/sh -c ${q(`${q(process.execPath)} ${q(probe)}`)}`], {
+          encoding: 'utf-8',
+          timeout: 60_000,
+        }),
+      ),
+    }
+    for (const [shape, installed] of Object.entries(results)) {
+      expect(installed, `S8: this realm has NO rules — ${shape}`).toBe(true)
+    }
+
+    // The predicate that used to be the gate is still widened, because it still
+    // chooses `execArgv` over `NODE_OPTIONS` for forks — but it is no longer what
+    // decides whether a realm is guarded.
+    expect(looksLikeNodeChild(nodeAlias), 'a symlink to node resolves to node whatever it is named').toBe(true)
+    expect(looksLikeNodeChild('/usr/bin/nodejs'), '`nodejs` is a node name').toBe(true)
+    expect(looksLikeNodeChild('/bin/sh'), 'a shell is still not a node realm').toBe(false)
+
+    console.log(
+      `T-450 S8 (grandchild bootstrap)\n` +
+        Object.keys(results)
+          .map((k) => `  rules present: ${k}`)
+          .join('\n'),
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(before, snapshotRealHome()), 'the S8 rows mutated the real home').toEqual([])
+})
+
+test('T-442 F-A: the rules reject every unsandboxed launch shape, and the real home is untouched', async () => {
+  const before = snapshotRealHome()
 
   const outsideSandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-udd-'))
   const okUdd = `--user-data-dir=${outsideSandbox}`
@@ -253,7 +1372,7 @@ test('T-442 F-A: the enforcer rejects every unsandboxed launch shape, and the re
    * chokepoint is the function, so location and import style are irrelevant BY
    * CONSTRUCTION — these rows prove that claim instead of asserting it.
    */
-  const rows: Array<{ name: string; run: () => Promise<unknown>; expect: RegExp }> = [
+  const rows: Row[] = [
     {
       // The exact three-liner the round-2 scan was built around.
       name: 'direct import, no env, no --user-data-dir',
@@ -309,7 +1428,7 @@ test('T-442 F-A: the enforcer rejects every unsandboxed launch shape, and the re
       // guess at, and the one the T-440 live-proof driver actually uses.
       name: 'child_process.spawn of the Electron binary with the real HOME',
       run: async () =>
-        cp.spawn(electronBinary(), [MAIN], { env: { ...process.env, HOME: REAL_HOME } as NodeJS.ProcessEnv }),
+        cp.spawn(APP_SHAPED_MISSING, [MAIN], { env: { ...process.env, HOME: REAL_HOME } as NodeJS.ProcessEnv }),
       expect: /child_process\.spawn\(\)[\s\S]*HOME inside the real home/,
     },
     {
@@ -320,63 +1439,761 @@ test('T-442 F-A: the enforcer rejects every unsandboxed launch shape, and the re
         }),
       expect: /without --user-data-dir/,
     },
+    {
+      // T-450 boundary ③ corrected: a NON-app-shaped child handed the real home.
+      // Under T-442 nothing fired at all here, because `looksLikeAppLaunch` was
+      // false and `assertContained` was therefore never called — so rule 1 was
+      // skipped, not just rule 2.
+      name: 'a plain, non-app-shaped child handed the REAL home',
+      run: async () => cp.spawnSync('/bin/echo', ['hi'], { env: { HOME: REAL_HOME } as NodeJS.ProcessEnv }),
+      expect: /HOME inside the real home/,
+    },
+    {
+      // T-450 R2 / S6. The checker read the FIRST --user-data-dir; Chromium uses
+      // the LAST (QA proved it with a real launch in the VM). So a launch could be
+      // validated against a clean path and executed against the real userData.
+      name: 'S6 — TWO --user-data-dir flags, the last one at the real userData',
+      run: () =>
+        _electron.launch({
+          args: [MAIN, `--user-data-dir=${outsideSandbox}`, `--user-data-dir=${REAL_USER_DATA}`],
+          env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+        }),
+      expect: /--user-data-dir inside the real home/,
+    },
+    {
+      // …and the reverse order too, so this is "every occurrence must be clean"
+      // rather than "mirror whichever one Chromium happens to prefer today".
+      name: 'S6b — the REAL userData first, a clean path last',
+      run: () =>
+        _electron.launch({
+          args: [MAIN, `--user-data-dir=${REAL_USER_DATA}`, `--user-data-dir=${outsideSandbox}`],
+          env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+        }),
+      expect: /--user-data-dir inside the real home/,
+    },
   ]
 
   const results: string[] = []
-  for (const row of rows) {
-    let message = ''
-    try {
-      const out = await row.run()
-      // A returned handle means the app really booted. Close it before failing,
-      // so one escaped launch does not leave a GUI process behind.
-      await closeQuietly(out)
-      message = 'NOT BLOCKED — this shape reached the real launcher'
-    } catch (e) {
-      message = e instanceof Error ? e.message : String(e)
-    }
-    expect(message, `[${row.name}] must be blocked by the isolation enforcer`).toContain(ISOLATION_TAG)
-    expect(message, `[${row.name}] blocked for the wrong reason`).toMatch(row.expect)
-    results.push(`  blocked: ${row.name}`)
-  }
+  for (const row of rows) results.push(await assertBlocked(row))
   console.log(`T-442 F-A bypass matrix — ${rows.length} shapes\n${results.join('\n')}`)
 
   fs.rmSync(outsideSandbox, { recursive: true, force: true })
 
-  // L5 — whatever a shape did before being blocked, the real home did not move.
-  expect(fingerprintRealHome(), 'a bypass attempt mutated the REAL home').toEqual(before)
+  expect(diffSnapshots(before, snapshotRealHome()), 'a bypass attempt mutated the REAL home').toEqual([])
 })
 
-test('T-442 F-A: the sanctioned harness call satisfies the same enforcer (no exemption)', async () => {
-  // The enforcer has no allowlist, so this doubles as proof that the gate is
-  // value-based: the harness passes because of WHAT it passes, not WHO it is.
-  const home = sandboxHome('enforcer-ok')
-  const app = await launchApp({ home })
+// ─────────────────────────────────────────────────────────────────────────────
+// Escape shapes INVENTED THIS ROUND — the acceptance asks for a guarantee that
+// holds for a spec that does not exist yet, not a re-run of the known five.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('T-450 NEW N1: deleting PRODUCTUNE_REAL_HOME no longer neuters every rule', async () => {
+  // The most damaging shape found this round, and it is one line.
+  //
+  // T-442 read `process.env.PRODUCTUNE_REAL_HOME` on EVERY call, falling back to
+  // `os.homedir()`. `os.homedir()` follows HOME on POSIX (measured) and the config
+  // repoints HOME at the sandbox — so
+  //
+  //     delete process.env.PRODUCTUNE_REAL_HOME
+  //
+  // made `realHome()` return the SANDBOX. Every containment check then compared
+  // real paths against the sandbox, found them "outside", and passed. Not one
+  // rule survived; the enforcer became a no-op that still looked installed.
+  const saved = process.env.PRODUCTUNE_REAL_HOME
   try {
-    const seen = await app.evaluate(({ app: a }) => ({
-      userData: a.getPath('userData'),
-      envHome: process.env.HOME,
-    }))
-    expect(seen.envHome).toBe(home)
-    expect(insideRealHome(seen.userData), 'harness launch put userData in the real home').toBe(false)
+    delete process.env.PRODUCTUNE_REAL_HOME
+    expect(insideRealHome(REAL_USER_DATA), 'N1: the real userData must still be recognised').toBe(true)
+    expect(insideRealHome(REAL_HOME), 'N1: the real home must still be recognised').toBe(true)
+
+    const msg = await assertBlocked({
+      name: 'N1 — real-home marker deleted, then launch at the real userData',
+      run: () =>
+        _electron.launch({
+          args: [MAIN, `--user-data-dir=${REAL_USER_DATA}`],
+          env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+        }),
+      expect: /--user-data-dir inside the real home/,
+    })
+
+    // Self-healing: the frozen value is put back so spawned realms still inherit
+    // it. A child that inherited a stripped environment would be unguarded.
+    expect(process.env.PRODUCTUNE_REAL_HOME, 'N1: the marker must be restored for children').toBe(REAL_HOME)
+    console.log(`T-450 NEW N1 (frozen real home)\n${msg}`)
   } finally {
-    await app.close()
-    fs.rmSync(home, { recursive: true, force: true })
+    if (saved === undefined) delete process.env.PRODUCTUNE_REAL_HOME
+    else process.env.PRODUCTUNE_REAL_HOME = saved
   }
 })
 
-test('T-442 F-A: the CJS assumption the child_process guard depends on still holds', () => {
-  // `child_process` is patched on the CJS module object. That reaches every
-  // collected file only while Playwright transpiles this package to CJS. If the
-  // package ever gains `"type": "module"`, collected files would get Node's
-  // frozen `node:child_process` namespace and the guard would silently stop
-  // covering them — a boundary worth failing on rather than documenting.
+test('T-450 NEW N2: reaching the launcher through a different package entrypoint', async () => {
+  // `@playwright/test` re-exports the launcher from `playwright-core`. If those
+  // were DIFFERENT objects, patching one would leave the other pristine and a
+  // spec could simply import the other one. Measured: all three entrypoints share
+  // one `_electron` object, so the patch covers them — but that is a fact about
+  // today's Playwright, not a law, so it is pinned here rather than assumed.
+  const pt = require('@playwright/test') as { _electron: unknown }
+  const entrypoints = ['playwright', 'playwright-core']
+  const reachable: string[] = []
+  for (const id of entrypoints) {
+    let mod: { _electron?: unknown } | null = null
+    try {
+      mod = require(require.resolve(id, { paths: [path.dirname(require.resolve('@playwright/test')), GUI_ROOT] }))
+    } catch {
+      continue // not reachable from this install — nothing to patch
+    }
+    reachable.push(id)
+    expect(
+      mod?._electron,
+      `N2: ${id} exposes a DIFFERENT launcher object than @playwright/test. The patch ` +
+        `does not cover it, and a spec can import it directly. Patch it in ` +
+        `isolation-rules.cjs (patchElectron already accepts any module).`,
+    ).toBe(pt._electron)
+  }
+  expect(reachable.length, 'N2: neither alternate entrypoint resolved — the check was vacuous').toBeGreaterThan(0)
+
+  // And going through one of them is blocked, not merely "the same object".
+  const msg = await assertBlocked({
+    name: 'N2 — launch via the playwright-core entrypoint',
+    run: () => {
+      const core = require(
+        require.resolve('playwright-core', { paths: [path.dirname(require.resolve('@playwright/test')), GUI_ROOT] }),
+      ) as { _electron: { launch: (o: unknown) => Promise<unknown> } }
+      return core._electron.launch({ args: [MAIN] })
+    },
+    expect: /without --user-data-dir/,
+  })
+  console.log(`T-450 NEW N2 (alternate package entrypoints: ${reachable.join(', ')})\n${msg}`)
+})
+
+test('T-450 NEW N3: raw spawn primitives under child_process are refused', () => {
+  // `child_process` is a JS wrapper over process bindings, and those bindings are
+  // still reachable on Node 22 (measured). A spec that calls them directly walks
+  // past every wrapper the enforcer installs — no `_electron`, no
+  // `child_process.spawn`, nothing to patch.
+  for (const name of ['spawn_sync', 'process_wrap']) {
+    let message = ''
+    try {
+      ;(process as unknown as { binding: (n: string) => unknown }).binding(name)
+      message = 'NOT BLOCKED'
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e)
+    }
+    expect(message, `N3: process.binding('${name}') must be refused`).toContain(ISOLATION_TAG)
+  }
+  // Collateral check: unrelated bindings must still work, or this rule breaks
+  // Node internals and gets reverted.
+  expect(() => (process as unknown as { binding: (n: string) => unknown }).binding('fs')).not.toThrow()
+  console.log(
+    "T-450 NEW N3 (raw spawn bindings)\n  blocked: process.binding('spawn_sync')\n" +
+      "  blocked: process.binding('process_wrap')\n  intact:  process.binding('fs')",
+  )
+})
+
+test('T-450 NEW N6: promisify(execFile) is guarded, not a supported bypass', async () => {
+  // ── INVENTED THIS ROUND, and it was very nearly shipped as a hole. ──────────
+  //
+  // `child_process.exec` and `execFile` carry a `util.promisify.custom`
+  // implementation, and `promisify()` prefers it over generic callback
+  // promisification. A wrapper that does not carry that property changes BEHAVIOUR:
+  // `promisify(execFile)` silently falls back and resolves `stdout` alone instead
+  // of `{stdout, stderr}`. That is how it was found — 19 of packages/core's git
+  // tests failed with results that read like product bugs.
+  //
+  // The obvious repair is to copy the original's own properties onto the wrapper.
+  // That would have been WORSE than the bug: the original's `promisify.custom`
+  // closes over the UNWRAPPED function, so `promisify(execFile)` would have become
+  // a documented, supported, entirely innocent-looking way to bypass every rule in
+  // isolation-rules.cjs. Both halves are pinned here.
+  const util = require('util') as typeof import('util')
+
+  // HALF 1 — the CONTRACT is preserved, or the product breaks and someone reverts
+  // the guard to make the tests pass again.
+  const execFileAsync = util.promisify(cp.execFile)
+  const ok = await execFileAsync('/bin/echo', ['contract'])
+  expect(typeof ok, 'promisify(execFile) must resolve an OBJECT, not a bare string').toBe('object')
+  expect(ok.stdout.trim()).toBe('contract')
+  expect(ok.stderr, 'stderr must be present, which is what the custom impl is for').toBe('')
+
+  // HALF 2 — and it is still GUARDED. This is the row that would have been green
+  // for the wrong reason under a naive property copy.
+  let message = ''
+  try {
+    await execFileAsync(APP_SHAPED_MISSING, [], {
+      env: { ...process.env, HOME: REAL_HOME } as NodeJS.ProcessEnv,
+    })
+    message = 'NOT BLOCKED'
+  } catch (e) {
+    message = e instanceof Error ? e.message : String(e)
+  }
+  expect(
+    message,
+    'N6: promisify(execFile) must go through the guard. If this is NOT BLOCKED, the ' +
+      "wrapper is exposing the original's promisify.custom and every rule here is optional.",
+  ).toContain(ISOLATION_TAG)
+
+  // The same for `exec`, which has its own custom impl.
+  const execAsync = util.promisify(cp.exec)
+  const okExec = await execAsync('echo contract2')
+  expect(okExec.stdout.trim()).toBe('contract2')
+  let execMsg = ''
+  try {
+    await execAsync('true', { env: { ...process.env, HOME: REAL_HOME } as NodeJS.ProcessEnv })
+    execMsg = 'NOT BLOCKED'
+  } catch (e) {
+    execMsg = e instanceof Error ? e.message : String(e)
+  }
+  expect(execMsg, 'N6: promisify(exec) must be guarded too').toContain(ISOLATION_TAG)
+
+  console.log(
+    'T-450 NEW N6 (promisify.custom)\n' +
+      '  contract kept: promisify(execFile) resolves {stdout, stderr}\n' +
+      '  guarded:       promisify(execFile) and promisify(exec) both hit the rules\n' +
+      "  NOT done:      copying the original's promisify.custom, which would be a bypass",
+  )
+})
+
+test('T-450 NEW N7: a realm that cannot identify the real home fails closed', () => {
+  // ── ALSO INVENTED THIS ROUND, and it is the S1 defect in a second place. ────
+  //
+  // `REAL_HOME` falls back to `os.homedir()` when `PRODUCTUNE_REAL_HOME` is unset,
+  // and refuses to guess when HOME is already a sandbox — because comparing every
+  // real path against the sandbox makes the whole enforcer a silent no-op.
+  //
+  // That fail-closed check listed ONE sandbox root: the Playwright one. This ticket
+  // put the rules into vitest realms, whose sandbox root is a DIFFERENT directory
+  // (`productune-vitest-home`, see scripts/vitest-home-sandbox.ts) — so in a vitest
+  // realm the check did not fire, the sandbox was recorded as "the real home", and
+  // every containment test passed. Exactly S1's shape: a predicate that knew about
+  // one spelling of the same thing and not the others.
+  // MEASURED BY LOADING A FRESH COPY OF THE MODULE, not by spawning a child.
+  //
+  // A child cannot show this any more, and the reason is itself worth recording:
+  // `bootstrapEnv` now injects `PRODUCTUNE_REAL_HOME` into EVERY child, so a
+  // spawned realm can no longer be missing the marker at all. That is defence in
+  // depth working — and it also means the fail-closed check has to be exercised
+  // where it lives: at module load, with `require.cache` cleared.
+  const rulesPath = require.resolve(path.join(TESTS_DIR, 'isolation-rules.cjs'))
+  const originalModule = require.cache[rulesPath]
+  const savedHome = process.env.HOME
+  const savedMarker = process.env.PRODUCTUNE_REAL_HOME
+
+  const loadFresh = (home: string, withMarker: boolean): string => {
+    delete require.cache[rulesPath]
+    process.env.HOME = home
+    if (withMarker) process.env.PRODUCTUNE_REAL_HOME = REAL_HOME
+    else delete process.env.PRODUCTUNE_REAL_HOME
+    try {
+      require(rulesPath)
+      return 'LOADED'
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  try {
+    for (const [label, root] of [
+      ['playwright', SANDBOX_ROOT],
+      ['vitest', path.join(os.tmpdir(), 'productune-vitest-home')],
+    ] as const) {
+      expect(
+        loadFresh(path.join(root, 'some-worker-home'), false),
+        `N7: with HOME inside the ${label} sandbox root and no marker, the rules MUST refuse to ` +
+          `load. Loading means the sandbox was recorded as the real home and every rule is a no-op.`,
+      ).toContain('cannot determine the real home')
+    }
+
+    // …and with the marker present it loads normally, or the check would just be
+    // "the rules never load in a sandbox".
+    expect(
+      loadFresh(path.join(os.tmpdir(), 'productune-vitest-home', 'w'), true),
+      'N7: with PRODUCTUNE_REAL_HOME provided the rules must load',
+    ).toBe('LOADED')
+  } finally {
+    // Restore BOTH the environment and the module cache. Every other module in this
+    // realm already holds a reference to the original instance, so leaving a second
+    // one cached would mean two frozen REAL_HOME values in one process.
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
+    if (savedMarker === undefined) delete process.env.PRODUCTUNE_REAL_HOME
+    else process.env.PRODUCTUNE_REAL_HOME = savedMarker
+    delete require.cache[rulesPath]
+    if (originalModule) require.cache[rulesPath] = originalModule
+  }
+
+  // The environment survived the experiment — this spec's later rows depend on it.
+  expect(process.env.HOME, 'N7 must leave HOME as it found it').toBe(DEFAULT_SANDBOX_HOME)
+  expect(insideRealHome(REAL_USER_DATA), 'the rules still work after the cache dance').toBe(true)
+
+  // And the defence-in-depth half, stated as an assertion rather than a comment:
+  // a spawned realm cannot be missing the marker, because the guard supplies it.
+  const spawned = cp.spawnSync(
+    process.execPath,
+    ['-e', 'process.stdout.write(String(process.env.PRODUCTUNE_REAL_HOME))'],
+    { encoding: 'utf-8', timeout: 60_000, env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } },
+  )
+  expect(spawned.stdout, 'every child is handed the real-home marker').toBe(REAL_HOME)
+
+  console.log(
+    'T-450 NEW N7 (fail-closed real-home detection)\n' +
+      '  refused: HOME inside the playwright sandbox root, no marker\n' +
+      '  refused: HOME inside the VITEST sandbox root, no marker (the new one)\n' +
+      '  loaded:  marker present\n' +
+      '  and:     every spawned child is handed the marker, so the case is unreachable here',
+  )
+})
+
+test('T-450 NEW N4: a direct fs write to the real home — prevention is silent, detection is not', () => {
+  // Deliberately NOT a launch. No chokepoint in isolation-rules.cjs has anything
+  // to say about `fs.writeFileSync`, and adding one would be hopeless: `fs` has
+  // dozens of entry points and a spec can reach the syscalls through many of them.
+  //
+  // This is the shape that shows why detection had to become the floor. The
+  // guarantee here is not "it cannot happen" but "the run goes red if it does",
+  // which is proven end-to-end by the nested-suite test above (the mutating spec
+  // does exactly this and the run fails).
+  const target = path.join(REAL_HOME, '.productune', 'T450-WOULD-HAVE-WRITTEN-THIS')
+  expect(insideRealHome(target), 'the target is inside the real home').toBe(true)
+  expect(fs.existsSync(target), 'this test must never actually create it').toBe(false)
+
+  // Assert the honest boundary: prevention does not cover this path at all.
+  expect(
+    looksLikeAppLaunch('/bin/dd', [`of=${target}`]),
+    'N4: a plain file write is not an app launch and is not meant to be caught here',
+  ).toBe(false)
+  console.log(
+    'T-450 NEW N4 (direct fs write, no launch)\n' +
+      '  prevention: NOT COVERED, by design — fs has too many entry points\n' +
+      '  detection:  COVERED — see "T-450 THE FLOOR", whose fixture performs this write',
+  )
+})
+
+test('T-450 NEW N5 BOUNDARY: a delayed non-node grandchild escapes BOTH layers', () => {
+  // ── THIS SHAPE IS NOT CLOSED. Stated, with blast radius, per acceptance. ────
+  //
+  //   cp.spawn('/bin/sh', ['-c', 'sleep 60; exec "$E" "$M"'], {
+  //     detached: true,
+  //     env: { ...process.env, E: <electron binary>, M: <main.js> },
+  //   })
+  //
+  // Why prevention misses it:
+  //   • the argv is `/bin/sh -c 'sleep 60; exec "$E" "$M"'` — the app path is in
+  //     the ENVIRONMENT, so the joined argv contains no APP_SHAPES marker and
+  //     `looksLikeAppLaunch` is false;
+  //   • HOME is the sandbox, so the explicit-real-HOME rule (rule 4) is satisfied
+  //     — and it does not matter, because Electron takes userData from the OS
+  //     account, not from HOME. That is the whole reason rule 2 exists;
+  //   • `/bin/sh` is not a node binary, so no NODE_OPTIONS bootstrap is injected
+  //     and the realm that eventually execs Electron never has the rules.
+  //
+  // Why detection misses it: the mutation happens AFTER the run's final
+  // fingerprint. A run-scoped tripwire cannot observe a write that has not
+  // happened yet.
+  //
+  // BLAST RADIUS: a full unsandboxed app boot against the real userData —
+  // `SingletonLock`, `SingletonSocket`, `SingletonCookie`, `Local Storage`,
+  // `DevToolsActivePort` — and, because the single-instance lock is
+  // filesystem-scoped to userData, it can kill or steal focus from the
+  // developer's own running Productune. `~/.productune` and `~/.prdt` are NOT hit
+  // (HOME is genuinely sandboxed), so the damage is confined to userData plus one
+  // stray GUI process. The run is green and nothing correlates the damage with it,
+  // which is the same invisibility this ticket set out to remove — for one shape.
+  //
+  // ── T-450 R2 / S13: BOTH mitigations R1 folded are now ADOPTED ──────────────
+  //
+  // R1 declined them and gave two reasons. QA disputed both, and QA was right on
+  // both counts, so the reasons are corrected rather than the conclusion repeated:
+  //
+  //   • "a process-group reap is racy — the child can escape its group". True only
+  //     of a child that detaches or `setsid`s ITSELF, and `detached: true` was the
+  //     ordinary way to do that. It is now REFUSED outright (rule 6, fixture
+  //     above). The reap itself is still not implemented, for a different and
+  //     narrower reason: killing a process group from inside the run means aiming
+  //     a signal at the developer's own shell session, and that blast radius is
+  //     worse than the shape it would close.
+  //   • "persisting the snapshot can only be a warning, never a failure". Also
+  //     true, and irrelevant to whether it is worth having: QA points out it would
+  //     have SURFACED incidents ② and ③ of this ticket's lineage, both of which
+  //     were instead found days later by reading a diff. It is implemented, as a
+  //     warning, in `armTripwire` — the only mechanism in this file that can see a
+  //     mutation which lands after a run has already ended.
+  //
+  // WHAT REMAINS OPEN is therefore narrower than R1's statement, not the same: a
+  // child that calls `setsid()` itself, or backgrounds work with `sh -c '… &'`, can
+  // still outlive the run. The blast radius above is unchanged for that shape, and
+  // the next run's warning is what surfaces it.
+  const shellCommand = 'sleep 60; exec "$E" "$M"'
+  expect(
+    looksLikeAppLaunch('/bin/sh', ['-c', shellCommand]),
+    'N5: if this is now TRUE the boundary has narrowed and this comment is stale — rewrite it',
+  ).toBe(false)
+  expect(looksLikeNodeChild('/bin/sh'), 'N5: /bin/sh gets no bootstrap, so the realm is unguarded').toBe(false)
+  // The same command with the path inline IS caught — which is what makes the
+  // env-indirection the actual escape rather than "shells are unguarded".
+  expect(
+    looksLikeAppLaunch('/bin/sh', ['-c', `sleep 60; exec ${MAIN}`]),
+    'N5: the inline-path variant must still be recognised',
+  ).toBe(true)
+  console.log(
+    'T-450 NEW N5 (delayed non-node grandchild) — OPEN BOUNDARY\n' +
+      '  prevention: escapes (no app-shape in argv, HOME legitimately sandboxed, non-node realm)\n' +
+      '  detection:  escapes (mutation lands after the run’s final fingerprint)\n' +
+      '  blast radius: real userData + single-instance lock of the developer’s running app',
+  )
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The two boundary claims T-442 stated incorrectly — corrected, not deleted.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('T-450 boundary ① corrected: what the CJS pin actually protects, and the real ESM risk', () => {
+  test.setTimeout(120_000)
+
+  // T-442 asserted `pkg.type === 'commonjs'` with this justification: a true-ESM
+  // test file "would get Node's own frozen `node:child_process` namespace, which
+  // cannot be monkey-patched", so an ESM flip would silently drop rule 3.
+  //
+  // Measured, both halves are false. Node builds a builtin's ESM namespace from
+  // that builtin's CJS exports, so a `.mjs` importing `node:child_process` AFTER
+  // the patch sees the PATCHED functions. QA measured BLOCKED in a real
+  // `.spec.mjs`; the two subprocess experiments below re-measure it here.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-esm-'))
+  const rulesPath = path.join(TESTS_DIR, 'isolation-rules.cjs')
+  const probe = `spawnSync(${JSON.stringify(APP_SHAPED_MISSING)}, [], { env: { ...process.env, HOME: ${JSON.stringify(
+    REAL_HOME,
+  )} } })`
+
+  const write = (name: string, body: string): string => {
+    const f = path.join(dir, name)
+    fs.writeFileSync(
+      f,
+      `import { createRequire } from 'module'\nconst require = createRequire(import.meta.url)\n${body}\n`,
+    )
+    return f
+  }
+  const run = (file: string): string =>
+    cp
+      .execFileSync(process.execPath, [file], {
+        encoding: 'utf-8',
+        timeout: 60_000,
+        env: { ...process.env, PRODUCTUNE_REAL_HOME: REAL_HOME, HOME: DEFAULT_SANDBOX_HOME },
+      })
+      .trim()
+
+  try {
+    // EXPERIMENT A — a true-ESM named import in a realm where the rules are
+    // installed. T-442 asserted this is unpatchable; it is patched.
+    const afterFile = write(
+      'after.mjs',
+      `require(${JSON.stringify(rulesPath)}).installIsolationEnforcer()\n` +
+        `const { spawnSync } = await import('node:child_process')\n` +
+        `try { ${probe}; console.log('NOT BLOCKED') } catch (e) { console.log('BLOCKED') }`,
+    )
+    expect(
+      run(afterFile),
+      'boundary ①: a true-ESM named import IS patched. ' +
+        "T-442's claim that ESM is unpatchable is false, and the pin was guarding a risk that does not exist.",
+    ).toBe('BLOCKED')
+
+    // EXPERIMENT B — the REAL risk, which is ORDERING.
+    //
+    // R1 measured this by spawning the probe through `/bin/sh` to obtain a realm
+    // with NO rules, so the `.mjs` could import before installing. That route is
+    // deliberately gone: the S8 fix hands `NODE_OPTIONS=--require <bootstrap>` to
+    // EVERY child, and a shell passes it on, so there is no longer a way to get an
+    // unbootstrapped realm out of this suite. Which is the good news — but it also
+    // means the old experiment would now silently measure nothing, so it is
+    // replaced rather than left to rot.
+    //
+    // The Node property is measured directly instead, with no dependence on our
+    // rules being absent: patch a builtin's CJS exports AFTER importing it, and
+    // compare the pre-import binding against the post-patch value.
+    const orderingFile = write(
+      'ordering.mjs',
+      `const ns = await import('node:child_process')\n` +
+        `const { spawnSync: capturedNamed } = ns\n` +
+        `const live = require('child_process')\n` +
+        `const before = live.spawnSync\n` +
+        `live.spawnSync = function patchedLater() { return 'PATCHED' }\n` +
+        `console.log(JSON.stringify({\n` +
+        `  named: capturedNamed === before ? 'STALE' : 'LIVE',\n` +
+        `  namespaceProp: ns.spawnSync === before ? 'STALE' : 'LIVE',\n` +
+        `  defaultExport: ns.default.spawnSync === before ? 'STALE' : 'LIVE',\n` +
+        `}))`,
+    )
+    const ordering = JSON.parse(run(orderingFile)) as Record<string, string>
+    expect(
+      ordering.named,
+      'boundary ①: a NAMED ESM binding captured before the patch must go stale — this is ' +
+        'the real risk T-442 could not see. If this is now LIVE, Node changed and both this ' +
+        'test and the comments in isolation-enforcer.ts must be rewritten.',
+    ).toBe('STALE')
+    expect(ordering.namespaceProp, 'the namespace snapshot goes stale with it').toBe('STALE')
+    // …and the DEFAULT export stays live, which is why the failure mode is narrow:
+    // only pre-patch NAMED bindings go stale.
+    expect(ordering.defaultExport, 'the default export is the live exports object').toBe('LIVE')
+
+    // THE INVARIANT THAT ACTUALLY HOLDS, now asserted rather than argued: every
+    // realm-entry path installs the rules through a PRELOAD (`--require` via
+    // execArgv or NODE_OPTIONS), which runs before the realm's entry module — so
+    // "import before install" is not reachable from inside this suite. S14: this
+    // is a property of every new realm, not only of ESM.
+    const rulesSrc = fs.readFileSync(rulesPath, 'utf-8')
+    for (const realmEntry of ['execArgv', 'NODE_OPTIONS']) {
+      expect(rulesSrc, `the ${realmEntry} preload path must exist, or a new realm starts unguarded`).toContain(
+        realmEntry,
+      )
+    }
+    expect(
+      fs.readFileSync(path.join(GUI_ROOT, 'vitest.config.ts'), 'utf-8'),
+      'vitest realms must be preloaded too — a setupFile would already be too late',
+    ).toMatch(/execArgv:\s*\['--require', BOOTSTRAP\]/)
+
+    console.log(
+      'T-450 boundary ① (ESM + realm ordering), measured\n' +
+        '  named import with rules installed  -> BLOCKED (T-442 claimed impossible)\n' +
+        `  named binding captured pre-patch   -> ${ordering.named} (the REAL risk: ordering)\n` +
+        `  default export captured pre-patch  -> ${ordering.defaultExport} (live object, so narrow)\n` +
+        '  S14: every realm is preloaded, so "import before install" is unreachable here',
+    )
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+
+  // The pin is KEPT, for its true reason: this package's own CJS assumptions.
+  // `__dirname` across tests/, `require()` in this spec, and
+  // `require('./isolation-rules.cjs')` in isolation-enforcer.ts all break on an
+  // ESM flip — loudly, which is why the assertion is still worth having.
   const pkg = JSON.parse(fs.readFileSync(path.join(GUI_ROOT, 'package.json'), 'utf-8')) as { type?: string }
   expect(
     pkg.type ?? 'commonjs',
-    'packages/gui switched to ESM — tests/isolation-enforcer.ts rule 3 (child_process) ' +
-      'no longer reaches collected files. Re-verify before removing this assertion.',
+    'packages/gui switched to ESM. This does NOT silently drop rule 3 (measured above) — ' +
+      'what it breaks is this package\'s CJS assumptions: __dirname across tests/, require() ' +
+      'in this spec, and require("./isolation-rules.cjs") in isolation-enforcer.ts.',
   ).toBe('commonjs')
   expect(typeof require, 'specs are not running as CJS').toBe('function')
+
+  // The invariant that ACTUALLY protects rule 3 is ordering: the enforcer must
+  // install before anything captures a child_process binding. In this suite that
+  // is guaranteed structurally — playwright.config.ts installs it at module scope,
+  // and Playwright evaluates the config before it loads any collected file.
+  const configSrc = fs.readFileSync(path.join(GUI_ROOT, 'playwright.config.ts'), 'utf-8')
+  const installLine = configSrc.split('\n').findIndex((l) => /^installIsolationEnforcer\(\)/.test(l))
+  expect(installLine, 'installIsolationEnforcer() must be called at module scope in the config').toBeGreaterThan(0)
+  expect(
+    configSrc.split('\n').slice(0, installLine).join('\n'),
+    'the config must not import child_process before installing the enforcer — a pre-patch ' +
+      'named ESM binding is the one shape that really does go stale',
+  ).not.toMatch(/from\s+['"](node:)?child_process['"]|require\(\s*['"](node:)?child_process['"]/)
+})
+
+test('T-450 boundary ② corrected: an unrecognised child no longer skips rule 1 as well', () => {
+  // T-442's comment: "A spec that spawns a renamed copy of the app binary from a
+  // path with no Electron/Productune marker is not recognised by rule 3. Rules 1+2
+  // at the `_electron` level still apply."
+  //
+  // The second sentence is false for the `child_process` path. Nothing at the
+  // `_electron` level applies to a call that never touches `_electron`, and
+  // because `assertContained` was called only INSIDE the `looksLikeAppLaunch`
+  // branch, an unrecognised shape skipped rule 1 (HOME) too — not merely rule 2.
+  const renamed = path.join(os.tmpdir(), 'totally-innocent-tool')
+  expect(looksLikeAppLaunch(renamed, []), 'a renamed binary is still unrecognised — that part was true').toBe(false)
+
+  // The corrected behaviour: shape-gating now applies ONLY to the userData rule.
+  // A real-home HOME is refused for every child, recognised or not.
+  let message = ''
+  try {
+    cp.spawnSync(renamed, [], { env: { HOME: REAL_HOME } as NodeJS.ProcessEnv })
+    message = 'NOT BLOCKED'
+  } catch (e) {
+    message = e instanceof Error ? e.message : String(e)
+  }
+  expect(message, 'boundary ②: rule 1 must apply to an unrecognised child too').toContain(ISOLATION_TAG)
+  expect(message).toMatch(/HOME inside the real home/)
+
+  // …and innocent spawns are untouched, which is what keeps the rule alive.
+  expect(() => cp.spawnSync('/bin/echo', ['ok'], { env: { ...process.env } as NodeJS.ProcessEnv })).not.toThrow()
+  expect(() => cp.spawnSync('/bin/echo', ['ok'])).not.toThrow()
+
+  // ── T-450 R2 / S5: the residual NARROWED, and the reason is not the name ────
+  //
+  // R1 left this residual: "a renamed binary with a sandboxed HOME and no
+  // --user-data-dir is not recognised, so rule 2 does not fire". QA showed how
+  // expensive that was — it is the 2026-07-30 ancestor incident's exact shape, and
+  // the same miss also skipped the WINDOW rule, which is the hole underneath the
+  // argument that per-test `@window` precision could be left to the runtime rule.
+  //
+  // The gate no longer decides by NAME. Three of its five signals catch a renamed
+  // copy, and each is asserted here rather than described.
+  expect(
+    looksLikeAppLaunch(renamed, [`--user-data-dir=${REAL_USER_DATA}`]),
+    'S5: --user-data-dir is a Chromium-only flag, so its mere presence makes this an app launch',
+  ).toBe(true)
+
+  const electronBinary = path.join(
+    GUI_ROOT,
+    'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
+  )
+  test.skip(!fs.existsSync(electronBinary), 'the electron devDependency binary is not installed')
+
+  const linkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-renamed-'))
+  const bySymlink = path.join(linkDir, 'totally-innocent-tool')
+  fs.symlinkSync(electronBinary, bySymlink)
+  try {
+    expect(
+      looksLikeAppLaunch(bySymlink, []),
+      'S5: a symlink under an innocent name resolves to a known Electron binary',
+    ).toBe(true)
+
+    // A real COPY is the shape QA used, and it shares nothing but its bytes. Copying
+    // ~100MB is worth it once: this is the assertion that would have caught the
+    // ancestor incident, so it is measured rather than reasoned about.
+    const byCopy = path.join(linkDir, 'definitely-not-electron')
+    fs.copyFileSync(electronBinary, byCopy)
+    expect(
+      looksLikeAppLaunch(byCopy, []),
+      'S5: a renamed COPY is byte-size-identical to a known Electron binary',
+    ).toBe(true)
+
+    // …and the WINDOW rule follows the same gate, which is the half R1 missed.
+    let windowMsg = ''
+    try {
+      cp.spawnSync(byCopy, [`--user-data-dir=${path.join(linkDir, 'udd')}`], {
+        env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as NodeJS.ProcessEnv,
+      })
+      windowMsg = 'NOT BLOCKED'
+    } catch (e) {
+      windowMsg = e instanceof Error ? e.message : String(e)
+    }
+    if (ALLOW_WINDOWS) {
+      // In the VM a fully contained launch is allowed, so there is nothing to assert
+      // beyond "it was not refused as an isolation violation".
+      expect(windowMsg, 'S5: a contained launch must not be an isolation violation').not.toContain(ISOLATION_TAG)
+    } else {
+      expect(
+        windowMsg,
+        'S5: a renamed copy must hit the WINDOW rule too — this is the half R1 missed, ' +
+          'and the reason the @window tag can be left to the runtime rule',
+      ).toContain(WINDOW_TAG)
+    }
+
+    // The honest remainder, stated: a renamed copy that is NEITHER size-identical to
+    // a known binary NOR passed --user-data-dir is still unrecognised. It is a
+    // narrower residual than R1's, not an absent one.
+    const trimmed = path.join(linkDir, 'trimmed-copy')
+    fs.writeFileSync(trimmed, fs.readFileSync(electronBinary).subarray(0, 1024))
+    expect(
+      looksLikeAppLaunch(trimmed, []),
+      'the residual: a MODIFIED copy is not size-identical and is not recognised',
+    ).toBe(false)
+
+    console.log(
+      'T-450 boundary ② + S5 (unrecognised child)\n' +
+        '  corrected: rule 1 (HOME) applies regardless of shape\n' +
+        '  S5 closed: --user-data-dir presence, realpath identity, byte-size identity\n' +
+        '  S5 closed: the WINDOW rule now follows the same gate\n' +
+        '  residual:  a MODIFIED copy with no --user-data-dir; the tripwire covers it',
+    )
+  } finally {
+    fs.rmSync(linkDir, { recursive: true, force: true })
+  }
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The window rule (this machine) — acceptance: nothing that opens a window
+// runs on the host.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('T-450: the window rule is a chokepoint, not a convention', async () => {
+  // docs/wiki/fact--qa-cua-vm.md: a window means the VM. A tag alone would be a
+  // convention a new test can forget, so the launcher itself refuses.
+  expect(windowsAllowed()).toBe(process.env.PRODUCTUNE_ALLOW_WINDOWS === '1')
+
+  if (ALLOW_WINDOWS) {
+    expect(pwConfig.grepInvert, 'with windows allowed, @window tests must NOT be filtered out').toBeFalsy()
+  } else {
+    expect(String(pwConfig.grepInvert), 'a host run must grep-invert @window').toBe(String(WINDOW_TAG_PATTERN))
+
+    // A launch that satisfies every containment rule is STILL refused on the
+    // host, because it would open a window. This is what protects against a new
+    // test that forgets the tag.
+    const okHome = sandboxHome('window-rule')
+    const okUdd = path.join(okHome, 'Library', 'Application Support', 'productune')
+    let message = ''
+    try {
+      await _electron.launch({
+        args: [MAIN, `--user-data-dir=${okUdd}`],
+        env: { ...process.env, HOME: okHome } as Record<string, string>,
+      })
+      message = 'NOT BLOCKED'
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e)
+    }
+    fs.rmSync(okHome, { recursive: true, force: true })
+    expect(message, 'a fully contained launch must still be refused on the host').toContain(WINDOW_TAG)
+    expect(message, 'the refusal must say how to run it properly').toContain('PRODUCTUNE_ALLOW_WINDOWS=1')
+    // …and it must NOT be reported as an isolation violation, or the two rules
+    // would be indistinguishable in a log.
+    expect(message, 'the window rule is not an isolation violation').not.toContain(ISOLATION_TAG)
+  }
+
+  // The realm bootstrap must exist on disk, or every "carried into a new realm"
+  // claim above silently degrades to "not carried at all".
+  expect(fs.existsSync(BOOTSTRAP), 'the realm bootstrap file must exist').toBe(true)
+  expect(path.extname(BOOTSTRAP), 'the bootstrap must be plain CJS — a worker has no TS transform').toBe('.cjs')
+})
+
+/**
+ * NOTE ON THIS TEST'S TITLE — it deliberately does NOT contain the literal window
+ * tag, and that is load-bearing rather than stylistic.
+ *
+ * The first version was titled '…is tagged @window'. `grepInvert` matches titles,
+ * so the test that polices tagging was itself filtered out of every host run — the
+ * one environment where a static check like this is the whole point. It only ever
+ * executed in the VM, where it then failed, and the failure was real: see below.
+ */
+test('T-450: a spec that boots the app carries the window tag', () => {
+  // WHY FILE-LEVEL AND NOT PER-TEST.
+  //
+  // The first version split each file on `test(` and flagged any block mentioning
+  // `launchApp(`. Measured in the VM, that produced two false positives, both from
+  // string LITERALS rather than calls: the scan matrix embeds a fixture source
+  // containing "await launchApp({ home })", and the scan test's own failure
+  // message reads 'Use `launchApp()` from tests/harness.ts instead.'. Matching raw
+  // source cannot tell a call from a mention, and a check that cries wolf is a
+  // check someone deletes — which is how this ticket's predecessors died.
+  //
+  // Two corrections. Comments and string literals are stripped before matching, so
+  // only real call sites count. And the assertion is FILE-level: a spec that
+  // launches the app must carry the tag on at least one test. Per-test precision is
+  // deliberately not attempted here — enumerating call shapes is what went wrong
+  // above (the second attempt's prefix list missed `return launchApp({` in
+  // t439.spec.ts). `tests/isolation-rules.cjs` refuses `_electron.launch` outright
+  // unless PRODUCTUNE_ALLOW_WINDOWS=1, so an individually untagged window test
+  // fails loudly with an instruction. That runtime refusal is the enforcement; this
+  // is only the early, file-shaped warning.
+  const offenders: string[] = []
+  const tagged: string[] = []
+  for (const rel of listCodeFiles(TESTS_DIR)) {
+    if (!PLAYWRIGHT_TEST_FILE_RE.test(path.basename(rel))) continue
+    const src = stripCommentsAndStrings(fs.readFileSync(path.join(TESTS_DIR, rel), 'utf-8'))
+    if (!/\blaunchApp\s*\(/.test(src)) continue
+    // The tag is read from the ORIGINAL source: it lives in test titles, which are
+    // string literals and would have just been stripped.
+    if (WINDOW_TAG_PATTERN.test(fs.readFileSync(path.join(TESTS_DIR, rel), 'utf-8'))) tagged.push(rel)
+    else offenders.push(rel)
+  }
+  expect(
+    offenders,
+    'These specs boot the app but carry no window tag on any test, so a host run would ' +
+      'try to open a real window. Tag the launching tests (docs/wiki/fact--qa-cua-vm.md).',
+  ).toEqual([])
+  // Non-vacuous: if nothing is tagged, the check above passed for free.
+  expect(tagged.sort(), 'no spec carries the window tag — the check is vacuous').toEqual([
+    'isolation.guard.spec.ts',
+    'smoke.spec.ts',
+    't439.spec.ts',
+    'theme.spec.ts',
+  ])
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,7 +2221,25 @@ test('T-442 F1: the harness refuses to target the real home', () => {
   fs.rmSync(good, { recursive: true, force: true })
 })
 
-test('T-442 F1/F5: a launched app resolves BOTH home and userData into the sandbox', async () => {
+test('T-442 F-A @window: the sanctioned harness call satisfies the same rules (no exemption)', async () => {
+  // The rules have no allowlist, so this doubles as proof that the gate is
+  // value-based: the harness passes because of WHAT it passes, not WHO it is.
+  const home = sandboxHome('enforcer-ok')
+  const app = await launchApp({ home })
+  try {
+    const seen = await app.evaluate(({ app: a }) => ({
+      userData: a.getPath('userData'),
+      envHome: process.env.HOME,
+    }))
+    expect(seen.envHome).toBe(home)
+    expect(insideRealHome(seen.userData), 'harness launch put userData in the real home').toBe(false)
+  } finally {
+    await app.close()
+    fs.rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('T-442 F1/F5 @window: a launched app resolves BOTH home and userData into the sandbox', async () => {
   const home = sandboxHome('isolation')
   const app = await launchApp({ home })
   try {
@@ -463,8 +2298,19 @@ async function bypassViaHelper(): Promise<unknown> {
   return boot()
 }
 
-function electronBinary(): string {
-  return path.join(GUI_ROOT, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+/**
+ * Remove comments and string/template literals, so a source search finds CALLS
+ * rather than mentions. Approximate by design — it is used only to decide whether
+ * `launchApp(` appears as code, and every inaccuracy errs towards removing text,
+ * i.e. towards not flagging a mention.
+ */
+function stripCommentsAndStrings(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ') // block comments
+    .replace(/\/\/[^\n]*/g, ' ') // line comments
+    .replace(/`(?:\\[\s\S]|[^`\\])*`/g, '``') // template literals
+    .replace(/'(?:\\.|[^'\\\n])*'/g, "''") // single-quoted
+    .replace(/"(?:\\.|[^"\\\n])*"/g, '""') // double-quoted
 }
 
 async function closeQuietly(handle: unknown): Promise<void> {
@@ -475,36 +2321,4 @@ async function closeQuietly(handle: unknown): Promise<void> {
   } catch {
     /* the assertion that follows is the report */
   }
-}
-
-/**
- * A cheap, stable fingerprint of the real-home surfaces this ticket protects.
- * Names + sizes + mtimes, no contents: enough to see a rewrite, cheap enough to
- * run around every matrix row.
- */
-function fingerprintRealHome(): string[] {
-  const out: string[] = []
-  const walk = (root: string, depth: number): void => {
-    let entries: fs.Dirent[]
-    try {
-      entries = fs.readdirSync(root, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      const full = path.join(root, e.name)
-      try {
-        const st = fs.lstatSync(full)
-        out.push(`${full}\t${st.size}\t${st.mtimeMs}`)
-        if (e.isDirectory() && depth > 0) walk(full, depth - 1)
-      } catch {
-        /* raced away; absence is itself recorded by the missing line */
-      }
-    }
-  }
-  for (const p of [...PROTECTED_REAL_PATHS, REAL_USER_DATA]) {
-    out.push(`${p}\texists=${fs.existsSync(p)}`)
-    walk(p, 2)
-  }
-  return out
 }

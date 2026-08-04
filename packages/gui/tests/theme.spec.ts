@@ -1,6 +1,7 @@
 import path from 'path'
 import { test, expect } from '@playwright/test'
 import { GUI_ROOT, cleanupHome, launchApp, sandboxHome } from './harness'
+import { CTA_LABEL_RE, RESET_LABEL_RE } from './cta-label'
 
 // T-359 regression: launch the real Electron app and drive the theme controller
 // (window.productuneTheme.setTheme) between dark and light. Guards that BOTH modes
@@ -12,24 +13,21 @@ import { GUI_ROOT, cleanupHome, launchApp, sandboxHome } from './harness'
 // whatever that machine's state produced — see the T-359 test below for what
 // that hid.
 
-/**
- * The wizard's primary CTA, in either locale.
- *
- * T-442 F-B: this used to be `/^(Next|다음)\b/`. JavaScript's `\b` is a
- * boundary between `[A-Za-z0-9_]` and anything else, so after a Hangul
- * syllable there is no boundary to find and the Korean branch could NEVER
- * match — '다음' → false, '다음 단계' → false (QA-measured). It was dead code
- * today only because `src/i18n.ts` hardcodes `lng: 'en'` and `sandboxHome()`
- * seeds nothing; the first spec to seed
- * `~/.productune/settings.json {ui:{language:'ko'}}` — the pattern
- * `fact--gui-testing-env` documents — would have failed on the locator and
- * been read as a product defect.
- *
- * The `\b` is kept for the ASCII branch, where it does the intended job of
- * rejecting 'Nextcloud'; the Hangul branch needs no separator rule because
- * '다음' is not a prefix of an unrelated label in this UI.
- */
-const CTA_LABEL_RE = /^(?:Next\b|다음)/u
+// The wizard's primary CTA matcher now lives in `tests/cta-label.ts`.
+//
+// T-442 F-B: it used to be `/^(Next|다음)\b/` and was defined right here.
+// JavaScript's `\b` is a boundary between `[A-Za-z0-9_]` and anything else, so
+// after a Hangul syllable there is no boundary to find and the Korean branch
+// could NEVER match — '다음' → false, '다음 단계' → false (QA-measured). It was
+// dead code only because `src/i18n.ts` hardcodes `lng: 'en'` and `sandboxHome()`
+// seeds nothing; the first spec to seed `~/.productune/settings.json
+// {ui:{language:'ko'}}` would have failed on the locator and been read as a
+// product defect.
+//
+// T-450 F-B: defining it HERE was the reason it went untested — the only thing
+// that could reach it was a test that boots the app, and this test is @window, so
+// on the host it never runs at all. `tests/cta-label.spec.ts` pins it with pure
+// unit assertions that need no app, no window and no locale plumbing.
 
 type Snap = {
   brandAccent: string; accent: string; paintedBtnBg: string
@@ -38,7 +36,7 @@ type Snap = {
   personaPo: string; statusInProgress: string; fontFamily: string
 }
 
-test('T-359: token layer + accent flip render in BOTH dark and light', async () => {
+test('T-359 @window: token layer + accent flip render in BOTH dark and light', async () => {
   const home = sandboxHome('theme-t359')
   const app = await launchApp({ home })
   try {
@@ -57,8 +55,9 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
       // The matcher crosses into the page context, so it travels as a source
       // string — a RegExp cannot be serialised through evaluate(). Passing
       // CTA_LABEL_RE.source keeps one definition for both sides.
-      return win.evaluate((ctaSource: string) => {
+      return win.evaluate(([ctaSource, resetSource]: [string, string]) => {
         const ctaRe = new RegExp(ctaSource, 'u')
+        const resetRe = new RegExp(resetSource, 'u')
         void document.documentElement.offsetHeight
         // T-442 F6 — this used to be `document.querySelector('button')`, i.e.
         // whatever button happened to come FIRST in the DOM. That is only the
@@ -75,7 +74,7 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
         // asserting something vacuous.
         const buttons = Array.from(document.querySelectorAll('button')) as HTMLElement[]
         const cta = buttons.find((b) => ctaRe.test((b.textContent ?? '').trim())) ?? null
-        const ghost = buttons.find((b) => /Reset|초기화/.test((b.textContent ?? '').trim())) ?? null
+        const ghost = buttons.find((b) => resetRe.test((b.textContent ?? '').trim())) ?? null
         const cs = getComputedStyle(document.documentElement)
         return {
           brandAccent: cs.getPropertyValue('--brand-accent').trim(),
@@ -91,7 +90,7 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
           statusInProgress: cs.getPropertyValue('--status-in-progress').trim(),
           fontFamily: cs.getPropertyValue('--font-family').trim(),
         }
-      }, CTA_LABEL_RE.source)
+      }, [CTA_LABEL_RE.source, RESET_LABEL_RE.source] as [string, string])
     }
 
     const dark = await snap('dark')
@@ -147,7 +146,7 @@ test('T-359: token layer + accent flip render in BOTH dark and light', async () 
 // md recipes the affected components use (e.g. .md-code-inline: bg --surface-subpanel
 // / color --text-primary, and a panel painted --surface-panel/--text-emphasis)
 // computes LIGHT surface + DARK text in light mode — not just a :root variable read.
-test('T-417: legacy-alias surfaces render LIGHT (real element, not just :root)', async () => {
+test('T-417 @window: legacy-alias surfaces render LIGHT (real element, not just :root)', async () => {
   const home = sandboxHome('theme-t417')
   const app = await launchApp({ home })
   try {
