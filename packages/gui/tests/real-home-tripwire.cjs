@@ -134,25 +134,43 @@
  *   running). The product never writes them, and a launch that reached them
  *   necessarily also reached `~/.productune`, so nothing is lost.
  *
- * DELIBERATELY NOT COVERED — 2: `~/.productune/state/autosave-snapshots/`
+ * COVERED IN NAME-ONLY MODE: `~/.productune/state/autosave-snapshots/`
  *
- *   T-450 / S11 — REFUTED PREMISE. R1 wrote "all four covered surfaces showed
- *   ZERO churn" and cited a 60s measurement. QA's objection is exact and it is
- *   about the METHOD, not the number: that measurement was taken while the machine
- *   was IDLE, and the only circumstance under which this suite ever runs is a live
- *   agent session. Re-measured under the real condition — 300s, live session, no
- *   suite running — `~/.productune` shows 4 changed entries of 45, and all four
- *   are this one subtree: `packages/core/src/git-workflow/autosave.ts` writes
- *   `<sha1(projectDir)>.json` there through `os.homedir()`, and the agent harness
- *   drives it. The rest of `~/.productune` was 0.
+ *   T-450 / S11 → R3 / F3, the history in full because each round corrected the
+ *   previous one's premise:
  *
- *   So the R1 CONCLUSION (cover `~/.productune`) survives, but only with this one
- *   leaf excluded — otherwise the tripwire reddens legitimate runs, and a tripwire
- *   that cries wolf is a tripwire someone deletes, which is how this ticket's
- *   predecessors died. Nothing is lost: an escaped launch that can write
- *   `state/autosave-snapshots/` had the real `HOME`, and with the real HOME it
- *   also writes `settings.json`, `recents.json` or `toolchain/`, all of which are
- *   still watched.
+ *   R1 wrote "all four covered surfaces showed ZERO churn" from a 60s IDLE
+ *   measurement. QA refuted the method: the only condition under which this
+ *   suite runs is a live agent session, and re-measured under that condition
+ *   this one subtree churns (`packages/core/src/git-workflow/autosave.ts`
+ *   rewrites `<sha1(projectDir)>.json` here through `os.homedir()`, driven by
+ *   the agent harness). R2 therefore EXCLUDED the subtree — and QA R2 showed the
+ *   exclusion is a LAUNDERING CHANNEL: in-place corruption and per-file DELETION
+ *   of the user's real recovery snapshots were wholly invisible while the run
+ *   stayed green. R2's counter-argument ("a launch with the real HOME writes
+ *   settings.json too") was an argument about LAUNCHES and does not hold for
+ *   this tripwire's own stated purpose #2 — a direct `fs` write with no launch.
+ *
+ *   The fix has to separate what the legitimate writer DOES from what it never
+ *   does, and that is measurable from `autosave.ts` itself: it CREATES
+ *   `<sha1>.json` files, REWRITES them in place (tmp + rename), and never
+ *   deletes or renames anything. So the subtree is fingerprinted in NAME-ONLY
+ *   mode: every entry is recorded by PATH but without size/mtime, additions are
+ *   ignored by the diff, and `*.tmp` (the writer's own transient) is invisible.
+ *   Result: per-file deletion, renames and subtree removal turn the run RED —
+ *   the laundering channel is closed — while a legitimate autosave rewrite or a
+ *   new project's first snapshot changes nothing the diff looks at.
+ *
+ *   THE HONEST REMAINDER, stated rather than hidden: an in-place rewrite of an
+ *   EXISTING snapshot with corrupt content is still invisible. It is
+ *   indistinguishable in principle from the legitimate writer's own rewrite by
+ *   any metadata- or content-level signal (both change the same file's bytes,
+ *   size and mtime, and the writer runs concurrently during every live
+ *   session), so any detector for it fires on every legitimate session — and a
+ *   tripwire that cries wolf is a tripwire someone deletes, which is how this
+ *   ticket's predecessors died. Blast radius of the remainder: silent content
+ *   damage to snapshots whose FILE SET is intact; deletion — the destructive
+ *   half QA demonstrated — is no longer in it.
  *
  * KNOWN FALSE POSITIVE, accepted deliberately: if the developer's own Productune
  * is running while the suite runs, its writes to the real userData are
@@ -188,13 +206,19 @@ const { containmentKey, realHome } = require('./isolation-rules.cjs')
 const MAX_ENTRIES = 400_000
 
 /**
- * Subtrees inside a covered surface that are excluded from the fingerprint.
- * See "DELIBERATELY NOT COVERED — 2" in the header: measured churn during the
- * only condition under which this suite runs.
+ * Subtrees inside a covered surface that are fingerprinted in NAME-ONLY mode:
+ * entries are recorded by path, size/mtime are not, additions are ignored and
+ * the writer's `*.tmp` transients are invisible — removals and renames are
+ * drift. See "COVERED IN NAME-ONLY MODE" in the header (T-450 R3 / F3): a full
+ * exclusion here was QA R2's laundering channel, a full fingerprint reddens
+ * every live agent session.
  */
-function tripwireExclusions() {
+function tripwireNameOnlySubtrees() {
   return [path.join(realHome(), '.productune', 'state', 'autosave-snapshots')]
 }
+
+/** Marker suffix on name-only detail lines; the diff keys off it. */
+const NAME_ONLY = 'name-only'
 
 /** The covered surfaces. See the header for why exactly these. */
 function tripwireSurfaces() {
@@ -215,13 +239,35 @@ function tripwireSurfaces() {
 
 class BudgetExhausted extends Error {}
 
-function walkSurface(root, exclusionKeys, budget) {
+function walkSurface(root, nameOnlyKeys, budget) {
   const out = []
   const spend = () => {
     if (--budget.left < 0) throw new BudgetExhausted(root)
   }
-  out.push(`${root}\texists=${fs.existsSync(root)}`)
-  const walk = (dir) => {
+  // T-450 R3 / F2. A FILE-shaped surface (the two NSUserDefaults plists) used to
+  // be recorded as `exists=` alone, so an in-place plist write — which is the
+  // only thing NSUserDefaults ever does to an existing plist — changed nothing
+  // in the fingerprint and the whole surface was watched in name only. A
+  // non-directory root now records size+mtime like any other file; `exists=`
+  // survives only for the two states that HAVE no size (absent, or a directory
+  // whose own mtime is deliberately not a signal — its children are).
+  let rootStat = null
+  try {
+    rootStat = fs.lstatSync(root)
+  } catch {
+    /* absent */
+  }
+  if (!rootStat) {
+    out.push(`${root}\texists=false`)
+    return out
+  }
+  if (!rootStat.isDirectory()) {
+    spend()
+    out.push(`${root}\t${rootStat.size}\t${rootStat.mtimeMs}`)
+    return out
+  }
+  out.push(`${root}\texists=true`)
+  const walk = (dir, nameOnly) => {
     let entries
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -230,12 +276,21 @@ function walkSurface(root, exclusionKeys, budget) {
     }
     for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const full = path.join(dir, e.name)
-      // Exclusions are DIRECTORIES, and this walk built `full` out of real
+      // Name-only roots are DIRECTORIES, and this walk built `full` out of real
       // `readdir` entries — so there is no symlink or alias to see through here,
       // and the cheap key is the correct comparison. Measured: doing the full
-      // `pathContains()` per entry instead cost 1.1s per snapshot against 0.2s,
-      // because it ran `fs.realpathSync` on all ~60k entries.
-      if (e.isDirectory() && exclusionKeys.has(containmentKey(full, false))) continue
+      // identity check per entry instead cost 5x per snapshot, because it
+      // stat-walked all ~60k entries' ancestries.
+      const entryNameOnly = nameOnly || (e.isDirectory() && nameOnlyKeys.has(containmentKey(full, false)))
+      if (entryNameOnly) {
+        // The legitimate writer's transient (`<file>.json.tmp`, write+rename):
+        // present in one snapshot and gone in the next on every live session.
+        if (e.name.endsWith('.tmp')) continue
+        spend()
+        out.push(`${full}\t${NAME_ONLY}`)
+        if (e.isDirectory()) walk(full, true)
+        continue
+      }
       try {
         const st = fs.lstatSync(full)
         spend()
@@ -243,14 +298,14 @@ function walkSurface(root, exclusionKeys, budget) {
         // Unbounded on purpose (S12) — the budget, not the depth, is the bound.
         // `isDirectory()` is false for a symlink-to-directory, so this cannot
         // follow a link out of the surface and into a cycle.
-        if (e.isDirectory()) walk(full)
+        if (e.isDirectory()) walk(full, false)
       } catch (err) {
         if (err instanceof BudgetExhausted) throw err
         /* raced away; its absence shows up as a removed line, which is the report */
       }
     }
   }
-  walk(root)
+  walk(root, false)
   return out
 }
 
@@ -259,13 +314,13 @@ function snapshotRealHome() {
   const perSurface = {}
   const detail = []
   // Normalised once, not per entry — see walkSurface().
-  const exclusionKeys = new Set(tripwireExclusions().map((x) => containmentKey(x, false)))
+  const nameOnlyKeys = new Set(tripwireNameOnlySubtrees().map((x) => containmentKey(x, false)))
   const budget = { left: MAX_ENTRIES }
   let truncated
   for (const surface of tripwireSurfaces()) {
     let lines
     try {
-      lines = walkSurface(surface, exclusionKeys, budget)
+      lines = walkSurface(surface, nameOnlyKeys, budget)
     } catch (err) {
       if (!(err instanceof BudgetExhausted)) throw err
       truncated =
@@ -295,11 +350,13 @@ function diffSnapshots(before, after) {
       new Set(snap.detail.filter((l) => l.startsWith(`${surface}\t`) || l.startsWith(surface + path.sep)))
     const bs = pick(before)
     const as = pick(after)
-    drifted.push({
-      surface,
-      added: [...as].filter((l) => !bs.has(l)).sort(),
-      removed: [...bs].filter((l) => !as.has(l)).sort(),
-    })
+    // Name-only ADDITIONS are the legitimate writer's behaviour (a new project's
+    // first snapshot) and are not drift; name-only REMOVALS are exactly what the
+    // legitimate writer never does, and stay in. See tripwireNameOnlySubtrees().
+    const added = [...as].filter((l) => !bs.has(l) && !l.endsWith(`\t${NAME_ONLY}`)).sort()
+    const removed = [...bs].filter((l) => !as.has(l)).sort()
+    if (added.length === 0 && removed.length === 0) continue
+    drifted.push({ surface, added, removed })
   }
   return drifted
 }
@@ -349,8 +406,21 @@ function formatDrift(drift, culprit) {
 const tripwireDisabled = () => process.env.PRODUCTUNE_TRIPWIRE === 'off'
 
 const BASELINE_DIR = path.join(os.tmpdir(), 'productune-tripwire')
-/** Where the previous COMPLETED run left its final fingerprint (S13). */
-const LAST_RUN_FILE = path.join(BASELINE_DIR, 'last-run.json')
+
+/**
+ * Where the previous COMPLETED run left its final fingerprint (S13) — keyed by
+ * the real home it fingerprints. T-450 R3: this used to be ONE shared file, so
+ * every nested fixture run (whose "real home" is a decoy) overwrote the host's
+ * between-run record on every suite run, and the S13 warning — the only
+ * mechanism that can surface an N5-shaped late landing — was silently reset by
+ * the very suite it protects. Keyed per home, a decoy's record and the
+ * developer's record no longer share a slot; it is also what makes the N5
+ * reduced-form fixture in the guard spec deterministic.
+ */
+function lastRunFile() {
+  const key = crypto.createHash('sha1').update(realHome()).digest('hex').slice(0, 16)
+  return path.join(BASELINE_DIR, `last-run-${key}.json`)
+}
 
 /**
  * The baseline file for this run.
@@ -446,8 +516,8 @@ function armTripwire(label) {
  */
 function warnIfDriftedSinceLastRun(current) {
   try {
-    if (!fs.existsSync(LAST_RUN_FILE)) return
-    const previous = JSON.parse(fs.readFileSync(LAST_RUN_FILE, 'utf-8'))
+    if (!fs.existsSync(lastRunFile())) return
+    const previous = JSON.parse(fs.readFileSync(lastRunFile(), 'utf-8'))
     if (previous.realHome !== current.realHome) return
     const drift = diffSnapshots(previous, current)
     if (drift.length === 0) return
@@ -473,7 +543,7 @@ function sweepStaleBaselines() {
   const MAX_AGE_MS = 6 * 60 * 60 * 1000
   try {
     for (const name of fs.readdirSync(BASELINE_DIR)) {
-      if (name === path.basename(LAST_RUN_FILE)) continue
+      if (name.startsWith('last-run-')) continue
       const full = path.join(BASELINE_DIR, name)
       try {
         if (Date.now() - fs.statSync(full).mtimeMs > MAX_AGE_MS) fs.rmSync(full, { force: true })
@@ -528,7 +598,7 @@ function verifyTripwire(options = {}) {
     // Persist the final state for the next run's warning, then drop the baseline.
     try {
       fs.mkdirSync(BASELINE_DIR, { recursive: true })
-      fs.writeFileSync(LAST_RUN_FILE, JSON.stringify(after))
+      fs.writeFileSync(lastRunFile(), JSON.stringify(after))
       fs.rmSync(file, { force: true })
     } catch {
       /* housekeeping only */
@@ -556,7 +626,7 @@ function assertTripwireClean(where, options = {}) {
 }
 
 module.exports = {
-  tripwireExclusions,
+  tripwireNameOnlySubtrees,
   tripwireSurfaces,
   snapshotRealHome,
   diffSnapshots,

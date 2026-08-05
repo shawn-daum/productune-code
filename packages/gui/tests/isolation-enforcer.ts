@@ -24,12 +24,19 @@
  *  2. Prevention stopped being the floor. Three rounds of adding chokepoints
  *     produced three rounds of new escapes, because "every way to reach the
  *     launcher" is not an enumerable set. The floor is now DETECTION:
- *     `real-home-tripwire.ts`, registered as a Playwright REPORTER so it
- *     fingerprints the real home around every test in the run. If the real home
- *     changes during a run, the run goes red — whatever shape did it, in whatever
- *     realm, through an API nobody has thought of yet. Everything in
- *     `isolation-rules.cjs` is a layer on top of that, valuable because it fails
- *     early and names the rule, not because it is complete.
+ *     `real-home-tripwire.ts` — ARMED at config module scope in every runner
+ *     (earlier than globalSetup, S3), with the VERDICT where no `--reporter`
+ *     flag can reach (Playwright `globalTeardown`, vitest `globalSetup`
+ *     teardown; S4). The Playwright reporter is ATTRIBUTION only — it names the
+ *     test a drift is blamed on, and losing it to a flag loses the name, never
+ *     the verdict. (T-450 R3 / F6: this paragraph used to say the floor was
+ *     "registered as a Playwright REPORTER", which described the R1 design QA
+ *     broke — the third stale boundary claim found in the file whose job is
+ *     fixing stale boundary claims.) If the real home changes during a run, the
+ *     run goes red — whatever shape did it, in whatever realm, through an API
+ *     nobody has thought of yet. Everything in `isolation-rules.cjs` is a layer
+ *     on top of that, valuable because it fails early and names the rule, not
+ *     because it is complete.
  *
  * ── the two boundary claims T-442 got wrong, corrected ──────────────────────
  *
@@ -99,9 +106,22 @@
  *        (realpath match, byte-size match) against the known Electron binaries, so
  *        the binary's NAME is no longer what decides.
  *
- *    Residual, still honest: a renamed copy that is neither size-identical to a
- *    known Electron binary nor passed `--user-data-dir` is not recognised. Its
- *    userData writes are what the tripwire fingerprints.
+ *    T-450 R3 / F4 — R2's statement of the residual was itself understated, and
+ *    QA measured the gap: a shape the gate misses skips rule 2 AND THE WINDOW
+ *    RULE, because both sit behind the same gate. On the host a window IS the
+ *    incident — detection can report the userData writes afterwards but cannot
+ *    undo a window or return stolen focus. The gate therefore grew signal 6
+ *    (`../Frameworks/Electron Framework.framework` next to the binary — the
+ *    marker dyld structurally requires for the copy to BOOT at all), which
+ *    closes the size-altered-copy shape QA demonstrated.
+ *
+ *    Residual, still honest and now narrower: a copy whose load commands were
+ *    rewritten to a relocated/renamed framework (install_name_tool — deliberate
+ *    binary patching, not `cp`) is not recognised by any signal. Blast radius:
+ *    on the VM, an unsandboxed real-userData boot whose writes the tripwire
+ *    reddens after the fact; on the host, ADDITIONALLY a real window opens
+ *    before anything can refuse it — the one part of the damage no detection
+ *    layer can undo.
  */
 
 /* eslint-disable @typescript-eslint/no-var-requires */
@@ -116,6 +136,7 @@ export interface IsolationRules {
   insideRealHome(p: string | undefined | null): boolean
   resolveRealPath(p: string): string
   containmentKey(p: string, followLinks?: boolean): string
+  fileIdentity(p: string): string | null
   pathContains(ancestor: string, p: string | undefined | null): boolean
   assertNotForbiddenHome(candidate: string | undefined, forbidden: string | undefined, label: string): void
   FS_CASE_INSENSITIVE: boolean
@@ -141,9 +162,12 @@ export const realHome = (): string => rules.realHome()
 export const protectedRealPaths = (): string[] => rules.protectedRealPaths()
 export const insideRealHome = (p: string | undefined | null): boolean => rules.insideRealHome(p)
 export const resolveRealPath = (p: string): string => rules.resolveRealPath(p)
-/** THE containment normalisation helper. Every layer uses this one — see below. */
+/** Cheap literal-path key — for readdir-built paths ONLY, never a containment decision. */
 export const containmentKey = (p: string, followLinks?: boolean): string =>
   rules.containmentKey(p, followLinks)
+/** `dev:ino` of whatever `p` names after full kernel resolution, or null. */
+export const fileIdentity = (p: string): string | null => rules.fileIdentity(p)
+/** THE containment predicate — filesystem identity, one implementation, every layer. */
 export const pathContains = (ancestor: string, p: string | undefined | null): boolean =>
   rules.pathContains(ancestor, p)
 /**

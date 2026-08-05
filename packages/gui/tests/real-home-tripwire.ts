@@ -80,7 +80,7 @@ export interface VerifyOptions {
 }
 
 interface TripwireImpl {
-  tripwireExclusions(): string[]
+  tripwireNameOnlySubtrees(): string[]
   tripwireSurfaces(): string[]
   snapshotRealHome(): HomeSnapshot
   diffSnapshots(before: HomeSnapshot, after: HomeSnapshot): SurfaceDrift[]
@@ -94,7 +94,13 @@ interface TripwireImpl {
 
 const impl = require('./real-home-tripwire.cjs') as TripwireImpl
 
-export const tripwireExclusions = (): string[] => impl.tripwireExclusions()
+/**
+ * Subtrees fingerprinted in NAME-ONLY mode (T-450 R3 / F3): removals and renames
+ * are drift, size/mtime and additions are not — the shape of the one legitimate
+ * writer, `packages/core/src/git-workflow/autosave.ts`. A full exclusion here was
+ * QA R2's laundering channel.
+ */
+export const tripwireNameOnlySubtrees = (): string[] => impl.tripwireNameOnlySubtrees()
 export const tripwireSurfaces = (): string[] => impl.tripwireSurfaces()
 export const snapshotRealHome = (): HomeSnapshot => impl.snapshotRealHome()
 export const diffSnapshots = (before: HomeSnapshot, after: HomeSnapshot): SurfaceDrift[] =>
