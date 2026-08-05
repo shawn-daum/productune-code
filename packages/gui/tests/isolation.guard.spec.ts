@@ -58,6 +58,7 @@ import {
   assertNotForbiddenHome,
   WINDOW_TAG,
   __enterLaunchScopeForTest,
+  fileIdentity,
   insideRealHome,
   looksLikeAppLaunch,
   looksLikeNodeChild,
@@ -78,10 +79,11 @@ import {
 import {
   diffSnapshots,
   snapshotRealHome,
-  tripwireExclusions,
+  tripwireNameOnlySubtrees,
   tripwireSurfaces,
   verifyTripwire,
 } from './real-home-tripwire'
+import type { HomeSnapshot } from './real-home-tripwire'
 
 const TESTS_DIR = __dirname
 const GUI_ROOT = path.resolve(__dirname, '..')
@@ -338,24 +340,41 @@ test('T-450: the tripwire covers the product write surfaces, and userData is one
     'both the packaged and the dev-layout bundle identifier must be covered',
   ).toBe(2)
 
-  // T-450 R2 / S11 — the other refuted premise. `~/.productune` stays covered, but
-  // this one leaf is excluded: measured over 300s during a LIVE agent session (the
-  // only condition under which this suite runs), 4 of the 45 entries under
-  // `~/.productune` changed and all 4 were this subtree. R1's "zero churn" figure
-  // came from an IDLE measurement, which was the wrong test.
-  expect(tripwireExclusions()).toEqual([
+  // T-450 R2 / S11 → R3 / F3. R2 EXCLUDED this churning leaf outright, and QA R2
+  // showed a full exclusion is a laundering channel: per-file deletion of the
+  // user's recovery snapshots was invisible while the run stayed green. It is now
+  // fingerprinted in NAME-ONLY mode — present by path, no size/mtime signal,
+  // additions ignored by the diff — so removals and renames are drift while the
+  // legitimate writer's churn (in-place rewrites, new snapshots, `*.tmp`) is not.
+  // The end-to-end proof runs against a decoy in its own test below.
+  expect(tripwireNameOnlySubtrees()).toEqual([
     path.join(REAL_HOME, '.productune', 'state', 'autosave-snapshots'),
   ])
+  const snap0 = snapshotRealHome()
   expect(
-    snapshotRealHome().detail.some((l) => l.includes('autosave-snapshots')),
-    'the excluded subtree must not appear in the fingerprint at all',
-  ).toBe(false)
-  // …and the exclusion must be a LEAF, not the whole surface, or the S11 fix would
-  // have thrown away the detection this ticket exists for.
-  expect(
-    tripwireExclusions().every((x) => x.startsWith(path.join(REAL_HOME, '.productune') + path.sep)),
-    'an exclusion must be a subtree of a covered surface, never a surface',
+    snap0.detail
+      .filter((l) => l.includes(`autosave-snapshots${path.sep}`))
+      .every((l) => l.endsWith('\tname-only')),
+    'entries under the churning subtree must carry no size/mtime signal — that signal is what reddened legitimate runs',
   ).toBe(true)
+  // …and the relaxation must be a LEAF, not the whole surface, or the S11 fix
+  // would have thrown away the detection this ticket exists for.
+  expect(
+    tripwireNameOnlySubtrees().every((x) => x.startsWith(path.join(REAL_HOME, '.productune') + path.sep)),
+    'a name-only subtree must be a leaf of a covered surface, never a surface',
+  ).toBe(true)
+
+  // T-450 R3 / F2. A FILE-shaped surface records size+mtime, not `exists=` alone.
+  // QA R2: both plists exist on the real machine, so `exists=true` never changed
+  // and every NSUserDefaults write was invisible — the surface was watched in
+  // name only, and the R2 spec only asserted list MEMBERSHIP, which is why it
+  // passed. Mutation-turns-red is asserted end-to-end against a decoy below.
+  for (const plist of surfaces.filter((s) => s.endsWith('.plist'))) {
+    if (!fs.existsSync(plist)) continue // creation-from-absent is in the decoy test
+    const line = snap0.detail.find((l) => l.startsWith(`${plist}\t`))
+    expect(line, `the file surface ${plist} must have a detail line`).toBeTruthy()
+    expect(line, 'a file surface must record size+mtime, never bare exists=').toMatch(/\t\d+\t[\d.]+$/)
+  }
 
   // The acceptance names userData specifically: it is the third real-home surface,
   // HOME cannot move it, and it carries the single-instance-lock edge.
@@ -404,6 +423,13 @@ interface NestedOpts {
   extraArgs?: string[]
   /** Omit the globalTeardown from the nested config (to prove it is the floor). */
   omitTeardown?: boolean
+  /**
+   * Reuse a home root across nested runs. The N5 reduced-form fixture needs run 2
+   * to arm against the SAME decoy real home run 1 fingerprinted, or the
+   * between-run warning it demonstrates would have nothing to compare. The caller
+   * owns the directory's lifetime; `cleanup()` then removes only the code root.
+   */
+  reuseHomeRoot?: string
 }
 
 function runNestedSuite(opts: NestedOpts): {
@@ -432,9 +458,10 @@ function runNestedSuite(opts: NestedOpts): {
     if (entry.startsWith('.t450-nested-')) fs.rmSync(path.join(GUI_ROOT, entry), { recursive: true, force: true })
   }
   const codeRoot = fs.mkdtempSync(path.join(GUI_ROOT, '.t450-nested-'))
-  const homeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-tripwire-'))
+  const homeRoot = opts.reuseHomeRoot ?? fs.mkdtempSync(path.join(os.tmpdir(), 'productune-tripwire-'))
   const cleanup = (): void => {
-    for (const d of [codeRoot, homeRoot]) fs.rmSync(d, { recursive: true, force: true })
+    const owned = opts.reuseHomeRoot ? [codeRoot] : [codeRoot, homeRoot]
+    for (const d of owned) fs.rmSync(d, { recursive: true, force: true })
   }
   const decoyHome = path.join(homeRoot, 'decoy-real-home')
   const nestedHome = path.join(homeRoot, 'nested-sandbox-home')
@@ -442,9 +469,12 @@ function runNestedSuite(opts: NestedOpts): {
   for (const d of [specDir, nestedHome, path.join(decoyHome, '.productune'), path.join(decoyHome, '.prdt')]) {
     fs.mkdirSync(d, { recursive: true })
   }
-  // Seed the decoy so the baseline is a real, non-empty fingerprint.
-  fs.writeFileSync(path.join(decoyHome, '.productune', 'settings.json'), JSON.stringify({ seeded: true }))
-  fs.writeFileSync(path.join(decoyHome, '.prdt', 'doctrine.md'), '# seed\n')
+  // Seed the decoy so the baseline is a real, non-empty fingerprint. Idempotent,
+  // so a reused decoy keeps whatever an earlier run landed in it.
+  const settingsSeed = path.join(decoyHome, '.productune', 'settings.json')
+  if (!fs.existsSync(settingsSeed)) fs.writeFileSync(settingsSeed, JSON.stringify({ seeded: true }))
+  const doctrineSeed = path.join(decoyHome, '.prdt', 'doctrine.md')
+  if (!fs.existsSync(doctrineSeed)) fs.writeFileSync(doctrineSeed, '# seed\n')
 
   fs.writeFileSync(path.join(specDir, 'nested.spec.js'), opts.specSource)
   const reporter = path.join(TESTS_DIR, 'real-home-tripwire-reporter.ts')
@@ -957,6 +987,142 @@ test('T-450 S1 (CASE): a case variant of the real home no longer launders it', a
   expect(diffSnapshots(before, snapshotRealHome()), 'the S1 rows mutated the real home').toEqual([])
 })
 
+test('T-450 F1 (FIRMLINK): containment identity is the filesystem\'s, so the alias CLASS is closed', async () => {
+  // ── THE FIFTH ROUND OF THE SAME META-DEFECT, and where its shape changed ────
+  //
+  // R2 genuinely collected normalisation into one helper — every layer shared it,
+  // QA confirmed. But the helper still ENUMERATED alias mechanisms (realpath,
+  // case fold, NFC), and QA's fifth round arrived with the enumeration's next
+  // missing member: the APFS FIRMLINK. `/System/Volumes/Data/Users/<u>` and
+  // `/Users/<u>` are ONE directory that `realpathSync` does not fold, so
+  // `containmentKey()` produced two different strings — rules 1, 2 and 4 fell,
+  // and `assertNotForbiddenHome`, added as incident #4's re-occurrence guard,
+  // answered NOT-REFUSED. On the host the window rule happened to catch the
+  // launch shape; under PRODUCTUNE_ALLOW_WINDOWS=1 — the VM, the only place real
+  // launches happen — nothing fired at all.
+  //
+  // The fix is NOT "add firmlinks to the list" (that is the sixth round waiting
+  // to happen). `pathContains` now decides by stat(2) identity — (dev, ino) —
+  // for everything that exists: two spellings of one directory cannot disagree
+  // about its inode, whatever alias mechanism produced them, including one
+  // nobody has named yet. String comparison survives ONLY for path components
+  // that do not exist yet, which cannot be aliases of anything (no inode to
+  // share); that remainder is stated in the CONTAINMENT section of
+  // isolation-rules.cjs rather than left as an implicit fallback.
+  const before = snapshotRealHome()
+  const FIRM = path.join('/System/Volumes/Data', REAL_HOME)
+
+  // The mechanism, re-measured with QA's own evidence — the fix is gated on the
+  // measurement, not on an assumption about macOS layouts.
+  const a = fs.statSync(REAL_HOME)
+  const b = fs.statSync(FIRM)
+  expect(a.ino === b.ino && a.dev === b.dev, 'F1: the firmlink spelling must be the SAME directory').toBe(true)
+  expect(resolveRealPath(FIRM), 'realpath does NOT fold a firmlink — the mechanism').toBe(FIRM)
+  expect(fileIdentity(FIRM), 'one directory, one identity — whatever the spelling').toBe(fileIdentity(REAL_HOME))
+
+  // The predicate, existing and not-yet-existing, plus the combination shape:
+  const firmUserData = path.join(FIRM, 'Library', 'Application Support', 'productune')
+  expect(insideRealHome(FIRM), 'F1: the firmlink home must be inside').toBe(true)
+  expect(insideRealHome(firmUserData), 'F1: the firmlink userData must be inside').toBe(true)
+  expect(
+    insideRealHome(path.join(firmUserData, 'does', 'not', 'exist', 'yet')),
+    'F1: a not-yet-existing tail under the firmlink must be inside',
+  ).toBe(true)
+  expect(insideRealHome(FIRM.toLowerCase()), 'F1: firmlink AND case, combined').toBe(true)
+  // …and a firmlink spelling of a non-home path stays outside, or the predicate
+  // just says yes to every /System/Volumes/Data path.
+  expect(
+    insideRealHome(path.join('/System/Volumes/Data', fs.realpathSync(os.tmpdir()))),
+    'a firmlink spelling of a NON-home path must stay outside',
+  ).toBe(false)
+
+  // ONE IMPLEMENTATION, EVERY LAYER — the same three layers S1 pins, same input.
+  expect(pathContains(REAL_HOME, FIRM), 'layer: the shared predicate').toBe(true)
+  expect(() => assertOutsideRealHome(FIRM, 'harness layer'), 'layer: the harness').toThrow(/REAL home/)
+  expect(
+    () => assertNotForbiddenHome(FIRM, REAL_HOME, 'fixture layer'),
+    'layer: the incident-#4 guard — the one QA measured NOT-REFUSED in R2',
+  ).toThrow(/REFUSING to run/)
+
+  // The launcher. Rule 2 fires BEFORE the window rule, so this row proves the
+  // same thing on the host and on the VM — the environment where R2's rule 2
+  // did not fire at all.
+  const msg = await assertBlocked({
+    name: 'F1 — --user-data-dir at the real userData, spelled through the firmlink',
+    run: () =>
+      _electron.launch({
+        args: [MAIN, `--user-data-dir=${firmUserData}`],
+        env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+      }),
+    expect: /--user-data-dir inside the real home/,
+  })
+  const homeMsg = await assertBlocked({
+    name: 'F1b — HOME spelled through the firmlink',
+    run: () =>
+      _electron.launch({
+        args: [MAIN, `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'productune-udd-'))}`],
+        env: { ...process.env, HOME: FIRM } as Record<string, string> ,
+      }),
+    expect: /HOME inside the real home/,
+  })
+  console.log(`T-450 F1 (firmlink laundering — identity, not spelling)\n${msg}\n${homeMsg}`)
+  expect(diffSnapshots(before, snapshotRealHome()), 'the F1 rows mutated the real home').toEqual([])
+})
+
+test('T-450 R3 INVENTED: `link/..` laundering — lexical dot-collapse vs the kernel', async () => {
+  // The acceptance requires a shape NOBODY has raised, invented this round.
+  //
+  // MEASURED mechanism: `path.resolve` collapses `..` TEXTUALLY before any
+  // filesystem call, and Node's JS `fs.realpathSync` does the same internally —
+  // while the kernel resolves the symlink FIRST. So with `lnk → <real
+  // home>/Library`, the string layers all see `<tmp>/.productune` for
+  // `<tmp>/lnk/../.productune`, and the kernel sees the real
+  // `~/.productune`. Every R2 predicate — realpath'd, case-folded, NFC'd —
+  // compared clean, because they all started from the lexical collapse. stat(2)
+  // identity does not.
+  const before = snapshotRealHome()
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-dotdot-'))
+  const lnk = path.join(root, 'lnk')
+  fs.symlinkSync(path.join(REAL_HOME, 'Library'), lnk)
+  const sep = path.sep
+  const evil = `${lnk}${sep}..${sep}.productune` // NOT path.join — join collapses the dots
+  try {
+    // The two facts that make it an escape from every string predicate:
+    expect(
+      path.resolve(evil).startsWith(REAL_HOME),
+      'lexically the path never touches the real home — that is the laundering',
+    ).toBe(false)
+    expect(
+      fileIdentity(`${lnk}${sep}..`),
+      'the kernel resolves the symlink BEFORE the dots — this IS the real home',
+    ).toBe(fileIdentity(REAL_HOME))
+
+    // The predicate sees through it — existing, and with a not-yet-existing tail.
+    expect(insideRealHome(evil), 'INVENTED: link/.. laundering must be inside').toBe(true)
+    expect(insideRealHome(`${evil}${sep}not${sep}yet`), '…with a not-yet-existing tail too').toBe(true)
+    expect(
+      () => assertNotForbiddenHome(`${lnk}${sep}..`, REAL_HOME, 'fixture layer'),
+      'the fixture guard must refuse it too — one implementation, every layer',
+    ).toThrow(/REFUSING to run/)
+    // Negative control: dots that stay outside stay outside.
+    expect(insideRealHome(path.join(root, 'a', '..', 'b'))).toBe(false)
+
+    const msg = await assertBlocked({
+      name: 'INVENTED — --user-data-dir through link/.. into the real userData',
+      run: () =>
+        _electron.launch({
+          args: [MAIN, `--user-data-dir=${lnk}${sep}..${sep}Library${sep}Application Support${sep}productune`],
+          env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as Record<string, string>,
+        }),
+      expect: /--user-data-dir inside the real home/,
+    })
+    console.log(`T-450 INVENTED (link/.. dot-collapse laundering)\n${msg}`)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(before, snapshotRealHome()), 'the invented-shape rows mutated the real home').toEqual([])
+})
+
 test('T-450 S12: an in-place edit deeper than the old depth limit is visible', () => {
   // The old walk stopped at depth 4, so an IN-PLACE edit below that changed the
   // file's size and mtime with no line in the fingerprint covering it. Depth was
@@ -1019,6 +1185,134 @@ test('T-450 S12: an in-place edit deeper than the old depth limit is visible', (
     fs.rmSync(decoy, { recursive: true, force: true })
   }
   expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the S12 fixture leaked out of the decoy').toEqual([])
+})
+
+test('T-450 F2+F3: file surfaces DETECT and the name-only subtree closes the laundering channel', () => {
+  // Two QA R2 findings, one decoy, because they are the same defect from two
+  // sides: what the fingerprint RECORDS decides what the diff can see.
+  //
+  //   F2  `walkSurface` recorded `exists=` alone for a file-shaped surface, so
+  //       NSUserDefaults writes to the two existing plists were wholly invisible
+  //       — and the R2 spec asserted list MEMBERSHIP, not detection, which is why
+  //       it passed. This test asserts DETECTION: mutating the surface turns the
+  //       diff red.
+  //   F3  excluding `~/.productune/state/autosave-snapshots` made in-place
+  //       corruption and per-file DELETION of real recovery snapshots invisible.
+  //       R2's defence ("a launch with the real HOME writes settings.json too")
+  //       was about launches; the tripwire's own purpose #2 is a direct fs write
+  //       with no launch. Now: name-only fingerprint — deletions and renames are
+  //       drift, the legitimate writer's churn is not.
+  const guardBefore = snapshotRealHome()
+  const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-surface-'))
+  const prefDir = path.join(decoy, 'Library', 'Preferences')
+  const snapDir = path.join(decoy, '.productune', 'state', 'autosave-snapshots')
+  const devPlist = path.join(prefDir, 'com.github.Electron.plist')
+  const pkgPlist = path.join(prefDir, 'com.productune.gui.plist')
+
+  // `realHome()` is frozen per realm, so the decoy is fingerprinted from a child
+  // — the same route a real nested run takes (see S12 above).
+  const probe = (): HomeSnapshot =>
+    JSON.parse(
+      cp.execFileSync(
+        process.execPath,
+        [
+          '-e',
+          `process.stdout.write(JSON.stringify(require(process.argv[1]).snapshotRealHome()))`,
+          path.join(TESTS_DIR, 'real-home-tripwire.cjs'),
+        ],
+        {
+          encoding: 'utf-8',
+          timeout: 60_000,
+          env: { ...process.env, PRODUCTUNE_REAL_HOME: decoy, HOME: DEFAULT_SANDBOX_HOME },
+        },
+      ).trim(),
+    ) as HomeSnapshot
+
+  try {
+    fs.mkdirSync(prefDir, { recursive: true })
+    fs.mkdirSync(snapDir, { recursive: true })
+    fs.writeFileSync(path.join(decoy, '.productune', 'settings.json'), '{}')
+    fs.writeFileSync(devPlist, 'AAAA') // the dev-layout id — exists, like on the real machine
+    fs.writeFileSync(path.join(snapDir, 'a.json'), JSON.stringify({ v: 1 }))
+    fs.writeFileSync(path.join(snapDir, 'b.json'), JSON.stringify({ v: 1 }))
+    const s1 = probe()
+
+    // F2 — recording: a file surface carries size+mtime, never bare `exists=`.
+    const plistLine = s1.detail.find((l) => l.startsWith(`${devPlist}\t`))
+    expect(plistLine, 'the plist surface must be in the fingerprint').toBeTruthy()
+    expect(plistLine, 'F2: a file surface records size+mtime').toMatch(/\t\d+\t[\d.]+$/)
+
+    // F2 — detection, worst case on purpose: an in-place rewrite of the SAME
+    // byte length, so mtime alone must carry it (NSUserDefaults rewrites are not
+    // guaranteed to change the size).
+    fs.writeFileSync(devPlist, 'BBBB')
+    const s2 = probe()
+    expect(
+      diffSnapshots(s1, s2).some((d) => d.surface === devPlist),
+      'F2: a same-size in-place plist write must turn the diff red',
+    ).toBe(true)
+
+    // F2 — the packaged bundle id: absent (as on a machine that never ran a
+    // packaged build), then CREATED by a first NSUserDefaults write. `exists=false`
+    // → size line is drift, so creation is detected too.
+    expect(s2.detail).toContain(`${pkgPlist}\texists=false`)
+    fs.writeFileSync(pkgPlist, 'C')
+    const s3 = probe()
+    expect(
+      diffSnapshots(s2, s3).some((d) => d.surface === pkgPlist),
+      'F2: the packaged-id plist appearing must turn the diff red',
+    ).toBe(true)
+
+    // F3 — the legitimate writer's whole repertoire is invisible: an in-place
+    // rewrite (size change included), a NEW snapshot, and the tmp+rename
+    // transient. This is what a live agent session does during every run
+    // (measured, S11), and what must NOT redden it.
+    fs.writeFileSync(path.join(snapDir, 'a.json'), JSON.stringify({ v: 2, pad: 'x'.repeat(64) }))
+    fs.writeFileSync(path.join(snapDir, 'c.json'), '{}')
+    fs.writeFileSync(path.join(snapDir, 'd.json.tmp'), 'partial')
+    const s4 = probe()
+    expect(
+      diffSnapshots(s3, s4),
+      'F3: the legitimate writer\'s churn (rewrite + add + tmp) must NOT be drift',
+    ).toEqual([])
+
+    // F3 — what the legitimate writer NEVER does is exactly what turns red:
+    fs.rmSync(path.join(snapDir, 'b.json'))
+    const s5 = probe()
+    const d5 = diffSnapshots(s4, s5)
+    expect(
+      d5.length === 1 && d5[0].removed.some((l) => l.includes('b.json')),
+      `F3: deleting one recovery snapshot must be drift. got ${JSON.stringify(d5)}`,
+    ).toBe(true)
+
+    fs.rmSync(snapDir, { recursive: true, force: true })
+    const s6 = probe()
+    expect(
+      diffSnapshots(s5, s6).some((d) => d.removed.length > 0),
+      'F3: deleting the whole subtree must be drift',
+    ).toBe(true)
+
+    // …and the relaxation is scoped to the leaf: a sibling file keeps full fidelity.
+    fs.writeFileSync(path.join(decoy, '.productune', 'settings.json'), JSON.stringify({ corrupt: 1 }))
+    const s7 = probe()
+    expect(
+      diffSnapshots(s6, s7).some((d) => d.surface === path.join(decoy, '.productune')),
+      'a settings.json rewrite outside the name-only leaf must still be drift',
+    ).toBe(true)
+
+    console.log(
+      'T-450 F2+F3 (surface fidelity, decoy-proven)\n' +
+        '  F2 red:   same-size in-place plist write (mtime), packaged-id plist creation\n' +
+        '  F3 red:   snapshot deletion, subtree deletion; green: rewrite/add/tmp churn\n' +
+        '  boundary: in-place snapshot corruption is indistinguishable from the\n' +
+        '            legitimate writer\'s own rewrite — stated in real-home-tripwire.cjs\n' +
+        '  unverified for QA\'s packaged leg: a REAL packaged-bundle NSUserDefaults\n' +
+        '            write on the VM (needs dist:mac; recording+diff are id-agnostic)',
+    )
+  } finally {
+    fs.rmSync(decoy, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the F2/F3 fixture leaked out of the decoy').toEqual([])
 })
 
 test('T-450 S13: detached children are refused, so a child cannot outlive the run by option', () => {
@@ -1702,6 +1996,25 @@ test('T-450 NEW N7: a realm that cannot identify the real home fails closed', ()
       ).toContain('cannot determine the real home')
     }
 
+    // T-450 R3 / F5 — the S1 defect in a THIRD place: the fail-closed check used
+    // to match sandbox roots by `os.tmpdir()` PREFIX, and `os.tmpdir()` answers
+    // `/tmp` in a realm without TMPDIR (measured) while the sandboxes live under
+    // `/var/folders/…` — so a child spawned without TMPDIR failed to match,
+    // recorded the sandbox as the real home, and every rule reopened as a no-op.
+    // Recognition is now by path SEGMENT, which travels with the path itself and
+    // needs nothing from the environment.
+    const savedTmpdir = process.env.TMPDIR
+    try {
+      delete process.env.TMPDIR
+      expect(
+        loadFresh(path.join(SANDBOX_ROOT, 'some-worker-home'), false),
+        'F5: with TMPDIR unset the sandbox HOME must STILL be recognised and refused',
+      ).toContain('cannot determine the real home')
+    } finally {
+      if (savedTmpdir === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = savedTmpdir
+    }
+
     // …and with the marker present it loads normally, or the check would just be
     // "the rules never load in a sandbox".
     expect(
@@ -1737,6 +2050,7 @@ test('T-450 NEW N7: a realm that cannot identify the real home fails closed', ()
     'T-450 NEW N7 (fail-closed real-home detection)\n' +
       '  refused: HOME inside the playwright sandbox root, no marker\n' +
       '  refused: HOME inside the VITEST sandbox root, no marker (the new one)\n' +
+      '  refused: same with TMPDIR unset (F5 — path-segment match, not tmpdir prefix)\n' +
       '  loaded:  marker present\n' +
       '  and:     every spawned child is handed the marker, so the case is unreachable here',
   )
@@ -1837,8 +2151,101 @@ test('T-450 NEW N5 BOUNDARY: a delayed non-node grandchild escapes BOTH layers',
     'T-450 NEW N5 (delayed non-node grandchild) — OPEN BOUNDARY\n' +
       '  prevention: escapes (no app-shape in argv, HOME legitimately sandboxed, non-node realm)\n' +
       '  detection:  escapes (mutation lands after the run’s final fingerprint)\n' +
-      '  blast radius: real userData + single-instance lock of the developer’s running app',
+      '  blast radius: real userData + single-instance lock of the developer’s running app\n' +
+      '  demonstrated: the reduced form, end-to-end — see the next test',
   )
+})
+
+test('T-450 N5 REDUCED FORM demonstrated: invisible to its own run, surfaced by the next run\'s warning', () => {
+  // QA R2 could not demonstrate this because their harness could not background
+  // cleanly — the hazard lives in quoting `sh -c '… &'`. Two changes make it
+  // deterministic here: the command travels through ENV VARS instead of quoted
+  // interpolation, and the backgrounded writer waits for a FLAG FILE that this
+  // test creates only AFTER the nested run has exited — so the write provably
+  // lands after that run's final fingerprint, not on a sleep race.
+  //
+  // What this proves, in order:
+  //   1. `sh -c '… &'` still slips past prevention (the S13 fix refuses
+  //      `detached: true`, the ordinary route; the shell ampersand is the
+  //      deliberate-effort route that keeps N5 a boundary);
+  //   2. the run it escaped from is GREEN and honestly reports "unchanged" —
+  //      the write had not happened yet, which is WHY no run-scoped mechanism
+  //      can close N5;
+  //   3. the NEXT run's between-run warning (S13, adopted at QA's prompting in
+  //      R2) surfaces exactly this landing — the mechanism that would have
+  //      surfaced incidents ② and ③ of this ticket's lineage, now measured
+  //      instead of argued.
+  test.setTimeout(300_000)
+  const guardBefore = snapshotRealHome()
+  const homeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-n5-'))
+  const flag = path.join(homeRoot, 'land-now')
+  const runs: Array<{ cleanup: () => void }> = []
+  try {
+    const LATE_SPEC = `
+const cp = require('child_process')
+const path = require('path')
+const { test, expect } = require('@playwright/test')
+
+test('spawns a backgrounded writer and finishes clean', () => {
+${REFUSAL_GUARD}
+  const target = path.join(decoy, '.productune', 'late-landing-write')
+  // NOT detached (that is refused, S13). A shell '&' orphan survives the run —
+  // the exact N5 reduced form. The writer spins on the flag file, capped at 60s
+  // so a failed outer test cannot leave an immortal orphan.
+  cp.spawn('/bin/sh', ['-c',
+    'i=0; until [ -f "$T450_FLAG" ] || [ "$i" -ge 600 ]; do sleep 0.1; i=$((i+1)); done; ' +
+    'if [ -f "$T450_FLAG" ]; then echo late > "$T450_TARGET"; fi &'],
+    { env: { ...process.env, T450_FLAG: ${JSON.stringify(flag)}, T450_TARGET: target }, stdio: 'ignore' })
+  expect(1 + 1).toBe(2)
+})
+`
+    // Run 1 — backgrounds the writer, exits green.
+    const run1 = runNestedSuite({ specSource: LATE_SPEC, tripwire: true, reuseHomeRoot: homeRoot })
+    runs.push(run1)
+    const landed = path.join(run1.decoyHome, '.productune', 'late-landing-write')
+    expect(run1.code, `N5: the backgrounding run must be GREEN — that is the boundary.\n${run1.output}`).toBe(0)
+    expect(run1.output).toContain('real home unchanged across the run')
+    expect(fs.existsSync(landed), 'the write must NOT have landed during the run, or this proves nothing').toBe(
+      false,
+    )
+
+    // The run is over; NOW let the orphan land.
+    fs.writeFileSync(flag, 'go')
+    const deadline = Date.now() + 45_000
+    while (!fs.existsSync(landed) && Date.now() < deadline) cp.execFileSync('/bin/sleep', ['0.2'])
+    expect(fs.existsSync(landed), 'the orphaned writer must land AFTER the run — the N5 window').toBe(true)
+
+    // Run 2, same decoy real home — the between-run warning surfaces the landing.
+    const run2 = runNestedSuite({ specSource: CLEAN_SPEC, tripwire: true, reuseHomeRoot: homeRoot })
+    runs.push(run2)
+    expect(
+      run2.code,
+      'the next run is legitimately GREEN — between runs the developer uses their own machine, ' +
+        'which is why this can only ever be a warning',
+    ).toBe(0)
+    expect(
+      run2.output,
+      'N5: the NEXT run must WARN about the late landing — the only mechanism that can see it',
+    ).toContain('the real home changed since the last suite run')
+    expect(run2.output).toContain('.productune')
+
+    console.log(
+      'T-450 N5 reduced form, demonstrated end-to-end\n' +
+        `  run 1 (backgrounds writer)  exit ${run1.code} (GREEN, honestly: nothing had landed)\n` +
+        '  after run 1 exits           the orphan lands its write (flag-gated, no sleep race)\n' +
+        `  run 2 (same decoy home)     exit ${run2.code} + WARNING naming .productune\n` +
+        '  the boundary stands; its landing is no longer silent',
+    )
+  } finally {
+    try {
+      fs.writeFileSync(flag, 'go') // never leave the orphan spinning
+    } catch {
+      /* homeRoot already gone */
+    }
+    for (const r of runs) r.cleanup()
+    fs.rmSync(homeRoot, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the N5 fixture leaked out of the decoy').toEqual([])
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2076,22 +2483,63 @@ test('T-450 boundary ② corrected: an unrecognised child no longer skips rule 1
       ).toContain(WINDOW_TAG)
     }
 
-    // The honest remainder, stated: a renamed copy that is NEITHER size-identical to
-    // a known binary NOR passed --user-data-dir is still unrecognised. It is a
-    // narrower residual than R1's, not an absent one.
+    // ── T-450 R3 / F4: the S5 residual — corrected wording, then narrowed ──────
+    //
+    // R2 stated the residual as "rule 2 does not fire". UNDERSTATED, QA measured:
+    // the WINDOW RULE sits behind the same gate, so a size-altered copy skipped
+    // both — and on the host a window IS the incident; detection reddens the run
+    // afterwards but cannot undo a window or return stolen focus.
+    //
+    // Closed for anything that can actually BOOT: dyld resolves the binary's
+    // `@executable_path/../Frameworks` load command, so a copy that can launch
+    // structurally carries an `../Frameworks/Electron Framework.framework`
+    // sibling — signal 6, independent of the copy's name AND its size. Asserted
+    // with a size-altered copy in a bundle layout, i.e. QA's exact R2 shape.
+    const bundleDir = path.join(linkDir, 'Copied.app', 'Contents')
+    fs.mkdirSync(path.join(bundleDir, 'MacOS'), { recursive: true })
+    fs.mkdirSync(path.join(bundleDir, 'Frameworks', 'Electron Framework.framework'), { recursive: true })
+    const sizeAltered = path.join(bundleDir, 'MacOS', 'definitely-not-electron')
+    // 4KB of a ~100MB binary: name, size and inode all defeat signals 1–5.
+    fs.writeFileSync(sizeAltered, fs.readFileSync(electronBinary).subarray(0, 4096))
+    expect(
+      looksLikeAppLaunch(sizeAltered, []),
+      'F4: a size-altered copy inside a bundle layout must be recognised (signal 6)',
+    ).toBe(true)
+    let alteredMsg = ''
+    try {
+      cp.spawnSync(sizeAltered, [], { env: { ...process.env, HOME: DEFAULT_SANDBOX_HOME } as NodeJS.ProcessEnv })
+      alteredMsg = 'NOT BLOCKED'
+    } catch (e) {
+      alteredMsg = e instanceof Error ? e.message : String(e)
+    }
+    expect(
+      alteredMsg,
+      'F4: the size-altered copy must be refused for CONTAINMENT (missing --user-data-dir), ' +
+        'ahead of any window — this is the row that was NOT-BLOCKED in R2',
+    ).toContain(ISOLATION_TAG)
+
+    // The remainder, still honest and now narrower: a copy whose load commands
+    // were REWRITTEN to a relocated/renamed framework (install_name_tool —
+    // deliberate binary patching, not `cp`). Blast radius, stated per acceptance:
+    // on the VM, an unsandboxed real-userData boot that only the tripwire
+    // reddens after the fact; on the host, ADDITIONALLY a real window opens
+    // before anything can refuse it — the one part of the damage no detection
+    // layer can undo.
     const trimmed = path.join(linkDir, 'trimmed-copy')
     fs.writeFileSync(trimmed, fs.readFileSync(electronBinary).subarray(0, 1024))
     expect(
       looksLikeAppLaunch(trimmed, []),
-      'the residual: a MODIFIED copy is not size-identical and is not recognised',
+      'the residual: a modified copy OUTSIDE any bundle layout is not recognised',
     ).toBe(false)
 
     console.log(
-      'T-450 boundary ② + S5 (unrecognised child)\n' +
+      'T-450 boundary ② + S5/F4 (unrecognised child)\n' +
         '  corrected: rule 1 (HOME) applies regardless of shape\n' +
-        '  S5 closed: --user-data-dir presence, realpath identity, byte-size identity\n' +
-        '  S5 closed: the WINDOW rule now follows the same gate\n' +
-        '  residual:  a MODIFIED copy with no --user-data-dir; the tripwire covers it',
+        '  S5 closed: --user-data-dir presence, inode identity, byte-size identity\n' +
+        '  F4 closed: size-altered copy in a bundle layout (framework sibling, signal 6)\n' +
+        '             — R2 wording understated this: it skipped the WINDOW rule too\n' +
+        '  residual:  a copy with RELOCATED load commands (install_name_tool);\n' +
+        '             VM: tripwire-red userData boot · host: + a real window, undoable by nothing',
     )
   } finally {
     fs.rmSync(linkDir, { recursive: true, force: true })

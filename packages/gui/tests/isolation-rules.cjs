@@ -60,9 +60,12 @@
  * `real-home-tripwire.ts`, armed at CONFIG MODULE SCOPE and adjudicated where no
  * `--reporter` flag can remove it. Everything here is a layer on top of that.
  *
- * ONE NORMALISATION HELPER. Every containment question — here, in the harness, in
- * the tripwire, and in the test-only fixtures — goes through `pathContains()`.
- * See the CONTAINMENT section for why that is a rule and not a preference.
+ * ONE CONTAINMENT PREDICATE. Every containment question — here, in the harness,
+ * and in the test-only fixtures — goes through `pathContains()`, which decides by
+ * FILESYSTEM IDENTITY (dev+ino), not by any normalised spelling. See the
+ * CONTAINMENT section for why the string-key approach had to die (F1: five
+ * rounds, five alias shapes, the last one a firmlink inside a guard written to
+ * stop the previous one).
  */
 
 'use strict'
@@ -100,15 +103,23 @@ const BOOTSTRAP = path.join(__dirname, 'isolation-realm-bootstrap.cjs')
 // captured once here, at first load of this module in this realm, and nothing
 // can reach it afterwards.
 //
-// The fail-closed check below lists EVERY sandbox root this repo creates. It used
+// The fail-closed check below recognises EVERY sandbox this repo creates. It used
 // to list only the Playwright one, which meant that in a vitest realm — whose
 // sandbox root is `productune-vitest-home`, see scripts/vitest-home-sandbox.ts —
 // a missing PRODUCTUNE_REAL_HOME silently recorded the SANDBOX as the real home
 // and every containment check passed. Same defect class as S1: a predicate that
 // knew about one shape of the same thing and not the others.
-const SANDBOX_ROOTS = ['productune-pw-sandbox', 'productune-vitest-home'].map((n) =>
-  path.join(os.tmpdir(), n),
-)
+//
+// T-450 R3 / F5: recognition is by PATH SEGMENT, not by `os.tmpdir()` prefix.
+// The prefix version depended on the child's environment agreeing with the
+// parent's about where tmp is: `os.tmpdir()` falls back to `/tmp` when TMPDIR is
+// unset (measured), while the sandboxes live under the parent's `/var/folders/…`
+// TMPDIR — so a child spawned without TMPDIR failed to match, recorded the
+// sandbox as the real home, and every rule became a no-op. The sandbox directory
+// NAMES travel with the path itself, whatever the environment says about tmp;
+// a real home containing one of these exact segments does not exist, and if it
+// ever did, the failure direction is a refusal to load — fail closed.
+const SANDBOX_DIR_NAMES = ['productune-pw-sandbox', 'productune-vitest-home']
 
 const REAL_HOME = (() => {
   const fromEnv = process.env.PRODUCTUNE_REAL_HOME
@@ -117,7 +128,7 @@ const REAL_HOME = (() => {
   // record of the real home survived, we cannot tell real from sandbox — and
   // guessing means guessing in the permissive direction.
   const h = os.homedir()
-  if (SANDBOX_ROOTS.some((root) => h === root || h.startsWith(root + path.sep))) {
+  if (h.split(path.sep).some((seg) => SANDBOX_DIR_NAMES.includes(seg))) {
     throw new Error(
       `${ISOLATION_TAG}: cannot determine the real home.\n` +
         `HOME is already the test sandbox (${h}) and PRODUCTUNE_REAL_HOME is unset, so ` +
@@ -148,42 +159,172 @@ function protectedRealPaths() {
   ]
 }
 
-// ── CONTAINMENT: ONE NORMALISATION HELPER, USED BY EVERY LAYER ──────────────
+// ── CONTAINMENT: FILESYSTEM IDENTITY, ONE IMPLEMENTATION FOR EVERY LAYER ─────
 //
-// This section is the answer to the meta-defect QA has now reported in four
+// This section is the answer to the meta-defect QA has now reported in FIVE
 // consecutive rounds: **the containment predicate gets fixed for ONE shape of
 // non-canonical path and the rest are left alone.**
 //
 //   R3  the predicate was purely lexical (`path.resolve`). A SYMLINK to the real
 //       userData compared clean and the real userData was written.
 //   R4  the symlink hole was closed with `fs.realpathSync` — and nothing else.
-//       QA then walked through with CASE: macOS is case-insensitive, but
-//       `realpath` does NOT canonicalise case, so `/users/<u>` survives every
-//       resolution step unchanged while `stat().ino`/`st.dev` prove it is the
-//       very same directory (re-measured here: ino and dev identical). Rules 1,
-//       2 and 4 all fell to it — i.e. the exact mechanism of the 2026-07-30
-//       incident passed through a guard written in the same diff that was meant
-//       to stop it.
+//       QA walked through with CASE (`/users/<u>` survives realpath unchanged
+//       while stat proves it is the same directory).
+//   R5  R2 of this ticket collected the normalisation into one helper — a real
+//       improvement, QA confirmed every layer now shared it — but the helper
+//       still ENUMERATED alias mechanisms: realpath for symlinks, toLowerCase
+//       for case, NFC for Unicode. QA's fifth round arrived with the
+//       enumeration's next missing member, the APFS FIRMLINK:
+//       `/System/Volumes/Data/Users/<u>` and `/Users/<u>` are one directory
+//       (dev+ino identical, re-measured here) and `realpathSync` does not fold
+//       the prefix, so every string-key layer — including the brand-new
+//       `assertNotForbiddenHome` guard — compared clean.
 //
-// So the shape of the fix has to change, not just its coverage. There is now ONE
-// function that turns a path into a comparison key, and EVERY layer routes
-// through it — the runtime rules here, the harness's advisory check, the
-// tripwire, and the test-only `T450_FORBIDDEN_HOME` refusal in the nested
-// fixtures (which QA found had reproduced the very same lexical defect, S9). A
-// new non-canonical form is fixed in one place or in none.
+// The class, not the member, closes only one way: STOP COMPARING SPELLINGS
+// WHERE THE FILESYSTEM CAN BE ASKED. For a path that exists, identity is
+// stat(2)'s `(dev, ino)` — two spellings of one directory cannot disagree about
+// its inode, whatever alias mechanism produced them: symlink, case, Unicode
+// form, firmlink, or one nobody has named yet. `pathContains` walks the
+// candidate's ancestor chain with stat() and compares `(dev, ino)` against the
+// ancestor's own identity. There is no alias list left to be one member short.
 //
-// The key composes the three ways a path can name a file without matching it
-// byte-for-byte:
-//   • ALIASING     symlinks           → fs.realpathSync (longest existing ancestor)
-//   • CASE         macOS/APFS default → case-fold, gated on a measurement
-//   • UNICODE      NFC vs NFD         → normalize('NFC'), because HFS+/APFS
-//                                       lookup is normalisation-insensitive and a
-//                                       decomposed Hangul/accented path would
-//                                       otherwise compare as a different string
+// stat() is also the only resolver here that is kernel-faithful for `link/..`:
+// `path.resolve` collapses `..` LEXICALLY before any filesystem call, and
+// Node's JS `fs.realpathSync` does the same internally (both measured) — so
+// `<tmp>/link/../x` with `link → <real home>/Library` resolved to a temp path
+// for every string layer while the kernel resolves it into the real home. The
+// guard spec runs that shape as this round's invented fixture. Where a full
+// canonical spelling is needed (the symlink-to-descendant walk below),
+// `fs.realpathSync.native` is used — realpath(3), kernel-faithful (measured).
 //
-// `fs.realpathSync` throws ENOENT on a path that does not exist yet, and a
-// `--user-data-dir` normally does NOT exist yet, so it cannot be called
-// directly. Resolve the longest existing ancestor and re-attach the remainder.
+// WHAT HAPPENS FOR A PATH THAT DOES NOT EXIST YET — stated explicitly, because
+// a lexical fallback here is where the next escape would live. A component that
+// does not exist cannot BE an alias: there is no inode yet for a symlink, case
+// variant, or firmlink to share. And a write to such a path physically lands
+// under its deepest EXISTING ancestor. So identity decides down to the deepest
+// existing level, and only the not-yet-existing remainder below an
+// identity-matched level is compared as text — case-folded and NFC-normalised,
+// the two spelling variations the filesystem will still apply to components it
+// is about to create. At no point does a whole-path string comparison decide
+// containment.
+//
+// EVERY layer routes through `pathContains`: the runtime rules here, the
+// harness's `assertOutsideRealHome`, and the test-only `T450_FORBIDDEN_HOME`
+// refusal (`assertNotForbiddenHome`) in the nested fixtures. The tripwire's walk
+// is the one deliberate non-caller: it matches its name-only subtree roots with
+// the cheap literal key below, because those paths are built from `readdir`
+// results and cannot be aliased — see the note at `walkSurface`.
+
+/** `dev:ino` of whatever `p` names after FULL kernel resolution, or null. */
+function fileIdentity(p) {
+  try {
+    const st = fs.statSync(p)
+    return `${st.dev}:${st.ino}`
+  } catch {
+    return null
+  }
+}
+
+/** Absolute WITHOUT lexical `..` collapse — the kernel must see the dots. */
+function rawAbsolute(p) {
+  const s = String(p)
+  return path.isAbsolute(s) ? s : process.cwd() + path.sep + s
+}
+
+/**
+ * Fold a NOT-YET-EXISTING remainder for comparison. Lexical `.`/`..` collapse is
+ * kernel-faithful here and only here: components that do not exist cannot be
+ * symlinks, so `nox/../y` can only ever mean `y`.
+ */
+function foldTail(tail) {
+  let k = path.normalize(tail).normalize('NFC')
+  if (FS_CASE_INSENSITIVE) k = k.toLowerCase()
+  return k
+}
+
+/**
+ * An ancestor, reduced to (identity of its deepest existing level, folded
+ * remainder). `tail === ''` when the ancestor itself exists — the common case;
+ * the tail form exists for protected paths that are not created yet
+ * (e.g. `~/productune` on a fresh machine).
+ */
+function identityAnchor(ancestor) {
+  let head = rawAbsolute(ancestor)
+  const tail = []
+  for (;;) {
+    const id = fileIdentity(head)
+    if (id !== null) return { id, tail: tail.length ? foldTail(tail.join(path.sep)) : '' }
+    const parent = path.dirname(head)
+    if (parent === head) return { id: null, tail: '' } // no existing level at all
+    tail.unshift(path.basename(head))
+    head = parent
+  }
+}
+
+/** Does any level of `start`'s ancestor chain carry the anchor's identity? */
+function identityWalkContains(start, anchor, preTail) {
+  let head = start
+  const below = [...preTail]
+  for (;;) {
+    const id = fileIdentity(head)
+    if (id !== null && id === anchor.id) {
+      if (anchor.tail === '') return true
+      const rest = foldTail(below.join(path.sep))
+      if (rest === anchor.tail || rest.startsWith(anchor.tail + path.sep)) return true
+    }
+    const parent = path.dirname(head)
+    if (parent === head) return false
+    below.unshift(path.basename(head))
+    head = parent
+  }
+}
+
+/**
+ * True when `p` is `ancestor` or anything under it, comparing the way the
+ * FILESYSTEM does — by inode identity for what exists, by folded text only for
+ * what cannot exist yet. THE containment predicate; every layer uses this one.
+ *
+ * Two walks, because aliasing points both ways:
+ *   W1  the path AS WRITTEN. Catches a candidate whose own ancestry reaches the
+ *       ancestor's inode — firmlink and case spellings, `link/..` traversal
+ *       (stat is kernel-faithful), and the conservative half: a path lexically
+ *       inside the ancestor whose leaf symlinks back OUT is still treated as
+ *       inside, because creating or deleting that leaf mutates the ancestor.
+ *   W2  the path RESOLVED (realpath(3) on the deepest existing level, the
+ *       not-yet-existing remainder re-attached). Catches a symlink from outside
+ *       pointing at a DESCENDANT of the ancestor, whose literal ancestry never
+ *       touches the ancestor's inode.
+ */
+function pathContains(ancestor, p) {
+  if (!p || !ancestor) return false
+  const anchor = identityAnchor(ancestor)
+  if (anchor.id === null) return false
+  const raw = rawAbsolute(p)
+  if (identityWalkContains(raw, anchor, [])) return true
+  let head = raw
+  const tail = []
+  for (;;) {
+    let canon = null
+    try {
+      canon = fs.realpathSync.native(head)
+    } catch {
+      canon = null
+    }
+    if (canon !== null) return identityWalkContains(canon, anchor, tail)
+    const parent = path.dirname(head)
+    if (parent === head) return false
+    tail.unshift(path.basename(head))
+    head = parent
+  }
+}
+
+/**
+ * Longest-existing-ancestor realpath, for ERROR MESSAGES ONLY (`describePath`).
+ * Not a containment decision: it inherits `path.resolve`'s lexical `..`
+ * collapse and realpath's blindness to case and firmlinks, which is exactly why
+ * `pathContains` above stopped using string keys. Kept because "what does this
+ * path point at" is still the most readable line in a refusal.
+ */
 function resolveRealPath(p) {
   const abs = path.resolve(p)
   let head = abs
@@ -231,34 +372,21 @@ const FS_CASE_INSENSITIVE = (() => {
 })()
 
 /**
- * A path reduced to the form in which two names that mean the same file are the
- * same string. THE single normalisation point — see the section header.
+ * A CHEAP literal-path key: lexical resolve + NFC + case fold. NOT a containment
+ * decision (that is `pathContains` — F1 established that string keys lose to any
+ * alias mechanism they have not enumerated). This survives for exactly one
+ * consumer: the tripwire's walk matches its name-only subtree roots against
+ * paths built from `readdir` results, which cannot be aliased, ~60k times per
+ * snapshot — where per-entry stat identity was measured at 5x the cost.
  *
- * `followLinks: false` yields the key of the path AS WRITTEN, which is used as a
- * second, conservative candidate: a path whose lexical form is inside the real
- * home is treated as inside even if a symlink points it out again.
+ * `followLinks: true` additionally runs the message-grade realpath; kept for
+ * back-compat with existing callers, same non-decision caveat.
  */
-function containmentKey(p, followLinks = true) {
+function containmentKey(p, followLinks = false) {
   let k = followLinks ? resolveRealPath(p) : path.resolve(p)
   k = k.normalize('NFC')
   if (FS_CASE_INSENSITIVE) k = k.toLowerCase()
   return k
-}
-
-/**
- * True when `p` is `ancestor` or anything under it, comparing the way the
- * FILESYSTEM does rather than the way string equality does.
- *
- * Exported so that no layer has to re-derive it — including the test-only
- * fixtures, whose hand-rolled `startsWith` was S9.
- */
-function pathContains(ancestor, p) {
-  if (!p || !ancestor) return false
-  const a = containmentKey(ancestor)
-  for (const candidate of [containmentKey(p, false), containmentKey(p, true)]) {
-    if (candidate === a || candidate.startsWith(a + path.sep)) return true
-  }
-  return false
 }
 
 /**
@@ -460,12 +588,25 @@ function assertContained(opts) {
 //   2. the basename is `electron` / `Productune`         (unchanged)
 //   3. an app-shaped path appears anywhere in argv        (unchanged)
 //   4. the file RESOLVES to a known Electron binary — catches a symlink or a
-//      hardlink under any name, because the name is not what is compared.
+//      hardlink under any name, because (dev, ino) is what is compared, not the
+//      spelling (T-450 R3: this used to be a string-key compare, which the F1
+//      firmlink walked past like every other string-key layer).
 //   5. the file is byte-size-identical to a known Electron binary — catches a
 //      `cp` of it under any name, at any path. The Electron binary is ~100MB and
 //      an unrelated tool matching its size exactly is not a realistic collision.
+//   6. the file sits inside an ELECTRON BUNDLE LAYOUT: an
+//      `../Frameworks/Electron Framework.framework` sibling of its directory.
+//      T-450 R3 / F4 — this is what closes the S5 residue for anything that can
+//      actually LAUNCH. A size-altered copy defeats signal 5, but to boot at all
+//      the binary's `@executable_path/../Frameworks` load command must find the
+//      Electron framework (dyld), so a runnable copy carries this marker
+//      structurally, whatever the copy is named and however its size changed.
+//      What still escapes is a copy whose load commands were rewritten
+//      (install_name_tool) to a relocated framework — deliberate binary
+//      patching, stated as the residual boundary in the guard spec.
 //
-// 4 and 5 are one `statSync` on a path we were about to execute anyway.
+// 4–6 are one `statSync` plus one `existsSync` on a path we were about to
+// execute anyway.
 const APP_SHAPES = [
   /dist-electron[/\\]main\.js/i, // this app's main entry, dev layout
   /[/\\]Electron\.app[/\\]Contents[/\\]MacOS[/\\]/i, // the devDependency binary
@@ -477,7 +618,7 @@ const APP_SHAPES = [
 const GUI_ROOT = path.resolve(__dirname, '..')
 
 /**
- * Electron binaries on this machine, as `{key, size}` identities. Computed once:
+ * Electron binaries on this machine, as `{id, size}` identities. Computed once:
  * a `statSync` per spawn is fine, re-scanning the candidates is not.
  */
 const KNOWN_ELECTRON_BINARIES = (() => {
@@ -491,7 +632,7 @@ const KNOWN_ELECTRON_BINARIES = (() => {
   for (const c of candidates) {
     try {
       const st = fs.statSync(c)
-      if (st.isFile()) out.push({ key: containmentKey(c), size: st.size })
+      if (st.isFile()) out.push({ id: `${st.dev}:${st.ino}`, size: st.size })
     } catch {
       /* not installed in this checkout */
     }
@@ -502,18 +643,24 @@ const KNOWN_ELECTRON_BINARIES = (() => {
 /** Signals 4 and 5: this file IS an Electron binary, whatever it is called. */
 function isElectronBinaryByIdentity(file) {
   if (KNOWN_ELECTRON_BINARIES.length === 0) return false
-  let key
-  try {
-    key = containmentKey(file)
-  } catch {
-    return false
-  }
-  if (KNOWN_ELECTRON_BINARIES.some((b) => b.key === key)) return true
   try {
     const st = fs.statSync(file)
-    return st.isFile() && KNOWN_ELECTRON_BINARIES.some((b) => b.size === st.size)
+    if (!st.isFile()) return false
+    const id = `${st.dev}:${st.ino}`
+    return KNOWN_ELECTRON_BINARIES.some((b) => b.id === id || b.size === st.size)
   } catch {
     return false // does not exist: the spawn will ENOENT, nothing to contain
+  }
+}
+
+/** Signal 6: the file lives where only an Electron bundle puts a binary. */
+function isInsideElectronBundleLayout(file) {
+  try {
+    return fs.existsSync(
+      path.join(path.dirname(String(file)), '..', 'Frameworks', 'Electron Framework.framework'),
+    )
+  } catch {
+    return false
   }
 }
 
@@ -524,7 +671,7 @@ function looksLikeAppLaunch(file, args) {
   if (/^electron(\.exe)?$/i.test(base) || base === 'Productune') return true
   const joined = [file, ...argv].join(' ')
   if (APP_SHAPES.some((re) => re.test(joined))) return true
-  return isElectronBinaryByIdentity(file)
+  return isElectronBinaryByIdentity(file) || isInsideElectronBundleLayout(file)
 }
 
 // ── bootstrap target detection ──────────────────────────────────────────────
@@ -545,12 +692,9 @@ function looksLikeNodeChild(file) {
   const f = String(file)
   if (f === process.execPath) return true
   if (/^node(js)?[\d.]*(\.exe)?$/i.test(path.basename(f))) return true
-  // A symlink or copy under any name: compare what it resolves to, not its name.
-  try {
-    return containmentKey(f) === containmentKey(process.execPath)
-  } catch {
-    return false
-  }
+  // A symlink or hardlink under any name: filesystem identity, not spelling.
+  const id = fileIdentity(f)
+  return id !== null && id === fileIdentity(process.execPath)
 }
 
 // ── the launch scope ────────────────────────────────────────────────────────
@@ -1045,6 +1189,7 @@ module.exports = {
   insideRealHome,
   resolveRealPath,
   containmentKey,
+  fileIdentity,
   pathContains,
   assertNotForbiddenHome,
   FS_CASE_INSENSITIVE,
