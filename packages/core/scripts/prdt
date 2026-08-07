@@ -935,7 +935,9 @@ def cmd_update(_args):
 
 # ── update-on-run (T-393 · 1일 1회 interactive update nudge) ──────────────────
 # Fires BEFORE any subcommand (main): once-a-day it compares the installed code
-# clone's local HEAD to `origin/<branch>` and, when the remote is ahead, shows a
+# clone's local HEAD to `origin/<branch>` and, when the remote is STRICTLY ahead
+# (T-456: fast-forwardable — a clone that is ahead or diverged is NOT an update)
+# AND the remote advertises a version above the installed one, shows a
 # release-note interstitial + a 3-way gum/fzf choose. EVERY failure path degrades
 # to silence — the original command always runs. Non-blocking by construction
 # (doctrine #5). Design SoT: docs/tickets/v1.4/T-393.md (Design decisions / UX flow).
@@ -1022,25 +1024,74 @@ def releases_pending(code_root, timeout=2):
 
 
 def remote_ahead(code_root, timeout=2):
-    """True when `origin/<current-branch>` HEAD differs from local HEAD. None on any
-    failure (dirty git, offline, 2s timeout, no remote) → caller degrades to silence.
-    Detection only compares SHAs; it does not assert direction (a fast-forward pull
-    is what cmd_update does), matching the 구 productune update contract."""
+    """True only when `origin/<current-branch>` is STRICTLY AHEAD of local HEAD —
+    i.e. local HEAD is an ancestor of the remote tip and the two differ, which is
+    exactly the case `cmd_update`'s `pull --ff-only` can satisfy. False when equal,
+    when local is ahead, and when the two have diverged. None on any failure
+    (detached HEAD, branch absent on origin, offline, 2s timeout, no remote) →
+    caller degrades to silence.
+
+    T-456: this used to be `remote != local` with a note that direction was
+    deliberately not asserted ("matching the 구 productune update contract"). That
+    made every clone that is AHEAD of origin — i.e. every dev clone, all cycle
+    long — get a daily prompt no choice could satisfy: `update now` either aborts
+    on the dirty tree or fast-forwards to a no-op, so only `skip` ends it. The
+    nudge exists to offer an update that can be taken; a non-fast-forwardable
+    difference is not one."""
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
     try:
         branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
         local = g("rev-parse", "HEAD").stdout.strip()
-        if not branch or not local:
+        if not branch or branch == "HEAD" or not local:   # detached / no commit
             return None
         r = g("ls-remote", "origin", branch)
-        if r.returncode != 0 or not r.stdout.strip():
+        if r.returncode != 0 or not r.stdout.strip():     # offline / no remote / branch not on origin
             return None
         remote = r.stdout.split()[0].strip()
-        return remote != local
+        if remote == local:                               # up to date — no fetch needed
+            return False
+        # Direction needs the remote COMMIT, not just its SHA: fetch it (objects
+        # land locally, no working-tree change), then ask whether local is an
+        # ancestor of it. Non-zero = not an ancestor (local ahead / diverged) or
+        # the object is unreachable (shallow clone) — both mean "no offer".
+        if g("fetch", "origin", branch).returncode != 0:
+            return None
+        return g("merge-base", "--is-ancestor", local, remote).returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return None
+
+
+def _version_key(v):
+    """Sortable key for a `v<N>.<m>[.<p>]` release tag, or None when unparseable.
+    Tuple compare gives the right order across lengths: v1.5 < v1.5.1 < v1.6."""
+    m = re.match(r"^v?(\d+(?:\.\d+)*)", (v or "").strip())
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def releases_local(code_root):
+    """(version, section_text) of the newest section in the LOCAL docs/RELEASES.md,
+    or (None, None) when the file is absent/unreadable/sectionless."""
+    try:
+        return _parse_releases((Path(code_root) / "docs" / "RELEASES.md").read_text(encoding="utf-8"))
+    except OSError:
+        return None, None
+
+
+def _newer_version(remote_v, local_v):
+    """T-456: True only when the remote's newest release section advertises a version
+    strictly above the installed one — never an equal or lower version (the v1.5 offered
+    to a clone already on v1.6 was the reported defect). An unparseable REMOTE version
+    is not provably an upgrade → False (silence). An unreadable LOCAL RELEASES.md leaves
+    nothing to compare against → True, because the caller only reaches here once
+    `remote_ahead` has already proven the clone is strictly behind; failing closed here
+    would silently strand such an install."""
+    rk = _version_key(remote_v)
+    if rk is None:
+        return False
+    lk = _version_key(local_v)
+    return True if lk is None else rk > lk
 
 
 def _render_release_box(version, note):
@@ -1079,12 +1130,14 @@ def maybe_prompt_update(cmd):
     # consume today's slot up front so the post-update re-exec can't loop
     state["last_check"] = today
     _write_update_state(state)
-    ahead = remote_ahead(code_root)                     # cheap ls-remote gate (network, 2s)
-    if not ahead:                                       # None (degrade/offline) or False (up to date)
+    ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
+    if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
         return
     version, note = releases_pending(code_root)         # REMOTE RELEASES via fetch+show (T-393)
     if not version:                                     # no section / fetch failed → silent degrade
         return
+    if not _newer_version(version, releases_local(code_root)[0]):
+        return                                          # T-456: never advertise an equal-or-lower version
     if version == state.get("skip_version"):            # user muted THIS remote version
         return
     _render_release_box(version, note)
