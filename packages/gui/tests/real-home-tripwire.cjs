@@ -100,7 +100,8 @@
  *                   user's own running Productune.
  *   ~/Library/Preferences/com.productune.gui.plist
  *   ~/Library/Preferences/com.github.Electron.plist
- *                   NSUserDefaults. T-450 / S10 — REFUTED PREMISE. R1 claimed
+ *                   NSUserDefaults, in SIZE-ONLY mode (see below).
+ *                   T-450 / S10 — REFUTED PREMISE. R1 claimed
  *                   "HOME and userData are the only two roots from which the
  *                   product derives a write path". False: Cocoa writes user
  *                   defaults under the BUNDLE IDENTIFIER, which neither `HOME`
@@ -125,6 +126,13 @@
  * `~/productune` 0/7229, userData 0/35295, `~/Library/Caches/electron` 0/8, both
  * plists 0/1. So adding the third root costs no false positives.
  *
+ * CORRECTION, QA R3 / B1 — that measurement was taken on the HOST, where the run
+ * rule forbids windows and therefore no launch happens at all. It says nothing
+ * about the leg where launches DO happen, and on that leg both of the surfaces it
+ * cleared have a legitimate writer. What the two recording modes below exist for
+ * is exactly that: a surface whose churn is zero in the environment you measured
+ * and non-zero in the environment the suite has to stay green in.
+ *
  * DELIBERATELY NOT COVERED — 1: `~/.claude` and `~/.claude.json`
  *
  *   In `protectedRealPaths()` for PREVENTION, where a false positive costs
@@ -134,7 +142,59 @@
  *   running). The product never writes them, and a launch that reached them
  *   necessarily also reached `~/.productune`, so nothing is lost.
  *
+ * COVERED IN SIZE-ONLY MODE: the two NSUserDefaults plists
+ *
+ *   T-450 R3 / F2 → QA R3 / B1. F2 was a correct fix and this is its consequence,
+ *   not its retraction. Before F2 a file-shaped surface recorded `exists=` alone,
+ *   so every NSUserDefaults write was invisible; F2 gave it `size mtime` and the
+ *   detection became precise enough to see a write it previously could not.
+ *
+ *   What it now sees on the VM `@window` leg is a LEGITIMATE writer. A sanctioned
+ *   `launchApp()` boots the app inside `Electron.app`, and Cocoa flushes user
+ *   defaults for `com.github.Electron` on the way out: measured on the VM, size
+ *   stays at 237 bytes and only mtime moves — precisely the shape F2 taught the
+ *   floor to catch. Neither `HOME` nor `--user-data-dir` can relocate it; that is
+ *   S10's own premise, which is why the surface is watched at all. Result before
+ *   this change: `51 passed, exit 1`, every window run, forever.
+ *
+ *   That is not a safe state. A floor that fires red on correct behaviour trains
+ *   the next round to read red as normal, and three of the four incidents in this
+ *   ticket's lineage happened in exactly that fog. So the plists drop mtime and
+ *   keep size:
+ *
+ *   DETECTION GIVEN UP: an in-place rewrite of an existing plist that preserves
+ *   its byte length. That is what the sanctioned launch does, and no metadata
+ *   signal separates it from an unsanctioned launch doing the same thing — both
+ *   are Cocoa writing user defaults for the same bundle id. Same structure as the
+ *   F3 remainder: where the legitimate and the illegitimate write are identical in
+ *   the signal, a detector for one is a false positive on the other.
+ *
+ *   DETECTION KEPT: creation (a bundle id that had no defaults on this machine now
+ *   does — an app that has never run here just ran), deletion (the user's defaults
+ *   destroyed, the same category of unrecoverable loss as incident #4's
+ *   settings.json), and any change of byte length — truncation, wholesale
+ *   replacement, keys added or removed.
+ *
+ *   WHY THE REMAINDER IS ACCEPTABLE: this surface's job is to catch an escaped
+ *   launch, and an escaped launch is caught at FULL `size mtime` fidelity on
+ *   `~/Library/Application Support/productune` — unless it also redirected
+ *   userData, in which case the plist is the only real-home path it touched and
+ *   what it did there is byte-for-byte the same edit a sanctioned launch makes.
+ *   The blast radius of the remainder is therefore the user's window frame and
+ *   UI defaults for one bundle id, with no user document, no credential and no
+ *   recovery data in it. The destructive edge S10 named for this surface —
+ *   losing the plist — stays red.
+ *
+ *   BOTH BUNDLE IDS, by construction: `tripwireSizeOnlyPaths()` is the single
+ *   place the two plist paths are derived and `tripwireSurfaces()` spreads it, so
+ *   the surface set and the mode set cannot disagree. Only the dev-layout id has
+ *   an OBSERVED legitimate write (QA R3 could not get the packaged app to flush
+ *   `com.productune.gui` in a 25s SIGTERM run); the packaged id is covered anyway,
+ *   because a normal-exit flush would put it in exactly the same position and
+ *   discovering that from a red leg later is the failure this change is about.
+ *
  * COVERED IN NAME-ONLY MODE: `~/.productune/state/autosave-snapshots/`
+ * and `~/.prdt/.auto-open-debounce/`
  *
  *   T-450 / S11 → R3 / F3, the history in full because each round corrected the
  *   previous one's premise:
@@ -171,6 +231,29 @@
  *   ticket's predecessors died. Blast radius of the remainder: silent content
  *   damage to snapshots whose FILE SET is intact; deletion — the destructive
  *   half QA demonstrated — is no longer in it.
+ *
+ *   `~/.prdt/.auto-open-debounce/` (QA R3 / B2) is the same shape and takes the
+ *   same mode. R3 reported it as an OBSERVATION — a churn source inside a watched
+ *   surface that had not yet produced a false red — and QA turned the observation
+ *   into a demonstration: one added marker reddens a run, and two appeared during
+ *   QA's own round roughly ten minutes apart.
+ *
+ *   The writer is `~/.prdt/hooks/prdt-auto-open.sh`, registered PostToolUse on
+ *   `Write`, so it fires during any agent session — which is the only condition
+ *   under which this suite ever runs (the S11 lesson, again). Read from the hook
+ *   itself, its whole repertoire is: `mkdir -p` the directory, and write a
+ *   10-byte epoch to `<cksum>-<blocks>`, either creating that marker or rewriting
+ *   it in place at the same length. It never deletes, never renames, never prunes
+ *   — there is no expiry path in the script at all. So the difference set is the
+ *   signal, exactly as for autosave-snapshots.
+ *
+ *   DETECTION GIVEN UP: an in-place rewrite of an existing marker (invisible), and
+ *   an added marker (ignored). Blast radius: nil in the destructive direction —
+ *   these are debounce timestamps for a Finder/Preview popup, regenerated on the
+ *   next Write, and the worst a corrupted one does is open a window once too
+ *   often or once too rarely. DETECTION KEPT: deletion of a marker, renaming, and
+ *   removal of the directory — which is what a test rampaging through `~/.prdt`
+ *   would do, and the reason the relaxation is a LEAF and not the surface.
  *
  * KNOWN FALSE POSITIVE, accepted deliberately: if the developer's own Productune
  * is running while the suite runs, its writes to the real userData are
@@ -214,11 +297,33 @@ const MAX_ENTRIES = 400_000
  * every live agent session.
  */
 function tripwireNameOnlySubtrees() {
-  return [path.join(realHome(), '.productune', 'state', 'autosave-snapshots')]
+  const h = realHome()
+  return [
+    path.join(h, '.productune', 'state', 'autosave-snapshots'),
+    // QA R3 / B2 — prdt's PostToolUse auto-open hook writes epoch markers here
+    // during any agent session, and one added marker turned a run red.
+    path.join(h, '.prdt', '.auto-open-debounce'),
+  ]
 }
 
 /** Marker suffix on name-only detail lines; the diff keys off it. */
 const NAME_ONLY = 'name-only'
+
+/**
+ * File-shaped surfaces fingerprinted in SIZE-ONLY mode: `size` is recorded,
+ * `mtime` is not, so an in-place rewrite of the same byte length is invisible
+ * while creation, deletion and any length change stay drift. See "COVERED IN
+ * SIZE-ONLY MODE" in the header (QA R3 / B1).
+ *
+ * Both bundle identifiers live here and `tripwireSurfaces()` spreads this list,
+ * so there is exactly one derivation of the two plist paths — a second copy is
+ * where the packaged id would be forgotten, and forgetting it is how B1 would
+ * come back the first time a packaged build flushes its defaults on a clean exit.
+ */
+function tripwireSizeOnlyPaths() {
+  const prefs = path.join(realHome(), 'Library', 'Preferences')
+  return [path.join(prefs, 'com.productune.gui.plist'), path.join(prefs, 'com.github.Electron.plist')]
+}
 
 /** The covered surfaces. See the header for why exactly these. */
 function tripwireSurfaces() {
@@ -229,8 +334,7 @@ function tripwireSurfaces() {
     path.join(h, 'productune'),
     path.join(h, 'Library', 'Application Support', 'productune'),
     // S10: the third root. Neither HOME nor --user-data-dir moves these.
-    path.join(h, 'Library', 'Preferences', 'com.productune.gui.plist'),
-    path.join(h, 'Library', 'Preferences', 'com.github.Electron.plist'),
+    ...tripwireSizeOnlyPaths(),
     path.join(h, 'Library', 'Caches', 'electron'),
   ]
 }
@@ -239,7 +343,7 @@ function tripwireSurfaces() {
 
 class BudgetExhausted extends Error {}
 
-function walkSurface(root, nameOnlyKeys, budget) {
+function walkSurface(root, modes, budget) {
   const out = []
   const spend = () => {
     if (--budget.left < 0) throw new BudgetExhausted(root)
@@ -248,9 +352,14 @@ function walkSurface(root, nameOnlyKeys, budget) {
   // be recorded as `exists=` alone, so an in-place plist write — which is the
   // only thing NSUserDefaults ever does to an existing plist — changed nothing
   // in the fingerprint and the whole surface was watched in name only. A
-  // non-directory root now records size+mtime like any other file; `exists=`
-  // survives only for the two states that HAVE no size (absent, or a directory
-  // whose own mtime is deliberately not a signal — its children are).
+  // non-directory root now records its size; `exists=` survives only for the two
+  // states that HAVE no size (absent, or a directory whose own mtime is
+  // deliberately not a signal — its children are).
+  //
+  // QA R3 / B1. Whether `mtime` joins the size is the surface's RECORDING MODE:
+  // a size-only surface has a sanctioned writer whose rewrites keep the byte
+  // length, so mtime there is a red light on correct behaviour rather than a
+  // signal. See "COVERED IN SIZE-ONLY MODE" in the header for what that gives up.
   let rootStat = null
   try {
     rootStat = fs.lstatSync(root)
@@ -263,7 +372,11 @@ function walkSurface(root, nameOnlyKeys, budget) {
   }
   if (!rootStat.isDirectory()) {
     spend()
-    out.push(`${root}\t${rootStat.size}\t${rootStat.mtimeMs}`)
+    out.push(
+      modes.sizeOnly.has(containmentKey(root, false))
+        ? `${root}\t${rootStat.size}`
+        : `${root}\t${rootStat.size}\t${rootStat.mtimeMs}`,
+    )
     return out
   }
   out.push(`${root}\texists=true`)
@@ -281,7 +394,7 @@ function walkSurface(root, nameOnlyKeys, budget) {
       // and the cheap key is the correct comparison. Measured: doing the full
       // identity check per entry instead cost 5x per snapshot, because it
       // stat-walked all ~60k entries' ancestries.
-      const entryNameOnly = nameOnly || (e.isDirectory() && nameOnlyKeys.has(containmentKey(full, false)))
+      const entryNameOnly = nameOnly || (e.isDirectory() && modes.nameOnly.has(containmentKey(full, false)))
       if (entryNameOnly) {
         // The legitimate writer's transient (`<file>.json.tmp`, write+rename):
         // present in one snapshot and gone in the next on every live session.
@@ -314,13 +427,16 @@ function snapshotRealHome() {
   const perSurface = {}
   const detail = []
   // Normalised once, not per entry — see walkSurface().
-  const nameOnlyKeys = new Set(tripwireNameOnlySubtrees().map((x) => containmentKey(x, false)))
+  const modes = {
+    nameOnly: new Set(tripwireNameOnlySubtrees().map((x) => containmentKey(x, false))),
+    sizeOnly: new Set(tripwireSizeOnlyPaths().map((x) => containmentKey(x, false))),
+  }
   const budget = { left: MAX_ENTRIES }
   let truncated
   for (const surface of tripwireSurfaces()) {
     let lines
     try {
-      lines = walkSurface(surface, nameOnlyKeys, budget)
+      lines = walkSurface(surface, modes, budget)
     } catch (err) {
       if (!(err instanceof BudgetExhausted)) throw err
       truncated =
@@ -627,6 +743,7 @@ function assertTripwireClean(where, options = {}) {
 
 module.exports = {
   tripwireNameOnlySubtrees,
+  tripwireSizeOnlyPaths,
   tripwireSurfaces,
   snapshotRealHome,
   diffSnapshots,

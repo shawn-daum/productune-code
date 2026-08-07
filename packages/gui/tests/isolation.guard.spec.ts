@@ -80,6 +80,7 @@ import {
   diffSnapshots,
   snapshotRealHome,
   tripwireNameOnlySubtrees,
+  tripwireSizeOnlyPaths,
   tripwireSurfaces,
   verifyTripwire,
 } from './real-home-tripwire'
@@ -347,33 +348,51 @@ test('T-450: the tripwire covers the product write surfaces, and userData is one
   // additions ignored by the diff — so removals and renames are drift while the
   // legitimate writer's churn (in-place rewrites, new snapshots, `*.tmp`) is not.
   // The end-to-end proof runs against a decoy in its own test below.
+  //
+  // QA R3 / B2 adds the second one: `~/.prdt/.auto-open-debounce` is written by
+  // prdt's PostToolUse auto-open hook during any agent session — the same
+  // "legitimate writer inside a watched surface" shape, closed the same way.
   expect(tripwireNameOnlySubtrees()).toEqual([
     path.join(REAL_HOME, '.productune', 'state', 'autosave-snapshots'),
+    path.join(REAL_HOME, '.prdt', '.auto-open-debounce'),
   ])
   const snap0 = snapshotRealHome()
-  expect(
-    snap0.detail
-      .filter((l) => l.includes(`autosave-snapshots${path.sep}`))
-      .every((l) => l.endsWith('\tname-only')),
-    'entries under the churning subtree must carry no size/mtime signal — that signal is what reddened legitimate runs',
-  ).toBe(true)
-  // …and the relaxation must be a LEAF, not the whole surface, or the S11 fix
-  // would have thrown away the detection this ticket exists for.
-  expect(
-    tripwireNameOnlySubtrees().every((x) => x.startsWith(path.join(REAL_HOME, '.productune') + path.sep)),
-    'a name-only subtree must be a leaf of a covered surface, never a surface',
-  ).toBe(true)
+  for (const leaf of tripwireNameOnlySubtrees()) {
+    if (!fs.existsSync(leaf)) continue // proven end-to-end against a decoy below
+    const under = snap0.detail.filter((l) => l.startsWith(leaf + path.sep))
+    expect(under.length, `${leaf} exists but contributed no fingerprint lines`).toBeGreaterThan(0)
+    expect(
+      under.every((l) => l.endsWith('\tname-only')),
+      `entries under ${leaf} must carry no size/mtime signal — that signal is what reddened legitimate runs`,
+    ).toBe(true)
+  }
+  // …and every relaxation must be a LEAF, strictly inside a covered surface and
+  // never a surface itself, or the S11/B2 fixes would have thrown away the
+  // detection this ticket exists for.
+  for (const leaf of tripwireNameOnlySubtrees()) {
+    expect(surfaces, 'a name-only subtree must never be a surface').not.toContain(leaf)
+    expect(
+      surfaces.some((s) => leaf.startsWith(s + path.sep)),
+      `a name-only subtree must live inside a covered surface: ${leaf}`,
+    ).toBe(true)
+  }
 
-  // T-450 R3 / F2. A FILE-shaped surface records size+mtime, not `exists=` alone.
-  // QA R2: both plists exist on the real machine, so `exists=true` never changed
-  // and every NSUserDefaults write was invisible — the surface was watched in
-  // name only, and the R2 spec only asserted list MEMBERSHIP, which is why it
-  // passed. Mutation-turns-red is asserted end-to-end against a decoy below.
-  for (const plist of surfaces.filter((s) => s.endsWith('.plist'))) {
+  // T-450 R3 / F2 → QA R3 / B1. A FILE-shaped surface records a SIZE, not
+  // `exists=` alone (QA R2: both plists exist on the real machine, so `exists=true`
+  // never changed and every NSUserDefaults write was invisible). It deliberately
+  // does NOT record mtime: a sanctioned `launchApp()` flushes user defaults on
+  // exit at an unchanged byte length, so mtime here is a red light on correct
+  // behaviour — measured on the VM, `51 passed, exit 1` every window run.
+  // Both bundle ids get the mode from ONE derivation, so the surface set and the
+  // mode set cannot disagree about the packaged id, whose flush QA could not
+  // observe but whose position is identical.
+  expect(tripwireSizeOnlyPaths().sort()).toEqual(surfaces.filter((s) => s.endsWith('.plist')).sort())
+  for (const plist of tripwireSizeOnlyPaths()) {
+    expect(surfaces, `${plist} must be a covered surface`).toContain(plist)
     if (!fs.existsSync(plist)) continue // creation-from-absent is in the decoy test
     const line = snap0.detail.find((l) => l.startsWith(`${plist}\t`))
     expect(line, `the file surface ${plist} must have a detail line`).toBeTruthy()
-    expect(line, 'a file surface must record size+mtime, never bare exists=').toMatch(/\t\d+\t[\d.]+$/)
+    expect(line, 'a size-only surface records size, never bare exists= and never mtime').toMatch(/\t\d+$/)
   }
 
   // The acceptance names userData specifically: it is the third real-home surface,
@@ -1187,25 +1206,36 @@ test('T-450 S12: an in-place edit deeper than the old depth limit is visible', (
   expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the S12 fixture leaked out of the decoy').toEqual([])
 })
 
-test('T-450 F2+F3: file surfaces DETECT and the name-only subtree closes the laundering channel', () => {
-  // Two QA R2 findings, one decoy, because they are the same defect from two
-  // sides: what the fingerprint RECORDS decides what the diff can see.
+test('T-450 F2/B1 + F3/B2: per-surface recording keeps legitimate writers green and destruction red', () => {
+  // Four findings, one decoy, because they are one defect seen from four sides:
+  // what the fingerprint RECORDS decides both what the diff can SEE and what it
+  // FALSELY FIRES ON. Each surface below has a legitimate writer, and the mode is
+  // the difference between that writer's repertoire and destruction.
   //
-  //   F2  `walkSurface` recorded `exists=` alone for a file-shaped surface, so
-  //       NSUserDefaults writes to the two existing plists were wholly invisible
-  //       — and the R2 spec asserted list MEMBERSHIP, not detection, which is why
-  //       it passed. This test asserts DETECTION: mutating the surface turns the
-  //       diff red.
-  //   F3  excluding `~/.productune/state/autosave-snapshots` made in-place
+  //   F2  (QA R2) `walkSurface` recorded `exists=` alone for a file-shaped
+  //       surface, so NSUserDefaults writes to the two existing plists were wholly
+  //       invisible — and the R2 spec asserted list MEMBERSHIP, not detection,
+  //       which is why it passed. Fixed by recording size+mtime.
+  //   B1  (QA R3) …and that fix, being correct, surfaced a pre-existing conflict:
+  //       a sanctioned `launchApp()` flushes `com.github.Electron` defaults at an
+  //       UNCHANGED byte length, so mtime made the VM `@window` leg permanently
+  //       red — `51 passed, exit 1`, reproduced twice. Size-only mode: creation,
+  //       deletion and length change stay red, the equal-length rewrite goes
+  //       green. Asserted BOTH ways here, because a mode that only relaxes is
+  //       indistinguishable from deleting the surface.
+  //   F3  (QA R2) excluding `~/.productune/state/autosave-snapshots` made in-place
   //       corruption and per-file DELETION of real recovery snapshots invisible.
   //       R2's defence ("a launch with the real HOME writes settings.json too")
   //       was about launches; the tripwire's own purpose #2 is a direct fs write
-  //       with no launch. Now: name-only fingerprint — deletions and renames are
-  //       drift, the legitimate writer's churn is not.
+  //       with no launch. Name-only fingerprint instead.
+  //   B2  (QA R3) `~/.prdt/.auto-open-debounce` is the same shape: prdt's
+  //       PostToolUse hook writes epoch markers there during any agent session,
+  //       and QA demonstrated one added marker turning a run red. Same mode.
   const guardBefore = snapshotRealHome()
   const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-surface-'))
   const prefDir = path.join(decoy, 'Library', 'Preferences')
   const snapDir = path.join(decoy, '.productune', 'state', 'autosave-snapshots')
+  const debounceDir = path.join(decoy, '.prdt', '.auto-open-debounce')
   const devPlist = path.join(prefDir, 'com.github.Electron.plist')
   const pkgPlist = path.join(prefDir, 'com.productune.gui.plist')
 
@@ -1231,37 +1261,72 @@ test('T-450 F2+F3: file surfaces DETECT and the name-only subtree closes the lau
   try {
     fs.mkdirSync(prefDir, { recursive: true })
     fs.mkdirSync(snapDir, { recursive: true })
+    fs.mkdirSync(debounceDir, { recursive: true })
     fs.writeFileSync(path.join(decoy, '.productune', 'settings.json'), '{}')
+    fs.writeFileSync(path.join(decoy, '.prdt', 'doctrine.md'), '# doctrine')
     fs.writeFileSync(devPlist, 'AAAA') // the dev-layout id — exists, like on the real machine
     fs.writeFileSync(path.join(snapDir, 'a.json'), JSON.stringify({ v: 1 }))
     fs.writeFileSync(path.join(snapDir, 'b.json'), JSON.stringify({ v: 1 }))
+    fs.writeFileSync(path.join(debounceDir, '1146162765-137'), '1786000000') // the hook's shape: cksum key, 10-byte epoch
+    fs.writeFileSync(path.join(debounceDir, '2402555511-22'), '1786000001')
     const s1 = probe()
 
-    // F2 — recording: a file surface carries size+mtime, never bare `exists=`.
+    // F2 — recording: a file surface carries a size, never bare `exists=`.
+    // B1 — …and NOT an mtime, which is what made the sanctioned launch red.
     const plistLine = s1.detail.find((l) => l.startsWith(`${devPlist}\t`))
     expect(plistLine, 'the plist surface must be in the fingerprint').toBeTruthy()
-    expect(plistLine, 'F2: a file surface records size+mtime').toMatch(/\t\d+\t[\d.]+$/)
+    expect(plistLine, 'B1: a size-only surface records size and no mtime').toMatch(/\t\d+$/)
 
-    // F2 — detection, worst case on purpose: an in-place rewrite of the SAME
-    // byte length, so mtime alone must carry it (NSUserDefaults rewrites are not
-    // guaranteed to change the size).
+    // B1 — GREEN: the sanctioned writer's exact shape. An in-place rewrite of the
+    // same byte length with the mtime moved is what `launchApp()` provokes out of
+    // Cocoa on the VM (measured: 237 bytes before and after, mtime forward), and
+    // it must not turn the run red. `utimesSync` is explicit about the mtime move
+    // rather than relying on the write's own clock resolution.
+    const bumped = new Date(Date.now() + 60_000)
     fs.writeFileSync(devPlist, 'BBBB')
+    fs.utimesSync(devPlist, bumped, bumped)
     const s2 = probe()
     expect(
-      diffSnapshots(s1, s2).some((d) => d.surface === devPlist),
-      'F2: a same-size in-place plist write must turn the diff red',
+      diffSnapshots(s1, s2),
+      'B1: an equal-length in-place plist rewrite is the sanctioned launch, and must be GREEN',
+    ).toEqual([])
+
+    // B1 — RED, the half that survives: the byte length changing at all. A
+    // wholesale replacement, a truncation, keys added or removed.
+    fs.writeFileSync(devPlist, 'BBBBB')
+    const s2b = probe()
+    expect(
+      diffSnapshots(s2, s2b).some((d) => d.surface === devPlist),
+      'B1: a plist whose byte length changed must turn the diff red',
     ).toBe(true)
+
+    // B1 — RED: DELETION. The user's defaults destroyed is the same category of
+    // unrecoverable loss as incident #4's settings.json, and it stays detected.
+    fs.rmSync(devPlist)
+    const s2c = probe()
+    expect(
+      diffSnapshots(s2b, s2c).some((d) => d.surface === devPlist),
+      'B1: deleting the plist must turn the diff red',
+    ).toBe(true)
+    fs.writeFileSync(devPlist, 'BBBBB')
 
     // F2 — the packaged bundle id: absent (as on a machine that never ran a
     // packaged build), then CREATED by a first NSUserDefaults write. `exists=false`
-    // → size line is drift, so creation is detected too.
-    expect(s2.detail).toContain(`${pkgPlist}\texists=false`)
+    // → size line is drift, so creation is detected too. This is the id whose
+    // legitimate flush QA could not observe (25s run, SIGTERM); it carries the
+    // same mode by construction, so a normal-exit flush cannot reopen B1 here.
+    const s2d = probe()
+    expect(s2d.detail).toContain(`${pkgPlist}\texists=false`)
     fs.writeFileSync(pkgPlist, 'C')
     const s3 = probe()
     expect(
-      diffSnapshots(s2, s3).some((d) => d.surface === pkgPlist),
+      diffSnapshots(s2d, s3).some((d) => d.surface === pkgPlist),
       'F2: the packaged-id plist appearing must turn the diff red',
     ).toBe(true)
+    expect(
+      s3.detail.find((l) => l.startsWith(`${pkgPlist}\t`)),
+      'B1: both bundle ids get the size-only mode from one derivation',
+    ).toMatch(/\t\d+$/)
 
     // F3 — the legitimate writer's whole repertoire is invisible: an in-place
     // rewrite (size change included), a NEW snapshot, and the tmp+rename
@@ -1300,19 +1365,173 @@ test('T-450 F2+F3: file surfaces DETECT and the name-only subtree closes the lau
       'a settings.json rewrite outside the name-only leaf must still be drift',
     ).toBe(true)
 
+    // B2 — GREEN: an AGENT-SESSION-SHAPED marker write. Read off
+    // `~/.prdt/hooks/prdt-auto-open.sh`: a new `<cksum>-<blocks>` marker for a
+    // path written for the first time, plus an in-place 10-byte epoch rewrite of
+    // an existing one. That is the hook's entire repertoire, and QA showed one
+    // added marker turning a run red before this mode existed.
+    fs.writeFileSync(path.join(debounceDir, '3980043065-91'), '1786000002')
+    fs.writeFileSync(path.join(debounceDir, '1146162765-137'), '1786000003')
+    const s8 = probe()
+    expect(
+      diffSnapshots(s7, s8),
+      'B2: a hook-shaped marker add + in-place epoch rewrite must be GREEN',
+    ).toEqual([])
+
+    // B2 — RED: what the hook never does. It has no expiry path at all — it never
+    // deletes, renames or prunes — so a missing marker is not the writer.
+    fs.rmSync(path.join(debounceDir, '2402555511-22'))
+    const s9 = probe()
+    const d9 = diffSnapshots(s8, s9)
+    expect(
+      d9.length === 1 && d9[0].removed.some((l) => l.includes('2402555511-22')),
+      `B2: deleting one debounce marker must be drift. got ${JSON.stringify(d9)}`,
+    ).toBe(true)
+
+    fs.rmSync(debounceDir, { recursive: true, force: true })
+    const s10 = probe()
+    expect(
+      diffSnapshots(s9, s10).some((d) => d.removed.length > 0),
+      'B2: a test rampaging through ~/.prdt and taking the whole subtree must be drift',
+    ).toBe(true)
+
+    // …and, as for F3, the relaxation is a LEAF: the rest of ~/.prdt is untouched
+    // by it and a doctrine file rewrite is still full-fidelity drift.
+    fs.writeFileSync(path.join(decoy, '.prdt', 'doctrine.md'), '# doctrine, corrupted')
+    const s11 = probe()
+    expect(
+      diffSnapshots(s10, s11).some((d) => d.surface === path.join(decoy, '.prdt')),
+      'a ~/.prdt rewrite outside the name-only leaf must still be drift',
+    ).toBe(true)
+
     console.log(
-      'T-450 F2+F3 (surface fidelity, decoy-proven)\n' +
-        '  F2 red:   same-size in-place plist write (mtime), packaged-id plist creation\n' +
+      'T-450 F2/B1 + F3/B2 (per-surface recording, decoy-proven)\n' +
+        '  B1 green: equal-length in-place plist rewrite with mtime moved (= the\n' +
+        '            sanctioned launchApp() flush, measured 237B on the VM)\n' +
+        '  B1 red:   byte-length change, deletion, packaged-id creation; both ids\n' +
+        '            carry the mode from one derivation\n' +
         '  F3 red:   snapshot deletion, subtree deletion; green: rewrite/add/tmp churn\n' +
-        '  boundary: in-place snapshot corruption is indistinguishable from the\n' +
-        '            legitimate writer\'s own rewrite — stated in real-home-tripwire.cjs\n' +
-        '  unverified for QA\'s packaged leg: a REAL packaged-bundle NSUserDefaults\n' +
-        '            write on the VM (needs dist:mac; recording+diff are id-agnostic)',
+        '  B2 green: hook-shaped marker add + in-place epoch rewrite\n' +
+        '  B2 red:   marker deletion, subtree removal; ~/.prdt outside the leaf keeps\n' +
+        '            full fidelity\n' +
+        '  boundaries stated in real-home-tripwire.cjs: an equal-length plist rewrite\n' +
+        '            and an in-place snapshot/marker corruption are indistinguishable\n' +
+        '            from their legitimate writers by any metadata signal',
     )
   } finally {
     fs.rmSync(decoy, { recursive: true, force: true })
   }
-  expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the F2/F3 fixture leaked out of the decoy').toEqual([])
+  expect(
+    diffSnapshots(guardBefore, snapshotRealHome()),
+    'the F2/B1 + F3/B2 fixture leaked out of the decoy',
+  ).toEqual([])
+})
+
+/**
+ * QA R3 / B1+B2 at RUN level: the legitimate writers of both surfaces.
+ *
+ * Byte-identical to what actually writes them — `launchApp()` provoking a Cocoa
+ * defaults flush at an unchanged length, and prdt's auto-open hook dropping a
+ * 10-byte epoch marker. Nothing here launches anything, so no window opens.
+ */
+const LEGITIMATE_WRITER_SPEC = `
+const fs = require('fs')
+const path = require('path')
+const { test, expect } = require('@playwright/test')
+
+test('a run during which the sanctioned writers write', () => {
+${REFUSAL_GUARD}
+  const plist = path.join(decoy, 'Library', 'Preferences', 'com.github.Electron.plist')
+  // The launch flush: same byte length, mtime forward. Measured on the VM at 237
+  // bytes before and after; utimes makes the mtime move explicit rather than
+  // leaving it to the write clock's resolution.
+  const size = fs.statSync(plist).size
+  fs.writeFileSync(plist, 'B'.repeat(size))
+  const bumped = new Date(Date.now() + 60000)
+  fs.utimesSync(plist, bumped, bumped)
+  // The auto-open hook: one new marker, one in-place epoch rewrite.
+  const dir = path.join(decoy, '.prdt', '.auto-open-debounce')
+  fs.writeFileSync(path.join(dir, '3980043065-91'), '1786000002')
+  fs.writeFileSync(path.join(dir, '1146162765-137'), '1786000003')
+  expect(1 + 1).toBe(2)
+})
+`
+
+/** The same two surfaces, destroyed. Must stay red. */
+const SURFACE_DESTROYING_SPEC = `
+const fs = require('fs')
+const path = require('path')
+const { test, expect } = require('@playwright/test')
+
+test('a run that destroys what the sanctioned writers only ever add to', () => {
+${REFUSAL_GUARD}
+  fs.truncateSync(path.join(decoy, 'Library', 'Preferences', 'com.github.Electron.plist'), 10)
+  fs.rmSync(path.join(decoy, '.prdt', '.auto-open-debounce', '2402555511-22'))
+  expect(1 + 1).toBe(2)
+})
+`
+
+test('T-450 B1+B2 end-to-end: a run with the sanctioned writers is GREEN, the same surfaces destroyed is RED', () => {
+  test.setTimeout(300_000)
+  // QA R3 measured both halves of this at RUN level — a `@window` leg at
+  // `51 passed, exit 1` from a plist whose only change was its mtime, and one
+  // added debounce marker reddening a run — so the answer is owed at run level
+  // too. The decoy-diff test above proves what the fingerprint records; this
+  // proves what a whole run does with it, exit code included.
+  //
+  // A permanently red leg is not a safe state. It is the failure mode this ticket
+  // named for itself: a floor that cries wolf gets deleted, and three of the four
+  // incidents in this lineage happened while red was being read as normal.
+  const guardBefore = snapshotRealHome()
+
+  // The surfaces must EXIST before the run arms its baseline, or creating them
+  // would be the drift instead of writing them. `runNestedSuite` lets the caller
+  // own the home root exactly for this kind of pre-seeding.
+  const homeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-b1b2-'))
+  const decoyHome = path.join(homeRoot, 'decoy-real-home')
+  const plist = path.join(decoyHome, 'Library', 'Preferences', 'com.github.Electron.plist')
+  const debounceDir = path.join(decoyHome, '.prdt', '.auto-open-debounce')
+  const nested: Array<{ cleanup: () => void }> = []
+  try {
+    fs.mkdirSync(path.dirname(plist), { recursive: true })
+    fs.mkdirSync(debounceDir, { recursive: true })
+    fs.writeFileSync(plist, 'A'.repeat(237)) // the VM's real byte length
+    fs.writeFileSync(path.join(debounceDir, '1146162765-137'), '1786000000')
+    fs.writeFileSync(path.join(debounceDir, '2402555511-22'), '1786000001')
+
+    const green = runNestedSuite({ specSource: LEGITIMATE_WRITER_SPEC, tripwire: true, reuseHomeRoot: homeRoot })
+    nested.push(green)
+    expect(
+      green.code,
+      `B1+B2: a run whose only real-home writes are the sanctioned ones must be GREEN.\n${green.output}`,
+    ).toBe(0)
+    expect(green.output).toContain('real home unchanged across the run')
+    // …and the writes really happened, or this proves nothing.
+    expect(fs.readFileSync(plist, 'utf-8'), 'the plist rewrite must really have happened').toBe('B'.repeat(237))
+    expect(fs.existsSync(path.join(debounceDir, '3980043065-91')), 'the new marker must really exist').toBe(true)
+
+    const red = runNestedSuite({ specSource: SURFACE_DESTROYING_SPEC, tripwire: true, reuseHomeRoot: homeRoot })
+    nested.push(red)
+    expect(red.code, `B1+B2: destroying the same two surfaces must be RED.\n${red.output}`).not.toBe(0)
+    expect(red.output).toContain('REAL HOME MUTATED DURING THIS RUN')
+    expect(red.output, 'the truncated plist must be named').toContain('com.github.Electron.plist')
+    expect(red.output, 'the deleted marker must be named').toContain('2402555511-22')
+    expect(red.output, 'the test itself passes; the RUN is what fails').toContain('1 passed')
+
+    console.log(
+      'T-450 B1+B2, end-to-end at run level\n' +
+        `  sanctioned writers (equal-length plist rewrite + mtime, marker add + rewrite)\n` +
+        `                                exit ${green.code} — "real home unchanged"\n` +
+        `  same surfaces destroyed (plist truncated, marker deleted)\n` +
+        `                                exit ${red.code} — both named in the report\n` +
+        '  VM confirmation: the @window leg is 51 passed / exit 0 with the real plist\n' +
+        '  mtime moving during the run (237 bytes before and after, twice)',
+    )
+  } finally {
+    for (const n of nested) n.cleanup()
+    fs.rmSync(homeRoot, { recursive: true, force: true })
+  }
+  expect(diffSnapshots(guardBefore, snapshotRealHome()), 'the B1+B2 fixture leaked out of the decoy').toEqual([])
 })
 
 test('T-450 S13: detached children are refused, so a child cannot outlive the run by option', () => {

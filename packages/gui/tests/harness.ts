@@ -85,12 +85,20 @@ export const DEFAULT_SANDBOX_HOME = path.join(SANDBOX_ROOT, 'default-home')
  */
 export const PROTECTED_REAL_PATHS = protectedRealPaths()
 
-/** Throw unless `p` is outside the developer's real home, full stop. */
+/**
+ * Throw unless `p` is outside the developer's real home, full stop.
+ *
+ * `p` goes to `insideRealHome()` RAW. QA R3 found this call site pre-folding it
+ * with `path.resolve()` first — which collapses `..` lexically, so
+ * `<real home>/link/..` became a path outside the home before the predicate ever
+ * saw it, reviving in one place the laundering the identity design exists to
+ * remove. `insideRealHome()` already resolves relative paths itself, against the
+ * kernel rather than against the string.
+ */
 export function assertOutsideRealHome(p: string, label: string): void {
-  const r = path.resolve(p)
-  if (insideRealHome(r)) {
+  if (insideRealHome(p)) {
     throw new Error(
-      `${label} resolves inside the REAL home (${r}). A test may never write there — ` +
+      `${label} resolves inside the REAL home (${p}). A test may never write there — ` +
         `use sandboxHome() from tests/harness.ts. (T-442 F1)`,
     )
   }
