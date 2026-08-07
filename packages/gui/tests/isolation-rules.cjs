@@ -622,10 +622,14 @@ const GUI_ROOT = path.resolve(__dirname, '..')
  * a `statSync` per spawn is fine, re-scanning the candidates is not.
  */
 const KNOWN_ELECTRON_BINARIES = (() => {
+  // QA R3: the packaged rows used to say `dist/mac-arm64`, but `directories.output`
+  // in `electron-builder.yml` is `release`, so signals 4 and 5 could never match a
+  // real packaged binary — a silently dead signal, which is the seed of the next
+  // round's false confidence even though signals 2 and 6 cover the same shape.
   const candidates = [
     path.join(GUI_ROOT, 'node_modules', 'electron', 'dist', 'Electron.app', 'Contents', 'MacOS', 'Electron'),
-    path.join(GUI_ROOT, 'dist', 'mac-arm64', 'Productune.app', 'Contents', 'MacOS', 'Productune'),
-    path.join(GUI_ROOT, 'dist', 'mac', 'Productune.app', 'Contents', 'MacOS', 'Productune'),
+    path.join(GUI_ROOT, 'release', 'mac-arm64', 'Productune.app', 'Contents', 'MacOS', 'Productune'),
+    path.join(GUI_ROOT, 'release', 'mac', 'Productune.app', 'Contents', 'MacOS', 'Productune'),
     '/Applications/Productune.app/Contents/MacOS/Productune',
   ]
   const out = []

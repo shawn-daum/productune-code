@@ -34,7 +34,7 @@
 export interface SurfaceDigest {
   /** Number of filesystem entries seen. */
   count: number
-  /** sha1 over `name\tsize\tmtime` for every entry, sorted. */
+  /** sha1 over every entry's detail line, sorted. */
   hash: string
 }
 
@@ -42,7 +42,12 @@ export interface HomeSnapshot {
   takenAt: number
   realHome: string
   perSurface: Record<string, SurfaceDigest>
-  /** `path\tsize\tmtime` lines, kept so a drift can be reported as a real diff. */
+  /**
+   * One line per entry, kept so a drift can be reported as a real diff. The
+   * fields after the path are the surface's RECORDING MODE: `size\tmtime` by
+   * default, `size` alone for a size-only surface, the literal `name-only` inside
+   * a name-only subtree, `exists=false` for an absent surface.
+   */
   detail: string[]
   /** Set when the entry budget ran out, i.e. the fingerprint is INCOMPLETE. */
   truncated?: string
@@ -81,6 +86,7 @@ export interface VerifyOptions {
 
 interface TripwireImpl {
   tripwireNameOnlySubtrees(): string[]
+  tripwireSizeOnlyPaths(): string[]
   tripwireSurfaces(): string[]
   snapshotRealHome(): HomeSnapshot
   diffSnapshots(before: HomeSnapshot, after: HomeSnapshot): SurfaceDrift[]
@@ -95,12 +101,19 @@ interface TripwireImpl {
 const impl = require('./real-home-tripwire.cjs') as TripwireImpl
 
 /**
- * Subtrees fingerprinted in NAME-ONLY mode (T-450 R3 / F3): removals and renames
- * are drift, size/mtime and additions are not — the shape of the one legitimate
- * writer, `packages/core/src/git-workflow/autosave.ts`. A full exclusion here was
- * QA R2's laundering channel.
+ * Subtrees fingerprinted in NAME-ONLY mode (T-450 R3 / F3, QA R3 / B2): removals
+ * and renames are drift, size/mtime and additions are not — the shape of their
+ * legitimate writers, `packages/core/src/git-workflow/autosave.ts` and prdt's
+ * `hooks/prdt-auto-open.sh`. A full exclusion here was QA R2's laundering channel.
  */
 export const tripwireNameOnlySubtrees = (): string[] => impl.tripwireNameOnlySubtrees()
+
+/**
+ * File surfaces fingerprinted in SIZE-ONLY mode (QA R3 / B1): creation, deletion
+ * and any byte-length change are drift, an equal-length in-place rewrite is not —
+ * the shape of a sanctioned `launchApp()` flushing NSUserDefaults.
+ */
+export const tripwireSizeOnlyPaths = (): string[] => impl.tripwireSizeOnlyPaths()
 export const tripwireSurfaces = (): string[] => impl.tripwireSurfaces()
 export const snapshotRealHome = (): HomeSnapshot => impl.snapshotRealHome()
 export const diffSnapshots = (before: HomeSnapshot, after: HomeSnapshot): SurfaceDrift[] =>
