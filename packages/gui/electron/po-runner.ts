@@ -36,6 +36,7 @@ import {
   type SubagentCostCapture,
 } from './subagent-cost'
 import { detectProjectKind, codeRoot } from './project-paths'
+import { coerceTodoItemsRaw, type TodoItemRaw } from '../shared/todo-item'
 import { setTrustAccepted } from '@productune/core'
 import { getPoSessionOverride, type PoSessionOverride } from './po-session-config'
 
@@ -124,13 +125,14 @@ export interface PoHealthEvent {
 
 // ── Todo items (T-P4-113) ─────────────────────────────────────────────────────
 
-/** Raw todo item shape as parsed from PO envelope JSON. */
-export interface TodoItemRaw {
-  id?: string
-  description: string
-  type?: 'check' | 'text-input' | 'link'
-  href?: string
-}
+/**
+ * T-434 (QA F8): this file used to DECLARE its own `TodoItemRaw`, a third copy
+ * alongside preload's and the store's. It had already drifted — `authIntent`
+ * existed on the renderer's copy and not on this one — so the generic
+ * `po:todo-items` producer stripped routing tier ① in main, before the IPC send
+ * the renderer-side fix was guarding. One declaration now, in `shared/`.
+ */
+export type { TodoItemRaw, TodoType } from '../shared/todo-item'
 
 // ── Ticket focus (T-P4-114 §B) ───────────────────────────────────────────────
 
@@ -1933,23 +1935,14 @@ export function parseTodoItems(text: string): TodoItemRaw[] {
         for (const key of ['manual_steps_pending', 'pending_user_actions']) {
           const arr = obj[key]
           if (Array.isArray(arr)) {
-            const items: TodoItemRaw[] = arr
-              .filter(
-                (item): item is Record<string, unknown> =>
-                  item !== null && typeof item === 'object',
-              )
-              .filter((item) => typeof item.description === 'string')
-              .map((item) => ({
-                id: typeof item.id === 'string' ? item.id : undefined,
-                description: item.description as string,
-                type:
-                  item.type === 'check' ||
-                  item.type === 'text-input' ||
-                  item.type === 'link'
-                    ? item.type
-                    : 'check',
-                href: typeof item.href === 'string' ? item.href : undefined,
-              }))
+            // T-434 (QA F8): this used to be a hand-written `.map()` of four
+            // fields — a whitelist, so `authIntent` was dropped here regardless
+            // of what any type said. `coerceTodoItemsRaw` is driven by a table
+            // the compiler forces to cover every field of `TodoItemRaw`, so the
+            // shape cannot silently lose one again. (`type` is no longer
+            // defaulted to 'check' here; the store owns that default, in one
+            // place — the resulting item is identical.)
+            const items = coerceTodoItemsRaw(arr)
             if (items.length > 0) return items
           }
         }

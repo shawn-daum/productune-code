@@ -10,38 +10,28 @@
  */
 
 import { create } from 'zustand'
+import { coerceTodoItemRaw, type TodoItemRaw, type TodoType } from '../../shared/todo-item'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type TodoStatus = 'open' | 'done' | 'dismissed'
-export type TodoType = 'check' | 'text-input' | 'link'
 
-export interface UserTodo {
+// T-434 (QA F8): the raw item's shape is declared ONCE, in `shared/todo-item.ts`
+// — main, preload and this store all take it from there. Re-exported so existing
+// importers keep working; re-DECLARING it here is what let `authIntent` exist on
+// one copy and not the others.
+export type { TodoItemRaw, TodoType }
+
+/**
+ * A stored todo: the raw item, with the fields the store resolves made
+ * mandatory. Extending rather than restating means a field added to the wire
+ * shape is automatically part of what the store holds — there is no second
+ * list that can quietly lack it.
+ */
+export interface UserTodo extends TodoItemRaw {
   id: string
-  description: string
   type: TodoType
-  /** href for type='link' — file path, tab id, or (T-434) an http(s) URL. */
-  href?: string
-  /**
-   * T-434 tier ① carried FORWARD. A user-verify todo is created at the moment
-   * the producer told us whether a login is in the way (`auth_required` on the
-   * envelope), but the user clicks its link minutes later — and by then the
-   * only thing that remembers is this field. Without it the click falls back to
-   * the tier-② IdP net or the tier-③ escape hatch, which is a DOWNGRADE of a
-   * tier we already knew. Undefined = the producer said nothing, not "no".
-   */
-  authIntent?: boolean
   status: TodoStatus
-}
-
-/** Raw shape from PO envelope (manual_steps_pending / pending_user_actions). */
-export interface TodoItemRaw {
-  id?: string
-  description: string
-  type?: 'check' | 'text-input' | 'link'
-  href?: string
-  /** See `UserTodo.authIntent` — T-434 tier ①, preserved across the wait. */
-  authIntent?: boolean
 }
 
 interface UserTodoState {
@@ -78,22 +68,29 @@ export const useUserTodo = create<UserTodoState>((set) => ({
     set((s) => {
       const existingIds = new Set(s.todos.map((t) => t.id))
       const newItems: UserTodo[] = []
-      for (const item of items) {
-        if (!item.description) continue
+      for (const input of items) {
+        // T-434 (QA F2, then F8): this was a hand-written field-by-field copy —
+        // a whitelist — so a field missing from it was dropped at the store
+        // boundary no matter what the type said, and that is exactly how
+        // `authIntent` was lost. Naming the field fixed the symptom; the SHAPE
+        // was the defect, and it recurred one layer up in main.
+        //
+        // The whitelist is gone. `coerceTodoItemRaw` walks a table the compiler
+        // forces to cover every field of `TodoItemRaw` (shared/todo-item.ts),
+        // and the spread below carries whatever it returns — so a new field
+        // reaches the store by existing, not by being remembered here. It also
+        // means this store never trusts the wire: unknown keys are dropped and
+        // every value is checked, which is what makes the spread safe.
+        const item = coerceTodoItemRaw(input)
+        if (!item) continue
         const id =
           item.id ??
           `todo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         if (existingIds.has(id)) continue
-        // Field-by-field, deliberately: this is a whitelist, so anything not
-        // named here is DROPPED at the store boundary (that is how T-434's
-        // `authIntent` was silently lost). Add the field here, not just to the
-        // type, when the envelope grows one.
         newItems.push({
+          ...item,
           id,
-          description: item.description,
           type: item.type ?? 'check',
-          href: item.href,
-          authIntent: item.authIntent,
           status: 'open',
         })
         existingIds.add(id) // handle duplicates within same batch
