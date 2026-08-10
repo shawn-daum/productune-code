@@ -114,11 +114,14 @@ describe('variant 2 — plain doc / deployed-site URLs open in the internal pane
 describe('variant 3 — unflagged URL matching the IdP net opens in the system browser', () => {
   const netCases: ReadonlyArray<readonly [string, string]> = [
     // R-34 itself: GitHub login (passkey / WebAuthn — impossible in a webview).
+    // `matched` names the RULE that fired, not the path that was judged — see
+    // the F10 block at the bottom of this file. `/login` covers the deeper
+    // GitHub auth paths by prefix, so all three report the same grounds.
     ['https://github.com/login', 'github.com/login'],
     ['https://github.com/login?return_to=%2Fshawn%2Frepo', 'github.com/login'],
-    ['https://github.com/login/oauth/authorize?client_id=x', 'github.com/login/oauth/authorize'],
-    ['https://github.com/login/device', 'github.com/login/device'],
-    ['https://github.com/sessions/two-factor/app', 'github.com/sessions/two-factor/app'],
+    ['https://github.com/login/oauth/authorize?client_id=x', 'github.com/login'],
+    ['https://github.com/login/device', 'github.com/login'],
+    ['https://github.com/sessions/two-factor/app', 'github.com/sessions'],
     // Dedicated auth hosts — whole host
     ['https://accounts.google.com/o/oauth2/v2/auth?scope=email', 'accounts.google.com'],
     ['https://login.microsoftonline.com/common/oauth2/v2.0/authorize', 'login.microsoftonline.com'],
@@ -199,15 +202,15 @@ describe('F3 — a prefix that is not a whole path segment does not leave the ap
     // webview that cannot serve it.
     const stillOut: ReadonlyArray<readonly [string, string]> = [
       ['https://github.com/login', 'github.com/login'],
-      ['https://github.com/login/', 'github.com/login/'],
+      ['https://github.com/login/', 'github.com/login'],
       ['https://github.com/login?return_to=%2Fshawn%2Frepo', 'github.com/login'],
       ['https://github.com/login#frag', 'github.com/login'],
-      ['https://github.com/login/device', 'github.com/login/device'],
-      ['https://github.com/login/oauth/authorize?client_id=x', 'github.com/login/oauth/authorize'],
+      ['https://github.com/login/device', 'github.com/login'],
+      ['https://github.com/login/oauth/authorize?client_id=x', 'github.com/login'],
       ['https://github.com/session', 'github.com/session'],
-      ['https://github.com/sessions/two-factor/app', 'github.com/sessions/two-factor/app'],
+      ['https://github.com/sessions/two-factor/app', 'github.com/sessions'],
       ['https://vercel.com/signup', 'vercel.com/signup'],
-      ['https://gitlab.com/users/auth/github/callback', 'gitlab.com/users/auth/github/callback'],
+      ['https://gitlab.com/users/auth/github/callback', 'gitlab.com/users/auth'],
     ]
     for (const [url, matched] of stillOut) {
       const d = routeUrl(url)
@@ -280,7 +283,8 @@ describe('F6 — `;` ends a segment because it names nothing', () => {
       // The contains sub-net gets the same boundary from the same helper.
       ['https://kc.example.com/realms/r/protocol/openid-connect/auth;jsessionid=Z', 'path:/protocol/openid-connect/auth'],
       // ...and a path-scoped host rule behaves identically — one rule, one shape.
-      ['https://github.com/login;jsessionid=ABC', 'github.com/login;jsessionid=ABC'],
+      // Its label is the rule, so the session id is not in it (F10, below).
+      ['https://github.com/login;jsessionid=ABC', 'github.com/login'],
     ]
     for (const [url, matched] of cases) {
       const d = routeUrl(url)
@@ -334,6 +338,92 @@ describe('F6 — `;` ends a segment because it names nothing', () => {
     ]) {
       expect(routeUrl(url).target, url).toBe('internal-pane')
     }
+  })
+})
+
+// ── F10 — `matched` is the GROUNDS, never the input ─────────────────────────
+//
+// QA finding F10: the path-scoped branch answered `${rule.host}${pathname}`, so
+// `github.com/login;jsessionid=ABCDEF…` — a live session identifier — went
+// verbatim into the `[url-route]` log line. The other two branches already
+// answered with the rule (a host, or `path:<prefix>`) and were fine.
+//
+// The invariant that makes the whole class unreachable, rather than that one
+// branch: `matched` is drawn from a CLOSED set derivable from the three rule
+// tables. Nothing about the URL under judgment can appear in it — not a session
+// id, not a token in a path segment, not a tenant name. The set below is built
+// from the exported tables, so a new rule joins it automatically and a branch
+// that starts interpolating caller material fails here instead of in a log.
+
+describe('F10 — the verdict label cannot carry caller-supplied path material', () => {
+  /** Every label the three rule tables can produce. Derived, never hand-listed. */
+  const RULE_LABELS: ReadonlySet<string> = new Set([
+    ...IDP_RULES.flatMap((r) => (r.paths ? r.paths.map((p) => `${r.host}${p}`) : [r.host])),
+    ...AUTH_PATH_PREFIXES.map((p) => `path:${p}`),
+    ...AUTH_PATH_CONTAINS.map((f) => `path:${f}`),
+  ])
+
+  /** Secret-shaped: what a servlet container or an SSO redirect actually staples on. */
+  const SECRET = 'ABCDEF0123456789abcdef'
+
+  it('a session identifier stapled to the path never reaches `matched`', () => {
+    // Every one of these must still LEAVE the app — the fix is about what we
+    // say about the verdict, not the verdict. The `;jsessionid=` shapes are the
+    // ones the previous delta deliberately started accepting (F6).
+    for (const url of [
+      `https://github.com/login;jsessionid=${SECRET}`,
+      `https://github.com/sessions/two-factor/app;jsessionid=${SECRET}`,
+      `https://gitlab.com/users/auth/github/callback?state=${SECRET}`,
+      `https://vercel.com/api/auth/callback/${SECRET}`,
+      `https://sso.example.com/oauth2/authorize;jsessionid=${SECRET}`,
+      `https://kc.example.com/realms/${SECRET}/protocol/openid-connect/auth`,
+      `https://acme.okta.com/oauth2/v1/authorize?code=${SECRET}`,
+    ]) {
+      const d = routeUrl(url)
+      expect(d.target, url).toBe('system-browser')
+      expect(d.matched ?? '', url).not.toContain(SECRET)
+    }
+  })
+
+  it('every branch answers with a rule label, on every rule, under hostile tails', () => {
+    // Tails a real IdP or a hostile page can put after the endpoint the rule
+    // named. If any branch interpolates the pathname, one of these carries the
+    // secret out and the membership check below fails.
+    const tails = ['', '/', `;jsessionid=${SECRET}`, `/${SECRET}`, `/deep/${SECRET}`, `;a=1/b;c=${SECRET}`]
+    const probes: string[] = []
+    for (const rule of IDP_RULES) {
+      const host = rule.subdomains ? `tenant.${rule.host}` : rule.host
+      for (const p of rule.paths ?? ['/']) {
+        for (const tail of tails) probes.push(`https://${host}${p}${tail}`)
+      }
+    }
+    for (const p of AUTH_PATH_PREFIXES) {
+      for (const tail of tails) probes.push(`https://sso.example.com${p}${tail}`)
+    }
+    for (const f of AUTH_PATH_CONTAINS) {
+      for (const tail of tails) probes.push(`https://kc.example.com/tenant-${SECRET}${f}${tail}`)
+    }
+
+    let outward = 0
+    for (const url of probes) {
+      const d = routeUrl(url)
+      if (d.target !== 'system-browser') continue
+      outward += 1
+      expect(d.matched, url).toBeDefined()
+      expect(RULE_LABELS.has(d.matched!), `${url} → matched=${d.matched}`).toBe(true)
+    }
+    // The sweep has to have actually exercised the outward branches, or the
+    // membership assertion above is vacuous.
+    expect(outward, 'the probe set never routed anything outward').toBeGreaterThan(150)
+  })
+
+  it('the log line built from a decision contains no path material', () => {
+    // The exact interpolation `ipc/urlRoute.ts` performs. Kept here rather than
+    // there because this module is where the guarantee is produced.
+    const d = routeUrl(`https://github.com/login;jsessionid=${SECRET}`)
+    const line = `[url-route] → system browser (${d.reason}${d.matched ? `: ${d.matched}` : ''})`
+    expect(line).not.toContain(SECRET)
+    expect(line).toBe('[url-route] → system browser (idp-allowlist: github.com/login)')
   })
 })
 

@@ -1936,12 +1936,21 @@ export function parseTodoItems(text: string): TodoItemRaw[] {
           const arr = obj[key]
           if (Array.isArray(arr)) {
             // T-434 (QA F8): this used to be a hand-written `.map()` of four
-            // fields — a whitelist, so `authIntent` was dropped here regardless
-            // of what any type said. `coerceTodoItemsRaw` is driven by a table
-            // the compiler forces to cover every field of `TodoItemRaw`, so the
+            // fields — a whitelist, so a field was dropped here regardless of
+            // what any type said. `coerceTodoItemsRaw` is driven by a table the
+            // compiler forces to cover every field of `TodoItemRaw`, so the
             // shape cannot silently lose one again. (`type` is no longer
             // defaulted to 'check' here; the store owns that default, in one
             // place — the resulting item is identical.)
+            //
+            // T-434 (QA F9): `text` here is PO RESULT TEXT — written by an
+            // agent that has read repositories and web pages, so it is
+            // prompt-injection reachable. That is why `TodoItemRaw` carries no
+            // routing tier ①: an `authIntent` in this JSON is refused by the
+            // coercer as an invented key, and a todo from this channel is
+            // routed by the IdP allowlist like any other URL. The reasoning,
+            // and the one producer that DOES confer tier ①, are written down in
+            // `shared/todo-item.ts` and `auth-route.ts` (`RouteOptions`).
             const items = coerceTodoItemsRaw(arr)
             if (items.length > 0) return items
           }
