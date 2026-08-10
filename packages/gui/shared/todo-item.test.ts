@@ -30,7 +30,6 @@ const FULL: Required<TodoItemRaw> = {
   description: 'log in and confirm the build',
   type: 'link',
   href: 'https://console.acme-corp.example/projects/42',
-  authIntent: true,
 }
 
 describe('the copier covers the type', () => {
@@ -51,7 +50,7 @@ describe('the copier is also the untrusted-JSON gate', () => {
 
   it('drops values of the wrong type rather than passing them on', () => {
     const out = coerceTodoItemRaw({
-      description: 'ok', id: 42, type: 'not-a-type', href: {}, authIntent: 'yes',
+      description: 'ok', id: 42, type: 'not-a-type', href: {},
     })
     expect(out).toEqual({ description: 'ok' })
   })
@@ -62,13 +61,24 @@ describe('the copier is also the untrusted-JSON gate', () => {
     }
   })
 
-  it('`authIntent` keeps the silence/assertion distinction', () => {
-    // undefined ("the producer said nothing") must never become false ("no
-    // login here") — routing treats them alike today, meaning alike is the
-    // cheap default a future edit would drift into.
-    expect(coerceTodoItemRaw({ description: 'd' })?.authIntent).toBeUndefined()
-    expect(coerceTodoItemRaw({ description: 'd', authIntent: false })?.authIntent).toBe(false)
-    expect(coerceTodoItemRaw({ description: 'd', authIntent: true })?.authIntent).toBe(true)
+  it('`authIntent` is NOT a wire field — this shape cannot confer tier ① (F9)', () => {
+    // The deliberate part of the F9 decision, asserted rather than commented.
+    // Routing tier ① is conferred by the ENVELOPE-level producer the discipline
+    // names (`auth_required`, QA live/smoke extras), which reaches the store on
+    // its own channel. A per-item `authIntent` in `manual_steps_pending[]` is
+    // not in that schema (T-P4-113 §E: id · description · type · href), no
+    // producer emits one, and PO envelope text is agent output that has read
+    // repos and web pages — so honouring it would hand prompt-injectable text a
+    // bypass of the IdP allowlist for one user click.
+    //
+    // It is absent from the TYPE, so `FIELD_COERCERS`' compile gate stays whole
+    // and nothing is dropped at an assembly point that claims to carry it.
+    expect(TODO_ITEM_RAW_FIELDS).not.toContain('authIntent')
+    for (const smuggled of [true, 'true', 1, {}, [true]]) {
+      const out = coerceTodoItemRaw({ description: 'd', href: 'https://x.example/p', authIntent: smuggled })
+      expect(out, JSON.stringify(smuggled)).toEqual({ description: 'd', href: 'https://x.example/p' })
+      expect(out && 'authIntent' in out, JSON.stringify(smuggled)).toBe(false)
+    }
   })
 
   it('a batch drops only the entries that fail, and keeps order', () => {

@@ -36,6 +36,11 @@ export function routeAndOpenExternal(req: RouteRequest): RouteDecision {
     // `routeUrl` has already proven the scheme is http(s) — nothing else can
     // reach the OS handler from here.
     void shell.openExternal(url)
+    // What goes in the line is the GROUNDS for the verdict, not the input that
+    // was judged: `reason` is a fixed enum and `matched` is rule-table material
+    // by `RouteDecision.matched`'s invariant. The URL itself is deliberately
+    // absent — it is caller-supplied and can carry a session identifier in the
+    // path (QA finding F10 caught exactly that leaking through `matched`).
     console.log(`[url-route] → system browser (${decision.reason}${decision.matched ? `: ${decision.matched}` : ''})`)
   }
   return decision

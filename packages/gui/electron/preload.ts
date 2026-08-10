@@ -571,8 +571,12 @@ contextBridge.exposeInMainWorld('api', {
    * pending_user_actions).
    *
    * T-434 (QA F8): this signature used to restate the item shape inline — the
-   * third copy of it, and one of the two that lacked `authIntent`. It names the
-   * shared type now, so the bridge cannot describe a payload main does not send.
+   * third copy of it, and one of the two that had drifted from the others. It
+   * names the shared type now, so the bridge cannot describe a payload main does
+   * not send.
+   *
+   * T-434 (QA F9): this channel carries no routing tier ①, by construction —
+   * `TodoItemRaw` has no field for it. `shared/todo-item.ts` says why.
    */
   poOnTodoItems: (cb: (items: TodoItemRaw[]) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, items: any[]) => cb(items)

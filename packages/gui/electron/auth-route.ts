@@ -15,7 +15,8 @@
  * detector leaks:
  *
  *   ① Producer intent  — whoever hands us the URL knows whether it demands a
- *                        login (`authIntent`). Highest authority.
+ *                        login (`authIntent`). Highest authority, and therefore
+ *                        a closed set of producers — see `RouteOptions`.
  *   ② IdP safety net   — an unflagged URL that matches a known auth endpoint
  *                        goes out anyway.
  *   ③ Escape hatch     — every internal pane that can host a URL carries a
@@ -53,16 +54,59 @@ export type RouteReason =
 export interface RouteDecision {
   target: RouteTarget
   reason: RouteReason
-  /** Which allowlist entry or path pattern matched, for logs and QA reports. */
+  /**
+   * WHY the verdict — the rule that fired, never the URL that was judged.
+   *
+   * Drawn from a closed set: a host from `IDP_RULES`, a `host + rule prefix`,
+   * or `path:<pattern>` from the two host-agnostic tables. This is an invariant,
+   * not a convention — the value is logged (`ipc/urlRoute.ts`) and quoted into
+   * QA reports, and a URL under judgment is caller-supplied material that can
+   * carry a live secret.
+   *
+   * QA finding F10 measured that: the path-scoped branch used to answer
+   * `${rule.host}${parsed.pathname}`, so `github.com/login;jsessionid=ABCDEF…`
+   * went verbatim into the log — the very shape the `;` boundary work had just
+   * taught this module to accept. Pinned by a membership test over the derived
+   * label set (auth-route.test.ts, "F10").
+   */
   matched?: string
 }
 
 export interface RouteOptions {
   /**
    * Tier ① — the producer asserts this URL requires the user to authenticate.
-   * Today's producer is a QA/PO envelope carrying `auth_required` alongside its
-   * `browser_url` / `verify_url` (contracts: QA live/smoke extras), which is the
-   * PO stating, in its own words, that a login is in the way.
+   *
+   * ── Who may confer tier ①, and why that set is exactly this (T-434 F9) ────
+   *
+   * EXACTLY ONE producer: the envelope-level `auth_required` of a worker return
+   * (contracts, QA live/smoke extras), which sits alongside that envelope's
+   * `browser_url` / `verify_url`. Main derives the flag from it in
+   * `po-runner.dispatchQaEnvelope` and sends it on `po:browser-open` /
+   * `po:user-verify`; the renderer spends it at `routeThenOpen`, and stores it
+   * on the resulting todo through `useUserTodo`'s tier-① grant so a click
+   * minutes later still has it.
+   *
+   * Nothing else confers it. In particular the generic `po:todo-items` channel
+   * does not, and `TodoItemRaw` has no field for it — see `shared/todo-item.ts`.
+   *
+   * The set is this small because of what tier ① COSTS. It is checked before
+   * the loopback pin and before tier ②, so a flagged URL reaches
+   * `shell.openExternal` with the IdP allowlist never consulted: any https URL
+   * at all, in the user's real browser, on one click. That is the right trade
+   * for a worker envelope — shawn's decision is "the producer knows whether it
+   * demands a login", and a worker return is a structured field the PO's own
+   * pipeline produced. It is the wrong trade for material parsed out of PO
+   * result TEXT, because that text is written by an agent after reading
+   * repositories and web pages, i.e. it is prompt-injection reachable.
+   *
+   * What bounds the damage if this is ever wrong, and why it stays a nuisance
+   * rather than a stranding: a click is required (nothing routes on arrival),
+   * and the system browser is a BETTER destination for a phishing page than the
+   * internal pane — a real address bar, the browser's own warnings, and a
+   * password manager that refuses to autofill a wrong domain.
+   *
+   * Only the scheme guard outranks this flag (see `routeUrl`), so a wrongly
+   * flagged `file://` still cannot escalate.
    */
   authIntent?: boolean
 }
@@ -263,29 +307,44 @@ function hostMatches(rule: IdpRule, host: string): boolean {
   return rule.subdomains === true && host.endsWith(`.${rule.host}`)
 }
 
-function pathMatches(rule: IdpRule, pathname: string): boolean {
-  // No `paths` → the whole host is an auth surface.
-  if (!rule.paths) return true
-  // Segment-bounded prefix match: `/login` still covers GitHub's
-  // `/login/oauth/authorize` and `/login/device` — the R-34 flows — but no
-  // longer `/loginsomething`, which is somebody's account page.
+/**
+ * WHICH of `rule.paths` fired, or null. Returns the RULE's own prefix — the
+ * grounds — and never the pathname it was tested against; see
+ * `RouteDecision.matched`.
+ *
+ * Segment-bounded prefix match: `/login` still covers GitHub's
+ * `/login/oauth/authorize` and `/login/device` — the R-34 flows — but no longer
+ * `/loginsomething`, which is somebody's account page. All three of those report
+ * the same grounds, `/login`, because it is the same rule doing the work.
+ */
+function matchedPathPrefix(rule: IdpRule, pathname: string): string | null {
+  const paths = rule.paths
+  if (!paths) return null
   const p = pathname.toLowerCase()
-  return rule.paths.some((prefix) => matchesPathPrefix(p, prefix))
+  return paths.find((prefix) => matchesPathPrefix(p, prefix)) ?? null
 }
 
 /**
  * Tier ② match. Returns the matched rule label (for logs / QA evidence) or null.
  * Exported so a test — and the ticket's variant report — can enumerate the net
  * without re-deriving the matching rules.
+ *
+ * Every `return` below hands back rule-table material only. That is the F10
+ * invariant stated on `RouteDecision.matched`, and it is why the path-scoped
+ * branch reports `rule.host + prefix` rather than the path it just judged.
  */
 export function matchAuthEndpoint(parsed: URL): string | null {
   const host = parsed.hostname.toLowerCase()
   if (isLoopbackHost(host)) return null
 
   for (const rule of IDP_RULES) {
-    if (hostMatches(rule, host) && pathMatches(rule, parsed.pathname)) {
-      return rule.paths ? `${rule.host}${parsed.pathname}` : rule.host
-    }
+    if (!hostMatches(rule, host)) continue
+    // No `paths` → the whole host is an auth surface, and the host IS the grounds.
+    if (!rule.paths) return rule.host
+    const prefix = matchedPathPrefix(rule, parsed.pathname)
+    if (prefix) return `${rule.host}${prefix}`
+    // Host on the list but no auth path matched — keep scanning; another rule
+    // (or the host-agnostic sub-net below) may still fire.
   }
 
   const p = parsed.pathname.toLowerCase()

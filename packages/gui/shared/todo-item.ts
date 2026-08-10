@@ -31,6 +31,33 @@
  * The coercer doubles as the untrusted-JSON gate: PO envelope text is parsed
  * into these, so every field is checked, and anything not in the table is
  * dropped rather than carried into the store.
+ *
+ * ── What this shape deliberately does NOT carry (T-434 F9) ──────────────────
+ *
+ * There is no `authIntent` here, and its absence is a decision rather than an
+ * omission. Routing tier ① — "the producer says a login stands in the way, send
+ * this to the system browser without consulting the IdP allowlist" — is
+ * conferred by exactly ONE producer: the envelope-level `auth_required` of a
+ * worker return (contracts, QA live/smoke extras), which reaches the store on
+ * the `po:user-verify` channel and is granted at `pushItems`, not read off an
+ * item. See `useUserTodo.ts` and `electron/auth-route.ts` (tier ①).
+ *
+ * Items on THIS shape come from `manual_steps_pending[]` /
+ * `pending_user_actions[]` in PO result TEXT. Two facts decide it:
+ *
+ *  - that array's schema is `id · description · type · href` (T-P4-113 §E) and
+ *    nothing in the discipline or the product emits a per-item auth flag, so
+ *    honouring one would buy no behaviour that exists today; and
+ *  - PO result text is the output of an agent that reads repositories and web
+ *    pages, so it is prompt-injection reachable. A field here that skips the
+ *    allowlist would let injected text put an arbitrary https URL in front of
+ *    the user's real browser for the price of one click.
+ *
+ * Note the shape of the refusal, because the opposite shape is this ticket's
+ * recurring defect (F2, then F8): the field is absent from the TYPE, so no
+ * assembly point has to remember to strip it and the `FIELD_COERCERS` compile
+ * gate stays whole. A smuggled `authIntent` on the wire is dropped by the same
+ * unknown-key rule that drops any other invented key — not by a special case.
  */
 
 export type TodoType = 'check' | 'text-input' | 'link'
@@ -42,17 +69,6 @@ export interface TodoItemRaw {
   type?: TodoType
   /** file path, tab id, or (T-434) an http(s) URL. */
   href?: string
-  /**
-   * T-434 routing tier ①: the producer telling us a login stands in the way of
-   * this href. Carried on the ITEM because a todo outlives the event that
-   * created it — the link is clicked minutes later, when nothing else still
-   * holds the producer's verdict, and re-deciding from tiers ②/③ at that point
-   * is a downgrade of an answer we already had.
-   *
-   * `undefined` means the producer said nothing, which is not the same as
-   * `false` ("no login here") — never coerce one into the other.
-   */
-  authIntent?: boolean
 }
 
 /**
@@ -68,7 +84,6 @@ const FIELD_COERCERS: FieldCoercers = {
   description: (v) => (typeof v === 'string' && v ? v : undefined),
   type: (v) => (v === 'check' || v === 'text-input' || v === 'link' ? v : undefined),
   href: (v) => (typeof v === 'string' && v ? v : undefined),
-  authIntent: (v) => (typeof v === 'boolean' ? v : undefined),
 }
 
 /** Every field of `TodoItemRaw`, as values — derived, never hand-listed. */
