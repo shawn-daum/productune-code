@@ -196,7 +196,7 @@ export interface PromotionCandidateMeta {
   origin?: 'user-requested' | 'auto'
 }
 
-interface RunCallbacks {
+export interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
   onAnnounce: (msgId: string, payload: AnnouncePayload) => void
@@ -1801,63 +1801,7 @@ function handleStreamJsonLine(
 
       // T-P4-116: QA envelope dispatch
       const qaEnv = parseQaEnvelope(resultText)
-      if (qaEnv) {
-        const ticketId =
-          typeof qaEnv.ticket_id === 'string' ? qaEnv.ticket_id : ''
-
-        // T-434 tier ①: `auth_required` in the SAME envelope is the worker
-        // saying, in its own words, that finishing this needs the user to log
-        // in. That makes its browser_url / verify_url auth-bearing, so they are
-        // flagged for the router (→ system default browser, where the user's
-        // passkeys and passwords already are).
-        const envAuthIntent = !!(qaEnv.auth_required && typeof qaEnv.auth_required === 'object')
-
-        // browser_url 있으면 browser-open
-        if (typeof qaEnv.browser_url === 'string' && qaEnv.browser_url) {
-          cb.onBrowserOpen(qaEnv.browser_url, ticketId, 'qa-smoke', envAuthIntent)
-        }
-
-        // qa_status === 'pass' → user-verify
-        if (qaEnv.qa_status === 'pass') {
-          cb.onUserVerify(
-            typeof qaEnv.verify_url === 'string' ? qaEnv.verify_url : undefined,
-            typeof qaEnv.verify_description === 'string'
-              ? qaEnv.verify_description
-              : '구현 결과 확인',
-            ticketId,
-            envAuthIntent,
-          )
-        }
-
-        // qa_loops 또는 qa_status 변화 → qa-loop-update
-        if (qaEnv.qa_loops !== undefined || qaEnv.qa_status !== undefined) {
-          const rawStatus = qaEnv.qa_status
-          const loopStatus: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required' =
-            rawStatus === 'pass'    ? 'pass'       :
-            rawStatus === 'fail'    ? 'fail'       :
-            rawStatus === 'running' ? 'qa-running' :
-            'qa-running'
-          cb.onQaLoopUpdate({
-            ticketId,
-            attempt: typeof qaEnv.qa_loops === 'number' ? qaEnv.qa_loops : 1,
-            maxAttempts: 3,
-            status: loopStatus,
-            lastFailReason: typeof qaEnv.fail_reason === 'string'
-              ? qaEnv.fail_reason
-              : undefined,
-          })
-        }
-
-        // auth_required → po:todo-items (기존 onTodoItems 채널 재사용)
-        if (qaEnv.auth_required && typeof qaEnv.auth_required === 'object') {
-          const { service, instruction, type } = qaEnv.auth_required
-          cb.onTodoItems([{
-            id: `qa-auth-${ticketId}-${Date.now()}`,
-            description: `인증 필요: ${service} — ${instruction}`,
-            type: type === 'env-var' ? 'text-input' : 'check',
-          }])
-        }
-      }
+      if (qaEnv) dispatchQaEnvelope(qaEnv, cb)
 
       // T-019 §B3: phase-transition gate emit → notification
       const gate = parsePendingGate(resultText)
@@ -1968,7 +1912,7 @@ function handleStreamJsonLine(
  * Looks for a JSON block (```json … ```) or raw `{…}` containing
  * `manual_steps_pending` or `pending_user_actions` arrays.
  */
-function parseTodoItems(text: string): TodoItemRaw[] {
+export function parseTodoItems(text: string): TodoItemRaw[] {
   // Collect candidate JSON strings: prefer ```json block, then raw object.
   const candidates: string[] = []
 
@@ -2257,6 +2201,77 @@ export function parseQaEnvelope(text: string): QaEnvelope | null {
     } catch { /* ignore */ }
   }
   return null
+}
+
+/**
+ * Fan a parsed QA envelope out to the renderer-bound callbacks (T-P4-116).
+ *
+ * Extracted verbatim from the stream-JSON result handler. It was inline there,
+ * which meant the ONE place `authIntent` is derived — the step that turns the
+ * worker's `auth_required` into routing tier ① — had no seam a test could reach,
+ * so every T-434 test had to start downstream of it from a hand-written flag.
+ * That gap is QA finding F7's shape; this is the seam that closes it.
+ *
+ * Takes only the callbacks it fires, so a test can pass four functions instead
+ * of a full RunCallbacks.
+ */
+export function dispatchQaEnvelope(
+  qaEnv: QaEnvelope,
+  cb: Pick<RunCallbacks, 'onBrowserOpen' | 'onUserVerify' | 'onQaLoopUpdate' | 'onTodoItems'>,
+): void {
+  const ticketId = typeof qaEnv.ticket_id === 'string' ? qaEnv.ticket_id : ''
+
+  // T-434 tier ①: `auth_required` in the SAME envelope is the worker saying, in
+  // its own words, that finishing this needs the user to log in. That makes its
+  // browser_url / verify_url auth-bearing, so they are flagged for the router
+  // (→ system default browser, where the user's passkeys and passwords are).
+  const envAuthIntent = !!(qaEnv.auth_required && typeof qaEnv.auth_required === 'object')
+
+  // browser_url 있으면 browser-open
+  if (typeof qaEnv.browser_url === 'string' && qaEnv.browser_url) {
+    cb.onBrowserOpen(qaEnv.browser_url, ticketId, 'qa-smoke', envAuthIntent)
+  }
+
+  // qa_status === 'pass' → user-verify
+  if (qaEnv.qa_status === 'pass') {
+    cb.onUserVerify(
+      typeof qaEnv.verify_url === 'string' ? qaEnv.verify_url : undefined,
+      typeof qaEnv.verify_description === 'string'
+        ? qaEnv.verify_description
+        : '구현 결과 확인',
+      ticketId,
+      envAuthIntent,
+    )
+  }
+
+  // qa_loops 또는 qa_status 변화 → qa-loop-update
+  if (qaEnv.qa_loops !== undefined || qaEnv.qa_status !== undefined) {
+    const rawStatus = qaEnv.qa_status
+    const loopStatus: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required' =
+      rawStatus === 'pass'    ? 'pass'       :
+      rawStatus === 'fail'    ? 'fail'       :
+      rawStatus === 'running' ? 'qa-running' :
+      'qa-running'
+    cb.onQaLoopUpdate({
+      ticketId,
+      attempt: typeof qaEnv.qa_loops === 'number' ? qaEnv.qa_loops : 1,
+      maxAttempts: 3,
+      status: loopStatus,
+      lastFailReason: typeof qaEnv.fail_reason === 'string'
+        ? qaEnv.fail_reason
+        : undefined,
+    })
+  }
+
+  // auth_required → po:todo-items (기존 onTodoItems 채널 재사용)
+  if (qaEnv.auth_required && typeof qaEnv.auth_required === 'object') {
+    const { service, instruction, type } = qaEnv.auth_required
+    cb.onTodoItems([{
+      id: `qa-auth-${ticketId}-${Date.now()}`,
+      description: `인증 필요: ${service} — ${instruction}`,
+      type: type === 'env-var' ? 'text-input' : 'check',
+    }])
+  }
 }
 
 // ── Pending-gate parser (T-019 §B3) ───────────────────────────────────────────
