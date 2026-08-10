@@ -158,6 +158,55 @@ export const AUTH_PATH_CONTAINS: readonly string[] = [
   '/adfs/oauth2/authorize',        // AD FS
 ]
 
+// ── Path boundaries ───────────────────────────────────────────────────────────
+
+/**
+ * Does `pathname` begin with `prefix` AT A SEGMENT BOUNDARY?
+ *
+ * A bare `startsWith` fired on every path that merely SPELLS a rule's prefix:
+ * `github.com/loginsomething`, `/login-tools`, `/sessionize`,
+ * `/signin-widget/repo` are ordinary user and org pages, and
+ * `example.com/authorized-users` is ordinary product copy. The direction was the
+ * safe one — tier ③ means nobody is stranded — but the cost was real: every link
+ * belonging to an org whose name merely STARTS with a rule's prefix kicked the
+ * user out of the app, once per link.
+ *
+ * The boundary set is `/` or end-of-path, and that pair is COMPLETE here: these
+ * predicates only ever see `URL.pathname`, which by construction carries neither
+ * the query nor the fragment (they live in `.search` / `.hash`). So
+ * `github.com/login?return_to=x` arrives as the exact path `/login`, and
+ * `/login/device` · `/login/oauth/authorize` still match on the `/`.
+ *
+ * A prefix that already ENDS in `/` carries its own boundary (`/saml2/`), and
+ * demanding a SECOND separator after it would break that rule outright — which
+ * is why this is an early return and not one uniform char check.
+ */
+export function matchesPathPrefix(pathname: string, prefix: string): boolean {
+  if (!pathname.startsWith(prefix)) return false
+  if (prefix.endsWith('/')) return true
+  const next = pathname.charAt(prefix.length)
+  return next === '' || next === '/'
+}
+
+/**
+ * The same boundary rule for the `contains` sub-net (`AUTH_PATH_CONTAINS`).
+ *
+ * Only the RIGHT side needs checking: every fragment there begins with `/`, so
+ * it can already only match at the start of a segment. Scans past a
+ * non-boundary hit instead of giving up on the first one, so a path that
+ * happens to spell the fragment early cannot mask the real endpoint later.
+ */
+export function containsPathSegment(pathname: string, fragment: string): boolean {
+  for (let from = 0; from <= pathname.length; from += 1) {
+    const at = pathname.indexOf(fragment, from)
+    if (at < 0) return false
+    const next = pathname.charAt(at + fragment.length)
+    if (next === '' || next === '/') return true
+    from = at
+  }
+  return false
+}
+
 // ── Host helpers ──────────────────────────────────────────────────────────────
 
 /** Loopback / link-local — a local dev server, preview, or OAuth callback. */
@@ -182,10 +231,11 @@ function hostMatches(rule: IdpRule, host: string): boolean {
 function pathMatches(rule: IdpRule, pathname: string): boolean {
   // No `paths` → the whole host is an auth surface.
   if (!rule.paths) return true
-  // Plain prefix match: `/login` therefore also covers GitHub's
-  // `/login/oauth/authorize` and `/login/device` — the R-34 flows.
+  // Segment-bounded prefix match: `/login` still covers GitHub's
+  // `/login/oauth/authorize` and `/login/device` — the R-34 flows — but no
+  // longer `/loginsomething`, which is somebody's account page.
   const p = pathname.toLowerCase()
-  return rule.paths.some((prefix) => p.startsWith(prefix))
+  return rule.paths.some((prefix) => matchesPathPrefix(p, prefix))
 }
 
 /**
@@ -205,10 +255,10 @@ export function matchAuthEndpoint(parsed: URL): string | null {
 
   const p = parsed.pathname.toLowerCase()
   for (const prefix of AUTH_PATH_PREFIXES) {
-    if (p.startsWith(prefix)) return `path:${prefix}`
+    if (matchesPathPrefix(p, prefix)) return `path:${prefix}`
   }
   for (const frag of AUTH_PATH_CONTAINS) {
-    if (p.includes(frag)) return `path:${frag}`
+    if (containsPathSegment(p, frag)) return `path:${frag}`
   }
 
   return null
