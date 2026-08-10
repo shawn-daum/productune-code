@@ -253,6 +253,90 @@ describe('F3 — a prefix that is not a whole path segment does not leave the ap
   })
 })
 
+// ── F6 — what `URL.pathname` actually keeps ─────────────────────────────────
+//
+// The F3 commit asserted that `/` and end-of-path were the COMPLETE boundary
+// set, on the grounds that a pathname carries no query and no fragment. That
+// reasoning covers `?` and `#` and nothing else: a pathname keeps every
+// in-segment separator, and QA measured the one that matters —
+// `new URL('https://x/oauth2/authorize;jsessionid=ABC').pathname` is
+// `/oauth2/authorize;jsessionid=ABC`, `;` and all.
+//
+// The decision (not a silent widening — see isSegmentBoundary): `;` ends a
+// segment, `.` `,` `:` do not. `;` introduces RFC 3986 segment parameters, so
+// the segment is still named `authorize`; the other three are name characters,
+// so `/login.php` is a different resource exactly as `/loginsomething` is.
+
+describe('F6 — `;` ends a segment because it names nothing', () => {
+  it('a cookie-disabled Java IdP still leaves the app', () => {
+    // Shibboleth / CAS / WSO2 with cookies off staple the session onto the path.
+    // These are the host-agnostic sub-net's target population BY CONSTRUCTION —
+    // self-hosted IdPs nobody put on a host list — so under-triggering here
+    // pins a login inside a pane that cannot serve a passkey.
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ['https://sso.example.com/oauth2/authorize;jsessionid=ABC123', 'path:/oauth2/authorize'],
+      ['https://sso.example.com/oauth/authorize;jsessionid=ABC?client_id=x', 'path:/oauth/authorize'],
+      ['https://idp.example.com/authorize;jsessionid=ABC', 'path:/authorize'],
+      // The contains sub-net gets the same boundary from the same helper.
+      ['https://kc.example.com/realms/r/protocol/openid-connect/auth;jsessionid=Z', 'path:/protocol/openid-connect/auth'],
+      // ...and a path-scoped host rule behaves identically — one rule, one shape.
+      ['https://github.com/login;jsessionid=ABC', 'github.com/login;jsessionid=ABC'],
+    ]
+    for (const [url, matched] of cases) {
+      const d = routeUrl(url)
+      expect(d.target, url).toBe('system-browser')
+      expect(d.matched, url).toBe(matched)
+    }
+  })
+
+  it('`.` `,` `:` are NOT boundaries — they are part of the segment name', () => {
+    // The knowingly-accepted boundary from the F3 round, now stated as a
+    // decision rather than a leftover: `/login.php` is a different resource
+    // than `/login`, and tier ③ covers it if one ever shows up on a real IdP.
+    for (const url of [
+      'https://github.com/login.php',
+      'https://github.com/login.jsp',
+      'https://example.com/authorize.json',
+      'https://github.com/login,x',
+      'https://github.com/login:x',
+    ]) {
+      expect(routeUrl(url).target, url).toBe('internal-pane')
+    }
+    for (const next of ['.', ',', ':', 'x', '-', '_']) {
+      expect(matchesPathPrefix(`/login${next}y`, '/login'), next).toBe(false)
+      expect(containsPathSegment(`/t/authorize${next}y`, '/authorize'), next).toBe(false)
+    }
+  })
+
+  it('widening cannot let a lookalike out — the predicate stays a subset of `startsWith`', () => {
+    // This is the structural property QA verified by comparing 127 verdicts old
+    // vs new: the boundary predicate can only ever REMOVE matches that a bare
+    // `startsWith` accepted, never add one. Adding `;` moves inside that
+    // envelope, it does not widen it — so no host that stayed in the app before
+    // F3 can newly leave because of this change.
+    const tails = ['', '/', ';', '.', ',', ':', 'x', '-', '/deeper', ';jsessionid=A', '?x=1']
+    for (const prefix of AUTH_PATH_PREFIXES) {
+      for (const tail of tails) {
+        const p = `${prefix}${tail}`
+        if (matchesPathPrefix(p, prefix)) expect(p.startsWith(prefix), p).toBe(true)
+      }
+      // ...and the lookalike shape that F3 was about is still refused.
+      expect(matchesPathPrefix(`${prefix}something`, prefix), prefix).toBe(prefix.endsWith('/'))
+    }
+    // Lookalike HOSTS are a hostname question, untouched by any of this: a
+    // matrix parameter cannot buy a host onto the list. (A path on the
+    // host-agnostic sub-net — `/oauth2/authorize` — leaves from ANY host by
+    // design, so the probes below use a path only github.com's rule covers.)
+    for (const url of [
+      'https://github.com.evil.tld/login;jsessionid=A',
+      'https://githubb.com/login;jsessionid=A',
+      'https://github.com@evil.tld/login;jsessionid=A',
+    ]) {
+      expect(routeUrl(url).target, url).toBe('internal-pane')
+    }
+  })
+})
+
 // ── Variant (4) precondition — the URL survives the routing verbatim ─────────
 
 describe('variant 4 precondition — an internally-routed URL is preserved verbatim', () => {
