@@ -22,7 +22,11 @@ import {
   dispatchUrl,
   matchAuthEndpoint,
   isLoopbackHost,
+  matchesPathPrefix,
+  containsPathSegment,
   IDP_RULES,
+  AUTH_PATH_PREFIXES,
+  AUTH_PATH_CONTAINS,
   type RouteSinks,
 } from './auth-route'
 
@@ -150,6 +154,102 @@ describe('variant 3 — unflagged URL matching the IdP net opens in the system b
       const probe = new URL(`https://${host}${pathname}`)
       expect(matchAuthEndpoint(probe), `unreachable rule: ${rule.host}`).not.toBeNull()
     }
+  })
+})
+
+// ── F3 — the net matches path SEGMENTS, not bare prefixes ───────────────────
+//
+// QA finding F3 (nuisance, no stranding): a bare `startsWith` sent every path
+// that merely SPELLS a rule's prefix to the system browser. Safe direction,
+// real cost — an org named `login-tools` or `sessionize` lost the app on every
+// single link. The cases below are QA's, by name.
+
+describe('F3 — a prefix that is not a whole path segment does not leave the app', () => {
+  const overTriggers: readonly string[] = [
+    // github.com rule `/login` — these are user/org account pages, not logins.
+    'https://github.com/loginsomething',
+    'https://github.com/loginsomething/some-repo',
+    'https://github.com/login-tools',
+    'https://github.com/login-tools/cli/blob/main/README.md',
+    // github.com rule `/session` / `/sessions`
+    'https://github.com/sessionize',
+    'https://github.com/sessionize/schedule',
+    // github.com rule `/signin`
+    'https://github.com/signin-widget/repo',
+    // AUTH_PATH_PREFIXES `/authorize` — ordinary product copy on any host.
+    'https://example.com/authorized-users',
+    'https://example.com/authorization',
+    // AUTH_PATH_PREFIXES `/oauth/authorize`
+    'https://example.com/oauth/authorized-apps',
+    // vercel.com rule `/signup`
+    'https://vercel.com/signups-are-open',
+  ]
+
+  for (const url of overTriggers) {
+    it(`stays internal: ${url}`, () => {
+      const d = routeUrl(url)
+      expect(d.target).toBe('internal-pane')
+      expect(d.reason).toBe('default-internal')
+    })
+  }
+
+  it('the real auth endpoints still leave — R-34 first', () => {
+    // The whole point of the boundary is that it costs the net NOTHING. If any
+    // of these regressed, the participant is back to a passkey prompt inside a
+    // webview that cannot serve it.
+    const stillOut: ReadonlyArray<readonly [string, string]> = [
+      ['https://github.com/login', 'github.com/login'],
+      ['https://github.com/login/', 'github.com/login/'],
+      ['https://github.com/login?return_to=%2Fshawn%2Frepo', 'github.com/login'],
+      ['https://github.com/login#frag', 'github.com/login'],
+      ['https://github.com/login/device', 'github.com/login/device'],
+      ['https://github.com/login/oauth/authorize?client_id=x', 'github.com/login/oauth/authorize'],
+      ['https://github.com/session', 'github.com/session'],
+      ['https://github.com/sessions/two-factor/app', 'github.com/sessions/two-factor/app'],
+      ['https://vercel.com/signup', 'vercel.com/signup'],
+      ['https://gitlab.com/users/auth/github/callback', 'gitlab.com/users/auth/github/callback'],
+    ]
+    for (const [url, matched] of stillOut) {
+      const d = routeUrl(url)
+      expect(d.target, url).toBe('system-browser')
+      expect(d.matched, url).toBe(matched)
+    }
+  })
+
+  it('a rule whose prefix ALREADY ends in `/` keeps matching', () => {
+    // `/saml2/` is the shape that a naive "next char must be /" check breaks:
+    // the separator is inside the prefix, so there is no second one to demand.
+    expect(routeUrl('https://idp.example.com/saml2/sso/idp').matched).toBe('path:/saml2/')
+    expect(matchesPathPrefix('/saml2/sso/idp', '/saml2/')).toBe(true)
+    // ...and the guard is load-bearing on the real list, not just this one case.
+    for (const prefix of AUTH_PATH_PREFIXES) {
+      expect(matchesPathPrefix(prefix, prefix), prefix).toBe(true)
+      expect(matchesPathPrefix(`${prefix}/deeper`, prefix), prefix).toBe(true)
+    }
+  })
+
+  it('the contains sub-net is bounded on the right, not the left', () => {
+    // Keycloak sits UNDER a realm segment, so the fragment can never be a
+    // prefix — the left boundary comes free with the fragment's leading `/`.
+    // Its device endpoint hangs one segment further down and must still leave.
+    expect(routeUrl('https://kc.example.com/realms/r/protocol/openid-connect/auth').matched)
+      .toBe('path:/protocol/openid-connect/auth')
+    expect(routeUrl('https://kc.example.com/realms/r/protocol/openid-connect/auth/device').matched)
+      .toBe('path:/protocol/openid-connect/auth')
+    // ...but a longer WORD in that final segment is not the endpoint.
+    expect(routeUrl('https://kc.example.com/realms/r/protocol/openid-connect/authz').target)
+      .toBe('internal-pane')
+    for (const frag of AUTH_PATH_CONTAINS) {
+      expect(containsPathSegment(`/tenant${frag}`, frag), frag).toBe(true)
+      expect(containsPathSegment(`/tenant${frag}x`, frag), frag).toBe(false)
+    }
+  })
+
+  it('a non-boundary hit does not mask a real endpoint later in the path', () => {
+    // The scan must continue past the first `indexOf`. `/authorized` is not the
+    // endpoint; the `/authorize` that follows it is.
+    expect(containsPathSegment('/a/authorizedx/authorize', '/authorize')).toBe(true)
+    expect(containsPathSegment('/a/authorizedx', '/authorize')).toBe(false)
   })
 })
 
