@@ -171,11 +171,16 @@ export const AUTH_PATH_CONTAINS: readonly string[] = [
  * belonging to an org whose name merely STARTS with a rule's prefix kicked the
  * user out of the app, once per link.
  *
- * The boundary set is `/` or end-of-path, and that pair is COMPLETE here: these
- * predicates only ever see `URL.pathname`, which by construction carries neither
- * the query nor the fragment (they live in `.search` / `.hash`). So
- * `github.com/login?return_to=x` arrives as the exact path `/login`, and
- * `/login/device` · `/login/oauth/authorize` still match on the `/`.
+ * `URL.pathname` drops the query and the fragment (they live in `.search` /
+ * `.hash`), so `github.com/login?return_to=x` arrives as the exact path
+ * `/login`. It does NOT follow that `/` and end-of-path are the only separators
+ * we can meet: a pathname keeps every IN-SEGMENT separator there is — `.` `;`
+ * `,` `:` all survive into it. An earlier revision of this comment claimed the
+ * `/`-or-end pair was COMPLETE; that was true of `?` and `#` only, and QA
+ * measured the counter-example (`/oauth2/authorize;jsessionid=ABC`).
+ *
+ * Of those in-segment characters exactly one is a SEPARATOR rather than part of
+ * the name, and it is the one that matters here — see `isSegmentBoundary`.
  *
  * A prefix that already ENDS in `/` carries its own boundary (`/saml2/`), and
  * demanding a SECOND separator after it would break that rule outright — which
@@ -184,8 +189,34 @@ export const AUTH_PATH_CONTAINS: readonly string[] = [
 export function matchesPathPrefix(pathname: string, prefix: string): boolean {
   if (!pathname.startsWith(prefix)) return false
   if (prefix.endsWith('/')) return true
-  const next = pathname.charAt(prefix.length)
-  return next === '' || next === '/'
+  return isSegmentBoundary(pathname.charAt(prefix.length))
+}
+
+/**
+ * Does `next` (the character just past a matched prefix, `''` at end-of-path)
+ * end the segment the rule named?
+ *
+ * `/` and end-of-path are the obvious two. The third is `;`, and it is a
+ * DELIBERATE inclusion rather than an oversight, because `;` does not name
+ * anything — RFC 3986 lets a segment carry parameters after a `;`, and a
+ * cookie-disabled Java IdP (Shibboleth, CAS, WSO2) uses exactly that to keep the
+ * session: `/oauth2/authorize;jsessionid=ABC` IS the `/oauth2/authorize`
+ * endpoint, with a parameter stapled on. Refusing it would be reading the
+ * parameter as part of the resource name.
+ *
+ * `.` `,` `:` are excluded for the mirror-image reason: they are ordinary NAME
+ * characters, so `/login.php` is a different resource than `/login`, the same
+ * way `/loginsomething` is. That distinction is the whole content of the F3 fix
+ * — a rule may not fire on a segment it did not name — and `;` never crosses it.
+ *
+ * Cost of getting this wrong in either direction is bounded and asymmetric:
+ * an under-trigger strands a login inside a pane that cannot serve a passkey and
+ * costs a click on tier ③, while `;` cannot smuggle a lookalike outward — this
+ * predicate still runs behind `startsWith`, so it can only ever accept a subset
+ * of what the pre-F3 predicate accepted (asserted in auth-route.test.ts).
+ */
+function isSegmentBoundary(next: string): boolean {
+  return next === '' || next === '/' || next === ';'
 }
 
 /**
@@ -195,13 +226,17 @@ export function matchesPathPrefix(pathname: string, prefix: string): boolean {
  * it can already only match at the start of a segment. Scans past a
  * non-boundary hit instead of giving up on the first one, so a path that
  * happens to spell the fragment early cannot mask the real endpoint later.
+ *
+ * Same boundary set as `matchesPathPrefix`, from the same helper — this sub-net
+ * is the one aimed at IdPs we have never heard of (self-hosted Keycloak, a
+ * customer's SSO), which is precisely the population that still ships
+ * `;jsessionid=`.
  */
 export function containsPathSegment(pathname: string, fragment: string): boolean {
   for (let from = 0; from <= pathname.length; from += 1) {
     const at = pathname.indexOf(fragment, from)
     if (at < 0) return false
-    const next = pathname.charAt(at + fragment.length)
-    if (next === '' || next === '/') return true
+    if (isSegmentBoundary(pathname.charAt(at + fragment.length))) return true
     from = at
   }
   return false
