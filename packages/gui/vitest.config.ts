@@ -37,12 +37,15 @@ export default defineConfig({
     // remove it — which is exactly how S4 removed the R1 floor.
     globalSetup: ['../../scripts/vitest-real-home-verdict.ts'],
     // Unit tests only — Playwright smoke lives in tests/ and is excluded here.
-    // electron/ and src/ are the two locations with .test.ts files; scripts/qa/
-    // holds standalone QA harness utilities (e.g. frontmostGate) with their own tests.
+    // electron/, src/ and shared/ are the locations with .test.ts files;
+    // scripts/qa/ holds standalone QA harness utilities (e.g. frontmostGate)
+    // with their own tests. (shared/ = T-434 F8: dependency-free modules both
+    // the main and renderer sides import, so neither owns the other's copy.)
     include: [
       'src/**/*.test.ts',
       'src/**/*.test.tsx',
       'electron/**/*.test.ts',
+      'shared/**/*.test.ts',
       'scripts/qa/**/*.test.ts',
     ],
     // Explicitly exclude Playwright specs so they are never picked up by vitest.

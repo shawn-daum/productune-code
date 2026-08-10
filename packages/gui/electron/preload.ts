@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { TodoItemRaw } from '../shared/todo-item'
 
 contextBridge.exposeInMainWorld('api', {
   ping: (): Promise<string> =>
@@ -565,13 +566,15 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // ── Todo items (T-P4-113) ──────────────────────────────────────────────────
-  /** Subscribe to todo items pushed by PO (parsed from manual_steps_pending / pending_user_actions). */
-  poOnTodoItems: (cb: (items: Array<{
-    id?: string
-    description: string
-    type?: 'check' | 'text-input' | 'link'
-    href?: string
-  }>) => void) => {
+  /**
+   * Subscribe to todo items pushed by PO (parsed from manual_steps_pending /
+   * pending_user_actions).
+   *
+   * T-434 (QA F8): this signature used to restate the item shape inline — the
+   * third copy of it, and one of the two that lacked `authIntent`. It names the
+   * shared type now, so the bridge cannot describe a payload main does not send.
+   */
+  poOnTodoItems: (cb: (items: TodoItemRaw[]) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, items: any[]) => cb(items)
     ipcRenderer.on('po:todo-items', listener)
     return () => ipcRenderer.removeListener('po:todo-items', listener)
