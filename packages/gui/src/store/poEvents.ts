@@ -463,6 +463,12 @@ function register() {
       description: i18next.t('workspace.userVerify.todoCheck', { description: payload.description }),
       type: payload.url ? 'link' : 'check',
       href: payload.url,
+      // T-434 (QA F2): the todo OUTLIVES this event. The pane above is opened
+      // now, while `payload.authIntent` is still in hand; the todo's link is
+      // clicked later, and unless tier ① rides along on the item itself that
+      // click re-decides from tiers ②/③ alone — a downgrade of a verdict the
+      // producer already gave us.
+      authIntent: payload.authIntent,
     }])
   }))
 
