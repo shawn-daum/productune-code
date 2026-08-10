@@ -21,8 +21,40 @@ import {
   selectVisibleTodos,
   type UserTodo,
 } from '../../../store/useUserTodo'
-import { useWorkspace } from '../../../store/workspace'
+import { useWorkspace, type WorkspaceState } from '../../../store/workspace'
 import { injectUserMessage } from '../../../lib/injectUserMessage'
+
+/**
+ * Open a `type:'link'` todo's href. Exported, and taking `openTab` as an
+ * argument rather than reading the store, so the T-434 tier-① hand-off is
+ * assertable: this package has no jsdom, so a rendered onClick cannot be
+ * reached by a test at all (see escapeHatch.test.tsx — renderToStaticMarkup
+ * only, no events).
+ *
+ * T-434 (QA F2): `todo.authIntent` is the producer's verdict, captured when the
+ * todo was created and spent HERE, possibly minutes later. Passing `undefined`
+ * instead — as this did — silently demoted every user-verify link to the tier-②
+ * net, which is exactly the fallback tier ① exists to pre-empt.
+ */
+export function openTodoHref(todo: UserTodo, openTab: WorkspaceState['openTab']): void {
+  if (!todo.href) return
+  // T-434: poEvents' user-verify todo carries an http(s) URL in `href`
+  // (store/poEvents.ts), and this handler was dropping it into a MARKDOWN tab —
+  // a pane that cannot host a URL at all, so a verify link (never mind a login)
+  // rendered as nothing. URLs now go through main's router; file paths / tab ids
+  // keep the original markdown-tab behavior.
+  if (/^https?:\/\//i.test(todo.href)) {
+    const url = todo.href
+    void routeThenOpen(url, todo.authIntent, () => {
+      let hostname = 'Browser'
+      try { hostname = new URL(url).hostname || hostname } catch { /* keep default */ }
+      openTab(`browser:${url}`, 'browser', { url }, hostname)
+    })
+    return
+  }
+  // Open file path as markdown tab; href can be a file path or tab id.
+  openTab(todo.href, 'markdown', {}, todo.description)
+}
 
 export default function TodoListPanel() {
   const { t } = useTranslation()
@@ -52,25 +84,7 @@ export default function TodoListPanel() {
     await injectUserMessage(`[user]: ${text}`)
   }
 
-  const handleLinkClick = (todo: UserTodo) => {
-    if (!todo.href) return
-    // T-434: poEvents' user-verify todo carries an http(s) URL in `href`
-    // (store/poEvents.ts), and this handler was dropping it into a MARKDOWN tab —
-    // a pane that cannot host a URL at all, so a verify link (never mind a login)
-    // rendered as nothing. URLs now go through main's router; file paths / tab ids
-    // keep the original markdown-tab behavior.
-    if (/^https?:\/\//i.test(todo.href)) {
-      const url = todo.href
-      void routeThenOpen(url, undefined, () => {
-        let hostname = 'Browser'
-        try { hostname = new URL(url).hostname || hostname } catch { /* keep default */ }
-        openTab(`browser:${url}`, 'browser', { url }, hostname)
-      })
-      return
-    }
-    // Open file path as markdown tab; href can be a file path or tab id.
-    openTab(todo.href, 'markdown', {}, todo.description)
-  }
+  const handleLinkClick = (todo: UserTodo) => openTodoHref(todo, openTab)
 
   return (
     <div style={panelStyle}>

@@ -143,7 +143,7 @@ export type DropTarget =
   | { kind: 'bar-end'; paneId: string }
   | { kind: 'pane-zone'; paneId: string; zone: PaneZone }
 
-interface WorkspaceState {
+export interface WorkspaceState {
   project: Project | null
   poState: PoState | null
   /**

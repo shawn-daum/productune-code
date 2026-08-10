@@ -20,8 +20,17 @@ export interface UserTodo {
   id: string
   description: string
   type: TodoType
-  /** href for type='link' — file path or tab id to open. */
+  /** href for type='link' — file path, tab id, or (T-434) an http(s) URL. */
   href?: string
+  /**
+   * T-434 tier ① carried FORWARD. A user-verify todo is created at the moment
+   * the producer told us whether a login is in the way (`auth_required` on the
+   * envelope), but the user clicks its link minutes later — and by then the
+   * only thing that remembers is this field. Without it the click falls back to
+   * the tier-② IdP net or the tier-③ escape hatch, which is a DOWNGRADE of a
+   * tier we already knew. Undefined = the producer said nothing, not "no".
+   */
+  authIntent?: boolean
   status: TodoStatus
 }
 
@@ -31,6 +40,8 @@ export interface TodoItemRaw {
   description: string
   type?: 'check' | 'text-input' | 'link'
   href?: string
+  /** See `UserTodo.authIntent` — T-434 tier ①, preserved across the wait. */
+  authIntent?: boolean
 }
 
 interface UserTodoState {
@@ -73,11 +84,16 @@ export const useUserTodo = create<UserTodoState>((set) => ({
           item.id ??
           `todo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         if (existingIds.has(id)) continue
+        // Field-by-field, deliberately: this is a whitelist, so anything not
+        // named here is DROPPED at the store boundary (that is how T-434's
+        // `authIntent` was silently lost). Add the field here, not just to the
+        // type, when the envelope grows one.
         newItems.push({
           id,
           description: item.description,
           type: item.type ?? 'check',
           href: item.href,
+          authIntent: item.authIntent,
           status: 'open',
         })
         existingIds.add(id) // handle duplicates within same batch
