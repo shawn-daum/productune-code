@@ -48,6 +48,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - Frontmatter (PO-only write): `id · slug · type(design|impl|qa|ops) · status(open|done|dropped) · assignee · feature? · deps?[] · created · closed?`
 - `id` is a global counter (`T-NNN` unique across ALL ticket dirs); moving a file never renumbers it. Backlog promotion = `git mv` into the current version dir.
 - Body = `## Request` / `## Acceptance` / `## Outcome`. Progress notes live in the body — no separate briefs file.
+- An access-control Acceptance line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.
 - `status` is the whole enum. blocked / review / waiting-on-user / deferred-decision are narration inside an `open` ticket, not statuses.
 - Deliverable work (design / impl / qa / ops) gets a ticket; rituals (retro · readiness · curation) get one `docs/wiki/log.md` line instead.
 - `deps` is dispatch-order judgment material + query index only — never machine-enforced.
@@ -62,7 +63,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - **Remote default branch = `main`, always** (GitHub repo setting). Vercel auto-binds the default branch to production — if `dev` becomes the default, every residence push deploys to prod. Set it at repo creation (`gh repo edit --default-branch main`); with `main` default, `dev` pushes land as previews, which is the intended mapping.
 - Message: `feat:|fix:|refactor:|docs:|chore:|test: <what>`, plus `(T-NNN)` when a ticket applies. Refactor commits stay separate from behavior commits (Tidy First).
 - Stage explicitly — never `git add .` / `git add -A`.
-- Isolation (branch + worktree, Agent-native option) only on three triggers: ① parallel devs on an overlapping area ② experimental / throwaway refactor ③ a second PO instance on the same project. Cut from `dev`; adopt = merge back then delete branch; abandon = drop whole.
+- Isolation (branch + worktree, Agent-native option) only on three triggers: ① parallel tracks sharing a resource — types/contracts, lockfile, migration numbers, ports, or a local dev store/scratchpad — not just overlapping file paths ② experimental / throwaway refactor ③ a second PO instance on the same project. Cut from `dev`; adopt = merge back then delete branch; abandon = drop whole.
 - No push / promote-to-main / PR / force-push / tag push / destructive git without explicit user instruction. Promotion and `v*` tagging create local refs only; they ship on the confirm-gated deploy.
 
 ## Language
