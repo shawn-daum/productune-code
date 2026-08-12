@@ -95,10 +95,16 @@ describe('overrides-absent machines: unchanged', () => {
 })
 
 describe('override present: reaches visible context via its own small channel', () => {
-  test.skipIf(!hasJq())('emits a LAST-WINS block containing the override body verbatim', () => {
+  // T-445 replaced the bare "LAST-WINS" title: the machine layer outranks the
+  // canonical set but is itself outranked by the project layer, and both are
+  // bounded by the non-overridable floor. The precedence wording is asserted in
+  // project-overrides-inject-hook.test.ts; here we only pin that the block still
+  // states it outranks the main discipline injection and carries the body.
+  test.skipIf(!hasJq())('emits an outranking block containing the override body verbatim', () => {
     const home = makePrdtHome({ overrideBody: OVERRIDE_BODY })
     const ctx = additionalContextOf(runHook(OVERRIDES_HOOK, home))
-    expect(ctx).toContain('LAST-WINS')
+    expect(ctx).toContain('machine overrides')
+    expect(ctx).toMatch(/outrank/)
     expect(ctx).toContain(OVERRIDE_BODY)
   })
 
