@@ -16,8 +16,10 @@
 #
 # Scope: PO only (v1.5). Worker output reaches the user re-voiced by the PO, so
 # it is covered here; workers' own direct register is out of scope.
-# Ordering: registered BEFORE prdt-overrides-inject.sh on the same matcher so
-# machine overrides arrive after this block and win (last-wins).
+# Ordering: registered BEFORE both override hooks on the same matcher; those
+# blocks say in their own text that they outrank this one, which is what actually
+# settles it (T-445: co-registered hooks render in completion order, not
+# registration order, so position alone decides nothing).
 #
 # NOTE the two separate paths of T-326: fixed GUI strings (buttons, labels,
 # onboarding copy) are i18n (packages/gui/src/locales); the PO's model-generated
@@ -50,8 +52,8 @@ BODY_FILE="$PRDT_HOME/discipline/po/audience-planner.md"
 
 PAYLOAD="[prdt audience-mode: planner — PO conversational register]
 The operator selected (or defaulted to) the planner audience. Apply the register
-below to every line the user reads. Machine overrides (a separate hook output,
-if present) still win over this block (last-wins).
+below to every line the user reads. Override blocks — machine, then project,
+each its own hook output — still win over this block (last-wins).
 
 ----- BEGIN audience-planner ($BODY_FILE) -----
 $(cat "$BODY_FILE")

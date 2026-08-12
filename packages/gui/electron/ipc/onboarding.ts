@@ -218,7 +218,7 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // T-311: GUI legacy dual-mode was downgraded to read-only. The legacy hook set
 // (T-PATCH-246's 18 pdt-* enforcement hooks + statusline-productune) is no longer
 // installed from the GUI — installClaudeHooks now installs ONLY the prdt hook set
-// (T-289 adapter A6; the full 8종 roster since T-409/T-413/T-423) for prdt-kind projects, and
+// (T-289 adapter A6; the full 9종 roster since T-409/T-413/T-423/T-445) for prdt-kind projects, and
 // is a NO-OP for legacy/undefined
 // projects. Legacy projects keep working for file/ticket/po-state VIEWING; only
 // the machine-provisioning wiring is cut. prdt install stays the single
@@ -244,7 +244,7 @@ interface HookManifest {
 const HOOK_MANIFEST = hookManifestJson as unknown as HookManifest
 
 /**
- * The 8 prdt discipline hook basenames install.sh §4 registers, imported from
+ * The 9 prdt discipline hook basenames install.sh §4 registers, imported from
  * the SAME hook-manifest.json (T-414) install.sh's jq --slurpfile reduces over —
  * this is no longer a hand-synced literal. The parity test in
  * onboarding.rosterParity.test.ts actually RUNS install.sh and installPrdtHooks
@@ -282,7 +282,7 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
 }
 
 /**
- * prdt branch (T-289): install exactly the 8 discipline hooks + statusline-prdt.sh,
+ * prdt branch (T-289): install exactly the 9 discipline hooks + statusline-prdt.sh,
  * producing the SAME settings.json registration install.sh §4/§6 writes —
  * same `~/.prdt` mirror paths, same matchers, same quoted-command form — so GUI
  * and CLI installs can never diverge or double-register: either one re-run strips
@@ -290,11 +290,15 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
  * identical values. Coexists with legacy pdt-* entries — only prdt-basename hooks
  * are stripped/replaced.
  *
- * T-413: audience-inject + overrides-inject ride the SAME matcher as session-start
- * on SessionStart(startup|resume|clear) AND SubagentStart(^prdt-), each as its OWN
- * command entry (never merged into another hook's additionalContext string) —
- * audience BEFORE overrides so machine overrides stay last-wins over the
- * audience-mode register block, matching install.sh §4 (T-326/T-358). The strip is
+ * T-413/T-445: the four small inject hooks (audience, plan-tier, machine
+ * overrides, project overrides) ride the SAME matcher as the discipline hook on
+ * SessionStart(startup|resume|clear), SessionStart(compact) AND
+ * SubagentStart(^prdt-), each as its OWN command entry (never merged into another
+ * hook's additionalContext string), in precedence order — machine overrides
+ * second-to-last, project overrides LAST for `canonical < machine < project`;
+ * matching install.sh §4 (T-326/T-358/T-445). The order is intent, not
+ * enforcement: T-445 measured co-registered hooks rendering in COMPLETION order,
+ * so each override payload states its own precedence in text. The strip is
  * per-hook (not per-entry), so a re-install/repair over a complete CLI install
  * preserves the full set instead of wiping audience/overrides.
  *

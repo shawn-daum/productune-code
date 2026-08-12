@@ -57,7 +57,7 @@ test.skipIf(!hasJq())('SessionStart: overrides hook rides the SAME matcher block
   const commands = block.hooks.map((h: any) => h.command)
   expect(commands.some((c: string) => c.includes('prdt-session-start.sh'))).toBe(true)
   expect(commands.some((c: string) => c.includes('prdt-overrides-inject.sh'))).toBe(true)
-  expect(commands.length).toBe(4) // distinct entries, not merged into one (+ audience T-326, + plan-tier T-423)
+  expect(commands.length).toBe(5) // distinct entries, not merged into one (+ audience T-326, + plan-tier T-423, + project overrides T-445)
 })
 
 test.skipIf(!hasJq())('SubagentStart: overrides hook rides the SAME ^prdt- matcher, as a distinct entry', () => {
@@ -66,7 +66,7 @@ test.skipIf(!hasJq())('SubagentStart: overrides hook rides the SAME ^prdt- match
   const commands = block.hooks.map((h: any) => h.command)
   expect(commands.some((c: string) => c.includes('prdt-session-start.sh'))).toBe(true)
   expect(commands.some((c: string) => c.includes('prdt-overrides-inject.sh'))).toBe(true)
-  expect(commands.length).toBe(4) // + audience hook (T-326) + plan-tier hook (T-423)
+  expect(commands.length).toBe(5) // + audience (T-326) + plan-tier (T-423) + project overrides (T-445)
 })
 
 test.skipIf(!hasJq())('re-running install.sh is idempotent (no duplicate hook entries)', () => {

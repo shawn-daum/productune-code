@@ -19,8 +19,10 @@
 #
 # Scope: PO only — plan-tier only matters for the PO's own model-routing
 # decisions (contracts.md §Route + dispatch); workers never route models.
-# Ordering: registered BEFORE prdt-overrides-inject.sh on the same matcher so
-# machine overrides arrive after this block and win (last-wins).
+# Ordering: registered BEFORE both override hooks on the same matcher; those
+# blocks say in their own text that they outrank this one, which is what actually
+# settles it (T-445: co-registered hooks render in completion order, not
+# registration order, so position alone decides nothing).
 
 set +e
 

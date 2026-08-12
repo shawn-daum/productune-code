@@ -4,9 +4,10 @@
  * Proves the acceptance at the settings-merge layer, entirely against fixture
  * dirs (mkdtemp HOME + project dirs) — the developer's real ~/.claude / ~/.prdt
  * are NEVER touched:
- *   1. prdt project → EXACTLY the 8 prdt hooks (prdt-session-start /
+ *   1. prdt project → EXACTLY the 9 prdt hooks (prdt-session-start /
  *      prdt-post-compact / prdt-post-dispatch / prdt-user-prompt / prdt-audience-inject /
- *      prdt-plan-tier-inject / prdt-overrides-inject / prdt-auto-open) + statusline-prdt.sh
+ *      prdt-plan-tier-inject / prdt-overrides-inject / prdt-project-overrides-inject /
+ *      prdt-auto-open) + statusline-prdt.sh
  *      are registered, pointing at the
  *      ~/.prdt mirror with the same matchers and quoted-command form install.sh
  *      §4/§6 writes; no legacy pdt hook leaks in.
@@ -36,7 +37,7 @@ interface Case {
 const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
-const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh', 'prdt-audience-inject.sh', 'prdt-plan-tier-inject.sh', 'prdt-overrides-inject.sh', 'prdt-auto-open.sh']
+const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh', 'prdt-audience-inject.sh', 'prdt-plan-tier-inject.sh', 'prdt-overrides-inject.sh', 'prdt-project-overrides-inject.sh', 'prdt-auto-open.sh']
 
 /** Throwaway HOME fixture. `withMirror` seeds ~/.prdt/hooks/* + bin/statusline. */
 function makeHome(withMirror = true): string {
@@ -81,23 +82,27 @@ function allCommands(settings: any): string[] {
 }
 
 /** The exact hooks block install.sh §4 produces for a given prdt home.
- *  T-413: SessionStart(startup|resume|clear) + SubagentStart(^prdt-) each carry
- *  session-start, then audience-inject, then overrides-inject (order load-bearing:
- *  overrides last so machine overrides stay last-wins). */
+ *  T-413/T-445: every discipline matcher — SessionStart(startup|resume|clear),
+ *  SessionStart(compact) and SubagentStart(^prdt-) — carries the discipline hook
+ *  followed by the four small inject hooks in precedence order (load-bearing:
+ *  machine overrides second-to-last, project overrides LAST, since render order
+ *  IS the precedence). On the compact matcher the discipline hook is
+ *  prdt-post-compact.sh, a thin exec wrapper around prdt-session-start.sh. */
 function cliHooksBlock(home: string): any {
   const h = (b: string) => ({ type: 'command', command: `"${path.join(home, '.prdt', 'hooks', b)}"` })
-  const injectQuartet = [
-    h('prdt-session-start.sh'),
+  const injectors = [
     h('prdt-audience-inject.sh'),
     h('prdt-plan-tier-inject.sh'),
     h('prdt-overrides-inject.sh'),
+    h('prdt-project-overrides-inject.sh'),
   ]
+  const disciplineEntry = [h('prdt-session-start.sh'), ...injectors]
   return {
     SessionStart: [
-      { matcher: 'startup|resume|clear', hooks: injectQuartet },
-      { matcher: 'compact', hooks: [h('prdt-post-compact.sh')] },
+      { matcher: 'startup|resume|clear', hooks: disciplineEntry },
+      { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...injectors] },
     ],
-    SubagentStart: [{ matcher: '^prdt-', hooks: injectQuartet }],
+    SubagentStart: [{ matcher: '^prdt-', hooks: disciplineEntry }],
     SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
     PostToolUse: [
       { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
@@ -109,7 +114,7 @@ function cliHooksBlock(home: string): any {
 
 export const A6_CASES: readonly Case[] = [
   {
-    label: 'prdt project → exactly the 8 prdt hooks (mirror paths) + statusline-prdt.sh',
+    label: 'prdt project → exactly the 9 prdt hooks (mirror paths) + statusline-prdt.sh',
     run: () => {
       const home = makeHome()
       const proj = makeProject('.prdt')
@@ -117,7 +122,7 @@ export const A6_CASES: readonly Case[] = [
       const s = readSettings(home)
 
       const cmds = allCommands(s)
-      // Every registered command is one of the 3 prdt hooks, quoted, under ~/.prdt/hooks.
+      // Every registered command is one of the prdt hooks, quoted, under ~/.prdt/hooks.
       const mirrorPrefix = `"${path.join(home, '.prdt', 'hooks')}${path.sep}`
       const nonPrdt = cmds.filter(c => !(c.startsWith(mirrorPrefix) && PRDT_HOOKS.some(b => c.endsWith(`${b}"`))))
       if (nonPrdt.length > 0) return fail(`unexpected hooks registered: ${nonPrdt.join(', ')}`)

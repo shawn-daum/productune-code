@@ -11,9 +11,10 @@
 # Dynamic state (po-state, wiki index) is NOT injected — the PO habit reads it
 # at turn open (it changes between turns; a snapshot would go stale).
 #
-# ~/.prdt/overrides/<persona>.md (last-wins overlay, §8) is INTENTIONALLY NOT
-# appended here — it is injected by a separate hook, prdt-overrides-inject.sh,
-# registered on these same events/matchers (T-358). A payload approaching/
+# Neither override layer is appended here — machine ~/.prdt/overrides/<persona>.md
+# (§8) and project <projectRoot>/.prdt/overrides/<persona>.md (§8b) are injected
+# by their own hooks, prdt-overrides-inject.sh then prdt-project-overrides-inject.sh,
+# registered after this one on these same matchers (T-358/T-445). A payload approaching/
 # exceeding the harness's additionalContext persist-truncation threshold used
 # to silently drop the overrides block (it sat last in this string, past the
 # ~2KB preview cutoff). Splitting it into its own hook output means it is
@@ -122,9 +123,11 @@ the next move. Do not ask the user to reconstruct context; the repo has it.
 fi
 
 PAYLOAD="[prdt discipline — $AGENT_TYPE session start]
-Discipline injected below (doctrine → contracts → habit, later wins). Machine
-overrides (if any) arrive as a SEPARATE hook output right around this one —
-those take priority over everything here (last-wins, T-358).
+Discipline injected below (doctrine → contracts → habit, later wins). Override
+blocks (if any) arrive as SEPARATE hook outputs in this same turn — machine and
+project — and each outranks everything here regardless of where it sits relative
+to this block; the project layer is the final word (T-358/T-445). Both stay
+bounded by the non-overridable floor in contracts §Overrides.
 Playbook bodies load on demand via Bash cat under $DISC/ (Read does NOT expand ~).
 
 $(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$MENUS$ONBOARD
