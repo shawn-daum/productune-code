@@ -742,6 +742,58 @@ def init_meta_split(root):
         return str(e)
 
 
+# ── release-notes scaffold (T-453) ────────────────────────────────────────────
+#
+# The format convention (T-394) declares itself common to every prdt-managed
+# project, but it only ever EXISTED in prdt-self: a new project reached its first
+# release with nothing to follow. This stub is the convention's portable home —
+# the preamble IS the spec, so it travels with the project and no one consults
+# another repo's wiki. Canonical discipline stays untouched on purpose: release is
+# a rare event, and per-turn injection would spend tokens in every turn of every
+# session to serve it (PO habit already carries the one WHEN line that fires at
+# tag-cut time, which is the only part needed before the file is open).
+#
+# Lives at `<codeRoot>/docs/RELEASES.md` because the code consumes it — the
+# updater parses it and consumers get it when they pull the code repo (contracts
+# §Fixed paths meta/code split test: coupling, not subject matter). It is outside
+# META_ALLOWLIST_DEFAULT, so the meta repo never claims it in either layout.
+#
+# Sectionless by construction: no line starts with `## `, so a fresh project keeps
+# parsing to (None, None) — identical to having no file — and the update nudge
+# stays silent instead of advertising a phantom version (T-393/T-456 contract).
+# Kept in-script rather than as a config/ template: install.sh ships `scripts/prdt`
+# as a single standalone file copy, so a sibling template would not be installed.
+RELEASES_STUB = """# Releases
+
+Version-by-version release notes for this project.
+
+> **Format** — [Keep a Changelog](https://keepachangelog.com) style, adapted for prdt.
+> - One `## <version>` section per shipped version, **newest first**. `<version>` is the
+>   exact git tag string (`v1.4`) as the first token after `## ` — this is the anchor the
+>   prdt updater parses, so keep it verbatim.
+> - Optional ` — <title>` and date after the version token: `## v1.4 — release-notes (2026-07-22)`.
+> - Group changes under `### Added` / `### Changed` / `### Fixed` / `### Removed` (omit empty groups).
+> - **When**: written at release time. When you close a version, add its `## <version>` section
+>   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
+> - Everything above the first `## ` heading is preamble and is ignored by the parser.
+
+<!-- No version shipped yet — the first `## <version>` section goes directly below. -->
+"""
+
+
+def scaffold_releases(root):
+    """Drop the `<codeRoot>/docs/RELEASES.md` format stub when absent (T-453).
+    Never touches an existing file — a project that brought its own release notes
+    keeps them byte-for-byte. Best-effort: a scaffold write must not fail init."""
+    fp = code_root(root) / "docs" / "RELEASES.md"
+    try:
+        if not fp.exists():
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(RELEASES_STUB, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
@@ -793,6 +845,9 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
         fp = root / "docs" / "wiki" / f
         if not fp.exists():
             fp.write_text(head, encoding="utf-8")
+    # Code-side release-notes stub (T-453) — after the config write above, so
+    # code_root() resolves the layout this init just recorded.
+    scaffold_releases(root)
     con = open_db(root, rebuild=True)
     reindex_tickets(root, con)
     reindex_wiki(root, con)
