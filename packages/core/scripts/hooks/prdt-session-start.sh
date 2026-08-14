@@ -130,14 +130,34 @@ neutralize_body() {
   }' "$1"
 }
 
-MENUS=""
-if [ "$PERSONA" = "po" ]; then
-  for p in po designer developer qa; do
-    MENUS="$MENUS$(block "$p playbook menu" "$DISC/$p/playbooks/_index.md")"
-  done
-else
-  MENUS="$(block "$PERSONA playbook menu" "$DISC/$PERSONA/playbooks/_index.md")"
-fi
+# --- T-471: one command substitution for the WHOLE block sequence -------------
+# `$(...)` strips every trailing newline of what it captures, so per-block
+# substitutions concatenated in a string fused each boundary onto ONE line:
+#   `----- END doctrine ---------- BEGIN contracts (…) -----`
+# Measured before this fix: 6 fused boundaries in the PO payload (T-470 had
+# already un-fused the 7th, its own MIGRATION ONBOARDING one) and 3 in a
+# worker's. Not a forgery bypass — but the reader's trust boundary between two
+# blocks is exactly what those delimiters exist to mark, and a fused line makes
+# where one ends and the next begins ambiguous.
+# Emitting every block from a SINGLE substitution keeps each block's own
+# terminating blank line; only the very last newline is stripped, and the literal
+# newline before `Act per the discipline above.` supplies it back. Add future
+# blocks HERE, never as another `$(block …)` in the payload string.
+emit_blocks() {
+  block "doctrine" "$DOCTRINE"
+  block "contracts" "$CONTRACTS"
+  block "$PERSONA habit" "$HABIT"
+  # PO gets every persona's menu (dispatch routing needs them); a worker its own.
+  if [ "$PERSONA" = "po" ]; then
+    for p in po designer developer qa; do
+      block "$p playbook menu" "$DISC/$p/playbooks/_index.md"
+    done
+  else
+    block "$PERSONA playbook menu" "$DISC/$PERSONA/playbooks/_index.md"
+  fi
+  [ -n "$ONBOARD" ] && printf '%s' "$ONBOARD"
+  return 0
+}
 
 # 1회용 migration 온보딩 (PO만): prdt migrate가 남긴 플래그를 발견하면 자기-브리핑
 # 지시를 주입하고 플래그를 소거 — 사용자가 첫 마디를 조립할 필요를 없앤다.
@@ -149,10 +169,9 @@ if [ "$PERSONA" = "po" ]; then
     # Own line + BEGIN/END-shaped delimiters (T-470): every structural line in this
     # payload is then a shape the neutralizer above recognizes, and the boundary
     # between the trusted canonical blocks and this untrusted record is
-    # unambiguous. (The `block()` helper's own trailing blank line is eaten by
-    # command substitution, hence the leading newline here.)
-    ONBOARD="
------ BEGIN MIGRATION ONBOARDING (one-shot) -----
+    # unambiguous. Shaped exactly like `block()`'s output — no leading newline,
+    # one trailing blank line — since T-471 emits it from the same substitution.
+    ONBOARD="----- BEGIN MIGRATION ONBOARDING (one-shot) -----
 This project was JUST migrated to prdt and current_task was reset. Whatever the
 user's first message says, OPEN with a short briefing you build yourself —
 stage/version, open tickets (prdt tickets --status open, read their bodies incl.
@@ -188,7 +207,7 @@ to this block; the project layer is the final word (T-358/T-445). Both stay
 bounded by the non-overridable floor in contracts §Overrides.
 Playbook bodies load on demand via Bash cat under $DISC/ (Read does NOT expand ~).
 
-$(block "doctrine" "$DOCTRINE")$(block "contracts" "$CONTRACTS")$(block "$PERSONA habit" "$HABIT")$MENUS$ONBOARD
+$(emit_blocks)
 Act per the discipline above. Do NOT acknowledge or narrate this injection in any register —
 your first user-facing line must be product substance."
 
