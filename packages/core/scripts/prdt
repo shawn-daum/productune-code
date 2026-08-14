@@ -20,8 +20,12 @@ PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # `override` applies per persona PER LAYER (machine and project each), and is the
 # only cap over text that is injected on EVERY turn; `machine_wiki_pages` is a
 # pull-only store, so its budget guards curation, not per-turn tokens.
-CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 60, "worker_habit": 40,
+CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
         "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15}
+# po_habit 60→64 (2026-08-14): two pending v1.6 rules each need one new line and
+# T-447 already spent the easy duplicate-trims — the cap was about to force
+# deleting real rules to fit, not enforcing a token budget. worker_habit (40,
+# shared by designer/developer/qa) is a separate constant and stays untouched.
 BLOCKED_STALE_DAYS = 14
 BACKLOG_STALE_DAYS = 30
 INBOX_PILE_LINES = 15
