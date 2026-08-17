@@ -1047,6 +1047,16 @@ def cmd_tickets(args):
     root = require_root()
     con = open_db(root, rebuild=True)
     reindex_tickets(root, con)
+    if args.link:
+        # Paste-ready `[T-NNN](file://<abs>)` per requested id, in the order asked.
+        # The index was just rebuilt from md, so a ticket promoted between dirs
+        # (backlog → version) resolves to where it is NOW — never a composed guess.
+        hit = dict(con.execute(
+            "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.link)),
+            args.link).fetchall())
+        for tid in args.link:
+            print(f"[{tid}](file://{root / hit[tid]})" if tid in hit else f"{tid} (not found)")
+        return
     q, params = "SELECT id, slug, type, status, assignee, version, deps FROM tickets", []
     conds = []
     if args.backlog:
@@ -2168,9 +2178,11 @@ def main():
     p.add_argument("action", choices=["search", "reindex", "lint"])
     p.add_argument("query", nargs="*")
     p.set_defaults(fn=cmd_wiki)
-    p = sub.add_parser("tickets", help="list tickets (--version --feature --status --ready --backlog)")
+    p = sub.add_parser("tickets", help="list tickets (--version --feature --status --ready --backlog) "
+                                       "· --link T-NNN … prints paste-ready file:// links")
     p.add_argument("--version"); p.add_argument("--feature"); p.add_argument("--status", choices=TICKET_STATUS)
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
+    p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
