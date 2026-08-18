@@ -160,10 +160,13 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
 """
 
 
-def open_db(root, rebuild=False):
+def open_db(root):
+    """Attach to the derived index, creating whatever table is missing. Never
+    destructive on purpose (T-480): `tickets`, `wiki_pages` and `wiki_fts` live in
+    ONE file, so a caller that drops the file and then re-fills only the slice it
+    came for leaves the others empty — and a query over an emptied slice reads as
+    a real answer, not as an error. Dropping is `rebuild_index` and nothing else."""
     dbp = root / ".prdt" / "index.db"
-    if rebuild and dbp.exists():
-        dbp.unlink()
     con = sqlite3.connect(dbp)
     con.executescript(SCHEMA)
     try:
@@ -300,6 +303,22 @@ def index_machine_wiki(con):
     pages = scan_machine_wiki()
     index_wiki_rows(con, pages, machine=True)
     return pages
+
+
+def rebuild_index(root):
+    """Drop index.db and re-derive EVERY slice from md — the only destructive path,
+    and it takes no argument for doing half the job. That is the point (T-480):
+    `tickets`/`history` used to rebuild the file and re-fill tickets alone, which
+    left `prdt wiki search` reporting the machine store as if it were the whole
+    wiki. Returns (con, ticket violations, project pages, machine pages)."""
+    dbp = root / ".prdt" / "index.db"
+    if dbp.exists():
+        dbp.unlink()
+    con = open_db(root)
+    violations = reindex_tickets(root, con)
+    pages = reindex_wiki(root, con)
+    mpages = index_machine_wiki(con)
+    return con, violations, pages, mpages
 
 
 # ── menus (playbook 메뉴판) ────────────────────────────────────────────────────
@@ -864,9 +883,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     # Code-side release-notes stub (T-453) — after the config write above, so
     # code_root() resolves the layout this init just recorded.
     scaffold_releases(root)
-    con = open_db(root, rebuild=True)
-    reindex_tickets(root, con)
-    reindex_wiki(root, con)
+    rebuild_index(root)
     # T-408: pre-accept Claude Code's trust dialog for projectRoot + codeRoot so
     # hooks/discipline apply on the very first session (config.json is written
     # above, so code_root resolves the split layout). Best-effort, never blocks.
@@ -984,10 +1001,7 @@ def require_root():
 def cmd_wiki(args):
     root = require_root()
     if args.action == "reindex":
-        con = open_db(root, rebuild=True)
-        v = reindex_tickets(root, con)
-        pages = reindex_wiki(root, con)
-        mpages = index_machine_wiki(con)
+        _con, v, pages, mpages = rebuild_index(root)
         mdir = machine_wiki_root()
         if mdir.is_dir():
             (mdir / "index.md").write_text(render_wiki_index(mpages, MACHINE_INDEX_HEADER),
@@ -1163,11 +1177,13 @@ def override_warnings(root):
 
 def cmd_tickets(args):
     root = require_root()
-    con = open_db(root, rebuild=True)
+    # Refresh THIS command's slice, in place. Not a rebuild: the wiki slice shares
+    # the file and nothing here re-fills it (T-480).
+    con = open_db(root)
     reindex_tickets(root, con)
     if args.link:
         # Paste-ready `[T-NNN](file://<abs>)` per requested id, in the order asked.
-        # The index was just rebuilt from md, so a ticket promoted between dirs
+        # The ticket slice was just re-derived from md, so one promoted between dirs
         # (backlog → version) resolves to where it is NOW — never a composed guess.
         hit = dict(con.execute(
             "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.link)),
@@ -1547,7 +1563,7 @@ def maybe_prompt_update(cmd):
 
 def cmd_history(_args):
     root = require_root()
-    con = open_db(root, rebuild=True)
+    con = open_db(root)                                 # ticket slice only — see cmd_tickets (T-480)
     reindex_tickets(root, con)
     rows = con.execute(
         "SELECT version, COUNT(*), SUM(status='done'), SUM(status='open'), SUM(status='dropped') "
@@ -1887,9 +1903,8 @@ def cmd_doctor(_args):
             warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
 
     # tickets
-    con = open_db(root, rebuild=True)
-    warns += [f"ticket: {v}" for v in reindex_tickets(root, con)]
-    reindex_wiki(root, con)
+    con, tviol, _pages, _mpages = rebuild_index(root)
+    warns += [f"ticket: {v}" for v in tviol]
     tickets = {r["id"]: r for r, _, _ in (scan_tickets(root) or [])}
     ids = set(tickets)
     for t in tickets.values():
@@ -2199,8 +2214,7 @@ def cmd_migrate(args):
         print(("[dry-run] " if dry else "") + "migrate: 루트 CLAUDE.md 이관 (PO walk-up 오염 제거)")
         res = migrate_claude_md(root, dry, assume_yes, to_archive, version)
         if res and res.get("moved"):
-            con = open_db(root, rebuild=True)
-            reindex_wiki(root, con)
+            rebuild_index(root)
             print(f"  · 완료 — {res['dest']} 생성 · 루트 CLAUDE.md 제거. "
                   "PO 세션이 더는 이 파일을 walk-up으로 읽지 않습니다.")
         return
@@ -2313,9 +2327,7 @@ def cmd_migrate(args):
                 fp.write_text(head, encoding="utf-8")
         with open(root / "docs" / "wiki" / "log.md", "a", encoding="utf-8") as f:
             f.write(f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
-        con = open_db(root, rebuild=True)
-        v = reindex_tickets(root, con)
-        reindex_wiki(root, con)
+        _con, v, _pages, _mpages = rebuild_index(root)
         if v:
             report.append(f"⚠ reindex: 티켓 위반 {len(v)}건 잔존 — `prdt doctor` 확인")
         # 1회용 온보딩 플래그 — hook#1이 다음 PO 세션에 자기 브리핑 지시를 주입 후 소거
