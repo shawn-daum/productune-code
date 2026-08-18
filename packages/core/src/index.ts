@@ -81,11 +81,6 @@ export {
 export type { BranchNameArgs } from './git-workflow/branchNamer'
 
 export {
-  installPrePushHook,
-  isPrePushHookInstalled,
-} from './git-workflow/hooks'
-
-export {
   ensureDevBranch,
   promoteDevToMain,
   tagVersion,
