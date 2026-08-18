@@ -15,6 +15,18 @@ TICKET_TYPES = ("design", "impl", "qa", "ops")
 TICKET_STATUS = ("open", "done", "dropped")
 WIKI_TYPES = ("decision", "fact", "learning", "feature", "retro", "term")
 PERSONAS = ("po", "designer", "developer", "qa")
+# Ticket `assignee` vocabulary: the personas plus `user` — work only the person's
+# own hands can do (contracts §Tickets). Pre-rename tickets spell personas
+# `pdt-developer`; normalize on read so one filter value covers both spellings
+# (same rule the GUI applies in views/versionHistory/helpers.ts).
+ASSIGNEES = PERSONAS + ("user",)
+LEGACY_ASSIGNEE_RE = re.compile(r"^pdtl?-")
+
+
+def norm_assignee(v):
+    return LEGACY_ASSIGNEE_RE.sub("", str(v or "")) or None
+
+
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
 # `override` applies per persona PER LAYER (machine and project each), and is the
@@ -170,7 +182,7 @@ def scan_tickets(root):
         fm, _ = parse_frontmatter(p)
         version = p.parent.name
         row = {"id": fm.get("id") or p.stem, "slug": fm.get("slug"), "type": fm.get("type"),
-               "status": fm.get("status"), "assignee": fm.get("assignee"),
+               "status": fm.get("status"), "assignee": norm_assignee(fm.get("assignee")),
                "feature": fm.get("feature"), "deps": fm.get("deps") or [],
                "created": fm.get("created"), "closed": fm.get("closed"),
                "version": version, "path": str(p.relative_to(root))}
@@ -1173,6 +1185,10 @@ def cmd_tickets(args):
         conds.append("feature = ?"); params.append(args.feature)
     if args.status:
         conds.append("status = ?"); params.append(args.status)
+    if args.assignee:
+        # `--assignee user` = the person's own-hands queue (T-464): who is being
+        # waited on, answerable from the index instead of from a chat scrollback.
+        conds.append("assignee = ?"); params.append(args.assignee)
     if conds:
         q += " WHERE " + " AND ".join(conds)
     rows = con.execute(q + " ORDER BY id", params).fetchall()
@@ -1970,7 +1986,7 @@ def migrate_ticket(p, dry):
         "slug": fm.get("slug") or p.stem.lower(),
         "type": FULL_TYPE_MAP.get(str(fm.get("type", "")).lower(), "impl"),
         "status": FULL_STATUS_MAP.get(str(fm.get("status", "")).lower(), "open"),
-        "assignee": re.sub(r"^pdtl?-", "", str(fm.get("assignee") or "")) or None,
+        "assignee": norm_assignee(fm.get("assignee")),
         "feature": fm.get("area_tag") or fm.get("feature") or None,
         "deps": next((fm[k] for k in ("deps", "depends_on") if isinstance(fm.get(k), list) and fm[k]), None),
         "created": date_only(fm.get("created_at") or fm.get("created")),
@@ -2285,9 +2301,12 @@ def main():
     p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
     p.add_argument("query", nargs="*")
     p.set_defaults(fn=cmd_wiki)
-    p = sub.add_parser("tickets", help="list tickets (--version --feature --status --ready --backlog) "
+    p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links")
     p.add_argument("--version"); p.add_argument("--feature"); p.add_argument("--status", choices=TICKET_STATUS)
+    p.add_argument("--assignee", choices=ASSIGNEES,
+                   help="filter by assignee: persona short name or `user` (work only the person can do) "
+                        "· legacy `pdt-` frontmatter normalizes on index, so one value matches both spellings")
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
     p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
     p.set_defaults(fn=cmd_tickets)
