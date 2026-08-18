@@ -58,12 +58,25 @@ def find_project_root(start=None):
     projectRoot where `.prdt/` lives (legacy layout finds it at depth 0). This is
     the CLI half of the 3-way parity with core's up-walk and the bash hooks
     (prdt-session-start.sh / prdt-post-dispatch.sh); codeRoot is derived from
-    projectRoot via code_root()."""
+    projectRoot via code_root().
+
+    Take the OUTERMOST marker on the ancestor chain, never the nearest (T-484,
+    CLI half — T-481). The only surface a PR or a clone reaches is the CODE
+    repo, which sits strictly INSIDE the projectRoot, so a planted
+    `code/.prdt/po-state.json` is an inner candidate by construction and can
+    never outrank the real meta root — closed, not filtered. Legitimate layouts
+    carry exactly one marker on the chain, so for them outermost == nearest,
+    byte-identical. Keep in lockstep with the four hook resolvers (bash
+    find_proj in prdt-session-start.sh / prdt-project-overrides-inject.sh,
+    python twins in prdt-post-dispatch.sh / prdt-user-prompt.sh): the hooks
+    blocking the planted layer while the CLI (`tickets` · `wiki` · `doctor` ·
+    po-state read/write) accepted it was two answers inside one repo."""
     d = Path(start or os.getcwd()).resolve()
+    hit = None
     for p in [d, *d.parents]:
         if (p / ".prdt" / "po-state.json").is_file():
-            return p
-    return None
+            hit = p
+    return hit
 
 
 def prdt_home():
@@ -820,6 +833,179 @@ def init_meta_split(root):
         return str(e)
 
 
+# ── managed pre-push hook (T-481) ─────────────────────────────────────────────
+#
+# contracts §Git states `main` direct push is blocked. Until T-481 NOTHING
+# installed the hook that blocks it: core's `installPrePushHook` (TS) was a dead
+# export called only by its own tests, so a teammate's fresh clone had zero
+# protection and this repo's compliance came from a hand-set org `core.hooksPath`
+# — infrastructure outside the product. The install now lives HERE, in the one
+# component every prdt machine has (the CLI is python; the node/dist bridge that
+# `prdt-post-dispatch.sh` spawns is optional on a fresh machine), and the TS twin
+# is deleted so there is ONE generator of the script and no drift.
+#
+# Two call sites, both real: `prdt init` (a new project is blocked from birth)
+# and `prdt doctor` (an already-cloned project self-heals on the PO's standing
+# diagnostic — habit stage checks / retro playbook / T-428 "diagnose through the
+# product's own surfaces"). No new trigger system, no new subcommand.
+#
+# WHAT IT WILL NOT DO — the honest boundary, and the reason contracts now names
+# its dependency instead of asserting a flat "blocked":
+#   * `.git/hooks` is not cloned, so protection begins at the first init/doctor
+#     in that clone, never at `git clone`.
+#   * ANY `core.hooksPath` (global husky/dotfiles, or an org `.githooks`) makes
+#     `.git/hooks` inert. We then refuse to write and say so, rather than lie:
+#     writing into a global hooks dir would touch every repo on the machine
+#     (privilege escalation by side effect) and writing into a TRACKED hooks dir
+#     would dirty the user's working tree. Changing the user's git config is not
+#     ours to do either.
+# That boundary is also why `isPrePushHookInstalled` reported false positives —
+# it stat'd `.git/hooks/pre-push` while git read somewhere else entirely. Every
+# check below resolves the EFFECTIVE dir git will actually use.
+PREPUSH_MARKER = "# productune managed pre-push hook"
+
+PREPUSH_SCRIPT = """#!/bin/sh
+# productune managed pre-push hook
+# Blocks direct push to main (T-381 hard rule). Auto-generated. Do not edit manually.
+# Emergency hotfix escape (T-465): ALLOW_MAIN_PUSH=1 git push ...
+# Per-command only — never export it, never put it in a script or config.
+
+while read local_ref local_sha remote_ref remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+  if [ "$branch" = "main" ]; then
+    if [ "${ALLOW_MAIN_PUSH:-}" = "1" ]; then
+      echo "pre-push: ALLOW_MAIN_PUSH=1 — hotfix push to main permitted." >&2
+      continue
+    fi
+    echo ""
+    echo "  이 작업 줄기는 직접 보낼 수 없어요."
+    echo "  배포 준비 단계를 거쳐 보내주세요."
+    echo ""
+    echo "  (대상 = main)"
+    echo ""
+    exit 1
+  fi
+done
+
+exit 0
+"""
+# ^ moved verbatim from core git-workflow/hooks.ts (now deleted).
+# `main` is baked in: it is the ONLY protected branch (T-381 hard rule — `dev` is
+# the pushable residence, `main` is reached only by promote), and T-386 C5 showed
+# the old git-rules.json parse never matched a real (pretty-printed) file anyway,
+# so the hard-coded fallback WAS the behavior.
+# T-465 emergency escape: `ALLOW_MAIN_PUSH=1` permits the push and says so on
+# stderr. The block exists to stop an ACCIDENTAL main push, and a hook cannot
+# verify consent — so the escape is deliberately per-command env only (never a
+# file, so no project override or config can pre-grant it) and deliberately loud,
+# which is what separates "the hook stopped me" from "a human meant this". It
+# grants nothing: the contracts push gate (explicit user instruction) is a
+# separate, earlier gate. Same variable name as the NTF org `.githooks` pre-push
+# so one signal covers both layers on a repo carrying both — and so the check
+# below can recognize that foreign hook as blocking rather than warn about it.
+
+
+def prepush_status(root):
+    """Where git will REALLY look for the code repo's pre-push hook, and what
+    sits there. `git rev-parse --git-path hooks` is git's own resolver, so it
+    honors core.hooksPath and linked worktrees (a split project's `code/.git` is
+    often a file, not a dir).
+
+    state:
+      no-repo   — codeRoot is not a git work tree (nothing to install into)
+      managed   — our generated hook (`current` = byte-identical to today's)
+      blocking  — someone else's pre-push that refuses `main` AND honors
+                  ALLOW_MAIN_PUSH (the NTF org `.githooks` hook): not ours, but
+                  the contracts claim holds and the hotfix path works
+      foreign   — a pre-push we cannot show to block main → unverified
+      missing   — no pre-push at the effective path → NOT blocked
+    `hooks_path` is core.hooksPath when set — that config, not the file, is what
+    makes `.git/hooks` inert."""
+    cr = code_root(root)
+    r = _git(["rev-parse", "--git-path", "hooks"], cr)
+    if r.returncode != 0:
+        return {"state": "no-repo", "path": None, "hooks_path": None, "current": False}
+    d = Path(r.stdout.strip() or "hooks")
+    if not d.is_absolute():
+        d = Path(cr) / d
+    hp = _git(["config", "--get", "core.hooksPath"], cr)
+    hooks_path = hp.stdout.strip() if hp.returncode == 0 and hp.stdout.strip() else None
+    hook = d / "pre-push"
+    try:
+        body = hook.read_text(encoding="utf-8")
+    except OSError:
+        return {"state": "missing", "path": hook, "hooks_path": hooks_path, "current": False}
+    if PREPUSH_MARKER in body:
+        return {"state": "managed", "path": hook, "hooks_path": hooks_path,
+                "current": body == PREPUSH_SCRIPT}
+    blocking = "ALLOW_MAIN_PUSH" in body and "main" in body
+    return {"state": "blocking" if blocking else "foreign", "path": hook,
+            "hooks_path": hooks_path, "current": False}
+
+
+def ensure_prepush_hook(root):
+    """Install/upgrade the managed hook where it is ours to write. Returns
+    {action, state, path, detail}; action ∈ installed | upgraded | ok | skipped.
+    Never throws — a git-less machine must not break init or doctor.
+
+    WRITE ONLY when core.hooksPath is unset, i.e. into the repo's own
+    `.git/hooks`: not cloned, not tracked, not shared with any other repo.
+    `upgraded` closes T-481's second half — a machine carrying a pre-T-465
+    managed hook (no ALLOW_MAIN_PUSH escape, so the emergency path is STUCK
+    there) is repaired by the next init/doctor, because the marker is what we
+    match on: a stale body is replaced, not respected. Foreign hooks are never
+    touched and never backed up — silently replacing someone else's hook is how
+    a tool breaks a repo it does not own."""
+    try:
+        st = prepush_status(root)
+        if st["state"] == "no-repo":
+            return {"action": "skipped", "detail": "code repo has no git", **st}
+        if st["hooks_path"]:
+            return {"action": "skipped",
+                    "detail": f"core.hooksPath={st['hooks_path']} — not ours to write", **st}
+        if st["state"] == "managed" and st["current"]:
+            return {"action": "ok", "detail": "managed hook current", **st}
+        if st["state"] in ("blocking", "foreign"):
+            return {"action": "skipped", "detail": "an unmanaged pre-push is in place", **st}
+        upgrade = st["state"] == "managed"
+        st["path"].parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(str(st["path"]) + ".tmp")
+        tmp.write_text(PREPUSH_SCRIPT, encoding="utf-8")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, st["path"])
+        st.update(state="managed", current=True)
+        return {"action": "upgraded" if upgrade else "installed",
+                "detail": "stale managed hook replaced" if upgrade else "no pre-push was present",
+                **st}
+    except Exception as e:  # perms / exotic layout — degrade, never block
+        return {"action": "skipped", "state": "unknown", "path": None,
+                "hooks_path": None, "current": False, "detail": str(e)}
+
+
+def prepush_warnings(root):
+    """doctor lines. The repair IS the finding (it says the block was absent
+    until this run), then the states we must not repair."""
+    res = ensure_prepush_hook(root)
+    p, act, st = res.get("path"), res["action"], res.get("state")
+    if act == "installed":
+        return [f"git: no pre-push hook was present — main-push block installed at {p} "
+                "(a clone carries no hooks; this repo was unprotected until now)"]
+    if act == "upgraded":
+        return [f"git: stale managed pre-push replaced at {p} — "
+                "ALLOW_MAIN_PUSH hotfix escape restored"]
+    if act != "skipped" or st in ("managed", "blocking", "no-repo"):
+        return []
+    hp = res.get("hooks_path")
+    if hp and st == "missing":
+        return [f"git: main-push block INACTIVE — core.hooksPath={hp} makes .git/hooks inert "
+                f"and {p} does not exist; add the block there (prdt writes no hooks outside "
+                ".git/hooks and never edits your git config)"]
+    if st == "foreign":
+        return [f"git: pre-push at {p} is not managed and does not honor ALLOW_MAIN_PUSH — "
+                "main-push block unverified, hotfix path may be stuck"]
+    return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
+
+
 # ── release-notes scaffold (T-453) ────────────────────────────────────────────
 #
 # The format convention (T-394) declares itself common to every prdt-managed
@@ -933,9 +1119,14 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     trust_accept_project(root)
     # Meta split last — the snapshot commit captures the whole fresh scaffold.
     meta_err = init_meta_split(root)
+    # main-push block (T-481) — AFTER the split, which is what created the code
+    # repo's `.git`. A new project is protected from birth; contracts §Git no
+    # longer claims a block that nothing installed.
+    prepush = ensure_prepush_hook(root)
     return {"status": "created", "root": str(root), "slug": slug,
             "version": version, "stage": stage,
-            "meta_git": "ok" if meta_err is None else f"skipped: {meta_err}"}
+            "meta_git": "ok" if meta_err is None else f"skipped: {meta_err}",
+            "prepush": prepush["action"], "prepush_detail": prepush["detail"]}
 
 
 def cmd_init(args):
@@ -2002,6 +2193,9 @@ def cmd_doctor(_args):
         for a in art.iterdir():
             if a.is_file() and not a.name.startswith(".") and a.name not in all_bodies:
                 warns.append(f"ticket: artifact {a.name} has no referencing ticket")
+
+    # main-push block: install where it is ours to write, report where it is not (T-481)
+    warns += prepush_warnings(root)
 
     # release notes vs cut tags (T-465)
     warns += release_notes_gap_warnings(root)
