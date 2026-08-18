@@ -12,6 +12,37 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.6 — 4칸 override 체계 · 기기 위키 · CLI 릴리스 (2026-08-18)
+
+> CLI 아티팩트 단독 릴리스입니다. GUI(.dmg)는 이 버전에 포함되지 않습니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행.
+
+### Added
+- **4칸 override 체계** — 기기(`~/.prdt/overrides/`) · 프로젝트(`.prdt/overrides/`) 2층이 매 턴 주입. 우선순위는 정본 < 기기 < 프로젝트이며, **비-override 바닥**(Secrets · 동의 게이트 · read-only/carve-out)은 어떤 층도 움직일 수 없습니다. compaction 후 재주입 구멍도 봉합.
+- **기기 위키** `~/.prdt/wiki/` — 이 기기의 모든 prdt 프로젝트가 공유. `prdt wiki search`가 양 저장소를 합산하고 기기 히트에 `machine:` 접두를 붙입니다.
+- `prdt wiki refs '<change_meta>'` — 디스패치에 실을 위키 후보를 기억이 아니라 도구로 유도.
+- `prdt tickets --link T-NNN …` — 티켓 id를 열 수 있는 링크로 해석(디렉터리를 옮긴 티켓도).
+- `prdt tickets --assignee <po|designer|developer|qa|user>` — 사람이 수행자인 작업 조회.
+- `prdt init`이 `docs/RELEASES.md` 스텁을 떨굽니다 — preamble 자체가 포맷 규약입니다.
+- `prdt doctor` 검사 추가 — override 층 캡(≤20줄) · 기기 위키 페이지 예산 · 두 층 정규화 중복 · `v*` 태그 대비 릴리스 노트 누락 · main-push 훅 소유권.
+
+### Changed
+- **패치 릴리스 모델 확정** — 격리 패치 미지원, 평시는 선형 소형 사이클(hotfix와 계획 릴리스가 같은 기계), 긴급은 main hotfix(`ALLOW_MAIN_PUSH=1`, 명령당 env 전용).
+- **main-push 차단의 소유자가 CLI로 이전** — `prdt init`이 설치하고 `prdt doctor`가 self-heal. 전역 `core.hooksPath` 기기에서는 쓰지 않고 정직하게 보고합니다.
+- projectRoot 해석이 **조상 체인의 outermost + physical**로 통일(CLI · 훅 4종 · statusline).
+- discipline — `assignee: user` 정식화 · 사용자에게 셸 명령을 넘기지 않는 규칙 · 직접 측정하지 않은 진단을 티켓 전제로 쓰지 않는 규칙 · Retro의 override align 스텝(줄 단위 판정).
+- installer가 조용히 성공하지 않습니다 — manifest 실패 시 종료 코드 비0, `settings.json` 무변경.
+
+### Fixed
+- `prdt tickets`/`history`가 인덱스를 지우고 자기 슬라이스만 채워, 이후 `wiki search`가 프로젝트 페이지를 **조용히 누락**하던 문제. 갓 clone한 프로젝트도 인덱스를 스스로 파생합니다.
+- uninstall이 존재하지 않는 스크립트를 가리키는 훅 등록을 남겨 **매 프롬프트마다** 에러가 나던 문제.
+- 훅이 없는 self-load 경로에서 프로젝트 override 층이 **조용히 누락**되던 문제.
+- 신뢰 경계 밖 본문의 인용 처리 — 모든 줄이 gutter 뒤로 도착하고, 읽을 수 없는 본문은 빈 채로 렌더되지 않고 **그렇다고 말합니다**. defense-in-depth이며 보증이 아닙니다.
+- statusline이 파일 내용으로 프로젝트·버전·stage를 위조당할 수 있던 문제.
+
+### Removed
+- `installPrePushHook` TS export(호출자 0건) — 훅 설치는 CLI가 소유합니다.
+
 ## v1.5 — Anchor DS reskin, audience-mode, security guards (2026-07-24)
 
 ### Added
