@@ -165,15 +165,45 @@ def open_db(root):
     destructive on purpose (T-480): `tickets`, `wiki_pages` and `wiki_fts` live in
     ONE file, so a caller that drops the file and then re-fills only the slice it
     came for leaves the others empty — and a query over an emptied slice reads as
-    a real answer, not as an error. Dropping is `rebuild_index` and nothing else."""
+    a real answer, not as an error. Dropping is `rebuild_index` and nothing else.
+
+    A file this call CREATES is derived whole before it is handed out (T-488).
+    `.prdt/index.db` is in the meta repo's info/exclude, so a freshly cloned
+    project has no index at all; letting the first command create it empty and
+    fill only its own slice reproduced T-480 through the front door — the machine
+    slice is refreshed on every search, so a clone answered `wiki search` with
+    machine hits alone while its entire project wiki was missing.
+
+    Only a MISSING file is derived. An existing one is handed over as it is, even
+    when a slice in it is empty: healing on every open would repair a wiped slice
+    between two commands and turn T-480's regression tests green over the very
+    defect they exist to catch. `wiki reindex` stays the way to refresh."""
     dbp = root / ".prdt" / "index.db"
+    cold = not dbp.exists()
     con = sqlite3.connect(dbp)
     con.executescript(SCHEMA)
     try:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='trigram')")
     except sqlite3.OperationalError:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='unicode61')")
+    if cold:
+        derive_all_slices(root, con)
     return con
+
+
+def derive_all_slices(root, con):
+    """Fill EVERY slice from md — tickets, project wiki, machine wiki. Whole index
+    or none of it: half a derived index answers queries over the missing half as
+    if that half were empty, which is the one failure mode T-480/T-488 are about.
+
+    Writes nothing outside index.db. Generating `docs/wiki/index.md` here would
+    make read-only commands dirty the meta repo on every clone — the measured
+    reason T-480 rejected "just reindex on each query"; that page belongs to
+    `reindex_wiki`, which only `prdt wiki reindex` reaches."""
+    violations = reindex_tickets(root, con)
+    pages = index_project_wiki(root, con)
+    mpages = index_machine_wiki(con)
+    return violations, pages, mpages
 
 
 def scan_tickets(root):
@@ -285,9 +315,17 @@ def index_wiki_rows(con, pages, machine):
     con.commit()
 
 
-def reindex_wiki(root, con):
+def index_project_wiki(root, con):
+    """Refresh the project slice of the index from docs/wiki md. Index only — the
+    generated `docs/wiki/index.md` page is deliberately NOT written here, so this
+    is safe to run from a read-only command (T-488); `reindex_wiki` adds it."""
     pages = scan_wiki(root)
     index_wiki_rows(con, pages, machine=False)
+    return pages
+
+
+def reindex_wiki(root, con):
+    pages = index_project_wiki(root, con)
     idx = root / "docs" / "wiki" / "index.md"
     idx.parent.mkdir(parents=True, exist_ok=True)
     idx.write_text(render_wiki_index(pages, PROJECT_INDEX_HEADER), encoding="utf-8")
@@ -314,6 +352,11 @@ def rebuild_index(root):
     dbp = root / ".prdt" / "index.db"
     if dbp.exists():
         dbp.unlink()
+    # The unlink makes the open below a cold start, so open_db derives every slice
+    # and these three re-derive it (~55 ms on a 634-ticket project, measured). Left
+    # explicit rather than optimised away: `reindex_wiki` — not the cold path's
+    # `index_project_wiki` — is what also regenerates docs/wiki/index.md, and this
+    # runs only on init / doctor / migrate / `wiki reindex`, never in a query path.
     con = open_db(root)
     violations = reindex_tickets(root, con)
     pages = reindex_wiki(root, con)
