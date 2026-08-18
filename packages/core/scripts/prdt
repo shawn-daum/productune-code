@@ -1333,6 +1333,53 @@ def _parse_releases(text):
     return tok[0], "\n".join(lines[start:end]).rstrip("\n")
 
 
+def _releases_sections(code_root_path):
+    """Every `## <version>` anchor in RELEASES.md, as a set of version tokens.
+    Same anchor the updater parses (T-394): first whitespace token after `## `."""
+    try:
+        text = (Path(code_root_path) / "docs" / "RELEASES.md").read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return {l[3:].split()[0] for l in text.splitlines()
+            if l.startswith("## ") and l[3:].split()}
+
+
+# Version-shaped tags only (`v1.5`, `v1.5.1`) — a `v`-prefixed non-release tag
+# (`vendor-sync`) is not a release cut and must not raise a release-notes miss.
+TAG_RE = re.compile(r"^v\d+(?:\.\d+)*$")
+
+
+def release_notes_gap_warnings(root):
+    """A `v*` tag exists with no matching `## <version>` section in RELEASES.md.
+
+    contracts §Git and the PO lifecycle both already require the section in the
+    SAME change that cuts the tag; nothing checked it, and T-465 observed the
+    miss for real (v1.5.1 tagged locally — zero release-note, log, or push trace,
+    and the user believed it had shipped). Tags come from the CODE repo, which is
+    where both the tag and `<codeRoot>/docs/RELEASES.md` live. Matching is exact
+    string against the tag — no normalization guessing, since that token IS the
+    updater's anchor. Degrade-never-raise: no git, not a repo, or no version-shaped
+    tag → silence, same posture as the rest of the doctor."""
+    cr = code_root(root)
+    try:
+        r = _git(["tag", "--list", "v*"], cr)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    tags = sorted(t for t in (x.strip() for x in r.stdout.splitlines()) if TAG_RE.match(t))
+    if not tags:
+        return []
+    have = _releases_sections(cr)
+    missing = [t for t in tags if t not in have]
+    if not missing:
+        return []
+    rel = f"{code_dir_name(root)}/docs/RELEASES.md" if code_dir_name(root) else "docs/RELEASES.md"
+    return [f"release-notes: tag(s) {' '.join(missing)} cut with no matching "
+            f"`## <version>` section in {rel} — contracts requires the section in "
+            f"the SAME change that cuts the tag"]
+
+
 def releases_pending(code_root, timeout=2):
     """(version, section_text) of the newest release section on the REMOTE
     (origin/<current-branch>) docs/RELEASES.md, or (None, None).
@@ -1897,6 +1944,9 @@ def cmd_doctor(_args):
         for a in art.iterdir():
             if a.is_file() and not a.name.startswith(".") and a.name not in all_bodies:
                 warns.append(f"ticket: artifact {a.name} has no referencing ticket")
+
+    # release notes vs cut tags (T-465)
+    warns += release_notes_gap_warnings(root)
 
     # meta backup lag + drift + fixed-path parity (T-428)
     warns += meta_backup_lag_warnings(root)

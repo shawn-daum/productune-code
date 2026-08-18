@@ -19,15 +19,30 @@ const HOOK_MARKER = '# productune managed pre-push hook'
  * the actual behavior explicit and removes ~20 lines of dead parsing — and,
  * because it no longer reads a possibly-stale `["main","dev"]` file, it can
  * never resurrect the dev-push-block landmine T-381 retired.
+ *
+ * T-465 emergency escape: `ALLOW_MAIN_PUSH=1` permits the push and says so on
+ * stderr. The block exists to stop an ACCIDENTAL main push, and a hook cannot
+ * verify consent — so the escape is deliberately per-command env only (never a
+ * file, so no project override or config can pre-grant it) and deliberately
+ * loud, which is what separates "the hook stopped me" from "a human meant this".
+ * It grants nothing: the contracts push gate (explicit user instruction) is a
+ * separate, earlier gate. Same variable name as the NTF org's own `.githooks`
+ * pre-push so one signal covers both layers on repos carrying both.
  */
 function prePushScript(): string {
   return `#!/bin/sh
 # productune managed pre-push hook
 # Blocks direct push to main (T-381 hard rule). Auto-generated. Do not edit manually.
+# Emergency hotfix escape (T-465): ALLOW_MAIN_PUSH=1 git push ...
+# Per-command only — never export it, never put it in a script or config.
 
 while read local_ref local_sha remote_ref remote_sha; do
   branch="\${remote_ref#refs/heads/}"
   if [ "$branch" = "main" ]; then
+    if [ "\${ALLOW_MAIN_PUSH:-}" = "1" ]; then
+      echo "pre-push: ALLOW_MAIN_PUSH=1 — hotfix push to main permitted." >&2
+      continue
+    fi
     echo ""
     echo "  이 작업 줄기는 직접 보낼 수 없어요."
     echo "  배포 준비 단계를 거쳐 보내주세요."

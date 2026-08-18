@@ -50,10 +50,11 @@ function writeConfig(root: string, cfg: unknown): void {
  * Run the installed pre-push hook from `cwd`, pushing `branch`.
  * Returns the exit code (1 = blocked as protected, 0 = allowed).
  */
-function runHook(hookScript: string, cwd: string, branch: string): number {
+function runHook(hookScript: string, cwd: string, branch: string, env?: Record<string, string>): number {
   try {
     execFileSync('sh', [hookScript], {
       cwd,
+      env: { ...process.env, ...(env || {}) },
       input: `refs/heads/${branch} aaaa refs/heads/${branch} bbbb\n`,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
@@ -102,6 +103,27 @@ test('landmine guard: a stale ["main","dev"] file does NOT block dev', async () 
 
   expect(runHook(hook, root, 'main')).toBe(1)
   expect(runHook(hook, root, 'dev')).toBe(0) // NOT blocked despite the stale file
+})
+
+// ── T-465 emergency hotfix escape ─────────────────────────────────────────────
+//
+// `main` stays blocked by default — the escape exists so an INTENDED hotfix push
+// is distinguishable from an accidental one, not so the block can be avoided. It
+// is env-only (never a file, so no config or project override can pre-grant it)
+// and it grants no consent: the contracts push gate is separate and earlier.
+
+test('hotfix escape: ALLOW_MAIN_PUSH=1 permits main; anything else still blocks', async () => {
+  const root = mkroot()
+  fs.mkdirSync(path.join(root, '.git'), { recursive: true })
+
+  await installPrePushHook(root)
+  const hook = path.join(root, '.git', 'hooks', 'pre-push')
+
+  expect(runHook(hook, root, 'main')).toBe(1) // default: blocked
+  expect(runHook(hook, root, 'main', { ALLOW_MAIN_PUSH: '1' })).toBe(0) // intended hotfix
+  expect(runHook(hook, root, 'main', { ALLOW_MAIN_PUSH: '0' })).toBe(1)
+  expect(runHook(hook, root, 'main', { ALLOW_MAIN_PUSH: '' })).toBe(1)
+  expect(runHook(hook, root, 'main', { ALLOW_MAIN_PUSH: 'true' })).toBe(1) // exact "1" only
 })
 
 // ── v1.3 physical split (codeRoot == <root>/code) ─────────────────────────────
