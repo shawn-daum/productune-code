@@ -57,6 +57,15 @@ done
 exit 0
 `
 
+/** A hook that blocks NOTHING but carries both words the old substring verdict
+ *  keyed on, in comments. This is the shape that made `prdt doctor` print clean
+ *  while `git push origin main` succeeded (T-493 item 5). */
+const PERMISSIVE_WITH_RIGHT_WORDS = `#!/bin/sh
+# This repo protects main.
+# Set ALLOW_MAIN_PUSH=1 for an emergency hotfix.
+exit 0
+`
+
 let sandbox: string
 let env: NodeJS.ProcessEnv
 let remote: string
@@ -209,25 +218,52 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('managed pre-push hook (T-481)',
     expect(pushMain().code).toBe(0)
   })
 
-  test('a tracked org hook that blocks main is recognized, never overwritten', () => {
+  // T-493: a hook we did not write is reported UNVERIFIED whatever it contains.
+  // The old verdict was `"ALLOW_MAIN_PUSH" in body and "main" in body`, so this
+  // org hook passed as an effective block — and so did a permissive hook that
+  // merely mentioned both words in a comment (the test right below). Ownership is
+  // what prdt can verify; behavior would mean executing someone else's pre-push,
+  // which a lint has no business doing. The honest cost is this line on a real
+  // org-hook repo; the honest gain is the one below.
+  test('a tracked org hook that really does block main is still reported unverified', () => {
     const orgDir = path.join(codeRoot, '.githooks')
     fs.mkdirSync(orgDir, { recursive: true })
     fs.writeFileSync(path.join(orgDir, 'pre-push'), ORG_HOOK, { mode: 0o755 })
     git(['config', 'core.hooksPath', '.githooks'], codeRoot)
 
     const rep = doctor()
-    expect(rep).not.toContain('pre-push')
+    expect(rep).toContain('main-push block UNVERIFIED')
+    expect(rep).toContain('verifies ownership only')
+    // never claimed as effective, and never touched
+    expect(rep).not.toMatch(/block installed|block is (active|effective)/)
     expect(fs.readFileSync(path.join(orgDir, 'pre-push'), 'utf8')).toBe(ORG_HOOK)
     expect(fs.existsSync(hookFile())).toBe(false)
+    // ground truth, by different means than the verdict: a REAL push
     expect(pushMain().code).not.toBe(0)
     expect(pushMain({ ALLOW_MAIN_PUSH: '1' }).code).toBe(0)
   })
 
-  test('an unmanaged pre-push we cannot show to block main is reported, not replaced', () => {
+  // The exact failure T-493 item 5 names, and the reason the substring test had
+  // to go: doctor said clean, `git push origin main` went through.
+  test('a permissive hook naming main + ALLOW_MAIN_PUSH only in comments does not pass', () => {
+    fs.mkdirSync(path.dirname(hookFile()), { recursive: true })
+    fs.writeFileSync(hookFile(), PERMISSIVE_WITH_RIGHT_WORDS, { mode: 0o755 })
+
+    const rep = doctor()
+    expect(rep).toContain('main-push block UNVERIFIED')
+    // the words are acknowledged as words, never as a block
+    expect(rep).toContain('words in a file are not a block')
+    // ground truth: the push really does succeed, so "clean" would have been a lie
+    expect(pushMain().code).toBe(0)
+    expect(fs.readFileSync(hookFile(), 'utf8')).toBe(PERMISSIVE_WITH_RIGHT_WORDS)
+  })
+
+  test('an unmanaged pre-push we cannot vouch for is reported, not replaced', () => {
     fs.mkdirSync(path.dirname(hookFile()), { recursive: true })
     fs.writeFileSync(hookFile(), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
     const rep = doctor()
-    expect(rep).toContain('is not managed and does not honor ALLOW_MAIN_PUSH')
+    expect(rep).toContain('main-push block UNVERIFIED')
+    expect(rep).toContain('Nothing in it mentions')
     expect(fs.readFileSync(hookFile(), 'utf8')).toBe('#!/bin/sh\nexit 0\n')
   })
 
@@ -242,7 +278,7 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('managed pre-push hook (T-481)',
     git(['config', 'core.hooksPath', '.githooks'], codeRoot)
 
     const rep = doctor()
-    expect(rep).toContain('is not managed and does not honor ALLOW_MAIN_PUSH')
+    expect(rep).toContain('main-push block UNVERIFIED')
     expect(rep).toContain(path.join(orgDir, 'pre-push'))
     expect(fs.existsSync(hookFile())).toBe(false)
     expect(fs.readFileSync(path.join(orgDir, 'pre-push'), 'utf8')).toBe('#!/bin/sh\nexit 0\n')

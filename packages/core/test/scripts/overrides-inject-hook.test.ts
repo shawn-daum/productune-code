@@ -136,7 +136,12 @@ describe('realistic oversized fixture (~18KB discipline payload, incident-scale)
     // below the observed persist threshold even though the main payload (same
     // fixture, same turn) is oversized — proving the two are size-independent.
     expect(overridesCtx).toContain(gutter(OVERRIDE_BODY))
-    expect(overridesCtx.length).toBeLessThan(2000)
+    // The bound is about ORDER OF MAGNITUDE, not a byte count: the observed
+    // persist threshold was ~10KB, and this channel must stay far under it no
+    // matter how large the main payload grows. T-493 added ~450 chars of payload
+    // prose (what the gutter does and does not stop — the honesty item), taking
+    // this block from ~2.0KB to ~2.4KB measured; still a quarter of the threshold.
+    expect(overridesCtx.length).toBeLessThan(4000)
     expect(mainCtx.length).toBeGreaterThan(12000)
     expect(mainCtx).not.toContain(OVERRIDE_BODY)
   })
