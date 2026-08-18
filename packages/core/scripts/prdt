@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · history · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, json, os, re, shutil, sqlite3, subprocess, sys, unicodedata
+import argparse, json, math, os, re, shutil, sqlite3, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -877,6 +877,89 @@ def cmd_init(args):
         print(f"initialized {res['slug']} · {res['version']} · {res['stage']} at {res['root']}/.prdt")
 
 
+# ── wiki refs (T-448) ─────────────────────────────────────────────────────────
+# `[ctx].wiki_refs` was recalled from memory, so in T-442 three dispatches went out
+# with an empty array while the one page that would have stopped the incident
+# (`machine:fact--qa-cua-vm`, "VM required") sat one lookup away — the PO never
+# forgot a rule, it just never got a prompt to look. The `change_meta` the PO is
+# already holding IS the query; this derives candidates from it.
+#
+# Matching is LEXICAL and nothing more: terms taken out of the file paths, the risk
+# flags and the slug, kept only when they are rare across the wiki. Rarity is the
+# whole precision mechanism — a term carried by most pages describes the project,
+# not this change. What that cannot see (a page relevant by concept while sharing
+# no wording) is a defined class, printed under every run, and is exactly the job
+# left to the PO's judgment.
+REFS_DF_CAP = 0.30        # term in >30% of pages → about the project, not the change
+REFS_PHRASE_W = 1.0       # a whole path/flag ("po/habit.md", "test isolation") …
+REFS_WORD_W = 0.6         # … outranks a fragment of one ("habit", "test")
+REFS_TOP, REFS_RATIO, REFS_MIN_TERMS = 3, 0.5, 2
+REFS_WORD = re.compile(r"[a-z0-9]+")
+REFS_NOTE = ("matched on wording only (file paths · risk flags · slug). A page relevant by "
+             "concept while sharing no wording — process/decision pages above all — cannot "
+             "appear here; adding that one is your judgment, as is dropping any line above.")
+
+
+def refs_terms(change_meta, slug):
+    """{term: weight} — every mechanical term a `change_meta` yields.
+
+    Paths give each suffix (`discipline/po/habit.md` → `po/habit.md` → `habit.md`)
+    because a page cites the part it cares about, plus the basename's words. Flags
+    give the whole flag both ways it is ever written (`test-isolation`, `test
+    isolation`) plus its words. The slug gives its words."""
+    terms = {}
+
+    def add(t, phrase):
+        t = t.strip().lower()
+        if len(t) >= 3:
+            terms[t] = max(terms.get(t, 0.0), REFS_PHRASE_W if phrase else REFS_WORD_W)
+
+    for f in (change_meta.get("files") or []):
+        segs = [s for s in re.split(r"[/\\]", str(f).strip()) if s and s not in (".", "..")]
+        for i in range(len(segs)):
+            add("/".join(segs[i:]), phrase=i < len(segs) - 1)
+        if segs:
+            for w in REFS_WORD.findall(re.sub(r"\.[a-z0-9]+$", "", segs[-1]).lower()):
+                add(w, phrase=False)
+    for fl in (change_meta.get("risk_flags") or []):
+        fl = str(fl)
+        add(fl, phrase="-" in fl)
+        add(fl.replace("-", " "), phrase="-" in fl)
+        for w in REFS_WORD.findall(fl.lower()):
+            add(w, phrase=False)
+    for w in REFS_WORD.findall(str(slug or "").lower()):
+        add(w, phrase=False)
+    return terms
+
+
+def wiki_refs(pages, change_meta, slug):
+    """Ranked candidates: [(score, page, [(term, weight), …])]. Both stores at once —
+    the T-442 page lives in the machine store, so a project-only derivation would
+    reproduce the very miss this exists to stop."""
+    texts = [(pg, f"{pg['name'].split(':', 1)[-1]} {pg['title']} {pg['body']}".lower())
+             for pg in pages]
+    hits = {}
+    # `max(1, …)`: on a young wiki 30% rounds below one page, which would filter
+    # every term and report "no candidate" forever — silent, and worse than noise.
+    df_cap = max(1, int(len(texts) * REFS_DF_CAP))
+    for term, mult in refs_terms(change_meta, slug).items():
+        matched = [pg["name"] for pg, text in texts if term in text]
+        if not matched or len(matched) > df_cap:
+            continue
+        weight = math.log(len(texts) / len(matched)) * mult
+        for name in matched:
+            hits.setdefault(name, []).append((term, weight))
+    scored = []
+    for pg, _text in texts:
+        ev = hits.get(pg["name"], [])
+        if len(ev) >= REFS_MIN_TERMS:      # a lone weak term is a coincidence
+            scored.append((sum(w for _, w in ev), pg, sorted(ev, key=lambda x: -x[1])))
+    scored.sort(key=lambda r: (-r[0], r[1]["name"]))
+    # a tail below half the leader is the "10 candidates" failure — the PO then
+    # loads the whole list or discards the whole list, and both lose the signal.
+    return [r for r in scored[:REFS_TOP] if r[0] >= scored[0][0] * REFS_RATIO] if scored else []
+
+
 # ── wiki ──────────────────────────────────────────────────────────────────────
 
 def require_root():
@@ -924,6 +1007,29 @@ def cmd_wiki(args):
             print(f"{name} — {title}{scope}\n    {snip}")
         if not rows:
             print("(no hits)")
+    elif args.action == "refs":
+        raw = " ".join(args.query).strip() or ("" if sys.stdin.isatty() else sys.stdin.read().strip())
+        if not raw:
+            sys.exit("usage: prdt wiki refs '<change_meta or [ctx] JSON>'   (or pipe it on stdin)")
+        try:
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError("not an object")
+        except (ValueError, TypeError) as e:
+            sys.exit(f"prdt wiki refs: could not read that as JSON ({e}) — pass the `change_meta` "
+                     "object, or the whole `[ctx]` object, verbatim")
+        # the PO holds a `[ctx]` at dispatch time and a `change_meta` inside it;
+        # taking either verbatim keeps this a copy, never a re-typing.
+        cm = payload.get("change_meta") if isinstance(payload.get("change_meta"), dict) else payload
+        cands = wiki_refs(scan_wiki(root) + scan_machine_wiki(), cm, payload.get("slug"))
+        for _score, pg, ev in cands:
+            scope = ("  [machine wiki — this machine, any project on it]"
+                     if pg["name"].startswith(MACHINE) else "")
+            print(f"{pg['name']} — {pg['title']}{scope}\n    matched: "
+                  + " · ".join(t for t, _ in ev[:5]))   # the reason, at a glance
+        if not cands:
+            print("(no candidate — no page in either wiki shares wording with these files/flags/slug)")
+        print(REFS_NOTE)
     elif args.action == "lint":
         warns = wiki_lint(root)
         for w in warns:
@@ -2174,8 +2280,9 @@ def main():
     p.set_defaults(fn=cmd_init)
     p = sub.add_parser("doctor", help="non-blocking lint: state · tickets · wiki (both stores) · overrides · discipline caps")
     p.set_defaults(fn=cmd_doctor)
-    p = sub.add_parser("wiki", help="search (both stores; machine hits prefixed `machine:`) | reindex | lint")
-    p.add_argument("action", choices=["search", "reindex", "lint"])
+    p = sub.add_parser("wiki", help="search (both stores; machine hits prefixed `machine:`) | "
+                                    "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint")
+    p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
     p.add_argument("query", nargs="*")
     p.set_defaults(fn=cmd_wiki)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --ready --backlog) "
