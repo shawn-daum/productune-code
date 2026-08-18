@@ -468,7 +468,12 @@ function elideChain(chain: StickyKey[]): CrumbSeg[] {
 
 // ── Tree node ─────────────────────────────────────────────────────────────────
 
-function JsonNode({
+// Exported (in addition to being used internally) so tests can render the REAL
+// tree-node function directly with an in-memory value — same idiom as
+// MessageBubble.attachments.test.tsx — and assert on the actual painted
+// elements' style attributes (T-410: `:root`-only assertions are insufficient,
+// docs/wiki/learning--v1.5-process.md).
+export function JsonNode({
   value,
   depth,
   label,
@@ -545,7 +550,7 @@ function JsonNode({
   )
 }
 
-function ValueLeaf({ value }: { value: unknown }) {
+export function ValueLeaf({ value }: { value: unknown }) {
   if (typeof value === 'string') return <span style={strVal}>"{value}"</span>
   if (typeof value === 'number') return <span style={numVal}>{String(value)}</span>
   if (typeof value === 'boolean' || value === null) return <span style={kwVal}>{String(value)}</span>
@@ -735,7 +740,10 @@ const chevronSpacer: React.CSSProperties = {
 
 // Key color cycles by depth — hierarchy cue. Hues avoid the value colors
 // (string green / number amber / keyword violet).
-const KEY_COLORS = ['var(--text-tertiary)', '#7EA8CF', '#CF9E9E', '#8FBFB4']
+// Colors are `--code-*` semantic tokens (docs/design.md §2.11, T-410) — a
+// productune-own categorical data-viz palette (light+dark), NOT raw hex.
+// KEY_COLORS[0] stays var(--text-tertiary) (existing Anchor token, out of scope).
+const KEY_COLORS = ['var(--text-tertiary)', 'var(--code-key-1)', 'var(--code-key-2)', 'var(--code-key-3)']
 const keyStyle = (depth: number): React.CSSProperties => ({
   color: KEY_COLORS[depth % KEY_COLORS.length],
   flexShrink: 0,
@@ -743,6 +751,6 @@ const keyStyle = (depth: number): React.CSSProperties => ({
 })
 const punct: React.CSSProperties = { color: 'var(--text-disabled)' }
 const collapsedHint: React.CSSProperties = { color: 'var(--text-ghost)', fontStyle: 'italic' }
-const strVal: React.CSSProperties = { color: '#7FB07F', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
-const numVal: React.CSSProperties = { color: '#C9A26D' }
-const kwVal: React.CSSProperties = { color: '#8B7EC8' }
+const strVal: React.CSSProperties = { color: 'var(--code-string)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }
+const numVal: React.CSSProperties = { color: 'var(--code-number)' }
+const kwVal: React.CSSProperties = { color: 'var(--code-keyword)' }

@@ -80,6 +80,10 @@ function additionalContextOf(stdout: string): string {
 
 const OVERRIDE_BODY = '- 개조식으로만 답하라 (금지: 서술형 문장)\n- 커밋 금지 — 항상 진단만\n- "당신" 대신 이름으로 호칭'
 
+/** T-483: hook renders every body line behind the `| ` gutter. */
+const gutter = (b: string) => b.split('\n').map((l) => '| ' + l).join('\n')
+
+
 describe('overrides-absent machines: unchanged', () => {
   test.skipIf(!hasJq())('no override file → hook emits nothing at all', () => {
     const home = makePrdtHome({})
@@ -95,11 +99,17 @@ describe('overrides-absent machines: unchanged', () => {
 })
 
 describe('override present: reaches visible context via its own small channel', () => {
-  test.skipIf(!hasJq())('emits a LAST-WINS block containing the override body verbatim', () => {
+  // T-445 replaced the bare "LAST-WINS" title: the machine layer outranks the
+  // canonical set but is itself outranked by the project layer, and both are
+  // bounded by the non-overridable floor. The precedence wording is asserted in
+  // project-overrides-inject-hook.test.ts; here we only pin that the block still
+  // states it outranks the main discipline injection and carries the body.
+  test.skipIf(!hasJq())('emits an outranking block carrying the whole body behind the T-483 gutter', () => {
     const home = makePrdtHome({ overrideBody: OVERRIDE_BODY })
     const ctx = additionalContextOf(runHook(OVERRIDES_HOOK, home))
-    expect(ctx).toContain('LAST-WINS')
-    expect(ctx).toContain(OVERRIDE_BODY)
+    expect(ctx).toContain('machine overrides')
+    expect(ctx).toMatch(/outrank/)
+    expect(ctx).toContain(gutter(OVERRIDE_BODY))
   })
 
   test.skipIf(!hasJq())('main hook payload no longer duplicates the overrides block', () => {
@@ -125,8 +135,13 @@ describe('realistic oversized fixture (~18KB discipline payload, incident-scale)
     // The overrides channel is the ONLY place the body appears, and it is far
     // below the observed persist threshold even though the main payload (same
     // fixture, same turn) is oversized — proving the two are size-independent.
-    expect(overridesCtx).toContain(OVERRIDE_BODY)
-    expect(overridesCtx.length).toBeLessThan(2000)
+    expect(overridesCtx).toContain(gutter(OVERRIDE_BODY))
+    // The bound is about ORDER OF MAGNITUDE, not a byte count: the observed
+    // persist threshold was ~10KB, and this channel must stay far under it no
+    // matter how large the main payload grows. T-493 added ~450 chars of payload
+    // prose (what the gutter does and does not stop — the honesty item), taking
+    // this block from ~2.0KB to ~2.4KB measured; still a quarter of the threshold.
+    expect(overridesCtx.length).toBeLessThan(4000)
     expect(mainCtx.length).toBeGreaterThan(12000)
     expect(mainCtx).not.toContain(OVERRIDE_BODY)
   })

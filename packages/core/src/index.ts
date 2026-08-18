@@ -44,6 +44,15 @@ export {
 export type { AudienceMode } from './settings/audience-mode'
 
 export {
+  getPlanTier,
+  setPlanTier,
+  hasPlanTierSet,
+  isFableEligible,
+  DEFAULT_PLAN_TIER,
+} from './settings/plan-tier'
+export type { PlanTier } from './settings/plan-tier'
+
+export {
   loadRules,
   saveRules,
   getDefault,
@@ -70,11 +79,6 @@ export {
   resolveBranchConflict,
 } from './git-workflow/branchNamer'
 export type { BranchNameArgs } from './git-workflow/branchNamer'
-
-export {
-  installPrePushHook,
-  isPrePushHookInstalled,
-} from './git-workflow/hooks'
 
 export {
   ensureDevBranch,

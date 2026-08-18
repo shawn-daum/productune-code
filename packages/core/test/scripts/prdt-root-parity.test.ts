@@ -134,3 +134,98 @@ describe.skipIf(!PYTHON3)('prdt root-resolution parity (T-377, python)', () => {
     expect(pyResolve(root, root).projRootFromCwd).toBe(realRoot)
   })
 })
+
+/**
+ * T-481 — outermost-wins parity between the CLI and the hooks.
+ *
+ * T-484 moved the four hook resolvers to "outermost marker on the ancestor chain
+ * wins"; `scripts/prdt` stayed nearest-wins, so a planted `code/.prdt/po-state.json`
+ * was inert for the hooks while the CLI (`tickets` · `wiki` · `doctor` · po-state
+ * read/write) still resolved to it — two answers inside one repo. Both halves are
+ * driven here on ONE fixture: the bash hook (via its real "persona unspecified"
+ * output, which prints the root it resolved) and the python CLI must return the
+ * same directory, and a nearest-wins copy of the walk is the positive control
+ * showing the fixture really does discriminate.
+ */
+function hasBin(bin: string, args: string[]): boolean {
+  try { execFileSync(bin, args, { stdio: 'ignore' }); return true } catch { return false }
+}
+const HAS_JQ = hasBin('jq', ['--version'])
+const SESSION_HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-session-start.sh')
+
+/** Minimal ~/.prdt so the hook reaches its "in a prdt project (<root>)" branch. */
+function miniPrdtHome(): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-outer-home-'))
+  fs.mkdirSync(path.join(home, 'discipline', 'po', 'playbooks'), { recursive: true })
+  fs.writeFileSync(path.join(home, 'doctrine.md'), '# d\n')
+  fs.writeFileSync(path.join(home, 'discipline', 'contracts.md'), '# c\n')
+  fs.writeFileSync(path.join(home, 'discipline', 'po', 'habit.md'), '# h\n')
+  return home
+}
+
+/** The bash hook's projectRoot for `cwd`, EXACTLY as the hook printed it.
+ *  This used to end in `fs.realpathSync(m[1])`, which is how T-493 item 3 hid
+ *  here for two tickets: normalizing the hook's answer made a lexical answer and
+ *  a physical one compare equal, so the resolver divergence this file exists to
+ *  catch was invisible to it. A check must not share the assumption it checks.
+ *  The symlink cases live in prdt-resolver-symlink-parity.test.ts. */
+function hookRoot(cwd: string, home: string): string | null {
+  const out = execFileSync('bash', [SESSION_HOOK], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', cwd }),
+    encoding: 'utf8',
+    env: { ...process.env, PRDT_HOME: home },
+  })
+  if (!out.trim()) return null
+  const ctx = JSON.parse(out).hookSpecificOutput.additionalContext as string
+  const m = ctx.match(/prdt project \(([^)]*)\)/)
+  return m ? m[1] : null
+}
+
+/** The pre-T-484 rule, as a control: first marker walking up. */
+function nearestRoot(cwd: string): string | null {
+  let d = fs.realpathSync(cwd)
+  for (;;) {
+    if (fs.existsSync(path.join(d, '.prdt', 'po-state.json'))) return d
+    const up = path.dirname(d)
+    if (up === d) return null
+    d = up
+  }
+}
+
+describe.skipIf(!PYTHON3 || !HAS_JQ)('outermost-wins: hook and CLI resolve the same root (T-481/T-484)', () => {
+  /** meta root + code tree, optionally with a planted marker inside the code tree. */
+  function layout(plant: boolean): { root: string; cwds: string[] } {
+    const root = makeProject({ slug: 'real', code: { dir: 'code' } }, ['code/src/deep'])
+    if (plant) {
+      fs.mkdirSync(path.join(root, 'code', '.prdt'), { recursive: true })
+      fs.writeFileSync(path.join(root, 'code', '.prdt', 'po-state.json'),
+        JSON.stringify({ schema_version: 1, stage: 'ship', version: 'v9.9', current_task: null }))
+    }
+    return { root, cwds: [root, path.join(root, 'code'), path.join(root, 'code', 'src', 'deep')] }
+  }
+
+  test('a planted code/.prdt cannot become the CLI project root either', () => {
+    const home = miniPrdtHome()
+    const { root, cwds } = layout(true)
+    const real = fs.realpathSync(root)
+    const planted = path.join(real, 'code')
+    for (const cwd of cwds) {
+      expect(pyResolve(root, cwd).projRootFromCwd).toBe(real)
+      expect(hookRoot(cwd, home)).toBe(real)
+    }
+    // positive control: the rule the CLI used to apply hands over the planted root
+    expect(nearestRoot(path.join(root, 'code'))).toBe(planted)
+    expect(nearestRoot(path.join(root, 'code', 'src', 'deep'))).toBe(planted)
+  })
+
+  test('a normal layout (one marker) is byte-identical under both rules', () => {
+    const home = miniPrdtHome()
+    const { root, cwds } = layout(false)
+    const real = fs.realpathSync(root)
+    for (const cwd of cwds) {
+      expect(pyResolve(root, cwd).projRootFromCwd).toBe(real)
+      expect(hookRoot(cwd, home)).toBe(real)
+      expect(nearestRoot(cwd)).toBe(real)
+    }
+  })
+})

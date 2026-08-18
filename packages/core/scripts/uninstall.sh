@@ -6,24 +6,45 @@ set -euo pipefail
 PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 say() { printf '%s\n' "$*"; }
+# T-485: abort loudly rather than delete the mirror out from under live
+# registrations — a settings.json entry pointing at a removed script fails on
+# EVERY prompt on that machine.
+die() { printf 'prdt-uninstall: %s\n' "$*" >&2; exit 1; }
+TMP=""
+cleanup() { [ -n "${TMP:-}" ] || return 0; rm -f "$TMP"; }
+trap cleanup EXIT
 
-# 1. hooks + statusline out of settings.json
+# 1. hooks + statusline out of settings.json — BEFORE §4 removes the scripts.
+#    T-485/S6: this used to strip four hardcoded event keys while the roster also
+#    registers UserPromptSubmit, so `prdt-user-prompt.sh` survived uninstall as a
+#    dangling registration. Strip by the $PRDT_HOME/hooks/ path prefix across
+#    EVERY event key instead — other apps' and the user's own hooks never match.
 SETTINGS="$CLAUDE_DIR/settings.json"
-if [ -f "$SETTINGS" ] && command -v jq >/dev/null 2>&1; then
+if [ -f "$SETTINGS" ]; then
+  command -v jq >/dev/null 2>&1 \
+    || die "jq is required to remove the prdt registrations from $SETTINGS — refusing to remove $PRDT_HOME while they point into it"
   say "1) Removing prdt hooks/statusline from $SETTINGS"
-  TMP="$(mktemp)"
+  TMP="$(mktemp "$SETTINGS.XXXXXX")"
   jq --arg h "$PRDT_HOME/hooks/" --arg sl "$PRDT_HOME/bin/statusline-prdt.sh" '
-    def strip(ev): (.hooks[ev] // []) | map(
-      .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
+    def isMine(cmd): (cmd // "") | (startswith($h) or startswith("\"" + $h));
+    def strip(arr): (arr // []) | map(
+      .hooks = ((.hooks // []) | map(select(isMine(.command) | not)))
     ) | map(select((.hooks | length) > 0));
-    (if .hooks then
-       .hooks.SessionStart = strip("SessionStart") |
-       .hooks.SubagentStart = strip("SubagentStart") |
-       .hooks.SubagentStop = strip("SubagentStop") |
-       .hooks.PostToolUse = strip("PostToolUse")
+    (if (.hooks | type) == "object" then
+       .hooks = (.hooks | with_entries(.value = strip(.value))
+                        | with_entries(select((.value | length) > 0)))
      else . end) |
     (if ((.statusLine.command // "") | (. == $sl or . == ("\"" + $sl + "\""))) then del(.statusLine) else . end)
-  ' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+  ' "$SETTINGS" > "$TMP" || die "could not rewrite $SETTINGS (jq failed) — nothing removed"
+  # verify the candidate before it lands: no command may still point into the
+  # hooks dir §4 is about to delete.
+  jq -e --arg h "$PRDT_HOME/hooks/" '
+    [(.hooks // {}) | to_entries[] | (.value // [])[] | (.hooks // [])[] | (.command // "")]
+    | all((startswith($h) or startswith("\"" + $h)) | not)
+  ' "$TMP" >/dev/null \
+    || die "prdt registrations still present after the strip — $SETTINGS left unchanged, nothing removed"
+  mv "$TMP" "$SETTINGS"
+  TMP=""
 fi
 
 # 2. agents

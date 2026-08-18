@@ -50,6 +50,11 @@ export default function BuildOutputTab({ props }: Props) {
 
   const [status, setStatus] = useState<RunStatus>('running')
   const [exitCode, setExitCode] = useState<number | null>(null)
+  // T-440: structured failure hint from the main process (e.g. no JS runtime
+  // was resolvable on the child PATH) — rendered as a localized, actionable
+  // line; raw stderr alone ("command not found") is not a state a participant
+  // can act on.
+  const [hint, setHint] = useState<'toolchain-unavailable' | null>(null)
   // Recover a previously-detected URL on remount so the reopen button persists.
   const [previewUrl, setPreviewUrl] = useState<string | null>(() => (runId ? detectedRunUrls.get(runId) ?? null : null))
 
@@ -110,10 +115,11 @@ export default function BuildOutputTab({ props }: Props) {
       }
     })
 
-    const offDone = api.onDone((ev: { runId: string; code: number | null; status: RunStatus }) => {
+    const offDone = api.onDone((ev: { runId: string; code: number | null; status: RunStatus; hint?: 'toolchain-unavailable' }) => {
       if (ev.runId !== runId) return
       setStatus(ev.status)
       setExitCode(ev.code)
+      setHint(ev.hint ?? null)
       scheduleFlush()
     })
 
@@ -159,6 +165,9 @@ export default function BuildOutputTab({ props }: Props) {
           <button style={cancelBtn} onClick={handleCancel}>{t('common.cancel')}</button>
         )}
       </div>
+      {hint === 'toolchain-unavailable' && (
+        <div style={hintBar}>{t('workspace.runOutput.toolchainUnavailable')}</div>
+      )}
       <pre ref={preRef} style={logPane} onScroll={handleScroll} />
     </div>
   )
@@ -252,6 +261,16 @@ const cancelBtn: React.CSSProperties = {
   padding: '2px 10px',
   borderRadius: 4,
   cursor: 'pointer',
+}
+
+// T-440: actionable failure state (no shell/command vocabulary — the raw log
+// below stays available for developer-mode users).
+const hintBar: React.CSSProperties = {
+  padding: '6px 10px',
+  fontSize: 12,
+  color: 'var(--health-warn)',
+  borderBottom: '1px solid var(--border-inline)',
+  flexShrink: 0,
 }
 
 const logPane: React.CSSProperties = {

@@ -38,6 +38,7 @@ import {
   AlertOctagon,
   CheckCircle2,
   Loader2,
+  ExternalLink,
 } from 'lucide-react'
 import { registerTabCloseGuard } from '../../../../store/tabCloseGuard'
 import { useWorkspace } from '../../../../store/workspace'
@@ -412,6 +413,14 @@ function LocalHtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFind
     void handleSave()
   }, [handleSave])
 
+  // T-434 tier ③ — hand this artifact to the OS default browser. Unconditional
+  // by design: an escape hatch that consults the router is not an escape hatch.
+  const handleOpenExternal = useCallback(() => {
+    if (!absPath) return
+    const api = (window as any).api
+    api?.openExternal?.(`file://${absPath}`)
+  }, [absPath])
+
   // ── Breadcrumb (relative to projectDir when possible) ──────────────────────
   const relPath =
     projectDir && absPath.startsWith(projectDir)
@@ -426,6 +435,23 @@ function LocalHtmlViewer({ tabId, props: tabProps, findQuery, findNavRef, onFind
           {relPath}
         </span>
         <div style={headerRight}>
+          {/* T-434 tier ③ — the standing escape hatch, on the pane that hosts a
+              local file:// URL. Outside the edit/preview branch on purpose: it
+              is present in BOTH modes, because "always available" is the whole
+              point of an escape hatch. This pane cannot receive a misrouted
+              login (nothing routes http(s) here — the isHttp branch above hands
+              those to BrowserTab), but a participant who wants this artifact in
+              their real browser had no way to get there at all. */}
+          <button
+            style={actionBtn}
+            data-escape-hatch="system-browser"
+            onClick={handleOpenExternal}
+            title={t('workspace.htmlViewer.openInBrowser')}
+            aria-label={t('workspace.htmlViewer.openInBrowser')}
+            disabled={!absPath}
+          >
+            <ExternalLink size={11} style={{ color: 'var(--text-tertiary)' }} />
+          </button>
           {!editing ? (
             <>
               {/* T-PATCH-045: zoom controls in preview mode (AC-1) */}

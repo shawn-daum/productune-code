@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|reindex|lint) · tickets · history · meta (log|remote|push|bootstrap|split) · menus · migrate
-Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §9 doctor, §10 CLI, §11 caps).
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · history · meta (log|remote|push|bootstrap|split) · menus · migrate
+Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
+layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, json, os, re, shutil, sqlite3, subprocess, sys
+import argparse, json, math, os, re, shutil, sqlite3, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,10 +14,30 @@ STAGES = ("define", "build", "ship", "retro", "idle")
 TICKET_TYPES = ("design", "impl", "qa", "ops")
 TICKET_STATUS = ("open", "done", "dropped")
 WIKI_TYPES = ("decision", "fact", "learning", "feature", "retro", "term")
+PERSONAS = ("po", "designer", "developer", "qa")
+# Ticket `assignee` vocabulary: the personas plus `user` — work only the person's
+# own hands can do (contracts §Tickets). Pre-rename tickets spell personas
+# `pdt-developer`; normalize on read so one filter value covers both spellings
+# (same rule the GUI applies in views/versionHistory/helpers.ts).
+ASSIGNEES = PERSONAS + ("user",)
+LEGACY_ASSIGNEE_RE = re.compile(r"^pdtl?-")
+
+
+def norm_assignee(v):
+    return LEGACY_ASSIGNEE_RE.sub("", str(v or "")) or None
+
+
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
-# §11 token-budget caps (physical lines; playbook cap counts body after frontmatter)
-CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 60, "worker_habit": 40,
-        "playbook_body": 80, "menu": 15}
+# §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
+# `override` applies per persona PER LAYER (machine and project each), and is the
+# only cap over text that is injected on EVERY turn; `machine_wiki_pages` is a
+# pull-only store, so its budget guards curation, not per-turn tokens.
+CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
+        "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15}
+# po_habit 60→64 (2026-08-14): two pending v1.6 rules each need one new line and
+# T-447 already spent the easy duplicate-trims — the cap was about to force
+# deleting real rules to fit, not enforcing a token budget. worker_habit (40,
+# shared by designer/developer/qa) is a separate constant and stays untouched.
 BLOCKED_STALE_DAYS = 14
 BACKLOG_STALE_DAYS = 30
 INBOX_PILE_LINES = 15
@@ -37,12 +58,34 @@ def find_project_root(start=None):
     projectRoot where `.prdt/` lives (legacy layout finds it at depth 0). This is
     the CLI half of the 3-way parity with core's up-walk and the bash hooks
     (prdt-session-start.sh / prdt-post-dispatch.sh); codeRoot is derived from
-    projectRoot via code_root()."""
+    projectRoot via code_root().
+
+    Take the OUTERMOST marker on the ancestor chain, never the nearest (T-484,
+    CLI half — T-481). The only surface a PR or a clone reaches is the CODE
+    repo, which sits strictly INSIDE the projectRoot, so a planted
+    `code/.prdt/po-state.json` is an inner candidate by construction and can
+    never outrank the real meta root — closed, not filtered. Legitimate layouts
+    carry exactly one marker on the chain, so for them outermost == nearest,
+    byte-identical. Keep in lockstep with the four hook resolvers (bash
+    find_proj in prdt-session-start.sh / prdt-project-overrides-inject.sh,
+    python twins in prdt-post-dispatch.sh / prdt-user-prompt.sh): the hooks
+    blocking the planted layer while the CLI (`tickets` · `wiki` · `doctor` ·
+    po-state read/write) accepted it was two answers inside one repo."""
     d = Path(start or os.getcwd()).resolve()
+    hit = None
     for p in [d, *d.parents]:
         if (p / ".prdt" / "po-state.json").is_file():
-            return p
-    return None
+            hit = p
+    return hit
+
+
+def prdt_home():
+    """Tool home — machine scope, one level above every project. Holds the
+    discipline mirror plus the two stores that are NOT mirrored (`overrides/`,
+    `wiki/`). `PRDT_HOME` redirects it, which is also how a test drives the
+    machine scope without touching the real one."""
+    env = os.environ.get("PRDT_HOME")
+    return Path(env) if env else Path.home() / ".prdt"
 
 
 def discipline_root():
@@ -50,7 +93,7 @@ def discipline_root():
     env = os.environ.get("PRDT_DISCIPLINE")
     if env and Path(env).is_dir():
         return Path(env)
-    home = Path.home() / ".prdt" / "discipline"
+    home = prdt_home() / "discipline"
     if home.is_dir():
         return home
     repo = Path(__file__).resolve().parent.parent / "discipline"
@@ -130,17 +173,50 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
 """
 
 
-def open_db(root, rebuild=False):
+def open_db(root):
+    """Attach to the derived index, creating whatever table is missing. Never
+    destructive on purpose (T-480): `tickets`, `wiki_pages` and `wiki_fts` live in
+    ONE file, so a caller that drops the file and then re-fills only the slice it
+    came for leaves the others empty — and a query over an emptied slice reads as
+    a real answer, not as an error. Dropping is `rebuild_index` and nothing else.
+
+    A file this call CREATES is derived whole before it is handed out (T-488).
+    `.prdt/index.db` is in the meta repo's info/exclude, so a freshly cloned
+    project has no index at all; letting the first command create it empty and
+    fill only its own slice reproduced T-480 through the front door — the machine
+    slice is refreshed on every search, so a clone answered `wiki search` with
+    machine hits alone while its entire project wiki was missing.
+
+    Only a MISSING file is derived. An existing one is handed over as it is, even
+    when a slice in it is empty: healing on every open would repair a wiped slice
+    between two commands and turn T-480's regression tests green over the very
+    defect they exist to catch. `wiki reindex` stays the way to refresh."""
     dbp = root / ".prdt" / "index.db"
-    if rebuild and dbp.exists():
-        dbp.unlink()
+    cold = not dbp.exists()
     con = sqlite3.connect(dbp)
     con.executescript(SCHEMA)
     try:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='trigram')")
     except sqlite3.OperationalError:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='unicode61')")
+    if cold:
+        derive_all_slices(root, con)
     return con
+
+
+def derive_all_slices(root, con):
+    """Fill EVERY slice from md — tickets, project wiki, machine wiki. Whole index
+    or none of it: half a derived index answers queries over the missing half as
+    if that half were empty, which is the one failure mode T-480/T-488 are about.
+
+    Writes nothing outside index.db. Generating `docs/wiki/index.md` here would
+    make read-only commands dirty the meta repo on every clone — the measured
+    reason T-480 rejected "just reindex on each query"; that page belongs to
+    `reindex_wiki`, which only `prdt wiki reindex` reaches."""
+    violations = reindex_tickets(root, con)
+    pages = index_project_wiki(root, con)
+    mpages = index_machine_wiki(con)
+    return violations, pages, mpages
 
 
 def scan_tickets(root):
@@ -152,7 +228,7 @@ def scan_tickets(root):
         fm, _ = parse_frontmatter(p)
         version = p.parent.name
         row = {"id": fm.get("id") or p.stem, "slug": fm.get("slug"), "type": fm.get("type"),
-               "status": fm.get("status"), "assignee": fm.get("assignee"),
+               "status": fm.get("status"), "assignee": norm_assignee(fm.get("assignee")),
                "feature": fm.get("feature"), "deps": fm.get("deps") or [],
                "created": fm.get("created"), "closed": fm.get("closed"),
                "version": version, "path": str(p.relative_to(root))}
@@ -183,10 +259,19 @@ def reindex_tickets(root, con):
 
 
 WIKILINK = re.compile(r"\[\[([^\]|#]+)")
+# Machine-store page names carry this prefix everywhere they surface — index row,
+# search hit, override citation (`상세: machine:fact--qa-cua-vm`) — so a page from
+# the machine store can never read as a page of the project you are standing in.
+MACHINE = "machine:"
+PROJECT_INDEX_HEADER = "# Wiki index (generated by `prdt wiki reindex` — do not hand-edit)"
+MACHINE_INDEX_HEADER = ("# Machine wiki index — this machine, every prdt project on it "
+                        "(generated by `prdt wiki reindex` — do not hand-edit)")
 
 
-def scan_wiki(root):
-    wdir = root / "docs" / "wiki"
+def wiki_store_pages(wdir, relative_to=None, prefix=""):
+    """Page rows for ONE wiki store. Both stores share the page convention
+    (`<type>--<slug>.md` + frontmatter); only the directory, the name prefix and
+    how a path is reported differ."""
     if not wdir.is_dir():
         return []
     pages = []
@@ -195,34 +280,101 @@ def scan_wiki(root):
             continue
         fm, body = parse_frontmatter(p)
         links = set(fm.get("links") or []) | set(WIKILINK.findall(body))
-        pages.append({"name": p.stem, "title": fm.get("title") or p.stem,
+        pages.append({"name": prefix + p.stem, "title": fm.get("title") or p.stem,
                       "type": fm.get("type") or p.stem.split("--")[0],
                       "status": fm.get("status") or "live",
                       "version": fm.get("version"), "links": sorted(links),
-                      "path": str(p.relative_to(root)), "body": body})
+                      "path": str(p.relative_to(relative_to)) if relative_to else str(p),
+                      "body": body})
     return pages
 
 
-def reindex_wiki(root, con):
-    pages = scan_wiki(root)
-    con.execute("DELETE FROM wiki_pages")
-    con.execute("DELETE FROM wiki_fts")
+def scan_wiki(root):
+    return wiki_store_pages(root / "docs" / "wiki", relative_to=root)
+
+
+def machine_wiki_root():
+    return prdt_home() / "wiki"
+
+
+def scan_machine_wiki():
+    """Facts and rules true of THIS MACHINE (its hardware, installed tooling, real
+    user sessions), readable from every prdt project on it. Outside the mirror, so
+    install/update never touches the contents."""
+    return wiki_store_pages(machine_wiki_root(), prefix=MACHINE)
+
+
+def render_wiki_index(pages, header):
+    """Derived index — 1 line per page (§11), identical rule for both stores."""
+    lines = [header, ""]
+    for pg in pages:
+        mark = " ⚠superseded" if pg["status"] == "superseded" else ""
+        ver = f" · {pg['version']}" if pg["version"] else ""
+        lines.append(f"- [[{pg['name']}]] {pg['type']}{ver}{mark} — {pg['title']}")
+    return "\n".join(lines) + "\n"
+
+
+def index_wiki_rows(con, pages, machine):
+    """Replace one store's slice of the derived index. Slices are keyed by the
+    `machine:` prefix so either store can be refreshed alone, in any order."""
+    op = "LIKE" if machine else "NOT LIKE"
+    con.execute(f"DELETE FROM wiki_pages WHERE name {op} ?", (MACHINE + "%",))
+    con.execute(f"DELETE FROM wiki_fts WHERE name {op} ?", (MACHINE + "%",))
     for pg in pages:
         con.execute("INSERT OR REPLACE INTO wiki_pages VALUES (?,?,?,?,?,?,?)",
                     (pg["name"], pg["title"], pg["type"], pg["status"], pg["version"],
                      json.dumps(pg["links"]), pg["path"]))
         con.execute("INSERT INTO wiki_fts VALUES (?,?,?)", (pg["name"], pg["title"], pg["body"]))
     con.commit()
-    # derived index.md — 1 line per page (§11), CLI-owned, never hand-edited
-    idx = root / "docs" / "wiki" / "index.md"
-    lines = ["# Wiki index (generated by `prdt wiki reindex` — do not hand-edit)", ""]
-    for pg in pages:
-        mark = " ⚠superseded" if pg["status"] == "superseded" else ""
-        ver = f" · {pg['version']}" if pg["version"] else ""
-        lines.append(f"- [[{pg['name']}]] {pg['type']}{ver}{mark} — {pg['title']}")
-    idx.parent.mkdir(parents=True, exist_ok=True)
-    idx.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def index_project_wiki(root, con):
+    """Refresh the project slice of the index from docs/wiki md. Index only — the
+    generated `docs/wiki/index.md` page is deliberately NOT written here, so this
+    is safe to run from a read-only command (T-488); `reindex_wiki` adds it."""
+    pages = scan_wiki(root)
+    index_wiki_rows(con, pages, machine=False)
     return pages
+
+
+def reindex_wiki(root, con):
+    pages = index_project_wiki(root, con)
+    idx = root / "docs" / "wiki" / "index.md"
+    idx.parent.mkdir(parents=True, exist_ok=True)
+    idx.write_text(render_wiki_index(pages, PROJECT_INDEX_HEADER), encoding="utf-8")
+    return pages
+
+
+def index_machine_wiki(con):
+    """Refresh the machine slice of THIS project's index without writing anything
+    to the store. Runs on every search, not just reindex: the store is shared, so
+    it changes while this project's index sits still, and a search that missed a
+    page the user just wrote from another project is the whole failure mode the
+    machine store exists to remove."""
+    pages = scan_machine_wiki()
+    index_wiki_rows(con, pages, machine=True)
+    return pages
+
+
+def rebuild_index(root):
+    """Drop index.db and re-derive EVERY slice from md — the only destructive path,
+    and it takes no argument for doing half the job. That is the point (T-480):
+    `tickets`/`history` used to rebuild the file and re-fill tickets alone, which
+    left `prdt wiki search` reporting the machine store as if it were the whole
+    wiki. Returns (con, ticket violations, project pages, machine pages)."""
+    dbp = root / ".prdt" / "index.db"
+    if dbp.exists():
+        dbp.unlink()
+    # The unlink makes the open below a cold start, so open_db derives every slice
+    # and these three re-derive it (~55 ms on a 634-ticket project, measured). Left
+    # explicit rather than optimised away: `reindex_wiki` — not the cold path's
+    # `index_project_wiki` — is what also regenerates docs/wiki/index.md, and this
+    # runs only on init / doctor / migrate / `wiki reindex`, never in a query path.
+    con = open_db(root)
+    violations = reindex_tickets(root, con)
+    pages = reindex_wiki(root, con)
+    mpages = index_machine_wiki(con)
+    return con, violations, pages, mpages
 
 
 # ── menus (playbook 메뉴판) ────────────────────────────────────────────────────
@@ -314,9 +466,14 @@ def prompt_version(default):
 # isPhysicallySplit "THE CONTRACT"). The three implementations (core TS · this
 # CLI · GUI project-paths.ts) MUST resolve projectRoot/codeRoot identically (T-377).
 
-META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/prd", "docs/tickets",
-                          "docs/wiki", "docs/designer", "docs/developer", "docs/po",
-                          "docs/qa", "docs/artifacts", "docs/retrospectives", "docs/archive"]
+# Byte-parity with core's DEFAULT_META_ALLOWLIST (meta-git.ts) — see its
+# T-427 audit comment for the include/exclude rationale per contracts.md's
+# Fixed paths table (docs/design.md IN; docs/DEPLOY.md, docs/testing.md etc.
+# project-local, NOT contracts-fixed, so left out of the shared default).
+META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md", "docs/prd",
+                          "docs/tickets", "docs/wiki", "docs/designer", "docs/developer",
+                          "docs/po", "docs/qa", "docs/artifacts", "docs/retrospectives",
+                          "docs/archive"]
 META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
                         ".cost-*.json", ".subagent-gate.json", "worktrees/"]
 
@@ -448,11 +605,153 @@ def _meta_git(root, args):
 
 
 def read_meta_allowlist(root):
+    """Mirrors core's readMetaAllowlist (meta-git.ts), incl. its T-427 self-heal:
+    a persisted allowlist (copied into config.json at init time) is unioned
+    with the CURRENT defaults on every read — add-only, so a project's own
+    custom entries are never dropped, but a default added later (e.g.
+    docs/design.md) reaches projects initialized before it existed too."""
     cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
     lst = (cfg.get("meta") or {}).get("allowlist") if isinstance(cfg.get("meta"), dict) else None
     if isinstance(lst, list) and all(isinstance(x, str) for x in lst):
-        return lst
+        merged = list(META_ALLOWLIST_DEFAULT)
+        for e in lst:
+            if e not in merged:
+                merged.append(e)
+        return merged
     return list(META_ALLOWLIST_DEFAULT)
+
+
+# ── meta doctor checks (T-428 · T-427 재발방지: 침묵 드리프트 신호화) ─────────
+# Two silent-drift classes observed in T-427: ① backup remote lag with zero
+# surface anywhere (100 commits unpushed, nobody told); ② a meta-shaped file
+# outside the effective allowlist silently uncaptured (docs/design.md lost 56
+# lines). Both get a `prdt doctor` warning — non-blocking, never a gate.
+
+META_BACKUP_LAG_COMMITS = 50
+META_BACKUP_LAG_DAYS = 14
+
+
+def meta_backup_lag_warnings(root):
+    """Item 1: unpushed commit count + last-push age past a sane threshold.
+    Backup push is always manual (T-374 ①), so SOME lag is normal — the point
+    is that it's never fully silent. No remote configured is surfaced too (one
+    line, not silence): that bare state is exactly what let T-427 happen.
+    Offline-only (no fetch): age is read off the local remote-tracking ref's
+    tip commit date, the best available proxy for "how stale is the backup"
+    without a network call in a non-blocking lint."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    if not (gd / "HEAD").exists():
+        return []  # no meta split — nothing to back up
+    r = _meta_git(root, ["remote"])
+    remotes = [x for x in r.stdout.splitlines() if x.strip()] if r.returncode == 0 else []
+    if not remotes:
+        return ["meta: no backup remote configured — `prdt meta remote add <name> <url>`"]
+    br = _meta_git(root, ["symbolic-ref", "--short", "HEAD"])
+    branch = br.stdout.strip() if br.returncode == 0 else None
+    if not branch:
+        return []
+    warns = []
+    for name in remotes:
+        ref = f"refs/remotes/{name}/{branch}"
+        if _meta_git(root, ["rev-parse", "--verify", "--quiet", ref]).returncode != 0:
+            warns.append(f"meta: backup remote '{name}' never pushed — `prdt meta push {name}`")
+            continue
+        cnt = _meta_git(root, ["rev-list", "--count", f"{ref}..HEAD"])
+        count = int(cnt.stdout.strip()) if cnt.returncode == 0 and cnt.stdout.strip().isdigit() else 0
+        dt = _meta_git(root, ["log", "-1", "--format=%cI", ref])
+        age = days_since(dt.stdout.strip()) if dt.returncode == 0 and dt.stdout.strip() else None
+        if count > META_BACKUP_LAG_COMMITS or (age is not None and age > META_BACKUP_LAG_DAYS):
+            warns.append(f"meta: backup remote '{name}' lag — {count} unpushed commit(s), "
+                         f"last push ~{age if age is not None else '?'}d ago "
+                         f"(`prdt meta push {name}`)")
+    return warns
+
+
+def meta_drift_warnings(root):
+    """Item 2: a meta-shaped file/dir directly under an allowlist HOME
+    (`.prdt`, `.productune`, `briefs`, `docs`) that has an uncommitted change
+    but is NOT covered by the effective allowlist — the generalized
+    docs/design.md failure class (T-427: silently uncaptured, 56 lines lost
+    before it entered the fixed default). Reads meta git's OWN raw status
+    (unscoped by the allowlist, unlike `_meta_stage_and_commit`'s staging
+    pathspec) — its `info/exclude` already keeps derived artifacts and the
+    code dir out, so what's left is real working-tree signal."""
+    root = Path(root)
+    gd = meta_git_dir(root)
+    if not (gd / "HEAD").exists():
+        return []
+    homes = [h for h in (".prdt", ".productune", "briefs", "docs") if (root / h).exists()]
+    if not homes:
+        return []
+    # -z: NUL-separated, paths NEVER C-quoted — unlike the default porcelain
+    # format, which double-quotes any path containing a space or non-ASCII
+    # byte (T-428 QA fail: that quoting broke covered()'s prefix match against
+    # the allowlist's plain unquoted entries — both false-warning an
+    # allowlisted 회고노트.md-style file, and making the advertised
+    # config.json fix path unreachable for a genuinely-outside file with such
+    # a name, since quoted never equals unquoted). Rename/copy records carry
+    # an extra NUL-terminated ORIG_PATH token with no "XY " prefix — skip it,
+    # only the current PATH (the first token) matters here.
+    r = _meta_git(root, ["status", "--porcelain", "-z", "--untracked-files=all", "--", *homes])
+    if r.returncode != 0:
+        return []
+    allow = read_meta_allowlist(root)
+
+    def covered(p):
+        return any(p == e or p.startswith(e.rstrip("/") + "/") for e in allow)
+
+    warns, seen = [], set()
+    tokens = r.stdout.split("\0")
+    i = 0
+    while i < len(tokens):
+        entry = tokens[i]
+        i += 1
+        if not entry or len(entry) < 4:
+            continue
+        xy, path = entry[:2], entry[3:]
+        if "R" in xy or "C" in xy:
+            i += 1  # consume the trailing ORIG_PATH token, unused here
+        if path in seen or covered(path):
+            continue
+        seen.add(path)
+        warns.append(f"meta: {path} has uncommitted changes but sits outside the "
+                     f"effective meta allowlist — decide fixed vs excluded "
+                     f"(config.json meta.allowlist), it won't auto-back-up as-is")
+    return warns
+
+
+def _ts_default_allowlist():
+    """core's DEFAULT_META_ALLOWLIST (meta-git.ts) — dev-repo-only (an installed
+    ~/.prdt mirror carries no TS source; this quietly returns None there, same
+    degrade-never-raise posture as the rest of the doctor)."""
+    ts = Path(__file__).resolve().parent.parent / "src" / "git-workflow" / "meta-git.ts"
+    if not ts.is_file():
+        return None
+    try:
+        text = ts.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"DEFAULT_META_ALLOWLIST\s*:\s*string\[\]\s*=\s*\[(.*?)\]", text, re.S)
+    if not m:
+        return None
+    return [x.strip().strip("'\",") for x in m.group(1).splitlines() if x.strip().strip("'\",")]
+
+
+def meta_allowlist_parity_warning():
+    """Item 3: lints the CLI's default allowlist against core's DEFAULT_META_ALLOWLIST
+    — the two hand-authored copies of the SAME T-427-audited fixed-path set
+    (docs/design.md IN; docs/DEPLOY.md/testing.md/MIGRATION.md/backlog.md OUT,
+    per contracts.md's Fixed paths table — not re-decided here, only parity-checked).
+    A silent edit to one side without the other is exactly how a future T-427
+    class bug would reappear."""
+    ts_allow = _ts_default_allowlist()
+    if ts_allow is None or set(ts_allow) == set(META_ALLOWLIST_DEFAULT):
+        return None
+    only_py = sorted(set(META_ALLOWLIST_DEFAULT) - set(ts_allow))
+    only_ts = sorted(set(ts_allow) - set(META_ALLOWLIST_DEFAULT))
+    return (f"meta: allowlist default drift vs core meta-git.ts — "
+            f"python-only {only_py}, ts-only {only_ts}")
 
 
 def _meta_stage_and_commit(root, message):
@@ -534,6 +833,257 @@ def init_meta_split(root):
         return str(e)
 
 
+# ── managed pre-push hook (T-481) ─────────────────────────────────────────────
+#
+# contracts §Git states `main` direct push is blocked. Until T-481 NOTHING
+# installed the hook that blocks it: core's `installPrePushHook` (TS) was a dead
+# export called only by its own tests, so a teammate's fresh clone had zero
+# protection and this repo's compliance came from a hand-set org `core.hooksPath`
+# — infrastructure outside the product. The install now lives HERE, in the one
+# component every prdt machine has (the CLI is python; the node/dist bridge that
+# `prdt-post-dispatch.sh` spawns is optional on a fresh machine), and the TS twin
+# is deleted so there is ONE generator of the script and no drift.
+#
+# Two call sites, both real: `prdt init` (a new project is blocked from birth)
+# and `prdt doctor` (an already-cloned project self-heals on the PO's standing
+# diagnostic — habit stage checks / retro playbook / T-428 "diagnose through the
+# product's own surfaces"). No new trigger system, no new subcommand.
+#
+# WHAT IT WILL NOT DO — the honest boundary, and the reason contracts now names
+# its dependency instead of asserting a flat "blocked":
+#   * `.git/hooks` is not cloned, so protection begins at the first init/doctor
+#     in that clone, never at `git clone`.
+#   * ANY `core.hooksPath` (global husky/dotfiles, or an org `.githooks`) makes
+#     `.git/hooks` inert. We then refuse to write and say so, rather than lie:
+#     writing into a global hooks dir would touch every repo on the machine
+#     (privilege escalation by side effect) and writing into a TRACKED hooks dir
+#     would dirty the user's working tree. Changing the user's git config is not
+#     ours to do either.
+#   * It does not vouch for a hook it did not write. prdt verifies OWNERSHIP (its
+#     marker), never behavior — running someone else's pre-push to see what it
+#     does is not a diagnostic's business. An unowned hook is reported
+#     `unverified`, never as an effective block (T-493).
+# That boundary is also why `isPrePushHookInstalled` reported false positives —
+# it stat'd `.git/hooks/pre-push` while git read somewhere else entirely. Every
+# check below resolves the EFFECTIVE dir git will actually use.
+PREPUSH_MARKER = "# productune managed pre-push hook"
+
+PREPUSH_SCRIPT = """#!/bin/sh
+# productune managed pre-push hook
+# Blocks direct push to main (T-381 hard rule). Auto-generated. Do not edit manually.
+# Emergency hotfix escape (T-465): ALLOW_MAIN_PUSH=1 git push ...
+# Per-command only — never export it, never put it in a script or config.
+
+while read local_ref local_sha remote_ref remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+  if [ "$branch" = "main" ]; then
+    if [ "${ALLOW_MAIN_PUSH:-}" = "1" ]; then
+      echo "pre-push: ALLOW_MAIN_PUSH=1 — hotfix push to main permitted." >&2
+      continue
+    fi
+    echo ""
+    echo "  이 작업 줄기는 직접 보낼 수 없어요."
+    echo "  배포 준비 단계를 거쳐 보내주세요."
+    echo ""
+    echo "  (대상 = main)"
+    echo ""
+    exit 1
+  fi
+done
+
+exit 0
+"""
+# ^ moved verbatim from core git-workflow/hooks.ts (now deleted).
+# `main` is baked in: it is the ONLY protected branch (T-381 hard rule — `dev` is
+# the pushable residence, `main` is reached only by promote), and T-386 C5 showed
+# the old git-rules.json parse never matched a real (pretty-printed) file anyway,
+# so the hard-coded fallback WAS the behavior.
+# T-465 emergency escape: `ALLOW_MAIN_PUSH=1` permits the push and says so on
+# stderr. The block exists to stop an ACCIDENTAL main push, and a hook cannot
+# verify consent — so the escape is deliberately per-command env only (never a
+# file, so no project override or config can pre-grant it) and deliberately loud,
+# which is what separates "the hook stopped me" from "a human meant this". It
+# grants nothing: the contracts push gate (explicit user instruction) is a
+# separate, earlier gate. Same variable name as the NTF org `.githooks` pre-push
+# so one signal covers both layers on a repo carrying both — and so the check
+# below can recognize that foreign hook as blocking rather than warn about it.
+
+
+def prepush_status(root):
+    """Where git will REALLY look for the code repo's pre-push hook, and what
+    sits there. `git rev-parse --git-path hooks` is git's own resolver, so it
+    honors core.hooksPath and linked worktrees (a split project's `code/.git` is
+    often a file, not a dir).
+
+    state:
+      no-repo    — codeRoot is not a git work tree (nothing to install into)
+      managed    — OUR generated hook: ownership verified by the marker
+                   (`current` = byte-identical to today's script)
+      unverified — a pre-push that is not ours. We do not claim it blocks `main`
+      missing    — no pre-push at the effective path → NOT blocked
+    `hooks_path` is core.hooksPath when set — that config, not the file, is what
+    makes `.git/hooks` inert.
+
+    T-493 removed a fourth state, `blocking`, which was decided by
+    `"ALLOW_MAIN_PUSH" in body and "main" in body`. A hook whose only occurrence
+    of either word sat in a COMMENT passed as effective, so `prdt doctor` printed
+    clean while `git push origin main` went straight through — the exact false
+    reassurance T-481 set out to end, for the population most likely to hit it
+    (anyone with a global core.hooksPath: husky, dotfiles, an org `.githooks`).
+    Ownership is the only thing verifiable without EXECUTING a hook we do not
+    own, and executing one is not a lint's business: a pre-push routinely runs a
+    test suite, and doctor is a standing diagnostic. So unowned == unverified,
+    and it always produces a doctor line. `mentions` below is wording for that
+    line only — never an input to the verdict."""
+    cr = code_root(root)
+    r = _git(["rev-parse", "--git-path", "hooks"], cr)
+    if r.returncode != 0:
+        return {"state": "no-repo", "path": None, "hooks_path": None,
+                "current": False, "mentions": False}
+    d = Path(r.stdout.strip() or "hooks")
+    if not d.is_absolute():
+        d = Path(cr) / d
+    hp = _git(["config", "--get", "core.hooksPath"], cr)
+    hooks_path = hp.stdout.strip() if hp.returncode == 0 and hp.stdout.strip() else None
+    hook = d / "pre-push"
+    try:
+        body = hook.read_text(encoding="utf-8")
+    except OSError:
+        return {"state": "missing", "path": hook, "hooks_path": hooks_path,
+                "current": False, "mentions": False}
+    if PREPUSH_MARKER in body:
+        return {"state": "managed", "path": hook, "hooks_path": hooks_path,
+                "current": body == PREPUSH_SCRIPT, "mentions": False}
+    return {"state": "unverified", "path": hook, "hooks_path": hooks_path,
+            "current": False,
+            "mentions": "ALLOW_MAIN_PUSH" in body and "main" in body}
+
+
+def ensure_prepush_hook(root):
+    """Install/upgrade the managed hook where it is ours to write. Returns
+    {action, state, path, detail}; action ∈ installed | upgraded | ok | skipped.
+    Never throws — a git-less machine must not break init or doctor.
+
+    WRITE ONLY when core.hooksPath is unset, i.e. into the repo's own
+    `.git/hooks`: not cloned, not tracked, not shared with any other repo.
+    `upgraded` closes T-481's second half — a machine carrying a pre-T-465
+    managed hook (no ALLOW_MAIN_PUSH escape, so the emergency path is STUCK
+    there) is repaired by the next init/doctor, because the marker is what we
+    match on: a stale body is replaced, not respected. Foreign hooks are never
+    touched and never backed up — silently replacing someone else's hook is how
+    a tool breaks a repo it does not own."""
+    try:
+        st = prepush_status(root)
+        if st["state"] == "no-repo":
+            return {"action": "skipped", "detail": "code repo has no git", **st}
+        if st["hooks_path"]:
+            return {"action": "skipped",
+                    "detail": f"core.hooksPath={st['hooks_path']} — not ours to write", **st}
+        if st["state"] == "managed" and st["current"]:
+            return {"action": "ok", "detail": "managed hook current", **st}
+        if st["state"] == "unverified":
+            return {"action": "skipped", "detail": "an unmanaged pre-push is in place", **st}
+        upgrade = st["state"] == "managed"
+        st["path"].parent.mkdir(parents=True, exist_ok=True)
+        tmp = Path(str(st["path"]) + ".tmp")
+        tmp.write_text(PREPUSH_SCRIPT, encoding="utf-8")
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, st["path"])
+        st.update(state="managed", current=True)
+        return {"action": "upgraded" if upgrade else "installed",
+                "detail": "stale managed hook replaced" if upgrade else "no pre-push was present",
+                **st}
+    except Exception as e:  # perms / exotic layout — degrade, never block
+        return {"action": "skipped", "state": "unknown", "path": None,
+                "hooks_path": None, "current": False, "detail": str(e)}
+
+
+def prepush_warnings(root):
+    """doctor lines. The repair IS the finding (it says the block was absent
+    until this run), then the states we must not repair."""
+    res = ensure_prepush_hook(root)
+    p, act, st = res.get("path"), res["action"], res.get("state")
+    if act == "installed":
+        return [f"git: no pre-push hook was present — main-push block installed at {p} "
+                "(a clone carries no hooks; this repo was unprotected until now)"]
+    if act == "upgraded":
+        return [f"git: stale managed pre-push replaced at {p} — "
+                "ALLOW_MAIN_PUSH hotfix escape restored"]
+    if act != "skipped" or st in ("managed", "no-repo"):
+        return []
+    hp = res.get("hooks_path")
+    if hp and st == "missing":
+        return [f"git: main-push block INACTIVE — core.hooksPath={hp} makes .git/hooks inert "
+                f"and {p} does not exist; add the block there (prdt writes no hooks outside "
+                ".git/hooks and never edits your git config)"]
+    if st == "unverified":
+        # `mentions` NEVER decides the verdict — it only picks which sentence is
+        # useful to the reader (T-493).
+        note = (" It does contain `main` and ALLOW_MAIN_PUSH, but words in a file are not a "
+                "block — a hook mentioning both only in comments used to pass this check."
+                if res.get("mentions") else
+                " Nothing in it mentions `main` or ALLOW_MAIN_PUSH at all.")
+        return [f"git: main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
+                "verifies ownership only (it never runs someone else's hook to find out what "
+                f"it does).{note} Until you have read it, assume nothing but you stops a push "
+                "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
+                + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
+                   "its own hook here" if hp else "")]
+    return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
+
+
+# ── release-notes scaffold (T-453) ────────────────────────────────────────────
+#
+# The format convention (T-394) declares itself common to every prdt-managed
+# project, but it only ever EXISTED in prdt-self: a new project reached its first
+# release with nothing to follow. This stub is the convention's portable home —
+# the preamble IS the spec, so it travels with the project and no one consults
+# another repo's wiki. Canonical discipline stays untouched on purpose: release is
+# a rare event, and per-turn injection would spend tokens in every turn of every
+# session to serve it (PO habit already carries the one WHEN line that fires at
+# tag-cut time, which is the only part needed before the file is open).
+#
+# Lives at `<codeRoot>/docs/RELEASES.md` because the code consumes it — the
+# updater parses it and consumers get it when they pull the code repo (contracts
+# §Fixed paths meta/code split test: coupling, not subject matter). It is outside
+# META_ALLOWLIST_DEFAULT, so the meta repo never claims it in either layout.
+#
+# Sectionless by construction: no line starts with `## `, so a fresh project keeps
+# parsing to (None, None) — identical to having no file — and the update nudge
+# stays silent instead of advertising a phantom version (T-393/T-456 contract).
+# Kept in-script rather than as a config/ template: install.sh ships `scripts/prdt`
+# as a single standalone file copy, so a sibling template would not be installed.
+RELEASES_STUB = """# Releases
+
+Version-by-version release notes for this project.
+
+> **Format** — [Keep a Changelog](https://keepachangelog.com) style, adapted for prdt.
+> - One `## <version>` section per shipped version, **newest first**. `<version>` is the
+>   exact git tag string (`v1.4`) as the first token after `## ` — this is the anchor the
+>   prdt updater parses, so keep it verbatim.
+> - Optional ` — <title>` and date after the version token: `## v1.4 — release-notes (2026-07-22)`.
+> - Group changes under `### Added` / `### Changed` / `### Fixed` / `### Removed` (omit empty groups).
+> - **When**: written at release time. When you close a version, add its `## <version>` section
+>   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
+> - Everything above the first `## ` heading is preamble and is ignored by the parser.
+
+<!-- No version shipped yet — the first `## <version>` section goes directly below. -->
+"""
+
+
+def scaffold_releases(root):
+    """Drop the `<codeRoot>/docs/RELEASES.md` format stub when absent (T-453).
+    Never touches an existing file — a project that brought its own release notes
+    keeps them byte-for-byte. Best-effort: a scaffold write must not fail init."""
+    fp = code_root(root) / "docs" / "RELEASES.md"
+    try:
+        if not fp.exists():
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(RELEASES_STUB, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def init_project(root, slug=None, version="v0.1", stage="define", interactive=True):
     """The one init module (§10) — GUI onboarding shares this via `prdt init --json`."""
     root = Path(root).resolve()
@@ -585,18 +1135,24 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
         fp = root / "docs" / "wiki" / f
         if not fp.exists():
             fp.write_text(head, encoding="utf-8")
-    con = open_db(root, rebuild=True)
-    reindex_tickets(root, con)
-    reindex_wiki(root, con)
+    # Code-side release-notes stub (T-453) — after the config write above, so
+    # code_root() resolves the layout this init just recorded.
+    scaffold_releases(root)
+    rebuild_index(root)
     # T-408: pre-accept Claude Code's trust dialog for projectRoot + codeRoot so
     # hooks/discipline apply on the very first session (config.json is written
     # above, so code_root resolves the split layout). Best-effort, never blocks.
     trust_accept_project(root)
     # Meta split last — the snapshot commit captures the whole fresh scaffold.
     meta_err = init_meta_split(root)
+    # main-push block (T-481) — AFTER the split, which is what created the code
+    # repo's `.git`. A new project is protected from birth; contracts §Git no
+    # longer claims a block that nothing installed.
+    prepush = ensure_prepush_hook(root)
     return {"status": "created", "root": str(root), "slug": slug,
             "version": version, "stage": stage,
-            "meta_git": "ok" if meta_err is None else f"skipped: {meta_err}"}
+            "meta_git": "ok" if meta_err is None else f"skipped: {meta_err}",
+            "prepush": prepush["action"], "prepush_detail": prepush["detail"]}
 
 
 def cmd_init(args):
@@ -608,6 +1164,89 @@ def cmd_init(args):
         print(f"already initialized: {res['root']}/.prdt")
     else:
         print(f"initialized {res['slug']} · {res['version']} · {res['stage']} at {res['root']}/.prdt")
+
+
+# ── wiki refs (T-448) ─────────────────────────────────────────────────────────
+# `[ctx].wiki_refs` was recalled from memory, so in T-442 three dispatches went out
+# with an empty array while the one page that would have stopped the incident
+# (`machine:fact--qa-cua-vm`, "VM required") sat one lookup away — the PO never
+# forgot a rule, it just never got a prompt to look. The `change_meta` the PO is
+# already holding IS the query; this derives candidates from it.
+#
+# Matching is LEXICAL and nothing more: terms taken out of the file paths, the risk
+# flags and the slug, kept only when they are rare across the wiki. Rarity is the
+# whole precision mechanism — a term carried by most pages describes the project,
+# not this change. What that cannot see (a page relevant by concept while sharing
+# no wording) is a defined class, printed under every run, and is exactly the job
+# left to the PO's judgment.
+REFS_DF_CAP = 0.30        # term in >30% of pages → about the project, not the change
+REFS_PHRASE_W = 1.0       # a whole path/flag ("po/habit.md", "test isolation") …
+REFS_WORD_W = 0.6         # … outranks a fragment of one ("habit", "test")
+REFS_TOP, REFS_RATIO, REFS_MIN_TERMS = 3, 0.5, 2
+REFS_WORD = re.compile(r"[a-z0-9]+")
+REFS_NOTE = ("matched on wording only (file paths · risk flags · slug). A page relevant by "
+             "concept while sharing no wording — process/decision pages above all — cannot "
+             "appear here; adding that one is your judgment, as is dropping any line above.")
+
+
+def refs_terms(change_meta, slug):
+    """{term: weight} — every mechanical term a `change_meta` yields.
+
+    Paths give each suffix (`discipline/po/habit.md` → `po/habit.md` → `habit.md`)
+    because a page cites the part it cares about, plus the basename's words. Flags
+    give the whole flag both ways it is ever written (`test-isolation`, `test
+    isolation`) plus its words. The slug gives its words."""
+    terms = {}
+
+    def add(t, phrase):
+        t = t.strip().lower()
+        if len(t) >= 3:
+            terms[t] = max(terms.get(t, 0.0), REFS_PHRASE_W if phrase else REFS_WORD_W)
+
+    for f in (change_meta.get("files") or []):
+        segs = [s for s in re.split(r"[/\\]", str(f).strip()) if s and s not in (".", "..")]
+        for i in range(len(segs)):
+            add("/".join(segs[i:]), phrase=i < len(segs) - 1)
+        if segs:
+            for w in REFS_WORD.findall(re.sub(r"\.[a-z0-9]+$", "", segs[-1]).lower()):
+                add(w, phrase=False)
+    for fl in (change_meta.get("risk_flags") or []):
+        fl = str(fl)
+        add(fl, phrase="-" in fl)
+        add(fl.replace("-", " "), phrase="-" in fl)
+        for w in REFS_WORD.findall(fl.lower()):
+            add(w, phrase=False)
+    for w in REFS_WORD.findall(str(slug or "").lower()):
+        add(w, phrase=False)
+    return terms
+
+
+def wiki_refs(pages, change_meta, slug):
+    """Ranked candidates: [(score, page, [(term, weight), …])]. Both stores at once —
+    the T-442 page lives in the machine store, so a project-only derivation would
+    reproduce the very miss this exists to stop."""
+    texts = [(pg, f"{pg['name'].split(':', 1)[-1]} {pg['title']} {pg['body']}".lower())
+             for pg in pages]
+    hits = {}
+    # `max(1, …)`: on a young wiki 30% rounds below one page, which would filter
+    # every term and report "no candidate" forever — silent, and worse than noise.
+    df_cap = max(1, int(len(texts) * REFS_DF_CAP))
+    for term, mult in refs_terms(change_meta, slug).items():
+        matched = [pg["name"] for pg, text in texts if term in text]
+        if not matched or len(matched) > df_cap:
+            continue
+        weight = math.log(len(texts) / len(matched)) * mult
+        for name in matched:
+            hits.setdefault(name, []).append((term, weight))
+    scored = []
+    for pg, _text in texts:
+        ev = hits.get(pg["name"], [])
+        if len(ev) >= REFS_MIN_TERMS:      # a lone weak term is a coincidence
+            scored.append((sum(w for _, w in ev), pg, sorted(ev, key=lambda x: -x[1])))
+    scored.sort(key=lambda r: (-r[0], r[1]["name"]))
+    # a tail below half the leader is the "10 candidates" failure — the PO then
+    # loads the whole list or discards the whole list, and both lose the signal.
+    return [r for r in scored[:REFS_TOP] if r[0] >= scored[0][0] * REFS_RATIO] if scored else []
 
 
 # ── wiki ──────────────────────────────────────────────────────────────────────
@@ -622,16 +1261,19 @@ def require_root():
 def cmd_wiki(args):
     root = require_root()
     if args.action == "reindex":
-        con = open_db(root, rebuild=True)
-        v = reindex_tickets(root, con)
-        pages = reindex_wiki(root, con)
-        print(f"reindexed: {len(pages)} wiki pages, tickets ok" +
+        _con, v, pages, mpages = rebuild_index(root)
+        mdir = machine_wiki_root()
+        if mdir.is_dir():
+            (mdir / "index.md").write_text(render_wiki_index(mpages, MACHINE_INDEX_HEADER),
+                                           encoding="utf-8")
+        print(f"reindexed: {len(pages)} wiki pages + {len(mpages)} machine, tickets ok" +
               (f", {len(v)} ticket violations (see `prdt doctor`)" if v else ""))
     elif args.action == "search":
         if not args.query:
             sys.exit("usage: prdt wiki search <query>")
         q = " ".join(args.query)
         con = open_db(root)
+        index_machine_wiki(con)
         rows = []
         if all(len(t) >= 3 for t in q.split()):
             try:
@@ -646,9 +1288,34 @@ def cmd_wiki(args):
                 "SELECT name, title, body FROM wiki_fts WHERE body LIKE ? OR title LIKE ? OR name LIKE ? LIMIT 10",
                 (like, like, like))]
         for name, title, snip in rows:
-            print(f"{name} — {title}\n    {snip}")
+            scope = ("  [machine wiki — this machine, any project on it]"
+                     if name.startswith(MACHINE) else "")
+            print(f"{name} — {title}{scope}\n    {snip}")
         if not rows:
             print("(no hits)")
+    elif args.action == "refs":
+        raw = " ".join(args.query).strip() or ("" if sys.stdin.isatty() else sys.stdin.read().strip())
+        if not raw:
+            sys.exit("usage: prdt wiki refs '<change_meta or [ctx] JSON>'   (or pipe it on stdin)")
+        try:
+            payload = json.loads(raw)
+            if not isinstance(payload, dict):
+                raise ValueError("not an object")
+        except (ValueError, TypeError) as e:
+            sys.exit(f"prdt wiki refs: could not read that as JSON ({e}) — pass the `change_meta` "
+                     "object, or the whole `[ctx]` object, verbatim")
+        # the PO holds a `[ctx]` at dispatch time and a `change_meta` inside it;
+        # taking either verbatim keeps this a copy, never a re-typing.
+        cm = payload.get("change_meta") if isinstance(payload.get("change_meta"), dict) else payload
+        cands = wiki_refs(scan_wiki(root) + scan_machine_wiki(), cm, payload.get("slug"))
+        for _score, pg, ev in cands:
+            scope = ("  [machine wiki — this machine, any project on it]"
+                     if pg["name"].startswith(MACHINE) else "")
+            print(f"{pg['name']} — {pg['title']}{scope}\n    matched: "
+                  + " · ".join(t for t, _ in ev[:5]))   # the reason, at a glance
+        if not cands:
+            print("(no candidate — no page in either wiki shares wording with these files/flags/slug)")
+        print(REFS_NOTE)
     elif args.action == "lint":
         warns = wiki_lint(root)
         for w in warns:
@@ -686,12 +1353,104 @@ def wiki_lint(root):
     return warns
 
 
+def machine_wiki_warnings():
+    """The machine store is pull-only, so its budget is about curation, not tokens:
+    past ~15 pages it stops being a shelf you can hold in your head. Read-only —
+    doctor runs from inside a project and never writes the tool home."""
+    wdir = machine_wiki_root()
+    if not wdir.is_dir():
+        return []
+    pages = scan_machine_wiki()
+    warns = []
+    if len(pages) > CAPS["machine_wiki_pages"]:
+        warns.append(f"machine wiki: {len(pages)} pages (budget ~{CAPS['machine_wiki_pages']}) — "
+                     f"merge, split, or move project-scope knowledge back to docs/wiki/")
+    if pages:
+        idx = wdir / "index.md"
+        want = render_wiki_index(pages, MACHINE_INDEX_HEADER)
+        if not idx.is_file():
+            warns.append("machine wiki: index.md missing — run `prdt wiki reindex`")
+        elif idx.read_text(encoding="utf-8") != want:
+            warns.append("machine wiki: index.md stale vs pages — run `prdt wiki reindex`")
+    return warns
+
+
+PUNCT_FOLD = str.maketrans({"—": "-", "–": "-", "‑": "-", "―": "-",
+                            "“": '"', "”": '"', "‘": "'", "’": "'"})
+
+
+def normalize_rule_line(s):
+    """Canonical form of one override line. Deliberately shallow — case, list
+    marker, emphasis/code ticks, dash and quote variants, whitespace, trailing
+    punctuation. Two copies of the SAME rule collapse to one string; two lines
+    about the same topic in different words stay different, which is what keeps
+    duplicate detection mechanical instead of a judgment call."""
+    s = unicodedata.normalize("NFKC", s).strip()
+    s = re.sub(r"^(?:[-*+]|\d+[.)])\s+", "", s)
+    s = s.translate(PUNCT_FOLD)
+    s = re.sub(r"[*_`]", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip(" .·:;").casefold()
+
+
+def is_rule_line(raw, key):
+    """Rule-bearing lines only: headings, frontmatter fences, blanks and HTML
+    comments are structure that legitimately repeats across layers."""
+    st = raw.strip()
+    if not st or st.startswith(("#", "<!--", "---", "===")):
+        return False
+    return len(key) >= 8 and re.search(r"\w", key) is not None
+
+
+def override_warnings(root):
+    """Override files are the only text injected on EVERY turn, so both layers get
+    the same cap, and a project line that has become a verbatim restatement of a
+    machine line is pure per-turn waste — flag it for the Retro align step."""
+    warns = []
+    layers = (("machine", prdt_home() / "overrides"),
+              ("project", root / ".prdt" / "overrides"))
+    for persona in PERSONAS:
+        seen = {}
+        for label, d in layers:
+            f = d / f"{persona}.md"
+            if not f.is_file():
+                continue
+            lines = f.read_text(encoding="utf-8").splitlines()
+            if len(lines) > CAPS["override"]:
+                warns.append(f"override: {label} {persona}.md is {len(lines)} lines "
+                             f"(cap {CAPS['override']}) — curate down")
+            for n, raw in enumerate(lines, 1):
+                key = normalize_rule_line(raw)
+                if not is_rule_line(raw, key):
+                    continue
+                prev = seen.get(key)
+                if prev and prev[0] != label:
+                    warns.append(f"override: {persona} — {prev[0]} L{prev[1]} and {label} L{n} "
+                                 f"are the same rule after normalization; drop the project line "
+                                 f"or give it a reason for diverging")
+                elif not prev:
+                    seen[key] = (label, n)
+    return warns
+
+
 # ── tickets / history ─────────────────────────────────────────────────────────
 
 def cmd_tickets(args):
     root = require_root()
-    con = open_db(root, rebuild=True)
+    # Refresh THIS command's slice, in place. Not a rebuild: the wiki slice shares
+    # the file and nothing here re-fills it (T-480).
+    con = open_db(root)
     reindex_tickets(root, con)
+    if args.link:
+        # Paste-ready `[T-NNN](file://<abs>)` per requested id, in the order asked.
+        # The ticket slice was just re-derived from md, so one promoted between dirs
+        # (backlog → version) resolves to where it is NOW — never a composed guess.
+        hit = dict(con.execute(
+            "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.link)),
+            args.link).fetchall())
+        for tid in args.link:
+            print(f"[{tid}](file://{root / hit[tid]})" if tid in hit else f"{tid} (not found)")
+        return
     q, params = "SELECT id, slug, type, status, assignee, version, deps FROM tickets", []
     conds = []
     if args.backlog:
@@ -702,6 +1461,10 @@ def cmd_tickets(args):
         conds.append("feature = ?"); params.append(args.feature)
     if args.status:
         conds.append("status = ?"); params.append(args.status)
+    if args.assignee:
+        # `--assignee user` = the person's own-hands queue (T-464): who is being
+        # waited on, answerable from the index instead of from a chat scrollback.
+        conds.append("assignee = ?"); params.append(args.assignee)
     if conds:
         q += " WHERE " + " AND ".join(conds)
     rows = con.execute(q + " ORDER BY id", params).fetchall()
@@ -788,7 +1551,9 @@ def cmd_update(_args):
 
 # ── update-on-run (T-393 · 1일 1회 interactive update nudge) ──────────────────
 # Fires BEFORE any subcommand (main): once-a-day it compares the installed code
-# clone's local HEAD to `origin/<branch>` and, when the remote is ahead, shows a
+# clone's local HEAD to `origin/<branch>` and, when the remote is STRICTLY ahead
+# (T-456: fast-forwardable — a clone that is ahead or diverged is NOT an update)
+# AND the remote advertises a version above the installed one, shows a
 # release-note interstitial + a 3-way gum/fzf choose. EVERY failure path degrades
 # to silence — the original command always runs. Non-blocking by construction
 # (doctrine #5). Design SoT: docs/tickets/v1.4/T-393.md (Design decisions / UX flow).
@@ -844,6 +1609,53 @@ def _parse_releases(text):
     return tok[0], "\n".join(lines[start:end]).rstrip("\n")
 
 
+def _releases_sections(code_root_path):
+    """Every `## <version>` anchor in RELEASES.md, as a set of version tokens.
+    Same anchor the updater parses (T-394): first whitespace token after `## `."""
+    try:
+        text = (Path(code_root_path) / "docs" / "RELEASES.md").read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    return {l[3:].split()[0] for l in text.splitlines()
+            if l.startswith("## ") and l[3:].split()}
+
+
+# Version-shaped tags only (`v1.5`, `v1.5.1`) — a `v`-prefixed non-release tag
+# (`vendor-sync`) is not a release cut and must not raise a release-notes miss.
+TAG_RE = re.compile(r"^v\d+(?:\.\d+)*$")
+
+
+def release_notes_gap_warnings(root):
+    """A `v*` tag exists with no matching `## <version>` section in RELEASES.md.
+
+    contracts §Git and the PO lifecycle both already require the section in the
+    SAME change that cuts the tag; nothing checked it, and T-465 observed the
+    miss for real (v1.5.1 tagged locally — zero release-note, log, or push trace,
+    and the user believed it had shipped). Tags come from the CODE repo, which is
+    where both the tag and `<codeRoot>/docs/RELEASES.md` live. Matching is exact
+    string against the tag — no normalization guessing, since that token IS the
+    updater's anchor. Degrade-never-raise: no git, not a repo, or no version-shaped
+    tag → silence, same posture as the rest of the doctor."""
+    cr = code_root(root)
+    try:
+        r = _git(["tag", "--list", "v*"], cr)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    tags = sorted(t for t in (x.strip() for x in r.stdout.splitlines()) if TAG_RE.match(t))
+    if not tags:
+        return []
+    have = _releases_sections(cr)
+    missing = [t for t in tags if t not in have]
+    if not missing:
+        return []
+    rel = f"{code_dir_name(root)}/docs/RELEASES.md" if code_dir_name(root) else "docs/RELEASES.md"
+    return [f"release-notes: tag(s) {' '.join(missing)} cut with no matching "
+            f"`## <version>` section in {rel} — contracts requires the section in "
+            f"the SAME change that cuts the tag"]
+
+
 def releases_pending(code_root, timeout=2):
     """(version, section_text) of the newest release section on the REMOTE
     (origin/<current-branch>) docs/RELEASES.md, or (None, None).
@@ -875,25 +1687,74 @@ def releases_pending(code_root, timeout=2):
 
 
 def remote_ahead(code_root, timeout=2):
-    """True when `origin/<current-branch>` HEAD differs from local HEAD. None on any
-    failure (dirty git, offline, 2s timeout, no remote) → caller degrades to silence.
-    Detection only compares SHAs; it does not assert direction (a fast-forward pull
-    is what cmd_update does), matching the 구 productune update contract."""
+    """True only when `origin/<current-branch>` is STRICTLY AHEAD of local HEAD —
+    i.e. local HEAD is an ancestor of the remote tip and the two differ, which is
+    exactly the case `cmd_update`'s `pull --ff-only` can satisfy. False when equal,
+    when local is ahead, and when the two have diverged. None on any failure
+    (detached HEAD, branch absent on origin, offline, 2s timeout, no remote) →
+    caller degrades to silence.
+
+    T-456: this used to be `remote != local` with a note that direction was
+    deliberately not asserted ("matching the 구 productune update contract"). That
+    made every clone that is AHEAD of origin — i.e. every dev clone, all cycle
+    long — get a daily prompt no choice could satisfy: `update now` either aborts
+    on the dirty tree or fast-forwards to a no-op, so only `skip` ends it. The
+    nudge exists to offer an update that can be taken; a non-fast-forwardable
+    difference is not one."""
     def g(*a, t=timeout):
         return subprocess.run(["git", "-C", str(code_root), *a],
                               capture_output=True, text=True, timeout=t)
     try:
         branch = g("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
         local = g("rev-parse", "HEAD").stdout.strip()
-        if not branch or not local:
+        if not branch or branch == "HEAD" or not local:   # detached / no commit
             return None
         r = g("ls-remote", "origin", branch)
-        if r.returncode != 0 or not r.stdout.strip():
+        if r.returncode != 0 or not r.stdout.strip():     # offline / no remote / branch not on origin
             return None
         remote = r.stdout.split()[0].strip()
-        return remote != local
+        if remote == local:                               # up to date — no fetch needed
+            return False
+        # Direction needs the remote COMMIT, not just its SHA: fetch it (objects
+        # land locally, no working-tree change), then ask whether local is an
+        # ancestor of it. Non-zero = not an ancestor (local ahead / diverged) or
+        # the object is unreachable (shallow clone) — both mean "no offer".
+        if g("fetch", "origin", branch).returncode != 0:
+            return None
+        return g("merge-base", "--is-ancestor", local, remote).returncode == 0
     except (subprocess.TimeoutExpired, OSError):
         return None
+
+
+def _version_key(v):
+    """Sortable key for a `v<N>.<m>[.<p>]` release tag, or None when unparseable.
+    Tuple compare gives the right order across lengths: v1.5 < v1.5.1 < v1.6."""
+    m = re.match(r"^v?(\d+(?:\.\d+)*)", (v or "").strip())
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def releases_local(code_root):
+    """(version, section_text) of the newest section in the LOCAL docs/RELEASES.md,
+    or (None, None) when the file is absent/unreadable/sectionless."""
+    try:
+        return _parse_releases((Path(code_root) / "docs" / "RELEASES.md").read_text(encoding="utf-8"))
+    except OSError:
+        return None, None
+
+
+def _newer_version(remote_v, local_v):
+    """T-456: True only when the remote's newest release section advertises a version
+    strictly above the installed one — never an equal or lower version (the v1.5 offered
+    to a clone already on v1.6 was the reported defect). An unparseable REMOTE version
+    is not provably an upgrade → False (silence). An unreadable LOCAL RELEASES.md leaves
+    nothing to compare against → True, because the caller only reaches here once
+    `remote_ahead` has already proven the clone is strictly behind; failing closed here
+    would silently strand such an install."""
+    rk = _version_key(remote_v)
+    if rk is None:
+        return False
+    lk = _version_key(local_v)
+    return True if lk is None else rk > lk
 
 
 def _render_release_box(version, note):
@@ -932,12 +1793,14 @@ def maybe_prompt_update(cmd):
     # consume today's slot up front so the post-update re-exec can't loop
     state["last_check"] = today
     _write_update_state(state)
-    ahead = remote_ahead(code_root)                     # cheap ls-remote gate (network, 2s)
-    if not ahead:                                       # None (degrade/offline) or False (up to date)
+    ahead = remote_ahead(code_root)                     # ls-remote + ancestry gate (network, 2s)
+    if not ahead:                                       # None (degrade/offline) or False (equal / local ahead / diverged)
         return
     version, note = releases_pending(code_root)         # REMOTE RELEASES via fetch+show (T-393)
     if not version:                                     # no section / fetch failed → silent degrade
         return
+    if not _newer_version(version, releases_local(code_root)[0]):
+        return                                          # T-456: never advertise an equal-or-lower version
     if version == state.get("skip_version"):            # user muted THIS remote version
         return
     _render_release_box(version, note)
@@ -960,7 +1823,7 @@ def maybe_prompt_update(cmd):
 
 def cmd_history(_args):
     root = require_root()
-    con = open_db(root, rebuild=True)
+    con = open_db(root)                                 # ticket slice only — see cmd_tickets (T-480)
     reindex_tickets(root, con)
     rows = con.execute(
         "SELECT version, COUNT(*), SUM(status='done'), SUM(status='open'), SUM(status='dropped') "
@@ -1300,9 +2163,8 @@ def cmd_doctor(_args):
             warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
 
     # tickets
-    con = open_db(root, rebuild=True)
-    warns += [f"ticket: {v}" for v in reindex_tickets(root, con)]
-    reindex_wiki(root, con)
+    con, tviol, _pages, _mpages = rebuild_index(root)
+    warns += [f"ticket: {v}" for v in tviol]
     tickets = {r["id"]: r for r, _, _ in (scan_tickets(root) or [])}
     ids = set(tickets)
     for t in tickets.values():
@@ -1327,6 +2189,13 @@ def cmd_doctor(_args):
             if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
                 warns.append(f"stage: {version} has no open tickets at stage={stage} — "
                              f"consider {next_stage} entry")
+        # build-entry signal (T-430): stage=build but the version's ticket dir has
+        # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
+        if stage == "build" and version:
+            ver_tickets = [t for t in tickets.values() if t["version"] == version]
+            if not any(t["status"] in ("open", "done") for t in ver_tickets):
+                warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
+                             f"consider build-entry scope slicing")
     # deps cycle
     def cycles():
         seen, stack = set(), set()
@@ -1351,8 +2220,25 @@ def cmd_doctor(_args):
             if a.is_file() and not a.name.startswith(".") and a.name not in all_bodies:
                 warns.append(f"ticket: artifact {a.name} has no referencing ticket")
 
-    # wiki
+    # main-push block: install where it is ours to write, report where it is not (T-481)
+    warns += prepush_warnings(root)
+
+    # release notes vs cut tags (T-465)
+    warns += release_notes_gap_warnings(root)
+
+    # meta backup lag + drift + fixed-path parity (T-428)
+    warns += meta_backup_lag_warnings(root)
+    warns += meta_drift_warnings(root)
+    parity = meta_allowlist_parity_warning()
+    if parity:
+        warns.append(parity)
+
+    # wiki — project store, then the machine store (§8b) it now searches alongside
     warns += wiki_lint(root)
+    warns += machine_wiki_warnings()
+
+    # override caps + cross-layer duplicates (§8b)
+    warns += override_warnings(root)
 
     # discipline caps + menu drift
     droot = discipline_root()
@@ -1428,7 +2314,7 @@ def migrate_ticket(p, dry):
         "slug": fm.get("slug") or p.stem.lower(),
         "type": FULL_TYPE_MAP.get(str(fm.get("type", "")).lower(), "impl"),
         "status": FULL_STATUS_MAP.get(str(fm.get("status", "")).lower(), "open"),
-        "assignee": re.sub(r"^pdtl?-", "", str(fm.get("assignee") or "")) or None,
+        "assignee": norm_assignee(fm.get("assignee")),
         "feature": fm.get("area_tag") or fm.get("feature") or None,
         "deps": next((fm[k] for k in ("deps", "depends_on") if isinstance(fm.get(k), list) and fm[k]), None),
         "created": date_only(fm.get("created_at") or fm.get("created")),
@@ -1591,8 +2477,7 @@ def cmd_migrate(args):
         print(("[dry-run] " if dry else "") + "migrate: 루트 CLAUDE.md 이관 (PO walk-up 오염 제거)")
         res = migrate_claude_md(root, dry, assume_yes, to_archive, version)
         if res and res.get("moved"):
-            con = open_db(root, rebuild=True)
-            reindex_wiki(root, con)
+            rebuild_index(root)
             print(f"  · 완료 — {res['dest']} 생성 · 루트 CLAUDE.md 제거. "
                   "PO 세션이 더는 이 파일을 walk-up으로 읽지 않습니다.")
         return
@@ -1705,9 +2590,7 @@ def cmd_migrate(args):
                 fp.write_text(head, encoding="utf-8")
         with open(root / "docs" / "wiki" / "log.md", "a", encoding="utf-8") as f:
             f.write(f"- ({now_iso()[:10]}) migrated from {kind}: {n_tickets} tickets, {n_pages} wiki pages — curation due at next Retro\n")
-        con = open_db(root, rebuild=True)
-        v = reindex_tickets(root, con)
-        reindex_wiki(root, con)
+        _con, v, _pages, _mpages = rebuild_index(root)
         if v:
             report.append(f"⚠ reindex: 티켓 위반 {len(v)}건 잔존 — `prdt doctor` 확인")
         # 1회용 온보딩 플래그 — hook#1이 다음 PO 세션에 자기 브리핑 지시를 주입 후 소거
@@ -1736,15 +2619,21 @@ def main():
     p.add_argument("--yes", action="store_true", help="accept defaults, no prompts")
     p.add_argument("--json", action="store_true", help="machine mode (GUI shares this module)")
     p.set_defaults(fn=cmd_init)
-    p = sub.add_parser("doctor", help="non-blocking lint: state · tickets · wiki · discipline caps")
+    p = sub.add_parser("doctor", help="non-blocking lint: state · tickets · wiki (both stores) · overrides · discipline caps")
     p.set_defaults(fn=cmd_doctor)
-    p = sub.add_parser("wiki", help="search | reindex | lint")
-    p.add_argument("action", choices=["search", "reindex", "lint"])
+    p = sub.add_parser("wiki", help="search (both stores; machine hits prefixed `machine:`) | "
+                                    "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint")
+    p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
     p.add_argument("query", nargs="*")
     p.set_defaults(fn=cmd_wiki)
-    p = sub.add_parser("tickets", help="list tickets (--version --feature --status --ready --backlog)")
+    p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
+                                       "· --link T-NNN … prints paste-ready file:// links")
     p.add_argument("--version"); p.add_argument("--feature"); p.add_argument("--status", choices=TICKET_STATUS)
+    p.add_argument("--assignee", choices=ASSIGNEES,
+                   help="filter by assignee: persona short name or `user` (work only the person can do) "
+                        "· legacy `pdt-` frontmatter normalizes on index, so one value matches both spellings")
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
+    p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)

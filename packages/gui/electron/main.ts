@@ -30,6 +30,8 @@ import { register as registerAttachments } from './ipc/attachments'
 import { register as registerGit }         from './ipc/git'
 import { register as registerMeta }        from './ipc/meta'
 import { register as registerMetaMigrate } from './ipc/metaMigrate'
+import { register as registerUrlRoute } from './ipc/urlRoute'
+import { attachWebviewNavigationGuards } from './webview-nav-guard'
 import { installWebviewAcceptLanguage } from './locale-session'
 import { startUsageWatch, stopUsageWatch, readInitialPayload } from './ipc/usageWatch'
 import { register as registerTicketsWatch, stopTicketsWatch } from './ipc/ticketsWatch'
@@ -37,10 +39,46 @@ import { register as registerDocsWatch, stopDocsWatch } from './ipc/docsWatch'
 import { register as registerCostArchive, stopCostWatch } from './ipc/costArchive'
 import { abortActiveTurn, isPoRunning } from './po-runner'
 import { killAllSurfaceRuns } from './surface-runner'
+import { ensurePrdtProvisioned, resolveDefaultPaths } from './prdt-bootstrap'
+import { ensureNodeToolchain, resolveNpmPayloadDir } from './toolchain'
+import { isShimMisfire, MISFIRE_EXIT_CODE } from './launch-guard'
 import { getCloseToTray, getLaunchAtLogin, setLaunchAtLogin, getZoomFactor } from '@productune/core'
 
 // T-PATCH-143: dev 모드 앱 메뉴/About/알림 소스 라벨을 "Electron"→"productune"로 통일 (app.name 첫 사용 전 호출, electron-builder.yml productName과 동일 값)
 app.setName('productune')
+
+// ── T-442 launch guards — BEFORE any window/IPC/provisioning side effect ─────
+//
+// 1. Shim-misfire guard: if ELECTRON_RUN_AS_NODE is set while THIS GUI code is
+//    executing, the env marker was inert (fuse-disabled binary or any future
+//    GUI-mode boot from a node-intended spawn). The 2026-07-30 runaway was
+//    exactly this instance class re-entering startup provisioning and
+//    re-spawning itself once per probe generation until the machine hung.
+//    A misfired instance must do NOTHING but exit.
+// 2. Single-instance lock: duplicate GUI instances (whatever launched them)
+//    exit immediately; the primary gets focus via 'second-instance'. The lock
+//    is filesystem-scoped (userData), so it holds even when the environment
+//    was stripped entirely — the env-independent duplicate stop.
+const shimMisfire = isShimMisfire(process.env)
+const isPrimaryInstance = !shimMisfire && app.requestSingleInstanceLock()
+const launchAllowed = !shimMisfire && isPrimaryInstance
+
+if (shimMisfire) {
+  console.error('[launch-guard] ELECTRON_RUN_AS_NODE is set but GUI code booted — the runAsNode marker was inert on this binary. Exiting (T-442).')
+  app.exit(MISFIRE_EXIT_CODE)
+} else if (!isPrimaryInstance) {
+  console.warn('[launch-guard] another Productune instance holds the single-instance lock — exiting (T-442).')
+  app.exit(0)
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore()
+      if (!win.isVisible()) win.show()
+      win.focus()
+    }
+  })
+}
 
 // ── Open Recent — deferred open-file queue (T-P4-111) ─────────────────────────
 // macOS may fire `open-file` before app.whenReady / before a window exists.
@@ -89,17 +127,18 @@ registerCostArchive()
 registerGit()
 registerMeta()
 registerMetaMigrate()
+registerUrlRoute()
 
-// T-PATCH-191: in-app browser — window.open / target=_blank on a <webview>
-// (e.g. Naver's home tiles) otherwise spawn a detached popup we don't manage, so
-// clicks appear to do nothing. Deny the popup and route the URL to the renderer,
-// which opens it as a new in-app browser tab (preserves the current page; safe
-// for OAuth popups). Same-tab <a> navigations (e.g. Google) are unaffected.
+// ── <webview> navigation routing (T-434, was T-PATCH-191) ─────────────────────
+// Popup + same-tab + redirect interception, so an auth flow reaches the system
+// default browser instead of dead-ending in the embedded view (R-34). The logic
+// and its full rationale live in ./webview-nav-guard so they are unit testable —
+// this file's module scope boots Electron and cannot be imported by a test.
 app.on('web-contents-created', (_e, contents) => {
   if (contents.getType() !== 'webview') return
-  contents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) mainWindow?.webContents.send('browser:open-url', { url })
-    return { action: 'deny' }
+  attachWebviewNavigationGuards(contents, {
+    openExternal: (url) => { void shell.openExternal(url) },
+    openInternalPane: (url) => { mainWindow?.webContents.send('browser:open-url', { url }) },
   })
 })
 
@@ -418,7 +457,10 @@ function sendToFocusedData(channel: string, data: unknown): void {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
+// T-442: app.exit() does not halt the current tick synchronously — gate the
+// whenReady bootstrap so a guarded-out instance can never open a window or
+// touch ~/.productune / ~/.prdt while its exit is being processed.
+if (launchAllowed) app.whenReady().then(() => {
   Menu.setApplicationMenu(buildAppMenu())
 
   // T-PATCH-109 §4.b QA-fix: macOS ignores BrowserWindow.icon for the Dock —
@@ -441,6 +483,38 @@ app.whenReady().then(() => {
 
   startUsageWatch()
   createWindow()
+
+  // T-431: first-launch prdt bootstrap — a participant machine (no ~/.prdt at
+  // all) is provisioned from the bundled installer payload so project-create
+  // works with zero terminal use. Idempotent: an app-managed ~/.prdt is only
+  // refreshed on app-version change; a repo-managed ~/.prdt (no gui marker) is
+  // never touched. Deferred a tick so first paint is never blocked; a failure
+  // here is non-fatal — project.ts retries lazily at create time and surfaces
+  // the actionable error in the GUI.
+  setTimeout(() => {
+    try {
+      const res = ensurePrdtProvisioned(resolveDefaultPaths(app))
+      if (!res.ok) console.warn(`[prdt-bootstrap] ${res.reason}: ${res.error ?? ''}`)
+      else if (res.performed) console.log('[prdt-bootstrap] provisioned ~/.prdt from bundled payload')
+    } catch (e) {
+      console.warn('[prdt-bootstrap] unexpected failure', e)
+    }
+
+    // T-440: app-provided JS toolchain for the PARTICIPANT'S PRODUCT — node =
+    // the app binary under ELECTRON_RUN_AS_NODE, npm/npx = the bundled npm
+    // package (extraResources). Shims land in ~/.productune/toolchain/bin and
+    // ride LAST on every child PATH (surface build/run, PO turns, MCP,
+    // prewarm) — a machine with its own toolchain is untouched. Idempotent
+    // (marker-cached probe); a failure is non-fatal here and surfaces per-run
+    // via surface.ts's toolchain-unavailable hint.
+    try {
+      const tc = ensureNodeToolchain({ npmDir: resolveNpmPayloadDir(app) })
+      if (!tc.ok) console.warn(`[toolchain] ${tc.code}: ${tc.error ?? ''}`)
+      else if (tc.performed) console.log(`[toolchain] provisioned node ${tc.nodeVersion} + npm ${tc.npmVersion} at ${tc.binDir}`)
+    } catch (e) {
+      console.warn('[toolchain] unexpected failure', e)
+    }
+  }, 0)
 
   // T-PATCH-177: create the menu-bar Tray. getWindow returns the live main
   // window (mainWindow is reassigned on every createWindow); requestQuit reuses

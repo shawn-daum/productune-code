@@ -1,0 +1,50 @@
+{
+  "$comment": "T-414: single machine-readable SoT for the prdt hook roster. install.sh §4 (jq --slurpfile) and packages/gui/electron/ipc/onboarding.ts (installPrdtHooks) both derive their ~/.claude/settings.json `hooks` registration from THIS file — neither hand-writes the event/matcher/order shape anymore. Edit here, not in either derived site. `basenames` is the flat roster (order = install.sh §1 mirror-copy order); `registrations` is the ordered list of {event, matcher?, hooks[]} entries each derivation reduces over, in registration order. `hooks[]` entries are basenames from ~/.prdt/hooks/ — install.sh prefixes `$PRDT_HOME/hooks/`, onboarding.ts prefixes the equivalent `<homeDir>/.prdt/hooks/`, both quoting the final command string. T-445: the discipline precedence is `canonical < machine override < project override`, and array order alone does NOT enforce it — measured 2026-08-12 on Claude Code 2.1.228, hooks sharing a matcher run in PARALLEL and their additionalContext blocks are appended in COMPLETION order (a 0.6s sleep in the machine hook made its block land AFTER the project block, registration order unchanged). Precedence is therefore carried by the payload TEXT: each override payload names its own layer and who outranks it. Keep prdt-overrides-inject.sh second-to-last and prdt-project-overrides-inject.sh last anyway — that is the intended order and the usual outcome — but never let position be the only carrier. Keep the four small inject hooks on the compact matcher too: without them a compaction re-injects the discipline set but silently drops audience-mode, plan-tier and BOTH override layers.",
+  "basenames": [
+    "prdt-session-start.sh",
+    "prdt-post-compact.sh",
+    "prdt-post-dispatch.sh",
+    "prdt-user-prompt.sh",
+    "prdt-audience-inject.sh",
+    "prdt-plan-tier-inject.sh",
+    "prdt-overrides-inject.sh",
+    "prdt-project-overrides-inject.sh",
+    "prdt-auto-open.sh"
+  ],
+  "registrations": [
+    {
+      "event": "SessionStart",
+      "matcher": "startup|resume|clear",
+      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-plan-tier-inject.sh", "prdt-overrides-inject.sh", "prdt-project-overrides-inject.sh"]
+    },
+    {
+      "event": "SessionStart",
+      "matcher": "compact",
+      "hooks": ["prdt-post-compact.sh", "prdt-audience-inject.sh", "prdt-plan-tier-inject.sh", "prdt-overrides-inject.sh", "prdt-project-overrides-inject.sh"]
+    },
+    {
+      "event": "SubagentStart",
+      "matcher": "^prdt-",
+      "hooks": ["prdt-session-start.sh", "prdt-audience-inject.sh", "prdt-plan-tier-inject.sh", "prdt-overrides-inject.sh", "prdt-project-overrides-inject.sh"]
+    },
+    {
+      "event": "SubagentStop",
+      "matcher": "^prdt-",
+      "hooks": ["prdt-post-dispatch.sh"]
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Agent",
+      "hooks": ["prdt-post-dispatch.sh"]
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Write",
+      "hooks": ["prdt-auto-open.sh"]
+    },
+    {
+      "event": "UserPromptSubmit",
+      "hooks": ["prdt-user-prompt.sh"]
+    }
+  ]
+}

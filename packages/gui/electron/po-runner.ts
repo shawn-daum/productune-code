@@ -36,6 +36,7 @@ import {
   type SubagentCostCapture,
 } from './subagent-cost'
 import { detectProjectKind, codeRoot } from './project-paths'
+import { coerceTodoItemsRaw, type TodoItemRaw } from '../shared/todo-item'
 import { setTrustAccepted } from '@productune/core'
 import { getPoSessionOverride, type PoSessionOverride } from './po-session-config'
 
@@ -124,13 +125,14 @@ export interface PoHealthEvent {
 
 // ── Todo items (T-P4-113) ─────────────────────────────────────────────────────
 
-/** Raw todo item shape as parsed from PO envelope JSON. */
-export interface TodoItemRaw {
-  id?: string
-  description: string
-  type?: 'check' | 'text-input' | 'link'
-  href?: string
-}
+/**
+ * T-434 (QA F8): this file used to DECLARE its own `TodoItemRaw`, a third copy
+ * alongside preload's and the store's. It had already drifted — `authIntent`
+ * existed on the renderer's copy and not on this one — so the generic
+ * `po:todo-items` producer stripped routing tier ① in main, before the IPC send
+ * the renderer-side fix was guarding. One declaration now, in `shared/`.
+ */
+export type { TodoItemRaw, TodoType } from '../shared/todo-item'
 
 // ── Ticket focus (T-P4-114 §B) ───────────────────────────────────────────────
 
@@ -196,7 +198,7 @@ export interface PromotionCandidateMeta {
   origin?: 'user-requested' | 'auto'
 }
 
-interface RunCallbacks {
+export interface RunCallbacks {
   onMsgId: (msgId: string) => void
   onToken: (msgId: string, chunk: string) => void
   onAnnounce: (msgId: string, payload: AnnouncePayload) => void
@@ -208,17 +210,25 @@ interface RunCallbacks {
   onTicketFocus: (ticketId: string, reason: 'emit' | 'dispatch') => void
   /** T-P4-114 §A: changed_files[] detected in PO envelope. */
   onArtifactOpen: (files: string[]) => void
-  /** T-P4-116: QA envelope browser_url 감지 → browser tab auto-open. */
+  /**
+   * T-P4-116: QA envelope browser_url 감지 → browser tab auto-open.
+   * T-434: `authIntent` is routing tier ① — the envelope also carried
+   * `auth_required`, i.e. the worker stated that a login stands in the way of
+   * this URL. The renderer asks main to route it instead of opening a pane
+   * blindly (an embedded view cannot complete a login at all).
+   */
   onBrowserOpen: (
     url: string,
     ticketId: string,
     purpose: 'qa-smoke' | 'user-verify',
+    authIntent?: boolean,
   ) => void
-  /** T-P4-116: QA pass + verify_url 감지 → user-verify flow. */
+  /** T-P4-116: QA pass + verify_url 감지 → user-verify flow. (T-434: authIntent) */
   onUserVerify: (
     url: string | undefined,
     description: string,
     ticketId: string,
+    authIntent?: boolean,
   ) => void
   /** T-P4-116: QA loop 상태 변화 감지 → BackgroundTaskSegment badge 갱신. */
   onQaLoopUpdate: (entry: {
@@ -1209,7 +1219,12 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // decision 2026-06-16. Sole gate for agent-teams; works in headless `--print`.
     // T-PATCH-216: augment PATH with the login-shell PATH so `claude` resolves
     // under a Finder/packaged-app launch (launchd's minimal PATH → ENOENT otherwise).
-    const env = withLoginShellPath({ ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1' })
+    // T-409: PRDT_GUI_SESSION marks this spawn as GUI-driven so prdt-auto-open.sh
+    // (CLI-only feature) skips it — the GUI already auto-surfaces artifacts
+    // in-app (T-PATCH-269/275); native Finder/Preview windows popping behind
+    // the Electron window on the SAME Write events would be pure noise. Hook
+    // subprocesses inherit this env var since they're children of this spawn.
+    const env = withLoginShellPath({ ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', PRDT_GUI_SESSION: '1' })
     // T-377 (PRD §v1.3 설계 결정 4): spawn the PO turn in the CODE root, not the
     // meta projectDir. Once physically split the code lives under
     // `<projectDir>/<code.dir>`, so the claude session (and the code git ops its
@@ -1788,55 +1803,7 @@ function handleStreamJsonLine(
 
       // T-P4-116: QA envelope dispatch
       const qaEnv = parseQaEnvelope(resultText)
-      if (qaEnv) {
-        const ticketId =
-          typeof qaEnv.ticket_id === 'string' ? qaEnv.ticket_id : ''
-
-        // browser_url 있으면 browser-open
-        if (typeof qaEnv.browser_url === 'string' && qaEnv.browser_url) {
-          cb.onBrowserOpen(qaEnv.browser_url, ticketId, 'qa-smoke')
-        }
-
-        // qa_status === 'pass' → user-verify
-        if (qaEnv.qa_status === 'pass') {
-          cb.onUserVerify(
-            typeof qaEnv.verify_url === 'string' ? qaEnv.verify_url : undefined,
-            typeof qaEnv.verify_description === 'string'
-              ? qaEnv.verify_description
-              : '구현 결과 확인',
-            ticketId,
-          )
-        }
-
-        // qa_loops 또는 qa_status 변화 → qa-loop-update
-        if (qaEnv.qa_loops !== undefined || qaEnv.qa_status !== undefined) {
-          const rawStatus = qaEnv.qa_status
-          const loopStatus: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required' =
-            rawStatus === 'pass'    ? 'pass'       :
-            rawStatus === 'fail'    ? 'fail'       :
-            rawStatus === 'running' ? 'qa-running' :
-            'qa-running'
-          cb.onQaLoopUpdate({
-            ticketId,
-            attempt: typeof qaEnv.qa_loops === 'number' ? qaEnv.qa_loops : 1,
-            maxAttempts: 3,
-            status: loopStatus,
-            lastFailReason: typeof qaEnv.fail_reason === 'string'
-              ? qaEnv.fail_reason
-              : undefined,
-          })
-        }
-
-        // auth_required → po:todo-items (기존 onTodoItems 채널 재사용)
-        if (qaEnv.auth_required && typeof qaEnv.auth_required === 'object') {
-          const { service, instruction, type } = qaEnv.auth_required
-          cb.onTodoItems([{
-            id: `qa-auth-${ticketId}-${Date.now()}`,
-            description: `인증 필요: ${service} — ${instruction}`,
-            type: type === 'env-var' ? 'text-input' : 'check',
-          }])
-        }
-      }
+      if (qaEnv) dispatchQaEnvelope(qaEnv, cb)
 
       // T-019 §B3: phase-transition gate emit → notification
       const gate = parsePendingGate(resultText)
@@ -1947,7 +1914,7 @@ function handleStreamJsonLine(
  * Looks for a JSON block (```json … ```) or raw `{…}` containing
  * `manual_steps_pending` or `pending_user_actions` arrays.
  */
-function parseTodoItems(text: string): TodoItemRaw[] {
+export function parseTodoItems(text: string): TodoItemRaw[] {
   // Collect candidate JSON strings: prefer ```json block, then raw object.
   const candidates: string[] = []
 
@@ -1968,23 +1935,23 @@ function parseTodoItems(text: string): TodoItemRaw[] {
         for (const key of ['manual_steps_pending', 'pending_user_actions']) {
           const arr = obj[key]
           if (Array.isArray(arr)) {
-            const items: TodoItemRaw[] = arr
-              .filter(
-                (item): item is Record<string, unknown> =>
-                  item !== null && typeof item === 'object',
-              )
-              .filter((item) => typeof item.description === 'string')
-              .map((item) => ({
-                id: typeof item.id === 'string' ? item.id : undefined,
-                description: item.description as string,
-                type:
-                  item.type === 'check' ||
-                  item.type === 'text-input' ||
-                  item.type === 'link'
-                    ? item.type
-                    : 'check',
-                href: typeof item.href === 'string' ? item.href : undefined,
-              }))
+            // T-434 (QA F8): this used to be a hand-written `.map()` of four
+            // fields — a whitelist, so a field was dropped here regardless of
+            // what any type said. `coerceTodoItemsRaw` is driven by a table the
+            // compiler forces to cover every field of `TodoItemRaw`, so the
+            // shape cannot silently lose one again. (`type` is no longer
+            // defaulted to 'check' here; the store owns that default, in one
+            // place — the resulting item is identical.)
+            //
+            // T-434 (QA F9): `text` here is PO RESULT TEXT — written by an
+            // agent that has read repositories and web pages, so it is
+            // prompt-injection reachable. That is why `TodoItemRaw` carries no
+            // routing tier ①: an `authIntent` in this JSON is refused by the
+            // coercer as an invented key, and a todo from this channel is
+            // routed by the IdP allowlist like any other URL. The reasoning,
+            // and the one producer that DOES confer tier ①, are written down in
+            // `shared/todo-item.ts` and `auth-route.ts` (`RouteOptions`).
+            const items = coerceTodoItemsRaw(arr)
             if (items.length > 0) return items
           }
         }
@@ -2236,6 +2203,77 @@ export function parseQaEnvelope(text: string): QaEnvelope | null {
     } catch { /* ignore */ }
   }
   return null
+}
+
+/**
+ * Fan a parsed QA envelope out to the renderer-bound callbacks (T-P4-116).
+ *
+ * Extracted verbatim from the stream-JSON result handler. It was inline there,
+ * which meant the ONE place `authIntent` is derived — the step that turns the
+ * worker's `auth_required` into routing tier ① — had no seam a test could reach,
+ * so every T-434 test had to start downstream of it from a hand-written flag.
+ * That gap is QA finding F7's shape; this is the seam that closes it.
+ *
+ * Takes only the callbacks it fires, so a test can pass four functions instead
+ * of a full RunCallbacks.
+ */
+export function dispatchQaEnvelope(
+  qaEnv: QaEnvelope,
+  cb: Pick<RunCallbacks, 'onBrowserOpen' | 'onUserVerify' | 'onQaLoopUpdate' | 'onTodoItems'>,
+): void {
+  const ticketId = typeof qaEnv.ticket_id === 'string' ? qaEnv.ticket_id : ''
+
+  // T-434 tier ①: `auth_required` in the SAME envelope is the worker saying, in
+  // its own words, that finishing this needs the user to log in. That makes its
+  // browser_url / verify_url auth-bearing, so they are flagged for the router
+  // (→ system default browser, where the user's passkeys and passwords are).
+  const envAuthIntent = !!(qaEnv.auth_required && typeof qaEnv.auth_required === 'object')
+
+  // browser_url 있으면 browser-open
+  if (typeof qaEnv.browser_url === 'string' && qaEnv.browser_url) {
+    cb.onBrowserOpen(qaEnv.browser_url, ticketId, 'qa-smoke', envAuthIntent)
+  }
+
+  // qa_status === 'pass' → user-verify
+  if (qaEnv.qa_status === 'pass') {
+    cb.onUserVerify(
+      typeof qaEnv.verify_url === 'string' ? qaEnv.verify_url : undefined,
+      typeof qaEnv.verify_description === 'string'
+        ? qaEnv.verify_description
+        : '구현 결과 확인',
+      ticketId,
+      envAuthIntent,
+    )
+  }
+
+  // qa_loops 또는 qa_status 변화 → qa-loop-update
+  if (qaEnv.qa_loops !== undefined || qaEnv.qa_status !== undefined) {
+    const rawStatus = qaEnv.qa_status
+    const loopStatus: 'dev-running' | 'qa-running' | 'pass' | 'fail' | 'capped' | 'auth-required' =
+      rawStatus === 'pass'    ? 'pass'       :
+      rawStatus === 'fail'    ? 'fail'       :
+      rawStatus === 'running' ? 'qa-running' :
+      'qa-running'
+    cb.onQaLoopUpdate({
+      ticketId,
+      attempt: typeof qaEnv.qa_loops === 'number' ? qaEnv.qa_loops : 1,
+      maxAttempts: 3,
+      status: loopStatus,
+      lastFailReason: typeof qaEnv.fail_reason === 'string'
+        ? qaEnv.fail_reason
+        : undefined,
+    })
+  }
+
+  // auth_required → po:todo-items (기존 onTodoItems 채널 재사용)
+  if (qaEnv.auth_required && typeof qaEnv.auth_required === 'object') {
+    const { service, instruction, type } = qaEnv.auth_required
+    cb.onTodoItems([{
+      id: `qa-auth-${ticketId}-${Date.now()}`,
+      description: `인증 필요: ${service} — ${instruction}`,
+      type: type === 'env-var' ? 'text-input' : 'check',
+    }])
+  }
 }
 
 // ── Pending-gate parser (T-019 §B3) ───────────────────────────────────────────
@@ -2595,8 +2633,10 @@ export function emitToWebContents(wc: WebContents): RunCallbacks {
     onTicketFocus: (ticketId, reason)       => wc.send('po:ticket-focus', { ticketId, reason }),
     onArtifactOpen:(files)                  => wc.send('po:artifact-open', { files }),
     // T-P4-116: QA loop IPC
-    onBrowserOpen: (url, ticketId, purpose) => wc.send('po:browser-open', { url, ticketId, purpose }),
-    onUserVerify:  (url, description, ticketId) => wc.send('po:user-verify', { url, description, ticketId }),
+    // T-434: authIntent rides along so the renderer can route through main
+    // (`url:route`) rather than opening an internal pane unconditionally.
+    onBrowserOpen: (url, ticketId, purpose, authIntent) => wc.send('po:browser-open', { url, ticketId, purpose, authIntent }),
+    onUserVerify:  (url, description, ticketId, authIntent) => wc.send('po:user-verify', { url, description, ticketId, authIntent }),
     onQaLoopUpdate:(entry) => {
       wc.send('po:qa-loop-update', entry)
       // ── T-019 §B3: OS notifications on QA-loop terminal states ──────────────

@@ -17,8 +17,10 @@
 import { spawn, execFileSync } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { codeRoot } from './project-paths'
+import { toolchainBinDir } from './toolchain'
 
 export type SurfaceKind = 'build' | 'run'
 
@@ -107,6 +109,27 @@ const cancelled = new Set<string>()
  * (the `fix-path` approach) recovers them. Returns '' on failure or Windows.
  */
 let loginShellPathCache: string | null = null
+
+/**
+ * T-439 (QA fail row 2): drop the memoized login-shell PATH so the next call
+ * re-asks the shell.
+ *
+ * The cache is populated the first time anything resolves a CLI — in practice
+ * on entry to onboarding step 3, i.e. BEFORE the participant clicks Install.
+ * Anything that happens to the shell environment afterwards (an installer that
+ * appends to `~/.zprofile`, the user fixing their profile in another window) is
+ * therefore invisible for the rest of the app run, and the engine row cannot
+ * recover without a restart.
+ *
+ * Note this reset is the SECONDARY defense only. Engine detection must not
+ * depend on the shell PATH changing at all — see `resolveClaudeCli`, which
+ * confirms the official launcher by absolute path. This reset exists so that
+ * installs which DO write shell integration are picked up in the same run too.
+ */
+export function resetLoginShellPathCache(): void {
+  loginShellPathCache = null
+}
+
 export function loginShellPath(): string {
   if (loginShellPathCache !== null) return loginShellPathCache
   if (process.platform === 'win32') return (loginShellPathCache = '')
@@ -127,17 +150,50 @@ export function loginShellPath(): string {
 }
 
 /**
+ * `~/.local/bin` — where the official Claude Code native installer puts its
+ * launcher, and where prdt-bootstrap §5 symlinks `prdt`. NOT on a fresh macOS
+ * PATH, and the non-interactive installer adds no shell integration to put it
+ * there (T-439 QA: `~/.zprofile` stayed 0 bytes, `~/.zshrc` never created).
+ */
+export function userLocalBinDir(homeDir: string = os.homedir()): string {
+  return path.join(homeDir, '.local', 'bin')
+}
+
+/**
  * T-PATCH-216: return `env` with its PATH augmented by the login-shell PATH, so
  * a globally-installed CLI (`claude`/`codex` in ~/.local/bin, Homebrew, npm-global)
  * resolves even under a Finder/packaged-app launch (launchd's minimal PATH).
  * Single source shared by every bare-CLI spawn (onboarding login + detection,
  * po-runner, mcp) so the resolution never drifts. Earlier entries win; deduped.
+ *
+ * T-439: `~/.local/bin` is APPENDED unconditionally. The login-shell PATH only
+ * contains it when the user's profile exports it, which on a fresh participant
+ * Mac it never does — so without this, every bare-`claude` spawn in the app
+ * (po-runner's PO turn and its canSpawnClaude gate, mcp's `claude mcp list`,
+ * the onboarding login child) fails to resolve a CLI the app itself installed,
+ * and the product silently degrades to echo mode one screen past onboarding.
+ * Appended LAST so it can never shadow a Homebrew / npm-global / user-PATH
+ * claude, and never changes behavior on a machine that already worked.
+ *
+ * NOTE: this is deliberately NOT used for the downloaded installer script —
+ * that runs under a fixed system PATH (claude-installer INSTALLER_SCRIPT_PATH)
+ * precisely because `~/.local/bin` is user-writable.
+ *
+ * T-440: the app-provided JS toolchain (`toolchainBinDir()` — node/npm/npx
+ * shims over the app's own Electron-as-Node runtime, see toolchain.ts) is
+ * appended STRICTLY LAST — after the login-shell PATH, the process PATH and
+ * `~/.local/bin` — so a machine with its own toolchain never sees ours shadow
+ * anything, and a machine with none stops exiting 127 on node/npm/npx. The
+ * dir constant comes from toolchain.ts (the writer) — one resolver for the
+ * write side and the read side, never two.
  */
 export function withLoginShellPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sep = path.delimiter
   const merged = [
     ...loginShellPath().split(sep),
     ...(env.PATH ?? '').split(sep),
+    userLocalBinDir(),
+    toolchainBinDir(),
   ].filter(Boolean)
   return { ...env, PATH: [...new Set(merged)].join(sep) }
 }
@@ -149,11 +205,15 @@ export function withLoginShellPath(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
  *      `next` / `vite` / `tsc`. npm/pnpm prepend these for scripts; our raw
  *      /bin/sh spawn does not, so a bare `next` exits 127 without this.
  *   2. The login-shell PATH (see loginShellPath) — global SDK tools.
- *   3. The inherited process PATH — last, as a floor.
+ *   3. The inherited process PATH — as a floor.
+ *   4. T-440: the app-provided JS toolchain (toolchain.ts) — STRICTLY LAST, so
+ *      a participant machine with no node/npm can still build+run its web
+ *      product while a machine with its own toolchain keeps using its own.
  *
- * Deduped, order-preserving (earlier entries win).
+ * Deduped, order-preserving (earlier entries win). Exported for the T-440
+ * resolution-order tests (surface-runner.path.test.ts).
  */
-function pathWithLocalBins(projectDir: string): string {
+export function pathWithLocalBins(projectDir: string): string {
   const localBins: string[] = []
   let dir = path.resolve(projectDir)
   // Cap the climb defensively (deep monorepos are still < 32 levels).
@@ -170,6 +230,7 @@ function pathWithLocalBins(projectDir: string): string {
     ...localBins,
     ...loginShellPath().split(sep),
     ...(process.env.PATH ?? '').split(sep),
+    toolchainBinDir(),
   ].filter(Boolean)
 
   return [...new Set(merged)].join(sep)

@@ -1,5 +1,6 @@
 import path from 'path'
-import { test, expect, _electron as electron } from '@playwright/test'
+import { test, expect } from '@playwright/test'
+import { GUI_ROOT, cleanupHome, launchApp, sandboxHome } from './harness'
 
 // Smoke gate (surfaces.gui.smoke): app launches → renderer mounts → zero console errors.
 // Run via `pnpm --filter @productune/gui smoke` — builds first, then symlinks
@@ -9,7 +10,15 @@ import { test, expect, _electron as electron } from '@playwright/test'
 // T-PATCH-267: augmented with screenshot capture + visual layout assertions.
 // Catches CSS breakage / collapsed layout (fail-pattern T-PATCH-095) without
 // requiring a full visual-regression pixel baseline.
-const GUI_ROOT = path.resolve(__dirname, '..')
+//
+// T-442 F1: every launch goes through `launchApp`, which sandboxes HOME *and*
+// userData. These three tests previously ran the packaged-layout app against
+// the developer's REAL home — the smoke suite itself was rewriting
+// ~/.productune/toolchain on every run, which is what kept undoing the T-442
+// repair. Each test gets its own throwaway home so the app lands on a
+// deterministic first-run screen instead of on whatever state the machine
+// happened to carry.
+
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -38,11 +47,9 @@ async function assertVisible(
 
 // ── tests ──────────────────────────────────────────────────────────────────────
 
-test('smoke: window opens, renderer mounts, zero console errors', async () => {
-  const electronApp = await electron.launch({
-    args: [path.join(GUI_ROOT, 'dist-electron', 'main.js')],
-    cwd: GUI_ROOT,
-  })
+test('smoke @window: window opens, renderer mounts, zero console errors', async () => {
+  const home = sandboxHome('smoke-console')
+  const electronApp = await launchApp({ home })
 
   const consoleErrors: string[] = []
   try {
@@ -64,10 +71,11 @@ test('smoke: window opens, renderer mounts, zero console errors', async () => {
     expect(consoleErrors, `renderer console errors:\n${consoleErrors.join('\n')}`).toEqual([])
   } finally {
     await electronApp.close()
+    cleanupHome(home)
   }
 })
 
-test('smoke: visual layout — app shell non-collapsed, titlebar + content area visible', async () => {
+test('smoke @window: visual layout — app shell non-collapsed, titlebar + content area visible', async () => {
   // T-PATCH-267: visual render assertions.
   // The test captures a screenshot (CI artifact) and asserts key layout invariants
   // without a pixel-diff baseline:
@@ -84,10 +92,8 @@ test('smoke: visual layout — app shell non-collapsed, titlebar + content area 
   //   • HomeView hero (env exists, no recents)
   // In both cases the same structural invariants hold.
 
-  const electronApp = await electron.launch({
-    args: [path.join(GUI_ROOT, 'dist-electron', 'main.js')],
-    cwd: GUI_ROOT,
-  })
+  const home = sandboxHome('smoke-layout')
+  const electronApp = await launchApp({ home })
 
   try {
     const win = await electronApp.firstWindow()
@@ -159,20 +165,19 @@ test('smoke: visual layout — app shell non-collapsed, titlebar + content area 
 
   } finally {
     await electronApp.close()
+    cleanupHome(home)
   }
 })
 
-test('smoke: visual layout — onboarding or home screen key elements present', async () => {
+test('smoke @window: visual layout — onboarding or home screen key elements present', async () => {
   // T-PATCH-267: screen-specific element presence check.
   // Identifies which top-level screen the app landed on and verifies its
   // signature elements are non-collapsed. This is the layer that catches
   // a screen-specific CSS breakage (e.g. flex column collapsed to 0 height
   // only in OnboardingWizard, but not HomeView).
 
-  const electronApp = await electron.launch({
-    args: [path.join(GUI_ROOT, 'dist-electron', 'main.js')],
-    cwd: GUI_ROOT,
-  })
+  const home = sandboxHome('smoke-screen')
+  const electronApp = await launchApp({ home })
 
   try {
     const win = await electronApp.firstWindow()
@@ -225,5 +230,6 @@ test('smoke: visual layout — onboarding or home screen key elements present', 
 
   } finally {
     await electronApp.close()
+    cleanupHome(home)
   }
 })

@@ -11,8 +11,8 @@
  *   1. mirror absent → { mirrorPresent:false, installed:false }, no settings.json write.
  *   2. mirror present, no settings.json yet → { mirrorPresent:true, installed:false }.
  *   3. mirror present, settings.json has an UNRELATED/partial hook set → installed:false
- *      (all 6 prdt hooks must be present, not just some).
- *   4. mirror present, settings.json already carries all 6 prdt hooks (CLI-written
+ *      (all 8 prdt hooks must be present, not just some).
+ *   4. mirror present, settings.json already carries all 8 prdt hooks (CLI-written
  *      or a prior GUI install) → installed:true.
  *   5. installPrdtHooksForProject on a prdt project with the mirror present installs
  *      the hooks and checkPrdtHooksStatus flips to installed:true afterward.
@@ -38,7 +38,7 @@ interface Case {
 const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
-const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh', 'prdt-audience-inject.sh', 'prdt-overrides-inject.sh']
+const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh', 'prdt-audience-inject.sh', 'prdt-plan-tier-inject.sh', 'prdt-overrides-inject.sh', 'prdt-project-overrides-inject.sh', 'prdt-auto-open.sh']
 
 function makeHome(withMirror: boolean): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t305-home-'))
@@ -96,12 +96,12 @@ export const CASES: readonly Case[] = [
         },
       }))
       const status = checkPrdtHooksStatus(home)
-      if (status.installed !== false) return fail(`installed=${status.installed} (only 1/6 hooks present)`)
+      if (status.installed !== false) return fail(`installed=${status.installed} (only 1/9 hooks present)`)
       return ok
     },
   },
   {
-    label: 'mirror present, settings.json already has all 6 prdt hooks → installed:true',
+    label: 'mirror present, settings.json already has all 9 prdt hooks → installed:true',
     run: () => {
       const home = makeHome(true)
       const h = (b: string) => ({ type: 'command', command: `"${path.join(home, '.prdt', 'hooks', b)}"` })
@@ -109,10 +109,14 @@ export const CASES: readonly Case[] = [
       fs.writeFileSync(settingsPath(home), JSON.stringify({
         hooks: {
           SessionStart: [
-            { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh'), h('prdt-audience-inject.sh'), h('prdt-overrides-inject.sh')] },
-            { matcher: 'compact', hooks: [h('prdt-post-compact.sh')] },
+            { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh'), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
+            { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
           ],
           SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
+          PostToolUse: [
+            { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
+            { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },
+          ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
         },
       }))
