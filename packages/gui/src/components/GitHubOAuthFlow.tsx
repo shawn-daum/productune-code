@@ -48,7 +48,13 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
       setUserCode(dc.user_code)
       setVerifyUrl(dc.verification_uri)
       setPhase('device-code')
-      ;(window as any).electron?.shell?.openExternal(dc.verification_uri)
+      // T-434: this was `window.electron?.shell?.openExternal` — a bridge that
+      // does not exist (preload exposes `window.api` only, contextBridge is
+      // called exactly once). The optional chaining made it a silent no-op, so
+      // GitHub's device-flow verification page never opened and the participant
+      // was left holding a code with nowhere to type it. Same R-34 class of
+      // failure: an auth flow that could not reach the system browser.
+      ;(window as any).api?.openExternal?.(dc.verification_uri)
 
       setPhase('polling')
       const creds = await api.githubPollDeviceFlow({
@@ -91,7 +97,8 @@ export default function GitHubOAuthFlow({ slug, projectDir, onDone }: Props) {
           <a
             href={verifyUrl}
             style={{ fontSize: 12, color: 'var(--text-info)', marginTop: 8 }}
-            onClick={e => { e.preventDefault(); (window as any).electron?.shell?.openExternal(verifyUrl) }}
+            data-escape-hatch="system-browser"
+            onClick={e => { e.preventDefault(); (window as any).api?.openExternal?.(verifyUrl) }}
           >
             {verifyUrl}
           </a>

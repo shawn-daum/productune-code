@@ -13,6 +13,8 @@ import {
   setUiLanguage,
   getAudienceMode,
   setAudienceMode,
+  getPlanTier,
+  setPlanTier,
   settingsFileExists,
   loadRules,
   saveRules,
@@ -29,7 +31,14 @@ import {
   getStatusBarVisible,
   setStatusBarVisible,
 } from '@productune/core'
-import type { UiLanguage, AudienceMode, GitRules, NotificationSettings } from '@productune/core'
+import type { UiLanguage, AudienceMode, PlanTier, GitRules, NotificationSettings } from '@productune/core'
+// T-420: read-only reference to the hook roster SoT (T-414) to name the
+// audience-inject hook basename, NOT to fs-read the file at runtime — same
+// static ES module import as onboarding.ts's HOOK_MANIFEST (see that file's
+// comment): Vite/esbuild inlines this JSON into dist-electron/main.js at BUILD
+// time, so the packaged app (no Resources/core since T-311) never needs the
+// file on disk. Do not edit hook-manifest.json from here — it derives.
+import hookManifestJson from '../../../core/scripts/hook-manifest.json'
 
 // ── T-PATCH-091 R3: apply zoom factor to every open window ───────────────────
 // Module-private. Called by the setZoomFactor handler after persisting the value
@@ -66,6 +75,72 @@ const PERSONA_SPEC_IDS = new Set([
 function personaSpecPath(personaId: string): string | null {
   if (!PERSONA_SPEC_IDS.has(personaId)) return null
   return path.join(os.homedir(), '.claude', 'agents', `${personaId}.md`)
+}
+
+// ── Audience hook registration check (T-420) ─────────────────────────────────
+// v1.5 review #8: on a version-skewed machine (GUI newer than the ~/.prdt
+// mirror — e.g. install.sh hasn't been re-run since T-326/T-413 added the
+// audience hook), Settings' audience toggle still writes ~/.prdt/audience-mode
+// and shows "applies next session" — but prdt-audience-inject.sh never runs,
+// so the setting is silently inert. Detection: is the audience-inject hook's
+// basename (from the SAME hook-manifest.json SoT onboarding.ts derives from)
+// actually present as a registered command in ~/.claude/settings.json? This is
+// intentionally narrower than onboarding.ts's checkPrdtHooksStatus (which
+// requires ALL 7 prdt hooks) — a missing UNRELATED hook (e.g. overrides-inject)
+// must not make this section lie about the audience hook specifically.
+interface HookManifestShape {
+  basenames: readonly string[]
+}
+const HOOK_MANIFEST = hookManifestJson as unknown as HookManifestShape
+const AUDIENCE_HOOK_BASENAME =
+  HOOK_MANIFEST.basenames.find((b) => b.includes('audience')) ?? 'prdt-audience-inject.sh'
+
+/** Read-only, never writes. `homeDir` is test-only (defaults to os.homedir()). */
+export function checkAudienceHookRegistered(homeDir: string = os.homedir()): boolean {
+  const settingsPath = path.join(homeDir, '.claude', 'settings.json')
+  if (!fs.existsSync(settingsPath)) return false
+  let settings: any
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+  } catch {
+    return false
+  }
+  for (const entries of Object.values((settings?.hooks ?? {}) as Record<string, any>)) {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      for (const hook of Array.isArray(entry?.hooks) ? entry.hooks : []) {
+        if (typeof hook?.command === 'string' && hook.command.includes(AUDIENCE_HOOK_BASENAME)) return true
+      }
+    }
+  }
+  return false
+}
+
+// ── Plan-tier hook registration check (T-423) ────────────────────────────────
+// Same version-skew concern as T-420's audience check above, applied to the
+// plan-tier hook: without this hook registered, the PO never sees the stored
+// value and would fall back to asking every session again — the exact friction
+// T-423 exists to remove. Same narrower-than-checkPrdtHooksStatus shape.
+const PLAN_TIER_HOOK_BASENAME =
+  HOOK_MANIFEST.basenames.find((b) => b.includes('plan-tier')) ?? 'prdt-plan-tier-inject.sh'
+
+/** Read-only, never writes. `homeDir` is test-only (defaults to os.homedir()). */
+export function checkPlanTierHookRegistered(homeDir: string = os.homedir()): boolean {
+  const settingsPath = path.join(homeDir, '.claude', 'settings.json')
+  if (!fs.existsSync(settingsPath)) return false
+  let settings: any
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+  } catch {
+    return false
+  }
+  for (const entries of Object.values((settings?.hooks ?? {}) as Record<string, any>)) {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      for (const hook of Array.isArray(entry?.hooks) ? entry.hooks : []) {
+        if (typeof hook?.command === 'string' && hook.command.includes(PLAN_TIER_HOOK_BASENAME)) return true
+      }
+    }
+  }
+  return false
 }
 
 // ── Register ──────────────────────────────────────────────────────────────────
@@ -110,6 +185,41 @@ export function register(): void {
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }
     }
+  })
+
+  // T-420: lets the Settings audience section warn when the toggle it just
+  // saved won't take effect until `prdt update` re-runs install.sh on this
+  // machine (version-skew — see checkAudienceHookRegistered's comment above).
+  ipcMain.handle('settings:checkAudienceHookRegistered', (): boolean => {
+    return checkAudienceHookRegistered()
+  })
+
+  // ── Plan-tier IPC (T-423) ────────────────────────────────────────────────────
+  // Per-USER Claude plan tier feeding the PO's fable model gate (T-391) —
+  // persisted as one token at ~/.prdt/plan-tier (core settings/plan-tier.ts),
+  // where the prdt-plan-tier-inject.sh SessionStart hook reads it so the PO
+  // asks once (device-scoped) instead of every session.
+  ipcMain.handle('settings:getPlanTier', (): PlanTier => {
+    return getPlanTier()
+  })
+
+  ipcMain.handle('settings:setPlanTier', (_event, tier: PlanTier): { ok: boolean; error?: string } => {
+    try {
+      if (tier !== 'max-x20' && tier !== 'team-premium' && tier !== 'other') {
+        return { ok: false, error: `unknown plan tier: ${String(tier)}` }
+      }
+      setPlanTier(tier)
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'unknown error' }
+    }
+  })
+
+  // Lets the Settings plan-tier section warn when the choice just saved won't
+  // reach the PO until `prdt update` re-runs install.sh on this machine
+  // (version-skew — see checkPlanTierHookRegistered's comment above).
+  ipcMain.handle('settings:checkPlanTierHookRegistered', (): boolean => {
+    return checkPlanTierHookRegistered()
   })
 
   ipcMain.handle('settings:getOsLocale', (): string => {

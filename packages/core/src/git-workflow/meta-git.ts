@@ -42,15 +42,30 @@ const execFileAsync = promisify(execFile)
 // ── Defaults ────────────────────────────────────────────────────────────────
 
 /**
- * Default meta allowlist — the paths prdt authors (PRD 경계 결정 1).
+ * Default meta allowlist — the paths prdt authors (PRD 경계 결정 1). Kept in
+ * lockstep with contracts.md's Fixed paths table (T-427 audit):
+ *  - `docs/design.md` — the single living design doc — INCLUDED (fixed path).
+ *  - `docs/prd` (→ PRD.md), `docs/tickets`, `docs/wiki`, `docs/artifacts` —
+ *    already covered by their directory entries below.
+ *  - `.prdt/po-state.json` / `.prdt/config.json` / `.prdt/index.db` — covered
+ *    by the `.prdt` directory entry (index.db itself is then kept out via
+ *    DEFAULT_META_EXCLUDE, same as any other derived artifact under it).
+ *  - `docs/DEPLOY.md`, `docs/testing.md`, `docs/MIGRATION.md`, `docs/backlog.md`
+ *    — EXCLUDED: not in the Fixed paths table, i.e. project-local convention
+ *    rather than a contracts-fixed meta doc. A project that wants them tracked
+ *    adds them itself via writeMetaAllowlist (or a loose config.json edit) —
+ *    the add-only per-project customization path this module has always had.
  * Everything else (incl. user-authored files) is code. Stored per-project in
  * `<stateDir>/config.json` under `meta.allowlist`; editable via
- * writeMetaAllowlist so a project can add loose meta files.
+ * writeMetaAllowlist so a project can add loose meta files. See
+ * readMetaAllowlist for how a persisted (possibly stale-copied) allowlist
+ * self-heals against this list without ever dropping a project's own entries.
  */
 export const DEFAULT_META_ALLOWLIST: string[] = [
   '.prdt',
   '.productune',
   'briefs',
+  'docs/design.md',
   'docs/prd',
   'docs/tickets',
   'docs/wiki',
@@ -194,12 +209,24 @@ function readConfig(projectDir: string): Record<string, any> {
 /**
  * The project's meta allowlist. Reads `meta.allowlist` from config.json,
  * falling back to DEFAULT_META_ALLOWLIST when unset.
+ *
+ * Self-heal (T-427): a project initialized before a new contracts fixed-path
+ * (e.g. `docs/design.md`) landed in DEFAULT_META_ALLOWLIST carries a COPY of
+ * the OLD default frozen into its config.json at init time — bumping the
+ * constant here never reaches it, so that project's meta auto-commit would
+ * silently skip the new fixed path forever. Fix: union the persisted list
+ * with the CURRENT defaults on every read, add-only — any project-added
+ * custom entry (writeMetaAllowlist's whole purpose) is preserved verbatim;
+ * only a default that's missing from the stored copy gets added back in.
+ * This never writes anything back to disk on its own — a project's
+ * config.json is untouched until something explicitly calls
+ * writeMetaAllowlist (e.g. with this very return value).
  */
 export function readMetaAllowlist(projectDir: string): string[] {
   const cfg = readConfig(projectDir)
   const list = cfg?.meta?.allowlist
   if (Array.isArray(list) && list.every((e) => typeof e === 'string')) {
-    return list
+    return [...new Set([...DEFAULT_META_ALLOWLIST, ...list])]
   }
   return [...DEFAULT_META_ALLOWLIST]
 }

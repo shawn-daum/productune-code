@@ -10,27 +10,62 @@
  */
 
 import { create } from 'zustand'
+import { coerceTodoItemRaw, type TodoItemRaw, type TodoType } from '../../shared/todo-item'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type TodoStatus = 'open' | 'done' | 'dismissed'
-export type TodoType = 'check' | 'text-input' | 'link'
 
-export interface UserTodo {
+// T-434 (QA F8): the raw item's shape is declared ONCE, in `shared/todo-item.ts`
+// — main, preload and this store all take it from there. Re-exported so existing
+// importers keep working; re-DECLARING it here is what let `authIntent` exist on
+// one copy and not the others.
+export type { TodoItemRaw, TodoType }
+
+/**
+ * A stored todo: the raw item, with the fields the store resolves made
+ * mandatory. Extending rather than restating means a field added to the wire
+ * shape is automatically part of what the store holds — there is no second
+ * list that can quietly lack it.
+ */
+export interface UserTodo extends TodoItemRaw {
   id: string
-  description: string
   type: TodoType
-  /** href for type='link' — file path or tab id to open. */
-  href?: string
   status: TodoStatus
+  /**
+   * T-434 routing tier ①: a login stands in the way of this `href`, so the
+   * click goes to the system browser without consulting the IdP allowlist.
+   *
+   * Held on the stored todo because a todo OUTLIVES the event that created it —
+   * the link is clicked minutes later, when nothing else still holds the
+   * producer's verdict, and re-deciding from tiers ②/③ then is a downgrade of
+   * an answer we already had (QA finding F2).
+   *
+   * It is NOT part of `TodoItemRaw`, and that is the F9 decision: this is a
+   * grant the CALLER of `pushItems` makes, never a field read off an item. See
+   * `TierOneGrant`.
+   *
+   * `undefined` means nobody granted it, which is not the same as `false` ("no
+   * login here") — routing treats them alike (`=== true`), so alike is the
+   * cheap default a future edit would drift into. Never coerce one to the other.
+   */
+  authIntent?: boolean
 }
 
-/** Raw shape from PO envelope (manual_steps_pending / pending_user_actions). */
-export interface TodoItemRaw {
-  id?: string
-  description: string
-  type?: 'check' | 'text-input' | 'link'
-  href?: string
+/**
+ * Who may confer routing tier ① (T-434 F9).
+ *
+ * Tier ① skips the IdP allowlist, so the set of producers that can confer it is
+ * a security-relevant fact and is kept to exactly one: the envelope-level
+ * `auth_required` of a worker return (contracts, QA live/smoke extras), which
+ * arrives on `po:user-verify` and is granted at the single call site in
+ * `poEvents.ts`. Making it an ARGUMENT rather than an item field is what keeps
+ * that set enumerable — `grep` for the second parameter and the producer set is
+ * the answer, whereas a field on the wire shape is conferrable by anything that
+ * can put JSON on the channel, including prompt-injected PO result text.
+ */
+export interface TierOneGrant {
+  authIntent: boolean | undefined
 }
 
 interface UserTodoState {
@@ -38,8 +73,13 @@ interface UserTodoState {
   /** Whether the TodoListPanel accordion is expanded. */
   todoExpanded: boolean
 
-  /** Push new items from PO envelope. Idempotent on duplicate id. */
-  pushItems: (items: TodoItemRaw[]) => void
+  /**
+   * Push new items from PO envelope. Idempotent on duplicate id.
+   *
+   * `grant` is routing tier ① for the whole batch, and omitting it is the
+   * normal case — see `TierOneGrant` for why it is not a field on the items.
+   */
+  pushItems: (items: TodoItemRaw[], grant?: TierOneGrant) => void
 
   /** Mark a todo done (by user action). */
   completeTodo: (id: string) => void
@@ -63,22 +103,41 @@ export const useUserTodo = create<UserTodoState>((set) => ({
   todos: [],
   todoExpanded: false,
 
-  pushItems: (items) =>
+  pushItems: (items, grant) =>
     set((s) => {
       const existingIds = new Set(s.todos.map((t) => t.id))
       const newItems: UserTodo[] = []
-      for (const item of items) {
-        if (!item.description) continue
+      for (const input of items) {
+        // T-434 (QA F2, then F8): this was a hand-written field-by-field copy —
+        // a whitelist — so a field missing from it was dropped at the store
+        // boundary no matter what the type said, and that is exactly how
+        // `authIntent` was lost. Naming the field fixed the symptom; the SHAPE
+        // was the defect, and it recurred one layer up in main.
+        //
+        // The whitelist is gone. `coerceTodoItemRaw` walks a table the compiler
+        // forces to cover every field of `TodoItemRaw` (shared/todo-item.ts),
+        // and the spread below carries whatever it returns — so a new field
+        // reaches the store by existing, not by being remembered here. It also
+        // means this store never trusts the wire: unknown keys are dropped and
+        // every value is checked, which is what makes the spread safe.
+        //
+        // T-434 (QA F9): `authIntent` is NOT among the keys the coercer knows,
+        // so an item arriving with one loses it here as an invented key — no
+        // special case, and nothing downstream of this line can be fooled by a
+        // wire item that spells the field. Tier ① comes from `grant` below, and
+        // it is applied AFTER the spread so the two can never trade places.
+        const item = coerceTodoItemRaw(input)
+        if (!item) continue
         const id =
           item.id ??
           `todo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         if (existingIds.has(id)) continue
         newItems.push({
+          ...item,
           id,
-          description: item.description,
           type: item.type ?? 'check',
-          href: item.href,
           status: 'open',
+          authIntent: grant?.authIntent,
         })
         existingIds.add(id) // handle duplicates within same batch
       }

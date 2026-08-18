@@ -41,14 +41,34 @@ function propagateAccent(mode: ThemeMode): void {
   root.style.setProperty('--status-in-progress', a)
 }
 
-/** Apply a theme: swap the class, then propagate the accent from --brand-accent. */
-export function setTheme(mode: ThemeMode): void {
+/** Swap the class, then propagate the accent from --brand-accent. No pin bookkeeping —
+ *  used for both the OS-driven auto path and the initial boot-time apply. */
+function applyTheme(mode: ThemeMode): void {
   const root = document.documentElement
   root.classList.remove(CLASS.dark, CLASS.light)
   root.classList.add(CLASS[mode])
   // Force a style recalc so --brand-accent reflects the new class before we read.
   void root.offsetHeight
   propagateAccent(mode)
+}
+
+// Cleanup for the OS prefers-color-scheme listener attached by initTheme(). Cleared
+// (and the listener detached) the first time the user makes an explicit choice via
+// the public setTheme() below — see T-419.
+let detachOsListener: (() => void) | null = null
+
+/**
+ * Apply an EXPLICIT theme choice (in-app toggle, future settings UI, tests). This
+ * pins the theme: it detaches the prefers-color-scheme listener so a subsequent OS
+ * theme change can no longer silently override the user's pick (T-419 — the listener
+ * used to stay attached forever and unconditionally clobber an explicit pin).
+ */
+export function setTheme(mode: ThemeMode): void {
+  if (detachOsListener) {
+    detachOsListener()
+    detachOsListener = null
+  }
+  applyTheme(mode)
 }
 
 /** Current mode from the applied class, falling back to the OS preference. */
@@ -71,10 +91,18 @@ export function toggleTheme(): ThemeMode {
  * which pins the class and stops OS tracking taking visible effect).
  */
 export function initTheme(): void {
-  setTheme(currentTheme())
-  window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', (e) => {
-    setTheme(e.matches ? 'light' : 'dark')
-  })
+  // Boot-time apply follows the OS preference but must NOT count as an explicit
+  // pin — use applyTheme directly so the listener attached below isn't detached
+  // before it even starts tracking.
+  applyTheme(currentTheme())
+
+  const mql = window.matchMedia?.('(prefers-color-scheme: light)')
+  const handleOsChange = (e: MediaQueryListEvent): void => {
+    applyTheme(e.matches ? 'light' : 'dark')
+  }
+  mql?.addEventListener?.('change', handleOsChange)
+  detachOsListener = () => mql?.removeEventListener?.('change', handleOsChange)
+
   // Runtime theme API — consumed by a future in-app toggle (§0.7) and by E2E.
   ;(window as unknown as { productuneTheme?: unknown }).productuneTheme = {
     setTheme, toggleTheme, currentTheme,

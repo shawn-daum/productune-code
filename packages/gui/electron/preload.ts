@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { TodoItemRaw } from '../shared/todo-item'
 
 contextBridge.exposeInMainWorld('api', {
   ping: (): Promise<string> =>
@@ -14,15 +15,28 @@ contextBridge.exposeInMainWorld('api', {
   openPath: (p: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('shell:openPath', p),
 
+  // T-434: ask main WHERE a URL should open (system browser vs internal pane) —
+  // the renderer never decides. Main performs the system-browser half itself and
+  // returns the decision; the caller creates a pane only on 'internal-pane'.
+  // Pass `authIntent: true` when the producer of the URL knows a login is in the
+  // way (tier ①). NOT for the escape-hatch control — that uses openExternal.
+  routeUrl: (req: { url: string; authIntent?: boolean }): Promise<{
+    target: 'system-browser' | 'internal-pane'
+    reason: string
+    matched?: string
+  }> => ipcRenderer.invoke('url:route', req),
+
   // ── Onboarding ──────────────────────────────────────────────────────────────
   checkEnv: (): Promise<boolean> =>
     ipcRenderer.invoke('onboarding:checkEnv'),
 
+  // T-440: `prewarm` reports the Playwright-MCP cache prewarm outcome — it was
+  // previously a silent best-effort; now the wizard can render a state for it.
   completeOnboarding: (opts: {
     engine: 'claude'
     uiLanguage?: 'en' | 'ko'
     audienceMode?: 'planner' | 'developer'
-  }): Promise<{ ok: boolean; error?: string }> =>
+  }): Promise<{ ok: boolean; error?: string; prewarm?: 'ready' | 'failed' | 'timeout' }> =>
     ipcRenderer.invoke('onboarding:complete', opts),
 
   checkClaude: (): Promise<{ installed: boolean; authed: boolean }> =>
@@ -33,6 +47,26 @@ contextBridge.exposeInMainWorld('api', {
   // via the onboarding:login-* push events below.
   claudeLogin: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('onboarding:claudeLogin'),
+
+  // T-439: in-app engine CLI install via the official native installer — no
+  // node/npm prerequisite, zero terminal. Resolves with the final result;
+  // progress phases stream via onInstallProgress below.
+  installClaude: (): Promise<{
+    ok: boolean
+    performed: boolean
+    alreadyInstalled?: boolean
+    version?: string
+    code?: 'unsupported-platform' | 'network' | 'script-invalid' | 'install-failed' | 'binary-verify-failed'
+    error?: string
+  }> =>
+    ipcRenderer.invoke('onboarding:installClaude'),
+
+  /** Install progress phase (download → install → verify). Returns an unsubscribe fn. */
+  onInstallProgress: (cb: (payload: { phase: 'download' | 'install' | 'verify' }) => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
+    ipcRenderer.on('onboarding:install-progress', listener)
+    return () => ipcRenderer.removeListener('onboarding:install-progress', listener)
+  },
 
   /** Paste-code fallback: write the user-entered code to the login child stdin. */
   submitLoginCode: (code: string): Promise<{ ok: boolean; error?: string }> =>
@@ -532,13 +566,19 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // ── Todo items (T-P4-113) ──────────────────────────────────────────────────
-  /** Subscribe to todo items pushed by PO (parsed from manual_steps_pending / pending_user_actions). */
-  poOnTodoItems: (cb: (items: Array<{
-    id?: string
-    description: string
-    type?: 'check' | 'text-input' | 'link'
-    href?: string
-  }>) => void) => {
+  /**
+   * Subscribe to todo items pushed by PO (parsed from manual_steps_pending /
+   * pending_user_actions).
+   *
+   * T-434 (QA F8): this signature used to restate the item shape inline — the
+   * third copy of it, and one of the two that had drifted from the others. It
+   * names the shared type now, so the bridge cannot describe a payload main does
+   * not send.
+   *
+   * T-434 (QA F9): this channel carries no routing tier ①, by construction —
+   * `TodoItemRaw` has no field for it. `shared/todo-item.ts` says why.
+   */
+  poOnTodoItems: (cb: (items: TodoItemRaw[]) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, items: any[]) => cb(items)
     ipcRenderer.on('po:todo-items', listener)
     return () => ipcRenderer.removeListener('po:todo-items', listener)
@@ -571,22 +611,28 @@ contextBridge.exposeInMainWorld('api', {
 
   // ── QA loop IPC (T-P4-116) ────────────────────────────────────────────────────
 
-  /** QA envelope browser_url 감지 시 emit — browser tab auto-open trigger. */
+  /**
+   * QA envelope browser_url 감지 시 emit — browser tab auto-open trigger.
+   * T-434: `authIntent` = the same envelope carried `auth_required`, so this URL
+   * needs the system browser rather than an internal pane (routing tier ①).
+   */
   onBrowserOpen: (cb: (payload: {
     url: string
     ticketId: string
     purpose: 'qa-smoke' | 'user-verify'
+    authIntent?: boolean
   }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('po:browser-open', listener)
     return () => ipcRenderer.removeListener('po:browser-open', listener)
   },
 
-  /** QA pass + verify_url 감지 시 emit — user-verify flow trigger. */
+  /** QA pass + verify_url 감지 시 emit — user-verify flow trigger. (T-434 authIntent) */
   onUserVerify: (cb: (payload: {
     url?: string
     description: string
     ticketId: string
+    authIntent?: boolean
   }) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, payload: any) => cb(payload)
     ipcRenderer.on('po:user-verify', listener)
@@ -788,6 +834,27 @@ contextBridge.exposeInMainWorld('api', {
 
   setAudienceMode: (mode: 'planner' | 'developer'): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:setAudienceMode', mode),
+
+  /** T-420: whether THIS machine's ~/.claude/settings.json already registers
+   *  the audience-inject hook. false → the toggle above silently won't take
+   *  effect until `prdt update` re-runs install.sh (version-skew: GUI newer
+   *  than the ~/.prdt mirror). Read-only. */
+  checkAudienceHookRegistered: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:checkAudienceHookRegistered'),
+
+  // T-423: per-user Claude plan tier feeding the PO's fable model gate —
+  // persisted at ~/.prdt/plan-tier for the prdt-plan-tier-inject.sh hook.
+  getPlanTier: (): Promise<'max-x20' | 'team-premium' | 'other'> =>
+    ipcRenderer.invoke('settings:getPlanTier'),
+
+  setPlanTier: (tier: 'max-x20' | 'team-premium' | 'other'): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:setPlanTier', tier),
+
+  /** Whether THIS machine's ~/.claude/settings.json already registers the
+   *  plan-tier-inject hook. false → the choice above silently won't reach the
+   *  PO until `prdt update` re-runs install.sh (version-skew). Read-only. */
+  checkPlanTierHookRegistered: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:checkPlanTierHookRegistered'),
 
   // ── Notification toggles (T-PATCH-083) ───────────────────────────────────────
   getNotifications: (): Promise<import('@productune/core').NotificationSettings> =>
@@ -1209,7 +1276,10 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('surface:onOutput', listener)
     },
 
-    onDone: (cb: (ev: { runId: string; code: number | null; status: 'pass' | 'fail' | 'cancelled' }) => void) => {
+    // T-440: `hint:'toolchain-unavailable'` rides along when the run failed AND
+    // no JS runtime was resolvable on the child PATH — the renderer maps it to
+    // a localized, actionable line (never a raw shell/npm/script string).
+    onDone: (cb: (ev: { runId: string; code: number | null; status: 'pass' | 'fail' | 'cancelled'; hint?: 'toolchain-unavailable' }) => void) => {
       const listener = (_e: Electron.IpcRendererEvent, ev: any) => cb(ev)
       ipcRenderer.on('surface:onDone', listener)
       return () => ipcRenderer.removeListener('surface:onDone', listener)

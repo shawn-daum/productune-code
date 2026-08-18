@@ -62,7 +62,11 @@ for (const [event, matcher] of [
     const idx = (needle: string) => commands.findIndex((c) => c.includes(needle))
     expect(idx('prdt-audience-inject.sh')).toBeGreaterThan(idx('prdt-session-start.sh'))
     expect(idx('prdt-audience-inject.sh')).toBeLessThan(idx('prdt-overrides-inject.sh'))
-    expect(commands.length).toBe(3)
+    // T-423: prdt-plan-tier-inject.sh joined the same roster (see
+    // install-plan-tier-hook.test.ts for its own ordering assertions); T-445:
+    // prdt-project-overrides-inject.sh joined it as the new last entry (see
+    // install-project-overrides-hook.test.ts).
+    expect(commands.length).toBe(5)
   })
 }
 

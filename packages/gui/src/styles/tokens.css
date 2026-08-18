@@ -192,6 +192,18 @@
   --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
 
+  /* ── Code/JSON syntax tokens — productune-own gap-fill (§2.11, T-410) ──
+   * Categorical data-viz palette for ArtifactJsonTab, NOT a semantic surface
+   * token family. dark = unchanged literal (was raw hex in ArtifactJsonTab.tsx),
+   * light = new value (§2.11 table). KEY_COLORS[0] stays var(--text-tertiary),
+   * out of scope here — only depth 1-3 keys + string/number/keyword leaves. */
+  --code-key-1:  #7EA8CF;   /* object key depth 1 (KEY_COLORS[1]) */
+  --code-key-2:  #CF9E9E;   /* object key depth 2 (KEY_COLORS[2]) */
+  --code-key-3:  #8FBFB4;   /* object key depth 3 (KEY_COLORS[3]) */
+  --code-string: #7FB07F;   /* string leaf (strVal) */
+  --code-number: #C9A26D;   /* number leaf (numVal) */
+  --code-keyword: #8B7EC8;  /* boolean/null leaf (kwVal) */
+
   /* ══ LEGACY ALIASES — old consumer var names → Anchor roles ══════════════
    * Existing var(--surface-* / --text-* / --border-*) consumers (index.css scroll,
    * md-recipes.css) keep resolving. md-viewer re-declares these under .md-light
@@ -283,6 +295,14 @@
     --shadow-high:   0 2px 16px 0 rgba(0, 0, 0, 0.16);
     --shadow-medium: 0 1px 10px 0 rgba(0, 0, 0, 0.08);
     --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.04);
+
+    /* Code/JSON syntax tokens (§2.11, T-410) — light values */
+    --code-key-1:  #3F76A9;
+    --code-key-2:  #B85151;
+    --code-key-3:  #467B6F;
+    --code-string: #4D7D4D;
+    --code-number: #926B36;
+    --code-keyword: #7562CB;
   }
 }
 
@@ -355,6 +375,14 @@
   --shadow-high:   0 2px 16px 0 rgba(0, 0, 0, 0.16);
   --shadow-medium: 0 1px 10px 0 rgba(0, 0, 0, 0.08);
   --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.04);
+
+  /* Code/JSON syntax tokens (§2.11, T-410) — light values */
+  --code-key-1:  #3F76A9;
+  --code-key-2:  #B85151;
+  --code-key-3:  #467B6F;
+  --code-string: #4D7D4D;
+  --code-number: #926B36;
+  --code-keyword: #7562CB;
 }
 
 /* Explicit dark toggle re-asserts the dark set even under a light OS pref.
@@ -430,4 +458,12 @@
   --shadow-high:   0 2px 16px 0 rgba(0, 0, 0, 0.32);
   --shadow-medium: 0 1px 10px 0 rgba(0, 0, 0, 0.16);
   --shadow-low:    0 0 4px 0 rgba(0, 0, 0, 0.08);
+
+  /* Code/JSON syntax tokens (§2.11, T-410) — dark values (unchanged, §2.11 impl memo) */
+  --code-key-1:  #7EA8CF;
+  --code-key-2:  #CF9E9E;
+  --code-key-3:  #8FBFB4;
+  --code-string: #7FB07F;
+  --code-number: #C9A26D;
+  --code-keyword: #8B7EC8;
 }

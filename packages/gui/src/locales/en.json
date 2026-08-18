@@ -45,6 +45,16 @@
       "statusReady": "installed · authed",
       "statusInstalledNoAuth": "installed · not authed",
       "statusNotInstalled": "not installed",
+      "install": {
+        "button": "Install Claude Code",
+        "desc": "The app installs it for you — nothing else to set up.",
+        "phaseDownload": "Getting the installer ready…",
+        "phaseInstall": "Installing… this can take a minute or two.",
+        "phaseVerify": "Verifying the installation…",
+        "errNetwork": "Couldn't reach the download server. Check your internet connection and try again.",
+        "errVerify": "The downloaded files couldn't be verified, so nothing was installed. Please try again.",
+        "errFailed": "The installation didn't finish. Please try again."
+      },
       "installGuide": "Install guide ↗",
       "recheck": "Recheck",
       "login": {
@@ -56,12 +66,13 @@
         "needsCodeHint": "If the browser couldn't finish sign-in, paste the code shown there.",
         "codePlaceholder": "Paste code here",
         "submitCode": "Submit",
-        "cancel": "Cancel"
+        "cancel": "Cancel",
+        "startFailed": "Couldn't start the browser sign-in. Please press Connect to try again."
       },
       "gate": {
         "checking": "Checking…",
-        "needInstall": "Install Claude Code first — see the guide above",
-        "needLogin": "Sign in with Start login above"
+        "needInstall": "Install Claude Code with the button above",
+        "needLogin": "Sign in with the Connect button above"
       }
     },
     "step4": {
@@ -80,9 +91,10 @@
     },
     "completionSteps": {
       "env": "Create env file (~/.productune/productune.env)",
-      "playwright": "Prepare Playwright MCP cache (QA smoke gate, npx @playwright/mcp)",
+      "playwright": "Prepare the QA smoke-test cache",
       "language": "Save UI language preference",
-      "audience": "Communication style saved"
+      "audience": "Communication style saved",
+      "playwrightDeferred": "couldn't finish now — it will be prepared automatically on first use"
     },
     "versionInit": {
       "label": "Initial Version ID",
@@ -134,7 +146,8 @@
       "writeError": "Save failed: {{error}}",
       "conflict": "File changed on disk since you opened it. Reload to get the latest, then re-apply your edits.",
       "reloadFromDisk": "Reload from disk",
-      "loadError": "Could not load file. Try again shortly."
+      "loadError": "Could not load file. Try again shortly.",
+      "openInBrowser": "Open in default browser"
     },
     "mermaid": {
       "renderError": "Mermaid render error",
@@ -181,7 +194,8 @@
       "runHint": "You can run the app now 🚀 Use ▶ Run (bottom-right) to pick an environment (e.g. local) and launch — a preview tab opens. (Closing the tab stops the server too.)"
     },
     "runOutput": {
-      "reopenPreview": "Reopen preview"
+      "reopenPreview": "Reopen preview",
+      "toolchainUnavailable": "This computer isn't set up to build and run the product yet. Reinstalling the latest version of this app usually fixes it."
     },
     "zoom": {
       "out": "Zoom out",
@@ -862,7 +876,7 @@
       "back": "Back",
       "forward": "Forward",
       "reload": "Reload",
-      "popout": "Open in browser",
+      "popout": "Open in default browser",
       "addressPlaceholder": "Enter URL…",
       "addressLabel": "Address bar",
       "iframeTitle": "Browser",
@@ -1065,7 +1079,20 @@
       "optionPlannerDesc": "Plain language, conclusion first, details on request. (default)",
       "optionDeveloper": "Developer mode",
       "optionDeveloperDesc": "Technical vocabulary as-is — the current expert register.",
-      "nextSessionNote": "Applies from the next conversation session. / 다음 대화 세션부터 적용돼요."
+      "nextSessionNote": "Applies from the next conversation session. / 다음 대화 세션부터 적용돼요.",
+      "hookNotRegisteredHint": "Not active on this machine yet — run `prdt update` for it to take effect. / 이 기기에는 아직 반영되지 않아요 — 적용하려면 prdt update가 필요해요."
+    },
+    "planTier": {
+      "title": "Claude plan / 요금제",
+      "description": "Your plan isn't detectable automatically, so the PO asks once and remembers your answer on this device — it won't ask again. Update this if your plan changes.",
+      "optionMaxX20": "Max x20",
+      "optionMaxX20Desc": "Fable model floors apply as designed.",
+      "optionTeamPremium": "Team Premium",
+      "optionTeamPremiumDesc": "Fable model floors apply as designed.",
+      "optionOther": "Other / not sure",
+      "optionOtherDesc": "Fable floors resolve to Opus at the same effort instead.",
+      "nextSessionNote": "Applies from the next conversation session. / 다음 대화 세션부터 적용돼요.",
+      "hookNotRegisteredHint": "Not active on this machine yet — run `prdt update` for it to take effect. / 이 기기에는 아직 반영되지 않아요 — 적용하려면 prdt update가 필요해요."
     },
     "tabGeneral": "General",
     "generalTabTitle": "General settings",
@@ -1241,7 +1268,8 @@
       "title": "New project",
       "nameLabel": "Project name (slug)",
       "slugHint": "Lowercase letters, digits, and hyphens only.",
-      "firstVersionLabel": "First Version ID"
+      "firstVersionLabel": "First Version ID",
+      "creating": "Creating…"
     },
     "github": {
       "oauthFailed": "OAuth failed",

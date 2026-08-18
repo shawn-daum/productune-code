@@ -12,6 +12,19 @@ interface Props {
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,}$/
 
+/**
+ * QA error-surface regression (T-431 follow-up): a main-process throw (e.g.
+ * ensurePrdtCliAvailable's ko-language actionable messages) reaches the
+ * renderer wrapped by Electron's ipcRenderer.invoke as
+ * `Error invoking remote method '<channel>': Error: <message>` — the user must
+ * see only the actionable `<message>`, not the IPC plumbing around it. The
+ * message itself stays ko for now (locale split is T-437's scope).
+ */
+export function stripIpcErrorWrapper(raw: string): string {
+  const m = raw.match(/^Error invoking remote method '[^']*':\s*(?:[A-Za-z][\w.]*:\s*)?([\s\S]*)$/)
+  return (m ? m[1] : raw).trim()
+}
+
 export default function NewProjectModal({ onCreated, onCancel }: Props) {
   const { t } = useTranslation()
   // step 1 = slug, 1.5 = version id, 2 = github oauth
@@ -34,15 +47,29 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
     setStep(1.5)
   }
 
+  /**
+   * T-439 (QA HIGH): `project:create` failing used to be completely silent.
+   * `setError` was called here at step 1.5, but the ONLY `{error && ...}` render
+   * site lived inside the `step === 1` block — so nothing was ever painted and
+   * the participant's report was literally "Next did nothing". The message now
+   * goes to VersionInitStep, which is the step that owns this Next.
+   */
   async function handleCreate() {
-    if (!isValidVersionId(versionId)) return
+    if (creating) return
+    if (!isValidVersionId(versionId)) {
+      setError(t('app.newProject.createFailed'))
+      return
+    }
+    setError('')
     setCreating(true)
     try {
       const result = await (window as any).api.createProject({ slug, initialVersionId: versionId })
       setCreatedDir(result.projectDir)
       setStep(2)
     } catch (e: any) {
-      setError(e?.message ?? t('app.newProject.createFailed'))
+      const raw = e?.message
+      setError(typeof raw === 'string' ? stripIpcErrorWrapper(raw) : t('app.newProject.createFailed'))
+    } finally {
       setCreating(false)
     }
   }
@@ -76,8 +103,11 @@ export default function NewProjectModal({ onCreated, onCancel }: Props) {
             value={versionId}
             onChange={setVersionId}
             onNext={handleCreate}
-            onPrev={() => { setStep(1); setCreating(false) }}
+            onPrev={() => { setStep(1); setCreating(false); setError('') }}
             stepLabel={t('app.newProject.firstVersionLabel')}
+            error={error}
+            busy={creating}
+            busyLabel={t('app.newProject.creating')}
           />
         )}
 

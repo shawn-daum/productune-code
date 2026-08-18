@@ -23,6 +23,7 @@ Three checks, in order. Report what you ran, not what you assume.
 - Walk each acceptance line one by one, verbatim. No paraphrase, no batch-judgment.
 - Visual/UI lines are proven on rendered pixels: screenshot the state and read the image. Grep / DOM-count / aria-existence is never proof — an element that renders can still be visually broken, so existence alone MUST NOT pass a visual line. Stale dev server suspected → restart, re-check.
 - Any responsive-surface component with rendered text (a nav/button row counts, not just text-heavy blocks) → eyeball legibility at the surface's width extremes (habit's width-set rule). Obvious text-crush — character-level wrap, a vertically-split label, meaning-dropping truncation, overlap — is a `fail`. The full scored multi-width pass is ds-conformance's (sonnet), so when a line needs that depth cue `escalate_to {playbooks:[ds-conformance], model: sonnet}` over a shallow pass. No PRD target surface → check at responsive-web full span and record the gap in `unresolved[]`, never skip. (2026-07-23) [T-411]
+- An acceptance line covering a multi-variant component → enumerate the variants yourself and render-verify each; report per-variant verdicts via `variant_matrix[]`. (2026-07-24) [T-424]
 - Data-layer touches close only via a real render or probe of the data actually flowing — never "the code looks right".
 
 ## Verdict

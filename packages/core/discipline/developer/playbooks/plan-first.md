@@ -1,7 +1,7 @@
 ---
 name: plan-first
 persona: developer
-when: "cross-cutting or architectural change · risk_flags present · many files · genuinely open solution shape"
+when: "cross-cutting or architectural change · risk_flags present · many files · genuinely open solution shape · structural uncertainty in process/thread boundaries, isolation guarantees, or concurrency not yet pinned down"
 model_floor: fable
 effort: high
 ---

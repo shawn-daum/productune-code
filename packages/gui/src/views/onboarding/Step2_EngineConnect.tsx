@@ -2,10 +2,25 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Engine, EngineStatus } from './types'
 import EngineStatusRow from './EngineStatusRow'
+import type { InstallUi } from './EngineStatusRow'
 import {
   body, footer, stepLabel, stepIntro, hint, btnSecondary, btnPrimary, btnPrimaryDisabled,
   engineRow, btnEngineAction, btnRedetect,
 } from './styles'
+
+// T-439: docs fallback shown only in the install-error state — the primary
+// path is the in-app install button (zero terminal, no package manager).
+const INSTALL_GUIDE_URL = 'https://code.claude.com/docs/en/setup'
+
+/** Map an installer failure class to its user-facing message key. */
+function installErrorKey(code?: string): string {
+  switch (code) {
+    case 'network': return 'onboarding.step2.install.errNetwork'
+    case 'script-invalid':
+    case 'binary-verify-failed': return 'onboarding.step2.install.errVerify'
+    default: return 'onboarding.step2.install.errFailed'
+  }
+}
 
 interface Step2Props {
   needsClaude: boolean
@@ -36,8 +51,15 @@ export default function Step2_EngineConnect({
   // the URL arrives) a "reopen browser" button + (on needs-code) a paste card.
   const [login, setLogin] = useState<LoginState | null>(null)
   const [codeInput, setCodeInput] = useState('')
+  // T-439: set when the login child exited without ever reaching a
+  // recognizable state (auth-url-timeout / spawn error) — the actionable
+  // replacement for the old indefinite spinner.
+  const [loginFailed, setLoginFailed] = useState(false)
   const loginRef = useRef<LoginState | null>(null)
   loginRef.current = login
+
+  // T-439: in-app CLI install progress/failure, rendered by EngineStatusRow.
+  const [install, setInstall] = useState<InstallUi>({ running: false, errorKey: null })
 
   useEffect(() => {
     const api = (window as any).api
@@ -48,17 +70,40 @@ export default function Step2_EngineConnect({
     const offNeedsCode = api.onLoginNeedsCode((p: { engine: Engine }) => {
       setLogin((prev) => (prev && prev.engine === p.engine ? { ...prev, needsCode: true } : prev))
     })
-    const offExit = api.onLoginExit(() => {
+    const offExit = api.onLoginExit((p: { engine: Engine; code: number | null; error?: string }) => {
+      // A timeout (or spawn error) while the waiting card never got a URL or a
+      // paste prompt = the handshake never started — surface it (T-439).
+      const l = loginRef.current
+      setLoginFailed(Boolean(p?.error) && Boolean(l) && !l?.url && !l?.needsCode)
       setLogin(null)
       setCodeInput('')
     })
-    return () => { offUrl?.(); offNeedsCode?.(); offExit?.() }
+    const offProgress = api.onInstallProgress?.((p: { phase: 'download' | 'install' | 'verify' }) => {
+      setInstall({ running: true, phase: p.phase })
+    })
+    return () => { offUrl?.(); offNeedsCode?.(); offExit?.(); offProgress?.() }
   }, [])
 
   function beginLogin(engine: Engine) {
     setCodeInput('')
+    setLoginFailed(false)
     setLogin({ engine, url: null, needsCode: false })
     onClaudeLogin()
+  }
+
+  async function beginInstall() {
+    setInstall({ running: true, phase: 'download' })
+    try {
+      const r = await (window as any).api.installClaude()
+      if (r?.ok) {
+        setInstall({ running: false, errorKey: null })
+        onCheckEngine()
+      } else {
+        setInstall({ running: false, errorKey: installErrorKey(r?.code) })
+      }
+    } catch {
+      setInstall({ running: false, errorKey: installErrorKey() })
+    }
   }
 
   function reopenBrowser() {
@@ -153,18 +198,27 @@ export default function Step2_EngineConnect({
               <EngineStatusRow
                 name="Claude Code"
                 status={claudeStatus}
-                installUrl="https://docs.anthropic.com/en/docs/claude-code"
-                installHint="npm install -g @anthropic-ai/claude-code"
+                install={install}
+                installGuideUrl={INSTALL_GUIDE_URL}
+                onInstall={beginInstall}
                 onLogin={() => beginLogin('claude')}
                 onRecheck={onCheckEngine}
               />
+            )}
+            {/* T-439: login child died without a recognizable URL/prompt —
+                actionable retry message instead of the old indefinite wait. */}
+            {loginFailed && (
+              <div style={{ fontSize: 11.5, color: 'var(--health-error)', lineHeight: 1.5 }}>
+                {t('onboarding.step2.login.startFailed')}
+              </div>
             )}
           </div>
         )}
 
         {/* T-PATCH-220: derive a why-disabled hint from claudeStatus.
-            Only shown when not ready, not in OAuth flow, not still checking. */}
-        {!engineFullyReady && !login && !checkingEngine && (
+            Only shown when not ready, not in OAuth flow, not still checking,
+            not mid-install (T-439 — the row already shows install progress). */}
+        {!engineFullyReady && !login && !checkingEngine && !install.running && (
           <div style={{ ...hint, marginTop: 12 }}>
             {claudeStatus === null
               ? t('onboarding.step2.gate.checking')

@@ -7,9 +7,24 @@ import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
 import { setUiLanguage, setAudienceMode } from '@productune/core'
 import type { UiLanguage, AudienceMode } from '@productune/core'
-import { withLoginShellPath } from '../surface-runner'
+import { withLoginShellPath, resetLoginShellPathCache } from '../surface-runner'
+import { installClaudeCli, resolveClaudeCli } from '../claude-installer'
+import type { InstallResult } from '../claude-installer'
+import { prewarmPlaywrightMcp } from '../prewarm'
+import type { PrewarmState } from '../prewarm'
 import { onboardingPath as projectOnboardingPath, detectProjectKind } from '../project-paths'
 import type { ProjectKind } from '../project-paths'
+// T-414: the prdt hook roster (basenames + event/matcher/order) is no longer
+// hand-written here — it's imported from the SAME JSON manifest install.sh §4
+// derives its jq registration from (packages/core/scripts/hook-manifest.json).
+// This is a static ES module import (resolveJsonModule), so Vite/esbuild inline
+// its contents into dist-electron/main.js at BUILD time — no runtime fs read of
+// packages/core/ happens, which matters because T-311 dropped the `../core`
+// extraResource from the packaged app (nothing under Resources/core is read at
+// runtime anymore). A relative cross-package import mirrors the established
+// pattern in onboarding.rosterParity.test.ts (which reads install.sh the same
+// relative-path way, from the same directory).
+import hookManifestJson from '../../../core/scripts/hook-manifest.json'
 
 const execFileAsync = promisify(execFile)
 
@@ -82,18 +97,35 @@ function loginShellEnv(): NodeJS.ProcessEnv {
   return withLoginShellPath(process.env)
 }
 
+/** T-439: bounded wait for the auth URL. Both the URL and the paste-code
+ *  detection are stdout string-matching — when the CLI's output format drifts
+ *  and neither is ever recognized, the renderer used to spin forever. If
+ *  nothing recognizable arrives within this window, the child is killed and a
+ *  login-exit with error 'auth-url-timeout' is emitted so the renderer can
+ *  offer a retry instead of an indefinite spinner. */
+export const LOGIN_URL_WAIT_MS = 30_000
+
+/** Test-only injection points for startHiddenLogin (fake CLI + captured emit). */
+export interface HiddenLoginOpts {
+  cmd?: string
+  args?: string[]
+  urlWaitMs?: number
+  emit?: (channel: string, payload: unknown) => void
+}
+
 /** Spawn a hidden login process (`claude auth login`) and wire its stdout/stderr
  *  to the renderer via webContents.send. Returns immediately; does NOT block on
- *  the browser OAuth handshake. */
-function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
+ *  the browser OAuth handshake. Exported for the loginTimeout test. */
+export function startHiddenLogin(engine: 'claude', opts: HiddenLoginOpts = {}): { ok: boolean; error?: string } {
+  const emit = opts.emit ?? emitLogin
   // Kill any prior in-flight login before starting a new one.
   if (loginChild && loginChild.exitCode === null) {
     try { loginChild.kill() } catch { /* ok */ }
   }
   loginChild = null
 
-  const cmd = 'claude'
-  const args = ['auth', 'login']
+  const cmd = opts.cmd ?? 'claude'
+  const args = opts.args ?? ['auth', 'login']
 
   let child: ChildProcess
   try {
@@ -110,6 +142,18 @@ function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
 
   loginChild = child
   let urlSent = false
+  let exitEmitted = false
+
+  // T-439: arm the bounded URL wait. Disarmed on ANY recognized progress (URL
+  // or paste-code prompt) and on exit. On fire: kill + single timeout exit —
+  // the kill's own 'exit' event must not double-emit (exitEmitted guard).
+  const urlTimer = setTimeout(() => {
+    if (exitEmitted || child.exitCode !== null) return
+    exitEmitted = true
+    try { child.kill() } catch { /* ok */ }
+    emit('onboarding:login-exit', { engine, code: null, error: 'auth-url-timeout' })
+    if (loginChild === child) loginChild = null
+  }, opts.urlWaitMs ?? LOGIN_URL_WAIT_MS)
 
   const handleChunk = (raw: Buffer) => {
     const clean = stripAnsi(raw.toString('utf-8'))
@@ -117,11 +161,13 @@ function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
       const url = extractUrl(clean)
       if (url) {
         urlSent = true
-        emitLogin('onboarding:login-url', { engine, url })
+        clearTimeout(urlTimer)
+        emit('onboarding:login-url', { engine, url })
       }
     }
     if (isPasteCodePrompt(clean)) {
-      emitLogin('onboarding:login-needs-code', { engine })
+      clearTimeout(urlTimer)
+      emit('onboarding:login-needs-code', { engine })
     }
   }
 
@@ -130,38 +176,32 @@ function startHiddenLogin(engine: 'claude'): { ok: boolean; error?: string } {
   child.stderr?.on('data', handleChunk)
 
   child.on('error', (err) => {
-    emitLogin('onboarding:login-exit', { engine, code: null, error: err?.message })
+    clearTimeout(urlTimer)
+    if (!exitEmitted) {
+      exitEmitted = true
+      emit('onboarding:login-exit', { engine, code: null, error: err?.message })
+    }
     if (loginChild === child) loginChild = null
   })
 
   child.on('exit', (code) => {
-    emitLogin('onboarding:login-exit', { engine, code })
+    clearTimeout(urlTimer)
+    if (!exitEmitted) {
+      exitEmitted = true
+      emit('onboarding:login-exit', { engine, code })
+    }
     if (loginChild === child) loginChild = null
   })
 
   return { ok: true }
 }
 
-async function prewarmPlaywrightMcp(): Promise<void> {
-  return new Promise((resolve) => {
-    const child = spawn('npx', ['-y', '@playwright/mcp@latest', '--help'], {
-      stdio: 'ignore',
-      shell: true,
-    })
-    const timeout = setTimeout(() => {
-      try { child.kill() } catch { /* ok */ }
-      resolve()  // best-effort; don't fail onboarding
-    }, 60_000)
-    child.on('exit', () => {
-      clearTimeout(timeout)
-      resolve()
-    })
-    child.on('error', () => {
-      clearTimeout(timeout)
-      resolve()
-    })
-  })
-}
+// T-440: the Playwright-MCP prewarm moved to ../prewarm.ts. The old inline
+// version spawned a bare `npx` with the inherited launchd PATH and resolved
+// void on EVERY outcome — on a participant Mac with no JS toolchain it failed
+// instantly and silently (T-439 unresolved). The new one runs under the
+// toolchain-augmented login-shell PATH and reports ready|failed|timeout,
+// which onboarding:complete forwards to the renderer.
 
 export function writeOnboardingPending(projectDir: string, source: OnboardingRecord['source']): void {
   const onboardingPath = projectOnboardingPath(projectDir)
@@ -178,7 +218,7 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // T-311: GUI legacy dual-mode was downgraded to read-only. The legacy hook set
 // (T-PATCH-246's 18 pdt-* enforcement hooks + statusline-productune) is no longer
 // installed from the GUI — installClaudeHooks now installs ONLY the prdt hook set
-// (T-289 adapter A6; the full 6종 roster since T-413) for prdt-kind projects, and
+// (T-289 adapter A6; the full 9종 roster since T-409/T-413/T-423/T-445) for prdt-kind projects, and
 // is a NO-OP for legacy/undefined
 // projects. Legacy projects keep working for file/ticket/po-state VIEWING; only
 // the machine-provisioning wiring is cut. prdt install stays the single
@@ -187,23 +227,35 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // can exercise the prdt branch against a throwaway fixture HOME instead of the
 // developer's real ~/.claude / ~/.prdt.
 
+/** One {event, matcher?, hooks[]} entry of the hook-manifest.json `registrations`
+ *  array — see that file's `$comment` for the full contract. `hooks` are
+ *  basenames; `matcher` is absent for matcher-less events (UserPromptSubmit). */
+interface HookRegistration {
+  event: string
+  matcher?: string
+  hooks: readonly string[]
+}
+
+interface HookManifest {
+  basenames: readonly string[]
+  registrations: readonly HookRegistration[]
+}
+
+const HOOK_MANIFEST = hookManifestJson as unknown as HookManifest
+
 /**
- * The 6 prdt discipline hook basenames install.sh §4 registers (its jq block is
- * the SoT). MUST equal the roster install.sh registers — the parity test in
- * onboarding.rosterParity.test.ts parses install.sh's registration commands and
- * fails loudly if this list drifts. audience-inject (T-326) and overrides-inject
- * (T-358) were the two missing from the pre-T-413 GUI list; their omission left a
- * GUI-only user (the north-star persona) without audience-mode or machine
- * overrides ever reaching their PO.
+ * The 9 prdt discipline hook basenames install.sh §4 registers, imported from
+ * the SAME hook-manifest.json (T-414) install.sh's jq --slurpfile reduces over —
+ * this is no longer a hand-synced literal. The parity test in
+ * onboarding.rosterParity.test.ts actually RUNS install.sh and installPrdtHooks
+ * against the same fixture home and diffs the resulting settings.json.hooks, so
+ * an event/matcher/order drift between the two derivations fails loudly even
+ * though both now read the identical manifest. audience-inject (T-326) and
+ * overrides-inject (T-358) were the two missing from the pre-T-413 GUI list;
+ * their omission left a GUI-only user (the north-star persona) without
+ * audience-mode or machine overrides ever reaching their PO.
  */
-export const PRDT_HOOK_BASENAMES = [
-  'prdt-session-start.sh',
-  'prdt-post-compact.sh',
-  'prdt-post-dispatch.sh',
-  'prdt-user-prompt.sh',
-  'prdt-audience-inject.sh',
-  'prdt-overrides-inject.sh',
-] as const
+export const PRDT_HOOK_BASENAMES = HOOK_MANIFEST.basenames
 
 function readSettings(settingsPath: string): any {
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
@@ -230,7 +282,7 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
 }
 
 /**
- * prdt branch (T-289): install exactly the 6 discipline hooks + statusline-prdt.sh,
+ * prdt branch (T-289): install exactly the 9 discipline hooks + statusline-prdt.sh,
  * producing the SAME settings.json registration install.sh §4/§6 writes —
  * same `~/.prdt` mirror paths, same matchers, same quoted-command form — so GUI
  * and CLI installs can never diverge or double-register: either one re-run strips
@@ -238,11 +290,15 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
  * identical values. Coexists with legacy pdt-* entries — only prdt-basename hooks
  * are stripped/replaced.
  *
- * T-413: audience-inject + overrides-inject ride the SAME matcher as session-start
- * on SessionStart(startup|resume|clear) AND SubagentStart(^prdt-), each as its OWN
- * command entry (never merged into another hook's additionalContext string) —
- * audience BEFORE overrides so machine overrides stay last-wins over the
- * audience-mode register block, matching install.sh §4 (T-326/T-358). The strip is
+ * T-413/T-445: the four small inject hooks (audience, plan-tier, machine
+ * overrides, project overrides) ride the SAME matcher as the discipline hook on
+ * SessionStart(startup|resume|clear), SessionStart(compact) AND
+ * SubagentStart(^prdt-), each as its OWN command entry (never merged into another
+ * hook's additionalContext string), in precedence order — machine overrides
+ * second-to-last, project overrides LAST for `canonical < machine < project`;
+ * matching install.sh §4 (T-326/T-358/T-445). The order is intent, not
+ * enforcement: T-445 measured co-registered hooks rendering in COMPLETION order,
+ * so each override payload states its own precedence in text. The strip is
  * per-hook (not per-entry), so a re-install/repair over a complete CLI install
  * preserves the full set instead of wiping audience/overrides.
  *
@@ -254,7 +310,7 @@ function writeSettingsAtomic(settingsPath: string, settings: any): void {
  * scripts — a prdt project can't spawn its PO without `~/.prdt/prdt.env` anyway
  * (po-runner canSpawnClaude), so install.sh runs first either way.
  */
-function installPrdtHooks(settingsPath: string, homeDir: string): void {
+export function installPrdtHooks(settingsPath: string, homeDir: string): void {
   const prdtHome = path.join(homeDir, '.prdt')
   const hooksDir = path.join(prdtHome, 'hooks')
   const missing = PRDT_HOOK_BASENAMES.filter(b => !fs.existsSync(path.join(hooksDir, b)))
@@ -286,35 +342,35 @@ function installPrdtHooks(settingsPath: string, homeDir: string): void {
       }))
       .filter((entry: any) => Array.isArray(entry.hooks) && entry.hooks.length > 0)
 
+  // T-414: the per-event entry list below used to be 5 hand-written assignments
+  // (one per event) that had to be kept byte-for-byte in sync with install.sh
+  // §4's jq block by hand — the exact drift class T-413 caught. Both now reduce
+  // over the SAME hook-manifest.json `registrations` array, in order, so an
+  // event/matcher/hook-order change only has to be made once.
   const H = (settings.hooks && typeof settings.hooks === 'object') ? settings.hooks : {}
-  H.SessionStart = [...stripPrdt(H.SessionStart),
-    { matcher: 'startup|resume|clear', hooks: [
-      cmd(h('prdt-session-start.sh')),
-      cmd(h('prdt-audience-inject.sh')),
-      cmd(h('prdt-overrides-inject.sh')),
-    ] },
-    { matcher: 'compact', hooks: [cmd(h('prdt-post-compact.sh'))] },
-  ]
-  H.SubagentStart = [...stripPrdt(H.SubagentStart),
-    { matcher: '^prdt-', hooks: [
-      cmd(h('prdt-session-start.sh')),
-      cmd(h('prdt-audience-inject.sh')),
-      cmd(h('prdt-overrides-inject.sh')),
-    ] },
-  ]
-  H.SubagentStop = [...stripPrdt(H.SubagentStop),
-    { matcher: '^prdt-', hooks: [cmd(h('prdt-post-dispatch.sh'))] },
-  ]
-  H.PostToolUse = [...stripPrdt(H.PostToolUse),
-    { matcher: 'Agent', hooks: [cmd(h('prdt-post-dispatch.sh'))] },
-  ]
-  // T-336 stage guard — per-prompt po-state line + deploy tripwire (no matcher).
-  H.UserPromptSubmit = [...stripPrdt(H.UserPromptSubmit),
-    { hooks: [cmd(h('prdt-user-prompt.sh'))] },
-  ]
+  const events = [...new Set(HOOK_MANIFEST.registrations.map((r) => r.event))]
+  for (const ev of events) {
+    const entries = HOOK_MANIFEST.registrations
+      .filter((r) => r.event === ev)
+      .map((r) => ({
+        ...(r.matcher !== undefined ? { matcher: r.matcher } : {}),
+        hooks: r.hooks.map((b) => cmd(h(b))),
+      }))
+    H[ev] = [...stripPrdt(H[ev]), ...entries]
+  }
 
   settings.hooks = H
-  settings.statusLine = { type: 'command', command: statusline }
+  // T-414: preserve an existing statusLine instead of unconditionally clobbering
+  // it (T-413 QA finding). install.sh §6 is the same "auto" default: it only
+  // registers the prdt statusline when NOTHING is currently set, and never
+  // stomps a pre-existing one (ours or a custom one) without --statusline. The
+  // GUI call sites (onboarding wizard, T-305 on-demand banner) have no
+  // equivalent --statusline force flag, so they only ever get the "auto" half of
+  // install.sh's behavior — a user who set a custom statusLine, then later opens
+  // a prdt project in the GUI, no longer has it silently replaced.
+  if (!settings.statusLine) {
+    settings.statusLine = { type: 'command', command: statusline }
+  }
   writeSettingsAtomic(settingsPath, settings)  // C5 (T-316): tmp+rename, no torn-read window
 }
 
@@ -366,9 +422,9 @@ function hasPrdtHooksRegistered(settingsPath: string): boolean {
 }
 
 export interface PrdtHooksStatus {
-  /** All 6 prdt hooks present under ~/.prdt/hooks — install.sh has run on this machine. */
+  /** All 7 prdt hooks present under ~/.prdt/hooks — install.sh has run on this machine. */
   mirrorPresent: boolean
-  /** settings.json already carries all 6 prdt hook commands (the COMPLETE set —
+  /** settings.json already carries all 7 prdt hook commands (the COMPLETE set —
    *  can't read true while audience/overrides are silently absent, T-413). */
   installed: boolean
 }
@@ -424,17 +480,22 @@ export function provisionUserGlobals(coreDir: string, homeDir: string = os.homed
 
 export function register(): void {
   ipcMain.handle('onboarding:checkClaude', async () => {
-    // T-PATCH-199: detection must resolve the CLI under the login-shell PATH too
-    // (Finder/packaged-app launch only inherits launchd's minimal PATH, so a
-    // globally-installed `claude` in ~/.local/bin / Homebrew reads as "not
-    // installed" and post-login `authed` is never detected). Mirrors the login
-    // spawn fix (loginShellEnv) and surface-runner (T-PATCH-186).
+    // T-PATCH-199: detection must resolve the CLI under the login-shell PATH
+    // (a Finder/packaged-app launch only inherits launchd's minimal PATH).
+    //
+    // T-439 QA BLOCKER: the login-shell PATH is NOT ENOUGH. The official native
+    // installer we run from step 3 writes `~/.local/bin/claude` and no shell
+    // integration whatsoever, and a fresh Mac has no `~/.local/bin` on PATH —
+    // so `which claude` kept answering "no" for an install this very app had
+    // just performed and code-signature-verified, and the participant was
+    // trapped re-clicking Install forever. resolveClaudeCli therefore falls
+    // back to confirming the native launcher by ABSOLUTE PATH, which cannot go
+    // stale with the shell environment. The resolved absolute path is then what
+    // we exec for `auth status`, so the auth probe cannot disagree with the
+    // install verdict either.
     const env = loginShellEnv()
-    let installed = false
-    try {
-      await execFileAsync('which', ['claude'], { env })
-      installed = true
-    } catch { return { installed: false, authed: false } }
+    const cli = await resolveClaudeCli()
+    if (!cli) return { installed: false, authed: false }
 
     // Fast path: credentials file
     const credPath = path.join(os.homedir(), '.claude', 'credentials.json')
@@ -442,7 +503,7 @@ export function register(): void {
 
     // Slow path: ask CLI (5 s timeout)
     try {
-      const out = await execFileAsync('claude', ['auth', 'status'], { timeout: 5000, env }) as any
+      const out = await execFileAsync(cli, ['auth', 'status'], { timeout: 5000, env }) as any
       const stdout: string = typeof out === 'string' ? out : (out?.stdout ?? '')
       const data = JSON.parse(stdout)
       return { installed: true, authed: data?.loggedIn === true }
@@ -453,7 +514,39 @@ export function register(): void {
 
   // T-PATCH-199: hidden-spawn browser-OAuth login. Returns once the child is
   // spawned (non-blocking); progress streams via onboarding:login-* events.
-  ipcMain.handle('onboarding:claudeLogin', async () => startHiddenLogin('claude'))
+  // T-439: spawn the ABSOLUTE path resolveClaudeCli found. A bare `claude`
+  // would ENOENT on a fresh Mac whose profile never exported ~/.local/bin, so
+  // the browser never opened and the row sat in "installed, not logged in".
+  ipcMain.handle('onboarding:claudeLogin', async () => {
+    const cli = await resolveClaudeCli()
+    return startHiddenLogin('claude', cli ? { cmd: cli } : {})
+  })
+
+  // T-439: in-app engine CLI install via the official native installer
+  // (claude-installer.ts — no node/npm prerequisite, zero terminal). Progress
+  // phases stream as onboarding:install-progress; the handler resolves with
+  // the final InstallResult. A second invoke while one is running joins the
+  // in-flight install instead of starting another.
+  let installInFlight: Promise<InstallResult> | null = null
+  ipcMain.handle('onboarding:installClaude', async (): Promise<InstallResult> => {
+    if (installInFlight) return installInFlight
+    installInFlight = installClaudeCli({
+      onProgress: (phase) => emitLogin('onboarding:install-progress', { phase }),
+    })
+    try {
+      return await installInFlight
+    } finally {
+      installInFlight = null
+      // T-439 (QA fail row 2): loginShellPath() is memoized for the whole app
+      // run and was already warmed on entry to step 3 — i.e. with the
+      // PRE-install PATH. Drop it so the very next detection re-asks the shell
+      // instead of replaying a snapshot taken before the install existed.
+      // Detection does not DEPEND on this (resolveClaudeCli confirms the
+      // launcher by absolute path); this is what lets an install that DID write
+      // shell integration be seen without restarting the app.
+      resetLoginShellPathCache()
+    }
+  })
 
   // Paste-code fallback: write the user-entered code to the login child's stdin.
   ipcMain.handle('onboarding:submitLoginCode', async (_event, code: string) => {
@@ -532,8 +625,13 @@ export function register(): void {
       // 2. Pre-warm Playwright MCP cache (used by QA's auto smoke gate).
       //    Best-effort: triggers `npx` to download @playwright/mcp now so the
       //    first QA invocation isn't slow. Does NOT block onboarding completion
-      //    on failure — agent's mcpServers block will retry lazily.
-      await prewarmPlaywrightMcp()
+      //    on failure — agent's mcpServers block will retry lazily. T-440: no
+      //    longer SILENT though — the state travels to the renderer, and a
+      //    non-ready state is logged with its output tail.
+      const prewarm = await prewarmPlaywrightMcp()
+      if (prewarm.state !== 'ready') {
+        console.warn(`[onboarding] playwright-mcp prewarm ${prewarm.state}: ${prewarm.detail ?? ''}`)
+      }
 
       // 3. Save UI language selection to settings.json
       if (opts.uiLanguage) {
@@ -546,7 +644,7 @@ export function register(): void {
         setAudienceMode(opts.audienceMode)
       }
 
-      return { ok: true }
+      return { ok: true, prewarm: prewarm.state satisfies PrewarmState }
     } catch (e: any) {
       return { ok: false, error: e?.message ?? 'unknown error' }
     }
