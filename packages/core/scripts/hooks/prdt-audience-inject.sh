@@ -50,6 +50,17 @@ esac
 BODY_FILE="$PRDT_HOME/discipline/po/audience-planner.md"
 [ -s "$BODY_FILE" ] || exit 0   # stale mirror without the file → degrade silently
 
+# T-483 audit note — this splice stays RAW deliberately, and that is safe here:
+# $BODY_FILE lives under $PRDT_HOME, the install-managed mirror — the same trust
+# class as the doctrine/contracts/habit bodies prdt-session-start.sh splices raw.
+# No clone or PR can reach it, and an attacker who can write ~/.prdt/discipline
+# can rewrite the hook scripts in ~/.prdt/hooks directly, so quoting this body
+# would add no boundary. It is also live register INSTRUCTIONS to apply, which a
+# data gutter would demote. The untrusted-body gutter (quote_body in the other
+# hooks) covers exactly the files that cross a trust boundary: project `.prdt/`
+# (clone-carried) and user-authored ~/.prdt/overrides. Adding a splice of any
+# OTHER source here requires the gutter.
+
 PAYLOAD="[prdt audience-mode: planner — PO conversational register]
 The operator selected (or defaulted to) the planner audience. Apply the register
 below to every line the user reads. Override blocks — machine, then project,
