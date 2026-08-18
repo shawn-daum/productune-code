@@ -30,15 +30,22 @@ except Exception:
 if not isinstance(ev, dict):
     sys.exit(0)
 
-# project root: walk up from event cwd (same routine as prdt-post-dispatch.sh)
+# project root: walk the WHOLE ancestor chain from the event cwd and take the
+# OUTERMOST dir holding `.prdt/po-state.json` (T-484 — never the nearest: a
+# `.prdt/` planted inside the cloned CODE tree is an inner candidate by
+# construction and can never win; legitimate layouts carry exactly one marker on
+# the chain, so for them outermost == nearest). Same routine as
+# prdt-post-dispatch.sh and the bash find_proj hooks — all four answer alike.
 d = ev.get("cwd") or os.getcwd()
 state_path = None
 while d and d != "/":
     p = os.path.join(d, ".prdt", "po-state.json")
     if os.path.isfile(p):
         state_path = p
+    up = os.path.dirname(d)
+    if up == d:
         break
-    d = os.path.dirname(d)
+    d = up
 if not state_path:
     sys.exit(0)
 

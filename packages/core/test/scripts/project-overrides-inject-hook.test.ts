@@ -40,6 +40,10 @@ function hasJq(): boolean {
 const PROJECT_BODY = '- 이 프로젝트에서는 GUI 부팅 시 HOME=sandbox 필수 (상세: learning--gui-testing)\n- PROJECT-LAYER-MARKER'
 const MACHINE_BODY = '- 이 기기에선 키/IME 검증은 VM 필수 (상세: machine:fact--qa-cua-vm)\n- MACHINE-LAYER-MARKER'
 
+/** T-483: hook renders every body line behind the `| ` gutter. */
+const gutter = (b: string) => b.split('\n').map((l) => '| ' + l).join('\n')
+
+
 /** Throwaway ~/.prdt mirror (minimal but complete enough for session-start). */
 function makePrdtHome(opts: { machineBody?: string } = {}): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t445-home-'))
@@ -102,7 +106,7 @@ describe('resolution: <projectRoot>/.prdt/overrides/<persona>.md via cwd up-walk
     const prdtHome = makePrdtHome()
     const proj = makeProject({ projectBody: PROJECT_BODY })
     const ctx = additionalContextOf(runHook(PROJECT_HOOK, { prdtHome, cwd: proj }))
-    expect(ctx).toContain(PROJECT_BODY)
+    expect(ctx).toContain(gutter(PROJECT_BODY))
     expect(ctx).toContain(path.join(proj, '.prdt', 'overrides', 'developer.md'))
   })
 
@@ -110,7 +114,7 @@ describe('resolution: <projectRoot>/.prdt/overrides/<persona>.md via cwd up-walk
     const prdtHome = makePrdtHome()
     const proj = makeProject({ projectBody: PROJECT_BODY })
     const ctx = additionalContextOf(runHook(PROJECT_HOOK, { prdtHome, cwd: path.join(proj, 'code') }))
-    expect(ctx).toContain(PROJECT_BODY)
+    expect(ctx).toContain(gutter(PROJECT_BODY))
   })
 
   test.skipIf(!hasJq())('SessionStart entry path (same script, different event) resolves identically', () => {
@@ -121,7 +125,7 @@ describe('resolution: <projectRoot>/.prdt/overrides/<persona>.md via cwd up-walk
     expect(out).toBe('')
     const dev = runHook(PROJECT_HOOK, { prdtHome, cwd: path.join(proj, 'code'), eventName: 'SessionStart' })
     expect(JSON.parse(dev).hookSpecificOutput.hookEventName).toBe('SessionStart')
-    expect(additionalContextOf(dev)).toContain(PROJECT_BODY)
+    expect(additionalContextOf(dev)).toContain(gutter(PROJECT_BODY))
   })
 })
 
@@ -160,7 +164,7 @@ describe('precedence text — the carrier of the layer ranking, not the position
     const prdtHome = makePrdtHome({ machineBody: MACHINE_BODY })
     const proj = makeProject({ projectBody: PROJECT_BODY })
     const ctx = additionalContextOf(runHook(MACHINE_HOOK, { prdtHome, cwd: proj }))
-    expect(ctx).toContain(MACHINE_BODY)
+    expect(ctx).toContain(gutter(MACHINE_BODY))
     expect(ctx).not.toContain('priority over EVERYTHING')
     expect(ctx).toContain('non-overridable floor')
     expect(ctx).toContain('§Overrides')
