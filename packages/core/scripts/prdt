@@ -859,6 +859,10 @@ def init_meta_split(root):
 #     (privilege escalation by side effect) and writing into a TRACKED hooks dir
 #     would dirty the user's working tree. Changing the user's git config is not
 #     ours to do either.
+#   * It does not vouch for a hook it did not write. prdt verifies OWNERSHIP (its
+#     marker), never behavior — running someone else's pre-push to see what it
+#     does is not a diagnostic's business. An unowned hook is reported
+#     `unverified`, never as an effective block (T-493).
 # That boundary is also why `isPrePushHookInstalled` reported false positives —
 # it stat'd `.git/hooks/pre-push` while git read somewhere else entirely. Every
 # check below resolves the EFFECTIVE dir git will actually use.
@@ -912,19 +916,30 @@ def prepush_status(root):
     often a file, not a dir).
 
     state:
-      no-repo   — codeRoot is not a git work tree (nothing to install into)
-      managed   — our generated hook (`current` = byte-identical to today's)
-      blocking  — someone else's pre-push that refuses `main` AND honors
-                  ALLOW_MAIN_PUSH (the NTF org `.githooks` hook): not ours, but
-                  the contracts claim holds and the hotfix path works
-      foreign   — a pre-push we cannot show to block main → unverified
-      missing   — no pre-push at the effective path → NOT blocked
+      no-repo    — codeRoot is not a git work tree (nothing to install into)
+      managed    — OUR generated hook: ownership verified by the marker
+                   (`current` = byte-identical to today's script)
+      unverified — a pre-push that is not ours. We do not claim it blocks `main`
+      missing    — no pre-push at the effective path → NOT blocked
     `hooks_path` is core.hooksPath when set — that config, not the file, is what
-    makes `.git/hooks` inert."""
+    makes `.git/hooks` inert.
+
+    T-493 removed a fourth state, `blocking`, which was decided by
+    `"ALLOW_MAIN_PUSH" in body and "main" in body`. A hook whose only occurrence
+    of either word sat in a COMMENT passed as effective, so `prdt doctor` printed
+    clean while `git push origin main` went straight through — the exact false
+    reassurance T-481 set out to end, for the population most likely to hit it
+    (anyone with a global core.hooksPath: husky, dotfiles, an org `.githooks`).
+    Ownership is the only thing verifiable without EXECUTING a hook we do not
+    own, and executing one is not a lint's business: a pre-push routinely runs a
+    test suite, and doctor is a standing diagnostic. So unowned == unverified,
+    and it always produces a doctor line. `mentions` below is wording for that
+    line only — never an input to the verdict."""
     cr = code_root(root)
     r = _git(["rev-parse", "--git-path", "hooks"], cr)
     if r.returncode != 0:
-        return {"state": "no-repo", "path": None, "hooks_path": None, "current": False}
+        return {"state": "no-repo", "path": None, "hooks_path": None,
+                "current": False, "mentions": False}
     d = Path(r.stdout.strip() or "hooks")
     if not d.is_absolute():
         d = Path(cr) / d
@@ -934,13 +949,14 @@ def prepush_status(root):
     try:
         body = hook.read_text(encoding="utf-8")
     except OSError:
-        return {"state": "missing", "path": hook, "hooks_path": hooks_path, "current": False}
+        return {"state": "missing", "path": hook, "hooks_path": hooks_path,
+                "current": False, "mentions": False}
     if PREPUSH_MARKER in body:
         return {"state": "managed", "path": hook, "hooks_path": hooks_path,
-                "current": body == PREPUSH_SCRIPT}
-    blocking = "ALLOW_MAIN_PUSH" in body and "main" in body
-    return {"state": "blocking" if blocking else "foreign", "path": hook,
-            "hooks_path": hooks_path, "current": False}
+                "current": body == PREPUSH_SCRIPT, "mentions": False}
+    return {"state": "unverified", "path": hook, "hooks_path": hooks_path,
+            "current": False,
+            "mentions": "ALLOW_MAIN_PUSH" in body and "main" in body}
 
 
 def ensure_prepush_hook(root):
@@ -965,7 +981,7 @@ def ensure_prepush_hook(root):
                     "detail": f"core.hooksPath={st['hooks_path']} — not ours to write", **st}
         if st["state"] == "managed" and st["current"]:
             return {"action": "ok", "detail": "managed hook current", **st}
-        if st["state"] in ("blocking", "foreign"):
+        if st["state"] == "unverified":
             return {"action": "skipped", "detail": "an unmanaged pre-push is in place", **st}
         upgrade = st["state"] == "managed"
         st["path"].parent.mkdir(parents=True, exist_ok=True)
@@ -993,16 +1009,26 @@ def prepush_warnings(root):
     if act == "upgraded":
         return [f"git: stale managed pre-push replaced at {p} — "
                 "ALLOW_MAIN_PUSH hotfix escape restored"]
-    if act != "skipped" or st in ("managed", "blocking", "no-repo"):
+    if act != "skipped" or st in ("managed", "no-repo"):
         return []
     hp = res.get("hooks_path")
     if hp and st == "missing":
         return [f"git: main-push block INACTIVE — core.hooksPath={hp} makes .git/hooks inert "
                 f"and {p} does not exist; add the block there (prdt writes no hooks outside "
                 ".git/hooks and never edits your git config)"]
-    if st == "foreign":
-        return [f"git: pre-push at {p} is not managed and does not honor ALLOW_MAIN_PUSH — "
-                "main-push block unverified, hotfix path may be stuck"]
+    if st == "unverified":
+        # `mentions` NEVER decides the verdict — it only picks which sentence is
+        # useful to the reader (T-493).
+        note = (" It does contain `main` and ALLOW_MAIN_PUSH, but words in a file are not a "
+                "block — a hook mentioning both only in comments used to pass this check."
+                if res.get("mentions") else
+                " Nothing in it mentions `main` or ALLOW_MAIN_PUSH at all.")
+        return [f"git: main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
+                "verifies ownership only (it never runs someone else's hook to find out what "
+                f"it does).{note} Until you have read it, assume nothing but you stops a push "
+                "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
+                + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
+                   "its own hook here" if hp else "")]
     return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
 
 

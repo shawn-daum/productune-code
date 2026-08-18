@@ -163,7 +163,12 @@ function miniPrdtHome(): string {
   return home
 }
 
-/** The bash hook's projectRoot for `cwd`, realpath-normalized. */
+/** The bash hook's projectRoot for `cwd`, EXACTLY as the hook printed it.
+ *  This used to end in `fs.realpathSync(m[1])`, which is how T-493 item 3 hid
+ *  here for two tickets: normalizing the hook's answer made a lexical answer and
+ *  a physical one compare equal, so the resolver divergence this file exists to
+ *  catch was invisible to it. A check must not share the assumption it checks.
+ *  The symlink cases live in prdt-resolver-symlink-parity.test.ts. */
 function hookRoot(cwd: string, home: string): string | null {
   const out = execFileSync('bash', [SESSION_HOOK], {
     input: JSON.stringify({ hook_event_name: 'SessionStart', cwd }),
@@ -173,7 +178,7 @@ function hookRoot(cwd: string, home: string): string | null {
   if (!out.trim()) return null
   const ctx = JSON.parse(out).hookSpecificOutput.additionalContext as string
   const m = ctx.match(/prdt project \(([^)]*)\)/)
-  return m ? fs.realpathSync(m[1]) : null
+  return m ? m[1] : null
 }
 
 /** The pre-T-484 rule, as a control: first marker walking up. */

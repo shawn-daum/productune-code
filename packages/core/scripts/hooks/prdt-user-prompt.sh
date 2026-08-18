@@ -36,7 +36,10 @@ if not isinstance(ev, dict):
 # construction and can never win; legitimate layouts carry exactly one marker on
 # the chain, so for them outermost == nearest). Same routine as
 # prdt-post-dispatch.sh and the bash find_proj hooks — all four answer alike.
-d = ev.get("cwd") or os.getcwd()
+# PHYSICAL first (T-493): realpath before walking, matching the CLI's
+# `Path.resolve()` — a lexical walk answers a DIFFERENT project whenever the cwd
+# carries a symlink component.
+d = os.path.realpath(ev.get("cwd") or os.getcwd())
 state_path = None
 while d and d != "/":
     p = os.path.join(d, ".prdt", "po-state.json")

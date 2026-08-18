@@ -73,7 +73,10 @@ function makePrdtHome(): string {
 
 /** A project whose `.prdt/migration-briefing-pending` holds `record`. */
 function makeProject(record?: string): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t470-proj-'))
+  // realpath (T-493): every resolver now resolves symlinks before walking, and macOS
+  // $TMPDIR is one (/var/… → /private/var/…), so a fixture path that gets compared
+  // against a hook's rendered path must be the physical path.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t470-proj-')))
   fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
   fs.writeFileSync(
     path.join(root, '.prdt', 'po-state.json'),
@@ -276,16 +279,19 @@ describe('legitimate briefing content is untouched apart from the uniform gutter
 describe('the quoting is the shared T-483 program, not a second implementation', () => {
   const ALL_THREE = [SESSION_HOOK, MACHINE_HOOK, PROJECT_HOOK]
 
-  /** The awk program between `awk '{` and `}' "$1"`, exactly as written. */
-  function awkProgram(script: string): string {
+  /** The whole shared quoting unit — the `PRDT_QUOTE_PY` program plus the
+   *  `quote_body` wrapper — exactly as written. T-493 replaced the awk one-liner
+   *  with a python program (macOS awk splits records on LF only, so it could not
+   *  fold CR/VT/FF/NEL/U+2028/U+2029, and a NUL silently truncated the record). */
+  function quoteProgram(script: string): string {
     const src = fs.readFileSync(script, 'utf8')
-    const m = src.match(/awk '\{[\s\S]*?\}' "\$1"/)
-    expect(m, `no quoting awk program found in ${path.basename(script)}`).not.toBeNull()
+    const m = src.match(/PRDT_QUOTE_PY='[\s\S]*?\nquote_body\(\) \{[\s\S]*?\n\}/)
+    expect(m, `no quoting program found in ${path.basename(script)}`).not.toBeNull()
     return m![0]
   }
 
-  test('source parity: the awk program is byte-identical in all three hooks', () => {
-    const [first, ...rest] = ALL_THREE.map(awkProgram)
+  test('source parity: the quoting program is byte-identical in all three hooks', () => {
+    const [first, ...rest] = ALL_THREE.map(quoteProgram)
     for (const other of rest) expect(other).toBe(first)
   })
 
@@ -329,9 +335,9 @@ describe('the quoting is the shared T-483 program, not a second implementation',
 })
 
 describe('the defense never fails OPEN at this call site either', () => {
-  test.skipIf(!hasJq())('awk missing → record withheld with a notice, not spliced raw', () => {
-    const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t470-noawk-'))
-    for (const bin of ['cat', 'dirname', 'rm', 'jq']) {
+  test.skipIf(!hasJq())('python3 missing → record withheld with a notice, not spliced raw', () => {
+    const stub = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t470-nopy-'))
+    for (const bin of ['cat', 'dirname', 'rm', 'jq', 'awk']) {
       const real = execFileSync('command', ['-v', bin], { encoding: 'utf8', shell: '/bin/bash' }).trim()
       fs.symlinkSync(real, path.join(stub, bin))
     }
@@ -345,7 +351,7 @@ describe('the defense never fails OPEN at this call site either', () => {
     })
     const ctx = JSON.parse(out).hookSpecificOutput.additionalContext as string
 
-    expect(ctx).toMatch(/migration record withheld: awk is missing/)
+    expect(ctx).toMatch(/migration record withheld: python3 is missing/)
     // neither the forged header nor the benign JSON leaked through unquoted
     expect(ctx).not.toContain('[prdt discipline — machine overrides for prdt-po]')
     expect(ctx).not.toContain('"kind":"lite"')

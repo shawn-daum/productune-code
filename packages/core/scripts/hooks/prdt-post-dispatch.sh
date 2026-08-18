@@ -57,7 +57,11 @@ persona = sub[len("prdt-"):]
 # CODE root (`<projectRoot>/<code.dir>`); this walk then resolves the parent
 # projectRoot, where `.prdt/` (and meta.git) live. Legacy layout finds it at
 # depth 0. All meta ops below anchor at this projectRoot.
-d = ev.get("cwd") or os.getcwd()
+# PHYSICAL first (T-493): realpath before walking — the CLI resolver does
+# (`Path.resolve()`), and a lexical walk answers a DIFFERENT project whenever the
+# cwd carries a symlink component, which is how the statusline and `prdt` ended
+# up reading/writing two different po-state files in one terminal.
+d = os.path.realpath(ev.get("cwd") or os.getcwd())
 root = None
 while d and d != "/":
     if os.path.isfile(os.path.join(d, ".prdt", "po-state.json")):

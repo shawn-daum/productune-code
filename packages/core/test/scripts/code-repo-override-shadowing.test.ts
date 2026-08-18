@@ -64,7 +64,10 @@ interface Layout {
 /** The real meta-split layout: `.prdt/` at the meta root, a `code/` git-repo
  *  stand-in nested inside, and a planted `.prdt/` inside the code tree. */
 function makeSplitLayout(opts: { plant?: boolean; plantDeep?: boolean } = {}): Layout {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t484-'))
+  // realpath (T-493): every resolver now resolves symlinks before walking, and macOS
+  // $TMPDIR is one (/var/… → /private/var/…), so a fixture path that gets compared
+  // against a hook's rendered path must be the physical path.
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t484-')))
   const codeRoot = path.join(root, 'code')
   const deep = path.join(codeRoot, 'src', 'deep')
   fs.mkdirSync(deep, { recursive: true })
@@ -146,7 +149,7 @@ describe('legitimate layouts resolve exactly as before (one marker → outermost
   })
 
   test.skipIf(!hasJq())('legacy layout (repo root holds .prdt) still resolves at depth 0', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t484-legacy-'))
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t484-legacy-')))
     fs.mkdirSync(path.join(root, '.prdt', 'overrides'), { recursive: true })
     fs.mkdirSync(path.join(root, 'src'), { recursive: true })
     fs.writeFileSync(path.join(root, '.prdt', 'po-state.json'), JSON.stringify(LEGIT_STATE))
@@ -156,7 +159,7 @@ describe('legitimate layouts resolve exactly as before (one marker → outermost
   })
 
   test.skipIf(!hasJq())('cwd outside any prdt project → still byte-identical silence', () => {
-    const loose = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t484-loose-'))
+    const loose = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t484-loose-')))
     expect(execFileSync('bash', [PROJECT_HOOK], {
       input: JSON.stringify({ agent_type: 'prdt-developer', cwd: loose }),
       encoding: 'utf8',
