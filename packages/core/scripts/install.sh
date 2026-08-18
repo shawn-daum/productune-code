@@ -23,9 +23,55 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # packages/core
 PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 say() { printf '%s\n' "$*"; }
+# T-485: every abort goes through die() — non-zero exit + the NAME of what is wrong
+# on stderr. A failed run is distinguishable from a clean one by exit code alone.
+die() { printf 'prdt-install: %s\n' "$*" >&2; exit 1; }
+TMP=""
+cleanup() { [ -n "${TMP:-}" ] || return 0; rm -f "$TMP"; }
+trap cleanup EXIT
 
-command -v jq >/dev/null 2>&1 || { echo "prdt-install: jq is required" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "prdt-install: python3 is required" >&2; exit 1; }
+command -v jq >/dev/null 2>&1 || die "jq is required"
+command -v python3 >/dev/null 2>&1 || die "python3 is required"
+
+# 0. Preflight the hook roster manifest — BEFORE anything is mirrored or written.
+#    scripts/hook-manifest.json is the SoT §1 (mirror copy) and §4 (settings.json
+#    registration) both derive from. It used to be read only inside §4's
+#    `jq … > "$TMP" && mv "$TMP" "$SETTINGS"`: `set -e` does NOT abort on a
+#    non-terminal failure in an `&&` list (bash 3.2.57 measured), so a missing or
+#    corrupt manifest made jq fail, the mv never ran, and the installer still
+#    printed "done" and exited 0 having registered ZERO hooks — the entire
+#    discipline injection silently gone on a teammate's machine. (T-485/S5)
+#    Validating up front also covers a bad $ROOT: the manifest path is under it.
+MANIFEST="$ROOT/scripts/hook-manifest.json"
+[ -f "$MANIFEST" ] || die "hook roster manifest not found: $MANIFEST — nothing installed"
+jq -e 'type == "object"' "$MANIFEST" >/dev/null 2>&1 \
+  || die "hook roster manifest is not valid JSON: $MANIFEST — nothing installed"
+jq -e '(.basenames | type) == "array" and (.basenames | length) > 0' "$MANIFEST" >/dev/null 2>&1 \
+  || die "hook roster manifest has no non-empty \`basenames\` array: $MANIFEST — nothing installed"
+jq -e '(.registrations | type) == "array" and (.registrations | length) > 0' "$MANIFEST" >/dev/null 2>&1 \
+  || die "hook roster manifest has no non-empty \`registrations\` array: $MANIFEST — nothing installed"
+jq -e 'all(.registrations[];
+         (.event | type) == "string" and (.hooks | type) == "array" and (.hooks | length) > 0)' \
+   "$MANIFEST" >/dev/null 2>&1 \
+  || die "hook roster manifest has a registration without a string \`event\` or a non-empty \`hooks\` array: $MANIFEST — nothing installed"
+
+UNKNOWN_HOOKS="$(jq -r '((.registrations | map(.hooks[])) - .basenames) | unique | join(", ")' "$MANIFEST")"
+[ -z "$UNKNOWN_HOOKS" ] \
+  || die "hook roster manifest registers hooks absent from \`basenames\`: $UNKNOWN_HOOKS — nothing installed"
+
+# The roster drives §1's copy loop too, so the hand-written cp list can no longer
+# drift from the manifest (that drift is how a registration ends up pointing at a
+# script the installer never copied).
+HOOK_BASENAMES="$(jq -r '.basenames[]' "$MANIFEST")"
+MISSING_HOOKS=""
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  [ -f "$ROOT/scripts/hooks/$b" ] || MISSING_HOOKS="$MISSING_HOOKS $b"
+done <<EOF
+$HOOK_BASENAMES
+EOF
+[ -z "$MISSING_HOOKS" ] \
+  || die "hook scripts named by the manifest are missing from $ROOT/scripts/hooks:$MISSING_HOOKS — nothing installed"
 
 # 1. mirror (1-way: repo → home). User content lives in the two NON-mirrored stores
 #    — overrides/ (per-turn rules) and wiki/ (machine facts, §8b) — which this step
@@ -36,15 +82,28 @@ mkdir -p "$PRDT_HOME/overrides" "$PRDT_HOME/wiki" "$PRDT_HOME/hooks" "$PRDT_HOME
 rm -rf "$PRDT_HOME/discipline"
 cp -R "$ROOT/discipline" "$PRDT_HOME/discipline"
 cp "$ROOT/doctrine.md" "$PRDT_HOME/doctrine.md"
-cp "$ROOT/scripts/hooks/prdt-session-start.sh" "$ROOT/scripts/hooks/prdt-post-compact.sh" \
-   "$ROOT/scripts/hooks/prdt-post-dispatch.sh" "$ROOT/scripts/hooks/prdt-user-prompt.sh" \
-   "$ROOT/scripts/hooks/prdt-overrides-inject.sh" "$ROOT/scripts/hooks/prdt-audience-inject.sh" \
-   "$ROOT/scripts/hooks/prdt-plan-tier-inject.sh" "$ROOT/scripts/hooks/prdt-project-overrides-inject.sh" \
-   "$ROOT/scripts/hooks/prdt-auto-open.sh" \
-   "$PRDT_HOME/hooks/"
+# hook set = the manifest roster (T-485: was a hand-written list that could drift
+# from what §4 registers). Existence in the source tree was preflighted above.
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  cp "$ROOT/scripts/hooks/$b" "$PRDT_HOME/hooks/$b"
+done <<EOF
+$HOOK_BASENAMES
+EOF
 cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
 cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
 chmod +x "$PRDT_HOME/hooks/"*.sh "$PRDT_HOME/bin/prdt" "$PRDT_HOME/bin/statusline-prdt.sh"
+
+# Never let §4 register a command that is not an executable file on this machine.
+UNMIRRORED=""
+while IFS= read -r b; do
+  [ -n "$b" ] || continue
+  [ -x "$PRDT_HOME/hooks/$b" ] || UNMIRRORED="$UNMIRRORED $b"
+done <<EOF
+$HOOK_BASENAMES
+EOF
+[ -z "$UNMIRRORED" ] \
+  || die "hooks failed to mirror into $PRDT_HOME/hooks:$UNMIRRORED — settings.json not touched"
 
 # menus are derived — regenerate against the installed mirror
 PRDT_DISCIPLINE="$PRDT_HOME/discipline" "$PRDT_HOME/bin/prdt" menus >/dev/null
@@ -89,10 +148,12 @@ cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
 #    installPrdtHooks reduces over too), via jq --slurpfile. Edit the manifest, not this
 #    reduce, to change the roster.
 say "4) Registering hook 9종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
-SETTINGS="$CLAUDE_DIR/settings.json"
-MANIFEST="$ROOT/scripts/hook-manifest.json"
+SETTINGS="$CLAUDE_DIR/settings.json"   # MANIFEST preflighted in §0
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-TMP="$(mktemp)"
+# temp lives NEXT TO settings.json so the mv below is an atomic same-filesystem
+# rename: settings.json is either the fully verified new content or byte-identical
+# to what it was — never a half-written middle state. (T-485)
+TMP="$(mktemp "$SETTINGS.XXXXXX")"
 jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   # C3a: legacy pdt-* hook basenames this repo distributed (deleted in T-293/T-311).
   (["post-edit-format.sh","post-compact-doctrine.sh","stop-verify.sh",
@@ -138,7 +199,25 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
         | (endswith("/scripts/statusline-productune.sh")
            or endswith("/scripts/statusline-productune.sh\"")))
    then del(.statusLine) else . end)
-' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+' "$SETTINGS" > "$TMP" || die "settings merge failed (jq) — $SETTINGS left unchanged, no hooks registered"
+
+# Verify the CANDIDATE before it replaces settings.json, so the file can never end
+# up claiming a registration that is not really there: every manifest registration
+# must be present, and no command under $PRDT_HOME/hooks/ may be present that the
+# manifest did not ask for (stale/dangling entries). (T-485)
+jq -e --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
+  ($manifest[0].registrations) as $regs |
+  ([$regs[] | .event as $ev | .hooks[] | {ev: $ev, cmd: ("\"" + $h + . + "\"")}]) as $want |
+  ([(.hooks // {}) | to_entries[] | .key as $ev | (.value // [])[]
+    | (.hooks // [])[] | {ev: $ev, cmd: (.command // "")}]) as $got |
+  all($want[]; . as $w | any($got[]; . == $w))
+  and all($got[]; . as $g
+    | ((($g.cmd | startswith($h)) or ($g.cmd | startswith("\"" + $h))) | not)
+      or any($want[]; . == $g))
+' "$TMP" >/dev/null \
+  || die "hook registration did not match the manifest roster — $SETTINGS left unchanged"
+mv "$TMP" "$SETTINGS"
+TMP=""
 
 # 5. PATH symlink
 if [ -d "$HOME/.local/bin" ] || mkdir -p "$HOME/.local/bin" 2>/dev/null; then
@@ -164,9 +243,12 @@ esac
 
 if [ "$REGISTER_STATUSLINE" = true ]; then
   say "6) Registering statusline"
-  TMP="$(mktemp)"
+  TMP="$(mktemp "$SETTINGS.XXXXXX")"
   jq --arg cmd "$PRDT_HOME/bin/statusline-prdt.sh" \
-     '.statusLine = {type: "command", command: ("\"" + $cmd + "\"")}' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
+     '.statusLine = {type: "command", command: ("\"" + $cmd + "\"")}' "$SETTINGS" > "$TMP" \
+    || die "statusline registration failed (jq) — $SETTINGS left unchanged"
+  mv "$TMP" "$SETTINGS"
+  TMP=""
   python3 - "$ENV_FILE" <<'PYEOF'
 import sys
 path = sys.argv[1]
