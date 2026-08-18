@@ -19,6 +19,17 @@
  * a helper-level test of reindex_tickets/index_wiki_rows passes while the CLI
  * lies. The last test pins the shape structurally — `open_db` no longer offers a
  * destructive mode, so no future caller can drop the file and re-fill half of it.
+ *
+ * T-488 (second describe) is the same complete-looking wrong answer reached from
+ * the other side: index.db is meta-excluded, so a freshly cloned project has NO
+ * index. Every command used to create it empty and fill only its own slice, so a
+ * clone answered `wiki search` with machine hits alone. The fix derives a MISSING
+ * index whole, once — an EXISTING index is never re-derived by a query, which is
+ * what keeps the T-480 tests above honest: a wiped slice stays wiped until a
+ * `reindex`, so a re-introduced wipe still turns them red rather than healing
+ * itself between two commands. That distinction is asserted directly against
+ * index.db (`projectRows`), not only through search output, so it survives any
+ * future change to how search reads.
  */
 
 import path from 'path'
@@ -39,12 +50,46 @@ let sandbox: string
 let machineHome: string
 let projectDir: string
 
-function runPrdt(args: string[], input?: string): string {
+function runPrdtAt(cwd: string, args: string[], input?: string): string {
   return execFileSync('python3', [PRDT_CLI, ...args], {
-    cwd: projectDir, env: { ...process.env, PRDT_HOME: machineHome },
+    cwd, env: { ...process.env, PRDT_HOME: machineHome },
     input, encoding: 'utf-8',
     stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], timeout: 20000,
   })
+}
+
+function runPrdt(args: string[], input?: string): string {
+  return runPrdtAt(projectDir, args, input)
+}
+
+/** Rows of ONE store's slice, read straight out of the derived index. The defect
+ *  both tickets describe is an emptied slice, so the slice — not the rendered
+ *  search output — is the honest place to assert. */
+function projectRows(dir: string, table: 'wiki_pages' | 'wiki_fts'): number {
+  const out = execFileSync('python3', ['-c',
+    'import sqlite3,sys\n' +
+    `print(sqlite3.connect(sys.argv[1]).execute("SELECT COUNT(*) FROM ${table} ` +
+    `WHERE name NOT LIKE \'machine:%\'").fetchone()[0])`,
+    path.join(dir, '.prdt', 'index.db')], { encoding: 'utf-8' })
+  return Number(out.trim())
+}
+
+function metaGit(args: string[], cwd = projectDir): string {
+  return execFileSync('git', ['--git-dir', path.join(projectDir, '.prdt', 'meta.git'),
+    '--work-tree', projectDir, ...args], { cwd, encoding: 'utf-8' })
+}
+
+/** A REAL clone of the meta repo `prdt init` created — same `info/exclude`, so
+ *  index.db is left behind exactly the way a teammate's `git clone` leaves it.
+ *  Simulating "empty index" by deleting the file would not prove the delivery
+ *  path is what drops it. */
+function cloneProject(): string {
+  metaGit(['add', '-A', '--', '.prdt', 'docs'])
+  metaGit(['commit', '-q', '-m', 'meta snapshot'])
+  const dest = path.join(sandbox, 'clone')
+  execFileSync('git', ['clone', '--quiet', path.join(projectDir, '.prdt', 'meta.git'), dest],
+    { cwd: sandbox, encoding: 'utf-8' })
+  return dest
 }
 
 function writePage(dir: string, name: string, fm: Record<string, string>, body: string) {
@@ -134,13 +179,27 @@ describe.skipIf(!PYTHON3)('derived index — one command never empties another c
     expect(out).toMatch(/machine:fact--qa-vm/)
   })
 
-  test('a search after tickets equals a search after a fresh reindex', () => {
+  test('after tickets, the project slice is still populated IN THE INDEX', () => {
+    // Was "a search after tickets equals a search after a fresh reindex" (T-480).
+    // Rewritten in T-488 to assert against index.db directly: the equality of two
+    // search outputs is only evidence while search does not re-derive the project
+    // slice itself. The day someone makes search self-heal — the naive fix for
+    // T-488 — the wipe would be repaired in between and the comparison would go
+    // green over an index that had in fact been emptied. The row count cannot be
+    // fooled that way: it is read after `tickets` and before anything queries.
     seedProject()
+    const seeded = projectRows(projectDir, 'wiki_pages')
+    expect(seeded).toBeGreaterThan(0)
+
     runPrdt(['tickets', '--version', 'v1.6'])
+
+    expect(projectRows(projectDir, 'wiki_pages')).toBe(seeded)
+    expect(projectRows(projectDir, 'wiki_fts')).toBe(seeded)
+
+    // behavioural corollary, kept: what the user sees is the same either way
     const afterTickets = runPrdt(['wiki', 'search', 'isolation rule that belongs'])
     runPrdt(['wiki', 'reindex'])
-    const afterReindex = runPrdt(['wiki', 'search', 'isolation rule that belongs'])
-    expect(afterTickets).toBe(afterReindex)
+    expect(afterTickets).toBe(runPrdt(['wiki', 'search', 'isolation rule that belongs']))
   })
 
   test('tickets still reports from a freshly derived index (a ticket added since is listed)', () => {
@@ -178,5 +237,79 @@ describe.skipIf(!PYTHON3)('derived index — one command never empties another c
     for (const fn of ['reindex_tickets', 'reindex_wiki', 'index_machine_wiki']) {
       expect(rebuildBody).toMatch(new RegExp(`${fn}\\(`))
     }
+  })
+})
+
+describe.skipIf(!PYTHON3)('a freshly cloned project searches its own wiki (T-488)', () => {
+  const PROBE = 'isolation rule that belongs'
+
+  test('index.db does not travel with the clone — the precondition, stated', () => {
+    seedProject()
+    const clone = cloneProject()
+    // `.prdt/index.db` sits in the meta repo's info/exclude (META_EXCLUDE_DEFAULT),
+    // so what a teammate gets is the md and no index at all.
+    expect(fs.existsSync(path.join(clone, '.prdt', 'index.db'))).toBe(false)
+    expect(fs.existsSync(path.join(clone, 'docs', 'wiki', 'decision--isolation.md'))).toBe(true)
+  })
+
+  test('the first search in a clone answers with project pages, not machine hits alone', () => {
+    seedProject()
+    const clone = cloneProject()
+
+    const out = runPrdtAt(clone, ['wiki', 'search', PROBE])
+    // THE defect: this line was absent while the machine line below printed, so
+    // the clone's search read as a complete answer over an empty project slice.
+    expect(out).toMatch(/^decision--isolation/m)
+    expect(out).toMatch(/machine:fact--qa-vm/)
+    expect(projectRows(clone, 'wiki_pages')).toBeGreaterThan(0)
+  })
+
+  test('a clone whose first command is `tickets` still searches whole', () => {
+    // The realistic order: PO habit fires `prdt tickets --link` long before any
+    // search, so `tickets` is usually what creates index.db in a fresh clone. A
+    // cold start that filled only the calling command's slice would put the clone
+    // straight back into the T-480 state.
+    seedProject()
+    const clone = cloneProject()
+
+    runPrdtAt(clone, ['tickets', '--version', 'v1.6'])
+
+    expect(runPrdtAt(clone, ['wiki', 'search', PROBE])).toMatch(/^decision--isolation/m)
+  })
+
+  test('the read-only search writes nothing into docs/ — no standing meta diff', () => {
+    // The naive fix (reindex on every search) was rejected in T-480 for exactly
+    // this: docs/wiki/index.md is meta-tracked, so a query that regenerates it
+    // leaves every clone permanently dirty.
+    seedProject()
+    const clone = cloneProject()
+    const idx = path.join(clone, 'docs', 'wiki', 'index.md')
+    const before = fs.readFileSync(idx, 'utf-8')
+
+    runPrdtAt(clone, ['wiki', 'search', PROBE])
+
+    expect(fs.readFileSync(idx, 'utf-8')).toBe(before)
+    expect(execFileSync('git', ['status', '--porcelain', '--', 'docs'],
+      { cwd: clone, encoding: 'utf-8' }).trim()).toBe('')
+  })
+
+  test('the derive is paid once — a warm index is not re-derived by a query', () => {
+    // The other half of the acceptance, and the guard that keeps the T-480 tests
+    // above meaningful: only a MISSING index is derived. Editing a page after the
+    // index exists must NOT show up, because an implementation that re-scanned
+    // docs/wiki on every search would also silently repair a wiped slice.
+    seedProject()
+    const clone = cloneProject()
+    runPrdtAt(clone, ['wiki', 'search', PROBE])
+
+    writePage(path.join(clone, 'docs', 'wiki'), 'decision--isolation',
+      { title: 'isolation decision', type: 'decision' }, 'REWRITTENSINCEINDEXING body')
+
+    expect(runPrdtAt(clone, ['wiki', 'search', PROBE])).toMatch(/^decision--isolation/m)
+    expect(runPrdtAt(clone, ['wiki', 'search', 'REWRITTENSINCEINDEXING'])).toMatch(/no hits/)
+    // and the documented way to pick it up
+    runPrdtAt(clone, ['wiki', 'reindex'])
+    expect(runPrdtAt(clone, ['wiki', 'search', 'REWRITTENSINCEINDEXING']))
+      .toMatch(/^decision--isolation/m)
   })
 })
