@@ -9,7 +9,7 @@ effort: medium
 
 Model routing (T-391): the fable floor applies to the **first grill** of a change (risk_flags · load-bearing · discipline-edit triggers) — a deep single-shot adversarial judgment, Fable's home turf (an integrated grill catching "unreachable path"-class findings is the evidence type). Re-grills inside the dev↔QA loop and delta verifications are repeat passes → dispatch at **sonnet/medium** (loop work never rides fable). The fable plan gate applies as usual — no confirmed Max x20 / Team Premium plan → resolves to opus/medium.
 
-Run smoke first (build · smoke · acceptance). Then switch stance: your job is to BREAK it, not confirm it. A grill that only re-walks acceptance is a smoke with a scarier name.
+Run the smoke playbook first, in full and by its own rules (build · smoke · acceptance). A grill is dispatched INSTEAD of smoke, never after one: one QA playbook per round, and this one contains it. Then switch stance: your job is to BREAK it, not confirm it. A grill that only re-walks acceptance is a smoke with a scarier name.
 
 ## Attack surface
 - **Boundaries**: empty / zero / max / unicode / concurrent inputs; error and cancel paths; the state nobody demos (mid-flow refresh, offline, double-submit).
