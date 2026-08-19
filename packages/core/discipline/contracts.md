@@ -9,7 +9,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - The worker selects its own playbook(s) even when a dispatch names a procedure (two-way defense against PO habit regression). Report picks in `playbooks_run[]`.
 - Before dispatch the PO matches `change_meta` against the persona's generated menu (`playbooks/_index.md`) and dispatches at the MAX `model_floor`/`effort` among plausible matches.
 - No worker↔worker calls — the PO is the single hub. `AskUserQuestion` is PO-only; workers return `needs_info` + `next_question` and the PO relays.
-- Impl return whose `change_meta` is user-facing or risky → PO auto-dispatches QA (no user confirm). Dev↔QA retry cap ~3, then surface to the user.
+- Impl return whose `change_meta` is user-facing or risky → PO auto-dispatches QA (no user confirm), its ENTRY playbook exactly one of smoke/grill: `risk_flags` / load-bearing / cross-cutting → `grill`, which runs smoke inside itself — everything else → `smoke`. Never both for one round; a grill IS the smoke. That choice is the whole scope of this rule — a follow-up dispatch QA's own `escalate_to` asks for (e.g. ds-conformance) and the ritual multi-playbook QA dispatches (ship-entry readiness) are untouched by it. Dev↔QA retry cap ~3, then surface to the user.
 
 ## Return envelope — single JSON object, first stdout char `{`
 - Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) · `confidence`(0..1)
