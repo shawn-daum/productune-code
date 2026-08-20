@@ -29,6 +29,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { checkPrdtHooksStatus, installPrdtHooksForProject } from './onboarding'
+import hookManifest from '../../../core/scripts/hook-manifest.json'
 
 interface Case {
   readonly label: string
@@ -38,7 +39,10 @@ interface Case {
 const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
-const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh', 'prdt-audience-inject.sh', 'prdt-plan-tier-inject.sh', 'prdt-overrides-inject.sh', 'prdt-project-overrides-inject.sh', 'prdt-auto-open.sh']
+// T-491: derived from the manifest SoT, never a hand-copied list — this literal
+// was 9 basenames and went stale the moment the roster grew to 10, which is the
+// exact drift class T-445 was about.
+const PRDT_HOOKS: readonly string[] = hookManifest.basenames
 
 function makeHome(withMirror: boolean): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t305-home-'))
@@ -101,7 +105,7 @@ export const CASES: readonly Case[] = [
     },
   },
   {
-    label: 'mirror present, settings.json already has all 9 prdt hooks → installed:true',
+    label: 'mirror present, settings.json already has the whole manifest roster → installed:true',
     run: () => {
       const home = makeHome(true)
       const h = (b: string) => ({ type: 'command', command: `"${path.join(home, '.prdt', 'hooks', b)}"` })
@@ -118,6 +122,8 @@ export const CASES: readonly Case[] = [
             { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
+          PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
+          PreToolUse: [{ hooks: [h('prdt-call-governor.sh')] }],
         },
       }))
       const status = checkPrdtHooksStatus(home)
