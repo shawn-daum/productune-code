@@ -437,7 +437,7 @@ function buildAppMenu(): Menu {
       submenu: [
         {
           label: 'productune docs',
-          click: () => shell.openExternal('https://github.com/shawn-kim-axz/productune'),
+          click: () => shell.openExternal('https://github.com/shawn-daum/productune-code'),
         },
       ],
     },
