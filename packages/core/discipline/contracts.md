@@ -4,7 +4,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 
 ## Dispatch — PO sends intent, never procedure
 - One inline `[ctx]` JSON line opens every dispatch:
-  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md"}`
+  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`
 - The PO states WHAT · WHY · acceptance — never steps, order, or tools. Procedure belongs to the worker's playbooks.
 - The worker selects its own playbook(s) even when a dispatch names a procedure (two-way defense against PO habit regression). Report picks in `playbooks_run[]`.
 - Before dispatch the PO matches `change_meta` against the persona's generated menu (`playbooks/_index.md`) and dispatches at the MAX `model_floor`/`effort` among plausible matches.
@@ -33,8 +33,8 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 ## Fixed paths — never improvise, never version a filename
 | What | Path |
 |---|---|
-| PRD (single living file) | `docs/prd/PRD.md` |
-| Design system (single living file) | `docs/design.md` |
+| PRD (single living file) | `docs/prd/PRD.md` — per-version scope estimation only (Why · gate · What · Non-goals · Risk · metrics); feature specs live in `docs/features/`. `[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`: the read unit is the standing head + that ONE version section, never the whole file. A closed version section is that round's immutable record — append a supersede note, never rewrite it. |
+| Design system · feature specs (single living, designer-authored, worker-read) | `docs/design.md` · `docs/features/<feature>.md` — `<feature>` is the ticket frontmatter `feature:` value verbatim; flat dir, no index file (`ls` is the index). Holds the CURRENT contract only — every fact carries `(vX~)` or `(vX~vY, replaced-by …)`, and an invalidated fact is annotated, never deleted; history · lessons · provenance stay in `docs/wiki/`. Frontmatter edges are a closed vocabulary, forward direction only (the reverse is a grep): `depends-on: []` · `parent:`. Never `[[…]]` here — `prdt wiki lint` covers `docs/wiki/` alone, so a wikilink out of that store is an unchecked dead link. |
 | User-review artifacts | `docs/artifacts/<slug>.<ext>` |
 | Tickets | `docs/tickets/<version>/T-NNN.md` (`<version>` = `v<N>.<m>` or patch `v<N>.<m>.<p>`) · backlog/roadmap = `docs/tickets/backlog/`, `docs/tickets/v<N>.<m>/` |
 | Wiki | `docs/wiki/` — `index.md` and playbook `_index.md` menus are CLI-generated; never hand-edit |
