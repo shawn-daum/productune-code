@@ -32,6 +32,10 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 - **If measuring requires a product feature (analytics, event log, feedback hook) → that feature enters PRD scope now.** Qualitative goal → name the observation method (user watch session, interview). Never leave measurement unstated.
 - Previous version's retro shows an unobserved outcome → surface it as your first question (the PO already confirmed once at Define entry).
 
+## What the PRD does NOT hold
+- The PRD holds per-version scope estimation. A feature's CURRENT spec goes to `docs/features/<feature>.md` (contracts §Fixed paths) — write it there and cite it from the version section; never restate a live contract inside a version section.
+- A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. The read unit you author for is the standing head + ONE version section.
+
 ## Page style (the user reads this file directly)
 - Heading rhythm H2 version / H3 section / H4 feature-chunk; never skip levels; no bullet walls — one claim per bullet, one sentence.
 - Backticks for real identifiers only; comparisons are tables; no ASCII diagrams in code fences (use a table, nested list, or mermaid).

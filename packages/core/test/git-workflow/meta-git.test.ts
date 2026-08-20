@@ -670,3 +670,50 @@ test('C3: bootstrap restores config THEN refreshes info/exclude with <code.dir>/
 
   fs.rmSync(B, { recursive: true, force: true })
 })
+
+// ── docs/features allowlist coverage (T-476) ──────────────────────────────────
+// Measured miss: `docs/features/` was in NO allowlist when the dir was created,
+// so meta autosave left it `?? docs/features/` forever — the docs/design.md
+// failure class (T-427) verbatim, one row later in contracts §Fixed paths.
+
+test('DEFAULT_META_ALLOWLIST covers docs/features (contracts Fixed paths)', () => {
+  expect(DEFAULT_META_ALLOWLIST).toContain('docs/features')
+})
+
+test('a fresh project auto-commits a docs/features/<feature>.md spec to meta history', async () => {
+  fs.mkdirSync(path.join(projectDir, 'docs', 'features'), { recursive: true })
+  fs.writeFileSync(path.join(projectDir, 'docs', 'features', 'meta-split.md'), '# meta-split\n')
+
+  await initMetaRepo(projectDir)
+  const res = await commitMeta(projectDir, 'T-476 [manual: →] feature spec snapshot')
+
+  expect(res.committed).toBe(true)
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).toContain('docs/features/meta-split.md')
+})
+
+test('an EXISTING project (allowlist copied before docs/features landed) picks it up via self-heal', async () => {
+  // Every project initialized before T-476 carries a frozen copy of the old
+  // default in config.json — the reason the fix has to ride readMetaAllowlist's
+  // union, not just the init-time copy.
+  const staleOldDefault = [
+    '.prdt', '.productune', 'briefs', 'docs/design.md', 'docs/prd', 'docs/tickets',
+    'docs/wiki', 'docs/designer', 'docs/developer', 'docs/po', 'docs/qa',
+    'docs/artifacts', 'docs/retrospectives', 'docs/archive',
+  ]
+  writeMetaAllowlist(projectDir, [...staleOldDefault, 'docs/looseNote.md'])
+  fs.writeFileSync(path.join(projectDir, 'docs', 'looseNote.md'), 'note\n')
+  fs.mkdirSync(path.join(projectDir, 'docs', 'features'), { recursive: true })
+  fs.writeFileSync(path.join(projectDir, 'docs', 'features', 'git-workflow.md'), '# git-workflow\n')
+
+  const merged = readMetaAllowlist(projectDir)
+  expect(merged).toContain('docs/features')
+  expect(merged).toContain('docs/looseNote.md')
+
+  await initMetaRepo(projectDir)
+  await commitMeta(projectDir, 'T-476 [manual: →] existing-project feature spec')
+
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).toContain('docs/features/git-workflow.md')
+  expect(tracked).toContain('docs/looseNote.md')
+})

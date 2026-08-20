@@ -228,11 +228,18 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta allowlist drift (T-428 item 2)',
 })
 
 describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (T-428 item 3)', () => {
-  const PY_DEFAULT = [
-    '.prdt', '.productune', 'briefs', 'docs/design.md', 'docs/prd', 'docs/tickets',
-    'docs/wiki', 'docs/designer', 'docs/developer', 'docs/po', 'docs/qa',
-    'docs/artifacts', 'docs/retrospectives', 'docs/archive',
-  ]
+  /** The python CLI's OWN default, parsed out of the real script rather than
+   * hand-copied here. T-476 tripped the hand-copied version: adding
+   * docs/features to both real defaults (they stayed in parity) still failed
+   * the "matching fixture" test below, because the fixture was a stale THIRD
+   * copy of the list this suite exists to keep at two. */
+  const PY_DEFAULT: string[] = (() => {
+    const m = /META_ALLOWLIST_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    if (!m) throw new Error('META_ALLOWLIST_DEFAULT not found in the prdt CLI')
+    const entries = m[1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+    if (entries.length < 5) throw new Error(`parsed a suspiciously short default: ${entries.join()}`)
+    return entries
+  })()
 
   /** A throwaway copy of the CLI script + a fixture TS sibling at the SAME
    * relative path (`../src/git-workflow/meta-git.ts`) the real repo has — lets
@@ -282,5 +289,53 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
     fs.chmodSync(cli, 0o755)
     const out = doctor(cli)
     expect(out).not.toMatch(/allowlist default drift/)
+  })
+})
+
+/**
+ * T-476: docs/features/ was outside every allowlist when the dir was created,
+ * so meta autosave never committed it. The doctor side of that story matters
+ * because the designer report claimed doctor stayed silent — it does NOT: item
+ * 2's drift check reads the EFFECTIVE allowlist, so before the fix it would
+ * have flagged the dir, and after the fix it must go quiet. Both directions are
+ * asserted here so neither the fix nor the detector can regress unnoticed.
+ */
+describe.skipIf(!PYTHON3)('prdt doctor — docs/features is allowlisted (T-476)', () => {
+  test('a fresh init writes docs/features into config.json meta.allowlist', () => {
+    runInit()
+    const cfg = JSON.parse(fs.readFileSync(path.join(projectDir, '.prdt', 'config.json'), 'utf-8'))
+    expect(cfg.meta.allowlist).toContain('docs/features')
+  })
+
+  test('an uncommitted docs/features/<feature>.md spec is NOT flagged as drift', () => {
+    runInit()
+    fs.mkdirSync(path.join(projectDir, 'docs', 'features'), { recursive: true })
+    fs.writeFileSync(path.join(projectDir, 'docs', 'features', 'meta-split.md'), '# meta-split\n')
+    const out = doctor()
+    expect(out).not.toContain('docs/features/meta-split.md')
+    expect(out).not.toMatch(/outside the effective meta allowlist/)
+  })
+
+  test('a project whose config.json predates docs/features stays silent too (self-heal)', () => {
+    runInit()
+    const cfgPath = path.join(projectDir, '.prdt', 'config.json')
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+    cfg.meta.allowlist = cfg.meta.allowlist.filter((e: string) => e !== 'docs/features')
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2))
+
+    fs.mkdirSync(path.join(projectDir, 'docs', 'features'), { recursive: true })
+    fs.writeFileSync(path.join(projectDir, 'docs', 'features', 'meta-split.md'), '# meta-split\n')
+    const out = doctor()
+    expect(out).not.toMatch(/outside the effective meta allowlist/)
+  })
+
+  // Positive control: the silence above is coverage, not a dead detector.
+  test('a sibling docs dir that is NOT allowlisted still warns', () => {
+    runInit()
+    fs.mkdirSync(path.join(projectDir, 'docs', 'featurez'), { recursive: true })
+    fs.writeFileSync(path.join(projectDir, 'docs', 'featurez', 'meta-split.md'), '# nope\n')
+    const out = doctor()
+    expect(out).toContain('docs/featurez/meta-split.md')
+    expect(out).toMatch(/outside the effective meta allowlist/)
   })
 })

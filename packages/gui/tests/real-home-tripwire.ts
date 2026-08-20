@@ -87,6 +87,7 @@ export interface VerifyOptions {
 interface TripwireImpl {
   tripwireNameOnlySubtrees(): string[]
   tripwireSizeOnlyPaths(): string[]
+  tripwireExcludedSubtrees(): string[]
   tripwireSurfaces(): string[]
   snapshotRealHome(): HomeSnapshot
   diffSnapshots(before: HomeSnapshot, after: HomeSnapshot): SurfaceDrift[]
@@ -114,6 +115,17 @@ export const tripwireNameOnlySubtrees = (): string[] => impl.tripwireNameOnlySub
  * the shape of a sanctioned `launchApp()` flushing NSUserDefaults.
  */
 export const tripwireSizeOnlyPaths = (): string[] => impl.tripwireSizeOnlyPaths()
+
+/**
+ * Subtrees DROPPED from the walk entirely (T-491): no line for the root or
+ * anything under it. Currently only `~/.prdt/run/` — the call-governor hook's
+ * own counter directory, tooling-owned per contracts §Return envelope
+ * (2026-08-20) and rewritten on every tool call of the governed session
+ * running the suite itself. Name-only mode does not suffice here because it
+ * still treats a removal as drift, and this writer's whole repertoire is
+ * create-then-remove.
+ */
+export const tripwireExcludedSubtrees = (): string[] => impl.tripwireExcludedSubtrees()
 export const tripwireSurfaces = (): string[] => impl.tripwireSurfaces()
 export const snapshotRealHome = (): HomeSnapshot => impl.snapshotRealHome()
 export const diffSnapshots = (before: HomeSnapshot, after: HomeSnapshot): SurfaceDrift[] =>

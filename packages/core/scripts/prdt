@@ -474,12 +474,13 @@ def prompt_version(default):
 
 # Byte-parity with core's DEFAULT_META_ALLOWLIST (meta-git.ts) — see its
 # T-427 audit comment for the include/exclude rationale per contracts.md's
-# Fixed paths table (docs/design.md IN; docs/DEPLOY.md, docs/testing.md etc.
-# project-local, NOT contracts-fixed, so left out of the shared default).
-META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md", "docs/prd",
-                          "docs/tickets", "docs/wiki", "docs/designer", "docs/developer",
-                          "docs/po", "docs/qa", "docs/artifacts", "docs/retrospectives",
-                          "docs/archive"]
+# Fixed paths table: docs/design.md + docs/features IN (T-476 — one row);
+# docs/DEPLOY.md, docs/testing.md etc. project-local, NOT contracts-fixed,
+# so left out of the shared default.
+META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md",
+                          "docs/features", "docs/prd", "docs/tickets", "docs/wiki",
+                          "docs/designer", "docs/developer", "docs/po", "docs/qa",
+                          "docs/artifacts", "docs/retrospectives", "docs/archive"]
 META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
                         ".cost-*.json", ".subagent-gate.json", "worktrees/"]
 
