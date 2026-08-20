@@ -1402,6 +1402,127 @@ def is_rule_line(raw, key):
     return len(key) >= 8 and re.search(r"\w", key) is not None
 
 
+# ── hook roster + fire evidence (T-445 / T-491) ───────────────────────────────
+# Derivation chain: scripts/hook-manifest.json is the SoT; install.sh mirrors
+# EXACTLY the manifest basenames into $PRDT_HOME/hooks and registers exactly the
+# manifest registrations. The manifest itself is not shipped into the mirror, so
+# on an installed machine the mirror IS the roster, and that is what doctor
+# reads — never a list hand-copied into this file (the T-445 drift class).
+GOVERNOR_HOOK = "prdt-call-governor.sh"
+# Counting (PostToolBatch) and enforcing (PreToolUse) are a pair: register the
+# enforcer alone and it reads a counter nothing increments — silent
+# non-enforcement that looks exactly like a governor with nothing to say.
+GOVERNOR_EVENTS = ("PostToolBatch", "PreToolUse")
+# T-491 R2-2: the `.fired-<event>` marker is create-once — the hook only ever
+# `>`-truncates it, so once it exists it exists forever, and doctor's
+# is_file() check goes green on day 1 and STAYS green even if a later harness
+# upgrade changes the payload shape enough to make the hook silently fail open
+# (T-445's lesson: an accepted-but-dead registration leaves no other trace).
+# A calendar-age check on the marker's own mtime is the only thing that can
+# still tell "fired" apart from "fired once, a long time ago". 7 days is the
+# threshold: the governor is matcher-less and fires on EVERY tool call in
+# EVERY prdt project on the machine, so a week with no fire at all already
+# means no prdt-developer/-qa/-designer dispatch ran anywhere on this machine
+# in that window — rare for an active install — while staying wider than one
+# quiet weekend (Fri→Mon is 3 days) so a normal gap in usage doesn't page
+# a false alarm.
+GOVERNOR_STALE_DAYS = 7
+
+
+def claude_settings_path():
+    """Where the harness reads hook registrations. `CLAUDE_DIR` redirects it —
+    the same override install.sh takes, and how a test drives this without
+    touching the developer's own ~/.claude."""
+    env = os.environ.get("CLAUDE_DIR")
+    return (Path(env) if env else Path.home() / ".claude") / "settings.json"
+
+
+def hook_registration_warnings():
+    """Mirror ↔ settings.json parity, plus proof that the governor's events FIRE.
+
+    The firing half exists because registration is NOT evidence: a misspelled
+    event name in settings.json is accepted with no error, no warning and no log
+    line (measured on harness 2.1.235, T-498 §8 r6), so a dead registration is
+    indistinguishable from a live one by reading files. The governor stamps a
+    marker per event when it runs, and that marker is the only thing here that
+    can tell the difference. It is checked only for the governor because it is
+    the only hook that leaves evidence — and the only one whose failure is
+    otherwise invisible."""
+    hooks_dir = prdt_home() / "hooks"
+    if not hooks_dir.is_dir():
+        return []                      # no install on this machine — not this check's business
+    mirrored = sorted(p.name for p in hooks_dir.glob("prdt-*.sh"))
+    if not mirrored:
+        return []
+
+    settings_path = claude_settings_path()
+    settings = read_json(settings_path)
+    if not isinstance(settings, dict):
+        return [f"hooks: {settings_path} missing or invalid JSON — no prdt hook is registered on this machine"]
+
+    per_event = {}
+    hooks = settings.get("hooks")
+    if isinstance(hooks, dict):
+        for event, entries in hooks.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                for h in entry.get("hooks") or []:
+                    cmd = h.get("command") if isinstance(h, dict) else None
+                    if isinstance(cmd, str):
+                        per_event.setdefault(str(event), []).append(cmd)
+    commands = [c for cmds in per_event.values() for c in cmds]
+
+    warns = []
+    for b in mirrored:
+        if not any(b in c for c in commands):
+            warns.append(f"hooks: {b} is mirrored in {hooks_dir} but registered nowhere in "
+                         f"{settings_path} — re-run install.sh")
+    stale = []
+    for c in commands:
+        name = c.strip('"').split()[0].strip('"').rsplit("/", 1)[-1]
+        if name.startswith("prdt-") and name.endswith(".sh") and name not in mirrored and name not in stale:
+            stale.append(name)
+    for name in stale:
+        warns.append(f"hooks: {name} is registered in {settings_path} but absent from {hooks_dir} — "
+                     f"stale entry, re-run install.sh")
+
+    if any(GOVERNOR_HOOK in c for c in commands):
+        run_dir = prdt_home() / "run" / "call-governor"
+        for ev in GOVERNOR_EVENTS:
+            if not any(GOVERNOR_HOOK in c for c in per_event.get(ev, [])):
+                warns.append(f"hooks: call governor is not registered on {ev} — counting "
+                             f"(PostToolBatch) and enforcement (PreToolUse) are a pair, and half of it "
+                             f"silently does nothing (T-491)")
+                continue
+            marker = run_dir / f".fired-{ev}"
+            if not marker.is_file():
+                warns.append(f"hooks: call governor is registered on {ev} but has never fired "
+                             f"(no {marker}) — a misspelled event name is accepted by the "
+                             f"harness with no error at all, so check the event name; if no tool call has "
+                             f"run in a prdt project since install, this clears itself")
+                continue
+            # The marker is create-once (T-491 R2-2): it never proves the hook is
+            # STILL alive, only that it fired at some point in the past. Age it
+            # off the marker's own mtime rather than its content.
+            try:
+                mtime = marker.stat().st_mtime
+                age_days = (datetime.now(timezone.utc) - datetime.fromtimestamp(mtime, tz=timezone.utc)).days
+            except OSError:
+                age_days = None
+            if age_days is not None and age_days > GOVERNOR_STALE_DAYS:
+                warns.append(f"hooks: call governor is registered on {ev} and has fired before, but not "
+                             f"in the last {GOVERNOR_STALE_DAYS}d ({marker} last updated ~{age_days}d ago) "
+                             f"— if prdt-developer/-qa/-designer dispatches HAVE run in that window, the "
+                             f"harness likely changed its payload shape under this hook and it is now "
+                             f"failing open silently; re-run one short dispatch and confirm {marker} updates. "
+                             f"If nothing has dispatched anywhere on this machine in that window, this is "
+                             f"expected and clears itself on the next tool call")
+    return warns
+
+
 def override_warnings(root):
     """Override files are the only text injected on EVERY turn, so both layers get
     the same cap, and a project line that has become a verbatim restatement of a
@@ -2239,6 +2360,9 @@ def cmd_doctor(_args):
 
     # override caps + cross-layer duplicates (§8b)
     warns += override_warnings(root)
+
+    # hook roster parity + governor fire evidence (T-445 / T-491)
+    warns += hook_registration_warnings()
 
     # discipline caps + menu drift
     droot = discipline_root()
