@@ -36,4 +36,4 @@ The machine check assists, it never decides: normalization folds em/en dashes to
 ## Rules
 - You write the retro page yourself — it's curation of what happened, not product content.
 - Don't manufacture a next version at Retro's end; idle is a valid resting state.
-- A **post-close patch** (`v<N>.<m>.<p>`, rolled from `idle`) does NOT run this full sequence — it closes with one `wiki/log.md` line + an immutable `v<N>.<m>.<p>` tag, no `retro--` page. See PO habit lifecycle.
+- A **post-close patch** (`v<N>.<m>.<p>`, rolled from `idle`) does NOT run this full sequence — it closes with one `wiki/log.md` line + an immutable `v<N>.<m>.<p>` tag, no `retro--` page. Run the `patch-cycle` playbook for it.
