@@ -244,7 +244,7 @@ interface HookManifest {
 const HOOK_MANIFEST = hookManifestJson as unknown as HookManifest
 
 /**
- * The 9 prdt discipline hook basenames install.sh §4 registers, imported from
+ * The prdt discipline hook basenames install.sh §4 registers, imported from
  * the SAME hook-manifest.json (T-414) install.sh's jq --slurpfile reduces over —
  * this is no longer a hand-synced literal. The parity test in
  * onboarding.rosterParity.test.ts actually RUNS install.sh and installPrdtHooks
