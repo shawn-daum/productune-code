@@ -12,6 +12,14 @@
 #      habit assumes, now guaranteed even in long-lived sessions);
 #   b) a deploy-shaped prompt while stage is define/build gets an explicit
 #      ship-entry warning at exactly the observed failure moment.
+#   c) T-490 slice 3 — it also DRAINS the worker return-envelope flag queue that
+#      prdt-post-dispatch.sh writes to .prdt/.return-flags.json. That hook fires
+#      on SubagentStop, where the worker's final message is, but a SubagentStop
+#      additionalContext is injected into the WORKER and resumes it (measured
+#      2026-08-24, harness 2.1.241 — one probe line produced 9 extra worker
+#      turns), so it cannot report to the PO. UserPromptSubmit additionalContext
+#      is the channel T-498 r9 proved reaches the PO, which is why the notice
+#      arrives here, on the PO's next prompt, instead of mid-turn.
 # Advisory only (additionalContext) — soft stages stay soft, the PO judges;
 # false positives cost one line. Silent no-op outside prdt projects and on any
 # read/parse failure (a state hook must never break a session).
@@ -162,6 +170,86 @@ if stage in ("define", "build") and isinstance(prompt, str) and DEPLOY_RE.search
         "po-state stage write, or an explicit N/A-skip line in docs/wiki/log.md. "
         "Raise it before doing the deploy work (PO habit — Lifecycle judgment)."
     )
+
+# ── T-490 slice 3: worker return-envelope flags ───────────────────────────────
+# prdt-post-dispatch.sh queues a flag here when a worker's final message is not a
+# well-formed envelope. DETECTION ONLY — by the time a return exists its tokens
+# are spent, so nothing was blocked and nothing was retried; this line exists so
+# the malformation is SEEN.
+#
+# Everything crossing the queue file is treated as untrusted, on the T-471
+# precedent: `.prdt/` is project-local and ships with a clone, so
+# `.return-flags.json` is exactly as tamperable as po-state.json. The defense is
+# the same one applied to the four po-state tokens above — shape-match, then emit
+# only what matched, never the file's bytes. Two consequences worth stating: the
+# `codes` are a CLOSED vocabulary (an unrecognised code is dropped, not rendered),
+# and every word of prose below is this file's own literal. No payload text from
+# the worker's return ever reaches the queue in the first place, which is the
+# other half of the reason there is nothing here to escape.
+RETURN_FLAG_CODES = (
+    "not-json-object", "parse-failed", "not-an-object",
+    "missing-key:persona", "missing-key:task", "missing-key:summary",
+    "missing-key:confidence", "over-cap:task", "over-cap:summary",
+    "confidence-out-of-range", "needs_info-without-next_question",
+    "hangul:task", "hangul:summary",
+)
+RETURN_FLAG_RENDER_CAP = 5
+# Verbatim from discipline/contracts.md — asserted against that file by
+# test/scripts/return-envelope-flag.test.ts, so a reworded clause breaks the test
+# instead of leaving this hook quoting prose that no longer exists (the rule
+# prdt-dispatch-gate.sh follows for its deny reasons).
+CLAUSE_ENVELOPE = "Return envelope — single JSON object, first stdout char `{`"
+CLAUSE_REQUIRED = ("Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) "
+                   "· `confidence`(0..1)")
+CLAUSE_LANG = ("Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, "
+               "`## Acceptance`) → English.")
+
+flags_path = os.path.join(os.path.dirname(state_path), ".return-flags.json")
+if os.path.exists(flags_path):
+    queued = []
+    try:
+        with open(flags_path) as f:
+            q = json.load(f)
+        if isinstance(q, dict) and isinstance(q.get("flags"), list):
+            queued = q["flags"]
+    except Exception:
+        queued = []
+    # Drained on sight, before any rendering: a flag is a one-time notice, and a
+    # file we could not parse must not wedge every future prompt.
+    try:
+        os.remove(flags_path)
+    except Exception:
+        pass
+    shown = 0
+    for entry in queued[:RETURN_FLAG_RENDER_CAP]:
+        if not isinstance(entry, dict):
+            continue
+        raw_codes = entry.get("codes")
+        codes = [c for c in raw_codes if isinstance(c, str) and c in RETURN_FLAG_CODES] \
+            if isinstance(raw_codes, list) else []
+        if not codes:
+            continue
+        who = entry.get("persona")
+        who = who if (isinstance(who, str) and who in ASSIGNEES) else "<withheld>"
+        shown += 1
+        lines.append(
+            f"[prdt return check] the last return from prdt-{who} did not match the envelope "
+            "contract: " + ", ".join(codes) + " — detected AFTER the fact, so nothing was blocked "
+            "and nothing was retried (that worker's tokens were already spent). Unknown extra keys "
+            "are allowed and are never flagged. contracts.md §Return envelope, verbatim: \""
+            + CLAUSE_ENVELOPE + "\" / \"" + CLAUSE_REQUIRED + "\""
+            + (" contracts.md §Language, verbatim: \"" + CLAUSE_LANG + "\""
+               if any(c.startswith("hangul:") for c in codes) else "")
+            + " Re-dispatch only if the return's CONTENT is unusable — this notice is not itself a "
+            "reason to spend another worker."
+        )
+    dropped = len(queued) - shown
+    if shown and dropped > 0:
+        lines.append(
+            f"[prdt return check] {dropped} further queued return flag(s) not rendered "
+            "(per-prompt cap, or a queue entry whose shape did not match — `.prdt/` is "
+            "project-local, so an off-shape entry is dropped rather than rendered)."
+        )
 
 print(json.dumps({"hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",

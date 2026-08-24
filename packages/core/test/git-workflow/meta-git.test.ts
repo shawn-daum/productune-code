@@ -123,11 +123,19 @@ test('commit stages ONLY the allowlist — code files never enter the meta repo'
 })
 
 test('derived artifacts under an allowlisted dir are excluded from the meta repo', async () => {
+  // T-490 slice 3 QA-BLOCKING: the return-flags queue is a sibling ephemeral
+  // runtime file (like index.db/turns.jsonl/sessions.json/.subagent-gate.json/
+  // .cost-*.json) that must never land in meta history — pinned here so a
+  // future entry to this family cannot silently drop it from
+  // DEFAULT_META_EXCLUDE.
+  fs.writeFileSync(path.join(projectDir, '.prdt', '.return-flags.json'), '{"flags":[]}')
+
   await initMetaRepo(projectDir)
   await commitMeta(projectDir, 'T-364 [manual: →] snapshot')
 
   const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
   expect(tracked).not.toContain('.prdt/index.db')
+  expect(tracked).not.toContain('.prdt/.return-flags.json')
   // the meta git-dir must not track itself
   expect(tracked.some((f) => f.startsWith('.prdt/meta.git'))).toBe(false)
 })
