@@ -87,7 +87,8 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
 /**
  * Derived/gate artifacts that must never enter the meta repo even though they
  * live under an allowlisted dir (PRD: index.db · turns.jsonl · sessions.json ·
- * gate caches are gitignored on both sides; the meta git-dir ignores itself).
+ * gate caches · the return-flags queue are gitignored on both sides; the meta
+ * git-dir ignores itself).
  * Written to the meta repo's `info/exclude` at init (gitignore syntax, matched
  * by basename anywhere in the tree). The physical code dir (`<code.dir>/`) is
  * appended per-project at init when the project is split (PRD §v1.3 설계 결정 3)
@@ -100,6 +101,7 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   'sessions.json',
   '.cost-*.json',
   '.subagent-gate.json',
+  '.return-flags.json',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + hook 10종.
+# prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + the hook
+# roster. The roster COUNT is never written down here: it is derived from
+# scripts/hook-manifest.json (§0 `HOOK_COUNT`), because a literal in this header and a
+# literal in §4's progress line both went stale the moment T-490 added the 11th hook —
+# a wrong count in a user-visible line during a load-bearing operation is the defect.
 # (Canonical name since T-293: was prdt-install.sh during pdt-* coexistence;
 #  a thin prdt-install.sh forwarder remains for older installed `prdt update` copies.)
 # Statusline (T-330): default-on when nothing is registered yet (fresh install, or
@@ -63,6 +67,10 @@ UNKNOWN_HOOKS="$(jq -r '((.registrations | map(.hooks[])) - .basenames) | unique
 # drift from the manifest (that drift is how a registration ends up pointing at a
 # script the installer never copied).
 HOOK_BASENAMES="$(jq -r '.basenames[]' "$MANIFEST")"
+# Roster size for the §4 progress line — derived, never typed. The manifest is the one
+# roster SoT both this script and the GUI reduce over, so the count the user reads comes
+# from the same place the registration does.
+HOOK_COUNT="$(jq -r '.basenames | length' "$MANIFEST")"
 MISSING_HOOKS=""
 while IFS= read -r b; do
   [ -n "$b" ] || continue
@@ -147,7 +155,7 @@ cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
 #    here — it's derived from scripts/hook-manifest.json (the SoT onboarding.ts's
 #    installPrdtHooks reduces over too), via jq --slurpfile. Edit the manifest, not this
 #    reduce, to change the roster.
-say "4) Registering hook 10종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
+say "4) Registering hook ${HOOK_COUNT}종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
 SETTINGS="$CLAUDE_DIR/settings.json"   # MANIFEST preflighted in §0
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
 # temp lives NEXT TO settings.json so the mv below is an atomic same-filesystem
