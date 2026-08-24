@@ -45,7 +45,11 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
     const row = read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (single living file) |'))
     expect(row).toBeDefined()
     expect(row).toContain('`docs/prd/PRD.md#v<N>.<m>`')
-    expect(row).toContain('the standing head + that ONE version section, never the whole file')
+    expect(row).toContain('that ONE version section, never the whole file')
+    // T-476 F4: a live '## Phase N' section sits outside the version section
+    // and must be pulled into the read unit too, or a worker reading only
+    // head+version-section misses its still-open Non-goals/Acceptance.
+    expect(row).toContain('## Phase N')
     // A closed section is an immutable episode — the whole point of keeping the
     // cumulative SoT while shrinking the read unit.
     expect(row).toContain('append a supersede note, never rewrite it')
