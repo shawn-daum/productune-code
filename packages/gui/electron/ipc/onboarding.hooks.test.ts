@@ -114,8 +114,15 @@ function cliHooksBlock(home: string): any {
     UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
     // T-491 call governor: matcher-less on both halves, and LAST in event order
     // because that is the manifest's registration order both derivations replay.
+    // T-490: prdt-dispatch-gate.sh shares PreToolUse with the governor but
+    // carries the `Agent` matcher — a second, separate entry, registered AFTER
+    // the matcher-less governor entry (manifest registration order: the
+    // unconditional hook, then the narrowed one).
     PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
-    PreToolUse: [{ hooks: [h('prdt-call-governor.sh')] }],
+    PreToolUse: [
+      { hooks: [h('prdt-call-governor.sh')] },
+      { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
+    ],
   }
 }
 

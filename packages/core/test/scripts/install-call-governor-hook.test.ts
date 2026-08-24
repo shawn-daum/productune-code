@@ -57,7 +57,11 @@ test('the manifest — the SoT both derivations reduce over — carries the gove
   const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'))
   expect(manifest.basenames).toContain(GOVERNOR)
   for (const event of EVENTS) {
-    const reg = manifest.registrations.find((r: any) => r.event === event)
+    // Select by HOOK, not by event alone: since T-490 the PreToolUse event also
+    // carries prdt-dispatch-gate.sh (matcher `Agent`), so a find-by-event would
+    // start asserting the wrong entry's matcher the moment the array is reordered.
+    const reg = manifest.registrations.find(
+      (r: any) => r.event === event && (r.hooks ?? []).includes(GOVERNOR))
     expect(reg, `${event} registration missing from hook-manifest.json`).toBeTruthy()
     expect(reg.hooks).toContain(GOVERNOR)
     expect(reg.matcher, `${event} must stay matcher-less`).toBeUndefined()

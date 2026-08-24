@@ -13,9 +13,23 @@
  *   3. the call governor's two events have actually FIRED — proven by the
  *      per-event marker the hook itself stamps, not by re-reading settings.
  *
- * Only the governor can be checked for (3): it is the only hook that leaves
- * evidence. That is deliberate — it is also the only hook whose failure is
- * invisible (a governor that never fires looks exactly like a quiet one).
+ * Only the governor is checked for (3) here, via filesystem evidence: it is
+ * the only hook that stamps a fire marker, because it is the only hook whose
+ * failure looks exactly like a quiet one — a registration can be present,
+ * well-formed, and dead, and nothing short of a fire marker would tell doctor
+ * apart from a session that simply never used the tool being watched.
+ *
+ * That is NOT the same as saying no other hook's failure is checkable. T-490's
+ * prdt-dispatch-gate.sh (PreToolUse, matcher `Agent`) is checkable too, just not
+ * by a filesystem marker: it is deny/warn-shaped, so its own OUTPUT is the
+ * evidence. Dispatching a deliberately [ctx]-less canary and observing the
+ * deny proves the gate fired, at the cost of zero dispatch tokens (the deny
+ * happens before any worker spawns) — this is the check the PO runs by hand
+ * right after `install.sh`, not a doctor check: doctor here stays limited to
+ * what it can verify black-box over the CLI without spawning a real dispatch,
+ * and adding a filesystem trip-wire for the gate would duplicate state the
+ * gate's own contract (T-490, "no filesystem state") deliberately does not
+ * carry.
  */
 
 import path from 'path'

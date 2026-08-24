@@ -123,7 +123,13 @@ export const CASES: readonly Case[] = [
           ],
           UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
           PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
-          PreToolUse: [{ hooks: [h('prdt-call-governor.sh')] }],
+          // T-490: prdt-dispatch-gate.sh is a SEPARATE PreToolUse entry (matcher
+          // `Agent`), sharing the event with the matcher-less governor entry —
+          // both must be present for the roster to read as fully installed.
+          PreToolUse: [
+            { hooks: [h('prdt-call-governor.sh')] },
+            { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
+          ],
         },
       }))
       const status = checkPrdtHooksStatus(home)
