@@ -4,7 +4,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 
 ## Dispatch — PO sends intent, never procedure
 - One inline `[ctx]` JSON line opens every dispatch:
-  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`
+  `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}` · optional `"direction_pin"` = the user's own answer to a direction fork, whoever raised it: the PO relays that answer and the worker writes it into the PRD verbatim — no paraphrase, no trim, no improvement.
 - The PO states WHAT · WHY · acceptance — never steps, order, or tools. Procedure belongs to the worker's playbooks.
 - The worker selects its own playbook(s) even when a dispatch names a procedure (two-way defense against PO habit regression). Report picks in `playbooks_run[]`.
 - Before dispatch the PO matches `change_meta` against the persona's generated menu (`playbooks/_index.md`) and dispatches at the MAX `model_floor`/`effort` among plausible matches.
