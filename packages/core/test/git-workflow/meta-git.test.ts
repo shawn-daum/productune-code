@@ -28,6 +28,7 @@ import {
   readMetaAllowlist,
   writeMetaAllowlist,
   DEFAULT_META_ALLOWLIST,
+  DEFAULT_META_EXCLUDE,
 } from '../../src/git-workflow/meta-git'
 import { runMetaMigration } from '../../src/git-workflow/meta-migrate'
 import { naturalizeCommit } from '../../src/history/naturalize'
@@ -138,6 +139,27 @@ test('derived artifacts under an allowlisted dir are excluded from the meta repo
   expect(tracked).not.toContain('.prdt/.return-flags.json')
   // the meta git-dir must not track itself
   expect(tracked.some((f) => f.startsWith('.prdt/meta.git'))).toBe(false)
+})
+
+test('.return-flags.json is in BOTH exclude defaults, not one side (T-513)', () => {
+  // T-513: the test above is TS-only — it exercises initMetaRepo/commitMeta
+  // exclusively, so a `.return-flags.json` entry missing from the python
+  // twin (scripts/prdt META_EXCLUDE_DEFAULT, the list `prdt init` actually
+  // writes into the meta repo's `info/exclude`) would pass it with no
+  // warning, which is exactly what happened (T-490 slice 3 added it here but
+  // not there). Pin the PAIR here instead of one side so this class can't
+  // recur silently; `prdt doctor`'s meta_exclude_parity_warning() is the
+  // ongoing drift check for everything else in the two lists.
+  expect(DEFAULT_META_EXCLUDE).toContain('.return-flags.json')
+
+  const cliSrc = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', 'scripts', 'prdt'),
+    'utf-8',
+  )
+  const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(cliSrc)
+  expect(m).not.toBeNull()
+  const pyExclude = m![1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+  expect(pyExclude).toContain('.return-flags.json')
 })
 
 test('meta commit never touches the code repo history or index', async () => {

@@ -15,6 +15,9 @@
  *     change — the docs/design.md failure class, generalized.
  *  3. the CLI's default allowlist lints against core's DEFAULT_META_ALLOWLIST
  *     (meta-git.ts) — the same T-427-audited fixed-path set, parity-checked.
+ *  3b. (T-513) the CLI's default EXCLUDE list lints against core's
+ *     DEFAULT_META_EXCLUDE the same way — item 3's allowlist-only coverage is
+ *     exactly how `.return-flags.json` landed on one side only, unwarned.
  */
 
 import path from 'path'
@@ -289,6 +292,94 @@ describe.skipIf(!PYTHON3)('prdt doctor — allowlist fixed-path parity vs core (
     fs.chmodSync(cli, 0o755)
     const out = doctor(cli)
     expect(out).not.toMatch(/allowlist default drift/)
+  })
+})
+
+/**
+ * T-513: item 3's allowlist parity had no EXCLUDE-list twin — nothing compared
+ * META_EXCLUDE_DEFAULT (python) against DEFAULT_META_EXCLUDE (meta-git.ts),
+ * which is exactly how `.return-flags.json` landed in the TS list (T-490
+ * slice 3) but not here, silently. Mirrors the allowlist parity suite above,
+ * fixture-for-fixture, plus coverage for the two reviewed, named divergences
+ * (`worktrees/`, `meta.git/`) that must NOT be flagged as drift.
+ */
+describe.skipIf(!PYTHON3)('prdt doctor — exclude-list fixed-path parity vs core (T-513)', () => {
+  const PY_EXCLUDE: string[] = (() => {
+    const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(fs.readFileSync(PRDT_CLI, 'utf-8'))
+    if (!m) throw new Error('META_EXCLUDE_DEFAULT not found in the prdt CLI')
+    const entries = m[1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+    if (entries.length < 5) throw new Error(`parsed a suspiciously short default: ${entries.join()}`)
+    return entries
+  })()
+
+  /** Same throwaway-copy trick as cliWithTsAllowlist above, but for the
+   * exclude list, so the real repo file is never touched. */
+  function cliWithTsExclude(entries: string[]): string {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-copy-excl-'))
+    fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
+    const cli = path.join(tmp, 'scripts', 'prdt')
+    fs.copyFileSync(PRDT_CLI, cli)
+    fs.chmodSync(cli, 0o755)
+    fs.mkdirSync(path.join(tmp, 'src', 'git-workflow'), { recursive: true })
+    const body = entries.map((e) => `  '${e}',`).join('\n')
+    fs.writeFileSync(
+      path.join(tmp, 'src', 'git-workflow', 'meta-git.ts'),
+      `export const DEFAULT_META_EXCLUDE: string[] = [\n${body}\n]\n`,
+    )
+    return cli
+  }
+
+  test('real repo: python exclude default and core meta-git.ts default are in parity (no warning)', () => {
+    runInit()
+    const out = doctor()
+    expect(out).not.toMatch(/exclude default drift/)
+  })
+
+  test('matching TS fixture → no parity warning', () => {
+    runInit()
+    const cli = cliWithTsExclude(PY_EXCLUDE)
+    const out = doctor(cli)
+    expect(out).not.toMatch(/exclude default drift/)
+  })
+
+  // Positive control (T-513 acceptance): proves the check actually fires
+  // before any "clean run" above is trusted as meaningful.
+  test('TS fixture missing an entry the python default carries → parity warning names it', () => {
+    runInit()
+    const cli = cliWithTsExclude(PY_EXCLUDE.filter((e) => e !== '.return-flags.json'))
+    const out = doctor(cli)
+    expect(out).toMatch(/exclude default drift vs core meta-git\.ts/)
+    expect(out).toContain('.return-flags.json')
+  })
+
+  test('a TS-only entry not in the python default is named on the ts-only side', () => {
+    runInit()
+    const cli = cliWithTsExclude([...PY_EXCLUDE, '.some-new-artifact.json'])
+    const out = doctor(cli)
+    expect(out).toMatch(/exclude default drift vs core meta-git\.ts/)
+    expect(out).toContain('.some-new-artifact.json')
+  })
+
+  // The two reviewed, permanent divergences (META_EXCLUDE_KNOWN_DIVERGENCE in
+  // the CLI) must be named as intended rather than flagged — a TS default that
+  // only differs from python by exactly these two entries is exactly today's
+  // real state and must stay silent.
+  test('the known divergences (worktrees/ python-only) do not trigger a warning on their own', () => {
+    runInit()
+    const cli = cliWithTsExclude(PY_EXCLUDE.filter((e) => e !== 'worktrees/'))
+    const out = doctor(cli)
+    expect(out).not.toMatch(/exclude default drift/)
+  })
+
+  test('installed mirror (no TS sibling at all) skips the check silently — never raises', () => {
+    runInit()
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-cli-noTS-excl-'))
+    fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true })
+    const cli = path.join(tmp, 'scripts', 'prdt')
+    fs.copyFileSync(PRDT_CLI, cli)
+    fs.chmodSync(cli, 0o755)
+    const out = doctor(cli)
+    expect(out).not.toMatch(/exclude default drift/)
   })
 })
 
