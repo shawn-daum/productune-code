@@ -101,6 +101,29 @@ ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
 TICKET_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
 
+# T-517: `state_path` is a DERIVED PATH and it is interpolated INLINE in the guard
+# line below, so a project directory whose NAME carries a line break would put the
+# bytes after the break at column 0 — where `[prdt state]`, a block delimiter or a
+# `[prdt discipline — …]` header stands. Measured 2026-08-25: 3 forged column-0
+# lines through this site (narrower than the override hooks only because the guard
+# line renders solely when po-state is already off-shape). A path cannot be
+# guttered piece by piece mid-sentence, so it gets the same treatment the four
+# po-state tokens get right above: match the shape it is allowed to have — ONE
+# plain line — and emit the matched path or a fixed literal of this file's own.
+# Never escaped-and-passed. Classes: every break `str.splitlines` folds (LF · CR ·
+# CRLF · VT · FF · NEL · LS · PS · FS · GS · RS), the same set the override hooks
+# fold for bodies and paths; in-line trickery that is not a break (bidi controls,
+# zero-width characters, homoglyphs) is out of scope here as it is there.
+# Kept in the shape of the bash `safe_path` in prdt-*-inject.sh, same literal.
+PATH_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+PATH_WITHHELD = ("<path withheld: the resolved path holds a line break, so it is not printed "
+                 "\u2014 its tail would stand at column 0, where this block owns its structure (T-517)>")
+
+
+def safe_path(p):
+    return PATH_WITHHELD if any(c in p for c in PATH_BREAKS) else p
+
+
 withheld = []
 
 
@@ -134,7 +157,7 @@ if withheld:
     lines.append(
         "[prdt state guard] po-state field(s) rendered as <withheld>: "
         + ", ".join(withheld)
-        + f" — the value in {state_path} did not match the shape that field is coerced to "
+        + f" — the value in {safe_path(state_path)} did not match the shape that field is coerced to "
         "(stage ∈ define|build|ship|retro|idle · version v<N>[.<m>[.<p>]] · ticket_id T-NNN · "
         "assignee ∈ po|designer|developer|qa|user). These short state tokens are shape-matched, "
         "never escaped-and-spliced, so a value that fails cannot add a line, a block, or a layer "
