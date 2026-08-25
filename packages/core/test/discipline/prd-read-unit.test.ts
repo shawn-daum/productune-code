@@ -25,10 +25,15 @@ const DISCIPLINE = path.resolve(__dirname, '..', '..', 'discipline')
 const CONTRACTS = path.join(DISCIPLINE, 'contracts.md')
 const DESIGNER_HABIT = path.join(DISCIPLINE, 'designer', 'habit.md')
 const PRD_CLARITY = path.join(DISCIPLINE, 'designer', 'playbooks', 'prd-clarity.md')
+const PO_HABIT = path.join(DISCIPLINE, 'po', 'habit.md')
+const SCOPE_CHALLENGE = path.join(DISCIPLINE, 'designer', 'playbooks', 'scope-challenge.md')
 
 const read = (p: string) => fs.readFileSync(p, 'utf-8')
 // Same count doctor uses: python splitlines() ignores one trailing newline.
 const lineCount = (p: string) => read(p).replace(/\n$/, '').split('\n').length
+// Mirrors doctor's body_line_count: frontmatter stripped, trailing newlines ignored.
+const bodyLineCount = (p: string) =>
+  read(p).split(/^---$/m).slice(2).join('---').replace(/\n+$/, '').split('\n').length
 
 describe('contracts.md — prd_path is a fragment, not the whole file', () => {
   test('the [ctx] schema line carries the version fragment', () => {
@@ -112,9 +117,16 @@ describe('line caps (doctor only warns — this is the failing surface)', () => 
   })
 
   test('prd-clarity body stays within its 80-line playbook cap', () => {
-    // Mirrors doctor's body_line_count: frontmatter stripped, trailing
-    // newlines ignored.
-    const body = read(PRD_CLARITY).split(/^---$/m).slice(2).join('---')
-    expect(body.replace(/\n+$/, '').split('\n').length).toBeLessThanOrEqual(80)
+    expect(bodyLineCount(PRD_CLARITY)).toBeLessThanOrEqual(80)
+  })
+
+  // T-497 added a rule to po/habit.md (61/64) and a whole new playbook. Neither
+  // had a failing surface here, so both caps could drift on a warning alone.
+  test('po/habit.md stays within its 64-line PO-habit cap', () => {
+    expect(lineCount(PO_HABIT)).toBeLessThanOrEqual(64)
+  })
+
+  test('scope-challenge body stays within its 80-line playbook cap', () => {
+    expect(bodyLineCount(SCOPE_CHALLENGE)).toBeLessThanOrEqual(80)
   })
 })
