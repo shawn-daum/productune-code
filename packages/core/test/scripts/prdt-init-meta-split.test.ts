@@ -138,6 +138,23 @@ describe.skipIf(!PYTHON3)('prdt init — meta split (T-365 / T-377)', () => {
     expect(metaIgnores('.prdt/config.json')).toBe(false)
   })
 
+  // T-513: the actual path that broke. `prdt init` writes info/exclude from
+  // THIS process's python META_EXCLUDE_DEFAULT alone — no node/dist bridge is
+  // spawned anywhere in this file (runInit shells out to python3 directly),
+  // so this is exactly "a project whose node bridge is absent" and core
+  // TS's ensureMetaExclude self-heal never runs to paper over a stale list.
+  // `.return-flags.json` landed in DEFAULT_META_EXCLUDE (meta-git.ts, T-490
+  // slice 3) but was missing here until T-513 — this pins that it is ignored
+  // on the python-only init path too, not merely in the TS unit test.
+  test('.return-flags.json is ignored by the META repo on a python-only init (no node bridge involved)', () => {
+    runInit()
+    fs.writeFileSync(path.join(projectDir, '.prdt', '.return-flags.json'), '{"flags":[]}\n')
+    expect(metaIgnores('.prdt/.return-flags.json')).toBe(true)
+
+    const status = git([...metaGitArgs(), 'status', '--porcelain'])
+    expect(status).not.toMatch(/\.return-flags\.json/)
+  })
+
   test('pre-existing user .gitignore and code .git are preserved untouched (no block appended)', () => {
     // user project: own git history + own .gitignore
     git(['init', '-q'])

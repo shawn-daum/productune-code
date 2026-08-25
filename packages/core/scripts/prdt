@@ -481,8 +481,19 @@ META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md",
                           "docs/features", "docs/prd", "docs/tickets", "docs/wiki",
                           "docs/designer", "docs/developer", "docs/po", "docs/qa",
                           "docs/artifacts", "docs/retrospectives", "docs/archive"]
+# Byte-parity with core's DEFAULT_META_EXCLUDE (meta-git.ts) — this is the list
+# `prdt init` writes verbatim into the meta repo's `info/exclude`, so a machine
+# with no node bridge (dist/bin/meta-cli.cjs) relies on THIS copy alone; the TS
+# self-heal (ensureMetaExclude) never runs there to paper over a stale entry.
+# `.return-flags.json` (T-513, was T-490 slice 3 TS-only): the return-flags
+# queue is a sibling ephemeral runtime file to index.db/turns.jsonl/etc. and
+# must never land in meta history on EITHER side.
+# meta_exclude_parity_warning() below lints this against meta-git.ts's copy —
+# see META_EXCLUDE_KNOWN_DIVERGENCE for the two reviewed, intentional gaps
+# (`worktrees/` / `meta.git/`) that check must name rather than flag as drift.
 META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
-                        ".cost-*.json", ".subagent-gate.json", "worktrees/"]
+                        ".cost-*.json", ".subagent-gate.json", "worktrees/",
+                        ".return-flags.json"]
 
 # ── code root resolution (PRD §v1.3 설계 결정 4 — mirrors core project-kind.ts) ──
 # code.dir absent → codeRoot IS projectRoot (legacy fallback). Best-effort: a
@@ -758,6 +769,62 @@ def meta_allowlist_parity_warning():
     only_py = sorted(set(META_ALLOWLIST_DEFAULT) - set(ts_allow))
     only_ts = sorted(set(ts_allow) - set(META_ALLOWLIST_DEFAULT))
     return (f"meta: allowlist default drift vs core meta-git.ts — "
+            f"python-only {only_py}, ts-only {only_ts}")
+
+
+def _ts_default_exclude():
+    """core's DEFAULT_META_EXCLUDE (meta-git.ts) — same dev-repo-only,
+    degrade-never-raise posture as _ts_default_allowlist (an installed ~/.prdt
+    mirror carries no TS source, so this quietly returns None there)."""
+    ts = Path(__file__).resolve().parent.parent / "src" / "git-workflow" / "meta-git.ts"
+    if not ts.is_file():
+        return None
+    try:
+        text = ts.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"DEFAULT_META_EXCLUDE\s*:\s*string\[\]\s*=\s*\[(.*?)\]", text, re.S)
+    if not m:
+        return None
+    return [x.strip().strip("'\",") for x in m.group(1).splitlines() if x.strip().strip("'\",")]
+
+
+# T-513: two REVIEWED, permanent divergences between the exclude defaults —
+# not drift, and named here so the parity check below never has to silently
+# swallow them (the failure this whole ticket is about: a check that quietly
+# stopped checking).
+#  - "worktrees/" (python-only): python's meta git-dir is hardcoded at
+#    `.prdt/meta.git` (no `.productune` dual-state-dir support — see
+#    meta_git_dir), so a bare, unanchored `worktrees/` literal written into
+#    `info/exclude` is sufficient. Core TS supports both project kinds and
+#    anchors this entry per-project instead (meta-git.ts desiredMetaExclude:
+#    `${STATE_DIR_NAME[kind]}/worktrees/`, T-387 item 3), so it is deliberately
+#    absent from DEFAULT_META_EXCLUDE itself — porting that per-kind anchoring
+#    into python is out of scope here (YAGNI) unless a `.productune` project
+#    actually needs it.
+#  - "meta.git/" (present, identically, on both sides today): kept as an
+#    explicit belt-and-suspenders line even though the meta git-dir already
+#    ignores itself structurally. Named here so neither side dropping it later
+#    reads as the drift class this check exists to catch.
+META_EXCLUDE_KNOWN_DIVERGENCE = {"worktrees/", "meta.git/"}
+
+
+def meta_exclude_parity_warning():
+    """T-513 (F2 sibling of Item 3 above, meta_allowlist_parity_warning): lints
+    the CLI's default EXCLUDE list against core's DEFAULT_META_EXCLUDE — the
+    two hand-authored copies of the derived/gate-artifact set `prdt init`
+    writes verbatim into the meta repo's `info/exclude`. Until this function
+    existed, NOTHING compared these two lists (only the allowlist twin was
+    checked), which is exactly how `.return-flags.json` landed in meta-git.ts
+    but not here without a single warning."""
+    ts_excl = _ts_default_exclude()
+    if ts_excl is None:
+        return None
+    only_py = sorted(set(META_EXCLUDE_DEFAULT) - set(ts_excl) - META_EXCLUDE_KNOWN_DIVERGENCE)
+    only_ts = sorted(set(ts_excl) - set(META_EXCLUDE_DEFAULT) - META_EXCLUDE_KNOWN_DIVERGENCE)
+    if not only_py and not only_ts:
+        return None
+    return (f"meta: exclude default drift vs core meta-git.ts — "
             f"python-only {only_py}, ts-only {only_ts}")
 
 
@@ -2360,6 +2427,9 @@ def cmd_doctor(_args):
     parity = meta_allowlist_parity_warning()
     if parity:
         warns.append(parity)
+    excl_parity = meta_exclude_parity_warning()
+    if excl_parity:
+        warns.append(excl_parity)
 
     # wiki — project store, then the machine store (§8b) it now searches alongside
     warns += wiki_lint(root)
