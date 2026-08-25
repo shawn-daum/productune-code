@@ -12,6 +12,14 @@
 #      habit assumes, now guaranteed even in long-lived sessions);
 #   b) a deploy-shaped prompt while stage is define/build gets an explicit
 #      ship-entry warning at exactly the observed failure moment.
+#   c) T-490 slice 3 — it also DRAINS the worker return-envelope flag queue that
+#      prdt-post-dispatch.sh writes to .prdt/.return-flags.json. That hook fires
+#      on SubagentStop, where the worker's final message is, but a SubagentStop
+#      additionalContext is injected into the WORKER and resumes it (measured
+#      2026-08-24, harness 2.1.241 — one probe line produced 9 extra worker
+#      turns), so it cannot report to the PO. UserPromptSubmit additionalContext
+#      is the channel T-498 r9 proved reaches the PO, which is why the notice
+#      arrives here, on the PO's next prompt, instead of mid-turn.
 # Advisory only (additionalContext) — soft stages stay soft, the PO judges;
 # false positives cost one line. Silent no-op outside prdt projects and on any
 # read/parse failure (a state hook must never break a session).
@@ -93,6 +101,29 @@ ASSIGNEES = ("po", "designer", "developer", "qa", "user")
 VERSION_RE = re.compile(r"\Av[0-9]{1,4}(?:\.[0-9]{1,4}){0,2}\Z")
 TICKET_RE = re.compile(r"\AT-[0-9]{1,5}\Z")
 
+# T-517: `state_path` is a DERIVED PATH and it is interpolated INLINE in the guard
+# line below, so a project directory whose NAME carries a line break would put the
+# bytes after the break at column 0 — where `[prdt state]`, a block delimiter or a
+# `[prdt discipline — …]` header stands. Measured 2026-08-25: 3 forged column-0
+# lines through this site (narrower than the override hooks only because the guard
+# line renders solely when po-state is already off-shape). A path cannot be
+# guttered piece by piece mid-sentence, so it gets the same treatment the four
+# po-state tokens get right above: match the shape it is allowed to have — ONE
+# plain line — and emit the matched path or a fixed literal of this file's own.
+# Never escaped-and-passed. Classes: every break `str.splitlines` folds (LF · CR ·
+# CRLF · VT · FF · NEL · LS · PS · FS · GS · RS), the same set the override hooks
+# fold for bodies and paths; in-line trickery that is not a break (bidi controls,
+# zero-width characters, homoglyphs) is out of scope here as it is there.
+# Kept in the shape of the bash `safe_path` in prdt-*-inject.sh, same literal.
+PATH_BREAKS = "\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+PATH_WITHHELD = ("<path withheld: the resolved path holds a line break, so it is not printed "
+                 "\u2014 its tail would stand at column 0, where this block owns its structure (T-517)>")
+
+
+def safe_path(p):
+    return PATH_WITHHELD if any(c in p for c in PATH_BREAKS) else p
+
+
 withheld = []
 
 
@@ -126,7 +157,7 @@ if withheld:
     lines.append(
         "[prdt state guard] po-state field(s) rendered as <withheld>: "
         + ", ".join(withheld)
-        + f" — the value in {state_path} did not match the shape that field is coerced to "
+        + f" — the value in {safe_path(state_path)} did not match the shape that field is coerced to "
         "(stage ∈ define|build|ship|retro|idle · version v<N>[.<m>[.<p>]] · ticket_id T-NNN · "
         "assignee ∈ po|designer|developer|qa|user). These short state tokens are shape-matched, "
         "never escaped-and-spliced, so a value that fails cannot add a line, a block, or a layer "
@@ -162,6 +193,86 @@ if stage in ("define", "build") and isinstance(prompt, str) and DEPLOY_RE.search
         "po-state stage write, or an explicit N/A-skip line in docs/wiki/log.md. "
         "Raise it before doing the deploy work (PO habit — Lifecycle judgment)."
     )
+
+# ── T-490 slice 3: worker return-envelope flags ───────────────────────────────
+# prdt-post-dispatch.sh queues a flag here when a worker's final message is not a
+# well-formed envelope. DETECTION ONLY — by the time a return exists its tokens
+# are spent, so nothing was blocked and nothing was retried; this line exists so
+# the malformation is SEEN.
+#
+# Everything crossing the queue file is treated as untrusted, on the T-471
+# precedent: `.prdt/` is project-local and ships with a clone, so
+# `.return-flags.json` is exactly as tamperable as po-state.json. The defense is
+# the same one applied to the four po-state tokens above — shape-match, then emit
+# only what matched, never the file's bytes. Two consequences worth stating: the
+# `codes` are a CLOSED vocabulary (an unrecognised code is dropped, not rendered),
+# and every word of prose below is this file's own literal. No payload text from
+# the worker's return ever reaches the queue in the first place, which is the
+# other half of the reason there is nothing here to escape.
+RETURN_FLAG_CODES = (
+    "not-json-object", "parse-failed", "not-an-object",
+    "missing-key:persona", "missing-key:task", "missing-key:summary",
+    "missing-key:confidence", "over-cap:task", "over-cap:summary",
+    "confidence-out-of-range", "needs_info-without-next_question",
+    "hangul:task", "hangul:summary",
+)
+RETURN_FLAG_RENDER_CAP = 5
+# Verbatim from discipline/contracts.md — asserted against that file by
+# test/scripts/return-envelope-flag.test.ts, so a reworded clause breaks the test
+# instead of leaving this hook quoting prose that no longer exists (the rule
+# prdt-dispatch-gate.sh follows for its deny reasons).
+CLAUSE_ENVELOPE = "Return envelope — single JSON object, first stdout char `{`"
+CLAUSE_REQUIRED = ("Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) "
+                   "· `confidence`(0..1)")
+CLAUSE_LANG = ("Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, "
+               "`## Acceptance`) → English.")
+
+flags_path = os.path.join(os.path.dirname(state_path), ".return-flags.json")
+if os.path.exists(flags_path):
+    queued = []
+    try:
+        with open(flags_path) as f:
+            q = json.load(f)
+        if isinstance(q, dict) and isinstance(q.get("flags"), list):
+            queued = q["flags"]
+    except Exception:
+        queued = []
+    # Drained on sight, before any rendering: a flag is a one-time notice, and a
+    # file we could not parse must not wedge every future prompt.
+    try:
+        os.remove(flags_path)
+    except Exception:
+        pass
+    shown = 0
+    for entry in queued[:RETURN_FLAG_RENDER_CAP]:
+        if not isinstance(entry, dict):
+            continue
+        raw_codes = entry.get("codes")
+        codes = [c for c in raw_codes if isinstance(c, str) and c in RETURN_FLAG_CODES] \
+            if isinstance(raw_codes, list) else []
+        if not codes:
+            continue
+        who = entry.get("persona")
+        who = who if (isinstance(who, str) and who in ASSIGNEES) else "<withheld>"
+        shown += 1
+        lines.append(
+            f"[prdt return check] the last return from prdt-{who} did not match the envelope "
+            "contract: " + ", ".join(codes) + " — detected AFTER the fact, so nothing was blocked "
+            "and nothing was retried (that worker's tokens were already spent). Unknown extra keys "
+            "are allowed and are never flagged. contracts.md §Return envelope, verbatim: \""
+            + CLAUSE_ENVELOPE + "\" / \"" + CLAUSE_REQUIRED + "\""
+            + (" contracts.md §Language, verbatim: \"" + CLAUSE_LANG + "\""
+               if any(c.startswith("hangul:") for c in codes) else "")
+            + " Re-dispatch only if the return's CONTENT is unusable — this notice is not itself a "
+            "reason to spend another worker."
+        )
+    dropped = len(queued) - shown
+    if shown and dropped > 0:
+        lines.append(
+            f"[prdt return check] {dropped} further queued return flag(s) not rendered "
+            "(per-prompt cap, or a queue entry whose shape did not match — `.prdt/` is "
+            "project-local, so an off-shape entry is dropped rather than rendered)."
+        )
 
 print(json.dumps({"hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",

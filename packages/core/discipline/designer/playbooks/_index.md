@@ -6,3 +6,4 @@
 | ds-conformance | Ship-entry readiness DS check when the PO routes it to the Designer (producer-side conformance) | sonnet/medium |
 | hifi | user-facing screens after a DS direction is settled · new visual pattern or complex interaction to convey | sonnet/high |
 | prd-clarity | Define entry · net-new or changed product scope · PRD refinement | fable/high |
+| scope-challenge | Define entry on a net-new version whose scope arrived already complete — the PO has no fork material to put to the user | fable/high |

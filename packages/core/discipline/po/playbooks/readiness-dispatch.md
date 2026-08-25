@@ -23,4 +23,3 @@ Soft ritual: nothing blocks mechanically; every skip is a judgment + one `wiki/l
 ## Rules
 - N/A is normal (no UI → no DS check; pure-local tool → most security items N/A). Judged skips are logged, not defended.
 - This ritual emits NO tickets for itself — only for findings.
-- Live-verify bugs after deploy stay `stage:"ship"` (patch loop); scope ballooning → call it and roll to the next version.

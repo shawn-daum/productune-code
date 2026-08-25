@@ -28,6 +28,7 @@ import {
   readMetaAllowlist,
   writeMetaAllowlist,
   DEFAULT_META_ALLOWLIST,
+  DEFAULT_META_EXCLUDE,
 } from '../../src/git-workflow/meta-git'
 import { runMetaMigration } from '../../src/git-workflow/meta-migrate'
 import { naturalizeCommit } from '../../src/history/naturalize'
@@ -123,13 +124,42 @@ test('commit stages ONLY the allowlist — code files never enter the meta repo'
 })
 
 test('derived artifacts under an allowlisted dir are excluded from the meta repo', async () => {
+  // T-490 slice 3 QA-BLOCKING: the return-flags queue is a sibling ephemeral
+  // runtime file (like index.db/turns.jsonl/sessions.json/.subagent-gate.json/
+  // .cost-*.json) that must never land in meta history — pinned here so a
+  // future entry to this family cannot silently drop it from
+  // DEFAULT_META_EXCLUDE.
+  fs.writeFileSync(path.join(projectDir, '.prdt', '.return-flags.json'), '{"flags":[]}')
+
   await initMetaRepo(projectDir)
   await commitMeta(projectDir, 'T-364 [manual: →] snapshot')
 
   const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
   expect(tracked).not.toContain('.prdt/index.db')
+  expect(tracked).not.toContain('.prdt/.return-flags.json')
   // the meta git-dir must not track itself
   expect(tracked.some((f) => f.startsWith('.prdt/meta.git'))).toBe(false)
+})
+
+test('.return-flags.json is in BOTH exclude defaults, not one side (T-513)', () => {
+  // T-513: the test above is TS-only — it exercises initMetaRepo/commitMeta
+  // exclusively, so a `.return-flags.json` entry missing from the python
+  // twin (scripts/prdt META_EXCLUDE_DEFAULT, the list `prdt init` actually
+  // writes into the meta repo's `info/exclude`) would pass it with no
+  // warning, which is exactly what happened (T-490 slice 3 added it here but
+  // not there). Pin the PAIR here instead of one side so this class can't
+  // recur silently; `prdt doctor`'s meta_exclude_parity_warning() is the
+  // ongoing drift check for everything else in the two lists.
+  expect(DEFAULT_META_EXCLUDE).toContain('.return-flags.json')
+
+  const cliSrc = fs.readFileSync(
+    path.resolve(__dirname, '..', '..', 'scripts', 'prdt'),
+    'utf-8',
+  )
+  const m = /META_EXCLUDE_DEFAULT\s*=\s*\[([^\]]*)\]/.exec(cliSrc)
+  expect(m).not.toBeNull()
+  const pyExclude = m![1].split(',').map((x) => x.trim().replace(/^["']|["']$/g, '')).filter(Boolean)
+  expect(pyExclude).toContain('.return-flags.json')
 })
 
 test('meta commit never touches the code repo history or index', async () => {
@@ -669,4 +699,51 @@ test('C3: bootstrap restores config THEN refreshes info/exclude with <code.dir>/
   expect(exclude.split('\n')).toContain('code/')
 
   fs.rmSync(B, { recursive: true, force: true })
+})
+
+// ── docs/features allowlist coverage (T-476) ──────────────────────────────────
+// Measured miss: `docs/features/` was in NO allowlist when the dir was created,
+// so meta autosave left it `?? docs/features/` forever — the docs/design.md
+// failure class (T-427) verbatim, one row later in contracts §Fixed paths.
+
+test('DEFAULT_META_ALLOWLIST covers docs/features (contracts Fixed paths)', () => {
+  expect(DEFAULT_META_ALLOWLIST).toContain('docs/features')
+})
+
+test('a fresh project auto-commits a docs/features/<feature>.md spec to meta history', async () => {
+  fs.mkdirSync(path.join(projectDir, 'docs', 'features'), { recursive: true })
+  fs.writeFileSync(path.join(projectDir, 'docs', 'features', 'meta-split.md'), '# meta-split\n')
+
+  await initMetaRepo(projectDir)
+  const res = await commitMeta(projectDir, 'T-476 [manual: →] feature spec snapshot')
+
+  expect(res.committed).toBe(true)
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).toContain('docs/features/meta-split.md')
+})
+
+test('an EXISTING project (allowlist copied before docs/features landed) picks it up via self-heal', async () => {
+  // Every project initialized before T-476 carries a frozen copy of the old
+  // default in config.json — the reason the fix has to ride readMetaAllowlist's
+  // union, not just the init-time copy.
+  const staleOldDefault = [
+    '.prdt', '.productune', 'briefs', 'docs/design.md', 'docs/prd', 'docs/tickets',
+    'docs/wiki', 'docs/designer', 'docs/developer', 'docs/po', 'docs/qa',
+    'docs/artifacts', 'docs/retrospectives', 'docs/archive',
+  ]
+  writeMetaAllowlist(projectDir, [...staleOldDefault, 'docs/looseNote.md'])
+  fs.writeFileSync(path.join(projectDir, 'docs', 'looseNote.md'), 'note\n')
+  fs.mkdirSync(path.join(projectDir, 'docs', 'features'), { recursive: true })
+  fs.writeFileSync(path.join(projectDir, 'docs', 'features', 'git-workflow.md'), '# git-workflow\n')
+
+  const merged = readMetaAllowlist(projectDir)
+  expect(merged).toContain('docs/features')
+  expect(merged).toContain('docs/looseNote.md')
+
+  await initMetaRepo(projectDir)
+  await commitMeta(projectDir, 'T-476 [manual: →] existing-project feature spec')
+
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).toContain('docs/features/git-workflow.md')
+  expect(tracked).toContain('docs/looseNote.md')
 })
