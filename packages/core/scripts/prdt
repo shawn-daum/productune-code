@@ -34,10 +34,16 @@ PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # pull-only store, so its budget guards curation, not per-turn tokens.
 CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
         "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15}
-# po_habit 60→64 (2026-08-14): two pending v1.6 rules each need one new line and
-# T-447 already spent the easy duplicate-trims — the cap was about to force
-# deleting real rules to fit, not enforcing a token budget. worker_habit (40,
-# shared by designer/developer/qa) is a separate constant and stays untouched.
+# po_habit holds at 64 over a curated 60 lines: the post-close-patch and
+# emergency-hotfix procedures moved out to the `patch-cycle` playbook, and the
+# ship-wrap and retro-sequence duplicates were merged into the clauses that
+# already owned them, so those 4 free lines ARE the deliverable — tightening the
+# cap down onto 60 would just recreate the pressure that made folding a rule into
+# an existing line the only legal move. Known limit: this gate counts physical
+# lines only, so growth that lands INSIDE an existing line passes unseen; until
+# that is fixed, byte growth is a curation judgment, not a doctor finding.
+# worker_habit (40, shared by designer/developer/qa) is a separate constant and
+# stays untouched.
 BLOCKED_STALE_DAYS = 14
 BACKLOG_STALE_DAYS = 30
 INBOX_PILE_LINES = 15
@@ -468,14 +474,26 @@ def prompt_version(default):
 
 # Byte-parity with core's DEFAULT_META_ALLOWLIST (meta-git.ts) — see its
 # T-427 audit comment for the include/exclude rationale per contracts.md's
-# Fixed paths table (docs/design.md IN; docs/DEPLOY.md, docs/testing.md etc.
-# project-local, NOT contracts-fixed, so left out of the shared default).
-META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md", "docs/prd",
-                          "docs/tickets", "docs/wiki", "docs/designer", "docs/developer",
-                          "docs/po", "docs/qa", "docs/artifacts", "docs/retrospectives",
-                          "docs/archive"]
+# Fixed paths table: docs/design.md + docs/features IN (T-476 — one row);
+# docs/DEPLOY.md, docs/testing.md etc. project-local, NOT contracts-fixed,
+# so left out of the shared default.
+META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md",
+                          "docs/features", "docs/prd", "docs/tickets", "docs/wiki",
+                          "docs/designer", "docs/developer", "docs/po", "docs/qa",
+                          "docs/artifacts", "docs/retrospectives", "docs/archive"]
+# Byte-parity with core's DEFAULT_META_EXCLUDE (meta-git.ts) — this is the list
+# `prdt init` writes verbatim into the meta repo's `info/exclude`, so a machine
+# with no node bridge (dist/bin/meta-cli.cjs) relies on THIS copy alone; the TS
+# self-heal (ensureMetaExclude) never runs there to paper over a stale entry.
+# `.return-flags.json` (T-513, was T-490 slice 3 TS-only): the return-flags
+# queue is a sibling ephemeral runtime file to index.db/turns.jsonl/etc. and
+# must never land in meta history on EITHER side.
+# meta_exclude_parity_warning() below lints this against meta-git.ts's copy —
+# see META_EXCLUDE_KNOWN_DIVERGENCE for the two reviewed, intentional gaps
+# (`worktrees/` / `meta.git/`) that check must name rather than flag as drift.
 META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
-                        ".cost-*.json", ".subagent-gate.json", "worktrees/"]
+                        ".cost-*.json", ".subagent-gate.json", "worktrees/",
+                        ".return-flags.json"]
 
 # ── code root resolution (PRD §v1.3 설계 결정 4 — mirrors core project-kind.ts) ──
 # code.dir absent → codeRoot IS projectRoot (legacy fallback). Best-effort: a
@@ -751,6 +769,62 @@ def meta_allowlist_parity_warning():
     only_py = sorted(set(META_ALLOWLIST_DEFAULT) - set(ts_allow))
     only_ts = sorted(set(ts_allow) - set(META_ALLOWLIST_DEFAULT))
     return (f"meta: allowlist default drift vs core meta-git.ts — "
+            f"python-only {only_py}, ts-only {only_ts}")
+
+
+def _ts_default_exclude():
+    """core's DEFAULT_META_EXCLUDE (meta-git.ts) — same dev-repo-only,
+    degrade-never-raise posture as _ts_default_allowlist (an installed ~/.prdt
+    mirror carries no TS source, so this quietly returns None there)."""
+    ts = Path(__file__).resolve().parent.parent / "src" / "git-workflow" / "meta-git.ts"
+    if not ts.is_file():
+        return None
+    try:
+        text = ts.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"DEFAULT_META_EXCLUDE\s*:\s*string\[\]\s*=\s*\[(.*?)\]", text, re.S)
+    if not m:
+        return None
+    return [x.strip().strip("'\",") for x in m.group(1).splitlines() if x.strip().strip("'\",")]
+
+
+# T-513: two REVIEWED, permanent divergences between the exclude defaults —
+# not drift, and named here so the parity check below never has to silently
+# swallow them (the failure this whole ticket is about: a check that quietly
+# stopped checking).
+#  - "worktrees/" (python-only): python's meta git-dir is hardcoded at
+#    `.prdt/meta.git` (no `.productune` dual-state-dir support — see
+#    meta_git_dir), so a bare, unanchored `worktrees/` literal written into
+#    `info/exclude` is sufficient. Core TS supports both project kinds and
+#    anchors this entry per-project instead (meta-git.ts desiredMetaExclude:
+#    `${STATE_DIR_NAME[kind]}/worktrees/`, T-387 item 3), so it is deliberately
+#    absent from DEFAULT_META_EXCLUDE itself — porting that per-kind anchoring
+#    into python is out of scope here (YAGNI) unless a `.productune` project
+#    actually needs it.
+#  - "meta.git/" (present, identically, on both sides today): kept as an
+#    explicit belt-and-suspenders line even though the meta git-dir already
+#    ignores itself structurally. Named here so neither side dropping it later
+#    reads as the drift class this check exists to catch.
+META_EXCLUDE_KNOWN_DIVERGENCE = {"worktrees/", "meta.git/"}
+
+
+def meta_exclude_parity_warning():
+    """T-513 (F2 sibling of Item 3 above, meta_allowlist_parity_warning): lints
+    the CLI's default EXCLUDE list against core's DEFAULT_META_EXCLUDE — the
+    two hand-authored copies of the derived/gate-artifact set `prdt init`
+    writes verbatim into the meta repo's `info/exclude`. Until this function
+    existed, NOTHING compared these two lists (only the allowlist twin was
+    checked), which is exactly how `.return-flags.json` landed in meta-git.ts
+    but not here without a single warning."""
+    ts_excl = _ts_default_exclude()
+    if ts_excl is None:
+        return None
+    only_py = sorted(set(META_EXCLUDE_DEFAULT) - set(ts_excl) - META_EXCLUDE_KNOWN_DIVERGENCE)
+    only_ts = sorted(set(ts_excl) - set(META_EXCLUDE_DEFAULT) - META_EXCLUDE_KNOWN_DIVERGENCE)
+    if not only_py and not only_ts:
+        return None
+    return (f"meta: exclude default drift vs core meta-git.ts — "
             f"python-only {only_py}, ts-only {only_ts}")
 
 
@@ -1400,6 +1474,127 @@ def is_rule_line(raw, key):
     if not st or st.startswith(("#", "<!--", "---", "===")):
         return False
     return len(key) >= 8 and re.search(r"\w", key) is not None
+
+
+# ── hook roster + fire evidence (T-445 / T-491) ───────────────────────────────
+# Derivation chain: scripts/hook-manifest.json is the SoT; install.sh mirrors
+# EXACTLY the manifest basenames into $PRDT_HOME/hooks and registers exactly the
+# manifest registrations. The manifest itself is not shipped into the mirror, so
+# on an installed machine the mirror IS the roster, and that is what doctor
+# reads — never a list hand-copied into this file (the T-445 drift class).
+GOVERNOR_HOOK = "prdt-call-governor.sh"
+# Counting (PostToolBatch) and enforcing (PreToolUse) are a pair: register the
+# enforcer alone and it reads a counter nothing increments — silent
+# non-enforcement that looks exactly like a governor with nothing to say.
+GOVERNOR_EVENTS = ("PostToolBatch", "PreToolUse")
+# T-491 R2-2: the `.fired-<event>` marker is create-once — the hook only ever
+# `>`-truncates it, so once it exists it exists forever, and doctor's
+# is_file() check goes green on day 1 and STAYS green even if a later harness
+# upgrade changes the payload shape enough to make the hook silently fail open
+# (T-445's lesson: an accepted-but-dead registration leaves no other trace).
+# A calendar-age check on the marker's own mtime is the only thing that can
+# still tell "fired" apart from "fired once, a long time ago". 7 days is the
+# threshold: the governor is matcher-less and fires on EVERY tool call in
+# EVERY prdt project on the machine, so a week with no fire at all already
+# means no prdt-developer/-qa/-designer dispatch ran anywhere on this machine
+# in that window — rare for an active install — while staying wider than one
+# quiet weekend (Fri→Mon is 3 days) so a normal gap in usage doesn't page
+# a false alarm.
+GOVERNOR_STALE_DAYS = 7
+
+
+def claude_settings_path():
+    """Where the harness reads hook registrations. `CLAUDE_DIR` redirects it —
+    the same override install.sh takes, and how a test drives this without
+    touching the developer's own ~/.claude."""
+    env = os.environ.get("CLAUDE_DIR")
+    return (Path(env) if env else Path.home() / ".claude") / "settings.json"
+
+
+def hook_registration_warnings():
+    """Mirror ↔ settings.json parity, plus proof that the governor's events FIRE.
+
+    The firing half exists because registration is NOT evidence: a misspelled
+    event name in settings.json is accepted with no error, no warning and no log
+    line (measured on harness 2.1.235, T-498 §8 r6), so a dead registration is
+    indistinguishable from a live one by reading files. The governor stamps a
+    marker per event when it runs, and that marker is the only thing here that
+    can tell the difference. It is checked only for the governor because it is
+    the only hook that leaves evidence — and the only one whose failure is
+    otherwise invisible."""
+    hooks_dir = prdt_home() / "hooks"
+    if not hooks_dir.is_dir():
+        return []                      # no install on this machine — not this check's business
+    mirrored = sorted(p.name for p in hooks_dir.glob("prdt-*.sh"))
+    if not mirrored:
+        return []
+
+    settings_path = claude_settings_path()
+    settings = read_json(settings_path)
+    if not isinstance(settings, dict):
+        return [f"hooks: {settings_path} missing or invalid JSON — no prdt hook is registered on this machine"]
+
+    per_event = {}
+    hooks = settings.get("hooks")
+    if isinstance(hooks, dict):
+        for event, entries in hooks.items():
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                for h in entry.get("hooks") or []:
+                    cmd = h.get("command") if isinstance(h, dict) else None
+                    if isinstance(cmd, str):
+                        per_event.setdefault(str(event), []).append(cmd)
+    commands = [c for cmds in per_event.values() for c in cmds]
+
+    warns = []
+    for b in mirrored:
+        if not any(b in c for c in commands):
+            warns.append(f"hooks: {b} is mirrored in {hooks_dir} but registered nowhere in "
+                         f"{settings_path} — re-run install.sh")
+    stale = []
+    for c in commands:
+        name = c.strip('"').split()[0].strip('"').rsplit("/", 1)[-1]
+        if name.startswith("prdt-") and name.endswith(".sh") and name not in mirrored and name not in stale:
+            stale.append(name)
+    for name in stale:
+        warns.append(f"hooks: {name} is registered in {settings_path} but absent from {hooks_dir} — "
+                     f"stale entry, re-run install.sh")
+
+    if any(GOVERNOR_HOOK in c for c in commands):
+        run_dir = prdt_home() / "run" / "call-governor"
+        for ev in GOVERNOR_EVENTS:
+            if not any(GOVERNOR_HOOK in c for c in per_event.get(ev, [])):
+                warns.append(f"hooks: call governor is not registered on {ev} — counting "
+                             f"(PostToolBatch) and enforcement (PreToolUse) are a pair, and half of it "
+                             f"silently does nothing (T-491)")
+                continue
+            marker = run_dir / f".fired-{ev}"
+            if not marker.is_file():
+                warns.append(f"hooks: call governor is registered on {ev} but has never fired "
+                             f"(no {marker}) — a misspelled event name is accepted by the "
+                             f"harness with no error at all, so check the event name; if no tool call has "
+                             f"run in a prdt project since install, this clears itself")
+                continue
+            # The marker is create-once (T-491 R2-2): it never proves the hook is
+            # STILL alive, only that it fired at some point in the past. Age it
+            # off the marker's own mtime rather than its content.
+            try:
+                mtime = marker.stat().st_mtime
+                age_days = (datetime.now(timezone.utc) - datetime.fromtimestamp(mtime, tz=timezone.utc)).days
+            except OSError:
+                age_days = None
+            if age_days is not None and age_days > GOVERNOR_STALE_DAYS:
+                warns.append(f"hooks: call governor is registered on {ev} and has fired before, but not "
+                             f"in the last {GOVERNOR_STALE_DAYS}d ({marker} last updated ~{age_days}d ago) "
+                             f"— if prdt-developer/-qa/-designer dispatches HAVE run in that window, the "
+                             f"harness likely changed its payload shape under this hook and it is now "
+                             f"failing open silently; re-run one short dispatch and confirm {marker} updates. "
+                             f"If nothing has dispatched anywhere on this machine in that window, this is "
+                             f"expected and clears itself on the next tool call")
+    return warns
 
 
 def override_warnings(root):
@@ -2232,6 +2427,9 @@ def cmd_doctor(_args):
     parity = meta_allowlist_parity_warning()
     if parity:
         warns.append(parity)
+    excl_parity = meta_exclude_parity_warning()
+    if excl_parity:
+        warns.append(excl_parity)
 
     # wiki — project store, then the machine store (§8b) it now searches alongside
     warns += wiki_lint(root)
@@ -2239,6 +2437,9 @@ def cmd_doctor(_args):
 
     # override caps + cross-layer duplicates (§8b)
     warns += override_warnings(root)
+
+    # hook roster parity + governor fire evidence (T-445 / T-491)
+    warns += hook_registration_warnings()
 
     # discipline caps + menu drift
     droot = discipline_root()

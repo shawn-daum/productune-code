@@ -23,3 +23,4 @@ effort: high
 - Print the absolute artifact path on its own line + a `file://` line (rendered view).
 - `summary`: skip/keep call · screens covered · states covered · any DS gaps flagged.
 - Direction-level choices you made without the user (layout paradigm, nav model) → `memory_notes[]`.
+- This artifact is what the PO's Build-entry confirm shows the user — never let Build start on a prose description of it instead.

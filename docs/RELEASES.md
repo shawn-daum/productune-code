@@ -12,6 +12,32 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.7 — Define 방향 소유권 · 호출 거버너 · 주입 방어 (2026-08-25)
+
+> CLI 아티팩트 단독 릴리스입니다. GUI(.dmg)는 이 버전에 포함되지 않습니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행.
+>
+> **이 라운드는 자체 합격선을 통과하지 못했습니다.** 목표는 티켓당 토큰 20% 감소였고 실측은 **−17.7%** 였으며, 라운드 중 신규 스코프를 편입해 짝 조항도 불합격입니다. 산출물은 전부 착지했고 아래 내용은 실제로 동작하지만, 이 버전은 목표 미달로 닫힙니다.
+
+### Added
+- **Define 진입의 방향 fork** — 새 버전 섹션은 PRD·위키·티켓이 이미 완비돼 있어도 designer 의 첫 반환이 `ready` 가 될 수 없습니다. 첫 반환은 2~3안 + 각 안의 득실 + 단일 추천을 담은 방향 fork 이고, 사용자의 답은 `[ctx].direction_pin` 으로 **개작 없이** PRD 에 들어갑니다. 문서가 두꺼울수록 질문이 0건이 되던 경로를 닫습니다.
+- **ambiguity 4조건 판정식** — ⓐ사용자에게 보이는 결과가 달라지는가 ⓑ되돌림 비용이 결정 비용보다 큰가 ⓒ기록된 결정을 뒤집는가 ⓓ기록이 비워둔 칸을 채우는가. 하나라도 yes 면 사용자 몫이고, 전부 no 면 designer 가 정하되 **PRD 의 `### Autonomous decisions` 에 한 줄을 남깁니다.** 흔적 없는 자율 결정은 위반입니다.
+- **`scope-challenge` playbook** — 스코프가 이미 완성돼 도착해 PO 가 fork 재료를 만들 수 없을 때. `prd-clarity` 와 별도 세션에서 돌고, 산출물은 fork 표뿐이며 PRD 를 건드리지 않습니다.
+- **호출 거버너** — 디스패치당 API 턴을 세어 developer 는 40턴 경고 · 60턴 차단, qa·designer 는 모든 대역에서 경고만. 차단은 도구 호출만 막고 반환은 항상 열려 있어, 워커가 `unresolved[]` 로 돌아오면 남은 조각을 새 컨텍스트에서 다시 냅니다. 8개 프로젝트 실측: 차단 5회 전부 설계대로 복귀, 분할이 절감의 **10.2배** 이득.
+- `prdt doctor` — 훅의 **발화 증거**(등록만이 아니라 실제 발화 + 마커 노화)와 meta exclude 쌍의 drift 를 봅니다.
+
+### Changed
+- PRD 의 읽기 단위가 **표준 머리 + 살아 있는 Phase 절 + 버전 섹션 하나**로 좁혀지고, 기능의 현재 스펙은 `docs/features/<feature>.md` 가 갖습니다.
+- 디스패치당 예산 규율 — 독립 읽기는 한 턴에 병렬로, 연속 검증은 한 호출로. 검증 4종은 모두 실행되고 없어지는 것은 API 왕복뿐입니다.
+- `contracts.md` — `[ctx].direction_pin`(축자 전달) · 툴링 소유 런타임 상태의 read-only 명문화(자기 카운터를 지워 차단을 피하는 것은 tampering).
+
+### Fixed
+- **파생 경로가 harness 구조를 위조할 수 있던 문제.** override 주입 훅이 파일 본문은 gutter 뒤에 두면서 **경로는 raw 로** 넣어, 줄바꿈 하나를 담은 디렉터리 이름이 위조된 블록 종료·위조된 `[prdt discipline …]` 헤더·임의 규칙 줄을 column 0 에 세울 수 있었습니다. git 이 그런 경로를 clone 으로 옮기므로 실제 도달 가능한 경로였습니다. 경로는 이제 shape 로 판정해 한 줄 평문만 통과하고 나머지는 통째로 보류합니다 — 보고된 2곳이 아니라 **17곳**이었고, gutter 안에 들어 있던 보류 알림 자신도 포함됩니다.
+- **위조된 tool 인자로 오케스트레이터를 정지시킬 수 있던 문제.** 거버너가 바이트 윈도우의 첫 매치로 신원을 읽어, 자기 신원을 보내지 않는 메인 세션이 tool 페이로드 안의 위조 키에 끌려 들어갔습니다. 이제 **최상위 멤버 walk** 로 읽어 중첩 깊이가 자격을 박탈합니다. tool **출력**이 같은 페이로드에 실리는 신설 경로도 함께 닫았습니다.
+- 거버너 훅의 문자열 처리 비용 — 원인이 알고리즘이 아니라 로케일이었습니다. `LC_ALL=C` 로 28KB 페이로드에서 ~120ms → 29.6ms(읽기 전용 하한 26.5ms).
+- meta exclude 쌍의 파리티 — `.return-flags.json` 이 TS 쪽에만 있어, node 브리지 없는 기기에서 큐 파일이 meta 히스토리에 계속 쌓였습니다.
+- 잘못된 형태의 `[ctx]` 를 워커가 뜨기 전에 거절하고, 규약을 벗어난 반환을 PO 프롬프트로 알립니다.
+
 ## v1.6 — 4칸 override 체계 · 기기 위키 · CLI 릴리스 (2026-08-18)
 
 > CLI 아티팩트 단독 릴리스입니다. GUI(.dmg)는 이 버전에 포함되지 않습니다.

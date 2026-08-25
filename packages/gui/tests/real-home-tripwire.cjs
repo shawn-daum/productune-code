@@ -142,6 +142,31 @@
  *   running). The product never writes them, and a launch that reached them
  *   necessarily also reached `~/.productune`, so nothing is lost.
  *
+ * DELIBERATELY NOT COVERED — 2: `~/.prdt/run/` (T-491)
+ *
+ *   Full exclusion, not name-only — see `tripwireExcludedSubtrees()`. This is
+ *   the call-governor hook's OWN counter directory, and the hook fires on every
+ *   tool call of the very session running this suite, so a governed run wrote
+ *   `+N / -N` entries here on every invocation (create-then-remove of
+ *   `.fired-*` markers and `<session-id>.<agent-id>` counters) with no test
+ *   involved at all — an always-red tripwire nobody reads, which is the exact
+ *   failure mode this file's own header (S13 above) names as how a floor dies.
+ *   Unlike the `~/.claude` case above (an unrelated harness, prevention already
+ *   covers it, name-only would still show the removals), this is `.prdt` ITSELF
+ *   and name-only mode does not help: the diff keeps name-only REMOVALS as
+ *   drift on purpose (that is what makes it catch a rampaging test elsewhere in
+ *   `.prdt`), and the governor's own churn is exactly create-then-remove. So the
+ *   surface is dropped from the walk entirely rather than down-graded.
+ *
+ *   Contracts §Return envelope (2026-08-20) makes this the correct call, not a
+ *   weakening: `~/.prdt/run/` is carved out as tooling-owned — written only by
+ *   hook/CLI/installer, read-only for every persona — so what this tripwire was
+ *   seeing was never test damage, it was normal runtime state for the very
+ *   category of writer the carve-out already blesses. `~/.prdt` itself stays
+ *   FULLY covered outside this one subtree: `discipline/`, `hooks/`, `bin/`,
+ *   `overrides/`, `wiki/`, `plan-tier`, `update-state.json` are untouched by this
+ *   change and a test that rm -rf's any of them still reddens the run.
+ *
  * COVERED IN SIZE-ONLY MODE: the two NSUserDefaults plists
  *
  *   T-450 R3 / F2 → QA R3 / B1. F2 was a correct fix and this is its consequence,
@@ -306,6 +331,21 @@ function tripwireNameOnlySubtrees() {
   ]
 }
 
+/**
+ * Subtrees inside a covered surface that are DROPPED from the walk entirely —
+ * no line recorded for the root or anything under it, not even `exists=`. See
+ * "DELIBERATELY NOT COVERED — 2" in the header (T-491): this is narrower than
+ * `tripwireNameOnlySubtrees()` on purpose. Name-only still treats a REMOVAL as
+ * drift, and this subtree's only writer (the call-governor hook) creates and
+ * removes its own markers on every tool call of the governed session running
+ * the suite — so name-only mode would still fire on every run. Nothing else in
+ * `~/.prdt` gets this treatment; only the tooling-owned `run/` carve-out does.
+ */
+function tripwireExcludedSubtrees() {
+  const h = realHome()
+  return [path.join(h, '.prdt', 'run')]
+}
+
 /** Marker suffix on name-only detail lines; the diff keys off it. */
 const NAME_ONLY = 'name-only'
 
@@ -389,6 +429,12 @@ function walkSurface(root, modes, budget) {
     }
     for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const full = path.join(dir, e.name)
+      // T-491: an excluded subtree (currently only `~/.prdt/run/`) is dropped
+      // BEFORE the name-only check and unconditionally, even inside an
+      // already-nameOnly walk — no line, no recursion, no spend. Same cheap
+      // readdir-built key as name-only below; see that comment for why it is
+      // safe here (no symlink/alias to see through).
+      if (e.isDirectory() && modes.excluded.has(containmentKey(full, false))) continue
       // Name-only roots are DIRECTORIES, and this walk built `full` out of real
       // `readdir` entries — so there is no symlink or alias to see through here,
       // and the cheap key is the correct comparison. Measured: doing the full
@@ -430,6 +476,7 @@ function snapshotRealHome() {
   const modes = {
     nameOnly: new Set(tripwireNameOnlySubtrees().map((x) => containmentKey(x, false))),
     sizeOnly: new Set(tripwireSizeOnlyPaths().map((x) => containmentKey(x, false))),
+    excluded: new Set(tripwireExcludedSubtrees().map((x) => containmentKey(x, false))),
   }
   const budget = { left: MAX_ENTRIES }
   let truncated
@@ -509,6 +556,12 @@ function formatDrift(drift, culprit) {
   lines.push('  3. the developer\'s OWN Productune was running during the suite, and its')
   lines.push('     userData writes are indistinguishable from an escaped launch. Close')
   lines.push('     the app and re-run to tell 1 and 2 apart from 3.')
+  lines.push('')
+  lines.push('Note (T-491): `~/.prdt/run/` (the call-governor hook\'s own counters) is')
+  lines.push('EXCLUDED from this fingerprint on purpose — it is tooling-owned runtime')
+  lines.push('state, not test damage, and the hook rewrites it on every tool call of the')
+  lines.push('governed session itself. Drift reported above is NOT that path; do not')
+  lines.push('diagnose it as cause 3 just because a governor is running this suite.')
   lines.push('')
   return lines.join('\n')
 }
@@ -744,6 +797,7 @@ function assertTripwireClean(where, options = {}) {
 module.exports = {
   tripwireNameOnlySubtrees,
   tripwireSizeOnlyPaths,
+  tripwireExcludedSubtrees,
   tripwireSurfaces,
   snapshotRealHome,
   diffSnapshots,

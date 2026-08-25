@@ -4,10 +4,9 @@
  * Proves the acceptance at the settings-merge layer, entirely against fixture
  * dirs (mkdtemp HOME + project dirs) — the developer's real ~/.claude / ~/.prdt
  * are NEVER touched:
- *   1. prdt project → EXACTLY the 9 prdt hooks (prdt-session-start /
- *      prdt-post-compact / prdt-post-dispatch / prdt-user-prompt / prdt-audience-inject /
- *      prdt-plan-tier-inject / prdt-overrides-inject / prdt-project-overrides-inject /
- *      prdt-auto-open) + statusline-prdt.sh
+ *   1. prdt project → EXACTLY the hook roster hook-manifest.json names (the SoT
+ *      both this test's fixture and installClaudeHooks derive from — never a
+ *      hand-copied list, T-445/T-491) + statusline-prdt.sh
  *      are registered, pointing at the
  *      ~/.prdt mirror with the same matchers and quoted-command form install.sh
  *      §4/§6 writes; no legacy pdt hook leaks in.
@@ -28,6 +27,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { installClaudeHooks } from './onboarding'
+import hookManifest from '../../../core/scripts/hook-manifest.json'
 
 interface Case {
   readonly label: string
@@ -37,7 +37,10 @@ interface Case {
 const ok = { ok: true } as const
 const fail = (detail: string) => ({ ok: false, detail })
 
-const PRDT_HOOKS = ['prdt-session-start.sh', 'prdt-post-compact.sh', 'prdt-post-dispatch.sh', 'prdt-user-prompt.sh', 'prdt-audience-inject.sh', 'prdt-plan-tier-inject.sh', 'prdt-overrides-inject.sh', 'prdt-project-overrides-inject.sh', 'prdt-auto-open.sh']
+// T-491: derived from the manifest SoT, never a hand-copied list — this literal
+// was 9 basenames and went stale the moment the roster grew to 10, which is the
+// exact drift class T-445 was about.
+const PRDT_HOOKS: readonly string[] = hookManifest.basenames
 
 /** Throwaway HOME fixture. `withMirror` seeds ~/.prdt/hooks/* + bin/statusline. */
 function makeHome(withMirror = true): string {
@@ -109,12 +112,23 @@ function cliHooksBlock(home: string): any {
       { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },
     ],
     UserPromptSubmit: [{ hooks: [h('prdt-user-prompt.sh')] }],
+    // T-491 call governor: matcher-less on both halves, and LAST in event order
+    // because that is the manifest's registration order both derivations replay.
+    // T-490: prdt-dispatch-gate.sh shares PreToolUse with the governor but
+    // carries the `Agent` matcher — a second, separate entry, registered AFTER
+    // the matcher-less governor entry (manifest registration order: the
+    // unconditional hook, then the narrowed one).
+    PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
+    PreToolUse: [
+      { hooks: [h('prdt-call-governor.sh')] },
+      { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
+    ],
   }
 }
 
 export const A6_CASES: readonly Case[] = [
   {
-    label: 'prdt project → exactly the 9 prdt hooks (mirror paths) + statusline-prdt.sh',
+    label: 'prdt project → exactly the manifest roster (mirror paths) + statusline-prdt.sh',
     run: () => {
       const home = makeHome()
       const proj = makeProject('.prdt')

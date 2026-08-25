@@ -45,6 +45,11 @@ const execFileAsync = promisify(execFile)
  * Default meta allowlist — the paths prdt authors (PRD 경계 결정 1). Kept in
  * lockstep with contracts.md's Fixed paths table (T-427 audit):
  *  - `docs/design.md` — the single living design doc — INCLUDED (fixed path).
+ *  - `docs/features` — the per-feature current-contract specs (T-476, same
+ *    Fixed paths row as docs/design.md) — INCLUDED. It was missing from this
+ *    default when the dir was created, so meta autosave left it `?? docs/
+ *    features/` forever; readMetaAllowlist's self-heal carries this addition
+ *    into projects initialized before it existed.
  *  - `docs/prd` (→ PRD.md), `docs/tickets`, `docs/wiki`, `docs/artifacts` —
  *    already covered by their directory entries below.
  *  - `.prdt/po-state.json` / `.prdt/config.json` / `.prdt/index.db` — covered
@@ -66,6 +71,7 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
   '.productune',
   'briefs',
   'docs/design.md',
+  'docs/features',
   'docs/prd',
   'docs/tickets',
   'docs/wiki',
@@ -81,7 +87,8 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
 /**
  * Derived/gate artifacts that must never enter the meta repo even though they
  * live under an allowlisted dir (PRD: index.db · turns.jsonl · sessions.json ·
- * gate caches are gitignored on both sides; the meta git-dir ignores itself).
+ * gate caches · the return-flags queue are gitignored on both sides; the meta
+ * git-dir ignores itself).
  * Written to the meta repo's `info/exclude` at init (gitignore syntax, matched
  * by basename anywhere in the tree). The physical code dir (`<code.dir>/`) is
  * appended per-project at init when the project is split (PRD §v1.3 설계 결정 3)
@@ -94,6 +101,7 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   'sessions.json',
   '.cost-*.json',
   '.subagent-gate.json',
+  '.return-flags.json',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }

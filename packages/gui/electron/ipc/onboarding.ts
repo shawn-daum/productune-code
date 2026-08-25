@@ -218,8 +218,9 @@ export function writeOnboardingPending(projectDir: string, source: OnboardingRec
 // T-311: GUI legacy dual-mode was downgraded to read-only. The legacy hook set
 // (T-PATCH-246's 18 pdt-* enforcement hooks + statusline-productune) is no longer
 // installed from the GUI — installClaudeHooks now installs ONLY the prdt hook set
-// (T-289 adapter A6; the full 9종 roster since T-409/T-413/T-423/T-445) for prdt-kind projects, and
-// is a NO-OP for legacy/undefined
+// (T-289 adapter A6; the full roster, derived from hook-manifest.json rather than
+// written down here — a literal count in this header went stale the moment
+// T-490 added the 11th hook) for prdt-kind projects, and is a NO-OP for legacy/undefined
 // projects. Legacy projects keep working for file/ticket/po-state VIEWING; only
 // the machine-provisioning wiring is cut. prdt install stays the single
 // go-forward path: install.sh (mirror + agents + hooks) plus the T-305
@@ -244,7 +245,7 @@ interface HookManifest {
 const HOOK_MANIFEST = hookManifestJson as unknown as HookManifest
 
 /**
- * The 9 prdt discipline hook basenames install.sh §4 registers, imported from
+ * The prdt discipline hook basenames install.sh §4 registers, imported from
  * the SAME hook-manifest.json (T-414) install.sh's jq --slurpfile reduces over —
  * this is no longer a hand-synced literal. The parity test in
  * onboarding.rosterParity.test.ts actually RUNS install.sh and installPrdtHooks

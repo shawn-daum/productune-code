@@ -79,6 +79,7 @@ import {
 import {
   diffSnapshots,
   snapshotRealHome,
+  tripwireExcludedSubtrees,
   tripwireNameOnlySubtrees,
   tripwireSizeOnlyPaths,
   tripwireSurfaces,
@@ -407,6 +408,31 @@ test('T-450: the tripwire covers the product write surfaces, and userData is one
   const claude = path.join(REAL_HOME, '.claude')
   expect(surfaces, '~/.claude must NOT be a tripwire surface — it churns constantly').not.toContain(claude)
   expect(PROTECTED_REAL_PATHS, '~/.claude must still be refused by prevention').toContain(claude)
+
+  // T-491: `~/.prdt/run/` is a FULL exclusion (not name-only) — the call-governor
+  // hook's own counter directory, tooling-owned per contracts §Return envelope
+  // (2026-08-20) and rewritten (create-then-remove) on every tool call of the
+  // governed session running this very suite. Name-only mode would not have
+  // fixed the regression this ticket exists for: the diff keeps a name-only
+  // REMOVAL as drift on purpose, and create-then-remove is exactly the
+  // governor's whole repertoire.
+  expect(tripwireExcludedSubtrees()).toEqual([path.join(REAL_HOME, '.prdt', 'run')])
+  for (const leaf of tripwireExcludedSubtrees()) {
+    expect(surfaces, 'an excluded subtree must never be a surface itself').not.toContain(leaf)
+    expect(
+      surfaces.some((s) => leaf.startsWith(s + path.sep)),
+      `an excluded subtree must live inside a covered surface: ${leaf}`,
+    ).toBe(true)
+  }
+  // On THIS machine, in a governed session, `~/.prdt/run/call-governor/` is
+  // guaranteed non-empty (the governor wrote to it to let this very test run).
+  // A snapshot taken right now must carry ZERO lines for it — not `exists=`,
+  // not name-only, nothing — or the exclusion is incomplete.
+  for (const leaf of tripwireExcludedSubtrees()) {
+    if (!fs.existsSync(leaf)) continue
+    const under = snapshotRealHome().detail.filter((l) => l === leaf || l.startsWith(leaf + path.sep) || l.startsWith(`${leaf}\t`))
+    expect(under, `${leaf} must contribute NO fingerprint lines at all`).toEqual([])
+  }
 
   // A snapshot must be non-vacuous, or every comparison below passes for free.
   const snap = snapshotRealHome()
@@ -1424,6 +1450,95 @@ test('T-450 F2/B1 + F3/B2: per-surface recording keeps legitimate writers green 
   expect(
     diffSnapshots(guardBefore, snapshotRealHome()),
     'the F2/B1 + F3/B2 fixture leaked out of the decoy',
+  ).toEqual([])
+})
+
+test('T-491: ~/.prdt/run/ is excluded from detection, and the rest of ~/.prdt keeps full fidelity', () => {
+  // The regression this ticket fixes: the call-governor hook that governs the
+  // very session running `npx vitest run` writes to `~/.prdt/run/call-governor/`
+  // on every tool call — creating `.fired-*` markers and `<session>.<agent>`
+  // counters, then removing them — and that always fired T-450, red on every
+  // governed run regardless of whether any test touched anything. Proven here
+  // against a DECOY, same route as the F2/B1 + F3/B2 test above.
+  //
+  // POSITIVE CONTROL FIRST (per this round's own lesson: a clean run proves
+  // nothing by itself) — the excluded subtree must still let a mutation
+  // ELSEWHERE in `.prdt` turn the diff red, or this "fix" would have widened
+  // into laundering the whole surface instead of the one tooling-owned leaf.
+  const guardBefore = snapshotRealHome()
+  const decoy = fs.mkdtempSync(path.join(os.tmpdir(), 'productune-run-exclusion-'))
+  const runDir = path.join(decoy, '.prdt', 'run', 'call-governor')
+
+  const probe = (): HomeSnapshot =>
+    JSON.parse(
+      cp.execFileSync(
+        process.execPath,
+        [
+          '-e',
+          `process.stdout.write(JSON.stringify(require(process.argv[1]).snapshotRealHome()))`,
+          path.join(TESTS_DIR, 'real-home-tripwire.cjs'),
+        ],
+        {
+          encoding: 'utf-8',
+          timeout: 60_000,
+          env: { ...process.env, PRODUCTUNE_REAL_HOME: decoy, HOME: DEFAULT_SANDBOX_HOME },
+        },
+      ).trim(),
+    ) as HomeSnapshot
+
+  try {
+    fs.mkdirSync(runDir, { recursive: true })
+    fs.writeFileSync(path.join(decoy, '.prdt', 'doctrine.md'), '# doctrine')
+    fs.writeFileSync(path.join(runDir, '.fired-PreToolUse'), '1')
+    fs.writeFileSync(path.join(runDir, 'session-a.agent-a'), '1')
+    const s1 = probe()
+
+    // The excluded subtree contributes NOTHING to the fingerprint, even though
+    // it exists and is non-empty — not `exists=`, not name-only.
+    const under = s1.detail.filter((l) => l.startsWith(runDir + path.sep) || l.startsWith(`${runDir}\t`))
+    expect(under, '~/.prdt/run/ must contribute no fingerprint lines').toEqual([])
+
+    // GREEN: the governor's actual shape — create, then remove, on every tool
+    // call. Before this fix this alone turned every governed run red.
+    fs.writeFileSync(path.join(runDir, '.fired-PostToolBatch'), '1')
+    fs.rmSync(path.join(runDir, 'session-a.agent-a'))
+    fs.writeFileSync(path.join(runDir, 'session-b.agent-b'), '1')
+    const s2 = probe()
+    expect(
+      diffSnapshots(s1, s2),
+      'T-491: create-then-remove churn inside ~/.prdt/run/ must be GREEN',
+    ).toEqual([])
+
+    // RED, the positive control: deleting the WHOLE run/ subtree is still
+    // invisible (that is the point of a full exclusion, stated as a limit
+    // rather than hidden) — so prove the boundary is a LEAF by showing a
+    // sibling change in ~/.prdt keeps full fidelity.
+    fs.rmSync(runDir, { recursive: true, force: true })
+    const s3 = probe()
+    expect(
+      diffSnapshots(s2, s3),
+      'T-491: even deleting the whole excluded subtree must stay GREEN — that is the documented limit',
+    ).toEqual([])
+
+    fs.writeFileSync(path.join(decoy, '.prdt', 'doctrine.md'), '# doctrine, corrupted')
+    const s4 = probe()
+    expect(
+      diffSnapshots(s3, s4).some((d) => d.surface === path.join(decoy, '.prdt')),
+      'T-491 positive control: a doctrine.md rewrite outside the excluded leaf must still be drift — ' +
+        'the tripwire is not blind to the rest of ~/.prdt',
+    ).toBe(true)
+
+    console.log(
+      'T-491 (call-governor exclusion, decoy-proven)\n' +
+        '  green: create/remove churn inside ~/.prdt/run/, including deleting the whole subtree\n' +
+        '  red:   a ~/.prdt/doctrine.md rewrite outside the excluded leaf — the tripwire keeps working',
+    )
+  } finally {
+    fs.rmSync(decoy, { recursive: true, force: true })
+  }
+  expect(
+    diffSnapshots(guardBefore, snapshotRealHome()),
+    'the T-491 fixture leaked out of the decoy',
   ).toEqual([])
 })
 
