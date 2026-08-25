@@ -24,9 +24,9 @@
 #
 # LATENCY BUDGET: this fires on EVERY tool call (v1.6: 5,124 worker calls), so
 # it must be effectively free — no network, no runtime startup, no jq, no
-# python. One `cat` fork to drain stdin, then bash builtins and local file
-# appends only. The v1.6 worst hook was vercel-plugin at 439.7s cumulative; that
-# is the mistake this file must not repeat.
+# python. bash builtins and local file appends only, zero forks.
+# The v1.6 worst hook was vercel-plugin at 439.7s cumulative; that is the
+# mistake this file must not repeat.
 #
 # STATE: $PRDT_HOME/run/call-governor/ — machine-local, outside any repo, and
 # outside the install mirror's rm -rf (install.sh §1 scopes that to
@@ -35,15 +35,61 @@
 # hook's own scratch counters. Counter files are ~one byte per turn and are
 # never read after the dispatch ends.
 #
-# TRUST: `tool_input` is attacker- and drift-shaped text (a worker can put any
-# string in a Bash command). Classification therefore reads only the payload
-# HEADER window — every key this hook needs is emitted BEFORE tool_input by the
-# harness — and every extracted value is SHAPE-MATCHED, never escaped-and-
-# spliced (the T-471 prescription for short enum-ish tokens). A value that
-# fails its shape yields silence, never a fallback guess: this hook can only
-# ever fail OPEN.
+# TRUST (rewritten by T-518 — the previous claim here was false): the event
+# payload carries bodies of attacker- and drift-shaped text. `tool_input` is one
+# (a worker can put any string in a Bash command, and a tool taking an OBJECT
+# argument — Artifact `capabilities`, an object-parameter MCP tool — serializes
+# nested keys UNESCAPED, so a forged `"agent_type":"prdt-developer"` arrives as a
+# literal, matchable key). `tool_response` on PostToolBatch is a second: tool
+# OUTPUT rides along, so merely CAT-ing a file that names these keys feeds them
+# in.
+#
+# So classification is STRUCTURAL, not positional. The scan below walks the
+# TOP-LEVEL members of the event object and stops at the tool payload; only a
+# top-level member can name the persona, and a forged key nested inside any
+# value is at depth ≥ 1 and is therefore never a candidate. Nesting depth, not
+# byte offset, is what disqualifies it.
+#
+# What the old byte-window got wrong, in BOTH directions:
+#   - It truncated `tool_input` but did not EXCLUDE it, so the first match won.
+#     Subagents survived on leftmost-match alone (a real agent_type precedes the
+#     tool payload), but the MAIN SESSION sends no agent_type at all — so the
+#     forged one was the only match, and 61 such calls hard-denied every tool
+#     call the orchestrator makes. An availability kill on the one session that
+#     dispatches work.
+#   - A long path could push the real keys past the window and silently drop
+#     enforcement. Reading structurally removes that cliff too.
+#
+# Every extracted value is still SHAPE-MATCHED, never escaped-and-spliced (the
+# T-471 prescription for short enum-ish tokens). A value that fails its shape
+# yields silence, never a fallback guess: this hook can only ever fail OPEN.
+#
+# PAYLOAD SHAPE — re-measured 2026-08-25 on harness 2.1.243 with a stdin-dumping
+# probe hook (do not take this on faith; re-run the probe when it matters):
+#   main session   session_id · transcript_path · cwd · prompt_id ·
+#                  permission_mode · effort · hook_event_name · …
+#                  — NO agent_id and NO agent_type, on either event. This is why
+#                    the main session self-excludes below.
+#   subagent       … · permission_mode · agent_id · agent_type · effort · …
+#                  — PostToolBatch really does carry both. Confirmed, not assumed.
+#   PreToolUse     … · tool_name · tool_input · tool_use_id
+#   PostToolBatch  … · tool_calls:[{tool_name, tool_input, tool_use_id,
+#                  tool_response}]
+# Two members are newer than the 2.1.235 note this file used to carry: `effort`
+# (an OBJECT, sitting between the identity keys and hook_event_name — the scan
+# must skip containers, not stop at them) and `tool_response`.
 
 set +e
+
+# BYTE SEMANTICS, and the single biggest latency lever in this file. Under a
+# UTF-8 locale bash converts the whole string to wide characters on every
+# parameter expansion, and re-does it per match attempt: measured 2026-08-25 on
+# a 28KB Write payload, two ${EV%%…} cuts cost 121ms in ko_KR.UTF-8 and 1ms in
+# C. JSON structure is ASCII, every value here is shape-matched to an ASCII
+# alphabet, and paths are handed to the filesystem as bytes either way — so byte
+# semantics is both faster and closer to what this hook actually means. Set it
+# before the first expansion or the saving is lost.
+LC_ALL=C
 
 # Drain stdin with the BUILTIN, no fork. bash reads a pipe one byte per syscall,
 # so the obvious worry is a large tool_input — measured on this machine
@@ -55,18 +101,121 @@ set +e
 IFS= read -r -d '' EV 2>/dev/null
 [ -n "$EV" ] || exit 0
 
-# Header window: the keys below are all emitted before `tool_input`
-# (session_id · transcript_path · cwd · prompt_id · permission_mode · agent_id ·
-# agent_type · hook_event_name · tool_name · tool_input · tool_use_id, measured
-# on harness 2.1.235). Truncating first means a forged `"agent_type":"prdt-qa"`
-# inside a tool_input body is never even scanned. If a pathological cwd ever
-# pushes the real keys past the window, the match fails and the hook goes silent
-# — the fail-open direction.
-HDR="${EV:0:8192}"
+# ── structural top-level scan ─────────────────────────────────────────────────
+# Two builtin-only helpers consume from $SCAN. Neither forks.
 
-RE_EVENT='"hook_event_name":"([A-Za-z]{1,32})"'
-[[ $HDR =~ $RE_EVENT ]] || exit 0
-EVENT="${BASH_REMATCH[1]}"
+STR=""
+
+# Consume one JSON string starting at $SCAN[0] == '"'; leave it in $STR.
+# Escape-aware, so a `\"` inside a value (a path containing a quote, say) is
+# consumed as content instead of ending the string and desynchronising the walk
+# — which is exactly how a forged key inside a string value would smuggle itself
+# up to top level. Only `\"` is decoded; every other escape stays as written,
+# because these values are shape-matched, never interpreted.
+str_take() {
+  local out="" seg bs
+  SCAN="${SCAN:1}"
+  while :; do
+    seg="${SCAN%%\"*}"
+    if [ "$seg" = "$SCAN" ]; then SCAN=""; STR=""; return 1; fi   # unterminated
+    bs="${seg##*[!\\]}"                                           # trailing backslash run
+    out="$out$seg"
+    SCAN="${SCAN:${#seg}+1}"
+    if [ $(( ${#bs} % 2 )) -eq 1 ]; then out="$out\""; continue; fi
+    STR="$out"
+    return 0
+  done
+}
+
+# Consume one balanced object/array starting at $SCAN[0]. Jumps between
+# structural characters rather than walking bytes, and hands strings to
+# str_take so a `{` or `"` inside a string value cannot skew the depth.
+skip_container() {
+  # `}` inside an inline bracket expression closes the ${...} early — bash reads
+  # `${SCAN%%[][{}` and treats the rest as literal text, with no syntax error to
+  # warn you (measured: it silently returns the whole string). Keep both
+  # structural patterns in variables so the parser never sees those braces.
+  local depth=0 seg c pat='[][{}"]'
+  while [ -n "$SCAN" ]; do
+    seg="${SCAN%%$pat*}"
+    if [ "$seg" = "$SCAN" ]; then SCAN=""; return 1; fi
+    SCAN="${SCAN:${#seg}}"
+    c="${SCAN:0:1}"
+    case "$c" in
+      '"')     str_take || return 1 ;;
+      '{'|'[') depth=$(( depth + 1 )); SCAN="${SCAN:1}" ;;
+      *)       depth=$(( depth - 1 )); SCAN="${SCAN:1}"
+               [ "$depth" -le 0 ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# LATENCY DEVICE, NOT A SECURITY BOUNDARY — read this before touching it.
+# Every parameter expansion is O(len(var)), so walking the header of a 28KB
+# Write payload one expansion at a time is measurably worse than cutting the
+# payload down to its header once and walking that.
+#
+# What makes that cut sound is the direction of its failure, not any trust in
+# it: attacker bytes exist only INSIDE tool_input / tool_calls, i.e. after the
+# genuine first occurrence of these literals, so the cut can only ever land at
+# or BEFORE the real boundary. Land it early (a crafted path containing the
+# literal) and identity goes missing and the hook goes silent — fail open. It
+# can never land late, and it is not what disqualifies a forgery: the top-level
+# walk below does that, and would do it just as well on the whole payload. The
+# suite pins exactly that, with a forged key nested BEFORE the cut.
+TIP='"tool_input":'
+TCP='"tool_calls":'
+SCAN="${EV%%$TIP*}"
+HDR2="${EV%%$TCP*}"
+[ ${#HDR2} -lt ${#SCAN} ] && SCAN="$HDR2"
+
+case "$SCAN" in
+  '{'*) SCAN="${SCAN:1}" ;;
+  *) exit 0 ;;               # not an object: nothing to classify, stay silent
+esac
+
+EVENT=""; DIR=""; SID=""; AID=""; ATYPE=""
+
+while :; do
+  case "$SCAN" in '"'*) ;; *) break ;; esac
+  str_take || break
+  K="$STR"
+  case "$SCAN" in ':'*) SCAN="${SCAN:1}" ;; *) break ;; esac
+
+  # Belt and braces with the cut above: if a payload ever arrives with the tool
+  # body ahead of the identity keys, stop rather than walk it. A nested forgery
+  # is invisible to a top-level walk either way — this is about cost, not trust.
+  case "$K" in
+    tool_input|tool_calls|tool_name|tool_response|tool_use_id) break ;;
+  esac
+
+  case "$SCAN" in
+    '"'*)
+      str_take || break
+      case "$K" in
+        session_id)      SID="$STR" ;;
+        cwd)             DIR="$STR" ;;
+        agent_id)        AID="$STR" ;;
+        agent_type)      ATYPE="$STR" ;;
+        hook_event_name) EVENT="$STR" ;;
+      esac
+      ;;
+    '{'*|'['*)
+      skip_container || break ;;          # e.g. `effort` — skipped, not stopped at
+    *)
+      PAT='[,}]'                          # in a variable — see skip_container
+      SEG="${SCAN%%$PAT*}"                # number / true / false / null
+      [ "$SEG" = "$SCAN" ] && break
+      SCAN="${SCAN:${#SEG}}"
+      ;;
+  esac
+
+  case "$SCAN" in ','*) SCAN="${SCAN:1}" ;; *) break ;; esac
+done
+
+# Any malformed payload leaves these empty and every gate below exits 0 — the
+# fail-open direction, by design.
 case "$EVENT" in
   PreToolUse|PostToolBatch) ;;
   *) exit 0 ;;
@@ -79,9 +228,7 @@ esac
 # the outermost-wins rule nor a realpath (T-484/T-493): a symlinked cwd that
 # misses the marker costs one uncounted turn, never a wrong deny. Builtin `[ -f
 # ]` tests only, no forks.
-RE_CWD='"cwd":"([^"]+)"'
-[[ $HDR =~ $RE_CWD ]] || exit 0
-DIR="${BASH_REMATCH[1]}"
+[ -n "$DIR" ] || exit 0
 # The harness always sends an absolute cwd, so this is unreached in practice —
 # but `${DIR%/*}` is a no-op on a string with no `/` in it (it returns the
 # string unchanged, not empty), so a relative DIR would never shrink and the
@@ -116,17 +263,17 @@ if ! : 2>/dev/null > "$RUN/.fired-$EVENT"; then
   mkdir -p "$RUN" 2>/dev/null && : 2>/dev/null > "$RUN/.fired-$EVENT"
 fi
 
-# ── persona (from the event itself — no correlation file needed) ──────────────
-# Measured 2026-08-19 (harness 2.1.235): PreToolUse and PostToolBatch raised
+# ── persona (a TOP-LEVEL member of the event itself) ──────────────────────────
+# Re-measured 2026-08-25 (harness 2.1.243): PreToolUse and PostToolBatch raised
 # INSIDE a subagent carry agent_id + agent_type; raised in the main session they
-# carry neither. So the main session self-excludes at this test.
-RE_AGENT='"agent_type":"(prdt-[a-z]{1,16})"'
-[[ $HDR =~ $RE_AGENT ]] || exit 0
+# carry neither. So the main session self-excludes at this test — and, since the
+# scan above only ever sees top-level members, nothing in a tool body can put it
+# back in (T-518).
 ENFORCE=""
-case "${BASH_REMATCH[1]}" in
+case "$ATYPE" in
   prdt-developer)          ENFORCE=1 ;;
   prdt-qa|prdt-designer)   ENFORCE="" ;;
-  *) exit 0 ;;   # prdt-po and anything new: out of scope by decision
+  *) exit 0 ;;   # main session (empty), prdt-po, anything new: out of scope
 esac
 
 # ── counter key: session + worker ─────────────────────────────────────────────
@@ -142,12 +289,11 @@ esac
 # accounting that matches that cost, not a bug to fix. A worker resumed at
 # turn 55 that hits the deny 5 turns later is the intended signal for the PO to
 # re-dispatch a smaller slice — not a reason to widen this key.
-RE_SID='"session_id":"([A-Za-z0-9_-]{8,64})"'
-RE_AID='"agent_id":"([A-Za-z0-9_-]{4,64})"'
-[[ $HDR =~ $RE_SID ]] || exit 0
-SID="${BASH_REMATCH[1]}"
-[[ $HDR =~ $RE_AID ]] || exit 0
-KEY="$RUN/$SID.${BASH_REMATCH[1]}"
+RE_SID='^[A-Za-z0-9_-]{8,64}$'
+RE_AID='^[A-Za-z0-9_-]{4,64}$'
+[[ $SID =~ $RE_SID ]] || exit 0
+[[ $AID =~ $RE_AID ]] || exit 0
+KEY="$RUN/$SID.$AID"
 
 WARN_AT=40
 DENY_AT=60
