@@ -2336,6 +2336,225 @@ def cmd_meta_bootstrap(root, args):
 
 # ── doctor ────────────────────────────────────────────────────────────────────
 
+def _discipline_repo_path():
+    """The repo-checkout path `discipline_root()`'s OWN fallback branch would
+    have returned, computed independently of what `discipline_root()` actually
+    picked. Only meaningful as a drift comparand when it names a real
+    directory that differs from the mirror — see `discipline_mirror_drift_warnings`."""
+    p = Path(__file__).resolve().parent.parent / "discipline"
+    return p if p.is_dir() else None
+
+
+def _tree_files(base):
+    return {str(p.relative_to(base)).replace(os.sep, "/"): p
+            for p in base.rglob("*") if p.is_file()}
+
+
+def _git_root(path, timeout=2):
+    try:
+        r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                            capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _mirror_matches_past_commit(git_root, rel_from_root, content, timeout=2):
+    """None = can't tell (no git / path untracked / git call failed) — the
+    caller treats that as "not proven behind", never as "proven ahead": we
+    only ever CLAIM behind on positive evidence, matching the anti-false-
+    positive posture the whole doctor already holds itself to (T-523).
+    Bounded to the file's most recent 25 commits (`--max-count`) — enough for
+    any realistic sync lag, and local-only (no `fetch`/`ls-remote`), so this
+    never becomes the unbounded history walk the docstring above warns against."""
+    try:
+        log = subprocess.run(
+            ["git", "-C", str(git_root), "log", "--max-count=25", "--format=%H", "--", rel_from_root],
+            capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if log.returncode != 0 or not log.stdout.strip():
+        return None
+    for commit in log.stdout.split():
+        try:
+            blob = subprocess.run(["git", "-C", str(git_root), "show", f"{commit}:{rel_from_root}"],
+                                   capture_output=True, timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if blob.returncode == 0 and blob.stdout == content:
+            return True
+    return False
+
+
+def discipline_mirror_drift_warnings(droot):
+    """T-507 (F1 from the T-476 QA grill): `discipline_root()` always prefers
+    the installed mirror over a repo checkout on a real machine — `PRDT_DISCIPLINE`
+    aside, `~/.prdt/discipline` wins the moment it exists, repo-fallback is a
+    dev-before-first-install path only. So a discipline change that landed in the
+    repo (committed, even) binds NO persona until `install.sh`'s mirror step
+    (rm -rf + cp -R, install.sh:82-83) reruns — and nothing said so before this
+    check. Measured live on this machine 2026-08-27: T-527/T-526 committed to the
+    repo, mirror still serving the pre-T-472 text.
+
+    Only fires when `droot` IS the mirror (the env-override and repo-fallback
+    branches of `discipline_root()` are each a reason NOT to compare, not a
+    drift condition — see the two early returns below) and a real, DIFFERENT
+    repo checkout sits at the path `discipline_root()`'s own fallback would
+    have used. On an install with no source tree nearby, that fallback path
+    collapses onto the mirror itself (this same installed script's
+    `parent.parent` IS `~/.prdt`) — same-path compare is a guaranteed no-op,
+    so a plain end-user machine never spends more than one `Path.is_dir()`
+    call here (AC 5: zero cost with no prdt project / no repo nearby).
+
+    Content, never mtime: `cp -R` rewrites mtimes on every sync (T-507 note),
+    so mtime can't distinguish "just synced" from "always identical". Behind
+    vs ahead/hand-edited is resolved per differing file against the repo's OWN
+    git history (bounded, local-only — see `_mirror_matches_past_commit`):
+      - repo has the file, mirror doesn't               → BEHIND
+      - mirror has the file, repo doesn't                → AHEAD/HAND-EDITED
+      - both have it, mirror bytes == some past commit   → BEHIND (stale sync)
+      - both have it, mirror bytes match no commit found → AHEAD/HAND-EDITED
+        (git unavailable/inconclusive also lands here — never claimed BEHIND
+        without a matching commit in evidence, per the anti-false-positive note)
+    The repair differs on purpose: BEHIND is safe to blind-overwrite (nothing in
+    the mirror is missing from the repo's own history upstream), so the action
+    offered is the ONE existing sync path reused verbatim, not a second one
+    invented here. AHEAD/HAND-EDITED is NOT safe to blind-overwrite — that would
+    silently drop bytes no commit anywhere has — so the action offered instead
+    promotes the mirror's content into the repo (the alternative, discarding it
+    via the same sync command as the behind case, is named but never the
+    default action string)."""
+    env_override = os.environ.get("PRDT_DISCIPLINE")
+    if env_override:
+        return []  # explicit dev choice — not a drift condition (false-positive note)
+    mirror = prdt_home() / "discipline"
+    if droot is None or droot.resolve() != mirror.resolve():
+        return []  # repo-fallback in use → no mirror to drift from
+    repo = _discipline_repo_path()
+    if repo is None:
+        return []  # no source tree nearby — nothing to compare against (AC 5)
+    if repo.resolve() == mirror.resolve():
+        return []  # installed-copy coincidence: fallback path IS the mirror (AC 5)
+
+    mirror_files, repo_files = _tree_files(mirror), _tree_files(repo)
+    only_repo = sorted(set(repo_files) - set(mirror_files))
+    only_mirror = sorted(set(mirror_files) - set(repo_files))
+    differing = []
+    for rel in sorted(set(repo_files) & set(mirror_files)):
+        try:
+            if mirror_files[rel].read_bytes() != repo_files[rel].read_bytes():
+                differing.append(rel)
+        except OSError:
+            continue
+    if not only_repo and not only_mirror and not differing:
+        return []
+
+    git_root = _git_root(repo)
+    behind, ahead = list(only_repo), list(only_mirror)
+    for rel in differing:
+        verdict = None
+        if git_root is not None:
+            try:
+                rel_from_root = str((repo / rel).resolve().relative_to(git_root.resolve()))
+            except ValueError:
+                rel_from_root = None
+            if rel_from_root:
+                verdict = _mirror_matches_past_commit(git_root, rel_from_root, mirror_files[rel].read_bytes())
+        (behind if verdict else ahead).append(rel)
+    behind.sort()
+    ahead.sort()
+
+    sync_cmd = f"rm -rf {mirror} && cp -R {repo} {mirror} && PRDT_DISCIPLINE={mirror} {prdt_home()}/bin/prdt menus"
+    warns = []
+    if behind:
+        warns.append(
+            "discipline: mirror BEHIND repo — " + ", ".join(behind[:8]) +
+            (f" (+{len(behind) - 8} more)" if len(behind) > 8 else "") +
+            f" — {mirror} wins over the repo per discipline_root() priority, so these "
+            f"committed changes bind no persona until synced — repair (reuses install.sh's "
+            f"own sync step): `{sync_cmd}`")
+    if ahead:
+        warns.append(
+            "discipline: mirror AHEAD OF / HAND-EDITED vs repo — " + ", ".join(ahead[:8]) +
+            (f" (+{len(ahead) - 8} more)" if len(ahead) > 8 else "") +
+            f" — content in {mirror} that no commit in the repo's history has; a blind resync "
+            f"would silently drop it, so repair is per-file: promote it into the repo "
+            f"(`cp {mirror}/<file> {repo}/<file>` then commit), or discard it instead with the "
+            f"same resync command the behind case uses: `{sync_cmd}`")
+    return warns
+
+
+def _prdt_script_repo_path():
+    """The repo-checkout path for `scripts/prdt` itself, computed the same way
+    `_discipline_repo_path()` computes discipline/'s: two levels up from THIS
+    running file, then back down to where the repo layout keeps it. Running
+    from the repo, that's a self-reference (`parent.parent` is `packages/core`,
+    `/scripts/prdt` is this very file). Running from the installed mirror
+    (`~/.prdt/bin/prdt`), `parent.parent` is `~/.prdt`, so `/scripts/prdt`
+    names nothing — same "collapses to nothing nearby" shape the discipline
+    helper relies on. Only meaningful as a drift comparand when it names a
+    real file that differs from the mirror — see `prdt_script_drift_warnings`."""
+    p = Path(__file__).resolve().parent.parent / "scripts" / "prdt"
+    return p if p.is_file() else None
+
+
+def prdt_script_drift_warnings():
+    """T-507 follow-up (same slice, PO-named gap): `discipline_mirror_drift_warnings`
+    only ever looks inside `discipline/` — if the prdt SCRIPT FILE itself is stale
+    on the installed mirror, the drift-check code above isn't running in the copy
+    a user's `prdt doctor` actually invokes, so nothing warns. Same structure,
+    reused rather than reinvented: `_mirror_matches_past_commit` for the
+    behind-vs-ahead call, the same env-override / no-mirror / no-repo / same-path
+    early-outs, and install.sh's own `cp` as the repair (no new sync path).
+
+    Bootstrap limit, named once here rather than left implicit: this warning can
+    only fire from a copy that already contains this very check — an installed
+    mirror predating this slice stays silent about its own drift until something
+    (a repo checkout, or a mirror already carrying this code) runs it."""
+    env_override = os.environ.get("PRDT_DISCIPLINE")
+    if env_override:
+        return []  # same dev-override posture as discipline: not a drift condition
+    mirror = prdt_home() / "bin" / "prdt"
+    if not mirror.is_file():
+        return []  # no installed copy on this machine (AC 5 / quiet on source-only)
+    mirror = mirror.resolve()  # follow-any-symlink real file, per PO's slice note
+    repo = _prdt_script_repo_path()
+    if repo is None:
+        return []  # no source tree nearby
+    if repo.resolve() == mirror:
+        return []  # running the mirror copy itself — collapses onto itself (AC 5)
+
+    try:
+        mirror_bytes, repo_bytes = mirror.read_bytes(), repo.read_bytes()
+    except OSError:
+        return []
+    if mirror_bytes == repo_bytes:
+        return []
+
+    git_root = _git_root(repo.parent)
+    verdict = None
+    if git_root is not None:
+        try:
+            rel_from_root = str(repo.resolve().relative_to(git_root.resolve()))
+        except ValueError:
+            rel_from_root = None
+        if rel_from_root:
+            verdict = _mirror_matches_past_commit(git_root, rel_from_root, mirror_bytes)
+
+    sync_cmd = f"cp {repo} {mirror} && chmod +x {mirror}"
+    bootstrap_note = ("this check only fires once the copy running it already carries "
+                       "this code — an installed copy predating this slice can't warn "
+                       "about its own drift")
+    if verdict:
+        return [f"discipline: prdt script mirror BEHIND repo — {mirror} runs stale code vs "
+                f"{repo}; committed script changes bind nothing until synced — repair "
+                f"(reuses install.sh's own sync step): `{sync_cmd}` ({bootstrap_note})"]
+    return [f"discipline: prdt script mirror AHEAD OF / HAND-EDITED vs repo — {mirror} "
+            f"differs from {repo} with no matching commit in the repo's history; promote it "
+            f"into the repo (`cp {mirror} {repo}` then commit), or discard it instead with "
+            f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
+
+
 def cmd_doctor(_args):
     root = require_root()
     warns = []
@@ -2443,7 +2662,14 @@ def cmd_doctor(_args):
 
     # discipline caps + menu drift
     droot = discipline_root()
+    # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
+    # discipline mirror exists at all; same env-override / no-mirror / no-repo
+    # early-outs as the discipline check above.
+    warns += prdt_script_drift_warnings()
     if droot:
+        # mirror↔repo content drift (T-507) — before the cap loop so a stale
+        # mirror is reported even when it happens to still be within cap
+        warns += discipline_mirror_drift_warnings(droot)
         for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
             if cand.exists():
                 if len(cand.read_text(encoding="utf-8").splitlines()) > CAPS["doctrine.md"]:

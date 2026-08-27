@@ -63,6 +63,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 
 ## Definition of Done
 - Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. Done-claims without runnable proof violate doctrine #4.
+- A discipline-file change is never done on a clean check alone: committed/applied ≠ effective — `discipline_root()` prefers `~/.prdt/discipline` over the repo, so it binds no persona until that mirror is resynced; verify effective with `prdt doctor`'s mirror-drift warning, not by re-reading the diff (T-507).
 
 ## Git — canonical branch model + Conventional Commits
 - Solo model, one canonical — no version branches, no dual rules. `dev` is the residence: daily work (code + docs) commits here. `main` is the deploy branch, reached ONLY by promoting `dev → main` (a plain merge — meta-split repos carry no `docs/` in the code tree, so nothing is filtered). Version boundary = an **immutable `v<N>.<m>` tag** fixed at close (never a long-lived version branch) + wiki `retro--v<N>.<m>.md`. A fix that surfaces AFTER a version closed and needs a deploy rolls a **patch `v<N>.<m>.<p>`** instead of a new minor — same tag + `docs/tickets/` system, immutable tag, lightweight retro (see PO lifecycle).
