@@ -56,6 +56,14 @@
 
 set +e
 
+# BYTE SEMANTICS (measured in prdt-call-governor.sh: two `${EV%%…}` cuts on a
+# 28KB payload cost 121ms in ko_KR.UTF-8 vs 1ms in C, because bash re-widens
+# the whole string to wide chars on every parameter expansion under a UTF-8
+# locale). JSON structure is ASCII and every value below is shape-matched or
+# used as filesystem bytes either way, so C is both faster and correct. Set it
+# before the first expansion or the saving is lost.
+LC_ALL=C
+
 # Drain stdin with the BUILTIN, no fork (measured in prdt-call-governor.sh: the
 # fork costs more than the syscalls it saves at every payload size we see, and
 # `read -d ''` still drains to EOF so the harness never sees an EPIPE).
@@ -71,16 +79,110 @@ IFS= read -r -d '' EV 2>/dev/null
 # prints (it cost this hook its first green run: a `"key": "value"` fixture sailed
 # straight past `*'"tool_name":"Agent"'*` and out the fail-open exit).
 #
+# `cwd` IS READ STRUCTURALLY (T-521) — not through a fixed-byte header window.
+# The window this replaced (`HDR="${EV:0:8192}"`) truncated `cwd` whenever a
+# long path pushed it past 8192B, and the failure was a SILENT no-op: no deny,
+# no warning, the gate just stopped existing for that dispatch. Measured
+# reproduction (T-521): a real harness-shaped payload with a 6,730-byte `cwd`
+# (`transcript_path`, which embeds `cwd`, sits ahead of it in the same object —
+# see the key order below — so the field's own byte offset is already past
+# half the window before its value even starts) left `HDR` cut mid-string, the
+# regex never matched a closing quote, and a dispatch that should have been
+# DENIED (no `[ctx]` line, `prdt-developer`, inside a real project) produced
+# zero stdout. There is no path length a byte window can be sized against —
+# PATH_MAX itself varies by OS and is not a hard ceiling on every filesystem —
+# so the fix removes the window rather than enlarging it.
+#
+# This reuses prdt-call-governor.sh's proven technique verbatim (T-518 fixed
+# the identical cliff there: "a long path could push the real keys past the
+# window and silently drop enforcement"): cut the payload at the first
+# `"tool_input":` — the only tool-body key this hook's PreToolUse-only
+# registration ever sees, so unlike the governor (PreToolUse AND PostToolBatch,
+# `tool_calls` too) one cut point is enough — then walk the TOP-LEVEL members
+# before that cut with an escape-aware, builtin-only string reader. `cwd` is
+# always among those top-level members (session_id · transcript_path · cwd ·
+# …, measured on harness 2.1.235/2.1.243), so this resolves for a `cwd` of ANY
+# length: there is no window left to overrun. Still zero forks, so a dispatch
+# this hook never has to act on (outside a prdt project) still costs nothing.
+#
+# Same fail-open direction as the window it replaces: a `cwd` value containing
+# the literal text `"tool_input":` would cut early and lose the rest of the
+# scan, but that only ever produces MORE silence, never a wrong deny — a path
+# cannot practically contain an unescaped `"` in the first place. (T-518's own
+# note on the governor's identical cut applies here unchanged.)
+
+# Consume one JSON string starting at $SCAN[0] == '"'; leave it in $STR.
+# Escape-aware: a `\"` inside a value is consumed as content, not a terminator.
+str_take() {
+  local out="" seg bs
+  SCAN="${SCAN:1}"
+  while :; do
+    seg="${SCAN%%\"*}"
+    if [ "$seg" = "$SCAN" ]; then SCAN=""; STR=""; return 1; fi   # unterminated
+    bs="${seg##*[!\\]}"                                           # trailing backslash run
+    out="$out$seg"
+    SCAN="${SCAN:${#seg}+1}"
+    if [ $(( ${#bs} % 2 )) -eq 1 ]; then out="$out\""; continue; fi
+    STR="$out"
+    return 0
+  done
+}
+
+# Consume one balanced object/array starting at $SCAN[0] (e.g. `permission_mode`
+# ever grows a container next to it) so it can be skipped without derailing the
+# top-level walk. Jumps between structural characters, hands strings to
+# str_take so a `{` or `"` inside a string value cannot skew the depth.
+skip_container() {
+  local depth=0 seg c pat='[][{}"]'
+  while [ -n "$SCAN" ]; do
+    seg="${SCAN%%$pat*}"
+    if [ "$seg" = "$SCAN" ]; then SCAN=""; return 1; fi
+    SCAN="${SCAN:${#seg}}"
+    c="${SCAN:0:1}"
+    case "$c" in
+      '"')     str_take || return 1 ;;
+      '{'|'[') depth=$(( depth + 1 )); SCAN="${SCAN:1}" ;;
+      *)       depth=$(( depth - 1 )); SCAN="${SCAN:1}"
+               [ "$depth" -le 0 ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+TIP='"tool_input":'
+SCAN="${EV%%$TIP*}"
+case "$SCAN" in
+  '{'*) SCAN="${SCAN:1}" ;;
+  *) exit 0 ;;               # not an object: nothing to classify, stay silent
+esac
+
+DIR=""
+while :; do
+  case "$SCAN" in '"'*) ;; *) break ;; esac
+  str_take || break
+  K="$STR"
+  case "$SCAN" in ':'*) SCAN="${SCAN:1}" ;; *) break ;; esac
+  case "$SCAN" in
+    '"'*)
+      str_take || break
+      [ "$K" = "cwd" ] && DIR="$STR"
+      ;;
+    '{'*|'['*)
+      skip_container || break ;;
+    *)
+      PAT='[,}]'                          # in a variable — see skip_container
+      SEG="${SCAN%%$PAT*}"                # number / true / false / null
+      [ "$SEG" = "$SCAN" ] && break
+      SCAN="${SCAN:${#SEG}}"
+      ;;
+  esac
+  case "$SCAN" in ','*) SCAN="${SCAN:1}" ;; *) break ;; esac
+done
+
 # Up-walk the cwd's ancestor chain for the `.prdt/po-state.json` marker, the
 # same IN-or-OUT test prdt-call-governor.sh makes (it never reads the file, so
 # it needs neither the outermost-wins rule nor a realpath — T-484/T-493).
-# `cwd` sits in the payload's first keys (session_id · transcript_path · cwd ·
-# …, measured on harness 2.1.235), so a window is enough to find it and a
-# pathological tool_input never has to be scanned.
-HDR="${EV:0:8192}"
-RE_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"]+)"'
-[[ $HDR =~ $RE_CWD ]] || exit 0
-DIR="${BASH_REMATCH[1]}"
+[ -n "$DIR" ] || exit 0
 # `${DIR%/*}` returns a slash-less string UNCHANGED, not empty, so a relative
 # DIR would never shrink and the loop below would spin to the hook timeout.
 # The harness always sends an absolute cwd, so this is unreached in practice —

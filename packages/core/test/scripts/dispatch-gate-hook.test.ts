@@ -22,6 +22,9 @@
  *   model, so echoing the text under inspection would be an injection channel.
  * - Total silence + zero writes outside a prdt project, on a non-Agent tool, on
  *   a non-prdt subagent_type, and on any other event.
+ * - `cwd` is read structurally (T-521), not through a fixed-byte header window:
+ *   a `cwd` far longer than the old 8192B window still resolves — the gate
+ *   never silently disables itself just because a path was long.
  */
 
 import path from 'path'
@@ -530,5 +533,48 @@ describe('fail open, never closed', () => {
       encoding: 'utf8',
     })
     expect(res.stdout).toBe('')
+  })
+})
+
+// ── T-521: `cwd` read structurally, not through a fixed-byte header window ──
+//
+// The hook used to slice `EV[0:8192]` and regex a `"cwd":"..."` out of that
+// slice. `transcript_path` (which embeds the full `cwd`) sits ahead of `cwd`
+// in the harness's own key order, so the byte offset of `cwd`'s own closing
+// quote is roughly `2 * len(cwd) + ~90` — a `cwd` of a bit over 4000 chars
+// (well within a single real PATH_MAX, e.g. Linux's 4096) was already enough
+// to push the closing quote past the window, leaving the regex with no match
+// and the whole gate SILENT: no deny, no warning, nothing. These tests pin
+// the fix — a real dispatch through a long `cwd` must still be judged, not
+// dropped — at both a realistic PATH_MAX-scale length and one dramatically
+// past it, proving there is no window left to overrun.
+
+describe('T-521: a long `cwd` still resolves, never silently disables the gate', () => {
+  test('a `cwd` past a realistic OS path-length ceiling (~4096B, e.g. Linux PATH_MAX) still denies', () => {
+    const proj = makeProject()
+    const cwd = path.join(proj, 'x'.repeat(4200))
+    expect(cwd.length).toBeGreaterThan(4096)
+    const reason = denyReason({ cwd, prompt: 'Go fix T-521, you know the drill.' })
+    expect(reason).toContain('DENIED')
+    expect(reason).toContain(CLAUSE_CTX)
+  })
+
+  test('a `cwd` far past the old 8192B window (here: tens of KB) still denies, not silence', () => {
+    const proj = makeProject()
+    const cwd = path.join(proj, 'y'.repeat(50_000))
+    const reason = denyReason({ cwd, prompt: 'Go fix T-521, you know the drill.' })
+    expect(reason).toContain('DENIED')
+  })
+
+  test('a long `cwd` inside a project still passes a well-formed dispatch in silence (not judged-but-broken)', () => {
+    const proj = makeProject()
+    const cwd = path.join(proj, 'z'.repeat(9000))
+    expect(run({ cwd })).toBe('')
+  })
+
+  test('a long `cwd` OUTSIDE any project is still total silence — the fix must not start denying everywhere', () => {
+    const notAProject = tmp('prdt-t521-bare-')
+    const cwd = path.join(notAProject, 'w'.repeat(9000))
+    expect(run({ cwd, prompt: 'no ctx line here' })).toBe('')
   })
 })
