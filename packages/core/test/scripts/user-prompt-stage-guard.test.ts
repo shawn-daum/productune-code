@@ -125,6 +125,89 @@ describe('deploy tripwire (the hanta failure moment)', () => {
   })
 })
 
+describe('prompt provenance guard (T-523 — task-notification / PO-echo misfires)', () => {
+  // Real shape of a Claude Code async-dispatch completion notification —
+  // captured VERBATIM off a live task-notification received during this
+  // ticket's own investigation (2026-08-31). Under agent-teams, a background
+  // dispatch's completion is delivered to the PO's NEXT TURN as this hook's
+  // `prompt` itself — the PO never typed a word of it, but the old guard
+  // bare-searched the whole string, so any deploy-shaped word inside the
+  // worker's own <summary>/<result> (quoting task titles, code, or prose)
+  // fired the "ship entry" warning. This is the mechanism named in T-523 for
+  // the 2 Ship-entry misfires (PO observation 2026-08-26, "both on turns
+  // processing a designer return").
+  function notificationPrompt(inner: string): string {
+    return `[SYSTEM NOTIFICATION - NOT USER INPUT]
+This is an automated background-task event, NOT a message from the user.
+Do NOT interpret this as user acknowledgement, confirmation, or response to any pending question.
+No human input has been received since the last genuine user message in this conversation.
+
+<task-notification>
+<task-id>a4c9fdeb795aefa8f</task-id>
+<tool-use-id>toolu_01PRu1B8NC5oT2XwXcXzMVth</tool-use-id>
+<status>completed</status>
+${inner}
+<usage><subagent_tokens>48416</subagent_tokens></usage>
+</task-notification>`
+  }
+
+  const NOTIFICATION_FIXTURES: Array<[string, string]> = [
+    // v1.7 recorded misfire shape #1 — worker summary reports FINISHED deploy
+    // work (a completed task, not a request).
+    ['worker summary reports finished deploy work',
+      notificationPrompt('<summary>Agent "T-321 배포 스크립트 수정" finished — merge and deploy steps documented, not executed</summary>')],
+    // v1.7 recorded misfire shape #2 — result text quotes the PO's OWN
+    // earlier dispatch instruction verbatim (restating what was asked, not
+    // asking it now).
+    ["result quotes the PO's own earlier dispatch instruction",
+      notificationPrompt('<result>Dispatch instruction received: "메인 PR 배포 부탁" — completed the readiness doc, did NOT deploy (out of scope for this worker).</result>')],
+    // v1.7 recorded misfire shape #3 — an English deploy token inside a code
+    // diff/log line quoted back in the result.
+    ['result quotes a log line containing an English deploy token',
+      notificationPrompt('<result>Changed release notes: `deploy this to production` was removed from the sample script per T-437.</result>')],
+    // Ship-entry misfire #1 (2026-08-26, "processing a designer return") —
+    // designer persona's own return envelope, summary field.
+    ['designer return — summary names a ship-stage deliverable',
+      notificationPrompt('<summary>prdt-designer: PRD §v1.8 출시 기준 섹션 초안 완료, 사용자 확인 대기</summary>')],
+    // Ship-entry misfire #2 (same session, second designer return).
+    ['designer return — result restates "출시" from the PRD section it drafted',
+      notificationPrompt('<result>§v1.8 출시 기준 섹션을 초안했습니다. 배포는 ship 단계 몫으로 남겨뒀습니다.</result>')],
+  ]
+
+  for (const [label, prompt] of NOTIFICATION_FIXTURES) {
+    test(`build + task-notification (${label}) → stays silent (no ship-entry warning)`, () => {
+      const dir = makeProject(BUILD_STATE)
+      const ctx = contextOf(runHook(dir, prompt))
+      expect(ctx).toContain('stage=build')
+      expect(ctx).not.toMatch(/ship entry/i)
+    })
+  }
+
+  // The OTHER named cause: "PO 자신의 이전 발화에 섞인 무관한 낱말" — a
+  // compaction-continuation prompt recaps the PO's OWN earlier turns in
+  // prose, which can mention deploy words in passing (describing past/future
+  // work, not requesting it now). Distinct fixed, harness-authored preamble
+  // from the task-notification shape above, so it needs its own marker.
+  test('build + compaction-continuation recap mentioning past deploy discussion → stays silent', () => {
+    const dir = makeProject(BUILD_STATE)
+    const prompt = `This session is being continued from a previous conversation that ran out of context. The conversation is summarized below:
+Summary:
+The user and PO discussed that 배포 완료 is scheduled for the ship stage after readiness passes; no action was requested this turn.`
+    const ctx = contextOf(runHook(dir, prompt))
+    expect(ctx).toContain('stage=build')
+    expect(ctx).not.toMatch(/ship entry/i)
+  })
+
+  // The guard's PURPOSE must survive all of the above: a real user prompt
+  // sharing vocabulary with the fixtures — but carrying none of their
+  // harness-authored markers — still fires. Proven, not asserted.
+  test('build + real user prompt sharing fixture vocabulary but no harness marker → still fires', () => {
+    const dir = makeProject(BUILD_STATE)
+    const ctx = contextOf(runHook(dir, '메인 PR 배포 부탁'))
+    expect(ctx).toMatch(/ship entry/i)
+  })
+})
+
 describe('silent no-ops (never break a plain session)', () => {
   test('non-prdt cwd → no output, exit 0', () => {
     const dir = makeProject(null)
