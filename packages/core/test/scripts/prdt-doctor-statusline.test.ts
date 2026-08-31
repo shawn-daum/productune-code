@@ -163,7 +163,13 @@ describe.skipIf(!PYTHON3)('prdt doctor — statusline registration states', () =
     writeStatusline(userSettingsPath(), '/usr/bin/echo hi') // the T-500 repro fixture
     const before = doctorStatuslineLines()
     expect(before.length).toBe(1)
-    execFileSync('bash', [path.join(CORE_ROOT, 'scripts', 'install.sh'), '--statusline'], {
+    // Take the command out of doctor's own printed text — not a hand-written
+    // equivalent — so this proves the PRINTED repair converges, not merely
+    // that install.sh --statusline happens to.
+    const match = before[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    execFileSync('bash', ['-c', match![1]], {
+      cwd: projectDir,
       env: { ...process.env, HOME: sandbox, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir },
       stdio: 'ignore',
     })
@@ -270,14 +276,18 @@ describe.skipIf(!PYTHON3)('prdt doctor — statusline: D2 corrupt settings JSON'
 
   test('the printed repair for corrupt user-level JSON actually converges to healthy', () => {
     writeCorruptJson(userSettingsPath())
-    expect(doctorStatuslineLines().length).toBe(1)
-    // Run exactly what a worker would copy-paste out of the warning: reset
-    // the file, then register. This is the D2 acceptance — the OLD repair
-    // (`install.sh --statusline` alone) dies on this exact fixture (jq can't
-    // parse it) and never converges; this composite one must.
-    fs.writeFileSync(`${userSettingsPath()}.bak`, fs.readFileSync(userSettingsPath()))
-    fs.writeFileSync(userSettingsPath(), '{}')
-    execFileSync('bash', [path.join(CORE_ROOT, 'scripts', 'install.sh'), '--statusline'], {
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    // Take the composite (reset + register) command out of doctor's own
+    // printed text and run exactly that — not a hand-written equivalent —
+    // so this is the D2 acceptance: the machine reaches healthy by following
+    // only what doctor prints. The OLD repair (`install.sh --statusline`
+    // alone) dies on this exact fixture (jq can't parse it) and never
+    // converges; this composite one must.
+    const match = lines[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    execFileSync('bash', ['-c', match![1]], {
+      cwd: projectDir,
       env: { ...process.env, HOME: sandbox, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir },
       stdio: 'ignore',
     })
@@ -290,7 +300,14 @@ describe.skipIf(!PYTHON3)('prdt doctor — statusline: D2 corrupt settings JSON'
       env: { ...process.env, HOME: sandbox, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir },
       stdio: 'ignore',
     })).toThrow()
-    expect(doctorStatuslineLines().length).toBe(1) // still broken, still reported
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1) // still broken, still reported
+    // The name's claim is specifically that it is STILL classified corrupt,
+    // not merely that some warning fired — a count-only assertion would stay
+    // green even if the OLD repair's failed jq write left the file in a
+    // state doctor misclassifies as "absent" instead.
+    expect(lines[0]).toContain('not valid JSON')
+    expect(lines[0]).not.toContain('not registered anywhere')
   })
 
   test('invalid JSON at the project level is reported as corrupt', () => {
@@ -331,12 +348,31 @@ describe.skipIf(!PYTHON3)('prdt doctor — statusline: D4 var/user expansion + r
   })
 
   test('a ~/-rooted registration pointing at the real prdt path is recognized as healthy', () => {
-    const rel = path.relative(os.homedir(), prdtStatuslinePath())
-    // Only meaningful if machineHome actually sits under the real $HOME —
-    // skip gracefully otherwise (mkdtemp target varies by platform/CI).
-    if (rel.startsWith('..')) return
-    writeStatusline(userSettingsPath(), `~/${rel}`)
-    expect(doctorStatuslineLines()).toEqual([])
+    // The module-level `sandbox` sits under os.tmpdir(), which on macOS is
+    // $TMPDIR — NOT under $HOME — so a `~/`-rooted path built from it never
+    // actually exercises os.path.expanduser() here; the guard this replaced
+    // silently returned before the assertion ever ran. Build a SEPARATE
+    // machine mirror genuinely rooted under the real $HOME instead (no
+    // installer involved — doctor only reads it) so `~/...` resolution is
+    // for real exercised on every platform, this one included.
+    const homeRootedHome = fs.mkdtempSync(path.join(os.homedir(), '.prdt-doctor-statusline-test-'))
+    try {
+      fs.mkdirSync(path.join(homeRootedHome, 'bin'), { recursive: true })
+      fs.mkdirSync(path.join(homeRootedHome, 'hooks'), { recursive: true })
+      const exe = path.join(homeRootedHome, 'bin', 'statusline-prdt.sh')
+      fs.writeFileSync(exe, '#!/usr/bin/env bash\necho ok\n', { mode: 0o755 })
+      fs.writeFileSync(path.join(homeRootedHome, 'prdt.env'), `PRDT_REPO=${CORE_ROOT}\n`)
+      const rel = path.relative(os.homedir(), exe)
+      // This must never be true by construction (homeRootedHome is a child
+      // of os.homedir()) — assert it loudly rather than silently skipping,
+      // so a future platform where mkdtemp itself resolves outside $HOME
+      // fails the test instead of passing empty.
+      expect(rel.startsWith('..')).toBe(false)
+      writeStatusline(userSettingsPath(), `~/${rel}`)
+      expect(doctorStatuslineLines(projectDir, homeRootedHome)).toEqual([])
+    } finally {
+      fs.rmSync(homeRootedHome, { recursive: true, force: true })
+    }
   })
 
   test('a relative-path registration is judged the same from the project root and from a nested subdirectory', () => {
