@@ -1692,6 +1692,28 @@ def hook_registration_warnings():
                              f"failing open silently; re-run one short dispatch and confirm {marker} updates. "
                              f"If nothing has dispatched anywhere on this machine in that window, this is "
                              f"expected and clears itself on the next tool call")
+
+        # T-519 vector 2: a counter path replaced by a DIRECTORY (`mkdir
+        # $run_dir/<sid>.<aid>`) makes the hook's append and read fail forever —
+        # the turn count pins at 0 and every deny is silently skipped, while the
+        # `.fired-*` markers checked above stay green. Nothing legitimately puts a
+        # subdirectory here (counters and the `.fired`/`.w` markers are all plain
+        # files), so any directory entry is a poisoned counter path. Reported, not
+        # treated as N=0 — this is the only signal that a governor which LOOKS
+        # healthy is silently non-enforcing for that worker. degrade-never-raise:
+        # an unreadable run dir is someone else's finding, not a crash here.
+        if run_dir.is_dir():
+            try:
+                entries = sorted(run_dir.iterdir())
+            except OSError:
+                entries = []
+            for entry in entries:
+                if entry.is_dir():
+                    warns.append(f"hooks: call governor state {entry} is a DIRECTORY, not a counter "
+                                 f"file — the turn counter at this path can never be read or appended, so "
+                                 f"enforcement silently skips this worker while the fire markers stay green "
+                                 f"(T-491/T-519). Remove it; the governor recreates the counter on the next "
+                                 f"tool call")
     return warns
 
 

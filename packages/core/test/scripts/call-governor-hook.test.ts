@@ -464,6 +464,59 @@ describe('the subagent direction still holds after the fix (T-518)', () => {
   })
 })
 
+// ── T-519 vector 2: a poisoned counter path is not silently N=0 ──────────────
+//
+// `mkdir "$run/<sid>.<aid>"` makes the hook's append and read fail forever: the
+// pre-T-519 hook read an empty buffer, saw N=0, and granted every turn while the
+// .fired-* markers stayed green — a governor that LOOKS healthy but enforces
+// nothing for that worker. The fix treats a counter path that exists but is not
+// a regular file as tampered evidence and fails CLOSED for the enforced persona,
+// rather than as a fresh N=0. A live counter (a regular file) and a fresh one
+// (no file yet) are both untouched by this.
+
+describe('a poisoned counter path fails closed, not open (T-519)', () => {
+  /** Plant a directory where this worker's counter file belongs. `recursive`
+   *  creates the run dir too, so the counter file itself is never made — the
+   *  poisoned path exists but is not a regular file, which is the whole point. */
+  function poison(prdtHome: string, o: EventOpts): string {
+    const p = path.join(runDir(prdtHome), `${o.sessionId ?? SID}.${o.agentId}`)
+    fs.mkdirSync(p, { recursive: true })
+    return p
+  }
+
+  test('an enforced developer with a mkdir-poisoned counter is DENIED, not waved through', () => {
+    const home = tmp('prdt-t491-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    poison(home, w)
+    const out = JSON.parse(run(home, 'PreToolUse', w))
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+    // the deny must route the worker to its envelope, like the over-turn deny
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('summary')
+    expect(out.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain('not a tool')
+  })
+
+  test('the append side of a poisoned counter never leaks a byte to stderr', () => {
+    const home = tmp('prdt-t491-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    poison(home, w)
+    // run() already asserts empty stderr + exit 0; this pins the append branch too
+    expect(run(home, 'PostToolBatch', w)).toBe('')
+  })
+
+  test('a warn-only persona is still never denied, even with a poisoned counter', () => {
+    const home = tmp('prdt-t491-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-qa')
+    poison(home, w)
+    const out = run(home, 'PreToolUse', w)
+    if (out !== '') {
+      expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBeUndefined()
+    }
+  })
+})
+
 // ── shape-matching of path components ────────────────────────────────────────
 
 describe('values are shape-matched, never trusted', () => {
