@@ -2560,7 +2560,7 @@ def prdt_script_drift_warnings():
 # the CLI writes. The manifest is a derived index, so `prdt artifacts sync`
 # rebuilds it from disk and keeps whatever a person set that disk cannot say
 # (ticket, kind, status, lang); doctor reports what the rule cannot place.
-ARTIFACT_BUCKET_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$")
+ARTIFACT_BUCKET_RE = re.compile(r"^v\d+\.\d+(?:\.\d+)?$")
 ARTIFACT_TICKET_PREFIX_RE = re.compile(r"^(T-(?:[A-Z][A-Z0-9]*-)?\d+)-")
 ARTIFACT_TICKET_ANY_RE = re.compile(r"\bT-(?:[A-Z][A-Z0-9]*-)?\d+\b")
 ARTIFACT_KIND_SUFFIX = (("-mockup", "mockup"), ("-showcase", "mockup"),
@@ -2587,36 +2587,49 @@ def version_key(v):
 
 
 def artifact_files(bucket):
-    """Manifest-relative paths of the files one bucket holds, bucket root then archive/."""
+    """Manifest-relative paths of the files one bucket holds: files directly in the
+    bucket root, then every file anywhere under archive/ — recursive, since an
+    archived doc may itself be organized into subdirectories (F1: a file at
+    archive/<subdir>/… was previously invisible to every check class)."""
     out = []
     for p in sorted(bucket.iterdir(), key=lambda x: x.name):
         if p.is_file() and not p.name.startswith(".") and p.name != "manifest.json":
             out.append(p.name)
     arch = bucket / "archive"
     if arch.is_dir():
-        for p in sorted(arch.iterdir(), key=lambda x: x.name):
-            if p.is_file() and not p.name.startswith("."):
-                out.append(f"archive/{p.name}")
+        for p in sorted(arch.rglob("*"), key=lambda x: x.as_posix()):
+            if not p.is_file():
+                continue
+            rel = p.relative_to(arch)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            out.append(f"archive/{rel.as_posix()}")
     return out
 
 
 def read_artifact_manifest(bucket):
-    """(entries keyed by path, error string or None). Absent manifest = empty, no error."""
+    """(entries keyed by path, error string or None, malformed-entry notes[]).
+    Absent manifest = empty, no error. An entry that is not {path: str, ...} is
+    dropped from the returned dict (it cannot be keyed by path) but never
+    silently — it is named in the third element instead (F4)."""
     mp = bucket / "manifest.json"
     if not mp.is_file():
-        return {}, None
+        return {}, None, []
     try:
         data = json.loads(mp.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        return {}, f"is unreadable ({e.__class__.__name__})"
+        return {}, f"is unreadable ({e.__class__.__name__})", []
     entries = data.get("entries")
     if not isinstance(entries, list):
-        return {}, "has no `entries` list"
+        return {}, "has no `entries` list", []
     out = {}
-    for e in entries:
+    malformed = []
+    for i, e in enumerate(entries):
         if isinstance(e, dict) and isinstance(e.get("path"), str):
             out[e["path"]] = e
-    return out, None
+        else:
+            malformed.append(f"entry {i} is not {{path: str, ...}} — dropped")
+    return out, None, malformed
 
 
 def derive_artifact_kind(rel):
@@ -2659,7 +2672,7 @@ def derive_artifact_ticket(root, bucket, rel):
 
 def build_artifact_manifest(root, bucket):
     """Derive the bucket's manifest, carrying forward every hand-set field."""
-    prior, _ = read_artifact_manifest(bucket)
+    prior, _, _ = read_artifact_manifest(bucket)
     entries = []
     for rel in artifact_files(bucket):
         old = prior.get(rel, {})
@@ -2701,10 +2714,12 @@ def artifact_placement_warnings(root):
             if d.is_dir() and d.name != "archive":
                 warns.append(f"artifact: {bucket.name}/{d.name}/ — a bucket holds files "
                              f"plus archive/, no other subdirectory")
-        prior, err = read_artifact_manifest(bucket)
+        prior, err, malformed = read_artifact_manifest(bucket)
         if err:
             warns.append(f"artifact: {bucket.name}/manifest.json {err} — run `prdt artifacts sync`")
             continue
+        for m in malformed:
+            warns.append(f"artifact: {bucket.name}/manifest.json {m} — run `prdt artifacts sync`")
         on_disk = set(artifact_files(bucket))
         if not prior and on_disk:
             warns.append(f"artifact: {bucket.name}/ has {len(on_disk)} file(s) and no manifest.json "

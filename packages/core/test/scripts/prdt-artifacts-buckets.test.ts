@@ -196,4 +196,52 @@ describe('T-512 artifacts live in version buckets', () => {
     sync()
     expect(entry('v1.6', 'probe.md').ticket).toBeNull()
   })
+
+  // ── QA round 2 (T-512 follow-up) ────────────────────────────────────────────
+
+  test('§10 a file nested under archive/<subdir>/ is reached by check + sync (F1)', () => {
+    // Root cause: artifact_files() walked archive/ one level only, so this file
+    // was invisible to every check class — sync never registered it, `check`
+    // reported clean, doctor stayed silent, while the GUI's recursive walk
+    // rendered it. That asymmetry is exactly what T-512 exists to remove.
+    artifact('v1.6/probe.md', '# probe\n')
+    sync()
+    artifact('v1.6/archive/sub/hidden.md', '# hidden\n')
+    const r = check()
+    expect(r.out).toContain('v1.6/archive/sub/hidden.md is not registered in manifest.json')
+    expect(r.code).toBe(1)
+    sync()
+    const e = entry('v1.6', 'archive/sub/hidden.md')
+    expect(e.status).toBe('archived')
+    expect(check().code).toBe(0)
+  })
+
+  test('§11 a bare v<N> (no minor) is not accepted as a version bucket (F3)', () => {
+    // ARTIFACT_BUCKET_RE previously matched a bare major with 0 dots, so a typo
+    // bucket like v1/ settled in as if it were legal and `sync` wrote it a
+    // manifest — contradicting both the warning text and contracts.md's own
+    // v<N>.<m> / v<N>.<m>.<p> form.
+    artifact('v1/note.md', '# n\n')
+    const r = check()
+    expect(r.out).toContain('docs/artifacts/v1/ is not a version bucket')
+    expect(r.code).toBe(1)
+    sync()
+    expect(fs.existsSync(path.join(projectDir, 'docs', 'artifacts', 'v1', 'manifest.json'))).toBe(false)
+  })
+
+  test('§12 a malformed manifest entry is reported, not silently dropped (F4)', () => {
+    // read_artifact_manifest() discarded any entry that was not {path: str, ...}
+    // with no report — a hand-edited entry of the wrong shape vanished at the
+    // next sync. Well-formed hand edits are preserved (§7); this asserts the
+    // malformed shape is surfaced instead of disappearing.
+    artifact('v1.6/probe.md', '# probe\n')
+    sync()
+    const mp = path.join(projectDir, 'docs', 'artifacts', 'v1.6', 'manifest.json')
+    const m = JSON.parse(fs.readFileSync(mp, 'utf-8'))
+    m.entries.push({ note: 'hand-added, wrong shape — no path key' })
+    fs.writeFileSync(mp, JSON.stringify(m, null, 2) + '\n')
+    const r = check()
+    expect(r.out).toContain('v1.6/manifest.json entry 1 is not {path: str, ...} — dropped')
+    expect(r.code).toBe(1)
+  })
 })
