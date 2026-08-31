@@ -1798,12 +1798,39 @@ def _statusline_install_cmd(flag=""):
 
 
 def _statusline_command(settings):
-    """Raw `statusLine.command` string out of a parsed settings dict, or None."""
+    """Raw `statusLine.command` string out of a parsed settings dict, or None.
+
+    N1: an empty or whitespace-only string is not a usable command — treating
+    it as one (old behavior: `isinstance(cmd, str)` alone) let a present-but-
+    blank `statusLine.command` fall through `_statusline_layer_state` as kind
+    "cmd", tokenize to nothing, and get reported "absent" ("no statusLine in
+    {source}") even though the key IS there. Returning None here instead
+    routes it to kind "malformed", whose repair (jq del at project level,
+    force re-register at user level) actually reaches healthy from this
+    state — the "absent" repair doesn't, by the same project-level argument
+    D1 already established for a present-but-unusable value."""
     if not isinstance(settings, dict):
         return None
     sl = settings.get("statusLine")
     cmd = sl.get("command") if isinstance(sl, dict) else None
-    return cmd if isinstance(cmd, str) else None
+    if not isinstance(cmd, str) or not cmd.strip():
+        return None
+    return cmd
+
+
+class _StatuslineUnparseable(Exception):
+    """N2: raised by `_statusline_command_exe` when `shlex.split` cannot parse
+    the raw command at all (unbalanced quoting). The old fallback here —
+    `cmd_raw.strip().strip('"').split()` — guessed a token out of the damaged
+    string, and on two natural damage shapes (a trailing unterminated quote
+    after the path; a leading quote with the closing one truncated) that
+    guess can accidentally recover the real prdt path as its first token,
+    so a value doctor cannot actually parse gets reported healthy — the
+    check goes silent on exactly the kind of damage it exists to catch. A
+    value we cannot parse is not evidence of health (same rule D1 settled
+    for a present-but-unusable value: where the two directions differ,
+    warn), so this must propagate as its own outcome rather than being
+    swallowed into a guessed token."""
 
 
 def _statusline_command_exe(cmd_raw):
@@ -1822,23 +1849,28 @@ def _statusline_command_exe(cmd_raw):
     instead, so a quoted path with an internal space stays one token. A real
     custom statusLine may carry arguments after the executable; only the
     first token is taken, same convention `hook_registration_warnings` uses
-    for hook commands above."""
+    for hook commands above.
+
+    Raises `_StatuslineUnparseable` (N2) on unbalanced quoting rather than
+    guessing a token via a naive fallback split — see that class's docstring
+    for why a guess here is worse than surfacing the failure."""
     if not cmd_raw:
         return None
     try:
         tok = shlex.split(cmd_raw)
     except ValueError:
-        # Unbalanced quoting in a hand-edited value — degrade-never-raise
-        # (same posture as the rest of doctor) rather than crash a report on
-        # one bad line; best-effort fallback to the old behavior.
-        tok = cmd_raw.strip().strip('"').split()
+        raise _StatuslineUnparseable(cmd_raw)
     return tok[0] if tok else None
 
 
 def statusline_classify(cmd_raw, anchor=None):
     """(state, exe_path) for one statusLine command string already known to be
     present and well-formed (the "cmd" kind from `_statusline_layer_state`).
-    state is one of "absent" / "healthy" / "not-prdt" / "broken" — see the
+    state is one of "absent" / "healthy" / "not-prdt" / "broken" /
+    "unparseable" (N2: `shlex.split` could not tokenize the raw command at
+    all — exe_path is None for this one, same as "absent", but it must never
+    be CONFUSED with "absent": the key is present and has a value, we simply
+    cannot read it, which is not evidence of health either) — see the
     module-comment above for what each means and how it is repaired.
 
     `anchor`: directory a RELATIVE registered path resolves against. Decision
@@ -1855,7 +1887,10 @@ def statusline_classify(cmd_raw, anchor=None):
     registration using either form is judged by the same rule as a plain
     absolute path — both used to be misjudged not-prdt even when they pointed
     exactly at the prdt statusline."""
-    exe = _statusline_command_exe(cmd_raw)
+    try:
+        exe = _statusline_command_exe(cmd_raw)
+    except _StatuslineUnparseable:
+        return "unparseable", None
     if not exe:
         return "absent", None
     exe = os.path.expandvars(os.path.expanduser(exe))
@@ -1957,6 +1992,22 @@ def _statusline_state_warning(state, exe, source, is_project, project_root=None)
         return (f"statusline: not registered anywhere for this project (no statusLine in "
                 f"{source}, and no project-level override) — repair: "
                 f"`{_statusline_install_cmd('--statusline')}`")
+    if state == "unparseable":
+        # N2: shlex couldn't tokenize the raw command at all (unbalanced
+        # quoting) — never treat that as evidence of health. Same repair
+        # split as "not-prdt": project-level files are never touched by
+        # install.sh, so only an explicit hand-run jq command converges there.
+        if is_project:
+            return (f"statusline: {source} statusLine command could not be parsed (unbalanced "
+                     f"quoting) — doctor cannot tell whether this project-level entry is the "
+                     f"prdt statusline or something else, and an unparseable value is not "
+                     f"evidence of health — repair (explicit, edits only this file): "
+                     f"`t=$(mktemp) && jq 'del(.statusLine)' {source} > \"$t\" && mv \"$t\" {source}`")
+        return (f"statusline: {source} statusLine command could not be parsed (unbalanced "
+                f"quoting) — doctor cannot tell whether it points at the prdt statusline "
+                f"({target}) or something else, and an unparseable value is not evidence of "
+                f"health — repair (force re-registers, overwrites the current entry): "
+                f"`{_statusline_install_cmd('--statusline')}`")
     if state == "not-prdt":
         if is_project:
             return (f"statusline: {source} statusLine points at {exe} — this project-level "
@@ -1987,11 +2038,18 @@ def _statusline_corrupt_warning(source, is_project):
                 f"files are never touched automatically — hand-repair the JSON, or if it isn't "
                 f"recoverable, move it aside: `mv {source} {source}.corrupt-$(date +%s)`")
     install_cmd = _statusline_install_cmd('--statusline')
+    # N3: a plain `cp {source} {source}.bak` overwrites an existing .bak
+    # unrecoverably (the corrupt file itself survives either way, but a prior
+    # backup does not) — walk .bak, .bak.1, .bak.2, ... until an unused name
+    # is found, same one-line copy-pasteable shape as the rest of this repair.
+    backup = (f"b={source}.bak; n=1; while [ -e \"$b\" ]; do b={source}.bak.$n; "
+              f"n=$((n+1)); done; cp {source} \"$b\"")
     return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a statusLine "
             f"is registered here (this is \"corrupt\", not \"absent\"), and `{install_cmd}`'s "
             f"settings merge (jq) fails to parse this file as-is (rc=1) without fixing it, so "
-            f"that command alone never converges — reset the file first, then register: "
-            f"`cp {source} {source}.bak && echo '{{}}' > {source} && {install_cmd}`")
+            f"that command alone never converges — reset the file first, then register (backup "
+            f"picks an unused name so it never clobbers an existing .bak): "
+            f"`{backup} && echo '{{}}' > {source} && {install_cmd}`")
 
 
 def _statusline_malformed_warning(source, is_project, project_root=None):
