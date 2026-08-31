@@ -1731,6 +1731,197 @@ def hook_registration_warnings():
     return warns
 
 
+# ── statusline registration (T-500) ────────────────────────────────────────────
+# install.sh §6 preserves any existing `statusLine` (ours or a custom one) by
+# default and only ever logs one install-time line about it — nothing re-checks
+# after that, so a machine that diverged once (something else already
+# registered when install.sh first ran) stays diverged forever with zero
+# ongoing signal. This is the same silent-registration class as T-445 (roster
+# drift) and T-498 (a misspelled hook event accepted with no warning): the only
+# fix is a standing doctor check, not a better one-time install message.
+#
+# Four states, per the ticket's acceptance:
+#   healthy   — registered, pointing at $PRDT_HOME/bin/statusline-prdt.sh, and
+#               that file exists + is executable.
+#   absent    — no statusLine registered anywhere reachable for this project.
+#   not-prdt  — a statusLine IS registered, but it points at something else
+#               (vanilla Claude's, or a real custom one) — never clobbered
+#               here; the repair this prints is an explicit, hand-run command,
+#               never an automatic rewrite (ticket's last acceptance line).
+#   broken    — registered AT the prdt path, but the file there is missing or
+#               not executable (a half-finished install, a chmod that didn't
+#               stick, a $PRDT_HOME move).
+#
+# Project-level coverage: `.claude/settings.local.json` and `.claude/settings.json`
+# in the project silently outrank the user-level registration install.sh writes
+# (~/.claude/settings.json) — a reporter that only read the user level would be
+# narrower than the thing it reports on, the exact defect the two prior tickets
+# this round shipped (and had to fix) once each. Checked at BOTH projectRoot and
+# codeRoot when the project is physically split (v1.3 #4): T-408 measured that
+# Claude Code's trust dialog is keyed by exact cwd and covers both roots
+# independently, so a developer session opened at either is equally real, and a
+# check anchored to only one would again be narrower than what it reports on.
+
+def statusline_prdt_path():
+    """Where install.sh mirrors the prdt statusline script (§1) and the only
+    path a HEALTHY registration may point at."""
+    return prdt_home() / "bin" / "statusline-prdt.sh"
+
+
+def prdt_repo_from_env():
+    """PRDT_REPO out of $PRDT_HOME/prdt.env (written by install.sh §2) — the one
+    place an installed machine still remembers where its own installer source
+    lives, so a repair line can name install.sh by an ABSOLUTE path rather than
+    assume the reader's cwd. None when the file/key is absent (never raises —
+    same posture as the rest of doctor)."""
+    try:
+        text = (prdt_home() / "prdt.env").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("PRDT_REPO="):
+            v = line.split("=", 1)[1].strip()
+            return v or None
+    return None
+
+
+def _statusline_install_cmd(flag=""):
+    """The exact, copy-pasteable repair command — full path when PRDT_REPO is
+    known (the common case on any machine this check can even run on, since it
+    requires an install to exist at all), a named fallback otherwise so the
+    line is never silently wrong."""
+    repo = prdt_repo_from_env()
+    if repo:
+        return f"{repo}/scripts/install.sh{(' ' + flag) if flag else ''}"
+    return (f"install.sh{(' ' + flag) if flag else ''}  (PRDT_REPO not found in "
+            f"{prdt_home()}/prdt.env — locate install.sh in the prdt repo checkout)")
+
+
+def _statusline_command(settings):
+    """Raw `statusLine.command` string out of a parsed settings dict, or None."""
+    if not isinstance(settings, dict):
+        return None
+    sl = settings.get("statusLine")
+    cmd = sl.get("command") if isinstance(sl, dict) else None
+    return cmd if isinstance(cmd, str) else None
+
+
+def _statusline_command_exe(cmd_raw):
+    """The executable token out of a statusLine command string, quote-stripped.
+    install.sh (and Claude Code itself, measured live: this machine's own
+    ~/.claude/settings.json) stores the value with a literal pair of escaped
+    quotes baked INTO the JSON string — `"\\"/path\\""` — so the parsed Python
+    string itself starts and ends with a `"` character; strip that before
+    comparing paths. Only the first whitespace token is taken (same convention
+    `hook_registration_warnings` already uses for hook commands above), because
+    a real custom statusLine may carry arguments after the executable."""
+    if not cmd_raw:
+        return None
+    tok = cmd_raw.strip().strip('"').split()
+    return tok[0].strip('"') if tok else None
+
+
+def _read_statusline_command(path):
+    return _statusline_command(read_json(path))
+
+
+def statusline_classify(cmd_raw):
+    """(state, exe_path) for one statusLine command string. state is one of
+    "absent" / "healthy" / "not-prdt" / "broken" — see the module-comment above
+    for what each means and how it is repaired."""
+    exe = _statusline_command_exe(cmd_raw)
+    if not exe:
+        return "absent", None
+    target = statusline_prdt_path()
+    try:
+        is_prdt = Path(exe).resolve() == target.resolve()
+    except OSError:
+        is_prdt = exe == str(target)
+    if not is_prdt:
+        return "not-prdt", exe
+    if not (Path(exe).is_file() and os.access(exe, os.X_OK)):
+        return "broken", exe
+    return "healthy", exe
+
+
+def _statusline_project_override(root_dir):
+    """(layer_path, raw_cmd) for the first of settings.local.json / settings.json
+    under root_dir/.claude carrying a statusLine key (local wins per Claude
+    Code's own documented precedence), else (None, None) — meaning this root
+    has no project-level opinion and falls through to the user-level file."""
+    for name in ("settings.local.json", "settings.json"):
+        p = Path(root_dir) / ".claude" / name
+        cmd = _read_statusline_command(p)
+        if cmd is not None:
+            return p, cmd
+    return None, None
+
+
+def _statusline_state_warning(state, exe, source, is_project, project_root=None):
+    """One warning line for a non-healthy state at one source file, or None for
+    healthy. Every branch names the exact repair command per the ticket's
+    acceptance; project-level "not-prdt" is the one case install.sh cannot
+    repair (it never touches project files) — that line prints an explicit,
+    hand-run jq command instead of inventing a second silent-clobber path."""
+    target = statusline_prdt_path()
+    if state == "healthy":
+        return None
+    if state == "absent":
+        return (f"statusline: not registered anywhere for this project (no statusLine in "
+                f"{source}, and no project-level override) — repair: "
+                f"`{_statusline_install_cmd('--statusline')}`")
+    if state == "not-prdt":
+        if is_project:
+            return (f"statusline: {source} statusLine points at {exe} — this project-level "
+                     f"entry silently wins over any user-level prdt registration for sessions "
+                     f"opened at {project_root} — repair (explicit, edits only this file): "
+                     f"`t=$(mktemp) && jq 'del(.statusLine)' {source} > \"$t\" && mv \"$t\" {source}`")
+        return (f"statusline: {source} statusLine points at {exe} — not the prdt statusline "
+                f"({target}) — repair (explicit force, overwrites the current entry): "
+                f"`{_statusline_install_cmd('--statusline')}`")
+    # broken: registered AT the prdt path, but the file is missing/not executable
+    reason = "missing" if not Path(exe).exists() else "not executable"
+    return (f"statusline: {source} statusLine points at the prdt statusline path ({exe}), but "
+            f"that file is {reason} — repair (re-mirrors + chmods it): `{_statusline_install_cmd()}`")
+
+
+def statusline_warnings(root):
+    # Same early-out idiom as hook_registration_warnings above: no install
+    # mirror on this machine at all (never ran install.sh — e.g. running
+    # straight out of a repo checkout, which most of this file's own tests
+    # do) is "not yet installed", not "installation drifted" — not this
+    # check's business. Gated on hooks/, mirrored in the SAME install.sh §1
+    # step as bin/statusline-prdt.sh, so its presence is the one signal this
+    # machine ever ran install.sh at all.
+    if not (prdt_home() / "hooks").is_dir():
+        return []
+    root = Path(root)
+    roots = [root]
+    cr = code_root(root)
+    if cr.resolve() != root.resolve():
+        roots.append(cr)  # physically split (v1.3 #4) — both are real dev cwds (T-408)
+
+    warns = []
+    falls_through = False
+    for r in roots:
+        layer_path, cmd = _statusline_project_override(r)
+        if layer_path is None:
+            falls_through = True
+            continue
+        state, exe = statusline_classify(cmd)
+        w = _statusline_state_warning(state, exe, layer_path, is_project=True, project_root=r)
+        if w:
+            warns.append(w)
+
+    if falls_through:
+        user_path = claude_settings_path()
+        state, exe = statusline_classify(_read_statusline_command(user_path))
+        w = _statusline_state_warning(state, exe, user_path, is_project=False)
+        if w:
+            warns.append(w)
+    return warns
+
+
 def override_warnings(root):
     """Override files are the only text injected on EVERY turn, so both layers get
     the same cap, and a project line that has become a verbatim restatement of a
@@ -2999,6 +3190,9 @@ def cmd_doctor(_args):
 
     # hook roster parity + governor fire evidence (T-445 / T-491)
     warns += hook_registration_warnings()
+
+    # statusline registration — user + project-level (T-500)
+    warns += statusline_warnings(root)
 
     # discipline caps + menu drift
     droot = discipline_root()
