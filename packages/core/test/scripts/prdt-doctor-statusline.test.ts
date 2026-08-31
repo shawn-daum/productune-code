@@ -369,3 +369,112 @@ describe.skipIf(!PYTHON3)('prdt doctor — statusline: D5 install-gate coverage'
     expect(lines[0]).toContain('not registered anywhere')
   })
 })
+
+// N1 — a present-but-blank `statusLine.command` is a malformed value (the
+// key IS there), not "absent". The old `isinstance(cmd, str)`-only check let
+// "" / "   " through as a usable command, which tokenizes to nothing and gets
+// misreported "no statusLine in {source}" — false, and at the project level
+// the "absent" repair (install.sh --statusline) never touches project files
+// by the code's own documented premise, so it can never converge from there.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: N1 blank command is malformed, not absent', () => {
+  test('an empty-string command at the user level is reported malformed, not "not registered anywhere"', () => {
+    writeRawStatusline(userSettingsPath(), { type: 'command', command: '' })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(userSettingsPath())
+    expect(lines[0]).toContain('malformed')
+    expect(lines[0]).not.toContain('not registered anywhere')
+  })
+
+  test('a whitespace-only command at the user level is reported malformed, not "not registered anywhere"', () => {
+    writeRawStatusline(userSettingsPath(), { type: 'command', command: '   ' })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('malformed')
+    expect(lines[0]).not.toContain('not registered anywhere')
+  })
+
+  test('a blank command at the project level still hides a healthy user-level one, reported not silent', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy, would otherwise be silent
+    writeRawStatusline(path.join(projectDir, '.claude', 'settings.json'), { type: 'command', command: '' })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(path.join(projectDir, '.claude', 'settings.json'))
+    expect(lines[0]).toContain('malformed')
+  })
+
+  test('the printed repair for a blank project-level command actually converges (jq del, not install.sh)', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy fallback once the override is gone
+    const projectSettings = path.join(projectDir, '.claude', 'settings.json')
+    writeRawStatusline(projectSettings, { type: 'command', command: '' })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    const match = lines[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    execFileSync('bash', ['-c', match![1]], { cwd: projectDir, stdio: 'ignore' })
+    expect(doctorStatuslineLines()).toEqual([])
+  })
+})
+
+// N2 — when shlex cannot tokenize the raw command at all (unbalanced
+// quoting), doctor must never guess a token out of the damaged string. The
+// old fallback (`cmd_raw.strip().strip('"').split()`) could accidentally
+// recover the real prdt path as its first token on natural damage shapes,
+// making a broken registration read as silently healthy — the exact
+// inversion this whole check exists to prevent.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: N2 unparseable command is never silently healthy', () => {
+  test('a trailing unterminated quote after the real path is reported, not silently healthy', () => {
+    const exe = prdtStatuslinePath()
+    writeStatusline(userSettingsPath(), `${exe} "`) // unbalanced: real path + stray trailing quote
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('could not be parsed')
+  })
+
+  test('a leading quote with the closing one truncated is reported, not silently healthy', () => {
+    const exe = prdtStatuslinePath()
+    writeStatusline(userSettingsPath(), `"${exe}`) // unbalanced: opening quote never closed
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('could not be parsed')
+  })
+
+  test('an unparseable command at the project level is reported with the explicit jq repair, not install.sh', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy, would otherwise be silent
+    const exe = prdtStatuslinePath()
+    writeStatusline(path.join(projectDir, '.claude', 'settings.json'), `"${exe}`)
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(path.join(projectDir, '.claude', 'settings.json'))
+    expect(lines[0]).toContain('could not be parsed')
+    expect(lines[0]).toContain('jq')
+  })
+})
+
+// N3 — the D2 corrupt-JSON repair must not destroy a pre-existing backup: a
+// plain `cp {source} {source}.bak` silently overwrites whatever was already
+// at that name. The corrupt file itself survives either way; a prior backup
+// must too.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: N3 corrupt-JSON repair must not clobber an existing backup', () => {
+  test('a pre-existing .bak file survives the printed repair command untouched', () => {
+    writeCorruptJson(userSettingsPath())
+    const staleBackupPath = `${userSettingsPath()}.bak`
+    const staleContent = '{"precious": "do-not-lose-me"}'
+    fs.writeFileSync(staleBackupPath, staleContent)
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    const match = lines[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    execFileSync('bash', ['-c', match![1]], {
+      cwd: projectDir,
+      env: { ...process.env, HOME: sandbox, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir },
+      stdio: 'ignore',
+    })
+    // The stale backup must be byte-for-byte untouched.
+    expect(fs.readFileSync(staleBackupPath, 'utf8')).toBe(staleContent)
+    // A second backup was made under a name that didn't collide.
+    expect(fs.existsSync(`${userSettingsPath()}.bak.1`)).toBe(true)
+    // The corrupt file itself was reset and re-registered — now healthy.
+    expect(doctorStatuslineLines()).toEqual([])
+  })
+})
