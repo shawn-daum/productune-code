@@ -87,6 +87,31 @@ function ageMarker(event: string, daysAgo: number) {
   fs.utimesSync(p, t, t)
 }
 
+/** Plant a FIFO at `p` (T-519 round 2 — a non-directory shape the hook's own
+ *  `[ -e "$KEY" ] && [ ! -f "$KEY" ]` guard also denies on). */
+function mkfifoAt(p: string) {
+  execFileSync('python3', ['-c', 'import os,sys\nos.mkfifo(sys.argv[1])\n', p])
+}
+
+/** Plant a unix domain socket at `p`. AF_UNIX bind() is subject to the kernel's
+ *  short sun_path limit (~104 bytes on macOS), which a tmpdir-nested sandbox
+ *  path can easily exceed — so bind at a short path under /tmp and rename into
+ *  place; rename has no such length limit. */
+function mkSocketAt(p: string) {
+  const script = [
+    'import socket, tempfile, os, sys',
+    'target = sys.argv[1]',
+    'd = tempfile.mkdtemp(dir="/tmp")',
+    'tmp_sock = os.path.join(d, "s")',
+    's = socket.socket(socket.AF_UNIX)',
+    's.bind(tmp_sock)',
+    's.close()',
+    'os.rename(tmp_sock, target)',
+    'os.rmdir(d)',
+  ].join('\n')
+  execFileSync('python3', ['-c', script, p])
+}
+
 function doctor(): string[] {
   const out = execFileSync('python3', [PRDT_CLI, 'doctor'], {
     cwd: projectDir,
@@ -192,6 +217,76 @@ describe.skipIf(!PYTHON3)('prdt doctor — a poisoned counter path is caught (T-
     register({ PreToolUse: [GOVERNOR], PostToolBatch: [GOVERNOR] })
     fired('PreToolUse', 'PostToolBatch')
     // a genuine counter file must NOT be mistaken for tamper
+    fs.writeFileSync(path.join(runDir(), `${SID}.${AID}`), '....')
+    fs.writeFileSync(path.join(runDir(), `${SID}.${AID}.w40`), '')
+    expect(doctor()).toEqual([])
+  })
+})
+
+describe.skipIf(!PYTHON3)('prdt doctor — every shape the hook denies on is caught, not just directories (T-519 round 2)', () => {
+  // The hook's tamper guard is `[ -e "$KEY" ] && [ ! -f "$KEY" ]` — it denies on
+  // ANY non-regular-file shape at a counter path, not only directories. Round 1
+  // of this check tested `entry.is_dir()`, which is narrower than the hook: a
+  // FIFO, a unix socket, or a symlink to either made the hook DENY the worker
+  // while doctor stayed silent and reported the governor healthy. Each shape
+  // below gets its own positive control — a clean pass alone proves nothing
+  // (machine-wiki fact--discipline-editing) — proving doctor now reports what
+  // the hook enforces on, for every shape, not only the one the ticket named.
+  const SID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const AID = 'a45b42f3cdda35348'
+
+  function setUpHealthyGovernor() {
+    mirror(GOVERNOR)
+    register({ PreToolUse: [GOVERNOR], PostToolBatch: [GOVERNOR] })
+    fired('PreToolUse', 'PostToolBatch') // markers green — the silent-death shape
+  }
+
+  test('a FIFO planted at a counter path is reported as a poisoned counter', () => {
+    setUpHealthyGovernor()
+    mkfifoAt(path.join(runDir(), `${SID}.${AID}`))
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+    expect(out).toMatch(/not a regular file|counter/i)
+  })
+
+  test('a unix domain socket planted at a counter path is reported as a poisoned counter', () => {
+    setUpHealthyGovernor()
+    mkSocketAt(path.join(runDir(), `${SID}.${AID}`))
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+    expect(out).toMatch(/not a regular file|counter/i)
+  })
+
+  test('a symlink to a non-regular file (/dev/null) is reported as a poisoned counter', () => {
+    setUpHealthyGovernor()
+    fs.symlinkSync('/dev/null', path.join(runDir(), `${SID}.${AID}`))
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+    expect(out).toMatch(/not a regular file|counter/i)
+  })
+
+  test('a symlink to a directory is reported as a poisoned counter', () => {
+    setUpHealthyGovernor()
+    const targetDir = path.join(runDir(), 'a-real-dir')
+    fs.mkdirSync(targetDir)
+    fs.symlinkSync(targetDir, path.join(runDir(), `${SID}.${AID}`))
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+  })
+
+  // The edge that makes `exists() and not is_file()` the right predicate rather
+  // than a looser one: a DANGLING symlink is not tamper. `-e "$KEY"` is false on
+  // it in the hook too, so the hook treats it as a fresh/absent counter and
+  // takes the normal path, not the deny branch — doctor reporting it would be a
+  // false positive the hook itself does not share.
+  test('a dangling symlink at a counter path stays unreported — the hook does not treat it as tamper either', () => {
+    setUpHealthyGovernor()
+    fs.symlinkSync(path.join(runDir(), 'nonexistent-target-xyz'), path.join(runDir(), `${SID}.${AID}`))
+    expect(doctor()).toEqual([])
+  })
+
+  test('genuine governor state (counter, .fired-*, .w* markers) stays unreported', () => {
+    setUpHealthyGovernor()
     fs.writeFileSync(path.join(runDir(), `${SID}.${AID}`), '....')
     fs.writeFileSync(path.join(runDir(), `${SID}.${AID}.w40`), '')
     expect(doctor()).toEqual([])
