@@ -6,7 +6,7 @@ Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + o
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, json, math, os, re, shutil, sqlite3, subprocess, sys, unicodedata
+import argparse, json, math, os, re, shlex, shutil, sqlite3, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1807,54 +1807,141 @@ def _statusline_command(settings):
 
 
 def _statusline_command_exe(cmd_raw):
-    """The executable token out of a statusLine command string, quote-stripped.
-    install.sh (and Claude Code itself, measured live: this machine's own
-    ~/.claude/settings.json) stores the value with a literal pair of escaped
-    quotes baked INTO the JSON string — `"\\"/path\\""` — so the parsed Python
-    string itself starts and ends with a `"` character; strip that before
-    comparing paths. Only the first whitespace token is taken (same convention
-    `hook_registration_warnings` already uses for hook commands above), because
-    a real custom statusLine may carry arguments after the executable."""
+    """The executable token out of a statusLine command string, tokenized the
+    way a shell would (D3) rather than split on whitespace. install.sh (and
+    Claude Code itself, measured live: this machine's own
+    ~/.claude/settings.json) stores the value with the executable wrapped in a
+    literal pair of escaped quotes baked INTO the JSON string —
+    `"\\"/path\\""` — so the parsed Python string starts and ends with a real
+    `"` character. A plain `.split()` on that string cuts a PRDT_HOME path
+    containing a space at the first whitespace token even though the quoting
+    marks it as one path — a correctly-registered machine judged not-prdt
+    forever, and the repair doctor prints never changes anything because the
+    registration was already correct (D3, measured repro: PRDT_HOME with a
+    space). `shlex.split` parses the quoting the way a POSIX shell would
+    instead, so a quoted path with an internal space stays one token. A real
+    custom statusLine may carry arguments after the executable; only the
+    first token is taken, same convention `hook_registration_warnings` uses
+    for hook commands above."""
     if not cmd_raw:
         return None
-    tok = cmd_raw.strip().strip('"').split()
-    return tok[0].strip('"') if tok else None
+    try:
+        tok = shlex.split(cmd_raw)
+    except ValueError:
+        # Unbalanced quoting in a hand-edited value — degrade-never-raise
+        # (same posture as the rest of doctor) rather than crash a report on
+        # one bad line; best-effort fallback to the old behavior.
+        tok = cmd_raw.strip().strip('"').split()
+    return tok[0] if tok else None
 
 
-def _read_statusline_command(path):
-    return _statusline_command(read_json(path))
+def statusline_classify(cmd_raw, anchor=None):
+    """(state, exe_path) for one statusLine command string already known to be
+    present and well-formed (the "cmd" kind from `_statusline_layer_state`).
+    state is one of "absent" / "healthy" / "not-prdt" / "broken" — see the
+    module-comment above for what each means and how it is repaired.
 
+    `anchor`: directory a RELATIVE registered path resolves against. Decision
+    (D4): anchor at the project root the check is running for — matching
+    Claude Code's own session cwd (a session's hooks run with PWD == session
+    cwd per docs/wiki/fact--claude-hooks.md, and the statusLine command is the
+    same kind of harness-spawned process) — rather than doctor's OWN process
+    cwd, which can be an arbitrary nested subdirectory under the project and
+    previously made a relative registration judge differently run to run.
+    None only when no project root applies; a relative path then resolves
+    against doctor's own cwd (undocumented, but no worse than before).
 
-def statusline_classify(cmd_raw):
-    """(state, exe_path) for one statusLine command string. state is one of
-    "absent" / "healthy" / "not-prdt" / "broken" — see the module-comment above
-    for what each means and how it is repaired."""
+    `~/...` and `$VAR/...` are expanded first (D4) so a hand-written
+    registration using either form is judged by the same rule as a plain
+    absolute path — both used to be misjudged not-prdt even when they pointed
+    exactly at the prdt statusline."""
     exe = _statusline_command_exe(cmd_raw)
     if not exe:
         return "absent", None
+    exe = os.path.expandvars(os.path.expanduser(exe))
     target = statusline_prdt_path()
+    p = Path(exe)
+    if not p.is_absolute() and anchor is not None:
+        p = Path(anchor) / p
     try:
-        is_prdt = Path(exe).resolve() == target.resolve()
+        is_prdt = p.resolve() == target.resolve()
     except OSError:
-        is_prdt = exe == str(target)
+        is_prdt = str(p) == str(target)
     if not is_prdt:
         return "not-prdt", exe
-    if not (Path(exe).is_file() and os.access(exe, os.X_OK)):
+    # target, not p/exe: is_prdt already proves they resolve to the same
+    # place, and target is always absolute — sidesteps re-deriving existence
+    # from a possibly-relative exe string against whatever cwd happens to be
+    # live at check time (the same class of bug D4 fixes above).
+    if not (target.is_file() and os.access(target, os.X_OK)):
         return "broken", exe
     return "healthy", exe
 
 
+def _statusline_layer_state(path):
+    """Everything one settings file has to say about statusLine, teasing apart
+    three things a single None from `read_json` used to conflate (D1/D2):
+
+      - "no-opinion": the file doesn't exist, or parses as a JSON object with
+        no `statusLine` key at all. Falls through to the next layer down.
+      - "corrupt": the file EXISTS but isn't parseable JSON (or isn't a JSON
+        object) — a different, worse problem than "nothing registered": the
+        content is simply unknown. For the user-level file this matters
+        operationally too (D2) — `install.sh --statusline`'s jq merge cannot
+        even parse this file, so the "absent" repair doctor used to print
+        here never converges; it must be named and repaired differently.
+      - "malformed": a `statusLine` key IS present but its value can't be
+        read as a usable command (bare string, object with no/non-string
+        `command`). Per Claude Code's documented per-key shallow merge, a
+        higher layer overrides the same-named key at a lower layer purely by
+        being SET — so this key's mere PRESENCE shadows whatever is
+        registered below it, even though the value itself is unusable (D1).
+        DECISION: this always warns rather than silently falling through.
+        The alternative — treating a malformed-but-present key as
+        "no-opinion" — is exactly the false negative D1 reported: a dead
+        statusline with a healthy layer sitting unreachable underneath it,
+        and doctor silent. [Residue: Claude Code's own live behavior on this
+        exact malformed shape is undocumented and could not be
+        render-verified on this machine (headless, sandbox HOME can't log
+        in) — where the two possible readings differ, this takes the one
+        that WARNS, never the one that stays silent. Same note in T-500's
+        `## Outcome`.]
+
+    Returns (kind, raw_cmd) — raw_cmd is only ever non-None for kind == "cmd"."""
+    p = Path(path)
+    if not p.is_file():
+        return "no-opinion", None
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return "no-opinion", None
+    try:
+        settings = json.loads(text)
+    except ValueError:
+        return "corrupt", None
+    if not isinstance(settings, dict):
+        return "corrupt", None
+    if "statusLine" not in settings:
+        return "no-opinion", None
+    cmd = _statusline_command(settings)
+    if cmd is None:
+        return "malformed", None
+    return "cmd", cmd
+
+
 def _statusline_project_override(root_dir):
-    """(layer_path, raw_cmd) for the first of settings.local.json / settings.json
-    under root_dir/.claude carrying a statusLine key (local wins per Claude
-    Code's own documented precedence), else (None, None) — meaning this root
-    has no project-level opinion and falls through to the user-level file."""
+    """(layer_path, kind, raw_cmd) for the first of settings.local.json /
+    settings.json under root_dir/.claude that has an OPINION (local wins per
+    Claude Code's own documented precedence) — kind is "corrupt" / "malformed"
+    / "cmd", never "no-opinion" when layer_path is not None. (None, None,
+    None) means neither file has any opinion at all, and the caller falls
+    through to the user-level file."""
     for name in ("settings.local.json", "settings.json"):
         p = Path(root_dir) / ".claude" / name
-        cmd = _read_statusline_command(p)
-        if cmd is not None:
-            return p, cmd
-    return None, None
+        kind, cmd = _statusline_layer_state(p)
+        if kind != "no-opinion":
+            return p, kind, cmd
+    return None, None, None
 
 
 def _statusline_state_warning(state, exe, source, is_project, project_root=None):
@@ -1880,9 +1967,62 @@ def _statusline_state_warning(state, exe, source, is_project, project_root=None)
                 f"({target}) — repair (explicit force, overwrites the current entry): "
                 f"`{_statusline_install_cmd('--statusline')}`")
     # broken: registered AT the prdt path, but the file is missing/not executable
-    reason = "missing" if not Path(exe).exists() else "not executable"
+    reason = "missing" if not target.exists() else "not executable"
     return (f"statusline: {source} statusLine points at the prdt statusline path ({exe}), but "
             f"that file is {reason} — repair (re-mirrors + chmods it): `{_statusline_install_cmd()}`")
+
+
+def _statusline_corrupt_warning(source, is_project):
+    """D2: the file exists but isn't parseable JSON (or isn't a JSON object) —
+    reported as its own state, distinct from "absent", because the repair for
+    "absent" (`install.sh --statusline`) does not converge here: its jq merge
+    step cannot even parse this file (rc=1), so printing that command alone
+    repeats the same warning forever. Project-level files are never touched by
+    install.sh at all (same posture as the not-prdt project branch), so that
+    repair is hand-editing either way; only the user-level file gets a repair
+    that reaches all the way to healthy in one line."""
+    if is_project:
+        return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a "
+                f"statusLine is registered here (this is \"corrupt\", not \"absent\"); project "
+                f"files are never touched automatically — hand-repair the JSON, or if it isn't "
+                f"recoverable, move it aside: `mv {source} {source}.corrupt-$(date +%s)`")
+    install_cmd = _statusline_install_cmd('--statusline')
+    return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a statusLine "
+            f"is registered here (this is \"corrupt\", not \"absent\"), and `{install_cmd}`'s "
+            f"settings merge (jq) fails to parse this file as-is (rc=1) without fixing it, so "
+            f"that command alone never converges — reset the file first, then register: "
+            f"`cp {source} {source}.bak && echo '{{}}' > {source} && {install_cmd}`")
+
+
+def _statusline_malformed_warning(source, is_project, project_root=None):
+    """D1: a `statusLine` key IS present but its value can't be read as a
+    usable command. See the DECISION note in `_statusline_layer_state` for why
+    this always warns rather than falling through, and the residue note about
+    Claude Code's unverified live behavior on this shape."""
+    if is_project:
+        return (f"statusline: {source} has a `statusLine` key present but its `command` is "
+                 f"missing or not a string (malformed) — this key's mere presence shadows any "
+                 f"statusLine registered at a lower-priority level for sessions opened at "
+                 f"{project_root}, even though the value itself is unusable — repair (explicit, "
+                 f"edits only this file): `t=$(mktemp) && jq 'del(.statusLine)' {source} > \"$t\" "
+                 f"&& mv \"$t\" {source}`")
+    return (f"statusline: {source} has a `statusLine` key present but its `command` is missing "
+            f"or not a string (malformed) — nothing prdt-controlled is confirmed registered here "
+            f"— repair (force re-registers, overwrites the malformed value): "
+            f"`{_statusline_install_cmd('--statusline')}`")
+
+
+def _statusline_layer_warning(kind, cmd, source, is_project, project_root=None, anchor=None):
+    """One warning line for a non-healthy layer, or None. Dispatches on the
+    `_statusline_layer_state` kind: "corrupt" and "malformed" get their own
+    messages (D2/D1); "cmd" goes through classify + the existing per-state
+    messages (healthy/absent/not-prdt/broken)."""
+    if kind == "corrupt":
+        return _statusline_corrupt_warning(source, is_project)
+    if kind == "malformed":
+        return _statusline_malformed_warning(source, is_project, project_root)
+    state, exe = statusline_classify(cmd, anchor=anchor)
+    return _statusline_state_warning(state, exe, source, is_project, project_root)
 
 
 def statusline_warnings(root):
@@ -1892,7 +2032,11 @@ def statusline_warnings(root):
     # do) is "not yet installed", not "installation drifted" — not this
     # check's business. Gated on hooks/, mirrored in the SAME install.sh §1
     # step as bin/statusline-prdt.sh, so its presence is the one signal this
-    # machine ever ran install.sh at all.
+    # machine ever ran install.sh at all. (D5: an installed machine — hooks/
+    # present — whose statusline was simply never registered must still fall
+    # THROUGH this gate and warn; the gate only silences a machine with no
+    # install mirror at all, never a real absent-registration defect on one
+    # that has it.)
     if not (prdt_home() / "hooks").is_dir():
         return []
     root = Path(root)
@@ -1904,19 +2048,21 @@ def statusline_warnings(root):
     warns = []
     falls_through = False
     for r in roots:
-        layer_path, cmd = _statusline_project_override(r)
+        layer_path, kind, cmd = _statusline_project_override(r)
         if layer_path is None:
             falls_through = True
             continue
-        state, exe = statusline_classify(cmd)
-        w = _statusline_state_warning(state, exe, layer_path, is_project=True, project_root=r)
+        w = _statusline_layer_warning(kind, cmd, layer_path, is_project=True, project_root=r, anchor=r)
         if w:
             warns.append(w)
 
     if falls_through:
         user_path = claude_settings_path()
-        state, exe = statusline_classify(_read_statusline_command(user_path))
-        w = _statusline_state_warning(state, exe, user_path, is_project=False)
+        kind, cmd = _statusline_layer_state(user_path)
+        if kind == "no-opinion":
+            w = _statusline_state_warning("absent", None, user_path, is_project=False)
+        else:
+            w = _statusline_layer_warning(kind, cmd, user_path, is_project=False, anchor=root)
         if w:
             warns.append(w)
     return warns
