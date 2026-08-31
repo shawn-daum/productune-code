@@ -1106,6 +1106,85 @@ def prepush_warnings(root):
     return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
 
 
+# ── promotion path (T-506) ────────────────────────────────────────────────────
+#
+# contracts §Git states the product DEFAULT: promotion to `main` is merge-shaped
+# and a PR is optional, never a gate prdt imposes. That default is ours to state,
+# never to impose — a repository or organisation can REQUIRE the promotion to go
+# through a pull request (branch protection, an org `.githooks` pre-push naming
+# the PR path), and where it does, the repo's policy IS this project's path.
+# prdt runs in other people's repositories, so the two must never be collapsed:
+# reporting a PR requirement that does not exist would be as wrong as following a
+# plain merge into a hook that blocks it (that mistake cost a wrong `main` push).
+#
+# So the path is READ OFF the repository instead of asserted, and only ever
+# reported — prdt sets no PR policy, edits no git config, opens no PR.
+#
+# Two local, offline signals; either one means "PR path here":
+#   * the effective pre-push hook's own text names a pull-request promotion path
+#     (a policy hook documents the path it leaves open — the NTF org hook says
+#     "Promote via dev -> main PR (self-merge) on GitHub")
+#   * `main`'s first-parent history is PR merge commits
+# Reading hook TEXT here decides only which path to REPORT. It never decides
+# whether a push is blocked — that verdict stays ownership-based (T-493: words in
+# a file are not a block), and it is never consent either: whichever path this
+# reports, the contracts push gate is a separate, earlier gate that only the
+# user's explicit instruction at the time satisfies.
+_PROMOTE_PR_WORDS = (re.compile(r"pull\s+request", re.IGNORECASE), re.compile(r"\bPRs?\b"))
+_PROMOTE_PR_MERGE = re.compile(r"^Merge pull request\b")
+PROMOTION_LOG_DEPTH = 20
+
+
+def promotion_policy(root):
+    """What THIS repository does to reach `main`, measured rather than assumed.
+
+    Returns {"path": "pr"|"default"|"unknown", "evidence": [str]} — `unknown`
+    only when there is no code git repo to read (nothing to mismatch with)."""
+    cr = code_root(root)
+    st = prepush_status(root)
+    if st["state"] == "no-repo":
+        return {"path": "unknown", "evidence": []}
+    evidence = []
+    if st["state"] in ("managed", "unverified") and st["path"]:
+        try:
+            body = Path(st["path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            body = ""
+        if any(w.search(body) for w in _PROMOTE_PR_WORDS):
+            evidence.append(f"the pre-push hook at {st['path']} names a pull-request "
+                            "promotion path")
+    # BOTH refs, not the first that resolves: the published history and the local
+    # one diverge routinely (a clone's `origin/main` predates a promotion that is
+    # still local, and vice versa), so picking one ref would report `default` on a
+    # PR repo whose evidence sits on the other.
+    for ref, label in (("refs/remotes/origin/main", "origin/main"), ("refs/heads/main", "main")):
+        if _git(["rev-parse", "--verify", "--quiet", ref], cr).returncode != 0:
+            continue
+        r = _git(["log", "--first-parent", "-n", str(PROMOTION_LOG_DEPTH), "--format=%s", ref], cr)
+        if r.returncode != 0:
+            continue
+        hits = [s for s in r.stdout.splitlines() if _PROMOTE_PR_MERGE.match(s)]
+        if hits:
+            evidence.append(f"{len(hits)} of the last {PROMOTION_LOG_DEPTH} commits on "
+                            f"{label} are PR merges (e.g. \"{hits[0]}\")")
+            break
+    return {"path": "pr" if evidence else "default", "evidence": evidence}
+
+
+def promotion_warnings(root):
+    """One doctor line when this repo's policy differs from the default — the
+    mismatch is reported, never silently followed either way. A repo with no PR
+    requirement stays silent: the default already describes it."""
+    pol = promotion_policy(root)
+    if pol["path"] != "pr":
+        return []
+    return ["git: promotion to main here goes through a PR, not the local `dev → main` merge "
+            "the default describes — " + "; ".join(pol["evidence"]) + ". Promote the way this "
+            "repository requires. This reports the path only: it grants nothing, and opening "
+            "or merging that PR is a push, so the contracts gate (the user's explicit "
+            "instruction at the time) is satisfied first and separately."]
+
+
 # ── release-notes scaffold (T-453) ────────────────────────────────────────────
 #
 # The format convention (T-394) declares itself common to every prdt-managed
@@ -2838,6 +2917,10 @@ def cmd_doctor(_args):
 
     # main-push block: install where it is ours to write, report where it is not (T-481)
     warns += prepush_warnings(root)
+
+    # promotion path: read the repo's own policy, report where it differs from
+    # the discipline default (T-506)
+    warns += promotion_warnings(root)
 
     # release notes vs cut tags (T-465)
     warns += release_notes_gap_warnings(root)

@@ -12,9 +12,16 @@
  *
  * Scope note (T-323 decision 2026-07-21): the "code-only sync, docs excluded"
  * (A안 파생-미러) promote step is NOT built. v1.3+ projects are meta-split, so
- * `docs/` is structurally absent from the CODE repo — promoting dev→main is a
- * plain merge and nothing needs filtering. The legacy (non-split) promote step
- * is scoped out; a demand for it goes to backlog.
+ * `docs/` is structurally absent from the CODE repo — a dev→main merge filters
+ * nothing. The legacy (non-split) promote step is scoped out; a demand for it
+ * goes to backlog.
+ *
+ * What this op is NOT (T-506): the local merge below is one SHAPE of promotion,
+ * not the promotion path itself. Whether a project reaches `main` by this merge
+ * or through a pull request is that REPOSITORY's policy — `prdt doctor` reads it
+ * off the repo and reports a PR requirement — and on a PR-policy repo (this one
+ * included) the promotion goes through the PR, so this function is not the path
+ * taken. Nothing here opens or merges a PR.
  *
  * Every git op here anchors at codeRoot (PRD §v1.3 설계 결정 4) — in a split
  * project the code `.git` lives under `<projectRoot>/<code.dir>`, not the meta
@@ -95,7 +102,7 @@ export async function ensureDevBranch(projectDir: string): Promise<EnsureDevResu
   }
 }
 
-// ── promoteDevToMain — dev → main promotion (plain merge, meta-split premise) ────
+// ── promoteDevToMain — dev → main LOCAL merge (meta-split premise; see T-506 note) ─
 
 export type PromoteReason =
   | 'promoted'
