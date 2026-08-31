@@ -69,6 +69,20 @@ done
 exit 0
 `
 
+/** T-506 round 2 / F1: a hook whose text CONTAINS the PR words but NEGATES
+ *  them — it documents a local-merge policy, not a PR one. A bare
+ *  word-presence check false-positives on this shape (files an evidence
+ *  sentence that is simply false about the hook it read). */
+const NEGATING_HOOK = `#!/usr/bin/env bash
+# We do NOT use pull requests here; promote with a local merge, no PR needed.
+while read -r a b remote_ref d; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    if [ "\${ALLOW_MAIN_PUSH:-}" = "1" ]; then echo "permitted" >&2; else echo "BLOCKED" >&2; exit 1; fi
+  fi
+done
+exit 0
+`
+
 const REPORT = 'promotion to main here goes through a PR'
 
 let sandbox: string
@@ -158,9 +172,23 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('doctor reads the promotion path
     promoteWithSubject('Merge pull request #7 from acme/dev')
     const rep = doctor()
     expect(rep).toContain(REPORT)
-    expect(rep).toContain('are PR merges (e.g. "Merge pull request #7 from acme/dev")')
+    // singular/plural: exactly 1 hit here must read "is a PR merge", not "are"
+    expect(rep).toContain('is a PR merge (e.g. "Merge pull request #7 from acme/dev")')
     // the hook doctor just installed is ours and says nothing about PRs
     expect(rep).not.toContain('names a pull-request promotion path')
+  })
+
+  test('a negating hook (T-506 F1) stays SILENT — words alone are not evidence', () => {
+    // "We do NOT use pull requests here ... no PR needed" contains every word
+    // a bare presence check keys on, but the hook is documenting the OPPOSITE
+    // policy: a local merge. The evidence sentence, and the report, must not
+    // claim this hook names a pull-request path.
+    useOrgHook(NEGATING_HOOK)
+    const rep = doctor()
+    expect(rep).not.toContain(REPORT)
+    expect(rep).not.toContain('names a pull-request promotion path')
+    // the run really happened — same non-dead-path check as the silent case below
+    expect(rep).toContain('main-push block UNVERIFIED')
   })
 
   test('a repo with no PR requirement stays SILENT — the default already describes it', () => {
@@ -213,7 +241,11 @@ describe('discipline text — repo policy and the product default stay separate'
   test('the Ship-entry deploy flow promotes by the reported path, inside the one confirm', () => {
     const readiness = fs.readFileSync(READINESS, 'utf-8')
     expect(readiness).toContain('Promote by the path `prdt doctor` names for THIS repo')
-    expect(readiness).toContain('a doctor silent on promotion means the local merge')
+    // doctor's signals are local/offline — silence proves no LOCAL evidence of
+    // a PR requirement, never that no requirement exists (branch protection
+    // and squash/rebase-merged PR history are both invisible to it)
+    expect(readiness).toContain('is no local evidence of a PR requirement, not proof there is none')
+    expect(readiness).toContain('treat a rejected push as the signal to stop and re-check')
     expect(readiness).toContain("any push beyond that confirm's scope needs its own instruction")
   })
 
