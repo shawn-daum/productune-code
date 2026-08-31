@@ -18,6 +18,7 @@ Soft ritual: nothing blocks mechanically; every skip is a judgment + one `wiki/l
 
 ## After
 - All findings sliced and patched (dev → QA loop as usual) → confirm deploy with the user (deploy itself = the version's single `ops` ticket; redeploys append to it; post-deploy → QA `live-verify`).
+- Promote by the path `prdt doctor` names for THIS repo — a `dev → main` PR self-merge where the repo requires one (org hook / branch protection), the local merge where it does not; a doctor silent on promotion means the local merge. Either shape is a push: it happens inside the deploy the user just confirmed and nowhere else, and any push beyond that confirm's scope needs its own instruction.
 - Ritual close: ONE `log.md` line — `(date) readiness v<N>.<m>: review ✓ · ds ✓/N-A · security ✓ · prd ✓` with any forgiven items named.
 
 ## Rules
