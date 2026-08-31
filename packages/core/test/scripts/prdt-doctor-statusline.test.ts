@@ -478,3 +478,123 @@ describe.skipIf(!PYTHON3)('prdt doctor — statusline: N3 corrupt-JSON repair mu
     expect(doctorStatuslineLines()).toEqual([])
   })
 })
+
+// B1 — the classification boundary itself: a present, non-blank `command`
+// that still tokenizes (via shlex) to no real executable is a malformed
+// VALUE, not an absent key. QA's surviving repro after N1/N2/D1 each closed
+// one input shape: a bare quote pair, which passes the raw-string blank
+// check (N1) and parses cleanly (no unbalanced quoting, so N2 doesn't fire)
+// but tokenizes to a single empty-string token — the shape none of the
+// earlier rounds blocked, because they each guarded one INPUT SHAPE instead
+// of fixing the boundary that turns "no executable extracted" into "absent".
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: B1 a present value with no extractable executable is malformed, not absent', () => {
+  test('a bare double-quote pair command at the user level is reported malformed, not "not registered anywhere"', () => {
+    writeRawStatusline(userSettingsPath(), { type: 'command', command: '""' })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(userSettingsPath())
+    expect(lines[0]).toContain('malformed')
+    expect(lines[0]).not.toContain('not registered anywhere')
+  })
+
+  test('a bare single-quote pair command at the user level is reported malformed, not "not registered anywhere"', () => {
+    writeRawStatusline(userSettingsPath(), { type: 'command', command: "''" })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('malformed')
+    expect(lines[0]).not.toContain('not registered anywhere')
+  })
+
+  test('a bare quote-pair command at the project level still hides a healthy user-level one, reported not silent, not absent', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy, would otherwise be silent
+    writeRawStatusline(path.join(projectDir, '.claude', 'settings.json'), { type: 'command', command: '""' })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(path.join(projectDir, '.claude', 'settings.json'))
+    expect(lines[0]).toContain('malformed')
+    expect(lines[0]).not.toContain('not registered anywhere')
+  })
+
+  test('the printed repair for a quote-pair project-level command actually converges (jq del, not install.sh)', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy fallback once the override is gone
+    const projectSettings = path.join(projectDir, '.claude', 'settings.json')
+    writeRawStatusline(projectSettings, { type: 'command', command: '""' })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    const match = lines[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    execFileSync('bash', ['-c', match![1]], { cwd: projectDir, stdio: 'ignore' })
+    expect(doctorStatuslineLines()).toEqual([])
+  })
+})
+
+// B2 — `_statusline_install_cmd`'s PRDT_REPO-not-found fallback must never
+// print something shaped like a runnable command that a real shell chokes
+// on. This path is unreachable through `doctorStatuslineLines()` because
+// `seedMachine()` always writes PRDT_REPO into prdt.env — exercise it
+// directly by removing that line so PRDT_REPO genuinely cannot be found.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: B2 repair line when PRDT_REPO cannot be determined', () => {
+  function stripPrdtRepo() {
+    fs.writeFileSync(path.join(machineHome, 'prdt.env'), '')
+  }
+
+  test('the "not registered anywhere" repair line states plainly it could not be determined, not a broken command', () => {
+    stripPrdtRepo()
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('could not determine')
+    // The OLD fallback baked "(PRDT_REPO not found ...)" INSIDE backticks
+    // alongside the command name — a real shell raises a syntax error on
+    // the literal `(` there. Assert no backtick-quoted span contains one.
+    const backtickSpans = [...lines[0].matchAll(/`([^`]*)`/g)].map((m) => m[1])
+    for (const span of backtickSpans) expect(span).not.toContain('PRDT_REPO not found')
+  })
+
+  test('the not-prdt repair line states plainly it could not be determined, not a broken command', () => {
+    stripPrdtRepo()
+    writeStatusline(userSettingsPath(), '/usr/bin/echo hi')
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('could not determine')
+    const backtickSpans = [...lines[0].matchAll(/`([^`]*)`/g)].map((m) => m[1])
+    for (const span of backtickSpans) expect(span).not.toContain('PRDT_REPO not found')
+  })
+
+  test('the broken (missing statusline file) repair line states plainly it could not be determined, not a broken command', () => {
+    stripPrdtRepo()
+    writeStatusline(userSettingsPath(), prdtStatuslinePath())
+    fs.rmSync(prdtStatuslinePath())
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('could not determine')
+    const backtickSpans = [...lines[0].matchAll(/`([^`]*)`/g)].map((m) => m[1])
+    for (const span of backtickSpans) expect(span).not.toContain('PRDT_REPO not found')
+  })
+
+  test('the corrupt-JSON repair line still hands over a runnable reset-and-backup command, and states plainly it could not determine the register step', () => {
+    stripPrdtRepo()
+    writeCorruptJson(userSettingsPath())
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('could not determine')
+    const backtickSpans = [...lines[0].matchAll(/`([^`]*)`/g)].map((m) => m[1])
+    expect(backtickSpans.length).toBeGreaterThan(0)
+    // The old bug embedded the human-readable explanation itself inside a
+    // backtick span (shaped like a command) — assert that text never lands
+    // inside backticks, not that no backtick span contains any '(' at all
+    // (the legit reset command below has a benign `$((n+1))`).
+    for (const span of backtickSpans) expect(span).not.toContain('PRDT_REPO not found')
+    // The runnable half (reset + backup) is still a real, executable command.
+    execFileSync('bash', ['-c', backtickSpans[0]], { cwd: projectDir, stdio: 'ignore' })
+  })
+
+  test('the malformed-key repair line states plainly it could not be determined, not a broken command', () => {
+    stripPrdtRepo()
+    writeRawStatusline(userSettingsPath(), '/bare/string')
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('could not determine')
+    const backtickSpans = [...lines[0].matchAll(/`([^`]*)`/g)].map((m) => m[1])
+    for (const span of backtickSpans) expect(span).not.toContain('PRDT_REPO not found')
+  })
+})

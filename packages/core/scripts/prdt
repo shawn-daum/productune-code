@@ -1786,15 +1786,43 @@ def prdt_repo_from_env():
 
 
 def _statusline_install_cmd(flag=""):
-    """The exact, copy-pasteable repair command — full path when PRDT_REPO is
-    known (the common case on any machine this check can even run on, since it
-    requires an install to exist at all), a named fallback otherwise so the
-    line is never silently wrong."""
+    """The exact, copy-pasteable install.sh invocation, or None when
+    PRDT_REPO isn't known (the common case still requires an install to
+    exist at all, but prdt.env can be missing/stripped of that one line).
+
+    B2: this used to return a fallback string in that case that mixed
+    human-readable parenthetical text INSIDE what every call site then
+    wrapped in backticks as if it were a runnable command — e.g. `install.sh
+    --statusline  (PRDT_REPO not found in ... — locate install.sh in the
+    prdt repo checkout)`. A real shell raises a syntax error on the literal
+    `(` in that string the moment anyone actually runs it, and the test
+    suite never caught it because its harness always seeds PRDT_REPO (see
+    `seedMachine()` in prdt-doctor-statusline.test.ts) — this path was
+    unreachable in tests. Returning None instead forces every caller to
+    branch explicitly rather than silently embedding a broken string in a
+    warning line; use `_statusline_repair_phrase` below for the common
+    'repair (...): `cmd`' shape."""
     repo = prdt_repo_from_env()
     if repo:
         return f"{repo}/scripts/install.sh{(' ' + flag) if flag else ''}"
-    return (f"install.sh{(' ' + flag) if flag else ''}  (PRDT_REPO not found in "
-            f"{prdt_home()}/prdt.env — locate install.sh in the prdt repo checkout)")
+    return None
+
+
+def _statusline_repair_phrase(desc, flag=""):
+    """'repair (<desc>): `<install.sh invocation>`' — the shape almost every
+    non-healthy statusline warning ends on — or, when `_statusline_install_cmd`
+    can't determine the command (PRDT_REPO missing from prdt.env), a plain
+    English statement saying so and what to do instead (B2), never a
+    command-shaped string a real shell would choke on. `desc` may be "" for
+    the bare "repair: `cmd`" phrasing this ticket's acceptance names."""
+    cmd = _statusline_install_cmd(flag)
+    prefix = f"repair ({desc})" if desc else "repair"
+    if cmd is not None:
+        return f"{prefix}: `{cmd}`"
+    return (f"{prefix} — doctor could not determine the exact command (PRDT_REPO not "
+            f"found in {prdt_home()}/prdt.env) — locate install.sh in the prdt repo "
+            f"checkout and run it there"
+            f"{(' with ' + flag) if flag else ''}")
 
 
 def _statusline_command(settings):
@@ -1866,12 +1894,33 @@ def _statusline_command_exe(cmd_raw):
 def statusline_classify(cmd_raw, anchor=None):
     """(state, exe_path) for one statusLine command string already known to be
     present and well-formed (the "cmd" kind from `_statusline_layer_state`).
-    state is one of "absent" / "healthy" / "not-prdt" / "broken" /
+    state is one of "malformed" / "healthy" / "not-prdt" / "broken" /
     "unparseable" (N2: `shlex.split` could not tokenize the raw command at
-    all — exe_path is None for this one, same as "absent", but it must never
-    be CONFUSED with "absent": the key is present and has a value, we simply
-    cannot read it, which is not evidence of health either) — see the
-    module-comment above for what each means and how it is repaired.
+    all — exe_path is None for this one, same as "malformed", but it must
+    never be CONFUSED with "absent": the key is present and has a value, we
+    simply cannot read it, which is not evidence of health either).
+
+    B1 (the classification boundary): "absent" must mean exactly one thing
+    everywhere in this check — the `statusLine` key is not present in a
+    settings file at all (`_statusline_layer_state`'s "no-opinion" kind, the
+    only path that ever reaches `_statusline_state_warning("absent", ...)`).
+    This function is only ever called on a value `_statusline_layer_state`
+    already classified "cmd" — the key IS present and its raw string is
+    non-blank — so nothing in here may return "absent" no matter how the
+    value fails to resolve to a real executable. `shlex.split` can still
+    tokenize a present, non-blank string down to an empty first token (a
+    bare quote pair — `'""'`, `"''"` — tokenizes to one token, the empty
+    string) or no tokens at all; that is a malformed VALUE, exactly the same
+    "key present, unusable" bucket `_statusline_layer_state`'s own
+    "malformed" kind covers for a missing/non-string `command` (D1), not a
+    missing key. Four rounds of shape-specific patches here (blank string,
+    whitespace-only, unbalanced quoting) each blocked one input shape while
+    this boundary kept relabeling "no executable could be extracted" as "the
+    key is absent" for whatever shape they missed — the fix is this
+    boundary, once, for the whole input CLASS: any value this function
+    cannot resolve to an executable returns "malformed", never "absent".
+    See the module-comment above for what each state means and how it is
+    repaired.
 
     `anchor`: directory a RELATIVE registered path resolves against. Decision
     (D4): anchor at the project root the check is running for — matching
@@ -1892,7 +1941,7 @@ def statusline_classify(cmd_raw, anchor=None):
     except _StatuslineUnparseable:
         return "unparseable", None
     if not exe:
-        return "absent", None
+        return "malformed", None
     exe = os.path.expandvars(os.path.expanduser(exe))
     target = statusline_prdt_path()
     p = Path(exe)
@@ -1990,8 +2039,8 @@ def _statusline_state_warning(state, exe, source, is_project, project_root=None)
         return None
     if state == "absent":
         return (f"statusline: not registered anywhere for this project (no statusLine in "
-                f"{source}, and no project-level override) — repair: "
-                f"`{_statusline_install_cmd('--statusline')}`")
+                f"{source}, and no project-level override) — "
+                f"{_statusline_repair_phrase('', '--statusline')}")
     if state == "unparseable":
         # N2: shlex couldn't tokenize the raw command at all (unbalanced
         # quoting) — never treat that as evidence of health. Same repair
@@ -2006,8 +2055,7 @@ def _statusline_state_warning(state, exe, source, is_project, project_root=None)
         return (f"statusline: {source} statusLine command could not be parsed (unbalanced "
                 f"quoting) — doctor cannot tell whether it points at the prdt statusline "
                 f"({target}) or something else, and an unparseable value is not evidence of "
-                f"health — repair (force re-registers, overwrites the current entry): "
-                f"`{_statusline_install_cmd('--statusline')}`")
+                f"health — {_statusline_repair_phrase('force re-registers, overwrites the current entry', '--statusline')}")
     if state == "not-prdt":
         if is_project:
             return (f"statusline: {source} statusLine points at {exe} — this project-level "
@@ -2015,12 +2063,11 @@ def _statusline_state_warning(state, exe, source, is_project, project_root=None)
                      f"opened at {project_root} — repair (explicit, edits only this file): "
                      f"`t=$(mktemp) && jq 'del(.statusLine)' {source} > \"$t\" && mv \"$t\" {source}`")
         return (f"statusline: {source} statusLine points at {exe} — not the prdt statusline "
-                f"({target}) — repair (explicit force, overwrites the current entry): "
-                f"`{_statusline_install_cmd('--statusline')}`")
+                f"({target}) — {_statusline_repair_phrase('explicit force, overwrites the current entry', '--statusline')}")
     # broken: registered AT the prdt path, but the file is missing/not executable
     reason = "missing" if not target.exists() else "not executable"
     return (f"statusline: {source} statusLine points at the prdt statusline path ({exe}), but "
-            f"that file is {reason} — repair (re-mirrors + chmods it): `{_statusline_install_cmd()}`")
+            f"that file is {reason} — {_statusline_repair_phrase('re-mirrors + chmods it')}")
 
 
 def _statusline_corrupt_warning(source, is_project):
@@ -2044,12 +2091,27 @@ def _statusline_corrupt_warning(source, is_project):
     # is found, same one-line copy-pasteable shape as the rest of this repair.
     backup = (f"b={source}.bak; n=1; while [ -e \"$b\" ]; do b={source}.bak.$n; "
               f"n=$((n+1)); done; cp {source} \"$b\"")
+    reset = f"{backup} && echo '{{}}' > {source}"
+    if install_cmd is None:
+        # B2: install_cmd unknown (PRDT_REPO missing from prdt.env) — the old
+        # code still spliced it into TWO backtick-wrapped spots below (a
+        # prose reference and the tail of a compound `&&` chain) regardless,
+        # so the broken fallback text corrupted both. State plainly instead:
+        # doctor can still hand over the runnable reset-and-backup half, but
+        # not the registration half.
+        return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a statusLine "
+                f"is registered here (this is \"corrupt\", not \"absent\"), and install.sh's "
+                f"settings merge (jq) fails to parse this file as-is (rc=1) without fixing it, so "
+                f"repair needs two steps: reset the file first (backup picks an unused name so it "
+                f"never clobbers an existing .bak): `{reset}` — then register, but doctor could not "
+                f"determine the exact command (PRDT_REPO not found in {prdt_home()}/prdt.env) — "
+                f"locate install.sh in the prdt repo checkout and run it there with --statusline")
     return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a statusLine "
             f"is registered here (this is \"corrupt\", not \"absent\"), and `{install_cmd}`'s "
             f"settings merge (jq) fails to parse this file as-is (rc=1) without fixing it, so "
             f"that command alone never converges — reset the file first, then register (backup "
             f"picks an unused name so it never clobbers an existing .bak): "
-            f"`{backup} && echo '{{}}' > {source} && {install_cmd}`")
+            f"`{reset} && {install_cmd}`")
 
 
 def _statusline_malformed_warning(source, is_project, project_root=None):
@@ -2066,20 +2128,26 @@ def _statusline_malformed_warning(source, is_project, project_root=None):
                  f"&& mv \"$t\" {source}`")
     return (f"statusline: {source} has a `statusLine` key present but its `command` is missing "
             f"or not a string (malformed) — nothing prdt-controlled is confirmed registered here "
-            f"— repair (force re-registers, overwrites the malformed value): "
-            f"`{_statusline_install_cmd('--statusline')}`")
+            f"— {_statusline_repair_phrase('force re-registers, overwrites the malformed value', '--statusline')}")
 
 
 def _statusline_layer_warning(kind, cmd, source, is_project, project_root=None, anchor=None):
     """One warning line for a non-healthy layer, or None. Dispatches on the
     `_statusline_layer_state` kind: "corrupt" and "malformed" get their own
     messages (D2/D1); "cmd" goes through classify + the existing per-state
-    messages (healthy/absent/not-prdt/broken)."""
+    messages (healthy/not-prdt/broken) — plus classify's OWN "malformed"
+    outcome (B1: a present, non-blank value that still tokenizes to no
+    executable, e.g. a bare quote pair), routed to the exact same
+    `_statusline_malformed_warning` as the "malformed" kind above so both
+    "key present, value unusable" paths converge on one message that names
+    the file/key that's actually the problem, never "absent"."""
     if kind == "corrupt":
         return _statusline_corrupt_warning(source, is_project)
     if kind == "malformed":
         return _statusline_malformed_warning(source, is_project, project_root)
     state, exe = statusline_classify(cmd, anchor=anchor)
+    if state == "malformed":
+        return _statusline_malformed_warning(source, is_project, project_root)
     return _statusline_state_warning(state, exe, source, is_project, project_root)
 
 
