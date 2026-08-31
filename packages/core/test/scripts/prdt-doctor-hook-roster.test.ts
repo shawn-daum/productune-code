@@ -168,6 +168,36 @@ describe.skipIf(!PYTHON3)('prdt doctor — call governor fire evidence (the sile
   })
 })
 
+describe.skipIf(!PYTHON3)('prdt doctor — a poisoned counter path is caught (T-519 vector 2)', () => {
+  // `mkdir "$run/<sid>.<aid>"` pins a worker's turn count at 0 (append + read
+  // both fail forever) while the .fired-* markers stay green, so the governor
+  // LOOKS healthy but enforces nothing for that worker. doctor must surface it.
+  const SID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const AID = 'a45b42f3cdda35348'
+
+  /** Positive control: the check is proven to FIRE, not just be silently absent
+   *  (a clean pass on its own proves nothing — machine-wiki fact--discipline-editing). */
+  test('a directory planted at a counter path is reported as a poisoned counter', () => {
+    mirror(GOVERNOR)
+    register({ PreToolUse: [GOVERNOR], PostToolBatch: [GOVERNOR] })
+    fired('PreToolUse', 'PostToolBatch') // markers green — the silent-death shape
+    fs.mkdirSync(path.join(runDir(), `${SID}.${AID}`), { recursive: true })
+    const out = doctor().join('\n')
+    expect(out).toMatch(/DIRECTORY|counter/i)
+    expect(out).toContain(`${SID}.${AID}`)
+  })
+
+  test('a clean run dir (only fire markers + real counter files) stays silent', () => {
+    mirror(GOVERNOR)
+    register({ PreToolUse: [GOVERNOR], PostToolBatch: [GOVERNOR] })
+    fired('PreToolUse', 'PostToolBatch')
+    // a genuine counter file must NOT be mistaken for tamper
+    fs.writeFileSync(path.join(runDir(), `${SID}.${AID}`), '....')
+    fs.writeFileSync(path.join(runDir(), `${SID}.${AID}.w40`), '')
+    expect(doctor()).toEqual([])
+  })
+})
+
 describe.skipIf(!PYTHON3)('prdt doctor — call governor fire evidence goes STALE (T-491 R2-2)', () => {
   // The marker is create-once (the hook only ever `>`-truncates it), so once
   // it exists it exists forever — a harness upgrade that changes the payload

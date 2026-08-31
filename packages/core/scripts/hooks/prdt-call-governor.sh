@@ -298,6 +298,24 @@ KEY="$RUN/$SID.$AID"
 WARN_AT=40
 DENY_AT=60
 
+# ── tamper: counter path is not a regular file (T-519 vector 2) ────────────────
+# `mkdir "$KEY"` — or any non-regular file planted at this path — makes BOTH the
+# append and the read below fail forever: the count would pin at 0 and every
+# deny be silently skipped, while the `.fired-*` markers stay green so `prdt
+# doctor` sees a healthy governor. A fresh counter does not exist yet (`! -e`), a
+# live one is a regular file (`-f`); only a POISONED path reaches here. This is
+# NOT the malformed-payload case that fails open above — identity is resolved and
+# the persona is known — it is tampered evidence, so treat it as over-limit
+# rather than as N=0: the enforced persona is DENIED (self-evasion via mkdir now
+# backfires), warn-only personas are never denied so they carry on, and `prdt
+# doctor` reports the path either way. Two builtin tests, no fork.
+if [ -e "$KEY" ] && [ ! -f "$KEY" ]; then
+  if [ -n "$ENFORCE" ] && [ "$EVENT" = "PreToolUse" ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[prdt call governor] Hard stop: the turn counter for this worker has been replaced by a non-regular file, so the count can no longer be trusted (T-491/T-519). Enforcement fails CLOSED here rather than granting untracked turns.\\nReturn your envelope NOW — `summary` (what landed, plus `files_written[]`) and `unresolved[]`, one line per remaining item, written so a fresh worker can pick it up cold. Returning is NOT a tool call; retrying a tool only earns another deny."}}'
+  fi
+  exit 0
+fi
+
 if [ "$EVENT" = "PostToolBatch" ]; then
   # One byte per completed API turn. O_APPEND of a single byte is atomic, so
   # concurrent workers (which key to different files anyway) cannot interleave.
