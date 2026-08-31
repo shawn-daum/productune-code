@@ -21,7 +21,7 @@ Non-developers can't tell text token-specs apart. Surface RENDERED HTML design-s
 - **Divergence rule**: any two of the three differ on ≥2 of the 4 mood labels (`light|dark · minimal|rich · playful|serious · editorial|chrome`) AND visibly differ in font, component shape, layout.
 
 ## Render requirements
-- `docs/artifacts/<slug>-ds-{a,b,c}.html` (one page with 3 sections is fine) — a real showcase: tokens / type / spacing / core components visibly applied, not prose.
+- `docs/artifacts/<version>/<slug>-ds-{a,b,c}.html` (one page with 3 sections is fine) — a real showcase: tokens / type / spacing / core components visibly applied, not prose.
 - Named fonts actually load (webfont/@font-face; bare `-apple-system` forbidden; Pretendard leads UI text). Anti-default pass (`style-library/anti-default.md`) + `style-library/ux-principles.md` bound. Render-verify (screenshot yourself) before returning — undecidable render = not done.
 - Per proposal, one provenance line: A·B `anchor: <slug> — why this mood fits · what was adapted`; C `searched: <what> — how it diverges`.
 
