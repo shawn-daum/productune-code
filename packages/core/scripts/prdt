@@ -1826,22 +1826,27 @@ def _statusline_repair_phrase(desc, flag=""):
 
 
 def _statusline_command(settings):
-    """Raw `statusLine.command` string out of a parsed settings dict, or None.
+    """Raw `statusLine.command` string out of a parsed settings dict, or None
+    (kind "malformed" — missing/non-string `command`, e.g. D1's bare-string
+    or no-`command`-key shapes).
 
-    N1: an empty or whitespace-only string is not a usable command — treating
-    it as one (old behavior: `isinstance(cmd, str)` alone) let a present-but-
-    blank `statusLine.command` fall through `_statusline_layer_state` as kind
-    "cmd", tokenize to nothing, and get reported "absent" ("no statusLine in
-    {source}") even though the key IS there. Returning None here instead
-    routes it to kind "malformed", whose repair (jq del at project level,
-    force re-register at user level) actually reaches healthy from this
-    state — the "absent" repair doesn't, by the same project-level argument
-    D1 already established for a present-but-unusable value."""
+    N1/B1 history: an empty or whitespace-only string used to be rejected
+    HERE too (`not cmd.strip()`), so it never even reached kind "cmd". That
+    guard is now dead: B1 moved the blank/unresolvable-value boundary into
+    `statusline_classify` itself — a present, non-blank raw string that
+    still tokenizes to no real executable (a blank command included: `""`
+    tokenizes to one empty-string token, `"   "` tokenizes to zero tokens)
+    returns "malformed" there and routes through the exact same
+    `_statusline_malformed_warning` this guard used to reach by a different
+    path — byte-identical message, so removing the guard changes nothing
+    observable. Kept as a blank string returned here (not rejected) so kind
+    "cmd" always means "the value was a string, unconditionally" and B1's
+    boundary is the ONE place that decides usable vs. not."""
     if not isinstance(settings, dict):
         return None
     sl = settings.get("statusLine")
     cmd = sl.get("command") if isinstance(sl, dict) else None
-    if not isinstance(cmd, str) or not cmd.strip():
+    if not isinstance(cmd, str):
         return None
     return cmd
 
