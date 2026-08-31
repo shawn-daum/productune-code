@@ -1130,9 +1130,27 @@ def prepush_warnings(root):
 # a file are not a block), and it is never consent either: whichever path this
 # reports, the contracts push gate is a separate, earlier gate that only the
 # user's explicit instruction at the time satisfies.
+#
+# T-506 round 2 / F1: bare word presence false-positives on a negation — a hook
+# reading "We do NOT use pull requests here; promote with a local merge, no PR
+# needed" contains the words and would have doctor claim it "names a
+# pull-request promotion path", which is false of that hook. A word match is
+# evidence only when nothing in its own clause negates it — split on sentence-
+# ish boundaries (line / `.` / `;`) and require no negation word share the
+# clause with the match, so "names" stays true of whatever it is said about.
 _PROMOTE_PR_WORDS = (re.compile(r"pull\s+request", re.IGNORECASE), re.compile(r"\bPRs?\b"))
+_PROMOTE_NEGATION = re.compile(r"\bnot\b|\bnever\b|\bno\b|\bwithout\b|n't\b", re.IGNORECASE)
 _PROMOTE_PR_MERGE = re.compile(r"^Merge pull request\b")
 PROMOTION_LOG_DEPTH = 20
+
+
+def _hook_names_pr_path(body):
+    """True only when some clause of the hook text both matches a PR word and
+    is not itself negated — see T-506 F1 above."""
+    for clause in re.split(r"[.\n;]", body):
+        if any(w.search(clause) for w in _PROMOTE_PR_WORDS) and not _PROMOTE_NEGATION.search(clause):
+            return True
+    return False
 
 
 def promotion_policy(root):
@@ -1150,7 +1168,7 @@ def promotion_policy(root):
             body = Path(st["path"]).read_text(encoding="utf-8", errors="replace")
         except OSError:
             body = ""
-        if any(w.search(body) for w in _PROMOTE_PR_WORDS):
+        if _hook_names_pr_path(body):
             evidence.append(f"the pre-push hook at {st['path']} names a pull-request "
                             "promotion path")
     # BOTH refs, not the first that resolves: the published history and the local
@@ -1165,8 +1183,9 @@ def promotion_policy(root):
             continue
         hits = [s for s in r.stdout.splitlines() if _PROMOTE_PR_MERGE.match(s)]
         if hits:
+            verb = "is a PR merge" if len(hits) == 1 else "are PR merges"
             evidence.append(f"{len(hits)} of the last {PROMOTION_LOG_DEPTH} commits on "
-                            f"{label} are PR merges (e.g. \"{hits[0]}\")")
+                            f"{label} {verb} (e.g. \"{hits[0]}\")")
             break
     return {"path": "pr" if evidence else "default", "evidence": evidence}
 
