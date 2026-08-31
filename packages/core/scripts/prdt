@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · history · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check) · history · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -2555,6 +2555,195 @@ def prdt_script_drift_warnings():
             f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
 
 
+# ── Artifacts — version buckets + derived manifest (T-512) ────────────────────
+# Layout: docs/artifacts/<version>/[archive/]<slug>.<ext> beside a manifest.json
+# the CLI writes. The manifest is a derived index, so `prdt artifacts sync`
+# rebuilds it from disk and keeps whatever a person set that disk cannot say
+# (ticket, kind, status, lang); doctor reports what the rule cannot place.
+ARTIFACT_BUCKET_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$")
+ARTIFACT_TICKET_PREFIX_RE = re.compile(r"^(T-(?:[A-Z][A-Z0-9]*-)?\d+)-")
+ARTIFACT_TICKET_ANY_RE = re.compile(r"\bT-(?:[A-Z][A-Z0-9]*-)?\d+\b")
+ARTIFACT_KIND_SUFFIX = (("-mockup", "mockup"), ("-showcase", "mockup"),
+                        ("-wireframe", "wireframe"), ("-design-system", "design-system"),
+                        ("-spec", "spec"), ("-runsheet", "doc"))
+ARTIFACT_EXTS = (".md", ".mmd", ".mermaid", ".html", ".json", ".excalidraw.json")
+
+
+def artifacts_root(root):
+    return root / "docs" / "artifacts"
+
+
+def artifact_buckets(root):
+    base = artifacts_root(root)
+    if not base.is_dir():
+        return []
+    return sorted((d for d in base.iterdir()
+                   if d.is_dir() and ARTIFACT_BUCKET_RE.match(d.name)),
+                  key=lambda d: version_key(d.name))
+
+
+def version_key(v):
+    return tuple(int(n) for n in re.findall(r"\d+", v))
+
+
+def artifact_files(bucket):
+    """Manifest-relative paths of the files one bucket holds, bucket root then archive/."""
+    out = []
+    for p in sorted(bucket.iterdir(), key=lambda x: x.name):
+        if p.is_file() and not p.name.startswith(".") and p.name != "manifest.json":
+            out.append(p.name)
+    arch = bucket / "archive"
+    if arch.is_dir():
+        for p in sorted(arch.iterdir(), key=lambda x: x.name):
+            if p.is_file() and not p.name.startswith("."):
+                out.append(f"archive/{p.name}")
+    return out
+
+
+def read_artifact_manifest(bucket):
+    """(entries keyed by path, error string or None). Absent manifest = empty, no error."""
+    mp = bucket / "manifest.json"
+    if not mp.is_file():
+        return {}, None
+    try:
+        data = json.loads(mp.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {}, f"is unreadable ({e.__class__.__name__})"
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return {}, "has no `entries` list"
+    out = {}
+    for e in entries:
+        if isinstance(e, dict) and isinstance(e.get("path"), str):
+            out[e["path"]] = e
+    return out, None
+
+
+def derive_artifact_kind(rel):
+    stem = Path(rel).name.rsplit(".", 1)[0].lower()
+    for suffix, kind in ARTIFACT_KIND_SUFFIX:
+        if stem.endswith(suffix):
+            return kind
+    return "doc"
+
+
+def derive_artifact_ticket(root, bucket, rel):
+    """Ticket id from the filename prefix, else the one the document names in its own
+    title (`# …` / `<title>`), and only if that ticket exists. Body prose is not read:
+    a document cites many tickets and the first mention is not its owner — that is how
+    a fork artifact briefly claimed the ticket it merely discussed."""
+    m = ARTIFACT_TICKET_PREFIX_RE.match(Path(rel).name)
+    if m:
+        return m.group(1)
+    try:
+        head = (bucket / rel).read_text(encoding="utf-8", errors="ignore")[:8000]
+    except OSError:
+        return None
+    title = None
+    tm = re.search(r"<title>(.*?)</title>", head, re.S | re.I)
+    if tm:
+        title = tm.group(1)
+    else:
+        for line in head.splitlines():
+            if line.startswith("# "):
+                title = line
+                break
+    if not title:
+        return None
+    known = {q.stem for q in (root / "docs" / "tickets").rglob("T-*.md")}
+    for cand in ARTIFACT_TICKET_ANY_RE.findall(title):
+        if cand in known:
+            return cand
+    return None
+
+
+def build_artifact_manifest(root, bucket):
+    """Derive the bucket's manifest, carrying forward every hand-set field."""
+    prior, _ = read_artifact_manifest(bucket)
+    entries = []
+    for rel in artifact_files(bucket):
+        old = prior.get(rel, {})
+        archived = rel.startswith("archive/")
+        e = {
+            "path": rel,
+            "ticket": old.get("ticket") if "ticket" in old else derive_artifact_ticket(root, bucket, rel),
+            "kind": old.get("kind") or derive_artifact_kind(rel),
+            "status": "archived" if archived else (old.get("status") or "pending"),
+            "lang": old.get("lang") or "ko",
+        }
+        for k in ("source", "source_hash", "backfilled"):
+            if k in old:
+                e[k] = old[k]
+        e["added_at"] = old.get("added_at") or datetime.fromtimestamp(
+            (bucket / rel).stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+        entries.append(e)
+    return {"schema_v": 1, "version": bucket.name, "entries": entries}
+
+
+def artifact_placement_warnings(root):
+    """Every file under docs/artifacts/ is attributable to a version by its bucket,
+    and registered in that bucket's manifest. Anything the rule cannot place says so."""
+    base = artifacts_root(root)
+    if not base.is_dir():
+        return []
+    warns = []
+    for p in sorted(base.iterdir(), key=lambda x: x.name):
+        if p.name.startswith("."):
+            continue
+        if p.is_file():
+            warns.append(f"artifact: {p.name} sits outside a version bucket — "
+                         f"move it under docs/artifacts/<version>/ (contracts §Fixed paths)")
+        elif not ARTIFACT_BUCKET_RE.match(p.name):
+            warns.append(f"artifact: docs/artifacts/{p.name}/ is not a version bucket "
+                         f"(expected v<N>.<m> or v<N>.<m>.<p>)")
+    for bucket in artifact_buckets(root):
+        for d in sorted(bucket.iterdir(), key=lambda x: x.name):
+            if d.is_dir() and d.name != "archive":
+                warns.append(f"artifact: {bucket.name}/{d.name}/ — a bucket holds files "
+                             f"plus archive/, no other subdirectory")
+        prior, err = read_artifact_manifest(bucket)
+        if err:
+            warns.append(f"artifact: {bucket.name}/manifest.json {err} — run `prdt artifacts sync`")
+            continue
+        on_disk = set(artifact_files(bucket))
+        if not prior and on_disk:
+            warns.append(f"artifact: {bucket.name}/ has {len(on_disk)} file(s) and no manifest.json "
+                         f"— run `prdt artifacts sync`")
+            continue
+        for rel in sorted(on_disk - set(prior)):
+            warns.append(f"artifact: {bucket.name}/{rel} is not registered in manifest.json "
+                         f"— run `prdt artifacts sync`")
+        for rel in sorted(set(prior) - on_disk):
+            warns.append(f"artifact: {bucket.name}/manifest.json lists {rel}, which is not on disk")
+    return warns
+
+
+def cmd_artifacts(args):
+    root = require_root()
+    if args.action == "check":
+        warns = artifact_placement_warnings(root)
+        for w in warns:
+            print(w)
+        print(f"artifacts: {len(warns)} finding(s)")
+        sys.exit(1 if warns else 0)
+    # sync — write each bucket's manifest from disk; report what sits outside one.
+    wrote = []
+    for bucket in artifact_buckets(root):
+        want = json.dumps(build_artifact_manifest(root, bucket), indent=2, ensure_ascii=False) + "\n"
+        mp = bucket / "manifest.json"
+        if mp.is_file() and mp.read_text(encoding="utf-8") == want:
+            continue
+        tmp = Path(str(mp) + ".tmp")
+        tmp.write_text(want, encoding="utf-8")
+        os.replace(tmp, mp)
+        wrote.append(bucket.name)
+    print(f"artifacts: manifest written for {', '.join(wrote)}" if wrote
+          else "artifacts: manifests already current")
+    stray = [w for w in artifact_placement_warnings(root) if "sits outside" in w or "not a version bucket" in w]
+    for w in stray:
+        print(w)
+
+
 def cmd_doctor(_args):
     root = require_root()
     warns = []
@@ -2626,13 +2815,11 @@ def cmd_doctor(_args):
     cyc = cycles()
     if cyc:
         warns.append(f"ticket: dependency cycle involving {cyc[0]}")
-    # artifact without referencing ticket
-    art = root / "docs" / "artifacts"
-    if art.is_dir():
-        all_bodies = " ".join((root / t["path"]).read_text(encoding="utf-8") for t in tickets.values()) if tickets else ""
-        for a in art.iterdir():
-            if a.is_file() and not a.name.startswith(".") and a.name not in all_bodies:
-                warns.append(f"ticket: artifact {a.name} has no referencing ticket")
+    # artifacts — version-bucket placement + manifest registration (T-512).
+    # Supersedes the referencing-ticket scan, which was never the checkable
+    # condition: it missed a file naming its own ticket in its title, and it
+    # cleared a file only because a LATER round's ticket happened to cite it.
+    warns += artifact_placement_warnings(root)
 
     # main-push block: install where it is ours to write, report where it is not (T-481)
     warns += prepush_warnings(root)
@@ -3062,6 +3249,10 @@ def main():
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
     p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
     p.set_defaults(fn=cmd_tickets)
+    p = sub.add_parser("artifacts", help="sync (write each docs/artifacts/<version>/manifest.json from disk) "
+                                         "| check (report artifacts the bucket rule cannot place; exit 1 on findings)")
+    p.add_argument("action", choices=("sync", "check"))
+    p.set_defaults(fn=cmd_artifacts)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
     p = sub.add_parser("meta", help="meta git: log · remote [add <name> <url>] · push · bootstrap · split · relocate — core API 브리지 호출")
