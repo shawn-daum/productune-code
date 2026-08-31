@@ -71,13 +71,30 @@ function writeStatusline(file: string, command: string | undefined) {
   fs.writeFileSync(file, JSON.stringify(existing, null, 2))
 }
 
+/** Write an arbitrary raw `statusLine` value — a bare string, `{}`, a
+ *  `command` that isn't a string, etc. — the shapes D1 covers (key present,
+ *  value malformed), which `writeStatusline` above can't produce since it
+ *  always emits a well-formed `{type, command}` object. */
+function writeRawStatusline(file: string, value: unknown) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const existing = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}
+  existing.statusLine = value
+  fs.writeFileSync(file, JSON.stringify(existing, null, 2))
+}
+
+/** Write literally-invalid JSON to a settings file (D2: corrupt, not absent). */
+function writeCorruptJson(file: string) {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, '{ this is not valid json,,, ')
+}
+
 function userSettingsPath(): string { return path.join(claudeDir, 'settings.json') }
 function codeRoot(): string { return path.join(projectDir, 'code') }
 
-function doctorStatuslineLines(): string[] {
+function doctorStatuslineLines(cwd: string = projectDir, home: string = machineHome): string[] {
   const out = execFileSync('python3', [PRDT_CLI, 'doctor'], {
-    cwd: projectDir,
-    env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir },
+    cwd,
+    env: { ...process.env, PRDT_HOME: home, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
   })
   return out.split('\n').filter((l) => l.includes('statusline:'))
@@ -198,5 +215,157 @@ describe.skipIf(!PYTHON3)('prdt doctor — statusline: project-level override co
     const before = fs.readFileSync(userSettingsPath(), 'utf8')
     doctorStatuslineLines()
     expect(fs.readFileSync(userSettingsPath(), 'utf8')).toBe(before)
+  })
+})
+
+// D1 — a present-but-malformed `statusLine` key must still shadow (and warn
+// about) a healthy lower-priority registration, never fall through silently.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: D1 malformed key presence', () => {
+  test('a bare-string statusLine at the project level hides a healthy user-level one — reported, not silent', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy, would otherwise be silent
+    writeRawStatusline(path.join(projectDir, '.claude', 'settings.json'), '/some/bare/string')
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(path.join(projectDir, '.claude', 'settings.json'))
+    expect(lines[0]).toContain('statusLine')
+    expect(lines[0]).toContain('malformed')
+  })
+
+  test('an object with no `command` key is malformed, same as a bare string', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath())
+    writeRawStatusline(path.join(projectDir, '.claude', 'settings.json'), {})
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('malformed')
+  })
+
+  test('a non-string `command` value is malformed', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath())
+    writeRawStatusline(path.join(projectDir, '.claude', 'settings.json'), { command: 12345 })
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('malformed')
+  })
+
+  test('a malformed statusLine at the user level (nothing below it) is reported malformed, not absent', () => {
+    writeRawStatusline(userSettingsPath(), '/bare/string')
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(userSettingsPath())
+    expect(lines[0]).toContain('malformed')
+    expect(lines[0]).not.toContain('not registered anywhere')
+  })
+})
+
+// D2 — corrupt (unparseable) settings JSON must be reported as its own
+// state, with a repair that actually converges, not misdiagnosed as "absent".
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: D2 corrupt settings JSON', () => {
+  test('invalid JSON at the user level is reported as corrupt, not "not registered anywhere"', () => {
+    writeCorruptJson(userSettingsPath())
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('not valid JSON')
+    expect(lines[0]).not.toContain('not registered anywhere')
+  })
+
+  test('the printed repair for corrupt user-level JSON actually converges to healthy', () => {
+    writeCorruptJson(userSettingsPath())
+    expect(doctorStatuslineLines().length).toBe(1)
+    // Run exactly what a worker would copy-paste out of the warning: reset
+    // the file, then register. This is the D2 acceptance — the OLD repair
+    // (`install.sh --statusline` alone) dies on this exact fixture (jq can't
+    // parse it) and never converges; this composite one must.
+    fs.writeFileSync(`${userSettingsPath()}.bak`, fs.readFileSync(userSettingsPath()))
+    fs.writeFileSync(userSettingsPath(), '{}')
+    execFileSync('bash', [path.join(CORE_ROOT, 'scripts', 'install.sh'), '--statusline'], {
+      env: { ...process.env, HOME: sandbox, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir },
+      stdio: 'ignore',
+    })
+    expect(doctorStatuslineLines()).toEqual([])
+  })
+
+  test('the OLD repair alone (install.sh --statusline against still-corrupt JSON) does not converge — proves D2 was real', () => {
+    writeCorruptJson(userSettingsPath())
+    expect(() => execFileSync('bash', [path.join(CORE_ROOT, 'scripts', 'install.sh'), '--statusline'], {
+      env: { ...process.env, HOME: sandbox, PRDT_HOME: machineHome, CLAUDE_DIR: claudeDir },
+      stdio: 'ignore',
+    })).toThrow()
+    expect(doctorStatuslineLines().length).toBe(1) // still broken, still reported
+  })
+
+  test('invalid JSON at the project level is reported as corrupt', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy — would be silent without this
+    writeCorruptJson(path.join(projectDir, '.claude', 'settings.json'))
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain(path.join(projectDir, '.claude', 'settings.json'))
+    expect(lines[0]).toContain('not valid JSON')
+  })
+})
+
+// D3 — a PRDT_HOME containing a space must not make a correctly-registered
+// machine judge itself not-prdt forever.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: D3 PRDT_HOME with a space', () => {
+  test('a healthy registration under a PRDT_HOME containing a space is judged healthy, not not-prdt', () => {
+    const spacedHome = path.join(sandbox, 'prdt home')
+    fs.mkdirSync(path.join(spacedHome, 'bin'), { recursive: true })
+    fs.mkdirSync(path.join(spacedHome, 'hooks'), { recursive: true })
+    const exe = path.join(spacedHome, 'bin', 'statusline-prdt.sh')
+    fs.writeFileSync(exe, '#!/usr/bin/env bash\necho ok\n', { mode: 0o755 })
+    fs.writeFileSync(path.join(spacedHome, 'prdt.env'), `PRDT_REPO=${CORE_ROOT}\n`)
+    // install.sh's own quoting convention (module comment above
+    // `_statusline_command_exe`): the executable wrapped in a literal pair of
+    // escaped quotes baked into the JSON string.
+    writeStatusline(userSettingsPath(), `"${exe}"`)
+    expect(doctorStatuslineLines(projectDir, spacedHome)).toEqual([])
+  })
+})
+
+// D4 — ~/... and $VAR/... registrations must be recognized as the prdt path,
+// and a relative-path registration must be judged the same regardless of
+// doctor's own invocation cwd.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: D4 var/user expansion + relative-path anchor', () => {
+  test('a $PRDT_HOME/... registration is recognized as healthy', () => {
+    writeStatusline(userSettingsPath(), '$PRDT_HOME/bin/statusline-prdt.sh')
+    expect(doctorStatuslineLines(projectDir, machineHome)).toEqual([])
+  })
+
+  test('a ~/-rooted registration pointing at the real prdt path is recognized as healthy', () => {
+    const rel = path.relative(os.homedir(), prdtStatuslinePath())
+    // Only meaningful if machineHome actually sits under the real $HOME —
+    // skip gracefully otherwise (mkdtemp target varies by platform/CI).
+    if (rel.startsWith('..')) return
+    writeStatusline(userSettingsPath(), `~/${rel}`)
+    expect(doctorStatuslineLines()).toEqual([])
+  })
+
+  test('a relative-path registration is judged the same from the project root and from a nested subdirectory', () => {
+    writeStatusline(userSettingsPath(), prdtStatuslinePath()) // healthy fallback for codeRoot, which has no override
+    const rel = path.relative(projectDir, prdtStatuslinePath())
+    writeStatusline(path.join(projectDir, '.claude', 'settings.json'), rel)
+    const nested = path.join(projectDir, 'docs', 'wiki')
+    fs.mkdirSync(nested, { recursive: true })
+    expect(doctorStatuslineLines(projectDir)).toEqual([])
+    expect(doctorStatuslineLines(nested)).toEqual([])
+  })
+})
+
+// D5 — the "no install on this machine" silence gate needs its own
+// assertions on both edges: silent when truly not installed, but never
+// silent for a real absent-registration defect on a machine that IS
+// installed.
+describe.skipIf(!PYTHON3)('prdt doctor — statusline: D5 install-gate coverage', () => {
+  test('no $PRDT_HOME/hooks at all — silent even with an unhealthy statusLine registered', () => {
+    fs.rmSync(path.join(machineHome, 'hooks'), { recursive: true, force: true })
+    writeStatusline(userSettingsPath(), '/usr/bin/echo hi') // would otherwise be "not-prdt"
+    expect(doctorStatuslineLines()).toEqual([])
+  })
+
+  test('an installed machine ($PRDT_HOME/hooks present) with no statusline registered still warns', () => {
+    // seedMachine() in beforeEach already created hooks/ — this is the gate's
+    // OTHER edge: presence of hooks/ must never itself suppress a real defect.
+    const lines = doctorStatuslineLines()
+    expect(lines.length).toBe(1)
+    expect(lines[0]).toContain('not registered anywhere')
   })
 })
