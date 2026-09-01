@@ -35,6 +35,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { freshInstall, hasJq } from '../helpers/install-fixture'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const REAL_PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -270,5 +271,131 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — hook mirror↔repo drift (T-5
     // therefore honest only as a reachability proof, not as a proof the
     // early return itself does anything — see the two notes above.
     expect(doctor({ PRDT_HOME: collapsedHome })).toEqual([])
+  })
+})
+
+/** Adds the rest of what a REAL `install.sh` run needs beyond the hooks/
+ *  history `seedRepoHistory()` already seeds — a copy of install.sh itself,
+ *  a manifest naming exactly the two synthetic hooks, and the handful of
+ *  other files §1/§3 touch. None of this is git-committed (install.sh
+ *  doesn't care), so it never perturbs the git-history fixtures BEHIND/AHEAD
+ *  verdicts read. `root` is the synthetic repo's `packages/core`. */
+function addInstallScaffolding(root: string) {
+  const scriptsDir = path.join(root, 'scripts')
+  fs.copyFileSync(path.join(CORE_ROOT, 'scripts', 'install.sh'), path.join(scriptsDir, 'install.sh'))
+  fs.chmodSync(path.join(scriptsDir, 'install.sh'), 0o755)
+  fs.writeFileSync(path.join(scriptsDir, 'hook-manifest.json'), JSON.stringify({
+    basenames: ['prdt-hook-a.sh', 'prdt-hook-b.sh'],
+    registrations: [{ event: 'SessionStart', hooks: ['prdt-hook-a.sh', 'prdt-hook-b.sh'] }],
+  }))
+  fs.writeFileSync(path.join(scriptsDir, 'statusline-prdt.sh'), '#!/usr/bin/env bash\necho ok\n')
+  fs.mkdirSync(path.join(root, 'discipline'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'doctrine.md'), 'test doctrine\n')
+  fs.mkdirSync(path.join(root, 'agents'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'agents', 'prdt-x.md'), 'test agent\n')
+}
+
+/** Runs the extracted repair line for REAL — never a hand-written equivalent
+ *  — against the synthetic repo's own copied install.sh, with HOME/PRDT_HOME/
+ *  CLAUDE_DIR all pointed at a scratch sandbox (never the real machine). The
+ *  bare `install.sh` word doctor's own text prints resolves via PATH here,
+ *  exactly as a developer's shell would resolve it once cd'd next to the
+ *  script. */
+function runPrintedRepair(cmd: string) {
+  const scriptsDir = path.join(repoRoot, 'packages', 'core', 'scripts')
+  const installHome = path.join(sandbox, 'install-home')
+  const installClaude = path.join(sandbox, 'install-claude')
+  fs.mkdirSync(installHome, { recursive: true })
+  fs.mkdirSync(installClaude, { recursive: true })
+  execFileSync('bash', ['-c', cmd], {
+    cwd: scriptsDir,
+    env: { ...process.env, HOME: installHome, PRDT_HOME: machineHome, CLAUDE_DIR: installClaude,
+           PATH: `${scriptsDir}:${process.env.PATH}` },
+    stdio: 'ignore', timeout: 30000,
+  })
+}
+
+describe.skipIf(!PYTHON3 || !GIT || !hasJq())('prdt doctor — hook mirror repair actually converges (T-532 QA H1/H2)', () => {
+  test('BEHIND: the printed repair (re-run install.sh) actually clears it', () => {
+    seedRepoHistory()
+    addInstallScaffolding(path.join(repoRoot, 'packages', 'core'))
+    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v1\n') // stale — matches the v1 commit
+    mirrorHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho b\n')
+    const before = doctor()
+    expect(before.length).toBe(1)
+    expect(before[0]).toContain('BEHIND repo')
+    const match = before[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    runPrintedRepair(match![1])
+    expect(doctor()).toEqual([])
+  })
+
+  test('AHEAD hand-edited (still shipped by the repo): the printed repair actually clears it', () => {
+    seedRepoHistory()
+    addInstallScaffolding(path.join(repoRoot, 'packages', 'core'))
+    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v2\n')
+    mirrorHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho HAND-EDITED, never committed\n')
+    const before = doctor()
+    expect(before.length).toBe(1)
+    expect(before[0]).toContain('AHEAD OF / HAND-EDITED')
+    const match = before[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    runPrintedRepair(match![1])
+    expect(doctor()).toEqual([])
+    expect(fs.readFileSync(path.join(machineHome, 'hooks', 'prdt-hook-b.sh'), 'utf8'))
+      .toBe('#!/usr/bin/env bash\necho b\n')
+  })
+
+  test('AHEAD orphan + hand-edited together: the printed compound repair (rm ... && install.sh) actually clears both', () => {
+    seedRepoHistory()
+    addInstallScaffolding(path.join(repoRoot, 'packages', 'core'))
+    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v2\n')
+    mirrorHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho HAND-EDITED, never committed\n')
+    mirrorHook('prdt-removed-from-repo.sh', '#!/usr/bin/env bash\necho gone\n')
+    const before = doctor()
+    expect(before.length).toBe(1)
+    expect(before[0]).toContain('AHEAD OF / HAND-EDITED')
+    expect(before[0]).toContain('prdt-removed-from-repo.sh')
+    const match = before[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    expect(match![1]).toContain('&&') // compound: rm the orphan, then install.sh for the hand-edit
+    runPrintedRepair(match![1])
+    expect(doctor()).toEqual([])
+    expect(fs.existsSync(path.join(machineHome, 'hooks', 'prdt-removed-from-repo.sh'))).toBe(false)
+  })
+})
+
+describe.skipIf(!PYTHON3 || !hasJq())('prdt doctor — hook mirror AHEAD orphan repair, real repo (T-532 QA H1)', () => {
+  // No synthetic repo needed here: `only_mirror` is unconditionally "ahead"
+  // regardless of git history, so this drives the REAL install.sh against
+  // the real repo (`freshInstall()`, HOME/PRDT_HOME/CLAUDE_DIR sandboxed —
+  // never the developer's real mirror) — the closest thing to QA's own
+  // "fully sandboxed install" repro.
+  test('a hook-shaped file with no counterpart anywhere in the repo: the printed rm actually clears it, install.sh alone never would', () => {
+    const sb = freshInstall()
+    const orphan = 'prdt-t532-orphan-never-shipped.sh'
+    fs.writeFileSync(path.join(sb.prdtHome, 'hooks', orphan), '#!/usr/bin/env bash\necho orphan\n')
+    const projDir = path.join(sb.root, 'proj')
+    fs.mkdirSync(projDir, { recursive: true })
+    execFileSync('python3', [REAL_PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
+      cwd: projDir, env: sb.env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    })
+    const doctorLines = () => execFileSync('python3', [REAL_PRDT_CLI, 'doctor'], {
+      cwd: projDir, env: sb.env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    }).split('\n').filter((l) => l.includes('hooks: mirror'))
+
+    const before = doctorLines()
+    expect(before.length).toBe(1)
+    expect(before[0]).toContain('AHEAD')
+    expect(before[0]).toContain(orphan)
+    expect(before[0]).not.toContain('BEHIND')
+
+    const match = before[0].match(/`([^`]+)`\s*$/)
+    expect(match).not.toBeNull()
+    expect(match![1]).not.toContain('install.sh') // rm-only: install.sh's copy loop could never clear this alone
+    execFileSync('bash', ['-c', match![1]], { cwd: sb.root, env: sb.env, stdio: 'ignore', timeout: 30000 })
+
+    expect(doctorLines()).toEqual([])
+    expect(fs.existsSync(path.join(sb.prdtHome, 'hooks', orphan))).toBe(false)
   })
 })
