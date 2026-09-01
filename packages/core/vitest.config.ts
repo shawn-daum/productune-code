@@ -28,6 +28,15 @@ export default defineConfig({
     // Each test file runs in its own isolated Node environment
     environment: 'node',
     globals: false,
+    // T-536: the per-test timeout is a recorded DECISION, not vitest's
+    // accidental 5s default. This suite's e2e files shell out to the real
+    // install.sh / prdt CLI / git, and the full parallel run packs minutes of
+    // real work into a ~1min wall clock — the measured flake was passing tests
+    // hitting 5.1–5.6s purely from contention, a different set every run. The
+    // ROOT fix is the shared per-file install fixture
+    // (test/helpers/install-fixture.ts); this budget is hang detection on top
+    // of it, not permission to be slow.
+    testTimeout: 15_000,
     // T-450: install the isolation rules at worker STARTUP. See the note in
     // packages/gui/vitest.config.ts for why this is `execArgv` and not a setupFile.
     execArgv: ['--require', BOOTSTRAP],

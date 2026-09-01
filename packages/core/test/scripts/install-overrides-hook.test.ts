@@ -9,42 +9,18 @@
  * must stay idempotent (no duplicate entries).
  *
  * Drives the REAL install.sh end-to-end under a fully sandboxed HOME /
- * PRDT_HOME / CLAUDE_DIR, mirroring the pattern in install-legacy-cleanup.test.ts.
+ * PRDT_HOME / CLAUDE_DIR via the shared fixture (T-536: installed-state
+ * assertions share ONE install for this file; only the idempotency test runs
+ * its own installs, because its subject is the re-RUN).
  */
 
 import path from 'path'
 import fs from 'fs'
-import os from 'os'
-import { execFileSync } from 'child_process'
 import { test, expect } from 'vitest'
-
-const CORE_ROOT = path.resolve(__dirname, '..', '..')
-const INSTALL_SH = path.join(CORE_ROOT, 'scripts', 'install.sh')
-
-function hasJq(): boolean {
-  try { execFileSync('jq', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
-}
-
-function runInstall(): { settings: any; prdtHome: string; claudeDir: string } {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t358-'))
-  const home = path.join(sb, 'home')
-  const prdtHome = path.join(sb, 'prdt')
-  const claudeDir = path.join(sb, 'claude')
-  for (const d of [home, prdtHome, claudeDir]) fs.mkdirSync(d, { recursive: true })
-  fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{}')
-  execFileSync('bash', [INSTALL_SH], {
-    env: { ...process.env, HOME: home, PRDT_HOME: prdtHome, CLAUDE_DIR: claudeDir },
-    stdio: 'ignore',
-  })
-  return {
-    settings: JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8')),
-    prdtHome,
-    claudeDir,
-  }
-}
+import { installedMachine, freshInstall, hasJq } from '../helpers/install-fixture'
 
 test.skipIf(!hasJq())('mirrors prdt-overrides-inject.sh as an executable file', () => {
-  const { prdtHome } = runInstall()
+  const { prdtHome } = installedMachine()
   const script = path.join(prdtHome, 'hooks', 'prdt-overrides-inject.sh')
   expect(fs.existsSync(script)).toBe(true)
   const mode = fs.statSync(script).mode
@@ -52,7 +28,7 @@ test.skipIf(!hasJq())('mirrors prdt-overrides-inject.sh as an executable file', 
 })
 
 test.skipIf(!hasJq())('SessionStart: overrides hook rides the SAME matcher block as prdt-session-start.sh, as a distinct entry', () => {
-  const { settings } = runInstall()
+  const { settings } = installedMachine()
   const block = (settings.hooks.SessionStart as any[]).find((e) => e.matcher === 'startup|resume|clear')
   const commands = block.hooks.map((h: any) => h.command)
   expect(commands.some((c: string) => c.includes('prdt-session-start.sh'))).toBe(true)
@@ -61,7 +37,7 @@ test.skipIf(!hasJq())('SessionStart: overrides hook rides the SAME matcher block
 })
 
 test.skipIf(!hasJq())('SubagentStart: overrides hook rides the SAME ^prdt- matcher, as a distinct entry', () => {
-  const { settings } = runInstall()
+  const { settings } = installedMachine()
   const block = (settings.hooks.SubagentStart as any[]).find((e) => e.matcher === '^prdt-')
   const commands = block.hooks.map((h: any) => h.command)
   expect(commands.some((c: string) => c.includes('prdt-session-start.sh'))).toBe(true)
@@ -70,17 +46,8 @@ test.skipIf(!hasJq())('SubagentStart: overrides hook rides the SAME ^prdt- match
 })
 
 test.skipIf(!hasJq())('re-running install.sh is idempotent (no duplicate hook entries)', () => {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t358-idem-'))
-  const home = path.join(sb, 'home')
-  const prdtHome = path.join(sb, 'prdt')
-  const claudeDir = path.join(sb, 'claude')
-  for (const d of [home, prdtHome, claudeDir]) fs.mkdirSync(d, { recursive: true })
-  fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{}')
-  const env = { ...process.env, HOME: home, PRDT_HOME: prdtHome, CLAUDE_DIR: claudeDir }
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-
-  const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+  // its own installs ON PURPOSE: the subject is the second RUN, not the state
+  const { settings } = freshInstall({ times: 2 })
   const block = (settings.hooks.SubagentStart as any[]).find((e) => e.matcher === '^prdt-')
   const overridesEntries = block.hooks.filter((h: any) => h.command.includes('prdt-overrides-inject.sh'))
   expect(overridesEntries.length).toBe(1)
