@@ -3233,6 +3233,127 @@ def prdt_script_drift_warnings():
             f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
 
 
+def _hooks_repo_path():
+    """The repo-checkout path for packages/core/scripts/hooks/, computed the
+    same way `_discipline_repo_path()` and `_prdt_script_repo_path()` compute
+    theirs: two levels up from THIS running file (`packages/core` from a repo
+    checkout, `~/.prdt` from the installed mirror), then back down to where
+    the repo layout keeps the hook sources. Only meaningful as a drift
+    comparand when it names a real directory that differs from the mirror —
+    see `hook_mirror_drift_warnings`."""
+    p = Path(__file__).resolve().parent.parent / "scripts" / "hooks"
+    return p if p.is_dir() else None
+
+
+def hook_mirror_drift_warnings():
+    """T-532 (PO-measured 2026-08-31): `discipline_mirror_drift_warnings` and
+    `prdt_script_drift_warnings` (T-507) cover the discipline tree and the CLI
+    script itself — `~/.prdt/hooks/` was the surface neither named. It matters
+    more than either: `~/.claude/settings.json` registers commands under the
+    MIRROR path, never the repo path (install.sh §4), so a hook fix committed
+    to the repo binds nothing until this mirror resyncs. Measured same-day:
+    right after two hook fixes landed on `dev`, both mirrored hooks differed
+    from the repo, `prdt doctor` produced 27 warnings and none named this, and
+    in the same session the defect one of those fixes had just repaired fired
+    again — the harness was still running the stale mirror copy.
+
+    Same structure, reused rather than reinvented: `_tree_files` for a
+    roster-as-a-SET compare (acceptance note ① — a hook added to the repo but
+    never mirrored, and a stale hook left in the mirror after the repo
+    dropped it, are both real states a file-by-file diff alone cannot see,
+    because it only ever walks names both sides already share), then
+    `_mirror_matches_past_commit` for the behind-vs-ahead call on names both
+    sides DO share, exactly like the two T-507 checks. `install.sh` is the
+    one existing sync path, reused verbatim rather than a second one invented
+    here (acceptance: no new subcommand).
+
+    Same early-outs as both T-507 checks, in the same order: `PRDT_DISCIPLINE`
+    set is a dev-override posture, not a drift condition, on all three checks
+    alike; no mirror (`~/.prdt/hooks/` missing — nothing installed on this
+    machine); no repo (no source tree nearby); mirror-equals-repo path
+    collapse (running the repo's own hooks directly, e.g. a dev box with no
+    separate install). Content, never mtime — same reason as both T-507
+    checks: `cp` rewrites mtime on every sync, so it cannot distinguish
+    "just synced" from "always identical".
+
+    Does NOT cover (named per acceptance note ③, not left to be discovered
+    later):
+      - a hook named in `~/.claude/settings.json` but present in NEITHER the
+        repo nor the mirror. `hook_registration_warnings` already reports a
+        registered name absent from the mirror as a stale entry; a name that
+        reached settings.json without ever being shipped anywhere is a
+        settings.json authoring error, not mirror-vs-repo drift, and this
+        check has no opinion on it.
+      - a mirror hook that is byte-identical to the repo but has lost its
+        executable bit. `install.sh` always `chmod +x`'s what it copies, so
+        this can only come from a hand-edit of the mirror's permissions
+        after install — this check reads bytes, not mode, and stays silent
+        on it.
+      - a `core.hooksPath` (or any other git/harness config) that redirects
+        the harness away from `~/.claude/settings.json`'s roster entirely.
+        That would make every hook here inert while this check keeps
+        comparing files that no longer bind anything — a condition this
+        check cannot see because it never reads harness config, only the
+        two file trees."""
+    env_override = os.environ.get("PRDT_DISCIPLINE")
+    if env_override:
+        return []  # dev override posture — not a drift condition (T-507 precedent)
+    mirror = prdt_home() / "hooks"
+    if not mirror.is_dir():
+        return []  # no install on this machine
+    repo = _hooks_repo_path()
+    if repo is None:
+        return []  # no source tree nearby
+    if repo.resolve() == mirror.resolve():
+        return []  # running the repo's own hooks directly — collapses onto itself
+
+    mirror_files, repo_files = _tree_files(mirror), _tree_files(repo)
+    only_repo = sorted(set(repo_files) - set(mirror_files))
+    only_mirror = sorted(set(mirror_files) - set(repo_files))
+    differing = []
+    for rel in sorted(set(repo_files) & set(mirror_files)):
+        try:
+            if mirror_files[rel].read_bytes() != repo_files[rel].read_bytes():
+                differing.append(rel)
+        except OSError:
+            continue
+    if not only_repo and not only_mirror and not differing:
+        return []
+
+    git_root = _git_root(repo)
+    behind, ahead = list(only_repo), list(only_mirror)
+    for rel in differing:
+        verdict = None
+        if git_root is not None:
+            try:
+                rel_from_root = str((repo / rel).resolve().relative_to(git_root.resolve()))
+            except ValueError:
+                rel_from_root = None
+            if rel_from_root:
+                verdict = _mirror_matches_past_commit(git_root, rel_from_root, mirror_files[rel].read_bytes())
+        (behind if verdict else ahead).append(rel)
+    behind.sort()
+    ahead.sort()
+
+    warns = []
+    if behind:
+        warns.append(
+            "hooks: mirror BEHIND repo — " + ", ".join(behind[:8]) +
+            (f" (+{len(behind) - 8} more)" if len(behind) > 8 else "") +
+            f" — {claude_settings_path()} registers commands under {mirror}, never under "
+            f"{repo}, so these committed changes bind nothing until synced — repair "
+            f"(reuses install.sh's own sync step): re-run `install.sh`")
+    if ahead:
+        warns.append(
+            "hooks: mirror AHEAD OF / HAND-EDITED vs repo — " + ", ".join(ahead[:8]) +
+            (f" (+{len(ahead) - 8} more)" if len(ahead) > 8 else "") +
+            f" — content in {mirror} that no commit in the repo's history has; re-running "
+            f"install.sh would silently drop it, so repair is per-file: promote it into the "
+            f"repo (`cp {mirror}/<file> {repo}/<file>` then commit and re-run install.sh), or "
+            f"discard it instead by re-running install.sh as-is")
+    return warns
+
+
 # ── Artifacts — version buckets + derived manifest (T-512) ────────────────────
 # Layout: docs/artifacts/<version>/[archive/]<slug>.<ext> beside a manifest.json
 # the CLI writes. The manifest is a derived index, so `prdt artifacts sync`
@@ -3558,6 +3679,10 @@ def cmd_doctor(_args):
     # discipline mirror exists at all; same env-override / no-mirror / no-repo
     # early-outs as the discipline check above.
     warns += prdt_script_drift_warnings()
+    # hook mirror↔repo drift (T-532) — same independence from droot: the
+    # hooks mirror lives at a fixed prdt_home()/hooks path, not behind
+    # discipline_root()'s mirror-vs-repo-fallback preference.
+    warns += hook_mirror_drift_warnings()
     if droot:
         # mirror↔repo content drift (T-507) — before the cap loop so a stale
         # mirror is reported even when it happens to still be within cap
