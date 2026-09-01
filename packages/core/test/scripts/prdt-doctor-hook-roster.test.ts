@@ -118,7 +118,13 @@ function doctor(): string[] {
     env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
   })
-  return out.split('\n').filter((l) => l.includes('hooks:'))
+  // Excludes `hooks: mirror …` lines (T-532's hook_mirror_drift_warnings):
+  // this file's synthetic mirror content/roster never matches the REAL repo
+  // checkout this in-place CLI resolves `_hooks_repo_path()` against, so
+  // that check would otherwise fire spuriously here — it is not what this
+  // file tests, and (T-532 QA G4) PRDT_DISCIPLINE no longer silences it the
+  // way it silences the discipline-tree check this file also sets it for.
+  return out.split('\n').filter((l) => l.includes('hooks:') && !l.includes('hooks: mirror '))
 }
 
 beforeEach(() => {

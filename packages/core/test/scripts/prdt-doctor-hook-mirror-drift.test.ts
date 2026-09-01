@@ -168,16 +168,57 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — hook mirror↔repo drift (T-5
     expect(out).toContain('prdt-removed-from-repo.sh')
   })
 
-  test('PRDT_DISCIPLINE set silences the check even with real drift present (T-507 precedent held)', () => {
+  test('an untracked stray file in the repo tree (e.g. .DS_Store) is not reported as BEHIND (T-532 QA G2)', () => {
     seedRepoHistory()
-    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v1\n') // stale, would otherwise fire
+    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v2\n')
     mirrorHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho b\n')
-    expect(doctor({ PRDT_DISCIPLINE: path.join(sandbox, 'unused-discipline-dir') })).toEqual([])
+    // Never committed — a Finder/editor artifact merely sitting in the
+    // checkout, present only in the repo tree the same way a real hook
+    // added-but-not-yet-mirrored would be. Roster membership must tell
+    // these apart by name shape (_hook_roster_files' prdt-*.sh filter), or
+    // this reports BEHIND with wording claiming "these committed changes" —
+    // false, it was never committed — and the repair it would name (re-run
+    // install.sh) can never clear it, since install.sh only ever copies the
+    // manifest's own basenames.
+    fs.writeFileSync(path.join(hooksRepoDir, '.DS_Store'), 'finder junk, never git add-ed')
+    expect(doctor()).toEqual([])
+  })
+
+  test('a stray file in the mirror only (editor swap file, .DS_Store) is not reported as AHEAD (T-532 QA G2)', () => {
+    seedRepoHistory()
+    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v2\n')
+    mirrorHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho b\n')
+    // Same finding, mirror side: real machines accumulate these on their own
+    // (~/.prdt/hooks on the machine this ticket was measured on already
+    // carries a Finder-recreated .DS_Store) — neither is a hand-edited hook.
+    fs.writeFileSync(path.join(machineHome, 'hooks', '.prdt-hook-a.sh.swp'), 'vim swap junk')
+    fs.writeFileSync(path.join(machineHome, 'hooks', '.DS_Store'), 'finder junk')
+    expect(doctor()).toEqual([])
+  })
+
+  test('PRDT_DISCIPLINE set does NOT silence the hook check — settings.json hardcodes the mirror path regardless (T-532 QA G4, T-507 precedent does NOT hold here)', () => {
+    seedRepoHistory()
+    // Identical drift to the positive control above: PRDT_DISCIPLINE only
+    // redirects discipline_root()'s own fallback choice, never where
+    // ~/.claude/settings.json points its hook commands (install.sh §4
+    // hardcodes $PRDT_HOME/hooks/<basename> at install time) — so a stale
+    // mirrored hook keeps executing whether or not this var is set, and
+    // inheriting T-507's silence here would hide exactly the drift this
+    // check exists to catch.
+    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v1\n')
+    mirrorHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho b\n')
+    const out = doctor({ PRDT_DISCIPLINE: path.join(sandbox, 'unused-discipline-dir') }).join('\n')
+    expect(out).toContain('BEHIND repo')
+    expect(out).toContain('prdt-hook-a.sh')
   })
 
   test('no install mirror on this machine (~/.prdt/hooks absent) → not doctor’s business', () => {
     seedRepoHistory()
-    // never call mirrorHook() — machineHome/hooks stays absent
+    // never call mirrorHook() — machineHome/hooks stays absent. Reachability:
+    // assert the precondition this early-out actually depends on, not just
+    // the eventual silence (T-532 QA G1 pattern — a fixture that never
+    // reaches the branch it means to test still passes on the wrong signal).
+    expect(fs.existsSync(path.join(machineHome, 'hooks'))).toBe(false)
     expect(doctor()).toEqual([])
   })
 
@@ -192,15 +233,42 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — hook mirror↔repo drift (T-5
       encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
     })
     mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho anything\n')
+    // Reachability: the branch this test means to exercise is `_hooks_repo_path()`
+    // returning None because the directory genuinely doesn't exist, reached only
+    // once the mirror-dir early-out is passed — assert both preconditions
+    // explicitly (T-532 QA G1 pattern), not just the eventual silence.
+    expect(fs.existsSync(hooksRepoDir)).toBe(false)
+    expect(fs.existsSync(path.join(machineHome, 'hooks'))).toBe(true)
     expect(doctor()).toEqual([])
   })
 
   test('mirror-equals-repo path collapse (PRDT_HOME pointed at the repo checkout itself) → silent', () => {
     seedRepoHistory()
-    // Point PRDT_HOME at packages/core itself, so PRDT_HOME/hooks IS hooksRepoDir —
-    // the same path collapse discipline_mirror_drift_warnings/prdt_script_drift_warnings
-    // both early-out on.
-    const collapsedHome = path.join(repoRoot, 'packages', 'core')
+    // PRDT_HOME must resolve so its "hooks" child IS hooksRepoDir for this to
+    // reach the collapse branch at all. packages/core/scripts, not
+    // packages/core: `_hooks_repo_path()` computes `parent.parent/scripts/hooks`
+    // from the copied CLI at packages/core/scripts/prdt, i.e. `parent.parent`
+    // is packages/core — so PRDT_HOME=packages/core makes PRDT_HOME/hooks
+    // resolve to packages/core/hooks, a directory that does not exist, not
+    // packages/core/scripts/hooks. That fixture took the mirror-absent
+    // early-out instead of this one and duplicated the "no install" test
+    // above — a tripwire placed in the collapse branch never fired, and
+    // deleting the early return changed nothing, because the fixture never
+    // got there (T-532 QA G1). PRDT_HOME=packages/core/scripts is the
+    // corrected fixture: its "hooks" child IS hooksRepoDir.
+    const collapsedHome = path.join(repoRoot, 'packages', 'core', 'scripts')
+    // Reachability, asserted directly rather than inferred from the outcome:
+    // prove the fixture produces the exact collapse this test means to
+    // exercise, independent of what doctor() then does with it.
+    expect(path.join(collapsedHome, 'hooks')).toBe(hooksRepoDir)
+    // This branch is behaviourally unobservable from outside even once
+    // reached: repo.resolve() === mirror.resolve() means every subsequent
+    // "differing" check compares a file's bytes against its own bytes, so
+    // the result is silence whether or not the early return exists — QA
+    // confirmed this two ways (a tripwire inside the branch never fires;
+    // deleting the early return changes nothing). The assertion below is
+    // therefore honest only as a reachability proof, not as a proof the
+    // early return itself does anything — see the two notes above.
     expect(doctor({ PRDT_HOME: collapsedHome })).toEqual([])
   })
 })

@@ -3245,6 +3245,30 @@ def _hooks_repo_path():
     return p if p.is_dir() else None
 
 
+HOOK_ROSTER_FILENAME_RE = re.compile(r"^prdt-[A-Za-z0-9_.-]+\.sh$")
+
+
+def _hook_roster_files(base):
+    """Restrict `_tree_files(base)` to names shaped like real hook scripts
+    (T-532 QA G2, same naming convention `hook_registration_warnings` already
+    filters on with `hooks_dir.glob("prdt-*.sh")`): a stray file sitting in
+    either tree — `.DS_Store`, an editor swap/backup file (`.foo.sh.swp`,
+    `foo.sh~`, `#foo.sh#`) — is neither a committed hook nor a hand-edited
+    one, and reporting it as either produces a warning nothing can clear:
+    `install.sh` only ever copies the manifest's own basenames (its §1 loop
+    reads `scripts/hook-manifest.json`'s `basenames`, never "whatever's in
+    the directory"), so "re-run install.sh" as advice is simply false for a
+    name that was never a hook to begin with. Measured real: `~/.prdt/hooks`
+    on this machine already carries a Finder-recreated `.DS_Store`.
+
+    A hook the repo has since dropped still passes this filter on the mirror
+    side (it is still shaped like a hook, just an orphaned one) — it needs to
+    keep surfacing as a stale leftover, not disappear from the roster the
+    moment the repo stops shipping it."""
+    return {rel: p for rel, p in _tree_files(base).items()
+            if HOOK_ROSTER_FILENAME_RE.fullmatch(rel)}
+
+
 def hook_mirror_drift_warnings():
     """T-532 (PO-measured 2026-08-31): `discipline_mirror_drift_warnings` and
     `prdt_script_drift_warnings` (T-507) cover the discipline tree and the CLI
@@ -3257,24 +3281,55 @@ def hook_mirror_drift_warnings():
     in the same session the defect one of those fixes had just repaired fired
     again — the harness was still running the stale mirror copy.
 
-    Same structure, reused rather than reinvented: `_tree_files` for a
-    roster-as-a-SET compare (acceptance note ① — a hook added to the repo but
-    never mirrored, and a stale hook left in the mirror after the repo
-    dropped it, are both real states a file-by-file diff alone cannot see,
-    because it only ever walks names both sides already share), then
-    `_mirror_matches_past_commit` for the behind-vs-ahead call on names both
-    sides DO share, exactly like the two T-507 checks. `install.sh` is the
-    one existing sync path, reused verbatim rather than a second one invented
-    here (acceptance: no new subcommand).
+    Same structure, reused rather than reinvented: a roster-as-a-SET compare
+    (acceptance note ① — a hook added to the repo but never mirrored, and a
+    stale hook left in the mirror after the repo dropped it, are both real
+    states a file-by-file diff alone cannot see, because it only ever walks
+    names both sides already share), then `_mirror_matches_past_commit` for
+    the behind-vs-ahead call on names both sides DO share, exactly like the
+    two T-507 checks. `install.sh` is the one existing sync path, reused
+    verbatim rather than a second one invented here (acceptance: no new
+    subcommand). Unlike the two T-507 checks, the roster is NOT a raw
+    `_tree_files` walk of both directories — see `_hook_roster_files` (T-532
+    QA G2): a stray file sitting in either tree (`.DS_Store`, an editor swap
+    file) is not a hook, was never committed as one, and a warning about it
+    can never be cleared by the repair it names.
 
-    Same early-outs as both T-507 checks, in the same order: `PRDT_DISCIPLINE`
-    set is a dev-override posture, not a drift condition, on all three checks
-    alike; no mirror (`~/.prdt/hooks/` missing — nothing installed on this
+    Early-outs, deliberately NOT the same set as the two T-507 checks:
+    no mirror (`~/.prdt/hooks/` missing — nothing installed on this
     machine); no repo (no source tree nearby); mirror-equals-repo path
     collapse (running the repo's own hooks directly, e.g. a dev box with no
-    separate install). Content, never mtime — same reason as both T-507
-    checks: `cp` rewrites mtime on every sync, so it cannot distinguish
-    "just synced" from "always identical".
+    separate install — PRDT_HOME pointed straight at the checkout, so
+    `prdt_home() / "hooks"` IS `_hooks_repo_path()`, byte-for-byte, and any
+    diff loop here would just be a directory compared against itself).
+    Deliberately does NOT inherit the `PRDT_DISCIPLINE`-set early-out the two
+    T-507 checks use (T-532 QA G4): that variable only redirects
+    `discipline_root()`'s OWN fallback choice — it changes nothing about
+    where `~/.claude/settings.json` points its hook commands, which
+    `install.sh` §4 hardcodes to `$PRDT_HOME/hooks/<basename>` unconditionally,
+    at install time, regardless of any env var set later. So a developer
+    setting `PRDT_DISCIPLINE` to work against a repo checkout does not stop
+    the harness from executing a stale MIRRORED hook — inheriting that
+    early-out here would silence exactly the drift this check exists to
+    catch. The one legitimate "I'm intentionally not using a separate
+    mirror" posture for hooks is already covered correctly by the
+    path-collapse early-out above: point `PRDT_HOME` at the repo checkout
+    itself and the two paths resolve identically.
+
+    Content, never mtime — same reason as both T-507 checks: `cp` rewrites
+    mtime on every sync, so it cannot distinguish "just synced" from "always
+    identical".
+
+    The AHEAD/HAND-EDITED verdict is bounded, and says so (T-532 QA G3):
+    `_mirror_matches_past_commit` only ever searches a file's most recent 25
+    commits, locally, under its CURRENT path. A match just outside that
+    window, a shallow clone that never fetched the older commits, or a body
+    that predates a `git mv` of the hooks directory would all search
+    inconclusive or negative here — this is NOT proof no commit in the
+    repo's history anywhere has the content, so the message says exactly
+    that, and does not hand out "promote it into the repo" as a confident
+    default action — a wrong promote on a false verdict would inject stale
+    content backwards.
 
     Does NOT cover (named per acceptance note ③, not left to be discovered
     later):
@@ -3289,15 +3344,12 @@ def hook_mirror_drift_warnings():
         this can only come from a hand-edit of the mirror's permissions
         after install — this check reads bytes, not mode, and stays silent
         on it.
-      - a `core.hooksPath` (or any other git/harness config) that redirects
-        the harness away from `~/.claude/settings.json`'s roster entirely.
-        That would make every hook here inert while this check keeps
-        comparing files that no longer bind anything — a condition this
-        check cannot see because it never reads harness config, only the
-        two file trees."""
-    env_override = os.environ.get("PRDT_DISCIPLINE")
-    if env_override:
-        return []  # dev override posture — not a drift condition (T-507 precedent)
+      - a machine where something other than `~/.claude/settings.json`
+        governs which hook commands actually run — this check (like
+        `hook_registration_warnings`) only ever reads the file
+        `claude_settings_path()` names (`~/.claude/settings.json`, or
+        `$CLAUDE_DIR/settings.json` when that's set); it has no visibility
+        into any other place a harness might source its hook roster from."""
     mirror = prdt_home() / "hooks"
     if not mirror.is_dir():
         return []  # no install on this machine
@@ -3307,7 +3359,8 @@ def hook_mirror_drift_warnings():
     if repo.resolve() == mirror.resolve():
         return []  # running the repo's own hooks directly — collapses onto itself
 
-    mirror_files, repo_files = _tree_files(mirror), _tree_files(repo)
+    mirror_files = _hook_roster_files(mirror)
+    repo_files = _hook_roster_files(repo)
     only_repo = sorted(set(repo_files) - set(mirror_files))
     only_mirror = sorted(set(mirror_files) - set(repo_files))
     differing = []
@@ -3345,12 +3398,19 @@ def hook_mirror_drift_warnings():
             f"(reuses install.sh's own sync step): re-run `install.sh`")
     if ahead:
         warns.append(
-            "hooks: mirror AHEAD OF / HAND-EDITED vs repo — " + ", ".join(ahead[:8]) +
+            "hooks: mirror AHEAD OF / HAND-EDITED vs repo (or a match outside the window "
+            "searched) — " + ", ".join(ahead[:8]) +
             (f" (+{len(ahead) - 8} more)" if len(ahead) > 8 else "") +
-            f" — content in {mirror} that no commit in the repo's history has; re-running "
-            f"install.sh would silently drop it, so repair is per-file: promote it into the "
-            f"repo (`cp {mirror}/<file> {repo}/<file>` then commit and re-run install.sh), or "
-            f"discard it instead by re-running install.sh as-is")
+            f" — {mirror} has content not found among the most recent 25 commits examined "
+            f"for each name (bounded, local-only search — no fetch, no rename-following); "
+            f"that is NOT proof no commit anywhere in the repo's history has this content — a "
+            f"match just outside that window, a shallow clone, or a body from before a rename "
+            f"of the hooks directory would all look identical to a genuine hand-edit. Do not "
+            f"promote {mirror}'s copy into the repo on this verdict alone — confirm by hand "
+            f"first (e.g. a deeper `git log` on the real repo, or checking for a shallow "
+            f"clone), since a mistaken promote can reintroduce stale content backwards. If "
+            f"unsure, the safer default is to discard the mirror copy instead: re-run "
+            f"`install.sh`")
     return warns
 
 
