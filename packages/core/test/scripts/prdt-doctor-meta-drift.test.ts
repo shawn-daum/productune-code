@@ -402,6 +402,14 @@ describe.skipIf(!PYTHON3)('prdt doctor — docs/features is allowlisted (T-476)'
     runInit()
     fs.mkdirSync(path.join(projectDir, 'docs', 'features'), { recursive: true })
     fs.writeFileSync(path.join(projectDir, 'docs', 'features', 'meta-split.md'), '# meta-split\n')
+    // A spec file is promoted BY a ticket carrying that value verbatim (T-547):
+    // a file no ticket names is an orphan the feature-seam check reports on its
+    // own (T-548), which is a different finding than meta drift. Complete the
+    // fixture so the assertion below still isolates the drift check.
+    fs.mkdirSync(path.join(projectDir, 'docs', 'tickets', 'v1.6'), { recursive: true })
+    fs.writeFileSync(path.join(projectDir, 'docs', 'tickets', 'v1.6', 'T-428.md'),
+      '---\nid: T-428\nslug: meta-split\ntype: impl\nstatus: done\nassignee: developer\n' +
+      'feature: meta-split\ncreated: 2026-01-01\n---\n\nbody\n')
     const out = doctor()
     expect(out).not.toContain('docs/features/meta-split.md')
     expect(out).not.toMatch(/outside the effective meta allowlist/)

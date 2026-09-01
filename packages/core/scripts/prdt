@@ -3666,6 +3666,116 @@ def cmd_artifacts(args):
         print(w)
 
 
+# ── feature seam — docs/features/ ↔ ticket `feature:` values (T-548/T-547) ────
+#
+# T-547 fixed what the field IS: `feature:` is a grouping key, not a spec
+# pointer. A value with NO `docs/features/<value>.md` is legal and the normal
+# state — 131 of 134 values across the 8 prdt projects measured on 2026-09-01 —
+# so "no spec file" is never a warning here. Three things ARE:
+#   W1  a spec file no ticket names        (orphan — renamed value or typo)
+#   W2  a promotion judgment left pending  (T3 passes, unpromoted, unrecorded)
+#   W3  a recorded non-promotion gone stale
+#
+# Only T3 — the mechanical leg of T-476's three promotion tests — is computed.
+# T1 (is the value a mechanism, not a surface/round/persona?) and T2 (is there
+# a contract still true today?) are human yes/no judgments; a doctor guessing
+# them would make exactly the call this check exists to ROUTE to a person.
+#
+# Two independent routes meet here on purpose: ticket frontmatter (scan_tickets
+# rows) and the spec directory listing. Neither derives from the other, so
+# agreement between them is evidence rather than one value read twice.
+
+
+def feature_spec_dir(root):
+    return Path(root) / "docs" / "features"
+
+
+def ticket_feature_values(tickets):
+    """Every `feature:` value carried by ANY ticket — all statuses, backlog dir
+    included. This is the existence set W1 and W3 ask about; it is deliberately
+    wider than T3's done-only set."""
+    out = set()
+    for t in tickets:
+        v = t.get("feature")
+        if isinstance(v, str) and v.strip():
+            out.add(v.strip())
+    return out
+
+
+def feature_done_version_dirs(tickets):
+    """T3 input — value → set of version dirs holding a `done` ticket for it.
+    `backlog` is excluded (T-476: an open ticket is not yet a fact), patch dirs
+    count separately (v1.2 and v1.2.1 are two, per T-476's own measurement),
+    and spellings are compared verbatim — there is no alias machine (YAGNI)."""
+    dirs = {}
+    for t in tickets:
+        v = t.get("feature")
+        if not isinstance(v, str) or not v.strip():
+            continue
+        if t.get("status") != "done":
+            continue
+        ver = t.get("version")
+        if not isinstance(ver, str) or not ver or ver == "backlog":
+            continue
+        dirs.setdefault(v.strip(), set()).add(ver)
+    return dirs
+
+
+FEATURE_T3_MIN_DIRS = 2
+
+
+def feature_seam_warnings(root, tickets):
+    """Standard doctor warnings — non-blocking, never a gate.
+
+    `tickets` is the scan_tickets ROW sequence (T-547 §2), not an id-keyed
+    mapping's values: T3 measures a span across version dirs, and an id-keyed
+    map holds one entry per id, so a duplicated id would hide a real span."""
+    tickets = list(tickets)
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    feat_cfg = cfg.get("features") if isinstance(cfg.get("features"), dict) else {}
+    raw = feat_cfg.get("non_features")
+    non_features = [v.strip() for v in raw if isinstance(v, str) and v.strip()] if isinstance(raw, list) else []
+    slug = cfg.get("slug") if isinstance(cfg.get("slug"), str) else None
+
+    sdir = feature_spec_dir(root)
+    specs = {p.stem for p in sorted(sdir.glob("*.md"))} if sdir.is_dir() else set()
+    carried = ticket_feature_values(tickets)
+    spanned = feature_done_version_dirs(tickets)
+
+    warns = []
+    # W1 — orphan spec: a file exists that no ticket's value names.
+    for name in sorted(specs - carried):
+        warns.append(f"feature: docs/features/{name}.md is named by no ticket's "
+                     f"feature: value (orphan — renamed value or typo)")
+    # W2 — promotion candidate: T3 passes, no spec file, no recorded judgment,
+    # and not the project's own slug (a project is never its own feature).
+    for value in sorted(spanned):
+        n = len(spanned[value])
+        if n < FEATURE_T3_MIN_DIRS or value in specs or value in non_features or value == slug:
+            continue
+        warns.append(f"feature: '{value}' — done tickets span {n} version dirs but "
+                     f"docs/features/{value}.md does not exist — promotion candidate: "
+                     f"apply the three tests (designer habit), then promote or record "
+                     f"in .prdt/config.json features.non_features")
+    # W3 — the recorded judgment has rotted: it was promoted after all, or the
+    # value it names no longer exists on any ticket.
+    seen = set()
+    for value in non_features:
+        if value in seen:
+            continue
+        seen.add(value)
+        why = []
+        if value in specs:
+            why.append("a spec file exists")
+        if value not in carried:
+            why.append("no ticket carries it")
+        if why:
+            warns.append(f"feature: config features.non_features entry '{value}' "
+                         f"is stale — {' and '.join(why)}")
+    return warns
+
+
 def cmd_doctor(_args):
     root = require_root()
     warns = []
@@ -3690,7 +3800,15 @@ def cmd_doctor(_args):
     # tickets
     con, tviol, _pages, _mpages = rebuild_index(root)
     warns += [f"ticket: {v}" for v in tviol]
-    tickets = {r["id"]: r for r, _, _ in (scan_tickets(root) or [])}
+    # ROWS first, id-keyed map second (T-549). The map is what the deps/staleness
+    # checks below need — they ask questions ABOUT an id. Any check that measures
+    # across version dirs must read the rows: an id present in two dirs collapses
+    # to one entry in the map, and a check fed the map then sees a 1-dir span where
+    # the rows hold 2 — a false SILENCE, the worst class available in the instrument
+    # v1.8's goal is measured with. Whether a duplicated id deserves its own
+    # warning is a separate question, deliberately not answered here.
+    trows = [r for r, _, _ in (scan_tickets(root) or [])]
+    tickets = {r["id"]: r for r in trows}
     ids = set(tickets)
     for t in tickets.values():
         for d in t["deps"]:
@@ -3762,6 +3880,14 @@ def cmd_doctor(_args):
     excl_parity = meta_exclude_parity_warning()
     if excl_parity:
         warns.append(excl_parity)
+
+    # feature seam — orphan specs · pending promotion judgments · stale
+    # non-promotion records (T-548). `feature:` is a grouping key: a value with
+    # no spec file is legal, so what is reported is a judgment left pending,
+    # never a missing file (T-547 §6).
+    # T3 is a span ACROSS version dirs, so it is computed over the rows T-547 §2
+    # names, never over the id-keyed map (T-549).
+    warns += feature_seam_warnings(root, trows)
 
     # wiki — project store, then the machine store (§8b) it now searches alongside
     warns += wiki_lint(root)
