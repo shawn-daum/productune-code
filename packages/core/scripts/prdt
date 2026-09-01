@@ -1547,6 +1547,82 @@ def machine_wiki_warnings():
     return warns
 
 
+# T-535: a live SoT doc citing a discipline-tree path that no longer exists is
+# worse than a stale claim sitting inert — it hands the reader a pointer that
+# resolves to nothing (or the reader's own reconstruction of "what it probably
+# meant", which is exactly how a ≤100 cap got inherited from a page that no
+# longer governs anything, T-509). `prdt wiki lint` only resolves `[[wikilink]]`
+# targets, and only inside docs/wiki/ — a plain-path citation in docs/design.md
+# or a persona Tier1 doc was invisible to every existing check (the T-535
+# surface-4 case: `designer/bookshelf/ux-principles.md`, superseded by
+# `designer/style-library/ux-principles.md`).
+#
+# Deliberately narrow, to keep the false-positive rate at zero rather than
+# merely low: only a small, curated set of docs is scanned (habit.md +
+# bookshelf/*.md pages, never a dated log like decisions.md/calibration-log.md/
+# version-summaries/* — those are episodic record, frozen once written, same
+# as a closed PRD version section), and only a backtick-quoted `.md` path
+# carrying one of DISCIPLINE_PATH_MARKERS counts as a candidate — a bare
+# sibling-relative filename used as a generic example (`routing.md`,
+# `po-loop.md`) never matches, so this never fires on doc-internal prose.
+DISCIPLINE_PATH_MARKERS = ("discipline/", "doctrine/", "bookshelf/", "style-library/",
+                            "playbooks/", "/habit.md", "/contracts.md")
+_BACKTICK_MD_PATH_RE = re.compile(r"`([^`\s]+\.md)`")
+
+
+def _live_sot_discipline_docs(root):
+    """Curated, not globbed: docs/design.md + each persona's habit.md and
+    bookshelf/*.md — excluding the dated-log pages (decisions.md,
+    calibration-log.md, version-summaries/*) that the same personas keep in the
+    same directories. Everything under docs/archive/, docs/tickets/,
+    docs/retrospectives/, docs/artifacts/ is out of scope on the same
+    closed-record logic."""
+    out = []
+    design = root / "docs" / "design.md"
+    if design.is_file():
+        out.append(design)
+    for persona in ("po", "designer", "developer", "qa"):
+        pdir = root / "docs" / persona
+        h = pdir / "habit.md"
+        if h.is_file():
+            out.append(h)
+        bdir = pdir / "bookshelf"
+        if bdir.is_dir():
+            for p in sorted(bdir.glob("*.md")):
+                if p.name in ("decisions.md", "calibration-log.md"):
+                    continue
+                out.append(p)
+    return out
+
+
+def dead_discipline_path_warnings(root):
+    cr = code_root(root)
+    droot = cr / "packages" / "core" / "discipline"
+    warns = []
+    for doc in _live_sot_discipline_docs(root):
+        try:
+            text = doc.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel_doc = doc.relative_to(root)
+        # doc.parent is a base too: a bare `bookshelf/<file>.md` citation with no
+        # persona prefix (docs/qa/habit.md → `bookshelf/fail-patterns.md`) is a
+        # sibling-relative reference within that persona's own docs/ dir, not a
+        # repo-rooted one.
+        bases = (root, cr, droot, doc.parent)
+        for m in _BACKTICK_MD_PATH_RE.finditer(text):
+            cand = m.group(1)
+            if cand.startswith("~"):
+                continue  # machine-home path — not repo-relative, not this check's job
+            if not any(marker in cand for marker in DISCIPLINE_PATH_MARKERS):
+                continue
+            if any((base / cand).exists() for base in bases):
+                continue
+            warns.append(f"discipline-path: {rel_doc} cites `{cand}` — no such path "
+                         f"(checked meta root, code root, code discipline tree, and doc's own dir)")
+    return warns
+
+
 PUNCT_FOLD = str.maketrans({"—": "-", "–": "-", "‑": "-", "―": "-",
                             "“": '"', "”": '"', "‘": "'", "’": "'"})
 
@@ -3461,6 +3537,11 @@ def cmd_doctor(_args):
     # wiki — project store, then the machine store (§8b) it now searches alongside
     warns += wiki_lint(root)
     warns += machine_wiki_warnings()
+
+    # dead discipline-path citations in live SoT docs (T-535) — wiki lint only
+    # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
+    # citations everywhere else a persona habit/bookshelf doc or design.md makes one
+    warns += dead_discipline_path_warnings(root)
 
     # override caps + cross-layer duplicates (§8b)
     warns += override_warnings(root)
