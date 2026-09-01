@@ -3331,6 +3331,21 @@ def hook_mirror_drift_warnings():
     default action — a wrong promote on a false verdict would inject stale
     content backwards.
 
+    QA delta-pass fix (T-532): the AHEAD warning used to name one repair
+    ("re-run `install.sh`") for both shapes it lumps together, but that
+    converges for only one of them. A name still present in the repo with
+    hand-edited content DOES clear on re-install — install.sh §1's copy loop
+    unconditionally overwrites every manifest basename, discarding the
+    hand-edit. A name with NO counterpart in the repo at all (a hook the
+    repo has since dropped, or a stray hand-add — `mirror_only` below) does
+    NOT: that same loop only ever WRITES the manifest's own basenames, it
+    never removes a mirror file the manifest doesn't list, so re-running
+    install.sh leaves an orphan standing and this warning reprints forever.
+    QA proved this live in a fully sandboxed install. The repair for that
+    shape now names a direct `rm` of the orphaned mirror path(s) instead,
+    composed onto (not replacing) the install.sh step when both shapes
+    co-occur — still one copy-pasteable line.
+
     Does NOT cover (named per acceptance note ③, not left to be discovered
     later):
       - a hook named in `~/.claude/settings.json` but present in NEITHER the
@@ -3374,7 +3389,20 @@ def hook_mirror_drift_warnings():
         return []
 
     git_root = _git_root(repo)
-    behind, ahead = list(only_repo), list(only_mirror)
+    # `ahead` splits into two shapes that do NOT share a repair (T-532 QA delta
+    # pass): `mirror_only` (== `only_mirror` above) has no counterpart in the
+    # repo at all — a hook the repo has since dropped, or a stray hand-add —
+    # while `hand_edited` names still exist in the repo, just with content no
+    # commit in its history matches. Only the second shape converges by
+    # re-running `install.sh`: its §1 copy loop unconditionally overwrites
+    # every manifest basename, discarding the hand-edit. The first shape does
+    # NOT — that loop only ever WRITES the manifest's own basenames, it never
+    # removes a mirror file the manifest doesn't name, so a name with no
+    # repo counterpart survives `install.sh` forever and this warning would
+    # reprint on every subsequent `doctor` run with a repair that can never
+    # clear it (see `mirror_only` in the warns block below).
+    mirror_only = list(only_mirror)
+    behind, hand_edited = list(only_repo), []
     for rel in differing:
         verdict = None
         if git_root is not None:
@@ -3384,9 +3412,11 @@ def hook_mirror_drift_warnings():
                 rel_from_root = None
             if rel_from_root:
                 verdict = _mirror_matches_past_commit(git_root, rel_from_root, mirror_files[rel].read_bytes())
-        (behind if verdict else ahead).append(rel)
+        (behind if verdict else hand_edited).append(rel)
     behind.sort()
-    ahead.sort()
+    hand_edited.sort()
+    mirror_only.sort()
+    ahead = sorted(mirror_only + hand_edited)
 
     warns = []
     if behind:
@@ -3397,6 +3427,19 @@ def hook_mirror_drift_warnings():
             f"{repo}, so these committed changes bind nothing until synced — repair "
             f"(reuses install.sh's own sync step): re-run `install.sh`")
     if ahead:
+        # See the comment above `mirror_only` for why these two shapes need
+        # different repairs: `install.sh` alone clears a hand-edit (its copy
+        # loop overwrites every manifest basename) but can never clear an
+        # orphan (that loop only ever writes basenames, never removes one
+        # the manifest doesn't list) — so an orphan's repair names a direct
+        # `rm` of the mirror path(s), composed onto the `install.sh` step
+        # (not replacing it) whenever both shapes are present, still one
+        # copy-pasteable line.
+        if mirror_only:
+            rm_targets = " ".join(str(mirror / rel) for rel in mirror_only)
+            repair_cmd = f"rm {rm_targets} && install.sh" if hand_edited else f"rm {rm_targets}"
+        else:
+            repair_cmd = "install.sh"
         warns.append(
             "hooks: mirror AHEAD OF / HAND-EDITED vs repo (or a match outside the window "
             "searched) — " + ", ".join(ahead[:8]) +
@@ -3408,9 +3451,14 @@ def hook_mirror_drift_warnings():
             f"of the hooks directory would all look identical to a genuine hand-edit. Do not "
             f"promote {mirror}'s copy into the repo on this verdict alone — confirm by hand "
             f"first (e.g. a deeper `git log` on the real repo, or checking for a shallow "
-            f"clone), since a mistaken promote can reintroduce stale content backwards. If "
-            f"unsure, the safer default is to discard the mirror copy instead: re-run "
-            f"`install.sh`")
+            f"clone), since a mistaken promote can reintroduce stale content backwards. " +
+            (f"{len(mirror_only)} of these — {', '.join(mirror_only[:8])}"
+             f"{f' (+{len(mirror_only) - 8} more)' if len(mirror_only) > 8 else ''} — have no "
+             f"counterpart in the repo at all, so `install.sh` alone can never clear them (its "
+             f"copy loop only ever writes the manifest's own basenames, never removing one the "
+             f"manifest doesn't list) — this reprints forever if that is the only repair tried. "
+             if mirror_only else "") +
+            f"If unsure, the safer default is to discard the mirror copy instead: `{repair_cmd}`")
     return warns
 
 
