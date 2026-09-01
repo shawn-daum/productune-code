@@ -9,50 +9,28 @@
  * separate {matcher, hooks[]} entries under the same "PostToolUse" key. It
  * must be mirrored executable. Re-running install.sh must stay idempotent.
  *
- * Drives the REAL install.sh under a sandboxed HOME / PRDT_HOME / CLAUDE_DIR,
- * mirroring install-audience-hook.test.ts (T-326 precedent) — required
- * isolation: a subprocess install.sh run against the real $HOME has broken the
- * developer's own CLI before (install-audience-hook.test.ts:36 precedent).
+ * Drives the REAL install.sh under a sandboxed HOME / PRDT_HOME / CLAUDE_DIR
+ * via the shared fixture (T-536: installed-state assertions share ONE install
+ * for this file; only the idempotency test runs its own installs, because its
+ * subject is the re-RUN) — required isolation: a subprocess install.sh run
+ * against the real $HOME has broken the developer's own CLI before
+ * (install-audience-hook.test.ts precedent).
  */
 
 import path from 'path'
 import fs from 'fs'
-import os from 'os'
-import { execFileSync } from 'child_process'
 import { test, expect } from 'vitest'
-
-const CORE_ROOT = path.resolve(__dirname, '..', '..')
-const INSTALL_SH = path.join(CORE_ROOT, 'scripts', 'install.sh')
-
-function hasJq(): boolean {
-  try { execFileSync('jq', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
-}
-
-function sandbox(): { env: NodeJS.ProcessEnv; prdtHome: string; claudeDir: string } {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t409-'))
-  const home = path.join(sb, 'home')
-  const prdtHome = path.join(sb, 'prdt')
-  const claudeDir = path.join(sb, 'claude')
-  for (const d of [home, prdtHome, claudeDir]) fs.mkdirSync(d, { recursive: true })
-  fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{}')
-  return { env: { ...process.env, HOME: home, PRDT_HOME: prdtHome, CLAUDE_DIR: claudeDir }, prdtHome, claudeDir }
-}
-
-function runInstall(): { settings: any; prdtHome: string } {
-  const { env, prdtHome, claudeDir } = sandbox()
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  return { settings: JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8')), prdtHome }
-}
+import { installedMachine, freshInstall, hasJq } from '../helpers/install-fixture'
 
 test.skipIf(!hasJq())('mirrors prdt-auto-open.sh executable', () => {
-  const { prdtHome } = runInstall()
+  const { prdtHome } = installedMachine()
   const script = path.join(prdtHome, 'hooks', 'prdt-auto-open.sh')
   expect(fs.existsSync(script)).toBe(true)
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
 })
 
 test.skipIf(!hasJq())('PostToolUse carries BOTH the pre-existing Agent entry and the new Write entry', () => {
-  const { settings } = runInstall()
+  const { settings } = installedMachine()
   const entries = settings.hooks.PostToolUse as any[]
   const agentEntry = entries.find((e) => e.matcher === 'Agent')
   const writeEntry = entries.find((e) => e.matcher === 'Write')
@@ -62,10 +40,8 @@ test.skipIf(!hasJq())('PostToolUse carries BOTH the pre-existing Agent entry and
 })
 
 test.skipIf(!hasJq())('re-running install.sh is idempotent (single auto-open entry, single command)', () => {
-  const { env, claudeDir } = sandbox()
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+  // its own installs ON PURPOSE: the subject is the second RUN, not the state
+  const { settings } = freshInstall({ times: 2 })
   const entries = (settings.hooks.PostToolUse as any[]).filter((e) => e.matcher === 'Write')
   expect(entries.length).toBe(1)
   expect(entries[0].hooks.length).toBe(1)
