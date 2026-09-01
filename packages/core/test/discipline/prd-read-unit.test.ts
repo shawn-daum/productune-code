@@ -73,8 +73,23 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
 
   test('the row fixes the naming rule, the flat-dir rule and the no-index rule', () => {
     const r = row()!
-    expect(r).toContain('the ticket frontmatter `feature:` value verbatim')
+    expect(r).toContain('named by that value verbatim')
     expect(r).toContain('flat dir, no index file')
+  })
+
+  // T-547: `feature:` is a GROUPING KEY. Measured across 8 prdt projects on
+  // 2026-09-01, 131 of 134 values carry no spec file — so a row that calls
+  // every value a spec pointer declares 131 legal tickets in violation. The
+  // read-FIRST duty is real, but it fires only where the file EXISTS. Both
+  // halves are pinned: dropping the condition and dropping the duty are the
+  // two ways this row goes wrong, and each fails here.
+  test('the row makes read-FIRST conditional on the spec file existing', () => {
+    const r = row()!
+    expect(r).toContain('a grouping key, not a pointer')
+    expect(r).toContain('a value with NO spec file is legal and the normal state')
+    expect(r).toContain('When `docs/features/<value>.md` EXISTS')
+    expect(r).toContain('read it FIRST, before touching that feature')
+    expect(r).toContain('history/lessons only, never the current spec')
   })
 
   test('the row fixes the validity-window tagging and no-delete rules', () => {
