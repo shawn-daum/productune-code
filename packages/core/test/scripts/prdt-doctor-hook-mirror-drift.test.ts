@@ -34,7 +34,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
-import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { test, expect, describe, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { freshInstall, hasJq } from '../helpers/install-fixture'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
@@ -57,18 +57,10 @@ let hooksRepoDir: string   // <repoRoot>/packages/core/scripts/hooks
 let cliCopy: string        // <repoRoot>/packages/core/scripts/prdt — a copy of the REAL script
 let machineHome: string    // PRDT_HOME (the mirror lives at <machineHome>/hooks)
 let projectDir: string
+let template: string       // the seeded fixture, built ONCE per file (T-557)
 
 function git(args: string[], cwd: string) {
   execFileSync('git', args, { cwd, encoding: 'utf-8', env: { ...process.env, ...GIT_ENV } })
-}
-
-function writeHook(basename: string, content: string) {
-  fs.writeFileSync(path.join(hooksRepoDir, basename), content)
-}
-
-function commitRepo(message: string) {
-  git(['add', '-A'], repoRoot)
-  git(['commit', '-q', '-m', message], repoRoot)
 }
 
 function mirrorHook(basename: string, content: string) {
@@ -87,38 +79,91 @@ function doctor(env: Record<string, string> = {}): string[] {
   return out.split('\n').filter((l) => l.includes('hooks: mirror'))
 }
 
-beforeEach(() => {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hook-drift-'))
-  repoRoot = path.join(sandbox, 'repo')
-  hooksRepoDir = path.join(repoRoot, 'packages', 'core', 'scripts', 'hooks')
-  cliCopy = path.join(repoRoot, 'packages', 'core', 'scripts', 'prdt')
-  fs.mkdirSync(hooksRepoDir, { recursive: true })
-  fs.copyFileSync(REAL_PRDT_CLI, cliCopy)
-  fs.chmodSync(cliCopy, 0o755)
-  execFileSync('git', ['init', '-q'], { cwd: repoRoot })
-
-  machineHome = path.join(sandbox, 'prdt-home')
-  fs.mkdirSync(path.join(machineHome, 'wiki'), { recursive: true })
-  projectDir = path.join(sandbox, 'proj')
-  fs.mkdirSync(projectDir, { recursive: true })
-})
-
-afterEach(() => { fs.rmSync(sandbox, { recursive: true, force: true }) })
+/** The empty shell every fixture starts from, under an arbitrary root: a
+ *  throwaway checkout shaped like the real repo with the REAL cli copied in,
+ *  plus the mirror-home and project dirs. Cheap — mkdirs, one copyFileSync
+ *  and `git init`. The expensive half is what buildRepoHistory() adds. */
+function scaffold(root: string) {
+  const scriptsDir = path.join(root, 'repo', 'packages', 'core', 'scripts')
+  fs.mkdirSync(path.join(scriptsDir, 'hooks'), { recursive: true })
+  fs.copyFileSync(REAL_PRDT_CLI, path.join(scriptsDir, 'prdt'))
+  fs.chmodSync(path.join(scriptsDir, 'prdt'), 0o755)
+  execFileSync('git', ['init', '-q'], { cwd: path.join(root, 'repo') })
+  fs.mkdirSync(path.join(root, 'prdt-home', 'wiki'), { recursive: true })
+  fs.mkdirSync(path.join(root, 'proj'), { recursive: true })
+}
 
 /** Common fixture: repo history carries an old (v1) and current (v2) body
  *  for one hook, a second hook with only one commit, and nothing else —
- *  then `prdt init` runs against the copied CLI so `doctor` has a project. */
-function seedRepoHistory() {
+ *  then `prdt init` runs against the copied CLI so `doctor` has a project.
+ *  T-557: two git commits plus a python `prdt init` spawn, rebuilt by 13 test
+ *  bodies for a history none of them mutates (what the scenarios below vary
+ *  is MIRROR state, which lives outside this tree) — so it is built ONCE, in
+ *  beforeAll, and each test gets its own copy via seedRepoHistory(). */
+function buildRepoHistory(root: string) {
+  const repo = path.join(root, 'repo')
+  const hooks = path.join(repo, 'packages', 'core', 'scripts', 'hooks')
+  const writeHook = (basename: string, content: string) =>
+    fs.writeFileSync(path.join(hooks, basename), content)
+  const commitRepo = (message: string) => {
+    git(['add', '-A'], repo)
+    git(['commit', '-q', '-m', message], repo)
+  }
   writeHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v1\n')
   writeHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho b\n')
   commitRepo('v1')
   writeHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v2\n')
   commitRepo('v2')
-  execFileSync('python3', [cliCopy, 'init', '--json', '--slug', 'proj', '--yes'], {
-    cwd: projectDir,
-    env: { ...process.env, PRDT_HOME: machineHome },
+  execFileSync('python3', [path.join(repo, 'packages', 'core', 'scripts', 'prdt'),
+    'init', '--json', '--slug', 'proj', '--yes'], {
+    cwd: path.join(root, 'proj'),
+    env: { ...process.env, PRDT_HOME: path.join(root, 'prdt-home') },
     encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
   })
+}
+
+/** `prdt init` bakes the project's ABSOLUTE path into `.prdt/meta.git/config`
+ *  (core.worktree, core.hooksPath) — the only absolute path anywhere in what
+ *  init writes, checked file-by-file when this hoist landed. A copy of the
+ *  template therefore still points at the template, at a directory afterAll
+ *  deletes. Fixture hygiene, stated plainly: a tripwire run with this call
+ *  commented out left all 15 tests green, so NO assertion here depends on it —
+ *  `doctor`'s `hooks: mirror` lines never reach the meta repo. It stays because
+ *  the alternative is handing the next scenario in this file a worktree pointer
+ *  into a deleted temp dir; it is not evidence of anything. */
+function retargetMetaGit(root: string) {
+  const cfg = path.join(root, 'proj', '.prdt', 'meta.git', 'config')
+  fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf-8')
+    .split(fs.realpathSync(template)).join(fs.realpathSync(root)))
+}
+
+beforeAll(() => {
+  if (!PYTHON3 || !GIT) return
+  template = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hook-drift-seed-'))
+  scaffold(template)
+  buildRepoHistory(template)
+})
+
+afterAll(() => {
+  if (template) fs.rmSync(template, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hook-drift-'))
+  repoRoot = path.join(sandbox, 'repo')
+  hooksRepoDir = path.join(repoRoot, 'packages', 'core', 'scripts', 'hooks')
+  cliCopy = path.join(repoRoot, 'packages', 'core', 'scripts', 'prdt')
+  machineHome = path.join(sandbox, 'prdt-home')
+  projectDir = path.join(sandbox, 'proj')
+})
+
+afterEach(() => { fs.rmSync(sandbox, { recursive: true, force: true }) })
+
+/** This test's own private copy of the once-built fixture above — same bytes
+ *  every scenario used to rebuild, minus the rebuild. */
+function seedRepoHistory() {
+  fs.cpSync(template, sandbox, { recursive: true })
+  retargetMetaGit(sandbox)
 }
 
 describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — hook mirror↔repo drift (T-532)', () => {
@@ -227,6 +272,9 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — hook mirror↔repo drift (T-5
     // no seedRepoHistory(): hooksRepoDir stays empty, but more importantly
     // simulate "no repo nearby" by removing the repo checkout's hooks dir
     // and git history entirely, then run `prdt init` off the copied CLI.
+    // scaffold() explicitly, because this is the one scenario that wants the
+    // bare shell rather than a copy of the seeded fixture (T-557).
+    scaffold(sandbox)
     fs.rmSync(hooksRepoDir, { recursive: true, force: true })
     execFileSync('python3', [cliCopy, 'init', '--json', '--slug', 'proj', '--yes'], {
       cwd: projectDir,

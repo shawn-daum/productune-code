@@ -21,7 +21,7 @@ import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
-import { test, expect } from 'vitest'
+import { test, expect, afterEach, afterAll } from 'vitest'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const MANIFEST_SRC = path.join(CORE_ROOT, 'scripts', 'hook-manifest.json')
@@ -38,14 +38,40 @@ interface Sandbox {
   settings: string
 }
 
-/** Copy the installer payload (packages/core minus src/node_modules) into a sandbox. */
+/** The installer payload (packages/core minus src/node_modules), pulled out of
+ *  the repo ONCE per file — T-557. Four `cp -R` per case, five cases over, for
+ *  a tree no case reads differently: only the CORRUPTION of it differs, and
+ *  that stays per-case below, applied to this template's own private copy.
+ *  Lazy rather than module-scope so a jq-less machine (every test here is
+ *  `skipIf(!hasJq())`) still pays nothing. */
+let payloadTemplate: string | undefined
+function payloadSrc(): string {
+  if (payloadTemplate === undefined) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-loud-payload-'))
+    for (const entry of ['discipline', 'agents', 'scripts', 'doctrine.md']) {
+      execFileSync('cp', ['-R', path.join(CORE_ROOT, entry), path.join(dir, entry)])
+    }
+    payloadTemplate = dir
+  }
+  return payloadTemplate
+}
+
+/** Roots created by makeSandbox() during the CURRENT test, swept in afterEach
+ *  below — a plain array rather than one-sandbox-per-test bookkeeping so it
+ *  needs no change if a future case ever calls makeSandbox() more than once.
+ *  afterEach runs on a FAILING test exactly the same as a passing one, which
+ *  is the property this whole file was missing: 516 leftover
+ *  core-install-loud-* dirs (1.8 GB) were measured with zero cleanup on
+ *  either path. */
+let sandboxRoots: string[] = []
+
+/** A sandbox with this case's OWN writable copy of the payload — every case
+ *  corrupts it differently and runs its own installer against the result. */
 function makeSandbox(seedSettings?: unknown): Sandbox {
   const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-loud-'))
+  sandboxRoots.push(sb)
   const payload = path.join(sb, 'payload')
-  fs.mkdirSync(payload, { recursive: true })
-  for (const entry of ['discipline', 'agents', 'scripts', 'doctrine.md']) {
-    execFileSync('cp', ['-R', path.join(CORE_ROOT, entry), path.join(payload, entry)])
-  }
+  fs.cpSync(payloadSrc(), payload, { recursive: true })
   const home = path.join(sb, 'home')
   const prdtHome = path.join(sb, 'prdt')
   const claudeDir = path.join(sb, 'claude')
@@ -54,6 +80,19 @@ function makeSandbox(seedSettings?: unknown): Sandbox {
   if (seedSettings !== undefined) fs.writeFileSync(settings, JSON.stringify(seedSettings, null, 2))
   return { payload, home, prdtHome, claudeDir, settings }
 }
+
+// Two cleanup levels, same shape as prdt-doctor-hook-mirror-drift.test.ts:
+// afterEach sweeps every per-case sandbox (payload + home + prdt + claude all
+// live under one mkdtemp root, so one rmSync per root is enough), afterAll
+// removes the once-built payload template those sandboxes were copied from.
+afterEach(() => {
+  for (const root of sandboxRoots) fs.rmSync(root, { recursive: true, force: true })
+  sandboxRoots = []
+})
+
+afterAll(() => {
+  if (payloadTemplate !== undefined) fs.rmSync(payloadTemplate, { recursive: true, force: true })
+})
 
 function run(sb: Sandbox, script: string, args: string[] = []) {
   const r = spawnSync('bash', [path.join(sb.payload, 'scripts', script), ...args], {
