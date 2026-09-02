@@ -91,6 +91,24 @@ function perCaseRebuild(rel: string, cases: number, helper = 'install'): void {
   write(rel, out.join('\n'))
 }
 
+interface Judgment { file: string; setup?: string; reason?: string }
+
+/** Write the project's recorded verdicts — `.prdt/config.json`
+ *  `tests.non_rebuilds`, the same home as the feature seam's
+ *  `features.non_features`. `unknown[]` so a malformed record can be written
+ *  on purpose; a record the CLI silently ignored would look identical to one
+ *  it applied. */
+function record(entries: unknown[] | unknown): void {
+  fs.writeFileSync(path.join(projectRoot, '.prdt', 'config.json'),
+    JSON.stringify({ slug: 'proj', tests: { non_rebuilds: entries } }, null, 2))
+}
+
+const JUDGED: Judgment = {
+  file: 'test/offender.test.ts',
+  setup: 'install',
+  reason: 'a fresh sandbox per case that the body then mutates — sharing would leak state',
+}
+
 /** Only this check's lines. Everything else doctor says belongs to another check. */
 function setupWarnings(): string[] {
   const out = execFileSync('python3', [PRDT_CLI, 'doctor'],
@@ -329,6 +347,163 @@ describe.skipIf(!CAN_RUN)('the report — one line however many files, worst fir
     expect(w[0]).toContain('(+2 more files)')
     expect(w[0]).not.toContain('test/f5.test.ts')
     expect(w[0].indexOf('test/f0.test.ts')).toBeLessThan(w[0].indexOf('test/f1.test.ts'))
+  })
+})
+
+/**
+ * The judgment record (T-556) — where a heuristic's known blind spot goes.
+ *
+ * This check cannot tell "rebuilt wastefully" from "minted fresh because each
+ * case MUTATES it": the difference is mutation, invisible to a static reader.
+ * Adding a third predicate would converge the check on this repo's shape until
+ * the check IS the standard; leaving the warning standing teaches that warnings
+ * are noise. So a person judges it once and the verdict is recorded — the same
+ * mechanism `features.non_features` already uses, in the same file, so "where
+ * do I write down what the machine cannot see" has ONE answer.
+ *
+ * Both directions are controlled here, because a suppression mechanism never
+ * seen suppressing, or never seen complaining, is not verified: the record
+ * clears a live accusation, and every way an entry can rot is reported.
+ */
+describe.skipIf(!CAN_RUN)('the judgment record — a false accusation spent once, not forever', () => {
+  test('a recorded verdict clears the accusation it names — red, then silent', () => {
+    perCaseRebuild('test/offender.test.ts', 5)
+    expect(setupWarnings()).toHaveLength(1)          // the accusation is live first
+    record([JUDGED])
+    expect(setupWarnings()).toEqual([])              // and only the record moved
+  })
+
+  test('the verdict is on ONE setup, so a second rebuild in the same file is still accused', () => {
+    // the anti-mute property: a record is not a per-file off switch
+    const out = [SPAWN_IMPORT, SPAWN_HELPER('install'), SPAWN_HELPER('reseed')]
+    for (const h of ['install', 'reseed']) {
+      for (let i = 0; i < 5; i++) out.push(`test('${h} ${i}', () => {`, `  ${h}(tmp())`, `})`)
+    }
+    write('test/offender.test.ts', out.join('\n'))
+    record([JUDGED])
+    const w = setupWarnings()
+    expect(w).toHaveLength(1)                       // the verdict is live, so no stale line
+    expect(w[0]).toContain('test/offender.test.ts (reseed opens 5 test bodies)')
+    expect(w[0]).not.toContain('install opens')
+  })
+
+  test('an unrelated offender is untouched by someone else’s verdict', () => {
+    perCaseRebuild('test/offender.test.ts', 5)
+    perCaseRebuild('test/other.test.ts', 6, 'seed')
+    record([JUDGED])
+    const w = setupWarnings()
+    expect(w).toHaveLength(1)
+    expect(w[0]).toContain('test/other.test.ts (seed opens 6 test bodies)')
+    expect(w[0]).not.toContain('test/offender.test.ts')
+  })
+
+  test('the live warning tells a reader where to put the verdict', () => {
+    perCaseRebuild('test/offender.test.ts', 5)
+    const line = setupWarnings()[0]
+    expect(line).toContain('.prdt/config.json tests.non_rebuilds')
+    expect(line).toContain('{file, setup, reason}')
+  })
+
+  test('a leading ./ in the recorded path still matches — the form is normalised', () => {
+    perCaseRebuild('test/offender.test.ts', 5)
+    record([{ ...JUDGED, file: './test/offender.test.ts' }])
+    expect(setupWarnings()).toEqual([])
+  })
+
+  describe('rot — a record that answers nothing IS reported, never silent', () => {
+    test('the file it names is gone', () => {
+      record([{ ...JUDGED, file: 'test/deleted.test.ts' }])
+      expect(setupWarnings()).toEqual([
+        "tests: config tests.non_rebuilds entry 'test/deleted.test.ts' (install) is stale — " +
+        'no file there any more; the recorded verdict answers nothing, drop it'])
+    })
+
+    test('the file is still there but the shape it judged is gone — repaired, or never real', () => {
+      write('test/offender.test.ts', [SPAWN_IMPORT, SPAWN_HELPER('install'),
+        `test('one', () => { expect(1).toBe(1) })`].join('\n'))
+      record([JUDGED])
+      expect(setupWarnings()).toEqual([
+        "tests: config tests.non_rebuilds entry 'test/offender.test.ts' (install) is stale — " +
+        "the check no longer counts a setup called 'install' there; " +
+        'the recorded verdict answers nothing, drop it'])
+    })
+
+    test('the shape shrank below the threshold — a partial repair does not leave a live verdict', () => {
+      perCaseRebuild('test/offender.test.ts', 3)      // 3 < the 5 the check reports
+      record([JUDGED])
+      expect(setupWarnings()).toEqual([
+        "tests: config tests.non_rebuilds entry 'test/offender.test.ts' (install) is stale — " +
+        "'install' opens 3 test bodies there, under the 5 this check reports; " +
+        'the recorded verdict answers nothing, drop it'])
+    })
+
+    test('the setup was renamed — the accusation moved and the verdict did not follow', () => {
+      perCaseRebuild('test/offender.test.ts', 5, 'installFresh')
+      record([JUDGED])
+      const w = setupWarnings()
+      expect(w).toHaveLength(2)                       // stale record AND a live accusation
+      expect(w.some(l => l.includes(
+        "is stale — the check no longer counts a setup called 'install' there — " +
+        "it names 'installFresh' instead, still unjudged"))).toBe(true)
+      expect(w.some(l => l.includes('test/offender.test.ts (installFresh opens 5 test bodies)'))).toBe(true)
+    })
+
+    test('every rotted entry is named, not just the first', () => {
+      record([{ ...JUDGED, file: 'test/a.test.ts' }, { ...JUDGED, file: 'test/b.test.ts' }])
+      const w = setupWarnings()
+      expect(w).toHaveLength(2)
+      expect(w.join('\n')).toContain("entry 'test/a.test.ts'")
+      expect(w.join('\n')).toContain("entry 'test/b.test.ts'")
+    })
+  })
+
+  describe('the record is a REASON, not a path list', () => {
+    test('an entry with no reason buys no silence and says why', () => {
+      perCaseRebuild('test/offender.test.ts', 5)
+      record([{ file: 'test/offender.test.ts', setup: 'install' }])
+      const w = setupWarnings()
+      expect(w.some(l => l.startsWith('tests: test bodies rebuilding'))).toBe(true)  // still accused
+      expect(w.some(l => l.includes("entry 'test/offender.test.ts' is missing reason"))).toBe(true)
+      expect(w.some(l => l.includes('see WHY this setup was judged legitimate'))).toBe(true)
+    })
+
+    test('an entry with no setup buys no silence — the verdict must name what it clears', () => {
+      perCaseRebuild('test/offender.test.ts', 5)
+      record([{ file: 'test/offender.test.ts', reason: 'trust me' }])
+      const w = setupWarnings()
+      expect(w.some(l => l.startsWith('tests: test bodies rebuilding'))).toBe(true)
+      expect(w.some(l => l.includes("entry 'test/offender.test.ts' is missing setup"))).toBe(true)
+    })
+
+    test('a malformed record is REPORTED, not skipped — a bare path list cannot pass as applied', () => {
+      perCaseRebuild('test/offender.test.ts', 5)
+      record(['test/offender.test.ts'])
+      const w = setupWarnings()
+      expect(w.some(l => l.includes('entry #1 is not an object'))).toBe(true)
+      expect(w.some(l => l.startsWith('tests: test bodies rebuilding'))).toBe(true)
+    })
+
+    test('a record of the wrong TYPE is reported rather than ignored', () => {
+      record('test/offender.test.ts')
+      expect(setupWarnings()).toEqual([
+        'tests: config tests.non_rebuilds must be a list of {file, setup, reason} entries ' +
+        '(found str) — no judgment is being applied'])
+    })
+  })
+
+  test('no record at all is the normal state — absent is not malformed', () => {
+    perCaseRebuild('test/offender.test.ts', 5)
+    const w = setupWarnings()
+    expect(w).toHaveLength(1)
+    expect(w[0]).not.toContain('is stale')
+  })
+
+  test('doctor stays non-blocking with a stale record firing — exit 0, never a gate', () => {
+    record([{ ...JUDGED, file: 'test/deleted.test.ts' }])
+    const r = execFileSync('python3', [PRDT_CLI, 'doctor'],
+      { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+    expect(r).toContain('is stale')
+    expect(r).toContain('(non-blocking)')   // execFileSync would have thrown on non-zero exit
   })
 })
 
