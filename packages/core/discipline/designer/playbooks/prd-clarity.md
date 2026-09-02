@@ -47,7 +47,7 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 - Previous version's retro shows an unobserved outcome → surface it as your first question (the PO already confirmed once at Define entry).
 
 ## What the PRD does NOT hold
-- The PRD holds per-version scope estimation. A feature's CURRENT spec goes to `docs/features/<feature>.md` (contracts §Fixed paths) — write it there and cite it from the version section; never restate a live contract inside a version section.
+- The PRD holds per-version scope estimation. A feature's CURRENT spec goes to `docs/features/<feature>.md` (contracts §Fixed paths) — write it there once the value has earned a file (a `feature:` value with no spec file is legal and the normal state) and cite it from the version section; never restate a live contract inside a version section.
 - A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. The read unit you author for is the standing head + ONE version section.
 
 ## Page style (the user reads this file directly)

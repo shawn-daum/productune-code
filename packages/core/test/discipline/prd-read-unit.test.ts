@@ -114,11 +114,46 @@ describe('designer habit + prd-clarity playbook', () => {
     expect(h).toContain('never delete an invalidated one')
   })
 
+  // T-552: the Feature spec line's T2 absorbed what used to be a separate
+  // third test — "a real consumer needs this contract". The absorption is what
+  // `docs/wiki/fact--discipline-editing.md` records; lose this half and T2
+  // degrades to "is there a contract?", which every feature passes, and the
+  // wiki page's statement becomes false. Pinned by the consumer half alone so
+  // rewording the surrounding sentence stays legal.
+  test('T2 keeps its consumer half — the contract has to be gettable-wrong', () => {
+    expect(read(DESIGNER_HABIT)).toContain(
+      'an agent touching this area gets WRONG without reading it',
+    )
+  })
+
   test('prd-clarity states what the PRD does NOT hold', () => {
     const p = read(PRD_CLARITY)
     expect(p).toContain('## What the PRD does NOT hold')
     expect(p).toContain('never restate a live contract inside a version section')
     expect(p).toContain('the standing head + ONE version section')
+  })
+})
+
+describe('contracts.md — risk_flags names only the risk the change CREATES', () => {
+  const tierRule = () =>
+    read(CONTRACTS)
+      .split('\n')
+      .find((l) => l.startsWith('- Impl return whose') && l.includes('auto-dispatches QA'))
+
+  test('the dispatch tier rule exists', () => {
+    expect(tierRule()).toBeDefined()
+  })
+
+  // T-552: without the negative list the definition reads as a platitude and
+  // every persona keeps flagging the bug it just fixed — the four recorded
+  // mis-routings all resolve on this half, not on the positive sentence. Three
+  // substrings, each load-bearing on its own: the ban, the literals people
+  // actually typed as flags, and the consequence that makes the ban matter.
+  test('the rule states the defect being fixed is never a flag', () => {
+    const r = tierRule()!
+    expect(r).toContain('The defect being FIXED is never a flag')
+    expect(r).toContain('`crash`, `data-loss`, `p0`')
+    expect(r).toContain('never raises the tier')
   })
 })
 
