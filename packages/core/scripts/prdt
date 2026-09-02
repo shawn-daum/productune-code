@@ -3599,8 +3599,35 @@ def hook_mirror_drift_warnings():
 #     (`const sb = makeSandbox(SEED)`, `const remote = makeBareRemote()`) is
 #     counted like a rebuild, because its call text is identical every time.
 #     Nothing statically separates "same fixture, hoistable" from "a new one
-#     per case by necessity" — measured on this repo, this is the whole
-#     residue the round-2 discriminators leave behind.
+#     per case by necessity" — the difference is MUTATION, and a static reader
+#     cannot see it. Measured on this repo, this is the whole residue the
+#     round-2 discriminators leave behind.
+#
+# THE JUDGMENT RECORD (T-556) is where that last residue goes. Three ways to
+# hold a heuristic's known gap, and only the third survives: (a) keep adding
+# predicates — the check then converges on THIS repo's shape until the check IS
+# the standard and can no longer be shown wrong (T-537 refused a third
+# predicate on exactly this ground); (b) leave the warning standing — one
+# accepted-noise line teaches that every line might be noise, which is the
+# state v1.8 exists to end; (c) let a person judge it ONCE and record the
+# verdict, so the accusation is spent rather than permanent.
+#
+# (c) is not invented here: the feature seam already does it (T-547 §4/§6) —
+# the machine computes the mechanical leg, a person calls the rest, and the
+# call is recorded in `.prdt/config.json` so doctor stops asking. This check
+# uses the same place and the same grammar, `tests.non_rebuilds` beside
+# `features.non_features`, because "where do I write down what the machine
+# cannot see" must have ONE answer across every heuristic doctor check.
+#
+# Two properties the record must keep, or it becomes worse than the warning:
+#   - it is not a mute. An entry that no longer answers a live accusation is
+#     reported STALE, exactly as a `features.non_features` entry is (W3). A
+#     judgment that rots quietly is the defect this mechanism would introduce.
+#   - it is not a path list. `reason` is required and an entry without one buys
+#     no silence: the next reader has to see WHY a file was cleared without
+#     re-running the adjudication. `setup` is required for the same reason at a
+#     finer grain — the verdict is on one named helper, so a DIFFERENT rebuild
+#     appearing in the same file later is still accused.
 
 TEST_SETUP_SPAWN_RE = re.compile(
     r"execSync|execFileSync|spawnSync|child_process|"
@@ -3708,15 +3735,72 @@ def test_setup_opener_counts(text):
     return {h: n for h, n in counts.items() if len(argsets[h]) == 1}
 
 
+TEST_SETUP_RECORD_KEY = "tests.non_rebuilds"
+
+
+def _rel_test_path(s):
+    """A config `file` value in the same posix, root-relative form the walk
+    reports, so a hand-written `./a/b.test.ts` matches `a/b.test.ts`."""
+    p = str(s).strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.strip("/")
+
+
+def test_setup_judgments(root):
+    """The project's recorded verdicts on this check — `.prdt/config.json`
+    `tests.non_rebuilds`, the same home and the same grammar as the feature
+    seam's `features.non_features` (T-547 §4): project state, one entry per
+    human judgment, durable rather than a migration list.
+
+    Returns `(judged, malformed)` — `judged` maps `(file, setup)` to its
+    reason, `malformed` holds one complaint per entry that cannot be honoured.
+    An entry needs all three of `file`, `setup` and `reason`, and a bad entry
+    is REPORTED rather than skipped: silently ignoring a typo'd record would
+    make the record look applied when nothing is suppressed."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    sec = cfg.get("tests") if isinstance(cfg.get("tests"), dict) else {}
+    raw = sec.get("non_rebuilds")
+    if raw is None:
+        return {}, []
+    if not isinstance(raw, list):
+        return {}, [f"must be a list of {{file, setup, reason}} entries "
+                    f"(found {type(raw).__name__}) — no judgment is being applied"]
+    judged, malformed = {}, []
+    for i, ent in enumerate(raw, 1):
+        if not isinstance(ent, dict):
+            malformed.append(f"entry #{i} is not an object — an entry is "
+                             f"{{file, setup, reason}}")
+            continue
+        fields = {}
+        for k in ("file", "setup", "reason"):
+            v = ent.get(k)
+            fields[k] = v.strip() if isinstance(v, str) else ""
+        missing = [k for k in ("file", "setup", "reason") if not fields[k]]
+        if missing:
+            who = fields["file"] or f"#{i}"
+            malformed.append(
+                f"entry '{who}' is missing {' and '.join(missing)} — it "
+                f"suppresses nothing. The reason is the record: a reader has to "
+                f"see WHY this setup was judged legitimate without adjudicating "
+                f"it again")
+            continue
+        judged[(_rel_test_path(fields["file"]), fields["setup"])] = fields["reason"]
+    return judged, malformed
+
+
 def test_setup_rebuild_warnings(root):
     """One warning line when any test file has TEST_SETUP_REBUILD_MIN or more
     test bodies opening with the SAME call — same in-file process-spawning
-    helper (or direct spawn), same argument text. Static file reads only,
-    ~40ms over a repo of this size — never runs a suite,
-    never times anything; skip-list pruning keeps the walk off node_modules
-    and friends so the doctor budget holds. See the block comment above for
-    what this can and cannot see."""
-    offenders = []
+    helper (or direct spawn), same argument text — minus the files a person has
+    already judged in `tests.non_rebuilds`, plus one line per recorded judgment
+    that has gone stale. Static file reads only, ~40ms over a repo of this size
+    — never runs a suite, never times anything; skip-list pruning keeps the
+    walk off node_modules and friends so the doctor budget holds. See the block
+    comment above for what this can and cannot see, and why the residue it
+    cannot see is routed to a person instead of to another predicate."""
+    per_file = {}
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames
                        if d not in TEST_SETUP_SKIP_DIRS and not d.startswith(".")]
@@ -3730,25 +3814,66 @@ def test_setup_rebuild_warnings(root):
                 continue
             counts = test_setup_opener_counts(text)
             if counts:
-                worst = max(counts, key=lambda h: counts[h])
-                if counts[worst] >= TEST_SETUP_REBUILD_MIN:
-                    rel = str(p.relative_to(root)).replace(os.sep, "/")
-                    offenders.append((counts[worst], rel, worst))
-    if not offenders:
-        return []
+                per_file[str(p.relative_to(root)).replace(os.sep, "/")] = counts
+
+    judged, malformed = test_setup_judgments(root)
+    # The verdict is per (file, setup), so a judged helper is dropped BEFORE the
+    # file's worst is chosen — otherwise clearing the loudest setup in a file
+    # would mute a second, unjudged rebuild hiding behind it.
+    offenders = []
+    for rel, counts in per_file.items():
+        left = {h: n for h, n in counts.items() if (rel, h) not in judged}
+        if not left:
+            continue
+        worst = max(left, key=lambda h: left[h])
+        if left[worst] >= TEST_SETUP_REBUILD_MIN:
+            offenders.append((left[worst], rel, worst))
     offenders.sort(reverse=True)
-    shown = ", ".join(f"{rel} ({name} opens {n} test bodies)"
-                      for n, rel, name in offenders[:5])
-    more = f" (+{len(offenders) - 5} more files)" if len(offenders) > 5 else ""
-    return [
-        "tests: test bodies rebuilding the same process-spawning setup per case — "
-        + shown + more +
-        " — expensive shared setup is built once per file and reused. Heuristic: "
-        "this counts a shape, it does not measure cost — a listed file may be "
-        "cheap, and a genuinely slow suite can pass unflagged. A file whose "
-        "subject IS the setup act (idempotency, first-run vs update parity, "
-        "cleanup) legitimately keeps per-case setup; deleting or weakening an "
-        "assertion to clear this line is the defect, not the repair"]
+    named_setup = {rel: name for _, rel, name in offenders}
+
+    warns = []
+    if offenders:
+        shown = ", ".join(f"{rel} ({name} opens {n} test bodies)"
+                          for n, rel, name in offenders[:5])
+        more = (f" (+{len(offenders) - 5} more files)"
+                if len(offenders) > 5 else "")
+        warns.append(
+            "tests: test bodies rebuilding the same process-spawning setup per case — "
+            + shown + more +
+            " — expensive shared setup is built once per file and reused. Heuristic: "
+            "this counts a shape, it does not measure cost — a listed file may be "
+            "cheap, and a genuinely slow suite can pass unflagged. A file whose "
+            "subject IS the setup act (idempotency, first-run vs update parity, "
+            "cleanup) legitimately keeps per-case setup; deleting or weakening an "
+            "assertion to clear this line is the defect, not the repair. If the "
+            "per-case build is necessary rather than wasteful — a fresh resource "
+            "each case then MUTATES, which no static reader can see — judge it once "
+            f"and record the verdict in .prdt/config.json {TEST_SETUP_RECORD_KEY} "
+            "as {file, setup, reason}; this line then goes silent for that setup, "
+            "and doctor reports the entry if it later stops matching anything")
+
+    # A judgment answers ONE accusation. When it stops answering one, say so —
+    # an entry that quietly suppresses nothing is the rot `features.non_features`
+    # W3 exists to catch, and it lands here for the same reason.
+    for rel, name in sorted(judged):
+        counts = per_file.get(rel, {})
+        if counts.get(name, 0) >= TEST_SETUP_REBUILD_MIN:
+            continue                       # still answering a live accusation
+        if not (Path(root) / rel).is_file():
+            why = "no file there any more"
+        elif name in counts:
+            why = (f"'{name}' opens {counts[name]} test bodies there, under the "
+                   f"{TEST_SETUP_REBUILD_MIN} this check reports")
+        else:
+            why = f"the check no longer counts a setup called '{name}' there"
+            if rel in named_setup:
+                why += f" — it names '{named_setup[rel]}' instead, still unjudged"
+        warns.append(f"tests: config {TEST_SETUP_RECORD_KEY} entry '{rel}' "
+                     f"({name}) is stale — {why}; the recorded verdict answers "
+                     f"nothing, drop it")
+    for why in malformed:
+        warns.append(f"tests: config {TEST_SETUP_RECORD_KEY} {why}")
+    return warns
 
 
 # ── Artifacts — version buckets + derived manifest (T-512) ────────────────────
