@@ -3551,6 +3551,206 @@ def hook_mirror_drift_warnings():
     return warns
 
 
+# ── test setup rebuild shape (T-537) ──────────────────────────────────────────
+# T-536 measured the defect this reports: dozens of full-installer runs spread
+# across 13 test files with no shared setup anywhere — 558s of real work packed
+# into a 45s parallel wall clock, nondeterministic timeouts. Every individual
+# diff had looked fine; the cost only ever existed as accumulation, and
+# accumulation is invisible in any single diff. That is why this lives in
+# doctor (a standing instrument) and not only in the habit/review layers.
+#
+# Time-based checking was REJECTED, not deferred (T-537 PO 실측): doctor is a
+# ~0.6s static reader, measuring a suite means running it (minutes), so there
+# is no cheap home for a runtime signal here. What is countable statically is
+# a SHAPE: many test bodies in one file each OPENING with a call to the same
+# in-file helper whose body spawns a process — the classic "every case
+# rebuilds the setup from scratch" silhouette. The opening-statement position
+# is the discriminator that keeps subject-runners out (a test that spawns the
+# CLI under test mid-body, after arranging state, is asserting on that run,
+# not rebuilding setup).
+#
+# SAME setup is half the rule and needs its own discriminator (T-537 round 2):
+# openers whose call VARIES across the file — `runInstall(undefined)` beside
+# `runInstall({}, ['--no-statusline'])` — are not one shared fixture rebuilt N
+# times, they are the subject arranged in the argument list, and no hoist can
+# merge them. So a helper is counted only when every opener calls it with the
+# same argument text. Argument PRESENCE was the other candidate and is wrong:
+# the commonest genuine offender is `install(tmpdir())` per case, which
+# presence would blind the check to entirely.
+#
+# Honest limits, stated in the warning itself because a warning that
+# overstates itself is its own defect class:
+#   - it counts a shape, it does not measure cost — a trip is "worth a look",
+#     never proof of slowness, and a genuinely slow suite can pass unflagged
+#     (a per-case rebuild routed through an imported helper, a mid-body
+#     rebuild, or a multi-line test signature all slip past this silhouette);
+#   - a file whose SUBJECT is the setup act — idempotency on re-run,
+#     first-run vs update parity, cleanup — legitimately keeps per-case
+#     setup, and this count cannot see that distinction. Deleting or
+#     weakening an assertion to clear the line is the defect a speed signal
+#     invites, so the warning forbids it in as many words;
+#   - the EMIT-CLASS: a test that GENERATES test code carries `execFileSync`
+#     as string data and reads identically to one that calls it. Single-line
+#     literals are blanked before the reader looks (`_strip_literals`), so the
+#     common generator is safe; a template that opens on one line and closes
+#     on another still reads as code, and that residue is left standing rather
+#     than met with a brace-counting parser inside a 0.6s static reader;
+#   - a helper that mints a FRESH per-case resource the body then mutates
+#     (`const sb = makeSandbox(SEED)`, `const remote = makeBareRemote()`) is
+#     counted like a rebuild, because its call text is identical every time.
+#     Nothing statically separates "same fixture, hoistable" from "a new one
+#     per case by necessity" — measured on this repo, this is the whole
+#     residue the round-2 discriminators leave behind.
+
+TEST_SETUP_SPAWN_RE = re.compile(
+    r"execSync|execFileSync|spawnSync|child_process|"
+    r"subprocess\.(?:run|Popen|call|check_\w+)|os\.system|exec\.Command")
+TEST_SETUP_DEF_RE = re.compile(
+    r"^\s*(?:(?:export\s+)?(?:async\s+)?function\s+(\w+)"
+    r"|(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\("
+    r"|def\s+(\w+)\s*\()", re.M)
+TEST_SETUP_OPENER_RE = re.compile(
+    r"^\s*(?:it|test)(?:\.\w+(?:\([^)]*\))?)*\s*\(|^\s*def test_\w+")
+TEST_SETUP_LITERAL_RE = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"|`[^`\n]*`")
+TEST_SETUP_COMMENT_RE = re.compile(r"^\s*(?:#|//|/\*|\*)")
+TEST_SETUP_SKIP_DIRS = {"node_modules", "dist", "build", "out", "vendor",
+                        "venv", "target", "coverage"}
+TEST_SETUP_BODY_MAX = 40    # lines of helper body the reader will look through
+TEST_SETUP_REBUILD_MIN = 5  # bodies opening with the same spawn-backed helper;
+                            # calibrated on this repo's own history: the T-536
+                            # offenders sat at 3-5 per file. NOT a false-
+                            # positive shield — measured 2026-09-02, this
+                            # repo's legitimate subject-runner shapes sit at
+                            # 5, 5, 5 and 9, so no threshold separates them
+                            # from a real offender; the discriminators do
+                            # (opener position, then same-argument). 5 is the
+                            # recurrence floor only: below it, "many bodies"
+                            # is not yet a shape worth a line.
+
+
+def _is_test_filename(fn):
+    if re.search(r"\.(?:test|spec)\.[^.]+$", fn):
+        return True
+    return (fn.startswith("test_") and fn.endswith(".py")) or \
+        fn.endswith(("_test.py", "_test.go"))
+
+
+def _strip_literals(s):
+    """Single-line string literals blanked out, so emitted text is not read as
+    a call (the emit-class). A literal that opens and closes on the same line
+    is covered; a multi-line template is not — declared above."""
+    return TEST_SETUP_LITERAL_RE.sub("", s)
+
+
+def _call_args(line, name):
+    """Argument text of `name(...)` as written on one line, whitespace
+    collapsed. A call whose signature continues onto the next line yields the
+    fragment this line holds — still enough to tell two openers apart."""
+    m = re.search(r"\b" + re.escape(name) + r"\s*\(", line)
+    if not m:
+        return ""
+    depth, out = 1, []
+    for ch in line[m.end():]:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                break
+        out.append(ch)
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+def test_setup_opener_counts(text):
+    """{helper: how many test bodies OPEN with a call to it} for one test
+    file's source — the whole shape reader, kept apart from the walk so it can
+    be measured on a single file. A helper is in the map only if its body
+    spawns a process AND every opener calls it with the same argument text."""
+    lines = text.splitlines()
+    defs = [(next(g for g in m.groups() if g), text[:m.start()].count("\n"))
+            for m in TEST_SETUP_DEF_RE.finditer(text)]
+    openers = [i for i, ln in enumerate(lines) if TEST_SETUP_OPENER_RE.match(ln)]
+    spawn_helpers = set()
+    for k, (name, start) in enumerate(defs):
+        # Body window: next def, next test opener, or TEST_SETUP_BODY_MAX lines
+        # — whichever comes first. The opener cut is the round-2 fix: with only
+        # the next-def cut, a helper's window ran through every test body that
+        # followed it (the commonest layout), and one spawn anywhere in that
+        # stretch marked an fs-only helper spawn-backed — observed on
+        # packages/gui/electron/prdt-bootstrap.test.ts, where a mkdir/write
+        # helper wore an execFileSync from a test 190 lines below it.
+        ends = [start + TEST_SETUP_BODY_MAX, len(lines)]
+        if k + 1 < len(defs):
+            ends.append(defs[k + 1][1])
+        nxt = next((o for o in openers if o > start), None)
+        if nxt is not None:
+            ends.append(nxt)
+        if TEST_SETUP_SPAWN_RE.search(_strip_literals("\n".join(lines[start:min(ends)]))):
+            spawn_helpers.add(name)
+    counts, argsets = {}, {}
+    for i in openers:
+        first = next((lines[j] for j in range(i + 1, min(i + 4, len(lines)))
+                      if lines[j].strip() and not TEST_SETUP_COMMENT_RE.match(lines[j])), "")
+        code = _strip_literals(first)
+        for h in sorted(spawn_helpers):          # sorted: one call site, one verdict
+            if re.search(r"\b" + re.escape(h) + r"\(", code):
+                key, args = h, _call_args(first, h)
+                break
+        else:
+            m = TEST_SETUP_SPAWN_RE.search(code)
+            if not m:
+                continue
+            key, args = "<direct spawn>", _call_args(first, m.group(0))
+        counts[key] = counts.get(key, 0) + 1
+        argsets.setdefault(key, set()).add(args)
+    # SAME setup, per the rule: a call that varies across the openers is the
+    # subject arranged per case, not one fixture rebuilt — drop it entirely.
+    return {h: n for h, n in counts.items() if len(argsets[h]) == 1}
+
+
+def test_setup_rebuild_warnings(root):
+    """One warning line when any test file has TEST_SETUP_REBUILD_MIN or more
+    test bodies opening with the SAME call — same in-file process-spawning
+    helper (or direct spawn), same argument text. Static file reads only,
+    ~40ms over a repo of this size — never runs a suite,
+    never times anything; skip-list pruning keeps the walk off node_modules
+    and friends so the doctor budget holds. See the block comment above for
+    what this can and cannot see."""
+    offenders = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if d not in TEST_SETUP_SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if not _is_test_filename(fn):
+                continue
+            p = Path(dirpath) / fn
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            counts = test_setup_opener_counts(text)
+            if counts:
+                worst = max(counts, key=lambda h: counts[h])
+                if counts[worst] >= TEST_SETUP_REBUILD_MIN:
+                    rel = str(p.relative_to(root)).replace(os.sep, "/")
+                    offenders.append((counts[worst], rel, worst))
+    if not offenders:
+        return []
+    offenders.sort(reverse=True)
+    shown = ", ".join(f"{rel} ({name} opens {n} test bodies)"
+                      for n, rel, name in offenders[:5])
+    more = f" (+{len(offenders) - 5} more files)" if len(offenders) > 5 else ""
+    return [
+        "tests: test bodies rebuilding the same process-spawning setup per case — "
+        + shown + more +
+        " — expensive shared setup is built once per file and reused. Heuristic: "
+        "this counts a shape, it does not measure cost — a listed file may be "
+        "cheap, and a genuinely slow suite can pass unflagged. A file whose "
+        "subject IS the setup act (idempotency, first-run vs update parity, "
+        "cleanup) legitimately keeps per-case setup; deleting or weakening an "
+        "assertion to clear this line is the defect, not the repair"]
+
+
 # ── Artifacts — version buckets + derived manifest (T-512) ────────────────────
 # Layout: docs/artifacts/<version>/[archive/]<slug>.<ext> beside a manifest.json
 # the CLI writes. The manifest is a derived index, so `prdt artifacts sync`
@@ -4021,6 +4221,12 @@ def cmd_doctor(_args):
     # T3 is a span ACROSS version dirs, so it is computed over the rows T-547 §2
     # names, never over the id-keyed map (T-549).
     warns += feature_seam_warnings(root, trows)
+
+    # accumulated per-case rebuilds of an expensive shared test setup (T-537).
+    # Static count of a SHAPE, never a timing run — the habit and the code-review
+    # check cover the write and the diff; this layer covers the only view neither
+    # has, the accumulation across files and rounds that no single diff shows.
+    warns += test_setup_rebuild_warnings(root)
 
     # wiki — project store, then the machine store (§8b) it now searches alongside
     warns += wiki_lint(root)
