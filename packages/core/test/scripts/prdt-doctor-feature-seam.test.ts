@@ -280,16 +280,30 @@ describe.skipIf(!CAN_RUN)('T3 is computed over ROWS, not over an id-keyed map (T
     expect(w).toHaveLength(1)
   })
 
-  test('the duplicated id itself is NOT reported here — a separate question', () => {
-    // Contracts claims ticket ids are globally unique. Whether doctor should say
-    // so is a PO decision outside this fix; what must not happen is this slice
-    // smuggling in the answer. The seam speaks only about `feature:`.
+  test('the SEAM does not invent the duplicate warning — the dedicated check owns it (T-551)', () => {
+    // T-549 wrote this as "nothing in the whole run says `duplicate`", because at
+    // the time nothing was supposed to, and a blanket assertion was the cheapest
+    // way to stop this slice smuggling the answer in next to its own fix. T-551 is
+    // the sanctioned opening of that lock, and it narrows the pin to the thing the
+    // pin was actually protecting: the seam's subject is `feature:` and nothing
+    // else, so the seam's OWN lines must still never mention a duplicate id.
+    //
+    // The two are kept distinct by channel, not by wording: this check filters the
+    // `⚠ feature:` lines and requires silence there, then requires the warning to
+    // exist exactly once on the `⚠ ticket:` channel that duplicate_ticket_id_warnings
+    // owns. A future seam check that grew a duplicate-id line would satisfy neither
+    // half — it would break the silence here AND double the count there.
     ticket({ id: 'T-200', version: 'v1.1', feature: 'real-mech', status: 'done' })
     ticket({ id: 'T-200', version: 'v1.2', feature: 'real-mech', status: 'done' })
     const out = execFileSync('python3', [PRDT_CLI, 'doctor'],
       { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
-    expect(out).not.toMatch(/duplicate/i)
-    expect(out).toContain('(non-blocking)')   // still exit 0 with the seam firing
+    const lines = out.split('\n').filter(l => l.startsWith('⚠ '))
+    expect(lines.filter(l => l.startsWith('⚠ feature:') && /duplicate/i.test(l))).toEqual([])
+    expect(lines.filter(l => /^⚠ ticket: duplicate id T-200 /.test(l))).toHaveLength(1)
+    // and the seam still says its own piece in the same run, unchanged by T-551
+    expect(lines.filter(l => l.startsWith('⚠ feature:') && l.includes('promotion candidate')))
+      .toHaveLength(1)
+    expect(out).toContain('(non-blocking)')   // still exit 0 with both firing
   })
 
   test('the collapse does not silence the negative set either — a 1-dir dup stays silent', () => {

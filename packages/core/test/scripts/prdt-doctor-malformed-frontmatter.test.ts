@@ -321,16 +321,38 @@ print(json.dumps([[mod.index_scalar(v)[0], mod.index_scalar(v)[1]]
  *   No cell bound into an index write may contain the stringification of a
  *   non-string.
  *
- * So this sweeps the COLUMNS of every table the two index writes touch, read back
- * from PRAGMA table_info rather than from any list this file or the script keeps.
- * A new column fed by a `str()`-backed normalizer is swept the day it is added,
- * with nobody remembering to extend a fixture.
+ * So this READS BACK the columns of every table the two index writes touch from
+ * PRAGMA table_info, never from a list this file keeps, and asserts the property
+ * over all of them.
+ *
+ * WHAT THAT DOES AND DOES NOT BUY (corrected on T-551 after T-550's delta QA
+ * measured the earlier wording as an overclaim — it said a new column fed by a
+ * `str()`-backed normalizer was swept "the day it is added, with nobody
+ * remembering to extend a fixture", and reproduced 0/8 against that on a scratch
+ * copy while the `assignee` regression this pin exists for was caught 8/8):
+ *
+ *   · Column DISCOVERY is genuinely dynamic. A new column is inspected the day it
+ *     is added, and a coerced cell in it fails this test — PROVIDED the value that
+ *     reaches it came from an injected key.
+ *   · Value INJECTION is not. The harness plants its shapes under KEYS below, so
+ *     the sweep can only catch a column downstream of one of those keys. A brand-new
+ *     frontmatter-sourced column fed by a key that is NOT in KEYS, carrying its own
+ *     coercion bug, is NOT caught: it is inspected, holds no injected value, and
+ *     passes.
+ *   · KEYS is derived from the script's own TICKET_INDEX_FIELDS / WIKI_INDEX_FIELDS
+ *     rather than restated, so a new key added to those constants IS injected
+ *     automatically. The residual gap is the key that bypasses them — read straight
+ *     off `fm` by a new write path — which is precisely the shape `assignee` had
+ *     before T-556, and which no in-test list can close. Closing it needs the guard
+ *     to be the only door into a cell, which is what the invariant above states and
+ *     what a reviewer, not this file, enforces.
  *
  * Out of scope by construction, and deliberately not injected below: `deps` and
  * `links`, the declared json-encoder channel (unreachable with today's parser,
  * recorded on T-554). Filesystem-derived cells (`version`, `path`, `name`) and the
- * `id` filename fallback are swept like everything else — they simply never carry
- * the injected value, which is the point of checking rather than exempting them.
+ * `id` filename fallback are inspected like everything else — they simply never
+ * carry the injected value, which is the point of checking rather than exempting
+ * them.
  */
 const INVARIANT_HARNESS = String.raw`
 import datetime, json, pathlib, sqlite3, sys
@@ -353,9 +375,12 @@ SHAPES = {
     'nested':  [['a'], {'b': 'c'}],
     'bytes':   b'developer',
 }
-# Every frontmatter key the two write paths read, minus deps/links (T-554 channel).
-KEYS = ['id', 'slug', 'type', 'status', 'assignee', 'feature', 'created', 'closed',
-        'title', 'version']
+# Every frontmatter key the two write paths route through index_scalar, read off
+# the script's own constants (T-551) so a key added there is injected without
+# anyone remembering this file. deps/links are absent from those tuples by design
+# — the T-554 json channel. See the doc comment for what this does NOT reach: a
+# key that bypasses the constants entirely.
+KEYS = list(dict.fromkeys(list(mod.TICKET_INDEX_FIELDS) + list(mod.WIKI_INDEX_FIELDS)))
 TABLES = ['tickets', 'wiki_pages', 'wiki_fts']
 
 real = mod.parse_frontmatter
@@ -405,6 +430,26 @@ describe.skipIf(!CAN_RUN)('invariant pin — no bound cell holds a stringified n
     }
     expect(seen.has('tickets.assignee')).toBe(true)
     expect(new Set(cells.map(c => c.shape)).size).toBe(8)
+  })
+
+  test('the derived KEYS actually cover the guarded fields — the derive is not a hole', () => {
+    // deriving the injection list buys nothing if the constants it reads can shrink
+    // unnoticed, so the set is pinned here ONCE, deliberately, instead of being
+    // restated inside the harness where it would silently do the injecting too
+    const kp = path.join(sandbox, 'keys.py')
+    fs.writeFileSync(kp, String.raw`
+import json, sys
+from importlib.machinery import SourceFileLoader
+import importlib.util
+loader = SourceFileLoader('prdt_uut', sys.argv[1])
+spec = importlib.util.spec_from_loader('prdt_uut', loader)
+mod = importlib.util.module_from_spec(spec); loader.exec_module(mod)
+print(json.dumps(list(dict.fromkeys(list(mod.TICKET_INDEX_FIELDS) + list(mod.WIKI_INDEX_FIELDS)))))
+`)
+    const keys: string[] = JSON.parse(
+      execFileSync('python3', [kp, PRDT_CLI], { encoding: 'utf8' }))
+    expect(keys).toEqual(['id', 'slug', 'type', 'status', 'assignee', 'feature',
+      'created', 'closed', 'title', 'version'])
   })
 
   test('the assignee column specifically: NULL for every non-string shape', () => {
