@@ -24,7 +24,16 @@ LEGACY_ASSIGNEE_RE = re.compile(r"^pdtl?-")
 
 
 def norm_assignee(v):
-    return LEGACY_ASSIGNEE_RE.sub("", str(v or "")) or None
+    """Strip the pre-rename prefix off a STRING assignee; every other shape is None.
+
+    Deliberately NOT `str(v or "")` (T-556). That coercion turned `assignee:
+    [developer]` into the cell "['developer']" — no crash, no warning, and
+    `prdt tickets --assignee developer` silently missing the row. A stringified
+    non-string in the index is the same quiet lie index_scalar exists to refuse;
+    this normalizer runs AFTER that guard on the index path and must not undo it."""
+    if not isinstance(v, str):
+        return None
+    return LEGACY_ASSIGNEE_RE.sub("", v) or None
 
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
@@ -225,20 +234,81 @@ def derive_all_slices(root, con):
     return violations, pages, mpages
 
 
+def index_scalar(value):
+    """(text, shape) for ONE frontmatter value on its way into the derived index.
+
+    md is the SoT and it is hand-written, so any field can hold whatever shape the
+    frontmatter parser yields — `feature: [gui]` is a list today, and a parser that
+    grows mappings/numbers/bools/dates would yield those. sqlite3 binds only
+    str/bytes/int/float/None, and it raises ProgrammingError — NOT IntegrityError —
+    when it refuses, which is how one ticket used to kill the whole `prdt doctor`
+    run before its first check (T-550).
+
+    The rule is by CLASS, never by enumerating shapes: a str (or an absent value)
+    passes through byte-identical; EVERY other shape is unusable, so the index cell
+    becomes NULL and `shape` names the type for the caller's warning. Nothing is
+    quietly coerced into a plausible string: `['gui']` sitting in the feature column
+    would be a lie the seam checks then group by, and a NULL that a named warning
+    accounts for is the honest derived value. Special-casing `list` here is exactly
+    the fix T-550 rejects — the next shape would crash the same way."""
+    if value is None or isinstance(value, str):
+        return value, None
+    return None, type(value).__name__
+
+
+def _index_fields(fm, keys, problems):
+    """Read `keys` off frontmatter through index_scalar, appending one problem line
+    per unusable value. Shared by both row builders so the two write paths into
+    index.db answer a bad shape identically."""
+    out = {}
+    for k in keys:
+        text, shape = index_scalar(fm.get(k))
+        if shape:
+            problems.append(f"{k}: {shape} value is not a string — dropped from the index "
+                            f"(frontmatter values are plain strings; lists belong in `deps`/`links`)")
+        out[k] = text
+    return out
+
+
+# The invariant, not a field list (T-556): NO cell bound into an index write may
+# hold the stringification of a non-string. A frontmatter value earns a cell only
+# by passing index_scalar; the sole other channels are the `deps`/`links` json
+# encoder and filesystem-derived values (`version`, `path`, `name`, and the `id`
+# filename fallback). Anything else — a `str()`-backed normalizer, an f-string, a
+# `or ""` default — reintroduces the failure this round exists to remove, because
+# it survives every "doctor didn't crash" test while the index quietly lies.
+#
+# These tuples are the frontmatter keys each write path routes through that guard.
+# `assignee` was the miss: T-550 argued it was safe because norm_assignee's `str()`
+# prevents the CRASH, which was true and was not the property — it produced
+# "['developer']". It now goes through index_scalar like the rest, and
+# norm_assignee only trims the legacy prefix off what comes out.
+TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "created", "closed")
+WIKI_INDEX_FIELDS = ("title", "type", "status", "version")
+
+
 def scan_tickets(root):
-    """Yield (dict, path, problems[]) per ticket md. Enum violations reported, row still listed."""
+    """Yield (dict, path, problems[]) per ticket md. Enum violations reported, row still listed.
+
+    Scalar fields are str-or-None by the time they leave here (T-550): the index
+    write, and every check reading these rows, gets one shape contract instead of
+    whatever the md happened to hold."""
     tdir = root / "docs" / "tickets"
     if not tdir.is_dir():
         return
     for p in sorted(tdir.rglob("T-*.md")):
         fm, _ = parse_frontmatter(p)
         version = p.parent.name
-        row = {"id": fm.get("id") or p.stem, "slug": fm.get("slug"), "type": fm.get("type"),
-               "status": fm.get("status"), "assignee": norm_assignee(fm.get("assignee")),
-               "feature": fm.get("feature"), "deps": fm.get("deps") or [],
-               "created": fm.get("created"), "closed": fm.get("closed"),
-               "version": version, "path": str(p.relative_to(root))}
         problems = []
+        f = _index_fields(fm, TICKET_INDEX_FIELDS, problems)
+        # `id` keys the row, so it falls back to the filename the way it always has
+        # — the dropped shape is already reported above, and a NULL primary key
+        # would cost the row its identity on top of its value.
+        row = {"id": f["id"] or p.stem, "slug": f["slug"], "type": f["type"],
+               "status": f["status"], "assignee": norm_assignee(f["assignee"]),
+               "feature": f["feature"], "deps": fm.get("deps") or [],
+               "created": f["created"], "closed": f["closed"],
+               "version": version, "path": str(p.relative_to(root))}
         if row["type"] not in TICKET_TYPES:
             problems.append(f"type '{row['type']}' not in {'/'.join(TICKET_TYPES)}")
         if row["status"] not in TICKET_STATUS:
@@ -260,6 +330,15 @@ def reindex_tickets(root, con):
                          row["version"], row["path"]))
         except sqlite3.IntegrityError as e:
             violations.append(f"{row['path']}: CHECK reject ({e})")
+        except sqlite3.Error as e:
+            # Backstop, added with the source normalization above (T-550). A CHECK
+            # reject was the only case caught here, so a ProgrammingError from an
+            # unbindable value escaped and took every doctor check with it — this
+            # write runs BEFORE all of them. Widened to the whole sqlite3.Error
+            # family and keyed to the file, because a named warning is always a
+            # better outcome for a non-blocking instrument than a traceback that
+            # switches the instrument off.
+            violations.append(f"{row['path']}: index write rejected ({type(e).__name__}: {e})")
     con.commit()
     return violations
 
@@ -286,12 +365,17 @@ def wiki_store_pages(wdir, relative_to=None, prefix=""):
             continue
         fm, body = parse_frontmatter(p)
         links = set(fm.get("links") or []) | set(WIKILINK.findall(body))
-        pages.append({"name": prefix + p.stem, "title": fm.get("title") or p.stem,
-                      "type": fm.get("type") or p.stem.split("--")[0],
-                      "status": fm.get("status") or "live",
-                      "version": fm.get("version"), "links": sorted(links),
+        # Same index-write contract as scan_tickets (T-550): this store feeds the
+        # OTHER write into index.db, on the same rebuild_index the doctor run opens
+        # with, and `title: [a, b]` used to kill the run identically.
+        problems = []
+        f = _index_fields(fm, WIKI_INDEX_FIELDS, problems)
+        pages.append({"name": prefix + p.stem, "title": f["title"] or p.stem,
+                      "type": f["type"] or p.stem.split("--")[0],
+                      "status": f["status"] or "live",
+                      "version": f["version"], "links": sorted(links),
                       "path": str(p.relative_to(relative_to)) if relative_to else str(p),
-                      "body": body})
+                      "body": body, "problems": problems})
     return pages
 
 
@@ -1498,6 +1582,9 @@ def cmd_wiki(args):
 def wiki_lint(root):
     pages = scan_wiki(root)
     warns = []
+    # unusable frontmatter shapes, named per file (T-550) — reported, never fatal
+    for pg in pages:
+        warns += [f"wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
     names = {p["name"] for p in pages}
     inbound = set()
     for pg in pages:
@@ -1534,6 +1621,8 @@ def machine_wiki_warnings():
         return []
     pages = scan_machine_wiki()
     warns = []
+    for pg in pages:
+        warns += [f"machine wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
     if len(pages) > CAPS["machine_wiki_pages"]:
         warns.append(f"machine wiki: {len(pages)} pages (budget ~{CAPS['machine_wiki_pages']}) — "
                      f"merge, split, or move project-scope knowledge back to docs/wiki/")
