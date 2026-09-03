@@ -107,14 +107,15 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     const out = doctor()
     expect(out).not.toContain('meta:')
     // "silent" here has always meant "no meta: line", and that is what this
-    // asserts. It is no longer the same as `doctor: clean`: T-564 made the
-    // promotion check state what it MEASURED, so any repo with no local PR
-    // evidence — this fixture included — carries exactly one line saying the
-    // requirement was NOT FOUND (scripts/prdt, promotion_warnings docstring).
-    // That line is the intended contract, so the healthy shape for this fixture
-    // is "the promotion line and nothing else".
-    expect(out).toContain('git: promotion path — no local evidence')
-    expect(out).toContain('doctor: 1 warning(s)')
+    // asserts. T-564 made the promotion check state what it MEASURED, so this
+    // fixture (no local PR evidence anywhere) carries that statement — but
+    // T-560 moved WHERE it is said: no-evidence is the third state of the
+    // discipline↔execution verdict line, not a standing ⚠ nobody can act on.
+    // So the fixture is back to zero warnings, and the measurement is still
+    // reported — now where a reader looks for a judgment.
+    expect(out).not.toMatch(/^⚠.*promotion path/m)
+    expect(out).toMatch(/\bno-evidence=[1-9]/)
+    expect(out).toContain('doctor: clean')
     fs.rmSync(bare, { recursive: true, force: true })
   })
 

@@ -4604,14 +4604,21 @@ def doctor_verdict_lines(records):
              f"[verdict={verdict} violations={violations} ran={len(ran)} "
              f"skipped={len(skipped)} no-evidence={len(unseen)} "
              f"unclassified={len(unclassified)}]"]
+    # Every detail line stays on the `doctor:` channel rather than becoming a
+    # ⚠ finding. doctor has exactly two line kinds and one severity — a `⚠`
+    # finding and doctor's own report — and two fixtures assert that invariant
+    # directly. These lines are report, not findings: nothing here is a defect
+    # anyone can repair, which is the whole reason no-evidence moved off the
+    # warning list in the first place.
     for r in skipped:
-        lines.append(f"    could not look · {r['name']}: {r['reason']}")
+        lines.append(f"doctor:    could not look · {r['name']}: {r['reason']}")
     for r in unseen:
-        lines.append(f"    no evidence · {r['name']}: {r['reason']}")
+        lines.append(f"doctor:    no evidence · {r['name']}: {r['reason']}")
     for r in unclassified:
-        lines.append(f"    unclassified · {r['name']}: registered with family {r.get('family')!r}, "
-                     f"which is not one of {' / '.join(DOCTOR_FAMILIES)} — its result is counted "
-                     "in NO family; declare one where the check is registered in cmd_doctor")
+        lines.append(f"doctor:    unclassified · {r['name']}: registered with family "
+                     f"{r.get('family')!r}, which is not one of {' / '.join(DOCTOR_FAMILIES)} — "
+                     "its result is counted in NO family; declare one where the check is "
+                     "registered in cmd_doctor")
     return lines
 
 
