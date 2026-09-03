@@ -2734,8 +2734,8 @@ def _render_release_box(version, note):
 def maybe_prompt_update(cmd):
     """T-393 entry — called from main() before dispatch. Silent on every degrade
     path (non-tty / CI / gum·fzf 부재 / offline / timeout / broken install)."""
-    if cmd == "update":                                 # never self-check the updater
-        return
+    if cmd in ("update", "preflight"):                  # never self-check the updater;
+        return                                          # `preflight` emits machine-read JSON on stdout
     # fast degrade: no interactive prompt is possible in these environments
     if os.environ.get("CI") or not (sys.stdin.isatty() and sys.stdout.isatty()):
         return
@@ -4751,6 +4751,351 @@ def cmd_migrate(args):
              직전에 하던 작업을 기억하면 한 줄 덧붙이면 더 빨라요.)""")
 
 
+# ── model availability preflight (T-525) ──────────────────────────────────────
+# A dispatch that dies on an account quota costs the whole worker; a headless
+# one-token probe costs ~7s wall and ~$0.003–$0.065 depending on the model
+# probed (haiku ~$0.003, sonnet ~$0.012, fable ~$0.065 — measured 2026-09-03, see
+# `prdt preflight`'s own `probe` block). This runs that probe BEFORE the
+# dispatch and returns a routing verdict. It takes the model as an argument:
+# the window closes on any model, and long opus or sonnet work dies at the same
+# point a fable dispatch does.
+#
+# THREE states, never two. `available` and `unavailable` are verdicts;
+# `inconclusive` is the third and it NEVER moves the tier. A canary that cannot
+# tell is worth exactly as much as no canary, so routing continues at the model
+# that was asked for and the PO is told the check did not answer. The failure
+# this direction is chosen against is a FALSE UNAVAILABLE — a probe reporting a
+# limit that does not exist would strand every floor dispatch on the fallback
+# tier, silently, which is the precise loss T-525 records the PO making by hand.
+#
+# NOT READABLE, DO NOT BUILD ON IT: the remaining window and the burn rate.
+# T-525 documents the exhaustive search (`/usage` is interactive-TUI only, no
+# CLI usage subcommand, no rate-limit cache under `~/.claude/`). This command
+# reports availability and nothing else.
+#
+# REUSE CHECK (T-525 acceptance): the call governor
+# (`$PRDT_HOME/run/call-governor/`) does NOT cover this and is not reused as a
+# mechanism. It counts API turns inside an already-spawned dispatch and denies
+# at 60; it knows nothing about models or the account window, and it is a
+# matcher-less bash hook under a hard no-network / no-fork latency budget — the
+# exact opposite of a probe. What IS reused is its STATE CONVENTION:
+# `$PRDT_HOME/run/<feature>/`, machine-local, outside every repo and outside
+# install.sh's mirror `rm -rf`, with every session/key component shape-matched
+# to a path-safe alphabet before it touches a path.
+
+CANARY_SENTINEL = "OK"
+CANARY_PROMPT = f"Reply with exactly: {CANARY_SENTINEL}"
+CANARY_TIMEOUT_S = 60
+# Tier ladder — mirrors PO habit's model-fallback clause; `--fallback` overrides
+# it, and an unmapped model returns route null rather than inventing a tier.
+CANARY_FALLBACK = {"fable": "opus", "opus": "sonnet", "sonnet": "haiku"}
+LATCH_TTL_MIN = 30
+RE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RE_CANARY_SESSION = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+RE_SENTINEL_ONLY = re.compile(rf"^[\W_]*{CANARY_SENTINEL}[\W_]*$", re.I)
+
+# WORDING-INDEPENDENT LIMIT DETECTION. The message text is the WEAKEST of the
+# three signals and is never the only one consulted:
+#   ① transport — `api_error_status` 429 / a 429 exit. Carries no prose at all.
+#   ② envelope  — an error result (`is_error`, or a non-success `subtype`).
+#   ③ shape     — a quota NOUN co-occurring with an exhaustion/recovery MARKER,
+#                 or one of the few standalone tokens that cannot mean anything
+#                 else.
+# ③ exists because the observed limit reply arrives inside a SUCCESS envelope
+# with exit 0 (`You've reached your Fable 5 limit. Switch to another model to
+# continue.`) — ① and ② do not see it. It is a two-factor co-occurrence over a
+# narrow vocabulary rather than the current sentence, so a reworded, localized
+# or renumbered message still fires. Bare `usage` and bare `later` were
+# REJECTED from the vocabulary on purpose: they are the two tokens an innocent
+# reply is likeliest to carry, and every entry in these patterns can only ever
+# cause a false UNAVAILABLE, never a false available.
+# The standalone `429` token is guarded against the shape a CLI crash actually
+# produces: a stack-trace line:column reference (`cli.js:429:13`). A probe runs
+# exactly when the CLI is unstable, so a crash trace reaching this matcher is
+# not a hypothetical (T-536: it downgraded a healthy model and latched the
+# downgrade for 30 minutes off a line number). The guard excludes only a `429`
+# touching a digit, `:` or `.` on either side — the shape of a line:col ref or
+# a version/port number — and nothing else. That is a narrow fix on purpose:
+# a bare `429` sitting in ordinary prose (no digit/colon/dot neighbor) still
+# matches, same as today, because the alternative — requiring an HTTP-ish
+# neighbor word — trades a rare false UNAVAILABLE for the possibility of a
+# false AVAILABLE on a terse real transport signal, and every pattern in this
+# file is chosen to fail toward "unavailable", never away from it (see the
+# module comment above). `429 Too Many Requests` and bare transport 429s are
+# unaffected; only the file:line:col shape is excluded.
+LIMIT_STANDALONE_RE = re.compile(
+    r"(?<![:.\d])\b429\b(?![:.\d])|too\s+many\s+requests|rate[\s-]?limit(?:ed|ing)\b", re.I)
+LIMIT_NOUN_RE = re.compile(
+    r"\b(?:limits?|quotas?|rate[\s-]?limits?|allowances?)\b"
+    r"|usage\s+(?:limit|cap)|한도|사용량|할당량", re.I)
+LIMIT_MARKER_RE = re.compile(
+    r"\b(?:reach(?:ed|es)?|exceed(?:ed|s)?|exhaust(?:ed)?|out\s+of|resets?|"
+    r"resumes?|try\s+again|upgrade|switch\s+to\s+another\s+model|"
+    r"unavailable\s+until|no\s+longer\s+available)\b|소진|초과|재설정|다시\s*시도", re.I)
+
+
+# A real quota notice is one or two sentences. The cap applies ONLY where the
+# text is a model REPLY (③, the success-envelope path): a reply that rambles is
+# a model doing something else, not a window closing, and letting prose that
+# long reach the vocabulary is the widest false-unavailable surface there is.
+# Error text (② and the no-envelope path) is uncapped — a transport failure is
+# already a failure, and its dump can legitimately be long.
+CANARY_NOTICE_MAX = 400
+
+
+def limit_shaped(text, max_len=None):
+    """True when `text` reads as a quota-exhaustion notice — by shape, not wording."""
+    if not text:
+        return False
+    if max_len is not None and len(text) > max_len:
+        return False
+    if LIMIT_STANDALONE_RE.search(text):
+        return True
+    return bool(LIMIT_NOUN_RE.search(text) and LIMIT_MARKER_RE.search(text))
+
+
+def classify_canary(rc, out, err, timed_out=False, missing=False):
+    """(status, reason, probe) — the whole false-unavailable defense lives here.
+
+    Nothing reaches `unavailable` without a POSITIVE quota signal. Every other
+    way a probe can fail — timeout, missing binary, auth or network error,
+    unparseable output, a reply that is neither the sentinel nor limit-shaped —
+    lands on `inconclusive`, which does not move the routing tier."""
+    probe = {"ran": not missing}
+    if missing:
+        return "inconclusive", "probe-binary-missing", probe
+    if timed_out:
+        return "inconclusive", "probe-timeout", probe
+    text = (out or "").strip()
+    env = None
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                env = parsed
+        except ValueError:
+            env = None
+    if env is not None:
+        probe["cost_usd"] = env.get("total_cost_usd")
+        probe["api_ms"] = env.get("duration_ms")
+        probe["subtype"] = env.get("subtype")
+        usage = env.get("usage") if isinstance(env.get("usage"), dict) else {}
+        probe["tokens"] = {"input": usage.get("input_tokens"),
+                           "output": usage.get("output_tokens")}
+        reply = env.get("result") if isinstance(env.get("result"), str) else ""
+        # ① transport
+        if str(env.get("api_error_status") or "") == "429":
+            return "unavailable", "transport-429", probe
+        # ② envelope — an error result is only a LIMIT when it also reads as one;
+        # an auth or network error is an error, not a closed window.
+        errored = bool(env.get("is_error")) or (env.get("subtype") or "success") != "success"
+        if errored:
+            if limit_shaped(reply) or limit_shaped(err or ""):
+                return "unavailable", "error-envelope-limit-shape", probe
+            return "inconclusive", "probe-error-envelope", probe
+        # ③ shape — the observed case: exit 0, success envelope, limit prose.
+        if RE_SENTINEL_ONLY.match(reply.strip()):
+            return "available", "sentinel", probe
+        if limit_shaped(reply, max_len=CANARY_NOTICE_MAX):
+            return "unavailable", "success-envelope-limit-shape", probe
+        return "inconclusive", "unexpected-reply", probe
+    # No JSON envelope at all: the CLI failed before emitting one, or was run in
+    # plain-text mode. Same rule, applied to raw stdout+stderr.
+    raw = "\n".join(x for x in ((out or "").strip(), (err or "").strip()) if x)
+    probe["exit_code"] = rc
+    if RE_SENTINEL_ONLY.match((out or "").strip()):
+        return "available", "sentinel-plain", probe
+    if limit_shaped(raw):
+        return "unavailable", "plain-limit-shape", probe
+    return "inconclusive", "no-envelope", probe
+
+
+def _canary_age_s(iso):
+    """Age in SECONDS. `days_since` is whole days and cannot express a 30-minute
+    latch TTL; a truncating-to-0 comparison would make every latch immortal."""
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds()
+
+
+def _canary_latch_path(model):
+    """`$PRDT_HOME/run/preflight/<session>.<model>.json` — the governor's state
+    convention. `model` is RE_MODEL-validated and the session is shape-matched
+    here, so neither half can be a traversal."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    if not RE_CANARY_SESSION.match(sid):
+        sid = "nosession"
+    return prdt_home() / "run" / "preflight" / f"{sid}.{model}.json"
+
+
+def read_canary_latch(model, ttl_min):
+    """A live latch for THIS model, or None. Expired latches are removed on read
+    so a window that reopened is never masked by a stale file. A latch on one
+    model says nothing about any other — the filename carries the model."""
+    p = _canary_latch_path(model)
+    d = read_json(p)
+    if not isinstance(d, dict) or d.get("status") != "unavailable":
+        return None
+    age = _canary_age_s(d.get("at"))
+    if age is None:
+        return None
+    if age > ttl_min * 60:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        return None
+    return d
+
+
+def write_canary_latch(model, reason):
+    p = _canary_latch_path(model)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"model": model, "status": "unavailable",
+                               "reason": reason, "at": now_iso()}) + "\n",
+                   encoding="utf-8")
+    tmp.replace(p)
+    return p
+
+
+def clear_canary_latch(model):
+    p = _canary_latch_path(model)
+    try:
+        p.unlink()
+        return True
+    except OSError:
+        return False
+
+
+# SLIM PROBE — measured 2026-09-03 on sonnet, one probe each, same machine:
+#   bare `-p --model M --output-format json`      30,784 cache-create · $0.172 · 7.4s
+#   + strict-mcp-config, own --system-prompt      30,784 cache-create · $0.123 · 6.1s
+#   + --tools (empty: no built-in tools)          11,252 cache-create · $0.045 · 5.8s
+#   + --agents '{}' (no agent roster)              2,932 cache-create · $0.012 · 5.2s
+# The tool and agent rosters ARE the probe's cost; stripping both is what makes
+# a per-dispatch preflight defensible rather than assumed. None of it changes
+# what is being measured — the account window is scoped to the account and the
+# model, not to the prompt.
+CANARY_SLIM_ARGS = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+                    "--tools", "--agents", "{}",
+                    "--system-prompt", "Availability probe. Answer literally.",
+                    "--no-session-persistence"]
+# A renamed or dropped slimming flag makes the CLI exit on a usage error, which
+# classifies `inconclusive` — correct, but it would quietly turn the preflight
+# into a 6-second no-op forever. So an inconclusive first attempt that looks
+# like an option error retries BARE: costlier, still right, and self-healing
+# across CLI versions.
+RE_CLI_OPTION_ERROR = re.compile(
+    r"unknown\s+(?:option|argument)|unrecognized|error:\s*option|too\s+many\s+arguments"
+    r"|see\s+--help|usage:\s*claude", re.I)
+
+
+def _canary_once(exe, model, extra, timeout_s):
+    cmd = [exe, "-p", "--model", model, "--output-format", "json", *extra, CANARY_PROMPT]
+    t0 = datetime.now(timezone.utc)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        st, rs, pr = classify_canary(None, "", "", timed_out=True)
+    except (FileNotFoundError, PermissionError, OSError):
+        st, rs, pr = classify_canary(None, "", "", missing=True)
+        pr["wall_ms"] = 0
+        return st, rs, pr, ""
+    else:
+        st, rs, pr = classify_canary(r.returncode, r.stdout, r.stderr)
+        pr["wall_ms"] = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
+        return st, rs, pr, (r.stderr or "") + (r.stdout or "")
+    pr["wall_ms"] = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
+    return st, rs, pr, ""
+
+
+def run_canary(model, timeout_s):
+    """One headless probe. `PRDT_CANARY_BIN` redirects the executable — that is
+    how the tests drive a limited account without having one."""
+    exe = os.environ.get("PRDT_CANARY_BIN") or "claude"
+    status, reason, probe, raw = _canary_once(exe, model, CANARY_SLIM_ARGS, timeout_s)
+    if status == "inconclusive" and RE_CLI_OPTION_ERROR.search(raw or ""):
+        st2, rs2, pr2, _ = _canary_once(exe, model, [], timeout_s)
+        pr2["retried_bare"] = True
+        pr2["first_reason"] = reason
+        return st2, rs2, pr2
+    return status, reason, probe
+
+
+def cmd_preflight(args):
+    """Availability verdict for ONE model, as JSON on stdout. Always exit 0 when
+    a verdict was produced: the verdict is `status`, and a non-zero exit would
+    be indistinguishable from the tool itself breaking — which the caller would
+    then read as "unavailable", the one direction that must never be guessed."""
+    model = (args.model or "").strip()
+    if not RE_MODEL.match(model):
+        sys.exit("prdt preflight: model must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    fallback = args.fallback if args.fallback is not None else CANARY_FALLBACK.get(model)
+    if fallback is not None and not RE_MODEL.match(fallback):
+        sys.exit("prdt preflight: --fallback must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    ttl = args.latch_ttl
+
+    out = {"model": model, "fallback": fallback}
+    if args.clear:
+        out.update(status="cleared", reason="latch-cleared", route=model, downgraded=False,
+                   latch={"state": "cleared" if clear_canary_latch(model) else "none"},
+                   probe={"ran": False},
+                   note="Latch removed. The next preflight for this model probes fresh.")
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    latched = None if args.recheck else read_canary_latch(model, ttl)
+    if latched:
+        # Prescription 2: the latch answers, no second probe, zero cost. This is
+        # the branch that keeps ① from being run before every single dispatch.
+        out.update(status="unavailable", reason="latch",
+                   route=fallback, downgraded=True,
+                   latch={"state": "hit", "set_at": latched.get("at"),
+                          "set_reason": latched.get("reason"), "ttl_min": ttl},
+                   probe={"ran": False, "wall_ms": 0, "cost_usd": 0},
+                   note=(f"Session latch for `{model}` is live — routing to "
+                         f"`{fallback}` at the SAME effort without re-probing. "
+                         f"A dispatch that was itself quota-killed must re-check "
+                         f"with --recheck instead of trusting this."))
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    status, reason, probe = run_canary(model, args.timeout)
+    latch = {"state": "none", "ttl_min": ttl}
+    if status == "unavailable":
+        write_canary_latch(model, reason)
+        latch = {"state": "set", "ttl_min": ttl}
+        route, downgraded = fallback, True
+        note = (f"`{model}` is out of window. Route to `{fallback}` at the SAME "
+                f"effort and do NOT spawn the dispatch on `{model}`. This is an "
+                f"account-window fact, not evidence the model failed the task.")
+        if fallback is None:
+            note = (f"`{model}` is out of window and no fallback tier is mapped "
+                    f"— pass --fallback or choose the tier yourself.")
+    elif status == "available":
+        if args.recheck and clear_canary_latch(model):
+            latch = {"state": "cleared", "ttl_min": ttl}
+        route, downgraded = model, False
+        note = f"`{model}` answered the probe. Dispatch as routed."
+    else:
+        # The failure direction, stated in the payload so it cannot be misread:
+        # an inconclusive canary leaves the tier exactly where the menu put it.
+        route, downgraded = model, False
+        note = (f"The probe did not answer ({reason}) — this is NOT a limit. "
+                f"Routing is UNCHANGED at `{model}`; no latch was set. Dispatch "
+                f"as routed, or re-run the probe. Never downgrade a tier on an "
+                f"inconclusive check.")
+    out.update(status=status, reason=reason, route=route, downgraded=downgraded,
+               latch=latch, probe=probe, note=note)
+    print(json.dumps(out, ensure_ascii=False))
+
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
     sub = ap.add_subparsers(dest="cmd")
@@ -4802,6 +5147,21 @@ def main():
     p.add_argument("--yes", action="store_true", help="확인 프롬프트 없이 CLAUDE.md 이동 실행 (비대화형)")
     p.add_argument("--archive", action="store_true", help="CLAUDE.md를 wiki 대신 docs/archive로 이관 (죽은 내용)")
     p.set_defaults(fn=cmd_migrate)
+    p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
+                                         "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
+                                         "— JSON verdict on stdout (available | unavailable | inconclusive)")
+    p.add_argument("model", help="model to probe (fable · opus · sonnet · haiku · a full model id)")
+    p.add_argument("--fallback", help="tier to route to when the window is closed "
+                                      "(default: PO habit's ladder — fable→opus, opus→sonnet, sonnet→haiku)")
+    p.add_argument("--recheck", action="store_true",
+                   help="ignore a live latch and probe fresh — the answer to a dispatch that was "
+                        "itself quota-killed; an available result clears the latch and routes back")
+    p.add_argument("--clear", action="store_true", help="drop this model's session latch, probe nothing")
+    p.add_argument("--timeout", type=int, default=CANARY_TIMEOUT_S, metavar="S",
+                   help=f"probe timeout in seconds (default {CANARY_TIMEOUT_S}); a timeout is inconclusive, never a limit")
+    p.add_argument("--latch-ttl", type=int, default=LATCH_TTL_MIN, metavar="MIN",
+                   help=f"minutes a limit latch stays live (default {LATCH_TTL_MIN})")
+    p.set_defaults(fn=cmd_preflight)
     args = ap.parse_args()
     maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
     if not args.cmd:

@@ -74,6 +74,18 @@ elif mode == "optionerror":
           "usage":{"input_tokens":2,"output_tokens":4},"result":"OK"})
 elif mode == "hang":
     time.sleep(30)
+elif mode == "crash":
+    sys.stderr.write(
+        "TypeError: Cannot read properties of undefined (reading 'foo')\\n"
+        "    at Object.<anonymous> (/opt/claude/cli.js:429:13)\\n"
+        "    at Module._compile (node:internal/modules/cjs/loader:1105:14)\\n")
+    sys.exit(1)
+elif mode == "crash_envelope":
+    sys.stderr.write(
+        "TypeError: Cannot read properties of undefined (reading 'foo')\\n"
+        "    at Object.<anonymous> (/opt/claude/cli.js:429:13)\\n")
+    emit({"type":"result","subtype":"error_during_execution","is_error":True,
+          "api_error_status":None,"total_cost_usd":0,"duration_ms":50,"result":""})
 `
 
 type Verdict = {
@@ -219,6 +231,38 @@ describe('failure direction: an inconclusive probe NEVER downgrades a tier', () 
     const v = preflight(['fable'], { FAKE_MODE: 'optionerror' })
     expect(v.status).toBe('available')
     expect(v.probe.retried_bare).toBe(true)
+  })
+})
+
+describe('a crash-trace line number is not a quota signal (T-536)', () => {
+  // QA's live repro: stderr containing `/opt/claude/cli.js:429:13` made the
+  // `\b429\b` token match, and the probe read a CLI crash as a closed account
+  // window — routing to the fallback and latching that downgrade for 30
+  // minutes. A crash is exactly when a probe runs, so this is not academic.
+  test('exit 1 with a stack-trace stderr is inconclusive, not unavailable', () => {
+    const v = preflight(['fable'], { FAKE_MODE: 'crash' })
+    expect(v.status).toBe('inconclusive')
+    expect(v.reason).toBe('no-envelope')
+    expect(v.route).toBe('fable')           // NOT the fallback
+    expect(v.downgraded).toBe(false)
+    expect(fs.existsSync(latchFile('fable'))).toBe(false)
+  })
+
+  test('an error envelope carrying the same stack-trace stderr is inconclusive, not unavailable', () => {
+    const v = preflight(['fable'], { FAKE_MODE: 'crash_envelope' })
+    expect(v.status).toBe('inconclusive')
+    expect(v.reason).toBe('probe-error-envelope')
+    expect(v.route).toBe('fable')
+    expect(v.downgraded).toBe(false)
+    expect(fs.existsSync(latchFile('fable'))).toBe(false)
+  })
+
+  test('must not regress: a genuine transport 429 with zero prose still reads unavailable', () => {
+    const v = preflight(['fable'], { FAKE_MODE: 'http429' })
+    expect(v.status).toBe('unavailable')
+    expect(v.reason).toBe('transport-429')
+    expect(v.route).toBe('opus')
+    expect(v.downgraded).toBe(true)
   })
 })
 
