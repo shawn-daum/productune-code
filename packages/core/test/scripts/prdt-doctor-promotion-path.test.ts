@@ -83,7 +83,37 @@ done
 exit 0
 `
 
+/** T-564 C1. The two most natural ways to write a PR-required policy are both
+ *  DOUBLE negatives — the negation governs the *absence* of a PR, so the clause
+ *  asserts the requirement. A "any negation word in the clause kills the match"
+ *  heuristic reads both as "no PR path here", which is the exact false negative
+ *  that lets a squash-merge repo fall through to the default path unannounced.
+ *
+ *  These two sentences are not synthesized to match a regex — they are how the
+ *  policy actually gets written (`git config` branch-protection prose, GitHub's
+ *  own "Require a pull request before merging" setting description). */
+const NEVER_WITHOUT_HOOK = `#!/usr/bin/env bash
+# Never push to main without a PR.
+while read -r a b remote_ref d; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then exit 1; fi
+done
+exit 0
+`
+
+const NOT_PR_MERGES_HOOK = `#!/usr/bin/env bash
+# Pushes to main that are not PR merges are rejected.
+while read -r a b remote_ref d; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then exit 1; fi
+done
+exit 0
+`
+
 const REPORT = 'promotion to main here goes through a PR'
+/** T-564 acceptance 4: silence used to collapse "we found no PR evidence" into
+ *  "this repo does not require a PR". The offline signals cannot see branch
+ *  protection or a rebase-merged PR history, so the no-evidence case has to say
+ *  which of the two it is. */
+const NO_EVIDENCE = 'no local evidence of a PR requirement'
 
 let sandbox: string
 let env: NodeJS.ProcessEnv
@@ -178,6 +208,38 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('doctor reads the promotion path
     expect(rep).not.toContain('names a pull-request promotion path')
   })
 
+  test('T-564 C1: "Never push to main without a PR." IS read as PR-required', () => {
+    // A double negative: `never` governs `without a PR`, so the sentence
+    // REQUIRES the PR. Counting "is there a negation word in this clause"
+    // discards it — the more precisely a hook states the policy, the less the
+    // check could read it.
+    useOrgHook(NEVER_WITHOUT_HOOK)
+    const rep = doctor()
+    expect(rep).toContain(REPORT)
+    expect(rep).toContain('names a pull-request promotion path')
+  })
+
+  test('T-564 C1: "Pushes to main that are not PR merges are rejected." IS read as PR-required', () => {
+    // Two polarity flips again — `not PR merges` inside the subject, `rejected`
+    // over the whole clause. What is refused is the non-PR push.
+    useOrgHook(NOT_PR_MERGES_HOOK)
+    const rep = doctor()
+    expect(rep).toContain(REPORT)
+    expect(rep).toContain('names a pull-request promotion path')
+  })
+
+  test('T-564 C2: a GitHub SQUASH merge subject counts as PR-merge evidence', () => {
+    // Squash is GitHub's default merge button for most repos, and it leaves no
+    // `Merge pull request` subject at all — only `<title> (#123)`. A check that
+    // reads merge-commit subjects only would report `default` on a PR repo.
+    promoteWithSubject('fix: tighten the doctor promotion check (#123)')
+    const rep = doctor()
+    expect(rep).toContain(REPORT)
+    expect(rep).toContain('fix: tighten the doctor promotion check (#123)')
+    // the hook doctor installed is ours and says nothing about PRs
+    expect(rep).not.toContain('names a pull-request promotion path')
+  })
+
   test('a negating hook (T-506 F1) stays SILENT — words alone are not evidence', () => {
     // "We do NOT use pull requests here ... no PR needed" contains every word
     // a bare presence check keys on, but the hook is documenting the OPPOSITE
@@ -191,17 +253,42 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('doctor reads the promotion path
     expect(rep).toContain('main-push block UNVERIFIED')
   })
 
-  test('a repo with no PR requirement stays SILENT — the default already describes it', () => {
+  test('a repo with no PR evidence is never claimed to REQUIRE one', () => {
     // promote first: the org hook below blocks a direct main push, which is the
     // point of it — a local `dev → main` merge is this repo's whole policy
     promoteWithSubject("Merge branch 'dev'")
     useOrgHook(SILENT_HOOK)
     const rep = doctor()
     expect(rep).not.toContain(REPORT)
-    expect(rep).not.toContain('promotion to main')
     // the run really happened — the same doctor pass still reports this repo's
-    // other git finding, so silence above is a verdict, not a dead code path
+    // other git finding, so the verdict above is a verdict, not a dead code path
     expect(rep).toContain('main-push block UNVERIFIED')
+  })
+
+  test('T-564 acceptance 4: no-evidence SAYS SO instead of falling through to the default', () => {
+    // Neither signal fires here. Both readings are consistent with that silence
+    // — "this repo promotes by local merge" and "this repo requires a PR that
+    // these offline signals cannot see" — and the second one is the shape that
+    // cost a wrong `main` push. So the report names which one doctor actually
+    // established: it found nothing, and that is not the same as nothing to find.
+    promoteWithSubject("Merge branch 'dev'")
+    useOrgHook(SILENT_HOOK)
+    const rep = doctor()
+    expect(rep).toContain(NO_EVIDENCE)
+    // and it does not upgrade its own ignorance into a policy claim
+    expect(rep).not.toContain(REPORT)
+    const line = rep.split('\n').find(l => l.includes(NO_EVIDENCE)) as string
+    expect(line).toBeTruthy()
+    expect(line).toMatch(/not proof there is none/)
+    // still a report, still grants nothing (T-436: no runnable line to paste)
+    expect(line).not.toMatch(/\bgh (pr|repo)\b|\bgit (push|merge)\b/)
+  })
+
+  test('the no-evidence line is NOT emitted where evidence exists — the two are exclusive', () => {
+    useOrgHook(ORG_PR_HOOK)
+    const rep = doctor()
+    expect(rep).toContain(REPORT)
+    expect(rep).not.toContain(NO_EVIDENCE)
   })
 
   test('the report grants nothing — it points AT the gate and hands over no command', () => {

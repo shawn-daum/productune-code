@@ -1208,7 +1208,12 @@ def prepush_warnings(root):
 #   * the effective pre-push hook's own text names a pull-request promotion path
 #     (a policy hook documents the path it leaves open — the NTF org hook says
 #     "Promote via dev -> main PR (self-merge) on GitHub")
-#   * `main`'s first-parent history is PR merge commits
+#   * `main`'s first-parent history carries commits in a PR-merge SHAPE (the
+#     merge-commit subject, or GitHub's squash form — see `_pr_merge_subject`
+#     for what that covers and, just as load-bearing, what it does not)
+# Neither signal can see branch protection or a rebase-merged PR history, so
+# neither one going off means "no PR required" — it means "not found here", and
+# `promotion_warnings` reports those as the two different things they are.
 # Reading hook TEXT here decides only which path to REPORT. It never decides
 # whether a push is blocked — that verdict stays ownership-based (T-493: words in
 # a file are not a block), and it is never consent either: whichever path this
@@ -1220,28 +1225,87 @@ def prepush_warnings(root):
 # needed" contains the words and would have doctor claim it "names a
 # pull-request promotion path", which is false of that hook. A word match is
 # evidence only when nothing in its own clause negates it — split on sentence-
-# ish boundaries (line / `.` / `;`) and require no negation word share the
-# clause with the match, so "names" stays true of whatever it is said about.
+# ish boundaries (line / `.` / `;`) and weigh the negation inside that clause.
+#
+# T-564 C1: "any negation word in the clause kills the match" was the wrong
+# weighing, and it failed on the two most natural ways to state a PR
+# requirement, because both are DOUBLE negatives — the negation governs the
+# ABSENCE of a PR, so the clause asserts the requirement:
+#   "Never push to main without a PR."                        never + without
+#   "Pushes to main that are not PR merges are rejected."     not   + rejected
+# Both read False, i.e. the more precisely a hook stated the policy, the less
+# this could read it — and a squash-merge repo (C2) then had no second signal
+# to fall back on, so doctor reported the local-merge default into a hook that
+# blocks it. That is the v1.7 mistake the whole check exists to prevent.
+#
+# So: count polarity flips in the clause and take the PARITY. A flip is either a
+# negation word or a REFUSAL verb (what is refused is the negated thing), and an
+# even count — zero flips included — leaves the PR word asserted:
+#   "no PR needed"                    1 flip   odd  → not a PR path  (F1 holds)
+#   "We do NOT use pull requests"     1 flip   odd  → not a PR path  (F1 holds)
+#   "Promote via dev -> main PR"      0 flips  even → PR path
+#   "Never push ... without a PR"     2 flips  even → PR path
+#   "... not PR merges are rejected"  2 flips  even → PR path
+#   "Pull requests are blocked"       1 flip   odd  → not a PR path
+# Parity is a heuristic over prose, not a parser, and it is deliberately shallow:
+# it reads one clause at a time, and a clause piling three flips onto one PR word
+# ("PRs are not never disallowed") is beyond what it claims. It is chosen because
+# both error directions are visible — an odd count keeps F1's silence, an even one
+# keeps a stated requirement readable — where the old rule could only ever fail
+# one way, silently, in the direction that costs a wrong push.
 _PROMOTE_PR_WORDS = (re.compile(r"pull\s+request", re.IGNORECASE), re.compile(r"\bPRs?\b"))
 _PROMOTE_NEGATION = re.compile(r"\bnot\b|\bnever\b|\bno\b|\bwithout\b|n't\b", re.IGNORECASE)
+_PROMOTE_REFUSAL = re.compile(
+    r"\breject(s|ed|ing)?\b|\bblock(s|ed|ing)?\b|\brefus(e|es|ed|ing)\b|\bden(y|ies|ied)\b"
+    r"|\bforbid(s|den)?\b|\bdisallow(s|ed|ing)?\b|\bprohibit(s|ed|ing)?\b", re.IGNORECASE)
+
+# T-564 C2. What is COVERED, stated as what it is — the docstring used to claim
+# "main's first-parent history is PR merge commits" while matching GitHub's
+# non-squash merge subject and nothing else:
+#   * GitHub / GitLab merge-commit subject  `Merge pull request #7 from acme/dev`
+#   * GitHub squash merge subject           `fix: tighten the check (#123)`
+# NOT covered, on purpose, because no local subject line distinguishes them from
+# an ordinary commit or an ordinary local merge:
+#   * rebase merges — the PR's own commit subjects land verbatim
+#   * GitLab merge commits (`Merge branch 'dev' into 'main'`), whose PR marker
+#     (`See merge request !N`) lives in the BODY and is shaped identically to a
+#     plain local `dev → main` merge, which is the default this check contrasts
+#     with; matching it would report every default-path repo as a PR repo
+# Those two are why silence from this signal is reported as "no evidence found",
+# never as "no PR required" — see `promotion_warnings`.
 _PROMOTE_PR_MERGE = re.compile(r"^Merge pull request\b")
+_PROMOTE_SQUASH_MERGE = re.compile(r"\(#\d+\)\s*$")
 PROMOTION_LOG_DEPTH = 20
 
 
 def _hook_names_pr_path(body):
-    """True only when some clause of the hook text both matches a PR word and
-    is not itself negated — see T-506 F1 above."""
+    """True only when some clause of the hook text matches a PR word under an
+    EVEN number of polarity flips — see T-506 F1 / T-564 C1 above."""
     for clause in re.split(r"[.\n;]", body):
-        if any(w.search(clause) for w in _PROMOTE_PR_WORDS) and not _PROMOTE_NEGATION.search(clause):
+        if not any(w.search(clause) for w in _PROMOTE_PR_WORDS):
+            continue
+        flips = len(_PROMOTE_NEGATION.findall(clause)) + len(_PROMOTE_REFUSAL.findall(clause))
+        if flips % 2 == 0:
             return True
     return False
+
+
+def _pr_merge_subject(subject):
+    """True when this first-parent subject line is one of the PR-merge shapes
+    `_PROMOTE_*_MERGE` covers — merge-commit or GitHub squash. See the coverage
+    note above for the shapes deliberately left out."""
+    return bool(_PROMOTE_PR_MERGE.match(subject) or _PROMOTE_SQUASH_MERGE.search(subject))
 
 
 def promotion_policy(root):
     """What THIS repository does to reach `main`, measured rather than assumed.
 
-    Returns {"path": "pr"|"default"|"unknown", "evidence": [str]} — `unknown`
-    only when there is no code git repo to read (nothing to mismatch with)."""
+    Returns {"path": "pr"|"no-evidence"|"unknown", "evidence": [str]}.
+    `unknown` only when there is no code git repo to read (nothing to mismatch
+    with). `no-evidence` is NOT `default` (T-564): both local signals are blind
+    to branch protection and to a rebase-merged PR history, so their silence
+    establishes that nothing was found, never that nothing is there. Naming it
+    `default` is what let the two false negatives (C1/C2) leave no trace."""
     cr = code_root(root)
     st = prepush_status(root)
     if st["state"] == "no-repo":
@@ -1265,22 +1329,43 @@ def promotion_policy(root):
         r = _git(["log", "--first-parent", "-n", str(PROMOTION_LOG_DEPTH), "--format=%s", ref], cr)
         if r.returncode != 0:
             continue
-        hits = [s for s in r.stdout.splitlines() if _PROMOTE_PR_MERGE.match(s)]
+        hits = [s for s in r.stdout.splitlines() if _pr_merge_subject(s)]
         if hits:
             verb = "is a PR merge" if len(hits) == 1 else "are PR merges"
             evidence.append(f"{len(hits)} of the last {PROMOTION_LOG_DEPTH} commits on "
                             f"{label} {verb} (e.g. \"{hits[0]}\")")
             break
-    return {"path": "pr" if evidence else "default", "evidence": evidence}
+    return {"path": "pr" if evidence else "no-evidence", "evidence": evidence}
 
 
 def promotion_warnings(root):
-    """One doctor line when this repo's policy differs from the default — the
-    mismatch is reported, never silently followed either way. A repo with no PR
-    requirement stays silent: the default already describes it."""
+    """One doctor line for what was MEASURED, in the two shapes the measurement
+    can actually take.
+
+    T-564 acceptance 4: this used to return [] for everything that was not `pr`,
+    which collapsed "no PR requirement here" into "we found no PR evidence here"
+    — and the second is what silence actually meant, since both signals are
+    local and offline. That collapse is what made C1/C2 invisible: the check
+    could go fully blind and the report was byte-identical to a correct read of
+    a default-path repo. So no-evidence gets its own line, stating what was
+    checked and what that does not establish. Not a defect to fix and not an
+    instruction — a repo really promoting by local merge is behaving correctly
+    and has nothing to change; the line exists so the reader can tell a verdict
+    apart from an absence, which is the whole failure class v1.8 is measured on.
+    `unknown` (no code git repo) stays silent — there was nothing to measure."""
     pol = promotion_policy(root)
-    if pol["path"] != "pr":
+    if pol["path"] == "unknown":
         return []
+    if pol["path"] != "pr":
+        return ["git: promotion path — no local evidence of a PR requirement on this repository "
+                f"(checked the effective pre-push hook's text and the first-parent subjects of "
+                f"origin/main / main, last {PROMOTION_LOG_DEPTH}). Read that as NOT FOUND, not "
+                "proof there is none: branch protection is a server-side setting these offline "
+                "signals cannot see, and a rebase-merged PR history leaves no subject line to "
+                "match. The local `dev → main` merge the default describes is therefore "
+                "unconfirmed rather than established here — confirm the path this repository "
+                "actually uses before promoting, and treat a rejected push as the signal to "
+                "stop and re-check rather than to retry."]
     return ["git: promotion to main here goes through a PR, not the local `dev → main` merge "
             "the default describes — " + "; ".join(pol["evidence"]) + ". Promote the way this "
             "repository requires. This reports the path only: it grants nothing, and opening "
