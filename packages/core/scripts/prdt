@@ -4813,16 +4813,29 @@ RE_SENTINEL_ONLY = re.compile(rf"^[\W_]*{CANARY_SENTINEL}[\W_]*$", re.I)
 # produces: a stack-trace line:column reference (`cli.js:429:13`). A probe runs
 # exactly when the CLI is unstable, so a crash trace reaching this matcher is
 # not a hypothetical (T-536: it downgraded a healthy model and latched the
-# downgrade for 30 minutes off a line number). The guard excludes only a `429`
-# touching a digit, `:` or `.` on either side — the shape of a line:col ref or
-# a version/port number — and nothing else. That is a narrow fix on purpose:
-# a bare `429` sitting in ordinary prose (no digit/colon/dot neighbor) still
-# matches, same as today, because the alternative — requiring an HTTP-ish
-# neighbor word — trades a rare false UNAVAILABLE for the possibility of a
-# false AVAILABLE on a terse real transport signal, and every pattern in this
-# file is chosen to fail toward "unavailable", never away from it (see the
-# module comment above). `429 Too Many Requests` and bare transport 429s are
-# unaffected; only the file:line:col shape is excluded.
+# downgrade for 30 minutes off a line number). The guard excludes ANY `429`
+# touching a digit, `:` or `.` on either side, full stop — not just the
+# line:col shape it was built for. That is wider than it sounds: on the raw /
+# no-envelope path it also gives up sentence-final `429.` and label-style
+# `429:` (`Request failed with status code 429.`, `code 429: upstream
+# rejected`, `"status":429`), because a period or colon sitting directly
+# against the token is indistinguishable in plain text from a line reference
+# or a version/port number. This is accepted, not overlooked: the structured
+# `api_error_status` field above is the PRIMARY detector for a real transport
+# 429 and is untouched by this guard; this standalone-token match is a
+# secondary net over prose, and a bare `429` with no digit/colon/dot neighbor
+# still matches it, same as today. Narrowing the lookaround to digits only
+# (`(?<!\d)\b429\b(?!\d)`) was tried and rejected — it re-admits `cli.js:429:13`,
+# `foo.js:12:429` and `v1.429.0`, which is the exact defect this guard exists
+# to fix, because the colon/period is precisely what marks those as line refs
+# or version numbers rather than a status code. Requiring an HTTP-ish neighbor
+# word instead was also rejected: it trades a rare false UNAVAILABLE for the
+# possibility of a false AVAILABLE on a terse real transport signal, and every
+# pattern in this file is chosen to fail toward "unavailable", never away from
+# it (see the module comment above). Given up on the raw path: `429.`, `429:`,
+# `429,429` and any 429 adjacent to a digit. Still caught: `429`, `(429)`,
+# `[429]`, `status=429`, `HTTP 429`, `429 Too Many Requests`, and any real
+# transport 429 via `api_error_status` regardless of prose shape.
 LIMIT_STANDALONE_RE = re.compile(
     r"(?<![:.\d])\b429\b(?![:.\d])|too\s+many\s+requests|rate[\s-]?limit(?:ed|ing)\b", re.I)
 LIMIT_NOUN_RE = re.compile(

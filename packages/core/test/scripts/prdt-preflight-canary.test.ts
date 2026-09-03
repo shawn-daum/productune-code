@@ -266,6 +266,55 @@ describe('a crash-trace line number is not a quota signal (T-536)', () => {
   })
 })
 
+describe('the digit/colon/period guard: a deliberate trade-off, pinned both ways', () => {
+  // The guard is `(?<![:.\d])\b429\b(?![:.\d])` — excludes any `429` touching a
+  // digit, `:` or `.` on either side, not just the line:col shape it was built
+  // for. Narrowing it to digits-only (`(?<!\d)\b429\b(?!\d)`) was measured and
+  // REJECTED: it re-admits `cli.js:429:13`, `foo.js:12:429` and `v1.429.0`,
+  // which is the exact T-536 defect this guard exists to fix. So the cases
+  // below are not bugs to "fix" by loosening the lookaround — they are the
+  // accepted cost of keeping the line:col/version exclusion, and the
+  // structured `api_error_status` check (①, above) is what still catches a
+  // real transport 429 in every one of these shapes.
+  test.each([
+    ['sentence-final period', 'Request failed with status code 429.'],
+    ['label-style colon', 'code 429: upstream rejected'],
+    ['JSON field, no space', '"status":429'],
+    ['stack-trace line:col', 'at Object.<anonymous> (/opt/claude/cli.js:429:13)'],
+    ['line:col, reversed order', 'at foo.js:12:429'],
+    ['version number', 'upgraded to v1.429.0, please retry'],
+  ])('given up on purpose, plain path: %s', (_label, msg) => {
+    const v = preflight(['fable'], { FAKE_MODE: 'plain', FAKE_MSG: msg })
+    expect(v.status).toBe('inconclusive')
+    expect(v.reason).toBe('no-envelope')
+    expect(v.route).toBe('fable')
+    expect(v.downgraded).toBe(false)
+  })
+
+  test.each([
+    ['bare token', '429'],
+    ['parenthesized', '(429)'],
+    ['bracketed', '[429]'],
+    ['key=value', 'status=429'],
+    ['HTTP-prefixed', 'HTTP 429'],
+    ['status phrase', '429 Too Many Requests'],
+  ])('still caught, plain path: %s', (_label, msg) => {
+    const v = preflight(['fable'], { FAKE_MODE: 'plain', FAKE_MSG: msg })
+    expect(v.status).toBe('unavailable')
+    expect(v.reason).toBe('plain-limit-shape')
+    expect(v.route).toBe('opus')
+    expect(v.downgraded).toBe(true)
+  })
+
+  test('a real transport 429 is unaffected by any of the given-up prose shapes', () => {
+    // The structured field is checked before any prose regex runs, so the
+    // trade-off above costs nothing on the primary detection path.
+    const v = preflight(['fable'], { FAKE_MODE: 'http429' })
+    expect(v.status).toBe('unavailable')
+    expect(v.reason).toBe('transport-429')
+  })
+})
+
 describe('session latch', () => {
   test('a second dispatch at that tier routes to the fallback with NO second probe', () => {
     expect(preflight(['fable']).latch.state).toBe('set')
