@@ -25,9 +25,10 @@ Only when a regression fires while `po-state.stage` is `build` — not the in-sh
 1. **Invalidates a prior version's claimed AC** — a closed version's PRD/AC says pass, and this regression is documented proof that claim is false right now.
 2. **Waiting compounds the damage** — deferring to next round's close (a 2-round delay) makes it worse, not just later. A one-time inconvenience fails this.
 
-Delivery reuses the Emergency `main` hotfix steps below unchanged — same fix, same tag, same mergeback. This opening changes only the trigger and that it runs alongside the active round, never inside it:
-- `git worktree add <dir> main` off the closed tag; dispatch the fix there with `isolation: "worktree"`. The active round's PO session keeps working the current version in parallel — the round never pauses.
-- The worktree worker's mandate stops at fix + commit. It never pushes or tags — the contracts push gate (explicit user instruction) isn't satisfied by a worker's own judgment. PO takes the committed fix, gets user approval, then runs the Emergency `main` hotfix steps (push + tag + mergeback) from the PO session.
+Delivery is its OWN sequence — it does not run the Emergency hotfix steps below, whose step 1 cherry-picks from `dev`. Here the fix is written on `main` and `dev` never carries it, so the only movement is `main` → `dev`. It ends in the same place — same patch tag, same mergeback — and runs alongside the active round, never inside it:
+1. `git worktree add <dir> main` — the base is the `main` branch TIP (what installs actually follow), never the closed tag. Dispatch the fix there with `isolation: "worktree"`. The active round's PO session keeps working the current version in parallel — the round never pauses.
+2. The worktree worker's mandate stops at fix + commit on that worktree. It never pushes or tags — the contracts push gate (explicit user instruction) isn't satisfied by a worker's own judgment.
+3. PO takes the committed fix and gets the user's approval, then from the PO session: add the `## <version>` RELEASES section and cut the `v<N>.<m>.<p>` tag in that same change, push `main` (the `ALLOW_MAIN_PUSH=1` and push-gate rules below apply unchanged), and merge `main` → `dev` immediately — merge, never rebase, per the last rule below.
 
 ## Emergency `main` hotfix
 ONLY when `dev` tip is not deployable and delivery cannot wait — installs on other machines follow `main`.
