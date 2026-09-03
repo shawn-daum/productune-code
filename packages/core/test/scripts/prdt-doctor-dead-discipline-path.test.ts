@@ -30,6 +30,9 @@ function which(bin: string): string | null {
 const PYTHON3 = which('python3')
 
 let projectDir: string
+/** Extra env for the CLI subprocess — the mirror-scope tests below point
+ *  `discipline_root()` at a tree they control. */
+let extraEnv: Record<string, string> = {}
 
 function runPrdt(args: string[]): string {
   return execFileSync('python3', [PRDT_CLI, ...args], {
@@ -37,6 +40,7 @@ function runPrdt(args: string[]): string {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 20000,
+    env: { ...process.env, ...extraEnv },
   })
 }
 
@@ -63,6 +67,7 @@ const DEAD = /discipline-path:/
 beforeEach(() => {
   projectDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-dead-path-')), 'proj')
   fs.mkdirSync(projectDir, { recursive: true })
+  extraEnv = {}
 })
 
 afterEach(() => {
@@ -109,5 +114,72 @@ describe.skipIf(!PYTHON3)('prdt doctor — dead discipline-path citation (T-535)
     writeDoc(projectDir, 'docs/designer/bookshelf/decisions.md',
       '# Decisions\n\n- (2026-05-07) see `~/.productune/po/habit.md`\n')
     expect(doctor()).not.toMatch(DEAD)
+  })
+})
+
+/**
+ * T-565 C3 — the base list left out the tree that actually binds.
+ *
+ * `dead_discipline_path_warnings` resolves a citation against the meta root, the
+ * code root, `<codeRoot>/packages/core/discipline` and the doc's own directory.
+ * That third base is the discipline tree AS THIS REPOSITORY LAYS IT OUT — it
+ * exists only when the project under inspection is prdt itself. Everywhere else
+ * the tree binding the personas is the INSTALLED MIRROR that `discipline_root()`
+ * returns, and it was not a base at all.
+ *
+ * So the "false-positive rate zero" the code comment claims was true of exactly
+ * one repository: the one it was measured in. Another prdt project whose
+ * `docs/developer/habit.md` cites `developer/playbooks/code-review.md` — a real,
+ * live, resolvable path in the mirror every persona reads from — got told it
+ * cites nothing. The existing silent case plants the citation under the CODE repo
+ * path, so it could not see this: it exercises the one base that happens to exist
+ * here.
+ *
+ * `PRDT_DISCIPLINE` is `discipline_root()`'s own documented first branch and the
+ * lever a test uses to drive machine scope without touching the real one.
+ */
+describe.skipIf(!PYTHON3)('T-565 C3 — the installed mirror is a base too', () => {
+  /** A discipline mirror outside the project, holding one real playbook. */
+  function seedMirror(rel: string): string {
+    const mirror = path.join(path.dirname(projectDir), 'mirror')
+    const p = path.join(mirror, rel)
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, '# code review\n')
+    extraEnv = { PRDT_DISCIPLINE: mirror }
+    return mirror
+  }
+
+  test('silent: a citation that resolves ONLY in the installed mirror', () => {
+    runInit()
+    seedMirror('developer/playbooks/code-review.md')
+    writeDoc(projectDir, 'docs/developer/habit.md',
+      '# Developer habit\n\n- before a review, read `developer/playbooks/code-review.md`\n')
+    expect(doctor()).not.toMatch(DEAD)
+  })
+
+  test('positive control: same fixture, mirror does NOT hold the path — still fires', () => {
+    // Same doc, same citation, same mirror-scoped run: the only difference is
+    // that the file is absent from the mirror. Without this the test above would
+    // also pass on a check that had simply stopped firing.
+    runInit()
+    seedMirror('developer/playbooks/something-else.md')
+    writeDoc(projectDir, 'docs/developer/habit.md',
+      '# Developer habit\n\n- before a review, read `developer/playbooks/code-review.md`\n')
+    const out = doctor()
+    expect(out).toMatch(DEAD)
+    expect(out).toMatch(/developer\/playbooks\/code-review\.md/)
+  })
+
+  test('the warning names the mirror among what it checked', () => {
+    // The line tells the reader where to look. Listing three bases while
+    // consulting four (or four while consulting three) sends them to the wrong
+    // tree — which is how C3 survived a code review in the first place.
+    runInit()
+    seedMirror('developer/playbooks/something-else.md')
+    writeDoc(projectDir, 'docs/developer/habit.md',
+      '# Developer habit\n\n- read `developer/playbooks/code-review.md`\n')
+    const line = doctor().split('\n').find(l => l.includes('discipline-path:')) as string
+    expect(line).toBeTruthy()
+    expect(line).toMatch(/installed .*mirror|mirror/i)
   })
 })

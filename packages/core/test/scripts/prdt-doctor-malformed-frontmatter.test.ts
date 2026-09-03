@@ -467,3 +467,48 @@ print(json.dumps(list(dict.fromkeys(list(mod.TICKET_INDEX_FIELDS) + list(mod.WIK
     for (const c of assignee) expect(c.cell, `assignee cell for ${c.shape}`).toBeNull()
   })
 })
+
+/**
+ * T-565 C5 — the `deps` ROW shape, which is a different property from the
+ * `deps` INDEX cell the T-554/T-556 note above declares safe.
+ *
+ * The json encoder really does make the index WRITE safe for any shape, and that
+ * is what "the declared json-encoder channel" claimed. What it never covered is
+ * the value handed to every CONSUMER of the row: `scan_tickets` puts
+ * `fm.get("deps") or []` straight into the row, so `deps: T-500` — the bracketless
+ * form a human writes without thinking — arrives as the STRING "T-500", and
+ * `for d in t["deps"]` in cmd_doctor walks it one character at a time. Five
+ * invented warnings about tickets named `T`, `-`, `5`, `0`, `0`.
+ *
+ * That is the same class as the crash T-550 fixed, one layer out: a field whose
+ * shape nothing guarantees, consumed as though something did. It is noise rather
+ * than silence, which is why it is graded lower — but it is noise ON the dependency
+ * graph, i.e. on the check that decides what is safe to close.
+ */
+describe.skipIf(!CAN_RUN)('T-565 C5 — a scalar deps: value is one dep, not five characters', () => {
+  const depLines = (lines: string[], id: string) =>
+    lines.filter(l => l.startsWith(`ticket: ${id} deps on `))
+
+  test('`deps: T-999` (no brackets) yields exactly one dep warning, naming T-999', () => {
+    ticket('T-004', 'deps: T-999')
+    const lines = expectSurvived(doctor())
+    expect(depLines(lines, 'T-004')).toEqual(['ticket: T-004 deps on missing T-999'])
+  })
+
+  test('the character walk is gone — no warning names a single-character ticket', () => {
+    ticket('T-004', 'deps: T-999')
+    const lines = expectSurvived(doctor())
+    // `missing T` is a PREFIX of `missing T-999`, so this has to be whole-line
+    for (const l of depLines(lines, 'T-004')) {
+      expect(l).not.toMatch(/deps on (missing|dropped) .$/)
+    }
+  })
+
+  test('a bracketless dep that RESOLVES is silent — the fix is a shape fix, not a mute', () => {
+    // T-003 exists in the fixture. Read as a list of one, this resolves and says
+    // nothing; read as characters it produces five warnings about `T`, `-`, `0`…
+    ticket('T-005', 'deps: T-003')
+    const lines = expectSurvived(doctor())
+    expect(depLines(lines, 'T-005')).toEqual([])
+  })
+})

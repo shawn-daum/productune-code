@@ -256,6 +256,37 @@ def index_scalar(value):
     return None, type(value).__name__
 
 
+def index_list(value):
+    """(list, shape) for ONE frontmatter value the row exposes as a SEQUENCE.
+
+    T-565 C5. `deps`/`links` were declared the safe channel because the json
+    encoder binds any shape into the index cell — true, and about the WRITE. The
+    row is also the thing every consumer iterates, and `fm.get("deps") or []`
+    handed them whatever the md held: `deps: T-500` (the bracketless form a human
+    writes without thinking) arrives as the str "T-500", and `for d in
+    t["deps"]` walks it one character at a time — five warnings about tickets
+    named `T`, `-`, `5`, `0`, `0`, on the dependency graph that decides what is
+    safe to close.
+
+    Sibling of `index_scalar`, deliberately not a branch inside it: the rule
+    there is "a str passes, every other shape is unusable", and it stays that
+    way. Here the field's declared shape IS a list, so the rule is the list one:
+      * absent/empty  → []
+      * a list        → itself
+      * a str         → a one-element list; the value is one dep, and the
+                        brackets are notation, not meaning
+      * anything else → [] plus a named problem — ONE reported problem instead
+                        of N invented dependencies, which is the same trade
+                        index_scalar makes with NULL."""
+    if value is None or value == []:
+        return [], None
+    if isinstance(value, list):
+        return value, None
+    if isinstance(value, str):
+        return [value], None
+    return [], type(value).__name__
+
+
 def _index_fields(fm, keys, problems):
     """Read `keys` off frontmatter through index_scalar, appending one problem line
     per unusable value. Shared by both row builders so the two write paths into
@@ -301,12 +332,16 @@ def scan_tickets(root):
         version = p.parent.name
         problems = []
         f = _index_fields(fm, TICKET_INDEX_FIELDS, problems)
+        deps, deps_shape = index_list(fm.get("deps"))
+        if deps_shape:
+            problems.append(f"deps: {deps_shape} value is not a list or a ticket id — "
+                            f"dropped (write `deps: [T-500, T-501]`, or `deps: T-500`)")
         # `id` keys the row, so it falls back to the filename the way it always has
         # — the dropped shape is already reported above, and a NULL primary key
         # would cost the row its identity on top of its value.
         row = {"id": f["id"] or p.stem, "slug": f["slug"], "type": f["type"],
                "status": f["status"], "assignee": norm_assignee(f["assignee"]),
-               "feature": f["feature"], "deps": fm.get("deps") or [],
+               "feature": f["feature"], "deps": deps,
                "created": f["created"], "closed": f["closed"],
                "version": version, "path": str(p.relative_to(root))}
         if row["type"] not in TICKET_TYPES:
@@ -1769,9 +1804,20 @@ def _live_sot_discipline_docs(root):
     return out
 
 
-def dead_discipline_path_warnings(root):
+def dead_discipline_path_warnings(root, mirror=None):
+    """T-565 C3: the bases have to include the tree that actually BINDS.
+
+    `<codeRoot>/packages/core/discipline` is the discipline tree as THIS
+    repository lays it out — it exists only when the project under inspection is
+    prdt itself, so the "false-positive rate zero" this check was measured at was
+    zero in one repository. Everywhere else the personas are bound by the
+    installed mirror `discipline_root()` returns, and a live citation resolving
+    there (`developer/playbooks/code-review.md`) was reported as a dead path.
+    `mirror` is a parameter so a test can drive it; None means ask."""
     cr = code_root(root)
     droot = cr / "packages" / "core" / "discipline"
+    if mirror is None:
+        mirror = discipline_root()
     warns = []
     for doc in _live_sot_discipline_docs(root):
         try:
@@ -1783,7 +1829,9 @@ def dead_discipline_path_warnings(root):
         # persona prefix (docs/qa/habit.md → `bookshelf/fail-patterns.md`) is a
         # sibling-relative reference within that persona's own docs/ dir, not a
         # repo-rooted one.
-        bases = (root, cr, droot, doc.parent)
+        bases = [root, cr, droot, doc.parent]
+        if mirror is not None:
+            bases.append(mirror)
         for m in _BACKTICK_MD_PATH_RE.finditer(text):
             cand = m.group(1)
             if cand.startswith("~"):
@@ -1792,8 +1840,11 @@ def dead_discipline_path_warnings(root):
                 continue
             if any((base / cand).exists() for base in bases):
                 continue
+            checked = "meta root, code root, code discipline tree, doc's own dir"
+            if mirror is not None:
+                checked += f", and the installed discipline mirror ({mirror})"
             warns.append(f"discipline-path: {rel_doc} cites `{cand}` — no such path "
-                         f"(checked meta root, code root, code discipline tree, and doc's own dir)")
+                         f"(checked {checked})")
     return warns
 
 
@@ -3197,9 +3248,43 @@ def _discipline_repo_path():
     return p if p.is_dir() else None
 
 
+# T-565 C4: the ONE junk filter, applied at `_tree_files` itself so the drift
+# checks share it by construction rather than by anyone remembering to.
+#
+# T-532 QA G2 added this for the hooks tree only, inside `_hook_roster_files`,
+# and the discipline tree kept comparing raw trees — the same Finder that the
+# hooks docstring records creating `~/.prdt/hooks/.DS_Store` creates
+# `~/.prdt/discipline/.DS_Store`, and there it surfaced as "mirror AHEAD OF /
+# HAND-EDITED … promote it into the repo": doctor telling the reader to commit a
+# macOS metadata blob. Both classes of junk warning share one property that makes
+# them worse than noise — they cannot be cleared by doing what they say, because
+# no sync path on either side has an opinion about a file that was never content.
+#
+# It lives HERE, not in each caller, because copying it a third time is what the
+# ticket was raised on. `_hook_roster_files` keeps its own name-shape allowlist
+# ON TOP of this, which is a different question (is this a hook?) from this one
+# (is this a file at all, or the filesystem's own bookkeeping?).
+#
+# By component, so junk nested anywhere in the tree is caught. Dot-prefixed
+# names go as a class: neither tree carries a legitimate dotfile — discipline is
+# `*.md`, hooks are `prdt-*.sh` — and the alternative is enumerating
+# `.DS_Store`, `._*`, `.habit.md.swp`, `.#habit.md`, `.localized`, `.git*` and
+# whatever the next tool invents.
+_JUNK_FILE_RE = re.compile(r"~$|\.sw[a-p]$|\.(bak|orig|rej|tmp)$|^#.*#$|^Thumbs\.db$|^desktop\.ini$",
+                           re.IGNORECASE)
+
+
+def _is_junk_rel(rel):
+    """True for a path the filesystem or an editor put there, not a person or a
+    sync step — see the note above. `rel` is `/`-joined and relative to the tree."""
+    return any(part.startswith(".") or _JUNK_FILE_RE.search(part) for part in rel.split("/"))
+
+
 def _tree_files(base):
-    return {str(p.relative_to(base)).replace(os.sep, "/"): p
-            for p in base.rglob("*") if p.is_file()}
+    return {rel: p for rel, p in
+            ((str(p.relative_to(base)).replace(os.sep, "/"), p)
+             for p in base.rglob("*") if p.is_file())
+            if not _is_junk_rel(rel)}
 
 
 def _git_root(path, timeout=2):
@@ -3426,14 +3511,19 @@ def _hook_roster_files(base):
     """Restrict `_tree_files(base)` to names shaped like real hook scripts
     (T-532 QA G2, same naming convention `hook_registration_warnings` already
     filters on with `hooks_dir.glob("prdt-*.sh")`): a stray file sitting in
-    either tree — `.DS_Store`, an editor swap/backup file (`.foo.sh.swp`,
-    `foo.sh~`, `#foo.sh#`) — is neither a committed hook nor a hand-edited
-    one, and reporting it as either produces a warning nothing can clear:
-    `install.sh` only ever copies the manifest's own basenames (its §1 loop
-    reads `scripts/hook-manifest.json`'s `basenames`, never "whatever's in
-    the directory"), so "re-run install.sh" as advice is simply false for a
-    name that was never a hook to begin with. Measured real: `~/.prdt/hooks`
-    on this machine already carries a Finder-recreated `.DS_Store`.
+    either tree is neither a committed hook nor a hand-edited one, and
+    reporting it as either produces a warning nothing can clear: `install.sh`
+    only ever copies the manifest's own basenames (its §1 loop reads
+    `scripts/hook-manifest.json`'s `basenames`, never "whatever's in the
+    directory"), so "re-run install.sh" as advice is simply false for a name
+    that was never a hook to begin with. Measured real: `~/.prdt/hooks` on
+    this machine already carries a Finder-recreated `.DS_Store`.
+
+    The filesystem-junk half of that (`.DS_Store`, `.foo.sh.swp`, `foo.sh~`,
+    `#foo.sh#`) is NOT re-stated here — it moved into `_tree_files` in T-565 C4
+    so the discipline drift check gets it too, which it did not, for exactly as
+    long as this filter was a local one. What stays here is the question only
+    this check asks: is this file a HOOK.
 
     A hook the repo has since dropped still passes this filter on the mirror
     side (it is still shaped like a hook, just an orphaned one) — it needs to
