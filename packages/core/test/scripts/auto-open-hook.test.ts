@@ -54,6 +54,9 @@ interface RunOpts {
   debounceSecs?: number
   fakePath?: string
   log?: string
+  agentType?: string
+  agentId?: string
+  content?: string
 }
 
 function run(opts: RunOpts): { stdout: string; log: string; prdtHome: string } {
@@ -65,11 +68,18 @@ function run(opts: RunOpts): { stdout: string; log: string; prdtHome: string } {
     fs.mkdirSync(prdtHome, { recursive: true })
     fs.writeFileSync(path.join(prdtHome, 'auto-open'), opts.autoOpenMode)
   }
-  const event = {
+  const event: Record<string, unknown> = {
     hook_event_name: 'PostToolUse',
     tool_name: opts.toolName ?? 'Write',
-    tool_input: { file_path: opts.filePath ?? '' },
+    tool_input: {
+      file_path: opts.filePath ?? '',
+      ...(opts.content !== undefined ? { content: opts.content } : {}),
+    },
   }
+  // Subagent PostToolUse payloads carry these as TOP-LEVEL members (T-559,
+  // empirically observed against Claude Code 2.1.259 — see the hook's header).
+  if (opts.agentType !== undefined) event.agent_type = opts.agentType
+  if (opts.agentId !== undefined) event.agent_id = opts.agentId
   const env: NodeJS.ProcessEnv = { ...process.env, PATH: fakePath, PRDT_HOME: prdtHome }
   if (opts.guiSession) env.PRDT_GUI_SESSION = '1'
   else delete env.PRDT_GUI_SESSION
@@ -234,6 +244,52 @@ describe('.prdt/ path exclusion', () => {
     const p = makeNestedFile('.prdtx', 'PRD.md')
     const { log } = run({ filePath: p })
     expect(readLog(log)).toBe(p)
+  })
+})
+
+// T-559: narrow firing to the main session. Payload shapes (`agent_type` /
+// `agent_id` as top-level PostToolUse members on a subagent Write, absent on
+// a main-session Write) were empirically probed against Claude Code 2.1.259
+// before writing this discriminator — not assumed. See the hook's own header
+// for the probe method and the fail-direction rationale.
+describe('T-559 — main-session-only firing', () => {
+  test.skipIf(!hasJq())('subagent Write (agent_type present) of PRD.md → no open call', () => {
+    const p = makeFile('PRD.md')
+    const { stdout, log } = run({ filePath: p, agentType: 'designer', agentId: 'abc123' })
+    expect(stdout).toBe('{}')
+    expect(readLog(log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('main-session Write (no agent_type key) of PRD.md → still opens', () => {
+    const p = makeFile('PRD.md')
+    const { log } = run({ filePath: p })
+    expect(readLog(log)).toBe(p)
+  })
+
+  test.skipIf(!hasJq())('agent_type present but empty string → treated as subagent, no open call', () => {
+    // Defensive: an empty-but-present key is not the "absent" shape a real
+    // main session produces — fail toward skip, per the hook's documented
+    // direction, rather than assume it means "no identity".
+    const p = makeFile('PRD.md')
+    const { log } = run({ filePath: p, agentType: '' })
+    expect(readLog(log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('literal "agent_type" text inside tool_input.content does not forge a main-session skip or a subagent open', () => {
+    // Anti-spoofing property (fact--claude-hooks T-518 "첫 매치" pitfall):
+    // jq's top-level addressing must not be fooled by the substring living
+    // two levels deep inside tool_input. A real main-session write with this
+    // content still opens.
+    const p = makeFile('spoofed.html')
+    const { log } = run({ filePath: p, content: '"agent_type":"designer" mentioned in the body, not top-level' })
+    expect(readLog(log)).toBe(p)
+  })
+
+  test.skipIf(!hasJq())('subagent Write is still subject to the .prdt/ exclude and debounce (narrowing changes WHO fires, not the other guards)', () => {
+    const p = makeNestedFile('.prdt/scratch', 'artifact.html')
+    const { stdout, log } = run({ filePath: p, agentType: 'qa' })
+    expect(stdout).toBe('{}')
+    expect(readLog(log)).toBe('')
   })
 })
 
