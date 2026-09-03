@@ -1202,7 +1202,11 @@ def prepush_warnings(root):
     if act == "upgraded":
         return [f"git: stale managed pre-push replaced at {p} — "
                 "ALLOW_MAIN_PUSH hotfix escape restored"]
-    if act != "skipped" or st in ("managed", "no-repo"):
+    if st == "no-repo":
+        # Not "no block needed" — there is no .git/hooks here to hold one, so
+        # this check looked at nothing. T-560: that is a skip, never a clean 0.
+        return Skipped("no git repository at the code root — nothing to hold a pre-push hook")
+    if act != "skipped" or st == "managed":
         return []
     hp = res.get("hooks_path")
     if hp and st == "missing":
@@ -1387,20 +1391,30 @@ def promotion_warnings(root):
     instruction — a repo really promoting by local merge is behaving correctly
     and has nothing to change; the line exists so the reader can tell a verdict
     apart from an absence, which is the whole failure class v1.8 is measured on.
-    `unknown` (no code git repo) stays silent — there was nothing to measure."""
+    `unknown` (no code git repo) stays silent — there was nothing to measure.
+
+    T-560 moves WHERE the no-evidence state is said, not whether. T-564's
+    reasoning above is untouched and still binding; what changed is that the
+    doctor now has a place built for exactly this distinction. As a ⚠ line, a
+    correct local-merge repo paid a permanent no-action warning on every run,
+    and T-523 measured what that costs: a no-action line that always shows
+    stops being read even when it is right. The verdict line already had to
+    separate "ran" from "could not look", so no-evidence became its literal
+    third state — the same fact, reported where a reader looks for a judgment
+    rather than for a defect. `pr` stays a ⚠ line on purpose: that one is real
+    evidence about how this repository promotes, and it is read in the minutes
+    before someone promotes."""
     pol = promotion_policy(root)
     if pol["path"] == "unknown":
-        return []
+        return Skipped("no git repository at the code root — no promotion path to read")
     if pol["path"] != "pr":
-        return ["git: promotion path — no local evidence of a PR requirement on this repository "
-                f"(checked the effective pre-push hook's text and the first-parent subjects of "
-                f"origin/main / main, last {PROMOTION_LOG_DEPTH}). Read that as NOT FOUND, not "
-                "proof there is none: branch protection is a server-side setting these offline "
-                "signals cannot see, and a rebase-merged PR history leaves no subject line to "
-                "match. The local `dev → main` merge the default describes is therefore "
-                "unconfirmed rather than established here — confirm the path this repository "
-                "actually uses before promoting, and treat a rejected push as the signal to "
-                "stop and re-check rather than to retry."]
+        return NoEvidence("no local evidence of a PR requirement here (checked the effective "
+                          "pre-push hook's text and the first-parent subjects of origin/main / "
+                          f"main, last {PROMOTION_LOG_DEPTH}) — NOT FOUND, not proof there is "
+                          "none: branch protection is server-side and invisible to these offline "
+                          "signals, and a rebase-merged history leaves no subject to match, so "
+                          "the default's local `dev → main` merge is unconfirmed here rather "
+                          "than established")
     return ["git: promotion to main here goes through a PR, not the local `dev → main` merge "
             "the default describes — " + "; ".join(pol["evidence"]) + ". Promote the way this "
             "repository requires. This reports the path only: it grants nothing, and opening "
@@ -1929,10 +1943,12 @@ def hook_registration_warnings():
     otherwise invisible."""
     hooks_dir = prdt_home() / "hooks"
     if not hooks_dir.is_dir():
-        return []                      # no install on this machine — not this check's business
+        # No install on this machine — not this check's business, and (T-560)
+        # not a clean bill either: it is the shape of "could not look".
+        return Skipped(f"no install mirror at {hooks_dir} — nothing to compare settings.json against")
     mirrored = sorted(p.name for p in hooks_dir.glob("prdt-*.sh"))
     if not mirrored:
-        return []
+        return Skipped(f"{hooks_dir} holds no prdt-*.sh — no hook roster to check registration for")
 
     settings_path = claude_settings_path()
     settings = read_json(settings_path)
@@ -2530,7 +2546,8 @@ def statusline_warnings(root):
     # install mirror at all, never a real absent-registration defect on one
     # that has it.)
     if not (prdt_home() / "hooks").is_dir():
-        return []
+        return Skipped(f"no install mirror at {prdt_home() / 'hooks'} — this machine never ran "
+                       "install.sh, so there is no registration to check")
     root = Path(root)
     roots = [root]
     cr = code_root(root)
@@ -3423,15 +3440,20 @@ def discipline_mirror_drift_warnings(droot):
     default action string)."""
     env_override = os.environ.get("PRDT_DISCIPLINE")
     if env_override:
-        return []  # explicit dev choice — not a drift condition (false-positive note)
+        # Explicit dev choice — not a drift condition (false-positive note) and,
+        # since T-560, not folded into a clean 0 either: each of these is a
+        # reason the check could not LOOK, which the verdict line now says.
+        return Skipped("PRDT_DISCIPLINE is set — an explicit dev override, so no mirror is compared")
     mirror = prdt_home() / "discipline"
     if droot is None or droot.resolve() != mirror.resolve():
-        return []  # repo-fallback in use → no mirror to drift from
+        return Skipped(f"the bound discipline root is not the mirror at {mirror} — "
+                       "repo-fallback or an override is in use, so there is no mirror to drift from")
     repo = _discipline_repo_path()
     if repo is None:
-        return []  # no source tree nearby — nothing to compare against (AC 5)
+        return Skipped("no source tree nearby to compare the mirror against (AC 5)")
     if repo.resolve() == mirror.resolve():
-        return []  # installed-copy coincidence: fallback path IS the mirror (AC 5)
+        return Skipped(f"the fallback path IS the mirror at {mirror} — installed-copy "
+                       "coincidence, a same-path compare (AC 5)")
 
     mirror_files, repo_files = _tree_files(mirror), _tree_files(repo)
     only_repo = sorted(set(repo_files) - set(mirror_files))
@@ -3510,21 +3532,24 @@ def prdt_script_drift_warnings():
     (a repo checkout, or a mirror already carrying this code) runs it."""
     env_override = os.environ.get("PRDT_DISCIPLINE")
     if env_override:
-        return []  # same dev-override posture as discipline: not a drift condition
+        # Same dev-override posture as discipline: not a drift condition — and
+        # (T-560) not a clean read either. Every one of these returns used to be
+        # `[]`, which the old flat total spent as evidence of health.
+        return Skipped("PRDT_DISCIPLINE is set — an explicit dev override, so no mirror is compared")
     mirror = prdt_home() / "bin" / "prdt"
     if not mirror.is_file():
-        return []  # no installed copy on this machine (AC 5 / quiet on source-only)
+        return Skipped(f"no installed copy at {mirror} (AC 5 / quiet on source-only machines)")
     mirror = mirror.resolve()  # follow-any-symlink real file, per PO's slice note
     repo = _prdt_script_repo_path()
     if repo is None:
-        return []  # no source tree nearby
+        return Skipped("no source tree nearby to compare the installed script against")
     if repo.resolve() == mirror:
-        return []  # running the mirror copy itself — collapses onto itself (AC 5)
+        return Skipped(f"{mirror} IS the repo path — mirror and source collapse onto one file (AC 5)")
 
     try:
         mirror_bytes, repo_bytes = mirror.read_bytes(), repo.read_bytes()
-    except OSError:
-        return []
+    except OSError as e:
+        return Skipped(f"could not read {mirror} or {repo} to compare them ({e.__class__.__name__})")
     if mirror_bytes == repo_bytes:
         return []
 
@@ -3691,12 +3716,16 @@ def hook_mirror_drift_warnings():
         into any other place a harness might source its hook roster from."""
     mirror = prdt_home() / "hooks"
     if not mirror.is_dir():
-        return []  # no install on this machine
+        # No install on this machine. Since T-560 these three are Skipped, not
+        # `[]`: each is a reason the check could not look, and the verdict line
+        # that the v1.8 bar is read off must not spend them as a clean 0.
+        return Skipped(f"no install mirror at {mirror} — no mirrored hooks to compare")
     repo = _hooks_repo_path()
     if repo is None:
-        return []  # no source tree nearby
+        return Skipped("no source tree nearby to compare the mirrored hooks against")
     if repo.resolve() == mirror.resolve():
-        return []  # running the repo's own hooks directly — collapses onto itself
+        return Skipped(f"{mirror} IS the repo hooks directory — mirror and source collapse "
+                       "onto one path (the repo's hooks are being run directly)")
 
     mirror_files = _hook_roster_files(mirror)
     repo_files = _hook_roster_files(repo)
