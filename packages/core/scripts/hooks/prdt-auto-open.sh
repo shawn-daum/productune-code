@@ -16,15 +16,24 @@
 #  - macOS `open` not on PATH → nothing (this feature is macOS-only, T-409
 #    decision: single-user tool, cross-platform not worth it yet).
 #
-# Main-session-only firing (T-559, 2026-09-03): this hook's own opening line
-# says it exists for PO deliverables, but T-409's post-grill hardening below
-# only narrowed subagent firing (path exclude, debounce) without ever asking
-# whether it should fire for subagents at all. It shouldn't — a worker Write
-# (designer/QA/developer artifact) was popping a native app window on a cold
-# Chrome launch from this sandboxed process, which macOS answers with an
-# unattributable keychain dialog on the user's screen mid-task. The PO already
-# has its own hand-off convention for deliverables (`[label](file://…)` links,
-# `open`-ing on request); this hook is now only that PO-side surface.
+# The keychain dialog, and what actually causes it (T-559 → T-571). Symptom:
+# an unattributable macOS keychain prompt landing on the user's screen mid-turn.
+# Cause: `open <file>` here COLD-STARTS the handling application — Chrome, on
+# this machine — out of a sandboxed hook process, and a cold Chrome unlocking
+# its Safe Storage keychain item from that parent is what macOS prompts about.
+# The cause is the cold LAUNCH, not who asked for it and not which extension
+# was written; see the T-571 block near the `open` call for the fix.
+#
+# Main-session-only firing (T-559, 2026-09-03) is a SEPARATE narrowing, and it
+# did not address the above: this hook's own opening line says it exists for PO
+# deliverables, but T-409's post-grill hardening below only narrowed subagent
+# firing (path exclude, debounce) without ever asking whether it should fire for
+# subagents at all. It shouldn't — a worker Write (designer/QA/developer
+# artifact) is not a PO-facing result, and the PO already has its own hand-off
+# convention for deliverables (`[label](file://…)` links, `open`-ing on
+# request); this hook is now only that PO-side surface. T-559 removed one
+# caller of the cold launch; main-session Writes kept firing by design, so the
+# dialog kept appearing (user report 2026-09-04) until T-571 removed the cause.
 #
 # Discriminator, empirically observed, not assumed (probed both a headless
 # main-session Write and a Task-dispatched subagent Write against a stdin-dump
@@ -141,6 +150,63 @@ if [ "$ACTION" = "open" ]; then
   if [ -n "$SIZE" ] && [ "$SIZE" -gt 26214400 ] 2>/dev/null; then
     ACTION="reveal"
   fi
+fi
+
+# T-571 (2026-09-04): never COLD-START an application from this hook — that is
+# the keychain dialog's actual cause (see header). A light `open` is allowed
+# only when the app that would handle the file is ALREADY running, so the open
+# lands in a live process instead of spawning one. Otherwise it degrades to the
+# reveal we already have: Finder is a permanently-running system app, so
+# `open -R` starts nothing, and the PO still sees the deliverable land — the
+# surface is kept, only the launch is dropped.
+#
+# Handler resolution, deliberately conservative:
+#  - UTI from `mdls -raw -name kMDItemContentType` (works on any real file,
+#    Spotlight-indexed or not — probed on /tmp and /var/folders alike).
+#  - Bundle id from the user's LaunchServices overrides
+#    (~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.
+#    secure.plist), read through plutil → jq.
+#  - A UTI with NO override falls back to the SYSTEM default, which cannot be
+#    read without launching something. That is left UNRESOLVED on purpose and
+#    treated as "possibly cold" → reveal. Same direction as every other guard
+#    in this hook (T-559): uncertainty fails toward not opening.
+# Bundle ids are compared case-INSENSITIVELY: observed on this machine, the
+# handler plist stores `com.google.chrome` while the running process registers
+# as `com.google.Chrome`, and a literal compare would call a live Chrome cold.
+if [ "$ACTION" = "open" ]; then
+  UTI=""
+  command -v mdls >/dev/null 2>&1 && \
+    UTI="$(mdls -raw -name kMDItemContentType "$FILE_PATH" 2>/dev/null)"
+
+  HANDLER_BUNDLE=""
+  LS_PLIST="$HOME/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist"
+  case "$UTI" in
+    ''|'(null)') ;;
+    *)
+      if command -v plutil >/dev/null 2>&1 && [ -f "$LS_PLIST" ]; then
+        HANDLER_BUNDLE="$(plutil -convert json -o - "$LS_PLIST" 2>/dev/null \
+          | jq -r --arg uti "$UTI" '
+              [ .LSHandlers[]?
+                | select((.LSHandlerContentType // "") == $uti)
+                | (.LSHandlerRoleAll // .LSHandlerRoleViewer // empty) ]
+              | first // ""' 2>/dev/null)"
+      fi
+      ;;
+  esac
+
+  HANDLER_WARM="no"
+  if [ -n "$HANDLER_BUNDLE" ] && command -v lsappinfo >/dev/null 2>&1; then
+    WANT_BUNDLE="$(printf '%s' "$HANDLER_BUNDLE" | tr '[:upper:]' '[:lower:]')"
+    if lsappinfo list 2>/dev/null \
+      | grep -o 'bundleID="[^"]*"' \
+      | sed -e 's/^bundleID="//' -e 's/"$//' \
+      | tr '[:upper:]' '[:lower:]' \
+      | grep -qxF "$WANT_BUNDLE"; then
+      HANDLER_WARM="yes"
+    fi
+  fi
+
+  [ "$HANDLER_WARM" = "yes" ] || ACTION="reveal"
 fi
 
 # Same-path debounce: a rewritten-in-place deliverable (designer iterating on
