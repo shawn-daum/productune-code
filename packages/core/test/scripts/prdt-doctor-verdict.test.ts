@@ -186,6 +186,69 @@ describe.skipIf(!PYTHON3)('prdt doctor — discipline↔execution verdict line',
     if (v.violations === 0) expect(v.verdict).toBe('not-established')
   })
 
+  test('T-572 ①: an unverified pre-push hook is a skip, never a violation', () => {
+    // `prdt init` already installed the managed hook — overwrite it with one
+    // prdt does not own, which is exactly the state the verdict misfiled
+    // before T-572 (a counted `ran` warning, despite the warning's own text
+    // saying "we could not verify this", never "this disagrees").
+    const hookFile = path.join(projectDir, 'code', '.git', 'hooks', 'pre-push')
+    const before = verdict()
+    fs.writeFileSync(hookFile, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+
+    const out = runDoctor()
+    const after = verdict(out)
+    expect(after.violations).toBe(before.violations)
+    expect(after.skipped).toBeGreaterThan(before.skipped)
+    expect(rosterTotal(after)).toBe(rosterTotal(before))
+    expect(out).toContain('could not look · main-push block')
+    expect(out).toContain('main-push block UNVERIFIED')
+    if (after.violations === 0) expect(after.verdict).toBe('not-established')
+  })
+
+  test('T-572 reverse fixture: a REAL main-push mismatch (hooksPath makes the block inert) still counts', () => {
+    // Proves the ① reclassification did not blunt the check generally — an
+    // actually-broken repo (discipline says main is blocked; git will not
+    // even look at the managed hook because core.hooksPath points elsewhere
+    // and nothing lives there) must still land as a violation.
+    const codeRoot = path.join(projectDir, 'code')
+    const before = verdict()
+    const emptyHooksDir = path.join(sandbox, 'elsewhere-hooks')
+    fs.mkdirSync(emptyHooksDir, { recursive: true })
+    execFileSync('git', ['config', '--local', 'core.hooksPath', emptyHooksDir], { cwd: codeRoot })
+
+    const out = runDoctor()
+    const after = verdict(out)
+    expect(after.violations).toBe(before.violations + 1)
+    expect(after.verdict).toBe('violations')
+    expect(out).toContain('main-push block INACTIVE')
+  })
+
+  test('T-572 ②: the PR-promotion-path report is real information, not a counted mismatch', () => {
+    // T-506 made the discipline text say "promote by the path doctor names
+    // for THIS repo" — so a repo measured to promote via PR is discipline
+    // and execution AGREEING, not a mismatch, even though the line stays a
+    // ⚠ finding a person reads before promoting.
+    const codeRoot = path.join(projectDir, 'code')
+    execFileSync('git', ['checkout', '-qb', 'main'], { cwd: codeRoot })
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q',
+      '--allow-empty', '-m', 'init'], { cwd: codeRoot })
+    execFileSync('git', ['checkout', '-qb', 'dev'], { cwd: codeRoot })
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q',
+      '--allow-empty', '-m', 'work'], { cwd: codeRoot })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: codeRoot })
+    execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'merge', '--no-ff', '-q',
+      '-m', 'Merge pull request #7 from acme/dev', 'dev'], { cwd: codeRoot })
+
+    const before = verdict()
+    const out = runDoctor()
+    const after = verdict(out)
+    expect(out).toContain('promotion to main here goes through a PR')
+    expect(out.split('\n').some((l) => l.startsWith('⚠') && /promotion to main here goes through a PR/.test(l))).toBe(true)
+    // it printed, ran, but did not move the mismatch count
+    expect(after.ran).toBeGreaterThan(before.ran - 1)
+    expect(after.violations).toBe(before.violations)
+  })
+
   test('membership is declared per check, and an undeclared one is surfaced', () => {
     // Structural, not textual: ask the script itself. Every roster entry must
     // carry a family from the fixed vocabulary, and the verdict function must

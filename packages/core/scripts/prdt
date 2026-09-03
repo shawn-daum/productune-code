@@ -1216,16 +1216,29 @@ def prepush_warnings(root):
     if st == "unverified":
         # `mentions` NEVER decides the verdict — it only picks which sentence is
         # useful to the reader (T-493).
+        #
+        # T-572 ①: this used to be a `ran` warning, i.e. a counted family
+        # VIOLATION — but the warning text itself says the opposite of "we
+        # found a mismatch": "prdt verifies ownership only (it never runs
+        # someone else's hook to find out what it does)" and "assume nothing
+        # BUT YOU stops a push to main". That is "we could not establish
+        # whether discipline and execution agree", not "they disagree" — the
+        # exact could-not-look state T-560 built `Skipped` for, which this
+        # check never used on itself. Moving it to `Skipped` takes it out of
+        # `violations` while the verdict line still names it under
+        # `skipped`/"could not look" — it is never silent, and the overall
+        # token becomes `not-established`, never a `clean` it did not earn.
         note = (" It does contain `main` and ALLOW_MAIN_PUSH, but words in a file are not a "
                 "block — a hook mentioning both only in comments used to pass this check."
                 if res.get("mentions") else
                 " Nothing in it mentions `main` or ALLOW_MAIN_PUSH at all.")
-        return [f"git: main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
-                "verifies ownership only (it never runs someone else's hook to find out what "
-                f"it does).{note} Until you have read it, assume nothing but you stops a push "
-                "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
-                + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
-                   "its own hook here" if hp else "")]
+        return Skipped(
+            f"main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
+            "verifies ownership only (it never runs someone else's hook to find out what "
+            f"it does).{note} Until you have read it, assume nothing but you stops a push "
+            "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
+            + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
+               "its own hook here" if hp else ""))
     return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
 
 
@@ -1415,11 +1428,20 @@ def promotion_warnings(root):
                           "signals, and a rebase-merged history leaves no subject to match, so "
                           "the default's local `dev → main` merge is unconfirmed here rather "
                           "than established")
-    return ["git: promotion to main here goes through a PR, not the local `dev → main` merge "
-            "the default describes — " + "; ".join(pol["evidence"]) + ". Promote the way this "
-            "repository requires. This reports the path only: it grants nothing, and opening "
-            "or merging that PR is a push, so the contracts gate (the user's explicit "
-            "instruction at the time) is satisfied first and separately."]
+    # T-572 ②: this line used to be a plain `ran` warning, i.e. a counted
+    # family VIOLATION. But the family's question is "did discipline and
+    # execution disagree?", and T-506 already rewrote the discipline text to
+    # say "promote by the path `prdt doctor` names for THIS repo" — so a repo
+    # measured to promote via PR is discipline and execution AGREEING, the
+    # opposite of a mismatch. It stays a ⚠ line on purpose (real, current,
+    # pre-promote information a person must read), just not one that moves
+    # the mismatch count — see `Advisory`'s docstring for the general rule.
+    return Advisory(
+        ["git: promotion to main here goes through a PR, not the local `dev → main` merge "
+         "the default describes — " + "; ".join(pol["evidence"]) + ". Promote the way this "
+         "repository requires. This reports the path only: it grants nothing, and opening "
+         "or merging that PR is a push, so the contracts gate (the user's explicit "
+         "instruction at the time) is satisfied first and separately."])
 
 
 # ── release-notes scaffold (T-453) ────────────────────────────────────────────
@@ -4557,18 +4579,50 @@ class NoEvidence:
         self.note = note
 
 
+class Advisory:
+    """What a check returns when it RAN and established something real and
+    worth a ⚠ line — a person reads it in the minutes before doing something —
+    but the fact itself is not a discipline↔execution MISMATCH (T-572 ②).
+
+    `git promotion path`'s `pr` case is the motivating example: T-506 changed
+    the discipline text to say "promote by the path `prdt doctor` names for
+    THIS repo", so a repo that promotes through a PR is the discipline and the
+    execution AGREEING, not diverging — the family's question ("did discipline
+    and execution disagree?") is answered "no" here, even though the line is
+    real, current, and needs reading before a promote. Counted in `ran` (the
+    check looked and found something), never in `violations` (nothing here
+    contradicts the discipline text) — the printed ⚠ line is unchanged either
+    way, since doctor has exactly one severity and this is still a finding
+    worth surfacing, just not one that moves the family's mismatch count."""
+    __slots__ = ("lines",)
+
+    def __init__(self, lines):
+        self.lines = list(lines)
+
+
 def doctor_record(name, family, result):
     """One registered check's outcome in the shape the verdict reads. `family`
     is carried through verbatim — including a bad value, so the verdict can
-    report it rather than this layer quietly guessing a home for it."""
+    report it rather than this layer quietly guessing a home for it.
+
+    `violations` is stored explicitly (T-572) rather than always being
+    `len(warnings)`: an `Advisory` result prints its lines exactly like any
+    other `ran` warning but contributes 0 to the family's mismatch count. A
+    record built without the key (the verdict-line unit test constructs raw
+    dicts by hand) defaults to the old behavior via `.get` in
+    `doctor_verdict_lines`, so that contract is untouched."""
     if isinstance(result, Skipped):
         return {"name": name, "family": family, "state": "skipped",
                 "reason": result.reason, "warnings": []}
     if isinstance(result, NoEvidence):
         return {"name": name, "family": family, "state": "no-evidence",
                 "reason": result.note, "warnings": []}
+    if isinstance(result, Advisory):
+        return {"name": name, "family": family, "state": "ran", "reason": None,
+                "warnings": list(result.lines), "violations": 0}
+    warnings = list(result)
     return {"name": name, "family": family, "state": "ran", "reason": None,
-            "warnings": list(result)}
+            "warnings": warnings, "violations": len(warnings)}
 
 
 def doctor_verdict_lines(records):
@@ -4587,7 +4641,11 @@ def doctor_verdict_lines(records):
     ran = [r for r in fam if r["state"] == "ran"]
     skipped = [r for r in fam if r["state"] == "skipped"]
     unseen = [r for r in fam if r["state"] == "no-evidence"]
-    violations = sum(len(r["warnings"]) for r in ran)
+    # `.get("violations", …)` — not every `ran` record carries the key (the
+    # membership unit test below builds raw dicts by hand), so a record
+    # without it falls back to the pre-T-572 rule (every warning is a
+    # violation). Only `Advisory` (T-572 ②) stores an explicit 0.
+    violations = sum(r.get("violations", len(r["warnings"])) for r in ran)
 
     if violations:
         verdict = "violations"
