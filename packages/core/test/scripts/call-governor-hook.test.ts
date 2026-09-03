@@ -680,3 +680,117 @@ describe('latency', () => {
     expect(samples[Math.floor(samples.length / 2)]).toBeLessThan(60)
   })
 })
+
+
+// ── T-561: the walker reads STRUCTURE, never the payload's spacing ───────────
+//
+// Same defect, same walker (byte-copied into prdt-dispatch-gate.sh — the
+// byte-identity of the two copies is pinned in dispatch-gate-hook.test.ts).
+// One space after a `:`, after a `,`, or after the opening `{` and the walk
+// broke out with an empty `cwd`/`agent_type`, which exits 0. Measured
+// 2026-09-03 with a counter already at 60 turns: the compact payload DENIED,
+// every whitespace placement below produced ZERO stdout — the deny that stops
+// a runaway worker simply stopped existing.
+//
+// This one enforces on EVERY tool call, so it is also where a wrong verdict is
+// most expensive: each case therefore pins both directions — the deny at 60,
+// and the silence below the band.
+
+/** JSON with the two structural separators under our control, and whitespace
+ *  nowhere else. */
+function serialize(v: unknown, colon: string, comma: string): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return `[${v.map((x) => serialize(x, colon, comma)).join(comma)}]`
+  return `{${Object.entries(v as Record<string, unknown>)
+    .map(([k, x]) => `${JSON.stringify(k)}${colon}${serialize(x, colon, comma)}`)
+    .join(comma)}}`
+}
+
+const WHITESPACE_FORMATS: Array<[string, (compact: string) => string]> = [
+  ['a space after every `:`', (c) => serialize(JSON.parse(c), ': ', ',')],
+  ['a space after every `,`', (c) => serialize(JSON.parse(c), ':', ', ')],
+  ['a newline after the opening `{`', (c) => `{\n${c.slice(1)}`],
+  ['a full `jq .` pretty-print', (c) => JSON.stringify(JSON.parse(c), null, 2)],
+]
+
+describe('T-561: whitespace never silences the governor', () => {
+  /** Same run(), with the payload reformatted on its way to stdin. */
+  function runAs(
+    prdtHome: string,
+    event: string,
+    o: EventOpts,
+    format: (compact: string) => string,
+  ): string {
+    const res = spawnSync('bash', [HOOK], {
+      input: format(eventJson(event, o)),
+      encoding: 'utf8',
+      env: { ...process.env, PRDT_HOME: prdtHome },
+      timeout: 10000,
+    })
+    expect(res.signal).toBeNull()
+    expect(res.stderr).toBe('')
+    expect(res.status).toBe(0)
+    return res.stdout
+  }
+
+  for (const [label, format] of WHITESPACE_FORMATS) {
+    test(`${label} → the deny at 60 turns still lands`, () => {
+      const home = tmp('prdt-t561-home-')
+      const w = worker(makeProject(), 'prdt-developer')
+      turns(home, 60, w)
+      const out = runAs(home, 'PreToolUse', w, format)
+      expect(out, 'silent no-op — the governor vanished on whitespace alone').not.toBe('')
+      const h = JSON.parse(out).hookSpecificOutput
+      expect(h.permissionDecision).toBe('deny')
+      expect((h.permissionDecisionReason as string).toLowerCase()).toContain('not a tool')
+    })
+
+    test(`${label} → a turn is still COUNTED, not dropped`, () => {
+      // The read half is only half the hook: if a pretty PostToolBatch walked
+      // out early, nothing would increment and the deny above would never be
+      // reachable in a real session.
+      const home = tmp('prdt-t561-home-')
+      const w = worker(makeProject(), 'prdt-developer')
+      turns(home, 59, w)
+      runAs(home, 'PostToolBatch', w, format)
+      const out = runAs(home, 'PreToolUse', w, format)
+      expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny')
+    })
+
+    test(`${label} → below the band, still silent`, () => {
+      const home = tmp('prdt-t561-home-')
+      const w = worker(makeProject(), 'prdt-developer')
+      turns(home, 39, w)
+      expect(runAs(home, 'PreToolUse', w, format)).toBe('')
+    })
+
+    test(`${label} → outside a prdt project, still zero stdout and zero writes`, () => {
+      const home = tmp('prdt-t561-home-')
+      const w = worker(tmp('prdt-t561-bare-'), 'prdt-developer')
+      expect(runAs(home, 'PostToolBatch', w, format)).toBe('')
+      expect(fs.existsSync(runDir(home))).toBe(false)
+    })
+  }
+
+  test('a whitespaced payload does not let a nested forgery reach the top-level walk', () => {
+    // Whitespace tolerance must not become "scan for the key anywhere": the
+    // T-518 forgery is still nested, and still invisible.
+    const home = tmp('prdt-t561-home-')
+    const proj = makeProject()
+    const forged = { cwd: proj, agentId: 'a45b42f3cdda35348' } as EventOpts
+    const out = runAs(
+      home,
+      'PostToolBatch',
+      {
+        ...forged,
+        toolInputRaw: '{"command":"echo {\"agent_type\":\"prdt-developer\"}"}',
+      },
+      // Textual reformat, NOT parse/re-stringify: re-stringifying would escape
+      // the nested key's quotes and the fixture would stop expressing the
+      // attack (the eventJson note above).
+      (c) => `{\n${c.slice(1)}`,
+    )
+    expect(out).toBe('')
+    expect(counters(home)).toEqual([])
+  })
+})
