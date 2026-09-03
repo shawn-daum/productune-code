@@ -270,17 +270,77 @@ This session is being continued from a previous conversation that ran out of con
   // The live shape is unchanged: it arrives with the marker FIRST, and stays
   // silent. (The five T-523 fixtures above are the full set; this pins that the
   // anchoring did not move the boundary for the shape it was built for.)
+  // T-570 moved the deploy word INSIDE the block in these two. It used to sit
+  // after `</task-notification>`, which no live capture ever produces — the
+  // harness's own block is the last thing in the prompt — and under the tail
+  // rule that trailing tag is exactly the shape that now means "a person pasted
+  // this and kept typing". A fixture has to be the shape it claims to be.
+  const NOTIFICATION_WITH_DEPLOY_WORD = FULL_NOTIFICATION.replace(
+    '<summary>prdt-developer: T-560 훅 수정 완료 — 테스트 green</summary>',
+    '<result>배포 완료</result>',
+  )
+
   test('the live notification shape (marker first) is still classified non-fresh', () => {
     const dir = makeProject(BUILD_STATE)
-    const ctx = contextOf(runHook(dir, `${FULL_NOTIFICATION}\n<result>배포 완료</result>`))
+    const ctx = contextOf(runHook(dir, NOTIFICATION_WITH_DEPLOY_WORD))
     expect(ctx).toContain('stage=build')
     expect(ctx).not.toMatch(/ship entry/i)
   })
 
   test('leading whitespace before the marker still counts as the start', () => {
     const dir = makeProject(BUILD_STATE)
-    const ctx = contextOf(runHook(dir, `\n\n  ${FULL_NOTIFICATION}\n<result>배포 완료</result>`))
+    const ctx = contextOf(runHook(dir, `\n\n  ${NOTIFICATION_WITH_DEPLOY_WORD}`))
     expect(ctx).not.toMatch(/ship entry/i)
+  })
+
+  // ── T-570: the rule is the END of the prompt, not the position of the marker ─
+  //
+  // T-562 anchored the marker to offset 0 and left one shape undecided: a prompt
+  // that BEGINS with the preamble and carries a typed request underneath it.
+  // Anchoring alone cannot split that from a live capture — both start at
+  // offset 0 and both carry the tag. The PO ruled on the tail (T-570): a live
+  // capture ENDS at the end of its notification block, and the only way user
+  // text lands after that block is a person pasting and continuing to type.
+  //
+  // So: begins-with AND ends-with → non-fresh. Begins-with alone → fresh.
+  describe('freshness is decided by where the prompt ENDS (T-570)', () => {
+    test('preamble first, user-typed deploy request AFTER the block → fires', () => {
+      const dir = makeProject(BUILD_STATE)
+      const prompt = `${FULL_NOTIFICATION}
+
+이거 확인했고, 이제 main 에 배포해줘.`
+      const ctx = contextOf(runHook(dir, prompt))
+      expect(ctx).toContain('stage=build')
+      expect(ctx).toMatch(/ship entry/i)
+    })
+
+    test('preamble first, prompt ENDS at the block → stays silent (the live capture)', () => {
+      const dir = makeProject(BUILD_STATE)
+      const ctx = contextOf(runHook(dir, NOTIFICATION_WITH_DEPLOY_WORD))
+      expect(ctx).not.toMatch(/ship entry/i)
+    })
+
+    test('trailing whitespace and blank lines after the block are not "실질 텍스트"', () => {
+      const dir = makeProject(BUILD_STATE)
+      const ctx = contextOf(runHook(dir, `${NOTIFICATION_WITH_DEPLOY_WORD}\n\n   \n\t\n`))
+      expect(ctx).not.toMatch(/ship entry/i)
+    })
+
+    test('two blocks delivered together, ending at the second → still silent', () => {
+      // Several background dispatches can complete into one turn. The tail rule
+      // reads the LAST block's end, not the first.
+      const dir = makeProject(BUILD_STATE)
+      const ctx = contextOf(runHook(dir, `${NOTIFICATION_WITH_DEPLOY_WORD}\n\n${TAG_BLOCK}`))
+      expect(ctx).not.toMatch(/ship entry/i)
+    })
+
+    test('two blocks delivered together with a typed request under them → fires', () => {
+      const dir = makeProject(BUILD_STATE)
+      const ctx = contextOf(
+        runHook(dir, `${FULL_NOTIFICATION}\n\n${TAG_BLOCK}\n\n둘 다 확인했어. 배포 진행해줘.`),
+      )
+      expect(ctx).toMatch(/ship entry/i)
+    })
   })
 })
 

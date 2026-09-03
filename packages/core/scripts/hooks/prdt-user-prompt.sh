@@ -223,13 +223,32 @@ COMPACT_CONTINUATION_MARKER = "This session is being continued from a previous c
 # corroboration for a prompt that already OPENS as a notification, never on its
 # own a reason to discount what the user typed. Quoting a `<task-notification>`
 # block mid-prompt is a thing people do while asking for something.
+#
+# THE RULE, in one line (T-570): a notification prompt must BEGIN with the
+# preamble AND END at the end of its notification block — begins-with alone is
+# not enough.
+#
+# Why both halves. Anchoring (T-562) split "marker mid-body" off, and left one
+# shape it cannot split at all: a person pastes a worker return, then types
+# their request UNDERNEATH it. That prompt starts at offset 0 with the preamble
+# and carries the tag, exactly like a live capture. The tail is what differs —
+# a live capture ends at its block, because the harness has nothing to append
+# after it, and the only way user text lands after that block is a human
+# continuing to type (PO ruling, T-570). So the tail decides, not the position.
+# "Substantive" means content, not formatting: trailing blank lines and
+# whitespace are still the live shape.
 def is_not_fresh_user_text(p):
     head = p.lstrip()
     if head.startswith(COMPACT_CONTINUATION_MARKER):
         return True
     if not head.startswith(NOTIFICATION_MARKER):
         return False
-    return bool(NOTIFICATION_TAG_RE.search(p))
+    last = None
+    for last in NOTIFICATION_TAG_RE.finditer(p):
+        pass          # several dispatches can land in one turn; the LAST end wins
+    if last is None:
+        return False
+    return not p[last.end():].strip()
 
 
 prompt = ev.get("prompt") or ""
