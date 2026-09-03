@@ -7,6 +7,7 @@
 #
 # Scope guards (all silent no-ops, never block the turn):
 #  - Not a Write tool call → nothing.
+#  - Subagent Write (see T-559 below) → nothing.
 #  - $PRDT_GUI_SESSION set → nothing. The GUI po-runner spawn sets this (T-409)
 #    specifically so its own PO turns never ALSO pop native Finder/Preview
 #    windows behind the Electron window — GUI already auto-surfaces in-app.
@@ -14,6 +15,41 @@
 #    toggle by direct file edit for now, same convention as audience-mode).
 #  - macOS `open` not on PATH → nothing (this feature is macOS-only, T-409
 #    decision: single-user tool, cross-platform not worth it yet).
+#
+# Main-session-only firing (T-559, 2026-09-03): this hook's own opening line
+# says it exists for PO deliverables, but T-409's post-grill hardening below
+# only narrowed subagent firing (path exclude, debounce) without ever asking
+# whether it should fire for subagents at all. It shouldn't — a worker Write
+# (designer/QA/developer artifact) was popping a native app window on a cold
+# Chrome launch from this sandboxed process, which macOS answers with an
+# unattributable keychain dialog on the user's screen mid-task. The PO already
+# has its own hand-off convention for deliverables (`[label](file://…)` links,
+# `open`-ing on request); this hook is now only that PO-side surface.
+#
+# Discriminator, empirically observed, not assumed (probed both a headless
+# main-session Write and a Task-dispatched subagent Write against a stdin-dump
+# PostToolUse hook, Claude Code 2.1.259): a subagent's PostToolUse payload
+# carries top-level `agent_id` + `agent_type` (e.g. `"agent_type":"file-writer"`)
+# right after `permission_mode`; a main-session payload has neither key at all
+# — confirms fact--claude-hooks' T-518 finding for PreToolUse/PostToolBatch
+# also holds for PostToolUse. Read with `jq -r 'has("agent_type")'`, which
+# is depth-aware: it can only ever match a real top-level member, so a Write
+# whose `tool_input.content` or `file_path` happens to contain the literal
+# text "agent_type" cannot forge a match the way a substring grep could
+# (fact--claude-hooks T-518 "첫 매치" pitfall) — jq's top-level addressing IS
+# the mitigation, no extra depth check needed. Checked via key MEMBERSHIP
+# (`has("agent_type")`), not truthiness of the value, so a hypothetical
+# present-but-empty value still reads as "identity present" — the shape a
+# real main-session payload never produces (it omits the key outright).
+#  - agent_type key present (has() = true, any value) → subagent → silent no-op.
+#  - jq itself fails to parse at this step → treated the same as "present":
+#    silent no-op. Fails toward NOT opening, on purpose — a wrongly-skipped
+#    open costs a convenience popup the PO can still hand off manually; a
+#    wrongly-fired open reproduces the exact keychain-dialog defect this
+#    ticket exists to kill. Every other guard in this hook already fails the
+#    same direction (missing jq/open, missing file, mode=off → all skip,
+#    never open), so this keeps the one consistent failure mode throughout.
+#  - agent_type key absent and jq parsed cleanly → main session → proceeds.
 #
 # Classification (T-409 추가 확정, 2026-07-24): a NARROW allowlist, not "any
 # md/html anywhere" — most md/html writes in a session are routine ticket/wiki/
@@ -65,6 +101,14 @@ TOOL_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_name // ""' 2>/dev/null)"
 
 FILE_PATH="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
 [ -n "$FILE_PATH" ] && [ -f "$FILE_PATH" ] || { printf '{}'; exit 0; }
+
+# T-559: subagent Write → silent no-op. `agent_type` is a top-level payload
+# member on subagent Writes only (see header) — jq's addressing is itself the
+# anti-spoofing guard, and a jq failure here is folded into the same "present"
+# branch (fails toward skip, not open; see header for why that direction).
+HAS_AGENT_TYPE="$(printf '%s' "$EVENT_JSON" | jq -r 'has("agent_type")' 2>/dev/null)"
+JQ_AGENT_STATUS=$?
+[ "$JQ_AGENT_STATUS" -eq 0 ] && [ "$HAS_AGENT_TYPE" = "false" ] || { printf '{}'; exit 0; }
 
 # .prdt/ 하위(scratch, session state, …) is internal bookkeeping, never a
 # PO-facing deliverable, regardless of extension — exclude before anything else.
