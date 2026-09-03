@@ -183,13 +183,15 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('managed pre-push hook (T-481)',
     const stamp = fs.statSync(hookFile()).mtimeMs
     const second = doctor()
     expect(second).not.toContain('main-push block')
-    // The claim is "doctor says nothing MORE about the hook", not "the string
-    // pre-push never appears". T-564's promotion line names the pre-push hook
-    // as one of the two signals it read, so a bare substring test now collides
-    // with a line that is about promotion policy, not about this repair.
+    // The claim is "doctor reports no FINDING about the hook", not "the string
+    // pre-push never appears": the promotion check names the pre-push hook as
+    // one of the two signals it read, and says so on doctor's report channel
+    // (T-564's measurement, moved onto the verdict line by T-560). Filtering to
+    // ⚠ lines states the claim as what it actually is — doctor has one severity
+    // and findings are the ⚠ ones.
     const aboutTheHook = second
       .split('\n')
-      .filter((l) => l.includes('pre-push') && !l.includes('git: promotion path'))
+      .filter((l) => l.startsWith('⚠ ') && l.includes('pre-push'))
     expect(aboutTheHook).toEqual([])
     expect(fs.statSync(hookFile()).mtimeMs).toBe(stamp)
   })
