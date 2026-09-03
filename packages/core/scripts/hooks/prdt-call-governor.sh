@@ -287,6 +287,25 @@ done
 
 RUN="${PRDT_HOME:-$HOME/.prdt}/run/call-governor"
 
+# ── cross-worker writability: a RECORDED decision, not an oversight (T-567 F4) ─
+# This directory is shared by every session on the machine, the file names are
+# `$SID.$AID`, and `ls` shows them all — so one worker can poison another
+# worker's counter, and since T-519 made tamper fail CLOSED that poisoning is a
+# confirmed kill rather than the silent fail-open it used to be.
+#
+# It stays that way, on purpose, because every candidate fix is theatre at this
+# layer: all workers run as ONE uid, so no mode, no per-worker subdirectory and
+# no name obfuscation stops a peer that can already run `rm -rf $HOME`. Only a
+# privileged out-of-process counter would, and this hook cannot have one (it runs
+# on every tool call and may not fork). Fail-closed is still the right direction
+# — the alternative hands a worker a way to silently UN-govern its peers, which
+# is worse than a loud, diagnosable stop.
+# What the fix here does instead is make the residual survivable rather than
+# mysterious: the deny text tells a victim to say "I did not touch this path" in
+# its envelope, and `prdt doctor` names the exact path and its repair. The
+# threat model this hook actually serves is a worker evading its OWN budget, and
+# that is what T-567 closes.
+
 # ── fire evidence (T-445 / T-498 §8 r6) ───────────────────────────────────────
 # A typo'd event name in settings.json is accepted by the harness with NO error
 # and NO warning, so "registered" never proves "fires". Each event stamps its
@@ -297,8 +316,20 @@ RUN="${PRDT_HOME:-$HOME/.prdt}/run/call-governor"
 # Redirections are applied left to right, so `: > missing/file 2>/dev/null`
 # reports its failure on the still-open stderr — a hook leaking to stderr on
 # every tool call is exactly the noise this file must not add.
-if ! : 2>/dev/null > "$RUN/.fired-$EVENT"; then
-  mkdir -p "$RUN" 2>/dev/null && : 2>/dev/null > "$RUN/.fired-$EVENT"
+#
+# T-567: `>` TRUNCATES, and it follows a symlink. A link planted at this marker
+# name aims that truncate at any file this uid owns — strictly worse than the
+# counter's one-byte append, and reproduced (a victim file went to 0 bytes).
+# `run/call-governor/` is a 0755 directory shared by every session on the
+# machine, so this path is plantable by something that is not us. The rule for
+# every write in this file is therefore the same one: it lands on a real file
+# inside this directory or it does not happen. Refusing here costs a missing
+# fire marker, which `prdt doctor` already reports — and it reports the planted
+# link itself too (T-567), so refusal is never silence.
+if [ ! -L "$RUN/.fired-$EVENT" ]; then
+  if ! : 2>/dev/null > "$RUN/.fired-$EVENT"; then
+    mkdir -p "$RUN" 2>/dev/null && : 2>/dev/null > "$RUN/.fired-$EVENT"
+  fi
 fi
 
 # ── persona (a TOP-LEVEL member of the event itself) ──────────────────────────
@@ -332,34 +363,77 @@ RE_AID='^[A-Za-z0-9_-]{4,64}$'
 [[ $SID =~ $RE_SID ]] || exit 0
 [[ $AID =~ $RE_AID ]] || exit 0
 KEY="$RUN/$SID.$AID"
+# The WITNESS (T-567). One byte per counted turn, same as the counter, appended
+# AFTER it — so the witness can only ever LAG the counter, never lead it. A
+# counter shorter than its witness is a state this hook cannot produce; it is a
+# deletion or a truncation. That is the whole mechanism, and it is what turns the
+# guard's question from "is this a regular file?" (which `rm` and `: >` both
+# answer correctly while resetting the budget) into "is this the counter this
+# session actually accrued?".
+#
+# The prefix is deliberately NOT `$SID.$AID`: the obvious cleanup a worker
+# reaches for is `rm "$RUN/$SID.$AID"*`, and that glob leaves the witness
+# standing, which is exactly when this check must speak.
+#
+# RESIDUAL, stated rather than implied: this is same-uid state, so a worker that
+# knows the scheme can remove BOTH files and start clean. No file under $HOME can
+# close that — only an out-of-process counter could, which this hook cannot have
+# (no forks on the hot path). What T-567 changes is that no single obvious
+# primitive silently restores budget any more: every inconsistent state is a deny
+# or a warning, and `prdt doctor` reports the leftovers of an attempt.
+WIT="$RUN/.hw-$SID.$AID"
 
 WARN_AT=40
 DENY_AT=60
 
-# ── tamper: counter path is not a regular file (T-519 vector 2) ────────────────
-# `mkdir "$KEY"` — or any non-regular file planted at this path — makes BOTH the
-# append and the read below fail forever: the count would pin at 0 and every
-# deny be silently skipped, while the `.fired-*` markers stay green so `prdt
-# doctor` sees a healthy governor. A fresh counter does not exist yet (`! -e`), a
-# live one is a regular file (`-f`); only a POISONED path reaches here. This is
-# NOT the malformed-payload case that fails open above — identity is resolved and
-# the persona is known — it is tampered evidence, so treat it as over-limit
-# rather than as N=0: the enforced persona is DENIED (self-evasion via mkdir now
-# backfires), warn-only personas are never denied so they carry on, and `prdt
-# doctor` reports the path either way. Two builtin tests, no fork.
-if [ -e "$KEY" ] && [ ! -f "$KEY" ]; then
-  if [ -n "$ENFORCE" ] && [ "$EVENT" = "PreToolUse" ]; then
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[prdt call governor] Hard stop: the turn counter for this worker has been replaced by a non-regular file, so the count can no longer be trusted (T-491/T-519). Enforcement fails CLOSED here rather than granting untracked turns.\\nReturn your envelope NOW — `summary` (what landed, plus `files_written[]`) and `unresolved[]`, one line per remaining item, written so a fresh worker can pick it up cold. Returning is NOT a tool call; retrying a tool only earns another deny."}}'
-  fi
-  exit 0
+# ── tamper: is this the counter this session accrued? (T-519 v2 / T-567) ───────
+# Three shapes, one verdict. All three were reproduced against the previous
+# `[ -e "$KEY" ] && [ ! -f "$KEY" ]` guard before this rewrite:
+#
+#   NON-REGULAR  `mkdir "$KEY"` (or a FIFO/socket) makes append and read fail
+#                forever, pinning the count at 0 while `.fired-*` stays green.
+#                This is the one shape T-519 caught.
+#   SYMLINK      `-f` FOLLOWS the link: a link to a regular file passed the old
+#                guard, and `printf . >> "$KEY"` then appended to whatever it
+#                named — an append primitive aimed at any file this uid owns
+#                (`~/.claude/settings.json`, `~/.prdt/prdt.env`, a git object).
+#                A DANGLING link is the same primitive in create form: `>>`
+#                through one creates the target (measured). So the test is
+#                `-L`, never the target's shape — the write stays inside this
+#                directory or it does not happen.
+#   REGRESSED    the counter is shorter than its witness: `rm -f "$KEY"` or
+#                `: > "$KEY"` — the two cheapest evasions there are, and both
+#                PASSED the old guard, which is the defect T-567 exists for.
+#
+# Verdict is the same for all three, and it is NOT the malformed-payload
+# fail-open above: identity is resolved and the persona is known, so this is
+# tampered evidence and it is read as over-limit rather than as N=0. Enforced
+# personas are DENIED (evasion backfires), warn-only personas are never denied
+# but ARE told (silence here is what let this run undetected), and `prdt doctor`
+# reports all four states. Builtin tests only, no fork.
+TAMPER=""
+if [ -L "$KEY" ] || [ -L "$WIT" ]; then
+  TAMPER="a symlink is planted at the counter path, so a write there would leave the governor's own directory"
+elif { [ -e "$KEY" ] && [ ! -f "$KEY" ]; } || { [ -e "$WIT" ] && [ ! -f "$WIT" ]; }; then
+  TAMPER="the counter path holds a non-regular file, so the count can never be read or appended"
 fi
 
 if [ "$EVENT" = "PostToolBatch" ]; then
+  # No append through a tampered path — not even a failed one. The visible
+  # outcome for this turn is raised on the PreToolUse of the NEXT tool call
+  # (there is no PostToolBatch channel to speak on), which is at most one turn
+  # away for any worker still working.
+  [ -z "$TAMPER" ] || exit 0
   # One byte per completed API turn. O_APPEND of a single byte is atomic, so
   # concurrent workers (which key to different files anyway) cannot interleave.
   if ! printf . 2>/dev/null >> "$KEY"; then
-    mkdir -p "$RUN" 2>/dev/null && printf . 2>/dev/null >> "$KEY"
+    mkdir -p "$RUN" 2>/dev/null
+    printf . 2>/dev/null >> "$KEY" || exit 0
   fi
+  # ORDER IS THE INVARIANT: witness after counter, and only if the counter append
+  # actually landed. A witness that could lead the counter would make an ordinary
+  # crashed write look like tampering.
+  printf . 2>/dev/null >> "$WIT"
   exit 0
 fi
 
@@ -369,6 +443,27 @@ fi
 BUF=""
 IFS= read -r -d '' BUF 2>/dev/null < "$KEY"
 N=${#BUF}
+
+# The witness, read the same way. Absent (W=0) is the normal state for a counter
+# that predates this check and for a dispatch that has not counted a turn yet —
+# never tamper on its own. Only a counter that FELL BEHIND its witness is.
+WBUF=""
+IFS= read -r -d '' WBUF 2>/dev/null < "$WIT"
+if [ -z "$TAMPER" ] && [ "${#WBUF}" -gt "$N" ]; then
+  TAMPER="this session accrued ${#WBUF} turns but the counter now holds $N — it was deleted or truncated"
+fi
+
+# Tamper verdict: deny the enforced persona, tell the warn-only ones. Neither
+# path may end in a plain exit 0 (T-567): a silent pass here is what made the
+# reset evasions invisible for a whole round.
+if [ -n "$TAMPER" ]; then
+  if [ -n "$ENFORCE" ]; then
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[prdt call governor] Hard stop: the turn counter for this worker cannot be trusted — %s (T-491/T-519/T-567). Enforcement fails CLOSED here rather than granting untracked turns; restoring the count is not something a worker does for itself.\\nReturn your envelope NOW — `summary` (what landed, plus `files_written[]`) and `unresolved[]`, one line per remaining item, written so a fresh worker can pick it up cold. Returning is NOT a tool call; retrying a tool only earns another deny.\\nIf you did not touch this path, say so in `unresolved[]` and let the PO run `prdt doctor` — it reports this state."}}' "$TAMPER"
+  else
+    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"[prdt call governor] The turn counter for this worker cannot be trusted — %s (T-567). Your persona is never denied, so nothing here stops you; the count for this dispatch is simply no longer accountable.\\nIf you did not touch this path, name it in your return and let the PO run `prdt doctor` — it reports this state."}}' "$TAMPER"
+  fi
+  exit 0
+fi
 
 # The count is of COMPLETED turns: the PreToolUse of turn n sees n-1.
 if [ -n "$ENFORCE" ] && [ "$N" -ge "$DENY_AT" ]; then
