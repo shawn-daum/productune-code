@@ -794,3 +794,173 @@ describe('T-561: whitespace never silences the governor', () => {
     expect(counters(home)).toEqual([])
   })
 })
+
+// ── T-567: the counter cannot be reset, and the counter path cannot be aimed ──
+//
+// T-519 closed ONE tamper shape — a NON-regular file planted at the counter path
+// (`mkdir`) — and its guard is written as exactly that question: `[ -e "$KEY" ]
+// && [ ! -f "$KEY" ]`. Three primitives walk straight through it, all three
+// reproduced on this hook before this block existed:
+//
+//   rm -f "$KEY"      the guard is false (nothing exists), the read yields N=0,
+//   : > "$KEY"        the guard is false (a 0-byte REGULAR file), N=0
+//                     → a saturated worker's next PreToolUse PASSES. The 60-turn
+//                       ceiling becomes unbounded for one `rm`, and the
+//                       `.fired-*` markers doctor reads stay green throughout.
+//   ln -s <regular file> "$KEY"
+//                     `-f` FOLLOWS the link, sees a regular file, and passes —
+//                     so `printf . >> "$KEY"` appends one byte per turn to
+//                     whatever the link names. That is an append primitive
+//                     pointed at any file this uid owns (`~/.claude/settings.json`,
+//                     `~/.prdt/prdt.env`, a git object). A DANGLING link is the
+//                     same primitive in create form (verified: `>>` through a
+//                     dangling link creates the target), and the `.fired-*`
+//                     markers are the same primitive in TRUNCATE form, since
+//                     those are written with `>` and not `>>`.
+//
+// So the guard's question is wrong twice over. It now asks two questions instead:
+// is this counter the one this session actually accrued (witness), and does this
+// path stay inside the run directory (never a symlink, either half).
+describe('counter tamper: rm, truncate, symlink (T-567)', () => {
+  const keyPath = (home: string, o: EventOpts) =>
+    path.join(runDir(home), `${o.sessionId ?? SID}.${o.agentId}`)
+
+  /** A file OUTSIDE the run directory, standing in for `~/.claude/settings.json`. */
+  function victim(name = 'settings.json'): { file: string; before: string } {
+    const dir = tmp('prdt-t567-victim-')
+    const file = path.join(dir, name)
+    const before = '{"hooks":{"PreToolUse":[]}}\n'
+    fs.writeFileSync(file, before)
+    return { file, before }
+  }
+
+  function decision(out: string): string | undefined {
+    return out === '' ? undefined : JSON.parse(out).hookSpecificOutput.permissionDecision
+  }
+
+  test('deleting a saturated counter does not restore the budget', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 60, w)
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+
+    fs.rmSync(keyPath(home, w))
+
+    const out = JSON.parse(run(home, 'PreToolUse', w))
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+    // the deny routes to the envelope, exactly like the over-limit one
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('summary')
+    expect(out.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain('not a tool')
+  })
+
+  test('truncating a saturated counter does not restore the budget', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 60, w)
+    fs.writeFileSync(keyPath(home, w), '')
+    expect(fs.statSync(keyPath(home, w)).size).toBe(0) // a 0-byte REGULAR file
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('deleting the counter mid-dispatch does not rewind it either', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 45, w)
+    fs.rmSync(keyPath(home, w))
+    turns(home, 3, w) // and keep working, hoping to re-accrue from zero
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('a counter symlinked at a regular file outside the run dir is never appended to', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const v = victim()
+    turns(home, 1, w) // creates the run dir
+    fs.rmSync(keyPath(home, w))
+    fs.symlinkSync(v.file, keyPath(home, w))
+
+    run(home, 'PostToolBatch', w)
+    run(home, 'PostToolBatch', w)
+
+    expect(fs.readFileSync(v.file, 'utf8')).toBe(v.before)
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('a DANGLING counter symlink never creates the file it points at', () => {
+    // `>>` through a dangling link CREATES the target (verified on this
+    // platform), so "dangling" is the same primitive in create form — it is
+    // tamper, not the absent-counter case it was previously read as.
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const target = path.join(tmp('prdt-t567-victim-'), 'never-created')
+    turns(home, 1, w)
+    fs.rmSync(keyPath(home, w))
+    fs.symlinkSync(target, keyPath(home, w))
+
+    run(home, 'PostToolBatch', w)
+
+    expect(fs.existsSync(target)).toBe(false)
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('a symlinked .fired-* marker never truncates the file it points at', () => {
+    // The fire-evidence markers are written with `>`, so a link planted there is
+    // an arbitrary-file TRUNCATE, strictly worse than the append above.
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const v = victim('prdt.env')
+    turns(home, 1, w) // creates the run dir + the PostToolBatch marker
+    fs.symlinkSync(v.file, path.join(runDir(home), '.fired-PreToolUse'))
+
+    run(home, 'PreToolUse', w)
+
+    expect(fs.readFileSync(v.file, 'utf8')).toBe(v.before)
+  })
+
+  test('a DANGLING warn-band symlink never creates its target either', () => {
+    // POSITIVE CONTROL, not a fix: the band marker is the one write in this
+    // hook that was already safe, and this pins WHY so the next reader does not
+    // "harden" it into a fork. `set -C` opens with O_CREAT|O_EXCL, and O_EXCL
+    // fails on a symlink whatever it points at — dangling included — so neither
+    // the create form nor the truncate form is reachable through it. Measured
+    // both ways here; the counter and `.fired-*` writes have no such shield
+    // because they are `>>` and a plain `>`.
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const target = path.join(tmp('prdt-t567-victim-'), 'never-created')
+    turns(home, 41, w)
+    fs.symlinkSync(target, `${keyPath(home, w)}.w40`)
+    run(home, 'PreToolUse', w)
+    expect(fs.existsSync(target)).toBe(false)
+  })
+
+  test('a warn-only persona is warned, never denied and never silently waved through', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-qa')
+    turns(home, 60, w)
+    fs.rmSync(keyPath(home, w))
+    const out = run(home, 'PreToolUse', w)
+    expect(out).not.toBe('') // silence here is the defect this ticket exists for
+    const hso = JSON.parse(out).hookSpecificOutput
+    expect(hso.permissionDecision).toBeUndefined()
+    expect(hso.additionalContext).toMatch(/counter/i)
+  })
+
+  test('an untouched counter is never called tamper — a fresh dispatch stays silent', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 5, w)
+    expect(run(home, 'PreToolUse', w)).toBe('')
+    turns(home, 34, w)
+    expect(run(home, 'PreToolUse', w)).toBe('') // 39 — still below the warn band
+  })
+
+  test('a resumed worker still inherits its count across the tamper check', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 40, w)
+    const out = JSON.parse(run(home, 'PreToolUse', w))
+    expect(out.hookSpecificOutput.permissionDecision).toBeUndefined()
+    expect(out.hookSpecificOutput.additionalContext).toContain('40 API turns')
+  })
+})

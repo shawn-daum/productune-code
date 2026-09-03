@@ -1886,6 +1886,12 @@ GOVERNOR_HOOK = "prdt-call-governor.sh"
 # enforcer alone and it reads a counter nothing increments — silent
 # non-enforcement that looks exactly like a governor with nothing to say.
 GOVERNOR_EVENTS = ("PostToolBatch", "PreToolUse")
+# The hook's witness file for a counter `<sid>.<aid>` is `.hw-<sid>.<aid>` in the
+# same directory — one byte per counted turn, appended after the counter's own
+# byte, which is what lets doctor tell a deleted or truncated counter (T-567)
+# from a fresh one. The hook owns this name; the parity between the two is
+# pinned by a test rather than by trust (the T-445 "same fact in two files" class).
+GOVERNOR_WITNESS_PREFIX = ".hw-"
 # T-491 R2-2: the `.fired-<event>` marker is create-once — the hook only ever
 # `>`-truncates it, so once it exists it exists forever, and doctor's
 # is_file() check goes green on day 1 and STAYS green even if a later harness
@@ -1994,26 +2000,38 @@ def hook_registration_warnings():
                              f"If nothing has dispatched anywhere on this machine in that window, this is "
                              f"expected and clears itself on the next tool call")
 
-        # T-519 vector 2 (round 2): the hook's own tamper guard is
-        # `[ -e "$KEY" ] && [ ! -f "$KEY" ]` — ANY non-regular-file shape planted
-        # at a counter path (directory, FIFO, unix socket, symlink to one of
-        # those) makes append and read fail forever, pinning the turn count at 0
-        # while the `.fired-*` markers checked above stay green. The first cut of
-        # this check only looked for directories, so a FIFO/socket/bad-symlink
-        # made the hook DENY the worker while doctor stayed silent and called the
-        # governor healthy — a reporter narrower than the enforcer it reports on.
-        # `exists() and not is_file()` mirrors the hook's guard exactly:
-        #   - directory / FIFO / socket / symlink-to-non-regular → exists() True,
-        #     is_file() False → reported (poisoned, matches the hook's deny).
-        #   - genuine counter / `.fired-*` / `.w*` marker → all plain files →
-        #     is_file() True → never reported (no false positives on a healthy
-        #     machine).
-        #   - a DANGLING symlink → exists() False (broken target) → not reported.
-        #     This is deliberate, not a gap: `-e` is also false on it in the hook,
-        #     so the hook treats it as a fresh/absent counter, not tamper — a
-        #     dangling symlink is unwritten space, and doctor calling it poisoned
-        #     would be a false positive the hook itself doesn't share.
-        # Reported, not treated as N=0 — this is the only signal that a governor
+        # Counter tamper — FOUR states, not one (T-519 v2, widened by T-567).
+        #
+        # Round 1 asked `exists() and not is_file()`, chosen to mirror the hook's
+        # guard exactly. That was the right instinct and the wrong question,
+        # because the guard itself was too narrow: two of the three evasions QA
+        # then reproduced leave a state this predicate calls HEALTHY.
+        #
+        #   non-regular   directory / FIFO / socket planted at a counter path:
+        #                 append and read fail forever, the count pins at 0, and
+        #                 the `.fired-*` markers above stay green. Round 1's case.
+        #   symlink       ANY symlink at ANY path in here, whatever it points at.
+        #                 `-f` follows the link, so a link to a regular file
+        #                 passed the old guard and the hook appended a byte per
+        #                 turn to whatever it named; a DANGLING link is the same
+        #                 primitive in create form (`>>` through one creates the
+        #                 target — measured, and the reason round 1's "dangling is
+        #                 not tamper" note is now reversed); and the `.fired-*`
+        #                 markers are written with `>`, making a link there an
+        #                 arbitrary-file TRUNCATE. None of that is about the
+        #                 target's shape, so neither is the test.
+        #   missing       the counter is gone but its witness stands: `rm -f`.
+        #   truncated     the counter is SHORTER than its witness: `: >`.
+        #
+        # The witness (`.hw-<key>`, written by the hook one byte per counted turn
+        # AFTER the counter's own byte) is what makes the last two visible at all:
+        # nothing about an absent or 0-byte file is suspicious on its own, and
+        # both were a one-command reset of a saturated 60-turn budget with doctor
+        # reporting a healthy governor throughout. The witness can only LAG the
+        # counter, never lead it, so `counter < witness` is a state the hook
+        # cannot produce — while `counter > witness` is an ordinary crashed turn
+        # and stays silent.
+        # Reported, never repaired here: this is the only signal that a governor
         # which LOOKS healthy is silently non-enforcing for that worker.
         # degrade-never-raise: an unreadable run dir is someone else's finding,
         # not a crash here.
@@ -2023,12 +2041,54 @@ def hook_registration_warnings():
             except OSError:
                 entries = []
             for entry in entries:
+                if entry.is_symlink():
+                    try:
+                        target = os.readlink(entry)
+                    except OSError:
+                        target = "?"
+                    warns.append(f"hooks: call governor state {entry} is a SYMLINK (→ {target}) — every "
+                                 f"write this hook makes is supposed to land on a real file inside "
+                                 f"{run_dir}, and a link aims it out of there instead: the counter is "
+                                 f"appended to with `>>` and the fire markers are written with `>`, so "
+                                 f"this is an append or a truncate pointed at that target (T-567). The "
+                                 f"hook refuses to write through it and denies the worker; remove the "
+                                 f"link and check the target's contents")
+                    continue
                 if entry.exists() and not entry.is_file():
                     warns.append(f"hooks: call governor state {entry} is not a regular file — the "
                                  f"turn counter at this path can never be read or appended, so "
                                  f"enforcement silently skips this worker while the fire markers stay green "
                                  f"(T-491/T-519). Remove it; the governor recreates the counter on the next "
                                  f"tool call")
+            for entry in entries:
+                if not entry.name.startswith(GOVERNOR_WITNESS_PREFIX) or entry.is_symlink():
+                    continue
+                key = run_dir / entry.name[len(GOVERNOR_WITNESS_PREFIX):]
+                try:
+                    accrued = entry.stat().st_size
+                except OSError:
+                    continue
+                if accrued == 0:
+                    continue
+                if key.is_symlink():
+                    continue          # already reported above, as the louder finding
+                if not key.exists():
+                    warns.append(f"hooks: call governor counter {key} is MISSING while this session's "
+                                 f"witness records {accrued} accrued turns — the counter was deleted, "
+                                 f"which is a worker's cheapest way to restore its own budget (T-567). "
+                                 f"The hook denies that worker from here on; nothing else is needed")
+                    continue
+                if not key.is_file():
+                    continue          # non-regular: already reported above
+                try:
+                    held = key.stat().st_size
+                except OSError:
+                    continue
+                if held < accrued:
+                    warns.append(f"hooks: call governor counter {key} holds {held} turns but this "
+                                 f"session's witness records {accrued} accrued — it was truncated "
+                                 f"(T-567). The counter only ever grows, so a shorter one is not a "
+                                 f"state the hook can produce. The hook denies that worker from here on")
     return warns
 
 

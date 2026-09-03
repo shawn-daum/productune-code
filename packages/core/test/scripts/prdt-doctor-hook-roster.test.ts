@@ -280,15 +280,19 @@ describe.skipIf(!PYTHON3)('prdt doctor — every shape the hook denies on is cau
     expect(out).toContain(`${SID}.${AID}`)
   })
 
-  // The edge that makes `exists() and not is_file()` the right predicate rather
-  // than a looser one: a DANGLING symlink is not tamper. `-e "$KEY"` is false on
-  // it in the hook too, so the hook treats it as a fresh/absent counter and
-  // takes the normal path, not the deny branch — doctor reporting it would be a
-  // false positive the hook itself does not share.
-  test('a dangling symlink at a counter path stays unreported — the hook does not treat it as tamper either', () => {
+  // T-567 REVERSED this one. It used to assert that a DANGLING symlink is not
+  // tamper, on the reasoning that `-e "$KEY"` is false on it so the hook treats
+  // it as an absent counter. The reasoning was wrong about the filesystem:
+  // `printf . >> <dangling link>` CREATES the file the link names (measured), so
+  // a dangling link at a counter path is the arbitrary-file primitive in create
+  // form, not unwritten space. The hook now denies on `-L` whatever the target
+  // is, and doctor reports the same.
+  test('a dangling symlink at a counter path IS reported — appending through it creates the target', () => {
     setUpHealthyGovernor()
     fs.symlinkSync(path.join(runDir(), 'nonexistent-target-xyz'), path.join(runDir(), `${SID}.${AID}`))
-    expect(doctor()).toEqual([])
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+    expect(out).toMatch(/symlink/i)
   })
 
   test('genuine governor state (counter, .fired-*, .w* markers) stays unreported', () => {
@@ -339,5 +343,105 @@ describe.skipIf(!PYTHON3)('prdt doctor — call governor fire evidence goes STAL
     const out = doctor().join('\n')
     expect(out).not.toContain('PreToolUse')
     expect(out).toContain('PostToolBatch')
+  })
+})
+
+// ── T-567: the four states, not one ──────────────────────────────────────────
+//
+// T-519's check asked `exists() and not is_file()`, which mirrored the hook's
+// guard exactly — and the hook's guard was itself too narrow. Two of the three
+// reproduced evasions (`rm -f`, `: > `) leave a state that predicate calls
+// HEALTHY: nothing there, or a 0-byte regular file. The third (`ln -s` at a
+// regular file) is is_file()==True through the link, so it was healthy too. A
+// reporter can only be as wide as the question it asks, so the question changed
+// in both places at once — witness comparison for the reset shapes, `-L`/
+// is_symlink() for the aimed ones.
+describe.skipIf(!PYTHON3)('prdt doctor — missing / truncated / symlinked counters (T-567)', () => {
+  const SID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const AID = 'a45b42f3cdda35348'
+  const key = () => path.join(runDir(), `${SID}.${AID}`)
+  /** The hook's witness file: one byte per counted turn, `.hw-` + the key name. */
+  const witness = (bytes: number) =>
+    fs.writeFileSync(path.join(runDir(), `.hw-${SID}.${AID}`), '.'.repeat(bytes))
+
+  function setUpHealthyGovernor() {
+    mirror(GOVERNOR)
+    register({ PreToolUse: [GOVERNOR], PostToolBatch: [GOVERNOR] })
+    fired('PreToolUse', 'PostToolBatch')
+  }
+
+  test('a DELETED counter whose witness still stands is reported', () => {
+    setUpHealthyGovernor()
+    witness(60)
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+    expect(out).toMatch(/deleted|missing/i)
+  })
+
+  test('a TRUNCATED counter is reported, with both numbers', () => {
+    setUpHealthyGovernor()
+    witness(60)
+    fs.writeFileSync(key(), '')
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+    expect(out).toMatch(/truncat|shorter/i)
+    expect(out).toContain('60')
+  })
+
+  test('a counter symlinked at a REGULAR file — the append primitive — is reported', () => {
+    setUpHealthyGovernor()
+    const victim = path.join(sandbox, 'settings.json')
+    fs.writeFileSync(victim, '{}\n')
+    fs.symlinkSync(victim, key())
+    const out = doctor().join('\n')
+    expect(out).toContain(`${SID}.${AID}`)
+    expect(out).toMatch(/symlink/i)
+    // and it must name where the write would have landed
+    expect(out).toContain(victim)
+  })
+
+  test('a symlinked .fired-* marker is reported too — that write is a TRUNCATE', () => {
+    setUpHealthyGovernor()
+    const victim = path.join(sandbox, 'prdt.env')
+    fs.writeFileSync(victim, 'KEEP=1\n')
+    fs.rmSync(path.join(runDir(), '.fired-PreToolUse'))
+    fs.symlinkSync(victim, path.join(runDir(), '.fired-PreToolUse'))
+    const out = doctor().join('\n')
+    expect(out).toMatch(/symlink/i)
+  })
+
+  test('a counter that matches its witness stays unreported', () => {
+    setUpHealthyGovernor()
+    witness(41)
+    fs.writeFileSync(key(), '.'.repeat(41))
+    fs.writeFileSync(`${key()}.w40`, '')
+    expect(doctor()).toEqual([])
+  })
+
+  test('a counter AHEAD of its witness is normal, not tamper — the witness lags by design', () => {
+    // The hook appends the counter first and the witness second, so a crash
+    // between the two leaves the counter one byte ahead. Reporting that would
+    // page on an ordinary interrupted turn.
+    setUpHealthyGovernor()
+    witness(40)
+    fs.writeFileSync(key(), '.'.repeat(41))
+    expect(doctor()).toEqual([])
+  })
+
+  test('a witness-less counter (predating the check) stays unreported', () => {
+    setUpHealthyGovernor()
+    fs.writeFileSync(key(), '.'.repeat(12))
+    expect(doctor()).toEqual([])
+  })
+
+  // Drift guard: doctor's witness prefix is a COPY of a name the hook owns, and
+  // the whole T-445 class is "two files hold the same fact and one moves". A
+  // rename in the hook with doctor left behind would make every reset silently
+  // unreportable again — the exact defect T-567 is closing.
+  test("doctor's witness prefix is the one the hook actually writes", () => {
+    const hook = fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'hooks', GOVERNOR), 'utf8')
+    expect(hook).toContain('WIT="$RUN/.hw-$SID.$AID"')
+    const cli = fs.readFileSync(PRDT_CLI, 'utf8')
+    expect(cli).toContain('".hw-"')
   })
 })
