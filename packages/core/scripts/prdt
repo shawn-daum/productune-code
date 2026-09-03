@@ -4464,45 +4464,155 @@ def duplicate_ticket_id_warnings(tickets):
     return warns
 
 
-def cmd_doctor(_args):
-    root = require_root()
-    warns = []
+# ── doctor: check roster · declared family · verdict line (T-560) ─────────────
+#
+# v1.8's acceptance bar is a single number — `prdt doctor` judges "0
+# discipline↔execution mismatches" — and until this slice the tool could not
+# produce it. `cmd_doctor` printed a flat warning list and a total; the split
+# into families was done by a PO reading 27 lines. So the bar itself stood in
+# the failure class this round exists to close (T-500 · T-507 · T-519 · T-521 ·
+# T-532 were each an instance): a 0 that cannot tell "found nothing" from
+# "nobody looked".
+#
+# Three properties, and where each lives:
+#
+#  1. Membership is DECLARED, never inferred. Every check is registered in the
+#     roster inside `cmd_doctor` with a family constant, and nothing here ever
+#     reads the TEXT a check emits. Post-hoc regex over printed warnings was
+#     ruled out by name in the ticket, with cause: T-525 and T-566/R4 each
+#     measured a check that silently misfiled itself the moment a message was
+#     reworded. A registration whose family is not in `DOCTOR_FAMILIES` is
+#     reported — `unclassified=` on the verdict line plus a line naming the
+#     check — never quietly filed under neither family. That is what makes the
+#     next person to add a check without declaring one find out.
+#  2. "The check ran" and "the check found nothing" are different facts. A
+#     check returns `Skipped` when a precondition is absent (no install mirror,
+#     no repo checkout nearby, an explicit dev env override), and a skipped
+#     check is counted apart from the violations — its blindness can never be
+#     spent as evidence of health. This is the entire reason the ticket exists.
+#  3. `no-evidence` is the third state of the verdict, not a standing warning.
+#     T-564 was right that a check which looked and established nothing must
+#     not be silent (that silence was byte-identical to a correct clean read).
+#     But as a ⚠ line it charged every correctly-behaving local-merge repo a
+#     permanent no-action warning, and T-523 priced that: a no-action warning
+#     that shows on every run stops being read even when it is right. The
+#     verdict line already had to separate "ran" from "could not look", so
+#     `no-evidence` is literally the third state of a distinction that had to
+#     exist anyway — it moves there rather than becoming a fourth concept. The
+#     `pr` case is NOT affected: real evidence that this repo promotes through
+#     a PR stays a warning, because it is execution information a person must
+#     read in the minutes before promoting.
 
-    # state
-    st = read_json(root / ".prdt" / "po-state.json")
-    if st is None:
-        warns.append("state: .prdt/po-state.json missing or invalid JSON")
+FAMILY_DE = "discipline↔execution"
+FAMILY_PROJECT = "project"
+DOCTOR_FAMILIES = (FAMILY_DE, FAMILY_PROJECT)
+
+
+class Skipped:
+    """What a check returns when it could not LOOK — a precondition it does not
+    own was absent. Distinct from `[]`, which asserts the check looked and found
+    nothing; conflating the two is the defect this whole slice removes."""
+    __slots__ = ("reason",)
+
+    def __init__(self, reason):
+        self.reason = reason
+
+
+class NoEvidence:
+    """What a check returns when it looked with every signal available to it and
+    established neither a violation nor the absence of one. Not a defect and not
+    an instruction — the reader is simply told the question stayed open."""
+    __slots__ = ("note",)
+
+    def __init__(self, note):
+        self.note = note
+
+
+def doctor_record(name, family, result):
+    """One registered check's outcome in the shape the verdict reads. `family`
+    is carried through verbatim — including a bad value, so the verdict can
+    report it rather than this layer quietly guessing a home for it."""
+    if isinstance(result, Skipped):
+        return {"name": name, "family": family, "state": "skipped",
+                "reason": result.reason, "warnings": []}
+    if isinstance(result, NoEvidence):
+        return {"name": name, "family": family, "state": "no-evidence",
+                "reason": result.note, "warnings": []}
+    return {"name": name, "family": family, "state": "ran", "reason": None,
+            "warnings": list(result)}
+
+
+def doctor_verdict_lines(records):
+    """The acceptance bar, computed by the tool from what the checks declared.
+
+    Pure on purpose: it takes records and returns lines, so the three states it
+    distinguishes can be tested without staging a machine that happens to
+    produce each one. The bracketed tail is the machine-readable half — counts
+    and a verdict token from a fixed vocabulary — and is the part tests pin.
+    The prose ahead of it is for the reader and is free to be rewritten."""
+    fam = [r for r in records if r.get("family") == FAMILY_DE]
+    # Not filed under FAMILY_PROJECT either: an undeclared check might belong to
+    # this family, and assuming it does not is the silent misfiling the ticket
+    # forbids. So it is counted nowhere and reported everywhere.
+    unclassified = [r for r in records if r.get("family") not in DOCTOR_FAMILIES]
+    ran = [r for r in fam if r["state"] == "ran"]
+    skipped = [r for r in fam if r["state"] == "skipped"]
+    unseen = [r for r in fam if r["state"] == "no-evidence"]
+    violations = sum(len(r["warnings"]) for r in ran)
+
+    if violations:
+        verdict = "violations"
+        head = f"{violations} mismatch(es) across {len(ran)} check(s) that ran"
+    elif skipped or unseen or unclassified:
+        verdict = "not-established"
+        head = (f"0 mismatches among the {len(ran)} check(s) that ran — not a clean bill: "
+                f"{len(skipped) + len(unseen)} of {len(fam)} could not establish an answer")
     else:
-        extra = set(st) - PO_STATE_KEYS
-        missing = PO_STATE_KEYS - set(st)
-        if extra:
-            warns.append(f"state: unexpected keys {sorted(extra)} (shape is 4 fields)")
-        if missing:
-            warns.append(f"state: missing keys {sorted(missing)}")
-        if st.get("stage") not in STAGES:
-            warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
-        ct = st.get("current_task")
-        if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee"} >= set(ct)):
-            warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
+        verdict = "clean"
+        head = f"0 mismatches, all {len(fam)} check(s) ran"
 
-    # tickets
-    con, tviol, _pages, _mpages = rebuild_index(root)
-    warns += [f"ticket: {v}" for v in tviol]
-    # ROWS first, id-keyed map second (T-549). The map is what the deps/staleness
-    # checks below need — they ask questions ABOUT an id. Any check that measures
-    # across version dirs must read the rows: an id present in two dirs collapses
-    # to one entry in the map, and a check fed the map then sees a 1-dir span where
-    # the rows hold 2 — a false SILENCE, the worst class available in the instrument
-    # v1.8's goal is measured with.
-    trows = [r for r, _, _ in (scan_tickets(root) or [])]
-    # Whether a duplicated id deserves its own warning was left open by T-549 and is
-    # answered here (T-551): it does, ONCE, from this dedicated check — never as a
-    # side effect of a check whose subject is something else. Over the rows, for the
-    # same reason: the map on the next line is *defined* by collapsing an id, so it
-    # is the one input in which this violation cannot be seen.
-    warns += duplicate_ticket_id_warnings(trows)
-    tickets = {r["id"]: r for r in trows}
+    lines = [f"doctor: {FAMILY_DE} — {head} "
+             f"[verdict={verdict} violations={violations} ran={len(ran)} "
+             f"skipped={len(skipped)} no-evidence={len(unseen)} "
+             f"unclassified={len(unclassified)}]"]
+    for r in skipped:
+        lines.append(f"    could not look · {r['name']}: {r['reason']}")
+    for r in unseen:
+        lines.append(f"    no evidence · {r['name']}: {r['reason']}")
+    for r in unclassified:
+        lines.append(f"    unclassified · {r['name']}: registered with family {r.get('family')!r}, "
+                     f"which is not one of {' / '.join(DOCTOR_FAMILIES)} — its result is counted "
+                     "in NO family; declare one where the check is registered in cmd_doctor")
+    return lines
+
+
+def po_state_warnings(st):
+    """`.prdt/po-state.json` is the state the harness actually runs on, against
+    the shape the discipline declares — a discipline↔execution check by
+    construction, which is why the ticket names `state:` in the family."""
+    if st is None:
+        return ["state: .prdt/po-state.json missing or invalid JSON"]
+    warns = []
+    extra = set(st) - PO_STATE_KEYS
+    missing = PO_STATE_KEYS - set(st)
+    if extra:
+        warns.append(f"state: unexpected keys {sorted(extra)} (shape is 4 fields)")
+    if missing:
+        warns.append(f"state: missing keys {sorted(missing)}")
+    if st.get("stage") not in STAGES:
+        warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
+    ct = st.get("current_task")
+    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee"} >= set(ct)):
+        warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
+    return warns
+
+
+def ticket_graph_warnings(root, tickets):
+    """Deps that point nowhere or at dropped work, plus the two staleness
+    clocks. One function because the emission order interleaves them per
+    ticket, and that order is what the fixtures read."""
     ids = set(tickets)
+    warns = []
     for t in tickets.values():
         for d in t["deps"]:
             if d not in ids:
@@ -4516,142 +4626,178 @@ def cmd_doctor(_args):
                 warns.append(f"ticket: {t['id']} open+blocked for {age}d")
             if t["version"] == "backlog" and age is not None and age > BACKLOG_STALE_DAYS:
                 warns.append(f"ticket: backlog {t['id']} untouched {age}d")
-    # stage-completion signal: current version's tickets exhausted → next-stage entry worth a look
-    if st:
-        stage, version = st.get("stage"), st.get("version")
-        next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
-        if next_stage and version:
-            ver_tickets = [t for t in tickets.values() if t["version"] == version]
-            if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
-                warns.append(f"stage: {version} has no open tickets at stage={stage} — "
-                             f"consider {next_stage} entry")
-        # build-entry signal (T-430): stage=build but the version's ticket dir has
-        # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
-        if stage == "build" and version:
-            ver_tickets = [t for t in tickets.values() if t["version"] == version]
-            if not any(t["status"] in ("open", "done") for t in ver_tickets):
-                warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
-                             f"consider build-entry scope slicing")
-    # deps cycle
-    def cycles():
-        seen, stack = set(), set()
-        def dfs(i):
-            if i in stack:
-                return True
-            if i in seen or i not in tickets:
-                return False
-            seen.add(i); stack.add(i)
-            hit = any(dfs(d) for d in tickets[i]["deps"])
-            stack.discard(i)
-            return hit
-        return [i for i in tickets if dfs(i)]
-    cyc = cycles()
-    if cyc:
-        warns.append(f"ticket: dependency cycle involving {cyc[0]}")
-    # artifacts — version-bucket placement + manifest registration (T-512).
-    # Supersedes the referencing-ticket scan, which was never the checkable
-    # condition: it missed a file naming its own ticket in its title, and it
-    # cleared a file only because a LATER round's ticket happened to cite it.
-    warns += artifact_placement_warnings(root)
+    return warns
 
-    # main-push block: install where it is ours to write, report where it is not (T-481)
-    warns += prepush_warnings(root)
 
-    # promotion path: read the repo's own policy, report where it differs from
-    # the discipline default (T-506)
-    warns += promotion_warnings(root)
+def stage_signal_warnings(st, tickets):
+    """Stage-completion signal, plus the build-entry signal (T-430). Both are
+    project-progress observations, not discipline↔execution mismatches."""
+    if not st:
+        return []
+    warns = []
+    stage, version = st.get("stage"), st.get("version")
+    next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
+    if next_stage and version:
+        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
+            warns.append(f"stage: {version} has no open tickets at stage={stage} — "
+                         f"consider {next_stage} entry")
+    # build-entry signal (T-430): stage=build but the version's ticket dir has
+    # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
+    if stage == "build" and version:
+        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        if not any(t["status"] in ("open", "done") for t in ver_tickets):
+            warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
+                         f"consider build-entry scope slicing")
+    return warns
 
-    # release notes vs cut tags (T-465)
-    warns += release_notes_gap_warnings(root)
 
-    # meta backup lag + drift + fixed-path parity (T-428)
-    warns += meta_backup_lag_warnings(root)
-    warns += meta_drift_warnings(root)
-    parity = meta_allowlist_parity_warning()
-    if parity:
-        warns.append(parity)
-    excl_parity = meta_exclude_parity_warning()
-    if excl_parity:
-        warns.append(excl_parity)
+def ticket_cycle_warnings(tickets):
+    seen, stack = set(), set()
 
-    # feature seam — orphan specs · pending promotion judgments · stale
-    # non-promotion records (T-548). `feature:` is a grouping key: a value with
-    # no spec file is legal, so what is reported is a judgment left pending,
-    # never a missing file (T-547 §6).
-    # T3 is a span ACROSS version dirs, so it is computed over the rows T-547 §2
-    # names, never over the id-keyed map (T-549).
-    warns += feature_seam_warnings(root, trows)
+    def dfs(i):
+        if i in stack:
+            return True
+        if i in seen or i not in tickets:
+            return False
+        seen.add(i); stack.add(i)
+        hit = any(dfs(d) for d in tickets[i]["deps"])
+        stack.discard(i)
+        return hit
 
-    # accumulated per-case rebuilds of an expensive shared test setup (T-537).
-    # Static count of a SHAPE, never a timing run — the habit and the code-review
-    # check cover the write and the diff; this layer covers the only view neither
-    # has, the accumulation across files and rounds that no single diff shows.
-    warns += test_setup_rebuild_warnings(root)
+    cyc = [i for i in tickets if dfs(i)]
+    return [f"ticket: dependency cycle involving {cyc[0]}"] if cyc else []
 
-    # wiki — project store, then the machine store (§8b) it now searches alongside
-    warns += wiki_lint(root)
-    warns += machine_wiki_warnings()
 
-    # dead discipline-path citations in live SoT docs (T-535) — wiki lint only
-    # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
-    # citations everywhere else a persona habit/bookshelf doc or design.md makes one
-    warns += dead_discipline_path_warnings(root)
+def discipline_caps_warnings(droot):
+    """Line caps and menu freshness on the discipline tree that is actually
+    BOUND on this machine. No root at all is a violation, not a skip: nothing
+    is binding any persona, which is the loudest discipline↔execution
+    mismatch available."""
+    if not droot:
+        return ["discipline: no discipline root found (~/.prdt/discipline or repo)"]
+    warns = []
+    for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
+        if cand.exists():
+            if len(cand.read_text(encoding="utf-8").splitlines()) > CAPS["doctrine.md"]:
+                warns.append(f"discipline: doctrine.md exceeds {CAPS['doctrine.md']} lines")
+            break
+    c = droot / "contracts.md"
+    if c.exists() and len(c.read_text(encoding="utf-8").splitlines()) > CAPS["contracts.md"]:
+        warns.append(f"discipline: contracts.md exceeds {CAPS['contracts.md']} lines")
+    for persona in ("po", "designer", "developer", "qa"):
+        h = droot / persona / "habit.md"
+        cap = CAPS["po_habit"] if persona == "po" else CAPS["worker_habit"]
+        if h.exists() and len(h.read_text(encoding="utf-8").splitlines()) > cap:
+            warns.append(f"discipline: {persona}/habit.md exceeds {cap} lines")
+        pdir = droot / persona / "playbooks"
+        if pdir.is_dir():
+            for p in pdir.glob("*.md"):
+                if p.name == "_index.md":
+                    if len(p.read_text(encoding="utf-8").splitlines()) > CAPS["menu"]:
+                        warns.append(f"discipline: {persona} menu exceeds {CAPS['menu']} lines")
+                    continue
+                if body_line_count(p) > CAPS["playbook_body"]:
+                    warns.append(f"discipline: {persona}/playbooks/{p.name} body exceeds {CAPS['playbook_body']} lines")
+            idx = pdir / "_index.md"
+            if not idx.exists():
+                warns.append(f"discipline: {persona} menu missing — run `prdt menus`")
+            elif idx.read_text(encoding="utf-8") != menu_content(droot / persona):
+                warns.append(f"discipline: {persona} menu stale vs frontmatter — run `prdt menus`")
+    return warns
 
-    # override caps + cross-layer duplicates (§8b)
-    warns += override_warnings(root)
 
-    # hook roster parity + governor fire evidence (T-445 / T-491)
-    warns += hook_registration_warnings()
-
-    # statusline registration — user + project-level (T-500)
-    warns += statusline_warnings(root)
-
-    # discipline caps + menu drift
+def cmd_doctor(_args):
+    root = require_root()
+    st = read_json(root / ".prdt" / "po-state.json")
+    con, tviol, _pages, _mpages = rebuild_index(root)
+    # ROWS first, id-keyed map second (T-549). The map is what the deps/staleness
+    # checks need — they ask questions ABOUT an id. Any check that measures
+    # across version dirs must read the rows: an id present in two dirs collapses
+    # to one entry in the map, and a check fed the map then sees a 1-dir span where
+    # the rows hold 2 — a false SILENCE, the worst class available in the instrument
+    # v1.8's goal is measured with.
+    trows = [r for r, _, _ in (scan_tickets(root) or [])]
+    tickets = {r["id"]: r for r in trows}
     droot = discipline_root()
-    # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
-    # discipline mirror exists at all; same env-override / no-mirror / no-repo
-    # early-outs as the discipline check above.
-    warns += prdt_script_drift_warnings()
-    # hook mirror↔repo drift (T-532) — same independence from droot: the
-    # hooks mirror lives at a fixed prdt_home()/hooks path, not behind
-    # discipline_root()'s mirror-vs-repo-fallback preference.
-    warns += hook_mirror_drift_warnings()
-    if droot:
-        # mirror↔repo content drift (T-507) — before the cap loop so a stale
+
+    # The roster. Order here IS the print order. The second element of every
+    # entry is the DECLARED family (T-560) — the one thing a person adding a
+    # check must not leave out, and the one thing the verdict refuses to guess.
+    roster = [
+        ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st)),
+        ("ticket index", FAMILY_PROJECT, lambda: [f"ticket: {v}" for v in tviol]),
+        # Whether a duplicated id deserves its own warning was left open by T-549
+        # and answered by T-551: it does, ONCE, from a dedicated check — never as
+        # a side effect of a check whose subject is something else. Over the rows,
+        # for the same reason: the id-keyed map is *defined* by collapsing an id,
+        # so it is the one input in which this violation cannot be seen.
+        ("duplicate ticket id", FAMILY_PROJECT, lambda: duplicate_ticket_id_warnings(trows)),
+        ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
+        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets)),
+        ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
+        # artifacts — version-bucket placement + manifest registration (T-512).
+        # Supersedes the referencing-ticket scan, which was never the checkable
+        # condition: it missed a file naming its own ticket in its title, and it
+        # cleared a file only because a LATER round's ticket happened to cite it.
+        ("artifact placement", FAMILY_PROJECT, lambda: artifact_placement_warnings(root)),
+        # main-push block: install where it is ours to write, report where it is not (T-481)
+        ("main-push block", FAMILY_DE, lambda: prepush_warnings(root)),
+        # promotion path: read the repo's own policy, report where it differs from
+        # the discipline default (T-506)
+        ("git promotion path", FAMILY_DE, lambda: promotion_warnings(root)),
+        ("release notes vs cut tags", FAMILY_PROJECT, lambda: release_notes_gap_warnings(root)),
+        # meta backup lag + drift + fixed-path parity (T-428)
+        ("meta backup lag", FAMILY_PROJECT, lambda: meta_backup_lag_warnings(root)),
+        ("meta drift", FAMILY_PROJECT, lambda: meta_drift_warnings(root)),
+        ("meta allowlist parity", FAMILY_PROJECT,
+         lambda: [w for w in [meta_allowlist_parity_warning()] if w]),
+        ("meta exclude parity", FAMILY_PROJECT,
+         lambda: [w for w in [meta_exclude_parity_warning()] if w]),
+        # feature seam — orphan specs · pending promotion judgments · stale
+        # non-promotion records (T-548). `feature:` is a grouping key: a value with
+        # no spec file is legal, so what is reported is a judgment left pending,
+        # never a missing file (T-547 §6). T3 is a span ACROSS version dirs, so it
+        # is computed over the rows T-547 §2 names, never over the id-keyed map.
+        ("feature seam", FAMILY_PROJECT, lambda: feature_seam_warnings(root, trows)),
+        # accumulated per-case rebuilds of an expensive shared test setup (T-537).
+        # Static count of a SHAPE, never a timing run — the habit and the code-review
+        # check cover the write and the diff; this layer covers the only view neither
+        # has, the accumulation across files and rounds that no single diff shows.
+        ("test setup rebuild", FAMILY_PROJECT, lambda: test_setup_rebuild_warnings(root)),
+        # wiki — project store, then the machine store (§8b) it now searches alongside
+        ("wiki lint", FAMILY_PROJECT, lambda: wiki_lint(root)),
+        ("machine wiki", FAMILY_PROJECT, lambda: machine_wiki_warnings()),
+        # dead discipline-path citations in live SoT docs (T-535) — wiki lint only
+        # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
+        # citations everywhere else a persona habit/bookshelf doc or design.md makes one
+        ("dead discipline-path citations", FAMILY_DE, lambda: dead_discipline_path_warnings(root)),
+        # override caps + cross-layer duplicates (§8b)
+        ("override caps", FAMILY_DE, lambda: override_warnings(root)),
+        # hook roster parity + governor fire evidence (T-445 / T-491)
+        ("hook roster + governor fire", FAMILY_DE, lambda: hook_registration_warnings()),
+        # statusline registration — user + project-level (T-500)
+        ("statusline registration", FAMILY_DE, lambda: statusline_warnings(root)),
+        # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
+        # discipline mirror exists at all.
+        ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
+        # hook mirror↔repo drift (T-532) — same independence from droot: the hooks
+        # mirror lives at a fixed prdt_home()/hooks path, not behind
+        # discipline_root()'s mirror-vs-repo-fallback preference.
+        ("hook mirror drift", FAMILY_DE, lambda: hook_mirror_drift_warnings()),
+        # mirror↔repo content drift (T-507) — before the caps check so a stale
         # mirror is reported even when it happens to still be within cap
-        warns += discipline_mirror_drift_warnings(droot)
-        for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
-            if cand.exists():
-                if len(cand.read_text(encoding="utf-8").splitlines()) > CAPS["doctrine.md"]:
-                    warns.append(f"discipline: doctrine.md exceeds {CAPS['doctrine.md']} lines")
-                break
-        c = droot / "contracts.md"
-        if c.exists() and len(c.read_text(encoding="utf-8").splitlines()) > CAPS["contracts.md"]:
-            warns.append(f"discipline: contracts.md exceeds {CAPS['contracts.md']} lines")
-        for persona in ("po", "designer", "developer", "qa"):
-            h = droot / persona / "habit.md"
-            cap = CAPS["po_habit"] if persona == "po" else CAPS["worker_habit"]
-            if h.exists() and len(h.read_text(encoding="utf-8").splitlines()) > cap:
-                warns.append(f"discipline: {persona}/habit.md exceeds {cap} lines")
-            pdir = droot / persona / "playbooks"
-            if pdir.is_dir():
-                for p in pdir.glob("*.md"):
-                    if p.name == "_index.md":
-                        if len(p.read_text(encoding="utf-8").splitlines()) > CAPS["menu"]:
-                            warns.append(f"discipline: {persona} menu exceeds {CAPS['menu']} lines")
-                        continue
-                    if body_line_count(p) > CAPS["playbook_body"]:
-                        warns.append(f"discipline: {persona}/playbooks/{p.name} body exceeds {CAPS['playbook_body']} lines")
-                idx = pdir / "_index.md"
-                if not idx.exists():
-                    warns.append(f"discipline: {persona} menu missing — run `prdt menus`")
-                elif idx.read_text(encoding="utf-8") != menu_content(droot / persona):
-                    warns.append(f"discipline: {persona} menu stale vs frontmatter — run `prdt menus`")
-    else:
-        warns.append("discipline: no discipline root found (~/.prdt/discipline or repo)")
+        ("discipline mirror drift", FAMILY_DE, lambda: discipline_mirror_drift_warnings(droot)),
+        ("discipline caps + menus", FAMILY_DE, lambda: discipline_caps_warnings(droot)),
+    ]
+
+    records = [doctor_record(name, family, fn()) for name, family, fn in roster]
+    warns = [w for r in records for w in r["warnings"]]
 
     for w in warns:
         print(f"⚠ {w}")
+    for line in doctor_verdict_lines(records):
+        print(line)
     print(("doctor: clean" if not warns else f"doctor: {len(warns)} warning(s)") + " (non-blocking)")
 
 
