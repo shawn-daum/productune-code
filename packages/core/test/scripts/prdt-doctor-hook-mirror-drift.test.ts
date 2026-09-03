@@ -447,3 +447,103 @@ describe.skipIf(!PYTHON3 || !hasJq())('prdt doctor — hook mirror AHEAD orphan 
     expect(fs.existsSync(path.join(sb.prdtHome, 'hooks', orphan))).toBe(false)
   })
 })
+
+/**
+ * T-565 C4 — the junk filter landed on ONE of the three drift checks.
+ *
+ * T-532 QA G2 added `_hook_roster_files` so a Finder-recreated `.DS_Store` in
+ * `~/.prdt/hooks` could not be reported as a hand-edited hook. Its own docstring
+ * records why that matters: `install.sh` copies the manifest's basenames, never
+ * "whatever's in the directory", so "re-run install.sh" is false advice for a
+ * name that was never a hook — the warning cannot be cleared by doing what it
+ * says. The user deletes the file or lives with the line.
+ *
+ * `discipline_mirror_drift_warnings` is the same check over `~/.prdt/discipline`
+ * and it kept raw `_tree_files`. Same Finder, same `.DS_Store`, same permanent
+ * warning — and this one reads "mirror AHEAD OF / HAND-EDITED … promote it into
+ * the repo", i.e. it tells the reader to commit a macOS metadata blob.
+ *
+ * The two scenarios below are the SAME fixture differing only in the junk file,
+ * so the silence in the first is attributable to the filter and nothing else.
+ * The hooks scenario is re-asserted alongside it on purpose: the point of the
+ * ticket is that these two must not drift apart again, and one filter shared
+ * between them is only worth something if a test reads both.
+ */
+function disciplineDoctor(env: Record<string, string> = {}): string[] {
+  const out = execFileSync('python3', [cliCopy, 'doctor'], {
+    cwd: projectDir,
+    env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: '', ...env },
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+  })
+  return out.split('\n').filter((l) => l.includes('discipline: mirror'))
+}
+
+/** An identical discipline tree on both sides — repo checkout and mirror. */
+function seedDisciplineInSync() {
+  const repoDisc = path.join(repoRoot, 'packages', 'core', 'discipline')
+  const mirrorDisc = path.join(machineHome, 'discipline')
+  for (const base of [repoDisc, mirrorDisc]) {
+    fs.mkdirSync(path.join(base, 'developer'), { recursive: true })
+    fs.writeFileSync(path.join(base, 'contracts.md'), '# Contracts\n\n- one rule\n')
+    fs.writeFileSync(path.join(base, 'developer', 'habit.md'), '# Developer habit\n')
+  }
+  return { repoDisc, mirrorDisc }
+}
+
+describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — discipline drift ignores filesystem junk (T-565 C4)', () => {
+  test('positive control: an in-sync discipline mirror is silent', () => {
+    seedRepoHistory()
+    seedDisciplineInSync()
+    expect(disciplineDoctor()).toEqual([])
+  })
+
+  test('positive control: a REAL hand-edit still fires AHEAD — the check is alive', () => {
+    seedRepoHistory()
+    const { mirrorDisc } = seedDisciplineInSync()
+    fs.writeFileSync(path.join(mirrorDisc, 'developer', 'habit.md'),
+      '# Developer habit\n\n- edited only in the mirror\n')
+    const out = disciplineDoctor().join('\n')
+    expect(out).toContain('AHEAD OF / HAND-EDITED')
+    expect(out).toContain('developer/habit.md')
+  })
+
+  test('a Finder-created .DS_Store in the mirror is NOT reported as a hand-edit', () => {
+    seedRepoHistory()
+    const { mirrorDisc } = seedDisciplineInSync()
+    fs.writeFileSync(path.join(mirrorDisc, '.DS_Store'), '\x00\x01binary junk')
+    expect(disciplineDoctor()).toEqual([])
+  })
+
+  test('nor is one nested a directory down, nor an editor swap/backup file', () => {
+    seedRepoHistory()
+    const { mirrorDisc } = seedDisciplineInSync()
+    fs.writeFileSync(path.join(mirrorDisc, 'developer', '.DS_Store'), 'junk')
+    fs.writeFileSync(path.join(mirrorDisc, 'developer', '.habit.md.swp'), 'vim swap')
+    fs.writeFileSync(path.join(mirrorDisc, 'developer', 'habit.md~'), 'emacs backup')
+    expect(disciplineDoctor()).toEqual([])
+  })
+
+  test('junk on the REPO side is ignored too — it is not a missing mirror file', () => {
+    // Symmetrical by construction: reported as BEHIND ("committed changes bind
+    // no persona until synced") it would send the reader to run install.sh for
+    // a file no commit has.
+    seedRepoHistory()
+    const { repoDisc } = seedDisciplineInSync()
+    fs.writeFileSync(path.join(repoDisc, '.DS_Store'), 'junk')
+    expect(disciplineDoctor()).toEqual([])
+  })
+
+  test('the hooks check keeps ignoring the same junk — one filter, both trees', () => {
+    // The pairing IS the assertion (T-565 C4 acceptance: share it or pin that
+    // they share it). Two checks over two trees, one filter, read together in
+    // one test so a future divergence fails here rather than in a bug report.
+    seedRepoHistory()
+    mirrorHook('prdt-hook-a.sh', '#!/usr/bin/env bash\necho v2\n')
+    mirrorHook('prdt-hook-b.sh', '#!/usr/bin/env bash\necho b\n')
+    fs.writeFileSync(path.join(machineHome, 'hooks', '.DS_Store'), 'junk')
+    seedDisciplineInSync()
+    fs.writeFileSync(path.join(machineHome, 'discipline', '.DS_Store'), 'junk')
+    expect(doctor()).toEqual([])
+    expect(disciplineDoctor()).toEqual([])
+  })
+})
