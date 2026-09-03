@@ -208,6 +208,82 @@ The user and PO discussed that 배포 완료 is scheduled for the ship stage aft
   })
 })
 
+describe('T-562: the provenance guard is anchored, not a whole-string search', () => {
+  // The guard T-523 added searched the WHOLE prompt for the harness markers, so
+  // any prompt that CONTAINED one was classified as "not the PO's own words".
+  // The live shapes it was built from all START with their marker — but a
+  // person pasting a worker return and typing underneath it produces the same
+  // bytes in the middle of a prompt they really did type, and the stage-entry
+  // warning silently disappeared from it. T-523's own note said this must not
+  // become a no-op; unanchored, it became one on the paste path.
+  //
+  // The current fixtures above cannot see that: every one of them puts the
+  // marker at offset 0, so they stay green under both implementations. These
+  // two do not — they FAIL against the substring guard.
+
+  const TAG_BLOCK = `<task-notification>
+<task-id>a4c9fdeb795aefa8f</task-id>
+<tool-use-id>toolu_01PRu1B8NC5oT2XwXcXzMVth</tool-use-id>
+<status>completed</status>
+<summary>prdt-developer: T-560 훅 수정 완료 — 테스트 green</summary>
+<usage><subagent_tokens>48416</subagent_tokens></usage>
+</task-notification>`
+
+  const FULL_NOTIFICATION = `[SYSTEM NOTIFICATION - NOT USER INPUT]
+This is an automated background-task event, NOT a message from the user.
+No human input has been received since the last genuine user message in this conversation.
+
+${TAG_BLOCK}`
+
+  test('pasted worker return + the user\'s own typed deploy request → the guard fires', () => {
+    const dir = makeProject(BUILD_STATE)
+    const prompt = `방금 워커가 이렇게 돌려줬는데:
+
+${FULL_NOTIFICATION}
+
+이거 main 에 배포해줘.`
+    const ctx = contextOf(runHook(dir, prompt))
+    expect(ctx).toContain('stage=build')
+    expect(ctx).toMatch(/ship entry/i)
+  })
+
+  test('a bare <task-notification> block quoted mid-prompt does not by itself mark it non-fresh', () => {
+    const dir = makeProject(BUILD_STATE)
+    const prompt = `아래 블록 참고해서 판단해줘.
+
+${TAG_BLOCK}
+
+문제 없으면 배포 진행해줘.`
+    expect(contextOf(runHook(dir, prompt))).toMatch(/ship entry/i)
+  })
+
+  test('a compaction recap quoted mid-prompt does not silence a real request either', () => {
+    const dir = makeProject(BUILD_STATE)
+    const prompt = `이전 세션 요약을 붙여넣는다:
+
+This session is being continued from a previous conversation that ran out of context.
+
+그래서 지금 배포해줘.`
+    expect(contextOf(runHook(dir, prompt))).toMatch(/ship entry/i)
+  })
+
+  // The live shape is unchanged: it arrives with the marker FIRST, and stays
+  // silent. (The five T-523 fixtures above are the full set; this pins that the
+  // anchoring did not move the boundary for the shape it was built for.)
+  test('the live notification shape (marker first) is still classified non-fresh', () => {
+    const dir = makeProject(BUILD_STATE)
+    const ctx = contextOf(runHook(dir, `${FULL_NOTIFICATION}\n<result>배포 완료</result>`))
+    expect(ctx).toContain('stage=build')
+    expect(ctx).not.toMatch(/ship entry/i)
+  })
+
+  test('leading whitespace before the marker still counts as the start', () => {
+    const dir = makeProject(BUILD_STATE)
+    const ctx = contextOf(runHook(dir, `\n\n  ${FULL_NOTIFICATION}\n<result>배포 완료</result>`))
+    expect(ctx).not.toMatch(/ship entry/i)
+  })
+})
+
 describe('silent no-ops (never break a plain session)', () => {
   test('non-prdt cwd → no output, exit 0', () => {
     const dir = makeProject(null)

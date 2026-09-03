@@ -208,14 +208,28 @@ NOTIFICATION_TAG_RE = re.compile(r"<task-notification>.*?</task-notification>", 
 COMPACT_CONTINUATION_MARKER = "This session is being continued from a previous conversation"
 
 
+# T-562: ANCHORED, never a whole-prompt substring search. The shapes above are
+# harness-authored and arrive as the WHOLE prompt — the preamble is the first
+# thing in it (the compaction marker was already read this way). Searching the
+# whole string instead classified any prompt that merely CONTAINED one of them
+# as "not the PO's own words", and the everyday way that happens is a person
+# pasting a worker return and typing their request underneath it: the deploy
+# request is genuinely typed, the marker sits mid-body, and the ship-entry
+# warning silently disappeared from exactly the turn it exists for. T-523 said
+# in as many words that its fix must not become a no-op; unanchored, it was one
+# on the paste path.
+#
+# The tag regex is kept but ANDed with the marker prefix (ticket AC): the tag is
+# corroboration for a prompt that already OPENS as a notification, never on its
+# own a reason to discount what the user typed. Quoting a `<task-notification>`
+# block mid-prompt is a thing people do while asking for something.
 def is_not_fresh_user_text(p):
-    if NOTIFICATION_MARKER in p:
+    head = p.lstrip()
+    if head.startswith(COMPACT_CONTINUATION_MARKER):
         return True
-    if NOTIFICATION_TAG_RE.search(p):
-        return True
-    if p.lstrip().startswith(COMPACT_CONTINUATION_MARKER):
-        return True
-    return False
+    if not head.startswith(NOTIFICATION_MARKER):
+        return False
+    return bool(NOTIFICATION_TAG_RE.search(p))
 
 
 prompt = ev.get("prompt") or ""
