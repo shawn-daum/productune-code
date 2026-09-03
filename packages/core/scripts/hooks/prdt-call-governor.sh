@@ -102,9 +102,38 @@ IFS= read -r -d '' EV 2>/dev/null
 [ -n "$EV" ] || exit 0
 
 # ── structural top-level scan ─────────────────────────────────────────────────
-# Two builtin-only helpers consume from $SCAN. Neither forks.
+# Three builtin-only helpers consume from $SCAN. None forks.
+#
+# THESE THREE BODIES ARE A DELIBERATE BYTE-COPY of prdt-dispatch-gate.sh's, and
+# test/scripts/dispatch-gate-hook.test.ts fails if either copy drifts (T-561
+# disposition B — the rationale for keeping the copy instead of sourcing a
+# `hooks/lib/` file is in that hook's header). Fix one, fix the other, in the
+# same diff: this pair already needed the same fix twice because nothing was
+# watching the copy.
 
 STR=""
+
+# Skip JSON insignificant whitespace at the head of $SCAN (T-561).
+#
+# WHY THIS EXISTS — do not "simplify" it away: the walk below decides structure
+# by looking at $SCAN's FIRST BYTE at five points (before `{`, before a key,
+# before `:`, before a value, before `,`). Without this, every one of those
+# five assumed the payload was compact, so ONE space after a `:` or a `,`, or a
+# newline after the opening `{`, dropped the walk out of the loop with an empty
+# `cwd` — and an empty `cwd` exits 0. No deny, no warning, nothing: the hook
+# silently stopped existing. Measured 2026-09-03 on this hook's own fixture,
+# all four placements plus a full `jq .` pretty-print. What kept this latent
+# was that the harness happens to emit compact JSON — someone else's
+# serializer, never verified by us and free to change in any release.
+ws_skip() {
+  # Two expansions, no loop and no fork whatever the payload's shape: cut the
+  # leading run of whitespace off the front, then delete exactly that prefix.
+  # `[![:space:]]` is safe under this file's LC_ALL=C — JSON's insignificant
+  # whitespace (space, tab, CR, LF) is a subset of C's [:space:]. An
+  # all-whitespace $SCAN leaves it empty, which every caller below reads as
+  # "no more members": the same fail-open direction as the rest of this walk.
+  SCAN="${SCAN#"${SCAN%%[![:space:]]*}"}"
+}
 
 # Consume one JSON string starting at $SCAN[0] == '"'; leave it in $STR.
 # Escape-aware, so a `\"` inside a value (a path containing a quote, say) is
@@ -170,6 +199,7 @@ SCAN="${EV%%$TIP*}"
 HDR2="${EV%%$TCP*}"
 [ ${#HDR2} -lt ${#SCAN} ] && SCAN="$HDR2"
 
+ws_skip
 case "$SCAN" in
   '{'*) SCAN="${SCAN:1}" ;;
   *) exit 0 ;;               # not an object: nothing to classify, stay silent
@@ -177,10 +207,16 @@ esac
 
 EVENT=""; DIR=""; SID=""; AID=""; ATYPE=""
 
+# EVERY first-byte test below is preceded by ws_skip — that is the whole of the
+# T-561 fix, and the five calls are not optional decoration: each one guards one
+# structural decision, and dropping any one of them re-opens the silent no-op at
+# exactly that position (here: an uncounted turn, or a deny that never fires).
 while :; do
+  ws_skip                                 # after `{` / `,`, before a key
   case "$SCAN" in '"'*) ;; *) break ;; esac
   str_take || break
   K="$STR"
+  ws_skip                                 # after a key, before `:`
   case "$SCAN" in ':'*) SCAN="${SCAN:1}" ;; *) break ;; esac
 
   # Belt and braces with the cut above: if a payload ever arrives with the tool
@@ -190,6 +226,7 @@ while :; do
     tool_input|tool_calls|tool_name|tool_response|tool_use_id) break ;;
   esac
 
+  ws_skip                                 # after `:`, before the value
   case "$SCAN" in
     '"'*)
       str_take || break
@@ -211,6 +248,7 @@ while :; do
       ;;
   esac
 
+  ws_skip                                 # after the value, before `,` / `}`
   case "$SCAN" in ','*) SCAN="${SCAN:1}" ;; *) break ;; esac
 done
 

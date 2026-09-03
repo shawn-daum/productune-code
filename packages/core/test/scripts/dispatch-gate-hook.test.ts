@@ -88,8 +88,8 @@ interface EventOpts {
  * prompt_id · permission_mode · agent_id · agent_type · hook_event_name ·
  * tool_name · tool_input · tool_use_id, measured on harness 2.1.235).
  */
-function eventJson(o: EventOpts): string {
-  return JSON.stringify({
+function eventObject(o: EventOpts): Record<string, unknown> {
+  return {
     session_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     transcript_path: path.join(o.cwd, 'transcript.jsonl'),
     cwd: o.cwd,
@@ -103,7 +103,11 @@ function eventJson(o: EventOpts): string {
       subagent_type: o.subagentType ?? 'prdt-developer',
     },
     tool_use_id: 'toolu_01aaaaaaaaaaaaaaaaaaaaaa',
-  })
+  }
+}
+
+function eventJson(o: EventOpts): string {
+  return JSON.stringify(eventObject(o))
 }
 
 /** stdout, with stderr asserted empty — a hook that can block work must never
@@ -577,4 +581,112 @@ describe('T-521: a long `cwd` still resolves, never silently disables the gate',
     const cwd = path.join(notAProject, 'w'.repeat(9000))
     expect(run({ cwd, prompt: 'no ctx line here' })).toBe('')
   })
+})
+
+
+// ── T-561: the walker reads STRUCTURE, never the payload's spacing ───────────
+//
+// The top-level walker that replaced the byte window (T-521) understood exactly
+// one shape: `{"key":"value","key":"value",…}`. A single space after the `:`,
+// after the `,`, or after the opening `{` and it fell out of the loop with
+// `DIR=""`, which exits 0 — no deny, no warning, no trace. Measured on this
+// file's own fixture, 2026-09-03: compact DENIED, all four placements below
+// produced ZERO stdout.
+//
+// The whole gate was therefore alive only because the harness happens to emit
+// compact JSON — a property of someone else's serializer that we never verified
+// and cannot pin. These cases pin the verdict to the payload's structure
+// instead: same event, same deny, whatever the spacing.
+//
+// A test that would still pass with the whitespace skip removed does not count
+// here, so each format below places whitespace at ONE structural position (plus
+// the full pretty-print, which places it at all of them) — a failure names the
+// position that broke.
+
+/** JSON with the two structural separators under our control, and whitespace
+ *  nowhere else. */
+function serialize(v: unknown, colon: string, comma: string): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return `[${v.map((x) => serialize(x, colon, comma)).join(comma)}]`
+  return `{${Object.entries(v as Record<string, unknown>)
+    .map(([k, x]) => `${JSON.stringify(k)}${colon}${serialize(x, colon, comma)}`)
+    .join(comma)}}`
+}
+
+const WHITESPACE_FORMATS: Array<[string, (o: EventOpts) => string]> = [
+  ['a space after every `:`', (o) => serialize(eventObject(o), ': ', ',')],
+  ['a space after every `,`', (o) => serialize(eventObject(o), ':', ', ')],
+  ['a newline after the opening `{`', (o) => `{\n${JSON.stringify(eventObject(o)).slice(1)}`],
+  ['a full `jq .` pretty-print', (o) => JSON.stringify(eventObject(o), null, 2)],
+]
+
+describe('T-561: whitespace never silences the gate', () => {
+  for (const [label, format] of WHITESPACE_FORMATS) {
+    test(`${label} → the same deny the compact payload produces`, () => {
+      const o: EventOpts = { cwd: makeProject(), prompt: 'no ctx line here' }
+      const res = spawnSync('bash', [HOOK], { input: format(o), encoding: 'utf8' })
+      expect(res.stderr).toBe('')
+      expect(res.status).toBe(0)
+      expect(res.stdout, 'silent no-op — the gate vanished on whitespace alone').not.toBe('')
+      const h = JSON.parse(res.stdout).hookSpecificOutput
+      expect(h.permissionDecision).toBe('deny')
+      expect(h.permissionDecisionReason).toContain(CLAUSE_CTX)
+    })
+
+    test(`${label} → a well-formed dispatch is still passed in silence`, () => {
+      const o: EventOpts = { cwd: makeProject() }
+      const res = spawnSync('bash', [HOOK], { input: format(o), encoding: 'utf8' })
+      expect(res.stderr).toBe('')
+      expect(res.stdout).toBe('')
+    })
+  }
+
+  test('whitespace does not smuggle a non-prdt dispatch past the persona check', () => {
+    // The skip must not turn into "read anything that looks close enough": the
+    // pretty payload has to reach the SAME scope decisions, including the ones
+    // that end in silence.
+    const o: EventOpts = { cwd: makeProject(), prompt: 'no ctx line', subagentType: 'Explore' }
+    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o), null, 2), encoding: 'utf8' })
+    expect(res.stdout).toBe('')
+  })
+
+  test('a pretty payload outside a prdt project is still total silence', () => {
+    const o: EventOpts = { cwd: tmp('prdt-t561-bare-'), prompt: 'no ctx line' }
+    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(eventObject(o), null, 2), encoding: 'utf8' })
+    expect(res.stdout).toBe('')
+  })
+})
+
+// ── T-561 duplication disposition: the copy is KEPT, and pinned ──────────────
+//
+// `prdt-call-governor.sh` carries the same walker, and this defect existed in
+// both because the copy drifted unwatched — the gate's header claims it "reuses
+// prdt-call-governor.sh's proven technique verbatim", and nothing checked that.
+// Option (A) of the ticket, extracting to `hooks/lib/json-walk.sh` and sourcing
+// it, was weighed and rejected: `scripts/hook-manifest.json` is the REGISTRATION
+// roster (install.sh and the GUI onboarding both derive ~/.claude/settings.json
+// `hooks` from it, and install.sh §4 asserts no unregistered file under
+// $PRDT_HOME/hooks/), so a lib file is either an entry the harness can never
+// satisfy or a mirrored file the roster check rejects — installer, doctor roster
+// and mirror-drift all move for a shared 40 lines.
+//
+// So the duplication is deliberate, and THIS is what makes it safe: the shared
+// walker functions must be byte-identical in both hooks. A fix applied to one
+// and not the other fails here, instead of drifting for a version — which is
+// exactly how this defect came to need fixing twice.
+describe('T-561: the two hooks share one walker, byte-for-byte', () => {
+  const GOVERNOR = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-call-governor.sh')
+
+  function fnBody(file: string, name: string): string {
+    const src = fs.readFileSync(file, 'utf8')
+    const m = src.match(new RegExp(`^${name}\\(\\) \\{\\n([\\s\\S]*?)\\n\\}$`, 'm'))
+    expect(m, `${name}() not found in ${path.basename(file)}`).toBeTruthy()
+    return m![1]
+  }
+
+  for (const fn of ['ws_skip', 'str_take', 'skip_container']) {
+    test(`${fn}() is byte-identical in both hooks`, () => {
+      expect(fnBody(HOOK, fn)).toBe(fnBody(GOVERNOR, fn))
+    })
+  }
 })
