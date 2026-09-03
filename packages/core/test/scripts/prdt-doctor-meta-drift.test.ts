@@ -106,7 +106,15 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     metaGit(['push', 'backup', 'main'])
     const out = doctor()
     expect(out).not.toContain('meta:')
-    expect(out).toContain('doctor: clean')
+    // "silent" here has always meant "no meta: line", and that is what this
+    // asserts. It is no longer the same as `doctor: clean`: T-564 made the
+    // promotion check state what it MEASURED, so any repo with no local PR
+    // evidence — this fixture included — carries exactly one line saying the
+    // requirement was NOT FOUND (scripts/prdt, promotion_warnings docstring).
+    // That line is the intended contract, so the healthy shape for this fixture
+    // is "the promotion line and nothing else".
+    expect(out).toContain('git: promotion path — no local evidence')
+    expect(out).toContain('doctor: 1 warning(s)')
     fs.rmSync(bare, { recursive: true, force: true })
   })
 
