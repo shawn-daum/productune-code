@@ -48,9 +48,19 @@ CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 4
 # ship-wrap and retro-sequence duplicates were merged into the clauses that
 # already owned them, so those 4 free lines ARE the deliverable — tightening the
 # cap down onto 60 would just recreate the pressure that made folding a rule into
-# an existing line the only legal move. Known limit: this gate counts physical
-# lines only, so growth that lands INSIDE an existing line passes unseen; until
-# that is fixed, byte growth is a curation judgment, not a doctor finding.
+# an existing line the only legal move.
+# T-577: these line counts are an EDITORIAL guide (reported as advisories), not
+# the gate. The dimension that actually constrains delivery is bytes per hook
+# output — the harness persists any single hook additionalContext over 10,000
+# chars to a file and injects a 2,000-char preview (measured, Claude Code
+# 2.1.260) — and for months these caps were satisfied while contracts.md
+# (240 B/line) and po/habit.md (316 B/line) were not arriving at all: growth
+# folded INSIDE lines passed this gate unseen and blew the one that mattered.
+# The byte budget lives where it is enforced, in scripts/hooks/
+# prdt-session-start.sh (PRDT_INJECT_PART_BUDGET_BYTES=8000 per part,
+# PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS=10000, slots = registered part
+# hooks); `discipline_delivery_warnings` below asks that hook for its plan and
+# reports parts needed vs slots registered — one number, one owner.
 # worker_habit (40, shared by designer/developer/qa) is a separate constant and
 # stays untouched.
 BLOCKED_STALE_DAYS = 14
@@ -4763,36 +4773,179 @@ def ticket_cycle_warnings(tickets):
     return [f"ticket: dependency cycle involving {cyc[0]}"] if cyc else []
 
 
-def discipline_caps_warnings(droot):
-    """Line caps and menu freshness on the discipline tree that is actually
-    BOUND on this machine. No root at all is a violation, not a skip: nothing
-    is binding any persona, which is the loudest discipline↔execution
-    mismatch available."""
+# ── discipline delivery (T-577) ───────────────────────────────────────────────
+# The largest member of the discipline↔execution family, and until this slice
+# invisible to it: the session-start hook's payload was 44,915 B in ONE hook
+# output, the harness persisted anything over 10,000 chars and injected a 2 KB
+# preview, so contracts.md and po/habit.md reached no persona on this machine
+# while every line cap above read green. The hook now splits the set into
+# parts (one registered hook command each) and owns the budget numbers; doctor
+# does not re-implement the split — it asks the hook for its plan (`--plan`) and
+# reports what the plan says: delivered bytes, parts needed, slots registered.
+DISCIPLINE_PERSONAS = ("po", "designer", "developer", "qa")
+_DELIVERY_PLANS = {}
+
+
+def _session_start_hook_path():
+    """The hook that is actually BOUND (install mirror) first, the repo copy next
+    to this file as fallback — same preference order as `discipline_root()`."""
+    for cand in (prdt_home() / "hooks" / "prdt-session-start.sh",
+                 Path(__file__).resolve().parent / "hooks" / "prdt-session-start.sh"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def discipline_delivery_plan(droot, persona):
+    """The hook's own split for `persona` over `droot`, as the JSON it prints for
+    `--plan`; None when the hook is absent or its plan could not be read. Cached
+    per (hook, root, persona) so the roster's three consumers cost one run each."""
+    hook = _session_start_hook_path()
+    if hook is None:
+        return None
+    key = (str(hook), str(droot), persona)
+    if key not in _DELIVERY_PLANS:
+        env = dict(os.environ)
+        env["PRDT_HOME"] = str(prdt_home())
+        env["PRDT_DISCIPLINE"] = str(droot)
+        plan = None
+        try:
+            # stdin closed on purpose: a pre-T-577 mirror hook knows no `--plan`
+            # and reads its event from stdin — inheriting the terminal would hang.
+            r = subprocess.run(["bash", str(hook), "--plan", persona], capture_output=True,
+                               text=True, env=env, timeout=60, stdin=subprocess.DEVNULL)
+            if r.returncode == 0 and r.stdout.strip():
+                out = json.loads(r.stdout)
+                # an old hook answers with its payload envelope, not a plan
+                plan = out if isinstance(out, dict) and "parts_needed" in out else {"legacy": True}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            plan = None
+        _DELIVERY_PLANS[key] = plan
+    return _DELIVERY_PLANS[key]
+
+
+def discipline_delivery_warnings(droot):
+    """Violations: a persona's set needs more parts than there are registered
+    slots (the tail never runs — part 1 says so in-session, doctor says so here),
+    or a single line is larger than a whole part (withheld from injection)."""
     if not droot:
-        return ["discipline: no discipline root found (~/.prdt/discipline or repo)"]
+        return Skipped("no discipline root — nothing is delivered to check")
+    if _session_start_hook_path() is None:
+        return Skipped("prdt-session-start.sh found in neither the install mirror nor the repo — "
+                       "the delivery plan cannot be computed")
     warns = []
+    for persona in DISCIPLINE_PERSONAS:
+        plan = discipline_delivery_plan(droot, persona)
+        if plan is None:
+            warns.append(f"discipline delivery: prdt-{persona} plan could not be read from the bound hook "
+                         f"{_session_start_hook_path()} (`--plan {persona}` printed nothing) — a mirror hook "
+                         f"that predates part delivery (T-577) answers exactly like this and still injects the "
+                         f"whole set as ONE output the harness persists past 10,000 chars, so contracts and habit "
+                         f"are NOT reaching sessions; re-run install.sh to resync the hooks")
+            continue
+        if plan.get("legacy"):
+            if persona == DISCIPLINE_PERSONAS[0]:
+                warns.append(f"discipline delivery: the bound hook {_session_start_hook_path()} predates part "
+                             f"delivery (no `--plan`) — it still injects the whole set as ONE hook output, which "
+                             f"the harness persists past 10,000 chars and replaces with a 2 KB preview: contracts "
+                             f"and habit are NOT reaching sessions on this machine; re-run install.sh to resync the hooks")
+            continue
+        if not plan.get("total_bytes"):
+            continue
+        need, slots, budget = plan["parts_needed"], plan["slots"], plan["budget_bytes"]
+        if need > slots:
+            lost = sorted({u["label"] for u in plan["undelivered"]})
+            warns.append(f"discipline delivery: prdt-{persona} needs {need} parts of ≤{budget} B but only "
+                         f"{slots} hook slot(s) exist — {', '.join(lost)} never reach the session "
+                         f"(part 1 says so in-session); add slots (hook-manifest.json + a byte-identical "
+                         f"prdt-session-start-p<k>.sh) and re-run install.sh")
+        for o in plan.get("oversized") or []:
+            warns.append(f"discipline delivery: {o['label']} line {o['line']} is {o['bytes']} B — larger than one "
+                         f"{budget}-byte part, so it is withheld from injection with a notice; split that line")
+    return warns
+
+
+def discipline_delivery_headroom(droot):
+    """Advisory: the set still fits, with at most one spare slot — the next fold
+    into contracts/habit goes undelivered. Not a mismatch yet, worth reading."""
+    if not droot or _session_start_hook_path() is None:
+        return Skipped("delivery plan unavailable — see `discipline delivery`")
+    lines = []
+    for persona in DISCIPLINE_PERSONAS:
+        plan = discipline_delivery_plan(droot, persona)
+        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+            continue
+        need, slots = plan["parts_needed"], plan["slots"]
+        if 0 <= slots - need <= 1:
+            lines.append(f"discipline delivery: prdt-{persona} uses {need} of {slots} part slots — "
+                         f"{'no' if slots == need else 'one'} spare part before growth in contracts.md / "
+                         f"{persona}/habit.md stops being delivered")
+    return Advisory(lines)
+
+
+def discipline_delivery_summary(droot):
+    """The one informational line doctor prints every run: delivered bytes per
+    persona against the budget — what the acceptance of T-577 asks to be
+    REPORTED, not only gated."""
+    if not droot or _session_start_hook_path() is None:
+        return None
+    cells, budget, threshold, slots = [], None, None, None
+    for persona in DISCIPLINE_PERSONAS:
+        plan = discipline_delivery_plan(droot, persona)
+        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+            continue
+        budget, threshold, slots = plan["budget_bytes"], plan["threshold_chars"], plan["slots"]
+        biggest = max([p["bytes"] or 0 for p in plan["parts"]] + [0])
+        cells.append(f"{persona} {plan['total_bytes']:,} B → {plan['parts_needed']} parts (largest {biggest:,} B)")
+    if not cells:
+        return None
+    return (f"doctor: discipline delivery — {' · '.join(cells)} · budget ≤{budget:,} B/part "
+            f"(harness persists a hook context over {threshold:,} chars; measured Claude Code 2.1.260) · "
+            f"{slots} part slots (hook files)")
+
+
+def discipline_line_caps(droot):
+    """Line counts are an EDITORIAL guide since T-577 (bytes gate delivery, see
+    `discipline_delivery_warnings`): reported as an Advisory, never a mismatch."""
+    if not droot:
+        return Skipped("no discipline root — see `discipline menus`")
+    lines = []
     for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
         if cand.exists():
             if len(cand.read_text(encoding="utf-8").splitlines()) > CAPS["doctrine.md"]:
-                warns.append(f"discipline: doctrine.md exceeds {CAPS['doctrine.md']} lines")
+                lines.append(f"discipline: doctrine.md exceeds {CAPS['doctrine.md']} lines")
             break
     c = droot / "contracts.md"
     if c.exists() and len(c.read_text(encoding="utf-8").splitlines()) > CAPS["contracts.md"]:
-        warns.append(f"discipline: contracts.md exceeds {CAPS['contracts.md']} lines")
-    for persona in ("po", "designer", "developer", "qa"):
+        lines.append(f"discipline: contracts.md exceeds {CAPS['contracts.md']} lines")
+    for persona in DISCIPLINE_PERSONAS:
         h = droot / persona / "habit.md"
         cap = CAPS["po_habit"] if persona == "po" else CAPS["worker_habit"]
         if h.exists() and len(h.read_text(encoding="utf-8").splitlines()) > cap:
-            warns.append(f"discipline: {persona}/habit.md exceeds {cap} lines")
+            lines.append(f"discipline: {persona}/habit.md exceeds {cap} lines")
         pdir = droot / persona / "playbooks"
         if pdir.is_dir():
             for p in pdir.glob("*.md"):
                 if p.name == "_index.md":
                     if len(p.read_text(encoding="utf-8").splitlines()) > CAPS["menu"]:
-                        warns.append(f"discipline: {persona} menu exceeds {CAPS['menu']} lines")
+                        lines.append(f"discipline: {persona} menu exceeds {CAPS['menu']} lines")
                     continue
                 if body_line_count(p) > CAPS["playbook_body"]:
-                    warns.append(f"discipline: {persona}/playbooks/{p.name} body exceeds {CAPS['playbook_body']} lines")
+                    lines.append(f"discipline: {persona}/playbooks/{p.name} body exceeds {CAPS['playbook_body']} lines")
+    return Advisory(lines)
+
+
+def discipline_caps_warnings(droot):
+    """Menu freshness on the discipline tree that is actually BOUND on this
+    machine. No root at all is a violation, not a skip: nothing is binding any
+    persona, which is the loudest discipline↔execution mismatch available.
+    (Line caps moved to `discipline_line_caps` as an advisory — T-577.)"""
+    if not droot:
+        return ["discipline: no discipline root found (~/.prdt/discipline or repo)"]
+    warns = []
+    for persona in DISCIPLINE_PERSONAS:
+        pdir = droot / persona / "playbooks"
+        if pdir.is_dir():
             idx = pdir / "_index.md"
             if not idx.exists():
                 warns.append(f"discipline: {persona} menu missing — run `prdt menus`")
@@ -4882,7 +5035,12 @@ def cmd_doctor(_args):
         # mirror↔repo content drift (T-507) — before the caps check so a stale
         # mirror is reported even when it happens to still be within cap
         ("discipline mirror drift", FAMILY_DE, lambda: discipline_mirror_drift_warnings(droot)),
-        ("discipline caps + menus", FAMILY_DE, lambda: discipline_caps_warnings(droot)),
+        ("discipline menus", FAMILY_DE, lambda: discipline_caps_warnings(droot)),
+        # line caps are an editorial guide (advisory) since T-577 — bytes gate delivery
+        ("discipline line caps (editorial)", FAMILY_DE, lambda: discipline_line_caps(droot)),
+        # what actually reaches a session: parts needed vs hook slots registered (T-577)
+        ("discipline delivery", FAMILY_DE, lambda: discipline_delivery_warnings(droot)),
+        ("discipline delivery headroom", FAMILY_DE, lambda: discipline_delivery_headroom(droot)),
     ]
 
     records = [doctor_record(name, family, fn()) for name, family, fn in roster]
@@ -4890,6 +5048,9 @@ def cmd_doctor(_args):
 
     for w in warns:
         print(f"⚠ {w}")
+    summary = discipline_delivery_summary(droot)
+    if summary:
+        print(summary)
     for line in doctor_verdict_lines(records):
         print(line)
     print(("doctor: clean" if not warns else f"doctor: {len(warns)} warning(s)") + " (non-blocking)")
