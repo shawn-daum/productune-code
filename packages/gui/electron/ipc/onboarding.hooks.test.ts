@@ -99,11 +99,16 @@ function cliHooksBlock(home: string): any {
     h('prdt-overrides-inject.sh'),
     h('prdt-project-overrides-inject.sh'),
   ]
-  const disciplineEntry = [h('prdt-session-start.sh'), ...injectors]
+  // T-577: the discipline set is delivered in PARTS, one registered command per
+  // part. Derived from the manifest, never a hand-copied p2..pN list — the same
+  // reason PRDT_HOOKS above is derived (T-491: a literal roster went stale the
+  // moment the roster grew, and this one grows whenever a slot is added).
+  const partSlots = PRDT_HOOKS.filter(b => /^prdt-session-start-p\d+\.sh$/.test(b)).map(h)
+  const disciplineEntry = [h('prdt-session-start.sh'), ...partSlots, ...injectors]
   return {
     SessionStart: [
       { matcher: 'startup|resume|clear', hooks: disciplineEntry },
-      { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...injectors] },
+      { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots, ...injectors] },
     ],
     SubagentStart: [{ matcher: '^prdt-', hooks: disciplineEntry }],
     SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],

@@ -43,6 +43,8 @@ const fail = (detail: string) => ({ ok: false, detail })
 // was 9 basenames and went stale the moment the roster grew to 10, which is the
 // exact drift class T-445 was about.
 const PRDT_HOOKS: readonly string[] = hookManifest.basenames
+// T-577: the discipline part slots, derived from that same roster.
+const partSlots: readonly string[] = PRDT_HOOKS.filter(b => /^prdt-session-start-p\d+\.sh$/.test(b))
 
 function makeHome(withMirror: boolean): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t305-home-'))
@@ -113,8 +115,12 @@ export const CASES: readonly Case[] = [
       fs.writeFileSync(settingsPath(home), JSON.stringify({
         hooks: {
           SessionStart: [
-            { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh'), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
-            { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
+            // T-577: the discipline part slots (prdt-session-start-p<k>.sh) ride
+            // every matcher part 1 rides. Derived from the manifest roster, not
+            // hand-listed — "installed" means the WHOLE roster is registered, so a
+            // literal list here would have quietly redefined what installed means.
+            { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
+            { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
           ],
           SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
           PostToolUse: [
