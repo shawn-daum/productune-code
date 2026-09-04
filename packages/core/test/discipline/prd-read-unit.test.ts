@@ -73,8 +73,23 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
 
   test('the row fixes the naming rule, the flat-dir rule and the no-index rule', () => {
     const r = row()!
-    expect(r).toContain('the ticket frontmatter `feature:` value verbatim')
+    expect(r).toContain('named by that value verbatim')
     expect(r).toContain('flat dir, no index file')
+  })
+
+  // T-547: `feature:` is a GROUPING KEY. Measured across 8 prdt projects on
+  // 2026-09-01, 131 of 134 values carry no spec file — so a row that calls
+  // every value a spec pointer declares 131 legal tickets in violation. The
+  // read-FIRST duty is real, but it fires only where the file EXISTS. Both
+  // halves are pinned: dropping the condition and dropping the duty are the
+  // two ways this row goes wrong, and each fails here.
+  test('the row makes read-FIRST conditional on the spec file existing', () => {
+    const r = row()!
+    expect(r).toContain('a grouping key, not a pointer')
+    expect(r).toContain('a value with NO spec file is legal and the normal state')
+    expect(r).toContain('When `docs/features/<value>.md` EXISTS')
+    expect(r).toContain('read it FIRST, before touching that feature')
+    expect(r).toContain('history/lessons only, never the current spec')
   })
 
   test('the row fixes the validity-window tagging and no-delete rules', () => {
@@ -99,11 +114,46 @@ describe('designer habit + prd-clarity playbook', () => {
     expect(h).toContain('never delete an invalidated one')
   })
 
+  // T-552: the Feature spec line's T2 absorbed what used to be a separate
+  // third test — "a real consumer needs this contract". The absorption is what
+  // `docs/wiki/fact--discipline-editing.md` records; lose this half and T2
+  // degrades to "is there a contract?", which every feature passes, and the
+  // wiki page's statement becomes false. Pinned by the consumer half alone so
+  // rewording the surrounding sentence stays legal.
+  test('T2 keeps its consumer half — the contract has to be gettable-wrong', () => {
+    expect(read(DESIGNER_HABIT)).toContain(
+      'an agent touching this area gets WRONG without reading it',
+    )
+  })
+
   test('prd-clarity states what the PRD does NOT hold', () => {
     const p = read(PRD_CLARITY)
     expect(p).toContain('## What the PRD does NOT hold')
     expect(p).toContain('never restate a live contract inside a version section')
     expect(p).toContain('the standing head + ONE version section')
+  })
+})
+
+describe('contracts.md — risk_flags names only the risk the change CREATES', () => {
+  const tierRule = () =>
+    read(CONTRACTS)
+      .split('\n')
+      .find((l) => l.startsWith('- Impl return whose') && l.includes('auto-dispatches QA'))
+
+  test('the dispatch tier rule exists', () => {
+    expect(tierRule()).toBeDefined()
+  })
+
+  // T-552: without the negative list the definition reads as a platitude and
+  // every persona keeps flagging the bug it just fixed — the four recorded
+  // mis-routings all resolve on this half, not on the positive sentence. Three
+  // substrings, each load-bearing on its own: the ban, the literals people
+  // actually typed as flags, and the consequence that makes the ban matter.
+  test('the rule states the defect being fixed is never a flag', () => {
+    const r = tierRule()!
+    expect(r).toContain('The defect being FIXED is never a flag')
+    expect(r).toContain('`crash`, `data-loss`, `p0`')
+    expect(r).toContain('never raises the tier')
   })
 })
 

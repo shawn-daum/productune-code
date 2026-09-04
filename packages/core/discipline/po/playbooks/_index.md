@@ -3,6 +3,6 @@
 |---|---|---|
 | build-entry | Build entry (Define close — PRD version scope approved) | opus/medium |
 | curate-wiki | stage boundary (mainly Retro entry) · inbox visibly piled up · doctor flags inbox backlog | opus/medium |
-| patch-cycle | post-close patch (a fix or a deliberately split-off scope arrives at stage `idle`) · emergency `main` hotfix (`dev` tip not deployable and delivery cannot wait) | opus/medium |
+| patch-cycle | post-close patch (a fix or a deliberately split-off scope arrives at stage `idle`) · emergency `main` hotfix (`dev` tip not deployable and delivery cannot wait) · in-build regression patch (stage is `build`, both trigger questions below are yes, delivered via a parallel worktree — the round does not stop) | opus/medium |
 | readiness-dispatch | Ship entry (build believed complete, before deploy) | opus/medium |
 | retro | Retro entry (version shipped or wrapped) · user asks to close out a version | opus/medium |

@@ -7,7 +7,7 @@ effort: medium
 ---
 # Brand assets — derive from the settled DS, never invent separately
 
-Produce **logo** (light/dark if dual-theme) · **favicon** (`favicon.svg` + `.ico`) · **og:image**, all derived FROM the accepted `docs/design.md` palette + type. Land them in `docs/artifacts/` (`<slug>-logo.*`, …); the build places them in `public/`.
+Produce **logo** (light/dark if dual-theme) · **favicon** (`favicon.svg` + `.ico`) · **og:image**, all derived FROM the accepted `docs/design.md` palette + type. Land them in `docs/artifacts/<version>/` (`<slug>-logo.*`, …); the build places them in `public/`.
 
 ## The ladder — generative-PNG-first, direct-SVG last
 Claude has no image-generation model. Say so once, then:

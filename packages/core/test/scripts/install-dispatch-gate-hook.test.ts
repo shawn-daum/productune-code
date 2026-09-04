@@ -6,8 +6,11 @@
  * (hook-manifest.json), the mirror copy, the settings.json registration and the
  * doctor verdict have to move in ONE diff. This file is the install half — it
  * drives the REAL install.sh under a sandboxed HOME/PRDT_HOME/CLAUDE_DIR (never
- * the developer's own, per install-audience-hook.test.ts:36) and asserts what
- * the harness will actually read.
+ * the developer's own, per install-audience-hook.test.ts precedent) via the
+ * shared fixture (T-536: installed-state assertions share ONE install for this
+ * file; the seeded-pre-state and idempotency tests run their own installs,
+ * because their subject is the install RUN) and asserts what the harness will
+ * actually read.
  *
  * The point of interest here is COHABITATION: PreToolUse now carries two prdt
  * hooks whose registrations are not interchangeable —
@@ -24,35 +27,12 @@
 
 import path from 'path'
 import fs from 'fs'
-import os from 'os'
-import { execFileSync } from 'child_process'
 import { test, expect } from 'vitest'
+import { CORE_ROOT, installedMachine, freshInstall, hasJq } from '../helpers/install-fixture'
 
-const CORE_ROOT = path.resolve(__dirname, '..', '..')
-const INSTALL_SH = path.join(CORE_ROOT, 'scripts', 'install.sh')
 const MANIFEST = path.join(CORE_ROOT, 'scripts', 'hook-manifest.json')
 const GATE = 'prdt-dispatch-gate.sh'
 const GOVERNOR = 'prdt-call-governor.sh'
-
-function hasJq(): boolean {
-  try { execFileSync('jq', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
-}
-
-function sandbox(): { env: NodeJS.ProcessEnv; prdtHome: string; claudeDir: string } {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t490-'))
-  const home = path.join(sb, 'home')
-  const prdtHome = path.join(sb, 'prdt')
-  const claudeDir = path.join(sb, 'claude')
-  for (const d of [home, prdtHome, claudeDir]) fs.mkdirSync(d, { recursive: true })
-  fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{}')
-  return { env: { ...process.env, HOME: home, PRDT_HOME: prdtHome, CLAUDE_DIR: claudeDir }, prdtHome, claudeDir }
-}
-
-function runInstall(): { settings: any; prdtHome: string } {
-  const { env, prdtHome, claudeDir } = sandbox()
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  return { settings: JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8')), prdtHome }
-}
 
 /** The settings.json PreToolUse entry that registers `basename`, if any. */
 function entryFor(settings: any, basename: string): any {
@@ -82,14 +62,14 @@ test('the gate and the governor share PreToolUse as SEPARATE, differently-matche
 })
 
 test.skipIf(!hasJq())('mirrors prdt-dispatch-gate.sh executable', () => {
-  const { prdtHome } = runInstall()
+  const { prdtHome } = installedMachine()
   const script = path.join(prdtHome, 'hooks', GATE)
   expect(fs.existsSync(script)).toBe(true)
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
 })
 
 test.skipIf(!hasJq())('registers the gate on PreToolUse with the Agent matcher, at the mirrored path', () => {
-  const { settings, prdtHome } = runInstall()
+  const { settings, prdtHome } = installedMachine()
   const entry = entryFor(settings, GATE)
   expect(entry, 'gate not registered on PreToolUse').toBeTruthy()
   expect(entry.matcher).toBe('Agent')
@@ -101,7 +81,7 @@ test.skipIf(!hasJq())('registers the gate on PreToolUse with the Agent matcher, 
 })
 
 test.skipIf(!hasJq())('the governor keeps its matcher-less entry alongside the gate', () => {
-  const { settings } = runInstall()
+  const { settings } = installedMachine()
   const gate = entryFor(settings, GATE)
   const gov = entryFor(settings, GOVERNOR)
   expect(gov).toBeTruthy()
@@ -110,13 +90,12 @@ test.skipIf(!hasJq())('the governor keeps its matcher-less entry alongside the g
 })
 
 test.skipIf(!hasJq())('pre-existing foreign PreToolUse hooks survive the merge', () => {
-  const { env, claudeDir } = sandbox()
-  const settingsPath = path.join(claudeDir, 'settings.json')
-  fs.writeFileSync(settingsPath, JSON.stringify({
-    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '/opt/someone-else/guard.sh' }] }] },
-  }))
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+  // its own install ON PURPOSE: the subject is an install over a SEEDED pre-state
+  const { settings } = freshInstall({
+    seedSettings: {
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '/opt/someone-else/guard.sh' }] }] },
+    },
+  })
   const commands = (settings.hooks.PreToolUse as any[])
     .flatMap((e) => (e.hooks ?? []).map((h: any) => h.command as string))
   expect(commands).toContain('/opt/someone-else/guard.sh')
@@ -124,10 +103,8 @@ test.skipIf(!hasJq())('pre-existing foreign PreToolUse hooks survive the merge',
 })
 
 test.skipIf(!hasJq())('re-running install.sh is idempotent (one gate entry)', () => {
-  const { env, claudeDir } = sandbox()
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  execFileSync('bash', [INSTALL_SH], { env, stdio: 'ignore' })
-  const settings = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+  // its own installs ON PURPOSE: the subject is the second RUN, not the state
+  const { settings } = freshInstall({ times: 2 })
   const commands = (settings.hooks.PreToolUse as any[])
     .flatMap((e) => (e.hooks ?? []).map((h: any) => h.command as string))
   expect(commands.filter((c) => c.includes(GATE))).toHaveLength(1)

@@ -142,7 +142,35 @@ export async function launchApp(opts: LaunchOpts = {}): Promise<ElectronApplicat
   fs.mkdirSync(userDataDir, { recursive: true })
 
   return electron.launch({
-    args: [MAIN, `--user-data-dir=${userDataDir}`, ...(opts.args ?? [])],
+    // T-558: `--use-mock-keychain`.
+    //
+    // Original hypothesis (unverified as causation): the sandboxed HOME (see
+    // playwright.config.ts) has no `Library/Keychains` login keychain, so
+    // Chromium's OSCrypt probes for one, finds none, and macOS raises "키체인
+    // 발견할 수 없음 — 'Chrome'을(를) 저장할 키체인을 찾을 수 없습니다" on every
+    // launchApp() call, unrelated to any real Chrome browser (Chromium just
+    // identifies itself as "Chrome" to the keychain).
+    //
+    // Negative-control result (2026-09-03, cua VM, HEAD without this flag):
+    // launchApp() held open 30s with a screenshot every 2s (22 shots) produced
+    // ZERO keychain dialogs, and after the run `security find-generic-password`
+    // found no "Electron Safe Storage" / "productune Safe Storage" / "Chrome
+    // Safe Storage" entries in the login keychain. The hypothesized failure did
+    // not reproduce. The dialog the user actually saw came from a different
+    // source — `prdt-auto-open.sh` (T-559) — and was fixed there.
+    //
+    // So this flag is not a fix for an observed symptom; it is a precaution
+    // against sandboxed-HOME keychain probing in environments we haven't all
+    // enumerated. It stays because it's harmless, not because it's proven
+    // necessary. This is the flag Chromium test infra uses for exactly that:
+    // swap the OS keychain for an in-memory mock, so OSCrypt never touches the
+    // real login keychain at all.
+    //
+    // DO NOT click "기본값으로 재설정" if you ever see this dialog (e.g. because this
+    // flag was removed, or a launch path bypassed the harness) — it can reset/damage
+    // the REAL Chrome browser's saved-password encryption key on this machine. Only
+    // "취소" is safe, and the actual fix is restoring this flag, not the dialog.
+    args: [MAIN, `--user-data-dir=${userDataDir}`, '--use-mock-keychain', ...(opts.args ?? [])],
     cwd: GUI_ROOT,
     env: {
       ...process.env,

@@ -31,15 +31,59 @@ function hasJq(): boolean {
 }
 
 /** A throwaway dir with a fake `open` shim (logs argv, never opens anything)
- *  prepended to PATH ahead of the real macOS /usr/bin/open. */
+ *  prepended to PATH ahead of the real macOS /usr/bin/open, plus a fake
+ *  `lsappinfo` (T-571) whose "running apps" list is whatever
+ *  $PRDT_TEST_RUNNING_APPS says — the real one would report this machine's
+ *  actual apps, which no test can control. `mdls` is NOT shimmed: UTI lookup
+ *  on a real temp file is deterministic (probed on this machine:
+ *  .html→public.html, .png→public.png, .pdf→com.adobe.pdf,
+ *  PRD.md→net.daringfireball.markdown) and shimming it would test nothing. */
 function fakeOpenBin(): { bin: string; log: string; path: string } {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t409-open-'))
   const log = path.join(dir, 'open.log')
   const bin = path.join(dir, 'open')
   fs.writeFileSync(bin, `#!/usr/bin/env bash\necho "$@" >> "${log}"\nexit 0\n`)
   fs.chmodSync(bin, 0o755)
+  const ls = path.join(dir, 'lsappinfo')
+  fs.writeFileSync(ls, [
+    '#!/usr/bin/env bash',
+    'if [ "$1" = "list" ]; then',
+    '  for b in $PRDT_TEST_RUNNING_APPS; do echo "  bundleID=\\"$b\\""; done',
+    'fi',
+    'exit 0',
+  ].join('\n') + '\n')
+  fs.chmodSync(ls, 0o755)
   return { bin, log, path: `${dir}:${process.env.PATH}` }
 }
+
+/** A throwaway $HOME carrying a LaunchServices handler-override plist, the
+ *  same file the hook reads to learn which app a UTI would launch. Built from
+ *  JSON through plutil so the hook parses a REAL plist, not a shim's output. */
+function fakeHome(handlers: Record<string, string>): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t571-home-'))
+  const dir = path.join(home, 'Library', 'Preferences', 'com.apple.LaunchServices')
+  fs.mkdirSync(dir, { recursive: true })
+  const src = path.join(home, 'handlers.json')
+  fs.writeFileSync(src, JSON.stringify({
+    LSHandlers: Object.entries(handlers).map(([uti, bundleId]) => ({
+      LSHandlerContentType: uti,
+      LSHandlerRoleAll: bundleId,
+    })),
+  }))
+  execFileSync('plutil', ['-convert', 'xml1', '-o', path.join(dir, 'com.apple.launchservices.secure.plist'), src])
+  return home
+}
+
+/** Default handler map for the pre-T-571 suite: every light-matched UTI maps
+ *  to one viewer that the fake lsappinfo reports as already running, so those
+ *  tests keep asserting CLASSIFICATION (open vs reveal) without also having to
+ *  restate T-571's warm/cold policy. */
+const WARM_APP = 'com.test.viewer'
+const ALL_LIGHT_UTIS = [
+  'public.html', 'public.png', 'public.jpeg', 'com.compuserve.gif',
+  'public.svg-image', 'com.adobe.pdf', 'net.daringfireball.markdown',
+]
+const WARM_HANDLERS: Record<string, string> = Object.fromEntries(ALL_LIGHT_UTIS.map((u) => [u, WARM_APP]))
 
 function readLog(log: string): string {
   try { return fs.readFileSync(log, 'utf8').trim() } catch { return '' }
@@ -54,6 +98,16 @@ interface RunOpts {
   debounceSecs?: number
   fakePath?: string
   log?: string
+  agentType?: string
+  agentId?: string
+  content?: string
+  /** T-571: UTI → handler bundle id, written into a fake $HOME's LaunchServices
+   *  plist. `null` means "no plist at all" (the shape of a machine where the
+   *  user never overrode a default). Defaults to WARM_HANDLERS. */
+  handlers?: Record<string, string> | null
+  /** T-571: bundle ids the fake lsappinfo reports as already running.
+   *  Defaults to [WARM_APP]. */
+  runningApps?: string[]
 }
 
 function run(opts: RunOpts): { stdout: string; log: string; prdtHome: string } {
@@ -65,12 +119,29 @@ function run(opts: RunOpts): { stdout: string; log: string; prdtHome: string } {
     fs.mkdirSync(prdtHome, { recursive: true })
     fs.writeFileSync(path.join(prdtHome, 'auto-open'), opts.autoOpenMode)
   }
-  const event = {
+  const event: Record<string, unknown> = {
     hook_event_name: 'PostToolUse',
     tool_name: opts.toolName ?? 'Write',
-    tool_input: { file_path: opts.filePath ?? '' },
+    tool_input: {
+      file_path: opts.filePath ?? '',
+      ...(opts.content !== undefined ? { content: opts.content } : {}),
+    },
   }
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: fakePath, PRDT_HOME: prdtHome }
+  // Subagent PostToolUse payloads carry these as TOP-LEVEL members (T-559,
+  // empirically observed against Claude Code 2.1.259 — see the hook's header).
+  if (opts.agentType !== undefined) event.agent_type = opts.agentType
+  if (opts.agentId !== undefined) event.agent_id = opts.agentId
+  const handlers = opts.handlers === undefined ? WARM_HANDLERS : opts.handlers
+  const home = handlers === null
+    ? fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t571-home-'))
+    : fakeHome(handlers)
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: fakePath,
+    PRDT_HOME: prdtHome,
+    HOME: home,
+    PRDT_TEST_RUNNING_APPS: (opts.runningApps ?? [WARM_APP]).join(' '),
+  }
   if (opts.guiSession) env.PRDT_GUI_SESSION = '1'
   else delete env.PRDT_GUI_SESSION
   if (opts.debounceSecs !== undefined) env.PRDT_AUTO_OPEN_DEBOUNCE_SECS = String(opts.debounceSecs)
@@ -234,6 +305,151 @@ describe('.prdt/ path exclusion', () => {
     const p = makeNestedFile('.prdtx', 'PRD.md')
     const { log } = run({ filePath: p })
     expect(readLog(log)).toBe(p)
+  })
+})
+
+// T-559: narrow firing to the main session. Payload shapes (`agent_type` /
+// `agent_id` as top-level PostToolUse members on a subagent Write, absent on
+// a main-session Write) were empirically probed against Claude Code 2.1.259
+// before writing this discriminator — not assumed. See the hook's own header
+// for the probe method and the fail-direction rationale.
+describe('T-559 — main-session-only firing', () => {
+  test.skipIf(!hasJq())('subagent Write (agent_type present) of PRD.md → no open call', () => {
+    const p = makeFile('PRD.md')
+    const { stdout, log } = run({ filePath: p, agentType: 'designer', agentId: 'abc123' })
+    expect(stdout).toBe('{}')
+    expect(readLog(log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('main-session Write (no agent_type key) of PRD.md → still opens', () => {
+    const p = makeFile('PRD.md')
+    const { log } = run({ filePath: p })
+    expect(readLog(log)).toBe(p)
+  })
+
+  test.skipIf(!hasJq())('agent_type present but empty string → treated as subagent, no open call', () => {
+    // Defensive: an empty-but-present key is not the "absent" shape a real
+    // main session produces — fail toward skip, per the hook's documented
+    // direction, rather than assume it means "no identity".
+    const p = makeFile('PRD.md')
+    const { log } = run({ filePath: p, agentType: '' })
+    expect(readLog(log)).toBe('')
+  })
+
+  test.skipIf(!hasJq())('literal "agent_type" text inside tool_input.content does not forge a main-session skip or a subagent open', () => {
+    // Anti-spoofing property (fact--claude-hooks T-518 "첫 매치" pitfall):
+    // jq's top-level addressing must not be fooled by the substring living
+    // two levels deep inside tool_input. A real main-session write with this
+    // content still opens.
+    const p = makeFile('spoofed.html')
+    const { log } = run({ filePath: p, content: '"agent_type":"designer" mentioned in the body, not top-level' })
+    expect(readLog(log)).toBe(p)
+  })
+
+  test.skipIf(!hasJq())('subagent Write is still subject to the .prdt/ exclude and debounce (narrowing changes WHO fires, not the other guards)', () => {
+    const p = makeNestedFile('.prdt/scratch', 'artifact.html')
+    const { stdout, log } = run({ filePath: p, agentType: 'qa' })
+    expect(stdout).toBe('{}')
+    expect(readLog(log)).toBe('')
+  })
+})
+
+// T-571: the hook must never be the process that COLD-STARTS an application.
+// T-559 narrowed WHO may open; this narrows what an open DOES. The keychain
+// dialog the user kept seeing came from `open some.html` launching Chrome from
+// scratch out of this sandboxed hook — a main-session write, which T-559 left
+// firing by design. Policy under test: a light match opens in place only when
+// the app that would handle it is ALREADY running; otherwise it downgrades to
+// the existing Finder reveal, which surfaces the deliverable without starting
+// anything (Finder is always up).
+describe('T-571 — a light match never cold-starts an app', () => {
+  test.skipIf(!hasJq())('html whose handler is NOT running → reveal, never a bare open', () => {
+    const p = makeFile('artifact.html')
+    const { stdout, log } = run({
+      filePath: p,
+      handlers: { 'public.html': 'com.google.chrome' },
+      runningApps: ['com.apple.finder'],
+    })
+    expect(stdout).toBe('{}')
+    expect(readLog(log)).toBe(`-R ${p}`)
+  })
+
+  test.skipIf(!hasJq())('html whose handler IS running → open in place (warm, no launch)', () => {
+    const p = makeFile('artifact.html')
+    const { log } = run({
+      filePath: p,
+      handlers: { 'public.html': 'com.google.chrome' },
+      runningApps: ['com.google.chrome'],
+    })
+    expect(readLog(log)).toBe(p)
+  })
+
+  test.skipIf(!hasJq())('handler bundle id case differs between LaunchServices and the running app → still recognised as warm', () => {
+    // Observed on this machine (2026-09-04): the handler plist stores
+    // `com.google.chrome` lowercased while the running process registers as
+    // `com.google.Chrome`. A case-sensitive comparison would call a running
+    // Chrome cold and pointlessly downgrade every html to a Finder reveal.
+    const p = makeFile('artifact.html')
+    const { log } = run({
+      filePath: p,
+      handlers: { 'public.html': 'com.google.chrome' },
+      runningApps: ['com.google.Chrome'],
+    })
+    expect(readLog(log)).toBe(p)
+  })
+
+  test.skipIf(!hasJq())('handler unresolvable (no override for this UTI) → reveal, not a gamble', () => {
+    // No LSHandlers entry means the SYSTEM default applies, which the hook
+    // cannot read without launching something. Unknown handler = possibly
+    // cold, and this hook fails toward not opening (T-559 direction).
+    const p = makeFile('report.pdf')
+    const { log } = run({ filePath: p, handlers: {}, runningApps: ['com.apple.Preview'] })
+    expect(readLog(log)).toBe(`-R ${p}`)
+  })
+
+  test.skipIf(!hasJq())('no handler plist at all → reveal', () => {
+    const p = makeFile('artifact.html')
+    const { log } = run({ filePath: p, handlers: null })
+    expect(readLog(log)).toBe(`-R ${p}`)
+  })
+
+  test.skipIf(!hasJq())('PRD.md gets the same treatment — markdown is handled by a browser on this machine', () => {
+    // The sweep's surprise: `net.daringfireball.markdown` is bound to
+    // com.google.chrome here, so PRD.md cold-launched Chrome exactly like a
+    // .html did. The fix is type-independent on purpose.
+    const p = makeFile('PRD.md')
+    const { log } = run({
+      filePath: p,
+      handlers: { 'net.daringfireball.markdown': 'com.google.chrome' },
+      runningApps: [],
+    })
+    expect(readLog(log)).toBe(`-R ${p}`)
+  })
+
+  test.skipIf(!hasJq())('nothing at all is running → every light type reveals', () => {
+    for (const name of ['a.html', 'a.htm', 'a.png', 'a.jpg', 'a.jpeg', 'a.gif', 'a.svg', 'a.pdf', 'PRD.md']) {
+      const p = makeFile(name)
+      const { log } = run({ filePath: p, runningApps: [] })
+      expect(readLog(log), name).toBe(`-R ${p}`)
+    }
+  })
+
+  test.skipIf(!hasJq())('heavy match is untouched — reveal never launched anything to begin with', () => {
+    const p = makeFile('installer.dmg')
+    const { log } = run({ filePath: p, handlers: null, runningApps: [] })
+    expect(readLog(log)).toBe(`-R ${p}`)
+  })
+
+  test.skipIf(!hasJq())('T-559 stays on top: a subagent html write is silent whether the handler is warm or cold', () => {
+    const p = makeFile('artifact.html')
+    const { stdout, log } = run({
+      filePath: p,
+      agentType: 'designer',
+      handlers: { 'public.html': 'com.google.chrome' },
+      runningApps: ['com.google.chrome'],
+    })
+    expect(stdout).toBe('{}')
+    expect(readLog(log)).toBe('')
   })
 })
 
