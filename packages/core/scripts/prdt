@@ -3348,13 +3348,62 @@ def cmd_meta_bootstrap(root, args):
 
 # ── doctor ────────────────────────────────────────────────────────────────────
 
+def _repo_root_candidates():
+    """Repo-checkout roots worth trying as the comparand for the three
+    mirror↔repo drift checks below, in priority order:
+
+      1. self-reference — two levels up from THIS running file. Free and
+         exactly right whenever the copy running IS a repo checkout (a dev
+         box invoking `scripts/prdt` directly): `parent.parent` is
+         `packages/core`, right where the repo keeps `discipline/`,
+         `scripts/prdt` and `scripts/hooks/`.
+      2. `PRDT_REPO`, via `prdt_repo_from_env()` — the one thing an
+         INSTALLED copy (`~/.prdt/bin/prdt`, a file that lives nowhere near
+         any checkout) still remembers about its own source. Without this,
+         candidate 1 collapses to `prdt_home()` itself on every installed
+         machine (`parent.parent` of `~/.prdt/bin/prdt` is `~/.prdt`), which
+         has no `scripts/` directory at all — so the three checks below were
+         permanently unable to find a repo to compare against, from any cwd,
+         on every machine that ever ran `install.sh` (T-576).
+
+    Each candidate is validated the same way regardless of which produced
+    it: `scripts/prdt` must exist there as a file — "is this actually a
+    prdt repo", not merely "is this a directory". `PRDT_REPO` missing, or
+    naming a path that isn't a prdt checkout, simply drops that candidate;
+    it never yields a bogus path for a caller to compare against."""
+    for base in (Path(__file__).resolve().parent.parent, prdt_repo_from_env()):
+        if base is None:
+            continue
+        base = Path(base)
+        if (base / "scripts" / "prdt").is_file():
+            yield base
+
+
 def _discipline_repo_path():
-    """The repo-checkout path `discipline_root()`'s OWN fallback branch would
-    have returned, computed independently of what `discipline_root()` actually
-    picked. Only meaningful as a drift comparand when it names a real
-    directory that differs from the mirror — see `discipline_mirror_drift_warnings`."""
-    p = Path(__file__).resolve().parent.parent / "discipline"
-    return p if p.is_dir() else None
+    """The repo-checkout path to compare the discipline mirror against — the
+    first candidate from `_repo_root_candidates()` whose `discipline/` is a
+    real directory that ALSO differs from the mirror. That second condition
+    is not redundant with the caller's own mirror-equality early-out
+    (`discipline_mirror_drift_warnings`): on an installed machine, `~/.prdt`
+    itself carries a top-level `discipline/` — the mirror — so the
+    self-reference candidate's `discipline/` COINCIDENTALLY names the mirror
+    itself (unlike `scripts/prdt` or `scripts/hooks/`, which `~/.prdt` never
+    has, so those two candidates are naturally excluded by the `scripts/prdt`
+    validity check in `_repo_root_candidates()` instead). Filtering that
+    match out here, rather than only in the caller, means a genuinely
+    different `PRDT_REPO` candidate is still tried instead of stopping at
+    "found a `discipline/` dir" the moment the first one happens to be the
+    mirror — the discipline check must never end up comparing the mirror
+    against itself, however many candidates get in its way (T-576).
+
+    Only meaningful as a drift comparand when it names a real, DIFFERENT
+    directory — see `discipline_mirror_drift_warnings`."""
+    mirror = prdt_home() / "discipline"
+    for base in _repo_root_candidates():
+        p = base / "discipline"
+        if p.is_dir() and p.resolve() != mirror.resolve():
+            return p
+    return None
 
 
 # T-565 C4: the ONE junk filter, applied at `_tree_files` itself so the drift
@@ -3536,17 +3585,21 @@ def discipline_mirror_drift_warnings(droot):
 
 
 def _prdt_script_repo_path():
-    """The repo-checkout path for `scripts/prdt` itself, computed the same way
-    `_discipline_repo_path()` computes discipline/'s: two levels up from THIS
-    running file, then back down to where the repo layout keeps it. Running
-    from the repo, that's a self-reference (`parent.parent` is `packages/core`,
-    `/scripts/prdt` is this very file). Running from the installed mirror
-    (`~/.prdt/bin/prdt`), `parent.parent` is `~/.prdt`, so `/scripts/prdt`
-    names nothing — same "collapses to nothing nearby" shape the discipline
-    helper relies on. Only meaningful as a drift comparand when it names a
-    real file that differs from the mirror — see `prdt_script_drift_warnings`."""
-    p = Path(__file__).resolve().parent.parent / "scripts" / "prdt"
-    return p if p.is_file() else None
+    """The repo-checkout path for `scripts/prdt` itself — the first candidate
+    from `_repo_root_candidates()` (self-reference, then `PRDT_REPO`) whose
+    `scripts/prdt` exists. Running from the repo, self-reference already IS
+    this very file. Running from an installed copy (`~/.prdt/bin/prdt`),
+    self-reference collapses to `~/.prdt`, which has no `scripts/prdt` at
+    all — `_repo_root_candidates()` drops it, and `PRDT_REPO` (parsed from
+    `~/.prdt/prdt.env` by `prdt_repo_from_env()`) is what lets an installed
+    copy find a real repo checkout to compare against (T-576), from any cwd.
+    Only meaningful as a drift comparand when it names a real file that
+    differs from the mirror — see `prdt_script_drift_warnings`."""
+    for base in _repo_root_candidates():
+        p = base / "scripts" / "prdt"
+        if p.is_file():
+            return p
+    return None
 
 
 def prdt_script_drift_warnings():
@@ -3610,15 +3663,20 @@ def prdt_script_drift_warnings():
 
 
 def _hooks_repo_path():
-    """The repo-checkout path for packages/core/scripts/hooks/, computed the
-    same way `_discipline_repo_path()` and `_prdt_script_repo_path()` compute
-    theirs: two levels up from THIS running file (`packages/core` from a repo
-    checkout, `~/.prdt` from the installed mirror), then back down to where
-    the repo layout keeps the hook sources. Only meaningful as a drift
-    comparand when it names a real directory that differs from the mirror —
-    see `hook_mirror_drift_warnings`."""
-    p = Path(__file__).resolve().parent.parent / "scripts" / "hooks"
-    return p if p.is_dir() else None
+    """The repo-checkout path for packages/core/scripts/hooks/ — the first
+    candidate from `_repo_root_candidates()` (self-reference, then
+    `PRDT_REPO`) whose `scripts/hooks/` exists, same priority
+    `_prdt_script_repo_path()` uses and for the same reason: self-reference
+    alone collapses to `~/.prdt` (no `scripts/` at all) on an installed
+    machine, so `PRDT_REPO` is what lets that copy find a real repo checkout
+    to compare its mirrored hooks against (T-576), from any cwd. Only
+    meaningful as a drift comparand when it names a real directory that
+    differs from the mirror — see `hook_mirror_drift_warnings`."""
+    for base in _repo_root_candidates():
+        p = base / "scripts" / "hooks"
+        if p.is_dir():
+            return p
+    return None
 
 
 HOOK_ROSTER_FILENAME_RE = re.compile(r"^prdt-[A-Za-z0-9_.-]+\.sh$")
