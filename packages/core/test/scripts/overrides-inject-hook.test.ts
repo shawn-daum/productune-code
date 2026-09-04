@@ -45,7 +45,15 @@ function makePrdtHome(opts: { overrideBody?: string; oversized?: boolean }): str
   fs.mkdirSync(path.join(disc, 'developer', 'playbooks'), { recursive: true })
   fs.mkdirSync(path.join(home, 'overrides'), { recursive: true })
 
-  const pad = opts.oversized ? '이 문단은 실측 인시던트 규모(약 16.6KB)를 재현하기 위한 채움 텍스트입니다. '.repeat(120) : ''
+  // T-577: the pad is 120 SEPARATE lines, not one 18KB line. A real discipline
+  // document is many lines (the largest line in the shipped tree measures 1,682 B),
+  // and the part renderer packs by line — a single line larger than a whole part
+  // is a different case with its own withheld-with-a-notice path, covered in
+  // session-start-parts.test.ts. Padding on one line tested that path by accident
+  // and never exercised the split this fixture exists to size.
+  const pad = opts.oversized
+    ? Array.from({ length: 120 }, (_, i) => `- ${i}: 이 줄은 실측 인시던트 규모(약 16.6KB)를 재현하기 위한 채움 텍스트입니다.`).join('\n')
+    : ''
 
   fs.writeFileSync(path.join(home, 'doctrine.md'), `# doctrine\n${pad}\n`)
   fs.writeFileSync(path.join(disc, 'contracts.md'), `# contracts\n${pad}\n`)

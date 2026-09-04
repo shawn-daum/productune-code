@@ -304,7 +304,17 @@ quote_body() { # $1 file, $2 noun for the withheld notice
 # `prdt doctor` reads it to report delivered size against the budget.
 PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS=10000   # Claude Code 2.1.260 `Nrr`
 PRDT_INJECT_PART_BUDGET_BYTES=8000                # under 10,000 AND under the 8,000 sanitizer
-PRDT_ONBOARD_RESERVE_BYTES=2200                   # PO part 1 keeps room for the one-shot migration block (~1.9 KB)
+# PO part 1 keeps room for the one-shot migration block. Measured: 1,708 B of
+# hook-written prose + ~200 B of BEGIN/END delimiters carrying the flag's absolute
+# path, so ~1,900 B before the record itself. The rest is the record allowance —
+# `prdt migrate` writes ONE json line (~150 B), but the file is project-local and
+# ships inside whatever repo was cloned, so the allowance is sized for a record an
+# order of magnitude larger and a record past it is withheld with a notice (below)
+# rather than pushing part 1 over the threshold. The reserve is a CONSTANT on
+# purpose: the slots run in parallel and every one of them must compute the same
+# split, so it cannot depend on whether this session has a pending flag — which
+# means PO part 1 carries this many fewer bytes of discipline on every session.
+PRDT_ONBOARD_RESERVE_BYTES=3600
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SLOTS=1
@@ -481,6 +491,16 @@ if [ -n "$PLAN_PERSONA" ]; then
   exit 0
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  # The renderer is python (install.sh hard-requires it). Without it the set
+  # cannot be split, and "nothing arrived" must never look like "nothing to say".
+  # BEFORE the onboarding block on purpose: that block CONSUMES the one-shot flag,
+  # and consuming it here would burn the briefing on a turn that delivers nothing.
+  [ "$PART" != "1" ] && exit 0
+  emit_ctx "[prdt discipline — NOT DELIVERED]
+python3 is missing on this machine, so the discipline set could not be rendered into parts. STOP. Do not act as $AGENT_TYPE without discipline: tell the user to install python3 (install.sh requires it), or load the documents by hand via Bash cat: $(safe_path "$DOCTRINE") $(safe_path "$CONTRACTS") $(safe_path "$HABIT") and the playbook menu(s) under $(safe_path "$DISC")/."
+fi
+
 # 1회용 migration 온보딩 (PO만, part 1만): prdt migrate가 남긴 플래그를 발견하면 자기-브리핑
 # 지시를 주입하고 플래그를 소거 — 사용자가 첫 마디를 조립할 필요를 없앤다. Part 1 only:
 # the slots run in parallel, and the plan every slot computes must not depend on
@@ -541,23 +561,22 @@ $(quote_body "$FLAG" "migration record")
   fi
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  # The renderer is python (install.sh hard-requires it). Without it the set
-  # cannot be split, and "nothing arrived" must never look like "nothing to say".
-  [ "$PART" != "1" ] && exit 0
-  emit_ctx "[prdt discipline — NOT DELIVERED]
-python3 is missing on this machine, so the discipline set could not be rendered into parts. STOP. Do not act as $AGENT_TYPE without discipline: tell the user to install python3 (install.sh requires it), or load the documents by hand via Bash cat: $(safe_path "$DOCTRINE") $(safe_path "$CONTRACTS") $(safe_path "$HABIT") and the playbook menu(s) under $(safe_path "$DISC")/."
-fi
 PAYLOAD="$(python3 -c "$PRDT_PARTS_PY" render "$PERSONA" "$AGENT_TYPE" "$PART" "$SLOTS" \
   "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
   "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES")"
 [ -z "$PAYLOAD" ] && exit 0
 if [ -n "$ONBOARD" ]; then
   # The one-shot block sits between the documents and the closing instruction,
-  # inside the reserve the plan kept for it.
+  # inside the reserve the plan kept for it. Anchored on the LAST occurrence of
+  # the footer (`%`/`##`, not `%%`/`#`): the footer is always the payload's final
+  # sentence, but a discipline document is free to quote that sentence, and a
+  # first-occurrence anchor would then splice this block into the middle of a
+  # canonical block — the one place an untrusted record must never land.
   FOOT="Act per the discipline above."
-  ONBOARD="$(printf '%s' "$ONBOARD")"   # $(...) strips the trailing newlines: END line, then the footer on the next line (T-471 shape)
-  PAYLOAD="${PAYLOAD%%"$FOOT"*}${ONBOARD}
-${FOOT}${PAYLOAD#*"$FOOT"}"
+  ONBOARD="$(printf '%s' "$ONBOARD")"   # $(...) strips the trailing newlines: END line, then the blank line and footer supplied below (T-471 shape)
+  PAYLOAD="${PAYLOAD%"$FOOT"*}
+${ONBOARD}
+
+${FOOT}${PAYLOAD##*"$FOOT"}"
 fi
 emit_ctx "$PAYLOAD"
