@@ -94,6 +94,19 @@ now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 # is unavailable on this machine.
 try:
     if os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
+        # TRUST (T-519 F5 — DECISION: accepted machine-local assumption, not
+        # narrowed). This reads PRDT_REPO from ~/.prdt/prdt.env and spawns
+        # <PRDT_REPO>/dist/bin/meta-cli.cjs detached (start_new_session). A worker
+        # that rewrites that one line gets detached exec on every later dispatch —
+        # a persistence primitive. We do NOT try to lock the target down here,
+        # because it cannot be: ~/.prdt/ is a same-OS-user zone, and a process that
+        # can write prdt.env can already run `node` on anything the user can, this
+        # spawn or not. The real boundary is the contracts "~/.prdt is read-only
+        # for every persona" rule (a discipline rule, not a file permission), the
+        # same boundary decision T-519 takes for the governor run dir. The one
+        # mechanical guard kept is os.path.isfile(_bridge) below: no target file,
+        # no spawn — so a stale/blank PRDT_REPO fails silent, it does not run
+        # something unexpected.
         prdt_repo = None
         _envf = os.path.expanduser("~/.prdt/prdt.env")
         if os.path.isfile(_envf):

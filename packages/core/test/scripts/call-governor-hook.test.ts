@@ -464,6 +464,59 @@ describe('the subagent direction still holds after the fix (T-518)', () => {
   })
 })
 
+// ── T-519 vector 2: a poisoned counter path is not silently N=0 ──────────────
+//
+// `mkdir "$run/<sid>.<aid>"` makes the hook's append and read fail forever: the
+// pre-T-519 hook read an empty buffer, saw N=0, and granted every turn while the
+// .fired-* markers stayed green — a governor that LOOKS healthy but enforces
+// nothing for that worker. The fix treats a counter path that exists but is not
+// a regular file as tampered evidence and fails CLOSED for the enforced persona,
+// rather than as a fresh N=0. A live counter (a regular file) and a fresh one
+// (no file yet) are both untouched by this.
+
+describe('a poisoned counter path fails closed, not open (T-519)', () => {
+  /** Plant a directory where this worker's counter file belongs. `recursive`
+   *  creates the run dir too, so the counter file itself is never made — the
+   *  poisoned path exists but is not a regular file, which is the whole point. */
+  function poison(prdtHome: string, o: EventOpts): string {
+    const p = path.join(runDir(prdtHome), `${o.sessionId ?? SID}.${o.agentId}`)
+    fs.mkdirSync(p, { recursive: true })
+    return p
+  }
+
+  test('an enforced developer with a mkdir-poisoned counter is DENIED, not waved through', () => {
+    const home = tmp('prdt-t491-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    poison(home, w)
+    const out = JSON.parse(run(home, 'PreToolUse', w))
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+    // the deny must route the worker to its envelope, like the over-turn deny
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('summary')
+    expect(out.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain('not a tool')
+  })
+
+  test('the append side of a poisoned counter never leaks a byte to stderr', () => {
+    const home = tmp('prdt-t491-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-developer')
+    poison(home, w)
+    // run() already asserts empty stderr + exit 0; this pins the append branch too
+    expect(run(home, 'PostToolBatch', w)).toBe('')
+  })
+
+  test('a warn-only persona is still never denied, even with a poisoned counter', () => {
+    const home = tmp('prdt-t491-home-')
+    const proj = makeProject()
+    const w = worker(proj, 'prdt-qa')
+    poison(home, w)
+    const out = run(home, 'PreToolUse', w)
+    if (out !== '') {
+      expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBeUndefined()
+    }
+  })
+})
+
 // ── shape-matching of path components ────────────────────────────────────────
 
 describe('values are shape-matched, never trusted', () => {
@@ -625,5 +678,289 @@ describe('latency', () => {
     }
     samples.sort((a, b) => a - b)
     expect(samples[Math.floor(samples.length / 2)]).toBeLessThan(60)
+  })
+})
+
+
+// ── T-561: the walker reads STRUCTURE, never the payload's spacing ───────────
+//
+// Same defect, same walker (byte-copied into prdt-dispatch-gate.sh — the
+// byte-identity of the two copies is pinned in dispatch-gate-hook.test.ts).
+// One space after a `:`, after a `,`, or after the opening `{` and the walk
+// broke out with an empty `cwd`/`agent_type`, which exits 0. Measured
+// 2026-09-03 with a counter already at 60 turns: the compact payload DENIED,
+// every whitespace placement below produced ZERO stdout — the deny that stops
+// a runaway worker simply stopped existing.
+//
+// This one enforces on EVERY tool call, so it is also where a wrong verdict is
+// most expensive: each case therefore pins both directions — the deny at 60,
+// and the silence below the band.
+
+/** JSON with the two structural separators under our control, and whitespace
+ *  nowhere else. */
+function serialize(v: unknown, colon: string, comma: string): string {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v)
+  if (Array.isArray(v)) return `[${v.map((x) => serialize(x, colon, comma)).join(comma)}]`
+  return `{${Object.entries(v as Record<string, unknown>)
+    .map(([k, x]) => `${JSON.stringify(k)}${colon}${serialize(x, colon, comma)}`)
+    .join(comma)}}`
+}
+
+const WHITESPACE_FORMATS: Array<[string, (compact: string) => string]> = [
+  ['a space after every `:`', (c) => serialize(JSON.parse(c), ': ', ',')],
+  ['a space after every `,`', (c) => serialize(JSON.parse(c), ':', ', ')],
+  ['a newline after the opening `{`', (c) => `{\n${c.slice(1)}`],
+  ['a full `jq .` pretty-print', (c) => JSON.stringify(JSON.parse(c), null, 2)],
+]
+
+describe('T-561: whitespace never silences the governor', () => {
+  /** Same run(), with the payload reformatted on its way to stdin. */
+  function runAs(
+    prdtHome: string,
+    event: string,
+    o: EventOpts,
+    format: (compact: string) => string,
+  ): string {
+    const res = spawnSync('bash', [HOOK], {
+      input: format(eventJson(event, o)),
+      encoding: 'utf8',
+      env: { ...process.env, PRDT_HOME: prdtHome },
+      timeout: 10000,
+    })
+    expect(res.signal).toBeNull()
+    expect(res.stderr).toBe('')
+    expect(res.status).toBe(0)
+    return res.stdout
+  }
+
+  for (const [label, format] of WHITESPACE_FORMATS) {
+    test(`${label} → the deny at 60 turns still lands`, () => {
+      const home = tmp('prdt-t561-home-')
+      const w = worker(makeProject(), 'prdt-developer')
+      turns(home, 60, w)
+      const out = runAs(home, 'PreToolUse', w, format)
+      expect(out, 'silent no-op — the governor vanished on whitespace alone').not.toBe('')
+      const h = JSON.parse(out).hookSpecificOutput
+      expect(h.permissionDecision).toBe('deny')
+      expect((h.permissionDecisionReason as string).toLowerCase()).toContain('not a tool')
+    })
+
+    test(`${label} → a turn is still COUNTED, not dropped`, () => {
+      // The read half is only half the hook: if a pretty PostToolBatch walked
+      // out early, nothing would increment and the deny above would never be
+      // reachable in a real session.
+      const home = tmp('prdt-t561-home-')
+      const w = worker(makeProject(), 'prdt-developer')
+      turns(home, 59, w)
+      runAs(home, 'PostToolBatch', w, format)
+      const out = runAs(home, 'PreToolUse', w, format)
+      expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny')
+    })
+
+    test(`${label} → below the band, still silent`, () => {
+      const home = tmp('prdt-t561-home-')
+      const w = worker(makeProject(), 'prdt-developer')
+      turns(home, 39, w)
+      expect(runAs(home, 'PreToolUse', w, format)).toBe('')
+    })
+
+    test(`${label} → outside a prdt project, still zero stdout and zero writes`, () => {
+      const home = tmp('prdt-t561-home-')
+      const w = worker(tmp('prdt-t561-bare-'), 'prdt-developer')
+      expect(runAs(home, 'PostToolBatch', w, format)).toBe('')
+      expect(fs.existsSync(runDir(home))).toBe(false)
+    })
+  }
+
+  test('a whitespaced payload does not let a nested forgery reach the top-level walk', () => {
+    // Whitespace tolerance must not become "scan for the key anywhere": the
+    // T-518 forgery is still nested, and still invisible.
+    const home = tmp('prdt-t561-home-')
+    const proj = makeProject()
+    const forged = { cwd: proj, agentId: 'a45b42f3cdda35348' } as EventOpts
+    const out = runAs(
+      home,
+      'PostToolBatch',
+      {
+        ...forged,
+        toolInputRaw: '{"command":"echo {\"agent_type\":\"prdt-developer\"}"}',
+      },
+      // Textual reformat, NOT parse/re-stringify: re-stringifying would escape
+      // the nested key's quotes and the fixture would stop expressing the
+      // attack (the eventJson note above).
+      (c) => `{\n${c.slice(1)}`,
+    )
+    expect(out).toBe('')
+    expect(counters(home)).toEqual([])
+  })
+})
+
+// ── T-567: the counter cannot be reset, and the counter path cannot be aimed ──
+//
+// T-519 closed ONE tamper shape — a NON-regular file planted at the counter path
+// (`mkdir`) — and its guard is written as exactly that question: `[ -e "$KEY" ]
+// && [ ! -f "$KEY" ]`. Three primitives walk straight through it, all three
+// reproduced on this hook before this block existed:
+//
+//   rm -f "$KEY"      the guard is false (nothing exists), the read yields N=0,
+//   : > "$KEY"        the guard is false (a 0-byte REGULAR file), N=0
+//                     → a saturated worker's next PreToolUse PASSES. The 60-turn
+//                       ceiling becomes unbounded for one `rm`, and the
+//                       `.fired-*` markers doctor reads stay green throughout.
+//   ln -s <regular file> "$KEY"
+//                     `-f` FOLLOWS the link, sees a regular file, and passes —
+//                     so `printf . >> "$KEY"` appends one byte per turn to
+//                     whatever the link names. That is an append primitive
+//                     pointed at any file this uid owns (`~/.claude/settings.json`,
+//                     `~/.prdt/prdt.env`, a git object). A DANGLING link is the
+//                     same primitive in create form (verified: `>>` through a
+//                     dangling link creates the target), and the `.fired-*`
+//                     markers are the same primitive in TRUNCATE form, since
+//                     those are written with `>` and not `>>`.
+//
+// So the guard's question is wrong twice over. It now asks two questions instead:
+// is this counter the one this session actually accrued (witness), and does this
+// path stay inside the run directory (never a symlink, either half).
+describe('counter tamper: rm, truncate, symlink (T-567)', () => {
+  const keyPath = (home: string, o: EventOpts) =>
+    path.join(runDir(home), `${o.sessionId ?? SID}.${o.agentId}`)
+
+  /** A file OUTSIDE the run directory, standing in for `~/.claude/settings.json`. */
+  function victim(name = 'settings.json'): { file: string; before: string } {
+    const dir = tmp('prdt-t567-victim-')
+    const file = path.join(dir, name)
+    const before = '{"hooks":{"PreToolUse":[]}}\n'
+    fs.writeFileSync(file, before)
+    return { file, before }
+  }
+
+  function decision(out: string): string | undefined {
+    return out === '' ? undefined : JSON.parse(out).hookSpecificOutput.permissionDecision
+  }
+
+  test('deleting a saturated counter does not restore the budget', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 60, w)
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+
+    fs.rmSync(keyPath(home, w))
+
+    const out = JSON.parse(run(home, 'PreToolUse', w))
+    expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
+    // the deny routes to the envelope, exactly like the over-limit one
+    expect(out.hookSpecificOutput.permissionDecisionReason).toContain('summary')
+    expect(out.hookSpecificOutput.permissionDecisionReason.toLowerCase()).toContain('not a tool')
+  })
+
+  test('truncating a saturated counter does not restore the budget', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 60, w)
+    fs.writeFileSync(keyPath(home, w), '')
+    expect(fs.statSync(keyPath(home, w)).size).toBe(0) // a 0-byte REGULAR file
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('deleting the counter mid-dispatch does not rewind it either', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 45, w)
+    fs.rmSync(keyPath(home, w))
+    turns(home, 3, w) // and keep working, hoping to re-accrue from zero
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('a counter symlinked at a regular file outside the run dir is never appended to', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const v = victim()
+    turns(home, 1, w) // creates the run dir
+    fs.rmSync(keyPath(home, w))
+    fs.symlinkSync(v.file, keyPath(home, w))
+
+    run(home, 'PostToolBatch', w)
+    run(home, 'PostToolBatch', w)
+
+    expect(fs.readFileSync(v.file, 'utf8')).toBe(v.before)
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('a DANGLING counter symlink never creates the file it points at', () => {
+    // `>>` through a dangling link CREATES the target (verified on this
+    // platform), so "dangling" is the same primitive in create form — it is
+    // tamper, not the absent-counter case it was previously read as.
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const target = path.join(tmp('prdt-t567-victim-'), 'never-created')
+    turns(home, 1, w)
+    fs.rmSync(keyPath(home, w))
+    fs.symlinkSync(target, keyPath(home, w))
+
+    run(home, 'PostToolBatch', w)
+
+    expect(fs.existsSync(target)).toBe(false)
+    expect(decision(run(home, 'PreToolUse', w))).toBe('deny')
+  })
+
+  test('a symlinked .fired-* marker never truncates the file it points at', () => {
+    // The fire-evidence markers are written with `>`, so a link planted there is
+    // an arbitrary-file TRUNCATE, strictly worse than the append above.
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const v = victim('prdt.env')
+    turns(home, 1, w) // creates the run dir + the PostToolBatch marker
+    fs.symlinkSync(v.file, path.join(runDir(home), '.fired-PreToolUse'))
+
+    run(home, 'PreToolUse', w)
+
+    expect(fs.readFileSync(v.file, 'utf8')).toBe(v.before)
+  })
+
+  test('a DANGLING warn-band symlink never creates its target either', () => {
+    // POSITIVE CONTROL, not a fix: the band marker is the one write in this
+    // hook that was already safe, and this pins WHY so the next reader does not
+    // "harden" it into a fork. `set -C` opens with O_CREAT|O_EXCL, and O_EXCL
+    // fails on a symlink whatever it points at — dangling included — so neither
+    // the create form nor the truncate form is reachable through it. Measured
+    // both ways here; the counter and `.fired-*` writes have no such shield
+    // because they are `>>` and a plain `>`.
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    const target = path.join(tmp('prdt-t567-victim-'), 'never-created')
+    turns(home, 41, w)
+    fs.symlinkSync(target, `${keyPath(home, w)}.w40`)
+    run(home, 'PreToolUse', w)
+    expect(fs.existsSync(target)).toBe(false)
+  })
+
+  test('a warn-only persona is warned, never denied and never silently waved through', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-qa')
+    turns(home, 60, w)
+    fs.rmSync(keyPath(home, w))
+    const out = run(home, 'PreToolUse', w)
+    expect(out).not.toBe('') // silence here is the defect this ticket exists for
+    const hso = JSON.parse(out).hookSpecificOutput
+    expect(hso.permissionDecision).toBeUndefined()
+    expect(hso.additionalContext).toMatch(/counter/i)
+  })
+
+  test('an untouched counter is never called tamper — a fresh dispatch stays silent', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 5, w)
+    expect(run(home, 'PreToolUse', w)).toBe('')
+    turns(home, 34, w)
+    expect(run(home, 'PreToolUse', w)).toBe('') // 39 — still below the warn band
+  })
+
+  test('a resumed worker still inherits its count across the tamper check', () => {
+    const home = tmp('prdt-t567-home-')
+    const w = worker(makeProject(), 'prdt-developer')
+    turns(home, 40, w)
+    const out = JSON.parse(run(home, 'PreToolUse', w))
+    expect(out.hookSpecificOutput.permissionDecision).toBeUndefined()
+    expect(out.hookSpecificOutput.additionalContext).toContain('40 API turns')
   })
 })

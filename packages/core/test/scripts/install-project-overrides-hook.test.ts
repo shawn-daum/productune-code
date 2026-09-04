@@ -19,37 +19,15 @@
  * the compact matcher too, in the same order as the startup matcher.
  *
  * Drives the REAL install.sh end-to-end under a sandboxed HOME / PRDT_HOME /
- * CLAUDE_DIR (idiom: install-overrides-hook.test.ts).
+ * CLAUDE_DIR via the shared fixture (T-536: installed-state assertions share
+ * ONE install for this file; only the idempotency test runs its own installs,
+ * because its subject is the re-RUN).
  */
 
 import path from 'path'
 import fs from 'fs'
-import os from 'os'
-import { execFileSync } from 'child_process'
 import { test, expect } from 'vitest'
-
-const CORE_ROOT = path.resolve(__dirname, '..', '..')
-const INSTALL_SH = path.join(CORE_ROOT, 'scripts', 'install.sh')
-
-function hasJq(): boolean {
-  try { execFileSync('jq', ['--version'], { stdio: 'ignore' }); return true } catch { return false }
-}
-
-function sandbox() {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t445-'))
-  const home = path.join(sb, 'home')
-  const prdtHome = path.join(sb, 'prdt')
-  const claudeDir = path.join(sb, 'claude')
-  for (const d of [home, prdtHome, claudeDir]) fs.mkdirSync(d, { recursive: true })
-  fs.writeFileSync(path.join(claudeDir, 'settings.json'), '{}')
-  return { env: { ...process.env, HOME: home, PRDT_HOME: prdtHome, CLAUDE_DIR: claudeDir }, prdtHome, claudeDir }
-}
-
-function runInstall(times = 1): { settings: any; prdtHome: string } {
-  const { env, prdtHome, claudeDir } = sandbox()
-  for (let i = 0; i < times; i++) execFileSync('bash', [INSTALL_SH, '--no-statusline'], { env, stdio: 'ignore' })
-  return { settings: JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8')), prdtHome }
-}
+import { installedMachine, freshInstall, hasJq } from '../helpers/install-fixture'
 
 /** The ordered inject roster every discipline matcher must carry, most-general
  *  first, highest-precedence LAST. */
@@ -67,7 +45,7 @@ function commandsOf(settings: any, event: string, matcher: string): string[] {
 }
 
 test.skipIf(!hasJq())('mirrors prdt-project-overrides-inject.sh as an executable file', () => {
-  const { prdtHome } = runInstall()
+  const { prdtHome } = installedMachine()
   const script = path.join(prdtHome, 'hooks', 'prdt-project-overrides-inject.sh')
   expect(fs.existsSync(script)).toBe(true)
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
@@ -80,7 +58,7 @@ for (const [event, matcher, first] of [
   ['SessionStart', 'compact', 'prdt-post-compact.sh'],
 ] as const) {
   test.skipIf(!hasJq())(`${event}(${matcher}): discipline block, then inject hooks in precedence order, project LAST`, () => {
-    const commands = commandsOf(runInstall().settings, event, matcher)
+    const commands = commandsOf(installedMachine().settings, event, matcher)
     const idx = (needle: string) => commands.findIndex((c) => c.includes(needle))
     expect(idx(first)).toBe(0)
     const positions = INJECT_ORDER.map(idx)
@@ -90,12 +68,14 @@ for (const [event, matcher, first] of [
     // project overrides are the LAST command in the whole entry — nothing may
     // render after them, or the precedence contract breaks.
     expect(idx('prdt-project-overrides-inject.sh')).toBe(commands.length - 1)
-    expect(commands.length).toBe(5)
+    expect(commands.length).toBe(16) // T-577: + the eleven discipline part slots prdt-session-start-p2..p12.sh
   })
 }
 
 test.skipIf(!hasJq())('re-running install.sh stays idempotent (single project-overrides entry per matcher)', () => {
-  const { settings } = runInstall(2)
+  // its own installs ON PURPOSE: the subject is the second RUN, not the state
+  // (keeps this file's historical --no-statusline flag for the re-run pair)
+  const { settings } = freshInstall({ times: 2, args: ['--no-statusline'] })
   for (const [event, matcher] of [
     ['SessionStart', 'startup|resume|clear'],
     ['SessionStart', 'compact'],

@@ -1,13 +1,13 @@
 ---
 name: patch-cycle
 persona: po
-when: "post-close patch (a fix or a deliberately split-off scope arrives at stage `idle`) · emergency `main` hotfix (`dev` tip not deployable and delivery cannot wait)"
+when: "post-close patch (a fix or a deliberately split-off scope arrives at stage `idle`) · emergency `main` hotfix (`dev` tip not deployable and delivery cannot wait) · in-build regression patch (stage is `build`, both trigger questions below are yes, delivered via a parallel worktree — the round does not stop)"
 model_floor: opus
 effort: medium
 ---
-# Patch cycle — ship a fix after the version already closed
+# Patch cycle — ship a fix outside the round
 
-Two openings, one machine. Everything here assumes the version's tag is cut and Retro has run. A bug found while stage is still `ship` is NOT this — that is the in-ship patch loop (PO habit lifecycle), which stays on the same release and rolls nothing.
+Three openings, one machine. The first two assume the version's tag is cut and Retro has run; the in-build one does NOT — it runs while the round is still open, which is exactly why it goes through a parallel worktree instead of the round's scope. A bug found while stage is still `ship` is NOT this — that is the in-ship patch loop (PO habit lifecycle), which stays on the same release and rolls nothing.
 
 ## Post-close patch (`idle` → patch)
 1. **Roll the patch, never a minor** — `po-state.version` `v<N>.<m>[.<p>]` → `v<N>.<m>.<p+1>`; the first patch on a `v<N>.<m>` is `.1`. A scope deliberately split off (kept out so the next minor's gated goal stays clean) opens the SAME cycle — only the opening trigger differs.
@@ -19,6 +19,16 @@ Two openings, one machine. Everything here assumes the version's tag is cut and 
 - Live-verify re-fail INSIDE the patch cycle reuses the in-ship patch-loop semantics — append the same ops ticket, no further roll.
 - Ballooning past a small scope → call it and open the next minor instead.
 - A fix wanted for an OLDER closed version is absorbed into the ACTIVE line — never a patch line branched off the closed tag (the updater delivers branch tips, not tags, so such a tag reaches nobody). If it cannot wait for the active line, take the hotfix path below.
+
+## In-build regression patch (stage `build`, worktree parallel)
+Only when a regression fires while `po-state.stage` is `build` — not the in-ship patch loop (title paragraph above) and not the idle-only Post-close patch. The pair clause still bars every other mid-round discovery; this opening exists because a regression is unpaid scope already billed, not new scope. Both trigger questions must be YES, or it's backlog, full stop:
+1. **Invalidates a prior version's claimed AC** — a closed version's PRD/AC says pass, and this regression is documented proof that claim is false right now.
+2. **Waiting compounds the damage** — deferring to next round's close (a 2-round delay) makes it worse, not just later. A one-time inconvenience fails this.
+
+Delivery is its OWN sequence — it does not run the Emergency hotfix steps below, whose step 1 cherry-picks from `dev`. Here the fix is written on `main` and `dev` never carries it, so the only movement is `main` → `dev`. It ends in the same place — same patch tag, same mergeback — and runs alongside the active round, never inside it:
+1. `git worktree add <dir> main` — the base is the `main` branch TIP (what installs actually follow), never the closed tag. Dispatch the fix there with `isolation: "worktree"`. The active round's PO session keeps working the current version in parallel — the round never pauses.
+2. The worktree worker's mandate stops at fix + commit on that worktree. It never pushes or tags — the contracts push gate (explicit user instruction) isn't satisfied by a worker's own judgment.
+3. PO takes the committed fix and gets the user's approval, then from the PO session: add the `## <version>` RELEASES section and cut the `v<N>.<m>.<p>` tag in that same change, push `main` (the `ALLOW_MAIN_PUSH=1` and push-gate rules below apply unchanged), and merge `main` → `dev` immediately — merge, never rebase, per the last rule below.
 
 ## Emergency `main` hotfix
 ONLY when `dev` tip is not deployable and delivery cannot wait — installs on other machines follow `main`.

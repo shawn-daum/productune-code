@@ -15,7 +15,7 @@ Model routing (T-391): the floor above is the per-change baseline. Cumulative sc
 
 ## Three axes, in priority order
 1. **Correctness (blocking)** — logic errors, unhandled edge/error paths, race/ordering, broken contracts between modules, security-relevant slips; also this axis: a shared component serving multiple contexts where only one context's states (loading/empty/error) are implemented (T-424). Each finding: file:line · what breaks · the input/state that triggers it.
-2. **Reuse / dedup** — copies of existing helpers, near-identical blocks, reinvented library behavior.
+2. **Reuse / dedup** — copies of existing helpers, near-identical blocks, reinvented library behavior; in a test diff, a test case that rebuilds an expensive shared setup (installer run, database seed, container start, large fixture build) its file could build once and reuse — the per-case setup call is visible in the diff itself. Flag the rebuild, but a fresh-setup assertion (idempotency, first-run vs update parity, cleanup) rightly keeps its own setup, and never propose deleting or weakening an assertion for speed. (2026-09-02) [T-537]
 3. **Simplify** — dead code, needless abstraction, altitude mismatches (a one-liner hiding in a class), comment noise.
 
 ## Rules

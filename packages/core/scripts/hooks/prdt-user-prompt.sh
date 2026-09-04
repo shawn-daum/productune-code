@@ -185,8 +185,75 @@ DEPLOY_RE = re.compile(
     r"|출시|릴리즈|릴리스)",
     re.IGNORECASE,
 )
+# T-523: prompt provenance guard — `prompt` is not always the PO's own fresh
+# words. Recorded misfires (retro--v1.7, PO observation 2026-08-26 "both on
+# turns processing a designer return" x2, plus 3 more during v1.7): the tripwire
+# above bare-searches the WHOLE prompt string, but under agent-teams a
+# background dispatch's completion is delivered to the PO's NEXT TURN as this
+# hook's `prompt` itself (live-captured verbatim during this ticket's own
+# investigation, 2026-08-31) — carrying a fixed harness-authored preamble plus
+# a <task-notification> block whose <summary>/<result> is the WORKER's prose
+# (quoting task titles, code, or its own report), not a request from the PO. A
+# compaction-continuation recap is the other named shape ("PO 자신의 이전
+# 발화에 섞인 무관한 낱말") — it restates the PO's own prior turns in prose,
+# which can mention deploy words in passing without asking for them now.
+# Both carry a fixed preamble a real user prompt does not type verbatim, so
+# matching on those markers (never on the prose content itself, which would
+# just move the false-positive surface) distinguishes "the PO's own fresh
+# request" from "text that landed in the prompt field without the PO typing
+# it" — without weakening the tripwire on an actual deploy-shaped request
+# (T-519/T-521 pull the opposite direction: this must not become a no-op).
+NOTIFICATION_MARKER = "[SYSTEM NOTIFICATION - NOT USER INPUT]"
+NOTIFICATION_TAG_RE = re.compile(r"<task-notification>.*?</task-notification>", re.DOTALL)
+COMPACT_CONTINUATION_MARKER = "This session is being continued from a previous conversation"
+
+
+# T-562: ANCHORED, never a whole-prompt substring search. The shapes above are
+# harness-authored and arrive as the WHOLE prompt — the preamble is the first
+# thing in it (the compaction marker was already read this way). Searching the
+# whole string instead classified any prompt that merely CONTAINED one of them
+# as "not the PO's own words", and the everyday way that happens is a person
+# pasting a worker return and typing their request underneath it: the deploy
+# request is genuinely typed, the marker sits mid-body, and the ship-entry
+# warning silently disappeared from exactly the turn it exists for. T-523 said
+# in as many words that its fix must not become a no-op; unanchored, it was one
+# on the paste path.
+#
+# The tag regex is kept but ANDed with the marker prefix (ticket AC): the tag is
+# corroboration for a prompt that already OPENS as a notification, never on its
+# own a reason to discount what the user typed. Quoting a `<task-notification>`
+# block mid-prompt is a thing people do while asking for something.
+#
+# THE RULE, in one line (T-570): a notification prompt must BEGIN with the
+# preamble AND END at the end of its notification block — begins-with alone is
+# not enough.
+#
+# Why both halves. Anchoring (T-562) split "marker mid-body" off, and left one
+# shape it cannot split at all: a person pastes a worker return, then types
+# their request UNDERNEATH it. That prompt starts at offset 0 with the preamble
+# and carries the tag, exactly like a live capture. The tail is what differs —
+# a live capture ends at its block, because the harness has nothing to append
+# after it, and the only way user text lands after that block is a human
+# continuing to type (PO ruling, T-570). So the tail decides, not the position.
+# "Substantive" means content, not formatting: trailing blank lines and
+# whitespace are still the live shape.
+def is_not_fresh_user_text(p):
+    head = p.lstrip()
+    if head.startswith(COMPACT_CONTINUATION_MARKER):
+        return True
+    if not head.startswith(NOTIFICATION_MARKER):
+        return False
+    last = None
+    for last in NOTIFICATION_TAG_RE.finditer(p):
+        pass          # several dispatches can land in one turn; the LAST end wins
+    if last is None:
+        return False
+    return not p[last.end():].strip()
+
+
 prompt = ev.get("prompt") or ""
-if stage in ("define", "build") and isinstance(prompt, str) and DEPLOY_RE.search(prompt):
+if (stage in ("define", "build") and isinstance(prompt, str)
+        and not is_not_fresh_user_text(prompt) and DEPLOY_RE.search(prompt)):
     lines.append(
         f"[prdt stage guard] deploy-shaped request while stage={stage} — deploy belongs to "
         "ship. Ship entry is due FIRST: readiness pass (readiness-dispatch playbook) + "

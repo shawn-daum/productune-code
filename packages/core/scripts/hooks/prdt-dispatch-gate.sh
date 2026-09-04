@@ -56,6 +56,14 @@
 
 set +e
 
+# BYTE SEMANTICS (measured in prdt-call-governor.sh: two `${EV%%…}` cuts on a
+# 28KB payload cost 121ms in ko_KR.UTF-8 vs 1ms in C, because bash re-widens
+# the whole string to wide chars on every parameter expansion under a UTF-8
+# locale). JSON structure is ASCII and every value below is shape-matched or
+# used as filesystem bytes either way, so C is both faster and correct. Set it
+# before the first expansion or the saving is lost.
+LC_ALL=C
+
 # Drain stdin with the BUILTIN, no fork (measured in prdt-call-governor.sh: the
 # fork costs more than the syscalls it saves at every payload size we see, and
 # `read -d ''` still drains to EOF so the harness never sees an EPIPE).
@@ -71,16 +79,166 @@ IFS= read -r -d '' EV 2>/dev/null
 # prints (it cost this hook its first green run: a `"key": "value"` fixture sailed
 # straight past `*'"tool_name":"Agent"'*` and out the fail-open exit).
 #
+# THAT CLAIM WAS TRUE OF THE PRE-FILTER AND FALSE OF THE WALKER (T-561). The
+# structural walk that replaced the byte window carried the identical spacing
+# assumption at its own five first-byte tests, so a pretty-printed payload took
+# the same silent exit the paragraph above rejects — the hook contradicted its
+# own header for a version, and the suite could not see it because every fixture
+# was compact. `ws_skip` is what makes the paragraph true of this whole file
+# now, and the pretty-print cases in test/scripts/dispatch-gate-hook.test.ts are
+# what keep it true. The rule the paragraph states is therefore general: NO
+# check in this hook may depend on the payload's whitespace, pre-filter or not.
+#
+# `cwd` IS READ STRUCTURALLY (T-521) — not through a fixed-byte header window.
+# The window this replaced (`HDR="${EV:0:8192}"`) truncated `cwd` whenever a
+# long path pushed it past 8192B, and the failure was a SILENT no-op: no deny,
+# no warning, the gate just stopped existing for that dispatch. Measured
+# reproduction (T-521): a real harness-shaped payload with a 6,730-byte `cwd`
+# (`transcript_path`, which embeds `cwd`, sits ahead of it in the same object —
+# see the key order below — so the field's own byte offset is already past
+# half the window before its value even starts) left `HDR` cut mid-string, the
+# regex never matched a closing quote, and a dispatch that should have been
+# DENIED (no `[ctx]` line, `prdt-developer`, inside a real project) produced
+# zero stdout. There is no path length a byte window can be sized against —
+# PATH_MAX itself varies by OS and is not a hard ceiling on every filesystem —
+# so the fix removes the window rather than enlarging it.
+#
+# This reuses prdt-call-governor.sh's proven technique verbatim — "verbatim" is
+# now MACHINE-CHECKED, not asserted: the two files carry byte-identical
+# `ws_skip` / `str_take` / `skip_container` bodies and a test in
+# test/scripts/dispatch-gate-hook.test.ts fails if either copy drifts. That is
+# the T-561 disposition (option B — keep the copy, pin it): the alternative,
+# sourcing a `hooks/lib/` file, would need an entry in scripts/hook-manifest.json,
+# which is the REGISTRATION roster install.sh and the GUI derive settings.json
+# from — a non-hook entry there is a registration the harness can never satisfy,
+# and no entry means install.sh §4's "nothing unregistered under $PRDT_HOME/hooks/"
+# assertion rejects the mirrored file. The copy is cheaper than that seam; what
+# was missing was anything that noticed it drifting, which is now the test.
+# (T-518 fixed
+# the identical cliff there: "a long path could push the real keys past the
+# window and silently drop enforcement"): cut the payload at the first
+# `"tool_input":` — the only tool-body key this hook's PreToolUse-only
+# registration ever sees, so unlike the governor (PreToolUse AND PostToolBatch,
+# `tool_calls` too) one cut point is enough — then walk the TOP-LEVEL members
+# before that cut with an escape-aware, builtin-only string reader. `cwd` is
+# always among those top-level members (session_id · transcript_path · cwd ·
+# …, measured on harness 2.1.235/2.1.243), so this resolves for a `cwd` of ANY
+# length: there is no window left to overrun. Still zero forks, so a dispatch
+# this hook never has to act on (outside a prdt project) still costs nothing.
+#
+# Same fail-open direction as the window it replaces: a `cwd` value containing
+# the literal text `"tool_input":` would cut early and lose the rest of the
+# scan, but that only ever produces MORE silence, never a wrong deny — a path
+# cannot practically contain an unescaped `"` in the first place. (T-518's own
+# note on the governor's identical cut applies here unchanged.)
+
+# Skip JSON insignificant whitespace at the head of $SCAN (T-561).
+#
+# WHY THIS EXISTS — do not "simplify" it away: the walk below decides structure
+# by looking at $SCAN's FIRST BYTE at five points (before `{`, before a key,
+# before `:`, before a value, before `,`). Without this, every one of those
+# five assumed the payload was compact, so ONE space after a `:` or a `,`, or a
+# newline after the opening `{`, dropped the walk out of the loop with an empty
+# `cwd` — and an empty `cwd` exits 0. No deny, no warning, nothing: the hook
+# silently stopped existing. Measured 2026-09-03 on this hook's own fixture,
+# all four placements plus a full `jq .` pretty-print. What kept this latent
+# was that the harness happens to emit compact JSON — someone else's
+# serializer, never verified by us and free to change in any release.
+ws_skip() {
+  # Two expansions, no loop and no fork whatever the payload's shape: cut the
+  # leading run of whitespace off the front, then delete exactly that prefix.
+  # `[![:space:]]` is safe under this file's LC_ALL=C — JSON's insignificant
+  # whitespace (space, tab, CR, LF) is a subset of C's [:space:]. An
+  # all-whitespace $SCAN leaves it empty, which every caller below reads as
+  # "no more members": the same fail-open direction as the rest of this walk.
+  SCAN="${SCAN#"${SCAN%%[![:space:]]*}"}"
+}
+
+# Consume one JSON string starting at $SCAN[0] == '"'; leave it in $STR.
+# Escape-aware: a `\"` inside a value is consumed as content, not a terminator.
+str_take() {
+  local out="" seg bs
+  SCAN="${SCAN:1}"
+  while :; do
+    seg="${SCAN%%\"*}"
+    if [ "$seg" = "$SCAN" ]; then SCAN=""; STR=""; return 1; fi   # unterminated
+    bs="${seg##*[!\\]}"                                           # trailing backslash run
+    out="$out$seg"
+    SCAN="${SCAN:${#seg}+1}"
+    if [ $(( ${#bs} % 2 )) -eq 1 ]; then out="$out\""; continue; fi
+    STR="$out"
+    return 0
+  done
+}
+
+# Consume one balanced object/array starting at $SCAN[0] (e.g. `permission_mode`
+# ever grows a container next to it) so it can be skipped without derailing the
+# top-level walk. Jumps between structural characters, hands strings to
+# str_take so a `{` or `"` inside a string value cannot skew the depth.
+skip_container() {
+  # `}` inside an inline bracket expression closes the ${...} early — bash reads
+  # `${SCAN%%[][{}` and treats the rest as literal text, with no syntax error to
+  # warn you (measured: it silently returns the whole string). Keep both
+  # structural patterns in variables so the parser never sees those braces.
+  local depth=0 seg c pat='[][{}"]'
+  while [ -n "$SCAN" ]; do
+    seg="${SCAN%%$pat*}"
+    if [ "$seg" = "$SCAN" ]; then SCAN=""; return 1; fi
+    SCAN="${SCAN:${#seg}}"
+    c="${SCAN:0:1}"
+    case "$c" in
+      '"')     str_take || return 1 ;;
+      '{'|'[') depth=$(( depth + 1 )); SCAN="${SCAN:1}" ;;
+      *)       depth=$(( depth - 1 )); SCAN="${SCAN:1}"
+               [ "$depth" -le 0 ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+TIP='"tool_input":'
+SCAN="${EV%%$TIP*}"
+ws_skip
+case "$SCAN" in
+  '{'*) SCAN="${SCAN:1}" ;;
+  *) exit 0 ;;               # not an object: nothing to classify, stay silent
+esac
+
+# EVERY first-byte test below is preceded by ws_skip — that is the whole of the
+# T-561 fix, and the five calls are not optional decoration: each one guards one
+# structural decision, and dropping any one of them re-opens the silent no-op at
+# exactly that position.
+DIR=""
+while :; do
+  ws_skip                                 # after `{` / `,`, before a key
+  case "$SCAN" in '"'*) ;; *) break ;; esac
+  str_take || break
+  K="$STR"
+  ws_skip                                 # after a key, before `:`
+  case "$SCAN" in ':'*) SCAN="${SCAN:1}" ;; *) break ;; esac
+  ws_skip                                 # after `:`, before the value
+  case "$SCAN" in
+    '"'*)
+      str_take || break
+      [ "$K" = "cwd" ] && DIR="$STR"
+      ;;
+    '{'*|'['*)
+      skip_container || break ;;
+    *)
+      PAT='[,}]'                          # in a variable — see skip_container
+      SEG="${SCAN%%$PAT*}"                # number / true / false / null
+      [ "$SEG" = "$SCAN" ] && break
+      SCAN="${SCAN:${#SEG}}"
+      ;;
+  esac
+  ws_skip                                 # after the value, before `,` / `}`
+  case "$SCAN" in ','*) SCAN="${SCAN:1}" ;; *) break ;; esac
+done
+
 # Up-walk the cwd's ancestor chain for the `.prdt/po-state.json` marker, the
 # same IN-or-OUT test prdt-call-governor.sh makes (it never reads the file, so
 # it needs neither the outermost-wins rule nor a realpath — T-484/T-493).
-# `cwd` sits in the payload's first keys (session_id · transcript_path · cwd ·
-# …, measured on harness 2.1.235), so a window is enough to find it and a
-# pathological tool_input never has to be scanned.
-HDR="${EV:0:8192}"
-RE_CWD='"cwd"[[:space:]]*:[[:space:]]*"([^"]+)"'
-[[ $HDR =~ $RE_CWD ]] || exit 0
-DIR="${BASH_REMATCH[1]}"
+[ -n "$DIR" ] || exit 0
 # `${DIR%/*}` returns a slash-less string UNCHANGED, not empty, so a relative
 # DIR would never shrink and the loop below would spin to the hook timeout.
 # The harness always sends an absolute cwd, so this is unreached in practice —

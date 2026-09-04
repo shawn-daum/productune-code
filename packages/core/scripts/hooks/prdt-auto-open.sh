@@ -7,6 +7,7 @@
 #
 # Scope guards (all silent no-ops, never block the turn):
 #  - Not a Write tool call → nothing.
+#  - Subagent Write (see T-559 below) → nothing.
 #  - $PRDT_GUI_SESSION set → nothing. The GUI po-runner spawn sets this (T-409)
 #    specifically so its own PO turns never ALSO pop native Finder/Preview
 #    windows behind the Electron window — GUI already auto-surfaces in-app.
@@ -14,6 +15,50 @@
 #    toggle by direct file edit for now, same convention as audience-mode).
 #  - macOS `open` not on PATH → nothing (this feature is macOS-only, T-409
 #    decision: single-user tool, cross-platform not worth it yet).
+#
+# The keychain dialog, and what actually causes it (T-559 → T-571). Symptom:
+# an unattributable macOS keychain prompt landing on the user's screen mid-turn.
+# Cause: `open <file>` here COLD-STARTS the handling application — Chrome, on
+# this machine — out of a sandboxed hook process, and a cold Chrome unlocking
+# its Safe Storage keychain item from that parent is what macOS prompts about.
+# The cause is the cold LAUNCH, not who asked for it and not which extension
+# was written; see the T-571 block near the `open` call for the fix.
+#
+# Main-session-only firing (T-559, 2026-09-03) is a SEPARATE narrowing, and it
+# did not address the above: this hook's own opening line says it exists for PO
+# deliverables, but T-409's post-grill hardening below only narrowed subagent
+# firing (path exclude, debounce) without ever asking whether it should fire for
+# subagents at all. It shouldn't — a worker Write (designer/QA/developer
+# artifact) is not a PO-facing result, and the PO already has its own hand-off
+# convention for deliverables (`[label](file://…)` links, `open`-ing on
+# request); this hook is now only that PO-side surface. T-559 removed one
+# caller of the cold launch; main-session Writes kept firing by design, so the
+# dialog kept appearing (user report 2026-09-04) until T-571 removed the cause.
+#
+# Discriminator, empirically observed, not assumed (probed both a headless
+# main-session Write and a Task-dispatched subagent Write against a stdin-dump
+# PostToolUse hook, Claude Code 2.1.259): a subagent's PostToolUse payload
+# carries top-level `agent_id` + `agent_type` (e.g. `"agent_type":"file-writer"`)
+# right after `permission_mode`; a main-session payload has neither key at all
+# — confirms fact--claude-hooks' T-518 finding for PreToolUse/PostToolBatch
+# also holds for PostToolUse. Read with `jq -r 'has("agent_type")'`, which
+# is depth-aware: it can only ever match a real top-level member, so a Write
+# whose `tool_input.content` or `file_path` happens to contain the literal
+# text "agent_type" cannot forge a match the way a substring grep could
+# (fact--claude-hooks T-518 "첫 매치" pitfall) — jq's top-level addressing IS
+# the mitigation, no extra depth check needed. Checked via key MEMBERSHIP
+# (`has("agent_type")`), not truthiness of the value, so a hypothetical
+# present-but-empty value still reads as "identity present" — the shape a
+# real main-session payload never produces (it omits the key outright).
+#  - agent_type key present (has() = true, any value) → subagent → silent no-op.
+#  - jq itself fails to parse at this step → treated the same as "present":
+#    silent no-op. Fails toward NOT opening, on purpose — a wrongly-skipped
+#    open costs a convenience popup the PO can still hand off manually; a
+#    wrongly-fired open reproduces the exact keychain-dialog defect this
+#    ticket exists to kill. Every other guard in this hook already fails the
+#    same direction (missing jq/open, missing file, mode=off → all skip,
+#    never open), so this keeps the one consistent failure mode throughout.
+#  - agent_type key absent and jq parsed cleanly → main session → proceeds.
 #
 # Classification (T-409 추가 확정, 2026-07-24): a NARROW allowlist, not "any
 # md/html anywhere" — most md/html writes in a session are routine ticket/wiki/
@@ -66,6 +111,14 @@ TOOL_NAME="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_name // ""' 2>/dev/null)"
 FILE_PATH="$(printf '%s' "$EVENT_JSON" | jq -r '.tool_input.file_path // ""' 2>/dev/null)"
 [ -n "$FILE_PATH" ] && [ -f "$FILE_PATH" ] || { printf '{}'; exit 0; }
 
+# T-559: subagent Write → silent no-op. `agent_type` is a top-level payload
+# member on subagent Writes only (see header) — jq's addressing is itself the
+# anti-spoofing guard, and a jq failure here is folded into the same "present"
+# branch (fails toward skip, not open; see header for why that direction).
+HAS_AGENT_TYPE="$(printf '%s' "$EVENT_JSON" | jq -r 'has("agent_type")' 2>/dev/null)"
+JQ_AGENT_STATUS=$?
+[ "$JQ_AGENT_STATUS" -eq 0 ] && [ "$HAS_AGENT_TYPE" = "false" ] || { printf '{}'; exit 0; }
+
 # .prdt/ 하위(scratch, session state, …) is internal bookkeeping, never a
 # PO-facing deliverable, regardless of extension — exclude before anything else.
 case "$FILE_PATH" in
@@ -97,6 +150,63 @@ if [ "$ACTION" = "open" ]; then
   if [ -n "$SIZE" ] && [ "$SIZE" -gt 26214400 ] 2>/dev/null; then
     ACTION="reveal"
   fi
+fi
+
+# T-571 (2026-09-04): never COLD-START an application from this hook — that is
+# the keychain dialog's actual cause (see header). A light `open` is allowed
+# only when the app that would handle the file is ALREADY running, so the open
+# lands in a live process instead of spawning one. Otherwise it degrades to the
+# reveal we already have: Finder is a permanently-running system app, so
+# `open -R` starts nothing, and the PO still sees the deliverable land — the
+# surface is kept, only the launch is dropped.
+#
+# Handler resolution, deliberately conservative:
+#  - UTI from `mdls -raw -name kMDItemContentType` (works on any real file,
+#    Spotlight-indexed or not — probed on /tmp and /var/folders alike).
+#  - Bundle id from the user's LaunchServices overrides
+#    (~/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.
+#    secure.plist), read through plutil → jq.
+#  - A UTI with NO override falls back to the SYSTEM default, which cannot be
+#    read without launching something. That is left UNRESOLVED on purpose and
+#    treated as "possibly cold" → reveal. Same direction as every other guard
+#    in this hook (T-559): uncertainty fails toward not opening.
+# Bundle ids are compared case-INSENSITIVELY: observed on this machine, the
+# handler plist stores `com.google.chrome` while the running process registers
+# as `com.google.Chrome`, and a literal compare would call a live Chrome cold.
+if [ "$ACTION" = "open" ]; then
+  UTI=""
+  command -v mdls >/dev/null 2>&1 && \
+    UTI="$(mdls -raw -name kMDItemContentType "$FILE_PATH" 2>/dev/null)"
+
+  HANDLER_BUNDLE=""
+  LS_PLIST="$HOME/Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist"
+  case "$UTI" in
+    ''|'(null)') ;;
+    *)
+      if command -v plutil >/dev/null 2>&1 && [ -f "$LS_PLIST" ]; then
+        HANDLER_BUNDLE="$(plutil -convert json -o - "$LS_PLIST" 2>/dev/null \
+          | jq -r --arg uti "$UTI" '
+              [ .LSHandlers[]?
+                | select((.LSHandlerContentType // "") == $uti)
+                | (.LSHandlerRoleAll // .LSHandlerRoleViewer // empty) ]
+              | first // ""' 2>/dev/null)"
+      fi
+      ;;
+  esac
+
+  HANDLER_WARM="no"
+  if [ -n "$HANDLER_BUNDLE" ] && command -v lsappinfo >/dev/null 2>&1; then
+    WANT_BUNDLE="$(printf '%s' "$HANDLER_BUNDLE" | tr '[:upper:]' '[:lower:]')"
+    if lsappinfo list 2>/dev/null \
+      | grep -o 'bundleID="[^"]*"' \
+      | sed -e 's/^bundleID="//' -e 's/"$//' \
+      | tr '[:upper:]' '[:lower:]' \
+      | grep -qxF "$WANT_BUNDLE"; then
+      HANDLER_WARM="yes"
+    fi
+  fi
+
+  [ "$HANDLER_WARM" = "yes" ] || ACTION="reveal"
 fi
 
 # Same-path debounce: a rewritten-in-place deliverable (designer iterating on

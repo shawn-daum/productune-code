@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · history · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check) · history · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, json, math, os, re, shutil, sqlite3, subprocess, sys, unicodedata
+import argparse, json, math, os, re, shlex, shutil, sqlite3, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,7 +24,16 @@ LEGACY_ASSIGNEE_RE = re.compile(r"^pdtl?-")
 
 
 def norm_assignee(v):
-    return LEGACY_ASSIGNEE_RE.sub("", str(v or "")) or None
+    """Strip the pre-rename prefix off a STRING assignee; every other shape is None.
+
+    Deliberately NOT `str(v or "")` (T-556). That coercion turned `assignee:
+    [developer]` into the cell "['developer']" — no crash, no warning, and
+    `prdt tickets --assignee developer` silently missing the row. A stringified
+    non-string in the index is the same quiet lie index_scalar exists to refuse;
+    this normalizer runs AFTER that guard on the index path and must not undo it."""
+    if not isinstance(v, str):
+        return None
+    return LEGACY_ASSIGNEE_RE.sub("", v) or None
 
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
@@ -39,9 +48,19 @@ CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 4
 # ship-wrap and retro-sequence duplicates were merged into the clauses that
 # already owned them, so those 4 free lines ARE the deliverable — tightening the
 # cap down onto 60 would just recreate the pressure that made folding a rule into
-# an existing line the only legal move. Known limit: this gate counts physical
-# lines only, so growth that lands INSIDE an existing line passes unseen; until
-# that is fixed, byte growth is a curation judgment, not a doctor finding.
+# an existing line the only legal move.
+# T-577: these line counts are an EDITORIAL guide (reported as advisories), not
+# the gate. The dimension that actually constrains delivery is bytes per hook
+# output — the harness persists any single hook additionalContext over 10,000
+# chars to a file and injects a 2,000-char preview (measured, Claude Code
+# 2.1.260) — and for months these caps were satisfied while contracts.md
+# (240 B/line) and po/habit.md (316 B/line) were not arriving at all: growth
+# folded INSIDE lines passed this gate unseen and blew the one that mattered.
+# The byte budget lives where it is enforced, in scripts/hooks/
+# prdt-session-start.sh (PRDT_INJECT_PART_BUDGET_BYTES=8000 per part,
+# PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS=10000, slots = registered part
+# hooks); `discipline_delivery_warnings` below asks that hook for its plan and
+# reports parts needed vs slots registered — one number, one owner.
 # worker_habit (40, shared by designer/developer/qa) is a separate constant and
 # stays untouched.
 BLOCKED_STALE_DAYS = 14
@@ -225,20 +244,116 @@ def derive_all_slices(root, con):
     return violations, pages, mpages
 
 
+def index_scalar(value):
+    """(text, shape) for ONE frontmatter value on its way into the derived index.
+
+    md is the SoT and it is hand-written, so any field can hold whatever shape the
+    frontmatter parser yields — `feature: [gui]` is a list today, and a parser that
+    grows mappings/numbers/bools/dates would yield those. sqlite3 binds only
+    str/bytes/int/float/None, and it raises ProgrammingError — NOT IntegrityError —
+    when it refuses, which is how one ticket used to kill the whole `prdt doctor`
+    run before its first check (T-550).
+
+    The rule is by CLASS, never by enumerating shapes: a str (or an absent value)
+    passes through byte-identical; EVERY other shape is unusable, so the index cell
+    becomes NULL and `shape` names the type for the caller's warning. Nothing is
+    quietly coerced into a plausible string: `['gui']` sitting in the feature column
+    would be a lie the seam checks then group by, and a NULL that a named warning
+    accounts for is the honest derived value. Special-casing `list` here is exactly
+    the fix T-550 rejects — the next shape would crash the same way."""
+    if value is None or isinstance(value, str):
+        return value, None
+    return None, type(value).__name__
+
+
+def index_list(value):
+    """(list, shape) for ONE frontmatter value the row exposes as a SEQUENCE.
+
+    T-565 C5. `deps`/`links` were declared the safe channel because the json
+    encoder binds any shape into the index cell — true, and about the WRITE. The
+    row is also the thing every consumer iterates, and `fm.get("deps") or []`
+    handed them whatever the md held: `deps: T-500` (the bracketless form a human
+    writes without thinking) arrives as the str "T-500", and `for d in
+    t["deps"]` walks it one character at a time — five warnings about tickets
+    named `T`, `-`, `5`, `0`, `0`, on the dependency graph that decides what is
+    safe to close.
+
+    Sibling of `index_scalar`, deliberately not a branch inside it: the rule
+    there is "a str passes, every other shape is unusable", and it stays that
+    way. Here the field's declared shape IS a list, so the rule is the list one:
+      * absent/empty  → []
+      * a list        → itself
+      * a str         → a one-element list; the value is one dep, and the
+                        brackets are notation, not meaning
+      * anything else → [] plus a named problem — ONE reported problem instead
+                        of N invented dependencies, which is the same trade
+                        index_scalar makes with NULL."""
+    if value is None or value == []:
+        return [], None
+    if isinstance(value, list):
+        return value, None
+    if isinstance(value, str):
+        return [value], None
+    return [], type(value).__name__
+
+
+def _index_fields(fm, keys, problems):
+    """Read `keys` off frontmatter through index_scalar, appending one problem line
+    per unusable value. Shared by both row builders so the two write paths into
+    index.db answer a bad shape identically."""
+    out = {}
+    for k in keys:
+        text, shape = index_scalar(fm.get(k))
+        if shape:
+            problems.append(f"{k}: {shape} value is not a string — dropped from the index "
+                            f"(frontmatter values are plain strings; lists belong in `deps`/`links`)")
+        out[k] = text
+    return out
+
+
+# The invariant, not a field list (T-556): NO cell bound into an index write may
+# hold the stringification of a non-string. A frontmatter value earns a cell only
+# by passing index_scalar; the sole other channels are the `deps`/`links` json
+# encoder and filesystem-derived values (`version`, `path`, `name`, and the `id`
+# filename fallback). Anything else — a `str()`-backed normalizer, an f-string, a
+# `or ""` default — reintroduces the failure this round exists to remove, because
+# it survives every "doctor didn't crash" test while the index quietly lies.
+#
+# These tuples are the frontmatter keys each write path routes through that guard.
+# `assignee` was the miss: T-550 argued it was safe because norm_assignee's `str()`
+# prevents the CRASH, which was true and was not the property — it produced
+# "['developer']". It now goes through index_scalar like the rest, and
+# norm_assignee only trims the legacy prefix off what comes out.
+TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "created", "closed")
+WIKI_INDEX_FIELDS = ("title", "type", "status", "version")
+
+
 def scan_tickets(root):
-    """Yield (dict, path, problems[]) per ticket md. Enum violations reported, row still listed."""
+    """Yield (dict, path, problems[]) per ticket md. Enum violations reported, row still listed.
+
+    Scalar fields are str-or-None by the time they leave here (T-550): the index
+    write, and every check reading these rows, gets one shape contract instead of
+    whatever the md happened to hold."""
     tdir = root / "docs" / "tickets"
     if not tdir.is_dir():
         return
     for p in sorted(tdir.rglob("T-*.md")):
         fm, _ = parse_frontmatter(p)
         version = p.parent.name
-        row = {"id": fm.get("id") or p.stem, "slug": fm.get("slug"), "type": fm.get("type"),
-               "status": fm.get("status"), "assignee": norm_assignee(fm.get("assignee")),
-               "feature": fm.get("feature"), "deps": fm.get("deps") or [],
-               "created": fm.get("created"), "closed": fm.get("closed"),
-               "version": version, "path": str(p.relative_to(root))}
         problems = []
+        f = _index_fields(fm, TICKET_INDEX_FIELDS, problems)
+        deps, deps_shape = index_list(fm.get("deps"))
+        if deps_shape:
+            problems.append(f"deps: {deps_shape} value is not a list or a ticket id — "
+                            f"dropped (write `deps: [T-500, T-501]`, or `deps: T-500`)")
+        # `id` keys the row, so it falls back to the filename the way it always has
+        # — the dropped shape is already reported above, and a NULL primary key
+        # would cost the row its identity on top of its value.
+        row = {"id": f["id"] or p.stem, "slug": f["slug"], "type": f["type"],
+               "status": f["status"], "assignee": norm_assignee(f["assignee"]),
+               "feature": f["feature"], "deps": deps,
+               "created": f["created"], "closed": f["closed"],
+               "version": version, "path": str(p.relative_to(root))}
         if row["type"] not in TICKET_TYPES:
             problems.append(f"type '{row['type']}' not in {'/'.join(TICKET_TYPES)}")
         if row["status"] not in TICKET_STATUS:
@@ -260,6 +375,15 @@ def reindex_tickets(root, con):
                          row["version"], row["path"]))
         except sqlite3.IntegrityError as e:
             violations.append(f"{row['path']}: CHECK reject ({e})")
+        except sqlite3.Error as e:
+            # Backstop, added with the source normalization above (T-550). A CHECK
+            # reject was the only case caught here, so a ProgrammingError from an
+            # unbindable value escaped and took every doctor check with it — this
+            # write runs BEFORE all of them. Widened to the whole sqlite3.Error
+            # family and keyed to the file, because a named warning is always a
+            # better outcome for a non-blocking instrument than a traceback that
+            # switches the instrument off.
+            violations.append(f"{row['path']}: index write rejected ({type(e).__name__}: {e})")
     con.commit()
     return violations
 
@@ -286,12 +410,17 @@ def wiki_store_pages(wdir, relative_to=None, prefix=""):
             continue
         fm, body = parse_frontmatter(p)
         links = set(fm.get("links") or []) | set(WIKILINK.findall(body))
-        pages.append({"name": prefix + p.stem, "title": fm.get("title") or p.stem,
-                      "type": fm.get("type") or p.stem.split("--")[0],
-                      "status": fm.get("status") or "live",
-                      "version": fm.get("version"), "links": sorted(links),
+        # Same index-write contract as scan_tickets (T-550): this store feeds the
+        # OTHER write into index.db, on the same rebuild_index the doctor run opens
+        # with, and `title: [a, b]` used to kill the run identically.
+        problems = []
+        f = _index_fields(fm, WIKI_INDEX_FIELDS, problems)
+        pages.append({"name": prefix + p.stem, "title": f["title"] or p.stem,
+                      "type": f["type"] or p.stem.split("--")[0],
+                      "status": f["status"] or "live",
+                      "version": f["version"], "links": sorted(links),
                       "path": str(p.relative_to(relative_to)) if relative_to else str(p),
-                      "body": body})
+                      "body": body, "problems": problems})
     return pages
 
 
@@ -1083,7 +1212,11 @@ def prepush_warnings(root):
     if act == "upgraded":
         return [f"git: stale managed pre-push replaced at {p} — "
                 "ALLOW_MAIN_PUSH hotfix escape restored"]
-    if act != "skipped" or st in ("managed", "no-repo"):
+    if st == "no-repo":
+        # Not "no block needed" — there is no .git/hooks here to hold one, so
+        # this check looked at nothing. T-560: that is a skip, never a clean 0.
+        return Skipped("no git repository at the code root — nothing to hold a pre-push hook")
+    if act != "skipped" or st == "managed":
         return []
     hp = res.get("hooks_path")
     if hp and st == "missing":
@@ -1093,17 +1226,232 @@ def prepush_warnings(root):
     if st == "unverified":
         # `mentions` NEVER decides the verdict — it only picks which sentence is
         # useful to the reader (T-493).
+        #
+        # T-572 ①: this used to be a `ran` warning, i.e. a counted family
+        # VIOLATION — but the warning text itself says the opposite of "we
+        # found a mismatch": "prdt verifies ownership only (it never runs
+        # someone else's hook to find out what it does)" and "assume nothing
+        # BUT YOU stops a push to main". That is "we could not establish
+        # whether discipline and execution agree", not "they disagree" — the
+        # exact could-not-look state T-560 built `Skipped` for, which this
+        # check never used on itself. Moving it to `Skipped` takes it out of
+        # `violations` while the verdict line still names it under
+        # `skipped`/"could not look" — it is never silent, and the overall
+        # token becomes `not-established`, never a `clean` it did not earn.
         note = (" It does contain `main` and ALLOW_MAIN_PUSH, but words in a file are not a "
                 "block — a hook mentioning both only in comments used to pass this check."
                 if res.get("mentions") else
                 " Nothing in it mentions `main` or ALLOW_MAIN_PUSH at all.")
-        return [f"git: main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
-                "verifies ownership only (it never runs someone else's hook to find out what "
-                f"it does).{note} Until you have read it, assume nothing but you stops a push "
-                "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
-                + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
-                   "its own hook here" if hp else "")]
+        return Skipped(
+            f"main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
+            "verifies ownership only (it never runs someone else's hook to find out what "
+            f"it does).{note} Until you have read it, assume nothing but you stops a push "
+            "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
+            + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
+               "its own hook here" if hp else ""))
     return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
+
+
+# ── promotion path (T-506) ────────────────────────────────────────────────────
+#
+# contracts §Git states the product DEFAULT: promotion to `main` is merge-shaped
+# and a PR is optional, never a gate prdt imposes. That default is ours to state,
+# never to impose — a repository or organisation can REQUIRE the promotion to go
+# through a pull request (branch protection, an org `.githooks` pre-push naming
+# the PR path), and where it does, the repo's policy IS this project's path.
+# prdt runs in other people's repositories, so the two must never be collapsed:
+# reporting a PR requirement that does not exist would be as wrong as following a
+# plain merge into a hook that blocks it (that mistake cost a wrong `main` push).
+#
+# So the path is READ OFF the repository instead of asserted, and only ever
+# reported — prdt sets no PR policy, edits no git config, opens no PR.
+#
+# Two local, offline signals; either one means "PR path here":
+#   * the effective pre-push hook's own text names a pull-request promotion path
+#     (a policy hook documents the path it leaves open — the NTF org hook says
+#     "Promote via dev -> main PR (self-merge) on GitHub")
+#   * `main`'s first-parent history carries commits in a PR-merge SHAPE (the
+#     merge-commit subject, or GitHub's squash form — see `_pr_merge_subject`
+#     for what that covers and, just as load-bearing, what it does not)
+# Neither signal can see branch protection or a rebase-merged PR history, so
+# neither one going off means "no PR required" — it means "not found here", and
+# `promotion_warnings` reports those as the two different things they are.
+# Reading hook TEXT here decides only which path to REPORT. It never decides
+# whether a push is blocked — that verdict stays ownership-based (T-493: words in
+# a file are not a block), and it is never consent either: whichever path this
+# reports, the contracts push gate is a separate, earlier gate that only the
+# user's explicit instruction at the time satisfies.
+#
+# T-506 round 2 / F1: bare word presence false-positives on a negation — a hook
+# reading "We do NOT use pull requests here; promote with a local merge, no PR
+# needed" contains the words and would have doctor claim it "names a
+# pull-request promotion path", which is false of that hook. A word match is
+# evidence only when nothing in its own clause negates it — split on sentence-
+# ish boundaries (line / `.` / `;`) and weigh the negation inside that clause.
+#
+# T-564 C1: "any negation word in the clause kills the match" was the wrong
+# weighing, and it failed on the two most natural ways to state a PR
+# requirement, because both are DOUBLE negatives — the negation governs the
+# ABSENCE of a PR, so the clause asserts the requirement:
+#   "Never push to main without a PR."                        never + without
+#   "Pushes to main that are not PR merges are rejected."     not   + rejected
+# Both read False, i.e. the more precisely a hook stated the policy, the less
+# this could read it — and a squash-merge repo (C2) then had no second signal
+# to fall back on, so doctor reported the local-merge default into a hook that
+# blocks it. That is the v1.7 mistake the whole check exists to prevent.
+#
+# So: count polarity flips in the clause and take the PARITY. A flip is either a
+# negation word or a REFUSAL verb (what is refused is the negated thing), and an
+# even count — zero flips included — leaves the PR word asserted:
+#   "no PR needed"                    1 flip   odd  → not a PR path  (F1 holds)
+#   "We do NOT use pull requests"     1 flip   odd  → not a PR path  (F1 holds)
+#   "Promote via dev -> main PR"      0 flips  even → PR path
+#   "Never push ... without a PR"     2 flips  even → PR path
+#   "... not PR merges are rejected"  2 flips  even → PR path
+#   "Pull requests are blocked"       1 flip   odd  → not a PR path
+# Parity is a heuristic over prose, not a parser, and it is deliberately shallow:
+# it reads one clause at a time, and a clause piling three flips onto one PR word
+# ("PRs are not never disallowed") is beyond what it claims. It is chosen because
+# both error directions are visible — an odd count keeps F1's silence, an even one
+# keeps a stated requirement readable — where the old rule could only ever fail
+# one way, silently, in the direction that costs a wrong push.
+_PROMOTE_PR_WORDS = (re.compile(r"pull\s+request", re.IGNORECASE), re.compile(r"\bPRs?\b"))
+_PROMOTE_NEGATION = re.compile(r"\bnot\b|\bnever\b|\bno\b|\bwithout\b|n't\b", re.IGNORECASE)
+_PROMOTE_REFUSAL = re.compile(
+    r"\breject(s|ed|ing)?\b|\bblock(s|ed|ing)?\b|\brefus(e|es|ed|ing)\b|\bden(y|ies|ied)\b"
+    r"|\bforbid(s|den)?\b|\bdisallow(s|ed|ing)?\b|\bprohibit(s|ed|ing)?\b", re.IGNORECASE)
+
+# T-564 C2. What is COVERED, stated as what it is — the docstring used to claim
+# "main's first-parent history is PR merge commits" while matching GitHub's
+# non-squash merge subject and nothing else:
+#   * GitHub / GitLab merge-commit subject  `Merge pull request #7 from acme/dev`
+#   * GitHub squash merge subject           `fix: tighten the check (#123)`
+# NOT covered, on purpose, because no local subject line distinguishes them from
+# an ordinary commit or an ordinary local merge:
+#   * rebase merges — the PR's own commit subjects land verbatim
+#   * GitLab merge commits (`Merge branch 'dev' into 'main'`), whose PR marker
+#     (`See merge request !N`) lives in the BODY and is shaped identically to a
+#     plain local `dev → main` merge, which is the default this check contrasts
+#     with; matching it would report every default-path repo as a PR repo
+# Those two are why silence from this signal is reported as "no evidence found",
+# never as "no PR required" — see `promotion_warnings`.
+_PROMOTE_PR_MERGE = re.compile(r"^Merge pull request\b")
+_PROMOTE_SQUASH_MERGE = re.compile(r"\(#\d+\)\s*$")
+PROMOTION_LOG_DEPTH = 20
+
+
+def _hook_names_pr_path(body):
+    """True only when some clause of the hook text matches a PR word under an
+    EVEN number of polarity flips — see T-506 F1 / T-564 C1 above."""
+    for clause in re.split(r"[.\n;]", body):
+        if not any(w.search(clause) for w in _PROMOTE_PR_WORDS):
+            continue
+        flips = len(_PROMOTE_NEGATION.findall(clause)) + len(_PROMOTE_REFUSAL.findall(clause))
+        if flips % 2 == 0:
+            return True
+    return False
+
+
+def _pr_merge_subject(subject):
+    """True when this first-parent subject line is one of the PR-merge shapes
+    `_PROMOTE_*_MERGE` covers — merge-commit or GitHub squash. See the coverage
+    note above for the shapes deliberately left out."""
+    return bool(_PROMOTE_PR_MERGE.match(subject) or _PROMOTE_SQUASH_MERGE.search(subject))
+
+
+def promotion_policy(root):
+    """What THIS repository does to reach `main`, measured rather than assumed.
+
+    Returns {"path": "pr"|"no-evidence"|"unknown", "evidence": [str]}.
+    `unknown` only when there is no code git repo to read (nothing to mismatch
+    with). `no-evidence` is NOT `default` (T-564): both local signals are blind
+    to branch protection and to a rebase-merged PR history, so their silence
+    establishes that nothing was found, never that nothing is there. Naming it
+    `default` is what let the two false negatives (C1/C2) leave no trace."""
+    cr = code_root(root)
+    st = prepush_status(root)
+    if st["state"] == "no-repo":
+        return {"path": "unknown", "evidence": []}
+    evidence = []
+    if st["state"] in ("managed", "unverified") and st["path"]:
+        try:
+            body = Path(st["path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            body = ""
+        if _hook_names_pr_path(body):
+            evidence.append(f"the pre-push hook at {st['path']} names a pull-request "
+                            "promotion path")
+    # BOTH refs, not the first that resolves: the published history and the local
+    # one diverge routinely (a clone's `origin/main` predates a promotion that is
+    # still local, and vice versa), so picking one ref would report `default` on a
+    # PR repo whose evidence sits on the other.
+    for ref, label in (("refs/remotes/origin/main", "origin/main"), ("refs/heads/main", "main")):
+        if _git(["rev-parse", "--verify", "--quiet", ref], cr).returncode != 0:
+            continue
+        r = _git(["log", "--first-parent", "-n", str(PROMOTION_LOG_DEPTH), "--format=%s", ref], cr)
+        if r.returncode != 0:
+            continue
+        hits = [s for s in r.stdout.splitlines() if _pr_merge_subject(s)]
+        if hits:
+            verb = "is a PR merge" if len(hits) == 1 else "are PR merges"
+            evidence.append(f"{len(hits)} of the last {PROMOTION_LOG_DEPTH} commits on "
+                            f"{label} {verb} (e.g. \"{hits[0]}\")")
+            break
+    return {"path": "pr" if evidence else "no-evidence", "evidence": evidence}
+
+
+def promotion_warnings(root):
+    """One doctor line for what was MEASURED, in the two shapes the measurement
+    can actually take.
+
+    T-564 acceptance 4: this used to return [] for everything that was not `pr`,
+    which collapsed "no PR requirement here" into "we found no PR evidence here"
+    — and the second is what silence actually meant, since both signals are
+    local and offline. That collapse is what made C1/C2 invisible: the check
+    could go fully blind and the report was byte-identical to a correct read of
+    a default-path repo. So no-evidence gets its own line, stating what was
+    checked and what that does not establish. Not a defect to fix and not an
+    instruction — a repo really promoting by local merge is behaving correctly
+    and has nothing to change; the line exists so the reader can tell a verdict
+    apart from an absence, which is the whole failure class v1.8 is measured on.
+    `unknown` (no code git repo) stays silent — there was nothing to measure.
+
+    T-560 moves WHERE the no-evidence state is said, not whether. T-564's
+    reasoning above is untouched and still binding; what changed is that the
+    doctor now has a place built for exactly this distinction. As a ⚠ line, a
+    correct local-merge repo paid a permanent no-action warning on every run,
+    and T-523 measured what that costs: a no-action line that always shows
+    stops being read even when it is right. The verdict line already had to
+    separate "ran" from "could not look", so no-evidence became its literal
+    third state — the same fact, reported where a reader looks for a judgment
+    rather than for a defect. `pr` stays a ⚠ line on purpose: that one is real
+    evidence about how this repository promotes, and it is read in the minutes
+    before someone promotes."""
+    pol = promotion_policy(root)
+    if pol["path"] == "unknown":
+        return Skipped("no git repository at the code root — no promotion path to read")
+    if pol["path"] != "pr":
+        return NoEvidence("no local evidence of a PR requirement here (checked the effective "
+                          "pre-push hook's text and the first-parent subjects of origin/main / "
+                          f"main, last {PROMOTION_LOG_DEPTH}) — NOT FOUND, not proof there is "
+                          "none: branch protection is server-side and invisible to these offline "
+                          "signals, and a rebase-merged history leaves no subject to match, so "
+                          "the default's local `dev → main` merge is unconfirmed here rather "
+                          "than established")
+    # T-572 ②: this line used to be a plain `ran` warning, i.e. a counted
+    # family VIOLATION. But the family's question is "did discipline and
+    # execution disagree?", and T-506 already rewrote the discipline text to
+    # say "promote by the path `prdt doctor` names for THIS repo" — so a repo
+    # measured to promote via PR is discipline and execution AGREEING, the
+    # opposite of a mismatch. It stays a ⚠ line on purpose (real, current,
+    # pre-promote information a person must read), just not one that moves
+    # the mismatch count — see `Advisory`'s docstring for the general rule.
+    return Advisory(
+        ["git: promotion to main here goes through a PR, not the local `dev → main` merge "
+         "the default describes — " + "; ".join(pol["evidence"]) + ". Promote the way this "
+         "repository requires. This reports the path only: it grants nothing, and opening "
+         "or merging that PR is a push, so the contracts gate (the user's explicit "
+         "instruction at the time) is satisfied first and separately."])
 
 
 # ── release-notes scaffold (T-453) ────────────────────────────────────────────
@@ -1400,6 +1748,9 @@ def cmd_wiki(args):
 def wiki_lint(root):
     pages = scan_wiki(root)
     warns = []
+    # unusable frontmatter shapes, named per file (T-550) — reported, never fatal
+    for pg in pages:
+        warns += [f"wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
     names = {p["name"] for p in pages}
     inbound = set()
     for pg in pages:
@@ -1436,6 +1787,8 @@ def machine_wiki_warnings():
         return []
     pages = scan_machine_wiki()
     warns = []
+    for pg in pages:
+        warns += [f"machine wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
     if len(pages) > CAPS["machine_wiki_pages"]:
         warns.append(f"machine wiki: {len(pages)} pages (budget ~{CAPS['machine_wiki_pages']}) — "
                      f"merge, split, or move project-scope knowledge back to docs/wiki/")
@@ -1446,6 +1799,98 @@ def machine_wiki_warnings():
             warns.append("machine wiki: index.md missing — run `prdt wiki reindex`")
         elif idx.read_text(encoding="utf-8") != want:
             warns.append("machine wiki: index.md stale vs pages — run `prdt wiki reindex`")
+    return warns
+
+
+# T-535: a live SoT doc citing a discipline-tree path that no longer exists is
+# worse than a stale claim sitting inert — it hands the reader a pointer that
+# resolves to nothing (or the reader's own reconstruction of "what it probably
+# meant", which is exactly how a ≤100 cap got inherited from a page that no
+# longer governs anything, T-509). `prdt wiki lint` only resolves `[[wikilink]]`
+# targets, and only inside docs/wiki/ — a plain-path citation in docs/design.md
+# or a persona Tier1 doc was invisible to every existing check (the T-535
+# surface-4 case: `designer/bookshelf/ux-principles.md`, superseded by
+# `designer/style-library/ux-principles.md`).
+#
+# Deliberately narrow, to keep the false-positive rate at zero rather than
+# merely low: only a small, curated set of docs is scanned (habit.md +
+# bookshelf/*.md pages, never a dated log like decisions.md/calibration-log.md/
+# version-summaries/* — those are episodic record, frozen once written, same
+# as a closed PRD version section), and only a backtick-quoted `.md` path
+# carrying one of DISCIPLINE_PATH_MARKERS counts as a candidate — a bare
+# sibling-relative filename used as a generic example (`routing.md`,
+# `po-loop.md`) never matches, so this never fires on doc-internal prose.
+DISCIPLINE_PATH_MARKERS = ("discipline/", "doctrine/", "bookshelf/", "style-library/",
+                            "playbooks/", "/habit.md", "/contracts.md")
+_BACKTICK_MD_PATH_RE = re.compile(r"`([^`\s]+\.md)`")
+
+
+def _live_sot_discipline_docs(root):
+    """Curated, not globbed: docs/design.md + each persona's habit.md and
+    bookshelf/*.md — excluding the dated-log pages (decisions.md,
+    calibration-log.md, version-summaries/*) that the same personas keep in the
+    same directories. Everything under docs/archive/, docs/tickets/,
+    docs/retrospectives/, docs/artifacts/ is out of scope on the same
+    closed-record logic."""
+    out = []
+    design = root / "docs" / "design.md"
+    if design.is_file():
+        out.append(design)
+    for persona in ("po", "designer", "developer", "qa"):
+        pdir = root / "docs" / persona
+        h = pdir / "habit.md"
+        if h.is_file():
+            out.append(h)
+        bdir = pdir / "bookshelf"
+        if bdir.is_dir():
+            for p in sorted(bdir.glob("*.md")):
+                if p.name in ("decisions.md", "calibration-log.md"):
+                    continue
+                out.append(p)
+    return out
+
+
+def dead_discipline_path_warnings(root, mirror=None):
+    """T-565 C3: the bases have to include the tree that actually BINDS.
+
+    `<codeRoot>/packages/core/discipline` is the discipline tree as THIS
+    repository lays it out — it exists only when the project under inspection is
+    prdt itself, so the "false-positive rate zero" this check was measured at was
+    zero in one repository. Everywhere else the personas are bound by the
+    installed mirror `discipline_root()` returns, and a live citation resolving
+    there (`developer/playbooks/code-review.md`) was reported as a dead path.
+    `mirror` is a parameter so a test can drive it; None means ask."""
+    cr = code_root(root)
+    droot = cr / "packages" / "core" / "discipline"
+    if mirror is None:
+        mirror = discipline_root()
+    warns = []
+    for doc in _live_sot_discipline_docs(root):
+        try:
+            text = doc.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        rel_doc = doc.relative_to(root)
+        # doc.parent is a base too: a bare `bookshelf/<file>.md` citation with no
+        # persona prefix (docs/qa/habit.md → `bookshelf/fail-patterns.md`) is a
+        # sibling-relative reference within that persona's own docs/ dir, not a
+        # repo-rooted one.
+        bases = [root, cr, droot, doc.parent]
+        if mirror is not None:
+            bases.append(mirror)
+        for m in _BACKTICK_MD_PATH_RE.finditer(text):
+            cand = m.group(1)
+            if cand.startswith("~"):
+                continue  # machine-home path — not repo-relative, not this check's job
+            if not any(marker in cand for marker in DISCIPLINE_PATH_MARKERS):
+                continue
+            if any((base / cand).exists() for base in bases):
+                continue
+            checked = "meta root, code root, code discipline tree, doc's own dir"
+            if mirror is not None:
+                checked += f", and the installed discipline mirror ({mirror})"
+            warns.append(f"discipline-path: {rel_doc} cites `{cand}` — no such path "
+                         f"(checked {checked})")
     return warns
 
 
@@ -1487,6 +1932,12 @@ GOVERNOR_HOOK = "prdt-call-governor.sh"
 # enforcer alone and it reads a counter nothing increments — silent
 # non-enforcement that looks exactly like a governor with nothing to say.
 GOVERNOR_EVENTS = ("PostToolBatch", "PreToolUse")
+# The hook's witness file for a counter `<sid>.<aid>` is `.hw-<sid>.<aid>` in the
+# same directory — one byte per counted turn, appended after the counter's own
+# byte, which is what lets doctor tell a deleted or truncated counter (T-567)
+# from a fresh one. The hook owns this name; the parity between the two is
+# pinned by a test rather than by trust (the T-445 "same fact in two files" class).
+GOVERNOR_WITNESS_PREFIX = ".hw-"
 # T-491 R2-2: the `.fired-<event>` marker is create-once — the hook only ever
 # `>`-truncates it, so once it exists it exists forever, and doctor's
 # is_file() check goes green on day 1 and STAYS green even if a later harness
@@ -1524,10 +1975,12 @@ def hook_registration_warnings():
     otherwise invisible."""
     hooks_dir = prdt_home() / "hooks"
     if not hooks_dir.is_dir():
-        return []                      # no install on this machine — not this check's business
+        # No install on this machine — not this check's business, and (T-560)
+        # not a clean bill either: it is the shape of "could not look".
+        return Skipped(f"no install mirror at {hooks_dir} — nothing to compare settings.json against")
     mirrored = sorted(p.name for p in hooks_dir.glob("prdt-*.sh"))
     if not mirrored:
-        return []
+        return Skipped(f"{hooks_dir} holds no prdt-*.sh — no hook roster to check registration for")
 
     settings_path = claude_settings_path()
     settings = read_json(settings_path)
@@ -1594,6 +2047,565 @@ def hook_registration_warnings():
                              f"failing open silently; re-run one short dispatch and confirm {marker} updates. "
                              f"If nothing has dispatched anywhere on this machine in that window, this is "
                              f"expected and clears itself on the next tool call")
+
+        # Counter tamper — FOUR states, not one (T-519 v2, widened by T-567).
+        #
+        # Round 1 asked `exists() and not is_file()`, chosen to mirror the hook's
+        # guard exactly. That was the right instinct and the wrong question,
+        # because the guard itself was too narrow: two of the three evasions QA
+        # then reproduced leave a state this predicate calls HEALTHY.
+        #
+        #   non-regular   directory / FIFO / socket planted at a counter path:
+        #                 append and read fail forever, the count pins at 0, and
+        #                 the `.fired-*` markers above stay green. Round 1's case.
+        #   symlink       ANY symlink at ANY path in here, whatever it points at.
+        #                 `-f` follows the link, so a link to a regular file
+        #                 passed the old guard and the hook appended a byte per
+        #                 turn to whatever it named; a DANGLING link is the same
+        #                 primitive in create form (`>>` through one creates the
+        #                 target — measured, and the reason round 1's "dangling is
+        #                 not tamper" note is now reversed); and the `.fired-*`
+        #                 markers are written with `>`, making a link there an
+        #                 arbitrary-file TRUNCATE. None of that is about the
+        #                 target's shape, so neither is the test.
+        #   missing       the counter is gone but its witness stands: `rm -f`.
+        #   truncated     the counter is SHORTER than its witness: `: >`.
+        #
+        # The witness (`.hw-<key>`, written by the hook one byte per counted turn
+        # AFTER the counter's own byte) is what makes the last two visible at all:
+        # nothing about an absent or 0-byte file is suspicious on its own, and
+        # both were a one-command reset of a saturated 60-turn budget with doctor
+        # reporting a healthy governor throughout. The witness can only LAG the
+        # counter, never lead it, so `counter < witness` is a state the hook
+        # cannot produce — while `counter > witness` is an ordinary crashed turn
+        # and stays silent.
+        # Reported, never repaired here: this is the only signal that a governor
+        # which LOOKS healthy is silently non-enforcing for that worker.
+        # degrade-never-raise: an unreadable run dir is someone else's finding,
+        # not a crash here.
+        if run_dir.is_dir():
+            try:
+                entries = sorted(run_dir.iterdir())
+            except OSError:
+                entries = []
+            for entry in entries:
+                if entry.is_symlink():
+                    try:
+                        target = os.readlink(entry)
+                    except OSError:
+                        target = "?"
+                    warns.append(f"hooks: call governor state {entry} is a SYMLINK (→ {target}) — every "
+                                 f"write this hook makes is supposed to land on a real file inside "
+                                 f"{run_dir}, and a link aims it out of there instead: the counter is "
+                                 f"appended to with `>>` and the fire markers are written with `>`, so "
+                                 f"this is an append or a truncate pointed at that target (T-567). The "
+                                 f"hook refuses to write through it and denies the worker; remove the "
+                                 f"link and check the target's contents")
+                    continue
+                if entry.exists() and not entry.is_file():
+                    warns.append(f"hooks: call governor state {entry} is not a regular file — the "
+                                 f"turn counter at this path can never be read or appended, so "
+                                 f"enforcement silently skips this worker while the fire markers stay green "
+                                 f"(T-491/T-519). Remove it; the governor recreates the counter on the next "
+                                 f"tool call")
+            for entry in entries:
+                if not entry.name.startswith(GOVERNOR_WITNESS_PREFIX) or entry.is_symlink():
+                    continue
+                key = run_dir / entry.name[len(GOVERNOR_WITNESS_PREFIX):]
+                try:
+                    accrued = entry.stat().st_size
+                except OSError:
+                    continue
+                if accrued == 0:
+                    continue
+                if key.is_symlink():
+                    continue          # already reported above, as the louder finding
+                if not key.exists():
+                    warns.append(f"hooks: call governor counter {key} is MISSING while this session's "
+                                 f"witness records {accrued} accrued turns — the counter was deleted, "
+                                 f"which is a worker's cheapest way to restore its own budget (T-567). "
+                                 f"The hook denies that worker from here on; nothing else is needed")
+                    continue
+                if not key.is_file():
+                    continue          # non-regular: already reported above
+                try:
+                    held = key.stat().st_size
+                except OSError:
+                    continue
+                if held < accrued:
+                    warns.append(f"hooks: call governor counter {key} holds {held} turns but this "
+                                 f"session's witness records {accrued} accrued — it was truncated "
+                                 f"(T-567). The counter only ever grows, so a shorter one is not a "
+                                 f"state the hook can produce. The hook denies that worker from here on")
+    return warns
+
+
+# ── statusline registration (T-500) ────────────────────────────────────────────
+# install.sh §6 preserves any existing `statusLine` (ours or a custom one) by
+# default and only ever logs one install-time line about it — nothing re-checks
+# after that, so a machine that diverged once (something else already
+# registered when install.sh first ran) stays diverged forever with zero
+# ongoing signal. This is the same silent-registration class as T-445 (roster
+# drift) and T-498 (a misspelled hook event accepted with no warning): the only
+# fix is a standing doctor check, not a better one-time install message.
+#
+# Four states, per the ticket's acceptance:
+#   healthy   — registered, pointing at $PRDT_HOME/bin/statusline-prdt.sh, and
+#               that file exists + is executable.
+#   absent    — no statusLine registered anywhere reachable for this project.
+#   not-prdt  — a statusLine IS registered, but it points at something else
+#               (vanilla Claude's, or a real custom one) — never clobbered
+#               here; the repair this prints is an explicit, hand-run command,
+#               never an automatic rewrite (ticket's last acceptance line).
+#   broken    — registered AT the prdt path, but the file there is missing or
+#               not executable (a half-finished install, a chmod that didn't
+#               stick, a $PRDT_HOME move).
+#
+# Project-level coverage: `.claude/settings.local.json` and `.claude/settings.json`
+# in the project silently outrank the user-level registration install.sh writes
+# (~/.claude/settings.json) — a reporter that only read the user level would be
+# narrower than the thing it reports on, the exact defect the two prior tickets
+# this round shipped (and had to fix) once each. Checked at BOTH projectRoot and
+# codeRoot when the project is physically split (v1.3 #4): T-408 measured that
+# Claude Code's trust dialog is keyed by exact cwd and covers both roots
+# independently, so a developer session opened at either is equally real, and a
+# check anchored to only one would again be narrower than what it reports on.
+
+def statusline_prdt_path():
+    """Where install.sh mirrors the prdt statusline script (§1) and the only
+    path a HEALTHY registration may point at."""
+    return prdt_home() / "bin" / "statusline-prdt.sh"
+
+
+def prdt_repo_from_env():
+    """PRDT_REPO out of $PRDT_HOME/prdt.env (written by install.sh §2) — the one
+    place an installed machine still remembers where its own installer source
+    lives, so a repair line can name install.sh by an ABSOLUTE path rather than
+    assume the reader's cwd. None when the file/key is absent (never raises —
+    same posture as the rest of doctor)."""
+    try:
+        text = (prdt_home() / "prdt.env").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("PRDT_REPO="):
+            v = line.split("=", 1)[1].strip()
+            return v or None
+    return None
+
+
+def _statusline_install_cmd(flag=""):
+    """The exact, copy-pasteable install.sh invocation, or None when
+    PRDT_REPO isn't known (the common case still requires an install to
+    exist at all, but prdt.env can be missing/stripped of that one line).
+
+    B2: this used to return a fallback string in that case that mixed
+    human-readable parenthetical text INSIDE what every call site then
+    wrapped in backticks as if it were a runnable command — e.g. `install.sh
+    --statusline  (PRDT_REPO not found in ... — locate install.sh in the
+    prdt repo checkout)`. A real shell raises a syntax error on the literal
+    `(` in that string the moment anyone actually runs it, and the test
+    suite never caught it because its harness always seeds PRDT_REPO (see
+    `seedMachine()` in prdt-doctor-statusline.test.ts) — this path was
+    unreachable in tests. Returning None instead forces every caller to
+    branch explicitly rather than silently embedding a broken string in a
+    warning line; use `_statusline_repair_phrase` below for the common
+    'repair (...): `cmd`' shape."""
+    repo = prdt_repo_from_env()
+    if repo:
+        return f"{repo}/scripts/install.sh{(' ' + flag) if flag else ''}"
+    return None
+
+
+def _statusline_repair_phrase(desc, flag=""):
+    """'repair (<desc>): `<install.sh invocation>`' — the shape almost every
+    non-healthy statusline warning ends on — or, when `_statusline_install_cmd`
+    can't determine the command (PRDT_REPO missing from prdt.env), a plain
+    English statement saying so and what to do instead (B2), never a
+    command-shaped string a real shell would choke on. `desc` may be "" for
+    the bare "repair: `cmd`" phrasing this ticket's acceptance names."""
+    cmd = _statusline_install_cmd(flag)
+    prefix = f"repair ({desc})" if desc else "repair"
+    if cmd is not None:
+        return f"{prefix}: `{cmd}`"
+    return (f"{prefix} — doctor could not determine the exact command (PRDT_REPO not "
+            f"found in {prdt_home()}/prdt.env) — locate install.sh in the prdt repo "
+            f"checkout and run it there"
+            f"{(' with ' + flag) if flag else ''}")
+
+
+def _statusline_command(settings):
+    """Raw `statusLine.command` string out of a parsed settings dict, or None
+    (kind "malformed" — missing/non-string `command`, e.g. D1's bare-string
+    or no-`command`-key shapes).
+
+    N1/B1 history: an empty or whitespace-only string used to be rejected
+    HERE too (`not cmd.strip()`), so it never even reached kind "cmd". That
+    guard is now dead: B1 moved the blank/unresolvable-value boundary into
+    `statusline_classify` itself — a present, non-blank raw string that
+    still tokenizes to no real executable (a blank command included: `""`
+    tokenizes to one empty-string token, `"   "` tokenizes to zero tokens)
+    returns "malformed" there and routes through the exact same
+    `_statusline_malformed_warning` this guard used to reach by a different
+    path — byte-identical message, so removing the guard changes nothing
+    observable. Kept as a blank string returned here (not rejected) so kind
+    "cmd" always means "the value was a string, unconditionally" and B1's
+    boundary is the ONE place that decides usable vs. not."""
+    if not isinstance(settings, dict):
+        return None
+    sl = settings.get("statusLine")
+    cmd = sl.get("command") if isinstance(sl, dict) else None
+    if not isinstance(cmd, str):
+        return None
+    return cmd
+
+
+class _StatuslineUnparseable(Exception):
+    """N2: raised by `_statusline_command_exe` when `shlex.split` cannot parse
+    the raw command at all (unbalanced quoting). The old fallback here —
+    `cmd_raw.strip().strip('"').split()` — guessed a token out of the damaged
+    string, and on two natural damage shapes (a trailing unterminated quote
+    after the path; a leading quote with the closing one truncated) that
+    guess can accidentally recover the real prdt path as its first token,
+    so a value doctor cannot actually parse gets reported healthy — the
+    check goes silent on exactly the kind of damage it exists to catch. A
+    value we cannot parse is not evidence of health (same rule D1 settled
+    for a present-but-unusable value: where the two directions differ,
+    warn), so this must propagate as its own outcome rather than being
+    swallowed into a guessed token."""
+
+
+def _statusline_command_exe(cmd_raw):
+    """The executable token out of a statusLine command string, tokenized the
+    way a shell would (D3) rather than split on whitespace. install.sh (and
+    Claude Code itself, measured live: this machine's own
+    ~/.claude/settings.json) stores the value with the executable wrapped in a
+    literal pair of escaped quotes baked INTO the JSON string —
+    `"\\"/path\\""` — so the parsed Python string starts and ends with a real
+    `"` character. A plain `.split()` on that string cuts a PRDT_HOME path
+    containing a space at the first whitespace token even though the quoting
+    marks it as one path — a correctly-registered machine judged not-prdt
+    forever, and the repair doctor prints never changes anything because the
+    registration was already correct (D3, measured repro: PRDT_HOME with a
+    space). `shlex.split` parses the quoting the way a POSIX shell would
+    instead, so a quoted path with an internal space stays one token. A real
+    custom statusLine may carry arguments after the executable; only the
+    first token is taken, same convention `hook_registration_warnings` uses
+    for hook commands above.
+
+    Raises `_StatuslineUnparseable` (N2) on unbalanced quoting rather than
+    guessing a token via a naive fallback split — see that class's docstring
+    for why a guess here is worse than surfacing the failure."""
+    if not cmd_raw:
+        return None
+    try:
+        tok = shlex.split(cmd_raw)
+    except ValueError:
+        raise _StatuslineUnparseable(cmd_raw)
+    return tok[0] if tok else None
+
+
+def statusline_classify(cmd_raw, anchor=None):
+    """(state, exe_path) for one statusLine command string already known to be
+    present and well-formed (the "cmd" kind from `_statusline_layer_state`).
+    state is one of "malformed" / "healthy" / "not-prdt" / "broken" /
+    "unparseable" (N2: `shlex.split` could not tokenize the raw command at
+    all — exe_path is None for this one, same as "malformed", but it must
+    never be CONFUSED with "absent": the key is present and has a value, we
+    simply cannot read it, which is not evidence of health either).
+
+    B1 (the classification boundary): "absent" must mean exactly one thing
+    everywhere in this check — the `statusLine` key is not present in a
+    settings file at all (`_statusline_layer_state`'s "no-opinion" kind, the
+    only path that ever reaches `_statusline_state_warning("absent", ...)`).
+    This function is only ever called on a value `_statusline_layer_state`
+    already classified "cmd" — the key IS present and its raw string is
+    non-blank — so nothing in here may return "absent" no matter how the
+    value fails to resolve to a real executable. `shlex.split` can still
+    tokenize a present, non-blank string down to an empty first token (a
+    bare quote pair — `'""'`, `"''"` — tokenizes to one token, the empty
+    string) or no tokens at all; that is a malformed VALUE, exactly the same
+    "key present, unusable" bucket `_statusline_layer_state`'s own
+    "malformed" kind covers for a missing/non-string `command` (D1), not a
+    missing key. Four rounds of shape-specific patches here (blank string,
+    whitespace-only, unbalanced quoting) each blocked one input shape while
+    this boundary kept relabeling "no executable could be extracted" as "the
+    key is absent" for whatever shape they missed — the fix is this
+    boundary, once, for the whole input CLASS: any value this function
+    cannot resolve to an executable returns "malformed", never "absent".
+    See the module-comment above for what each state means and how it is
+    repaired.
+
+    `anchor`: directory a RELATIVE registered path resolves against. Decision
+    (D4): anchor at the project root the check is running for — matching
+    Claude Code's own session cwd (a session's hooks run with PWD == session
+    cwd per docs/wiki/fact--claude-hooks.md, and the statusLine command is the
+    same kind of harness-spawned process) — rather than doctor's OWN process
+    cwd, which can be an arbitrary nested subdirectory under the project and
+    previously made a relative registration judge differently run to run.
+    None only when no project root applies; a relative path then resolves
+    against doctor's own cwd (undocumented, but no worse than before).
+
+    `~/...` and `$VAR/...` are expanded first (D4) so a hand-written
+    registration using either form is judged by the same rule as a plain
+    absolute path — both used to be misjudged not-prdt even when they pointed
+    exactly at the prdt statusline."""
+    try:
+        exe = _statusline_command_exe(cmd_raw)
+    except _StatuslineUnparseable:
+        return "unparseable", None
+    if not exe:
+        return "malformed", None
+    exe = os.path.expandvars(os.path.expanduser(exe))
+    target = statusline_prdt_path()
+    p = Path(exe)
+    if not p.is_absolute() and anchor is not None:
+        p = Path(anchor) / p
+    try:
+        is_prdt = p.resolve() == target.resolve()
+    except OSError:
+        is_prdt = str(p) == str(target)
+    if not is_prdt:
+        return "not-prdt", exe
+    # target, not p/exe: is_prdt already proves they resolve to the same
+    # place, and target is always absolute — sidesteps re-deriving existence
+    # from a possibly-relative exe string against whatever cwd happens to be
+    # live at check time (the same class of bug D4 fixes above).
+    if not (target.is_file() and os.access(target, os.X_OK)):
+        return "broken", exe
+    return "healthy", exe
+
+
+def _statusline_layer_state(path):
+    """Everything one settings file has to say about statusLine, teasing apart
+    three things a single None from `read_json` used to conflate (D1/D2):
+
+      - "no-opinion": the file doesn't exist, or parses as a JSON object with
+        no `statusLine` key at all. Falls through to the next layer down.
+      - "corrupt": the file EXISTS but isn't parseable JSON (or isn't a JSON
+        object) — a different, worse problem than "nothing registered": the
+        content is simply unknown. For the user-level file this matters
+        operationally too (D2) — `install.sh --statusline`'s jq merge cannot
+        even parse this file, so the "absent" repair doctor used to print
+        here never converges; it must be named and repaired differently.
+      - "malformed": a `statusLine` key IS present but its value can't be
+        read as a usable command (bare string, object with no/non-string
+        `command`). Per Claude Code's documented per-key shallow merge, a
+        higher layer overrides the same-named key at a lower layer purely by
+        being SET — so this key's mere PRESENCE shadows whatever is
+        registered below it, even though the value itself is unusable (D1).
+        DECISION: this always warns rather than silently falling through.
+        The alternative — treating a malformed-but-present key as
+        "no-opinion" — is exactly the false negative D1 reported: a dead
+        statusline with a healthy layer sitting unreachable underneath it,
+        and doctor silent. [Residue: Claude Code's own live behavior on this
+        exact malformed shape is undocumented and could not be
+        render-verified on this machine (headless, sandbox HOME can't log
+        in) — where the two possible readings differ, this takes the one
+        that WARNS, never the one that stays silent. Same note in T-500's
+        `## Outcome`.]
+
+    Returns (kind, raw_cmd) — raw_cmd is only ever non-None for kind == "cmd"."""
+    p = Path(path)
+    if not p.is_file():
+        return "no-opinion", None
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return "no-opinion", None
+    try:
+        settings = json.loads(text)
+    except ValueError:
+        return "corrupt", None
+    if not isinstance(settings, dict):
+        return "corrupt", None
+    if "statusLine" not in settings:
+        return "no-opinion", None
+    cmd = _statusline_command(settings)
+    if cmd is None:
+        return "malformed", None
+    return "cmd", cmd
+
+
+def _statusline_project_override(root_dir):
+    """(layer_path, kind, raw_cmd) for the first of settings.local.json /
+    settings.json under root_dir/.claude that has an OPINION (local wins per
+    Claude Code's own documented precedence) — kind is "corrupt" / "malformed"
+    / "cmd", never "no-opinion" when layer_path is not None. (None, None,
+    None) means neither file has any opinion at all, and the caller falls
+    through to the user-level file."""
+    for name in ("settings.local.json", "settings.json"):
+        p = Path(root_dir) / ".claude" / name
+        kind, cmd = _statusline_layer_state(p)
+        if kind != "no-opinion":
+            return p, kind, cmd
+    return None, None, None
+
+
+def _statusline_state_warning(state, exe, source, is_project, project_root=None):
+    """One warning line for a non-healthy state at one source file, or None for
+    healthy. Every branch names the exact repair command per the ticket's
+    acceptance; project-level "not-prdt" is the one case install.sh cannot
+    repair (it never touches project files) — that line prints an explicit,
+    hand-run jq command instead of inventing a second silent-clobber path."""
+    target = statusline_prdt_path()
+    if state == "healthy":
+        return None
+    if state == "absent":
+        return (f"statusline: not registered anywhere for this project (no statusLine in "
+                f"{source}, and no project-level override) — "
+                f"{_statusline_repair_phrase('', '--statusline')}")
+    if state == "unparseable":
+        # N2: shlex couldn't tokenize the raw command at all (unbalanced
+        # quoting) — never treat that as evidence of health. Same repair
+        # split as "not-prdt": project-level files are never touched by
+        # install.sh, so only an explicit hand-run jq command converges there.
+        if is_project:
+            return (f"statusline: {source} statusLine command could not be parsed (unbalanced "
+                     f"quoting) — doctor cannot tell whether this project-level entry is the "
+                     f"prdt statusline or something else, and an unparseable value is not "
+                     f"evidence of health — repair (explicit, edits only this file): "
+                     f"`t=$(mktemp) && jq 'del(.statusLine)' {source} > \"$t\" && mv \"$t\" {source}`")
+        return (f"statusline: {source} statusLine command could not be parsed (unbalanced "
+                f"quoting) — doctor cannot tell whether it points at the prdt statusline "
+                f"({target}) or something else, and an unparseable value is not evidence of "
+                f"health — {_statusline_repair_phrase('force re-registers, overwrites the current entry', '--statusline')}")
+    if state == "not-prdt":
+        if is_project:
+            return (f"statusline: {source} statusLine points at {exe} — this project-level "
+                     f"entry silently wins over any user-level prdt registration for sessions "
+                     f"opened at {project_root} — repair (explicit, edits only this file): "
+                     f"`t=$(mktemp) && jq 'del(.statusLine)' {source} > \"$t\" && mv \"$t\" {source}`")
+        return (f"statusline: {source} statusLine points at {exe} — not the prdt statusline "
+                f"({target}) — {_statusline_repair_phrase('explicit force, overwrites the current entry', '--statusline')}")
+    # broken: registered AT the prdt path, but the file is missing/not executable
+    reason = "missing" if not target.exists() else "not executable"
+    return (f"statusline: {source} statusLine points at the prdt statusline path ({exe}), but "
+            f"that file is {reason} — {_statusline_repair_phrase('re-mirrors + chmods it')}")
+
+
+def _statusline_corrupt_warning(source, is_project):
+    """D2: the file exists but isn't parseable JSON (or isn't a JSON object) —
+    reported as its own state, distinct from "absent", because the repair for
+    "absent" (`install.sh --statusline`) does not converge here: its jq merge
+    step cannot even parse this file (rc=1), so printing that command alone
+    repeats the same warning forever. Project-level files are never touched by
+    install.sh at all (same posture as the not-prdt project branch), so that
+    repair is hand-editing either way; only the user-level file gets a repair
+    that reaches all the way to healthy in one line."""
+    if is_project:
+        return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a "
+                f"statusLine is registered here (this is \"corrupt\", not \"absent\"); project "
+                f"files are never touched automatically — hand-repair the JSON, or if it isn't "
+                f"recoverable, move it aside: `mv {source} {source}.corrupt-$(date +%s)`")
+    install_cmd = _statusline_install_cmd('--statusline')
+    # N3: a plain `cp {source} {source}.bak` overwrites an existing .bak
+    # unrecoverably (the corrupt file itself survives either way, but a prior
+    # backup does not) — walk .bak, .bak.1, .bak.2, ... until an unused name
+    # is found, same one-line copy-pasteable shape as the rest of this repair.
+    backup = (f"b={source}.bak; n=1; while [ -e \"$b\" ]; do b={source}.bak.$n; "
+              f"n=$((n+1)); done; cp {source} \"$b\"")
+    reset = f"{backup} && echo '{{}}' > {source}"
+    if install_cmd is None:
+        # B2: install_cmd unknown (PRDT_REPO missing from prdt.env) — the old
+        # code still spliced it into TWO backtick-wrapped spots below (a
+        # prose reference and the tail of a compound `&&` chain) regardless,
+        # so the broken fallback text corrupted both. State plainly instead:
+        # doctor can still hand over the runnable reset-and-backup half, but
+        # not the registration half.
+        return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a statusLine "
+                f"is registered here (this is \"corrupt\", not \"absent\"), and install.sh's "
+                f"settings merge (jq) fails to parse this file as-is (rc=1) without fixing it, so "
+                f"repair needs two steps: reset the file first (backup picks an unused name so it "
+                f"never clobbers an existing .bak): `{reset}` — then register, but doctor could not "
+                f"determine the exact command (PRDT_REPO not found in {prdt_home()}/prdt.env) — "
+                f"locate install.sh in the prdt repo checkout and run it there with --statusline")
+    return (f"statusline: {source} is not valid JSON — doctor cannot tell whether a statusLine "
+            f"is registered here (this is \"corrupt\", not \"absent\"), and `{install_cmd}`'s "
+            f"settings merge (jq) fails to parse this file as-is (rc=1) without fixing it, so "
+            f"that command alone never converges — reset the file first, then register (backup "
+            f"picks an unused name so it never clobbers an existing .bak): "
+            f"`{reset} && {install_cmd}`")
+
+
+def _statusline_malformed_warning(source, is_project, project_root=None):
+    """D1: a `statusLine` key IS present but its value can't be read as a
+    usable command. See the DECISION note in `_statusline_layer_state` for why
+    this always warns rather than falling through, and the residue note about
+    Claude Code's unverified live behavior on this shape."""
+    if is_project:
+        return (f"statusline: {source} has a `statusLine` key present but its `command` is "
+                 f"missing or not a string (malformed) — this key's mere presence shadows any "
+                 f"statusLine registered at a lower-priority level for sessions opened at "
+                 f"{project_root}, even though the value itself is unusable — repair (explicit, "
+                 f"edits only this file): `t=$(mktemp) && jq 'del(.statusLine)' {source} > \"$t\" "
+                 f"&& mv \"$t\" {source}`")
+    return (f"statusline: {source} has a `statusLine` key present but its `command` is missing "
+            f"or not a string (malformed) — nothing prdt-controlled is confirmed registered here "
+            f"— {_statusline_repair_phrase('force re-registers, overwrites the malformed value', '--statusline')}")
+
+
+def _statusline_layer_warning(kind, cmd, source, is_project, project_root=None, anchor=None):
+    """One warning line for a non-healthy layer, or None. Dispatches on the
+    `_statusline_layer_state` kind: "corrupt" and "malformed" get their own
+    messages (D2/D1); "cmd" goes through classify + the existing per-state
+    messages (healthy/not-prdt/broken) — plus classify's OWN "malformed"
+    outcome (B1: a present, non-blank value that still tokenizes to no
+    executable, e.g. a bare quote pair), routed to the exact same
+    `_statusline_malformed_warning` as the "malformed" kind above so both
+    "key present, value unusable" paths converge on one message that names
+    the file/key that's actually the problem, never "absent"."""
+    if kind == "corrupt":
+        return _statusline_corrupt_warning(source, is_project)
+    if kind == "malformed":
+        return _statusline_malformed_warning(source, is_project, project_root)
+    state, exe = statusline_classify(cmd, anchor=anchor)
+    if state == "malformed":
+        return _statusline_malformed_warning(source, is_project, project_root)
+    return _statusline_state_warning(state, exe, source, is_project, project_root)
+
+
+def statusline_warnings(root):
+    # Same early-out idiom as hook_registration_warnings above: no install
+    # mirror on this machine at all (never ran install.sh — e.g. running
+    # straight out of a repo checkout, which most of this file's own tests
+    # do) is "not yet installed", not "installation drifted" — not this
+    # check's business. Gated on hooks/, mirrored in the SAME install.sh §1
+    # step as bin/statusline-prdt.sh, so its presence is the one signal this
+    # machine ever ran install.sh at all. (D5: an installed machine — hooks/
+    # present — whose statusline was simply never registered must still fall
+    # THROUGH this gate and warn; the gate only silences a machine with no
+    # install mirror at all, never a real absent-registration defect on one
+    # that has it.)
+    if not (prdt_home() / "hooks").is_dir():
+        return Skipped(f"no install mirror at {prdt_home() / 'hooks'} — this machine never ran "
+                       "install.sh, so there is no registration to check")
+    root = Path(root)
+    roots = [root]
+    cr = code_root(root)
+    if cr.resolve() != root.resolve():
+        roots.append(cr)  # physically split (v1.3 #4) — both are real dev cwds (T-408)
+
+    warns = []
+    falls_through = False
+    for r in roots:
+        layer_path, kind, cmd = _statusline_project_override(r)
+        if layer_path is None:
+            falls_through = True
+            continue
+        w = _statusline_layer_warning(kind, cmd, layer_path, is_project=True, project_root=r, anchor=r)
+        if w:
+            warns.append(w)
+
+    if falls_through:
+        user_path = claude_settings_path()
+        kind, cmd = _statusline_layer_state(user_path)
+        if kind == "no-opinion":
+            w = _statusline_state_warning("absent", None, user_path, is_project=False)
+        else:
+            w = _statusline_layer_warning(kind, cmd, user_path, is_project=False, anchor=root)
+        if w:
+            warns.append(w)
     return warns
 
 
@@ -1967,8 +2979,8 @@ def _render_release_box(version, note):
 def maybe_prompt_update(cmd):
     """T-393 entry — called from main() before dispatch. Silent on every degrade
     path (non-tty / CI / gum·fzf 부재 / offline / timeout / broken install)."""
-    if cmd == "update":                                 # never self-check the updater
-        return
+    if cmd in ("update", "preflight"):                  # never self-check the updater;
+        return                                          # `preflight` emits machine-read JSON on stdout
     # fast degrade: no interactive prompt is possible in these environments
     if os.environ.get("CI") or not (sys.stdin.isatty() and sys.stdout.isatty()):
         return
@@ -2336,32 +3348,1433 @@ def cmd_meta_bootstrap(root, args):
 
 # ── doctor ────────────────────────────────────────────────────────────────────
 
-def cmd_doctor(_args):
-    root = require_root()
+def _repo_root_candidates():
+    """Repo-checkout roots worth trying as the comparand for the three
+    mirror↔repo drift checks below, in priority order:
+
+      1. self-reference — two levels up from THIS running file. Free and
+         exactly right whenever the copy running IS a repo checkout (a dev
+         box invoking `scripts/prdt` directly): `parent.parent` is
+         `packages/core`, right where the repo keeps `discipline/`,
+         `scripts/prdt` and `scripts/hooks/`.
+      2. `PRDT_REPO`, via `prdt_repo_from_env()` — the one thing an
+         INSTALLED copy (`~/.prdt/bin/prdt`, a file that lives nowhere near
+         any checkout) still remembers about its own source. Without this,
+         candidate 1 collapses to `prdt_home()` itself on every installed
+         machine (`parent.parent` of `~/.prdt/bin/prdt` is `~/.prdt`), which
+         has no `scripts/` directory at all — so the three checks below were
+         permanently unable to find a repo to compare against, from any cwd,
+         on every machine that ever ran `install.sh` (T-576).
+
+    Each candidate is validated the same way regardless of which produced
+    it: `scripts/prdt` must exist there as a file — "is this actually a
+    prdt repo", not merely "is this a directory". `PRDT_REPO` missing, or
+    naming a path that isn't a prdt checkout, simply drops that candidate;
+    it never yields a bogus path for a caller to compare against."""
+    for base in (Path(__file__).resolve().parent.parent, prdt_repo_from_env()):
+        if base is None:
+            continue
+        base = Path(base)
+        if (base / "scripts" / "prdt").is_file():
+            yield base
+
+
+def _discipline_repo_path():
+    """The repo-checkout path to compare the discipline mirror against — the
+    first candidate from `_repo_root_candidates()` whose `discipline/` is a
+    real directory that ALSO differs from the mirror. That second condition
+    is not redundant with the caller's own mirror-equality early-out
+    (`discipline_mirror_drift_warnings`): on an installed machine, `~/.prdt`
+    itself carries a top-level `discipline/` — the mirror — so the
+    self-reference candidate's `discipline/` COINCIDENTALLY names the mirror
+    itself (unlike `scripts/prdt` or `scripts/hooks/`, which `~/.prdt` never
+    has, so those two candidates are naturally excluded by the `scripts/prdt`
+    validity check in `_repo_root_candidates()` instead). Filtering that
+    match out here, rather than only in the caller, means a genuinely
+    different `PRDT_REPO` candidate is still tried instead of stopping at
+    "found a `discipline/` dir" the moment the first one happens to be the
+    mirror — the discipline check must never end up comparing the mirror
+    against itself, however many candidates get in its way (T-576).
+
+    Only meaningful as a drift comparand when it names a real, DIFFERENT
+    directory — see `discipline_mirror_drift_warnings`."""
+    mirror = prdt_home() / "discipline"
+    for base in _repo_root_candidates():
+        p = base / "discipline"
+        if p.is_dir() and p.resolve() != mirror.resolve():
+            return p
+    return None
+
+
+# T-565 C4: the ONE junk filter, applied at `_tree_files` itself so the drift
+# checks share it by construction rather than by anyone remembering to.
+#
+# T-532 QA G2 added this for the hooks tree only, inside `_hook_roster_files`,
+# and the discipline tree kept comparing raw trees — the same Finder that the
+# hooks docstring records creating `~/.prdt/hooks/.DS_Store` creates
+# `~/.prdt/discipline/.DS_Store`, and there it surfaced as "mirror AHEAD OF /
+# HAND-EDITED … promote it into the repo": doctor telling the reader to commit a
+# macOS metadata blob. Both classes of junk warning share one property that makes
+# them worse than noise — they cannot be cleared by doing what they say, because
+# no sync path on either side has an opinion about a file that was never content.
+#
+# It lives HERE, not in each caller, because copying it a third time is what the
+# ticket was raised on. `_hook_roster_files` keeps its own name-shape allowlist
+# ON TOP of this, which is a different question (is this a hook?) from this one
+# (is this a file at all, or the filesystem's own bookkeeping?).
+#
+# By component, so junk nested anywhere in the tree is caught. Dot-prefixed
+# names go as a class: neither tree carries a legitimate dotfile — discipline is
+# `*.md`, hooks are `prdt-*.sh` — and the alternative is enumerating
+# `.DS_Store`, `._*`, `.habit.md.swp`, `.#habit.md`, `.localized`, `.git*` and
+# whatever the next tool invents.
+_JUNK_FILE_RE = re.compile(r"~$|\.sw[a-p]$|\.(bak|orig|rej|tmp)$|^#.*#$|^Thumbs\.db$|^desktop\.ini$",
+                           re.IGNORECASE)
+
+
+def _is_junk_rel(rel):
+    """True for a path the filesystem or an editor put there, not a person or a
+    sync step — see the note above. `rel` is `/`-joined and relative to the tree."""
+    return any(part.startswith(".") or _JUNK_FILE_RE.search(part) for part in rel.split("/"))
+
+
+def _tree_files(base):
+    return {rel: p for rel, p in
+            ((str(p.relative_to(base)).replace(os.sep, "/"), p)
+             for p in base.rglob("*") if p.is_file())
+            if not _is_junk_rel(rel)}
+
+
+def _git_root(path, timeout=2):
+    try:
+        r = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                            capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _mirror_matches_past_commit(git_root, rel_from_root, content, timeout=2):
+    """None = can't tell (no git / path untracked / git call failed) — the
+    caller treats that as "not proven behind", never as "proven ahead": we
+    only ever CLAIM behind on positive evidence, matching the anti-false-
+    positive posture the whole doctor already holds itself to (T-523).
+    Bounded to the file's most recent 25 commits (`--max-count`) — enough for
+    any realistic sync lag, and local-only (no `fetch`/`ls-remote`), so this
+    never becomes the unbounded history walk the docstring above warns against."""
+    try:
+        log = subprocess.run(
+            ["git", "-C", str(git_root), "log", "--max-count=25", "--format=%H", "--", rel_from_root],
+            capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if log.returncode != 0 or not log.stdout.strip():
+        return None
+    for commit in log.stdout.split():
+        try:
+            blob = subprocess.run(["git", "-C", str(git_root), "show", f"{commit}:{rel_from_root}"],
+                                   capture_output=True, timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if blob.returncode == 0 and blob.stdout == content:
+            return True
+    return False
+
+
+def discipline_mirror_drift_warnings(droot):
+    """T-507 (F1 from the T-476 QA grill): `discipline_root()` always prefers
+    the installed mirror over a repo checkout on a real machine — `PRDT_DISCIPLINE`
+    aside, `~/.prdt/discipline` wins the moment it exists, repo-fallback is a
+    dev-before-first-install path only. So a discipline change that landed in the
+    repo (committed, even) binds NO persona until `install.sh`'s mirror step
+    (rm -rf + cp -R, install.sh:82-83) reruns — and nothing said so before this
+    check. Measured live on this machine 2026-08-27: T-527/T-526 committed to the
+    repo, mirror still serving the pre-T-472 text.
+
+    Only fires when `droot` IS the mirror (the env-override and repo-fallback
+    branches of `discipline_root()` are each a reason NOT to compare, not a
+    drift condition — see the two early returns below) and a real, DIFFERENT
+    repo checkout sits at the path `discipline_root()`'s own fallback would
+    have used. On an install with no source tree nearby, that fallback path
+    collapses onto the mirror itself (this same installed script's
+    `parent.parent` IS `~/.prdt`) — same-path compare is a guaranteed no-op,
+    so a plain end-user machine never spends more than one `Path.is_dir()`
+    call here (AC 5: zero cost with no prdt project / no repo nearby).
+
+    Content, never mtime: `cp -R` rewrites mtimes on every sync (T-507 note),
+    so mtime can't distinguish "just synced" from "always identical". Behind
+    vs ahead/hand-edited is resolved per differing file against the repo's OWN
+    git history (bounded, local-only — see `_mirror_matches_past_commit`):
+      - repo has the file, mirror doesn't               → BEHIND
+      - mirror has the file, repo doesn't                → AHEAD/HAND-EDITED
+      - both have it, mirror bytes == some past commit   → BEHIND (stale sync)
+      - both have it, mirror bytes match no commit found → AHEAD/HAND-EDITED
+        (git unavailable/inconclusive also lands here — never claimed BEHIND
+        without a matching commit in evidence, per the anti-false-positive note)
+    The repair differs on purpose: BEHIND is safe to blind-overwrite (nothing in
+    the mirror is missing from the repo's own history upstream), so the action
+    offered is the ONE existing sync path reused verbatim, not a second one
+    invented here. AHEAD/HAND-EDITED is NOT safe to blind-overwrite — that would
+    silently drop bytes no commit anywhere has — so the action offered instead
+    promotes the mirror's content into the repo (the alternative, discarding it
+    via the same sync command as the behind case, is named but never the
+    default action string)."""
+    env_override = os.environ.get("PRDT_DISCIPLINE")
+    if env_override:
+        # Explicit dev choice — not a drift condition (false-positive note) and,
+        # since T-560, not folded into a clean 0 either: each of these is a
+        # reason the check could not LOOK, which the verdict line now says.
+        return Skipped("PRDT_DISCIPLINE is set — an explicit dev override, so no mirror is compared")
+    mirror = prdt_home() / "discipline"
+    if droot is None or droot.resolve() != mirror.resolve():
+        return Skipped(f"the bound discipline root is not the mirror at {mirror} — "
+                       "repo-fallback or an override is in use, so there is no mirror to drift from")
+    repo = _discipline_repo_path()
+    if repo is None:
+        return Skipped("no source tree nearby to compare the mirror against (AC 5)")
+    if repo.resolve() == mirror.resolve():
+        return Skipped(f"the fallback path IS the mirror at {mirror} — installed-copy "
+                       "coincidence, a same-path compare (AC 5)")
+
+    mirror_files, repo_files = _tree_files(mirror), _tree_files(repo)
+    only_repo = sorted(set(repo_files) - set(mirror_files))
+    only_mirror = sorted(set(mirror_files) - set(repo_files))
+    differing = []
+    for rel in sorted(set(repo_files) & set(mirror_files)):
+        try:
+            if mirror_files[rel].read_bytes() != repo_files[rel].read_bytes():
+                differing.append(rel)
+        except OSError:
+            continue
+    if not only_repo and not only_mirror and not differing:
+        return []
+
+    git_root = _git_root(repo)
+    behind, ahead = list(only_repo), list(only_mirror)
+    for rel in differing:
+        verdict = None
+        if git_root is not None:
+            try:
+                rel_from_root = str((repo / rel).resolve().relative_to(git_root.resolve()))
+            except ValueError:
+                rel_from_root = None
+            if rel_from_root:
+                verdict = _mirror_matches_past_commit(git_root, rel_from_root, mirror_files[rel].read_bytes())
+        (behind if verdict else ahead).append(rel)
+    behind.sort()
+    ahead.sort()
+
+    sync_cmd = f"rm -rf {mirror} && cp -R {repo} {mirror} && PRDT_DISCIPLINE={mirror} {prdt_home()}/bin/prdt menus"
     warns = []
+    if behind:
+        warns.append(
+            "discipline: mirror BEHIND repo — " + ", ".join(behind[:8]) +
+            (f" (+{len(behind) - 8} more)" if len(behind) > 8 else "") +
+            f" — {mirror} wins over the repo per discipline_root() priority, so these "
+            f"committed changes bind no persona until synced — repair (reuses install.sh's "
+            f"own sync step): `{sync_cmd}`")
+    if ahead:
+        warns.append(
+            "discipline: mirror AHEAD OF / HAND-EDITED vs repo — " + ", ".join(ahead[:8]) +
+            (f" (+{len(ahead) - 8} more)" if len(ahead) > 8 else "") +
+            f" — content in {mirror} that no commit in the repo's history has; a blind resync "
+            f"would silently drop it, so repair is per-file: promote it into the repo "
+            f"(`cp {mirror}/<file> {repo}/<file>` then commit), or discard it instead with the "
+            f"same resync command the behind case uses: `{sync_cmd}`")
+    return warns
 
-    # state
-    st = read_json(root / ".prdt" / "po-state.json")
-    if st is None:
-        warns.append("state: .prdt/po-state.json missing or invalid JSON")
-    else:
-        extra = set(st) - PO_STATE_KEYS
-        missing = PO_STATE_KEYS - set(st)
-        if extra:
-            warns.append(f"state: unexpected keys {sorted(extra)} (shape is 4 fields)")
+
+def _prdt_script_repo_path():
+    """The repo-checkout path for `scripts/prdt` itself — the first candidate
+    from `_repo_root_candidates()` (self-reference, then `PRDT_REPO`) whose
+    `scripts/prdt` exists. Running from the repo, self-reference already IS
+    this very file. Running from an installed copy (`~/.prdt/bin/prdt`),
+    self-reference collapses to `~/.prdt`, which has no `scripts/prdt` at
+    all — `_repo_root_candidates()` drops it, and `PRDT_REPO` (parsed from
+    `~/.prdt/prdt.env` by `prdt_repo_from_env()`) is what lets an installed
+    copy find a real repo checkout to compare against (T-576), from any cwd.
+    Only meaningful as a drift comparand when it names a real file that
+    differs from the mirror — see `prdt_script_drift_warnings`."""
+    for base in _repo_root_candidates():
+        p = base / "scripts" / "prdt"
+        if p.is_file():
+            return p
+    return None
+
+
+def prdt_script_drift_warnings():
+    """T-507 follow-up (same slice, PO-named gap): `discipline_mirror_drift_warnings`
+    only ever looks inside `discipline/` — if the prdt SCRIPT FILE itself is stale
+    on the installed mirror, the drift-check code above isn't running in the copy
+    a user's `prdt doctor` actually invokes, so nothing warns. Same structure,
+    reused rather than reinvented: `_mirror_matches_past_commit` for the
+    behind-vs-ahead call, the same env-override / no-mirror / no-repo / same-path
+    early-outs, and install.sh's own `cp` as the repair (no new sync path).
+
+    Bootstrap limit, named once here rather than left implicit: this warning can
+    only fire from a copy that already contains this very check — an installed
+    mirror predating this slice stays silent about its own drift until something
+    (a repo checkout, or a mirror already carrying this code) runs it."""
+    env_override = os.environ.get("PRDT_DISCIPLINE")
+    if env_override:
+        # Same dev-override posture as discipline: not a drift condition — and
+        # (T-560) not a clean read either. Every one of these returns used to be
+        # `[]`, which the old flat total spent as evidence of health.
+        return Skipped("PRDT_DISCIPLINE is set — an explicit dev override, so no mirror is compared")
+    mirror = prdt_home() / "bin" / "prdt"
+    if not mirror.is_file():
+        return Skipped(f"no installed copy at {mirror} (AC 5 / quiet on source-only machines)")
+    mirror = mirror.resolve()  # follow-any-symlink real file, per PO's slice note
+    repo = _prdt_script_repo_path()
+    if repo is None:
+        return Skipped("no source tree nearby to compare the installed script against")
+    if repo.resolve() == mirror:
+        return Skipped(f"{mirror} IS the repo path — mirror and source collapse onto one file (AC 5)")
+
+    try:
+        mirror_bytes, repo_bytes = mirror.read_bytes(), repo.read_bytes()
+    except OSError as e:
+        return Skipped(f"could not read {mirror} or {repo} to compare them ({e.__class__.__name__})")
+    if mirror_bytes == repo_bytes:
+        return []
+
+    git_root = _git_root(repo.parent)
+    verdict = None
+    if git_root is not None:
+        try:
+            rel_from_root = str(repo.resolve().relative_to(git_root.resolve()))
+        except ValueError:
+            rel_from_root = None
+        if rel_from_root:
+            verdict = _mirror_matches_past_commit(git_root, rel_from_root, mirror_bytes)
+
+    sync_cmd = f"cp {repo} {mirror} && chmod +x {mirror}"
+    bootstrap_note = ("this check only fires once the copy running it already carries "
+                       "this code — an installed copy predating this slice can't warn "
+                       "about its own drift")
+    if verdict:
+        return [f"discipline: prdt script mirror BEHIND repo — {mirror} runs stale code vs "
+                f"{repo}; committed script changes bind nothing until synced — repair "
+                f"(reuses install.sh's own sync step): `{sync_cmd}` ({bootstrap_note})"]
+    return [f"discipline: prdt script mirror AHEAD OF / HAND-EDITED vs repo — {mirror} "
+            f"differs from {repo} with no matching commit in the repo's history; promote it "
+            f"into the repo (`cp {mirror} {repo}` then commit), or discard it instead with "
+            f"the same resync the behind case uses: `{sync_cmd}` ({bootstrap_note})"]
+
+
+def _hooks_repo_path():
+    """The repo-checkout path for packages/core/scripts/hooks/ — the first
+    candidate from `_repo_root_candidates()` (self-reference, then
+    `PRDT_REPO`) whose `scripts/hooks/` exists, same priority
+    `_prdt_script_repo_path()` uses and for the same reason: self-reference
+    alone collapses to `~/.prdt` (no `scripts/` at all) on an installed
+    machine, so `PRDT_REPO` is what lets that copy find a real repo checkout
+    to compare its mirrored hooks against (T-576), from any cwd. Only
+    meaningful as a drift comparand when it names a real directory that
+    differs from the mirror — see `hook_mirror_drift_warnings`."""
+    for base in _repo_root_candidates():
+        p = base / "scripts" / "hooks"
+        if p.is_dir():
+            return p
+    return None
+
+
+HOOK_ROSTER_FILENAME_RE = re.compile(r"^prdt-[A-Za-z0-9_.-]+\.sh$")
+
+
+def _hook_roster_files(base):
+    """Restrict `_tree_files(base)` to names shaped like real hook scripts
+    (T-532 QA G2, same naming convention `hook_registration_warnings` already
+    filters on with `hooks_dir.glob("prdt-*.sh")`): a stray file sitting in
+    either tree is neither a committed hook nor a hand-edited one, and
+    reporting it as either produces a warning nothing can clear: `install.sh`
+    only ever copies the manifest's own basenames (its §1 loop reads
+    `scripts/hook-manifest.json`'s `basenames`, never "whatever's in the
+    directory"), so "re-run install.sh" as advice is simply false for a name
+    that was never a hook to begin with. Measured real: `~/.prdt/hooks` on
+    this machine already carries a Finder-recreated `.DS_Store`.
+
+    The filesystem-junk half of that (`.DS_Store`, `.foo.sh.swp`, `foo.sh~`,
+    `#foo.sh#`) is NOT re-stated here — it moved into `_tree_files` in T-565 C4
+    so the discipline drift check gets it too, which it did not, for exactly as
+    long as this filter was a local one. What stays here is the question only
+    this check asks: is this file a HOOK.
+
+    A hook the repo has since dropped still passes this filter on the mirror
+    side (it is still shaped like a hook, just an orphaned one) — it needs to
+    keep surfacing as a stale leftover, not disappear from the roster the
+    moment the repo stops shipping it."""
+    return {rel: p for rel, p in _tree_files(base).items()
+            if HOOK_ROSTER_FILENAME_RE.fullmatch(rel)}
+
+
+def hook_mirror_drift_warnings():
+    """T-532 (PO-measured 2026-08-31): `discipline_mirror_drift_warnings` and
+    `prdt_script_drift_warnings` (T-507) cover the discipline tree and the CLI
+    script itself — `~/.prdt/hooks/` was the surface neither named. It matters
+    more than either: `~/.claude/settings.json` registers commands under the
+    MIRROR path, never the repo path (install.sh §4), so a hook fix committed
+    to the repo binds nothing until this mirror resyncs. Measured same-day:
+    right after two hook fixes landed on `dev`, both mirrored hooks differed
+    from the repo, `prdt doctor` produced 27 warnings and none named this, and
+    in the same session the defect one of those fixes had just repaired fired
+    again — the harness was still running the stale mirror copy.
+
+    Same structure, reused rather than reinvented: a roster-as-a-SET compare
+    (acceptance note ① — a hook added to the repo but never mirrored, and a
+    stale hook left in the mirror after the repo dropped it, are both real
+    states a file-by-file diff alone cannot see, because it only ever walks
+    names both sides already share), then `_mirror_matches_past_commit` for
+    the behind-vs-ahead call on names both sides DO share, exactly like the
+    two T-507 checks. `install.sh` is the one existing sync path, reused
+    verbatim rather than a second one invented here (acceptance: no new
+    subcommand). Unlike the two T-507 checks, the roster is NOT a raw
+    `_tree_files` walk of both directories — see `_hook_roster_files` (T-532
+    QA G2): a stray file sitting in either tree (`.DS_Store`, an editor swap
+    file) is not a hook, was never committed as one, and a warning about it
+    can never be cleared by the repair it names.
+
+    Early-outs, deliberately NOT the same set as the two T-507 checks:
+    no mirror (`~/.prdt/hooks/` missing — nothing installed on this
+    machine); no repo (no source tree nearby); mirror-equals-repo path
+    collapse (running the repo's own hooks directly, e.g. a dev box with no
+    separate install — PRDT_HOME pointed straight at the checkout, so
+    `prdt_home() / "hooks"` IS `_hooks_repo_path()`, byte-for-byte, and any
+    diff loop here would just be a directory compared against itself).
+    Deliberately does NOT inherit the `PRDT_DISCIPLINE`-set early-out the two
+    T-507 checks use (T-532 QA G4): that variable only redirects
+    `discipline_root()`'s OWN fallback choice — it changes nothing about
+    where `~/.claude/settings.json` points its hook commands, which
+    `install.sh` §4 hardcodes to `$PRDT_HOME/hooks/<basename>` unconditionally,
+    at install time, regardless of any env var set later. So a developer
+    setting `PRDT_DISCIPLINE` to work against a repo checkout does not stop
+    the harness from executing a stale MIRRORED hook — inheriting that
+    early-out here would silence exactly the drift this check exists to
+    catch. The one legitimate "I'm intentionally not using a separate
+    mirror" posture for hooks is already covered correctly by the
+    path-collapse early-out above: point `PRDT_HOME` at the repo checkout
+    itself and the two paths resolve identically.
+
+    Content, never mtime — same reason as both T-507 checks: `cp` rewrites
+    mtime on every sync, so it cannot distinguish "just synced" from "always
+    identical".
+
+    The AHEAD/HAND-EDITED verdict is bounded, and says so (T-532 QA G3):
+    `_mirror_matches_past_commit` only ever searches a file's most recent 25
+    commits, locally, under its CURRENT path. A match just outside that
+    window, a shallow clone that never fetched the older commits, or a body
+    that predates a `git mv` of the hooks directory would all search
+    inconclusive or negative here — this is NOT proof no commit in the
+    repo's history anywhere has the content, so the message says exactly
+    that, and does not hand out "promote it into the repo" as a confident
+    default action — a wrong promote on a false verdict would inject stale
+    content backwards.
+
+    QA delta-pass fix (T-532): the AHEAD warning used to name one repair
+    ("re-run `install.sh`") for both shapes it lumps together, but that
+    converges for only one of them. A name still present in the repo with
+    hand-edited content DOES clear on re-install — install.sh §1's copy loop
+    unconditionally overwrites every manifest basename, discarding the
+    hand-edit. A name with NO counterpart in the repo at all (a hook the
+    repo has since dropped, or a stray hand-add — `mirror_only` below) does
+    NOT: that same loop only ever WRITES the manifest's own basenames, it
+    never removes a mirror file the manifest doesn't list, so re-running
+    install.sh leaves an orphan standing and this warning reprints forever.
+    QA proved this live in a fully sandboxed install. The repair for that
+    shape now names a direct `rm` of the orphaned mirror path(s) instead,
+    composed onto (not replacing) the install.sh step when both shapes
+    co-occur — still one copy-pasteable line.
+
+    Does NOT cover (named per acceptance note ③, not left to be discovered
+    later):
+      - a hook named in `~/.claude/settings.json` but present in NEITHER the
+        repo nor the mirror. `hook_registration_warnings` already reports a
+        registered name absent from the mirror as a stale entry; a name that
+        reached settings.json without ever being shipped anywhere is a
+        settings.json authoring error, not mirror-vs-repo drift, and this
+        check has no opinion on it.
+      - a mirror hook that is byte-identical to the repo but has lost its
+        executable bit. `install.sh` always `chmod +x`'s what it copies, so
+        this can only come from a hand-edit of the mirror's permissions
+        after install — this check reads bytes, not mode, and stays silent
+        on it.
+      - a machine where something other than `~/.claude/settings.json`
+        governs which hook commands actually run — this check (like
+        `hook_registration_warnings`) only ever reads the file
+        `claude_settings_path()` names (`~/.claude/settings.json`, or
+        `$CLAUDE_DIR/settings.json` when that's set); it has no visibility
+        into any other place a harness might source its hook roster from."""
+    mirror = prdt_home() / "hooks"
+    if not mirror.is_dir():
+        # No install on this machine. Since T-560 these three are Skipped, not
+        # `[]`: each is a reason the check could not look, and the verdict line
+        # that the v1.8 bar is read off must not spend them as a clean 0.
+        return Skipped(f"no install mirror at {mirror} — no mirrored hooks to compare")
+    repo = _hooks_repo_path()
+    if repo is None:
+        return Skipped("no source tree nearby to compare the mirrored hooks against")
+    if repo.resolve() == mirror.resolve():
+        return Skipped(f"{mirror} IS the repo hooks directory — mirror and source collapse "
+                       "onto one path (the repo's hooks are being run directly)")
+
+    mirror_files = _hook_roster_files(mirror)
+    repo_files = _hook_roster_files(repo)
+    only_repo = sorted(set(repo_files) - set(mirror_files))
+    only_mirror = sorted(set(mirror_files) - set(repo_files))
+    differing = []
+    for rel in sorted(set(repo_files) & set(mirror_files)):
+        try:
+            if mirror_files[rel].read_bytes() != repo_files[rel].read_bytes():
+                differing.append(rel)
+        except OSError:
+            continue
+    if not only_repo and not only_mirror and not differing:
+        return []
+
+    git_root = _git_root(repo)
+    # `ahead` splits into two shapes that do NOT share a repair (T-532 QA delta
+    # pass): `mirror_only` (== `only_mirror` above) has no counterpart in the
+    # repo at all — a hook the repo has since dropped, or a stray hand-add —
+    # while `hand_edited` names still exist in the repo, just with content no
+    # commit in its history matches. Only the second shape converges by
+    # re-running `install.sh`: its §1 copy loop unconditionally overwrites
+    # every manifest basename, discarding the hand-edit. The first shape does
+    # NOT — that loop only ever WRITES the manifest's own basenames, it never
+    # removes a mirror file the manifest doesn't name, so a name with no
+    # repo counterpart survives `install.sh` forever and this warning would
+    # reprint on every subsequent `doctor` run with a repair that can never
+    # clear it (see `mirror_only` in the warns block below).
+    mirror_only = list(only_mirror)
+    behind, hand_edited = list(only_repo), []
+    for rel in differing:
+        verdict = None
+        if git_root is not None:
+            try:
+                rel_from_root = str((repo / rel).resolve().relative_to(git_root.resolve()))
+            except ValueError:
+                rel_from_root = None
+            if rel_from_root:
+                verdict = _mirror_matches_past_commit(git_root, rel_from_root, mirror_files[rel].read_bytes())
+        (behind if verdict else hand_edited).append(rel)
+    behind.sort()
+    hand_edited.sort()
+    mirror_only.sort()
+    ahead = sorted(mirror_only + hand_edited)
+
+    warns = []
+    if behind:
+        warns.append(
+            "hooks: mirror BEHIND repo — " + ", ".join(behind[:8]) +
+            (f" (+{len(behind) - 8} more)" if len(behind) > 8 else "") +
+            f" — {claude_settings_path()} registers commands under {mirror}, never under "
+            f"{repo}, so these committed changes bind nothing until synced — repair "
+            f"(reuses install.sh's own sync step): re-run `install.sh`")
+    if ahead:
+        # See the comment above `mirror_only` for why these two shapes need
+        # different repairs: `install.sh` alone clears a hand-edit (its copy
+        # loop overwrites every manifest basename) but can never clear an
+        # orphan (that loop only ever writes basenames, never removes one
+        # the manifest doesn't list) — so an orphan's repair names a direct
+        # `rm` of the mirror path(s), composed onto the `install.sh` step
+        # (not replacing it) whenever both shapes are present, still one
+        # copy-pasteable line.
+        if mirror_only:
+            rm_targets = " ".join(str(mirror / rel) for rel in mirror_only)
+            repair_cmd = f"rm {rm_targets} && install.sh" if hand_edited else f"rm {rm_targets}"
+        else:
+            repair_cmd = "install.sh"
+        warns.append(
+            "hooks: mirror AHEAD OF / HAND-EDITED vs repo (or a match outside the window "
+            "searched) — " + ", ".join(ahead[:8]) +
+            (f" (+{len(ahead) - 8} more)" if len(ahead) > 8 else "") +
+            f" — {mirror} has content not found among the most recent 25 commits examined "
+            f"for each name (bounded, local-only search — no fetch, no rename-following); "
+            f"that is NOT proof no commit anywhere in the repo's history has this content — a "
+            f"match just outside that window, a shallow clone, or a body from before a rename "
+            f"of the hooks directory would all look identical to a genuine hand-edit. Do not "
+            f"promote {mirror}'s copy into the repo on this verdict alone — confirm by hand "
+            f"first (e.g. a deeper `git log` on the real repo, or checking for a shallow "
+            f"clone), since a mistaken promote can reintroduce stale content backwards. " +
+            (f"{len(mirror_only)} of these — {', '.join(mirror_only[:8])}"
+             f"{f' (+{len(mirror_only) - 8} more)' if len(mirror_only) > 8 else ''} — have no "
+             f"counterpart in the repo at all, so `install.sh` alone can never clear them (its "
+             f"copy loop only ever writes the manifest's own basenames, never removing one the "
+             f"manifest doesn't list) — this reprints forever if that is the only repair tried. "
+             if mirror_only else "") +
+            f"If unsure, the safer default is to discard the mirror copy instead: `{repair_cmd}`")
+    return warns
+
+
+# ── test setup rebuild shape (T-537) ──────────────────────────────────────────
+# T-536 measured the defect this reports: dozens of full-installer runs spread
+# across 13 test files with no shared setup anywhere — 558s of real work packed
+# into a 45s parallel wall clock, nondeterministic timeouts. Every individual
+# diff had looked fine; the cost only ever existed as accumulation, and
+# accumulation is invisible in any single diff. That is why this lives in
+# doctor (a standing instrument) and not only in the habit/review layers.
+#
+# Time-based checking was REJECTED, not deferred (T-537 PO 실측): doctor is a
+# ~0.6s static reader, measuring a suite means running it (minutes), so there
+# is no cheap home for a runtime signal here. What is countable statically is
+# a SHAPE: many test bodies in one file each OPENING with a call to the same
+# in-file helper whose body spawns a process — the classic "every case
+# rebuilds the setup from scratch" silhouette. The opening-statement position
+# is the discriminator that keeps subject-runners out (a test that spawns the
+# CLI under test mid-body, after arranging state, is asserting on that run,
+# not rebuilding setup).
+#
+# SAME setup is half the rule and needs its own discriminator (T-537 round 2):
+# openers whose call VARIES across the file — `runInstall(undefined)` beside
+# `runInstall({}, ['--no-statusline'])` — are not one shared fixture rebuilt N
+# times, they are the subject arranged in the argument list, and no hoist can
+# merge them. So a helper is counted only when every opener calls it with the
+# same argument text. Argument PRESENCE was the other candidate and is wrong:
+# the commonest genuine offender is `install(tmpdir())` per case, which
+# presence would blind the check to entirely.
+#
+# Honest limits, stated in the warning itself because a warning that
+# overstates itself is its own defect class:
+#   - it counts a shape, it does not measure cost — a trip is "worth a look",
+#     never proof of slowness, and a genuinely slow suite can pass unflagged
+#     (a per-case rebuild routed through an imported helper, a mid-body
+#     rebuild, or a multi-line test signature all slip past this silhouette);
+#   - a file whose SUBJECT is the setup act — idempotency on re-run,
+#     first-run vs update parity, cleanup — legitimately keeps per-case
+#     setup, and this count cannot see that distinction. Deleting or
+#     weakening an assertion to clear the line is the defect a speed signal
+#     invites, so the warning forbids it in as many words;
+#   - the EMIT-CLASS: a test that GENERATES test code carries `execFileSync`
+#     as string data and reads identically to one that calls it. Single-line
+#     literals are blanked before the reader looks (`_strip_literals`), so the
+#     common generator is safe; a template that opens on one line and closes
+#     on another still reads as code, and that residue is left standing rather
+#     than met with a brace-counting parser inside a 0.6s static reader;
+#   - a helper that mints a FRESH per-case resource the body then mutates
+#     (`const sb = makeSandbox(SEED)`, `const remote = makeBareRemote()`) is
+#     counted like a rebuild, because its call text is identical every time.
+#     Nothing statically separates "same fixture, hoistable" from "a new one
+#     per case by necessity" — the difference is MUTATION, and a static reader
+#     cannot see it. Measured on this repo, this is the whole residue the
+#     round-2 discriminators leave behind.
+#
+# THE JUDGMENT RECORD (T-556) is where that last residue goes. Three ways to
+# hold a heuristic's known gap, and only the third survives: (a) keep adding
+# predicates — the check then converges on THIS repo's shape until the check IS
+# the standard and can no longer be shown wrong (T-537 refused a third
+# predicate on exactly this ground); (b) leave the warning standing — one
+# accepted-noise line teaches that every line might be noise, which is the
+# state v1.8 exists to end; (c) let a person judge it ONCE and record the
+# verdict, so the accusation is spent rather than permanent.
+#
+# (c) is not invented here: the feature seam already does it (T-547 §4/§6) —
+# the machine computes the mechanical leg, a person calls the rest, and the
+# call is recorded in `.prdt/config.json` so doctor stops asking. This check
+# uses the same place and the same grammar, `tests.non_rebuilds` beside
+# `features.non_features`, because "where do I write down what the machine
+# cannot see" must have ONE answer across every heuristic doctor check.
+#
+# Two properties the record must keep, or it becomes worse than the warning:
+#   - it is not a mute. An entry that no longer answers a live accusation is
+#     reported STALE, exactly as a `features.non_features` entry is (W3). A
+#     judgment that rots quietly is the defect this mechanism would introduce.
+#   - it is not a path list. `reason` is required and an entry without one buys
+#     no silence: the next reader has to see WHY a file was cleared without
+#     re-running the adjudication. `setup` is required for the same reason at a
+#     finer grain — the verdict is on one named helper, so a DIFFERENT rebuild
+#     appearing in the same file later is still accused.
+
+TEST_SETUP_SPAWN_RE = re.compile(
+    r"execSync|execFileSync|spawnSync|child_process|"
+    r"subprocess\.(?:run|Popen|call|check_\w+)|os\.system|exec\.Command")
+TEST_SETUP_DEF_RE = re.compile(
+    r"^\s*(?:(?:export\s+)?(?:async\s+)?function\s+(\w+)"
+    r"|(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\("
+    r"|def\s+(\w+)\s*\()", re.M)
+TEST_SETUP_OPENER_RE = re.compile(
+    r"^\s*(?:it|test)(?:\.\w+(?:\([^)]*\))?)*\s*\(|^\s*def test_\w+")
+TEST_SETUP_LITERAL_RE = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"|`[^`\n]*`")
+TEST_SETUP_COMMENT_RE = re.compile(r"^\s*(?:#|//|/\*|\*)")
+TEST_SETUP_SKIP_DIRS = {"node_modules", "dist", "build", "out", "vendor",
+                        "venv", "target", "coverage"}
+TEST_SETUP_BODY_MAX = 40    # lines of helper body the reader will look through
+TEST_SETUP_REBUILD_MIN = 5  # bodies opening with the same spawn-backed helper;
+                            # calibrated on this repo's own history: the T-536
+                            # offenders sat at 3-5 per file. NOT a false-
+                            # positive shield — measured 2026-09-02, this
+                            # repo's legitimate subject-runner shapes sit at
+                            # 5, 5, 5 and 9, so no threshold separates them
+                            # from a real offender; the discriminators do
+                            # (opener position, then same-argument). 5 is the
+                            # recurrence floor only: below it, "many bodies"
+                            # is not yet a shape worth a line.
+
+
+def _is_test_filename(fn):
+    if re.search(r"\.(?:test|spec)\.[^.]+$", fn):
+        return True
+    return (fn.startswith("test_") and fn.endswith(".py")) or \
+        fn.endswith(("_test.py", "_test.go"))
+
+
+def _strip_literals(s):
+    """Single-line string literals blanked out, so emitted text is not read as
+    a call (the emit-class). A literal that opens and closes on the same line
+    is covered; a multi-line template is not — declared above."""
+    return TEST_SETUP_LITERAL_RE.sub("", s)
+
+
+def _call_args(line, name):
+    """Argument text of `name(...)` as written on one line, whitespace
+    collapsed. A call whose signature continues onto the next line yields the
+    fragment this line holds — still enough to tell two openers apart."""
+    m = re.search(r"\b" + re.escape(name) + r"\s*\(", line)
+    if not m:
+        return ""
+    depth, out = 1, []
+    for ch in line[m.end():]:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                break
+        out.append(ch)
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+def test_setup_opener_counts(text):
+    """{helper: how many test bodies OPEN with a call to it} for one test
+    file's source — the whole shape reader, kept apart from the walk so it can
+    be measured on a single file. A helper is in the map only if its body
+    spawns a process AND every opener calls it with the same argument text."""
+    lines = text.splitlines()
+    defs = [(next(g for g in m.groups() if g), text[:m.start()].count("\n"))
+            for m in TEST_SETUP_DEF_RE.finditer(text)]
+    openers = [i for i, ln in enumerate(lines) if TEST_SETUP_OPENER_RE.match(ln)]
+    spawn_helpers = set()
+    for k, (name, start) in enumerate(defs):
+        # Body window: next def, next test opener, or TEST_SETUP_BODY_MAX lines
+        # — whichever comes first. The opener cut is the round-2 fix: with only
+        # the next-def cut, a helper's window ran through every test body that
+        # followed it (the commonest layout), and one spawn anywhere in that
+        # stretch marked an fs-only helper spawn-backed — observed on
+        # packages/gui/electron/prdt-bootstrap.test.ts, where a mkdir/write
+        # helper wore an execFileSync from a test 190 lines below it.
+        ends = [start + TEST_SETUP_BODY_MAX, len(lines)]
+        if k + 1 < len(defs):
+            ends.append(defs[k + 1][1])
+        nxt = next((o for o in openers if o > start), None)
+        if nxt is not None:
+            ends.append(nxt)
+        if TEST_SETUP_SPAWN_RE.search(_strip_literals("\n".join(lines[start:min(ends)]))):
+            spawn_helpers.add(name)
+    counts, argsets = {}, {}
+    for i in openers:
+        first = next((lines[j] for j in range(i + 1, min(i + 4, len(lines)))
+                      if lines[j].strip() and not TEST_SETUP_COMMENT_RE.match(lines[j])), "")
+        code = _strip_literals(first)
+        for h in sorted(spawn_helpers):          # sorted: one call site, one verdict
+            if re.search(r"\b" + re.escape(h) + r"\(", code):
+                key, args = h, _call_args(first, h)
+                break
+        else:
+            m = TEST_SETUP_SPAWN_RE.search(code)
+            if not m:
+                continue
+            key, args = "<direct spawn>", _call_args(first, m.group(0))
+        counts[key] = counts.get(key, 0) + 1
+        argsets.setdefault(key, set()).add(args)
+    # SAME setup, per the rule: a call that varies across the openers is the
+    # subject arranged per case, not one fixture rebuilt — drop it entirely.
+    return {h: n for h, n in counts.items() if len(argsets[h]) == 1}
+
+
+TEST_SETUP_RECORD_KEY = "tests.non_rebuilds"
+
+
+def _rel_test_path(s):
+    """A config `file` value in the same posix, root-relative form the walk
+    reports, so a hand-written `./a/b.test.ts` matches `a/b.test.ts`."""
+    p = str(s).strip().replace("\\", "/")
+    while p.startswith("./"):
+        p = p[2:]
+    return p.strip("/")
+
+
+def test_setup_judgments(root):
+    """The project's recorded verdicts on this check — `.prdt/config.json`
+    `tests.non_rebuilds`, the same home and the same grammar as the feature
+    seam's `features.non_features` (T-547 §4): project state, one entry per
+    human judgment, durable rather than a migration list.
+
+    Returns `(judged, malformed)` — `judged` maps `(file, setup)` to its
+    reason, `malformed` holds one complaint per entry that cannot be honoured.
+    An entry needs all three of `file`, `setup` and `reason`, and a bad entry
+    is REPORTED rather than skipped: silently ignoring a typo'd record would
+    make the record look applied when nothing is suppressed."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    sec = cfg.get("tests") if isinstance(cfg.get("tests"), dict) else {}
+    raw = sec.get("non_rebuilds")
+    if raw is None:
+        return {}, []
+    if not isinstance(raw, list):
+        return {}, [f"must be a list of {{file, setup, reason}} entries "
+                    f"(found {type(raw).__name__}) — no judgment is being applied"]
+    judged, malformed = {}, []
+    for i, ent in enumerate(raw, 1):
+        if not isinstance(ent, dict):
+            malformed.append(f"entry #{i} is not an object — an entry is "
+                             f"{{file, setup, reason}}")
+            continue
+        fields = {}
+        for k in ("file", "setup", "reason"):
+            v = ent.get(k)
+            fields[k] = v.strip() if isinstance(v, str) else ""
+        missing = [k for k in ("file", "setup", "reason") if not fields[k]]
         if missing:
-            warns.append(f"state: missing keys {sorted(missing)}")
-        if st.get("stage") not in STAGES:
-            warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
-        ct = st.get("current_task")
-        if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee"} >= set(ct)):
-            warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
+            who = fields["file"] or f"#{i}"
+            malformed.append(
+                f"entry '{who}' is missing {' and '.join(missing)} — it "
+                f"suppresses nothing. The reason is the record: a reader has to "
+                f"see WHY this setup was judged legitimate without adjudicating "
+                f"it again")
+            continue
+        judged[(_rel_test_path(fields["file"]), fields["setup"])] = fields["reason"]
+    return judged, malformed
 
-    # tickets
-    con, tviol, _pages, _mpages = rebuild_index(root)
-    warns += [f"ticket: {v}" for v in tviol]
-    tickets = {r["id"]: r for r, _, _ in (scan_tickets(root) or [])}
+
+def test_setup_rebuild_warnings(root):
+    """One warning line when any test file has TEST_SETUP_REBUILD_MIN or more
+    test bodies opening with the SAME call — same in-file process-spawning
+    helper (or direct spawn), same argument text — minus the files a person has
+    already judged in `tests.non_rebuilds`, plus one line per recorded judgment
+    that has gone stale. Static file reads only, ~40ms over a repo of this size
+    — never runs a suite, never times anything; skip-list pruning keeps the
+    walk off node_modules and friends so the doctor budget holds. See the block
+    comment above for what this can and cannot see, and why the residue it
+    cannot see is routed to a person instead of to another predicate."""
+    per_file = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if d not in TEST_SETUP_SKIP_DIRS and not d.startswith(".")]
+        for fn in filenames:
+            if not _is_test_filename(fn):
+                continue
+            p = Path(dirpath) / fn
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            counts = test_setup_opener_counts(text)
+            if counts:
+                per_file[str(p.relative_to(root)).replace(os.sep, "/")] = counts
+
+    judged, malformed = test_setup_judgments(root)
+    # The verdict is per (file, setup), so a judged helper is dropped BEFORE the
+    # file's worst is chosen — otherwise clearing the loudest setup in a file
+    # would mute a second, unjudged rebuild hiding behind it.
+    offenders = []
+    for rel, counts in per_file.items():
+        left = {h: n for h, n in counts.items() if (rel, h) not in judged}
+        if not left:
+            continue
+        worst = max(left, key=lambda h: left[h])
+        if left[worst] >= TEST_SETUP_REBUILD_MIN:
+            offenders.append((left[worst], rel, worst))
+    offenders.sort(reverse=True)
+    named_setup = {rel: name for _, rel, name in offenders}
+
+    warns = []
+    if offenders:
+        shown = ", ".join(f"{rel} ({name} opens {n} test bodies)"
+                          for n, rel, name in offenders[:5])
+        more = (f" (+{len(offenders) - 5} more files)"
+                if len(offenders) > 5 else "")
+        warns.append(
+            "tests: test bodies rebuilding the same process-spawning setup per case — "
+            + shown + more +
+            " — expensive shared setup is built once per file and reused. Heuristic: "
+            "this counts a shape, it does not measure cost — a listed file may be "
+            "cheap, and a genuinely slow suite can pass unflagged. A file whose "
+            "subject IS the setup act (idempotency, first-run vs update parity, "
+            "cleanup) legitimately keeps per-case setup; deleting or weakening an "
+            "assertion to clear this line is the defect, not the repair. If the "
+            "per-case build is necessary rather than wasteful — a fresh resource "
+            "each case then MUTATES, which no static reader can see — judge it once "
+            f"and record the verdict in .prdt/config.json {TEST_SETUP_RECORD_KEY} "
+            "as {file, setup, reason}; this line then goes silent for that setup, "
+            "and doctor reports the entry if it later stops matching anything")
+
+    # A judgment answers ONE accusation. When it stops answering one, say so —
+    # an entry that quietly suppresses nothing is the rot `features.non_features`
+    # W3 exists to catch, and it lands here for the same reason.
+    for rel, name in sorted(judged):
+        counts = per_file.get(rel, {})
+        if counts.get(name, 0) >= TEST_SETUP_REBUILD_MIN:
+            continue                       # still answering a live accusation
+        if not (Path(root) / rel).is_file():
+            why = "no file there any more"
+        elif name in counts:
+            why = (f"'{name}' opens {counts[name]} test bodies there, under the "
+                   f"{TEST_SETUP_REBUILD_MIN} this check reports")
+        else:
+            why = f"the check no longer counts a setup called '{name}' there"
+            if rel in named_setup:
+                why += f" — it names '{named_setup[rel]}' instead, still unjudged"
+        warns.append(f"tests: config {TEST_SETUP_RECORD_KEY} entry '{rel}' "
+                     f"({name}) is stale — {why}; the recorded verdict answers "
+                     f"nothing, drop it")
+    for why in malformed:
+        warns.append(f"tests: config {TEST_SETUP_RECORD_KEY} {why}")
+    return warns
+
+
+# ── Artifacts — version buckets + derived manifest (T-512) ────────────────────
+# Layout: docs/artifacts/<version>/[archive/]<slug>.<ext> beside a manifest.json
+# the CLI writes. The manifest is a derived index, so `prdt artifacts sync`
+# rebuilds it from disk and keeps whatever a person set that disk cannot say
+# (ticket, kind, status, lang); doctor reports what the rule cannot place.
+ARTIFACT_BUCKET_RE = re.compile(r"^v\d+\.\d+(?:\.\d+)?$")
+ARTIFACT_TICKET_PREFIX_RE = re.compile(r"^(T-(?:[A-Z][A-Z0-9]*-)?\d+)-")
+ARTIFACT_TICKET_ANY_RE = re.compile(r"\bT-(?:[A-Z][A-Z0-9]*-)?\d+\b")
+ARTIFACT_KIND_SUFFIX = (("-mockup", "mockup"), ("-showcase", "mockup"),
+                        ("-wireframe", "wireframe"), ("-design-system", "design-system"),
+                        ("-spec", "spec"), ("-runsheet", "doc"))
+ARTIFACT_EXTS = (".md", ".mmd", ".mermaid", ".html", ".json", ".excalidraw.json")
+
+
+def artifacts_root(root):
+    return root / "docs" / "artifacts"
+
+
+def artifact_buckets(root):
+    base = artifacts_root(root)
+    if not base.is_dir():
+        return []
+    return sorted((d for d in base.iterdir()
+                   if d.is_dir() and ARTIFACT_BUCKET_RE.match(d.name)),
+                  key=lambda d: version_key(d.name))
+
+
+def version_key(v):
+    return tuple(int(n) for n in re.findall(r"\d+", v))
+
+
+def artifact_files(bucket):
+    """Manifest-relative paths of the files one bucket holds: files directly in the
+    bucket root, then every file anywhere under archive/ — recursive, since an
+    archived doc may itself be organized into subdirectories (F1: a file at
+    archive/<subdir>/… was previously invisible to every check class)."""
+    out = []
+    for p in sorted(bucket.iterdir(), key=lambda x: x.name):
+        if p.is_file() and not p.name.startswith(".") and p.name != "manifest.json":
+            out.append(p.name)
+    arch = bucket / "archive"
+    if arch.is_dir():
+        for p in sorted(arch.rglob("*"), key=lambda x: x.as_posix()):
+            if not p.is_file():
+                continue
+            rel = p.relative_to(arch)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            out.append(f"archive/{rel.as_posix()}")
+    return out
+
+
+def read_artifact_manifest(bucket):
+    """(entries keyed by path, error string or None, malformed-entry notes[]).
+    Absent manifest = empty, no error. An entry that is not {path: str, ...} is
+    dropped from the returned dict (it cannot be keyed by path) but never
+    silently — it is named in the third element instead (F4)."""
+    mp = bucket / "manifest.json"
+    if not mp.is_file():
+        return {}, None, []
+    try:
+        data = json.loads(mp.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return {}, f"is unreadable ({e.__class__.__name__})", []
+    entries = data.get("entries")
+    if not isinstance(entries, list):
+        return {}, "has no `entries` list", []
+    out = {}
+    malformed = []
+    for i, e in enumerate(entries):
+        if isinstance(e, dict) and isinstance(e.get("path"), str):
+            out[e["path"]] = e
+        else:
+            malformed.append(f"entry {i} is not {{path: str, ...}} — dropped")
+    return out, None, malformed
+
+
+def derive_artifact_kind(rel):
+    stem = Path(rel).name.rsplit(".", 1)[0].lower()
+    for suffix, kind in ARTIFACT_KIND_SUFFIX:
+        if stem.endswith(suffix):
+            return kind
+    return "doc"
+
+
+def derive_artifact_ticket(root, bucket, rel):
+    """Ticket id from the filename prefix, else the one the document names in its own
+    title (`# …` / `<title>`), and only if that ticket exists. Body prose is not read:
+    a document cites many tickets and the first mention is not its owner — that is how
+    a fork artifact briefly claimed the ticket it merely discussed."""
+    m = ARTIFACT_TICKET_PREFIX_RE.match(Path(rel).name)
+    if m:
+        return m.group(1)
+    try:
+        head = (bucket / rel).read_text(encoding="utf-8", errors="ignore")[:8000]
+    except OSError:
+        return None
+    title = None
+    tm = re.search(r"<title>(.*?)</title>", head, re.S | re.I)
+    if tm:
+        title = tm.group(1)
+    else:
+        for line in head.splitlines():
+            if line.startswith("# "):
+                title = line
+                break
+    if not title:
+        return None
+    known = {q.stem for q in (root / "docs" / "tickets").rglob("T-*.md")}
+    for cand in ARTIFACT_TICKET_ANY_RE.findall(title):
+        if cand in known:
+            return cand
+    return None
+
+
+def build_artifact_manifest(root, bucket):
+    """Derive the bucket's manifest, carrying forward every hand-set field."""
+    prior, _, _ = read_artifact_manifest(bucket)
+    entries = []
+    for rel in artifact_files(bucket):
+        old = prior.get(rel, {})
+        archived = rel.startswith("archive/")
+        e = {
+            "path": rel,
+            "ticket": old.get("ticket") if "ticket" in old else derive_artifact_ticket(root, bucket, rel),
+            "kind": old.get("kind") or derive_artifact_kind(rel),
+            "status": "archived" if archived else (old.get("status") or "pending"),
+            "lang": old.get("lang") or "ko",
+        }
+        for k in ("source", "source_hash", "backfilled"):
+            if k in old:
+                e[k] = old[k]
+        e["added_at"] = old.get("added_at") or datetime.fromtimestamp(
+            (bucket / rel).stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
+        entries.append(e)
+    return {"schema_v": 1, "version": bucket.name, "entries": entries}
+
+
+def artifact_placement_warnings(root):
+    """Every file under docs/artifacts/ is attributable to a version by its bucket,
+    and registered in that bucket's manifest. Anything the rule cannot place says so."""
+    base = artifacts_root(root)
+    if not base.is_dir():
+        return []
+    warns = []
+    for p in sorted(base.iterdir(), key=lambda x: x.name):
+        if p.name.startswith("."):
+            continue
+        if p.is_file():
+            warns.append(f"artifact: {p.name} sits outside a version bucket — "
+                         f"move it under docs/artifacts/<version>/ (contracts §Fixed paths)")
+        elif not ARTIFACT_BUCKET_RE.match(p.name):
+            warns.append(f"artifact: docs/artifacts/{p.name}/ is not a version bucket "
+                         f"(expected v<N>.<m> or v<N>.<m>.<p>)")
+    for bucket in artifact_buckets(root):
+        for d in sorted(bucket.iterdir(), key=lambda x: x.name):
+            if d.is_dir() and d.name != "archive":
+                warns.append(f"artifact: {bucket.name}/{d.name}/ — a bucket holds files "
+                             f"plus archive/, no other subdirectory")
+        prior, err, malformed = read_artifact_manifest(bucket)
+        if err:
+            warns.append(f"artifact: {bucket.name}/manifest.json {err} — run `prdt artifacts sync`")
+            continue
+        for m in malformed:
+            warns.append(f"artifact: {bucket.name}/manifest.json {m} — run `prdt artifacts sync`")
+        on_disk = set(artifact_files(bucket))
+        if not prior and on_disk:
+            warns.append(f"artifact: {bucket.name}/ has {len(on_disk)} file(s) and no manifest.json "
+                         f"— run `prdt artifacts sync`")
+            continue
+        for rel in sorted(on_disk - set(prior)):
+            warns.append(f"artifact: {bucket.name}/{rel} is not registered in manifest.json "
+                         f"— run `prdt artifacts sync`")
+        for rel in sorted(set(prior) - on_disk):
+            warns.append(f"artifact: {bucket.name}/manifest.json lists {rel}, which is not on disk")
+    return warns
+
+
+def cmd_artifacts(args):
+    root = require_root()
+    if args.action == "check":
+        warns = artifact_placement_warnings(root)
+        for w in warns:
+            print(w)
+        print(f"artifacts: {len(warns)} finding(s)")
+        sys.exit(1 if warns else 0)
+    # sync — write each bucket's manifest from disk; report what sits outside one.
+    wrote = []
+    for bucket in artifact_buckets(root):
+        want = json.dumps(build_artifact_manifest(root, bucket), indent=2, ensure_ascii=False) + "\n"
+        mp = bucket / "manifest.json"
+        if mp.is_file() and mp.read_text(encoding="utf-8") == want:
+            continue
+        tmp = Path(str(mp) + ".tmp")
+        tmp.write_text(want, encoding="utf-8")
+        os.replace(tmp, mp)
+        wrote.append(bucket.name)
+    print(f"artifacts: manifest written for {', '.join(wrote)}" if wrote
+          else "artifacts: manifests already current")
+    stray = [w for w in artifact_placement_warnings(root) if "sits outside" in w or "not a version bucket" in w]
+    for w in stray:
+        print(w)
+
+
+# ── feature seam — docs/features/ ↔ ticket `feature:` values (T-548/T-547) ────
+#
+# T-547 fixed what the field IS: `feature:` is a grouping key, not a spec
+# pointer. A value with NO `docs/features/<value>.md` is legal and the normal
+# state — 131 of 134 values across the 8 prdt projects measured on 2026-09-01 —
+# so "no spec file" is never a warning here. Three things ARE:
+#   W1  a spec file no ticket names        (orphan — renamed value or typo)
+#   W2  a promotion judgment left pending  (T3 passes, unpromoted, unrecorded)
+#   W3  a recorded non-promotion gone stale
+#
+# Only T3 — the mechanical leg of T-476's three promotion tests — is computed.
+# T1 (is the value a mechanism, not a surface/round/persona?) and T2 (is there
+# a contract still true today?) are human yes/no judgments; a doctor guessing
+# them would make exactly the call this check exists to ROUTE to a person.
+#
+# Two independent routes meet here on purpose: ticket frontmatter (scan_tickets
+# rows) and the spec directory listing. Neither derives from the other, so
+# agreement between them is evidence rather than one value read twice.
+
+
+def feature_spec_dir(root):
+    return Path(root) / "docs" / "features"
+
+
+def ticket_feature_values(tickets):
+    """Every `feature:` value carried by ANY ticket — all statuses, backlog dir
+    included. This is the existence set W1 and W3 ask about; it is deliberately
+    wider than T3's done-only set."""
+    out = set()
+    for t in tickets:
+        v = t.get("feature")
+        if isinstance(v, str) and v.strip():
+            out.add(v.strip())
+    return out
+
+
+def feature_done_version_dirs(tickets):
+    """T3 input — value → set of version dirs holding a `done` ticket for it.
+    `backlog` is excluded (T-476: an open ticket is not yet a fact), patch dirs
+    count separately (v1.2 and v1.2.1 are two, per T-476's own measurement),
+    and spellings are compared verbatim — there is no alias machine (YAGNI)."""
+    dirs = {}
+    for t in tickets:
+        v = t.get("feature")
+        if not isinstance(v, str) or not v.strip():
+            continue
+        if t.get("status") != "done":
+            continue
+        ver = t.get("version")
+        if not isinstance(ver, str) or not ver or ver == "backlog":
+            continue
+        dirs.setdefault(v.strip(), set()).add(ver)
+    return dirs
+
+
+FEATURE_T3_MIN_DIRS = 2
+
+
+def feature_seam_warnings(root, tickets):
+    """Standard doctor warnings — non-blocking, never a gate.
+
+    `tickets` is the scan_tickets ROW sequence (T-547 §2), not an id-keyed
+    mapping's values: T3 measures a span across version dirs, and an id-keyed
+    map holds one entry per id, so a duplicated id would hide a real span."""
+    tickets = list(tickets)
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    feat_cfg = cfg.get("features") if isinstance(cfg.get("features"), dict) else {}
+    raw = feat_cfg.get("non_features")
+    non_features = [v.strip() for v in raw if isinstance(v, str) and v.strip()] if isinstance(raw, list) else []
+    slug = cfg.get("slug") if isinstance(cfg.get("slug"), str) else None
+
+    sdir = feature_spec_dir(root)
+    specs = {p.stem for p in sorted(sdir.glob("*.md"))} if sdir.is_dir() else set()
+    carried = ticket_feature_values(tickets)
+    spanned = feature_done_version_dirs(tickets)
+
+    warns = []
+    # W1 — orphan spec: a file exists that no ticket's value names.
+    for name in sorted(specs - carried):
+        warns.append(f"feature: docs/features/{name}.md is named by no ticket's "
+                     f"feature: value (orphan — renamed value or typo)")
+    # W2 — promotion candidate: T3 passes, no spec file, no recorded judgment,
+    # and not the project's own slug (a project is never its own feature).
+    for value in sorted(spanned):
+        n = len(spanned[value])
+        if n < FEATURE_T3_MIN_DIRS or value in specs or value in non_features or value == slug:
+            continue
+        warns.append(f"feature: '{value}' — done tickets span {n} version dirs but "
+                     f"docs/features/{value}.md does not exist — promotion candidate: "
+                     f"apply the three tests (designer habit), then promote or record "
+                     f"in .prdt/config.json features.non_features")
+    # W3 — the recorded judgment has rotted: it was promoted after all, or the
+    # value it names no longer exists on any ticket.
+    seen = set()
+    for value in non_features:
+        if value in seen:
+            continue
+        seen.add(value)
+        why = []
+        if value in specs:
+            why.append("a spec file exists")
+        if value not in carried:
+            why.append("no ticket carries it")
+        if why:
+            warns.append(f"feature: config features.non_features entry '{value}' "
+                         f"is stale — {' and '.join(why)}")
+    return warns
+
+
+def duplicate_ticket_id_warnings(tickets):
+    """Standard doctor warnings — non-blocking, never a gate.
+
+    contracts §Tickets declares `id` a global counter — "`T-NNN` unique across ALL
+    ticket dirs" — and until T-551 nothing verified it, so the claim held only on
+    paper. Measured 2026-09-01: 0 duplicates across ~1420 tickets in the real
+    projects. This does not repair a break; it makes a declared invariant checkable,
+    which is why the evidence for it lives in a fixture and not in a silent pass.
+
+    What a violation costs, silently: `prdt tickets --link` and every other id
+    lookup resolve through an id-keyed map, so which of the colliding files they
+    mean is undefined (last writer wins), and the row that loses is invisible to
+    every check reading that map.
+
+    Takes the scan_tickets ROW sequence, never that map. Keyed by the row `id` —
+    the key resolution itself uses — so two files collide here whenever their ids
+    collide, including when only the FRONTMATTER id does and the filenames differ.
+
+    This is the only place doctor speaks about duplicate ids. The feature seam
+    (T-548/T-549) reads the same rows for a different question and stays silent
+    about them; prdt-doctor-feature-seam.test.ts pins that separation from the
+    seam's side, prdt-doctor-duplicate-ticket-id.test.ts from this side."""
+    by_id = {}
+    for r in tickets:
+        by_id.setdefault(r["id"], []).append(r["path"])
+    warns = []
+    for tid in sorted(by_id):
+        paths = sorted(by_id[tid])
+        if len(paths) < 2:
+            continue
+        # every carrier is named, never a count with an example: the repair is a
+        # renumber, and you cannot renumber the files you were not told about.
+        warns.append(f"ticket: duplicate id {tid} — {len(paths)} files carry it: "
+                     f"{', '.join(paths)} — ids are unique across ALL ticket dirs "
+                     f"(contracts §Tickets), so which file an id resolves to is "
+                     f"undefined; renumber all but one to a fresh T-NNN")
+    return warns
+
+
+# ── doctor: check roster · declared family · verdict line (T-560) ─────────────
+#
+# v1.8's acceptance bar is a single number — `prdt doctor` judges "0
+# discipline↔execution mismatches" — and until this slice the tool could not
+# produce it. `cmd_doctor` printed a flat warning list and a total; the split
+# into families was done by a PO reading 27 lines. So the bar itself stood in
+# the failure class this round exists to close (T-500 · T-507 · T-519 · T-521 ·
+# T-532 were each an instance): a 0 that cannot tell "found nothing" from
+# "nobody looked".
+#
+# Three properties, and where each lives:
+#
+#  1. Membership is DECLARED, never inferred. Every check is registered in the
+#     roster inside `cmd_doctor` with a family constant, and nothing here ever
+#     reads the TEXT a check emits. Post-hoc regex over printed warnings was
+#     ruled out by name in the ticket, with cause: T-525 and T-566/R4 each
+#     measured a check that silently misfiled itself the moment a message was
+#     reworded. A registration whose family is not in `DOCTOR_FAMILIES` is
+#     reported — `unclassified=` on the verdict line plus a line naming the
+#     check — never quietly filed under neither family. That is what makes the
+#     next person to add a check without declaring one find out.
+#  2. "The check ran" and "the check found nothing" are different facts. A
+#     check returns `Skipped` when a precondition is absent (no install mirror,
+#     no repo checkout nearby, an explicit dev env override), and a skipped
+#     check is counted apart from the violations — its blindness can never be
+#     spent as evidence of health. This is the entire reason the ticket exists.
+#  3. `no-evidence` is the third state of the verdict, not a standing warning.
+#     T-564 was right that a check which looked and established nothing must
+#     not be silent (that silence was byte-identical to a correct clean read).
+#     But as a ⚠ line it charged every correctly-behaving local-merge repo a
+#     permanent no-action warning, and T-523 priced that: a no-action warning
+#     that shows on every run stops being read even when it is right. The
+#     verdict line already had to separate "ran" from "could not look", so
+#     `no-evidence` is literally the third state of a distinction that had to
+#     exist anyway — it moves there rather than becoming a fourth concept. The
+#     `pr` case is NOT affected: real evidence that this repo promotes through
+#     a PR stays a warning, because it is execution information a person must
+#     read in the minutes before promoting.
+
+FAMILY_DE = "discipline↔execution"
+FAMILY_PROJECT = "project"
+DOCTOR_FAMILIES = (FAMILY_DE, FAMILY_PROJECT)
+
+
+class Skipped:
+    """What a check returns when it could not LOOK — a precondition it does not
+    own was absent. Distinct from `[]`, which asserts the check looked and found
+    nothing; conflating the two is the defect this whole slice removes."""
+    __slots__ = ("reason",)
+
+    def __init__(self, reason):
+        self.reason = reason
+
+
+class NoEvidence:
+    """What a check returns when it looked with every signal available to it and
+    established neither a violation nor the absence of one. Not a defect and not
+    an instruction — the reader is simply told the question stayed open."""
+    __slots__ = ("note",)
+
+    def __init__(self, note):
+        self.note = note
+
+
+class Advisory:
+    """What a check returns when it RAN and established something real and
+    worth a ⚠ line — a person reads it in the minutes before doing something —
+    but the fact itself is not a discipline↔execution MISMATCH (T-572 ②).
+
+    `git promotion path`'s `pr` case is the motivating example: T-506 changed
+    the discipline text to say "promote by the path `prdt doctor` names for
+    THIS repo", so a repo that promotes through a PR is the discipline and the
+    execution AGREEING, not diverging — the family's question ("did discipline
+    and execution disagree?") is answered "no" here, even though the line is
+    real, current, and needs reading before a promote. Counted in `ran` (the
+    check looked and found something), never in `violations` (nothing here
+    contradicts the discipline text) — the printed ⚠ line is unchanged either
+    way, since doctor has exactly one severity and this is still a finding
+    worth surfacing, just not one that moves the family's mismatch count."""
+    __slots__ = ("lines",)
+
+    def __init__(self, lines):
+        self.lines = list(lines)
+
+
+def doctor_record(name, family, result):
+    """One registered check's outcome in the shape the verdict reads. `family`
+    is carried through verbatim — including a bad value, so the verdict can
+    report it rather than this layer quietly guessing a home for it.
+
+    `violations` is stored explicitly (T-572) rather than always being
+    `len(warnings)`: an `Advisory` result prints its lines exactly like any
+    other `ran` warning but contributes 0 to the family's mismatch count. A
+    record built without the key (the verdict-line unit test constructs raw
+    dicts by hand) defaults to the old behavior via `.get` in
+    `doctor_verdict_lines`, so that contract is untouched."""
+    if isinstance(result, Skipped):
+        return {"name": name, "family": family, "state": "skipped",
+                "reason": result.reason, "warnings": []}
+    if isinstance(result, NoEvidence):
+        return {"name": name, "family": family, "state": "no-evidence",
+                "reason": result.note, "warnings": []}
+    if isinstance(result, Advisory):
+        return {"name": name, "family": family, "state": "ran", "reason": None,
+                "warnings": list(result.lines), "violations": 0}
+    warnings = list(result)
+    return {"name": name, "family": family, "state": "ran", "reason": None,
+            "warnings": warnings, "violations": len(warnings)}
+
+
+def doctor_verdict_lines(records):
+    """The acceptance bar, computed by the tool from what the checks declared.
+
+    Pure on purpose: it takes records and returns lines, so the three states it
+    distinguishes can be tested without staging a machine that happens to
+    produce each one. The bracketed tail is the machine-readable half — counts
+    and a verdict token from a fixed vocabulary — and is the part tests pin.
+    The prose ahead of it is for the reader and is free to be rewritten."""
+    fam = [r for r in records if r.get("family") == FAMILY_DE]
+    # Not filed under FAMILY_PROJECT either: an undeclared check might belong to
+    # this family, and assuming it does not is the silent misfiling the ticket
+    # forbids. So it is counted nowhere and reported everywhere.
+    unclassified = [r for r in records if r.get("family") not in DOCTOR_FAMILIES]
+    ran = [r for r in fam if r["state"] == "ran"]
+    skipped = [r for r in fam if r["state"] == "skipped"]
+    unseen = [r for r in fam if r["state"] == "no-evidence"]
+    # `.get("violations", …)` — not every `ran` record carries the key (the
+    # membership unit test below builds raw dicts by hand), so a record
+    # without it falls back to the pre-T-572 rule (every warning is a
+    # violation). Only `Advisory` (T-572 ②) stores an explicit 0.
+    violations = sum(r.get("violations", len(r["warnings"])) for r in ran)
+
+    if violations:
+        verdict = "violations"
+        head = f"{violations} mismatch(es) across {len(ran)} check(s) that ran"
+    elif skipped or unseen or unclassified:
+        verdict = "not-established"
+        head = (f"0 mismatches among the {len(ran)} check(s) that ran — not a clean bill: "
+                f"{len(skipped) + len(unseen)} of {len(fam)} could not establish an answer")
+    else:
+        verdict = "clean"
+        head = f"0 mismatches, all {len(fam)} check(s) ran"
+
+    lines = [f"doctor: {FAMILY_DE} — {head} "
+             f"[verdict={verdict} violations={violations} ran={len(ran)} "
+             f"skipped={len(skipped)} no-evidence={len(unseen)} "
+             f"unclassified={len(unclassified)}]"]
+    # Every detail line stays on the `doctor:` channel rather than becoming a
+    # ⚠ finding. doctor has exactly two line kinds and one severity — a `⚠`
+    # finding and doctor's own report — and two fixtures assert that invariant
+    # directly. These lines are report, not findings: nothing here is a defect
+    # anyone can repair, which is the whole reason no-evidence moved off the
+    # warning list in the first place.
+    for r in skipped:
+        lines.append(f"doctor:    could not look · {r['name']}: {r['reason']}")
+    for r in unseen:
+        lines.append(f"doctor:    no evidence · {r['name']}: {r['reason']}")
+    for r in unclassified:
+        lines.append(f"doctor:    unclassified · {r['name']}: registered with family "
+                     f"{r.get('family')!r}, which is not one of {' / '.join(DOCTOR_FAMILIES)} — "
+                     "its result is counted in NO family; declare one where the check is "
+                     "registered in cmd_doctor")
+    return lines
+
+
+def po_state_warnings(st):
+    """`.prdt/po-state.json` is the state the harness actually runs on, against
+    the shape the discipline declares — a discipline↔execution check by
+    construction, which is why the ticket names `state:` in the family."""
+    if st is None:
+        return ["state: .prdt/po-state.json missing or invalid JSON"]
+    warns = []
+    extra = set(st) - PO_STATE_KEYS
+    missing = PO_STATE_KEYS - set(st)
+    if extra:
+        warns.append(f"state: unexpected keys {sorted(extra)} (shape is 4 fields)")
+    if missing:
+        warns.append(f"state: missing keys {sorted(missing)}")
+    if st.get("stage") not in STAGES:
+        warns.append(f"state: stage '{st.get('stage')}' not in {'/'.join(STAGES)}")
+    ct = st.get("current_task")
+    if ct is not None and (not isinstance(ct, dict) or not {"ticket_id", "slug", "assignee"} >= set(ct)):
+        warns.append("state: current_task must be null or {ticket_id, slug, assignee}")
+    return warns
+
+
+def ticket_graph_warnings(root, tickets):
+    """Deps that point nowhere or at dropped work, plus the two staleness
+    clocks. One function because the emission order interleaves them per
+    ticket, and that order is what the fixtures read."""
     ids = set(tickets)
+    warns = []
     for t in tickets.values():
         for d in t["deps"]:
             if d not in ids:
@@ -2375,107 +4788,332 @@ def cmd_doctor(_args):
                 warns.append(f"ticket: {t['id']} open+blocked for {age}d")
             if t["version"] == "backlog" and age is not None and age > BACKLOG_STALE_DAYS:
                 warns.append(f"ticket: backlog {t['id']} untouched {age}d")
-    # stage-completion signal: current version's tickets exhausted → next-stage entry worth a look
-    if st:
-        stage, version = st.get("stage"), st.get("version")
-        next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
-        if next_stage and version:
-            ver_tickets = [t for t in tickets.values() if t["version"] == version]
-            if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
-                warns.append(f"stage: {version} has no open tickets at stage={stage} — "
-                             f"consider {next_stage} entry")
-        # build-entry signal (T-430): stage=build but the version's ticket dir has
-        # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
-        if stage == "build" and version:
-            ver_tickets = [t for t in tickets.values() if t["version"] == version]
-            if not any(t["status"] in ("open", "done") for t in ver_tickets):
-                warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
-                             f"consider build-entry scope slicing")
-    # deps cycle
-    def cycles():
-        seen, stack = set(), set()
-        def dfs(i):
-            if i in stack:
-                return True
-            if i in seen or i not in tickets:
-                return False
-            seen.add(i); stack.add(i)
-            hit = any(dfs(d) for d in tickets[i]["deps"])
-            stack.discard(i)
-            return hit
-        return [i for i in tickets if dfs(i)]
-    cyc = cycles()
-    if cyc:
-        warns.append(f"ticket: dependency cycle involving {cyc[0]}")
-    # artifact without referencing ticket
-    art = root / "docs" / "artifacts"
-    if art.is_dir():
-        all_bodies = " ".join((root / t["path"]).read_text(encoding="utf-8") for t in tickets.values()) if tickets else ""
-        for a in art.iterdir():
-            if a.is_file() and not a.name.startswith(".") and a.name not in all_bodies:
-                warns.append(f"ticket: artifact {a.name} has no referencing ticket")
+    return warns
 
-    # main-push block: install where it is ours to write, report where it is not (T-481)
-    warns += prepush_warnings(root)
 
-    # release notes vs cut tags (T-465)
-    warns += release_notes_gap_warnings(root)
+def stage_signal_warnings(st, tickets):
+    """Stage-completion signal, plus the build-entry signal (T-430). Both are
+    project-progress observations, not discipline↔execution mismatches."""
+    if not st:
+        return []
+    warns = []
+    stage, version = st.get("stage"), st.get("version")
+    next_stage = {"build": "Ship", "ship": "Retro"}.get(stage)
+    if next_stage and version:
+        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        if ver_tickets and not any(t["status"] == "open" for t in ver_tickets):
+            warns.append(f"stage: {version} has no open tickets at stage={stage} — "
+                         f"consider {next_stage} entry")
+    # build-entry signal (T-430): stage=build but the version's ticket dir has
+    # 0 open+done tickets yet → scope likely wasn't sliced on Build entry.
+    if stage == "build" and version:
+        ver_tickets = [t for t in tickets.values() if t["version"] == version]
+        if not any(t["status"] in ("open", "done") for t in ver_tickets):
+            warns.append(f"stage: {version} has 0 open+done tickets at stage=build — "
+                         f"consider build-entry scope slicing")
+    return warns
 
-    # meta backup lag + drift + fixed-path parity (T-428)
-    warns += meta_backup_lag_warnings(root)
-    warns += meta_drift_warnings(root)
-    parity = meta_allowlist_parity_warning()
-    if parity:
-        warns.append(parity)
-    excl_parity = meta_exclude_parity_warning()
-    if excl_parity:
-        warns.append(excl_parity)
 
-    # wiki — project store, then the machine store (§8b) it now searches alongside
-    warns += wiki_lint(root)
-    warns += machine_wiki_warnings()
+def ticket_cycle_warnings(tickets):
+    seen, stack = set(), set()
 
-    # override caps + cross-layer duplicates (§8b)
-    warns += override_warnings(root)
+    def dfs(i):
+        if i in stack:
+            return True
+        if i in seen or i not in tickets:
+            return False
+        seen.add(i); stack.add(i)
+        hit = any(dfs(d) for d in tickets[i]["deps"])
+        stack.discard(i)
+        return hit
 
-    # hook roster parity + governor fire evidence (T-445 / T-491)
-    warns += hook_registration_warnings()
+    cyc = [i for i in tickets if dfs(i)]
+    return [f"ticket: dependency cycle involving {cyc[0]}"] if cyc else []
 
-    # discipline caps + menu drift
+
+# ── discipline delivery (T-577) ───────────────────────────────────────────────
+# The largest member of the discipline↔execution family, and until this slice
+# invisible to it: the session-start hook's payload was 44,915 B in ONE hook
+# output, the harness persisted anything over 10,000 chars and injected a 2 KB
+# preview, so contracts.md and po/habit.md reached no persona on this machine
+# while every line cap above read green. The hook now splits the set into
+# parts (one registered hook command each) and owns the budget numbers; doctor
+# does not re-implement the split — it asks the hook for its plan (`--plan`) and
+# reports what the plan says: delivered bytes, parts needed, slots registered.
+DISCIPLINE_PERSONAS = ("po", "designer", "developer", "qa")
+_DELIVERY_PLANS = {}
+
+
+def _session_start_hook_path():
+    """The hook that is actually BOUND (install mirror) first, the repo copy next
+    to this file as fallback — same preference order as `discipline_root()`."""
+    for cand in (prdt_home() / "hooks" / "prdt-session-start.sh",
+                 Path(__file__).resolve().parent / "hooks" / "prdt-session-start.sh"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def discipline_delivery_plan(droot, persona):
+    """The hook's own split for `persona` over `droot`, as the JSON it prints for
+    `--plan`; None when the hook is absent or its plan could not be read. Cached
+    per (hook, root, persona) so the roster's three consumers cost one run each."""
+    hook = _session_start_hook_path()
+    if hook is None:
+        return None
+    key = (str(hook), str(droot), persona)
+    if key not in _DELIVERY_PLANS:
+        env = dict(os.environ)
+        env["PRDT_HOME"] = str(prdt_home())
+        env["PRDT_DISCIPLINE"] = str(droot)
+        plan = None
+        try:
+            # stdin closed on purpose: a pre-T-577 mirror hook knows no `--plan`
+            # and reads its event from stdin — inheriting the terminal would hang.
+            r = subprocess.run(["bash", str(hook), "--plan", persona], capture_output=True,
+                               text=True, env=env, timeout=60, stdin=subprocess.DEVNULL)
+            if r.returncode == 0 and r.stdout.strip():
+                out = json.loads(r.stdout)
+                # an old hook answers with its payload envelope, not a plan
+                plan = out if isinstance(out, dict) and "parts_needed" in out else {"legacy": True}
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            plan = None
+        _DELIVERY_PLANS[key] = plan
+    return _DELIVERY_PLANS[key]
+
+
+def discipline_delivery_warnings(droot):
+    """Violations: a persona's set needs more parts than there are registered
+    slots (the tail never runs — part 1 says so in-session, doctor says so here),
+    or a single line is larger than a whole part (withheld from injection)."""
+    if not droot:
+        return Skipped("no discipline root — nothing is delivered to check")
+    if _session_start_hook_path() is None:
+        return Skipped("prdt-session-start.sh found in neither the install mirror nor the repo — "
+                       "the delivery plan cannot be computed")
+    warns = []
+    for persona in DISCIPLINE_PERSONAS:
+        plan = discipline_delivery_plan(droot, persona)
+        if plan is None:
+            # one line, not one per persona: the cause is the hook, not the persona
+            # (the legacy branch below collapses the same way).
+            if persona == DISCIPLINE_PERSONAS[0]:
+                warns.append(f"discipline delivery: no plan could be read from the bound hook "
+                             f"{_session_start_hook_path()} (`--plan` printed nothing for any persona) — a mirror "
+                             f"hook that predates part delivery (T-577) answers exactly like this and still injects "
+                             f"the whole set as ONE output the harness persists past 10,000 chars, so contracts and "
+                             f"habit are NOT reaching sessions; re-run install.sh to resync the hooks")
+            continue
+        if plan.get("legacy"):
+            if persona == DISCIPLINE_PERSONAS[0]:
+                warns.append(f"discipline delivery: the bound hook {_session_start_hook_path()} predates part "
+                             f"delivery (no `--plan`) — it still injects the whole set as ONE hook output, which "
+                             f"the harness persists past 10,000 chars and replaces with a 2 KB preview: contracts "
+                             f"and habit are NOT reaching sessions on this machine; re-run install.sh to resync the hooks")
+            continue
+        if not plan.get("total_bytes"):
+            continue
+        need, slots, budget = plan["parts_needed"], plan["slots"], plan["budget_bytes"]
+        if need > slots:
+            lost = sorted({u["label"] for u in plan["undelivered"]})
+            warns.append(f"discipline delivery: prdt-{persona} needs {need} parts of ≤{budget} B but only "
+                         f"{slots} hook slot(s) exist — {', '.join(lost)} never reach the session "
+                         f"(part 1 says so in-session); add slots (hook-manifest.json + a byte-identical "
+                         f"prdt-session-start-p<k>.sh) and re-run install.sh")
+        for o in plan.get("oversized") or []:
+            warns.append(f"discipline delivery: {o['label']} line {o['line']} is {o['bytes']} B — larger than one "
+                         f"{budget}-byte part, so it is withheld from injection with a notice; split that line")
+    return warns
+
+
+def discipline_delivery_headroom(droot):
+    """Advisory: the set still fits, with at most one spare slot — the next fold
+    into contracts/habit goes undelivered. Not a mismatch yet, worth reading."""
+    if not droot or _session_start_hook_path() is None:
+        return Skipped("delivery plan unavailable — see `discipline delivery`")
+    lines = []
+    for persona in DISCIPLINE_PERSONAS:
+        plan = discipline_delivery_plan(droot, persona)
+        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+            continue
+        need, slots = plan["parts_needed"], plan["slots"]
+        if 0 <= slots - need <= 1:
+            lines.append(f"discipline delivery: prdt-{persona} uses {need} of {slots} part slots — "
+                         f"{'no' if slots == need else 'one'} spare part before growth in contracts.md / "
+                         f"{persona}/habit.md stops being delivered")
+    return Advisory(lines)
+
+
+def discipline_delivery_summary(droot):
+    """The one informational line doctor prints every run: delivered bytes per
+    persona against the budget — what the acceptance of T-577 asks to be
+    REPORTED, not only gated."""
+    if not droot or _session_start_hook_path() is None:
+        return None
+    cells, budget, threshold, slots = [], None, None, None
+    for persona in DISCIPLINE_PERSONAS:
+        plan = discipline_delivery_plan(droot, persona)
+        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+            continue
+        budget, threshold, slots = plan["budget_bytes"], plan["threshold_chars"], plan["slots"]
+        biggest = max([p["bytes"] or 0 for p in plan["parts"]] + [0])
+        cells.append(f"{persona} {plan['total_bytes']:,} B → {plan['parts_needed']} parts (largest {biggest:,} B)")
+    if not cells:
+        return None
+    return (f"doctor: discipline delivery — {' · '.join(cells)} · budget ≤{budget:,} B/part "
+            f"(harness persists a hook context over {threshold:,} chars; measured Claude Code 2.1.260) · "
+            f"{slots} part slots (hook files)")
+
+
+def discipline_line_caps(droot):
+    """Line counts are an EDITORIAL guide since T-577 (bytes gate delivery, see
+    `discipline_delivery_warnings`): reported as an Advisory, never a mismatch."""
+    if not droot:
+        return Skipped("no discipline root — see `discipline menus`")
+    lines = []
+    for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
+        if cand.exists():
+            if len(cand.read_text(encoding="utf-8").splitlines()) > CAPS["doctrine.md"]:
+                lines.append(f"discipline: doctrine.md exceeds {CAPS['doctrine.md']} lines")
+            break
+    c = droot / "contracts.md"
+    if c.exists() and len(c.read_text(encoding="utf-8").splitlines()) > CAPS["contracts.md"]:
+        lines.append(f"discipline: contracts.md exceeds {CAPS['contracts.md']} lines")
+    for persona in DISCIPLINE_PERSONAS:
+        h = droot / persona / "habit.md"
+        cap = CAPS["po_habit"] if persona == "po" else CAPS["worker_habit"]
+        if h.exists() and len(h.read_text(encoding="utf-8").splitlines()) > cap:
+            lines.append(f"discipline: {persona}/habit.md exceeds {cap} lines")
+        pdir = droot / persona / "playbooks"
+        if pdir.is_dir():
+            for p in pdir.glob("*.md"):
+                if p.name == "_index.md":
+                    if len(p.read_text(encoding="utf-8").splitlines()) > CAPS["menu"]:
+                        lines.append(f"discipline: {persona} menu exceeds {CAPS['menu']} lines")
+                    continue
+                if body_line_count(p) > CAPS["playbook_body"]:
+                    lines.append(f"discipline: {persona}/playbooks/{p.name} body exceeds {CAPS['playbook_body']} lines")
+    return Advisory(lines)
+
+
+def discipline_caps_warnings(droot):
+    """Menu freshness on the discipline tree that is actually BOUND on this
+    machine. No root at all is a violation, not a skip: nothing is binding any
+    persona, which is the loudest discipline↔execution mismatch available.
+    (Line caps moved to `discipline_line_caps` as an advisory — T-577.)"""
+    if not droot:
+        return ["discipline: no discipline root found (~/.prdt/discipline or repo)"]
+    warns = []
+    for persona in DISCIPLINE_PERSONAS:
+        pdir = droot / persona / "playbooks"
+        if pdir.is_dir():
+            idx = pdir / "_index.md"
+            if not idx.exists():
+                warns.append(f"discipline: {persona} menu missing — run `prdt menus`")
+            elif idx.read_text(encoding="utf-8") != menu_content(droot / persona):
+                warns.append(f"discipline: {persona} menu stale vs frontmatter — run `prdt menus`")
+    return warns
+
+
+def cmd_doctor(_args):
+    root = require_root()
+    st = read_json(root / ".prdt" / "po-state.json")
+    con, tviol, _pages, _mpages = rebuild_index(root)
+    # ROWS first, id-keyed map second (T-549). The map is what the deps/staleness
+    # checks need — they ask questions ABOUT an id. Any check that measures
+    # across version dirs must read the rows: an id present in two dirs collapses
+    # to one entry in the map, and a check fed the map then sees a 1-dir span where
+    # the rows hold 2 — a false SILENCE, the worst class available in the instrument
+    # v1.8's goal is measured with.
+    trows = [r for r, _, _ in (scan_tickets(root) or [])]
+    tickets = {r["id"]: r for r in trows}
     droot = discipline_root()
-    if droot:
-        for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
-            if cand.exists():
-                if len(cand.read_text(encoding="utf-8").splitlines()) > CAPS["doctrine.md"]:
-                    warns.append(f"discipline: doctrine.md exceeds {CAPS['doctrine.md']} lines")
-                break
-        c = droot / "contracts.md"
-        if c.exists() and len(c.read_text(encoding="utf-8").splitlines()) > CAPS["contracts.md"]:
-            warns.append(f"discipline: contracts.md exceeds {CAPS['contracts.md']} lines")
-        for persona in ("po", "designer", "developer", "qa"):
-            h = droot / persona / "habit.md"
-            cap = CAPS["po_habit"] if persona == "po" else CAPS["worker_habit"]
-            if h.exists() and len(h.read_text(encoding="utf-8").splitlines()) > cap:
-                warns.append(f"discipline: {persona}/habit.md exceeds {cap} lines")
-            pdir = droot / persona / "playbooks"
-            if pdir.is_dir():
-                for p in pdir.glob("*.md"):
-                    if p.name == "_index.md":
-                        if len(p.read_text(encoding="utf-8").splitlines()) > CAPS["menu"]:
-                            warns.append(f"discipline: {persona} menu exceeds {CAPS['menu']} lines")
-                        continue
-                    if body_line_count(p) > CAPS["playbook_body"]:
-                        warns.append(f"discipline: {persona}/playbooks/{p.name} body exceeds {CAPS['playbook_body']} lines")
-                idx = pdir / "_index.md"
-                if not idx.exists():
-                    warns.append(f"discipline: {persona} menu missing — run `prdt menus`")
-                elif idx.read_text(encoding="utf-8") != menu_content(droot / persona):
-                    warns.append(f"discipline: {persona} menu stale vs frontmatter — run `prdt menus`")
-    else:
-        warns.append("discipline: no discipline root found (~/.prdt/discipline or repo)")
+
+    # The roster. Order here IS the print order. The second element of every
+    # entry is the DECLARED family (T-560) — the one thing a person adding a
+    # check must not leave out, and the one thing the verdict refuses to guess.
+    roster = [
+        ("po-state shape", FAMILY_DE, lambda: po_state_warnings(st)),
+        ("ticket index", FAMILY_PROJECT, lambda: [f"ticket: {v}" for v in tviol]),
+        # Whether a duplicated id deserves its own warning was left open by T-549
+        # and answered by T-551: it does, ONCE, from a dedicated check — never as
+        # a side effect of a check whose subject is something else. Over the rows,
+        # for the same reason: the id-keyed map is *defined* by collapsing an id,
+        # so it is the one input in which this violation cannot be seen.
+        ("duplicate ticket id", FAMILY_PROJECT, lambda: duplicate_ticket_id_warnings(trows)),
+        ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
+        ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets)),
+        ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
+        # artifacts — version-bucket placement + manifest registration (T-512).
+        # Supersedes the referencing-ticket scan, which was never the checkable
+        # condition: it missed a file naming its own ticket in its title, and it
+        # cleared a file only because a LATER round's ticket happened to cite it.
+        ("artifact placement", FAMILY_PROJECT, lambda: artifact_placement_warnings(root)),
+        # main-push block: install where it is ours to write, report where it is not (T-481)
+        ("main-push block", FAMILY_DE, lambda: prepush_warnings(root)),
+        # promotion path: read the repo's own policy, report where it differs from
+        # the discipline default (T-506)
+        ("git promotion path", FAMILY_DE, lambda: promotion_warnings(root)),
+        ("release notes vs cut tags", FAMILY_PROJECT, lambda: release_notes_gap_warnings(root)),
+        # meta backup lag + drift + fixed-path parity (T-428)
+        ("meta backup lag", FAMILY_PROJECT, lambda: meta_backup_lag_warnings(root)),
+        ("meta drift", FAMILY_PROJECT, lambda: meta_drift_warnings(root)),
+        ("meta allowlist parity", FAMILY_PROJECT,
+         lambda: [w for w in [meta_allowlist_parity_warning()] if w]),
+        ("meta exclude parity", FAMILY_PROJECT,
+         lambda: [w for w in [meta_exclude_parity_warning()] if w]),
+        # feature seam — orphan specs · pending promotion judgments · stale
+        # non-promotion records (T-548). `feature:` is a grouping key: a value with
+        # no spec file is legal, so what is reported is a judgment left pending,
+        # never a missing file (T-547 §6). T3 is a span ACROSS version dirs, so it
+        # is computed over the rows T-547 §2 names, never over the id-keyed map.
+        ("feature seam", FAMILY_PROJECT, lambda: feature_seam_warnings(root, trows)),
+        # accumulated per-case rebuilds of an expensive shared test setup (T-537).
+        # Static count of a SHAPE, never a timing run — the habit and the code-review
+        # check cover the write and the diff; this layer covers the only view neither
+        # has, the accumulation across files and rounds that no single diff shows.
+        ("test setup rebuild", FAMILY_PROJECT, lambda: test_setup_rebuild_warnings(root)),
+        # wiki — project store, then the machine store (§8b) it now searches alongside
+        ("wiki lint", FAMILY_PROJECT, lambda: wiki_lint(root)),
+        ("machine wiki", FAMILY_PROJECT, lambda: machine_wiki_warnings()),
+        # dead discipline-path citations in live SoT docs (T-535) — wiki lint only
+        # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
+        # citations everywhere else a persona habit/bookshelf doc or design.md makes one
+        ("dead discipline-path citations", FAMILY_DE, lambda: dead_discipline_path_warnings(root)),
+        # override caps + cross-layer duplicates (§8b)
+        ("override caps", FAMILY_DE, lambda: override_warnings(root)),
+        # hook roster parity + governor fire evidence (T-445 / T-491)
+        ("hook roster + governor fire", FAMILY_DE, lambda: hook_registration_warnings()),
+        # statusline registration — user + project-level (T-500)
+        ("statusline registration", FAMILY_DE, lambda: statusline_warnings(root)),
+        # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
+        # discipline mirror exists at all.
+        ("prdt script mirror drift", FAMILY_DE, lambda: prdt_script_drift_warnings()),
+        # hook mirror↔repo drift (T-532) — same independence from droot: the hooks
+        # mirror lives at a fixed prdt_home()/hooks path, not behind
+        # discipline_root()'s mirror-vs-repo-fallback preference.
+        ("hook mirror drift", FAMILY_DE, lambda: hook_mirror_drift_warnings()),
+        # mirror↔repo content drift (T-507) — before the caps check so a stale
+        # mirror is reported even when it happens to still be within cap
+        ("discipline mirror drift", FAMILY_DE, lambda: discipline_mirror_drift_warnings(droot)),
+        ("discipline menus", FAMILY_DE, lambda: discipline_caps_warnings(droot)),
+        # line caps are an editorial guide (advisory) since T-577 — bytes gate delivery
+        ("discipline line caps (editorial)", FAMILY_DE, lambda: discipline_line_caps(droot)),
+        # what actually reaches a session: parts needed vs hook slots registered (T-577)
+        ("discipline delivery", FAMILY_DE, lambda: discipline_delivery_warnings(droot)),
+        ("discipline delivery headroom", FAMILY_DE, lambda: discipline_delivery_headroom(droot)),
+    ]
+
+    records = [doctor_record(name, family, fn()) for name, family, fn in roster]
+    warns = [w for r in records for w in r["warnings"]]
 
     for w in warns:
         print(f"⚠ {w}")
+    summary = discipline_delivery_summary(droot)
+    if summary:
+        print(summary)
+    for line in doctor_verdict_lines(records):
+        print(line)
     print(("doctor: clean" if not warns else f"doctor: {len(warns)} warning(s)") + " (non-blocking)")
 
 
@@ -2810,6 +5448,364 @@ def cmd_migrate(args):
              직전에 하던 작업을 기억하면 한 줄 덧붙이면 더 빨라요.)""")
 
 
+# ── model availability preflight (T-525) ──────────────────────────────────────
+# A dispatch that dies on an account quota costs the whole worker; a headless
+# one-token probe costs ~7s wall and ~$0.003–$0.065 depending on the model
+# probed (haiku ~$0.003, sonnet ~$0.012, fable ~$0.065 — measured 2026-09-03, see
+# `prdt preflight`'s own `probe` block). This runs that probe BEFORE the
+# dispatch and returns a routing verdict. It takes the model as an argument:
+# the window closes on any model, and long opus or sonnet work dies at the same
+# point a fable dispatch does.
+#
+# THREE states, never two. `available` and `unavailable` are verdicts;
+# `inconclusive` is the third and it NEVER moves the tier. A canary that cannot
+# tell is worth exactly as much as no canary, so routing continues at the model
+# that was asked for and the PO is told the check did not answer. The failure
+# this direction is chosen against is a FALSE UNAVAILABLE — a probe reporting a
+# limit that does not exist would strand every floor dispatch on the fallback
+# tier, silently, which is the precise loss T-525 records the PO making by hand.
+#
+# NOT READABLE, DO NOT BUILD ON IT: the remaining window and the burn rate.
+# T-525 documents the exhaustive search (`/usage` is interactive-TUI only, no
+# CLI usage subcommand, no rate-limit cache under `~/.claude/`). This command
+# reports availability and nothing else.
+#
+# REUSE CHECK (T-525 acceptance): the call governor
+# (`$PRDT_HOME/run/call-governor/`) does NOT cover this and is not reused as a
+# mechanism. It counts API turns inside an already-spawned dispatch and denies
+# at 60; it knows nothing about models or the account window, and it is a
+# matcher-less bash hook under a hard no-network / no-fork latency budget — the
+# exact opposite of a probe. What IS reused is its STATE CONVENTION:
+# `$PRDT_HOME/run/<feature>/`, machine-local, outside every repo and outside
+# install.sh's mirror `rm -rf`, with every session/key component shape-matched
+# to a path-safe alphabet before it touches a path.
+
+CANARY_SENTINEL = "OK"
+CANARY_PROMPT = f"Reply with exactly: {CANARY_SENTINEL}"
+CANARY_TIMEOUT_S = 60
+# Tier ladder — mirrors PO habit's model-fallback clause; `--fallback` overrides
+# it, and an unmapped model returns route null rather than inventing a tier.
+CANARY_FALLBACK = {"fable": "opus", "opus": "sonnet", "sonnet": "haiku"}
+LATCH_TTL_MIN = 30
+RE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RE_CANARY_SESSION = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+RE_SENTINEL_ONLY = re.compile(rf"^[\W_]*{CANARY_SENTINEL}[\W_]*$", re.I)
+
+# WORDING-INDEPENDENT LIMIT DETECTION. The message text is the WEAKEST of the
+# three signals and is never the only one consulted:
+#   ① transport — `api_error_status` 429 / a 429 exit. Carries no prose at all.
+#   ② envelope  — an error result (`is_error`, or a non-success `subtype`).
+#   ③ shape     — a quota NOUN co-occurring with an exhaustion/recovery MARKER,
+#                 or one of the few standalone tokens that cannot mean anything
+#                 else.
+# ③ exists because the observed limit reply arrives inside a SUCCESS envelope
+# with exit 0 (`You've reached your Fable 5 limit. Switch to another model to
+# continue.`) — ① and ② do not see it. It is a two-factor co-occurrence over a
+# narrow vocabulary rather than the current sentence, so a reworded, localized
+# or renumbered message still fires. Bare `usage` and bare `later` were
+# REJECTED from the vocabulary on purpose: they are the two tokens an innocent
+# reply is likeliest to carry, and every entry in these patterns can only ever
+# cause a false UNAVAILABLE, never a false available.
+# The standalone `429` token is guarded against the shape a CLI crash actually
+# produces: a stack-trace line:column reference (`cli.js:429:13`). A probe runs
+# exactly when the CLI is unstable, so a crash trace reaching this matcher is
+# not a hypothetical (T-536: it downgraded a healthy model and latched the
+# downgrade for 30 minutes off a line number). The guard excludes ANY `429`
+# touching a digit, `:` or `.` on either side, full stop — not just the
+# line:col shape it was built for. That is wider than it sounds: on the raw /
+# no-envelope path it also gives up sentence-final `429.` and label-style
+# `429:` (`Request failed with status code 429.`, `code 429: upstream
+# rejected`, `"status":429`), because a period or colon sitting directly
+# against the token is indistinguishable in plain text from a line reference
+# or a version/port number. This is accepted, not overlooked: the structured
+# `api_error_status` field above is the PRIMARY detector for a real transport
+# 429 and is untouched by this guard; this standalone-token match is a
+# secondary net over prose, and a bare `429` with no digit/colon/dot neighbor
+# still matches it, same as today. Narrowing the lookaround to digits only
+# (`(?<!\d)\b429\b(?!\d)`) was tried and rejected — it re-admits `cli.js:429:13`,
+# `foo.js:12:429` and `v1.429.0`, which is the exact defect this guard exists
+# to fix, because the colon/period is precisely what marks those as line refs
+# or version numbers rather than a status code. Requiring an HTTP-ish neighbor
+# word instead was also rejected: it trades a rare false UNAVAILABLE for the
+# possibility of a false AVAILABLE on a terse real transport signal, and every
+# pattern in this file is chosen to fail toward "unavailable", never away from
+# it (see the module comment above). Given up on the raw path: `429.`, `429:`,
+# `429,429` and any 429 adjacent to a digit. Still caught: `429`, `(429)`,
+# `[429]`, `status=429`, `HTTP 429`, `429 Too Many Requests`, and any real
+# transport 429 via `api_error_status` regardless of prose shape.
+LIMIT_STANDALONE_RE = re.compile(
+    r"(?<![:.\d])\b429\b(?![:.\d])|too\s+many\s+requests|rate[\s-]?limit(?:ed|ing)\b", re.I)
+LIMIT_NOUN_RE = re.compile(
+    r"\b(?:limits?|quotas?|rate[\s-]?limits?|allowances?)\b"
+    r"|usage\s+(?:limit|cap)|한도|사용량|할당량", re.I)
+LIMIT_MARKER_RE = re.compile(
+    r"\b(?:reach(?:ed|es)?|exceed(?:ed|s)?|exhaust(?:ed)?|out\s+of|resets?|"
+    r"resumes?|try\s+again|upgrade|switch\s+to\s+another\s+model|"
+    r"unavailable\s+until|no\s+longer\s+available)\b|소진|초과|재설정|다시\s*시도", re.I)
+
+
+# A real quota notice is one or two sentences. The cap applies ONLY where the
+# text is a model REPLY (③, the success-envelope path): a reply that rambles is
+# a model doing something else, not a window closing, and letting prose that
+# long reach the vocabulary is the widest false-unavailable surface there is.
+# Error text (② and the no-envelope path) is uncapped — a transport failure is
+# already a failure, and its dump can legitimately be long.
+CANARY_NOTICE_MAX = 400
+
+
+def limit_shaped(text, max_len=None):
+    """True when `text` reads as a quota-exhaustion notice — by shape, not wording."""
+    if not text:
+        return False
+    if max_len is not None and len(text) > max_len:
+        return False
+    if LIMIT_STANDALONE_RE.search(text):
+        return True
+    return bool(LIMIT_NOUN_RE.search(text) and LIMIT_MARKER_RE.search(text))
+
+
+def classify_canary(rc, out, err, timed_out=False, missing=False):
+    """(status, reason, probe) — the whole false-unavailable defense lives here.
+
+    Nothing reaches `unavailable` without a POSITIVE quota signal. Every other
+    way a probe can fail — timeout, missing binary, auth or network error,
+    unparseable output, a reply that is neither the sentinel nor limit-shaped —
+    lands on `inconclusive`, which does not move the routing tier."""
+    probe = {"ran": not missing}
+    if missing:
+        return "inconclusive", "probe-binary-missing", probe
+    if timed_out:
+        return "inconclusive", "probe-timeout", probe
+    text = (out or "").strip()
+    env = None
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                env = parsed
+        except ValueError:
+            env = None
+    if env is not None:
+        probe["cost_usd"] = env.get("total_cost_usd")
+        probe["api_ms"] = env.get("duration_ms")
+        probe["subtype"] = env.get("subtype")
+        usage = env.get("usage") if isinstance(env.get("usage"), dict) else {}
+        probe["tokens"] = {"input": usage.get("input_tokens"),
+                           "output": usage.get("output_tokens")}
+        reply = env.get("result") if isinstance(env.get("result"), str) else ""
+        # ① transport
+        if str(env.get("api_error_status") or "") == "429":
+            return "unavailable", "transport-429", probe
+        # ② envelope — an error result is only a LIMIT when it also reads as one;
+        # an auth or network error is an error, not a closed window.
+        errored = bool(env.get("is_error")) or (env.get("subtype") or "success") != "success"
+        if errored:
+            if limit_shaped(reply) or limit_shaped(err or ""):
+                return "unavailable", "error-envelope-limit-shape", probe
+            return "inconclusive", "probe-error-envelope", probe
+        # ③ shape — the observed case: exit 0, success envelope, limit prose.
+        if RE_SENTINEL_ONLY.match(reply.strip()):
+            return "available", "sentinel", probe
+        if limit_shaped(reply, max_len=CANARY_NOTICE_MAX):
+            return "unavailable", "success-envelope-limit-shape", probe
+        return "inconclusive", "unexpected-reply", probe
+    # No JSON envelope at all: the CLI failed before emitting one, or was run in
+    # plain-text mode. Same rule, applied to raw stdout+stderr.
+    raw = "\n".join(x for x in ((out or "").strip(), (err or "").strip()) if x)
+    probe["exit_code"] = rc
+    if RE_SENTINEL_ONLY.match((out or "").strip()):
+        return "available", "sentinel-plain", probe
+    if limit_shaped(raw):
+        return "unavailable", "plain-limit-shape", probe
+    return "inconclusive", "no-envelope", probe
+
+
+def _canary_age_s(iso):
+    """Age in SECONDS. `days_since` is whole days and cannot express a 30-minute
+    latch TTL; a truncating-to-0 comparison would make every latch immortal."""
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds()
+
+
+def _canary_latch_path(model):
+    """`$PRDT_HOME/run/preflight/<session>.<model>.json` — the governor's state
+    convention. `model` is RE_MODEL-validated and the session is shape-matched
+    here, so neither half can be a traversal."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    if not RE_CANARY_SESSION.match(sid):
+        sid = "nosession"
+    return prdt_home() / "run" / "preflight" / f"{sid}.{model}.json"
+
+
+def read_canary_latch(model, ttl_min):
+    """A live latch for THIS model, or None. Expired latches are removed on read
+    so a window that reopened is never masked by a stale file. A latch on one
+    model says nothing about any other — the filename carries the model."""
+    p = _canary_latch_path(model)
+    d = read_json(p)
+    if not isinstance(d, dict) or d.get("status") != "unavailable":
+        return None
+    age = _canary_age_s(d.get("at"))
+    if age is None:
+        return None
+    if age > ttl_min * 60:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        return None
+    return d
+
+
+def write_canary_latch(model, reason):
+    p = _canary_latch_path(model)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"model": model, "status": "unavailable",
+                               "reason": reason, "at": now_iso()}) + "\n",
+                   encoding="utf-8")
+    tmp.replace(p)
+    return p
+
+
+def clear_canary_latch(model):
+    p = _canary_latch_path(model)
+    try:
+        p.unlink()
+        return True
+    except OSError:
+        return False
+
+
+# SLIM PROBE — measured 2026-09-03 on sonnet, one probe each, same machine:
+#   bare `-p --model M --output-format json`      30,784 cache-create · $0.172 · 7.4s
+#   + strict-mcp-config, own --system-prompt      30,784 cache-create · $0.123 · 6.1s
+#   + --tools (empty: no built-in tools)          11,252 cache-create · $0.045 · 5.8s
+#   + --agents '{}' (no agent roster)              2,932 cache-create · $0.012 · 5.2s
+# The tool and agent rosters ARE the probe's cost; stripping both is what makes
+# a per-dispatch preflight defensible rather than assumed. None of it changes
+# what is being measured — the account window is scoped to the account and the
+# model, not to the prompt.
+CANARY_SLIM_ARGS = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+                    "--tools", "--agents", "{}",
+                    "--system-prompt", "Availability probe. Answer literally.",
+                    "--no-session-persistence"]
+# A renamed or dropped slimming flag makes the CLI exit on a usage error, which
+# classifies `inconclusive` — correct, but it would quietly turn the preflight
+# into a 6-second no-op forever. So an inconclusive first attempt that looks
+# like an option error retries BARE: costlier, still right, and self-healing
+# across CLI versions.
+RE_CLI_OPTION_ERROR = re.compile(
+    r"unknown\s+(?:option|argument)|unrecognized|error:\s*option|too\s+many\s+arguments"
+    r"|see\s+--help|usage:\s*claude", re.I)
+
+
+def _canary_once(exe, model, extra, timeout_s):
+    cmd = [exe, "-p", "--model", model, "--output-format", "json", *extra, CANARY_PROMPT]
+    t0 = datetime.now(timezone.utc)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        st, rs, pr = classify_canary(None, "", "", timed_out=True)
+    except (FileNotFoundError, PermissionError, OSError):
+        st, rs, pr = classify_canary(None, "", "", missing=True)
+        pr["wall_ms"] = 0
+        return st, rs, pr, ""
+    else:
+        st, rs, pr = classify_canary(r.returncode, r.stdout, r.stderr)
+        pr["wall_ms"] = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
+        return st, rs, pr, (r.stderr or "") + (r.stdout or "")
+    pr["wall_ms"] = int((datetime.now(timezone.utc) - t0).total_seconds() * 1000)
+    return st, rs, pr, ""
+
+
+def run_canary(model, timeout_s):
+    """One headless probe. `PRDT_CANARY_BIN` redirects the executable — that is
+    how the tests drive a limited account without having one."""
+    exe = os.environ.get("PRDT_CANARY_BIN") or "claude"
+    status, reason, probe, raw = _canary_once(exe, model, CANARY_SLIM_ARGS, timeout_s)
+    if status == "inconclusive" and RE_CLI_OPTION_ERROR.search(raw or ""):
+        st2, rs2, pr2, _ = _canary_once(exe, model, [], timeout_s)
+        pr2["retried_bare"] = True
+        pr2["first_reason"] = reason
+        return st2, rs2, pr2
+    return status, reason, probe
+
+
+def cmd_preflight(args):
+    """Availability verdict for ONE model, as JSON on stdout. Always exit 0 when
+    a verdict was produced: the verdict is `status`, and a non-zero exit would
+    be indistinguishable from the tool itself breaking — which the caller would
+    then read as "unavailable", the one direction that must never be guessed."""
+    model = (args.model or "").strip()
+    if not RE_MODEL.match(model):
+        sys.exit("prdt preflight: model must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    fallback = args.fallback if args.fallback is not None else CANARY_FALLBACK.get(model)
+    if fallback is not None and not RE_MODEL.match(fallback):
+        sys.exit("prdt preflight: --fallback must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    ttl = args.latch_ttl
+
+    out = {"model": model, "fallback": fallback}
+    if args.clear:
+        out.update(status="cleared", reason="latch-cleared", route=model, downgraded=False,
+                   latch={"state": "cleared" if clear_canary_latch(model) else "none"},
+                   probe={"ran": False},
+                   note="Latch removed. The next preflight for this model probes fresh.")
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    latched = None if args.recheck else read_canary_latch(model, ttl)
+    if latched:
+        # Prescription 2: the latch answers, no second probe, zero cost. This is
+        # the branch that keeps ① from being run before every single dispatch.
+        out.update(status="unavailable", reason="latch",
+                   route=fallback, downgraded=True,
+                   latch={"state": "hit", "set_at": latched.get("at"),
+                          "set_reason": latched.get("reason"), "ttl_min": ttl},
+                   probe={"ran": False, "wall_ms": 0, "cost_usd": 0},
+                   note=(f"Session latch for `{model}` is live — routing to "
+                         f"`{fallback}` at the SAME effort without re-probing. "
+                         f"A dispatch that was itself quota-killed must re-check "
+                         f"with --recheck instead of trusting this."))
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    status, reason, probe = run_canary(model, args.timeout)
+    latch = {"state": "none", "ttl_min": ttl}
+    if status == "unavailable":
+        write_canary_latch(model, reason)
+        latch = {"state": "set", "ttl_min": ttl}
+        route, downgraded = fallback, True
+        note = (f"`{model}` is out of window. Route to `{fallback}` at the SAME "
+                f"effort and do NOT spawn the dispatch on `{model}`. This is an "
+                f"account-window fact, not evidence the model failed the task.")
+        if fallback is None:
+            note = (f"`{model}` is out of window and no fallback tier is mapped "
+                    f"— pass --fallback or choose the tier yourself.")
+    elif status == "available":
+        if args.recheck and clear_canary_latch(model):
+            latch = {"state": "cleared", "ttl_min": ttl}
+        route, downgraded = model, False
+        note = f"`{model}` answered the probe. Dispatch as routed."
+    else:
+        # The failure direction, stated in the payload so it cannot be misread:
+        # an inconclusive canary leaves the tier exactly where the menu put it.
+        route, downgraded = model, False
+        note = (f"The probe did not answer ({reason}) — this is NOT a limit. "
+                f"Routing is UNCHANGED at `{model}`; no latch was set. Dispatch "
+                f"as routed, or re-run the probe. Never downgrade a tier on an "
+                f"inconclusive check.")
+    out.update(status=status, reason=reason, route=route, downgraded=downgraded,
+               latch=latch, probe=probe, note=note)
+    print(json.dumps(out, ensure_ascii=False))
+
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
     sub = ap.add_subparsers(dest="cmd")
@@ -2836,6 +5832,10 @@ def main():
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
     p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
     p.set_defaults(fn=cmd_tickets)
+    p = sub.add_parser("artifacts", help="sync (write each docs/artifacts/<version>/manifest.json from disk) "
+                                         "| check (report artifacts the bucket rule cannot place; exit 1 on findings)")
+    p.add_argument("action", choices=("sync", "check"))
+    p.set_defaults(fn=cmd_artifacts)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
     p = sub.add_parser("meta", help="meta git: log · remote [add <name> <url>] · push · bootstrap · split · relocate — core API 브리지 호출")
@@ -2857,6 +5857,21 @@ def main():
     p.add_argument("--yes", action="store_true", help="확인 프롬프트 없이 CLAUDE.md 이동 실행 (비대화형)")
     p.add_argument("--archive", action="store_true", help="CLAUDE.md를 wiki 대신 docs/archive로 이관 (죽은 내용)")
     p.set_defaults(fn=cmd_migrate)
+    p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
+                                         "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
+                                         "— JSON verdict on stdout (available | unavailable | inconclusive)")
+    p.add_argument("model", help="model to probe (fable · opus · sonnet · haiku · a full model id)")
+    p.add_argument("--fallback", help="tier to route to when the window is closed "
+                                      "(default: PO habit's ladder — fable→opus, opus→sonnet, sonnet→haiku)")
+    p.add_argument("--recheck", action="store_true",
+                   help="ignore a live latch and probe fresh — the answer to a dispatch that was "
+                        "itself quota-killed; an available result clears the latch and routes back")
+    p.add_argument("--clear", action="store_true", help="drop this model's session latch, probe nothing")
+    p.add_argument("--timeout", type=int, default=CANARY_TIMEOUT_S, metavar="S",
+                   help=f"probe timeout in seconds (default {CANARY_TIMEOUT_S}); a timeout is inconclusive, never a limit")
+    p.add_argument("--latch-ttl", type=int, default=LATCH_TTL_MIN, metavar="MIN",
+                   help=f"minutes a limit latch stays live (default {LATCH_TTL_MIN})")
+    p.set_defaults(fn=cmd_preflight)
     args = ap.parse_args()
     maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
     if not args.cmd:
