@@ -241,6 +241,12 @@ const REVERT_QUOTE_PY: Revert = {
   pin: 'if any(c in p for c in "\\n\\r\\v\\f\\x1c\\x1d\\x1e\\x85\\u2028\\u2029"):',
   pre: 'if False:',
 }
+/** The twin inside prdt-session-start.sh's part renderer (T-577): the document
+ *  delimiters and the $DISC pointer are rendered there, guarded by `shown()`. */
+const REVERT_PARTS_PY: Revert = {
+  pin: '    return WITHHELD if any(c in p for c in BREAKS) else p',
+  pre: '    return p',
+}
 /** The python twin in prdt-user-prompt.sh. */
 const REVERT_PROMPT: Revert = {
   pin: '    return PATH_WITHHELD if any(c in p for c in PATH_BREAKS) else p',
@@ -390,7 +396,9 @@ describe('positive control: revert the fix and the forged lines come back', () =
       const hook = REVERTS_FOR[site]
       const reverted = hook === PROMPT_HOOK
         ? revertedCopyOf(hook, REVERT_PROMPT)
-        : revertedCopyOf(hook, REVERT_BASH)
+        : hook === SESSION_HOOK
+          ? revertedCopyOf(hook, REVERT_BASH, REVERT_PARTS_PY)
+          : revertedCopyOf(hook, REVERT_BASH)
 
       const leaked = c.hostile('\n', reverted)
       const control = c.benign()
@@ -490,7 +498,11 @@ describe('the path guard is duplicated like the gutter — lock the source parit
     const counts: Record<string, number> = {
       [PROJECT_HOOK]: 3, // quote_body ×2 fallback notices + OVERRIDES_SHOWN
       [MACHINE_HOOK]: 3,
-      [SESSION_HOOK]: 11, // + $PROJ, 4 pointer paths, MISSING, block(), $FLAG, $DISC
+      // T-577: the document delimiters and $DISC moved into the python part renderer,
+      // which guards them with its own `shown()` (same shape match as PRDT_QUOTE_PY);
+      // bash keeps $PROJ, 4 pointer paths, MISSING, $FLAG ×2, the python3-missing
+      // notice ×4 and the withheld-record notice.
+      [SESSION_HOOK]: 14,
     }
     for (const [hook, n] of Object.entries(counts)) {
       const src = fs.readFileSync(hook, 'utf8')
