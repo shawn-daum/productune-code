@@ -547,3 +547,113 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — discipline drift ignores file
     expect(disciplineDoctor()).toEqual([])
   })
 })
+
+/**
+ * T-576 — all three `_xxx_repo_path()` helpers used to compute their
+ * repo-checkout candidate ONLY from `Path(__file__).resolve().parent.parent`,
+ * the running script's OWN sibling path. Correct for a dev box invoking the
+ * repo's own `scripts/prdt` directly; wrong for an INSTALLED copy
+ * (`~/.prdt/bin/prdt`, a file that lives nowhere near any checkout):
+ * `parent.parent` there is `~/.prdt` itself, which has no `scripts/`
+ * directory at all — `_prdt_script_repo_path()`/`_hooks_repo_path()` always
+ * returned None, and `_discipline_repo_path()` returned `~/.prdt/discipline`,
+ * i.e. THE MIRROR ITSELF (`~/.prdt` carries a top-level `discipline/` — the
+ * mirror — the way it never carries a top-level `scripts/`), tripping the
+ * caller's own "installed-copy coincidence" early-out. All three checks were
+ * therefore permanently Skipped on every installed machine, from any cwd,
+ * regardless of whether a real drift existed.
+ *
+ * `prdt_repo_from_env()` already existed (parses `PRDT_REPO` out of
+ * `$PRDT_HOME/prdt.env`) but none of the three helpers consulted it. This
+ * proves all three now do, running the CLI from a location that recreates
+ * the installed shape (`installedHome/bin/prdt`, nowhere near the throwaway
+ * repo) with a cwd that is not inside — nor a sibling of — that repo either.
+ */
+describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo via PRDT_REPO (T-576)', () => {
+  let root: string
+  let repo: string
+  let installedHome: string
+  let installedCli: string
+  let otherProjectDir: string
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t576-'))
+    repo = path.join(root, 'source-repo')
+    const scriptsDir = path.join(repo, 'packages', 'core', 'scripts')
+    fs.mkdirSync(path.join(scriptsDir, 'hooks'), { recursive: true })
+    fs.mkdirSync(path.join(repo, 'packages', 'core', 'discipline', 'developer'), { recursive: true })
+    fs.copyFileSync(REAL_PRDT_CLI, path.join(scriptsDir, 'prdt'))
+    fs.chmodSync(path.join(scriptsDir, 'prdt'), 0o755)
+    fs.writeFileSync(path.join(scriptsDir, 'hooks', 'prdt-hook-a.sh'), '#!/usr/bin/env bash\necho v2\n')
+    fs.writeFileSync(path.join(repo, 'packages', 'core', 'discipline', 'developer', 'habit.md'),
+      '# habit\n\nrepo version\n')
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    git(['add', '-A'], repo)
+    git(['commit', '-q', '-m', 'seed'], repo)
+
+    // The "installed" copy: physically elsewhere, nowhere near `repo` — the
+    // shape that made self-reference collapse onto `~/.prdt` on a real
+    // machine. A byte-appended comment (T-576 marker) is what makes it a
+    // REAL drift against the repo's committed `scripts/prdt` — copying the
+    // same bytes twice would make `prdt_script_drift_warnings` compare the
+    // file against itself and find nothing to report.
+    installedHome = path.join(root, 'installed-home')
+    fs.mkdirSync(path.join(installedHome, 'bin'), { recursive: true })
+    fs.mkdirSync(path.join(installedHome, 'discipline', 'developer'), { recursive: true })
+    fs.mkdirSync(path.join(installedHome, 'hooks'), { recursive: true })
+    installedCli = path.join(installedHome, 'bin', 'prdt')
+    fs.copyFileSync(REAL_PRDT_CLI, installedCli)
+    fs.appendFileSync(installedCli, '\n# T-576 test drift marker — never committed anywhere\n')
+    fs.chmodSync(installedCli, 0o755)
+    fs.writeFileSync(path.join(installedHome, 'prdt.env'),
+      `PRDT_REPO=${path.join(repo, 'packages', 'core')}\n`)
+    // Deliberately drifted mirrors — a real difference each check must catch.
+    fs.writeFileSync(path.join(installedHome, 'hooks', 'prdt-hook-a.sh'), '#!/usr/bin/env bash\necho STALE\n')
+    fs.writeFileSync(path.join(installedHome, 'discipline', 'developer', 'habit.md'),
+      '# habit\n\nHAND-EDITED, never committed\n')
+
+    // A cwd that is neither inside `repo` nor a sibling of it — a plain
+    // unrelated project, the "any project on this machine" the ticket names.
+    otherProjectDir = path.join(root, 'unrelated-project')
+    fs.mkdirSync(otherProjectDir, { recursive: true })
+    execFileSync('python3', [installedCli, 'init', '--json', '--slug', 'proj', '--yes'], {
+      cwd: otherProjectDir,
+      env: { ...process.env, PRDT_HOME: installedHome },
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    })
+  })
+
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }) })
+
+  function installedDoctor(): string {
+    return execFileSync('python3', [installedCli, 'doctor'], {
+      cwd: otherProjectDir,
+      env: { ...process.env, PRDT_HOME: installedHome },
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    })
+  }
+
+  test('all three drift checks compare for real (not Skipped) via PRDT_REPO, from a cwd outside the repo', () => {
+    const out = installedDoctor()
+    expect(out).toContain('hooks: mirror')
+    expect(out).toContain('discipline: mirror')
+    expect(out).toContain('discipline: prdt script mirror')
+    // None of the three took the "no source tree nearby" / "installed-copy
+    // coincidence" skip this ticket exists to eliminate.
+    expect(out).not.toContain('no source tree nearby')
+    expect(out).not.toContain('installed-copy coincidence')
+  })
+
+  test('a bad PRDT_REPO (points nowhere real) is a skip with a reason — never a silent pass, never false drift', () => {
+    fs.writeFileSync(path.join(installedHome, 'prdt.env'),
+      `PRDT_REPO=${path.join(root, 'does-not-exist')}\n`)
+    const out = installedDoctor()
+    expect(out).toContain('no source tree nearby')
+    expect(out).not.toContain('discipline: mirror BEHIND')
+    expect(out).not.toContain('discipline: mirror AHEAD')
+    expect(out).not.toContain('discipline: prdt script mirror BEHIND')
+    expect(out).not.toContain('discipline: prdt script mirror AHEAD')
+    expect(out).not.toContain('hooks: mirror BEHIND')
+    expect(out).not.toContain('hooks: mirror AHEAD')
+  })
+})
