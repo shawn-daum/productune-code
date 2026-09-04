@@ -44,7 +44,7 @@ for (const [event, matcher] of [
     // install-plan-tier-hook.test.ts for its own ordering assertions); T-445:
     // prdt-project-overrides-inject.sh joined it as the new last entry (see
     // install-project-overrides-hook.test.ts).
-    expect(commands.length).toBe(5)
+    expect(commands.length).toBe(16) // T-577: + the eleven discipline part slots prdt-session-start-p2..p12.sh
   })
 }
 

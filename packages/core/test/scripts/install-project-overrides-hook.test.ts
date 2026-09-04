@@ -68,7 +68,7 @@ for (const [event, matcher, first] of [
     // project overrides are the LAST command in the whole entry — nothing may
     // render after them, or the precedence contract breaks.
     expect(idx('prdt-project-overrides-inject.sh')).toBe(commands.length - 1)
-    expect(commands.length).toBe(5)
+    expect(commands.length).toBe(16) // T-577: + the eleven discipline part slots prdt-session-start-p2..p12.sh
   })
 }
 

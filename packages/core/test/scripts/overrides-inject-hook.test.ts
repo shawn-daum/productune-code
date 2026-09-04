@@ -121,28 +121,46 @@ describe('override present: reaches visible context via its own small channel', 
 })
 
 describe('realistic oversized fixture (~18KB discipline payload, incident-scale)', () => {
-  test.skipIf(!hasJq())('main payload alone is large enough to have tripped the observed ~10KB persist threshold', () => {
+  /** T-577: the main hook now delivers the set in PARTS (one hook command each),
+   *  every part under the measured 10,000-char persistence threshold. The
+   *  fixture is still incident-sized in TOTAL — that is what proves the split
+   *  is doing work — but no single output is over the threshold any more. */
+  function allParts(home: string): string[] {
+    const parts: string[] = []
+    for (let n = 1; n <= 12; n++) {
+      const out = execFileSync('bash', [SESSION_START_HOOK, '--part', String(n)], {
+        input: JSON.stringify({ hook_event_name: 'SubagentStart', agent_type: 'prdt-developer', cwd: os.tmpdir() }),
+        encoding: 'utf8', env: { ...process.env, PRDT_HOME: home },
+      })
+      const ctx = additionalContextOf(out)
+      if (ctx) parts.push(ctx)
+    }
+    return parts
+  }
+
+  test.skipIf(!hasJq())('the fixture is incident-scale in total, yet no single hook output crosses the 10,000-char persist threshold', () => {
     const home = makePrdtHome({ overrideBody: OVERRIDE_BODY, oversized: true })
-    const ctx = additionalContextOf(runHook(SESSION_START_HOOK, home))
-    expect(ctx.length).toBeGreaterThan(12000)
+    const parts = allParts(home)
+    expect(parts.length).toBeGreaterThan(1)
+    expect(parts.reduce((n, p) => n + p.length, 0)).toBeGreaterThan(12000)
+    for (const p of parts) expect(p.length).toBeLessThanOrEqual(10000)
   })
 
   test.skipIf(!hasJq())('overrides hook output stays small and independent of main payload size', () => {
     const home = makePrdtHome({ overrideBody: OVERRIDE_BODY, oversized: true })
     const overridesCtx = additionalContextOf(runHook(OVERRIDES_HOOK, home))
-    const mainCtx = additionalContextOf(runHook(SESSION_START_HOOK, home))
+    const parts = allParts(home)
 
     // The overrides channel is the ONLY place the body appears, and it is far
-    // below the observed persist threshold even though the main payload (same
-    // fixture, same turn) is oversized — proving the two are size-independent.
+    // below the persist threshold even though the main set (same fixture, same
+    // turn) is oversized in total — proving the two are size-independent.
     expect(overridesCtx).toContain(gutter(OVERRIDE_BODY))
-    // The bound is about ORDER OF MAGNITUDE, not a byte count: the observed
-    // persist threshold was ~10KB, and this channel must stay far under it no
-    // matter how large the main payload grows. T-493 added ~450 chars of payload
-    // prose (what the gutter does and does not stop — the honesty item), taking
-    // this block from ~2.0KB to ~2.4KB measured; still a quarter of the threshold.
+    // The bound is about ORDER OF MAGNITUDE, not a byte count: the measured
+    // persist threshold is 10,000 chars (T-577), and this channel must stay far
+    // under it no matter how large the main payload grows. T-493 added ~450 chars
+    // of payload prose, taking this block from ~2.0KB to ~2.4KB measured.
     expect(overridesCtx.length).toBeLessThan(4000)
-    expect(mainCtx.length).toBeGreaterThan(12000)
-    expect(mainCtx).not.toContain(OVERRIDE_BODY)
+    expect(parts.reduce((n, p) => n + p.length, 0)).toBeGreaterThan(12000)
+    for (const p of parts) expect(p).not.toContain(OVERRIDE_BODY)
   })
 })
