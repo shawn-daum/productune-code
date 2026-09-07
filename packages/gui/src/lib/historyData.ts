@@ -9,6 +9,34 @@
 /** A version id like v1, v1.0, v1.2.3. Excludes `backlog` and other dirs. */
 export const VERSION_RE = /^v\d+(\.\d+)*$/
 
+/** The single living PRD SoT (prdt mode). Mirrors PrdSection's PRD_MASTER_REL. */
+export const PRD_MASTER_REL = 'docs/prd/PRD.md'
+
+/**
+ * Resolve the PRD path for a CLOSED version's History-detail row (T-546
+ * follow-up: HistoryDetailView hardcoded `docs/prd/versions/<v>.md` with no
+ * prdt branch, so a real closed version — e.g. a `v0.5` git tag — pointed at
+ * a file prdt never writes and rendered the "no PRD" placeholder instead of
+ * the actual PRD).
+ *
+ * HistoryDetailView only ever renders CLOSED versions (HistoryPane excludes
+ * the in-progress version from its list), so — unlike PrdSection, which also
+ * distinguishes the OPEN/current version — the only branch that matters here
+ * is prdt vs legacy:
+ *   - prdt (isPrdt=true)  → ALWAYS docs/prd/PRD.md, regardless of whether a
+ *     `docs/prd/versions/<versionId>.md` file happens to exist on disk. prdt
+ *     abolished the per-version snapshot (T-291, adapter A8); PRD.md is the
+ *     single living SoT for every version, closed or open.
+ *   - legacy (isPrdt=false) → ALWAYS `docs/prd/versions/<versionId>.md`,
+ *     unchanged. A legacy snapshot file is not necessarily 1:1 with a version:
+ *     `v0.4.md` can be the record for v0.1~v0.4 together, so this branch never
+ *     stops reading `versions/` — it only stops being reached at all once a
+ *     project is prdt.
+ */
+export function resolveClosedVersionPrdPath(isPrdt: boolean, versionId: string): string {
+  return isPrdt ? PRD_MASTER_REL : `docs/prd/versions/${versionId}.md`
+}
+
 export interface TicketCounts {
   done: number
   dropped: number
