@@ -27,6 +27,7 @@ const DESIGNER_HABIT = path.join(DISCIPLINE, 'designer', 'habit.md')
 const PRD_CLARITY = path.join(DISCIPLINE, 'designer', 'playbooks', 'prd-clarity.md')
 const PO_HABIT = path.join(DISCIPLINE, 'po', 'habit.md')
 const SCOPE_CHALLENGE = path.join(DISCIPLINE, 'designer', 'playbooks', 'scope-challenge.md')
+const FIXED_PATHS_ANNEX = path.join(DISCIPLINE, 'contracts', 'fixed-paths.md')
 
 const read = (p: string) => fs.readFileSync(p, 'utf-8')
 // Same count doctor uses: python splitlines() ignores one trailing newline.
@@ -100,9 +101,13 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
   })
 
   // features/ sits OUTSIDE the wiki store, so `prdt wiki lint` cannot see a
-  // wikilink written there — it would be an unchecked dead link.
-  test('the row bans wikilinks in the features store', () => {
-    expect(row()).toContain('Never `[[…]]` here')
+  // wikilink written there — it would be an unchecked dead link. The ban is a
+  // spec-AUTHORING rule, so it lives in the on-demand annex the row points at
+  // (T-586 hot→cold split); the row keeps the pointer, the annex keeps the text.
+  test('the row points at the annex that bans wikilinks in the features store', () => {
+    expect(row()).toContain('`contracts/fixed-paths.md`')
+    expect(read(FIXED_PATHS_ANNEX)).toContain('Never `[[…]]` here')
+    expect(row()).not.toContain('Never `[[…]]` here')
   })
 })
 
