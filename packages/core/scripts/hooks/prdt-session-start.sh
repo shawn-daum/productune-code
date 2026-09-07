@@ -484,7 +484,7 @@ def render(parts, k, undelivered_docs):
           % (n, budget, threshold, n)
         + "Part map: " + pmap + "\n"
         + "Precedence (doctrine → contracts → habit, later wins) is by document, never by part order. Override blocks (machine, project) arrive as their OWN hook outputs and each outranks everything here wherever it sits; the project layer is the final word (T-358/T-445); both stay under the non-overridable floor in contracts §Overrides.\n"
-        + "Playbook bodies load on demand via Bash cat under %s/ (Read does NOT expand ~).\n" % shown(disc))
+        + "Playbook bodies and `contracts/*.md` annexes load on demand via Bash cat under %s/ (Read does NOT expand ~).\n" % shown(disc))
     if k == 1 and undelivered_docs:
         head += ("\nNOT DELIVERED — this set needs %d parts but only %d hook slot(s) are registered on this machine, so parts %d–%d never run. Missing: %s. STOP: cat those paths before acting on anything; re-run install.sh to register the missing slots (prdt doctor reports this).\n"
                  % (len(parts), slots, slots + 1, len(parts), "; ".join("%s (%s)" % (l, shown(p)) for l, p in undelivered_docs)))
