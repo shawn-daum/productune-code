@@ -21,7 +21,8 @@ import {
 } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { useTicketScan } from '../../lib/useTicketScan'
-import { countTicketStatuses, parseOutcomeBlock } from '../../lib/historyData'
+import { countTicketStatuses, parseOutcomeBlock, resolveClosedVersionPrdPath } from '../../lib/historyData'
+import { isPrdtPoState } from '../../lib/phase-mapping'
 
 interface ArtifactEntry {
   relPath: string
@@ -53,9 +54,14 @@ export default function HistoryDetailView({ versionId, closedDate }: Props) {
   const openTab = useWorkspace((s) => s.openTab)
   const projectDir = project?.projectDir ?? null
   const { tickets } = useTicketScan(projectDir)
+  // T-546 follow-up: this view only ever renders CLOSED versions (HistoryPane
+  // excludes the in-progress one from its list), so the PRD path needs only
+  // the prdt-vs-legacy branch — see resolveClosedVersionPrdPath for the full
+  // rationale (prdt has no per-version snapshot; legacy keeps reading one).
+  const isPrdt = useWorkspace((s) => isPrdtPoState(s.poState))
 
   const retroRel = `docs/wiki/retro--${versionId}.md`
-  const prdRel = `docs/prd/versions/${versionId}.md`
+  const prdRel = resolveClosedVersionPrdPath(isPrdt, versionId)
 
   // undefined = loading, null = absent
   const [outcome, setOutcome] = useState<string | null | undefined>(undefined)
