@@ -501,8 +501,9 @@ describe('the path guard is duplicated like the gutter — lock the source parit
       // T-577: the document delimiters and $DISC moved into the python part renderer,
       // which guards them with its own `shown()` (same shape match as PRDT_QUOTE_PY);
       // bash keeps $PROJ, 4 pointer paths, MISSING, $FLAG ×2, the python3-missing
-      // notice ×4 and the withheld-record notice.
-      [SESSION_HOOK]: 14,
+      // notice ×4 and the withheld-record notice; T-578 adds the self-load
+      // python3-missing notice ×4 (its MISSING line reuses the already-guarded $MISSING).
+      [SESSION_HOOK]: 18,
     }
     for (const [hook, n] of Object.entries(counts)) {
       const src = fs.readFileSync(hook, 'utf8')
