@@ -7,7 +7,7 @@
  *   register is out of scope in v1.5; workers are covered via PO relay.
  * - Mode source `$PRDT_HOME/audience-mode`: `developer` → zero stdout
  *   (current register, byte-identical behavior); `planner` OR missing OR
- *   invalid → inject discipline/po/audience-planner.md (default = planner,
+ *   invalid → inject discipline/register/audience-planner.md (default = planner,
  *   PRD v1.5 decision).
  * - Same T-358 wiring as prdt-overrides-inject.sh: its own small hook output,
  *   never part of prdt-session-start.sh's payload — so the main hook must not
@@ -28,7 +28,7 @@ const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const AUDIENCE_HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-audience-inject.sh')
 const SESSION_START_HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-session-start.sh')
 
-// A sentence that exists verbatim in discipline/po/audience-planner.md — the
+// A sentence that exists verbatim in discipline/register/audience-planner.md — the
 // marker for "the planner register body reached the context".
 const PLANNER_MARKER = 'The person reading you is a product planner, not a developer.'
 
@@ -41,14 +41,15 @@ function makePrdtHome(opts: { mode?: string } = {}): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t326-'))
   const disc = path.join(home, 'discipline')
   fs.mkdirSync(path.join(disc, 'po', 'playbooks'), { recursive: true })
+  fs.mkdirSync(path.join(disc, 'register'), { recursive: true })
 
   fs.writeFileSync(path.join(home, 'doctrine.md'), '# doctrine\n')
   fs.writeFileSync(path.join(disc, 'contracts.md'), '# contracts\n')
   fs.writeFileSync(path.join(disc, 'po', 'habit.md'), '# po habit\n')
   fs.writeFileSync(path.join(disc, 'po', 'playbooks', '_index.md'), '# menu\n')
   fs.copyFileSync(
-    path.join(CORE_ROOT, 'discipline', 'po', 'audience-planner.md'),
-    path.join(disc, 'po', 'audience-planner.md'),
+    path.join(CORE_ROOT, 'discipline', 'register', 'audience-planner.md'),
+    path.join(disc, 'register', 'audience-planner.md'),
   )
 
   if (opts.mode !== undefined) {
@@ -130,7 +131,7 @@ describe('T-358 channel separation', () => {
 
   test.skipIf(!hasJq())('stale mirror without audience-planner.md → degrades silently (no broken JSON)', () => {
     const home = makePrdtHome({ mode: 'planner\n' })
-    fs.rmSync(path.join(home, 'discipline', 'po', 'audience-planner.md'))
+    fs.rmSync(path.join(home, 'discipline', 'register', 'audience-planner.md'))
     expect(runHook(AUDIENCE_HOOK, home, 'prdt-po')).toBe('')
   })
 })

@@ -9,7 +9,7 @@
 # belongs to the operator reading the PO, not to the project, so it lives in
 # ~/.prdt (never .prdt/config.json). Written by the GUI (onboarding + Settings)
 # via @productune/core settings/audience-mode.ts; both sides share the shape:
-#   planner   → inject discipline/po/audience-planner.md (plain vocabulary,
+#   planner   → inject discipline/register/audience-planner.md (plain vocabulary,
 #               conclusion first, progressive disclosure)
 #   developer → emit NOTHING (current PO register, byte-identical behavior)
 #   missing/invalid → planner (product default, T-326/PRD v1.5)
@@ -47,7 +47,7 @@ case "$MODE" in
   *)         ;;          # unset/invalid → planner (default)
 esac
 
-BODY_FILE="$PRDT_HOME/discipline/po/audience-planner.md"
+BODY_FILE="$PRDT_HOME/discipline/register/audience-planner.md"
 [ -s "$BODY_FILE" ] || exit 0   # stale mirror without the file → degrade silently
 
 # T-483 audit note — this splice stays RAW deliberately, and that is safe here:
