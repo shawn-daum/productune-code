@@ -96,9 +96,9 @@ describe('audience=developer with nothing else in force = zero stdout (T-326 byt
   test.skipIf(!hasJq())('hook emits nothing at all — never an empty block', () => {
     expect(runHook(AUDIENCE_HOOK, makePrdtHome({ register: 'audience=developer\n' }), 'prdt-po')).toBe('')
   })
-  test.skipIf(!hasJq())('--binding still names the non-default key', () => {
+  test.skipIf(!hasJq())('--binding still names the non-default key; tail never claims a body arrived (none exists)', () => {
     expect(mode(makePrdtHome({ register: 'audience=developer\n' }), '--binding'))
-      .toBe('[prdt register] audience=developer — governs user-chat. Binding only; any body arrived at session start.\n')
+      .toBe('[prdt register] audience=developer — governs user-chat. No body is in force for these values — this line is the whole cost.\n')
   })
 })
 

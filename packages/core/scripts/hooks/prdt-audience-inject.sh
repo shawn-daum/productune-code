@@ -31,18 +31,35 @@
 #   form       prose | outline            default prose
 #   structure  default | planner-tables   default default
 #   address    free text — ONE line · 1–32 bytes · no control or line-break
-#              characters · valid UTF-8; default none (the user is not addressed
-#              by a name or title). A value, not a rule: it is emitted only
-#              inside a fixed sentence of this file's own.
+#              characters · none of `"`, `·`, `[prdt` (those forge the binding
+#              line's own grammar — see address_ok) · valid UTF-8; default none
+#              (the user is not addressed by a name or title). A value, not a
+#              rule: it is emitted only inside a fixed sentence of this file's
+#              own. Both gates enforce the same shape: this parse AND the CLI's
+#              `set` (packages/core/scripts/prdt) — a hand-edited line is
+#              refused here the same way a CLI write is refused there.
 # An out-of-domain value resolves to the key's default and never reaches a
 # reader; the block only says HOW MANY lines were ignored, never their bytes.
 #
+# GOVERNS VOCABULARY — a body's `governs:` frontmatter may only name a surface
+# from the closed vocabulary contracts.md §Language enumerates (twelve names).
+# This resolver owns the one copy (GOVERNS_VOCAB below): it is already the
+# domain's single source of truth for the four register keys, and a `governs:`
+# value is body-authored data of the same trust class, so it is judged here
+# rather than by a second hardcoded copy in the CLI/doctor — `prdt doctor` asks
+# via `--resolve`'s `body_warnings` instead of re-parsing frontmatter itself. An
+# off-vocabulary name is dropped from the union silently rendered to the PO
+# (never spliced) and reported once per body via `body_warnings`.
+#
 # BODIES — `discipline/register/<key>-<value>.md` (install mirror), each with
 # `key:` · `value:` · `governs:` frontmatter naming the surfaces it shapes
-# (closed vocabulary in contracts.md §Language). A legal value with no body file
-# emits nothing for that key (`audience=developer` is 0 B, byte-identical to
-# T-326), so a machine at every default injects exactly the planner body it
-# always did and nothing more.
+# (closed vocabulary above). A legal value with no body file emits nothing for
+# that key at SESSION START (`audience=developer` is 0 B there, byte-identical
+# to T-326), so a machine at every default injects exactly the planner body it
+# always did and nothing more. The PER-TURN `--binding` line is a separate
+# channel (see below) and is NOT 0 B for `audience=developer` alone — it is a
+# non-default value, so it still binds every turn (measured ~128 B including
+# the trailing newline); only its BODY is 0 B, never the binding.
 #
 # MODES
 #   (hook)      stdin = event JSON. PO only. Emits the register block: header +
@@ -50,12 +67,15 @@
 #               no address in force → no output at all (never an empty block).
 #   --list      JSON: keys · domain · default · body presence. The domain's SoT.
 #   --resolve   JSON: resolved values + warnings (unknown key · out-of-domain ·
-#               address shape · malformed line). For `prdt register show` and
-#               `prdt doctor`; never injected.
+#               address shape · malformed line) + body_warnings (an
+#               off-vocabulary `governs:` name, named by file). For `prdt
+#               register show` and `prdt doctor`; never injected.
 #   --binding   ONE plain-text line for the per-turn channel
 #               (prdt-user-prompt.sh appends it): the non-default keys in force.
 #               EMPTY when every key is at its default — a default machine pays
-#               nothing per turn.
+#               nothing per turn. Its tail names whether a body actually arrived
+#               at session start for these values — never claims one did when
+#               none exists (e.g. `audience=developer` alone has no body).
 #
 # Scope: PO only. Worker output reaches the user re-voiced by the PO, so it is
 # covered here; workers' own direct register is out of scope.
@@ -88,7 +108,24 @@ KEYS="audience form structure address"
 domain_of()  { case "$1" in audience) echo "planner developer" ;; form) echo "prose outline" ;; structure) echo "default planner-tables" ;; esac; }
 default_of() { case "$1" in audience) echo planner ;; form) echo prose ;; structure) echo default ;; address) echo "" ;; esac; }
 ADDRESS_MAX_BYTES=32
-ADDRESS_SHAPE="one line · 1–32 bytes · no control or line-break characters · valid UTF-8"
+ADDRESS_SHAPE="one line · 1–32 bytes · no control or line-break characters · none of \`\"\`, \`·\`, \`[prdt\` · valid UTF-8"
+
+# The closed surface vocabulary a `governs:` value may name — contracts.md
+# §Language, verbatim (twelve names). One copy, owned here (see the header
+# comment for why); doctor asks via --resolve rather than re-parsing.
+GOVERNS_VOCAB="user-chat prd artifacts ticket-request tool-description wiki envelope ctx-fields ticket-acceptance commit-message dispatch-body discipline"
+# IFS explicit and local: body_governs (a caller) sets `local IFS=','` for its own
+# comma-split, and bash's `local` is dynamically scoped across a nested call — an
+# ambient IFS here would silently turn every word-split into a single token.
+in_vocab() { local v="$1" d IFS=' '; for d in $GOVERNS_VOCAB; do [ "$v" = "$d" ] && return 0; done; return 1; }
+
+# Body-authored governs warnings survive command-substitution subshells only via
+# a file (a bash variable set inside `$(fn)` never reaches the caller) — short
+# lived, this process only, removed on exit.
+BODY_WARN_FILE="$(mktemp 2>/dev/null || printf '%s/prdt-register-body-warn.%s' "${TMPDIR:-/tmp}" "$$")"
+: 2>/dev/null > "$BODY_WARN_FILE"
+trap 'rm -f "$BODY_WARN_FILE"' EXIT
+body_warn() { printf '%s\n' "$1" >> "$BODY_WARN_FILE" 2>/dev/null; }
 
 # ── resolution ────────────────────────────────────────────────────────────────
 R_audience="$(default_of audience)"; R_form="$(default_of form)"; R_structure="$(default_of structure)"; R_address=""
@@ -97,6 +134,11 @@ WARNS=""; IGNORED=0; REG_PRESENT=0
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
 warn() { WARNS="${WARNS}${WARNS:+
 }$1"; IGNORED=$((IGNORED + 1)); }
+# Same list, but not a "line was ignored" — an unreadable FILE is a distinct
+# failure mode from a malformed line inside a readable one, so it never inflates
+# the session-start block's ignored-line count.
+warn_only() { WARNS="${WARNS}${WARNS:+
+}$1"; }
 in_domain() { local v="$1" d; for d in $(domain_of "$2"); do [ "$v" = "$d" ] && return 0; done; return 1; }
 
 # Shape match for the one free value. The address goes into a fixed sentence of
@@ -104,7 +146,14 @@ in_domain() { local v="$1" d; for d in $(domain_of "$2"); do [ "$v" = "$d" ] && 
 # C0 control (CR · VT · FF · FS · GS · RS included) and DEL are rejected by a byte
 # scan, the three multi-byte breaks (NEL · LS · PS) by literal match, and the
 # bytes must be UTF-8. LF cannot occur — the file is read line by line. Then the
-# byte cap: 32 bytes hold a name or a title and no room for a rule.
+# byte cap: 32 bytes hold a name or a title and no room for a rule. Finally, three
+# literals that would forge the binding/session line's OWN grammar are banned
+# outright: `"` (opens/closes the address's own quoted slot — `prdt register set
+# address 'x" · form=outline'` used to make the rendered line carry a SECOND,
+# unintended `form=outline` a reader sees as in force), `·` (the pair separator
+# between key=value entries) and the literal `[prdt` (a block/line header this
+# file's own output uses). Same shape enforced at the CLI's `set`
+# (packages/core/scripts/prdt) — a hand-edited line is refused here identically.
 address_ok() {
   local v="$1" stripped
   [ -n "$v" ] || return 1
@@ -112,6 +161,7 @@ address_ok() {
   stripped="$(printf '%s' "$v" | tr -d '\001-\037\177')"
   [ "$stripped" = "$v" ] || return 1
   case "$v" in *$'\xc2\x85'*|*$'\xe2\x80\xa8'*|*$'\xe2\x80\xa9'*) return 1 ;; esac
+  case "$v" in *'"'*|*'·'*|*'[prdt'*) return 1 ;; esac
   printf '%s' "$v" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 || return 1
   return 0
 }
@@ -119,6 +169,10 @@ address_ok() {
 parse_register() {
   [ -f "$REG_FILE" ] || return 0
   REG_PRESENT=1
+  if [ ! -r "$REG_FILE" ]; then
+    warn_only "$REG_FILE exists but is not readable (permission denied) — every key resolves to its default"
+    return 0
+  fi
   local n=0 line key val
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
@@ -137,16 +191,46 @@ parse_register() {
       *)
         # the key name is file bytes: it reaches `--resolve` (CLI/doctor, never the
         # model context) so the person can find the line; the block counts it only.
-        warn "L$n: unknown key \`$(printf '%s' "$key" | tr -d '\001-\037\177' | cut -c1-40)\` — ignored" ;;
+        warn "L$n: unknown key \`$(printf '%s' "$key" | tr -d '\001-\037\177' | utf8_truncate40)\` — ignored" ;;
     esac
   done < "$REG_FILE"
+}
+
+# `cut -c1-40` under this file's LC_ALL=C is a BYTE cut, so it can split a
+# multi-byte UTF-8 character at the boundary and emit a broken trailing byte.
+# Cut at 40 bytes, then trim trailing bytes (one at a time — `${v%?}` removes one
+# BYTE under LC_ALL=C) until what remains re-validates as UTF-8 or is empty —
+# the same iconv round-trip address_ok already uses, applied to the tail instead
+# of the whole value.
+utf8_truncate40() {
+  local v
+  v="$(cut -c1-40)"
+  while [ -n "$v" ] && ! printf '%s' "$v" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; do
+    v="${v%?}"
+  done
+  printf '%s' "$v"
 }
 
 body_path() { printf '%s/%s-%s.md' "$BODY_DIR" "$1" "$2"; }
 # Body minus its frontmatter (`---` … `---` at the top) — the frontmatter is the
 # object's metadata for tooling, not text the PO should read as instruction.
 body_text() { awk 'NR==1 && $0=="---" {fm=1; next} fm && $0=="---" {fm=0; next} !fm' "$1"; }
-body_governs() { sed -n 's/^governs:[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p' "$1" | head -1 | tr -d ' '; }
+# `governs:` values are filtered against the closed vocabulary (GOVERNS_VOCAB) —
+# an off-vocabulary name is dropped from what's returned and reported once via
+# body_warn, named by file, for `prdt doctor` to surface (--resolve's
+# `body_warnings`). Never rendered to the PO either way.
+body_governs() {
+  local p="$1" raw name out=""
+  raw="$(sed -n 's/^governs:[[:space:]]*\[\(.*\)\][[:space:]]*$/\1/p' "$p" | head -1 | tr -d ' ')"
+  local IFS=','
+  for name in $raw; do
+    [ -n "$name" ] || continue
+    if in_vocab "$name"; then out="${out}${out:+,}$name"
+    else body_warn "body $(basename "$p") names governs=\`$name\`, outside the closed surface vocabulary (contracts.md §Language) — dropped"
+    fi
+  done
+  printf '%s' "$out"
+}
 
 # Keys in force with a body file present → "key value path" per line.
 active_bodies() {
@@ -205,14 +289,18 @@ parse_register
 # ── --resolve: values + warnings, as JSON (CLI / doctor) ──────────────────────
 if [ "${1:-}" = "--resolve" ]; then
   command -v jq >/dev/null 2>&1 || exit 0
+  GOVERNS="$(governs_union)"
+  BODY_WARNS="$(cat "$BODY_WARN_FILE" 2>/dev/null)"
   jq -n --arg file "$REG_FILE" --argjson present "$([ "$REG_PRESENT" = 1 ] && echo true || echo false)" \
      --arg a "$R_audience" --arg f "$R_form" --arg s "$R_structure" --arg ad "$R_address" \
-     --arg warns "$WARNS" --arg governs "$(governs_union)" --arg binding "$(non_default_pairs)" \
+     --arg warns "$WARNS" --arg governs "$GOVERNS" --arg binding "$(non_default_pairs)" \
+     --arg bwarns "$BODY_WARNS" \
      '{file:$file, present:$present,
        values:{audience:$a, form:$f, structure:$s, address:(if $ad == "" then null else $ad end)},
        defaults:{audience:"planner", form:"prose", structure:"default", address:null},
        governs:$governs, binding:(if $binding == "" then null else $binding end),
-       warnings:($warns | split("\n") | map(select(length > 0)))}'
+       warnings:($warns | split("\n") | map(select(length > 0))),
+       body_warnings:($bwarns | split("\n") | map(select(length > 0)))}'
   exit 0
 fi
 
@@ -220,8 +308,15 @@ fi
 if [ "${1:-}" = "--binding" ]; then
   pairs="$(non_default_pairs)"
   [ -n "$pairs" ] || exit 0
-  printf '[prdt register] %s — governs %s. Binding only; any body arrived at session start.\n' \
-    "$pairs" "$(governs_union)"
+  # Whether a body actually arrived at session start for these VALUES — never
+  # claimed when none exists (`audience=developer` alone has no body; this line
+  # is then the whole cost, not a reminder of something already delivered).
+  if [ -n "$(active_bodies)" ]; then
+    tail="Binding only; any body arrived at session start."
+  else
+    tail="No body is in force for these values — this line is the whole cost."
+  fi
+  printf '[prdt register] %s — governs %s. %s\n' "$pairs" "$(governs_union)" "$tail"
   exit 0
 fi
 
