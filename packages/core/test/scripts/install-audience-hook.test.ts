@@ -6,7 +6,7 @@
  * DISTINCT hook command entry (T-358 small-payload pattern), ordered BEFORE
  * prdt-overrides-inject.sh so machine overrides stay last-wins over the
  * audience-mode register block. It must be mirrored executable, and the
- * discipline mirror must carry po/audience-planner.md (the injected body).
+ * discipline mirror must carry register/audience-planner.md (the injected body).
  * Re-running install.sh must stay idempotent.
  *
  * Drives the REAL install.sh under a sandboxed HOME / PRDT_HOME / CLAUDE_DIR
@@ -20,13 +20,13 @@ import fs from 'fs'
 import { test, expect } from 'vitest'
 import { installedMachine, freshInstall, hasJq } from '../helpers/install-fixture'
 
-test.skipIf(!hasJq())('mirrors prdt-audience-inject.sh executable + po/audience-planner.md body', () => {
+test.skipIf(!hasJq())('mirrors prdt-audience-inject.sh executable + register/audience-planner.md body', () => {
   const { prdtHome } = installedMachine()
   const script = path.join(prdtHome, 'hooks', 'prdt-audience-inject.sh')
   expect(fs.existsSync(script)).toBe(true)
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
   // The injected body ships inside the discipline mirror (cp -R discipline).
-  expect(fs.existsSync(path.join(prdtHome, 'discipline', 'po', 'audience-planner.md'))).toBe(true)
+  expect(fs.existsSync(path.join(prdtHome, 'discipline', 'register', 'audience-planner.md'))).toBe(true)
 })
 
 for (const [event, matcher] of [
