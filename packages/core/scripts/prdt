@@ -2767,6 +2767,12 @@ def cmd_register(args):
             sys.exit("usage: prdt register unset <key>")
         key = rest[0]
         value = rest[1].strip() if action == "set" else ""
+        # T-586 item 4 (pinned decision): an empty or whitespace-only `set` value
+        # is refused, not treated as a delete -- a setter that silently removes a
+        # key on an empty/unset variable is a footgun for any caller. Removal has
+        # its own explicit verb.
+        if action == "set" and not value:
+            sys.exit(f"prdt register: set refuses an empty value for `{key}` — use `prdt register unset {key}` to remove it")
         dom = register_query("--list", droot)
         if dom is None:
             sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
@@ -6036,7 +6042,8 @@ def main():
     p.set_defaults(fn=cmd_migrate)
     p = sub.add_parser("register", help="the PO's conversational register (~/.prdt/register: audience · form · "
                                         "structure · address): show | set <key> <value> | unset <key> | --list (the domain, "
-                                        "from the resolver hook — the one authority on legal values)")
+                                        "from the resolver hook — the one authority on legal values); set refuses an "
+                                        "empty/whitespace value — use unset <key> to remove a key")
     p.add_argument("action", nargs="?", choices=("show", "set", "unset"))
     p.add_argument("rest", nargs="*", help="set: <key> <value> · unset: <key>")
     p.add_argument("--list", action="store_true", help="print keys · domain · default · body presence")
