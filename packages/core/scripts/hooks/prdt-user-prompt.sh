@@ -291,8 +291,8 @@ RETURN_FLAG_RENDER_CAP = 5
 CLAUSE_ENVELOPE = "Return envelope — single JSON object, first stdout char `{`"
 CLAUSE_REQUIRED = ("Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) "
                    "· `confidence`(0..1)")
-CLAUSE_LANG = ("Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, "
-               "`## Acceptance`) → English.")
+CLAUSE_LANG = ("Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · "
+               "`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.")
 
 flags_path = os.path.join(os.path.dirname(state_path), ".return-flags.json")
 if os.path.exists(flags_path):

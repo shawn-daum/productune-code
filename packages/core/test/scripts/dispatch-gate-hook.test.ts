@@ -145,8 +145,8 @@ const CLAUSE_CTX =
   '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
 const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
 const CLAUSE_LANG =
-  'Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, ' +
-  '`## Acceptance`) → English.'
+  'Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · ' +
+  '`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
 
 describe('the quoted clauses are the real ones (drift guard)', () => {
   const contracts = fs.readFileSync(CONTRACTS, 'utf8')
