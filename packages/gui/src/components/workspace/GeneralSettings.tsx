@@ -703,9 +703,9 @@ function ToggleRow({
 }
 
 // ── Audience mode (T-326) ─────────────────────────────────────────────────────
-// Per-USER register of the PO's conversational output. Persisted as one token
-// at ~/.prdt/audience-mode (via IPC → core settings/audience-mode.ts), where
-// the prdt-audience-inject.sh SessionStart hook reads it. Two separate paths
+// Per-USER register of the PO's conversational output. Persisted as the
+// `audience` key of ~/.prdt/register (via IPC → core settings/audience-mode.ts),
+// where the prdt-audience-inject.sh SessionStart hook reads it. Two separate paths
 // by design: the strings in THIS section are i18n (fixed UI copy); the PO's
 // prose register is the hook-injection path — never i18n.
 type AudienceModeLocal = 'planner' | 'developer'

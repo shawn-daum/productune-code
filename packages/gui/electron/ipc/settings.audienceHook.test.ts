@@ -3,8 +3,8 @@
  *
  * v1.5 review #8: on a version-skewed machine (GUI newer than the ~/.prdt
  * mirror — install.sh hasn't re-run since T-326/T-413 added the audience
- * hook), Settings' audience toggle still writes ~/.prdt/audience-mode and
- * claims "applies next session" — but prdt-audience-inject.sh is never
+ * hook), Settings' audience toggle still writes ~/.prdt/register's `audience`
+ * key and claims "applies next session" — but prdt-audience-inject.sh is never
  * actually registered, so the setting is silently inert. This pins
  * checkAudienceHookRegistered (electron/ipc/settings.ts), the read-only
  * detector the Settings audience section uses to decide whether to show the

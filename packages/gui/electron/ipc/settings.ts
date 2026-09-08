@@ -80,8 +80,8 @@ function personaSpecPath(personaId: string): string | null {
 // ── Audience hook registration check (T-420) ─────────────────────────────────
 // v1.5 review #8: on a version-skewed machine (GUI newer than the ~/.prdt
 // mirror — e.g. install.sh hasn't been re-run since T-326/T-413 added the
-// audience hook), Settings' audience toggle still writes ~/.prdt/audience-mode
-// and shows "applies next session" — but prdt-audience-inject.sh never runs,
+// audience hook), Settings' audience toggle still writes ~/.prdt/register's
+// `audience` key and shows "applies next session" — but prdt-audience-inject.sh never runs,
 // so the setting is silently inert. Detection: is the audience-inject hook's
 // basename (from the SAME hook-manifest.json SoT onboarding.ts derives from)
 // actually present as a registered command in ~/.claude/settings.json? This is
@@ -167,8 +167,8 @@ export function register(): void {
   })
 
   // ── Audience mode IPC (T-326) ────────────────────────────────────────────────
-  // Per-USER register of the PO's conversational output — persisted as one
-  // token at ~/.prdt/audience-mode (core settings/audience-mode.ts), where the
+  // Per-USER register of the PO's conversational output — persisted as the
+  // `audience` key of ~/.prdt/register (core settings/audience-mode.ts), where the
   // prdt-audience-inject.sh SessionStart hook reads it. This is the PROSE
   // injection path; fixed UI strings stay on the i18n path (src/locales).
   ipcMain.handle('settings:getAudienceMode', (): AudienceMode => {
