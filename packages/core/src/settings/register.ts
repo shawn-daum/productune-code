@@ -10,7 +10,9 @@ import os from 'os'
  * layer.
  *
  * Storage: `~/.prdt/register`, one `key=value` per line, `#` comments, blank
- * lines, whitespace trimmed, unknown keys ignored, a repeated key → last wins.
+ * lines, ASCII whitespace trimmed (`asciiTrim` below — matches the resolver's
+ * `LC_ALL=C` trim byte for byte, never Unicode whitespace), unknown keys
+ * ignored, a repeated key → last wins.
  * Deliberately NOT ~/.productune/settings.json and NOT the project's
  * .prdt/config.json: the consumer is prdt-audience-inject.sh, a bash hook that
  * must read the file with no JSON parser — and it is that hook, not this
@@ -68,6 +70,21 @@ export function registerPath(homeDir: string = os.homedir()): string {
 }
 
 /**
+ * ASCII-only trim — the resolver's `trim()` in prdt-audience-inject.sh runs
+ * under `LC_ALL=C`, so its POSIX `[:space:]` class is exactly these six bytes
+ * (space, tab, LF, CR, VT, FF), never Unicode whitespace. JS's `String.trim()`
+ * strips far more (NBSP U+00A0, the Unicode space separators, BOM, …), which
+ * used to let a hand-edited `address=<NBSP><32 chars>` line parse here as a
+ * legal 32-char address while the resolver rejected the same 34-byte value
+ * outright (T-586 QA delta-grill defect: NBSP silently dropped). The resolver
+ * is canonical (contracts.md) — this function is what makes every trim in
+ * this file match it byte for byte instead of widening to Unicode.
+ */
+function asciiTrim(s: string): string {
+  return s.replace(/^[ \t\n\v\f\r]+/, '').replace(/[ \t\n\v\f\r]+$/, '')
+}
+
+/**
  * The address shape the hook enforces: one line, 1–32 bytes, no C0 control or
  * DEL, none of the three multi-byte breaks (NEL · LS · PS), none of `"`,
  * `·`, `[prdt` (T-586 QA defect 1 — those three would forge the
@@ -100,12 +117,12 @@ export function parseRegister(text: string): { values: Register; warnings: strin
   const lines = text.split('\n')
   lines.forEach((raw, i) => {
     const n = i + 1
-    const line = raw.replace(/\r$/, '').trim()
+    const line = asciiTrim(raw.replace(/\r$/, ''))
     if (!line || line.startsWith('#')) return
     const eq = line.indexOf('=')
     if (eq < 0) { warnings.push(`L${n}: not a key=value line — ignored`); return }
-    const key = line.slice(0, eq).trim()
-    const val = line.slice(eq + 1).trim()
+    const key = asciiTrim(line.slice(0, eq))
+    const val = asciiTrim(line.slice(eq + 1))
     if (key === 'audience' || key === 'form' || key === 'structure') {
       if (isLegalEnumValue(key, val)) (values as unknown as Record<string, string>)[key] = val
       else warnings.push(`L${n}: ${key}= is outside its domain (${REGISTER_DOMAIN[key].join('|')}) — resolved to the default \`${REGISTER_DEFAULTS[key]}\``)
@@ -141,7 +158,7 @@ export function readRegister(homeDir: string = os.homedir()): Register {
  */
 export function writeRegisterKey(key: RegisterKey, value: string | null, homeDir: string = os.homedir()): void {
   if (!REGISTER_KEYS.includes(key)) throw new Error(`register: unknown key \`${key}\``)
-  const v = value === null ? '' : value.trim()
+  const v = value === null ? '' : asciiTrim(value)
   if (v !== '') {
     if (key === 'address') {
       if (!isLegalAddress(v)) throw new Error(`register: address fails its shape (one line · 1–${ADDRESS_MAX_BYTES} bytes · no control or line-break characters · none of \`"\`, \`·\`, \`[prdt\` · valid UTF-8)`)
@@ -157,9 +174,9 @@ export function writeRegisterKey(key: RegisterKey, value: string | null, homeDir
   for (const raw of existing.replace(/\n$/, '').split('\n')) {
     if (existing === '') break
     const line = raw.replace(/\r$/, '')
-    const t = line.trim()
+    const t = asciiTrim(line)
     const eq = t.indexOf('=')
-    const k = !t.startsWith('#') && eq >= 0 ? t.slice(0, eq).trim() : null
+    const k = !t.startsWith('#') && eq >= 0 ? asciiTrim(t.slice(0, eq)) : null
     if (k === key) {
       if (!placed && v !== '') { out.push(`${key}=${v}`); placed = true }
       continue // later duplicates (and the removed key) are dropped

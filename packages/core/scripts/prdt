@@ -2719,6 +2719,18 @@ def register_warnings(droot):
     return warns
 
 
+def _ascii_strip(s):
+    """ASCII-only strip, matching prdt-audience-inject.sh's `trim()` (which runs
+    under `LC_ALL=C`, so its POSIX `[:space:]` class is exactly these six bytes)
+    byte for byte. Python's bare `str.strip()` treats far more as whitespace
+    (NBSP U+00A0, the Unicode space separators, …) — that gap used to let
+    `prdt register set address` silently drop a leading/trailing NBSP the
+    resolver would have counted toward the byte cap and rejected (T-586 QA
+    delta-grill defect). The resolver is canonical (contracts.md); this is what
+    keeps the CLI's own trim from re-widening past it."""
+    return s.strip(" \t\n\r\x0b\x0c")
+
+
 def cmd_register(args):
     """`prdt register` — show · set <key> <value> · unset <key> · --list. Legality is
     the resolver's judgment (`--list`), never this function's: `set` refuses what
@@ -2766,7 +2778,7 @@ def cmd_register(args):
         if action == "unset" and len(rest) != 1:
             sys.exit("usage: prdt register unset <key>")
         key = rest[0]
-        value = rest[1].strip() if action == "set" else ""
+        value = _ascii_strip(rest[1]) if action == "set" else ""
         # T-586 item 4 (pinned decision): an empty or whitespace-only `set` value
         # is refused, not treated as a delete -- a setter that silently removes a
         # key on an empty/unset variable is a footgun for any caller. Removal has
@@ -2798,8 +2810,8 @@ def cmd_register(args):
         out, placed = [], False
         for raw in (existing.rstrip("\n").split("\n") if existing else []):
             line = raw.rstrip("\r")
-            t = line.strip()
-            k = t.split("=", 1)[0].strip() if ("=" in t and not t.startswith("#")) else None
+            t = _ascii_strip(line)
+            k = _ascii_strip(t.split("=", 1)[0]) if ("=" in t and not t.startswith("#")) else None
             if k == key:
                 if not placed and value:
                     out.append(f"{key}={value}")
