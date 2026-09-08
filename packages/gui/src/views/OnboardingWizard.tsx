@@ -92,7 +92,7 @@ export default function OnboardingWizard({ onDone }: Props) {
     setCompleting(true)
     setCompleteError('')
     // codex폐기 (T-PATCH-235): 엔진은 항상 claude — 리터럴 인라인.
-    // T-326: audienceMode rides along — persisted per-user (~/.prdt/audience-mode).
+    // T-326: audienceMode rides along — persisted per-user (~/.prdt/register, `audience` key).
     const completeOpts: Record<string, unknown> = { engine: 'claude', uiLanguage: uiLang, audienceMode }
     // T-PATCH-213: guard deref — .catch traps only promise rejection.
     const api = (window as any).api
