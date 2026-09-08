@@ -87,6 +87,22 @@ EOF
 #    install and an update both leave accumulated machine content standing.
 say "1) Mirroring discipline → $PRDT_HOME"
 mkdir -p "$PRDT_HOME/overrides" "$PRDT_HOME/wiki" "$PRDT_HOME/hooks" "$PRDT_HOME/bin"
+# T-586: the register object (`register`, key=value) absorbs the T-326 one-token
+# `audience-mode` file. A machine that recorded its audience level there keeps it:
+# migrate ONCE into `register` as `audience=<value>` when no register file exists
+# yet, then remove the old file — after this nothing reads audience-mode (one
+# mechanism; the resolver never falls back to it). An existing register wins.
+if [ -f "$PRDT_HOME/audience-mode" ]; then
+  OLD_MODE="$(tr -d '[:space:]' < "$PRDT_HOME/audience-mode")"
+  if [ ! -f "$PRDT_HOME/register" ]; then
+    case "$OLD_MODE" in
+      planner|developer)
+        printf 'audience=%s\n' "$OLD_MODE" > "$PRDT_HOME/register.tmp" && mv "$PRDT_HOME/register.tmp" "$PRDT_HOME/register"
+        say "   audience-mode=$OLD_MODE → register (audience=$OLD_MODE); audience-mode removed" ;;
+    esac
+  fi
+  rm -f "$PRDT_HOME/audience-mode"
+fi
 rm -rf "$PRDT_HOME/discipline"
 cp -R "$ROOT/discipline" "$PRDT_HOME/discipline"
 cp "$ROOT/doctrine.md" "$PRDT_HOME/doctrine.md"

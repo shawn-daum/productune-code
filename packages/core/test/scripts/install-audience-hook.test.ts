@@ -25,8 +25,10 @@ test.skipIf(!hasJq())('mirrors prdt-audience-inject.sh executable + register/aud
   const script = path.join(prdtHome, 'hooks', 'prdt-audience-inject.sh')
   expect(fs.existsSync(script)).toBe(true)
   expect(fs.statSync(script).mode & 0o111).not.toBe(0)
-  // The injected body ships inside the discipline mirror (cp -R discipline).
-  expect(fs.existsSync(path.join(prdtHome, 'discipline', 'register', 'audience-planner.md'))).toBe(true)
+  // The register bodies ship inside the discipline mirror (cp -R discipline) — T-586.
+  for (const b of ['audience-planner.md', 'form-outline.md', 'structure-planner-tables.md']) {
+    expect(fs.existsSync(path.join(prdtHome, 'discipline', 'register', b)), b).toBe(true)
+  }
 })
 
 for (const [event, matcher] of [
