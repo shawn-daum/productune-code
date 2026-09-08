@@ -23,6 +23,7 @@ import {
   REGISTER_DOMAIN, REGISTER_DEFAULTS, REGISTER_KEYS, ADDRESS_MAX_BYTES,
 } from '../../src/settings/register'
 import { getAudienceMode, setAudienceMode, DEFAULT_AUDIENCE_MODE } from '../../src/settings/audience-mode'
+import { casesFor } from '../fixtures/address-legality-cases'
 
 const HOOK = path.resolve(__dirname, '..', '..', 'scripts', 'hooks', 'prdt-audience-inject.sh')
 function hasJq(): boolean {
@@ -69,6 +70,25 @@ describe('address shape (mirrors address_ok in the hook)', () => {
     ['ab"cd', false], ['ab·cd', false], ['ab[prdt cd', false], ['[prdt', false],
   ])('%j → %s', (v, ok) => { expect(isLegalAddress(v as string)).toBe(ok) })
   test('ADDRESS_MAX_BYTES is 32', () => expect(ADDRESS_MAX_BYTES).toBe(32))
+})
+
+describe('parseRegister address parity — shared fixture (T-586 register-ts gate, trim included)', () => {
+  // isLegalAddress itself does not trim (see above) — parity with the resolver's
+  // ASCII-only trim belongs at THIS layer, parseRegister, which trims before
+  // judging. One shared case list drives all three gates (fixtures/address-legality-cases.ts);
+  // a probe restricted to this gate (or excluded from it) is marked in the fixture.
+  for (const c of casesFor('register-ts')) {
+    test(`address=${c.label} → ${c.legal ? 'legal' : 'illegal'}`, () => {
+      const { values, warnings } = parseRegister(`address=${c.value}\n`)
+      if (c.legal) {
+        expect(values.address).toBe(c.finalValue ?? c.value)
+        expect(warnings.some((w) => w.includes('address='))).toBe(false)
+      } else {
+        expect(values.address).toBeNull()
+        expect(warnings.some((w) => w.includes('address= fails its shape'))).toBe(true)
+      }
+    })
+  }
 })
 
 describe('write — one key at a time, the rest of the file kept', () => {
