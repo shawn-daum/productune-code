@@ -65,6 +65,8 @@ describe('address shape (mirrors address_ok in the hook)', () => {
     ['', false], ['a'.repeat(33), false], ['ab\tcd', false], ['ab\ncd', false], ['ab\rcd', false],
     ['ab\u0085cd', false], ['ab\u2028cd', false], ['ab\u2029cd', false], ['ab\u000bcd', false],
     ['가'.repeat(11), false], // 33 bytes: the cap is BYTES, not characters
+    // T-586 QA defect 1 — forges the binding/session line's own grammar (d46076f, 07ec491)
+    ['ab"cd', false], ['ab·cd', false], ['ab[prdt cd', false], ['[prdt', false],
   ])('%j → %s', (v, ok) => { expect(isLegalAddress(v as string)).toBe(ok) })
   test('ADDRESS_MAX_BYTES is 32', () => expect(ADDRESS_MAX_BYTES).toBe(32))
 })
