@@ -2701,6 +2701,8 @@ def register_warnings(droot):
                        "re-run install.sh")
     for w in res.get("warnings") or []:
         warns.append(f"register: {res.get('file', '~/.prdt/register')} {w}")
+    for w in res.get("body_warnings") or []:
+        warns.append(f"register: {w}")
     rdir = (droot / "register") if droot else None
     if rdir is not None and rdir.is_dir():
         for p in sorted(rdir.glob("*.md")):
