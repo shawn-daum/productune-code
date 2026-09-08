@@ -69,14 +69,21 @@ export function registerPath(homeDir: string = os.homedir()): string {
 
 /**
  * The address shape the hook enforces: one line, 1–32 bytes, no C0 control or
- * DEL, none of the three multi-byte breaks (NEL · LS · PS), valid UTF-8. Kept
- * identical to `address_ok` in prdt-audience-inject.sh.
+ * DEL, none of the three multi-byte breaks (NEL · LS · PS), none of `"`,
+ * `·`, `[prdt` (T-586 QA defect 1 — those three would forge the
+ * binding/session line's own key=value grammar: `"` opens/closes the
+ * address's own quoted slot, `·` is the pair separator between
+ * key=value entries, `[prdt` is a block/line header this file's own output
+ * uses), valid UTF-8. Kept identical to `address_ok` in
+ * prdt-audience-inject.sh AND the CLI's `set` (packages/core/scripts/prdt) —
+ * all three gates must refuse the same values byte for byte.
  */
 export function isLegalAddress(value: string): boolean {
   if (!value) return false
   if (Buffer.byteLength(value, 'utf8') > ADDRESS_MAX_BYTES) return false
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f\u0085\u2028\u2029]/.test(value)) return false
+  if (value.includes('"') || value.includes('·') || value.includes('[prdt')) return false
   // lone surrogates are the one way a JS string fails to be valid UTF-8
   if (Buffer.from(value, 'utf8').toString('utf8') !== value) return false
   return true
@@ -104,7 +111,7 @@ export function parseRegister(text: string): { values: Register; warnings: strin
       else warnings.push(`L${n}: ${key}= is outside its domain (${REGISTER_DOMAIN[key].join('|')}) — resolved to the default \`${REGISTER_DEFAULTS[key]}\``)
     } else if (key === 'address') {
       if (isLegalAddress(val)) values.address = val
-      else warnings.push(`L${n}: address= fails its shape (one line · 1–${ADDRESS_MAX_BYTES} bytes · no control or line-break characters · valid UTF-8) — address unused`)
+      else warnings.push(`L${n}: address= fails its shape (one line · 1–${ADDRESS_MAX_BYTES} bytes · no control or line-break characters · none of \`"\`, \`·\`, \`[prdt\` · valid UTF-8) — address unused`)
     } else {
       warnings.push(`L${n}: unknown key \`${key.slice(0, 40)}\` — ignored`)
     }
@@ -137,7 +144,7 @@ export function writeRegisterKey(key: RegisterKey, value: string | null, homeDir
   const v = value === null ? '' : value.trim()
   if (v !== '') {
     if (key === 'address') {
-      if (!isLegalAddress(v)) throw new Error(`register: address fails its shape (one line · 1–${ADDRESS_MAX_BYTES} bytes · no control or line-break characters · valid UTF-8)`)
+      if (!isLegalAddress(v)) throw new Error(`register: address fails its shape (one line · 1–${ADDRESS_MAX_BYTES} bytes · no control or line-break characters · none of \`"\`, \`·\`, \`[prdt\` · valid UTF-8)`)
     } else if (!isLegalEnumValue(key, v)) {
       throw new Error(`register: ${key}=${v} is outside its domain (${REGISTER_DOMAIN[key].join('|')})`)
     }
