@@ -141,6 +141,13 @@ describe.skipIf(!READY)('prdt doctor — register check', () => {
     expect(lines.some((l) => /body form-outline\.md is 2,\d{3} B \(budget 2,000 B\)/.test(l))).toBe(true)
     expect(lines.some((l) => /body form-outline\.md lacks frontmatter governs/.test(l))).toBe(true)
   })
+  test('a body with an off-vocabulary governs: value is named (T-586 item 2, resolver body_warnings)', () => {
+    fs.writeFileSync(regFile(), 'form=outline\n')
+    const body = path.join(disciplineDir, 'register', 'form-outline.md')
+    fs.writeFileSync(body, '---\nkey: form\nvalue: outline\ngoverns: [bogus-surface]\n---\nbody text\n')
+    const lines = registerLines(doctor())
+    expect(lines.some((l) => /register: body form-outline\.md names governs=`bogus-surface`, outside the closed surface vocabulary/.test(l))).toBe(true)
+  })
   test('a legal file + the shipped bodies → no register warning at all', () => {
     fs.writeFileSync(regFile(), '# taste\naudience=planner\nform=outline\nstructure=planner-tables\naddress=션님\n')
     expect(registerLines(doctor())).toEqual([])
