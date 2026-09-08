@@ -28,8 +28,12 @@ set +e
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
+# T-586: the register binding rides THIS channel (see below) and is computed by the
+# resolver hook next to this file — the mirror dir, so both come from one install.
+PRDT_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+export PRDT_HOOK_DIR
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
-import json, os, re, sys
+import json, os, re, subprocess, sys
 
 try:
     ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
@@ -152,6 +156,33 @@ else:
     task = "none"
 
 lines = [f"[prdt state] stage={stage} · version={version} · current_task={task}"]
+
+# ── T-586: register binding — ONE line, from the resolver, every prompt ────────
+# The register object (`~/.prdt/register`: audience · form · structure · address)
+# arrives as a body block once per session start; a long session drifts back to
+# the model's own default voice a few hundred turns later, so the RESOLVED VALUES
+# are re-bound on every prompt. This hook is the single assembly point of the
+# per-turn channel (T-578), so the line is appended here rather than by a second
+# UserPromptSubmit registration — the roster does not grow. The domain, the
+# legality judgment and the wording all live in prdt-audience-inject.sh
+# (`--binding`); this hook only carries what that resolver printed, and only
+# when it printed the shape it owns: exactly one line opening with the fixed
+# `[prdt register]` literal. A default machine (no register file, or every key at
+# its default) gets NO line — the resolver prints nothing, and nothing is added.
+# A pre-T-586 mirror hook given `--binding` and a closed stdin exits silently
+# (no agent_type → PO-only exit), so a half-updated mirror degrades to today's
+# output rather than breaking the prompt.
+hook_dir = os.environ.get("PRDT_HOOK_DIR") or ""
+resolver = os.path.join(hook_dir, "prdt-audience-inject.sh")
+if hook_dir and os.path.isfile(resolver):
+    try:
+        r = subprocess.run(["bash", resolver, "--binding"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=5)
+        first = (r.stdout or "").split("\n", 1)[0].strip()
+        if r.returncode == 0 and first.startswith("[prdt register] "):
+            lines.append(first)
+    except Exception:
+        pass
 
 if withheld:
     lines.append(
