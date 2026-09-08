@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # prdt v1 uninstall — reverse of install.sh.
-# Keeps ~/.prdt/overrides/ (user content) unless --purge is passed.
+# Keeps the operator's own state unless --purge is passed — the KEEP-LIST:
+#   overrides/ · wiki/ · register · prdt.env
+# `register` (T-586) is the PO's conversational register (audience · form ·
+# structure · address); without it on this list a reinstall silently reset the
+# operator's tone to every default. §4 removes ONLY the mirrored trees named
+# there, so anything not named is kept — add to the list AND to the message.
 set -euo pipefail
 
 PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
@@ -64,7 +69,7 @@ if [ "${1:-}" = "--purge" ]; then
   say "4) Purging $PRDT_HOME (including overrides/)"
   rm -rf "$PRDT_HOME"
 else
-  say "4) Removing $PRDT_HOME mirror (keeping overrides/ + prdt.env; --purge removes all)"
+  say "4) Removing $PRDT_HOME mirror (keeping overrides/ + wiki/ + register + prdt.env; --purge removes all)"
   rm -rf "$PRDT_HOME/discipline" "$PRDT_HOME/hooks" "$PRDT_HOME/bin" "$PRDT_HOME/doctrine.md"
 fi
 
