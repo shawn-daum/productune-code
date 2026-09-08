@@ -21,6 +21,7 @@ import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { casesFor } from '../fixtures/address-legality-cases'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -129,6 +130,25 @@ describe.skipIf(!READY)('prdt register set / unset / show', () => {
     fs.writeFileSync(regFile(), 'form=outline\nlang=ko\n')
     expect(prdt('register', 'show').out).toContain('warning    L2: unknown key `lang` — ignored')
   })
+})
+
+describe.skipIf(!READY)('register set address parity — shared fixture (T-586 CLI gate, trim included)', () => {
+  // One shared case list drives all three gates (fixtures/address-legality-cases.ts).
+  // A case whose only representation is raw bytes or an in-memory lone surrogate
+  // cannot survive CLI argv, so `casesFor('cli')` already excludes those.
+  for (const c of casesFor('cli')) {
+    test(`set address ${c.label} → ${c.legal ? 'legal' : 'illegal'}`, () => {
+      const before = fs.existsSync(regFile()) ? fs.readFileSync(regFile(), 'utf8') : null
+      const r = prdt('register', 'set', 'address', c.value as string)
+      if (c.legal) {
+        expect(r.status, r.err).toBe(0)
+        expect(fs.readFileSync(regFile(), 'utf8')).toBe(`address=${c.finalValue ?? c.value}\n`)
+      } else {
+        expect(r.status).toBe(1)
+        expect(fs.existsSync(regFile()) ? fs.readFileSync(regFile(), 'utf8') : null).toBe(before)
+      }
+    })
+  }
 })
 
 describe.skipIf(!READY)('prdt doctor — register check', () => {

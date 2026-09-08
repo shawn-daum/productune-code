@@ -22,6 +22,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { casesFor, caseBytes } from '../fixtures/address-legality-cases'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const AUDIENCE_HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-audience-inject.sh')
@@ -148,6 +149,21 @@ describe('the resolver is the single source of truth for what is legal', () => {
       expect(r.warnings[0]).toContain('address= fails its shape')
       expect(mode(home, '--binding')).toBe('')
       expect(additionalContextOf(runHook(AUDIENCE_HOOK, home, 'prdt-po'))).not.toContain('Address the user as')
+    })
+  }
+
+  for (const c of casesFor('resolver')) {
+    test.skipIf(!hasJq())(`shared fixture — address=${c.label} → ${c.legal ? 'legal' : 'illegal'} (T-586 resolver gate, canonical trim)`, () => {
+      const home = makePrdtHome()
+      fs.writeFileSync(path.join(home, 'register'), Buffer.concat([Buffer.from('address='), caseBytes(c), Buffer.from('\n')]))
+      const r = JSON.parse(mode(home, '--resolve'))
+      if (c.legal) {
+        expect(r.values.address).toBe(c.finalValue ?? c.value)
+        expect((r.warnings || []).some((w: string) => w.includes('address='))).toBe(false)
+      } else {
+        expect(r.values.address).toBeNull()
+        expect(r.warnings[0]).toContain('address= fails its shape')
+      }
     })
   }
 
