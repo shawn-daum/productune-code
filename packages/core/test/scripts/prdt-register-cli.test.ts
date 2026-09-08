@@ -104,6 +104,15 @@ describe.skipIf(!READY)('prdt register set / unset / show', () => {
       expect(fs.readFileSync(regFile(), 'utf8')).toBe('form=outline\n')
     })
   }
+  for (const [label, val] of [['empty', ''], ['whitespace-only', '   ']] as const) {
+    test(`set refuses a ${label} value: exit 1, points at unset, file untouched (T-586 item 4)`, () => {
+      fs.writeFileSync(regFile(), 'form=outline\n')
+      const r = prdt('register', 'set', 'form', val)
+      expect(r.status).toBe(1)
+      expect(r.err).toMatch(/set refuses an empty value for `form`.*prdt register unset form/)
+      expect(fs.readFileSync(regFile(), 'utf8')).toBe('form=outline\n')
+    })
+  }
   test('unset removes exactly that key', () => {
     fs.writeFileSync(regFile(), 'form=outline\naddress=션님\n')
     expect(prdt('register', 'unset', 'address').status).toBe(0)
