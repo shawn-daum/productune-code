@@ -38,11 +38,17 @@ def norm_assignee(v):
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
-# `override` applies per persona PER LAYER (machine and project each), and is the
-# only cap over text that is injected on EVERY turn; `machine_wiki_pages` is a
-# pull-only store, so its budget guards curation, not per-turn tokens.
+# `override` applies per persona PER LAYER (machine and project each) — a curation
+# budget for text injected once per session start and after a compaction (T-586
+# corrected the earlier "every turn" claim: only an unregistered shim ever did
+# that); `machine_wiki_pages` is a pull-only store, so its budget guards curation,
+# not per-turn tokens. `register_body_bytes` is the one BYTE cap here: a register
+# body (`discipline/register/<key>-<value>.md`) is spliced raw into the PO's
+# session start, several may be in force at once, and the delivery gate is
+# ≤8,000 B per hook output — two bodies at 2,000 B stay under half of it.
 CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
-        "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15}
+        "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15,
+        "register_body_bytes": 2000}
 # po_habit holds at 64 over a curated 60 lines: the post-close-patch and
 # emergency-hotfix procedures moved out to the `patch-cycle` playbook, and the
 # ship-wrap and retro-sequence duplicates were merged into the clauses that
@@ -2610,9 +2616,13 @@ def statusline_warnings(root):
 
 
 def override_warnings(root):
-    """Override files are the only text injected on EVERY turn, so both layers get
-    the same cap, and a project line that has become a verbatim restatement of a
-    machine line is pure per-turn waste — flag it for the Retro align step."""
+    """Override files are injected once per session start (and after a compaction)
+    as their own hook output — NOT on every turn (T-586: the "every turn" this
+    docstring used to claim was one machine's unregistered shim). Both layers get
+    the same cap as a curation budget for that block, and a project line that has
+    become a verbatim restatement of a machine line is pure waste in it — flag it
+    for the Retro align step. Register rules (voice, form, structure, address) do
+    not belong here at all; they are the register object (`register_warnings`)."""
     warns = []
     layers = (("machine", prdt_home() / "overrides"),
               ("project", root / ".prdt" / "overrides"))
@@ -2638,6 +2648,164 @@ def override_warnings(root):
                 elif not prev:
                     seen[key] = (label, n)
     return warns
+
+
+# ── register (T-586) — the PO's conversational register as an object ─────────
+
+def _register_hook_path():
+    """prdt-audience-inject.sh — named for the key it started with (T-326), now the
+    resolver for the whole register object. The hook that is actually BOUND
+    (install mirror) first, the repo copy next to this file as fallback — same
+    preference order as `_session_start_hook_path()`."""
+    for cand in (prdt_home() / "hooks" / "prdt-audience-inject.sh",
+                 Path(__file__).resolve().parent / "hooks" / "prdt-audience-inject.sh"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def register_query(mode, droot=None):
+    """Ask the resolver — `--list` (the domain) or `--resolve` (values + warnings).
+    The hook is the single source of truth for what is legal; this CLI never
+    re-implements the domain. None when the hook is absent or its answer could
+    not be read (a pre-T-586 mirror prints nothing for either flag)."""
+    hook = _register_hook_path()
+    if hook is None:
+        return None
+    env = dict(os.environ)
+    env["PRDT_HOME"] = str(prdt_home())
+    if droot is not None:
+        env["PRDT_DISCIPLINE"] = str(droot)
+    try:
+        r = subprocess.run(["bash", str(hook), mode], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, env=env, timeout=10)
+        out = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+        return out if isinstance(out, dict) else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+REGISTER_BODY_FM_KEYS = ("key", "value", "governs")
+
+
+def register_warnings(droot):
+    """The register file as the resolver reads it (unknown key · out-of-domain value
+    · off-shape address · malformed line — each names its LINE so the person can
+    fix it; the resolver already kept every one of them away from the PO), plus
+    the bodies' byte budget and their `governs:` frontmatter (a body that does not
+    state its surfaces has lost the property the object exists for)."""
+    warns = []
+    res = register_query("--resolve", droot)
+    if res is None:
+        return Skipped("register resolver (prdt-audience-inject.sh) not found or pre-T-586 — "
+                       "re-run install.sh")
+    for w in res.get("warnings") or []:
+        warns.append(f"register: {res.get('file', '~/.prdt/register')} {w}")
+    rdir = (droot / "register") if droot else None
+    if rdir is not None and rdir.is_dir():
+        for p in sorted(rdir.glob("*.md")):
+            size = p.stat().st_size
+            if size > CAPS["register_body_bytes"]:
+                warns.append(f"register: body {p.name} is {size:,} B (budget {CAPS['register_body_bytes']:,} B) — "
+                             f"it is spliced raw into the PO's session start; curate down")
+            text = p.read_text(encoding="utf-8")
+            fm = text.split("---\n", 2)[1] if text.startswith("---\n") and text.count("---\n") >= 2 else ""
+            missing = [k for k in REGISTER_BODY_FM_KEYS if not re.search(rf"^{k}:", fm, re.M)]
+            if missing:
+                warns.append(f"register: body {p.name} lacks frontmatter {', '.join(missing)} — "
+                             f"a register body states its own scope (`governs:`) or it is prose, not an object")
+    return warns
+
+
+def cmd_register(args):
+    """`prdt register` — show · set <key> <value> · unset <key> · --list. Legality is
+    the resolver's judgment (`--list`), never this function's: `set` refuses what
+    the domain does not contain, so the one way an illegal value gets into
+    ~/.prdt/register stays a hand edit, and `prdt doctor` names that line."""
+    droot = discipline_root()
+    if args.list:
+        dom = register_query("--list", droot)
+        if dom is None:
+            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+        if args.json:
+            print(json.dumps(dom, ensure_ascii=False))
+            return
+        print(f"register file: {dom['file']}   bodies: {dom['bodies_dir']}")
+        print("key        domain                       default    bodies")
+        for k in dom["keys"]:
+            if k["kind"] == "enum":
+                bodies = " ".join(f"{v}{'✓' if k['bodies'].get(v) else '·'}" for v in k["domain"])
+                print(f"{k['key']:<10} {' | '.join(k['domain']):<28} {k['default']:<10} {bodies}")
+            else:
+                print(f"{k['key']:<10} {k['shape']:<28} (none)")
+        return
+    action = args.action or "show"
+    if action == "show":
+        res = register_query("--resolve", droot)
+        if res is None:
+            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False))
+            return
+        print(f"register file: {res['file']} ({'present' if res['present'] else 'absent — every default'})")
+        for k, v in res["values"].items():
+            d = res["defaults"][k]
+            tag = "" if v == d else "   (set)"
+            print(f"  {k:<10} {v if v is not None else 'none'}{tag}")
+        print(f"  governs    {res['governs']}")
+        print(f"  binding    {res['binding'] or '(silent — every key at its default)'}")
+        for w in res.get("warnings") or []:
+            print(f"  warning    {w}")
+        return
+    if action in ("set", "unset"):
+        rest = list(args.rest or [])
+        if action == "set" and len(rest) != 2:
+            sys.exit("usage: prdt register set <key> <value>")
+        if action == "unset" and len(rest) != 1:
+            sys.exit("usage: prdt register unset <key>")
+        key = rest[0]
+        value = rest[1].strip() if action == "set" else ""
+        dom = register_query("--list", droot)
+        if dom is None:
+            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+        spec = next((k for k in dom["keys"] if k["key"] == key), None)
+        if spec is None:
+            sys.exit(f"prdt register: unknown key `{key}` — keys: "
+                     + ", ".join(k["key"] for k in dom["keys"]))
+        if value:
+            if spec["kind"] == "enum" and value not in spec["domain"]:
+                sys.exit(f"prdt register: {key}={value} is outside its domain ({' | '.join(spec['domain'])})")
+            if spec["kind"] == "text":
+                bad = (len(value.encode("utf-8")) > spec["max_bytes"]
+                       or re.search(r"[\x00-\x1f\x7f\x85\u2028\u2029]", value))
+                if bad:
+                    sys.exit(f"prdt register: address fails its shape ({spec['shape']})")
+        path = Path(dom["file"])
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        out, placed = [], False
+        for raw in (existing.rstrip("\n").split("\n") if existing else []):
+            line = raw.rstrip("\r")
+            t = line.strip()
+            k = t.split("=", 1)[0].strip() if ("=" in t and not t.startswith("#")) else None
+            if k == key:
+                if not placed and value:
+                    out.append(f"{key}={value}")
+                    placed = True
+                continue
+            out.append(line)
+        if not placed and value:
+            out.append(f"{key}={value}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(("\n".join(out) + "\n") if out else "", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        # confirm through the resolver — the write is only as good as what it reads back
+        res = register_query("--resolve", droot) or {}
+        shown = (res.get("values") or {}).get(key)
+        print(f"register: {key}={shown if shown is not None else 'none'} → {path}")
+        return
+    sys.exit(f"prdt register: unknown action `{action}`")
 
 
 # ── tickets / history ─────────────────────────────────────────────────────────
@@ -5082,6 +5250,8 @@ def cmd_doctor(_args):
         ("dead discipline-path citations", FAMILY_DE, lambda: dead_discipline_path_warnings(root)),
         # override caps + cross-layer duplicates (§8b)
         ("override caps", FAMILY_DE, lambda: override_warnings(root)),
+        # register object — file legality as the resolver sees it + body budget (T-586)
+        ("register", FAMILY_DE, lambda: register_warnings(droot)),
         # hook roster parity + governor fire evidence (T-445 / T-491)
         ("hook roster + governor fire", FAMILY_DE, lambda: hook_registration_warnings()),
         # statusline registration — user + project-level (T-500)
@@ -5857,6 +6027,14 @@ def main():
     p.add_argument("--yes", action="store_true", help="확인 프롬프트 없이 CLAUDE.md 이동 실행 (비대화형)")
     p.add_argument("--archive", action="store_true", help="CLAUDE.md를 wiki 대신 docs/archive로 이관 (죽은 내용)")
     p.set_defaults(fn=cmd_migrate)
+    p = sub.add_parser("register", help="the PO's conversational register (~/.prdt/register: audience · form · "
+                                        "structure · address): show | set <key> <value> | unset <key> | --list (the domain, "
+                                        "from the resolver hook — the one authority on legal values)")
+    p.add_argument("action", nargs="?", choices=("show", "set", "unset"))
+    p.add_argument("rest", nargs="*", help="set: <key> <value> · unset: <key>")
+    p.add_argument("--list", action="store_true", help="print keys · domain · default · body presence")
+    p.add_argument("--json", action="store_true", help="machine mode (show / --list)")
+    p.set_defaults(fn=cmd_register)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
                                          "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
                                          "— JSON verdict on stdout (available | unavailable | inconclusive)")
