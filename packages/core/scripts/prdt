@@ -2776,8 +2776,13 @@ def cmd_register(args):
             if spec["kind"] == "enum" and value not in spec["domain"]:
                 sys.exit(f"prdt register: {key}={value} is outside its domain ({' | '.join(spec['domain'])})")
             if spec["kind"] == "text":
+                # Same three literals prdt-audience-inject.sh's address_ok bans
+                # (T-586 QA defect 1): they would forge the binding/session
+                # line's own key=value grammar. Both gates refuse identically --
+                # a hand-edited register line is judged the same way.
                 bad = (len(value.encode("utf-8")) > spec["max_bytes"]
-                       or re.search(r"[\x00-\x1f\x7f\x85\u2028\u2029]", value))
+                       or re.search(r"[\x00-\x1f\x7f\x85\u2028\u2029]", value)
+                       or '"' in value or '\u00b7' in value or '[prdt' in value)
                 if bad:
                     sys.exit(f"prdt register: address fails its shape ({spec['shape']})")
         path = Path(dom["file"])
