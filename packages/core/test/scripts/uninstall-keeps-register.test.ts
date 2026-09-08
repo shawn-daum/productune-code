@@ -16,9 +16,15 @@ import path from 'path'
 import fs from 'fs'
 import { execFileSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
-import { makeSandbox, runInstall, hasJq, CORE_ROOT } from '../helpers/install-fixture'
+import { makeSandbox, runInstall, hasJq, CORE_ROOT, INSTALL_SH } from '../helpers/install-fixture'
 
 const UNINSTALL_SH = path.join(CORE_ROOT, 'scripts', 'uninstall.sh')
+
+// runInstall (install-fixture.ts) runs with stdio:'ignore' -- these two cases are
+// about the `say` MESSAGE itself, so they drive install.sh directly to capture stdout.
+function runInstallCapture(sb: ReturnType<typeof makeSandbox>, args: string[] = []): string {
+  return execFileSync('bash', [INSTALL_SH, ...args], { env: sb.env, encoding: 'utf8' })
+}
 
 function runUninstall(sb: ReturnType<typeof makeSandbox>, args: string[] = []): string {
   return execFileSync('bash', [UNINSTALL_SH, ...args], { env: sb.env, encoding: 'utf8' })
@@ -85,5 +91,35 @@ describe.skipIf(!hasJq())('install.sh absorbs the legacy audience-mode file into
     const sb = makeSandbox('t586-migrate-none-')
     runInstall(sb)
     expect(fs.existsSync(path.join(sb.prdtHome, 'register'))).toBe(false)
+  }, 60_000)
+  test('the migrated register is written 0600, not the umask default', () => {
+    const sb = makeSandbox('t586-migrate-mode-')
+    fs.writeFileSync(path.join(sb.prdtHome, 'audience-mode'), 'developer\n')
+    runInstall(sb)
+    expect(fs.statSync(path.join(sb.prdtHome, 'register')).mode & 0o777).toBe(0o600)
+  }, 60_000)
+  test('a register that exists but is 0 B (prdt register unset of the last key) drops the value with a message (T-586 item 3)', () => {
+    const sb = makeSandbox('t586-migrate-empty-reg-')
+    fs.writeFileSync(path.join(sb.prdtHome, 'audience-mode'), 'developer\n')
+    fs.writeFileSync(path.join(sb.prdtHome, 'register'), '')
+    const out = runInstallCapture(sb)
+    expect(out).toContain('audience-mode=developer dropped — register exists but is empty (0 B); audience resolves to its default (planner)')
+    expect(fs.readFileSync(path.join(sb.prdtHome, 'register'), 'utf8')).toBe('')
+    expect(fs.existsSync(path.join(sb.prdtHome, 'audience-mode'))).toBe(false)
+  }, 60_000)
+  test('a register that exists with no audience= key drops the value with a message (T-586 item 3)', () => {
+    const sb = makeSandbox('t586-migrate-no-audience-key-')
+    fs.writeFileSync(path.join(sb.prdtHome, 'audience-mode'), 'developer\n')
+    fs.writeFileSync(path.join(sb.prdtHome, 'register'), 'form=outline\n')
+    const out = runInstallCapture(sb)
+    expect(out).toContain('audience-mode=developer dropped — register exists with no audience= key; audience resolves to its default (planner)')
+    expect(fs.readFileSync(path.join(sb.prdtHome, 'register'), 'utf8')).toBe('form=outline\n')
+    expect(fs.existsSync(path.join(sb.prdtHome, 'audience-mode'))).toBe(false)
+  }, 60_000)
+  test('an off-domain legacy value is dropped WITH a message naming it (T-586 item 3)', () => {
+    const sb = makeSandbox('t586-migrate-bad-msg-')
+    fs.writeFileSync(path.join(sb.prdtHome, 'audience-mode'), 'expert\n')
+    const out = runInstallCapture(sb)
+    expect(out).toContain("audience-mode=expert is outside audience's domain (planner|developer) — dropped; audience resolves to its default (planner)")
   }, 60_000)
 })
