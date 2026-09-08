@@ -80,7 +80,6 @@ const MOVED: ReadonlyArray<readonly [(typeof ANNEXES)[number], string]> = [
   ['fixed-paths', 'Never `[[…]]` here — `prdt wiki lint` covers `docs/wiki/` alone, so a wikilink out of that store is an unchecked dead link.'],
   ['fixed-paths', '`prdt doctor` watches the seam: orphan spec files · promotion candidates (done tickets in ≥2 version dirs, unjudged)'],
   ['fixed-paths', 'A design/token contract or build pipeline the code imports or builds from (e.g. `tokens.json` → a token build script) is code no matter the subject matter'],
-  ['tickets', 'names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.'],
   ['tickets', "Redeploys append to the version's single `ops` ticket, not new tickets."],
   ['definition-of-done', '`discipline_root()` prefers `~/.prdt/discipline` over the repo, so it binds no persona until that mirror is resynced'],
   ['git', "whether that merge lands locally or through a pull request is the REPOSITORY's policy"],
@@ -110,6 +109,8 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     // §Tickets: the enum and the body shape
     '`status` is the whole enum.',
     '- Body = `## Request` / `## Acceptance` / `## Outcome`.',
+    // restored from the annex by T-586 slice 2A — slice 1's own audit named it the weakest-reachability move
+    '- An access-control Acceptance line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.',
     // §DoD: the check itself
     '- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket.',
     // §Git: residence + hard rule + every-commit rules + the consent gate (floor)
@@ -124,13 +125,13 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     expect(CONTRACTS).toContain('## Secrets — production credentials never enter agent context (EVERY persona, PO included)')
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
     expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/plan-tier` is PO-writable')
-    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/overrides/<persona>.md` and `~/.prdt/wiki/` are PO-writable.')
+    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/overrides/<persona>.md`, `~/.prdt/wiki/` and `~/.prdt/register` are PO-writable')
     for (const n of ANNEXES) expect(annex(n)).not.toMatch(/Secrets|Carve-out|non-overridable/)
   })
 
-  test('line room was actually freed (contracts 80 → 74, po habit 64 → 60) and the caps still hold', () => {
+  test('line room was actually freed (contracts 80 → 74, po habit 64 → 60; T-586 slice 2A spent two lines — the Register row and the restored access-control line — 76/80) and the caps still hold', () => {
     const lines = (s: string) => s.replace(/\n$/, '').split('\n').length
-    expect(lines(CONTRACTS)).toBe(74)
+    expect(lines(CONTRACTS)).toBe(76)
     expect(lines(HABITS.po)).toBe(60)
     expect(lines(HABITS.developer)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.qa)).toBeLessThanOrEqual(40)

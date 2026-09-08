@@ -260,7 +260,7 @@ done
 CLAUSE_CTX='One inline `[ctx]` JSON line opens every dispatch:
   `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
 CLAUSE_PRD='`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
-CLAUSE_LANG='Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, `## Acceptance`) → English.'
+CLAUSE_LANG='Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · `dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
 
 IFS= read -r -d '' PROG <<'JQ'
 def hangul_ratio:

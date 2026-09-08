@@ -58,7 +58,7 @@ No stored answer at $PRDT_HOME/plan-tier. Ask the user ONCE this session which
 plan they're on — Max x20 / Team Premium (fable-eligible) or another/unsure
 plan (not eligible) — then persist their answer as a single token + newline to
 $PRDT_HOME/plan-tier (atomic tmp+rename: write plan-tier.tmp, then mv over
-plan-tier — mirrors ~/.prdt/audience-mode) using EXACTLY one of: max-x20 |
+plan-tier — the same atomic write `prdt register set` makes to ~/.prdt/register) using EXACTLY one of: max-x20 |
 team-premium | other. This is a device-scoped answer, not a session one — once
 written, do not ask again in any future session; the value persists until the
 user changes it (GUI Settings or a direct file edit). Until answered, every
