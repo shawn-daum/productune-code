@@ -9,8 +9,10 @@
  *
  * TWO HOOKS, ONE CHANNEL, and the split is a measurement result rather than a
  * preference (2026-08-24, harness 2.1.241, headless rig per T-498 §8/§9b):
- *   - prdt-post-dispatch.sh DETECTS on SubagentStop, the only event carrying the
- *     worker's `last_assistant_message`. It prints NOTHING there: a SubagentStop
+ *   - prdt-return-check.sh DETECTS on SubagentStop, the only event carrying the
+ *     worker's `last_assistant_message` (T-553 moved it out of the state hook
+ *     prdt-post-dispatch.sh, which shares the registration and stays silent).
+ *     It prints NOTHING there: a SubagentStop
  *     hook's additionalContext is injected into the WORKER and resumes it — one
  *     probe line produced 9 further SubagentStop firings, the worker echoing the
  *     token back — so emitting would burn worker turns to report burnt worker
@@ -47,6 +49,7 @@ import { test, expect, describe } from 'vitest'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const POST_DISPATCH = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-post-dispatch.sh')
+const RETURN_CHECK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-return-check.sh')
 const USER_PROMPT = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-user-prompt.sh')
 const CONTRACTS = path.join(CORE_ROOT, 'discipline', 'contracts.md')
 
@@ -74,9 +77,10 @@ const QUEUE = ['.prdt', '.return-flags.json']
 function queuePath(root: string): string { return path.join(root, ...QUEUE) }
 
 /**
- * Drive prdt-post-dispatch.sh on SubagentStop with `last` as the worker's final
- * message. Returns its stdout — which MUST always be empty here: printing on
- * SubagentStop resumes the worker (see the header).
+ * Drive the SubagentStop pair (prdt-return-check.sh, then prdt-post-dispatch.sh)
+ * with `last` as the worker's final message. Returns their combined stdout —
+ * which MUST always be empty here: printing on SubagentStop resumes the worker
+ * (see the header).
  */
 function stopWith(root: string, last: unknown, agentId = 'a1'): string {
   const ev = {
@@ -90,9 +94,15 @@ function stopWith(root: string, last: unknown, agentId = 'a1'): string {
     last_assistant_message: last,
     stop_hook_active: false,
   }
-  const res = spawnSync('bash', [POST_DISPATCH], { input: JSON.stringify(ev), encoding: 'utf8' })
-  expect(res.status, 'a state hook must never fail a turn').toBe(0)
-  return res.stdout
+  // Both hooks share the SubagentStop `^prdt-` registration and run in
+  // parallel in the harness; here they run back to back, the check first.
+  let out = ''
+  for (const hook of [RETURN_CHECK, POST_DISPATCH]) {
+    const res = spawnSync('bash', [hook], { input: JSON.stringify(ev), encoding: 'utf8' })
+    expect(res.status, `${path.basename(hook)}: a hook must never fail a turn`).toBe(0)
+    out += res.stdout
+  }
+  return out
 }
 
 /** codes queued for the worker's return, or null when nothing was queued. */
@@ -314,9 +324,11 @@ describe.skipIf(!READY)('the existing prdt-post-dispatch.sh responsibilities are
       cwd: bare, agent_type: 'prdt-developer', agent_id: 'a1',
       hook_event_name: 'SubagentStop', last_assistant_message: 'prose, not an envelope',
     }
-    const res = spawnSync('bash', [POST_DISPATCH], { input: JSON.stringify(ev), encoding: 'utf8' })
-    expect(res.status).toBe(0)
-    expect(res.stdout).toBe('')
+    for (const hook of [RETURN_CHECK, POST_DISPATCH]) {
+      const res = spawnSync('bash', [hook], { input: JSON.stringify(ev), encoding: 'utf8' })
+      expect(res.status).toBe(0)
+      expect(res.stdout).toBe('')
+    }
     expect(fs.readdirSync(bare)).toEqual([])
   })
 
@@ -326,7 +338,7 @@ describe.skipIf(!READY)('the existing prdt-post-dispatch.sh responsibilities are
       cwd: root, agent_type: 'Explore', agent_id: 'a1',
       hook_event_name: 'SubagentStop', last_assistant_message: 'prose, not an envelope',
     }
-    spawnSync('bash', [POST_DISPATCH], { input: JSON.stringify(ev), encoding: 'utf8' })
+    for (const hook of [RETURN_CHECK, POST_DISPATCH]) spawnSync('bash', [hook], { input: JSON.stringify(ev), encoding: 'utf8' })
     expect(fs.existsSync(queuePath(root))).toBe(false)
   })
 })
@@ -383,7 +395,7 @@ describe.skipIf(!READY)('delivery — the flag reaches the PO exactly once', () 
       expect(m, `RETURN_FLAG_CODES not found in ${p}`).toBeTruthy()
       return (m![1].match(/"[^"]+"/g) ?? []).map((s) => s.slice(1, -1)).sort()
     }
-    const detector = read(POST_DISPATCH)
+    const detector = read(RETURN_CHECK)
     expect(detector.length).toBeGreaterThan(0)
     expect(read(USER_PROMPT)).toEqual(detector)
   })
