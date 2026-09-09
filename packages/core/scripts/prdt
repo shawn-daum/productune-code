@@ -6,7 +6,7 @@ Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + o
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, json, math, os, re, shlex, shutil, sqlite3, subprocess, sys, unicodedata
+import argparse, hashlib, json, math, os, re, shlex, shutil, sqlite3, subprocess, sys, unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -179,6 +179,55 @@ def read_json(path):
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+# ── untrusted text on a structured line (T-586 ①, T-581 QA) ──────────────────
+#
+# Twice now a value a PERSON writes has been rendered onto a line whose grammar
+# a MACHINE reads: T-586 ① a register value forging the binding line's own
+# `key=value`, and T-581 a `reason` printing `[verdict=clean …]` onto doctor's
+# own channel — the exact string this version's pass bar greps for. It is one
+# class, not two bugs: our structured lines have a vocabulary, and untrusted
+# text rendered on them must not be able to speak it. So the test is named once
+# here and each site brings its own reserved words; a third site adds a list,
+# not a third ad-hoc regex.
+#
+# The answer is REFUSAL, not escaping. Mangling a person's prose into something
+# printable hides the attempt and leaves a record that looks honoured; refusing
+# names it and leaves the record inert, which is the only safe direction for a
+# record whose whole effect is to silence a warning.
+LINE_BREAK_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
+# doctor's own vocabulary: every key in the verdict tail, plus its two line
+# kinds (`doctor:` report, `⚠` finding — an invariant two fixtures assert).
+DOCTOR_RESERVED = ("verdict=", "violations=", "ran=", "attested=", "skipped=",
+                   "no-evidence=", "unclassified=", "doctor:", "⚠")
+
+
+def forged_tokens(text, reserved=()):
+    """Which pieces of OUR OWN output grammar `text` would forge if rendered.
+    Empty list == safe to print on a structured line."""
+    hits = []
+    if LINE_BREAK_RE.search(str(text)):
+        hits.append("a control character or line break (one value printing as several lines)")
+    hits += [f"`{t}`" for t in reserved if t in str(text)]
+    return hits
+
+
+def one_line(text):
+    """Last-resort render guard: fold every break class into a space so a string
+    that reached output unvalidated can still never become a second line. NOT a
+    substitute for `forged_tokens` — it cannot stop a forgery that fits on one
+    line, which is why the validators refuse rather than lean on this."""
+    return LINE_BREAK_RE.sub(" ", str(text))
+
+
+def safe_label(text, reserved=DOCTOR_RESERVED, limit=60):
+    """Name a piece of untrusted input on one of our lines without letting it BE
+    one of our lines. Used where refusing is not available because the whole
+    point of the line is to say what the bad input was — a JSON field named
+    `verdict=clean` gets described rather than quoted."""
+    t = one_line(text)[:limit]
+    return "<a name imitating doctor's own output>" if forged_tokens(t, reserved) else t
 
 
 def days_since(iso):
@@ -1118,6 +1167,230 @@ exit 0
 # below can recognize that foreign hook as blocking rather than warn about it.
 
 
+# ── a HUMAN's reading of a foreign pre-push (T-581) ───────────────────────────
+#
+# T-493 fixed the boundary: an unowned hook is `unverified`, because the only
+# way prdt could learn what it does is to EXECUTE it, and running someone else's
+# pre-push is not a diagnostic's business. The honest cost was a standing skip on
+# every repo carrying an org hook — one a person had usually already resolved by
+# reading the hook. T-523 priced that cost: a no-action warning that repeats
+# stops being read even when it is right, and it held this repository's own
+# verdict at `not-established` (T-581).
+#
+# So the reading gets a home. Same home and grammar as the two heuristic checks
+# that already record a human judgment (`features.non_features` T-547 §4,
+# `tests.non_rebuilds` T-556): project state in `.prdt/config.json`, one entry,
+# `reason` required. Two things differ from those precedents, on purpose:
+#   - the pin is CONTENT, not identity. A T-556 entry names (file, setup) and
+#     goes stale when the accusation stops; this record names the sha256 of the
+#     exact bytes a person read, and stops applying the moment the hook in force
+#     hashes differently. The failure mode designed against is a hook edited
+#     AFTER the reading with the warning still quiet — that would trade a noisy
+#     true warning for a quiet false one, the mirror image of this project's
+#     named defect class and worse than the noise. Path is deliberately NOT part
+#     of the pin: whether the hook is the one git will run is decided live by
+#     prepush_status (effective hooks dir, core.hooksPath), never by the record;
+#     the record only says what a person found in these bytes.
+#   - it is a reading, not a mute. `blocks_main: false` is a legal record and
+#     produces a VIOLATION (a person established the block is absent); a record
+#     pinned to other bytes, or malformed, silences nothing and is named inside
+#     the skip it failed to lift. A record can never make the check `clean` in
+#     the "we verified" sense: it returns `Attested`, which the verdict line
+#     counts apart (`attested=N`) and prints as `human record ·` — the
+#     distinction the acceptance requires to survive in the output.
+#
+# Known limit, now stated IN THE OUTPUT rather than only here: the pin covers
+# the one file git executes. A hook that `source`s or `exec`s another file can
+# change behaviour without changing these bytes — a copy of the directory beside
+# a permissive `guard.sh` plus a `core.hooksPath` flip is enough, and the record
+# follows the bytes across (T-581 QA P3). `prepush_delegation_note` detects that
+# shape and makes both `prdt attest` and doctor's line say the record covers the
+# outer file only. Refusing to attest such a hook was the alternative and is
+# worse: sourcing a shared library is the ordinary shape of an org hook.
+#
+# The pin covers CONTENT. Whether git will run that content at all is a separate
+# question with a separate answer — `prepush_status`'s `executable` — asked
+# before the record is consulted, because a record matched to bytes git skips is
+# a true statement about a file and a false one about this repository.
+#
+# The record is written through `prdt attest prepush`, never by hand: a human
+# cannot be expected to type a sha256 correctly, and the surface refuses where
+# there is nothing foreign to read (managed / missing / no repo) so the record
+# cannot be aimed at a hook prdt already verifies or at nothing at all. It
+# reads the hook's bytes to hash them and executes nothing.
+PREPUSH_READING_KEY = "git.prepush_reading"
+PREPUSH_READING_FIELDS = ("sha256", "blocks_main", "hotfix_escape", "reason", "recorded_at")
+PREPUSH_ATTEST_HINT = ("Once a person has read it, record the reading through `prdt attest prepush "
+                       "--blocks-main yes|no --hotfix-escape yes|no --reason '<what was read and found>'`"
+                       " — the record is pinned to this exact hook content and stops applying when "
+                       "the hook changes")
+
+
+# `.`/`source`/`exec` of another file — a hook whose behaviour lives somewhere
+# these bytes do not (T-581 QA P3). `exec <redirect>` is not delegation.
+PREPUSH_DELEGATES_RE = re.compile(r"^[ \t]*(?:\.|source|exec)[ \t]+(?![<>|&])\S", re.M)
+
+
+def _hook_bytes(path):
+    """`(sha256, text)` of a hook file in ONE read — `(None, "")` if unreadable.
+    Bytes, then a lossy decode: the pin is over bytes (a hook need not be text),
+    while the text is only ever used for wording."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return None, ""
+    return hashlib.sha256(raw).hexdigest(), raw.decode("utf-8", "replace")
+
+
+def prepush_delegation_note(body):
+    """The pin's stated limit, said WHERE the claim is made instead of only in a
+    comment (T-581 QA P3).
+
+    A hook whose body is `. "$(dirname "$0")/guard.sh"` carries none of its own
+    behaviour: the same bytes beside a different `guard.sh` — a copy of the
+    directory plus a `core.hooksPath` flip does it — are a different hook, and
+    the content pin cannot see the difference. Refusing to attest such a hook
+    was the other option and is the wrong one: sourcing a shared library is the
+    normal shape of an org hook, so refusing would disable this record exactly
+    where it is most needed. What prdt can do honestly is stop overclaiming —
+    the record covers the file it hashed, and the line that reports it says so."""
+    if not PREPUSH_DELEGATES_RE.search(body or ""):
+        return ""
+    return (" Note: these bytes RUN ANOTHER FILE (a `source`/`.`/`exec` line) that prdt did not "
+            "hash — the record covers this file only, and what it does can change without these "
+            "bytes changing.")
+
+
+def prepush_reading(root):
+    """The project's recorded human reading of its foreign pre-push —
+    `.prdt/config.json git.prepush_reading`. Returns `(record, complaint)`:
+    the validated record or None, and a string naming why a present record
+    cannot be honoured. A bad record is REPORTED rather than ignored (same rule
+    as `tests.non_rebuilds`): a silently skipped typo would look applied while
+    suppressing nothing — or, worse here, look like it had been checked."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    sec = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    raw = sec.get("prepush_reading")
+    if raw is None:
+        return None, None
+    shape = "{" + ", ".join(PREPUSH_READING_FIELDS) + "}"
+    if not isinstance(raw, dict):
+        return None, f"must be an object {shape} (found {type(raw).__name__})"
+    missing = [k for k in PREPUSH_READING_FIELDS if k not in raw]
+    if missing:
+        return None, f"is missing {', '.join(missing)} (an entry is {shape})"
+    # T-581 QA P6: unknown keys are REFUSED, not ignored. A hand-written record
+    # carrying `path` or `expires` alongside the real fields was accepted whole,
+    # so it read as scoped or expiring while nothing on this side looked at
+    # either key — a record that lies about its own reach, which is the same
+    # false-silence class the content pin exists to close. Refusing keeps the
+    # rule the schema already implies: what prdt reads is all there is.
+    extra = sorted(safe_label(k) for k in raw if k not in PREPUSH_READING_FIELDS)
+    if extra:
+        return None, (f"carries field(s) {', '.join(extra)} that prdt does not read — a record "
+                      "cannot be scoped to a path or given an expiry by adding keys, and one "
+                      f"that looks like it is would be a false reassurance (an entry is {shape})")
+    if not (isinstance(raw["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", raw["sha256"])):
+        return None, "has a sha256 that is not a 64-hex digest — it cannot be matched to any hook"
+    if not isinstance(raw["blocks_main"], bool) or not isinstance(raw["hotfix_escape"], bool):
+        return None, "needs boolean blocks_main and hotfix_escape"
+    if not (isinstance(raw["recorded_at"], str)
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw["recorded_at"])):
+        return None, "has a recorded_at that is not a YYYY-MM-DD date — testimony with no date on it"
+    if not (isinstance(raw["reason"], str) and raw["reason"].strip()):
+        return None, "has an empty reason — a reading without one buys no silence"
+    # T-581 QA P1. `reason` is a person's prose printed on doctor's own report
+    # channel, and `.prdt/config.json` is tracked — so a forged reason travels
+    # to every clone. One carrying a newline plus `[verdict=clean …]` printed a
+    # second, fake verdict line two lines under the real one, on the same
+    # channel, in this version's literal pass-bar wording. Refused here rather
+    # than escaped at render: the record is then inert and named, which is what
+    # every other unusable record already gets.
+    if forged_tokens(raw["reason"], DOCTOR_RESERVED):
+        # Deliberately does NOT quote what it found: this complaint is itself
+        # printed on doctor's channel, and echoing the offending token there
+        # would put the forgery on the line that refuses it. `prdt attest
+        # prepush` names the exact tokens — that is the surface the author is
+        # standing at, and it is not the report channel.
+        return None, ("has a reason that imitates doctor's own report lines (a line break, or one "
+                      "of the tokens the verdict line is made of) — a reading is prose, and a "
+                      "record does not get to print a verdict. Re-record it with `prdt attest "
+                      "prepush`, which refuses the same text at the surface")
+    return raw, None
+
+
+def cmd_attest(args):
+    """`prdt attest prepush --blocks-main yes|no --hotfix-escape yes|no --reason …`
+    — the one surface that writes `git.prepush_reading`. Reads the hook's bytes
+    to pin the record; executes nothing."""
+    root = require_root()
+    st = prepush_status(root)
+    p, state = st["path"], st["state"]
+    if state != "unverified":
+        why = {
+            "no-repo": "the code root is not a git repository, so no pre-push can be in force",
+            "managed": f"the pre-push at {p} is prdt's own managed hook — prdt verifies it itself",
+            "missing": f"no pre-push exists at {p} — there is nothing to read, and doctor already "
+                       "reports the block as missing or inactive",
+        }.get(state, f"pre-push state is {state!r}")
+        sys.exit(f"prdt attest prepush: nothing to attest — {why}. A reading is recorded only for a "
+                 "hook prdt does not own and cannot verify.")
+    # T-581 QA P0: a hook without the exec bit is a hook git does not run. There
+    # is no block there to read, so there is nothing to attest — and accepting
+    # one at exit 0 was how a record came to exist for a hook that stops nothing.
+    if not st.get("executable"):
+        sys.exit(f"prdt attest prepush: {p} is NOT EXECUTABLE — git skips a hook without the "
+                 "exec bit (it prints a `hint:` line and pushes anyway), so whatever that file "
+                 f"says, it stops nothing. Restore it (`chmod +x {p}`), confirm the block by "
+                 "reading it, then record the reading.")
+    reason = (args.reason or "").strip()
+    if not reason:
+        sys.exit("prdt attest prepush: --reason is required and must say what was read and found — "
+                 "a record without one buys no silence.")
+    bad = forged_tokens(reason, DOCTOR_RESERVED)
+    if bad:
+        sys.exit("prdt attest prepush: --reason cannot contain " + ", ".join(bad) + " — doctor "
+                 "prints this text on its own report channel, so a reason able to imitate "
+                 "doctor's grammar could print a verdict of its own. Say what was read in prose.")
+    digest, body = _hook_bytes(p)
+    if digest is None:
+        sys.exit(f"prdt attest prepush: could not read {p} to pin the record")
+    rec = {"sha256": digest, "blocks_main": args.blocks_main == "yes",
+           "hotfix_escape": args.hotfix_escape == "yes", "reason": reason,
+           "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%d")}
+    # T-581 QA P2: this write REPLACES the file, so it must start from the file
+    # that is there. `read_json` answers None for "absent" and for "corrupt"
+    # alike, and falling back to `{}` on the second turned one bad byte in
+    # config.json into the silent loss of slug, surfaces, meta.allowlist and
+    # features.non_features. Absent is the only case that may start empty.
+    cfg_path = root / ".prdt" / "config.json"
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            sys.exit(f"prdt attest prepush: {cfg_path} cannot be read as JSON "
+                     f"({e.__class__.__name__}) — refusing to write. Recording the reading means "
+                     "rewriting this whole file, and everything else in it would be lost. Repair "
+                     "the file first, then re-run.")
+        if not isinstance(cfg, dict):
+            sys.exit(f"prdt attest prepush: {cfg_path} holds a JSON {type(cfg).__name__}, not an "
+                     "object — refusing to write over it.")
+    else:
+        cfg = {}
+    git_sec = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    git_sec["prepush_reading"] = rec
+    cfg["git"] = git_sec
+    tmp = Path(str(cfg_path) + ".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, cfg_path)
+    print(f"prdt attest prepush: recorded a human reading of {p} (sha256 {digest[:12]}…) in "
+          f".prdt/config.json {PREPUSH_READING_KEY} — blocks_main={'yes' if rec['blocks_main'] else 'no'} "
+          f"hotfix_escape={'yes' if rec['hotfix_escape'] else 'no'}. doctor honours it only while the "
+          "hook's bytes still match and git can still run it; it executed nothing, and the next "
+          "`prdt doctor` shows the result." + prepush_delegation_note(body))
+
+
 def prepush_status(root):
     """Where git will REALLY look for the code repo's pre-push hook, and what
     sits there. `git rev-parse --git-path hooks` is git's own resolver, so it
@@ -1132,6 +1405,14 @@ def prepush_status(root):
       missing    — no pre-push at the effective path → NOT blocked
     `hooks_path` is core.hooksPath when set — that config, not the file, is what
     makes `.git/hooks` inert.
+
+    `executable` is the OTHER way a hook that exists runs nothing (T-581 QA P0).
+    git will not execute a hook without the bit and says so in a `hint:` line
+    nobody reads, so `chmod -x` turns the block off while every byte of the file
+    still says it is on — the same false silence as a missing hook, only harder
+    to see. It is reported here, once, because every caller that cares whether
+    the block is IN FORCE has to ask: doctor's line, the human-record match, and
+    `prdt attest` all read this key rather than each re-deriving it.
 
     T-493 removed a fourth state, `blocking`, which was decided by
     `"ALLOW_MAIN_PUSH" in body and "main" in body`. A hook whose only occurrence
@@ -1148,7 +1429,7 @@ def prepush_status(root):
     r = _git(["rev-parse", "--git-path", "hooks"], cr)
     if r.returncode != 0:
         return {"state": "no-repo", "path": None, "hooks_path": None,
-                "current": False, "mentions": False}
+                "current": False, "mentions": False, "executable": False}
     d = Path(r.stdout.strip() or "hooks")
     if not d.is_absolute():
         d = Path(cr) / d
@@ -1156,15 +1437,30 @@ def prepush_status(root):
     hooks_path = hp.stdout.strip() if hp.returncode == 0 and hp.stdout.strip() else None
     hook = d / "pre-push"
     try:
-        body = hook.read_text(encoding="utf-8")
+        raw = hook.read_bytes()
     except OSError:
         return {"state": "missing", "path": hook, "hooks_path": hooks_path,
-                "current": False, "mentions": False}
+                "current": False, "mentions": False, "executable": False}
+    try:
+        # A hook git runs need not be text at all (a compiled binary is a legal
+        # pre-push). Decoding it used to raise UnicodeDecodeError straight out
+        # of here, which took `prdt doctor` down with exit 1 — a diagnostic that
+        # dies on the repository it is diagnosing (T-581 QA P7). A hook we
+        # cannot read as text is simply a hook we did not write: the marker is
+        # text, so it cannot be in there, and `unverified` is the honest state.
+        body = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        body = ""
+    try:
+        executable = bool(hook.stat().st_mode & 0o111)
+    except OSError:
+        executable = False
     if PREPUSH_MARKER in body:
         return {"state": "managed", "path": hook, "hooks_path": hooks_path,
-                "current": body == PREPUSH_SCRIPT, "mentions": False}
+                "current": body == PREPUSH_SCRIPT, "mentions": False,
+                "executable": executable}
     return {"state": "unverified", "path": hook, "hooks_path": hooks_path,
-            "current": False,
+            "current": False, "executable": executable,
             "mentions": "ALLOW_MAIN_PUSH" in body and "main" in body}
 
 
@@ -1188,17 +1484,27 @@ def ensure_prepush_hook(root):
         if st["hooks_path"]:
             return {"action": "skipped",
                     "detail": f"core.hooksPath={st['hooks_path']} — not ours to write", **st}
-        if st["state"] == "managed" and st["current"]:
+        if st["state"] == "managed" and st["current"] and st["executable"]:
             return {"action": "ok", "detail": "managed hook current", **st}
         if st["state"] == "unverified":
             return {"action": "skipped", "detail": "an unmanaged pre-push is in place", **st}
+        # T-581 QA P0: byte-current is not the same as in force. `chmod -x` on
+        # our own hook left doctor with NOTHING to say while `git push origin
+        # main` went through — worse than the foreign-hook case, because there
+        # the warning at least stayed. The write path below restores mode 0755
+        # along with the content, so the one repair covers both ways the
+        # managed hook can stop running.
+        demoted = st["state"] == "managed" and st["current"] and not st["executable"]
         upgrade = st["state"] == "managed"
         st["path"].parent.mkdir(parents=True, exist_ok=True)
         tmp = Path(str(st["path"]) + ".tmp")
         tmp.write_text(PREPUSH_SCRIPT, encoding="utf-8")
         os.chmod(tmp, 0o755)
         os.replace(tmp, st["path"])
-        st.update(state="managed", current=True)
+        st.update(state="managed", current=True, executable=True)
+        if demoted:
+            return {"action": "repaired",
+                    "detail": "managed hook was not executable — git was ignoring it", **st}
         return {"action": "upgraded" if upgrade else "installed",
                 "detail": "stale managed hook replaced" if upgrade else "no pre-push was present",
                 **st}
@@ -1218,10 +1524,28 @@ def prepush_warnings(root):
     if act == "upgraded":
         return [f"git: stale managed pre-push replaced at {p} — "
                 "ALLOW_MAIN_PUSH hotfix escape restored"]
+    if act == "repaired":
+        return [f"git: the managed pre-push at {p} had lost its exec bit — git skips a hook it "
+                "cannot execute (a `hint:` line, then the push goes through), so the main-push "
+                "block was OFF while every byte of the hook still said it was on. Mode restored "
+                "to 0755 and the block is live again"]
     if st == "no-repo":
         # Not "no block needed" — there is no .git/hooks here to hold one, so
         # this check looked at nothing. T-560: that is a skip, never a clean 0.
         return Skipped("no git repository at the code root — nothing to hold a pre-push hook")
+    # A managed hook we could NOT repair — it sits behind a core.hooksPath, so
+    # it is not in `.git/hooks` and not ours to write (or the repair itself
+    # failed). The bit is missing all the same, and this branch exists because
+    # the `return []` below used to swallow the case whole: zero lines about the
+    # block while `git push origin main` succeeded (T-581 QA P0).
+    if st == "managed" and not res.get("executable", True):
+        hpm = res.get("hooks_path")
+        return [f"git: main-push block INACTIVE — the managed pre-push at {p} is not executable, "
+                "and git skips a hook it cannot execute (a `hint:` line, then the push goes "
+                "through). prdt did not repair it"
+                + (f" because core.hooksPath={hpm} puts it outside .git/hooks, which is the only "
+                   "place prdt writes" if hpm else f" ({res.get('detail')})")
+                + f"; restore it with `chmod +x {p}`"]
     if act != "skipped" or st == "managed":
         return []
     hp = res.get("hooks_path")
@@ -1248,13 +1572,71 @@ def prepush_warnings(root):
                 "block — a hook mentioning both only in comments used to pass this check."
                 if res.get("mentions") else
                 " Nothing in it mentions `main` or ALLOW_MAIN_PUSH at all.")
+        #
+        # T-581: a PERSON may have read it. The record lifts the skip only when
+        # it is pinned to the exact bytes now in force; anything else — other
+        # bytes, a malformed entry — leaves the skip standing and is named
+        # inside it, so a record never buys silence it did not earn.
+        rec, complaint = prepush_reading(root)
+        # BEFORE the record is even consulted: a hook without the exec bit is
+        # not the hook in force, it is a file git walks past. Matching a record
+        # to its bytes would then answer a question nobody asked — "what would
+        # this do if it ran" — and print `it stops a push to main` about a push
+        # that succeeds. OBSERVED (T-581 QA P0): attest an executable org hook,
+        # `chmod 644` it, doctor's output did not change by one character while
+        # `git push origin main` returned 0. A ⚠ line, not a skip: main is
+        # unprotected right now and one chmod fixes it.
+        if not res.get("executable", True):
+            return [f"git: main-push block INACTIVE — the pre-push at {p} is not executable, and "
+                    "git skips a hook it cannot execute (a `hint:` line, then the push goes "
+                    "through). Nothing there stops a push to main, whatever the file says"
+                    + (". The human record at .prdt/config.json " + PREPUSH_READING_KEY
+                       + " describes bytes git never runs, so it silences nothing"
+                       if (rec or complaint) else "")
+                    + f". Ask the hook's owner to restore it (`chmod +x {p}`) — prdt never "
+                      "changes the mode of a hook it does not own"]
+        digest, body = _hook_bytes(p)
+        if rec and digest and digest == rec["sha256"]:
+            short = digest[:12]
+            said = one_line(rec["reason"])
+            when = rec["recorded_at"]
+            if not rec["blocks_main"]:
+                return [f"git: main-push block ABSENT per human record — on {when} a person read "
+                        f"the pre-push at {p} (sha256 {short}…) and recorded that it does not stop "
+                        f"a push to main: {said}. Nothing but you stops a push to main here; ask "
+                        "the hook's owner for the block (prdt writes no hooks outside .git/hooks)"]
+            if not rec["hotfix_escape"]:
+                return [f"git: main-push block per human record, but the ALLOW_MAIN_PUSH hotfix "
+                        f"escape does NOT work there — on {when} a person read the pre-push at {p} "
+                        f"(sha256 {short}…) and recorded that it stops a push to main with no "
+                        f"escape: {said}. The emergency hotfix path (PO habit) is stuck on this "
+                        "repo until the hook's owner honours ALLOW_MAIN_PUSH=1"]
+            return Attested(
+                f"main-push block per HUMAN RECORD, not prdt's own inspection — on {when} a person "
+                f"read the pre-push at {p} (sha256 {short}…) and recorded that it stops a push to "
+                f"main and honours ALLOW_MAIN_PUSH: {said}. prdt matched the record to these exact "
+                "bytes, checked that git can still execute them, and executed nothing itself; the "
+                "record stops applying the moment the hook changes"
+                + prepush_delegation_note(body))
+        if complaint:
+            record_note = (f" A record at .prdt/config.json {PREPUSH_READING_KEY} exists but "
+                           f"{complaint} — it silences nothing.")
+        elif rec:
+            record_note = (f" A human record at .prdt/config.json {PREPUSH_READING_KEY} exists but "
+                           f"is pinned to different bytes (sha256 {rec['sha256'][:12]}… recorded, "
+                           f"{digest[:12] if digest else 'unreadable'}… now) — the hook changed "
+                           "after it was read, so the record silences nothing; re-read the hook "
+                           "and re-record.")
+        else:
+            record_note = ""
         return Skipped(
             f"main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
             "verifies ownership only (it never runs someone else's hook to find out what "
             f"it does).{note} Until you have read it, assume nothing but you stops a push "
             "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
             + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
-               "its own hook here" if hp else ""))
+               "its own hook here" if hp else "")
+            + f".{record_note} {PREPUSH_ATTEST_HINT}")
     return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
 
 
@@ -4850,6 +5232,20 @@ class Skipped:
         self.reason = reason
 
 
+class Attested:
+    """What a check returns when it could not look itself, but a PERSON did, and
+    the record of that reading is pinned to the exact state now in force (T-581).
+    Not `[]`: that asserts prdt looked and found nothing, which it did not. Not
+    `Skipped`: the question is answered, only not by prdt. It does not hold the
+    verdict at `not-established`, but the verdict line counts it apart
+    (`attested=N`) and prints it as `human record ·`, so "we verified" and "a
+    person told us" never collapse into one number."""
+    __slots__ = ("note",)
+
+    def __init__(self, note):
+        self.note = note
+
+
 class NoEvidence:
     """What a check returns when it looked with every signal available to it and
     established neither a violation nor the absence of one. Not a defect and not
@@ -4898,6 +5294,9 @@ def doctor_record(name, family, result):
     if isinstance(result, NoEvidence):
         return {"name": name, "family": family, "state": "no-evidence",
                 "reason": result.note, "warnings": []}
+    if isinstance(result, Attested):
+        return {"name": name, "family": family, "state": "attested",
+                "reason": result.note, "warnings": []}
     if isinstance(result, Advisory):
         return {"name": name, "family": family, "state": "ran", "reason": None,
                 "warnings": list(result.lines), "violations": 0}
@@ -4922,6 +5321,9 @@ def doctor_verdict_lines(records):
     ran = [r for r in fam if r["state"] == "ran"]
     skipped = [r for r in fam if r["state"] == "skipped"]
     unseen = [r for r in fam if r["state"] == "no-evidence"]
+    # T-581: answered by a human record pinned to the live state. Counted apart
+    # from `ran` so the tail never says prdt verified what a person told it.
+    attested = [r for r in fam if r["state"] == "attested"]
     # `.get("violations", …)` — not every `ran` record carries the key (the
     # membership unit test below builds raw dicts by hand), so a record
     # without it falls back to the pre-T-572 rule (every warning is a
@@ -4937,11 +5339,20 @@ def doctor_verdict_lines(records):
                 f"{len(skipped) + len(unseen)} of {len(fam)} could not establish an answer")
     else:
         verdict = "clean"
-        head = f"0 mismatches, all {len(fam)} check(s) ran"
+        # T-581 QA P4: "all N check(s) ran" beside a tail reading `ran=N-1` is
+        # this line contradicting itself, and its entire purpose is that its
+        # numbers do not lie. An attested check was ANSWERED, not run — so the
+        # head says answered, and the two ways of answering are named with the
+        # same numbers the tail carries.
+        if attested:
+            head = (f"0 mismatches, all {len(fam)} check(s) answered — {len(ran)} by prdt's own "
+                    f"inspection, {len(attested)} by a human record")
+        else:
+            head = f"0 mismatches, all {len(fam)} check(s) ran"
 
     lines = [f"doctor: {FAMILY_DE} — {head} "
              f"[verdict={verdict} violations={violations} ran={len(ran)} "
-             f"skipped={len(skipped)} no-evidence={len(unseen)} "
+             f"attested={len(attested)} skipped={len(skipped)} no-evidence={len(unseen)} "
              f"unclassified={len(unclassified)}]"]
     # Every detail line stays on the `doctor:` channel rather than becoming a
     # ⚠ finding. doctor has exactly two line kinds and one severity — a `⚠`
@@ -4949,10 +5360,19 @@ def doctor_verdict_lines(records):
     # directly. These lines are report, not findings: nothing here is a defect
     # anyone can repair, which is the whole reason no-evidence moved off the
     # warning list in the first place.
+    #
+    # `one_line` on every reason (T-581 QA P1): most of these strings are ours,
+    # but some quote a person's record or a field name out of a tracked config
+    # file, and one embedded newline would turn a report line into two — the
+    # second free to look like any line doctor prints. The refusals upstream are
+    # the fix; this is the render-time floor under all of them, and the one
+    # place that covers a reason path added later without one.
+    for r in attested:
+        lines.append(f"doctor:    human record · {r['name']}: {one_line(r['reason'])}")
     for r in skipped:
-        lines.append(f"doctor:    could not look · {r['name']}: {r['reason']}")
+        lines.append(f"doctor:    could not look · {r['name']}: {one_line(r['reason'])}")
     for r in unseen:
-        lines.append(f"doctor:    no evidence · {r['name']}: {r['reason']}")
+        lines.append(f"doctor:    no evidence · {r['name']}: {one_line(r['reason'])}")
     for r in unclassified:
         lines.append(f"doctor:    unclassified · {r['name']}: registered with family "
                      f"{r.get('family')!r}, which is not one of {' / '.join(DOCTOR_FAMILIES)} — "
@@ -6033,6 +6453,18 @@ def main():
     p.set_defaults(fn=cmd_init)
     p = sub.add_parser("doctor", help="non-blocking lint: state · tickets · wiki (both stores) · overrides · discipline caps")
     p.set_defaults(fn=cmd_doctor)
+    p = sub.add_parser("attest", help="record a HUMAN's reading of something prdt refuses to inspect itself: "
+                                      "`attest prepush` pins what a person found in a foreign pre-push hook to "
+                                      "that hook's sha256 (.prdt/config.json git.prepush_reading); doctor honours "
+                                      "it only while the hook's bytes match (T-581)")
+    p.add_argument("subject", choices=("prepush",))
+    p.add_argument("--blocks-main", required=True, choices=("yes", "no"),
+                   help="does the hook stop `git push` to refs/heads/main?")
+    p.add_argument("--hotfix-escape", required=True, choices=("yes", "no"),
+                   help="does ALLOW_MAIN_PUSH=1 let a hotfix push through it?")
+    p.add_argument("--reason", required=True,
+                   help="what was read and found — required; a record without one buys no silence")
+    p.set_defaults(fn=cmd_attest)
     p = sub.add_parser("wiki", help="search (both stores; machine hits prefixed `machine:`) | "
                                     "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint")
     p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
