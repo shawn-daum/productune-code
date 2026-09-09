@@ -178,3 +178,28 @@ describe.skipIf(!PYTHON3)('prdt doctor — machine wiki page budget (T-446)', ()
     expect(doctor()).not.toMatch(/machine wiki:/)
   })
 })
+
+describe.skipIf(!PYTHON3)('prdt doctor — playbook-scoped machine store (T-586)', () => {
+  function writePlaybookOverride(name: string, lines: string[]) {
+    const d = path.join(machineLayer(), 'playbooks')
+    fs.mkdirSync(d, { recursive: true })
+    fs.writeFileSync(path.join(d, `${name}.md`), lines.join('\n') + '\n')
+  }
+
+  test("a name that is no persona's playbook is named — it binds nobody", () => {
+    writePlaybookOverride('implemnt', ['- typo'])
+    expect(doctor()).toMatch(/override: playbooks\/implemnt\.md names no playbook of any persona/)
+  })
+
+  test('the same ≤20-line cap applies, naming the store', () => {
+    writePlaybookOverride('grill', Array.from({ length: 21 }, (_, i) => `- distinct rule number ${i + 1} about its own subject.`))
+    expect(doctor()).toMatch(/override: machine playbooks\/grill\.md is 21 lines \(cap 20\)/)
+  })
+
+  test('silent on a legal name at the cap; an empty store directory says nothing', () => {
+    fs.mkdirSync(path.join(machineLayer(), 'playbooks'), { recursive: true })
+    expect(doctor()).not.toMatch(/override: .*playbooks\//)
+    writePlaybookOverride('grill', Array.from({ length: 20 }, (_, i) => `- rule ${i + 1}.`))
+    expect(doctor()).not.toMatch(/override: .*playbooks\//)
+  })
+})
