@@ -11,7 +11,7 @@ Soft ritual: nothing blocks mechanically; every skip is a judgment + one `wiki/l
 
 ## Sequence
 1. **Slice the approved PRD version scope** into tickets by type (`design`/`impl`/`qa`/`ops`), including `deps` wherever one ticket's work gates another. Slice at the grain the version actually needs — don't over-split trivial work or under-split a large surface.
-2. **Merge the split proposal into the existing Build-entry confirm fork** (PO habit Lifecycle: "entering Build with real scope" is already a load-bearing confirm) — present the ticket breakdown alongside that same ask, one confirm covers both scope approval and ticket shape, never a second round-trip.
+2. **Merge the split proposal into the existing Build-entry confirm fork** (PO habit Lifecycle: "entering Build with real scope" is already a load-bearing confirm) — present the ticket breakdown alongside that same ask, one confirm covers both scope approval and ticket shape, never a second round-trip. User-facing scope's confirm attaches the artifact hi-fi's skip/keep judgment points at — a fresh render when kept, the existing mockup/DS-showcase page when legitimately skipped — never a prose description alone. (2026-09-09) [T-597]
 3. On the user's affirmative reply: write the tickets (`docs/tickets/<version>/T-NNN.md`, PO-authored frontmatter per contracts) and the stage write (`po-state.json` stage → `build`).
 
 ## Exception — emergent work
