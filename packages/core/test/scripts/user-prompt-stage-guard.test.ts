@@ -21,6 +21,8 @@ import { execFileSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
 
 const HOOK = path.resolve(__dirname, '..', '..', 'scripts', 'hooks', 'prdt-user-prompt.sh')
+const CORE_ROOT = path.resolve(__dirname, '..', '..')
+const REGISTER_DIR = path.join(CORE_ROOT, 'discipline', 'register')
 
 /** Make a throwaway project dir; state=null → no .prdt/po-state.json (non-prdt dir). */
 function makeProject(state: object | null): string {
@@ -367,9 +369,13 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
   // A sandbox ~/.prdt: the resolver reads `$PRDT_HOME/register`; the hook finds the
   // resolver next to itself (PRDT_HOOK_DIR = the repo hooks dir here, the mirror
   // dir on an installed machine).
-  function prdtHome(register: string | null): string {
+  // withBodies=true copies the REAL register bodies (packages/core/discipline/register)
+  // in, the way audience-inject-hook.test.ts sources them for the resolver itself —
+  // never hand-copy body text here, it drifts the moment a body is renamed.
+  function prdtHome(register: string | null, withBodies = false): string {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t586-home-'))
     fs.mkdirSync(path.join(home, 'discipline', 'register'), { recursive: true })
+    if (withBodies) fs.cpSync(REGISTER_DIR, path.join(home, 'discipline', 'register'), { recursive: true })
     if (register !== null) fs.writeFileSync(path.join(home, 'register'), register)
     return home
   }
@@ -387,13 +393,21 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
     expect(ctx).not.toContain('[prdt register]')
   })
 
-  test('non-default keys → one `[prdt register]` line right after the state line, values verbatim', () => {
-    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n') }))
+  test('non-default keys with real bodies present → one `[prdt register]` line right after the state line, values verbatim, "Binding only" tail', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n', true) }))
     const lines = ctx.split('\n')
     expect(lines).toHaveLength(2)
     expect(lines[0]).toMatch(/^\[prdt state\] /)
     expect(lines[1]).toBe('[prdt register] form=outline · structure=planner-tables · address="션님" — governs user-chat. Binding only; any body arrived at session start.')
     expect(Buffer.byteLength(lines[1], 'utf8')).toBeLessThanOrEqual(180)
+  })
+
+  test('non-default keys with NO body files for the resolved values → same line, "No body is in force" tail', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n') }))
+    const lines = ctx.split('\n')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(/^\[prdt state\] /)
+    expect(lines[1]).toBe('[prdt register] form=outline · structure=planner-tables · address="션님" — governs user-chat. No body is in force for these values — this line is the whole cost.')
   })
 
   test('an illegal value never reaches the prompt: out-of-domain + off-shape address → defaults → no line', () => {
