@@ -327,8 +327,8 @@ RETURN_FLAG_RENDER_CAP = 5
 # instead of leaving this hook quoting prose that no longer exists (the rule
 # prdt-dispatch-gate.sh follows for its deny reasons).
 CLAUSE_ENVELOPE = "Return envelope — single JSON object, first stdout char `{`"
-CLAUSE_REQUIRED = ("Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) "
-                   "· `confidence`(0..1)")
+CLAUSE_REQUIRED = ("Required: `persona`(`po`|`designer`|`developer`|`qa`) · `task`(≤80) "
+                   "· `summary`(≤200, machine outcome) · `confidence`(0..1, a JSON number — never a word)")
 CLAUSE_LANG = ("Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · "
                "`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.")
 

@@ -224,9 +224,10 @@ def block_reason(violations):
     # Every word here is this file's own literal (see the header); the details
     # carry at most a length, a type name, or one character.
     return (
-        "[prdt return check] BLOCKED — your final message is not a valid return envelope "
-        "(contracts §Return envelope). This is the ONE re-ask: a second failure passes "
-        "through as-is and is reported to the PO. What is wrong: "
+        "[prdt return check] BLOCKED — your final message is not a valid return envelope. "
+        "This is the machine enforcement your discipline announces in contracts §Return "
+        "envelope, and this is the ONE re-ask it grants: a second failure passes through "
+        "as-is and is reported to the PO. What is wrong: "
         + "; ".join(d for _c, d in violations) + ". "
         "Re-emit your ENTIRE return now as ONE JSON object and nothing else — first "
         "character `{`, no code fence, no prose before or after it — with `persona` "
