@@ -5473,6 +5473,19 @@ def ticket_cycle_warnings(tickets):
 # parts (one registered hook command each) and owns the budget numbers; doctor
 # does not re-implement the split — it asks the hook for its plan (`--plan`) and
 # reports what the plan says: delivered bytes, parts needed, slots registered.
+#
+# T-580 — two sizes, and the budget applies to exactly one of them. `docs_bytes`
+# is the documents (what the parts CARRY); `wire_bytes` is the sum of the rendered
+# parts (what the hook commands EMIT — each part's additionalContext string, part
+# header + delimiters + footer included, the string the harness measures against
+# its 10,000-char persistence threshold). Until T-580 the summary printed the
+# documents figure while `largest` was a rendered part, so the total sat ~1.4 KB
+# per part under what shipped (measured qa: 26,296 B printed, 34,021 B emitted).
+# The line now leads with the wire, names the documents figure beside it, and the
+# gate compares every DELIVERED part against the limit the hook packed it under
+# (`parts[].limit` — the budget, less the onboarding reserve on po part 1). The
+# per-persona total has no threshold of its own: parts are separate commands, so
+# the only cap on the total is the slot count, reported separately.
 DISCIPLINE_PERSONAS = ("po", "designer", "developer", "qa")
 _DELIVERY_PLANS = {}
 
@@ -5515,10 +5528,26 @@ def discipline_delivery_plan(droot, persona):
     return _DELIVERY_PLANS[key]
 
 
+def _plan_docs_bytes(plan):
+    """Documents carried; `total_bytes` is the pre-T-580 name of the same sum."""
+    return plan.get("docs_bytes", plan.get("total_bytes")) or 0
+
+
+def _plan_wire_bytes(plan):
+    """Bytes the slot commands emit for this persona: the plan's own figure, or the
+    sum of its delivered parts for a bound hook that predates the key."""
+    if plan.get("wire_bytes") is not None:
+        return plan["wire_bytes"]
+    return sum(p["bytes"] or 0 for p in plan.get("parts") or [])
+
+
 def discipline_delivery_warnings(droot):
     """Violations: a persona's set needs more parts than there are registered
     slots (the tail never runs — part 1 says so in-session, doctor says so here),
-    or a single line is larger than a whole part (withheld from injection)."""
+    a single line is larger than a whole part (withheld from injection), or a
+    delivered part is larger on the wire than the limit it was packed under (the
+    harness would persist it and inject a 2 KB preview — the T-577 failure
+    itself, so this is gated on the RENDERED size, never on the documents)."""
     if not droot:
         return Skipped("no discipline root — nothing is delivered to check")
     if _session_start_hook_path() is None:
@@ -5544,9 +5573,16 @@ def discipline_delivery_warnings(droot):
                              f"the harness persists past 10,000 chars and replaces with a 2 KB preview: contracts "
                              f"and habit are NOT reaching sessions on this machine; re-run install.sh to resync the hooks")
             continue
-        if not plan.get("total_bytes"):
+        if not _plan_docs_bytes(plan):
             continue
         need, slots, budget = plan["parts_needed"], plan["slots"], plan["budget_bytes"]
+        for p in plan.get("parts") or []:
+            limit = p.get("limit", budget)
+            if p.get("bytes") is not None and p["bytes"] > limit:
+                warns.append(f"discipline delivery: prdt-{persona} part {p['n']}/{need} is {p['bytes']:,} B on the wire — "
+                             f"over the {limit:,} B this slot may emit (budget {budget:,} B/part), so the harness "
+                             f"persists it and the persona gets a 2 KB preview instead of that part; the hook's "
+                             f"split did not converge — shorten the longest lines/sections it carries")
         if need > slots:
             lost = sorted({u["label"] for u in plan["undelivered"]})
             warns.append(f"discipline delivery: prdt-{persona} needs {need} parts of ≤{budget} B but only "
@@ -5567,7 +5603,7 @@ def discipline_delivery_headroom(droot):
     lines = []
     for persona in DISCIPLINE_PERSONAS:
         plan = discipline_delivery_plan(droot, persona)
-        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+        if not plan or plan.get("legacy") or not _plan_docs_bytes(plan):
             continue
         need, slots = plan["parts_needed"], plan["slots"]
         if 0 <= slots - need <= 1:
@@ -5580,22 +5616,26 @@ def discipline_delivery_headroom(droot):
 def discipline_delivery_summary(droot):
     """The one informational line doctor prints every run: delivered bytes per
     persona against the budget — what the acceptance of T-577 asks to be
-    REPORTED, not only gated."""
+    REPORTED, not only gated. Leads with the WIRE figure (T-580): the bytes the
+    part commands emit, which is what `largest` is a member of and what the
+    per-part budget applies to; the documents figure follows, labeled."""
     if not droot or _session_start_hook_path() is None:
         return None
     cells, budget, threshold, slots = [], None, None, None
     for persona in DISCIPLINE_PERSONAS:
         plan = discipline_delivery_plan(droot, persona)
-        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+        if not plan or plan.get("legacy") or not _plan_docs_bytes(plan):
             continue
         budget, threshold, slots = plan["budget_bytes"], plan["threshold_chars"], plan["slots"]
         biggest = max([p["bytes"] or 0 for p in plan["parts"]] + [0])
-        cells.append(f"{persona} {plan['total_bytes']:,} B → {plan['parts_needed']} parts (largest {biggest:,} B)")
+        cells.append(f"{persona} {_plan_wire_bytes(plan):,} B wire ({_plan_docs_bytes(plan):,} B docs) → "
+                     f"{plan['parts_needed']} parts (largest {biggest:,} B)")
     if not cells:
         return None
-    return (f"doctor: discipline delivery — {' · '.join(cells)} · budget ≤{budget:,} B/part "
-            f"(harness persists a hook context over {threshold:,} chars; measured Claude Code 2.1.260) · "
-            f"{slots} part slots (hook files)")
+    return (f"doctor: discipline delivery — {' · '.join(cells)} · budget ≤{budget:,} B/part, gated on the wire "
+            f"(wire = the additionalContext each part command emits, part header + delimiters + footer included — "
+            f"the string the harness persists over {threshold:,} chars; docs = the discipline files the parts carry; "
+            f"measured Claude Code 2.1.260) · {slots} part slots (hook files)")
 
 
 def discipline_line_caps(droot):
