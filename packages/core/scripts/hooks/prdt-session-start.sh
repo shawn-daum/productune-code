@@ -331,7 +331,8 @@ quote_body() { # $1 file, $2 noun for the withheld notice
 # with the paths to `cat` — instead of the tail silently never running. A single
 # line larger than a whole part is withheld with a notice at its place, never
 # handed to the harness to persist. `--plan <persona>` prints the plan as JSON:
-# `prdt doctor` reads it to report delivered size against the budget.
+# `prdt doctor` reads it to report delivered size against the budget — the
+# per-part rendered size (what a slot emits), which is the budget's subject.
 PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS=10000   # Claude Code 2.1.260 `Nrr`
 PRDT_INJECT_PART_BUDGET_BYTES=8000                # under 10,000 AND under the 8,000 sanitizer
 # PO part 1 keeps room for the one-shot migration block. Measured: 1,708 B of
@@ -547,9 +548,19 @@ if mode == "selfload":
     sys.stdout.write(body + "\n\n" + foot + "\n")
     raise SystemExit(0)
 if mode == "plan":
+    # Two sizes, named for what they are (T-580): `docs_bytes` is the documents
+    # themselves — what the parts CARRY; `wire_bytes` is the sum of the rendered
+    # parts — what the hook commands EMIT, part header + delimiters + footer
+    # included, i.e. the additionalContext strings the harness measures. Per
+    # part, `bytes` is the size of that string and `limit` the cap this slot was
+    # packed under (part 1 of po keeps the onboarding reserve); the ≤budget gate
+    # is per part on the wire, never on either total. (No apostrophes here: this
+    # program lives inside a single-quoted shell string.)
     out = {"persona": persona, "agent": agent, "threshold_chars": threshold, "budget_bytes": budget,
-           "slots": slots, "total_bytes": sum(nbytes(t) for _, _, t in loaded), "parts_needed": len(parts),
+           "slots": slots, "docs_bytes": sum(nbytes(t) for _, _, t in loaded),
+           "wire_bytes": sum(nbytes(r) for r in rendered), "parts_needed": len(parts),
            "parts": [{"n": i + 1, "bytes": (nbytes(rendered[i]) if i < len(rendered) else None),
+                      "limit": budget - (onboard_reserve if (persona == "po" and i == 0) else 0),
                       "pieces": [{"label": loaded[pc["di"]][0], "path": shown(loaded[pc["di"]][1]), "piece": pc["piece"], "of": pc["of"],
                                   "first": pc["first"], "last": pc["last"], "kind": pc["kind"]} for pc in p]} for i, p in enumerate(parts)],
            "undelivered": [{"label": loaded[pc["di"]][0], "path": shown(loaded[pc["di"]][1]), "piece": pc["piece"], "of": pc["of"]}
