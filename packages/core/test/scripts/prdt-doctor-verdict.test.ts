@@ -269,6 +269,22 @@ bad = m.doctor_verdict_lines([rec(), rec(name="mystery", family=None)])
 assert "unclassified=1" in bad[0], bad
 assert "verdict=clean" not in bad[0], bad
 assert any("mystery" in l for l in bad), bad
+# T-581: a check answered by a HUMAN record is neither ran nor skipped — it
+# does not hold the verdict at not-established, but the tail counts it apart
+# and a detail line names it, so "we verified" and "a person told us" never
+# collapse into one number.
+att = m.doctor_verdict_lines([rec(), m.doctor_record("hook", m.FAMILY_DE, m.Attested("a person read it"))])
+assert "verdict=clean" in att[0], att
+assert "attested=1" in att[0] and "ran=1" in att[0], att
+assert any("human record" in l and "hook" in l for l in att), att
+assert "attested=0" in clean[0], clean
+# T-581 QA P4: the head sentence and the machine tail are one line and must
+# agree. "all 2 check(s) ran" beside "ran=1" is this line contradicting itself,
+# on a line whose entire purpose is that its numbers do not lie. An attested
+# check was ANSWERED, not run.
+assert "all 2 check(s) ran" not in att[0], att
+assert "answered" in att[0] and "ran=1" in att[0] and "attested=1" in att[0], att
+assert "all 1 check(s) ran" in clean[0], clean
 print("ok")
 `
     const out = execFileSync('python3', ['-c', probe], { encoding: 'utf-8', timeout: 30000 })
