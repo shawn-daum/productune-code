@@ -12,14 +12,17 @@
 #      habit assumes, now guaranteed even in long-lived sessions);
 #   b) a deploy-shaped prompt while stage is define/build gets an explicit
 #      ship-entry warning at exactly the observed failure moment.
-#   c) T-490 slice 3 — it also DRAINS the worker return-envelope flag queue that
-#      prdt-post-dispatch.sh writes to .prdt/.return-flags.json. That hook fires
-#      on SubagentStop, where the worker's final message is, but a SubagentStop
-#      additionalContext is injected into the WORKER and resumes it (measured
-#      2026-08-24, harness 2.1.241 — one probe line produced 9 extra worker
-#      turns), so it cannot report to the PO. UserPromptSubmit additionalContext
-#      is the channel T-498 r9 proved reaches the PO, which is why the notice
-#      arrives here, on the PO's next prompt, instead of mid-turn.
+#   c) T-490 slice 3 / T-553 — it also DRAINS the worker return-envelope flag
+#      queue that prdt-return-check.sh writes to .prdt/.return-flags.json. That
+#      hook fires on SubagentStop, where the worker's final message is; since
+#      T-553 it BLOCKS a malformed return once there (`decision:"block"`, the
+#      worker rewrites it) and queues a flag only when the corrected return still
+#      breaks the contract. A SubagentStop additionalContext would be injected
+#      into the WORKER and resume it unbounded (measured 2026-08-24, harness
+#      2.1.241 — one probe line produced 9 extra worker turns), so the notice
+#      cannot ride that; UserPromptSubmit additionalContext is the channel
+#      T-498 r9 proved reaches the PO, which is why it arrives here, on the PO's
+#      next prompt, instead of mid-turn.
 # Advisory only (additionalContext) — soft stages stay soft, the PO judges;
 # false positives cost one line. Silent no-op outside prdt projects and on any
 # read/parse failure (a state hook must never break a session).
@@ -292,11 +295,15 @@ if (stage in ("define", "build") and isinstance(prompt, str)
         "Raise it before doing the deploy work (PO habit — Lifecycle judgment)."
     )
 
-# ── T-490 slice 3: worker return-envelope flags ───────────────────────────────
-# prdt-post-dispatch.sh queues a flag here when a worker's final message is not a
-# well-formed envelope. DETECTION ONLY — by the time a return exists its tokens
-# are spent, so nothing was blocked and nothing was retried; this line exists so
-# the malformation is SEEN.
+# ── T-490 slice 3 / T-553: worker return-envelope flags ──────────────────────
+# prdt-return-check.sh queues a flag here when a worker's final message is not a
+# well-formed envelope. Two provenances, told apart by the entry's `reask` marker
+# and rendered TRUTHFULLY apart: `reask: true` means the SubagentStop gate blocked
+# the return once, the worker re-emitted, and the corrected return STILL broke the
+# contract (one retry is the cap, so it was let through as-is); no marker means an
+# advisory-only detector queued it — a mirror older than the gate (its
+# prdt-post-dispatch.sh still carries the pre-T-553 detector) — and for that entry
+# alone it is true that nothing was blocked and nothing was retried.
 #
 # Everything crossing the queue file is treated as untrusted, on the T-471
 # precedent: `.prdt/` is project-local and ships with a clone, so
@@ -310,7 +317,7 @@ if (stage in ("define", "build") and isinstance(prompt, str)
 RETURN_FLAG_CODES = (
     "not-json-object", "parse-failed", "not-an-object",
     "missing-key:persona", "missing-key:task", "missing-key:summary",
-    "missing-key:confidence", "over-cap:task", "over-cap:summary",
+    "missing-key:confidence", "persona-not-in-enum", "over-cap:task", "over-cap:summary",
     "confidence-out-of-range", "needs_info-without-next_question",
     "hangul:task", "hangul:summary",
 )
@@ -353,10 +360,20 @@ if os.path.exists(flags_path):
         who = entry.get("persona")
         who = who if (isinstance(who, str) and who in ASSIGNEES) else "<withheld>"
         shown += 1
+        # Shape-matched like everything else in the entry: only the literal
+        # `true` counts as the re-ask marker.
+        how = (
+            " — the SubagentStop gate BLOCKED it once and re-asked, and the corrected return "
+            "STILL broke the contract; one retry is the cap, so it was let through as-is "
+            "(that worker's tokens are spent)."
+            if entry.get("reask") is True else
+            " — detected AFTER the fact by an advisory-only detector (a mirror older than the "
+            "SubagentStop gate), so nothing was blocked and nothing was retried (that worker's "
+            "tokens were already spent)."
+        )
         lines.append(
             f"[prdt return check] the last return from prdt-{who} did not match the envelope "
-            "contract: " + ", ".join(codes) + " — detected AFTER the fact, so nothing was blocked "
-            "and nothing was retried (that worker's tokens were already spent). Unknown extra keys "
+            "contract: " + ", ".join(codes) + how + " Unknown extra keys "
             "are allowed and are never flagged. contracts.md §Return envelope, verbatim: \""
             + CLAUSE_ENVELOPE + "\" / \"" + CLAUSE_REQUIRED + "\""
             + (" contracts.md §Language, verbatim: \"" + CLAUSE_LANG + "\""
