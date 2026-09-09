@@ -122,7 +122,7 @@ export const CASES: readonly Case[] = [
             { matcher: 'startup|resume|clear', hooks: [h('prdt-session-start.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
             { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots.map(h), h('prdt-audience-inject.sh'), h('prdt-plan-tier-inject.sh'), h('prdt-overrides-inject.sh'), h('prdt-project-overrides-inject.sh')] },
           ],
-          SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
+          SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
           PostToolUse: [
             { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
             { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },

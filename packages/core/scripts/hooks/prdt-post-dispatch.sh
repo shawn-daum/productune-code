@@ -18,13 +18,10 @@
 #      cost_source marks "reported" vs "estimated" (additive field; GUI-safe).
 #   c) meta autosave beat (T-367, PRD v1.2) — fire-and-forget metaAutosaveTick
 #      via the core meta-cli bridge, only when .prdt/meta.git exists.
-#   d) return-envelope advisory (T-490 slice 3, SubagentStop only) — a worker
-#      whose final message is not a well-formed envelope gets a closed-vocabulary
-#      flag queued to .prdt/.return-flags.json for prdt-user-prompt.sh to render.
-#      DETECTION ONLY: nothing is blocked, nothing is retried, and this hook still
-#      prints NOTHING on SubagentStop (see the measurement at that section — a
-#      SubagentStop additionalContext resumes the WORKER, not the PO).
-# Silent no-op on anything that isn't a prdt-* Agent dispatch.
+#   d) (moved, T-553) the worker return-envelope check that used to live here is
+#      its own hook now — prdt-return-check.sh, same SubagentStop registration.
+#      This hook still prints NOTHING on SubagentStop (see the note at that
+#      section — a SubagentStop additionalContext resumes the WORKER, not the PO).
 
 set +e
 EVENT_JSON="$(cat 2>/dev/null || true)"
@@ -289,162 +286,14 @@ def three_bucket(per_model):
     return tot
 
 
-# ── worker return-envelope check (T-490 slice 3) ───────────────────────────────
-# DETECTION ONLY, and that is a design constraint rather than a shortcut: by the
-# time a worker's final message exists its tokens are already spent, so there is
-# nothing left to block, and an automatic retry would spend a SECOND worker on a
-# judgment only the PO can make. Nothing below ever blocks, denies, or
-# re-dispatches — it records that a return was malformed so the PO sees it.
-#
-# WHY THE FLAG IS QUEUED TO A FILE INSTEAD OF PRINTED (measured 2026-08-24,
-# harness 2.1.241, headless rig per T-498 §8/§9b): a SubagentStop hook's
-# `hookSpecificOutput.additionalContext` does NOT reach the parent (PO) model —
-# it is injected into the WORKER and RESUMES it. One probe line
-# (`PROBE_SAS=6464`) produced 9 further SubagentStop firings, the worker itself
-# answering "I've received the additional context (PROBE_SAS=6464)". Emitting
-# here would therefore burn worker turns in a loop in order to report that a
-# worker burned its turns — the exact inversion of this check's purpose.
-# PostToolUse additionalContext DOES render to the parent (same probe, matchers
-# `Agent` and `Bash` both read back), but PostToolUse/Agent fires at LAUNCH for a
-# background dispatch (`{"isAsync":true,"status":"async_launched"}` — no final
-# message to inspect), which is how prdt dispatches actually run. So: detect HERE,
-# where `last_assistant_message` is, and render from prdt-user-prompt.sh, the
-# channel T-498 r9 proved reaches the PO. The cost is that the flag lands on the
-# PO's NEXT prompt instead of mid-turn. NEVER print on SubagentStop from this hook.
-#
-# WHAT CROSSES THAT FILE IS A CLOSED VOCABULARY, NEVER PAYLOAD TEXT — two
-# load-bearing reasons: (1) the flag reaches a model and the text under
-# inspection is a worker's own output, so echoing it would make this an injection
-# channel out of the very thing being distrusted (prdt-dispatch-gate.sh makes the
-# same call on the dispatch side); (2) `.prdt/` is PROJECT-LOCAL and ships with a
-# clone (T-471), so the queue file is as tamperable as po-state.json. Only codes
-# from RETURN_FLAG_CODES and one persona token cross it, and prdt-user-prompt.sh
-# composes every word of the rendered line from its OWN literals after
-# shape-matching both.
-#
-# UNKNOWN EXTRA KEYS ARE ALLOWED AND NEVER FLAGGED — stated here explicitly
-# rather than by omission, because it is a decision and not an oversight: the
-# envelope schema is a floor, not a whitelist (the dispatch gate makes the same
-# call for `[ctx]`), and contracts §Return envelope's own conditional keys mean a
-# perfectly well-formed return routinely carries keys this check has never heard
-# of. Flagging them would teach the worker to strip signal out of its return.
-
-# The whole vocabulary that may cross into .prdt/.return-flags.json. Keep this
-# tuple in lockstep with the twin in prdt-user-prompt.sh — a test compares the
-# two, because a code this side invents and that side does not know is a flag
-# that is silently dropped at render time.
-RETURN_FLAG_CODES = (
-    "not-json-object", "parse-failed", "not-an-object",
-    "missing-key:persona", "missing-key:task", "missing-key:summary",
-    "missing-key:confidence", "over-cap:task", "over-cap:summary",
-    "confidence-out-of-range", "needs_info-without-next_question",
-    "hangul:task", "hangul:summary",
-)
-RETURN_REQUIRED = ("persona", "task", "summary", "confidence")
-RETURN_CAPS = (("task", 80), ("summary", 200))
-RETURN_FLAG_QUEUE_CAP = 8
-
-# Per-FIELD Hangul ratio, letters only — the same measure prdt-dispatch-gate.sh
-# applies to `[ctx].goal`/`.acceptance`, and per-field for the same measured
-# reason: over a whole envelope the ASCII scaffolding (keys, paths, enums)
-# dilutes a fully-Korean field below any usable threshold. Digits and
-# punctuation are excluded from numerator AND denominator. Ranges: syllables
-# AC00-D7A3, jamo 1100-11FF, compatibility jamo 3130-318F, extended-A A960-A97F,
-# extended-B D7B0-D7FF. Counted with the regex engine, not a per-char loop, so a
-# multi-megabyte field costs milliseconds.
-_HANGUL_RE = re.compile("[\uac00-\ud7a3\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\ud7b0-\ud7ff]")
-_ASCII_LETTER_RE = re.compile("[A-Za-z]")
-
-
-def hangul_ratio(s):
-    h = len(_HANGUL_RE.findall(s))
-    a = len(_ASCII_LETTER_RE.findall(s))
-    return 0.0 if (h + a) == 0 else h / (h + a)
-
-
-def envelope_flag_codes(text):
-    """Closed-vocabulary codes for a worker's final message. [] == well-formed.
-
-    Empty / whitespace-only is NOT a violation here: it means this hook cannot
-    see the return (a shape the harness did not hand us), and a check that
-    guesses in that case would flag healthy dispatches.
-    """
-    stripped = text.strip()
-    if not stripped:
-        return []
-    # contracts §Return envelope: "single JSON object, first stdout char `{`".
-    # Leading whitespace is tolerated; a ```json fence, a prose paragraph, or a
-    # bare array all fail here — which is the observed slip (5 prose returns).
-    if stripped[0] != "{":
-        return ["not-json-object"]
-    try:
-        env = json.loads(stripped)
-    except Exception:
-        # A JSON object followed by prose lands here too, and correctly so: the
-        # contract is ONE object, nothing after it.
-        return ["parse-failed"]
-    if not isinstance(env, dict):
-        return ["not-an-object"]
-    codes = []
-    for k in RETURN_REQUIRED:
-        if env.get(k) is None:
-            codes.append("missing-key:" + k)
-    for k, cap in RETURN_CAPS:
-        v = env.get(k)
-        if isinstance(v, str) and len(v) > cap:
-            codes.append("over-cap:" + k)
-    conf = env.get("confidence")
-    # bool is an int in Python — `true` is not a confidence.
-    if conf is not None and (isinstance(conf, bool)
-                             or not isinstance(conf, (int, float))
-                             or not (0 <= conf <= 1)):
-        codes.append("confidence-out-of-range")
-    if env.get("needs_info") is True:
-        nq = env.get("next_question")
-        if not (isinstance(nq, str) and nq.strip()):
-            codes.append("needs_info-without-next_question")
-    for k, _cap in RETURN_CAPS:
-        v = env.get(k)
-        if isinstance(v, str) and hangul_ratio(v) > 0.1:
-            codes.append("hangul:" + k)
-    return codes
-
-
-def check_return_envelope(ev, state_dir, persona):
-    """Queue a return-envelope flag for prdt-user-prompt.sh to render. Silent on
-    a well-formed return, and silent on any surprise — this is advisory, so
-    failing open costs one missed notice while failing loud would cost a turn."""
-    last = ev.get("last_assistant_message")
-    if not isinstance(last, str):
-        return                      # measured shape is a plain string; anything else: no judgment
-    codes = [c for c in envelope_flag_codes(last) if c in RETURN_FLAG_CODES]
-    if not codes:
-        return
-    path = os.path.join(state_dir, ".return-flags.json")
-    try:
-        with open(path) as f:
-            q = json.load(f)
-        flags = q.get("flags") if isinstance(q, dict) else None
-        if not isinstance(flags, list):
-            flags = []
-    except Exception:
-        flags = []
-    flags.append({"ts": now, "persona": persona, "codes": codes})
-    # Bounded so an unattended session cannot grow a queue that floods the PO's
-    # next prompt; the renderer reports how many it dropped.
-    atomic_write(path, {"flags": flags[-RETURN_FLAG_QUEUE_CAP:]})
-
+# ── worker return-envelope check — NOT HERE (moved to prdt-return-check.sh, T-553) ──
+# It fires on the same SubagentStop registration. What stays true for THIS hook:
+# NEVER emit `hookSpecificOutput.additionalContext` on SubagentStop (measured
+# 2026-08-24, harness 2.1.241: it is injected into the WORKER and resumes it —
+# one probe line produced 9 further firings), so this state hook prints nothing.
 
 # ── SubagentStop: completion-time subagent line (usage summed from its transcript) ──
 if event == "SubagentStop":
-    # advisory FIRST and outside the turns-line dedupe below: the dedupe
-    # answers "was this agent's cost already recorded", which has nothing to
-    # do with whether its return was well formed. Wrapped, because a state
-    # hook must never break a session over an advisory.
-    try:
-        check_return_envelope(ev, state_dir, persona)
-    except Exception:
-        pass
     gate = load_json_map(gate_sub_path)
     if agent_id and gate.get(agent_id):
         sys.exit(0)  # sync dispatch already recorded this agent at PostToolUse time
