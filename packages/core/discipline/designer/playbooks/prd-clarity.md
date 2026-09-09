@@ -41,6 +41,12 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 - The version section carries an `### Autonomous decisions` H3 — that heading in English whatever `[ctx].user_lang` is, the lines under it in `user_lang` — one line per call you made without the user: the ambiguity, and the call you made on it.
 - An empty list is valid only when no ambiguity failed all four conditions — say that in `summary`, so an empty section reads as a result and not an omission.
 
+## as-is / to-be — the version section declares both
+- Two H3s inside the version section, fixed byte-for-byte: `### 이 버전 직전 (as-is)` and `### 이 버전 직후 (to-be)` — one paragraph each, in `user_lang`, leading the section (the as-is is the premise the Why argues from). A receiving pipe slices on exact heading text, so append nothing: an ` — …` subtitle silently empties that column downstream.
+- **Asked, never gated.** Not a new score dimension and not an extra iteration — the as-is is the Problem & target user answer written as a state, the to-be the Acceptance answer written as a state. Spend a `next_question` only when the loop never produced that material. A PRD that declines to declare either is NOT a violation: note the gap in `summary` and move on.
+- **Current open version section only.** Never add these headings to a closed `## v<N>.<m>` section, and never retro-rename past headings into them — a closed section is that round's immutable record (contracts §Fixed paths, T-546). A project with no PRD, or with no current version section, has nowhere to declare and is outside this rule, not in violation of it.
+- Version section, not the document head: the values are per-version (this version's as-is is roughly the last one's to-be), the read unit is head + ONE version section, and only inside the section does immutability preserve what each round declared.
+
 ## North star (Define-time scope input, not retro trivia)
 - Derive `north_star · input_metrics · validation_method` into the PRD's success-signals section.
 - **If measuring requires a product feature (analytics, event log, feedback hook) → that feature enters PRD scope now.** Qualitative goal → name the observation method (user watch session, interview). Never leave measurement unstated.
