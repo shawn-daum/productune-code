@@ -50,7 +50,7 @@ test('the count comes from the manifest roster', () => {
 test('the roster is 23 hooks today — a canary on the number the user reads', () => {
   // Not the assertion that matters (the two above are), but the one that makes a
   // roster change visible in this file's diff as well as in the manifest's.
-  // T-577: 11 + the eleven discipline part slots prdt-session-start-p2..p12.sh.
+  // T-577: 12 + the eleven discipline part slots prdt-session-start-p2..p12.sh.
   expect(rosterSize()).toBe(23)
 })
 
