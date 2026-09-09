@@ -2647,6 +2647,26 @@ def override_warnings(root):
                                  f"or give it a reason for diverging")
                 elif not prev:
                     seen[key] = (label, n)
+    # T-586: the playbook-scoped machine store, `overrides/playbooks/<name>.md`.
+    # Same line cap (it is one more block a worker reads). A name that is no
+    # persona's playbook is the silent failure the inject hook's index cannot
+    # show: the index walks canonical playbook names, so such a file is never
+    # listed and binds nobody — name it here.
+    store = prdt_home() / "overrides" / "playbooks"
+    if store.is_dir():
+        droot = discipline_root()
+        for f in sorted(store.glob("*.md")):
+            name = f.stem
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            if len(lines) > CAPS["override"]:
+                warns.append(f"override: machine playbooks/{name}.md is {len(lines)} lines "
+                             f"(cap {CAPS['override']}) — curate down")
+            owners = [p for p in PERSONAS
+                      if droot is not None and (droot / p / "playbooks" / f"{name}.md").is_file()]
+            if not owners:
+                warns.append(f"override: playbooks/{name}.md names no playbook of any persona — "
+                             f"the session index never lists it, so it binds nobody (typo? "
+                             f"the legal names are the persona `playbooks/_index.md` menus)")
     return warns
 
 
