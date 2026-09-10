@@ -1,11 +1,11 @@
 /**
- * meta-migrate.test.ts — T-366 existing-project migration (PRD §v1.2 경계 결정 4,
+ * meta-migrate.test.ts — T-366 existing-project migration (PRD history §v1.2 경계 결정 4,
  * 공통 마이그레이션 절차 ①→④).
  *
  * Logic-bearing guarantees under test (doctrine #3, test-first):
  *  - a mixed repo migrates to: code `git ls-files` meta-free · meta repo
  *    tracking exactly the allowlist · the code `.gitignore` is NOT touched
- *    (the managed block was retired in PRD §v1.3 설계 결정 2);
+ *    (the managed block was retired in PRD history §v1.3 설계 결정 2);
  *  - NO history rewrite: the code repo's pre-migration commits are untouched
  *    (old commits still contain meta) and no force-push/destructive git runs;
  *  - refusals: already-split re-run · no code git · staged changes (they would
@@ -139,7 +139,7 @@ test('run: mixed repo → code ls-files meta-free, meta repo tracks exactly the 
   expect(metaFiles).not.toContain('.prdt/index.db')
 
   // ③ code `.gitignore` untouched: user line intact, NO managed block injected
-  // (PRD §v1.3 설계 결정 2 — the block was retired)
+  // (PRD history §v1.3 설계 결정 2 — the block was retired)
   const gitignore = fs.readFileSync(path.join(projectDir, '.gitignore'), 'utf-8')
   expect(gitignore).toBe('node_modules/\n')
   expect(gitignore).not.toContain('>>> prdt meta')

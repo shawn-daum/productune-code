@@ -1,5 +1,5 @@
 /**
- * meta-autosave.ts — the meta repo's autosave beat (T-367, PRD §v1.2 경계 결정 2).
+ * meta-autosave.ts — the meta repo's autosave beat (T-367, PRD history §v1.2 경계 결정 2).
  *
  * T-364 landed the meta-git primitives (commitMeta / scanMetaHistory) with no
  * caller; this module is the single wiring point that puts commitMeta on the

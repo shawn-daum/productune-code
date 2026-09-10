@@ -5,7 +5,7 @@
  * promote.ts and worktree.ts had each grown their own byte-identical copies of
  * "run git at codeRoot", "does this local branch exist", "what branch am I on",
  * and "fold a child_process error's stdout+stderr into one searchable string".
- * They live here once. Every op still anchors at codeRoot (PRD §v1.3 설계 결정 4):
+ * They live here once. Every op still anchors at codeRoot (PRD history §v1.3 설계 결정 4):
  * in a split project the code `.git` sits under `<projectRoot>/<code.dir>`, not
  * the meta projectRoot — confusing the two is `fatal: not a git repository`.
  */

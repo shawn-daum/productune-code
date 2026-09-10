@@ -130,7 +130,7 @@ safe_path() { # $1 a derived path — emits it only when it is ONE plain line
 # carry exactly one marker on the chain, so for them outermost == nearest,
 # byte-identical). Keep in lockstep with prdt-project-overrides-inject.sh and
 # the python twins in prdt-post-dispatch.sh / prdt-user-prompt.sh.
-# v1.3 physical split (PRD §v1.3 설계 결정 4): the session cwd may be the CODE root
+# v1.3 physical split (PRD history §v1.3 설계 결정 4): the session cwd may be the CODE root
 # (`<projectRoot>/<code.dir>`) — this walk then lands on the parent projectRoot
 # where `.prdt/` lives. Legacy layout finds it at depth 0.
 find_proj() {
