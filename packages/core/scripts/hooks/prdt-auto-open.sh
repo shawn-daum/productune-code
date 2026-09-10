@@ -65,7 +65,9 @@
 # md/html anywhere" — most md/html writes in a session are routine ticket/wiki/
 # design bookkeeping, not a deliverable to look at. Matched paths:
 #  - light (`open <path>`, opens in the default app/browser): the PRD file
-#    (basename PRD.md, wherever prd_path points it), *.html/*.htm (docs/
+#    (basename PRD.md, wherever prd_path points it — NOT docs/prd/history.md:
+#    T-602 moved closed sections there, and it is only ever written by a
+#    close-time move, never a deliverable to look at), *.html/*.htm (docs/
 #    artifacts/* in practice, but any .html is rare enough to not need a path
 #    restriction), images (png/jpg/jpeg/gif/svg), *.pdf.
 #  - heavy (`open -R <path>`, Finder-reveal only): installer/archive

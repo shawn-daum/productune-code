@@ -54,7 +54,7 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 
 ## What the PRD does NOT hold
 - The PRD holds per-version scope estimation. A feature's CURRENT spec goes to `docs/features/<feature>.md` (contracts §Fixed paths) — write it there once the value has earned a file (a `feature:` value with no spec file is legal and the normal state) and cite it from the version section; never restate a live contract inside a version section.
-- A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. The read unit you author for is the standing head + ONE version section.
+- A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. Closed sections live in `docs/prd/history.md` (moved there byte-identical at close — contracts §Fixed paths), so `docs/prd/PRD.md` is exactly the read unit you author for: the standing head + ONE version section.
 
 ## Page style (the user reads this file directly)
 - Heading rhythm H2 version / H3 section / H4 feature-chunk; never skip levels; no bullet walls — one claim per bullet, one sentence.

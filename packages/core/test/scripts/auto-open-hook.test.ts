@@ -235,6 +235,17 @@ describe('classification — unmatched → silent, open never invoked', () => {
 })
 
 describe('scope guards', () => {
+  // T-602: closed PRD sections live in docs/prd/history.md. It is written only
+  // by a close-time move, never as a deliverable to look at — so the basename
+  // allowlist (PRD.md) must NOT widen to it. Pinned, because the obvious
+  // "PRD*.md" generalisation would start popping the 1,200-line lump.
+  test.skipIf(!hasJq())('docs/prd/history.md → no open call (not a review deliverable)', () => {
+    const p = makeNestedFile('docs/prd', 'history.md')
+    const { stdout, log } = run({ filePath: p })
+    expect(stdout).toBe('{}')
+    expect(readLog(log)).toBe('')
+  })
+
   test.skipIf(!hasJq())('non-Write tool (Edit) → no open call even for PRD.md', () => {
     const p = makeFile('PRD.md')
     const { log } = run({ filePath: p, toolName: 'Edit' })

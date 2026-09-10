@@ -1,11 +1,15 @@
 ---
 name: fixed-paths
 section: Fixed paths
-when: "authoring or updating a `docs/features/<feature>.md` spec file · closing a PRD `## Phase N` section · landing a user-review artifact (the bucket manifest) · setting or reading a register value · deciding whether a design/token file is meta or code"
+when: "authoring or updating a `docs/features/<feature>.md` spec file · closing a PRD `## v<N>.<m>` version section or a `## Phase N` section · landing a user-review artifact (the bucket manifest) · setting or reading a register value · deciding whether a design/token file is meta or code"
 ---
 # Contracts §Fixed paths — annex
 
 Continues `contracts.md` §Fixed paths; binds every persona the same way, loaded on demand at the moment `when` names.
+
+## PRD — closing a `## v<N>.<m>` version section (T-602)
+- `docs/prd/PRD.md` holds the standing head + the ONE open version section; `docs/prd/history.md` holds every closed one, v0.5 onward, in close order (v0.1~v0.4 stay in `docs/prd/versions/v0.4.md` — the retired snapshot regime's sole record, a whole-document snapshot that is never spliced into the `## v` run). Closing = cut the whole `## v<N>.<m>` block (heading through the line before the next `## `, or EOF) out of `PRD.md`, append it verbatim to the end of `history.md`, open the next version section in `PRD.md`, and prove the move with a byte compare of the block (`shasum` before/after) — a rewrite during the move breaks the immutable-record rule.
+- History stays ONE lump: nothing machine-reads a closed section (ntf-pm's portfolio pipe reads only the open section, first match of `docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`, verified 2026-09-10) — so the history file is never named `PRD.md` and never sits at one of those three paths, or first-match would serve history as the current PRD without an error. Citation form for a closed section: `docs/prd/history.md#v<N>.<m>`; a dispatch `prd_path` always names the open section in `PRD.md`.
 
 ## PRD — closing a `## Phase N` section
 - Closing one rewrites that heading away into a `완료된 라운드` snapshot pointer — same precedent as Phase 1~3 — never left in place with an appended note.

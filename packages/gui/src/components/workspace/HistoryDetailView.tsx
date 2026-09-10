@@ -4,7 +4,7 @@
  * Section order puts the RESULT first (doctrine #7 — user outcome over output):
  *   1. header (version + CLOSED + date)
  *   2. Outcome   (parsed from retro --v<N>.md `## Outcome`)  ← topmost, on purpose
- *   3. PRD       (docs/prd/versions/<v>.md snapshot link, or placeholder)
+ *   3. PRD       (prdt: docs/prd/history.md · legacy: docs/prd/versions/<v>.md snapshot link, or placeholder)
  *   4. Tickets   (done/dropped/open summary + "open board" link; commit-only note if 0)
  *   5. Artifacts (docs/artifacts/<v>/ flat + archive)
  *   6. Retro     (full retro link — "read more" at the bottom)
