@@ -12,6 +12,31 @@ Version-by-version release notes for this project.
 >   here in the same change that cuts the `v*` tag — never after the fact, never by a nightly job.
 > - Everything above the first `## ` heading is preamble and is ignored by the parser.
 
+## v1.8 — 규율 전량 도달 · doctor 자가 판정 · 집행층 방어 3종 (2026-09-04)
+
+> CLI 아티팩트 단독 릴리스입니다. GUI(.dmg)는 이 버전에 포함되지 않습니다.
+> 적용: `prdt update` 또는 `packages/core/scripts/install.sh` 재실행.
+
+### Added
+- **규율이 세션에 전량 도착합니다** — doctrine·contracts·habit·플레이북 메뉴를 합친 페이로드가 주입 한도(약 10,000자)를 넘으면 앞 2KB 미리보기만 도착하고 나머지는 통째로 잘리던 결함을 닫았습니다. 이제 파트당 하나의 훅 출력으로 나눠 전량 전달하고, `prdt doctor` 가 규율이 실제로 발화했다는 증거(등록만이 아니라 실제 발화 + 마커 노화)를 봅니다.
+- **`prdt doctor` 판정 줄이 규율↔실집행 계열을 스스로 나눕니다** — 검사마다 소속 계열을 선언하고, "검사가 돌았다" · "위반이 없다" · "볼 수 없었다(스킵)"를 구분해 한 줄로 보고합니다(`verdict=… violations=N ran=N skipped=N`). 스킵된 검사가 있으면 위반이 0이어도 `clean`이 아니라 `not-established`로 보고합니다.
+- **모델 가용성 프리플라이트** — 디스패치를 태우기 전에 카나리 호출 1회(수 초, 토큰 사실상 0)로 해당 모델이 지금 쓸 수 있는지 확인합니다. 한도 소진으로 인한 실행층 사망과 모델 자체의 거부를 더는 같은 실패로 취급하지 않습니다.
+- **`prdt artifacts sync` / `prdt artifacts check`** — 사용자 리뷰 산출물이 `docs/artifacts/<version>/` 버킷 + `manifest.json` + `archive/`로 정본화되고, 매니페스트는 손으로 쓰지 않고 `sync`가 디스크에서 유도합니다. `check`는 버킷에 배치되지 않는 파일과 형식이 깨진 항목을 보고합니다.
+- **`prdt doctor` 신규 검사** — 훅 미러 drift · discipline 미러 drift · statusline 등록 drift(사용자/프로젝트 층, malformed 값 포함) · `docs/features/` 참조 그래프 정합성 · 중복 티켓 id · 손상된 티켓 frontmatter에 대한 내성.
+
+### Changed
+- **승격 경로 판정이 이중부정과 squash merge를 정확히 읽습니다** — `"Never push to main without a PR."`처럼 PR 정책을 가장 정확하게 적은 문장이 오히려 false negative로 버려지던 휴리스틱을 고쳤고, GitHub squash merge 제목(`<title> (#123)`)도 PR-merge 증거로 인식합니다. "PR 증거 없음"과 "PR 불필요"를 doctor가 별도 상태(`no-evidence`)로 구분해 보고합니다. v1.7은 이 자리의 오판정으로 실제 잘못된 main push를 낸 적이 있습니다.
+- **override align 검사가 프로젝트 층에만 적용됩니다** — 기기 층 override는 참고만 하고 판정 대상에서 빠집니다.
+- **비싼 테스트 셋업은 파일당 한 번만 구축합니다** — 설치·시드 데이터베이스·컨테이너 기동처럼 비용이 큰 공유 셋업은 테스트 케이스마다 다시 만들지 않고 파일당 한 번만 만들어 재사용하며(신선한 셋업이 필요한 idempotency/cleanup 검증은 예외), 그 규율을 어긴 스위트가 남기던 대용량 임시 디렉터리 누수를 정리했습니다.
+
+### Fixed
+- **디스패치 게이트·호출 거버너가 공백 하나로 무력화되던 문제** — 두 훅의 top-level JSON 파서가 compact 포맷만 전제해, harness가 pretty-print로 바꾸면 deny도 경고도 없이 게이트가 사라졌습니다. 구조를 읽도록 고쳤습니다.
+- **호출 거버너 카운터를 지우거나 잘라 한도를 영구 무력화할 수 있던 문제** — 삭제·truncate·정규 파일을 가리키는 symlink로 카운터를 우회하거나 다른 파일을 오염시킬 수 있었습니다. `prdt doctor`가 missing · truncated · symlinked · non-regular 네 상태를 모두 보고합니다.
+- **stage guard가 붙여넣기로 조용히 사라지던 문제** — 워커 반환을 붙여넣고 그 아래에 직접 배포 요청을 타이핑하면 알림 마커가 본문 중간에 있다는 이유로 무발화됐습니다. 마커의 시작과 끝 양쪽을 함께 보도록 고쳐, 실제 라이브 캡처만 non-fresh로 판정합니다.
+- **`.html`/`PRD.md` 산출물을 쓸 때 macOS 키체인 다이얼로그가 뜨던 문제** — auto-open 훅이 샌드박스 프로세스에서 앱을 콜드 스타트시켜 발생했습니다. 대상 앱이 이미 실행 중이 아니면 여는 대신 Finder로 reveal하도록 바꿨고, 워커의 Write에는 더 이상 발화하지 않습니다.
+- **statusline 등록 실패가 침묵하던 문제** — 기존 `statusLine`이 이미 있으면 prdt 것이 등록되지 않고도 아무 신호가 없었습니다. `prdt doctor`가 등록 상태(정상 / 미등록 / 다른 대상 / 파일 결손)를 프로젝트 층 오버라이드까지 포함해 보고하고, 복구 명령을 함께 출력합니다.
+- **doctor의 drift·base·shape 오탐 3건**을 정리했습니다.
+
 ## v1.7 — Define 방향 소유권 · 호출 거버너 · 주입 방어 (2026-08-25)
 
 > CLI 아티팩트 단독 릴리스입니다. GUI(.dmg)는 이 버전에 포함되지 않습니다.
