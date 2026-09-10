@@ -1,5 +1,5 @@
 /**
- * meta-migrate.ts — existing-project meta-split migration (T-366, PRD §v1.2
+ * meta-migrate.ts — existing-project meta-split migration (T-366, PRD history §v1.2
  * 경계 결정 4, 공통 마이그레이션 절차).
  *
  * Takes a MIXED repo (code + meta both tracked by `.git`) to the split state:
@@ -7,7 +7,7 @@
  *   ② first meta snapshot commit (T-364 commitMeta)
  *   ③ code repo `git rm -r --cached` over the allowlist + commit the removal —
  *      tracking removal ONLY (the `.gitignore` managed block was retired in
- *      PRD §v1.3 설계 결정 2, so nothing touches the code `.gitignore` here)
+ *      PRD history §v1.3 설계 결정 2, so nothing touches the code `.gitignore` here)
  *   ④ verify both sides via `git ls-files`
  *
  * Auto / confirm boundary (§10 git abstraction, contract "no force-push /
@@ -87,7 +87,7 @@ export interface MetaMigrationResult {
 
 /**
  * Run git against the CODE repo. Anchored at codeRoot (`<projectRoot>/<code.dir>`
- * once physically split, or the project root in legacy layout — PRD §v1.3 설계
+ * once physically split, or the project root in legacy layout — PRD history §v1.3 설계
  * 결정 4). Meta ops (metaGit below) stay anchored at the project root.
  * scrubbedGitEnv (T-364 QA-HIGH): ambient GIT_INDEX_FILE etc. inside a hook
  * would redirect our git calls at the wrong index — shared with meta-git.ts
@@ -159,7 +159,7 @@ function stripManagedBlock(content: string): string {
 /**
  * After the LOGICAL split (code + meta share ONE work-tree) the meta paths are
  * untracked in the code repo but NOT ignored — the retired `.gitignore` managed
- * block (PRD §v1.3 설계 결정 2) had been the only thing hiding them. Left
+ * block (PRD history §v1.3 설계 결정 2) had been the only thing hiding them. Left
  * un-ignored they (①) read as untracked in `git status`, so worktree.ts
  * isBaseDirty / promote.ts isDirty perma-refuse, and (② worst) a `git add -A`
  * sweeps the whole meta area back into the code repo — undoing the split and
@@ -276,7 +276,7 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
 
   // ③ code repo: drop meta from the index. rm --cached only — work-tree
   //    contents and history stay untouched. No `.gitignore` staging: the managed
-  //    block was retired (PRD §v1.3 설계 결정 2), and touching the code
+  //    block was retired (PRD history §v1.3 설계 결정 2), and touching the code
   //    `.gitignore` here would sweep unrelated user edits into the untrack commit.
   //
   // T-370 C2: on ANY failure past this point, roll our own staging back.
@@ -402,14 +402,14 @@ export async function runMetaMigration(projectDir: string): Promise<MetaMigratio
   }
 }
 
-// ── 2nd migration: physical re-layout (T-378, PRD §v1.3 §기존 분리 완료 repo 7개) ──
+// ── 2nd migration: physical re-layout (T-378, PRD history §v1.3 §기존 분리 완료 repo 7개) ──
 //
 // The LOGICAL split (runMetaMigration above / v1.2) leaves code + meta on ONE
 // work-tree, two git-dirs. The PHYSICAL migration moves the code repo down into
 // `<projectRoot>/<code.dir>/` so `ls <projectRoot>` shows the meta area with the
 // code folded into `code/`. The move is a pure relocation — the code git-dir AND
 // every code work-tree entry descend together, so the code repo's tracked paths
-// and history are UNCHANGED (no rename commit — PRD §v1.3 §기존 분리 완료 repo 7개
+// and history are UNCHANGED (no rename commit — PRD history §v1.3 §기존 분리 완료 repo 7개
 // step 2). Nothing is pushed, nothing is history-rewritten.
 //
 // Two `.git` shapes (PRD Risk & assumptions — "7 repo 형태가 균일하지 않을 수 있음"):
@@ -543,7 +543,7 @@ function isEmptyDir(p: string): boolean {
 
 /**
  * Inspect a logically-split project and classify it for the physical migration.
- * Read-only. `codeDir` defaults to `code` (the confirmed folder name, PRD §v1.3).
+ * Read-only. `codeDir` defaults to `code` (the confirmed folder name, PRD history §v1.3).
  */
 export async function planPhysicalMigration(
   projectDir: string,
@@ -639,7 +639,7 @@ export async function planPhysicalMigration(
   return { ...base, entriesToMove }
 }
 
-/** Strip the retired `.gitignore` managed block (PRD §v1.3 설계 결정 2), leaving
+/** Strip the retired `.gitignore` managed block (PRD history §v1.3 설계 결정 2), leaving
  * every user-authored line untouched. Returns true when a block was removed. */
 function removeManagedBlock(gitignorePath: string): boolean {
   let content: string
@@ -804,7 +804,7 @@ export async function runPhysicalMigration(
   // Record code.dir so codeRoot() resolves to codeDirPath everywhere hereafter.
   recordCodeDir(projectDir, codeDir)
 
-  // Refresh the meta repo's info/exclude to exclude `code/` (PRD §v1.3 설계 결정 3).
+  // Refresh the meta repo's info/exclude to exclude `code/` (PRD history §v1.3 설계 결정 3).
   // Idempotent — meta.git already exists, so this only repropagates config +
   // info/exclude (now that code.dir is set).
   await initMetaRepo(projectDir)

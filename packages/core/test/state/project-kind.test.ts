@@ -57,7 +57,7 @@ test('missing directory -> productune default (no throw)', () => {
   expect(detectProjectKind('/no/such/dir/anywhere-xyz')).toBe('productune')
 })
 
-// ── Code root resolution (PRD §v1.3 설계 결정 4, T-376) ──────────────────────────
+// ── Code root resolution (PRD history §v1.3 설계 결정 4, T-376) ──────────────────────────
 
 test('legacy: no state dir → codeRoot == projectRoot, not split', () => {
   const d = makeProject([])

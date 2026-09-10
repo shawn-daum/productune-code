@@ -263,7 +263,7 @@ export function runSurfaceCommand(
   //    intentionally sets NODE_ENV still wins over our delete.
   //  - FORCE_COLOR:'0' keeps ANSI escapes out of the log panel; PATH is
   //    augmented to resolve project-local + global tools.
-  // T-377 (PRD §v1.3 설계 결정 4): terminal/dev/build surfaces run in the CODE
+  // T-377 (PRD history §v1.3 설계 결정 4): terminal/dev/build surfaces run in the CODE
   // root — once physically split the package.json / node_modules / build tooling
   // live under `<projectDir>/<code.dir>`, so both the spawn cwd AND the
   // project-local `.bin` resolution anchor there. `opts.projectDir` stays the META

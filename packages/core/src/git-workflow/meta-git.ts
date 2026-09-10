@@ -1,10 +1,10 @@
 /**
- * meta-git.ts — meta-only local git core module (T-364, PRD §v1.2).
+ * meta-git.ts — meta-only local git core module (T-364, PRD history §v1.2).
  *
  * The META repo lives in a separate git-dir (`<stateDir>/meta.git`) with the
  * PROJECT ROOT as its work-tree and tracks ONLY the allowlist (PRD 경계 결정 1);
  * the CODE repo (`.git`, at codeRoot — projectRoot in legacy layout, or
- * `<projectRoot>/<code.dir>` once physically split, PRD §v1.3) tracks everything
+ * `<projectRoot>/<code.dir>` once physically split, PRD history §v1.3) tracks everything
  * else. Meta git ops here always anchor at projectRoot; code detection anchors
  * at codeRoot (resolved via state/project-kind).
  *
@@ -91,7 +91,7 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
  * git-dir ignores itself).
  * Written to the meta repo's `info/exclude` at init (gitignore syntax, matched
  * by basename anywhere in the tree). The physical code dir (`<code.dir>/`) is
- * appended per-project at init when the project is split (PRD §v1.3 설계 결정 3)
+ * appended per-project at init when the project is split (PRD history §v1.3 설계 결정 3)
  * so the code tree never shows up in the meta `git status`.
  */
 export const DEFAULT_META_EXCLUDE: string[] = [
@@ -349,7 +349,7 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
 
     // Derived/gate artifacts excluded from tracking even under allowlisted dirs,
     // plus the physical code dir (`<code.dir>/`) when split so the code tree stays
-    // out of the meta `git status` (PRD §v1.3 설계 결정 3). Idempotent (re-run
+    // out of the meta `git status` (PRD history §v1.3 설계 결정 3). Idempotent (re-run
     // refreshes an existing repo — the T-386 C3/C4 propagation path).
     ensureMetaExclude(projectDir)
 
@@ -408,7 +408,7 @@ function existingAllowlistPaths(projectDir: string, allowlist: string[]): string
  *
  * Once physically split (isPhysicallySplit) the code `.gitignore` no longer
  * lives at the project root, so commitMeta uses a plain `git add -A` instead
- * (PRD §v1.3 설계 결정 4) — see stageAllowlist.
+ * (PRD history §v1.3 설계 결정 4) — see stageAllowlist.
  */
 async function collectStageableFiles(
   projectDir: string,
@@ -431,7 +431,7 @@ async function collectStageableFiles(
 
 /**
  * Stage the allowlist for one meta commit. Two strategies, keyed on layout:
- *  - PHYSICALLY SPLIT (PRD §v1.3): the code `.gitignore` no longer sits at the
+ *  - PHYSICALLY SPLIT (PRD history §v1.3): the code `.gitignore` no longer sits at the
  *    project root, so a plain `git add -A -- <allowlist>` correctly stages
  *    adds/edits/deletions while honoring the meta repo's own info/exclude
  *    (derived artifacts + `<code.dir>/`). No ignore-immune dance needed.
@@ -618,7 +618,7 @@ export interface MetaPushResult {
  * Push the meta repo's local branches to a configured backup remote (T-374 ①).
  *
  * This is the EXPLICIT counterpart to addMetaRemote: `remote add` only records
- * the url, and no beat / hook / autosave path ever pushes (PRD §v1.2 Non-goal:
+ * the url, and no beat / hook / autosave path ever pushes (PRD history §v1.2 Non-goal:
  * no automatic push). A push happens ONLY when the user runs this command, so
  * the backup remote is the durable history a second machine bootstraps from
  * (bootstrapMetaRepo). Never `--force` — a fast-forward push preserves the
@@ -712,7 +712,7 @@ export interface MetaBootstrapResult {
  * carries `.prdt/config.json` and thus `code.dir` — has not been restored yet,
  * so codeRoot falls back to projectRoot here. A split-layout bootstrap that
  * runs from inside `code/` must re-anchor to the parent (projectRoot) before
- * calling in; the python bootstrap owns that re-anchoring (PRD §v1.3 T-374 정합).
+ * calling in; the python bootstrap owns that re-anchoring (PRD history §v1.3 T-374 정합).
  */
 function bootstrapCodeRepoExists(projectDir: string): boolean {
   try {

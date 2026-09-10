@@ -1,5 +1,5 @@
 /**
- * meta.ts — meta repo read/config IPC (T-367, PRD §v1.2 CLI·GUI parity).
+ * meta.ts — meta repo read/config IPC (T-367, PRD history §v1.2 CLI·GUI parity).
  *
  * Thin pass-throughs to @productune/core's meta-git module — the SAME API the
  * `prdt meta` CLI reaches through the dist/bin/meta-cli bridge, so both

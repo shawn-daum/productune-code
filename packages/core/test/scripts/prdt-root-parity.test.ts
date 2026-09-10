@@ -2,7 +2,7 @@
  * prdt-root-parity.test.ts — T-377 root-resolution parity, python half.
  *
  * The projectRoot/codeRoot contract lives in three lockstep implementations
- * (PRD §v1.3 설계 결정 4): core TS (state/project-kind.ts), GUI electron
+ * (PRD history §v1.3 설계 결정 4): core TS (state/project-kind.ts), GUI electron
  * (project-paths.ts), and this python CLI (scripts/prdt). The TS pair is covered
  * by project-kind.test.ts + project-paths.test.ts with a byte-identical case
  * list; this file drives the SAME cases through the python resolvers so all three

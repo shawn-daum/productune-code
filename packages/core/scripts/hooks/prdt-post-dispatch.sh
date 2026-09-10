@@ -56,7 +56,7 @@ persona = sub[len("prdt-"):]
 # on the chain, so for them outermost == nearest). Keep in lockstep with the
 # bash find_proj in prdt-session-start.sh / prdt-project-overrides-inject.sh and
 # the twin below in prdt-user-prompt.sh.
-# Under the v1.3 physical split (PRD §v1.3 설계 결정 4) the session cwd may be the
+# Under the v1.3 physical split (PRD history §v1.3 설계 결정 4) the session cwd may be the
 # CODE root (`<projectRoot>/<code.dir>`); this walk then resolves the parent
 # projectRoot, where `.prdt/` (and meta.git) live. Legacy layout finds it at
 # depth 0. All meta ops below anchor at this projectRoot.

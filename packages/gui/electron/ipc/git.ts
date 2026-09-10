@@ -67,7 +67,7 @@ export function parseTagLines(stdout: string): GitTag[] {
 export async function listTags(projectDir: string): Promise<GitTag[]> {
   if (!projectDir) return []
   try {
-    // T-377 (PRD §v1.3 설계 결정 4): version tags live on the CODE repo — anchor at
+    // T-377 (PRD history §v1.3 설계 결정 4): version tags live on the CODE repo — anchor at
     // codeRoot (`<projectDir>/<code.dir>` once split, else projectDir in legacy).
     // Reading tags at the meta projectDir in a split project hits no `.git` and
     // silently returns [] (the catch below), leaving HistoryPane's version list

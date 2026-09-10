@@ -1,6 +1,6 @@
 /**
  * meta-migrate-physical.test.ts — T-378 2nd migration: PHYSICAL re-layout
- * (PRD §v1.3 §기존 분리 완료 repo 7개 · Acceptance #1 #2).
+ * (PRD history §v1.3 §기존 분리 완료 repo 7개 · Acceptance #1 #2).
  *
  * Logic-bearing guarantees (doctrine #3, test-first):
  *  - a logically-split repo relocates its code (files + `.git`) into `code/` with

@@ -1404,7 +1404,7 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<Array<{ name: string; date: string }>> =>
     ipcRenderer.invoke('git:listTags', projectDir),
 
-  // ── Meta repo (T-367, PRD §v1.2) — same core API as `prdt meta` ─────────────
+  // ── Meta repo (T-367, PRD history §v1.2) — same core API as `prdt meta` ─────────────
 
   /** Meta commit timeline (newest-first). [] when the meta split is not applied. */
   metaLog: (

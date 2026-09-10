@@ -117,7 +117,7 @@ export const PROJECT_PATHS_CASES: readonly Case[] = [
     },
   },
 
-  // ── Code root resolution (PRD §v1.3 설계 결정 4, T-377) ──────────────────────
+  // ── Code root resolution (PRD history §v1.3 설계 결정 4, T-377) ──────────────────────
   // Byte-identical case list to core's project-kind.test.ts so the two + python
   // stay behaviorally in lockstep (3-way parity acceptance).
   {
