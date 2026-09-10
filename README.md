@@ -55,7 +55,8 @@ prdt update                 # repo pull --ff-only + 재설치
 ```
 .prdt/                      # po-state.json · config.json · meta.git(메타 저장소) · index.db(파생)
 docs/
-├── prd/PRD.md              # 단일 living PRD (경로 고정)
+├── prd/PRD.md              # PRD 작업 문서 = 상주 head + 열린 버전 섹션 하나 (경로 고정)
+│   └── history.md          # 닫힌 버전 섹션 — close 때 바이트 그대로 이동 (T-602)
 ├── artifacts/<slug>.<ext>  # 사용자 리뷰 산출물
 ├── tickets/<version>/T-NNN.md   # ticket-lite (전역 id · 3값 status)
 │   └── backlog/            # backlog = version 없는 ticket (승격 = git mv)

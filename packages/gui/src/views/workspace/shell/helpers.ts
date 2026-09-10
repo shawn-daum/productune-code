@@ -226,8 +226,10 @@ function makeSamplePromotionMessage(origin: 'auto' | 'user-requested'): Message 
  * Returns [] when there's no current_version.
  */
 export function prdCandidatePaths(poState: PoState | null, projectDir: string): string[] {
-  // T-306: prdt keeps ONE living PRD at docs/prd/PRD.md — no prd_anchor, no
+  // T-306: prdt keeps the working PRD at docs/prd/PRD.md — no prd_anchor, no
   // per-version snapshots (docs/prd/versions/ does not exist). Single candidate.
+  // T-602: docs/prd/history.md (closed sections) is never a candidate here —
+  // this list resolves the CURRENT version, which lives in PRD.md by contract.
   if (isPrdtPoState(poState)) return [`${projectDir}/docs/prd/PRD.md`]
   const currentVersionId = poState?.current_version
   if (!currentVersionId) return []

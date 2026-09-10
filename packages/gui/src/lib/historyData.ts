@@ -9,8 +9,19 @@
 /** A version id like v1, v1.0, v1.2.3. Excludes `backlog` and other dirs. */
 export const VERSION_RE = /^v\d+(\.\d+)*$/
 
-/** The single living PRD SoT (prdt mode). Mirrors PrdSection's PRD_MASTER_REL. */
+/** The PRD working document (prdt mode): standing head + the ONE open version
+ * section. PrdSection imports this — one definition, two readers. */
 export const PRD_MASTER_REL = 'docs/prd/PRD.md'
+
+/**
+ * T-602: the PRD history — every CLOSED `## v<N>.<m>` section, moved out of
+ * PRD.md byte-identical at close (contracts §Fixed paths). One human-read lump,
+ * never per-version files, and deliberately NOT named `PRD.md`: ntf-pm's
+ * portfolio pipe resolves the current PRD by first match over
+ * `docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`, so a `PRD.md` basename on any of
+ * those paths could serve history as the current PRD without an error.
+ */
+export const PRD_HISTORY_REL = 'docs/prd/history.md'
 
 /**
  * Resolve the PRD path for a CLOSED version's History-detail row (T-546
@@ -23,10 +34,13 @@ export const PRD_MASTER_REL = 'docs/prd/PRD.md'
  * the in-progress version from its list), so — unlike PrdSection, which also
  * distinguishes the OPEN/current version — the only branch that matters here
  * is prdt vs legacy:
- *   - prdt (isPrdt=true)  → ALWAYS docs/prd/PRD.md, regardless of whether a
- *     `docs/prd/versions/<versionId>.md` file happens to exist on disk. prdt
- *     abolished the per-version snapshot (T-291, adapter A8); PRD.md is the
- *     single living SoT for every version, closed or open.
+ *   - prdt (isPrdt=true)  → ALWAYS docs/prd/history.md (T-602), regardless of
+ *     whether a `docs/prd/versions/<versionId>.md` file happens to exist on
+ *     disk. prdt abolished the per-version snapshot (T-291, adapter A8), and
+ *     since T-602 a closed section no longer lives in PRD.md either — PRD.md is
+ *     head + the open section only, so resolving it here would render a file
+ *     that does not contain this version. The reader gets the whole history
+ *     lump (no `#v` anchor scroll in the md tab yet).
  *   - legacy (isPrdt=false) → ALWAYS `docs/prd/versions/<versionId>.md`,
  *     unchanged. A legacy snapshot file is not necessarily 1:1 with a version:
  *     `v0.4.md` can be the record for v0.1~v0.4 together, so this branch never
@@ -34,7 +48,7 @@ export const PRD_MASTER_REL = 'docs/prd/PRD.md'
  *     project is prdt.
  */
 export function resolveClosedVersionPrdPath(isPrdt: boolean, versionId: string): string {
-  return isPrdt ? PRD_MASTER_REL : `docs/prd/versions/${versionId}.md`
+  return isPrdt ? PRD_HISTORY_REL : `docs/prd/versions/${versionId}.md`
 }
 
 export interface TicketCounts {

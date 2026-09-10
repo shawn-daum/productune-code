@@ -28,6 +28,7 @@ const PRD_CLARITY = path.join(DISCIPLINE, 'designer', 'playbooks', 'prd-clarity.
 const PO_HABIT = path.join(DISCIPLINE, 'po', 'habit.md')
 const SCOPE_CHALLENGE = path.join(DISCIPLINE, 'designer', 'playbooks', 'scope-challenge.md')
 const FIXED_PATHS_ANNEX = path.join(DISCIPLINE, 'contracts', 'fixed-paths.md')
+const AUTO_OPEN_HOOK = path.join(DISCIPLINE, '..', 'scripts', 'hooks', 'prdt-auto-open.sh')
 
 const read = (p: string) => fs.readFileSync(p, 'utf-8')
 // Same count doctor uses: python splitlines() ignores one trailing newline.
@@ -48,10 +49,15 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
   })
 
   test('the Fixed paths PRD row states the read unit', () => {
-    const row = read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (single living file) |'))
+    const row = read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))
     expect(row).toBeDefined()
     expect(row).toContain('`docs/prd/PRD.md#v<N>.<m>`')
-    expect(row).toContain('that ONE version section, never the whole file')
+    expect(row).toContain('that ONE version section')
+    // T-602: the working file is head + the open section and nothing else, so
+    // reading the whole file IS the read unit — the old "never the whole file"
+    // wording would now forbid the intended read.
+    expect(row).toContain('the working file IS the read unit')
+    expect(row).not.toContain('never the whole file')
     // T-476 F4: a live '## Phase N' section sits outside the version section
     // and must be pulled into the read unit too, or a worker reading only
     // head+version-section misses its still-open Non-goals/Acceptance.
@@ -59,6 +65,57 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
     // A closed section is an immutable episode — the whole point of keeping the
     // cumulative SoT while shrinking the read unit.
     expect(row).toContain('append a supersede note, never rewrite it')
+  })
+})
+
+describe('contracts.md — PRD split: working document + history (T-602)', () => {
+  const row = () =>
+    read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))!
+
+  // The user's requirement is sight: opening the working document shows the
+  // current version only. The row must therefore name BOTH files and say the
+  // move is a move (byte-identical, immutable record) — not a copy, which §Git
+  // bans, and not per-version files, which v1.10 would have to fold back.
+  test('the row names history.md and the byte-identical move', () => {
+    const r = row()
+    expect(r).toContain('`docs/prd/PRD.md` = the standing head + the ONE open `## v<N>.<m>` section')
+    expect(r).toContain('MOVES its section byte-identical to the end of `docs/prd/history.md`')
+    expect(r).toContain('never a per-version file, never a copy')
+  })
+
+  // Two prd_path forms. A dispatch always works the OPEN version, and the
+  // dispatch-gate hook pins `docs/prd/PRD.md#v<N>.<m>` by regex — so the closed
+  // form is a citation form only, and the row has to say so or a PO will type
+  // `history.md#v1.3` into a dispatch and be denied by the gate.
+  test('the row gives the closed-section citation form and keeps it out of dispatch prd_path', () => {
+    const r = row()
+    expect(r).toContain('`docs/prd/history.md#v<N>.<m>`')
+    expect(r).toContain('a form a dispatch `prd_path` never takes')
+    expect(read(CONTRACTS)).toContain('`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`')
+    expect(read(CONTRACTS)).not.toMatch(/"prd_path":"docs\/prd\/history\.md/)
+  })
+
+  test('§Git still bans snapshot copies and classifies history.md as a move', () => {
+    const git = read(CONTRACTS).split('\n').find((l) => l.startsWith('- git is the version history'))!
+    expect(git).toContain('no snapshot copies')
+    expect(git).toContain('`docs/prd/history.md` is a move, not a copy')
+  })
+
+  // ntf-pm's portfolio pipe resolves the current PRD by FIRST MATCH over three
+  // candidate paths; a history file named PRD.md on any of them would be served
+  // as the current PRD with no error. The annex has to carry that constraint.
+  test('the annex carries the close procedure and the candidate-path constraint', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).toContain('## PRD — closing a `## v<N>.<m>` version section')
+    expect(annex).toContain('append it verbatim to the end of `history.md`')
+    expect(annex).toContain('never named `PRD.md` and never sits at one of those three paths')
+    expect(annex).toContain('`docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`')
+    expect(annex).toContain('`docs/prd/versions/v0.4.md`')
+    expect(annex).toMatch(/^when: .*closing a PRD `## v<N>\.<m>` version section/m)
+  })
+
+  test('the auto-open hook documents that history.md is deliberately not a light-open match', () => {
+    expect(read(AUTO_OPEN_HOOK)).toContain('NOT docs/prd/history.md')
   })
 })
 
