@@ -79,7 +79,9 @@ describe('contracts.md — PRD split: working document + history (T-602)', () =>
   test('the row names history.md and the byte-identical move', () => {
     const r = row()
     expect(r).toContain('`docs/prd/PRD.md` = the standing head + the ONE open `## v<N>.<m>` section')
-    expect(r).toContain('MOVES its section byte-identical to the end of `docs/prd/history.md`')
+    expect(r).toContain('MOVES its section byte-identical into `docs/prd/history.md`')
+    // The row must not restate an anchor the annex owns and states differently.
+    expect(r).not.toContain('to the end of `docs/prd/history.md`')
     expect(r).toContain('never a per-version file, never a copy')
   })
 
@@ -101,17 +103,45 @@ describe('contracts.md — PRD split: working document + history (T-602)', () =>
     expect(git).toContain('`docs/prd/history.md` is a move, not a copy')
   })
 
-  // ntf-pm's portfolio pipe resolves the current PRD by FIRST MATCH over three
-  // candidate paths; a history file named PRD.md on any of them would be served
-  // as the current PRD with no error. The annex has to carry that constraint.
+  // A PRD resolver takes the FIRST match over three candidate paths; a history
+  // file named PRD.md on any of them would be served as the current PRD with no
+  // error. The annex has to carry that constraint.
   test('the annex carries the close procedure and the candidate-path constraint', () => {
     const annex = read(FIXED_PATHS_ANNEX)
     expect(annex).toContain('## PRD — closing a `## v<N>.<m>` version section')
-    expect(annex).toContain('append it verbatim to the end of `history.md`')
-    expect(annex).toContain('never named `PRD.md` and never sits at one of those three paths')
+    expect(annex).toContain('append it verbatim after the LAST `## v` section of `history.md`')
+    expect(annex).toContain('never named `PRD.md` and never sits on a path a PRD resolver would try')
     expect(annex).toContain('`docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`')
-    expect(annex).toContain('`docs/prd/versions/v0.4.md`')
     expect(annex).toMatch(/^when: .*closing a PRD `## v<N>\.<m>` version section/m)
+  })
+
+  // A close appends; the version run must stay contiguous even in a history file
+  // that carries trailing non-version matter, so "the end of the file" is the
+  // wrong anchor and the annex must not say it.
+  test('the close appends after the last version section, not at EOF', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).toContain('ahead of any trailing non-version matter')
+    expect(annex).not.toContain('append it verbatim to the end of `history.md`')
+  })
+
+  // The byte compare is the proof the move was a move. It has to say which side
+  // the blank separator belongs to, or the first real close fails its own shasum.
+  test('the byte compare names the separator convention', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).toContain('each side rstripped')
+    expect(annex).toContain('belongs to the FILE, not to either block')
+  })
+
+  // This annex is mirrored into EVERY prdt project. A sentence stating one
+  // project's version history or a sibling project's name is false everywhere
+  // else, so the contract states the RULE and the project's own file heads
+  // state its facts.
+  test('the shared annex states no project-private fact', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).not.toMatch(/v0\.\d/)
+    expect(annex).not.toContain('versions/v0.4.md')
+    expect(annex).not.toContain('ntf-pm')
+    expect(annex).toContain('belongs to the two file heads, never to this contract')
   })
 
   test('the auto-open hook documents that history.md is deliberately not a light-open match', () => {
