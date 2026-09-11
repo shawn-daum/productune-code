@@ -20,6 +20,7 @@
 import fs from 'fs'
 import path from 'path'
 import { test, expect, describe } from 'vitest'
+import { pin, pinAbsent } from '../helpers/pin'
 
 const DISCIPLINE = path.resolve(__dirname, '..', '..', 'discipline')
 const CONTRACTS = path.join(DISCIPLINE, 'contracts.md')
@@ -180,11 +181,21 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
     expect(r).toContain('history/lessons only, never the current spec')
   })
 
-  test('the row fixes the validity-window tagging and no-delete rules', () => {
-    const r = row()!
-    expect(r).toContain('`(vX~)`')
-    expect(r).toContain('`(vX~vY, replaced-by …)`')
-    expect(r).toContain('never deleted')
+  // T-613: the row no longer carries the tags. T-586 moved spec-AUTHORING rules
+  // into the annex this row points at, and the designer habit carries the same
+  // vocabulary for the author — the rule is intact, so the pin moved to its new
+  // home instead of being deleted or dropped to a weaker check. Both halves are
+  // still pinned: the tags (validity window) and "never deleted" (no-delete).
+  test('the validity-window tagging and no-delete rules live in the annex the row points at', () => {
+    expect(row()).toContain('`contracts/fixed-paths.md`')
+    const a = read(FIXED_PATHS_ANNEX)
+    const ctx = {
+      file: 'discipline/contracts/fixed-paths.md',
+      protects: 'a spec file states the CURRENT contract only: every fact carries its validity window, and an invalidated fact is annotated, never deleted',
+    }
+    for (const lit of ['`(vX~)`', '`(vX~vY, replaced-by …)`', 'never deleted']) pin(a, lit, ctx)
+    // no dual text: the hot row points, it does not restate
+    pinAbsent(row()!, '`(vX~', { file: 'discipline/contracts.md (feature-spec row)', protects: 'the row points at the annex instead of carrying authoring vocabulary' })
   })
 
   // features/ sits OUTSIDE the wiki store, so `prdt wiki lint` cannot see a

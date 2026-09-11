@@ -29,6 +29,7 @@ import os from 'os'
 import path from 'path'
 import { execFileSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { pin, pinAbsent } from '../helpers/pin'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const DISC = path.join(CORE_ROOT, 'discipline')
@@ -40,13 +41,25 @@ const HABITS = Object.fromEntries(
   (['po', 'developer', 'qa', 'designer'] as const).map((p) => [p, read(path.join(DISC, p, 'habit.md'))]),
 ) as Record<'po' | 'developer' | 'qa' | 'designer', string>
 const ANNEX_DIR = path.join(DISC, 'contracts')
-const ANNEXES = ['return-envelope', 'fixed-paths', 'tickets', 'definition-of-done', 'git'] as const
+// T-613: this list used to be five hardcoded names and read "exactly the five
+// annexes" while the tree carried seven — a pin that fails on a LEGAL addition
+// says nothing about what to fix. The list is read from disk instead, and the
+// property that hardcoding was protecting (no annex the hot text never names,
+// no name the hot text points at without a file) is asserted as a set equality
+// below. Adding an annex without registering it in contracts.md still fails.
+const ANNEXES: readonly string[] = fs
+  .readdirSync(ANNEX_DIR)
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => f.replace(/\.md$/, ''))
+  .sort()
 const annex = (n: string) => read(path.join(ANNEX_DIR, `${n}.md`))
 const POINTER_RE = /`contracts\/([a-z-]+)\.md`/g
 
 describe('contracts annexes — every pointer resolves, every annex is pointed at', () => {
-  test('the annex dir holds exactly the five annexes and nothing else', () => {
-    expect(fs.readdirSync(ANNEX_DIR).filter((f) => f.endsWith('.md')).sort()).toEqual([...ANNEXES].map((n) => `${n}.md`).sort())
+  test('the annex dir and contracts.md name the same set — no orphan file, no unregistered annex', () => {
+    expect(ANNEXES.length).toBeGreaterThan(0)
+    const registered = [...new Set([...CONTRACTS.matchAll(POINTER_RE)].map((m) => m[1]))].sort()
+    expect(registered, 'annex files on disk vs `contracts/<name>.md` pointers in contracts.md').toEqual([...ANNEXES])
   })
 
   test('every `contracts/<name>.md` pointer in contracts.md and the four habits resolves to a file', () => {
@@ -91,20 +104,27 @@ const MOVED: ReadonlyArray<readonly [(typeof ANNEXES)[number], string]> = [
 describe('moved clauses are verbatim in the cold document and gone from the hot text', () => {
   for (const [home, literal] of MOVED) {
     test(`${home}: ${literal.slice(0, 48)}…`, () => {
-      expect(annex(home)).toContain(literal)
-      expect(CONTRACTS).not.toContain(literal)
+      pin(annex(home), literal, {
+        file: `discipline/contracts/${home}.md`,
+        protects: 'a clause moved out of contracts.md by the hot→cold split must survive verbatim in its cold home',
+      })
+      pinAbsent(CONTRACTS, literal, {
+        file: 'discipline/contracts.md',
+        protects: 'no dual text — the hot copy was deleted when the clause moved',
+      })
     })
   }
 })
 
 describe('what a persona needs before it can act stayed hot in contracts.md', () => {
   const HOT = [
-    // §Return: required keys + the pointer that replaces the QA-extras line
-    'Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) · `confidence`(0..1)',
+    // §Return: the QA pointer that replaces the extras line (the required keys
+    // get their own line-scoped test below — T-613)
     'QA live/smoke extras: `contracts/return-envelope.md`',
-    // §Fixed paths: the read-FIRST duty and the validity-tag vocabulary a READER needs
+    // §Fixed paths: the read-FIRST duty
+    // (the validity-tag vocabulary is NOT here any more — see the designer-habit
+    // test below: it is spec-AUTHORING vocabulary and moved with the rest of it)
     'read it FIRST, before touching that feature',
-    '`(vX~vY, replaced-by …)`',
     'Meta/code split test = coupling, never "is it a doc"',
     // §Tickets: the enum and the body shape
     '`status` is the whole enum.',
@@ -119,13 +139,49 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     '- Stage explicitly — never `git add .` / `git add -A`.',
     '- No push / promote-to-main / PR / force-push / tag push / destructive git without explicit user instruction.',
   ]
-  for (const h of HOT) test(h.slice(0, 60), () => expect(CONTRACTS).toContain(h))
+  for (const h of HOT)
+    test(h.slice(0, 60), () =>
+      pin(CONTRACTS, h, {
+        file: 'discipline/contracts.md',
+        protects: 'a persona needs this clause BEFORE it can act, so it stays in the injected hot text — moving it to an annex is the regression',
+      }),
+    )
+
+  // T-613: pinned as four key literals scoped to the `- Required:` LINE, not as
+  // one long sentence. The property is "all four keys with their caps are still
+  // required, in the hot text"; the old whole-sentence pin broke the moment
+  // `persona`'s enum and `confidence`'s "a JSON number — never a word" were
+  // added INSIDE it — a wording addition that strengthened the very rule the
+  // pin existed to protect.
+  test('§Return envelope: the Required line still names all four keys with their caps', () => {
+    const line = CONTRACTS.split('\n').find((l) => l.startsWith('- Required:'))
+    expect(line, 'contracts.md §Return envelope no longer opens with a `- Required:` line').toBeDefined()
+    for (const key of ['`persona`', '`task`(≤80)', '`summary`(≤200, machine outcome)', '`confidence`(0..1'])
+      pin(line!, key, {
+        file: 'discipline/contracts.md (the `- Required:` line)',
+        protects: 'the four envelope keys and their caps are machine-enforced at SubagentStop — dropping one from the hot text unbinds it',
+      })
+  })
 
   test('the floor did not move: Secrets, carve-outs, Overrides are whole sections in contracts.md', () => {
     expect(CONTRACTS).toContain('## Secrets — production credentials never enter agent context (EVERY persona, PO included)')
     expect(CONTRACTS).toContain('## Overrides — precedence and the non-overridable floor')
     expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/plan-tier` is PO-writable')
-    expect(CONTRACTS).toContain('- Carve-out: `~/.prdt/overrides/<persona>.md`, `~/.prdt/wiki/` and `~/.prdt/register` are PO-writable')
+    // T-613: re-pinned to the current wording. T-586 added the playbook-scoped
+    // override path to this carve-out; the carve-out clause is floor text, so
+    // the test follows contracts.md, never the reverse. Every path the line
+    // names is pinned separately — a path silently DROPPED from a carve-out is
+    // the regression this guards, and a single long literal hides which one.
+    for (const p of [
+      '- Carve-out: `~/.prdt/overrides/<persona>.md`',
+      '`~/.prdt/overrides/playbooks/<name>.md`',
+      '`~/.prdt/wiki/`',
+      '`~/.prdt/register` are PO-writable',
+    ])
+      pin(CONTRACTS, p, {
+        file: 'discipline/contracts.md',
+        protects: 'the PO-writable carve-out enumerates every writable path under the read-only runtime root; a path added or dropped changes the floor',
+      })
     for (const n of ANNEXES) expect(annex(n)).not.toMatch(/Secrets|Carve-out|non-overridable/)
   })
 
@@ -201,6 +257,26 @@ describe('worker habits point at the annex where their own act needs it', () => 
   })
   test('designer habit: spec-authoring pointer', () => {
     expect(HABITS.designer).toContain('Frontmatter edges, wikilinks and the doctor seam: `contracts/fixed-paths.md`.')
+  })
+
+  // T-613: `(vX~vY, replaced-by …)` was pinned as hot contracts text. It is not
+  // hot any more and should not be: tagging a fact is something only the AUTHOR
+  // of a spec file does, so the vocabulary sits where that act happens — the
+  // designer habit (author) and the fixed-paths annex (the spec-authoring
+  // rules). The pin moved with the rule rather than being deleted, and the
+  // no-dual-text half is asserted on the contracts row it left.
+  test('designer habit + fixed-paths annex carry the validity-tag vocabulary (it left the contracts row)', () => {
+    for (const [where, text] of [
+      ['discipline/designer/habit.md', HABITS.designer],
+      ['discipline/contracts/fixed-paths.md', annex('fixed-paths')],
+    ] as const)
+      for (const tag of ['`(vX~)`', '`(vX~vY, replaced-by …)`'])
+        pin(text, tag, {
+          file: where,
+          protects: 'the validity-window tag vocabulary — without it a spec file states a contract with no idea when it was true, and an invalidated fact gets deleted instead of annotated',
+        })
+    const row = CONTRACTS.split('\n').find((l) => l.startsWith('|') && l.includes('`docs/features/<feature>.md`'))!
+    pinAbsent(row, '`(vX~', { file: 'discipline/contracts.md (the Fixed paths feature-spec row)', protects: 'no dual text — authoring vocabulary lives at the authoring site only' })
   })
   test('po habit: isolation triggers pointer', () => {
     expect(HABITS.po).toContain('Worktree isolation only on the three contract triggers (`contracts/git.md`)')
