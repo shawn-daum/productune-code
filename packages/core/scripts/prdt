@@ -844,9 +844,13 @@ META_BACKUP_LAG_DAYS = 14
 
 def meta_backup_lag_warnings(root):
     """Item 1: unpushed commit count + last-push age past a sane threshold.
-    Backup push is always manual (T-374 ①), so SOME lag is normal — the point
-    is that it's never fully silent. No remote configured is surfaced too (one
-    line, not silence): that bare state is exactly what let T-427 happen.
+    Since T-504 the backup pushes itself (stage boundary + once daily, from the
+    `prdt` main / PO SessionStart hook), so lag past the thresholds means that
+    path has not run or keeps failing — the point is that it's never silent.
+    The tick's own failure record (<meta.git>/prdt-backup-state.json, written by
+    core meta-backup.ts because the detached push has no terminal) is surfaced
+    here too. No remote configured is surfaced as well (one line, not silence):
+    that bare state is exactly what let T-427 happen.
     Offline-only (no fetch): age is read off the local remote-tracking ref's
     tip commit date, the best available proxy for "how stale is the backup"
     without a network call in a non-blocking lint."""
@@ -863,6 +867,24 @@ def meta_backup_lag_warnings(root):
     if not branch:
         return []
     warns = []
+    st = _meta_backup_state(root)
+    if st.get("last_ok") is False:
+        warns.append(f"meta: automatic backup push FAILED at {str(st.get('last_attempt_at') or '?')[:16]}Z "
+                     f"(remote '{st.get('remote') or '?'}') — {st.get('last_error') or '?'} "
+                     f"— retries at the next stage boundary / day; manual: `prdt meta push {st.get('remote') or 'backup'}`")
+    # The automatic target itself (T-504 QA F1/F2): config may only NAME one of
+    # the remotes the meta repo already has. A renamed/removed one silences the
+    # tick (it has nothing to push to), a flag-/refspec-shaped one is refused by
+    # the tick — either way doctor says so here, latch or no latch.
+    auto = _meta_backup_remote_name(root)
+    if auto.startswith("-") or any(c in auto for c in ":\t \n") or \
+            _meta_git(root, ["check-ref-format", "--allow-onelevel", auto]).returncode != 0:
+        warns.append(f"meta: `meta.backup_remote` = {auto!r} is not a legal remote name — the automatic backup "
+                     f"refuses it; set .prdt/config.json meta.backup_remote to one of: {', '.join(remotes)}")
+    elif auto not in remotes:
+        warns.append(f"meta: `meta.backup_remote` = '{auto}' names a remote the meta repo does not have "
+                     f"(have: {', '.join(remotes)}) — renamed? `git --git-dir {gd} remote rename <name> {auto}` "
+                     f"or point .prdt/config.json meta.backup_remote at one of them; no automatic backup until then")
     for name in remotes:
         ref = f"refs/remotes/{name}/{branch}"
         if _meta_git(root, ["rev-parse", "--verify", "--quiet", ref]).returncode != 0:
@@ -3637,6 +3659,63 @@ def maybe_prompt_update(cmd):
     # "skip" or cancelled (None) → fall through to the original command
 
 
+# ── meta backup tick (T-504 · stage boundary + once daily, detached) ─────────
+# The ONE automatic push in prdt — contracts §Git names it as a carve-out of
+# the push gate: the META repo's own branch → the remote registered as this
+# project's meta backup, ff-only. The decision (stage changed since the last
+# push / new UTC day / nothing ahead / backoff) and the push both live in core
+# (meta-backup.ts, via the meta-cli bridge `backup`); this function only picks
+# the MOMENT: every `prdt` invocation but `prdt meta` (the explicit path — never
+# race it) is a non-per-turn path, and the PO runs `prdt doctor` at Ship-entry
+# and Retro, so a stage write is followed by a tick within the same ritual. The
+# PO SessionStart hook is the second call site (prdt-session-start.sh) — never
+# the persona-turn beat (prdt-post-dispatch.sh). Detached + DEVNULL: the command
+# in hand never waits on the network. Failure reports itself through
+# <meta.git>/prdt-backup-state.json → the notice below on the next run + `prdt
+# doctor` (meta_backup_lag_warnings). PRDT_META_BACKUP=0 mutes BOTH the tick and
+# the notice (the mechanism is off, so its last failure is not news); doctor
+# still warns — it reads the latch regardless.
+
+def _meta_backup_state(root):
+    return read_json(meta_git_dir(root) / "prdt-backup-state.json") or {}
+
+
+def _meta_backup_remote_name(root):
+    """`meta.backup_remote` from .prdt/config.json, default 'backup' — mirrors core
+    metaBackupRemoteName (meta-backup.ts) for doctor / `prdt meta remote`."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    meta = cfg.get("meta") if isinstance(cfg.get("meta"), dict) else {}
+    v = meta.get("backup_remote")
+    return v.strip() if isinstance(v, str) and v.strip() else "backup"
+
+
+def maybe_meta_backup(cmd):
+    if cmd == "meta":                                   # `prdt meta push` is the explicit path; don't race it
+        return
+    if os.environ.get("PRDT_META_BACKUP") == "0":       # kill switch (tests · a machine that must stay offline)
+        return
+    try:
+        root = find_project_root()
+        if root is None or not (meta_git_dir(root) / "HEAD").is_file():
+            return
+        st = _meta_backup_state(root)
+        if st.get("last_ok") is False:
+            # the detached tick has no terminal — its last failure is said here, once per run
+            print(f"prdt: 메타 자동 백업 실패 ({str(st.get('last_attempt_at') or '?')[:16]}Z, "
+                  f"원격 '{st.get('remote') or '?'}') — {st.get('last_error') or '?'}\n"
+                  f"      재시도는 다음 stage 경계/일일 tick · 수동: prdt meta push {st.get('remote') or 'backup'}",
+                  file=sys.stderr)
+        pair = _meta_bridge()
+        if isinstance(pair, str):
+            return                                      # no PRDT_REPO / node / built bridge → silent
+        node, bridge = pair
+        subprocess.Popen([node, bridge, "backup", str(root)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception:
+        return
+
+
 def cmd_history(_args):
     root = require_root()
     con = open_db(root)                                 # ticket slice only — see cmd_tickets (T-480)
@@ -3772,8 +3851,12 @@ def cmd_meta(args):
             res = _meta_call(root, "remote-add", name, url)
             if not res.get("ok"):
                 sys.exit(f"prdt meta: remote 설정 실패 — {res.get('error') or '?'}")
-            print(f"메타 백업 원격 '{name}' 설정 완료 (자동 push 없음 — 백업은 항상 수동).")
-            print(f"백업 push: prdt meta push {name}")
+            if name == "backup":
+                print(f"메타 백업 원격 '{name}' 설정 완료 — stage 경계와 하루 1회 자동 push (force 없음).")
+            else:
+                print(f"메타 백업 원격 '{name}' 설정 완료 — 자동 push 대상은 .prdt/config.json meta.backup_remote "
+                      f"(기본 'backup'); 이 이름을 자동 백업으로 쓰려면 그 값을 '{name}' 으로.")
+            print(f"지금 바로 push: prdt meta push {name}")
         elif not rest:
             res = _meta_call(root, "remote-list")
             if not res.get("exists"):
@@ -3785,7 +3868,10 @@ def cmd_meta(args):
                 return
             for r in remotes:
                 print(f"{r.get('name')}\t{r.get('url')}")
-            print("(자동 push 없음 — 백업하려면: prdt meta push [<name>])")
+            auto = _meta_backup_remote_name(root)
+            st = _meta_backup_state(root)
+            last = f"마지막 자동 push {str(st.get('last_push_at'))[:16]}Z" if st.get("last_push_at") else "자동 push 기록 없음"
+            print(f"(자동 백업 대상: '{auto}' — stage 경계 + 하루 1회 · {last} · 지금 바로: prdt meta push [<name>])")
         else:
             sys.exit("usage: prdt meta remote [add <name> <url>]")
     elif args.action == "push":
@@ -6976,6 +7062,7 @@ def main():
     p.set_defaults(fn=cmd_preflight)
     args = ap.parse_args()
     maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
+    maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
         cmd_po(argparse.Namespace(rest=[]))

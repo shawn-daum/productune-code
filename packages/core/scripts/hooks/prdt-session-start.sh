@@ -168,6 +168,42 @@ esac
 
 [ -n "$PLAN_PERSONA" ] && PERSONA="$PLAN_PERSONA" && AGENT_TYPE="prdt-$PLAN_PERSONA"
 
+# ── T-504: meta backup tick, PO SessionStart only ──────────────────────────────
+# The ONE automatic push in prdt (contracts §Git carve-out): the META repo's own
+# branch → the remote registered as this project's meta backup, ff-only, when
+# core's decision says so (stage changed since the last push / new UTC day —
+# meta-backup.ts, via the meta-cli bridge `backup`). Second call site next to the
+# `prdt` CLI main (maybe_meta_backup). Fires on the PO's SessionStart ONLY —
+# every SessionStart the harness sends (startup, resume, compact; the latch in
+# core decides, so extra calls cost no network) — never SubagentStart (that is
+# the per-dispatch path), never a --plan/--self-load run, and only from part 1
+# so the K part slots do not spawn K ticks. Detached +
+# silent: the session start never waits on the network; failure is recorded in
+# <meta.git>/prdt-backup-state.json for `prdt` / `prdt doctor` to say.
+# TRUST: same PRDT_REPO-from-prdt.env spawn as prdt-post-dispatch.sh §(c) (T-519
+# F5 decision) — no target file, no spawn. Same DETACH too: python3
+# start_new_session (setsid), not a bare `&` — a backgrounded job stays in the
+# hook's process group, and a push is seconds of network the harness may reap
+# with the hook; macOS ships no setsid(1), python3 is already this hook's dependency.
+if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart" ] \
+   && [ -z "$SELF_LOAD" ] && [ -z "$PLAN_PERSONA" ] && [ "${PRDT_META_BACKUP:-1}" != "0" ]; then
+  BK_ROOT="$(find_proj "$EVENT_CWD")"
+  if [ -n "$BK_ROOT" ] && [ -f "$BK_ROOT/.prdt/meta.git/HEAD" ] && [ -f "$PRDT_HOME/prdt.env" ]; then
+    BK_REPO="$(sed -n 's/^PRDT_REPO=//p' "$PRDT_HOME/prdt.env" 2>/dev/null | head -1 | tr -d '[:space:]')"
+    BK_BRIDGE="$BK_REPO/dist/bin/meta-cli.cjs"
+    if [ -n "$BK_REPO" ] && [ -f "$BK_BRIDGE" ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+      python3 - "$BK_BRIDGE" "$BK_ROOT" >/dev/null 2>&1 <<'PY' || true
+import shutil, subprocess, sys
+node = shutil.which("node")
+if node:
+    subprocess.Popen([node, sys.argv[1], "backup", sys.argv[2]],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+PY
+    fi
+  fi
+fi
+
 if [ -n "$SELF_LOAD" ] && [ -z "$PERSONA" ]; then
   printf 'prdt-session-start: --self-load takes a prdt agent type (prdt-po|prdt-designer|prdt-developer|prdt-qa), got: %s\n' "$SELF_LOAD" >&2
   exit 1
