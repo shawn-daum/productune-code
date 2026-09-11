@@ -86,15 +86,27 @@ describe('agents/prdt-*.md are stubs over one hook-carried bootstrap (T-578)', (
     const contracts = fs.readFileSync(path.join(DISC, 'contracts.md'), 'utf8')
     expect(contracts.match(/T-491/g)?.length).toBe(1)
     expect(contracts).toMatch(/Turn economy \(T-491\)/)
-    for (const p of ['po', 'developer', 'qa', 'designer']) {
-      const habit = fs.readFileSync(path.join(DISC, p, 'habit.md'), 'utf8')
-      const lines = habit.split('\n').filter((l) => l.includes('T-491'))
-      expect(lines.length, `${p}/habit.md T-491 lines`).toBe(1)
+    // T-613: the per-persona half used to be counted by its `(T-491)` TAG.
+    // T-611 slice 1 strips history tags out of injected files on purpose, so
+    // qa/habit.md lost the tag while keeping the rule — restoring the tag is
+    // not an option, and counting a tag was never the point. The pin now holds
+    // the RULE: exactly one line per habit stating that persona's own terms,
+    // and that line carrying the governor fact for it (prdt-call-governor.sh:
+    // developer 40/60, qa+designer advisory, po not counted). This is stricter
+    // than the tag count was — the governor fact must sit ON the rule line, not
+    // merely somewhere in the file.
+    const RULE_LINE = /^- (?:\*\*)?(?:Turn|Dispatch) economy\b/
+    const TERMS: Record<string, RegExp> = {
+      po: /You yourself are not counted\./,
+      developer: /warns you at 40 API turns and denies every tool call at 60/,
+      qa: /never denied a tool call/,
+      designer: /never denied a tool call/,
     }
-    // the per-persona facts match the governor's scope (prdt-call-governor.sh: developer 40/60, qa+designer advisory, po not counted)
-    expect(fs.readFileSync(path.join(DISC, 'developer', 'habit.md'), 'utf8')).toMatch(/warns you at 40 API turns and denies every tool call at 60/)
-    expect(fs.readFileSync(path.join(DISC, 'qa', 'habit.md'), 'utf8')).toMatch(/never denied a tool call/)
-    expect(fs.readFileSync(path.join(DISC, 'designer', 'habit.md'), 'utf8')).toMatch(/never denied a tool call/)
-    expect(fs.readFileSync(path.join(DISC, 'po', 'habit.md'), 'utf8')).toMatch(/Dispatch economy\*\* \(T-491\)/)
+    for (const [p, terms] of Object.entries(TERMS)) {
+      const habit = fs.readFileSync(path.join(DISC, p, 'habit.md'), 'utf8')
+      const lines = habit.split('\n').filter((l) => RULE_LINE.test(l))
+      expect(lines.length, `${p}/habit.md: lines stating this persona's turn/dispatch economy terms (matched by rule text — a (T-491) tag is not required and not sufficient)`).toBe(1)
+      expect(lines[0], `${p}/habit.md: the turn-economy line no longer carries this persona's governor fact ${terms}`).toMatch(terms)
+    }
   })
 })
