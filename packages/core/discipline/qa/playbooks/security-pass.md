@@ -7,9 +7,9 @@ effort: medium
 ---
 # Security pass — surface-conditional checklist
 
-**Model pin (T-391): opus, NEVER fable.** Fable's cyber safety classifier carries a false-positive refusal risk on security-verification prompts (secret scanning, exploit-shaped checklist items — per official model docs). A refused security pass is worse than a slower one. Escalation for this playbook raises effort on opus; it never routes to fable.
+Opus pin, never fable (cyber-classifier false-positive refusal risk on security prompts) — the PO's fable-excluded list, `po/habit` §Route + dispatch. `escalate_to` from this playbook raises `effort` on opus, never `model: "fable"`.
 
-A starting set, not a closed list: each item applies only when its surface exists (the PO judges applicability; you still flag anything you see). Mark each ✓ / N/A / ✗. Soft ritual — you report, the PO judges what to fix or let slide.
+A starting set, not a closed list: each item applies only when its surface exists (the PO judges applicability; you still flag anything you see). Mark each ✓ / N/A / ✗. You report; the PO judges what to fix or let slide.
 
 ## Items
 1. **secrets** *(all surfaces)* — no credentials / keys / tokens in source, build, or dist; scan tracked files + build output for key patterns; sensitive values injected at runtime (env / keychain).
@@ -21,8 +21,8 @@ A starting set, not a closed list: each item applies only when its surface exist
 
 ## Rules
 - New risk the surface raises (server auth, payments, file upload, user content) → add an item and check it; never stop at the six.
-- A ✗ that is genuinely an env limitation → manual fallback + note, not a product fail.
-- Waiving is the PO's call, but a skip is always named — which item, why — never silent.
+- ✗ whose only cause is a genuine env limitation → env note + manual fallback, not a product fail (habit *Env fail ≠ product fail*).
+- Waiving is the PO's call; a skip is always named — which item, why — never silent.
 
 ## Verdict
-- Table of item → ✓/N/A/✗ + one line each for ✗ (what, where, evidence). The PO slices patch tickets; Ship-internal patch loop re-checks only the ✗ items.
+- Table item → ✓/N/A/✗ + one line per ✗ (what, where, evidence). The PO slices patch tickets; the Ship-internal patch loop re-checks only ✗ items.
