@@ -48,7 +48,16 @@ PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # ≤8,000 B per hook output — two bodies at 2,000 B stay under half of it.
 CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
         "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15,
-        "register_body_bytes": 2000}
+        "register_body_bytes": 2000, "agent_stub_bytes": 2000}
+# `agent_stub_bytes` (T-578): the second BYTE cap — an agent stub is the
+# persona's base prompt, read whole by the harness with no part delivery, so
+# lines say nothing about it. Basis: the stubs measure 1,404–1,515 B after the
+# T-578 consolidation (2026-09-04), so 2,000 B leaves the largest ~485 B — room
+# for one more sentence-sized rule, not for a paragraph — while the pre-T-578
+# files that motivated the ticket were 3,358–3,962 B, every one ≥68 % over; the
+# budget separates the two observed states with margin on both sides. It is
+# also the number `test/agents-stubs.test.ts` already pinned, which now reads
+# it from here rather than carrying its own.
 # po_habit holds at 64 over a curated 60 lines: the post-close-patch and
 # emergency-hotfix procedures moved out to the `patch-cycle` playbook, and the
 # ship-wrap and retro-sequence duplicates were merged into the clauses that
@@ -2297,7 +2306,12 @@ def normalize_rule_line(s):
     s = s.translate(PUNCT_FOLD)
     s = re.sub(r"[*_`]", "", s)
     s = re.sub(r"\s+", " ", s)
-    return s.strip(" .·:;").casefold()
+    # `!?` joined the set in T-578 QA F5: the docstring said "trailing
+    # punctuation" but the set held only the quiet marks, so `… ONLY!` and
+    # `… ONLY.` normalized apart and a duplicated rule shouted its way past the
+    # sweep. Widening a strip can only make two keys MORE equal, and only ever
+    # for keys that already differ by nothing but a final mark.
+    return s.strip(" .·:;!?").casefold()
 
 
 def is_rule_line(raw, key):
@@ -4033,10 +4047,29 @@ def _is_junk_rel(rel):
     return any(part.startswith(".") or _JUNK_FILE_RE.search(part) for part in rel.split("/"))
 
 
-def _tree_files(base):
+def _tree_files(base, include_unreadable=False):
+    """Every file under `base`, junk-filtered, keyed by `/`-joined relative path.
+
+    `include_unreadable` widens the walk past `is_file()` to the entries the
+    directory listing HAS but that are neither a readable regular file nor a
+    directory to descend into — a dangling symlink, a symlink loop, a device
+    node. Off by default (a tree walked only to compare CONTENT has nothing to
+    compare on one of those); ON where the NAME is itself the finding.
+    T-578 QA N1 measured what the default costs there: a dangling `prdt-*.md`
+    under the installed agents dir was invisible to all three stub checks — 0
+    agent-stub lines, violations=0, total silence — including to the drift
+    message that tells the reader to fix "the dangling link", which could never
+    fire. `is_file()` answers False for a broken link AND for a loop (ELOOP is
+    one of the errors `Path.is_file` swallows), so every try/except further
+    down was dead code for both shapes: the repair for an "unreadable = silence"
+    defect belongs at the DISCOVERY filter, not only at the read call."""
+    def keep(p):
+        # `is_dir()` is the exclusion, not `is_file()`'s inverse: a real
+        # subdirectory is descended into, never yielded as a file (unchanged).
+        return p.is_file() or (include_unreadable and not p.is_dir())
     return {rel: p for rel, p in
             ((str(p.relative_to(base)).replace(os.sep, "/"), p)
-             for p in base.rglob("*") if p.is_file())
+             for p in base.rglob("*") if keep(p))
             if not _is_junk_rel(rel)}
 
 
@@ -4497,6 +4530,371 @@ def hook_mirror_drift_warnings():
              f"manifest doesn't list) — this reprints forever if that is the only repair tried. "
              if mirror_only else "") +
             f"If unsure, the safer default is to discard the mirror copy instead: `{repair_cmd}`")
+    return warns
+
+
+# ── agent stubs — the fourth surface (T-578) ─────────────────────────────────
+# `agents/prdt-*.md` is a fourth discipline surface: Claude Code reads the
+# INSTALLED copy at `~/.claude/agents/` as each persona's base prompt, and
+# `install.sh` §3 (`cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"`) is its
+# one sync path — with no content verification. T-578 measured what an
+# unchecked surface accumulates: 14,346 B across four files, ~9.6 KB of it the
+# same bootstrap paragraph four times, and one load-bearing rule (T-491) that
+# lived ONLY there. The consolidation cut the four to stubs (1,404–1,515 B);
+# these three checks are what keeps them stubs. Same three questions the rest
+# of the discipline tree already gets — a budget, mirror↔repo drift, and a
+# duplicate sweep — and where possible the same machinery, not a fourth copy of
+# it: `_tree_files` (junk filter), `_mirror_matches_past_commit` (behind vs
+# ahead), `normalize_rule_line` / `is_rule_line` (the override duplicate key).
+#
+# Two copy sets, named once here so the three checks agree on them:
+#   - BOUND: `claude_agents_dir()` — what the harness reads. The budget and
+#     the duplicate sweep run over this set (the same choice
+#     `discipline_line_caps(droot)` makes for the discipline tree: measure what
+#     binds), falling back to the repo copies on a source-only machine that
+#     has never run install.sh.
+#   - REPO: `<checkout>/packages/core/agents/` via `_repo_root_candidates()` —
+#     the drift comparand, exactly as the hooks and discipline checks find theirs.
+# T-578 QA F3: this IS install.sh §3's glob (`cp "$ROOT"/agents/prdt-*.md`),
+# transcribed rather than narrowed — the earlier `prdt-[a-z][a-z0-9-]*\.md`
+# silently dropped every name install.sh copies but this file did not like
+# (`prdt-my_agent.md`, `prdt-QA2.md`), which is the check walking a different
+# file set from the one that binds. `[^/\\]*` and not `.*` because a shell glob
+# does not descend: `_tree_files` is recursive, so `prdt-a/b.md` must not count.
+AGENT_STUB_RE = re.compile(r"prdt-[^/\\]*\.md")
+
+
+def claude_agents_dir():
+    """Where the harness reads user-level agent definitions — sibling of the
+    settings.json `claude_settings_path()` already resolves, so `CLAUDE_DIR`
+    redirects both together (install.sh §3 writes under the same variable)."""
+    return claude_settings_path().parent / "agents"
+
+
+def _agent_stub_files(base):
+    """`_tree_files(base)` restricted to the names install.sh §3 copies —
+    `AGENT_STUB_RE` is that glob, see the note there. `~/.claude/agents/` is a
+    shared directory: other tools' agents (`pdt-*`, `pdtl-*`, a user's own)
+    live there legitimately and are none of this check's business.
+
+    `include_unreadable=True` (T-578 QA N1): here the NAME is the finding —
+    install.sh §3's `cp` copies whatever matches the glob and the harness tries
+    to load whatever is installed under it, so an entry that cannot be read is
+    a broken base prompt, not an absent one. It reaches the three checks and
+    each reports it; dropping it here is the silence N1 measured."""
+    if base is None or not base.is_dir():
+        return {}
+    return {rel: p for rel, p in _tree_files(base, include_unreadable=True).items()
+            if AGENT_STUB_RE.fullmatch(rel)}
+
+
+def _agents_repo_path():
+    """Repo-checkout `agents/` dir, first `_repo_root_candidates()` hit that has
+    one — mirrors `_hooks_repo_path()`; None on a machine with no source tree."""
+    for base in _repo_root_candidates():
+        p = base / "agents"
+        if p.is_dir():
+            return p
+    return None
+
+
+def _bound_agent_stubs():
+    """(label, {rel: path}) for the copy set the budget and duplicate sweep
+    read: the installed dir when it holds any stub, else the repo copies."""
+    installed = _agent_stub_files(claude_agents_dir())
+    if installed:
+        return "installed", installed
+    return "repo", _agent_stub_files(_agents_repo_path())
+
+
+def agent_stub_budget_warnings():
+    """Byte budget per stub — an EDITORIAL guide (Advisory, violations=0),
+    the same severity class as `discipline line caps`: unlike the hook parts
+    there is no delivery gate on an agent file, so growth past the budget is
+    the stub starting to re-accumulate procedure, not a broken delivery.
+    `CAPS["agent_stub_bytes"]` — basis at the constant."""
+    label, stubs = _bound_agent_stubs()
+    if not stubs:
+        return Skipped("no agent stubs found — neither an installed copy under "
+                       f"{claude_agents_dir()} nor a repo checkout with agents/")
+    lines = []
+    for rel in sorted(stubs):
+        try:
+            size = stubs[rel].stat().st_size
+        except OSError as e:
+            # T-578 QA F2: an unreadable stub is never spent as a silent pass.
+            # QA N2 found this branch unreachable as first written — `stat()`
+            # follows the path, and a chmod-000 file stats fine (only the READ
+            # fails, which is why drift and the sweep fired on that fixture and
+            # this one did not). Its trigger is a stub whose path does not
+            # RESOLVE: a dangling symlink or a symlink loop, which N1's
+            # discovery fix is what lets reach this loop at all.
+            lines.append(f"agent stub: {label} {rel} could not be measured — {e.__class__.__name__} on "
+                         f"{stubs[rel]}; the budget did not look at this file, so its silence here is "
+                         f"not a clean 0")
+            continue
+        if size > CAPS["agent_stub_bytes"]:
+            lines.append(f"agent stub: {label} {rel} is {size:,} B (budget {CAPS['agent_stub_bytes']:,} B) — "
+                         f"a stub carries no procedure of its own (the self-load lives in "
+                         f"prdt-session-start.sh, the rules in the discipline tree); move what grew "
+                         f"back to the surface that owns it")
+    return Advisory(lines)
+
+
+def agent_stub_drift_warnings():
+    """Installed (`~/.claude/agents/`) vs repo `agents/` — a discipline↔execution
+    mismatch (VIOLATION) exactly like `hook mirror drift`: the harness reads
+    the installed copy, so a committed stub change binds nothing until
+    install.sh §3 reruns, and a hand-edit of the installed copy binds a text no
+    commit has. Roster-as-a-set (a stub added to the repo but never installed,
+    an orphan left installed after the repo dropped it) plus per-name bytes;
+    behind vs ahead via `_mirror_matches_past_commit`, bounded and local, so
+    AHEAD is never a confident promote instruction."""
+    installed_dir = claude_agents_dir()
+    if not installed_dir.is_dir():
+        return Skipped(f"no installed agents dir at {installed_dir} — nothing bound to compare")
+    repo = _agents_repo_path()
+    if repo is None:
+        return Skipped("no source tree nearby to compare the installed agent stubs against")
+    if repo.resolve() == installed_dir.resolve():
+        return Skipped(f"{installed_dir} IS the repo agents directory — one path, nothing to drift")
+    installed, repo_files = _agent_stub_files(installed_dir), _agent_stub_files(repo)
+    if not installed and not repo_files:
+        return Skipped(f"no prdt-*.md stubs in either {installed_dir} or {repo}")
+    only_repo = sorted(set(repo_files) - set(installed))
+    only_installed = sorted(set(installed) - set(repo_files))
+    differing, unreadable, unreadable_repo, inst_bytes = [], [], [], {}
+    for rel in sorted(set(repo_files) & set(installed)):
+        # T-578 QA F2: an unreadable side used to `continue`, which reads as
+        # "identical" — the one verdict the check has NO evidence for. A stub it
+        # cannot read is a stub the harness cannot read either. The two reads are
+        # separate so the warning names the side that actually failed: once N1's
+        # discovery fix lets a broken entry through, either copy can be the
+        # broken one, and sending the reader to the wrong file is its own defect.
+        try:
+            inst_bytes[rel] = installed[rel].read_bytes()
+        except OSError as e:
+            unreadable.append(f"{rel} ({e.__class__.__name__})")
+            continue
+        try:
+            same = inst_bytes[rel] == repo_files[rel].read_bytes()
+        except OSError as e:
+            unreadable_repo.append(f"{rel} ({e.__class__.__name__})")
+            continue
+        if not same:
+            differing.append(rel)
+    if not only_repo and not only_installed and not differing and not unreadable and not unreadable_repo:
+        return []
+    git_root = _git_root(repo)
+    behind, hand_edited = list(only_repo), []
+    for rel in differing:
+        verdict = None
+        if git_root is not None:
+            try:
+                rel_from_root = str((repo / rel).resolve().relative_to(git_root.resolve()))
+            except ValueError:
+                rel_from_root = None
+            if rel_from_root:
+                verdict = _mirror_matches_past_commit(git_root, rel_from_root, inst_bytes[rel])
+        (behind if verdict else hand_edited).append(rel)
+    behind.sort()
+    ahead = sorted(only_installed + hand_edited)
+    sync_cmd = f"cp {repo}/prdt-*.md {installed_dir}/"
+    warns = []
+    if unreadable:
+        warns.append(
+            "agent stub: could not read the installed copy of " + ", ".join(unreadable[:8]) +
+            (f" (+{len(unreadable) - 8} more)" if len(unreadable) > 8 else "") +
+            f" under {installed_dir} — the drift comparison did not run for "
+            f"{'these' if len(unreadable) > 1 else 'this one'}, so this check is NOT a clean 0 "
+            f"over the whole roster; the harness reads these same files as persona base prompts, "
+            f"so what doctor cannot read binds nothing either — fix the permissions (or the "
+            f"dangling link) and rerun")
+    if unreadable_repo:
+        warns.append(
+            "agent stub: could not read the repo copy of " + ", ".join(unreadable_repo[:8]) +
+            (f" (+{len(unreadable_repo) - 8} more)" if len(unreadable_repo) > 8 else "") +
+            f" under {repo} — the drift comparison did not run for "
+            f"{'these' if len(unreadable_repo) > 1 else 'this one'}, so this check is NOT a clean 0 "
+            f"over the whole roster; the repo copy is the one install.sh §3 would copy OVER the "
+            f"installed base prompt, so a broken one is a broken sync — fix it (a dangling link, or "
+            f"the permissions) and rerun")
+    if behind:
+        warns.append(
+            "agent stub: installed BEHIND repo — " + ", ".join(behind[:8]) +
+            (f" (+{len(behind) - 8} more)" if len(behind) > 8 else "") +
+            f" — the harness reads {installed_dir}, never {repo}, so these committed changes bind "
+            f"no persona until synced — repair (install.sh §3's own copy step): `{sync_cmd}`")
+    if ahead:
+        if only_installed:
+            rm_targets = " ".join(str(installed_dir / rel) for rel in only_installed)
+            repair_cmd = f"rm {rm_targets} && {sync_cmd}" if hand_edited else f"rm {rm_targets}"
+        else:
+            repair_cmd = sync_cmd
+        warns.append(
+            "agent stub: installed AHEAD OF / HAND-EDITED vs repo (or a match outside the window "
+            "searched) — " + ", ".join(ahead[:8]) +
+            (f" (+{len(ahead) - 8} more)" if len(ahead) > 8 else "") +
+            f" — {installed_dir} has content not found among the most recent 25 commits examined per "
+            f"name (bounded, local-only) — not proof no commit has it; confirm by hand before "
+            f"promoting anything into the repo. " +
+            (f"{len(only_installed)} of these — {', '.join(only_installed[:8])} — have no counterpart "
+             f"in the repo at all, and install.sh only ever copies, never removes, so they reprint "
+             f"until removed by hand. " if only_installed else "") +
+            f"If unsure, the safer default is to discard the installed copy: `{repair_cmd}`")
+    return warns
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+# ── what counts as a RULE at sentence grain (T-578 QA F1) ────────────────────
+# `is_rule_line`'s 8-char floor was tuned for whole override LINES, where a
+# collision between two 8-char lines really is two layers writing one rule. At
+# sentence grain over the bound discipline tree it is far too low. Measured on
+# this tree (2026-09-11, `_tree_files(droot)` + doctrine.md): 20,533 distinct
+# sentence keys, 3,712 of them under 30 characters — and that band is not rules.
+# Sampling it returns design-reference token cells (`on-dark-soft: "#a8a29e"`,
+# `body-muted: "#cccccc"`, `fontfamily: ui-sans-serif`), table fragments
+# (`| level | treatment | use |`), and sentence fragments (`beliefs, not
+# rules`). Every one of those is a standing VIOLATION the moment a
+# stub happens to contain the same few characters — which is exactly what QA
+# reproduced: a stub gaining doctrine.md's own preamble sentence, `Beliefs, not
+# rules. Rules live in \`discipline/contracts.md\`.`, scored TWO violations.
+#
+# The gate is two mechanical tests against ONE floor:
+#   1. the normalized key reaches AGENT_STUB_RULE_MIN_CHARS; and
+#   2. so does the key with its cited PATHS removed. A sentence that is mostly
+#      a citation — `Rules live in \`discipline/contracts.md\`.`, residue
+#      `rules live in`, 13 — says where a rule lives instead of stating one,
+#      and pointing there is a stub's whole job. PATHS only, never every code
+#      span: `Long-term memory is \`memory_notes[]\` ONLY.` names an identifier
+#      and is still a rule (residue 39, comfortably over).
+# CJK counts double: a Hangul syllable block or CJK ideograph carries roughly
+# what two Latin characters do, so a raw count would put a ~2x stricter floor
+# on a Korean sentence than on its English twin.
+#
+# FALSE-POSITIVE / FALSE-NEGATIVE TOLERANCE, chosen deliberately: a genuine
+# rule terse enough to normalize under the floor is NOT reported. That miss is
+# POPULATED, not hypothetical (T-578 QA N-round, measured): across the
+# rule-bearing docs 107 distinct keys fall under the floor and about 30 of them
+# read as genuine rules. Five, pasted into a stub verbatim, ran silent —
+# `Never push / PR / merge.` (developer habit), `You never edit code.` and
+# `Never fake output.` (designer habit), `- You own git.` (po habit), all four
+# short of test 1; and contracts §Language's "`wiki` (`docs/wiki/**` ·
+# `~/.prdt/wiki/**`) stays mixed.", which clears test 1 at weight 45 and is
+# stopped by test 2 at residue 18 — test 2 working as designed on a sentence
+# that is mostly citation, and the duplicate it lets through is that rule's
+# priced cost, not a bug in the floor.
+#
+# It is still the side the error belongs on, but NOT for the reason first
+# written here: "this check blocks the pre-push gate" is FALSE on this repo
+# (measured — `cmd_doctor` prints "(non-blocking)" and exits 0 on a tree with
+# violations=1, and neither `.githooks/pre-push` nor the managed
+# `PREPUSH_SCRIPT` above consumes doctor; both only block a direct push to
+# `main`). What consumes `violations=` is human and agent discipline — the
+# Retro's doctor step (`po/playbooks/retro.md`) and the Definition of Done. So
+# a false positive costs no push; it costs a line NOBODY CAN CLEAR by doing
+# what it says — the sentence was never a rule, so there is nothing to move
+# back — reprinting in every run until the reader learns to discount the
+# verdict line, and that discount falls on this instrument's other findings
+# too. A miss costs one round of undetected drift on a surface two other
+# checks still watch. Both numbers below are measured, not tuned; move either
+# one only against a fresh distribution.
+AGENT_STUB_RULE_MIN_CHARS = 30
+# A cited path: anything carrying a separator, or a bare filename with a
+# tree-ish extension. Run against the NORMALIZED key, where the backticks are
+# already gone.
+_CITED_PATH_RE = re.compile(r"\S*[/\\]\S*|\S+\.(?:md|sh|json|jsonl|ts|js|py|toml|ya?ml|txt)\b")
+_CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
+
+
+def _rule_weight(key):
+    """Length of a normalized key, CJK/Hangul counted double — see above."""
+    return len(key) + len(_CJK_RE.findall(key))
+
+
+def _is_stub_rule_sentence(raw, key):
+    """The stub duplicate sweep's grain gate — `is_rule_line` plus the two
+    floors documented at `AGENT_STUB_RULE_MIN_CHARS`."""
+    if not is_rule_line(raw, key):
+        return False
+    if _rule_weight(key) < AGENT_STUB_RULE_MIN_CHARS:
+        return False
+    residue = normalize_rule_line(_CITED_PATH_RE.sub(" ", key))
+    return _rule_weight(residue) >= AGENT_STUB_RULE_MIN_CHARS
+
+
+def _rule_sentences(text):
+    """{normalized sentence: original} over rule-bearing text, one sentence at a
+    time — the override sweep's line key, applied a grain finer because a stub
+    paragraph is one physical line and would never equal a contracts bullet
+    whole. Same normalizer; the GATE is `_is_stub_rule_sentence`, not
+    `is_rule_line`, because the grain change is what broke that floor."""
+    out = {}
+    for line in text.splitlines():
+        if not is_rule_line(line, normalize_rule_line(line)):
+            continue
+        for sent in _SENTENCE_SPLIT_RE.split(line):
+            key = normalize_rule_line(sent)
+            if _is_stub_rule_sentence(sent, key):
+                out.setdefault(key, sent.strip())
+    return out
+
+
+def agent_stub_duplicate_warnings(droot):
+    """A sentence that lives in a stub AND in the discipline tree is the T-578
+    defect itself — a rule with two homes, free to drift (VIOLATION, the same
+    class as the override cross-layer duplicate this reuses the key of). Swept
+    against every `*.md` under the bound discipline root plus doctrine.md.
+    What counts as a rule at this grain — and what that criterion deliberately
+    misses — is `AGENT_STUB_RULE_MIN_CHARS`, not `is_rule_line` alone.
+    Not swept: stub against stub — the four share one bootstrap text by
+    design (agent name substituted), and `test/agents-stubs.test.ts` pins that
+    identity; nor the session-start hook's own header prose, which is a shell
+    script, not the discipline tree."""
+    if not droot:
+        return Skipped("no discipline root — nothing to sweep the stubs against")
+    label, stubs = _bound_agent_stubs()
+    if not stubs:
+        return Skipped("no agent stubs found — see `agent stub size budget`")
+    tree, warns = {}, []
+    docs = [p for rel, p in _tree_files(droot).items() if rel.endswith(".md")]
+    for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
+        if cand.is_file():
+            docs.append(cand)
+            break
+    for p in docs:
+        rel = str(p.relative_to(droot.parent)).replace(os.sep, "/") if droot.parent in p.parents else p.name
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            # T-578 QA F2: a comparand this sweep never read is a hole in the
+            # comparand, not a document with no rules in it.
+            warns.append(f"agent stub: could not read discipline document {rel} ({p}) — "
+                         f"{e.__class__.__name__}; the duplicate sweep ran WITHOUT it, so a stub "
+                         f"sentence that lives only there goes unreported — this check is not a "
+                         f"clean 0 over the tree")
+            continue
+        for key in _rule_sentences(text):
+            tree.setdefault(key, rel)
+    for rel in sorted(stubs):
+        try:
+            # Probe before `parse_frontmatter`, which answers `({}, "")` for an
+            # unreadable path — indistinguishable from an empty stub, which is
+            # how a chmod-000 base prompt swept clean (T-578 QA F2).
+            stubs[rel].read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            warns.append(f"agent stub: could not read {label} {rel} ({stubs[rel]}) — "
+                         f"{e.__class__.__name__}; the duplicate sweep did not look at this stub, so "
+                         f"its silence here is not a clean 0 — the harness reads this same file as a "
+                         f"persona's base prompt, so fix it and rerun")
+            continue
+        _fm, body = parse_frontmatter(stubs[rel])
+        for key, sent in _rule_sentences(body).items():
+            if key in tree:
+                warns.append(f"agent stub: {label} {rel} and {tree[key]} carry the same sentence after "
+                             f"normalization — \"{one_line(sent)[:80]}\" — a rule with two homes drifts "
+                             f"(T-578); keep it in the discipline tree and drop it from the stub")
     return warns
 
 
@@ -5768,6 +6166,14 @@ def cmd_doctor(_args):
         # mirror lives at a fixed prdt_home()/hooks path, not behind
         # discipline_root()'s mirror-vs-repo-fallback preference.
         ("hook mirror drift", FAMILY_DE, lambda: hook_mirror_drift_warnings()),
+        # agent stubs `agents/prdt-*.md` — the fourth discipline surface (T-578):
+        # installed↔repo drift (violation, like the two mirror checks above),
+        # per-stub byte budget (advisory, like `discipline line caps`), and the
+        # stub↔discipline-tree duplicate sweep (violation, the override
+        # cross-layer duplicate's key at sentence grain).
+        ("agent stub mirror drift", FAMILY_DE, lambda: agent_stub_drift_warnings()),
+        ("agent stub size budget (editorial)", FAMILY_DE, lambda: agent_stub_budget_warnings()),
+        ("agent stub duplicates vs discipline", FAMILY_DE, lambda: agent_stub_duplicate_warnings(droot)),
         # mirror↔repo content drift (T-507) — before the caps check so a stale
         # mirror is reported even when it happens to still be within cap
         ("discipline mirror drift", FAMILY_DE, lambda: discipline_mirror_drift_warnings(droot)),

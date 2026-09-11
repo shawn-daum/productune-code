@@ -3,8 +3,10 @@
  * name substituted) + one mirror-absent paragraph in two variants (worker / PO).
  * The self-load PROCEDURE lives in prdt-session-start.sh `--self-load`, and the
  * turn-economy rule (T-491) lives in the discipline tree — neither in these
- * files. This test is the drift pin until `prdt doctor` covers the directory
- * (T-578 slice B): an edit to one stub that does not reach the others fails here.
+ * files. This test pins the stubs' SHAPE (one text, name-substituted); `prdt
+ * doctor` covers the directory itself since T-578 slice B — byte budget,
+ * installed↔repo drift, duplicate sweep vs the discipline tree — see
+ * test/scripts/prdt-doctor-agent-stubs.test.ts.
  */
 
 import path from 'path'
@@ -17,8 +19,13 @@ const DISC = path.join(CORE_ROOT, 'discipline')
 const WORKERS = ['prdt-developer', 'prdt-qa', 'prdt-designer'] as const
 const ALL = ['prdt-po', ...WORKERS] as const
 
-// Generous ceiling for a stub; the pre-T-578 files were 3,358–3,962 B each.
-const STUB_CAP_BYTES = 2000
+// The budget doctor enforces — read from the CLI's CAPS (its basis is stated
+// there), not restated here: two copies of one number is the T-445 drift class.
+const STUB_CAP_BYTES = (() => {
+  const m = fs.readFileSync(path.join(CORE_ROOT, 'scripts', 'prdt'), 'utf8').match(/"agent_stub_bytes":\s*(\d+)/)
+  if (!m) throw new Error('CAPS["agent_stub_bytes"] not found in scripts/prdt')
+  return Number(m[1])
+})()
 
 function read(agent: string): string {
   return fs.readFileSync(path.join(AGENTS, `${agent}.md`), 'utf8')
