@@ -129,10 +129,10 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     for (const n of ANNEXES) expect(annex(n)).not.toMatch(/Secrets|Carve-out|non-overridable/)
   })
 
-  test('line room was actually freed (contracts 80 → 74, po habit 64 → 60; T-586 slice 2A spent two lines — the Register row and the restored access-control line — 76/80) and the caps still hold', () => {
+  test('line room was actually freed (contracts 76/80 after T-586 slice 2A; po habit 58/64 after T-611 slice 2) and the caps still hold', () => {
     const lines = (s: string) => s.replace(/\n$/, '').split('\n').length
     expect(lines(CONTRACTS)).toBe(76)
-    expect(lines(HABITS.po)).toBe(60)
+    expect(lines(HABITS.po)).toBe(58)
     expect(lines(HABITS.developer)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.qa)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.designer)).toBeLessThanOrEqual(40)
