@@ -16,8 +16,10 @@
  *
  * This module is the shared core primitive for CLI · GUI parity — init,
  * allowlist-scoped auto-commit (reusing the §10 autosave lifecycle signals),
- * history read, and opt-in remote add. It never pushes (backup is manual /
- * opt-in per PRD Non-goals) and performs no destructive git.
+ * history read, and opt-in remote add. It performs no destructive git. The one
+ * automatic push in prdt lives in meta-backup.ts (T-504: the meta repo's own
+ * branch → its registered backup remote, ff-only); everything here is either
+ * local or an explicit user command (`prdt meta push`).
  */
 
 import fs from 'fs'
@@ -187,13 +189,21 @@ export function scrubbedGitEnv(): NodeJS.ProcessEnv {
 export async function metaGit(
   projectDir: string,
   args: string[],
-  opts: { timeout?: number; maxBuffer?: number } = {},
+  opts: { timeout?: number; maxBuffer?: number; env?: Record<string, string> } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const gitDir = metaGitDir(projectDir)
   return execFileAsync(
     'git',
     ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: opts.timeout ?? 10_000, maxBuffer: opts.maxBuffer, env: scrubbedGitEnv() },
+    {
+      cwd: projectDir,
+      timeout: opts.timeout ?? 10_000,
+      maxBuffer: opts.maxBuffer,
+      // `opts.env` is applied AFTER the scrub — a caller may add a non-GIT_*
+      // knob or a deliberate GIT_* one (e.g. GIT_TERMINAL_PROMPT=0 on the
+      // detached backup push); the ambient GIT_* redirection is still gone.
+      env: { ...scrubbedGitEnv(), ...(opts.env ?? {}) },
+    },
   )
 }
 
@@ -562,8 +572,10 @@ export interface MetaRemoteResult {
 }
 
 /**
- * Add (or update) a backup remote on the meta repo. Opt-in only — this never
- * pushes; the user pushes manually (PRD: no auto-push, no bidirectional sync).
+ * Add (or update) a backup remote on the meta repo. This never pushes by
+ * itself; the remote named `meta.backup_remote` (default `backup`) is what the
+ * automatic backup (meta-backup.ts) pushes to, and `prdt meta push` pushes on
+ * demand. No bidirectional sync.
  */
 export async function addMetaRemote(
   projectDir: string,
@@ -605,7 +617,7 @@ export async function listMetaRemotes(projectDir: string): Promise<MetaRemote[]>
   }
 }
 
-// ── Push (explicit user-invoked backup; never automatic, never force) ─────────
+// ── Push (explicit user-invoked backup; never force) ─────────────────────────
 
 export interface MetaPushResult {
   ok: boolean
@@ -618,9 +630,11 @@ export interface MetaPushResult {
  * Push the meta repo's local branches to a configured backup remote (T-374 ①).
  *
  * This is the EXPLICIT counterpart to addMetaRemote: `remote add` only records
- * the url, and no beat / hook / autosave path ever pushes (PRD history §v1.2 Non-goal:
- * no automatic push). A push happens ONLY when the user runs this command, so
- * the backup remote is the durable history a second machine bootstraps from
+ * the url. Two paths push: this command (the user, any configured remote name)
+ * and the automatic backup in meta-backup.ts (T-504 — the `meta.backup_remote`
+ * only, at a stage boundary / once daily, from the `prdt` CLI main and the PO
+ * SessionStart hook; NEVER from the persona-turn beat). Either way the backup
+ * remote is the durable history a second machine bootstraps from
  * (bootstrapMetaRepo). Never `--force` — a fast-forward push preserves the
  * remote's history; a rejected non-ff surfaces as an error for the user to
  * resolve, never a silent overwrite.
