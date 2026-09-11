@@ -98,10 +98,15 @@ describe('contracts.md — PRD split: working document + history (T-602)', () =>
     expect(read(CONTRACTS)).not.toMatch(/"prd_path":"docs\/prd\/history\.md/)
   })
 
-  test('§Git still bans snapshot copies and classifies history.md as a move', () => {
+  // T-611 slice 4: the git bullet no longer restates the move — the PRD row is
+  // the one statement (`MOVES its section byte-identical` · `never a copy`,
+  // both pinned above), so the pin on the move lives there and this bullet
+  // keeps only the snapshot-copy ban.
+  test('§Git still bans snapshot copies; the move fact is stated once, on the PRD row', () => {
     const git = read(CONTRACTS).split('\n').find((l) => l.startsWith('- git is the version history'))!
     expect(git).toContain('no snapshot copies')
-    expect(git).toContain('`docs/prd/history.md` is a move, not a copy')
+    expect(git).not.toContain('is a move, not a copy')
+    expect(row()).toContain('never a copy')
   })
 
   // A PRD resolver takes the FIRST match over three candidate paths; a history
