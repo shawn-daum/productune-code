@@ -6,7 +6,7 @@ Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + o
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, hashlib, json, math, os, re, shlex, shutil, sqlite3, subprocess, sys, unicodedata
+import argparse, hashlib, json, math, os, re, shlex, shutil, sqlite3, statistics, subprocess, sys, unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -3976,6 +3976,163 @@ def cmd_usage(args):
     print(out["scope_boundary"])
 
 
+# ── estimate (T-545) ──────────────────────────────────────────────────────────
+# An outlier SIGNAL for a dispatch about to go out — never a gate (shawn,
+# 2026-09-01, quoted verbatim in the ticket): "이 발주가 한도에 맞는가" cannot be
+# answered at all (no readable remaining-quota surface, T-525), so this never
+# tries to. The one legitimate use: notice a dispatch that is several times the
+# usual for its shape, before sending it, so it can be sliced per T-491.
+#
+# Reuse check (acceptance) — re-examined for THIS ticket, not copied from
+# T-544's: `~/.prdt/run/call-governor/` holds exactly the unit T-491 calls the
+# budget (turns), so it looked like the right input on a fresh look. Rejected
+# anyway: its files are one-byte-per-turn counters (`xxd` shows literal `.`
+# bytes) named `<session-id>.<dispatch-hash>[.w<N>]`, tooling-owned and cleared
+# by the governor itself — no persona/model/ticket field anywhere to group by,
+# and no join key back to a turns.jsonl record (its session_id is not the
+# subagent's own). Turn counts are the right CONCEPT for this ticket; this
+# particular store is not a usable INPUT for it. The per-dispatch usage already
+# in turns.jsonl (scope=="subagent", cost_basis=="subagent_total" — one row per
+# completed dispatch, the total for that whole subagent invocation) is the only
+# surface on this machine that already carries persona+model per dispatch.
+#
+# Unit: TOKENS, not cost. T-543/T-628 found the heaviest-used tier (opus-5) is
+# only priced from today (1,673/1,705 records on this machine still cost-null)
+# and two other tiers carry up to 50%/4x historical overcounts with no way to
+# tell a pre-fix record from a post-fix one. Cost is still right for MONEY
+# (T-544) — but this ticket asks for a shape's RELATIVE size, and a sum that is
+# silently wrong for the most common shape is not a sounder basis than the raw
+# tokens the price was computed from.
+#
+# Dimensions tried (numbers in docs/tickets/v1.9/T-545.md Outcome, machine-wide,
+# 1,803 named-model subagent dispatches across 10 projects):
+#   - playbook: NOT RECORDED anywhere in turns.jsonl on this machine (grepped
+#     every project's full history — zero occurrences of a "playbook" key).
+#     Dropped for having no data to test, not for failing to predict.
+#   - persona alone: weighted CV(IQR/median) 1.185 vs pooled 1.208 — barely
+#     separates anything.
+#   - model alone: 1.079. persona+model: 1.041 — the useful minimum split.
+#   - persona+model+project: 0.99, but thins ~25% of records below usable group
+#     size and the further CV drop over persona+model is marginal — not applied.
+MIN_SAMPLES = 8
+
+
+def _estimate_scan(scan_root):
+    """Subagent-scope, subagent_total dispatch records with a positive token
+    count, across every sibling prdt project (same discovery rule as `prdt
+    usage`: a dir counts only if it has .prdt/po-state.json). Deliberately its
+    own small loop rather than a helper shared with cmd_usage — a QA pass is
+    reviewing `usage` concurrently (T-545 dispatch note) and the two commands
+    should stay independently editable."""
+    out = []
+    for d in sorted(p for p in scan_root.iterdir() if p.is_dir()):
+        if not (d / ".prdt" / "po-state.json").is_file():
+            continue
+        status, records, _bad = _scan_turns_file(str(d / ".prdt" / "turns.jsonl"))
+        if status != "ok":
+            continue
+        for rec in records:
+            if rec.get("scope") != "subagent" or rec.get("cost_basis") != "subagent_total":
+                continue
+            u = rec.get("usage") or {}
+            tok = sum(v for v in (u.get("input"), u.get("output"), u.get("cache")) if isinstance(v, (int, float)))
+            if tok <= 0:
+                continue
+            out.append({"ts": rec.get("ts"), "persona": rec.get("persona"), "model": rec.get("model"), "tok": tok})
+    return out
+
+
+def _pct(sorted_vals, q):
+    idx = min(int(len(sorted_vals) * q), len(sorted_vals) - 1)
+    return sorted_vals[idx]
+
+
+def cmd_estimate(args):
+    root = require_root()
+    scan_root = Path(args.root).resolve() if args.root else root.parent
+    if not scan_root.is_dir():
+        sys.exit(f"prdt estimate: --root 없음 — {scan_root}")
+
+    group = sorted(
+        (r for r in _estimate_scan(scan_root) if r["persona"] == args.persona and r["model"] == args.model),
+        key=lambda r: r["ts"])
+    n = len(group)
+
+    playbook_note = None
+    if args.playbook:
+        playbook_note = (f"--playbook {args.playbook} 는 받았지만 반영되지 않음 — 이 기기 turns.jsonl "
+                          f"어디에도 playbook 필드가 없음(10개 프로젝트 전수 확인, T-545). persona × "
+                          f"model 까지만 구분 가능.")
+
+    out = {
+        "scan_root": str(scan_root),
+        "shape": {"persona": args.persona, "model": args.model},
+        "playbook_note": playbook_note,
+        "sample_count": n,
+        "min_samples": MIN_SAMPLES,
+        "gates_nothing": True,
+    }
+
+    if n < MIN_SAMPLES:
+        out["insufficient_history"] = True
+        out["message"] = (f"이력 부족 — persona={args.persona} model={args.model} 조합 발주 {n}건뿐 "
+                           f"(최소 {MIN_SAMPLES}건 필요). 추정치 없음 — 표본이 얇을 때 자신 있는 숫자를 "
+                           f"내는 것이 이 티켓이 막으려는 실패 모드다(T-545).")
+        if args.json:
+            print(json.dumps(out, ensure_ascii=False))
+        else:
+            print(out["message"])
+            if playbook_note:
+                print(playbook_note)
+        return
+
+    toks = [r["tok"] for r in group]
+    sorted_toks = sorted(toks)
+    median = statistics.median(sorted_toks)
+    p10, p25, p75, p90 = (_pct(sorted_toks, .10), _pct(sorted_toks, .25),
+                           _pct(sorted_toks, .75), _pct(sorted_toks, .90))
+
+    # Self-measured error (acceptance: "say how often the actual lands outside
+    # it") — walk-forward, never scored against a range fit to the same points
+    # it judges: record i is judged only against the median of records strictly
+    # BEFORE it (chronological order), and only once MIN_SAMPLES of those exist.
+    thresholds = (2, 3, 5)
+    calib = {k: {"evaluated": 0, "flagged": 0} for k in thresholds}
+    for i in range(MIN_SAMPLES, n):
+        prior_median = statistics.median(sorted(toks[:i]))
+        for k in thresholds:
+            calib[k]["evaluated"] += 1
+            if toks[i] > k * prior_median:
+                calib[k]["flagged"] += 1
+
+    out.update({
+        "insufficient_history": False,
+        "tokens": {"median": median, "p10": p10, "p25": p25, "p75": p75, "p90": p90, "max": sorted_toks[-1]},
+        "outlier_flag_calibration": {
+            str(k): {**v, "flagged_rate": round(v["flagged"] / v["evaluated"], 4) if v["evaluated"] else None}
+            for k, v in calib.items()
+        },
+    })
+
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    print(f"prdt estimate — persona={args.persona} model={args.model}  (n={n}, scan_root={scan_root})")
+    if playbook_note:
+        print(playbook_note)
+    print(f"토큰(참고용, 과금 단위 아님 — T-543/T-628: 이 기기 opus-5 이력 대부분 무비용, sonnet-5/"
+          f"fable-5-1 은 과거 단가 오염 가능): median {median:,.0f} · p10 {p10:,.0f} · p25 {p25:,.0f} · "
+          f"p75 {p75:,.0f} · p90 {p90:,.0f} · max {sorted_toks[-1]:,.0f}")
+    for k in thresholds:
+        c = calib[k]
+        if c["evaluated"]:
+            print(f"  자기검정 @{k}배 median: 과거 {c['evaluated']}건 중 {c['flagged']}건 "
+                  f"({c['flagged']/c['evaluated']:.1%}) 이 그 시점까지의 median 의 {k}배를 넘었음")
+    print("이상치 신호일 뿐 — 게이트 아님(T-545). 이 발주가 위 median 의 몇 배로 예상되면 "
+          "보내기 전에 쪼갤 근거로만 쓸 것.")
+
+
 # ── meta (T-367 · PRD §v1.2 CLI·GUI parity) ──────────────────────────────────
 # History read / remote backup go through the CORE API only — the CLI owns no
 # git logic here. Bridge: node <PRDT_REPO>/packages/core/dist/bin/meta-cli.cjs
@@ -7271,6 +7428,16 @@ def main():
     p.add_argument("--root")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_usage)
+    p = sub.add_parser("estimate", help="dispatch-size outlier SIGNAL for a (persona, model) shape, from this "
+                                        "machine's turns.jsonl (T-545) — never a gate: --persona <po|developer|"
+                                        "designer|qa> --model <model-id> [--playbook <name>, accepted but not "
+                                        "usable — not recorded] [--root <dir>] [--json]")
+    p.add_argument("--persona", required=True, choices=("po", "developer", "designer", "qa"))
+    p.add_argument("--model", required=True)
+    p.add_argument("--playbook")
+    p.add_argument("--root")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_estimate)
     p = sub.add_parser("meta", help="meta git: log · remote [add <name> <url>] · push · bootstrap · split · relocate — core API 브리지 호출")
     p.add_argument("action", choices=("log", "remote", "push", "bootstrap", "split", "relocate"))
     p.add_argument("rest", nargs="*", help="remote: [add <name> <url>] · push: [name] · bootstrap: <url> [name]")
