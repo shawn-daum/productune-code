@@ -32,13 +32,78 @@
 #      its own hook now — prdt-return-check.sh, same SubagentStop registration.
 #      This hook still prints NOTHING on SubagentStop (see the note at that
 #      section — a SubagentStop additionalContext resumes the WORKER, not the PO).
+#   e) (T-584) two more properties of a dispatch, ADDITIVE keys on the
+#      scope=subagent line (every reader — `prdt usage`/`estimate`, the GUI cost
+#      archive — json-parses a line and picks keys, so additive keys are safe;
+#      verified against _scan_turns_file / costArchive.ts 2026-09-14):
+#        `refs`          — the worker's REFERENCE SET, derived from the SAME
+#                          agent_transcript_path this hook already sums usage
+#                          from. The harness exposes no such surface on its own
+#                          (checked: the SubagentStop payload carries usage-free
+#                          launch metadata + the transcript path + the last
+#                          message; `prdt` has no subcommand for it), so it is
+#                          derived from the worker's own tool_use records and
+#                          attachments. The record states its own boundary:
+#                            observed[]       Read.file_path · Grep/Glob path —
+#                                             exact.
+#                            bash_observed[]  path args of read-shaped Bash
+#                                             segments (cat/sed/head/tail/grep/
+#                                             …) — HEURISTIC (argv parsing), the
+#                                             dominant read path on this machine
+#                                             (auto mode steers workers to Bash).
+#                                             Tokens land VERBATIM: relative to
+#                                             whatever cwd that segment ran in,
+#                                             globs unexpanded, `~` unexpanded —
+#                                             this derivation resolves nothing.
+#                            injected[]       files the harness injected without
+#                                             a tool call — hook additionalContext
+#                                             `----- BEGIN x (<path>) -----`
+#                                             delimiters + CLAUDE.md instruction
+#                                             files (transcript `attachment`
+#                                             records).
+#                            unobservable{}   COUNTS of consults this derivation
+#                                             cannot see into: bash_opaque (a
+#                                             Bash segment that is not a known
+#                                             read/neutral command — python/node
+#                                             heredocs, git, find, curl…), agent
+#                                             (a sub-dispatch's reads live in ITS
+#                                             transcript), web, mcp, skill.
+#                          "read nothing" is `source:"agent_transcript"` with
+#                          empty lists and zero counts; "we could not see" is a
+#                          non-zero unobservable count or `source:null` (no
+#                          transcript at this recording point). A record written
+#                          BEFORE this change has no `refs` key at all — history
+#                          is never backfilled. Lists are capped (REF_CAP) with the
+#                          dropped count in `truncated`, so one record is bounded;
+#                          file growth stays T-400's (rotation) problem.
+#        `playbooks_run`  — the envelope's `playbooks_run[]` NAMES (never the
+#                          free-text `why`: payload-free like every other field
+#                          here). Source order: the event's `last_assistant_message`
+#                          (the return itself — the same field prdt-return-check.sh
+#                          gates on, same SubagentStop registration), else the
+#                          transcript's last assistant text block. `playbooks_source`
+#                          names which one — or why none was captured:
+#                          "envelope_without_key" (a return that omitted the key)
+#                          vs "no_envelope" (nothing parseable — a session-limit
+#                          placeholder, an unparsed return). A legitimately empty
+#                          `[]` is captured as `[]`; "not captured" is `null`.
+#      Both are best-effort behind try/except: a derivation failure marks
+#      `refs.error` and never costs the usage record.
+#      Cost, measured 2026-09-15 over the 60 most recent worker transcripts on
+#      this machine (0.5–9.5 MB each): +700 B min · +1.4 KB median · +2.5 KB
+#      p90 · +3.2 KB max per scope=subagent line (the line was ~330 B before);
+#      9–46 ref entries, the 200 cap never reached; hook wall time unchanged
+#      (median 354 ms vs 347 ms before — the transcript was already being read
+#      once for usage). Home: turns.jsonl itself, not a sibling — one dispatch
+#      = one line keeps the join trivial for `prdt usage`/`estimate`, and
+#      ~1.5 KB × ~500 dispatches/yr is well inside T-400's rotation horizon.
 
 set +e
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
-import json, os, re, shutil, subprocess, sys
+import json, os, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 try:
@@ -389,6 +454,226 @@ def three_bucket(per_model):
     return tot
 
 
+# ── T-584: reference set + playbooks_run, derived from the transcript / the return ──
+REF_CAP = 200
+# Bash argv[0] classes for the heuristic. READ: path-shaped args are consults.
+# SKIP_FIRST: the first non-flag arg is a pattern/script, not a path.
+# NEUTRAL: known not to consult a file (so it is NOT counted as opaque).
+BASH_READ = {"cat", "sed", "head", "tail", "less", "more", "bat", "grep", "rg", "egrep",
+             "fgrep", "awk", "nl", "jq", "diff", "wc", "strings", "stat", "file"}
+BASH_SKIP_FIRST = {"sed", "grep", "rg", "egrep", "fgrep", "awk", "jq"}
+BASH_NEUTRAL = {"cd", "echo", "printf", "export", "true", "false", "set", "exit", "pwd",
+                "sleep", "date", "test", "[", "mkdir", "touch", "rm", "mv", "cp", "chmod",
+                "ln", "tee", "sort", "uniq", "cut", "tr", "xargs", "which", "type", "env",
+                "TZ=Asia/Seoul", "time"}
+UNOBS_TOOL_CLASS = {"Agent": "agent", "Task": "agent", "WebFetch": "web", "WebSearch": "web",
+                    "Skill": "skill"}
+_HEREDOC = re.compile(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?")
+_BEGIN_PATH = re.compile(r"-----\s*BEGIN [^()\n]*\(([^()\n]+)\)")
+
+
+def _pathish(tok):
+    return (not tok.startswith("-") and tok not in ("*", ".", "..")
+            and ("/" in tok or re.search(r"\.[A-Za-z0-9]{1,8}$", tok) is not None)
+            and not tok.startswith("$"))
+
+
+def _bash_segments(cmd):
+    """Pipeline/list segments of a Bash command, heredoc bodies folded into the
+    segment that opened them (a python/node heredoc is ONE opaque consult, not
+    thirty)."""
+    segs, skip_until = [], None
+    for ln in (cmd or "").split("\n"):
+        if skip_until is not None:
+            if ln.strip() == skip_until:
+                skip_until = None
+            continue
+        m = _HEREDOC.search(ln)
+        if m:
+            skip_until = m.group(1)
+            ln = ln[:m.start()]  # the opener (`python3 -`) stays one segment; its body is skipped
+        segs.extend(re.split(r"\s*(?:;|&&|\|\||\|)\s*", ln))
+    return [x.strip() for x in segs if x.strip()]
+
+
+def _bash_refs(cmd):
+    """→ (paths consulted by read-shaped segments, opaque segment count)."""
+    paths, opaque = [], 0
+    for seg in _bash_segments(cmd):
+        try:
+            toks = shlex.split(seg)
+        except ValueError:
+            toks = seg.split()
+        while toks and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
+            toks = toks[1:]  # leading VAR=value assignments
+        if not toks:
+            continue
+        head = os.path.basename(toks[0])
+        if head in BASH_NEUTRAL or head.startswith("#"):
+            continue
+        if head not in BASH_READ:
+            opaque += 1
+            continue
+        args, skip_next = [], False
+        for t in toks[1:]:
+            if skip_next:
+                skip_next = False  # target of a bare `>` / `<` / `2>` — a redirect, not a consult
+                continue
+            if re.match(r"^\d*[<>]", t) or t == "&>":
+                skip_next = t.rstrip("&") in ("<", ">", ">>", "2>", "1>", "&>") or t in ("2>", "&>")
+                continue
+            if not t.startswith("-"):
+                args.append(t)
+        if head in BASH_SKIP_FIRST and args:
+            args = args[1:]
+        paths.extend(t for t in args if _pathish(t))
+    return paths, opaque
+
+
+def _cap(seq):
+    out = sorted(set(x for x in seq if isinstance(x, str) and x))
+    return out[:REF_CAP], max(0, len(out) - REF_CAP)
+
+
+def derive_refs(path):
+    """Reference set of one worker transcript. → refs dict (see header e).
+    `source` is None when there is no transcript to read at all."""
+    observed, bash_obs, injected = [], [], []
+    unobs = {"bash_opaque": 0, "agent": 0, "web": 0, "mcp": 0, "skill": 0}
+    last_text = None
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for raw in f:
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("type") == "attachment":
+                att = msg.get("attachment") if isinstance(msg.get("attachment"), dict) else {}
+                if att.get("type") == "hook_additional_context":
+                    c = att.get("content")
+                    for chunk in (c if isinstance(c, list) else [c]):
+                        if isinstance(chunk, str):
+                            injected.extend(_BEGIN_PATH.findall(chunk))
+                elif att.get("type") == "instructions":
+                    for fi in (att.get("files") or []):
+                        if isinstance(fi, dict) and isinstance(fi.get("path"), str):
+                            injected.append(fi["path"])
+                continue
+            if msg.get("type") != "assistant":
+                continue
+            content = (msg.get("message") or {}).get("content")
+            if not isinstance(content, list):
+                continue
+            for b in content:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "text" and isinstance(b.get("text"), str):
+                    last_text = b["text"]
+                if b.get("type") != "tool_use":
+                    continue
+                name = str(b.get("name") or "")
+                inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                if name == "Read":
+                    observed.append(inp.get("file_path"))
+                elif name in ("Grep", "Glob"):
+                    observed.append(inp.get("path") or ".")
+                elif name == "Bash":
+                    ps, op = _bash_refs(inp.get("command"))
+                    bash_obs.extend(ps)
+                    unobs["bash_opaque"] += op
+                elif name in UNOBS_TOOL_CLASS:
+                    unobs[UNOBS_TOOL_CLASS[name]] += 1
+                elif name.startswith("mcp__"):
+                    unobs["mcp"] += 1
+    o, t1 = _cap(observed)
+    bo, t2 = _cap(bash_obs)
+    inj, t3 = _cap(injected)
+    refs = {"source": "agent_transcript", "observed": o, "bash_observed": bo,
+            "injected": inj, "unobservable": unobs}
+    if t1 + t2 + t3:
+        refs["truncated"] = t1 + t2 + t3
+    return refs, last_text
+
+
+def parse_envelope(text):
+    """The return envelope as a dict, tolerant of a code fence or trailing prose.
+    None when nothing object-shaped parses."""
+    if not isinstance(text, str):
+        return None
+    s = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", text.strip())
+    i, j = s.find("{"), s.rfind("}")
+    if i < 0 or j <= i:
+        return None
+    for cand in (s[i:], s[i:j + 1]):
+        try:
+            obj = json.loads(cand)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def playbooks_from(*texts):
+    """First text that parses as an envelope decides. → (names or None, source)
+    where source names the winning text's label, or why none was captured."""
+    saw_envelope = False
+    for label, text in texts:
+        env = parse_envelope(text)
+        if env is None:
+            continue
+        saw_envelope = True
+        if "playbooks_run" not in env:
+            continue
+        pr = env.get("playbooks_run")
+        if not isinstance(pr, list):
+            continue
+        names = []
+        for it in pr:
+            nm = it.get("name") if isinstance(it, dict) else it
+            if isinstance(nm, str) and nm:
+                names.append(nm[:64])
+        return names[:32], label
+    return None, ("envelope_without_key" if saw_envelope else "no_envelope")
+
+
+def _response_texts(resp):
+    """Text blocks of a sync Agent tool_response (a str, or a dict whose
+    `content` is a list of {type:"text", text} blocks) — the worker's return
+    lives in one of those, never in the response dict as a whole."""
+    if isinstance(resp, str):
+        return [resp]
+    c = resp.get("content") if isinstance(resp, dict) else None
+    out = []
+    for b in (c if isinstance(c, list) else [c]):
+        if isinstance(b, dict) and isinstance(b.get("text"), str):
+            out.append(b["text"])
+        elif isinstance(b, str):
+            out.append(b)
+    return out
+
+
+def annotate_t584(line, transcript_path, *texts):
+    """Attach `refs` · `playbooks_run` · `playbooks_source` to a subagent line.
+    Best-effort: a failure marks refs.error and never blocks the record."""
+    last_text = None
+    try:
+        if transcript_path and os.path.isfile(transcript_path):
+            line["refs"], last_text = derive_refs(transcript_path)
+        else:
+            line["refs"] = {"source": None}
+    except Exception:
+        line["refs"] = {"source": None, "error": True}
+    try:
+        names, src = playbooks_from(*texts, ("transcript", last_text))
+    except Exception:
+        names, src = None, "no_envelope"
+    line["playbooks_run"] = names
+    line["playbooks_source"] = src
+
+
 # ── worker return-envelope check — NOT HERE (moved to prdt-return-check.sh, T-553) ──
 # It fires on the same SubagentStop registration. What stays true for THIS hook:
 # NEVER emit `hookSpecificOutput.additionalContext` on SubagentStop (measured
@@ -412,6 +697,7 @@ if event == "SubagentStop":
             "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
     if unpriced:
         line["cost_unpriced_models"] = sorted(unpriced)
+    annotate_t584(line, atp, ("last_assistant_message", ev.get("last_assistant_message")))
     with open(turns, "a") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     if agent_id:
@@ -456,6 +742,11 @@ if sub_usage or isinstance(cost, (int, float)):
             "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
     if unpriced_sub:
         line["cost_unpriced_models"] = sorted(unpriced_sub)
+    # T-584: no transcript at this recording point → refs.source null (unobservable,
+    # not "read nothing"); the sync response's TEXT BLOCKS may still carry the
+    # envelope — never the json-dumped response dict, which parses as a key-less
+    # "envelope" and would mislabel every sync record envelope_without_key.
+    annotate_t584(line, None, *[("tool_response", t) for t in _response_texts(resp)])
     with open(turns, "a") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     if agent_id:
