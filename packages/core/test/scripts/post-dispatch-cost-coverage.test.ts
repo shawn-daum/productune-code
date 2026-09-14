@@ -127,6 +127,36 @@ function transcriptLineZero(model: string): string {
   })
 }
 
+/** A transcript line for an unpriced model non-zero in EXACTLY ONE of the
+ *  four buckets `estimate_cost()` checks (T-543 R3-2, round 3). All four
+ *  flat fields — matching `transcriptLine`/`transcriptLineZero` above, not
+ *  the nested `cache_creation: {ephemeral_*_input_tokens}` shape real
+ *  transcripts can carry for that bucket (QA note): a fixture built on the
+ *  nested shape would read back as zero here (`usage4_from()`'s `g()` only
+ *  sums flat int/float fields), landing in the zero-token "excluded, not a
+ *  partial sum" path instead of the single-bucket case this is meant to
+ *  pin. Flat ints keep this fixture unambiguously single-bucket. */
+function transcriptLineOnlyBucket(
+  model: string,
+  bucket: 'input' | 'output' | 'cache_read' | 'cache_creation',
+  value = 1,
+): string {
+  const usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  }
+  const field = {
+    input: 'input_tokens',
+    output: 'output_tokens',
+    cache_read: 'cache_read_input_tokens',
+    cache_creation: 'cache_creation_input_tokens',
+  }[bucket] as keyof typeof usage
+  usage[field] = value
+  return JSON.stringify({ message: { model, usage } })
+}
+
 /** A copy of the hook with one PRICES row hand-edited down to a 2-tuple —
  *  reproduces the exact R2-3 hazard: `pi, po, cr_mult = p` raises
  *  ValueError unpacking a 2-tuple, python dies, and the bash wrapper's
@@ -381,6 +411,40 @@ describe('a zero-token unpriced model is not a partial sum (T-543 R2-1, round 3)
     expect(line.cost_source).toBe('estimated_partial')
     expect(line.cost_unpriced_models).toContain(unpricedModel)
   })
+})
+
+describe('an unpriced model non-zero in exactly one bucket still refuses the sum (T-543 R3-2, round 3)', () => {
+  // R3-2: round 3's own regression test for "still refuses" used a fixture
+  // whose unpriced model was non-zero in ALL FOUR buckets — so the rule it
+  // actually pinned was "refuse when every bucket is non-zero", not "refuse
+  // when ANY bucket is". A mutation flipping `estimate_cost()`'s `any(...)`
+  // to `all(...)` passed that fixture unchanged, then (QA-verified) priced
+  // an opus-5 + output-only-unpriced-model transcript as a complete
+  // "estimated" total — F2 again. Each of these four cases is non-zero in
+  // exactly one bucket, so the ANY/ALL difference is the only thing that
+  // can make it pass or fail.
+  const buckets = ['input', 'output', 'cache_read', 'cache_creation'] as const
+  for (const bucket of buckets) {
+    test(`unpriced model non-zero only in "${bucket}"`, () => {
+      const root = makeProject()
+      const transcriptPath = path.join(root, 'transcript.jsonl')
+      const unpricedModel = 'claude-not-a-real-tier-9'
+      fs.writeFileSync(
+        transcriptPath,
+        transcriptLine('claude-opus-5') + '\n' + transcriptLineOnlyBucket(unpricedModel, bucket) + '\n',
+      )
+      runSubagentStop({
+        cwd: root,
+        agentType: 'prdt-developer',
+        agentId: `a-t543-r3-2-${bucket}`,
+        transcriptPath,
+      })
+      const line = lastTurn(root)
+      expect(line.cost_usd).toBeNull()
+      expect(line.cost_source).toBe('estimated_partial')
+      expect(line.cost_unpriced_models).toContain(unpricedModel)
+    })
+  }
 })
 
 describe('a malformed PRICES row is survivable and non-silent, not a dead recorder (T-543 R2-3, round 3)', () => {
