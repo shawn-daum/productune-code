@@ -167,11 +167,22 @@ except Exception:
     pass
 
 
-# USD per MTok (input, output) — cached 2026-07-02 from the Claude API price table.
+# USD per MTok (input, output) — cached 2026-07-02 from the Claude API price table,
+# refreshed 2026-09-14 (T-543): the table never carried a row for `opus-5`
+# (`claude-opus-5`) at all — it shipped 2026-07-02 with only the opus-4-x
+# family, before opus-5 existed, and was never revisited when opus-5 became
+# the default/heaviest-used tier. `price_for()`'s substring match then misses
+# every opus-5 model id, `estimate_cost()` returns None for it, and cost_usd
+# stays null on every dispatch that isn't one of the rare cases where the CLI
+# itself reports total_cost_usd directly (T-543 measured: 1672/1704 opus-5
+# records missing cost_usd on this machine, 13 days after the ticket's
+# original 1008/1018). This is a missing-row bug, not a shape/collection
+# defect — every other model prices correctly through the same code path.
 # Sonnet 5 has intro pricing ($2/$10) through 2026-08-31; list price used here.
 # Cache multipliers: read = 0.1 × input · write(5m TTL) = 1.25 × input.
 PRICES = {
     "fable-5": (10.0, 50.0), "mythos-5": (10.0, 50.0),
+    "opus-5": (5.0, 25.0),
     "opus-4-8": (5.0, 25.0), "opus-4-7": (5.0, 25.0), "opus-4-6": (5.0, 25.0),
     "opus-4-5": (5.0, 25.0), "opus-4-1": (15.0, 75.0), "opus-4-0": (15.0, 75.0),
     "sonnet-5": (3.0, 15.0), "sonnet-4": (3.0, 15.0),
