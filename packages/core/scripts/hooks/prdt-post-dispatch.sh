@@ -14,8 +14,13 @@
 #      as full (scope=subagent per dispatch · scope=main transcript-cumulative,
 #      delta-gated). Best-effort: absent usage/cost fields → nulls, never a failure.
 #      cost_usd absent from the payload → ESTIMATED from usage × API price table
-#      (2026-07-02 확정, 열린 항목 ③): cache read = 0.1×input, cache write(5m) = 1.25×input.
-#      cost_source marks "reported" vs "estimated" (additive field; GUI-safe).
+#      (2026-07-02 확정, 열린 항목 ③): cache read = per-model multiplier×input
+#      (default 0.1×), cache write(5m) = 1.25×input. cost_source marks
+#      "reported" vs "estimated" vs "estimated_partial" (T-543 round 2, F2):
+#      a transcript mixing a priced and an unpriced model never yields a
+#      partial sum silently mislabeled "estimated" — cost_usd stays null,
+#      cost_source is "estimated_partial", and the dropped model ids land in
+#      an additive `cost_unpriced_models` field (all additive; GUI-safe).
 #   c) meta autosave beat (T-367, PRD v1.2) — fire-and-forget metaAutosaveTick
 #      via the core meta-cli bridge, only when .prdt/meta.git exists.
 #   d) (moved, T-553) the worker return-envelope check that used to live here is
@@ -167,26 +172,39 @@ except Exception:
     pass
 
 
-# USD per MTok (input, output) — cached 2026-07-02 from the Claude API price table,
-# refreshed 2026-09-14 (T-543): the table never carried a row for `opus-5`
-# (`claude-opus-5`) at all — it shipped 2026-07-02 with only the opus-4-x
-# family, before opus-5 existed, and was never revisited when opus-5 became
-# the default/heaviest-used tier. `price_for()`'s substring match then misses
-# every opus-5 model id, `estimate_cost()` returns None for it, and cost_usd
-# stays null on every dispatch that isn't one of the rare cases where the CLI
-# itself reports total_cost_usd directly (T-543 measured: 1672/1704 opus-5
-# records missing cost_usd on this machine, 13 days after the ticket's
-# original 1008/1018). This is a missing-row bug, not a shape/collection
-# defect — every other model prices correctly through the same code path.
-# Sonnet 5 has intro pricing ($2/$10) through 2026-08-31; list price used here.
-# Cache multipliers: read = 0.1 × input · write(5m TTL) = 1.25 × input.
+# USD per MTok (input, output, cache-read multiplier×input) — cached 2026-07-02
+# from the Claude API price table, refreshed 2026-09-14 (T-543 round 1: the
+# table never carried a row for `opus-5` at all — it shipped 2026-07-02 with
+# only the opus-4-x family, before opus-5 existed, and was never revisited
+# when opus-5 became the default/heaviest-used tier; a missing-row bug, not a
+# shape/collection defect — every other model priced correctly through the
+# same code path).
+#
+# Round 2 (T-543 F7, QA-verified against the live official pricing page +
+# two more sources, 2026-09-14) fixed two more rows that were ALREADY wrong,
+# found while re-checking round 1's table rather than caused by it:
+#   - sonnet-5 was (3.0, 15.0) — the $2/$10 intro price became the standard
+#     price; the $3/$15 increase planned for 2026-09-01 was never applied.
+#     Overstated 742 records ~50%.
+#   - fable-5-1 has no PRICES row of its own and inherited fable-5's rate by
+#     substring match; the input/output rate happens to be correct, but its
+#     cache-read discount is 0.025×, not the 0.1× every other current model
+#     gets — applying 0.1× uniformly overstated 119 records' cache-read cost
+#     4×. Given its own PRICES row below (matched before the shorter
+#     "fable-5" key, since price_for() checks longest keys first) so the
+#     rate now carries its own multiplier instead of inheriting a wrong one.
+# Not fixed here (QA finding, not required by this round — T-628 territory,
+# a stale/self-check-free table): fast mode ($10/$50) has no row.
+# Cache multipliers: read = per-row 3rd value × input (default 0.1×, see
+# fable-5-1) · write(5m TTL) = 1.25 × input (uniform — not reported wrong).
 PRICES = {
-    "fable-5": (10.0, 50.0), "mythos-5": (10.0, 50.0),
-    "opus-5": (5.0, 25.0),
-    "opus-4-8": (5.0, 25.0), "opus-4-7": (5.0, 25.0), "opus-4-6": (5.0, 25.0),
-    "opus-4-5": (5.0, 25.0), "opus-4-1": (15.0, 75.0), "opus-4-0": (15.0, 75.0),
-    "sonnet-5": (3.0, 15.0), "sonnet-4": (3.0, 15.0),
-    "haiku-4-5": (1.0, 5.0), "haiku-3-5": (0.8, 4.0), "haiku-3": (0.25, 1.25),
+    "fable-5-1": (10.0, 50.0, 0.025),
+    "fable-5": (10.0, 50.0, 0.1), "mythos-5": (10.0, 50.0, 0.1),
+    "opus-5": (5.0, 25.0, 0.1),
+    "opus-4-8": (5.0, 25.0, 0.1), "opus-4-7": (5.0, 25.0, 0.1), "opus-4-6": (5.0, 25.0, 0.1),
+    "opus-4-5": (5.0, 25.0, 0.1), "opus-4-1": (15.0, 75.0, 0.1), "opus-4-0": (15.0, 75.0, 0.1),
+    "sonnet-5": (2.0, 10.0, 0.1), "sonnet-4": (3.0, 15.0, 0.1),
+    "haiku-4-5": (1.0, 5.0, 0.1), "haiku-3-5": (0.8, 4.0, 0.1), "haiku-3": (0.25, 1.25, 0.1),
 }
 
 
@@ -199,17 +217,40 @@ def price_for(model):
 
 
 def estimate_cost(per_model):
-    """per_model: {model: {input, output, cache_read, cache_creation}} → USD or None."""
-    total, priced = 0.0, False
+    """per_model: {model: {input, output, cache_read, cache_creation}}
+    → (USD or None, [unpriced model ids]).
+
+    F2 (T-543 round 2): a transcript mixing a priced and an unpriced model
+    used to silently drop the unpriced model's tokens and return a number
+    for the priced share alone — a confident-looking total indistinguishable
+    from a real one. That is exactly what made round 1's "32 opus-5 priced"
+    history records confident UNDERESTIMATES rather than healthy records
+    (one 2026-07-30 record: real opus-5-rate cost >= $18.8, recorded $7.51 —
+    the rest of that transcript's usage belonged to another, unpriced-at-the-
+    time model and was silently dropped from the sum). A transcript now
+    prices only when EVERY model in it has a price row; otherwise this
+    returns no number
+    (None) and names what went unpriced, so the caller marks cost_source
+    "estimated_partial" instead of "estimated" and — per this ticket's
+    decision to make the gap visible in DATA, not only in code — records
+    which models were dropped in a `cost_unpriced_models` field, rather than
+    writing a partial sum that reads exactly like a complete one.
+    """
+    total, priced_models, unpriced = 0.0, 0, []
     for model, u in per_model.items():
         p = price_for(model)
         if not p:
+            unpriced.append(model)
             continue
-        pi, po = p
+        pi, po, cr_mult = p
         total += (u["input"] * pi + u["output"] * po
-                  + u["cache_read"] * 0.1 * pi + u["cache_creation"] * 1.25 * pi) / 1e6
-        priced = True
-    return round(total, 6) if priced else None
+                  + u["cache_read"] * cr_mult * pi + u["cache_creation"] * 1.25 * pi) / 1e6
+        priced_models += 1
+    if priced_models == 0:
+        return None, []  # nothing priced at all — unchanged from round 1 (not a "partial" case)
+    if unpriced:
+        return None, unpriced  # some priced, some not — refuse a confidently-wrong partial sum
+    return round(total, 6), []
 
 
 def usage4_from(obj):
@@ -310,13 +351,16 @@ if event == "SubagentStop":
         sys.exit(0)  # sync dispatch already recorded this agent at PostToolUse time
     atp = ev.get("agent_transcript_path")
     per_model, seen = sum_transcript(atp) if atp and os.path.isfile(atp) else ({}, False)
-    cost = estimate_cost(per_model) if seen else None
+    cost, unpriced = estimate_cost(per_model) if seen else (None, [])
     line = {"ts": now, "scope": "subagent", "persona": persona,
             "session_id": agent_id,
             "model": max(per_model, key=lambda m: sum(per_model[m].values())) if per_model else None,
-            "cost_usd": cost, "cost_source": "estimated" if cost is not None else None,
+            "cost_usd": cost,
+            "cost_source": "estimated" if cost is not None else ("estimated_partial" if unpriced else None),
             "cost_basis": "subagent_total", "usage": three_bucket(per_model) if seen else None,
             "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
+    if unpriced:
+        line["cost_unpriced_models"] = sorted(unpriced)
     with open(turns, "a") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     if agent_id:
@@ -330,12 +374,21 @@ cost = resp_obj.get("total_cost_usd")
 if cost is None and isinstance(resp_obj.get("cost"), dict):
     cost = resp_obj["cost"].get("total_cost_usd")
 sub_model = (resp_obj.get("model") or {}).get("id") if isinstance(resp_obj.get("model"), dict) else resp_obj.get("model")
+# F3 (T-543 round 2): this sync response can carry usage with NO model field at
+# all — the source of the 101 null-model turns.jsonl records QA traced on
+# 2026-09-14, mechanically distinct from sum_transcript() above (which has
+# defaulted `mdl or "_unknown"` since the first cost version and so cannot
+# null). Mark it "_unknown" like that sibling path instead of writing a
+# record nobody can attribute to a model. Recurrence: none observed since
+# 2026-08-20, but this code path is still live — not retired, not chased.
+sub_model = sub_model or "_unknown"
 cost_source = "reported" if isinstance(cost, (int, float)) else None
+unpriced_sub = []
 if cost_source is None:
     u4 = usage4_from(resp_obj)
-    if u4 and sub_model:
-        cost = estimate_cost({sub_model: u4})
-        cost_source = "estimated" if cost is not None else None
+    if u4:
+        cost, unpriced_sub = estimate_cost({sub_model: u4})
+        cost_source = "estimated" if cost is not None else ("estimated_partial" if unpriced_sub else None)
 sub_usage = usage_from(resp_obj)
 if sub_usage or isinstance(cost, (int, float)):
     line = {"ts": now, "scope": "subagent", "persona": persona,
@@ -345,6 +398,8 @@ if sub_usage or isinstance(cost, (int, float)):
             "cost_source": cost_source,
             "cost_basis": "subagent_total", "usage": sub_usage,
             "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
+    if unpriced_sub:
+        line["cost_unpriced_models"] = sorted(unpriced_sub)
     with open(turns, "a") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
     if agent_id:
@@ -360,7 +415,7 @@ if tpath and os.path.isfile(tpath):
     if seen:
         # recorded usage keeps the legacy 3-bucket shape (cache = read + creation)
         tot = three_bucket(per_model)
-        main_cost = estimate_cost(per_model)
+        main_cost, main_unpriced = estimate_cost(per_model)
         gate_path = os.path.join(state_dir, ".cost-main-gate.json")
         try:
             with open(gate_path) as f:
@@ -376,9 +431,11 @@ if tpath and os.path.isfile(tpath):
             line = {"ts": now, "scope": "main", "persona": "po", "session_id": sid,
                     "model": max(per_model, key=lambda m: sum(per_model[m].values())) if per_model else None,
                     "cost_usd": main_cost,
-                    "cost_source": "estimated" if main_cost is not None else None,
+                    "cost_source": "estimated" if main_cost is not None else ("estimated_partial" if main_unpriced else None),
                     "cost_basis": "main_session_cumulative", "usage": tot,
                     "version": version, "task_slug": task_slug, "ticket_id": ticket_id}
+            if main_unpriced:
+                line["cost_unpriced_models"] = sorted(main_unpriced)
             with open(turns, "a") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
 PYEOF
