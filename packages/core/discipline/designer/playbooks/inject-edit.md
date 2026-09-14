@@ -41,7 +41,7 @@ One editor, one pass, four verdicts judged per RULE, bytes reported. Form is com
 ## Verdict 4 — relation to the rest of the corpus
 - Duplicate: grep the rule's identifiers and numbers; a second statement → Verdict 2.
 - Contradiction: two lines, one situation, different verdicts → higher document wins (doctrine → contracts → habit → playbook; override above, floor immovable). Fix the lower; a fix belonging to PO or user → `unresolved[]`.
-- Orphan pointer: every hot pointer resolves to an existing file or section; every cold file has a hot pointer naming its trigger. Check both directions after the edit.
+- Orphan pointer, three directions, checked after the edit: every hot pointer resolves to an existing file or section · every cold file has a hot pointer naming its trigger · every sentence assigning an act to ANOTHER persona (`the PO relays` · `the PO deletes` · `the PO judges … then resumes`) resolves in that persona's own set — its hot files (Map), or a cold body its own hot line already leads to — and the landing names the trigger in the reader's kernel (a return arrives · a dispatch fails · `blocked` surfaces), never a step of the writer's procedure. Unresolved → land the line there, or rewrite so no other persona must act. An envelope key no rule in the reader's set names is information: fold it into `summary`, never a key.
 - Pinned literals: hooks and tests bind some lines byte-for-byte (`CLAUSE_*` in `scripts/hooks/`, `test/**`). Grep the exact old sentence there — a hit means same-diff edit of hook + test, or the line stays byte-identical.
 
 ## Form — compressed English
