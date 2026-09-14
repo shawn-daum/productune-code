@@ -36,7 +36,7 @@ EVENT_JSON="$(cat 2>/dev/null || true)"
 PRDT_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 export PRDT_HOOK_DIR
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
-import json, os, re, subprocess, sys
+import hashlib, json, os, re, subprocess, sys, time
 
 try:
     ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
@@ -74,6 +74,208 @@ try:
         sys.exit(0)
 except Exception:
     sys.exit(0)
+
+# ── T-627 ⓓ: discard guard — the PO must learn when THIS hook was discarded ───
+# The fault is SILENCE, not slowness. When the harness discards a
+# UserPromptSubmit hook's output the PO's turn simply has no `[prdt state]` and
+# no `[prdt register]` line, and PO habit treats the CURRENT turn's state line as
+# the authority over anything read earlier in a long session. So the authority
+# vanishes and nobody can tell — the harness prints its "timed out … output
+# discarded" notice to the USER, never into the PO's context, and this hook's own
+# stderr is debug-log-only while it exits 0 (it reaches neither the transcript,
+# the agent, nor a person). A notice therefore has to ride the same
+# additionalContext channel the state line does, one prompt late.
+#
+# Round 1 of T-627 measured the cliff this machine actually has: the effective
+# UserPromptSubmit timeout is 30 000 ms (read out of the shipped bundle for
+# 2.1.268/269/270 and confirmed by a ticking hook killed at ~29 s), against
+# 1.14–2.41 s wall at 0.15 s CPU for this hook under load — a ~12× margin. The
+# margin makes a discard RARE; it does not make it visible, and rare-and-invisible
+# is the worst combination for a line the PO is told to rely on. Other machines
+# and teammates do not have this margin.
+#
+# MECHANISM. Per `(project, session_id)` this hook leaves one marker under
+# `~/.prdt/run/hook-guard/` — written at the START of the run with `done:false`,
+# rewritten at the END with the measured wall. On the NEXT prompt of the SAME
+# session it reads that marker before overwriting it, and speaks once when the
+# previous run either (a) never completed it — the process was killed mid-run, so
+# the output is GONE, certain — or (b) completed it at/over the guard budget —
+# finished, but possibly too late, which nothing else can see from inside.
+# Keying on session_id (not the project alone) is what stops a second session in
+# the same project raising a false notice; the marker is consumed by being
+# overwritten, so a notice fires once and never repeats.
+#
+# The marker also carries the writing process's `pid`. It is DIAGNOSTIC ONLY —
+# never read back into a decision and never rendered into the context; it is
+# there so a human (or a test that must address this exact process) can tell
+# which run left a marker behind.
+#
+# `~/.prdt/run/` is tooling-owned runtime state and the contracts §Fixed-paths
+# carve-out names the DIRECTORY, so a new file under it needs no new carve-out.
+#
+# BUDGET. 10 000 ms. Above every wall this hook has ever been measured at
+# (1.14–2.41 s in round 1; 6.55 s the worst single PO observation at load 9.2),
+# and well under the 30 s cliff, so it warns BEFORE a discard rather than only
+# after one — and it is the right order of magnitude for a machine that registered
+# a lower `timeout` than the default (the only non-default timeout registered
+# anywhere on this machine is 10). `PRDT_HOOK_GUARD_BUDGET_MS` retunes it for such
+# a machine, and is the seam the tests drive the over-budget path through; it is
+# shape-matched to a positive int, and a bad value falls back to the default.
+#
+# BLIND SPOT, stated rather than implied: the marker is written by this python
+# process, so a kill landing in the ~0.1–1.0 s of interpreter startup BEFORE it
+# leaves no marker at all and goes unseen. No timeout that short is registered by
+# anything observed here (the smallest seen is 5 s), so the window is real but not
+# reachable by the failure this guard exists for.
+#
+# NEVER BREAKS THE SESSION (the whole point of this file being `set +e` / exit 0):
+# every path below is wrapped. A full disk, a missing directory, a corrupt or
+# planted marker, a read-only home — each ends as "no guard this turn" with the
+# normal output still emitted. The guard failing must never cost the PO the state
+# line it exists to protect.
+GUARD_SID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+GUARD_STALE_SECS = 12 * 3600          # older marker = a different working day
+GUARD_DEFAULT_BUDGET_MS = 10000
+GUARD_SWEEP_CAP = 500                 # bounded scan; this runs on every prompt
+
+
+def _guard_budget_ms():
+    raw = (os.environ.get("PRDT_HOOK_GUARD_BUDGET_MS") or "").strip()
+    if raw.isdigit():
+        v = int(raw)
+        if 1 <= v <= 600000:
+            return v
+    return GUARD_DEFAULT_BUDGET_MS
+
+
+def _guard_write(marker, obj):
+    # Atomic and symlink-proof, on the prdt-call-governor.sh precedent (T-567):
+    # `run/` is a 0755 directory shared by every session on this machine, so a
+    # marker name is plantable by something that is not us. O_EXCL creates the
+    # temp or nothing, and `os.replace` renames ONTO the name without following a
+    # link — so neither half can be aimed at another file this uid owns.
+    tmp = "%s.%d.tmp" % (marker, os.getpid())
+    fd = None
+    for attempt in (0, 1):
+        try:
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except Exception:
+            if attempt:
+                return
+            try:
+                os.unlink(tmp)          # our own leftover from a killed run
+            except Exception:
+                return
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(obj, f)
+        os.replace(tmp, marker)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+
+
+def _guard_sweep(d, now):
+    # A session that never came back leaves its marker behind. It can never
+    # accuse anyone — only that same session_id ever reads it — but it should not
+    # accumulate either. Bounded, best-effort, and it never touches a marker
+    # younger than the staleness window, so a live peer session is untouched.
+    try:
+        n = 0
+        for e in os.scandir(d):
+            n += 1
+            if n > GUARD_SWEEP_CAP:
+                break
+            try:
+                if now - e.stat(follow_symlinks=False).st_mtime > GUARD_STALE_SECS:
+                    os.unlink(e.path)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def guard_begin(proj_root, sid, now):
+    """Read the previous run's verdict, then stamp this run's start marker.
+
+    Returns (notice_or_None, marker_path_or_None). Never raises.
+    """
+    try:
+        if not (isinstance(sid, str) and GUARD_SID_RE.match(sid)):
+            return None, None           # no session key → nothing to attribute
+        home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+        d = os.path.join(home, "run", "hook-guard")
+        os.makedirs(d, exist_ok=True)
+        key = hashlib.sha1(proj_root.encode("utf-8", "replace")).hexdigest()[:12]
+        marker = os.path.join(d, "%s.%s.json" % (key, sid))
+
+        prev = None
+        try:
+            with open(marker, "rb") as f:
+                prev = json.loads(f.read(4096).decode("utf-8", "replace"))
+        except Exception:
+            prev = None
+
+        notice = None
+        budget = _guard_budget_ms()
+        if isinstance(prev, dict):
+            # Everything crossing this file is shape-matched and only ever
+            # re-rendered as a number of this file's own formatting — same rule
+            # the four po-state tokens and the return-flag queue follow above.
+            started = prev.get("start")
+            fresh = (isinstance(started, (int, float)) and not isinstance(started, bool)
+                     and 0 < now - started <= GUARD_STALE_SECS)
+            if fresh and prev.get("done") is not True:
+                notice = (
+                    "[prdt hook guard] the previous run of this hook in THIS session never "
+                    "finished — it was killed mid-run, so the harness discarded its whole "
+                    "output and your last turn carried no [prdt state] and no [prdt register] "
+                    "line. The state line above is this turn's and is current; whatever you "
+                    "assumed about stage/version/current_task on that turn did not come from "
+                    "this channel. Re-read it here rather than from memory (T-627)."
+                )
+            elif fresh:
+                dur = prev.get("dur_ms")
+                if isinstance(dur, int) and not isinstance(dur, bool) and 0 <= dur:
+                    if dur >= budget:
+                        notice = (
+                            "[prdt hook guard] the previous run of this hook in THIS session took "
+                            "%.1f s, at or over its %g s guard budget. A UserPromptSubmit hook "
+                            "that runs past the timeout registered for it has its ENTIRE output "
+                            "discarded (measured effective default on this harness: 30 s, T-627), "
+                            "so if your last turn showed no [prdt state] line, this is why. The "
+                            "state line above is this turn's and is current."
+                            % (min(dur, 86400000) / 1000.0, budget / 1000.0)
+                        )
+        _guard_write(marker, {"v": 1, "start": now, "done": False, "pid": os.getpid()})
+        _guard_sweep(d, now)
+        return notice, marker
+    except Exception:
+        return None, None
+
+
+def guard_finish(marker, t0, started):
+    try:
+        if marker:
+            _guard_write(marker, {"v": 1, "start": started, "done": True,
+                                  "pid": os.getpid(),
+                                  "dur_ms": int((time.monotonic() - t0) * 1000)})
+    except Exception:
+        pass
+
+
+# t0 is taken here, not at interpreter start: what it measures is this hook's own
+# work, and it UNDERSTATES the wall the harness times by the python startup ahead
+# of it (0.09–1.04 s measured on this machine). Understating is the safe
+# direction for a budget comparison — the guard cannot cry wolf because of a cost
+# it did not observe — and the killed-mid-run half does not depend on it at all.
+_guard_t0 = time.monotonic()
+_guard_started = time.time()
+_guard_notice, _guard_marker = guard_begin(
+    os.path.dirname(os.path.dirname(state_path)), ev.get("session_id"), _guard_started)
 
 # --- T-471: coerce the short po-state tokens to a fixed shape -----------------
 # `.prdt/po-state.json` is PROJECT-LOCAL — a clone carries it — and it is a
@@ -186,6 +388,12 @@ if hook_dir and os.path.isfile(resolver):
             lines.append(first)
     except Exception:
         pass
+
+# Next to the state line, because it is a statement ABOUT that line's absence on
+# the previous turn. Silent in the normal case: `guard_begin` returns None and
+# nothing is appended, so the byte cost on a healthy prompt is zero.
+if _guard_notice:
+    lines.append(_guard_notice)
 
 if withheld:
     lines.append(
@@ -393,5 +601,10 @@ print(json.dumps({"hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
     "additionalContext": "\n".join(lines),
 }}, ensure_ascii=False))
+
+# AFTER the print, so the recorded wall covers everything the harness waited on.
+# A kill in the microseconds between the two would record a false "killed", which
+# is the harmless direction: one advisory line, never a lost state line.
+guard_finish(_guard_marker, _guard_t0, _guard_started)
 PYEOF
 exit 0
