@@ -36,10 +36,36 @@
  *   - F7: two PRICES rows were themselves wrong, QA-verified against the
  *     live official pricing page — sonnet-5 was priced at the never-applied
  *     $3/$15 increase instead of the standing $2/$10 rate, and fable-5-1
- *     (which has no row of its own and inherits fable-5's input/output rate
- *     by substring) was overstated 4× on cache reads because the hook
- *     applied every model's cache-read multiplier as a uniform 0.1× instead
- *     of fable-5-1's actual 0.025×.
+ *     (which BEFORE this fix had no row of its own and inherited fable-5's
+ *     input/output rate by substring — it now carries its own PRICES row)
+ *     was overstated 4× on cache reads because the hook applied every
+ *     model's cache-read multiplier as a uniform 0.1× instead of
+ *     fable-5-1's actual 0.025×.
+ *
+ * Round 3 (T-543, regression repair on round 2's `3a86e2a`) fixed three more:
+ *   - R2-1: round 2's F2 fix over-fired on a ZERO-token unpriced model.
+ *     Claude Code transcripts really do carry `model:"<synthetic>"` lines
+ *     (session-limit/interrupt placeholders) that are zero-token in every
+ *     bucket; price_for() finds no row for them, so round 2 refused the
+ *     whole transcript's cost as "estimated_partial" even though the sum
+ *     was exactly computable (the unpriced contributor adds nothing).
+ *     Fixed by excluding a ZERO-token unpriced model from consideration
+ *     entirely rather than treating "unpriced model present" as equivalent
+ *     to "sum untrustworthy" — a non-zero-token unpriced model still
+ *     refuses exactly as round 2 did.
+ *   - R2-3: the 3-tuple refactor (round 1) made a hand-edited row that is a
+ *     legal Python literal but the WRONG shape (e.g. a leftover 2-tuple)
+ *     possible. Unpacking it used to raise an uncaught ValueError that
+ *     killed the whole python process — the bash wrapper's trailing
+ *     `exit 0` then hid that death, so NO turns.jsonl record was written
+ *     for the dispatch at all (usage included), repeating every dispatch
+ *     for the main/b2 path. Fixed by validating the row shape in
+ *     price_for(): a malformed row is reported on stderr and treated as
+ *     unpriced instead of crashing the recorder.
+ *   - R2-4: this file's own exact-value pins never covered `fable-5-1` —
+ *     deleting that row still passed 7/7 while silently regressing its
+ *     cache-read cost 4×, even though `fable-5-1` is the only reason the
+ *     3-tuple PRICES refactor exists. Fixed by pinning it directly below.
  */
 
 import path from 'path'
@@ -80,6 +106,44 @@ function transcriptLine(model: string): string {
       },
     },
   })
+}
+
+/** A transcript line for a placeholder/synthetic model — explicit ZERO usage
+ *  in every bucket, matching Claude Code's real `model:"<synthetic>"`
+ *  session-limit / interrupt placeholder lines (T-543 R2-1, round 3). These
+ *  are real and common (measured: 8.8% of opus-5 subagent transcripts,
+ *  15% of main-session transcripts since 2026-09-01 mix one in). */
+function transcriptLineZero(model: string): string {
+  return JSON.stringify({
+    message: {
+      model,
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    },
+  })
+}
+
+/** A copy of the hook with one PRICES row hand-edited down to a 2-tuple —
+ *  reproduces the exact R2-3 hazard: `pi, po, cr_mult = p` raises
+ *  ValueError unpacking a 2-tuple, python dies, and the bash wrapper's
+ *  trailing `exit 0` used to swallow that death so no turns.jsonl record
+ *  was written at all. Runs against a real temp copy of the hook rather
+ *  than the shared one, so this test never mutates the file under test. */
+function hookWithMalformedRow(): string {
+  const src = fs.readFileSync(HOOK, 'utf8')
+  const needle = '"fable-5-1": (10.0, 50.0, 0.025),'
+  if (!src.includes(needle)) {
+    throw new Error('fixture out of sync with hook PRICES table — update needle in post-dispatch-cost-coverage.test.ts')
+  }
+  const mutated = src.replace(needle, '"fable-5-1": (10.0, 50.0),')
+  const dir = tmp('prdt-t543-hook-')
+  const p = path.join(dir, 'prdt-post-dispatch.sh')
+  fs.writeFileSync(p, mutated)
+  return p
 }
 
 function runSubagentStop(opts: {
@@ -158,6 +222,13 @@ const TIER_EXPECT: Record<string, { modelId: string; costUsd: number }> = {
   // to the standing $2/$10 rate — this expectation moves with that fix.
   sonnet: { modelId: 'claude-sonnet-5', costUsd: 0.00729 },
   haiku: { modelId: 'claude-haiku-4-5', costUsd: 0.003645 },
+  // R2-4 (round 3): fable-5-1 is the ONLY reason the 3-tuple PRICES
+  // refactor exists (its 0.025× cache-read multiplier differs from every
+  // other current model's 0.1×), yet round 2 pinned no exact value for it —
+  // deleting its row still passed 7/7 while silently regressing its
+  // cache-read cost 4×. (in*10 + out*50 + cache_read*0.025*10 +
+  // cache_creation*1.25*10) / 1e6 = (10000+25000+50+1250)/1e6 = 0.0363.
+  'fable-5-1': { modelId: 'claude-fable-5-1', costUsd: 0.0363 },
 }
 
 describe('every router tier records model + exact cost_usd (T-543)', () => {
@@ -259,5 +330,117 @@ describe('PostToolUse sync response with usage but no model (T-543 F3)', () => {
     // fully-unpriced record (not a "partial" one), so no partial marker.
     expect(line.cost_usd).toBeNull()
     expect(line.cost_source).toBeNull()
+  })
+})
+
+describe('a zero-token unpriced model is not a partial sum (T-543 R2-1, round 3)', () => {
+  test('priced model + zero-token "<synthetic>" placeholder: full cost, not refused', () => {
+    const root = makeProject()
+    const transcriptPath = path.join(root, 'transcript.jsonl')
+    // The real shape QA reproduced against a 2026-09-14 opus-5 transcript:
+    // a real assistant turn plus a session-limit/interrupt placeholder line
+    // carrying `model:"<synthetic>"` with explicit zero usage in every
+    // bucket. The sum is exactly computable — the placeholder adds nothing.
+    fs.writeFileSync(
+      transcriptPath,
+      transcriptLine('claude-opus-5') + '\n' + transcriptLineZero('<synthetic>') + '\n',
+    )
+    runSubagentStop({
+      cwd: root,
+      agentType: 'prdt-developer',
+      agentId: 'a-t543-r2-1-zero',
+      transcriptPath,
+    })
+    const line = lastTurn(root)
+    // Round 2 regression: this used to come back cost_usd:null,
+    // cost_source:"estimated_partial" purely because `<synthetic>` has no
+    // PRICES row — even though it contributed zero tokens.
+    expect(line.cost_usd).toBeCloseTo(0.018225, 6)
+    expect(line.cost_source).toBe('estimated')
+    expect(line.cost_unpriced_models).toBeUndefined()
+  })
+
+  test('priced model + unpriced model with SOME non-zero tokens still refuses (F2 must not regress)', () => {
+    const root = makeProject()
+    const transcriptPath = path.join(root, 'transcript.jsonl')
+    const unpricedModel = 'claude-not-a-real-tier-9'
+    fs.writeFileSync(
+      transcriptPath,
+      transcriptLine('claude-opus-5') + '\n' + transcriptLine(unpricedModel) + '\n',
+    )
+    runSubagentStop({
+      cwd: root,
+      agentType: 'prdt-developer',
+      agentId: 'a-t543-r2-1-nonzero',
+      transcriptPath,
+    })
+    const line = lastTurn(root)
+    // A genuinely non-zero unpriced contributor must still void the total —
+    // the R2-1 fix keys on unpriced TOKENS, not unpriced MODEL PRESENCE.
+    expect(line.cost_usd).toBeNull()
+    expect(line.cost_source).toBe('estimated_partial')
+    expect(line.cost_unpriced_models).toContain(unpricedModel)
+  })
+})
+
+describe('a malformed PRICES row is survivable and non-silent, not a dead recorder (T-543 R2-3, round 3)', () => {
+  test('2-tuple row: dispatch still writes a refused/partial record instead of none at all', () => {
+    const hookPath = hookWithMalformedRow()
+    const root = makeProject()
+    const transcriptPath = path.join(root, 'transcript.jsonl')
+    // Mixed with a real priced model so a fix that just skips pricing
+    // entirely (rather than refusing correctly) would be caught: this must
+    // land in the "some priced, some genuinely unpriced" refusal branch,
+    // not the "nothing priced at all" branch.
+    fs.writeFileSync(
+      transcriptPath,
+      transcriptLine('claude-opus-5') + '\n' + transcriptLine('claude-fable-5-1') + '\n',
+    )
+    const ev = {
+      hook_event_name: 'SubagentStop',
+      agent_type: 'prdt-developer',
+      agent_id: 'a-t543-r2-3-malformed',
+      cwd: root,
+      agent_transcript_path: transcriptPath,
+    }
+    const res = spawnSync('bash', [hookPath], {
+      input: JSON.stringify(ev),
+      encoding: 'utf8',
+      timeout: 10000,
+    })
+    // Before the fix: python died unpacking the 2-tuple, and the bash
+    // wrapper's trailing `exit 0` hid that death entirely.
+    expect(res.status).toBe(0)
+    const line = lastTurn(root)
+    expect(line).toBeDefined()
+    expect(line.cost_usd).toBeNull()
+    expect(line.cost_source).toBe('estimated_partial')
+    expect(line.cost_unpriced_models).toContain('claude-fable-5-1')
+    // Non-silent: the malformed row is reported on stderr, not swallowed.
+    expect(res.stderr).toMatch(/malformed PRICES row/)
+  })
+
+  test('malformed row in one model does not take down recording for OTHER models', () => {
+    const hookPath = hookWithMalformedRow()
+    const root = makeProject()
+    const transcriptPath = path.join(root, 'transcript.jsonl')
+    fs.writeFileSync(transcriptPath, transcriptLine('claude-opus-5') + '\n')
+    const ev = {
+      hook_event_name: 'SubagentStop',
+      agent_type: 'prdt-developer',
+      agent_id: 'a-t543-r2-3-other-model',
+      cwd: root,
+      agent_transcript_path: transcriptPath,
+    }
+    const res = spawnSync('bash', [hookPath], {
+      input: JSON.stringify(ev),
+      encoding: 'utf8',
+      timeout: 10000,
+    })
+    expect(res.status).toBe(0)
+    const line = lastTurn(root)
+    expect(line.model).toBe('claude-opus-5')
+    expect(line.cost_usd).toBeCloseTo(0.018225, 6)
+    expect(line.cost_source).toBe('estimated')
   })
 })

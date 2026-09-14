@@ -16,11 +16,16 @@
 #      cost_usd absent from the payload → ESTIMATED from usage × API price table
 #      (2026-07-02 확정, 열린 항목 ③): cache read = per-model multiplier×input
 #      (default 0.1×), cache write(5m) = 1.25×input. cost_source marks
-#      "reported" vs "estimated" vs "estimated_partial" (T-543 round 2, F2):
-#      a transcript mixing a priced and an unpriced model never yields a
-#      partial sum silently mislabeled "estimated" — cost_usd stays null,
+#      "reported" vs "estimated" vs "estimated_partial" (T-543 round 2 F2,
+#      narrowed round 3 R2-1): a transcript mixing a priced model with an
+#      unpriced model that actually contributes non-zero tokens never yields
+#      a partial sum silently mislabeled "estimated" — cost_usd stays null,
 #      cost_source is "estimated_partial", and the dropped model ids land in
-#      an additive `cost_unpriced_models` field (all additive; GUI-safe).
+#      an additive `cost_unpriced_models` field (all additive; GUI-safe). An
+#      unpriced model with ZERO tokens in every bucket — Claude Code's real
+#      `model:"<synthetic>"` session-limit/interrupt placeholder lines are
+#      exactly this — is not a partial sum: it contributes nothing, so it is
+#      dropped from consideration rather than voiding the whole total.
 #   c) meta autosave beat (T-367, PRD v1.2) — fire-and-forget metaAutosaveTick
 #      via the core meta-cli bridge, only when .prdt/meta.git exists.
 #   d) (moved, T-553) the worker return-envelope check that used to live here is
@@ -212,7 +217,32 @@ def price_for(model):
     m = (model or "").lower()
     for key in sorted(PRICES, key=len, reverse=True):
         if key in m:
-            return PRICES[key]
+            row = PRICES[key]
+            # R2-3 (T-543 round 3): the 3-tuple refactor (round 1) made a
+            # hand-edited row that is still a legal Python literal but the
+            # WRONG shape possible — e.g. a 2-tuple missing the cache-read
+            # multiplier. Before this check, `pi, po, cr_mult = p` raised an
+            # uncaught ValueError that killed this whole python process; the
+            # bash wrapper's trailing `exit 0` then swallowed that death, so
+            # NO turns.jsonl record was written for the dispatch at all
+            # (usage included) — and for the main/b2 path that repeats on
+            # every dispatch for the rest of the session. Validate the shape
+            # here instead: a malformed row is reported on stderr (non-
+            # silent) and treated as unpriced, same as a missing row — the
+            # dispatch still gets a record (refused/partial when its tokens
+            # are non-zero, per estimate_cost) instead of losing everything.
+            if not (
+                isinstance(row, (tuple, list))
+                and len(row) == 3
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in row)
+            ):
+                sys.stderr.write(
+                    "prdt-post-dispatch: malformed PRICES row for %r: %r "
+                    "(expected a 3-tuple of numbers) — treating as unpriced\n"
+                    % (key, row)
+                )
+                return None
+            return row
     return None
 
 
@@ -235,12 +265,33 @@ def estimate_cost(per_model):
     decision to make the gap visible in DATA, not only in code — records
     which models were dropped in a `cost_unpriced_models` field, rather than
     writing a partial sum that reads exactly like a complete one.
+
+    R2-1 (T-543 round 3): round 2 treated "an unpriced model is present" as
+    identical to "the total cannot be trusted", and that equivalence breaks
+    at zero tokens. Claude Code transcripts really do carry
+    `model:"<synthetic>"` lines — session-limit/interrupt placeholders — and
+    every one of them is zero-token in every bucket. price_for() finds no
+    row for them, so round 2 called any transcript containing one "priced +
+    unpriced mixed" and refused the whole sum, even though it is exactly
+    computable (the unpriced contributor adds nothing). Measured on real
+    transcripts: 8.8% of opus-5 subagent transcripts and 15% of main-session
+    transcripts since 2026-09-01 mix a priced model with a zero-token one —
+    main sessions accumulate, so one session-limit message nulled every
+    later record in that session. Fix: an unpriced model with ZERO tokens
+    across all four buckets is dropped from consideration entirely — it is
+    not a partial sum, so it neither joins `unpriced` nor blocks pricing. An
+    unpriced model with ANY non-zero bucket still refuses exactly as round 2
+    did (F2 must not regress).
     """
     total, priced_models, unpriced = 0.0, 0, []
     for model, u in per_model.items():
         p = price_for(model)
         if not p:
-            unpriced.append(model)
+            if any(u.get(k, 0) for k in ("input", "output", "cache_read", "cache_creation")):
+                unpriced.append(model)
+            # else: zero-token unpriced model — contributes nothing, is not
+            # a partial sum, so it is silently excluded rather than voiding
+            # the total (R2-1).
             continue
         pi, po, cr_mult = p
         total += (u["input"] * pi + u["output"] * po
@@ -249,7 +300,7 @@ def estimate_cost(per_model):
     if priced_models == 0:
         return None, []  # nothing priced at all — unchanged from round 1 (not a "partial" case)
     if unpriced:
-        return None, unpriced  # some priced, some not — refuse a confidently-wrong partial sum
+        return None, unpriced  # some priced, some genuinely non-zero unpriced — refuse
     return round(total, 6), []
 
 
@@ -378,9 +429,14 @@ sub_model = (resp_obj.get("model") or {}).get("id") if isinstance(resp_obj.get("
 # all — the source of the 101 null-model turns.jsonl records QA traced on
 # 2026-09-14, mechanically distinct from sum_transcript() above (which has
 # defaulted `mdl or "_unknown"` since the first cost version and so cannot
-# null). Mark it "_unknown" like that sibling path instead of writing a
-# record nobody can attribute to a model. Recurrence: none observed since
-# 2026-08-20, but this code path is still live — not retired, not chased.
+# null WHEN a per-model usage line is present — corrected R2-5, T-543 round
+# 3: at record level a missing/empty agent transcript still writes
+# {model: null, usage: null} through the caller's `if per_model else None`,
+# a different mechanism than sum_transcript()'s own per-line default; a
+# 2026-07-16 record carries exactly that signature). Mark it "_unknown" like
+# that sibling path instead of writing a record nobody can attribute to a
+# model. Recurrence: none observed since 2026-08-20, but this code path is
+# still live — not retired, not chased.
 sub_model = sub_model or "_unknown"
 cost_source = "reported" if isinstance(cost, (int, float)) else None
 unpriced_sub = []
