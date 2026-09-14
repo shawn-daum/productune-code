@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check) · history · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
 import argparse, hashlib, json, math, os, re, shlex, shutil, sqlite3, subprocess, sys, unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 STAGES = ("define", "build", "ship", "retro", "idle")
@@ -3731,6 +3731,251 @@ def cmd_history(_args):
         print("(no history)")
 
 
+# ── usage (T-544) ─────────────────────────────────────────────────────────────
+# Machine-wide cost sum, reading only: no new collection path, no daemon. Each
+# project already writes .prdt/turns.jsonl (prdt-post-dispatch.sh); this just
+# adds them up across every sibling prdt project on this machine, over an
+# explicit window.
+#
+# Reuse check (acceptance): no existing subcommand covers this (grepped — no
+# "usage"/"cost" subparser before this ticket). `~/.prdt/run/call-governor/`
+# was considered as a home and rejected — it holds per-dispatch API-turn
+# counters (one byte per turn, cleared per session, T-491), a different
+# concern from a cross-project cost archive; nothing there is keyed by
+# project, model, or cost. No new infrastructure is added here beyond this
+# subcommand.
+def _parse_time_arg(s):
+    """ISO-8601 timestamp (Z or offset) or a relative shorthand `<N><unit>`
+    (m/h/d) counting back from now (UTC). Returns (datetime|None, error|None).
+    Deliberately narrow (contracts ENVIRONMENT note, T-525): this never infers
+    a rate-limit window boundary — only what the caller spells out."""
+    if not s:
+        return None, None
+    s = s.strip()
+    m = re.fullmatch(r"(\d+)([mhd])", s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        secs = n * {"m": 60, "h": 3600, "d": 86400}[unit]
+        return datetime.now(timezone.utc) - timedelta(seconds=secs), None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt, None
+    except ValueError:
+        return None, (f"'{s}' 를 시각으로 해석 못함 — ISO-8601(예: 2026-09-14T00:00:00Z) "
+                       f"또는 상대값(예: 6h, 2d, 90m)만 지원")
+
+
+# T-543 fixed the PRICE TABLE used at write time; it added no version marker
+# to the record itself. So a model whose *rate* was wrong before today's
+# install (not merely missing — opus-5's gap is a literal null cost_usd,
+# already caught by the "no cost recorded" bucket below) cannot be told apart
+# per-record from one written after the fix. Naming it here — not guessing a
+# cutoff from a file mtime or any other proxy — is the "annotate" branch of
+# the ticket's "exclude, annotate, report per era, your call": the sum stays
+# whole and correct-as-far-as-known, and the reader is told which models'
+# `estimated` share may still carry a pre-fix rate.
+USAGE_ERA_CAVEATS = {
+    "sonnet-5": "estimated 비용에 T-543 이전 가격표($3/$15) 값이 섞여 있으면 최대 50% 과다 "
+                "계상 — 정정가는 $2/$10",
+    "fable-5-1": "estimated 비용에 T-543 이전 캐시읽기 배율(0.1× 오적용) 값이 섞여 있으면 캐시읽기 "
+                 "몫이 최대 4배 과다 계상 — 정정 배율은 0.025×",
+}
+
+
+def _usage_era_caveats(model):
+    m = (model or "").lower()
+    return [msg for key, msg in USAGE_ERA_CAVEATS.items() if key in m]
+
+
+def _scan_turns_file(path):
+    """(status, records, bad_line_count). status: absent|empty|malformed|ok —
+    malformed = the file has content but not one line parsed as a JSON
+    object; ok-with-some-bad-lines reports those via bad_line_count instead
+    of hiding them (acceptance: a bad file is reported, never skipped
+    silently)."""
+    if not os.path.isfile(path):
+        return "absent", [], 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw_lines = [ln for ln in f if ln.strip()]
+    except Exception:
+        return "malformed", [], 0
+    if not raw_lines:
+        return "empty", [], 0
+    records, bad = [], 0
+    for ln in raw_lines:
+        try:
+            obj = json.loads(ln)
+        except Exception:
+            bad += 1
+            continue
+        if isinstance(obj, dict):
+            records.append(obj)
+        else:
+            bad += 1
+    if not records:
+        return "malformed", [], bad
+    return "ok", records, bad
+
+
+def cmd_usage(args):
+    root = require_root()
+    since_dt, err = _parse_time_arg(args.since)
+    if err:
+        sys.exit(f"prdt usage: --since: {err}")
+    until_dt, err = _parse_time_arg(args.until)
+    if err:
+        sys.exit(f"prdt usage: --until: {err}")
+    scan_root = Path(args.root).resolve() if args.root else root.parent
+    if not scan_root.is_dir():
+        sys.exit(f"prdt usage: --root 없음 — {scan_root}")
+
+    window_label = (
+        f"{args.since or '(시작 없음)'} ~ {args.until or '(끝 없음, 지금까지)'}"
+        if (args.since or args.until) else
+        "전체 기록 (윈도우 미지정 — 한도 창 경계는 기계가 읽을 수 없어 추정하지 않음, T-525)"
+    )
+
+    projects = []
+    for d in sorted(p for p in scan_root.iterdir() if p.is_dir()):
+        if not (d / ".prdt" / "po-state.json").is_file():
+            continue  # not a prdt project on this machine — out of scope, not a gap
+        status, records, bad = _scan_turns_file(str(d / ".prdt" / "turns.jsonl"))
+        projects.append({"name": d.name, "status": status, "bad_lines": bad, "records": records})
+
+    if not projects:
+        sys.exit(f"prdt usage: {scan_root} 아래 prdt 프로젝트(.prdt/po-state.json)가 하나도 없음")
+
+    cost_by_source = {"reported": 0.0, "estimated": 0.0}
+    cost_by_model = {}
+    tokens_total = {"input": 0, "output": 0, "cache": 0}
+    no_cost_by_model = {}
+    partial_count = 0
+    partial_unpriced = {}
+    null_model_records = 0
+    per_project = []
+
+    for p in projects:
+        proj_cost, in_window, skipped, bad_ts = 0.0, 0, 0, 0
+        for rec in p["records"]:
+            raw_ts = rec.get("ts")
+            dt, _ = _parse_time_arg(raw_ts) if raw_ts else (None, None)
+            if dt is None:
+                bad_ts += 1  # no usable ts — excluded from every sum below, counted rather than silently dropped
+                continue
+            if since_dt and dt < since_dt:
+                continue
+            if until_dt and dt > until_dt:
+                continue
+            in_window += 1
+            model = rec.get("model")
+            if model is None:
+                null_model_records += 1
+            u = rec.get("usage") or {}
+            for k in ("input", "output", "cache"):
+                v = u.get(k)
+                if isinstance(v, (int, float)):
+                    tokens_total[k] += v
+            cost = rec.get("cost_usd")
+            src = rec.get("cost_source")
+            if isinstance(cost, (int, float)) and src in ("reported", "estimated"):
+                cost_by_source[src] += cost
+                proj_cost += cost
+                mkey = model or "(null)"
+                slot = cost_by_model.setdefault(mkey, {"reported": 0.0, "estimated": 0.0, "count": 0})
+                slot[src] += cost
+                slot["count"] += 1
+            elif src == "estimated_partial":
+                # hook itself refused to total this record — a real, priced model
+                # shared the transcript with one it could not price. Never folded
+                # into the sum as zero (that IS the silent-understatement defect
+                # T-543 removed); reported as a gap instead.
+                skipped += 1
+                partial_count += 1
+                for um in (rec.get("cost_unpriced_models") or []):
+                    partial_unpriced[um] = partial_unpriced.get(um, 0) + 1
+            else:
+                # cost_usd missing/null and not estimated_partial — the pre-T-543
+                # gap (e.g. opus-5 before today) or any other unpriced record.
+                skipped += 1
+                mkey = model or "(null)"
+                no_cost_by_model[mkey] = no_cost_by_model.get(mkey, 0) + 1
+        per_project.append({"name": p["name"], "status": p["status"], "bad_lines": p["bad_lines"],
+                             "bad_ts": bad_ts, "records_in_window": in_window,
+                             "cost_usd": round(proj_cost, 4), "skipped_in_window": skipped})
+
+    cost_total = round(cost_by_source["reported"] + cost_by_source["estimated"], 4)
+    caveats = []
+    for model, slot in cost_by_model.items():
+        for msg in _usage_era_caveats(model):
+            caveats.append(f"{model}: {msg} (레코드 단위 구분 불가 — 가격표 버전 마커 없음; "
+                            f"위 합계의 estimated ${round(slot['estimated'], 4)} 중 일부일 수 있음)")
+
+    out = {
+        "scan_root": str(scan_root),
+        "window": {"since": args.since, "until": args.until, "label": window_label},
+        "projects": per_project,
+        "cost_usd_total": cost_total,
+        "cost_usd_by_source": {k: round(v, 4) for k, v in cost_by_source.items()},
+        "cost_usd_by_model": {k: {"reported": round(v["reported"], 4),
+                                   "estimated": round(v["estimated"], 4),
+                                   "count": v["count"]} for k, v in cost_by_model.items()},
+        "tokens_total": tokens_total,
+        "skipped": {"no_cost_recorded": no_cost_by_model,
+                    "estimated_partial": {"count": partial_count, "unpriced_models": partial_unpriced}},
+        "null_model_records": null_model_records,
+        "era_caveats": caveats,
+        "scope_boundary": (
+            f"이 기기({scan_root}) 아래 prdt 프로젝트 {len(projects)}개의 합계일 뿐 — 다른 기기나 "
+            "같은 계정을 쓰는 다른 사람의 사용량은 관측 대상이 아니라 이 수치에 없음(0건이 아니라 "
+            "'못 봄')."
+        ),
+    }
+
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    print(f"prdt usage — {window_label}")
+    print(f"scan root: {scan_root}")
+    print()
+    status_tag = {"ok": "", "absent": " [turns.jsonl 없음]", "empty": " [turns.jsonl 비어있음]",
+                  "malformed": " [turns.jsonl 파싱 불가]"}
+    for pr in per_project:
+        extra = status_tag[pr["status"]]
+        if pr["bad_lines"]:
+            extra += f", 손상 라인 {pr['bad_lines']}"
+        if pr["bad_ts"]:
+            extra += f", ts 해석 불가 {pr['bad_ts']}"
+        print(f"  {pr['name']:<24} ${pr['cost_usd']:.4f}  레코드 {pr['records_in_window']}건"
+              f"(스킵 {pr['skipped_in_window']}){extra}")
+    print()
+    print(f"측정된 비용 합계: ${cost_total:.4f}  (reported ${cost_by_source['reported']:.4f} + "
+          f"estimated ${cost_by_source['estimated']:.4f})")
+    print(f"토큰 합계(참고용, 과금 단위 아님): input {tokens_total['input']:,} · "
+          f"output {tokens_total['output']:,} · cache {tokens_total['cache']:,}")
+    print()
+    if no_cost_by_model:
+        print(f"비용 미기록 — 합계에서 제외됨 ({sum(no_cost_by_model.values())}건), 모델별:")
+        for m, n in sorted(no_cost_by_model.items(), key=lambda kv: -kv[1]):
+            print(f"    {m}: {n}건")
+    if partial_count:
+        print(f"estimated_partial — 합계에서 제외됨 ({partial_count}건, 훅이 미가격 모델의 실토큰 "
+              f"혼재를 스스로 거부한 레코드), 등장한 미가격 모델:")
+        for m, n in sorted(partial_unpriced.items(), key=lambda kv: -kv[1]):
+            print(f"    {m}: {n}건")
+    if null_model_records:
+        print(f"모델 미상(model: null) 레코드 {null_model_records}건 — 동기 응답 경로가 모델 없이 "
+              f"usage만 실어보낸 것(T-543 확인; 2026-08-20 이후 미관측이나 경로는 살아있음, 퇴역 "
+              f"아님); 귀속 불가라 위 집계에서 '(null)'로 잡힘.")
+    for c in caveats:
+        print(f"주의: {c}")
+    print()
+    print(out["scope_boundary"])
+
+
 # ── meta (T-367 · PRD §v1.2 CLI·GUI parity) ──────────────────────────────────
 # History read / remote backup go through the CORE API only — the CLI owns no
 # git logic here. Bridge: node <PRDT_REPO>/packages/core/dist/bin/meta-cli.cjs
@@ -7017,6 +7262,15 @@ def main():
     p.set_defaults(fn=cmd_artifacts)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
+    p = sub.add_parser("usage", help="machine-wide cost sum across this machine's prdt projects' "
+                                     "turns.jsonl (T-544): --since/--until (ISO-8601 or Nm/Nh/Nd, "
+                                     "default: all recorded history) --root <dir> (default: parent "
+                                     "of the current project) --json")
+    p.add_argument("--since")
+    p.add_argument("--until")
+    p.add_argument("--root")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_usage)
     p = sub.add_parser("meta", help="meta git: log · remote [add <name> <url>] · push · bootstrap · split · relocate — core API 브리지 호출")
     p.add_argument("action", choices=("log", "remote", "push", "bootstrap", "split", "relocate"))
     p.add_argument("rest", nargs="*", help="remote: [add <name> <url>] · push: [name] · bootstrap: <url> [name]")
