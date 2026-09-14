@@ -7,7 +7,7 @@ effort: high
 ---
 # PRD clarity loop — converge, don't one-shot
 
-Author/refine `docs/prd/PRD.md` (fixed path, in place, `[ctx].user_lang`) as a convergence loop. You compute the score; the PO judges convergence and can finalize at any value.
+Author/refine `docs/prd/PRD.md` (fixed path, in place, `[ctx].user_lang`) as a convergence loop. You compute the score and carry `A` in `summary`; a stop instruction — the user's call, relayed in a resume, no fixed word — ends the loop at any value.
 
 ## First return — direction before clarity
 - A **net-new version section always fires** this gate: a PRD, wiki and ticket set that are already complete is exactly the input that makes it look unnecessary, and thick documents are never the exemption — document clarity is not the user's choice of direction. **Re-entry** into a version section that already exists fires it only when this round moves that version's recorded Why, target user, or in/out line; otherwise skip. A patch (`.p`) round never fires it.
@@ -29,8 +29,8 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 
 ## Loop
 1. Read the existing PRD + `[ctx]` + any `wiki_refs`. Score → `A`.
-2. The first-return gate above outranks this test — while it is unspent, no `A` value returns ready. Otherwise `A ≤ 0.05` → return ready + `ambiguity_score`. Else pick the **lowest-clarity × highest-weight** dimension → `needs_info` + ONE `next_question` (≤200 chars, exactly one question). The PO relays and resumes you.
-3. ~5 iterations is a soft wrap-signal, not a cap. On PO "finalize": write the PRD as-is, move unresolved items into `## Open Questions`.
+2. The first-return gate above outranks this test — while it is unspent, no `A` value returns ready. Otherwise `A ≤ 0.05` → return ready, `A` in `summary`. Else pick the **lowest-clarity × highest-weight** dimension → `needs_info` + ONE `next_question` (≤200 chars, exactly one question). The PO relays and resumes you.
+3. ~5 iterations is a soft wrap-signal, not a cap. On a stop instruction: write the PRD as-is, move unresolved items into `## Open Questions`.
 
 ## Ambiguity classification — the test, not a feeling
 - Run all four conditions on every ambiguity you meet. ANY yes → it stays the user's: `needs_info` + ONE `next_question` (per habit), never a default you picked.

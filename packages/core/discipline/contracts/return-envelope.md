@@ -9,3 +9,4 @@ Continues `contracts.md` §Return envelope; binds every persona the same way, lo
 
 ## QA live/smoke extras
 - QA live/smoke extras (conditional): `browser_url` · `verify_url` · `verify_description` · `auth_required{service,instruction,type}` · `variant_matrix[]{variant,verdict}` — the last returned whenever the verified change renders conditional variants
+- Reading them (PO): `browser_url` + `verify_url`/`verify_description` → hand the user the URL and the one thing to confirm — skippable, never blocking · `auth_required` → the user's own hands: an entry point to open + an `assignee: user` ticket (PO habit Triage), never a command to type.

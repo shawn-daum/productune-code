@@ -7,7 +7,7 @@ effort: high
 ---
 # Plan first — think before touching code
 
-For work where a wrong first move is expensive. Return a plan; write NO code until resumed.
+For work where a wrong first move is expensive. Return the plan; write NO code in this return.
 
 ## Produce
 1. **Goal restated** — one line, in your words, from the acceptance. Mismatch with the dispatch → `needs_info` now, not after implementing.
@@ -19,4 +19,4 @@ For work where a wrong first move is expensive. Return a plan; write NO code unt
 ## Rules
 - Plan fits in the envelope `summary` + body — if it needs a document, the task probably needs slicing; say so in `unresolved[]`.
 - Architecture picks in the plan → `memory_notes[]` one-liner each (ADR seed).
-- The PO judges the plan (or cross-looks it via a fresh code-review dispatch), then resumes you to implement — the implement playbook takes over from there.
+- Return shape: `files_written[]` empty · the implementation as `unresolved[]`, one line per step, readable by a fresh worker (contracts §Return). Non-empty `unresolved[]` is the PO's re-dispatch path already — its call to resume you, cross-look the plan via a `code-review` dispatch first, or re-slice; `implement` takes over from there.
