@@ -3751,6 +3751,11 @@ def _parse_time_arg(s):
     a rate-limit window boundary — only what the caller spells out."""
     if not s:
         return None, None
+    if not isinstance(s, str):
+        # a record's `ts` of the wrong JSON type (number/list/dict/…) — the
+        # hook's write contract is best-effort, so this is reachable; unusable
+        # rather than a crash that kills the whole command (T-544 F5).
+        return None, None
     s = s.strip()
     m = re.fullmatch(r"(\d+)([mhd])", s)
     if m:
@@ -3789,19 +3794,45 @@ def _usage_era_caveats(model):
     return [msg for key, msg in USAGE_ERA_CAVEATS.items() if key in m]
 
 
+# T-544 F1 (round 2) — the aggregation rule this CLI must use, reused rather
+# than reinvented (doctrine #2): packages/gui/electron/ipc/costArchive.ts's
+# `isCumulative`. A `main` line's cost_usd is a SESSION-CUMULATIVE snapshot —
+# a fresh running total appended on every Stop of the same session_id — never
+# a per-turn increment, so it must be deduped to one max per session, never
+# summed directly (that summing was the ≈2.8x over-count QA caught). A
+# `subagent` line's cost_usd is a genuine per-dispatch total and sums
+# directly. Basis-less legacy lines (pre-dating the cost_basis field) fall
+# back to scope, matching the TS reference exactly.
+def _is_cumulative_cost_line(rec):
+    cb = rec.get("cost_basis")
+    if cb == "main_session_cumulative":
+        return True
+    if cb == "subagent_total":
+        return False
+    return rec.get("scope") == "main"
+
+
 def _scan_turns_file(path):
-    """(status, records, bad_line_count). status: absent|empty|malformed|ok —
-    malformed = the file has content but not one line parsed as a JSON
-    object; ok-with-some-bad-lines reports those via bad_line_count instead
-    of hiding them (acceptance: a bad file is reported, never skipped
-    silently)."""
+    """(status, records, bad_line_count). status: absent|is_directory|
+    unreadable|empty|malformed|ok — each names its OWN condition rather than
+    folding into a neighboring one (T-544 F6 round 2: a directory sitting at
+    this path used to read as "absent" and a permission error as "malformed"
+    — both mislabels that hide what actually went wrong). ok-with-some-bad-
+    lines reports those via bad_line_count instead of hiding them
+    (acceptance: a bad file is reported, never skipped silently)."""
+    if os.path.isdir(path):
+        return "is_directory", [], 0
     if not os.path.isfile(path):
         return "absent", [], 0
     try:
         with open(path, encoding="utf-8") as f:
             raw_lines = [ln for ln in f if ln.strip()]
-    except Exception:
+    except PermissionError:
+        return "unreadable", [], 0
+    except UnicodeDecodeError:
         return "malformed", [], 0
+    except OSError:
+        return "unreadable", [], 0
     if not raw_lines:
         return "empty", [], 0
     records, bad = [], 0
@@ -3832,14 +3863,27 @@ def cmd_usage(args):
     if not scan_root.is_dir():
         sys.exit(f"prdt usage: --root 없음 — {scan_root}")
 
+    instant_window = bool(since_dt and until_dt and since_dt == until_dt)
     window_label = (
         f"{args.since or '(시작 없음)'} ~ {args.until or '(끝 없음, 지금까지)'}"
         if (args.since or args.until) else
         "전체 기록 (윈도우 미지정 — 한도 창 경계는 기계가 읽을 수 없어 추정하지 않음, T-525)"
     )
+    if instant_window:
+        # T-544 F6 round 2: --since X --until X used to read as if it labeled
+        # a day; it resolves to one instant, and only a record at that exact
+        # timestamp would ever fall inside it.
+        window_label += " — 주의: since=until, 하루 범위가 아니라 단일 시점"
 
     projects = []
+    symlinks_skipped = []
     for d in sorted(p for p in scan_root.iterdir() if p.is_dir()):
+        if d.is_symlink():
+            # never followed (T-544 F6 round 2) — a symlinked project dir used
+            # to be scanned silently, which can double-count a project
+            # reachable two ways. Named here instead, not silently included.
+            symlinks_skipped.append(d.name)
+            continue
         if not (d / ".prdt" / "po-state.json").is_file():
             continue  # not a prdt project on this machine — out of scope, not a gap
         status, records, bad = _scan_turns_file(str(d / ".prdt" / "turns.jsonl"))
@@ -3852,13 +3896,28 @@ def cmd_usage(args):
     cost_by_model = {}
     tokens_total = {"input": 0, "output": 0, "cache": 0}
     no_cost_by_model = {}
+    bad_cost_type_by_model = {}
     partial_count = 0
     partial_unpriced = {}
     null_model_records = 0
+    null_model_last_ts = None
+    negative_cost_records = 0
+    observed_first_ts = None
+    observed_last_ts = None
     per_project = []
 
     for p in projects:
         proj_cost, in_window, skipped, bad_ts = 0.0, 0, 0, 0
+        # T-544 F1 round 2 — a `main` (cost_basis == main_session_cumulative,
+        # or basis-less scope == main) line's cost_usd is a running total for
+        # the WHOLE session, re-snapshotted on every Stop; summing every line
+        # double(-triple-…)counts it. Deferred here and folded once per
+        # session_id (its max) after the record loop — the rule
+        # packages/gui/electron/ipc/costArchive.ts's aggregateLines already
+        # implements (Σ(subagent) + Σ_session(max of cumulative)), reused
+        # rather than re-derived.
+        session_max = {}
+        no_session_seq = 0
         for rec in p["records"]:
             raw_ts = rec.get("ts")
             dt, _ = _parse_time_arg(raw_ts) if raw_ts else (None, None)
@@ -3870,23 +3929,56 @@ def cmd_usage(args):
             if until_dt and dt > until_dt:
                 continue
             in_window += 1
+            if observed_first_ts is None or dt < observed_first_ts:
+                observed_first_ts = dt
+            if observed_last_ts is None or dt > observed_last_ts:
+                observed_last_ts = dt
             model = rec.get("model")
             if model is None:
                 null_model_records += 1
+                if null_model_last_ts is None or dt > null_model_last_ts:
+                    null_model_last_ts = dt
             u = rec.get("usage") or {}
             for k in ("input", "output", "cache"):
                 v = u.get(k)
-                if isinstance(v, (int, float)):
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
                     tokens_total[k] += v
             cost = rec.get("cost_usd")
             src = rec.get("cost_source")
-            if isinstance(cost, (int, float)) and src in ("reported", "estimated"):
-                cost_by_source[src] += cost
-                proj_cost += cost
+            bad_type = cost is not None and (isinstance(cost, bool) or not isinstance(cost, (int, float)))
+            if bad_type:
+                # present but the wrong shape (a JSON string/bool where a
+                # number belongs) — its own bucket. Never folded into
+                # "no cost recorded" (that means a legitimate gap; this is a
+                # malformed value) and never summed as a number (T-544 F6
+                # round 2: `cost_usd: true` used to sum as $1.0 because
+                # Python bool is an int subclass).
+                skipped += 1
                 mkey = model or "(null)"
-                slot = cost_by_model.setdefault(mkey, {"reported": 0.0, "estimated": 0.0, "count": 0})
-                slot[src] += cost
-                slot["count"] += 1
+                bad_cost_type_by_model[mkey] = bad_cost_type_by_model.get(mkey, 0) + 1
+            elif isinstance(cost, (int, float)) and not isinstance(cost, bool) and src in ("reported", "estimated"):
+                if cost < 0:
+                    # summed as-is (an adjustment/refund is plausible and
+                    # unverifiable from here) but never silently — T-544 F6
+                    # round 2.
+                    negative_cost_records += 1
+                if _is_cumulative_cost_line(rec):
+                    sid = rec.get("session_id")
+                    if not isinstance(sid, str) or not sid:
+                        sid = f"__no_session__{no_session_seq}"
+                        no_session_seq += 1
+                    slot = session_max.get(sid)
+                    if slot is None or cost > slot["cost"]:
+                        session_max[sid] = {"cost": cost, "model": model, "src": src}
+                    # NOT added to proj_cost/cost_by_model here — folded once
+                    # per session below, after every line has been seen.
+                else:
+                    cost_by_source[src] += cost
+                    proj_cost += cost
+                    mkey = model or "(null)"
+                    slot = cost_by_model.setdefault(mkey, {"reported": 0.0, "estimated": 0.0, "count": 0})
+                    slot[src] += cost
+                    slot["count"] += 1
             elif src == "estimated_partial":
                 # hook itself refused to total this record — a real, priced model
                 # shared the transcript with one it could not price. Never folded
@@ -3902,6 +3994,16 @@ def cmd_usage(args):
                 skipped += 1
                 mkey = model or "(null)"
                 no_cost_by_model[mkey] = no_cost_by_model.get(mkey, 0) + 1
+
+        # Fold each session's single cumulative maximum in exactly once.
+        for info in session_max.values():
+            cost_by_source[info["src"]] += info["cost"]
+            proj_cost += info["cost"]
+            mkey = info["model"] or "(null)"
+            slot = cost_by_model.setdefault(mkey, {"reported": 0.0, "estimated": 0.0, "count": 0})
+            slot[info["src"]] += info["cost"]
+            slot["count"] += 1
+
         per_project.append({"name": p["name"], "status": p["status"], "bad_lines": p["bad_lines"],
                              "bad_ts": bad_ts, "records_in_window": in_window,
                              "cost_usd": round(proj_cost, 4), "skipped_in_window": skipped})
@@ -3913,23 +4015,105 @@ def cmd_usage(args):
             caveats.append(f"{model}: {msg} (레코드 단위 구분 불가 — 가격표 버전 마커 없음; "
                             f"위 합계의 estimated ${round(slot['estimated'], 4)} 중 일부일 수 있음)")
 
+    # T-544 F2 (user verdict ①, 2026-09-14): do NOT compute a lower bound for
+    # the excluded records (that needs the hook's PRICES table in the CLI —
+    # T-628 owns that consolidation) — instead the total must SAY it is a
+    # lower bound whenever real, priced-but-unreadable cost was excluded.
+    is_lower_bound = bool(no_cost_by_model) or partial_count > 0 or bool(bad_cost_type_by_model)
+
+    # T-544 F1 consequence (dispatch, 2026-09-14): a cumulative snapshot's
+    # session-max IS the whole session's total, so when the window narrows to
+    # a slice of a longer-running session, the main portion of a windowed sum
+    # still carries usage from before the window started. Said, not silently
+    # offered as a true windowed figure (T-525: no readable window-boundary
+    # signal exists to correct for this).
+    main_window_caveat = None
+    if args.since or args.until:
+        main_window_caveat = (
+            "지정한 --since/--until 윈도우 중 main(세션 누적) 몫은 참값이 아닐 수 있음 — 세션별 "
+            "최댓값이 그 세션 '전체'의 누적 비용이라, 세션이 창 시작 이전에 시작했다면 창 이전 "
+            "사용량까지 포함됨(T-525: 한도 창 경계를 기계가 읽을 수 없어 보정 불가)."
+        )
+
+    # T-544 F4 (grill): every cost_source on this machine has been "estimated"
+    # (usage × API list price) — "reported" (a real invoice figure) has never
+    # once fired here, and this is a subscription. The output must not let a
+    # reader conclude "we were billed $X".
+    billing_note = None
+    if cost_by_source["estimated"] > 0:
+        billing_note = (
+            "reported(실제 청구) 비용이 이 기기에서 한 번도 관측되지 않음 — 정액제 구독이라면 위 "
+            "합계는 청구액이 아니라 API 정가 환산 추정치(estimated)일 뿐"
+            if cost_by_source["reported"] == 0 else
+            "위 합계 중 estimated 항목은 API 정가 환산이며, 정액제 구독 하에서는 실제 청구액과 "
+            "다를 수 있음"
+        )
+
+    null_model_note = None
+    if null_model_records:
+        last_str = null_model_last_ts.date().isoformat() if null_model_last_ts else "알 수 없음"
+        null_model_note = (
+            f"모델 미상(model: null) 레코드 {null_model_records}건 — 동기 응답 경로가 모델 없이 "
+            f"usage만 실어보낸 것(T-543 확인); 이번 집계에서 마지막 관측 {last_str}(그 이후 계속 "
+            f"미관측일 수 있으나 이 문장은 매번 다시 계산됨 — 경로 자체는 살아있음, 퇴역 아님); "
+            f"귀속 불가라 위 집계에서 '(null)'로 잡힘."
+        )
+
+    negative_cost_note = None
+    if negative_cost_records:
+        negative_cost_note = (
+            f"음수 cost_usd 레코드 {negative_cost_records}건이 합계에 그대로 더해짐 — 조정/환불로 "
+            f"추정되나 여기서는 확인 불가."
+        )
+
+    symlink_note = None
+    if symlinks_skipped:
+        symlink_note = (
+            f"심볼릭 링크 디렉터리 {len(symlinks_skipped)}개는 스캔에서 제외됨(추종 안 함): "
+            + ", ".join(symlinks_skipped)
+        )
+
+    # T-544 F3 (round 2): narrow the claim rather than silently widen the scan
+    # — "이 기기"였던 라벨이 실제로는 scan_root 바로 아래(깊이 1)만 본다. 관측된
+    # 구간을 그대로 적어 "전체 기록"이 실은 이 구간뿐임을 드러낸다 (verdict ②).
+    observed_range_note = None
+    if observed_first_ts and observed_last_ts:
+        observed_range_note = (
+            f"관측 구간: {observed_first_ts.date().isoformat()} ~ {observed_last_ts.date().isoformat()} "
+            f"— 이번 집계에서 실제로 발견된 레코드의 첫/마지막 시각일 뿐, '전체 기록'의 정의가 아님. "
+            f"스캔 루트({scan_root}) 밖이나 그 아래 더 깊은 경로의 prdt 프로젝트, 그리고 스캔 대상이 "
+            f"아닌 레거시 저장소에는 이보다 오래된 기록이 남아 있을 수 있고 감사 대상이 아님."
+        )
+
     out = {
         "scan_root": str(scan_root),
-        "window": {"since": args.since, "until": args.until, "label": window_label},
+        "scan_depth": 1,
+        "window": {"since": args.since, "until": args.until, "label": window_label, "is_instant": instant_window},
+        "observed_ts": {
+            "first": observed_first_ts.isoformat() if observed_first_ts else None,
+            "last": observed_last_ts.isoformat() if observed_last_ts else None,
+        },
         "projects": per_project,
         "cost_usd_total": cost_total,
+        "cost_usd_total_is_lower_bound": is_lower_bound,
         "cost_usd_by_source": {k: round(v, 4) for k, v in cost_by_source.items()},
         "cost_usd_by_model": {k: {"reported": round(v["reported"], 4),
                                    "estimated": round(v["estimated"], 4),
                                    "count": v["count"]} for k, v in cost_by_model.items()},
         "tokens_total": tokens_total,
         "skipped": {"no_cost_recorded": no_cost_by_model,
-                    "estimated_partial": {"count": partial_count, "unpriced_models": partial_unpriced}},
+                    "estimated_partial": {"count": partial_count, "unpriced_models": partial_unpriced},
+                    "bad_cost_type": bad_cost_type_by_model},
         "null_model_records": null_model_records,
+        "negative_cost_records": negative_cost_records,
+        "symlinks_skipped": symlinks_skipped,
         "era_caveats": caveats,
+        "main_window_caveat": main_window_caveat,
+        "billing_note": billing_note,
         "scope_boundary": (
-            f"이 기기({scan_root}) 아래 prdt 프로젝트 {len(projects)}개의 합계일 뿐 — 다른 기기나 "
-            "같은 계정을 쓰는 다른 사람의 사용량은 관측 대상이 아니라 이 수치에 없음(0건이 아니라 "
+            f"이 기기({scan_root}, 깊이 1) 아래 prdt 프로젝트 {len(projects)}개의 합계일 뿐 — 다른 "
+            "기기나 같은 계정을 쓰는 다른 사람, 이 루트 밖 또는 더 깊은 경로의 prdt 프로젝트, 스캔 "
+            "대상에서 제외된 레거시 저장소의 사용량은 관측 대상이 아니라 이 수치에 없음(0건이 아니라 "
             "'못 봄')."
         ),
     }
@@ -3939,10 +4123,11 @@ def cmd_usage(args):
         return
 
     print(f"prdt usage — {window_label}")
-    print(f"scan root: {scan_root}")
+    print(f"scan root: {scan_root} (깊이 1)")
     print()
     status_tag = {"ok": "", "absent": " [turns.jsonl 없음]", "empty": " [turns.jsonl 비어있음]",
-                  "malformed": " [turns.jsonl 파싱 불가]"}
+                  "malformed": " [turns.jsonl 파싱 불가]", "unreadable": " [turns.jsonl 읽기 불가(권한 등)]",
+                  "is_directory": " [turns.jsonl 자리에 디렉터리가 있음]"}
     for pr in per_project:
         extra = status_tag[pr["status"]]
         if pr["bad_lines"]:
@@ -3952,7 +4137,8 @@ def cmd_usage(args):
         print(f"  {pr['name']:<24} ${pr['cost_usd']:.4f}  레코드 {pr['records_in_window']}건"
               f"(스킵 {pr['skipped_in_window']}){extra}")
     print()
-    print(f"측정된 비용 합계: ${cost_total:.4f}  (reported ${cost_by_source['reported']:.4f} + "
+    total_label = "측정된 비용 합계(하한 — 미기록/미가격 구간 있음)" if is_lower_bound else "측정된 비용 합계"
+    print(f"{total_label}: ${cost_total:.4f}  (reported ${cost_by_source['reported']:.4f} + "
           f"estimated ${cost_by_source['estimated']:.4f})")
     print(f"토큰 합계(참고용, 과금 단위 아님): input {tokens_total['input']:,} · "
           f"output {tokens_total['output']:,} · cache {tokens_total['cache']:,}")
@@ -3961,17 +4147,30 @@ def cmd_usage(args):
         print(f"비용 미기록 — 합계에서 제외됨 ({sum(no_cost_by_model.values())}건), 모델별:")
         for m, n in sorted(no_cost_by_model.items(), key=lambda kv: -kv[1]):
             print(f"    {m}: {n}건")
+    if bad_cost_type_by_model:
+        print(f"cost_usd 타입 이상(문자열/불리언 등) — 합계에서 제외됨 "
+              f"({sum(bad_cost_type_by_model.values())}건), 모델별:")
+        for m, n in sorted(bad_cost_type_by_model.items(), key=lambda kv: -kv[1]):
+            print(f"    {m}: {n}건")
     if partial_count:
         print(f"estimated_partial — 합계에서 제외됨 ({partial_count}건, 훅이 미가격 모델의 실토큰 "
               f"혼재를 스스로 거부한 레코드), 등장한 미가격 모델:")
         for m, n in sorted(partial_unpriced.items(), key=lambda kv: -kv[1]):
             print(f"    {m}: {n}건")
-    if null_model_records:
-        print(f"모델 미상(model: null) 레코드 {null_model_records}건 — 동기 응답 경로가 모델 없이 "
-              f"usage만 실어보낸 것(T-543 확인; 2026-08-20 이후 미관측이나 경로는 살아있음, 퇴역 "
-              f"아님); 귀속 불가라 위 집계에서 '(null)'로 잡힘.")
+    if null_model_note:
+        print(null_model_note)
+    if negative_cost_note:
+        print(negative_cost_note)
+    if symlink_note:
+        print(symlink_note)
     for c in caveats:
         print(f"주의: {c}")
+    if main_window_caveat:
+        print(f"주의: {main_window_caveat}")
+    if billing_note:
+        print(f"주의: {billing_note}")
+    if observed_range_note:
+        print(observed_range_note)
     print()
     print(out["scope_boundary"])
 

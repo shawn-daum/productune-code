@@ -201,4 +201,191 @@ describe.skipIf(!READY)('prdt usage — machine-wide sum (T-544 positive control
     expect(r.status).toBe(1)
     expect(r.err).toMatch(/--since/)
   })
+
+  // ── Round 2 (T-544 reopened) ────────────────────────────────────────────────
+
+  test('F1 (critical): a session-cumulative main record is a running total, not an increment — ' +
+       'per-session MAX, never a naive sum, matching costArchive.ts\'s aggregateLines', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      // Same session_id, 3 Stop-triggered snapshots of the SAME running total.
+      // A naive sum would give 1+4+10=15; the correct total is the final
+      // snapshot's value, 10 (this IS the fixture shape none of round 1's
+      // fixtures planted — two main records under one session_id).
+      { ts: '2026-09-01T00:00:00Z', scope: 'main', persona: 'po', session_id: 'S1', model: 'claude-fable-5',
+        cost_usd: 1.0, cost_source: 'estimated', cost_basis: 'main_session_cumulative', usage: { input: 10, output: 5, cache: 0 } },
+      { ts: '2026-09-01T01:00:00Z', scope: 'main', persona: 'po', session_id: 'S1', model: 'claude-fable-5',
+        cost_usd: 4.0, cost_source: 'estimated', cost_basis: 'main_session_cumulative', usage: { input: 10, output: 5, cache: 0 } },
+      { ts: '2026-09-01T02:00:00Z', scope: 'main', persona: 'po', session_id: 'S1', model: 'claude-fable-5',
+        cost_usd: 10.0, cost_source: 'estimated', cost_basis: 'main_session_cumulative', usage: { input: 10, output: 5, cache: 0 } },
+      // A second, independent session — its own max folds in separately.
+      { ts: '2026-09-02T00:00:00Z', scope: 'main', persona: 'po', session_id: 'S2', model: 'claude-fable-5',
+        cost_usd: 3.0, cost_source: 'estimated', cost_basis: 'main_session_cumulative', usage: { input: 5, output: 2, cache: 0 } },
+      // A genuine per-dispatch subagent total — summed directly, unaffected.
+      { ts: '2026-09-02T00:00:00Z', scope: 'subagent', persona: 'developer', model: 'claude-sonnet-5',
+        cost_usd: 2.0, cost_source: 'estimated', cost_basis: 'subagent_total', usage: { input: 1, output: 1, cache: 0 } },
+    ])
+    const r = prdt(p1, 'usage', '--root', root, '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    // Correct: session-max(S1)=10 + session-max(S2)=3 + subagent 2 = 15.
+    // The pre-fix defect would give 1+4+10+3+2 = 20.
+    expect(out.cost_usd_total).toBeCloseTo(15.0, 6)
+    expect(out.projects[0].cost_usd).toBeCloseTo(15.0, 6)
+    // records_in_window still counts every raw snapshot line (5), independent
+    // of the dedup applied to their cost.
+    expect(out.projects[0].records_in_window).toBe(5)
+  })
+
+  test('F1: a basis-less legacy main record falls back to scope==main for the same session-max rule', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      { ts: '2026-09-01T00:00:00Z', scope: 'main', session_id: 'S1', model: 'x', cost_usd: 5.0, cost_source: 'reported', usage: null },
+      { ts: '2026-09-01T01:00:00Z', scope: 'main', session_id: 'S1', model: 'x', cost_usd: 9.0, cost_source: 'reported', usage: null },
+    ])
+    const r = prdt(p1, 'usage', '--root', root, '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    expect(out.cost_usd_total).toBeCloseTo(9.0, 6) // max, not 14
+  })
+
+  test('F1 consequence: a --since/--until window states that the main portion can predate it', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      { ts: '2026-09-10T00:00:00Z', scope: 'main', session_id: 'S1', model: 'x', cost_usd: 1.0, cost_source: 'estimated',
+        cost_basis: 'main_session_cumulative', usage: null },
+    ])
+    const r = prdt(p1, 'usage', '--root', root, '--since', '2026-09-09T00:00:00Z', '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    expect(out.main_window_caveat).toMatch(/세션/)
+  })
+
+  test('F2: the total states it is a LOWER BOUND when priced-but-excluded records exist (no size computed)', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      { ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'claude-opus-5', cost_usd: 1.0, cost_source: 'estimated', usage: null },
+      { ts: '2026-09-14T00:00:01Z', scope: 'subagent', model: 'claude-opus-5', cost_usd: null, cost_source: null, usage: null },
+    ])
+    const out = JSON.parse(prdt(p1, 'usage', '--root', root, '--json').out)
+    expect(out.cost_usd_total_is_lower_bound).toBe(true)
+    expect(prdt(p1, 'usage', '--root', root).out).toMatch(/하한/)
+  })
+
+  test('F2 contrast: nothing excluded → not a lower bound, no "하한" wording', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [{ ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'x', cost_usd: 1.0, cost_source: 'estimated', usage: null }])
+    const out = JSON.parse(prdt(p1, 'usage', '--root', root, '--json').out)
+    expect(out.cost_usd_total_is_lower_bound).toBe(false)
+    expect(prdt(p1, 'usage', '--root', root).out).not.toMatch(/하한/)
+  })
+
+  test('F3/verdict②: output states the observed first/last ts and that the scan is scoped (depth 1, this root)', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      { ts: '2026-07-03T06:48:48Z', scope: 'subagent', model: 'x', cost_usd: 1.0, cost_source: 'estimated', usage: null },
+      { ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'x', cost_usd: 1.0, cost_source: 'estimated', usage: null },
+    ])
+    const r = prdt(p1, 'usage', '--root', root, '--json')
+    const out = JSON.parse(r.out)
+    expect(out.observed_ts.first).toMatch(/^2026-07-03/)
+    expect(out.observed_ts.last).toMatch(/^2026-09-14/)
+    expect(out.scope_boundary).toMatch(/깊이|더 깊은/)
+  })
+
+  test('F4: a billing note fires when reported has never once occurred (this machine\'s actual shape)', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [{ ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'x', cost_usd: 1.0, cost_source: 'estimated', usage: null }])
+    const r = prdt(p1, 'usage', '--root', root, '--json')
+    const out = JSON.parse(r.out)
+    expect(out.billing_note).toMatch(/reported|청구/)
+  })
+
+  test('F5: a non-string ts does not crash the whole command — the record is excluded, others still print', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      { ts: 1700000000, scope: 'subagent', model: 'x', cost_usd: 1.0, cost_source: 'estimated', usage: null },
+      { ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'x', cost_usd: 2.0, cost_source: 'estimated', usage: null },
+    ])
+    const r = prdt(p1, 'usage', '--root', root, '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    expect(out.cost_usd_total).toBeCloseTo(2.0, 6)
+    expect(out.projects[0].bad_ts).toBe(1)
+  })
+
+  test('F7: "last observed" for null-model records is computed from the data, not a hardcoded date', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      { ts: '2026-09-13T00:00:00Z', scope: 'subagent', model: null, cost_usd: 1.0, cost_source: 'estimated', usage: null },
+    ])
+    const r = prdt(p1, 'usage', '--root', root)
+    expect(r.out).toMatch(/2026-09-13/)
+    expect(r.out).not.toMatch(/2026-08-20/)
+  })
+
+  test('F6 quiet acceptances: bool cost_usd is not summed as $1, a negative cost is summed but flagged, ' +
+       'since==until is labeled an instant, and a symlinked project dir is not followed', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, [
+      { ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'x', cost_usd: true, cost_source: 'estimated', usage: null },
+      { ts: '2026-09-14T00:00:01Z', scope: 'subagent', model: 'x', cost_usd: -5.0, cost_source: 'estimated', usage: null },
+    ])
+    const rInstant = prdt(p1, 'usage', '--root', root, '--since', '2026-09-14T00:00:00Z', '--until', '2026-09-14T00:00:00Z', '--json')
+    const outInstant = JSON.parse(rInstant.out)
+    expect(outInstant.window.is_instant).toBe(true)
+    expect(outInstant.window.label).toMatch(/단일 시점/)
+
+    const rFull = prdt(p1, 'usage', '--root', root, '--json')
+    const outFull = JSON.parse(rFull.out)
+    // bool cost_usd excluded entirely from the money total (not summed as 1.0)
+    // and reported in its own bucket, not folded into no_cost_recorded.
+    expect(outFull.skipped.bad_cost_type).toEqual({ x: 1 })
+    // the negative record IS summed (a plausible refund/adjustment) but named.
+    expect(outFull.cost_usd_total).toBeCloseTo(-5.0, 6)
+    expect(outFull.negative_cost_records).toBe(1)
+
+    // Symlinked project dir: real project + a symlink pointing at it must not
+    // be scanned twice (would double the total).
+    const real = mkProject('preal')
+    writeTurns(real, [{ ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'x', cost_usd: 10.0, cost_source: 'estimated', usage: null }])
+    fs.symlinkSync(real, path.join(root, 'plink'), 'dir')
+    const rSym = prdt(p1, 'usage', '--root', root, '--json')
+    const outSym = JSON.parse(rSym.out)
+    expect(outSym.projects.map((p: any) => p.name)).not.toContain('plink')
+    expect(outSym.symlinks_skipped).toContain('plink')
+  })
+
+  test('F6 mislabels: an unreadable file, a directory named turns.jsonl, and a wrong-typed cost_usd ' +
+       'each get their OWN status/bucket instead of borrowing a neighboring one', () => {
+    // a) directory sitting where turns.jsonl belongs → "is_directory", not "absent".
+    const pDir = mkProject('pdir')
+    fs.mkdirSync(path.join(pDir, '.prdt', 'turns.jsonl'))
+    // b) cost_usd as a string → its own bad-type bucket, not "no_cost_recorded".
+    const pStr = mkProject('pstr')
+    writeTurns(pStr, [{ ts: '2026-09-14T00:00:00Z', scope: 'subagent', model: 'x', cost_usd: '3.0', cost_source: 'estimated', usage: null }])
+
+    const r = prdt(pDir, 'usage', '--root', root, '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    const byName = Object.fromEntries(out.projects.map((p: any) => [p.name, p]))
+    expect(byName.pdir.status).toBe('is_directory')
+    expect(out.skipped.no_cost_recorded).not.toHaveProperty('x')
+    expect(out.skipped.bad_cost_type).toEqual({ x: 1 })
+
+    // c) unreadable file (permission denied) → "unreadable", not "malformed".
+    if (process.getuid && process.getuid() !== 0) {
+      const pPerm = mkProject('pperm')
+      writeTurns(pPerm, [{ ts: '2026-09-14T00:00:00Z', model: 'x', cost_usd: 1, cost_source: 'estimated', usage: null }])
+      fs.chmodSync(path.join(pPerm, '.prdt', 'turns.jsonl'), 0o000)
+      try {
+        const rPerm = prdt(pPerm, 'usage', '--root', root, '--json')
+        const outPerm = JSON.parse(rPerm.out)
+        const byName2 = Object.fromEntries(outPerm.projects.map((p: any) => [p.name, p]))
+        expect(byName2.pperm.status).toBe('unreadable')
+      } finally {
+        fs.chmodSync(path.join(pPerm, '.prdt', 'turns.jsonl'), 0o644)
+      }
+    }
+  })
 })
