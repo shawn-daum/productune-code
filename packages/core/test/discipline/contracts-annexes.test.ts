@@ -185,10 +185,20 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     for (const n of ANNEXES) expect(annex(n)).not.toMatch(/Secrets|Carve-out|non-overridable/)
   })
 
-  test('line room was actually freed (contracts 76/80 after T-586 slice 2A; po habit 58/64 after T-611 slice 2) and the caps still hold', () => {
+  // This test's job is the compression gain from T-586/T-611, not the hard cap
+  // — the caps themselves are guarded elsewhere and do not depend on this test
+  // (contracts ≤80: prdt-doctor-promotion-path.test.ts, prdt-doctor-feature-seam.test.ts;
+  // po habit ≤64: prdt-doctor-po-habit-cap.test.ts, where doctor itself warns).
+  // A `toBe(76)`/`toBe(58)` exact pin fired on every legal line-count-preserving
+  // edit and had already been re-bumped three rounds running (T-586, T-611,
+  // T-631) — QA named that class each time. Ceilings at what the tree now holds
+  // instead: 77, not 76, because T-630 moved a voice kernel out of po/habit.md
+  // into contracts §Language today, costing po habit 2 lines (58→56) and
+  // contracts 1 (76→77).
+  test('line room stays within what T-586/T-611/T-630 compressed it to (contracts ≤77, po habit ≤56) — hard caps enforced elsewhere', () => {
     const lines = (s: string) => s.replace(/\n$/, '').split('\n').length
-    expect(lines(CONTRACTS)).toBe(76)
-    expect(lines(HABITS.po)).toBe(58)
+    expect(lines(CONTRACTS)).toBeLessThanOrEqual(77)
+    expect(lines(HABITS.po)).toBeLessThanOrEqual(56)
     expect(lines(HABITS.developer)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.qa)).toBeLessThanOrEqual(40)
     expect(lines(HABITS.designer)).toBeLessThanOrEqual(40)
