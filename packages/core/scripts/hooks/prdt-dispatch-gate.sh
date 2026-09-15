@@ -306,7 +306,7 @@ else (.tool_input // {}) as $ti
               deny(head + "the `[ctx]` line is missing required key(s): " + ($missing | join(", ")) + ".\ncontracts.md §Dispatch, verbatim:\n" + $clause_ctx + "\nEvery key in that schema is required; extra keys of your own are fine." + tail)
             elif (($ctx.prd_path | type) != "string")
                  or (($ctx.prd_path | test("^docs/prd/PRD\\.md#v[0-9]+\\.[0-9]+$")) | not) then
-              deny(head + "`[ctx].prd_path` is malformed.\ncontracts.md §Fixed paths, verbatim:\n" + $clause_prd + "\nThe fragment is what scopes the worker's read to ONE version section, so it is the shape that has to be exact." + tail)
+              deny(head + "`[ctx].prd_path` is malformed.\ncontracts.md §Fixed paths, verbatim:\n" + $clause_prd + "\nSet it to exactly that shape — the fragment scopes the worker's read to ONE version section, so it has no tolerance." + tail)
             else
               # Passed. Per-FIELD Hangul ratio on the two machine-facing fields.
               ([{f: "goal", r: ($ctx.goal | hangul_ratio)},

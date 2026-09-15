@@ -497,10 +497,13 @@ prompt = ev.get("prompt") or ""
 if (stage in ("define", "build") and isinstance(prompt, str)
         and not is_not_fresh_user_text(prompt) and DEPLOY_RE.search(prompt)):
     lines.append(
-        f"[prdt stage guard] deploy-shaped request while stage={stage} — deploy belongs to "
-        "ship. Ship entry is due FIRST: readiness pass (readiness-dispatch playbook) + "
-        "po-state stage write, or an explicit N/A-skip line in docs/wiki/log.md. "
-        "Raise it before doing the deploy work (PO habit — Lifecycle judgment)."
+        f"[prdt stage guard] confirm before acting: deploy-shaped phrasing matched this "
+        f"turn while stage={stage}, but this trigger has misfired on every turn it has "
+        "fired this version (11/11, T-530 owns the match fix) — read the turn yourself and "
+        "confirm it actually asks for a deploy before treating it as one. If it does, do "
+        "ship entry first: readiness pass (readiness-dispatch playbook) + po-state stage "
+        "write, or an explicit N/A-skip line in docs/wiki/log.md, before the deploy work "
+        "(PO habit — Lifecycle judgment)."
     )
 
 # ── T-490 slice 3 / T-553: worker return-envelope flags ──────────────────────
