@@ -135,7 +135,7 @@ function codesFor(root: string, last: unknown): string[] | null {
 }
 
 /** Lines of the gate's evidence log, parsed. */
-function gateLog(root: string): Array<{ outcome: string, codes: string[] }> {
+function gateLog(root: string): Array<{ outcome: string, codes: string[], agent_id?: string }> {
   const p = path.join(root, '.prdt', '.return-gate.jsonl')
   if (!fs.existsSync(p)) return []
   return fs.readFileSync(p, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
@@ -327,7 +327,7 @@ describe.skipIf(!READY)('the gate — block once while the worker lives, let the
     expect(out).not.toBeNull()
     expect(out!.decision).toBe('block')
     expect(fs.existsSync(queuePath(root)), 'the PO notice is the SECOND line, not the first').toBe(false)
-    expect(gateLog(root)).toEqual([{ ts: expect.any(String), persona: 'developer', outcome: 'blocked', codes: ['not-json-object'] }])
+    expect(gateLog(root)).toEqual([{ ts: expect.any(String), persona: 'developer', outcome: 'blocked', codes: ['not-json-object'], agent_id: 'a1' }])
   })
 
   test('the block is the ONLY channel — never additionalContext (the unbounded one, T-490)', () => {
@@ -344,15 +344,15 @@ describe.skipIf(!READY)('the gate — block once while the worker lives, let the
     const fenced = gateFirst(root, '```json\n' + envelope() + '\n```')!.reason
     expect(fenced).toContain('the first character is "`"')
     const long = gateFirst(root, envelope({ summary: 'y'.repeat(306), task: 'x'.repeat(81) }))!.reason
-    expect(long).toContain('`summary` is 306 chars, cap 200')
-    expect(long).toContain('`task` is 81 chars, cap 80')
+    expect(long).toContain('shorten `summary` to ≤200 chars — yours is 306')
+    expect(long).toContain('shorten `task` to ≤80 chars — yours is 81')
     const conf = gateFirst(root, envelope({ confidence: 'high' }))!.reason
     expect(conf).toContain('`confidence` must be a JSON number in 0..1 — yours is a string')
     const num = gateFirst(root, envelope({ confidence: 7 }))!.reason
     expect(num).toContain('yours is the number 7, outside 0..1')
     const missing = gateFirst(root, JSON.stringify({ summary: 'ok', confidence: 0.5 }))!.reason
-    expect(missing).toContain('required key `persona` is missing or null')
-    expect(missing).toContain('required key `task` is missing or null')
+    expect(missing).toContain('include `persona` — currently missing or null')
+    expect(missing).toContain('include `task` — currently missing or null')
     const who = gateFirst(root, envelope({ persona: 'ops' }))!.reason
     expect(who).toContain('`persona` must be one of po|designer|developer|qa')
     const tail = gateFirst(root, envelope() + '\ndone.')!.reason
@@ -420,6 +420,72 @@ describe.skipIf(!READY)('the gate — block once while the worker lives, let the
     const ctx = promptCtx(root)
     expect((ctx.match(/\[prdt return check\] the last return/g) ?? []).length).toBe(5)
     expect(ctx).toContain('3 further queued return flag(s) not rendered')
+  })
+})
+
+describe.skipIf(!READY)('T-634 — a repaired row carries the codes it was originally blocked on', () => {
+  test('same agent_id, block then clean re-fire: repaired.codes equals blocked.codes, and both rows carry agent_id', () => {
+    const root = makeProject()
+    stopWith(root, 'prose, not an envelope', 'a3', false)
+    expect(stopWith(root, envelope(), 'a3', true)).toBe('')
+    const log = gateLog(root)
+    expect(log.map((l) => l.outcome)).toEqual(['blocked', 'repaired'])
+    expect(log[0].agent_id).toBe('a3')
+    expect(log[1].agent_id).toBe('a3')
+    expect(log[1].codes).toEqual(['not-json-object'])
+    expect(log[1].codes).toEqual(log[0].codes)
+  })
+
+  test('a clean re-fire with no matching block for that agent_id logs repaired with empty codes — no guessing', () => {
+    const root = makeProject()
+    expect(stopWith(root, envelope(), 'a9', true)).toBe('')
+    expect(gateLog(root)).toEqual([
+      { ts: expect.any(String), persona: 'developer', outcome: 'repaired', codes: [], agent_id: 'a9' },
+    ])
+  })
+
+  test('the bridge is consumed once — a second clean re-fire under the same agent_id does not replay stale codes', () => {
+    const root = makeProject()
+    stopWith(root, 'prose', 'a4', false)
+    stopWith(root, envelope(), 'a4', true) // repaired: consumes the bridge
+    stopWith(root, envelope(), 'a4', true) // an unrelated second clean re-fire, same id
+    const log = gateLog(root)
+    expect(log.map((l) => l.outcome)).toEqual(['blocked', 'repaired', 'repaired'])
+    expect(log[1].codes).toEqual(['not-json-object'])
+    expect(log[2].codes).toEqual([])
+  })
+
+  test('a `failed` row still logs its own freshly-detected codes, and now also carries agent_id', () => {
+    const root = makeProject()
+    stopWith(root, 'prose', 'a5', false)
+    stopWith(root, 'still prose', 'a5', true)
+    const log = gateLog(root)
+    expect(log.map((l) => l.outcome)).toEqual(['blocked', 'failed'])
+    expect(log[1].agent_id).toBe('a5')
+    expect(log[1].codes).toEqual(['not-json-object'])
+  })
+
+  test('the schema boundary is written once, naming the ts from which repaired rows carry codes', () => {
+    const root = makeProject()
+    expect(stopWith(root, envelope())).toBe('')
+    const p = path.join(root, '.prdt', '.return-gate-schema.json')
+    const first = JSON.parse(fs.readFileSync(p, 'utf8'))
+    expect(typeof first.repaired_codes_since).toBe('string')
+    stopWith(root, envelope(), 'a6', true)
+    const second = JSON.parse(fs.readFileSync(p, 'utf8'))
+    expect(second).toEqual(first) // written once, never overwritten on later runs
+  })
+
+  test('existing pre-T-634 log lines are never rewritten or backfilled', () => {
+    const root = makeProject()
+    const legacyLine = JSON.stringify({ ts: '2026-09-09T00:00:00Z', persona: 'developer', outcome: 'repaired', codes: [] })
+    fs.mkdirSync(path.join(root, '.prdt'), { recursive: true })
+    fs.writeFileSync(path.join(root, '.prdt', '.return-gate.jsonl'), legacyLine + '\n')
+    stopWith(root, 'prose', 'a7', false)
+    stopWith(root, envelope(), 'a7', true)
+    const lines = fs.readFileSync(path.join(root, '.prdt', '.return-gate.jsonl'), 'utf8').trim().split('\n')
+    expect(lines[0]).toBe(legacyLine)
+    expect(JSON.parse(lines[2]).codes).toEqual(['not-json-object'])
   })
 })
 
@@ -561,7 +627,7 @@ describe.skipIf(!READY)('no payload text escapes — probed the way the dispatch
     const root = makeProject()
     const reason = gateFirst(root, HOSTILE)!.reason
     for (const s of FORBIDDEN) expect(reason, `payload leaked into the block reason: ${s}`).not.toContain(s)
-    expect(reason).toContain('`task` is')
+    expect(reason).toContain('shorten `task` to')
     expect(reason).toContain('yours is a string')
   })
 
