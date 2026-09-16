@@ -8,7 +8,7 @@ effort: high
 # Hi-fi — only when it earns its render cost
 
 ## Skip/keep judgment (run it first, say the call in `summary`)
-- **Skip** when existing mockups/DS showcase already convey interaction + states, no new visual pattern, no complex state transitions — the build proceeds from what exists; one line why.
+- **Skip** when existing mockups/DS showcase already convey interaction + states, no new visual pattern, no complex state transitions — the build proceeds from what exists; one line why. The Define screen set (`build-entry` §Screen set names the version's prototype) is a keep every time: render it.
 - **Keep** when: several new screens · complex interaction / state machines · a new pattern · a brand-heavy surface · this is the sole design artifact of the change.
 - Genuinely ambiguous → `needs_info` with the 2-option question (hi-fi first vs build from current mockups), your recommendation first.
 
