@@ -6773,6 +6773,404 @@ def discipline_caps_warnings(droot):
     return warns
 
 
+# ── resource ownership markers (T-591) — the CLI the stop rule names ────────
+#
+# `qa/habit.md` §Working rules and `po/habit.md` §Returns already read: "last
+# dispatch out stops it" / "0 left → stop it" — this is the CLI that makes
+# those lines real. `prdt resource up|down` record who booted a machine
+# resource; `ls` reports what is recorded. None of the three stops, kills, or
+# signals anything (provable by grep — see the CLI-side test for this
+# section): the marker is bookkeeping only, the stop command belongs to
+# whichever dispatch removes the LAST marker, in the rule text, not here.
+#
+# Marker file: `~/.prdt/run/resources/<name>/<dispatch>.json`, tooling-owned
+# under the existing `~/.prdt/run/` carve-out (contracts §Fixed paths already
+# names the directory — no new carve-out needed). One file per (resource,
+# dispatch) pair; `up` on the same dispatch is idempotent — it rewrites
+# `since`, it never doubles the held count.
+#
+# Ownership test (user's verdict, verbatim "c. docker같은것도 똑같아",
+# 2026-09-15): a resource with at least one marker was agent-started
+# (prdt-owned), one with none was not (user-owned) — ONE test, never a branch
+# on kind. `_resource_owner` below is the single function both this CLI's
+# `ls` and the resident-machine-resources doctor check (further down) call
+# for that judgment; the doctor check used to split VM-vs-Docker by a fixed
+# name list, which is exactly the split the user's verdict discarded.
+
+RE_RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RE_DISPATCH_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _resource_default_dispatch_id():
+    """Self-identification for a dispatch's OWN bare `up <name>` / `down
+    <name>` (qa/habit.md never passes `--dispatch` on its own resource) — the
+    same session-scoped signal `prdt preflight`'s latch already keys on
+    (`_canary_latch_path`), the only per-dispatch identity this process can
+    read from its own environment.
+
+    KNOWN GAP, left open by T-591's own §재설계 (not this ticket's to close):
+    two dispatches sharing ONE session (this machine has run two workers in
+    parallel inside a single session) collide on this default. Whichever of
+    them needs to be told apart must pass its own `--dispatch <id>`; the CLI
+    cannot see subagent identity, only session identity."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
+    return sid if RE_CANARY_SESSION.match(sid) else "local"
+
+
+def _resource_marker_dir(name):
+    return prdt_home() / "run" / "resources" / name
+
+
+def _resource_markers(name=None):
+    """Markers on disk, optionally filtered to one resource `name`. A corrupt
+    or foreign JSON file under the directory is skipped, never raised — a
+    read here must survive a hand-edited or half-written file."""
+    base = prdt_home() / "run" / "resources"
+    if not base.is_dir():
+        return []
+    try:
+        dir_names = [name] if name is not None else sorted(p.name for p in base.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    out = []
+    for n in dir_names:
+        d = base / n
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.json")):
+            data = read_json(f)
+            if not isinstance(data, dict):
+                continue
+            out.append({
+                "resource": data.get("resource") or n,
+                "dispatch": data.get("dispatch") or f.stem,
+                "project": data.get("project"),
+                "since": data.get("since"),
+            })
+    return out
+
+
+def _resource_owner(name):
+    """T-591 판정 ⓒ — 종류가 아니라 표식이 소유를 가른다: 표식이 하나라도 있으면
+    prdt-owned, 없으면 user-owned. VM 과 Docker 스택이 같은 함수를 탄다."""
+    return "prdt" if _resource_markers(name) else "user"
+
+
+def _resource_project_slug(root):
+    if not root:
+        return None
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    slug = cfg.get("slug")
+    return slug if isinstance(slug, str) and slug else None
+
+
+def cmd_resource(args):
+    """`prdt resource up|down|ls` — record/report ownership markers ONLY.
+    Grep-provable: nothing below signals a process, stops a VM, touches a
+    container, or quits an application. The stop command lives with whichever
+    dispatch's `down` brings a resource's marker count to zero — rule text
+    (qa/habit.md, po/habit.md), never this function."""
+    action = args.action
+    if action == "ls":
+        markers = _resource_markers()
+        if args.json:
+            print(json.dumps(markers, ensure_ascii=False))
+            return
+        if not markers:
+            print("no resource markers")
+            return
+        by_name = {}
+        for m in markers:
+            by_name.setdefault(m["resource"], []).append(m)
+        for n in sorted(by_name):
+            group = by_name[n]
+            print(f"{safe_label(n)}: {len(group)} held")
+            for m in group:
+                proj = safe_label(m["project"]) if m["project"] else "-"
+                print(f"  dispatch={safe_label(m['dispatch'])} project={proj} since={m['since'] or '-'}")
+        return
+
+    rest = list(args.rest or [])
+    if len(rest) != 1:
+        sys.exit(f"usage: prdt resource {action} <name>")
+    name = rest[0].strip()
+    if not RE_RESOURCE_NAME.match(name):
+        sys.exit("prdt resource: <name> must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    dispatch = (args.dispatch or "").strip() or _resource_default_dispatch_id()
+    if not RE_DISPATCH_ID.match(dispatch):
+        sys.exit("prdt resource: --dispatch must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+    if action == "up":
+        project = _resource_project_slug(find_project_root())
+        since = now_iso()
+        marker = {"resource": name, "dispatch": dispatch, "project": project, "since": since}
+        d = _resource_marker_dir(name)
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{dispatch}.json"
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, p)
+        held = len(_resource_markers(name))
+        proj_out = safe_label(project) if project else "-"
+        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out} since={since} held={held}")
+        return
+
+    if action == "down":
+        p = _resource_marker_dir(name) / f"{dispatch}.json"
+        removed = p.exists()
+        if removed:
+            try:
+                p.unlink()
+            except OSError:
+                removed = False
+        left = len(_resource_markers(name))
+        print(f"down: {safe_label(name)} marker={safe_label(dispatch)} "
+              f"removed={'true' if removed else 'false'} left: {left}")
+        return
+
+
+# ── resident machine resources — report only, never act (T-592) ─────────────
+#
+# T-591 puts the stop duty on the persona that booted a resource (the QA
+# playbooks that boot the `cua` VM). This is the second line of defense for
+# what that duty misses — a resource still up after its dispatch returned, a
+# round that ended mid-verification, a dead agent that never reached its own
+# cleanup. It only REPORTS: no function below signals a process, stops a VM,
+# touches a container, or quits an application — provable by grep on this
+# section alone (no `stop`/`kill`/`shutdown`/`quit`/`rm` verb reaches a
+# subprocess call here; the one shutdown STRING that exists is quoted into a
+# warning LINE for a person to run, never executed).
+#
+# Ownership decides whether a line carries a repair command (the user's own
+# constraint, 2026-09-08, quoted in T-591/T-592) — and, as of T-591's
+# §재설계 (2026-09-15), ownership is read from the SAME resource markers the
+# `prdt resource` CLI above writes (`_resource_owner`), not from a fixed
+# VM-vs-Docker split: a marker for the name means an agent dispatch started
+# it, no marker means it was already there. A repair command is only ever
+# offered on TOP of that — this machine has one known stop procedure, for
+# `cua` (`machine:fact--qa-cua-vm`), so `KNOWN_REPAIR_COMMANDS` below stays a
+# small lookup, not a kind branch: a prdt-owned Docker stack still gets no
+# command, because there genuinely isn't one this doctor check can hand out
+# (which compose file, which service — T-591's forbidden-actions list never
+# lets it touch one), while a hypothetical prdt-owned VM under a different
+# name would get none either, for the same reason: the lookup, not the kind.
+#
+# `lume ls` (incl. `--format json`) carries no boot timestamp — measured on
+# this machine (T-592). So "resident hours" for a VM is tracked by doctor
+# itself: a first-seen marker under the tooling-owned `~/.prdt/run/` (no
+# persona writes there by hand; this is the CLI persisting its own runtime
+# state, the same class as the call-governor's turn counters — contracts
+# §Fixed paths, no new carve-out needed, the clause already names the
+# directory). A VM that stops and later restarts gets a fresh first-seen —
+# correct, its resident age really did reset. Docker containers carry their
+# own `CreatedAt`, so no marker is needed there.
+
+RESIDENT_HOURS_WARN = 24.0      # under a day resident is not yet "forgotten" territory
+LOAD_AVG_WARN = 10.0            # this machine's own measured stall point (fact--cli-pty-testing.md:
+                                 # "load avg 10 이상에서 vitest 기본 15s 를 깬다") reused as the
+                                 # "worth a look now" line — not a vitest-specific number
+CUA_STOP_CMD = 'lume ssh cua "echo lume | sudo -S shutdown -h now"'  # `lume stop` exits 130 here (measured)
+KNOWN_REPAIR_COMMANDS = {"cua": CUA_STOP_CMD}  # name → the one stop command doctor can hand out on this machine
+
+
+def _resident_vm_state_path():
+    return prdt_home() / "run" / "resident-vm-since.json"
+
+
+def _lume_running_vm_names():
+    """Read-only `lume ls --format json`. Absent binary, non-zero exit, or
+    unparsable output → None ("could not look"), never an empty list standing
+    in for "nothing running" — those are different facts."""
+    exe = shutil.which("lume")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "ls", "--format", "json"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        rows = json.loads(r.stdout or "[]")
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return [row.get("name") for row in rows
+            if isinstance(row, dict) and row.get("status") == "running" and row.get("name")]
+
+
+def _lume_resident_resources(now):
+    names = _lume_running_vm_names()
+    if names is None:
+        return None
+    state_path = _resident_vm_state_path()
+    state = read_json(state_path)
+    state = state if isinstance(state, dict) else {}
+    new_state = {}
+    resources = []
+    for name in names:
+        try:
+            first_seen = datetime.fromisoformat(state[name]) if name in state else None
+        except (ValueError, TypeError):
+            first_seen = None
+        if first_seen is None:
+            first_seen = now
+        new_state[name] = first_seen.isoformat()
+        hours = (now - first_seen).total_seconds() / 3600
+        owner = _resource_owner(name)
+        resources.append({
+            "kind": "vm", "name": safe_label(name), "owner": owner,
+            "resident_hours": hours, "detail": None,
+            "repair_cmd": KNOWN_REPAIR_COMMANDS.get(name) if owner == "prdt" else None,
+        })
+    if new_state != state:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = state_path.with_name(state_path.name + ".tmp")
+        tmp.write_text(json.dumps(new_state, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, state_path)
+    return resources
+
+
+_DOCKER_CREATED_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([+-]\d{4})")
+
+
+def _parse_docker_created(raw):
+    """`docker ps`'s CreatedAt looks like `2026-09-14 15:18:17 +0900 KST` — the
+    trailing zone NAME is not part of the offset and is left unmatched."""
+    m = _DOCKER_CREATED_RE.match((raw or "").strip())
+    if not m:
+        return None
+    try:
+        return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M:%S %z")
+    except ValueError:
+        return None
+
+
+def _docker_resident_resources(now):
+    """Read-only `docker ps` — RUNNING containers only, never `-a` (which would
+    also name stopped ones as if resident). Grouped by the compose project
+    label so a 10+-container stack reports as ONE line; an unlabeled
+    container groups under its own name. Ownership is marker-based like the
+    VM check (`_resource_owner`), never a fixed "always user" default — this
+    check still never STOPS a Docker resource either way (T-591's
+    forbidden-actions list), it only reports who is on the hook for it."""
+    exe = shutil.which("docker")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run(
+            [exe, "ps", "--format", '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.CreatedAt}}'],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    stacks = {}
+    for line in (r.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        cname, project, created_raw = parts
+        project = project.strip() or cname.strip()
+        created = _parse_docker_created(created_raw)
+        if created is None:
+            continue
+        entry = stacks.setdefault(project, {"count": 0, "earliest": created})
+        entry["count"] += 1
+        if created < entry["earliest"]:
+            entry["earliest"] = created
+    resources = []
+    for project, info in stacks.items():
+        hours = (now - info["earliest"]).total_seconds() / 3600
+        owner = _resource_owner(project)
+        resources.append({
+            "kind": "docker-stack", "name": safe_label(project), "owner": owner,
+            "resident_hours": hours,
+            "repair_cmd": KNOWN_REPAIR_COMMANDS.get(project) if owner == "prdt" else None,
+            "detail": f"{info['count']} container(s)",
+        })
+    return resources
+
+
+def _uptime_load_1m():
+    exe = shutil.which("uptime")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"load averages?:\s*([\d.]+)", r.stdout or "")
+    return float(m.group(1)) if m else None
+
+
+def _memory_pressure_free_pct():
+    """`memory_pressure`'s own free-PERCENTAGE line — never `vm_stat` free
+    PAGES, which undercounts reclaimable `inactive` memory as unavailable
+    (measured wrong on this machine, T-591/T-592 §실측 기준선). Context only —
+    it never gates the warning threshold (resident hours + load do)."""
+    exe = shutil.which("memory_pressure")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"free percentage:\s*(\d+)%", r.stdout or "")
+    return int(m.group(1)) if m else None
+
+
+def resident_resource_lines(resources, load_1m, mem_free_pct=None):
+    """Pure — takes already-gathered machine state, returns warning lines. Kept
+    apart from the gathering functions above so the threshold logic is
+    testable against a machine-state fixture without a real `lume` / `docker`
+    / `uptime` on the test machine (T-592 acceptance)."""
+    if load_1m is None or load_1m < LOAD_AVG_WARN:
+        return []
+    mem_note = f" · available memory {mem_free_pct}% (memory_pressure)" if mem_free_pct is not None else ""
+    lines = []
+    for res in resources:
+        if res["resident_hours"] < RESIDENT_HOURS_WARN:
+            continue
+        detail = f" ({res['detail']})" if res.get("detail") else ""
+        base = (f"machine: {res['kind']} '{res['name']}'{detail} resident "
+                f"{res['resident_hours']:.1f}h while host load is {load_1m:.1f} "
+                f"(≥{LOAD_AVG_WARN:.0f}){mem_note}")
+        if res["owner"] == "prdt":
+            # prdt-owned (a marker exists) does not guarantee a KNOWN repair
+            # command — that lookup is a separate, machine-specific fact
+            # (today only `cua`), not implied by ownership.
+            if res.get("repair_cmd"):
+                lines.append(f"{base} — prdt-owned, stop if this dispatch's job is done: `{res['repair_cmd']}`")
+            else:
+                lines.append(f"{base} — prdt-owned, report only, no known repair command for this resource")
+        else:
+            lines.append(f"{base} — user-owned, report only, no stop command offered")
+    return lines
+
+
+def resident_machine_resource_warnings():
+    """Report-only doctor check (T-592). Skipped (not a clean pass) when
+    neither `lume` nor `docker` is on PATH — the check could not look, which
+    is different from looking and finding nothing resident."""
+    lume_ok = shutil.which("lume") is not None
+    docker_ok = shutil.which("docker") is not None
+    if not lume_ok and not docker_ok:
+        return Skipped("no `lume` or `docker` on PATH — could not look at resident VM/container state")
+    now = datetime.now(timezone.utc)
+    resources = []
+    if lume_ok:
+        vm = _lume_resident_resources(now)
+        if vm is not None:
+            resources += vm
+    if docker_ok:
+        dk = _docker_resident_resources(now)
+        if dk is not None:
+            resources += dk
+    return resident_resource_lines(resources, _uptime_load_1m(), _memory_pressure_free_pct())
+
+
 def cmd_doctor(_args):
     root = require_root()
     st = read_json(root / ".prdt" / "po-state.json")
@@ -6834,6 +7232,14 @@ def cmd_doctor(_args):
         # wiki — project store, then the machine store (§8b) it now searches alongside
         ("wiki lint", FAMILY_PROJECT, lambda: wiki_lint(root)),
         ("machine wiki", FAMILY_PROJECT, lambda: machine_wiki_warnings()),
+        # resident VM/docker state — report only, never act (T-592). FAMILY_DE,
+        # not FAMILY_PROJECT: this detects the missed case of T-591's discipline
+        # rule (the booting persona stops what it started) — a resource still
+        # resident past the threshold IS a discipline↔execution mismatch, and
+        # filing it here is also what makes an absent `lume`/`docker` print as
+        # "could not look" via the existing Skipped precedent (FAMILY_PROJECT
+        # checks have no such print path — none of them ever return Skipped).
+        ("resident machine resources", FAMILY_DE, lambda: resident_machine_resource_warnings()),
         # dead discipline-path citations in live SoT docs (T-535) — wiki lint only
         # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
         # citations everywhere else a persona habit/bookshelf doc or design.md makes one
@@ -7665,6 +8071,16 @@ def main():
     p.add_argument("--list", action="store_true", help="print keys · domain · default · body presence")
     p.add_argument("--json", action="store_true", help="machine mode (show / --list)")
     p.set_defaults(fn=cmd_register)
+    p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591): "
+                                        "up <name> [--dispatch <id>] · down <name> [--dispatch <id>] · "
+                                        "ls [--json] — record/report only, NEVER stops anything; the "
+                                        "dispatch whose `down` empties a resource's marker count stops it itself")
+    p.add_argument("action", choices=("up", "down", "ls"))
+    p.add_argument("rest", nargs="*", help="up/down: <name>")
+    p.add_argument("--dispatch", help="marker id for up/down; default is this session's own identity "
+                                      "(CLAUDE_CODE_SESSION_ID) — pass explicitly to act on another dispatch's marker")
+    p.add_argument("--json", action="store_true", help="ls: machine-readable output")
+    p.set_defaults(fn=cmd_resource)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
                                          "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
                                          "— JSON verdict on stdout (available | unavailable | inconclusive)")
