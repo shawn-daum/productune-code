@@ -22,7 +22,7 @@ Three openings, one machine. The first two assume the version's tag is cut and R
 
 ## In-build regression patch (stage `build`, worktree parallel)
 Only when a regression fires while `po-state.stage` is `build` — not the in-ship patch loop (title paragraph above) and not the idle-only Post-close patch. The pair clause still bars every other mid-round discovery; this opening exists because a regression is unpaid scope already billed, not new scope. Both trigger questions must be YES, or it's backlog, full stop:
-1. **Invalidates a prior version's claimed AC** — a closed version's PRD/AC says pass, and this regression is documented proof that claim is false right now.
+1. **Invalidates a prior version's claimed AC** — a closed version's PRD/AC says pass, and this regression is documented proof that claim is false right now on `main`, what installs follow. A regression only this round's `dev` commits carry is not this opening: `build-entry` §Exception, ticketed into the round.
 2. **Waiting compounds the damage** — deferring to next round's close (a 2-round delay) makes it worse, not just later. A one-time inconvenience fails this.
 
 Delivery is its OWN sequence — it does not run the Emergency hotfix steps below, whose step 1 cherry-picks from `dev`. Here the fix is written on `main` and `dev` never carries it, so the only movement is `main` → `dev`. It ends in the same place — same patch tag, same mergeback — and runs alongside the active round, never inside it:
