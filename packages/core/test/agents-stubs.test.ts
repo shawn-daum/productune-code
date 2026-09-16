@@ -84,8 +84,19 @@ describe('agents/prdt-*.md are stubs over one hook-carried bootstrap (T-578)', (
   test('T-491 lives in the discipline tree, not in the stubs: contracts kernel once + one per-persona line in each habit', () => {
     for (const a of ALL) expect(read(a)).not.toMatch(/T-491|Turn economy|Dispatch economy/)
     const contracts = fs.readFileSync(path.join(DISC, 'contracts.md'), 'utf8')
-    expect(contracts.match(/T-491/g)?.length).toBe(1)
-    expect(contracts).toMatch(/Turn economy \(T-491\)/)
+    // T-639: the contracts half was counted by its `(T-491)` TAG, exactly as
+    // the per-persona half below was before T-613 — and `contracts.md` is an
+    // injected file, so the T-611 sweep took that tag too. Same repair, same
+    // reason: the pin holds the RULE. Exactly one line carries the kernel, and
+    // that line states the budget unit, names the governor that counts it, and
+    // defers the per-count behaviour to the persona habits (where the lines
+    // pinned below state it). Stricter than the tag count was.
+    const KERNEL_LINE = /\b(?:Turn|Dispatch) economy\b/
+    const kernel = contracts.split('\n').filter((l) => KERNEL_LINE.test(l))
+    expect(kernel.length, 'discipline/contracts.md: lines stating the turn-economy kernel (matched by rule text — a (T-491) tag is not required and not sufficient)').toBe(1)
+    expect(kernel[0], 'discipline/contracts.md: the turn-economy kernel no longer states TURNS as the budget unit').toMatch(/TURNS are the budget, not bytes/)
+    expect(kernel[0], 'discipline/contracts.md: the turn-economy kernel no longer names the governor that counts the turns').toMatch(/`prdt-call-governor\.sh`\) counts API turns per dispatch/)
+    expect(kernel[0], 'discipline/contracts.md: the turn-economy kernel no longer defers the per-count behaviour to the persona habit').toMatch(/what it does at which count: that persona's habit/)
     // T-613: the per-persona half used to be counted by its `(T-491)` TAG.
     // T-611 slice 1 strips history tags out of injected files on purpose, so
     // qa/habit.md lost the tag while keeping the rule — restoring the tag is
