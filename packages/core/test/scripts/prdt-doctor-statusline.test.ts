@@ -101,7 +101,7 @@ function doctorStatuslineLines(cwd: string = projectDir, home: string = machineH
 }
 
 beforeEach(() => {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-statusline-'))
+  sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-statusline-')))
   disciplineDir = path.join(sandbox, 'discipline')
   fs.cpSync(REPO_DISCIPLINE, disciplineDir, { recursive: true })
   machineHome = path.join(sandbox, 'prdt-home')

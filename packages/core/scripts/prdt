@@ -2564,6 +2564,54 @@ def hook_registration_warnings():
     return warns
 
 
+def hook_dangling_command_warnings():
+    """Hook registrations whose command names an absolute path that does not
+    exist — reported, never repaired (T-640).
+
+    OBSERVED BY RUNNING (PO, 2026-09-16): a scratch-home installer run registered
+    the whole prdt roster under /private/tmp/… into the real settings.json; when
+    the scratch dirs were deleted, every one of those entries ran a file that
+    was not there, once per event, on every session. `hook_registration_warnings`
+    compares BASENAMES against the mirror, so it saw nothing: the basename was
+    mirrored, only the path was dead. This check is independent of the mirror
+    (no install on this machine still leaves settings.json worth reading) and
+    judges only what it can know without running anything: the first token of
+    the command, when it is an absolute path. A PATH lookup (`jq …`), an inline
+    shell, or a command shlex cannot tokenize is not judged here — the
+    statusline check owns the parse-error vocabulary, and a guess would be a
+    false accusation."""
+    settings_path = claude_settings_path()
+    settings = read_json(settings_path)
+    if not isinstance(settings, dict):
+        return Skipped(f"{settings_path} missing or invalid JSON — no hook registrations to read")
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+    warns = []
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for h in entry.get("hooks") or []:
+                cmd = h.get("command") if isinstance(h, dict) else None
+                if not isinstance(cmd, str) or not cmd.strip():
+                    continue
+                try:
+                    tok = shlex.split(cmd)
+                except ValueError:
+                    continue
+                exe = tok[0] if tok else ""
+                if not exe.startswith("/") or os.path.exists(exe):
+                    continue
+                warns.append(f"hooks: {settings_path} registers {exe} on {event} but that file does not exist — "
+                             f"the harness runs it anyway (command-not-found, once per {event}); if it is a prdt hook "
+                             f"under a deleted scratch PRDT_HOME, remove that entry by hand — doctor reports, it does "
+                             f"not edit settings.json")
+    return warns
+
+
 # ── statusline registration (T-500) ────────────────────────────────────────────
 # install.sh §6 preserves any existing `statusLine` (ours or a custom one) by
 # default and only ever logs one install-time line about it — nothing re-checks
@@ -7250,6 +7298,9 @@ def cmd_doctor(_args):
         ("register", FAMILY_DE, lambda: register_warnings(droot)),
         # hook roster parity + governor fire evidence (T-445 / T-491)
         ("hook roster + governor fire", FAMILY_DE, lambda: hook_registration_warnings()),
+        # a registered command whose absolute path is gone (T-640) — independent of
+        # the mirror: the basename check above cannot see a dead PATH
+        ("hook command targets", FAMILY_DE, lambda: hook_dangling_command_warnings()),
         # statusline registration — user + project-level (T-500)
         ("statusline registration", FAMILY_DE, lambda: statusline_warnings(root)),
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a

@@ -55,7 +55,7 @@ test('the roster is 23 hooks today — a canary on the number the user reads', (
 })
 
 test.skipIf(!hasJq())('a real install prints the manifest count', () => {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-count-'))
+  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-count-')))
   const home = path.join(sb, 'home')
   const prdtHome = path.join(sb, 'prdt')
   const claudeDir = path.join(sb, 'claude')
