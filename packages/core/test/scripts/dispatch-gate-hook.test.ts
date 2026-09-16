@@ -40,7 +40,7 @@ const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-dispatch-gate.sh')
 const CONTRACTS = path.join(CORE_ROOT, 'discipline', 'contracts.md')
 
 function tmp(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
 }
 
 /** A project dir carrying the `.prdt/po-state.json` marker the hooks up-walk for. */

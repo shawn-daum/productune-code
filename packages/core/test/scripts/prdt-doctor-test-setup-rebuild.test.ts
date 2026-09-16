@@ -43,7 +43,7 @@ let projectRoot: string
 let env: NodeJS.ProcessEnv
 
 function makeFixture(): void {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-setuprebuild-'))
+  sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-setuprebuild-')))
   const home = path.join(sandbox, 'home')
   fs.mkdirSync(home, { recursive: true })
   env = {

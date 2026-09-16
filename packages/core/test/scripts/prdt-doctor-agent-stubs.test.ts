@@ -134,13 +134,13 @@ function editBoth(s: string, fn: (text: string) => string) {
 
 beforeAll(() => {
   if (!PYTHON3 || !GIT) return
-  template = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-agent-stubs-seed-'))
+  template = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-agent-stubs-seed-')))
   buildTemplate(template)
 })
 afterAll(() => { if (template) fs.rmSync(template, { recursive: true, force: true }) })
 
 beforeEach(() => {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-agent-stubs-'))
+  sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-agent-stubs-')))
   fs.cpSync(template, sandbox, { recursive: true })
   retargetMetaGit(sandbox)
   repoAgents = path.join(sandbox, 'repo', 'packages', 'core', 'agents')

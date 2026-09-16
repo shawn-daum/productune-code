@@ -128,7 +128,7 @@ function doctor(): string[] {
 }
 
 beforeEach(() => {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hooks-'))
+  sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hooks-')))
   disciplineDir = path.join(sandbox, 'discipline')
   fs.cpSync(REPO_DISCIPLINE, disciplineDir, { recursive: true })
   machineHome = path.join(sandbox, 'prdt-home')
@@ -443,5 +443,51 @@ describe.skipIf(!PYTHON3)('prdt doctor — missing / truncated / symlinked count
     expect(hook).toContain('WIT="$RUN/.hw-$SID.$AID"')
     const cli = fs.readFileSync(PRDT_CLI, 'utf8')
     expect(cli).toContain('".hw-"')
+  })
+})
+
+describe.skipIf(!PYTHON3)('prdt doctor — a hook registration pointing at a path that does not exist (T-640)', () => {
+  /** The PO's incident shape: a scratch-home install registered the whole roster
+   *  under /private/tmp/…, then the scratch dirs were deleted. Every such entry
+   *  runs a file that is not there, once per event, forever — and the basename
+   *  check above does not see it (the basename IS in the mirror). */
+  function registerRaw(commands: Record<string, string[]>) {
+    const hooks: any = {}
+    for (const [event, cmds] of Object.entries(commands)) {
+      hooks[event] = [{ hooks: cmds.map((c) => ({ type: 'command', command: c })) }]
+    }
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ hooks }, null, 2))
+  }
+
+  test('a prdt hook registered from a deleted scratch home is reported by its full path, once per entry', () => {
+    mirror('prdt-session-start.sh', GOVERNOR)
+    fired('PreToolUse', 'PostToolBatch')
+    const gone = path.join(sandbox, 'prdt-injPO', 'hooks', 'prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, `"${gone}"`],
+      SubagentStart: [`"${gone}"`],
+      PreToolUse: [`"${path.join(hooksDir(), GOVERNOR)}"`],
+      PostToolBatch: [`"${path.join(hooksDir(), GOVERNOR)}"`],
+    })
+    const lines = doctor().filter((l) => l.includes(gone))
+    expect(lines.length).toBe(2)
+    expect(lines.join('\n')).toContain('SessionStart')
+    expect(lines.join('\n')).toContain('SubagentStart')
+    // report only — settings.json is not edited
+    const after = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+    expect(after.hooks.SessionStart[0].hooks.length).toBe(2)
+  })
+
+  test('a non-prdt hook whose absolute path is missing is reported too — the harness runs it just the same', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({ SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, '/opt/gone/some-other-tool-hook.sh --flag'] })
+    expect(doctor().join('\n')).toContain('/opt/gone/some-other-tool-hook.sh')
+  })
+
+  test('a command that is not an absolute path (a PATH lookup, an inline shell) is not judged', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({ SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, 'jq -n 1', 'echo hi && true'] })
+    expect(doctor().filter((l) => l.includes('does not exist') || l.includes('not exist'))).toEqual([])
   })
 })
