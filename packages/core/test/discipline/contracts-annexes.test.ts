@@ -94,6 +94,7 @@ const MOVED: ReadonlyArray<readonly [(typeof ANNEXES)[number], string]> = [
   ['fixed-paths', '`prdt doctor` watches the seam: orphan spec files · promotion candidates (done tickets in ≥2 version dirs, unjudged)'],
   ['fixed-paths', 'A design/token contract or build pipeline the code imports or builds from (e.g. `tokens.json` → a token build script) is code no matter the subject matter'],
   ['tickets', "Redeploys append to the version's single `ops` ticket, not new tickets."],
+  ['tickets', '`deps` is dispatch-order judgment material + query index only — never machine-enforced.'],
   ['definition-of-done', '`discipline_root()` prefers `~/.prdt/discipline` over the repo, so it binds no persona until that mirror is resynced'],
   ['git', "whether that merge lands locally or through a pull request is the REPOSITORY's policy"],
   ['git', 'The mechanical block is a per-clone pre-push hook that `prdt init` / `prdt doctor` writes into the code repo\'s own `.git/hooks`'],
@@ -128,7 +129,9 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     'Meta/code split test = coupling, never "is it a doc"',
     // §Tickets: the enum and the body shape
     '`status` is the whole enum.',
-    '- Body = `## Request` / `## Acceptance` / `## Outcome`.',
+    '- Body = `## Request` / `## Why` / `## Acceptance` / `## Outcome`.',
+    // T-638: the two literal triggers stay hot — the PO must recognize them at its own act
+    '`## Why` exists only on two triggers',
     // restored from the annex by T-586 slice 2A — slice 1's own audit named it the weakest-reachability move
     '- An access-control Acceptance line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.',
     // §DoD: the check itself
