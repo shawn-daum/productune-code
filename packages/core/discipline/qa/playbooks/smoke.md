@@ -17,7 +17,7 @@ Three checks, in order. Report what you ran, not what you assume.
 - Run `surfaces[X].smoke`. Driver map: web → playwright · electron → playwright-electron (scripted launch, not a browser MCP) · ios/android → maestro.
 - Mobile smoke needs BOTH the config command AND an in-repo `.maestro/*.yaml` flow; either missing = effectively `smoke: null`.
 - `smoke: null` · driver / device missing → habit *Commands come from config* · *Env fail ≠ product fail*.
-- Electron smoke that drives window focus, System Events synthetic keys, or IME/input-source switching runs inside the isolated cua VM on this machine, never on the host (`fact--qa-cua-vm`); everything else here stays local.
+- Smoke that moves OS window focus, sends synthesized key events, or switches IME/input sources runs in an isolated environment, never on the host — a host run pollutes the user's live session. Which environment: the machine override; none named → `blocked` (env gap), the host is never the fallback. Everything else here stays local.
 
 ## 3. Acceptance
 - Walk each acceptance line one by one, verbatim. No paraphrase, no batch judgment.
