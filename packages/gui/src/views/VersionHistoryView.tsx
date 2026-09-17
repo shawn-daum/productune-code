@@ -74,8 +74,9 @@ export default function VersionHistoryView() {
         <div style={headerSubtitle}>{subtitle}</div>
       </div>
 
-      {/* PRD row — closed version opens its docs/prd/versions/<v>.md snapshot,
-          current version opens the live master (same UI as VersionDetailView) */}
+      {/* PRD row — closed version opens its record (prdt: docs/prd/history.md,
+          legacy: docs/prd/versions/<v>.md snapshot), current version opens the
+          working PRD.md (same UI as VersionDetailView) */}
       <div style={prdWrap}>
         <PrdSection versionId={selectedVersionId} />
       </div>

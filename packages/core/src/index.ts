@@ -44,6 +44,20 @@ export {
 export type { AudienceMode } from './settings/audience-mode'
 
 export {
+  readRegister,
+  writeRegisterKey,
+  parseRegister,
+  isLegalAddress,
+  isLegalEnumValue,
+  registerPath,
+  REGISTER_DOMAIN,
+  REGISTER_DEFAULTS,
+  REGISTER_KEYS,
+  ADDRESS_MAX_BYTES,
+} from './settings/register'
+export type { Register, RegisterKey, RegisterEnumKey, RegisterAudience, RegisterForm, RegisterStructure } from './settings/register'
+
+export {
   getPlanTier,
   setPlanTier,
   hasPlanTierSet,

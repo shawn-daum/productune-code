@@ -24,4 +24,4 @@ Producer-side checklist: read `docs/design.md`, scan the BUILT product (rendered
 - Drift traced to a DS gap (the DS never specified it) → that's YOUR fix: update `docs/design.md`, note it in `summary`.
 
 ## Return
-- Table item → ✓/N/A/✗ + ✗ detail lines. The PO slices patches → developer → re-check ✗ items only.
+- Table item → ✓/N/A/✗ + ✗ detail lines. The PO slices patches → developer → re-check ✗ items only. Item 5 ✗ on an asset that does not exist (missing — not present-but-unplaced or unreferenced, those stay developer) → `escalate_to{model:"sonnet",effort:"medium",playbooks:["brand-assets"],why}` in the same return; the developer places what it lands, then re-check.

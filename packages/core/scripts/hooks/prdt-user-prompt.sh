@@ -12,14 +12,17 @@
 #      habit assumes, now guaranteed even in long-lived sessions);
 #   b) a deploy-shaped prompt while stage is define/build gets an explicit
 #      ship-entry warning at exactly the observed failure moment.
-#   c) T-490 slice 3 — it also DRAINS the worker return-envelope flag queue that
-#      prdt-post-dispatch.sh writes to .prdt/.return-flags.json. That hook fires
-#      on SubagentStop, where the worker's final message is, but a SubagentStop
-#      additionalContext is injected into the WORKER and resumes it (measured
-#      2026-08-24, harness 2.1.241 — one probe line produced 9 extra worker
-#      turns), so it cannot report to the PO. UserPromptSubmit additionalContext
-#      is the channel T-498 r9 proved reaches the PO, which is why the notice
-#      arrives here, on the PO's next prompt, instead of mid-turn.
+#   c) T-490 slice 3 / T-553 — it also DRAINS the worker return-envelope flag
+#      queue that prdt-return-check.sh writes to .prdt/.return-flags.json. That
+#      hook fires on SubagentStop, where the worker's final message is; since
+#      T-553 it BLOCKS a malformed return once there (`decision:"block"`, the
+#      worker rewrites it) and queues a flag only when the corrected return still
+#      breaks the contract. A SubagentStop additionalContext would be injected
+#      into the WORKER and resume it unbounded (measured 2026-08-24, harness
+#      2.1.241 — one probe line produced 9 extra worker turns), so the notice
+#      cannot ride that; UserPromptSubmit additionalContext is the channel
+#      T-498 r9 proved reaches the PO, which is why it arrives here, on the PO's
+#      next prompt, instead of mid-turn.
 # Advisory only (additionalContext) — soft stages stay soft, the PO judges;
 # false positives cost one line. Silent no-op outside prdt projects and on any
 # read/parse failure (a state hook must never break a session).
@@ -28,8 +31,12 @@ set +e
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
+# T-586: the register binding rides THIS channel (see below) and is computed by the
+# resolver hook next to this file — the mirror dir, so both come from one install.
+PRDT_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+export PRDT_HOOK_DIR
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
-import json, os, re, sys
+import hashlib, json, os, re, subprocess, sys, time
 
 try:
     ev = json.loads(os.environ.get("PRDT_EVENT_JSON", ""))
@@ -67,6 +74,243 @@ try:
         sys.exit(0)
 except Exception:
     sys.exit(0)
+
+# ── T-627 ⓓ: discard guard — the PO must learn when THIS hook was discarded ───
+# The fault is SILENCE, not slowness. When the harness discards a
+# UserPromptSubmit hook's output the PO's turn simply has no `[prdt state]` and
+# no `[prdt register]` line, and PO habit treats the CURRENT turn's state line as
+# the authority over anything read earlier in a long session. So the authority
+# vanishes and nobody can tell — the harness prints its "timed out … output
+# discarded" notice to the USER, never into the PO's context, and this hook's own
+# stderr is debug-log-only while it exits 0 (it reaches neither the transcript,
+# the agent, nor a person). A notice therefore has to ride the same
+# additionalContext channel the state line does, one prompt late.
+#
+# Round 1 of T-627 measured the cliff this machine actually has: the effective
+# UserPromptSubmit timeout is 30 000 ms (read out of the shipped bundle for
+# 2.1.268/269/270 and confirmed by a ticking hook killed at ~29 s), against
+# 1.14–2.41 s wall at 0.15 s CPU for this hook under load — a ~12× margin. The
+# margin makes a discard RARE; it does not make it visible, and rare-and-invisible
+# is the worst combination for a line the PO is told to rely on. Other machines
+# and teammates do not have this margin.
+#
+# MECHANISM. Per `(project, session_id)` this hook leaves one marker under
+# `~/.prdt/run/hook-guard/` — written at the START of the run with `done:false`,
+# rewritten at the END with the measured wall. On the NEXT prompt of the SAME
+# session it reads that marker before overwriting it, and speaks once when the
+# previous run either (a) never completed it AND is confirmed dead — the
+# process was killed mid-run, so the output is GONE, certain — or (b) completed
+# it at/over the guard budget — finished, but possibly too late, which nothing
+# else can see from inside. Keying on session_id (not the project alone) is
+# what stops a second session in the same project raising a false notice; the
+# marker is consumed by being overwritten, so a notice fires once and never
+# repeats.
+#
+# T-627 round 3: a marker reading `done:false` does NOT by itself mean killed —
+# it equally means "still running", and the harness can invoke this hook twice
+# concurrently for ONE prompt when it is registered twice (T-640's duplicate
+# registration measured 161/179 `[prdt hook guard]` notices as exactly this: the
+# second copy reading the first copy's in-progress marker a few hundred ms after
+# it was written, while the first copy was still executing). The marker protocol
+# alone cannot tell those apart; liveness can. The marker's `pid` — previously
+# DIAGNOSTIC ONLY — is now READ BACK: `os.kill(pid, 0)` (no signal sent, just the
+# existence check) tells a live sibling from a confirmed-dead one. Only a
+# confirmed-dead pid (`ProcessLookupError`) is reported as killed; a live pid, an
+# unreadable pid (permission denied — some other uid's process, still alive from
+# our point of view), or a pid whose shape we cannot even trust all fall on the
+# side of SILENCE, on the same "cannot cry wolf about a cost it did not observe"
+# rule the rest of this guard already follows. The cost of that choice is a
+# vanishingly rare true miss (the pid was reused by an unrelated process inside
+# the same session within the staleness window) traded against the measured
+# 161/179 false accusation this repairs.
+#
+# `~/.prdt/run/` is tooling-owned runtime state and the contracts §Fixed-paths
+# carve-out names the DIRECTORY, so a new file under it needs no new carve-out.
+#
+# BUDGET. 10 000 ms. Above every wall this hook has ever been measured at
+# (1.14–2.41 s in round 1; 6.55 s the worst single PO observation at load 9.2),
+# and well under the 30 s cliff, so it warns BEFORE a discard rather than only
+# after one — and it is the right order of magnitude for a machine that registered
+# a lower `timeout` than the default (the only non-default timeout registered
+# anywhere on this machine is 10). `PRDT_HOOK_GUARD_BUDGET_MS` retunes it for such
+# a machine, and is the seam the tests drive the over-budget path through; it is
+# shape-matched to a positive int, and a bad value falls back to the default.
+#
+# BLIND SPOT, stated rather than implied: the marker is written by this python
+# process, so a kill landing in the ~0.1–1.0 s of interpreter startup BEFORE it
+# leaves no marker at all and goes unseen. No timeout that short is registered by
+# anything observed here (the smallest seen is 5 s), so the window is real but not
+# reachable by the failure this guard exists for.
+#
+# NEVER BREAKS THE SESSION (the whole point of this file being `set +e` / exit 0):
+# every path below is wrapped. A full disk, a missing directory, a corrupt or
+# planted marker, a read-only home — each ends as "no guard this turn" with the
+# normal output still emitted. The guard failing must never cost the PO the state
+# line it exists to protect.
+GUARD_SID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
+GUARD_STALE_SECS = 12 * 3600          # older marker = a different working day
+GUARD_DEFAULT_BUDGET_MS = 10000
+GUARD_SWEEP_CAP = 500                 # bounded scan; this runs on every prompt
+
+
+def _guard_budget_ms():
+    raw = (os.environ.get("PRDT_HOOK_GUARD_BUDGET_MS") or "").strip()
+    if raw.isdigit():
+        v = int(raw)
+        if 1 <= v <= 600000:
+            return v
+    return GUARD_DEFAULT_BUDGET_MS
+
+
+def _guard_write(marker, obj):
+    # Atomic and symlink-proof, on the prdt-call-governor.sh precedent (T-567):
+    # `run/` is a 0755 directory shared by every session on this machine, so a
+    # marker name is plantable by something that is not us. O_EXCL creates the
+    # temp or nothing, and `os.replace` renames ONTO the name without following a
+    # link — so neither half can be aimed at another file this uid owns.
+    tmp = "%s.%d.tmp" % (marker, os.getpid())
+    fd = None
+    for attempt in (0, 1):
+        try:
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except Exception:
+            if attempt:
+                return
+            try:
+                os.unlink(tmp)          # our own leftover from a killed run
+            except Exception:
+                return
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(obj, f)
+        os.replace(tmp, marker)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+
+
+def _guard_sweep(d, now):
+    # A session that never came back leaves its marker behind. It can never
+    # accuse anyone — only that same session_id ever reads it — but it should not
+    # accumulate either. Bounded, best-effort, and it never touches a marker
+    # younger than the staleness window, so a live peer session is untouched.
+    try:
+        n = 0
+        for e in os.scandir(d):
+            n += 1
+            if n > GUARD_SWEEP_CAP:
+                break
+            try:
+                if now - e.stat(follow_symlinks=False).st_mtime > GUARD_STALE_SECS:
+                    os.unlink(e.path)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _pid_confirmed_dead(pid):
+    """True only when `pid` is a plausible pid AND is confirmed gone.
+
+    `os.kill(pid, 0)` sends no signal — it only probes existence. Anything short
+    of a definite "no such process" answer (a live pid, a pid we lack permission
+    to probe, an off-shape value, an unexpected OS error) returns False: this
+    guard must never accuse a kill it cannot actually see (T-627 round 3).
+    """
+    if not (isinstance(pid, int) and not isinstance(pid, bool) and pid > 0):
+        return False
+    try:
+        os.kill(pid, 0)
+        return False                    # still alive — a concurrent sibling, not a kill
+    except ProcessLookupError:
+        return True                     # confirmed gone
+    except Exception:
+        return False                    # e.g. PermissionError — can't tell, so don't accuse
+
+
+def guard_begin(proj_root, sid, now):
+    """Read the previous run's verdict, then stamp this run's start marker.
+
+    Returns (notice_or_None, marker_path_or_None). Never raises.
+    """
+    try:
+        if not (isinstance(sid, str) and GUARD_SID_RE.match(sid)):
+            return None, None           # no session key → nothing to attribute
+        home = os.environ.get("PRDT_HOME") or os.path.join(os.path.expanduser("~"), ".prdt")
+        d = os.path.join(home, "run", "hook-guard")
+        os.makedirs(d, exist_ok=True)
+        key = hashlib.sha1(proj_root.encode("utf-8", "replace")).hexdigest()[:12]
+        marker = os.path.join(d, "%s.%s.json" % (key, sid))
+
+        prev = None
+        try:
+            with open(marker, "rb") as f:
+                prev = json.loads(f.read(4096).decode("utf-8", "replace"))
+        except Exception:
+            prev = None
+
+        notice = None
+        budget = _guard_budget_ms()
+        if isinstance(prev, dict):
+            # Everything crossing this file is shape-matched and only ever
+            # re-rendered as a number of this file's own formatting — same rule
+            # the four po-state tokens and the return-flag queue follow above.
+            started = prev.get("start")
+            fresh = (isinstance(started, (int, float)) and not isinstance(started, bool)
+                     and 0 < now - started <= GUARD_STALE_SECS)
+            if fresh and prev.get("done") is not True and _pid_confirmed_dead(prev.get("pid")):
+                notice = (
+                    "[prdt hook guard] the previous run of this hook in THIS session never "
+                    "finished — it was killed mid-run, so the harness discarded its whole "
+                    "output and your last turn carried no [prdt state] and no [prdt register] "
+                    "line. The state line above is this turn's and is current; whatever you "
+                    "assumed about stage/version/current_task on that turn did not come from "
+                    "this channel. Re-read it here rather than from memory (T-627)."
+                )
+            elif fresh and prev.get("done") is not True:
+                pass                     # still running (or unconfirmable) — a sibling, not a kill
+            elif fresh:
+                dur = prev.get("dur_ms")
+                if isinstance(dur, int) and not isinstance(dur, bool) and 0 <= dur:
+                    if dur >= budget:
+                        notice = (
+                            "[prdt hook guard] the previous run of this hook in THIS session took "
+                            "%.1f s, at or over its %g s guard budget. A UserPromptSubmit hook "
+                            "that runs past the timeout registered for it has its ENTIRE output "
+                            "discarded (measured effective default on this harness: 30 s, T-627), "
+                            "so if your last turn showed no [prdt state] line, this is why. The "
+                            "state line above is this turn's and is current."
+                            % (min(dur, 86400000) / 1000.0, budget / 1000.0)
+                        )
+        _guard_write(marker, {"v": 1, "start": now, "done": False, "pid": os.getpid()})
+        _guard_sweep(d, now)
+        return notice, marker
+    except Exception:
+        return None, None
+
+
+def guard_finish(marker, t0, started):
+    try:
+        if marker:
+            _guard_write(marker, {"v": 1, "start": started, "done": True,
+                                  "pid": os.getpid(),
+                                  "dur_ms": int((time.monotonic() - t0) * 1000)})
+    except Exception:
+        pass
+
+
+# t0 is taken here, not at interpreter start: what it measures is this hook's own
+# work, and it UNDERSTATES the wall the harness times by the python startup ahead
+# of it (0.09–1.04 s measured on this machine). Understating is the safe
+# direction for a budget comparison — the guard cannot cry wolf because of a cost
+# it did not observe — and the killed-mid-run half does not depend on it at all.
+_guard_t0 = time.monotonic()
+_guard_started = time.time()
+_guard_notice, _guard_marker = guard_begin(
+    os.path.dirname(os.path.dirname(state_path)), ev.get("session_id"), _guard_started)
 
 # --- T-471: coerce the short po-state tokens to a fixed shape -----------------
 # `.prdt/po-state.json` is PROJECT-LOCAL — a clone carries it — and it is a
@@ -152,6 +396,68 @@ else:
     task = "none"
 
 lines = [f"[prdt state] stage={stage} · version={version} · current_task={task}"]
+
+# ── T-586: register binding — ONE line, from the resolver, every prompt ────────
+# The register object (`~/.prdt/register`: audience · form · structure · address)
+# arrives as a body block once per session start; a long session drifts back to
+# the model's own default voice a few hundred turns later, so the RESOLVED VALUES
+# are re-bound on every prompt. This hook is the single assembly point of the
+# per-turn channel (T-578), so the line is appended here rather than by a second
+# UserPromptSubmit registration — the roster does not grow. The domain, the
+# legality judgment and the wording all live in prdt-audience-inject.sh
+# (`--binding`); this hook only carries what that resolver printed, and only
+# when it printed the shape it owns: exactly one line opening with the fixed
+# `[prdt register]` literal. A default machine (no register file, or every key at
+# its default) gets NO line — the resolver prints nothing, and nothing is added.
+# A pre-T-586 mirror hook given `--binding` and a closed stdin exits silently
+# (no agent_type → PO-only exit), so a half-updated mirror degrades to today's
+# output rather than breaking the prompt.
+#
+# T-627 round 3: that "no line" shape is exactly what a TIMED-OUT or otherwise
+# FAILED resolver call also produces, and the two used to be indistinguishable —
+# the PO cannot tell a default-valued register from a lost one. Measured: one in
+# ten resolver runs took 6.22 s under load 13–15 against this call's own 5 s
+# limit (live markers show `dur_ms 5011`/`5019` — the timeout firing), and 87 of
+# 1,084 state deliveries since 2026-09-15 carried no register line although the
+# register has been non-default since 2026-09-08. The repair is NOT to widen
+# this timeout (no measurement justifies a number, and the resolver call sits
+# well inside the hook's own 10 s guard budget above) and NOT to know a single
+# thing about what the line would have said — the resolver stays the ONE
+# authority on which register values are legal (contracts §Fixed paths) — it is
+# only to stop failing SILENTLY. A definite call failure (timeout, non-zero
+# exit, or any exception spawning/reading the subprocess) now appends one fixed
+# guard line that says the binding is UNCONFIRMED this turn — never a guess at
+# what it would have been. A clean run that legitimately prints nothing (every
+# key at its default) is UNCHANGED: still silent, still zero bytes.
+REGISTER_RESOLVER_TIMEOUT_S = 5
+REGISTER_UNCONFIRMED_NOTICE = (
+    "[prdt register guard] the register binding call did not complete this turn (%s), so no "
+    "[prdt register] line could be confirmed. This is NOT the same as a default register — the "
+    "resolver is the sole authority on the current binding and it did not get to answer, so treat "
+    "the binding as UNKNOWN rather than default for this turn (T-627)."
+)
+hook_dir = os.environ.get("PRDT_HOOK_DIR") or ""
+resolver = os.path.join(hook_dir, "prdt-audience-inject.sh")
+if hook_dir and os.path.isfile(resolver):
+    try:
+        r = subprocess.run(["bash", resolver, "--binding"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=REGISTER_RESOLVER_TIMEOUT_S)
+        first = (r.stdout or "").split("\n", 1)[0].strip()
+        if r.returncode == 0 and first.startswith("[prdt register] "):
+            lines.append(first)
+        elif r.returncode != 0:
+            lines.append(REGISTER_UNCONFIRMED_NOTICE % "the resolver exited non-zero")
+    except subprocess.TimeoutExpired:
+        lines.append(REGISTER_UNCONFIRMED_NOTICE
+                      % ("the call exceeded its %gs limit" % REGISTER_RESOLVER_TIMEOUT_S))
+    except Exception:
+        lines.append(REGISTER_UNCONFIRMED_NOTICE % "the call could not be run")
+
+# Next to the state line, because it is a statement ABOUT that line's absence on
+# the previous turn. Silent in the normal case: `guard_begin` returns None and
+# nothing is appended, so the byte cost on a healthy prompt is zero.
+if _guard_notice:
+    lines.append(_guard_notice)
 
 if withheld:
     lines.append(
@@ -255,17 +561,24 @@ prompt = ev.get("prompt") or ""
 if (stage in ("define", "build") and isinstance(prompt, str)
         and not is_not_fresh_user_text(prompt) and DEPLOY_RE.search(prompt)):
     lines.append(
-        f"[prdt stage guard] deploy-shaped request while stage={stage} — deploy belongs to "
-        "ship. Ship entry is due FIRST: readiness pass (readiness-dispatch playbook) + "
-        "po-state stage write, or an explicit N/A-skip line in docs/wiki/log.md. "
-        "Raise it before doing the deploy work (PO habit — Lifecycle judgment)."
+        f"[prdt stage guard] confirm before acting: deploy-shaped phrasing matched this "
+        f"turn while stage={stage}, but this trigger has misfired on every turn it has "
+        "fired this version (11/11, T-530 owns the match fix) — read the turn yourself and "
+        "confirm it actually asks for a deploy before treating it as one. If it does, do "
+        "ship entry first: readiness pass (readiness-dispatch playbook) + po-state stage "
+        "write, or an explicit N/A-skip line in docs/wiki/log.md, before the deploy work "
+        "(PO habit — Lifecycle judgment)."
     )
 
-# ── T-490 slice 3: worker return-envelope flags ───────────────────────────────
-# prdt-post-dispatch.sh queues a flag here when a worker's final message is not a
-# well-formed envelope. DETECTION ONLY — by the time a return exists its tokens
-# are spent, so nothing was blocked and nothing was retried; this line exists so
-# the malformation is SEEN.
+# ── T-490 slice 3 / T-553: worker return-envelope flags ──────────────────────
+# prdt-return-check.sh queues a flag here when a worker's final message is not a
+# well-formed envelope. Two provenances, told apart by the entry's `reask` marker
+# and rendered TRUTHFULLY apart: `reask: true` means the SubagentStop gate blocked
+# the return once, the worker re-emitted, and the corrected return STILL broke the
+# contract (one retry is the cap, so it was let through as-is); no marker means an
+# advisory-only detector queued it — a mirror older than the gate (its
+# prdt-post-dispatch.sh still carries the pre-T-553 detector) — and for that entry
+# alone it is true that nothing was blocked and nothing was retried.
 #
 # Everything crossing the queue file is treated as untrusted, on the T-471
 # precedent: `.prdt/` is project-local and ships with a clone, so
@@ -279,7 +592,7 @@ if (stage in ("define", "build") and isinstance(prompt, str)
 RETURN_FLAG_CODES = (
     "not-json-object", "parse-failed", "not-an-object",
     "missing-key:persona", "missing-key:task", "missing-key:summary",
-    "missing-key:confidence", "over-cap:task", "over-cap:summary",
+    "missing-key:confidence", "persona-not-in-enum", "over-cap:task", "over-cap:summary",
     "confidence-out-of-range", "needs_info-without-next_question",
     "hangul:task", "hangul:summary",
 )
@@ -289,10 +602,10 @@ RETURN_FLAG_RENDER_CAP = 5
 # instead of leaving this hook quoting prose that no longer exists (the rule
 # prdt-dispatch-gate.sh follows for its deny reasons).
 CLAUSE_ENVELOPE = "Return envelope — single JSON object, first stdout char `{`"
-CLAUSE_REQUIRED = ("Required: `persona` · `task`(≤80) · `summary`(≤200, machine outcome) "
-                   "· `confidence`(0..1)")
-CLAUSE_LANG = ("Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, "
-               "`## Acceptance`) → English.")
+CLAUSE_REQUIRED = ("Required: `persona`(`po`|`designer`|`developer`|`qa`) · `task`(≤80) "
+                   "· `summary`(≤200, machine outcome) · `confidence`(0..1, a JSON number — never a word)")
+CLAUSE_LANG = ("Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · "
+               "`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.")
 
 flags_path = os.path.join(os.path.dirname(state_path), ".return-flags.json")
 if os.path.exists(flags_path):
@@ -322,10 +635,20 @@ if os.path.exists(flags_path):
         who = entry.get("persona")
         who = who if (isinstance(who, str) and who in ASSIGNEES) else "<withheld>"
         shown += 1
+        # Shape-matched like everything else in the entry: only the literal
+        # `true` counts as the re-ask marker.
+        how = (
+            " — the SubagentStop gate BLOCKED it once and re-asked, and the corrected return "
+            "STILL broke the contract; one retry is the cap, so it was let through as-is "
+            "(that worker's tokens are spent)."
+            if entry.get("reask") is True else
+            " — detected AFTER the fact by an advisory-only detector (a mirror older than the "
+            "SubagentStop gate), so nothing was blocked and nothing was retried (that worker's "
+            "tokens were already spent)."
+        )
         lines.append(
             f"[prdt return check] the last return from prdt-{who} did not match the envelope "
-            "contract: " + ", ".join(codes) + " — detected AFTER the fact, so nothing was blocked "
-            "and nothing was retried (that worker's tokens were already spent). Unknown extra keys "
+            "contract: " + ", ".join(codes) + how + " Unknown extra keys "
             "are allowed and are never flagged. contracts.md §Return envelope, verbatim: \""
             + CLAUSE_ENVELOPE + "\" / \"" + CLAUSE_REQUIRED + "\""
             + (" contracts.md §Language, verbatim: \"" + CLAUSE_LANG + "\""
@@ -345,5 +668,10 @@ print(json.dumps({"hookSpecificOutput": {
     "hookEventName": "UserPromptSubmit",
     "additionalContext": "\n".join(lines),
 }}, ensure_ascii=False))
+
+# AFTER the print, so the recorded wall covers everything the harness waited on.
+# A kill in the microseconds between the two would record a false "killed", which
+# is the harmless direction: one advisory line, never a lost state line.
+guard_finish(_guard_marker, _guard_t0, _guard_started)
 PYEOF
 exit 0

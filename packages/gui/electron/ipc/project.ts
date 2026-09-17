@@ -758,7 +758,7 @@ export function register(): void {
   })
 
   ipcMain.handle('github:setupRemote', async (_event, { projectDir, cloneUrl }: { projectDir: string; cloneUrl: string }) => {
-    // T-377 (PRD §v1.3 설계 결정 4): the GitHub remote is the CODE repo's — anchor
+    // T-377 (PRD history §v1.3 설계 결정 4): the GitHub remote is the CODE repo's — anchor
     // `git init` + `remote add origin` at codeRoot (`<projectDir>/<code.dir>`),
     // never the meta projectRoot. Legacy layout: codeRoot == projectDir (unchanged).
     const cwd = codeRoot(projectDir)

@@ -1,59 +1,29 @@
-import fs from 'fs'
-import path from 'path'
 import os from 'os'
+import { readRegister, writeRegisterKey, REGISTER_DEFAULTS } from './register'
+import type { RegisterAudience } from './register'
 
 /**
- * Audience mode (T-326) — the register/vocabulary level of the PO's
- * CONVERSATIONAL output, per USER (the operator reading the PO), never per
- * project.
+ * Audience mode (T-326) — COMPATIBILITY WRAPPER since T-586.
  *
- * - `planner`   — plain vocabulary, minimal jargon, progressive disclosure
- *                 (conclusion first; depth on request). Product default.
- * - `developer` — current register, technical vocabulary as-is.
- *
- * Storage: `~/.prdt/audience-mode`, ONE token. Deliberately NOT
- * ~/.productune/settings.json and NOT the project's .prdt/config.json:
- * the consumer is prdt-audience-inject.sh — a bash SessionStart hook that
- * injects the planner register into the PO context (the same harness path as
- * the ~/.prdt/overrides/<persona>.md injection) — so the value must be
- * readable with a bare `cat`, and the register is a property of the operator,
- * not of any project.
- *
- * The two T-326 paths, kept separate: fixed GUI strings (onboarding copy,
- * Settings labels) are i18n (packages/gui/src/locales); the PO's
- * model-generated prose cannot be i18n'd — that is what this setting + the
- * injection hook cover.
+ * The audience level is now the `audience` key of the register object
+ * (settings/register.ts, `~/.prdt/register`); this module keeps the T-326 API
+ * (`getAudienceMode` / `setAudienceMode` / `AudienceMode`) so the GUI's
+ * onboarding step and Settings toggle keep compiling and behaving, while the
+ * storage is the register file. `~/.prdt/audience-mode` is neither read nor
+ * written here — after T-586 there is exactly one register mechanism, and this
+ * file is a name for one of its keys, not a second store. New code imports
+ * `readRegister` / `writeRegisterKey` directly.
  */
-export type AudienceMode = 'planner' | 'developer'
+export type AudienceMode = RegisterAudience
 
-export const DEFAULT_AUDIENCE_MODE: AudienceMode = 'planner'
+export const DEFAULT_AUDIENCE_MODE: AudienceMode = REGISTER_DEFAULTS.audience
 
-function audienceModePath(homeDir: string): string {
-  return path.join(homeDir, '.prdt', 'audience-mode')
-}
-
-/**
- * Read the per-user audience mode. Missing / empty / corrupt file → planner
- * (default). Never throws. `homeDir` is test-only (defaults to os.homedir()).
- */
+/** `readRegister(homeDir).audience` — missing / illegal → planner. Never throws. */
 export function getAudienceMode(homeDir: string = os.homedir()): AudienceMode {
-  try {
-    const raw = fs.readFileSync(audienceModePath(homeDir), 'utf-8').trim()
-    return raw === 'developer' ? 'developer' : DEFAULT_AUDIENCE_MODE
-  } catch {
-    return DEFAULT_AUDIENCE_MODE
-  }
+  return readRegister(homeDir).audience
 }
 
-/**
- * Persist the per-user audience mode as a single token + newline — the exact
- * shape prdt-audience-inject.sh `cat`s. Atomic tmp + rename (same pattern as
- * ui-settings saveSettings). `homeDir` is test-only.
- */
+/** `writeRegisterKey('audience', mode, homeDir)` — the register file, atomically. */
 export function setAudienceMode(mode: AudienceMode, homeDir: string = os.homedir()): void {
-  const p = audienceModePath(homeDir)
-  fs.mkdirSync(path.dirname(p), { recursive: true })
-  const tmp = p + '.tmp'
-  fs.writeFileSync(tmp, mode + '\n', { mode: 0o600 })
-  fs.renameSync(tmp, p)
+  writeRegisterKey('audience', mode, homeDir)
 }

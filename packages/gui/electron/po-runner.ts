@@ -1225,7 +1225,7 @@ function spawnClaude(opts: SendOpts, msgId: string, cb: RunCallbacks): Promise<v
     // the Electron window on the SAME Write events would be pure noise. Hook
     // subprocesses inherit this env var since they're children of this spawn.
     const env = withLoginShellPath({ ...process.env, NO_COLOR: '1', CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1', PRDT_GUI_SESSION: '1' })
-    // T-377 (PRD §v1.3 설계 결정 4): spawn the PO turn in the CODE root, not the
+    // T-377 (PRD history §v1.3 설계 결정 4): spawn the PO turn in the CODE root, not the
     // meta projectDir. Once physically split the code lives under
     // `<projectDir>/<code.dir>`, so the claude session (and the code git ops its
     // dispatched workers run) must anchor there; the session-start / post-dispatch

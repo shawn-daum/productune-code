@@ -23,7 +23,7 @@
  * included) the promotion goes through the PR, so this function is not the path
  * taken. Nothing here opens or merges a PR.
  *
- * Every git op here anchors at codeRoot (PRD §v1.3 설계 결정 4) — in a split
+ * Every git op here anchors at codeRoot (PRD history §v1.3 설계 결정 4) — in a split
  * project the code `.git` lives under `<projectRoot>/<code.dir>`, not the meta
  * projectRoot. Following worktree.ts's contract exactly.
  *

@@ -87,9 +87,11 @@ function readPoStateSafe(projectDir: string): any {
  * back to a non-existent PRD.md). Mirrors PrdSection: anchor → master → snapshot.
  */
 export function prdCandidatePaths(projectDir: string, state: any): string[] {
-  // T-306: prdt (flat `stage` string discriminator) keeps ONE living PRD at
+  // T-306: prdt (flat `stage` string discriminator) keeps the working PRD at
   // docs/prd/PRD.md — no prd_anchor, no per-version snapshots. Single candidate,
-  // mirroring the renderer twin (views/workspace/shell/helpers.ts).
+  // mirroring the renderer twin (views/workspace/shell/helpers.ts). T-602: the
+  // closed-section file docs/prd/history.md is never a candidate — this list
+  // resolves the CURRENT version, which lives in PRD.md by contract.
   if (typeof state?.stage === 'string') return [path.join(projectDir, 'docs', 'prd', 'PRD.md')]
   const currentVersion: string | undefined = state?.current_version
   if (!currentVersion) return []

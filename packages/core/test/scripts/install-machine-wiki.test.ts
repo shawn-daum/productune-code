@@ -25,7 +25,7 @@ function hasJq(): boolean {
 }
 
 function sandbox() {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t446-'))
+  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t446-')))
   const home = path.join(sb, 'home')
   const prdtHome = path.join(sb, 'prdt')
   const claudeDir = path.join(sb, 'claude')

@@ -47,7 +47,7 @@ interface Sandbox {
 let payloadTemplate: string | undefined
 function payloadSrc(): string {
   if (payloadTemplate === undefined) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-loud-payload-'))
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-loud-payload-')))
     for (const entry of ['discipline', 'agents', 'scripts', 'doctrine.md']) {
       execFileSync('cp', ['-R', path.join(CORE_ROOT, entry), path.join(dir, entry)])
     }
@@ -68,7 +68,7 @@ let sandboxRoots: string[] = []
 /** A sandbox with this case's OWN writable copy of the payload — every case
  *  corrupts it differently and runs its own installer against the result. */
 function makeSandbox(seedSettings?: unknown): Sandbox {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-loud-'))
+  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-loud-')))
   sandboxRoots.push(sb)
   const payload = path.join(sb, 'payload')
   fs.cpSync(payloadSrc(), payload, { recursive: true })

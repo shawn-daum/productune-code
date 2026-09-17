@@ -9,7 +9,7 @@ import { stateDir, STATE_DIR_NAME, detectProjectKind, codeRoot, isPhysicallySpli
 
 const execFileAsync = promisify(execFile)
 
-// T-377 (PRD §v1.3 설계 결정 4): every git op here operates on the CODE repo, so
+// T-377 (PRD history §v1.3 설계 결정 4): every git op here operates on the CODE repo, so
 // it anchors at codeRoot (`<projectRoot>/<code.dir>` once physically split, else
 // projectRoot in legacy layout — byte-for-byte unchanged). Confusing this with
 // the meta projectRoot means `fatal: not a git repository` in a split project

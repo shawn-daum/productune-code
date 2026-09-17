@@ -3,8 +3,9 @@
  *
  * Renders the PRD row for a version. Path is chosen deterministically from
  * whether versionId is the OPEN (current) version or a CLOSED one:
- *   - OPEN / current (or no versionId) → docs/prd/PRD.md (살아있는 master SoT)
- *   - CLOSED                           → docs/prd/versions/<versionId>.md (P5 불변 스냅샷)
+ *   - OPEN / current (or no versionId) → docs/prd/PRD.md (working document: head + open section)
+ *   - CLOSED, prdt                     → docs/prd/history.md (T-602: closed sections moved here, one lump)
+ *   - CLOSED, legacy                   → docs/prd/versions/<versionId>.md (P5 불변 스냅샷)
  * OPEN vs CLOSED is decided by comparing versionId to po-state current_version,
  * so no snapshot-first guess probe is needed (snapshots only exist post-close).
  * On click opens an artifact-md tab (MarkdownViewer). Missing file → subtle
@@ -19,8 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { isPrdtPoState } from '../../lib/phase-mapping'
-
-const PRD_MASTER_REL = 'docs/prd/PRD.md'
+import { PRD_MASTER_REL, resolveClosedVersionPrdPath } from '../../lib/historyData'
 
 interface Props {
   versionId?: string
@@ -35,8 +35,13 @@ export default function PrdSection({ versionId, compact }: Props) {
   const openTab = useWorkspace((s) => s.openTab)
   const currentVersion = useWorkspace((s) => s.poState?.current_version)
   // T-291 (adapter A8): prdt abolished the per-version PRD snapshot
-  // (docs/prd/versions/<v>.md) — PRD.md is the single living SoT. So prdt always
-  // resolves the master, never probing a snapshot path that cannot exist.
+  // (docs/prd/versions/<v>.md). T-602: PRD.md is head + the OPEN section only,
+  // and every closed section lives in docs/prd/history.md — so a closed version
+  // in prdt resolves history.md (whole lump), never PRD.md (which no longer
+  // contains it — the tab would open a file without this version) and never a
+  // snapshot path that cannot exist. `currentVersion` is bridged from prdt's
+  // flat `version` at the store ingress (bridgePrdtVersion), so the OPEN test
+  // below holds for both modes.
   const isPrdt = useWorkspace((s) => isPrdtPoState(s.poState))
   const projectDir = project?.projectDir ?? ''
 
@@ -47,10 +52,12 @@ export default function PrdSection({ versionId, compact }: Props) {
     if (!projectDir) { setPrd(null); return }
     let cancelled = false
     const api = (window as any).api
-    // OPEN (current version, or no versionId) reads the live master PRD.md;
-    // CLOSED versions read the immutable docs/prd/versions/<v>.md snapshot.
-    const isOpen = isPrdt || !versionId || versionId === currentVersion
-    const relPath = isOpen ? PRD_MASTER_REL : `docs/prd/versions/${versionId}.md`
+    // OPEN (current version, or no versionId) reads the working PRD.md;
+    // CLOSED versions read the immutable record — history.md (prdt) or the
+    // docs/prd/versions/<v>.md snapshot (legacy).
+    const isOpen = !versionId || versionId === currentVersion
+    // Same resolver HistoryDetailView uses — one branch, two readers (T-546 follow-up + T-602).
+    const relPath = isOpen ? PRD_MASTER_REL : resolveClosedVersionPrdPath(isPrdt, versionId)
     const absPath = `${projectDir}/${relPath}`
     // Handler returns null on a missing file (no ENOENT throw) → treat as not-found.
     Promise.resolve(api.artifactsReadFile?.(projectDir, absPath))

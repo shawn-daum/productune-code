@@ -151,6 +151,26 @@ describe.skipIf(!READY)('nothing is lost across the split', () => {
     const part2 = runPart(home, 'po', 2)
     for (const part of p.parts) expect(part2).toContain(`${part.n}: `)
   })
+
+  for (const persona of PERSONAS) {
+    test(`${persona}: the plan's wire_bytes is what the slots emit, docs_bytes is what they carry, and each part is under its own limit (T-580)`, () => {
+      const home = realHome()
+      const p = plan(home, persona)
+      const emitted = allParts(home, persona).filter((s) => s !== '')
+      const sizes = emitted.map((s) => Buffer.byteLength(s, 'utf8'))
+      expect(p.parts.map((x: any) => x.bytes)).toEqual(sizes)
+      expect(p.wire_bytes).toBe(sizes.reduce((a, b) => a + b, 0))
+      // per part the header + delimiters + footer ride the wire: it is strictly more than the documents
+      expect(p.wire_bytes).toBeGreaterThan(p.docs_bytes)
+      for (const part of p.parts) {
+        expect(part.bytes).toBeLessThanOrEqual(part.limit)
+        expect(part.limit).toBeLessThanOrEqual(PART_BUDGET_BYTES)
+      }
+      // po part 1 alone keeps the onboarding reserve; every other slot may fill the budget
+      expect(p.parts[0].limit < PART_BUDGET_BYTES).toBe(persona === 'po')
+      for (const part of p.parts.slice(1)) expect(part.limit).toBe(PART_BUDGET_BYTES)
+    })
+  }
 })
 
 describe.skipIf(!READY)('a part that cannot be delivered is said, never silent', () => {

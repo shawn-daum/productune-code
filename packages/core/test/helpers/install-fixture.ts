@@ -56,7 +56,12 @@ export interface InstallSandbox {
 /** HOME / PRDT_HOME / CLAUDE_DIR all inside one fresh tmpdir + a seeded
  *  settings.json — the sandbox shape every install test already used. */
 export function makeSandbox(prefix = 'core-install-', seedSettings: unknown = {}): InstallSandbox {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  // realpath'd on purpose (T-640): install.sh resolves every path it keys on
+  // physically and registers the RESOLVED one, so a fixture rooted at the symlinked
+  // /var/folders/… would assert against /private/var/folders/… strings. The sandbox
+  // hands out canonical paths; the spelling variants are the SUBJECT of
+  // install-measure-home-untouched.test.ts, never an accident of os.tmpdir().
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
   const home = path.join(root, 'home')
   const prdtHome = path.join(root, 'prdt')
   const claudeDir = path.join(root, 'claude')

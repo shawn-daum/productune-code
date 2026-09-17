@@ -60,7 +60,7 @@ function legacyProject(): string {
 }
 
 /**
- * SPLIT project (PRD §v1.3): meta (`.prdt`) at projectRoot, CODE git one level
+ * SPLIT project (PRD history §v1.3): meta (`.prdt`) at projectRoot, CODE git one level
  * down under `code/`. Returns the projectRoot — every promote op takes projectDir
  * and must anchor at codeRoot, never the meta root (the T-377 defect class).
  */

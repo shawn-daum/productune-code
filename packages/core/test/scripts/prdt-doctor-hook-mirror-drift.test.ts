@@ -139,7 +139,7 @@ function retargetMetaGit(root: string) {
 
 beforeAll(() => {
   if (!PYTHON3 || !GIT) return
-  template = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hook-drift-seed-'))
+  template = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hook-drift-seed-')))
   scaffold(template)
   buildRepoHistory(template)
 })
@@ -149,7 +149,7 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hook-drift-'))
+  sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hook-drift-')))
   repoRoot = path.join(sandbox, 'repo')
   hooksRepoDir = path.join(repoRoot, 'packages', 'core', 'scripts', 'hooks')
   cliCopy = path.join(repoRoot, 'packages', 'core', 'scripts', 'prdt')
@@ -577,7 +577,7 @@ describe.skipIf(!PYTHON3 || !GIT)('prdt doctor — installed copy finds the repo
   let otherProjectDir: string
 
   beforeEach(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t576-'))
+    root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t576-')))
     repo = path.join(root, 'source-repo')
     const scriptsDir = path.join(repo, 'packages', 'core', 'scripts')
     fs.mkdirSync(path.join(scriptsDir, 'hooks'), { recursive: true })

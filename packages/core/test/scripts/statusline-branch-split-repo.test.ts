@@ -4,7 +4,7 @@
  * Repro (confirmed on a second machine's dogfood report): the `branch:`
  * segment queried git ONLY at the project root, so a meta/code split project
  * (root has no `.git`; the code repo physically lives at `<root>/<code.dir>`,
- * PRD §v1.3) could never surface it — the segment silently vanished on every
+ * PRD history §v1.3) could never surface it — the segment silently vanished on every
  * such machine. This machine never caught it because productune's own root
  * happens to sit inside a parent monorepo `.git`.
  *

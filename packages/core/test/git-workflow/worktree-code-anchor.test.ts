@@ -30,7 +30,7 @@ const GIT = which('git')
 /**
  * Init a git repo with one commit on `main` at `dir`. Ignores `.prdt/` so the
  * base is CLEAN — a legacy project (code repo == projectRoot) physically contains
- * the meta scaffold, and after PRD §v1.3 설계 결정 2 (managed block retired) the
+ * the meta scaffold, and after PRD history §v1.3 설계 결정 2 (managed block retired) the
  * user's own `.gitignore` is what keeps `.prdt/` out of the code repo's status.
  * For a split fixture the code repo is `code/`, so `.prdt/` (at the parent) is
  * outside its work-tree and this line is simply a harmless no-op.

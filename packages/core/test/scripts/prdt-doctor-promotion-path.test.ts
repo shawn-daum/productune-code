@@ -33,6 +33,7 @@ const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
 const CONTRACTS = path.join(CORE_ROOT, 'discipline', 'contracts.md')
 const READINESS = path.join(CORE_ROOT, 'discipline', 'po', 'playbooks', 'readiness-dispatch.md')
+const GIT_ANNEX = path.join(CORE_ROOT, 'discipline', 'contracts', 'git.md')
 
 function has(bin: string, args: string[]): boolean {
   try { execFileSync(bin, args, { stdio: 'ignore' }); return true } catch { return false }
@@ -304,6 +305,11 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('doctor reads the promotion path
 
 describe('discipline text — repo policy and the product default stay separate', () => {
   const contracts = fs.readFileSync(CONTRACTS, 'utf-8')
+  // T-586 hot→cold split: the promotion-shape and optional-default clauses are
+  // ship-time text, so they live in the on-demand §Git annex the hot bullets
+  // point at. The consent gate (floor) stays in contracts.md itself.
+  const gitAnnex = fs.readFileSync(GIT_ANNEX, 'utf-8')
+  const binding = contracts + '\n' + gitAnnex
 
   test('the push consent gate is untouched, verbatim', () => {
     expect(contracts).toContain(
@@ -311,18 +317,21 @@ describe('discipline text — repo policy and the product default stay separate'
   })
 
   test('promotion shape is the repository\'s policy, read rather than assumed', () => {
-    expect(contracts).toContain(
+    expect(gitAnnex).toContain(
       "whether that merge lands locally or through a pull request is the REPOSITORY's policy")
-    expect(contracts).toContain('`prdt doctor` reads off the repo')
+    expect(gitAnnex).toContain('`prdt doctor` reads off the repo')
+    // the hot bullet keeps the pointer that makes the annex reachable at promotion time
+    expect(contracts).toContain('promotion path · version boundary · patch rolls · remote default branch · isolation triggers: `contracts/git.md`')
     // the superseded claim is gone from the binding text
-    expect(contracts).not.toContain('a plain merge')
+    expect(binding).not.toContain('a plain merge')
   })
 
   test('PRs stay OUR optional default — required only where a repo requires them', () => {
-    expect(contracts).toContain('**Optional as OUR default, never a gate the product imposes**')
-    expect(contracts).toContain("has already fixed that project's promotion path")
+    expect(gitAnnex).toContain('**Optional as OUR default, never a gate the product imposes**')
+    expect(gitAnnex).toContain("has already fixed that project's promotion path")
+    expect(contracts).toContain('Mechanical block + the optional `feat/*` · PR · `staging` default: `contracts/git.md`')
     // and the old absolute, which read as "no repo ever forces a PR", is gone
-    expect(contracts).not.toContain('never a forced gate')
+    expect(binding).not.toContain('never a forced gate')
   })
 
   test('the Ship-entry deploy flow promotes by the reported path, inside the one confirm', () => {

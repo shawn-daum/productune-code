@@ -827,8 +827,11 @@ contextBridge.exposeInMainWorld('api', {
   setUiLanguage: (lng: 'en' | 'ko'): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:setUiLanguage', lng),
 
-  // T-326: per-user PO conversational register (planner | developer) —
-  // persisted at ~/.prdt/audience-mode for the prdt-audience-inject.sh hook.
+  // T-326: per-user PO conversational register (planner | developer) — since
+  // T-586 this is the `audience` key of ~/.prdt/register (the object
+  // prdt-audience-inject.sh resolves); getAudienceMode/setAudienceMode are a
+  // compatibility wrapper over that file, ~/.prdt/audience-mode is no longer
+  // read or written.
   getAudienceMode: (): Promise<'planner' | 'developer'> =>
     ipcRenderer.invoke('settings:getAudienceMode'),
 
@@ -1401,7 +1404,7 @@ contextBridge.exposeInMainWorld('api', {
   ): Promise<Array<{ name: string; date: string }>> =>
     ipcRenderer.invoke('git:listTags', projectDir),
 
-  // ── Meta repo (T-367, PRD §v1.2) — same core API as `prdt meta` ─────────────
+  // ── Meta repo (T-367, PRD history §v1.2) — same core API as `prdt meta` ─────────────
 
   /** Meta commit timeline (newest-first). [] when the meta split is not applied. */
   metaLog: (

@@ -10,7 +10,9 @@
  *
  * Contract under test:
  * - DENY (before any worker spawns) on: no `[ctx]` line · that line failing JSON
- *   parse · a missing required top-level key · a malformed `prd_path`.
+ *   parse · a missing required top-level key · a malformed `prd_path` · (T-591)
+ *   a missing or empty `[ctx].dispatch_id` on a `prdt-qa` or `prdt-developer`
+ *   `subagent_type` only — `prdt-designer` / `prdt-po` are never denied for it.
  * - ALLOW unknown extra keys. The schema is a floor, not a whitelist, and a gate
  *   that rejected tomorrow's key would be a gate the PO learns to work around.
  * - WARN — never deny — on a per-FIELD Hangul ratio over 0.1 in `goal` or
@@ -38,7 +40,7 @@ const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-dispatch-gate.sh')
 const CONTRACTS = path.join(CORE_ROOT, 'discipline', 'contracts.md')
 
 function tmp(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
 }
 
 /** A project dir carrying the `.prdt/po-state.json` marker the hooks up-walk for. */
@@ -62,6 +64,7 @@ const VALID_CTX: Ctx = {
   wiki_refs: ['docs/wiki/fact--claude-hooks.md'],
   user_lang: 'ko',
   prd_path: 'docs/prd/PRD.md#v1.7',
+  dispatch_id: 't591-gate-01',
 }
 
 const REQUIRED = ['slug', 'goal', 'change_meta', 'acceptance', 'wiki_refs', 'user_lang', 'prd_path']
@@ -145,8 +148,11 @@ const CLAUSE_CTX =
   '"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
 const CLAUSE_PRD = '`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
 const CLAUSE_LANG =
-  'Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, ' +
-  '`## Acceptance`) → English.'
+  'Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · ' +
+  '`dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
+const CLAUSE_DISPATCH_ID =
+  '`"dispatch_id"` = the PO\'s minted id, one per dispatch, never per session and never a harness agent id — ' +
+  'it owns that dispatch\'s resource markers; the gate denies its absence on a `prdt-qa` or `prdt-developer` `subagent_type`.'
 
 describe('the quoted clauses are the real ones (drift guard)', () => {
   const contracts = fs.readFileSync(CONTRACTS, 'utf8')
@@ -158,6 +164,23 @@ describe('the quoted clauses are the real ones (drift guard)', () => {
       expect(fs.readFileSync(HOOK, 'utf8')).toContain(clause)
     })
   }
+
+  // `CLAUSE_DISPATCH_ID` carries two apostrophes (the PO's · dispatch's), so the
+  // bash single-quoted literal escapes them (`'\''`) — the hook's raw SOURCE
+  // bytes never equal the clause text, only what bash evaluates the variable to.
+  // A plain substring check would therefore fail on a correct hook, so this
+  // clause is asserted by evaluating the assignment instead of grepping for it.
+  test('dispatch_id clause appears verbatim in discipline/contracts.md', () => {
+    expect(contracts).toContain(CLAUSE_DISPATCH_ID)
+  })
+  test('dispatch_id clause appears verbatim in the hook itself (evaluated, not grepped)', () => {
+    const src = fs.readFileSync(HOOK, 'utf8')
+    const m = src.match(/^CLAUSE_DISPATCH_ID=.*$/m)
+    expect(m, 'CLAUSE_DISPATCH_ID assignment not found in the hook').toBeTruthy()
+    const res = spawnSync('bash', ['-c', `${m![0]}\nprintf '%s' "$CLAUSE_DISPATCH_ID"`], { encoding: 'utf8' })
+    expect(res.stderr).toBe('')
+    expect(res.stdout).toBe(CLAUSE_DISPATCH_ID)
+  })
 })
 
 // ── silence: everything this gate is not about ───────────────────────────────
@@ -387,6 +410,63 @@ describe('deny: `prd_path` shape', () => {
     '%s passes', (prd_path) => {
       expect(run({ cwd: makeProject(), prompt: promptWith({ ...VALID_CTX, prd_path }) })).toBe('')
     })
+})
+
+// ── deny ⑤ (T-591) missing/empty `dispatch_id` — `prdt-qa`/`prdt-developer` only ──
+//
+// The QA grill this ticket closes: two parallel dispatches wrote the same
+// resource marker because neither carried an id of its own. `dispatch_id` is
+// NOT in `$required` (contracts §Dispatch pins it as its own clause, not part
+// of the `[ctx]` schema literal), so this is its own elif in the hook, scoped
+// to exactly the two `subagent_type`s the contracts clause names.
+
+describe('deny: `dispatch_id` missing or empty on `prdt-qa`/`prdt-developer` only (T-591)', () => {
+  test.each(['prdt-qa', 'prdt-developer'])('%s with no `dispatch_id` key is denied, clause quoted', (subagentType) => {
+    const ctx = { ...VALID_CTX }
+    delete ctx.dispatch_id
+    const reason = denyReason({ cwd: makeProject(), subagentType, prompt: promptWith(ctx) })
+    expect(reason).toContain('`dispatch_id`')
+    expect(reason).toContain('contracts.md §Dispatch')
+    expect(reason).toContain(CLAUSE_DISPATCH_ID)
+    expect(reason).toMatch(/no dispatch tokens were spent/)
+  })
+
+  test.each(['prdt-qa', 'prdt-developer'])('%s with an empty-string `dispatch_id` is denied the same way', (subagentType) => {
+    const reason = denyReason({ cwd: makeProject(), subagentType, prompt: promptWith({ ...VALID_CTX, dispatch_id: '' }) })
+    expect(reason).toContain(CLAUSE_DISPATCH_ID)
+  })
+
+  test.each(['prdt-qa', 'prdt-developer'])('%s with a `null` `dispatch_id` is denied — it carries nothing', (subagentType) => {
+    const reason = denyReason({ cwd: makeProject(), subagentType, prompt: promptWith({ ...VALID_CTX, dispatch_id: null }) })
+    expect(reason).toContain(CLAUSE_DISPATCH_ID)
+  })
+
+  test.each(['prdt-qa', 'prdt-developer'])('%s with a real `dispatch_id` passes in silence', (subagentType) => {
+    expect(run({ cwd: makeProject(), subagentType, prompt: promptWith(VALID_CTX) })).toBe('')
+  })
+
+  test.each(['prdt-designer', 'prdt-po'])(
+    '%s with no `dispatch_id` is NOT denied for it — the clause names only `prdt-qa`/`prdt-developer`',
+    (subagentType) => {
+      const ctx = { ...VALID_CTX }
+      delete ctx.dispatch_id
+      expect(run({ cwd: makeProject(), subagentType, prompt: promptWith(ctx) })).toBe('')
+    },
+  )
+
+  test('the missing-`[ctx]`-line deny still fires first, and is unaffected by this check', () => {
+    const reason = denyReason({ cwd: makeProject(), subagentType: 'prdt-developer', prompt: 'no ctx line here' })
+    expect(reason).toContain(CLAUSE_CTX)
+    expect(reason).not.toContain(CLAUSE_DISPATCH_ID)
+  })
+
+  test('a malformed `prd_path` still denies on ITS OWN clause even when `dispatch_id` is also missing', () => {
+    const ctx = { ...VALID_CTX, prd_path: 'docs/prd/PRD.md' }
+    delete ctx.dispatch_id
+    const reason = denyReason({ cwd: makeProject(), subagentType: 'prdt-developer', prompt: promptWith(ctx) })
+    expect(reason).toContain(CLAUSE_PRD)
+    expect(reason).not.toContain(CLAUSE_DISPATCH_ID)
+  })
 })
 
 // ── warn: per-field Hangul ratio ─────────────────────────────────────────────

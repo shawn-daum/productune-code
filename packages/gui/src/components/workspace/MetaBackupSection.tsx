@@ -4,7 +4,7 @@
  * Mounted in GeneralSettings (the REACHABLE settings surface — the former
  * WorkflowRulesPanel mount is dead UI since T-PATCH-200; QA FAIL 2). Registers
  * a remote on the meta repo via core addMetaRemote through meta:addRemote —
- * registration only, NEVER pushes (PRD §v1.2 Non-goals: no auto-push/sync).
+ * registration only, NEVER pushes (PRD history §v1.2 Non-goals: no auto-push/sync).
  *
  * Self-hides for projects without the meta split (same pattern as
  * PoSessionSection): meta:listRemotes → exists=false → render nothing.

@@ -3,7 +3,11 @@
 #   SessionStart (matcher: startup|resume|clear)  — `claude --agent prdt-*` process path
 #   SubagentStart (matcher: ^prdt-)               — Agent-tool subagent path (2026-07-02:
 #     dogfood E1/E3 실측 — SessionStart는 sidechain에 발화하지 않음; SubagentStart가 공식 주입 채널)
-# agents/prdt-*.md self-load is the belt-and-suspenders fallback for both.
+# `--self-load <agent_type>` (T-578) is the belt-and-suspenders fallback for both:
+# the agents/prdt-*.md stubs point at it when neither event fired, and it prints
+# the SAME set this hook would have injected — every part, then both override
+# layers as their hooks render them — paged under the Bash tool's own output cap.
+# The self-load PROCEDURE lives here, once, and nowhere in the agent files.
 #
 # Injects the discipline set (§9): doctrine.md + contracts.md + <persona> habit
 # + playbook menu(s). PO gets every persona's menu (dispatch routing needs
@@ -29,19 +33,29 @@ set +e
 # T-577: `--part k` renders part k of the set (default 1 — this file IS part 1;
 # the prdt-session-start-p<k>.sh siblings pass 2..K). `--plan <persona>` prints
 # the split as JSON without reading an event (prdt doctor's input).
-PART=1; PLAN_PERSONA=""
+# T-578: `--self-load <agent_type> [--page p]` prints page p (default 1) of the
+# whole set as PLAIN TEXT for an agent that Bash-runs it because no hook fired.
+# Stdin is never read in that mode (an interactive stdin would block).
+PART=1; PLAN_PERSONA=""; SELF_LOAD=""; PAGE=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --part) PART="${2:-1}"; shift 2 ;;
     --plan) PLAN_PERSONA="${2:-}"; shift 2 ;;
+    --self-load) SELF_LOAD="${2:-}"; shift 2 ;;
+    --page) PAGE="${2:-1}"; shift 2 ;;
     *) shift ;;
   esac
 done
 case "$PART" in ''|*[!0-9]*) PART=1 ;; esac
+case "$PAGE" in ''|*[!0-9]*) PAGE=1 ;; esac
 
 EVENT_JSON=""
-[ -z "$PLAN_PERSONA" ] && EVENT_JSON="$(cat 2>/dev/null || true)"
+[ -z "$PLAN_PERSONA" ] && [ -z "$SELF_LOAD" ] && EVENT_JSON="$(cat 2>/dev/null || true)"
 AGENT_TYPE=""; EVENT_CWD=""; EVENT_NAME="SessionStart"
+if [ -n "$SELF_LOAD" ]; then
+  # The agent's own shell: its cwd is the project the override hooks resolve from.
+  AGENT_TYPE="$SELF_LOAD"; EVENT_CWD="$PWD"; EVENT_NAME="SubagentStart"
+fi
 if [ -n "$EVENT_JSON" ] && command -v jq >/dev/null 2>&1; then
   AGENT_TYPE="$(printf '%s' "$EVENT_JSON" | jq -r '.agent_type // ""' 2>/dev/null)"
   EVENT_CWD="$(printf '%s' "$EVENT_JSON" | jq -r '.cwd // ""' 2>/dev/null)"
@@ -116,7 +130,7 @@ safe_path() { # $1 a derived path — emits it only when it is ONE plain line
 # carry exactly one marker on the chain, so for them outermost == nearest,
 # byte-identical). Keep in lockstep with prdt-project-overrides-inject.sh and
 # the python twins in prdt-post-dispatch.sh / prdt-user-prompt.sh.
-# v1.3 physical split (PRD §v1.3 설계 결정 4): the session cwd may be the CODE root
+# v1.3 physical split (PRD history §v1.3 설계 결정 4): the session cwd may be the CODE root
 # (`<projectRoot>/<code.dir>`) — this walk then lands on the parent projectRoot
 # where `.prdt/` lives. Legacy layout finds it at depth 0.
 find_proj() {
@@ -154,6 +168,47 @@ esac
 
 [ -n "$PLAN_PERSONA" ] && PERSONA="$PLAN_PERSONA" && AGENT_TYPE="prdt-$PLAN_PERSONA"
 
+# ── T-504: meta backup tick, PO SessionStart only ──────────────────────────────
+# The ONE automatic push in prdt (contracts §Git carve-out): the META repo's own
+# branch → the remote registered as this project's meta backup, ff-only, when
+# core's decision says so (stage changed since the last push / new UTC day —
+# meta-backup.ts, via the meta-cli bridge `backup`). Second call site next to the
+# `prdt` CLI main (maybe_meta_backup). Fires on the PO's SessionStart ONLY —
+# every SessionStart the harness sends (startup, resume, compact; the latch in
+# core decides, so extra calls cost no network) — never SubagentStart (that is
+# the per-dispatch path), never a --plan/--self-load run, and only from part 1
+# so the K part slots do not spawn K ticks. Detached +
+# silent: the session start never waits on the network; failure is recorded in
+# <meta.git>/prdt-backup-state.json for `prdt` / `prdt doctor` to say.
+# TRUST: same PRDT_REPO-from-prdt.env spawn as prdt-post-dispatch.sh §(c) (T-519
+# F5 decision) — no target file, no spawn. Same DETACH too: python3
+# start_new_session (setsid), not a bare `&` — a backgrounded job stays in the
+# hook's process group, and a push is seconds of network the harness may reap
+# with the hook; macOS ships no setsid(1), python3 is already this hook's dependency.
+if [ "$PART" = "1" ] && [ "$PERSONA" = "po" ] && [ "$EVENT_NAME" = "SessionStart" ] \
+   && [ -z "$SELF_LOAD" ] && [ -z "$PLAN_PERSONA" ] && [ "${PRDT_META_BACKUP:-1}" != "0" ]; then
+  BK_ROOT="$(find_proj "$EVENT_CWD")"
+  if [ -n "$BK_ROOT" ] && [ -f "$BK_ROOT/.prdt/meta.git/HEAD" ] && [ -f "$PRDT_HOME/prdt.env" ]; then
+    BK_REPO="$(sed -n 's/^PRDT_REPO=//p' "$PRDT_HOME/prdt.env" 2>/dev/null | head -1 | tr -d '[:space:]')"
+    BK_BRIDGE="$BK_REPO/dist/bin/meta-cli.cjs"
+    if [ -n "$BK_REPO" ] && [ -f "$BK_BRIDGE" ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+      python3 - "$BK_BRIDGE" "$BK_ROOT" >/dev/null 2>&1 <<'PY' || true
+import shutil, subprocess, sys
+node = shutil.which("node")
+if node:
+    subprocess.Popen([node, sys.argv[1], "backup", sys.argv[2]],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+PY
+    fi
+  fi
+fi
+
+if [ -n "$SELF_LOAD" ] && [ -z "$PERSONA" ]; then
+  printf 'prdt-session-start: --self-load takes a prdt agent type (prdt-po|prdt-designer|prdt-developer|prdt-qa), got: %s\n' "$SELF_LOAD" >&2
+  exit 1
+fi
+
 if [ -z "$PERSONA" ]; then
   # Plain session (no prdt agent). Point, don't inject — this machine runs other tools too.
   [ "$PART" != "1" ] && exit 0   # T-577: the pointer is one line; only part 1 speaks
@@ -171,6 +226,17 @@ MISSING=""
 for f in "$DOCTRINE" "$CONTRACTS" "$HABIT"; do
   [ ! -s "$f" ] && MISSING="$MISSING $(safe_path "$f")"
 done
+if [ -n "$MISSING" ] && [ -n "$SELF_LOAD" ]; then
+  # T-578: the self-loading agent gets the persona's own mirror-absent rule here,
+  # so that rule is written once (the agent stubs only point at this script).
+  printf '[prdt discipline — MISSING]\nRequired discipline file(s) absent on this machine:%s\nThe ~/.prdt mirror needs restoring (install.sh in the prdt core package). STOP — do no work without discipline.\n' "$MISSING"
+  if [ "$PERSONA" = "po" ]; then
+    printf 'You are the PO: say so to the user in one line (ko) and ask them to authorize you to restore it; on their yes, locate `scripts/install.sh` in the prdt core package (`packages/core/` in the repo, `prdt-core/` inside the app bundle) and run it yourself, then self-load again and proceed. Running it is yours — never handed to them to type.\n'
+  else
+    printf 'You are a worker: restoring the mirror is the PO'"'"'s call, not the user'"'"'s to be sent off to do. Address only the PO — return your envelope with `needs_info: true` and one `next_question` stating the mirror is absent. Never hand anyone a command to run.\n'
+  fi
+  exit 0
+fi
 if [ -n "$MISSING" ]; then
   [ "$PART" != "1" ] && exit 0   # T-577: one STOP notice, from part 1
   printf '[!] prdt discipline MISSING for %s:%s\n' "$AGENT_TYPE" "$MISSING" >&2
@@ -301,7 +367,8 @@ quote_body() { # $1 file, $2 noun for the withheld notice
 # with the paths to `cat` — instead of the tail silently never running. A single
 # line larger than a whole part is withheld with a notice at its place, never
 # handed to the harness to persist. `--plan <persona>` prints the plan as JSON:
-# `prdt doctor` reads it to report delivered size against the budget.
+# `prdt doctor` reads it to report delivered size against the budget — the
+# per-part rendered size (what a slot emits), which is the budget's subject.
 PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS=10000   # Claude Code 2.1.260 `Nrr`
 PRDT_INJECT_PART_BUDGET_BYTES=8000                # under 10,000 AND under the 8,000 sanitizer
 # PO part 1 keeps room for the one-shot migration block. Measured: 1,708 B of
@@ -315,6 +382,17 @@ PRDT_INJECT_PART_BUDGET_BYTES=8000                # under 10,000 AND under the 8
 # split, so it cannot depend on whether this session has a pending flag — which
 # means PO part 1 carries this many fewer bytes of discipline on every session.
 PRDT_ONBOARD_RESERVE_BYTES=3600
+# T-578 self-load pages. The Bash tool has a cap of its own: a command's output
+# past ~30,000 chars is persisted to a file and the model receives a preview
+# (observed 2026-09-04 on Claude Code 2.1.260 — a 35.8 KB `cat` arrived as
+# "Output too large … saved to" + 2 KB; the documented default is
+# BASH_MAX_OUTPUT_LENGTH=30000). So the pre-T-578 self-load — one `cat` of
+# doctrine + contracts + habit + menu, 24–45 KB — was truncated the same way the
+# hook payload was before T-577. A page packs WHOLE parts (the same split
+# `--plan` reports, so doctor's numbers describe this path too) under this
+# budget; the override blocks ride the last page, or a page of their own when
+# they would push it over.
+PRDT_SELF_LOAD_PAGE_BUDGET_BYTES=28000
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SLOTS=1
@@ -443,7 +521,7 @@ def render(parts, k, undelivered_docs):
           % (n, budget, threshold, n)
         + "Part map: " + pmap + "\n"
         + "Precedence (doctrine → contracts → habit, later wins) is by document, never by part order. Override blocks (machine, project) arrive as their OWN hook outputs and each outranks everything here wherever it sits; the project layer is the final word (T-358/T-445); both stay under the non-overridable floor in contracts §Overrides.\n"
-        + "Playbook bodies load on demand via Bash cat under %s/ (Read does NOT expand ~).\n" % shown(disc))
+        + "Playbook bodies and `contracts/*.md` annexes load on demand via Bash cat under %s/ (Read does NOT expand ~).\n" % shown(disc))
     if k == 1 and undelivered_docs:
         head += ("\nNOT DELIVERED — this set needs %d parts but only %d hook slot(s) are registered on this machine, so parts %d–%d never run. Missing: %s. STOP: cat those paths before acting on anything; re-run install.sh to register the missing slots (prdt doctor reports this).\n"
                  % (len(parts), slots, slots + 1, len(parts), "; ".join("%s (%s)" % (l, shown(p)) for l, p in undelivered_docs)))
@@ -469,10 +547,56 @@ for _ in range(40):
     # the header (part map included) is what the body budget did not know yet:
     # grow the reserve by exactly the overshoot and split again
     reserve += excess + 40
+if mode == "selfload":
+    # argv[12] page budget, argv[13] the path of this script (for the NEXT line);
+    # stdin = the override blocks already rendered by their own hooks (may be empty).
+    page_budget, hook_path = int(sys.argv[12]), sys.argv[13]
+    ov = sys.stdin.read().rstrip("\n")
+    foot_reserve = 700
+    pages, cur, cur_b = [], [], 0
+    for r in rendered:
+        b = nbytes(r) + 2
+        if cur and cur_b + b > page_budget - foot_reserve:
+            pages.append(cur); cur, cur_b = [], 0
+        cur.append(r); cur_b += b
+    if cur:
+        pages.append(cur)
+    if ov and sum(nbytes(r) + 2 for r in pages[-1]) + nbytes(ov) > page_budget - foot_reserve:
+        pages.append([])
+    total = len(pages)
+    if not 1 <= part <= total:
+        sys.stderr.write("prdt-session-start: --page %d is out of range — this set has %d page(s)\n" % (part, total))
+        raise SystemExit(1)
+    body = "\n\n".join(pages[part - 1])
+    if part == total and ov:
+        body = (body + "\n\n" if body else "") + ov
+    if part < total:
+        foot = ("----- prdt self-load · page %d/%d for %s -----\n"
+                "NEXT: this set has %d pages and you have read %d. Run `bash %s --self-load %s --page %d` now, before acting — "
+                "the discipline is complete only with all %d pages read; nothing on a later page is optional."
+                % (part, total, agent, total, part, shown(hook_path), agent, part + 1, total))
+    else:
+        foot = ("----- prdt self-load · page %d/%d for %s -----\n"
+                "All %d page(s) read: the set is complete — the canonical documents, then the override layers exactly as their hooks render them "
+                "(an override file is never read bare: the hooks are what quote its body so its lines cannot stand as structure; "
+                "a missing layer printed nothing, the same silence as the hook path). Now act, without narrating any of this."
+                % (part, total, agent, total))
+    sys.stdout.write(body + "\n\n" + foot + "\n")
+    raise SystemExit(0)
 if mode == "plan":
+    # Two sizes, named for what they are (T-580): `docs_bytes` is the documents
+    # themselves — what the parts CARRY; `wire_bytes` is the sum of the rendered
+    # parts — what the hook commands EMIT, part header + delimiters + footer
+    # included, i.e. the additionalContext strings the harness measures. Per
+    # part, `bytes` is the size of that string and `limit` the cap this slot was
+    # packed under (part 1 of po keeps the onboarding reserve); the ≤budget gate
+    # is per part on the wire, never on either total. (No apostrophes here: this
+    # program lives inside a single-quoted shell string.)
     out = {"persona": persona, "agent": agent, "threshold_chars": threshold, "budget_bytes": budget,
-           "slots": slots, "total_bytes": sum(nbytes(t) for _, _, t in loaded), "parts_needed": len(parts),
+           "slots": slots, "docs_bytes": sum(nbytes(t) for _, _, t in loaded),
+           "wire_bytes": sum(nbytes(r) for r in rendered), "parts_needed": len(parts),
            "parts": [{"n": i + 1, "bytes": (nbytes(rendered[i]) if i < len(rendered) else None),
+                      "limit": budget - (onboard_reserve if (persona == "po" and i == 0) else 0),
                       "pieces": [{"label": loaded[pc["di"]][0], "path": shown(loaded[pc["di"]][1]), "piece": pc["piece"], "of": pc["of"],
                                   "first": pc["first"], "last": pc["last"], "kind": pc["kind"]} for pc in p]} for i, p in enumerate(parts)],
            "undelivered": [{"label": loaded[pc["di"]][0], "path": shown(loaded[pc["di"]][1]), "piece": pc["piece"], "of": pc["of"]}
@@ -497,8 +621,32 @@ if ! command -v python3 >/dev/null 2>&1; then
   # BEFORE the onboarding block on purpose: that block CONSUMES the one-shot flag,
   # and consuming it here would burn the briefing on a turn that delivers nothing.
   [ "$PART" != "1" ] && exit 0
+  if [ -n "$SELF_LOAD" ]; then
+    printf '[prdt discipline — NOT DELIVERED]\npython3 is missing on this machine, so the discipline set cannot be rendered. STOP. Do not act as %s without discipline: load the documents by hand via Bash cat — %s %s %s and the playbook menu(s) under %s/ — and tell the user python3 is required (install.sh requires it).\n' "$AGENT_TYPE" "$(safe_path "$DOCTRINE")" "$(safe_path "$CONTRACTS")" "$(safe_path "$HABIT")" "$(safe_path "$DISC")"
+    exit 0
+  fi
   emit_ctx "[prdt discipline — NOT DELIVERED]
 python3 is missing on this machine, so the discipline set could not be rendered into parts. STOP. Do not act as $AGENT_TYPE without discipline: tell the user to install python3 (install.sh requires it), or load the documents by hand via Bash cat: $(safe_path "$DOCTRINE") $(safe_path "$CONTRACTS") $(safe_path "$HABIT") and the playbook menu(s) under $(safe_path "$DISC")/."
+fi
+
+# T-578 self-load: every part (no slot cap — this path has no registered slots
+# to run short of), paged for the Bash tool, then the two override layers as
+# their own hooks render them (siblings in this dir; an absent hook or an absent
+# override file prints nothing, as on the hook path). Never the onboarding block:
+# that one-shot flag is consumed only by the hook path's part 1.
+if [ -n "$SELF_LOAD" ]; then
+  OV=""
+  for h in prdt-overrides-inject.sh prdt-project-overrides-inject.sh; do
+    [ -f "$HOOK_DIR/$h" ] || continue
+    BLK="$(jq -cn --arg a "$AGENT_TYPE" --arg c "$EVENT_CWD" '{hook_event_name:"SubagentStart",agent_type:$a,cwd:$c}' \
+      | bash "$HOOK_DIR/$h" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty' 2>/dev/null)"
+    [ -n "$BLK" ] && OV="${OV}${BLK}"$'\n\n'
+  done
+  printf '%s' "$OV" | python3 -c "$PRDT_PARTS_PY" selfload "$PERSONA" "$AGENT_TYPE" "$PAGE" 1000000 \
+    "$PRDT_INJECT_PART_BUDGET_BYTES" "$PRDT_HOOK_CONTEXT_PERSIST_THRESHOLD_CHARS" \
+    "$DOCTRINE" "$CONTRACTS" "$DISC" "$PRDT_ONBOARD_RESERVE_BYTES" \
+    "$PRDT_SELF_LOAD_PAGE_BUDGET_BYTES" "$HOOK_DIR/prdt-session-start.sh"
+  exit $?
 fi
 
 # 1회용 migration 온보딩 (PO만, part 1만): prdt migrate가 남긴 플래그를 발견하면 자기-브리핑

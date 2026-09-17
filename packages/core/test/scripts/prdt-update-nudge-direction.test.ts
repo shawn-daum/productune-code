@@ -105,7 +105,7 @@ print(json.dumps(${expr}))
 
 const aheadOf = (clone: string) => py(`m.remote_ahead(${JSON.stringify(clone)})`)
 
-beforeEach(() => { tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-nudge-')) })
+beforeEach(() => { tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-nudge-'))) })
 afterEach(() => { fs.rmSync(tmpRoot, { recursive: true, force: true }) })
 
 describe.skipIf(!PYTHON3)('T-456 · remote_ahead asserts direction', () => {

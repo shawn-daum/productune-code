@@ -48,7 +48,7 @@ export function stateDir(projectDir: string): string {
   return path.join(projectDir, STATE_DIR_NAME[detectProjectKind(projectDir)])
 }
 
-// ── Code root resolution (PRD §v1.3 설계 결정 4) ────────────────────────────────
+// ── Code root resolution (PRD history §v1.3 설계 결정 4) ────────────────────────────────
 //
 // v1.2 assumed one root: projectRoot == codeRoot == metaRoot. v1.3 introduces a
 // PHYSICAL split — code lives under `<projectRoot>/<code.dir>` while meta
@@ -72,7 +72,7 @@ export function stateDir(projectDir: string): string {
 //      at codeRoot. Confusing the two commits to the wrong repo — the whole
 //      reason this lives in one function.
 
-/** Default code sub-directory name for a fresh physical split (PRD §v1.3). */
+/** Default code sub-directory name for a fresh physical split (PRD history §v1.3). */
 export const CODE_DIR_DEFAULT = 'code'
 
 /**
@@ -115,7 +115,7 @@ export function codeRoot(projectDir: string): string {
  * True when the project is physically split (code.dir configured). Drives the
  * meta-staging strategy: when split, the code `.gitignore` no longer sits at the
  * project root, so meta commits use a plain `git add` instead of the legacy
- * ignore-immune staging (PRD §v1.3 설계 결정 4).
+ * ignore-immune staging (PRD history §v1.3 설계 결정 4).
  */
 export function isPhysicallySplit(projectDir: string): boolean {
   return codeDirName(projectDir) !== null

@@ -171,7 +171,7 @@ if isinstance(ct, dict) and (ct.get("ticket_id") or ct.get("slug")):
     if seg:
         parts.append(f"{seg}→{who}" if who else seg)
 
-# branch (T-426): meta/code split projects (PRD §v1.3) carry no `.git` at
+# branch (T-426): meta/code split projects (PRD history §v1.3) carry no `.git` at
 # root — the code repo lives at `<root>/<config.code.dir>` (default "code").
 # Mirrors project-kind.ts codeDirName/codeRoot (THE CONTRACT) so this stays in
 # lockstep with the CLI/GUI resolution; kept local since this is a pure bash+
