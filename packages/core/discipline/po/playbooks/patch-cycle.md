@@ -16,6 +16,7 @@ Three openings, one machine. The first two assume the version's tag is cut and R
 4. **Close** — cut the tag (the release-notes rule applies — `retro` playbook, Rules: the `## <version>` RELEASES section lands in the SAME change), then stage back to `idle`.
 
 ## Rules
+- All three openings end in a `v*` tag cut, so the tag-cut document rules bind all three (`retro` playbook, §Rules): the `## <version>` RELEASES section AND the `<codeRoot>/README.md` pass land in that same change. A patch rarely moves what the README claims — then the pass writes nothing, which is a check, not a rewrite.
 - Live-verify re-fail INSIDE the patch cycle reuses the in-ship patch-loop semantics — append the same ops ticket, no further roll.
 - Ballooning past a small scope → call it and open the next minor instead.
 - A fix wanted for an OLDER closed version is absorbed into the ACTIVE line — never a patch line branched off the closed tag (the updater delivers branch tips, not tags, so such a tag reaches nobody). If it cannot wait for the active line, take the hotfix path below.
