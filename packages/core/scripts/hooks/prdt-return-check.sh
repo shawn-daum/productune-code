@@ -246,10 +246,40 @@ def block_reason(violations):
 
 
 def atomic_write(path, obj):
+    # Symlink-proof (T-647): `path + ".tmp"` is project-local (`.prdt/` ships
+    # inside a clone), so a repo can plant `<path>.tmp` as a symlink to any file
+    # this uid can write — the old `open(tmp, "w")` followed it, truncating the
+    # target with this call's JSON payload, and `os.replace` then consumed the
+    # symlink with no trace left. Same primitive as `_guard_write` in
+    # prdt-user-prompt.sh (T-567 precedent): O_EXCL creates the temp or nothing
+    # — a symlink (or stale leftover) already at that name loses the race and is
+    # unlinked (removes the link entry, never follows it) rather than opened —
+    # and os.replace renames ONTO the destination name without following a link
+    # on either side.
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    for attempt in (0, 1):
+        try:
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except FileExistsError:
+            if attempt:
+                raise
+            os.unlink(tmp)  # our own leftover from a killed run, or a planted link — gone unopened either way
+    with os.fdopen(fd, "w") as f:
         json.dump(obj, f, indent=2)
     os.replace(tmp, path)
+
+
+def _append_line(path, text):
+    # Symlink-proof append (T-647, same guarantee as atomic_write above): a
+    # planted symlink at this exact append path is the append-side form of the
+    # same clone-carried attack. O_NOFOLLOW refuses to open through a symlink at
+    # all (raises, ELOOP) rather than silently widening the write onto whatever
+    # it points at; a regular file — the normal case, every gate event — opens
+    # and appends exactly as before.
+    fd = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as f:
+        f.write(text)
 
 
 def queue_flag(codes):
@@ -368,8 +398,7 @@ def log_gate(outcome, codes, agent_id=None):
     row = {"ts": now, "persona": persona, "outcome": outcome, "codes": codes}
     if agent_id:
         row["agent_id"] = agent_id
-    with open(os.path.join(state_dir, ".return-gate.jsonl"), "a") as f:
-        f.write(json.dumps(row) + "\n")
+    _append_line(os.path.join(state_dir, ".return-gate.jsonl"), json.dumps(row) + "\n")
 
 
 # Fail OPEN on any surprise: a gate that misfires strands a dispatch, an advisory
