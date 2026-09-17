@@ -2581,7 +2581,7 @@ def hook_registration_warnings():
 
 
 def hook_roster_duplicate_warnings():
-    """A basename registered more than once on the SAME event — T-645.
+    """A basename registered more than once on the SAME event AND matcher — T-645, T-652.
 
     `hook_registration_warnings` above checks basename EXISTENCE only
     (`any(b in c for c in commands)`), which reads a DOUBLED roster as clean:
@@ -2595,6 +2595,17 @@ def hook_roster_duplicate_warnings():
     112-entry, every-hook-fires-three-times incident, reproduced by a symlink
     instead of by a stray `--plan` flag, and the exact state that check read
     as healthy.
+
+    T-652: the judgment unit is event PLUS matcher, not event alone. The
+    manifest deliberately binds one hook to two different matchers on the
+    same event (e.g. prdt-session-start-p2.sh on SessionStart's
+    `startup|resume|clear` AND `compact` entries — 16 hooks x 2 matchers =
+    32 SessionStart entries by design), and that shape is correct, not a
+    T-640 doubled roster. So entries are grouped by (event, matcher) before
+    counting; two entries sharing an event but carrying DIFFERENT matcher
+    strings never collide, while two entries on the same event that both
+    omit a matcher (or both carry the identical one) still do — that second
+    shape is what T-640 actually produced.
 
     Report only, like every other check in this file — doctor never edits
     settings.json. Fixed by keying "is this ours" on basename everywhere
@@ -2620,10 +2631,18 @@ def hook_roster_duplicate_warnings():
     for event, entries in hooks.items():
         if not isinstance(entries, list):
             continue
-        per_basename: dict = {}
+        # Grouped by matcher first — an entry with no "matcher" key groups
+        # with other matcher-less entries on this event (that pairing IS a
+        # collision, per PreToolUse's matcher-less governor vs T-640), while
+        # two entries carrying DIFFERENT matcher strings never share a group.
+        per_matcher: dict = {}
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
+            matcher = entry.get("matcher")
+            if not isinstance(matcher, str):
+                matcher = None
+            per_basename = per_matcher.setdefault(matcher, {})
             for h in entry.get("hooks") or []:
                 cmd = h.get("command") if isinstance(h, dict) else None
                 if not isinstance(cmd, str):
@@ -2635,15 +2654,18 @@ def hook_roster_duplicate_warnings():
                                 # stale from a version this roster no longer carries
                                 # (hook_registration_warnings' business, not this one)
                 per_basename.setdefault(name, []).append(bare)
-        for name in sorted(per_basename):
-            cmds = per_basename[name]
-            if len(cmds) <= 1:
-                continue
-            uniq = sorted(set(cmds))
-            warns.append(f"hooks: {name} is registered {len(cmds)} times on {event} in {settings_path} "
-                         f"({'; '.join(uniq)}) — the roster is doubled (T-640's incident shape); "
-                         f"re-run install.sh (or uninstall.sh) to collapse it — both now strip by "
-                         f"basename, not by path spelling")
+        for matcher in sorted(per_matcher, key=lambda m: (m is None, m or "")):
+            per_basename = per_matcher[matcher]
+            where = event if matcher is None else f"{event} (matcher {matcher!r})"
+            for name in sorted(per_basename):
+                cmds = per_basename[name]
+                if len(cmds) <= 1:
+                    continue
+                uniq = sorted(set(cmds))
+                warns.append(f"hooks: {name} is registered {len(cmds)} times on {where} in {settings_path} "
+                             f"({'; '.join(uniq)}) — the roster is doubled (T-640's incident shape); "
+                             f"re-run install.sh (or uninstall.sh) to collapse it — both now strip by "
+                             f"basename, not by path spelling")
     return warns
 
 
