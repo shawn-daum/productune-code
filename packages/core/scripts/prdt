@@ -2580,6 +2580,73 @@ def hook_registration_warnings():
     return warns
 
 
+def hook_roster_duplicate_warnings():
+    """A basename registered more than once on the SAME event — T-645.
+
+    `hook_registration_warnings` above checks basename EXISTENCE only
+    (`any(b in c for c in commands)`), which reads a DOUBLED roster as clean:
+    two commands for the same basename on one event, one under each of two
+    path spellings, both satisfy "exists somewhere". That is exactly the shape
+    an upgrade produces on a machine whose spelled $PRDT_HOME (or $HOME)
+    differs from its resolved one (a dotfiles-symlinked ~/.prdt, a HOME with a
+    symlinked path component): install.sh's §4 `strip` used to match only the
+    CURRENT run's path-prefix spelling, so an existing differently-spelled
+    registration of the same hook was never replaced — only added to. T-640's
+    112-entry, every-hook-fires-three-times incident, reproduced by a symlink
+    instead of by a stray `--plan` flag, and the exact state that check read
+    as healthy.
+
+    Report only, like every other check in this file — doctor never edits
+    settings.json. Fixed by keying "is this ours" on basename everywhere
+    (install.sh strip + verify, uninstall.sh strip + verify, this check), so a
+    future run of either script collapses the duplicate on its own; this
+    check exists for the machine that has NOT been re-run yet."""
+    hooks_dir = prdt_home() / "hooks"
+    if not hooks_dir.is_dir():
+        return Skipped(f"no install mirror at {hooks_dir} — nothing to compare settings.json against")
+    mirrored = sorted(p.name for p in hooks_dir.glob("prdt-*.sh"))
+    if not mirrored:
+        return Skipped(f"{hooks_dir} holds no prdt-*.sh — no hook roster to check registration for")
+
+    settings_path = claude_settings_path()
+    settings = read_json(settings_path)
+    if not isinstance(settings, dict):
+        return []  # hook_registration_warnings already reports the missing/invalid file
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+
+    warns = []
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            continue
+        per_basename: dict = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for h in entry.get("hooks") or []:
+                cmd = h.get("command") if isinstance(h, dict) else None
+                if not isinstance(cmd, str):
+                    continue
+                bare = cmd.strip('"')
+                name = bare.rsplit("/", 1)[-1]
+                if name not in mirrored:
+                    continue  # not ours — someone else's hook, or a basename
+                                # stale from a version this roster no longer carries
+                                # (hook_registration_warnings' business, not this one)
+                per_basename.setdefault(name, []).append(bare)
+        for name in sorted(per_basename):
+            cmds = per_basename[name]
+            if len(cmds) <= 1:
+                continue
+            uniq = sorted(set(cmds))
+            warns.append(f"hooks: {name} is registered {len(cmds)} times on {event} in {settings_path} "
+                         f"({'; '.join(uniq)}) — the roster is doubled (T-640's incident shape); "
+                         f"re-run install.sh (or uninstall.sh) to collapse it — both now strip by "
+                         f"basename, not by path spelling")
+    return warns
+
+
 def hook_dangling_command_warnings():
     """Hook registrations whose command names an absolute path that does not
     exist — reported, never repaired (T-640).
@@ -7545,6 +7612,9 @@ def cmd_doctor(_args):
         ("register", FAMILY_DE, lambda: register_warnings(droot)),
         # hook roster parity + governor fire evidence (T-445 / T-491)
         ("hook roster + governor fire", FAMILY_DE, lambda: hook_registration_warnings()),
+        # a basename registered more than once on one event (T-645) — the
+        # existence check above cannot see a DOUBLED roster, only an absent one
+        ("hook roster duplicates", FAMILY_DE, lambda: hook_roster_duplicate_warnings()),
         # a registered command whose absolute path is gone (T-640) — independent of
         # the mirror: the basename check above cannot see a dead PATH
         ("hook command targets", FAMILY_DE, lambda: hook_dangling_command_warnings()),

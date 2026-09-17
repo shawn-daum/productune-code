@@ -446,6 +446,58 @@ describe.skipIf(!PYTHON3)('prdt doctor — missing / truncated / symlinked count
   })
 })
 
+describe.skipIf(!PYTHON3)('prdt doctor — a basename registered more than once on one event (T-645)', () => {
+  /** The doubled-roster shape: two commands for the SAME mirrored basename on
+   *  ONE event, differing only in path prefix — exactly what an upgrade on a
+   *  spelled≠resolved $PRDT_HOME machine used to produce, and what the plain
+   *  existence check (`hook_registration_warnings`, "a mirrored hook
+   *  registered nowhere is reported") reads as clean, since the basename
+   *  exists under BOTH prefixes. */
+  function registerRaw(commands: Record<string, string[]>) {
+    const hooks: any = {}
+    for (const [event, cmds] of Object.entries(commands)) {
+      hooks[event] = [{ hooks: cmds.map((c) => ({ type: 'command', command: c })) }]
+    }
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ hooks }, null, 2))
+  }
+
+  test('the same basename registered twice on one event is reported, naming both paths', () => {
+    mirror('prdt-session-start.sh')
+    const spelled = path.join(machineHome, 'home-dotfiles-link', 'hooks', 'prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, `"${spelled}"`],
+    })
+    const out = doctor().join('\n')
+    expect(out).toContain('prdt-session-start.sh')
+    expect(out).toContain('SessionStart')
+    expect(out).toMatch(/registered 2 times|doubled/)
+    expect(out).toContain(spelled)
+    // report only — settings.json is not edited
+    const after = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+    expect(after.hooks.SessionStart[0].hooks.length).toBe(2)
+  })
+
+  test('the same basename registered once each on TWO DIFFERENT events is not a duplicate', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`],
+      SubagentStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`],
+    })
+    expect(doctor().join('\n')).not.toMatch(/doubled|registered \d+ times/)
+  })
+
+  test('a basename that never mirrored here at all stays the OTHER check\'s business, not a duplicate', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`,
+        '"/opt/other-tool/hooks/prdt-unrelated-hook.sh"', // not one of ours — never mirrored, never in the manifest
+      ],
+    })
+    expect(doctor().join('\n')).not.toMatch(/doubled|registered \d+ times/)
+  })
+})
+
 describe.skipIf(!PYTHON3)('prdt doctor — a hook registration pointing at a path that does not exist (T-640)', () => {
   /** The PO's incident shape: a scratch-home install registered the whole roster
    *  under /private/tmp/…, then the scratch dirs were deleted. Every such entry
