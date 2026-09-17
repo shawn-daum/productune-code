@@ -156,6 +156,59 @@ describe.skipIf(!READY)('prdt estimate — dispatch-size outlier signal (T-545)'
     expect(out.sample_count).toBe(0)
   })
 
+  test('a record with a missing/null ts does not crash estimate (T-646) — it is skipped and counted as bad_ts, sibling to usage\'s bad_ts', () => {
+    const p1 = mkProject('p1')
+    const good = Array.from({ length: 8 }, (_, i) =>
+      rec(`2026-09-0${i + 1}T00:00:00Z`, 'developer', 'claude-sonnet-5', 10, 100 * (i + 1), 0))
+    // one record with ts: null (matches the hook's best-effort write contract, T-544 F5) —
+    // before T-646 this crashed the whole command with
+    // TypeError: '<' not supported between instances of 'str' and 'NoneType'
+    const malformed = { ...good[0], ts: null }
+    writeTurns(p1, [...good, malformed])
+    const r = prdt(p1, 'estimate', '--persona', 'developer', '--model', 'claude-sonnet-5', '--root', root, '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    expect(out.bad_ts).toBe(1)
+    expect(out.sample_count).toBe(8) // the malformed record is excluded, not counted as a sample
+    expect(out.insufficient_history).toBe(false)
+    expect(out.tokens).toBeDefined()
+  })
+
+  test('a record with no ts key at all also counts as bad_ts rather than crashing', () => {
+    const p1 = mkProject('p1')
+    const good = Array.from({ length: 8 }, (_, i) =>
+      rec(`2026-09-0${i + 1}T00:00:00Z`, 'developer', 'claude-sonnet-5', 10, 100 * (i + 1), 0))
+    const { ts: _drop, ...malformed } = good[0] as any
+    writeTurns(p1, [...good, malformed])
+    const r = prdt(p1, 'estimate', '--persona', 'developer', '--model', 'claude-sonnet-5', '--root', root, '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    expect(out.bad_ts).toBe(1)
+    expect(out.sample_count).toBe(8)
+  })
+
+  test('non-JSON output reports the skipped bad_ts count rather than dropping it silently', () => {
+    const p1 = mkProject('p1')
+    const good = Array.from({ length: 8 }, (_, i) =>
+      rec(`2026-09-0${i + 1}T00:00:00Z`, 'developer', 'claude-sonnet-5', 10, 100 * (i + 1), 0))
+    const malformed = { ...good[0], ts: null }
+    writeTurns(p1, [...good, malformed])
+    const r = prdt(p1, 'estimate', '--persona', 'developer', '--model', 'claude-sonnet-5', '--root', root)
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toMatch(/ts 해석 불가 1건/)
+  })
+
+  test('all-well-formed history is unaffected by the T-646 guard: bad_ts is 0 and output is unchanged', () => {
+    const p1 = mkProject('p1')
+    writeTurns(p1, Array.from({ length: 8 }, (_, i) =>
+      rec(`2026-09-0${i + 1}T00:00:00Z`, 'developer', 'claude-sonnet-5', 10, 100 * (i + 1), 0)))
+    const r = prdt(p1, 'estimate', '--persona', 'developer', '--model', 'claude-sonnet-5', '--root', root, '--json')
+    expect(r.status, r.err).toBe(0)
+    const out = JSON.parse(r.out)
+    expect(out.bad_ts).toBe(0)
+    expect(out.sample_count).toBe(8)
+  })
+
   test('default --root (no flag) is the parent of the current project, not a hardcoded path', () => {
     const p1 = mkProject('p1')
     writeTurns(p1, Array.from({ length: 8 }, (_, i) =>

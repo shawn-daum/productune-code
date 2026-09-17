@@ -4521,9 +4521,14 @@ def cmd_estimate(args):
     if not scan_root.is_dir():
         sys.exit(f"prdt estimate: --root 없음 — {scan_root}")
 
-    group = sorted(
-        (r for r in _estimate_scan(scan_root) if r["persona"] == args.persona and r["model"] == args.model),
-        key=lambda r: r["ts"])
+    shaped = [r for r in _estimate_scan(scan_root) if r["persona"] == args.persona and r["model"] == args.model]
+    # T-646: `usage` already treats a record's `ts` as best-effort (the
+    # hook's write contract, T-544 F5) and counts an unusable one as
+    # `bad_ts` rather than crash or drop silently. `estimate` sorts on `ts`
+    # too — same guard, same name, so one malformed record (missing/None/
+    # non-string ts) is skipped and counted, never a TypeError.
+    bad_ts = sum(1 for r in shaped if not isinstance(r["ts"], str) or not r["ts"].strip())
+    group = sorted((r for r in shaped if isinstance(r["ts"], str) and r["ts"].strip()), key=lambda r: r["ts"])
     n = len(group)
 
     playbook_note = None
@@ -4537,6 +4542,7 @@ def cmd_estimate(args):
         "shape": {"persona": args.persona, "model": args.model},
         "playbook_note": playbook_note,
         "sample_count": n,
+        "bad_ts": bad_ts,
         "min_samples": MIN_SAMPLES,
         "gates_nothing": True,
     }
@@ -4550,6 +4556,8 @@ def cmd_estimate(args):
             print(json.dumps(out, ensure_ascii=False))
         else:
             print(out["message"])
+            if bad_ts:
+                print(f"ts 해석 불가 {bad_ts}건 — 건너뜀 (T-646)")
             if playbook_note:
                 print(playbook_note)
         return
@@ -4587,6 +4595,8 @@ def cmd_estimate(args):
         return
 
     print(f"prdt estimate — persona={args.persona} model={args.model}  (n={n}, scan_root={scan_root})")
+    if bad_ts:
+        print(f"ts 해석 불가 {bad_ts}건 — 건너뜀 (T-646)")
     if playbook_note:
         print(playbook_note)
     print(f"토큰(참고용, 과금 단위 아님 — T-543/T-628: 이 기기 opus-5 이력 대부분 무비용, sonnet-5/"
