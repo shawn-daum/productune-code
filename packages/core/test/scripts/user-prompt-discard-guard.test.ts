@@ -24,6 +24,13 @@
  *   · normal, two-sessions, stale marker, unwritable state dir — all real runs.
  * The only fixture-written marker is the stale one, which by definition cannot
  * be produced inside a test's lifetime.
+ *
+ * T-627 round 3 adds one more real mode: a duplicate hook registration firing
+ * this hook TWICE, concurrently, for the SAME prompt. The marker protocol alone
+ * cannot tell "still running" from "was killed" — only a pid-liveness probe
+ * can — so that describe block spawns a REAL first run, confirms via a REAL
+ * `os.kill(pid, 0)`-style probe that it is genuinely still alive, then runs a
+ * REAL second copy and asserts the guard stays silent about it.
  */
 
 import path from 'path'
@@ -248,6 +255,47 @@ describe('two sessions in one project do not accuse each other', () => {
       .not.toBe(markerPath(sb.prdtHome, other, 'sess-shared'))
     expect(fs.existsSync(markerPath(sb.prdtHome, other, 'sess-shared'))).toBe(true)
   })
+})
+
+describe('T-627 round 3 — a duplicate hook registration must not accuse a live sibling', () => {
+  test('a real concurrent second run of this hook, for the SAME prompt, does not report the still-running first run as killed', async () => {
+    // Reproduces the measured cause of 161/179 false `[prdt hook guard]`
+    // notices: a duplicate UserPromptSubmit registration invokes this hook
+    // TWICE for one prompt. The second copy used to read the first copy's
+    // in-progress (`done:false`) marker and unconditionally call it a kill.
+    // This spawns a REAL first run, waits (by polling) until it has genuinely
+    // started and is genuinely still alive, then runs a REAL second copy for
+    // the identical (project, session_id) and asserts it stays silent — no
+    // fixture, no simulated marker, an actual concurrent pid.
+    const sb = makeSandbox()
+    const slow = makeSlowHookDir(sb.root, 20)     // sleeps long enough that A is
+    const marker = markerPath(sb.prdtHome, sb.proj, 'sess-dup-reg')  // still alive well past B's whole run
+
+    const childA = spawn('bash', [slow.hook], {
+      env: { ...process.env, PRDT_HOME: sb.prdtHome }, stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    childA.stdin.end(event(sb.proj, 'sess-dup-reg'))
+    const deadline = Date.now() + 60000
+    while (!fs.existsSync(marker) && Date.now() < deadline) await sleep(20)
+    expect(fs.existsSync(marker)).toBe(true)
+    const pidA = JSON.parse(fs.readFileSync(marker, 'utf8')).pid as number
+    expect(Number.isInteger(pidA)).toBe(true)
+    // A is genuinely still running — the marker is still `done:false` and the
+    // pid it names genuinely answers a liveness probe.
+    expect(JSON.parse(fs.readFileSync(marker, 'utf8')).done).toBe(false)
+    expect(() => process.kill(pidA, 0)).not.toThrow()
+
+    // B: a duplicate registration firing the REAL, fast hook for the identical
+    // (project, session_id) while A is still mid-flight.
+    const ctxB = run(HOOK, sb.proj, 'sess-dup-reg', { PRDT_HOME: sb.prdtHome })
+    expect(ctxB).toContain('stage=build')
+    expect(ctxB).not.toContain(GUARD)            // the defect: this used to fire "killed mid-run"
+
+    // Cleanup — A does not need to finish naturally for this test.
+    try { process.kill(pidA, 'SIGKILL') } catch { /* already gone */ }
+    try { childA.kill('SIGKILL') } catch { /* already gone */ }
+    fs.rmSync(slow.flag, { force: true })
+  }, 90000)
 })
 
 describe('a stale marker from a session that never came back', () => {

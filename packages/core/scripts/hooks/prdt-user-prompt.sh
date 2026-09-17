@@ -98,17 +98,31 @@ except Exception:
 # `~/.prdt/run/hook-guard/` — written at the START of the run with `done:false`,
 # rewritten at the END with the measured wall. On the NEXT prompt of the SAME
 # session it reads that marker before overwriting it, and speaks once when the
-# previous run either (a) never completed it — the process was killed mid-run, so
-# the output is GONE, certain — or (b) completed it at/over the guard budget —
-# finished, but possibly too late, which nothing else can see from inside.
-# Keying on session_id (not the project alone) is what stops a second session in
-# the same project raising a false notice; the marker is consumed by being
-# overwritten, so a notice fires once and never repeats.
+# previous run either (a) never completed it AND is confirmed dead — the
+# process was killed mid-run, so the output is GONE, certain — or (b) completed
+# it at/over the guard budget — finished, but possibly too late, which nothing
+# else can see from inside. Keying on session_id (not the project alone) is
+# what stops a second session in the same project raising a false notice; the
+# marker is consumed by being overwritten, so a notice fires once and never
+# repeats.
 #
-# The marker also carries the writing process's `pid`. It is DIAGNOSTIC ONLY —
-# never read back into a decision and never rendered into the context; it is
-# there so a human (or a test that must address this exact process) can tell
-# which run left a marker behind.
+# T-627 round 3: a marker reading `done:false` does NOT by itself mean killed —
+# it equally means "still running", and the harness can invoke this hook twice
+# concurrently for ONE prompt when it is registered twice (T-640's duplicate
+# registration measured 161/179 `[prdt hook guard]` notices as exactly this: the
+# second copy reading the first copy's in-progress marker a few hundred ms after
+# it was written, while the first copy was still executing). The marker protocol
+# alone cannot tell those apart; liveness can. The marker's `pid` — previously
+# DIAGNOSTIC ONLY — is now READ BACK: `os.kill(pid, 0)` (no signal sent, just the
+# existence check) tells a live sibling from a confirmed-dead one. Only a
+# confirmed-dead pid (`ProcessLookupError`) is reported as killed; a live pid, an
+# unreadable pid (permission denied — some other uid's process, still alive from
+# our point of view), or a pid whose shape we cannot even trust all fall on the
+# side of SILENCE, on the same "cannot cry wolf about a cost it did not observe"
+# rule the rest of this guard already follows. The cost of that choice is a
+# vanishingly rare true miss (the pid was reused by an unrelated process inside
+# the same session within the staleness window) traded against the measured
+# 161/179 false accusation this repairs.
 #
 # `~/.prdt/run/` is tooling-owned runtime state and the contracts §Fixed-paths
 # carve-out names the DIRECTORY, so a new file under it needs no new carve-out.
@@ -198,6 +212,25 @@ def _guard_sweep(d, now):
         pass
 
 
+def _pid_confirmed_dead(pid):
+    """True only when `pid` is a plausible pid AND is confirmed gone.
+
+    `os.kill(pid, 0)` sends no signal — it only probes existence. Anything short
+    of a definite "no such process" answer (a live pid, a pid we lack permission
+    to probe, an off-shape value, an unexpected OS error) returns False: this
+    guard must never accuse a kill it cannot actually see (T-627 round 3).
+    """
+    if not (isinstance(pid, int) and not isinstance(pid, bool) and pid > 0):
+        return False
+    try:
+        os.kill(pid, 0)
+        return False                    # still alive — a concurrent sibling, not a kill
+    except ProcessLookupError:
+        return True                     # confirmed gone
+    except Exception:
+        return False                    # e.g. PermissionError — can't tell, so don't accuse
+
+
 def guard_begin(proj_root, sid, now):
     """Read the previous run's verdict, then stamp this run's start marker.
 
@@ -228,7 +261,7 @@ def guard_begin(proj_root, sid, now):
             started = prev.get("start")
             fresh = (isinstance(started, (int, float)) and not isinstance(started, bool)
                      and 0 < now - started <= GUARD_STALE_SECS)
-            if fresh and prev.get("done") is not True:
+            if fresh and prev.get("done") is not True and _pid_confirmed_dead(prev.get("pid")):
                 notice = (
                     "[prdt hook guard] the previous run of this hook in THIS session never "
                     "finished — it was killed mid-run, so the harness discarded its whole "
@@ -237,6 +270,8 @@ def guard_begin(proj_root, sid, now):
                     "assumed about stage/version/current_task on that turn did not come from "
                     "this channel. Re-read it here rather than from memory (T-627)."
                 )
+            elif fresh and prev.get("done") is not True:
+                pass                     # still running (or unconfirmable) — a sibling, not a kill
             elif fresh:
                 dur = prev.get("dur_ms")
                 if isinstance(dur, int) and not isinstance(dur, bool) and 0 <= dur:
@@ -377,17 +412,46 @@ lines = [f"[prdt state] stage={stage} · version={version} · current_task={task
 # A pre-T-586 mirror hook given `--binding` and a closed stdin exits silently
 # (no agent_type → PO-only exit), so a half-updated mirror degrades to today's
 # output rather than breaking the prompt.
+#
+# T-627 round 3: that "no line" shape is exactly what a TIMED-OUT or otherwise
+# FAILED resolver call also produces, and the two used to be indistinguishable —
+# the PO cannot tell a default-valued register from a lost one. Measured: one in
+# ten resolver runs took 6.22 s under load 13–15 against this call's own 5 s
+# limit (live markers show `dur_ms 5011`/`5019` — the timeout firing), and 87 of
+# 1,084 state deliveries since 2026-09-15 carried no register line although the
+# register has been non-default since 2026-09-08. The repair is NOT to widen
+# this timeout (no measurement justifies a number, and the resolver call sits
+# well inside the hook's own 10 s guard budget above) and NOT to know a single
+# thing about what the line would have said — the resolver stays the ONE
+# authority on which register values are legal (contracts §Fixed paths) — it is
+# only to stop failing SILENTLY. A definite call failure (timeout, non-zero
+# exit, or any exception spawning/reading the subprocess) now appends one fixed
+# guard line that says the binding is UNCONFIRMED this turn — never a guess at
+# what it would have been. A clean run that legitimately prints nothing (every
+# key at its default) is UNCHANGED: still silent, still zero bytes.
+REGISTER_RESOLVER_TIMEOUT_S = 5
+REGISTER_UNCONFIRMED_NOTICE = (
+    "[prdt register guard] the register binding call did not complete this turn (%s), so no "
+    "[prdt register] line could be confirmed. This is NOT the same as a default register — the "
+    "resolver is the sole authority on the current binding and it did not get to answer, so treat "
+    "the binding as UNKNOWN rather than default for this turn (T-627)."
+)
 hook_dir = os.environ.get("PRDT_HOOK_DIR") or ""
 resolver = os.path.join(hook_dir, "prdt-audience-inject.sh")
 if hook_dir and os.path.isfile(resolver):
     try:
         r = subprocess.run(["bash", resolver, "--binding"], stdin=subprocess.DEVNULL,
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True, timeout=REGISTER_RESOLVER_TIMEOUT_S)
         first = (r.stdout or "").split("\n", 1)[0].strip()
         if r.returncode == 0 and first.startswith("[prdt register] "):
             lines.append(first)
+        elif r.returncode != 0:
+            lines.append(REGISTER_UNCONFIRMED_NOTICE % "the resolver exited non-zero")
+    except subprocess.TimeoutExpired:
+        lines.append(REGISTER_UNCONFIRMED_NOTICE
+                      % ("the call exceeded its %gs limit" % REGISTER_RESOLVER_TIMEOUT_S))
     except Exception:
-        pass
+        lines.append(REGISTER_UNCONFIRMED_NOTICE % "the call could not be run")
 
 # Next to the state line, because it is a statement ABOUT that line's absence on
 # the previous turn. Silent in the normal case: `guard_begin` returns None and
