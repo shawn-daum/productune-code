@@ -95,6 +95,23 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
  * by basename anywhere in the tree). The physical code dir (`<code.dir>/`) is
  * appended per-project at init when the project is split (PRD history §v1.3 설계 결정 3)
  * so the code tree never shows up in the meta `git status`.
+ *
+ * `scratch/` (T-648): qa/habit.md directs verification screenshots and ad-hoc
+ * harness files to `.prdt/scratch/`. `.prdt` is allowlisted wholesale above, so
+ * without this entry every screenshot became a permanent meta commit — pushed
+ * off the machine by the one push that needs no per-push consent (the meta
+ * backup carve-out). The round-end scratch cleanup does not close this gap: a
+ * `blocked` verdict leaves scratch standing by design, and the autosave tick
+ * runs every turn, so the deletion structurally loses the race rather than
+ * occasionally.
+ * `po.lock` / `gui-bootstrap.json` / `update-state.json` (T-648 sibling
+ * judgment, same ticket): none carries history-worthy value. `po.lock` is a
+ * dead legacy-layout marker under `.productune` — current code only ever
+ * checks for its existence (detectProductuneLayout, gui/electron/ipc/project.ts)
+ * and nothing writes it anymore. The other two are per-machine state
+ * (gui-bootstrap.json, update-state.json) that always resolves under the HOME
+ * `.prdt`, never a project's — excluding them here is defense-in-depth for the
+ * degenerate case where a project root coincides with home.
  */
 export const DEFAULT_META_EXCLUDE: string[] = [
   'meta.git/',
@@ -104,6 +121,10 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   '.cost-*.json',
   '.subagent-gate.json',
   '.return-flags.json',
+  'scratch/',
+  'po.lock',
+  'gui-bootstrap.json',
+  'update-state.json',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
