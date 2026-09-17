@@ -3542,6 +3542,227 @@ def release_notes_gap_warnings(root):
             f"the SAME change that cuts the tag"]
 
 
+# ── README staleness at a cut tag (T-589) ─────────────────────────────────────
+#
+# `po/playbooks/retro.md` and `patch-cycle.md` §Rules (37e98bf) landed the duty
+# next to the release-notes rule they already carried: `<codeRoot>/README.md`,
+# and only that file, is tested against the TAGGED TREE — never the diff — on
+# three predicates. This mirrors `release_notes_gap_warnings` on purpose: same
+# code-root anchor, same degrade-rather-than-raise posture (no tag, no git, or
+# an unreadable README/CLI source at the tag → silence, exactly like a missing
+# RELEASES section never raises when there is no tag to measure against), same
+# bar of reporting only an OBSERVED violation.
+#
+# Ground truth is read from the NEWEST version-shaped tag's own tree, never the
+# working tree: the tag's file list (`git ls-tree`), and the tag's own CLI
+# source (`packages/core/scripts/prdt` as it stood at that tag) for the
+# subcommand set and the PERSONAS/STAGES vocabulary — a project on an older
+# shape of this script is judged by what IT shipped, not by what this checkout
+# happens to run.
+#
+# Only a fenced block a reader is meant to RUN is scanned for a path or a
+# `prdt <subcommand>` claim — an explicit shell-family info string (bash · sh ·
+# shell · zsh · console). This README carries three illustration blocks (a
+# one-line summary diagram, a generated-project tree, this repo's own package
+# tree) with NO info string, each drawing a directory shape rather than a
+# command a reader runs; scanning those too is the measured false positive
+# (T-589 §spec) — a placeholder path like `tickets/<version>/T-NNN.md` reads as
+# a dead path to a naive scanner, when it was never runnable to begin with.
+README_RUNNABLE_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console"}
+_README_FENCE_RE = re.compile(r"^```([^\n]*)\n(.*?)\n^```[ \t]*$", re.MULTILINE | re.DOTALL)
+_README_PATH_RE = re.compile(r"[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+")
+_README_SUBCOMMAND_RE = re.compile(r"\bprdt\s+([a-z][a-z0-9_-]*)")
+_README_PERSONA_RE = re.compile(r"prdt-([a-z]+)", re.IGNORECASE)
+# A stage chain needs ≥2 arrows (≥3 tokens) before it counts as one — a single
+# `→` shows up in ordinary prose (e.g. "append → Retro에서 큐레이션") without
+# presenting the stage vocabulary at all; requiring two keeps that out.
+_README_STAGE_CHAIN_RE = re.compile(r"(?:[A-Za-z]+\s*→\s*){2,}[A-Za-z]+")
+_CLI_SUBCOMMAND_RE = re.compile(r"""add_parser\(\s*['"]([a-zA-Z0-9_-]+)['"]""")
+
+
+def _readme_runnable_blocks(text):
+    """Fenced-block CONTENT for every block whose info string names a shell
+    family — never a block with no info string or a non-shell one (the
+    project-structure / package-tree illustrations in this very README)."""
+    out = []
+    for m in _README_FENCE_RE.finditer(text):
+        if m.group(1).strip().lower() in README_RUNNABLE_FENCE_LANGS:
+            out.append(m.group(2))
+    return out
+
+
+def _readme_path_tokens(block_text):
+    """repo-path-shaped tokens in a runnable block's text: ≥1 slash, and not a
+    URL (`scheme://…`) or an npm-scope package id (`@scope/name` is a package,
+    not a filesystem path) — both would otherwise read as a slash-bearing path
+    a naive scan then reports as dead."""
+    out = []
+    for m in _README_PATH_RE.finditer(block_text):
+        s = m.start()
+        if block_text[max(0, s - 3):s] == "://" or (s > 0 and block_text[s - 1] == "@"):
+            continue
+        tok = m.group(0).rstrip(".,;:)")
+        if tok:
+            out.append(tok)
+    return out
+
+
+def _cli_subcommands(cli_source):
+    """Registered subcommand names, parsed out of the tagged CLI source text
+    itself (`sub.add_parser("name", …)`) — never imported/executed, since this
+    is another tag's bytes, not necessarily this process's own module."""
+    return {m.group(1) for m in _CLI_SUBCOMMAND_RE.finditer(cli_source)}
+
+
+def _cli_tuple(cli_source, name):
+    """The quoted-string members of a module-level `NAME = (...)` tuple literal
+    in the tagged CLI source (`PERSONAS`, `STAGES`) — same text-parse posture
+    as `_cli_subcommands`."""
+    m = re.search(rf"^{name}\s*=\s*\(([^)]*)\)", cli_source, re.MULTILINE)
+    if not m:
+        return set()
+    return {t.strip().strip("\"'") for t in m.group(1).split(",") if t.strip().strip("\"'")}
+
+
+def _readme_shown_stages(text):
+    """Stage tokens the README actually PRESENTS as one arrow-connected chain
+    (the lifecycle line's own convention: `Define → Build → Ship → Retro →
+    idle`) — never a stray single arrow elsewhere in prose."""
+    tokens = set()
+    for line in text.splitlines():
+        if line.count("→") < 2:
+            continue
+        m = _README_STAGE_CHAIN_RE.search(line)
+        if m:
+            tokens |= {w.lower() for w in re.findall(r"[A-Za-z]+", m.group(0))}
+    return tokens
+
+
+def readme_stale_at_tag_warnings(root):
+    """`<codeRoot>/README.md`, evaluated against the newest `v*` tag's own
+    tree — never the working tree or the diff (retro.md / patch-cycle.md
+    §Rules, 37e98bf). Four predicates, three of them real violations and one
+    that never is:
+
+      A. a repo path a runnable block names does not resolve at the tag;
+      B. a `prdt <subcommand>` a runnable block shows is not one the tagged
+         CLI accepts;
+      D. the persona (`prdt-<name>`) or stage (the arrow-chain) vocabulary the
+         README presents disagrees with the tagged CLI's own PERSONAS/STAGES,
+         in EITHER direction — named-but-not-shipped, or shipped-but-never-
+         presented, both count.
+
+    C — a registered subcommand the README never shows (a runnable-block
+    invocation) or names (anywhere in its text) — is deliberately NEVER a
+    violation: a machine cannot tell a newcomer-facing surface from a
+    tooling-internal one, and inventing that boundary where no violation was
+    observed is exactly what doctrine forbids. It rides along as one
+    `Advisory` line precisely when it is the ONLY thing this check found —
+    the moment A, B, or D produced a real violation, that already-broken
+    result is what a reader needs to act on, so the advisory line is left out
+    rather than padding a violations list it was never meant to join.
+
+    Degrade-never-raise, same posture as `release_notes_gap_warnings`: no git,
+    no version-shaped tag, or the README/CLI source unreadable at that tag
+    (either file plain absent there, or an old shape this parse can't read)
+    all fall through to `[]` — a silence, not a claim that nothing is stale."""
+    cr = code_root(root)
+    try:
+        r = _git(["tag", "--list", "v*"], cr)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    tags = [t.strip() for t in r.stdout.splitlines() if TAG_RE.match(t.strip())]
+    keyed = sorted((k, t) for t in tags for k in (_version_key(t),) if k is not None)
+    if not keyed:
+        return []
+    tag = keyed[-1][1]
+
+    def show(path):
+        try:
+            sr = _git(["show", f"{tag}:{path}"], cr)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return sr.stdout if sr.returncode == 0 else None
+
+    readme = show("README.md")
+    if readme is None:
+        return []
+    cli_source = show("packages/core/scripts/prdt")
+    if cli_source is None:
+        return []
+    try:
+        lr = _git(["ls-tree", "-r", "--name-only", tag], cr)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if lr.returncode != 0:
+        return []
+    files = {l.strip() for l in lr.stdout.splitlines() if l.strip()}
+    dirs = set()
+    for f in files:
+        parts = f.split("/")
+        for i in range(1, len(parts)):
+            dirs.add("/".join(parts[:i]))
+
+    rel = f"{code_dir_name(root)}/README.md" if code_dir_name(root) else "README.md"
+    blocks = _readme_runnable_blocks(readme)
+
+    # A — repo paths named in a runnable block that don't resolve at the tag.
+    dead_paths = sorted({tok for b in blocks for tok in _readme_path_tokens(b)
+                          if tok not in files and tok not in dirs})
+
+    # B — `prdt <subcommand>` shown in a runnable block the tagged CLI refuses.
+    shipped_cmds = _cli_subcommands(cli_source)
+    shown_cmds = {m.group(1) for b in blocks for m in _README_SUBCOMMAND_RE.finditer(b)}
+    dead_cmds = sorted(shown_cmds - shipped_cmds)
+
+    # D — persona/stage vocabulary, either direction.
+    shipped_personas = _cli_tuple(cli_source, "PERSONAS")
+    shipped_stages = _cli_tuple(cli_source, "STAGES")
+    shown_personas = {m.group(1).lower() for m in _README_PERSONA_RE.finditer(readme)}
+    shown_stages = _readme_shown_stages(readme)
+    extra_personas = sorted(shown_personas - shipped_personas)
+    missing_personas = sorted(shipped_personas - shown_personas)
+    extra_stages = sorted(shown_stages - shipped_stages)
+    missing_stages = sorted(shipped_stages - shown_stages)
+
+    violations = []
+    for tok in dead_paths:
+        violations.append(f"readme: {rel} names path `{tok}` in a runnable block "
+                           f"that does not resolve at {tag} — stale against the shipped tag")
+    for cmd in dead_cmds:
+        violations.append(f"readme: {rel} shows `prdt {cmd}` in a runnable block, "
+                           f"which {tag}'s CLI does not accept — stale against the shipped tag")
+    if extra_personas or missing_personas:
+        bits = []
+        if extra_personas:
+            bits.append(f"names `prdt-<x>` for {', '.join(extra_personas)}, which {tag} does not ship")
+        if missing_personas:
+            bits.append(f"never presents shipped persona(s) {' '.join(missing_personas)}")
+        violations.append(f"readme: {rel} persona vocabulary disagrees with {tag} — " + "; ".join(bits))
+    if extra_stages or missing_stages:
+        bits = []
+        if extra_stages:
+            bits.append(f"names stage(s) {' '.join(extra_stages)}, which {tag} does not ship")
+        if missing_stages:
+            bits.append(f"never presents shipped stage(s) {' '.join(missing_stages)}")
+        violations.append(f"readme: {rel} stage vocabulary disagrees with {tag} — " + "; ".join(bits))
+
+    if violations:
+        return violations
+
+    # C — advisory only, and only when nothing above already fired.
+    mentioned = {c for c in shipped_cmds if re.search(rf"\b{re.escape(c)}\b", readme)}
+    unmentioned = sorted(shipped_cmds - mentioned)
+    if unmentioned:
+        return Advisory(
+            [f"readme: {tag} ships subcommand(s) {' '.join(unmentioned)} that {rel} "
+             f"never shows or names — not a violation on its own; a tooling-internal "
+             f"surface can legitimately stay unlisted"])
+    return []
+
+
 def releases_pending(code_root, timeout=2):
     """(version, section_text) of the newest release section on the REMOTE
     (origin/<current-branch>) docs/RELEASES.md, or (None, None).
@@ -7258,6 +7479,11 @@ def cmd_doctor(_args):
         # promotion path: read the repo's own policy, report where it differs from
         # the discipline default (T-506)
         ("git promotion path", FAMILY_DE, lambda: promotion_warnings(root)),
+        # README staleness at the newest cut tag (T-589, retro.md/patch-cycle.md
+        # §Rules 37e98bf): discipline↔execution, not project — the rule tests
+        # whether what ships agrees with what the README claims, the same
+        # question every other FAMILY_DE check asks.
+        ("readme vs shipped tag", FAMILY_DE, lambda: readme_stale_at_tag_warnings(root)),
         ("release notes vs cut tags", FAMILY_PROJECT, lambda: release_notes_gap_warnings(root)),
         # meta backup lag + drift + fixed-path parity (T-428)
         ("meta backup lag", FAMILY_PROJECT, lambda: meta_backup_lag_warnings(root)),
