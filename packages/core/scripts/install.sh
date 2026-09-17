@@ -270,6 +270,19 @@ cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
 #    here — it's derived from scripts/hook-manifest.json (the SoT onboarding.ts's
 #    installPrdtHooks reduces over too), via jq --slurpfile. Edit the manifest, not this
 #    reduce, to change the roster.
+#    T-645: "is this registration ours" used to be a PATH-PREFIX match against
+#    THIS run's resolved $PRDT_HOME/hooks/ — so on a machine whose spelled
+#    $PRDT_HOME (or $HOME) differs from its resolved one (a dotfiles-symlinked
+#    ~/.prdt, a HOME with a symlinked component), an existing registration
+#    written under the OTHER spelling was invisible to strip() and never
+#    replaced, only added to: the roster doubles every such run, T-640's
+#    112-entry incident reproduced by symlink instead of by a stray flag. The
+#    predicate is now BASENAME membership in the manifest's own roster — the
+#    same test onboarding.ts's `isPrdtHook` already used (T-414's SoT), and
+#    what doctor's stale-registration check already keys on — so a spelled and
+#    a resolved registration of the SAME hook are recognized as the same
+#    registration regardless of which path text carries it. uninstall.sh
+#    strips by this identical predicate (see its own header).
 say "4) Registering hook ${HOOK_COUNT}종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
 SETTINGS="$CLAUDE_DIR/settings.json"   # MANIFEST preflighted in §0
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
@@ -290,8 +303,19 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   def stripLegacy(arr): (arr // []) | map(
     .hooks = ((.hooks // []) | map(select(isLegacy(.command // "") | not)))
   ) | map(select((.hooks | length) > 0));
+  # T-645: identity is BASENAME membership in the manifest roster, never a path
+  # prefix — a command may be quoted (the shape this script and onboarding.ts
+  # both write) or bare, so the wrapping quote is stripped before taking the
+  # final path segment. This is the ONE predicate install.sh/uninstall.sh/
+  # onboarding.ts now all use for "is this registration ours".
+  ($manifest[0].basenames) as $ours |
+  def cmdBasename($cmd): ($cmd // "")
+    | (if startswith("\"") then .[1:] else . end)
+    | (if endswith("\"") then .[:-1] else . end)
+    | split("/") | last;
+  def isOurs($cmd): ($ours | index(cmdBasename($cmd))) != null;
   def strip(ev): (.hooks[ev] // []) | map(
-    .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
+    .hooks = ((.hooks // []) | map(select(isOurs(.command // "") | not)))
   ) | map(select((.hooks | length) > 0));
   .hooks = (.hooks // {}) |
   # sweep legacy pdt-* out of EVERY event array (incl. PostCompact/Stop, and the
@@ -328,16 +352,23 @@ jq --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
 
 # Verify the CANDIDATE before it replaces settings.json, so the file can never end
 # up claiming a registration that is not really there: every manifest registration
-# must be present, and no command under $PRDT_HOME/hooks/ may be present that the
-# manifest did not ask for (stale/dangling entries). (T-485)
+# must be present, and no OTHER registration bearing one of OUR basenames may
+# remain (stale/dangling/doubled entries) — checked by basename (T-645), not by
+# path prefix, so a doubled roster from a spelled≠resolved mismatch is caught
+# even though the stale half's path text never matched this run's $PRDT_HOME.
 jq -e --arg h "$PRDT_HOME/hooks/" --slurpfile manifest "$MANIFEST" '
   ($manifest[0].registrations) as $regs |
+  ($manifest[0].basenames) as $ours |
+  def cmdBasename(cmd): (cmd // "")
+    | (if startswith("\"") then .[1:] else . end)
+    | (if endswith("\"") then .[:-1] else . end)
+    | split("/") | last;
   ([$regs[] | .event as $ev | .hooks[] | {ev: $ev, cmd: ("\"" + $h + . + "\"")}]) as $want |
   ([(.hooks // {}) | to_entries[] | .key as $ev | (.value // [])[]
     | (.hooks // [])[] | {ev: $ev, cmd: (.command // "")}]) as $got |
   all($want[]; . as $w | any($got[]; . == $w))
   and all($got[]; . as $g
-    | ((($g.cmd | startswith($h)) or ($g.cmd | startswith("\"" + $h))) | not)
+    | (($ours | index(cmdBasename($g.cmd))) == null)
       or any($want[]; . == $g))
 ' "$TMP" >/dev/null \
   || die "hook registration did not match the manifest roster — $SETTINGS left unchanged"
