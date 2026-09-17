@@ -498,6 +498,50 @@ describe.skipIf(!PYTHON3)('prdt doctor — a basename registered more than once 
   })
 })
 
+describe.skipIf(!PYTHON3)('prdt doctor — the duplicate unit is event PLUS matcher, not event alone (T-652)', () => {
+  /** Register several {matcher?, hooks} entries under one event — the exact
+   *  shape hook-manifest.json produces for SessionStart (one entry per
+   *  matcher, same basenames repeated across them by design). */
+  function registerMatched(event: string, entries: Array<{ matcher?: string; cmds: string[] }>) {
+    const hooks: any = {}
+    hooks[event] = entries.map((e) => {
+      const entry: any = { hooks: e.cmds.map((c) => ({ type: 'command', command: c })) }
+      if (e.matcher !== undefined) entry.matcher = e.matcher
+      return entry
+    })
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ hooks }, null, 2))
+  }
+
+  // Must be RED on the pre-fix code — that is what proves the fix is the fix
+  // (T-652 acceptance). This is the PO's own observed-on-this-machine shape:
+  // one hook bound to two matchers on SessionStart, correct and designed.
+  test('the same basename bound to two DIFFERENT matchers on one event is not a duplicate', () => {
+    mirror('prdt-session-start-p2.sh')
+    const cmd = `"${path.join(hooksDir(), 'prdt-session-start-p2.sh')}"`
+    registerMatched('SessionStart', [
+      { matcher: 'startup|resume|clear', cmds: [cmd] },
+      { matcher: 'compact', cmds: [cmd] },
+    ])
+    expect(doctor().join('\n')).not.toMatch(/doubled|registered \d+ times/)
+  })
+
+  // The T-640 incident shape reproduced with an explicit matcher this time:
+  // two entries on the same event carrying the SAME matcher, one basename
+  // doubled inside it — this must keep warning after the fix too.
+  test('the same basename registered twice under the SAME matcher is still reported', () => {
+    mirror('prdt-session-start-p2.sh')
+    const spelled = `"${path.join(machineHome, 'home-dotfiles-link', 'hooks', 'prdt-session-start-p2.sh')}"`
+    registerMatched('SessionStart', [
+      { matcher: 'startup|resume|clear', cmds: [`"${path.join(hooksDir(), 'prdt-session-start-p2.sh')}"`] },
+      { matcher: 'startup|resume|clear', cmds: [spelled] },
+    ])
+    const out = doctor().join('\n')
+    expect(out).toContain('prdt-session-start-p2.sh')
+    expect(out).toMatch(/registered 2 times|doubled/)
+  })
+})
+
 describe.skipIf(!PYTHON3)('prdt doctor — a hook registration pointing at a path that does not exist (T-640)', () => {
   /** The PO's incident shape: a scratch-home install registered the whole roster
    *  under /private/tmp/…, then the scratch dirs were deleted. Every such entry
@@ -522,10 +566,23 @@ describe.skipIf(!PYTHON3)('prdt doctor — a hook registration pointing at a pat
       PreToolUse: [`"${path.join(hooksDir(), GOVERNOR)}"`],
       PostToolBatch: [`"${path.join(hooksDir(), GOVERNOR)}"`],
     })
-    const lines = doctor().filter((l) => l.includes(gone))
-    expect(lines.length).toBe(2)
-    expect(lines.join('\n')).toContain('SessionStart')
-    expect(lines.join('\n')).toContain('SubagentStart')
+    const goneLines = doctor().filter((l) => l.includes(gone))
+    // This fixture registers the same basename twice on SessionStart under
+    // one matcher-less entry — the T-640 doubled-roster shape itself, not
+    // just a dangling path. So it now earns TWO kinds of warning, both of
+    // which name the `gone` path: one dangling-command line per entry that
+    // points at it (T-652's original question — "once per entry, per
+    // event"), plus the T-645/T-652 duplicate-roster line for the SessionStart
+    // collision. Asserted separately so a future duplicate-check change can't
+    // silently satisfy this test by changing which count comes out to 3.
+    const danglingLines = goneLines.filter((l) => l.includes('does not exist'))
+    const duplicateLines = goneLines.filter((l) => /doubled|registered \d+ times/.test(l))
+    expect(danglingLines.length).toBe(2)
+    expect(danglingLines.join('\n')).toContain('SessionStart')
+    expect(danglingLines.join('\n')).toContain('SubagentStart')
+    expect(duplicateLines.length).toBe(1)
+    expect(duplicateLines[0]).toContain('SessionStart')
+    expect(goneLines.length).toBe(danglingLines.length + duplicateLines.length)
     // report only — settings.json is not edited
     const after = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
     expect(after.hooks.SessionStart[0].hooks.length).toBe(2)
