@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check) · history · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, json, math, os, re, shlex, shutil, sqlite3, subprocess, sys, unicodedata
-from datetime import datetime, timezone
+import argparse, hashlib, json, math, os, re, shlex, shutil, sqlite3, statistics, subprocess, sys, unicodedata
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 STAGES = ("define", "build", "ship", "retro", "idle")
@@ -38,11 +38,26 @@ def norm_assignee(v):
 
 PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 # §11 token-budget caps (physical lines; playbook cap counts body after frontmatter).
-# `override` applies per persona PER LAYER (machine and project each), and is the
-# only cap over text that is injected on EVERY turn; `machine_wiki_pages` is a
-# pull-only store, so its budget guards curation, not per-turn tokens.
+# `override` applies per persona PER LAYER (machine and project each) — a curation
+# budget for text injected once per session start and after a compaction (T-586
+# corrected the earlier "every turn" claim: only an unregistered shim ever did
+# that); `machine_wiki_pages` is a pull-only store, so its budget guards curation,
+# not per-turn tokens. `register_body_bytes` is the one BYTE cap here: a register
+# body (`discipline/register/<key>-<value>.md`) is spliced raw into the PO's
+# session start, several may be in force at once, and the delivery gate is
+# ≤8,000 B per hook output — two bodies at 2,000 B stay under half of it.
 CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
-        "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15}
+        "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15,
+        "register_body_bytes": 2000, "agent_stub_bytes": 2000}
+# `agent_stub_bytes` (T-578): the second BYTE cap — an agent stub is the
+# persona's base prompt, read whole by the harness with no part delivery, so
+# lines say nothing about it. Basis: the stubs measure 1,404–1,515 B after the
+# T-578 consolidation (2026-09-04), so 2,000 B leaves the largest ~485 B — room
+# for one more sentence-sized rule, not for a paragraph — while the pre-T-578
+# files that motivated the ticket were 3,358–3,962 B, every one ≥68 % over; the
+# budget separates the two observed states with margin on both sides. It is
+# also the number `test/agents-stubs.test.ts` already pinned, which now reads
+# it from here rather than carrying its own.
 # po_habit holds at 64 over a curated 60 lines: the post-close-patch and
 # emergency-hotfix procedures moved out to the `patch-cycle` playbook, and the
 # ship-wrap and retro-sequence duplicates were merged into the clauses that
@@ -173,6 +188,55 @@ def read_json(path):
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+# ── untrusted text on a structured line (T-586 ①, T-581 QA) ──────────────────
+#
+# Twice now a value a PERSON writes has been rendered onto a line whose grammar
+# a MACHINE reads: T-586 ① a register value forging the binding line's own
+# `key=value`, and T-581 a `reason` printing `[verdict=clean …]` onto doctor's
+# own channel — the exact string this version's pass bar greps for. It is one
+# class, not two bugs: our structured lines have a vocabulary, and untrusted
+# text rendered on them must not be able to speak it. So the test is named once
+# here and each site brings its own reserved words; a third site adds a list,
+# not a third ad-hoc regex.
+#
+# The answer is REFUSAL, not escaping. Mangling a person's prose into something
+# printable hides the attempt and leaves a record that looks honoured; refusing
+# names it and leaves the record inert, which is the only safe direction for a
+# record whose whole effect is to silence a warning.
+LINE_BREAK_RE = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
+# doctor's own vocabulary: every key in the verdict tail, plus its two line
+# kinds (`doctor:` report, `⚠` finding — an invariant two fixtures assert).
+DOCTOR_RESERVED = ("verdict=", "violations=", "ran=", "attested=", "skipped=",
+                   "no-evidence=", "unclassified=", "doctor:", "⚠")
+
+
+def forged_tokens(text, reserved=()):
+    """Which pieces of OUR OWN output grammar `text` would forge if rendered.
+    Empty list == safe to print on a structured line."""
+    hits = []
+    if LINE_BREAK_RE.search(str(text)):
+        hits.append("a control character or line break (one value printing as several lines)")
+    hits += [f"`{t}`" for t in reserved if t in str(text)]
+    return hits
+
+
+def one_line(text):
+    """Last-resort render guard: fold every break class into a space so a string
+    that reached output unvalidated can still never become a second line. NOT a
+    substitute for `forged_tokens` — it cannot stop a forgery that fits on one
+    line, which is why the validators refuse rather than lean on this."""
+    return LINE_BREAK_RE.sub(" ", str(text))
+
+
+def safe_label(text, reserved=DOCTOR_RESERVED, limit=60):
+    """Name a piece of untrusted input on one of our lines without letting it BE
+    one of our lines. Used where refusing is not available because the whole
+    point of the line is to say what the bad input was — a JSON field named
+    `verdict=clean` gets described rather than quoted."""
+    t = one_line(text)[:limit]
+    return "<a name imitating doctor's own output>" if forged_tokens(t, reserved) else t
 
 
 def days_since(iso):
@@ -617,12 +681,28 @@ META_ALLOWLIST_DEFAULT = [".prdt", ".productune", "briefs", "docs/design.md",
 # `.return-flags.json` (T-513, was T-490 slice 3 TS-only): the return-flags
 # queue is a sibling ephemeral runtime file to index.db/turns.jsonl/etc. and
 # must never land in meta history on EITHER side.
+# `scratch/` (T-648): qa/habit.md puts verification screenshots and ad-hoc
+# harness files at `.prdt/scratch/`. `.prdt` is allowlisted wholesale, so
+# without this entry every screenshot became a permanent meta commit, pushed
+# off the machine by the one push that needs no per-push consent (the meta
+# backup carve-out). The round-end scratch cleanup does not cover this: a
+# `blocked` verdict leaves scratch standing by design, and the autosave tick
+# runs every turn, so the deletion structurally loses the race.
+# `po.lock` / `gui-bootstrap.json` / `update-state.json` (T-648 sibling
+# judgment): all three are ephemeral machine/legacy markers with no history
+# value — `po.lock` is a dead legacy-detection marker (only ever read, never
+# written, by current code: see gui/electron/ipc/project.ts), and the other
+# two are per-machine bootstrap/update-check state that always resolves under
+# the HOME `.prdt` (never a project's), so excluding them here is pure
+# defense-in-depth for the degenerate case where a project root coincides
+# with home.
 # meta_exclude_parity_warning() below lints this against meta-git.ts's copy —
 # see META_EXCLUDE_KNOWN_DIVERGENCE for the two reviewed, intentional gaps
 # (`worktrees/` / `meta.git/`) that check must name rather than flag as drift.
 META_EXCLUDE_DEFAULT = ["meta.git/", "index.db", "turns.jsonl", "sessions.json",
                         ".cost-*.json", ".subagent-gate.json", "worktrees/",
-                        ".return-flags.json"]
+                        ".return-flags.json", "scratch/", "po.lock",
+                        "gui-bootstrap.json", "update-state.json"]
 
 # ── code root resolution (PRD §v1.3 설계 결정 4 — mirrors core project-kind.ts) ──
 # code.dir absent → codeRoot IS projectRoot (legacy fallback). Best-effort: a
@@ -780,9 +860,13 @@ META_BACKUP_LAG_DAYS = 14
 
 def meta_backup_lag_warnings(root):
     """Item 1: unpushed commit count + last-push age past a sane threshold.
-    Backup push is always manual (T-374 ①), so SOME lag is normal — the point
-    is that it's never fully silent. No remote configured is surfaced too (one
-    line, not silence): that bare state is exactly what let T-427 happen.
+    Since T-504 the backup pushes itself (stage boundary + once daily, from the
+    `prdt` main / PO SessionStart hook), so lag past the thresholds means that
+    path has not run or keeps failing — the point is that it's never silent.
+    The tick's own failure record (<meta.git>/prdt-backup-state.json, written by
+    core meta-backup.ts because the detached push has no terminal) is surfaced
+    here too. No remote configured is surfaced as well (one line, not silence):
+    that bare state is exactly what let T-427 happen.
     Offline-only (no fetch): age is read off the local remote-tracking ref's
     tip commit date, the best available proxy for "how stale is the backup"
     without a network call in a non-blocking lint."""
@@ -799,6 +883,24 @@ def meta_backup_lag_warnings(root):
     if not branch:
         return []
     warns = []
+    st = _meta_backup_state(root)
+    if st.get("last_ok") is False:
+        warns.append(f"meta: automatic backup push FAILED at {str(st.get('last_attempt_at') or '?')[:16]}Z "
+                     f"(remote '{st.get('remote') or '?'}') — {st.get('last_error') or '?'} "
+                     f"— retries at the next stage boundary / day; manual: `prdt meta push {st.get('remote') or 'backup'}`")
+    # The automatic target itself (T-504 QA F1/F2): config may only NAME one of
+    # the remotes the meta repo already has. A renamed/removed one silences the
+    # tick (it has nothing to push to), a flag-/refspec-shaped one is refused by
+    # the tick — either way doctor says so here, latch or no latch.
+    auto = _meta_backup_remote_name(root)
+    if auto.startswith("-") or any(c in auto for c in ":\t \n") or \
+            _meta_git(root, ["check-ref-format", "--allow-onelevel", auto]).returncode != 0:
+        warns.append(f"meta: `meta.backup_remote` = {auto!r} is not a legal remote name — the automatic backup "
+                     f"refuses it; set .prdt/config.json meta.backup_remote to one of: {', '.join(remotes)}")
+    elif auto not in remotes:
+        warns.append(f"meta: `meta.backup_remote` = '{auto}' names a remote the meta repo does not have "
+                     f"(have: {', '.join(remotes)}) — renamed? `git --git-dir {gd} remote rename <name> {auto}` "
+                     f"or point .prdt/config.json meta.backup_remote at one of them; no automatic backup until then")
     for name in remotes:
         ref = f"refs/remotes/{name}/{branch}"
         if _meta_git(root, ["rev-parse", "--verify", "--quiet", ref]).returncode != 0:
@@ -1112,6 +1214,230 @@ exit 0
 # below can recognize that foreign hook as blocking rather than warn about it.
 
 
+# ── a HUMAN's reading of a foreign pre-push (T-581) ───────────────────────────
+#
+# T-493 fixed the boundary: an unowned hook is `unverified`, because the only
+# way prdt could learn what it does is to EXECUTE it, and running someone else's
+# pre-push is not a diagnostic's business. The honest cost was a standing skip on
+# every repo carrying an org hook — one a person had usually already resolved by
+# reading the hook. T-523 priced that cost: a no-action warning that repeats
+# stops being read even when it is right, and it held this repository's own
+# verdict at `not-established` (T-581).
+#
+# So the reading gets a home. Same home and grammar as the two heuristic checks
+# that already record a human judgment (`features.non_features` T-547 §4,
+# `tests.non_rebuilds` T-556): project state in `.prdt/config.json`, one entry,
+# `reason` required. Two things differ from those precedents, on purpose:
+#   - the pin is CONTENT, not identity. A T-556 entry names (file, setup) and
+#     goes stale when the accusation stops; this record names the sha256 of the
+#     exact bytes a person read, and stops applying the moment the hook in force
+#     hashes differently. The failure mode designed against is a hook edited
+#     AFTER the reading with the warning still quiet — that would trade a noisy
+#     true warning for a quiet false one, the mirror image of this project's
+#     named defect class and worse than the noise. Path is deliberately NOT part
+#     of the pin: whether the hook is the one git will run is decided live by
+#     prepush_status (effective hooks dir, core.hooksPath), never by the record;
+#     the record only says what a person found in these bytes.
+#   - it is a reading, not a mute. `blocks_main: false` is a legal record and
+#     produces a VIOLATION (a person established the block is absent); a record
+#     pinned to other bytes, or malformed, silences nothing and is named inside
+#     the skip it failed to lift. A record can never make the check `clean` in
+#     the "we verified" sense: it returns `Attested`, which the verdict line
+#     counts apart (`attested=N`) and prints as `human record ·` — the
+#     distinction the acceptance requires to survive in the output.
+#
+# Known limit, now stated IN THE OUTPUT rather than only here: the pin covers
+# the one file git executes. A hook that `source`s or `exec`s another file can
+# change behaviour without changing these bytes — a copy of the directory beside
+# a permissive `guard.sh` plus a `core.hooksPath` flip is enough, and the record
+# follows the bytes across (T-581 QA P3). `prepush_delegation_note` detects that
+# shape and makes both `prdt attest` and doctor's line say the record covers the
+# outer file only. Refusing to attest such a hook was the alternative and is
+# worse: sourcing a shared library is the ordinary shape of an org hook.
+#
+# The pin covers CONTENT. Whether git will run that content at all is a separate
+# question with a separate answer — `prepush_status`'s `executable` — asked
+# before the record is consulted, because a record matched to bytes git skips is
+# a true statement about a file and a false one about this repository.
+#
+# The record is written through `prdt attest prepush`, never by hand: a human
+# cannot be expected to type a sha256 correctly, and the surface refuses where
+# there is nothing foreign to read (managed / missing / no repo) so the record
+# cannot be aimed at a hook prdt already verifies or at nothing at all. It
+# reads the hook's bytes to hash them and executes nothing.
+PREPUSH_READING_KEY = "git.prepush_reading"
+PREPUSH_READING_FIELDS = ("sha256", "blocks_main", "hotfix_escape", "reason", "recorded_at")
+PREPUSH_ATTEST_HINT = ("Once a person has read it, record the reading through `prdt attest prepush "
+                       "--blocks-main yes|no --hotfix-escape yes|no --reason '<what was read and found>'`"
+                       " — the record is pinned to this exact hook content and stops applying when "
+                       "the hook changes")
+
+
+# `.`/`source`/`exec` of another file — a hook whose behaviour lives somewhere
+# these bytes do not (T-581 QA P3). `exec <redirect>` is not delegation.
+PREPUSH_DELEGATES_RE = re.compile(r"^[ \t]*(?:\.|source|exec)[ \t]+(?![<>|&])\S", re.M)
+
+
+def _hook_bytes(path):
+    """`(sha256, text)` of a hook file in ONE read — `(None, "")` if unreadable.
+    Bytes, then a lossy decode: the pin is over bytes (a hook need not be text),
+    while the text is only ever used for wording."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return None, ""
+    return hashlib.sha256(raw).hexdigest(), raw.decode("utf-8", "replace")
+
+
+def prepush_delegation_note(body):
+    """The pin's stated limit, said WHERE the claim is made instead of only in a
+    comment (T-581 QA P3).
+
+    A hook whose body is `. "$(dirname "$0")/guard.sh"` carries none of its own
+    behaviour: the same bytes beside a different `guard.sh` — a copy of the
+    directory plus a `core.hooksPath` flip does it — are a different hook, and
+    the content pin cannot see the difference. Refusing to attest such a hook
+    was the other option and is the wrong one: sourcing a shared library is the
+    normal shape of an org hook, so refusing would disable this record exactly
+    where it is most needed. What prdt can do honestly is stop overclaiming —
+    the record covers the file it hashed, and the line that reports it says so."""
+    if not PREPUSH_DELEGATES_RE.search(body or ""):
+        return ""
+    return (" Note: these bytes RUN ANOTHER FILE (a `source`/`.`/`exec` line) that prdt did not "
+            "hash — the record covers this file only, and what it does can change without these "
+            "bytes changing.")
+
+
+def prepush_reading(root):
+    """The project's recorded human reading of its foreign pre-push —
+    `.prdt/config.json git.prepush_reading`. Returns `(record, complaint)`:
+    the validated record or None, and a string naming why a present record
+    cannot be honoured. A bad record is REPORTED rather than ignored (same rule
+    as `tests.non_rebuilds`): a silently skipped typo would look applied while
+    suppressing nothing — or, worse here, look like it had been checked."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    sec = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    raw = sec.get("prepush_reading")
+    if raw is None:
+        return None, None
+    shape = "{" + ", ".join(PREPUSH_READING_FIELDS) + "}"
+    if not isinstance(raw, dict):
+        return None, f"must be an object {shape} (found {type(raw).__name__})"
+    missing = [k for k in PREPUSH_READING_FIELDS if k not in raw]
+    if missing:
+        return None, f"is missing {', '.join(missing)} (an entry is {shape})"
+    # T-581 QA P6: unknown keys are REFUSED, not ignored. A hand-written record
+    # carrying `path` or `expires` alongside the real fields was accepted whole,
+    # so it read as scoped or expiring while nothing on this side looked at
+    # either key — a record that lies about its own reach, which is the same
+    # false-silence class the content pin exists to close. Refusing keeps the
+    # rule the schema already implies: what prdt reads is all there is.
+    extra = sorted(safe_label(k) for k in raw if k not in PREPUSH_READING_FIELDS)
+    if extra:
+        return None, (f"carries field(s) {', '.join(extra)} that prdt does not read — a record "
+                      "cannot be scoped to a path or given an expiry by adding keys, and one "
+                      f"that looks like it is would be a false reassurance (an entry is {shape})")
+    if not (isinstance(raw["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", raw["sha256"])):
+        return None, "has a sha256 that is not a 64-hex digest — it cannot be matched to any hook"
+    if not isinstance(raw["blocks_main"], bool) or not isinstance(raw["hotfix_escape"], bool):
+        return None, "needs boolean blocks_main and hotfix_escape"
+    if not (isinstance(raw["recorded_at"], str)
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw["recorded_at"])):
+        return None, "has a recorded_at that is not a YYYY-MM-DD date — testimony with no date on it"
+    if not (isinstance(raw["reason"], str) and raw["reason"].strip()):
+        return None, "has an empty reason — a reading without one buys no silence"
+    # T-581 QA P1. `reason` is a person's prose printed on doctor's own report
+    # channel, and `.prdt/config.json` is tracked — so a forged reason travels
+    # to every clone. One carrying a newline plus `[verdict=clean …]` printed a
+    # second, fake verdict line two lines under the real one, on the same
+    # channel, in this version's literal pass-bar wording. Refused here rather
+    # than escaped at render: the record is then inert and named, which is what
+    # every other unusable record already gets.
+    if forged_tokens(raw["reason"], DOCTOR_RESERVED):
+        # Deliberately does NOT quote what it found: this complaint is itself
+        # printed on doctor's channel, and echoing the offending token there
+        # would put the forgery on the line that refuses it. `prdt attest
+        # prepush` names the exact tokens — that is the surface the author is
+        # standing at, and it is not the report channel.
+        return None, ("has a reason that imitates doctor's own report lines (a line break, or one "
+                      "of the tokens the verdict line is made of) — a reading is prose, and a "
+                      "record does not get to print a verdict. Re-record it with `prdt attest "
+                      "prepush`, which refuses the same text at the surface")
+    return raw, None
+
+
+def cmd_attest(args):
+    """`prdt attest prepush --blocks-main yes|no --hotfix-escape yes|no --reason …`
+    — the one surface that writes `git.prepush_reading`. Reads the hook's bytes
+    to pin the record; executes nothing."""
+    root = require_root()
+    st = prepush_status(root)
+    p, state = st["path"], st["state"]
+    if state != "unverified":
+        why = {
+            "no-repo": "the code root is not a git repository, so no pre-push can be in force",
+            "managed": f"the pre-push at {p} is prdt's own managed hook — prdt verifies it itself",
+            "missing": f"no pre-push exists at {p} — there is nothing to read, and doctor already "
+                       "reports the block as missing or inactive",
+        }.get(state, f"pre-push state is {state!r}")
+        sys.exit(f"prdt attest prepush: nothing to attest — {why}. A reading is recorded only for a "
+                 "hook prdt does not own and cannot verify.")
+    # T-581 QA P0: a hook without the exec bit is a hook git does not run. There
+    # is no block there to read, so there is nothing to attest — and accepting
+    # one at exit 0 was how a record came to exist for a hook that stops nothing.
+    if not st.get("executable"):
+        sys.exit(f"prdt attest prepush: {p} is NOT EXECUTABLE — git skips a hook without the "
+                 "exec bit (it prints a `hint:` line and pushes anyway), so whatever that file "
+                 f"says, it stops nothing. Restore it (`chmod +x {p}`), confirm the block by "
+                 "reading it, then record the reading.")
+    reason = (args.reason or "").strip()
+    if not reason:
+        sys.exit("prdt attest prepush: --reason is required and must say what was read and found — "
+                 "a record without one buys no silence.")
+    bad = forged_tokens(reason, DOCTOR_RESERVED)
+    if bad:
+        sys.exit("prdt attest prepush: --reason cannot contain " + ", ".join(bad) + " — doctor "
+                 "prints this text on its own report channel, so a reason able to imitate "
+                 "doctor's grammar could print a verdict of its own. Say what was read in prose.")
+    digest, body = _hook_bytes(p)
+    if digest is None:
+        sys.exit(f"prdt attest prepush: could not read {p} to pin the record")
+    rec = {"sha256": digest, "blocks_main": args.blocks_main == "yes",
+           "hotfix_escape": args.hotfix_escape == "yes", "reason": reason,
+           "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%d")}
+    # T-581 QA P2: this write REPLACES the file, so it must start from the file
+    # that is there. `read_json` answers None for "absent" and for "corrupt"
+    # alike, and falling back to `{}` on the second turned one bad byte in
+    # config.json into the silent loss of slug, surfaces, meta.allowlist and
+    # features.non_features. Absent is the only case that may start empty.
+    cfg_path = root / ".prdt" / "config.json"
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            sys.exit(f"prdt attest prepush: {cfg_path} cannot be read as JSON "
+                     f"({e.__class__.__name__}) — refusing to write. Recording the reading means "
+                     "rewriting this whole file, and everything else in it would be lost. Repair "
+                     "the file first, then re-run.")
+        if not isinstance(cfg, dict):
+            sys.exit(f"prdt attest prepush: {cfg_path} holds a JSON {type(cfg).__name__}, not an "
+                     "object — refusing to write over it.")
+    else:
+        cfg = {}
+    git_sec = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
+    git_sec["prepush_reading"] = rec
+    cfg["git"] = git_sec
+    tmp = Path(str(cfg_path) + ".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, cfg_path)
+    print(f"prdt attest prepush: recorded a human reading of {p} (sha256 {digest[:12]}…) in "
+          f".prdt/config.json {PREPUSH_READING_KEY} — blocks_main={'yes' if rec['blocks_main'] else 'no'} "
+          f"hotfix_escape={'yes' if rec['hotfix_escape'] else 'no'}. doctor honours it only while the "
+          "hook's bytes still match and git can still run it; it executed nothing, and the next "
+          "`prdt doctor` shows the result." + prepush_delegation_note(body))
+
+
 def prepush_status(root):
     """Where git will REALLY look for the code repo's pre-push hook, and what
     sits there. `git rev-parse --git-path hooks` is git's own resolver, so it
@@ -1126,6 +1452,14 @@ def prepush_status(root):
       missing    — no pre-push at the effective path → NOT blocked
     `hooks_path` is core.hooksPath when set — that config, not the file, is what
     makes `.git/hooks` inert.
+
+    `executable` is the OTHER way a hook that exists runs nothing (T-581 QA P0).
+    git will not execute a hook without the bit and says so in a `hint:` line
+    nobody reads, so `chmod -x` turns the block off while every byte of the file
+    still says it is on — the same false silence as a missing hook, only harder
+    to see. It is reported here, once, because every caller that cares whether
+    the block is IN FORCE has to ask: doctor's line, the human-record match, and
+    `prdt attest` all read this key rather than each re-deriving it.
 
     T-493 removed a fourth state, `blocking`, which was decided by
     `"ALLOW_MAIN_PUSH" in body and "main" in body`. A hook whose only occurrence
@@ -1142,7 +1476,7 @@ def prepush_status(root):
     r = _git(["rev-parse", "--git-path", "hooks"], cr)
     if r.returncode != 0:
         return {"state": "no-repo", "path": None, "hooks_path": None,
-                "current": False, "mentions": False}
+                "current": False, "mentions": False, "executable": False}
     d = Path(r.stdout.strip() or "hooks")
     if not d.is_absolute():
         d = Path(cr) / d
@@ -1150,15 +1484,30 @@ def prepush_status(root):
     hooks_path = hp.stdout.strip() if hp.returncode == 0 and hp.stdout.strip() else None
     hook = d / "pre-push"
     try:
-        body = hook.read_text(encoding="utf-8")
+        raw = hook.read_bytes()
     except OSError:
         return {"state": "missing", "path": hook, "hooks_path": hooks_path,
-                "current": False, "mentions": False}
+                "current": False, "mentions": False, "executable": False}
+    try:
+        # A hook git runs need not be text at all (a compiled binary is a legal
+        # pre-push). Decoding it used to raise UnicodeDecodeError straight out
+        # of here, which took `prdt doctor` down with exit 1 — a diagnostic that
+        # dies on the repository it is diagnosing (T-581 QA P7). A hook we
+        # cannot read as text is simply a hook we did not write: the marker is
+        # text, so it cannot be in there, and `unverified` is the honest state.
+        body = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        body = ""
+    try:
+        executable = bool(hook.stat().st_mode & 0o111)
+    except OSError:
+        executable = False
     if PREPUSH_MARKER in body:
         return {"state": "managed", "path": hook, "hooks_path": hooks_path,
-                "current": body == PREPUSH_SCRIPT, "mentions": False}
+                "current": body == PREPUSH_SCRIPT, "mentions": False,
+                "executable": executable}
     return {"state": "unverified", "path": hook, "hooks_path": hooks_path,
-            "current": False,
+            "current": False, "executable": executable,
             "mentions": "ALLOW_MAIN_PUSH" in body and "main" in body}
 
 
@@ -1182,17 +1531,27 @@ def ensure_prepush_hook(root):
         if st["hooks_path"]:
             return {"action": "skipped",
                     "detail": f"core.hooksPath={st['hooks_path']} — not ours to write", **st}
-        if st["state"] == "managed" and st["current"]:
+        if st["state"] == "managed" and st["current"] and st["executable"]:
             return {"action": "ok", "detail": "managed hook current", **st}
         if st["state"] == "unverified":
             return {"action": "skipped", "detail": "an unmanaged pre-push is in place", **st}
+        # T-581 QA P0: byte-current is not the same as in force. `chmod -x` on
+        # our own hook left doctor with NOTHING to say while `git push origin
+        # main` went through — worse than the foreign-hook case, because there
+        # the warning at least stayed. The write path below restores mode 0755
+        # along with the content, so the one repair covers both ways the
+        # managed hook can stop running.
+        demoted = st["state"] == "managed" and st["current"] and not st["executable"]
         upgrade = st["state"] == "managed"
         st["path"].parent.mkdir(parents=True, exist_ok=True)
         tmp = Path(str(st["path"]) + ".tmp")
         tmp.write_text(PREPUSH_SCRIPT, encoding="utf-8")
         os.chmod(tmp, 0o755)
         os.replace(tmp, st["path"])
-        st.update(state="managed", current=True)
+        st.update(state="managed", current=True, executable=True)
+        if demoted:
+            return {"action": "repaired",
+                    "detail": "managed hook was not executable — git was ignoring it", **st}
         return {"action": "upgraded" if upgrade else "installed",
                 "detail": "stale managed hook replaced" if upgrade else "no pre-push was present",
                 **st}
@@ -1212,10 +1571,28 @@ def prepush_warnings(root):
     if act == "upgraded":
         return [f"git: stale managed pre-push replaced at {p} — "
                 "ALLOW_MAIN_PUSH hotfix escape restored"]
+    if act == "repaired":
+        return [f"git: the managed pre-push at {p} had lost its exec bit — git skips a hook it "
+                "cannot execute (a `hint:` line, then the push goes through), so the main-push "
+                "block was OFF while every byte of the hook still said it was on. Mode restored "
+                "to 0755 and the block is live again"]
     if st == "no-repo":
         # Not "no block needed" — there is no .git/hooks here to hold one, so
         # this check looked at nothing. T-560: that is a skip, never a clean 0.
         return Skipped("no git repository at the code root — nothing to hold a pre-push hook")
+    # A managed hook we could NOT repair — it sits behind a core.hooksPath, so
+    # it is not in `.git/hooks` and not ours to write (or the repair itself
+    # failed). The bit is missing all the same, and this branch exists because
+    # the `return []` below used to swallow the case whole: zero lines about the
+    # block while `git push origin main` succeeded (T-581 QA P0).
+    if st == "managed" and not res.get("executable", True):
+        hpm = res.get("hooks_path")
+        return [f"git: main-push block INACTIVE — the managed pre-push at {p} is not executable, "
+                "and git skips a hook it cannot execute (a `hint:` line, then the push goes "
+                "through). prdt did not repair it"
+                + (f" because core.hooksPath={hpm} puts it outside .git/hooks, which is the only "
+                   "place prdt writes" if hpm else f" ({res.get('detail')})")
+                + f"; restore it with `chmod +x {p}`"]
     if act != "skipped" or st == "managed":
         return []
     hp = res.get("hooks_path")
@@ -1242,13 +1619,71 @@ def prepush_warnings(root):
                 "block — a hook mentioning both only in comments used to pass this check."
                 if res.get("mentions") else
                 " Nothing in it mentions `main` or ALLOW_MAIN_PUSH at all.")
+        #
+        # T-581: a PERSON may have read it. The record lifts the skip only when
+        # it is pinned to the exact bytes now in force; anything else — other
+        # bytes, a malformed entry — leaves the skip standing and is named
+        # inside it, so a record never buys silence it did not earn.
+        rec, complaint = prepush_reading(root)
+        # BEFORE the record is even consulted: a hook without the exec bit is
+        # not the hook in force, it is a file git walks past. Matching a record
+        # to its bytes would then answer a question nobody asked — "what would
+        # this do if it ran" — and print `it stops a push to main` about a push
+        # that succeeds. OBSERVED (T-581 QA P0): attest an executable org hook,
+        # `chmod 644` it, doctor's output did not change by one character while
+        # `git push origin main` returned 0. A ⚠ line, not a skip: main is
+        # unprotected right now and one chmod fixes it.
+        if not res.get("executable", True):
+            return [f"git: main-push block INACTIVE — the pre-push at {p} is not executable, and "
+                    "git skips a hook it cannot execute (a `hint:` line, then the push goes "
+                    "through). Nothing there stops a push to main, whatever the file says"
+                    + (". The human record at .prdt/config.json " + PREPUSH_READING_KEY
+                       + " describes bytes git never runs, so it silences nothing"
+                       if (rec or complaint) else "")
+                    + f". Ask the hook's owner to restore it (`chmod +x {p}`) — prdt never "
+                      "changes the mode of a hook it does not own"]
+        digest, body = _hook_bytes(p)
+        if rec and digest and digest == rec["sha256"]:
+            short = digest[:12]
+            said = one_line(rec["reason"])
+            when = rec["recorded_at"]
+            if not rec["blocks_main"]:
+                return [f"git: main-push block ABSENT per human record — on {when} a person read "
+                        f"the pre-push at {p} (sha256 {short}…) and recorded that it does not stop "
+                        f"a push to main: {said}. Nothing but you stops a push to main here; ask "
+                        "the hook's owner for the block (prdt writes no hooks outside .git/hooks)"]
+            if not rec["hotfix_escape"]:
+                return [f"git: main-push block per human record, but the ALLOW_MAIN_PUSH hotfix "
+                        f"escape does NOT work there — on {when} a person read the pre-push at {p} "
+                        f"(sha256 {short}…) and recorded that it stops a push to main with no "
+                        f"escape: {said}. The emergency hotfix path (PO habit) is stuck on this "
+                        "repo until the hook's owner honours ALLOW_MAIN_PUSH=1"]
+            return Attested(
+                f"main-push block per HUMAN RECORD, not prdt's own inspection — on {when} a person "
+                f"read the pre-push at {p} (sha256 {short}…) and recorded that it stops a push to "
+                f"main and honours ALLOW_MAIN_PUSH: {said}. prdt matched the record to these exact "
+                "bytes, checked that git can still execute them, and executed nothing itself; the "
+                "record stops applying the moment the hook changes"
+                + prepush_delegation_note(body))
+        if complaint:
+            record_note = (f" A record at .prdt/config.json {PREPUSH_READING_KEY} exists but "
+                           f"{complaint} — it silences nothing.")
+        elif rec:
+            record_note = (f" A human record at .prdt/config.json {PREPUSH_READING_KEY} exists but "
+                           f"is pinned to different bytes (sha256 {rec['sha256'][:12]}… recorded, "
+                           f"{digest[:12] if digest else 'unreadable'}… now) — the hook changed "
+                           "after it was read, so the record silences nothing; re-read the hook "
+                           "and re-record.")
+        else:
+            record_note = ""
         return Skipped(
             f"main-push block UNVERIFIED — the pre-push at {p} is not ours, and prdt "
             "verifies ownership only (it never runs someone else's hook to find out what "
             f"it does).{note} Until you have read it, assume nothing but you stops a push "
             "to main, and that the ALLOW_MAIN_PUSH hotfix path may not work"
             + (f"; core.hooksPath={hp} also makes .git/hooks inert, so prdt will not write "
-               "its own hook here" if hp else ""))
+               "its own hook here" if hp else "")
+            + f".{record_note} {PREPUSH_ATTEST_HINT}")
     return [f"git: pre-push not installed at {p} — {res.get('detail')}"]
 
 
@@ -1909,7 +2344,12 @@ def normalize_rule_line(s):
     s = s.translate(PUNCT_FOLD)
     s = re.sub(r"[*_`]", "", s)
     s = re.sub(r"\s+", " ", s)
-    return s.strip(" .·:;").casefold()
+    # `!?` joined the set in T-578 QA F5: the docstring said "trailing
+    # punctuation" but the set held only the quiet marks, so `… ONLY!` and
+    # `… ONLY.` normalized apart and a duplicated rule shouted its way past the
+    # sweep. Widening a strip can only make two keys MORE equal, and only ever
+    # for keys that already differ by nothing but a final mark.
+    return s.strip(" .·:;!?").casefold()
 
 
 def is_rule_line(raw, key):
@@ -2137,6 +2577,143 @@ def hook_registration_warnings():
                                  f"session's witness records {accrued} accrued — it was truncated "
                                  f"(T-567). The counter only ever grows, so a shorter one is not a "
                                  f"state the hook can produce. The hook denies that worker from here on")
+    return warns
+
+
+def hook_roster_duplicate_warnings():
+    """A basename registered more than once on the SAME event AND matcher — T-645, T-652.
+
+    `hook_registration_warnings` above checks basename EXISTENCE only
+    (`any(b in c for c in commands)`), which reads a DOUBLED roster as clean:
+    two commands for the same basename on one event, one under each of two
+    path spellings, both satisfy "exists somewhere". That is exactly the shape
+    an upgrade produces on a machine whose spelled $PRDT_HOME (or $HOME)
+    differs from its resolved one (a dotfiles-symlinked ~/.prdt, a HOME with a
+    symlinked path component): install.sh's §4 `strip` used to match only the
+    CURRENT run's path-prefix spelling, so an existing differently-spelled
+    registration of the same hook was never replaced — only added to. T-640's
+    112-entry, every-hook-fires-three-times incident, reproduced by a symlink
+    instead of by a stray `--plan` flag, and the exact state that check read
+    as healthy.
+
+    T-652: the judgment unit is event PLUS matcher, not event alone. The
+    manifest deliberately binds one hook to two different matchers on the
+    same event (e.g. prdt-session-start-p2.sh on SessionStart's
+    `startup|resume|clear` AND `compact` entries — 16 hooks x 2 matchers =
+    32 SessionStart entries by design), and that shape is correct, not a
+    T-640 doubled roster. So entries are grouped by (event, matcher) before
+    counting; two entries sharing an event but carrying DIFFERENT matcher
+    strings never collide, while two entries on the same event that both
+    omit a matcher (or both carry the identical one) still do — that second
+    shape is what T-640 actually produced.
+
+    Report only, like every other check in this file — doctor never edits
+    settings.json. Fixed by keying "is this ours" on basename everywhere
+    (install.sh strip + verify, uninstall.sh strip + verify, this check), so a
+    future run of either script collapses the duplicate on its own; this
+    check exists for the machine that has NOT been re-run yet."""
+    hooks_dir = prdt_home() / "hooks"
+    if not hooks_dir.is_dir():
+        return Skipped(f"no install mirror at {hooks_dir} — nothing to compare settings.json against")
+    mirrored = sorted(p.name for p in hooks_dir.glob("prdt-*.sh"))
+    if not mirrored:
+        return Skipped(f"{hooks_dir} holds no prdt-*.sh — no hook roster to check registration for")
+
+    settings_path = claude_settings_path()
+    settings = read_json(settings_path)
+    if not isinstance(settings, dict):
+        return []  # hook_registration_warnings already reports the missing/invalid file
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+
+    warns = []
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            continue
+        # Grouped by matcher first — an entry with no "matcher" key groups
+        # with other matcher-less entries on this event (that pairing IS a
+        # collision, per PreToolUse's matcher-less governor vs T-640), while
+        # two entries carrying DIFFERENT matcher strings never share a group.
+        per_matcher: dict = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            matcher = entry.get("matcher")
+            if not isinstance(matcher, str):
+                matcher = None
+            per_basename = per_matcher.setdefault(matcher, {})
+            for h in entry.get("hooks") or []:
+                cmd = h.get("command") if isinstance(h, dict) else None
+                if not isinstance(cmd, str):
+                    continue
+                bare = cmd.strip('"')
+                name = bare.rsplit("/", 1)[-1]
+                if name not in mirrored:
+                    continue  # not ours — someone else's hook, or a basename
+                                # stale from a version this roster no longer carries
+                                # (hook_registration_warnings' business, not this one)
+                per_basename.setdefault(name, []).append(bare)
+        for matcher in sorted(per_matcher, key=lambda m: (m is None, m or "")):
+            per_basename = per_matcher[matcher]
+            where = event if matcher is None else f"{event} (matcher {matcher!r})"
+            for name in sorted(per_basename):
+                cmds = per_basename[name]
+                if len(cmds) <= 1:
+                    continue
+                uniq = sorted(set(cmds))
+                warns.append(f"hooks: {name} is registered {len(cmds)} times on {where} in {settings_path} "
+                             f"({'; '.join(uniq)}) — the roster is doubled (T-640's incident shape); "
+                             f"re-run install.sh (or uninstall.sh) to collapse it — both now strip by "
+                             f"basename, not by path spelling")
+    return warns
+
+
+def hook_dangling_command_warnings():
+    """Hook registrations whose command names an absolute path that does not
+    exist — reported, never repaired (T-640).
+
+    OBSERVED BY RUNNING (PO, 2026-09-16): a scratch-home installer run registered
+    the whole prdt roster under /private/tmp/… into the real settings.json; when
+    the scratch dirs were deleted, every one of those entries ran a file that
+    was not there, once per event, on every session. `hook_registration_warnings`
+    compares BASENAMES against the mirror, so it saw nothing: the basename was
+    mirrored, only the path was dead. This check is independent of the mirror
+    (no install on this machine still leaves settings.json worth reading) and
+    judges only what it can know without running anything: the first token of
+    the command, when it is an absolute path. A PATH lookup (`jq …`), an inline
+    shell, or a command shlex cannot tokenize is not judged here — the
+    statusline check owns the parse-error vocabulary, and a guess would be a
+    false accusation."""
+    settings_path = claude_settings_path()
+    settings = read_json(settings_path)
+    if not isinstance(settings, dict):
+        return Skipped(f"{settings_path} missing or invalid JSON — no hook registrations to read")
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+    warns = []
+    for event, entries in hooks.items():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for h in entry.get("hooks") or []:
+                cmd = h.get("command") if isinstance(h, dict) else None
+                if not isinstance(cmd, str) or not cmd.strip():
+                    continue
+                try:
+                    tok = shlex.split(cmd)
+                except ValueError:
+                    continue
+                exe = tok[0] if tok else ""
+                if not exe.startswith("/") or os.path.exists(exe):
+                    continue
+                warns.append(f"hooks: {settings_path} registers {exe} on {event} but that file does not exist — "
+                             f"the harness runs it anyway (command-not-found, once per {event}); if it is a prdt hook "
+                             f"under a deleted scratch PRDT_HOME, remove that entry by hand — doctor reports, it does "
+                             f"not edit settings.json")
     return warns
 
 
@@ -2610,9 +3187,13 @@ def statusline_warnings(root):
 
 
 def override_warnings(root):
-    """Override files are the only text injected on EVERY turn, so both layers get
-    the same cap, and a project line that has become a verbatim restatement of a
-    machine line is pure per-turn waste — flag it for the Retro align step."""
+    """Override files are injected once per session start (and after a compaction)
+    as their own hook output — NOT on every turn (T-586: the "every turn" this
+    docstring used to claim was one machine's unregistered shim). Both layers get
+    the same cap as a curation budget for that block, and a project line that has
+    become a verbatim restatement of a machine line is pure waste in it — flag it
+    for the Retro align step. Register rules (voice, form, structure, address) do
+    not belong here at all; they are the register object (`register_warnings`)."""
     warns = []
     layers = (("machine", prdt_home() / "overrides"),
               ("project", root / ".prdt" / "overrides"))
@@ -2637,7 +3218,210 @@ def override_warnings(root):
                                  f"or give it a reason for diverging")
                 elif not prev:
                     seen[key] = (label, n)
+    # T-586: the playbook-scoped machine store, `overrides/playbooks/<name>.md`.
+    # Same line cap (it is one more block a worker reads). A name that is no
+    # persona's playbook is the silent failure the inject hook's index cannot
+    # show: the index walks canonical playbook names, so such a file is never
+    # listed and binds nobody — name it here.
+    store = prdt_home() / "overrides" / "playbooks"
+    if store.is_dir():
+        droot = discipline_root()
+        for f in sorted(store.glob("*.md")):
+            name = f.stem
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+            if len(lines) > CAPS["override"]:
+                warns.append(f"override: machine playbooks/{name}.md is {len(lines)} lines "
+                             f"(cap {CAPS['override']}) — curate down")
+            owners = [p for p in PERSONAS
+                      if droot is not None and (droot / p / "playbooks" / f"{name}.md").is_file()]
+            if not owners:
+                warns.append(f"override: playbooks/{name}.md names no playbook of any persona — "
+                             f"the session index never lists it, so it binds nobody (typo? "
+                             f"the legal names are the persona `playbooks/_index.md` menus)")
     return warns
+
+
+# ── register (T-586) — the PO's conversational register as an object ─────────
+
+def _register_hook_path():
+    """prdt-audience-inject.sh — named for the key it started with (T-326), now the
+    resolver for the whole register object. The hook that is actually BOUND
+    (install mirror) first, the repo copy next to this file as fallback — same
+    preference order as `_session_start_hook_path()`."""
+    for cand in (prdt_home() / "hooks" / "prdt-audience-inject.sh",
+                 Path(__file__).resolve().parent / "hooks" / "prdt-audience-inject.sh"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def register_query(mode, droot=None):
+    """Ask the resolver — `--list` (the domain) or `--resolve` (values + warnings).
+    The hook is the single source of truth for what is legal; this CLI never
+    re-implements the domain. None when the hook is absent or its answer could
+    not be read (a pre-T-586 mirror prints nothing for either flag)."""
+    hook = _register_hook_path()
+    if hook is None:
+        return None
+    env = dict(os.environ)
+    env["PRDT_HOME"] = str(prdt_home())
+    if droot is not None:
+        env["PRDT_DISCIPLINE"] = str(droot)
+    try:
+        r = subprocess.run(["bash", str(hook), mode], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, env=env, timeout=10)
+        out = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+        return out if isinstance(out, dict) else None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+REGISTER_BODY_FM_KEYS = ("key", "value", "governs")
+
+
+def register_warnings(droot):
+    """The register file as the resolver reads it (unknown key · out-of-domain value
+    · off-shape address · malformed line — each names its LINE so the person can
+    fix it; the resolver already kept every one of them away from the PO), plus
+    the bodies' byte budget and their `governs:` frontmatter (a body that does not
+    state its surfaces has lost the property the object exists for)."""
+    warns = []
+    res = register_query("--resolve", droot)
+    if res is None:
+        return Skipped("register resolver (prdt-audience-inject.sh) not found or pre-T-586 — "
+                       "re-run install.sh")
+    for w in res.get("warnings") or []:
+        warns.append(f"register: {res.get('file', '~/.prdt/register')} {w}")
+    for w in res.get("body_warnings") or []:
+        warns.append(f"register: {w}")
+    rdir = (droot / "register") if droot else None
+    if rdir is not None and rdir.is_dir():
+        for p in sorted(rdir.glob("*.md")):
+            size = p.stat().st_size
+            if size > CAPS["register_body_bytes"]:
+                warns.append(f"register: body {p.name} is {size:,} B (budget {CAPS['register_body_bytes']:,} B) — "
+                             f"it is spliced raw into the PO's session start; curate down")
+            text = p.read_text(encoding="utf-8")
+            fm = text.split("---\n", 2)[1] if text.startswith("---\n") and text.count("---\n") >= 2 else ""
+            missing = [k for k in REGISTER_BODY_FM_KEYS if not re.search(rf"^{k}:", fm, re.M)]
+            if missing:
+                warns.append(f"register: body {p.name} lacks frontmatter {', '.join(missing)} — "
+                             f"a register body states its own scope (`governs:`) or it is prose, not an object")
+    return warns
+
+
+def _ascii_strip(s):
+    """ASCII-only strip, matching prdt-audience-inject.sh's `trim()` (which runs
+    under `LC_ALL=C`, so its POSIX `[:space:]` class is exactly these six bytes)
+    byte for byte. Python's bare `str.strip()` treats far more as whitespace
+    (NBSP U+00A0, the Unicode space separators, …) — that gap used to let
+    `prdt register set address` silently drop a leading/trailing NBSP the
+    resolver would have counted toward the byte cap and rejected (T-586 QA
+    delta-grill defect). The resolver is canonical (contracts.md); this is what
+    keeps the CLI's own trim from re-widening past it."""
+    return s.strip(" \t\n\r\x0b\x0c")
+
+
+def cmd_register(args):
+    """`prdt register` — show · set <key> <value> · unset <key> · --list. Legality is
+    the resolver's judgment (`--list`), never this function's: `set` refuses what
+    the domain does not contain, so the one way an illegal value gets into
+    ~/.prdt/register stays a hand edit, and `prdt doctor` names that line."""
+    droot = discipline_root()
+    if args.list:
+        dom = register_query("--list", droot)
+        if dom is None:
+            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+        if args.json:
+            print(json.dumps(dom, ensure_ascii=False))
+            return
+        print(f"register file: {dom['file']}   bodies: {dom['bodies_dir']}")
+        print("key        domain                       default    bodies")
+        for k in dom["keys"]:
+            if k["kind"] == "enum":
+                bodies = " ".join(f"{v}{'✓' if k['bodies'].get(v) else '·'}" for v in k["domain"])
+                print(f"{k['key']:<10} {' | '.join(k['domain']):<28} {k['default']:<10} {bodies}")
+            else:
+                print(f"{k['key']:<10} {k['shape']:<28} (none)")
+        return
+    action = args.action or "show"
+    if action == "show":
+        res = register_query("--resolve", droot)
+        if res is None:
+            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False))
+            return
+        print(f"register file: {res['file']} ({'present' if res['present'] else 'absent — every default'})")
+        for k, v in res["values"].items():
+            d = res["defaults"][k]
+            tag = "" if v == d else "   (set)"
+            print(f"  {k:<10} {v if v is not None else 'none'}{tag}")
+        print(f"  governs    {res['governs']}")
+        print(f"  binding    {res['binding'] or '(silent — every key at its default)'}")
+        for w in res.get("warnings") or []:
+            print(f"  warning    {w}")
+        return
+    if action in ("set", "unset"):
+        rest = list(args.rest or [])
+        if action == "set" and len(rest) != 2:
+            sys.exit("usage: prdt register set <key> <value>")
+        if action == "unset" and len(rest) != 1:
+            sys.exit("usage: prdt register unset <key>")
+        key = rest[0]
+        value = _ascii_strip(rest[1]) if action == "set" else ""
+        # T-586 item 4 (pinned decision): an empty or whitespace-only `set` value
+        # is refused, not treated as a delete -- a setter that silently removes a
+        # key on an empty/unset variable is a footgun for any caller. Removal has
+        # its own explicit verb.
+        if action == "set" and not value:
+            sys.exit(f"prdt register: set refuses an empty value for `{key}` — use `prdt register unset {key}` to remove it")
+        dom = register_query("--list", droot)
+        if dom is None:
+            sys.exit("prdt register: resolver not found (prdt-audience-inject.sh) — re-run install.sh")
+        spec = next((k for k in dom["keys"] if k["key"] == key), None)
+        if spec is None:
+            sys.exit(f"prdt register: unknown key `{key}` — keys: "
+                     + ", ".join(k["key"] for k in dom["keys"]))
+        if value:
+            if spec["kind"] == "enum" and value not in spec["domain"]:
+                sys.exit(f"prdt register: {key}={value} is outside its domain ({' | '.join(spec['domain'])})")
+            if spec["kind"] == "text":
+                # Same three literals prdt-audience-inject.sh's address_ok bans
+                # (T-586 QA defect 1): they would forge the binding/session
+                # line's own key=value grammar. Both gates refuse identically --
+                # a hand-edited register line is judged the same way.
+                bad = (len(value.encode("utf-8")) > spec["max_bytes"]
+                       or re.search(r"[\x00-\x1f\x7f\x85\u2028\u2029]", value)
+                       or '"' in value or '\u00b7' in value or '[prdt' in value)
+                if bad:
+                    sys.exit(f"prdt register: address fails its shape ({spec['shape']})")
+        path = Path(dom["file"])
+        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        out, placed = [], False
+        for raw in (existing.rstrip("\n").split("\n") if existing else []):
+            line = raw.rstrip("\r")
+            t = _ascii_strip(line)
+            k = _ascii_strip(t.split("=", 1)[0]) if ("=" in t and not t.startswith("#")) else None
+            if k == key:
+                if not placed and value:
+                    out.append(f"{key}={value}")
+                    placed = True
+                continue
+            out.append(line)
+        if not placed and value:
+            out.append(f"{key}={value}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(("\n".join(out) + "\n") if out else "", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        # confirm through the resolver — the write is only as good as what it reads back
+        res = register_query("--resolve", droot) or {}
+        shown = (res.get("values") or {}).get(key)
+        print(f"register: {key}={shown if shown is not None else 'none'} → {path}")
+        return
+    sys.exit(f"prdt register: unknown action `{action}`")
 
 
 # ── tickets / history ─────────────────────────────────────────────────────────
@@ -2863,6 +3647,227 @@ def release_notes_gap_warnings(root):
             f"the SAME change that cuts the tag"]
 
 
+# ── README staleness at a cut tag (T-589) ─────────────────────────────────────
+#
+# `po/playbooks/retro.md` and `patch-cycle.md` §Rules (37e98bf) landed the duty
+# next to the release-notes rule they already carried: `<codeRoot>/README.md`,
+# and only that file, is tested against the TAGGED TREE — never the diff — on
+# three predicates. This mirrors `release_notes_gap_warnings` on purpose: same
+# code-root anchor, same degrade-rather-than-raise posture (no tag, no git, or
+# an unreadable README/CLI source at the tag → silence, exactly like a missing
+# RELEASES section never raises when there is no tag to measure against), same
+# bar of reporting only an OBSERVED violation.
+#
+# Ground truth is read from the NEWEST version-shaped tag's own tree, never the
+# working tree: the tag's file list (`git ls-tree`), and the tag's own CLI
+# source (`packages/core/scripts/prdt` as it stood at that tag) for the
+# subcommand set and the PERSONAS/STAGES vocabulary — a project on an older
+# shape of this script is judged by what IT shipped, not by what this checkout
+# happens to run.
+#
+# Only a fenced block a reader is meant to RUN is scanned for a path or a
+# `prdt <subcommand>` claim — an explicit shell-family info string (bash · sh ·
+# shell · zsh · console). This README carries three illustration blocks (a
+# one-line summary diagram, a generated-project tree, this repo's own package
+# tree) with NO info string, each drawing a directory shape rather than a
+# command a reader runs; scanning those too is the measured false positive
+# (T-589 §spec) — a placeholder path like `tickets/<version>/T-NNN.md` reads as
+# a dead path to a naive scanner, when it was never runnable to begin with.
+README_RUNNABLE_FENCE_LANGS = {"bash", "sh", "shell", "zsh", "console"}
+_README_FENCE_RE = re.compile(r"^```([^\n]*)\n(.*?)\n^```[ \t]*$", re.MULTILINE | re.DOTALL)
+_README_PATH_RE = re.compile(r"[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+")
+_README_SUBCOMMAND_RE = re.compile(r"\bprdt\s+([a-z][a-z0-9_-]*)")
+_README_PERSONA_RE = re.compile(r"prdt-([a-z]+)", re.IGNORECASE)
+# A stage chain needs ≥2 arrows (≥3 tokens) before it counts as one — a single
+# `→` shows up in ordinary prose (e.g. "append → Retro에서 큐레이션") without
+# presenting the stage vocabulary at all; requiring two keeps that out.
+_README_STAGE_CHAIN_RE = re.compile(r"(?:[A-Za-z]+\s*→\s*){2,}[A-Za-z]+")
+_CLI_SUBCOMMAND_RE = re.compile(r"""add_parser\(\s*['"]([a-zA-Z0-9_-]+)['"]""")
+
+
+def _readme_runnable_blocks(text):
+    """Fenced-block CONTENT for every block whose info string names a shell
+    family — never a block with no info string or a non-shell one (the
+    project-structure / package-tree illustrations in this very README)."""
+    out = []
+    for m in _README_FENCE_RE.finditer(text):
+        if m.group(1).strip().lower() in README_RUNNABLE_FENCE_LANGS:
+            out.append(m.group(2))
+    return out
+
+
+def _readme_path_tokens(block_text):
+    """repo-path-shaped tokens in a runnable block's text: ≥1 slash, and not a
+    URL (`scheme://…`) or an npm-scope package id (`@scope/name` is a package,
+    not a filesystem path) — both would otherwise read as a slash-bearing path
+    a naive scan then reports as dead."""
+    out = []
+    for m in _README_PATH_RE.finditer(block_text):
+        s = m.start()
+        if block_text[max(0, s - 3):s] == "://" or (s > 0 and block_text[s - 1] == "@"):
+            continue
+        tok = m.group(0).rstrip(".,;:)")
+        if tok:
+            out.append(tok)
+    return out
+
+
+def _cli_subcommands(cli_source):
+    """Registered subcommand names, parsed out of the tagged CLI source text
+    itself (`sub.add_parser("name", …)`) — never imported/executed, since this
+    is another tag's bytes, not necessarily this process's own module."""
+    return {m.group(1) for m in _CLI_SUBCOMMAND_RE.finditer(cli_source)}
+
+
+def _cli_tuple(cli_source, name):
+    """The quoted-string members of a module-level `NAME = (...)` tuple literal
+    in the tagged CLI source (`PERSONAS`, `STAGES`) — same text-parse posture
+    as `_cli_subcommands`."""
+    m = re.search(rf"^{name}\s*=\s*\(([^)]*)\)", cli_source, re.MULTILINE)
+    if not m:
+        return set()
+    return {t.strip().strip("\"'") for t in m.group(1).split(",") if t.strip().strip("\"'")}
+
+
+def _readme_shown_stages(text):
+    """Stage tokens the README actually PRESENTS as one arrow-connected chain
+    (the lifecycle line's own convention: `Define → Build → Ship → Retro →
+    idle`) — never a stray single arrow elsewhere in prose."""
+    tokens = set()
+    for line in text.splitlines():
+        if line.count("→") < 2:
+            continue
+        m = _README_STAGE_CHAIN_RE.search(line)
+        if m:
+            tokens |= {w.lower() for w in re.findall(r"[A-Za-z]+", m.group(0))}
+    return tokens
+
+
+def readme_stale_at_tag_warnings(root):
+    """`<codeRoot>/README.md`, evaluated against the newest `v*` tag's own
+    tree — never the working tree or the diff (retro.md / patch-cycle.md
+    §Rules, 37e98bf). Four predicates, three of them real violations and one
+    that never is:
+
+      A. a repo path a runnable block names does not resolve at the tag;
+      B. a `prdt <subcommand>` a runnable block shows is not one the tagged
+         CLI accepts;
+      D. the persona (`prdt-<name>`) or stage (the arrow-chain) vocabulary the
+         README presents disagrees with the tagged CLI's own PERSONAS/STAGES,
+         in EITHER direction — named-but-not-shipped, or shipped-but-never-
+         presented, both count.
+
+    C — a registered subcommand the README never shows (a runnable-block
+    invocation) or names (anywhere in its text) — is deliberately NEVER a
+    violation: a machine cannot tell a newcomer-facing surface from a
+    tooling-internal one, and inventing that boundary where no violation was
+    observed is exactly what doctrine forbids. It rides along as one
+    `Advisory` line precisely when it is the ONLY thing this check found —
+    the moment A, B, or D produced a real violation, that already-broken
+    result is what a reader needs to act on, so the advisory line is left out
+    rather than padding a violations list it was never meant to join.
+
+    Degrade-never-raise, same posture as `release_notes_gap_warnings`: no git,
+    no version-shaped tag, or the README/CLI source unreadable at that tag
+    (either file plain absent there, or an old shape this parse can't read)
+    all fall through to `[]` — a silence, not a claim that nothing is stale."""
+    cr = code_root(root)
+    try:
+        r = _git(["tag", "--list", "v*"], cr)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    tags = [t.strip() for t in r.stdout.splitlines() if TAG_RE.match(t.strip())]
+    keyed = sorted((k, t) for t in tags for k in (_version_key(t),) if k is not None)
+    if not keyed:
+        return []
+    tag = keyed[-1][1]
+
+    def show(path):
+        try:
+            sr = _git(["show", f"{tag}:{path}"], cr)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return sr.stdout if sr.returncode == 0 else None
+
+    readme = show("README.md")
+    if readme is None:
+        return []
+    cli_source = show("packages/core/scripts/prdt")
+    if cli_source is None:
+        return []
+    try:
+        lr = _git(["ls-tree", "-r", "--name-only", tag], cr)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if lr.returncode != 0:
+        return []
+    files = {l.strip() for l in lr.stdout.splitlines() if l.strip()}
+    dirs = set()
+    for f in files:
+        parts = f.split("/")
+        for i in range(1, len(parts)):
+            dirs.add("/".join(parts[:i]))
+
+    rel = f"{code_dir_name(root)}/README.md" if code_dir_name(root) else "README.md"
+    blocks = _readme_runnable_blocks(readme)
+
+    # A — repo paths named in a runnable block that don't resolve at the tag.
+    dead_paths = sorted({tok for b in blocks for tok in _readme_path_tokens(b)
+                          if tok not in files and tok not in dirs})
+
+    # B — `prdt <subcommand>` shown in a runnable block the tagged CLI refuses.
+    shipped_cmds = _cli_subcommands(cli_source)
+    shown_cmds = {m.group(1) for b in blocks for m in _README_SUBCOMMAND_RE.finditer(b)}
+    dead_cmds = sorted(shown_cmds - shipped_cmds)
+
+    # D — persona/stage vocabulary, either direction.
+    shipped_personas = _cli_tuple(cli_source, "PERSONAS")
+    shipped_stages = _cli_tuple(cli_source, "STAGES")
+    shown_personas = {m.group(1).lower() for m in _README_PERSONA_RE.finditer(readme)}
+    shown_stages = _readme_shown_stages(readme)
+    extra_personas = sorted(shown_personas - shipped_personas)
+    missing_personas = sorted(shipped_personas - shown_personas)
+    extra_stages = sorted(shown_stages - shipped_stages)
+    missing_stages = sorted(shipped_stages - shown_stages)
+
+    violations = []
+    for tok in dead_paths:
+        violations.append(f"readme: {rel} names path `{tok}` in a runnable block "
+                           f"that does not resolve at {tag} — stale against the shipped tag")
+    for cmd in dead_cmds:
+        violations.append(f"readme: {rel} shows `prdt {cmd}` in a runnable block, "
+                           f"which {tag}'s CLI does not accept — stale against the shipped tag")
+    if extra_personas or missing_personas:
+        bits = []
+        if extra_personas:
+            bits.append(f"names `prdt-<x>` for {', '.join(extra_personas)}, which {tag} does not ship")
+        if missing_personas:
+            bits.append(f"never presents shipped persona(s) {' '.join(missing_personas)}")
+        violations.append(f"readme: {rel} persona vocabulary disagrees with {tag} — " + "; ".join(bits))
+    if extra_stages or missing_stages:
+        bits = []
+        if extra_stages:
+            bits.append(f"names stage(s) {' '.join(extra_stages)}, which {tag} does not ship")
+        if missing_stages:
+            bits.append(f"never presents shipped stage(s) {' '.join(missing_stages)}")
+        violations.append(f"readme: {rel} stage vocabulary disagrees with {tag} — " + "; ".join(bits))
+
+    if violations:
+        return violations
+
+    # C — advisory only, and only when nothing above already fired.
+    mentioned = {c for c in shipped_cmds if re.search(rf"\b{re.escape(c)}\b", readme)}
+    unmentioned = sorted(shipped_cmds - mentioned)
+    if unmentioned:
+        return Advisory(
+            [f"readme: {tag} ships subcommand(s) {' '.join(unmentioned)} that {rel} "
+             f"never shows or names — not a violation on its own; a tooling-internal "
+             f"surface can legitimately stay unlisted"])
+    return []
+
+
 def releases_pending(code_root, timeout=2):
     """(version, section_text) of the newest release section on the REMOTE
     (origin/<current-branch>) docs/RELEASES.md, or (None, None).
@@ -3028,6 +4033,63 @@ def maybe_prompt_update(cmd):
     # "skip" or cancelled (None) → fall through to the original command
 
 
+# ── meta backup tick (T-504 · stage boundary + once daily, detached) ─────────
+# The ONE automatic push in prdt — contracts §Git names it as a carve-out of
+# the push gate: the META repo's own branch → the remote registered as this
+# project's meta backup, ff-only. The decision (stage changed since the last
+# push / new UTC day / nothing ahead / backoff) and the push both live in core
+# (meta-backup.ts, via the meta-cli bridge `backup`); this function only picks
+# the MOMENT: every `prdt` invocation but `prdt meta` (the explicit path — never
+# race it) is a non-per-turn path, and the PO runs `prdt doctor` at Ship-entry
+# and Retro, so a stage write is followed by a tick within the same ritual. The
+# PO SessionStart hook is the second call site (prdt-session-start.sh) — never
+# the persona-turn beat (prdt-post-dispatch.sh). Detached + DEVNULL: the command
+# in hand never waits on the network. Failure reports itself through
+# <meta.git>/prdt-backup-state.json → the notice below on the next run + `prdt
+# doctor` (meta_backup_lag_warnings). PRDT_META_BACKUP=0 mutes BOTH the tick and
+# the notice (the mechanism is off, so its last failure is not news); doctor
+# still warns — it reads the latch regardless.
+
+def _meta_backup_state(root):
+    return read_json(meta_git_dir(root) / "prdt-backup-state.json") or {}
+
+
+def _meta_backup_remote_name(root):
+    """`meta.backup_remote` from .prdt/config.json, default 'backup' — mirrors core
+    metaBackupRemoteName (meta-backup.ts) for doctor / `prdt meta remote`."""
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    meta = cfg.get("meta") if isinstance(cfg.get("meta"), dict) else {}
+    v = meta.get("backup_remote")
+    return v.strip() if isinstance(v, str) and v.strip() else "backup"
+
+
+def maybe_meta_backup(cmd):
+    if cmd == "meta":                                   # `prdt meta push` is the explicit path; don't race it
+        return
+    if os.environ.get("PRDT_META_BACKUP") == "0":       # kill switch (tests · a machine that must stay offline)
+        return
+    try:
+        root = find_project_root()
+        if root is None or not (meta_git_dir(root) / "HEAD").is_file():
+            return
+        st = _meta_backup_state(root)
+        if st.get("last_ok") is False:
+            # the detached tick has no terminal — its last failure is said here, once per run
+            print(f"prdt: 메타 자동 백업 실패 ({str(st.get('last_attempt_at') or '?')[:16]}Z, "
+                  f"원격 '{st.get('remote') or '?'}') — {st.get('last_error') or '?'}\n"
+                  f"      재시도는 다음 stage 경계/일일 tick · 수동: prdt meta push {st.get('remote') or 'backup'}",
+                  file=sys.stderr)
+        pair = _meta_bridge()
+        if isinstance(pair, str):
+            return                                      # no PRDT_REPO / node / built bridge → silent
+        node, bridge = pair
+        subprocess.Popen([node, bridge, "backup", str(root)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception:
+        return
+
+
 def cmd_history(_args):
     root = require_root()
     con = open_db(root)                                 # ticket slice only — see cmd_tickets (T-480)
@@ -3041,6 +4103,617 @@ def cmd_history(_args):
               + (f" · retro--{v}" if retro.exists() else ""))
     if not rows:
         print("(no history)")
+
+
+# ── usage (T-544) ─────────────────────────────────────────────────────────────
+# Machine-wide cost sum, reading only: no new collection path, no daemon. Each
+# project already writes .prdt/turns.jsonl (prdt-post-dispatch.sh); this just
+# adds them up across every sibling prdt project on this machine, over an
+# explicit window.
+#
+# Reuse check (acceptance): no existing subcommand covers this (grepped — no
+# "usage"/"cost" subparser before this ticket). `~/.prdt/run/call-governor/`
+# was considered as a home and rejected — it holds per-dispatch API-turn
+# counters (one byte per turn, cleared per session, T-491), a different
+# concern from a cross-project cost archive; nothing there is keyed by
+# project, model, or cost. No new infrastructure is added here beyond this
+# subcommand.
+def _parse_time_arg(s):
+    """ISO-8601 timestamp (Z or offset) or a relative shorthand `<N><unit>`
+    (m/h/d) counting back from now (UTC). Returns (datetime|None, error|None).
+    Deliberately narrow (contracts ENVIRONMENT note, T-525): this never infers
+    a rate-limit window boundary — only what the caller spells out."""
+    if not s:
+        return None, None
+    if not isinstance(s, str):
+        # a record's `ts` of the wrong JSON type (number/list/dict/…) — the
+        # hook's write contract is best-effort, so this is reachable; unusable
+        # rather than a crash that kills the whole command (T-544 F5).
+        return None, None
+    s = s.strip()
+    m = re.fullmatch(r"(\d+)([mhd])", s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        secs = n * {"m": 60, "h": 3600, "d": 86400}[unit]
+        return datetime.now(timezone.utc) - timedelta(seconds=secs), None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt, None
+    except ValueError:
+        return None, (f"'{s}' 를 시각으로 해석 못함 — ISO-8601(예: 2026-09-14T00:00:00Z) "
+                       f"또는 상대값(예: 6h, 2d, 90m)만 지원")
+
+
+# T-543 fixed the PRICE TABLE used at write time; it added no version marker
+# to the record itself. So a model whose *rate* was wrong before today's
+# install (not merely missing — opus-5's gap is a literal null cost_usd,
+# already caught by the "no cost recorded" bucket below) cannot be told apart
+# per-record from one written after the fix. Naming it here — not guessing a
+# cutoff from a file mtime or any other proxy — is the "annotate" branch of
+# the ticket's "exclude, annotate, report per era, your call": the sum stays
+# whole and correct-as-far-as-known, and the reader is told which models'
+# `estimated` share may still carry a pre-fix rate.
+USAGE_ERA_CAVEATS = {
+    "sonnet-5": "estimated 비용에 T-543 이전 가격표($3/$15) 값이 섞여 있으면 최대 50% 과다 "
+                "계상 — 정정가는 $2/$10",
+    "fable-5-1": "estimated 비용에 T-543 이전 캐시읽기 배율(0.1× 오적용) 값이 섞여 있으면 캐시읽기 "
+                 "몫이 최대 4배 과다 계상 — 정정 배율은 0.025×",
+}
+
+
+def _usage_era_caveats(model):
+    m = (model or "").lower()
+    return [msg for key, msg in USAGE_ERA_CAVEATS.items() if key in m]
+
+
+# T-544 F1 (round 2) — the aggregation rule this CLI must use, reused rather
+# than reinvented (doctrine #2): packages/gui/electron/ipc/costArchive.ts's
+# `isCumulative`. A `main` line's cost_usd is a SESSION-CUMULATIVE snapshot —
+# a fresh running total appended on every Stop of the same session_id — never
+# a per-turn increment, so it must be deduped to one max per session, never
+# summed directly (that summing was the ≈2.8x over-count QA caught). A
+# `subagent` line's cost_usd is a genuine per-dispatch total and sums
+# directly. Basis-less legacy lines (pre-dating the cost_basis field) fall
+# back to scope, matching the TS reference exactly.
+def _is_cumulative_cost_line(rec):
+    cb = rec.get("cost_basis")
+    if cb == "main_session_cumulative":
+        return True
+    if cb == "subagent_total":
+        return False
+    return rec.get("scope") == "main"
+
+
+def _scan_turns_file(path):
+    """(status, records, bad_line_count). status: absent|is_directory|
+    unreadable|empty|malformed|ok — each names its OWN condition rather than
+    folding into a neighboring one (T-544 F6 round 2: a directory sitting at
+    this path used to read as "absent" and a permission error as "malformed"
+    — both mislabels that hide what actually went wrong). ok-with-some-bad-
+    lines reports those via bad_line_count instead of hiding them
+    (acceptance: a bad file is reported, never skipped silently)."""
+    if os.path.isdir(path):
+        return "is_directory", [], 0
+    if not os.path.isfile(path):
+        return "absent", [], 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw_lines = [ln for ln in f if ln.strip()]
+    except PermissionError:
+        return "unreadable", [], 0
+    except UnicodeDecodeError:
+        return "malformed", [], 0
+    except OSError:
+        return "unreadable", [], 0
+    if not raw_lines:
+        return "empty", [], 0
+    records, bad = [], 0
+    for ln in raw_lines:
+        try:
+            obj = json.loads(ln)
+        except Exception:
+            bad += 1
+            continue
+        if isinstance(obj, dict):
+            records.append(obj)
+        else:
+            bad += 1
+    if not records:
+        return "malformed", [], bad
+    return "ok", records, bad
+
+
+def cmd_usage(args):
+    root = require_root()
+    since_dt, err = _parse_time_arg(args.since)
+    if err:
+        sys.exit(f"prdt usage: --since: {err}")
+    until_dt, err = _parse_time_arg(args.until)
+    if err:
+        sys.exit(f"prdt usage: --until: {err}")
+    scan_root = Path(args.root).resolve() if args.root else root.parent
+    if not scan_root.is_dir():
+        sys.exit(f"prdt usage: --root 없음 — {scan_root}")
+
+    instant_window = bool(since_dt and until_dt and since_dt == until_dt)
+    window_label = (
+        f"{args.since or '(시작 없음)'} ~ {args.until or '(끝 없음, 지금까지)'}"
+        if (args.since or args.until) else
+        "전체 기록 (윈도우 미지정 — 한도 창 경계는 기계가 읽을 수 없어 추정하지 않음, T-525)"
+    )
+    if instant_window:
+        # T-544 F6 round 2: --since X --until X used to read as if it labeled
+        # a day; it resolves to one instant, and only a record at that exact
+        # timestamp would ever fall inside it.
+        window_label += " — 주의: since=until, 하루 범위가 아니라 단일 시점"
+
+    projects = []
+    symlinks_skipped = []
+    for d in sorted(p for p in scan_root.iterdir() if p.is_dir()):
+        if d.is_symlink():
+            # never followed (T-544 F6 round 2) — a symlinked project dir used
+            # to be scanned silently, which can double-count a project
+            # reachable two ways. Named here instead, not silently included.
+            symlinks_skipped.append(d.name)
+            continue
+        if not (d / ".prdt" / "po-state.json").is_file():
+            continue  # not a prdt project on this machine — out of scope, not a gap
+        status, records, bad = _scan_turns_file(str(d / ".prdt" / "turns.jsonl"))
+        projects.append({"name": d.name, "status": status, "bad_lines": bad, "records": records})
+
+    if not projects:
+        sys.exit(f"prdt usage: {scan_root} 아래 prdt 프로젝트(.prdt/po-state.json)가 하나도 없음")
+
+    cost_by_source = {"reported": 0.0, "estimated": 0.0}
+    cost_by_model = {}
+    tokens_total = {"input": 0, "output": 0, "cache": 0}
+    no_cost_by_model = {}
+    bad_cost_type_by_model = {}
+    partial_count = 0
+    partial_unpriced = {}
+    null_model_records = 0
+    null_model_last_ts = None
+    negative_cost_records = 0
+    observed_first_ts = None
+    observed_last_ts = None
+    per_project = []
+
+    for p in projects:
+        proj_cost, in_window, skipped, bad_ts = 0.0, 0, 0, 0
+        # T-544 F1 round 2 — a `main` (cost_basis == main_session_cumulative,
+        # or basis-less scope == main) line's cost_usd is a running total for
+        # the WHOLE session, re-snapshotted on every Stop; summing every line
+        # double(-triple-…)counts it. Deferred here and folded once per
+        # session_id (its max) after the record loop — the rule
+        # packages/gui/electron/ipc/costArchive.ts's aggregateLines already
+        # implements (Σ(subagent) + Σ_session(max of cumulative)), reused
+        # rather than re-derived.
+        session_max = {}
+        no_session_seq = 0
+        for rec in p["records"]:
+            raw_ts = rec.get("ts")
+            dt, _ = _parse_time_arg(raw_ts) if raw_ts else (None, None)
+            if dt is None:
+                bad_ts += 1  # no usable ts — excluded from every sum below, counted rather than silently dropped
+                continue
+            if since_dt and dt < since_dt:
+                continue
+            if until_dt and dt > until_dt:
+                continue
+            in_window += 1
+            if observed_first_ts is None or dt < observed_first_ts:
+                observed_first_ts = dt
+            if observed_last_ts is None or dt > observed_last_ts:
+                observed_last_ts = dt
+            model = rec.get("model")
+            if model is None:
+                null_model_records += 1
+                if null_model_last_ts is None or dt > null_model_last_ts:
+                    null_model_last_ts = dt
+            u = rec.get("usage") or {}
+            for k in ("input", "output", "cache"):
+                v = u.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    tokens_total[k] += v
+            cost = rec.get("cost_usd")
+            src = rec.get("cost_source")
+            bad_type = cost is not None and (isinstance(cost, bool) or not isinstance(cost, (int, float)))
+            if bad_type:
+                # present but the wrong shape (a JSON string/bool where a
+                # number belongs) — its own bucket. Never folded into
+                # "no cost recorded" (that means a legitimate gap; this is a
+                # malformed value) and never summed as a number (T-544 F6
+                # round 2: `cost_usd: true` used to sum as $1.0 because
+                # Python bool is an int subclass).
+                skipped += 1
+                mkey = model or "(null)"
+                bad_cost_type_by_model[mkey] = bad_cost_type_by_model.get(mkey, 0) + 1
+            elif isinstance(cost, (int, float)) and not isinstance(cost, bool) and src in ("reported", "estimated"):
+                if cost < 0:
+                    # summed as-is (an adjustment/refund is plausible and
+                    # unverifiable from here) but never silently — T-544 F6
+                    # round 2.
+                    negative_cost_records += 1
+                if _is_cumulative_cost_line(rec):
+                    sid = rec.get("session_id")
+                    if not isinstance(sid, str) or not sid:
+                        sid = f"__no_session__{no_session_seq}"
+                        no_session_seq += 1
+                    slot = session_max.get(sid)
+                    if slot is None or cost > slot["cost"]:
+                        session_max[sid] = {"cost": cost, "model": model, "src": src}
+                    # NOT added to proj_cost/cost_by_model here — folded once
+                    # per session below, after every line has been seen.
+                else:
+                    cost_by_source[src] += cost
+                    proj_cost += cost
+                    mkey = model or "(null)"
+                    slot = cost_by_model.setdefault(mkey, {"reported": 0.0, "estimated": 0.0, "count": 0})
+                    slot[src] += cost
+                    slot["count"] += 1
+            elif src == "estimated_partial":
+                # hook itself refused to total this record — a real, priced model
+                # shared the transcript with one it could not price. Never folded
+                # into the sum as zero (that IS the silent-understatement defect
+                # T-543 removed); reported as a gap instead.
+                skipped += 1
+                partial_count += 1
+                for um in (rec.get("cost_unpriced_models") or []):
+                    partial_unpriced[um] = partial_unpriced.get(um, 0) + 1
+            else:
+                # cost_usd missing/null and not estimated_partial — the pre-T-543
+                # gap (e.g. opus-5 before today) or any other unpriced record.
+                skipped += 1
+                mkey = model or "(null)"
+                no_cost_by_model[mkey] = no_cost_by_model.get(mkey, 0) + 1
+
+        # Fold each session's single cumulative maximum in exactly once.
+        for info in session_max.values():
+            cost_by_source[info["src"]] += info["cost"]
+            proj_cost += info["cost"]
+            mkey = info["model"] or "(null)"
+            slot = cost_by_model.setdefault(mkey, {"reported": 0.0, "estimated": 0.0, "count": 0})
+            slot[info["src"]] += info["cost"]
+            slot["count"] += 1
+
+        per_project.append({"name": p["name"], "status": p["status"], "bad_lines": p["bad_lines"],
+                             "bad_ts": bad_ts, "records_in_window": in_window,
+                             "cost_usd": round(proj_cost, 4), "skipped_in_window": skipped})
+
+    cost_total = round(cost_by_source["reported"] + cost_by_source["estimated"], 4)
+    caveats = []
+    for model, slot in cost_by_model.items():
+        for msg in _usage_era_caveats(model):
+            caveats.append(f"{model}: {msg} (레코드 단위 구분 불가 — 가격표 버전 마커 없음; "
+                            f"위 합계의 estimated ${round(slot['estimated'], 4)} 중 일부일 수 있음)")
+
+    # T-544 F2 (user verdict ①, 2026-09-14): do NOT compute a lower bound for
+    # the excluded records (that needs the hook's PRICES table in the CLI —
+    # T-628 owns that consolidation) — instead the total must SAY it is a
+    # lower bound whenever real, priced-but-unreadable cost was excluded.
+    is_lower_bound = bool(no_cost_by_model) or partial_count > 0 or bool(bad_cost_type_by_model)
+
+    # T-544 F1 consequence (dispatch, 2026-09-14): a cumulative snapshot's
+    # session-max IS the whole session's total, so when the window narrows to
+    # a slice of a longer-running session, the main portion of a windowed sum
+    # still carries usage from before the window started. Said, not silently
+    # offered as a true windowed figure (T-525: no readable window-boundary
+    # signal exists to correct for this).
+    main_window_caveat = None
+    if args.since or args.until:
+        main_window_caveat = (
+            "지정한 --since/--until 윈도우 중 main(세션 누적) 몫은 참값이 아닐 수 있음 — 세션별 "
+            "최댓값이 그 세션 '전체'의 누적 비용이라, 세션이 창 시작 이전에 시작했다면 창 이전 "
+            "사용량까지 포함됨(T-525: 한도 창 경계를 기계가 읽을 수 없어 보정 불가)."
+        )
+
+    # T-544 F4 (grill): every cost_source on this machine has been "estimated"
+    # (usage × API list price) — "reported" (a real invoice figure) has never
+    # once fired here, and this is a subscription. The output must not let a
+    # reader conclude "we were billed $X".
+    billing_note = None
+    if cost_by_source["estimated"] > 0:
+        billing_note = (
+            "reported(실제 청구) 비용이 이 기기에서 한 번도 관측되지 않음 — 정액제 구독이라면 위 "
+            "합계는 청구액이 아니라 API 정가 환산 추정치(estimated)일 뿐"
+            if cost_by_source["reported"] == 0 else
+            "위 합계 중 estimated 항목은 API 정가 환산이며, 정액제 구독 하에서는 실제 청구액과 "
+            "다를 수 있음"
+        )
+
+    null_model_note = None
+    if null_model_records:
+        last_str = null_model_last_ts.date().isoformat() if null_model_last_ts else "알 수 없음"
+        null_model_note = (
+            f"모델 미상(model: null) 레코드 {null_model_records}건 — 동기 응답 경로가 모델 없이 "
+            f"usage만 실어보낸 것(T-543 확인); 이번 집계에서 마지막 관측 {last_str}(그 이후 계속 "
+            f"미관측일 수 있으나 이 문장은 매번 다시 계산됨 — 경로 자체는 살아있음, 퇴역 아님); "
+            f"귀속 불가라 위 집계에서 '(null)'로 잡힘."
+        )
+
+    negative_cost_note = None
+    if negative_cost_records:
+        negative_cost_note = (
+            f"음수 cost_usd 레코드 {negative_cost_records}건이 합계에 그대로 더해짐 — 조정/환불로 "
+            f"추정되나 여기서는 확인 불가."
+        )
+
+    symlink_note = None
+    if symlinks_skipped:
+        symlink_note = (
+            f"심볼릭 링크 디렉터리 {len(symlinks_skipped)}개는 스캔에서 제외됨(추종 안 함): "
+            + ", ".join(symlinks_skipped)
+        )
+
+    # T-544 F3 (round 2): narrow the claim rather than silently widen the scan
+    # — "이 기기"였던 라벨이 실제로는 scan_root 바로 아래(깊이 1)만 본다. 관측된
+    # 구간을 그대로 적어 "전체 기록"이 실은 이 구간뿐임을 드러낸다 (verdict ②).
+    observed_range_note = None
+    if observed_first_ts and observed_last_ts:
+        observed_range_note = (
+            f"관측 구간: {observed_first_ts.date().isoformat()} ~ {observed_last_ts.date().isoformat()} "
+            f"— 이번 집계에서 실제로 발견된 레코드의 첫/마지막 시각일 뿐, '전체 기록'의 정의가 아님. "
+            f"스캔 루트({scan_root}) 밖이나 그 아래 더 깊은 경로의 prdt 프로젝트, 그리고 스캔 대상이 "
+            f"아닌 레거시 저장소에는 이보다 오래된 기록이 남아 있을 수 있고 감사 대상이 아님."
+        )
+
+    out = {
+        "scan_root": str(scan_root),
+        "scan_depth": 1,
+        "window": {"since": args.since, "until": args.until, "label": window_label, "is_instant": instant_window},
+        "observed_ts": {
+            "first": observed_first_ts.isoformat() if observed_first_ts else None,
+            "last": observed_last_ts.isoformat() if observed_last_ts else None,
+        },
+        "projects": per_project,
+        "cost_usd_total": cost_total,
+        "cost_usd_total_is_lower_bound": is_lower_bound,
+        "cost_usd_by_source": {k: round(v, 4) for k, v in cost_by_source.items()},
+        "cost_usd_by_model": {k: {"reported": round(v["reported"], 4),
+                                   "estimated": round(v["estimated"], 4),
+                                   "count": v["count"]} for k, v in cost_by_model.items()},
+        "tokens_total": tokens_total,
+        "skipped": {"no_cost_recorded": no_cost_by_model,
+                    "estimated_partial": {"count": partial_count, "unpriced_models": partial_unpriced},
+                    "bad_cost_type": bad_cost_type_by_model},
+        "null_model_records": null_model_records,
+        "negative_cost_records": negative_cost_records,
+        "symlinks_skipped": symlinks_skipped,
+        "era_caveats": caveats,
+        "main_window_caveat": main_window_caveat,
+        "billing_note": billing_note,
+        "scope_boundary": (
+            f"이 기기({scan_root}, 깊이 1) 아래 prdt 프로젝트 {len(projects)}개의 합계일 뿐 — 다른 "
+            "기기나 같은 계정을 쓰는 다른 사람, 이 루트 밖 또는 더 깊은 경로의 prdt 프로젝트, 스캔 "
+            "대상에서 제외된 레거시 저장소의 사용량은 관측 대상이 아니라 이 수치에 없음(0건이 아니라 "
+            "'못 봄')."
+        ),
+    }
+
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    print(f"prdt usage — {window_label}")
+    print(f"scan root: {scan_root} (깊이 1)")
+    print()
+    status_tag = {"ok": "", "absent": " [turns.jsonl 없음]", "empty": " [turns.jsonl 비어있음]",
+                  "malformed": " [turns.jsonl 파싱 불가]", "unreadable": " [turns.jsonl 읽기 불가(권한 등)]",
+                  "is_directory": " [turns.jsonl 자리에 디렉터리가 있음]"}
+    for pr in per_project:
+        extra = status_tag[pr["status"]]
+        if pr["bad_lines"]:
+            extra += f", 손상 라인 {pr['bad_lines']}"
+        if pr["bad_ts"]:
+            extra += f", ts 해석 불가 {pr['bad_ts']}"
+        print(f"  {pr['name']:<24} ${pr['cost_usd']:.4f}  레코드 {pr['records_in_window']}건"
+              f"(스킵 {pr['skipped_in_window']}){extra}")
+    print()
+    total_label = "측정된 비용 합계(하한 — 미기록/미가격 구간 있음)" if is_lower_bound else "측정된 비용 합계"
+    print(f"{total_label}: ${cost_total:.4f}  (reported ${cost_by_source['reported']:.4f} + "
+          f"estimated ${cost_by_source['estimated']:.4f})")
+    print(f"토큰 합계(참고용, 과금 단위 아님): input {tokens_total['input']:,} · "
+          f"output {tokens_total['output']:,} · cache {tokens_total['cache']:,}")
+    print()
+    if no_cost_by_model:
+        print(f"비용 미기록 — 합계에서 제외됨 ({sum(no_cost_by_model.values())}건), 모델별:")
+        for m, n in sorted(no_cost_by_model.items(), key=lambda kv: -kv[1]):
+            print(f"    {m}: {n}건")
+    if bad_cost_type_by_model:
+        print(f"cost_usd 타입 이상(문자열/불리언 등) — 합계에서 제외됨 "
+              f"({sum(bad_cost_type_by_model.values())}건), 모델별:")
+        for m, n in sorted(bad_cost_type_by_model.items(), key=lambda kv: -kv[1]):
+            print(f"    {m}: {n}건")
+    if partial_count:
+        print(f"estimated_partial — 합계에서 제외됨 ({partial_count}건, 훅이 미가격 모델의 실토큰 "
+              f"혼재를 스스로 거부한 레코드), 등장한 미가격 모델:")
+        for m, n in sorted(partial_unpriced.items(), key=lambda kv: -kv[1]):
+            print(f"    {m}: {n}건")
+    if null_model_note:
+        print(null_model_note)
+    if negative_cost_note:
+        print(negative_cost_note)
+    if symlink_note:
+        print(symlink_note)
+    for c in caveats:
+        print(f"주의: {c}")
+    if main_window_caveat:
+        print(f"주의: {main_window_caveat}")
+    if billing_note:
+        print(f"주의: {billing_note}")
+    if observed_range_note:
+        print(observed_range_note)
+    print()
+    print(out["scope_boundary"])
+
+
+# ── estimate (T-545) ──────────────────────────────────────────────────────────
+# An outlier SIGNAL for a dispatch about to go out — never a gate (shawn,
+# 2026-09-01, quoted verbatim in the ticket): "이 발주가 한도에 맞는가" cannot be
+# answered at all (no readable remaining-quota surface, T-525), so this never
+# tries to. The one legitimate use: notice a dispatch that is several times the
+# usual for its shape, before sending it, so it can be sliced per T-491.
+#
+# Reuse check (acceptance) — re-examined for THIS ticket, not copied from
+# T-544's: `~/.prdt/run/call-governor/` holds exactly the unit T-491 calls the
+# budget (turns), so it looked like the right input on a fresh look. Rejected
+# anyway: its files are one-byte-per-turn counters (`xxd` shows literal `.`
+# bytes) named `<session-id>.<dispatch-hash>[.w<N>]`, tooling-owned and cleared
+# by the governor itself — no persona/model/ticket field anywhere to group by,
+# and no join key back to a turns.jsonl record (its session_id is not the
+# subagent's own). Turn counts are the right CONCEPT for this ticket; this
+# particular store is not a usable INPUT for it. The per-dispatch usage already
+# in turns.jsonl (scope=="subagent", cost_basis=="subagent_total" — one row per
+# completed dispatch, the total for that whole subagent invocation) is the only
+# surface on this machine that already carries persona+model per dispatch.
+#
+# Unit: TOKENS, not cost. T-543/T-628 found the heaviest-used tier (opus-5) is
+# only priced from today (1,673/1,705 records on this machine still cost-null)
+# and two other tiers carry up to 50%/4x historical overcounts with no way to
+# tell a pre-fix record from a post-fix one. Cost is still right for MONEY
+# (T-544) — but this ticket asks for a shape's RELATIVE size, and a sum that is
+# silently wrong for the most common shape is not a sounder basis than the raw
+# tokens the price was computed from.
+#
+# Dimensions tried (numbers in docs/tickets/v1.9/T-545.md Outcome, machine-wide,
+# 1,803 named-model subagent dispatches across 10 projects):
+#   - playbook: NOT RECORDED anywhere in turns.jsonl on this machine (grepped
+#     every project's full history — zero occurrences of a "playbook" key).
+#     Dropped for having no data to test, not for failing to predict.
+#   - persona alone: weighted CV(IQR/median) 1.185 vs pooled 1.208 — barely
+#     separates anything.
+#   - model alone: 1.079. persona+model: 1.041 — the useful minimum split.
+#   - persona+model+project: 0.99, but thins ~25% of records below usable group
+#     size and the further CV drop over persona+model is marginal — not applied.
+MIN_SAMPLES = 8
+
+
+def _estimate_scan(scan_root):
+    """Subagent-scope, subagent_total dispatch records with a positive token
+    count, across every sibling prdt project (same discovery rule as `prdt
+    usage`: a dir counts only if it has .prdt/po-state.json). Deliberately its
+    own small loop rather than a helper shared with cmd_usage — a QA pass is
+    reviewing `usage` concurrently (T-545 dispatch note) and the two commands
+    should stay independently editable."""
+    out = []
+    for d in sorted(p for p in scan_root.iterdir() if p.is_dir()):
+        if not (d / ".prdt" / "po-state.json").is_file():
+            continue
+        status, records, _bad = _scan_turns_file(str(d / ".prdt" / "turns.jsonl"))
+        if status != "ok":
+            continue
+        for rec in records:
+            if rec.get("scope") != "subagent" or rec.get("cost_basis") != "subagent_total":
+                continue
+            u = rec.get("usage") or {}
+            tok = sum(v for v in (u.get("input"), u.get("output"), u.get("cache")) if isinstance(v, (int, float)))
+            if tok <= 0:
+                continue
+            out.append({"ts": rec.get("ts"), "persona": rec.get("persona"), "model": rec.get("model"), "tok": tok})
+    return out
+
+
+def _pct(sorted_vals, q):
+    idx = min(int(len(sorted_vals) * q), len(sorted_vals) - 1)
+    return sorted_vals[idx]
+
+
+def cmd_estimate(args):
+    root = require_root()
+    scan_root = Path(args.root).resolve() if args.root else root.parent
+    if not scan_root.is_dir():
+        sys.exit(f"prdt estimate: --root 없음 — {scan_root}")
+
+    shaped = [r for r in _estimate_scan(scan_root) if r["persona"] == args.persona and r["model"] == args.model]
+    # T-646: `usage` already treats a record's `ts` as best-effort (the
+    # hook's write contract, T-544 F5) and counts an unusable one as
+    # `bad_ts` rather than crash or drop silently. `estimate` sorts on `ts`
+    # too — same guard, same name, so one malformed record (missing/None/
+    # non-string ts) is skipped and counted, never a TypeError.
+    bad_ts = sum(1 for r in shaped if not isinstance(r["ts"], str) or not r["ts"].strip())
+    group = sorted((r for r in shaped if isinstance(r["ts"], str) and r["ts"].strip()), key=lambda r: r["ts"])
+    n = len(group)
+
+    playbook_note = None
+    if args.playbook:
+        playbook_note = (f"--playbook {args.playbook} 는 받았지만 반영되지 않음 — 이 기기 turns.jsonl "
+                          f"어디에도 playbook 필드가 없음(10개 프로젝트 전수 확인, T-545). persona × "
+                          f"model 까지만 구분 가능.")
+
+    out = {
+        "scan_root": str(scan_root),
+        "shape": {"persona": args.persona, "model": args.model},
+        "playbook_note": playbook_note,
+        "sample_count": n,
+        "bad_ts": bad_ts,
+        "min_samples": MIN_SAMPLES,
+        "gates_nothing": True,
+    }
+
+    if n < MIN_SAMPLES:
+        out["insufficient_history"] = True
+        out["message"] = (f"이력 부족 — persona={args.persona} model={args.model} 조합 발주 {n}건뿐 "
+                           f"(최소 {MIN_SAMPLES}건 필요). 추정치 없음 — 표본이 얇을 때 자신 있는 숫자를 "
+                           f"내는 것이 이 티켓이 막으려는 실패 모드다(T-545).")
+        if args.json:
+            print(json.dumps(out, ensure_ascii=False))
+        else:
+            print(out["message"])
+            if bad_ts:
+                print(f"ts 해석 불가 {bad_ts}건 — 건너뜀 (T-646)")
+            if playbook_note:
+                print(playbook_note)
+        return
+
+    toks = [r["tok"] for r in group]
+    sorted_toks = sorted(toks)
+    median = statistics.median(sorted_toks)
+    p10, p25, p75, p90 = (_pct(sorted_toks, .10), _pct(sorted_toks, .25),
+                           _pct(sorted_toks, .75), _pct(sorted_toks, .90))
+
+    # Self-measured error (acceptance: "say how often the actual lands outside
+    # it") — walk-forward, never scored against a range fit to the same points
+    # it judges: record i is judged only against the median of records strictly
+    # BEFORE it (chronological order), and only once MIN_SAMPLES of those exist.
+    thresholds = (2, 3, 5)
+    calib = {k: {"evaluated": 0, "flagged": 0} for k in thresholds}
+    for i in range(MIN_SAMPLES, n):
+        prior_median = statistics.median(sorted(toks[:i]))
+        for k in thresholds:
+            calib[k]["evaluated"] += 1
+            if toks[i] > k * prior_median:
+                calib[k]["flagged"] += 1
+
+    out.update({
+        "insufficient_history": False,
+        "tokens": {"median": median, "p10": p10, "p25": p25, "p75": p75, "p90": p90, "max": sorted_toks[-1]},
+        "outlier_flag_calibration": {
+            str(k): {**v, "flagged_rate": round(v["flagged"] / v["evaluated"], 4) if v["evaluated"] else None}
+            for k, v in calib.items()
+        },
+    })
+
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    print(f"prdt estimate — persona={args.persona} model={args.model}  (n={n}, scan_root={scan_root})")
+    if bad_ts:
+        print(f"ts 해석 불가 {bad_ts}건 — 건너뜀 (T-646)")
+    if playbook_note:
+        print(playbook_note)
+    print(f"토큰(참고용, 과금 단위 아님 — T-543/T-628: 이 기기 opus-5 이력 대부분 무비용, sonnet-5/"
+          f"fable-5-1 은 과거 단가 오염 가능): median {median:,.0f} · p10 {p10:,.0f} · p25 {p25:,.0f} · "
+          f"p75 {p75:,.0f} · p90 {p90:,.0f} · max {sorted_toks[-1]:,.0f}")
+    for k in thresholds:
+        c = calib[k]
+        if c["evaluated"]:
+            print(f"  자기검정 @{k}배 median: 과거 {c['evaluated']}건 중 {c['flagged']}건 "
+                  f"({c['flagged']/c['evaluated']:.1%}) 이 그 시점까지의 median 의 {k}배를 넘었음")
+    print("이상치 신호일 뿐 — 게이트 아님(T-545). 이 발주가 위 median 의 몇 배로 예상되면 "
+          "보내기 전에 쪼갤 근거로만 쓸 것.")
 
 
 # ── meta (T-367 · PRD §v1.2 CLI·GUI parity) ──────────────────────────────────
@@ -3163,8 +4836,12 @@ def cmd_meta(args):
             res = _meta_call(root, "remote-add", name, url)
             if not res.get("ok"):
                 sys.exit(f"prdt meta: remote 설정 실패 — {res.get('error') or '?'}")
-            print(f"메타 백업 원격 '{name}' 설정 완료 (자동 push 없음 — 백업은 항상 수동).")
-            print(f"백업 push: prdt meta push {name}")
+            if name == "backup":
+                print(f"메타 백업 원격 '{name}' 설정 완료 — stage 경계와 하루 1회 자동 push (force 없음).")
+            else:
+                print(f"메타 백업 원격 '{name}' 설정 완료 — 자동 push 대상은 .prdt/config.json meta.backup_remote "
+                      f"(기본 'backup'); 이 이름을 자동 백업으로 쓰려면 그 값을 '{name}' 으로.")
+            print(f"지금 바로 push: prdt meta push {name}")
         elif not rest:
             res = _meta_call(root, "remote-list")
             if not res.get("exists"):
@@ -3176,7 +4853,10 @@ def cmd_meta(args):
                 return
             for r in remotes:
                 print(f"{r.get('name')}\t{r.get('url')}")
-            print("(자동 push 없음 — 백업하려면: prdt meta push [<name>])")
+            auto = _meta_backup_remote_name(root)
+            st = _meta_backup_state(root)
+            last = f"마지막 자동 push {str(st.get('last_push_at'))[:16]}Z" if st.get("last_push_at") else "자동 push 기록 없음"
+            print(f"(자동 백업 대상: '{auto}' — stage 경계 + 하루 1회 · {last} · 지금 바로: prdt meta push [<name>])")
         else:
             sys.exit("usage: prdt meta remote [add <name> <url>]")
     elif args.action == "push":
@@ -3438,10 +5118,29 @@ def _is_junk_rel(rel):
     return any(part.startswith(".") or _JUNK_FILE_RE.search(part) for part in rel.split("/"))
 
 
-def _tree_files(base):
+def _tree_files(base, include_unreadable=False):
+    """Every file under `base`, junk-filtered, keyed by `/`-joined relative path.
+
+    `include_unreadable` widens the walk past `is_file()` to the entries the
+    directory listing HAS but that are neither a readable regular file nor a
+    directory to descend into — a dangling symlink, a symlink loop, a device
+    node. Off by default (a tree walked only to compare CONTENT has nothing to
+    compare on one of those); ON where the NAME is itself the finding.
+    T-578 QA N1 measured what the default costs there: a dangling `prdt-*.md`
+    under the installed agents dir was invisible to all three stub checks — 0
+    agent-stub lines, violations=0, total silence — including to the drift
+    message that tells the reader to fix "the dangling link", which could never
+    fire. `is_file()` answers False for a broken link AND for a loop (ELOOP is
+    one of the errors `Path.is_file` swallows), so every try/except further
+    down was dead code for both shapes: the repair for an "unreadable = silence"
+    defect belongs at the DISCOVERY filter, not only at the read call."""
+    def keep(p):
+        # `is_dir()` is the exclusion, not `is_file()`'s inverse: a real
+        # subdirectory is descended into, never yielded as a file (unchanged).
+        return p.is_file() or (include_unreadable and not p.is_dir())
     return {rel: p for rel, p in
             ((str(p.relative_to(base)).replace(os.sep, "/"), p)
-             for p in base.rglob("*") if p.is_file())
+             for p in base.rglob("*") if keep(p))
             if not _is_junk_rel(rel)}
 
 
@@ -3902,6 +5601,371 @@ def hook_mirror_drift_warnings():
              f"manifest doesn't list) — this reprints forever if that is the only repair tried. "
              if mirror_only else "") +
             f"If unsure, the safer default is to discard the mirror copy instead: `{repair_cmd}`")
+    return warns
+
+
+# ── agent stubs — the fourth surface (T-578) ─────────────────────────────────
+# `agents/prdt-*.md` is a fourth discipline surface: Claude Code reads the
+# INSTALLED copy at `~/.claude/agents/` as each persona's base prompt, and
+# `install.sh` §3 (`cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"`) is its
+# one sync path — with no content verification. T-578 measured what an
+# unchecked surface accumulates: 14,346 B across four files, ~9.6 KB of it the
+# same bootstrap paragraph four times, and one load-bearing rule (T-491) that
+# lived ONLY there. The consolidation cut the four to stubs (1,404–1,515 B);
+# these three checks are what keeps them stubs. Same three questions the rest
+# of the discipline tree already gets — a budget, mirror↔repo drift, and a
+# duplicate sweep — and where possible the same machinery, not a fourth copy of
+# it: `_tree_files` (junk filter), `_mirror_matches_past_commit` (behind vs
+# ahead), `normalize_rule_line` / `is_rule_line` (the override duplicate key).
+#
+# Two copy sets, named once here so the three checks agree on them:
+#   - BOUND: `claude_agents_dir()` — what the harness reads. The budget and
+#     the duplicate sweep run over this set (the same choice
+#     `discipline_line_caps(droot)` makes for the discipline tree: measure what
+#     binds), falling back to the repo copies on a source-only machine that
+#     has never run install.sh.
+#   - REPO: `<checkout>/packages/core/agents/` via `_repo_root_candidates()` —
+#     the drift comparand, exactly as the hooks and discipline checks find theirs.
+# T-578 QA F3: this IS install.sh §3's glob (`cp "$ROOT"/agents/prdt-*.md`),
+# transcribed rather than narrowed — the earlier `prdt-[a-z][a-z0-9-]*\.md`
+# silently dropped every name install.sh copies but this file did not like
+# (`prdt-my_agent.md`, `prdt-QA2.md`), which is the check walking a different
+# file set from the one that binds. `[^/\\]*` and not `.*` because a shell glob
+# does not descend: `_tree_files` is recursive, so `prdt-a/b.md` must not count.
+AGENT_STUB_RE = re.compile(r"prdt-[^/\\]*\.md")
+
+
+def claude_agents_dir():
+    """Where the harness reads user-level agent definitions — sibling of the
+    settings.json `claude_settings_path()` already resolves, so `CLAUDE_DIR`
+    redirects both together (install.sh §3 writes under the same variable)."""
+    return claude_settings_path().parent / "agents"
+
+
+def _agent_stub_files(base):
+    """`_tree_files(base)` restricted to the names install.sh §3 copies —
+    `AGENT_STUB_RE` is that glob, see the note there. `~/.claude/agents/` is a
+    shared directory: other tools' agents (`pdt-*`, `pdtl-*`, a user's own)
+    live there legitimately and are none of this check's business.
+
+    `include_unreadable=True` (T-578 QA N1): here the NAME is the finding —
+    install.sh §3's `cp` copies whatever matches the glob and the harness tries
+    to load whatever is installed under it, so an entry that cannot be read is
+    a broken base prompt, not an absent one. It reaches the three checks and
+    each reports it; dropping it here is the silence N1 measured."""
+    if base is None or not base.is_dir():
+        return {}
+    return {rel: p for rel, p in _tree_files(base, include_unreadable=True).items()
+            if AGENT_STUB_RE.fullmatch(rel)}
+
+
+def _agents_repo_path():
+    """Repo-checkout `agents/` dir, first `_repo_root_candidates()` hit that has
+    one — mirrors `_hooks_repo_path()`; None on a machine with no source tree."""
+    for base in _repo_root_candidates():
+        p = base / "agents"
+        if p.is_dir():
+            return p
+    return None
+
+
+def _bound_agent_stubs():
+    """(label, {rel: path}) for the copy set the budget and duplicate sweep
+    read: the installed dir when it holds any stub, else the repo copies."""
+    installed = _agent_stub_files(claude_agents_dir())
+    if installed:
+        return "installed", installed
+    return "repo", _agent_stub_files(_agents_repo_path())
+
+
+def agent_stub_budget_warnings():
+    """Byte budget per stub — an EDITORIAL guide (Advisory, violations=0),
+    the same severity class as `discipline line caps`: unlike the hook parts
+    there is no delivery gate on an agent file, so growth past the budget is
+    the stub starting to re-accumulate procedure, not a broken delivery.
+    `CAPS["agent_stub_bytes"]` — basis at the constant."""
+    label, stubs = _bound_agent_stubs()
+    if not stubs:
+        return Skipped("no agent stubs found — neither an installed copy under "
+                       f"{claude_agents_dir()} nor a repo checkout with agents/")
+    lines = []
+    for rel in sorted(stubs):
+        try:
+            size = stubs[rel].stat().st_size
+        except OSError as e:
+            # T-578 QA F2: an unreadable stub is never spent as a silent pass.
+            # QA N2 found this branch unreachable as first written — `stat()`
+            # follows the path, and a chmod-000 file stats fine (only the READ
+            # fails, which is why drift and the sweep fired on that fixture and
+            # this one did not). Its trigger is a stub whose path does not
+            # RESOLVE: a dangling symlink or a symlink loop, which N1's
+            # discovery fix is what lets reach this loop at all.
+            lines.append(f"agent stub: {label} {rel} could not be measured — {e.__class__.__name__} on "
+                         f"{stubs[rel]}; the budget did not look at this file, so its silence here is "
+                         f"not a clean 0")
+            continue
+        if size > CAPS["agent_stub_bytes"]:
+            lines.append(f"agent stub: {label} {rel} is {size:,} B (budget {CAPS['agent_stub_bytes']:,} B) — "
+                         f"a stub carries no procedure of its own (the self-load lives in "
+                         f"prdt-session-start.sh, the rules in the discipline tree); move what grew "
+                         f"back to the surface that owns it")
+    return Advisory(lines)
+
+
+def agent_stub_drift_warnings():
+    """Installed (`~/.claude/agents/`) vs repo `agents/` — a discipline↔execution
+    mismatch (VIOLATION) exactly like `hook mirror drift`: the harness reads
+    the installed copy, so a committed stub change binds nothing until
+    install.sh §3 reruns, and a hand-edit of the installed copy binds a text no
+    commit has. Roster-as-a-set (a stub added to the repo but never installed,
+    an orphan left installed after the repo dropped it) plus per-name bytes;
+    behind vs ahead via `_mirror_matches_past_commit`, bounded and local, so
+    AHEAD is never a confident promote instruction."""
+    installed_dir = claude_agents_dir()
+    if not installed_dir.is_dir():
+        return Skipped(f"no installed agents dir at {installed_dir} — nothing bound to compare")
+    repo = _agents_repo_path()
+    if repo is None:
+        return Skipped("no source tree nearby to compare the installed agent stubs against")
+    if repo.resolve() == installed_dir.resolve():
+        return Skipped(f"{installed_dir} IS the repo agents directory — one path, nothing to drift")
+    installed, repo_files = _agent_stub_files(installed_dir), _agent_stub_files(repo)
+    if not installed and not repo_files:
+        return Skipped(f"no prdt-*.md stubs in either {installed_dir} or {repo}")
+    only_repo = sorted(set(repo_files) - set(installed))
+    only_installed = sorted(set(installed) - set(repo_files))
+    differing, unreadable, unreadable_repo, inst_bytes = [], [], [], {}
+    for rel in sorted(set(repo_files) & set(installed)):
+        # T-578 QA F2: an unreadable side used to `continue`, which reads as
+        # "identical" — the one verdict the check has NO evidence for. A stub it
+        # cannot read is a stub the harness cannot read either. The two reads are
+        # separate so the warning names the side that actually failed: once N1's
+        # discovery fix lets a broken entry through, either copy can be the
+        # broken one, and sending the reader to the wrong file is its own defect.
+        try:
+            inst_bytes[rel] = installed[rel].read_bytes()
+        except OSError as e:
+            unreadable.append(f"{rel} ({e.__class__.__name__})")
+            continue
+        try:
+            same = inst_bytes[rel] == repo_files[rel].read_bytes()
+        except OSError as e:
+            unreadable_repo.append(f"{rel} ({e.__class__.__name__})")
+            continue
+        if not same:
+            differing.append(rel)
+    if not only_repo and not only_installed and not differing and not unreadable and not unreadable_repo:
+        return []
+    git_root = _git_root(repo)
+    behind, hand_edited = list(only_repo), []
+    for rel in differing:
+        verdict = None
+        if git_root is not None:
+            try:
+                rel_from_root = str((repo / rel).resolve().relative_to(git_root.resolve()))
+            except ValueError:
+                rel_from_root = None
+            if rel_from_root:
+                verdict = _mirror_matches_past_commit(git_root, rel_from_root, inst_bytes[rel])
+        (behind if verdict else hand_edited).append(rel)
+    behind.sort()
+    ahead = sorted(only_installed + hand_edited)
+    sync_cmd = f"cp {repo}/prdt-*.md {installed_dir}/"
+    warns = []
+    if unreadable:
+        warns.append(
+            "agent stub: could not read the installed copy of " + ", ".join(unreadable[:8]) +
+            (f" (+{len(unreadable) - 8} more)" if len(unreadable) > 8 else "") +
+            f" under {installed_dir} — the drift comparison did not run for "
+            f"{'these' if len(unreadable) > 1 else 'this one'}, so this check is NOT a clean 0 "
+            f"over the whole roster; the harness reads these same files as persona base prompts, "
+            f"so what doctor cannot read binds nothing either — fix the permissions (or the "
+            f"dangling link) and rerun")
+    if unreadable_repo:
+        warns.append(
+            "agent stub: could not read the repo copy of " + ", ".join(unreadable_repo[:8]) +
+            (f" (+{len(unreadable_repo) - 8} more)" if len(unreadable_repo) > 8 else "") +
+            f" under {repo} — the drift comparison did not run for "
+            f"{'these' if len(unreadable_repo) > 1 else 'this one'}, so this check is NOT a clean 0 "
+            f"over the whole roster; the repo copy is the one install.sh §3 would copy OVER the "
+            f"installed base prompt, so a broken one is a broken sync — fix it (a dangling link, or "
+            f"the permissions) and rerun")
+    if behind:
+        warns.append(
+            "agent stub: installed BEHIND repo — " + ", ".join(behind[:8]) +
+            (f" (+{len(behind) - 8} more)" if len(behind) > 8 else "") +
+            f" — the harness reads {installed_dir}, never {repo}, so these committed changes bind "
+            f"no persona until synced — repair (install.sh §3's own copy step): `{sync_cmd}`")
+    if ahead:
+        if only_installed:
+            rm_targets = " ".join(str(installed_dir / rel) for rel in only_installed)
+            repair_cmd = f"rm {rm_targets} && {sync_cmd}" if hand_edited else f"rm {rm_targets}"
+        else:
+            repair_cmd = sync_cmd
+        warns.append(
+            "agent stub: installed AHEAD OF / HAND-EDITED vs repo (or a match outside the window "
+            "searched) — " + ", ".join(ahead[:8]) +
+            (f" (+{len(ahead) - 8} more)" if len(ahead) > 8 else "") +
+            f" — {installed_dir} has content not found among the most recent 25 commits examined per "
+            f"name (bounded, local-only) — not proof no commit has it; confirm by hand before "
+            f"promoting anything into the repo. " +
+            (f"{len(only_installed)} of these — {', '.join(only_installed[:8])} — have no counterpart "
+             f"in the repo at all, and install.sh only ever copies, never removes, so they reprint "
+             f"until removed by hand. " if only_installed else "") +
+            f"If unsure, the safer default is to discard the installed copy: `{repair_cmd}`")
+    return warns
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+# ── what counts as a RULE at sentence grain (T-578 QA F1) ────────────────────
+# `is_rule_line`'s 8-char floor was tuned for whole override LINES, where a
+# collision between two 8-char lines really is two layers writing one rule. At
+# sentence grain over the bound discipline tree it is far too low. Measured on
+# this tree (2026-09-11, `_tree_files(droot)` + doctrine.md): 20,533 distinct
+# sentence keys, 3,712 of them under 30 characters — and that band is not rules.
+# Sampling it returns design-reference token cells (`on-dark-soft: "#a8a29e"`,
+# `body-muted: "#cccccc"`, `fontfamily: ui-sans-serif`), table fragments
+# (`| level | treatment | use |`), and sentence fragments (`beliefs, not
+# rules`). Every one of those is a standing VIOLATION the moment a
+# stub happens to contain the same few characters — which is exactly what QA
+# reproduced: a stub gaining doctrine.md's own preamble sentence, `Beliefs, not
+# rules. Rules live in \`discipline/contracts.md\`.`, scored TWO violations.
+#
+# The gate is two mechanical tests against ONE floor:
+#   1. the normalized key reaches AGENT_STUB_RULE_MIN_CHARS; and
+#   2. so does the key with its cited PATHS removed. A sentence that is mostly
+#      a citation — `Rules live in \`discipline/contracts.md\`.`, residue
+#      `rules live in`, 13 — says where a rule lives instead of stating one,
+#      and pointing there is a stub's whole job. PATHS only, never every code
+#      span: `Long-term memory is \`memory_notes[]\` ONLY.` names an identifier
+#      and is still a rule (residue 39, comfortably over).
+# CJK counts double: a Hangul syllable block or CJK ideograph carries roughly
+# what two Latin characters do, so a raw count would put a ~2x stricter floor
+# on a Korean sentence than on its English twin.
+#
+# FALSE-POSITIVE / FALSE-NEGATIVE TOLERANCE, chosen deliberately: a genuine
+# rule terse enough to normalize under the floor is NOT reported. That miss is
+# POPULATED, not hypothetical (T-578 QA N-round, measured): across the
+# rule-bearing docs 107 distinct keys fall under the floor and about 30 of them
+# read as genuine rules. Five, pasted into a stub verbatim, ran silent —
+# `Never push / PR / merge.` (developer habit), `You never edit code.` and
+# `Never fake output.` (designer habit), `- You own git.` (po habit), all four
+# short of test 1; and contracts §Language's "`wiki` (`docs/wiki/**` ·
+# `~/.prdt/wiki/**`) stays mixed.", which clears test 1 at weight 45 and is
+# stopped by test 2 at residue 18 — test 2 working as designed on a sentence
+# that is mostly citation, and the duplicate it lets through is that rule's
+# priced cost, not a bug in the floor.
+#
+# It is still the side the error belongs on, but NOT for the reason first
+# written here: "this check blocks the pre-push gate" is FALSE on this repo
+# (measured — `cmd_doctor` prints "(non-blocking)" and exits 0 on a tree with
+# violations=1, and neither `.githooks/pre-push` nor the managed
+# `PREPUSH_SCRIPT` above consumes doctor; both only block a direct push to
+# `main`). What consumes `violations=` is human and agent discipline — the
+# Retro's doctor step (`po/playbooks/retro.md`) and the Definition of Done. So
+# a false positive costs no push; it costs a line NOBODY CAN CLEAR by doing
+# what it says — the sentence was never a rule, so there is nothing to move
+# back — reprinting in every run until the reader learns to discount the
+# verdict line, and that discount falls on this instrument's other findings
+# too. A miss costs one round of undetected drift on a surface two other
+# checks still watch. Both numbers below are measured, not tuned; move either
+# one only against a fresh distribution.
+AGENT_STUB_RULE_MIN_CHARS = 30
+# A cited path: anything carrying a separator, or a bare filename with a
+# tree-ish extension. Run against the NORMALIZED key, where the backticks are
+# already gone.
+_CITED_PATH_RE = re.compile(r"\S*[/\\]\S*|\S+\.(?:md|sh|json|jsonl|ts|js|py|toml|ya?ml|txt)\b")
+_CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
+
+
+def _rule_weight(key):
+    """Length of a normalized key, CJK/Hangul counted double — see above."""
+    return len(key) + len(_CJK_RE.findall(key))
+
+
+def _is_stub_rule_sentence(raw, key):
+    """The stub duplicate sweep's grain gate — `is_rule_line` plus the two
+    floors documented at `AGENT_STUB_RULE_MIN_CHARS`."""
+    if not is_rule_line(raw, key):
+        return False
+    if _rule_weight(key) < AGENT_STUB_RULE_MIN_CHARS:
+        return False
+    residue = normalize_rule_line(_CITED_PATH_RE.sub(" ", key))
+    return _rule_weight(residue) >= AGENT_STUB_RULE_MIN_CHARS
+
+
+def _rule_sentences(text):
+    """{normalized sentence: original} over rule-bearing text, one sentence at a
+    time — the override sweep's line key, applied a grain finer because a stub
+    paragraph is one physical line and would never equal a contracts bullet
+    whole. Same normalizer; the GATE is `_is_stub_rule_sentence`, not
+    `is_rule_line`, because the grain change is what broke that floor."""
+    out = {}
+    for line in text.splitlines():
+        if not is_rule_line(line, normalize_rule_line(line)):
+            continue
+        for sent in _SENTENCE_SPLIT_RE.split(line):
+            key = normalize_rule_line(sent)
+            if _is_stub_rule_sentence(sent, key):
+                out.setdefault(key, sent.strip())
+    return out
+
+
+def agent_stub_duplicate_warnings(droot):
+    """A sentence that lives in a stub AND in the discipline tree is the T-578
+    defect itself — a rule with two homes, free to drift (VIOLATION, the same
+    class as the override cross-layer duplicate this reuses the key of). Swept
+    against every `*.md` under the bound discipline root plus doctrine.md.
+    What counts as a rule at this grain — and what that criterion deliberately
+    misses — is `AGENT_STUB_RULE_MIN_CHARS`, not `is_rule_line` alone.
+    Not swept: stub against stub — the four share one bootstrap text by
+    design (agent name substituted), and `test/agents-stubs.test.ts` pins that
+    identity; nor the session-start hook's own header prose, which is a shell
+    script, not the discipline tree."""
+    if not droot:
+        return Skipped("no discipline root — nothing to sweep the stubs against")
+    label, stubs = _bound_agent_stubs()
+    if not stubs:
+        return Skipped("no agent stubs found — see `agent stub size budget`")
+    tree, warns = {}, []
+    docs = [p for rel, p in _tree_files(droot).items() if rel.endswith(".md")]
+    for cand in (droot.parent / "doctrine.md", droot / "doctrine.md"):
+        if cand.is_file():
+            docs.append(cand)
+            break
+    for p in docs:
+        rel = str(p.relative_to(droot.parent)).replace(os.sep, "/") if droot.parent in p.parents else p.name
+        try:
+            text = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            # T-578 QA F2: a comparand this sweep never read is a hole in the
+            # comparand, not a document with no rules in it.
+            warns.append(f"agent stub: could not read discipline document {rel} ({p}) — "
+                         f"{e.__class__.__name__}; the duplicate sweep ran WITHOUT it, so a stub "
+                         f"sentence that lives only there goes unreported — this check is not a "
+                         f"clean 0 over the tree")
+            continue
+        for key in _rule_sentences(text):
+            tree.setdefault(key, rel)
+    for rel in sorted(stubs):
+        try:
+            # Probe before `parse_frontmatter`, which answers `({}, "")` for an
+            # unreadable path — indistinguishable from an empty stub, which is
+            # how a chmod-000 base prompt swept clean (T-578 QA F2).
+            stubs[rel].read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            warns.append(f"agent stub: could not read {label} {rel} ({stubs[rel]}) — "
+                         f"{e.__class__.__name__}; the duplicate sweep did not look at this stub, so "
+                         f"its silence here is not a clean 0 — the harness reads this same file as a "
+                         f"persona's base prompt, so fix it and rerun")
+            continue
+        _fm, body = parse_frontmatter(stubs[rel])
+        for key, sent in _rule_sentences(body).items():
+            if key in tree:
+                warns.append(f"agent stub: {label} {rel} and {tree[key]} carry the same sentence after "
+                             f"normalization — \"{one_line(sent)[:80]}\" — a rule with two homes drifts "
+                             f"(T-578); keep it in the discipline tree and drop it from the stub")
     return warns
 
 
@@ -4637,6 +6701,20 @@ class Skipped:
         self.reason = reason
 
 
+class Attested:
+    """What a check returns when it could not look itself, but a PERSON did, and
+    the record of that reading is pinned to the exact state now in force (T-581).
+    Not `[]`: that asserts prdt looked and found nothing, which it did not. Not
+    `Skipped`: the question is answered, only not by prdt. It does not hold the
+    verdict at `not-established`, but the verdict line counts it apart
+    (`attested=N`) and prints it as `human record ·`, so "we verified" and "a
+    person told us" never collapse into one number."""
+    __slots__ = ("note",)
+
+    def __init__(self, note):
+        self.note = note
+
+
 class NoEvidence:
     """What a check returns when it looked with every signal available to it and
     established neither a violation nor the absence of one. Not a defect and not
@@ -4685,6 +6763,9 @@ def doctor_record(name, family, result):
     if isinstance(result, NoEvidence):
         return {"name": name, "family": family, "state": "no-evidence",
                 "reason": result.note, "warnings": []}
+    if isinstance(result, Attested):
+        return {"name": name, "family": family, "state": "attested",
+                "reason": result.note, "warnings": []}
     if isinstance(result, Advisory):
         return {"name": name, "family": family, "state": "ran", "reason": None,
                 "warnings": list(result.lines), "violations": 0}
@@ -4709,6 +6790,9 @@ def doctor_verdict_lines(records):
     ran = [r for r in fam if r["state"] == "ran"]
     skipped = [r for r in fam if r["state"] == "skipped"]
     unseen = [r for r in fam if r["state"] == "no-evidence"]
+    # T-581: answered by a human record pinned to the live state. Counted apart
+    # from `ran` so the tail never says prdt verified what a person told it.
+    attested = [r for r in fam if r["state"] == "attested"]
     # `.get("violations", …)` — not every `ran` record carries the key (the
     # membership unit test below builds raw dicts by hand), so a record
     # without it falls back to the pre-T-572 rule (every warning is a
@@ -4724,11 +6808,20 @@ def doctor_verdict_lines(records):
                 f"{len(skipped) + len(unseen)} of {len(fam)} could not establish an answer")
     else:
         verdict = "clean"
-        head = f"0 mismatches, all {len(fam)} check(s) ran"
+        # T-581 QA P4: "all N check(s) ran" beside a tail reading `ran=N-1` is
+        # this line contradicting itself, and its entire purpose is that its
+        # numbers do not lie. An attested check was ANSWERED, not run — so the
+        # head says answered, and the two ways of answering are named with the
+        # same numbers the tail carries.
+        if attested:
+            head = (f"0 mismatches, all {len(fam)} check(s) answered — {len(ran)} by prdt's own "
+                    f"inspection, {len(attested)} by a human record")
+        else:
+            head = f"0 mismatches, all {len(fam)} check(s) ran"
 
     lines = [f"doctor: {FAMILY_DE} — {head} "
              f"[verdict={verdict} violations={violations} ran={len(ran)} "
-             f"skipped={len(skipped)} no-evidence={len(unseen)} "
+             f"attested={len(attested)} skipped={len(skipped)} no-evidence={len(unseen)} "
              f"unclassified={len(unclassified)}]"]
     # Every detail line stays on the `doctor:` channel rather than becoming a
     # ⚠ finding. doctor has exactly two line kinds and one severity — a `⚠`
@@ -4736,10 +6829,19 @@ def doctor_verdict_lines(records):
     # directly. These lines are report, not findings: nothing here is a defect
     # anyone can repair, which is the whole reason no-evidence moved off the
     # warning list in the first place.
+    #
+    # `one_line` on every reason (T-581 QA P1): most of these strings are ours,
+    # but some quote a person's record or a field name out of a tracked config
+    # file, and one embedded newline would turn a report line into two — the
+    # second free to look like any line doctor prints. The refusals upstream are
+    # the fix; this is the render-time floor under all of them, and the one
+    # place that covers a reason path added later without one.
+    for r in attested:
+        lines.append(f"doctor:    human record · {r['name']}: {one_line(r['reason'])}")
     for r in skipped:
-        lines.append(f"doctor:    could not look · {r['name']}: {r['reason']}")
+        lines.append(f"doctor:    could not look · {r['name']}: {one_line(r['reason'])}")
     for r in unseen:
-        lines.append(f"doctor:    no evidence · {r['name']}: {r['reason']}")
+        lines.append(f"doctor:    no evidence · {r['name']}: {one_line(r['reason'])}")
     for r in unclassified:
         lines.append(f"doctor:    unclassified · {r['name']}: registered with family "
                      f"{r.get('family')!r}, which is not one of {' / '.join(DOCTOR_FAMILIES)} — "
@@ -4840,6 +6942,19 @@ def ticket_cycle_warnings(tickets):
 # parts (one registered hook command each) and owns the budget numbers; doctor
 # does not re-implement the split — it asks the hook for its plan (`--plan`) and
 # reports what the plan says: delivered bytes, parts needed, slots registered.
+#
+# T-580 — two sizes, and the budget applies to exactly one of them. `docs_bytes`
+# is the documents (what the parts CARRY); `wire_bytes` is the sum of the rendered
+# parts (what the hook commands EMIT — each part's additionalContext string, part
+# header + delimiters + footer included, the string the harness measures against
+# its 10,000-char persistence threshold). Until T-580 the summary printed the
+# documents figure while `largest` was a rendered part, so the total sat ~1.4 KB
+# per part under what shipped (measured qa: 26,296 B printed, 34,021 B emitted).
+# The line now leads with the wire, names the documents figure beside it, and the
+# gate compares every DELIVERED part against the limit the hook packed it under
+# (`parts[].limit` — the budget, less the onboarding reserve on po part 1). The
+# per-persona total has no threshold of its own: parts are separate commands, so
+# the only cap on the total is the slot count, reported separately.
 DISCIPLINE_PERSONAS = ("po", "designer", "developer", "qa")
 _DELIVERY_PLANS = {}
 
@@ -4882,10 +6997,26 @@ def discipline_delivery_plan(droot, persona):
     return _DELIVERY_PLANS[key]
 
 
+def _plan_docs_bytes(plan):
+    """Documents carried; `total_bytes` is the pre-T-580 name of the same sum."""
+    return plan.get("docs_bytes", plan.get("total_bytes")) or 0
+
+
+def _plan_wire_bytes(plan):
+    """Bytes the slot commands emit for this persona: the plan's own figure, or the
+    sum of its delivered parts for a bound hook that predates the key."""
+    if plan.get("wire_bytes") is not None:
+        return plan["wire_bytes"]
+    return sum(p["bytes"] or 0 for p in plan.get("parts") or [])
+
+
 def discipline_delivery_warnings(droot):
     """Violations: a persona's set needs more parts than there are registered
     slots (the tail never runs — part 1 says so in-session, doctor says so here),
-    or a single line is larger than a whole part (withheld from injection)."""
+    a single line is larger than a whole part (withheld from injection), or a
+    delivered part is larger on the wire than the limit it was packed under (the
+    harness would persist it and inject a 2 KB preview — the T-577 failure
+    itself, so this is gated on the RENDERED size, never on the documents)."""
     if not droot:
         return Skipped("no discipline root — nothing is delivered to check")
     if _session_start_hook_path() is None:
@@ -4911,9 +7042,16 @@ def discipline_delivery_warnings(droot):
                              f"the harness persists past 10,000 chars and replaces with a 2 KB preview: contracts "
                              f"and habit are NOT reaching sessions on this machine; re-run install.sh to resync the hooks")
             continue
-        if not plan.get("total_bytes"):
+        if not _plan_docs_bytes(plan):
             continue
         need, slots, budget = plan["parts_needed"], plan["slots"], plan["budget_bytes"]
+        for p in plan.get("parts") or []:
+            limit = p.get("limit", budget)
+            if p.get("bytes") is not None and p["bytes"] > limit:
+                warns.append(f"discipline delivery: prdt-{persona} part {p['n']}/{need} is {p['bytes']:,} B on the wire — "
+                             f"over the {limit:,} B this slot may emit (budget {budget:,} B/part), so the harness "
+                             f"persists it and the persona gets a 2 KB preview instead of that part; the hook's "
+                             f"split did not converge — shorten the longest lines/sections it carries")
         if need > slots:
             lost = sorted({u["label"] for u in plan["undelivered"]})
             warns.append(f"discipline delivery: prdt-{persona} needs {need} parts of ≤{budget} B but only "
@@ -4934,7 +7072,7 @@ def discipline_delivery_headroom(droot):
     lines = []
     for persona in DISCIPLINE_PERSONAS:
         plan = discipline_delivery_plan(droot, persona)
-        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+        if not plan or plan.get("legacy") or not _plan_docs_bytes(plan):
             continue
         need, slots = plan["parts_needed"], plan["slots"]
         if 0 <= slots - need <= 1:
@@ -4947,22 +7085,26 @@ def discipline_delivery_headroom(droot):
 def discipline_delivery_summary(droot):
     """The one informational line doctor prints every run: delivered bytes per
     persona against the budget — what the acceptance of T-577 asks to be
-    REPORTED, not only gated."""
+    REPORTED, not only gated. Leads with the WIRE figure (T-580): the bytes the
+    part commands emit, which is what `largest` is a member of and what the
+    per-part budget applies to; the documents figure follows, labeled."""
     if not droot or _session_start_hook_path() is None:
         return None
     cells, budget, threshold, slots = [], None, None, None
     for persona in DISCIPLINE_PERSONAS:
         plan = discipline_delivery_plan(droot, persona)
-        if not plan or plan.get("legacy") or not plan.get("total_bytes"):
+        if not plan or plan.get("legacy") or not _plan_docs_bytes(plan):
             continue
         budget, threshold, slots = plan["budget_bytes"], plan["threshold_chars"], plan["slots"]
         biggest = max([p["bytes"] or 0 for p in plan["parts"]] + [0])
-        cells.append(f"{persona} {plan['total_bytes']:,} B → {plan['parts_needed']} parts (largest {biggest:,} B)")
+        cells.append(f"{persona} {_plan_wire_bytes(plan):,} B wire ({_plan_docs_bytes(plan):,} B docs) → "
+                     f"{plan['parts_needed']} parts (largest {biggest:,} B)")
     if not cells:
         return None
-    return (f"doctor: discipline delivery — {' · '.join(cells)} · budget ≤{budget:,} B/part "
-            f"(harness persists a hook context over {threshold:,} chars; measured Claude Code 2.1.260) · "
-            f"{slots} part slots (hook files)")
+    return (f"doctor: discipline delivery — {' · '.join(cells)} · budget ≤{budget:,} B/part, gated on the wire "
+            f"(wire = the additionalContext each part command emits, part header + delimiters + footer included — "
+            f"the string the harness persists over {threshold:,} chars; docs = the discipline files the parts carry; "
+            f"measured Claude Code 2.1.260) · {slots} part slots (hook files)")
 
 
 def discipline_line_caps(droot):
@@ -5015,6 +7157,399 @@ def discipline_caps_warnings(droot):
     return warns
 
 
+# ── resource ownership markers (T-591) — the CLI the stop rule names ────────
+#
+# `qa/habit.md` §Working rules and `po/habit.md` §Returns already read: "last
+# dispatch out stops it" / "0 left → stop it" — this is the CLI that makes
+# those lines real. `prdt resource up|down` record who booted a machine
+# resource; `ls` reports what is recorded. None of the three stops, kills, or
+# signals anything (provable by grep — see the CLI-side test for this
+# section): the marker is bookkeeping only, the stop command belongs to
+# whichever dispatch removes the LAST marker, in the rule text, not here.
+#
+# Marker file: `~/.prdt/run/resources/<name>/<dispatch>.json`, tooling-owned
+# under the existing `~/.prdt/run/` carve-out (contracts §Fixed paths already
+# names the directory — no new carve-out needed). One file per (resource,
+# dispatch) pair; `up` on the same dispatch is idempotent — it rewrites
+# `since`, it never doubles the held count.
+#
+# Ownership test (user's verdict, verbatim "c. docker같은것도 똑같아",
+# 2026-09-15): a resource with at least one marker was agent-started
+# (prdt-owned), one with none was not (user-owned) — ONE test, never a branch
+# on kind. `_resource_owner` below is the single function both this CLI's
+# `ls` and the resident-machine-resources doctor check (further down) call
+# for that judgment; the doctor check used to split VM-vs-Docker by a fixed
+# name list, which is exactly the split the user's verdict discarded.
+
+RE_RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RE_DISPATCH_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+# T-644: no session-keyed or `local` default. contracts §Dispatch names the
+# marker's owner as the PO-minted `[ctx].dispatch_id` and says "never per
+# session"; qa/habit.md always passes `--dispatch <id>` itself. A session
+# default let two parallel dispatches in one session collide on one marker
+# file — the exact incident T-591 closed, reopened through this CLI's own
+# help text. `up`/`down` now refuse to run without an explicit `--dispatch`.
+
+
+def _resource_marker_dir(name):
+    return prdt_home() / "run" / "resources" / name
+
+
+def _resource_markers(name=None):
+    """Markers on disk, optionally filtered to one resource `name`. A corrupt
+    or foreign JSON file under the directory is skipped, never raised — a
+    read here must survive a hand-edited or half-written file."""
+    base = prdt_home() / "run" / "resources"
+    if not base.is_dir():
+        return []
+    try:
+        dir_names = [name] if name is not None else sorted(p.name for p in base.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    out = []
+    for n in dir_names:
+        d = base / n
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.json")):
+            data = read_json(f)
+            if not isinstance(data, dict):
+                continue
+            out.append({
+                "resource": data.get("resource") or n,
+                "dispatch": data.get("dispatch") or f.stem,
+                "project": data.get("project"),
+                "since": data.get("since"),
+            })
+    return out
+
+
+def _resource_owner(name):
+    """T-591 판정 ⓒ — 종류가 아니라 표식이 소유를 가른다: 표식이 하나라도 있으면
+    prdt-owned, 없으면 user-owned. VM 과 Docker 스택이 같은 함수를 탄다."""
+    return "prdt" if _resource_markers(name) else "user"
+
+
+def _resource_project_slug(root):
+    if not root:
+        return None
+    cfg = read_json(Path(root) / ".prdt" / "config.json") or {}
+    slug = cfg.get("slug")
+    return slug if isinstance(slug, str) and slug else None
+
+
+def cmd_resource(args):
+    """`prdt resource up|down|ls` — record/report ownership markers ONLY.
+    Grep-provable: nothing below signals a process, stops a VM, touches a
+    container, or quits an application. The stop command lives with whichever
+    dispatch's `down` brings a resource's marker count to zero — rule text
+    (qa/habit.md, po/habit.md), never this function."""
+    action = args.action
+    if action == "ls":
+        markers = _resource_markers()
+        if args.json:
+            print(json.dumps(markers, ensure_ascii=False))
+            return
+        if not markers:
+            print("no resource markers")
+            return
+        by_name = {}
+        for m in markers:
+            by_name.setdefault(m["resource"], []).append(m)
+        for n in sorted(by_name):
+            group = by_name[n]
+            print(f"{safe_label(n)}: {len(group)} held")
+            for m in group:
+                proj = safe_label(m["project"]) if m["project"] else "-"
+                print(f"  dispatch={safe_label(m['dispatch'])} project={proj} since={m['since'] or '-'}")
+        return
+
+    rest = list(args.rest or [])
+    if len(rest) != 1:
+        sys.exit(f"usage: prdt resource {action} <name>")
+    name = rest[0].strip()
+    if not RE_RESOURCE_NAME.match(name):
+        sys.exit("prdt resource: <name> must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    dispatch = (args.dispatch or "").strip()
+    if not dispatch:
+        sys.exit("prdt resource: --dispatch <id> is required for up/down — the PO's [ctx].dispatch_id "
+                  "(contracts §Dispatch: never per session); ls needs none")
+    if not RE_DISPATCH_ID.match(dispatch):
+        sys.exit("prdt resource: --dispatch must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+    if action == "up":
+        project = _resource_project_slug(find_project_root())
+        since = now_iso()
+        marker = {"resource": name, "dispatch": dispatch, "project": project, "since": since}
+        d = _resource_marker_dir(name)
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"{dispatch}.json"
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(tmp, p)
+        held = len(_resource_markers(name))
+        proj_out = safe_label(project) if project else "-"
+        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out} since={since} held={held}")
+        return
+
+    if action == "down":
+        p = _resource_marker_dir(name) / f"{dispatch}.json"
+        removed = p.exists()
+        if removed:
+            try:
+                p.unlink()
+            except OSError:
+                removed = False
+        left = len(_resource_markers(name))
+        print(f"down: {safe_label(name)} marker={safe_label(dispatch)} "
+              f"removed={'true' if removed else 'false'} left: {left}")
+        return
+
+
+# ── resident machine resources — report only, never act (T-592) ─────────────
+#
+# T-591 puts the stop duty on the persona that booted a resource (the QA
+# playbooks that boot the `cua` VM). This is the second line of defense for
+# what that duty misses — a resource still up after its dispatch returned, a
+# round that ended mid-verification, a dead agent that never reached its own
+# cleanup. It only REPORTS: no function below signals a process, stops a VM,
+# touches a container, or quits an application — provable by grep on this
+# section alone (no `stop`/`kill`/`shutdown`/`quit`/`rm` verb reaches a
+# subprocess call here; the one shutdown STRING that exists is quoted into a
+# warning LINE for a person to run, never executed).
+#
+# Ownership decides whether a line carries a repair command (the user's own
+# constraint, 2026-09-08, quoted in T-591/T-592) — and, as of T-591's
+# §재설계 (2026-09-15), ownership is read from the SAME resource markers the
+# `prdt resource` CLI above writes (`_resource_owner`), not from a fixed
+# VM-vs-Docker split: a marker for the name means an agent dispatch started
+# it, no marker means it was already there. A repair command is only ever
+# offered on TOP of that — this machine has one known stop procedure, for
+# `cua` (`machine:fact--qa-cua-vm`), so `KNOWN_REPAIR_COMMANDS` below stays a
+# small lookup, not a kind branch: a prdt-owned Docker stack still gets no
+# command, because there genuinely isn't one this doctor check can hand out
+# (which compose file, which service — T-591's forbidden-actions list never
+# lets it touch one), while a hypothetical prdt-owned VM under a different
+# name would get none either, for the same reason: the lookup, not the kind.
+#
+# `lume ls` (incl. `--format json`) carries no boot timestamp — measured on
+# this machine (T-592). So "resident hours" for a VM is tracked by doctor
+# itself: a first-seen marker under the tooling-owned `~/.prdt/run/` (no
+# persona writes there by hand; this is the CLI persisting its own runtime
+# state, the same class as the call-governor's turn counters — contracts
+# §Fixed paths, no new carve-out needed, the clause already names the
+# directory). A VM that stops and later restarts gets a fresh first-seen —
+# correct, its resident age really did reset. Docker containers carry their
+# own `CreatedAt`, so no marker is needed there.
+
+RESIDENT_HOURS_WARN = 24.0      # under a day resident is not yet "forgotten" territory
+LOAD_AVG_WARN = 10.0            # this machine's own measured stall point (fact--cli-pty-testing.md:
+                                 # "load avg 10 이상에서 vitest 기본 15s 를 깬다") reused as the
+                                 # "worth a look now" line — not a vitest-specific number
+CUA_STOP_CMD = 'lume ssh cua "echo lume | sudo -S shutdown -h now"'  # `lume stop` exits 130 here (measured)
+KNOWN_REPAIR_COMMANDS = {"cua": CUA_STOP_CMD}  # name → the one stop command doctor can hand out on this machine
+
+
+def _resident_vm_state_path():
+    return prdt_home() / "run" / "resident-vm-since.json"
+
+
+def _lume_running_vm_names():
+    """Read-only `lume ls --format json`. Absent binary, non-zero exit, or
+    unparsable output → None ("could not look"), never an empty list standing
+    in for "nothing running" — those are different facts."""
+    exe = shutil.which("lume")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "ls", "--format", "json"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        rows = json.loads(r.stdout or "[]")
+    except ValueError:
+        return None
+    if not isinstance(rows, list):
+        return None
+    return [row.get("name") for row in rows
+            if isinstance(row, dict) and row.get("status") == "running" and row.get("name")]
+
+
+def _lume_resident_resources(now):
+    names = _lume_running_vm_names()
+    if names is None:
+        return None
+    state_path = _resident_vm_state_path()
+    state = read_json(state_path)
+    state = state if isinstance(state, dict) else {}
+    new_state = {}
+    resources = []
+    for name in names:
+        try:
+            first_seen = datetime.fromisoformat(state[name]) if name in state else None
+        except (ValueError, TypeError):
+            first_seen = None
+        if first_seen is None:
+            first_seen = now
+        new_state[name] = first_seen.isoformat()
+        hours = (now - first_seen).total_seconds() / 3600
+        owner = _resource_owner(name)
+        resources.append({
+            "kind": "vm", "name": safe_label(name), "owner": owner,
+            "resident_hours": hours, "detail": None,
+            "repair_cmd": KNOWN_REPAIR_COMMANDS.get(name) if owner == "prdt" else None,
+        })
+    if new_state != state:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = state_path.with_name(state_path.name + ".tmp")
+        tmp.write_text(json.dumps(new_state, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, state_path)
+    return resources
+
+
+_DOCKER_CREATED_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([+-]\d{4})")
+
+
+def _parse_docker_created(raw):
+    """`docker ps`'s CreatedAt looks like `2026-09-14 15:18:17 +0900 KST` — the
+    trailing zone NAME is not part of the offset and is left unmatched."""
+    m = _DOCKER_CREATED_RE.match((raw or "").strip())
+    if not m:
+        return None
+    try:
+        return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M:%S %z")
+    except ValueError:
+        return None
+
+
+def _docker_resident_resources(now):
+    """Read-only `docker ps` — RUNNING containers only, never `-a` (which would
+    also name stopped ones as if resident). Grouped by the compose project
+    label so a 10+-container stack reports as ONE line; an unlabeled
+    container groups under its own name. Ownership is marker-based like the
+    VM check (`_resource_owner`), never a fixed "always user" default — this
+    check still never STOPS a Docker resource either way (T-591's
+    forbidden-actions list), it only reports who is on the hook for it."""
+    exe = shutil.which("docker")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run(
+            [exe, "ps", "--format", '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.CreatedAt}}'],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    stacks = {}
+    for line in (r.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        cname, project, created_raw = parts
+        project = project.strip() or cname.strip()
+        created = _parse_docker_created(created_raw)
+        if created is None:
+            continue
+        entry = stacks.setdefault(project, {"count": 0, "earliest": created})
+        entry["count"] += 1
+        if created < entry["earliest"]:
+            entry["earliest"] = created
+    resources = []
+    for project, info in stacks.items():
+        hours = (now - info["earliest"]).total_seconds() / 3600
+        owner = _resource_owner(project)
+        resources.append({
+            "kind": "docker-stack", "name": safe_label(project), "owner": owner,
+            "resident_hours": hours,
+            "repair_cmd": KNOWN_REPAIR_COMMANDS.get(project) if owner == "prdt" else None,
+            "detail": f"{info['count']} container(s)",
+        })
+    return resources
+
+
+def _uptime_load_1m():
+    exe = shutil.which("uptime")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"load averages?:\s*([\d.]+)", r.stdout or "")
+    return float(m.group(1)) if m else None
+
+
+def _memory_pressure_free_pct():
+    """`memory_pressure`'s own free-PERCENTAGE line — never `vm_stat` free
+    PAGES, which undercounts reclaimable `inactive` memory as unavailable
+    (measured wrong on this machine, T-591/T-592 §실측 기준선). Context only —
+    it never gates the warning threshold (resident hours + load do)."""
+    exe = shutil.which("memory_pressure")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"free percentage:\s*(\d+)%", r.stdout or "")
+    return int(m.group(1)) if m else None
+
+
+def resident_resource_lines(resources, load_1m, mem_free_pct=None):
+    """Pure — takes already-gathered machine state, returns warning lines. Kept
+    apart from the gathering functions above so the threshold logic is
+    testable against a machine-state fixture without a real `lume` / `docker`
+    / `uptime` on the test machine (T-592 acceptance)."""
+    if load_1m is None or load_1m < LOAD_AVG_WARN:
+        return []
+    mem_note = f" · available memory {mem_free_pct}% (memory_pressure)" if mem_free_pct is not None else ""
+    lines = []
+    for res in resources:
+        if res["resident_hours"] < RESIDENT_HOURS_WARN:
+            continue
+        detail = f" ({res['detail']})" if res.get("detail") else ""
+        base = (f"machine: {res['kind']} '{res['name']}'{detail} resident "
+                f"{res['resident_hours']:.1f}h while host load is {load_1m:.1f} "
+                f"(≥{LOAD_AVG_WARN:.0f}){mem_note}")
+        if res["owner"] == "prdt":
+            # prdt-owned (a marker exists) does not guarantee a KNOWN repair
+            # command — that lookup is a separate, machine-specific fact
+            # (today only `cua`), not implied by ownership.
+            if res.get("repair_cmd"):
+                lines.append(f"{base} — prdt-owned, stop if this dispatch's job is done: `{res['repair_cmd']}`")
+            else:
+                lines.append(f"{base} — prdt-owned, report only, no known repair command for this resource")
+        else:
+            lines.append(f"{base} — user-owned, report only, no stop command offered")
+    return lines
+
+
+def resident_machine_resource_warnings():
+    """Report-only doctor check (T-592). Skipped (not a clean pass) when
+    neither `lume` nor `docker` is on PATH — the check could not look, which
+    is different from looking and finding nothing resident."""
+    lume_ok = shutil.which("lume") is not None
+    docker_ok = shutil.which("docker") is not None
+    if not lume_ok and not docker_ok:
+        return Skipped("no `lume` or `docker` on PATH — could not look at resident VM/container state")
+    now = datetime.now(timezone.utc)
+    resources = []
+    if lume_ok:
+        vm = _lume_resident_resources(now)
+        if vm is not None:
+            resources += vm
+    if docker_ok:
+        dk = _docker_resident_resources(now)
+        if dk is not None:
+            resources += dk
+    return resident_resource_lines(resources, _uptime_load_1m(), _memory_pressure_free_pct())
+
+
 def cmd_doctor(_args):
     root = require_root()
     st = read_json(root / ".prdt" / "po-state.json")
@@ -5054,6 +7589,11 @@ def cmd_doctor(_args):
         # promotion path: read the repo's own policy, report where it differs from
         # the discipline default (T-506)
         ("git promotion path", FAMILY_DE, lambda: promotion_warnings(root)),
+        # README staleness at the newest cut tag (T-589, retro.md/patch-cycle.md
+        # §Rules 37e98bf): discipline↔execution, not project — the rule tests
+        # whether what ships agrees with what the README claims, the same
+        # question every other FAMILY_DE check asks.
+        ("readme vs shipped tag", FAMILY_DE, lambda: readme_stale_at_tag_warnings(root)),
         ("release notes vs cut tags", FAMILY_PROJECT, lambda: release_notes_gap_warnings(root)),
         # meta backup lag + drift + fixed-path parity (T-428)
         ("meta backup lag", FAMILY_PROJECT, lambda: meta_backup_lag_warnings(root)),
@@ -5076,14 +7616,30 @@ def cmd_doctor(_args):
         # wiki — project store, then the machine store (§8b) it now searches alongside
         ("wiki lint", FAMILY_PROJECT, lambda: wiki_lint(root)),
         ("machine wiki", FAMILY_PROJECT, lambda: machine_wiki_warnings()),
+        # resident VM/docker state — report only, never act (T-592). FAMILY_DE,
+        # not FAMILY_PROJECT: this detects the missed case of T-591's discipline
+        # rule (the booting persona stops what it started) — a resource still
+        # resident past the threshold IS a discipline↔execution mismatch, and
+        # filing it here is also what makes an absent `lume`/`docker` print as
+        # "could not look" via the existing Skipped precedent (FAMILY_PROJECT
+        # checks have no such print path — none of them ever return Skipped).
+        ("resident machine resources", FAMILY_DE, lambda: resident_machine_resource_warnings()),
         # dead discipline-path citations in live SoT docs (T-535) — wiki lint only
         # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
         # citations everywhere else a persona habit/bookshelf doc or design.md makes one
         ("dead discipline-path citations", FAMILY_DE, lambda: dead_discipline_path_warnings(root)),
         # override caps + cross-layer duplicates (§8b)
         ("override caps", FAMILY_DE, lambda: override_warnings(root)),
+        # register object — file legality as the resolver sees it + body budget (T-586)
+        ("register", FAMILY_DE, lambda: register_warnings(droot)),
         # hook roster parity + governor fire evidence (T-445 / T-491)
         ("hook roster + governor fire", FAMILY_DE, lambda: hook_registration_warnings()),
+        # a basename registered more than once on one event (T-645) — the
+        # existence check above cannot see a DOUBLED roster, only an absent one
+        ("hook roster duplicates", FAMILY_DE, lambda: hook_roster_duplicate_warnings()),
+        # a registered command whose absolute path is gone (T-640) — independent of
+        # the mirror: the basename check above cannot see a dead PATH
+        ("hook command targets", FAMILY_DE, lambda: hook_dangling_command_warnings()),
         # statusline registration — user + project-level (T-500)
         ("statusline registration", FAMILY_DE, lambda: statusline_warnings(root)),
         # prdt script mirror↔repo drift (T-507 follow-up) — independent of whether a
@@ -5093,6 +7649,14 @@ def cmd_doctor(_args):
         # mirror lives at a fixed prdt_home()/hooks path, not behind
         # discipline_root()'s mirror-vs-repo-fallback preference.
         ("hook mirror drift", FAMILY_DE, lambda: hook_mirror_drift_warnings()),
+        # agent stubs `agents/prdt-*.md` — the fourth discipline surface (T-578):
+        # installed↔repo drift (violation, like the two mirror checks above),
+        # per-stub byte budget (advisory, like `discipline line caps`), and the
+        # stub↔discipline-tree duplicate sweep (violation, the override
+        # cross-layer duplicate's key at sentence grain).
+        ("agent stub mirror drift", FAMILY_DE, lambda: agent_stub_drift_warnings()),
+        ("agent stub size budget (editorial)", FAMILY_DE, lambda: agent_stub_budget_warnings()),
+        ("agent stub duplicates vs discipline", FAMILY_DE, lambda: agent_stub_duplicate_warnings(droot)),
         # mirror↔repo content drift (T-507) — before the caps check so a stale
         # mirror is reported even when it happens to still be within cap
         ("discipline mirror drift", FAMILY_DE, lambda: discipline_mirror_drift_warnings(droot)),
@@ -5818,6 +8382,18 @@ def main():
     p.set_defaults(fn=cmd_init)
     p = sub.add_parser("doctor", help="non-blocking lint: state · tickets · wiki (both stores) · overrides · discipline caps")
     p.set_defaults(fn=cmd_doctor)
+    p = sub.add_parser("attest", help="record a HUMAN's reading of something prdt refuses to inspect itself: "
+                                      "`attest prepush` pins what a person found in a foreign pre-push hook to "
+                                      "that hook's sha256 (.prdt/config.json git.prepush_reading); doctor honours "
+                                      "it only while the hook's bytes match (T-581)")
+    p.add_argument("subject", choices=("prepush",))
+    p.add_argument("--blocks-main", required=True, choices=("yes", "no"),
+                   help="does the hook stop `git push` to refs/heads/main?")
+    p.add_argument("--hotfix-escape", required=True, choices=("yes", "no"),
+                   help="does ALLOW_MAIN_PUSH=1 let a hotfix push through it?")
+    p.add_argument("--reason", required=True,
+                   help="what was read and found — required; a record without one buys no silence")
+    p.set_defaults(fn=cmd_attest)
     p = sub.add_parser("wiki", help="search (both stores; machine hits prefixed `machine:`) | "
                                     "refs <change_meta JSON> (wiki_refs candidates) | reindex | lint")
     p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
@@ -5838,6 +8414,25 @@ def main():
     p.set_defaults(fn=cmd_artifacts)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
+    p = sub.add_parser("usage", help="machine-wide cost sum across this machine's prdt projects' "
+                                     "turns.jsonl (T-544): --since/--until (ISO-8601 or Nm/Nh/Nd, "
+                                     "default: all recorded history) --root <dir> (default: parent "
+                                     "of the current project) --json")
+    p.add_argument("--since")
+    p.add_argument("--until")
+    p.add_argument("--root")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_usage)
+    p = sub.add_parser("estimate", help="dispatch-size outlier SIGNAL for a (persona, model) shape, from this "
+                                        "machine's turns.jsonl (T-545) — never a gate: --persona <po|developer|"
+                                        "designer|qa> --model <model-id> [--playbook <name>, accepted but not "
+                                        "usable — not recorded] [--root <dir>] [--json]")
+    p.add_argument("--persona", required=True, choices=("po", "developer", "designer", "qa"))
+    p.add_argument("--model", required=True)
+    p.add_argument("--playbook")
+    p.add_argument("--root")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_estimate)
     p = sub.add_parser("meta", help="meta git: log · remote [add <name> <url>] · push · bootstrap · split · relocate — core API 브리지 호출")
     p.add_argument("action", choices=("log", "remote", "push", "bootstrap", "split", "relocate"))
     p.add_argument("rest", nargs="*", help="remote: [add <name> <url>] · push: [name] · bootstrap: <url> [name]")
@@ -5857,6 +8452,26 @@ def main():
     p.add_argument("--yes", action="store_true", help="확인 프롬프트 없이 CLAUDE.md 이동 실행 (비대화형)")
     p.add_argument("--archive", action="store_true", help="CLAUDE.md를 wiki 대신 docs/archive로 이관 (죽은 내용)")
     p.set_defaults(fn=cmd_migrate)
+    p = sub.add_parser("register", help="the PO's conversational register (~/.prdt/register: audience · form · "
+                                        "structure · address): show | set <key> <value> | unset <key> | --list (the domain, "
+                                        "from the resolver hook — the one authority on legal values); set refuses an "
+                                        "empty/whitespace value — use unset <key> to remove a key")
+    p.add_argument("action", nargs="?", choices=("show", "set", "unset"))
+    p.add_argument("rest", nargs="*", help="set: <key> <value> · unset: <key>")
+    p.add_argument("--list", action="store_true", help="print keys · domain · default · body presence")
+    p.add_argument("--json", action="store_true", help="machine mode (show / --list)")
+    p.set_defaults(fn=cmd_register)
+    p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591): "
+                                        "up <name> --dispatch <id> · down <name> --dispatch <id> · "
+                                        "ls [--json] — record/report only, NEVER stops anything; the "
+                                        "dispatch whose `down` empties a resource's marker count stops it itself")
+    p.add_argument("action", choices=("up", "down", "ls"))
+    p.add_argument("rest", nargs="*", help="up/down: <name>")
+    p.add_argument("--dispatch", help="marker id for up/down — required, the PO's [ctx].dispatch_id "
+                                      "(contracts §Dispatch: never per session, never this session's own identity); "
+                                      "ls takes none")
+    p.add_argument("--json", action="store_true", help="ls: machine-readable output")
+    p.set_defaults(fn=cmd_resource)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
                                          "prdt preflight <model> [--fallback M] [--recheck] [--clear] "
                                          "— JSON verdict on stdout (available | unavailable | inconclusive)")
@@ -5874,6 +8489,7 @@ def main():
     p.set_defaults(fn=cmd_preflight)
     args = ap.parse_args()
     maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
+    maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
     if not args.cmd:
         # bare `prdt` = 구 productune UX 계승: init(필요 시 §10 3항목) → PO 대화 진입
         cmd_po(argparse.Namespace(rest=[]))

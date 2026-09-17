@@ -1,10 +1,10 @@
 /**
- * meta-git.ts — meta-only local git core module (T-364, PRD §v1.2).
+ * meta-git.ts — meta-only local git core module (T-364, PRD history §v1.2).
  *
  * The META repo lives in a separate git-dir (`<stateDir>/meta.git`) with the
  * PROJECT ROOT as its work-tree and tracks ONLY the allowlist (PRD 경계 결정 1);
  * the CODE repo (`.git`, at codeRoot — projectRoot in legacy layout, or
- * `<projectRoot>/<code.dir>` once physically split, PRD §v1.3) tracks everything
+ * `<projectRoot>/<code.dir>` once physically split, PRD history §v1.3) tracks everything
  * else. Meta git ops here always anchor at projectRoot; code detection anchors
  * at codeRoot (resolved via state/project-kind).
  *
@@ -16,8 +16,10 @@
  *
  * This module is the shared core primitive for CLI · GUI parity — init,
  * allowlist-scoped auto-commit (reusing the §10 autosave lifecycle signals),
- * history read, and opt-in remote add. It never pushes (backup is manual /
- * opt-in per PRD Non-goals) and performs no destructive git.
+ * history read, and opt-in remote add. It performs no destructive git. The one
+ * automatic push in prdt lives in meta-backup.ts (T-504: the meta repo's own
+ * branch → its registered backup remote, ff-only); everything here is either
+ * local or an explicit user command (`prdt meta push`).
  */
 
 import fs from 'fs'
@@ -91,8 +93,25 @@ export const DEFAULT_META_ALLOWLIST: string[] = [
  * git-dir ignores itself).
  * Written to the meta repo's `info/exclude` at init (gitignore syntax, matched
  * by basename anywhere in the tree). The physical code dir (`<code.dir>/`) is
- * appended per-project at init when the project is split (PRD §v1.3 설계 결정 3)
+ * appended per-project at init when the project is split (PRD history §v1.3 설계 결정 3)
  * so the code tree never shows up in the meta `git status`.
+ *
+ * `scratch/` (T-648): qa/habit.md directs verification screenshots and ad-hoc
+ * harness files to `.prdt/scratch/`. `.prdt` is allowlisted wholesale above, so
+ * without this entry every screenshot became a permanent meta commit — pushed
+ * off the machine by the one push that needs no per-push consent (the meta
+ * backup carve-out). The round-end scratch cleanup does not close this gap: a
+ * `blocked` verdict leaves scratch standing by design, and the autosave tick
+ * runs every turn, so the deletion structurally loses the race rather than
+ * occasionally.
+ * `po.lock` / `gui-bootstrap.json` / `update-state.json` (T-648 sibling
+ * judgment, same ticket): none carries history-worthy value. `po.lock` is a
+ * dead legacy-layout marker under `.productune` — current code only ever
+ * checks for its existence (detectProductuneLayout, gui/electron/ipc/project.ts)
+ * and nothing writes it anymore. The other two are per-machine state
+ * (gui-bootstrap.json, update-state.json) that always resolves under the HOME
+ * `.prdt`, never a project's — excluding them here is defense-in-depth for the
+ * degenerate case where a project root coincides with home.
  */
 export const DEFAULT_META_EXCLUDE: string[] = [
   'meta.git/',
@@ -102,6 +121,10 @@ export const DEFAULT_META_EXCLUDE: string[] = [
   '.cost-*.json',
   '.subagent-gate.json',
   '.return-flags.json',
+  'scratch/',
+  'po.lock',
+  'gui-bootstrap.json',
+  'update-state.json',
 ]
 
 const META_GIT_IDENTITY = { name: 'prdt', email: 'prdt@localhost' }
@@ -187,13 +210,21 @@ export function scrubbedGitEnv(): NodeJS.ProcessEnv {
 export async function metaGit(
   projectDir: string,
   args: string[],
-  opts: { timeout?: number; maxBuffer?: number } = {},
+  opts: { timeout?: number; maxBuffer?: number; env?: Record<string, string> } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   const gitDir = metaGitDir(projectDir)
   return execFileAsync(
     'git',
     ['--git-dir', gitDir, '--work-tree', projectDir, ...args],
-    { cwd: projectDir, timeout: opts.timeout ?? 10_000, maxBuffer: opts.maxBuffer, env: scrubbedGitEnv() },
+    {
+      cwd: projectDir,
+      timeout: opts.timeout ?? 10_000,
+      maxBuffer: opts.maxBuffer,
+      // `opts.env` is applied AFTER the scrub — a caller may add a non-GIT_*
+      // knob or a deliberate GIT_* one (e.g. GIT_TERMINAL_PROMPT=0 on the
+      // detached backup push); the ambient GIT_* redirection is still gone.
+      env: { ...scrubbedGitEnv(), ...(opts.env ?? {}) },
+    },
   )
 }
 
@@ -349,7 +380,7 @@ export async function initMetaRepo(projectDir: string): Promise<MetaInitResult> 
 
     // Derived/gate artifacts excluded from tracking even under allowlisted dirs,
     // plus the physical code dir (`<code.dir>/`) when split so the code tree stays
-    // out of the meta `git status` (PRD §v1.3 설계 결정 3). Idempotent (re-run
+    // out of the meta `git status` (PRD history §v1.3 설계 결정 3). Idempotent (re-run
     // refreshes an existing repo — the T-386 C3/C4 propagation path).
     ensureMetaExclude(projectDir)
 
@@ -408,7 +439,7 @@ function existingAllowlistPaths(projectDir: string, allowlist: string[]): string
  *
  * Once physically split (isPhysicallySplit) the code `.gitignore` no longer
  * lives at the project root, so commitMeta uses a plain `git add -A` instead
- * (PRD §v1.3 설계 결정 4) — see stageAllowlist.
+ * (PRD history §v1.3 설계 결정 4) — see stageAllowlist.
  */
 async function collectStageableFiles(
   projectDir: string,
@@ -431,7 +462,7 @@ async function collectStageableFiles(
 
 /**
  * Stage the allowlist for one meta commit. Two strategies, keyed on layout:
- *  - PHYSICALLY SPLIT (PRD §v1.3): the code `.gitignore` no longer sits at the
+ *  - PHYSICALLY SPLIT (PRD history §v1.3): the code `.gitignore` no longer sits at the
  *    project root, so a plain `git add -A -- <allowlist>` correctly stages
  *    adds/edits/deletions while honoring the meta repo's own info/exclude
  *    (derived artifacts + `<code.dir>/`). No ignore-immune dance needed.
@@ -562,8 +593,10 @@ export interface MetaRemoteResult {
 }
 
 /**
- * Add (or update) a backup remote on the meta repo. Opt-in only — this never
- * pushes; the user pushes manually (PRD: no auto-push, no bidirectional sync).
+ * Add (or update) a backup remote on the meta repo. This never pushes by
+ * itself; the remote named `meta.backup_remote` (default `backup`) is what the
+ * automatic backup (meta-backup.ts) pushes to, and `prdt meta push` pushes on
+ * demand. No bidirectional sync.
  */
 export async function addMetaRemote(
   projectDir: string,
@@ -605,7 +638,7 @@ export async function listMetaRemotes(projectDir: string): Promise<MetaRemote[]>
   }
 }
 
-// ── Push (explicit user-invoked backup; never automatic, never force) ─────────
+// ── Push (explicit user-invoked backup; never force) ─────────────────────────
 
 export interface MetaPushResult {
   ok: boolean
@@ -618,9 +651,11 @@ export interface MetaPushResult {
  * Push the meta repo's local branches to a configured backup remote (T-374 ①).
  *
  * This is the EXPLICIT counterpart to addMetaRemote: `remote add` only records
- * the url, and no beat / hook / autosave path ever pushes (PRD §v1.2 Non-goal:
- * no automatic push). A push happens ONLY when the user runs this command, so
- * the backup remote is the durable history a second machine bootstraps from
+ * the url. Two paths push: this command (the user, any configured remote name)
+ * and the automatic backup in meta-backup.ts (T-504 — the `meta.backup_remote`
+ * only, at a stage boundary / once daily, from the `prdt` CLI main and the PO
+ * SessionStart hook; NEVER from the persona-turn beat). Either way the backup
+ * remote is the durable history a second machine bootstraps from
  * (bootstrapMetaRepo). Never `--force` — a fast-forward push preserves the
  * remote's history; a rejected non-ff surfaces as an error for the user to
  * resolve, never a silent overwrite.
@@ -712,7 +747,7 @@ export interface MetaBootstrapResult {
  * carries `.prdt/config.json` and thus `code.dir` — has not been restored yet,
  * so codeRoot falls back to projectRoot here. A split-layout bootstrap that
  * runs from inside `code/` must re-anchor to the parent (projectRoot) before
- * calling in; the python bootstrap owns that re-anchoring (PRD §v1.3 T-374 정합).
+ * calling in; the python bootstrap owns that re-anchoring (PRD history §v1.3 T-374 정합).
  */
 function bootstrapCodeRepoExists(projectDir: string): boolean {
   try {

@@ -2,11 +2,11 @@
  * prdt-init-meta-split.test.ts — T-365 fresh-init meta split, black-box over
  * the REAL `prdt` CLI (`prdt init --json`, the one init SoT CLI+GUI share).
  *
- * Acceptance (docs/tickets/v1.2/T-365.md, revised for PRD §v1.3 설계 결정 2 / T-377):
+ * Acceptance (docs/tickets/v1.2/T-365.md, revised for PRD history §v1.3 설계 결정 2 / T-377):
  *  - Fresh init produces the code `.git` + the meta `.prdt/meta.git` + the
  *    initial meta snapshot + the allowlist config — with zero user git interaction.
  *  - prdt no longer manages the code `.gitignore` at ALL (the managed block was
- *    retired, PRD §v1.3 설계 결정 2): fresh init injects no block, and a
+ *    retired, PRD history §v1.3 설계 결정 2): fresh init injects no block, and a
  *    pre-existing user `.gitignore` is left byte-for-byte untouched.
  *  - The meta repo holds the scaffold; derived artifacts are ignored by the META
  *    repo (its `info/exclude`); the code repo tracks zero meta.
@@ -19,7 +19,7 @@ import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { DEFAULT_META_ALLOWLIST } from '../../src/git-workflow/meta-git'
 
-// The `.gitignore` managed block was retired in PRD §v1.3 설계 결정 2 (TS side:
+// The `.gitignore` managed block was retired in PRD history §v1.3 설계 결정 2 (TS side:
 // T-376, python side: T-377). These markers are kept ONLY for negative assertions
 // — proving no managed block is ever injected anymore.
 const MANAGED_BLOCK_START = '# >>> prdt meta (managed) >>>'
@@ -78,7 +78,7 @@ describe.skipIf(!PYTHON3)('prdt init — meta split (T-365 / T-377)', () => {
     expect(res.status).toBe('created')
     expect(res.meta_git).toBe('ok')
 
-    // PHYSICAL layout (PRD §v1.3 §신규 init 레이아웃, T-378): code `.git` lives under
+    // PHYSICAL layout (PRD history §v1.3 §신규 init 레이아웃, T-378): code `.git` lives under
     // `<root>/code/`, NOT at projectRoot; meta `.prdt/meta.git` stays at projectRoot.
     expect(fs.existsSync(path.join(projectDir, 'code', '.git', 'HEAD'))).toBe(true)
     expect(fs.existsSync(path.join(projectDir, '.git'))).toBe(false)

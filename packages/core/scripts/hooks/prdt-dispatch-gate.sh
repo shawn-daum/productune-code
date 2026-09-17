@@ -12,7 +12,11 @@
 #
 # SCOPE — user decision 2026-08-24 (option ②), do not widen it here:
 #   DENY  ① no `[ctx]` line  ② that line fails JSON parse, lacks a required
-#         top-level key, or carries a malformed `prd_path`.
+#         top-level key, or carries a malformed `prd_path`  ③ (T-591) a
+#         `prdt-qa` or `prdt-developer` dispatch whose `[ctx].dispatch_id` is
+#         missing or empty. `dispatch_id` is NOT in `$required` — it binds
+#         only these two `subagent_type`s, never `prdt-designer` / `prdt-po`,
+#         so it is its own elif rather than a fourth required key.
 #   WARN  per-FIELD Hangul ratio of `[ctx].goal` / `[ctx].acceptance` over 0.10.
 #         Never a deny: the drift already stopped behaviourally (the last 6
 #         dispatches are all under 0.05), so day-one denying it would only
@@ -21,6 +25,12 @@
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
 #         writes). Adding any of them needs its own user decision.
+#
+# WHY ③ (T-591): a QA grill found two parallel dispatches in one session write
+# the same resource marker under `~/.prdt/run/` — the first to finish stopped
+# the VM the other still needed. `dispatch_id` is the PO-minted id that owns a
+# dispatch's markers (contracts.md §Dispatch); a PO that forgets it produces
+# exactly that collision, silently, unless the gate stops it before the spawn.
 #
 # LINE-LEVEL HANGUL DETECTION IS PROVEN USELESS — do not "simplify" back to it.
 # A `[ctx]` line whose goal is 77% Korean measures 0.18 over the whole line,
@@ -260,7 +270,8 @@ done
 CLAUSE_CTX='One inline `[ctx]` JSON line opens every dispatch:
   `[ctx] {"slug","goal","change_meta":{"files":[],"user_facing":bool,"risk_flags":[],"stage":""},"acceptance","wiki_refs":[],"user_lang":"<BCP-47>","prd_path":"docs/prd/PRD.md#v<N>.<m>"}`'
 CLAUSE_PRD='`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`'
-CLAUSE_LANG='Machine-facing (envelopes, frontmatter keys, enums, code identifiers, paths, `## Acceptance`) → English.'
+CLAUSE_LANG='Machine-facing (`envelope` · `ctx-fields` · `ticket-acceptance` · `commit-message` · `dispatch-body` · `discipline`; frontmatter keys, enums, code identifiers and paths everywhere) → English.'
+CLAUSE_DISPATCH_ID='`"dispatch_id"` = the PO'\''s minted id, one per dispatch, never per session and never a harness agent id — it owns that dispatch'\''s resource markers; the gate denies its absence on a `prdt-qa` or `prdt-developer` `subagent_type`.'
 
 IFS= read -r -d '' PROG <<'JQ'
 def hangul_ratio:
@@ -306,7 +317,10 @@ else (.tool_input // {}) as $ti
               deny(head + "the `[ctx]` line is missing required key(s): " + ($missing | join(", ")) + ".\ncontracts.md §Dispatch, verbatim:\n" + $clause_ctx + "\nEvery key in that schema is required; extra keys of your own are fine." + tail)
             elif (($ctx.prd_path | type) != "string")
                  or (($ctx.prd_path | test("^docs/prd/PRD\\.md#v[0-9]+\\.[0-9]+$")) | not) then
-              deny(head + "`[ctx].prd_path` is malformed.\ncontracts.md §Fixed paths, verbatim:\n" + $clause_prd + "\nThe fragment is what scopes the worker's read to ONE version section, so it is the shape that has to be exact." + tail)
+              deny(head + "`[ctx].prd_path` is malformed.\ncontracts.md §Fixed paths, verbatim:\n" + $clause_prd + "\nSet it to exactly that shape — the fragment scopes the worker's read to ONE version section, so it has no tolerance." + tail)
+            elif ($ti.subagent_type == "prdt-qa" or $ti.subagent_type == "prdt-developer")
+                 and (($ctx.dispatch_id // "") == "") then
+              deny(head + "the `[ctx]` line has no `dispatch_id` for this `prdt-qa`/`prdt-developer` dispatch, so this dispatch's resource markers would have no owner.\ncontracts.md §Dispatch, verbatim:\n" + $clause_dispatch_id + "\nMint one id per dispatch and set `[ctx].dispatch_id` to it — never a session id, never a harness agent id." + tail)
             else
               # Passed. Per-FIELD Hangul ratio on the two machine-facing fields.
               ([{f: "goal", r: ($ctx.goal | hangul_ratio)},
@@ -330,6 +344,7 @@ OUT="$(printf '%s' "$EV" | jq -c \
   --arg clause_ctx "$CLAUSE_CTX" \
   --arg clause_prd "$CLAUSE_PRD" \
   --arg clause_lang "$CLAUSE_LANG" \
+  --arg clause_dispatch_id "$CLAUSE_DISPATCH_ID" \
   --argjson required '["slug","goal","change_meta","acceptance","wiki_refs","user_lang","prd_path"]' \
   "$PROG" 2>/dev/null)"
 

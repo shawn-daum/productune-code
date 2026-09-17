@@ -9,8 +9,8 @@ import { body, footer, stepLabel, stepIntro, btnSecondary, btnPrimary } from './
  *
  * Picks the PO's conversational register per USER: `planner` (default —
  * plain vocabulary, conclusion first, progressive disclosure) or `developer`
- * (current register). The choice is persisted to ~/.prdt/audience-mode at
- * onboarding completion and injected into the PO context by
+ * (current register). The choice is persisted to ~/.prdt/register (its
+ * `audience` key) at onboarding completion and injected into the PO context by
  * prdt-audience-inject.sh — the prose path. THIS component's own strings are
  * the other path: fixed UI copy via i18n.
  */

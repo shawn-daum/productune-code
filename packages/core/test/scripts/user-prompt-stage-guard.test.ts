@@ -21,6 +21,8 @@ import { execFileSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
 
 const HOOK = path.resolve(__dirname, '..', '..', 'scripts', 'hooks', 'prdt-user-prompt.sh')
+const CORE_ROOT = path.resolve(__dirname, '..', '..')
+const REGISTER_DIR = path.join(CORE_ROOT, 'discipline', 'register')
 
 /** Make a throwaway project dir; state=null → no .prdt/po-state.json (non-prdt dir). */
 function makeProject(state: object | null): string {
@@ -33,14 +35,14 @@ function makeProject(state: object | null): string {
 }
 
 /** Run the hook with a UserPromptSubmit event; returns raw stdout. */
-function runHook(cwd: string, prompt: string): string {
+function runHook(cwd: string, prompt: string, env: NodeJS.ProcessEnv = {}): string {
   const event = {
     hook_event_name: 'UserPromptSubmit',
     session_id: 'test-session',
     cwd,
     prompt,
   }
-  return execFileSync('bash', [HOOK], { input: JSON.stringify(event), encoding: 'utf8' })
+  return execFileSync('bash', [HOOK], { input: JSON.stringify(event), encoding: 'utf8', env: { ...process.env, ...env } })
 }
 
 /** Parse the hook's additionalContext, '' when the hook stayed silent. */
@@ -360,5 +362,75 @@ describe('silent no-ops (never break a plain session)', () => {
     fs.mkdirSync(path.join(dir, '.prdt'), { recursive: true })
     fs.writeFileSync(path.join(dir, '.prdt', 'po-state.json'), '{broken')
     expect(runHook(dir, '배포').trim()).toBe('')
+  })
+})
+
+describe('register binding (T-586) — the per-turn channel has ONE assembly point', () => {
+  // A sandbox ~/.prdt: the resolver reads `$PRDT_HOME/register`; the hook finds the
+  // resolver next to itself (PRDT_HOOK_DIR = the repo hooks dir here, the mirror
+  // dir on an installed machine).
+  // withBodies=true copies the REAL register bodies (packages/core/discipline/register)
+  // in, the way audience-inject-hook.test.ts sources them for the resolver itself —
+  // never hand-copy body text here, it drifts the moment a body is renamed.
+  function prdtHome(register: string | null, withBodies = false): string {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t586-home-'))
+    fs.mkdirSync(path.join(home, 'discipline', 'register'), { recursive: true })
+    if (withBodies) fs.cpSync(REGISTER_DIR, path.join(home, 'discipline', 'register'), { recursive: true })
+    if (register !== null) fs.writeFileSync(path.join(home, 'register'), register)
+    return home
+  }
+
+  test('a machine with no register file gets exactly the state line — no binding, no empty line, no warning', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome(null) }))
+    expect(ctx.split('\n')).toHaveLength(1)
+    expect(ctx).toMatch(/^\[prdt state\] /)
+    expect(ctx).not.toContain('[prdt register]')
+  })
+
+  test('every key at its default (explicitly) → still no binding line', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('audience=planner\nform=prose\n') }))
+    expect(ctx.split('\n')).toHaveLength(1)
+    expect(ctx).not.toContain('[prdt register]')
+  })
+
+  test('non-default keys with real bodies present → one `[prdt register]` line right after the state line, values verbatim, "Binding only" tail', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n', true) }))
+    const lines = ctx.split('\n')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(/^\[prdt state\] /)
+    expect(lines[1]).toBe('[prdt register] form=outline · structure=planner-tables · address="션님" — governs user-chat. Binding only; any body arrived at session start.')
+    expect(Buffer.byteLength(lines[1], 'utf8')).toBeLessThanOrEqual(180)
+  })
+
+  test('non-default keys with NO body files for the resolved values → same line, "No body is in force" tail', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n') }))
+    const lines = ctx.split('\n')
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(/^\[prdt state\] /)
+    expect(lines[1]).toBe('[prdt register] form=outline · structure=planner-tables · address="션님" — governs user-chat. No body is in force for these values — this line is the whole cost.')
+  })
+
+  test('an illegal value never reaches the prompt: out-of-domain + off-shape address → defaults → no line', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=fancy\naddress=' + 'x'.repeat(40) + '\n') }))
+    expect(ctx).not.toContain('[prdt register]')
+    expect(ctx).not.toContain('fancy')
+    expect(ctx).not.toContain('xxxx')
+  })
+
+  test('a mirror holding this hook but no resolver (half-updated install) degrades to today\'s output', () => {
+    // the hook looks for the resolver NEXT TO ITSELF — copy it alone into an empty dir
+    const lone = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-t586-lone-'))
+    fs.copyFileSync(HOOK, path.join(lone, 'prdt-user-prompt.sh'))
+    const event = { hook_event_name: 'UserPromptSubmit', session_id: 's', cwd: makeProject(BUILD_STATE), prompt: 'hello' }
+    const out = execFileSync('bash', [path.join(lone, 'prdt-user-prompt.sh')], {
+      input: JSON.stringify(event), encoding: 'utf8', env: { ...process.env, PRDT_HOME: prdtHome('form=outline\naddress=션님\n') },
+    })
+    const ctx = contextOf(out)
+    expect(ctx.split('\n')).toHaveLength(1)
+    expect(ctx).toMatch(/^\[prdt state\] /)
+  })
+
+  test('outside a prdt project the hook stays silent even with a full register (today\'s behavior)', () => {
+    expect(runHook(makeProject(null), 'hello', { PRDT_HOME: prdtHome('form=outline\naddress=션님\n') })).toBe('')
   })
 })

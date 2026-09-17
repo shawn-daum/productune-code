@@ -128,7 +128,7 @@ function doctor(): string[] {
 }
 
 beforeEach(() => {
-  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hooks-'))
+  sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-hooks-')))
   disciplineDir = path.join(sandbox, 'discipline')
   fs.cpSync(REPO_DISCIPLINE, disciplineDir, { recursive: true })
   machineHome = path.join(sandbox, 'prdt-home')
@@ -443,5 +443,160 @@ describe.skipIf(!PYTHON3)('prdt doctor — missing / truncated / symlinked count
     expect(hook).toContain('WIT="$RUN/.hw-$SID.$AID"')
     const cli = fs.readFileSync(PRDT_CLI, 'utf8')
     expect(cli).toContain('".hw-"')
+  })
+})
+
+describe.skipIf(!PYTHON3)('prdt doctor — a basename registered more than once on one event (T-645)', () => {
+  /** The doubled-roster shape: two commands for the SAME mirrored basename on
+   *  ONE event, differing only in path prefix — exactly what an upgrade on a
+   *  spelled≠resolved $PRDT_HOME machine used to produce, and what the plain
+   *  existence check (`hook_registration_warnings`, "a mirrored hook
+   *  registered nowhere is reported") reads as clean, since the basename
+   *  exists under BOTH prefixes. */
+  function registerRaw(commands: Record<string, string[]>) {
+    const hooks: any = {}
+    for (const [event, cmds] of Object.entries(commands)) {
+      hooks[event] = [{ hooks: cmds.map((c) => ({ type: 'command', command: c })) }]
+    }
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ hooks }, null, 2))
+  }
+
+  test('the same basename registered twice on one event is reported, naming both paths', () => {
+    mirror('prdt-session-start.sh')
+    const spelled = path.join(machineHome, 'home-dotfiles-link', 'hooks', 'prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, `"${spelled}"`],
+    })
+    const out = doctor().join('\n')
+    expect(out).toContain('prdt-session-start.sh')
+    expect(out).toContain('SessionStart')
+    expect(out).toMatch(/registered 2 times|doubled/)
+    expect(out).toContain(spelled)
+    // report only — settings.json is not edited
+    const after = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+    expect(after.hooks.SessionStart[0].hooks.length).toBe(2)
+  })
+
+  test('the same basename registered once each on TWO DIFFERENT events is not a duplicate', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`],
+      SubagentStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`],
+    })
+    expect(doctor().join('\n')).not.toMatch(/doubled|registered \d+ times/)
+  })
+
+  test('a basename that never mirrored here at all stays the OTHER check\'s business, not a duplicate', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`,
+        '"/opt/other-tool/hooks/prdt-unrelated-hook.sh"', // not one of ours — never mirrored, never in the manifest
+      ],
+    })
+    expect(doctor().join('\n')).not.toMatch(/doubled|registered \d+ times/)
+  })
+})
+
+describe.skipIf(!PYTHON3)('prdt doctor — the duplicate unit is event PLUS matcher, not event alone (T-652)', () => {
+  /** Register several {matcher?, hooks} entries under one event — the exact
+   *  shape hook-manifest.json produces for SessionStart (one entry per
+   *  matcher, same basenames repeated across them by design). */
+  function registerMatched(event: string, entries: Array<{ matcher?: string; cmds: string[] }>) {
+    const hooks: any = {}
+    hooks[event] = entries.map((e) => {
+      const entry: any = { hooks: e.cmds.map((c) => ({ type: 'command', command: c })) }
+      if (e.matcher !== undefined) entry.matcher = e.matcher
+      return entry
+    })
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ hooks }, null, 2))
+  }
+
+  // Must be RED on the pre-fix code — that is what proves the fix is the fix
+  // (T-652 acceptance). This is the PO's own observed-on-this-machine shape:
+  // one hook bound to two matchers on SessionStart, correct and designed.
+  test('the same basename bound to two DIFFERENT matchers on one event is not a duplicate', () => {
+    mirror('prdt-session-start-p2.sh')
+    const cmd = `"${path.join(hooksDir(), 'prdt-session-start-p2.sh')}"`
+    registerMatched('SessionStart', [
+      { matcher: 'startup|resume|clear', cmds: [cmd] },
+      { matcher: 'compact', cmds: [cmd] },
+    ])
+    expect(doctor().join('\n')).not.toMatch(/doubled|registered \d+ times/)
+  })
+
+  // The T-640 incident shape reproduced with an explicit matcher this time:
+  // two entries on the same event carrying the SAME matcher, one basename
+  // doubled inside it — this must keep warning after the fix too.
+  test('the same basename registered twice under the SAME matcher is still reported', () => {
+    mirror('prdt-session-start-p2.sh')
+    const spelled = `"${path.join(machineHome, 'home-dotfiles-link', 'hooks', 'prdt-session-start-p2.sh')}"`
+    registerMatched('SessionStart', [
+      { matcher: 'startup|resume|clear', cmds: [`"${path.join(hooksDir(), 'prdt-session-start-p2.sh')}"`] },
+      { matcher: 'startup|resume|clear', cmds: [spelled] },
+    ])
+    const out = doctor().join('\n')
+    expect(out).toContain('prdt-session-start-p2.sh')
+    expect(out).toMatch(/registered 2 times|doubled/)
+  })
+})
+
+describe.skipIf(!PYTHON3)('prdt doctor — a hook registration pointing at a path that does not exist (T-640)', () => {
+  /** The PO's incident shape: a scratch-home install registered the whole roster
+   *  under /private/tmp/…, then the scratch dirs were deleted. Every such entry
+   *  runs a file that is not there, once per event, forever — and the basename
+   *  check above does not see it (the basename IS in the mirror). */
+  function registerRaw(commands: Record<string, string[]>) {
+    const hooks: any = {}
+    for (const [event, cmds] of Object.entries(commands)) {
+      hooks[event] = [{ hooks: cmds.map((c) => ({ type: 'command', command: c })) }]
+    }
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({ hooks }, null, 2))
+  }
+
+  test('a prdt hook registered from a deleted scratch home is reported by its full path, once per entry', () => {
+    mirror('prdt-session-start.sh', GOVERNOR)
+    fired('PreToolUse', 'PostToolBatch')
+    const gone = path.join(sandbox, 'prdt-injPO', 'hooks', 'prdt-session-start.sh')
+    registerRaw({
+      SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, `"${gone}"`],
+      SubagentStart: [`"${gone}"`],
+      PreToolUse: [`"${path.join(hooksDir(), GOVERNOR)}"`],
+      PostToolBatch: [`"${path.join(hooksDir(), GOVERNOR)}"`],
+    })
+    const goneLines = doctor().filter((l) => l.includes(gone))
+    // This fixture registers the same basename twice on SessionStart under
+    // one matcher-less entry — the T-640 doubled-roster shape itself, not
+    // just a dangling path. So it now earns TWO kinds of warning, both of
+    // which name the `gone` path: one dangling-command line per entry that
+    // points at it (T-652's original question — "once per entry, per
+    // event"), plus the T-645/T-652 duplicate-roster line for the SessionStart
+    // collision. Asserted separately so a future duplicate-check change can't
+    // silently satisfy this test by changing which count comes out to 3.
+    const danglingLines = goneLines.filter((l) => l.includes('does not exist'))
+    const duplicateLines = goneLines.filter((l) => /doubled|registered \d+ times/.test(l))
+    expect(danglingLines.length).toBe(2)
+    expect(danglingLines.join('\n')).toContain('SessionStart')
+    expect(danglingLines.join('\n')).toContain('SubagentStart')
+    expect(duplicateLines.length).toBe(1)
+    expect(duplicateLines[0]).toContain('SessionStart')
+    expect(goneLines.length).toBe(danglingLines.length + duplicateLines.length)
+    // report only — settings.json is not edited
+    const after = JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8'))
+    expect(after.hooks.SessionStart[0].hooks.length).toBe(2)
+  })
+
+  test('a non-prdt hook whose absolute path is missing is reported too — the harness runs it just the same', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({ SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, '/opt/gone/some-other-tool-hook.sh --flag'] })
+    expect(doctor().join('\n')).toContain('/opt/gone/some-other-tool-hook.sh')
+  })
+
+  test('a command that is not an absolute path (a PATH lookup, an inline shell) is not judged', () => {
+    mirror('prdt-session-start.sh')
+    registerRaw({ SessionStart: [`"${path.join(hooksDir(), 'prdt-session-start.sh')}"`, 'jq -n 1', 'echo hi && true'] })
+    expect(doctor().filter((l) => l.includes('does not exist') || l.includes('not exist'))).toEqual([])
   })
 })

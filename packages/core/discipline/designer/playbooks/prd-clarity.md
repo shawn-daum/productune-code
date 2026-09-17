@@ -7,7 +7,7 @@ effort: high
 ---
 # PRD clarity loop — converge, don't one-shot
 
-Author/refine `docs/prd/PRD.md` (fixed path, in place, `[ctx].user_lang`) as a convergence loop. You compute the score; the PO judges convergence and can finalize at any value.
+Author/refine `docs/prd/PRD.md` (fixed path, in place, `[ctx].user_lang`) as a convergence loop. You compute the score and carry `A` in `summary`; a stop instruction — the user's call, relayed in a resume, no fixed word — ends the loop at any value.
 
 ## First return — direction before clarity
 - A **net-new version section always fires** this gate: a PRD, wiki and ticket set that are already complete is exactly the input that makes it look unnecessary, and thick documents are never the exemption — document clarity is not the user's choice of direction. **Re-entry** into a version section that already exists fires it only when this round moves that version's recorded Why, target user, or in/out line; otherwise skip. A patch (`.p`) round never fires it.
@@ -29,8 +29,8 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 
 ## Loop
 1. Read the existing PRD + `[ctx]` + any `wiki_refs`. Score → `A`.
-2. The first-return gate above outranks this test — while it is unspent, no `A` value returns ready. Otherwise `A ≤ 0.05` → return ready + `ambiguity_score`. Else pick the **lowest-clarity × highest-weight** dimension → `needs_info` + ONE `next_question` (≤200 chars, exactly one question). The PO relays and resumes you.
-3. ~5 iterations is a soft wrap-signal, not a cap. On PO "finalize": write the PRD as-is, move unresolved items into `## Open Questions`.
+2. The first-return gate above outranks this test — while it is unspent, no `A` value returns ready. Otherwise `A ≤ 0.05` → return ready, `A` in `summary`. Else pick the **lowest-clarity × highest-weight** dimension → `needs_info` + ONE `next_question` (≤200 chars, exactly one question). The PO relays and resumes you.
+3. ~5 iterations is a soft wrap-signal, not a cap. On a stop instruction: write the PRD as-is, move unresolved items into `## Open Questions`.
 
 ## Ambiguity classification — the test, not a feeling
 - Run all four conditions on every ambiguity you meet. ANY yes → it stays the user's: `needs_info` + ONE `next_question` (per habit), never a default you picked.
@@ -41,6 +41,12 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 - The version section carries an `### Autonomous decisions` H3 — that heading in English whatever `[ctx].user_lang` is, the lines under it in `user_lang` — one line per call you made without the user: the ambiguity, and the call you made on it.
 - An empty list is valid only when no ambiguity failed all four conditions — say that in `summary`, so an empty section reads as a result and not an omission.
 
+## as-is / to-be — the version section declares both
+- Two H3s inside the version section, fixed byte-for-byte: `### 이 버전 직전 (as-is)` and `### 이 버전 직후 (to-be)` — one paragraph each, in `user_lang`, leading the section (the as-is is the premise the Why argues from). A receiving pipe slices on exact heading text, so append nothing: an ` — …` subtitle silently empties that column downstream.
+- **Asked, never gated.** Not a new score dimension and not an extra iteration — the as-is is the Problem & target user answer written as a state, the to-be the Acceptance answer written as a state. Spend a `next_question` only when the loop never produced that material. A PRD that declines to declare either is NOT a violation: note the gap in `summary` and move on.
+- **Current open version section only.** Never add these headings to a closed `## v<N>.<m>` section, and never retro-rename past headings into them — a closed section is that round's immutable record (contracts §Fixed paths, T-546). A project with no PRD, or with no current version section, has nowhere to declare and is outside this rule, not in violation of it.
+- Version section, not the document head: the values are per-version (this version's as-is is roughly the last one's to-be), the read unit is head + ONE version section, and only inside the section does immutability preserve what each round declared.
+
 ## North star (Define-time scope input, not retro trivia)
 - Derive `north_star · input_metrics · validation_method` into the PRD's success-signals section.
 - **If measuring requires a product feature (analytics, event log, feedback hook) → that feature enters PRD scope now.** Qualitative goal → name the observation method (user watch session, interview). Never leave measurement unstated.
@@ -48,7 +54,7 @@ Weights are defaults — a project with no brand surface reweights, and you say 
 
 ## What the PRD does NOT hold
 - The PRD holds per-version scope estimation. A feature's CURRENT spec goes to `docs/features/<feature>.md` (contracts §Fixed paths) — write it there once the value has earned a file (a `feature:` value with no spec file is legal and the normal state) and cite it from the version section; never restate a live contract inside a version section.
-- A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. The read unit you author for is the standing head + ONE version section.
+- A closed `## v<N>.<m>` section is that round's immutable record: append a supersede note, never rewrite its scope. Closed sections live in `docs/prd/history.md` (moved there byte-identical at close — contracts §Fixed paths), so `docs/prd/PRD.md` is exactly the read unit you author for: the standing head + ONE version section.
 
 ## Page style (the user reads this file directly)
 - Heading rhythm H2 version / H3 section / H4 feature-chunk; never skip levels; no bullet walls — one claim per bullet, one sentence.

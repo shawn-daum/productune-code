@@ -27,7 +27,7 @@ function hasJq(): boolean {
 
 /** Run install.sh in a throwaway sandbox, optionally seeding settings.json and passing args. */
 function runInstall(settings: unknown | undefined, args: string[] = []): any {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t330-'))
+  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-t330-')))
   const home = path.join(sb, 'home')
   const prdtHome = path.join(sb, 'prdt')
   const claudeDir = path.join(sb, 'claude')

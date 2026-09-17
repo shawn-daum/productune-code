@@ -20,6 +20,7 @@
 import fs from 'fs'
 import path from 'path'
 import { test, expect, describe } from 'vitest'
+import { pin, pinAbsent } from '../helpers/pin'
 
 const DISCIPLINE = path.resolve(__dirname, '..', '..', 'discipline')
 const CONTRACTS = path.join(DISCIPLINE, 'contracts.md')
@@ -27,6 +28,8 @@ const DESIGNER_HABIT = path.join(DISCIPLINE, 'designer', 'habit.md')
 const PRD_CLARITY = path.join(DISCIPLINE, 'designer', 'playbooks', 'prd-clarity.md')
 const PO_HABIT = path.join(DISCIPLINE, 'po', 'habit.md')
 const SCOPE_CHALLENGE = path.join(DISCIPLINE, 'designer', 'playbooks', 'scope-challenge.md')
+const FIXED_PATHS_ANNEX = path.join(DISCIPLINE, 'contracts', 'fixed-paths.md')
+const AUTO_OPEN_HOOK = path.join(DISCIPLINE, '..', 'scripts', 'hooks', 'prdt-auto-open.sh')
 
 const read = (p: string) => fs.readFileSync(p, 'utf-8')
 // Same count doctor uses: python splitlines() ignores one trailing newline.
@@ -47,10 +50,15 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
   })
 
   test('the Fixed paths PRD row states the read unit', () => {
-    const row = read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (single living file) |'))
+    const row = read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))
     expect(row).toBeDefined()
     expect(row).toContain('`docs/prd/PRD.md#v<N>.<m>`')
-    expect(row).toContain('that ONE version section, never the whole file')
+    expect(row).toContain('that ONE version section')
+    // T-602: the working file is head + the open section and nothing else, so
+    // reading the whole file IS the read unit — the old "never the whole file"
+    // wording would now forbid the intended read.
+    expect(row).toContain('the working file IS the read unit')
+    expect(row).not.toContain('never the whole file')
     // T-476 F4: a live '## Phase N' section sits outside the version section
     // and must be pulled into the read unit too, or a worker reading only
     // head+version-section misses its still-open Non-goals/Acceptance.
@@ -58,6 +66,92 @@ describe('contracts.md — prd_path is a fragment, not the whole file', () => {
     // A closed section is an immutable episode — the whole point of keeping the
     // cumulative SoT while shrinking the read unit.
     expect(row).toContain('append a supersede note, never rewrite it')
+  })
+})
+
+describe('contracts.md — PRD split: working document + history (T-602)', () => {
+  const row = () =>
+    read(CONTRACTS).split('\n').find((l) => l.startsWith('| PRD (working document + history) |'))!
+
+  // The user's requirement is sight: opening the working document shows the
+  // current version only. The row must therefore name BOTH files and say the
+  // move is a move (byte-identical, immutable record) — not a copy, which §Git
+  // bans, and not per-version files, which v1.10 would have to fold back.
+  test('the row names history.md and the byte-identical move', () => {
+    const r = row()
+    expect(r).toContain('`docs/prd/PRD.md` = the standing head + the ONE open `## v<N>.<m>` section')
+    expect(r).toContain('MOVES its section byte-identical into `docs/prd/history.md`')
+    // The row must not restate an anchor the annex owns and states differently.
+    expect(r).not.toContain('to the end of `docs/prd/history.md`')
+    expect(r).toContain('never a per-version file, never a copy')
+  })
+
+  // Two prd_path forms. A dispatch always works the OPEN version, and the
+  // dispatch-gate hook pins `docs/prd/PRD.md#v<N>.<m>` by regex — so the closed
+  // form is a citation form only, and the row has to say so or a PO will type
+  // `history.md#v1.3` into a dispatch and be denied by the gate.
+  test('the row gives the closed-section citation form and keeps it out of dispatch prd_path', () => {
+    const r = row()
+    expect(r).toContain('`docs/prd/history.md#v<N>.<m>`')
+    expect(r).toContain('a form a dispatch `prd_path` never takes')
+    expect(read(CONTRACTS)).toContain('`[ctx].prd_path` = `docs/prd/PRD.md#v<N>.<m>`')
+    expect(read(CONTRACTS)).not.toMatch(/"prd_path":"docs\/prd\/history\.md/)
+  })
+
+  // T-611 slice 4: the git bullet no longer restates the move — the PRD row is
+  // the one statement (`MOVES its section byte-identical` · `never a copy`,
+  // both pinned above), so the pin on the move lives there and this bullet
+  // keeps only the snapshot-copy ban.
+  test('§Git still bans snapshot copies; the move fact is stated once, on the PRD row', () => {
+    const git = read(CONTRACTS).split('\n').find((l) => l.startsWith('- git is the version history'))!
+    expect(git).toContain('no snapshot copies')
+    expect(git).not.toContain('is a move, not a copy')
+    expect(row()).toContain('never a copy')
+  })
+
+  // A PRD resolver takes the FIRST match over three candidate paths; a history
+  // file named PRD.md on any of them would be served as the current PRD with no
+  // error. The annex has to carry that constraint.
+  test('the annex carries the close procedure and the candidate-path constraint', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).toContain('## PRD — closing a `## v<N>.<m>` version section')
+    expect(annex).toContain('append it verbatim after the LAST `## v` section of `history.md`')
+    expect(annex).toContain('never named `PRD.md` and never sits on a path a PRD resolver would try')
+    expect(annex).toContain('`docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`')
+    expect(annex).toMatch(/^when: .*closing a PRD `## v<N>\.<m>` version section/m)
+  })
+
+  // A close appends; the version run must stay contiguous even in a history file
+  // that carries trailing non-version matter, so "the end of the file" is the
+  // wrong anchor and the annex must not say it.
+  test('the close appends after the last version section, not at EOF', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).toContain('ahead of any trailing non-version matter')
+    expect(annex).not.toContain('append it verbatim to the end of `history.md`')
+  })
+
+  // The byte compare is the proof the move was a move. It has to say which side
+  // the blank separator belongs to, or the first real close fails its own shasum.
+  test('the byte compare names the separator convention', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).toContain('each side rstripped')
+    expect(annex).toContain('belongs to the FILE, not to either block')
+  })
+
+  // This annex is mirrored into EVERY prdt project. A sentence stating one
+  // project's version history or a sibling project's name is false everywhere
+  // else, so the contract states the RULE and the project's own file heads
+  // state its facts.
+  test('the shared annex states no project-private fact', () => {
+    const annex = read(FIXED_PATHS_ANNEX)
+    expect(annex).not.toMatch(/v0\.\d/)
+    expect(annex).not.toContain('versions/v0.4.md')
+    expect(annex).not.toContain('ntf-pm')
+    expect(annex).toContain('belongs to the two file heads, never to this contract')
+  })
+
+  test('the auto-open hook documents that history.md is deliberately not a light-open match', () => {
+    expect(read(AUTO_OPEN_HOOK)).toContain('NOT docs/prd/history.md')
   })
 })
 
@@ -92,17 +186,31 @@ describe('contracts.md — docs/features is a registered fixed path', () => {
     expect(r).toContain('history/lessons only, never the current spec')
   })
 
-  test('the row fixes the validity-window tagging and no-delete rules', () => {
-    const r = row()!
-    expect(r).toContain('`(vX~)`')
-    expect(r).toContain('`(vX~vY, replaced-by …)`')
-    expect(r).toContain('never deleted')
+  // T-613: the row no longer carries the tags. T-586 moved spec-AUTHORING rules
+  // into the annex this row points at, and the designer habit carries the same
+  // vocabulary for the author — the rule is intact, so the pin moved to its new
+  // home instead of being deleted or dropped to a weaker check. Both halves are
+  // still pinned: the tags (validity window) and "never deleted" (no-delete).
+  test('the validity-window tagging and no-delete rules live in the annex the row points at', () => {
+    expect(row()).toContain('`contracts/fixed-paths.md`')
+    const a = read(FIXED_PATHS_ANNEX)
+    const ctx = {
+      file: 'discipline/contracts/fixed-paths.md',
+      protects: 'a spec file states the CURRENT contract only: every fact carries its validity window, and an invalidated fact is annotated, never deleted',
+    }
+    for (const lit of ['`(vX~)`', '`(vX~vY, replaced-by …)`', 'never deleted']) pin(a, lit, ctx)
+    // no dual text: the hot row points, it does not restate
+    pinAbsent(row()!, '`(vX~', { file: 'discipline/contracts.md (feature-spec row)', protects: 'the row points at the annex instead of carrying authoring vocabulary' })
   })
 
   // features/ sits OUTSIDE the wiki store, so `prdt wiki lint` cannot see a
-  // wikilink written there — it would be an unchecked dead link.
-  test('the row bans wikilinks in the features store', () => {
-    expect(row()).toContain('Never `[[…]]` here')
+  // wikilink written there — it would be an unchecked dead link. The ban is a
+  // spec-AUTHORING rule, so it lives in the on-demand annex the row points at
+  // (T-586 hot→cold split); the row keeps the pointer, the annex keeps the text.
+  test('the row points at the annex that bans wikilinks in the features store', () => {
+    expect(row()).toContain('`contracts/fixed-paths.md`')
+    expect(read(FIXED_PATHS_ANNEX)).toContain('Never `[[…]]` here')
+    expect(row()).not.toContain('Never `[[…]]` here')
   })
 })
 

@@ -365,30 +365,63 @@ describe('the defense never fails OPEN', () => {
   })
 })
 
-describe('self-load fallback (T-468) reads the same untrusted files — same defense', () => {
+describe('self-load fallback (T-468/T-578) reads the same untrusted files — same defense', () => {
+  // T-578: the self-load PROCEDURE moved out of the four agent files into
+  // prdt-session-start.sh `--self-load` (one place). The agent stubs only point
+  // at it, so the defense is asserted where it now lives: the hook's own source
+  // routes both layers through the inject hooks, and what an agent actually
+  // receives on the last page is the two hooks' rendered blocks — gutter,
+  // layer header and the layer-identity sentence included.
   const PERSONAS = ['po', 'designer', 'developer', 'qa'] as const
+  const SESSION_HOOK = path.join(HOOKS, 'prdt-session-start.sh')
 
   for (const persona of PERSONAS) {
     const file = path.join(AGENTS_DIR, `prdt-${persona}.md`)
 
-    test(`prdt-${persona}.md never bare-cats an override file`, () => {
+    test(`prdt-${persona}.md never bare-cats an override file, and carries no self-load procedure of its own`, () => {
       const body = fs.readFileSync(file, 'utf8')
       expect(body).not.toMatch(new RegExp(`cat[^\\n\`]*overrides/${persona}\\.md`))
-    })
-
-    test(`prdt-${persona}.md routes both override layers through the inject hooks`, () => {
-      const body = fs.readFileSync(file, 'utf8')
-      expect(body).toContain('prdt-overrides-inject.sh')
-      expect(body).toContain('prdt-project-overrides-inject.sh')
-      expect(body).toMatch(/additionalContext/)
-    })
-
-    test(`prdt-${persona}.md states layer identity is fixed by the file read, and names the gutter`, () => {
-      const body = fs.readFileSync(file, 'utf8')
-      expect(body).toMatch(/never .*body|not .*body text/i)
-      expect(body).toContain('`| ` gutter')
+      expect(body).not.toContain('prdt-overrides-inject.sh')
+      expect(body).toContain(`prdt-session-start.sh --self-load prdt-${persona}`)
     })
   }
+
+  test('the hook self-load routes both override layers through the inject hooks (source)', () => {
+    const src = fs.readFileSync(SESSION_HOOK, 'utf8')
+    const loop = src.slice(src.indexOf('if [ -n "$SELF_LOAD" ]; then\n  OV=""'))
+    expect(loop).toContain('for h in prdt-overrides-inject.sh prdt-project-overrides-inject.sh; do')
+    expect(loop).toMatch(/additionalContext/)
+    // never a bare read of the override file anywhere in the self-load branch
+    expect(loop).not.toMatch(/cat[^\n]*overrides\//)
+  })
+
+  test.skipIf(!hasJq())('what the agent receives names the gutter and fixes layer identity by the file read (rendered)', () => {
+    const home = makePrdtHome({ machineBody: '- machine rule α' })
+    // this fixture home carries only the override file; self-load also needs the set
+    fs.cpSync(path.join(CORE_ROOT, 'discipline'), path.join(home, 'discipline'), { recursive: true })
+    fs.copyFileSync(path.join(CORE_ROOT, 'doctrine.md'), path.join(home, 'doctrine.md'))
+    fs.mkdirSync(path.join(home, 'hooks'), { recursive: true })
+    for (const h of ['prdt-session-start.sh', 'prdt-overrides-inject.sh', 'prdt-project-overrides-inject.sh']) {
+      fs.copyFileSync(path.join(HOOKS, h), path.join(home, 'hooks', h))
+    }
+    const proj = makeProject({ projectBody: '- project rule β' })
+    let last = ''
+    for (let p = 1; p <= 20; p++) {
+      let out = ''
+      try {
+        out = execFileSync('bash', [path.join(home, 'hooks', 'prdt-session-start.sh'), '--self-load', 'prdt-developer', '--page', String(p)], {
+          encoding: 'utf8', cwd: proj, env: { ...process.env, PRDT_HOME: home }, stdio: ['pipe', 'pipe', 'ignore'],
+        })
+      } catch { break }
+      last = out
+    }
+    expect(last).toContain('[prdt discipline — machine overrides for prdt-developer]')
+    expect(last).toContain('[prdt discipline — PROJECT overrides for prdt-developer — highest layer]')
+    expect(last).toMatch(/fixed only by which file the harness read into which block/)
+    expect(last).toContain('`| ` gutter')
+    expect(last).toContain(GUTTER + '- machine rule α')
+    expect(last).toContain(GUTTER + '- project rule β')
+  })
 })
 
 /**

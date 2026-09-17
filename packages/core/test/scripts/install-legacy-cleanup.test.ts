@@ -49,7 +49,7 @@ const LEGACY_SETTINGS = {
 
 /** Run install.sh in a throwaway sandbox seeded with `settings`; return the result. */
 function runInstall(settings: unknown): any {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-c3a-'))
+  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-c3a-')))
   const home = path.join(sb, 'home')
   const prdtHome = path.join(sb, 'prdt')
   const claudeDir = path.join(sb, 'claude')

@@ -1,80 +1,70 @@
 /**
- * audience-mode.ts — T-326 per-user audience mode (planner / developer).
+ * audience-mode.ts — T-326 API, a COMPATIBILITY WRAPPER since T-586.
  *
  * Contract under test:
- * - Storage is USER-level: `<home>/.prdt/audience-mode`, one token — the same
- *   file prdt-audience-inject.sh reads at PO session start. NOT the GUI's
- *   ~/.productune/settings.json (the bash hook must read it without JSON
- *   parsing) and NOT the project's .prdt/config.json (the register belongs to
- *   the operator, not the project).
- * - Default is `planner`: missing file, empty file, corrupt content all
- *   resolve to planner (PRD v1.5 T-326 decision).
- * - Write is atomic (tmp + rename) and round-trips through the hook's parse
- *   (trailing-newline tolerant).
+ * - `getAudienceMode` / `setAudienceMode` read and write the `audience` key of
+ *   `<home>/.prdt/register` (the register object) — NOT `<home>/.prdt/audience-mode`,
+ *   which no longer exists as a store (one register mechanism).
+ * - Default is `planner`: missing file, empty file, corrupt value all resolve to
+ *   planner (PRD v1.5 T-326 decision, unchanged).
+ * - Write is atomic and round-trips through the hook's parse (key=value + newline).
+ * The register itself is tested in register.test.ts.
  */
 
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
-import {
-  getAudienceMode,
-  setAudienceMode,
-  DEFAULT_AUDIENCE_MODE,
-} from '../../src/settings/audience-mode'
+import { getAudienceMode, setAudienceMode, DEFAULT_AUDIENCE_MODE } from '../../src/settings/audience-mode'
 
 let home: string
+beforeEach(() => { home = fs.mkdtempSync(path.join(os.tmpdir(), 'audience-mode-')) })
+afterEach(() => { fs.rmSync(home, { recursive: true, force: true }) })
 
-beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), 'audience-mode-'))
-})
-
-afterEach(() => {
-  fs.rmSync(home, { recursive: true, force: true })
-})
-
-const modeFile = () => path.join(home, '.prdt', 'audience-mode')
+const registerFile = () => path.join(home, '.prdt', 'register')
+const legacyFile = () => path.join(home, '.prdt', 'audience-mode')
 
 describe('default = planner', () => {
   test('missing file → planner', () => {
     expect(getAudienceMode(home)).toBe('planner')
     expect(DEFAULT_AUDIENCE_MODE).toBe('planner')
   })
-
-  test('empty file → planner', () => {
-    fs.mkdirSync(path.dirname(modeFile()), { recursive: true })
-    fs.writeFileSync(modeFile(), '')
+  test('empty register → planner', () => {
+    fs.mkdirSync(path.dirname(registerFile()), { recursive: true })
+    fs.writeFileSync(registerFile(), '')
     expect(getAudienceMode(home)).toBe('planner')
   })
-
-  test('corrupt content → planner (never throws)', () => {
-    fs.mkdirSync(path.dirname(modeFile()), { recursive: true })
-    fs.writeFileSync(modeFile(), 'expert\n')
+  test('corrupt value → planner (never throws)', () => {
+    fs.mkdirSync(path.dirname(registerFile()), { recursive: true })
+    fs.writeFileSync(registerFile(), 'audience=expert\n')
+    expect(getAudienceMode(home)).toBe('planner')
+  })
+  test('the legacy audience-mode file is not a source any more', () => {
+    fs.mkdirSync(path.dirname(legacyFile()), { recursive: true })
+    fs.writeFileSync(legacyFile(), 'developer\n')
     expect(getAudienceMode(home)).toBe('planner')
   })
 })
 
-describe('set + get round-trip', () => {
+describe('set + get round-trip through the register file', () => {
   test('developer persists and reads back', () => {
     setAudienceMode('developer', home)
     expect(getAudienceMode(home)).toBe('developer')
   })
-
-  test('planner persists and reads back (explicit, not just default)', () => {
+  test('planner persists explicitly (not just by default)', () => {
     setAudienceMode('developer', home)
     setAudienceMode('planner', home)
     expect(getAudienceMode(home)).toBe('planner')
-    expect(fs.readFileSync(modeFile(), 'utf-8').trim()).toBe('planner')
+    expect(fs.readFileSync(registerFile(), 'utf-8')).toBe('audience=planner\n')
   })
-
-  test('creates ~/.prdt when absent; no leftover tmp file', () => {
+  test('creates ~/.prdt when absent; writes the register, not audience-mode; no leftover tmp', () => {
     setAudienceMode('developer', home)
-    expect(fs.existsSync(modeFile())).toBe(true)
-    expect(fs.existsSync(modeFile() + '.tmp')).toBe(false)
+    expect(fs.existsSync(registerFile())).toBe(true)
+    expect(fs.existsSync(legacyFile())).toBe(false)
+    expect(fs.existsSync(registerFile() + '.tmp')).toBe(false)
   })
-
-  test('file shape matches what the bash hook parses: single token + newline', () => {
+  test('file shape matches what the bash resolver parses: key=value + newline', () => {
     setAudienceMode('developer', home)
-    expect(fs.readFileSync(modeFile(), 'utf-8')).toBe('developer\n')
+    expect(fs.readFileSync(registerFile(), 'utf-8')).toBe('audience=developer\n')
   })
 })

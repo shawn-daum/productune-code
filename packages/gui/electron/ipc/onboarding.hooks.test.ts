@@ -111,7 +111,7 @@ function cliHooksBlock(home: string): any {
       { matcher: 'compact', hooks: [h('prdt-post-compact.sh'), ...partSlots, ...injectors] },
     ],
     SubagentStart: [{ matcher: '^prdt-', hooks: disciplineEntry }],
-    SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh')] }],
+    SubagentStop: [{ matcher: '^prdt-', hooks: [h('prdt-post-dispatch.sh'), h('prdt-return-check.sh')] }],
     PostToolUse: [
       { matcher: 'Agent', hooks: [h('prdt-post-dispatch.sh')] },
       { matcher: 'Write', hooks: [h('prdt-auto-open.sh')] },

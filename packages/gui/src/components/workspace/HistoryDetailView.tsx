@@ -4,7 +4,7 @@
  * Section order puts the RESULT first (doctrine #7 — user outcome over output):
  *   1. header (version + CLOSED + date)
  *   2. Outcome   (parsed from retro --v<N>.md `## Outcome`)  ← topmost, on purpose
- *   3. PRD       (docs/prd/versions/<v>.md snapshot link, or placeholder)
+ *   3. PRD       (prdt: docs/prd/history.md · legacy: docs/prd/versions/<v>.md snapshot link, or placeholder)
  *   4. Tickets   (done/dropped/open summary + "open board" link; commit-only note if 0)
  *   5. Artifacts (docs/artifacts/<v>/ flat + archive)
  *   6. Retro     (full retro link — "read more" at the bottom)
@@ -21,7 +21,8 @@ import {
 } from 'lucide-react'
 import { useWorkspace } from '../../store/workspace'
 import { useTicketScan } from '../../lib/useTicketScan'
-import { countTicketStatuses, parseOutcomeBlock } from '../../lib/historyData'
+import { countTicketStatuses, parseOutcomeBlock, resolveClosedVersionPrdPath } from '../../lib/historyData'
+import { isPrdtPoState } from '../../lib/phase-mapping'
 
 interface ArtifactEntry {
   relPath: string
@@ -53,9 +54,14 @@ export default function HistoryDetailView({ versionId, closedDate }: Props) {
   const openTab = useWorkspace((s) => s.openTab)
   const projectDir = project?.projectDir ?? null
   const { tickets } = useTicketScan(projectDir)
+  // T-546 follow-up: this view only ever renders CLOSED versions (HistoryPane
+  // excludes the in-progress one from its list), so the PRD path needs only
+  // the prdt-vs-legacy branch — see resolveClosedVersionPrdPath for the full
+  // rationale (prdt has no per-version snapshot; legacy keeps reading one).
+  const isPrdt = useWorkspace((s) => isPrdtPoState(s.poState))
 
   const retroRel = `docs/wiki/retro--${versionId}.md`
-  const prdRel = `docs/prd/versions/${versionId}.md`
+  const prdRel = resolveClosedVersionPrdPath(isPrdt, versionId)
 
   // undefined = loading, null = absent
   const [outcome, setOutcome] = useState<string | null | undefined>(undefined)

@@ -13,16 +13,17 @@ Three openings, one machine. The first two assume the version's tag is cut and R
 1. **Roll the patch, never a minor** — `po-state.version` `v<N>.<m>[.<p>]` → `v<N>.<m>.<p+1>`; the first patch on a `v<N>.<m>` is `.1`. A scope deliberately split off (kept out so the next minor's gated goal stays clean) opens the SAME cycle — only the opening trigger differs.
 2. **Same machine as a minor** — new `docs/tickets/v<N>.<m>.<p>/` dir, fix + auto-QA, confirm-gated deploy, live-verify, immutable `v<N>.<m>.<p>` tag at close.
 3. **Lightweight retro, both openings** — one `wiki/log.md` line: what shipped + outcome-if-any, and for a split-off release also WHY it was split. NO `retro--` page and NO full `retro` sequence — that page exists to harvest a whole minor's cross-ticket learning, which a handful of tickets does not have.
-4. **Close** — cut the tag (PO habit's release-notes rule applies: the `## <version>` RELEASES section lands in the SAME change), then stage back to `idle`.
+4. **Close** — cut the tag (the release-notes rule applies — `retro` playbook, Rules: the `## <version>` RELEASES section lands in the SAME change), then stage back to `idle`.
 
 ## Rules
+- All three openings end in a `v*` tag cut, so the tag-cut document rules bind all three (`retro` playbook, §Rules): the `## <version>` RELEASES section AND the `<codeRoot>/README.md` pass land in that same change. A patch rarely moves what the README claims — then the pass writes nothing, which is a check, not a rewrite.
 - Live-verify re-fail INSIDE the patch cycle reuses the in-ship patch-loop semantics — append the same ops ticket, no further roll.
 - Ballooning past a small scope → call it and open the next minor instead.
 - A fix wanted for an OLDER closed version is absorbed into the ACTIVE line — never a patch line branched off the closed tag (the updater delivers branch tips, not tags, so such a tag reaches nobody). If it cannot wait for the active line, take the hotfix path below.
 
 ## In-build regression patch (stage `build`, worktree parallel)
 Only when a regression fires while `po-state.stage` is `build` — not the in-ship patch loop (title paragraph above) and not the idle-only Post-close patch. The pair clause still bars every other mid-round discovery; this opening exists because a regression is unpaid scope already billed, not new scope. Both trigger questions must be YES, or it's backlog, full stop:
-1. **Invalidates a prior version's claimed AC** — a closed version's PRD/AC says pass, and this regression is documented proof that claim is false right now.
+1. **Invalidates a prior version's claimed AC** — a closed version's PRD/AC says pass, and this regression is documented proof that claim is false right now on `main`, what installs follow. A regression only this round's `dev` commits carry is not this opening: `build-entry` §Exception, ticketed into the round.
 2. **Waiting compounds the damage** — deferring to next round's close (a 2-round delay) makes it worse, not just later. A one-time inconvenience fails this.
 
 Delivery is its OWN sequence — it does not run the Emergency hotfix steps below, whose step 1 cherry-picks from `dev`. Here the fix is written on `main` and `dev` never carries it, so the only movement is `main` → `dev`. It ends in the same place — same patch tag, same mergeback — and runs alongside the active round, never inside it:

@@ -17,6 +17,12 @@
  *   remote-add   <projectDir> <name> <url>   — add/update a backup remote (NEVER pushes)
  *   push         <projectDir> [name]         — EXPLICIT push of the meta branch to a backup
  *                                              remote (name defaults to "backup"; never --force)
+ *   backup       <projectDir>                — T-504 automatic backup tick: pushes the meta
+ *                                              branch to `meta.backup_remote` ONLY when the
+ *                                              stage-boundary / once-daily decision says so
+ *                                              (meta-backup.ts). Spawned detached by the `prdt`
+ *                                              CLI main and the PO SessionStart hook — never by
+ *                                              the persona-turn beat.
  *   bootstrap    <projectDir> <url> [name]   — T-374: second-machine restore of meta.git from a
  *                                              backup remote (name defaults to "backup")
  *   migrate-plan <projectDir>                — T-366 migration eligibility + untrack preview (read-only)
@@ -30,6 +36,7 @@
  */
 
 import { metaAutosaveTick } from '../git-workflow/meta-autosave'
+import { metaBackupTick } from '../git-workflow/meta-backup'
 import {
   metaRepoExists,
   scanMetaHistory,
@@ -53,7 +60,7 @@ function out(obj: unknown, code = 0): never {
 async function main(): Promise<void> {
   const [cmd, projectDir, ...rest] = process.argv.slice(2)
   if (!cmd || !projectDir) {
-    out({ ok: false, error: 'usage: meta-cli <tick|log|remote-list|remote-add|push|bootstrap|migrate-plan|migrate-run|relocate-plan|relocate-run> <projectDir> [...]' }, 1)
+    out({ ok: false, error: 'usage: meta-cli <tick|backup|log|remote-list|remote-add|push|bootstrap|migrate-plan|migrate-run|relocate-plan|relocate-run> <projectDir> [...]' }, 1)
   }
 
   switch (cmd) {
@@ -82,6 +89,14 @@ async function main(): Promise<void> {
       }
       const res = await addMetaRemote(projectDir, name, url)
       out({ ok: res.ok, error: res.error })
+      break
+    }
+    case 'backup': {
+      // T-504: the decision (stage boundary / daily / skip) and the push are
+      // both in core; a skip is a handled result (exit 0), a failed push too —
+      // it is recorded in the meta git-dir's state file for doctor / the CLI.
+      const res = await metaBackupTick(projectDir)
+      out({ ok: true, ...res })
       break
     }
     case 'push': {

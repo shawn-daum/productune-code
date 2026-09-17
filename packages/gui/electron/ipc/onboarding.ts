@@ -253,8 +253,9 @@ const HOOK_MANIFEST = hookManifestJson as unknown as HookManifest
  * an event/matcher/order drift between the two derivations fails loudly even
  * though both now read the identical manifest. audience-inject (T-326) and
  * overrides-inject (T-358) were the two missing from the pre-T-413 GUI list;
- * their omission left a GUI-only user (the north-star persona) without
- * audience-mode or machine overrides ever reaching their PO.
+ * their omission left a GUI-only user (the north-star persona) without the
+ * register object (audience included, since T-586) or machine overrides ever
+ * reaching their PO.
  */
 export const PRDT_HOOK_BASENAMES = HOOK_MANIFEST.basenames
 
@@ -639,8 +640,9 @@ export function register(): void {
         setUiLanguage(opts.uiLanguage)
       }
 
-      // 4. Save audience mode (T-326) — per-USER, to ~/.prdt/audience-mode,
-      //    where the prdt-audience-inject.sh hook reads it at PO session start.
+      // 4. Save audience mode (T-326) — per-USER, as the `audience` key of
+      //    ~/.prdt/register (since T-586), which prdt-audience-inject.sh
+      //    resolves at PO session start.
       if (opts.audienceMode === 'planner' || opts.audienceMode === 'developer') {
         setAudienceMode(opts.audienceMode)
       }

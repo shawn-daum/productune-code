@@ -47,15 +47,15 @@ test('the count comes from the manifest roster', () => {
   expect(src).toContain('${HOOK_COUNT}종')
 })
 
-test('the roster is 22 hooks today — a canary on the number the user reads', () => {
+test('the roster is 23 hooks today — a canary on the number the user reads', () => {
   // Not the assertion that matters (the two above are), but the one that makes a
   // roster change visible in this file's diff as well as in the manifest's.
-  // T-577: 11 + the eleven discipline part slots prdt-session-start-p2..p12.sh.
-  expect(rosterSize()).toBe(22)
+  // T-577: 12 + the eleven discipline part slots prdt-session-start-p2..p12.sh.
+  expect(rosterSize()).toBe(23)
 })
 
 test.skipIf(!hasJq())('a real install prints the manifest count', () => {
-  const sb = fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-count-'))
+  const sb = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'core-install-count-')))
   const home = path.join(sb, 'home')
   const prdtHome = path.join(sb, 'prdt')
   const claudeDir = path.join(sb, 'claude')
