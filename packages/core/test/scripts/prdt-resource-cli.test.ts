@@ -41,6 +41,15 @@ function markerPath(name: string, dispatch: string): string {
   return path.join(machineHome, 'run', 'resources', name, `${dispatch}.json`)
 }
 
+function _resourceHasAnyMarker(): boolean {
+  const base = path.join(machineHome, 'run', 'resources')
+  if (!fs.existsSync(base)) return false
+  return fs.readdirSync(base).some((name) => {
+    const dir = path.join(base, name)
+    return fs.statSync(dir).isDirectory() && fs.readdirSync(dir).length > 0
+  })
+}
+
 beforeEach(() => {
   sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-resource-cli-'))
   machineHome = path.join(sandbox, 'home')
@@ -112,19 +121,33 @@ describe.skipIf(!PYTHON3)('prdt resource up|down|ls (T-591)', () => {
     expect(out).toContain('left: 0')
   })
 
-  test('down with no --dispatch defaults to this session identity (CLAUDE_CODE_SESSION_ID), matching the same default `up` used', () => {
-    run(['resource', 'up', 'cua'], { CLAUDE_CODE_SESSION_ID: 'abc12345' })
-    const { out } = run(['resource', 'down', 'cua'], { CLAUDE_CODE_SESSION_ID: 'abc12345' })
-    expect(out).toContain('marker=abc12345')
-    expect(out).toContain('left: 0')
+  test('up with no --dispatch is refused, not defaulted to session identity (T-644): no marker is written, exit is non-zero, and the message names [ctx].dispatch_id', () => {
+    const { out, code } = run(['resource', 'up', 'cua'], { CLAUDE_CODE_SESSION_ID: 'abc12345' })
+    expect(code).not.toBe(0)
+    expect(out).toMatch(/--dispatch/)
+    expect(out).toMatch(/\[ctx\]\.dispatch_id/)
+    expect(fs.existsSync(markerPath('cua', 'abc12345'))).toBe(false)
+    expect(fs.existsSync(path.join(machineHome, 'run', 'resources', 'cua'))).toBe(false)
   })
 
-  test('down with no --dispatch and no session id falls back to a fixed "local" identity — still self-consistent across up then down', () => {
+  test('down with no --dispatch is refused, not defaulted to a "local" fallback (T-644): no session env, still a hard failure', () => {
     const cleanEnv: Record<string, string> = { CLAUDE_CODE_SESSION_ID: '' }
-    run(['resource', 'up', 'daum-mini-games'], cleanEnv)
-    const { out } = run(['resource', 'down', 'daum-mini-games'], cleanEnv)
-    expect(out).toContain('marker=local')
-    expect(out).toContain('left: 0')
+    const { out, code } = run(['resource', 'down', 'daum-mini-games'], cleanEnv)
+    expect(code).not.toBe(0)
+    expect(out).toMatch(/--dispatch/)
+    expect(out).toMatch(/\[ctx\]\.dispatch_id/)
+  })
+
+  test('two parallel dispatches in one session no longer collide on a shared "local"/session marker: each must carry its own --dispatch', () => {
+    // Before T-644 both of these bare calls resolved to the SAME marker file
+    // (session id, or "local" with no session env) — the first `down` would
+    // have stopped a resource the second dispatch still held. Now both are
+    // refused outright: there is no shared default left to collide on.
+    const a = run(['resource', 'up', 'cua'], { CLAUDE_CODE_SESSION_ID: 'shared-session' })
+    const b = run(['resource', 'up', 'cua'], { CLAUDE_CODE_SESSION_ID: 'shared-session' })
+    expect(a.code).not.toBe(0)
+    expect(b.code).not.toBe(0)
+    expect(_resourceHasAnyMarker()).toBe(false)
   })
 
   test('ls reports nothing when no markers exist, and groups multiple dispatches under one resource once they do', () => {
@@ -151,6 +174,23 @@ describe.skipIf(!PYTHON3)('prdt resource up|down|ls (T-591)', () => {
     expect(code).not.toBe(0)
     expect(out).toMatch(/must match/)
     expect(fs.existsSync(path.join(machineHome, 'run', 'resources', '..'))).toBe(false)
+  })
+
+  test('the source carries no session-keyed or "local" default, and no comment claiming qa/habit.md skips --dispatch (T-644)', () => {
+    const src = fs.readFileSync(PRDT_CLI, 'utf-8')
+    expect(src).not.toMatch(/_resource_default_dispatch_id/)
+    expect(src).not.toMatch(/qa\/habit\.md never passes/)
+    expect(src).not.toMatch(/default is this session/)
+  })
+
+  test('top-level --help states --dispatch is required for up/down, not optional, and per-flag help matches contracts §Dispatch language', () => {
+    const top = run(['--help']).out
+    expect(top).toMatch(/up <name> --dispatch <id>/)
+    expect(top).toMatch(/down <name>\s+--dispatch <id>/)
+    expect(top).not.toMatch(/\[--dispatch <id>\]/)
+    const flag = run(['resource', '--help']).out
+    expect(flag).toMatch(/required, the PO's/)
+    expect(flag).not.toMatch(/default is this session/)
   })
 
   test('a corrupt marker file on disk is skipped by ls, never crashes the read', () => {

@@ -7070,20 +7070,12 @@ RE_RESOURCE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 RE_DISPATCH_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
-def _resource_default_dispatch_id():
-    """Self-identification for a dispatch's OWN bare `up <name>` / `down
-    <name>` (qa/habit.md never passes `--dispatch` on its own resource) — the
-    same session-scoped signal `prdt preflight`'s latch already keys on
-    (`_canary_latch_path`), the only per-dispatch identity this process can
-    read from its own environment.
-
-    KNOWN GAP, left open by T-591's own §재설계 (not this ticket's to close):
-    two dispatches sharing ONE session (this machine has run two workers in
-    parallel inside a single session) collide on this default. Whichever of
-    them needs to be told apart must pass its own `--dispatch <id>`; the CLI
-    cannot see subagent identity, only session identity."""
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or ""
-    return sid if RE_CANARY_SESSION.match(sid) else "local"
+# T-644: no session-keyed or `local` default. contracts §Dispatch names the
+# marker's owner as the PO-minted `[ctx].dispatch_id` and says "never per
+# session"; qa/habit.md always passes `--dispatch <id>` itself. A session
+# default let two parallel dispatches in one session collide on one marker
+# file — the exact incident T-591 closed, reopened through this CLI's own
+# help text. `up`/`down` now refuse to run without an explicit `--dispatch`.
 
 
 def _resource_marker_dir(name):
@@ -7165,7 +7157,10 @@ def cmd_resource(args):
     name = rest[0].strip()
     if not RE_RESOURCE_NAME.match(name):
         sys.exit("prdt resource: <name> must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-    dispatch = (args.dispatch or "").strip() or _resource_default_dispatch_id()
+    dispatch = (args.dispatch or "").strip()
+    if not dispatch:
+        sys.exit("prdt resource: --dispatch <id> is required for up/down — the PO's [ctx].dispatch_id "
+                  "(contracts §Dispatch: never per session); ls needs none")
     if not RE_DISPATCH_ID.match(dispatch):
         sys.exit("prdt resource: --dispatch must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
@@ -8349,13 +8344,14 @@ def main():
     p.add_argument("--json", action="store_true", help="machine mode (show / --list)")
     p.set_defaults(fn=cmd_register)
     p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591): "
-                                        "up <name> [--dispatch <id>] · down <name> [--dispatch <id>] · "
+                                        "up <name> --dispatch <id> · down <name> --dispatch <id> · "
                                         "ls [--json] — record/report only, NEVER stops anything; the "
                                         "dispatch whose `down` empties a resource's marker count stops it itself")
     p.add_argument("action", choices=("up", "down", "ls"))
     p.add_argument("rest", nargs="*", help="up/down: <name>")
-    p.add_argument("--dispatch", help="marker id for up/down; default is this session's own identity "
-                                      "(CLAUDE_CODE_SESSION_ID) — pass explicitly to act on another dispatch's marker")
+    p.add_argument("--dispatch", help="marker id for up/down — required, the PO's [ctx].dispatch_id "
+                                      "(contracts §Dispatch: never per session, never this session's own identity); "
+                                      "ls takes none")
     p.add_argument("--json", action="store_true", help="ls: machine-readable output")
     p.set_defaults(fn=cmd_resource)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
