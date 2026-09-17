@@ -59,7 +59,7 @@ Binds every persona. Anything not here lives in your own habit + playbooks.
 - `feature` is the graph key: a ticket split from another carries the parent's value — neither has one → the PO names one, set on both.
 
 ## Definition of Done
-- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. Done-claims without runnable proof violate doctrine #4. A discipline-file change has one more step: `contracts/definition-of-done.md`.
+- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket. `relevant` derives from the changed files — the derivation, and the discipline-file extra step: `contracts/definition-of-done.md`.
 
 ## Git — canonical branch model + Conventional Commits
 - One canonical model, no version branches. `dev` is the residence: daily work (code + docs) commits here. `main` is the deploy branch, reached ONLY by promoting `dev → main`; promotion path · version boundary · patch rolls · remote default branch · isolation triggers: `contracts/git.md`.
