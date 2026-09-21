@@ -30,6 +30,7 @@ import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-post-dispatch.sh')
@@ -110,7 +111,7 @@ function runSubagentStop(opts: { cwd: string; agentId: string; transcriptPath: s
     agent_transcript_path: opts.transcriptPath,
   }
   if (opts.lastAssistantMessage !== undefined) ev.last_assistant_message = opts.lastAssistantMessage
-  const res = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', timeout: 10000 })
+  const res = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', timeout: subprocessTimeout('hook') })
   expect(res.status).toBe(0)
   expect(res.stdout).toBe('') // SubagentStop prints NOTHING (a printed context resumes the worker)
 }
@@ -216,7 +217,7 @@ describe('T-584 — reference set + playbooks_run are recorded per dispatch', ()
       // The sync Agent response: a content array of text blocks + usage (no model — the T-543 F3 shape).
       tool_response: { content: [{ type: 'text', text: 'prose before the return' }, { type: 'text', text: ENVELOPE_TWO }], usage: USAGE },
     }
-    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', timeout: 10000 })
+    const res = spawnSync('bash', [HOOK], { input: JSON.stringify(ev), encoding: 'utf8', timeout: subprocessTimeout('hook') })
     expect(res.status).toBe(0)
     const line = lastTurn(root)
     expect(line.usage).toEqual({ input: 1000, output: 500, cache: 300 })

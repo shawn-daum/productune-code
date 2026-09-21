@@ -33,6 +33,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -63,7 +64,7 @@ function runDoctor(): string {
   return execFileSync('python3', [PRDT_CLI, 'doctor'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('doctor'),
   })
 }
 
@@ -114,7 +115,7 @@ beforeEach(() => {
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 })
 
@@ -287,7 +288,7 @@ assert "answered" in att[0] and "ran=1" in att[0] and "attested=1" in att[0], at
 assert "all 1 check(s) ran" in clean[0], clean
 print("ok")
 `
-    const out = execFileSync('python3', ['-c', probe], { encoding: 'utf-8', timeout: 30000 })
+    const out = execFileSync('python3', ['-c', probe], { encoding: 'utf-8', timeout: subprocessTimeout('cli') })
     expect(out.trim()).toBe('ok')
   })
 })

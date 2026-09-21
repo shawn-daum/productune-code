@@ -34,6 +34,7 @@ import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-dispatch-gate.sh')
@@ -605,7 +606,7 @@ describe('fail open, never closed', () => {
         cwd: 'relative/path', hook_event_name: 'PreToolUse', tool_name: 'Agent',
         tool_input: { prompt: 'no ctx', subagent_type: 'prdt-developer' },
       }),
-      encoding: 'utf8', timeout: 5000,
+      encoding: 'utf8', timeout: subprocessTimeout('quick'),
     })
     expect(res.stdout).toBe('')
     expect(res.status).toBe(0)

@@ -38,6 +38,7 @@ import fs from 'fs'
 import os from 'os'
 import { spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-call-governor.sh')
@@ -136,7 +137,7 @@ function run(prdtHome: string, event: string, o: EventOpts): string {
     input: eventJson(event, o),
     encoding: 'utf8',
     env: { ...process.env, PRDT_HOME: prdtHome },
-    timeout: 10000,
+    timeout: subprocessTimeout('hook'),
   })
   expect(res.signal).toBeNull()
   expect(res.stderr).toBe('')
@@ -567,7 +568,7 @@ describe('relative cwd: fails open instead of spinning (T-491 R2-1)', () => {
       input: eventJson('PostToolBatch', worker('relative/path/no/leading/slash', 'prdt-developer')),
       encoding: 'utf8',
       env: { ...process.env, PRDT_HOME: home },
-      timeout: 3000, // the bug hangs to the 60s hook timeout; 3s is generous slack
+      timeout: subprocessTimeout('quick'), // the bug hangs to the 60s hook timeout; the quick tier is generous slack
     })
     expect(res.signal).toBeNull() // null signal ⇒ it exited on its own, not killed by the timeout
     expect(res.stderr).toBe('')
@@ -584,7 +585,7 @@ describe('relative cwd: fails open instead of spinning (T-491 R2-1)', () => {
       input: eventJson('PostToolBatch', worker('bare', 'prdt-developer')),
       encoding: 'utf8',
       env: { ...process.env, PRDT_HOME: home },
-      timeout: 3000,
+      timeout: subprocessTimeout('quick'),
     })
     expect(res.signal).toBeNull()
     expect(res.status).toBe(0)
@@ -609,7 +610,7 @@ describe('malformed payloads fail open', () => {
         input,
         encoding: 'utf8',
         env: { ...process.env, PRDT_HOME: home },
-        timeout: 3000,
+        timeout: subprocessTimeout('quick'),
       })
       expect(res.signal).toBeNull()
       expect(res.stderr).toBe('')
@@ -725,7 +726,7 @@ describe('T-561: whitespace never silences the governor', () => {
       input: format(eventJson(event, o)),
       encoding: 'utf8',
       env: { ...process.env, PRDT_HOME: prdtHome },
-      timeout: 10000,
+      timeout: subprocessTimeout('hook'),
     })
     expect(res.signal).toBeNull()
     expect(res.stderr).toBe('')

@@ -22,6 +22,7 @@ import os from 'os'
 import { spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { casesFor } from '../fixtures/address-legality-cases'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -53,7 +54,7 @@ afterEach(() => { fs.rmSync(sandbox, { recursive: true, force: true }) })
 
 function prdt(...args: string[]) {
   const r = spawnSync('python3', [PRDT_CLI, ...args], {
-    cwd: projectDir, encoding: 'utf8', timeout: 30000,
+    cwd: projectDir, encoding: 'utf8', timeout: subprocessTimeout('cli'),
     env: { ...process.env, PRDT_HOME: prdtHome, PRDT_DISCIPLINE: disciplineDir },
   })
   return { status: r.status, out: r.stdout, err: r.stderr }

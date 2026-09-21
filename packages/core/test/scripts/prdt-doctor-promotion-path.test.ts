@@ -28,6 +28,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -185,7 +186,7 @@ function useOrgHook(body: string): void {
 
 /** `prdt doctor` from the code root (a session's usual cwd). */
 function doctor(): string {
-  return execFileSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: 60000 })
+  return execFileSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
 }
 
 beforeEach(() => { if (CAN_RUN) makeFixture() })

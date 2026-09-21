@@ -37,6 +37,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -98,7 +99,7 @@ interface Run { out: string; code: number; err: string }
 function doctor(): Run {
   try {
     const out = execFileSync('python3', [PRDT_CLI, 'doctor'],
-      { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] })
+      { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor'), stdio: ['ignore', 'pipe', 'pipe'] })
     return { out, code: 0, err: '' }
   } catch (e) {
     const x = e as { status?: number; stdout?: string; stderr?: string }
@@ -273,7 +274,7 @@ describe.skipIf(!CAN_RUN)('class pin — every non-string shape, not just the li
     const hp = path.join(sandbox, 'harness.py')
     fs.writeFileSync(hp, HARNESS)
     const recs: Rec[] = JSON.parse(
-      execFileSync('python3', [hp, PRDT_CLI, projectRoot], { encoding: 'utf8', timeout: 60000 }))
+      execFileSync('python3', [hp, PRDT_CLI, projectRoot], { encoding: 'utf8', timeout: subprocessTimeout('doctor') }))
     // 8 shapes x 8 bound fields, all present — a fix that narrowed the guard to one
     // shape or one field shows up here as a `raised` value, never as a skipped case
     expect(recs).toHaveLength(64)
@@ -417,7 +418,7 @@ describe.skipIf(!CAN_RUN)('invariant pin — no bound cell holds a stringified n
     const hp = path.join(sandbox, 'invariant.py')
     fs.writeFileSync(hp, INVARIANT_HARNESS)
     const cells: Cell[] = JSON.parse(
-      execFileSync('python3', [hp, PRDT_CLI, projectRoot], { encoding: 'utf8', timeout: 60000 }))
+      execFileSync('python3', [hp, PRDT_CLI, projectRoot], { encoding: 'utf8', timeout: subprocessTimeout('doctor') }))
 
     const bad = cells.filter(c => c.coerced)
     expect(bad, `coerced cells: ${JSON.stringify(bad)}`).toEqual([])
@@ -461,7 +462,7 @@ print(json.dumps(list(dict.fromkeys(list(mod.TICKET_INDEX_FIELDS) + list(mod.WIK
     const hp = path.join(sandbox, 'invariant.py')
     fs.writeFileSync(hp, INVARIANT_HARNESS)
     const cells: Cell[] = JSON.parse(
-      execFileSync('python3', [hp, PRDT_CLI, projectRoot], { encoding: 'utf8', timeout: 60000 }))
+      execFileSync('python3', [hp, PRDT_CLI, projectRoot], { encoding: 'utf8', timeout: subprocessTimeout('doctor') }))
     const assignee = cells.filter(c => c.table === 'tickets' && c.col === 'assignee')
     expect(assignee.length).toBeGreaterThan(0)
     for (const c of assignee) expect(c.cell, `assignee cell for ${c.shape}`).toBeNull()

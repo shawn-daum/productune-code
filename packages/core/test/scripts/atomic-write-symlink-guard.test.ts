@@ -25,6 +25,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeAll } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const REPO_ROOT = path.resolve(CORE_ROOT, '..', '..')
@@ -78,7 +79,7 @@ function run(hook: string, cwd: string, event: Record<string, unknown>): { statu
     input: JSON.stringify(event),
     encoding: 'utf8',
     cwd,
-    timeout: 10_000,
+    timeout: subprocessTimeout('hook'),
   })
   return { status: res.status, stdout: res.stdout, stderr: res.stderr }
 }

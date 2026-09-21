@@ -37,6 +37,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -54,7 +55,7 @@ function runPrdtAt(cwd: string, args: string[], input?: string): string {
   return execFileSync('python3', [PRDT_CLI, ...args], {
     cwd, env: { ...process.env, PRDT_HOME: machineHome },
     input, encoding: 'utf-8',
-    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], timeout: 20000,
+    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 }
 

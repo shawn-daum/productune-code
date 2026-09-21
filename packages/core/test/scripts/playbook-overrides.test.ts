@@ -21,6 +21,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const HOOK = path.join(CORE_ROOT, 'scripts', 'hooks', 'prdt-overrides-inject.sh')
@@ -153,7 +154,7 @@ describe.skipIf(!hasJq())('--playbook <name> renders one body through the gutter
     const home = makeHome({ store: { implement: '- x\n' } })
     // no input given → the child inherits a pipe this test never closes; a read would hang past the timeout
     const r = spawnSync('bash', [HOOK, '--playbook', 'implement'], {
-      encoding: 'utf8', env: { ...process.env, PRDT_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], timeout: 10_000,
+      encoding: 'utf8', env: { ...process.env, PRDT_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'], timeout: subprocessTimeout('hook'),
     })
     expect(r.error).toBeUndefined()
     expect(r.stdout).toContain(GUTTER + '- x')

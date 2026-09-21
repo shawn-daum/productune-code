@@ -11,6 +11,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -29,7 +30,7 @@ function run(args: string[], env: Record<string, string> = {}): { out: string; c
     const out = execFileSync(PYTHON3 as string, [PRDT_CLI, ...args], {
       cwd: projectDir,
       env: { ...process.env, PRDT_HOME: machineHome, ...env },
-      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+      encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
     })
     return { out, code: 0 }
   } catch (e: any) {
@@ -59,7 +60,7 @@ beforeEach(() => {
   execFileSync(PYTHON3 as string, [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 })
 

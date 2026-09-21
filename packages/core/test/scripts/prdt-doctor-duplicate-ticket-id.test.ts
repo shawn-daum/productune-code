@@ -35,6 +35,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -83,7 +84,7 @@ function ticket(version: string, file: string, id: string, status = 'done'): str
 
 function doctorOut(): string {
   return execFileSync('python3', [PRDT_CLI, 'doctor'],
-    { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+    { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
 }
 
 /** Only the duplicate-id lines. Proof-of-completion first, so a silence below is a

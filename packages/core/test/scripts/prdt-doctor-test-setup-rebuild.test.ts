@@ -27,6 +27,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -112,7 +113,7 @@ const JUDGED: Judgment = {
 /** Only this check's lines. Everything else doctor says belongs to another check. */
 function setupWarnings(): string[] {
   const out = execFileSync('python3', [PRDT_CLI, 'doctor'],
-    { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+    { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
   // proof the run reached the end — silence below is then a verdict, not a crash
   expect(out).toMatch(/^doctor: (clean|\d+ warning\(s\)) \(non-blocking\)$/m)
   return out.split('\n').filter(l => l.startsWith('⚠ tests:')).map(l => l.replace(/^⚠ /, ''))
@@ -172,7 +173,7 @@ describe.skipIf(!CAN_RUN)('the positive control — the shape the check exists f
   test('doctor stays non-blocking with the check firing — exit 0, never a gate', () => {
     perCaseRebuild('test/offender.test.ts', 5)
     const r = execFileSync('python3', [PRDT_CLI, 'doctor'],
-      { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     expect(r).toContain('⚠ tests:')
     expect(r).toContain('(non-blocking)')   // execFileSync would have thrown on non-zero exit
   })
@@ -501,7 +502,7 @@ describe.skipIf(!CAN_RUN)('the judgment record — a false accusation spent once
   test('doctor stays non-blocking with a stale record firing — exit 0, never a gate', () => {
     record([{ ...JUDGED, file: 'test/deleted.test.ts' }])
     const r = execFileSync('python3', [PRDT_CLI, 'doctor'],
-      { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     expect(r).toContain('is stale')
     expect(r).toContain('(non-blocking)')   // execFileSync would have thrown on non-zero exit
   })
