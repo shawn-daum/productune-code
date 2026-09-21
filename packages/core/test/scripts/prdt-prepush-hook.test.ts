@@ -24,6 +24,7 @@ import os from 'os'
 import crypto from 'crypto'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -128,7 +129,7 @@ function pushMain(extraEnv: NodeJS.ProcessEnv = {}): { code: number; out: string
 
 /** `prdt doctor` from the CODE root (a session's usual cwd). */
 function doctor(): string {
-  return execFileSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: 60000 })
+  return execFileSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
 }
 
 const hookFile = () => path.join(codeRoot, '.git', 'hooks', 'pre-push')
@@ -336,7 +337,7 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('managed pre-push hook (T-481)',
     const fresh = path.join(sandbox, 'fresh')
     fs.mkdirSync(fresh)
     const out = execFileSync('python3', [PRDT_CLI, 'init', '--yes', '--json'],
-      { cwd: fresh, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: fresh, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     const res = JSON.parse(out)
     expect(res.status).toBe('created')
     expect(res.prepush).toBe('installed')
@@ -379,7 +380,7 @@ ${ORG_HOOK.replace(/^#!.*\n/, '')}`
 
   function attest(args: string[]): { code: number; out: string } {
     const r = spawnSync('python3', [PRDT_CLI, 'attest', 'prepush', ...args],
-      { cwd: codeRoot, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: codeRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
   }
 
@@ -632,7 +633,7 @@ ${ORG_HOOK.replace(/^#!.*\n/, '')}`
     fs.writeFileSync(path.join(orgDir, 'pre-push'), Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0x00, 0xff]), { mode: 0o755 })
     git(['config', 'core.hooksPath', '.githooks'], codeRoot)
 
-    const d = spawnSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: 60000 })
+    const d = spawnSync('python3', [PRDT_CLI, 'doctor'], { cwd: codeRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     expect(d.status, `${d.stdout}${d.stderr}`).toBe(0)
     expect(`${d.stdout}`).toContain('main-push block UNVERIFIED')
     expect(`${d.stdout}${d.stderr}`).not.toContain('Traceback')
@@ -666,7 +667,7 @@ describe.skipIf(!CAN_RUN || !!SYSTEM_HOOKSPATH)('attest and a config.json it did
   const cfgPath = () => path.join(legacy, '.prdt', 'config.json')
   const attestIn = (cwd: string) => spawnSync('python3',
     [PRDT_CLI, 'attest', 'prepush', '--blocks-main', 'yes', '--hotfix-escape', 'yes', '--reason', 'read it'],
-    { cwd, encoding: 'utf8', env, timeout: 60000 })
+    { cwd, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
 
   beforeEach(() => {
     legacy = path.join(sandbox, 'legacy')

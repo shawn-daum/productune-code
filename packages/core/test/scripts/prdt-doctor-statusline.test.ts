@@ -25,6 +25,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -95,7 +96,7 @@ function doctorStatuslineLines(cwd: string = projectDir, home: string = machineH
   const out = execFileSync('python3', [PRDT_CLI, 'doctor'], {
     cwd,
     env: { ...process.env, PRDT_HOME: home, PRDT_DISCIPLINE: disciplineDir, CLAUDE_DIR: claudeDir },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
   return out.split('\n').filter((l) => l.includes('statusline:'))
 }
@@ -113,7 +114,7 @@ beforeEach(() => {
   execFileSync('python3', [PRDT_CLI, 'init', '--json', '--slug', 'proj', '--yes'], {
     cwd: projectDir,
     env: { ...process.env, PRDT_HOME: machineHome },
-    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000,
+    encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: subprocessTimeout('cli'),
   })
 })
 

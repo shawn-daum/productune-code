@@ -19,6 +19,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync, spawnSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -77,7 +78,7 @@ const ARMED = { PRDT_META_BACKUP: '1' }
 
 function runPrdt(args: string[], env: Record<string, string> = {}): { stdout: string; stderr: string; status: number | null } {
   const r = spawnSync('python3', [PRDT_CLI, ...args], {
-    cwd: projectDir, encoding: 'utf-8', timeout: 20000,
+    cwd: projectDir, encoding: 'utf-8', timeout: subprocessTimeout('cli'),
     env: { ...process.env, ...ARMED, ...env },
   })
   return { stdout: r.stdout ?? '', stderr: r.stderr ?? '', status: r.status }
@@ -228,7 +229,7 @@ describe.skipIf(!NODE || !JQ || !PYTHON3)('session-start hook — PO SessionStar
   }
   function runHook(event: Record<string, string>, prdtHome: string, extraEnv: Record<string, string> = {}): void {
     spawnSync('bash', [SESSION_START_HOOK], {
-      input: JSON.stringify(event), encoding: 'utf8', timeout: 20000,
+      input: JSON.stringify(event), encoding: 'utf8', timeout: subprocessTimeout('cli'),
       env: { ...process.env, ...ARMED, PRDT_HOME: prdtHome, ...extraEnv },
     })
   }

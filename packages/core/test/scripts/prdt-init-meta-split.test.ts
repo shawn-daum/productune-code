@@ -18,6 +18,7 @@ import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
 import { DEFAULT_META_ALLOWLIST } from '../../src/git-workflow/meta-git'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 // The `.gitignore` managed block was retired in PRD history §v1.3 설계 결정 2 (TS side:
 // T-376, python side: T-377). These markers are kept ONLY for negative assertions
@@ -41,7 +42,7 @@ function runInit(args: string[] = []): any {
     encoding: 'utf-8',
     // zero user interaction — a prompt would hang and trip the timeout
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 15000,
+    timeout: subprocessTimeout('cli'),
   })
   return JSON.parse(out)
 }

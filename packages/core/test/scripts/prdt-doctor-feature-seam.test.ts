@@ -35,6 +35,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -97,7 +98,7 @@ function spec(name: string): void {
 /** Only the seam's own lines. Everything else doctor says is another check's. */
 function featureWarnings(): string[] {
   const out = execFileSync('python3', [PRDT_CLI, 'doctor'],
-    { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+    { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
   // proof the run reached the end rather than dying early — silence below is
   // then a verdict, not a dead code path
   expect(out).toMatch(/^doctor: (clean|\d+ warning\(s\)) \(non-blocking\)$/m)
@@ -254,7 +255,7 @@ describe.skipIf(!CAN_RUN)('the positive control, then the zero — v1.8 gated-go
   test('doctor stays non-blocking with the seam firing — exit 0, never a gate', () => {
     span('real-mech', ['v1.1', 'v1.2'])
     const r = execFileSync('python3', [PRDT_CLI, 'doctor'],
-      { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     expect(r).toContain('promotion candidate')
     expect(r).toContain('(non-blocking)')   // execFileSync would have thrown on a non-zero exit
   })
@@ -296,7 +297,7 @@ describe.skipIf(!CAN_RUN)('T3 is computed over ROWS, not over an id-keyed map (T
     ticket({ id: 'T-200', version: 'v1.1', feature: 'real-mech', status: 'done' })
     ticket({ id: 'T-200', version: 'v1.2', feature: 'real-mech', status: 'done' })
     const out = execFileSync('python3', [PRDT_CLI, 'doctor'],
-      { cwd: projectRoot, encoding: 'utf8', env, timeout: 60000 })
+      { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
     const lines = out.split('\n').filter(l => l.startsWith('⚠ '))
     expect(lines.filter(l => l.startsWith('⚠ feature:') && /duplicate/i.test(l))).toEqual([])
     expect(lines.filter(l => /^⚠ ticket: duplicate id T-200 /.test(l))).toHaveLength(1)

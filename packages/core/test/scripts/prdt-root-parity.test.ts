@@ -19,6 +19,7 @@ import fs from 'fs'
 import os from 'os'
 import { execFileSync } from 'child_process'
 import { test, expect, describe, beforeEach, afterEach } from 'vitest'
+import { subprocessTimeout } from '../helpers/subprocess-timeout'
 
 const CORE_ROOT = path.resolve(__dirname, '..', '..')
 const PRDT_CLI = path.join(CORE_ROOT, 'scripts', 'prdt')
@@ -68,7 +69,7 @@ print(json.dumps({
   "projRootFromCwd": str(pr) if pr else None,
 }))
 `
-  const out = execFileSync('python3', ['-c', script], { encoding: 'utf-8', timeout: 15000 })
+  const out = execFileSync('python3', ['-c', script], { encoding: 'utf-8', timeout: subprocessTimeout('cli') })
   return JSON.parse(out)
 }
 
