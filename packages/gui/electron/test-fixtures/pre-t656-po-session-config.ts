@@ -15,8 +15,7 @@
  */
 
 import fs from 'fs'
-import { atomicWriteFileSync } from '@productune/core'
-import { configPath, detectProjectKind } from './project-paths'
+import { configPath, detectProjectKind } from '../project-paths'
 
 // ── Allowed values (T-310: "select-level" config — no free-text model/effort) ──
 //
@@ -124,7 +123,9 @@ export function setPoSessionOverride(
       cfg.gui_effort = next.effort
     }
 
-    atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o644 })
+    const tmp = cfgPath + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o644 })
+    fs.renameSync(tmp, cfgPath)
     return { ok: true }
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'write failed' }

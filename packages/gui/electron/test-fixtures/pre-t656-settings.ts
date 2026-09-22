@@ -30,7 +30,6 @@ import {
   setZoomFactor,
   getStatusBarVisible,
   setStatusBarVisible,
-  atomicWriteFileSync,
 } from '@productune/core'
 import type { UiLanguage, AudienceMode, PlanTier, GitRules, NotificationSettings } from '@productune/core'
 // T-420: read-only reference to the hook roster SoT (T-414) to name the
@@ -408,7 +407,9 @@ export function register(): void {
       if (!specPath) return { ok: false, error: 'unknown persona' }
       try {
         fs.mkdirSync(path.dirname(specPath), { recursive: true })
-        atomicWriteFileSync(specPath, content)
+        const tmp = specPath + '.tmp'
+        fs.writeFileSync(tmp, content, 'utf-8')
+        fs.renameSync(tmp, specPath)
         return { ok: true }
       } catch (e: any) {
         return { ok: false, error: e?.message ?? 'write failed' }

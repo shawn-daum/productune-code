@@ -1,7 +1,6 @@
 import { ipcMain } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { atomicWriteFileSync } from '@productune/core'
 
 // ── Local .html read/write IPC (v0.5 T-PATCH-032) ────────────────────────────
 // Backs HtmlViewer: read a project-scoped .html / .htm file for Preview + the
@@ -80,8 +79,10 @@ export function register(): void {
             return { ok: false, error: 'conflict', conflict: true, currentMtimeMs }
           }
         }
-        // Atomic write: symlink-safe tmp+rename into place.
-        atomicWriteFileSync(resolved, content)
+        // Atomic write: write tmp, rename into place.
+        const tmp = resolved + '.tmp'
+        fs.writeFileSync(tmp, content, 'utf-8')
+        fs.renameSync(tmp, resolved)
         const mtimeMs = fs.statSync(resolved).mtimeMs
         return { ok: true, mtimeMs }
       } catch (e: any) {

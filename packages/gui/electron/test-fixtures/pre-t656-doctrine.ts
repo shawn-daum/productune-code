@@ -2,7 +2,6 @@ import { ipcMain } from 'electron'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import { atomicWriteFileSync } from '@productune/core'
 
 // ── Doctrine tier filesystem + IPC (v0.5 T-PATCH-019, #7) ────────────────────
 // Backs the Persona Tier Editor. Enumerates each persona's 3 doctrine tiers and
@@ -267,9 +266,11 @@ export function register(): void {
             return { ok: false, error: 'conflict', conflict: true, currentMtimeMs }
           }
         }
-        // Atomic write: mkdir -p, symlink-safe tmp+rename into place.
+        // Atomic write: mkdir -p, write tmp, rename into place.
         fs.mkdirSync(path.dirname(resolved), { recursive: true })
-        atomicWriteFileSync(resolved, content)
+        const tmp = resolved + '.tmp'
+        fs.writeFileSync(tmp, content, 'utf-8')
+        fs.renameSync(tmp, resolved)
         const mtimeMs = fs.statSync(resolved).mtimeMs
         return { ok: true, mtimeMs }
       } catch (e: any) {

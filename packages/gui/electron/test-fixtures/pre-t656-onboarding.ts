@@ -5,7 +5,7 @@ import os from 'os'
 import { execFile, spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { promisify } from 'util'
-import { setUiLanguage, setAudienceMode, atomicWriteFileSync } from '@productune/core'
+import { setUiLanguage, setAudienceMode } from '@productune/core'
 import type { UiLanguage, AudienceMode } from '@productune/core'
 import { withLoginShellPath, resetLoginShellPathCache } from '../surface-runner'
 import { installClaudeCli, resolveClaudeCli } from '../claude-installer'
@@ -277,8 +277,10 @@ function readSettings(settingsPath: string): any {
  * atomic on the same POSIX filesystem, so there is no torn-read window.
  */
 function writeSettingsAtomic(settingsPath: string, settings: any): void {
+  const tmp = settingsPath + '.tmp'
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
-  atomicWriteFileSync(settingsPath, JSON.stringify(settings, null, 2))
+  fs.writeFileSync(tmp, JSON.stringify(settings, null, 2))
+  fs.renameSync(tmp, settingsPath)
 }
 
 /**
