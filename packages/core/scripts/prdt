@@ -6781,6 +6781,34 @@ def _is_document_snapshot(text, heads):
     return False
 
 
+def _prd_version_file_kind(text):
+    """What a `docs/prd/versions/` file RECORDS about its round, as one word:
+
+    `section` — it carries a `## v` heading (well-formed or not: shape findings
+    are the per-file loop's business, not this one's) · `stub` — the one-line
+    registered absence, no `## ` heading · `snapshot` — the whole-document
+    snapshot the pre-sections regime left · `other` — none of those, an
+    unreadable file (`text` None) included.
+
+    Exists because "a file for that round is on disk" is not one fact but two
+    (T-657 re-grill, 2026-09-22): a section there makes a second copy elsewhere
+    a leftover copy, while a stub there makes it a contradiction — and the
+    remedies are opposites, one of them destroying the only copy of a section
+    when named against the wrong shape. The stub rule lives here ONLY; the
+    per-file loop reads it from here so the two cannot drift."""
+    if text is None:
+        return "other"
+    heads = _prd_version_headings(text)
+    if heads:
+        return "section"
+    if _is_document_snapshot(text, heads):
+        return "snapshot"
+    body = [l for l in text.split("\n") if l.strip()]
+    if len(body) == 1 and not body[0].startswith("## "):
+        return "stub"
+    return "other"
+
+
 def prd_layout_warnings(root, st):
     """A discipline↔execution check (FAMILY_DE): what the contract says the PRD
     tree looks like, against what is on disk.
@@ -6816,10 +6844,11 @@ def prd_layout_warnings(root, st):
     PRD.md — so an unmigrated project learns it from the tool, not from a
     person reading the file.
 
-    Reads: PRD.md's sections against the open version · every other
+    Reads: PRD.md's sections against the open version (and, for the open one,
+    whether versions/ already holds a file for that round) · every other
     docs/prd/**/*.md for a `## v` heading outside its own file · each versions/
-    file's shape · ticket dirs of rounds up to the current one that have no
-    version file. Silent on a ticket dir ABOVE the current version — a roadmap
+    file's shape · two versions/ files naming one round · ticket dirs of rounds
+    up to the current one that have no version file. Silent on a ticket dir ABOVE the current version — a roadmap
     dir is legal (contracts §Fixed paths, Tickets row) — and on the current
     round itself, whose section is the open one in PRD.md (or not yet written
     between close and Define)."""
@@ -6841,7 +6870,9 @@ def prd_layout_warnings(root, st):
     # Every version file already on disk, keyed canonically — so `versions/v1.md`
     # answers for a `## v1.0` section and for `docs/tickets/v1.0/`, and the
     # round is looked up by the version it NAMES rather than by a filename
-    # spelling. Names on disk are never rewritten to match.
+    # spelling. Names on disk are never rewritten to match. A key holds EVERY
+    # file that canonicalizes onto it, because two of them is itself a finding
+    # (next block); the first in sorted order answers "where does this round live".
     on_disk = {}
     if vdir.is_dir():
         for f in sorted(vdir.glob("*.md")):
@@ -6849,17 +6880,64 @@ def prd_layout_warnings(root, st):
                 continue
             k = _version_id_canon(f.stem)
             if k is not None:
-                on_disk.setdefault(k, f)
+                on_disk.setdefault(k, []).append(f)
+
+    # One round, exactly one file (T-657 re-grill, 2026-09-22): `versions/v1.md`
+    # and `versions/v1.0.md` both holding `## v1` was silent — and silent still
+    # when the two bodies DIFFERED, which leaves the immutable record of a
+    # closed round ambiguous with nothing saying so. `setdefault(k, f)` was the
+    # cause: the second file was never compared against the first.
+    for k, files in sorted(on_disk.items()):
+        if len(files) < 2:
+            continue
+        vid = "v" + ".".join(str(n) for n in k)
+        bodies = [read(f) for f in files]
+        if any(b is None for b in bodies):
+            verdict = "one of them cannot be read, so which is the record cannot be judged here"
+        elif len(set(bodies)) == 1:
+            verdict = "their bodies are byte-identical — keep one and delete the rest"
+        else:
+            verdict = ("their bodies DIFFER, so the round's immutable record is ambiguous — keep "
+                       "the one the close wrote and delete the rest")
+        warns.append(f"prd: {', '.join(rel(f) for f in files)} name the same round `{vid}` — a "
+                     f"round has exactly ONE file (contracts §Fixed paths); {verdict}")
+
+    def found_phrase(have):
+        """What the file that ALREADY exists for a round records about it — the
+        half of a finding that decides whether a `## v` section elsewhere is a
+        copy or a contradiction. Returns (kind, phrase)."""
+        kind = _prd_version_file_kind(read(have))
+        if kind == "section":
+            return kind, f"{rel(have)} already holds that round's section"
+        if kind == "stub":
+            return kind, (f"{rel(have)} is the one-line stub registering that round as having "
+                          f"written NO PRD section")
+        if kind == "snapshot":
+            return kind, f"{rel(have)} holds a whole-document snapshot of that round"
+        return kind, f"{rel(have)} is that round's file and is neither a section nor a stub"
 
     def home_clause(v, here):
         """Where `## v` belongs, and — when a file for that round already
-        exists — that this is the copy-not-move shape, which is the half of the
-        repair a reader otherwise misses."""
+        exists — WHICH of two shapes this is. A section in that file makes this
+        one a leftover copy (the close copied instead of moving); anything else
+        there — a stub above all — makes the two records contradict: the file
+        says the round wrote no section, and here one is. The remedies differ,
+        and naming the copy remedy against a stub cost the only copy of a
+        section (T-657 re-grill, 2026-09-22): "delete it once the two agree
+        byte for byte" can never come true against a one-line stub, and a
+        literal reader deletes anyway."""
         k = _version_id_canon(v)
-        have = on_disk.get(k) if k is not None else None
+        files = on_disk.get(k) if k is not None else None
+        have = files[0] if files else None
         if have is not None and rel(have) != here:
-            return (f"{rel(have)} already holds that round — a close MOVES the section, so this "
-                    f"one is a leftover copy: delete it from {here} once the two agree byte for byte")
+            kind, phrase = found_phrase(have)
+            if kind == "section":
+                return (f"{rel(have)} already holds that round — a close MOVES the section, so this "
+                        f"one is a leftover copy: delete it from {here} once the two agree byte for byte")
+            return (f"{phrase}, so the two records contradict — settle it at that path: if this IS "
+                    f"the round's section, it becomes the ENTIRE body of {rel(have)}, moved there "
+                    f"byte-identical over what the file holds now; if {rel(have)} is right, {here} "
+                    f"is not where that round is recorded")
         return (f"its home is docs/prd/versions/{v}.md, the ENTIRE body of that file "
                 f"(contracts §Fixed paths); move it byte-identical")
 
@@ -6880,6 +6958,21 @@ def prd_layout_warnings(root, st):
                     if seen_open > 1:
                         warns.append(f"prd: {rel(prd_md)}:{ln} repeats the open section `## {v}` — "
                                      f"the working file carries it once (contracts §Fixed paths)")
+                    elif open_key in on_disk:
+                        # The mirror of the copy-not-move shape, silent before
+                        # this branch (T-657 re-grill, 2026-09-22): versions/ is
+                        # the CLOSED record, written at close by MOVING the
+                        # section out of the working file, so a file there for
+                        # a round whose section is still open in PRD.md is one
+                        # round recorded twice. Keyed on the round being in
+                        # BOTH places on purpose: between close and Define,
+                        # po-state still names the round just closed while
+                        # PRD.md no longer carries it — legal, and silent here.
+                        _, phrase = found_phrase(on_disk[open_key][0])
+                        warns.append(f"prd: `## {v}` is the OPEN section in {rel(prd_md)}:{ln} and "
+                                     f"{phrase} — docs/prd/versions/ is the CLOSED record, written at "
+                                     f"close by MOVING the section out of the working file; while the "
+                                     f"round is open it lives in {rel(prd_md)} alone (contracts §Fixed paths)")
                     continue
                 warns.append(f"prd: closed section `## {v}` found in {rel(prd_md)}:{ln} — the working "
                              f"file is the standing head + the ONE open section, which "
@@ -6931,9 +7024,8 @@ def prd_layout_warnings(root, st):
                              f"per file; `## {v}` belongs in docs/prd/versions/{v}.md")
             continue
         # no `## v` heading and not a snapshot → a registered-absence stub:
-        # ONE line, no `## `.
-        body = [l for l in text.split("\n") if l.strip()]
-        if len(body) != 1 or any(l.startswith("## ") for l in body):
+        # ONE line, no `## ` (the rule itself: `_prd_version_file_kind`).
+        if _prd_version_file_kind(text) != "stub":
             warns.append(f"prd: {here} is neither a `## {own}` section nor a stub — a registered "
                          f"absence is ONE line (`no PRD section — <decision>`) with no `## ` heading; "
                          f"a section starts with `## {own}` on line 1")
