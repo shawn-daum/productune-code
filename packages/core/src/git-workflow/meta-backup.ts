@@ -98,6 +98,20 @@ export type BackupPushReason = 'stage-boundary' | 'daily'
 export interface MetaBackupDecision {
   push: boolean
   reason: BackupPushReason | BackupSkipReason
+  /**
+   * True when this skip should also CLEAR a standing `last_ok: false` without
+   * a network attempt (T-643): `aheadCount <= 0` means every commit reachable
+   * from local HEAD is already reachable from the remote-tracking ref — the
+   * thing a past failed push was trying to land is already there, landed by
+   * some other route (a manual `prdt meta push`, another session, a direct
+   * terminal push — all of which write the SAME shared tracking ref this repo
+   * reads). A remote that is still genuinely behind never reaches this branch:
+   * unreflected local commits keep `aheadCount` > 0, so that case keeps
+   * retrying and failing (or succeeding) on its own merits via the normal push
+   * path below — this flag never fires for it. Only meaningful when `push` is
+   * `false` and `reason` is `'up-to-date'`.
+   */
+  clearsFailure?: boolean
 }
 
 export interface MetaBackupTickResult {
@@ -183,7 +197,10 @@ export interface BackupDecisionInput {
 
 /**
  * Stage boundary + once daily, as ONE decision so the pair cannot double-fire:
- *  1. nothing ahead → skip, no network at all;
+ *  1. nothing ahead → skip, no network at all — and if a past attempt is
+ *     latched as failed, that failure clears here too (T-643): nothing ahead
+ *     of the remote proves nothing of ours is missing from it, whatever route
+ *     got it there;
  *  2. the last attempt failed less than the backoff ago → skip;
  *  3. stage differs from the stage recorded at the last successful push →
  *     push (`stage-boundary`) — this also records today's date, so
@@ -191,7 +208,11 @@ export interface BackupDecisionInput {
  *  5. otherwise a new UTC day → push (`daily`).
  */
 export function decideBackup(state: MetaBackupState, input: BackupDecisionInput): MetaBackupDecision {
-  if (input.aheadCount <= 0) return { push: false, reason: 'up-to-date' }
+  if (input.aheadCount <= 0) {
+    return state.last_ok === false
+      ? { push: false, reason: 'up-to-date', clearsFailure: true }
+      : { push: false, reason: 'up-to-date' }
+  }
   if (state.last_ok === false && state.last_attempt_at) {
     const t = Date.parse(state.last_attempt_at)
     if (Number.isFinite(t) && input.nowMs - t < BACKUP_RETRY_BACKOFF_MS) {
@@ -322,6 +343,21 @@ export async function metaBackupTick(
     aheadCount: ahead,
   })
   if (!decision.push) {
+    if (decision.clearsFailure) {
+      // T-643: nothing ahead of the remote-tracking ref, but the latch still
+      // says the last attempt failed — that attempt's target is already on
+      // the remote (pushed by another route through this same git-dir, so
+      // the tracking ref already reflects it), so the failure it recorded no
+      // longer describes reality. Only `last_ok`/`last_error` move; NOT a
+      // push, so `last_push_at` / `last_push_date` / `last_pushed_stage` /
+      // `last_pushed_sha` (this tool's own record of the last push it made)
+      // stay untouched — that is what still tells "we pushed it" apart from
+      // "it became current some other way" (last_pushed_sha vs the current
+      // tracking ref), so no extra field is needed for that distinction.
+      const cleared: MetaBackupState = { ...state, last_ok: true }
+      delete cleared.last_error
+      writeMetaBackupState(projectDir, cleared)
+    }
     return { attempted: false, pushed: false, reason: decision.reason, remote, branch, ahead }
   }
 
