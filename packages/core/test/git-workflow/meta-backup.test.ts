@@ -132,6 +132,22 @@ describe('decideBackup — stage boundary + once daily, no double fire', () => {
     expect(decideBackup(st, { stage: 'build', todayUtc: day1, nowMs: t0 + 5 * 60_000, aheadCount: 2 }).reason).toBe('backoff')
     expect(decideBackup(st, { stage: 'build', todayUtc: day1, nowMs: t0 + BACKUP_RETRY_BACKOFF_MS + 1, aheadCount: 2 }).push).toBe(true)
   })
+
+  // T-643: the backup became current by another route (a manual `prdt meta
+  // push`, another session, a direct terminal push — all land on the SAME
+  // shared tracking ref this repo reads) while a past attempt is still
+  // latched as failed. Nothing ahead of the remote means whatever that
+  // attempt was trying to land is already there, so the latch clears.
+  test('nothing ahead but the latch says failed → clears too (the thing that was failing already resolved)', () => {
+    const st: MetaBackupState = { last_pushed_stage: 'build', last_push_date: '2026-09-10', last_ok: false, last_attempt_at: new Date(t0).toISOString(), last_error: 'boom' }
+    expect(decideBackup(st, { stage: 'build', todayUtc: day1, nowMs: t0, aheadCount: 0 })).toEqual({ push: false, reason: 'up-to-date', clearsFailure: true })
+  })
+
+  test('nothing ahead and no failure latched → clearsFailure is absent (nothing to clear)', () => {
+    expect(decideBackup({}, { stage: 'build', todayUtc: day1, nowMs: t0, aheadCount: 0 }).clearsFailure).toBeUndefined()
+    const ok: MetaBackupState = { last_ok: true }
+    expect(decideBackup(ok, { stage: 'build', todayUtc: day1, nowMs: t0, aheadCount: 0 }).clearsFailure).toBeUndefined()
+  })
 })
 
 // ── backupPushArgs: the argv shape is the scope ───────────────────────────────
@@ -399,6 +415,38 @@ test('failure: unreachable remote is recorded with git\'s words, backs off, and 
   const st2 = readMetaBackupState(projectDir)
   expect(st2.last_ok).toBe(true)
   expect(st2.last_error).toBeUndefined()
+})
+
+test('T-643: nothing ahead but the latch says failed → clears without a network attempt (backup became current by another route)', async () => {
+  const backup = makeBare('backup')
+  metaGitSync(['remote', 'add', 'backup', backup])
+  expect((await metaBackupTick(projectDir, { now: new Date('2026-09-21T02:00:00Z') })).pushed).toBe(true)
+  const goodState = readMetaBackupState(projectDir)
+
+  // Latch a failure as if a prior tick had raced another push (through this
+  // same git-dir: a manual `prdt meta push`, another session, a direct
+  // terminal push) and lost — the ticket's own repro. The tracking ref is
+  // already current (the fixture never diverged it), matching the "nothing
+  // ahead" fixture the acceptance calls for.
+  fs.writeFileSync(metaBackupStatePath(projectDir), JSON.stringify({
+    ...goodState,
+    last_attempt_at: '2026-09-21T07:30:00.000Z',
+    last_ok: false,
+    last_error: "remote rejected main -> main (cannot lock ref 'refs/heads/main': is at deadbeef but expected c0ffee00)",
+  }))
+
+  const tick = await metaBackupTick(projectDir, { now: new Date('2026-09-21T09:00:00Z') })
+  expect(tick).toMatchObject({ attempted: false, reason: 'up-to-date', ahead: 0 })
+
+  const st = readMetaBackupState(projectDir)
+  expect(st.last_ok).toBe(true)
+  expect(st.last_error).toBeUndefined()
+  // Not a push this tick — the last actual push's own bookkeeping is
+  // untouched, which is what still lets `last_pushed_sha` (vs the current
+  // tracking ref) tell "we pushed it" apart from "it became current some
+  // other way"; no separate field earns its keep for that.
+  expect(st.last_push_at).toBe(goodState.last_push_at)
+  expect(st.last_pushed_sha).toBe(goodState.last_pushed_sha)
 })
 
 test('never force: a diverged backup remote rejects the push and keeps its own history', async () => {
