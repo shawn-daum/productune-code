@@ -27,7 +27,6 @@ import os from 'os'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { atomicWriteFileSync } from '../fs/atomic-write'
 import {
   stateDir,
   STATE_DIR_NAME,
@@ -282,7 +281,9 @@ export function writeMetaAllowlist(projectDir: string, allowlist: string[]): voi
 
   const fp = configPath(projectDir)
   fs.mkdirSync(path.dirname(fp), { recursive: true })
-  atomicWriteFileSync(fp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
+  const tmp = fp + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, fp)
 }
 
 // ── info/exclude propagation ──────────────────────────────────────────────────

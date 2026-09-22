@@ -2,7 +2,6 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { stateDir } from '../state/project-kind'
-import { atomicWriteFileSync } from '../fs/atomic-write'
 
 export interface GitRules {
   /**
@@ -100,7 +99,9 @@ export function saveRules(projectDir: string, rules: GitRules): void {
   const dir = path.dirname(rulesPath)
   fs.mkdirSync(dir, { recursive: true })
 
-  atomicWriteFileSync(rulesPath, JSON.stringify(rules, null, 2), { mode: 0o644 })
+  const tmp = rulesPath + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(rules, null, 2), { mode: 0o644 })
+  fs.renameSync(tmp, rulesPath)
 
   // Invalidate cache so next loadRules re-reads from fs
   cache.delete(projectDir)
@@ -124,7 +125,9 @@ export function getDefault(): GitRules {
   // First-run: auto-create
   const dir = path.dirname(GLOBAL_DEFAULT_PATH)
   fs.mkdirSync(dir, { recursive: true })
-  atomicWriteFileSync(GLOBAL_DEFAULT_PATH, JSON.stringify(DEFAULT_RULES, null, 2), { mode: 0o644 })
+  const tmp = GLOBAL_DEFAULT_PATH + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(DEFAULT_RULES, null, 2), { mode: 0o644 })
+  fs.renameSync(tmp, GLOBAL_DEFAULT_PATH)
 
   return { ...DEFAULT_RULES }
 }

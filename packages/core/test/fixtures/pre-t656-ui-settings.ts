@@ -1,7 +1,6 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { atomicWriteFileSync } from '../fs/atomic-write'
 
 export type UiLanguage = 'en' | 'ko'
 
@@ -148,7 +147,9 @@ export function saveSettings(settings: UiSettings): void {
   const dir = path.dirname(SETTINGS_PATH)
   fs.mkdirSync(dir, { recursive: true })
 
-  atomicWriteFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), { mode: 0o600 })
+  const tmp = SETTINGS_PATH + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, SETTINGS_PATH)
 }
 
 export function getUiLanguage(): UiLanguage {

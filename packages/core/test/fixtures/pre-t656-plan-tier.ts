@@ -1,7 +1,6 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { atomicWriteFileSync } from '../fs/atomic-write'
 
 /**
  * Plan tier (T-423) — the operator's Claude subscription tier, per USER
@@ -81,5 +80,7 @@ export function hasPlanTierSet(homeDir: string = os.homedir()): boolean {
 export function setPlanTier(tier: PlanTier, homeDir: string = os.homedir()): void {
   const p = planTierPath(homeDir)
   fs.mkdirSync(path.dirname(p), { recursive: true })
-  atomicWriteFileSync(p, tier + '\n', { mode: 0o600 })
+  const tmp = p + '.tmp'
+  fs.writeFileSync(tmp, tier + '\n', { mode: 0o600 })
+  fs.renameSync(tmp, p)
 }

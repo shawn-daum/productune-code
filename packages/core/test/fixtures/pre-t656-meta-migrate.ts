@@ -35,7 +35,6 @@ import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { codeRoot, codeDirName, stateDir, CODE_DIR_DEFAULT } from '../state/project-kind'
-import { atomicWriteFileSync } from '../fs/atomic-write'
 import {
   initMetaRepo,
   commitMeta,
@@ -679,7 +678,9 @@ function recordCodeDir(projectDir: string, codeDir: string): void {
     /* missing / corrupt → fresh object */
   }
   cfg.code = { ...(cfg.code && typeof cfg.code === 'object' ? cfg.code : {}), dir: codeDir }
-  atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
+  const tmp = cfgPath + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n')
+  fs.renameSync(tmp, cfgPath)
 }
 
 /**

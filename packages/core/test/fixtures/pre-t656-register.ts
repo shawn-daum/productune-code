@@ -1,7 +1,6 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { atomicWriteFileSync } from '../fs/atomic-write'
 
 /**
  * The register (T-586) — how the PO speaks to the operator, as a named OBJECT
@@ -186,5 +185,7 @@ export function writeRegisterKey(key: RegisterKey, value: string | null, homeDir
   }
   if (!placed && v !== '') out.push(`${key}=${v}`)
   fs.mkdirSync(path.dirname(p), { recursive: true })
-  atomicWriteFileSync(p, out.length ? out.join('\n') + '\n' : '', { mode: 0o600 })
+  const tmp = p + '.tmp'
+  fs.writeFileSync(tmp, out.length ? out.join('\n') + '\n' : '', { mode: 0o600 })
+  fs.renameSync(tmp, p)
 }
