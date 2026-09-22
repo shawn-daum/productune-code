@@ -486,3 +486,123 @@ describe.skipIf(!PYTHON3)('PRD layout — findings are violations, not decoratio
     expect(prdLines(out).length).toBeGreaterThanOrEqual(5)
   })
 })
+
+// ── 5. a stub is not a copy, and a remedy has to be reachable ────────────────
+//
+// Measured by a re-grill on 2026-09-22: `PRD.md` holding `## v1.1` while
+// `versions/v1.1.md` is the one-line registered-absence stub was diagnosed
+// "already holds that round … a leftover copy: delete it from docs/prd/PRD.md
+// once the two agree byte for byte". Both halves were wrong. A stub and a
+// section can never agree byte for byte, so the condition never comes true and
+// a literal reader deletes the only copy of the section; and the shape is not
+// a copy at all — a round registered as having written NO section, with a
+// section, is a contradiction between two records.
+describe.skipIf(!PYTHON3)('PRD layout — the finding says WHICH shape it found (T-657 re-grill ⑤)', () => {
+  test('a section whose round is registered ABSENT by a stub is a contradiction, not a leftover copy', () => {
+    setVersion('v1.3')
+    write('docs/prd/PRD.md', HEAD + section('v1.1'))
+    write('docs/prd/versions/v1.1.md', 'no PRD section — docs/wiki/decision--tickets-only.md\n')
+    for (const v of ['v1.1', 'v1.3']) ticketDir(v)
+    const lines = prdLines(doctor())
+    const hit = lines.find((l) => /closed section `## v1\.1`/.test(l) && /docs\/prd\/PRD\.md/.test(l))
+    expect(hit, `no finding for the section in:\n${lines.join('\n')}`).toBeTruthy()
+    expect(hit!).toMatch(/docs\/prd\/versions\/v1\.1\.md/)
+    expect(hit!).toMatch(/stub/)
+    expect(hit!).not.toMatch(/leftover copy/)
+    // the unreachable condition, and the delete-the-only-copy instruction
+    expect(hit!).not.toMatch(/agree byte for byte/)
+  })
+
+  test('the same shape in any other docs/prd file reads the same way', () => {
+    cleanLayout()
+    write('docs/prd/history.md', '# history\n\n' + section('v1.1'))
+    const lines = prdLines(doctor())
+    const hit = lines.find((l) => /docs\/prd\/history\.md/.test(l) && /v1\.1/.test(l))
+    expect(hit, `no finding in:\n${lines.join('\n')}`).toBeTruthy()
+    expect(hit!).toMatch(/stub/)
+    expect(hit!).not.toMatch(/agree byte for byte/)
+  })
+
+  test('a real section on disk is still diagnosed as a leftover copy — the copy half is not lost', () => {
+    cleanLayout()
+    write('docs/prd/PRD.md', HEAD + section('v1.2') + '\n' + section('v1.3'))
+    const hit = prdLines(doctor()).find((l) => /closed section `## v1\.2`/.test(l))
+    expect(hit).toBeTruthy()
+    expect(hit!).toMatch(/leftover copy/)
+    expect(hit!).toMatch(/docs\/prd\/versions\/v1\.2\.md/)
+  })
+})
+
+// ── 6. an open round duplicated into versions/ ───────────────────────────────
+//
+// Measured by the same re-grill: a clean layout plus `versions/v1.3.md`
+// holding the OPEN `## v1.3` section was silent. versions/ is the CLOSED
+// record, written at close by MOVING the section out of the working file — a
+// file there for a round whose section is still open in PRD.md is one round
+// recorded twice, the mirror of the copy-not-move shape.
+describe.skipIf(!PYTHON3)('PRD layout — the open round is not in versions/ yet (T-657 re-grill ⑥)', () => {
+  test('the open section sitting in BOTH PRD.md and versions/ is reported, naming both paths', () => {
+    cleanLayout()
+    write('docs/prd/versions/v1.3.md', section('v1.3'))
+    const lines = prdLines(doctor())
+    const hit = lines.find((l) => /docs\/prd\/versions\/v1\.3\.md/.test(l) && /docs\/prd\/PRD\.md/.test(l))
+    expect(hit, `no open-round duplicate line in:\n${lines.join('\n')}`).toBeTruthy()
+    expect(hit!).toMatch(/v1\.3/)
+  })
+
+  test('a stub for the open round is reported too — it registers as absent a section that is open', () => {
+    cleanLayout()
+    write('docs/prd/versions/v1.3.md', 'no PRD section — decision\n')
+    const lines = prdLines(doctor())
+    const hit = lines.find((l) => /docs\/prd\/versions\/v1\.3\.md/.test(l))
+    expect(hit, `no finding in:\n${lines.join('\n')}`).toBeTruthy()
+    expect(hit!).toMatch(/docs\/prd\/PRD\.md/)
+  })
+
+  // The legal window: po-state still names the round just closed, and PRD.md
+  // no longer carries its section. Keyed on BOTH places holding the round, so
+  // this state stays silent.
+  test('between close and Define — the file exists, PRD.md no longer holds the section — is silent', () => {
+    cleanLayout()
+    write('docs/prd/versions/v1.3.md', section('v1.3'))
+    write('docs/prd/PRD.md', HEAD)
+    expect(prdLines(doctor())).toEqual([])
+  })
+})
+
+// ── 7. one round, exactly one file ───────────────────────────────────────────
+//
+// Measured by the same re-grill: `versions/v1.md` and `versions/v1.0.md` both
+// holding `## v1` was silent, and silent still when the two bodies DIFFERED —
+// the immutable record of a closed round left ambiguous with nothing saying
+// so. Cause: the canonical key was filled with `setdefault`, so the second
+// file was never compared against the first.
+describe.skipIf(!PYTHON3)('PRD layout — a round has exactly one file (T-657 re-grill ⑦)', () => {
+  test('two files naming the same round are reported, naming both paths', () => {
+    cleanLayout()
+    write('docs/prd/versions/v1.md', section('v1'))
+    write('docs/prd/versions/v1.0.md', section('v1'))
+    ticketDir('v1')
+    const lines = prdLines(doctor())
+    const hit = lines.find((l) => /docs\/prd\/versions\/v1\.md/.test(l) && /docs\/prd\/versions\/v1\.0\.md/.test(l))
+    expect(hit, `no duplicate-file line in:\n${lines.join('\n')}`).toBeTruthy()
+  })
+
+  test('when the two bodies differ the finding says the record is ambiguous', () => {
+    cleanLayout()
+    write('docs/prd/versions/v1.md', section('v1'))
+    write('docs/prd/versions/v1.0.md', section('v1') + '\nand another paragraph.\n')
+    ticketDir('v1')
+    const lines = prdLines(doctor())
+    const hit = lines.find((l) => /docs\/prd\/versions\/v1\.md/.test(l) && /docs\/prd\/versions\/v1\.0\.md/.test(l))
+    expect(hit, `no duplicate-file line in:\n${lines.join('\n')}`).toBeTruthy()
+    expect(hit!).toMatch(/DIFFER/)
+  })
+
+  test('one file per round stays silent — v1.md and v1.1.md are different rounds', () => {
+    cleanLayout()
+    write('docs/prd/versions/v1.md', section('v1'))
+    ticketDir('v1')
+    expect(prdLines(doctor())).toEqual([])
+  })
+})
