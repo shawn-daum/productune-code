@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -6294,35 +6294,70 @@ def test_setup_rebuild_warnings(root):
     return warns
 
 
-# ── Artifacts — version buckets + derived manifest (T-512) ────────────────────
-# Layout: docs/artifacts/<version>/[archive/]<slug>.<ext> beside a manifest.json
-# the CLI writes. The manifest is a derived index, so `prdt artifacts sync`
-# rebuilds it from disk and keeps whatever a person set that disk cannot say
-# (ticket, kind, status, lang); doctor reports what the rule cannot place.
-ARTIFACT_BUCKET_RE = re.compile(r"^v\d+\.\d+(?:\.\d+)?$")
+# ── Artifacts — version buckets + ONE derived root manifest (T-512, T-661) ────
+# Layout: docs/artifacts/<version>/[archive/]<slug>.<ext>; the registry is the
+# ONE root docs/artifacts/manifest.json, each entry carrying its `bucket` (user
+# decision 2026-09-18, verbatim "루트에하나" — T-661). The manifest is a derived
+# index, so `prdt artifacts sync` rebuilds it from disk and keeps whatever a
+# person set that disk cannot say (ticket, kind, status, lang — and any key the
+# CLI does not derive, e.g. `note`); doctor reports what the rule cannot place.
+#
+# A bucket is any directory whose name is a version id — the ONE definition
+# T-657 landed (`VERSION_ID_RE` / `_version_id_canon`: 1–3 components, a missing
+# component reads as zero, a name on disk never rewritten). Before T-661 this
+# section kept its own `ARTIFACT_BUCKET_RE = ^v\d+\.\d+(?:\.\d+)?$`, which
+# reported `docs/artifacts/v1/` as "not a version bucket" (measured 2026-09-22).
+#
+# Pre-T-661 shape — `docs/artifacts/<version>/manifest.json`, one per bucket —
+# is REPORTED by `check`/`doctor` and moved by `prdt artifacts migrate`, which a
+# project runs once: every entry of every per-bucket manifest lands in the root
+# file verbatim plus `bucket` = its directory name, then the per-bucket files
+# are removed. `sync` refuses to run while a per-bucket manifest exists, because
+# re-deriving from disk without reading it would drop hand-set values.
+ARTIFACT_MANIFEST_NAME = "manifest.json"
+ARTIFACT_MANIFEST_SCHEMA_V = 2
 ARTIFACT_TICKET_PREFIX_RE = re.compile(r"^(T-(?:[A-Z][A-Z0-9]*-)?\d+)-")
 ARTIFACT_TICKET_ANY_RE = re.compile(r"\bT-(?:[A-Z][A-Z0-9]*-)?\d+\b")
 ARTIFACT_KIND_SUFFIX = (("-mockup", "mockup"), ("-showcase", "mockup"),
                         ("-wireframe", "wireframe"), ("-design-system", "design-system"),
                         ("-spec", "spec"), ("-runsheet", "doc"))
 ARTIFACT_EXTS = (".md", ".mmd", ".mermaid", ".html", ".json", ".excalidraw.json")
+# Keys `sync` derives itself; every OTHER key on a prior entry is carried
+# forward untouched — the preservation rule (contracts/fixed-paths.md) names
+# "the values a person filled", not a closed list.
+ARTIFACT_DERIVED_KEYS = ("bucket", "path", "ticket", "kind", "status", "lang", "added_at")
 
 
 def artifacts_root(root):
     return root / "docs" / "artifacts"
 
 
+def artifact_manifest_path(root):
+    return artifacts_root(root) / ARTIFACT_MANIFEST_NAME
+
+
+def is_artifact_bucket_name(name):
+    """The version-id definition of T-657, and no other (T-661)."""
+    return _version_id_canon(name) is not None
+
+
 def artifact_buckets(root):
     base = artifacts_root(root)
     if not base.is_dir():
         return []
-    return sorted((d for d in base.iterdir()
-                   if d.is_dir() and ARTIFACT_BUCKET_RE.match(d.name)),
-                  key=lambda d: version_key(d.name))
+    return sorted((d for d in base.iterdir() if d.is_dir() and is_artifact_bucket_name(d.name)),
+                  key=lambda d: (_version_id_canon(d.name), d.name))
 
 
-def version_key(v):
-    return tuple(int(n) for n in re.findall(r"\d+", v))
+def legacy_bucket_manifests(root):
+    """Every `<dir>/manifest.json` directly under docs/artifacts/ — the pre-T-661
+    per-bucket shape, in a version bucket or not. Sorted by directory name."""
+    base = artifacts_root(root)
+    if not base.is_dir():
+        return []
+    return sorted((d / ARTIFACT_MANIFEST_NAME for d in base.iterdir()
+                   if d.is_dir() and (d / ARTIFACT_MANIFEST_NAME).is_file()),
+                  key=lambda p: p.parent.name)
 
 
 def artifact_files(bucket):
@@ -6332,7 +6367,7 @@ def artifact_files(bucket):
     archive/<subdir>/… was previously invisible to every check class)."""
     out = []
     for p in sorted(bucket.iterdir(), key=lambda x: x.name):
-        if p.is_file() and not p.name.startswith(".") and p.name != "manifest.json":
+        if p.is_file() and not p.name.startswith(".") and p.name != ARTIFACT_MANIFEST_NAME:
             out.append(p.name)
     arch = bucket / "archive"
     if arch.is_dir():
@@ -6346,29 +6381,38 @@ def artifact_files(bucket):
     return out
 
 
-def read_artifact_manifest(bucket):
-    """(entries keyed by path, error string or None, malformed-entry notes[]).
-    Absent manifest = empty, no error. An entry that is not {path: str, ...} is
-    dropped from the returned dict (it cannot be keyed by path) but never
-    silently — it is named in the third element instead (F4)."""
-    mp = bucket / "manifest.json"
+def _read_manifest_file(mp, need_bucket):
+    """(entries keyed by (bucket, path), error string or None, malformed notes[],
+    present: bool). An entry that is not {path: str, ...} (and, at the root,
+    {bucket: str, ...}) cannot be keyed, so it is dropped from the dict — never
+    silently: it is named in the notes instead (F4). `need_bucket` False reads a
+    pre-T-661 per-bucket file, whose entries take their bucket from the directory."""
     if not mp.is_file():
-        return {}, None, []
+        return {}, None, [], False
     try:
         data = json.loads(mp.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        return {}, f"is unreadable ({e.__class__.__name__})", []
-    entries = data.get("entries")
+        return {}, f"is unreadable ({e.__class__.__name__})", [], True
+    entries = data.get("entries") if isinstance(data, dict) else None
     if not isinstance(entries, list):
-        return {}, "has no `entries` list", []
-    out = {}
-    malformed = []
+        return {}, "has no `entries` list", [], True
+    out, malformed = {}, []
     for i, e in enumerate(entries):
-        if isinstance(e, dict) and isinstance(e.get("path"), str):
-            out[e["path"]] = e
-        else:
+        if not (isinstance(e, dict) and isinstance(e.get("path"), str)):
             malformed.append(f"entry {i} is not {{path: str, ...}} — dropped")
-    return out, None, malformed
+            continue
+        if need_bucket and not isinstance(e.get("bucket"), str):
+            malformed.append(f"entry {i} ({e['path']}) has no `bucket` — dropped")
+            continue
+        bucket = e["bucket"] if need_bucket else mp.parent.name
+        out[(bucket, e["path"])] = e
+    return out, None, malformed, True
+
+
+def read_artifact_manifest(root):
+    """The root manifest: (entries keyed by (bucket, path), error or None,
+    malformed notes[], present). Absent = empty, no error."""
+    return _read_manifest_file(artifact_manifest_path(root), need_bucket=True)
 
 
 def derive_artifact_kind(rel):
@@ -6409,67 +6453,192 @@ def derive_artifact_ticket(root, bucket, rel):
     return None
 
 
-def build_artifact_manifest(root, bucket):
-    """Derive the bucket's manifest, carrying forward every hand-set field."""
-    prior, _, _ = read_artifact_manifest(bucket)
+def _artifact_entry_sort_key(e):
+    return (_version_id_canon(e["bucket"]) or (), e["bucket"], e["path"])
+
+
+def _artifact_entry_canon(bucket, e):
+    """One key order for every writer — the derived seven first, then every
+    other key in its own order, values untouched — so a `sync` right after a
+    `migrate` rewrites nothing."""
+    out = {"bucket": bucket}
+    for k in ARTIFACT_DERIVED_KEYS[1:]:
+        if k in e:
+            out[k] = e[k]
+    for k, v in e.items():
+        if k not in ARTIFACT_DERIVED_KEYS:
+            out[k] = v
+    return out
+
+
+def build_artifact_manifest(root, prior=None):
+    """Derive the root manifest from disk, carrying forward every hand-set field
+    of a prior entry with the same (bucket, path). Entries in bucket order
+    (version order), then path — a shape a static generator reads without the CLI."""
+    if prior is None:
+        prior, _, _, _ = read_artifact_manifest(root)
     entries = []
-    for rel in artifact_files(bucket):
-        old = prior.get(rel, {})
-        archived = rel.startswith("archive/")
-        e = {
-            "path": rel,
-            "ticket": old.get("ticket") if "ticket" in old else derive_artifact_ticket(root, bucket, rel),
-            "kind": old.get("kind") or derive_artifact_kind(rel),
-            "status": "archived" if archived else (old.get("status") or "pending"),
-            "lang": old.get("lang") or "ko",
-        }
-        for k in ("source", "source_hash", "backfilled"):
-            if k in old:
-                e[k] = old[k]
-        e["added_at"] = old.get("added_at") or datetime.fromtimestamp(
-            (bucket / rel).stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z")
-        entries.append(e)
-    return {"schema_v": 1, "version": bucket.name, "entries": entries}
+    for bucket in artifact_buckets(root):
+        for rel in artifact_files(bucket):
+            old = prior.get((bucket.name, rel), {})
+            archived = rel.startswith("archive/")
+            e = {
+                "bucket": bucket.name,
+                "path": rel,
+                "ticket": old.get("ticket") if "ticket" in old else derive_artifact_ticket(root, bucket, rel),
+                "kind": old.get("kind") or derive_artifact_kind(rel),
+                "status": "archived" if archived else (old.get("status") or "pending"),
+                "lang": old.get("lang") or "ko",
+                "added_at": old.get("added_at") or datetime.fromtimestamp(
+                    (bucket / rel).stat().st_mtime, timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+            for k, v in old.items():
+                if k not in ARTIFACT_DERIVED_KEYS:
+                    e[k] = v
+            entries.append(_artifact_entry_canon(bucket.name, e))
+    entries.sort(key=_artifact_entry_sort_key)
+    return {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V, "entries": entries}
+
+
+def write_artifact_manifest(root, data):
+    """True when the file changed. Atomic (temp + replace)."""
+    mp = artifact_manifest_path(root)
+    want = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    if mp.is_file() and mp.read_text(encoding="utf-8") == want:
+        return False
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(mp) + ".tmp")
+    tmp.write_text(want, encoding="utf-8")
+    os.replace(tmp, mp)
+    return True
 
 
 def artifact_placement_warnings(root):
     """Every file under docs/artifacts/ is attributable to a version by its bucket,
-    and registered in that bucket's manifest. Anything the rule cannot place says so."""
+    and registered in the ONE root manifest. Anything the rule cannot place says
+    so — including the pre-T-661 shape, a manifest.json inside a bucket, so a
+    project that has not migrated learns it from the tool (ntf-pm lesson, T-657)."""
     base = artifacts_root(root)
     if not base.is_dir():
         return []
     warns = []
     for p in sorted(base.iterdir(), key=lambda x: x.name):
-        if p.name.startswith("."):
+        if p.name.startswith(".") or p.name == ARTIFACT_MANIFEST_NAME:
             continue
         if p.is_file():
             warns.append(f"artifact: {p.name} sits outside a version bucket — "
                          f"move it under docs/artifacts/<version>/ (contracts §Fixed paths)")
-        elif not ARTIFACT_BUCKET_RE.match(p.name):
+        elif not is_artifact_bucket_name(p.name):
             warns.append(f"artifact: docs/artifacts/{p.name}/ is not a version bucket "
-                         f"(expected v<N>.<m> or v<N>.<m>.<p>)")
-    for bucket in artifact_buckets(root):
+                         f"(expected a version id: v<N>, v<N>.<m> or v<N>.<m>.<p>)")
+    legacy = legacy_bucket_manifests(root)
+    for mp in legacy:
+        warns.append(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest — the "
+                     f"one manifest is docs/artifacts/manifest.json; run `prdt artifacts migrate`")
+    prior, err, malformed, present = read_artifact_manifest(root)
+    if err:
+        warns.append(f"artifact: docs/artifacts/manifest.json {err} — run `prdt artifacts sync`")
+        return warns
+    for m in malformed:
+        warns.append(f"artifact: docs/artifacts/manifest.json {m} — run `prdt artifacts sync`")
+    next_step = "`prdt artifacts migrate`" if legacy else "`prdt artifacts sync`"
+    buckets = artifact_buckets(root)
+    for bucket in buckets:
         for d in sorted(bucket.iterdir(), key=lambda x: x.name):
             if d.is_dir() and d.name != "archive":
                 warns.append(f"artifact: {bucket.name}/{d.name}/ — a bucket holds files "
                              f"plus archive/, no other subdirectory")
-        prior, err, malformed = read_artifact_manifest(bucket)
+        on_disk = set(artifact_files(bucket))
+        registered = {p for (b, p) in prior if b == bucket.name}
+        if not present and on_disk:
+            warns.append(f"artifact: {bucket.name}/ has {len(on_disk)} file(s) and there is no "
+                         f"docs/artifacts/manifest.json — run {next_step}")
+            continue
+        for rel in sorted(on_disk - registered):
+            warns.append(f"artifact: {bucket.name}/{rel} is not registered in "
+                         f"docs/artifacts/manifest.json — run {next_step}")
+    bucket_names = {b.name for b in buckets}
+    for (b, rel) in sorted(prior, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1])):
+        if b not in bucket_names:
+            warns.append(f"artifact: docs/artifacts/manifest.json lists {b}/{rel}, and {b}/ "
+                         f"is not a version bucket on disk")
+        elif rel not in set(artifact_files(base / b)):
+            warns.append(f"artifact: docs/artifacts/manifest.json lists {b}/{rel}, which is not on disk")
+    return warns
+
+
+def _print_stray_artifact_warnings(root):
+    for w in artifact_placement_warnings(root):
+        if "sits outside" in w or "not a version bucket" in w:
+            print(w)
+
+
+def artifacts_migrate(root, dry_run=False):
+    """Move every per-bucket manifest into the root one, losslessly: each entry
+    lands verbatim plus `bucket` = its directory name; nothing is re-derived
+    from disk here (that is `sync`, run next). All-or-nothing: a manifest the
+    move cannot place (a directory that is not a version id, an unreadable
+    file) stops the run before anything is written. Returns (report lines,
+    exit code)."""
+    legacy = legacy_bucket_manifests(root)
+    lines = []
+    if not legacy:
+        lines.append("artifacts: nothing to migrate — no per-bucket manifest.json under docs/artifacts/")
+        return lines, 0
+    blockers = []
+    staged = []  # (dir name, entries keyed by path)
+    for mp in legacy:
+        name = mp.parent.name
+        if not is_artifact_bucket_name(name):
+            blockers.append(f"artifact: {name}/manifest.json sits in a directory that is not a version "
+                            f"bucket — rename {name}/ to a version id first (v<N>, v<N>.<m> or v<N>.<m>.<p>)")
+            continue
+        entries, err, malformed, _ = _read_manifest_file(mp, need_bucket=False)
         if err:
-            warns.append(f"artifact: {bucket.name}/manifest.json {err} — run `prdt artifacts sync`")
+            blockers.append(f"artifact: {name}/manifest.json {err} — fix or remove it first")
             continue
         for m in malformed:
-            warns.append(f"artifact: {bucket.name}/manifest.json {m} — run `prdt artifacts sync`")
-        on_disk = set(artifact_files(bucket))
-        if not prior and on_disk:
-            warns.append(f"artifact: {bucket.name}/ has {len(on_disk)} file(s) and no manifest.json "
-                         f"— run `prdt artifacts sync`")
-            continue
-        for rel in sorted(on_disk - set(prior)):
-            warns.append(f"artifact: {bucket.name}/{rel} is not registered in manifest.json "
-                         f"— run `prdt artifacts sync`")
-        for rel in sorted(set(prior) - on_disk):
-            warns.append(f"artifact: {bucket.name}/manifest.json lists {rel}, which is not on disk")
-    return warns
+            blockers.append(f"artifact: {name}/manifest.json {m} — fix or remove the entry first")
+        staged.append((name, entries))
+    if blockers:
+        lines.extend(blockers)
+        lines.append(f"artifacts: migrate stopped — {len(blockers)} blocker(s), nothing written")
+        return lines, 1
+    prior, err, malformed, present = read_artifact_manifest(root)
+    if err or malformed:
+        for m in ([err] if err else []) + malformed:
+            lines.append(f"artifact: docs/artifacts/manifest.json {m} — fix it first")
+        lines.append("artifacts: migrate stopped — the root manifest is not readable as-is, nothing written")
+        return lines, 1
+    merged = dict(prior)
+    kept = []
+    total = 0
+    for name, entries in staged:
+        n = 0
+        for (b, rel), e in entries.items():
+            if (b, rel) in merged:
+                kept.append(f"artifact: {b}/{rel} is already in docs/artifacts/manifest.json — "
+                            f"the root entry is kept, the per-bucket one dropped")
+                continue
+            merged[(b, rel)] = _artifact_entry_canon(b, e)
+            n += 1
+        total += n
+        lines.append(f"  {name}/manifest.json: {len(entries)} entrie(s) → root")
+    lines.extend(kept)
+    data = {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V,
+            "entries": sorted(merged.values(), key=_artifact_entry_sort_key)}
+    prefix = "[dry-run] " if dry_run else ""
+    lines.append(f"{prefix}artifacts: {len(staged)} per-bucket manifest(s), {total} entrie(s) → "
+                 f"docs/artifacts/manifest.json ({len(data['entries'])} entrie(s)"
+                 f"{f', {len(prior)} already there' if present else ''})")
+    if dry_run:
+        return lines, 0
+    write_artifact_manifest(root, data)
+    for name, _ in staged:
+        os.remove(artifacts_root(root) / name / ARTIFACT_MANIFEST_NAME)
+    lines.append("artifacts: per-bucket manifest.json files removed — next: `prdt artifacts check`, "
+                 "then `prdt artifacts sync` for files the old manifests never registered")
+    return lines, 0
 
 
 def cmd_artifacts(args):
@@ -6480,22 +6649,27 @@ def cmd_artifacts(args):
             print(w)
         print(f"artifacts: {len(warns)} finding(s)")
         sys.exit(1 if warns else 0)
-    # sync — write each bucket's manifest from disk; report what sits outside one.
-    wrote = []
-    for bucket in artifact_buckets(root):
-        want = json.dumps(build_artifact_manifest(root, bucket), indent=2, ensure_ascii=False) + "\n"
-        mp = bucket / "manifest.json"
-        if mp.is_file() and mp.read_text(encoding="utf-8") == want:
-            continue
-        tmp = Path(str(mp) + ".tmp")
-        tmp.write_text(want, encoding="utf-8")
-        os.replace(tmp, mp)
-        wrote.append(bucket.name)
-    print(f"artifacts: manifest written for {', '.join(wrote)}" if wrote
-          else "artifacts: manifests already current")
-    stray = [w for w in artifact_placement_warnings(root) if "sits outside" in w or "not a version bucket" in w]
-    for w in stray:
-        print(w)
+    if args.action == "migrate":
+        lines, code = artifacts_migrate(root, dry_run=getattr(args, "dry_run", False))
+        for l in lines:
+            print(l)
+        sys.exit(code)
+    # sync — write the ONE root manifest from disk; report what sits outside a bucket.
+    legacy = legacy_bucket_manifests(root)
+    if legacy:
+        for mp in legacy:
+            print(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest")
+        sys.exit("artifacts: sync refused — re-deriving from disk would drop the values those "
+                 "files hold; run `prdt artifacts migrate` first")
+    _, err, _, _ = read_artifact_manifest(root)
+    if err:
+        sys.exit(f"artifacts: sync refused — docs/artifacts/manifest.json {err}; fix or remove it first")
+    data = build_artifact_manifest(root)
+    if write_artifact_manifest(root, data):
+        print(f"artifacts: docs/artifacts/manifest.json written ({len(data['entries'])} entrie(s))")
+    else:
+        print("artifacts: manifest already current")
+    _print_stray_artifact_warnings(root)
 
 
 # ── feature seam — docs/features/ ↔ ticket `feature:` values (T-548/T-547) ────
@@ -8826,9 +9000,13 @@ def main():
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
     p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
     p.set_defaults(fn=cmd_tickets)
-    p = sub.add_parser("artifacts", help="sync (write each docs/artifacts/<version>/manifest.json from disk) "
-                                         "| check (report artifacts the bucket rule cannot place; exit 1 on findings)")
-    p.add_argument("action", choices=("sync", "check"))
+    p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
+                                         "| check (report artifacts the bucket rule cannot place, and a "
+                                         "manifest.json inside a bucket; exit 1 on findings) "
+                                         "| migrate (move every per-bucket manifest.json into the root one, "
+                                         "losslessly — run once per project; --dry-run prints the plan; T-661)")
+    p.add_argument("action", choices=("sync", "check", "migrate"))
+    p.add_argument("--dry-run", action="store_true", help="migrate: print what would move, write nothing")
     p.set_defaults(fn=cmd_artifacts)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)

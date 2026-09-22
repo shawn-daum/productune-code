@@ -3,8 +3,11 @@
  * (mirrors prdt-doctor-meta-drift.test.ts).
  *
  * Applies [[decision--artifact-versioning]]: artifacts live in
- * docs/artifacts/<version>/ beside a manifest.json the CLI derives, with
- * superseded drafts under archive/.
+ * docs/artifacts/<version>/ with superseded drafts under archive/, registered
+ * in the ONE root docs/artifacts/manifest.json the CLI derives, each entry
+ * carrying its `bucket` (T-661, user decision 2026-09-18 "루트에하나"). The
+ * pre-T-661 shape — a manifest.json inside each bucket — is reported by
+ * check + doctor (§13) and moved losslessly by `prdt artifacts migrate` (§14).
  *
  * Root cause this guards (T-512): the layout existed in GUI code but nothing
  * WROTE it, so v0.7~v1.7 registered zero artifacts while 15 files piled up flat
@@ -55,15 +58,27 @@ function artifact(rel: string, body: string): void {
   fs.writeFileSync(abs, body)
 }
 
-function manifest(version: string): any {
-  return JSON.parse(fs.readFileSync(
-    path.join(projectDir, 'docs', 'artifacts', version, 'manifest.json'), 'utf-8'))
+const ROOT_MANIFEST = () => path.join(projectDir, 'docs', 'artifacts', 'manifest.json')
+
+function manifest(): any {
+  return JSON.parse(fs.readFileSync(ROOT_MANIFEST(), 'utf-8'))
+}
+
+function writeManifest(m: any): void {
+  fs.writeFileSync(ROOT_MANIFEST(), JSON.stringify(m, null, 2) + '\n')
 }
 
 function entry(version: string, relPath: string): any {
-  const hit = manifest(version).entries.find((e: any) => e.path === relPath)
+  const hit = manifest().entries.find((e: any) => e.bucket === version && e.path === relPath)
   if (!hit) throw new Error(`no manifest entry for ${version}/${relPath}`)
   return hit
+}
+
+/** A pre-T-661 per-bucket manifest, written as the old CLI wrote it. */
+function legacyManifest(version: string, entries: any[]): void {
+  const abs = path.join(projectDir, 'docs', 'artifacts', version, 'manifest.json')
+  fs.mkdirSync(path.dirname(abs), { recursive: true })
+  fs.writeFileSync(abs, JSON.stringify({ schema_v: 1, version, entries }, null, 2) + '\n')
 }
 
 function ticketFile(id: string, version: string): void {
@@ -101,7 +116,7 @@ describe('T-512 artifacts live in version buckets', () => {
     sync()
     artifact('v1.6/late-arrival.md', '# late\n')
     const r = check()
-    expect(r.out).toContain('v1.6/late-arrival.md is not registered in manifest.json')
+    expect(r.out).toContain('v1.6/late-arrival.md is not registered in docs/artifacts/manifest.json')
     expect(r.code).toBe(1)
   })
 
@@ -109,7 +124,7 @@ describe('T-512 artifacts live in version buckets', () => {
     artifact('v1.6/probe.md', '# probe\n')
     sync()
     fs.rmSync(path.join(projectDir, 'docs', 'artifacts', 'v1.6', 'probe.md'))
-    expect(check().out).toContain('manifest.json lists probe.md, which is not on disk')
+    expect(check().out).toContain('manifest.json lists v1.6/probe.md, which is not on disk')
   })
 
   test('§4 a directory that is not a version bucket is reported', () => {
@@ -124,7 +139,7 @@ describe('T-512 artifacts live in version buckets', () => {
 
   test('§5b a bucket holding files with no manifest at all is reported', () => {
     artifact('v1.6/probe.md', '# probe\n')
-    expect(check().out).toContain('v1.6/ has 1 file(s) and no manifest.json')
+    expect(check().out).toContain('v1.6/ has 1 file(s) and there is no docs/artifacts/manifest.json')
   })
 
   // ── §6 only now is a clean run meaningful ──────────────────────────────────
@@ -145,18 +160,19 @@ describe('T-512 artifacts live in version buckets', () => {
   test('§7 sync preserves hand-set attribution disk cannot derive', () => {
     artifact('v1.7/governor-wide-sample.md', '# sample\n')
     sync()
-    const m = manifest('v1.7')
+    const m = manifest()
     m.entries[0].ticket = 'T-491'
     m.entries[0].status = 'approved'
     m.entries[0].kind = 'spec'
-    fs.writeFileSync(path.join(projectDir, 'docs', 'artifacts', 'v1.7', 'manifest.json'),
-      JSON.stringify(m, null, 2) + '\n')
+    m.entries[0].note = 'hand-written, a key the CLI never derives' // real: 2 entries on this machine carry `note`
+    writeManifest(m)
     artifact('v1.7/second.md', '# second\n') // force a re-derive
     sync()
     const e = entry('v1.7', 'governor-wide-sample.md')
     expect(e.ticket).toBe('T-491')
     expect(e.status).toBe('approved')
     expect(e.kind).toBe('spec')
+    expect(e.note).toBe('hand-written, a key the CLI never derives')
   })
 
   test('§8 archive/ entries register as archived under an archive/ path', () => {
@@ -209,7 +225,7 @@ describe('T-512 artifacts live in version buckets', () => {
     sync()
     artifact('v1.6/archive/sub/hidden.md', '# hidden\n')
     const r = check()
-    expect(r.out).toContain('v1.6/archive/sub/hidden.md is not registered in manifest.json')
+    expect(r.out).toContain('v1.6/archive/sub/hidden.md is not registered in docs/artifacts/manifest.json')
     expect(r.code).toBe(1)
     sync()
     const e = entry('v1.6', 'archive/sub/hidden.md')
@@ -217,16 +233,26 @@ describe('T-512 artifacts live in version buckets', () => {
     expect(check().code).toBe(0)
   })
 
-  test('§11 a bare v<N> (no minor) is not accepted as a version bucket (F3)', () => {
-    // ARTIFACT_BUCKET_RE previously matched a bare major with 0 dots, so a typo
-    // bucket like v1/ settled in as if it were legal and `sync` wrote it a
-    // manifest — contradicting both the warning text and contracts.md's own
-    // v<N>.<m> / v<N>.<m>.<p> form.
+  test('§11 a bucket name is a version id — v1 · v1.2 · v1.2.3 all buckets, v1.2.3.4 and v1.x not (T-661 / T-657)', () => {
+    // Flipped from T-512's F3 by T-661 acceptance line 8: T-657 fixed the ONE
+    // version-id definition (1–3 components, a missing one reads as zero) and
+    // the bucket reader now uses it instead of its own `^v\d+\.\d+(?:\.\d+)?$`,
+    // which reported docs/artifacts/v1/ as "not a version bucket" (measured
+    // 2026-09-22). The name on disk is never rewritten: the entry says `v1`.
     artifact('v1/note.md', '# n\n')
+    artifact('v1.2/note.md', '# n\n')
+    artifact('v1.2.3/note.md', '# n\n')
+    artifact('v1.2.3.4/note.md', '# n\n')
+    artifact('v1.x/note.md', '# n\n')
     const r = check()
-    expect(r.out).toContain('docs/artifacts/v1/ is not a version bucket')
-    expect(r.code).toBe(1)
+    expect(r.out).not.toContain('docs/artifacts/v1/ is not a version bucket')
+    expect(r.out).not.toContain('docs/artifacts/v1.2/ is not a version bucket')
+    expect(r.out).not.toContain('docs/artifacts/v1.2.3/ is not a version bucket')
+    expect(r.out).toContain('docs/artifacts/v1.2.3.4/ is not a version bucket')
+    expect(r.out).toContain('docs/artifacts/v1.x/ is not a version bucket')
     sync()
+    expect(manifest().entries.map((e: any) => e.bucket)).toEqual(['v1', 'v1.2', 'v1.2.3'])
+    expect(entry('v1', 'note.md').bucket).toBe('v1')
     expect(fs.existsSync(path.join(projectDir, 'docs', 'artifacts', 'v1', 'manifest.json'))).toBe(false)
   })
 
@@ -237,12 +263,117 @@ describe('T-512 artifacts live in version buckets', () => {
     // malformed shape is surfaced instead of disappearing.
     artifact('v1.6/probe.md', '# probe\n')
     sync()
-    const mp = path.join(projectDir, 'docs', 'artifacts', 'v1.6', 'manifest.json')
-    const m = JSON.parse(fs.readFileSync(mp, 'utf-8'))
+    const m = manifest()
     m.entries.push({ note: 'hand-added, wrong shape — no path key' })
-    fs.writeFileSync(mp, JSON.stringify(m, null, 2) + '\n')
+    m.entries.push({ path: 'no-bucket.md' })
+    writeManifest(m)
     const r = check()
-    expect(r.out).toContain('v1.6/manifest.json entry 1 is not {path: str, ...} — dropped')
+    expect(r.out).toContain('docs/artifacts/manifest.json entry 1 is not {path: str, ...} — dropped')
+    expect(r.out).toContain('docs/artifacts/manifest.json entry 2 (no-bucket.md) has no `bucket` — dropped')
+    expect(r.code).toBe(1)
+  })
+
+  // ── T-661: ONE manifest at the root ─────────────────────────────────────────
+
+  test('§13 the pre-T-661 shape (manifest.json inside a bucket) is a failure for check AND doctor, and sync refuses', () => {
+    // ntf-pm lesson (T-657): a project that has not migrated learns it from
+    // the tool, not from a person opening the file. Old shape, exactly as the
+    // pre-T-661 CLI wrote it — no root manifest at all.
+    artifact('v1.6/probe.md', '# probe\n')
+    legacyManifest('v1.6', [{ path: 'probe.md', ticket: null, kind: 'doc', status: 'pending', lang: 'ko', added_at: '2026-08-01T00:00:00Z' }])
+    const r = check()
+    expect(r.out).toContain('v1.6/manifest.json is a per-bucket manifest')
+    expect(r.out).toContain('run `prdt artifacts migrate`')
+    expect(r.code).toBe(1)
+    const d = doctor()
+    expect(d).toContain('v1.6/manifest.json is a per-bucket manifest')
+    // sync would re-derive from disk without reading the old file — refused,
+    // the old file untouched, no root manifest written.
+    const s = sync()
+    expect(s.code).not.toBe(0)
+    expect(s.out).toContain('sync refused')
+    expect(fs.existsSync(path.join(projectDir, 'docs', 'artifacts', 'v1.6', 'manifest.json'))).toBe(true)
+    expect(fs.existsSync(ROOT_MANIFEST())).toBe(false)
+  })
+
+  test('§14 migrate merges every per-bucket manifest into the root one losslessly, then check is clean', () => {
+    // Three buckets in the old shape, with every field class the 29 real
+    // manifests carry (measured 2026-09-22: path · ticket · kind · status ·
+    // lang · added_at on all 227 entries, `backfilled` on 83, `note` on 2),
+    // hand-set values a re-derive would NOT produce, and one archived entry.
+    const v16 = [
+      { path: 'probe.md', ticket: 'T-491', kind: 'spec', status: 'approved', lang: 'en', added_at: '2026-08-01T00:00:00Z', note: 'hand note' },
+      { path: 'archive/old.md', ticket: null, kind: 'doc', status: 'archived', lang: 'ko', added_at: '2026-07-01T00:00:00Z', backfilled: true },
+    ]
+    const v17 = [{ path: 'two.html', ticket: 'T-9', kind: 'mockup', status: 'pending', lang: 'ko', added_at: '2026-08-02T00:00:00Z' }]
+    const v1 = [{ path: 'short-id.md', ticket: null, kind: 'doc', status: 'pending', lang: 'ko', added_at: '2026-08-03T00:00:00Z' }]
+    artifact('v1.6/probe.md', '# probe\n')
+    artifact('v1.6/archive/old.md', '# old\n')
+    artifact('v1.7/two.html', '<title>two</title>')
+    artifact('v1/short-id.md', '# short\n')
+    legacyManifest('v1.6', v16)
+    legacyManifest('v1.7', v17)
+    legacyManifest('v1', v1)
+    const before = [...v1.map((e) => ({ bucket: 'v1', ...e })), ...v16.map((e) => ({ bucket: 'v1.6', ...e })), ...v17.map((e) => ({ bucket: 'v1.7', ...e }))]
+
+    // dry-run: the plan, nothing written
+    const dry = runPrdt(['artifacts', 'migrate', '--dry-run'])
+    expect(dry.code).toBe(0)
+    expect(dry.out).toContain('[dry-run] artifacts: 3 per-bucket manifest(s), 4 entrie(s)')
+    expect(fs.existsSync(ROOT_MANIFEST())).toBe(false)
+
+    const r = runPrdt(['artifacts', 'migrate'])
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('3 per-bucket manifest(s), 4 entrie(s) → docs/artifacts/manifest.json (4 entrie(s))')
+    const m = manifest()
+    expect(m.schema_v).toBe(2)
+    // entry count and every field value identical; `bucket` = the directory name
+    expect(m.entries.length).toBe(before.length)
+    const byKey = (a: any, b: any) => `${a.bucket}/${a.path}`.localeCompare(`${b.bucket}/${b.path}`)
+    expect([...m.entries].sort(byKey)).toEqual([...before].sort(byKey)) // order-free: migrate sorts by bucket (version order) then path
+    for (const v of ['v1', 'v1.6', 'v1.7']) {
+      expect(fs.existsSync(path.join(projectDir, 'docs', 'artifacts', v, 'manifest.json'))).toBe(false)
+    }
+    expect(check().code).toBe(0)
+    expect(doctor()).not.toContain('artifact:') // the fixture's verdict carries unrelated machine checks; the artifact family is silent
+    // a second run has nothing to do; sync after migrate preserves every moved value
+    expect(runPrdt(['artifacts', 'migrate']).out).toContain('nothing to migrate')
+    sync()
+    expect([...manifest().entries].sort(byKey)).toEqual([...before].sort(byKey))
+  })
+
+  test('§14b migrate is all-or-nothing: a manifest in a non-bucket directory stops the run before any write', () => {
+    // real: paepyeong/docs/artifacts/paepyeong-v1/manifest.json (2026-09-22)
+    artifact('v1.6/probe.md', '# probe\n')
+    legacyManifest('v1.6', [{ path: 'probe.md', ticket: null, kind: 'doc', status: 'pending', lang: 'ko', added_at: '2026-08-01T00:00:00Z' }])
+    artifact('paepyeong-v1/x.md', '# x\n')
+    legacyManifest('paepyeong-v1', [{ path: 'x.md', ticket: null, kind: 'doc', status: 'pending', lang: 'ko', added_at: '2026-08-01T00:00:00Z' }])
+    const r = runPrdt(['artifacts', 'migrate'])
+    expect(r.code).toBe(1)
+    expect(r.out).toContain('paepyeong-v1/manifest.json sits in a directory that is not a version bucket')
+    expect(r.out).toContain('nothing written')
+    expect(fs.existsSync(ROOT_MANIFEST())).toBe(false)
+    expect(fs.existsSync(path.join(projectDir, 'docs', 'artifacts', 'v1.6', 'manifest.json'))).toBe(true)
+  })
+
+  test('§15 the root manifest is one JSON a static generator reads without the CLI: schema_v + entries[] with bucket first', () => {
+    artifact('v1.6/probe.md', '# probe\n')
+    artifact('v1.10/late.md', '# late\n')
+    sync()
+    const m = manifest()
+    expect(Object.keys(m)).toEqual(['schema_v', 'entries'])
+    expect(m.entries.map((e: any) => `${e.bucket}/${e.path}`)).toEqual(['v1.6/probe.md', 'v1.10/late.md']) // version order, not lexical
+    expect(Object.keys(m.entries[0])).toEqual(['bucket', 'path', 'ticket', 'kind', 'status', 'lang', 'added_at'])
+  })
+
+  test('§16 an entry whose bucket is not on disk is reported', () => {
+    artifact('v1.6/probe.md', '# probe\n')
+    sync()
+    const m = manifest()
+    m.entries.push({ bucket: 'v1.9', path: 'gone.md', ticket: null, kind: 'doc', status: 'pending', lang: 'ko', added_at: '2026-08-01T00:00:00Z' })
+    writeManifest(m)
+    const r = check()
+    expect(r.out).toContain('manifest.json lists v1.9/gone.md, and v1.9/ is not a version bucket on disk')
     expect(r.code).toBe(1)
   })
 })
