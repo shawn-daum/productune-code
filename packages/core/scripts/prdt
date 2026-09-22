@@ -6648,30 +6648,166 @@ def duplicate_ticket_id_warnings(tickets):
 
 
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
+#
+# ONE definition of a version id, and both readers use it: this regex and the
+# GUI's `VERSION_RE` in packages/gui/src/lib/historyData.ts are the same
+# pattern. They were NOT, until T-657's QA pass measured the split (2026-09-22):
+# the CLI required at least one dot (`^v\d+(?:\.\d+)+$`) while the GUI did not,
+# so a round named `v1` — the shape ntf-pm actually has — was illegal to one
+# reader and ordinary to the other. Worse, the CLI was wrong in BOTH directions
+# at once: it called a correct `versions/v1.md` stub an illegal file, and the
+# ticket-dir scan gated on the same pattern, so `docs/tickets/v1/` with no
+# version file was reported by nobody.
+#
+# User decision 2026-09-22, verbatim: "a. 인정하고 v1.0.0으로 간주하면되는거아닌가?
+# 1.1은 1.1.0으로 간주하고." — a dotless or one-dot id is ACCEPTED, and compare ·
+# sort · identity fill the missing components with zero. Names on disk stay
+# exactly as written: nothing here renames a file or a directory.
+#
+# Bounded at THREE components, `{0,2}` rather than `*`: major · minor · patch is
+# the whole ladder contracts §Fixed paths (Tickets row) and its annex §Version id
+# define, so `v1.2.3.4` names no round. The bound is the narrower of the two
+# readers on purpose — code and contract text then say exactly the same thing,
+# and a fourth component is reported rather than quietly accepted as a version.
+VERSION_ID_RE = re.compile(r"^v\d+(?:\.\d+){0,2}$")
+# `(?![\d.])` rather than `\b`: after the greedy component run, a heading like
+# `## v1.x` is not a version heading at all (with `\b` it read as `v1`).
+PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+){0,2})(?![\d.])")
+PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+){0,2}\.md$")
 
-PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+)+)\b")
-PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+)+\.md$")
+
+def _version_id_canon(v):
+    """Canonical comparable form of a version id — trailing zero components
+    dropped, so `v1` ≡ `v1.0` ≡ `v1.0.0` (user decision above). None when `v`
+    is not a version id.
+
+    Tuple order over these canonical forms IS version order, so one function
+    answers both questions the check asks (same round? / which round is
+    newer?). Dropping trailing zeros can never invert an order: two ids compare
+    equal only when one is the other padded with zeros, which is exactly the
+    case this collapses; whenever one canonical tuple is a strict prefix of the
+    other, the longer one ends in a non-zero component and is genuinely newer.
+
+    Distinct from `_version_key`, which parses a release TAG (leading `v`
+    optional, trailing text tolerated) and is the ordering basis for the tag
+    and release-notes checks. Left untouched on purpose: padding semantics are
+    a PRD-layout question, and changing a shared helper to answer it would move
+    behavior in checks this ticket never measured."""
+    m = VERSION_ID_RE.match((v or "").strip())
+    if not m:
+        return None
+    parts = [int(x) for x in m.group(0)[1:].split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def _md_structural_lines(text):
+    """[(line_no, line)] 1-based, with fenced code blocks dropped.
+
+    Markdown inside ``` … ``` is quoted text, not structure. Measured cost of
+    ignoring that (2026-09-22): this project's own PRD sections quote shell, so
+    a `# comment` in a ```sh block read as an H1 — and under the pre-T-657 rule
+    a single H1 anywhere waived every other shape rule in the file. The same
+    blindness would now invent a finding rather than hide one: a PRD section
+    that quotes `## v1.2` in a fence would be reported as a closed section
+    sitting in the wrong file."""
+    out = []
+    fence = None
+    for i, line in enumerate(text.split("\n"), 1):
+        m = re.match(r"^\s{0,3}(`{3,}|~{3,})", line)
+        if m:
+            tok = m.group(1)[0]
+            if fence is None:
+                fence = tok
+                continue
+            if tok == fence:
+                fence = None
+            continue
+        if fence is None:
+            out.append((i, line))
+    return out
 
 
 def _prd_version_headings(text):
-    """[(version, line_no)] for every `## v<N>.<m>` heading in `text`, 1-based."""
+    """[(version, line_no)] for every `## v<N>[.<m>…]` heading in `text`, 1-based,
+    fenced blocks excluded."""
     out = []
-    for i, line in enumerate(text.split("\n"), 1):
+    for i, line in _md_structural_lines(text):
         m = PRD_VERSION_HEADING_RE.match(line)
         if m:
             out.append((m.group(1), i))
     return out
 
 
+def _is_document_snapshot(text, heads):
+    """True for a whole-document snapshot from the regime that predates version
+    sections — the one shape under `versions/` that is legal as its own regime
+    left it (contracts/fixed-paths.md §PRD).
+
+    Two conditions, and the file must meet BOTH: it carries NO `## v` heading,
+    and its title H1 stands at the head of the document — after frontmatter,
+    past blank lines and a leading blockquote banner, and outside any fence.
+
+    Narrowed here from `any(l.startswith("# ") for l in lines)` (T-657 QA,
+    measured 2026-09-22), which read one `# ` ANYWHERE as "snapshot" and so
+    switched off every other rule in the file. Three measured pairs, identical
+    but for an added H1: junk above the heading → caught, +H1 → silent; the
+    same section twice in one file → caught, +H1 → silent; a malformed stub →
+    caught, +H1 → silent. A `# comment` inside a ```sh block did it with no
+    intent at all.
+
+    The leading-blockquote tolerance is not a hedge: `docs/prd/versions/v0.4.md`
+    — the genuine pre-sections snapshot this project is required to keep silent
+    — opens with a `> **[버전 스냅샷 — v0.4]**` banner and carries its H1 on
+    line 3. A banner above the title is how that regime wrote a snapshot, so
+    the rule names it; anything else above the title is content, and content
+    above the title means the file is not a snapshot."""
+    if heads:
+        return False
+    lines = text.split("\n")
+    i = 0
+    if lines and lines[0].strip() == "---":
+        j = 1
+        while j < len(lines) and lines[j].strip() != "---":
+            j += 1
+        if j < len(lines):
+            i = j + 1
+    for line in lines[i:]:
+        s = line.strip()
+        if not s or s.startswith(">"):
+            continue
+        return line.startswith("# ")
+    return False
+
+
 def prd_layout_warnings(root, st):
-    """Standard doctor warnings — non-blocking, never a gate.
+    """A discipline↔execution check (FAMILY_DE): what the contract says the PRD
+    tree looks like, against what is on disk.
 
     contracts §Fixed paths (T-657): `docs/prd/PRD.md` = the standing head + the
     ONE open `## v<N>.<m>` section; every closed section is the ENTIRE body of
     `docs/prd/versions/v<N>.<m>.md` (heading on line 1, nothing above it); a
     round that wrote no section has a one-line stub at that path carrying no
     `## ` heading; a whole-document snapshot from the regime that predates
-    sections (an H1 file) stays as that regime left it.
+    sections stays as that regime left it.
+
+    Registered under FAMILY_DE, not FAMILY_PROJECT (T-657 QA, 2026-09-22): the
+    ticket's acceptance says "a check FAILS when a closed version section is
+    found anywhere other than its per-version file", and only this family's
+    findings reach `violations=` on the verdict line — a project-family finding
+    prints a ⚠ and leaves the tail reading `violations=0`, which is how a
+    5-warning fixture passed. Every line this check emits compares disk against
+    a sentence in contracts §Fixed paths, which is this family's question.
+
+    WHICH section is the open one comes from `.prdt/po-state.json` — not from
+    counting headings. Counting was the pre-QA rule and it was silent on the
+    two shapes a migration actually fails in (both reproduced with the real CLI
+    on 2026-09-22): the ONE section left in PRD.md is the closed one, and a
+    section COPIED to its own file but never deleted from PRD.md. Neither
+    changes the count from 1, and both leave the closed record in two places at
+    once. With no readable version in po-state the check falls back to the
+    count — the weaker rule is still better than silence.
 
     Observed before this check existed: ntf-pm's PRD.md held two `## v`
     sections for 8 days with no tool saying so (measured 2026-09-18), and this
@@ -6680,12 +6816,13 @@ def prd_layout_warnings(root, st):
     PRD.md — so an unmigrated project learns it from the tool, not from a
     person reading the file.
 
-    Reads: PRD.md's section count · every other docs/prd/**/*.md for a `## v`
-    heading outside its own file · each versions/ file's shape · ticket dirs of
-    rounds up to the current one that have no version file. Silent on a ticket
-    dir ABOVE the current version — a roadmap dir is legal (contracts §Fixed
-    paths, Tickets row) — and on the current round itself, whose section is
-    the open one in PRD.md (or not yet written between close and Define)."""
+    Reads: PRD.md's sections against the open version · every other
+    docs/prd/**/*.md for a `## v` heading outside its own file · each versions/
+    file's shape · ticket dirs of rounds up to the current one that have no
+    version file. Silent on a ticket dir ABOVE the current version — a roadmap
+    dir is legal (contracts §Fixed paths, Tickets row) — and on the current
+    round itself, whose section is the open one in PRD.md (or not yet written
+    between close and Define)."""
     root = Path(root)
     prd_dir = root / "docs" / "prd"
     prd_md = prd_dir / "PRD.md"
@@ -6701,17 +6838,58 @@ def prd_layout_warnings(root, st):
         except (OSError, UnicodeDecodeError):
             return None
 
-    home = "docs/prd/versions/v<N>.<m>.md"
-    open_versions = []
+    # Every version file already on disk, keyed canonically — so `versions/v1.md`
+    # answers for a `## v1.0` section and for `docs/tickets/v1.0/`, and the
+    # round is looked up by the version it NAMES rather than by a filename
+    # spelling. Names on disk are never rewritten to match.
+    on_disk = {}
+    if vdir.is_dir():
+        for f in sorted(vdir.glob("*.md")):
+            if not PRD_VERSION_FILE_RE.match(f.name):
+                continue
+            k = _version_id_canon(f.stem)
+            if k is not None:
+                on_disk.setdefault(k, f)
+
+    def home_clause(v, here):
+        """Where `## v` belongs, and — when a file for that round already
+        exists — that this is the copy-not-move shape, which is the half of the
+        repair a reader otherwise misses."""
+        k = _version_id_canon(v)
+        have = on_disk.get(k) if k is not None else None
+        if have is not None and rel(have) != here:
+            return (f"{rel(have)} already holds that round — a close MOVES the section, so this "
+                    f"one is a leftover copy: delete it from {here} once the two agree byte for byte")
+        return (f"its home is docs/prd/versions/{v}.md, the ENTIRE body of that file "
+                f"(contracts §Fixed paths); move it byte-identical")
+
+    pv = st.get("version") if isinstance(st, dict) else None
+    open_id = pv.strip() if isinstance(pv, str) and pv.strip() else None
+    open_key = _version_id_canon(open_id) if open_id else None
+
+    prd_section_ids = []
     text = read(prd_md) if prd_md.is_file() else None
     if text is not None:
         heads = _prd_version_headings(text)
-        open_versions = [v for v, _ in heads]
-        if len(heads) > 1:
+        prd_section_ids = [v for v, _ in heads]
+        if open_key is not None:
+            seen_open = 0
+            for v, ln in heads:
+                if _version_id_canon(v) == open_key:
+                    seen_open += 1
+                    if seen_open > 1:
+                        warns.append(f"prd: {rel(prd_md)}:{ln} repeats the open section `## {v}` — "
+                                     f"the working file carries it once (contracts §Fixed paths)")
+                    continue
+                warns.append(f"prd: closed section `## {v}` found in {rel(prd_md)}:{ln} — the working "
+                             f"file is the standing head + the ONE open section, which "
+                             f"`.prdt/po-state.json` names as `{open_id}`; {home_clause(v, rel(prd_md))}")
+        elif len(heads) > 1:
+            # No readable open version: the count is all that is left to judge on.
             warns.append(f"prd: {rel(prd_md)} holds {len(heads)} `## v` sections "
-                         f"({', '.join(open_versions)}) — the working file is the standing head "
+                         f"({', '.join(prd_section_ids)}) — the working file is the standing head "
                          f"+ ONE open version section; move each closed one byte-identical to "
-                         f"its own {home} (contracts §Fixed paths)")
+                         f"its own docs/prd/versions/v<N>.<m>.md (contracts §Fixed paths)")
 
     for p in (sorted(prd_dir.rglob("*.md")) if prd_dir.is_dir() else []):
         if p == prd_md:
@@ -6719,68 +6897,61 @@ def prd_layout_warnings(root, st):
         text = read(p)
         if text is None:
             continue
+        here = rel(p)
         heads = _prd_version_headings(text)
         in_vdir = p.parent == vdir
         own = p.stem if in_vdir and PRD_VERSION_FILE_RE.match(p.name) else None
+        own_key = _version_id_canon(own) if own else None
         if in_vdir and own is None:
             why = ("a resolver takes the FIRST match over docs/prd/PRD.md · docs/PRD.md · "
                    "PRD.md, so a PRD.md here can be served as the current PRD with no error"
                    if p.name == "PRD.md" else
                    "only v<N>.<m>.md version files live here (contracts/fixed-paths.md §PRD)")
-            warns.append(f"prd: {rel(p)} is not a version file — {why}")
+            warns.append(f"prd: {here} is not a version file — {why}")
         if own is None:
             # history.md, a stray note, a misnamed file: every closed section it
             # holds is named with the one path it belongs on.
             for v, ln in heads:
-                warns.append(f"prd: closed section `## {v}` found in {rel(p)}:{ln} — its home is "
-                             f"docs/prd/versions/{v}.md, the ENTIRE body of that file "
-                             f"(contracts §Fixed paths); move it byte-identical")
+                warns.append(f"prd: closed section `## {v}` found in {here}:{ln} — {home_clause(v, here)}")
             continue
-        lines = text.split("\n")
-        if any(l.startswith("# ") for l in lines):
-            # whole-document snapshot (pre-section regime): legal as left; only a
-            # foreign version section inside it is out of place.
-            for v, ln in heads:
-                if v != own:
-                    warns.append(f"prd: closed section `## {v}` found in {rel(p)}:{ln} — its home is "
-                                 f"docs/prd/versions/{v}.md; move it byte-identical")
+        if _is_document_snapshot(text, heads):
+            # whole-document snapshot (pre-section regime): legal as left.
             continue
         if heads:
             first_v, first_ln = heads[0]
-            if first_v != own:
-                warns.append(f"prd: {rel(p)} opens with `## {first_v}` — a version file holds its "
+            if _version_id_canon(first_v) != own_key:
+                warns.append(f"prd: {here} opens with `## {first_v}` — a version file holds its "
                              f"own `## {own}` block and nothing else; `## {first_v}` belongs in "
                              f"docs/prd/versions/{first_v}.md")
             elif first_ln != 1:
-                warns.append(f"prd: {rel(p)} has {first_ln - 1} line(s) above its `## {own}` heading "
+                warns.append(f"prd: {here} has {first_ln - 1} line(s) above its `## {own}` heading "
                              f"— the file is that block and nothing else (no frontmatter, no head)")
             for v, ln in heads[1:]:
-                warns.append(f"prd: {rel(p)}:{ln} carries a second section `## {v}` — one version "
+                warns.append(f"prd: {here}:{ln} carries a second section `## {v}` — one version "
                              f"per file; `## {v}` belongs in docs/prd/versions/{v}.md")
             continue
-        # no `## v` heading, no H1 → a registered-absence stub: ONE line, no `## `.
-        body = [l for l in lines if l.strip()]
+        # no `## v` heading and not a snapshot → a registered-absence stub:
+        # ONE line, no `## `.
+        body = [l for l in text.split("\n") if l.strip()]
         if len(body) != 1 or any(l.startswith("## ") for l in body):
-            warns.append(f"prd: {rel(p)} is neither a `## {own}` section nor a stub — a registered "
+            warns.append(f"prd: {here} is neither a `## {own}` section nor a stub — a registered "
                          f"absence is ONE line (`no PRD section — <decision>`) with no `## ` heading; "
                          f"a section starts with `## {own}` on line 1")
 
     # Rounds with tickets and no PRD record — the gap the lump hid.
     tdir = root / "docs" / "tickets"
     if tdir.is_dir():
-        current = set(open_versions)
-        pv = st.get("version") if isinstance(st, dict) else None
-        if isinstance(pv, str) and pv.strip():
-            current.add(pv.strip())
-        keys = [k for k in (_version_key(v) for v in current) if k]
-        ceiling = max(keys) if keys else None
+        current = {k for k in (_version_id_canon(v) for v in prd_section_ids) if k is not None}
+        if open_key is not None:
+            current.add(open_key)
+        ceiling = max(current) if current else None
         for d in sorted(tdir.iterdir()):
             if not d.is_dir() or not PRD_VERSION_FILE_RE.match(d.name + ".md"):
                 continue
-            if d.name in current or (vdir / f"{d.name}.md").is_file():
+            k = _version_id_canon(d.name)
+            if k is None or k in current or k in on_disk:
                 continue
-            k = _version_key(d.name)
-            if ceiling is not None and (k is None or k >= ceiling):
+            if ceiling is not None and k >= ceiling:
                 continue
             warns.append(f"prd: {rel(d)}/ has no docs/prd/versions/{d.name}.md — a closed round's "
                          f"`## {d.name}` section, or a one-line `no PRD section — <decision>` stub "
@@ -7730,7 +7901,15 @@ def cmd_doctor(_args):
         # leaves (T-657). Fires on the pre-migration shapes too (history.md lump,
         # several `## v` sections in PRD.md) — measured 2026-09-18: ntf-pm ran
         # 8 days in the second shape with no tool saying so.
-        ("PRD layout", FAMILY_PROJECT, lambda: prd_layout_warnings(root, st)),
+        #
+        # FAMILY_DE, not FAMILY_PROJECT (T-657 QA, 2026-09-22): the acceptance
+        # line reads "a check FAILS when a closed version section is found
+        # anywhere other than its per-version file", and only this family's
+        # findings reach `violations=` — a 5-warning fixture printed five ⚠
+        # lines beside a tail still reading `violations=0`. Every line this
+        # check emits is disk disagreeing with a sentence in contracts §Fixed
+        # paths, which is precisely this family's question.
+        ("PRD layout", FAMILY_DE, lambda: prd_layout_warnings(root, st)),
         # main-push block: install where it is ours to write, report where it is not (T-481)
         ("main-push block", FAMILY_DE, lambda: prepush_warnings(root)),
         # promotion path: read the repo's own policy, report where it differs from
