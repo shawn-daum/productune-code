@@ -18,8 +18,8 @@
  * the fixed-name-without-O_EXCL shape and asserts the match set equals a
  * DECLARED allowlist below — any new site fails the build by name and line
  * the moment it appears, with no memory required. Today's allowlist is the
- * plan for what's left (CLI 11 sites, GUI 7 sites, install.sh 1 site — all
- * explicitly out of THIS slice's scope; see T-656 Outcome).
+ * plan for what's left (CLI 11 sites, `packages/core/scripts/prdt` — later
+ * slice; GUI and install.sh were closed in T-656 slice C, see Outcome).
  *
  * Detection is line + local-context heuristic, not an AST — good enough to
  * catch the actual recurring idiom (verified against every site the manual
@@ -122,7 +122,11 @@ function walk(dir: string, exts: string[], excludeTestFiles: boolean): string[] 
   for (const e of entries) {
     const p = path.join(dir, e.name)
     if (e.isDirectory()) {
-      if (e.name === 'node_modules' || e.name === 'dist' || e.name === '.git') continue
+      // test-fixtures/: pinned pre-fix source snapshots (T-656 slice C) — verbatim
+      // copies of vulnerable code kept ON PURPOSE for symlink-attack regression
+      // tests to run against; scanning them here would flag known, already-fixed
+      // history as a live violation.
+      if (e.name === 'node_modules' || e.name === 'dist' || e.name === '.git' || e.name === 'test-fixtures') continue
       out.push(...walk(p, exts, excludeTestFiles))
     } else if (e.isFile()) {
       if (!exts.some((ext) => e.name.endsWith(ext))) continue
@@ -144,34 +148,16 @@ function scanDir(dir: string, exts: string[], kind: Kind): Site[] {
 // growing it silently (instead of via a reviewed diff) is exactly what this
 // ratchet exists to make impossible. `file:line` — one per site.
 const ALLOWLIST: string[] = [
-  // packages/core/scripts/prdt (Python CLI, ~9500 lines) — later slice.
-  // Same idiom at every site: `tmp = Path(str(x) + ".tmp")` /
-  // `.with_name(x.name + ".tmp")` / `.with_suffix(".tmp")`, then
-  // `os.replace(tmp, x)` with no O_EXCL on the open in between.
-  'packages/core/scripts/prdt:799',
-  'packages/core/scripts/prdt:1431',
-  'packages/core/scripts/prdt:1547',
-  'packages/core/scripts/prdt:1982',
-  'packages/core/scripts/prdt:3415',
-  'packages/core/scripts/prdt:3581',
-  'packages/core/scripts/prdt:6564',
-  'packages/core/scripts/prdt:7041',
-  'packages/core/scripts/prdt:8287',
-  'packages/core/scripts/prdt:8406',
-  'packages/core/scripts/prdt:9244',
-  // packages/gui/electron — later slice. Same idiom at every site:
-  // `const tmp = x + '.tmp'; fs.writeFileSync(tmp, …); fs.renameSync(tmp, x)`.
-  'packages/gui/electron/po-session-config.ts:126',
-  'packages/gui/electron/ipc/settings.ts:410',
-  'packages/gui/electron/ipc/mcp.ts:109',
-  'packages/gui/electron/ipc/mcp.ts:121',
-  'packages/gui/electron/ipc/doctrine.ts:271',
-  'packages/gui/electron/ipc/html.ts:83',
-  'packages/gui/electron/ipc/onboarding.ts:280',
-  // install.sh — later slice. `:279`/`:292`/`:406`-area siblings already use
-  // `mktemp "$SETTINGS.XXXXXX"`; this one site still builds the fixed
-  // `register.tmp` name via a plain `>` redirect.
-  'packages/core/scripts/install.sh:191',
+  // packages/core/scripts/prdt (Python CLI) — CLOSED (T-656 slice B): all 11
+  // former sites (799/1431/1547/1982/3415/3581/6564/7041/8287/8406/9244) now
+  // route through `atomic_write_text()` (defined right after `read_json` in
+  // scripts/prdt), the CLI-side counterpart of `atomic_write` in
+  // prdt-post-dispatch.sh (T-647). See no-unsafe-tmp-write-cli.test.ts for
+  // the pinned-fixture symlink-attack regression per site.
+  // packages/gui/electron and install.sh:191 — fixed in T-656 slice C
+  // (atomicWriteFileSync from packages/core/src/fs/atomic-write.ts for the
+  // GUI writers; mktemp, matching install.sh's own :279 convention, for the
+  // register migration). Shrunk from this allowlist accordingly.
 ]
 
 describe('no unsafe fixed-name .tmp write appears without O_EXCL (T-656 ratchet)', () => {

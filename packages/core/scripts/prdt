@@ -190,6 +190,39 @@ def read_json(path):
         return None
 
 
+def atomic_write_text(path, text, mode=0o644):
+    """Symlink-proof atomic write (T-656) — the CLI-side counterpart of
+    `atomic_write` in prdt-post-dispatch.sh (T-647 precedent, same primitive).
+    A fixed `<path>.tmp` name is project-local and clone-carried, so a cloned
+    repo could plant `<path>.tmp` as a symlink to any file this uid can write;
+    the old `Path.write_text()` / `open(tmp, "w")` at each of these call sites
+    followed it, truncating the target with this call's payload, and
+    `os.replace` then consumed the symlink with no trace left. O_EXCL creates
+    the temp or nothing — a symlink (or stale leftover) already at that name
+    loses the race and is unlinked (removed, never followed) rather than
+    opened — and os.replace renames ONTO the destination without following a
+    link on either side. `mode` is passed straight to the O_CREAT open (still
+    subject to umask, exactly like the `Path.write_text()` calls this
+    replaces); callers that need a specific bit pattern regardless of umask
+    (e.g. an executable hook) pass one explicitly. One helper, not eleven
+    copies of the same three lines — this is exactly the recurring shape T-656
+    ratchets against."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    for attempt in (0, 1):
+        try:
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, mode)
+            break
+        except FileExistsError:
+            if attempt:
+                raise
+            os.unlink(tmp)  # our own leftover from a killed run, or a planted link — gone unopened either way
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+    return path
+
+
 # ── untrusted text on a structured line (T-586 ①, T-581 QA) ──────────────────
 #
 # Twice now a value a PERSON writes has been rendered onto a line whose grammar
@@ -796,11 +829,7 @@ def set_trust_accepted(d):
         if entry.get("hasTrustDialogAccepted") is True:
             return  # idempotent no-op
         projs[key] = {**entry, "hasTrustDialogAccepted": True}
-        tmp = Path(str(cj) + ".tmp")
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(data, indent=2))
-        os.replace(tmp, cj)
+        atomic_write_text(cj, json.dumps(data, indent=2), mode=0o600)
     except Exception:
         pass  # never block init/launch on trust bookkeeping
 
@@ -1428,9 +1457,7 @@ def cmd_attest(args):
     git_sec = cfg.get("git") if isinstance(cfg.get("git"), dict) else {}
     git_sec["prepush_reading"] = rec
     cfg["git"] = git_sec
-    tmp = Path(str(cfg_path) + ".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, cfg_path)
+    atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
     print(f"prdt attest prepush: recorded a human reading of {p} (sha256 {digest[:12]}…) in "
           f".prdt/config.json {PREPUSH_READING_KEY} — blocks_main={'yes' if rec['blocks_main'] else 'no'} "
           f"hotfix_escape={'yes' if rec['hotfix_escape'] else 'no'}. doctor honours it only while the "
@@ -1544,10 +1571,7 @@ def ensure_prepush_hook(root):
         demoted = st["state"] == "managed" and st["current"] and not st["executable"]
         upgrade = st["state"] == "managed"
         st["path"].parent.mkdir(parents=True, exist_ok=True)
-        tmp = Path(str(st["path"]) + ".tmp")
-        tmp.write_text(PREPUSH_SCRIPT, encoding="utf-8")
-        os.chmod(tmp, 0o755)
-        os.replace(tmp, st["path"])
+        atomic_write_text(st["path"], PREPUSH_SCRIPT, mode=0o755)
         st.update(state="managed", current=True, executable=True)
         if demoted:
             return {"action": "repaired",
@@ -1979,9 +2003,7 @@ def init_project(root, slug=None, version="v0.1", stage="define", interactive=Tr
     elif not (root / ".git").exists():
         cfg["code"] = {"dir": CODE_DIR_DEFAULT}
         (root / CODE_DIR_DEFAULT).mkdir(parents=True, exist_ok=True)
-    tmp = Path(str(prdt / "config.json") + ".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, prdt / "config.json")
+    atomic_write_text(prdt / "config.json", json.dumps(cfg, indent=2) + "\n")
     (prdt / "po-state.json").write_text(json.dumps(
         {"schema_version": 1, "stage": stage, "version": version, "current_task": None},
         indent=2) + "\n", encoding="utf-8")
@@ -3412,10 +3434,7 @@ def cmd_register(args):
         if not placed and value:
             out.append(f"{key}={value}")
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(("\n".join(out) + "\n") if out else "", encoding="utf-8")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
+        atomic_write_text(path, ("\n".join(out) + "\n") if out else "", mode=0o600)
         # confirm through the resolver — the write is only as good as what it reads back
         res = register_query("--resolve", droot) or {}
         shown = (res.get("values") or {}).get(key)
@@ -3578,9 +3597,7 @@ def _write_update_state(state):
     try:
         p = _update_state_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = Path(str(p) + ".tmp")
-        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, p)
+        atomic_write_text(p, json.dumps(state, indent=2) + "\n")
     except OSError:
         pass
 
@@ -6561,9 +6578,7 @@ def write_artifact_manifest(root, data):
     if mp.is_file() and mp.read_text(encoding="utf-8") == want:
         return False
     mp.parent.mkdir(parents=True, exist_ok=True)
-    tmp = Path(str(mp) + ".tmp")
-    tmp.write_text(want, encoding="utf-8")
-    os.replace(tmp, mp)
+    atomic_write_text(mp, want)
     return True
 
 
@@ -7038,9 +7053,7 @@ def features_vocab_seed(root):
     feat = {k: v for k, v in feat.items() if k != "non_features"}
     feat["vocab"] = vocab
     cfg["features"] = feat
-    tmp = Path(str(cfg_path) + ".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, cfg_path)
+    atomic_write_text(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
     n_tag = sum(1 for e in vocab.values() if e["kind"] == "tag")
     n_area = len(vocab) - n_tag
     ghosts = sorted(a for a in areas if a not in hist)
@@ -8284,9 +8297,7 @@ def cmd_resource(args):
         d = _resource_marker_dir(name)
         d.mkdir(parents=True, exist_ok=True)
         p = d / f"{dispatch}.json"
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(tmp, p)
+        atomic_write_text(p, json.dumps(marker, indent=2, sort_keys=True) + "\n")
         held = len(_resource_markers(name))
         proj_out = safe_label(project) if project else "-"
         print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out} since={since} held={held}")
@@ -8403,9 +8414,7 @@ def _lume_resident_resources(now):
         })
     if new_state != state:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = state_path.with_name(state_path.name + ".tmp")
-        tmp.write_text(json.dumps(new_state, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, state_path)
+        atomic_write_text(state_path, json.dumps(new_state, indent=2, sort_keys=True))
     return resources
 
 
@@ -9241,11 +9250,8 @@ def read_canary_latch(model, ttl_min):
 def write_canary_latch(model, reason):
     p = _canary_latch_path(model)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"model": model, "status": "unavailable",
-                               "reason": reason, "at": now_iso()}) + "\n",
-                   encoding="utf-8")
-    tmp.replace(p)
+    atomic_write_text(p, json.dumps({"model": model, "status": "unavailable",
+                                     "reason": reason, "at": now_iso()}) + "\n")
     return p
 
 
