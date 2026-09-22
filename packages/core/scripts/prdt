@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """prdt — productune v1 CLI.
 
-Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
+Subcommands: init · doctor · wiki (search|refs|reindex|lint) · tickets · features (vocab|migrate) · artifacts (sync|check|migrate) · history · usage · meta (log|remote|push|bootstrap|split) · menus · migrate
 Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + override
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
@@ -6802,6 +6802,345 @@ def feature_done_version_dirs(tickets):
 FEATURE_T3_MIN_DIRS = 2
 
 
+# ── feature vocabulary — `.prdt/config.json` features.vocab (T-674) ───────────
+#
+# Design SoT: docs/artifacts/v1.10/linkage-design.md §1.3 (schema) · §1.5 (the
+# seed → hand-edit → migrate sequence) · §1.6 (W4 · W5 · W6 · W3'). `feature:`
+# was a free string and nothing read the value itself, so one surface grew
+# five names (`gui` · `gui-core` · `gui-rework` · `gui-prd-viewer` ·
+# `gui-adapter`, 2026-09-22). The vocabulary closes the way `status` did — an
+# enum the tool checks — except that its members are a human's naming
+# judgment, so the block is seeded by the tool with NO judgment (`kind: tag`
+# for every value) and edited by the PO once. `features.non_features` (T-547
+# §4) is the block's predecessor: its entries become `kind: area`.
+#
+#   "vocab": { "<key>": { "kind": feature|area|tag, "since": "v1.1",
+#                         "aliases": ["<old spelling>"], "parent": "<key>" } }
+#
+# Absent block = the vocabulary is not closed yet (a project that has not
+# seeded): W4–W6 stay silent and the legacy `non_features` route still runs, so
+# the shared CLI keeps every other project on this machine exactly as it was.
+FEATURE_KEY_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+FEATURE_KINDS = ("feature", "area", "tag")
+# W6's constants set: the stems a `term--<x>` page may carry without `x` being
+# a project feature. Design §1.4 names the four prdt-global concepts whose
+# term pages stay (`dispatch · persona · stage · ticket`); the members of the
+# closed vocabularies the CLI already holds join them, so `term--designer` or
+# `term--build` explains a known name too. A `feature--<x>` page or a spec file
+# never gets this exemption — those are features by definition.
+FEATURE_VOCAB_CONSTANTS = frozenset(("dispatch", "persona", "stage", "ticket")
+                                    + PERSONAS + STAGES + TICKET_TYPES)
+_FEATURE_FM_LINE_RE = re.compile(r"^(feature:[ \t]*)(['\"]?)([^'\"\s][^'\"\n]*?)\2([ \t]*)$")
+
+
+def read_feature_vocab(cfg):
+    """(vocab, problems) from a config dict. `vocab` is None when the block is
+    absent — the pre-seed state, distinct from an empty or broken block — and
+    otherwise `{key: {"kind", "since", "aliases", "parent"}}` with every field
+    normalised to its expected shape. `problems` are the block's own shape
+    faults, worded for doctor's `feature: config features.vocab …` channel."""
+    feat = cfg.get("features") if isinstance(cfg.get("features"), dict) else {}
+    raw = feat.get("vocab")
+    if raw is None:
+        return None, []
+    if not isinstance(raw, dict):
+        return {}, [f"is a JSON {type(raw).__name__}, not an object"]
+    vocab, problems = {}, []
+    for key, ent in raw.items():
+        if not isinstance(key, str) or not FEATURE_KEY_RE.match(key):
+            problems.append(f"key '{key}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)")
+        if not isinstance(ent, dict):
+            problems.append(f"'{key}' is not an object")
+            vocab[key] = {"kind": None, "since": None, "aliases": [], "parent": None}
+            continue
+        kind = ent.get("kind")
+        if kind not in FEATURE_KINDS:
+            problems.append(f"'{key}' kind '{kind}' is not one of {'/'.join(FEATURE_KINDS)}")
+        raw_al = ent.get("aliases")
+        aliases = []
+        if raw_al is not None:
+            if not isinstance(raw_al, list):
+                problems.append(f"'{key}' aliases is not a list")
+            else:
+                for a in raw_al:
+                    if not isinstance(a, str) or not FEATURE_KEY_RE.match(a):
+                        problems.append(f"'{key}' alias '{a}' is not kebab-case")
+                    else:
+                        aliases.append(a)
+        parent = ent.get("parent")
+        if parent is not None and not isinstance(parent, str):
+            problems.append(f"'{key}' parent is not a string")
+            parent = None
+        since = ent.get("since")
+        if since is not None and (not isinstance(since, str) or _version_id_canon(since) is None):
+            problems.append(f"'{key}' since '{since}' is not a version id")
+        vocab[key] = {"kind": kind, "since": since if isinstance(since, str) else None,
+                      "aliases": aliases, "parent": parent}
+    owner = {}
+    for key, ent in vocab.items():
+        for a in ent["aliases"]:
+            if a in vocab:
+                problems.append(f"alias '{a}' of '{key}' is also a key — an alias never overlaps a key")
+            elif owner.setdefault(a, key) != key:
+                problems.append(f"alias '{a}' is claimed by both '{owner[a]}' and '{key}'")
+        if ent["parent"] is not None and ent["parent"] not in vocab:
+            problems.append(f"'{key}' parent '{ent['parent']}' is not a vocab key")
+    return vocab, problems
+
+
+def feature_alias_map(vocab):
+    """alias → key. On a collision the first key in block order wins; the
+    collision itself is reported by read_feature_vocab, never resolved here."""
+    out = {}
+    for key, ent in vocab.items():
+        for a in ent["aliases"]:
+            out.setdefault(a, key)
+    return out
+
+
+def feature_did_you_mean(value, vocab, aliases):
+    """The key a stray value most likely meant — prefix match over keys and
+    aliases (an alias resolves to its key), longest shared prefix first, then
+    the shorter and alphabetically earlier key. None when nothing shares a
+    prefix: a suggestion is only offered when there is something to point at."""
+    cands = []
+    for name, key in [(k, k) for k in vocab] + list(aliases.items()):
+        if name.startswith(value) or value.startswith(name):
+            cands.append((-len(os.path.commonprefix([name, value])), len(key), key))
+    if not cands:
+        return None
+    return sorted(cands)[0][2]
+
+
+def _paths_phrase(paths, cap=3):
+    paths = sorted(paths)
+    shown = ", ".join(paths[:cap]) + (f", +{len(paths) - cap} more" if len(paths) > cap else "")
+    return f"{len(paths)} tickets: {shown}" if len(paths) > 1 else shown
+
+
+def feature_vocab_warnings(root, tickets, cfg, vocab, problems, specs):
+    """W4 · W5 · W6 · W3' plus the block's own shape faults — only ever called
+    with a present vocab. Standard doctor warnings, never a gate."""
+    warns = [f"feature: config features.vocab {p}" for p in problems]
+    feat = cfg.get("features") if isinstance(cfg.get("features"), dict) else {}
+    legacy = feat.get("non_features")
+    if isinstance(legacy, list) and legacy:
+        names = ", ".join(str(x) for x in legacy)
+        warns.append(f"feature: config features.non_features is retired by features.vocab "
+                     f"(kind: area) — remove it (entries: {names})")
+    aliases = feature_alias_map(vocab)
+    # W4 / W5 — over every ticket row, folded per value so one stray spelling on
+    # nine tickets is one finding with nine addresses, not nine findings.
+    by_value = {}
+    for t in tickets:
+        v = t.get("feature")
+        if isinstance(v, str) and v.strip():
+            by_value.setdefault(v.strip(), []).append(t["path"])
+    for value in sorted(by_value):
+        if value in vocab:
+            continue
+        where = _paths_phrase(by_value[value])
+        if value in aliases:
+            n = len(by_value[value])
+            warns.append(f"feature: '{value}' is an alias of '{aliases[value]}' — {n} ticket{'s' if n != 1 else ''} "
+                         f"still carr{'y' if n != 1 else 'ies'} it ({', '.join(sorted(by_value[value]))}): "
+                         f"run `prdt features migrate --dry-run`, then `--apply`")
+            continue
+        hint = feature_did_you_mean(value, vocab, aliases)
+        warns.append(f"feature: '{value}' is not a .prdt/config.json features.vocab key ({where})"
+                     + (f" — did you mean '{hint}'?" if hint else "")
+                     + " — add a vocab line first, or fix the value")
+    # W6 — a name that claims to BE a feature (spec file, `feature--` page) or
+    # to explain one (`term--` page) but names nothing the vocab knows. term--
+    # stems may also be prdt's own constants (design §1.4); the others may not.
+    def w6(what, stem, allow_constants):
+        if stem in vocab or (allow_constants and stem in FEATURE_VOCAB_CONSTANTS):
+            return
+        tail = " nor a prdt constant" if allow_constants else ""
+        if stem in aliases:
+            tail += f" — '{stem}' is an alias of '{aliases[stem]}'"
+        warns.append(f"feature: {what} names no features.vocab key{tail}")
+    for name in sorted(specs):
+        w6(f"docs/features/{name}.md", name, False)
+    for pg in scan_wiki(root) + scan_machine_wiki():
+        name = pg["name"]
+        bare = name[len(MACHINE):] if name.startswith(MACHINE) else name
+        if "--" not in bare:
+            continue
+        kind, stem = bare.split("--", 1)
+        if kind not in ("feature", "term"):
+            continue
+        label = "machine wiki page" if name.startswith(MACHINE) else "wiki page"
+        w6(f"{label} {name}", stem, kind == "term")
+    # W3' — the old W3 (a non_features entry that got promoted anyway), absorbed
+    # by `kind`: an `area` has no spec by definition, so one on disk is rot.
+    for key in sorted(vocab):
+        if vocab[key]["kind"] == "area" and key in specs:
+            warns.append(f"feature: config features.vocab '{key}' is kind: area but "
+                         f"docs/features/{key}.md exists — set kind: feature or remove the spec")
+    return warns
+
+
+def feature_histogram(tickets):
+    """value → {"count", "since"} over every ticket row, all statuses and dirs.
+    `since` is the earliest version dir carrying the value (backlog and any
+    non-version dir do not count; None when only those do)."""
+    out = {}
+    for t in tickets:
+        v = t.get("feature")
+        if not isinstance(v, str) or not v.strip():
+            continue
+        v = v.strip()
+        ent = out.setdefault(v, {"count": 0, "since": None})
+        ent["count"] += 1
+        ver = t.get("version")
+        canon = _version_id_canon(ver) if isinstance(ver, str) else None
+        if canon is not None and (ent["since"] is None or canon < _version_id_canon(ent["since"])):
+            ent["since"] = ver.strip()
+    return out
+
+
+def _read_config_strict(root, verb):
+    """The config file as it IS, or exit — a write that starts from `{}` on a
+    corrupt file replaces the whole project config with one block (T-581 QA P2)."""
+    cfg_path = Path(root) / ".prdt" / "config.json"
+    if not cfg_path.exists():
+        return cfg_path, {}
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        sys.exit(f"prdt features {verb}: {cfg_path} cannot be read as JSON ({e.__class__.__name__}) "
+                 "— refusing to write. Repair the file first, then re-run.")
+    if not isinstance(cfg, dict):
+        sys.exit(f"prdt features {verb}: {cfg_path} holds a JSON {type(cfg).__name__}, not an object "
+                 "— refusing to write over it.")
+    return cfg_path, cfg
+
+
+def features_vocab_seed(root):
+    cfg_path, cfg = _read_config_strict(root, "vocab --seed")
+    feat = cfg.get("features") if isinstance(cfg.get("features"), dict) else {}
+    if feat.get("vocab") is not None:
+        n = len(feat["vocab"]) if isinstance(feat["vocab"], dict) else 0
+        sys.exit(f"prdt features vocab --seed: .prdt/config.json features.vocab is already present "
+                 f"({n} key(s)) — seeding is one-time; edit the block by hand (kind · aliases · parent)")
+    rows = [r for r, _, _ in (scan_tickets(root) or [])]
+    hist = feature_histogram(rows)
+    raw = feat.get("non_features")
+    areas = [v.strip() for v in raw if isinstance(v, str) and v.strip()] if isinstance(raw, list) else []
+    vocab = {}
+    for value in sorted(set(hist) | set(areas)):
+        ent = {"kind": "area" if value in areas else "tag"}
+        since = hist.get(value, {}).get("since")
+        if since:
+            ent["since"] = since
+        vocab[value] = ent
+    feat = {k: v for k, v in feat.items() if k != "non_features"}
+    feat["vocab"] = vocab
+    cfg["features"] = feat
+    tmp = Path(str(cfg_path) + ".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, cfg_path)
+    n_tag = sum(1 for e in vocab.values() if e["kind"] == "tag")
+    n_area = len(vocab) - n_tag
+    ghosts = sorted(a for a in areas if a not in hist)
+    print(f"prdt features vocab --seed: {len(vocab)} key(s) written to .prdt/config.json features.vocab "
+          f"— {n_tag} kind: tag from the ticket histogram, {n_area} kind: area from features.non_features "
+          f"(key removed). No judgment was made: edit kind · aliases · parent by hand, then "
+          f"`prdt features migrate --dry-run`.")
+    for g in ghosts:
+        print(f"  note: non_features entry '{g}' is carried by no ticket — kept as kind: area, your call")
+    bad = sorted(k for k in vocab if not FEATURE_KEY_RE.match(k))
+    for b in bad:
+        print(f"  note: '{b}' is not kebab-case — doctor will say so until the value is renamed")
+
+
+def features_vocab_print(vocab):
+    if not vocab:
+        print("prdt features vocab: .prdt/config.json features.vocab is absent — run `prdt features vocab --seed`")
+        return
+    w = max(len(k) for k in vocab)
+    for key in sorted(vocab):
+        e = vocab[key]
+        extra = []
+        if e["aliases"]:
+            extra.append("aliases: " + ", ".join(e["aliases"]))
+        if e["parent"]:
+            extra.append(f"parent: {e['parent']}")
+        print(f"{key.ljust(w)}  {(e['kind'] or '?').ljust(7)}  {(e['since'] or '-').ljust(8)}  {' · '.join(extra)}".rstrip())
+
+
+def rewrite_feature_line(text, old, new):
+    """The frontmatter `feature:` line and nothing else: same quoting, same
+    trailing whitespace, body bytes untouched. None when no line moves."""
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 4)
+    if end < 0:
+        return None
+    lines = text[:end].split("\n")
+    changed = False
+    for i in range(1, len(lines)):
+        m = _FEATURE_FM_LINE_RE.match(lines[i])
+        if m and m.group(3).strip() == old:
+            lines[i] = m.group(1) + m.group(2) + new + m.group(2) + m.group(4)
+            changed = True
+    return "\n".join(lines) + text[end:] if changed else None
+
+
+def features_migrate(root, apply):
+    _, cfg = _read_config_strict(root, "migrate")
+    vocab, problems = read_feature_vocab(cfg)
+    if vocab is None:
+        sys.exit("prdt features migrate: .prdt/config.json has no features.vocab — run "
+                 "`prdt features vocab --seed` first, then edit the block")
+    if problems:
+        for p in problems:
+            print(f"features.vocab {p}", file=sys.stderr)
+        sys.exit(f"prdt features migrate: refusing — {len(problems)} problem(s) in features.vocab (above); "
+                 "fix the block first")
+    aliases = feature_alias_map(vocab)
+    plan = []
+    for row, p, _ in scan_tickets(root) or []:
+        v = row.get("feature")
+        if isinstance(v, str) and v.strip() in aliases:
+            plan.append((p, v.strip(), aliases[v.strip()]))
+    for p, old, new in plan:
+        print(f"{p.relative_to(root)} · {old} → {new}")
+    if not apply:
+        print(f"prdt features migrate: {len(plan)} file(s) would change (dry-run, nothing written)")
+        return
+    done = 0
+    for p, old, new in plan:
+        text = p.read_text(encoding="utf-8")
+        out = rewrite_feature_line(text, old, new)
+        if out is None:
+            print(f"  skipped {p.relative_to(root)}: no frontmatter `feature: {old}` line found")
+            continue
+        p.write_text(out, encoding="utf-8")
+        done += 1
+    rebuild_index(root)
+    print(f"prdt features migrate: {done} file(s) rewritten (the frontmatter `feature:` line only) · reindexed")
+
+
+def cmd_features(args):
+    root = require_root()
+    if args.action == "vocab":
+        if args.seed:
+            features_vocab_seed(root)
+        else:
+            cfg = read_json(root / ".prdt" / "config.json")
+            vocab, problems = read_feature_vocab(cfg if isinstance(cfg, dict) else {})
+            for p in problems:
+                print(f"features.vocab {p}")
+            features_vocab_print(vocab)
+        return
+    if args.action == "migrate":
+        if args.dry_run == args.apply:
+            sys.exit("usage: prdt features migrate --dry-run | --apply")
+        features_migrate(root, apply=args.apply)
+
+
 def feature_seam_warnings(root, tickets):
     """Standard doctor warnings — non-blocking, never a gate.
 
@@ -6815,6 +7154,14 @@ def feature_seam_warnings(root, tickets):
     raw = feat_cfg.get("non_features")
     non_features = [v.strip() for v in raw if isinstance(v, str) and v.strip()] if isinstance(raw, list) else []
     slug = cfg.get("slug") if isinstance(cfg.get("slug"), str) else None
+    # T-674: with a vocab present the recorded non-promotion judgment IS
+    # `kind: area`, and the legacy list is retired (reported below).
+    vocab, vocab_problems = read_feature_vocab(cfg)
+    if vocab is not None:
+        non_features = [k for k, e in vocab.items() if e["kind"] == "area"]
+        judgment_hint = "record `kind: area` in .prdt/config.json features.vocab"
+    else:
+        judgment_hint = "record in .prdt/config.json features.non_features"
 
     sdir = feature_spec_dir(root)
     specs = {p.stem for p in sorted(sdir.glob("*.md"))} if sdir.is_dir() else set()
@@ -6834,8 +7181,9 @@ def feature_seam_warnings(root, tickets):
             continue
         warns.append(f"feature: '{value}' — done tickets span {n} version dirs but "
                      f"docs/features/{value}.md does not exist — promotion candidate: "
-                     f"apply the three tests (designer habit), then promote or record "
-                     f"in .prdt/config.json features.non_features")
+                     f"apply the three tests (designer habit), then promote or {judgment_hint}")
+    if vocab is not None:
+        return warns + feature_vocab_warnings(root, tickets, cfg, vocab, vocab_problems, specs)
     # W3 — the recorded judgment has rotted: it was promoted after all, or the
     # value it names no longer exists on any ticket.
     seen = set()
@@ -9080,6 +9428,15 @@ def main():
     p.add_argument("action", choices=("sync", "check", "migrate"))
     p.add_argument("--dry-run", action="store_true", help="migrate: print what would move, write nothing")
     p.set_defaults(fn=cmd_artifacts)
+    p = sub.add_parser("features", help="the closed `feature:` vocabulary (.prdt/config.json features.vocab, T-674): "
+                                        "vocab (list) · vocab --seed (one-time: every ticket value → kind: tag, "
+                                        "features.non_features → kind: area, no judgment) · migrate --dry-run | "
+                                        "--apply (alias → key rewrite of the frontmatter `feature:` line only, then reindex)")
+    p.add_argument("action", choices=("vocab", "migrate"))
+    p.add_argument("--seed", action="store_true", help="vocab: write the block from the ticket histogram (refused when present)")
+    p.add_argument("--dry-run", action="store_true", help="migrate: print file · old → new, write nothing")
+    p.add_argument("--apply", action="store_true", help="migrate: rewrite the `feature:` line of each affected ticket and reindex")
+    p.set_defaults(fn=cmd_features)
     p = sub.add_parser("history", help="per-version ticket aggregates + retro pointer")
     p.set_defaults(fn=cmd_history)
     p = sub.add_parser("usage", help="machine-wide cost sum across this machine's prdt projects' "
