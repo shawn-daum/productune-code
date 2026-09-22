@@ -4,7 +4,7 @@
  * Section order puts the RESULT first (doctrine #7 — user outcome over output):
  *   1. header (version + CLOSED + date)
  *   2. Outcome   (parsed from retro --v<N>.md `## Outcome`)  ← topmost, on purpose
- *   3. PRD       (prdt: docs/prd/history.md · legacy: docs/prd/versions/<v>.md snapshot link, or placeholder)
+ *   3. PRD       (docs/prd/versions/<v>.md — prdt: the closed section or its stub · legacy: snapshot — link, or placeholder)
  *   4. Tickets   (done/dropped/open summary + "open board" link; commit-only note if 0)
  *   5. Artifacts (docs/artifacts/<v>/ flat + archive)
  *   6. Retro     (full retro link — "read more" at the bottom)
@@ -56,8 +56,8 @@ export default function HistoryDetailView({ versionId, closedDate }: Props) {
   const { tickets } = useTicketScan(projectDir)
   // T-546 follow-up: this view only ever renders CLOSED versions (HistoryPane
   // excludes the in-progress one from its list), so the PRD path needs only
-  // the prdt-vs-legacy branch — see resolveClosedVersionPrdPath for the full
-  // rationale (prdt has no per-version snapshot; legacy keeps reading one).
+  // the closed record's path — see resolveClosedVersionPrdPath for the full
+  // rationale (T-657: prdt and legacy both read docs/prd/versions/<v>.md).
   const isPrdt = useWorkspace((s) => isPrdtPoState(s.poState))
 
   const retroRel = `docs/wiki/retro--${versionId}.md`

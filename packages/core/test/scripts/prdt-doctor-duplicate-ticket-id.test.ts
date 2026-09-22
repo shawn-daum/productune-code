@@ -82,6 +82,20 @@ function ticket(version: string, file: string, id: string, status = 'done'): str
   return `docs/tickets/${version}/${file}.md`   // the path doctor prints, by construction
 }
 
+/** T-657: a round's PRD record — the one-line stub form for a tickets-only
+ *  round. `prdt doctor`'s PRD-layout check reports a ticket dir below the
+ *  current version that has no `docs/prd/versions/<v>.md`, so a fixture that
+ *  plants a ticket dir and nothing else carries that gap too. Tests reading the
+ *  `ticket:` channel alone never see it; the blast-radius test below compares
+ *  WHOLE warning sets, so it writes the record and keeps its delta the planted
+ *  duplicate only. */
+function prdRecord(version: string): void {
+  const dir = path.join(projectRoot, 'docs', 'prd', 'versions')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, `${version}.md`),
+    `no PRD section — docs/wiki/decision--tickets-only.md\n`)
+}
+
 function doctorOut(): string {
   return execFileSync('python3', [PRDT_CLI, 'doctor'],
     { cwd: projectRoot, encoding: 'utf8', env, timeout: subprocessTimeout('doctor') })
@@ -215,8 +229,13 @@ describe.skipIf(!CAN_RUN)('severity and blast radius', () => {
 
   test('the other checks are behaviorally unchanged — same warnings minus this one', () => {
     // one fixture, run twice: the second differs only by the planted duplicate, so
-    // any other line that moves is this check bleeding into a neighbour
+    // any other line that moves is this check bleeding into a neighbour.
+    // Both rounds get their PRD record up front (T-657) — otherwise the second
+    // run's NEW ticket dir legitimately moves the PRD-layout check too, and the
+    // delta would stop isolating this one.
     ticket('v1.1', 'T-101', 'T-101')
+    prdRecord('v1.1')
+    prdRecord('v1.2')
     fs.writeFileSync(path.join(projectRoot, 'docs', 'features', 'renamed-away.md'), '# x\n')
     const before = doctorOut().split('\n').filter(l => l.startsWith('⚠ '))
     expect(before.some(l => l.includes('renamed-away.md'))).toBe(true)   // a live neighbour

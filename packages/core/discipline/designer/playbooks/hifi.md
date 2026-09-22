@@ -8,19 +8,26 @@ effort: high
 # Hi-fi — only when it earns its render cost
 
 ## Skip/keep judgment (run it first, say the call in `summary`)
-- **Skip** when existing mockups/DS showcase already convey interaction + states, no new visual pattern, no complex state transitions — the build proceeds from what exists; one line why. The Define screen set (`build-entry` §Screen set names the version's prototype) is a keep every time: render it to the shell below.
+- **Skip** when existing mockups / the DS file already convey interaction + states, no new visual pattern, no complex state transitions — the build proceeds from what exists; one line why. The Define screen set (`build-entry` §Screen set names the version's prototype) is a keep every time: render it in the order below, on the skeleton below.
 - **Keep** when: several new screens · complex interaction / state machines · a new pattern · a brand-heavy surface · this is the sole design artifact of the change.
 - Genuinely ambiguous → `needs_info` with the 2-option question (hi-fi first vs build from current mockups), your recommendation first.
 
-## Define screen set — the prototype's shell
-`build-entry` §Screen set names what the user operates and what closes Define; this names what you build for it. One dispatch renders one file.
-- **One file**: `docs/artifacts/<version>/<slug>.html`, self-contained — roster, screens, description panel and transitions all inside it. The key binds the two sides within the page, so the set stays one artifact.
-- **Key per screen**: each screen renders as `id="screen-<key>"`, its roster entry carries `data-screen="<key>"`, `<key>` identical on both sides. Verify before returning: `grep -o 'data-screen="[^"]*"'` and `grep -o 'id="screen-[^"]*"'` over the file return the same set — that equality IS "roster and render are one set".
-- **Roster**: left pane, one entry per screen this version adds or changes, ordered as the user meets them. Entry = screen name + its structure line; the user counts the entries to judge coverage. Selecting one shows that screen and swaps the description panel.
+## Define screen set — the order: criteria → skeleton → screens
+`build-entry` §Screen set names what the user operates and what closes Define; this names what you build for it, in a fixed order. One dispatch renders one file. The order never runs backwards: a shell change after a screen exists is a lost round — say so in `summary`.
+1. **Criteria** — `docs/artifacts/<version>/<slug>-criteria.md` before any screen is drawn: the coverage unit (what counts as one screen: surface × condition · flow branch · reachable state) · the condition set, CLOSED (e.g. default · empty · error · max), each pair kept only with the repository evidence it exists (a path, a count) · the interactive minimum bought (transitions press · state changes show · the reviewer edits in place). The roster derives from this table: one row per screen, its evidence, drawn / not drawn + why.
+2. **Skeleton** — copy `~/.prdt/discipline/designer/screen-set/skeleton.html` to `docs/artifacts/<version>/<slug>.html`; fill only the spec layer (head card · roster · conditions · descriptions), frames empty. Run the two checks below on the empty set — the shell is settled here and not re-argued once screens exist.
+3. **Screens** — fill each frame from the DS (§Build), one per roster row, then transitions, then states. Run the two checks again before returning.
+
+## Define screen set — the shell (what the skeleton gives)
+- **One file**, self-contained: a head card (title · scope · rules · review questions; collapsible, collapsed on load) over three panes — left the screen list, center ONE screen inside the product frame, right its description. Selecting a list entry swaps center and right in place: no page scroll, the frame's origin never moves. A condition radio sits on the stage, outside the frame, and swaps that screen's conditions the same way.
+- **Two layers, told apart by structure, never by typeface**: the spec layer (head card · list · radio · description) keeps the skeleton's own palette and uses no product component; the product DS lives only inside `.frame`. Spec vocabulary — screen names, condition labels, `#N` row numbers, this document's own facts (how many screens, which PRD items) — never renders inside a frame: not in a sidebar, a crumb, a card.
+- **Check 1, layer leak**: `python3 ~/.prdt/discipline/designer/screen-set/layer-leak-sweep.py <file>` reads that vocabulary off the spec layer (`.r-name` · `.cond-name` · `[data-spec-fact]`) and sweeps every frame's visible text; exit 0 and its `hits: 0` line go in `summary`, one hit is a fail. Real repository text rendered inside a screen carries `data-content="repo"` (excluded); a product label that IS the same string as a spec term → `--allow <term>`, the reason in `summary`.
+- **Check 2, key equality**: each screen renders as `id="screen-<key>"`, its roster entry carries `data-screen="<key>"`, `<key>` identical on both sides — `grep -o 'data-screen="[^"]*"'` and `grep -o 'id="screen-[^"]*"'` over the file return the same set (the sweep prints it too); that equality IS "roster and render are one set".
+- **Roster**: left pane, one entry per screen this version adds or changes, ordered as the user meets them. Entry = screen name + its structure line; the user counts the entries to judge coverage.
 - **Structure line**, one per entry, ≤120 chars, written in `[ctx].user_lang`: the screen's regions in reading order, `>` for what sits inside what, `·` between siblings, a count where the count is the point, `→` before the control that leads to another screen. It carries region names, nesting and counts — the reader accepts or rejects layout and information order from this line with the render hidden, which is what pays for dropping the wireframe. English shape: `top bar > logo · search · body = card grid (12) · right = filter panel → "Export"`.
-- **Transitions**: every control a structure line marks `→` moves — pressing it renders that screen and moves the roster selection with it. The press is the evidence the transition exists.
-- **Description panel**: changes with the selection — the selected screen's structure line, what the screen is for, and which states it shows.
-- **Order**: the DS pick sits in `docs/design.md` before this renders (`ds-3up` settles it, its own user fork). No DS there → `needs_info`, one question: settle the DS direction first.
+- **Transitions**: every control a structure line marks `→` moves — `data-open="<key>"` on the control renders that screen and moves the roster selection with it. The press is the evidence the transition exists.
+- **Description panel**: changes with the selection — the selected screen's structure line, what the screen is for, which states it shows, and where its numbers come from (a path or a measurement).
+- **DS first**: the DS pick sits in `docs/design.md` before this renders (`ds-3up` settles it, its own user fork). No DS there → `needs_info`, one question: settle the DS direction first.
 
 ## Build
 - `docs/artifacts/<version>/<slug>.<ext>` — interactive HTML preferred (use the `frontend-design` skill when available). Define screen set → the shell above. Otherwise one page per key screen or a linked set; keep candidates collapsed into one page when comparing.
@@ -31,6 +38,6 @@ effort: high
 
 ## Return
 - Print the absolute artifact path on its own line + a `file://` line (rendered view).
-- `summary`: skip/keep call · screens covered · states covered · any DS gaps flagged.
+- `summary`: skip/keep call · screens covered · states covered · both check results · any DS gaps flagged.
 - Direction-level choices you made without the user (layout paradigm, nav model) → `memory_notes[]`.
 - This artifact is what the PO's Build-entry confirm shows the user — never let Build start on a prose description of it instead.
