@@ -5,6 +5,7 @@ import crypto from 'crypto'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readGitRules } from './rules'
+import { atomicWriteFileSync } from '../fs/atomic-write'
 
 const execFileAsync = promisify(execFile)
 
@@ -77,9 +78,7 @@ function saveSnapshot(projectDir: string, data: SnapshotFile): void {
   const fp = snapshotPath(projectDir)
   const dir = path.dirname(fp)
   fs.mkdirSync(dir, { recursive: true })
-  const tmp = fp + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 })
-  fs.renameSync(tmp, fp)
+  atomicWriteFileSync(fp, JSON.stringify(data, null, 2), { mode: 0o600 })
 }
 
 function parseFrontmatter(content: string): Record<string, any> {
