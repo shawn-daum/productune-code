@@ -6647,6 +6647,147 @@ def duplicate_ticket_id_warnings(tickets):
     return warns
 
 
+# ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
+
+PRD_VERSION_HEADING_RE = re.compile(r"^## (v\d+(?:\.\d+)+)\b")
+PRD_VERSION_FILE_RE = re.compile(r"^v\d+(?:\.\d+)+\.md$")
+
+
+def _prd_version_headings(text):
+    """[(version, line_no)] for every `## v<N>.<m>` heading in `text`, 1-based."""
+    out = []
+    for i, line in enumerate(text.split("\n"), 1):
+        m = PRD_VERSION_HEADING_RE.match(line)
+        if m:
+            out.append((m.group(1), i))
+    return out
+
+
+def prd_layout_warnings(root, st):
+    """Standard doctor warnings — non-blocking, never a gate.
+
+    contracts §Fixed paths (T-657): `docs/prd/PRD.md` = the standing head + the
+    ONE open `## v<N>.<m>` section; every closed section is the ENTIRE body of
+    `docs/prd/versions/v<N>.<m>.md` (heading on line 1, nothing above it); a
+    round that wrote no section has a one-line stub at that path carrying no
+    `## ` heading; a whole-document snapshot from the regime that predates
+    sections (an H1 file) stays as that regime left it.
+
+    Observed before this check existed: ntf-pm's PRD.md held two `## v`
+    sections for 8 days with no tool saying so (measured 2026-09-18), and this
+    project's history.md lump hid that three ticket dirs had no PRD section at
+    all. Both PRE-migration shapes fire here — the lump and the multi-section
+    PRD.md — so an unmigrated project learns it from the tool, not from a
+    person reading the file.
+
+    Reads: PRD.md's section count · every other docs/prd/**/*.md for a `## v`
+    heading outside its own file · each versions/ file's shape · ticket dirs of
+    rounds up to the current one that have no version file. Silent on a ticket
+    dir ABOVE the current version — a roadmap dir is legal (contracts §Fixed
+    paths, Tickets row) — and on the current round itself, whose section is
+    the open one in PRD.md (or not yet written between close and Define)."""
+    root = Path(root)
+    prd_dir = root / "docs" / "prd"
+    prd_md = prd_dir / "PRD.md"
+    vdir = prd_dir / "versions"
+    warns = []
+
+    def rel(p):
+        return str(p.relative_to(root))
+
+    def read(p):
+        try:
+            return p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    home = "docs/prd/versions/v<N>.<m>.md"
+    open_versions = []
+    text = read(prd_md) if prd_md.is_file() else None
+    if text is not None:
+        heads = _prd_version_headings(text)
+        open_versions = [v for v, _ in heads]
+        if len(heads) > 1:
+            warns.append(f"prd: {rel(prd_md)} holds {len(heads)} `## v` sections "
+                         f"({', '.join(open_versions)}) — the working file is the standing head "
+                         f"+ ONE open version section; move each closed one byte-identical to "
+                         f"its own {home} (contracts §Fixed paths)")
+
+    for p in (sorted(prd_dir.rglob("*.md")) if prd_dir.is_dir() else []):
+        if p == prd_md:
+            continue
+        text = read(p)
+        if text is None:
+            continue
+        heads = _prd_version_headings(text)
+        in_vdir = p.parent == vdir
+        own = p.stem if in_vdir and PRD_VERSION_FILE_RE.match(p.name) else None
+        if in_vdir and own is None:
+            why = ("a resolver takes the FIRST match over docs/prd/PRD.md · docs/PRD.md · "
+                   "PRD.md, so a PRD.md here can be served as the current PRD with no error"
+                   if p.name == "PRD.md" else
+                   "only v<N>.<m>.md version files live here (contracts/fixed-paths.md §PRD)")
+            warns.append(f"prd: {rel(p)} is not a version file — {why}")
+        if own is None:
+            # history.md, a stray note, a misnamed file: every closed section it
+            # holds is named with the one path it belongs on.
+            for v, ln in heads:
+                warns.append(f"prd: closed section `## {v}` found in {rel(p)}:{ln} — its home is "
+                             f"docs/prd/versions/{v}.md, the ENTIRE body of that file "
+                             f"(contracts §Fixed paths); move it byte-identical")
+            continue
+        lines = text.split("\n")
+        if any(l.startswith("# ") for l in lines):
+            # whole-document snapshot (pre-section regime): legal as left; only a
+            # foreign version section inside it is out of place.
+            for v, ln in heads:
+                if v != own:
+                    warns.append(f"prd: closed section `## {v}` found in {rel(p)}:{ln} — its home is "
+                                 f"docs/prd/versions/{v}.md; move it byte-identical")
+            continue
+        if heads:
+            first_v, first_ln = heads[0]
+            if first_v != own:
+                warns.append(f"prd: {rel(p)} opens with `## {first_v}` — a version file holds its "
+                             f"own `## {own}` block and nothing else; `## {first_v}` belongs in "
+                             f"docs/prd/versions/{first_v}.md")
+            elif first_ln != 1:
+                warns.append(f"prd: {rel(p)} has {first_ln - 1} line(s) above its `## {own}` heading "
+                             f"— the file is that block and nothing else (no frontmatter, no head)")
+            for v, ln in heads[1:]:
+                warns.append(f"prd: {rel(p)}:{ln} carries a second section `## {v}` — one version "
+                             f"per file; `## {v}` belongs in docs/prd/versions/{v}.md")
+            continue
+        # no `## v` heading, no H1 → a registered-absence stub: ONE line, no `## `.
+        body = [l for l in lines if l.strip()]
+        if len(body) != 1 or any(l.startswith("## ") for l in body):
+            warns.append(f"prd: {rel(p)} is neither a `## {own}` section nor a stub — a registered "
+                         f"absence is ONE line (`no PRD section — <decision>`) with no `## ` heading; "
+                         f"a section starts with `## {own}` on line 1")
+
+    # Rounds with tickets and no PRD record — the gap the lump hid.
+    tdir = root / "docs" / "tickets"
+    if tdir.is_dir():
+        current = set(open_versions)
+        pv = st.get("version") if isinstance(st, dict) else None
+        if isinstance(pv, str) and pv.strip():
+            current.add(pv.strip())
+        keys = [k for k in (_version_key(v) for v in current) if k]
+        ceiling = max(keys) if keys else None
+        for d in sorted(tdir.iterdir()):
+            if not d.is_dir() or not PRD_VERSION_FILE_RE.match(d.name + ".md"):
+                continue
+            if d.name in current or (vdir / f"{d.name}.md").is_file():
+                continue
+            k = _version_key(d.name)
+            if ceiling is not None and (k is None or k >= ceiling):
+                continue
+            warns.append(f"prd: {rel(d)}/ has no docs/prd/versions/{d.name}.md — a closed round's "
+                         f"`## {d.name}` section, or a one-line `no PRD section — <decision>` stub "
+                         f"when the round was tickets-only (contracts/fixed-paths.md §PRD)")
+    return warns
+
+
 # ── doctor: check roster · declared family · verdict line (T-560) ─────────────
 #
 # v1.8's acceptance bar is a single number — `prdt doctor` judges "0
@@ -7584,6 +7725,12 @@ def cmd_doctor(_args):
         # condition: it missed a file naming its own ticket in its title, and it
         # cleared a file only because a LATER round's ticket happened to cite it.
         ("artifact placement", FAMILY_PROJECT, lambda: artifact_placement_warnings(root)),
+        # PRD layout — one file per closed version · one open section in PRD.md ·
+        # a stub for a tickets-only round · the gap a ticket dir with no record
+        # leaves (T-657). Fires on the pre-migration shapes too (history.md lump,
+        # several `## v` sections in PRD.md) — measured 2026-09-18: ntf-pm ran
+        # 8 days in the second shape with no tool saying so.
+        ("PRD layout", FAMILY_PROJECT, lambda: prd_layout_warnings(root, st)),
         # main-push block: install where it is ours to write, report where it is not (T-481)
         ("main-push block", FAMILY_DE, lambda: prepush_warnings(root)),
         # promotion path: read the repo's own policy, report where it differs from

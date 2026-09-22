@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!--
+  Define screen set — skeleton (designer `hifi` §Define screen set).
+  Copy this file to docs/artifacts/<version>/<slug>.html and fill it in the order the
+  playbook fixes: criteria → this shell → screens.
+
+  TWO LAYERS, one file:
+    spec layer   = .spec-shell (head card) · .spec-roster (list) · .spec-cond (radio) · .spec-desc
+                   — the skeleton's own --spec-* palette, no product component, no product token.
+    product layer = everything inside .frame — the product DS only (tokens from docs/design.md).
+  Spec vocabulary (screen names in .r-name, condition labels in .cond-name, facts marked
+  data-spec-fact) never renders inside .frame — layer-leak-sweep.py checks it.
+
+  KEYS: a roster entry data-screen="<key>" ↔ a screen id="screen-<key>"; the same set on both
+  sides. A condition of a screen is a .cond-view[data-cond="<name>"] inside that screen; the
+  radio on the stage lists the names DESCRIPTIONS[key].conditions gives.
+  TRANSITIONS: any control inside a screen with data-open="<key>" selects that screen.
+  Real repository text rendered inside a screen: wrap it in data-content="repo" (sweep excludes).
+-->
+<title>SCREEN SET — vN.m</title>
+<style>
+/* ---------- spec layer palette (never the product's) ---------- */
+:root{
+  --spec-bg:#FBFAF8; --spec-panel:#F3F1EC; --spec-border:rgba(0,0,0,.10);
+  --spec-text:#1A1A18; --spec-muted:#6B6A64; --spec-current:#1A1A18; --spec-current-text:#FBFAF8;
+  --spec-font:'Pretendard Variable','Pretendard',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Segoe UI',sans-serif;
+  --spec-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --spec-bg:#1C1B18; --spec-panel:#242320; --spec-border:rgba(255,255,255,.12);
+    --spec-text:#EDEBE4; --spec-muted:#9C9A92; --spec-current:#EDEBE4; --spec-current-text:#1C1B18; }
+}
+/* ---------- product DS tokens — paste from docs/design.md; scope them to .frame ---------- */
+.frame{
+  /* --bg:…; --text:…; --accent:…; --font:…; */
+  font-family:var(--font, var(--spec-font));
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;height:100%;}
+body{
+  background:var(--spec-bg); color:var(--spec-text); font-family:var(--spec-font);
+  font-size:14px; line-height:1.6; -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column; height:100vh; overflow:hidden;   /* fixed viewport: the page never scrolls */
+  word-break:keep-all; overflow-wrap:break-word;
+}
+code,.mono{font-family:var(--spec-mono);}
+
+/* ---------- head card (collapsible, collapsed on load) ---------- */
+.spec-shell{max-width:1440px; width:100%; margin:0 auto; padding:8px 28px 0; flex:0 0 auto;}
+.spec-head{background:var(--spec-panel); border:1px solid var(--spec-border); border-radius:14px; overflow:hidden; margin-bottom:10px;}
+.spec-head-bar{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 18px;}
+.spec-head-bar h1{font-size:15px; font-weight:700; margin:0; letter-spacing:-.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.spec-toggle{display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; font:inherit; font-size:11.5px; color:var(--spec-muted);
+  background:var(--spec-bg); border:1px solid var(--spec-border); border-radius:100px; padding:5px 12px; cursor:pointer; white-space:nowrap;}
+.spec-toggle:hover{color:var(--spec-text);}
+.spec-head-body{padding:14px 20px 16px; border-top:1px solid var(--spec-border);}
+.spec-shell.collapsed .spec-head-body{display:none;}
+.spec-head-body h2{font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--spec-muted); margin:12px 0 6px; font-weight:700;}
+.spec-head-body h2:first-child{margin-top:0;}
+.spec-head-body p,.spec-head-body li{font-size:12.5px; line-height:1.6; margin:0 0 4px;}
+.spec-head-body ul{margin:0; padding-left:18px;}
+.spec-questions{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:8px;}
+.spec-questions .q{background:var(--spec-bg); border:1px solid var(--spec-border); border-radius:10px; padding:10px 12px;}
+.spec-questions .q .qn{display:block; font-size:10px; font-weight:700; letter-spacing:.5px; color:var(--spec-muted); margin-bottom:4px;}
+.spec-questions .q p{margin:0; font-size:12px;}
+
+/* ---------- three panes ---------- */
+.spec-grid{max-width:1440px; width:100%; margin:0 auto; padding:0 28px 12px; flex:1 1 auto; min-height:0;
+  display:grid; grid-template-columns:280px minmax(0,1fr) 300px; gap:14px; align-items:stretch;}
+.spec-roster,.spec-desc{background:var(--spec-panel); border:1px solid var(--spec-border); border-radius:14px; overflow-y:auto; min-height:0;}
+.spec-roster{padding:10px;}
+.spec-roster h2{font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--spec-muted); margin:6px 8px 6px; font-weight:700;}
+.spec-group{margin-bottom:6px;}
+.roster-item{display:block; width:100%; text-align:left; border:none; background:none; cursor:pointer; font:inherit; color:inherit;
+  padding:9px 10px; border-radius:8px; margin-bottom:2px;}
+.roster-item:hover{background:var(--spec-border);}
+.roster-item.active{background:var(--spec-current);}
+.roster-item.active .r-name,.roster-item.active .r-struct{color:var(--spec-current-text);}
+.r-name{display:block; font-size:13px; font-weight:700; margin-bottom:3px;}
+.r-struct{display:block; font-size:10.5px; color:var(--spec-muted); font-family:var(--spec-mono); line-height:1.5;}
+
+.spec-stage{display:flex; flex-direction:column; min-height:0; min-width:0; gap:8px;}
+.spec-cond{display:flex; align-items:center; gap:6px; flex-wrap:wrap; flex:0 0 auto; font-size:11.5px; color:var(--spec-muted);}
+.spec-cond label{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--spec-border); border-radius:100px; padding:4px 10px; cursor:pointer;}
+.spec-cond label:has(input:checked){background:var(--spec-current); color:var(--spec-current-text); border-color:var(--spec-current);}
+.spec-cond input{margin:0;}
+.cond-num{font-family:var(--spec-mono); font-size:10.5px;}
+/* the product frame: one screen visible, its origin never moves */
+.frame{flex:1 1 auto; min-height:0; position:relative; border:1px solid var(--spec-border); border-radius:12px; overflow:hidden; background:#fff;}
+.screen{position:absolute; inset:0; overflow:auto; display:none;}
+.screen.active{display:block;}
+.cond-view{display:none;}
+.cond-view.active{display:block;}
+
+.spec-desc{padding:18px 20px;}
+.spec-desc h3{font-size:15px; margin:0 0 4px; font-weight:700;}
+.desc-struct{font-family:var(--spec-mono); font-size:11px; color:var(--spec-muted); background:var(--spec-bg); border-radius:6px; padding:8px 10px; margin:10px 0; line-height:1.6;}
+.spec-desc h4{font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--spec-muted); margin:14px 0 6px; font-weight:700;}
+.spec-desc p,.spec-desc li{font-size:12.5px; line-height:1.6; margin:0 0 6px;}
+.spec-desc ul{margin:0; padding-left:18px;}
+@media (max-width:1100px){ .spec-grid{grid-template-columns:240px minmax(0,1fr);} .spec-desc{display:none;} }
+</style>
+</head>
+<body>
+
+<!-- ================= spec layer: head card ================= -->
+<div class="spec-shell collapsed" id="spec-shell">
+  <header class="spec-head">
+    <div class="spec-head-bar">
+      <h1 data-spec-fact>SCREEN SET — vN.m · TITLE</h1>
+      <button class="spec-toggle" id="spec-toggle" type="button" aria-expanded="false" aria-controls="spec-head-body">범위 · 규칙 · 질문</button>
+    </div>
+    <div class="spec-head-body" id="spec-head-body">
+      <h2>범위</h2>
+      <p data-spec-fact>이 버전이 더하거나 바꾸는 화면 N장 · 조건 M · PRD 항목 …</p>
+      <h2>규칙</h2>
+      <ul>
+        <li>왼쪽 목록에서 고르면 가운데 화면과 오른쪽 설명이 제자리에서 바뀐다.</li>
+        <li>화면 안의 컨트롤을 누르면 그 컨트롤이 이름 부르는 화면으로 간다.</li>
+        <li>조건 라디오는 같은 화면의 조건을 바꾼다.</li>
+      </ul>
+      <h2>검토 질문</h2>
+      <div class="spec-questions">
+        <div class="q"><span class="qn">Q1</span><p>…</p></div>
+        <div class="q"><span class="qn">Q2</span><p>…</p></div>
+        <div class="q"><span class="qn">Q3</span><p>…</p></div>
+      </div>
+    </div>
+  </header>
+</div>
+
+<!-- ================= three panes ================= -->
+<div class="spec-grid">
+  <!-- left: the roster — one entry per screen, data-screen = the key -->
+  <nav class="spec-roster" id="roster" aria-label="screen list">
+    <div class="spec-group">
+      <h2>GROUP</h2>
+      <button class="roster-item" data-screen="example-a">
+        <span class="r-name">Example A</span>
+        <span class="r-struct">top bar > logo · search · body = list (N) → "Open"</span>
+      </button>
+      <button class="roster-item" data-screen="example-b">
+        <span class="r-name">Example B</span>
+        <span class="r-struct">top bar > back · body = detail</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- center: condition radio (spec layer) + the product frame (product layer) -->
+  <div class="spec-stage">
+    <div class="spec-cond" id="cond" role="radiogroup" aria-label="condition"></div>
+    <div class="frame" id="frame">
+      <section class="screen" id="screen-example-a">
+        <div class="cond-view" data-cond="default">
+          <!-- product screen, DS tokens only. A control that leads elsewhere: data-open="example-b" -->
+          <button data-open="example-b">Open</button>
+        </div>
+        <div class="cond-view" data-cond="empty">
+          <!-- the same screen, empty state -->
+        </div>
+      </section>
+      <section class="screen" id="screen-example-b">
+        <div class="cond-view" data-cond="default">
+          <button data-open="example-a">Back</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- right: the description panel — rendered from DESCRIPTIONS[key] -->
+  <aside class="spec-desc" id="desc"></aside>
+</div>
+
+<script>
+/* One entry per key. `conditions` names the radio options and matches .cond-view[data-cond] inside
+   the screen (first one = the one shown on select). `source` says where the screen's numbers come from. */
+const DESCRIPTIONS = {
+  'example-a': {
+    title: 'Example A',
+    struct: 'top bar > logo · search · body = list (N) → "Open"',
+    purpose: '이 화면이 무엇을 위한 것인가.',
+    conditions: { default: '기본', empty: '비어 있음' },
+    states: ['default — …', 'empty — …'],
+    source: '수의 출처: <path or measurement>',
+  },
+  'example-b': {
+    title: 'Example B',
+    struct: 'top bar > back · body = detail',
+    purpose: '…',
+    conditions: { default: '기본' },
+    states: ['default — …'],
+    source: '…',
+  },
+};
+
+(function () {
+  const roster = document.getElementById('roster');
+  const cond = document.getElementById('cond');
+  const desc = document.getElementById('desc');
+  let current = null;
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  function renderCond(key) {
+    const d = DESCRIPTIONS[key] || {};
+    const names = Object.keys(d.conditions || {});
+    cond.innerHTML = names.map((n, i) =>
+      `<label><input type="radio" name="cond" value="${esc(n)}"${i === 0 ? ' checked' : ''}>` +
+      `<span class="cond-num">#${i + 1}</span><span class="cond-name">${esc(d.conditions[n])}</span></label>`).join('');
+  }
+
+  function setCondition(key, name) {
+    const screen = document.getElementById('screen-' + key);
+    if (!screen) return;
+    screen.querySelectorAll(':scope > .cond-view').forEach(v => v.classList.toggle('active', v.dataset.cond === name));
+    const radio = cond.querySelector(`input[value="${CSS.escape(name)}"]`);
+    if (radio) radio.checked = true;
+  }
+
+  function renderDesc(key) {
+    const d = DESCRIPTIONS[key];
+    if (!d) { desc.innerHTML = ''; return; }
+    desc.innerHTML =
+      `<h3>${esc(d.title)}</h3>` +
+      `<div class="desc-struct">${esc(d.struct)}</div>` +
+      `<h4>무엇을 위한 화면인가</h4><p>${esc(d.purpose)}</p>` +
+      `<h4>보여 주는 상태</h4><ul>${(d.states || []).map(s => `<li>${esc(s)}</li>`).join('')}</ul>` +
+      `<h4>수의 출처</h4><p>${esc(d.source)}</p>`;
+  }
+
+  /* select(key): swap center + right IN PLACE — no scroll, the frame never moves */
+  function select(key) {
+    const screen = document.getElementById('screen-' + key);
+    if (!screen) return;
+    document.querySelectorAll('.screen.active').forEach(s => s.classList.remove('active'));
+    screen.classList.add('active');
+    roster.querySelectorAll('.roster-item').forEach(b => b.classList.toggle('active', b.dataset.screen === key));
+    const active = roster.querySelector('.roster-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+    renderCond(key);
+    const first = Object.keys((DESCRIPTIONS[key] || {}).conditions || {})[0];
+    if (first) setCondition(key, first);
+    renderDesc(key);
+    current = key;
+  }
+
+  document.addEventListener('click', ev => {
+    const item = ev.target.closest('[data-screen]');
+    if (item && roster.contains(item)) { ev.preventDefault(); select(item.dataset.screen); return; }
+    const open = ev.target.closest('[data-open]');
+    if (open) { ev.preventDefault(); select(open.dataset.open); return; }
+  });
+  cond.addEventListener('change', ev => {
+    if (ev.target.name === 'cond' && current) setCondition(current, ev.target.value);
+  });
+
+  const shell = document.getElementById('spec-shell');
+  document.getElementById('spec-toggle').addEventListener('click', () => {
+    const collapsed = shell.classList.toggle('collapsed');
+    document.getElementById('spec-toggle').setAttribute('aria-expanded', String(!collapsed));
+  });
+
+  const firstKey = roster.querySelector('.roster-item') && roster.querySelector('.roster-item').dataset.screen;
+  if (firstKey) select(firstKey);
+})();
+</script>
+</body>
+</html>
