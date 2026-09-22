@@ -6364,7 +6364,11 @@ def artifact_files(bucket):
     """Manifest-relative paths of the files one bucket holds: files directly in the
     bucket root, then every file anywhere under archive/ — recursive, since an
     archived doc may itself be organized into subdirectories (F1: a file at
-    archive/<subdir>/… was previously invisible to every check class)."""
+    archive/<subdir>/… was previously invisible to every check class). A
+    manifest.json at ANY depth is never an artifact (contracts §Fixed paths:
+    "any manifest.json inside a bucket") — the top-level loop already excluded
+    it; the archive/ walk did not, so `archive/manifest.json` was silently
+    registered as an artifact instead of being reported (T-672 ⓒ)."""
     out = []
     for p in sorted(bucket.iterdir(), key=lambda x: x.name):
         if p.is_file() and not p.name.startswith(".") and p.name != ARTIFACT_MANIFEST_NAME:
@@ -6374,10 +6378,28 @@ def artifact_files(bucket):
         for p in sorted(arch.rglob("*"), key=lambda x: x.as_posix()):
             if not p.is_file():
                 continue
+            if p.name == ARTIFACT_MANIFEST_NAME:
+                continue
             rel = p.relative_to(arch)
             if any(part.startswith(".") for part in rel.parts):
                 continue
             out.append(f"archive/{rel.as_posix()}")
+    return out
+
+
+def stray_manifest_jsons_in_buckets(root):
+    """Every manifest.json under a bucket at a depth OTHER than the bucket's own
+    root — the root one (`<bucket>/manifest.json`) is the pre-T-661 per-bucket
+    shape, already reported by `legacy_bucket_manifests` with its own remedy;
+    any deeper one (typically `archive/manifest.json`, since archive/ is the
+    only other legal bucket subdirectory) is a stray file the annex still
+    requires check/doctor to report (T-672 ⓒ) — `artifact_files` above already
+    keeps `sync` from registering it."""
+    out = []
+    for bucket in artifact_buckets(root):
+        for p in sorted(bucket.rglob(ARTIFACT_MANIFEST_NAME), key=lambda x: x.as_posix()):
+            if p.parent != bucket:
+                out.append(p)
     return out
 
 
@@ -6474,14 +6496,43 @@ def _artifact_entry_canon(bucket, e):
 def build_artifact_manifest(root, prior=None):
     """Derive the root manifest from disk, carrying forward every hand-set field
     of a prior entry with the same (bucket, path). Entries in bucket order
-    (version order), then path — a shape a static generator reads without the CLI."""
+    (version order), then path — a shape a static generator reads without the CLI.
+
+    Returns (data, drop_lines). The entry key is (bucket, path); the contract's
+    own prescribed move — a superseded draft to that bucket's archive/ — changes
+    path, so an exact-key lookup alone re-derives the moved entry from scratch and
+    drops every hand-filled value (T-672 ⓐ). When the current file sits under
+    archive/ and no entry already exists at ITS path, but a prior entry exists at
+    the same relative name with the archive/ prefix stripped, and that pre-move
+    path is no longer on disk (it moved, it was not merely copied), the old
+    entry's values are carried to the new (bucket, archive/<name>) key; `status`
+    still becomes "archived" like any archived entry.
+
+    Every prior (bucket, path) key that survives into neither an exact match nor
+    an archive-move match is genuinely dropped — sync never re-derives it, so a
+    line is returned per drop instead of the manifest changing silently."""
     if prior is None:
         prior, _, _, _ = read_artifact_manifest(root)
     entries = []
+    consumed = set()
     for bucket in artifact_buckets(root):
-        for rel in artifact_files(bucket):
-            old = prior.get((bucket.name, rel), {})
+        files = artifact_files(bucket)
+        files_set = set(files)
+        for rel in files:
             archived = rel.startswith("archive/")
+            key = (bucket.name, rel)
+            if key in prior:
+                old = prior[key]
+                consumed.add(key)
+            elif archived:
+                moved_from = (bucket.name, rel[len("archive/"):])
+                if moved_from in prior and moved_from[1] not in files_set:
+                    old = prior[moved_from]
+                    consumed.add(moved_from)
+                else:
+                    old = {}
+            else:
+                old = {}
             e = {
                 "bucket": bucket.name,
                 "path": rel,
@@ -6497,7 +6548,10 @@ def build_artifact_manifest(root, prior=None):
                     e[k] = v
             entries.append(_artifact_entry_canon(bucket.name, e))
     entries.sort(key=_artifact_entry_sort_key)
-    return {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V, "entries": entries}
+    dropped = sorted(prior.keys() - consumed, key=lambda k: (_version_id_canon(k[0]) or (), k[0], k[1]))
+    drop_lines = [f"artifact: docs/artifacts/manifest.json dropped {b}/{p} — no longer on disk"
+                  for (b, p) in dropped]
+    return {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V, "entries": entries}, drop_lines
 
 
 def write_artifact_manifest(root, data):
@@ -6535,6 +6589,11 @@ def artifact_placement_warnings(root):
     for mp in legacy:
         warns.append(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest — the "
                      f"one manifest is docs/artifacts/manifest.json; run `prdt artifacts migrate`")
+    for mp in stray_manifest_jsons_in_buckets(root):
+        rel = mp.relative_to(base).as_posix()
+        warns.append(f"artifact: {rel} is a manifest.json inside a bucket — it is never registered "
+                     f"as an artifact and never a home for entries (contracts §Fixed paths); remove or "
+                     f"relocate it")
     prior, err, malformed, present = read_artifact_manifest(root)
     if err:
         warns.append(f"artifact: docs/artifacts/manifest.json {err} — run `prdt artifacts sync`")
@@ -6661,10 +6720,23 @@ def cmd_artifacts(args):
             print(f"artifact: {mp.parent.name}/manifest.json is a per-bucket manifest")
         sys.exit("artifacts: sync refused — re-deriving from disk would drop the values those "
                  "files hold; run `prdt artifacts migrate` first")
-    _, err, _, _ = read_artifact_manifest(root)
+    prior, err, malformed, _ = read_artifact_manifest(root)
     if err:
         sys.exit(f"artifacts: sync refused — docs/artifacts/manifest.json {err}; fix or remove it first")
-    data = build_artifact_manifest(root)
+    if malformed:
+        # A broken root entry (T-672 ⓑ) — e.g. one with no `bucket` — cannot be
+        # re-derived from disk (nothing on disk says which bucket it belongs to),
+        # so re-deriving anyway would drop it and its values with no report. Same
+        # posture as the two refusals above: broken input stops sync before it
+        # writes, the same way it stops on a broken file.
+        for m in malformed:
+            print(f"artifact: docs/artifacts/manifest.json {m}")
+        sys.exit(f"artifacts: sync refused — {len(malformed)} malformed entrie(s) in "
+                 f"docs/artifacts/manifest.json would be silently dropped by re-deriving; fix them "
+                 f"first (e.g. fill in the missing `bucket`)")
+    data, dropped = build_artifact_manifest(root, prior=prior)
+    for d in dropped:
+        print(d)
     if write_artifact_manifest(root, data):
         print(f"artifacts: docs/artifacts/manifest.json written ({len(data['entries'])} entrie(s))")
     else:

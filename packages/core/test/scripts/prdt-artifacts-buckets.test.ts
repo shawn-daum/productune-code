@@ -376,4 +376,74 @@ describe('T-512 artifacts live in version buckets', () => {
     expect(r.out).toContain('manifest.json lists v1.9/gone.md, and v1.9/ is not a version bucket on disk')
     expect(r.code).toBe(1)
   })
+
+  // ── T-672: a hand-filled value survives the archive/ move ──────────────────
+
+  test('§17 a superseded file moved to archive/ keeps its hand-filled values (T-672 ⓐ)', () => {
+    // Root cause: the entry key is (bucket, path); the contract's own
+    // prescribed move (superseded -> archive/<same name>) changes the path, so
+    // an exact-key re-derive found nothing and dropped ticket/note/status.
+    artifact('v1.2/a.html', '<title>a</title>')
+    sync()
+    const m = manifest()
+    m.entries[0].ticket = 'T-999'
+    m.entries[0].note = 'hand-filled note'
+    m.entries[0].status = 'approved'
+    writeManifest(m)
+    const bucketDir = path.join(projectDir, 'docs', 'artifacts', 'v1.2')
+    fs.mkdirSync(path.join(bucketDir, 'archive'), { recursive: true })
+    fs.renameSync(path.join(bucketDir, 'a.html'), path.join(bucketDir, 'archive', 'a.html'))
+    sync()
+    const e = entry('v1.2', 'archive/a.html')
+    expect(e.ticket).toBe('T-999')
+    expect(e.note).toBe('hand-filled note')
+    expect(e.status).toBe('archived') // archived always wins, same rule as §8 — only the OTHER values had to survive
+    expect(manifest().entries.some((x: any) => x.bucket === 'v1.2' && x.path === 'a.html')).toBe(false)
+    expect(manifest().entries.length).toBe(1) // carried forward, not duplicated
+  })
+
+  test('§18 sync refuses on a root entry with no `bucket` instead of silently dropping it (T-672 ⓑ)', () => {
+    // check names `prdt artifacts sync` as the remedy for exactly this
+    // malformed shape (§12); running it must not be the thing that erases the
+    // entry's values with no report — it refuses, the same posture as an
+    // unreadable manifest or a leftover per-bucket one (§13).
+    artifact('v1.6/probe.md', '# probe\n')
+    sync()
+    const m = manifest()
+    m.entries.push({ path: 'no-bucket.md', ticket: 'T-1', note: 'would be lost silently' })
+    writeManifest(m)
+    const before = fs.readFileSync(ROOT_MANIFEST(), 'utf-8')
+    const r = sync()
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain('sync refused')
+    expect(r.out).toContain('no-bucket.md) has no `bucket`')
+    expect(fs.readFileSync(ROOT_MANIFEST(), 'utf-8')).toBe(before) // untouched — nothing dropped
+    expect(check().out).toContain('run `prdt artifacts sync`') // and that remedy now actually describes what happens
+  })
+
+  test('§19 a manifest.json nested inside a bucket is reported, not registered as an artifact (T-672 ⓒ)', () => {
+    // Real shape: v1.1/archive/manifest.json. Depth-1 (bucket/manifest.json) is
+    // the pre-T-661 per-bucket shape (§13); this is deeper, unreported before,
+    // and sync silently registered it as an ordinary artifact.
+    artifact('v1.1/keep.md', '# keep\n')
+    const archiveDir = path.join(projectDir, 'docs', 'artifacts', 'v1.1', 'archive')
+    fs.mkdirSync(archiveDir, { recursive: true })
+    fs.writeFileSync(path.join(archiveDir, 'manifest.json'), '{"schema_v":1,"entries":[]}\n')
+    const r = check()
+    expect(r.out).toContain('v1.1/archive/manifest.json is a manifest.json inside a bucket')
+    expect(r.code).toBe(1)
+    expect(doctor()).toContain('v1.1/archive/manifest.json is a manifest.json inside a bucket')
+    sync()
+    expect(manifest().entries.map((e: any) => e.path)).toEqual(['keep.md'])
+  })
+
+  test('§20 sync prints a line for every entry it drops, not only "written (…)" (T-672)', () => {
+    artifact('v1.6/probe.md', '# probe\n')
+    artifact('v1.6/gone.md', '# gone\n')
+    sync()
+    fs.rmSync(path.join(projectDir, 'docs', 'artifacts', 'v1.6', 'gone.md'))
+    const r = sync()
+    expect(r.out).toContain('dropped v1.6/gone.md')
+    expect(manifest().entries.map((e: any) => e.path)).toEqual(['probe.md'])
+  })
 })
