@@ -152,13 +152,25 @@ describe('a legitimate po-state renders byte-identically to pre-T-471', () => {
       .toBe('[prdt state] stage=build · version=v1.6 · current_task=T-471(developer)')
   })
 
+  // T-669: this golden went stale at d689fa3 (2026-09-15, "fix: gate messages
+  // state the work, and a repair records what it repaired (T-633, T-634)"),
+  // which reworded the stage guard from an assertion ("deploy-shaped request
+  // … deploy belongs to ship") to a confirm-before-acting ask, after the trigger
+  // misfired 11/11 times this version — T-530 owns the match logic the new
+  // wording cites, but the wording change itself is T-633/T-634's, not T-530's.
+  // Confirmed via `git log -S` on both strings (§ commit log below); updating
+  // the golden to the current wording is a golden-string update, not a defect
+  // repair — the guard's behavior (fires once, names the stage, points at
+  // ship entry) is unchanged.
   test('stage-guard line included, verbatim', () => {
     expect(stateContext(LEGIT, '배포 완료')).toBe(
       '[prdt state] stage=build · version=v1.6 · current_task=none\n' +
-      '[prdt stage guard] deploy-shaped request while stage=build — deploy belongs to ship. ' +
-      'Ship entry is due FIRST: readiness pass (readiness-dispatch playbook) + po-state stage write, ' +
-      'or an explicit N/A-skip line in docs/wiki/log.md. Raise it before doing the deploy work ' +
-      '(PO habit — Lifecycle judgment).',
+      '[prdt stage guard] confirm before acting: deploy-shaped phrasing matched this turn ' +
+      'while stage=build, but this trigger has misfired on every turn it has fired this version ' +
+      '(11/11, T-530 owns the match fix) — read the turn yourself and confirm it actually asks ' +
+      'for a deploy before treating it as one. If it does, do ship entry first: readiness pass ' +
+      '(readiness-dispatch playbook) + po-state stage write, or an explicit N/A-skip line in ' +
+      'docs/wiki/log.md, before the deploy work (PO habit — Lifecycle judgment).',
     )
   })
 
