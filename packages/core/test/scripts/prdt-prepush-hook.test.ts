@@ -74,6 +74,24 @@ let remote: string
 let projectRoot: string
 let codeRoot: string
 
+/** T-668: `prdt doctor`'s "resident machine resources" check (T-592) is
+ * registered under FAMILY_DE and returns a plain warning list (never wrapped
+ * in `Advisory`), so under THIS machine's own load its `⚠ machine:
+ * docker-stack …` line counts toward the verdict tail's `violations=` like
+ * any real discipline↔execution mismatch — exactly the untracked contributor
+ * to the `violations` assertion this file pins. `resident_resource_lines()`
+ * gates on load before it ever reads docker/lume state, so faking only
+ * `uptime` (fixed, low) silences the whole check deterministically — same
+ * technique `prdt-doctor-resident-resources.test.ts` uses via FAKE_LOAD. */
+function fakeUptimeBinDir(dir: string): string {
+  const binDir = path.join(dir, 'bin')
+  fs.mkdirSync(binDir, { recursive: true })
+  fs.writeFileSync(path.join(binDir, 'uptime'),
+    '#!/bin/sh\necho "12:00  up 1 day, 2 users, load averages: 1.00 1.00 1.00"\n')
+  fs.chmodSync(path.join(binDir, 'uptime'), 0o755)
+  return binDir
+}
+
 /** Sandbox HOME (no user gitconfig, no real ~/.prdt) + a bare remote + a project
  *  whose code root is a genuine `git clone` — i.e. carrying no hooks, exactly
  *  what a teammate has. */
@@ -83,12 +101,14 @@ function makeFixture(): void {
   fs.mkdirSync(home, { recursive: true })
   fs.writeFileSync(path.join(home, '.gitconfig'),
     '[user]\n\tname = t\n\temail = t@t\n[init]\n\tdefaultBranch = main\n')
+  const binDir = fakeUptimeBinDir(sandbox)
   env = {
     ...process.env,
     HOME: home,
     PRDT_HOME: path.join(home, '.prdt'),
     PRDT_DISCIPLINE: path.join(CORE_ROOT, 'discipline'),
     GIT_CONFIG_NOSYSTEM: '1',
+    PATH: `${binDir}:${process.env.PATH}`,
   }
   remote = path.join(sandbox, 'origin.git')
   git(['init', '-q', '--bare', remote], sandbox)

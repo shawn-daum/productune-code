@@ -50,15 +50,35 @@ let sandbox: string
 let projectRoot: string
 let env: NodeJS.ProcessEnv
 
+/** T-668: doctor's "resident machine resources" check (T-592) shells out to
+ * the REAL `uptime` — under this machine's own load, it can add a
+ * `⚠ machine: docker-stack …` line that embeds the LIVE load number. The
+ * blast-radius test below diffs two whole warning sets from two separate
+ * doctor runs, so a line that differs from itself run to run breaks it
+ * outright. `resident_resource_lines()` gates on load before it ever reads
+ * docker/lume state, so faking only `uptime` (fixed, low) silences the whole
+ * check deterministically — same technique
+ * `prdt-doctor-resident-resources.test.ts` uses via FAKE_LOAD. */
+function fakeUptimeBinDir(dir: string): string {
+  const binDir = path.join(dir, 'bin')
+  fs.mkdirSync(binDir, { recursive: true })
+  fs.writeFileSync(path.join(binDir, 'uptime'),
+    '#!/bin/sh\necho "12:00  up 1 day, 2 users, load averages: 1.00 1.00 1.00"\n')
+  fs.chmodSync(path.join(binDir, 'uptime'), 0o755)
+  return binDir
+}
+
 function makeFixture(): void {
   sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-dupid-'))
   const home = path.join(sandbox, 'home')
   fs.mkdirSync(home, { recursive: true })
+  const binDir = fakeUptimeBinDir(sandbox)
   env = {
     ...process.env,
     HOME: home,
     PRDT_HOME: path.join(home, '.prdt'),
     PRDT_DISCIPLINE: path.join(CORE_ROOT, 'discipline'),
+    PATH: `${binDir}:${process.env.PATH}`,
   }
   projectRoot = path.join(sandbox, 'proj')
   fs.mkdirSync(path.join(projectRoot, '.prdt'), { recursive: true })

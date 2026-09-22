@@ -36,12 +36,33 @@ function which(bin: string): string | null {
 const PYTHON3 = which('python3')
 
 let projectDir: string
+let binDir: string
+
+/** T-668: doctor's own "resident machine resources" check (T-592) shells out
+ * to the REAL `uptime` — on THIS machine, whenever host load happens to sit
+ * at/above LOAD_AVG_WARN (10.0), it prints a `⚠ machine: docker-stack …`
+ * line that this file never asked for and has no fixture for. That line
+ * breaks the literal `doctor: clean` assertion below and, because it embeds
+ * the LIVE load number, breaks any before/after warning-set comparison too.
+ * `resident_resource_lines()` gates itself on load BEFORE it ever looks at
+ * docker/lume state, so faking only `uptime` (fixed, low) is sufficient to
+ * silence the whole check deterministically — same fixture technique as
+ * `prdt-doctor-resident-resources.test.ts`'s FAKE_LOAD, applied here just to
+ * keep this file's actual subject (meta drift) machine-independent. */
+function fakeUptimeBinDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-meta-drift-bin-'))
+  fs.writeFileSync(path.join(dir, 'uptime'),
+    '#!/bin/sh\necho "12:00  up 1 day, 2 users, load averages: 1.00 1.00 1.00"\n')
+  fs.chmodSync(path.join(dir, 'uptime'), 0o755)
+  return dir
+}
 
 function runPrdt(cli: string, args: string[]): string {
   return execFileSync('python3', [cli, ...args], {
     cwd: projectDir,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
     timeout: subprocessTimeout('cli'),
   })
 }
@@ -75,10 +96,12 @@ function metaGit(args: string[], env: Record<string, string> = {}): string {
 beforeEach(() => {
   projectDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-meta-')), 'proj')
   fs.mkdirSync(projectDir, { recursive: true })
+  binDir = fakeUptimeBinDir()
 })
 
 afterEach(() => {
   fs.rmSync(path.dirname(projectDir), { recursive: true, force: true })
+  fs.rmSync(binDir, { recursive: true, force: true })
 })
 
 describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () => {
