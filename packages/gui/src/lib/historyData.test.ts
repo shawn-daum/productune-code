@@ -8,7 +8,10 @@ describe('VERSION_RE', () => {
     }
   })
   it('rejects non-version dir names', () => {
-    for (const v of ['backlog', 'v', 'version1', '1.0', 'v1.0-rc', 'vNext']) {
+    // `v1.2.3.4`: major · minor · patch is the whole ladder (contracts §Fixed
+    // paths §Version id) — a fourth component names no round, and the CLI's
+    // VERSION_ID_RE rejects it too (T-657).
+    for (const v of ['backlog', 'v', 'version1', '1.0', 'v1.0-rc', 'vNext', 'v1.2.3.4']) {
       expect(VERSION_RE.test(v)).toBe(false)
     }
   })

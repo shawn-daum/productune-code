@@ -6,8 +6,21 @@
  * components are thin glue over them.
  */
 
-/** A version id like v1, v1.0, v1.2.3. Excludes `backlog` and other dirs. */
-export const VERSION_RE = /^v\d+(\.\d+)*$/
+/**
+ * A version id: one, two or three numeric components — `v1` · `v1.1` · `v1.1.0`,
+ * the third a patch round (contracts §Fixed paths §Version id). Excludes
+ * `backlog` and other dirs, and a fourth component: major · minor · patch is
+ * the whole ladder, so `v1.2.3.4` names no round.
+ *
+ * ONE definition, two readers (T-657): this pattern and `VERSION_ID_RE` in
+ * packages/core/scripts/prdt are the same, and
+ * packages/core/test/scripts/prdt-doctor-prd-shape.test.ts reads this literal
+ * out of this file and answers the same corpus through the real CLI, so
+ * narrowing either side alone turns that test red. They were NOT the same
+ * until T-657 (measured 2026-09-22): the CLI required a dot and this did not,
+ * so `v1` was illegal to one reader and ordinary to the other.
+ */
+export const VERSION_RE = /^v\d+(\.\d+){0,2}$/
 
 /** The PRD working document (prdt mode): standing head + the ONE open version
  * section. PrdSection imports this — one definition, two readers. */
