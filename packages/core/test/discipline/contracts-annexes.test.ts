@@ -129,11 +129,12 @@ describe('what a persona needs before it can act stayed hot in contracts.md', ()
     'Meta/code split test = coupling, never "is it a doc"',
     // §Tickets: the enum and the body shape
     '`status` is the whole enum.',
-    '- Body = `## Request` / `## Why` / `## Acceptance` / `## Outcome`.',
+    '- Body = the frame: H2 = its keys in its order, nothing else',
     // T-638: the two literal triggers stay hot — the PO must recognize them at its own act
-    '`## Why` exists only on two triggers',
+    'an `acceptance` line changes after first dispatch',
+    '`feature:` names a spec file',
     // restored from the annex by T-586 slice 2A — slice 1's own audit named it the weakest-reachability move
-    '- An access-control Acceptance line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.',
+    '- An access-control `acceptance` line (gate / hide / restrict / limit) names its exact target — page, asset, API route, or field; a bare verb with no named target is not acceptance-complete.',
     // §DoD: the check itself
     '- Not done until: build green · lint clean · typecheck clean · relevant tests green · acceptance verified against the ticket.',
     // §Git: residence + hard rule + every-commit rules + the consent gate (floor)

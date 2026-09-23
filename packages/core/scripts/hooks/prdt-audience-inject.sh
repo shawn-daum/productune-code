@@ -113,7 +113,7 @@ ADDRESS_SHAPE="one line · 1–32 bytes · no control or line-break characters �
 # The closed surface vocabulary a `governs:` value may name — contracts.md
 # §Language, verbatim (twelve names). One copy, owned here (see the header
 # comment for why); doctor asks via --resolve rather than re-parsing.
-GOVERNS_VOCAB="user-chat prd artifacts ticket-request tool-description wiki envelope ctx-fields ticket-acceptance commit-message dispatch-body discipline"
+GOVERNS_VOCAB="user-chat prd artifacts ticket-body tool-description wiki envelope ctx-fields ticket-acceptance commit-message dispatch-body discipline"
 # IFS explicit and local: body_governs (a caller) sets `local IFS=','` for its own
 # comma-split, and bash's `local` is dynamically scoped across a nested call — an
 # ambient IFS here would silently turn every word-split into a single token.

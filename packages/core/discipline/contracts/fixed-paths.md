@@ -1,7 +1,7 @@
 ---
 name: fixed-paths
 section: Fixed paths
-when: "authoring or updating a `docs/features/<feature>.md` spec file · closing a PRD `## v<N>.<m>` version section, a `## Phase N` section, or a round that wrote no section · retiring a standing PRD section that is not a version section · writing, comparing or sorting a version id · landing a user-review artifact (the root manifest) · setting or reading a register value · deciding whether a design/token file is meta or code"
+when: "authoring or updating a `docs/features/<feature>.md` spec file · closing a PRD `## v<N>.<m>` version section, a `## Phase N` section, or a round that wrote no section · writing a PRD scope item or a ticket's `prd_item:` · retiring a standing PRD section that is not a version section · writing, comparing or sorting a version id · landing a user-review artifact (the root manifest) · setting or reading a register value · deciding whether a design/token file is meta or code"
 ---
 # Contracts §Fixed paths — annex
 
@@ -17,6 +17,10 @@ Continues `contracts.md` §Fixed paths; binds every persona the same way, loaded
 - A round that wrote no PRD section (tickets-only, by decision) still gets its file: `docs/prd/versions/v<N>.<m>.md` whose whole body is ONE line — `no PRD section — <the decision page or user line that made it tickets-only>` — never a `## ` heading, so a check tells a stub from a section by the heading alone. That stub is the ONE home for a registered absence; the standing head never lists absent rounds. A ticket dir `docs/tickets/v<N>.<m>/` with no `docs/prd/versions/v<N>.<m>.md` is the gap `prdt doctor` reports; a closed `## v<N>.<m>` section anywhere but its own file is a failure it reports.
 - No file under `docs/prd/versions/` is named `PRD.md` — a resolver takes the FIRST match over `docs/prd/PRD.md` · `docs/PRD.md` · `PRD.md`, and a file on any of them is served as the current PRD with nothing raising an error. Citation of a closed section: `docs/prd/versions/v<N>.<m>.md` (a `#<heading>` anchor for a subsection); a dispatch `prd_path` always names the open section in `PRD.md`.
 - Retiring a standing section that is NOT a version section (an inherited reference list, an open-questions list, an activity log the rounds outgrew): record the retirement in the standing head of `docs/prd/PRD.md` — what the section held, where its last state survives (a file that still carries the same content, or the commit that holds it), and what decided it — and then delete the section. It never becomes a file under `docs/prd/versions/`: that store holds rounds, and a check reads a file there as one. The two cases are opposites and never borrow each other's home — an absent round takes the stub above and no head line, a retired standing section takes the head line and no file.
+
+## PRD — the open version section's fixed form
+- The transition heads the section as three H3s — as-is · to-be · reversed — strings fixed byte-for-byte at their authoring site, designer `prd-clarity` §as-is / to-be; a receiving pipe slices on the exact strings, so nothing is appended to them.
+- Scope items under What are H4s `#### <key> — <label>`: `<key>` matches `^[a-z0-9]+(-[a-z0-9]+)*$`, unique in the section, immutable once the section closes. A ticket addresses one with frontmatter `prd_item: v<N>.<m>#<key>` — never an ordinal, a heading string or a line number.
 
 ## PRD — closing a `## Phase N` section
 - Closing one rewrites that heading away into a `완료된 라운드` snapshot pointer — same precedent as Phase 1~3 — never left in place with an appended note.
