@@ -8203,6 +8203,237 @@ def artifact_ticket_edge_warnings(root, tickets):
     return warns
 
 
+# ── doctor: P1 (prd form) · E4 (prd_item edge) — T-674 slice 2b ───────────────
+#
+# Design SoT: docs/artifacts/v1.10/linkage-design.md §2.4 · §2.7. Literals and
+# grades: docs/tickets/v1.10/T-663.md Outcome "고정 리터럴" / "P1 넷째 줄이 내는
+# 판정 — 등급표", byte-exact. T-663 landed the first application of all three
+# forms in this project's own open `## v1.10` section (commit 2026-09-23); this
+# slice adds the two checks that read it: P1 (`prd_form_warnings`) grades the
+# open section's own shape, E4 (`prd_item_edge_warnings`) resolves every
+# ticket's `prd_item:` against it. Both register FAMILY_PROJECT, same posture
+# as E2-E6 above — a stray value here is project data a person fixes in the
+# md, never prdt's own discipline diverging from its execution. Neither reads
+# or writes an `edges` table in `.prdt/index.db`, and closed
+# docs/prd/versions/*.md files are read ONLY to resolve `prd_item` keys (E4) —
+# never graded (P1 is the open section's check alone; a closed section is an
+# immutable record, no retroactive grading).
+
+PRD_ASIS_HEADING = "### 이 버전 직전 (as-is)"
+PRD_TOBE_HEADING = "### 이 버전 직후 (to-be)"
+PRD_REVERSED_HEADING = "### 이 버전이 뒤집은 것 (reversed)"
+PRD_REVERSED_NONE_ROW = "- 없음"
+# T-663 Outcome "고정 리터럴" #2, byte-exact (row grammar, line-start anchored).
+PRD_REVERSED_ROW_RE = re.compile(
+    r"^- (\[\[decision--[a-z0-9]+(?:-[a-z0-9]+)*\]\]|T-[0-9]+) — .+$")
+# Item-address key, shared by the H4 form (P1 #2) and `prd_item`'s dst half
+# (E4) — design §2.4 "항목 주소": same regex as the feature vocab key.
+PRD_ITEM_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+PRD_H4_RE = re.compile(r"^#### (.+)$")
+# A ticket's src half: `prd_item: <version>#<key>` (T-663 §「항목 주소」).
+PRD_ITEM_RE = re.compile(r"^(v\d+(?:\.\d+){0,2})#([a-z0-9]+(?:-[a-z0-9]+)*)$")
+
+
+def _prd_open_section(root, st):
+    """(version_id_as_written, [(line_no, line), ...]) for the ONE open `## v`
+    section's BODY (heading line excluded, next `## v` heading excluded),
+    fenced blocks already dropped. Same "which section is open" resolution
+    `prd_layout_warnings` / `version_set_from_disk` use — po-state.json's
+    `version` when it names a heading actually in the file, the first `## v`
+    heading as a weak fallback otherwise (matches `version_set_from_disk`'s
+    posture: a missing/stale po-state should not blind every open-section
+    check at once). (None, []) when PRD.md is unreadable or carries no `## v`
+    heading at all — callers stay silent rather than inventing a section
+    (T-657's own posture: `prd_layout_warnings` is the check that judges the
+    tree shape itself)."""
+    root = Path(root)
+    prd_md = root / "docs" / "prd" / "PRD.md"
+    try:
+        text = prd_md.read_text(encoding="utf-8")
+    except OSError:
+        return None, []
+    lines = _md_structural_lines(text)
+    heads = _prd_version_headings(text)
+    if not heads:
+        return None, []
+    pv = st.get("version") if isinstance(st, dict) else None
+    open_key = _version_id_canon(pv) if isinstance(pv, str) and pv.strip() else None
+    chosen = next((h for h in heads if open_key is not None and _version_id_canon(h[0]) == open_key),
+                  None)
+    if chosen is None:
+        if open_key is not None:
+            return None, []  # po-state names a round PRD.md does not carry open
+        chosen = heads[0]
+    version, start_ln = chosen
+    later = sorted(ln for _, ln in heads if ln > start_ln)
+    end_ln = later[0] if later else None
+    body = [(ln, line) for ln, line in lines
+            if ln > start_ln and (end_ln is None or ln < end_ln)]
+    return version, body
+
+
+def _prd_h4_items(lines):
+    """[(line_no, key_or_None, heading_content)] for every `#### ` line in
+    `lines` ([(line_no, line), ...]). `key_or_None` is the parsed item key
+    when the heading takes item-address form `#### <key> — <label>` (T-663
+    §「항목 주소」: split on the FIRST ` — `, the left side read as the key,
+    `^[a-z0-9]+(-[a-z0-9]+)*$`); None for any other `#### ` shape (a numbered
+    `#### 1. …` heading, or no ` — ` separator at all) — P1 grades that as an
+    address-less item, E4's key harvest just skips it."""
+    out = []
+    for ln, line in lines:
+        m = PRD_H4_RE.match(line)
+        if not m:
+            continue
+        content = m.group(1)
+        key = None
+        if " — " in content:
+            head, _label = content.split(" — ", 1)
+            if PRD_ITEM_KEY_RE.match(head):
+                key = head
+        out.append((ln, key, content))
+    return out
+
+
+def _prd_reversed_section_warnings(root, version, body, tickets):
+    """P1's 3rd+4th outputs — the `### 이 버전이 뒤집은 것 (reversed)` heading,
+    its row grammar, and every target row resolving. Grades exactly T-663
+    Outcome's table (byte-exact literals above)."""
+    warns = []
+    heading_ln = next((ln for ln, line in body if line == PRD_REVERSED_HEADING), None)
+    if heading_ln is None:
+        near = next((line for _, line in body if line.startswith("### ")
+                     and ("뒤집은" in line or "(reversed)" in line)), None)
+        if near is None:
+            warns.append(f'{version}: no "{PRD_REVERSED_HEADING}" — declare reversals or '
+                         f'"{PRD_REVERSED_NONE_ROW}"')
+        else:
+            warns.append(f'{version}: reversed heading near-miss "{near}" — expected exact literal')
+        return warns
+    later_h3 = sorted(ln for ln, line in body if ln > heading_ln and line.startswith("### "))
+    end_ln = later_h3[0] if later_h3 else None
+    rows = [(ln, line) for ln, line in body
+            if ln > heading_ln and (end_ln is None or ln < end_ln) and line.strip()]
+    if not rows:
+        warns.append(f'{version}: reversed section has no rows — add targets or '
+                     f'"{PRD_REVERSED_NONE_ROW}"')
+        return warns
+    none_rows, target_rows, bad_rows = [], [], []
+    for ln, line in rows:
+        if line == PRD_REVERSED_NONE_ROW:
+            none_rows.append(ln)
+            continue
+        m = PRD_REVERSED_ROW_RE.match(line)
+        if m:
+            target_rows.append((ln, m.group(1)))
+        else:
+            bad_rows.append((ln, line))
+    for _ln, line in bad_rows:
+        warns.append(f'{version}: reversed row without leading target key: "{line[:40]}"')
+    if none_rows and (target_rows or len(none_rows) > 1):
+        warns.append(f'{version}: "{PRD_REVERSED_NONE_ROW}" mixed with target rows')
+    wiki_names = {pg["name"] for pg in scan_wiki(root)}
+    for _ln, target in target_rows:
+        resolved = (target[2:-2] in wiki_names) if target.startswith("[[") else target in tickets
+        if not resolved:
+            warns.append(f"{version}: reversed target {target} does not resolve")
+    return warns
+
+
+def prd_form_warnings(root, st, tickets):
+    """P1 — the OPEN `## v` section's form, graded exactly as T-663 Outcome's
+    table (docs/tickets/v1.10/T-663.md "P1 넷째 줄이 내는 판정", design linkage
+    §2.4): ⓐ as-is/to-be pair present (advisory — an undeclared PRD is not a
+    violation, T-599's own posture) ⓑ every H4 in the section is item-address
+    form (warning; a duplicate key is a violation) ⓒ the reversed heading +
+    its row grammar, incl. the `- 없음` empty marker (mixed grades per the
+    table) ⓓ every reversed row's target resolving (violation, same class E4
+    uses). `prd_item` resolution across the WHOLE ticket set is the separate
+    E4 check below — this one never reads a ticket file, only the ticket id
+    map already built for the wiki-edge checks (E2's `tickets`), to answer
+    "does this T-NNN target exist" the same way E2/E6 already do."""
+    version, body = _prd_open_section(root, st)
+    if version is None:
+        return []
+    warns = []
+    texts = {line for _, line in body}
+    if PRD_ASIS_HEADING not in texts or PRD_TOBE_HEADING not in texts:
+        warns.append(f'{version}: missing as-is/to-be pair ("{PRD_ASIS_HEADING}" / '
+                     f'"{PRD_TOBE_HEADING}")')
+    seen = {}
+    for ln, key, content in _prd_h4_items(body):
+        if key is None:
+            warns.append(f"{version}: heading `#### {content}` at line {ln} is not item-address "
+                         f"form (`#### <key> — <label>`)")
+        else:
+            seen.setdefault(key, []).append(ln)
+    for key, lns in sorted(seen.items()):
+        if len(lns) > 1:
+            warns.append(f"{version}: item key '{key}' duplicated at lines "
+                         f"{', '.join(str(x) for x in lns)}")
+    warns += _prd_reversed_section_warnings(root, version, body, tickets)
+    return warns
+
+
+def _prd_item_keys_for_version(root, st, version_str):
+    """Item keys resolvable for one version id AS WRITTEN in a `prd_item:`
+    value — the open section when it names the SAME round (po-state.json),
+    else the closed `docs/prd/versions/<id>.md` record once that round has
+    moved there (T-657). Resolve-only: a closed file's H4s are harvested
+    (`_prd_h4_items` already skips any that are not item-address form) but
+    never graded — P1 above is the open section's check alone. Empty set
+    when neither is on disk yet (the version does not exist, or the round
+    that owns it has not written its items yet)."""
+    vkey = _version_id_canon(version_str)
+    if vkey is None:
+        return set()
+    open_v, open_body = _prd_open_section(root, st)
+    if open_v is not None and _version_id_canon(open_v) == vkey:
+        return {k for _, k, _ in _prd_h4_items(open_body) if k}
+    vdir = Path(root) / "docs" / "prd" / "versions"
+    if vdir.is_dir():
+        for f in sorted(vdir.glob("*.md")):
+            if not PRD_VERSION_FILE_RE.match(f.name) or _version_id_canon(f.stem) != vkey:
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return set()
+            return {k for _, k, _ in _prd_h4_items(_md_structural_lines(text)) if k}
+    return set()
+
+
+def prd_item_edge_warnings(root, st, trows):
+    """E4 — a ticket's `prd_item: <version>#<key>` resolves to an item key of
+    that version (design linkage §2.4, T-663 §「항목 주소」). Malformed shape
+    (no `#`, an unparseable version, or a key not `^[a-z0-9]+(-[a-z0-9]+)*$`)
+    is a WARNING; a well-formed value that does not resolve is a VIOLATION —
+    both severities are message-text only here (this check is FAMILY_PROJECT,
+    same posture as every other edge-value check in this file: a stray value
+    is project data, not a discipline↔execution mismatch). Reads frontmatter
+    directly (`trows`' index-derived rows do not carry `prd_item` — same
+    reason `ticket_relation_key_warnings` above re-parses per ticket)."""
+    warns = []
+    cache = {}
+    for t in trows:
+        fm, _ = parse_frontmatter(Path(root) / t["path"])
+        raw = fm.get("prd_item")
+        if not (isinstance(raw, str) and raw.strip()):
+            continue
+        raw = raw.strip()
+        m = PRD_ITEM_RE.match(raw)
+        if not m:
+            warns.append(f"ticket: {t['id']} prd_item: '{raw}' is not `<version>#<key>` form")
+            continue
+        version_str, key = m.group(1), m.group(2)
+        if version_str not in cache:
+            cache[version_str] = _prd_item_keys_for_version(root, st, version_str)
+        if key not in cache[version_str]:
+            warns.append(f"ticket: {t['id']} prd_item: {raw} does not resolve to an item "
+                         f"of {version_str}")
+    return warns
+
+
 # ── discipline delivery (T-577) ───────────────────────────────────────────────
 # The largest member of the discipline↔execution family, and until this slice
 # invisible to it: the session-start hook's payload was 44,915 B in ONE hook
@@ -8895,6 +9126,10 @@ def cmd_doctor(_args):
         ("wiki version edge (E3)", FAMILY_PROJECT, lambda: wiki_version_edge_warnings(root, st)),
         ("ticket relation key (E5)", FAMILY_PROJECT, lambda: ticket_relation_key_warnings(root, trows, st)),
         ("artifact ticket edge (E6)", FAMILY_PROJECT, lambda: artifact_ticket_edge_warnings(root, tickets)),
+        # P1 (prd form) · E4 (prd_item edge) — T-674 slice 2b, design §2.4 /
+        # T-663 Outcome literals. Project family, same posture as E2-E6 above.
+        ("PRD form (P1)", FAMILY_PROJECT, lambda: prd_form_warnings(root, st, tickets)),
+        ("prd_item edge (E4)", FAMILY_PROJECT, lambda: prd_item_edge_warnings(root, st, trows)),
         # accumulated per-case rebuilds of an expensive shared test setup (T-537).
         # Static count of a SHAPE, never a timing run — the habit and the code-review
         # check cover the write and the diff; this layer covers the only view neither
