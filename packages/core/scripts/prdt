@@ -8223,9 +8223,13 @@ PRD_ASIS_HEADING = "### 이 버전 직전 (as-is)"
 PRD_TOBE_HEADING = "### 이 버전 직후 (to-be)"
 PRD_REVERSED_HEADING = "### 이 버전이 뒤집은 것 (reversed)"
 PRD_REVERSED_NONE_ROW = "- 없음"
-# T-663 Outcome "고정 리터럴" #2, byte-exact (row grammar, line-start anchored).
+# T-663 Outcome "개정 1 — 행 정규식의 slug 문자 집합" (2026-09-23), byte-exact
+# (row grammar, line-start anchored). Supersedes the landing literal ("고정
+# 리터럴" #2) — the separator class is `[.-]` (was `-`) so dotted decision
+# slugs (e.g. `decision--v1.10-structure-round`) resolve; a leading/trailing/
+# doubled dot still fails since the separator only sits between alnum runs.
 PRD_REVERSED_ROW_RE = re.compile(
-    r"^- (\[\[decision--[a-z0-9]+(?:-[a-z0-9]+)*\]\]|T-[0-9]+) — .+$")
+    r"^- (\[\[decision--[a-z0-9]+([.-][a-z0-9]+)*\]\]|T-[0-9]+) — .+$")
 # Item-address key, shared by the H4 form (P1 #2) and `prd_item`'s dst half
 # (E4) — design §2.4 "항목 주소": same regex as the feature vocab key.
 PRD_ITEM_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")

@@ -209,6 +209,31 @@ describe('T-674 slice 2b — P1 (prd form) + E4 (prd_item edge)', () => {
     expect(doctor()).not.toContain('v1.10: reversed target')
   })
 
+  // ── T-663 개정 1 — dotted decision slugs (separator class `[.-]`) ───────────
+
+  test('a dotted decision slug (e.g. decision--v1.10-structure-round) resolves silently', () => {
+    wikiPage('decision--v1.10-structure-round', { type: 'decision', status: 'live' })
+    writePrd({ reversedRows: ['- [[decision--v1.10-structure-round]] — 분리 뒤집음.'] })
+    const d = doctor()
+    expect(d).not.toContain('v1.10: reversed target')
+    expect(d).not.toContain('v1.10: reversed row without leading target key')
+  })
+
+  test('a doubled dot in a decision slug still violates as a malformed row', () => {
+    writePrd({ reversedRows: ['- [[decision--v1..10-structure-round]] — x.'] })
+    expect(doctor()).toContain('v1.10: reversed row without leading target key:')
+  })
+
+  test('a leading dot right after the decision-- prefix still violates as a malformed row', () => {
+    writePrd({ reversedRows: ['- [[decision--.v1.10]] — x.'] })
+    expect(doctor()).toContain('v1.10: reversed row without leading target key:')
+  })
+
+  test('a trailing dot at the end of a decision slug still violates as a malformed row', () => {
+    writePrd({ reversedRows: ['- [[decision--v1.10.]] — x.'] })
+    expect(doctor()).toContain('v1.10: reversed row without leading target key:')
+  })
+
   // ── E4 — prd_item edge ───────────────────────────────────────────────────────
 
   test('E4: a malformed prd_item warns', () => {
