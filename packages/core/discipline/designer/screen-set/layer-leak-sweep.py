@@ -3,7 +3,7 @@
 
     python3 layer-leak-sweep.py <screen-set.html> [--frame-class frame] [--allow TERM ...] [--term TERM ...]
 
-A screen set is two layers in one file: the spec layer (head card · roster · condition radio ·
+A screen set is two layers in one file: the spec layer (head · decide block · roster · condition radio ·
 description) and the product layer (everything inside an element of class `frame`). Spec
 vocabulary must never render inside a frame. This script reads the vocabulary OFF the spec layer,
 so it needs no per-project list:
