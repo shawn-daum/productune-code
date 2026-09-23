@@ -44,7 +44,14 @@ const PRDT_HOOKS: readonly string[] = hookManifest.basenames
 
 /** Throwaway HOME fixture. `withMirror` seeds ~/.prdt/hooks/* + bin/statusline. */
 function makeHome(withMirror = true): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-a6-home-'))
+  // T-670: realpath'd immediately — installPrdtHooks now resolves its homeDir
+  // to a physical path before building any hook command (parity with
+  // install.sh's resolve_path), so an unresolved fixture home (macOS
+  // os.tmpdir() sits under the symlink /var -> /private/var) would make every
+  // "expected" path this file hand-builds from `home` differ textually from
+  // what installClaudeHooks actually writes. Resolving here once keeps this
+  // whole file's literal path-building consistent with the code under test.
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-a6-home-')))
   if (withMirror) {
     const hooksDir = path.join(home, '.prdt', 'hooks')
     fs.mkdirSync(hooksDir, { recursive: true })
