@@ -292,6 +292,10 @@ CREATE TABLE IF NOT EXISTS tickets (
 CREATE TABLE IF NOT EXISTS wiki_pages (
   name TEXT PRIMARY KEY, title TEXT, type TEXT, status TEXT, version TEXT,
   links TEXT, path TEXT);
+CREATE TABLE IF NOT EXISTS edges (
+  src TEXT, rel TEXT CHECK(rel IN ('feature','ticket','version','prd_item','deps',
+                                   'artifact_ticket','cites')),
+  dst TEXT, resolved INTEGER);
 """
 
 
@@ -334,10 +338,19 @@ def derive_all_slices(root, con):
     Writes nothing outside index.db. Generating `docs/wiki/index.md` here would
     make read-only commands dirty the meta repo on every clone — the measured
     reason T-480 rejected "just reindex on each query"; that page belongs to
-    `reindex_wiki`, which only `prdt wiki reindex` reaches."""
+    `reindex_wiki`, which only `prdt wiki reindex` reaches.
+
+    `edges` is a slice too (design linkage §4, T-674 slice 2c): derived here so
+    a cold open (any command hitting a missing index.db, not only `wiki
+    reindex`/`index rebuild`) reproduces it, the same "whole index or none"
+    guarantee T-480/T-488 hold for tickets/wiki."""
     violations = reindex_tickets(root, con)
     pages = index_project_wiki(root, con)
     mpages = index_machine_wiki(con)
+    trows = [r for r, _, _ in (scan_tickets(root) or [])]
+    tickets = {r["id"]: r for r in trows}
+    st = read_json(Path(root) / ".prdt" / "po-state.json")
+    rebuild_edges(root, con, trows, tickets, pages, st)
     return violations, pages, mpages
 
 
@@ -606,6 +619,10 @@ def rebuild_index(root):
     violations = reindex_tickets(root, con)
     pages = reindex_wiki(root, con)
     mpages = index_machine_wiki(con)
+    trows = [r for r, _, _ in (scan_tickets(root) or [])]
+    tickets = {r["id"]: r for r in trows}
+    st = read_json(Path(root) / ".prdt" / "po-state.json")
+    rebuild_edges(root, con, trows, tickets, pages, st)
     return con, violations, pages, mpages
 
 
@@ -2137,6 +2154,19 @@ def require_root():
     return root
 
 
+def cmd_index(args):
+    """`prdt index rebuild` — the derived-index seam made visible as a command
+    (T-674 slice 2c, design linkage §4): drop `.prdt/index.db` and re-derive
+    every slice, `edges` included. Same primitive `wiki reindex`/`doctor`/
+    `migrate` already call (`rebuild_index`) — this just names it for the one
+    case none of those own: proving the table is derived, not hand-kept."""
+    root = require_root()
+    con, v, pages, mpages = rebuild_index(root)
+    n = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    print(f"index rebuilt: {len(pages)} wiki pages + {len(mpages)} machine + {n} edges" +
+          (f", {len(v)} ticket violations (see `prdt doctor`)" if v else ""))
+
+
 def cmd_wiki(args):
     root = require_root()
     if args.action == "reindex":
@@ -2209,9 +2239,19 @@ def wiki_lint(root):
     for pg in pages:
         warns += [f"wiki: {pg['path']}: {x}" for x in pg.get("problems") or []]
     names = {p["name"] for p in pages}
+    # `machine:` prefixed links resolve against the machine store (design
+    # linkage §2 C2, T-674 slice 2c) — a project-wiki page citing one is legal
+    # (curate-wiki.md's own prescribed form), so it is checked, not just
+    # skipped: dead against the RIGHT store instead of the wrong one.
+    mach_by_name = {p["name"]: p for p in scan_machine_wiki()}
     inbound = set()
     for pg in pages:
         for l in pg["links"]:
+            if l.startswith(MACHINE):
+                if l not in mach_by_name:
+                    warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not "
+                                 f"exist (machine wiki)")
+                continue
             inbound.add(l)
             if l not in names:
                 warns.append(f"wiki: [[{l}]] referenced from {pg['name']} does not exist")
@@ -2220,7 +2260,7 @@ def wiki_lint(root):
         if pg["status"] == "live" and pg["name"] not in inbound and not pg["links"]:
             warns.append(f"wiki: orphan page {pg['name']} (no links in or out)")
         for l in pg["links"]:
-            tgt = by_name.get(l)
+            tgt = mach_by_name.get(l) if l.startswith(MACHINE) else by_name.get(l)
             if tgt and tgt["status"] == "superseded" and pg["status"] == "live":
                 warns.append(f"wiki: live page {pg['name']} references superseded [[{l}]]")
     inbox = root / "docs" / "wiki" / "inbox.md"
@@ -2232,6 +2272,9 @@ def wiki_lint(root):
     idx = root / "docs" / "wiki" / "index.md"
     if pages and not idx.exists():
         warns.append("wiki: index.md missing — run `prdt wiki reindex`")
+    # C1 (design linkage §2) — the same `[[…]]` scan, widened to docs/prd/**
+    # and docs/tickets/**.
+    warns += prd_ticket_link_warnings(root)
     return warns
 
 
@@ -8438,6 +8481,259 @@ def prd_item_edge_warnings(root, st, trows):
     return warns
 
 
+# ── doctor: edges table · C1/C2 (T-674 slice 2c) ──────────────────────────────
+#
+# Design SoT: docs/artifacts/v1.10/linkage-design.md §4 · §2 (C1/C2). This
+# slice adds the ONE thing every prior slice deliberately deferred: a derived
+# `edges` table in `.prdt/index.db` materialising E1·E2·E3·E4·E5·E6 (never
+# hand-maintained — `rebuild_edges` is the only writer, called from both the
+# cold `derive_all_slices` path and the explicit `rebuild_index` re-derive,
+# same dual-call shape `tickets`/`wiki_pages` already have). `resolved` reuses
+# each edge's own doctor-warning predicate (E1-E6 above) — never a second
+# notion of "exists". `rel='cites'` (C1) is in the CHECK domain per design §4
+# but this slice writes no `cites` rows — dispatch acceptance lists exactly
+# six rels (feature · ticket · version · deps · artifact_ticket · prd_item).
+#
+# C1 widens `wiki_lint`'s `[[…]]` scan to docs/prd/** and docs/tickets/** (dead
+# links + live citations of a superseded page, excluding the `### 이 버전이
+# 뒤집은 것 (reversed)` section's rows from the superseded half only — a
+# reversed row's target is EXPECTED to be superseded, T-663 handoff). C2 lets
+# a `[[machine:<page>]]` citation resolve against the machine store anywhere
+# wiki_lint runs (fixing the same gap inside docs/wiki/** itself), and adds a
+# separate doctor check: shared discipline text (doctrine/contracts/habit/
+# playbooks — never `overrides/`, which is inherently machine-scoped) may
+# never cite a machine-store page by name (T-619: a shared `smoke` playbook
+# line sent a dead machine-page pointer to another machine).
+
+
+def _edge_rows(root, trows, tickets, pages, st):
+    """[(src, rel, dst, resolved)] for E1·E2·E3·E4·E5·E6 — a pure function of
+    already-scanned rows/pages/state, so it costs nothing extra to run from
+    the cold index-derive path. Reuses the exact predicate each edge's own
+    doctor warning already tests (wiki_ticket_edge_warnings / _version_edge /
+    ticket_graph / artifact_ticket_edge / prd_item_edge above) rather than a
+    second "does this resolve" definition."""
+    root = Path(root)
+    rows = []
+    cfg = read_json(root / ".prdt" / "config.json")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    vocab, _probs = read_feature_vocab(cfg)
+    alias_owner = set()
+    if vocab:
+        for ent in vocab.values():
+            alias_owner.update(ent["aliases"])
+    versions = version_set_from_disk(root, st)
+    prd_item_cache = {}
+
+    for t in trows:
+        tid = t["id"]
+        fv = t.get("feature")
+        if isinstance(fv, str) and fv.strip():
+            fv = fv.strip()
+            resolved = 1 if (vocab is None or fv in vocab or fv in alias_owner) else 0
+            rows.append((tid, "feature", fv, resolved))
+        for d in t.get("deps") or []:
+            if isinstance(d, str) and d.strip():
+                d = d.strip()
+                rows.append((tid, "deps", d, 1 if d in tickets else 0))
+        fm, _ = parse_frontmatter(root / t["path"])
+        raw = fm.get("prd_item")
+        if isinstance(raw, str) and raw.strip():
+            raw = raw.strip()
+            m = PRD_ITEM_RE.match(raw)
+            if not m:
+                rows.append((tid, "prd_item", raw, 0))
+            else:
+                version_str, key = m.group(1), m.group(2)
+                if version_str not in prd_item_cache:
+                    prd_item_cache[version_str] = _prd_item_keys_for_version(root, st, version_str)
+                rows.append((tid, "prd_item", raw, 1 if key in prd_item_cache[version_str] else 0))
+
+    for pg in pages:
+        tv = pg.get("ticket")
+        if isinstance(tv, str) and tv.strip():
+            tv = tv.strip()
+            resolved = 1 if (TICKET_ID_RE.match(tv) and tv in tickets
+                             and tickets[tv]["status"] != "dropped") else 0
+            rows.append((pg["name"], "ticket", tv, resolved))
+        vv = pg.get("version")
+        if isinstance(vv, str) and vv.strip():
+            vv = vv.strip()
+            k = _version_id_canon(vv)
+            rows.append((pg["name"], "version", vv, 1 if k is not None and k in versions else 0))
+
+    prior, err, _malformed, present = read_artifact_manifest(root)
+    if not err and present:
+        for (bucket, relp), e in sorted(prior.items()):
+            tv = e.get("ticket")
+            if tv is None:
+                continue
+            tv_str = tv.strip() if isinstance(tv, str) else str(tv)
+            resolved = 1 if (isinstance(tv, str) and TICKET_ID_RE.match(tv_str)
+                             and tv_str in tickets) else 0
+            rows.append((f"{bucket}/{relp}", "artifact_ticket", tv_str, resolved))
+    return rows
+
+
+def rebuild_edges(root, con, trows, tickets, pages, st):
+    """The only writer of `edges` — DELETE + re-INSERT, whole table, every
+    time (same "derived, never hand-maintained" posture as `reindex_tickets`)."""
+    con.execute("DELETE FROM edges")
+    rows = _edge_rows(root, trows, tickets, pages, st)
+    con.executemany("INSERT INTO edges VALUES (?,?,?,?)", rows)
+    con.commit()
+    return rows
+
+
+def _reversed_section_lines(text):
+    """Line numbers (1-based) inside the ONE `### 이 버전이 뒤집은 것
+    (reversed)` section of `text`, if it has one — same heading-to-next-H3
+    span P1 grades (design linkage §2.4, `_prd_reversed_section_warnings`).
+    A citation in this range is an EXPECTED superseded reference — the
+    section's whole point is naming what this round overturned — so C1's
+    superseded-citation warning excludes these lines; the dead-link half
+    still applies everywhere (a reversed target must still exist)."""
+    lines = _md_structural_lines(text)
+    heading_ln = next((ln for ln, line in lines if line == PRD_REVERSED_HEADING), None)
+    if heading_ln is None:
+        return set()
+    later_h3 = sorted(ln for ln, line in lines if ln > heading_ln and line.startswith("### "))
+    end_ln = later_h3[0] if later_h3 else None
+    return {ln for ln, _ in lines if ln > heading_ln and (end_ln is None or ln < end_ln)}
+
+
+def _prd_and_ticket_files(root):
+    root = Path(root)
+    out = []
+    prd_md = root / "docs" / "prd" / "PRD.md"
+    if prd_md.is_file():
+        out.append(prd_md)
+    vdir = root / "docs" / "prd" / "versions"
+    if vdir.is_dir():
+        out += sorted(vdir.glob("*.md"))
+    tdir = root / "docs" / "tickets"
+    if tdir.is_dir():
+        out += sorted(tdir.rglob("T-*.md"))
+    return out
+
+
+
+# Fenced ``` … ``` blocks are already dropped by `_md_structural_lines` before
+# a line ever reaches here. That misses the other shape docs/tickets/** backlog
+# scripts quote a bash idiom in: a single-backtick inline code span on an
+# ordinary prose line (e.g. `` `[[ "${BASH_SOURCE[0]}" == "$0" ]]` `` or
+# ``` `^[[:space:]]*status:` ```, measured 2026-09-23 across docs/tickets/v0.4
+# and v0.5 backlog tickets) — `[[` there is bash test/glob syntax, not a
+# wikilink, and must never be scanned as one. Dropping the span outright (not
+# just unwrapping it) also means a *literal* `[[decision--x]]` shown as a code
+# example reads as prose-quoted-as-code, never as a real citation — the same
+# treatment a fenced block already gets.
+_INLINE_CODE_SPAN_RE = re.compile(r"`[^`\n]+`")
+
+
+def prd_ticket_link_warnings(root):
+    """C1 — widen the `[[…]]` scan to docs/prd/** (PRD.md + closed
+    versions/*.md) and docs/tickets/** (design linkage §2 C1): dead links
+    (target resolves to neither store) and a live citation of a superseded
+    page. A `machine:` prefixed target resolves against the machine store
+    (§2 C2) — the same resolution the fix to `wiki_lint` below gives
+    docs/wiki/** links. Real cases this catches (design §2 C1, measured
+    2026-09-22): `PRD.md` citing superseded `decision--gui-round-v1.10`
+    (outside the reversed section) · `versions/v1.9.md` citing superseded
+    `decision--prd-single-file` and `decision--gui-round-v1.10`."""
+    root = Path(root)
+    proj_pages = {p["name"]: p for p in scan_wiki(root)}
+    mach_pages = {p["name"]: p for p in scan_machine_wiki()}
+    warns = []
+    for f in _prd_and_ticket_files(root):
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        reversed_lines = _reversed_section_lines(text)
+        rel = f.relative_to(root)
+        for ln, line in _md_structural_lines(text):
+            for target in WIKILINK.findall(_INLINE_CODE_SPAN_RE.sub("", line)):
+                machine = target.startswith(MACHINE)
+                store = mach_pages if machine else proj_pages
+                pg = store.get(target)
+                if pg is None:
+                    label = "machine wiki" if machine else "wiki"
+                    warns.append(f"{rel}:{ln}: [[{target}]] does not exist ({label})")
+                elif pg["status"] == "superseded" and ln not in reversed_lines:
+                    warns.append(f"{rel}:{ln}: cites superseded [[{target}]]")
+    return warns
+
+
+# Real page-name shape only — `machine:fact--<page>` (a template placeholder,
+# curate-wiki.md) and `machine:fact--*` (a wildcard, inject-edit.md) both stay
+# unmatched on purpose, so a teaching example does not misfire. Separator class
+# is `[.-]` (T-663's revision, PRD_REVERSED_ROW_RE) — this is a page-name match
+# too, so a dotted slug (`decision--v1.10-structure-round`) must resolve here
+# the same way it does everywhere else this slice matches page names.
+MACHINE_WIKI_CITE_RE = re.compile(
+    r"\bmachine:(?:decision|fact|learning|feature|retro|term)--[a-z0-9]+(?:[.-][a-z0-9]+)*\b")
+
+
+def _shared_discipline_docs(droot):
+    """doctrine.md (one level ABOVE the discipline mirror, `prdt_home()`-
+    sibling — same layout the repo checkout uses: `packages/core/doctrine.md`
+    beside `packages/core/discipline/`) + contracts.md + every contracts/*.md
+    annex + each persona's habit.md + playbooks/*.md. Never `overrides/` —
+    that store is inherently machine-scoped (curate-wiki.md's own prescribed
+    form is an override line citing a machine page), so it is the ONE place a
+    `machine:<page>` citation is legal by design."""
+    if droot is None or not droot.is_dir():
+        return []
+    out = []
+    doctrine = droot.parent / "doctrine.md"
+    if doctrine.is_file():
+        out.append(doctrine)
+    contracts = droot / "contracts.md"
+    if contracts.is_file():
+        out.append(contracts)
+    cdir = droot / "contracts"
+    if cdir.is_dir():
+        out += sorted(cdir.glob("*.md"))
+    for persona in ("po", "designer", "developer", "qa"):
+        pdir = droot / persona
+        h = pdir / "habit.md"
+        if h.is_file():
+            out.append(h)
+        pbdir = pdir / "playbooks"
+        if pbdir.is_dir():
+            out += sorted(p for p in pbdir.glob("*.md") if p.name != "_index.md")
+    return out
+
+
+def discipline_machine_citation_warnings(droot):
+    """C2's second half — shared discipline text (doctrine/contracts/habit/
+    playbooks) citing a machine-store page by name is a portability break:
+    the citation reaches every machine this discipline mirrors to, but the
+    page lives on one (T-619: a shared `smoke` playbook line sent this
+    machine's VM name and a `fact--qa-cua-vm` pointer to another machine,
+    where the page did not exist). FAMILY_DE — this is discipline text
+    disagreeing with its own delivery guarantee, not project data.
+
+    Returns `Advisory` (T-674 slice 2c follow-up), not a plain list: design
+    linkage §2 C2 says "doctor warns" — a ⚠ line a person reads, not a
+    discipline↔execution MISMATCH the verdict's violation count should move
+    on. A bare list here would count every hit as a violation and flip a
+    repo's FAMILY_DE verdict to `violations` the moment it finds one, which
+    is not what the design asked for."""
+    warns = []
+    for doc in _shared_discipline_docs(droot):
+        try:
+            text = doc.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for m in MACHINE_WIKI_CITE_RE.finditer(text):
+            warns.append(f"discipline: {doc} cites {m.group(0)} — shared text "
+                         f"(discipline/playbook/annex) cannot cite a machine-store "
+                         f"page (design linkage §2 C2); move it to an override line")
+    return Advisory(warns)
+
+
 # ── discipline delivery (T-577) ───────────────────────────────────────────────
 # The largest member of the discipline↔execution family, and until this slice
 # invisible to it: the session-start hook's payload was 44,915 B in ONE hook
@@ -9154,6 +9450,12 @@ def cmd_doctor(_args):
         # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
         # citations everywhere else a persona habit/bookshelf doc or design.md makes one
         ("dead discipline-path citations", FAMILY_DE, lambda: dead_discipline_path_warnings(root)),
+        # C2 (design linkage §2, T-674 slice 2c) — shared discipline text
+        # (doctrine/contracts/habit/playbooks) may never cite a machine-store
+        # page by name; `overrides/` is exempt (inherently machine-scoped).
+        # Advisory (T-674 slice 2c follow-up): design linkage §2 C2 says
+        # "doctor warns" — a ⚠ line, never a FAMILY_DE violation.
+        ("discipline machine-page citation", FAMILY_DE, lambda: discipline_machine_citation_warnings(droot)),
         # override caps + cross-layer duplicates (§8b)
         ("override caps", FAMILY_DE, lambda: override_warnings(root)),
         # register object — file legality as the resolver sees it + body budget (T-586)
@@ -9922,6 +10224,11 @@ def main():
     p.add_argument("action", choices=["search", "refs", "reindex", "lint"])
     p.add_argument("query", nargs="*")
     p.set_defaults(fn=cmd_wiki)
+    p = sub.add_parser("index", help="rebuild — drop + re-derive `.prdt/index.db` in full "
+                                     "(tickets · wiki · edges, T-674); `edges` is derived, "
+                                     "never hand-maintained")
+    p.add_argument("action", choices=["rebuild"])
+    p.set_defaults(fn=cmd_index)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
                                        "· --link T-NNN … prints paste-ready file:// links")
     p.add_argument("--version"); p.add_argument("--feature"); p.add_argument("--status", choices=TICKET_STATUS)
