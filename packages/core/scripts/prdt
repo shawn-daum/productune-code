@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 STAGES = ("define", "build", "ship", "retro", "idle")
-TICKET_TYPES = ("design", "impl", "qa", "ops")
+TICKET_TYPES = ("design", "impl", "qa", "ops", "decision")
 TICKET_STATUS = ("open", "done", "dropped")
 WIKI_TYPES = ("decision", "fact", "learning", "feature", "retro", "term")
 PERSONAS = ("po", "designer", "developer", "qa")
@@ -286,7 +286,7 @@ def days_since(iso):
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS tickets (
-  id TEXT PRIMARY KEY, slug TEXT, type TEXT CHECK(type IN ('design','impl','qa','ops')),
+  id TEXT PRIMARY KEY, slug TEXT, type TEXT CHECK(type IN ('design','impl','qa','ops','decision')),
   status TEXT CHECK(status IN ('open','done','dropped')), assignee TEXT, feature TEXT,
   deps TEXT, created TEXT, closed TEXT, version TEXT, path TEXT);
 CREATE TABLE IF NOT EXISTS wiki_pages (
@@ -297,6 +297,20 @@ CREATE TABLE IF NOT EXISTS edges (
                                    'artifact_ticket','cites')),
   dst TEXT, resolved INTEGER);
 """
+
+
+def _tickets_check_stale(con):
+    """True when an EXISTING `tickets` table's `type` CHECK predates the current
+    TICKET_TYPES tuple — the structural half of open_db's migration guard (see
+    its docstring). No table yet (a cold file) reads as not-stale; `open_db`
+    only calls this on the non-cold path, where CREATE TABLE IF NOT EXISTS
+    would otherwise leave an old CHECK standing forever."""
+    row = con.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'").fetchone()
+    if row is None or row[0] is None:
+        return False
+    sql = row[0]
+    return not all(f"'{t}'" in sql for t in TICKET_TYPES)
 
 
 def open_db(root):
@@ -316,10 +330,27 @@ def open_db(root):
     Only a MISSING file is derived. An existing one is handed over as it is, even
     when a slice in it is empty: healing on every open would repair a wiped slice
     between two commands and turn T-480's regression tests green over the very
-    defect they exist to catch. `wiki reindex` stays the way to refresh."""
+    defect they exist to catch. `wiki reindex` stays the way to refresh.
+
+    One exception, narrower than content healing: the `tickets` table's own
+    CREATE-TABLE `type` CHECK. `CREATE TABLE IF NOT EXISTS` never widens a CHECK
+    on a table that already exists, so a file built before TICKET_TYPES grew the
+    `decision` member keeps rejecting every row of that type forever — not stale
+    content, a stale STRUCTURE no `reindex_tickets` call can fix by itself.
+    Detected structurally (the CHECK clause text on the existing
+    table), never by content, so an ordinary md edit never trips it — only a
+    schema that predates the current TICKET_TYPES tuple does. Same remedy as a
+    cold open: drop the whole file and re-derive every slice (T-480/T-488's
+    "whole index or none"), so this never turns into a second, half-applied
+    migration path alongside `rebuild_index`."""
     dbp = root / ".prdt" / "index.db"
     cold = not dbp.exists()
     con = sqlite3.connect(dbp)
+    if not cold and _tickets_check_stale(con):
+        con.close()
+        dbp.unlink()
+        cold = True
+        con = sqlite3.connect(dbp)
     con.executescript(SCHEMA)
     try:
         con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(name, title, body, tokenize='trigram')")
