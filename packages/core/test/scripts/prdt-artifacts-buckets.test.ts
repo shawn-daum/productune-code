@@ -335,7 +335,14 @@ describe('T-512 artifacts live in version buckets', () => {
       expect(fs.existsSync(path.join(projectDir, 'docs', 'artifacts', v, 'manifest.json'))).toBe(false)
     }
     expect(check().code).toBe(0)
-    expect(doctor()).not.toContain('artifact:') // the fixture's verdict carries unrelated machine checks; the artifact family is silent
+    // T-674 slice 2a added E6 (artifact ticket edge): the fixture's placeholder
+    // ticket ids (T-491, T-9 — chosen above only to exercise migrate's field
+    // fidelity, never created as real tickets) now surface exactly those two
+    // `artifact:` lines and nothing else — migrate itself introduces no finding.
+    const d = doctor()
+    expect(d).toContain('artifact: v1.6/probe.md ticket: T-491 does not exist in the ticket index')
+    expect(d).toContain('artifact: v1.7/two.html ticket: T-9 does not exist in the ticket index')
+    expect(d.split('\n').filter((l) => l.includes('artifact:')).length).toBe(2)
     // a second run has nothing to do; sync after migrate preserves every moved value
     expect(runPrdt(['artifacts', 'migrate']).out).toContain('nothing to migrate')
     sync()

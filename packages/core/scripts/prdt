@@ -422,7 +422,7 @@ def _index_fields(fm, keys, problems):
 # "['developer']". It now goes through index_scalar like the rest, and
 # norm_assignee only trims the legacy prefix off what comes out.
 TICKET_INDEX_FIELDS = ("id", "slug", "type", "status", "assignee", "feature", "created", "closed")
-WIKI_INDEX_FIELDS = ("title", "type", "status", "version")
+WIKI_INDEX_FIELDS = ("title", "type", "status", "version", "ticket")
 
 
 def scan_tickets(root):
@@ -515,7 +515,7 @@ def wiki_store_pages(wdir, relative_to=None, prefix=""):
         pages.append({"name": prefix + p.stem, "title": f["title"] or p.stem,
                       "type": f["type"] or p.stem.split("--")[0],
                       "status": f["status"] or "live",
-                      "version": f["version"], "links": sorted(links),
+                      "version": f["version"], "ticket": f["ticket"], "links": sorted(links),
                       "path": str(p.relative_to(relative_to)) if relative_to else str(p),
                       "body": body, "problems": problems})
     return pages
@@ -6715,8 +6715,84 @@ def artifacts_migrate(root, dry_run=False):
     return lines, 0
 
 
+def _artifact_bucket_path_split(root, path_arg):
+    """`<bucket>, <rel>` from a `prdt artifacts set` path argument, which may
+    be spelled relative to the project root (`docs/artifacts/v1.10/x.md`),
+    relative to docs/artifacts/ (`v1.10/x.md`), or as an absolute path under
+    either. Exits with a clear message on anything else — never a guess."""
+    base = artifacts_root(root)
+    p = Path(path_arg)
+    if p.is_absolute():
+        try:
+            s = str(p.relative_to(base)).replace("\\", "/")
+        except ValueError:
+            sys.exit(f"prdt artifacts set: {path_arg} is not under {base}")
+    else:
+        s = path_arg.replace("\\", "/").lstrip("./")
+        for prefix in ("docs/artifacts/",):
+            if s.startswith(prefix):
+                s = s[len(prefix):]
+                break
+    parts = s.split("/", 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        sys.exit(f"prdt artifacts set: {path_arg!r} is not `<bucket>/<path>` under docs/artifacts/ "
+                 f"(e.g. v1.10/linkage-design.md)")
+    return parts[0], parts[1]
+
+
+def artifacts_set(root, path_arg, ticket):
+    """`prdt artifacts set <path> --ticket T-NNN` (T-674, design §2 E6) — the
+    one manifest field `sync` can never derive: which ticket owns an artifact
+    when the filename carries no T-NNN prefix and the document names no
+    ticket in its own title either (or names the wrong one). Refuses a ticket
+    id that is not real, so this command cannot itself hand `prdt doctor` E6
+    a fresh violation; refuses a path `sync` has not already registered — the
+    entry's other fields (kind/status/lang/added_at) are `sync`'s, never
+    this command's to invent. `sync` afterwards preserves the value it
+    writes: `build_artifact_manifest` already carries forward any prior
+    entry's `ticket` key untouched (T-512 §7) whenever the key is PRESENT,
+    which this command makes true by writing it."""
+    prior, err, malformed, present = read_artifact_manifest(root)
+    if err:
+        sys.exit(f"prdt artifacts set: docs/artifacts/manifest.json {err} — fix or remove it first")
+    if not present:
+        sys.exit("prdt artifacts set: docs/artifacts/manifest.json does not exist yet — "
+                 "run `prdt artifacts sync` first")
+    if malformed:
+        sys.exit(f"prdt artifacts set: docs/artifacts/manifest.json has {len(malformed)} malformed "
+                 f"entrie(s) — fix them first (see `prdt artifacts check`)")
+    bucket, rel = _artifact_bucket_path_split(root, path_arg)
+    key = (bucket, rel)
+    if key not in prior:
+        sys.exit(f"prdt artifacts set: {bucket}/{rel} is not a registered entry in "
+                 f"docs/artifacts/manifest.json — run `prdt artifacts sync` first")
+    tid = (ticket or "").strip()
+    if not TICKET_ID_RE.match(tid):
+        sys.exit(f"prdt artifacts set: --ticket {ticket!r} is not a ticket id (T-NNN)")
+    known = {r["id"] for r, _, _ in (scan_tickets(root) or [])}
+    if tid not in known:
+        sys.exit(f"prdt artifacts set: --ticket {tid} does not exist in docs/tickets/ — E6 needs a "
+                 f"real ticket (add the ticket first, or fix the id)")
+    merged = dict(prior)
+    e = dict(merged[key])
+    e["ticket"] = tid
+    merged[key] = _artifact_entry_canon(bucket, e)
+    data = {"schema_v": ARTIFACT_MANIFEST_SCHEMA_V,
+            "entries": sorted(merged.values(), key=_artifact_entry_sort_key)}
+    write_artifact_manifest(root, data)
+    print(f"prdt artifacts set: {bucket}/{rel} ticket → {tid}")
+
+
 def cmd_artifacts(args):
     root = require_root()
+    if args.action == "set":
+        if not args.path:
+            sys.exit("prdt artifacts set: a path is required (e.g. `prdt artifacts set "
+                     "v1.10/linkage-design.md --ticket T-600`)")
+        if not args.ticket:
+            sys.exit("prdt artifacts set: --ticket T-NNN is required")
+        artifacts_set(root, args.path, args.ticket)
+        return
     if args.action == "check":
         warns = artifact_placement_warnings(root)
         for w in warns:
@@ -7944,6 +8020,189 @@ def ticket_cycle_warnings(tickets):
     return [f"ticket: dependency cycle involving {cyc[0]}"] if cyc else []
 
 
+# ── doctor: edge value checks — E2 · E3 · E5 · E6 (T-674 slice 2a) ────────────
+#
+# Design SoT: docs/artifacts/v1.10/linkage-design.md §1.3 · §1.5 · §1.6 · §2 · §4.
+# Slice 1 (T-674) closed the `feature:` vocabulary and checked its VALUE (W4-W6,
+# edge E1). This slice checks the VALUE of four more of the six adopted edges —
+# E2 (wiki decision → ticket) · E3 (wiki page → version) · E5 (ticket → ticket:
+# `deps`' target already gets checked by `ticket_graph_warnings`; new here is
+# the unknown-relation-key sweep) · E6 (artifact → ticket). E4 stays reserved
+# (key name only) until T-663 lands the PRD item address format. None of this
+# reads or writes an `edges` table in `.prdt/index.db` — that table, widening
+# `wiki lint` to docs/prd/**/docs/tickets/**, and `[[machine:…]]` resolution
+# are the next slice (T-674 dispatch, deliberately narrower than the ticket).
+#
+# All four register FAMILY_PROJECT (never FAMILY_DE) in cmd_doctor: a stray
+# value here is project data a person fixes in the md, not prdt's own
+# discipline diverging from its execution — the same posture
+# `feature_seam_warnings` and `ticket_graph_warnings` already take.
+
+TICKET_ID_RE = re.compile(r"^T-(?:[A-Z][A-Z0-9]*-)?\d+$")
+
+
+def wiki_ticket_edge_warnings(root, tickets):
+    """E2 — a wiki page's `ticket:` names a real, non-dropped ticket; plus the
+    one wikilink-position finding this slice adds. Project store only
+    (docs/wiki/**), the same scope `wiki_lint` already has — the machine
+    store and docs/prd/**/docs/tickets/** are the next slice.
+
+    `tickets` is the id-keyed map (T-549) — E2 only ever asks "does this id
+    exist / what is its status", never a span question, so the map is the
+    right shape here (unlike the ticket-row checks below)."""
+    warns = []
+    for pg in scan_wiki(root):
+        raw = pg.get("ticket")
+        if isinstance(raw, str) and raw.strip():
+            tid = raw.strip()
+            if not TICKET_ID_RE.match(tid):
+                warns.append(f"wiki: {pg['name']} ticket: '{tid}' is not a ticket id (T-NNN)")
+            elif tid not in tickets:
+                warns.append(f"wiki: {pg['name']} ticket: {tid} does not exist in the ticket index")
+            elif tickets[tid]["status"] == "dropped":
+                warns.append(f"wiki: {pg['name']} ticket: {tid} is dropped")
+        # a ticket id used where a wikilink target belongs — design real
+        # example: docs/tickets/v1.9/T-610.md links `[[T-508]]` (out of this
+        # slice's scan scope; the same shape inside docs/wiki/** is in it).
+        for l in pg["links"]:
+            if TICKET_ID_RE.match(l):
+                warns.append(f"wiki: {pg['name']} cites {l} in wikilink position ([[{l}]]) — "
+                             f"a ticket edge is the frontmatter `ticket:` key (design linkage "
+                             f"§2 E2), not a wikilink target")
+    return warns
+
+
+def version_set_from_disk(root, st):
+    """Canonical version ids (`_version_id_canon` keys) → first-seen spelling,
+    derived from disk the way design §2 E3 binds together: every
+    docs/prd/versions/<id>.md file, the ONE open PRD section (po-state.json's
+    `version`, falling back to a `## v` heading in docs/prd/PRD.md when
+    po-state names none), and every docs/tickets/<id>/ directory whose name is
+    a version id (`backlog` and anything else excluded — `_version_id_canon`
+    already returns None for those)."""
+    root = Path(root)
+    ids = {}
+
+    def add(v):
+        if isinstance(v, str) and v.strip():
+            k = _version_id_canon(v.strip())
+            if k is not None and k not in ids:
+                ids[k] = v.strip()
+
+    vdir = root / "docs" / "prd" / "versions"
+    if vdir.is_dir():
+        for f in sorted(vdir.glob("*.md")):
+            if PRD_VERSION_FILE_RE.match(f.name):
+                add(f.stem)
+    pv = st.get("version") if isinstance(st, dict) else None
+    if isinstance(pv, str) and pv.strip():
+        add(pv)
+    else:
+        prd_md = root / "docs" / "prd" / "PRD.md"
+        if prd_md.is_file():
+            try:
+                text = prd_md.read_text(encoding="utf-8")
+            except OSError:
+                text = None
+            if text:
+                for v, _ in _prd_version_headings(text):
+                    add(v)
+    tdir = root / "docs" / "tickets"
+    if tdir.is_dir():
+        for d in sorted(tdir.iterdir()):
+            if d.is_dir():
+                add(d.name)
+    return ids
+
+
+def wiki_version_edge_warnings(root, st):
+    """E3 — a wiki page's `version:` is in the version set derived from disk.
+    Project store only, same reasoning as E2 above."""
+    versions = version_set_from_disk(root, st)
+    warns = []
+    for pg in scan_wiki(root):
+        v = pg.get("version")
+        if not (isinstance(v, str) and v.strip()):
+            continue
+        v = v.strip()
+        k = _version_id_canon(v)
+        if k is None:
+            warns.append(f"wiki: {pg['name']} version: '{v}' is not a version id (v<N>[.<m>[.<p>]])")
+        elif k not in versions:
+            warns.append(f"wiki: {pg['name']} version: {v} is not in the version set derived from "
+                         f"disk (docs/prd/versions/*.md ∪ the open PRD section ∪ docs/tickets/*/)")
+    return warns
+
+
+# E5's known deprecated spellings (design §2 measured: `depends_on` 47 ·
+# `parent_ticket` 20 · `related_tickets` 2 · `blocks` 1 · `revises` 1 ·
+# `related` 1) — `prd_item` is E4's reserved key name (T-663 gives it a value
+# check; this slice never flags it as an unknown relation key).
+_TICKET_KNOWN_KEYS = frozenset(TICKET_INDEX_FIELDS) | {"deps", "prd_item"}
+
+
+def _relation_shaped(value):
+    """True when `value` is a bare ticket id, or a non-empty list of nothing
+    but ticket ids — the shape every one of the seven measured relation-key
+    spellings actually takes (`depends_on: [T-491]`, `parent_ticket: T-500`,
+    …). Deliberately narrower than "the string CONTAINS a T-NNN": a prose
+    field that happens to mention a ticket must not misfire."""
+    if isinstance(value, str):
+        return bool(TICKET_ID_RE.match(value.strip()))
+    if isinstance(value, list) and value:
+        return all(isinstance(x, str) and TICKET_ID_RE.match(x.strip()) for x in value)
+    return False
+
+
+def ticket_relation_key_warnings(root, trows, st):
+    """E5's second half — `deps`' target already gets checked by
+    `ticket_graph_warnings`; what stays uncovered is a ticket using some OTHER
+    key to express the same kind of relation (the historical 7-spelling
+    drift, design §2). Swept on NEW tickets only, no retroactive sweep of old
+    ones (dispatch acceptance, design §2.2 B / §7-8): "new" = this round
+    (po-state.json's open `version`) or any round after it, by canonical
+    compare — a ticket in an OLDER round or still in backlog stays silent
+    here, however it spells a relation, because the closed vocabulary (`deps`
+    only) was never the rule while it was written."""
+    pv = st.get("version") if isinstance(st, dict) else None
+    baseline = _version_id_canon(pv) if isinstance(pv, str) else None
+    if baseline is None:
+        return []
+    warns = []
+    for t in trows:
+        k = _version_id_canon(t.get("version"))
+        if k is None or k < baseline:
+            continue
+        fm, _ = parse_frontmatter(Path(root) / t["path"])
+        for key, value in fm.items():
+            if key in _TICKET_KNOWN_KEYS or not _relation_shaped(value):
+                continue
+            warns.append(f"ticket: {t['id']} uses relation key `{key}:` — the closed relation "
+                         f"vocabulary is `deps` only (design linkage §2 E5); rewrite as "
+                         f"deps: [...] (new tickets only, no retroactive sweep)")
+    return warns
+
+
+def artifact_ticket_edge_warnings(root, tickets):
+    """E6 — a manifest entry's `ticket:` names a real ticket. `check`/`sync`
+    already report a manifest that cannot be READ at all (malformed shape);
+    this is the one further question once it reads clean: does the value
+    point at something real."""
+    prior, err, _malformed, present = read_artifact_manifest(root)
+    if err or not present:
+        return []
+    warns = []
+    for (bucket, rel), e in sorted(prior.items()):
+        tid = e.get("ticket")
+        if tid is None:
+            continue
+        if not (isinstance(tid, str) and TICKET_ID_RE.match(tid.strip())):
+            warns.append(f"artifact: {bucket}/{rel} ticket: {tid!r} is not a ticket id (T-NNN)")
+        elif tid.strip() not in tickets:
+            warns.append(f"artifact: {bucket}/{rel} ticket: {tid} does not exist in the ticket index")
+    return warns
+
+
 # ── discipline delivery (T-577) ───────────────────────────────────────────────
 # The largest member of the discipline↔execution family, and until this slice
 # invisible to it: the session-start hook's payload was 44,915 B in ONE hook
@@ -8629,6 +8888,13 @@ def cmd_doctor(_args):
         # never a missing file (T-547 §6). T3 is a span ACROSS version dirs, so it
         # is computed over the rows T-547 §2 names, never over the id-keyed map.
         ("feature seam", FAMILY_PROJECT, lambda: feature_seam_warnings(root, trows)),
+        # edge value checks E2 · E3 · E5(unknown-relation-key) · E6 (T-674 slice 2a) —
+        # design linkage-design.md §2. project family: a stray value here is data a
+        # person fixes in the md, never prdt's own discipline↔execution mismatch.
+        ("wiki ticket edge (E2)", FAMILY_PROJECT, lambda: wiki_ticket_edge_warnings(root, tickets)),
+        ("wiki version edge (E3)", FAMILY_PROJECT, lambda: wiki_version_edge_warnings(root, st)),
+        ("ticket relation key (E5)", FAMILY_PROJECT, lambda: ticket_relation_key_warnings(root, trows, st)),
+        ("artifact ticket edge (E6)", FAMILY_PROJECT, lambda: artifact_ticket_edge_warnings(root, tickets)),
         # accumulated per-case rebuilds of an expensive shared test setup (T-537).
         # Static count of a SHAPE, never a timing run — the habit and the code-review
         # check cover the write and the diff; this layer covers the only view neither
@@ -9430,9 +9696,15 @@ def main():
                                          "| check (report artifacts the bucket rule cannot place, and a "
                                          "manifest.json inside a bucket; exit 1 on findings) "
                                          "| migrate (move every per-bucket manifest.json into the root one, "
-                                         "losslessly — run once per project; --dry-run prints the plan; T-661)")
-    p.add_argument("action", choices=("sync", "check", "migrate"))
+                                         "losslessly — run once per project; --dry-run prints the plan; T-661) "
+                                         "| set <path> --ticket T-NNN (hand-fill the E6 edge `sync` cannot "
+                                         "derive; refuses an unregistered path or a ticket id that does not "
+                                         "exist; T-674)")
+    p.add_argument("action", choices=("sync", "check", "migrate", "set"))
+    p.add_argument("path", nargs="?", help="set: manifest-relative path, e.g. v1.10/linkage-design.md "
+                                           "or docs/artifacts/v1.10/linkage-design.md")
     p.add_argument("--dry-run", action="store_true", help="migrate: print what would move, write nothing")
+    p.add_argument("--ticket", help="set: the T-NNN this artifact belongs to")
     p.set_defaults(fn=cmd_artifacts)
     p = sub.add_parser("features", help="the closed `feature:` vocabulary (.prdt/config.json features.vocab, T-674): "
                                         "vocab (list) · vocab --seed (one-time: every ticket value → kind: tag, "

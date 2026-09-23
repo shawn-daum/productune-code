@@ -449,8 +449,10 @@ print(json.dumps(list(dict.fromkeys(list(mod.TICKET_INDEX_FIELDS) + list(mod.WIK
 `)
     const keys: string[] = JSON.parse(
       execFileSync('python3', [kp, PRDT_CLI], { encoding: 'utf8' }))
+    // T-674 slice 2a added `ticket` to WIKI_INDEX_FIELDS (E2: a wiki page's
+    // `ticket:` edge) — 11 keys now, not 10.
     expect(keys).toEqual(['id', 'slug', 'type', 'status', 'assignee', 'feature',
-      'created', 'closed', 'title', 'version'])
+      'created', 'closed', 'title', 'version', 'ticket'])
   })
 
   test('the assignee column specifically: NULL for every non-string shape', () => {
