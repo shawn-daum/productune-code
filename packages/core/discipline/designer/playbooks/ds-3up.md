@@ -22,7 +22,7 @@ Non-developers can't tell text token-specs apart. Surface RENDERED HTML design-s
 
 ## Render requirements
 - `docs/artifacts/<version>/<slug>-ds-{a,b,c}.html` (one page with 3 sections is fine) — a real showcase: tokens / type / spacing / core components visibly applied, not prose. Components carry real product copy in the proposal's register — empty · error · confirm/destructive states — never lorem.
-- Named fonts actually load (webfont/@font-face) — Pretendard leads UI text for a bare `-apple-system` stack. Anti-default pass (`style-library/anti-default.md`) + `style-library/ux-principles.md` bound. Render-verify (screenshot yourself) before returning — undecidable render = not done.
+- Named fonts actually load (webfont/@font-face) — Pretendard leads UI text for a bare `-apple-system` stack. Anti-default pass (`style-library/anti-default.md`) + `style-library/ux-principles.md` bound. Render-verify (screenshot yourself) before returning — undecidable render = not done. Page top = the decide line: pick A · B · C, recommendation on it (habit Artifacts).
 - Per proposal, one provenance line: A·B `anchor: <slug> — why this mood fits · what was adapted`; C `searched: <what> — how it diverges`.
 
 ## On the user's pick / rejection
