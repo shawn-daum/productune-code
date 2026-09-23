@@ -10195,6 +10195,162 @@ def cmd_preflight(args):
 
 
 
+# ── env — value-free credential presence probe (T-677 S1) ───────────────────
+#
+# The incident this answers (T-677, quoted from the user 2026-09-23): a worker
+# wanting to know "did the key get in?" printed the raw `.env.local` line, and
+# 80 chars of a real token hit the screen and this session's own record.
+# contracts §Secrets only reaches PRODUCTION credentials — a local `.env.*`
+# account token was never in scope, and there was no way to answer "is it set"
+# without looking at it. This command is that way: presence and length only,
+# on EVERY exit path, including error messages — no code path below ever
+# formats a parsed value into a string that reaches stdout or stderr.
+
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _env_strip_cr(line):
+    """Drop exactly one trailing CR — CRLF support without str.splitlines()'s
+    wider separator set (T-677 QA S1: bare \\r, \\x0b, \\x0c, \\x1c-\\x1e,
+    U+0085, U+2028, U+2029 are each a "line separator" to splitlines() but
+    NOT to a dotenv loader — splitting a value on one of those turns its tail
+    into an independent KEY= line, leaking value bytes into a key name that
+    list mode then prints)."""
+    return line[:-1] if line.endswith("\r") else line
+
+
+def _env_parse_line(raw):
+    """One dotenv line → (key, raw_value) or None (not a KEY=VALUE line).
+    Quote-stripping is NOT done here when the value opens a quote that this
+    line does not close — that case is open-quote continuation, handled by
+    the caller across lines. An inline `# comment` after the value is NOT
+    stripped (dotenv syntax is ambiguous there), so a trailing comment counts
+    toward the reported length — the raw line is truth, not a guess at
+    intent."""
+    stripped = _env_strip_cr(raw).strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    if stripped.startswith("export ") or stripped.startswith("export\t"):
+        stripped = stripped[len("export"):].lstrip()
+    if "=" not in stripped:
+        return None
+    key, _, value = stripped.partition("=")
+    key = key.strip()
+    if not _ENV_KEY_RE.match(key):
+        return None
+    return key, value
+
+
+def _env_parse_file(p):
+    """Path -> {KEY: length}. Last occurrence of a repeated key wins (matches
+    real dotenv loader behavior). Raises OSError on read failure — the caller
+    turns that into exit 3, never a printed exception (an exception's default
+    __str__ never carries file content here, only path/errno, but nothing
+    below constructs one that could).
+
+    Splits ONLY on `\\n` (a trailing `\\r` is stripped per line for CRLF) —
+    never str.splitlines()'s wider separator set (T-677 QA S1). A value that
+    opens a quote (`'` or `"`) but does not close it on the same line is a
+    dotenv-style multi-line value: subsequent raw lines are consumed and
+    joined with `\\n` until one ends with the matching quote, or EOF — those
+    consumed lines are never re-parsed as independent KEY= lines, so a value
+    byte can never surface as a key name in list mode."""
+    # newline="" disables Path.read_text()'s default universal-newline
+    # translation, which otherwise turns a BARE \r into \n before this
+    # function ever sees it — defeating the \n-only split below (T-677 QA
+    # S1: a bare \r must stay embedded, never act as a line separator).
+    with p.open("r", encoding="utf-8", errors="replace", newline="") as f:
+        text = f.read()
+    if text.startswith("﻿"):  # T-677 QA S4: a leading UTF-8 BOM must not
+        text = text[1:]  # hide the first key from _ENV_KEY_RE.
+    lines = text.split("\n")
+    n = len(lines)
+    lengths = {}
+    i = 0
+    while i < n:
+        raw = lines[i]
+        i += 1
+        parsed = _env_parse_line(raw)
+        if parsed is None:
+            continue
+        key, value = parsed
+        if value and value[0] in ("'", '"'):
+            quote = value[0]
+            if len(value) >= 2 and value[-1] == quote:
+                value = value[1:-1]
+            else:
+                parts = [value[1:]]
+                while i < n:
+                    cont = _env_strip_cr(lines[i])
+                    i += 1
+                    if cont.endswith(quote):
+                        parts.append(cont[:-1])
+                        break
+                    parts.append(cont)
+                value = "\n".join(parts)
+        lengths[key] = len(value)
+    return lengths
+
+
+def cmd_env(args):
+    """`prdt env check <file> [KEY ...]` — see module header above. Every
+    branch below prints only: a key name FROM THE FILE (never the caller's
+    raw argument text — a KEY argument absent from the file is reported by
+    its 1-based position instead, since it may itself be a pasted value:
+    T-677 QA re-grill, `prdt env check .env "$TOKEN"` must never put the
+    expanded value on stdout even when the session record kept `$TOKEN`
+    unexpanded), the literal words `set` / `empty` / `absent`, and an
+    integer length. No branch formats a value."""
+    file_arg = args.file
+    p = Path(file_arg)
+    try:
+        lengths = _env_parse_file(p)
+    except OSError as e:
+        # T-677 QA S2 (PO decision): the given path is caller-supplied text
+        # too — a mistaken paste can put a value where a path belongs — so it
+        # is never echoed back either. Only the errno string, which never
+        # carries file content.
+        print(f"prdt env check: cannot read the given file: {e.strerror or 'read error'}", file=sys.stderr)
+        sys.exit(3)
+
+    keys = list(args.keys or [])
+    if not keys:
+        for key in sorted(lengths):
+            length = lengths[key]
+            print(f"{key}  empty" if length == 0 else f"{key}  set  len={length}")
+        sys.exit(0)
+
+    worst = 0
+    for idx, key in enumerate(keys, start=1):
+        if not _ENV_KEY_RE.match(key):
+            # T-677 QA S2 (PO decision): a KEY argument that does not match
+            # the key pattern is never echoed — it may BE a value the caller
+            # pasted by mistake (e.g. `prdt env check f "$TOKEN"`), and
+            # echoing it back would defeat the whole probe. Reported by
+            # position only.
+            print(f"KEY#{idx}  invalid-key-argument")
+            worst = max(worst, 3)
+            continue
+        if key not in lengths:
+            # T-677 QA re-grill S1 fix2 (PO decision): a KEY argument absent
+            # from the file is never echoed by text, matching-key-pattern or
+            # not — it may BE a value the caller pasted by mistake (e.g.
+            # `prdt env check f "$TOKEN"`), and the file record keeps the
+            # unexpanded `$TOKEN` while stdout would otherwise carry the
+            # expanded value. Reported by position only, same shape as the
+            # invalid-key-argument branch below.
+            print(f"#{idx}  absent")
+            worst = max(worst, 1)
+            continue
+        length = lengths[key]
+        if length == 0:
+            print(f"{key}  empty")
+            worst = max(worst, 2)
+        else:
+            print(f"{key}  set  len={length}")
+    sys.exit(worst)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="prdt", description=__doc__)
     sub = ap.add_subparsers(dest="cmd")
@@ -10336,6 +10492,15 @@ def main():
     p.add_argument("--latch-ttl", type=int, default=LATCH_TTL_MIN, metavar="MIN",
                    help=f"minutes a limit latch stays live (default {LATCH_TTL_MIN})")
     p.set_defaults(fn=cmd_preflight)
+    p = sub.add_parser("env", help="value-free credential presence probe (T-677): "
+                                   "check <file> [KEY ...] — presence + length only, never a value; "
+                                   "exit 0 all set, 1 a KEY is absent, 2 a KEY is present but empty, "
+                                   "3 the file could not be read; several KEYs print one line each and "
+                                   "exit with the worst of their codes; no KEY lists every key in <file>")
+    p.add_argument("action", choices=("check",))
+    p.add_argument("file")
+    p.add_argument("keys", nargs="*", metavar="KEY")
+    p.set_defaults(fn=cmd_env)
     args = ap.parse_args()
     maybe_prompt_update(args.cmd)  # T-393: 1일 1회 interactive update nudge (silent on every degrade path)
     maybe_meta_backup(args.cmd)    # T-504: detached meta backup tick (stage boundary / once daily; never blocks)
@@ -10347,4 +10512,19 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BrokenPipeError:
+        # T-677 QA S3: a downstream reader that closes early (e.g.
+        # `prdt env check big.env | head -c 1`) turns our next write — or
+        # Python's own flush of stdout at interpreter shutdown — into
+        # BrokenPipeError. No value byte is at risk (this fires on ANY
+        # command's output, not just env check's), but left uncaught it
+        # prints a traceback and a non-standard exit code. Standard fix
+        # (Python docs, "Note on SIGPIPE"): redirect stdout's fd to devnull
+        # so the interpreter's own shutdown flush has nothing left to fail
+        # on, then exit quietly through the documented set (3: the request
+        # could not be completed).
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        sys.exit(3)
