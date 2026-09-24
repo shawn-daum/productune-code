@@ -131,9 +131,13 @@ function cliHooksBlock(home: string): any {
     // the matcher-less governor entry (manifest registration order: the
     // unconditional hook, then the narrowed one).
     PostToolBatch: [{ hooks: [h('prdt-call-governor.sh')] }],
+    // T-677: prdt-secret-guard.sh is a THIRD PreToolUse entry (matcher
+    // `Read|Bash`), registered LAST — after the matcher-less governor and the
+    // `Agent`-matched dispatch gate, same manifest registration order.
     PreToolUse: [
       { hooks: [h('prdt-call-governor.sh')] },
       { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
+      { matcher: 'Read|Bash', hooks: [h('prdt-secret-guard.sh')] },
     ],
   }
 }

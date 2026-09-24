@@ -173,6 +173,29 @@ describe.skipIf(!PYTHON3)('prdt doctor — hook roster', () => {
   })
 })
 
+describe.skipIf(!PYTHON3)('prdt doctor — the secret guard joins the checked roster automatically (T-677 S3)', () => {
+  // No doctor code changed for this hook — the existing mirror↔registration
+  // check already reads the mirror by NAME (fs walk) and settings.json by
+  // NAME, so a new manifest entry is covered the moment it is mirrored and/or
+  // registered, same as every other hook on the roster. These two cases prove
+  // that "automatic" claim rather than assume it.
+  const GUARD = 'prdt-secret-guard.sh'
+
+  test('the guard mirrored but absent from settings.json is reported', () => {
+    mirror('prdt-session-start.sh', GUARD)
+    register({ SessionStart: ['prdt-session-start.sh'] })
+    const out = doctor().join('\n')
+    expect(out).toContain(GUARD)
+    expect(out).toContain('install.sh')
+  })
+
+  test('the guard mirrored and registered on PreToolUse stays silent', () => {
+    mirror('prdt-session-start.sh', GUARD)
+    register({ SessionStart: ['prdt-session-start.sh'], PreToolUse: [GUARD] })
+    expect(doctor()).toEqual([])
+  })
+})
+
 describe.skipIf(!PYTHON3)('prdt doctor — call governor fire evidence (the silent-typo class)', () => {
   test('registered but never fired → named, with the typo cause spelled out', () => {
     mirror(GOVERNOR)

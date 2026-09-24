@@ -132,9 +132,13 @@ export const CASES: readonly Case[] = [
           // T-490: prdt-dispatch-gate.sh is a SEPARATE PreToolUse entry (matcher
           // `Agent`), sharing the event with the matcher-less governor entry —
           // both must be present for the roster to read as fully installed.
+          // T-677: prdt-secret-guard.sh is a THIRD PreToolUse entry (matcher
+          // `Read|Bash`) — all three must be present for the roster to read
+          // as fully installed.
           PreToolUse: [
             { hooks: [h('prdt-call-governor.sh')] },
             { matcher: 'Agent', hooks: [h('prdt-dispatch-gate.sh')] },
+            { matcher: 'Read|Bash', hooks: [h('prdt-secret-guard.sh')] },
           ],
         },
       }))
