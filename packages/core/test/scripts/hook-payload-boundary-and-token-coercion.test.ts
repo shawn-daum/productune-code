@@ -306,7 +306,7 @@ describe('every block boundary in the session-start payload owns its line', () =
 
   test.skipIf(!hasJq())('blocks stay separated by exactly one blank line, and the trailing prose survives', () => {
     const payload = sessionPayload('prdt-developer')
-    expect(payload).toMatch(/----- END doctrine -----\n\n----- BEGIN contracts \(/)
+    expect(payload).toMatch(/----- END doctrine -----\n\n----- BEGIN contracts -----/)
     expect(payload).toMatch(/----- END developer playbook menu -----\nAct per the discipline above\./)
   })
 })

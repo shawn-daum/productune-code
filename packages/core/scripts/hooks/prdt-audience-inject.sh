@@ -312,11 +312,15 @@ if [ "${1:-}" = "--binding" ]; then
   # claimed when none exists (`audience=developer` alone has no body; this line
   # is then the whole cost, not a reminder of something already delivered).
   if [ -n "$(active_bodies)" ]; then
-    tail="Binding only; any body arrived at session start."
+    tail=""
   else
     tail="No body is in force for these values — this line is the whole cost."
   fi
-  printf '[prdt register] %s — governs %s. %s\n' "$pairs" "$(governs_union)" "$tail"
+  if [ -n "$tail" ]; then
+    printf '[prdt register] %s — governs %s. %s\n' "$pairs" "$(governs_union)" "$tail"
+  else
+    printf '[prdt register] %s — governs %s.\n' "$pairs" "$(governs_union)"
+  fi
   exit 0
 fi
 
@@ -351,7 +355,7 @@ BODIES="$(active_bodies)"
 # OTHER source here requires the gutter.
 emit_block() {
   printf '[prdt register — PO conversational register]\n'
-  printf 'Resolved from %s (an absent key takes its default): %s. governs: %s — the register shapes HOW you say things on those surfaces, never WHAT you do or decide. Override blocks (machine, then project, each its own hook output) still win over this block. The `[prdt register]` line on a prompt (present only while some key is off its default) is the binding of these same values.\n' \
+  printf 'Resolved from %s (absent key → its default): %s. governs: %s — HOW you say things there, never WHAT you do or decide; override blocks (machine, then project) still win over this block; the `[prdt register]` prompt line (present while a key is off its default) binds these same values.\n' \
     "$REG_FILE" "$(all_pairs)" "$(governs_union)"
   if [ -n "$R_address" ]; then
     printf 'Address the user as "%s" wherever the user is named or addressed in user-chat.\n' "$R_address"

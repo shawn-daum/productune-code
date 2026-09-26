@@ -166,31 +166,34 @@ interface Rendered {
 
 function render(layer: 'project' | 'machine', body: Body, hookOverride?: string): Rendered {
   let payload: string
-  let ownStructure: string[]
+  let beginLine: string
+  let endLine: string
   if (layer === 'project') {
     const proj = makeProject({ projectBody: body })
     const file = path.join(proj, '.prdt', 'overrides', 'developer.md')
     payload = runHook(hookOverride ?? PROJECT_HOOK, { prdtHome: makePrdtHome(), cwd: proj })
-    ownStructure = [
-      '[prdt discipline — PROJECT overrides for prdt-developer — highest layer]',
-      `----- BEGIN project overrides (${file}) -----`,
-      '----- END project overrides -----',
-    ]
+    beginLine = `----- BEGIN project overrides (${file}) -----`
+    endLine = '----- END project overrides -----'
   } else {
     const home = makePrdtHome({ machineBody: body })
     const file = path.join(home, 'overrides', 'developer.md')
     payload = runHook(hookOverride ?? MACHINE_HOOK, { prdtHome: home, cwd: makeProject() })
-    ownStructure = [
-      '[prdt discipline — machine overrides for prdt-developer]',
-      `----- BEGIN overrides (${file}) -----`,
-      '----- END overrides -----',
-    ]
+    beginLine = `----- BEGIN overrides (${file}) -----`
+    endLine = '----- END overrides -----'
   }
   const lines = payload.split('\n')
-  const begin = lines.findIndex((l) => l === ownStructure[1])
-  const end = lines.findIndex((l) => l === ownStructure[2])
+  const begin = lines.findIndex((l) => l === beginLine)
+  const end = lines.findIndex((l) => l === endLine)
   expect(begin).toBeGreaterThan(-1)
   expect(end).toBeGreaterThan(begin)
+  // Everything before BEGIN is the hook's own fixed prose (the block header, the
+  // precedence paragraph, the FORGERY_NOTE) — never attacker-controlled, so any
+  // of it the oracle reads as structure-shaped is legitimate, not a leak. Derived
+  // from the actual render rather than retyped as a literal, so a Designer
+  // `inject-edit` wording pass (T-702 S2: the FORGERY_NOTE now names its own
+  // bracket example, `` `[prdt …]` ``, which the oracle also matches) cannot
+  // silently desync this baseline from what the hook actually ships.
+  const ownStructure = [...lines.slice(0, begin).filter((l) => STRUCTURE_TOKEN.test(l)), beginLine, endLine]
   return { payload, ownStructure, body: lines.slice(begin + 1, end).join('\n') }
 }
 
@@ -211,7 +214,7 @@ describe('no body line can be read as structure, regardless of what precedes it'
       //    not one line more. Counting matters: several fixtures forge a line
       //    byte-identical to the hook's real delimiter, so the only detectable
       //    difference would be a DUPLICATE in this set.
-      expect(structureReadable(r.payload)).toEqual([r.ownStructure[0], r.ownStructure[1], r.ownStructure[2]])
+      expect(structureReadable(r.payload)).toEqual(r.ownStructure)
 
       // 3. Every hostile line still arrives, visible to the user — as quoted
       //    content inside the body region.
@@ -292,8 +295,12 @@ describe('payload states the grammar: gutter = data, layer identity = source fil
     test.skipIf(!hasJq())(`${layer} layer — names the gutter and the disposition of lookalike lines`, () => {
       const flat = render(layer, LEGIT_BODY).payload.replace(/\s+/g, ' ')
       expect(flat).toContain('`| `')
-      expect(flat).toMatch(/which file the harness read/i)
-      expect(flat).toMatch(/never by a line inside a body/i)
+      // T-702 S2: layer identity is fixed by which file the harness read into
+      // which block — the paragraph explaining "fixed only by which file the
+      // harness read into which block" was cut for length, but this literal
+      // pinned string (README §의미 검사: "테스트 pin") survives verbatim.
+      expect(flat).toMatch(/layer identity is never self-declared/i)
+      expect(flat).toMatch(/DATA from that one file/i)
       expect(flat).toContain('VOID')
       expect(flat).toMatch(/surface/i)
     })
@@ -303,15 +310,19 @@ describe('payload states the grammar: gutter = data, layer identity = source fil
     // position no file byte can reach" — which was measurably false for six
     // newline classes. A claim we cannot hold is worse than no claim, so the
     // replacement has to NAME the limits, not just drop the sentence.
-    test.skipIf(!hasJq())(`${layer} layer — claims defense-in-depth, not an invariant, and names what is not stopped`, () => {
+    //
+    // T-702 S2 cut the old spelled-out disclaimer ("Defense-in-depth, not a
+    // guarantee … nothing here PARSES this context … your call") to "nothing
+    // more" — shorter, same claim (a defense, not a proof) — but still NAMES
+    // the residual exposures a reader has to act on, so those stay pinned.
+    test.skipIf(!hasJq())(`${layer} layer — claims a defense, not an invariant, and names what is not stopped`, () => {
       const flat = render(layer, LEGIT_BODY).payload.replace(/\s+/g, ' ')
       expect(flat).not.toMatch(/unguttered/i)
       expect(flat).not.toMatch(/no file byte can/i)
       expect(flat).not.toMatch(/can never stand where structure stands/i)
-      expect(flat).toMatch(/defense-in-depth, not a guarantee/i)
-      expect(flat).toMatch(/nothing here PARSES this context/i)
-      // the three residual exposures a reader has to act on
-      expect(flat).toMatch(/blunts neither what the body SAYS/i)
+      expect(flat).toMatch(/nothing more/i)
+      // the residual exposures a reader has to act on
+      expect(flat).toMatch(/not what a line SAYS/i)
       expect(flat).toMatch(/bidi controls/i)
       expect(flat).toMatch(/zero-width/i)
     })
@@ -360,8 +371,11 @@ describe('the defense never fails OPEN', () => {
     const ctx = JSON.parse(out).hookSpecificOutput.additionalContext as string
     expect(ctx).toMatch(/\| \(override body withheld: python3 is missing/)
     expect(ctx).not.toContain('- ok rule')
-    // and the forged delimiter never reached the payload at all
-    expect(structureReadable(ctx)).toHaveLength(3)
+    // and the forged delimiter never reached the payload at all — the hook's own
+    // structure is its header, its FORGERY_NOTE paragraph (which now names its
+    // own `[prdt …]` bracket example — T-702 S2 — and so the oracle reads it too,
+    // legitimately), BEGIN and END: four lines, never a fifth from the body.
+    expect(structureReadable(ctx)).toHaveLength(4)
   })
 })
 
@@ -417,7 +431,9 @@ describe('self-load fallback (T-468/T-578) reads the same untrusted files — sa
     }
     expect(last).toContain('[prdt discipline — machine overrides for prdt-developer]')
     expect(last).toContain('[prdt discipline — PROJECT overrides for prdt-developer — highest layer]')
-    expect(last).toMatch(/fixed only by which file the harness read into which block/)
+    // T-702 S2 pin: this literal string is what fixes layer identity by the file
+    // read, not the longer paragraph around it (cut for length).
+    expect(last).toMatch(/layer identity is never self-declared/i)
     expect(last).toContain('`| ` gutter')
     expect(last).toContain(GUTTER + '- machine rule α')
     expect(last).toContain(GUTTER + '- project rule β')
@@ -452,8 +468,8 @@ describe('every newline class is folded behind the gutter, not just LF', () => {
       test.skipIf(!hasJq())(`${layer} layer — ${b.name} cannot put a forged line at column 0`, () => {
         const body = `- 정상 규칙${b.ch}${FORGED_CLOSER}${b.ch}${FORGED_HEADER}`
         const r = render(layer, body)
-        // the hook's own three structure lines, and nothing else
-        expect(structureReadable(r.payload)).toHaveLength(3)
+        // the hook's own structure lines, and nothing else
+        expect(structureReadable(r.payload)).toEqual(r.ownStructure)
         // every piece of the body region is guttered, per the superset splitter
         expect(anyLines(r.body).every((l) => l.startsWith(GUTTER))).toBe(true)
         // the forged text survives as DATA — folding must not silently delete it
