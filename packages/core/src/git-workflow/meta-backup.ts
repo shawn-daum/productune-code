@@ -397,6 +397,10 @@ export async function metaBackupTick(
     // Remotes exist but not THIS one = renamed/removed backup (QA F2) — a
     // failure the latch must carry so `prdt` and `prdt doctor` say it.
     if (remotes.length === 0) return { attempted: false, pushed: false, reason: 'remote-missing', remote }
+    // T-699: the CLI's own failure hint (scripts/prdt `_meta_backup_fail_hint`)
+    // keys off this exact phrase ("names no remote of the meta repo (have:")
+    // to tell this config-shaped failure apart from a transient one — keep
+    // that substring if this message ever changes.
     const error = `meta.backup_remote '${remote}' names no remote of the meta repo (have: ${remotes.map((r) => r.name).join(', ')})`
     recordFailure(projectDir, { remote, attemptAt: now.toISOString(), error })
     return { attempted: false, pushed: false, reason: 'remote-missing', remote, error }
