@@ -81,6 +81,11 @@
     },
     {
       "event": "PreToolUse",
+      "matcher": "SubagentHandback",
+      "hooks": ["prdt-return-check.sh"]
+    },
+    {
+      "event": "PreToolUse",
       "matcher": "Read|Bash",
       "hooks": ["prdt-secret-guard.sh"]
     }
