@@ -1,7 +1,7 @@
 ---
 name: ds-3up
 persona: designer
-when: "Define screen set while NO DS is settled (docs/design.md names no DS HTML) — showcase before any prototype · DS overhaul (approved reversal) · user rejected the settled DS"
+when: "Define screen set while NO DS is settled (docs/design.md frontmatter has no ds_html:) — showcase before any prototype · DS overhaul (approved reversal) · user rejected the settled DS"
 model_floor: opus
 effort: high
 ---

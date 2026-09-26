@@ -16,6 +16,9 @@
   to the viewport (max-height + overflow-y:auto), the frame runs at its own height, the page scrolls.
   HEAD: the ID, the definition, the decide lines — nothing else. Scope · rules · provenance · history fold
   under <details class="spec-fold"> (closed on load).
+  FONT: embed Pretendard as a glyph-subset base64 @font-face (400 + 600–700) before handing the page — a file:// page
+  cannot load a sibling font file and the reader may not have Pretendard installed. Procedure:
+  ~/.prdt/discipline/designer/style-library/pretendard-embed.md.
 
   TWO LAYERS, one file:
     spec layer   = everything outside .frame — the skeleton's own --spec-* palette, no product component, no product token.
