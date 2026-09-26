@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# prdt — Claude Code state-recording hook (v1 hook #3). Registered TWICE:
+# prdt — Claude Code state-recording hook (v1 hook #3). Registered THREE times:
 #   PostToolUse (matcher: Agent)      — dispatch time: sessions.json + main line
 #                                       (+ subagent line if the sync response carries usage)
 #   SubagentStop (matcher: ^prdt-)    — completion time: subagent line summed from
 #                                       agent_transcript_path (2026-07-02: background
 #                                       dispatch responses carry NO usage — launch metadata only)
+#   SubagentStart (matcher: ^prdt-)   — T-682 slice 3: the mode-independent START of a
+#                                       dispatch — in-flight marker only, nothing else
+#                                       (see the LIFECYCLE note at the marker block)
 # Dedupe: .prdt/.subagent-gate.json marks agent_ids whose subagent line is already written.
 #
 # Mechanical state recording after a persona dispatch (§9 #3) — the side effects
@@ -103,7 +106,7 @@ EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
 PRDT_EVENT_JSON="$EVENT_JSON" python3 - <<'PYEOF'
-import json, os, re, shlex, shutil, subprocess, sys
+import hashlib, json, os, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 try:
@@ -114,7 +117,7 @@ except Exception:
 event = ev.get("hook_event_name") or "PostToolUse"
 tool = ev.get("tool_name") or ""
 tin = ev.get("tool_input") or {}
-if event == "SubagentStop":
+if event in ("SubagentStop", "SubagentStart"):
     sub = str(ev.get("agent_type") or "")
 elif tool == "Agent":
     sub = str(tin.get("subagent_type") or "")
@@ -165,7 +168,9 @@ now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 # absent — checked FIRST, before any spawn), or node / the built core bridge
 # is unavailable on this machine.
 try:
-    if os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
+    # SubagentStart (T-682 slice 3) is a marker-only event for this hook — it
+    # is not a persona-turn beat, so it fires no autosave tick.
+    if event != "SubagentStart" and os.path.isfile(os.path.join(state_dir, "meta.git", "HEAD")):
         # TRUST (T-519 F5 — DECISION: accepted machine-local assumption, not
         # narrowed). This reads PRDT_REPO from ~/.prdt/prdt.env and spawns
         # <PRDT_REPO>/dist/bin/meta-cli.cjs detached (start_new_session). A worker
@@ -240,6 +245,289 @@ def _append_line(path, text):
         f.write(text)
 
 
+# ── T-682: "in flight" dispatch markers ──────────────────────────────────────
+# `statusline-prdt.sh`'s "running" footer segment reads these — machine-
+# generated, never PO narration (acceptance). Machine-scope on purpose:
+# `<PRDT_HOME>/run/dispatches/<sha256(agent_id)>.json`, the existing `run/`
+# tooling-owned carve-out (contracts §Overrides) — so it sidesteps T-655's
+# still-open question about which project-local `.prdt/` files ride the meta
+# backup, and needs no new `prdt` subcommand: this hook is the only writer.
+#
+# LIFECYCLE (slice 3 — rebuilt on QA's measured event order, Claude Code
+# 2.1.283, re-measured here 2026-09-26 with a `claude -p` probe):
+#   FOREGROUND Agent call:  SubagentStart → SubagentStop → PostToolUse:Agent
+#   BACKGROUND Agent call:  SubagentStart → PostToolUse:Agent → SubagentStop
+#   resume (SendMessage):   PostToolUse:SendMessage → SubagentStart → SubagentStop
+#                           (same agent_id; PostToolUse:SendMessage never
+#                           reaches this hook — its matcher is `Agent`)
+# so PostToolUse:Agent is NOT a start signal (slice 1/2 keyed the start on it
+# and every foreground dispatch — 63 of 112 real ones — showed as running for
+# STALE_HOURS after it had finished). SubagentStart is the mode-independent
+# start; SubagentStop the mode-independent end:
+#   SubagentStart  → marker written (or REVIVED for a known agent_id: a resume
+#                    keeps the ticket id of its original dispatch), `since`=now,
+#                    no `stopped_at`.
+#   PostToolUse    → pairing refinement only: the response carries `agentId`
+#                    and the input carries the `[ctx]` prompt, so an EXISTING
+#                    marker's ticket_id/dispatch_id are corrected from the
+#                    authoritative source. Never revives a stopped marker. It
+#                    CREATES one only when none exists AND the response says
+#                    `status:"async_launched"` (a background launch, still
+#                    running) — the fallback that keeps background dispatches
+#                    visible on a machine whose settings.json predates the
+#                    SubagentStart registration in hook-manifest.json.
+#   SubagentStop   → `stopped_at` stamped; the file STAYS for the resume case.
+#   prune          → F10: THIS hook (the tooling that owns `run/`) removes
+#                    marker files from disk, at every event it handles, once
+#                    `stopped_at` — or `since`, for a marker that never saw a
+#                    SubagentStop (crash / quota kill) — is older than
+#                    MARKER_RETENTION_HOURS. The statusline never deletes
+#                    (pure display); it merely stops SHOWING a never-stopped
+#                    marker after its own STALE_HOURS, which is shorter.
+# TICKET ID at SubagentStart — the open design question of slice 3. The event
+# carries only agent_id + agent_type, no `[ctx]`. Sources, in order:
+#   1. a marker already on disk for this agent_id (resume) — its ticket_id.
+#   2. the PARENT transcript (`transcript_path` in the event): the probe shows
+#      the assistant `tool_use` block for the Agent call (subagent_type +
+#      the `[ctx]` prompt) is already in that file when SubagentStart fires,
+#      and its tool_result is not yet. So: the OLDEST pending Agent tool_use
+#      (no tool_result yet) of this agent_type whose `tool_use_id` no marker
+#      has claimed. Same-persona fan-out in one assistant message is paired
+#      FIFO — a heuristic; PostToolUse:Agent corrects a wrong pairing for a
+#      background dispatch the moment it fires, and the running segment is
+#      one row per ticket anyway.
+#   3. `.prdt/po-state.json` `current_task.ticket_id` — the PO's own record
+#      of what it is working on.
+#   none → the marker is still written (persona-only) so SubagentStop has
+#   something to stamp; the statusline shows only markers with a ticket id.
+# Rejected: pushing a pending queue from the PreToolUse gate hook (a second
+# writer, and a gate-denied call would need un-queueing); changing the `[ctx]`
+# contract to carry ticket_id (contract change for a display feature).
+# Best-effort throughout: every marker operation is wrapped so a failure never
+# changes the dispatch's exit code or its other recorded output.
+MARKER_RETENTION_HOURS = 24
+# `T-682`, `d-T682-s3-…` (the PO's dispatch_id convention has no hyphen), never
+# the `T-4` inside `GPT-4` (F9: left boundary) nor `T-68` inside `T-6829`.
+TICKET_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])T-?([0-9]{1,5})(?![0-9])")
+
+
+def marker_dir():
+    home = os.environ.get("PRDT_HOME") or os.path.expanduser("~/.prdt")
+    return os.path.join(home, "run", "dispatches")
+
+
+def marker_path(aid):
+    return os.path.join(marker_dir(), hashlib.sha256(aid.encode("utf-8")).hexdigest() + ".json")
+
+
+def marker_load(aid):
+    try:
+        with open(marker_path(aid), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) and data.get("agent_id") == aid else None
+    except Exception:
+        return None
+
+
+def marker_save(data):
+    os.makedirs(marker_dir(), exist_ok=True)
+    atomic_write(marker_path(data["agent_id"]), data)
+
+
+def ctx_from_prompt(prompt):
+    if not isinstance(prompt, str):
+        return None
+    for pline in prompt.split("\n"):
+        if pline.startswith("[ctx] {"):
+            try:
+                obj = json.loads(pline[len("[ctx] "):])
+            except Exception:
+                return None
+            return obj if isinstance(obj, dict) else None
+    return None
+
+
+def ticket_from_ctx(ctx_obj):
+    """(dispatch_id, ticket_id) — the ticket id is a documented heuristic, not a
+    contract field: `[ctx]` has no `ticket_id` (contracts §Dispatch). Checked in
+    dispatch_id, then goal, then slug; the digits are always re-assembled as
+    `T-<digits>`, the shape the read side's TICKET_RE requires."""
+    if not isinstance(ctx_obj, dict):
+        return None, None
+    did = ctx_obj.get("dispatch_id")
+    dispatch_id = did if isinstance(did, str) and did.strip() else None
+    for field in (dispatch_id, ctx_obj.get("goal"), ctx_obj.get("slug")):
+        if isinstance(field, str):
+            m = TICKET_TOKEN_RE.search(field)
+            if m:
+                return dispatch_id, f"T-{m.group(1)}"
+    return dispatch_id, None
+
+
+def pending_agent_calls(transcript_path, agent_type, tail_bytes=4 * 1024 * 1024):
+    """Agent tool_use blocks of `agent_type` in the parent transcript's tail
+    that have no tool_result yet, oldest first: [(tool_use_id, prompt)]."""
+    if not (isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
+        return []
+    try:
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            if size > tail_bytes:
+                f.seek(size - tail_bytes)
+                f.readline()  # drop the partial first line
+            raw = f.read().decode("utf-8", "replace")
+    except Exception:
+        return []
+    calls, resolved = [], set()
+    for line in raw.split("\n"):
+        if '"tool_use"' not in line and '"tool_result"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        content = ((rec.get("message") or {}).get("content")) if isinstance(rec, dict) else None
+        if not isinstance(content, list):
+            continue
+        for blk in content:
+            if not isinstance(blk, dict):
+                continue
+            if blk.get("type") == "tool_use" and blk.get("name") == "Agent":
+                tin_ = blk.get("input") or {}
+                if isinstance(tin_, dict) and tin_.get("subagent_type") == agent_type and isinstance(blk.get("id"), str):
+                    calls.append((blk["id"], tin_.get("prompt")))
+            elif blk.get("type") == "tool_result" and isinstance(blk.get("tool_use_id"), str):
+                resolved.add(blk["tool_use_id"])
+    return [(tid, prompt) for tid, prompt in calls if tid not in resolved]
+
+
+def claimed_tool_use_ids():
+    ids = set()
+    try:
+        names = os.listdir(marker_dir())
+    except OSError:
+        return ids
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(marker_dir(), n), encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("tool_use_id"), str):
+                ids.add(data["tool_use_id"])
+        except Exception:
+            continue
+    return ids
+
+
+def po_state_ticket():
+    try:
+        with open(os.path.join(state_dir, "po-state.json"), encoding="utf-8") as f:
+            ct = (json.load(f) or {}).get("current_task")
+        tid = ct.get("ticket_id") if isinstance(ct, dict) else None
+        return tid if isinstance(tid, str) and re.match(r"\AT-[0-9]{1,5}\Z", tid) else None
+    except Exception:
+        return None
+
+
+def marker_start(aid):
+    """SubagentStart: write or revive the marker for `aid` (see LIFECYCLE)."""
+    prior = marker_load(aid)
+    data = {
+        "agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
+        "tool_use_id": None, "project_root": root, "since": now,
+    }
+    if prior:
+        for k in ("dispatch_id", "ticket_id", "tool_use_id"):
+            data[k] = prior.get(k) if isinstance(prior.get(k), str) else None
+        data["resumed_from"] = prior.get("since") if isinstance(prior.get("since"), str) else None
+    if not data["ticket_id"]:
+        claimed = claimed_tool_use_ids()
+        for tuid, prompt in pending_agent_calls(ev.get("transcript_path"), sub):
+            if tuid in claimed:
+                continue
+            data["dispatch_id"], data["ticket_id"] = ticket_from_ctx(ctx_from_prompt(prompt))
+            data["tool_use_id"] = tuid
+            break
+    if not data["ticket_id"]:
+        data["ticket_id"] = po_state_ticket()
+    marker_save(data)
+
+
+def marker_refine(aid, ctx_obj, tool_use_id, launched_async):
+    """PostToolUse:Agent: correct an existing marker's pairing; create one only
+    for a still-running background launch that has none (see LIFECYCLE)."""
+    dispatch_id, ticket_id = ticket_from_ctx(ctx_obj)
+    data = marker_load(aid)
+    if data is None:
+        if not launched_async:
+            return
+        data = {"agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
+                "tool_use_id": None, "project_root": root, "since": now}
+    if ticket_id:
+        data["ticket_id"], data["dispatch_id"] = ticket_id, dispatch_id
+    elif dispatch_id and not data.get("dispatch_id"):
+        data["dispatch_id"] = dispatch_id
+    if isinstance(tool_use_id, str):
+        data["tool_use_id"] = tool_use_id
+    marker_save(data)
+
+
+def marker_stop(aid):
+    if not aid:
+        return
+    try:
+        data = marker_load(aid)
+        if data is not None and not data.get("stopped_at"):
+            data["stopped_at"] = now
+            marker_save(data)
+    except Exception:
+        pass
+
+
+def marker_prune():
+    """F10: remove marker files older than MARKER_RETENTION_HOURS from disk —
+    `stopped_at` when stamped, else `since` (a dispatch that never reached
+    SubagentStop). Runs at every event this hook handles; only this hook
+    (never the statusline) unlinks under run/dispatches."""
+    try:
+        names = os.listdir(marker_dir())
+    except OSError:
+        return
+    cutoff = datetime.now(timezone.utc).timestamp() - MARKER_RETENTION_HOURS * 3600
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        fp = os.path.join(marker_dir(), n)
+        try:
+            with open(fp, encoding="utf-8") as f:
+                data = json.load(f)
+            ts = (data.get("stopped_at") or data.get("since")) if isinstance(data, dict) else None
+            t = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+        except Exception:
+            continue  # unreadable/unparseable: not this hook's to judge — left alone
+        if t < cutoff:
+            try:
+                os.unlink(fp)
+            except Exception:
+                pass
+
+
+if event == "SubagentStart":
+    # Marker-only event: no sessions.json / turns.jsonl / autosave here — those
+    # stay keyed on PostToolUse:Agent + SubagentStop exactly as before.
+    aid = ev.get("agent_id")
+    if isinstance(aid, str) and aid:
+        try:
+            marker_start(aid)
+        except Exception:
+            pass
+    try:
+        marker_prune()
+    except Exception:
+        pass
+    sys.exit(0)
+
 # a) sessions.json
 sess_path = os.path.join(state_dir, "sessions.json")
 try:
@@ -258,6 +546,17 @@ if agent_id:
     entry["agent_id"] = agent_id
 sess[persona] = {**sess.get(persona, {}), **entry}
 atomic_write(sess_path, sess)
+
+if event != "SubagentStop" and agent_id:
+    try:
+        marker_refine(agent_id, ctx_from_prompt(tin.get("prompt")), ev.get("tool_use_id"),
+                      resp_obj.get("status") == "async_launched")
+    except Exception:
+        pass
+    try:
+        marker_prune()
+    except Exception:
+        pass
 
 # context for turns lines: version / task from po-state
 version = task_slug = ticket_id = None
@@ -712,6 +1011,18 @@ def annotate_t584(line, transcript_path, *texts):
 
 # ── SubagentStop: completion-time subagent line (usage summed from its transcript) ──
 if event == "SubagentStop":
+    # T-682: the in-flight marker's "completion time" — stamped `stopped_at`,
+    # never unlinked (a resume via SendMessage re-fires SubagentStart with the
+    # SAME agent_id and needs this record to recover its ticket id; see
+    # marker_stop). Independent of the cost-recording dedup right below — the
+    # stamp lands whether or not THIS SubagentStop turns out to be a dup of an
+    # already-recorded sync dispatch. Best-effort: a missing/corrupt marker is
+    # not an error.
+    marker_stop(agent_id)
+    try:
+        marker_prune()
+    except Exception:
+        pass
     gate = load_json_map(gate_sub_path)
     if agent_id and gate.get(agent_id):
         sys.exit(0)  # sync dispatch already recorded this agent at PostToolUse time
