@@ -92,39 +92,45 @@ PO_STATE_KEYS = {"schema_version", "stage", "version", "current_task"}
 CAPS = {"doctrine.md": 20, "contracts.md": 80, "po_habit": 64, "worker_habit": 40,
         "playbook_body": 80, "menu": 15, "override": 20, "machine_wiki_pages": 15,
         "register_body_bytes": 2000, "agent_stub_bytes": 2000,
-        "doctrine_bytes": 1400, "contracts_bytes": 21500, "po_habit_bytes": 17600,
-        "worker_habit_bytes": 6000, "menu_bytes": 1400,
-        "persona_total_bytes": {"po": 45000, "designer": 27500, "developer": 26500, "qa": 29500}}
+        "doctrine_bytes": 1400, "contracts_bytes": 20500, "po_habit_bytes": 17500,
+        "worker_habit_bytes": 5800, "menu_bytes": 1400,
+        "persona_total_bytes": {"po": 43300, "designer": 26300, "developer": 25200, "qa": 28200}}
 # T-701: a BYTE budget beside every line cap above that the session-start hook
 # actually injects (doctrine.md · contracts.md · each persona's habit.md · each
 # persona's playbook menu) — `discipline_byte_caps` GATES on these (a real
 # violation, unlike the line counts below, which stayed advisory after T-577).
 # Basis for every number here is the SAME measurement, one pass (2026-09-26,
-# `wc -c` against the bound discipline tree): doctrine.md 1,202 B · contracts.md
-# 21,072 B (T-700 §evidence: 16,391 B on 2026-08-20 → 19,745 B on 09-05 →
-# 21,072 B today, ungated the whole way) · po/habit.md 17,330 B · worker_habit
-# (shared by designer/developer/qa, same as its line cap) at its largest member,
-# qa/habit.md 5,832 B (designer 3,344 B · developer 2,584 B) · menu at its
-# largest member, po's 1,287 B (designer 1,192 B · developer 803 B · qa 753 B).
-# Each budget is that measured size plus a small (≤5%) rounding margin for the
-# ordinary edit already in flight — NOT room for a new paragraph: a fixture one
-# byte over its budget must still fail (T-701 acceptance). T-702, the injection
-# diet, lands later in this same version and is expected to LOWER every number
-# here — this round only stops further growth from landing unnoticed, per
-# T-700's decision (option B: guard now, diet now, in the same version).
+# `wc -c` against the bound discipline tree, T-702 injection diet applied):
+# doctrine.md 1,202 B · contracts.md 20,018 B (T-700 §evidence: 16,391 B on
+# 2026-08-20 → 19,745 B on 09-05 → 21,072 B pre-diet → 20,018 B after T-702's
+# S4, ungated the whole way until this round) · po/habit.md 17,087 B ·
+# worker_habit (shared by designer/developer/qa, same as its line cap) at its
+# largest member, qa/habit.md 5,585 B (designer 3,230 B · developer 2,532 B) ·
+# menu at its largest member, po's 1,287 B (designer 1,192 B · developer 803 B
+# · qa 753 B, untouched by T-702). Each budget is that measured size plus a
+# small (≤5%) rounding margin for the ordinary edit already in flight — NOT
+# room for a new paragraph: a fixture one byte over its budget must still fail
+# (T-701 acceptance). T-701 first landed these caps a small margin over the
+# then-current (pre-diet) sizes to stop further growth from landing unnoticed;
+# T-702 (this pass) is the diet itself — every number above is LOWERED to the
+# post-diet measurement plus the same margin, per T-700's decision (option B:
+# guard now, diet now, in the same version).
 # `persona_total_bytes`: the sum of documents this persona's session-start hook
 # actually carries — `_plan_docs_bytes` on `prdt-session-start.sh --plan
 # <persona>`, the same figure `discipline delivery`/`discipline delivery
 # summary` already read, checked here as its own gate rather than only printed.
-# Basis: measured via that same `--plan` call against the bound tree
-# (2026-09-26) — po 43,632 B · designer 26,806 B · developer 25,657 B · qa
-# 28,855 B — each budget that figure plus the same small margin. This is the
-# DOCS total (content only); it is smaller than the per-persona SessionStart
-# figures T-653 measured on this machine (po 69,498 · developer 39,218 ·
-# designer 39,317 · qa 45,656 B) because those also carry machine-local
-# overrides/wiki content that `prdt doctor` cannot see or reproduce — this gate
-# covers the tree-content subset doctor can actually check the same way
-# everywhere it runs.
+# Basis: measured via that same `--plan` call against the bound tree, T-702
+# injection diet applied (2026-09-26) — po 42,335 B · designer 25,638 B ·
+# developer 24,551 B · qa 27,554 B — each budget that figure plus the same
+# small margin. This is the DOCS total (content only); it is smaller than the
+# per-persona SessionStart figures T-653 measured pre-diet on this machine
+# (po 69,498 · developer 39,218 · designer 39,317 · qa 45,656 B) because those
+# also carry machine-local overrides/wiki content that `prdt doctor` cannot see
+# or reproduce — this gate covers the tree-content subset doctor can actually
+# check the same way everywhere it runs. (T-702's own after-diet SessionStart
+# remeasurement, same method: po 53,653 · designer 30,660 · developer 30,783 ·
+# qa 36,410 B — a further ~20% down from the T-653 baseline; docs-bytes above
+# is the subset of that total this gate can check.)
 # `agent_stub_bytes` (T-578): the second BYTE cap — an agent stub is the
 # persona's base prompt, read whole by the harness with no part delivery, so
 # lines say nothing about it. Basis: the stubs measure 1,404–1,515 B after the

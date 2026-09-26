@@ -96,7 +96,10 @@ describe('agents/prdt-*.md are stubs over one hook-carried bootstrap (T-578)', (
     expect(kernel.length, 'discipline/contracts.md: lines stating the turn-economy kernel (matched by rule text — a (T-491) tag is not required and not sufficient)').toBe(1)
     expect(kernel[0], 'discipline/contracts.md: the turn-economy kernel no longer states TURNS as the budget unit').toMatch(/TURNS are the budget, not bytes/)
     expect(kernel[0], 'discipline/contracts.md: the turn-economy kernel no longer names the governor that counts the turns').toMatch(/`prdt-call-governor\.sh`\) counts API turns per dispatch/)
-    expect(kernel[0], 'discipline/contracts.md: the turn-economy kernel no longer defers the per-count behaviour to the persona habit').toMatch(/what it does at which count: that persona's habit/)
+    // T-702 (injection diet, S4): wording tightened "what it does at which
+    // count" → "its act per count" — same deferral, re-pinned per pin.ts
+    // repair #1 (rule still holds, wording moved).
+    expect(kernel[0], 'discipline/contracts.md: the turn-economy kernel no longer defers the per-count behaviour to the persona habit').toMatch(/its act per count: that persona's habit/)
     // T-613: the per-persona half used to be counted by its `(T-491)` TAG.
     // T-611 slice 1 strips history tags out of injected files on purpose, so
     // qa/habit.md lost the tag while keeping the rule — restoring the tag is
