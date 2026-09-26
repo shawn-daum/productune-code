@@ -10,6 +10,13 @@ const { BOOTSTRAP } = cjs('../gui/tests/isolation-rules.cjs') as { BOOTSTRAP: st
 const { armTripwire } = cjs('../gui/tests/real-home-tripwire.cjs') as {
   armTripwire: (l: string) => unknown
 }
+// T-703 slice 2: symmetric guard for the OTHER unsafe default — process.cwd().
+// See scripts/vitest-cwd-tripwire.cjs for why (`prdt init` has no --cwd flag and
+// always resolves off os.getcwd(); a subprocess call missing `cwd:` inherits
+// this process's own cwd, which is packages/core during a normal `vitest run`).
+const { armTripwire: armCwdTripwire } = cjs('../../scripts/vitest-cwd-tripwire.cjs') as {
+  armTripwire: (l: string) => unknown
+}
 // T-649: every timeout in this run comes from ONE module. `.cjs` + createRequire
 // for the same bundling reason as the tripwire above.
 const timeouts = cjs('../../scripts/vitest-timeouts.cjs') as {
@@ -32,6 +39,9 @@ const TIMEOUT_SHIM = path.resolve(__dirname, '../../scripts/vitest-subprocess-ti
 // purpose: a second copy of the containment predicate is the defect this ticket
 // has now been reported for in four consecutive rounds.
 armTripwire('packages/core vitest.config.ts module scope')
+// T-703 slice 2: armed here too, same module scope — earlier than any test file
+// or globalSetup mutation, same reasoning as the home tripwire's own arm site.
+armCwdTripwire('packages/core vitest.config.ts module scope')
 
 // T-649: resolve the run's timeout scale ONCE, here, and pin it into the
 // environment — every worker fork and every `subprocessTimeout()` call inside
@@ -78,7 +88,7 @@ export default defineConfig({
     reporters: ['default', new TimeoutTallyReporter(timeouts)],
     // T-450 THE FLOOR: the run's verdict. A config field, so `--reporter` cannot
     // remove it — which is exactly how S4 removed the R1 floor.
-    globalSetup: ['../../scripts/vitest-real-home-verdict.ts'],
+    globalSetup: ['../../scripts/vitest-real-home-verdict.ts', '../../scripts/vitest-cwd-verdict.ts'],
     // T-442: repoint HOME at a per-worker temp dir before any test module
     // loads. Several tests here shell out to the real `prdt` CLI (which
     // rewrites ~/.claude.json) or call `getDefault()` (which auto-creates
