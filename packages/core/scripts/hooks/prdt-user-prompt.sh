@@ -440,12 +440,195 @@ REGISTER_UNCONFIRMED_NOTICE = (
 # (0 B on a compliant one), line numbers only, never the reply's text. Wording is
 # the designer's `inject-edit` (contracts: hook-injected text); the detector that
 # fills and appends it lands in its own diff, so this constant is unreferenced
-# until then. %d = violating line count, %s = their numbers ("1, 12, 14").
+# until then. %d = violating line count, %s = their numbers ("1, 12, 14"), capped
+# per FORM_OUTLINE_LIST_CAP below.
 REGISTER_CHECK_NOTICE = (
     "[prdt register check] your last user-chat reply broke form=outline: %d paragraph line(s) "
     "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
     "Leave the sent reply as is; write this reply one point per marked line."
 )
+# T-651 grill: how many violating line numbers the notice actually lists before
+# collapsing the rest into "+N more" — the COUNT (%d above) always stays the
+# true total, only the printed list is capped (a QA-round PO decision: an
+# unbounded list on a badly-broken reply would itself become paragraph-shaped).
+FORM_OUTLINE_LIST_CAP = 5
+
+# T-651 detector — turned on only when THIS turn's resolved binding carries the
+# `form=outline` pair (checked below, on the resolver's own successful output —
+# never a register file read, never a domain copy: contracts §Fixed paths keeps
+# the resolver the sole authority on legal values). Everything here is pure
+# string/regex judgment ("기계 판정" — the ticket's own requirement): no model
+# call, no human-in-the-loop, so the same reply always gets the same verdict.
+#
+# Exclusion classes (판정식, T-651 §판정식 + QA-round PO decisions), applied
+# top to bottom per line:
+#   fence   — a ``` or ~~~ delimiter (either counts, T-651 grill) or anything
+#             between a pair of them
+#   blank   — an empty (or whitespace-only) line
+#   marker  — a line opening (after leading spaces/TABS) with a list/quote/
+#             heading/table/enumeration token: `-` `*` `+` `•` `1.` `1)` `#`
+#             through `######` `|` `>` `→` `①`–`⑳` `ⓐ`–`ⓩ` — or a thematic
+#             break made only of 3+ `-` (a table row's own `---` separator is
+#             already caught by the leading `|`/table case)
+#   bold    — the WHOLE line is one bold span (`**...**`) — a sub-heading
+#   indent  — 2+ leading spaces/tabs and none of the above — a wrapped
+#             continuation
+# Anything left is a CANDIDATE line ("표식 없는 줄"). A candidate is a
+# VIOLATION when either (a) it alone holds 2+ sentence-ending marks, or
+# (b) the line immediately before it is ALSO a candidate (paragraph flow) — a
+# lone single-sentence candidate (no candidate before it, <2 sentence-ends)
+# is explicitly NOT flagged (T-651: "결론 첫 줄 · 표 앞 안내 줄").
+FORM_OUTLINE_FENCE_RE = re.compile(r"^(?:`{3,}|~{3,})")
+FORM_OUTLINE_MARKER_RE = re.compile(
+    r"^(?:"
+    r"\||"                              # table row
+    r"→|"                          # leading arrow →
+    r"[-*+•>](?:\s|$)|"            # -, *, +, •, > (blockquote)
+    r"#{1,6}(?:\s|$)|"                  # ATX heading, # through ######
+    r"[0-9]{1,9}[.)](?:\s|$)|"          # ordered list "1." / "1)"
+    r"[①-⑳]|"                 # circled digits ①–⑳
+    r"[ⓐ-ⓩ]"                  # circled letters ⓐ–ⓩ
+    r")"
+)
+FORM_OUTLINE_HR_RE = re.compile(r"^-{3,}$")  # thematic break: "---", "- - -"
+FORM_OUTLINE_BOLD_RE = re.compile(r"^\*\*.+\*\*$")
+# Sentence end = one of `. ! ? 。`, optionally followed by a closing wrapper
+# (`**`, `*`, `」`, `)`, `"` — a QA-round PO decision: "정말 좋아요.**" still
+# ends the sentence AT the period, the bold-close is not new content), then
+# whitespace or end-of-line — EXCEPT a `.` right after a digit (T-651: "숫자
+# 뒤 `.` 제외" — an inline enumeration like "옵션은 1. 저장 2. 취소 중" must
+# not read as two sentence boundaries).
+FORM_OUTLINE_CLOSER = r"(?:\*\*|\*|」|\)|\")"
+FORM_OUTLINE_SENT_END_RE = re.compile(
+    r"[.!?。]" + FORM_OUTLINE_CLOSER + r"{0,3}(?=\s|$)"
+)
+
+
+def _form_outline_line_kind(line):
+    if line.strip() == "":
+        return "blank"
+    body = line.lstrip(" \t")            # tab-led bullets are marked lines
+    lead = len(line) - len(body)
+    if FORM_OUTLINE_MARKER_RE.match(body) or FORM_OUTLINE_HR_RE.match(line.strip()):
+        return "marker"
+    if FORM_OUTLINE_BOLD_RE.match(line.strip()):
+        return "marker"
+    if lead >= 2:
+        return "indent"
+    return "candidate"
+
+
+def _form_outline_sentence_ends(line):
+    n = 0
+    for m in FORM_OUTLINE_SENT_END_RE.finditer(line):
+        pos = m.start()
+        if line[pos] == "." and pos > 0 and line[pos - 1].isdigit():
+            continue
+        n += 1
+    return n
+
+
+def form_outline_violations(text):
+    """1-indexed line numbers of `text` that break form=outline (T-651
+    §판정식). [] on a compliant reply AND on a reply with only one non-blank
+    line — a one-line answer is body-allowed, never judged."""
+    if not isinstance(text, str) or not text:
+        return []
+    raw_lines = [ln.rstrip("\r") for ln in text.split("\n")]
+    if sum(1 for ln in raw_lines if ln.strip() != "") <= 1:
+        return []
+    kinds = []
+    in_fence = False
+    for ln in raw_lines:
+        if FORM_OUTLINE_FENCE_RE.match(ln.strip()):
+            kinds.append("marker")
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            kinds.append("marker")
+            continue
+        kinds.append(_form_outline_line_kind(ln))
+    out = []
+    for i, k in enumerate(kinds):
+        if k != "candidate":
+            continue
+        prev_is_candidate = i > 0 and kinds[i - 1] == "candidate"
+        if _form_outline_sentence_ends(raw_lines[i]) >= 2 or prev_is_candidate:
+            out.append(i + 1)
+    return out
+
+
+FORM_OUTLINE_TAIL_CHUNK = 256 * 1024
+FORM_OUTLINE_TAIL_MAX = 1024 * 1024
+
+
+def last_main_session_text(transcript_path):
+    """Read `transcript_path` from the end in 256 KB steps (max 1 MB) for the
+    last main-session (`isSidechain` false) assistant TEXT block — never a
+    sidechain/subagent transcript, never a tool-call description. None on any
+    miss (no such block within budget) or failure — silent, per T-651 spec
+    ("준수·판정 불가·읽기 실패 → 0 B")."""
+    try:
+        if not (isinstance(transcript_path, str) and os.path.isfile(transcript_path)):
+            return None
+        size = os.path.getsize(transcript_path)
+        if size <= 0:
+            return None
+        total = min(size, FORM_OUTLINE_TAIL_CHUNK)
+        while True:
+            with open(transcript_path, "rb") as f:
+                f.seek(max(0, size - total))
+                raw = f.read()
+            text_lines = raw.decode("utf-8", "replace").split("\n")
+            if size - total > 0:
+                text_lines = text_lines[1:]  # drop the partial leading line
+            for jline in reversed(text_lines):
+                jline = jline.strip()
+                if not jline:
+                    continue
+                try:
+                    rec = json.loads(jline)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("type") != "assistant" or rec.get("isSidechain") is not False:
+                    continue
+                msg = rec.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for blk in reversed(content):
+                    if (isinstance(blk, dict) and blk.get("type") == "text"
+                            and isinstance(blk.get("text"), str)):
+                        return blk["text"]
+            if total >= FORM_OUTLINE_TAIL_MAX or total >= size:
+                return None
+            total = min(total + FORM_OUTLINE_TAIL_CHUNK, FORM_OUTLINE_TAIL_MAX, size)
+    except Exception:
+        return None
+
+
+def register_binding_has_form_outline(binding_line):
+    """True only when the resolver's OWN successful `[prdt register] …` line
+    carries the exact `form=outline` pair — never a file read, never a legality
+    judgment of our own (the resolver stays the sole authority, contracts
+    §Fixed paths).
+
+    T-651 grill FAIL 1: the real line is `[prdt register] <pairs> — governs
+    <surface>. <tail>` (prdt-audience-inject.sh `--binding`, literal em dash
+    U+2014 with spaces both sides) — so when `form=outline` is the LAST pair,
+    a bare split on `·` left it fused with " — governs …" and the exact-token
+    match failed. Cut the pairs off at the em dash FIRST, then split only that
+    part on `·`."""
+    if not (isinstance(binding_line, str) and binding_line.startswith("[prdt register] ")):
+        return False
+    body = binding_line[len("[prdt register] "):]
+    pairs_part = body.split(" — ", 1)[0]
+    tokens = [t.strip() for t in pairs_part.split("·")]
+    return "form=outline" in tokens
+
+
 hook_dir = os.environ.get("PRDT_HOOK_DIR") or ""
 resolver = os.path.join(hook_dir, "prdt-audience-inject.sh")
 if hook_dir and os.path.isfile(resolver):
@@ -455,6 +638,16 @@ if hook_dir and os.path.isfile(resolver):
         first = (r.stdout or "").split("\n", 1)[0].strip()
         if r.returncode == 0 and first.startswith("[prdt register] "):
             lines.append(first)
+            if register_binding_has_form_outline(first):
+                reply_text = last_main_session_text(ev.get("transcript_path"))
+                violations = form_outline_violations(reply_text) if reply_text is not None else []
+                if violations:
+                    shown = violations[:FORM_OUTLINE_LIST_CAP]
+                    rest = len(violations) - len(shown)
+                    numbers = ", ".join(str(n) for n in shown)
+                    if rest > 0:
+                        numbers += f", +{rest} more"
+                    lines.append(REGISTER_CHECK_NOTICE % (len(violations), numbers))
         elif r.returncode != 0:
             lines.append(REGISTER_UNCONFIRMED_NOTICE % "the resolver exited non-zero")
     except subprocess.TimeoutExpired:
