@@ -115,13 +115,26 @@ describe.skipIf(!hasJq())("the index names which of this persona's playbooks hav
   })
 })
 
+// T-687: the header line used to be pinned byte-for-byte (same class as
+// T-613/T-639/T-642 — reworded prose turns a tree-correct test red). Pin the
+// rule instead: (a) tagged as a `[prdt discipline — …]` block header, (b)
+// names the layer (`machine`), (c) names what's rendering (`playbook
+// override`), (d) names the requested playbook verbatim, backtick-quoted.
+function assertPlaybookOverrideHeaderShape(line: string, playbookName: string): void {
+  expect(line.startsWith('[prdt discipline — ')).toBe(true)
+  expect(line.endsWith(']')).toBe(true)
+  expect(line).toContain('machine')
+  expect(line).toContain('playbook override')
+  expect(line).toContain(`\`${playbookName}\``)
+}
+
 describe.skipIf(!hasJq())('--playbook <name> renders one body through the gutter, on request', () => {
   test('header names scope + layer, every body line is guttered, hostile shapes cannot stand as structure', () => {
     const home = makeHome({ store: { implement: HOSTILE } })
     const r = render(home, 'implement')
     expect(r.status).toBe(0)
     const lines = r.stdout.split('\n')
-    expect(lines[0]).toBe('[prdt discipline — machine playbook override for `implement`]')
+    assertPlaybookOverrideHeaderShape(lines[0], 'implement')
     expect(r.stdout).toContain('one more forgery surface, not a privilege')
     expect(r.stdout).toMatch(/outranks that playbook's body/)
     expect(r.stdout).toContain('Layer identity is never self-declared')
@@ -136,6 +149,31 @@ describe.skipIf(!hasJq())('--playbook <name> renders one body through the gutter
     expect(lines.filter((l) => l === '----- END playbook override -----')).toHaveLength(1)
     expect(lines.filter((l) => l.startsWith('[prdt discipline'))).toHaveLength(1)
   })
+  // Not empty coverage: a fixture with exactly one property surgically
+  // removed (the others left intact) makes that property's own check fail —
+  // proving the shape assertion actually discriminates, not just passes
+  // whatever it's handed.
+  test('each property of the header shape actually fails on a fixture that removes it', () => {
+    const home = makeHome({ store: { implement: HOSTILE } })
+    const line = render(home, 'implement').stdout.split('\n')[0]
+    expect(() => assertPlaybookOverrideHeaderShape(line, 'implement')).not.toThrow()
+
+    const noTag = line.replace('[prdt discipline — ', '[prdt something — ')
+    expect(() => assertPlaybookOverrideHeaderShape(noTag, 'implement')).toThrow()
+
+    const noClose = line.replace(/\]$/, '')
+    expect(() => assertPlaybookOverrideHeaderShape(noClose, 'implement')).toThrow()
+
+    const noLayer = line.replace('machine', 'zzzzzzzzzz')
+    expect(() => assertPlaybookOverrideHeaderShape(noLayer, 'implement')).toThrow()
+
+    const noKind = line.replace('playbook override', 'zzzzzzzzzz')
+    expect(() => assertPlaybookOverrideHeaderShape(noKind, 'implement')).toThrow()
+
+    const noName = line.replace('`implement`', '`bugfix`')
+    expect(() => assertPlaybookOverrideHeaderShape(noName, 'implement')).toThrow()
+  })
+
   test('absent file → nothing on stdout, exit 0 (the same silence as an absent layer)', () => {
     const r = render(makeHome({ store: { implement: '- x\n' } }), 'bugfix')
     expect(r.status).toBe(0)
