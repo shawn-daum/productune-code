@@ -162,6 +162,30 @@ test('.return-flags.json is in BOTH exclude defaults, not one side (T-513)', () 
   expect(pyExclude).toContain('.return-flags.json')
 })
 
+test('T-655: .return-gate-pending.json is excluded; .return-gate-schema.json and .return-gate.jsonl are not', async () => {
+  // Per-file verdict (not a blanket "gate cache" answer): the pending bridge
+  // is popped-on-read plumbing (same class as .return-flags.json above), but
+  // the schema marker and the jsonl log it annotates are append-only history
+  // the meta backup must actually carry.
+  fs.writeFileSync(path.join(projectDir, '.prdt', '.return-gate-pending.json'), '{}')
+  fs.writeFileSync(
+    path.join(projectDir, '.prdt', '.return-gate-schema.json'),
+    '{"repaired_codes_since":"2026-01-01T00:00:00Z"}',
+  )
+  fs.writeFileSync(
+    path.join(projectDir, '.prdt', '.return-gate.jsonl'),
+    '{"ts":"2026-01-01T00:00:00Z","outcome":"blocked","codes":["X1"]}\n',
+  )
+
+  await initMetaRepo(projectDir)
+  await commitMeta(projectDir, 'T-655 [manual: →] snapshot')
+
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).not.toContain('.prdt/.return-gate-pending.json')
+  expect(tracked).toContain('.prdt/.return-gate-schema.json')
+  expect(tracked).toContain('.prdt/.return-gate.jsonl')
+})
+
 test('meta commit never touches the code repo history or index', async () => {
   const codeLogBefore = git(['log', '--oneline']).split('\n').length
   const codeTrackedBefore = git(['ls-files'])
@@ -666,6 +690,31 @@ test('C4: commitMeta self-heals a stale info/exclude and never tracks a worktree
   // … so the worktree checkout never entered meta history.
   const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
   expect(tracked.some((f) => f.includes('worktrees/'))).toBe(false)
+})
+
+test('T-655: commitMeta self-heals a stale info/exclude missing the new return-gate entry', async () => {
+  // A meta repo created BEFORE T-655 landed has an info/exclude frozen at
+  // init time without `.return-gate-pending.json` — same self-heal shape as
+  // C4 above (`worktrees/`), proving an existing project does not keep
+  // leaking this file forever just because its info/exclude predates the fix.
+  await initMetaRepo(projectDir)
+  const excludePath = path.join(metaGitDir(projectDir), 'info', 'exclude')
+  fs.writeFileSync(
+    excludePath,
+    [
+      'meta.git/', 'index.db', 'turns.jsonl', 'sessions.json', '.cost-*.json',
+      '.subagent-gate.json', '.return-flags.json', 'scratch/', 'po.lock',
+      'gui-bootstrap.json', 'update-state.json',
+    ].join('\n') + '\n',
+  )
+  fs.writeFileSync(path.join(projectDir, '.prdt', '.return-gate-pending.json'), '{}')
+
+  const res = await commitMeta(projectDir, 'T-655 [manual: →] snapshot')
+  expect(res.committed).toBe(true)
+
+  expect(fs.readFileSync(excludePath, 'utf-8').split('\n')).toContain('.return-gate-pending.json')
+  const tracked = git(['--git-dir', metaGitDir(projectDir), 'ls-files']).split('\n')
+  expect(tracked).not.toContain('.prdt/.return-gate-pending.json')
 })
 
 test('C3: bootstrap restores config THEN refreshes info/exclude with <code.dir>/', async () => {
