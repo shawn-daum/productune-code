@@ -91,6 +91,19 @@ async function spawnHeadlessChrome(execPath: string): Promise<{
       `--user-data-dir=${userDataDir}`,
       '--no-sandbox',
       '--disable-gpu',
+      // MEASURED (2026-09-26, cua VM): under this suite's sandboxed HOME
+      // (T-450), a fresh throwaway HOME has no `~/Library/Keychains`, and
+      // Chrome's os_crypt "Safe Storage" keychain item write
+      // (`SecItemAdd` → `StorageManager::optionalSearchList`) deadlocks
+      // there forever with zero stderr — `sample` on the hung process
+      // showed the main thread and a `copy_certificates_from_keychain`
+      // thread both parked on the same Security-framework mutex
+      // (`_pthread_mutex_firstfit_lock_wait`). It never happens with the
+      // real HOME (an unlocked login keychain already exists). This flag
+      // is Chromium's own escape hatch for exactly this class of CI/macOS
+      // keychain hang — it only changes what THIS child process does with
+      // its keychain access, not HOME or any real-home path.
+      '--use-mock-keychain',
       `--remote-debugging-port=${port}`,
     ],
     { detached: false, stdio: ['ignore', 'ignore', 'pipe'] },
@@ -159,7 +172,7 @@ async function stopHeadlessChrome(child: ChildProcessWithoutNullStreams, userDat
 async function renderAndObserve(
   cdpBase: string,
   html: string,
-): Promise<{ consoleErrors: string[]; fontsPretendard12pxAvailable: boolean }> {
+): Promise<{ consoleErrors: string[]; pretendardFontFaceLoaded: boolean }> {
   const browser = await chromium.connectOverCDP(cdpBase)
   try {
     const ctx = browser.contexts()[0] ?? (await browser.newContext())
@@ -169,18 +182,42 @@ async function renderAndObserve(
       if (msg.type() === 'error') consoleErrors.push(msg.text())
     })
     page.on('pageerror', (err) => consoleErrors.push(String(err)))
+    // PO root-cause (2026-09-26, cua VM): a `page.goto` never reaches 'load'
+    // if a sub-resource request never SETTLES (succeeds or fails) — and this
+    // VM's NAT networking does not answer a TEST-NET-1 (192.0.2.1) connection
+    // fast, it hangs well past this suite's own timeouts (MEASURED via a
+    // direct connectOverCDP probe: the request is issued, then neither
+    // 'requestfinished' nor 'requestfailed' ever fires). The external-<img>
+    // fixture control below only needs the request to be ISSUED
+    // (`page.on('request')` below already captures that) — it does not need
+    // the network to ever answer. Aborting every non-file:// request
+    // deterministically, right after Playwright has already recorded it,
+    // removes the dependency on this VM's routing behaviour entirely and
+    // costs nothing for every other fixture here (none of them issue a
+    // non-file:// request in the first place).
+    await page.route('**/*', (route) => {
+      const url = route.request().url()
+      return url.startsWith('file://') ? route.continue() : route.abort('connectionfailed')
+    })
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-html-window-fixture-'))
     const file = path.join(tmp, 'page.html')
     fs.writeFileSync(file, html)
     try {
       await page.goto(`file://${file}`)
       await page.waitForLoadState('load')
-      const fontsPretendard12pxAvailable = await page.evaluate(async () => {
+      // PO root-cause (2026-09-26): `document.fonts.check()` returns true
+      // whenever nothing NEEDS loading — an unknown/undeclared family counts
+      // as "nothing to load", so it can never fail (MEASURED: it returned
+      // true for a nonsense family name and even with an unrelated
+      // `@font-face` declared, under both the sandboxed and the real HOME).
+      // The real question is whether a Pretendard FontFace was actually
+      // registered and loaded, so check the FontFaceSet directly instead.
+      const pretendardFontFaceLoaded = await page.evaluate(async () => {
         await document.fonts.ready
-        return document.fonts.check('12px Pretendard')
+        return Array.from(document.fonts).some((f) => f.family === 'Pretendard' && f.status === 'loaded')
       })
       await page.close()
-      return { consoleErrors, fontsPretendard12pxAvailable }
+      return { consoleErrors, pretendardFontFaceLoaded }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
@@ -219,8 +256,8 @@ test.describe('ds/design-system.html — rendered in a real browser @window', ()
 
   test('has Pretendard available for document.fonts.check @window', async () => {
     const html = fs.readFileSync(DS_HTML, 'utf8')
-    const { fontsPretendard12pxAvailable } = await renderAndObserve(cdpBase, html)
-    expect(fontsPretendard12pxAvailable).toBe(true)
+    const { pretendardFontFaceLoaded } = await renderAndObserve(cdpBase, html)
+    expect(pretendardFontFaceLoaded).toBe(true)
   })
 
   // Non-vacuous controls: each property above must be able to FAIL, on a
@@ -234,7 +271,7 @@ test.describe('ds/design-system.html — rendered in a real browser @window', ()
 
   test('fixture control: a page with no @font-face fails the Pretendard check @window', async () => {
     const broken = '<!doctype html><html><head></head><body>no fonts here</body></html>'
-    const { fontsPretendard12pxAvailable } = await renderAndObserve(cdpBase, broken)
-    expect(fontsPretendard12pxAvailable).toBe(false)
+    const { pretendardFontFaceLoaded } = await renderAndObserve(cdpBase, broken)
+    expect(pretendardFontFaceLoaded).toBe(false)
   })
 })
