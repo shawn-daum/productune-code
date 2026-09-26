@@ -189,7 +189,7 @@
   --space-48: 48px;   /* productune-own extension (activity bar / modal outer) */
 
   /* ── Typography — Pretendard family (§0.3) ── */
-  --font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
+  --font-family: 'Pretendard Variable', 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Menlo', 'Consolas', monospace;
 
   /* ── Code/JSON syntax tokens — productune-own gap-fill (§2.11, T-410) ──
