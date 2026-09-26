@@ -33,9 +33,17 @@ test('the manifest — the SoT both derivations reduce over — carries the gate
   const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'))
   expect(manifest.basenames).toContain(CHECK)
   const regs = manifest.registrations.filter((r: any) => (r.hooks ?? []).includes(CHECK))
-  expect(regs.map((r: any) => r.event), 'the gate reads last_assistant_message — SubagentStop only').toEqual(['SubagentStop'])
-  expect(regs[0].matcher).toBe('^prdt-')
-  expect(regs[0].hooks, 'state recorder and gate share the one SubagentStop entry').toContain(STATE)
+  // T-688 개정 1: the gate judges what the PO receives — a SubagentHandback
+  // `message` at PreToolUse (delivered at call time, unrepeatable), and
+  // `last_assistant_message` at SubagentStop for a worker that did not hand back.
+  expect(regs.map((r: any) => r.event).sort(), 'the gate reads the handback at PreToolUse and last_assistant_message at SubagentStop — nothing else')
+    .toEqual(['PreToolUse', 'SubagentStop'])
+  const stop = regs.find((r: any) => r.event === 'SubagentStop')
+  expect(stop.matcher).toBe('^prdt-')
+  expect(stop.hooks, 'state recorder and gate share the one SubagentStop entry').toContain(STATE)
+  const pre = regs.find((r: any) => r.event === 'PreToolUse')
+  expect(pre.matcher, 'the PreToolUse half is matched to the one tool that delivers a return').toBe('SubagentHandback')
+  expect(pre.hooks).toEqual([CHECK])
 })
 
 test.skipIf(!hasJq())('mirrors prdt-return-check.sh executable', () => {
@@ -54,9 +62,15 @@ test.skipIf(!hasJq())('registers the gate on SubagentStop ^prdt- at the mirrored
   expect(commands).toContain(path.join(prdtHome, 'hooks', CHECK))
   expect(commands).toContain(path.join(prdtHome, 'hooks', STATE))
   for (const c of commands) expect(fs.existsSync(c), `registered but not mirrored: ${c}`).toBe(true)
-  // no other event registers the gate
+  // the only other event that registers the gate is PreToolUse, matched to SubagentHandback (T-688 개정 1)
   for (const [ev, entries] of Object.entries(settings.hooks as Record<string, any[]>)) {
     if (ev === 'SubagentStop') continue
-    for (const e of entries) for (const h of e.hooks ?? []) expect(h.command).not.toContain(CHECK)
+    for (const e of entries) for (const h of e.hooks ?? []) {
+      if (ev === 'PreToolUse' && e.matcher === 'SubagentHandback') continue
+      expect(h.command, `${ev}/${e.matcher}: the gate belongs on SubagentStop and PreToolUse/SubagentHandback only`).not.toContain(CHECK)
+    }
   }
+  const pre = (settings.hooks?.PreToolUse ?? []).find((e: any) => e.matcher === 'SubagentHandback')
+  expect(pre, 'gate not registered on PreToolUse/SubagentHandback').toBeTruthy()
+  expect((pre.hooks as any[]).map((h) => (h.command as string).replace(/"/g, ''))).toEqual([path.join(prdtHome, 'hooks', CHECK)])
 })

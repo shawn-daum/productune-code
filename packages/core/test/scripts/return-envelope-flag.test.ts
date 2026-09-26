@@ -78,7 +78,39 @@ const QUEUE = ['.prdt', '.return-flags.json']
 
 function queuePath(root: string): string { return path.join(root, ...QUEUE) }
 
+/**
+ * T-696: the gate judges a stop only when the agent has a transcript of its own
+ * next to the parent's — `<dir>/<session>/subagents/agent-<id>.jsonl`, the
+ * harness-owned signal that this agent_id is a dispatched worker (measured
+ * 2026-09-26: 134/134 real worker rows had one, 804/804 phantom `po` rows had
+ * none). Every fixture that stands for a worker writes one; the phantom test
+ * below deliberately does not. `lines` lets a test plant a SubagentHandback
+ * tool_use + tool_result pair, shaped like the real transcript rows.
+ */
+function workerTranscript(root: string, agentId: string, lines: unknown[] = []): string {
+  const dir = path.join(root, 'transcript', 'subagents')
+  fs.mkdirSync(dir, { recursive: true })
+  const p = path.join(dir, `agent-${agentId}.jsonl`)
+  const rows = [{ type: 'user', message: { role: 'user', content: '[ctx] {}' } }, ...lines]
+  fs.writeFileSync(p, rows.map((r) => JSON.stringify(r)).join('\n') + '\n')
+  return p
+}
+
+/** The two transcript rows a SubagentHandback call leaves behind (real shape, 2.1.282). */
+function handbackRows(success: boolean, id = 'toolu_01HB'): unknown[] {
+  return [
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'SubagentHandback', input: { message: '(payload never read)' } }] } },
+    {
+      type: 'user',
+      message: { role: 'user', content: [{ tool_use_id: id, type: 'tool_result', content: [{ type: 'text', text: '{"success":' + success + '}' }] }] },
+      toolUseResult: success ? { success: true, message: 'Report delivered to your caller.' }
+        : { success: false, message: 'Nothing was sent: your report was already delivered' },
+    },
+  ]
+}
+
 function stopEvent(root: string, last: unknown, agentId: string, refire: boolean) {
+  if (!fs.existsSync(path.join(root, 'transcript', 'subagents', `agent-${agentId}.jsonl`))) workerTranscript(root, agentId)
   return {
     session_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
     transcript_path: path.join(root, 'transcript.jsonl'),
@@ -112,12 +144,30 @@ function stopWith(root: string, last: unknown, agentId = 'a1', refire = false): 
 }
 
 /** The gate alone, first firing: its stdout parsed, or null when it printed nothing. */
-function gateFirst(root: string, last: unknown): { decision: string, reason: string } | null {
+function gateFirst(root: string, last: unknown, agentId = 'a1'): { decision: string, reason: string } | null {
   const res = spawnSync('bash', [RETURN_CHECK],
-    { input: JSON.stringify(stopEvent(root, last, 'a1', false)), encoding: 'utf8' })
+    { input: JSON.stringify(stopEvent(root, last, agentId, false)), encoding: 'utf8' })
   expect(res.status).toBe(0)
   if (res.stdout.trim() === '') return null
   return JSON.parse(res.stdout)
+}
+
+/**
+ * HIGH (QA grill on T-688 개정 1 + T-696): the resume boundary a `SendMessage`
+ * wakeup leaves in a worker's OWN transcript — a `user` row with
+ * `isMeta: true` and `origin.kind: "coordinator"` (measured across 162 real
+ * worker transcripts on this machine, 2026-09-26, and the exact shape of every
+ * "the coordinator sent a message" row in the 7-handback fixture
+ * ~/.claude/projects/-Users-shawn-axz-pc-dev-ntf-products-ntf-pm/d8503325-…/
+ * subagents/agent-a54cb2ed51270af35.jsonl — each of its 6 resumes carries one
+ * of these rows, immediately before that segment's own handback). Structural
+ * only, no resume TEXT is read by the gate — just these two fields.
+ */
+function resumeBoundaryRow(): unknown {
+  return {
+    type: 'user', isMeta: true, origin: { kind: 'coordinator' },
+    message: { role: 'user', content: 'The coordinator sent a message while you were working:\n(payload never read)' },
+  }
 }
 
 /**
@@ -197,6 +247,44 @@ describe.skipIf(!READY)('detection — what gets flagged', () => {
   test('truncated JSON is a parse failure', () => {
     const root = makeProject()
     expect(codesFor(root, '{"persona":"developer","task":')).toEqual(['parse-failed'])
+  })
+
+  // T-688 개정 1 restated as measured: this extraction covers a real but
+  // DIFFERENT case than the day's actual `failed` rows. Replaying the day's 6
+  // real qa cases found the judged text had no `{` at all because the
+  // envelope had gone out via SubagentHandback (delivered) and the text left
+  // behind — the final assistant message — was a prose line, never JSON
+  // embedded in a report or a fence; `_extract_embedded_object` therefore
+  // changed 0/6 of those verdicts (see prdt-return-check.sh header). What
+  // these fixtures actually prove: a report-then-envelope or a fenced blob
+  // that DOES embed a JSON object gets that object's over-cap fields named in
+  // the SAME first block, instead of staying invisible until a clean
+  // shape-only retry burns the one retry — a harmless improvement kept for
+  // its own sake, not the fix for the handback-delivered failures above.
+  test('a report followed by an over-cap envelope is flagged for BOTH — not just the shape', () => {
+    const root = makeProject()
+    const report = 'Here is what I did:\n- built the feature\n- ran the suite\n\n'
+    expect(codesFor(root, report + envelope({ summary: 'y'.repeat(233) })))
+      .toEqual(['not-json-object', 'over-cap:summary'])
+  })
+
+  test('a fenced envelope with an over-cap field is flagged for BOTH', () => {
+    const root = makeProject()
+    const fenced = '```json\n' + envelope({ task: 'x'.repeat(90), summary: 'y'.repeat(210) }) + '\n```'
+    expect(codesFor(root, fenced)).toEqual(['not-json-object', 'over-cap:task', 'over-cap:summary'])
+  })
+
+  test('extraction is advisory only: a clean embedded envelope adds nothing beyond the shape code', () => {
+    const root = makeProject()
+    expect(codesFor(root, '```json\n' + envelope() + '\n```')).toEqual(['not-json-object'])
+    expect(codesFor(root, envelope() + '\n\nDone.')).toEqual(['parse-failed'])
+  })
+
+  test('extraction fails open: prose with no braces, or braces that still will not parse, add nothing', () => {
+    const root = makeProject()
+    expect(codesFor(root, 'I finished the work, all green.')).toEqual(['not-json-object'])
+    expect(codesFor(root, '{"persona":"developer","task":')).toEqual(['parse-failed'])
+    expect(codesFor(root, 'note: {not json at all} trailing')).toEqual(['not-json-object'])
   })
 
   test.each(['persona', 'task', 'summary', 'confidence'])('a missing %s is flagged', (key) => {
@@ -327,7 +415,7 @@ describe.skipIf(!READY)('the gate — block once while the worker lives, let the
     expect(out).not.toBeNull()
     expect(out!.decision).toBe('block')
     expect(fs.existsSync(queuePath(root)), 'the PO notice is the SECOND line, not the first').toBe(false)
-    expect(gateLog(root)).toEqual([{ ts: expect.any(String), persona: 'developer', outcome: 'blocked', codes: ['not-json-object'], agent_id: 'a1' }])
+    expect(gateLog(root)).toEqual([{ ts: expect.any(String), persona: 'developer', outcome: 'blocked', codes: ['not-json-object'], agent_id: 'a1', via: 'stop' }])
   })
 
   test('the block is the ONLY channel — never additionalContext (the unbounded one, T-490)', () => {
@@ -440,7 +528,7 @@ describe.skipIf(!READY)('T-634 — a repaired row carries the codes it was origi
     const root = makeProject()
     expect(stopWith(root, envelope(), 'a9', true)).toBe('')
     expect(gateLog(root)).toEqual([
-      { ts: expect.any(String), persona: 'developer', outcome: 'repaired', codes: [], agent_id: 'a9' },
+      { ts: expect.any(String), persona: 'developer', outcome: 'repaired', codes: [], agent_id: 'a9', via: 'stop' },
     ])
   })
 
@@ -699,5 +787,214 @@ describe.skipIf(!READY)('the queue file is untrusted — `.prdt/` ships with a c
     fs.writeFileSync(queuePath(root), 'not json at all')
     expect(promptCtx(root)).toContain('[prdt state]')
     expect(fs.existsSync(queuePath(root))).toBe(false)
+  })
+})
+
+/**
+ * T-688 개정 1 + T-696 — the gate judges what the PO actually receives, only
+ * for dispatched workers, and never fails open on a large message.
+ *
+ * Measured 2026-09-26 (Claude Code 2.1.282/283) on the day's 6 real qa returns:
+ * every worker delivered its envelope via SubagentHandback (the PO gets it at
+ * CALL time as an `<agent-message>`; the task-notification says "it is not
+ * repeated here"), the harness nudged 2/6 into a prose final message, 4/6 wrote
+ * one unprompted, a second SubagentHandback after the block was refused
+ * ("Nothing was sent: your report was already delivered") — so the stop-side
+ * block judged text the PO never receives and could not fix the text it did.
+ */
+function preToolEvent(root: string, message: unknown, agentId = 'hb1') {
+  return {
+    session_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    transcript_path: path.join(root, 'transcript.jsonl'),
+    cwd: root,
+    permission_mode: 'default',
+    agent_id: agentId,
+    agent_type: 'prdt-qa',
+    hook_event_name: 'PreToolUse',
+    tool_name: 'SubagentHandback',
+    tool_input: { message },
+    tool_use_id: 'toolu_01HB',
+  }
+}
+
+function preTool(root: string, message: unknown, agentId = 'hb1'): { decision: string, reason: string } | null {
+  const res = spawnSync('bash', [RETURN_CHECK], { input: JSON.stringify(preToolEvent(root, message, agentId)), encoding: 'utf8' })
+  expect(res.status).toBe(0)
+  if (res.stdout.trim() === '') return null
+  const out = JSON.parse(res.stdout).hookSpecificOutput
+  expect(out.hookEventName).toBe('PreToolUse')
+  return { decision: out.permissionDecision, reason: out.permissionDecisionReason }
+}
+
+describe.skipIf(!READY)('T-688 개정 1 — the handback IS the return: judged at PreToolUse, before delivery', () => {
+  test('an over-cap handback is denied ONCE with the same reason the stop side gives; the retry passes through flagged', () => {
+    const root = makeProject()
+    workerTranscript(root, 'hb1')
+    const first = preTool(root, envelope({ persona: 'qa', summary: 'y'.repeat(427) }))
+    expect(first?.decision).toBe('deny')
+    expect(first?.reason).toContain('shorten `summary` to ≤200 chars — yours is 427')
+    expect(gateLog(root)).toEqual([expect.objectContaining({ outcome: 'blocked', codes: ['over-cap:summary'], agent_id: 'hb1', via: 'handback' })])
+    // the retry still violates: one retry was the cap — deliver it, queue the notice
+    expect(preTool(root, envelope({ persona: 'qa', summary: 'y'.repeat(267) }))).toBeNull()
+    expect(gateLog(root).map((r) => r.outcome)).toEqual(['blocked', 'failed'])
+    const q = JSON.parse(fs.readFileSync(queuePath(root), 'utf8'))
+    expect(q.flags.at(-1)).toMatchObject({ persona: 'qa', codes: ['over-cap:summary'], reask: true })
+  })
+
+  test('a markdown report handed back (the day\'s a264… case) is denied as not-json-object — the class the stop side could never name', () => {
+    const root = makeProject()
+    workerTranscript(root, 'hb1')
+    const first = preTool(root, '# T-689 slice 1 — verified\n\n## results\n- pass\n')
+    expect(first?.decision).toBe('deny')
+    expect(first?.reason).toContain('the first character is "#" instead')
+  })
+
+  test('a denied handback that comes back clean is logged repaired, and nothing is queued', () => {
+    const root = makeProject()
+    workerTranscript(root, 'hb1')
+    expect(preTool(root, envelope({ persona: 'qa', task: 'x'.repeat(90) }))?.decision).toBe('deny')
+    expect(preTool(root, envelope({ persona: 'qa' }))).toBeNull()
+    expect(gateLog(root).map((r) => [r.outcome, r.codes, r.via])).toEqual([
+      ['blocked', ['over-cap:task'], 'handback'], ['repaired', ['over-cap:task'], 'handback']])
+    expect(fs.existsSync(queuePath(root))).toBe(false)
+  })
+
+  test('a clean handback is silent: no output, no log, no queue', () => {
+    const root = makeProject()
+    workerTranscript(root, 'hb1')
+    expect(preTool(root, envelope({ persona: 'qa' }))).toBeNull()
+    expect(gateLog(root)).toEqual([])
+    expect(fs.existsSync(queuePath(root))).toBe(false)
+  })
+
+  test('the stop AFTER a delivered handback is not judged: the prose the harness nudged out never reaches the PO', () => {
+    const root = makeProject()
+    workerTranscript(root, 'a1', handbackRows(true))
+    expect(gateFirst(root, '검증 작업이 완료되었습니다. 상세 보고서는 PO에게 전달되었습니다.')).toBeNull()
+    expect(gateLog(root)).toEqual([])
+  })
+
+  test('a handback the harness REFUSED (success:false) leaves the final message as the return — judged as before', () => {
+    const root = makeProject()
+    workerTranscript(root, 'a1', handbackRows(false))
+    expect(gateFirst(root, 'Done, all green.')?.decision).toBe('block')
+  })
+
+  test('a second handback after a delivered one is not judged either — the harness refuses it regardless', () => {
+    const root = makeProject()
+    workerTranscript(root, 'hb1', handbackRows(true))
+    expect(preTool(root, 'not an envelope at all')).toBeNull()
+    expect(gateLog(root)).toEqual([])
+  })
+})
+
+describe.skipIf(!READY)('T-696 — only a dispatched worker\'s stop is a return', () => {
+  test('a SubagentStop whose agent has no transcript of its own (the 804/804 phantom `po` rows) gets no verdict and no log line', () => {
+    const root = makeProject()
+    const ev = { ...stopEvent(root, 'just a PO turn ending in prose', 'phantom', false), agent_type: 'prdt-po' }
+    fs.rmSync(path.join(root, 'transcript', 'subagents', 'agent-phantom.jsonl'))
+    const res = spawnSync('bash', [RETURN_CHECK], { input: JSON.stringify(ev), encoding: 'utf8' })
+    expect(res.status).toBe(0)
+    expect(res.stdout).toBe('')
+    expect(gateLog(root)).toEqual([])
+    expect(fs.existsSync(queuePath(root))).toBe(false)
+  })
+
+  test('a genuine prdt-po dispatch (transcript present) is gated exactly like any worker', () => {
+    const root = makeProject()
+    const ev = { ...stopEvent(root, 'just prose', 'realpo', false), agent_type: 'prdt-po' }
+    const res = spawnSync('bash', [RETURN_CHECK], { input: JSON.stringify(ev), encoding: 'utf8' })
+    expect(JSON.parse(res.stdout).decision).toBe('block')
+    expect(gateLog(root)).toEqual([expect.objectContaining({ persona: 'po', outcome: 'blocked', via: 'stop' })])
+  })
+
+  test('a PreToolUse handback from an agent with no transcript is not judged', () => {
+    const root = makeProject()
+    expect(preTool(root, 'prose', 'nobody')).toBeNull()
+    expect(gateLog(root)).toEqual([])
+  })
+
+  test('a transcript_path the event does not carry means no derivation — the stop is left alone (fail open)', () => {
+    const root = makeProject()
+    const ev: any = stopEvent(root, 'prose', 'a1', false)
+    delete ev.transcript_path
+    const res = spawnSync('bash', [RETURN_CHECK], { input: JSON.stringify(ev), encoding: 'utf8' })
+    expect(res.stdout).toBe('')
+  })
+})
+
+describe.skipIf(!READY)('HIGH (QA grill) — a SendMessage-resumed worker\'s LATER segments are still judged', () => {
+  /** `n` already-completed resume segments, each having delivered its OWN
+   *  handback successfully — mirrors the real fixture (7 handbacks, one per
+   *  resume, all success:true), scaled down. Ends with a trailing resume
+   *  boundary (segment n+1 has started, has not yet handed back). */
+  function priorSegments(n: number): unknown[] {
+    let rows: unknown[] = [...handbackRows(true, 'toolu_seg1')]
+    for (let seg = 2; seg <= n; seg++) {
+      rows = [...rows, resumeBoundaryRow(), ...handbackRows(true, `toolu_seg${seg}`)]
+    }
+    return [...rows, resumeBoundaryRow()]
+  }
+
+  test('segment 2\'s own malformed handback is denied — segment 1\'s delivered handback must not silence it', () => {
+    const root = makeProject()
+    workerTranscript(root, 'hbresume', priorSegments(1))
+    const res = preTool(root, envelope({ persona: 'qa', summary: 'y'.repeat(267) }), 'hbresume')
+    expect(res?.decision).toBe('deny')
+  })
+
+  test('segment 4\'s own malformed handback is denied — THREE earlier delivered handbacks must not silence it either', () => {
+    const root = makeProject()
+    workerTranscript(root, 'hbresume4', priorSegments(3))
+    const res = preTool(root, envelope({ persona: 'qa', summary: 'y'.repeat(267) }), 'hbresume4')
+    expect(res?.decision).toBe('deny')
+    expect(res?.reason).toContain('shorten `summary` to ≤200 chars — yours is 267')
+    expect(gateLog(root)).toEqual([expect.objectContaining({ outcome: 'blocked', codes: ['over-cap:summary'], via: 'handback' })])
+  })
+
+  test('a stop in a later resumed segment is judged — an earlier segment\'s delivered handback must not silence THIS segment\'s prose', () => {
+    const root = makeProject()
+    workerTranscript(root, 'stopresume', priorSegments(3))
+    const res = gateFirst(root, 'All done — no handback this time, just prose.', 'stopresume')
+    expect(res?.decision).toBe('block')
+  })
+})
+
+describe.skipIf(!READY)('MEDIUM (QA grill) — a handback with no agent_id fails open, never denies without a cap', () => {
+  test('a malformed handback with no agent_id is never denied — nothing to key a one-retry cap on, so the same call stays silent every time', () => {
+    const root = makeProject()
+    const ev: any = preToolEvent(root, envelope({ persona: 'qa', summary: 'y'.repeat(400) }), 'ignored')
+    delete ev.agent_id
+    const runOnce = () => {
+      const res = spawnSync('bash', [RETURN_CHECK], { input: JSON.stringify(ev), encoding: 'utf8' })
+      expect(res.status).toBe(0)
+      return res.stdout
+    }
+    expect(runOnce()).toBe('')
+    expect(runOnce()).toBe('') // never denies — a deny here could never be capped without a key
+    expect(gateLog(root)).toEqual([])
+  })
+})
+
+describe.skipIf(!READY)('T-688 개정 1 — the event reaches python on stdin, never through an ARG_MAX-bounded env hop', () => {
+  test('a 1.1 MB prose return is still blocked (HEAD failed open here: `Argument list too long`, exit 0, no output)', () => {
+    const root = makeProject()
+    const big = 'prose '.repeat(1_100_000 / 6)
+    const res = spawnSync('bash', [RETURN_CHECK], { input: JSON.stringify(stopEvent(root, big, 'a1', false)), encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    expect(res.status).toBe(0)
+    expect(res.stderr).toBe('')
+    expect(JSON.parse(res.stdout).decision).toBe('block')
+    expect(gateLog(root)).toEqual([expect.objectContaining({ outcome: 'blocked', codes: ['not-json-object'] })])
+  })
+
+  test('a 1.1 MB WELL-FORMED return (a long unknown extra key) is silent, not blocked', () => {
+    const root = makeProject()
+    expect(gateFirst(root, envelope({ evidence: 'x'.repeat(1_100_000) }))).toBeNull()
+  })
+
+  test('empty stdin is a no-op', () => {
+    const res = spawnSync('bash', [RETURN_CHECK], { input: '', encoding: 'utf8' })
+    expect(res.status).toBe(0)
+    expect(res.stdout).toBe('')
   })
 })
