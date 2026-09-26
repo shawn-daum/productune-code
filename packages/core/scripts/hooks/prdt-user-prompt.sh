@@ -436,6 +436,16 @@ REGISTER_UNCONFIRMED_NOTICE = (
     "resolver is the sole authority on the current binding and it did not get to answer, so treat "
     "the binding as UNKNOWN rather than default for this turn (T-627)."
 )
+# T-651: the form=outline compliance notice — rendered on a violating turn only
+# (0 B on a compliant one), line numbers only, never the reply's text. Wording is
+# the designer's `inject-edit` (contracts: hook-injected text); the detector that
+# fills and appends it lands in its own diff, so this constant is unreferenced
+# until then. %d = violating line count, %s = their numbers ("1, 12, 14").
+REGISTER_CHECK_NOTICE = (
+    "[prdt register check] your last user-chat reply broke form=outline: %d paragraph line(s) "
+    "(lines %s) — an unmarked line holding 2+ sentences, or 2+ unmarked lines in a row. "
+    "Leave the sent reply as is; write this reply one point per marked line."
+)
 hook_dir = os.environ.get("PRDT_HOOK_DIR") or ""
 resolver = os.path.join(hook_dir, "prdt-audience-inject.sh")
 if hook_dir and os.path.isfile(resolver):
