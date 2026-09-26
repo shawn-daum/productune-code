@@ -71,6 +71,7 @@ function markerPath(home: string, agentId: string): string {
 type Marker = {
   agent_id: string; persona: string; dispatch_id: string | null; ticket_id: string | null
   tool_use_id: string | null; project_root: string; since: string; stopped_at?: string; resumed_from?: string | null
+  session_id?: string | null; transcript?: string | null
 }
 
 function readMarker(home: string, agentId: string): Marker {
@@ -270,6 +271,23 @@ describe('T-682 slice 3 — F2: a resumed worker (same agent_id) runs under its 
 
     expectSilent(subagentStop({ agentId }))
     expect(readMarker(prdtHome, agentId).stopped_at).toBeDefined()
+  })
+})
+
+describe('T-695 slice 2 — the marker names the worker transcript the gate probes for liveness', () => {
+  test('SubagentStart derives <parent dir>/<session_id>/subagents/agent-<id>.jsonl and records session_id', () => {
+    const parent = path.join(root, 'projects', '-Users-u-dev-p', 'sess-1.jsonl')
+    fs.mkdirSync(path.dirname(parent), { recursive: true })
+    fs.writeFileSync(parent, '')
+    expectSilent(subagentStart({ agentId: 'agent-t695', transcriptPath: parent }))
+    const m = readMarker(prdtHome, 'agent-t695')
+    expect(m.session_id).toBe('sess-1')
+    expect(m.transcript).toBe(path.join(root, 'projects', '-Users-u-dev-p', 'sess-1', 'subagents', 'agent-agent-t695.jsonl'))
+  })
+
+  test('no parent transcript_path in the event: transcript is null, the marker is still written', () => {
+    expectSilent(subagentStart({ agentId: 'agent-t695b' }))
+    expect(readMarker(prdtHome, 'agent-t695b').transcript).toBeNull()
   })
 })
 
