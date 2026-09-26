@@ -55,6 +55,27 @@ function contextOf(stdout: string): string {
 
 const BUILD_STATE = { schema_version: 1, stage: 'build', version: 'v1', current_task: null }
 
+// T-687: a register `[prdt register]` binding line used to be pinned
+// byte-for-byte here too (same class as T-613/T-639/T-642 — the tail prose
+// can be reworded without the rule changing, and a byte pin turns that into
+// a false-red tree). Pin the rule instead: (a) tagged `[prdt register]`,
+// (b) names the non-default keys verbatim, (c) states which surface it
+// governs, (d) the tail says whether a body already arrived at session
+// start ("Binding only …") or none exists ("No body is in force …") —
+// never both, never neither.
+function assertRegisterBindingLineShape(line: string, opts: { keys: string; governs: string; bodyArrived: boolean }): void {
+  expect(line.startsWith('[prdt register] ')).toBe(true)
+  expect(line).toContain(opts.keys)
+  expect(line).toContain(`governs ${opts.governs}`)
+  if (opts.bodyArrived) {
+    expect(line).toMatch(/binding only/i)
+    expect(line).not.toMatch(/no body is in force/i)
+  } else {
+    expect(line).toMatch(/no body is in force/i)
+    expect(line).not.toMatch(/binding only/i)
+  }
+}
+
 describe('state line (turn-open refresher)', () => {
   test('every prompt in a prdt project gets one live state line', () => {
     const dir = makeProject(BUILD_STATE)
@@ -398,7 +419,7 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
     const lines = ctx.split('\n')
     expect(lines).toHaveLength(2)
     expect(lines[0]).toMatch(/^\[prdt state\] /)
-    expect(lines[1]).toBe('[prdt register] form=outline · structure=planner-tables · address="션님" — governs user-chat. Binding only; any body arrived at session start.')
+    assertRegisterBindingLineShape(lines[1], { keys: 'form=outline · structure=planner-tables · address="션님"', governs: 'user-chat', bodyArrived: true })
     expect(Buffer.byteLength(lines[1], 'utf8')).toBeLessThanOrEqual(180)
   })
 
@@ -407,7 +428,30 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
     const lines = ctx.split('\n')
     expect(lines).toHaveLength(2)
     expect(lines[0]).toMatch(/^\[prdt state\] /)
-    expect(lines[1]).toBe('[prdt register] form=outline · structure=planner-tables · address="션님" — governs user-chat. No body is in force for these values — this line is the whole cost.')
+    assertRegisterBindingLineShape(lines[1], { keys: 'form=outline · structure=planner-tables · address="션님"', governs: 'user-chat', bodyArrived: false })
+  })
+
+  // Not empty coverage: a fixture with exactly one property surgically removed
+  // (the others left intact) makes that property's own check fail — proving
+  // the shape assertion actually discriminates, not just passes whatever
+  // it's handed.
+  test('each property of the register binding-line shape actually fails on a fixture that removes it', () => {
+    const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n', true) }))
+    const line = ctx.split('\n')[1]
+    const opts = { keys: 'form=outline · structure=planner-tables · address="션님"', governs: 'user-chat', bodyArrived: true } as const
+    expect(() => assertRegisterBindingLineShape(line, opts)).not.toThrow()
+
+    const noTag = line.replace('[prdt register] ', '[prdt something] ')
+    expect(() => assertRegisterBindingLineShape(noTag, opts)).toThrow()
+
+    const noKeys = line.replace('form=outline · structure=planner-tables · address="션님"', 'form=x')
+    expect(() => assertRegisterBindingLineShape(noKeys, opts)).toThrow()
+
+    const noGoverns = line.replace('governs user-chat', 'governs nothing')
+    expect(() => assertRegisterBindingLineShape(noGoverns, opts)).toThrow()
+
+    const noTail = line.replace('Binding only', 'zzzzzzzzzz')
+    expect(() => assertRegisterBindingLineShape(noTail, opts)).toThrow()
   })
 
   test('an illegal value never reaches the prompt: out-of-domain + off-shape address → defaults → no line', () => {
