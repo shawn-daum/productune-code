@@ -41,12 +41,20 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import net from 'node:net'
 import { test, expect, chromium } from '@playwright/test'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+// The ambient CJS `__dirname` (NOT `path.dirname(fileURLToPath(import.meta.url))`,
+// removed here) — MEASURED 2026-09-26 (PO + QA, cua VM): a top-level
+// `import.meta.url` reference is what made `npx playwright test --list` fail
+// to load this file and `tests/viewer-html.window.spec.ts` with
+// `ReferenceError: require is not defined in ES module scope` (thrown from
+// tests/isolation-rules.cjs's patchedLoad hook), collecting 0 specs across
+// the whole suite. Every OTHER spec here (`tests/isolation.guard.spec.ts`,
+// `tests/harness.ts`, etc.) uses the plain `__dirname` global instead and
+// loads fine — confirming `import.meta.url` was the one thing this file did
+// differently. `node:url`'s `fileURLToPath` is no longer needed either.
 const DS_HTML = path.resolve(__dirname, '../ds/design-system.html')
 
 // Same fix as the vitest file used to need: `playwright.config.ts` repoints
