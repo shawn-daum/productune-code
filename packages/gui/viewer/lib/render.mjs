@@ -19,6 +19,7 @@
 // suite, which asserts exactly those two properties against the real,
 // rendered-in-Chrome page — evidence, not an argument from the script being
 // absent.
+import path from 'node:path'
 import { marked, Renderer } from 'marked'
 
 function escapeHtml(str) {
@@ -106,7 +107,81 @@ hardenedRenderer.heading = function ({ tokens, depth }) {
   return `<h${depth} class="pill pill-heading-${level}">${text}</h${depth}>\n`
 }
 
-function md(text) {
+// T-666 slice 2b acceptance line 3: "relative document links inside rendered
+// bodies either open the linked document inside the viewer or point to the
+// real file — none resolves against viewer.html's own folder." Every body
+// this generator embeds (ticket/wiki/feature/PRD/artifact prose) is authored
+// as if it still lived at its own repo path (docs/prd/PRD.md links to
+// `./versions/v1.9.md`, meaning "next to me"); marked's default renderer
+// passes that href straight through, which the BROWSER then resolves against
+// `viewer.html`'s own directory (`code/packages/gui/viewer/`) — a file that
+// does not exist there. `repoRootHref` (the path from the generated page's
+// own directory back to the repo root, computed once in generate.mjs from
+// OUTPUT_PATH — see `renderPage`) plus the source document's own
+// repo-root-relative directory is enough to rewrite the href to the real
+// file, chosen over "open inside the viewer" (also legal per the acceptance
+// line) because the viewer has no per-document-kind in-page router today —
+// doctrine #1, build what's needed now.
+const DEFAULT_REPO_ROOT_HREF = '../../../..'
+
+/**
+ * `href` resolved against `sourceDirRel` (the source document's own
+ * repo-root-relative directory) and rebased onto `repoRootHref`, or `null`
+ * when `href` is not a plain repo-relative link this generator can safely
+ * rewrite: an anchor (`#…`), protocol-relative (`//…`), a URL with a scheme
+ * (`https:`, `mailto:`, …), a site-absolute path (`/…` — relative to some
+ * assumed server root this generator does not control), or a path that
+ * would resolve outside the repo root entirely (`../` walking past it) —
+ * "leave untouched if it escapes the repo root", never rewritten past it.
+ * @param {string} href
+ * @param {string} sourceDirRel
+ * @param {string} repoRootHref
+ * @returns {string|null}
+ */
+export function resolveDocLink(href, sourceDirRel, repoRootHref) {
+  if (!href) return null
+  if (/^(#|\/\/|\/)/.test(href)) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href)) return null
+  const hashIdx = href.indexOf('#')
+  const pathPart = hashIdx === -1 ? href : href.slice(0, hashIdx)
+  const hashPart = hashIdx === -1 ? '' : href.slice(hashIdx)
+  if (!pathPart) return null
+  const resolved = path.posix.normalize(path.posix.join(sourceDirRel, pathPart))
+  if (resolved === '..' || resolved.startsWith('../')) return null
+  return encodeURI(`${repoRootHref}/${resolved}${hashPart}`)
+}
+
+// marked.parse() gives its renderer no way to receive extra per-call
+// context, so `md()` stashes the current document's own directory + the
+// page's repoRootHref here right before parsing — safe because generation
+// is single-threaded and synchronous (no md() call is ever in flight while
+// another starts).
+let linkContext = { sourceDirRel: '', repoRootHref: DEFAULT_REPO_ROOT_HREF }
+
+// Captured BEFORE hardenedRenderer.link is overridden below, so every link
+// this override chooses not to rewrite (anchor/scheme/absolute/escaping)
+// still gets marked's own real default rendering — never a second,
+// hand-rolled copy of it.
+const defaultLinkRenderer = new Renderer().link
+
+hardenedRenderer.link = function ({ href, title, tokens }) {
+  const rewritten = resolveDocLink(href, linkContext.sourceDirRel, linkContext.repoRootHref)
+  if (rewritten === null) return defaultLinkRenderer.call(this, { href, title, tokens })
+  const text = this.parser.parseInline(tokens)
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : ''
+  return `<a href="${escapeHtml(rewritten)}" target="_blank" rel="noopener"${titleAttr}>${text}</a>`
+}
+
+/**
+ * @param {string} text
+ * @param {string} [sourceDirRel] the source document's own repo-root-relative
+ *   directory (e.g. "docs/prd" for docs/prd/PRD.md) — every relative link
+ *   `text` contains is resolved against this, never against viewer.html's own.
+ * @param {string} [repoRootHref] path from the generated page's own directory
+ *   back to the repo root (see `renderPage`).
+ */
+function md(text, sourceDirRel = '', repoRootHref = DEFAULT_REPO_ROOT_HREF) {
+  linkContext = { sourceDirRel, repoRootHref }
   return marked.parse(text ?? '', { gfm: true, renderer: hardenedRenderer })
 }
 
@@ -237,7 +312,7 @@ ${omittedHtml}`
 }
 
 /** The detail-data JSON blob's "ticket" bucket — one entry per row `ticketRowsTable` drew, same loop's inputs, so no row can point at a missing entry. */
-function ticketDetailEntries(tickets) {
+function ticketDetailEntries(tickets, repoRootHref) {
   const entries = {}
   for (const t of tickets.included) {
     const fm = t.frontmatter
@@ -249,7 +324,7 @@ function ticketDetailEntries(tickets) {
       assignee: fm.assignee || '',
       created: fm.created || '',
       path: t.rel,
-      body: md(t.body),
+      body: md(t.body, path.dirname(t.rel), repoRootHref),
     }
   }
   return entries
@@ -367,7 +442,7 @@ function wikiStoreInner(pages) {
 }
 
 /** The detail-data JSON blob's "wiki" bucket — same construction discipline as `ticketDetailEntries`: keyed by the same id `wikiRowsTable` renders, from the same input list. */
-function wikiDetailEntries(pages) {
+function wikiDetailEntries(pages, repoRootHref) {
   const entries = {}
   for (const p of pages) {
     const fm = p.frontmatter
@@ -378,7 +453,7 @@ function wikiDetailEntries(pages) {
       status: fm.status || '',
       version: fm.version || '',
       path: p.rel,
-      body: md(p.body),
+      body: md(p.body, path.dirname(p.rel), repoRootHref),
     }
   }
   return entries
@@ -411,7 +486,7 @@ function featureStoreInner(pages) {
   return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups })
 }
 
-function featureDetailEntries(pages) {
+function featureDetailEntries(pages, repoRootHref) {
   const entries = {}
   for (const p of pages) {
     const fm = p.frontmatter
@@ -421,7 +496,7 @@ function featureDetailEntries(pages) {
       status: fm.status || '',
       spec_since: fm.spec_since || '',
       path: p.rel,
-      body: md(p.body),
+      body: md(p.body, path.dirname(p.rel), repoRootHref),
     }
   }
   return entries
@@ -432,8 +507,12 @@ function featuresSection(pages) {
 }
 
 /** PRD store: the ONE named content nuance (not a structural deviation — same activity-bar → sidebar-group → main-pane shell as every other store). The "open" group's single, currently-relevant document renders inline directly rather than as a one-row list a reader must click; "closed" behaves exactly like every other store's list→detail. Both strings below ("열린 섹션" / "닫힌 버전") are lifted verbatim from the user-approved mockup (docs/artifacts/v1.10/define-screen-set.html), not new copy. */
-function prdOpenBody(prd) {
-  return `<div class="v-body">${md(prd.current.body)}</div>`
+function prdOpenBody(prd, repoRootHref) {
+  // 'docs/prd' is the fixed path (contracts §Fixed paths — PRD.md is a single
+  // standing file, never per-version), not derived from `prd.current.rel` —
+  // a fixture that omits `.rel` (this module's own tests do) still resolves
+  // links correctly.
+  return `<div class="v-body">${md(prd.current.body, 'docs/prd', repoRootHref)}</div>`
 }
 
 function prdClosedRowsTable(closed) {
@@ -450,26 +529,26 @@ function prdClosedRowsTable(closed) {
   return html
 }
 
-function prdStoreInner(prd, currentVersion) {
+function prdStoreInner(prd, currentVersion, repoRootHref) {
   const groups = [
-    { key: 'open', label: `열린 섹션 · ${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd) },
+    { key: 'open', label: `열린 섹션 · ${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref) },
     { key: 'closed', label: '닫힌 버전', count: prd.closed.length, bodyHtml: prdClosedRowsTable(prd.closed) },
   ]
   return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups })
 }
 
 /** Closed-round entries only — the open section is not a detail-row (see prdStoreInner); a closed round's id is its filename minus `.md` (e.g. "v1.1", "v1.2.1"). A stub file with no `##` heading (docs/prd/versions/v1.1.md, v1.2.1.md — measured 2026-09-26) still produces a non-empty `md()` body (a plain paragraph), so it still lists and opens (acceptance line 3). */
-function prdDetailEntries(prd) {
+function prdDetailEntries(prd, repoRootHref) {
   const entries = {}
   for (const c of prd.closed) {
     const id = c.name.replace(/\.md$/, '')
-    entries[id] = { title: id, path: c.rel, body: md(c.body) }
+    entries[id] = { title: id, path: c.rel, body: md(c.body, path.dirname(c.rel), repoRootHref) }
   }
   return entries
 }
 
-function prdSection(prd, currentVersion) {
-  return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion) })
+function prdSection(prd, currentVersion, repoRootHref) {
+  return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref) })
 }
 
 function artifactRowsTable(entries) {
@@ -522,7 +601,7 @@ function artifactStoreInner(artifacts, currentVersion) {
  * knows where OUTPUT_PATH lives on disk) — defaulted here so a fixture/test
  * that does not pass one still gets the real repo's actual layout.
  */
-function artifactDetailEntries(artifacts, artifactsBaseHref) {
+function artifactDetailEntries(artifacts, artifactsBaseHref, repoRootHref) {
   const entries = {}
   for (const e of artifacts.entries) {
     const f = e.fields
@@ -533,7 +612,7 @@ function artifactDetailEntries(artifacts, artifactsBaseHref) {
       status: f.status || '',
       created: f.added_at || '',
       path: e.diskRel,
-      body: e.inlined ? md(e.body) : undefined,
+      body: e.inlined ? md(e.body, path.dirname(e.diskRel), repoRootHref) : undefined,
       fileHref: e.inlined ? undefined : encodeURI(`${artifactsBaseHref}/${f.bucket}/${f.path}`),
     }
   }
@@ -580,15 +659,15 @@ const PROGRESS_ASSIGNEE_ORDER = ['user', 'po', 'designer', 'developer', 'qa']
 // wording is still open, same as the wiki/feature UNCLASSIFIED-group and
 // no-body-link copy flagged in slice 1a/1b's own 미해결).
 //
-// T-666 slice 2a scope: a ticket with NO matching `prd_item` (today
-// T-677/678/679 — measured 2026-09-26, `grep -L prd_item: docs/tickets/v1.10`)
-// is silently OMITTED from the matrix here on purpose — the dispatch for
-// this slice named the matrix's trailing "항목 밖" row as slice 2b's, to be
-// built there, not here ("leave room for them in home, build neither"). This
-// array is exactly that seam: 2b appends one more key (e.g. `OUT_OF_SCOPE`)
-// with its own label and one more `byItem` bucket collecting what this
-// filter drops today.
+// T-666 slice 2b: a ticket with NO matching `prd_item` (today T-677/678/679
+// — measured 2026-09-26, `grep -L prd_item: docs/tickets/v1.10`) used to be
+// silently omitted from the matrix (slice 2a scope, "leave room for them,
+// build neither"). This slice appends `PROGRESS_OUT_OF_SCOPE_KEY` as one more
+// row — labelled from this SAME label layer (`PROGRESS_ITEM_LABEL`), never a
+// second vocabulary — so a ticket never disappears from the card for lacking
+// an item address (acceptance line 2).
 const PROGRESS_ITEM_ORDER = ['north-star', 'prd-form', 'linkage', 'gui-deferral-marker', 'inherited-defects', 'viewer', 'ticket-frame']
+const PROGRESS_OUT_OF_SCOPE_KEY = 'out-of-scope'
 const PROGRESS_ITEM_LABEL = {
   'north-star': '북극성',
   'prd-form': 'PRD 표현',
@@ -597,6 +676,56 @@ const PROGRESS_ITEM_LABEL = {
   'inherited-defects': '승계 결함',
   viewer: '뷰어',
   'ticket-frame': '티켓 틀',
+  // "항목 밖" ("outside the item[s]") — this repo's own existing PRD.md
+  // vocabulary for the same idea ("항목 밖 편입", v1.10 §What) reused
+  // verbatim rather than a new phrase invented for this row; Designer
+  // sign-off on the exact wording is still open (same status as every other
+  // Korean UI string this generator flagged in its own 미해결 so far).
+  [PROGRESS_OUT_OF_SCOPE_KEY]: '항목 밖',
+}
+
+// T-666 slice 2b acceptance line 1: "Stage progress is counted by
+// statusline-prdt.sh's own TYPE_TO_STAGE mapping, not a second rule — a test
+// fails if the two diverge." Values copied VERBATIM from
+// code/packages/core/scripts/statusline-prdt.sh lines 116-125 (its own
+// `TYPE_TO_STAGE` dict) — `scripts/qa/type-to-stage-parity.test.ts` parses
+// that file's dict literal and deep-equals it against this export, so a hand
+// edit to either side without the other fails CI rather than silently
+// drifting.
+export const TYPE_TO_STAGE = {
+  // canonical enum
+  design: 'define', impl: 'build', qa: 'build', ops: 'ship',
+  // tolerated aliases
+  docs: 'define', prd: 'define', spec: 'define', feature: 'define',
+  build: 'build', refactor: 'build', bug: 'build', fix: 'build',
+  chore: 'build', test: 'build',
+  deploy: 'ship', release: 'ship',
+  retro: 'retro', close: 'retro',
+}
+
+// The four ticket-mapped stages, always rendered in this order (acceptance
+// line 1: "all four lifecycle stages always render") — statusline-prdt.sh's
+// own STAGES tuple also carries "idle", but idle is a po-state-only stage no
+// ticket ever maps to (TYPE_TO_STAGE has no "idle" value), so it is not a
+// fifth column here.
+const STAGE_ORDER = ['define', 'build', 'ship', 'retro']
+
+/**
+ * One line, `define n/m · build n/m · ship n/m · retro n/m`, always all
+ * four. Mirrors statusline-prdt.sh's own counting rule exactly (lines
+ * 147-158): a ticket counts toward a stage's n/m only when
+ * `TYPE_TO_STAGE[type] === stage`; `status: dropped` counts toward neither
+ * (open/done only) — never a second rule invented for the viewer.
+ * @param {Array} currentTickets current-version tickets (any status)
+ */
+function homeStageLine(currentTickets) {
+  const counted = currentTickets.filter((t) => t.frontmatter.status === 'open' || t.frontmatter.status === 'done')
+  const cells = STAGE_ORDER.map((stage) => {
+    const inStage = counted.filter((t) => TYPE_TO_STAGE[t.frontmatter.type] === stage)
+    const done = inStage.filter((t) => t.frontmatter.status === 'done').length
+    return `${stage} ${done}/${inStage.length}`
+  })
+  return `<div class="stage-line mono">${escapeHtml(cells.join(' · '))}</div>`
 }
 
 function progressSquare(done) {
@@ -648,20 +777,22 @@ function progressOverall(currentTickets) {
 
 const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-matrix-legend-item">${progressSquare(true)} <span>담당</span></span><span class="stage-matrix-legend-item">${progressDashedSquare(true)} <span>검수</span></span></div>`
 
-/** The "진행 상황" pane's only card: T-675's assignee x PRD-item matrix. Deliberately NOT included here (T-666 slice 2a dispatch: "leave room for them in home, build neither" — slice 2b's own scope): the TYPE_TO_STAGE 4-stage progress line, and the matrix's trailing no-`prd_item` row. */
+/** The "진행 상황" pane: T-666 slice 2b's own TYPE_TO_STAGE stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
 function homeProgressBody(data) {
   const currentTickets = data.tickets.included.filter((t) => t.bucket === data.currentVersion)
   const byItem = new Map(PROGRESS_ITEM_ORDER.map((k) => [k, []]))
+  const outOfScope = []
   for (const t of currentTickets) {
     const prdItem = t.frontmatter.prd_item || ''
     const prefix = `${data.currentVersion}#`
     const key = prdItem.startsWith(prefix) ? prdItem.slice(prefix.length) : null
     if (key && byItem.has(key)) byItem.get(key).push(t)
-    // else: no matching prd_item (or none at all) — T-666 slice 2b's trailing row, omitted here on purpose (see PROGRESS_ITEM_ORDER comment above).
+    else outOfScope.push(t) // no prd_item, or one this version's §What items don't name — the trailing row
   }
-  const rows = PROGRESS_ITEM_ORDER.map((key) => progressMatrixRow(key, byItem.get(key))).join('')
+  const rows = PROGRESS_ITEM_ORDER.map((key) => progressMatrixRow(key, byItem.get(key))).join('') + progressMatrixRow(PROGRESS_OUT_OF_SCOPE_KEY, outOfScope)
   return `<div class="dash-card">
 <div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>진행 상황</span></div>
+${homeStageLine(currentTickets)}
 ${progressOverall(currentTickets)}
 <div class="stage-matrix">${progressMatrixHeadRow()}${rows}</div>
 ${PROGRESS_LEGEND}
@@ -672,14 +803,14 @@ ${PROGRESS_LEGEND}
 </div>`
 }
 
-function homeSection(data) {
+function homeSection(data, repoRootHref) {
   const currentTickets = data.tickets.included.filter((t) => t.bucket === data.currentVersion)
   const currentArtifacts = data.artifacts.entries.filter((e) => e.fields.bucket === data.currentVersion)
   const groups = [
     { key: 'progress', label: '진행 상황', bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
-    { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd) },
+    { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref) },
   ]
   return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: '홈', crumbLabel: '홈', groups }) })
 }
@@ -821,6 +952,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .dash-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-16); }
 .dash-card { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); padding: var(--space-20); }
 .dash-card-title { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
+.stage-line { font-size: 11px; color: var(--text-secondary); margin-bottom: var(--space-12); }
 .stage-overall { display: flex; align-items: center; gap: var(--space-8); margin-bottom: var(--space-12); padding-bottom: var(--space-10); border-bottom: 1px solid var(--border-item); }
 .stage-overall .stage-matrix-label { font-weight: 700; color: var(--text-primary); flex: 0 0 auto; }
 .stage-overall .stage-matrix-count { font-weight: 700; color: var(--text-primary); margin-left: auto; }
@@ -1001,14 +1133,23 @@ function detailDataScript(obj) {
  * @param {string} args.fontFaceCss
  * @param {string} args.tokensSha256
  * @param {string} [args.artifactsBaseHref] path from the generated page's own directory to `docs/artifacts/` — defaults to this repo's real, current OUTPUT_PATH layout (`code/packages/gui/viewer/viewer.html` → repo root) so a fixture/test that omits it still gets a working link.
+ * @param {string} [args.repoRootHref] path from the generated page's own directory back to the repo root — T-666 slice 2b: every relative link inside a rendered document body is rewritten onto this (see `resolveDocLink`), rather than being left to resolve against the page's own folder. Defaults to this repo's real, current OUTPUT_PATH layout, same as `artifactsBaseHref`'s default (`artifactsBaseHref` = `${repoRootHref}/docs/artifacts`, computed once in generate.mjs from the same OUTPUT_PATH — not a second relative-path calculation).
  */
-export function renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref = '../../../../docs/artifacts' }) {
+export function renderPage({
+  data,
+  dark,
+  light,
+  fontFaceCss,
+  tokensSha256,
+  artifactsBaseHref = '../../../../docs/artifacts',
+  repoRootHref = DEFAULT_REPO_ROOT_HREF,
+}) {
   const detailData = {
-    ticket: ticketDetailEntries(data.tickets),
-    wiki: wikiDetailEntries(data.wiki),
-    feature: featureDetailEntries(data.features),
-    artifact: artifactDetailEntries(data.artifacts, artifactsBaseHref),
-    prd: prdDetailEntries(data.prd),
+    ticket: ticketDetailEntries(data.tickets, repoRootHref),
+    wiki: wikiDetailEntries(data.wiki, repoRootHref),
+    feature: featureDetailEntries(data.features, repoRootHref),
+    artifact: artifactDetailEntries(data.artifacts, artifactsBaseHref, repoRootHref),
+    prd: prdDetailEntries(data.prd, repoRootHref),
   }
 
   return `<!doctype html>
@@ -1030,8 +1171,8 @@ ${emitThemeVarBlock('v-light', light)}
 </header>
 <div class="app-shell">
 ${activityBar('home')}
-${homeSection(data)}
-${prdSection(data.prd, data.currentVersion)}
+${homeSection(data, repoRootHref)}
+${prdSection(data.prd, data.currentVersion, repoRootHref)}
 ${ticketSection(data.tickets, data.currentVersion)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data.features)}

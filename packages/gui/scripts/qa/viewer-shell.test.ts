@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import { OUTPUT_PATH } from '../../viewer/generate.mjs'
-import { renderPage } from '../../viewer/lib/render.mjs'
+import { renderPage, resolveDocLink } from '../../viewer/lib/render.mjs'
 
 const fixtureData = {
   poState: { stage: 'build', version: 'v1.10', current_task: null },
@@ -25,6 +25,15 @@ const fixtureData = {
         frontmatter: { id: 'T-902', slug: 'fixture-two', type: 'design', status: 'done', assignee: 'designer' },
         body: '## Only heading\n\nmore prose.',
       },
+      // T-666 slice 2b: no `prd_item` (like the real T-677/678/679) — must
+      // land in the matrix's trailing row, never disappear. `type: ops` also
+      // makes this the fixture's one `ship`-stage ticket for the stage line.
+      {
+        bucket: 'v1.10',
+        rel: 'docs/tickets/v1.10/T-903.md',
+        frontmatter: { id: 'T-903', slug: 'fixture-out-of-scope', type: 'ops', status: 'open', assignee: 'user' },
+        body: 'no prd_item — this ticket is out of scope for the seven PRD items.',
+      },
     ],
     omitted: [],
   },
@@ -38,6 +47,15 @@ const fixtureData = {
       rel: 'docs/wiki/log.md',
       frontmatter: {}, // no `type` — T-666 slice 1b's UNCLASSIFIED fallback group
       body: 'untyped log prose.',
+    },
+    // T-666 slice 2b: a relative link fixture — 'docs/wiki' -> '../prd/versions/v1.1.md'
+    // resolves to the real repo shape 'docs/prd/versions/v1.1.md' (siblings
+    // under docs/), same as an anchor-only, a protocol-relative, and a
+    // scheme link left untouched.
+    {
+      rel: 'docs/wiki/fact--fixture-link.md',
+      frontmatter: { title: 'fixture link fact', type: 'fact' },
+      body: 'See [a closed PRD round](../prd/versions/v1.1.md), [an anchor](#foo), and [an external site](https://example.com/x).',
     },
   ],
   features: [
@@ -265,5 +283,101 @@ describe('viewer/lib/render.mjs — home is the shared-model, version-scoped wor
     const fakeHtml = '<section class="store-section" data-store="home">산출물 3건 (인라인 2건)</section>'
     const m = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(fakeHtml)
     expect(m![0]).toContain('인라인')
+  })
+
+  // T-666 slice 2b acceptance line 1: the stage line, always all four stages.
+  it('the stage line always renders all four lifecycle stages, counted by TYPE_TO_STAGE', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const home = homeMatch![0]
+    expect(home).toContain('class="stage-line')
+    // T-901 (impl→build, open) and T-903 (ops→ship, open) are this
+    // fixture's only current-version tickets whose type maps anywhere;
+    // T-902 is backlog (excluded from home) and has no type mapping to
+    // "define" here regardless.
+    expect(home).toMatch(/define 0\/0/)
+    expect(home).toMatch(/build 0\/1/)
+    expect(home).toMatch(/ship 0\/1/)
+    expect(home).toMatch(/retro 0\/0/)
+  })
+
+  // Non-vacuous control: a version with zero tickets must still show all
+  // four stages at 0/0, never omit one.
+  it('checker fixture: a version with zero tickets still shows all four stages, all at 0/0', () => {
+    const emptyData = { ...fixtureData, currentVersion: 'v1.11', tickets: { included: [], omitted: [] } }
+    const html = renderPage({ data: emptyData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const home = homeMatch![0]
+    for (const stage of ['define', 'build', 'ship', 'retro']) {
+      expect(home).toMatch(new RegExp(`${stage} 0/0`))
+    }
+  })
+
+  // T-666 slice 2b acceptance line 2: the matrix's trailing row for a
+  // ticket carrying no `prd_item` — today's real T-677/678/679, fixture T-903.
+  it('the matrix gets a trailing "항목 밖" row for a ticket with no prd_item — it never disappears from the card', () => {
+    const html = render()
+    const homeMatch = /<section[^>]*data-store="home"[^>]*>[\s\S]*?<\/section>/.exec(html)
+    const home = homeMatch![0]
+    const rowMatch = /<div class="stage-matrix-row"><span class="stage-matrix-label">항목 밖<\/span>([\s\S]*?)<\/div>/.exec(home)
+    expect(rowMatch, 'no trailing "항목 밖" row found in the matrix').not.toBeNull()
+    // T-903 (assignee: user, status: open) draws a real square in this row
+    // — never all "–", or the ticket would still be effectively invisible.
+    expect(rowMatch![1]).toContain('stage-sq')
+  })
+})
+
+describe('viewer/lib/render.mjs — resolveDocLink (T-666 slice 2b)', () => {
+  it('resolves a same-repo relative link against the source directory and repoRootHref, matching the real hrefs measured in PRD.md', () => {
+    expect(resolveDocLink('./versions/v1.9.md', 'docs/prd', '../../../..')).toBe('../../../../docs/prd/versions/v1.9.md')
+    expect(resolveDocLink('../artifacts/v1.9/phase4-terminal-free-gui.md', 'docs/prd', '../../../..')).toBe(
+      '../../../../docs/artifacts/v1.9/phase4-terminal-free-gui.md',
+    )
+  })
+
+  it('leaves an anchor, a protocol-relative link, a scheme link, and a site-absolute link untouched (returns null)', () => {
+    expect(resolveDocLink('#section', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('//example.com/x', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('https://example.com/x', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('mailto:a@b.com', 'docs/prd', '../../../..')).toBeNull()
+    expect(resolveDocLink('/docs/prd/PRD.md', 'docs/prd', '../../../..')).toBeNull()
+  })
+
+  // Non-vacuous control: a link that would resolve outside the repo root
+  // really is caught, or "leave untouched if it escapes the repo root"
+  // could be passing only because no fixture ever exercises that branch.
+  it('checker fixture: a link that would escape the repo root is left untouched, never rewritten past it', () => {
+    expect(resolveDocLink('../../../../../etc/passwd', 'docs/prd', '../../../..')).toBeNull()
+  })
+})
+
+describe("viewer/lib/render.mjs — relative document links resolve against the source file's own location, not viewer.html's (T-666 slice 2b)", () => {
+  function detailData(html) {
+    const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)
+    expect(blobMatch).not.toBeNull()
+    return JSON.parse(blobMatch[1])
+  }
+
+  it("rewrites a relative link inside a wiki body against the wiki page's own directory, using the default repoRootHref", () => {
+    const html = renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const body = detailData(html).wiki['fact--fixture-link.md'].body
+    expect(body).toContain('href="../../../../docs/prd/versions/v1.1.md"')
+    expect(body).toContain('target="_blank"')
+    expect(body).toContain('rel="noopener"')
+    expect(body).toContain('href="#foo"')
+    expect(body).toContain('href="https://example.com/x"')
+  })
+
+  it("honors a repoRootHref passed explicitly by the caller (generate.mjs threads the real one)", () => {
+    const html = renderPage({
+      data: fixtureData,
+      dark: new Map(),
+      light: new Map(),
+      fontFaceCss: '',
+      tokensSha256: '',
+      repoRootHref: '../../custom',
+    })
+    const body = detailData(html).wiki['fact--fixture-link.md'].body
+    expect(body).toContain('href="../../custom/docs/prd/versions/v1.1.md"')
   })
 })
