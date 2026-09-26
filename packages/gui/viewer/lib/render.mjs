@@ -21,6 +21,20 @@
 // absent.
 import path from 'node:path'
 import { marked, Renderer } from 'marked'
+import {
+  STORE_LABEL,
+  COMMON,
+  PAGE,
+  HOME,
+  PROGRESS_ITEM_LABEL,
+  DETAIL_FIELD_LABELS,
+  TICKET,
+  WIKI,
+  FEATURE,
+  ARTIFACT,
+  PRD,
+  FILE_HREF_NOTE,
+} from './labels.mjs'
 
 function escapeHtml(str) {
   return String(str ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -203,7 +217,6 @@ function fmtBytes(n) {
 // approved mockup (docs/artifacts/v1.10/define-screen-set.html ~line
 // 621-627) — doctrine #2, don't re-draw what is already signed off.
 const STORE_ORDER = ['home', 'prd', 'ticket', 'wiki', 'feature', 'artifact']
-const STORE_LABEL = { home: '홈', prd: 'PRD', ticket: '티켓', wiki: '위키', feature: '기능', artifact: '아티팩트' }
 const STORE_ICON_PATHS = {
   home: '<rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>',
   prd: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/>',
@@ -238,6 +251,11 @@ function statusPillClass(status) {
   return 'todo' // open, or anything this generator does not recognize — neutral, never invented
 }
 
+/** Raw ticket status (open/done/dropped) → its T-705 §B Korean pill text. */
+function ticketStatusText(status) {
+  return TICKET.statusText[status] ?? status ?? ''
+}
+
 function rolePillClass(assignee) {
   if (['po', 'designer', 'developer', 'qa'].includes(assignee)) return assignee
   return null // 'user' and anything else render as the neutral pill, same as the mockup's own "user" row
@@ -252,10 +270,9 @@ function ticketRolePill(assignee) {
 /** One <table> of ticket rows for one group (current version, or backlog) — every row is a detail-row keyed for the embedded JSON blob below, so "every row resolves to a detail entry" is true by construction (same loop builds both). */
 function ticketRowsTable(tickets) {
   if (tickets.length === 0) {
-    return '<p class="v-note">이 묶음에는 티켓이 없다.</p>'
+    return `<p class="v-note">${TICKET.empty}</p>`
   }
-  let html =
-    '<div class="table-wrap"><table><thead><tr><th>ID</th><th>slug</th><th>유형</th><th>상태</th><th>담당</th></tr></thead><tbody>\n'
+  let html = `<div class="table-wrap"><table><thead><tr>${TICKET.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
   for (const t of tickets) {
     const fm = t.frontmatter
     const id = fm.id || t.rel
@@ -263,7 +280,7 @@ function ticketRowsTable(tickets) {
     html += `<td class="id-col">${escapeHtml(id)}</td>`
     html += `<td>${escapeHtml(fm.slug || '')}</td>`
     html += `<td><span class="pill pill-type">${escapeHtml(fm.type || '')}</span></td>`
-    html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(fm.status || '')}</span></td>`
+    html += `<td><span class="pill pill-status-${statusPillClass(fm.status)}">${escapeHtml(ticketStatusText(fm.status))}</span></td>`
     html += `<td>${ticketRolePill(fm.assignee)}</td>`
     html += '</tr>\n'
   }
@@ -278,32 +295,31 @@ function ticketStoreInner(tickets, currentVersion) {
 
   const sidebar = `<nav class="sidebar">
 <div class="sidebar-title">productune · ${escapeHtml(currentVersion)}</div>
-<div class="sidebar-sub">티켓</div>
+<div class="sidebar-sub">${TICKET.sidebarLabel}</div>
 <button type="button" class="nav-item nav-item-clickable active" data-group-select="${escapeHtml(currentVersion)}"><span>${escapeHtml(currentVersion)}</span><span class="nav-item-count">${currentTickets.length}</span></button>
-<button type="button" class="nav-item nav-item-clickable" data-group-select="backlog"><span>backlog</span><span class="nav-item-count">${backlogTickets.length}</span></button>
+<button type="button" class="nav-item nav-item-clickable" data-group-select="backlog"><span>${escapeHtml(TICKET.backlogLabel)}</span><span class="nav-item-count">${backlogTickets.length}</span></button>
 </nav>`
 
   let omittedHtml = ''
   if (tickets.omitted.length > 0) {
-    omittedHtml =
-      '<p class="v-note">이 두 묶음만 목록에 올린다 — 지금 열려 있는 라운드와 아직 배정 안 된 백로그. 닫힌 라운드는 목록에 없다(원본은 아래 경로에 그대로 있다):</p>\n'
-    omittedHtml += '<table class="v-omitted"><thead><tr><th>bucket</th><th>tickets</th><th>bytes</th><th>path</th></tr></thead><tbody>\n'
+    omittedHtml = `<p class="v-note">${escapeHtml(TICKET.omittedNote)}</p>\n`
+    omittedHtml += `<table class="v-omitted"><thead><tr>${TICKET.omittedTableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
     for (const o of tickets.omitted) {
       omittedHtml += `<tr><td><code>${escapeHtml(o.bucket)}</code></td><td>${o.count}</td><td>${fmtBytes(o.bytes)}</td><td><code>docs/tickets/${escapeHtml(o.bucket)}/</code></td></tr>\n`
     }
     omittedHtml += '</tbody></table>\n'
   }
 
-  const body = `<div class="section-meta"><span class="count-badge">티켓 <b>${currentTickets.length + backlogTickets.length}</b>건</span></div>
+  const body = `<div class="section-meta"><span class="count-badge">${TICKET.sidebarLabel} <b>${currentTickets.length + backlogTickets.length}</b>${TICKET.countUnit}</span></div>
 <div class="view-pane active" data-group="${escapeHtml(currentVersion)}">${ticketRowsTable(currentTickets)}</div>
 <div class="view-pane" data-group="backlog">${ticketRowsTable(backlogTickets)}</div>
 ${omittedHtml}`
 
   const mainCol = `<div class="frame-main-col">
-<div class="topstrip"><span class="topstrip-crumb"><b>티켓 · <span class="js-group-label">${escapeHtml(currentVersion)}</span></b></span></div>
+<div class="topstrip"><span class="topstrip-crumb"><b>${TICKET.sidebarLabel} · <span class="js-group-label">${escapeHtml(currentVersion)}</span></b></span></div>
 <div class="frame-body"><div class="main-inner">${body}</div></div>
-<div class="detail-panel" role="dialog" aria-label="상세">
-<div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="닫기">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
+<div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
+<div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
 <div class="detail-panel-body"></div>
 </div>
 </div>`
@@ -376,8 +392,8 @@ ${sidebarButtons}
   const mainCol = `<div class="frame-main-col">
 <div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span></div>
 <div class="frame-body"><div class="main-inner">${panes}</div></div>
-<div class="detail-panel" role="dialog" aria-label="상세">
-<div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="닫기">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
+<div class="detail-panel" role="dialog" aria-label="${COMMON.detailPanel}">
+<div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="${COMMON.close}">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
 <div class="detail-panel-body"></div>
 </div>
 </div>`
@@ -397,23 +413,34 @@ function wikiFeatureStatusPillClass(status) {
   return 'todo' // unknown/absent — neutral, never invented
 }
 
+/** Raw wiki/feature status (live/superseded/absent) → its T-705 §B/§D Korean pill text — same map for both stores. */
+function wikiFeatureStatusText(status) {
+  return WIKI.statusText[status || ''] ?? status ?? ''
+}
+
 // Wiki frontmatter without a `type` key (docs/wiki/log.md, docs/wiki/inbox.md
 // — measured 2026-09-26) still has to land in some sidebar group. This is a
-// sentinel key, not a Korean label invented ahead of Designer sign-off
-// (acceptance line 3) — English, machine-shaped, same register as the
-// ticket-store's own "backlog"/omitted-bucket labels above.
+// sentinel DATA key (never rendered to the screen — T-705 §F: "내부 정렬/
+// 데이터 키는 화면에 안 보이므로 그대로 둬도 된다"), distinct from its
+// human-visible label (WIKI.unclassifiedLabel, below).
 const WIKI_UNCLASSIFIED = 'UNCLASSIFIED'
 
+/** raw frontmatter `type` (or the WIKI_UNCLASSIFIED sentinel) → its T-705 §F human-visible label. */
+function wikiGroupLabel(key) {
+  if (key === WIKI_UNCLASSIFIED) return WIKI.unclassifiedLabel
+  return WIKI.groupLabels[key] || key
+}
+
 function wikiRowsTable(pages) {
-  if (pages.length === 0) return '<p class="v-note">이 묶음에는 위키 문서가 없다.</p>'
-  let html = '<div class="table-wrap"><table><thead><tr><th>파일</th><th>제목</th><th>상태</th><th>버전</th></tr></thead><tbody>\n'
+  if (pages.length === 0) return `<p class="v-note">${WIKI.empty}</p>`
+  let html = `<div class="table-wrap"><table><thead><tr>${WIKI.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
   for (const p of pages) {
     const fm = p.frontmatter
     const id = p.rel.split('/').pop()
     html += `<tr class="detail-row" data-detail-kind="wiki" data-detail-id="${escapeHtml(id)}">`
     html += `<td class="id-col">${escapeHtml(id)}</td>`
     html += `<td>${escapeHtml(fm.title || id)}</td>`
-    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(fm.status || '')}</span></td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(wikiFeatureStatusText(fm.status))}</span></td>`
     html += `<td class="num-col">${escapeHtml(fm.version || '—')}</td>`
     html += '</tr>\n'
   }
@@ -421,7 +448,12 @@ function wikiRowsTable(pages) {
   return html
 }
 
-/** Wiki store: sidebar groups by the RAW frontmatter `type` value (acceptance line 3 — Korean group labels await Designer sign-off, so the label IS the key, verbatim). */
+/** One store's-main-pane count badge (T-705 §G: wiki/feature/artifact/PRD-closed lacked this — ticket/home already had it). */
+function countBadge(label, count, unit) {
+  return `<div class="section-meta"><span class="count-badge">${escapeHtml(label)} · <b>${count}</b>${escapeHtml(unit)}</span></div>\n`
+}
+
+/** Wiki store: sidebar groups by the RAW frontmatter `type` value, keyed internally by that raw value (never shown) but LABELED per T-705 §F's final Korean mapping. */
 function wikiStoreInner(pages) {
   const byType = new Map()
   for (const p of pages) {
@@ -436,9 +468,10 @@ function wikiStoreInner(pages) {
   })
   const groups = keys.map((key) => {
     const items = byType.get(key)
-    return { key, label: key, count: items.length, bodyHtml: wikiRowsTable(items) }
+    const label = wikiGroupLabel(key)
+    return { key, label, count: items.length, bodyHtml: countBadge(label, items.length, WIKI.countUnit) + wikiRowsTable(items) }
   })
-  return groupedStore({ sidebarSubLabel: STORE_LABEL.wiki, crumbLabel: STORE_LABEL.wiki, groups })
+  return groupedStore({ sidebarSubLabel: WIKI.sidebarLabel, crumbLabel: WIKI.sidebarLabel, groups })
 }
 
 /** The detail-data JSON blob's "wiki" bucket — same construction discipline as `ticketDetailEntries`: keyed by the same id `wikiRowsTable` renders, from the same input list. */
@@ -464,15 +497,15 @@ function wikiSection(pages) {
 }
 
 function featureRowsTable(pages) {
-  if (pages.length === 0) return '<p class="v-note">기능 스펙이 없다.</p>'
-  let html = '<div class="table-wrap"><table><thead><tr><th>기능</th><th>제목</th><th>상태</th><th>spec_since</th></tr></thead><tbody>\n'
+  if (pages.length === 0) return `<p class="v-note">${FEATURE.empty}</p>`
+  let html = `<div class="table-wrap"><table><thead><tr>${FEATURE.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
   for (const p of pages) {
     const fm = p.frontmatter
     const id = p.rel.split('/').pop()
     html += `<tr class="detail-row" data-detail-kind="feature" data-detail-id="${escapeHtml(id)}">`
     html += `<td class="id-col">${escapeHtml(fm.feature || id)}</td>`
     html += `<td>${escapeHtml(fm.title || id)}</td>`
-    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(fm.status || '')}</span></td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(wikiFeatureStatusText(fm.status))}</span></td>`
     html += `<td class="num-col">${escapeHtml(fm.spec_since || '—')}</td>`
     html += '</tr>\n'
   }
@@ -482,7 +515,14 @@ function featureRowsTable(pages) {
 
 /** Feature store: `docs/features/` is flat (contracts §Fixed paths — "no index file, `ls` is the index") — one group, same list→detail model as every other store rather than a bespoke no-sidebar layout. */
 function featureStoreInner(pages) {
-  const groups = [{ key: 'all', label: STORE_LABEL.feature, count: pages.length, bodyHtml: featureRowsTable(pages) }]
+  const groups = [
+    {
+      key: 'all',
+      label: STORE_LABEL.feature,
+      count: pages.length,
+      bodyHtml: countBadge(FEATURE.sidebarLabel, pages.length, FEATURE.countUnit) + featureRowsTable(pages),
+    },
+  ]
   return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups })
 }
 
@@ -515,14 +555,30 @@ function prdOpenBody(prd, repoRootHref) {
   return `<div class="v-body">${md(prd.current.body, 'docs/prd', repoRootHref)}</div>`
 }
 
+/**
+ * T-705 §G: the closed-round table's 2nd column used to show the raw file
+ * path; the mockup's own column is the round's actual TITLE instead. Reads
+ * the document's own first `#`/`##`/… heading (its text, `#` markers
+ * stripped); a stub file with no heading (docs/prd/versions/v1.1.md,
+ * v1.2.1.md — measured 2026-09-26) falls back to its first non-empty line,
+ * per acceptance line 3 ("falling back to its first line").
+ * @param {string} body
+ */
+export function extractTitle(body) {
+  const headingMatch = /^#{1,6}\s+(.+)$/m.exec(body || '')
+  if (headingMatch) return headingMatch[1].trim()
+  const firstLine = (body || '').split('\n').find((l) => l.trim() !== '')
+  return firstLine ? firstLine.trim() : ''
+}
+
 function prdClosedRowsTable(closed) {
-  if (closed.length === 0) return '<p class="v-note">닫힌 버전이 없다.</p>'
-  let html = '<div class="table-wrap"><table><thead><tr><th>버전</th><th>파일</th></tr></thead><tbody>\n'
+  if (closed.length === 0) return `<p class="v-note">${PRD.empty}</p>`
+  let html = `<div class="table-wrap"><table><thead><tr>${PRD.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
   for (const c of closed) {
     const id = c.name.replace(/\.md$/, '')
     html += `<tr class="detail-row" data-detail-kind="prd" data-detail-id="${escapeHtml(id)}">`
     html += `<td class="id-col">${escapeHtml(id)}</td>`
-    html += `<td><code>${escapeHtml(c.rel)}</code></td>`
+    html += `<td>${escapeHtml(extractTitle(c.body))}</td>`
     html += '</tr>\n'
   }
   html += '</tbody></table></div>\n'
@@ -531,8 +587,13 @@ function prdClosedRowsTable(closed) {
 
 function prdStoreInner(prd, currentVersion, repoRootHref) {
   const groups = [
-    { key: 'open', label: `열린 섹션 · ${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref) },
-    { key: 'closed', label: '닫힌 버전', count: prd.closed.length, bodyHtml: prdClosedRowsTable(prd.closed) },
+    { key: 'open', label: `${PRD.openLabelPrefix}${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd, repoRootHref) },
+    {
+      key: 'closed',
+      label: PRD.closedLabel,
+      count: prd.closed.length,
+      bodyHtml: countBadge(PRD.closedLabel, prd.closed.length, PRD.countUnit) + prdClosedRowsTable(prd.closed),
+    },
   ]
   return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups })
 }
@@ -551,19 +612,30 @@ function prdSection(prd, currentVersion, repoRootHref) {
   return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion, repoRootHref) })
 }
 
+/** Raw artifact status (pending/approved/archived) → its T-705 §B/§D pill class + Korean text — a third store on the shared todo/done/abandoned CSS vocabulary (§D: same class, different word per store). */
+function artifactStatusPillClass(status) {
+  if (status === 'approved') return 'done'
+  if (status === 'archived') return 'abandoned'
+  return 'todo' // 'pending', or anything unrecognized — neutral, never invented
+}
+
+function artifactStatusText(status) {
+  return ARTIFACT.statusText[status] ?? status ?? ''
+}
+
 function artifactRowsTable(entries) {
-  if (entries.length === 0) return '<p class="v-note">이 버킷에는 산출물이 없다.</p>'
-  let html =
-    '<div class="table-wrap"><table><thead><tr><th>경로</th><th>종류</th><th>상태</th><th>티켓</th><th>언어</th><th>추가일</th></tr></thead><tbody>\n'
+  if (entries.length === 0) return `<p class="v-note">${ARTIFACT.empty}</p>`
+  let html = `<div class="table-wrap"><table><thead><tr>${ARTIFACT.tableHeaders.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>\n`
   for (const e of entries) {
     const f = e.fields
     const id = `${f.bucket}/${f.path}`
     html += `<tr class="detail-row" data-detail-kind="artifact" data-detail-id="${escapeHtml(id)}">`
     html += `<td class="id-col">${escapeHtml(f.path)}</td>`
     html += `<td>${escapeHtml(f.kind || '')}</td>`
-    html += `<td>${escapeHtml(f.status || '')}</td>`
+    html += `<td><span class="pill pill-status-${artifactStatusPillClass(f.status)}">${escapeHtml(artifactStatusText(f.status))}</span></td>`
     html += `<td>${escapeHtml(f.ticket || '')}</td>`
     html += `<td>${escapeHtml(f.lang || '')}</td>`
+    html += `<td class="num-col">${e.bytes === undefined ? '' : escapeHtml(fmtBytes(e.bytes))}</td>`
     html += `<td class="num-col">${escapeHtml(f.added_at || '')}</td>`
     html += '</tr>\n'
   }
@@ -584,7 +656,8 @@ function artifactStoreInner(artifacts, currentVersion) {
   const ordered = defaultKey === undefined ? keys : [defaultKey, ...keys.filter((k) => k !== defaultKey)]
   const groups = ordered.map((key) => {
     const items = byBucket.get(key)
-    return { key, label: key, count: items.length, bodyHtml: artifactRowsTable(items) }
+    const badgeLabel = `${key}${ARTIFACT.bucketSuffix}`
+    return { key, label: key, count: items.length, bodyHtml: countBadge(badgeLabel, items.length, ARTIFACT.countUnit) + artifactRowsTable(items) }
   })
   return groupedStore({ sidebarSubLabel: STORE_LABEL.artifact, crumbLabel: STORE_LABEL.artifact, groups })
 }
@@ -668,21 +741,10 @@ const PROGRESS_ASSIGNEE_ORDER = ['user', 'po', 'designer', 'developer', 'qa']
 // an item address (acceptance line 2).
 const PROGRESS_ITEM_ORDER = ['north-star', 'prd-form', 'linkage', 'gui-deferral-marker', 'inherited-defects', 'viewer', 'ticket-frame']
 const PROGRESS_OUT_OF_SCOPE_KEY = 'out-of-scope'
-const PROGRESS_ITEM_LABEL = {
-  'north-star': '북극성',
-  'prd-form': 'PRD 표현',
-  linkage: '연결',
-  'gui-deferral-marker': 'GUI 유예',
-  'inherited-defects': '승계 결함',
-  viewer: '뷰어',
-  'ticket-frame': '티켓 틀',
-  // "항목 밖" ("outside the item[s]") — this repo's own existing PRD.md
-  // vocabulary for the same idea ("항목 밖 편입", v1.10 §What) reused
-  // verbatim rather than a new phrase invented for this row; Designer
-  // sign-off on the exact wording is still open (same status as every other
-  // Korean UI string this generator flagged in its own 미해결 so far).
-  [PROGRESS_OUT_OF_SCOPE_KEY]: '항목 밖',
-}
+// PROGRESS_ITEM_LABEL now imported from ./labels.mjs (T-706: one label
+// layer) — T-705 §B moved `linkage` from '연결' to '간선' there; every other
+// key here (including PROGRESS_OUT_OF_SCOPE_KEY's '항목 밖', this repo's own
+// existing PRD.md vocabulary reused verbatim) is §A keep.
 
 // T-666 slice 2b acceptance line 1: "Stage progress is counted by
 // statusline-prdt.sh's own TYPE_TO_STAGE mapping, not a second rule — a test
@@ -772,10 +834,10 @@ function progressMatrixRow(key, ticketsForItem) {
 function progressOverall(currentTickets) {
   const done = currentTickets.filter((t) => t.frontmatter.status === 'done').length
   const squares = currentTickets.map((t) => progressSquare(t.frontmatter.status === 'done')).join('')
-  return `<div class="stage-overall"><span class="stage-matrix-label">전체</span><span class="stage-matrix-sq-wrap stage-overall-sq-wrap">${squares}</span><span class="stage-matrix-count mono">${done}/${currentTickets.length}</span></div>`
+  return `<div class="stage-overall"><span class="stage-matrix-label">${HOME.overall}</span><span class="stage-matrix-sq-wrap stage-overall-sq-wrap">${squares}</span><span class="stage-matrix-count mono">${done}/${currentTickets.length}</span></div>`
 }
 
-const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-matrix-legend-item">${progressSquare(true)} <span>담당</span></span><span class="stage-matrix-legend-item">${progressDashedSquare(true)} <span>검수</span></span></div>`
+const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-matrix-legend-item">${progressSquare(true)} <span>${HOME.legendMain}</span></span><span class="stage-matrix-legend-item">${progressDashedSquare(true)} <span>${HOME.legendDerived}</span></span></div>`
 
 /** The "진행 상황" pane: T-666 slice 2b's own TYPE_TO_STAGE stage line, above T-675's assignee x PRD-item matrix (a trailing "항목 밖" row included) — two different questions ("which lifecycle stage" vs "which PRD item"), not the same component, per this ticket's two separate acceptance lines. */
 function homeProgressBody(data) {
@@ -791,14 +853,14 @@ function homeProgressBody(data) {
   }
   const rows = PROGRESS_ITEM_ORDER.map((key) => progressMatrixRow(key, byItem.get(key))).join('') + progressMatrixRow(PROGRESS_OUT_OF_SCOPE_KEY, outOfScope)
   return `<div class="dash-card">
-<div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>진행 상황</span></div>
+<div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>${HOME.working}</span></div>
 ${homeStageLine(currentTickets)}
 ${progressOverall(currentTickets)}
 <div class="stage-matrix">${progressMatrixHeadRow()}${rows}</div>
 ${PROGRESS_LEGEND}
 <div class="dash-actions">
-<button type="button" class="btn-secondary" data-group-select="ticket">${svgIcon(STORE_ICON_PATHS.ticket, 13)} <span>티켓 목록 보기</span></button>
-<button type="button" class="btn-secondary" data-group-select="prd">${svgIcon(STORE_ICON_PATHS.prd, 13)} <span>PRD 열기</span></button>
+<button type="button" class="btn-secondary" data-group-select="ticket">${svgIcon(STORE_ICON_PATHS.ticket, 13)} <span>${HOME.gotoTickets}</span></button>
+<button type="button" class="btn-secondary" data-group-select="prd">${svgIcon(STORE_ICON_PATHS.prd, 13)} <span>${HOME.openPrd}</span></button>
 </div>
 </div>`
 }
@@ -807,12 +869,12 @@ function homeSection(data, repoRootHref) {
   const currentTickets = data.tickets.included.filter((t) => t.bucket === data.currentVersion)
   const currentArtifacts = data.artifacts.entries.filter((e) => e.fields.bucket === data.currentVersion)
   const groups = [
-    { key: 'progress', label: '진행 상황', bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
+    { key: 'progress', label: HOME.working, bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
     { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
     { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
     { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd, repoRootHref) },
   ]
-  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: '홈', crumbLabel: '홈', groups }) })
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: STORE_LABEL.home, crumbLabel: STORE_LABEL.home, groups }) })
 }
 
 const TEMPLATE_CSS = `
@@ -1026,7 +1088,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 const INTERACTION_SCRIPT = `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
-  var DETAIL_FIELD_LABELS = { type: '유형', status: '상태', assignee: '담당', created: '생성일', version: '버전', spec_since: 'spec_since', kind: '종류' };
+  var DETAIL_FIELD_LABELS = ${JSON.stringify(DETAIL_FIELD_LABELS)};
 
   function closeDetailPanel(section) {
     if (!section) return;
@@ -1056,7 +1118,7 @@ const INTERACTION_SCRIPT = `
     if (fields.body) {
       docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
     } else if (fields.fileHref) {
-      docHtml = '<div class="detail-doc detail-nobody"><p>이 항목은 본문을 인라인하지 않는다 — 파일을 직접 연다.</p><p><a href="' +
+      docHtml = '<div class="detail-doc detail-nobody"><p>' + ${JSON.stringify(FILE_HREF_NOTE)} + '</p><p><a href="' +
         fields.fileHref + '" target="_blank" rel="noopener">' + (fields.path || fields.fileHref).replace(/</g, '&lt;') + '</a></p></div>';
     } else {
       docHtml = '';
@@ -1156,7 +1218,7 @@ export function renderPage({
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>productune 뷰어</title>
+<title>${PAGE.title}</title>
 <style>
 ${fontFaceCss}
 ${TEMPLATE_CSS}
@@ -1166,8 +1228,8 @@ ${emitThemeVarBlock('v-light', light)}
 </head>
 <body class="v-dark">
 <header>
-<h1>productune — 뷰어</h1>
-<p>token file sha256 <code>${escapeHtml(tokensSha256)}</code></p>
+<h1>${PAGE.h1}</h1>
+<p>${COMMON.tokenHashCaption} <code>${escapeHtml(tokensSha256)}</code></p>
 </header>
 <div class="app-shell">
 ${activityBar('home')}

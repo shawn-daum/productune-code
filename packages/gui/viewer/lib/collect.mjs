@@ -133,13 +133,16 @@ export function collectArtifacts(repoRoot) {
     const relFsPath = path.join(repoRoot, 'docs/artifacts', bucket, fields.path)
     const isMd = fields.path.toLowerCase().endsWith('.md')
     let body
-    if (isMd && fs.existsSync(relFsPath)) {
-      body = fs.readFileSync(relFsPath, 'utf8')
+    let bytes
+    if (fs.existsSync(relFsPath)) {
+      bytes = fs.statSync(relFsPath).size
+      if (isMd) body = fs.readFileSync(relFsPath, 'utf8')
     }
     return {
       fields,
       diskRel: `docs/artifacts/${bucket}/${fields.path}`,
       inlined: isMd && body !== undefined,
+      bytes,
       body,
     }
   })
