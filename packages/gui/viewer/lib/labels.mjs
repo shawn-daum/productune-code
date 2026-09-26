@@ -85,9 +85,11 @@ export const TICKET = {
 export const WIKI = {
   tableHeaders: ['파일', '제목', '상태', '버전'],
   sidebarLabel: '위키',
-  // T-705 §E: 원문 '이 묶음에는 위키 문서가 없다.'를 해요체로 — 둘째 줄은 T-705가
-  // 스토어별 확정을 열어 뒀으므로(§C) 짓지 않는다; 없는 채로 둔다(acceptance line 2).
-  empty: '이 묶음에는 위키 문서가 없어요.',
+  // T-705 §E: 원문 '이 묶음에는 위키 문서가 없다.'를 해요체로. 둘째 줄은 T-707 확정
+  // (분류-중립 문장 — 위키 사이드바는 frontmatter type 별로 그룹지어 렌더하므로 이
+  // 문구가 여러 분류에서 재사용된다).
+  empty:
+    '이 묶음에는 위키 문서가 없어요.<br><span style="font-size:11px;">이 분류로 문서가 하나라도 쓰이면 여기 나타나요.</span>',
   // T-705 §D: 같은 pill 클래스(done 등)라도 스토어마다 다른 한글 — 위키/기능은 live=유효.
   statusText: { live: '유효', superseded: '대체됨', '': '미기재' },
   // T-705 §F — raw type → 최종 라벨("한글 라벨 (raw 영문)", feature 타입만 예외).
@@ -108,8 +110,9 @@ export const FEATURE = {
   // T-705 §B: 4번째 헤더 'spec_since'(영문 그대로) → '시작 버전'.
   tableHeaders: ['기능', '제목', '상태', '시작 버전'],
   sidebarLabel: '기능',
-  // T-705 §E: 원문 '기능 스펙이 없다.'를 해요체로 — 둘째 줄은 미확정(위와 동일 사유).
-  empty: '기능 스펙이 없어요.',
+  // T-705 §E: 원문 '기능 스펙이 없다.'를 해요체로. 둘째 줄은 T-707 확정.
+  empty:
+    '기능 스펙이 없어요.<br><span style="font-size:11px;">Designer 가 스펙 파일을 만들면 여기 나타나요.</span>',
   statusText: { live: '유효', superseded: '대체됨', '': '미기재' },
   countUnit: '개',
 }
@@ -134,8 +137,9 @@ export const PRD = {
   // T-705 §G: '제목' 열 추가 — closed round title from the document, falling
   // back to its first line (render.mjs's extractTitle).
   tableHeaders: ['버전', '제목'],
-  // T-705 §E: 원문 '닫힌 버전이 없다.'를 해요체로 — 둘째 줄 미확정.
-  empty: '닫힌 버전이 없어요.',
+  // T-705 §E: 원문 '닫힌 버전이 없다.'를 해요체로. 둘째 줄은 T-707 확정.
+  empty:
+    '닫힌 버전이 없어요.<br><span style="font-size:11px;">버전이 닫히면 여기 나타나요.</span>',
   countUnit: '개',
 }
 

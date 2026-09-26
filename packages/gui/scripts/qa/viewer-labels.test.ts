@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { renderPage } from '../../viewer/lib/render.mjs'
 import { OUTPUT_PATH } from '../../viewer/generate.mjs'
+import { WIKI, FEATURE, PRD } from '../../viewer/lib/labels.mjs'
 
 const RENDER_MJS_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../viewer/lib/render.mjs')
 
@@ -229,5 +230,54 @@ describe('viewer/lib/render.mjs — T-705 §G structures the approved mockup sho
     expect(html).toContain('<th>크기</th>')
     expect(html).toContain('<th>제목</th>')
     expect(html).toMatch(/class="count-badge">/)
+  })
+})
+
+// ---------- T-707: WIKI.empty / FEATURE.empty / PRD.empty second lines ----------
+
+const emptyGroupFixtureData = {
+  currentVersion: 'v1.10',
+  prd: { current: { body: '' }, closed: [] }, // closed: [] — PRD's "closed" group always exists (prdStoreInner), so this is reachable
+  tickets: { included: [], omitted: [] },
+  wiki: [],
+  features: [], // featureStoreInner always builds its single "all" group regardless of count, so this is reachable
+  artifacts: { entries: [] },
+}
+
+function renderEmptyGroupFixture(): string {
+  return renderPage({ data: emptyGroupFixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+}
+
+describe('viewer/lib/render.mjs — T-707: an empty group shows the Designer\'s two-line empty note', () => {
+  it('FEATURE.empty (both lines, verbatim, unescaped as HTML) renders when the store has zero specs', () => {
+    const html = renderEmptyGroupFixture()
+    expect(html).toContain(`<p class="v-note">${FEATURE.empty}</p>`)
+    expect(html).toContain('기능 스펙이 없어요')
+    expect(html).toContain('Designer 가 스펙 파일을 만들면 여기 나타나요')
+  })
+
+  it('PRD.empty (both lines, verbatim, unescaped as HTML) renders when there are zero closed rounds', () => {
+    const html = renderEmptyGroupFixture()
+    expect(html).toContain(`<p class="v-note">${PRD.empty}</p>`)
+    expect(html).toContain('닫힌 버전이 없어요')
+    expect(html).toContain('버전이 닫히면 여기 나타나요')
+  })
+
+  // WIKI.empty is NOT exercised through renderPage here: wikiStoreInner (T-706)
+  // builds its sidebar groups only from frontmatter `type` values actually
+  // present in `pages` (byType), so an entirely-empty wiki store produces
+  // ZERO groups rather than one empty group — wikiRowsTable (and so
+  // WIKI.empty) is never invoked. Confirmed by inspection: with `wiki: []`,
+  // `#store-wiki`'s main-inner is `''`, no `v-note` at all. That reachability
+  // gap predates T-707 (T-707's scope is the three RHS string values only,
+  // per its ticket's own "developer 반영 지점" note) — reported to the PO as
+  // an out-of-scope find (see this dispatch's `unresolved[]`), not patched
+  // here. This asserts what IS in scope: the constant itself carries the
+  // Designer's exact two-line verbatim value, ready for whenever a group-
+  // level empty wiki path exists.
+  it('WIKI.empty itself carries the Designer\'s exact two-line value (verbatim, T-707 §outcome)', () => {
+    expect(WIKI.empty).toBe(
+      '이 묶음에는 위키 문서가 없어요.<br><span style="font-size:11px;">이 분류로 문서가 하나라도 쓰이면 여기 나타나요.</span>',
+    )
   })
 })
