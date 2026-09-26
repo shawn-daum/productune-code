@@ -57,12 +57,12 @@ function fakeUptimeBinDir(): string {
   return dir
 }
 
-function runPrdt(cli: string, args: string[]): string {
+function runPrdt(cli: string, args: string[], env: Record<string, string> = {}): string {
   return execFileSync('python3', [cli, ...args], {
     cwd: projectDir,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, ...env },
     timeout: subprocessTimeout('cli'),
   })
 }
@@ -71,11 +71,16 @@ function runInit(): any {
   return JSON.parse(runPrdt(PRDT_CLI, ['init', '--json', '--slug', 'proj', '--yes']))
 }
 
-function doctor(cli = PRDT_CLI): string {
+// PRDT_META_BACKUP=0 by default: doctor's own live tick (maybe_meta_backup)
+// runs detached on every `prdt` invocation and would otherwise race a
+// hand-written prdt-backup-state.json fixture — same technique as
+// meta-backup-trigger.test.ts. Only doctor's LATCH-reading path is under
+// test here, never the tick itself.
+function doctor(cli = PRDT_CLI, env: Record<string, string> = { PRDT_META_BACKUP: '0' }): string {
   // doctor never fails the process (non-blocking) — but reindex/db work could
   // theoretically throw, so surface stderr on unexpected non-zero exit.
   try {
-    return runPrdt(cli, ['doctor'])
+    return runPrdt(cli, ['doctor'], env)
   } catch (e: any) {
     throw new Error(`prdt doctor failed: ${e.stderr || e.message}`)
   }
@@ -172,6 +177,34 @@ describe.skipIf(!PYTHON3)('prdt doctor — meta backup lag (T-428 item 1)', () =
     expect(metaGit(['rev-list', '--count', 'refs/remotes/backup/main..HEAD'])).toBe('0')
     const out = doctor()
     expect(out).toMatch(/backup remote 'backup' lag — 0 unpushed commit\(s\), last push ~(2[89]|3[01])d ago/)
+    fs.rmSync(bare, { recursive: true, force: true })
+  })
+
+  // T-699 (last piece): the As-is bug (user report, different machine,
+  // 2026-09-26) — meta.backup_remote defaults to 'backup', a meta repo whose
+  // only remote is 'origin' fails every automatic push with `reason:
+  // remote-missing`, and the old FAILED-line hint always suggested `prdt meta
+  // push backup` — a push that cannot ever succeed until the config or the
+  // remote changes. The fixture below reproduces the latch directly (same
+  // technique as meta-backup-trigger.test.ts) rather than racing the live
+  // detached tick, and drives the real `prdt doctor` over it.
+  test('T-699: remote-missing FAILED latch (only remote is origin, meta.backup_remote unset) names both fixes, never the push', () => {
+    runInit()
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'prdt-doctor-bare-'))
+    execFileSync('git', ['init', '--bare', '-q', bare])
+    metaGit(['remote', 'add', 'origin', bare])
+    fs.writeFileSync(path.join(projectDir, '.prdt', 'meta.git', 'prdt-backup-state.json'), JSON.stringify({
+      remote: 'backup', last_attempt_at: '2026-09-26T06:14:00.000Z', last_ok: false,
+      last_error: "meta.backup_remote 'backup' names no remote of the meta repo (have: origin)",
+    }))
+    const out = doctor()
+    expect(out).toMatch(/meta: automatic backup push FAILED at 2026-09-26T06:14Z .*names no remote of the meta repo \(have: origin\)/)
+    // fix 1: repoint .prdt/config.json meta.backup_remote at an existing remote
+    expect(out).toContain('meta.backup_remote 를 위에 나열된 원격 중 하나로 바꾸거나')
+    // fix 2: add the remote the config already names
+    expect(out).toContain('prdt meta remote add backup <url>')
+    // never the push that is guaranteed to fail again
+    expect(out).not.toContain('prdt meta push backup')
     fs.rmSync(bare, { recursive: true, force: true })
   })
 })

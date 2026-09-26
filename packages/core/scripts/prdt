@@ -1030,16 +1030,19 @@ def meta_backup_lag_warnings(root):
     st = _meta_backup_state(root)
     if st.get("last_ok") is False:
         err = st.get("last_error") or "?"
-        # T-699: `remote-missing`'s fix lives in exactly ONE place below (the
-        # `elif auto not in remotes` warning, live config vs live remotes) — this
-        # line must never ALSO tell the user to retry the exact push that
-        # already can't succeed until that fix lands (the doctor-side half of
-        # the same defect the `prdt` CLI's own notice had; PO decision
-        # 2026-09-26: same slice, same marker `_META_BACKUP_REMOTE_MISSING_MARKER`).
-        tail = "" if _META_BACKUP_REMOTE_MISSING_MARKER in err else (
-            f" — retries at the next stage boundary / day; manual: `prdt meta push {st.get('remote') or 'backup'}`")
+        remote = st.get("remote") or "backup"
+        # T-699 (last piece): the doctor-side FAILED line reuses the CLI's own
+        # `_meta_backup_fail_hint` instead of going silent on `remote-missing`
+        # — the `prdt` stderr notice and `prdt doctor` now name the exact same
+        # two fixes (repoint config / add the remote), never the push that is
+        # guaranteed to fail again. Every other reason is untouched: same old
+        # retry/manual-push tail as before.
+        if _META_BACKUP_REMOTE_MISSING_MARKER in err:
+            tail = " " + _meta_backup_fail_hint(remote, err).strip()
+        else:
+            tail = f" — retries at the next stage boundary / day; manual: `prdt meta push {remote}`"
         warns.append(f"meta: automatic backup push FAILED at {str(st.get('last_attempt_at') or '?')[:16]}Z "
-                     f"(remote '{st.get('remote') or '?'}') — {err}{tail}")
+                     f"(remote '{remote}') — {err}{tail}")
     # The automatic target itself (T-504 QA F1/F2): config may only NAME one of
     # the remotes the meta repo already has. A renamed/removed one silences the
     # tick (it has nothing to push to), a flag-/refspec-shaped one is refused by
