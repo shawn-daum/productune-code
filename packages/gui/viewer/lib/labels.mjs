@@ -21,8 +21,16 @@ export const COMMON = {
   // T-705 §C: no aria-label this specific existed in the mockup (screen-reader
   // only) — Designer's proposed wording, sharpened from a bare "상세".
   detailPanel: '상세 패널',
-  // T-705 §C proposed replacement for the plain "token file sha256 <hash>" caption.
-  tokenHashCaption: '토큰 파일 해시(sha256)',
+}
+
+// T-708 결함 7: a store whose sidebar collapses to exactly one group (feature,
+// today) shows this static line instead of a clickable group button — text
+// lifted verbatim from the approved mockup (docs/artifacts/v1.10/
+// define-screen-set.html ~line 4181, "그룹 없음 · 전체 3개"). `unit` is the
+// caller's own count-unit word (FEATURE.countUnit '개', WIKI.countUnit '장', …)
+// — this function holds no store-specific vocabulary of its own.
+export function noGroupLabel(count, unit) {
+  return `그룹 없음 · 전체 ${count}${unit}`
 }
 
 export const PAGE = {
