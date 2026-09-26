@@ -21,6 +21,11 @@
 #         Never a deny: the drift already stopped behaviourally (the last 6
 #         dispatches are all under 0.05), so day-one denying it would only
 #         teach a workaround. Promote to deny after one clean round.
+#   DENY  ④ (T-695) the MACHINE is over a resource cap — measured by tooling,
+#         never by PO judgment, after ①–③ pass (a malformed `[ctx]` keeps its
+#         own deny; a non-prdt dispatch and a cwd outside a prdt project stay
+#         fork-free and silent). See "T-695: machine resource cap" below for
+#         the five axes, their measurement, the defaults and the override file.
 #   NOT HERE — the return/envelope side (slice 3), and the three binary
 #         candidates held under doctrine #5 for zero observed violations
 #         (AskUserQuestion in a worker · worker↔worker calls · discipline-path
@@ -219,6 +224,7 @@ esac
 # structural decision, and dropping any one of them re-opens the silent no-op at
 # exactly that position.
 DIR=""
+SID=""
 while :; do
   ws_skip                                 # after `{` / `,`, before a key
   case "$SCAN" in '"'*) ;; *) break ;; esac
@@ -231,6 +237,7 @@ while :; do
     '"'*)
       str_take || break
       [ "$K" = "cwd" ] && DIR="$STR"
+      [ "$K" = "session_id" ] && SID="$STR"
       ;;
     '{'*|'['*)
       skip_container || break ;;
@@ -298,6 +305,7 @@ def tail: "\nNothing was spawned and no dispatch tokens were spent — fix the l
 # Event and tool are checked STRUCTURALLY, never by substring: the matcher is
 # supposed to narrow this to Agent/PreToolUse, and this is the check that makes
 # a mis-registration a no-op instead of a surprise.
+def gate:
 if (.hook_event_name != "PreToolUse") or (.tool_name != "Agent") then empty
 else (.tool_input // {}) as $ti
 | if ($ti | type) != "object" then empty
@@ -337,10 +345,19 @@ else (.tool_input // {}) as $ti
         end
       end
   end
-end
+end;
+# T-695: two lines — does the resource cap apply to this call (a `prdt-*`
+# dispatch on PreToolUse/Agent), and the `[ctx]` verdict above (deny · warn ·
+# nothing) as one compact JSON line or an empty line. Structural, never a
+# substring test on the raw payload.
+{applies: (if (.hook_event_name == "PreToolUse") and (.tool_name == "Agent") and ((.tool_input // {}) | type) == "object"
+              and (((.tool_input // {}).subagent_type // "") | type) == "string"
+           then ((.tool_input // {}).subagent_type // "") | test("^prdt-") else false end),
+ out: ([gate] | first)}
+| "\(.applies)\n\(if .out == null then "" else (.out | tojson) end)"
 JQ
 
-OUT="$(printf '%s' "$EV" | jq -c \
+RAW="$(printf '%s' "$EV" | jq -r \
   --arg clause_ctx "$CLAUSE_CTX" \
   --arg clause_prd "$CLAUSE_PRD" \
   --arg clause_lang "$CLAUSE_LANG" \
@@ -351,6 +368,353 @@ OUT="$(printf '%s' "$EV" | jq -c \
 # Any jq failure yields empty output and therefore silence: this hook can only
 # ever fail OPEN. A gate that breaks a dispatch because its own parser tripped
 # would be worse than the drift it exists to catch.
-[ -n "$OUT" ] || exit 0
-printf '%s\n' "$OUT"
+[ -n "$RAW" ] || exit 0
+APPLIES="${RAW%%$'\n'*}"
+GATE="${RAW#*$'\n'}"
+[ "$GATE" = "$RAW" ] && GATE=""          # no second line: the `[ctx]` verdict was silence
+if [ "$APPLIES" != "true" ]; then
+  [ -n "$GATE" ] && printf '%s\n' "$GATE"
+  exit 0
+fi
+case "$GATE" in
+  *'"permissionDecision":"deny"'*) printf '%s\n' "$GATE"; exit 0 ;;
+esac
+
+# ── T-695: machine resource cap ───────────────────────────────────────────────
+# WHY: 2026-09-26 one session ran 5–7 workers + 2 full suites + the cua VM at
+# once — a test flaked under load (green alone) and the 4 workers that ended
+# without a handback were all long runs; 2026-09-23 two overlapping full suites
+# put load at 72 on 14 CPUs (T-681). Parallelism was PO judgment; now the
+# machine is measured HERE, the one point every `prdt-*` dispatch passes before
+# it spawns. Reached only after the `[ctx]` verdict above passed, so a cwd
+# outside a prdt project and a non-prdt dispatch still cost zero forks.
+#
+# FIVE AXES — each with its measurement, each failing OPEN on its own:
+#   load       1-minute load average ÷ cores. `sysctl -n vm.loadavg` ("{ a b c }")
+#              and `hw.ncpu`; Linux fallback /proc/loadavg + getconf. The vitest
+#              timeout scaler's history on this machine: passes at load 4, times
+#              out at load 10 (scripts/vitest-timeouts.cjs).
+#   memory     `memory_pressure`'s own "System-wide memory free percentage: N%"
+#              × `sysctl -n hw.memsize` — the same source `prdt doctor` uses
+#              (T-619); never `vm_stat` free pages, which undercount reclaimable
+#              inactive memory.
+#   dispatches in-flight markers under $PRDT_HOME/run/dispatches/ (T-682) —
+#              MACHINE-WIDE, every project's: no `stopped_at`, `since` within
+#              STALE_H hours (the statusline's own STALE_HOURS rule), AND a live
+#              worker transcript (slice 2 — the rule and its evidence sit at
+#              the "dispatches axis" block below). THIS dispatch's marker is
+#              written at SubagentStart, after this hook, so the count is the
+#              OTHERS. `prdt dispatch ls` lists the same markers with the same
+#              verdict per marker.
+#   suites     vitest ENTRY processes in `ps -axo args=`: the node script token
+#              is `…/vitest/vitest.mjs` (or `…/.bin/vitest`) and no `.test.`
+#              file token follows — a single-file run is brief and cheap; "full"
+#              is what the process list can tell apart. Measured 2026-09-26: one
+#              `pnpm exec vitest run` is FOUR processes whose args mention
+#              vitest — `/bin/sh …/pnpm exec vitest run` (the pnpm shim, no
+#              exec), the pnpm-exe (titled `npm exec vitest run`), the node
+#              entry, and N pool workers — and the pre-slice-2 filter ("any
+#              args containing vitest, minus workers/`sh -c`") counted three of
+#              them, so ONE suite denied at cap 1. Only the entry counts now;
+#              an editor helper or any other process whose args merely contain
+#              the word counts 0.
+#   vms        `com.apple.Virtualization.VirtualMachine` processes in the same
+#              ps output. Not `lume ls`: its status stays `running` after a stop
+#              (machine wiki fact--qa-cua-vm), while the process IS the memory.
+#
+# CAPS — the measured value OVER the cap denies (memory: UNDER the minimum).
+# Defaults sized on this machine (14 CPU / 36 GB) from the incidents above; any
+# key can be overridden by `$PRDT_HOME/dispatch-caps.json`, a machine-scope
+# JSON object of numbers the USER writes (no persona writes it — a PO write
+# path needs its own contracts §Overrides carve-out first).
+#   load_ratio       1.5  (21 on 14 cores) — 1.0 is crossed by one full suite
+#                         alone (every dispatch would wait on any test run);
+#                         2.0 is the band where tests already time out.
+#   mem_free_pct_min 15   (~5.4 GB of 36) — one more worker (claude ~0.6 GB +
+#                         node test children ~2 GB) still fits; a VM boot costs
+#                         22 pp, and a dispatch right after one still passes.
+#   inflight_max     5    — 5 in flight admits a 6th, 6 in flight denies the
+#                         7th: the 5–7 band is where 2026-09-26 broke.
+#   suites_max       1    — two full suites already running denies: the pair
+#                         that broke both 09-23 and 09-26.
+#   vms_max          2    — two VM processes (16 GiB, 44% of RAM) still admit;
+#                         one leftover process must not stall every dispatch.
+#
+# A measurement that fails (tool missing, output unparsed) makes that axis
+# `unmeasured`: it never denies, and the failure is said ONCE per session — the
+# latch is `$PRDT_HOME/run/dispatch-gate/unmeasured.<session_id>` (run/ is the
+# tooling-owned directory, no new carve-out). Under every cap: no added output.
+# Nothing from the payload is echoed here either — the numbers are the
+# machine's, the session id is used only as a sanitized file name.
+
+PRDT_ROOT="${PRDT_HOME:-$HOME/.prdt}"
+STALE_H=4
+
+# One sysctl fork for all three keys (its output is one value per line, in
+# argument order); a missing key leaves its line empty rather than shifting
+# the others, and the Linux fallbacks fill only what stayed empty.
+SYS="$(sysctl -n vm.loadavg hw.ncpu hw.memsize 2>/dev/null)"
+LOADAVG="${SYS%%$'\n'*}"; SYS="${SYS#*$'\n'}"
+NCPU="${SYS%%$'\n'*}"; SYS="${SYS#*$'\n'}"
+MEMSIZE="${SYS%%$'\n'*}"
+[ "$LOADAVG" = "$NCPU" ] && [ "$NCPU" = "$MEMSIZE" ] && { NCPU=""; MEMSIZE=""; }   # fewer than three lines
+[ -n "$LOADAVG" ] || LOADAVG="$(cat /proc/loadavg 2>/dev/null)"
+[ -n "$NCPU" ] || NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
+MEMP="$(memory_pressure 2>/dev/null)"
+PSOUT="$(ps -axo args= 2>/dev/null)"
+
+# ── dispatches axis: markers, then liveness (T-695 slice 2) ──────────────────
+# Each marker file is read on its own (bash builtin, no fork) and joined with a
+# record separator, so ONE jq parses them one by one: a corrupt or half-written
+# file makes THIS axis `unmeasured` and nothing else — the old `cat | jq -s`
+# failed as a whole and the entire resource check vanished silently.
+#
+# A marker with no `stopped_at` is not a live worker. Measured 2026-09-26 on
+# this machine: 13 open markers, 6 live, 7 phantom — six workers the harness
+# killed on a 429 session limit (SubagentStop never fires for those) and one
+# leaked test marker with no transcript at all. The 4 h `since` window alone
+# held the gate shut for zero live workers until 10:31Z. So a candidate counts
+# only when its WORKER TRANSCRIPT says it is alive:
+#   path        marker `transcript` (written at SubagentStart since slice 2);
+#               a marker without one (pre-slice-2) is looked up ONCE for all of
+#               them with a single `find` under $CLAUDE_CONFIG_DIR/projects/
+#               (*/<session>/subagents/agent-<id>.jsonl) — 33 ms flat vs ~8 ms
+#               per bash glob per marker.
+#   dead        the transcript's LAST record carries `"model":"<synthetic>"` —
+#               the harness's own placeholder for a run it ended itself
+#               (session limit · interrupt · API stop; every one of today's six
+#               phantoms ends on exactly this line, ~1.4 KB, "You've hit your
+#               session limit"). A resume appends new records, so a revived
+#               worker stops matching the moment it writes.
+#   dead        no transcript file and the marker is older than GRACE_S — a
+#               worker writes its first record within seconds of SubagentStart
+#               (this dispatch's own: 0 s), so 5 min is 60× that; younger with
+#               no file yet = a worker that is starting, counted.
+#   dead        the transcript's mtime is older than IDLE_MIN — the no-signature
+#               crash. Evidence for 30 min: over 93 worker transcripts / 20,450
+#               consecutive writes of the last 30 h, p99 of the gap is 0.7 min,
+#               p99.9 is 3.5 min, the largest in-run gap is 10.0 min (Bash's own
+#               600 s ceiling); every gap over that (18–224 min) is a pause
+#               between coordinator resumes, whose marker was `stopped_at` then.
+#               A worker parked on a background job past 30 min is not counted
+#               either — it holds no CPU, which is what this axis guards.
+#   alive       otherwise.
+# Any failure on this path (jq · find · stat · tail missing or unparsed) leaves
+# `$INFLIGHT` empty = unmeasured; every other axis still judges.
+# `prdt dispatch ls` applies the same rule to the same files and names each
+# marker's state — it is the command the deny text points at.
+GRACE_S=300
+IDLE_MIN=30
+CLAUDE_CFG="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+MARK_BAD=""          # non-empty = the dispatches axis is unmeasured
+MARK_CANDS=""        # `<agent_id>US<transcript>US<age-seconds>` per open, fresh marker
+MTIMES=""; TAILS=""  # liveness evidence for the transcripts that exist
+MARK_FILES=()
+for f in "$PRDT_ROOT"/run/dispatches/*.json; do
+  [ -e "$f" ] || continue
+  [ -r "$f" ] || { MARK_BAD=1; continue; }
+  MARK_FILES+=("$f")
+done
+if [ -z "$MARK_BAD" ] && [ ${#MARK_FILES[@]} -gt 0 ]; then
+  # ONE fork reads every marker: `tail -n +1` prints each file whole behind
+  # its own `==> path <==` header (`/dev/null` forces the headers even for a
+  # single file — macOS tail has no -v). `$(<f)` per file would fork once per
+  # marker on bash 3.2 (42 markers = +120 ms, measured).
+  MARK_RAW="$(tail -n +1 -- "${MARK_FILES[@]}" /dev/null 2>/dev/null)"
+  # Fields are joined with US (0x1f): a TAB is IFS whitespace to `read`, so an
+  # empty middle field (a legacy marker's transcript) would collapse away.
+  # Line 1: `<bad-count>`; then one candidate line per open marker whose
+  # `since` is within STALE_H. Values are our own hook's writes, never payload
+  # — still, an id is used below only as a file-name token and a path only
+  # when absolute.
+  IFS= read -r -d '' MPROG <<'JQ'
+(reduce (split("\n"))[] as $l ({cur: null, files: {}};
+   if ($l | test("^==> .* <==$")) then (($l | capture("^==> (?<p>.*) <==$").p) as $p | .cur = $p | .files[$p] = "")
+   elif .cur == null then . else .files[.cur] += $l + "\n" end)
+ | .files | to_entries | map(select(.key != "/dev/null") | .value | try fromjson catch "BAD")) as $m
+| ($m | map(select(. == "BAD")) | length) as $bad
+| (now | floor) as $now
+| ($m | map(select(type == "object" and ((.stopped_at // null) == null))
+        | ((.since // "") | try fromdate catch null) as $s
+        | select($s != null and ($now - $s) < ($stale_h * 3600))
+        | {id: ((.agent_id // "") | tostring), t: ((.transcript // "") | tostring), age: ($now - $s)})) as $c
+| "\($bad)", ($c[] | "\(.id | gsub("[\u001f\n]"; ""))\u001f\(.t | gsub("[\u001f\n]"; ""))\u001f\(.age)")
+JQ
+  MOUT="$(printf '%s' "$MARK_RAW" | jq -r -R -s --argjson stale_h "$STALE_H" "$MPROG" 2>/dev/null)"
+  if [ -z "$MOUT" ]; then
+    MARK_BAD=1
+  else
+    US=$'\x1f'
+    BADN="${MOUT%%$'\n'*}"; CANDS="${MOUT#*$'\n'}"; [ "$CANDS" = "$MOUT" ] && CANDS=""
+    if [ "$BADN" != "0" ]; then
+      MARK_BAD=1
+    else
+      # Legacy markers (no `transcript`): one `find` for all of them. Zero forks
+      # once every open marker carries its path.
+      FIND_ARGS=(); FOUND=""
+      while IFS=$US read -r id t age; do
+        [ -n "$id" ] || continue
+        case "$t" in /*) continue ;; esac
+        case "$id" in *[!A-Za-z0-9_-]*) continue ;; esac
+        if [ ${#FIND_ARGS[@]} -eq 0 ]; then FIND_ARGS=(-name "agent-$id.jsonl")
+        else FIND_ARGS+=(-o -name "agent-$id.jsonl"); fi
+      done <<< "$CANDS"
+      if [ ${#FIND_ARGS[@]} -gt 0 ] && [ -d "$CLAUDE_CFG/projects" ]; then
+        FOUND="$(find "$CLAUDE_CFG/projects" -maxdepth 4 -name 'agent-*.jsonl' -path '*/subagents/*' \( "${FIND_ARGS[@]}" \) 2>/dev/null)"
+      fi
+      # Resolve every candidate to a path (or none); collect the paths that exist.
+      EXIST=()
+      while IFS=$US read -r id t age; do
+        [ -n "$id" ] || continue
+        case "$t" in /*) ;; *) t="" ;; esac
+        if [ -z "$t" ] && [ -n "$FOUND" ]; then
+          case "$id" in *[!A-Za-z0-9_-]*) ;; *)
+            while IFS= read -r fp; do
+              case "$fp" in */"agent-$id.jsonl") t="$fp"; break ;; esac
+            done <<< "$FOUND" ;;
+          esac
+        fi
+        [ -n "$t" ] && [ -f "$t" ] && EXIST+=("$t")
+        MARK_CANDS="$MARK_CANDS$id$US$t$US$age"$'\n'
+      done <<< "$CANDS"
+      if [ ${#EXIST[@]} -gt 0 ]; then
+        # macOS stat first, GNU second; `/dev/null` forces tail's per-file
+        # headers even for a single transcript. The verdict itself is computed
+        # inside the resource program below (one jq, not two).
+        MTIMES="$(stat -f '%m %N' -- "${EXIST[@]}" 2>/dev/null)"
+        [ -n "$MTIMES" ] || MTIMES="$(stat -c '%Y %n' -- "${EXIST[@]}" 2>/dev/null)"
+        TAILS="$(tail -c 4000 -- "${EXIST[@]}" /dev/null 2>/dev/null)"
+        [ -n "$MTIMES" ] && [ -n "$TAILS" ] || MARK_BAD=1
+      fi
+    fi
+  fi
+fi
+
+CAPSF="$PRDT_ROOT/dispatch-caps.json"
+CAPS='{}'
+CAPS_BAD=""
+if [ -e "$CAPSF" ]; then
+  CAPS="$(jq -c 'if type == "object" then with_entries(select(.value | type == "number")) else empty end' "$CAPSF" 2>/dev/null)"
+  [ -n "$CAPS" ] || { CAPS='{}'; CAPS_BAD=1; }
+fi
+
+IFS= read -r -d '' RPROG <<'JQ'
+def r2: (. * 100 | round) / 100;
+def num: try (tonumber | select(. >= 0)) catch null;
+def deny($why): {hookSpecificOutput: {hookEventName: "PreToolUse",
+  permissionDecision: "deny", permissionDecisionReason: $why}};
+
+({load_ratio: 1.5, mem_free_pct_min: 15, inflight_max: 5, suites_max: 1, vms_max: 2} + $caps) as $cap
+| ([$loadavg | scan("[0-9]+\\.[0-9]+")] | first | if . == null then null else num end) as $load1
+| ($ncpu | num | if . == 0 then null else . end) as $ncpu
+| ($memsize | num | if . == 0 then null else . end) as $memsize
+| ([$memp | capture("free percentage: *(?<p>[0-9]+)%")] | first | if . == null then null else (.p | num) end) as $memfree
+| (if $ps == "" then null else ($ps | split("\n")) end) as $procs
+| (if $procs == null then null else
+     ($procs | map(select(test("vitest") and test("^(\\S*/)?node(js|[0-9]+)?(\\s+-\\S*)*\\s+\\S*/(vitest/vitest\\.mjs|\\.bin/vitest)(\\s|$)")
+                          and (test("\\.test\\.[cm]?[jt]sx?") | not))) | length) end) as $suites
+| (if $procs == null then null else
+     ($procs | map(select(test("com\\.apple\\.Virtualization\\.VirtualMachine$"))) | length) end) as $vms
+| (if $mark_bad != "" then null else
+     try (
+       ($mtimes | split("\n") | map(capture("^(?<m>[0-9]+) (?<p>.+)$")) | map({(.p): (.m | tonumber)}) | add // {}) as $mt
+       | (reduce ($tails | split("\n"))[] as $l ({cur: "", last: {}};
+            if ($l | test("^==> .* <==$")) then .cur = ($l | capture("^==> (?<p>.*) <==$").p)
+            elif $l == "" or .cur == "" then . else .last[.cur] = $l end)).last as $last
+       | [$cands | split("\n")[] | select(length > 0) | split("\u001f") | {id: .[0], t: .[1], age: (.[2] | tonumber)}]
+       | map(if .t == "" or ($mt[.t] // null) == null then (.age < $grace)
+             elif (($last[.t] // "") | contains("\"model\":\"<synthetic>\"")) then false
+             elif (now - $mt[.t]) > ($idle_min * 60) then false
+             else true end)
+       | map(select(.)) | length
+     ) catch null end) as $inflight
+| (if $load1 != null and $ncpu != null then ($load1 / $ncpu) else null end) as $ratio
+| (if $memsize != null then ($memsize / 1073741824 | r2) else null end) as $gb
+| [
+  {k: "load", ok: ($ratio != null), over: ($ratio != null and $ratio > $cap.load_ratio),
+   text: (if $ratio != null then "CPU load 1m \($load1 | r2) on \($ncpu) cores = ratio \($ratio | r2) (cap \($cap.load_ratio) — sysctl vm.loadavg / hw.ncpu)"
+          else "CPU load: unmeasured (sysctl vm.loadavg / hw.ncpu)" end),
+   free: "wait for load to fall (a running suite or worker finishing)"},
+  {k: "memory", ok: ($memfree != null), over: ($memfree != null and $memfree < $cap.mem_free_pct_min),
+   text: (if $memfree != null then "available memory \($memfree)%\(if $gb != null then " of \($gb) GB" else "" end) (min \($cap.mem_free_pct_min)% — memory_pressure free percentage × hw.memsize)"
+          else "available memory: unmeasured (memory_pressure × hw.memsize)" end),
+   free: "free memory: stop a VM whose job is done (`prdt resource ls` names its owner) or wait for a suite to finish"},
+  {k: "dispatches", ok: ($inflight != null), over: ($inflight != null and $inflight > $cap.inflight_max),
+   text: (if $inflight != null then "in-flight dispatches \($inflight) machine-wide, every project (cap \($cap.inflight_max) — run/dispatches markers with no stopped_at, since < \($stale_h) h, and a live worker transcript: not ended by the harness, written within \($idle_min) min)"
+          else "in-flight dispatches: unmeasured (a run/dispatches marker is unreadable or a liveness probe failed — `prdt dispatch ls` names it)" end),
+   free: "wait for a worker to return (`prdt dispatch ls` lists every project's in-flight dispatches and each marker's state)"},
+  {k: "suites", ok: ($suites != null), over: ($suites != null and $suites > $cap.suites_max),
+   text: (if $suites != null then "running full test suites \($suites) (cap \($cap.suites_max) — vitest entry processes (node …/vitest/vitest.mjs) with no .test. file filter, from ps; pnpm wrappers and pool workers are not counted)"
+          else "running full test suites: unmeasured (ps)" end),
+   free: "wait for a full test suite to finish"},
+  {k: "vms", ok: ($vms != null), over: ($vms != null and $vms > $cap.vms_max),
+   text: (if $vms != null then "resident VMs \($vms) (cap \($cap.vms_max) — com.apple.Virtualization.VirtualMachine processes, from ps)"
+          else "resident VMs: unmeasured (ps)" end),
+   free: "stop a VM whose job is done (`prdt resource ls` names its owner; a VM no marker owns is the user's)"}
+  ] as $axes
+| ($axes | map(select(.ok | not) | .k)) as $unm_axes
+| (if $caps_bad == "1" then $unm_axes + ["caps-file"] else $unm_axes end) as $unm
+| (if ($unm | length) == 0 then "" else
+     "[prdt dispatch gate] resource check: unmeasured " + ($unm | join(", "))
+     + " — a measurement failed (tool missing or output unparsed), so that axis never blocks a dispatch; said once per session."
+     + (if $caps_bad == "1" then " `dispatch-caps.json` is not a JSON object of numbers — defaults in force." else "" end) end) as $note
+| ($axes | map(select(.over))) as $over
+| (if ($over | length) == 0 then "" else
+     deny("[prdt dispatch gate] WAITING — the machine is over cap; nothing was spawned and no dispatch tokens were spent."
+          + "\nmeasured: " + ($axes | map(.text) | join(" · "))
+          + "\nover cap: " + ($over | map(.k) | join(", "))
+          + "\nfrees it: " + ($over | map(.free) | join("; "))
+          + " — then re-dispatch the same prompt. Caps: defaults in prdt-dispatch-gate.sh, machine override `$PRDT_HOME/dispatch-caps.json` (keys load_ratio · mem_free_pct_min · inflight_max · suites_max · vms_max, numbers only)."
+          + (if $note == "" then "" else "\n" + $note end)) | tojson end) as $deny
+| "\($unm | join(","))\n\($deny)\n\($note)\nend"
+JQ
+
+RES="$(jq -rn \
+  --arg loadavg "$LOADAVG" --arg ncpu "$NCPU" --arg memsize "$MEMSIZE" --arg memp "$MEMP" \
+  --arg ps "$PSOUT" --argjson caps "$CAPS" --arg caps_bad "$CAPS_BAD" \
+  --arg mark_bad "$MARK_BAD" --arg cands "$MARK_CANDS" --arg mtimes "$MTIMES" --arg tails "$TAILS" \
+  --argjson stale_h "$STALE_H" --argjson idle_min "$IDLE_MIN" --argjson grace "$GRACE_S" \
+  "$RPROG" 2>/dev/null)"
+if [ -z "$RES" ]; then
+  # The resource program itself failed: fail OPEN, keep the `[ctx]` verdict.
+  [ -n "$GATE" ] && printf '%s\n' "$GATE"
+  exit 0
+fi
+UNM="${RES%%$'\n'*}"; REST="${RES#*$'\n'}"
+DENY="${REST%%$'\n'*}"; REST="${REST#*$'\n'}"
+NOTE="${REST%%$'\n'*}"
+
+if [ -n "$DENY" ]; then
+  printf '%s\n' "$DENY"
+  exit 0
+fi
+
+# Unmeasured: say it once per session. The session id is a file-name token
+# only — anything outside [A-Za-z0-9._-] collapses to `nosession`.
+if [ -n "$UNM" ]; then
+  case "$SID" in *[!A-Za-z0-9._-]*|"") SID="nosession" ;; esac
+  LATCH_DIR="$PRDT_ROOT/run/dispatch-gate"
+  LATCH="$LATCH_DIR/unmeasured.$SID"
+  PREV=""
+  [ -r "$LATCH" ] && IFS= read -r PREV < "$LATCH"
+  if [ "$PREV" = "$UNM" ]; then
+    NOTE=""
+  else
+    mkdir -p "$LATCH_DIR" 2>/dev/null
+    printf '%s\n' "$UNM" > "$LATCH" 2>/dev/null
+    find "$LATCH_DIR" -type f -mtime +1 -delete 2>/dev/null
+  fi
+fi
+
+if [ -z "$NOTE" ]; then
+  [ -n "$GATE" ] && printf '%s\n' "$GATE"
+  exit 0
+fi
+if [ -n "$GATE" ]; then
+  OUT="$(printf '%s' "$GATE" | jq -c --arg n "$NOTE" '.hookSpecificOutput.additionalContext += "\n" + $n' 2>/dev/null)"
+else
+  OUT="$(jq -nc --arg n "$NOTE" '{hookSpecificOutput: {hookEventName: "PreToolUse", additionalContext: $n}}' 2>/dev/null)"
+fi
+[ -n "$OUT" ] || OUT="$GATE"
+[ -n "$OUT" ] && printf '%s\n' "$OUT"
 exit 0

@@ -430,12 +430,30 @@ def po_state_ticket():
         return None
 
 
+def agent_transcript_path(aid):
+    """T-695 slice 2: the WORKER transcript this dispatch writes — derived from
+    the event's parent `transcript_path` (`…/projects/<slug>/<session_id>.jsonl`)
+    and `session_id`: `…/projects/<slug>/<session_id>/subagents/agent-<aid>.jsonl`
+    (layout measured 2026-09-26, Claude Code 2.1.283). The dispatch gate reads
+    this file's tail and mtime to tell a live worker from a phantom marker (a
+    429-killed run never gets SubagentStop); a marker without the path costs
+    the gate one `find` over every project. None when the event lacks either."""
+    tp, sid = ev.get("transcript_path"), ev.get("session_id")
+    if not (isinstance(tp, str) and tp and isinstance(sid, str) and sid):
+        return None
+    if "/" in sid or "/" in aid:
+        return None
+    return os.path.join(os.path.dirname(tp), sid, "subagents", f"agent-{aid}.jsonl")
+
+
 def marker_start(aid):
     """SubagentStart: write or revive the marker for `aid` (see LIFECYCLE)."""
     prior = marker_load(aid)
     data = {
         "agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
         "tool_use_id": None, "project_root": root, "since": now,
+        "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
+        "transcript": agent_transcript_path(aid),
     }
     if prior:
         for k in ("dispatch_id", "ticket_id", "tool_use_id"):
@@ -463,7 +481,9 @@ def marker_refine(aid, ctx_obj, tool_use_id, launched_async):
         if not launched_async:
             return
         data = {"agent_id": aid, "persona": persona, "dispatch_id": None, "ticket_id": None,
-                "tool_use_id": None, "project_root": root, "since": now}
+                "tool_use_id": None, "project_root": root, "since": now,
+                "session_id": ev.get("session_id") if isinstance(ev.get("session_id"), str) else None,
+                "transcript": agent_transcript_path(aid)}
     if ticket_id:
         data["ticket_id"], data["dispatch_id"] = ticket_id, dispatch_id
     elif dispatch_id and not data.get("dispatch_id"):
