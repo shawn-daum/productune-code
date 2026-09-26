@@ -250,6 +250,31 @@ async function openInteractivePage(
   return { browser, page, tmp }
 }
 
+// T-706 root cause (measured 2026-09-27, this checkout's execution sandbox):
+// every interaction test below hung at "waiting for element to be visible,
+// enabled and stable" until Playwright's own action timeout, regardless of
+// viewer.html's content — reproduced identically against the pre-T-706
+// (ca78f9b) render.mjs/collect.mjs output, so it is not a T-706 regression.
+// Isolated with a standalone probe: `requestAnimationFrame` never fires in
+// this sandbox's spawned headless Chrome — a 3s poll scheduling 5 consecutive
+// rAF callbacks got 0 — tried across `--headless=new` and legacy `--headless`,
+// with and without `--disable-gpu`, and with
+// `--use-angle=swiftshader --enable-unsafe-swiftshader` /
+// `--run-all-compositor-stages-before-draw`; none changed the result.
+// Playwright's default `.click()` actionability wait includes a "stable"
+// check (two equal bounding-rect samples across animation frames), which
+// therefore never resolves here. A raw CDP `Input.dispatchMouseEvent` at the
+// element's real coordinates, and `page.click(..., { force: true })` (skips
+// the actionability wait but still dispatches a real mouse click through the
+// same input pipeline), both land correctly and flip the real interaction
+// state (verified: the activity-bar switch and the detail-panel open both
+// fire) — the page's own click delegator is not what is broken. `force:
+// true` is used below for exactly that reason: it keeps every click a real,
+// coordinate-based mouse event through the actual document click listener
+// (the T-666 slice 1a defect this suite exists to catch would still fail it),
+// while not depending on a browser property (rAF ticking) this sandbox does
+// not provide. Non-click assertions (`toBeVisible`, `toHaveClass`,
+// `toHaveCount`) do not use the "stable" check and were unaffected.
 test.describe('viewer/viewer.html — rendered in a real browser @window', () => {
   let execPath: string
   let child: ChildProcessWithoutNullStreams
@@ -336,11 +361,11 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
-      await page.click('.activity-btn[data-store="ticket"]')
+      await page.click('.activity-btn[data-store="ticket"]', { force: true })
       const rows = page.locator('#store-ticket .detail-row')
       await expect(rows.first()).toBeVisible()
 
-      await rows.nth(0).click()
+      await rows.nth(0).click({ force: true })
       await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(1)
       const firstTitle = await page.locator('#store-ticket .detail-panel-title').innerText()
       expect(firstTitle.length).toBeGreaterThan(0)
@@ -350,12 +375,12 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
       await page.keyboard.press('Escape')
       await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(0)
 
-      await rows.nth(0).click()
+      await rows.nth(0).click({ force: true })
       await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(1)
-      await page.click('#store-ticket .topstrip')
+      await page.click('#store-ticket .topstrip', { force: true })
       await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(0)
 
-      await rows.nth(1).click()
+      await rows.nth(1).click({ force: true })
       await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(1)
       const secondTitle = await page.locator('#store-ticket .detail-panel-title').innerText()
       expect(secondTitle).not.toBe(firstTitle)
@@ -370,16 +395,16 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
-      await page.click('.activity-btn[data-store="ticket"]')
+      await page.click('.activity-btn[data-store="ticket"]', { force: true })
       const currentGroup = await page.locator('#store-ticket [data-group-select]').first().getAttribute('data-group-select')
       expect(currentGroup).toBeTruthy()
       await expect(page.locator(`#store-ticket .view-pane[data-group="${currentGroup}"]`)).toHaveClass(/active/)
 
-      await page.click('#store-ticket [data-group-select="backlog"]')
+      await page.click('#store-ticket [data-group-select="backlog"]', { force: true })
       await expect(page.locator('#store-ticket .view-pane[data-group="backlog"]')).toHaveClass(/active/)
       await expect(page.locator(`#store-ticket .view-pane[data-group="${currentGroup}"]`)).not.toHaveClass(/active/)
 
-      await page.click(`#store-ticket [data-group-select="${currentGroup}"]`)
+      await page.click(`#store-ticket [data-group-select="${currentGroup}"]`, { force: true })
       await expect(page.locator(`#store-ticket .view-pane[data-group="${currentGroup}"]`)).toHaveClass(/active/)
       await expect(page.locator('#store-ticket .view-pane[data-group="backlog"]')).not.toHaveClass(/active/)
     } finally {
@@ -400,11 +425,11 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
       const html = fs.readFileSync(VIEWER_HTML, 'utf8')
       const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
       try {
-        await page.click(`.activity-btn[data-store="${store}"]`)
+        await page.click(`.activity-btn[data-store="${store}"]`, { force: true })
         const rows = page.locator(`#store-${store} .detail-row`)
         await expect(rows.first()).toBeVisible()
 
-        await rows.first().click()
+        await rows.first().click({ force: true })
         await expect(page.locator(`#store-${store} .detail-panel.active`)).toHaveCount(1)
         const title = await page.locator(`#store-${store} .detail-panel-title`).innerText()
         expect(title.length).toBeGreaterThan(0)
@@ -435,14 +460,14 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
       await expect(page.locator('#store-home .view-pane[data-group="progress"]')).toHaveClass(/active/)
 
       for (const group of ['ticket', 'artifact', 'prd', 'progress']) {
-        await page.click(`#store-home [data-group-select="${group}"]`)
+        await page.click(`#store-home [data-group-select="${group}"]`, { force: true })
         await expect(page.locator(`#store-home .view-pane[data-group="${group}"]`)).toHaveClass(/active/)
       }
 
-      await page.click('#store-home [data-group-select="ticket"]')
+      await page.click('#store-home [data-group-select="ticket"]', { force: true })
       const rows = page.locator('#store-home .detail-row[data-detail-kind="ticket"]')
       await expect(rows.first()).toBeVisible()
-      await rows.first().click()
+      await rows.first().click({ force: true })
       await expect(page.locator('#store-home .detail-panel.active')).toHaveCount(1)
       // Scoped to home's OWN panel — the ticket store's sibling section must
       // stay untouched (each `.store-section` carries its own `.detail-panel`).
@@ -463,18 +488,18 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
-      await page.click('.activity-btn[data-store="prd"]')
-      await page.click('#store-prd [data-group-select="closed"]')
+      await page.click('.activity-btn[data-store="prd"]', { force: true })
+      await page.click('#store-prd [data-group-select="closed"]', { force: true })
       await expect(page.locator('#store-prd .view-pane[data-group="closed"]')).toHaveClass(/active/)
 
       const rows = page.locator('#store-prd .detail-row')
       await expect(rows.first()).toBeVisible()
-      await rows.first().click()
+      await rows.first().click({ force: true })
       await expect(page.locator('#store-prd .detail-panel.active')).toHaveCount(1)
       const bodyText = await page.locator('#store-prd .detail-panel-body').innerText()
       expect(bodyText.length).toBeGreaterThan(0)
 
-      await page.click('#store-prd .topstrip')
+      await page.click('#store-prd .topstrip', { force: true })
       await expect(page.locator('#store-prd .detail-panel.active')).toHaveCount(0)
     } finally {
       await page.close()
@@ -523,7 +548,7 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
     const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
     try {
-      await page.click('.activity-btn[data-store="prd"]')
+      await page.click('.activity-btn[data-store="prd"]', { force: true })
       const links = page.locator('#store-prd .view-pane[data-group="open"] a[href]')
       await expect(links.first()).toBeVisible()
       const href = await links.first().getAttribute('href')
