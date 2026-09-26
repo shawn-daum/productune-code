@@ -60,19 +60,19 @@ const BUILD_STATE = { schema_version: 1, stage: 'build', version: 'v1', current_
 // can be reworded without the rule changing, and a byte pin turns that into
 // a false-red tree). Pin the rule instead: (a) tagged `[prdt register]`,
 // (b) names the non-default keys verbatim, (c) states which surface it
-// governs, (d) the tail says whether a body already arrived at session
-// start ("Binding only …") or none exists ("No body is in force …") —
-// never both, never neither.
+// governs, (d) when a body already arrived at session start the line ends
+// right there (S7-b, T-702, dropped the "Binding only" tail) — when none
+// exists, a "No body is in force …" tail still follows — never both.
 function assertRegisterBindingLineShape(line: string, opts: { keys: string; governs: string; bodyArrived: boolean }): void {
   expect(line.startsWith('[prdt register] ')).toBe(true)
   expect(line).toContain(opts.keys)
   expect(line).toContain(`governs ${opts.governs}`)
   if (opts.bodyArrived) {
-    expect(line).toMatch(/binding only/i)
+    expect(line.endsWith(`governs ${opts.governs}.`)).toBe(true)
     expect(line).not.toMatch(/no body is in force/i)
   } else {
     expect(line).toMatch(/no body is in force/i)
-    expect(line).not.toMatch(/binding only/i)
+    expect(line.endsWith(`governs ${opts.governs}.`)).toBe(false)
   }
 }
 
@@ -414,7 +414,7 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
     expect(ctx).not.toContain('[prdt register]')
   })
 
-  test('non-default keys with real bodies present → one `[prdt register]` line right after the state line, values verbatim, "Binding only" tail', () => {
+  test('non-default keys with real bodies present → one `[prdt register]` line right after the state line, values verbatim, no tail (S7-b)', () => {
     const ctx = contextOf(runHook(makeProject(BUILD_STATE), 'hello', { PRDT_HOME: prdtHome('form=outline\nstructure=planner-tables\naddress=션님\n', true) }))
     const lines = ctx.split('\n')
     expect(lines).toHaveLength(2)
@@ -450,8 +450,8 @@ describe('register binding (T-586) — the per-turn channel has ONE assembly poi
     const noGoverns = line.replace('governs user-chat', 'governs nothing')
     expect(() => assertRegisterBindingLineShape(noGoverns, opts)).toThrow()
 
-    const noTail = line.replace('Binding only', 'zzzzzzzzzz')
-    expect(() => assertRegisterBindingLineShape(noTail, opts)).toThrow()
+    const spuriousTail = `${line} Binding only; extra.`
+    expect(() => assertRegisterBindingLineShape(spuriousTail, opts)).toThrow()
   })
 
   test('an illegal value never reaches the prompt: out-of-domain + off-shape address → defaults → no line', () => {
