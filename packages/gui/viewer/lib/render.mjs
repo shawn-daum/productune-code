@@ -267,64 +267,280 @@ function ticketSection(tickets, currentVersion) {
   return storeSection('ticket', { innerHtml: ticketStoreInner(tickets, currentVersion) })
 }
 
-function wikiSection(pages) {
-  let html = '<section id="wiki"><h2>위키</h2>\n'
+// ---------- shared grouped-store shell (T-666 slice 1b) ----------
+// Slice 1a proved the model on the ticket store only; every other store kept
+// T-665's flat `plainFrame` content (acceptance line 1: "a store that
+// deviates is a defect"). This is the ONE builder wiki/feature/artifact/PRD
+// below all call — sidebar group buttons (`nav-item-clickable` +
+// `data-group-select`) → one `.view-pane` per group → the same shared
+// `.detail-panel` the ticket store already uses — so the interaction shape
+// literally cannot drift between stores (it is not re-authored per store).
+// `groups` is `[{ key, label, count, bodyHtml }]`; index 0 is the
+// default-active group (mirrors ticketStoreInner's current-version-first
+// convention). PRD's "open" group is the one intentional content nuance,
+// not a structural one — see prdStoreInner below.
+function groupedStore({ sidebarSubLabel, crumbLabel, groups }) {
+  const sidebarButtons = groups
+    .map((g, i) => {
+      const active = i === 0 ? ' active' : ''
+      return `<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"><span>${escapeHtml(g.label)}</span><span class="nav-item-count">${g.count}</span></button>`
+    })
+    .join('\n')
+  const sidebar = `<nav class="sidebar">
+<div class="sidebar-title">productune</div>
+<div class="sidebar-sub">${escapeHtml(sidebarSubLabel)}</div>
+${sidebarButtons}
+</nav>`
+
+  const panes = groups
+    .map((g, i) => `<div class="view-pane${i === 0 ? ' active' : ''}" data-group="${escapeHtml(g.key)}">${g.bodyHtml}</div>`)
+    .join('\n')
+
+  const defaultLabel = groups.length > 0 ? groups[0].label : ''
+  const mainCol = `<div class="frame-main-col">
+<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(crumbLabel)} · <span class="js-group-label">${escapeHtml(defaultLabel)}</span></b></span></div>
+<div class="frame-body"><div class="main-inner">${panes}</div></div>
+<div class="detail-panel" role="dialog" aria-label="상세">
+<div class="detail-panel-header"><span class="detail-panel-title"></span><button type="button" class="detail-panel-close" aria-label="닫기">${svgIcon(CLOSE_ICON_PATH, 14)}</button></div>
+<div class="detail-panel-body"></div>
+</div>
+</div>`
+
+  return sidebar + '\n' + mainCol
+}
+
+// A `status` vocabulary wiki/feature frontmatter actually uses (`live` /
+// `superseded` — measured 2026-09-26 across docs/wiki + docs/features) is
+// NOT the ticket enum (open/done/dropped) `statusPillClass` above covers —
+// mapping it through that function would silently mislabel "live" as
+// "todo". Extends the SAME pill class vocabulary (doctrine: one system, not
+// a parallel one) rather than inventing new CSS.
+function wikiFeatureStatusPillClass(status) {
+  if (status === 'live') return 'done'
+  if (status === 'superseded') return 'abandoned'
+  return 'todo' // unknown/absent — neutral, never invented
+}
+
+// Wiki frontmatter without a `type` key (docs/wiki/log.md, docs/wiki/inbox.md
+// — measured 2026-09-26) still has to land in some sidebar group. This is a
+// sentinel key, not a Korean label invented ahead of Designer sign-off
+// (acceptance line 3) — English, machine-shaped, same register as the
+// ticket-store's own "backlog"/omitted-bucket labels above.
+const WIKI_UNCLASSIFIED = 'UNCLASSIFIED'
+
+function wikiRowsTable(pages) {
+  if (pages.length === 0) return '<p class="v-note">이 묶음에는 위키 문서가 없다.</p>'
+  let html = '<div class="table-wrap"><table><thead><tr><th>파일</th><th>제목</th><th>상태</th><th>버전</th></tr></thead><tbody>\n'
   for (const p of pages) {
     const fm = p.frontmatter
-    html += `<article class="v-wiki" id="wiki-${escapeHtml(p.rel)}">\n<h3>${escapeHtml(fm.title || p.rel)}</h3>\n`
-    html += `<p class="v-path"><code>${escapeHtml(p.rel)}</code>`
-    if (fm.type) html += ` · ${escapeHtml(fm.type)}`
-    if (fm.status) html += ` · ${escapeHtml(fm.status)}`
-    if (fm.version) html += ` · ${escapeHtml(fm.version)}`
-    html += '</p>\n'
-    html += `<div class="v-body">${md(p.body)}</div>\n</article>\n`
+    const id = p.rel.split('/').pop()
+    html += `<tr class="detail-row" data-detail-kind="wiki" data-detail-id="${escapeHtml(id)}">`
+    html += `<td class="id-col">${escapeHtml(id)}</td>`
+    html += `<td>${escapeHtml(fm.title || id)}</td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(fm.status || '')}</span></td>`
+    html += `<td class="num-col">${escapeHtml(fm.version || '—')}</td>`
+    html += '</tr>\n'
   }
-  html += '</section>\n'
-  return storeSection('wiki', { innerHtml: plainFrame('위키', html) })
+  html += '</tbody></table></div>\n'
+  return html
+}
+
+/** Wiki store: sidebar groups by the RAW frontmatter `type` value (acceptance line 3 — Korean group labels await Designer sign-off, so the label IS the key, verbatim). */
+function wikiStoreInner(pages) {
+  const byType = new Map()
+  for (const p of pages) {
+    const key = p.frontmatter.type || WIKI_UNCLASSIFIED
+    if (!byType.has(key)) byType.set(key, [])
+    byType.get(key).push(p)
+  }
+  const keys = [...byType.keys()].sort((a, b) => {
+    if (a === WIKI_UNCLASSIFIED) return 1
+    if (b === WIKI_UNCLASSIFIED) return -1
+    return a.localeCompare(b)
+  })
+  const groups = keys.map((key) => {
+    const items = byType.get(key)
+    return { key, label: key, count: items.length, bodyHtml: wikiRowsTable(items) }
+  })
+  return groupedStore({ sidebarSubLabel: STORE_LABEL.wiki, crumbLabel: STORE_LABEL.wiki, groups })
+}
+
+/** The detail-data JSON blob's "wiki" bucket — same construction discipline as `ticketDetailEntries`: keyed by the same id `wikiRowsTable` renders, from the same input list. */
+function wikiDetailEntries(pages) {
+  const entries = {}
+  for (const p of pages) {
+    const fm = p.frontmatter
+    const id = p.rel.split('/').pop()
+    entries[id] = {
+      title: fm.title || id,
+      type: fm.type || '',
+      status: fm.status || '',
+      version: fm.version || '',
+      path: p.rel,
+      body: md(p.body),
+    }
+  }
+  return entries
+}
+
+function wikiSection(pages) {
+  return storeSection('wiki', { innerHtml: wikiStoreInner(pages) })
+}
+
+function featureRowsTable(pages) {
+  if (pages.length === 0) return '<p class="v-note">기능 스펙이 없다.</p>'
+  let html = '<div class="table-wrap"><table><thead><tr><th>기능</th><th>제목</th><th>상태</th><th>spec_since</th></tr></thead><tbody>\n'
+  for (const p of pages) {
+    const fm = p.frontmatter
+    const id = p.rel.split('/').pop()
+    html += `<tr class="detail-row" data-detail-kind="feature" data-detail-id="${escapeHtml(id)}">`
+    html += `<td class="id-col">${escapeHtml(fm.feature || id)}</td>`
+    html += `<td>${escapeHtml(fm.title || id)}</td>`
+    html += `<td><span class="pill pill-status-${wikiFeatureStatusPillClass(fm.status)}">${escapeHtml(fm.status || '')}</span></td>`
+    html += `<td class="num-col">${escapeHtml(fm.spec_since || '—')}</td>`
+    html += '</tr>\n'
+  }
+  html += '</tbody></table></div>\n'
+  return html
+}
+
+/** Feature store: `docs/features/` is flat (contracts §Fixed paths — "no index file, `ls` is the index") — one group, same list→detail model as every other store rather than a bespoke no-sidebar layout. */
+function featureStoreInner(pages) {
+  const groups = [{ key: 'all', label: STORE_LABEL.feature, count: pages.length, bodyHtml: featureRowsTable(pages) }]
+  return groupedStore({ sidebarSubLabel: STORE_LABEL.feature, crumbLabel: STORE_LABEL.feature, groups })
+}
+
+function featureDetailEntries(pages) {
+  const entries = {}
+  for (const p of pages) {
+    const fm = p.frontmatter
+    const id = p.rel.split('/').pop()
+    entries[id] = {
+      title: fm.title || id,
+      status: fm.status || '',
+      spec_since: fm.spec_since || '',
+      path: p.rel,
+      body: md(p.body),
+    }
+  }
+  return entries
 }
 
 function featuresSection(pages) {
-  let html = '<section id="features"><h2>기능 스펙</h2>\n'
-  for (const p of pages) {
-    html += `<article class="v-feature" id="feature-${escapeHtml(p.rel)}">\n<h3><code>${escapeHtml(p.rel)}</code></h3>\n`
-    html += `<div class="v-body">${md(p.body)}</div>\n</article>\n`
-  }
-  html += '</section>\n'
-  return storeSection('feature', { innerHtml: plainFrame('기능', html) })
+  return storeSection('feature', { innerHtml: featureStoreInner(pages) })
 }
 
-function prdSection(prd) {
-  let html = '<section id="prd"><h2>PRD</h2>\n'
-  html += `<article class="v-prd" id="prd-current">\n<div class="v-body">${md(prd.current.body)}</div>\n</article>\n`
-  if (prd.closed.length > 0) {
-    html += '<h3>닫힌 라운드</h3>\n'
-    for (const c of prd.closed) {
-      html += `<details class="v-fold"><summary><code>${escapeHtml(c.rel)}</code></summary>\n<div class="v-body">${md(c.body)}</div>\n</details>\n`
-    }
-  }
-  html += '</section>\n'
-  return storeSection('prd', { innerHtml: plainFrame('PRD', html) })
+/** PRD store: the ONE named content nuance (not a structural deviation — same activity-bar → sidebar-group → main-pane shell as every other store). The "open" group's single, currently-relevant document renders inline directly rather than as a one-row list a reader must click; "closed" behaves exactly like every other store's list→detail. Both strings below ("열린 섹션" / "닫힌 버전") are lifted verbatim from the user-approved mockup (docs/artifacts/v1.10/define-screen-set.html), not new copy. */
+function prdOpenBody(prd) {
+  return `<div class="v-body">${md(prd.current.body)}</div>`
 }
 
-function artifactsSection(artifacts) {
-  let html = '<section id="artifacts"><h2>산출물</h2>\n'
-  html +=
-    '<p class="v-note">manifest 의 모든 항목이 표에 나온다. <code>.md</code> 는 본문을 아래에 전체 인라인한다. <code>.html</code>/<code>.json</code> 은 본문을 넣지 않는다 — 그 자체로 이미 독립된 <code>file://</code> 문서이거나(html) manifest 형태의 자료라(json), 본문 없이 이 행이 「있다·어디 있다」 를 전부 말한다.</p>\n'
-  html +=
-    '<table class="v-artifacts"><thead><tr><th>bucket</th><th>path</th><th>ticket</th><th>kind</th><th>status</th><th>lang</th><th>added_at</th><th>inlined</th></tr></thead><tbody>\n'
+function prdClosedRowsTable(closed) {
+  if (closed.length === 0) return '<p class="v-note">닫힌 버전이 없다.</p>'
+  let html = '<div class="table-wrap"><table><thead><tr><th>버전</th><th>파일</th></tr></thead><tbody>\n'
+  for (const c of closed) {
+    const id = c.name.replace(/\.md$/, '')
+    html += `<tr class="detail-row" data-detail-kind="prd" data-detail-id="${escapeHtml(id)}">`
+    html += `<td class="id-col">${escapeHtml(id)}</td>`
+    html += `<td><code>${escapeHtml(c.rel)}</code></td>`
+    html += '</tr>\n'
+  }
+  html += '</tbody></table></div>\n'
+  return html
+}
+
+function prdStoreInner(prd, currentVersion) {
+  const groups = [
+    { key: 'open', label: `열린 섹션 · ${currentVersion}`, count: 1, bodyHtml: prdOpenBody(prd) },
+    { key: 'closed', label: '닫힌 버전', count: prd.closed.length, bodyHtml: prdClosedRowsTable(prd.closed) },
+  ]
+  return groupedStore({ sidebarSubLabel: STORE_LABEL.prd, crumbLabel: STORE_LABEL.prd, groups })
+}
+
+/** Closed-round entries only — the open section is not a detail-row (see prdStoreInner); a closed round's id is its filename minus `.md` (e.g. "v1.1", "v1.2.1"). A stub file with no `##` heading (docs/prd/versions/v1.1.md, v1.2.1.md — measured 2026-09-26) still produces a non-empty `md()` body (a plain paragraph), so it still lists and opens (acceptance line 3). */
+function prdDetailEntries(prd) {
+  const entries = {}
+  for (const c of prd.closed) {
+    const id = c.name.replace(/\.md$/, '')
+    entries[id] = { title: id, path: c.rel, body: md(c.body) }
+  }
+  return entries
+}
+
+function prdSection(prd, currentVersion) {
+  return storeSection('prd', { innerHtml: prdStoreInner(prd, currentVersion) })
+}
+
+function artifactRowsTable(entries) {
+  if (entries.length === 0) return '<p class="v-note">이 버킷에는 산출물이 없다.</p>'
+  let html =
+    '<div class="table-wrap"><table><thead><tr><th>경로</th><th>종류</th><th>상태</th><th>티켓</th><th>언어</th><th>추가일</th></tr></thead><tbody>\n'
+  for (const e of entries) {
+    const f = e.fields
+    const id = `${f.bucket}/${f.path}`
+    html += `<tr class="detail-row" data-detail-kind="artifact" data-detail-id="${escapeHtml(id)}">`
+    html += `<td class="id-col">${escapeHtml(f.path)}</td>`
+    html += `<td>${escapeHtml(f.kind || '')}</td>`
+    html += `<td>${escapeHtml(f.status || '')}</td>`
+    html += `<td>${escapeHtml(f.ticket || '')}</td>`
+    html += `<td>${escapeHtml(f.lang || '')}</td>`
+    html += `<td class="num-col">${escapeHtml(f.added_at || '')}</td>`
+    html += '</tr>\n'
+  }
+  html += '</tbody></table></div>\n'
+  return html
+}
+
+/** Artifact store: one group per manifest bucket (version) — the current version's bucket (if it has any entries) opens by default, else the first bucket, so the reader lands on "now" the same way the ticket store's sidebar defaults to the current version. */
+function artifactStoreInner(artifacts, currentVersion) {
+  const byBucket = new Map()
+  for (const e of artifacts.entries) {
+    const bucket = e.fields.bucket
+    if (!byBucket.has(bucket)) byBucket.set(bucket, [])
+    byBucket.get(bucket).push(e)
+  }
+  const keys = [...byBucket.keys()]
+  const defaultKey = keys.includes(currentVersion) ? currentVersion : keys[0]
+  const ordered = defaultKey === undefined ? keys : [defaultKey, ...keys.filter((k) => k !== defaultKey)]
+  const groups = ordered.map((key) => {
+    const items = byBucket.get(key)
+    return { key, label: key, count: items.length, bodyHtml: artifactRowsTable(items) }
+  })
+  return groupedStore({ sidebarSubLabel: STORE_LABEL.artifact, crumbLabel: STORE_LABEL.artifact, groups })
+}
+
+/**
+ * The detail-data JSON blob's "artifact" bucket. Two shapes, per this
+ * generator's own inline/not-inline size rule (viewer/lib/collect.mjs
+ * header): an inlined `.md` entry gets a real `body`; a non-inlined
+ * `.html`/`.json` entry gets no body and a `fileHref` instead — a relative
+ * `file://`-safe link back to the actual file on disk (acceptance line 2:
+ * "say so … and link the file rather than showing an empty panel").
+ * `artifactsBaseHref` is the path from the GENERATED page's own directory to
+ * `docs/artifacts/` (computed once in generate.mjs, since only that module
+ * knows where OUTPUT_PATH lives on disk) — defaulted here so a fixture/test
+ * that does not pass one still gets the real repo's actual layout.
+ */
+function artifactDetailEntries(artifacts, artifactsBaseHref) {
+  const entries = {}
   for (const e of artifacts.entries) {
     const f = e.fields
-    const anchor = e.inlined ? ` <a href="#artifact-${escapeHtml(e.diskRel)}">↓</a>` : ''
-    html += `<tr><td><code>${escapeHtml(f.bucket)}</code></td><td><code>${escapeHtml(f.path)}</code></td><td>${escapeHtml(f.ticket || '')}</td><td>${escapeHtml(f.kind || '')}</td><td>${escapeHtml(f.status || '')}</td><td>${escapeHtml(f.lang || '')}</td><td>${escapeHtml(f.added_at || '')}</td><td>${e.inlined ? 'yes' + anchor : 'no — ' + escapeHtml(e.diskRel)}</td></tr>\n`
+    const id = `${f.bucket}/${f.path}`
+    entries[id] = {
+      title: f.path,
+      kind: f.kind || '',
+      status: f.status || '',
+      created: f.added_at || '',
+      path: e.diskRel,
+      body: e.inlined ? md(e.body) : undefined,
+      fileHref: e.inlined ? undefined : encodeURI(`${artifactsBaseHref}/${f.bucket}/${f.path}`),
+    }
   }
-  html += '</tbody></table>\n'
-  for (const e of artifacts.entries) {
-    if (!e.inlined) continue
-    html += `<article class="v-artifact" id="artifact-${escapeHtml(e.diskRel)}">\n<h3><code>${escapeHtml(e.diskRel)}</code></h3>\n`
-    html += `<div class="v-body">${md(e.body)}</div>\n</article>\n`
-  }
-  html += '</section>\n'
-  return storeSection('artifact', { innerHtml: plainFrame('산출물', html) })
+  return entries
+}
+
+function artifactsSection(artifacts, currentVersion) {
+  return storeSection('artifact', { innerHtml: artifactStoreInner(artifacts, currentVersion) })
 }
 
 function homeSection(data) {
@@ -451,6 +667,7 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
 .detail-field-value { color: var(--text-primary); font-weight: 500; }
 .detail-doc { font-size: 13.5px; }
 .detail-doc :first-child { margin-top: 0; }
+.detail-doc a, .v-body a { color: var(--accent); }
 
 /* ---------- pills (ticket type/status/role + T-666 heading chips) ---------- */
 .pill { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
@@ -515,7 +732,7 @@ details.v-fold[open] summary { color: var(--text-primary); }
 const INTERACTION_SCRIPT = `
 (function () {
   var DETAIL_DATA = JSON.parse(document.getElementById('detail-data').textContent);
-  var DETAIL_FIELD_LABELS = { type: '유형', status: '상태', assignee: '담당', created: '생성일' };
+  var DETAIL_FIELD_LABELS = { type: '유형', status: '상태', assignee: '담당', created: '생성일', version: '버전', spec_since: 'spec_since', kind: '종류' };
 
   function closeDetailPanel(section) {
     if (!section) return;
@@ -539,7 +756,17 @@ const INTERACTION_SCRIPT = `
         '</span><span class="detail-field-value">' + String(v).replace(/</g, '&lt;') + '</span></div>');
     });
     var metaHtml = metaRows.length ? '<div class="detail-meta">' + metaRows.join('') + '</div>' : '';
-    var docHtml = fields.body ? '<div class="detail-doc body-prose">' + fields.body + '</div>' : '';
+    // T-666 slice 1b acceptance line 2: an artifact with no inlinable body
+    // (.html/.json) says so and links the file, instead of an empty panel.
+    var docHtml;
+    if (fields.body) {
+      docHtml = '<div class="detail-doc body-prose">' + fields.body + '</div>';
+    } else if (fields.fileHref) {
+      docHtml = '<div class="detail-doc detail-nobody"><p>이 항목은 본문을 인라인하지 않는다 — 파일을 직접 연다.</p><p><a href="' +
+        fields.fileHref + '" target="_blank" rel="noopener">' + (fields.path || fields.fileHref).replace(/</g, '&lt;') + '</a></p></div>';
+    } else {
+      docHtml = '';
+    }
     panel.querySelector('.detail-panel-body').innerHTML = metaHtml + docHtml;
     panel.classList.add('active');
   }
@@ -611,9 +838,16 @@ function detailDataScript(obj) {
  * @param {Map<string,string>} args.light resolved light token map
  * @param {string} args.fontFaceCss
  * @param {string} args.tokensSha256
+ * @param {string} [args.artifactsBaseHref] path from the generated page's own directory to `docs/artifacts/` — defaults to this repo's real, current OUTPUT_PATH layout (`code/packages/gui/viewer/viewer.html` → repo root) so a fixture/test that omits it still gets a working link.
  */
-export function renderPage({ data, dark, light, fontFaceCss, tokensSha256 }) {
-  const detailData = { ticket: ticketDetailEntries(data.tickets) }
+export function renderPage({ data, dark, light, fontFaceCss, tokensSha256, artifactsBaseHref = '../../../../docs/artifacts' }) {
+  const detailData = {
+    ticket: ticketDetailEntries(data.tickets),
+    wiki: wikiDetailEntries(data.wiki),
+    feature: featureDetailEntries(data.features),
+    artifact: artifactDetailEntries(data.artifacts, artifactsBaseHref),
+    prd: prdDetailEntries(data.prd),
+  }
 
   return `<!doctype html>
 <html lang="ko">
@@ -635,11 +869,11 @@ ${emitThemeVarBlock('v-light', light)}
 <div class="app-shell">
 ${activityBar('home')}
 ${homeSection(data)}
-${prdSection(data.prd)}
+${prdSection(data.prd, data.currentVersion)}
 ${ticketSection(data.tickets, data.currentVersion)}
 ${wikiSection(data.wiki)}
 ${featuresSection(data.features)}
-${artifactsSection(data.artifacts)}
+${artifactsSection(data.artifacts, data.currentVersion)}
 </div>
 ${detailDataScript(detailData)}
 <script>${INTERACTION_SCRIPT}</script>

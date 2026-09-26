@@ -388,4 +388,62 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
       await browser.close().catch(() => {})
     }
   }, 30_000)
+
+  // T-666 slice 1b: wiki/feature/artifact/PRD now share the SAME
+  // sidebar-group → list → detail-panel model the ticket store proved in
+  // slice 1a (acceptance line 1). One real-browser row-open per store —
+  // markup-string assertions alone already proved insufficient once
+  // (slice 1a's defect, see this file's tests above) — plus outside-click
+  // and Escape close, per store (acceptance line 2).
+  for (const store of ['wiki', 'feature', 'artifact']) {
+    test(`clicking a ${store} row opens its detail panel with a non-empty body; Escape closes it @window`, async () => {
+      const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+      const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+      try {
+        await page.click(`.activity-btn[data-store="${store}"]`)
+        const rows = page.locator(`#store-${store} .detail-row`)
+        await expect(rows.first()).toBeVisible()
+
+        await rows.first().click()
+        await expect(page.locator(`#store-${store} .detail-panel.active`)).toHaveCount(1)
+        const title = await page.locator(`#store-${store} .detail-panel-title`).innerText()
+        expect(title.length).toBeGreaterThan(0)
+        // Non-empty even for a non-inlined artifact (.html/.json) — the
+        // fallback "say so + link the file" message, never a blank panel.
+        const bodyText = await page.locator(`#store-${store} .detail-panel-body`).innerText()
+        expect(bodyText.length).toBeGreaterThan(0)
+
+        await page.keyboard.press('Escape')
+        await expect(page.locator(`#store-${store} .detail-panel.active`)).toHaveCount(0)
+      } finally {
+        await page.close()
+        fs.rmSync(tmp, { recursive: true, force: true })
+        await browser.close().catch(() => {})
+      }
+    }, 30_000)
+  }
+
+  test('clicking a PRD closed-round row (after switching to the closed group) opens its detail panel; outside click closes it @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await page.click('.activity-btn[data-store="prd"]')
+      await page.click('#store-prd [data-group-select="closed"]')
+      await expect(page.locator('#store-prd .view-pane[data-group="closed"]')).toHaveClass(/active/)
+
+      const rows = page.locator('#store-prd .detail-row')
+      await expect(rows.first()).toBeVisible()
+      await rows.first().click()
+      await expect(page.locator('#store-prd .detail-panel.active')).toHaveCount(1)
+      const bodyText = await page.locator('#store-prd .detail-panel-body').innerText()
+      expect(bodyText.length).toBeGreaterThan(0)
+
+      await page.click('#store-prd .topstrip')
+      await expect(page.locator('#store-prd .detail-panel.active')).toHaveCount(0)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
 })

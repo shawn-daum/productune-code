@@ -28,9 +28,53 @@ const fixtureData = {
     ],
     omitted: [],
   },
-  wiki: [],
-  features: [],
-  artifacts: { entries: [] },
+  wiki: [
+    {
+      rel: 'docs/wiki/decision--fixture.md',
+      frontmatter: { title: 'fixture decision', type: 'decision', status: 'live', version: 'v1.10' },
+      body: '## Decision body\n\nprose.',
+    },
+    {
+      rel: 'docs/wiki/log.md',
+      frontmatter: {}, // no `type` — T-666 slice 1b's UNCLASSIFIED fallback group
+      body: 'untyped log prose.',
+    },
+  ],
+  features: [
+    {
+      rel: 'docs/features/fixture-feature.md',
+      frontmatter: { feature: 'fixture-feature', title: 'Fixture feature', status: 'live', spec_since: 'v1.1' },
+      body: '## Feature body\n\nprose.',
+    },
+  ],
+  artifacts: {
+    entries: [
+      {
+        fields: { bucket: 'v1.10', path: 'fixture-doc.md', ticket: 'T-901', kind: 'doc', status: 'todo', lang: 'ko', added_at: '2026-09-26' },
+        diskRel: 'docs/artifacts/v1.10/fixture-doc.md',
+        inlined: true,
+        body: '## Artifact body\n\nprose.',
+      },
+      {
+        fields: { bucket: 'v1.10', path: 'fixture-mockup.html', ticket: 'T-901', kind: 'mockup', status: 'todo', lang: 'ko', added_at: '2026-09-26' },
+        diskRel: 'docs/artifacts/v1.10/fixture-mockup.html',
+        inlined: false,
+      },
+    ],
+  },
+}
+
+// A separate fixture layered on top of the shared one above: a PRD closed
+// round with NO `##` heading — a one-line stub, exactly the real shape
+// docs/prd/versions/v1.1.md and v1.2.1.md carry (T-666 slice 1b acceptance
+// line 3: "closed PRD files that carry only a one-line stub … still list and
+// open").
+const fixtureDataWithPrdStub = {
+  ...fixtureData,
+  prd: {
+    current: { body: '' },
+    closed: [{ rel: 'docs/prd/versions/v1.1.md', name: 'v1.1.md', body: 'no PRD section — stub round.' }],
+  },
 }
 
 function render() {
@@ -96,5 +140,48 @@ describe('viewer/lib/render.mjs — every ticket row resolves to a detail entry 
     for (const id of rowIds) {
       expect(detailData.ticket[id]).toBeDefined()
     }
+  })
+})
+
+// T-666 slice 1b: wiki/feature/artifact/PRD now build their rows and their
+// detail-data entries from the SAME input list the ticket store already
+// proved this for (slice 1a) — same non-vacuous shape, one block per store.
+describe('viewer/lib/render.mjs — every wiki/feature/artifact row resolves to a detail entry (T-666 slice 1b)', () => {
+  function detailData(html) {
+    const blobMatch = /<script id="detail-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html)
+    expect(blobMatch).not.toBeNull()
+    return JSON.parse(blobMatch[1])
+  }
+
+  it.each(['wiki', 'feature', 'artifact'])('every "%s" row resolves to a non-vacuous detail entry', (kind) => {
+    const html = renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const rowIds = [...html.matchAll(new RegExp(`data-detail-kind="${kind}" data-detail-id="([^"]+)"`, 'g'))].map((m) => m[1])
+    expect(rowIds.length).toBeGreaterThan(0)
+    const data = detailData(html)
+    for (const id of rowIds) {
+      expect(data[kind][id], `${kind} detail-data missing "${id}"`).toBeDefined()
+    }
+  })
+
+  it('an inlined (.md) artifact entry has a body; a non-inlined (.html) one has no body but a fileHref instead', () => {
+    const html = renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    const data = detailData(html)
+    expect(data.artifact['v1.10/fixture-doc.md'].body).toBeTruthy()
+    expect(data.artifact['v1.10/fixture-doc.md'].fileHref).toBeUndefined()
+    expect(data.artifact['v1.10/fixture-mockup.html'].body).toBeUndefined()
+    expect(data.artifact['v1.10/fixture-mockup.html'].fileHref).toBeTruthy()
+  })
+
+  it('wiki groups by the raw frontmatter type value; an untyped page falls into the UNCLASSIFIED group', () => {
+    const html = renderPage({ data: fixtureData, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(html).toContain('data-group-select="decision"')
+    expect(html).toContain('data-group-select="UNCLASSIFIED"')
+  })
+
+  it('a closed PRD round with no ## heading (a one-line stub) still lists and opens', () => {
+    const html = renderPage({ data: fixtureDataWithPrdStub, dark: new Map(), light: new Map(), fontFaceCss: '', tokensSha256: '' })
+    expect(html).toContain('data-detail-kind="prd" data-detail-id="v1.1"')
+    const data = detailData(html)
+    expect(data.prd['v1.1'].body).toBeTruthy()
   })
 })
