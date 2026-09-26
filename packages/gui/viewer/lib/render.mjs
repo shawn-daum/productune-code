@@ -157,14 +157,6 @@ function storeSection(key, { active = false, innerHtml }) {
   return `<section class="store-section${active ? ' active' : ''}" data-store="${key}" id="store-${key}">\n${innerHtml}\n</section>`
 }
 
-/** A store with no sidebar-group/detail-panel wiring yet (T-666 slice 1b) — still reachable from the activity bar, still says nothing false: no clickable-looking row promises a detail it cannot open. */
-function plainFrame(title, bodyHtml) {
-  return `<div class="frame-main-col">
-<div class="topstrip"><span class="topstrip-crumb"><b>${escapeHtml(title)}</b></span></div>
-<div class="frame-body"><div class="main-inner">${bodyHtml}</div></div>
-</div>`
-}
-
 function statusPillClass(status) {
   if (status === 'done') return 'done'
   if (status === 'dropped') return 'abandoned'
@@ -267,15 +259,17 @@ function ticketSection(tickets, currentVersion) {
   return storeSection('ticket', { innerHtml: ticketStoreInner(tickets, currentVersion) })
 }
 
-// ---------- shared grouped-store shell (T-666 slice 1b) ----------
-// Slice 1a proved the model on the ticket store only; every other store kept
-// T-665's flat `plainFrame` content (acceptance line 1: "a store that
-// deviates is a defect"). This is the ONE builder wiki/feature/artifact/PRD
-// below all call — sidebar group buttons (`nav-item-clickable` +
-// `data-group-select`) → one `.view-pane` per group → the same shared
-// `.detail-panel` the ticket store already uses — so the interaction shape
-// literally cannot drift between stores (it is not re-authored per store).
-// `groups` is `[{ key, label, count, bodyHtml }]`; index 0 is the
+// ---------- shared grouped-store shell (T-666 slice 1b/2a) ----------
+// Slice 1a proved the model on the ticket store only; slice 1b rewired
+// wiki/feature/artifact/PRD onto this ONE builder (replacing T-665's flat
+// `plainFrame`, since removed — acceptance line 1: "a store that deviates is
+// a defect"); slice 2a rewires home onto it too (see `homeSection` below),
+// leaving no store on a bespoke layout. Sidebar group buttons
+// (`nav-item-clickable` + `data-group-select`) → one `.view-pane` per group →
+// the same shared `.detail-panel` the ticket store already uses — so the
+// interaction shape literally cannot drift between stores (it is not
+// re-authored per store). `groups` is `[{ key, label, count?, bodyHtml }]`
+// (`count` optional — see the badge note inline below); index 0 is the
 // default-active group (mirrors ticketStoreInner's current-version-first
 // convention). PRD's "open" group is the one intentional content nuance,
 // not a structural one — see prdStoreInner below.
@@ -283,7 +277,14 @@ function groupedStore({ sidebarSubLabel, crumbLabel, groups }) {
   const sidebarButtons = groups
     .map((g, i) => {
       const active = i === 0 ? ' active' : ''
-      return `<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"><span>${escapeHtml(g.label)}</span><span class="nav-item-count">${g.count}</span></button>`
+      // T-666 slice 2a: `count` is optional (home's "진행 상황" group is not a
+      // list and carries no count — the mockup's own sidebar leaves that one
+      // button's badge off, per docs/artifacts/v1.10/define-screen-set.html
+      // ~line 628) and may be a non-numeric label (home's "PRD" row badges
+      // with the version string, matching every other store's own PRD-nav
+      // convention) rather than always a bare integer.
+      const countHtml = g.count === undefined || g.count === null ? '' : `<span class="nav-item-count">${escapeHtml(String(g.count))}</span>`
+      return `<button type="button" class="nav-item nav-item-clickable${active}" data-group-select="${escapeHtml(g.key)}"><span>${escapeHtml(g.label)}</span>${countHtml}</button>`
     })
     .join('\n')
   const sidebar = `<nav class="sidebar">
@@ -543,24 +544,144 @@ function artifactsSection(artifacts, currentVersion) {
   return storeSection('artifact', { innerHtml: artifactStoreInner(artifacts, currentVersion) })
 }
 
+// ---------- home: the in-progress version's workspace (T-666 slice 2a) ----------
+// Slice 1a/1b proved the shared sidebar-group -> list -> detail-panel model on
+// five stores; home was the one deliberately left as a flat summary table
+// (T-665's `plainFrame`, see its old outcome note). This slice retires that
+// deviation: home now calls the SAME `groupedStore()` every other simple
+// store below already shares (acceptance line 2, "no store remains a named
+// deviation") rather than inventing the mockup's own `data-view-select`
+// naming (docs/artifacts/v1.10/define-screen-set.html home markup) — a sixth
+// attribute name driving the same click behavior INTERACTION_SCRIPT already
+// has would be doctrine #2's "don't reinvent the wheel" violated a second
+// time over. `INTERACTION_SCRIPT` needed no change to drive this: it was
+// already generic over `data-group-select`/`data-detail-kind`, scoped to
+// `.closest('.store-section')` (slice 1b).
+//
+// Every group here is scoped to the CURRENT version only (never backlog, a
+// closed PRD round, or a non-current artifact bucket) — acceptance line 1,
+// "no control inside home throws the reader into the archive". Reaching the
+// archive (backlog tickets, closed PRD rounds, other artifact buckets) still
+// needs the activity bar, i.e. leaving home for the ticket/PRD/artifact store
+// proper — never a home control.
+
+// Column order and set are FIXED — always all five, whether or not today's
+// data has a ticket in that column (T-675 round 2, user verbatim: "user po
+// designer developer qa 순으로 배치해줘 열 순서는").
+const PROGRESS_ASSIGNEE_ORDER = ['user', 'po', 'designer', 'developer', 'qa']
+
+// Row keys = the `## v1.10` PRD §What section's own H4 order (docs/prd/PRD.md
+// ~line 105-149, `#### <key> — <label>`), NOT parsed from that file at
+// generation time — this fixed list only changes when the version's own
+// §What items change, at which point this generator's next edit changes too
+// (T-675 round 2: a ticket's `prd_item:` string is never printed to the
+// screen verbatim; the label is this generator's own short Korean gloss,
+// trimmed from the PRD's own H4 label text — Designer sign-off on the exact
+// wording is still open, same as the wiki/feature UNCLASSIFIED-group and
+// no-body-link copy flagged in slice 1a/1b's own 미해결).
+//
+// T-666 slice 2a scope: a ticket with NO matching `prd_item` (today
+// T-677/678/679 — measured 2026-09-26, `grep -L prd_item: docs/tickets/v1.10`)
+// is silently OMITTED from the matrix here on purpose — the dispatch for
+// this slice named the matrix's trailing "항목 밖" row as slice 2b's, to be
+// built there, not here ("leave room for them in home, build neither"). This
+// array is exactly that seam: 2b appends one more key (e.g. `OUT_OF_SCOPE`)
+// with its own label and one more `byItem` bucket collecting what this
+// filter drops today.
+const PROGRESS_ITEM_ORDER = ['north-star', 'prd-form', 'linkage', 'gui-deferral-marker', 'inherited-defects', 'viewer', 'ticket-frame']
+const PROGRESS_ITEM_LABEL = {
+  'north-star': '북극성',
+  'prd-form': 'PRD 표현',
+  linkage: '연결',
+  'gui-deferral-marker': 'GUI 유예',
+  'inherited-defects': '승계 결함',
+  viewer: '뷰어',
+  'ticket-frame': '티켓 틀',
+}
+
+function progressSquare(done) {
+  return `<span class="stage-sq${done ? ' sq-done' : ''}"></span>`
+}
+
+// A ticket's PARTICIPATION (not assignment) shows as a dashed-stroke square —
+// the stroke itself is dashed (an SVG <rect stroke-dasharray>), never a
+// dashed CSS outline drawn around a solid square (T-675 round 3, user
+// verbatim: "점선이 네모를 점선이 감싸는게 아니라 stroke를 점선으로
+// 표시하는걸 의미한거야" — a round-2 attempt that used `outline:dashed`
+// produced a rounded-corner "scalloped flower" artifact at 10px, fixed by
+// moving the dash onto the shape's own stroke path instead).
+function progressDashedSquare(done) {
+  return `<svg class="stage-sq-svg" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" rx="1" class="stage-sq-dashed-rect${done ? ' sq-done' : ''}"></rect></svg>`
+}
+
+/** One (item, assignee) matrix cell: `–` when empty (drawn even at 0 — the fixed-column rule extends to fixed cells, never a collapsed column), else one square per ticket + a `done/total` count. */
+function progressCell(solidTickets, dashedTickets) {
+  const total = solidTickets.length + dashedTickets.length
+  if (total === 0) return '<span class="stage-matrix-cell stage-matrix-cell-empty">–</span>'
+  const isDone = (t) => t.frontmatter.status === 'done'
+  const done = solidTickets.filter(isDone).length + dashedTickets.filter(isDone).length
+  const sqHtml = solidTickets.map((t) => progressSquare(isDone(t))).join('') + dashedTickets.map((t) => progressDashedSquare(isDone(t))).join('')
+  return `<span class="stage-matrix-cell"><span class="stage-matrix-sq-wrap">${sqHtml}</span><span class="stage-matrix-count mono">${done}/${total}</span></span>`
+}
+
+function progressMatrixHeadRow() {
+  const cols = PROGRESS_ASSIGNEE_ORDER.map((role) => `<span class="stage-matrix-col">${escapeHtml(role)}</span>`).join('')
+  return `<div class="stage-matrix-row stage-matrix-head"><span class="stage-matrix-label"></span>${cols}</div>`
+}
+
+/** `ticketsForItem` = every current-version ticket whose `prd_item:` resolves to this row's key. The `qa` column is always the dashed/derived one — contracts §Dispatch: QA never gets its own ticket, so an `assignee: qa` solid square is a possibility this code still handles correctly, but never observed in this repo (T-675 round 2). */
+function progressMatrixRow(key, ticketsForItem) {
+  const cells = PROGRESS_ASSIGNEE_ORDER.map((role) => {
+    const solid = ticketsForItem.filter((t) => t.frontmatter.assignee === role)
+    const dashed = role === 'qa' ? ticketsForItem.filter((t) => t.frontmatter.assignee !== 'qa' && /^### QA/m.test(t.body || '')) : []
+    return progressCell(solid, dashed)
+  }).join('')
+  return `<div class="stage-matrix-row"><span class="stage-matrix-label">${escapeHtml(PROGRESS_ITEM_LABEL[key] || key)}</span>${cells}</div>`
+}
+
+/** The straight overall line above the matrix — one square per current-version ticket, once each, regardless of assignee or prd_item (T-675 round 3: "전체는... 일직선으로 쭉... assignee상관없이"). */
+function progressOverall(currentTickets) {
+  const done = currentTickets.filter((t) => t.frontmatter.status === 'done').length
+  const squares = currentTickets.map((t) => progressSquare(t.frontmatter.status === 'done')).join('')
+  return `<div class="stage-overall"><span class="stage-matrix-label">전체</span><span class="stage-matrix-sq-wrap stage-overall-sq-wrap">${squares}</span><span class="stage-matrix-count mono">${done}/${currentTickets.length}</span></div>`
+}
+
+const PROGRESS_LEGEND = `<div class="stage-matrix-legend"><span class="stage-matrix-legend-item">${progressSquare(true)} <span>담당</span></span><span class="stage-matrix-legend-item">${progressDashedSquare(true)} <span>검수</span></span></div>`
+
+/** The "진행 상황" pane's only card: T-675's assignee x PRD-item matrix. Deliberately NOT included here (T-666 slice 2a dispatch: "leave room for them in home, build neither" — slice 2b's own scope): the TYPE_TO_STAGE 4-stage progress line, and the matrix's trailing no-`prd_item` row. */
+function homeProgressBody(data) {
+  const currentTickets = data.tickets.included.filter((t) => t.bucket === data.currentVersion)
+  const byItem = new Map(PROGRESS_ITEM_ORDER.map((k) => [k, []]))
+  for (const t of currentTickets) {
+    const prdItem = t.frontmatter.prd_item || ''
+    const prefix = `${data.currentVersion}#`
+    const key = prdItem.startsWith(prefix) ? prdItem.slice(prefix.length) : null
+    if (key && byItem.has(key)) byItem.get(key).push(t)
+    // else: no matching prd_item (or none at all) — T-666 slice 2b's trailing row, omitted here on purpose (see PROGRESS_ITEM_ORDER comment above).
+  }
+  const rows = PROGRESS_ITEM_ORDER.map((key) => progressMatrixRow(key, byItem.get(key))).join('')
+  return `<div class="dash-card">
+<div class="dash-card-title">${svgIcon(STORE_ICON_PATHS.home, 14)} <span>진행 상황</span></div>
+${progressOverall(currentTickets)}
+<div class="stage-matrix">${progressMatrixHeadRow()}${rows}</div>
+${PROGRESS_LEGEND}
+<div class="dash-actions">
+<button type="button" class="btn-secondary" data-group-select="ticket">${svgIcon(STORE_ICON_PATHS.ticket, 13)} <span>티켓 목록 보기</span></button>
+<button type="button" class="btn-secondary" data-group-select="prd">${svgIcon(STORE_ICON_PATHS.prd, 13)} <span>PRD 열기</span></button>
+</div>
+</div>`
+}
+
 function homeSection(data) {
-  const ct = data.poState.current_task
-  const ctText = ct ? `${escapeHtml(ct.ticket_id || '')} · ${escapeHtml(ct.assignee || '')}` : '(없음)'
-  const html = `<section id="home"><h2>현재 상태</h2>
-<table class="v-fm"><tbody>
-<tr><th>stage</th><td>${escapeHtml(data.poState.stage)}</td></tr>
-<tr><th>version</th><td>${escapeHtml(data.poState.version)}</td></tr>
-<tr><th>current_task</th><td>${ctText}</td></tr>
-<tr><th>tickets — 이번 라운드</th><td>${data.tickets.included.filter((t) => t.bucket === data.currentVersion).length}</td></tr>
-<tr><th>tickets — backlog</th><td>${data.tickets.included.filter((t) => t.bucket === 'backlog').length}</td></tr>
-<tr><th>tickets — 제외(닫힌 라운드)</th><td>${data.tickets.omitted.reduce((n, o) => n + o.count, 0)}</td></tr>
-<tr><th>위키</th><td>${data.wiki.length}</td></tr>
-<tr><th>기능 스펙</th><td>${data.features.length}</td></tr>
-<tr><th>산출물</th><td>${data.artifacts.entries.length} (인라인 ${data.artifacts.entries.filter((e) => e.inlined).length})</td></tr>
-</tbody></table>
-<p class="v-note">홈의 작업실(사이드바 행이 가운데를 바꾸는 것 · 진행 상황 매트릭스)은 다음 슬라이스 — 지금은 이 요약표만 보인다.</p>
-</section>`
-  return storeSection('home', { active: true, innerHtml: plainFrame('홈', html) })
+  const currentTickets = data.tickets.included.filter((t) => t.bucket === data.currentVersion)
+  const currentArtifacts = data.artifacts.entries.filter((e) => e.fields.bucket === data.currentVersion)
+  const groups = [
+    { key: 'progress', label: '진행 상황', bodyHtml: `<div class="dash-grid">${homeProgressBody(data)}</div>` },
+    { key: 'ticket', label: STORE_LABEL.ticket, count: currentTickets.length, bodyHtml: ticketRowsTable(currentTickets) },
+    { key: 'artifact', label: STORE_LABEL.artifact, count: currentArtifacts.length, bodyHtml: artifactRowsTable(currentArtifacts) },
+    { key: 'prd', label: STORE_LABEL.prd, count: data.currentVersion, bodyHtml: prdOpenBody(data.prd) },
+  ]
+  return storeSection('home', { active: true, innerHtml: groupedStore({ sidebarSubLabel: '홈', crumbLabel: '홈', groups }) })
 }
 
 const TEMPLATE_CSS = `
@@ -691,6 +812,47 @@ code { font-family: var(--font-mono); font-size: 0.9em; }
   padding: 3px 10px; border-radius: var(--radius-8); }
 .pill-heading-3 { text-transform: none; letter-spacing: 0; white-space: normal; font-size: 11px; font-weight: 600;
   background: var(--bg-interaction-neutral); color: var(--text-tertiary); padding: 2px 8px; border-radius: var(--radius-4); }
+
+/* ---------- home dashboard (T-666 slice 2a) — T-675's assignee x PRD-item
+   matrix, copied class-for-class from the user-approved mockup
+   (docs/artifacts/v1.10/define-screen-set.html ~line 402-465, T-675
+   round 1-4) so the same visual spec that went through four user rounds of
+   review lands unchanged in the real product. ---------- */
+.dash-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-16); }
+.dash-card { border: 1px solid var(--border-item); border-radius: var(--radius-12); background: var(--bg-surface-base); padding: var(--space-20); }
+.dash-card-title { font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-tertiary); margin: 0 0 var(--space-12); display: flex; align-items: center; gap: var(--space-8); }
+.stage-overall { display: flex; align-items: center; gap: var(--space-8); margin-bottom: var(--space-12); padding-bottom: var(--space-10); border-bottom: 1px solid var(--border-item); }
+.stage-overall .stage-matrix-label { font-weight: 700; color: var(--text-primary); flex: 0 0 auto; }
+.stage-overall .stage-matrix-count { font-weight: 700; color: var(--text-primary); margin-left: auto; }
+.stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: nowrap; gap: 2px; }
+.stage-overall-sq-wrap .stage-sq { width: 6px; height: 6px; }
+.stage-overall-sq-wrap .stage-sq-svg { width: 6px; height: 6px; }
+@media (max-width: 900px) {
+  .stage-matrix-sq-wrap.stage-overall-sq-wrap { flex-wrap: wrap; }
+}
+.stage-matrix { display: grid; grid-template-columns: 60px repeat(5, 1fr); column-gap: var(--space-6); row-gap: 4px; align-items: center; margin-bottom: var(--space-8); }
+.stage-matrix-row { display: contents; }
+.stage-matrix-head .stage-matrix-col { font-size: 9px; text-transform: none; letter-spacing: 0.02em; color: var(--text-quaternary);
+  font-weight: 600; text-align: center; padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-item); }
+.stage-matrix-head .stage-matrix-label { border-bottom: 1px solid var(--border-item); padding-bottom: var(--space-6); }
+.stage-matrix-label { display: flex; align-items: center; gap: 3px; color: var(--text-tertiary); font-size: 11px;
+  text-transform: none; white-space: nowrap; overflow: hidden; }
+.stage-matrix-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 2px 0; }
+.stage-matrix-sq-wrap { display: flex; flex-wrap: wrap; gap: 3px; justify-content: center; max-width: 100%; }
+.stage-sq { width: 10px; height: 10px; border-radius: 2px; background: var(--bg-interaction-neutral); border: 1px solid var(--border-inline); flex: 0 0 auto; }
+.stage-sq.sq-done { background: var(--accent); border-color: var(--accent); }
+.stage-sq-svg { width: 10px; height: 10px; flex: 0 0 auto; display: block; overflow: visible; }
+.stage-sq-dashed-rect { fill: var(--bg-interaction-neutral); stroke: var(--text-quaternary); stroke-width: 1; stroke-dasharray: 2 1.2; }
+.stage-sq-dashed-rect.sq-done { fill: var(--accent); stroke: var(--text-primary); }
+.stage-matrix-count { font-size: 9.5px; color: var(--text-secondary); font-family: var(--font-mono); }
+.stage-matrix-cell-empty { color: var(--text-disabled); font-size: 11px; }
+.stage-matrix-legend { display: flex; flex-direction: column; gap: 2px; margin: var(--space-4) 0 var(--space-2); font-size: 10px; color: var(--text-quaternary); }
+.stage-matrix-legend-item { display: flex; align-items: center; gap: 5px; }
+.dash-actions { display: flex; gap: var(--space-8); margin-top: var(--space-10); flex-wrap: wrap; }
+.btn-secondary { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-family); cursor: pointer;
+  border-radius: var(--radius-8); font-size: 12px; text-decoration: none; white-space: nowrap;
+  background: var(--bg-interaction-neutral); color: var(--text-primary); border: none; padding: var(--space-6) var(--space-12); }
+.btn-secondary:hover { background: var(--border-hover); }
 
 /* ---------- tables ---------- */
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
