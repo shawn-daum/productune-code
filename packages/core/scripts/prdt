@@ -1029,9 +1029,17 @@ def meta_backup_lag_warnings(root):
     warns = []
     st = _meta_backup_state(root)
     if st.get("last_ok") is False:
+        err = st.get("last_error") or "?"
+        # T-699: `remote-missing`'s fix lives in exactly ONE place below (the
+        # `elif auto not in remotes` warning, live config vs live remotes) — this
+        # line must never ALSO tell the user to retry the exact push that
+        # already can't succeed until that fix lands (the doctor-side half of
+        # the same defect the `prdt` CLI's own notice had; PO decision
+        # 2026-09-26: same slice, same marker `_META_BACKUP_REMOTE_MISSING_MARKER`).
+        tail = "" if _META_BACKUP_REMOTE_MISSING_MARKER in err else (
+            f" — retries at the next stage boundary / day; manual: `prdt meta push {st.get('remote') or 'backup'}`")
         warns.append(f"meta: automatic backup push FAILED at {str(st.get('last_attempt_at') or '?')[:16]}Z "
-                     f"(remote '{st.get('remote') or '?'}') — {st.get('last_error') or '?'} "
-                     f"— retries at the next stage boundary / day; manual: `prdt meta push {st.get('remote') or 'backup'}`")
+                     f"(remote '{st.get('remote') or '?'}') — {err}{tail}")
     # The automatic target itself (T-504 QA F1/F2): config may only NAME one of
     # the remotes the meta repo already has. A renamed/removed one silences the
     # tick (it has nothing to push to), a flag-/refspec-shaped one is refused by
@@ -4626,6 +4634,30 @@ def _meta_backup_remote_name(root):
     return v.strip() if isinstance(v, str) and v.strip() else "backup"
 
 
+# T-699: `remote-missing` (meta.backup_remote names no remote the meta repo
+# actually HAS) is a config problem — the old one-size hint below it
+# ("수동: prdt meta push {remote}") retries the exact push that already fails,
+# and keeps failing until the config changes; the user reporting this saw the
+# same line repeat across runs with no way out. Detected off the reason
+# text's own shape rather than a new state field: meta-backup.ts's
+# `remote-missing` branch (git-workflow/meta-backup.ts) is the only writer of
+# this exact phrase, so Python mirrors it the same way `_meta_backup_remote_name`
+# already mirrors core's default — no shared import between the two runtimes
+# here, and this also fixes an ALREADY-WRITTEN latch from before this change
+# (no re-run of the tick required for the better hint to show). Every other
+# failure (network, auth, an illegal remote NAME) keeps the old hint — a retry
+# there can genuinely succeed once the transient cause clears.
+_META_BACKUP_REMOTE_MISSING_MARKER = "names no remote of the meta repo (have:"
+
+
+def _meta_backup_fail_hint(remote, error):
+    if _META_BACKUP_REMOTE_MISSING_MARKER in (error or ""):
+        return ("      고치기: .prdt/config.json 의 meta.backup_remote 를 위에 나열된 원격 중 하나로 바꾸거나 · "
+                 f"메타 저장소에 원격을 추가하세요: prdt meta remote add {remote} <url> — "
+                 "어느 원격을 백업으로 쓸지는 사람이 정합니다(도구가 자동으로 고르지 않습니다)")
+    return f"      재시도는 다음 stage 경계/일일 tick · 수동: prdt meta push {remote}"
+
+
 def maybe_meta_backup(cmd):
     if cmd == "meta":                                   # `prdt meta push` is the explicit path; don't race it
         return
@@ -4638,9 +4670,10 @@ def maybe_meta_backup(cmd):
         st = _meta_backup_state(root)
         if st.get("last_ok") is False:
             # the detached tick has no terminal — its last failure is said here, once per run
+            error = st.get("last_error") or "?"
             print(f"prdt: 메타 자동 백업 실패 ({str(st.get('last_attempt_at') or '?')[:16]}Z, "
-                  f"원격 '{st.get('remote') or '?'}') — {st.get('last_error') or '?'}\n"
-                  f"      재시도는 다음 stage 경계/일일 tick · 수동: prdt meta push {st.get('remote') or 'backup'}",
+                  f"원격 '{st.get('remote') or '?'}') — {error}\n"
+                  f"{_meta_backup_fail_hint(st.get('remote') or 'backup', error)}",
                   file=sys.stderr)
         pair = _meta_bridge()
         if isinstance(pair, str):
@@ -9934,7 +9967,15 @@ def cmd_dispatch(args):
                          "project_root": data.get("project_root"), "session_id": data.get("session_id"),
                          "since": data.get("since"), "stopped_at": data.get("stopped_at"),
                          "transcript": _dispatch_transcript(data), "state": state, "file": f.name})
-    live = sum(1 for r in rows if r["state"].startswith("live"))
+    # T-699: an unreadable marker makes the GATE's whole dispatches axis
+    # unmeasured — a single bad file, not just the count of good ones (any
+    # `fromjson` failure sets its jq's `$bad` > 0, and the gate reads
+    # `$inflight` as null whenever `$bad != 0`: prdt-dispatch-gate.sh). "the
+    # SAME rule to the SAME files" (docstring above) means this count must
+    # degrade the same way — never a partial count computed only over the
+    # files that happened to parse, which would show a number here while the
+    # gate that denies dispatches is treating itself as unmeasured.
+    live = None if unreadable else sum(1 for r in rows if r["state"].startswith("live"))
     if args.json:
         print(json.dumps({"in_flight": live, "unreadable": unreadable, "markers": rows}, ensure_ascii=False))
         return
@@ -9949,8 +9990,11 @@ def cmd_dispatch(args):
     for n in unreadable:
         print(f"unreadable marker: {safe_label(n)} — the gate's dispatches axis is unmeasured until the "
               f"post-dispatch hook prunes it (24 h) or it is rewritten")
-    print(f"in flight (what the dispatch gate counts, machine-wide): {live} of {len(rows)} shown"
-          + (f" · {len(unreadable)} unreadable" if unreadable else ""))
+    if live is None:
+        print("in flight (what the dispatch gate counts, machine-wide): unmeasured — "
+              f"{len(unreadable)} unreadable marker(s) make the whole count unmeasured, same as the gate")
+    else:
+        print(f"in flight (what the dispatch gate counts, machine-wide): {live} of {len(rows)} shown")
 
 
 def cmd_resource(args):

@@ -151,10 +151,13 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
       last_error: 'fatal: unable to access — could not resolve host',
     }))
     // no PRDT_REPO → no spawn, so the state file stays as written
+    // T-699: a non-`remote-missing` reason (here: a network failure) keeps
+    // today's hint — a retry can genuinely succeed once the cause clears.
     const r = runPrdt(['tickets'])
     expect(r.stderr).toContain('메타 자동 백업 실패')
     expect(r.stderr).toContain('could not resolve host')
     expect(r.stderr).toContain('prdt meta push backup')
+    expect(r.stderr).not.toContain('meta.backup_remote 를 위에 나열된 원격 중 하나로 바꾸거나')
 
     // the kill switch mutes the notice with the tick (the mechanism is off) …
     expect(runPrdt(['tickets'], { PRDT_META_BACKUP: '0' }).stderr).not.toContain('메타 자동 백업 실패')
@@ -182,12 +185,30 @@ describe.skipIf(!PYTHON3 || !NODE)('prdt CLI main — detached backup tick (T-50
     const d = runPrdt(['doctor'], { PRDT_META_BACKUP: '0' })
     expect(d.stdout).toMatch(/meta: `meta\.backup_remote` = 'backup' names a remote the meta repo does not have \(have: vault\)/)
 
-    // and the tick's own record of it (what core writes on a real run) is said on the next run
+    // and the tick's own record of it (what core writes on a real run) is said on the next run —
+    // T-699: `remote-missing`'s hint names BOTH fixes and never suggests the
+    // push that is guaranteed to fail again (the As-is bug: a repeat visitor
+    // saw this exact line, unchanged, run after run).
     fs.writeFileSync(path.join(projectDir, '.prdt', 'meta.git', 'prdt-backup-state.json'), JSON.stringify({
       remote: 'backup', last_attempt_at: '2026-09-11T04:05:06.000Z', last_ok: false,
       last_error: "meta.backup_remote 'backup' names no remote of the meta repo (have: vault)",
     }))
-    expect(runPrdt(['tickets']).stderr).toMatch(/메타 자동 백업 실패 .*names no remote of the meta repo \(have: vault\)/)
+    const stderr = runPrdt(['tickets']).stderr
+    expect(stderr).toMatch(/메타 자동 백업 실패 .*names no remote of the meta repo \(have: vault\)/)
+    expect(stderr).toContain('meta.backup_remote 를 위에 나열된 원격 중 하나로 바꾸거나') // fix 1: repoint config
+    expect(stderr).toContain('prdt meta remote add backup <url>')                        // fix 2: add the remote
+    expect(stderr).not.toContain('prdt meta push')                                       // never the push that can't succeed
+
+    // T-699 (PO decision, same slice): `prdt doctor` had the identical defect —
+    // its generic FAILED line always suggested `prdt meta push {remote}` even
+    // while the very next line already named the real fix (rename/repoint).
+    // The FAILED line must now say nothing about a manual push for this
+    // reason; the fix stays sourced from that one other line only.
+    const d2 = runPrdt(['doctor'], { PRDT_META_BACKUP: '0' })
+    expect(d2.stdout).toMatch(/meta: automatic backup push FAILED at 2026-09-11T04:05Z .*names no remote of the meta repo \(have: vault\)/)
+    expect(d2.stdout).not.toContain('prdt meta push backup`')
+    // the fix is still said, just by the one line that already carried it
+    expect(d2.stdout).toMatch(/meta: `meta\.backup_remote` = 'backup' names a remote the meta repo does not have \(have: vault\)/)
     fs.rmSync(bare, { recursive: true, force: true })
   })
 
