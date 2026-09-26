@@ -325,7 +325,7 @@ describe.skipIf(!READY)('delivery — the hook plan of THIS tree', () => {
       input: JSON.stringify({ hook_event_name: 'SubagentStart', agent_type: 'prdt-developer', cwd: os.tmpdir() }),
       encoding: 'utf8', env: { ...process.env, PRDT_HOME: home },
     })
-    expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Playbook bodies and `contracts/*.md` annexes load on demand via Bash cat under')
+    expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('Playbook bodies and `contracts/*.md` annexes load on demand via the Read tool on their absolute path under')
   })
 
   for (const persona of ['po', 'developer', 'qa', 'designer']) {
