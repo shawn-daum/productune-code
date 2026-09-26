@@ -81,6 +81,19 @@ async function spawnHeadlessChrome(execPath: string): Promise<{
       `--user-data-dir=${userDataDir}`,
       '--no-sandbox',
       '--disable-gpu',
+      // MEASURED (2026-09-26, cua VM) — same fix as tests/ds-html.window.spec.ts:
+      // under this suite's sandboxed HOME (T-450), a fresh throwaway HOME has
+      // no `~/Library/Keychains`, and Chrome's os_crypt "Safe Storage" keychain
+      // item write (`SecItemAdd` → `StorageManager::optionalSearchList`)
+      // deadlocks there forever with zero stderr — `sample` on the hung
+      // process showed the main thread and a `copy_certificates_from_keychain`
+      // thread both parked on the same Security-framework mutex
+      // (`_pthread_mutex_firstfit_lock_wait`). It never happens with the real
+      // HOME (an unlocked login keychain already exists). This flag is
+      // Chromium's own escape hatch for exactly this class of CI/macOS
+      // keychain hang — it only changes what THIS child process does with its
+      // keychain access, not HOME or any real-home path.
+      '--use-mock-keychain',
       `--remote-debugging-port=${port}`,
     ],
     { detached: false, stdio: ['ignore', 'ignore', 'pipe'] },
@@ -152,7 +165,7 @@ async function stopHeadlessChrome(child: ChildProcessWithoutNullStreams, userDat
 async function renderAndObserve(
   cdpBase: string,
   html: string,
-): Promise<{ consoleErrors: string[]; fontsPretendard12pxAvailable: boolean; requestUrls: string[] }> {
+): Promise<{ consoleErrors: string[]; pretendardFontFaceLoaded: boolean; requestUrls: string[] }> {
   const browser = await chromium.connectOverCDP(cdpBase)
   try {
     const ctx = browser.contexts()[0] ?? (await browser.newContext())
@@ -164,18 +177,41 @@ async function renderAndObserve(
     })
     page.on('pageerror', (err) => consoleErrors.push(String(err)))
     page.on('request', (req) => requestUrls.push(req.url()))
+    // PO root-cause (2026-09-26, cua VM): a `page.goto` never reaches 'load'
+    // if a sub-resource request never SETTLES (succeeds or fails) — and this
+    // VM's NAT networking does not answer a TEST-NET-1 (192.0.2.1) connection
+    // fast, it hangs well past this suite's own timeouts (MEASURED via a
+    // direct connectOverCDP probe: the request is issued, then neither
+    // 'requestfinished' nor 'requestfailed' ever fires). The external-<img>
+    // fixture control below only needs the request to be ISSUED — the
+    // `page.on('request')` listener above already captures that regardless of
+    // whether the request is then aborted. Aborting every non-file:// request
+    // deterministically, right after Playwright has already recorded it,
+    // removes the dependency on this VM's routing behaviour entirely and
+    // costs nothing for the other fixtures (the real viewer.html issues none).
+    await page.route('**/*', (route) => {
+      const url = route.request().url()
+      return url.startsWith('file://') ? route.continue() : route.abort('connectionfailed')
+    })
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-html-window-fixture-'))
     const file = path.join(tmp, 'page.html')
     fs.writeFileSync(file, html)
     try {
       await page.goto(`file://${file}`)
       await page.waitForLoadState('load')
-      const fontsPretendard12pxAvailable = await page.evaluate(async () => {
+      // PO root-cause (2026-09-26): `document.fonts.check()` returns true
+      // whenever nothing NEEDS loading — an unknown/undeclared family counts
+      // as "nothing to load", so it can never fail (MEASURED: it returned
+      // true for a nonsense family name and even with an unrelated
+      // `@font-face` declared, under both the sandboxed and the real HOME).
+      // The real question is whether a Pretendard FontFace was actually
+      // registered and loaded, so check the FontFaceSet directly instead.
+      const pretendardFontFaceLoaded = await page.evaluate(async () => {
         await document.fonts.ready
-        return document.fonts.check('12px Pretendard')
+        return Array.from(document.fonts).some((f) => f.family === 'Pretendard' && f.status === 'loaded')
       })
       await page.close()
-      return { consoleErrors, fontsPretendard12pxAvailable, requestUrls }
+      return { consoleErrors, pretendardFontFaceLoaded, requestUrls }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
     }
@@ -214,8 +250,8 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
 
   test('has Pretendard available for document.fonts.check @window', async () => {
     const html = fs.readFileSync(VIEWER_HTML, 'utf8')
-    const { fontsPretendard12pxAvailable } = await renderAndObserve(cdpBase, html)
-    expect(fontsPretendard12pxAvailable).toBe(true)
+    const { pretendardFontFaceLoaded } = await renderAndObserve(cdpBase, html)
+    expect(pretendardFontFaceLoaded).toBe(true)
   })
 
   test('issues zero non-file:// requests @window', async () => {
@@ -236,8 +272,8 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
 
   test('fixture control: a page with no @font-face fails the Pretendard check @window', async () => {
     const broken = '<!doctype html><html><head></head><body>no fonts here</body></html>'
-    const { fontsPretendard12pxAvailable } = await renderAndObserve(cdpBase, broken)
-    expect(fontsPretendard12pxAvailable).toBe(false)
+    const { pretendardFontFaceLoaded } = await renderAndObserve(cdpBase, broken)
+    expect(pretendardFontFaceLoaded).toBe(false)
   })
 
   // The viewer's own fixture written to a throwaway `file://` path is itself
@@ -245,11 +281,13 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
   // page that DOES fetch must fail this control, or "zero non-file://
   // requests" above could be passing for the wrong reason (e.g. a page.on
   // listener that never fires).
-  // Uses 192.0.2.1 (RFC 5737 TEST-NET-1, reserved for documentation — no
-  // route ever exists to it) rather than a real hostname, so the request
-  // fails fast with no route instead of stalling on a DNS lookup; either way
-  // `page.on('request')` fires as the request is ISSUED, before the browser
-  // learns whether it will succeed.
+  // Uses 192.0.2.1 (RFC 5737 TEST-NET-1, reserved for documentation) rather
+  // than a real hostname, so no DNS lookup is involved. `page.on('request')`
+  // fires as the request is ISSUED, before the browser learns whether it
+  // will succeed — and on THIS VM's NAT networking it never learns: the
+  // connection just hangs (MEASURED 2026-09-26) rather than failing fast, so
+  // `renderAndObserve`'s route handler aborts every non-file:// request right
+  // after recording it, and this test never needs the network to answer.
   test('fixture control: an external <img src> produces a non-file:// request @window', async () => {
     const broken = '<!doctype html><html><body><img src="http://192.0.2.1/does-not-exist.png"></body></html>'
     const { requestUrls } = await renderAndObserve(cdpBase, broken)
