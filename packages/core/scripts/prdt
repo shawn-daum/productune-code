@@ -6,7 +6,7 @@ Design SoT: docs/prdt-v1-design.md (§6 tickets, §7 wiki, §8b machine wiki + o
 layers, §9 doctor, §10 CLI, §11 caps).
 md + frontmatter is the SoT; .prdt/index.db is a derived, rebuildable index.
 """
-import argparse, hashlib, json, math, os, re, shlex, shutil, sqlite3, statistics, subprocess, sys, unicodedata
+import argparse, contextlib, difflib, fcntl, hashlib, json, math, os, re, shlex, shutil, sqlite3, statistics, subprocess, sys, unicodedata
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,6 +21,49 @@ PERSONAS = ("po", "designer", "developer", "qa")
 # (same rule the GUI applies in views/versionHistory/helpers.ts).
 ASSIGNEES = PERSONAS + ("user",)
 LEGACY_ASSIGNEE_RE = re.compile(r"^pdtl?-")
+
+# ── ticket frame (T-685) — the ONE definition `tickets new`, `tickets fmt` and
+# any future doctor check share (contracts/tickets.md annex: "H2 keys, this
+# order, nothing else"). `required` reads: "always" · "optional" · a
+# frontmatter condition ("decision" → only `type: decision` · "done" → only
+# `status: done`) — `tickets fmt --check` enforces exactly this, never a
+# second copy of it.
+TICKET_FRAME_KEYS = ("problem", "options", "related", "acceptance", "evidence", "outcome", "log")
+TICKET_FRAME_REQUIRED = {"problem": "always", "options": "decision", "related": "optional",
+                         "acceptance": "always", "evidence": "optional", "outcome": "done",
+                         "log": "optional"}
+# Binds tickets created ON/AFTER this date only (T-685 acceptance; landed this
+# commit) — an older ticket "keeps its headings as written" (annex), so `fmt`
+# never touches it and `--check` never flags it. String-compares against a
+# plain `YYYY-MM-DD` `created:` value, same shape every ticket already writes.
+TICKET_FRAME_LANDING_DATE = "2026-09-24"
+# Headings `fmt` folds into a frame key without asking — the legacy English
+# frame (`Request`/`Acceptance`/`Outcome`, pre-T-685) plus the user-authored
+# Korean labels (docs/prd/PRD.md §ticket-frame, 2026-09-18). Lookup is
+# case-insensitive on the LOWERCASED heading text; Korean entries need no
+# case fold but share the one table so a third alias source is one more row,
+# not a second mechanism.
+TICKET_FRAME_ALIASES = {
+    "request": "problem", "acceptance": "acceptance", "outcome": "outcome",
+    "문제": "problem", "대안": "options", "관련사항": "related",
+    "합격 기준": "acceptance", "근거": "evidence", "진행 기록": "log",
+}
+# `tickets new`'s `type: decision` scaffold for the `options` key (contracts/
+# tickets.md annex: "one table — columns the options, rows `pros` · `cons` ·
+# `trade-off` · `recommend`") — the empty shape so the PO fills cells instead
+# of retyping the table (T-685 fix, PO-observed scratch-project run: a fresh
+# decision ticket's `options` landed empty). Column headers are placeholders
+# the PO renames to the real fork names; the row labels are the frame's own
+# vocabulary and stay as written — `fmt_ticket_body`'s decision gate looks for
+# a `recommend` row, which this scaffold already carries.
+TICKET_OPTIONS_TABLE_SCAFFOLD = (
+    "| | Option A | Option B |\n"
+    "|---|---|---|\n"
+    "| pros | | |\n"
+    "| cons | | |\n"
+    "| trade-off | | |\n"
+    "| recommend | | |\n"
+)
 
 
 def norm_assignee(v):
@@ -263,13 +306,25 @@ def one_line(text):
     return LINE_BREAK_RE.sub(" ", str(text))
 
 
-def safe_label(text, reserved=DOCTOR_RESERVED, limit=60):
+def safe_label(text, reserved=DOCTOR_RESERVED, limit=60, ellipsis=False):
     """Name a piece of untrusted input on one of our lines without letting it BE
     one of our lines. Used where refusing is not available because the whole
     point of the line is to say what the bad input was — a JSON field named
-    `verdict=clean` gets described rather than quoted."""
-    t = one_line(text)[:limit]
-    return "<a name imitating doctor's own output>" if forged_tokens(t, reserved) else t
+    `verdict=clean` gets described rather than quoted.
+
+    `ellipsis=True` (T-680 S6) marks a cut with a trailing `…` instead of
+    silently dropping the tail — for a value whose length is someone else's
+    call (a stop command, a subprocess failure detail), never our own short
+    identifiers, where a truncated-but-unmarked line reads as complete when
+    it is not. Default stays plain slicing so every existing caller (short,
+    bounded identifiers) is untouched."""
+    full = one_line(text)
+    t = full[:limit]
+    if forged_tokens(t, reserved):
+        return "<a name imitating doctor's own output>"
+    if ellipsis and limit > 0 and len(full) > limit:
+        t = full[:limit - 1] + "…"
+    return t
 
 
 def days_since(iso):
@@ -3519,8 +3574,275 @@ def cmd_register(args):
 
 # ── tickets / history ─────────────────────────────────────────────────────────
 
+def next_ticket_id(root):
+    """The next `T-NNN` — a global counter unique across every ticket dir
+    (contracts §Tickets: "moving a file never renumbers it"), so this reads
+    every dir under `docs/tickets/` (current version · backlog · older
+    versions), never just the current one. Both the FILENAME and the
+    frontmatter `id` are considered — a mismatch between them is a
+    `scan_tickets` problem row, not this allocator's job to resolve, but
+    either one already having claimed a number must still keep this call
+    from reissuing it."""
+    tdir = root / "docs" / "tickets"
+    max_n = 0
+    if tdir.is_dir():
+        idre = re.compile(r"^T-(\d+)$")
+        for p in tdir.rglob("T-*.md"):
+            m = idre.match(p.stem)
+            if m:
+                max_n = max(max_n, int(m.group(1)))
+            fm, _ = parse_frontmatter(p)
+            fid = fm.get("id")
+            if isinstance(fid, str):
+                m2 = idre.match(fid)
+                if m2:
+                    max_n = max(max_n, int(m2.group(1)))
+    # Contracts §Tickets: "the `T-NNN` form … at least three digits, zero-
+    # padded: a first ticket is `T-001`" — `:03d` pads to 3 and widens on its
+    # own once the counter needs more (T-685 fix; PO-observed `T-1`).
+    return f"T-{max_n + 1:03d}"
+
+
+def current_version_id(root):
+    """`docs/tickets/<version>/` for a freshly scaffolded ticket — the
+    project's OPEN version (`po-state.json.version`), never a guess; falls
+    back to `backlog` only when the state file is unreadable (a corrupt or
+    pre-init project — `new` still has to land the file somewhere)."""
+    st = read_json(root / ".prdt" / "po-state.json")
+    v = (st or {}).get("version")
+    return v if isinstance(v, str) and v.strip() else "backlog"
+
+
+SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+# `tickets new`'s frontmatter-key order (contracts §Tickets): id · slug · type ·
+# status · assignee · feature? · prd_item? · deps? · created · closed? — a
+# fresh ticket never carries `closed`.
+TICKET_FRONTMATTER_ORDER = ("id", "slug", "type", "status", "assignee", "feature",
+                            "prd_item", "deps", "created")
+
+
+def cmd_tickets_new(args, root):
+    """`prdt tickets new` — scaffold a frame ticket (T-685): the next global id,
+    full frontmatter in frame order, and the frame's H2 keys already in place
+    so a worker/PO fills content instead of retyping structure. `options` is
+    the one H2 key gated on `type` — required for `decision`, so `new` seeds it
+    for that type only (TICKET_FRAME_REQUIRED, the one shared frame table)."""
+    if not args.type:
+        sys.exit(f"prdt tickets new: --type is required ({'/'.join(TICKET_TYPES)})")
+    if not args.slug or not SLUG_RE.match(args.slug):
+        sys.exit("prdt tickets new: --slug is required and must be kebab-case (a-z0-9, hyphen-separated)")
+    ttype = args.type
+    tid = next_ticket_id(root)
+    version = current_version_id(root)
+    # `type: decision` forces `assignee: user` (contracts §Tickets) — never a
+    # CLI choice, the same way the frame itself is never a per-ticket choice.
+    assignee = "user" if ttype == "decision" else (args.assignee or "po")
+    fm = {"id": tid, "slug": args.slug, "type": ttype, "status": "open", "assignee": assignee,
+          "feature": args.feature, "prd_item": args.prd_item,
+          "deps": "[" + ", ".join(args.deps) + "]" if args.deps else None,
+          # The MACHINE's local date, not UTC (T-685 fix — PO-observed at
+          # 2026-09-24 KST: a scaffold landed `created: 2026-09-23` because
+          # this read UTC, which is still the previous day west of UTC in
+          # the evening KST). `created:` is a plain local-calendar-date
+          # string everywhere else it is read (`TICKET_FRAME_LANDING_DATE`
+          # string-compare, `fmt --check`'s landing-date gate) — `datetime.now()`
+          # with no tz reads the OS local clock, same as the operator sees it.
+          "created": datetime.now().strftime("%Y-%m-%d")}
+    fm_lines = ["---"] + [f"{k}: {fm[k]}" for k in TICKET_FRONTMATTER_ORDER if fm.get(k) is not None] + ["---"]
+    # `options` is the one H2 key gated by `type` (TICKET_FRAME_REQUIRED —
+    # required for `decision`, optional otherwise); every other key scaffolds
+    # regardless of type. A `decision` ticket's `options` is seeded with the
+    # annex's empty table shape (TICKET_OPTIONS_TABLE_SCAFFOLD), not a bare
+    # heading — the PO fills cells, never recalls the shape from memory.
+    body_keys = [k for k in TICKET_FRAME_KEYS if k != "options" or ttype == "decision"]
+    def _section(k):
+        if k == "options" and ttype == "decision":
+            return f"## options\n\n{TICKET_OPTIONS_TABLE_SCAFFOLD}\n"
+        return f"## {k}\n\n"
+    body = "".join(_section(k) for k in body_keys)
+    text = "\n".join(fm_lines) + "\n\n" + body
+    tdir = root / "docs" / "tickets" / version
+    tdir.mkdir(parents=True, exist_ok=True)
+    path = tdir / f"{tid}.md"
+    if path.exists():
+        sys.exit(f"prdt tickets new: {path} already exists — id collision, re-run (next_ticket_id is derived, never cached)")
+    atomic_write_text(path, text)
+    print(f"[{tid}](file://{path.resolve()})")
+
+
+def split_ticket_header_body(text):
+    """Frontmatter block (verbatim, delimiters included) + everything after it.
+    `fmt` never parses or rewrites the header — only H2 lines in the body — so
+    this is a byte split, not `parse_frontmatter`'s YAML-subset read."""
+    if not text.startswith("---\n"):
+        return "", text
+    end = text.find("\n---", 4)
+    if end < 0:
+        return "", text
+    nl = text.find("\n", end + 1)
+    cut = (nl + 1) if nl >= 0 else len(text)
+    return text[:cut], text[cut:]
+
+
+H2_RE = re.compile(r"^## (.+?)[ \t]*$", re.M)
+
+
+def resolve_frame_heading(raw):
+    """A body H2's raw heading text → (canonical_key_or_None, exact_bool).
+    `exact_bool` is False whenever `fmt` would rewrite the heading LINE even
+    though it already resolves (wrong case, a known alias) — the same
+    predicate both `fmt`'s rewrite and `fmt --check`'s violation list read."""
+    t = raw.strip()
+    tl = t.lower()
+    if tl in TICKET_FRAME_KEYS:
+        return tl, t == tl
+    if tl in TICKET_FRAME_ALIASES:
+        return TICKET_FRAME_ALIASES[tl], False
+    if t in TICKET_FRAME_ALIASES:
+        return TICKET_FRAME_ALIASES[t], False
+    return None, False
+
+
+def fmt_ticket_body(body, ttype, status):
+    """The one transform `fmt` and `fmt --check` share: parse `body`'s H2
+    sections, fold them onto the frame (order, spelling, aliases, stray H2 →
+    `###` under the nearest key), and report every violation found along the
+    way. Returns (new_body, violations[]) — `new_body == body` iff there is
+    nothing to change (the idempotence property T-685 tests)."""
+    matches = list(H2_RE.finditer(body))
+    preamble = body[:matches[0].start()] if matches else body
+    segments = []
+    for i, m in enumerate(matches):
+        start = m.end() + 1 if m.end() < len(body) and body[m.end():m.end() + 1] == "\n" else m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        content = body[start:end]
+        key, exact = resolve_frame_heading(m.group(1))
+        segments.append({"raw": m.group(1).strip(), "key": key, "exact": exact, "content": content})
+
+    violations = []
+    key_content = {}
+    pending_leading = []       # [(demoted_text, violation_index)] — no key seen yet
+    pending_slot_by_content = {}
+    last_key = None
+    for seg in segments:
+        if seg["key"]:
+            chunks = key_content.setdefault(seg["key"], [])
+            if pending_leading:
+                chunks[:0] = [d for d, _ in pending_leading]
+                for _, vidx in pending_leading:
+                    violations[vidx] = (f"stray heading `{pending_slot_by_content[vidx]}` "
+                                        f"— demoted under `{seg['key']}`")
+                pending_leading = []
+            chunks.append(seg["content"])
+            if not seg["exact"]:
+                violations.append(f"heading `{seg['raw']}` → `{seg['key']}`")
+            last_key = seg["key"]
+        else:
+            demoted = f"### {seg['raw']}\n{seg['content']}"
+            if last_key is None:
+                violations.append(None)  # placeholder — target unknown until a key follows
+                vidx = len(violations) - 1
+                pending_slot_by_content[vidx] = seg["raw"]
+                pending_leading.append((demoted, vidx))
+            else:
+                key_content.setdefault(last_key, []).append(demoted)
+                violations.append(f"stray heading `{seg['raw']}` — demoted under `{last_key}`")
+    if pending_leading:
+        # every stray heading ran out of a following key too — the whole
+        # ticket has no recognizable H2 at all; anchor them on `problem`.
+        chunks = key_content.setdefault("problem", [])
+        chunks[:0] = [d for d, _ in pending_leading]
+        for _, vidx in pending_leading:
+            violations[vidx] = f"stray heading `{pending_slot_by_content[vidx]}` — demoted under `problem`"
+
+    file_order = []
+    for seg in segments:
+        if seg["key"] and seg["key"] not in file_order:
+            file_order.append(seg["key"])
+    want_order = [k for k in TICKET_FRAME_KEYS if k in file_order]
+    if file_order != want_order:
+        violations.append(f"heading order: got {file_order} — want {want_order}")
+
+    if "problem" not in key_content:
+        violations.append("missing required key `problem`")
+    if "acceptance" not in key_content:
+        violations.append("missing required key `acceptance`")
+    if ttype == "decision":
+        opts = "".join(key_content.get("options", []))
+        if not opts.strip():
+            violations.append("type: decision requires `options` with a `recommend` cell")
+        elif "recommend" not in opts.lower():
+            violations.append("`options` is missing a `recommend` cell (required for type: decision)")
+    if status == "done" and not "".join(key_content.get("outcome", [])).strip():
+        violations.append("status: done requires `outcome`")
+
+    new_body = preamble + "".join(
+        f"## {k}\n{''.join(key_content[k])}" for k in TICKET_FRAME_KEYS if k in key_content)
+    return new_body, violations
+
+
+def cmd_tickets_fmt(args, root):
+    """`prdt tickets fmt <id…>` — normalize H2 headings to the frame (plain),
+    report violations without writing (`--check`, non-zero exit on any), or
+    print the diff without writing (`--dry-run`). Binds only tickets created
+    on/after `TICKET_FRAME_LANDING_DATE` (contracts/tickets.md annex: "an
+    older ticket keeps its headings as written") — an older ticket is
+    reported as skipped and never touched, in every mode."""
+    con = open_db(root)
+    reindex_tickets(root, con)
+    if not args.ids:
+        sys.exit("usage: prdt tickets fmt <id…> [--check] [--dry-run]")
+    hit = dict(con.execute(
+        "SELECT id, path FROM tickets WHERE id IN (%s)" % ",".join("?" * len(args.ids)),
+        args.ids).fetchall())
+    any_violation = False
+    for tid in args.ids:
+        if tid not in hit:
+            print(f"{tid} (not found)")
+            any_violation = True
+            continue
+        path = root / hit[tid]
+        text = path.read_text(encoding="utf-8")
+        fm, _ = parse_frontmatter(path)
+        created = fm.get("created") if isinstance(fm.get("created"), str) else ""
+        if created < TICKET_FRAME_LANDING_DATE:
+            print(f"{tid}: skipped (pre-frame ticket, created {created or '?'})")
+            continue
+        header, body = split_ticket_header_body(text)
+        new_body, violations = fmt_ticket_body(body, fm.get("type"), fm.get("status"))
+        new_text = header + new_body
+        if args.dry_run:
+            diff = difflib.unified_diff(text.splitlines(keepends=True), new_text.splitlines(keepends=True),
+                                         fromfile=f"{tid} (before)", tofile=f"{tid} (after)")
+            out = "".join(diff)
+            print(out if out else f"{tid}: no change")
+            continue
+        if args.check:
+            if violations:
+                any_violation = True
+                for v in violations:
+                    print(f"{tid}: {v}")
+            else:
+                print(f"{tid}: ok")
+            continue
+        if new_text != text:
+            atomic_write_text(path, new_text)
+            print(f"{tid}: fmt'd ({len(violations)} change(s))")
+        else:
+            print(f"{tid}: already formatted")
+    if any_violation:
+        sys.exit(1)
+
+
 def cmd_tickets(args):
     root = require_root()
+    if getattr(args, "action", None) == "new":
+        cmd_tickets_new(args, root)
+        return
+    if getattr(args, "action", None) == "fmt":
+        cmd_tickets_fmt(args, root)
+        return
     # Refresh THIS command's slice, in place. Not a rebuild: the wiki slice shares
     # the file and nothing here re-fills it (T-480).
     con = open_db(root)
@@ -7404,6 +7726,35 @@ def duplicate_ticket_id_warnings(tickets):
     return warns
 
 
+def ticket_frame_warnings(root, tickets):
+    """T-685 acceptance: `prdt doctor` reports frame violations for tickets
+    created on/after `TICKET_FRAME_LANDING_DATE` by calling `fmt_ticket_body`
+    — the SAME transform `tickets fmt`/`fmt --check` read, so this can never
+    drift from what `fmt --check` would itself say about the same file.
+    Advisory (T-572 ②), never a mismatch the verdict counts: a frame violation
+    is a body a person can `prdt tickets fmt` in place, not prdt's own
+    discipline↔execution disagreeing with itself, and the annex is explicit
+    that binding is only prospective — "an older ticket keeps its headings as
+    written" — so a pre-landing ticket is skipped here exactly as `fmt` skips
+    it, in total silence (no line at all, not even a skipped-note): older
+    tickets were never promised to conform."""
+    warns = []
+    for r in sorted(tickets, key=lambda r: r["id"]):
+        created = r.get("created") if isinstance(r.get("created"), str) else ""
+        if created < TICKET_FRAME_LANDING_DATE:
+            continue
+        path = root / r["path"]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        _header, body = split_ticket_header_body(text)
+        _new_body, violations = fmt_ticket_body(body, r.get("type"), r.get("status"))
+        for v in violations:
+            warns.append(f"ticket frame: {r['id']} ({r['path']}): {v}")
+    return Advisory(warns)
+
+
 # ── doctor: PRD layout — one file per closed version (T-657) ──────────────────
 #
 # ONE definition of a version id, and both readers use it: this regex and the
@@ -8989,21 +9340,51 @@ def discipline_caps_warnings(droot):
     return warns
 
 
-# ── resource ownership markers (T-591) — the CLI the stop rule names ────────
+# ── resource ownership markers (T-591/T-680) — the CLI the stop rule names ──
 #
 # `qa/habit.md` §Working rules and `po/habit.md` §Returns already read: "last
 # dispatch out stops it" / "0 left → stop it" — this is the CLI that makes
 # those lines real. `prdt resource up|down` record who booted a machine
-# resource; `ls` reports what is recorded. None of the three stops, kills, or
-# signals anything (provable by grep — see the CLI-side test for this
-# section): the marker is bookkeeping only, the stop command belongs to
-# whichever dispatch removes the LAST marker, in the rule text, not here.
+# resource; `ls` reports what is recorded.
+#
+# T-680: the stop command itself is a machine fact, not shared discipline
+# text — canonical `po/habit.md`/`qa/habit.md` used to point at a machine wiki
+# page by name (`machine:fact--qa-cua-vm`), which does not exist on every
+# machine (T-619/T-674). The side that knows the fact now holds it: this tool
+# reads a machine-scope registry (`~/.prdt/resource-stop.json` — machine
+# CONFIG, beside `~/.prdt/register`, never under the runtime-state `run/`
+# carve-out; PO decision 2026-09-24, QA grill S3), populated by
+# `prdt resource register-stop <name> <command>` — tooling-written, never
+# hand-edited. `down` never touches another dispatch's marker, but when
+# removing ITS OWN marker is what brings a resource's held count to zero, it
+# resolves the stop command from the LIVE registry AT THAT MOMENT (never a
+# copy cached earlier — QA grill S5: a marker's content is never the
+# executed source, so hand-editing a marker, or registering after `up` ran,
+# can change nothing about what actually runs) and reports the result —
+# never a guess, never a swallowed failure. A resource with no registered
+# command, or still held by another marker, is reported and left alone.
+#
+# S1 (QA grill, two concurrent `down`s that together reach 0 must run the
+# stop exactly once): the unlink + count + resolve-and-run sequence runs
+# inside `_resource_lock(name)`, an OS file lock scoped to this one resource
+# name — a second `down` racing the first blocks until the first's whole
+# critical section (including the stop run) has completed and released it,
+# then sees the count the first one left behind and never re-runs.
+#
+# S4 (a failed stop must not vanish with the marker that triggered it): a
+# failed run is recorded in `~/.prdt/run/resource-stop-failures.json`
+# (runtime state, the existing `run/` carve-out) — `_resource_owner` treats
+# a name with a live failure record as still prdt-owned even with zero
+# markers, so `ls`/doctor keep surfacing it until a later `down` (any
+# `--dispatch`, since there is nothing left to unlink) resolves the
+# (by-then-fixed) registry and clears the record on success.
 #
 # Marker file: `~/.prdt/run/resources/<name>/<dispatch>.json`, tooling-owned
 # under the existing `~/.prdt/run/` carve-out (contracts §Fixed paths already
 # names the directory — no new carve-out needed). One file per (resource,
 # dispatch) pair; `up` on the same dispatch is idempotent — it rewrites
-# `since`, it never doubles the held count.
+# `since`, it never doubles the held count. It carries no `stop_cmd` (S5) —
+# nothing in this section ever trusts a value read back out of one.
 #
 # Ownership test (user's verdict, verbatim "c. docker같은것도 똑같아",
 # 2026-09-15): a resource with at least one marker was agent-started
@@ -9025,8 +9406,80 @@ RE_DISPATCH_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # help text. `up`/`down` now refuse to run without an explicit `--dispatch`.
 
 
+def _resource_stop_registry_path():
+    """Machine-scope registry (T-680; PO decision 2026-09-24, QA grill S3):
+    `<name> → stop command`. This is machine CONFIG, not runtime state — it
+    lives directly under `PRDT_HOME`, beside `~/.prdt/register`, never under
+    the `run/` carve-out (that clause covers only tooling's own bookkeeping:
+    turn counters, latches, these ownership markers — never a fact a person
+    put there on purpose). Written ONLY by `prdt resource register-stop`
+    (this CLI, i.e. tooling), never hand-edited; a persona pointed here
+    writes through the subcommand, not the file — exactly like `register`."""
+    return prdt_home() / "resource-stop.json"
+
+
+def _resource_stop_registry():
+    data = read_json(_resource_stop_registry_path())
+    return data if isinstance(data, dict) else {}
+
+
+def _resource_registered_stop_cmd(name):
+    """Always a FRESH read of the registry file — never a value cached
+    anywhere else (T-680 S5). Every caller that needs "what would `down` run
+    right now for `name`" — `up`'s informational `stop=` field, `down`
+    itself, `ls`, the failed-stop retry — goes through this one function."""
+    cmd = _resource_stop_registry().get(name)
+    return cmd if isinstance(cmd, str) and cmd.strip() else None
+
+
+def _run_resource_stop_cmd(cmd):
+    """Runs a resource's recorded stop command through a shell — the registry
+    stores a full shell command string (pipes/quoting included, e.g. an ssh +
+    sudo pipeline). Never raises: a spawn error, a timeout, or a non-zero
+    exit all come back as (False, detail) — reported by the caller, never
+    swallowed here."""
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"could not run: {e}"
+    if r.returncode != 0:
+        detail = (r.stderr or r.stdout or "").strip() or f"exit {r.returncode}"
+        return False, detail[:300]
+    return True, None
+
+
 def _resource_marker_dir(name):
     return prdt_home() / "run" / "resources" / name
+
+
+def _resource_lock_path(name):
+    # A dot-prefixed FILE beside the per-name marker DIRECTORIES, never inside
+    # one — `_resource_markers` globs `*.json` under a resource's own dir, and
+    # this must never be counted as a marker or show up as a resource name.
+    return prdt_home() / "run" / "resources" / f".{name}.lock"
+
+
+@contextlib.contextmanager
+def _resource_lock(name):
+    """Exclusive per-resource OS file lock (T-680 S1). Held across the whole
+    unlink-own-marker + count-what's-left + resolve-and-run-stop sequence in
+    `down`, so two concurrent `down`s that together bring a resource's count
+    to zero can never both observe count==0: the second one blocks on
+    `fcntl.flock` until the first's full critical section — stop run
+    included — has finished and released it, then counts what the first one
+    actually left behind. Blocking, not polling or racing a retry; released
+    (and the fd closed) even if the body raises."""
+    lock_dir = prdt_home() / "run" / "resources"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(_resource_lock_path(name)), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _resource_markers(name=None):
@@ -9058,10 +9511,48 @@ def _resource_markers(name=None):
     return out
 
 
+def _resource_failed_stops_path():
+    # Runtime state (a failed *attempt*, recorded by the tool that made it),
+    # so this stays under the existing `run/` carve-out — unlike the registry
+    # above, nobody sets this on purpose.
+    return prdt_home() / "run" / "resource-stop-failures.json"
+
+
+def _resource_failed_stops():
+    data = read_json(_resource_failed_stops_path())
+    return data if isinstance(data, dict) else {}
+
+
+def _resource_write_failed_stop(name, dispatch, cmd, detail):
+    """T-680 S4: a failed stop is recorded here so the resource stays visible
+    as prdt-owned (`_resource_owner` below) — in `ls` and in doctor — even
+    though the marker that triggered the attempt is already gone (`down`
+    still only ever unlinks its OWN marker; a failed stop is never a reason
+    to leave a stale marker behind either)."""
+    failures = _resource_failed_stops()
+    failures[name] = {"dispatch": dispatch, "cmd": cmd, "detail": detail, "since": now_iso()}
+    p = _resource_failed_stops_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(p, json.dumps(failures, indent=2, sort_keys=True) + "\n")
+
+
+def _resource_clear_failed_stop(name):
+    failures = _resource_failed_stops()
+    if name in failures:
+        del failures[name]
+        p = _resource_failed_stops_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(p, json.dumps(failures, indent=2, sort_keys=True) + "\n")
+
+
 def _resource_owner(name):
     """T-591 판정 ⓒ — 종류가 아니라 표식이 소유를 가른다: 표식이 하나라도 있으면
-    prdt-owned, 없으면 user-owned. VM 과 Docker 스택이 같은 함수를 탄다."""
-    return "prdt" if _resource_markers(name) else "user"
+    prdt-owned, 없으면 user-owned. VM 과 Docker 스택이 같은 함수를 탄다.
+    T-680 S4: a name with an unresolved failed-stop record also reads as
+    prdt-owned even with zero markers left — the ownership question the
+    original verdict answers ("did an agent dispatch start this") stays true
+    right up until the stop that dispatch owed actually succeeds."""
+    return "prdt" if _resource_markers(name) or name in _resource_failed_stops() else "user"
 
 
 def _resource_project_slug(root):
@@ -9073,29 +9564,71 @@ def _resource_project_slug(root):
 
 
 def cmd_resource(args):
-    """`prdt resource up|down|ls` — record/report ownership markers ONLY.
-    Grep-provable: nothing below signals a process, stops a VM, touches a
-    container, or quits an application. The stop command lives with whichever
-    dispatch's `down` brings a resource's marker count to zero — rule text
-    (qa/habit.md, po/habit.md), never this function."""
+    """`prdt resource up|down|ls|register-stop`. `up`/`down`/`ls` record and
+    report ownership markers; `register-stop` writes this machine's stop
+    command for a resource name into the machine-scope registry
+    (`~/.prdt/resource-stop.json`, T-680 — beside `~/.prdt/register`, S3).
+    `down` never touches another dispatch's marker, but when removing its OWN
+    marker is what brings a resource's held count to zero, it resolves the
+    stop command from the LIVE registry (never a marker's own content, S5)
+    and runs it under a per-resource lock (S1) — a missing registration or a
+    failed run is reported, never guessed at and never swallowed, and a
+    failed run stays visible for retry until it succeeds (S4)."""
     action = args.action
+
     if action == "ls":
         markers = _resource_markers()
         if args.json:
             print(json.dumps(markers, ensure_ascii=False))
             return
-        if not markers:
-            print("no resource markers")
-            return
+        failed = _resource_failed_stops()
         by_name = {}
         for m in markers:
             by_name.setdefault(m["resource"], []).append(m)
-        for n in sorted(by_name):
-            group = by_name[n]
+        names = sorted(set(by_name) | set(failed))
+        if not names:
+            print("no resource markers")
+            return
+        for n in names:
+            group = by_name.get(n, [])
             print(f"{safe_label(n)}: {len(group)} held")
             for m in group:
                 proj = safe_label(m["project"]) if m["project"] else "-"
                 print(f"  dispatch={safe_label(m['dispatch'])} project={proj} since={m['since'] or '-'}")
+            # S6/S7: the command `down` would actually run for this name right
+            # now (resolved fresh, same function `down` itself calls — never a
+            # marker's stale copy), with a visible `…` when it is cut.
+            stop_cmd = _resource_registered_stop_cmd(n)
+            if stop_cmd:
+                print(f"  stop: {safe_label(stop_cmd, limit=100, ellipsis=True)}")
+            else:
+                print(f"  stop: none-registered — `prdt resource register-stop {safe_label(n)} <command>`")
+            fail = failed.get(n)
+            if isinstance(fail, dict):
+                detail = safe_label(fail.get("detail") or "", limit=150, ellipsis=True)
+                since = safe_label(fail.get("since") or "-")
+                print(f"  stop FAILED (since {since}): {detail} — retry: "
+                      f"`prdt resource down {safe_label(n)} --dispatch <id>`")
+        return
+
+    if action == "register-stop":
+        rest = list(args.rest or [])
+        if len(rest) != 2:
+            sys.exit("usage: prdt resource register-stop <name> <command> "
+                      "(one shell-quoted argument for <command>)")
+        name = rest[0].strip()
+        if not RE_RESOURCE_NAME.match(name):
+            sys.exit("prdt resource: <name> must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+        cmd = rest[1]
+        if not cmd.strip():
+            sys.exit("prdt resource: register-stop <command> must not be empty")
+        reg = _resource_stop_registry()
+        reg[name] = cmd
+        p = _resource_stop_registry_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(p, json.dumps(reg, indent=2, sort_keys=True) + "\n")
+        print(f"register-stop: {safe_label(name)} stop command registered "
+              f"(this machine, {safe_label(str(p))})")
         return
 
     rest = list(args.rest or [])
@@ -9107,13 +9640,15 @@ def cmd_resource(args):
     dispatch = (args.dispatch or "").strip()
     if not dispatch:
         sys.exit("prdt resource: --dispatch <id> is required for up/down — the PO's [ctx].dispatch_id "
-                  "(contracts §Dispatch: never per session); ls needs none")
+                  "(contracts §Dispatch: never per session); ls/register-stop need none")
     if not RE_DISPATCH_ID.match(dispatch):
         sys.exit("prdt resource: --dispatch must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
     if action == "up":
         project = _resource_project_slug(find_project_root())
         since = now_iso()
+        # No `stop_cmd` on the marker (T-680 S5) — this dict is bookkeeping
+        # only, never a value anything later trusts as an executable source.
         marker = {"resource": name, "dispatch": dispatch, "project": project, "since": since}
         d = _resource_marker_dir(name)
         d.mkdir(parents=True, exist_ok=True)
@@ -9121,20 +9656,52 @@ def cmd_resource(args):
         atomic_write_text(p, json.dumps(marker, indent=2, sort_keys=True) + "\n")
         held = len(_resource_markers(name))
         proj_out = safe_label(project) if project else "-"
-        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out} since={since} held={held}")
+        # Purely informational — a fresh registry read at THIS moment, printed
+        # and never persisted; `down` re-resolves independently at its own time.
+        stop_out = "registered" if _resource_registered_stop_cmd(name) else "none"
+        print(f"up: {safe_label(name)} marker={safe_label(dispatch)} project={proj_out} since={since} "
+              f"held={held} stop={stop_out}")
         return
 
     if action == "down":
-        p = _resource_marker_dir(name) / f"{dispatch}.json"
-        removed = p.exists()
-        if removed:
-            try:
-                p.unlink()
-            except OSError:
-                removed = False
-        left = len(_resource_markers(name))
-        print(f"down: {safe_label(name)} marker={safe_label(dispatch)} "
-              f"removed={'true' if removed else 'false'} left: {left}")
+        with _resource_lock(name):
+            p = _resource_marker_dir(name) / f"{dispatch}.json"
+            removed = p.exists()
+            if removed:
+                try:
+                    p.unlink()
+                except OSError:
+                    removed = False
+            left = len(_resource_markers(name))
+            failed_now = _resource_failed_stops()
+            had_failed = name in failed_now
+            stop_note = ""
+            exit_code = 0
+            # Fires when THIS call's own unlink brought the count to zero, or
+            # (S4 retry path) the count is already zero and an earlier failed
+            # stop for this name is still unresolved — either way this is the
+            # dispatch on the hook for it right now. Never while another
+            # marker still holds the resource.
+            if left == 0 and (removed or had_failed):
+                stop_cmd = _resource_registered_stop_cmd(name)  # resolved NOW, never cached (S5)
+                if stop_cmd:
+                    ok, detail = _run_resource_stop_cmd(stop_cmd)
+                    if ok:
+                        stop_note = f" stop=ok ({safe_label(stop_cmd, limit=120, ellipsis=True)})"
+                        if had_failed:
+                            _resource_clear_failed_stop(name)
+                    else:
+                        stop_note = (f" stop=FAILED ({safe_label(stop_cmd, limit=120, ellipsis=True)}): "
+                                      f"{safe_label(detail, limit=200, ellipsis=True)}")
+                        exit_code = 1
+                        _resource_write_failed_stop(name, dispatch, stop_cmd, detail)
+                else:
+                    stop_note = (f" stop=none-registered — registering one takes the user's own instruction, never a guess: "
+                                  f"`prdt resource register-stop {safe_label(name)} <command>`")
+            print(f"down: {safe_label(name)} marker={safe_label(dispatch)} "
+                  f"removed={'true' if removed else 'false'} left: {left}{stop_note}")
+        if exit_code:
+            sys.exit(exit_code)
         return
 
 
@@ -9378,6 +9945,28 @@ def resident_machine_resource_warnings():
     return resident_resource_lines(resources, _uptime_load_1m(), _memory_pressure_free_pct())
 
 
+def resource_stop_failure_warnings():
+    """T-680 S4: a stop that failed must not vanish with the marker that
+    triggered it — this reads the same `resource-stop-failures.json`
+    `prdt resource down` writes on a failed run and clears on a later
+    success (`_resource_write_failed_stop`/`_resource_clear_failed_stop`),
+    so it can never drift from what `ls` itself reports for the same name.
+    FAMILY_DE, same posture as "resident machine resources" just above: a
+    resource sitting here IS T-591's booting-persona-stops-it-self duty
+    having been attempted and not yet completed."""
+    failures = _resource_failed_stops()
+    warns = []
+    for name in sorted(failures):
+        rec = failures[name]
+        if not isinstance(rec, dict):
+            continue
+        detail = safe_label(rec.get("detail") or "", limit=150, ellipsis=True)
+        since = safe_label(rec.get("since") or "?")
+        warns.append(f"resource stop: {safe_label(name)} FAILED to stop (since {since}): {detail} — "
+                     f"retry with `prdt resource down {safe_label(name)} --dispatch <id>` once fixed")
+    return warns
+
+
 def cmd_doctor(_args):
     root = require_root()
     st = read_json(root / ".prdt" / "po-state.json")
@@ -9404,6 +9993,11 @@ def cmd_doctor(_args):
         # for the same reason: the id-keyed map is *defined* by collapsing an id,
         # so it is the one input in which this violation cannot be seen.
         ("duplicate ticket id", FAMILY_PROJECT, lambda: duplicate_ticket_id_warnings(trows)),
+        # T-685: same `fmt_ticket_body` transform `tickets fmt --check` reads —
+        # advisory, never verdict-changing (a frame slip is a `tickets fmt`
+        # away, not a discipline↔execution mismatch); silent on any ticket
+        # created before the frame's landing date.
+        ("ticket frame", FAMILY_PROJECT, lambda: ticket_frame_warnings(root, trows)),
         ("ticket deps + staleness", FAMILY_PROJECT, lambda: ticket_graph_warnings(root, tickets)),
         ("stage signals", FAMILY_PROJECT, lambda: stage_signal_warnings(st, tickets)),
         ("ticket dependency cycle", FAMILY_PROJECT, lambda: ticket_cycle_warnings(tickets)),
@@ -9477,6 +10071,10 @@ def cmd_doctor(_args):
         # "could not look" via the existing Skipped precedent (FAMILY_PROJECT
         # checks have no such print path — none of them ever return Skipped).
         ("resident machine resources", FAMILY_DE, lambda: resident_machine_resource_warnings()),
+        # T-680 S4: an unresolved failed stop, same family/reasoning as the
+        # check just above (a resource this discipline's own duty never
+        # finished stopping).
+        ("resource stop failures", FAMILY_DE, lambda: resource_stop_failure_warnings()),
         # dead discipline-path citations in live SoT docs (T-535) — wiki lint only
         # resolves [[wikilink]] targets inside docs/wiki/, this covers plain-path
         # citations everywhere else a persona habit/bookshelf doc or design.md makes one
@@ -10417,13 +11015,29 @@ def main():
     p.add_argument("action", choices=["rebuild"])
     p.set_defaults(fn=cmd_index)
     p = sub.add_parser("tickets", help="list tickets (--version --feature --status --assignee --ready --backlog) "
-                                       "· --link T-NNN … prints paste-ready file:// links")
-    p.add_argument("--version"); p.add_argument("--feature"); p.add_argument("--status", choices=TICKET_STATUS)
+                                       "· --link T-NNN … prints paste-ready file:// links "
+                                       "· new --type <design|impl|qa|ops|decision> --slug <slug> "
+                                       "[--assignee --feature --prd-item --deps] scaffolds a frame ticket (T-685) "
+                                       "· fmt <id…> [--check|--dry-run] normalizes/checks H2 headings against "
+                                       "the frame (contracts/tickets.md annex) — binds tickets created on/after "
+                                       f"{TICKET_FRAME_LANDING_DATE} only, an older ticket is skipped untouched")
+    p.add_argument("action", nargs="?", choices=("new", "fmt"), help="omit for the plain listing")
+    p.add_argument("ids", nargs="*", metavar="ID", help="fmt: one or more ticket ids")
+    p.add_argument("--version"); p.add_argument("--feature", help="list: filter · new: this ticket's `feature`")
+    p.add_argument("--status", choices=TICKET_STATUS)
     p.add_argument("--assignee", choices=ASSIGNEES,
-                   help="filter by assignee: persona short name or `user` (work only the person can do) "
-                        "· legacy `pdt-` frontmatter normalizes on index, so one value matches both spellings")
+                   help="list: filter by assignee (legacy `pdt-` frontmatter normalizes on index, so one value "
+                        "matches both spellings) · new: this ticket's `assignee` (default `po`; `decision` "
+                        "always forces `user`)")
     p.add_argument("--ready", action="store_true"); p.add_argument("--backlog", action="store_true")
     p.add_argument("--link", nargs="+", metavar="ID", help="resolve ticket ids to `[T-NNN](file://<abs>)`")
+    p.add_argument("--type", choices=TICKET_TYPES, help="new: the ticket's `type` (required)")
+    p.add_argument("--slug", help="new: the ticket's `slug`, kebab-case (required)")
+    p.add_argument("--prd-item", dest="prd_item", help="new: `prd_item` value (v<N>.<m>#<key>)")
+    p.add_argument("--deps", nargs="+", metavar="ID", help="new: `deps` ticket ids")
+    p.add_argument("--check", action="store_true",
+                   help="fmt: report violations and exit non-zero instead of writing")
+    p.add_argument("--dry-run", action="store_true", help="fmt: print the diff, write nothing")
     p.set_defaults(fn=cmd_tickets)
     p = sub.add_parser("artifacts", help="sync (write the ONE docs/artifacts/manifest.json from disk) "
                                          "| check (report artifacts the bucket rule cannot place, and a "
@@ -10497,15 +11111,16 @@ def main():
     p.add_argument("--list", action="store_true", help="print keys · domain · default · body presence")
     p.add_argument("--json", action="store_true", help="machine mode (show / --list)")
     p.set_defaults(fn=cmd_register)
-    p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591): "
+    p = sub.add_parser("resource", help="agent-started machine resource ownership markers (T-591/T-680): "
                                         "up <name> --dispatch <id> · down <name> --dispatch <id> · "
-                                        "ls [--json] — record/report only, NEVER stops anything; the "
-                                        "dispatch whose `down` empties a resource's marker count stops it itself")
-    p.add_argument("action", choices=("up", "down", "ls"))
-    p.add_argument("rest", nargs="*", help="up/down: <name>")
+                                        "ls [--json] · register-stop <name> <command> — up/down record/report; "
+                                        "the dispatch whose `down` empties a resource's marker count runs that "
+                                        "resource's registered stop command itself and reports the result")
+    p.add_argument("action", choices=("up", "down", "ls", "register-stop"))
+    p.add_argument("rest", nargs="*", help="up/down: <name> · register-stop: <name> <command>")
     p.add_argument("--dispatch", help="marker id for up/down — required, the PO's [ctx].dispatch_id "
                                       "(contracts §Dispatch: never per session, never this session's own identity); "
-                                      "ls takes none")
+                                      "ls/register-stop take none")
     p.add_argument("--json", action="store_true", help="ls: machine-readable output")
     p.set_defaults(fn=cmd_resource)
     p = sub.add_parser("preflight", help="model availability canary before a dispatch: "
