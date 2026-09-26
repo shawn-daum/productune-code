@@ -20,7 +20,7 @@
 /* ┌────────────────────────────────────────────────────────────────────────┐
  * │ ★★★  ACCENT — THE SINGLE SWAPPABLE BRAND TOKEN  (design.md §0.2.1)  ★★★ │
  * │                                                                          │
- * │ productune accent = violet (#8B5CF6 dark / #7C3AED light). CONFIRMED by  │
+ * │ productune accent = violet (#A48AF8 dark / #7C3AED light). CONFIRMED by  │
  * │ shawn 2026-07-23 (A/B, Anchor blue rejected).                            │
  * │                                                                          │
  * │ >>> TO FLIP violet → Anchor blue: set every `--brand-accent` to #1E84FF <<<│
@@ -62,7 +62,7 @@
    * set every `--brand-accent` to #1E84FF (3 lines, all marked "SWAP POINT").
    * --accent / -hover / -subtle / -contrast are declared ONCE (here) and derive
    * from --brand-accent, so they need no per-theme redeclaration. */
-  --brand-accent: #8B5CF6;                                        /* ← SWAP POINT (dark). violet → #1E84FF for Anchor blue */
+  --brand-accent: #A48AF8;                                        /* ← SWAP POINT (dark). violet → #1E84FF for Anchor blue */
   --accent: var(--brand-accent);                                  /* Anchor interaction.primary role */
   --accent-hover: color-mix(in srgb, var(--brand-accent) 84%, #000);  /* derived darker fill for hover */
   --accent-contrast: #FFFFFF;                                     /* text/icon ON accent — text.static.white.primary */
@@ -143,7 +143,7 @@
   --health-info:    #38BDF8;
   --health-success: #34D399;
   --health-warn:    #FBBF24;
-  --health-error:   #EF4444;
+  --health-error:   #F87171;
 
   /* Subtle tints (banner/inline bg) — derived via color-mix so they track the
    * themed base value automatically (no per-mode redeclaration needed). */
@@ -451,7 +451,7 @@
   --health-info:    #38BDF8;
   --health-success: #34D399;
   --health-warn:    #FBBF24;
-  --health-error:   #EF4444;
+  --health-error:   #F87171;
 
   --brand-mint: #2DD4BF;
 
