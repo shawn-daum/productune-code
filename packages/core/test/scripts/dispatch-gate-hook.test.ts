@@ -86,12 +86,22 @@ interface EventOpts {
   toolName?: string
   event?: string
   sessionId?: string
+  // T-704: the CALLER's identity — present only when this event is raised
+  // INSIDE a subagent (a worker persona), absent for the main session (the
+  // PO). Both are omitted by default so every pre-existing fixture here still
+  // models a main-session (PO) call, unchanged.
+  agentId?: string
+  agentType?: string
 }
 
 /**
  * Built in the harness's OWN key order (session_id · transcript_path · cwd ·
  * prompt_id · permission_mode · agent_id · agent_type · hook_event_name ·
- * tool_name · tool_input · tool_use_id, measured on harness 2.1.235).
+ * tool_name · tool_input · tool_use_id, measured on harness 2.1.235). T-704:
+ * `agent_id`/`agent_type` are included ONLY when passed — a main-session event
+ * carries neither key at all (prdt-call-governor.sh's header, confirmed on a
+ * stdin-dump probe against harness 2.1.243, 2026-08-25), so a test that wants
+ * that shape must never see even an empty string for them.
  */
 function eventObject(o: EventOpts): Record<string, unknown> {
   return {
@@ -100,6 +110,8 @@ function eventObject(o: EventOpts): Record<string, unknown> {
     cwd: o.cwd,
     prompt_id: '11111111-2222-3333-4444-555555555555',
     permission_mode: 'default',
+    ...(o.agentId !== undefined ? { agent_id: o.agentId } : {}),
+    ...(o.agentType !== undefined ? { agent_type: o.agentType } : {}),
     hook_event_name: o.event ?? 'PreToolUse',
     tool_name: o.toolName ?? 'Agent',
     tool_input: {
@@ -322,6 +334,80 @@ describe('silence outside its scope', () => {
     run({ cwd: proj, prompt: 'no ctx line' })
     run({ cwd: proj })
     expect(fs.readdirSync(path.join(proj, '.prdt')).sort()).toEqual(before)
+  })
+})
+
+// ── T-704: a worker persona cannot spawn `subagent_type: "fork"` ─────────────
+// Classified by the CALLER (`agent_type`, a top-level sibling of `tool_input`
+// set only when the event is raised inside a subagent), never by the callee
+// (`tool_input.subagent_type`, which is `"fork"` either way) — see the hook's
+// own T-704 comment for the real-event-shape evidence this relies on.
+
+describe('T-704: worker persona fork spawns are denied by caller identity (`agent_type`)', () => {
+  test.each(['prdt-developer', 'prdt-qa', 'prdt-designer'])(
+    '%s calling Agent with subagent_type "fork" is denied, one line, naming the alternative',
+    (agentType) => {
+      const proj = makeProject()
+      const reason = denyReason({
+        cwd: proj,
+        agentId: 'agent-01aaaaaaaaaaaaaaaaaaaaaa',
+        agentType,
+        subagentType: 'fork',
+        prompt: 'go read render.mjs and report back',
+      })
+      expect(reason).toContain('DENIED')
+      expect(reason).toContain('T-704')
+      expect(reason.split('\n')).toHaveLength(1)
+      expect(reason).toContain('do the read yourself')
+      expect(reason).toContain('unresolved[]')
+    },
+  )
+
+  test('the PO\'s own fork call (main session — no `agent_type` at all) is unaffected', () => {
+    const proj = makeProject()
+    expect(run({ cwd: proj, subagentType: 'fork', prompt: 'research this' })).toBe('')
+  })
+
+  test('an `agent_type: "prdt-po"` fork call is unaffected too — the scope is the three worker personas only', () => {
+    const proj = makeProject()
+    expect(
+      run({ cwd: proj, agentId: 'agent-po', agentType: 'prdt-po', subagentType: 'fork', prompt: 'research this' }),
+    ).toBe('')
+  })
+
+  test('a worker persona spawning anything OTHER than "fork" is not caught by this check', () => {
+    const proj = makeProject()
+    for (const subagentType of ['general-purpose', 'Explore', 'claude']) {
+      expect(
+        run({ cwd: proj, agentId: 'agent-01', agentType: 'prdt-developer', subagentType, prompt: 'no ctx line' }),
+      ).toBe('')
+    }
+  })
+
+  test('a malformed `agent_type` (not a string) fails open — no deny', () => {
+    const proj = makeProject()
+    const ev = eventObject({ cwd: proj, subagentType: 'fork', prompt: 'x' }) as Record<string, unknown>
+    ;(ev as any).agent_type = 12345
+    const res = spawnSync('bash', [HOOK], {
+      input: JSON.stringify(ev),
+      encoding: 'utf8',
+      env: envFor({}).env,
+    })
+    expect(res.stderr).toBe('')
+    expect(res.stdout).toBe('')
+  })
+
+  test('this deny fires before the resource-cap check — no cap measurement leaks through', () => {
+    const proj = makeProject()
+    const reason = denyReason({
+      cwd: proj,
+      agentId: 'agent-01',
+      agentType: 'prdt-developer',
+      subagentType: 'fork',
+      prompt: 'x',
+    })
+    expect(reason).not.toContain('WAITING')
+    expect(reason).not.toContain('resource check')
   })
 })
 
