@@ -27,7 +27,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import net from 'node:net'
-import { test, expect, chromium } from '@playwright/test'
+import { test, expect, chromium, type Browser, type Page } from '@playwright/test'
 
 // A plain path constant, not an import from `viewer/generate.mjs` — MEASURED:
 // Playwright's own module loader runs this file as CJS and fails
@@ -223,6 +223,33 @@ async function renderAndObserve(
   }
 }
 
+/**
+ * Like `renderAndObserve`, but leaves the page OPEN for the caller to drive
+ * with clicks/keys instead of taking one static snapshot and closing it —
+ * needed for the click-interaction tests below (T-666 slice 1a defect). The
+ * caller must `page.close()` + `browser.close()` and remove `tmp` itself.
+ */
+async function openInteractivePage(
+  cdpBase: string,
+  html: string,
+): Promise<{ browser: Browser; page: Page; tmp: string }> {
+  const browser = await chromium.connectOverCDP(cdpBase)
+  const ctx = browser.contexts()[0] ?? (await browser.newContext())
+  const page = await ctx.newPage()
+  // Same "zero network requests" defense as renderAndObserve — irrelevant to
+  // what these tests assert, but keeps this helper safe to reuse as-is.
+  await page.route('**/*', (route) => {
+    const url = route.request().url()
+    return url.startsWith('file://') ? route.continue() : route.abort('connectionfailed')
+  })
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-html-window-interact-'))
+  const file = path.join(tmp, 'page.html')
+  fs.writeFileSync(file, html)
+  await page.goto(`file://${file}`)
+  await page.waitForLoadState('load')
+  return { browser, page, tmp }
+}
+
 test.describe('viewer/viewer.html — rendered in a real browser @window', () => {
   let execPath: string
   let child: ChildProcessWithoutNullStreams
@@ -293,4 +320,72 @@ test.describe('viewer/viewer.html — rendered in a real browser @window', () =>
     const { requestUrls } = await renderAndObserve(cdpBase, broken)
     expect(requestUrls.some((u) => u.startsWith('http://192.0.2.1/'))).toBe(true)
   })
+
+  // T-666 slice 1a defect (d-T666-s1a-fix-0926): the vitest suite (which only
+  // asserts on markup strings) stayed green while clicking a ticket row did
+  // nothing in a real browser, and the sidebar group buttons did nothing
+  // either. Root cause: the click delegator's activity-bar branch matched on
+  // `ev.target.closest('[data-store]')`, but `.store-section` ALSO carries a
+  // `data-store` attribute (it's what the activity-bar switch toggles), so
+  // every click anywhere inside a store section (a ticket row, a sidebar
+  // group button) matched that closest() first and returned before reaching
+  // the group-select / detail-row branches below it. These two tests drive
+  // the real generated `viewer.html` in an actual browser (unlike the vitest
+  // suite's string/markup assertions) and fail on that bug.
+  test('clicking a ticket row opens its detail panel with the ticket body; Escape and outside click close it; another row swaps the ticket @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await page.click('.activity-btn[data-store="ticket"]')
+      const rows = page.locator('#store-ticket .detail-row')
+      await expect(rows.first()).toBeVisible()
+
+      await rows.nth(0).click()
+      await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(1)
+      const firstTitle = await page.locator('#store-ticket .detail-panel-title').innerText()
+      expect(firstTitle.length).toBeGreaterThan(0)
+      const bodyText = await page.locator('#store-ticket .detail-panel-body').innerText()
+      expect(bodyText.length).toBeGreaterThan(0)
+
+      await page.keyboard.press('Escape')
+      await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(0)
+
+      await rows.nth(0).click()
+      await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(1)
+      await page.click('#store-ticket .topstrip')
+      await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(0)
+
+      await rows.nth(1).click()
+      await expect(page.locator('#store-ticket .detail-panel.active')).toHaveCount(1)
+      const secondTitle = await page.locator('#store-ticket .detail-panel-title').innerText()
+      expect(secondTitle).not.toBe(firstTitle)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
+
+  test('clicking the backlog sidebar group shows the backlog pane; clicking back shows the current-version pane @window', async () => {
+    const html = fs.readFileSync(VIEWER_HTML, 'utf8')
+    const { browser, page, tmp } = await openInteractivePage(cdpBase, html)
+    try {
+      await page.click('.activity-btn[data-store="ticket"]')
+      const currentGroup = await page.locator('#store-ticket [data-group-select]').first().getAttribute('data-group-select')
+      expect(currentGroup).toBeTruthy()
+      await expect(page.locator(`#store-ticket .view-pane[data-group="${currentGroup}"]`)).toHaveClass(/active/)
+
+      await page.click('#store-ticket [data-group-select="backlog"]')
+      await expect(page.locator('#store-ticket .view-pane[data-group="backlog"]')).toHaveClass(/active/)
+      await expect(page.locator(`#store-ticket .view-pane[data-group="${currentGroup}"]`)).not.toHaveClass(/active/)
+
+      await page.click(`#store-ticket [data-group-select="${currentGroup}"]`)
+      await expect(page.locator(`#store-ticket .view-pane[data-group="${currentGroup}"]`)).toHaveClass(/active/)
+      await expect(page.locator('#store-ticket .view-pane[data-group="backlog"]')).not.toHaveClass(/active/)
+    } finally {
+      await page.close()
+      fs.rmSync(tmp, { recursive: true, force: true })
+      await browser.close().catch(() => {})
+    }
+  }, 30_000)
 })
